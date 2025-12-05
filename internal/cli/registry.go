@@ -297,7 +297,8 @@ func deployRegistry(logger *zap.Logger, namespace string, port int) error {
 
 	// Wait for registry to be ready
 	logger.Info("Waiting for registry to be ready")
-	if err := waitForDeploymentAvailable(logger, "registry", namespace, "app=registry", 5*time.Minute); err != nil {
+	deployTimeout := 5 * time.Minute
+	if err := waitForDeploymentAvailable(logger, "registry", namespace, "app=registry", deployTimeout); err != nil {
 		logger.Warn("Registry deployment may still be in progress", zap.Error(err))
 	}
 
@@ -340,7 +341,8 @@ func checkRegistryStatus(logger *zap.Logger, namespace string) error {
 func loginRegistry(logger *zap.Logger, registryURL, username, password string) error {
 	logger.Info("Logging into registry", zap.String("url", registryURL))
 
-	cmd := exec.Command("docker", "login", "-u", username, "-p", password, registryURL)
+	cmd := exec.Command("docker", "login", "-u", username, "--password-stdin", registryURL)
+	cmd.Stdin = strings.NewReader(password)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
