@@ -1,10 +1,11 @@
 # MCP Runtime Platform
 
-A complete platform for deploying and managing MCP (Model Context Protocol) servers internally. Teams can deploy MCP servers without Kubernetes knowledge—simply define metadata, build images, and deploy. 
+A complete platform for deploying and managing MCP (Model Context Protocol) servers. 
 
 When working with large language models, context window limitations often require breaking monolithic services into multiple specialized MCP servers. Rather than paying for third-party gateway services that only provide basic routing, this platform offers a self-hosted solution that gives you full control.
 
 The platform targets organizations that need to ship many MCP servers internally, maintaining a centralized registry where any team can discover and use available MCP servers across the company.
+
 ## Overview
 
 MCP Runtime Platform provides a streamlined workflow for teams to deploy a suite of MCP servers:
