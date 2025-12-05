@@ -24,7 +24,7 @@ type ServerMetadata struct {
 	Resources *ResourceRequirements `yaml:"resources,omitempty" json:"resources,omitempty"`
 
 	// EnvVars are environment variables to pass to the container
-	EnvVars map[string]string `yaml:"envVars,omitempty" json:"envVars,omitempty"`
+	EnvVars []EnvVar `yaml:"envVars,omitempty" json:"envVars,omitempty"`
 
 	// Namespace is the Kubernetes namespace (defaults to "mcp-servers")
 	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
@@ -40,6 +40,12 @@ type ResourceRequirements struct {
 type ResourceList struct {
 	CPU    string `yaml:"cpu,omitempty" json:"cpu,omitempty"`
 	Memory string `yaml:"memory,omitempty" json:"memory,omitempty"`
+}
+
+// EnvVar defines an environment variable
+type EnvVar struct {
+	Name  string `yaml:"name" json:"name"`
+	Value string `yaml:"value" json:"value"`
 }
 
 // RegistryFile represents the complete registry/metadata file

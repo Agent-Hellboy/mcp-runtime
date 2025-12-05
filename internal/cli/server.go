@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+	"gopkg.in/yaml.v3"
 )
 
 func NewServerCmd(logger *zap.Logger) *cobra.Command {
@@ -181,25 +182,46 @@ func createServer(logger *zap.Logger, name, namespace, image, imageTag string) e
 		return fmt.Errorf("image is required")
 	}
 
+	var err error
+	if name, err = validateManifestValue("name", name); err != nil {
+		return err
+	}
+	if namespace, err = validateManifestValue("namespace", namespace); err != nil {
+		return err
+	}
+	if image, err = validateManifestValue("image", image); err != nil {
+		return err
+	}
+	if imageTag, err = validateManifestValue("tag", imageTag); err != nil {
+		return err
+	}
+
 	logger.Info("Creating MCP server", zap.String("name", name), zap.String("image", image))
 
-	// Create a basic MCPServer manifest
-	manifest := fmt.Sprintf(`apiVersion: mcp.agent-hellboy.io/v1alpha1
-kind: MCPServer
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  image: %s
-  imageTag: %s
-  replicas: 1
-  port: 8088
-  servicePort: 80
-  ingressPath: /%s
-`, name, namespace, image, imageTag, name)
+	manifest := mcpServerManifest{
+		APIVersion: "mcp.agent-hellboy.io/v1alpha1",
+		Kind:       "MCPServer",
+		Metadata: manifestMetadata{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: manifestSpec{
+			Image:       image,
+			ImageTag:    imageTag,
+			Replicas:    1,
+			Port:        8088,
+			ServicePort: 80,
+			IngressPath: "/" + name,
+		},
+	}
+
+	manifestBytes, err := yaml.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("failed to marshal manifest: %w", err)
+	}
 
 	tmpFile := fmt.Sprintf("/tmp/mcpserver-%s.yaml", name)
-	if err := os.WriteFile(tmpFile, []byte(manifest), 0644); err != nil {
+	if err := os.WriteFile(tmpFile, manifestBytes, 0644); err != nil {
 		return fmt.Errorf("failed to create manifest: %w", err)
 	}
 	defer os.Remove(tmpFile)
@@ -310,4 +332,37 @@ func serverStatus(logger *zap.Logger, namespace string) error {
 	}
 
 	return nil
+}
+
+type mcpServerManifest struct {
+	APIVersion string           `yaml:"apiVersion"`
+	Kind       string           `yaml:"kind"`
+	Metadata   manifestMetadata `yaml:"metadata"`
+	Spec       manifestSpec     `yaml:"spec"`
+}
+
+type manifestMetadata struct {
+	Name      string `yaml:"name"`
+	Namespace string `yaml:"namespace"`
+}
+
+type manifestSpec struct {
+	Image       string `yaml:"image"`
+	ImageTag    string `yaml:"imageTag"`
+	Replicas    int    `yaml:"replicas"`
+	Port        int    `yaml:"port"`
+	ServicePort int    `yaml:"servicePort"`
+	IngressPath string `yaml:"ingressPath"`
+}
+
+// validateManifestValue ensures basic values do not contain control characters that would break YAML.
+func validateManifestValue(field, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("%s is required", field)
+	}
+	if strings.ContainsAny(value, "\r\n\t") {
+		return "", fmt.Errorf("%s must not contain control characters", field)
+	}
+	return value, nil
 }

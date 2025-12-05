@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -56,11 +57,16 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	logger.Info("Reconciling MCPServer", "name", mcpServer.Name, "namespace", mcpServer.Namespace)
 
-	// Set defaults and update spec as needed
+	// Set defaults and update spec only if changed
+	original := mcpServer.DeepCopy()
 	r.setDefaults(&mcpServer)
-	if err := r.Update(ctx, &mcpServer); err != nil {
-		logger.Error(err, "Failed to update MCPServer spec with defaults")
-		return ctrl.Result{}, err
+	if !reflect.DeepEqual(original.Spec, mcpServer.Spec) {
+		if err := r.Update(ctx, &mcpServer); err != nil {
+			logger.Error(err, "Failed to update MCPServer spec with defaults")
+			return ctrl.Result{}, err
+		}
+		// Requeue to work with the updated object and avoid stale data
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Reconcile Deployment
@@ -194,20 +200,36 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 		if mcpServer.Spec.Resources.Limits.CPU != "" || mcpServer.Spec.Resources.Limits.Memory != "" {
 			deployment.Spec.Template.Spec.Containers[0].Resources.Limits = corev1.ResourceList{}
 			if mcpServer.Spec.Resources.Limits.CPU != "" {
-				deployment.Spec.Template.Spec.Containers[0].Resources.Limits[corev1.ResourceCPU] = resource.MustParse(mcpServer.Spec.Resources.Limits.CPU)
+				cpuLimit, err := resource.ParseQuantity(mcpServer.Spec.Resources.Limits.CPU)
+				if err != nil {
+					return fmt.Errorf("invalid CPU limit %q: %w", mcpServer.Spec.Resources.Limits.CPU, err)
+				}
+				deployment.Spec.Template.Spec.Containers[0].Resources.Limits[corev1.ResourceCPU] = cpuLimit
 			}
 			if mcpServer.Spec.Resources.Limits.Memory != "" {
-				deployment.Spec.Template.Spec.Containers[0].Resources.Limits[corev1.ResourceMemory] = resource.MustParse(mcpServer.Spec.Resources.Limits.Memory)
+				memLimit, err := resource.ParseQuantity(mcpServer.Spec.Resources.Limits.Memory)
+				if err != nil {
+					return fmt.Errorf("invalid memory limit %q: %w", mcpServer.Spec.Resources.Limits.Memory, err)
+				}
+				deployment.Spec.Template.Spec.Containers[0].Resources.Limits[corev1.ResourceMemory] = memLimit
 			}
 		}
 
 		if mcpServer.Spec.Resources.Requests.CPU != "" || mcpServer.Spec.Resources.Requests.Memory != "" {
 			deployment.Spec.Template.Spec.Containers[0].Resources.Requests = corev1.ResourceList{}
 			if mcpServer.Spec.Resources.Requests.CPU != "" {
-				deployment.Spec.Template.Spec.Containers[0].Resources.Requests[corev1.ResourceCPU] = resource.MustParse(mcpServer.Spec.Resources.Requests.CPU)
+				cpuReq, err := resource.ParseQuantity(mcpServer.Spec.Resources.Requests.CPU)
+				if err != nil {
+					return fmt.Errorf("invalid CPU request %q: %w", mcpServer.Spec.Resources.Requests.CPU, err)
+				}
+				deployment.Spec.Template.Spec.Containers[0].Resources.Requests[corev1.ResourceCPU] = cpuReq
 			}
 			if mcpServer.Spec.Resources.Requests.Memory != "" {
-				deployment.Spec.Template.Spec.Containers[0].Resources.Requests[corev1.ResourceMemory] = resource.MustParse(mcpServer.Spec.Resources.Requests.Memory)
+				memReq, err := resource.ParseQuantity(mcpServer.Spec.Resources.Requests.Memory)
+				if err != nil {
+					return fmt.Errorf("invalid memory request %q: %w", mcpServer.Spec.Resources.Requests.Memory, err)
+				}
+				deployment.Spec.Template.Spec.Containers[0].Resources.Requests[corev1.ResourceMemory] = memReq
 			}
 		}
 
@@ -489,7 +511,11 @@ func (r *MCPServerReconciler) checkDeploymentReady(ctx context.Context, mcpServe
 		return false, err
 	}
 
-	return deployment.Status.ReadyReplicas == *deployment.Spec.Replicas, nil
+	desiredReplicas := int32(1)
+	if deployment.Spec.Replicas != nil {
+		desiredReplicas = *deployment.Spec.Replicas
+	}
+	return deployment.Status.ReadyReplicas == desiredReplicas, nil
 }
 
 func (r *MCPServerReconciler) checkServiceReady(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (bool, error) {
@@ -513,7 +539,13 @@ func (r *MCPServerReconciler) checkIngressReady(ctx context.Context, mcpServer *
 		return false, err
 	}
 
-	return len(ingress.Status.LoadBalancer.Ingress) > 0 || ingress.Spec.Rules[0].Host != "", nil
+	if len(ingress.Status.LoadBalancer.Ingress) > 0 {
+		return true, nil
+	}
+	if len(ingress.Spec.Rules) > 0 && ingress.Spec.Rules[0].Host != "" {
+		return true, nil
+	}
+	return false, nil
 }
 
 func (r *MCPServerReconciler) updateStatus(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, phase, message string, deploymentReady, serviceReady, ingressReady bool) {

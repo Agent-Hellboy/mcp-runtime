@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -47,7 +48,10 @@ will use to push and pull container images.`,
 func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingressMode, ingressManifest string, forceIngressInstall bool) error {
 	printSection("MCP Runtime Setup")
 
-	extRegistry, _ := loadExternalRegistryConfig()
+	extRegistry, err := resolveExternalRegistryConfig(nil)
+	if err != nil {
+		printWarn(fmt.Sprintf("Could not load external registry config: %v", err))
+	}
 	usingExternalRegistry := extRegistry != nil
 	registrySecretName := "mcp-runtime-registry-creds"
 
@@ -207,24 +211,70 @@ func configureProvisionedRegistryEnv(ext *ExternalRegistryConfig, secretName str
 	if ext == nil || ext.URL == "" {
 		return nil
 	}
+	if secretName == "" {
+		secretName = "mcp-runtime-registry-creds"
+	}
 	args := []string{
 		"set", "env", "deployment/mcp-runtime-operator-controller-manager",
 		"-n", "mcp-runtime",
 		"PROVISIONED_REGISTRY_URL=" + ext.URL,
 	}
-	if ext.Username != "" {
-		args = append(args, "PROVISIONED_REGISTRY_USERNAME="+ext.Username)
-	}
-	if ext.Password != "" {
-		args = append(args, "PROVISIONED_REGISTRY_PASSWORD="+ext.Password)
-	}
 	if secretName != "" {
 		args = append(args, "PROVISIONED_REGISTRY_SECRET_NAME="+secretName)
+	}
+	if ext.Username != "" || ext.Password != "" {
+		if err := ensureProvisionedRegistrySecret(secretName, ext.Username, ext.Password); err != nil {
+			return err
+		}
+		// Populate env vars from the secret instead of literals to avoid leaking creds in args/history.
+		args = append(args, "--from=secret/"+secretName)
 	}
 	cmd := exec.Command("kubectl", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func ensureProvisionedRegistrySecret(name, username, password string) error {
+	var envData strings.Builder
+	if username != "" {
+		envData.WriteString("PROVISIONED_REGISTRY_USERNAME=")
+		envData.WriteString(username)
+		envData.WriteString("\n")
+	}
+	if password != "" {
+		envData.WriteString("PROVISIONED_REGISTRY_PASSWORD=")
+		envData.WriteString(password)
+		envData.WriteString("\n")
+	}
+	if envData.Len() == 0 {
+		return nil
+	}
+
+	createCmd := exec.Command(
+		"kubectl", "create", "secret", "generic", name,
+		"--from-env-file=-",
+		"-n", "mcp-runtime",
+		"--dry-run=client",
+		"-o", "yaml",
+	)
+	createCmd.Stdin = strings.NewReader(envData.String())
+	var rendered bytes.Buffer
+	createCmd.Stdout = &rendered
+	createCmd.Stderr = os.Stderr
+	if err := createCmd.Run(); err != nil {
+		return fmt.Errorf("render secret manifest: %w", err)
+	}
+
+	applyCmd := exec.Command("kubectl", "apply", "-f", "-")
+	applyCmd.Stdin = &rendered
+	applyCmd.Stdout = os.Stdout
+	applyCmd.Stderr = os.Stderr
+	if err := applyCmd.Run(); err != nil {
+		return fmt.Errorf("apply secret manifest: %w", err)
+	}
+
+	return nil
 }
 
 func buildOperatorImage(image string) error {

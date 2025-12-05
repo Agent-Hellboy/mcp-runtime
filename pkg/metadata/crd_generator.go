@@ -58,10 +58,10 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 	// Convert environment variables
 	if len(server.EnvVars) > 0 {
 		mcpServer.Spec.EnvVars = make([]mcpv1alpha1.EnvVar, 0, len(server.EnvVars))
-		for name, value := range server.EnvVars {
+		for _, env := range server.EnvVars {
 			mcpServer.Spec.EnvVars = append(mcpServer.Spec.EnvVars, mcpv1alpha1.EnvVar{
-				Name:  name,
-				Value: value,
+				Name:  env.Name,
+				Value: env.Value,
 			})
 		}
 	}

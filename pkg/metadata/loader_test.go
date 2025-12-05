@@ -103,6 +103,22 @@ func TestSetDefaults(t *testing.T) {
 		want   *ServerMetadata
 	}{
 		{
+			name: "apply-defaults",
+			server: &ServerMetadata{
+				Name:  "test-server",
+				Image: "test-image",
+			},
+			want: &ServerMetadata{
+				Name:      "test-server",
+				Image:     "test-image",
+				ImageTag:  "latest",
+				Route:     "/test-server/mcp",
+				Port:      8088,
+				Replicas:  int32Ptr(1),
+				Namespace: "mcp-servers",
+			},
+		},
+		{
 			name: "test-server",
 			server: &ServerMetadata{
 				Name:      "test-server",

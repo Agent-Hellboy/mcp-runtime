@@ -52,3 +52,5 @@ docs/
 .fakehome/
 
 .cache/
+
+DIFF*.md

@@ -14,8 +14,10 @@ servers:
         cpu: "100m"
         memory: "128Mi"
     envVars:
-      ENV_VAR_1: "value1"
-      ENV_VAR_2: "value2"
+      - name: ENV_VAR_1
+        value: "value1"
+      - name: ENV_VAR_2
+        value: "value2"
 
   - name: another-server
     # image and imageTag will be auto-updated by 'mcp-runtime build push'

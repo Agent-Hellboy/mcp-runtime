@@ -70,17 +70,24 @@ func newRegistryProvisionCmd(logger *zap.Logger) *cobra.Command {
 		Short: "Configure an external registry",
 		Long:  "Configure an external registry to be used for operator/runtime images",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := &ExternalRegistryConfig{
+			flagCfg := &ExternalRegistryConfig{
 				URL:      url,
 				Username: username,
 				Password: password,
+			}
+			cfg, err := resolveExternalRegistryConfig(flagCfg)
+			if err != nil {
+				return err
+			}
+			if cfg == nil || cfg.URL == "" {
+				return fmt.Errorf("registry url is required (flag, env PROVISIONED_REGISTRY_URL, or config file)")
 			}
 			if err := saveExternalRegistryConfig(cfg); err != nil {
 				return fmt.Errorf("failed to save registry config: %w", err)
 			}
 			if username != "" || password != "" {
-				logger.Info("Performing docker login to external registry", zap.String("url", url))
-				if err := loginRegistry(logger, url, username, password); err != nil {
+				logger.Info("Performing docker login to external registry", zap.String("url", cfg.URL))
+				if err := loginRegistry(logger, cfg.URL, cfg.Username, cfg.Password); err != nil {
 					return err
 				}
 			}
@@ -103,7 +110,6 @@ func newRegistryProvisionCmd(logger *zap.Logger) *cobra.Command {
 	cmd.Flags().StringVar(&username, "username", "", "Registry username (optional)")
 	cmd.Flags().StringVar(&password, "password", "", "Registry password (optional)")
 	cmd.Flags().StringVar(&operatorImage, "operator-image", "", "Optional: build and push operator image to this external registry (e.g., <registry>/mcp-runtime-operator:latest)")
-	cmd.MarkFlagRequired("url")
 
 	return cmd
 }
@@ -124,7 +130,7 @@ func newRegistryPushCmd(logger *zap.Logger) *cobra.Command {
 			}
 			targetRegistry := registryURL
 			if targetRegistry == "" {
-				if ext, err := loadExternalRegistryConfig(); err == nil && ext != nil && ext.URL != "" {
+				if ext, err := resolveExternalRegistryConfig(nil); err == nil && ext != nil && ext.URL != "" {
 					targetRegistry = strings.TrimSuffix(ext.URL, "/")
 				}
 			}
@@ -204,6 +210,9 @@ func loadExternalRegistryConfig() (*ExternalRegistryConfig, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	var cfg ExternalRegistryConfig
@@ -216,18 +225,70 @@ func loadExternalRegistryConfig() (*ExternalRegistryConfig, error) {
 	return &cfg, nil
 }
 
+// resolveExternalRegistryConfig returns the external registry config using precedence:
+// CLI flags > environment variables (PROVISIONED_REGISTRY_*) > config file.
+// Returns (nil, nil) if no source provides a URL.
+func resolveExternalRegistryConfig(flagCfg *ExternalRegistryConfig) (*ExternalRegistryConfig, error) {
+	var cfg ExternalRegistryConfig
+	sourceFound := false
+
+	if fileCfg, err := loadExternalRegistryConfig(); err == nil && fileCfg != nil {
+		cfg = *fileCfg
+		if cfg.URL != "" {
+			sourceFound = true
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+
+	if envURL := strings.TrimSpace(os.Getenv("PROVISIONED_REGISTRY_URL")); envURL != "" {
+		cfg.URL = envURL
+		sourceFound = true
+	}
+	if envUser := os.Getenv("PROVISIONED_REGISTRY_USERNAME"); envUser != "" {
+		cfg.Username = envUser
+		sourceFound = true
+	}
+	if envPass := os.Getenv("PROVISIONED_REGISTRY_PASSWORD"); envPass != "" {
+		cfg.Password = envPass
+		sourceFound = true
+	}
+
+	if flagCfg != nil {
+		if flagCfg.URL != "" {
+			cfg.URL = flagCfg.URL
+			sourceFound = true
+		}
+		if flagCfg.Username != "" {
+			cfg.Username = flagCfg.Username
+			sourceFound = true
+		}
+		if flagCfg.Password != "" {
+			cfg.Password = flagCfg.Password
+			sourceFound = true
+		}
+	}
+
+	if cfg.URL == "" {
+		if sourceFound {
+			return nil, fmt.Errorf("registry url is required")
+		}
+		return nil, nil
+	}
+
+	return &cfg, nil
+}
+
 func deployRegistry(logger *zap.Logger, namespace string, port int) error {
 	logger.Info("Deploying container registry", zap.String("namespace", namespace))
 
-	// Create namespace
-	cmd := exec.Command("kubectl", "create", "namespace", namespace, "--dry-run=client", "-o", "yaml")
-	if err := cmd.Run(); err != nil {
-		exec.Command("kubectl", "create", "namespace", namespace).Run()
+	// Ensure Namespace
+	if err := ensureNamespace(namespace); err != nil {
+		return fmt.Errorf("failed to ensure namespace: %w", err)
 	}
-
 	// Apply registry manifests via kustomize with namespace override
 	logger.Info("Applying registry manifests")
-	cmd = exec.Command("kubectl", "apply", "-k", "config/registry/", "-n", namespace)
+	cmd := exec.Command("kubectl", "apply", "-k", "config/registry/", "-n", namespace)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -236,7 +297,7 @@ func deployRegistry(logger *zap.Logger, namespace string, port int) error {
 
 	// Wait for registry to be ready
 	logger.Info("Waiting for registry to be ready")
-	if err := waitForDeploymentAvailable(logger, "registry", namespace, "app=registry", 5*60); err != nil {
+	if err := waitForDeploymentAvailable(logger, "registry", namespace, "app=registry", 5*time.Minute); err != nil {
 		logger.Warn("Registry deployment may still be in progress", zap.Error(err))
 	}
 
