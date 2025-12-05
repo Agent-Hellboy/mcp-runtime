@@ -155,7 +155,7 @@ fi
 
 echo "[verify] curling ingress via Traefik (port-forwarded)"
 PF_LOG="$(mktemp)"
-kubectl port-forward -n traefik svc/traefik 18080:80 >"${PF_LOG}" 2>&1 &
+kubectl port-forward -n traefik svc/traefik 18080:8000 >"${PF_LOG}" 2>&1 &
 PF_PID=$!
 sleep 3
 set +e
