@@ -73,7 +73,6 @@ spec:
       - name: traefik
         image: traefik:v2.10
         args:
-          - --api.insecure=true
           - --providers.kubernetesingress=true
           - --entrypoints.web.address=:80
           - --entrypoints.websecure.address=:443

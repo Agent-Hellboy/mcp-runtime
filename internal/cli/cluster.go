@@ -84,7 +84,7 @@ func newClusterConfigCmd(logger *zap.Logger) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&ingressMode, "ingress", "traefik", "Ingress controller to install (traefik|none)")
-	cmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/traefik.yaml", "Manifest to apply when installing the ingress controller")
+	cmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/overlays/prod", "Manifest to apply when installing the ingress controller")
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force ingress install even if an ingress class already exists")
 
 	return cmd
@@ -215,11 +215,30 @@ func configureCluster(logger *zap.Logger, ingress ingressOptions) error {
 
 	manifest := ingress.manifest
 	if manifest == "" {
-		manifest = "config/ingress/traefik.yaml"
+		manifest = "config/ingress/overlays/prod"
 	}
 
 	logger.Info("Installing ingress controller", zap.String("ingress", ingress.mode), zap.String("manifest", manifest))
-	applyCmd := exec.Command("kubectl", "apply", "-f", manifest)
+	useKustomize := false
+	manifestArg := manifest
+
+	if info, err := os.Stat(manifest); err == nil {
+		if info.IsDir() {
+			useKustomize = true
+		} else if strings.EqualFold(filepath.Base(manifest), "kustomization.yaml") {
+			useKustomize = true
+			manifestArg = filepath.Dir(manifest)
+		}
+	}
+
+	args := []string{"apply"}
+	if useKustomize {
+		args = append(args, "-k", manifestArg)
+	} else {
+		args = append(args, "-f", manifest)
+	}
+
+	applyCmd := exec.Command("kubectl", args...)
 	applyCmd.Stdout = os.Stdout
 	applyCmd.Stderr = os.Stderr
 	if err := applyCmd.Run(); err != nil {

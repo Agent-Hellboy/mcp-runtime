@@ -14,6 +14,6 @@ Flags:
       --force-ingress-install     Force ingress install even if an ingress class already exists
   -h, --help                      help for setup
       --ingress string            Ingress controller to install automatically during setup (traefik|none) (default "traefik")
-      --ingress-manifest string   Manifest to apply when installing the ingress controller (default "config/ingress/traefik.yaml")
+      --ingress-manifest string   Manifest to apply when installing the ingress controller (default "config/ingress/overlays/prod")
       --registry-storage string   Registry storage size (default: 20Gi) (default "20Gi")
-      --registry-type string      Registry type: docker (default), harbor (default "docker")
+      --registry-type string      Registry type (docker; harbor coming soon) (default "docker")

@@ -7,7 +7,7 @@ When working with large language models, context window limitations often requir
 The platform targets organizations that need to ship many MCP servers internally, maintaining a centralized registry where any team can discover and use available MCP servers across the company.
 ## Overview
 
-MCP Runtime Platform provides a streamlined workflow for internal teams/or maybe enterprise as well to deploy a suite of MCP servers:
+MCP Runtime Platform provides a streamlined workflow for teams to deploy a suite of MCP servers:
 - **Define** server metadata in simple YAML files
 - **Build** Docker images automatically from Dockerfiles
 - **Deploy** via CLI or CI/CD - Kubernetes operator handles everything
@@ -15,7 +15,7 @@ MCP Runtime Platform provides a streamlined workflow for internal teams/or maybe
 
 ## Features
 
-- **Complete Platform** - Container registry and Kubernetes cluster included
+- **Complete Platform** - Internal registry deployment plus cluster setup helpers
 - **CLI Tool** - Manage platform, registry, cluster, and servers
 - **Automated Setup** - One-command platform deployment
 - **CI/CD Integration** - Automated build and deployment pipeline
@@ -28,7 +28,7 @@ MCP Runtime Platform provides a streamlined workflow for internal teams/or maybe
 
 ```
 ├── cmd/                 # Application entry points
-│   ├── mcp-runtime/    # Platform management CLI
+│   ├── mcp-runtime/     # Platform management CLI
 │   └── operator/        # Kubernetes operator
 ├── internal/            # Private application code
 │   ├── operator/        # Kubernetes operator controller
@@ -36,13 +36,14 @@ MCP Runtime Platform provides a streamlined workflow for internal teams/or maybe
 ├── api/                 # Kubernetes API definitions (CRDs)
 ├── config/              # Kubernetes manifests
 │   ├── crd/             # Custom Resource Definitions
-│   ├── registry/         # Registry deployment
+│   ├── registry/        # Registry deployment
 │   ├── rbac/            # RBAC configurations
 │   └── manager/         # Operator deployment
-├── docs/                # Documentation (will be pushed later)
-├── examples/            # Example configurations
-└── scripts/             # Setup and utility scripts
+├── docs/                # Internal notes (README is primary; no separate docs published)
+└── examples/            # Example configurations
 ```
+
+This README is the primary source of truth; no additional external docs are published.
 
 ## Prerequisites
 
@@ -57,7 +58,7 @@ MCP Runtime Platform provides a streamlined workflow for internal teams/or maybe
 
 ### Registry options
 - **Default (internal)**: `mcp-runtime setup` deploys an in-cluster registry in namespace `registry` (PVC-backed) and loads the operator image into the cluster.
-- **External registry**: run `mcp-runtime registry provision --url <registry> [--username ... --password ...] [--operator-image <registry>/mcp-runtime-operator:latest]` before `mcp-runtime setup`. Setup will skip deploying the internal registry, tag/push the operator image to the external registry, and use that for deploy. Ensure the cluster can pull from that registry (add imagePullSecrets if required).
+- **Bring your own registry**: run `mcp-runtime registry provision --url <registry> [--username ... --password ...] [--operator-image <registry>/mcp-runtime-operator:latest]` before `mcp-runtime setup`. When a provisioned registry is configured, setup **does not create the internal registry**; it uses your registry instead and tags/pushes the operator image there. Make sure your cluster nodes can pull from it (configure imagePullSecrets if needed).
 
 ### Registry usage (quick guidance)
 - **Pushing images**: use `mcp-runtime registry push --image <src> [--mode in-cluster|direct] [--registry ...] [--name ...]`. Default mode (`in-cluster`) spins up a helper pod with skopeo to push from inside the cluster; requires kubectl access to create pods in `registry` namespace. `direct` mode uses `docker push` from the runner/host and needs a reachable, trusted registry endpoint (Ingress/TLS or NodePort plus insecure-registry config).
@@ -68,14 +69,13 @@ MCP Runtime Platform provides a streamlined workflow for internal teams/or maybe
   - Global/provisioned registry (`spec.useProvisionedRegistry` + operator env `PROVISIONED_REGISTRY_*`) is the “platform default” path; enables auto pull-secret creation.
   - If you want tighter control, layer policy (allowlist/denylist/webhook) rather than removing per-server override.
 - **Image pull secrets**: Kubernetes stores registry creds in a `kubernetes.io/dockerconfigjson` Secret. The operator will auto-create/update one per namespace (default name `mcp-runtime-registry-creds`) and attach it to Deployments when `PROVISIONED_REGISTRY_URL/USERNAME/PASSWORD` are set and `spec.imagePullSecrets` is empty. If you need custom creds, set `spec.imagePullSecrets` on the MCPServer.
-See local docs in `docs/` (to be pushed later) for full registry details.
 
 ### Ingress behavior (Traefik by default)
 - The operator creates one Ingress per MCPServer with a default path of `/<name>/mcp`; set `spec.ingressPath` to override.
 - Set a shared host once via operator env `MCP_DEFAULT_INGRESS_HOST` (e.g., `mcp.example.com`); any MCPServer without `spec.ingressHost` will inherit it. Per-CR values override the default.
 - Traefik merges all matching Host/Path rules onto its single listener (80/443), so multiple MCPServers can share the same host with different paths.
 - Make your hostname resolve to the ingress entrypoint (LB IP, node IP+NodePort, or your chosen exposure) so `http(s)://<host>/<name>/mcp` works from clients.
-- `mcp-runtime setup --ingress traefik` installs the bundled Traefik controller by default (uses `config/ingress/traefik.yaml`). It skips install if an IngressClass already exists unless you add `--force-ingress-install`. Use `--ingress none` to skip installing a controller.
+- `mcp-runtime setup --ingress traefik` installs the bundled Traefik controller by default using the secure overlay at `config/ingress/overlays/prod` (dashboard/API disabled). It skips install if an IngressClass already exists unless you add `--force-ingress-install`. Use `--ingress none` to skip installing a controller. For a dev-friendly dashboard, point `--ingress-manifest` to `config/ingress/overlays/dev` to enable `--api.insecure=true`.
 - On-prem/no-cloud exposure options:
   - Install MetalLB and keep Traefik as `LoadBalancer`; MetalLB assigns a LAN IP—point DNS/hosts to it.
   - Switch Traefik Service to `NodePort` and use `http://<node-ip>:<nodePort>`; update DNS/hosts to the node IP.
@@ -116,7 +116,7 @@ make install-runtime
 ```
 Copies `bin/mcp-runtime` to `/usr/local/bin` so it’s on your PATH.
 
-3) Setup the platform
+3) Setup the platform (uses internal registry by default; skips it if you provision an external one)
 ```bash
 mcp-runtime setup
 ```
@@ -141,17 +141,20 @@ servers:
     port: 8088
 EOF
 
-# 2. Build and push image (updates metadata automatically)
-mcp-runtime build push my-server
+# 2. Build image locally
+docker build -t my-server:latest .
 
-# 3. Generate CRDs and deploy
+# 3. Push image to the platform/provisioned registry (retags automatically)
+mcp-runtime registry push --image my-server:latest
+
+# 4. Generate CRDs and deploy
 mcp-runtime pipeline generate --dir .mcp --output manifests/
 mcp-runtime pipeline deploy --dir manifests/
 ```
 
 Your server will be available at: `http://<ingress-host>/my-server/mcp`
 
-See local docs in `docs/` (to be pushed later) for complete workflow documentation.
+Use this README as the primary walkthrough.
 
 ## Usage
 
@@ -224,11 +227,7 @@ mcp-runtime server logs my-server --follow
 mcp-runtime server delete my-server
 ```
 
-Detailed docs live locally in `docs/` (to be pushed later).
-
-## Documentation
-
-Workflow, platform, deployment, and architecture guides are available locally in `docs/` (will be pushed later).
+This README is the main reference; there is no separate published doc set.
 
 ## Development
 
@@ -261,8 +260,6 @@ make -f Makefile.operator manifests generate
 ```
 
 **Note:** Generated files (`api/v1alpha1/zz_generated.deepcopy.go` and CRD manifests) are committed to the repository. Regenerate them after modifying types in `api/v1alpha1/`.
-
-See local docs in `docs/` (to be pushed later) for troubleshooting code generation issues.
 
 ### Building the Operator
 
@@ -361,8 +358,6 @@ The operator automatically manages MCP server deployments:
 - Creates ClusterIP Service for internal communication
 - Creates Ingress with unified route pattern
 
-Detailed deployment notes are in `docs/` (local, to be pushed later).
-
 ## CI/CD Integration
 
 The platform integrates seamlessly with CI/CD pipelines:
@@ -378,7 +373,7 @@ The platform integrates seamlessly with CI/CD pipelines:
     mcp-runtime pipeline deploy --dir manifests/
 ```
 
-Use these snippets in your pipeline of choice. A sample pre-check workflow exists at `.github/workflows/pre-check.yaml`. See the local `docs/` directory for complete CI/CD examples (to be pushed later).
+Use these snippets in your pipeline of choice. A sample pre-check workflow exists at `.github/workflows/pre-check.yaml`.
 
 ## Status
 
@@ -389,7 +384,6 @@ Use these snippets in your pipeline of choice. A sample pre-check workflow exist
 - Custom Resource Definition (CRD)
 - Platform CLI with full feature set
 - Container registry deployment
-- Cluster provisioning automation
 - Metadata-driven workflow
 - Automatic image building and metadata updates
 - Unified URL routing pattern
