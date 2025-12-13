@@ -1,0 +1,6 @@
+- op: replace
+  path: /spec/template/spec/containers/0/args
+  value:
+    - --providers.kubernetesingress=true
+    - --entrypoints.web.address=:80
+    - --entrypoints.websecure.address=:443
