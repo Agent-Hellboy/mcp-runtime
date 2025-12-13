@@ -1,0 +1,9 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: mcp-runtime-ca
+spec:
+  ca:
+    # Create this Secret with your internal CA keypair:
+    # kubectl create secret tls mcp-runtime-ca --cert=ca.crt --key=ca.key -n cert-manager
+    secretName: mcp-runtime-ca

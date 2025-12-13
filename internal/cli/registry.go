@@ -279,7 +279,7 @@ func resolveExternalRegistryConfig(flagCfg *ExternalRegistryConfig) (*ExternalRe
 	return &cfg, nil
 }
 
-func deployRegistry(logger *zap.Logger, namespace string, port int, registryType, registryStorageSize string) error {
+func deployRegistry(logger *zap.Logger, namespace string, port int, registryType, registryStorageSize, manifestPath string) error {
 	logger.Info("Deploying container registry", zap.String("namespace", namespace), zap.String("type", registryType))
 
 	if registryType == "" {
@@ -293,13 +293,17 @@ func deployRegistry(logger *zap.Logger, namespace string, port int, registryType
 		return fmt.Errorf("unsupported registry type %q (supported: docker; harbor coming soon)", registryType)
 	}
 
+	if manifestPath == "" {
+		manifestPath = "config/registry"
+	}
+
 	// Ensure Namespace
 	if err := ensureNamespace(namespace); err != nil {
 		return fmt.Errorf("failed to ensure namespace: %w", err)
 	}
 	// Apply registry manifests via kustomize with namespace override
 	logger.Info("Applying registry manifests")
-	cmd := exec.Command("kubectl", "apply", "-k", "config/registry/", "-n", namespace)
+	cmd := exec.Command("kubectl", "apply", "-k", manifestPath, "-n", namespace)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

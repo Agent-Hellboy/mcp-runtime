@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik
+  namespace: traefik
+spec:
+  ports:
+    - name: web
+      port: 80
+      targetPort: 80
+    - name: websecure
+      port: 443
+      targetPort: 443
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  namespace: traefik
+spec:
+  template:
+    spec:
+      containers:
+        - name: traefik
+          args:
+            - --providers.kubernetesingress=true
+            - --entrypoints.web.address=:80
+            - --entrypoints.websecure.address=:443
+          ports:
+            - name: web
+              containerPort: 80
+            - name: websecure
+              containerPort: 443
+            - name: admin
+              containerPort: 8080

@@ -4,8 +4,13 @@ metadata:
   name: registry
   namespace: registry
   annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    cert-manager.io/cluster-issuer: mcp-runtime-ca
 spec:
+  tls:
+  - hosts:
+    - registry.local
+    secretName: registry-tls
   rules:
   - host: registry.local
     http:

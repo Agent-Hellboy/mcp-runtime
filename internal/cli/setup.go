@@ -22,6 +22,7 @@ func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 	var ingressMode string
 	var ingressManifest string
 	var forceIngressInstall bool
+	var tlsEnabled bool
 
 	cmd := &cobra.Command{
 		Use:   "setup",
@@ -35,20 +36,34 @@ func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 The platform deploys an internal Docker registry by default, which teams
 will use to push and pull container images.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return setupPlatform(logger, registryType, registryStorageSize, ingressMode, ingressManifest, forceIngressInstall)
+			manifestPath := ingressManifest
+			if !cmd.Flags().Changed("ingress-manifest") {
+				if tlsEnabled {
+					manifestPath = "config/ingress/overlays/prod"
+				} else {
+					manifestPath = "config/ingress/overlays/http"
+				}
+			}
+			registryManifest := "config/registry"
+			if tlsEnabled {
+				registryManifest = "config/registry/overlays/tls"
+			}
+
+			return setupPlatform(logger, registryType, registryStorageSize, ingressMode, manifestPath, registryManifest, forceIngressInstall, tlsEnabled)
 		},
 	}
 
 	cmd.Flags().StringVar(&registryType, "registry-type", "docker", "Registry type (docker; harbor coming soon)")
 	cmd.Flags().StringVar(&registryStorageSize, "registry-storage", "20Gi", "Registry storage size (default: 20Gi)")
 	cmd.Flags().StringVar(&ingressMode, "ingress", "traefik", "Ingress controller to install automatically during setup (traefik|none)")
-	cmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/overlays/prod", "Manifest to apply when installing the ingress controller")
+	cmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/overlays/http", "Manifest to apply when installing the ingress controller")
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force ingress install even if an ingress class already exists")
+	cmd.Flags().BoolVar(&tlsEnabled, "with-tls", false, "Enable TLS overlays (ingress/registry); default is HTTP for dev")
 
 	return cmd
 }
 
-func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingressMode, ingressManifest string, forceIngressInstall bool) error {
+func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingressMode, ingressManifest, registryManifest string, forceIngressInstall, tlsEnabled bool) error {
 	printSection("MCP Runtime Setup")
 
 	extRegistry, err := resolveExternalRegistryConfig(nil)
@@ -94,7 +109,12 @@ func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingres
 		}
 	} else {
 		printInfo(fmt.Sprintf("Type: %s", registryType))
-		if err := deployRegistry(logger, "registry", 5000, registryType, registryStorageSize); err != nil {
+		if tlsEnabled {
+			printInfo("TLS: enabled (registry overlay)")
+		} else {
+			printInfo("TLS: disabled (dev HTTP mode)")
+		}
+		if err := deployRegistry(logger, "registry", 5000, registryType, registryStorageSize, registryManifest); err != nil {
 			printError(fmt.Sprintf("Registry deployment failed: %v", err))
 			return fmt.Errorf("failed to deploy registry: %w", err)
 		}
