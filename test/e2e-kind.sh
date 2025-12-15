@@ -10,6 +10,9 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${PROJECT_ROOT}"
 echo "[info] Running from: ${PROJECT_ROOT}"
 
+# Mark repo as safe for git (needed for Go build VCS stamping inside container)
+git config --global --add safe.directory "${PROJECT_ROOT}" >/dev/null 2>&1 || true
+
 CLUSTER_NAME="mcp-e2e"
 KIND_CONFIG="$(mktemp)"
 ORIG_CONTEXT="$(kubectl config current-context 2>/dev/null || true)"
