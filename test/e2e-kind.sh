@@ -32,7 +32,16 @@ EOF
 
 echo "[kind] creating cluster ${CLUSTER_NAME} with registry mirror"
 kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}" --wait 120s
+KUBECONFIG_INTERNAL="/tmp/kubeconfig-kind"
+kind get kubeconfig --name "${CLUSTER_NAME}" --internal > "${KUBECONFIG_INTERNAL}"
+export KUBECONFIG="${KUBECONFIG_INTERNAL}"
+API_IP="$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${CLUSTER_NAME}-control-plane" 2>/dev/null || true)"
+if [ -n "${API_IP}" ]; then
+  kubectl config set-cluster "kind-${CLUSTER_NAME}" --server="https://${API_IP}:6443" >/dev/null
+fi
 kubectl config use-context "kind-${CLUSTER_NAME}"
+mkdir -p "${HOME}/.kube"
+cp "${KUBECONFIG_INTERNAL}" "${HOME}/.kube/config"
 
 echo "[build] rebuilding CLI"
 go build -o bin/mcp-runtime ./cmd/mcp-runtime
@@ -68,7 +77,7 @@ docker exec "${CLUSTER_NAME}-control-plane" crictl images | grep -E "mcp-runtime
 echo "[setup] running platform setup with pre-loaded operator image"
 export OPERATOR_IMG="docker.io/library/mcp-runtime-operator:latest"
 export SKIP_OPERATOR_BUILD="1"
-./bin/mcp-runtime setup
+./bin/mcp-runtime setup --ingress-manifest config/ingress/overlays/http
 SETUP_EXIT=$?
 
 # Debug: Check pod status right after setup
