@@ -20,7 +20,7 @@ DOCKER_FLAGS=(-i --rm --privileged)
 if [ -t 0 ]; then
   DOCKER_FLAGS=(-it --rm --privileged)
 fi
-DOCKER_CONFIG="${DOCKER_CONFIG}" docker run "${DOCKER_FLAGS[@]}" \
+DOCKER_CONFIG="${DOCKER_CONFIG}" docker run "${DOCKER_FLAGS[@]}" --network=host \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "${ROOT}":/workspace \
   -w /workspace \

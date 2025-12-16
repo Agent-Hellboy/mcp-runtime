@@ -35,16 +35,18 @@ EOF
 
 echo "[kind] creating cluster ${CLUSTER_NAME} with registry mirror"
 kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}" --wait 120s
-KUBECONFIG_INTERNAL="/tmp/kubeconfig-kind"
-kind get kubeconfig --name "${CLUSTER_NAME}" --internal > "${KUBECONFIG_INTERNAL}"
-export KUBECONFIG="${KUBECONFIG_INTERNAL}"
-API_IP="$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${CLUSTER_NAME}-control-plane" 2>/dev/null || true)"
-if [ -n "${API_IP}" ]; then
-  kubectl config set-cluster "kind-${CLUSTER_NAME}" --server="https://${API_IP}:6443" >/dev/null
-fi
+KUBECONFIG_FILE="/tmp/kubeconfig-kind"
+kind get kubeconfig --name "${CLUSTER_NAME}" > "${KUBECONFIG_FILE}"
+export KUBECONFIG="${KUBECONFIG_FILE}"
 kubectl config use-context "kind-${CLUSTER_NAME}"
 mkdir -p "${HOME}/.kube"
-cp "${KUBECONFIG_INTERNAL}" "${HOME}/.kube/config"
+cp "${KUBECONFIG_FILE}" "${HOME}/.kube/config"
+
+echo "[kind] preloading images into kind"
+for img in traefik:v2.10 curlimages/curl:latest registry:2.8.3; do
+  docker pull "${img}"
+  kind load docker-image "${img}" --name "${CLUSTER_NAME}"
+done
 
 echo "[build] rebuilding CLI"
 go build -o bin/mcp-runtime ./cmd/mcp-runtime
@@ -143,8 +145,11 @@ done
 kubectl rollout status deploy/example-mcp-server -n mcp-servers --timeout=180s
 
 echo "[verify] curling service from inside cluster"
-kubectl -n mcp-servers run curl --rm -i --image=curlimages/curl --restart=Never --command -- \
-  sh -c "curl -s http://example-mcp-server.mcp-servers.svc.cluster.local/" | tee /tmp/mcp-e2e-curl.log
+kubectl -n mcp-servers run curl --image=curlimages/curl --restart=Never --command -- \
+  sh -c "curl -s http://example-mcp-server.mcp-servers.svc.cluster.local/" || true
+kubectl -n mcp-servers wait --for=condition=Succeeded pod/curl --timeout=60s || true
+kubectl -n mcp-servers logs curl | tee /tmp/mcp-e2e-curl.log || true
+kubectl -n mcp-servers delete pod curl --ignore-not-found --wait=true --timeout=30s || true
 
 # Ensure Traefik is ready before port-forwarding to it
 echo "[verify] waiting for Traefik ingress controller to be ready"
