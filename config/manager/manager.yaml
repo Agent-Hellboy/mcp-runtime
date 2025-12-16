@@ -19,6 +19,15 @@ spec:
         control-plane: controller-manager
     spec:
       serviceAccountName: mcp-runtime-operator-controller-manager
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  control-plane: controller-manager
+              topologyKey: kubernetes.io/hostname
       containers:
       - command:
         - /manager

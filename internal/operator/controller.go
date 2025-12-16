@@ -33,6 +33,13 @@ type MCPServerReconciler struct {
 	Scheme *runtime.Scheme
 }
 
+const (
+	defaultRequestCPU    = "50m"
+	defaultRequestMemory = "64Mi"
+	defaultLimitCPU      = "500m"
+	defaultLimitMemory   = "256Mi"
+)
+
 //+kubebuilder:rbac:groups=mcp.agent-hellboy.io,resources=mcpservers,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=mcp.agent-hellboy.io,resources=mcpservers/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=mcp.agent-hellboy.io,resources=mcpservers/finalizers,verbs=update
@@ -67,6 +74,13 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		// Requeue to work with the updated object and avoid stale data
 		return ctrl.Result{Requeue: true}, nil
+	}
+
+	if mcpServer.Spec.IngressHost == "" {
+		err := fmt.Errorf("ingressHost is required; set spec.ingressHost or MCP_DEFAULT_INGRESS_HOST")
+		r.updateStatus(ctx, &mcpServer, "Error", err.Error(), false, false, false)
+		logger.Error(err, "Missing ingress host")
+		return ctrl.Result{}, err
 	}
 
 	// Reconcile Deployment
@@ -178,60 +192,89 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 				},
 				Spec: corev1.PodSpec{
 					ImagePullSecrets: r.buildImagePullSecrets(ctx, mcpServer),
-					Containers: []corev1.Container{
-						{
-							Name:            mcpServer.Name,
-							Image:           image,
-							ImagePullPolicy: corev1.PullIfNotPresent,
-							Ports: []corev1.ContainerPort{
-								{
-									Name:          "http",
-									ContainerPort: mcpServer.Spec.Port,
-									Protocol:      corev1.ProtocolTCP,
-								},
-							},
-							Env: r.buildEnvVars(mcpServer.Spec.EnvVars),
-						},
-					},
+					Containers:       []corev1.Container{},
 				},
 			},
 		}
 
+		container := corev1.Container{
+			Name:            mcpServer.Name,
+			Image:           image,
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			Ports: []corev1.ContainerPort{
+				{
+					Name:          "http",
+					ContainerPort: mcpServer.Spec.Port,
+					Protocol:      corev1.ProtocolTCP,
+				},
+			},
+			Env: r.buildEnvVars(mcpServer.Spec.EnvVars),
+			LivenessProbe: &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(mcpServer.Spec.Port)},
+				},
+				InitialDelaySeconds: 5,
+				PeriodSeconds:       10,
+			},
+			ReadinessProbe: &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(mcpServer.Spec.Port)},
+				},
+				InitialDelaySeconds: 3,
+				PeriodSeconds:       5,
+			},
+		}
+
 		if mcpServer.Spec.Resources.Limits != nil && (mcpServer.Spec.Resources.Limits.CPU != "" || mcpServer.Spec.Resources.Limits.Memory != "") {
-			deployment.Spec.Template.Spec.Containers[0].Resources.Limits = corev1.ResourceList{}
+			container.Resources.Limits = corev1.ResourceList{}
 			if mcpServer.Spec.Resources.Limits.CPU != "" {
 				cpuLimit, err := resource.ParseQuantity(mcpServer.Spec.Resources.Limits.CPU)
 				if err != nil {
 					return fmt.Errorf("invalid CPU limit %q: %w", mcpServer.Spec.Resources.Limits.CPU, err)
 				}
-				deployment.Spec.Template.Spec.Containers[0].Resources.Limits[corev1.ResourceCPU] = cpuLimit
+				container.Resources.Limits[corev1.ResourceCPU] = cpuLimit
 			}
 			if mcpServer.Spec.Resources.Limits.Memory != "" {
 				memLimit, err := resource.ParseQuantity(mcpServer.Spec.Resources.Limits.Memory)
 				if err != nil {
 					return fmt.Errorf("invalid memory limit %q: %w", mcpServer.Spec.Resources.Limits.Memory, err)
 				}
-				deployment.Spec.Template.Spec.Containers[0].Resources.Limits[corev1.ResourceMemory] = memLimit
+				container.Resources.Limits[corev1.ResourceMemory] = memLimit
 			}
 		}
 
 		if mcpServer.Spec.Resources.Requests != nil && (mcpServer.Spec.Resources.Requests.CPU != "" || mcpServer.Spec.Resources.Requests.Memory != "") {
-			deployment.Spec.Template.Spec.Containers[0].Resources.Requests = corev1.ResourceList{}
+			container.Resources.Requests = corev1.ResourceList{}
 			if mcpServer.Spec.Resources.Requests.CPU != "" {
 				cpuReq, err := resource.ParseQuantity(mcpServer.Spec.Resources.Requests.CPU)
 				if err != nil {
 					return fmt.Errorf("invalid CPU request %q: %w", mcpServer.Spec.Resources.Requests.CPU, err)
 				}
-				deployment.Spec.Template.Spec.Containers[0].Resources.Requests[corev1.ResourceCPU] = cpuReq
+				container.Resources.Requests[corev1.ResourceCPU] = cpuReq
 			}
 			if mcpServer.Spec.Resources.Requests.Memory != "" {
 				memReq, err := resource.ParseQuantity(mcpServer.Spec.Resources.Requests.Memory)
 				if err != nil {
 					return fmt.Errorf("invalid memory request %q: %w", mcpServer.Spec.Resources.Requests.Memory, err)
 				}
-				deployment.Spec.Template.Spec.Containers[0].Resources.Requests[corev1.ResourceMemory] = memReq
+				container.Resources.Requests[corev1.ResourceMemory] = memReq
 			}
 		}
+
+		if len(container.Resources.Requests) == 0 {
+			container.Resources.Requests = corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse(defaultRequestCPU),
+				corev1.ResourceMemory: resource.MustParse(defaultRequestMemory),
+			}
+		}
+		if len(container.Resources.Limits) == 0 {
+			container.Resources.Limits = corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse(defaultLimitCPU),
+				corev1.ResourceMemory: resource.MustParse(defaultLimitMemory),
+			}
+		}
+
+		deployment.Spec.Template.Spec.Containers = []corev1.Container{container}
 
 		if err := ctrl.SetControllerReference(mcpServer, deployment, r.Scheme); err != nil {
 			return err
@@ -528,9 +571,6 @@ func (r *MCPServerReconciler) checkIngressReady(ctx context.Context, mcpServer *
 	}
 
 	if len(ingress.Status.LoadBalancer.Ingress) > 0 {
-		return true, nil
-	}
-	if len(ingress.Spec.Rules) > 0 && ingress.Spec.Rules[0].Host != "" {
 		return true, nil
 	}
 	return false, nil

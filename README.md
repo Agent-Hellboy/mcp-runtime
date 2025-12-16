@@ -72,6 +72,7 @@ This README is the primary source of truth; no additional external docs are publ
 - **Image pull secrets**: Kubernetes stores registry creds in a `kubernetes.io/dockerconfigjson` Secret. The operator will auto-create/update one per namespace (default name `mcp-runtime-registry-creds`) and attach it to Deployments when `PROVISIONED_REGISTRY_URL/USERNAME/PASSWORD` are set and `spec.imagePullSecrets` is empty. If you need custom creds, set `spec.imagePullSecrets` on the MCPServer.
 
 ### Ingress behavior (Traefik by default)
+- Ingress host is required. Set `spec.ingressHost` per MCPServer or configure a cluster-wide default via operator env `MCP_DEFAULT_INGRESS_HOST`. The operator will error if neither is set to avoid catch-all ingress collisions.
 - The operator creates one Ingress per MCPServer with a default path of `/<name>/mcp`; set `spec.ingressPath` to override.
 - Set a shared host once via operator env `MCP_DEFAULT_INGRESS_HOST` (e.g., `mcp.example.com`); any MCPServer without `spec.ingressHost` will inherit it. Per-CR values override the default.
 - Traefik merges all matching Host/Path rules onto its single listener (80/443), so multiple MCPServers can share the same host with different paths.
@@ -80,7 +81,10 @@ This README is the primary source of truth; no additional external docs are publ
 - On-prem/no-cloud exposure options:
   - Install MetalLB and keep Traefik as `LoadBalancer`; MetalLB assigns a LAN IP—point DNS/hosts to it.
   - Switch Traefik Service to `NodePort` and use `http://<node-ip>:<nodePort>`; update DNS/hosts to the node IP.
-  - Dev-only: `kubectl port-forward -n traefik svc/traefik 18080:80` and curl `http://127.0.0.1:18080/...` with the correct Host header.
+- Dev-only: `kubectl port-forward -n traefik svc/traefik 18080:80` and curl `http://127.0.0.1:18080/...` with the correct Host header.
+
+### MCPServer runtime defaults
+- Pods get TCP readiness/liveness probes on `spec.port` and baseline resources (requests: `50m`/`64Mi`, limits: `500m`/`256Mi`) when none are set. Override with `spec.resources` if you need different sizing.
 
 ## Installation
 
