@@ -19,6 +19,7 @@ type ingressOptions struct {
 	force    bool
 }
 
+// NewClusterCmd returns the root cluster subcommand (status/init/provision).
 func NewClusterCmd(logger *zap.Logger) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cluster",

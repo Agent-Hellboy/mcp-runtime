@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// NewStatusCmd returns the status subcommand for platform health checks.
 func NewStatusCmd(logger *zap.Logger) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",

@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// NewRegistryCmd builds the registry subcommand for managing registry lifecycle.
 func NewRegistryCmd(logger *zap.Logger) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "registry",

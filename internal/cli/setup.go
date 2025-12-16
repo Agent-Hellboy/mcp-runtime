@@ -16,6 +16,7 @@ import (
 
 const defaultRegistrySecretName = "mcp-runtime-registry-creds"
 
+// NewSetupCmd constructs the top-level setup command for installing the platform.
 func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 	var registryType string
 	var registryStorageSize string
