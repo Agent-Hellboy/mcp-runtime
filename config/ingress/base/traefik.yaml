@@ -43,12 +43,12 @@ spec:
   type: LoadBalancer
   ports:
     - name: web
-      port: 8000
-      targetPort: 8000
+      port: 80
+      targetPort: 80
       protocol: TCP
     - name: websecure
-      port: 8443
-      targetPort: 8443
+      port: 443
+      targetPort: 443
       protocol: TCP
   selector:
     app: traefik
@@ -84,13 +84,16 @@ spec:
               - NET_BIND_SERVICE
         args:
           - --providers.kubernetesingress=true
-          - --entrypoints.web.address=:8000
-          - --entrypoints.websecure.address=:8443
+          - --entrypoints.web.address=:80
+          - --entrypoints.web.http.redirections.entryPoint.to=websecure
+          - --entrypoints.web.http.redirections.entryPoint.scheme=https
+          - --entrypoints.websecure.address=:443
+          - --entrypoints.websecure.http.tls=true
         ports:
           - name: web
-            containerPort: 8000
+            containerPort: 80
           - name: websecure
-            containerPort: 8443
+            containerPort: 443
           - name: admin
             containerPort: 8080
         resources:

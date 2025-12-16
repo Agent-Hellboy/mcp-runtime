@@ -11,7 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// GenerateCRD generates a Kubernetes CRD YAML file from server metadata
+// GenerateCRD generates a Kubernetes CRD YAML file for a single server metadata entry at the given output path.
 func GenerateCRD(server *ServerMetadata, outputPath string) error {
 	// Convert metadata to CRD
 	mcpServer := &mcpv1alpha1.MCPServer{
@@ -85,7 +85,7 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 	return nil
 }
 
-// GenerateCRDsFromRegistry generates CRD files for all servers in a registry
+// GenerateCRDsFromRegistry renders CRD YAML files for every server in a registry into outputDir.
 func GenerateCRDsFromRegistry(registry *RegistryFile, outputDir string) error {
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)

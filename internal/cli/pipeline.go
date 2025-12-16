@@ -12,6 +12,7 @@ import (
 	"mcp-runtime/pkg/metadata"
 )
 
+// NewPipelineCmd returns the pipeline subcommand for generate/deploy flows.
 func NewPipelineCmd(logger *zap.Logger) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pipeline",

@@ -1,0 +1,12 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: registry-cert
+  namespace: registry
+spec:
+  secretName: registry-tls
+  dnsNames:
+    - registry.local
+  issuerRef:
+    name: mcp-runtime-ca
+    kind: ClusterIssuer

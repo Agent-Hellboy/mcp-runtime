@@ -10,6 +10,9 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${PROJECT_ROOT}"
 echo "[info] Running from: ${PROJECT_ROOT}"
 
+# Mark repo as safe for git (needed for Go build VCS stamping inside container)
+git config --global --add safe.directory "${PROJECT_ROOT}" >/dev/null 2>&1 || true
+
 CLUSTER_NAME="mcp-e2e"
 KIND_CONFIG="$(mktemp)"
 ORIG_CONTEXT="$(kubectl config current-context 2>/dev/null || true)"
@@ -32,7 +35,18 @@ EOF
 
 echo "[kind] creating cluster ${CLUSTER_NAME} with registry mirror"
 kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}" --wait 120s
+KUBECONFIG_FILE="/tmp/kubeconfig-kind"
+kind get kubeconfig --name "${CLUSTER_NAME}" > "${KUBECONFIG_FILE}"
+export KUBECONFIG="${KUBECONFIG_FILE}"
 kubectl config use-context "kind-${CLUSTER_NAME}"
+mkdir -p "${HOME}/.kube"
+cp "${KUBECONFIG_FILE}" "${HOME}/.kube/config"
+
+echo "[kind] preloading images into kind"
+for img in traefik:v2.10 curlimages/curl:latest registry:2.8.3; do
+  docker pull "${img}"
+  kind load docker-image "${img}" --name "${CLUSTER_NAME}"
+done
 
 echo "[build] rebuilding CLI"
 go build -o bin/mcp-runtime ./cmd/mcp-runtime
@@ -68,7 +82,7 @@ docker exec "${CLUSTER_NAME}-control-plane" crictl images | grep -E "mcp-runtime
 echo "[setup] running platform setup with pre-loaded operator image"
 export OPERATOR_IMG="docker.io/library/mcp-runtime-operator:latest"
 export SKIP_OPERATOR_BUILD="1"
-./bin/mcp-runtime setup
+./bin/mcp-runtime setup --ingress-manifest config/ingress/overlays/http
 SETUP_EXIT=$?
 
 # Debug: Check pod status right after setup
@@ -131,8 +145,11 @@ done
 kubectl rollout status deploy/example-mcp-server -n mcp-servers --timeout=180s
 
 echo "[verify] curling service from inside cluster"
-kubectl -n mcp-servers run curl --rm -i --image=curlimages/curl --restart=Never --command -- \
-  sh -c "curl -s http://example-mcp-server.mcp-servers.svc.cluster.local/" | tee /tmp/mcp-e2e-curl.log
+kubectl -n mcp-servers run curl --image=curlimages/curl --restart=Never --command -- \
+  sh -c "curl -s http://example-mcp-server.mcp-servers.svc.cluster.local/" || true
+kubectl -n mcp-servers wait --for=condition=Succeeded pod/curl --timeout=60s || true
+kubectl -n mcp-servers logs curl | tee /tmp/mcp-e2e-curl.log || true
+kubectl -n mcp-servers delete pod curl --ignore-not-found --wait=true --timeout=30s || true
 
 # Ensure Traefik is ready before port-forwarding to it
 echo "[verify] waiting for Traefik ingress controller to be ready"

@@ -1,0 +1,11 @@
+- op: replace
+  path: /spec/ports
+  value:
+    - name: web
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+    - name: websecure
+      port: 8443
+      targetPort: 8443
+      protocol: TCP

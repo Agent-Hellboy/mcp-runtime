@@ -1,0 +1,15 @@
+- op: replace
+  path: /spec/template/spec/containers/0/args
+  value:
+    - --providers.kubernetesingress=true
+    - --entrypoints.web.address=:8000
+    - --entrypoints.websecure.address=:8443
+- op: replace
+  path: /spec/template/spec/containers/0/ports
+  value:
+    - name: web
+      containerPort: 8000
+    - name: websecure
+      containerPort: 8443
+    - name: admin
+      containerPort: 8080

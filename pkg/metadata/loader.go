@@ -8,7 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// LoadFromFile loads server metadata from a YAML file
+// LoadFromFile reads a single registry YAML file from disk and applies default values.
 func LoadFromFile(filePath string) (*RegistryFile, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -28,7 +28,7 @@ func LoadFromFile(filePath string) (*RegistryFile, error) {
 	return &registry, nil
 }
 
-// LoadFromDirectory loads all metadata files from a directory
+// LoadFromDirectory aggregates all .yaml/.yml registry files in a directory into one registry object.
 func LoadFromDirectory(dirPath string) (*RegistryFile, error) {
 	files, err := filepath.Glob(filepath.Join(dirPath, "*.yaml"))
 	if err != nil {

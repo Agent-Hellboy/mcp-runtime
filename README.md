@@ -76,6 +76,9 @@ This README is the primary source of truth; no additional external docs are publ
 - Set a shared host once via operator env `MCP_DEFAULT_INGRESS_HOST` (e.g., `mcp.example.com`); any MCPServer without `spec.ingressHost` will inherit it. Per-CR values override the default.
 - Traefik merges all matching Host/Path rules onto its single listener (80/443), so multiple MCPServers can share the same host with different paths.
 - Make your hostname resolve to the ingress entrypoint (LB IP, node IP+NodePort, or your chosen exposure) so `http(s)://<host>/<name>/mcp` works from clients.
+- TLS modes:
+  - Dev (default): `mcp-runtime setup` installs Traefik with HTTP only (no redirect, no certs) and the registry on HTTP.
+  - TLS: `mcp-runtime setup --with-tls` installs the TLS overlays (Traefik on 80/443 with HTTP→HTTPS redirect, registry ingress on `websecure`). Bring cert-manager and an issuer or pre-create a TLS secret—see below.
 - `mcp-runtime setup --ingress traefik` installs the bundled Traefik controller by default using the secure overlay at `config/ingress/overlays/prod` (dashboard/API disabled). It skips install if an IngressClass already exists unless you add `--force-ingress-install`. Use `--ingress none` to skip installing a controller. For a dev-friendly dashboard, point `--ingress-manifest` to `config/ingress/overlays/dev` to enable `--api.insecure=true`.
 - On-prem/no-cloud exposure options:
   - Install MetalLB and keep Traefik as `LoadBalancer`; MetalLB assigns a LAN IP—point DNS/hosts to it.
@@ -129,6 +132,20 @@ The registry uses a PersistentVolumeClaim by default; make sure your cluster has
 mcp-runtime status
 ```
 Verifies cluster, registry, and operator readiness.
+
+### TLS (optional, internal CA)
+- Install cert-manager (Helm or `kubectl apply`).
+- Create an internal CA secret in the cert-manager namespace, e.g.:
+  ```bash
+  kubectl create secret tls mcp-runtime-ca --cert=ca.crt --key=ca.key -n cert-manager
+  ```
+- Apply the ClusterIssuer and a Certificate for the registry (examples in `config/cert-manager/`):
+  ```bash
+  kubectl apply -f config/cert-manager/cluster-issuer.yaml
+  kubectl apply -f config/cert-manager/example-registry-certificate.yaml
+  ```
+- Run `mcp-runtime setup --with-tls` to install Traefik with HTTPS and the registry TLS ingress. Ensure DNS/hosts map your chosen hostnames to the Traefik Service.
+- Distribute the CA to any clients/runners (Docker/skopeo/kaniko/kubectl) so pushes/pulls verify the registry and MCP servers.
 
 ### 2. Deploy Your First MCP Server
 
