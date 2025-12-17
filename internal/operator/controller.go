@@ -261,18 +261,7 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 			}
 		}
 
-		if len(container.Resources.Requests) == 0 {
-			container.Resources.Requests = corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(defaultRequestCPU),
-				corev1.ResourceMemory: resource.MustParse(defaultRequestMemory),
-			}
-		}
-		if len(container.Resources.Limits) == 0 {
-			container.Resources.Limits = corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(defaultLimitCPU),
-				corev1.ResourceMemory: resource.MustParse(defaultLimitMemory),
-			}
-		}
+		applyContainerResourceDefaults(&container)
 
 		deployment.Spec.Template.Spec.Containers = []corev1.Container{container}
 
@@ -292,6 +281,28 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 	}
 
 	return nil
+}
+
+func applyContainerResourceDefaults(container *corev1.Container) {
+	if container.Resources.Requests == nil {
+		container.Resources.Requests = corev1.ResourceList{}
+	}
+	if _, ok := container.Resources.Requests[corev1.ResourceCPU]; !ok {
+		container.Resources.Requests[corev1.ResourceCPU] = resource.MustParse(defaultRequestCPU)
+	}
+	if _, ok := container.Resources.Requests[corev1.ResourceMemory]; !ok {
+		container.Resources.Requests[corev1.ResourceMemory] = resource.MustParse(defaultRequestMemory)
+	}
+
+	if container.Resources.Limits == nil {
+		container.Resources.Limits = corev1.ResourceList{}
+	}
+	if _, ok := container.Resources.Limits[corev1.ResourceCPU]; !ok {
+		container.Resources.Limits[corev1.ResourceCPU] = resource.MustParse(defaultLimitCPU)
+	}
+	if _, ok := container.Resources.Limits[corev1.ResourceMemory]; !ok {
+		container.Resources.Limits[corev1.ResourceMemory] = resource.MustParse(defaultLimitMemory)
+	}
 }
 
 func (r *MCPServerReconciler) resolveImage(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (string, error) {
