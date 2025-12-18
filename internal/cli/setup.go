@@ -162,13 +162,15 @@ func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingres
 	printInfo("Cluster configuration complete")
 
 	// Step 3: Configure TLS (if enabled)
+	printStep("Step 3: Configure TLS")
 	if tlsEnabled {
-		printStep("Step 3: Configure TLS")
 		if err := setupTLS(logger); err != nil {
 			printError(fmt.Sprintf("TLS setup failed: %v", err))
 			return fmt.Errorf("TLS setup failed: %w", err)
 		}
 		printSuccess("TLS configured successfully")
+	} else {
+		printInfo("Skipped (TLS disabled, use --with-tls to enable)")
 	}
 
 	// Step 4: Deploy internal container registry
@@ -263,7 +265,7 @@ func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingres
 		printWarn(fmt.Sprintf("Could not restart operator deployment: %v", err))
 	}
 
-	// Step 5: Verify components
+	// Step 6: Verify components
 	if err := verifySetup(usingExternalRegistry); err != nil {
 		printError(fmt.Sprintf("Post-setup verification failed: %v", err))
 		return err
@@ -275,7 +277,7 @@ func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingres
 }
 
 func verifySetup(usingExternalRegistry bool) error {
-	printStep("Step 5: Verify platform components")
+	printStep("Step 6: Verify platform components")
 
 	if usingExternalRegistry {
 		printInfo("Skipping internal registry availability check (using external registry)")
