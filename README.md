@@ -80,10 +80,33 @@ mcp-runtime registry push --image my-app:latest
 ### Ingress
 
 - **Default**: Traefik is installed automatically (HTTP mode)
-- **TLS**: Use `mcp-runtime setup --with-tls` for HTTPS
+- **TLS**: Use `mcp-runtime setup --with-tls` for HTTPS (see TLS section below)
 - **Custom**: Use `--ingress none` if you have your own ingress controller
 
 All MCP servers get routes at `/{server-name}/mcp` automatically.
+
+### TLS Setup
+
+To enable HTTPS, you need cert-manager and a CA secret:
+
+```bash
+# 1. Install cert-manager
+helm install cert-manager jetstack/cert-manager \
+  --namespace cert-manager --create-namespace \
+  --set crds.enabled=true
+
+# 2. Create CA secret (use your own CA cert/key)
+kubectl create secret tls mcp-runtime-ca \
+  --cert=ca.crt --key=ca.key -n cert-manager
+
+# 3. Run setup with TLS
+mcp-runtime setup --with-tls
+```
+
+The `--with-tls` flag automatically:
+- Applies ClusterIssuer and Certificate resources
+- Configures Traefik with HTTPS
+- Configures registry with TLS ingress
 
 ### Defaults
 
@@ -126,7 +149,7 @@ docker build -t my-server:latest .
 
 Your server will be available at: `http://<ingress-host>/my-server/mcp`
 
-For TLS, use `mcp-runtime setup --with-tls` (requires cert-manager).
+For HTTPS, see the [TLS Setup](#tls-setup) section.
 
 ## Examples
 

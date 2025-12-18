@@ -99,8 +99,18 @@ func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingres
 	}
 	printInfo("Cluster configuration complete")
 
-	// Step 3: Deploy internal container registry
-	printStep("Step 3: Configure registry")
+	// Step 3: Configure TLS (if enabled)
+	if tlsEnabled {
+		printStep("Step 3: Configure TLS")
+		if err := setupTLS(logger); err != nil {
+			printError(fmt.Sprintf("TLS setup failed: %v", err))
+			return fmt.Errorf("TLS setup failed: %w", err)
+		}
+		printSuccess("TLS configured successfully")
+	}
+
+	// Step 4: Deploy internal container registry
+	printStep("Step 4: Configure registry")
 	if usingExternalRegistry {
 		printInfo(fmt.Sprintf("Using external registry: %s", extRegistry.URL))
 		if extRegistry.Username != "" || extRegistry.Password != "" {
@@ -132,8 +142,8 @@ func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingres
 		showRegistryInfo(logger)
 	}
 
-	// Step 4: Deploy operator
-	printStep("Step 4: Deploy operator")
+	// Step 5: Deploy operator
+	printStep("Step 5: Deploy operator")
 
 	operatorImage := getOperatorImage(extRegistry, testMode)
 	printInfo(fmt.Sprintf("Image: %s", operatorImage))
@@ -449,4 +459,61 @@ func deployOperatorManifests(logger *zap.Logger, operatorImage string) error {
 
 	printSuccess("Operator manifests deployed successfully")
 	return nil
+}
+
+// setupTLS configures TLS by applying cert-manager resources.
+// Prerequisites: cert-manager must be installed and CA secret must exist.
+func setupTLS(logger *zap.Logger) error {
+	// Check if cert-manager CRDs are installed
+	printInfo("Checking cert-manager installation")
+	cmd := exec.Command("kubectl", "get", "crd", "certificates.cert-manager.io")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true")
+	}
+	printInfo("cert-manager CRDs found")
+
+	// Check if CA secret exists
+	printInfo("Checking CA secret")
+	cmd = exec.Command("kubectl", "get", "secret", "mcp-runtime-ca", "-n", "cert-manager")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("CA secret 'mcp-runtime-ca' not found in cert-manager namespace. Create it first:\n  kubectl create secret tls mcp-runtime-ca --cert=ca.crt --key=ca.key -n cert-manager")
+	}
+	printInfo("CA secret found")
+
+	// Apply ClusterIssuer
+	printInfo("Applying ClusterIssuer")
+	cmd = exec.Command("kubectl", "apply", "-f", "config/cert-manager/cluster-issuer.yaml")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to apply ClusterIssuer: %w", err)
+	}
+
+	// Ensure registry namespace exists before applying Certificate
+	if err := ensureNamespace("registry"); err != nil {
+		return fmt.Errorf("failed to create registry namespace: %w", err)
+	}
+
+	// Apply Certificate
+	printInfo("Applying Certificate for registry")
+	cmd = exec.Command("kubectl", "apply", "-f", "config/cert-manager/example-registry-certificate.yaml")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to apply Certificate: %w", err)
+	}
+
+	// Wait for certificate to be ready
+	printInfo("Waiting for certificate to be issued")
+	for i := 0; i < 30; i++ {
+		cmd = exec.Command("kubectl", "get", "certificate", "registry-cert", "-n", "registry", "-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+		out, err := cmd.Output()
+		if err == nil && strings.TrimSpace(string(out)) == "True" {
+			printInfo("Certificate issued successfully")
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	return fmt.Errorf("certificate not ready after 60 seconds. Check cert-manager logs: kubectl logs -n cert-manager deployment/cert-manager")
 }
