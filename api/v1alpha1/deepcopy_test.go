@@ -1,0 +1,213 @@
+package v1alpha1
+
+import (
+	"testing"
+)
+
+// TestMCPServerSpecResourcesDeepCopy verifies that MCPServerSpec.Resources performs a deep copy
+// instead of a shallow copy by modifying the original and ensuring the copy is unaffected.
+func TestMCPServerSpecResourcesDeepCopy(t *testing.T) {
+	// Create original spec with Resources containing Limits and Requests
+	original := MCPServerSpec{
+		Image: "test-image",
+		Resources: ResourceRequirements{
+			Limits: &ResourceList{
+				CPU:    "100m",
+				Memory: "128Mi",
+			},
+			Requests: &ResourceList{
+				CPU:    "50m",
+				Memory: "64Mi",
+			},
+		},
+	}
+
+	// Perform deep copy
+	copied := original.DeepCopy()
+
+	// Verify initial values are equal
+	if copied.Resources.Limits.CPU != original.Resources.Limits.CPU {
+		t.Errorf("Initial copy failed: Limits.CPU = %q, want %q", copied.Resources.Limits.CPU, original.Resources.Limits.CPU)
+	}
+	if copied.Resources.Limits.Memory != original.Resources.Limits.Memory {
+		t.Errorf("Initial copy failed: Limits.Memory = %q, want %q", copied.Resources.Limits.Memory, original.Resources.Limits.Memory)
+	}
+	if copied.Resources.Requests.CPU != original.Resources.Requests.CPU {
+		t.Errorf("Initial copy failed: Requests.CPU = %q, want %q", copied.Resources.Requests.CPU, original.Resources.Requests.CPU)
+	}
+	if copied.Resources.Requests.Memory != original.Resources.Requests.Memory {
+		t.Errorf("Initial copy failed: Requests.Memory = %q, want %q", copied.Resources.Requests.Memory, original.Resources.Requests.Memory)
+	}
+
+	// Modify the original Resources.Limits
+	original.Resources.Limits.CPU = "200m"
+	original.Resources.Limits.Memory = "256Mi"
+
+	// Verify that copied values remain unchanged (proving deep copy)
+	if copied.Resources.Limits.CPU != "100m" {
+		t.Errorf("Deep copy failed: copied Limits.CPU was modified to %q, expected it to remain \"100m\"", copied.Resources.Limits.CPU)
+	}
+	if copied.Resources.Limits.Memory != "128Mi" {
+		t.Errorf("Deep copy failed: copied Limits.Memory was modified to %q, expected it to remain \"128Mi\"", copied.Resources.Limits.Memory)
+	}
+
+	// Modify the original Resources.Requests
+	original.Resources.Requests.CPU = "100m"
+	original.Resources.Requests.Memory = "128Mi"
+
+	// Verify that copied values remain unchanged (proving deep copy)
+	if copied.Resources.Requests.CPU != "50m" {
+		t.Errorf("Deep copy failed: copied Requests.CPU was modified to %q, expected it to remain \"50m\"", copied.Resources.Requests.CPU)
+	}
+	if copied.Resources.Requests.Memory != "64Mi" {
+		t.Errorf("Deep copy failed: copied Requests.Memory was modified to %q, expected it to remain \"64Mi\"", copied.Resources.Requests.Memory)
+	}
+}
+
+// TestResourceRequirementsLimitsDeepCopy verifies that ResourceRequirements.Limits performs a deep copy
+// instead of a shallow copy by modifying the original and ensuring the copy is unaffected.
+func TestResourceRequirementsLimitsDeepCopy(t *testing.T) {
+	// Create original ResourceRequirements with Limits
+	original := ResourceRequirements{
+		Limits: &ResourceList{
+			CPU:    "200m",
+			Memory: "256Mi",
+		},
+	}
+
+	// Perform deep copy
+	copied := original.DeepCopy()
+
+	// Verify initial values are equal
+	if copied.Limits.CPU != original.Limits.CPU {
+		t.Errorf("Initial copy failed: Limits.CPU = %q, want %q", copied.Limits.CPU, original.Limits.CPU)
+	}
+	if copied.Limits.Memory != original.Limits.Memory {
+		t.Errorf("Initial copy failed: Limits.Memory = %q, want %q", copied.Limits.Memory, original.Limits.Memory)
+	}
+
+	// Modify the original Limits
+	original.Limits.CPU = "400m"
+	original.Limits.Memory = "512Mi"
+
+	// Verify that copied values remain unchanged (proving deep copy)
+	if copied.Limits.CPU != "200m" {
+		t.Errorf("Deep copy failed: copied Limits.CPU was modified to %q, expected it to remain \"200m\"", copied.Limits.CPU)
+	}
+	if copied.Limits.Memory != "256Mi" {
+		t.Errorf("Deep copy failed: copied Limits.Memory was modified to %q, expected it to remain \"256Mi\"", copied.Limits.Memory)
+	}
+
+	// Verify pointer independence: change the entire Limits pointer in original
+	newLimits := &ResourceList{
+		CPU:    "1000m",
+		Memory: "1Gi",
+	}
+	original.Limits = newLimits
+
+	// Copied Limits should still point to the old values
+	if copied.Limits.CPU != "200m" {
+		t.Errorf("Deep copy failed: copied Limits.CPU was affected by pointer reassignment, got %q, want \"200m\"", copied.Limits.CPU)
+	}
+	if copied.Limits.Memory != "256Mi" {
+		t.Errorf("Deep copy failed: copied Limits.Memory was affected by pointer reassignment, got %q, want \"256Mi\"", copied.Limits.Memory)
+	}
+}
+
+// TestResourceRequirementsRequestsDeepCopy verifies that ResourceRequirements.Requests performs a deep copy
+// instead of a shallow copy by modifying the original and ensuring the copy is unaffected.
+func TestResourceRequirementsRequestsDeepCopy(t *testing.T) {
+	// Create original ResourceRequirements with Requests
+	original := ResourceRequirements{
+		Requests: &ResourceList{
+			CPU:    "100m",
+			Memory: "128Mi",
+		},
+	}
+
+	// Perform deep copy
+	copied := original.DeepCopy()
+
+	// Verify initial values are equal
+	if copied.Requests.CPU != original.Requests.CPU {
+		t.Errorf("Initial copy failed: Requests.CPU = %q, want %q", copied.Requests.CPU, original.Requests.CPU)
+	}
+	if copied.Requests.Memory != original.Requests.Memory {
+		t.Errorf("Initial copy failed: Requests.Memory = %q, want %q", copied.Requests.Memory, original.Requests.Memory)
+	}
+
+	// Modify the original Requests
+	original.Requests.CPU = "200m"
+	original.Requests.Memory = "256Mi"
+
+	// Verify that copied values remain unchanged (proving deep copy)
+	if copied.Requests.CPU != "100m" {
+		t.Errorf("Deep copy failed: copied Requests.CPU was modified to %q, expected it to remain \"100m\"", copied.Requests.CPU)
+	}
+	if copied.Requests.Memory != "128Mi" {
+		t.Errorf("Deep copy failed: copied Requests.Memory was modified to %q, expected it to remain \"128Mi\"", copied.Requests.Memory)
+	}
+
+	// Verify pointer independence: change the entire Requests pointer in original
+	newRequests := &ResourceList{
+		CPU:    "500m",
+		Memory: "512Mi",
+	}
+	original.Requests = newRequests
+
+	// Copied Requests should still point to the old values
+	if copied.Requests.CPU != "100m" {
+		t.Errorf("Deep copy failed: copied Requests.CPU was affected by pointer reassignment, got %q, want \"100m\"", copied.Requests.CPU)
+	}
+	if copied.Requests.Memory != "128Mi" {
+		t.Errorf("Deep copy failed: copied Requests.Memory was affected by pointer reassignment, got %q, want \"128Mi\"", copied.Requests.Memory)
+	}
+}
+
+// TestResourceRequirementsDeepCopyWithNilPointers tests deep copy behavior when Limits and Requests are nil
+func TestResourceRequirementsDeepCopyWithNilPointers(t *testing.T) {
+	// Test with nil Limits
+	original := ResourceRequirements{
+		Limits: nil,
+		Requests: &ResourceList{
+			CPU:    "50m",
+			Memory: "64Mi",
+		},
+	}
+
+	copied := original.DeepCopy()
+
+	if copied.Limits != nil {
+		t.Errorf("Deep copy failed: copied Limits should be nil, got %v", copied.Limits)
+	}
+
+	// Test with nil Requests
+	original2 := ResourceRequirements{
+		Limits: &ResourceList{
+			CPU:    "100m",
+			Memory: "128Mi",
+		},
+		Requests: nil,
+	}
+
+	copied2 := original2.DeepCopy()
+
+	if copied2.Requests != nil {
+		t.Errorf("Deep copy failed: copied Requests should be nil, got %v", copied2.Requests)
+	}
+
+	// Test with both nil
+	original3 := ResourceRequirements{
+		Limits:   nil,
+		Requests: nil,
+	}
+
+	copied3 := original3.DeepCopy()
+
+	if copied3.Limits != nil {
+		t.Errorf("Deep copy failed: copied Limits should be nil, got %v", copied3.Limits)
+	}
+	if copied3.Requests != nil {
+		t.Errorf("Deep copy failed: copied Requests should be nil, got %v", copied3.Requests)
+	}
+}

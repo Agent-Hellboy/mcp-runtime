@@ -54,3 +54,5 @@ docs/
 .cache/
 
 DIFF*.md
+
+unittesting_strategy.md
