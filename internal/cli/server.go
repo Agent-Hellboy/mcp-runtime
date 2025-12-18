@@ -210,7 +210,7 @@ func createServer(logger *zap.Logger, name, namespace, image, imageTag string) e
 			Image:       image,
 			ImageTag:    imageTag,
 			Replicas:    1,
-			Port:        8088,
+			Port:        getDefaultServerPort(),
 			ServicePort: 80,
 			IngressPath: "/" + name,
 		},

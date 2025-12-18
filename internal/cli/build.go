@@ -200,7 +200,7 @@ func getPlatformRegistryURL(logger *zap.Logger) string {
 
 	// Fallback to default
 	logger.Warn("Could not detect platform registry, using default host:port")
-	return "registry.registry.svc.cluster.local:5000"
+	return fmt.Sprintf("registry.registry.svc.cluster.local:%d", getRegistryPort())
 }
 
 func getGitTag() string {

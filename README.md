@@ -117,6 +117,29 @@ The platform sets sensible defaults:
 
 Override any defaults in your server metadata if needed.
 
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_DEPLOYMENT_TIMEOUT` | `5m` | Timeout for deployment readiness checks |
+| `MCP_CERT_TIMEOUT` | `60s` | Timeout for TLS certificate issuance |
+| `MCP_REGISTRY_PORT` | `5000` | Registry port for internal registry |
+| `MCP_SKOPEO_IMAGE` | `quay.io/skopeo/stable:v1.14` | Skopeo image for in-cluster image transfers (useful for air-gapped environments) |
+| `MCP_OPERATOR_IMAGE` | (auto) | Override operator image (bypasses build/push) |
+| `MCP_DEFAULT_SERVER_PORT` | `8088` | Default container port for MCP servers |
+
+Examples:
+```bash
+# Slow cluster - increase timeouts
+MCP_DEPLOYMENT_TIMEOUT=10m mcp-runtime setup
+
+# Air-gapped environment - use local skopeo image
+MCP_SKOPEO_IMAGE=my-registry.local/skopeo:v1.14 mcp-runtime registry push myimage
+
+# Use pre-built operator image
+MCP_OPERATOR_IMAGE=ghcr.io/myorg/mcp-operator:v1.0 mcp-runtime setup
+```
+
 
 ## Quick Start
 

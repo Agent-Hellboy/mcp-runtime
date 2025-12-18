@@ -508,7 +508,7 @@ func pushInCluster(logger *zap.Logger, source, target, helperNS string) error {
 	}
 
 	// Start helper pod with skopeo
-	runCmd := exec.Command("kubectl", "run", helperName, "-n", helperNS, "--image=quay.io/skopeo/stable:v1.14", "--restart=Never", "--command", "--", "sh", "-c", "while true; do sleep 3600; done")
+	runCmd := exec.Command("kubectl", "run", helperName, "-n", helperNS, "--image="+getSkopeoImage(), "--restart=Never", "--command", "--", "sh", "-c", "while true; do sleep 3600; done")
 	runCmd.Stdout = os.Stdout
 	runCmd.Stderr = os.Stderr
 	if err := runCmd.Run(); err != nil {
