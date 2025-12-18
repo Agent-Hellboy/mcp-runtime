@@ -1,6 +1,6 @@
 .PHONY: all build test clean install dev fmt lint coverage build-unix install-bin
 
-all: build
+all: build-cli
 
 -include Makefile.runtime
 
@@ -8,11 +8,14 @@ all: build
 BINARY_NAME=mcp-runtime
 BUILD_DIR=bin
 
-# Build the application for current platform
-build:
-	@echo "Building $(BINARY_NAME)..."
+# Build the mcp-runtime CLI for current platform
+build-cli:
+	@echo "Building $(BINARY_NAME) CLI..."
 	@mkdir -p $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/mcp-runtime
+
+# Alias for backward compatibility
+build: build-cli
 
 # Run tests
 test:
@@ -30,7 +33,7 @@ install:
 	go mod tidy
 
 # Development mode
-dev: build
+dev: build-cli
 	./$(BUILD_DIR)/$(BINARY_NAME)
 
 # Format code
@@ -65,6 +68,6 @@ build-unix:
 	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/mcp-runtime
 
 # Install binary to system PATH
-install-bin: build
+install-bin: build-cli
 	@echo "Installing $(BINARY_NAME) to /usr/local/bin..."
 	@sudo cp $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/

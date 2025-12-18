@@ -6,6 +6,8 @@ When working with large language models, context window limitations often requir
 
 The platform targets organizations that need to ship many MCP servers internally, maintaining a centralized registry where any team can discover and use available MCP servers across the company.
 
+> ⚠️ **Caution**: This platform is currently under active development. APIs, commands, and behavior may change. Some features are "vibe-coded" and need thorough testing. Not recommended for production use yet. Contributions and feedback welcome!
+
 ## Overview
 
 MCP Runtime Platform provides a streamlined workflow for teams to deploy a suite of MCP servers:
@@ -27,7 +29,9 @@ MCP Runtime Platform provides a streamlined workflow for teams to deploy a suite
 
 ## Architecture
 
-```text
+### Code Structure
+
+```
 ├── cmd/                 # Application entry points
 │   ├── mcp-runtime/     # Platform management CLI
 │   └── operator/        # Kubernetes operator
@@ -40,54 +44,106 @@ MCP Runtime Platform provides a streamlined workflow for teams to deploy a suite
 │   ├── registry/        # Registry deployment
 │   ├── rbac/            # RBAC configurations
 │   └── manager/         # Operator deployment
-├── docs/                # Internal notes (README is primary; no separate docs published)
-└── examples/            # Example configurations
+├── examples/            # Complete working examples
+└── test/                # Test utilities and e2e tests
 ```
+
+### Platform Overview
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Developer     │    │   CI/CD Runner  │    │   Kubernetes    │
+│   Workstations  │    │                 │    │   Cluster       │
+│                 │    │  1. Build Image │    │                 │
+│  • VS Code      │────│  2. Push to     │────│  ┌─────────────┐ │
+│  • Terminal     │    │     Registry    │    │  │  Registry   │ │
+│                 │    │  3. Generate    │    │  │  (Docker)   │ │
+└─────────────────┘    │     CRDs        │    │  └─────────────┘ │
+                       │  4. Deploy      │    │                 │
+                       └─────────────────┘    │  ┌─────────────┐ │
+                                               │  │  Operator  │ │
+                                               │  │  Controller│ │
+                                               │  └─────────────┘ │
+                                               │        │          │
+                                               │        ▼          │
+                                               │  ┌─────────────┐ │
+                                               │  │ MCPServer   │ │
+                                               │  │ Resources   │ │
+                                               │  │ • Deployment│ │
+                                               │  │ • Service   │ │
+                                               │  │ • Ingress   │ │
+                                               │  └─────────────┘ │
+                                               └─────────────────┘
+```
+
+### Data Flow
+
+1. **Metadata Definition** → Developer defines MCP servers in YAML
+2. **Image Building** → CLI builds Docker images from Dockerfiles
+3. **Registry Push** → Images pushed to internal/external registry
+4. **CRD Generation** → CLI converts metadata to Kubernetes CRDs
+5. **Operator Deployment** → Kubernetes operator watches for CRDs
+6. **Resource Creation** → Operator creates Deployment, Service, Ingress
+7. **Access** → Servers accessible via unified `/{name}/mcp` URLs
 
 This README is the primary source of truth; no additional external docs are published.
 
 ## Prerequisites
 
-- Go 1.21 or higher (needed to build the CLI and operator tools)
-- Make (used by the provided Makefiles)
-- kubectl configured for your cluster
-- Docker (to build/push images and interact with the registry)
-- Kubernetes cluster (1.21+) with a default StorageClass (registry PVC)
-- Ingress controller: setup installs Traefik by default; install/configure another controller first if you prefer a different one
-- Operator image handling: setup builds the operator image and auto-loads it into minikube/kind/k3d; for other clusters, ensure the image is in a pullable registry (use `OPERATOR_IMG` to override)
-- Network access to fetch Go modules (for controller-gen/kustomize downloads)
+### Required Tools
 
-### Registry options
-- **Default (internal)**: `mcp-runtime setup` deploys an in-cluster registry in namespace `registry` (PVC-backed) and loads the operator image into the cluster.
-- **Bring your own registry**: run `mcp-runtime registry provision --url <registry> [--username ... --password ...] [--operator-image <registry>/mcp-runtime-operator:latest]` before `mcp-runtime setup`. When a provisioned registry is configured, setup **does not create the internal registry**; it uses your registry instead and tags/pushes the operator image there. Make sure your cluster nodes can pull from it (configure imagePullSecrets if needed).
+- **Go**: 1.21+ (for building CLI and operator)
+  - Download: https://golang.org/dl/
+  - Verify: `go version`
 
-### Registry usage (quick guidance)
-- **Pushing images**: use `mcp-runtime registry push --image <src> [--mode in-cluster|direct] [--registry ...] [--name ...]`. Default mode (`in-cluster`) spins up a helper pod with skopeo to push from inside the cluster; requires kubectl access to create pods in `registry` namespace. `direct` mode uses `docker push` from the runner/host and needs a reachable, trusted registry endpoint (Ingress/TLS or NodePort plus insecure-registry config).
-- **Pulling images (pods)**: nodes must reach the registry. Prefer ClusterIP or a trusted ingress/TLS hostname. Service DNS (`*.svc`) is not used by the node runtime for image pulls. NodePort without TLS requires marking the registry as insecure on the node runtime.
-- **MCPServer images**: set `spec.image` to the address nodes can reach (ClusterIP or trusted ingress). `spec.useProvisionedRegistry`/`spec.registryOverride` can rewrite to a provisioned registry, and the controller can auto-create a pull secret if provisioned creds are set and `imagePullSecrets` is empty.
-- **Registry selection decisions**:
-  - Per-server override (`spec.registryOverride`) is kept to let teams pull public images, migrate gradually, or target partner registries without mirroring everything.
-  - Global/provisioned registry (`spec.useProvisionedRegistry` + operator env `PROVISIONED_REGISTRY_*`) is the “platform default” path; enables auto pull-secret creation.
-  - If you want tighter control, layer policy (allowlist/denylist/webhook) rather than removing per-server override.
-- **Image pull secrets**: Kubernetes stores registry creds in a `kubernetes.io/dockerconfigjson` Secret. The operator will auto-create/update one per namespace (default name `mcp-runtime-registry-creds`) and attach it to Deployments when `PROVISIONED_REGISTRY_URL/USERNAME/PASSWORD` are set and `spec.imagePullSecrets` is empty. If you need custom creds, set `spec.imagePullSecrets` on the MCPServer.
+- **Make**: Build system (usually pre-installed on macOS/Linux)
+  - macOS: `xcode-select --install`
+  - Ubuntu: `sudo apt install build-essential`
 
-### Ingress behavior (Traefik by default)
-- Ingress host is required. Set `spec.ingressHost` per MCPServer or configure a cluster-wide default via operator env `MCP_DEFAULT_INGRESS_HOST`. The operator will error if neither is set to avoid catch-all ingress collisions.
-- The operator creates one Ingress per MCPServer with a default path of `/<name>/mcp`; set `spec.ingressPath` to override.
-- Set a shared host once via operator env `MCP_DEFAULT_INGRESS_HOST` (e.g., `mcp.example.com`); any MCPServer without `spec.ingressHost` will inherit it. Per-CR values override the default.
-- Traefik merges all matching Host/Path rules onto its single listener (80/443), so multiple MCPServers can share the same host with different paths.
-- Make your hostname resolve to the ingress entrypoint (LB IP, node IP+NodePort, or your chosen exposure) so `http(s)://<host>/<name>/mcp` works from clients.
-- TLS modes:
-  - Dev (default): `mcp-runtime setup` installs Traefik with HTTP only (no redirect, no certs) and the registry on HTTP.
-  - TLS: `mcp-runtime setup --with-tls` installs the TLS overlays (Traefik on 80/443 with HTTP→HTTPS redirect, registry ingress on `websecure`). Bring cert-manager and an issuer or pre-create a TLS secret—see below.
-- `mcp-runtime setup --ingress traefik` installs the bundled Traefik controller by default using the secure overlay at `config/ingress/overlays/prod` (dashboard/API disabled). It skips install if an IngressClass already exists unless you add `--force-ingress-install`. Use `--ingress none` to skip installing a controller. For a dev-friendly dashboard, point `--ingress-manifest` to `config/ingress/overlays/dev` to enable `--api.insecure=true`.
-- On-prem/no-cloud exposure options:
-  - Install MetalLB and keep Traefik as `LoadBalancer`; MetalLB assigns a LAN IP—point DNS/hosts to it.
-  - Switch Traefik Service to `NodePort` and use `http://<node-ip>:<nodePort>`; update DNS/hosts to the node IP.
-- Dev-only: `kubectl port-forward -n traefik svc/traefik 18080:80` and curl `http://127.0.0.1:18080/...` with the correct Host header.
+- **kubectl**: Kubernetes CLI (must be configured for your cluster)
+  - Install: https://kubernetes.io/docs/tasks/tools/
+  - Verify: `kubectl cluster-info`
 
-### MCPServer runtime defaults
-- Pods get TCP readiness/liveness probes on `spec.port` and baseline resources (requests: `50m`/`64Mi`, limits: `500m`/`256Mi`) when none are set. Override with `spec.resources` if you need different sizing.
+- **Docker**: Container runtime (for building/pushing images)
+  - Alternatives: podman, nerdctl
+  - Verify: `docker version`
+
+### Cluster Requirements
+
+- **Kubernetes**: 1.21+ with default StorageClass
+  - Local: Minikube (`minikube start`), Kind (`kind create cluster`)
+  - Cloud: GKE, EKS, AKS (configure kubectl access)
+
+- **Ingress Controller**: Traefik (installed automatically) or alternatives
+  - nginx-ingress, istio, etc.
+
+
+### Registry
+
+- **Default**: Platform deploys an internal registry automatically
+- **External**: Use `mcp-runtime registry provision --url <registry>` before setup
+
+```bash
+# Push images to registry
+mcp-runtime registry push --image my-app:latest
+```
+
+### Ingress
+
+- **Default**: Traefik is installed automatically (HTTP mode)
+- **TLS**: Use `mcp-runtime setup --with-tls` for HTTPS
+- **Custom**: Use `--ingress none` if you have your own ingress controller
+
+All MCP servers get routes at `/{server-name}/mcp` automatically.
+
+### Defaults
+
+The platform sets sensible defaults:
+- Health checks (readiness/liveness probes)
+- Resource limits (CPU/memory)
+- Ingress routes
+
+Override any defaults in your server metadata if needed.
 
 ## Installation
 
@@ -175,6 +231,62 @@ mcp-runtime pipeline deploy --dir manifests/
 ```
 
 Your server will be available at: `http://<ingress-host>/my-server/mcp`
+
+## Examples
+
+The `examples/` directory contains complete working examples:
+
+### Basic MCP Server Example
+
+```bash
+cd examples/example-app
+
+# Build the example app
+docker build -t example-app:latest .
+
+# Push to platform registry
+mcp-runtime registry push --image example-app:latest
+
+# Generate and deploy CRD
+mcp-runtime pipeline generate --dir . --output manifests/
+mcp-runtime pipeline deploy --dir manifests/
+
+# Access your server
+curl http://<ingress-host>/example-app/mcp
+```
+
+**What it does:**
+- Simple HTTP server that responds with JSON
+- Shows environment variable passing
+- Demonstrates the complete MCP server deployment flow
+
+### Metadata Configuration
+
+The `examples/metadata.yaml` shows how to define multiple servers:
+
+```yaml
+version: v1
+servers:
+  - name: my-mcp-server
+    route: /my-mcp-server/mcp
+    port: 8088
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+    envVars:
+      - name: ENV_VAR_1
+        value: "value1"
+```
+
+### Advanced Examples
+
+- **`mcpserver-example.yaml`**: Direct CRD definition
+- **`mcpservers-shared-host.yaml`**: Multiple servers sharing one ingress host
+- **`example-app/`**: Complete MCP server implementation
 
 Use this README as the primary walkthrough.
 
@@ -313,58 +425,69 @@ make lint
 make -f Makefile.operator generate
 ```
 
+## Troubleshooting
+
+### Common Issues
+
+-- Exploring it and will write it up in docs
+
+### Getting Help
+
+1. Check `mcp-runtime status` for overall platform health
+2. View detailed logs: `kubectl logs -n <namespace> deployment/<name>`
+3. Use verbose flags if available: `mcp-runtime --help`
+4. Check GitHub issues for similar problems
+
+### Debug Commands
+
+```bash
+# Platform status
+mcp-runtime status
+
+# Check all resources
+kubectl get all -n mcp-runtime
+kubectl get all -n registry
+kubectl get all -n traefik
+
+# View logs
+kubectl logs -n registry deployment/registry --tail=50
+kubectl logs -n mcp-runtime deployment/mcp-runtime-operator-controller-manager --tail=50
+
+# Check events
+kubectl get events -n mcp-runtime --sort-by='.lastTimestamp'
+```
+
 ## Contributing
 
+### For Kubernetes Newcomers
+
+If you're new to Kubernetes like the maintainer, here are some helpful resources:
+- [Kubernetes Documentation](https://kubernetes.io/docs/)
+- [Kubebuilder Book](https://book.kubebuilder.io/) - For understanding operators
+- [kubectl Cheat Sheet](https://kubernetes.io/docs/reference/kubectl/cheatsheet/)
+- [Kubernetes API Reference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/)
+
+### Development Workflow
+
 1. Fork the repository
-2. Create a feature branch
+2. Create a feature branch: `git checkout -b feature/my-feature`
 3. Make your changes
-4. Add tests if applicable
-5. Run `make fmt && make lint && make test`
-6. Submit a pull request
+4. Test locally: `make build && make test`
+5. Format code: `make fmt`
+6. Run linter: `make lint`
+7. Submit a pull request with a clear description
+
+### Code Style
+
+- Use `go fmt` for formatting
+- Follow standard Go naming conventions
+- Add comments for exported functions
+- Write tests for new functionality
+- Keep PRs focused on single features
 
 ## How It Works
 
-### Architecture
-
-```text
-┌─────────────────────────────────────────────────────────────┐
-│  CI/CD Runner (GitHub Actions, GitLab CI, etc.)            │
-│                                                             │
-│  1. Checkout code                                          │
-│  2. Build Docker image                                      │
-│  3. Push to registry                                        │
-│  4. Generate CRDs from metadata                            │
-│  5. Apply CRDs to cluster via kubectl                      │
-│     (uses kubeconfig from secrets)                         │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ HTTPS API calls
-                       │ (kubectl → Kubernetes API Server)
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Kubernetes Cluster (Remote - Cloud/On-Prem)               │
-│                                                             │
-│  ┌───────────────────────────────────────────────────────┐ │
-│  │  API Server                                           │ │
-│  │  • Receives CRD manifests from CI/CD                 │ │
-│  │  • Stores CRDs in etcd                               │ │
-│  └──────────────────┬──────────────────────────────────┘ │
-│                     │                                      │
-│                     │ Operator watches for changes        │
-│                     ▼                                      │
-│  ┌───────────────────────────────────────────────────────┐ │
-│  │  Operator (in cluster)                                │ │
-│  │  • Watches MCPServer CRDs                             │ │
-│  │  • Creates Deployment, Service, Ingress              │ │
-│  └───────────────────────────────────────────────────────┘ │
-│                                                             │
-│  ┌───────────────────────────────────────────────────────┐ │
-│  │  Resources Created by Operator                        │ │
-│  │  ├─ Deployment (runs pods)                           │ │
-│  │  ├─ Service (ClusterIP)                              │ │
-│  │  └─ Ingress (external routes)                        │ │
-│  └───────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-```
+### Workflow
 
 1. **Teams define metadata** - Simple YAML file with server configuration
 2. **CLI builds images** - From Dockerfiles, pushes to registry, updates metadata
@@ -424,9 +547,19 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Platform Support
 
-Officially supported on:
-under dev
+### Will support
+- **Kubernetes**: 1.21+ (tested on 1.21-1.34)
+- **Container Runtimes**: Docker, containerd
+- **Architectures**: AMD64, ARM64
 
-Tested on:
-- macOS Sonoma (M1/M4 chips)
-- Ubuntu 20.04+ LTS
+### Tested On
+- **macOS**: Sonoma (M1/M4 chips) with Docker Desktop
+- **Kubernetes Distributions**:
+  - Minikube (Docker driver)
+  - Kind
+  - GKE, EKS, AKS (not tested)
+
+### Known Limitations
+- **HostPath Storage**: Not tested on managed kubernetes distribution , also s3 or other blob storage type for registry volume is not tested  
+- **External Registries**: Some authentication methods not fully tested
+- **Multi-cluster**: Not yet supported

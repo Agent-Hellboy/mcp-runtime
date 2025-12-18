@@ -24,6 +24,7 @@ func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 	var ingressManifest string
 	var forceIngressInstall bool
 	var tlsEnabled bool
+	var testMode bool
 
 	cmd := &cobra.Command{
 		Use:   "setup",
@@ -50,7 +51,7 @@ will use to push and pull container images.`,
 				registryManifest = "config/registry/overlays/tls"
 			}
 
-			return setupPlatform(logger, registryType, registryStorageSize, ingressMode, manifestPath, registryManifest, forceIngressInstall, tlsEnabled)
+			return setupPlatform(logger, registryType, registryStorageSize, ingressMode, manifestPath, registryManifest, forceIngressInstall, tlsEnabled, testMode)
 		},
 	}
 
@@ -60,11 +61,12 @@ will use to push and pull container images.`,
 	cmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/overlays/http", "Manifest to apply when installing the ingress controller")
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force ingress install even if an ingress class already exists")
 	cmd.Flags().BoolVar(&tlsEnabled, "with-tls", false, "Enable TLS overlays (ingress/registry); default is HTTP for dev")
+	cmd.Flags().BoolVar(&testMode, "test-mode", false, "Test mode: skip operator build and use kind-loaded image")
 
 	return cmd
 }
 
-func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingressMode, ingressManifest, registryManifest string, forceIngressInstall, tlsEnabled bool) error {
+func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingressMode, ingressManifest, registryManifest string, forceIngressInstall, tlsEnabled, testMode bool) error {
 	printSection("MCP Runtime Setup")
 
 	extRegistry, err := resolveExternalRegistryConfig(nil)
@@ -132,14 +134,12 @@ func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingres
 
 	// Step 4: Deploy operator
 	printStep("Step 4: Deploy operator")
-	operatorImage := getOperatorImage(extRegistry)
+
+	operatorImage := getOperatorImage(extRegistry, testMode)
 	printInfo(fmt.Sprintf("Image: %s", operatorImage))
 
-	// Check if operator build/push should be skipped (for Kind/local testing)
-	skipOperatorBuild := os.Getenv("SKIP_OPERATOR_BUILD") == "1"
-
-	if skipOperatorBuild {
-		printInfo("Skipping operator build (SKIP_OPERATOR_BUILD=1, using pre-loaded image)")
+	if testMode {
+		printInfo("Test mode: skipping operator build, using kind-loaded image")
 	} else {
 		printInfo("Building operator image")
 		if err := buildOperatorImage(operatorImage); err != nil {
@@ -230,10 +230,12 @@ func verifySetup(usingExternalRegistry bool) error {
 	return nil
 }
 
-func getOperatorImage(ext *ExternalRegistryConfig) string {
-	if val := os.Getenv("OPERATOR_IMG"); val != "" {
-		return val
+func getOperatorImage(ext *ExternalRegistryConfig, testMode bool) string {
+	// In test mode, use the standard kind-loaded image
+	if testMode {
+		return "docker.io/library/mcp-runtime-operator:latest"
 	}
+
 	if ext != nil && ext.URL != "" {
 		return strings.TrimSuffix(ext.URL, "/") + "/mcp-runtime-operator:latest"
 	}
@@ -417,7 +419,7 @@ func deployOperatorManifests(logger *zap.Logger, operatorImage string) error {
 		return fmt.Errorf("failed to read manager.yaml: %w", err)
 	}
 
-	// Replace image name using a broad regex with captured indentation to handle arbitrary custom OPERATOR_IMG values.
+	// Replace image name using a broad regex with captured indentation to handle registry-customized image values.
 	// This targets the first image field in the file (the manager container).
 	re := regexp.MustCompile(`(?m)^(\s*)image:\s*\S+`)
 	managerYAMLStr := re.ReplaceAllString(string(managerYAML), fmt.Sprintf("${1}image: %s", operatorImage))
