@@ -80,9 +80,7 @@ docker exec "${CLUSTER_NAME}-control-plane" crictl images | grep -E "mcp-runtime
 # Run setup with pre-loaded operator image (skip building/pushing operator)
 # Note: kind stores images with docker.io/library/ prefix for local images
 echo "[setup] running platform setup with pre-loaded operator image"
-export OPERATOR_IMG="docker.io/library/mcp-runtime-operator:latest"
-export SKIP_OPERATOR_BUILD="1"
-./bin/mcp-runtime setup --ingress-manifest config/ingress/overlays/http
+./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http
 SETUP_EXIT=$?
 
 # Debug: Check pod status right after setup
