@@ -174,6 +174,19 @@ make -f Makefile.operator manifests generate  # Regenerate CRDs
 make -f Makefile.operator docker-build-operator IMG=<image>
 ```
 
+### Testing
+
+For e2e testing with pre-loaded images (kind/minikube):
+
+```bash
+# Build and load operator image into kind
+docker build -t mcp-runtime-operator:latest -f Dockerfile.operator .
+kind load docker-image docker.io/library/mcp-runtime-operator:latest --name <cluster>
+
+# Run setup in test mode (skips operator build, uses pre-loaded image)
+./bin/mcp-runtime setup --test-mode
+```
+
 ### Contributing
 
 1. Fork the repository
