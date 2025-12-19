@@ -60,7 +60,7 @@ func showPlatformStatus(logger *zap.Logger) error {
 		operatorDetails = "Not found"
 	} else {
 		replicas := strings.TrimSpace(string(replicasOut))
-		if replicas == "" || strings.HasPrefix(replicas, "/") || replicas == "0/1" {
+		if replicas == "" || strings.HasPrefix(replicas, "/") || strings.HasPrefix(replicas, "0/") {
 			operatorStatus = Yellow("PENDING")
 		}
 		operatorDetails = "Replicas: " + replicas

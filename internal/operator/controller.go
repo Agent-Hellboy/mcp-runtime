@@ -203,18 +203,22 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 	}
 
 	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
-		labels := map[string]string{
+		selectorLabels := map[string]string{
 			"app": mcpServer.Name,
+		}
+		templateLabels := map[string]string{
+			"app":                          mcpServer.Name,
+			"app.kubernetes.io/managed-by": "mcp-runtime",
 		}
 
 		deployment.Spec = appsv1.DeploymentSpec{
 			Replicas: mcpServer.Spec.Replicas,
 			Selector: &metav1.LabelSelector{
-				MatchLabels: labels,
+				MatchLabels: selectorLabels,
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: labels,
+					Labels: templateLabels,
 				},
 				Spec: corev1.PodSpec{
 					ImagePullSecrets: r.buildImagePullSecrets(ctx, mcpServer),
