@@ -43,7 +43,7 @@ generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and
 CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
 controller-gen: ## Download controller-gen locally if necessary.
 	@mkdir -p $(shell dirname $(CONTROLLER_GEN))
-	$(call go-get-tool,sigs.k8s.io/controller-tools/cmd/controller-gen@latest,$(CONTROLLER_GEN))
+	$(call go-get-tool,sigs.k8s.io/controller-tools/cmd/controller-gen@v0.19.0,$(CONTROLLER_GEN))
 
 ##@ Deployment
 
