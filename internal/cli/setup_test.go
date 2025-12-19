@@ -34,8 +34,11 @@ func TestLoadCLIConfig(t *testing.T) {
 		os.Unsetenv("MCP_DEFAULT_SERVER_PORT")
 
 		cfg := LoadCLIConfig()
+		if cfg == nil {
+			t.Fatal("LoadCLIConfig returned nil")
+		}
 
-		assertCLIConfig(t, cfg, cliConfigExpectation{
+		assertCLIConfig(t, *cfg, cliConfigExpectation{
 			deploymentTimeout: defaultDeploymentTimeout,
 			certTimeout:       defaultCertTimeout,
 			registryPort:      defaultRegistryPort,
@@ -54,8 +57,11 @@ func TestLoadCLIConfig(t *testing.T) {
 		os.Setenv("MCP_DEFAULT_SERVER_PORT", "9000")
 
 		cfg := LoadCLIConfig()
+		if cfg == nil {
+			t.Fatal("LoadCLIConfig returned nil")
+		}
 
-		assertCLIConfig(t, cfg, cliConfigExpectation{
+		assertCLIConfig(t, *cfg, cliConfigExpectation{
 			deploymentTimeout: 10 * time.Minute,
 			certTimeout:       2 * time.Minute,
 			registryPort:      5001,
@@ -67,12 +73,18 @@ func TestLoadCLIConfig(t *testing.T) {
 
 	t.Run("handles invalid values gracefully", func(t *testing.T) {
 		os.Setenv("MCP_DEPLOYMENT_TIMEOUT", "invalid")
+		os.Setenv("MCP_CERT_TIMEOUT", "invalid")
 		os.Setenv("MCP_REGISTRY_PORT", "not-a-number")
 		os.Setenv("MCP_DEFAULT_SERVER_PORT", "-1")
+		os.Setenv("MCP_SKOPEO_IMAGE", "")
+		os.Setenv("MCP_OPERATOR_IMAGE", "")
 
 		cfg := LoadCLIConfig()
+		if cfg == nil {
+			t.Fatal("LoadCLIConfig returned nil")
+		}
 
-		assertCLIConfig(t, cfg, cliConfigExpectation{
+		assertCLIConfig(t, *cfg, cliConfigExpectation{
 			deploymentTimeout: defaultDeploymentTimeout,
 			certTimeout:       defaultCertTimeout,
 			registryPort:      defaultRegistryPort,

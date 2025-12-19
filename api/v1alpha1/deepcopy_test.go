@@ -251,7 +251,7 @@ func TestMCPServerSpecDeepCopy(t *testing.T) {
 	// Perform deep copy
 	copied := original.DeepCopy()
 
-	assertSpecSimpleFields(t, copied, original)
+	assertSpecSimpleFields(t, copied, &original)
 	assertReplicasDeepCopy(t, copied, &original)
 	assertImagePullSecretsDeepCopy(t, copied, &original)
 	assertIngressAnnotationsDeepCopy(t, copied, &original)
@@ -285,8 +285,11 @@ func TestMCPServerSpecDeepCopyNilFields(t *testing.T) {
 	}
 }
 
-func assertSpecSimpleFields(t *testing.T, copied, original MCPServerSpec) {
+func assertSpecSimpleFields(t *testing.T, copied, original *MCPServerSpec) {
 	t.Helper()
+	if copied == nil || original == nil {
+		t.Fatal("MCPServerSpec is nil")
+	}
 	if copied.Image != original.Image {
 		t.Errorf("Image = %q, want %q", copied.Image, original.Image)
 	}
