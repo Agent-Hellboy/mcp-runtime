@@ -1,6 +1,9 @@
 package cli
 
-import "io"
+import (
+	"io"
+	"os"
+)
 
 // KubectlClient wraps kubectl command execution with validation.
 type KubectlClient struct {
@@ -10,10 +13,15 @@ type KubectlClient struct {
 
 // NewKubectlClient creates a KubectlClient with default validators.
 func NewKubectlClient(exec Executor) *KubectlClient {
+	root, err := os.Getwd()
+	if err != nil {
+		root = "."
+	}
 	return &KubectlClient{
 		exec: exec,
 		validators: []ExecValidator{
 			NoControlChars(), // Prevent YAML/command injection via control chars
+			PathUnder(root),
 		},
 	}
 }

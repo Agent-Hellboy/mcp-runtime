@@ -8,6 +8,7 @@ import (
 	"strings"
 )
 
+// execCommand is a seam for tests to stub out command creation.
 var execCommand = exec.Command
 
 // Command represents a command that can be executed.
@@ -98,13 +99,22 @@ func NoControlChars() ExecValidator {
 }
 
 func PathUnder(root string) ExecValidator {
+	absRoot := root
+	if abs, err := filepath.Abs(root); err == nil {
+		absRoot = abs
+	}
 	return func(spec ExecSpec) error {
 		for _, arg := range spec.Args {
-			if !filepath.IsAbs(arg) {
+			if arg == "-" {
 				continue
 			}
-			rel, err := filepath.Rel(root, arg)
-			if err != nil || strings.HasPrefix(rel, "..") {
+			candidate := arg
+			if !filepath.IsAbs(candidate) {
+				candidate = filepath.Join(absRoot, candidate)
+			}
+			candidate = filepath.Clean(candidate)
+			rel, err := filepath.Rel(absRoot, candidate)
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				return errors.New("exec: path escapes root")
 			}
 		}
