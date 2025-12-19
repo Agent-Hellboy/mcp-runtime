@@ -22,6 +22,11 @@ coverage:
           - pkg/
           - api/
 
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: false
+
 ignore:
   - "**/*_test.go"
   - "api/**/zz_generated.*.go"

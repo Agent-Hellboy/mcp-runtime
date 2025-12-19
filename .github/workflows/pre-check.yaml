@@ -60,7 +60,9 @@ jobs:
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
-          file: ./coverage.out
+          files: ./coverage.out
+          flags: pre-merge
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
   integration-test:
