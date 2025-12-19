@@ -132,7 +132,9 @@ func initCluster(logger *zap.Logger, kubeconfig, context string) error {
 	}
 
 	// Set KUBECONFIG environment variable
-	os.Setenv("KUBECONFIG", kubeconfig)
+	if err := os.Setenv("KUBECONFIG", kubeconfig); err != nil {
+		return fmt.Errorf("failed to set KUBECONFIG: %w", err)
+	}
 
 	if context != "" {
 		// Switch to specified context
@@ -178,21 +180,27 @@ func checkClusterStatus(logger *zap.Logger) error {
 	cmd = execCommand("kubectl", "get", "nodes")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Run()
+	if err := cmd.Run(); err != nil {
+		Warn(fmt.Sprintf("Failed to get nodes: %v", err))
+	}
 
 	// Check CRD
 	Section("MCP CRD")
 	cmd = execCommand("kubectl", "get", "crd", "mcpservers.mcp.agent-hellboy.io")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Run()
+	if err := cmd.Run(); err != nil {
+		Warn(fmt.Sprintf("Failed to get MCP CRD: %v", err))
+	}
 
 	// Check operator
 	Section("Operator")
 	cmd = execCommand("kubectl", "get", "pods", "-n", "mcp-runtime")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Run()
+	if err := cmd.Run(); err != nil {
+		Warn(fmt.Sprintf("Failed to get operator pods: %v", err))
+	}
 
 	return nil
 }
@@ -299,11 +307,16 @@ nodes:
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.WriteString(config); err != nil {
-		tmp.Close()
+		if closeErr := tmp.Close(); closeErr != nil {
+			return fmt.Errorf("failed to close kind config after write error: %w", closeErr)
+		}
 		return fmt.Errorf("failed to write kind config: %w", err)
 	}
-	tmp.Close()
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close kind config: %w", err)
+	}
 
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	cmd := exec.Command("kind", "create", "cluster", "--config", tmp.Name(), "--name", clusterName)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

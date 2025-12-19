@@ -1,7 +1,7 @@
 # MCP Runtime Platform
 
-[![Pre-Check](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/pre-check.yaml/badge.svg)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/pre-check.yaml)
 [![Post-Merge Checks](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/post-merge.yaml/badge.svg)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/post-merge.yaml)
+[![Security](https://img.shields.io/github/actions/workflow/status/Agent-Hellboy/mcp-runtime/post-merge.yaml?label=security)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/post-merge.yaml)
 [![Coverage](https://codecov.io/gh/Agent-Hellboy/mcp-runtime/branch/main/graph/badge.svg)](https://codecov.io/gh/Agent-Hellboy/mcp-runtime)
 [![Go Report Card](https://goreportcard.com/badge/github.com/Agent-Hellboy/mcp-runtime)](https://goreportcard.com/report/github.com/Agent-Hellboy/mcp-runtime)
 

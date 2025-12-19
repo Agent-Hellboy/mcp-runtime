@@ -73,12 +73,12 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 	}
 
 	// Ensure output directory exists
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o750); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
 	// Write to file
-	if err := os.WriteFile(outputPath, data, 0644); err != nil {
+	if err := os.WriteFile(outputPath, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write CRD file: %w", err)
 	}
 
@@ -87,7 +87,7 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 
 // GenerateCRDsFromRegistry renders CRD YAML files for every server in a registry into outputDir.
 func GenerateCRDsFromRegistry(registry *RegistryFile, outputDir string) error {
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 

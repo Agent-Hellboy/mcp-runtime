@@ -194,7 +194,7 @@ func saveExternalRegistryConfig(cfg *ExternalRegistryConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
 	data, err := yaml.Marshal(cfg)
@@ -209,6 +209,7 @@ func loadExternalRegistryConfig() (*ExternalRegistryConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	// #nosec G304 -- path is scoped to the user's config directory.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -349,6 +350,7 @@ func ensureRegistryStorageSize(logger *zap.Logger, namespace, registryStorageSiz
 
 	logger.Info("Updating registry storage size", zap.String("from", currentSize), zap.String("to", storageSize))
 	patchPayload := fmt.Sprintf(`{"spec":{"resources":{"requests":{"storage":"%s"}}}}`, storageSize)
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	patchCmd := exec.Command("kubectl", "patch", "pvc", "registry-storage", "-n", namespace, "-p", patchPayload)
 	patchCmd.Stdout = os.Stdout
 	patchCmd.Stderr = os.Stderr
@@ -523,6 +525,7 @@ func pushInCluster(logger *zap.Logger, source, target, helperNS string) error {
 	}
 	defer os.Remove(tmpPath)
 
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	saveCmd := exec.Command("docker", "save", "-o", tmpPath, source)
 	saveCmd.Stdout = os.Stdout
 	saveCmd.Stderr = os.Stderr
@@ -531,6 +534,7 @@ func pushInCluster(logger *zap.Logger, source, target, helperNS string) error {
 	}
 
 	// Start helper pod with skopeo
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	runCmd := exec.Command("kubectl", "run", helperName, "-n", helperNS, "--image="+GetSkopeoImage(), "--restart=Never", "--command", "--", "sh", "-c", "while true; do sleep 3600; done")
 	runCmd.Stdout = os.Stdout
 	runCmd.Stderr = os.Stderr
@@ -538,9 +542,11 @@ func pushInCluster(logger *zap.Logger, source, target, helperNS string) error {
 		return fmt.Errorf("failed to start helper pod: %w", err)
 	}
 	defer func() {
+		// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 		_ = exec.Command("kubectl", "delete", "pod", helperName, "-n", helperNS, "--ignore-not-found").Run()
 	}()
 
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	waitCmd := exec.Command("kubectl", "wait", "--for=condition=Ready", "pod/"+helperName, "-n", helperNS, "--timeout=60s")
 	waitCmd.Stdout = os.Stdout
 	waitCmd.Stderr = os.Stderr
@@ -549,6 +555,7 @@ func pushInCluster(logger *zap.Logger, source, target, helperNS string) error {
 	}
 
 	// Copy tar into pod
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	cpCmd := exec.Command("kubectl", "cp", tmpPath, fmt.Sprintf("%s/%s:%s", helperNS, helperName, "/tmp/image.tar"))
 	cpCmd.Stdout = os.Stdout
 	cpCmd.Stderr = os.Stderr
@@ -557,6 +564,7 @@ func pushInCluster(logger *zap.Logger, source, target, helperNS string) error {
 	}
 
 	// Push using skopeo from inside cluster (registry is http, so disable tls verify)
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	pushCmd := exec.Command("kubectl", "exec", "-n", helperNS, helperName, "--",
 		"skopeo", "copy", "--dest-tls-verify=false", "docker-archive:/tmp/image.tar", "docker://"+target)
 	pushCmd.Stdout = os.Stdout

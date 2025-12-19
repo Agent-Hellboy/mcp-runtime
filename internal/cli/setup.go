@@ -14,7 +14,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const defaultRegistrySecretName = "mcp-runtime-registry-creds"
+const defaultRegistrySecretName = "mcp-runtime-registry-creds" // #nosec G101 -- default secret name, not a credential.
 
 // NewSetupCmd constructs the top-level setup command for installing the platform.
 func NewSetupCmd(logger *zap.Logger) *cobra.Command {
@@ -141,7 +141,9 @@ func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingres
 			return err
 		}
 
-		showRegistryInfo(logger)
+		if err := showRegistryInfo(logger); err != nil {
+			Warn(fmt.Sprintf("Failed to show registry info: %v", err))
+		}
 	}
 
 	// Step 5: Deploy operator
@@ -281,6 +283,7 @@ func configureProvisionedRegistryEnv(ext *ExternalRegistryConfig, secretName str
 		// Populate env vars from the secret instead of literals to avoid leaking creds in args/history.
 		args = append(args, "--from=secret/"+secretName)
 	}
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	cmd := exec.Command("kubectl", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -303,6 +306,7 @@ func ensureProvisionedRegistrySecret(name, username, password string) error {
 		return nil
 	}
 
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	createCmd := exec.Command(
 		"kubectl", "create", "secret", "generic", name,
 		"--from-env-file=-",
@@ -318,6 +322,7 @@ func ensureProvisionedRegistrySecret(name, username, password string) error {
 		return fmt.Errorf("render secret manifest: %w", err)
 	}
 
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	applyCmd := exec.Command("kubectl", "apply", "-f", "-")
 	applyCmd.Stdin = &rendered
 	applyCmd.Stdout = os.Stdout
@@ -330,6 +335,7 @@ func ensureProvisionedRegistrySecret(name, username, password string) error {
 }
 
 func buildOperatorImage(image string) error {
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	cmd := exec.Command("make", "-f", "Makefile.operator", "docker-build-operator", "IMG="+image)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -337,6 +343,7 @@ func buildOperatorImage(image string) error {
 }
 
 func restartDeployment(name, namespace string) error {
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	cmd := exec.Command("kubectl", "rollout", "restart", "deployment/"+name, "-n", namespace)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -449,14 +456,20 @@ func deployOperatorManifests(logger *zap.Logger, operatorImage string) error {
 	defer os.Remove(tmpFile.Name())
 
 	if _, err := tmpFile.WriteString(managerYAMLStr); err != nil {
-		tmpFile.Close()
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			return fmt.Errorf("failed to close temp file after write error: %w", closeErr)
+		}
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
 
 	// Delete existing deployment to avoid immutable selector conflicts on reapply.
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	_ = exec.Command("kubectl", "delete", "deployment/mcp-runtime-operator-controller-manager", "-n", "mcp-runtime", "--ignore-not-found").Run()
 
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	cmd = exec.Command("kubectl", "apply", "-f", tmpFile.Name())
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -513,6 +526,7 @@ func setupTLS(logger *zap.Logger) error {
 	// Wait for certificate to be ready using kubectl wait
 	certTimeout := GetCertTimeout()
 	Info(fmt.Sprintf("Waiting for certificate to be issued (timeout: %s)", certTimeout))
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	cmd = exec.Command("kubectl", "wait", "--for=condition=Ready",
 		"certificate/registry-cert", "-n", "registry",
 		fmt.Sprintf("--timeout=%s", certTimeout))

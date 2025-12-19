@@ -136,6 +136,7 @@ func deployCRDs(logger *zap.Logger, manifestsDir, namespace string) error {
 			args = append(args, "-n", namespace)
 		}
 
+		// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 		cmd := exec.Command("kubectl", args...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr

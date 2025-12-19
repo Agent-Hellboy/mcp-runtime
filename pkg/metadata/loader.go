@@ -10,7 +10,9 @@ import (
 
 // LoadFromFile reads a single registry YAML file from disk and applies default values.
 func LoadFromFile(filePath string) (*RegistryFile, error) {
-	data, err := os.ReadFile(filePath)
+	cleanPath := filepath.Clean(filePath)
+	// #nosec G304 -- path is user-supplied for local metadata loading.
+	data, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}

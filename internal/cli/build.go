@@ -98,6 +98,7 @@ func buildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metada
 		fullImage := fmt.Sprintf("%s:%s", imageName, tag)
 
 		// Build Docker image
+		// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 		buildCmd := exec.Command("docker", "build",
 			"-f", dockerfile,
 			"-t", fullImage,
@@ -181,7 +182,7 @@ func updateMetadataImage(serverName, imageName, tag, metadataFile, metadataDir s
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	if err := os.WriteFile(targetFile, data, 0644); err != nil {
+	if err := os.WriteFile(targetFile, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write metadata: %w", err)
 	}
 

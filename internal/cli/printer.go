@@ -68,7 +68,9 @@ func (p *Printer) Table(data [][]string) {
 	if len(data) == 0 {
 		return
 	}
-	pterm.DefaultTable.WithHasHeader().WithData(data).Render()
+	if err := pterm.DefaultTable.WithHasHeader().WithData(data).Render(); err != nil {
+		pterm.Error.Println("failed to render table:", err)
+	}
 }
 
 // TableBoxed prints a formatted table with box borders.
@@ -76,7 +78,9 @@ func (p *Printer) TableBoxed(data [][]string) {
 	if len(data) == 0 {
 		return
 	}
-	pterm.DefaultTable.WithHasHeader().WithBoxed().WithData(data).Render()
+	if err := pterm.DefaultTable.WithHasHeader().WithBoxed().WithData(data).Render(); err != nil {
+		pterm.Error.Println("failed to render table:", err)
+	}
 }
 
 // --- Headers & Banners ---

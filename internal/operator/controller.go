@@ -407,7 +407,7 @@ func (r *MCPServerReconciler) buildImagePullSecrets(ctx context.Context, mcpServ
 
 	secretName := r.ProvisionedRegistry.SecretName
 	if secretName == "" {
-		secretName = "mcp-runtime-registry-creds"
+		secretName = "mcp-runtime-registry-creds" // #nosec G101 -- default secret name, not a credential.
 	}
 
 	if err := r.ensureRegistryPullSecret(ctx, mcpServer.Namespace, secretName,

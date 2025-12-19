@@ -222,11 +222,12 @@ func createServer(logger *zap.Logger, name, namespace, image, imageTag string) e
 	}
 
 	tmpFile := fmt.Sprintf("/tmp/mcpserver-%s.yaml", name)
-	if err := os.WriteFile(tmpFile, manifestBytes, 0644); err != nil {
+	if err := os.WriteFile(tmpFile, manifestBytes, 0o600); err != nil {
 		return fmt.Errorf("failed to create manifest: %w", err)
 	}
 	defer os.Remove(tmpFile)
 
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	cmd := exec.Command("kubectl", "apply", "-f", tmpFile)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -235,6 +236,7 @@ func createServer(logger *zap.Logger, name, namespace, image, imageTag string) e
 }
 
 func createServerFromFile(logger *zap.Logger, file string) error {
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	cmd := exec.Command("kubectl", "apply", "-f", file)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -258,6 +260,7 @@ func viewServerLogs(logger *zap.Logger, name, namespace string, follow bool) err
 		args = append(args, "-f")
 	}
 
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	cmd := exec.Command("kubectl", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
