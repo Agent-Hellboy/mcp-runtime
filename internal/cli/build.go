@@ -185,7 +185,7 @@ func updateMetadataImage(serverName, imageName, tag, metadataFile, metadataDir s
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	if err := os.WriteFile(targetFile, data, 0o644); err != nil {
+	if err := os.WriteFile(targetFile, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write metadata: %w", err)
 	}
 

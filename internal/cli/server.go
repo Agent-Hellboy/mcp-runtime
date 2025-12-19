@@ -282,7 +282,10 @@ func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) er
 	defer os.Remove(tmpPath)
 
 	if _, err := tmpFile.Write(manifestBytes); err != nil {
-		tmpFile.Close()
+		closeErr := tmpFile.Close()
+		if closeErr != nil {
+			return fmt.Errorf("failed to write manifest: %w; failed to close temp file: %v", err, closeErr)
+		}
 		return fmt.Errorf("failed to write manifest: %w", err)
 	}
 	if err := tmpFile.Close(); err != nil {
