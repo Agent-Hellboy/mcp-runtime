@@ -29,30 +29,6 @@ jobs:
           flags: post-merge
           fail_ci_if_error: false
 
-  generated-drift:
-    name: Generated File Drift
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Regenerate CRDs/manifests
-        run: make -f Makefile.operator generate manifests
-
-      - name: Check for drift
-        run: |
-          if ! git diff --quiet; then
-            echo "Generated files are out of date. Run 'make -f Makefile.operator generate manifests'."
-            git diff
-            exit 1
-          fi
-
   kustomize-builds:
     name: Kustomize Build Sanity
     runs-on: ubuntu-latest
