@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"os"
 )
@@ -12,10 +13,10 @@ type KubectlClient struct {
 }
 
 // NewKubectlClient creates a KubectlClient with default validators.
-func NewKubectlClient(exec Executor) *KubectlClient {
+func NewKubectlClient(exec Executor) (*KubectlClient, error) {
 	root, err := os.Getwd()
 	if err != nil {
-		root = "."
+		return nil, fmt.Errorf("get working directory: %w", err)
 	}
 	return &KubectlClient{
 		exec: exec,
@@ -23,7 +24,7 @@ func NewKubectlClient(exec Executor) *KubectlClient {
 			NoControlChars(), // Prevent YAML/command injection via control chars
 			PathUnder(root),
 		},
-	}
+	}, nil
 }
 
 // CommandArgs builds a kubectl command with the given arguments.
@@ -70,4 +71,12 @@ func (c *KubectlClient) RunWithOutput(args []string, stdout, stderr io.Writer) e
 	return cmd.Run()
 }
 
-var kubectlClient = NewKubectlClient(execExecutor)
+var kubectlClient = mustNewKubectlClient()
+
+func mustNewKubectlClient() *KubectlClient {
+	client, err := NewKubectlClient(execExecutor)
+	if err != nil {
+		panic(err)
+	}
+	return client
+}
