@@ -94,7 +94,7 @@ TMP_DIR=$$(mktemp -d) ;\
 cd $$TMP_DIR ;\
 go mod init tmp ;\
 echo "Downloading $(1)" ;\
-GOBIN=$(PROJECT_DIR)/bin go install $(1) ;\
+CGO_ENABLED=0 GOBIN=$(PROJECT_DIR)/bin go install $(1) ;\
 rm -rf $$TMP_DIR ;\
 }
 endef
