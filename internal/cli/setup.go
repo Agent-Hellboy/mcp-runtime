@@ -452,8 +452,8 @@ func deployOperatorManifests(logger *zap.Logger, operatorImage string) error {
 	re := regexp.MustCompile(`(?m)^(\s*)image:\s*\S+`)
 	managerYAMLStr := re.ReplaceAllString(string(managerYAML), fmt.Sprintf("${1}image: %s", operatorImage))
 
-	// Write to temp file and apply
-	tmpFile, err := os.CreateTemp("", "manager-*.yaml")
+	// Write to temp file under the working directory so kubectl path validation passes.
+	tmpFile, err := os.CreateTemp(".", "manager-*.yaml")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
