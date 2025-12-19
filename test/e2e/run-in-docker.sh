@@ -23,14 +23,16 @@ fi
 DOCKER_BASE_ARGS=(--network=host -v /var/run/docker.sock:/var/run/docker.sock)
 MOUNT_ARGS=(-v "${ROOT}":/workspace -w /workspace)
 
-if ! DOCKER_CONFIG="${DOCKER_CONFIG}" docker run "${DOCKER_FLAGS[@]}" "${DOCKER_BASE_ARGS[@]}" \
-  "${MOUNT_ARGS[@]}" "${IMAGE_NAME}" -lc "test -f test/e2e-kind.sh"; then
+# Test if bind mounts work with a simple check first (suppress errors for clean fallback)
+if DOCKER_CONFIG="${DOCKER_CONFIG}" docker run --rm "${DOCKER_BASE_ARGS[@]}" \
+  "${MOUNT_ARGS[@]}" "${IMAGE_NAME}" -lc "test -d /workspace" 2>/dev/null; then
+  echo "[run] bind mount available, using host workspace"
+  DOCKER_CONFIG="${DOCKER_CONFIG}" docker run "${DOCKER_FLAGS[@]}" "${DOCKER_BASE_ARGS[@]}" \
+    "${MOUNT_ARGS[@]}" "${IMAGE_NAME}" \
+    test/e2e/kind.sh
+else
   echo "[warn] bind mount unavailable, running from image contents"
   DOCKER_CONFIG="${DOCKER_CONFIG}" docker run "${DOCKER_FLAGS[@]}" "${DOCKER_BASE_ARGS[@]}" \
     "${IMAGE_NAME}" \
-    test/e2e-kind.sh
-else
-  DOCKER_CONFIG="${DOCKER_CONFIG}" docker run "${DOCKER_FLAGS[@]}" "${DOCKER_BASE_ARGS[@]}" \
-    "${MOUNT_ARGS[@]}" "${IMAGE_NAME}" \
-    test/e2e-kind.sh
+    test/e2e/kind.sh
 fi

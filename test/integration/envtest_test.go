@@ -1,0 +1,324 @@
+//go:build integration
+
+// Package integration provides controller integration tests using envtest.
+//
+// These tests use controller-runtime's envtest to spin up a local API server
+// and test the operator controller WITHOUT requiring a real Kubernetes cluster.
+//
+// envtest provides:
+//   - Local API server (kube-apiserver)
+//   - Local etcd
+//   - CRD registration
+//
+// envtest does NOT provide:
+//   - Kubernetes controllers (Deployment, Service, etc.)
+//   - Kubelet or node simulation
+//   - Networking
+//
+// Prerequisites:
+//   - Install envtest binaries: setup-envtest use -p path k8s/1.28
+//   - Set KUBEBUILDER_ASSETS if not using default location
+//
+// Run with: go test -v ./test/integration/... -tags=integration
+package integration
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+	"mcp-runtime/internal/operator"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+)
+
+// TestControllerWithEnvtest tests the full controller setup with envtest.
+func TestControllerWithEnvtest(t *testing.T) {
+	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
+
+	// Find CRD path (relative to test/integration/)
+	crdPath := filepath.Join("..", "..", "config", "crd", "bases")
+
+	testEnv := &envtest.Environment{
+		CRDDirectoryPaths:     []string{crdPath},
+		ErrorIfCRDPathMissing: true,
+	}
+
+	cfg, err := testEnv.Start()
+	if err != nil {
+		t.Fatalf("failed to start test environment: %v", err)
+	}
+	defer func() {
+		if err := testEnv.Stop(); err != nil {
+			t.Errorf("failed to stop test environment: %v", err)
+		}
+	}()
+
+	scheme := runtime.NewScheme()
+	_ = mcpv1alpha1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = networkingv1.AddToScheme(scheme)
+
+	t.Run("SetupWithManager", func(t *testing.T) {
+		testSetupWithManager(t, cfg, scheme)
+	})
+
+	t.Run("ReconcileCreatesResources", func(t *testing.T) {
+		testReconcileCreatesResources(t, cfg, scheme)
+	})
+
+	t.Run("ReconcileHandlesDeletion", func(t *testing.T) {
+		testReconcileHandlesDeletion(t, cfg, scheme)
+	})
+
+	t.Run("ReconcileAppliesDefaults", func(t *testing.T) {
+		testReconcileAppliesDefaults(t, cfg, scheme)
+	})
+}
+
+func testSetupWithManager(t *testing.T, cfg *rest.Config, scheme *runtime.Scheme) {
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme})
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	reconciler := &operator.MCPServerReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}
+
+	if err := reconciler.SetupWithManager(mgr); err != nil {
+		t.Fatalf("SetupWithManager failed: %v", err)
+	}
+	t.Log("SetupWithManager completed successfully")
+}
+
+func testReconcileCreatesResources(t *testing.T, cfg *rest.Config, scheme *runtime.Scheme) {
+	mgr, k8sClient, cancel := startManager(t, cfg, scheme)
+	defer cancel()
+
+	createNamespace(t, k8sClient, "test-create")
+
+	replicas := int32(1)
+	mcpServer := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-server",
+			Namespace: "test-create",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image:        "nginx",
+			ImageTag:     "alpine",
+			Port:         80,
+			ServicePort:  80,
+			Replicas:     &replicas,
+			IngressHost:  "test.example.com",
+			IngressPath:  "/test",
+			IngressClass: "nginx",
+		},
+	}
+
+	ctx := context.Background()
+	if err := k8sClient.Create(ctx, mcpServer); err != nil {
+		t.Fatalf("failed to create MCPServer: %v", err)
+	}
+
+	key := types.NamespacedName{Name: "test-server", Namespace: "test-create"}
+
+	// Verify resources are created
+	var deployment appsv1.Deployment
+	if err := waitForResource(ctx, k8sClient, &deployment, key, 30*time.Second); err != nil {
+		t.Fatalf("deployment not created: %v", err)
+	}
+	if len(deployment.OwnerReferences) == 0 {
+		t.Error("deployment should have owner reference")
+	}
+
+	var service corev1.Service
+	if err := waitForResource(ctx, k8sClient, &service, key, 10*time.Second); err != nil {
+		t.Fatalf("service not created: %v", err)
+	}
+
+	var ingress networkingv1.Ingress
+	if err := waitForResource(ctx, k8sClient, &ingress, key, 10*time.Second); err != nil {
+		t.Fatalf("ingress not created: %v", err)
+	}
+
+	_ = mgr // suppress unused warning
+	t.Log("All resources created with owner references")
+}
+
+func testReconcileHandlesDeletion(t *testing.T, cfg *rest.Config, scheme *runtime.Scheme) {
+	_, k8sClient, cancel := startManager(t, cfg, scheme)
+	defer cancel()
+
+	createNamespace(t, k8sClient, "test-delete")
+
+	replicas := int32(1)
+	mcpServer := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "delete-test",
+			Namespace: "test-delete",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image:        "nginx",
+			ImageTag:     "alpine",
+			Port:         80,
+			ServicePort:  80,
+			Replicas:     &replicas,
+			IngressHost:  "delete.example.com",
+			IngressPath:  "/delete",
+			IngressClass: "nginx",
+		},
+	}
+
+	ctx := context.Background()
+	if err := k8sClient.Create(ctx, mcpServer); err != nil {
+		t.Fatalf("failed to create MCPServer: %v", err)
+	}
+
+	key := types.NamespacedName{Name: "delete-test", Namespace: "test-delete"}
+
+	// Wait for deployment to be created
+	var deployment appsv1.Deployment
+	if err := waitForResource(ctx, k8sClient, &deployment, key, 30*time.Second); err != nil {
+		t.Fatalf("deployment not created: %v", err)
+	}
+
+	// Delete MCPServer
+	if err := k8sClient.Delete(ctx, mcpServer); err != nil {
+		t.Fatalf("failed to delete MCPServer: %v", err)
+	}
+
+	// Verify MCPServer is deleted
+	if err := waitForResourceDeletion(ctx, k8sClient, &mcpv1alpha1.MCPServer{}, key, 10*time.Second); err != nil {
+		t.Fatalf("MCPServer not deleted: %v", err)
+	}
+
+	t.Log("MCPServer deletion handled successfully")
+}
+
+func testReconcileAppliesDefaults(t *testing.T, cfg *rest.Config, scheme *runtime.Scheme) {
+	_, k8sClient, cancel := startManager(t, cfg, scheme)
+	defer cancel()
+
+	createNamespace(t, k8sClient, "test-defaults")
+
+	// Create MCPServer with minimal spec
+	mcpServer := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "defaults-test",
+			Namespace: "test-defaults",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image:       "nginx",
+			IngressHost: "defaults.example.com",
+		},
+	}
+
+	ctx := context.Background()
+	if err := k8sClient.Create(ctx, mcpServer); err != nil {
+		t.Fatalf("failed to create MCPServer: %v", err)
+	}
+
+	// Wait for defaults to be applied
+	time.Sleep(3 * time.Second)
+
+	var updated mcpv1alpha1.MCPServer
+	key := types.NamespacedName{Name: "defaults-test", Namespace: "test-defaults"}
+	if err := k8sClient.Get(ctx, key, &updated); err != nil {
+		t.Fatalf("failed to get MCPServer: %v", err)
+	}
+
+	if updated.Spec.Port == 0 {
+		t.Error("default port should be applied")
+	}
+	if updated.Spec.Replicas == nil || *updated.Spec.Replicas == 0 {
+		t.Error("default replicas should be applied")
+	}
+	if updated.Spec.ImageTag == "" {
+		t.Error("default imageTag should be applied")
+	}
+
+	t.Logf("Defaults applied: port=%d, replicas=%d, imageTag=%s",
+		updated.Spec.Port, *updated.Spec.Replicas, updated.Spec.ImageTag)
+}
+
+// Helper functions
+
+func startManager(t *testing.T, cfg *rest.Config, scheme *runtime.Scheme) (ctrl.Manager, client.Client, context.CancelFunc) {
+	t.Helper()
+
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+		Scheme:         scheme,
+		LeaderElection: false,
+	})
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	reconciler := &operator.MCPServerReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}
+
+	if err := reconciler.SetupWithManager(mgr); err != nil {
+		t.Fatalf("SetupWithManager failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		if err := mgr.Start(ctx); err != nil {
+			t.Logf("manager stopped: %v", err)
+		}
+	}()
+
+	time.Sleep(2 * time.Second) // Wait for cache to sync
+
+	return mgr, mgr.GetClient(), cancel
+}
+
+func createNamespace(t *testing.T, c client.Client, name string) {
+	t.Helper()
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+	}
+	if err := c.Create(context.Background(), ns); err != nil {
+		t.Logf("namespace %s may already exist: %v", name, err)
+	}
+}
+
+func waitForResource(ctx context.Context, c client.Client, obj client.Object, key types.NamespacedName, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if err := c.Get(ctx, key, obj); err == nil {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return c.Get(ctx, key, obj)
+}
+
+func waitForResourceDeletion(ctx context.Context, c client.Client, obj client.Object, key types.NamespacedName, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if err := c.Get(ctx, key, obj); err != nil {
+			return nil // Resource deleted
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return c.Get(ctx, key, obj)
+}
