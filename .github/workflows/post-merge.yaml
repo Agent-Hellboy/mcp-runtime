@@ -77,20 +77,6 @@ jobs:
             bin/mcp-runtime-linux-arm64
             bin/mcp-runtime-linux-amd64
 
-  operator-image:
-    name: Operator Image Build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Build operator image (validation only)
-        run: |
-          docker build \
-            --pull \
-            -f Dockerfile.operator \
-            .
-
   security-gosec:
     name: Gosec Scan
     runs-on: ubuntu-latest
