@@ -69,10 +69,7 @@ jobs:
 
       - name: Run unit tests with coverage
         run: |
-          go test -v -race -coverprofile=coverage.out \
-            ./internal/cli/... \
-            ./pkg/metadata/... \
-            ./test/golden/cli/...
+          go test -v -race -coverprofile=coverage.out ./...
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
