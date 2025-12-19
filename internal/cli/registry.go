@@ -615,15 +615,3 @@ func (m *RegistryManager) PushInCluster(source, target, helperNS string) error {
 	Success(fmt.Sprintf("Pushed %s via in-cluster helper", target))
 	return nil
 }
-
-// pushDirect is a package-level helper for backward compatibility.
-func pushDirect(source, target string) error {
-	mgr := DefaultRegistryManager(zap.NewNop())
-	return mgr.PushDirect(source, target)
-}
-
-// pushInCluster is a package-level helper for backward compatibility.
-func pushInCluster(logger *zap.Logger, source, target, helperNS string) error {
-	mgr := DefaultRegistryManager(logger)
-	return mgr.PushInCluster(source, target, helperNS)
-}

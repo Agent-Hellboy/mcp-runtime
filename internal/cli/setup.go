@@ -366,7 +366,8 @@ func pushOperatorImage(image string) error {
 }
 
 func pushOperatorImageToInternalRegistry(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error {
-	if err := pushInCluster(logger, sourceImage, targetImage, helperNamespace); err != nil {
+	mgr := DefaultRegistryManager(logger)
+	if err := mgr.PushInCluster(sourceImage, targetImage, helperNamespace); err != nil {
 		return fmt.Errorf("failed to push image in-cluster: %w", err)
 	}
 	return nil
