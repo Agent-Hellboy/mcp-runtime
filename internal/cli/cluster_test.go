@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"go.uber.org/zap"
@@ -100,13 +102,19 @@ func TestClusterManager_EnsureNamespace(t *testing.T) {
 
 func TestClusterManager_InitCluster(t *testing.T) {
 	t.Run("sets kubeconfig context when provided", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		kubeconfig := filepath.Join(tmpDir, "config")
+		if err := os.WriteFile(kubeconfig, []byte("apiVersion: v1\nkind: Config\n"), 0644); err != nil {
+			t.Fatalf("failed to write kubeconfig: %v", err)
+		}
+
 		mock := &MockExecutor{
 			DefaultOutput: []byte("Switched to context"),
 		}
 		kubectl := &KubectlClient{exec: mock, validators: nil}
 		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
 
-		err := mgr.InitCluster("", "my-context")
+		err := mgr.InitCluster(kubeconfig, "my-context")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

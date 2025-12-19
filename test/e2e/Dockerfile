@@ -20,5 +20,8 @@ RUN ARCH="$(dpkg --print-architecture)" && \
 
 WORKDIR /workspace
 
-# Use bash as default entrypoint; mount repo at /workspace when running.
+# Copy the repo so tests still run if bind mounts aren't available.
+COPY . /workspace
+
+# Use bash as default entrypoint; optionally mount repo at /workspace when running.
 ENTRYPOINT ["/bin/bash"]

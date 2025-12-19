@@ -20,9 +20,17 @@ DOCKER_FLAGS=(-i --rm --privileged)
 if [ -t 0 ]; then
   DOCKER_FLAGS=(-it --rm --privileged)
 fi
-DOCKER_CONFIG="${DOCKER_CONFIG}" docker run "${DOCKER_FLAGS[@]}" --network=host \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "${ROOT}":/workspace \
-  -w /workspace \
-  "${IMAGE_NAME}" \
-  test/e2e-kind.sh
+DOCKER_BASE_ARGS=(--network=host -v /var/run/docker.sock:/var/run/docker.sock)
+MOUNT_ARGS=(-v "${ROOT}":/workspace -w /workspace)
+
+if ! DOCKER_CONFIG="${DOCKER_CONFIG}" docker run "${DOCKER_FLAGS[@]}" "${DOCKER_BASE_ARGS[@]}" \
+  "${MOUNT_ARGS[@]}" "${IMAGE_NAME}" -lc "test -f test/e2e-kind.sh"; then
+  echo "[warn] bind mount unavailable, running from image contents"
+  DOCKER_CONFIG="${DOCKER_CONFIG}" docker run "${DOCKER_FLAGS[@]}" "${DOCKER_BASE_ARGS[@]}" \
+    "${IMAGE_NAME}" \
+    test/e2e-kind.sh
+else
+  DOCKER_CONFIG="${DOCKER_CONFIG}" docker run "${DOCKER_FLAGS[@]}" "${DOCKER_BASE_ARGS[@]}" \
+    "${MOUNT_ARGS[@]}" "${IMAGE_NAME}" \
+    test/e2e-kind.sh
+fi
