@@ -22,6 +22,7 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -40,6 +42,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
 // TestControllerWithEnvtest tests the full controller setup with envtest.
@@ -88,7 +91,10 @@ func TestControllerWithEnvtest(t *testing.T) {
 }
 
 func testSetupWithManager(t *testing.T, cfg *rest.Config, scheme *runtime.Scheme) {
-	mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme})
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+		Scheme:  scheme,
+		Metrics: server.Options{BindAddress: "0"},
+	})
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
 	}
@@ -262,6 +268,7 @@ func startManager(t *testing.T, cfg *rest.Config, scheme *runtime.Scheme) (ctrl.
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:         scheme,
 		LeaderElection: false,
+		Metrics:        server.Options{BindAddress: "0"},
 	})
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
@@ -318,5 +325,11 @@ func waitForResourceDeletion(ctx context.Context, c client.Client, obj client.Ob
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	return c.Get(ctx, key, obj)
+	if err := c.Get(ctx, key, obj); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("timed out waiting for resource %s/%s deletion: %w", key.Namespace, key.Name, err)
+	}
+	return fmt.Errorf("timed out waiting for resource %s/%s deletion", key.Namespace, key.Name)
 }

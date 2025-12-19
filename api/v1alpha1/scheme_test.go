@@ -140,6 +140,12 @@ func TestMCPServerTypeMeta(t *testing.T) {
 		}
 
 		gvk := gvks[0]
+		if gvk.Group != "mcp-runtime.org" {
+			t.Errorf("GVK.Group = %q, want %q", gvk.Group, "mcp-runtime.org")
+		}
+		if gvk.Version != "v1alpha1" {
+			t.Errorf("GVK.Version = %q, want %q", gvk.Version, "v1alpha1")
+		}
 		if gvk.Kind != "MCPServerList" {
 			t.Errorf("GVK.Kind = %q, want %q", gvk.Kind, "MCPServerList")
 		}

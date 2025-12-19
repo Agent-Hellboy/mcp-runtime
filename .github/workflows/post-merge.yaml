@@ -80,6 +80,24 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
+  e2e-test:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Run E2E tests (containerized)
+        env:
+          DOCKER_CONFIG: /tmp/docker-config
+          DOCKER_BUILDKIT: "1"
+        run: |
+          chmod +x ./test/e2e/run-in-docker.sh
+          ./test/e2e/run-in-docker.sh
+
   security-gosec:
     name: Gosec Scan
     runs-on: ubuntu-latest

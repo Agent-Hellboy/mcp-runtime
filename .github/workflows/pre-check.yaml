@@ -86,24 +86,6 @@ jobs:
         env:
           KUBEBUILDER_ASSETS: ${{ env.KUBEBUILDER_ASSETS }}
 
-  e2e-test:
-    name: E2E Tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Run E2E tests (containerized)
-        env:
-          DOCKER_CONFIG: /tmp/docker-config
-          DOCKER_BUILDKIT: "1"
-        run: |
-          chmod +x ./test/e2e/run-in-docker.sh
-          ./test/e2e/run-in-docker.sh
-
   benchmark:
     name: Benchmarks
     runs-on: ubuntu-latest

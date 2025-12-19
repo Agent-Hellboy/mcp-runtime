@@ -6,7 +6,7 @@ coverage.out
 *.test
 docs/
 unittesting_strategy.md
-
+benchmarking.md
 # controller-runtime client
 .fakehome/
 .cache/
