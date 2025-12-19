@@ -20,7 +20,7 @@ jobs:
           cache: true
 
       - name: Install kustomize
-        run: go install sigs.k8s.io/kustomize/kustomize/v5@latest
+        run: go install sigs.k8s.io/kustomize/kustomize/v5@v5.7.2
 
       - name: Build default manifests
         run: kustomize build config/default
