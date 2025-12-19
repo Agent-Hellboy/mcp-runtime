@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -99,13 +98,17 @@ func buildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metada
 
 		// Build Docker image
 		// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-		buildCmd := exec.Command("docker", "build",
+		buildCmd, err := execCommandWithValidators("docker", []string{
+			"build",
 			"-f", dockerfile,
 			"-t", fullImage,
 			context,
-		)
-		buildCmd.Stdout = os.Stdout
-		buildCmd.Stderr = os.Stderr
+		})
+		if err != nil {
+			return err
+		}
+		buildCmd.SetStdout(os.Stdout)
+		buildCmd.SetStderr(os.Stderr)
 
 		if err := buildCmd.Run(); err != nil {
 			return fmt.Errorf("failed to build image for %s: %w", server.Name, err)
@@ -182,7 +185,7 @@ func updateMetadataImage(serverName, imageName, tag, metadataFile, metadataDir s
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	if err := os.WriteFile(targetFile, data, 0o600); err != nil {
+	if err := os.WriteFile(targetFile, data, 0o644); err != nil {
 		return fmt.Errorf("failed to write metadata: %w", err)
 	}
 
@@ -191,10 +194,18 @@ func updateMetadataImage(serverName, imageName, tag, metadataFile, metadataDir s
 
 func getPlatformRegistryURL(logger *zap.Logger) string {
 	// Try to get from kubectl
-	ipCmd := exec.Command("kubectl", "get", "service", "registry", "-n", "registry", "-o", "jsonpath={.spec.clusterIP}")
-	clusterIP, ipErr := ipCmd.Output()
-	portCmd := exec.Command("kubectl", "get", "service", "registry", "-n", "registry", "-o", "jsonpath={.spec.ports[0].port}")
-	port, portErr := portCmd.Output()
+	// #nosec G204 -- fixed arguments, no user input.
+	ipCmd, ipErr := kubectlClient.CommandArgs([]string{"get", "service", "registry", "-n", "registry", "-o", "jsonpath={.spec.clusterIP}"})
+	var clusterIP []byte
+	if ipErr == nil {
+		clusterIP, ipErr = ipCmd.Output()
+	}
+	// #nosec G204 -- fixed arguments, no user input.
+	portCmd, portErr := kubectlClient.CommandArgs([]string{"get", "service", "registry", "-n", "registry", "-o", "jsonpath={.spec.ports[0].port}"})
+	var port []byte
+	if portErr == nil {
+		port, portErr = portCmd.Output()
+	}
 	if ipErr == nil && len(clusterIP) > 0 && portErr == nil && len(port) > 0 {
 		return fmt.Sprintf("%s:%s", strings.TrimSpace(string(clusterIP)), strings.TrimSpace(string(port)))
 	}
@@ -206,10 +217,13 @@ func getPlatformRegistryURL(logger *zap.Logger) string {
 
 func getGitTag() string {
 	// Try to get git SHA
-	cmd := exec.Command("git", "rev-parse", "--short", "HEAD")
-	sha, err := cmd.Output()
-	if err == nil && len(sha) > 0 {
-		return strings.TrimSpace(string(sha))
+	// #nosec G204 -- fixed arguments, no user input.
+	cmd, err := execCommandWithValidators("git", []string{"rev-parse", "--short", "HEAD"})
+	if err == nil {
+		sha, execErr := cmd.Output()
+		if execErr == nil && len(sha) > 0 {
+			return strings.TrimSpace(string(sha))
+		}
 	}
 
 	// Fallback to latest

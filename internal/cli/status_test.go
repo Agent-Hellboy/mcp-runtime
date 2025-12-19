@@ -22,13 +22,13 @@ func commandKey(name string, args ...string) string {
 	return strings.Join(append([]string{name}, args...), " ")
 }
 
-func fakeExecCommand(t *testing.T, responses map[string]commandResponse, calls *[]string) func(string, ...string) *exec.Cmd {
+func fakeExecCommand(t *testing.T, base func(string, ...string) *exec.Cmd, responses map[string]commandResponse, calls *[]string) func(string, ...string) *exec.Cmd {
 	t.Helper()
 	return func(name string, args ...string) *exec.Cmd {
 		if calls != nil {
 			*calls = append(*calls, commandKey(name, args...))
 		}
-		cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--", name)
+		cmd := base(os.Args[0], "-test.run=TestHelperProcess", "--", name)
 		cmd.Args = append(cmd.Args, args...)
 		payload, err := json.Marshal(responses)
 		if err != nil {
@@ -111,7 +111,7 @@ func TestShowPlatformStatus(t *testing.T) {
 		}
 
 		origExec := execCommand
-		execCommand = fakeExecCommand(t, responses, &calls)
+		execCommand = fakeExecCommand(t, origExec, responses, &calls)
 		t.Cleanup(func() { execCommand = origExec })
 
 		var buf bytes.Buffer
@@ -149,7 +149,7 @@ func TestServerStatus(t *testing.T) {
 		}
 
 		origExec := execCommand
-		execCommand = fakeExecCommand(t, responses, nil)
+		execCommand = fakeExecCommand(t, origExec, responses, nil)
 		t.Cleanup(func() { execCommand = origExec })
 
 		var buf bytes.Buffer
@@ -160,7 +160,8 @@ func TestServerStatus(t *testing.T) {
 			pterm.EnableStyling()
 		})
 
-		err := serverStatus(logger, namespace)
+		mgr := DefaultServerManager(logger)
+		err := mgr.ServerStatus(namespace)
 		if err == nil {
 			t.Fatal("expected error from serverStatus, got nil")
 		}
@@ -186,10 +187,11 @@ func TestServerStatus(t *testing.T) {
 		}
 
 		origExec := execCommand
-		execCommand = fakeExecCommand(t, responses, &calls)
+		execCommand = fakeExecCommand(t, origExec, responses, &calls)
 		t.Cleanup(func() { execCommand = origExec })
 
-		if err := serverStatus(logger, namespace); err != nil {
+		mgr2 := DefaultServerManager(logger)
+		if err := mgr2.ServerStatus(namespace); err != nil {
 			t.Fatalf("serverStatus() unexpected error = %v", err)
 		}
 

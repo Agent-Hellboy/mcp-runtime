@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -19,23 +18,50 @@ type ingressOptions struct {
 	force    bool
 }
 
+// ClusterManager handles cluster operations with injected dependencies.
+type ClusterManager struct {
+	kubectl *KubectlClient
+	exec    Executor
+	logger  *zap.Logger
+}
+
+// NewClusterManager creates a ClusterManager with the given dependencies.
+func NewClusterManager(kubectl *KubectlClient, exec Executor, logger *zap.Logger) *ClusterManager {
+	return &ClusterManager{
+		kubectl: kubectl,
+		exec:    exec,
+		logger:  logger,
+	}
+}
+
+// DefaultClusterManager returns a ClusterManager using default clients.
+func DefaultClusterManager(logger *zap.Logger) *ClusterManager {
+	return NewClusterManager(kubectlClient, execExecutor, logger)
+}
+
 // NewClusterCmd returns the root cluster subcommand (status/init/provision).
 func NewClusterCmd(logger *zap.Logger) *cobra.Command {
+	mgr := DefaultClusterManager(logger)
+	return NewClusterCmdWithManager(mgr)
+}
+
+// NewClusterCmdWithManager returns the cluster subcommand using the provided manager.
+func NewClusterCmdWithManager(mgr *ClusterManager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cluster",
 		Short: "Manage Kubernetes cluster",
 		Long:  "Commands for managing the Kubernetes cluster",
 	}
 
-	cmd.AddCommand(newClusterInitCmd(logger))
-	cmd.AddCommand(newClusterStatusCmd(logger))
-	cmd.AddCommand(newClusterConfigCmd(logger))
-	cmd.AddCommand(newClusterProvisionCmd(logger))
+	cmd.AddCommand(mgr.newClusterInitCmd())
+	cmd.AddCommand(mgr.newClusterStatusCmd())
+	cmd.AddCommand(mgr.newClusterConfigCmd())
+	cmd.AddCommand(mgr.newClusterProvisionCmd())
 
 	return cmd
 }
 
-func newClusterInitCmd(logger *zap.Logger) *cobra.Command {
+func (m *ClusterManager) newClusterInitCmd() *cobra.Command {
 	var kubeconfig string
 	var context string
 
@@ -44,7 +70,7 @@ func newClusterInitCmd(logger *zap.Logger) *cobra.Command {
 		Short: "Initialize cluster configuration",
 		Long:  "Initialize and configure the Kubernetes cluster for MCP platform",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return initCluster(logger, kubeconfig, context)
+			return m.InitCluster(kubeconfig, context)
 		},
 	}
 
@@ -54,20 +80,20 @@ func newClusterInitCmd(logger *zap.Logger) *cobra.Command {
 	return cmd
 }
 
-func newClusterStatusCmd(logger *zap.Logger) *cobra.Command {
+func (m *ClusterManager) newClusterStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Check cluster status",
 		Long:  "Check the status of the Kubernetes cluster",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return checkClusterStatus(logger)
+			return m.CheckClusterStatus()
 		},
 	}
 
 	return cmd
 }
 
-func newClusterConfigCmd(logger *zap.Logger) *cobra.Command {
+func (m *ClusterManager) newClusterConfigCmd() *cobra.Command {
 	var ingressMode string
 	var ingressManifest string
 	var forceIngressInstall bool
@@ -82,7 +108,7 @@ func newClusterConfigCmd(logger *zap.Logger) *cobra.Command {
 				manifest: ingressManifest,
 				force:    forceIngressInstall,
 			}
-			return configureCluster(logger, opts)
+			return m.ConfigureCluster(opts)
 		},
 	}
 
@@ -93,7 +119,7 @@ func newClusterConfigCmd(logger *zap.Logger) *cobra.Command {
 	return cmd
 }
 
-func newClusterProvisionCmd(logger *zap.Logger) *cobra.Command {
+func (m *ClusterManager) newClusterProvisionCmd() *cobra.Command {
 	var provider string
 	var region string
 	var nodeCount int
@@ -104,7 +130,7 @@ func newClusterProvisionCmd(logger *zap.Logger) *cobra.Command {
 		Short: "Provision a new cluster",
 		Long:  "Provision a new Kubernetes cluster (requires cloud provider credentials)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return provisionCluster(logger, provider, region, nodeCount, clusterName)
+			return m.ProvisionCluster(provider, region, nodeCount, clusterName)
 		},
 	}
 
@@ -116,8 +142,9 @@ func newClusterProvisionCmd(logger *zap.Logger) *cobra.Command {
 	return cmd
 }
 
-func initCluster(logger *zap.Logger, kubeconfig, context string) error {
-	logger.Info("Initializing cluster configuration")
+// InitCluster initializes cluster configuration.
+func (m *ClusterManager) InitCluster(kubeconfig, context string) error {
+	m.logger.Info("Initializing cluster configuration")
 
 	if kubeconfig == "" {
 		home, err := os.UserHomeDir()
@@ -138,38 +165,41 @@ func initCluster(logger *zap.Logger, kubeconfig, context string) error {
 
 	if context != "" {
 		// Switch to specified context
-		if err := exec.Command("kubectl", "config", "use-context", context).Run(); err != nil {
+		// #nosec G204 -- context from CLI flag, kubectl validates context names.
+		if err := m.kubectl.Run([]string{"config", "use-context", context}); err != nil {
 			return fmt.Errorf("failed to set context: %w", err)
 		}
 	}
 
 	// Install CRD
-	logger.Info("Installing CRD")
-	if err := exec.Command("kubectl", "apply", "--validate=false", "-f", "config/crd/bases/mcp.agent-hellboy.io_mcpservers.yaml").Run(); err != nil {
+	m.logger.Info("Installing CRD")
+	// #nosec G204 -- fixed file path from repository.
+	if err := m.kubectl.Run([]string{"apply", "--validate=false", "-f", "config/crd/bases/mcp.agent-hellboy.io_mcpservers.yaml"}); err != nil {
 		return fmt.Errorf("failed to install CRD: %w", err)
 	}
 
 	// Create namespace
-	logger.Info("Creating mcp-runtime namespace")
-	if err := ensureNamespace("mcp-runtime"); err != nil {
+	m.logger.Info("Creating mcp-runtime namespace")
+	if err := m.EnsureNamespace(NamespaceMCPRuntime); err != nil {
 		return fmt.Errorf("failed to ensure mcp-runtime namespace: %w", err)
 	}
 
-	logger.Info("Creating mcp-servers namespace")
-	if err := ensureNamespace("mcp-servers"); err != nil {
+	m.logger.Info("Creating mcp-servers namespace")
+	if err := m.EnsureNamespace(NamespaceMCPServers); err != nil {
 		return fmt.Errorf("failed to ensure mcp-servers namespace: %w", err)
 	}
 
-	logger.Info("Cluster initialized successfully")
+	m.logger.Info("Cluster initialized successfully")
 	return nil
 }
 
-func checkClusterStatus(logger *zap.Logger) error {
-	logger.Info("Checking cluster status")
+// CheckClusterStatus checks and displays cluster status.
+func (m *ClusterManager) CheckClusterStatus() error {
+	m.logger.Info("Checking cluster status")
 
 	// Check cluster connectivity
-	cmd := execCommand("kubectl", "cluster-info")
-	output, err := cmd.CombinedOutput()
+	// #nosec G204 -- fixed kubectl command.
+	output, err := m.kubectl.CombinedOutput([]string{"cluster-info"})
 	if err != nil {
 		return fmt.Errorf("cluster not accessible: %w", err)
 	}
@@ -177,41 +207,36 @@ func checkClusterStatus(logger *zap.Logger) error {
 
 	// Check nodes
 	Section("Nodes")
-	cmd = execCommand("kubectl", "get", "nodes")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	// #nosec G204 -- fixed kubectl command.
+	if err := m.kubectl.RunWithOutput([]string{"get", "nodes"}, os.Stdout, os.Stderr); err != nil {
 		Warn(fmt.Sprintf("Failed to get nodes: %v", err))
 	}
 
 	// Check CRD
 	Section("MCP CRD")
-	cmd = execCommand("kubectl", "get", "crd", "mcpservers.mcp.agent-hellboy.io")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	// #nosec G204 -- fixed kubectl command.
+	if err := m.kubectl.RunWithOutput([]string{"get", "crd", MCPServerCRDName}, os.Stdout, os.Stderr); err != nil {
 		Warn(fmt.Sprintf("Failed to get MCP CRD: %v", err))
 	}
 
 	// Check operator
 	Section("Operator")
-	cmd = execCommand("kubectl", "get", "pods", "-n", "mcp-runtime")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	// #nosec G204 -- fixed kubectl command with hardcoded namespace.
+	if err := m.kubectl.RunWithOutput([]string{"get", "pods", "-n", NamespaceMCPRuntime}, os.Stdout, os.Stderr); err != nil {
 		Warn(fmt.Sprintf("Failed to get operator pods: %v", err))
 	}
 
 	return nil
 }
 
-func configureCluster(logger *zap.Logger, ingress ingressOptions) error {
-	logger.Info("Configuring cluster", zap.String("ingress", ingress.mode))
+// ConfigureCluster configures cluster settings like ingress.
+func (m *ClusterManager) ConfigureCluster(ingress ingressOptions) error {
+	m.logger.Info("Configuring cluster", zap.String("ingress", ingress.mode))
 
 	mode := strings.ToLower(ingress.mode)
 	switch mode {
 	case "none":
-		logger.Info("Skipping ingress controller install (ingress=none)")
+		m.logger.Info("Skipping ingress controller install (ingress=none)")
 		return nil
 	case "traefik":
 	default:
@@ -220,13 +245,13 @@ func configureCluster(logger *zap.Logger, ingress ingressOptions) error {
 
 	// Detect existing ingress classes to avoid double-install unless forced.
 	hasIngress := false
-	checkCmd := exec.Command("kubectl", "get", "ingressclass", "-o", "name")
-	out, err := checkCmd.CombinedOutput()
+	// #nosec G204 -- fixed kubectl command.
+	out, err := m.kubectl.CombinedOutput([]string{"get", "ingressclass", "-o", "name"})
 	if err == nil && strings.TrimSpace(string(out)) != "" {
 		hasIngress = true
 	}
 	if hasIngress && !ingress.force {
-		logger.Info("Ingress controller already present; skipping install", zap.String("ingress", ingress.mode))
+		m.logger.Info("Ingress controller already present; skipping install", zap.String("ingress", ingress.mode))
 		return nil
 	}
 
@@ -235,7 +260,7 @@ func configureCluster(logger *zap.Logger, ingress ingressOptions) error {
 		manifest = "config/ingress/overlays/prod"
 	}
 
-	logger.Info("Installing ingress controller", zap.String("ingress", ingress.mode), zap.String("manifest", manifest))
+	m.logger.Info("Installing ingress controller", zap.String("ingress", ingress.mode), zap.String("manifest", manifest))
 	useKustomize := false
 	manifestArg := manifest
 
@@ -255,36 +280,36 @@ func configureCluster(logger *zap.Logger, ingress ingressOptions) error {
 		args = append(args, "-f", manifest)
 	}
 
-	applyCmd := exec.Command("kubectl", args...)
-	applyCmd.Stdout = os.Stdout
-	applyCmd.Stderr = os.Stderr
-	if err := applyCmd.Run(); err != nil {
+	// #nosec G204 -- manifest path from internal config or CLI flag with file validation.
+	if err := m.kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
 		return fmt.Errorf("failed to install ingress controller (%s): %w", ingress.mode, err)
 	}
 
-	logger.Info("Ingress controller installed successfully", zap.String("ingress", ingress.mode))
-	logger.Info("Cluster configuration complete")
+	m.logger.Info("Ingress controller installed successfully", zap.String("ingress", ingress.mode))
+	m.logger.Info("Cluster configuration complete")
 	return nil
 }
-func provisionCluster(logger *zap.Logger, provider, region string, nodeCount int, clusterName string) error {
-	logger.Info("Provisioning cluster", zap.String("provider", provider), zap.String("region", region), zap.String("name", clusterName))
+
+// ProvisionCluster provisions a new Kubernetes cluster.
+func (m *ClusterManager) ProvisionCluster(provider, region string, nodeCount int, clusterName string) error {
+	m.logger.Info("Provisioning cluster", zap.String("provider", provider), zap.String("region", region), zap.String("name", clusterName))
 
 	switch provider {
 	case "kind":
-		return provisionKindCluster(logger, nodeCount, clusterName)
+		return m.provisionKindCluster(nodeCount, clusterName)
 	case "gke":
-		return provisionGKECluster(logger, region, nodeCount, clusterName)
+		return provisionGKECluster(m.logger, region, nodeCount, clusterName)
 	case "eks":
-		return provisionEKSCluster(logger, region, nodeCount, clusterName)
+		return provisionEKSCluster(m.logger, region, nodeCount, clusterName)
 	case "aks":
-		return provisionAKSCluster(logger, region, nodeCount, clusterName)
+		return provisionAKSCluster(m.logger, region, nodeCount, clusterName)
 	default:
 		return fmt.Errorf("unsupported provider: %s", provider)
 	}
 }
 
-func provisionKindCluster(logger *zap.Logger, nodeCount int, name string) error {
-	logger.Info("Provisioning Kind cluster")
+func (m *ClusterManager) provisionKindCluster(nodeCount int, name string) error {
+	m.logger.Info("Provisioning Kind cluster")
 
 	clusterName := name
 	if clusterName == "" {
@@ -317,15 +342,18 @@ nodes:
 	}
 
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	cmd := exec.Command("kind", "create", "cluster", "--config", tmp.Name(), "--name", clusterName)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd, err := m.exec.Command("kind", []string{"create", "cluster", "--config", tmp.Name(), "--name", clusterName})
+	if err != nil {
+		return err
+	}
+	cmd.SetStdout(os.Stdout)
+	cmd.SetStderr(os.Stderr)
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to create kind cluster: %w", err)
 	}
 
-	logger.Info("Kind cluster provisioned successfully")
+	m.logger.Info("Kind cluster provisioned successfully")
 	return nil
 }
 
@@ -350,16 +378,27 @@ func provisionAKSCluster(logger *zap.Logger, region string, nodeCount int, clust
 	return fmt.Errorf("AKS provisioning not yet implemented; create the cluster with az, e.g. `az aks create --name %s --resource-group <rg> --location %s --node-count %d`", clusterName, region, nodeCount)
 }
 
-// ensureNamespace applies/creates a namespace idempotently.
-func ensureNamespace(name string) error {
+// EnsureNamespace applies/creates a namespace idempotently.
+func (m *ClusterManager) EnsureNamespace(name string) error {
 	nsYAML := fmt.Sprintf(`apiVersion: v1
 kind: Namespace
 metadata:
   name: %s
 `, name)
-	cmd := exec.Command("kubectl", "apply", "-f", "-")
-	cmd.Stdin = strings.NewReader(nsYAML)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// #nosec G204 -- fixed kubectl command, input via stdin; name from internal code.
+	cmd, err := m.kubectl.CommandArgs([]string{"apply", "-f", "-"})
+	if err != nil {
+		return err
+	}
+	cmd.SetStdin(strings.NewReader(nsYAML))
+	cmd.SetStdout(os.Stdout)
+	cmd.SetStderr(os.Stderr)
 	return cmd.Run()
+}
+
+// ensureNamespace is a package-level helper that uses the default kubectl client.
+// Used by other modules that don't have a ClusterManager instance.
+func ensureNamespace(name string) error {
+	mgr := DefaultClusterManager(zap.NewNop())
+	return mgr.EnsureNamespace(name)
 }

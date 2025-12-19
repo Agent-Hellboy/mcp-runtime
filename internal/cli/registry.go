@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,23 +13,50 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// RegistryManager handles registry operations with injected dependencies.
+type RegistryManager struct {
+	kubectl *KubectlClient
+	exec    Executor
+	logger  *zap.Logger
+}
+
+// NewRegistryManager creates a RegistryManager with the given dependencies.
+func NewRegistryManager(kubectl *KubectlClient, exec Executor, logger *zap.Logger) *RegistryManager {
+	return &RegistryManager{
+		kubectl: kubectl,
+		exec:    exec,
+		logger:  logger,
+	}
+}
+
+// DefaultRegistryManager returns a RegistryManager using default clients.
+func DefaultRegistryManager(logger *zap.Logger) *RegistryManager {
+	return NewRegistryManager(kubectlClient, execExecutor, logger)
+}
+
 // NewRegistryCmd builds the registry subcommand for managing registry lifecycle.
 func NewRegistryCmd(logger *zap.Logger) *cobra.Command {
+	mgr := DefaultRegistryManager(logger)
+	return NewRegistryCmdWithManager(mgr)
+}
+
+// NewRegistryCmdWithManager returns the registry subcommand using the provided manager.
+func NewRegistryCmdWithManager(mgr *RegistryManager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "registry",
 		Short: "Manage container registry",
 		Long:  "Commands for managing the container registry",
 	}
 
-	cmd.AddCommand(newRegistryStatusCmd(logger))
-	cmd.AddCommand(newRegistryInfoCmd(logger))
-	cmd.AddCommand(newRegistryProvisionCmd(logger))
-	cmd.AddCommand(newRegistryPushCmd(logger))
+	cmd.AddCommand(mgr.newRegistryStatusCmd())
+	cmd.AddCommand(mgr.newRegistryInfoCmd())
+	cmd.AddCommand(mgr.newRegistryProvisionCmd())
+	cmd.AddCommand(mgr.newRegistryPushCmd())
 
 	return cmd
 }
 
-func newRegistryStatusCmd(logger *zap.Logger) *cobra.Command {
+func (m *RegistryManager) newRegistryStatusCmd() *cobra.Command {
 	var namespace string
 
 	cmd := &cobra.Command{
@@ -38,29 +64,29 @@ func newRegistryStatusCmd(logger *zap.Logger) *cobra.Command {
 		Short: "Check registry status",
 		Long:  "Check the status of the container registry",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return checkRegistryStatus(logger, namespace)
+			return m.CheckRegistryStatus(namespace)
 		},
 	}
 
-	cmd.Flags().StringVar(&namespace, "namespace", "registry", "Registry namespace")
+	cmd.Flags().StringVar(&namespace, "namespace", NamespaceRegistry, "Registry namespace")
 
 	return cmd
 }
 
-func newRegistryInfoCmd(logger *zap.Logger) *cobra.Command {
+func (m *RegistryManager) newRegistryInfoCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "info",
 		Short: "Show registry information",
 		Long:  "Show registry URL and connection information",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return showRegistryInfo(logger)
+			return m.ShowRegistryInfo()
 		},
 	}
 
 	return cmd
 }
 
-func newRegistryProvisionCmd(logger *zap.Logger) *cobra.Command {
+func (m *RegistryManager) newRegistryProvisionCmd() *cobra.Command {
 	var url string
 	var username string
 	var password string
@@ -87,13 +113,13 @@ func newRegistryProvisionCmd(logger *zap.Logger) *cobra.Command {
 				return fmt.Errorf("failed to save registry config: %w", err)
 			}
 			if cfg.Username != "" && cfg.Password != "" {
-				logger.Info("Performing docker login to external registry", zap.String("url", cfg.URL))
-				if err := loginRegistry(logger, cfg.URL, cfg.Username, cfg.Password); err != nil {
+				m.logger.Info("Performing docker login to external registry", zap.String("url", cfg.URL))
+				if err := m.LoginRegistry(cfg.URL, cfg.Username, cfg.Password); err != nil {
 					return err
 				}
 			}
 			if operatorImage != "" {
-				logger.Info("Building and pushing operator image to external registry", zap.String("image", operatorImage))
+				m.logger.Info("Building and pushing operator image to external registry", zap.String("image", operatorImage))
 				if err := buildOperatorImage(operatorImage); err != nil {
 					return fmt.Errorf("failed to build operator image: %w", err)
 				}
@@ -101,7 +127,7 @@ func newRegistryProvisionCmd(logger *zap.Logger) *cobra.Command {
 					return fmt.Errorf("failed to push operator image: %w", err)
 				}
 			}
-			logger.Info("External registry configured", zap.String("url", cfg.URL))
+			m.logger.Info("External registry configured", zap.String("url", cfg.URL))
 			fmt.Printf("External registry configured: %s\n", cfg.URL)
 			return nil
 		},
@@ -115,7 +141,7 @@ func newRegistryProvisionCmd(logger *zap.Logger) *cobra.Command {
 	return cmd
 }
 
-func newRegistryPushCmd(logger *zap.Logger) *cobra.Command {
+func (m *RegistryManager) newRegistryPushCmd() *cobra.Command {
 	var image string
 	var registryURL string
 	var name string
@@ -136,7 +162,7 @@ func newRegistryPushCmd(logger *zap.Logger) *cobra.Command {
 				}
 			}
 			if targetRegistry == "" {
-				targetRegistry = getPlatformRegistryURL(logger)
+				targetRegistry = getPlatformRegistryURL(m.logger)
 			}
 
 			repo, tag := splitImage(image)
@@ -150,13 +176,13 @@ func newRegistryPushCmd(logger *zap.Logger) *cobra.Command {
 				target = target + ":" + tag
 			}
 
-			logger.Info("Pushing image", zap.String("source", image), zap.String("target", target))
+			m.logger.Info("Pushing image", zap.String("source", image), zap.String("target", target))
 
 			switch mode {
 			case "direct":
-				return pushDirect(image, target)
+				return m.PushDirect(image, target)
 			case "in-cluster":
-				return pushInCluster(logger, image, target, helperNamespace)
+				return m.PushInCluster(image, target, helperNamespace)
 			default:
 				return fmt.Errorf("unknown mode %q (use direct|in-cluster)", mode)
 			}
@@ -167,7 +193,7 @@ func newRegistryPushCmd(logger *zap.Logger) *cobra.Command {
 	cmd.Flags().StringVar(&registryURL, "registry", "", "Target registry (defaults to provisioned or internal)")
 	cmd.Flags().StringVar(&name, "name", "", "Override target repo/name (default: source name without registry)")
 	cmd.Flags().StringVar(&mode, "mode", "in-cluster", "Push mode: in-cluster (default, uses skopeo helper) or direct (docker push)")
-	cmd.Flags().StringVar(&helperNamespace, "namespace", "registry", "Namespace to run the in-cluster helper pod")
+	cmd.Flags().StringVar(&helperNamespace, "namespace", NamespaceRegistry, "Namespace to run the in-cluster helper pod")
 
 	return cmd
 }
@@ -306,10 +332,8 @@ func deployRegistry(logger *zap.Logger, namespace string, port int, registryType
 	}
 	// Apply registry manifests via kustomize with namespace override
 	logger.Info("Applying registry manifests")
-	cmd := exec.Command("kubectl", "apply", "-k", manifestPath, "-n", namespace)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	// #nosec G204 -- manifestPath from internal config, namespace from setup flags.
+	if err := kubectlClient.RunWithOutput([]string{"apply", "-k", manifestPath, "-n", namespace}, os.Stdout, os.Stderr); err != nil {
 		return fmt.Errorf("failed to deploy registry: %w", err)
 	}
 
@@ -334,10 +358,14 @@ func ensureRegistryStorageSize(logger *zap.Logger, namespace, registryStorageSiz
 		return nil
 	}
 
-	getCmd := exec.Command("kubectl", "get", "pvc", "registry-storage", "-n", namespace, "-o", "jsonpath={.spec.resources.requests.storage}")
+	// #nosec G204 -- fixed kubectl command, namespace from internal config.
+	getCmd, err := kubectlClient.CommandArgs([]string{"get", "pvc", RegistryPVCName, "-n", namespace, "-o", "jsonpath={.spec.resources.requests.storage}"})
+	if err != nil {
+		return err
+	}
 	var stdout, stderr bytes.Buffer
-	getCmd.Stdout = &stdout
-	getCmd.Stderr = &stderr
+	getCmd.SetStdout(&stdout)
+	getCmd.SetStderr(&stderr)
 	if err := getCmd.Run(); err != nil {
 		return fmt.Errorf("failed to read current registry storage size: %w (%s)", err, strings.TrimSpace(stderr.String()))
 	}
@@ -351,37 +379,35 @@ func ensureRegistryStorageSize(logger *zap.Logger, namespace, registryStorageSiz
 	logger.Info("Updating registry storage size", zap.String("from", currentSize), zap.String("to", storageSize))
 	patchPayload := fmt.Sprintf(`{"spec":{"resources":{"requests":{"storage":"%s"}}}}`, storageSize)
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	patchCmd := exec.Command("kubectl", "patch", "pvc", "registry-storage", "-n", namespace, "-p", patchPayload)
-	patchCmd.Stdout = os.Stdout
-	patchCmd.Stderr = os.Stderr
-	if err := patchCmd.Run(); err != nil {
+	if err := kubectlClient.RunWithOutput([]string{"patch", "pvc", RegistryPVCName, "-n", namespace, "-p", patchPayload}, os.Stdout, os.Stderr); err != nil {
 		return fmt.Errorf("failed to update registry storage size to %s: %w", storageSize, err)
 	}
 
 	return nil
 }
 
-func checkRegistryStatus(logger *zap.Logger, namespace string) error {
-	logger.Info("Checking registry status")
+// CheckRegistryStatus checks and displays registry status.
+func (m *RegistryManager) CheckRegistryStatus(namespace string) error {
+	m.logger.Info("Checking registry status")
 
 	Header("Registry Status")
 	DefaultPrinter.Println()
 
 	// Get deployment status
-	readyCmd := exec.Command("kubectl", "get", "deployment", "registry", "-n", namespace, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}")
-	readyOut, err := readyCmd.Output()
+	// #nosec G204 -- fixed kubectl command, namespace from internal config.
+	readyOut, err := m.kubectl.Output([]string{"get", "deployment", RegistryDeploymentName, "-n", namespace, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"})
 	if err != nil {
 		Error("Registry deployment not found")
 		return err
 	}
 
 	// Get service IP
-	ipCmd := exec.Command("kubectl", "get", "service", "registry", "-n", namespace, "-o", "jsonpath={.spec.clusterIP}:{.spec.ports[0].port}")
-	ipOut, _ := ipCmd.Output()
+	// #nosec G204 -- fixed kubectl command, namespace from internal config.
+	ipOut, _ := m.kubectl.Output([]string{"get", "service", RegistryServiceName, "-n", namespace, "-o", "jsonpath={.spec.clusterIP}:{.spec.ports[0].port}"})
 
 	// Get pod status
-	podCmd := exec.Command("kubectl", "get", "pods", "-n", namespace, "-l", "app=registry", "-o", "jsonpath={.items[0].status.phase}")
-	podOut, _ := podCmd.Output()
+	// #nosec G204 -- fixed kubectl command, namespace from internal config.
+	podOut, _ := m.kubectl.Output([]string{"get", "pods", "-n", namespace, "-l", SelectorRegistry, "-o", "jsonpath={.items[0].status.phase}"})
 
 	// Build status table
 	replicas := strings.TrimSpace(string(readyOut))
@@ -403,35 +429,41 @@ func checkRegistryStatus(logger *zap.Logger, namespace string) error {
 	return nil
 }
 
-func loginRegistry(logger *zap.Logger, registryURL, username, password string) error {
-	logger.Info("Logging into registry", zap.String("url", registryURL))
+// LoginRegistry logs into a container registry.
+func (m *RegistryManager) LoginRegistry(registryURL, username, password string) error {
+	m.logger.Info("Logging into registry", zap.String("url", registryURL))
 
-	cmd := exec.Command("docker", "login", "-u", username, "--password-stdin", registryURL)
-	cmd.Stdin = strings.NewReader(password)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// #nosec G204 -- credentials from validated config; password via stdin (not command line).
+	cmd, err := m.exec.Command("docker", []string{"login", "-u", username, "--password-stdin", registryURL})
+	if err != nil {
+		return err
+	}
+	cmd.SetStdin(strings.NewReader(password))
+	cmd.SetStdout(os.Stdout)
+	cmd.SetStderr(os.Stderr)
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to login to registry: %w", err)
 	}
 
-	logger.Info("Successfully logged into registry")
+	m.logger.Info("Successfully logged into registry")
 	return nil
 }
 
-func showRegistryInfo(logger *zap.Logger) error {
-	ns := "registry"
+// ShowRegistryInfo displays registry connection information.
+func (m *RegistryManager) ShowRegistryInfo() error {
+	ns := NamespaceRegistry
 	// Get registry service
-	cmd := exec.Command("kubectl", "get", "service", "registry", "-n", ns, "-o", "jsonpath={.spec.clusterIP}")
-	clusterIP, err := cmd.Output()
+	// #nosec G204 -- fixed kubectl command with hardcoded namespace.
+	clusterIP, err := m.kubectl.Output([]string{"get", "service", RegistryServiceName, "-n", ns, "-o", "jsonpath={.spec.clusterIP}"})
 	if err != nil {
-		logger.Debug("Failed to get registry cluster IP", zap.Error(err))
+		m.logger.Debug("Failed to get registry cluster IP", zap.Error(err))
 	}
 
-	cmd = exec.Command("kubectl", "get", "service", "registry", "-n", ns, "-o", "jsonpath={.spec.ports[0].port}")
-	port, portErr := cmd.Output()
-	if portErr != nil {
-		logger.Debug("Failed to get registry port", zap.Error(portErr))
+	// #nosec G204 -- fixed kubectl command with hardcoded namespace.
+	port, err := m.kubectl.Output([]string{"get", "service", RegistryServiceName, "-n", ns, "-o", "jsonpath={.spec.ports[0].port}"})
+	if err != nil {
+		m.logger.Debug("Failed to get registry port", zap.Error(err))
 	}
 
 	if len(clusterIP) > 0 && len(port) > 0 {
@@ -463,6 +495,12 @@ func showRegistryInfo(logger *zap.Logger) error {
 	return nil
 }
 
+// loginRegistry is a package-level helper for backward compatibility.
+func loginRegistry(logger *zap.Logger, registryURL, username, password string) error {
+	mgr := DefaultRegistryManager(logger)
+	return mgr.LoginRegistry(registryURL, username, password)
+}
+
 func splitImage(image string) (string, string) {
 	tag := ""
 	parts := strings.Split(image, ":")
@@ -487,17 +525,26 @@ func dropRegistryPrefix(repo string) string {
 	return repo
 }
 
-func pushDirect(source, target string) error {
-	tagCmd := exec.Command("docker", "tag", source, target)
-	tagCmd.Stdout = os.Stdout
-	tagCmd.Stderr = os.Stderr
+// PushDirect pushes an image directly using docker.
+func (m *RegistryManager) PushDirect(source, target string) error {
+	// #nosec G204 -- source/target are image references from internal push logic.
+	tagCmd, err := m.exec.Command("docker", []string{"tag", source, target})
+	if err != nil {
+		return err
+	}
+	tagCmd.SetStdout(os.Stdout)
+	tagCmd.SetStderr(os.Stderr)
 	if err := tagCmd.Run(); err != nil {
 		return fmt.Errorf("failed to tag image: %w", err)
 	}
 
-	pushCmd := exec.Command("docker", "push", target)
-	pushCmd.Stdout = os.Stdout
-	pushCmd.Stderr = os.Stderr
+	// #nosec G204 -- target is image reference from internal push logic.
+	pushCmd, err := m.exec.Command("docker", []string{"push", target})
+	if err != nil {
+		return err
+	}
+	pushCmd.SetStdout(os.Stdout)
+	pushCmd.SetStderr(os.Stderr)
 	if err := pushCmd.Run(); err != nil {
 		return fmt.Errorf("failed to push image: %w", err)
 	}
@@ -506,11 +553,12 @@ func pushDirect(source, target string) error {
 	return nil
 }
 
-func pushInCluster(logger *zap.Logger, source, target, helperNS string) error {
+// PushInCluster pushes an image using an in-cluster helper pod.
+func (m *RegistryManager) PushInCluster(source, target, helperNS string) error {
 	helperName := fmt.Sprintf("registry-pusher-%d", time.Now().UnixNano())
 
-	nsCheck := exec.Command("kubectl", "get", "namespace", helperNS)
-	if err := nsCheck.Run(); err != nil {
+	// #nosec G204 -- helperNS from CLI flag, kubectl validates namespace names.
+	if err := m.kubectl.Run([]string{"get", "namespace", helperNS}); err != nil {
 		return fmt.Errorf("helper namespace %q not found (create it or pass --namespace): %w", helperNS, err)
 	}
 
@@ -526,53 +574,56 @@ func pushInCluster(logger *zap.Logger, source, target, helperNS string) error {
 	defer os.Remove(tmpPath)
 
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	saveCmd := exec.Command("docker", "save", "-o", tmpPath, source)
-	saveCmd.Stdout = os.Stdout
-	saveCmd.Stderr = os.Stderr
+	saveCmd, err := m.exec.Command("docker", []string{"save", "-o", tmpPath, source})
+	if err != nil {
+		return err
+	}
+	saveCmd.SetStdout(os.Stdout)
+	saveCmd.SetStderr(os.Stderr)
 	if err := saveCmd.Run(); err != nil {
 		return fmt.Errorf("failed to save image: %w", err)
 	}
 
 	// Start helper pod with skopeo
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	runCmd := exec.Command("kubectl", "run", helperName, "-n", helperNS, "--image="+GetSkopeoImage(), "--restart=Never", "--command", "--", "sh", "-c", "while true; do sleep 3600; done")
-	runCmd.Stdout = os.Stdout
-	runCmd.Stderr = os.Stderr
-	if err := runCmd.Run(); err != nil {
+	if err := m.kubectl.RunWithOutput([]string{"run", helperName, "-n", helperNS, "--image=" + GetSkopeoImage(), "--restart=Never", "--command", "--", "sh", "-c", "while true; do sleep 3600; done"}, os.Stdout, os.Stderr); err != nil {
 		return fmt.Errorf("failed to start helper pod: %w", err)
 	}
 	defer func() {
 		// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-		_ = exec.Command("kubectl", "delete", "pod", helperName, "-n", helperNS, "--ignore-not-found").Run()
+		_ = m.kubectl.Run([]string{"delete", "pod", helperName, "-n", helperNS, "--ignore-not-found"})
 	}()
 
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	waitCmd := exec.Command("kubectl", "wait", "--for=condition=Ready", "pod/"+helperName, "-n", helperNS, "--timeout=60s")
-	waitCmd.Stdout = os.Stdout
-	waitCmd.Stderr = os.Stderr
-	if err := waitCmd.Run(); err != nil {
+	if err := m.kubectl.RunWithOutput([]string{"wait", "--for=condition=Ready", "pod/" + helperName, "-n", helperNS, "--timeout=60s"}, os.Stdout, os.Stderr); err != nil {
 		return fmt.Errorf("helper pod not ready: %w", err)
 	}
 
 	// Copy tar into pod
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	cpCmd := exec.Command("kubectl", "cp", tmpPath, fmt.Sprintf("%s/%s:%s", helperNS, helperName, "/tmp/image.tar"))
-	cpCmd.Stdout = os.Stdout
-	cpCmd.Stderr = os.Stderr
-	if err := cpCmd.Run(); err != nil {
+	if err := m.kubectl.RunWithOutput([]string{"cp", tmpPath, fmt.Sprintf("%s/%s:%s", helperNS, helperName, "/tmp/image.tar")}, os.Stdout, os.Stderr); err != nil {
 		return fmt.Errorf("failed to copy image tar to helper pod: %w", err)
 	}
 
 	// Push using skopeo from inside cluster (registry is http, so disable tls verify)
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	pushCmd := exec.Command("kubectl", "exec", "-n", helperNS, helperName, "--",
-		"skopeo", "copy", "--dest-tls-verify=false", "docker-archive:/tmp/image.tar", "docker://"+target)
-	pushCmd.Stdout = os.Stdout
-	pushCmd.Stderr = os.Stderr
-	if err := pushCmd.Run(); err != nil {
+	if err := m.kubectl.RunWithOutput([]string{"exec", "-n", helperNS, helperName, "--",
+		"skopeo", "copy", "--dest-tls-verify=false", "docker-archive:/tmp/image.tar", "docker://" + target}, os.Stdout, os.Stderr); err != nil {
 		return fmt.Errorf("failed to push image from helper pod: %w", err)
 	}
 
 	Success(fmt.Sprintf("Pushed %s via in-cluster helper", target))
 	return nil
+}
+
+// pushDirect is a package-level helper for backward compatibility.
+func pushDirect(source, target string) error {
+	mgr := DefaultRegistryManager(zap.NewNop())
+	return mgr.PushDirect(source, target)
+}
+
+// pushInCluster is a package-level helper for backward compatibility.
+func pushInCluster(logger *zap.Logger, source, target, helperNS string) error {
+	mgr := DefaultRegistryManager(logger)
+	return mgr.PushInCluster(source, target, helperNS)
 }

@@ -7,8 +7,8 @@ import (
 )
 
 // Note: Most server functions execute kubectl commands and are better tested
-// through integration tests or by mocking exec.Command.
-// Unit tests here would require mocking os/exec which is complex.
+// through integration tests or by mocking execCommand.
+// Unit tests here would require mocking execCommand which is complex.
 
 func TestNewServerCmd(t *testing.T) {
 	// Test that the command structure is created correctly

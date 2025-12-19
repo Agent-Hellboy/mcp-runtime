@@ -3,7 +3,8 @@ package cli
 import (
 	"fmt"
 	"os"
-	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -11,8 +12,55 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ServerManager handles MCP server operations with injected dependencies.
+type ServerManager struct {
+	kubectl *KubectlClient
+	logger  *zap.Logger
+}
+
+// NewServerManager creates a ServerManager with the given dependencies.
+func NewServerManager(kubectl *KubectlClient, logger *zap.Logger) *ServerManager {
+	return &ServerManager{
+		kubectl: kubectl,
+		logger:  logger,
+	}
+}
+
+// DefaultServerManager returns a ServerManager using the default kubectl client.
+func DefaultServerManager(logger *zap.Logger) *ServerManager {
+	return NewServerManager(kubectlClient, logger)
+}
+
+// validServerName matches Kubernetes resource name requirements (RFC 1123 subdomain).
+var validServerName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+
+// validateServerInput validates name and namespace for kubectl commands.
+// Returns sanitized values or an error if validation fails.
+func validateServerInput(name, namespace string) (string, string, error) {
+	if !validServerName.MatchString(name) {
+		return "", "", fmt.Errorf("invalid server name %q: must be lowercase alphanumeric with optional hyphens", name)
+	}
+
+	var err error
+	if name, err = validateManifestValue("name", name); err != nil {
+		return "", "", err
+	}
+	if namespace, err = validateManifestValue("namespace", namespace); err != nil {
+		return "", "", err
+	}
+
+	return name, namespace, nil
+}
+
 // NewServerCmd returns the server subcommand (build/deploy helpers).
 func NewServerCmd(logger *zap.Logger) *cobra.Command {
+	mgr := DefaultServerManager(logger)
+	return NewServerCmdWithManager(mgr)
+}
+
+// NewServerCmdWithManager returns the server subcommand using the provided manager.
+// This is useful for testing with mock dependencies.
+func NewServerCmdWithManager(mgr *ServerManager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "server",
 		Short: "Manage MCP servers",
@@ -22,13 +70,13 @@ For building images from source, use 'server build'.
 For pushing images, use 'registry push'.`,
 	}
 
-	cmd.AddCommand(newServerListCmd(logger))
-	cmd.AddCommand(newServerGetCmd(logger))
-	cmd.AddCommand(newServerCreateCmd(logger))
-	cmd.AddCommand(newServerDeleteCmd(logger))
-	cmd.AddCommand(newServerLogsCmd(logger))
-	cmd.AddCommand(newServerStatusCmd(logger))
-	cmd.AddCommand(newServerBuildCmd(logger))
+	cmd.AddCommand(mgr.newServerListCmd())
+	cmd.AddCommand(mgr.newServerGetCmd())
+	cmd.AddCommand(mgr.newServerCreateCmd())
+	cmd.AddCommand(mgr.newServerDeleteCmd())
+	cmd.AddCommand(mgr.newServerLogsCmd())
+	cmd.AddCommand(mgr.newServerStatusCmd())
+	cmd.AddCommand(newServerBuildCmd(mgr.logger))
 
 	return cmd
 }
@@ -45,7 +93,7 @@ func newServerBuildCmd(logger *zap.Logger) *cobra.Command {
 	return cmd
 }
 
-func newServerListCmd(logger *zap.Logger) *cobra.Command {
+func (m *ServerManager) newServerListCmd() *cobra.Command {
 	var namespace string
 
 	cmd := &cobra.Command{
@@ -53,16 +101,16 @@ func newServerListCmd(logger *zap.Logger) *cobra.Command {
 		Short: "List MCP servers",
 		Long:  "List all MCP server deployments",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return listServers(logger, namespace)
+			return m.ListServers(namespace)
 		},
 	}
 
-	cmd.Flags().StringVar(&namespace, "namespace", "mcp-servers", "Namespace to list servers from")
+	cmd.Flags().StringVar(&namespace, "namespace", NamespaceMCPServers, "Namespace to list servers from")
 
 	return cmd
 }
 
-func newServerGetCmd(logger *zap.Logger) *cobra.Command {
+func (m *ServerManager) newServerGetCmd() *cobra.Command {
 	var namespace string
 
 	cmd := &cobra.Command{
@@ -71,16 +119,16 @@ func newServerGetCmd(logger *zap.Logger) *cobra.Command {
 		Long:  "Get detailed information about an MCP server",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return getServer(logger, args[0], namespace)
+			return m.GetServer(args[0], namespace)
 		},
 	}
 
-	cmd.Flags().StringVar(&namespace, "namespace", "mcp-servers", "Namespace")
+	cmd.Flags().StringVar(&namespace, "namespace", NamespaceMCPServers, "Namespace")
 
 	return cmd
 }
 
-func newServerCreateCmd(logger *zap.Logger) *cobra.Command {
+func (m *ServerManager) newServerCreateCmd() *cobra.Command {
 	var namespace string
 	var image string
 	var imageTag string
@@ -93,13 +141,13 @@ func newServerCreateCmd(logger *zap.Logger) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if file != "" {
-				return createServerFromFile(logger, file)
+				return m.CreateServerFromFile(file)
 			}
-			return createServer(logger, args[0], namespace, image, imageTag)
+			return m.CreateServer(args[0], namespace, image, imageTag)
 		},
 	}
 
-	cmd.Flags().StringVar(&namespace, "namespace", "mcp-servers", "Namespace")
+	cmd.Flags().StringVar(&namespace, "namespace", NamespaceMCPServers, "Namespace")
 	cmd.Flags().StringVar(&image, "image", "", "Container image")
 	cmd.Flags().StringVar(&imageTag, "tag", "latest", "Image tag")
 	cmd.Flags().StringVar(&file, "file", "", "YAML file with server spec")
@@ -107,7 +155,7 @@ func newServerCreateCmd(logger *zap.Logger) *cobra.Command {
 	return cmd
 }
 
-func newServerDeleteCmd(logger *zap.Logger) *cobra.Command {
+func (m *ServerManager) newServerDeleteCmd() *cobra.Command {
 	var namespace string
 
 	cmd := &cobra.Command{
@@ -116,16 +164,16 @@ func newServerDeleteCmd(logger *zap.Logger) *cobra.Command {
 		Long:  "Delete an MCP server deployment",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return deleteServer(logger, args[0], namespace)
+			return m.DeleteServer(args[0], namespace)
 		},
 	}
 
-	cmd.Flags().StringVar(&namespace, "namespace", "mcp-servers", "Namespace")
+	cmd.Flags().StringVar(&namespace, "namespace", NamespaceMCPServers, "Namespace")
 
 	return cmd
 }
 
-func newServerLogsCmd(logger *zap.Logger) *cobra.Command {
+func (m *ServerManager) newServerLogsCmd() *cobra.Command {
 	var namespace string
 	var follow bool
 
@@ -135,17 +183,17 @@ func newServerLogsCmd(logger *zap.Logger) *cobra.Command {
 		Long:  "View logs from an MCP server",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return viewServerLogs(logger, args[0], namespace, follow)
+			return m.ViewServerLogs(args[0], namespace, follow)
 		},
 	}
 
-	cmd.Flags().StringVar(&namespace, "namespace", "mcp-servers", "Namespace")
+	cmd.Flags().StringVar(&namespace, "namespace", NamespaceMCPServers, "Namespace")
 	cmd.Flags().BoolVar(&follow, "follow", false, "Follow log output")
 
 	return cmd
 }
 
-func newServerStatusCmd(logger *zap.Logger) *cobra.Command {
+func (m *ServerManager) newServerStatusCmd() *cobra.Command {
 	var namespace string
 
 	cmd := &cobra.Command{
@@ -153,41 +201,45 @@ func newServerStatusCmd(logger *zap.Logger) *cobra.Command {
 		Short: "Show MCP server runtime status (pods, images, pull secrets)",
 		Long:  "List MCPServer resources with their Deployment/pod status, image, and pull secrets.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return serverStatus(logger, namespace)
+			return m.ServerStatus(namespace)
 		},
 	}
 
-	cmd.Flags().StringVar(&namespace, "namespace", "mcp-servers", "Namespace to inspect")
+	cmd.Flags().StringVar(&namespace, "namespace", NamespaceMCPServers, "Namespace to inspect")
 
 	return cmd
 }
 
-func listServers(logger *zap.Logger, namespace string) error {
-	cmd := exec.Command("kubectl", "get", "mcpserver", "-n", namespace)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	return cmd.Run()
-}
-
-func getServer(logger *zap.Logger, name, namespace string) error {
-	cmd := exec.Command("kubectl", "get", "mcpserver", name, "-n", namespace, "-o", "yaml")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	return cmd.Run()
-}
-
-func createServer(logger *zap.Logger, name, namespace, image, imageTag string) error {
-	if image == "" {
-		return fmt.Errorf("image is required")
-	}
-
-	var err error
-	if name, err = validateManifestValue("name", name); err != nil {
+// ListServers lists all MCP servers in the given namespace.
+func (m *ServerManager) ListServers(namespace string) error {
+	namespace, err := validateManifestValue("namespace", namespace)
+	if err != nil {
 		return err
 	}
-	if namespace, err = validateManifestValue("namespace", namespace); err != nil {
+
+	// #nosec G204 -- namespace validated above; kubectl validates resource names.
+	return m.kubectl.RunWithOutput([]string{"get", "mcpserver", "-n", namespace}, os.Stdout, os.Stderr)
+}
+
+// GetServer retrieves details for a specific MCP server.
+func (m *ServerManager) GetServer(name, namespace string) error {
+	name, namespace, err := validateServerInput(name, namespace)
+	if err != nil {
+		return err
+	}
+
+	// #nosec G204 -- name/namespace validated via validateServerInput.
+	return m.kubectl.RunWithOutput([]string{"get", "mcpserver", name, "-n", namespace, "-o", "yaml"}, os.Stdout, os.Stderr)
+}
+
+// CreateServer creates a new MCP server with the given parameters.
+func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) error {
+	if image == "" {
+		return ErrImageRequired
+	}
+
+	name, namespace, err := validateServerInput(name, namespace)
+	if err != nil {
 		return err
 	}
 	if image, err = validateManifestValue("image", image); err != nil {
@@ -197,7 +249,7 @@ func createServer(logger *zap.Logger, name, namespace, image, imageTag string) e
 		return err
 	}
 
-	logger.Info("Creating MCP server", zap.String("name", name), zap.String("image", image))
+	m.logger.Info("Creating MCP server", zap.String("name", name), zap.String("image", image))
 
 	manifest := mcpServerManifest{
 		APIVersion: "mcp.agent-hellboy.io/v1alpha1",
@@ -221,59 +273,87 @@ func createServer(logger *zap.Logger, name, namespace, image, imageTag string) e
 		return fmt.Errorf("failed to marshal manifest: %w", err)
 	}
 
-	tmpFile := fmt.Sprintf("/tmp/mcpserver-%s.yaml", name)
-	if err := os.WriteFile(tmpFile, manifestBytes, 0o600); err != nil {
-		return fmt.Errorf("failed to create manifest: %w", err)
+	// Use os.CreateTemp for secure temp file creation (random suffix, no race conditions)
+	tmpFile, err := os.CreateTemp("", "mcpserver-*.yaml")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
 	}
-	defer os.Remove(tmpFile)
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
 
-	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	cmd := exec.Command("kubectl", "apply", "-f", tmpFile)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	if _, err := tmpFile.Write(manifestBytes); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("failed to write manifest: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
 
-	return cmd.Run()
+	// #nosec G204 -- tmpPath is from os.CreateTemp, kubectl is a fixed command.
+	return m.kubectl.RunWithOutput([]string{"apply", "-f", tmpPath}, os.Stdout, os.Stderr)
 }
 
-func createServerFromFile(logger *zap.Logger, file string) error {
-	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	cmd := exec.Command("kubectl", "apply", "-f", file)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+// CreateServerFromFile creates an MCP server from a YAML file.
+func (m *ServerManager) CreateServerFromFile(file string) error {
+	// Validate file path exists and is a regular file
+	absPath, err := filepath.Abs(file)
+	if err != nil {
+		return fmt.Errorf("invalid file path: %w", err)
+	}
 
-	return cmd.Run()
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return fmt.Errorf("cannot access file %q: %w", file, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("path %q is a directory, not a file", file)
+	}
+
+	// #nosec G204 -- execCommand passes arguments directly without shell interpretation;
+	// file path validated above (exists, is regular file); kubectl validates manifest contents.
+	return m.kubectl.RunWithOutput([]string{"apply", "-f", absPath}, os.Stdout, os.Stderr)
 }
 
-func deleteServer(logger *zap.Logger, name, namespace string) error {
-	logger.Info("Deleting MCP server", zap.String("name", name))
+// DeleteServer deletes an MCP server.
+func (m *ServerManager) DeleteServer(name, namespace string) error {
+	name, namespace, err := validateServerInput(name, namespace)
+	if err != nil {
+		return err
+	}
 
-	cmd := exec.Command("kubectl", "delete", "mcpserver", name, "-n", namespace)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	m.logger.Info("Deleting MCP server", zap.String("name", name))
 
-	return cmd.Run()
+	// #nosec G204 -- name/namespace validated via validateServerInput.
+	return m.kubectl.RunWithOutput([]string{"delete", "mcpserver", name, "-n", namespace}, os.Stdout, os.Stderr)
 }
 
-func viewServerLogs(logger *zap.Logger, name, namespace string, follow bool) error {
-	args := []string{"logs", "-l", "app=" + name, "-n", namespace}
+// ViewServerLogs views logs from an MCP server.
+func (m *ServerManager) ViewServerLogs(name, namespace string, follow bool) error {
+	name, namespace, err := validateServerInput(name, namespace)
+	if err != nil {
+		return err
+	}
+
+	args := []string{"logs", "-l", LabelApp + "=" + name, "-n", namespace}
 	if follow {
 		args = append(args, "-f")
 	}
 
-	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	cmd := exec.Command("kubectl", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	return cmd.Run()
+	// #nosec G204 -- name/namespace validated via validateServerInput.
+	return m.kubectl.RunWithOutput(args, os.Stdout, os.Stderr)
 }
 
-func serverStatus(logger *zap.Logger, namespace string) error {
+// ServerStatus shows the status of MCP servers in a namespace.
+func (m *ServerManager) ServerStatus(namespace string) error {
 	Header(fmt.Sprintf("MCP Servers in %s", namespace))
 	DefaultPrinter.Println()
 
 	// Get MCPServer details
-	getServersCmd := execCommand("kubectl", "get", "mcpserver", "-n", namespace, "-o", "jsonpath={range .items[*]}{.metadata.name}|{.spec.image}:{.spec.imageTag}|{.spec.replicas}|{.spec.ingressPath}|{.spec.useProvisionedRegistry}{\"\\n\"}{end}")
+	// #nosec G204 -- namespace from CLI flag; kubectl validates namespace names.
+	getServersCmd, err := m.kubectl.CommandArgs([]string{"get", "mcpserver", "-n", namespace, "-o", "jsonpath={range .items[*]}{.metadata.name}|{.spec.image}:{.spec.imageTag}|{.spec.replicas}|{.spec.ingressPath}|{.spec.useProvisionedRegistry}{\"\\n\"}{end}"})
+	if err != nil {
+		return err
+	}
 	out, err := getServersCmd.CombinedOutput()
 	if err != nil {
 		errDetails := strings.TrimSpace(string(out))
@@ -324,7 +404,11 @@ func serverStatus(logger *zap.Logger, namespace string) error {
 	DefaultPrinter.Println()
 	Section("Pod Status")
 
-	podCmd := execCommand("kubectl", "get", "pods", "-n", namespace, "-l", "app.kubernetes.io/managed-by=mcp-runtime", "-o", "custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[0].ready,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount")
+	// #nosec G204 -- namespace from CLI flag; fixed label selector.
+	podCmd, err := m.kubectl.CommandArgs([]string{"get", "pods", "-n", namespace, "-l", SelectorManagedBy, "-o", "custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[0].ready,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount"})
+	if err != nil {
+		return err
+	}
 	podOut, err := podCmd.Output()
 	if err != nil {
 		Warn("Failed to list pods: " + err.Error())

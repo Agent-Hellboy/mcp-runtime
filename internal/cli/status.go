@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -34,7 +33,8 @@ func showPlatformStatus(logger *zap.Logger) error {
 	// Cluster
 	clusterStatus := Green("OK")
 	clusterDetails := "Connected"
-	if err := checkClusterStatus(logger); err != nil {
+	clusterMgr := DefaultClusterManager(logger)
+	if err := clusterMgr.CheckClusterStatus(); err != nil {
 		clusterStatus = Red("ERROR")
 		clusterDetails = err.Error()
 	}
@@ -43,7 +43,7 @@ func showPlatformStatus(logger *zap.Logger) error {
 	// Registry
 	registryStatus := Green("OK")
 	registryDetails := "Running"
-	if err := checkRegistryStatusQuiet(logger, "registry"); err != nil {
+	if err := checkRegistryStatusQuiet(logger, NamespaceRegistry); err != nil {
 		registryStatus = Red("ERROR")
 		registryDetails = err.Error()
 	}
@@ -52,17 +52,23 @@ func showPlatformStatus(logger *zap.Logger) error {
 	// Operator
 	operatorStatus := Green("OK")
 	operatorDetails := ""
-	replicasCmd := execCommand("kubectl", "get", "deployment", "mcp-runtime-operator-controller-manager", "-n", "mcp-runtime", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}")
-	replicasOut, err := replicasCmd.Output()
+	// #nosec G204 -- fixed kubectl command with hardcoded deployment name.
+	replicasCmd, err := kubectlClient.CommandArgs([]string{"get", "deployment", OperatorDeploymentName, "-n", NamespaceMCPRuntime, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"})
 	if err != nil {
 		operatorStatus = Red("ERROR")
-		operatorDetails = "Not found"
+		operatorDetails = err.Error()
 	} else {
-		replicas := strings.TrimSpace(string(replicasOut))
-		if replicas == "" || strings.HasPrefix(replicas, "/") || strings.HasPrefix(replicas, "0/") {
-			operatorStatus = Yellow("PENDING")
+		replicasOut, execErr := replicasCmd.Output()
+		if execErr != nil {
+			operatorStatus = Red("ERROR")
+			operatorDetails = "Not found"
+		} else {
+			replicas := strings.TrimSpace(string(replicasOut))
+			if replicas == "" || strings.HasPrefix(replicas, "/") || strings.HasPrefix(replicas, "0/") {
+				operatorStatus = Yellow("PENDING")
+			}
+			operatorDetails = "Replicas: " + replicas
 		}
-		operatorDetails = "Replicas: " + replicas
 	}
 	tableData = append(tableData, []string{"Operator", operatorStatus, operatorDetails})
 
@@ -72,27 +78,32 @@ func showPlatformStatus(logger *zap.Logger) error {
 	DefaultPrinter.Println()
 	Section("MCP Servers")
 
-	cmd := execCommand("kubectl", "get", "mcpserver", "--all-namespaces", "-o", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,IMAGE:.spec.image,REPLICAS:.spec.replicas,PATH:.spec.ingressPath")
-	output, err := cmd.CombinedOutput()
+	// #nosec G204 -- fixed kubectl command.
+	cmd, err := kubectlClient.CommandArgs([]string{"get", "mcpserver", "--all-namespaces", "-o", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,IMAGE:.spec.image,REPLICAS:.spec.replicas,PATH:.spec.ingressPath"})
 	if err != nil {
-		errDetails := strings.TrimSpace(string(output))
-		if errDetails == "" {
-			errDetails = err.Error()
-		}
-		Warn("Failed to list MCP servers: " + errDetails)
-	} else if len(strings.TrimSpace(string(output))) == 0 {
-		Warn("No MCP servers deployed")
+		Warn("Failed to list MCP servers: " + err.Error())
 	} else {
-		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-		if len(lines) <= 1 {
+		output, execErr := cmd.CombinedOutput()
+		if execErr != nil {
+			errDetails := strings.TrimSpace(string(output))
+			if errDetails == "" {
+				errDetails = execErr.Error()
+			}
+			Warn("Failed to list MCP servers: " + errDetails)
+		} else if len(strings.TrimSpace(string(output))) == 0 {
 			Warn("No MCP servers deployed")
 		} else {
-			serverData := [][]string{}
-			for _, line := range lines {
-				fields := strings.Fields(line)
-				serverData = append(serverData, fields)
+			lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+			if len(lines) <= 1 {
+				Warn("No MCP servers deployed")
+			} else {
+				serverData := [][]string{}
+				for _, line := range lines {
+					fields := strings.Fields(line)
+					serverData = append(serverData, fields)
+				}
+				Table(serverData)
 			}
-			Table(serverData)
 		}
 	}
 
@@ -105,13 +116,17 @@ func showPlatformStatus(logger *zap.Logger) error {
 
 // checkRegistryStatusQuiet checks registry without printing output
 func checkRegistryStatusQuiet(logger *zap.Logger, namespace string) error {
-	cmd := execCommand("kubectl", "get", "deployment", "registry", "-n", namespace, "-o", "jsonpath={.status.readyReplicas}")
-	out, err := cmd.Output()
+	// #nosec G204 -- fixed kubectl command; namespace from internal config.
+	cmd, err := kubectlClient.CommandArgs([]string{"get", "deployment", RegistryDeploymentName, "-n", namespace, "-o", "jsonpath={.status.readyReplicas}"})
 	if err != nil {
 		return err
 	}
+	out, execErr := cmd.Output()
+	if execErr != nil {
+		return ErrRegistryNotFound
+	}
 	if strings.TrimSpace(string(out)) == "" || strings.TrimSpace(string(out)) == "0" {
-		return fmt.Errorf("registry not ready")
+		return ErrRegistryNotReady
 	}
 	return nil
 }

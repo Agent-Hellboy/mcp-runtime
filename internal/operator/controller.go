@@ -48,11 +48,12 @@ type MCPServerReconciler struct {
 	ProvisionedRegistry *RegistryConfig
 }
 
+// Use constants from constants.go
 const (
-	defaultRequestCPU    = "50m"
-	defaultRequestMemory = "64Mi"
-	defaultLimitCPU      = "500m"
-	defaultLimitMemory   = "256Mi"
+	defaultRequestCPU    = DefaultRequestCPU
+	defaultRequestMemory = DefaultRequestMemory
+	defaultLimitCPU      = DefaultLimitCPU
+	defaultLimitMemory   = DefaultLimitMemory
 )
 
 //+kubebuilder:rbac:groups=mcp.agent-hellboy.io,resources=mcpservers,verbs=get;list;watch;create;update;patch;delete

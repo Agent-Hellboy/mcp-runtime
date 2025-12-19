@@ -71,6 +71,7 @@ func runCLI(t *testing.T, args ...string) []byte {
 				t.Fatalf("failed to create bin directory: %v", err)
 			}
 
+			// #nosec G204 -- test code with trusted paths
 			buildCmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/mcp-runtime")
 			buildCmd.Dir = root
 			if err := buildCmd.Run(); err != nil {
@@ -80,6 +81,7 @@ func runCLI(t *testing.T, args ...string) []byte {
 	})
 
 	// Execute binary with args
+	// #nosec G204 -- test code with trusted binary path
 	cmd := exec.Command(binaryPath, args...)
 	cmd.Dir = repoRoot(t)
 
