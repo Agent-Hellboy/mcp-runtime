@@ -270,14 +270,14 @@ func serverStatus(logger *zap.Logger, namespace string) error {
 	DefaultPrinter.Println()
 
 	// Get MCPServer details
-	getServersCmd := exec.Command("kubectl", "get", "mcpserver", "-n", namespace, "-o", "jsonpath={range .items[*]}{.metadata.name}|{.spec.image}:{.spec.imageTag}|{.spec.replicas}|{.spec.ingressPath}|{.spec.useProvisionedRegistry}{\"\\n\"}{end}")
+	getServersCmd := execCommand("kubectl", "get", "mcpserver", "-n", namespace, "-o", "jsonpath={range .items[*]}{.metadata.name}|{.spec.image}:{.spec.imageTag}|{.spec.replicas}|{.spec.ingressPath}|{.spec.useProvisionedRegistry}{\"\\n\"}{end}")
 	out, err := getServersCmd.CombinedOutput()
 	if err != nil {
 		errDetails := strings.TrimSpace(string(out))
 		if errDetails == "" {
 			errDetails = err.Error()
 		}
-		Error("Failed to list MCP servers: " + errDetails)
+		DefaultPrinter.Println("ERROR: Failed to list MCP servers: " + errDetails)
 		return fmt.Errorf("kubectl get mcpserver failed: %w", err)
 	}
 
@@ -321,9 +321,13 @@ func serverStatus(logger *zap.Logger, namespace string) error {
 	DefaultPrinter.Println()
 	Section("Pod Status")
 
-	podCmd := exec.Command("kubectl", "get", "pods", "-n", namespace, "-l", "app.kubernetes.io/managed-by=mcp-runtime", "-o", "custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[0].ready,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount")
+	podCmd := execCommand("kubectl", "get", "pods", "-n", namespace, "-l", "app.kubernetes.io/managed-by=mcp-runtime", "-o", "custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[0].ready,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount")
 	podOut, err := podCmd.Output()
-	if err == nil && len(strings.TrimSpace(string(podOut))) > 0 {
+	if err != nil {
+		Warn("Failed to list pods: " + err.Error())
+		return nil
+	}
+	if len(strings.TrimSpace(string(podOut))) > 0 {
 		podLines := strings.Split(strings.TrimSpace(string(podOut)), "\n")
 		if len(podLines) > 1 {
 			podData := [][]string{}

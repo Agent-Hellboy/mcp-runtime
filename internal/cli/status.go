@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -53,7 +52,7 @@ func showPlatformStatus(logger *zap.Logger) error {
 	// Operator
 	operatorStatus := Green("OK")
 	operatorDetails := ""
-	replicasCmd := exec.Command("kubectl", "get", "deployment", "mcp-runtime-operator-controller-manager", "-n", "mcp-runtime", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}")
+	replicasCmd := execCommand("kubectl", "get", "deployment", "mcp-runtime-operator-controller-manager", "-n", "mcp-runtime", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}")
 	replicasOut, err := replicasCmd.Output()
 	if err != nil {
 		operatorStatus = Red("ERROR")
@@ -73,9 +72,15 @@ func showPlatformStatus(logger *zap.Logger) error {
 	DefaultPrinter.Println()
 	Section("MCP Servers")
 
-	cmd := exec.Command("kubectl", "get", "mcpserver", "--all-namespaces", "-o", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,IMAGE:.spec.image,REPLICAS:.spec.replicas,PATH:.spec.ingressPath")
-	output, err := cmd.Output()
-	if err != nil || len(strings.TrimSpace(string(output))) == 0 {
+	cmd := execCommand("kubectl", "get", "mcpserver", "--all-namespaces", "-o", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,IMAGE:.spec.image,REPLICAS:.spec.replicas,PATH:.spec.ingressPath")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		errDetails := strings.TrimSpace(string(output))
+		if errDetails == "" {
+			errDetails = err.Error()
+		}
+		Warn("Failed to list MCP servers: " + errDetails)
+	} else if len(strings.TrimSpace(string(output))) == 0 {
 		Warn("No MCP servers deployed")
 	} else {
 		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
@@ -100,7 +105,7 @@ func showPlatformStatus(logger *zap.Logger) error {
 
 // checkRegistryStatusQuiet checks registry without printing output
 func checkRegistryStatusQuiet(logger *zap.Logger, namespace string) error {
-	cmd := exec.Command("kubectl", "get", "deployment", "registry", "-n", namespace, "-o", "jsonpath={.status.readyReplicas}")
+	cmd := execCommand("kubectl", "get", "deployment", "registry", "-n", namespace, "-o", "jsonpath={.status.readyReplicas}")
 	out, err := cmd.Output()
 	if err != nil {
 		return err

@@ -211,6 +211,11 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 			"app.kubernetes.io/managed-by": "mcp-runtime",
 		}
 
+		deployment.Labels = map[string]string{
+			"app":                          mcpServer.Name,
+			"app.kubernetes.io/managed-by": "mcp-runtime",
+		}
+
 		deployment.Spec = appsv1.DeploymentSpec{
 			Replicas: mcpServer.Spec.Replicas,
 			Selector: &metav1.LabelSelector{
