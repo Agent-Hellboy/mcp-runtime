@@ -156,7 +156,7 @@ func (r *MCPServerReconciler) requireSpecField(ctx context.Context, mcpServer *m
 	if value != "" {
 		return nil
 	}
-	err := fmt.Errorf(message)
+	err := fmt.Errorf("%s", message)
 	r.updateStatus(ctx, mcpServer, "Error", err.Error(), false, false, false)
 	logger.Error(err, "Missing "+field)
 	return err
