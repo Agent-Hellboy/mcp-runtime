@@ -251,65 +251,12 @@ func TestMCPServerSpecDeepCopy(t *testing.T) {
 	// Perform deep copy
 	copied := original.DeepCopy()
 
-	// Verify all simple fields are copied correctly
-	if copied.Image != original.Image {
-		t.Errorf("Image = %q, want %q", copied.Image, original.Image)
-	}
-	if copied.ImageTag != original.ImageTag {
-		t.Errorf("ImageTag = %q, want %q", copied.ImageTag, original.ImageTag)
-	}
-	if copied.RegistryOverride != original.RegistryOverride {
-		t.Errorf("RegistryOverride = %q, want %q", copied.RegistryOverride, original.RegistryOverride)
-	}
-	if copied.UseProvisionedRegistry != original.UseProvisionedRegistry {
-		t.Errorf("UseProvisionedRegistry = %v, want %v", copied.UseProvisionedRegistry, original.UseProvisionedRegistry)
-	}
-
-	// Verify Replicas pointer is independent
-	if copied.Replicas == nil || *copied.Replicas != *original.Replicas {
-		t.Errorf("Replicas = %v, want %v", copied.Replicas, original.Replicas)
-	}
-	// Modify original replicas to verify independence
-	*original.Replicas = 5
-	if *copied.Replicas != 3 {
-		t.Errorf("Deep copy failed: copied Replicas was modified to %d, expected it to remain 3", *copied.Replicas)
-	}
-
-	// Verify ImagePullSecrets slice is independent
-	if len(copied.ImagePullSecrets) != len(original.ImagePullSecrets) {
-		t.Errorf("ImagePullSecrets length = %d, want %d", len(copied.ImagePullSecrets), len(original.ImagePullSecrets))
-	}
-	original.ImagePullSecrets[0] = "modified-secret"
-	if copied.ImagePullSecrets[0] != "secret1" {
-		t.Errorf("Deep copy failed: copied ImagePullSecrets[0] was modified to %q, expected it to remain \"secret1\"", copied.ImagePullSecrets[0])
-	}
-
-	// Verify IngressAnnotations map is independent
-	if len(copied.IngressAnnotations) != len(original.IngressAnnotations) {
-		t.Errorf("IngressAnnotations length = %d, want %d", len(copied.IngressAnnotations), len(original.IngressAnnotations))
-	}
-	original.IngressAnnotations["key1"] = "modified-value"
-	if copied.IngressAnnotations["key1"] != "value1" {
-		t.Errorf("Deep copy failed: copied IngressAnnotations[\"key1\"] was modified to %q, expected it to remain \"value1\"", copied.IngressAnnotations["key1"])
-	}
-
-	// Verify Resources is deeply copied
-	if copied.Resources.Limits == nil || copied.Resources.Limits.CPU != "500m" {
-		t.Errorf("Resources.Limits.CPU = %q, want \"500m\"", copied.Resources.Limits.CPU)
-	}
-	original.Resources.Limits.CPU = "1000m"
-	if copied.Resources.Limits.CPU != "500m" {
-		t.Errorf("Deep copy failed: copied Resources.Limits.CPU was modified to %q, expected it to remain \"500m\"", copied.Resources.Limits.CPU)
-	}
-
-	// Verify EnvVars slice is independent
-	if len(copied.EnvVars) != len(original.EnvVars) {
-		t.Errorf("EnvVars length = %d, want %d", len(copied.EnvVars), len(original.EnvVars))
-	}
-	original.EnvVars[0].Value = "modified-value"
-	if copied.EnvVars[0].Value != "value1" {
-		t.Errorf("Deep copy failed: copied EnvVars[0].Value was modified to %q, expected it to remain \"value1\"", copied.EnvVars[0].Value)
-	}
+	assertSpecSimpleFields(t, copied, original)
+	assertReplicasDeepCopy(t, copied, &original)
+	assertImagePullSecretsDeepCopy(t, copied, &original)
+	assertIngressAnnotationsDeepCopy(t, copied, &original)
+	assertResourcesDeepCopy(t, copied, &original)
+	assertEnvVarsDeepCopy(t, copied, &original)
 }
 
 // TestMCPServerSpecDeepCopyNilFields tests that MCPServerSpec.DeepCopy() handles nil pointer fields correctly
@@ -335,5 +282,76 @@ func TestMCPServerSpecDeepCopyNilFields(t *testing.T) {
 	}
 	if copied.Resources.Requests != nil {
 		t.Errorf("Deep copy failed: copied Resources.Requests should be nil, got %v", copied.Resources.Requests)
+	}
+}
+
+func assertSpecSimpleFields(t *testing.T, copied, original MCPServerSpec) {
+	t.Helper()
+	if copied.Image != original.Image {
+		t.Errorf("Image = %q, want %q", copied.Image, original.Image)
+	}
+	if copied.ImageTag != original.ImageTag {
+		t.Errorf("ImageTag = %q, want %q", copied.ImageTag, original.ImageTag)
+	}
+	if copied.RegistryOverride != original.RegistryOverride {
+		t.Errorf("RegistryOverride = %q, want %q", copied.RegistryOverride, original.RegistryOverride)
+	}
+	if copied.UseProvisionedRegistry != original.UseProvisionedRegistry {
+		t.Errorf("UseProvisionedRegistry = %v, want %v", copied.UseProvisionedRegistry, original.UseProvisionedRegistry)
+	}
+}
+
+func assertReplicasDeepCopy(t *testing.T, copied *MCPServerSpec, original *MCPServerSpec) {
+	t.Helper()
+	if copied.Replicas == nil || *copied.Replicas != *original.Replicas {
+		t.Errorf("Replicas = %v, want %v", copied.Replicas, original.Replicas)
+	}
+	*original.Replicas = 5
+	if *copied.Replicas != 3 {
+		t.Errorf("Deep copy failed: copied Replicas was modified to %d, expected it to remain 3", *copied.Replicas)
+	}
+}
+
+func assertImagePullSecretsDeepCopy(t *testing.T, copied *MCPServerSpec, original *MCPServerSpec) {
+	t.Helper()
+	if len(copied.ImagePullSecrets) != len(original.ImagePullSecrets) {
+		t.Errorf("ImagePullSecrets length = %d, want %d", len(copied.ImagePullSecrets), len(original.ImagePullSecrets))
+	}
+	original.ImagePullSecrets[0] = "modified-secret"
+	if copied.ImagePullSecrets[0] != "secret1" {
+		t.Errorf("Deep copy failed: copied ImagePullSecrets[0] was modified to %q, expected it to remain \"secret1\"", copied.ImagePullSecrets[0])
+	}
+}
+
+func assertIngressAnnotationsDeepCopy(t *testing.T, copied *MCPServerSpec, original *MCPServerSpec) {
+	t.Helper()
+	if len(copied.IngressAnnotations) != len(original.IngressAnnotations) {
+		t.Errorf("IngressAnnotations length = %d, want %d", len(copied.IngressAnnotations), len(original.IngressAnnotations))
+	}
+	original.IngressAnnotations["key1"] = "modified-value"
+	if copied.IngressAnnotations["key1"] != "value1" {
+		t.Errorf("Deep copy failed: copied IngressAnnotations[\"key1\"] was modified to %q, expected it to remain \"value1\"", copied.IngressAnnotations["key1"])
+	}
+}
+
+func assertResourcesDeepCopy(t *testing.T, copied *MCPServerSpec, original *MCPServerSpec) {
+	t.Helper()
+	if copied.Resources.Limits == nil || copied.Resources.Limits.CPU != "500m" {
+		t.Errorf("Resources.Limits.CPU = %q, want \"500m\"", copied.Resources.Limits.CPU)
+	}
+	original.Resources.Limits.CPU = "1000m"
+	if copied.Resources.Limits.CPU != "500m" {
+		t.Errorf("Deep copy failed: copied Resources.Limits.CPU was modified to %q, expected it to remain \"500m\"", copied.Resources.Limits.CPU)
+	}
+}
+
+func assertEnvVarsDeepCopy(t *testing.T, copied *MCPServerSpec, original *MCPServerSpec) {
+	t.Helper()
+	if len(copied.EnvVars) != len(original.EnvVars) {
+		t.Errorf("EnvVars length = %d, want %d", len(copied.EnvVars), len(original.EnvVars))
+	}
+	original.EnvVars[0].Value = "modified-value"
+	if copied.EnvVars[0].Value != "value1" {
+		t.Errorf("Deep copy failed: copied EnvVars[0].Value was modified to %q, expected it to remain \"value1\"", copied.EnvVars[0].Value)
 	}
 }

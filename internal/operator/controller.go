@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -70,88 +71,40 @@ const (
 func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	var mcpServer mcpv1alpha1.MCPServer
-	if err := r.Get(ctx, req.NamespacedName, &mcpServer); err != nil {
-		if errors.IsNotFound(err) {
-			return ctrl.Result{Requeue: false}, nil
-		}
+	mcpServer, found, err := r.fetchMCPServer(ctx, req)
+	if err != nil {
 		return ctrl.Result{Requeue: false}, err
+	}
+	if !found {
+		return ctrl.Result{Requeue: false}, nil
 	}
 
 	logger.Info("Reconciling MCPServer", "name", mcpServer.Name, "namespace", mcpServer.Namespace)
 
 	// Set defaults and update spec only if changed
-	original := mcpServer.DeepCopy()
-	r.setDefaults(&mcpServer)
-	if !reflect.DeepEqual(original.Spec, mcpServer.Spec) {
-		if err := r.Update(ctx, &mcpServer); err != nil {
-			logger.Error(err, "Failed to update MCPServer spec with defaults")
-			return ctrl.Result{Requeue: false}, err
-		}
-		// Requeue to work with the updated object and avoid stale data
+	requeue, err := r.applyDefaultsIfNeeded(ctx, mcpServer, logger)
+	if err != nil {
+		return ctrl.Result{Requeue: false}, err
+	}
+	if requeue {
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	if mcpServer.Spec.IngressHost == "" {
-		err := fmt.Errorf("ingressHost is required; set spec.ingressHost or MCP_DEFAULT_INGRESS_HOST")
-		r.updateStatus(ctx, &mcpServer, "Error", err.Error(), false, false, false)
-		logger.Error(err, "Missing ingress host")
+	if err := r.validateIngressConfig(ctx, mcpServer, logger); err != nil {
 		return ctrl.Result{Requeue: false}, err
 	}
 
-	if mcpServer.Spec.IngressPath == "" {
-		err := fmt.Errorf("ingressPath is required; set spec.ingressPath or ensure metadata.name is set")
-		r.updateStatus(ctx, &mcpServer, "Error", err.Error(), false, false, false)
-		logger.Error(err, "Missing ingress path")
+	if err := r.reconcileResources(ctx, mcpServer, logger); err != nil {
 		return ctrl.Result{Requeue: false}, err
 	}
 
-	// Reconcile Deployment
-	if err := r.reconcileDeployment(ctx, &mcpServer); err != nil {
-		logger.Error(err, "Failed to reconcile Deployment")
-		r.updateStatus(ctx, &mcpServer, "Error", fmt.Sprintf("Failed to reconcile Deployment: %v", err), false, false, false)
-		return ctrl.Result{Requeue: false}, err
-	}
-
-	// Reconcile Service
-	if err := r.reconcileService(ctx, &mcpServer); err != nil {
-		logger.Error(err, "Failed to reconcile Service")
-		r.updateStatus(ctx, &mcpServer, "Error", fmt.Sprintf("Failed to reconcile Service: %v", err), false, false, false)
-		return ctrl.Result{Requeue: false}, err
-	}
-
-	// Reconcile Ingress
-	if err := r.reconcileIngress(ctx, &mcpServer); err != nil {
-		logger.Error(err, "Failed to reconcile Ingress")
-		r.updateStatus(ctx, &mcpServer, "Error", fmt.Sprintf("Failed to reconcile Ingress: %v", err), false, false, false)
-		return ctrl.Result{Requeue: false}, err
-	}
-
-	// Check deployment status
-	deploymentReady, err := r.checkDeploymentReady(ctx, &mcpServer)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	serviceReady, err := r.checkServiceReady(ctx, &mcpServer)
+	deploymentReady, serviceReady, ingressReady, err := r.checkResourceReadiness(ctx, mcpServer)
 	if err != nil {
 		return ctrl.Result{Requeue: false}, err
 	}
 
-	ingressReady, err := r.checkIngressReady(ctx, &mcpServer)
-	if err != nil {
-		return ctrl.Result{Requeue: false}, err
-	}
-
-	phase := "Pending"
-	allReady := deploymentReady && serviceReady && ingressReady
-	if allReady {
-		phase = "Ready"
-	} else if deploymentReady || serviceReady {
-		phase = "PartiallyReady"
-	}
-
-	r.updateStatus(ctx, &mcpServer, phase, "All resources reconciled", deploymentReady, serviceReady, ingressReady)
+	phase, allReady := determinePhase(deploymentReady, serviceReady, ingressReady)
+	r.updateStatus(ctx, mcpServer, phase, "All resources reconciled", deploymentReady, serviceReady, ingressReady)
 
 	logger.Info("Successfully reconciled MCPServer", "name", mcpServer.Name, "phase", phase)
 
@@ -160,6 +113,99 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 	return ctrl.Result{Requeue: false}, nil
+}
+
+func (r *MCPServerReconciler) fetchMCPServer(ctx context.Context, req ctrl.Request) (*mcpv1alpha1.MCPServer, bool, error) {
+	var mcpServer mcpv1alpha1.MCPServer
+	if err := r.Get(ctx, req.NamespacedName, &mcpServer); err != nil {
+		if errors.IsNotFound(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return &mcpServer, true, nil
+}
+
+func (r *MCPServerReconciler) applyDefaultsIfNeeded(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, logger logr.Logger) (bool, error) {
+	original := mcpServer.DeepCopy()
+	r.setDefaults(mcpServer)
+	if reflect.DeepEqual(original.Spec, mcpServer.Spec) {
+		return false, nil
+	}
+	if err := r.Update(ctx, mcpServer); err != nil {
+		logger.Error(err, "Failed to update MCPServer spec with defaults")
+		return false, err
+	}
+	// Requeue to work with the updated object and avoid stale data
+	return true, nil
+}
+
+func (r *MCPServerReconciler) validateIngressConfig(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, logger logr.Logger) error {
+	if err := r.requireSpecField(ctx, mcpServer, logger, "ingress host", mcpServer.Spec.IngressHost,
+		"ingressHost is required; set spec.ingressHost or MCP_DEFAULT_INGRESS_HOST"); err != nil {
+		return err
+	}
+	if err := r.requireSpecField(ctx, mcpServer, logger, "ingress path", mcpServer.Spec.IngressPath,
+		"ingressPath is required; set spec.ingressPath or ensure metadata.name is set"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *MCPServerReconciler) requireSpecField(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, logger logr.Logger, field, value, message string) error {
+	if value != "" {
+		return nil
+	}
+	err := fmt.Errorf(message)
+	r.updateStatus(ctx, mcpServer, "Error", err.Error(), false, false, false)
+	logger.Error(err, "Missing "+field)
+	return err
+}
+
+func (r *MCPServerReconciler) reconcileResources(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, logger logr.Logger) error {
+	if err := r.reconcileDeployment(ctx, mcpServer); err != nil {
+		logger.Error(err, "Failed to reconcile Deployment")
+		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile Deployment: %v", err), false, false, false)
+		return err
+	}
+	if err := r.reconcileService(ctx, mcpServer); err != nil {
+		logger.Error(err, "Failed to reconcile Service")
+		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile Service: %v", err), false, false, false)
+		return err
+	}
+	if err := r.reconcileIngress(ctx, mcpServer); err != nil {
+		logger.Error(err, "Failed to reconcile Ingress")
+		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile Ingress: %v", err), false, false, false)
+		return err
+	}
+	return nil
+}
+
+func (r *MCPServerReconciler) checkResourceReadiness(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (bool, bool, bool, error) {
+	deploymentReady, err := r.checkDeploymentReady(ctx, mcpServer)
+	if err != nil {
+		return false, false, false, err
+	}
+	serviceReady, err := r.checkServiceReady(ctx, mcpServer)
+	if err != nil {
+		return false, false, false, err
+	}
+	ingressReady, err := r.checkIngressReady(ctx, mcpServer)
+	if err != nil {
+		return false, false, false, err
+	}
+	return deploymentReady, serviceReady, ingressReady, nil
+}
+
+func determinePhase(deploymentReady, serviceReady, ingressReady bool) (string, bool) {
+	allReady := deploymentReady && serviceReady && ingressReady
+	if allReady {
+		return "Ready", true
+	}
+	if deploymentReady || serviceReady {
+		return "PartiallyReady", false
+	}
+	return "Pending", false
 }
 
 func (r *MCPServerReconciler) setDefaults(mcpServer *mcpv1alpha1.MCPServer) {
@@ -261,40 +307,8 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 			},
 		}
 
-		if mcpServer.Spec.Resources.Limits != nil && (mcpServer.Spec.Resources.Limits.CPU != "" || mcpServer.Spec.Resources.Limits.Memory != "") {
-			container.Resources.Limits = corev1.ResourceList{}
-			if mcpServer.Spec.Resources.Limits.CPU != "" {
-				cpuLimit, err := resource.ParseQuantity(mcpServer.Spec.Resources.Limits.CPU)
-				if err != nil {
-					return fmt.Errorf("invalid CPU limit %q: %w", mcpServer.Spec.Resources.Limits.CPU, err)
-				}
-				container.Resources.Limits[corev1.ResourceCPU] = cpuLimit
-			}
-			if mcpServer.Spec.Resources.Limits.Memory != "" {
-				memLimit, err := resource.ParseQuantity(mcpServer.Spec.Resources.Limits.Memory)
-				if err != nil {
-					return fmt.Errorf("invalid memory limit %q: %w", mcpServer.Spec.Resources.Limits.Memory, err)
-				}
-				container.Resources.Limits[corev1.ResourceMemory] = memLimit
-			}
-		}
-
-		if mcpServer.Spec.Resources.Requests != nil && (mcpServer.Spec.Resources.Requests.CPU != "" || mcpServer.Spec.Resources.Requests.Memory != "") {
-			container.Resources.Requests = corev1.ResourceList{}
-			if mcpServer.Spec.Resources.Requests.CPU != "" {
-				cpuReq, err := resource.ParseQuantity(mcpServer.Spec.Resources.Requests.CPU)
-				if err != nil {
-					return fmt.Errorf("invalid CPU request %q: %w", mcpServer.Spec.Resources.Requests.CPU, err)
-				}
-				container.Resources.Requests[corev1.ResourceCPU] = cpuReq
-			}
-			if mcpServer.Spec.Resources.Requests.Memory != "" {
-				memReq, err := resource.ParseQuantity(mcpServer.Spec.Resources.Requests.Memory)
-				if err != nil {
-					return fmt.Errorf("invalid memory request %q: %w", mcpServer.Spec.Resources.Requests.Memory, err)
-				}
-				container.Resources.Requests[corev1.ResourceMemory] = memReq
-			}
+		if err := applyContainerResourceOverrides(&container, mcpServer.Spec.Resources); err != nil {
+			return err
 		}
 
 		applyContainerResourceDefaults(&container)
@@ -317,6 +331,50 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 	}
 
 	return nil
+}
+
+func applyContainerResourceOverrides(container *corev1.Container, resources mcpv1alpha1.ResourceRequirements) error {
+	if resources.Limits != nil {
+		limits, err := buildResourceList(resources.Limits.CPU, resources.Limits.Memory, "limit")
+		if err != nil {
+			return err
+		}
+		if limits != nil {
+			container.Resources.Limits = limits
+		}
+	}
+	if resources.Requests != nil {
+		requests, err := buildResourceList(resources.Requests.CPU, resources.Requests.Memory, "request")
+		if err != nil {
+			return err
+		}
+		if requests != nil {
+			container.Resources.Requests = requests
+		}
+	}
+	return nil
+}
+
+func buildResourceList(cpu, memory, kind string) (corev1.ResourceList, error) {
+	if cpu == "" && memory == "" {
+		return nil, nil
+	}
+	list := corev1.ResourceList{}
+	if cpu != "" {
+		cpuLimit, err := resource.ParseQuantity(cpu)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CPU %s %q: %w", kind, cpu, err)
+		}
+		list[corev1.ResourceCPU] = cpuLimit
+	}
+	if memory != "" {
+		memLimit, err := resource.ParseQuantity(memory)
+		if err != nil {
+			return nil, fmt.Errorf("invalid memory %s %q: %w", kind, memory, err)
+		}
+		list[corev1.ResourceMemory] = memLimit
+	}
+	return list, nil
 }
 
 func applyContainerResourceDefaults(container *corev1.Container) {

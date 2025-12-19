@@ -68,13 +68,52 @@ will use to push and pull container images.`,
 func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingressMode, ingressManifest, registryManifest string, forceIngressInstall, tlsEnabled, testMode bool) error {
 	Section("MCP Runtime Setup")
 
+	extRegistry, usingExternalRegistry, registrySecretName := resolveRegistrySetup(logger)
+	ingressOpts := ingressOptions{
+		mode:     ingressMode,
+		manifest: ingressManifest,
+		force:    forceIngressInstall,
+	}
+
+	if err := setupClusterSteps(logger, ingressOpts); err != nil {
+		return err
+	}
+	if err := setupTLSStep(logger, tlsEnabled); err != nil {
+		return err
+	}
+	if err := setupRegistryStep(logger, extRegistry, usingExternalRegistry, registryType, registryStorageSize, registryManifest, tlsEnabled); err != nil {
+		return err
+	}
+
+	operatorImage, err := prepareOperatorImage(logger, extRegistry, usingExternalRegistry, testMode)
+	if err != nil {
+		return err
+	}
+	if err := deployOperatorStep(logger, operatorImage, extRegistry, registrySecretName, usingExternalRegistry); err != nil {
+		return err
+	}
+
+	// Step 6: Verify components
+	if err := verifySetup(usingExternalRegistry); err != nil {
+		Error(fmt.Sprintf("Post-setup verification failed: %v", err))
+		return err
+	}
+
+	Success("Platform setup complete")
+	fmt.Println(Green("\nPlatform is ready. Use 'mcp-runtime status' to check everything."))
+	return nil
+}
+
+func resolveRegistrySetup(logger *zap.Logger) (*ExternalRegistryConfig, bool, string) {
 	extRegistry, err := resolveExternalRegistryConfig(nil)
 	if err != nil {
 		Warn(fmt.Sprintf("Could not load external registry config: %v", err))
 	}
 	usingExternalRegistry := extRegistry != nil
-	registrySecretName := defaultRegistrySecretName
+	return extRegistry, usingExternalRegistry, defaultRegistrySecretName
+}
 
+func setupClusterSteps(logger *zap.Logger, ingressOpts ingressOptions) error {
 	// Step 1: Initialize cluster
 	Step("Step 1: Initialize cluster")
 	Info("Installing CRD")
@@ -88,29 +127,30 @@ func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingres
 	// Step 2: Configure cluster
 	Step("Step 2: Configure cluster")
 	Info("Checking ingress controller")
-	ingressOpts := ingressOptions{
-		mode:     ingressMode,
-		manifest: ingressManifest,
-		force:    forceIngressInstall,
-	}
 	if err := clusterMgr.ConfigureCluster(ingressOpts); err != nil {
 		Error(fmt.Sprintf("Cluster configuration failed: %v", err))
 		return fmt.Errorf("cluster configuration failed: %w", err)
 	}
 	Info("Cluster configuration complete")
+	return nil
+}
 
+func setupTLSStep(logger *zap.Logger, tlsEnabled bool) error {
 	// Step 3: Configure TLS (if enabled)
 	Step("Step 3: Configure TLS")
-	if tlsEnabled {
-		if err := setupTLS(logger); err != nil {
-			Error(fmt.Sprintf("TLS setup failed: %v", err))
-			return fmt.Errorf("TLS setup failed: %w", err)
-		}
-		Success("TLS configured successfully")
-	} else {
+	if !tlsEnabled {
 		Info("Skipped (TLS disabled, use --with-tls to enable)")
+		return nil
 	}
+	if err := setupTLS(logger); err != nil {
+		Error(fmt.Sprintf("TLS setup failed: %v", err))
+		return fmt.Errorf("TLS setup failed: %w", err)
+	}
+	Success("TLS configured successfully")
+	return nil
+}
 
+func setupRegistryStep(logger *zap.Logger, extRegistry *ExternalRegistryConfig, usingExternalRegistry bool, registryType, registryStorageSize, registryManifest string, tlsEnabled bool) error {
 	// Step 4: Deploy internal container registry
 	Step("Step 4: Configure registry")
 	if usingExternalRegistry {
@@ -122,31 +162,35 @@ func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingres
 				return err
 			}
 		}
-	} else {
-		Info(fmt.Sprintf("Type: %s", registryType))
-		if tlsEnabled {
-			Info("TLS: enabled (registry overlay)")
-		} else {
-			Info("TLS: disabled (dev HTTP mode)")
-		}
-		if err := deployRegistry(logger, "registry", GetRegistryPort(), registryType, registryStorageSize, registryManifest); err != nil {
-			Error(fmt.Sprintf("Registry deployment failed: %v", err))
-			return fmt.Errorf("failed to deploy registry: %w", err)
-		}
-
-		Info("Waiting for registry to be ready...")
-		if err := waitForDeploymentAvailable(logger, "registry", "registry", "app=registry", GetDeploymentTimeout()); err != nil {
-			printDeploymentDiagnostics("registry", "registry", "app=registry")
-			Error(fmt.Sprintf("Registry failed to become ready: %v", err))
-			return err
-		}
-
-		registryMgr := DefaultRegistryManager(logger)
-		if err := registryMgr.ShowRegistryInfo(); err != nil {
-			Warn(fmt.Sprintf("Failed to show registry info: %v", err))
-		}
+		return nil
 	}
 
+	Info(fmt.Sprintf("Type: %s", registryType))
+	if tlsEnabled {
+		Info("TLS: enabled (registry overlay)")
+	} else {
+		Info("TLS: disabled (dev HTTP mode)")
+	}
+	if err := deployRegistry(logger, "registry", GetRegistryPort(), registryType, registryStorageSize, registryManifest); err != nil {
+		Error(fmt.Sprintf("Registry deployment failed: %v", err))
+		return fmt.Errorf("failed to deploy registry: %w", err)
+	}
+
+	Info("Waiting for registry to be ready...")
+	if err := waitForDeploymentAvailable(logger, "registry", "registry", "app=registry", GetDeploymentTimeout()); err != nil {
+		printDeploymentDiagnostics("registry", "registry", "app=registry")
+		Error(fmt.Sprintf("Registry failed to become ready: %v", err))
+		return err
+	}
+
+	registryMgr := DefaultRegistryManager(logger)
+	if err := registryMgr.ShowRegistryInfo(); err != nil {
+		Warn(fmt.Sprintf("Failed to show registry info: %v", err))
+	}
+	return nil
+}
+
+func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfig, usingExternalRegistry, testMode bool) (string, error) {
 	// Step 5: Deploy operator
 	Step("Step 5: Deploy operator")
 
@@ -155,37 +199,40 @@ func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingres
 
 	if testMode {
 		Info("Test mode: skipping operator build, using kind-loaded image")
-	} else {
-		Info("Building operator image")
-		if err := buildOperatorImage(operatorImage); err != nil {
-			Error(fmt.Sprintf("Operator image build failed: %v", err))
-			return fmt.Errorf("operator image build failed: %w", err)
-		}
-
-		if usingExternalRegistry {
-			Info("Pushing operator image to external registry")
-			if err := pushOperatorImage(operatorImage); err != nil {
-				Warn(fmt.Sprintf("Could not push image to external registry: %v", err))
-			}
-		} else {
-			Info("Pushing operator image to internal registry")
-			internalRegistryURL := getPlatformRegistryURL(logger)
-			internalOperatorImage := internalRegistryURL + "/mcp-runtime-operator:latest"
-
-			if err := ensureNamespace("registry"); err != nil {
-				return fmt.Errorf("failed to ensure registry namespace: %w", err)
-			}
-
-			pushErr := pushOperatorImageToInternalRegistry(logger, operatorImage, internalOperatorImage, "registry")
-			operatorImage = internalOperatorImage
-			if pushErr != nil {
-				Error(fmt.Sprintf("Could not push image to internal registry via in-cluster helper: %v", pushErr))
-				return fmt.Errorf("failed to push operator image to internal registry: %w", pushErr)
-			}
-			Info(fmt.Sprintf("Using internal registry image: %s", operatorImage))
-		}
+		return operatorImage, nil
 	}
 
+	Info("Building operator image")
+	if err := buildOperatorImage(operatorImage); err != nil {
+		Error(fmt.Sprintf("Operator image build failed: %v", err))
+		return "", fmt.Errorf("operator image build failed: %w", err)
+	}
+
+	if usingExternalRegistry {
+		Info("Pushing operator image to external registry")
+		if err := pushOperatorImage(operatorImage); err != nil {
+			Warn(fmt.Sprintf("Could not push image to external registry: %v", err))
+		}
+		return operatorImage, nil
+	}
+
+	Info("Pushing operator image to internal registry")
+	internalRegistryURL := getPlatformRegistryURL(logger)
+	internalOperatorImage := internalRegistryURL + "/mcp-runtime-operator:latest"
+
+	if err := ensureNamespace("registry"); err != nil {
+		return "", fmt.Errorf("failed to ensure registry namespace: %w", err)
+	}
+
+	if err := pushOperatorImageToInternalRegistry(logger, operatorImage, internalOperatorImage, "registry"); err != nil {
+		Error(fmt.Sprintf("Could not push image to internal registry via in-cluster helper: %v", err))
+		return "", fmt.Errorf("failed to push operator image to internal registry: %w", err)
+	}
+	Info(fmt.Sprintf("Using internal registry image: %s", internalOperatorImage))
+	return internalOperatorImage, nil
+}
+
+func deployOperatorStep(logger *zap.Logger, operatorImage string, extRegistry *ExternalRegistryConfig, registrySecretName string, usingExternalRegistry bool) error {
 	Info("Deploying operator manifests")
 	if err := deployOperatorManifests(logger, operatorImage); err != nil {
 		Error(fmt.Sprintf("Operator deployment failed: %v", err))
@@ -198,6 +245,7 @@ func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingres
 			return fmt.Errorf("failed to configure external registry env on operator: %w", err)
 		}
 	}
+
 	if err := restartDeployment("mcp-runtime-operator-controller-manager", "mcp-runtime"); err != nil {
 		if usingExternalRegistry {
 			Error(fmt.Sprintf("Failed to restart operator deployment to pick up registry env: %v", err))
@@ -205,15 +253,6 @@ func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingres
 		}
 		Warn(fmt.Sprintf("Could not restart operator deployment: %v", err))
 	}
-
-	// Step 6: Verify components
-	if err := verifySetup(usingExternalRegistry); err != nil {
-		Error(fmt.Sprintf("Post-setup verification failed: %v", err))
-		return err
-	}
-
-	Success("Platform setup complete")
-	fmt.Println(Green("\nPlatform is ready. Use 'mcp-runtime status' to check everything."))
 	return nil
 }
 
