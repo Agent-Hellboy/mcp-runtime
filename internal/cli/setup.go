@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -276,7 +278,7 @@ func verifySetup(usingExternalRegistry bool) error {
 	}
 
 	Info("Checking MCPServer CRD presence")
-	if err := checkCRDInstalled("mcpservers.mcp.agent-hellboy.io"); err != nil {
+	if err := checkCRDInstalled("mcpservers.mcp-runtime.org"); err != nil {
 		return fmt.Errorf("CRD check failed: %w", err)
 	}
 
@@ -317,6 +319,10 @@ func configureProvisionedRegistryEnv(ext *ExternalRegistryConfig, secretName str
 	}
 	if hasCreds {
 		if err := ensureProvisionedRegistrySecret(secretName, ext.Username, ext.Password); err != nil {
+			return err
+		}
+		// Create imagePullSecret in mcp-servers namespace for pod image pulls.
+		if err := ensureImagePullSecret(NamespaceMCPServers, secretName, ext.URL, ext.Username, ext.Password); err != nil {
 			return err
 		}
 		args = append(args, "PROVISIONED_REGISTRY_SECRET_NAME="+secretName)
@@ -372,6 +378,52 @@ func ensureProvisionedRegistrySecret(name, username, password string) error {
 	applyCmd.SetStderr(os.Stderr)
 	if err := applyCmd.Run(); err != nil {
 		return fmt.Errorf("apply secret manifest: %w", err)
+	}
+
+	return nil
+}
+
+// ensureImagePullSecret creates or updates a dockerconfigjson secret for image pulls.
+func ensureImagePullSecret(namespace, name, registry, username, password string) error {
+	if username == "" && password == "" {
+		return nil
+	}
+
+	dockerCfg := map[string]any{
+		"auths": map[string]any{
+			registry: map[string]string{
+				"username": username,
+				"password": password,
+				"auth":     base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", username, password))),
+			},
+		},
+	}
+	dockerCfgJSON, err := json.Marshal(dockerCfg)
+	if err != nil {
+		return fmt.Errorf("marshal docker config: %w", err)
+	}
+
+	// Build secret manifest
+	secretManifest := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: %s
+`, name, namespace, base64.StdEncoding.EncodeToString(dockerCfgJSON))
+
+	// Apply secret manifest
+	applyCmd, err := kubectlClient.CommandArgs([]string{"apply", "-f", "-"})
+	if err != nil {
+		return err
+	}
+	applyCmd.SetStdin(strings.NewReader(secretManifest))
+	applyCmd.SetStdout(os.Stdout)
+	applyCmd.SetStderr(os.Stderr)
+	if err := applyCmd.Run(); err != nil {
+		return fmt.Errorf("apply imagePullSecret: %w", err)
 	}
 
 	return nil
@@ -463,7 +515,7 @@ func deployOperatorManifests(logger *zap.Logger, operatorImage string) error {
 	// Step 1: Apply CRD
 	Info("Applying CRD manifests")
 	// #nosec G204 -- fixed file path from repository.
-	if err := kubectlClient.RunWithOutput([]string{"apply", "--validate=false", "-f", "config/crd/bases/mcp.agent-hellboy.io_mcpservers.yaml"}, os.Stdout, os.Stderr); err != nil {
+	if err := kubectlClient.RunWithOutput([]string{"apply", "--validate=false", "-f", "config/crd/bases/mcp-runtime.org_mcpservers.yaml"}, os.Stdout, os.Stderr); err != nil {
 		return fmt.Errorf("failed to apply CRD: %w", err)
 	}
 

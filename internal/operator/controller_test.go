@@ -37,10 +37,13 @@ func TestRewriteRegistry(t *testing.T) {
 	}
 }
 
-func TestApplyContainerResourceDefaults(t *testing.T) {
-	t.Run("fills all defaults when unset", func(t *testing.T) {
+func TestApplyContainerResources(t *testing.T) {
+	t.Run("fills all defaults when no overrides", func(t *testing.T) {
 		var container corev1.Container
-		applyContainerResourceDefaults(&container)
+		err := applyContainerResources(&container, mcpv1alpha1.ResourceRequirements{})
+		if err != nil {
+			t.Fatalf("applyContainerResources() error = %v", err)
+		}
 
 		if got := container.Resources.Requests[corev1.ResourceCPU]; got.Cmp(resource.MustParse(defaultRequestCPU)) != 0 {
 			t.Fatalf("requests.cpu = %q, want %q", got.String(), defaultRequestCPU)
@@ -56,19 +59,21 @@ func TestApplyContainerResourceDefaults(t *testing.T) {
 		}
 	})
 
-	t.Run("fills only missing fields", func(t *testing.T) {
-		container := corev1.Container{
-			Resources: corev1.ResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceCPU: resource.MustParse("250m"),
-				},
-				Limits: corev1.ResourceList{
-					corev1.ResourceMemory: resource.MustParse("1Gi"),
-				},
+	t.Run("overrides specific fields while keeping defaults for others", func(t *testing.T) {
+		var container corev1.Container
+		resources := mcpv1alpha1.ResourceRequirements{
+			Requests: &mcpv1alpha1.ResourceList{
+				CPU: "250m",
+			},
+			Limits: &mcpv1alpha1.ResourceList{
+				Memory: "1Gi",
 			},
 		}
 
-		applyContainerResourceDefaults(&container)
+		err := applyContainerResources(&container, resources)
+		if err != nil {
+			t.Fatalf("applyContainerResources() error = %v", err)
+		}
 
 		if got := container.Resources.Requests[corev1.ResourceCPU]; got.Cmp(resource.MustParse("250m")) != 0 {
 			t.Fatalf("requests.cpu = %q, want %q", got.String(), "250m")
@@ -81,6 +86,34 @@ func TestApplyContainerResourceDefaults(t *testing.T) {
 		}
 		if got := container.Resources.Limits[corev1.ResourceMemory]; got.Cmp(resource.MustParse("1Gi")) != 0 {
 			t.Fatalf("limits.memory = %q, want %q", got.String(), "1Gi")
+		}
+	})
+
+	t.Run("returns error for invalid CPU value", func(t *testing.T) {
+		var container corev1.Container
+		resources := mcpv1alpha1.ResourceRequirements{
+			Requests: &mcpv1alpha1.ResourceList{
+				CPU: "invalid",
+			},
+		}
+
+		err := applyContainerResources(&container, resources)
+		if err == nil {
+			t.Fatal("expected error for invalid CPU value")
+		}
+	})
+
+	t.Run("returns error for invalid memory value", func(t *testing.T) {
+		var container corev1.Container
+		resources := mcpv1alpha1.ResourceRequirements{
+			Limits: &mcpv1alpha1.ResourceList{
+				Memory: "invalid",
+			},
+		}
+
+		err := applyContainerResources(&container, resources)
+		if err == nil {
+			t.Fatal("expected error for invalid memory value")
 		}
 	})
 }

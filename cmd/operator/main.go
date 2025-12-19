@@ -47,7 +47,7 @@ func main() {
 		Metrics:                server.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "mcp-runtime-operator.agent-hellboy.io",
+		LeaderElectionID:       "mcp-runtime-operator.mcp-runtime.org",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

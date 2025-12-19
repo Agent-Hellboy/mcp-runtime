@@ -1,9 +1,18 @@
+/*
+Let me share the flow of the code:
+1. fetch the MCPServer object
+2. apply the defaults if needed
+3. validate the ingress config
+4. reconcile the resources
+5. check the resource readiness
+6. determine the phase
+7. update the status
+8. return the result
+*/
 package operator
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -14,7 +23,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -57,9 +65,9 @@ const (
 	defaultLimitMemory   = DefaultLimitMemory
 )
 
-//+kubebuilder:rbac:groups=mcp.agent-hellboy.io,resources=mcpservers,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=mcp.agent-hellboy.io,resources=mcpservers/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=mcp.agent-hellboy.io,resources=mcpservers/finalizers,verbs=update
+//+kubebuilder:rbac:groups=mcp-runtime.org,resources=mcpservers,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=mcp-runtime.org,resources=mcpservers/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=mcp-runtime.org,resources=mcpservers/finalizers,verbs=update
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
@@ -273,7 +281,7 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 					Labels: templateLabels,
 				},
 				Spec: corev1.PodSpec{
-					ImagePullSecrets: r.buildImagePullSecrets(ctx, mcpServer),
+					ImagePullSecrets: r.buildImagePullSecrets(mcpServer),
 					Containers:       []corev1.Container{},
 				},
 			},
@@ -307,11 +315,9 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 			},
 		}
 
-		if err := applyContainerResourceOverrides(&container, mcpServer.Spec.Resources); err != nil {
+		if err := applyContainerResources(&container, mcpServer.Spec.Resources); err != nil {
 			return err
 		}
-
-		applyContainerResourceDefaults(&container)
 
 		deployment.Spec.Template.Spec.Containers = []corev1.Container{container}
 
@@ -333,70 +339,59 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 	return nil
 }
 
-func applyContainerResourceOverrides(container *corev1.Container, resources mcpv1alpha1.ResourceRequirements) error {
-	if resources.Limits != nil {
-		limits, err := buildResourceList(resources.Limits.CPU, resources.Limits.Memory, "limit")
-		if err != nil {
-			return err
-		}
-		if limits != nil {
-			container.Resources.Limits = limits
-		}
-	}
-	if resources.Requests != nil {
-		requests, err := buildResourceList(resources.Requests.CPU, resources.Requests.Memory, "request")
-		if err != nil {
-			return err
-		}
-		if requests != nil {
-			container.Resources.Requests = requests
-		}
-	}
-	return nil
-}
-
-func buildResourceList(cpu, memory, kind string) (corev1.ResourceList, error) {
-	if cpu == "" && memory == "" {
-		return nil, nil
-	}
-	list := corev1.ResourceList{}
-	if cpu != "" {
-		cpuLimit, err := resource.ParseQuantity(cpu)
-		if err != nil {
-			return nil, fmt.Errorf("invalid CPU %s %q: %w", kind, cpu, err)
-		}
-		list[corev1.ResourceCPU] = cpuLimit
-	}
-	if memory != "" {
-		memLimit, err := resource.ParseQuantity(memory)
-		if err != nil {
-			return nil, fmt.Errorf("invalid memory %s %q: %w", kind, memory, err)
-		}
-		list[corev1.ResourceMemory] = memLimit
-	}
-	return list, nil
-}
-
-func applyContainerResourceDefaults(container *corev1.Container) {
+// applyContainerResources sets container resource requests and limits.
+// It applies defaults first, then overrides with user-specified values.
+func applyContainerResources(container *corev1.Container, resources mcpv1alpha1.ResourceRequirements) error {
+	// Initialize maps
 	if container.Resources.Requests == nil {
 		container.Resources.Requests = corev1.ResourceList{}
 	}
-	if _, ok := container.Resources.Requests[corev1.ResourceCPU]; !ok {
-		container.Resources.Requests[corev1.ResourceCPU] = resource.MustParse(defaultRequestCPU)
-	}
-	if _, ok := container.Resources.Requests[corev1.ResourceMemory]; !ok {
-		container.Resources.Requests[corev1.ResourceMemory] = resource.MustParse(defaultRequestMemory)
-	}
-
 	if container.Resources.Limits == nil {
 		container.Resources.Limits = corev1.ResourceList{}
 	}
-	if _, ok := container.Resources.Limits[corev1.ResourceCPU]; !ok {
-		container.Resources.Limits[corev1.ResourceCPU] = resource.MustParse(defaultLimitCPU)
+
+	// Apply defaults
+	container.Resources.Requests[corev1.ResourceCPU] = resource.MustParse(defaultRequestCPU)
+	container.Resources.Requests[corev1.ResourceMemory] = resource.MustParse(defaultRequestMemory)
+	container.Resources.Limits[corev1.ResourceCPU] = resource.MustParse(defaultLimitCPU)
+	container.Resources.Limits[corev1.ResourceMemory] = resource.MustParse(defaultLimitMemory)
+
+	// Override with user-specified values
+	if resources.Requests != nil {
+		if resources.Requests.CPU != "" {
+			cpu, err := resource.ParseQuantity(resources.Requests.CPU)
+			if err != nil {
+				return fmt.Errorf("invalid CPU request %q: %w", resources.Requests.CPU, err)
+			}
+			container.Resources.Requests[corev1.ResourceCPU] = cpu
+		}
+		if resources.Requests.Memory != "" {
+			mem, err := resource.ParseQuantity(resources.Requests.Memory)
+			if err != nil {
+				return fmt.Errorf("invalid memory request %q: %w", resources.Requests.Memory, err)
+			}
+			container.Resources.Requests[corev1.ResourceMemory] = mem
+		}
 	}
-	if _, ok := container.Resources.Limits[corev1.ResourceMemory]; !ok {
-		container.Resources.Limits[corev1.ResourceMemory] = resource.MustParse(defaultLimitMemory)
+
+	if resources.Limits != nil {
+		if resources.Limits.CPU != "" {
+			cpu, err := resource.ParseQuantity(resources.Limits.CPU)
+			if err != nil {
+				return fmt.Errorf("invalid CPU limit %q: %w", resources.Limits.CPU, err)
+			}
+			container.Resources.Limits[corev1.ResourceCPU] = cpu
+		}
+		if resources.Limits.Memory != "" {
+			mem, err := resource.ParseQuantity(resources.Limits.Memory)
+			if err != nil {
+				return fmt.Errorf("invalid memory limit %q: %w", resources.Limits.Memory, err)
+			}
+			container.Resources.Limits[corev1.ResourceMemory] = mem
+		}
 	}
+
+	return nil
 }
 
 func (r *MCPServerReconciler) resolveImage(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (string, error) {
@@ -442,7 +437,7 @@ func rewriteRegistry(image, registry string) string {
 	return fmt.Sprintf("%s/%s", registry, strings.Join(parts, "/"))
 }
 
-func (r *MCPServerReconciler) buildImagePullSecrets(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) []corev1.LocalObjectReference {
+func (r *MCPServerReconciler) buildImagePullSecrets(mcpServer *mcpv1alpha1.MCPServer) []corev1.LocalObjectReference {
 	// If user specified pull secrets, honor them.
 	if len(mcpServer.Spec.ImagePullSecrets) > 0 {
 		out := make([]corev1.LocalObjectReference, 0, len(mcpServer.Spec.ImagePullSecrets))
@@ -458,7 +453,8 @@ func (r *MCPServerReconciler) buildImagePullSecrets(ctx context.Context, mcpServ
 		return out
 	}
 
-	// Otherwise, optionally auto-create/use a pull secret from provisioned registry creds.
+	// Otherwise, use the provisioned registry secret if configured.
+	// The secret is created during setup (mcp-runtime setup), not during reconciliation.
 	if r.ProvisionedRegistry == nil || r.ProvisionedRegistry.URL == "" ||
 		r.ProvisionedRegistry.Username == "" || r.ProvisionedRegistry.Password == "" {
 		return nil
@@ -469,60 +465,7 @@ func (r *MCPServerReconciler) buildImagePullSecrets(ctx context.Context, mcpServ
 		secretName = "mcp-runtime-registry-creds" // #nosec G101 -- default secret name, not a credential.
 	}
 
-	if err := r.ensureRegistryPullSecret(ctx, mcpServer.Namespace, secretName,
-		r.ProvisionedRegistry.URL, r.ProvisionedRegistry.Username, r.ProvisionedRegistry.Password); err != nil {
-		// Best-effort; log but do not fail reconcile.
-		logger := log.FromContext(ctx)
-		logger.Error(err, "failed to ensure registry pull secret", "secret", secretName, "namespace", mcpServer.Namespace)
-		return nil
-	}
-
 	return []corev1.LocalObjectReference{{Name: secretName}}
-}
-
-func (r *MCPServerReconciler) ensureRegistryPullSecret(ctx context.Context, namespace, name, registry, username, password string) error {
-	dockerCfg := map[string]any{
-		"auths": map[string]any{
-			registry: map[string]string{
-				"username": username,
-				"password": password,
-				"auth":     base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", username, password))),
-			},
-		},
-	}
-	raw, err := json.Marshal(dockerCfg)
-	if err != nil {
-		return err
-	}
-
-	secret := &corev1.Secret{}
-	secretKey := types.NamespacedName{Name: name, Namespace: namespace}
-	err = r.Get(ctx, secretKey, secret)
-	if err != nil {
-		if errors.IsNotFound(err) || meta.IsNoMatchError(err) {
-			secret = &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      name,
-					Namespace: namespace,
-				},
-				Type: corev1.SecretTypeDockerConfigJson,
-				Data: map[string][]byte{".dockerconfigjson": raw},
-			}
-			return r.Create(ctx, secret)
-		}
-		return err
-	}
-
-	// update if changed
-	if secret.Type != corev1.SecretTypeDockerConfigJson || string(secret.Data[".dockerconfigjson"]) != string(raw) {
-		secret.Type = corev1.SecretTypeDockerConfigJson
-		if secret.Data == nil {
-			secret.Data = map[string][]byte{}
-		}
-		secret.Data[".dockerconfigjson"] = raw
-		return r.Update(ctx, secret)
-	}
-	return nil
 }
 
 func (r *MCPServerReconciler) reconcileService(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {

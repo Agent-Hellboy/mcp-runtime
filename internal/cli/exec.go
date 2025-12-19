@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// execCommand is a seam for tests to stub out command creation.
+// execCommand is a test seam for stubbing command creation in tests.
 var execCommand = exec.Command
 
 // Command represents a command that can be executed.
@@ -26,31 +26,32 @@ type Executor interface {
 	Command(name string, args []string, validators ...ExecValidator) (Command, error)
 }
 
-// realCommand wraps exec.Cmd to implement Command interface.
-type realCommand struct {
+// execCmd wraps exec.Cmd to implement Command interface.
+type execCmd struct {
 	cmd *exec.Cmd
 }
 
-func (c *realCommand) Output() ([]byte, error)         { return c.cmd.Output() }
-func (c *realCommand) CombinedOutput() ([]byte, error) { return c.cmd.CombinedOutput() }
-func (c *realCommand) Run() error                      { return c.cmd.Run() }
-func (c *realCommand) SetStdout(w io.Writer)           { c.cmd.Stdout = w }
-func (c *realCommand) SetStderr(w io.Writer)           { c.cmd.Stderr = w }
-func (c *realCommand) SetStdin(r io.Reader)            { c.cmd.Stdin = r }
+func (c *execCmd) Output() ([]byte, error)         { return c.cmd.Output() }
+func (c *execCmd) CombinedOutput() ([]byte, error) { return c.cmd.CombinedOutput() }
+func (c *execCmd) Run() error                      { return c.cmd.Run() }
+func (c *execCmd) SetStdout(w io.Writer)           { c.cmd.Stdout = w }
+func (c *execCmd) SetStderr(w io.Writer)           { c.cmd.Stderr = w }
+func (c *execCmd) SetStdin(r io.Reader)            { c.cmd.Stdin = r }
 
-type defaultExecutor struct{}
+// osExecutor is the production implementation using os/exec.
+type osExecutor struct{}
 
-func (defaultExecutor) Command(name string, args []string, validators ...ExecValidator) (Command, error) {
+func (osExecutor) Command(name string, args []string, validators ...ExecValidator) (Command, error) {
 	spec := ExecSpec{Name: name, Args: args}
 	for _, validate := range validators {
 		if err := validate(spec); err != nil {
 			return nil, err
 		}
 	}
-	return &realCommand{cmd: execCommand(name, args...)}, nil
+	return &execCmd{cmd: execCommand(name, args...)}, nil
 }
 
-var execExecutor Executor = defaultExecutor{}
+var execExecutor Executor = osExecutor{}
 
 type ExecSpec struct {
 	Name string
@@ -120,65 +121,4 @@ func PathUnder(root string) ExecValidator {
 		}
 		return nil
 	}
-}
-
-// MockCommand is a test double for Command.
-type MockCommand struct {
-	Spec       ExecSpec
-	OutputData []byte
-	OutputErr  error
-	RunErr     error
-	StdoutW    io.Writer
-	StderrW    io.Writer
-	StdinR     io.Reader
-}
-
-func (m *MockCommand) Output() ([]byte, error)         { return m.OutputData, m.OutputErr }
-func (m *MockCommand) CombinedOutput() ([]byte, error) { return m.OutputData, m.OutputErr }
-func (m *MockCommand) Run() error                      { return m.RunErr }
-func (m *MockCommand) SetStdout(w io.Writer)           { m.StdoutW = w }
-func (m *MockCommand) SetStderr(w io.Writer)           { m.StderrW = w }
-func (m *MockCommand) SetStdin(r io.Reader)            { m.StdinR = r }
-
-// MockExecutor is a test double for Executor.
-type MockExecutor struct {
-	Commands   []ExecSpec
-	OutputData []byte
-	OutputErr  error
-	RunErr     error
-	// CommandFunc allows custom behavior per command.
-	CommandFunc func(spec ExecSpec) *MockCommand
-}
-
-func (m *MockExecutor) Command(name string, args []string, validators ...ExecValidator) (Command, error) {
-	spec := ExecSpec{Name: name, Args: args}
-	for _, validate := range validators {
-		if err := validate(spec); err != nil {
-			return nil, err
-		}
-	}
-	m.Commands = append(m.Commands, spec)
-
-	if m.CommandFunc != nil {
-		return m.CommandFunc(spec), nil
-	}
-	return &MockCommand{
-		Spec:       spec,
-		OutputData: m.OutputData,
-		OutputErr:  m.OutputErr,
-		RunErr:     m.RunErr,
-	}, nil
-}
-
-// LastCommand returns the last recorded command.
-func (m *MockExecutor) LastCommand() ExecSpec {
-	if len(m.Commands) == 0 {
-		return ExecSpec{}
-	}
-	return m.Commands[len(m.Commands)-1]
-}
-
-// Reset clears recorded commands.
-func (m *MockExecutor) Reset() {
-	m.Commands = nil
 }

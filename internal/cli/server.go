@@ -252,7 +252,7 @@ func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) er
 	m.logger.Info("Creating MCP server", zap.String("name", name), zap.String("image", image))
 
 	manifest := mcpServerManifest{
-		APIVersion: "mcp.agent-hellboy.io/v1alpha1",
+		APIVersion: "mcp-runtime.org/v1alpha1",
 		Kind:       "MCPServer",
 		Metadata: manifestMetadata{
 			Name:      name,

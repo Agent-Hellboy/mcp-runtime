@@ -91,8 +91,8 @@ func TestCRDInstalled(t *testing.T) {
 	skipIfShort(t)
 	skipIfNoCluster(t)
 
-	output := runCommand(t, "kubectl", "get", "crd", "mcpservers.mcp.agent-hellboy.io")
-	if !strings.Contains(output, "mcpservers.mcp.agent-hellboy.io") {
+	output := runCommand(t, "kubectl", "get", "crd", "mcpservers.mcp-runtime.org")
+	if !strings.Contains(output, "mcpservers.mcp-runtime.org") {
 		t.Errorf("CRD not found: %s", output)
 	}
 }
@@ -146,7 +146,7 @@ func TestMCPServerCreate(t *testing.T) {
 	_, _ = runCommandAllowFail("kubectl", "create", "namespace", namespace)
 
 	// Create MCPServer
-	manifest := `apiVersion: mcp.agent-hellboy.io/v1alpha1
+	manifest := `apiVersion: mcp-runtime.org/v1alpha1
 kind: MCPServer
 metadata:
   name: ` + serverName + `
