@@ -1,5 +1,3 @@
-//go:build integration
-
 // Package integration provides controller integration tests using envtest.
 //
 // These tests use controller-runtime's envtest to spin up a local API server
@@ -17,9 +15,9 @@
 //
 // Prerequisites:
 //   - Install envtest binaries: setup-envtest use -p path k8s/1.28
-//   - Set KUBEBUILDER_ASSETS if not using default location
+//   - Set KUBEBUILDER_ASSETS to the path of the binaries
 //
-// Run with: go test -v ./test/integration/... -tags=integration
+// Run with: go test -v ./test/integration/...
 package integration
 
 import (
