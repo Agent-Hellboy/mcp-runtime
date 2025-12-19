@@ -5,9 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
 	"reflect"
 	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -27,10 +27,25 @@ import (
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 )
 
+// RegistryConfig holds configuration for a provisioned container registry.
+type RegistryConfig struct {
+	URL        string
+	Username   string
+	Password   string
+	SecretName string
+}
+
 // MCPServerReconciler reconciles a MCPServer object
 type MCPServerReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	// DefaultIngressHost is the default ingress host if not specified in the CR.
+	DefaultIngressHost string
+
+	// ProvisionedRegistry holds the provisioned registry configuration.
+	// If nil or URL is empty, provisioned registry features are disabled.
+	ProvisionedRegistry *RegistryConfig
 }
 
 const (
@@ -57,9 +72,9 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	var mcpServer mcpv1alpha1.MCPServer
 	if err := r.Get(ctx, req.NamespacedName, &mcpServer); err != nil {
 		if errors.IsNotFound(err) {
-			return ctrl.Result{}, nil
+			return ctrl.Result{Requeue: false}, nil
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{Requeue: false}, err
 	}
 
 	logger.Info("Reconciling MCPServer", "name", mcpServer.Name, "namespace", mcpServer.Namespace)
@@ -70,7 +85,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if !reflect.DeepEqual(original.Spec, mcpServer.Spec) {
 		if err := r.Update(ctx, &mcpServer); err != nil {
 			logger.Error(err, "Failed to update MCPServer spec with defaults")
-			return ctrl.Result{}, err
+			return ctrl.Result{Requeue: false}, err
 		}
 		// Requeue to work with the updated object and avoid stale data
 		return ctrl.Result{Requeue: true}, nil
@@ -80,28 +95,35 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		err := fmt.Errorf("ingressHost is required; set spec.ingressHost or MCP_DEFAULT_INGRESS_HOST")
 		r.updateStatus(ctx, &mcpServer, "Error", err.Error(), false, false, false)
 		logger.Error(err, "Missing ingress host")
-		return ctrl.Result{}, err
+		return ctrl.Result{Requeue: false}, err
+	}
+
+	if mcpServer.Spec.IngressPath == "" {
+		err := fmt.Errorf("ingressPath is required; set spec.ingressPath or ensure metadata.name is set")
+		r.updateStatus(ctx, &mcpServer, "Error", err.Error(), false, false, false)
+		logger.Error(err, "Missing ingress path")
+		return ctrl.Result{Requeue: false}, err
 	}
 
 	// Reconcile Deployment
 	if err := r.reconcileDeployment(ctx, &mcpServer); err != nil {
 		logger.Error(err, "Failed to reconcile Deployment")
 		r.updateStatus(ctx, &mcpServer, "Error", fmt.Sprintf("Failed to reconcile Deployment: %v", err), false, false, false)
-		return ctrl.Result{}, err
+		return ctrl.Result{Requeue: false}, err
 	}
 
 	// Reconcile Service
 	if err := r.reconcileService(ctx, &mcpServer); err != nil {
 		logger.Error(err, "Failed to reconcile Service")
 		r.updateStatus(ctx, &mcpServer, "Error", fmt.Sprintf("Failed to reconcile Service: %v", err), false, false, false)
-		return ctrl.Result{}, err
+		return ctrl.Result{Requeue: false}, err
 	}
 
 	// Reconcile Ingress
 	if err := r.reconcileIngress(ctx, &mcpServer); err != nil {
 		logger.Error(err, "Failed to reconcile Ingress")
 		r.updateStatus(ctx, &mcpServer, "Error", fmt.Sprintf("Failed to reconcile Ingress: %v", err), false, false, false)
-		return ctrl.Result{}, err
+		return ctrl.Result{Requeue: false}, err
 	}
 
 	// Check deployment status
@@ -112,16 +134,17 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	serviceReady, err := r.checkServiceReady(ctx, &mcpServer)
 	if err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{Requeue: false}, err
 	}
 
 	ingressReady, err := r.checkIngressReady(ctx, &mcpServer)
 	if err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{Requeue: false}, err
 	}
 
 	phase := "Pending"
-	if deploymentReady && serviceReady && ingressReady {
+	allReady := deploymentReady && serviceReady && ingressReady
+	if allReady {
 		phase = "Ready"
 	} else if deploymentReady || serviceReady {
 		phase = "PartiallyReady"
@@ -130,7 +153,12 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	r.updateStatus(ctx, &mcpServer, phase, "All resources reconciled", deploymentReady, serviceReady, ingressReady)
 
 	logger.Info("Successfully reconciled MCPServer", "name", mcpServer.Name, "phase", phase)
-	return ctrl.Result{}, nil
+
+	// If not all resources are ready, requeue with a short delay to check again
+	if !allReady {
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+	return ctrl.Result{Requeue: false}, nil
 }
 
 func (r *MCPServerReconciler) setDefaults(mcpServer *mcpv1alpha1.MCPServer) {
@@ -148,13 +176,11 @@ func (r *MCPServerReconciler) setDefaults(mcpServer *mcpv1alpha1.MCPServer) {
 	if mcpServer.Spec.ServicePort == 0 {
 		mcpServer.Spec.ServicePort = 80
 	}
-	if mcpServer.Spec.IngressPath == "" {
+	if mcpServer.Spec.IngressPath == "" && mcpServer.Name != "" {
 		mcpServer.Spec.IngressPath = "/" + mcpServer.Name + "/mcp"
 	}
-	if mcpServer.Spec.IngressHost == "" {
-		if defaultHost := os.Getenv("MCP_DEFAULT_INGRESS_HOST"); defaultHost != "" {
-			mcpServer.Spec.IngressHost = defaultHost
-		}
+	if mcpServer.Spec.IngressHost == "" && r.DefaultIngressHost != "" {
+		mcpServer.Spec.IngressHost = r.DefaultIngressHost
 	}
 	if mcpServer.Spec.IngressClass == "" {
 		mcpServer.Spec.IngressClass = "traefik"
@@ -316,12 +342,12 @@ func (r *MCPServerReconciler) resolveImage(ctx context.Context, mcpServer *mcpv1
 
 	regOverride := mcpServer.Spec.RegistryOverride
 	if mcpServer.Spec.UseProvisionedRegistry {
-		if envVal := os.Getenv("PROVISIONED_REGISTRY_URL"); envVal != "" {
-			regOverride = envVal
+		if r.ProvisionedRegistry != nil && r.ProvisionedRegistry.URL != "" {
+			regOverride = r.ProvisionedRegistry.URL
 		} else if regOverride == "" {
-			// Fallback to internal registry service if env not set
+			// Fallback to internal registry service if not configured
 			regOverride = "registry.registry.svc.cluster.local:5000"
-			logger.Info("useProvisionedRegistry set without PROVISIONED_REGISTRY_URL; falling back to internal registry service", "mcpServer", mcpServer.Name, "registry", regOverride)
+			logger.Info("useProvisionedRegistry set without ProvisionedRegistry config; falling back to internal registry service", "mcpServer", mcpServer.Name, "registry", regOverride)
 		}
 	}
 	if regOverride != "" {
@@ -365,19 +391,18 @@ func (r *MCPServerReconciler) buildImagePullSecrets(ctx context.Context, mcpServ
 	}
 
 	// Otherwise, optionally auto-create/use a pull secret from provisioned registry creds.
-	registry := os.Getenv("PROVISIONED_REGISTRY_URL")
-	username := os.Getenv("PROVISIONED_REGISTRY_USERNAME")
-	password := os.Getenv("PROVISIONED_REGISTRY_PASSWORD")
-	if registry == "" || username == "" || password == "" {
+	if r.ProvisionedRegistry == nil || r.ProvisionedRegistry.URL == "" ||
+		r.ProvisionedRegistry.Username == "" || r.ProvisionedRegistry.Password == "" {
 		return nil
 	}
 
-	secretName := os.Getenv("PROVISIONED_REGISTRY_SECRET_NAME")
+	secretName := r.ProvisionedRegistry.SecretName
 	if secretName == "" {
 		secretName = "mcp-runtime-registry-creds"
 	}
 
-	if err := r.ensureRegistryPullSecret(ctx, mcpServer.Namespace, secretName, registry, username, password); err != nil {
+	if err := r.ensureRegistryPullSecret(ctx, mcpServer.Namespace, secretName,
+		r.ProvisionedRegistry.URL, r.ProvisionedRegistry.Username, r.ProvisionedRegistry.Password); err != nil {
 		// Best-effort; log but do not fail reconcile.
 		logger := log.FromContext(ctx)
 		logger.Error(err, "failed to ensure registry pull secret", "secret", secretName, "namespace", mcpServer.Namespace)

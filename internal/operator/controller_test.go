@@ -5,6 +5,10 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+
+	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 )
 
 func TestRewriteRegistry(t *testing.T) {
@@ -73,6 +77,103 @@ func TestApplyContainerResourceDefaults(t *testing.T) {
 		}
 		if got := container.Resources.Limits[corev1.ResourceMemory]; got.Cmp(resource.MustParse("1Gi")) != 0 {
 			t.Fatalf("limits.memory = %q, want %q", got.String(), "1Gi")
+		}
+	})
+}
+
+func TestSetDefaults(t *testing.T) {
+	t.Run("fills all defaults when unset", func(t *testing.T) {
+		mcpServer := mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-server",
+				Namespace: "default",
+			},
+		}
+		r := MCPServerReconciler{Scheme: runtime.NewScheme()}
+		r.setDefaults(&mcpServer)
+
+		// Check actual values
+		if mcpServer.Spec.Replicas == nil || *mcpServer.Spec.Replicas != 1 {
+			t.Errorf("replicas = %v, want 1", mcpServer.Spec.Replicas)
+		}
+		if mcpServer.Spec.Port != 8088 {
+			t.Errorf("port = %d, want 8088", mcpServer.Spec.Port)
+		}
+		if mcpServer.Spec.ServicePort != 80 {
+			t.Errorf("servicePort = %d, want 80", mcpServer.Spec.ServicePort)
+		}
+		if mcpServer.Spec.ImageTag != "latest" {
+			t.Errorf("imageTag = %q, want 'latest'", mcpServer.Spec.ImageTag)
+		}
+		if mcpServer.Spec.IngressPath != "/test-server/mcp" {
+			t.Errorf("ingressPath = %q, want '/test-server/mcp'", mcpServer.Spec.IngressPath)
+		}
+		if mcpServer.Spec.IngressClass != "traefik" {
+			t.Errorf("ingressClass = %q, want 'traefik'", mcpServer.Spec.IngressClass)
+		}
+		// IngressHost only set from env var - not tested here
+	})
+
+	t.Run("preserves existing values", func(t *testing.T) {
+		replicas := int32(5)
+		mcpServer := mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "my-server"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				Replicas:     &replicas,
+				Port:         9000,
+				ServicePort:  8080,
+				IngressPath:  "/custom/path",
+				IngressClass: "nginx",
+			},
+		}
+		r := MCPServerReconciler{Scheme: runtime.NewScheme()}
+		r.setDefaults(&mcpServer)
+
+		// These should NOT be changed
+		if *mcpServer.Spec.Replicas != 5 {
+			t.Errorf("replicas changed to %d, should stay 5", *mcpServer.Spec.Replicas)
+		}
+		if mcpServer.Spec.Port != 9000 {
+			t.Errorf("port changed to %d, should stay 9000", mcpServer.Spec.Port)
+		}
+		if mcpServer.Spec.ServicePort != 8080 {
+			t.Errorf("servicePort changed to %d, should stay 8080", mcpServer.Spec.ServicePort)
+		}
+		if mcpServer.Spec.IngressPath != "/custom/path" {
+			t.Errorf("ingressPath changed to %q, should stay '/custom/path'", mcpServer.Spec.IngressPath)
+		}
+		if mcpServer.Spec.IngressClass != "nginx" {
+			t.Errorf("ingressClass changed to %q, should stay 'nginx'", mcpServer.Spec.IngressClass)
+		}
+		// ImageTag should be set since it was empty
+		if mcpServer.Spec.ImageTag != "latest" {
+			t.Errorf("imageTag = %q, want 'latest'", mcpServer.Spec.ImageTag)
+		}
+	})
+
+	t.Run("skips imageTag if image has tag", func(t *testing.T) {
+		mcpServer := mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "test"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				Image: "nginx:1.19", // Already has tag
+			},
+		}
+		r := MCPServerReconciler{Scheme: runtime.NewScheme()}
+		r.setDefaults(&mcpServer)
+
+		if mcpServer.Spec.ImageTag != "" {
+			t.Errorf("imageTag = %q, should stay empty when image has tag", mcpServer.Spec.ImageTag)
+		}
+	})
+
+	t.Run("skips ingressPath if name is empty", func(t *testing.T) {
+		mcpServer := mcpv1alpha1.MCPServer{} // No name set
+		r := MCPServerReconciler{Scheme: runtime.NewScheme()}
+		r.setDefaults(&mcpServer)
+
+		// IngressPath should remain empty (not "//mcp")
+		if mcpServer.Spec.IngressPath != "" {
+			t.Errorf("ingressPath = %q, should stay empty when name is empty", mcpServer.Spec.IngressPath)
 		}
 	})
 }

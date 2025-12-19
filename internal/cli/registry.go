@@ -242,16 +242,17 @@ func resolveExternalRegistryConfig(flagCfg *ExternalRegistryConfig) (*ExternalRe
 		return nil, err
 	}
 
-	if envURL := strings.TrimSpace(os.Getenv("PROVISIONED_REGISTRY_URL")); envURL != "" {
-		cfg.URL = envURL
+	// Load from CLIConfig (which reads from env vars at startup)
+	if DefaultCLIConfig.ProvisionedRegistryURL != "" {
+		cfg.URL = DefaultCLIConfig.ProvisionedRegistryURL
 		sourceFound = true
 	}
-	if envUser := os.Getenv("PROVISIONED_REGISTRY_USERNAME"); envUser != "" {
-		cfg.Username = envUser
+	if DefaultCLIConfig.ProvisionedRegistryUsername != "" {
+		cfg.Username = DefaultCLIConfig.ProvisionedRegistryUsername
 		sourceFound = true
 	}
-	if envPass := os.Getenv("PROVISIONED_REGISTRY_PASSWORD"); envPass != "" {
-		cfg.Password = envPass
+	if DefaultCLIConfig.ProvisionedRegistryPassword != "" {
+		cfg.Password = DefaultCLIConfig.ProvisionedRegistryPassword
 		sourceFound = true
 	}
 
@@ -361,31 +362,41 @@ func ensureRegistryStorageSize(logger *zap.Logger, namespace, registryStorageSiz
 func checkRegistryStatus(logger *zap.Logger, namespace string) error {
 	logger.Info("Checking registry status")
 
-	// Check deployment
-	cmd := exec.Command("kubectl", "get", "deployment", "registry", "-n", namespace, "-o", "wide")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	Header("Registry Status")
+	DefaultPrinter.Println()
+
+	// Get deployment status
+	readyCmd := exec.Command("kubectl", "get", "deployment", "registry", "-n", namespace, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}")
+	readyOut, err := readyCmd.Output()
+	if err != nil {
+		Error("Registry deployment not found")
 		return err
 	}
 
-	// Check service
-	fmt.Println("\nService:")
-	cmd = exec.Command("kubectl", "get", "service", "registry", "-n", namespace, "-o", "wide")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return err
+	// Get service IP
+	ipCmd := exec.Command("kubectl", "get", "service", "registry", "-n", namespace, "-o", "jsonpath={.spec.clusterIP}:{.spec.ports[0].port}")
+	ipOut, _ := ipCmd.Output()
+
+	// Get pod status
+	podCmd := exec.Command("kubectl", "get", "pods", "-n", namespace, "-l", "app=registry", "-o", "jsonpath={.items[0].status.phase}")
+	podOut, _ := podCmd.Output()
+
+	// Build status table
+	replicas := strings.TrimSpace(string(readyOut))
+	status := Green("Healthy")
+	if replicas == "" || strings.HasPrefix(replicas, "/") || strings.HasPrefix(replicas, "0/") {
+		status = Yellow("Starting")
 	}
 
-	// Check pods
-	fmt.Println("\nPods:")
-	cmd = exec.Command("kubectl", "get", "pods", "-n", namespace, "-l", "app=registry")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return err
+	tableData := [][]string{
+		{"Property", "Value"},
+		{"Status", status},
+		{"Replicas", replicas},
+		{"Endpoint", strings.TrimSpace(string(ipOut))},
+		{"Pod Phase", strings.TrimSpace(string(podOut))},
 	}
+
+	TableBoxed(tableData)
 
 	return nil
 }
@@ -422,17 +433,29 @@ func showRegistryInfo(logger *zap.Logger) error {
 	}
 
 	if len(clusterIP) > 0 && len(port) > 0 {
-		fmt.Println("\n=== Registry Information ===")
-		fmt.Printf("Internal URL: %s:%s\n", string(clusterIP), string(port))
-		fmt.Printf("Service URL: registry.registry.svc.cluster.local:%s\n", string(port))
-		fmt.Printf("\nTo use from local machine, configure Docker:\n")
-		fmt.Printf("  Add to /etc/docker/daemon.json:\n")
-		fmt.Printf("    \"insecure-registries\": [\"%s:%s\"]\n", string(clusterIP), string(port))
-		fmt.Printf("\nOr use port-forward:\n")
-		fmt.Printf("  kubectl port-forward -n registry svc/registry 5000:5000\n")
-		fmt.Printf("  Then use: localhost:5000\n")
+		Header("Registry Information")
+		DefaultPrinter.Println()
+
+		ip := strings.TrimSpace(string(clusterIP))
+		p := strings.TrimSpace(string(port))
+
+		tableData := [][]string{
+			{"Property", "Value"},
+			{"Internal URL", fmt.Sprintf("%s:%s", ip, p)},
+			{"Service DNS", fmt.Sprintf("registry.registry.svc.cluster.local:%s", p)},
+		}
+		TableBoxed(tableData)
+
+		DefaultPrinter.Println()
+		Section("Local Access")
+		Info("Option 1: Add to /etc/docker/daemon.json:")
+		DefaultPrinter.Printf("  \"insecure-registries\": [\"%s:%s\"]\n", ip, p)
+		DefaultPrinter.Println()
+		Info("Option 2: Use port-forward:")
+		DefaultPrinter.Printf("  kubectl port-forward -n registry svc/registry %s:%s\n", p, p)
+		DefaultPrinter.Printf("  Then use: localhost:%s\n", p)
 	} else {
-		fmt.Println("Registry not found. Deploy it with: mcp-runtime registry deploy")
+		Warn("Registry not found. Deploy it with: mcp-runtime setup")
 	}
 
 	return nil
@@ -477,7 +500,7 @@ func pushDirect(source, target string) error {
 		return fmt.Errorf("failed to push image: %w", err)
 	}
 
-	fmt.Printf("Pushed %s\n", target)
+	Success(fmt.Sprintf("Pushed %s", target))
 	return nil
 }
 
@@ -508,7 +531,7 @@ func pushInCluster(logger *zap.Logger, source, target, helperNS string) error {
 	}
 
 	// Start helper pod with skopeo
-	runCmd := exec.Command("kubectl", "run", helperName, "-n", helperNS, "--image="+getSkopeoImage(), "--restart=Never", "--command", "--", "sh", "-c", "while true; do sleep 3600; done")
+	runCmd := exec.Command("kubectl", "run", helperName, "-n", helperNS, "--image="+GetSkopeoImage(), "--restart=Never", "--command", "--", "sh", "-c", "while true; do sleep 3600; done")
 	runCmd.Stdout = os.Stdout
 	runCmd.Stderr = os.Stderr
 	if err := runCmd.Run(); err != nil {
@@ -542,6 +565,6 @@ func pushInCluster(logger *zap.Logger, source, target, helperNS string) error {
 		return fmt.Errorf("failed to push image from helper pod: %w", err)
 	}
 
-	fmt.Printf("Pushed %s via in-cluster helper\n", target)
+	Success(fmt.Sprintf("Pushed %s via in-cluster helper", target))
 	return nil
 }

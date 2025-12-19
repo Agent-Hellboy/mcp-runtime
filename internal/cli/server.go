@@ -210,7 +210,7 @@ func createServer(logger *zap.Logger, name, namespace, image, imageTag string) e
 			Image:       image,
 			ImageTag:    imageTag,
 			Replicas:    1,
-			Port:        getDefaultServerPort(),
+			Port:        GetDefaultServerPort(),
 			ServicePort: 80,
 			IngressPath: "/" + name,
 		},
@@ -266,69 +266,69 @@ func viewServerLogs(logger *zap.Logger, name, namespace string, follow bool) err
 }
 
 func serverStatus(logger *zap.Logger, namespace string) error {
-	fmt.Printf("Namespace: %s\n", namespace)
-	fmt.Println("MCPServers:")
-	getServers := exec.Command("kubectl", "get", "mcpserver", "-n", namespace, "-o", "wide")
-	getServers.Stdout = os.Stdout
-	getServers.Stderr = os.Stderr
-	if err := getServers.Run(); err != nil {
-		return err
+	Header(fmt.Sprintf("MCP Servers in %s", namespace))
+	DefaultPrinter.Println()
+
+	// Get MCPServer details
+	getServersCmd := exec.Command("kubectl", "get", "mcpserver", "-n", namespace, "-o", "jsonpath={range .items[*]}{.metadata.name}|{.spec.image}:{.spec.imageTag}|{.spec.replicas}|{.spec.ingressPath}|{.spec.useProvisionedRegistry}{\"\\n\"}{end}")
+	out, err := getServersCmd.Output()
+	if err != nil {
+		Warn("No MCP servers found in namespace " + namespace)
+		return nil
 	}
 
-	fmt.Println("\nDeployments:")
-	getDeploy := exec.Command("kubectl", "get", "deploy", "-n", namespace, "-l", "app", "-o", "wide")
-	getDeploy.Stdout = os.Stdout
-	getDeploy.Stderr = os.Stderr
-	if err := getDeploy.Run(); err != nil {
-		logger.Warn("Could not list deployments", zap.Error(err))
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 0 || (len(lines) == 1 && lines[0] == "") {
+		Warn("No MCP servers found in namespace " + namespace)
+		return nil
 	}
 
-	fmt.Println("\nPods:")
-	getPods := exec.Command("kubectl", "get", "pods", "-n", namespace, "-o", "wide", "--show-labels")
-	getPods.Stdout = os.Stdout
-	getPods.Stderr = os.Stderr
-	if err := getPods.Run(); err != nil {
-		logger.Warn("Could not list pods", zap.Error(err))
+	// Build table
+	tableData := [][]string{
+		{"Name", "Image", "Replicas", "Path", "Registry"},
 	}
 
-	// Show image and pull secrets for each MCPServer
-	fmt.Println("\nDetails per MCPServer:")
-	getServersYaml := exec.Command("kubectl", "get", "mcpserver", "-n", namespace, "-o", "jsonpath={range .items[*]}{.metadata.name} {.spec.image}{\":\"}{.spec.imageTag} {.spec.useProvisionedRegistry} {.spec.registryOverride}{\"\\n\"}{end}")
-	out, err := getServersYaml.Output()
-	if err == nil {
-		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-		for _, line := range lines {
-			fields := strings.Fields(line)
-			if len(fields) >= 1 {
-				name := fields[0]
-				image := ""
-				if len(fields) >= 2 {
-					image = fields[1]
-				}
-				useProv := ""
-				if len(fields) >= 3 {
-					useProv = fields[2]
-				}
-				regOverride := ""
-				if len(fields) >= 4 {
-					regOverride = fields[3]
-				}
-				fmt.Printf("  %s\n", name)
-				fmt.Printf("    image: %s\n", image)
-				if useProv != "" {
-					fmt.Printf("    useProvisionedRegistry: %s\n", useProv)
-				}
-				if regOverride != "" {
-					fmt.Printf("    registryOverride: %s\n", regOverride)
-				}
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "|")
+		if len(parts) >= 5 {
+			name := parts[0]
+			image := parts[1]
+			replicas := parts[2]
+			path := parts[3]
+			useProv := parts[4]
 
-				// pull secrets from deployment
-				psCmd := exec.Command("kubectl", "get", "deploy", name, "-n", namespace, "-o", "jsonpath={.spec.template.spec.imagePullSecrets[*].name}")
-				psOut, psErr := psCmd.Output()
-				if psErr == nil && len(psOut) > 0 {
-					fmt.Printf("    imagePullSecrets: %s\n", string(psOut))
-				}
+			registry := "custom"
+			if useProv == "true" {
+				registry = "provisioned"
 			}
+
+			tableData = append(tableData, []string{name, image, replicas, path, registry})
+		}
+	}
+
+	if len(tableData) > 1 {
+		TableBoxed(tableData)
+	}
+
+	// Pod status section
+	DefaultPrinter.Println()
+	Section("Pod Status")
+
+	podCmd := exec.Command("kubectl", "get", "pods", "-n", namespace, "-l", "app", "-o", "custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[0].ready,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount")
+	podOut, err := podCmd.Output()
+	if err == nil && len(strings.TrimSpace(string(podOut))) > 0 {
+		podLines := strings.Split(strings.TrimSpace(string(podOut)), "\n")
+		if len(podLines) > 1 {
+			podData := [][]string{}
+			for _, pl := range podLines {
+				podData = append(podData, strings.Fields(pl))
+			}
+			Table(podData)
+		} else {
+			Info("No pods found")
 		}
 	}
 

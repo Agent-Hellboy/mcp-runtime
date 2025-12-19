@@ -2,8 +2,8 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -24,51 +24,89 @@ func NewStatusCmd(logger *zap.Logger) *cobra.Command {
 }
 
 func showPlatformStatus(logger *zap.Logger) error {
-	fmt.Println("=== MCP Platform Status ===")
-	fmt.Println()
+	Header("MCP Platform Status")
+	DefaultPrinter.Println()
 
-	// Cluster status
-	fmt.Println("Cluster:")
+	// Component status table
+	tableData := [][]string{
+		{"Component", "Status", "Details"},
+	}
+
+	// Cluster
+	clusterStatus := Green("OK")
+	clusterDetails := "Connected"
 	if err := checkClusterStatus(logger); err != nil {
-		fmt.Printf("  Status: ERROR - %v\n", err)
-	} else {
-		fmt.Println("  Status: OK")
+		clusterStatus = Red("ERROR")
+		clusterDetails = err.Error()
 	}
+	tableData = append(tableData, []string{"Cluster", clusterStatus, clusterDetails})
 
-	fmt.Println("\nNamespaces:")
-	nsCmd := exec.Command("kubectl", "get", "ns")
-	nsCmd.Stdout = os.Stdout
-	nsCmd.Stderr = os.Stderr
-	_ = nsCmd.Run()
-
-	fmt.Println("\nRegistry:")
-	if err := checkRegistryStatus(logger, "registry"); err != nil {
-		fmt.Printf("  Status: ERROR - %v\n", err)
-	} else {
-		fmt.Println("  Status: OK")
+	// Registry
+	registryStatus := Green("OK")
+	registryDetails := "Running"
+	if err := checkRegistryStatusQuiet(logger, "registry"); err != nil {
+		registryStatus = Red("ERROR")
+		registryDetails = err.Error()
 	}
+	tableData = append(tableData, []string{"Registry", registryStatus, registryDetails})
 
-	fmt.Println("\nOperator:")
-	imageCmd := exec.Command("kubectl", "get", "deployment", "mcp-runtime-operator-controller-manager", "-n", "mcp-runtime", "-o", "jsonpath={.spec.template.spec.containers[0].image}")
-	imageOut, _ := imageCmd.Output()
+	// Operator
+	operatorStatus := Green("OK")
+	operatorDetails := ""
 	replicasCmd := exec.Command("kubectl", "get", "deployment", "mcp-runtime-operator-controller-manager", "-n", "mcp-runtime", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}")
-	replicasOut, _ := replicasCmd.Output()
-	fmt.Printf("  Image: %s\n", string(imageOut))
-	fmt.Printf("  Replicas: %s\n", string(replicasOut))
-	fmt.Println("  Pods:")
-	podsCmd := exec.Command("kubectl", "get", "pods", "-n", "mcp-runtime", "-o", "wide")
-	podsCmd.Stdout = os.Stdout
-	podsCmd.Stderr = os.Stderr
-	_ = podsCmd.Run()
-
-	fmt.Println("\nMCP Servers:")
-	cmd := exec.Command("kubectl", "get", "mcpserver", "--all-namespaces", "--no-headers")
-	output, _ := cmd.Output()
-	if len(output) == 0 {
-		fmt.Println("  No servers deployed")
+	replicasOut, err := replicasCmd.Output()
+	if err != nil {
+		operatorStatus = Red("ERROR")
+		operatorDetails = "Not found"
 	} else {
-		fmt.Println(string(output))
+		replicas := strings.TrimSpace(string(replicasOut))
+		if replicas == "" || strings.HasPrefix(replicas, "/") || replicas == "0/1" {
+			operatorStatus = Yellow("PENDING")
+		}
+		operatorDetails = "Replicas: " + replicas
+	}
+	tableData = append(tableData, []string{"Operator", operatorStatus, operatorDetails})
+
+	TableBoxed(tableData)
+
+	// MCP Servers section
+	DefaultPrinter.Println()
+	Section("MCP Servers")
+
+	cmd := exec.Command("kubectl", "get", "mcpserver", "--all-namespaces", "-o", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,IMAGE:.spec.image,REPLICAS:.spec.replicas,PATH:.spec.ingressPath")
+	output, err := cmd.Output()
+	if err != nil || len(strings.TrimSpace(string(output))) == 0 {
+		Warn("No MCP servers deployed")
+	} else {
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		if len(lines) <= 1 {
+			Warn("No MCP servers deployed")
+		} else {
+			serverData := [][]string{}
+			for _, line := range lines {
+				fields := strings.Fields(line)
+				serverData = append(serverData, fields)
+			}
+			Table(serverData)
+		}
 	}
 
+	// Quick tips
+	DefaultPrinter.Println()
+	Info("Use 'mcp-runtime server list' for detailed server info")
+
+	return nil
+}
+
+// checkRegistryStatusQuiet checks registry without printing output
+func checkRegistryStatusQuiet(logger *zap.Logger, namespace string) error {
+	cmd := exec.Command("kubectl", "get", "deployment", "registry", "-n", namespace, "-o", "jsonpath={.status.readyReplicas}")
+	out, err := cmd.Output()
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(out)) == "" || strings.TrimSpace(string(out)) == "0" {
+		return fmt.Errorf("registry not ready")
+	}
 	return nil
 }

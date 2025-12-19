@@ -54,9 +54,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Build registry config from environment variables
+	var registryConfig *operator.RegistryConfig
+	if url := os.Getenv("PROVISIONED_REGISTRY_URL"); url != "" {
+		registryConfig = &operator.RegistryConfig{
+			URL:        url,
+			Username:   os.Getenv("PROVISIONED_REGISTRY_USERNAME"),
+			Password:   os.Getenv("PROVISIONED_REGISTRY_PASSWORD"),
+			SecretName: os.Getenv("PROVISIONED_REGISTRY_SECRET_NAME"),
+		}
+		setupLog.Info("Provisioned registry configured", "url", url)
+	}
+
 	if err = (&operator.MCPServerReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		DefaultIngressHost:  os.Getenv("MCP_DEFAULT_INGRESS_HOST"),
+		ProvisionedRegistry: registryConfig,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPServer")
 		os.Exit(1)

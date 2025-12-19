@@ -101,7 +101,7 @@ func generateCRDsFromMetadata(logger *zap.Logger, metadataFile, metadataDir, out
 	// List generated files
 	files, _ := filepath.Glob(filepath.Join(outputDir, "*.yaml"))
 	for _, file := range files {
-		fmt.Printf("Generated: %s\n", file)
+		Success(fmt.Sprintf("Generated: %s", file))
 	}
 
 	return nil

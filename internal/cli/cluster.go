@@ -171,24 +171,24 @@ func checkClusterStatus(logger *zap.Logger) error {
 	if err != nil {
 		return fmt.Errorf("cluster not accessible: %w", err)
 	}
-	fmt.Println(string(output))
+	DefaultPrinter.Println(string(output))
 
 	// Check nodes
-	fmt.Println("\nNodes:")
+	Section("Nodes")
 	cmd = exec.Command("kubectl", "get", "nodes")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Run()
 
 	// Check CRD
-	fmt.Println("\nMCP CRD:")
+	Section("MCP CRD")
 	cmd = exec.Command("kubectl", "get", "crd", "mcpservers.mcp.agent-hellboy.io")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Run()
 
 	// Check operator
-	fmt.Println("\nOperator:")
+	Section("Operator")
 	cmd = exec.Command("kubectl", "get", "pods", "-n", "mcp-runtime")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
