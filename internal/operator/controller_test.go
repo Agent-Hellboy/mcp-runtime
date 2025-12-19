@@ -96,26 +96,12 @@ func TestSetDefaults(t *testing.T) {
 		r := MCPServerReconciler{Scheme: runtime.NewScheme()}
 		r.setDefaults(&mcpServer)
 
-		// Check actual values
-		if mcpServer.Spec.Replicas == nil || *mcpServer.Spec.Replicas != 1 {
-			t.Errorf("replicas = %v, want 1", mcpServer.Spec.Replicas)
-		}
-		if mcpServer.Spec.Port != 8088 {
-			t.Errorf("port = %d, want 8088", mcpServer.Spec.Port)
-		}
-		if mcpServer.Spec.ServicePort != 80 {
-			t.Errorf("servicePort = %d, want 80", mcpServer.Spec.ServicePort)
-		}
-		if mcpServer.Spec.ImageTag != "latest" {
-			t.Errorf("imageTag = %q, want 'latest'", mcpServer.Spec.ImageTag)
-		}
-		if mcpServer.Spec.IngressPath != "/test-server/mcp" {
-			t.Errorf("ingressPath = %q, want '/test-server/mcp'", mcpServer.Spec.IngressPath)
-		}
-		if mcpServer.Spec.IngressClass != "traefik" {
-			t.Errorf("ingressClass = %q, want 'traefik'", mcpServer.Spec.IngressClass)
-		}
-		// IngressHost only set from env var - not tested here
+		assertReplicas(t, mcpServer.Spec.Replicas, 1)
+		assertEqual(t, "port", mcpServer.Spec.Port, int32(8088))
+		assertEqual(t, "servicePort", mcpServer.Spec.ServicePort, int32(80))
+		assertEqual(t, "imageTag", mcpServer.Spec.ImageTag, "latest")
+		assertEqual(t, "ingressPath", mcpServer.Spec.IngressPath, "/test-server/mcp")
+		assertEqual(t, "ingressClass", mcpServer.Spec.IngressClass, "traefik")
 	})
 
 	t.Run("preserves existing values", func(t *testing.T) {
@@ -133,26 +119,12 @@ func TestSetDefaults(t *testing.T) {
 		r := MCPServerReconciler{Scheme: runtime.NewScheme()}
 		r.setDefaults(&mcpServer)
 
-		// These should NOT be changed
-		if *mcpServer.Spec.Replicas != 5 {
-			t.Errorf("replicas changed to %d, should stay 5", *mcpServer.Spec.Replicas)
-		}
-		if mcpServer.Spec.Port != 9000 {
-			t.Errorf("port changed to %d, should stay 9000", mcpServer.Spec.Port)
-		}
-		if mcpServer.Spec.ServicePort != 8080 {
-			t.Errorf("servicePort changed to %d, should stay 8080", mcpServer.Spec.ServicePort)
-		}
-		if mcpServer.Spec.IngressPath != "/custom/path" {
-			t.Errorf("ingressPath changed to %q, should stay '/custom/path'", mcpServer.Spec.IngressPath)
-		}
-		if mcpServer.Spec.IngressClass != "nginx" {
-			t.Errorf("ingressClass changed to %q, should stay 'nginx'", mcpServer.Spec.IngressClass)
-		}
-		// ImageTag should be set since it was empty
-		if mcpServer.Spec.ImageTag != "latest" {
-			t.Errorf("imageTag = %q, want 'latest'", mcpServer.Spec.ImageTag)
-		}
+		assertReplicas(t, mcpServer.Spec.Replicas, 5)
+		assertEqual(t, "port", mcpServer.Spec.Port, int32(9000))
+		assertEqual(t, "servicePort", mcpServer.Spec.ServicePort, int32(8080))
+		assertEqual(t, "ingressPath", mcpServer.Spec.IngressPath, "/custom/path")
+		assertEqual(t, "ingressClass", mcpServer.Spec.IngressClass, "nginx")
+		assertEqual(t, "imageTag", mcpServer.Spec.ImageTag, "latest")
 	})
 
 	t.Run("skips imageTag if image has tag", func(t *testing.T) {
@@ -165,9 +137,7 @@ func TestSetDefaults(t *testing.T) {
 		r := MCPServerReconciler{Scheme: runtime.NewScheme()}
 		r.setDefaults(&mcpServer)
 
-		if mcpServer.Spec.ImageTag != "" {
-			t.Errorf("imageTag = %q, should stay empty when image has tag", mcpServer.Spec.ImageTag)
-		}
+		assertEqual(t, "imageTag", mcpServer.Spec.ImageTag, "")
 	})
 
 	t.Run("skips ingressPath if name is empty", func(t *testing.T) {
@@ -175,10 +145,7 @@ func TestSetDefaults(t *testing.T) {
 		r := MCPServerReconciler{Scheme: runtime.NewScheme()}
 		r.setDefaults(&mcpServer)
 
-		// IngressPath should remain empty (not "//mcp")
-		if mcpServer.Spec.IngressPath != "" {
-			t.Errorf("ingressPath = %q, should stay empty when name is empty", mcpServer.Spec.IngressPath)
-		}
+		assertEqual(t, "ingressPath", mcpServer.Spec.IngressPath, "")
 	})
 }
 
@@ -236,5 +203,19 @@ func TestReconcileDeploymentLabels(t *testing.T) {
 	}
 	if deployment.Spec.Template.Labels["app.kubernetes.io/managed-by"] != "mcp-runtime" {
 		t.Fatalf("pod template label managed-by = %q, want %q", deployment.Spec.Template.Labels["app.kubernetes.io/managed-by"], "mcp-runtime")
+	}
+}
+
+func assertReplicas(t *testing.T, replicas *int32, want int32) {
+	t.Helper()
+	if replicas == nil || *replicas != want {
+		t.Errorf("replicas = %v, want %d", replicas, want)
+	}
+}
+
+func assertEqual[T comparable](t *testing.T, name string, got, want T) {
+	t.Helper()
+	if got != want {
+		t.Errorf("%s = %v, want %v", name, got, want)
 	}
 }

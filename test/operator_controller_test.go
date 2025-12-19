@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
@@ -69,49 +70,66 @@ func TestMCPServerReconciler_ReconcileCreatesResources(t *testing.T) {
 		t.Fatalf("Reconcile returned error: %v", err)
 	}
 
-	deployment := &appsv1.Deployment{}
-	if err := fakeClient.Get(ctx, types.NamespacedName{Name: "test-server", Namespace: "mcp-servers"}, deployment); err != nil {
-		t.Fatalf("expected Deployment to be created: %v", err)
-	}
-	if *deployment.Spec.Replicas != 3 {
-		t.Errorf("expected 3 replicas, got %d", *deployment.Spec.Replicas)
-	}
-	if deployment.Spec.Template.Spec.Containers[0].Image != "my-registry.com/my-image:v1.0" {
-		t.Errorf("expected image my-registry.com/my-image:v1.0, got %s", deployment.Spec.Template.Spec.Containers[0].Image)
-	}
-	if deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort != 9000 {
-		t.Errorf("expected container port 9000, got %d", deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort)
-	}
-
-	service := &corev1.Service{}
-	if err := fakeClient.Get(ctx, types.NamespacedName{Name: "test-server", Namespace: "mcp-servers"}, service); err != nil {
-		t.Fatalf("expected Service to be created: %v", err)
-	}
-	if service.Spec.Ports[0].Port != 8080 {
-		t.Errorf("expected service port 8080, got %d", service.Spec.Ports[0].Port)
-	}
-	if service.Spec.Ports[0].TargetPort.IntVal != 9000 {
-		t.Errorf("expected service target port 9000, got %d", service.Spec.Ports[0].TargetPort.IntVal)
-	}
-
-	ingress := &networkingv1.Ingress{}
-	if err := fakeClient.Get(ctx, types.NamespacedName{Name: "test-server", Namespace: "mcp-servers"}, ingress); err != nil {
-		t.Fatalf("expected Ingress to be created: %v", err)
-	}
-	if ingress.Spec.Rules[0].HTTP.Paths[0].Path != "/custom/path" {
-		t.Errorf("expected ingress path /custom/path, got %s", ingress.Spec.Rules[0].HTTP.Paths[0].Path)
-	}
-	if ingress.Spec.Rules[0].Host != "example.com" {
-		t.Errorf("expected ingress host example.com, got %s", ingress.Spec.Rules[0].Host)
-	}
-	if ingress.Spec.IngressClassName == nil || *ingress.Spec.IngressClassName != "traefik" {
-		t.Errorf("expected ingress class traefik, got %v", ingress.Spec.IngressClassName)
-	}
-	if ingress.Annotations["custom"] != "annotation" {
-		t.Errorf("expected custom annotation to be present, got %v", ingress.Annotations["custom"])
-	}
+	key := types.NamespacedName{Name: "test-server", Namespace: "mcp-servers"}
+	assertDeployment(t, ctx, fakeClient, key, 3, "my-registry.com/my-image:v1.0", 9000)
+	assertService(t, ctx, fakeClient, key, 8080, 9000)
+	assertIngress(t, ctx, fakeClient, key, "/custom/path", "example.com", "traefik", "custom", "annotation")
 }
 
 func int32Ptr(i int32) *int32 {
 	return &i
+}
+
+func assertDeployment(t *testing.T, ctx context.Context, client client.Client, key types.NamespacedName, replicas int32, image string, port int32) {
+	t.Helper()
+
+	deployment := &appsv1.Deployment{}
+	if err := client.Get(ctx, key, deployment); err != nil {
+		t.Fatalf("expected Deployment to be created: %v", err)
+	}
+	if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != replicas {
+		t.Errorf("expected %d replicas, got %v", replicas, deployment.Spec.Replicas)
+	}
+	if deployment.Spec.Template.Spec.Containers[0].Image != image {
+		t.Errorf("expected image %s, got %s", image, deployment.Spec.Template.Spec.Containers[0].Image)
+	}
+	if deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort != port {
+		t.Errorf("expected container port %d, got %d", port, deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort)
+	}
+}
+
+func assertService(t *testing.T, ctx context.Context, client client.Client, key types.NamespacedName, servicePort, targetPort int32) {
+	t.Helper()
+
+	service := &corev1.Service{}
+	if err := client.Get(ctx, key, service); err != nil {
+		t.Fatalf("expected Service to be created: %v", err)
+	}
+	if service.Spec.Ports[0].Port != servicePort {
+		t.Errorf("expected service port %d, got %d", servicePort, service.Spec.Ports[0].Port)
+	}
+	if service.Spec.Ports[0].TargetPort.IntVal != targetPort {
+		t.Errorf("expected service target port %d, got %d", targetPort, service.Spec.Ports[0].TargetPort.IntVal)
+	}
+}
+
+func assertIngress(t *testing.T, ctx context.Context, client client.Client, key types.NamespacedName, path, host, className, annotationKey, annotationValue string) {
+	t.Helper()
+
+	ingress := &networkingv1.Ingress{}
+	if err := client.Get(ctx, key, ingress); err != nil {
+		t.Fatalf("expected Ingress to be created: %v", err)
+	}
+	if ingress.Spec.Rules[0].HTTP.Paths[0].Path != path {
+		t.Errorf("expected ingress path %s, got %s", path, ingress.Spec.Rules[0].HTTP.Paths[0].Path)
+	}
+	if ingress.Spec.Rules[0].Host != host {
+		t.Errorf("expected ingress host %s, got %s", host, ingress.Spec.Rules[0].Host)
+	}
+	if ingress.Spec.IngressClassName == nil || *ingress.Spec.IngressClassName != className {
+		t.Errorf("expected ingress class %s, got %v", className, ingress.Spec.IngressClassName)
+	}
+	if ingress.Annotations[annotationKey] != annotationValue {
+		t.Errorf("expected custom annotation to be present, got %v", ingress.Annotations[annotationKey])
+	}
 }

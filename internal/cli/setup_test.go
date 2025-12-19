@@ -34,25 +34,18 @@ func TestLoadCLIConfig(t *testing.T) {
 		os.Unsetenv("MCP_DEFAULT_SERVER_PORT")
 
 		cfg := LoadCLIConfig()
+		if cfg == nil {
+			t.Fatal("LoadCLIConfig returned nil")
+		}
 
-		if cfg.DeploymentTimeout != defaultDeploymentTimeout {
-			t.Errorf("DeploymentTimeout = %v, want %v", cfg.DeploymentTimeout, defaultDeploymentTimeout)
-		}
-		if cfg.CertTimeout != defaultCertTimeout {
-			t.Errorf("CertTimeout = %v, want %v", cfg.CertTimeout, defaultCertTimeout)
-		}
-		if cfg.RegistryPort != defaultRegistryPort {
-			t.Errorf("RegistryPort = %v, want %v", cfg.RegistryPort, defaultRegistryPort)
-		}
-		if cfg.SkopeoImage != defaultSkopeoImage {
-			t.Errorf("SkopeoImage = %v, want %v", cfg.SkopeoImage, defaultSkopeoImage)
-		}
-		if cfg.OperatorImage != "" {
-			t.Errorf("OperatorImage = %v, want empty", cfg.OperatorImage)
-		}
-		if cfg.DefaultServerPort != defaultServerPort {
-			t.Errorf("DefaultServerPort = %v, want %v", cfg.DefaultServerPort, defaultServerPort)
-		}
+		assertCLIConfig(t, *cfg, cliConfigExpectation{
+			deploymentTimeout: defaultDeploymentTimeout,
+			certTimeout:       defaultCertTimeout,
+			registryPort:      defaultRegistryPort,
+			skopeoImage:       defaultSkopeoImage,
+			operatorImage:     "",
+			defaultServerPort: defaultServerPort,
+		})
 	})
 
 	t.Run("reads env vars when set", func(t *testing.T) {
@@ -64,44 +57,41 @@ func TestLoadCLIConfig(t *testing.T) {
 		os.Setenv("MCP_DEFAULT_SERVER_PORT", "9000")
 
 		cfg := LoadCLIConfig()
+		if cfg == nil {
+			t.Fatal("LoadCLIConfig returned nil")
+		}
 
-		if cfg.DeploymentTimeout != 10*time.Minute {
-			t.Errorf("DeploymentTimeout = %v, want %v", cfg.DeploymentTimeout, 10*time.Minute)
-		}
-		if cfg.CertTimeout != 2*time.Minute {
-			t.Errorf("CertTimeout = %v, want %v", cfg.CertTimeout, 2*time.Minute)
-		}
-		if cfg.RegistryPort != 5001 {
-			t.Errorf("RegistryPort = %v, want %v", cfg.RegistryPort, 5001)
-		}
-		if cfg.SkopeoImage != "custom/skopeo:v2" {
-			t.Errorf("SkopeoImage = %v, want %v", cfg.SkopeoImage, "custom/skopeo:v2")
-		}
-		if cfg.OperatorImage != "custom/operator:v1" {
-			t.Errorf("OperatorImage = %v, want %v", cfg.OperatorImage, "custom/operator:v1")
-		}
-		if cfg.DefaultServerPort != 9000 {
-			t.Errorf("DefaultServerPort = %v, want %v", cfg.DefaultServerPort, 9000)
-		}
+		assertCLIConfig(t, *cfg, cliConfigExpectation{
+			deploymentTimeout: 10 * time.Minute,
+			certTimeout:       2 * time.Minute,
+			registryPort:      5001,
+			skopeoImage:       "custom/skopeo:v2",
+			operatorImage:     "custom/operator:v1",
+			defaultServerPort: 9000,
+		})
 	})
 
 	t.Run("handles invalid values gracefully", func(t *testing.T) {
 		os.Setenv("MCP_DEPLOYMENT_TIMEOUT", "invalid")
+		os.Setenv("MCP_CERT_TIMEOUT", "invalid")
 		os.Setenv("MCP_REGISTRY_PORT", "not-a-number")
 		os.Setenv("MCP_DEFAULT_SERVER_PORT", "-1")
+		os.Setenv("MCP_SKOPEO_IMAGE", "")
+		os.Setenv("MCP_OPERATOR_IMAGE", "")
 
 		cfg := LoadCLIConfig()
+		if cfg == nil {
+			t.Fatal("LoadCLIConfig returned nil")
+		}
 
-		// Should fall back to defaults
-		if cfg.DeploymentTimeout != defaultDeploymentTimeout {
-			t.Errorf("DeploymentTimeout = %v, want default %v", cfg.DeploymentTimeout, defaultDeploymentTimeout)
-		}
-		if cfg.RegistryPort != defaultRegistryPort {
-			t.Errorf("RegistryPort = %v, want default %v", cfg.RegistryPort, defaultRegistryPort)
-		}
-		if cfg.DefaultServerPort != defaultServerPort {
-			t.Errorf("DefaultServerPort = %v, want default %v", cfg.DefaultServerPort, defaultServerPort)
-		}
+		assertCLIConfig(t, *cfg, cliConfigExpectation{
+			deploymentTimeout: defaultDeploymentTimeout,
+			certTimeout:       defaultCertTimeout,
+			registryPort:      defaultRegistryPort,
+			skopeoImage:       defaultSkopeoImage,
+			operatorImage:     "",
+			defaultServerPort: defaultServerPort,
+		})
 	})
 }
 
@@ -130,5 +120,36 @@ func TestProvisionedRegistryConfig(t *testing.T) {
 	}
 	if cfg.ProvisionedRegistryPassword != "pass" {
 		t.Errorf("ProvisionedRegistryPassword = %v, want %v", cfg.ProvisionedRegistryPassword, "pass")
+	}
+}
+
+type cliConfigExpectation struct {
+	deploymentTimeout time.Duration
+	certTimeout       time.Duration
+	registryPort      int
+	skopeoImage       string
+	operatorImage     string
+	defaultServerPort int
+}
+
+func assertCLIConfig(t *testing.T, cfg CLIConfig, want cliConfigExpectation) {
+	t.Helper()
+	if cfg.DeploymentTimeout != want.deploymentTimeout {
+		t.Errorf("DeploymentTimeout = %v, want %v", cfg.DeploymentTimeout, want.deploymentTimeout)
+	}
+	if cfg.CertTimeout != want.certTimeout {
+		t.Errorf("CertTimeout = %v, want %v", cfg.CertTimeout, want.certTimeout)
+	}
+	if cfg.RegistryPort != want.registryPort {
+		t.Errorf("RegistryPort = %v, want %v", cfg.RegistryPort, want.registryPort)
+	}
+	if cfg.SkopeoImage != want.skopeoImage {
+		t.Errorf("SkopeoImage = %v, want %v", cfg.SkopeoImage, want.skopeoImage)
+	}
+	if cfg.OperatorImage != want.operatorImage {
+		t.Errorf("OperatorImage = %v, want %v", cfg.OperatorImage, want.operatorImage)
+	}
+	if cfg.DefaultServerPort != want.defaultServerPort {
+		t.Errorf("DefaultServerPort = %v, want %v", cfg.DefaultServerPort, want.defaultServerPort)
 	}
 }
