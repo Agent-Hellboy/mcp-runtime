@@ -3,6 +3,8 @@
 package cli
 
 import (
+	"io"
+
 	"github.com/pterm/pterm"
 )
 
@@ -11,6 +13,8 @@ import (
 type Printer struct {
 	// Quiet suppresses non-essential output
 	Quiet bool
+	// Writer overrides the output destination when set.
+	Writer io.Writer
 }
 
 // DefaultPrinter is the default printer instance used by package-level functions.
@@ -23,6 +27,12 @@ func (p *Printer) Section(title string) {
 	if p.Quiet {
 		return
 	}
+	writer := p.Writer
+	if writer != nil {
+		pterm.Fprintln(writer)
+		pterm.DefaultSection.WithWriter(writer).Println(title)
+		return
+	}
 	pterm.Println()
 	pterm.DefaultSection.Println(title)
 }
@@ -30,6 +40,12 @@ func (p *Printer) Section(title string) {
 // Step prints a step indicator (e.g., "Step 1: Initialize").
 func (p *Printer) Step(title string) {
 	if p.Quiet {
+		return
+	}
+	writer := p.Writer
+	if writer != nil {
+		pterm.Fprintln(writer)
+		pterm.DefaultSection.WithLevel(2).WithWriter(writer).Println(title)
 		return
 	}
 	pterm.Println()
@@ -43,22 +59,38 @@ func (p *Printer) Info(msg string) {
 	if p.Quiet {
 		return
 	}
-	pterm.Info.WithWriter(nil).Println(msg)
+	if p.Writer != nil {
+		pterm.Info.WithWriter(p.Writer).Println(msg)
+		return
+	}
+	pterm.Info.Println(msg)
 }
 
 // Success prints a success message.
 func (p *Printer) Success(msg string) {
-	pterm.Success.WithWriter(nil).Println(msg)
+	if p.Writer != nil {
+		pterm.Success.WithWriter(p.Writer).Println(msg)
+		return
+	}
+	pterm.Success.Println(msg)
 }
 
 // Warn prints a warning message.
 func (p *Printer) Warn(msg string) {
-	pterm.Warning.WithWriter(nil).Println(msg)
+	if p.Writer != nil {
+		pterm.Warning.WithWriter(p.Writer).Println(msg)
+		return
+	}
+	pterm.Warning.Println(msg)
 }
 
 // Error prints an error message.
 func (p *Printer) Error(msg string) {
-	pterm.Error.WithWriter(nil).Println(msg)
+	if p.Writer != nil {
+		pterm.Error.WithWriter(p.Writer).Println(msg)
+		return
+	}
+	pterm.Error.Println(msg)
 }
 
 // --- Tables ---
@@ -68,7 +100,11 @@ func (p *Printer) Table(data [][]string) {
 	if len(data) == 0 {
 		return
 	}
-	if err := pterm.DefaultTable.WithHasHeader().WithData(data).Render(); err != nil {
+	table := pterm.DefaultTable.WithHasHeader().WithData(data)
+	if p.Writer != nil {
+		table = table.WithWriter(p.Writer)
+	}
+	if err := table.Render(); err != nil {
 		pterm.Error.Println("failed to render table:", err)
 	}
 }
@@ -78,7 +114,11 @@ func (p *Printer) TableBoxed(data [][]string) {
 	if len(data) == 0 {
 		return
 	}
-	if err := pterm.DefaultTable.WithHasHeader().WithBoxed().WithData(data).Render(); err != nil {
+	table := pterm.DefaultTable.WithHasHeader().WithBoxed().WithData(data)
+	if p.Writer != nil {
+		table = table.WithWriter(p.Writer)
+	}
+	if err := table.Render(); err != nil {
 		pterm.Error.Println("failed to render table:", err)
 	}
 }
@@ -87,7 +127,11 @@ func (p *Printer) TableBoxed(data [][]string) {
 
 // Header prints a full-width header banner.
 func (p *Printer) Header(title string) {
-	pterm.DefaultHeader.WithFullWidth().WithBackgroundStyle(pterm.NewStyle(pterm.BgCyan)).Println(title)
+	header := pterm.DefaultHeader.WithFullWidth().WithBackgroundStyle(pterm.NewStyle(pterm.BgCyan))
+	if p.Writer != nil {
+		header = header.WithWriter(p.Writer)
+	}
+	header.Println(title)
 }
 
 // --- Colors ---
@@ -119,12 +163,16 @@ func (p *Printer) SpinnerStart(msg string) func(success bool, finalMsg string) {
 	if p.Quiet {
 		return func(bool, string) {}
 	}
-	spinner, _ := pterm.DefaultSpinner.Start(msg)
+	spinner := pterm.DefaultSpinner
+	if p.Writer != nil {
+		spinner = *spinner.WithWriter(p.Writer)
+	}
+	s, _ := spinner.Start(msg)
 	return func(success bool, finalMsg string) {
 		if success {
-			spinner.Success(finalMsg)
+			s.Success(finalMsg)
 		} else {
-			spinner.Fail(finalMsg)
+			s.Fail(finalMsg)
 		}
 	}
 }
@@ -133,11 +181,19 @@ func (p *Printer) SpinnerStart(msg string) func(success bool, finalMsg string) {
 
 // Println prints a plain line.
 func (p *Printer) Println(a ...interface{}) {
+	if p.Writer != nil {
+		pterm.Fprintln(p.Writer, a...)
+		return
+	}
 	pterm.Println(a...)
 }
 
 // Printf prints formatted text.
 func (p *Printer) Printf(format string, a ...interface{}) {
+	if p.Writer != nil {
+		pterm.Fprint(p.Writer, pterm.Sprintf(format, a...))
+		return
+	}
 	pterm.Printf(format, a...)
 }
 

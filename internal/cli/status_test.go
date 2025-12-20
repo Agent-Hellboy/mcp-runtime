@@ -118,6 +118,7 @@ func TestShowPlatformStatus(t *testing.T) {
 		var buf bytes.Buffer
 		pterm.SetDefaultOutput(&buf)
 		pterm.DisableStyling()
+		setDefaultPrinterWriter(t, &buf)
 		t.Cleanup(func() {
 			pterm.SetDefaultOutput(os.Stdout)
 			pterm.EnableStyling()
@@ -156,6 +157,7 @@ func TestServerStatus(t *testing.T) {
 		var buf bytes.Buffer
 		pterm.SetDefaultOutput(&buf)
 		pterm.DisableStyling()
+		setDefaultPrinterWriter(t, &buf)
 		t.Cleanup(func() {
 			pterm.SetDefaultOutput(os.Stdout)
 			pterm.EnableStyling()
@@ -187,6 +189,7 @@ func TestServerStatus(t *testing.T) {
 		var buf bytes.Buffer
 		pterm.SetDefaultOutput(&buf)
 		pterm.DisableStyling()
+		setDefaultPrinterWriter(t, &buf)
 		t.Cleanup(func() {
 			pterm.SetDefaultOutput(os.Stdout)
 			pterm.EnableStyling()
@@ -257,6 +260,7 @@ func TestServerStatus(t *testing.T) {
 		var buf bytes.Buffer
 		pterm.SetDefaultOutput(&buf)
 		pterm.DisableStyling()
+		setDefaultPrinterWriter(t, &buf)
 		t.Cleanup(func() {
 			pterm.SetDefaultOutput(os.Stdout)
 			pterm.EnableStyling()
@@ -280,5 +284,14 @@ func TestCheckRegistryStatusQuiet(t *testing.T) {
 		// This will likely fail in test env without a cluster
 		// but we're testing that it handles errors gracefully
 		_ = checkRegistryStatusQuiet(logger, "nonexistent-namespace")
+	})
+}
+
+func setDefaultPrinterWriter(t *testing.T, w *bytes.Buffer) {
+	t.Helper()
+	orig := DefaultPrinter.Writer
+	DefaultPrinter.Writer = w
+	t.Cleanup(func() {
+		DefaultPrinter.Writer = orig
 	})
 }
