@@ -45,7 +45,9 @@ cp "${KUBECONFIG_FILE}" "${HOME}/.kube/config"
 echo "[kind] preloading images into kind"
 for img in traefik:v2.10 curlimages/curl:latest registry:2.8.3; do
   docker pull "${img}"
-  kind load docker-image "${img}" --name "${CLUSTER_NAME}"
+  if ! kind load docker-image "${img}" --name "${CLUSTER_NAME}"; then
+    echo "[warn] preload failed for ${img}; will rely on in-cluster pull"
+  fi
 done
 
 echo "[build] rebuilding CLI"

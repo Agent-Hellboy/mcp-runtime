@@ -54,8 +54,8 @@ jobs:
             bin/mcp-runtime-linux-arm64
             bin/mcp-runtime-linux-amd64
 
-  unit-test-coverage:
-    name: Unit Tests (Coverage)
+  test-coverage:
+    name: Unit + Integration Tests (Coverage)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -67,10 +67,28 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install envtest
+        run: |
+          export KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use -p path)
+          echo "KUBEBUILDER_ASSETS=$KUBEBUILDER_ASSETS" >> $GITHUB_ENV
+
       - name: Run unit tests with coverage
         run: |
-          go test -v -race -coverprofile=coverage.out \
+          go test -v -race -coverprofile=unit.out \
             $(go list ./... | grep -v '^mcp-runtime/test' | grep -v '^mcp-runtime/examples/example-app$')
+
+      - name: Run integration tests with coverage
+        run: |
+          go test -v -race -timeout 30m -coverprofile=integration.out \
+            -coverpkg=./internal/...,./pkg/...,./api/... \
+            ./test/integration/...
+        env:
+          KUBEBUILDER_ASSETS: ${{ env.KUBEBUILDER_ASSETS }}
+
+      - name: Merge coverage files
+        run: |
+          tail -n +2 integration.out >> unit.out
+          mv unit.out coverage.out
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4

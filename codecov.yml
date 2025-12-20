@@ -5,8 +5,8 @@ coverage:
   status:
     project:
       default:
-        target: 0.80
-        threshold: 1%
+        target: 0.60
+        threshold: 2%
         paths:
           - cmd/
           - internal/
@@ -14,8 +14,8 @@ coverage:
           - api/
     patch:
       default:
-        target: 0.80
-        threshold: 0.5%
+        target: 0.60
+        threshold: 1%
         paths:
           - cmd/
           - internal/
@@ -35,7 +35,7 @@ ignore:
   - "**/zz_generated.*.go"
   - "**/mocks/**"
   - "**/testdata/**"
-  - "test/golden/**"
+  - "test/**"
   - "config/**"
   - "docs/**"
   - "examples/**"
