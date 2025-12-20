@@ -1,0 +1,15 @@
+Commands for managing the Kubernetes cluster
+
+Usage:
+  mcp-runtime cluster [command]
+
+Available Commands:
+  config      Configure cluster settings
+  init        Initialize cluster configuration
+  provision   Provision a new cluster
+  status      Check cluster status
+
+Flags:
+  -h, --help   help for cluster
+
+Use "mcp-runtime cluster [command] --help" for more information about a command.

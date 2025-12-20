@@ -367,8 +367,20 @@ func (m *ServerManager) ServerStatus(namespace string) error {
 		return fmt.Errorf("kubectl get mcpserver failed: %w", err)
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) == 0 || (len(lines) == 1 && lines[0] == "") {
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		Warn("No MCP servers found in namespace " + namespace)
+		return nil
+	}
+	rawLines := strings.Split(trimmed, "\n")
+	lines := make([]string, 0, len(rawLines))
+	for _, line := range rawLines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) == 0 {
 		Warn("No MCP servers found in namespace " + namespace)
 		return nil
 	}
@@ -417,17 +429,26 @@ func (m *ServerManager) ServerStatus(namespace string) error {
 		Warn("Failed to list pods: " + err.Error())
 		return nil
 	}
-	if len(strings.TrimSpace(string(podOut))) > 0 {
-		podLines := strings.Split(strings.TrimSpace(string(podOut)), "\n")
-		if len(podLines) > 1 {
-			podData := [][]string{}
-			for _, pl := range podLines {
-				podData = append(podData, strings.Fields(pl))
-			}
-			Table(podData)
-		} else {
-			Info("No pods found")
+	trimmedPods := strings.TrimSpace(string(podOut))
+	if trimmedPods == "" {
+		return nil
+	}
+	rawPodLines := strings.Split(trimmedPods, "\n")
+	podLines := make([]string, 0, len(rawPodLines))
+	for _, line := range rawPodLines {
+		if strings.TrimSpace(line) == "" {
+			continue
 		}
+		podLines = append(podLines, line)
+	}
+	if len(podLines) > 1 {
+		podData := [][]string{}
+		for _, pl := range podLines {
+			podData = append(podData, strings.Fields(pl))
+		}
+		Table(podData)
+	} else {
+		Info("No pods found")
 	}
 
 	return nil
@@ -456,12 +477,12 @@ type manifestSpec struct {
 
 // validateManifestValue ensures basic values do not contain control characters that would break YAML.
 func validateManifestValue(field, value string) (string, error) {
+	if strings.ContainsAny(value, "\r\n\t") {
+		return "", fmt.Errorf("%s must not contain control characters", field)
+	}
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "", fmt.Errorf("%s is required", field)
-	}
-	if strings.ContainsAny(value, "\r\n\t") {
-		return "", fmt.Errorf("%s must not contain control characters", field)
 	}
 	return value, nil
 }

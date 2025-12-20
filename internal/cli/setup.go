@@ -17,6 +17,103 @@ import (
 
 const defaultRegistrySecretName = "mcp-runtime-registry-creds" // #nosec G101 -- default secret name, not a credential.
 
+type ClusterManagerAPI interface {
+	InitCluster(kubeconfig, context string) error
+	ConfigureCluster(opts ingressOptions) error
+}
+
+type RegistryManagerAPI interface {
+	ShowRegistryInfo() error
+	PushInCluster(source, target, helperNS string) error
+}
+
+type SetupDeps struct {
+	ResolveExternalRegistryConfig   func(*ExternalRegistryConfig) (*ExternalRegistryConfig, error)
+	ClusterManager                  ClusterManagerAPI
+	RegistryManager                 RegistryManagerAPI
+	LoginRegistry                   func(logger *zap.Logger, registryURL, username, password string) error
+	DeployRegistry                  func(logger *zap.Logger, namespace string, port int, registryType, registryStorageSize, manifestPath string) error
+	WaitForDeploymentAvailable      func(logger *zap.Logger, name, namespace, selector string, timeout time.Duration) error
+	PrintDeploymentDiagnostics      func(deploy, namespace, selector string)
+	SetupTLS                        func(logger *zap.Logger) error
+	BuildOperatorImage              func(image string) error
+	PushOperatorImage               func(image string) error
+	EnsureNamespace                 func(namespace string) error
+	GetPlatformRegistryURL          func(logger *zap.Logger) string
+	PushOperatorImageToInternal     func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
+	DeployOperatorManifests         func(logger *zap.Logger, operatorImage string) error
+	ConfigureProvisionedRegistryEnv func(ext *ExternalRegistryConfig, secretName string) error
+	RestartDeployment               func(name, namespace string) error
+	CheckCRDInstalled               func(name string) error
+	GetDeploymentTimeout            func() time.Duration
+	GetRegistryPort                 func() int
+	OperatorImageFor                func(ext *ExternalRegistryConfig, testMode bool) string
+}
+
+func (d SetupDeps) withDefaults(logger *zap.Logger) SetupDeps {
+	if d.ResolveExternalRegistryConfig == nil {
+		d.ResolveExternalRegistryConfig = resolveExternalRegistryConfig
+	}
+	if d.ClusterManager == nil {
+		d.ClusterManager = DefaultClusterManager(logger)
+	}
+	if d.RegistryManager == nil {
+		d.RegistryManager = DefaultRegistryManager(logger)
+	}
+	if d.LoginRegistry == nil {
+		d.LoginRegistry = loginRegistry
+	}
+	if d.DeployRegistry == nil {
+		d.DeployRegistry = deployRegistry
+	}
+	if d.WaitForDeploymentAvailable == nil {
+		d.WaitForDeploymentAvailable = waitForDeploymentAvailable
+	}
+	if d.PrintDeploymentDiagnostics == nil {
+		d.PrintDeploymentDiagnostics = printDeploymentDiagnostics
+	}
+	if d.SetupTLS == nil {
+		d.SetupTLS = setupTLS
+	}
+	if d.BuildOperatorImage == nil {
+		d.BuildOperatorImage = buildOperatorImage
+	}
+	if d.PushOperatorImage == nil {
+		d.PushOperatorImage = pushOperatorImage
+	}
+	if d.EnsureNamespace == nil {
+		d.EnsureNamespace = ensureNamespace
+	}
+	if d.GetPlatformRegistryURL == nil {
+		d.GetPlatformRegistryURL = getPlatformRegistryURL
+	}
+	if d.PushOperatorImageToInternal == nil {
+		d.PushOperatorImageToInternal = pushOperatorImageToInternalRegistry
+	}
+	if d.DeployOperatorManifests == nil {
+		d.DeployOperatorManifests = deployOperatorManifests
+	}
+	if d.ConfigureProvisionedRegistryEnv == nil {
+		d.ConfigureProvisionedRegistryEnv = configureProvisionedRegistryEnv
+	}
+	if d.RestartDeployment == nil {
+		d.RestartDeployment = restartDeployment
+	}
+	if d.CheckCRDInstalled == nil {
+		d.CheckCRDInstalled = checkCRDInstalled
+	}
+	if d.GetDeploymentTimeout == nil {
+		d.GetDeploymentTimeout = GetDeploymentTimeout
+	}
+	if d.GetRegistryPort == nil {
+		d.GetRegistryPort = GetRegistryPort
+	}
+	if d.OperatorImageFor == nil {
+		d.OperatorImageFor = getOperatorImage
+	}
+	return d
+}
+
 // NewSetupCmd constructs the top-level setup command for installing the platform.
 func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 	var registryType string
@@ -39,20 +136,18 @@ func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 The platform deploys an internal Docker registry by default, which teams
 will use to push and pull container images.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			manifestPath := ingressManifest
-			if !cmd.Flags().Changed("ingress-manifest") {
-				if tlsEnabled {
-					manifestPath = "config/ingress/overlays/prod"
-				} else {
-					manifestPath = "config/ingress/overlays/http"
-				}
-			}
-			registryManifest := "config/registry"
-			if tlsEnabled {
-				registryManifest = "config/registry/overlays/tls"
-			}
+			plan := BuildSetupPlan(SetupPlanInput{
+				RegistryType:           registryType,
+				RegistryStorageSize:    registryStorageSize,
+				IngressMode:            ingressMode,
+				IngressManifest:        ingressManifest,
+				IngressManifestChanged: cmd.Flags().Changed("ingress-manifest"),
+				ForceIngressInstall:    forceIngressInstall,
+				TLSEnabled:             tlsEnabled,
+				TestMode:               testMode,
+			})
 
-			return setupPlatform(logger, registryType, registryStorageSize, ingressMode, manifestPath, registryManifest, forceIngressInstall, tlsEnabled, testMode)
+			return setupPlatform(logger, plan)
 		},
 	}
 
@@ -67,37 +162,22 @@ will use to push and pull container images.`,
 	return cmd
 }
 
-func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingressMode, ingressManifest, registryManifest string, forceIngressInstall, tlsEnabled, testMode bool) error {
+func setupPlatform(logger *zap.Logger, plan SetupPlan) error {
+	return setupPlatformWithDeps(logger, plan, SetupDeps{}.withDefaults(logger))
+}
+
+func setupPlatformWithDeps(logger *zap.Logger, plan SetupPlan, deps SetupDeps) error {
+	deps = deps.withDefaults(logger)
 	Section("MCP Runtime Setup")
 
-	extRegistry, usingExternalRegistry, registrySecretName := resolveRegistrySetup(logger)
-	ingressOpts := ingressOptions{
-		mode:     ingressMode,
-		manifest: ingressManifest,
-		force:    forceIngressInstall,
+	extRegistry, usingExternalRegistry, registrySecretName := resolveRegistrySetup(logger, deps)
+	ctx := &SetupContext{
+		Plan:                 plan,
+		ExternalRegistry:      extRegistry,
+		UsingExternalRegistry: usingExternalRegistry,
+		RegistrySecretName:    registrySecretName,
 	}
-
-	if err := setupClusterSteps(logger, ingressOpts); err != nil {
-		return err
-	}
-	if err := setupTLSStep(logger, tlsEnabled); err != nil {
-		return err
-	}
-	if err := setupRegistryStep(logger, extRegistry, usingExternalRegistry, registryType, registryStorageSize, registryManifest, tlsEnabled); err != nil {
-		return err
-	}
-
-	operatorImage, err := prepareOperatorImage(logger, extRegistry, usingExternalRegistry, testMode)
-	if err != nil {
-		return err
-	}
-	if err := deployOperatorStep(logger, operatorImage, extRegistry, registrySecretName, usingExternalRegistry); err != nil {
-		return err
-	}
-
-	// Step 6: Verify components
-	if err := verifySetup(usingExternalRegistry); err != nil {
-		Error(fmt.Sprintf("Post-setup verification failed: %v", err))
+	if err := runSetupSteps(logger, deps, ctx, buildSetupSteps(ctx)); err != nil {
 		return err
 	}
 
@@ -106,8 +186,8 @@ func setupPlatform(logger *zap.Logger, registryType, registryStorageSize, ingres
 	return nil
 }
 
-func resolveRegistrySetup(logger *zap.Logger) (*ExternalRegistryConfig, bool, string) {
-	extRegistry, err := resolveExternalRegistryConfig(nil)
+func resolveRegistrySetup(logger *zap.Logger, deps SetupDeps) (*ExternalRegistryConfig, bool, string) {
+	extRegistry, err := deps.ResolveExternalRegistryConfig(nil)
 	if err != nil {
 		Warn(fmt.Sprintf("Could not load external registry config: %v", err))
 	}
@@ -115,12 +195,11 @@ func resolveRegistrySetup(logger *zap.Logger) (*ExternalRegistryConfig, bool, st
 	return extRegistry, usingExternalRegistry, defaultRegistrySecretName
 }
 
-func setupClusterSteps(logger *zap.Logger, ingressOpts ingressOptions) error {
+func setupClusterSteps(logger *zap.Logger, ingressOpts ingressOptions, deps SetupDeps) error {
 	// Step 1: Initialize cluster
 	Step("Step 1: Initialize cluster")
 	Info("Installing CRD")
-	clusterMgr := DefaultClusterManager(logger)
-	if err := clusterMgr.InitCluster("", ""); err != nil {
+	if err := deps.ClusterManager.InitCluster("", ""); err != nil {
 		Error(fmt.Sprintf("Cluster initialization failed: %v", err))
 		return fmt.Errorf("failed to initialize cluster: %w", err)
 	}
@@ -129,7 +208,7 @@ func setupClusterSteps(logger *zap.Logger, ingressOpts ingressOptions) error {
 	// Step 2: Configure cluster
 	Step("Step 2: Configure cluster")
 	Info("Checking ingress controller")
-	if err := clusterMgr.ConfigureCluster(ingressOpts); err != nil {
+	if err := deps.ClusterManager.ConfigureCluster(ingressOpts); err != nil {
 		Error(fmt.Sprintf("Cluster configuration failed: %v", err))
 		return fmt.Errorf("cluster configuration failed: %w", err)
 	}
@@ -137,14 +216,14 @@ func setupClusterSteps(logger *zap.Logger, ingressOpts ingressOptions) error {
 	return nil
 }
 
-func setupTLSStep(logger *zap.Logger, tlsEnabled bool) error {
+func setupTLSStep(logger *zap.Logger, tlsEnabled bool, deps SetupDeps) error {
 	// Step 3: Configure TLS (if enabled)
 	Step("Step 3: Configure TLS")
 	if !tlsEnabled {
 		Info("Skipped (TLS disabled, use --with-tls to enable)")
 		return nil
 	}
-	if err := setupTLS(logger); err != nil {
+	if err := deps.SetupTLS(logger); err != nil {
 		Error(fmt.Sprintf("TLS setup failed: %v", err))
 		return fmt.Errorf("TLS setup failed: %w", err)
 	}
@@ -152,14 +231,14 @@ func setupTLSStep(logger *zap.Logger, tlsEnabled bool) error {
 	return nil
 }
 
-func setupRegistryStep(logger *zap.Logger, extRegistry *ExternalRegistryConfig, usingExternalRegistry bool, registryType, registryStorageSize, registryManifest string, tlsEnabled bool) error {
+func setupRegistryStep(logger *zap.Logger, extRegistry *ExternalRegistryConfig, usingExternalRegistry bool, registryType, registryStorageSize, registryManifest string, tlsEnabled bool, deps SetupDeps) error {
 	// Step 4: Deploy internal container registry
 	Step("Step 4: Configure registry")
 	if usingExternalRegistry {
 		Info(fmt.Sprintf("Using external registry: %s", extRegistry.URL))
 		if extRegistry.Username != "" || extRegistry.Password != "" {
 			Info("Logging into external registry")
-			if err := loginRegistry(logger, extRegistry.URL, extRegistry.Username, extRegistry.Password); err != nil {
+			if err := deps.LoginRegistry(logger, extRegistry.URL, extRegistry.Username, extRegistry.Password); err != nil {
 				Error(fmt.Sprintf("Registry login failed: %v", err))
 				return err
 			}
@@ -173,30 +252,29 @@ func setupRegistryStep(logger *zap.Logger, extRegistry *ExternalRegistryConfig, 
 	} else {
 		Info("TLS: disabled (dev HTTP mode)")
 	}
-	if err := deployRegistry(logger, "registry", GetRegistryPort(), registryType, registryStorageSize, registryManifest); err != nil {
+	if err := deps.DeployRegistry(logger, "registry", deps.GetRegistryPort(), registryType, registryStorageSize, registryManifest); err != nil {
 		Error(fmt.Sprintf("Registry deployment failed: %v", err))
 		return fmt.Errorf("failed to deploy registry: %w", err)
 	}
 
 	Info("Waiting for registry to be ready...")
-	if err := waitForDeploymentAvailable(logger, "registry", "registry", "app=registry", GetDeploymentTimeout()); err != nil {
-		printDeploymentDiagnostics("registry", "registry", "app=registry")
+	if err := deps.WaitForDeploymentAvailable(logger, "registry", "registry", "app=registry", deps.GetDeploymentTimeout()); err != nil {
+		deps.PrintDeploymentDiagnostics("registry", "registry", "app=registry")
 		Error(fmt.Sprintf("Registry failed to become ready: %v", err))
 		return err
 	}
 
-	registryMgr := DefaultRegistryManager(logger)
-	if err := registryMgr.ShowRegistryInfo(); err != nil {
+	if err := deps.RegistryManager.ShowRegistryInfo(); err != nil {
 		Warn(fmt.Sprintf("Failed to show registry info: %v", err))
 	}
 	return nil
 }
 
-func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfig, usingExternalRegistry, testMode bool) (string, error) {
+func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfig, usingExternalRegistry, testMode bool, deps SetupDeps) (string, error) {
 	// Step 5: Deploy operator
 	Step("Step 5: Deploy operator")
 
-	operatorImage := getOperatorImage(extRegistry, testMode)
+	operatorImage := deps.OperatorImageFor(extRegistry, testMode)
 	Info(fmt.Sprintf("Image: %s", operatorImage))
 
 	if testMode {
@@ -205,28 +283,28 @@ func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfi
 	}
 
 	Info("Building operator image")
-	if err := buildOperatorImage(operatorImage); err != nil {
+	if err := deps.BuildOperatorImage(operatorImage); err != nil {
 		Error(fmt.Sprintf("Operator image build failed: %v", err))
 		return "", fmt.Errorf("operator image build failed: %w", err)
 	}
 
 	if usingExternalRegistry {
 		Info("Pushing operator image to external registry")
-		if err := pushOperatorImage(operatorImage); err != nil {
+		if err := deps.PushOperatorImage(operatorImage); err != nil {
 			Warn(fmt.Sprintf("Could not push image to external registry: %v", err))
 		}
 		return operatorImage, nil
 	}
 
 	Info("Pushing operator image to internal registry")
-	internalRegistryURL := getPlatformRegistryURL(logger)
+	internalRegistryURL := deps.GetPlatformRegistryURL(logger)
 	internalOperatorImage := internalRegistryURL + "/mcp-runtime-operator:latest"
 
-	if err := ensureNamespace("registry"); err != nil {
+	if err := deps.EnsureNamespace("registry"); err != nil {
 		return "", fmt.Errorf("failed to ensure registry namespace: %w", err)
 	}
 
-	if err := pushOperatorImageToInternalRegistry(logger, operatorImage, internalOperatorImage, "registry"); err != nil {
+	if err := deps.PushOperatorImageToInternal(logger, operatorImage, internalOperatorImage, "registry"); err != nil {
 		Error(fmt.Sprintf("Could not push image to internal registry via in-cluster helper: %v", err))
 		return "", fmt.Errorf("failed to push operator image to internal registry: %w", err)
 	}
@@ -234,21 +312,21 @@ func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfi
 	return internalOperatorImage, nil
 }
 
-func deployOperatorStep(logger *zap.Logger, operatorImage string, extRegistry *ExternalRegistryConfig, registrySecretName string, usingExternalRegistry bool) error {
+func deployOperatorStep(logger *zap.Logger, operatorImage string, extRegistry *ExternalRegistryConfig, registrySecretName string, usingExternalRegistry bool, deps SetupDeps) error {
 	Info("Deploying operator manifests")
-	if err := deployOperatorManifests(logger, operatorImage); err != nil {
+	if err := deps.DeployOperatorManifests(logger, operatorImage); err != nil {
 		Error(fmt.Sprintf("Operator deployment failed: %v", err))
 		return fmt.Errorf("operator deployment failed: %w", err)
 	}
 
 	if usingExternalRegistry {
-		if err := configureProvisionedRegistryEnv(extRegistry, registrySecretName); err != nil {
+		if err := deps.ConfigureProvisionedRegistryEnv(extRegistry, registrySecretName); err != nil {
 			Error(fmt.Sprintf("Failed to set PROVISIONED_REGISTRY_* env on operator: %v", err))
 			return fmt.Errorf("failed to configure external registry env on operator: %w", err)
 		}
 	}
 
-	if err := restartDeployment("mcp-runtime-operator-controller-manager", "mcp-runtime"); err != nil {
+	if err := deps.RestartDeployment("mcp-runtime-operator-controller-manager", "mcp-runtime"); err != nil {
 		if usingExternalRegistry {
 			Error(fmt.Sprintf("Failed to restart operator deployment to pick up registry env: %v", err))
 			return fmt.Errorf("failed to restart operator deployment after registry env update: %w", err)
@@ -258,27 +336,27 @@ func deployOperatorStep(logger *zap.Logger, operatorImage string, extRegistry *E
 	return nil
 }
 
-func verifySetup(usingExternalRegistry bool) error {
+func verifySetup(usingExternalRegistry bool, deps SetupDeps) error {
 	Step("Step 6: Verify platform components")
 
 	if usingExternalRegistry {
 		Info("Skipping internal registry availability check (using external registry)")
 	} else {
 		Info("Waiting for registry deployment to be available")
-		if err := waitForDeploymentAvailable(nil, "registry", "registry", "app=registry", GetDeploymentTimeout()); err != nil {
-			printDeploymentDiagnostics("registry", "registry", "app=registry")
+		if err := deps.WaitForDeploymentAvailable(nil, "registry", "registry", "app=registry", deps.GetDeploymentTimeout()); err != nil {
+			deps.PrintDeploymentDiagnostics("registry", "registry", "app=registry")
 			return fmt.Errorf("registry not ready: %w", err)
 		}
 	}
 
 	Info("Waiting for operator deployment to be available")
-	if err := waitForDeploymentAvailable(nil, "mcp-runtime-operator-controller-manager", "mcp-runtime", "control-plane=controller-manager", GetDeploymentTimeout()); err != nil {
-		printDeploymentDiagnostics("mcp-runtime-operator-controller-manager", "mcp-runtime", "control-plane=controller-manager")
+	if err := deps.WaitForDeploymentAvailable(nil, "mcp-runtime-operator-controller-manager", "mcp-runtime", "control-plane=controller-manager", deps.GetDeploymentTimeout()); err != nil {
+		deps.PrintDeploymentDiagnostics("mcp-runtime-operator-controller-manager", "mcp-runtime", "control-plane=controller-manager")
 		return fmt.Errorf("operator not ready: %w", err)
 	}
 
 	Info("Checking MCPServer CRD presence")
-	if err := checkCRDInstalled("mcpservers.mcp-runtime.org"); err != nil {
+	if err := deps.CheckCRDInstalled("mcpservers.mcp-runtime.org"); err != nil {
 		return fmt.Errorf("CRD check failed: %w", err)
 	}
 
@@ -305,6 +383,10 @@ func getOperatorImage(ext *ExternalRegistryConfig, testMode bool) string {
 }
 
 func configureProvisionedRegistryEnv(ext *ExternalRegistryConfig, secretName string) error {
+	return configureProvisionedRegistryEnvWithKubectl(kubectlClient, ext, secretName)
+}
+
+func configureProvisionedRegistryEnvWithKubectl(kubectl KubectlRunner, ext *ExternalRegistryConfig, secretName string) error {
 	if ext == nil || ext.URL == "" {
 		return nil
 	}
@@ -318,11 +400,11 @@ func configureProvisionedRegistryEnv(ext *ExternalRegistryConfig, secretName str
 		"PROVISIONED_REGISTRY_URL=" + ext.URL,
 	}
 	if hasCreds {
-		if err := ensureProvisionedRegistrySecret(secretName, ext.Username, ext.Password); err != nil {
+		if err := ensureProvisionedRegistrySecretWithKubectl(kubectl, secretName, ext.Username, ext.Password); err != nil {
 			return err
 		}
 		// Create imagePullSecret in mcp-servers namespace for pod image pulls.
-		if err := ensureImagePullSecret(NamespaceMCPServers, secretName, ext.URL, ext.Username, ext.Password); err != nil {
+		if err := ensureImagePullSecretWithKubectl(kubectl, NamespaceMCPServers, secretName, ext.URL, ext.Username, ext.Password); err != nil {
 			return err
 		}
 		args = append(args, "PROVISIONED_REGISTRY_SECRET_NAME="+secretName)
@@ -330,10 +412,14 @@ func configureProvisionedRegistryEnv(ext *ExternalRegistryConfig, secretName str
 		args = append(args, "--from=secret/"+secretName)
 	}
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	return kubectlClient.RunWithOutput(args, os.Stdout, os.Stderr)
+	return kubectl.RunWithOutput(args, os.Stdout, os.Stderr)
 }
 
 func ensureProvisionedRegistrySecret(name, username, password string) error {
+	return ensureProvisionedRegistrySecretWithKubectl(kubectlClient, name, username, password)
+}
+
+func ensureProvisionedRegistrySecretWithKubectl(kubectl KubectlRunner, name, username, password string) error {
 	var envData strings.Builder
 	if username != "" {
 		envData.WriteString("PROVISIONED_REGISTRY_USERNAME=")
@@ -350,7 +436,7 @@ func ensureProvisionedRegistrySecret(name, username, password string) error {
 	}
 
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	createCmd, err := kubectlClient.CommandArgs([]string{
+	createCmd, err := kubectl.CommandArgs([]string{
 		"create", "secret", "generic", name,
 		"--from-env-file=-",
 		"-n", NamespaceMCPRuntime,
@@ -369,7 +455,7 @@ func ensureProvisionedRegistrySecret(name, username, password string) error {
 	}
 
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	applyCmd, err := kubectlClient.CommandArgs([]string{"apply", "-f", "-"})
+	applyCmd, err := kubectl.CommandArgs([]string{"apply", "-f", "-"})
 	if err != nil {
 		return err
 	}
@@ -385,6 +471,10 @@ func ensureProvisionedRegistrySecret(name, username, password string) error {
 
 // ensureImagePullSecret creates or updates a dockerconfigjson secret for image pulls.
 func ensureImagePullSecret(namespace, name, registry, username, password string) error {
+	return ensureImagePullSecretWithKubectl(kubectlClient, namespace, name, registry, username, password)
+}
+
+func ensureImagePullSecretWithKubectl(kubectl KubectlRunner, namespace, name, registry, username, password string) error {
 	if username == "" && password == "" {
 		return nil
 	}
@@ -415,7 +505,7 @@ data:
 `, name, namespace, base64.StdEncoding.EncodeToString(dockerCfgJSON))
 
 	// Apply secret manifest
-	applyCmd, err := kubectlClient.CommandArgs([]string{"apply", "-f", "-"})
+	applyCmd, err := kubectl.CommandArgs([]string{"apply", "-f", "-"})
 	if err != nil {
 		return err
 	}
@@ -442,7 +532,12 @@ func buildOperatorImage(image string) error {
 
 func restartDeployment(name, namespace string) error {
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	return kubectlClient.RunWithOutput([]string{"rollout", "restart", "deployment/" + name, "-n", namespace}, os.Stdout, os.Stderr)
+	return restartDeploymentWithKubectl(kubectlClient, name, namespace)
+}
+
+func restartDeploymentWithKubectl(kubectl KubectlRunner, name, namespace string) error {
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
+	return kubectl.RunWithOutput([]string{"rollout", "restart", "deployment/" + name, "-n", namespace}, os.Stdout, os.Stderr)
 }
 
 func pushOperatorImage(image string) error {
@@ -466,16 +561,26 @@ func pushOperatorImageToInternalRegistry(logger *zap.Logger, sourceImage, target
 
 func checkCRDInstalled(name string) error {
 	// #nosec G204 -- name is hardcoded CRD identifier from internal code.
-	return kubectlClient.RunWithOutput([]string{"get", "crd", name}, os.Stdout, os.Stderr)
+	return checkCRDInstalledWithKubectl(kubectlClient, name)
+}
+
+func checkCRDInstalledWithKubectl(kubectl KubectlRunner, name string) error {
+	// #nosec G204 -- name is hardcoded CRD identifier from internal code.
+	return kubectl.RunWithOutput([]string{"get", "crd", name}, os.Stdout, os.Stderr)
 }
 
 // waitForDeploymentAvailable polls a deployment until it has at least one available replica or times out.
 func waitForDeploymentAvailable(logger *zap.Logger, name, namespace, selector string, timeout time.Duration) error {
+	return waitForDeploymentAvailableWithKubectl(kubectlClient, logger, name, namespace, selector, timeout)
+}
+
+// waitForDeploymentAvailableWithKubectl polls a deployment until it has at least one available replica or times out.
+func waitForDeploymentAvailableWithKubectl(kubectl KubectlRunner, logger *zap.Logger, name, namespace, selector string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	lastLog := time.Time{}
 	for {
 		// #nosec G204 -- name/namespace from internal setup logic, not direct user input.
-		cmd, err := kubectlClient.CommandArgs([]string{"get", "deployment", name, "-n", namespace, "-o", "jsonpath={.status.availableReplicas}"})
+		cmd, err := kubectl.CommandArgs([]string{"get", "deployment", name, "-n", namespace, "-o", "jsonpath={.status.availableReplicas}"})
 		if err == nil {
 			out, execErr := cmd.Output()
 			if execErr == nil {
@@ -504,18 +609,29 @@ func waitForDeploymentAvailable(logger *zap.Logger, name, namespace, selector st
 
 // printDeploymentDiagnostics prints a quick status of pods for a deployment selector to help users triage readiness issues.
 func printDeploymentDiagnostics(deploy, namespace, selector string) {
+	printDeploymentDiagnosticsWithKubectl(kubectlClient, deploy, namespace, selector)
+}
+
+// printDeploymentDiagnosticsWithKubectl prints a quick status of pods for a deployment selector.
+func printDeploymentDiagnosticsWithKubectl(kubectl KubectlRunner, deploy, namespace, selector string) {
 	Warn(fmt.Sprintf("Deployment %s in %s is not ready. Showing pod statuses:", deploy, namespace))
 	// #nosec G204 -- namespace/selector from internal diagnostics, not user input.
-	_ = kubectlClient.RunWithOutput([]string{"get", "pods", "-n", namespace, "-l", selector, "-o", "wide"}, os.Stdout, os.Stderr)
+	_ = kubectl.RunWithOutput([]string{"get", "pods", "-n", namespace, "-l", selector, "-o", "wide"}, os.Stdout, os.Stderr)
 }
 
 // deployOperatorManifests deploys operator manifests without requiring kustomize or controller-gen.
 // It applies CRD, RBAC, and manager manifests directly, replacing the image name in the process.
 func deployOperatorManifests(logger *zap.Logger, operatorImage string) error {
+	return deployOperatorManifestsWithKubectl(kubectlClient, logger, operatorImage)
+}
+
+// deployOperatorManifestsWithKubectl deploys operator manifests without requiring kustomize or controller-gen.
+// It applies CRD, RBAC, and manager manifests directly, replacing the image name in the process.
+func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logger, operatorImage string) error {
 	// Step 1: Apply CRD
 	Info("Applying CRD manifests")
 	// #nosec G204 -- fixed file path from repository.
-	if err := kubectlClient.RunWithOutput([]string{"apply", "--validate=false", "-f", "config/crd/bases/mcp-runtime.org_mcpservers.yaml"}, os.Stdout, os.Stderr); err != nil {
+	if err := kubectl.RunWithOutput([]string{"apply", "--validate=false", "-f", "config/crd/bases/mcp-runtime.org_mcpservers.yaml"}, os.Stdout, os.Stderr); err != nil {
 		return fmt.Errorf("failed to apply CRD: %w", err)
 	}
 
@@ -526,7 +642,7 @@ func deployOperatorManifests(logger *zap.Logger, operatorImage string) error {
 	}
 
 	// #nosec G204 -- fixed kustomize path from repository.
-	if err := kubectlClient.RunWithOutput([]string{"apply", "-k", "config/rbac/"}, os.Stdout, os.Stderr); err != nil {
+	if err := kubectl.RunWithOutput([]string{"apply", "-k", "config/rbac/"}, os.Stdout, os.Stderr); err != nil {
 		return fmt.Errorf("failed to apply RBAC: %w", err)
 	}
 
@@ -562,10 +678,10 @@ func deployOperatorManifests(logger *zap.Logger, operatorImage string) error {
 
 	// Delete existing deployment to avoid immutable selector conflicts on reapply.
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	_ = kubectlClient.Run([]string{"delete", "deployment/" + OperatorDeploymentName, "-n", NamespaceMCPRuntime, "--ignore-not-found"})
+	_ = kubectl.Run([]string{"delete", "deployment/" + OperatorDeploymentName, "-n", NamespaceMCPRuntime, "--ignore-not-found"})
 
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	if err := kubectlClient.RunWithOutput([]string{"apply", "-f", tmpFile.Name()}, os.Stdout, os.Stderr); err != nil {
+	if err := kubectl.RunWithOutput([]string{"apply", "-f", tmpFile.Name()}, os.Stdout, os.Stderr); err != nil {
 		return fmt.Errorf("failed to apply manager deployment: %w", err)
 	}
 
@@ -576,10 +692,16 @@ func deployOperatorManifests(logger *zap.Logger, operatorImage string) error {
 // setupTLS configures TLS by applying cert-manager resources.
 // Prerequisites: cert-manager must be installed and CA secret must exist.
 func setupTLS(logger *zap.Logger) error {
+	return setupTLSWithKubectl(kubectlClient, logger)
+}
+
+// setupTLSWithKubectl configures TLS by applying cert-manager resources.
+// Prerequisites: cert-manager must be installed and CA secret must exist.
+func setupTLSWithKubectl(kubectl KubectlRunner, logger *zap.Logger) error {
 	// Check if cert-manager CRDs are installed
 	Info("Checking cert-manager installation")
 	// #nosec G204 -- fixed kubectl command to check CRD.
-	if err := kubectlClient.Run([]string{"get", "crd", CertManagerCRDName}); err != nil {
+	if err := kubectl.Run([]string{"get", "crd", CertManagerCRDName}); err != nil {
 		return fmt.Errorf("cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true")
 	}
 	Info("cert-manager CRDs found")
@@ -587,7 +709,7 @@ func setupTLS(logger *zap.Logger) error {
 	// Check if CA secret exists
 	Info("Checking CA secret")
 	// #nosec G204 -- fixed kubectl command to check secret.
-	if err := kubectlClient.Run([]string{"get", "secret", "mcp-runtime-ca", "-n", "cert-manager"}); err != nil {
+	if err := kubectl.Run([]string{"get", "secret", "mcp-runtime-ca", "-n", "cert-manager"}); err != nil {
 		return fmt.Errorf("CA secret 'mcp-runtime-ca' not found in cert-manager namespace. Create it first:\n  kubectl create secret tls mcp-runtime-ca --cert=ca.crt --key=ca.key -n cert-manager")
 	}
 	Info("CA secret found")
@@ -595,7 +717,7 @@ func setupTLS(logger *zap.Logger) error {
 	// Apply ClusterIssuer
 	Info("Applying ClusterIssuer")
 	// #nosec G204 -- fixed file path from repository.
-	if err := kubectlClient.RunWithOutput([]string{"apply", "-f", "config/cert-manager/cluster-issuer.yaml"}, os.Stdout, os.Stderr); err != nil {
+	if err := kubectl.RunWithOutput([]string{"apply", "-f", "config/cert-manager/cluster-issuer.yaml"}, os.Stdout, os.Stderr); err != nil {
 		return fmt.Errorf("failed to apply ClusterIssuer: %w", err)
 	}
 
@@ -607,7 +729,7 @@ func setupTLS(logger *zap.Logger) error {
 	// Apply Certificate
 	Info("Applying Certificate for registry")
 	// #nosec G204 -- fixed file path from repository.
-	if err := kubectlClient.RunWithOutput([]string{"apply", "-f", "config/cert-manager/example-registry-certificate.yaml"}, os.Stdout, os.Stderr); err != nil {
+	if err := kubectl.RunWithOutput([]string{"apply", "-f", "config/cert-manager/example-registry-certificate.yaml"}, os.Stdout, os.Stderr); err != nil {
 		return fmt.Errorf("failed to apply Certificate: %w", err)
 	}
 
@@ -615,7 +737,7 @@ func setupTLS(logger *zap.Logger) error {
 	certTimeout := GetCertTimeout()
 	Info(fmt.Sprintf("Waiting for certificate to be issued (timeout: %s)", certTimeout))
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	if err := kubectlClient.RunWithOutput([]string{
+	if err := kubectl.RunWithOutput([]string{
 		"wait", "--for=condition=Ready",
 		"certificate/registry-cert", "-n", NamespaceRegistry,
 		fmt.Sprintf("--timeout=%s", certTimeout),

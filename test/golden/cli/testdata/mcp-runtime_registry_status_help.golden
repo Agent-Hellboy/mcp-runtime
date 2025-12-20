@@ -1,0 +1,8 @@
+Check the status of the container registry
+
+Usage:
+  mcp-runtime registry status [flags]
+
+Flags:
+  -h, --help               help for status
+      --namespace string   Registry namespace (default "registry")

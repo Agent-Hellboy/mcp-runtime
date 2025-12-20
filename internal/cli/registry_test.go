@@ -2,6 +2,9 @@ package cli
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"go.uber.org/zap"
@@ -177,4 +180,216 @@ func TestDropRegistryPrefix(t *testing.T) {
 			t.Errorf("dropRegistryPrefix(%q) = %q, want %q", test.repo, repo, test.want)
 		}
 	}
+}
+
+func TestRegistryConfigPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path, err := registryConfigPath()
+	if err != nil {
+		t.Fatalf("registryConfigPath returned error: %v", err)
+	}
+	expectedSuffix := filepath.Join(".mcp-runtime", "registry.yaml")
+	if !strings.HasSuffix(path, expectedSuffix) {
+		t.Fatalf("expected path to end with %q, got %q", expectedSuffix, path)
+	}
+	if !strings.HasPrefix(path, home) {
+		t.Fatalf("expected path to start with home %q, got %q", home, path)
+	}
+}
+
+func TestSaveAndLoadExternalRegistryConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfg := &ExternalRegistryConfig{
+		URL:      "registry.example.com",
+		Username: "user",
+		Password: "pass",
+	}
+	if err := saveExternalRegistryConfig(cfg); err != nil {
+		t.Fatalf("saveExternalRegistryConfig returned error: %v", err)
+	}
+
+	loaded, err := loadExternalRegistryConfig()
+	if err != nil {
+		t.Fatalf("loadExternalRegistryConfig returned error: %v", err)
+	}
+	if loaded == nil {
+		t.Fatal("expected config to be loaded")
+	}
+	if loaded.URL != cfg.URL || loaded.Username != cfg.Username || loaded.Password != cfg.Password {
+		t.Fatalf("loaded config mismatch: %#v", loaded)
+	}
+}
+
+func TestLoadExternalRegistryConfigMissing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfg, err := loadExternalRegistryConfig()
+	if err != nil {
+		t.Fatalf("loadExternalRegistryConfig returned error: %v", err)
+	}
+	if cfg != nil {
+		t.Fatalf("expected nil config when file missing, got %#v", cfg)
+	}
+}
+
+func TestLoadExternalRegistryConfigInvalid(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path, err := registryConfigPath()
+	if err != nil {
+		t.Fatalf("registryConfigPath returned error: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("username: user\n"), 0o600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	if _, err := loadExternalRegistryConfig(); err == nil {
+		t.Fatal("expected error for config missing url")
+	}
+}
+
+func TestResolveExternalRegistryConfigPrecedence(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	origConfig := DefaultCLIConfig
+	t.Cleanup(func() { DefaultCLIConfig = origConfig })
+
+	if err := saveExternalRegistryConfig(&ExternalRegistryConfig{URL: "file.example.com"}); err != nil {
+		t.Fatalf("failed to save file config: %v", err)
+	}
+
+	t.Run("uses file config when no overrides", func(t *testing.T) {
+		DefaultCLIConfig = &CLIConfig{}
+		cfg, err := resolveExternalRegistryConfig(nil)
+		if err != nil {
+			t.Fatalf("resolveExternalRegistryConfig returned error: %v", err)
+		}
+		if cfg == nil || cfg.URL != "file.example.com" {
+			t.Fatalf("expected file config, got %#v", cfg)
+		}
+	})
+
+	t.Run("env config overrides file", func(t *testing.T) {
+		DefaultCLIConfig = &CLIConfig{
+			ProvisionedRegistryURL:      "env.example.com",
+			ProvisionedRegistryUsername: "env-user",
+			ProvisionedRegistryPassword: "env-pass",
+		}
+		cfg, err := resolveExternalRegistryConfig(nil)
+		if err != nil {
+			t.Fatalf("resolveExternalRegistryConfig returned error: %v", err)
+		}
+		if cfg == nil || cfg.URL != "env.example.com" || cfg.Username != "env-user" || cfg.Password != "env-pass" {
+			t.Fatalf("expected env config, got %#v", cfg)
+		}
+	})
+
+	t.Run("flag config overrides env", func(t *testing.T) {
+		DefaultCLIConfig = &CLIConfig{
+			ProvisionedRegistryURL:      "env.example.com",
+			ProvisionedRegistryUsername: "env-user",
+			ProvisionedRegistryPassword: "env-pass",
+		}
+		cfg, err := resolveExternalRegistryConfig(&ExternalRegistryConfig{
+			URL:      "flag.example.com",
+			Username: "flag-user",
+			Password: "flag-pass",
+		})
+		if err != nil {
+			t.Fatalf("resolveExternalRegistryConfig returned error: %v", err)
+		}
+		if cfg == nil || cfg.URL != "flag.example.com" || cfg.Username != "flag-user" || cfg.Password != "flag-pass" {
+			t.Fatalf("expected flag config, got %#v", cfg)
+		}
+	})
+}
+
+func TestEnsureRegistryStorageSize(t *testing.T) {
+	origKubectl := kubectlClient
+	t.Cleanup(func() { kubectlClient = origKubectl })
+
+	t.Run("skips when size empty", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectlClient = &KubectlClient{exec: mock, validators: nil}
+
+		if err := ensureRegistryStorageSize(zap.NewNop(), "registry", ""); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(mock.Commands) != 0 {
+			t.Fatalf("expected no kubectl calls, got %v", mock.Commands)
+		}
+	})
+
+	t.Run("no-op when size matches", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				cmd := &MockCommand{Args: spec.Args}
+				if contains(spec.Args, "get") && contains(spec.Args, "pvc") {
+					cmd.RunFunc = func() error {
+						if cmd.StdoutW != nil {
+							_, _ = cmd.StdoutW.Write([]byte("10Gi"))
+						}
+						return nil
+					}
+				}
+				return cmd
+			},
+		}
+		kubectlClient = &KubectlClient{exec: mock, validators: nil}
+
+		if err := ensureRegistryStorageSize(zap.NewNop(), "registry", "10Gi"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(mock.Commands) != 1 {
+			t.Fatalf("expected 1 kubectl call, got %d", len(mock.Commands))
+		}
+		if contains(mock.Commands[0].Args, "patch") {
+			t.Fatalf("did not expect patch call")
+		}
+	})
+
+	t.Run("patches when size differs", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				cmd := &MockCommand{Args: spec.Args}
+				if contains(spec.Args, "get") && contains(spec.Args, "pvc") {
+					cmd.RunFunc = func() error {
+						if cmd.StdoutW != nil {
+							_, _ = cmd.StdoutW.Write([]byte("5Gi"))
+						}
+						return nil
+					}
+				}
+				return cmd
+			},
+		}
+		kubectlClient = &KubectlClient{exec: mock, validators: nil}
+
+		if err := ensureRegistryStorageSize(zap.NewNop(), "registry", "10Gi"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(mock.Commands) != 2 {
+			t.Fatalf("expected 2 kubectl calls, got %d", len(mock.Commands))
+		}
+		foundPatch := false
+		for _, cmd := range mock.Commands {
+			if cmd.Name == "kubectl" && contains(cmd.Args, "patch") {
+				foundPatch = true
+				break
+			}
+		}
+		if !foundPatch {
+			t.Fatalf("expected patch command, got %v", mock.Commands)
+		}
+	})
 }

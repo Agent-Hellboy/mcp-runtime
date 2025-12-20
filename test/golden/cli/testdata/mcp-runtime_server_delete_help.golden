@@ -1,0 +1,8 @@
+Delete an MCP server deployment
+
+Usage:
+  mcp-runtime server delete [name] [flags]
+
+Flags:
+  -h, --help               help for delete
+      --namespace string   Namespace (default "mcp-servers")

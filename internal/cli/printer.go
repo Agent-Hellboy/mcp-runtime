@@ -43,22 +43,22 @@ func (p *Printer) Info(msg string) {
 	if p.Quiet {
 		return
 	}
-	pterm.Info.Println(msg)
+	pterm.Info.WithWriter(nil).Println(msg)
 }
 
 // Success prints a success message.
 func (p *Printer) Success(msg string) {
-	pterm.Success.Println(msg)
+	pterm.Success.WithWriter(nil).Println(msg)
 }
 
 // Warn prints a warning message.
 func (p *Printer) Warn(msg string) {
-	pterm.Warning.Println(msg)
+	pterm.Warning.WithWriter(nil).Println(msg)
 }
 
 // Error prints an error message.
 func (p *Printer) Error(msg string) {
-	pterm.Error.Println(msg)
+	pterm.Error.WithWriter(nil).Println(msg)
 }
 
 // --- Tables ---

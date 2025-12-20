@@ -1,0 +1,10 @@
+Configure cluster settings like ingress, storage, etc.
+
+Usage:
+  mcp-runtime cluster config [flags]
+
+Flags:
+      --force-ingress-install     Force ingress install even if an ingress class already exists
+  -h, --help                      help for config
+      --ingress string            Ingress controller to install (traefik|none) (default "traefik")
+      --ingress-manifest string   Manifest to apply when installing the ingress controller (default "config/ingress/overlays/prod")

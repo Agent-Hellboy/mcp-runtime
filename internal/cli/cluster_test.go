@@ -132,3 +132,83 @@ func TestClusterManager_InitCluster(t *testing.T) {
 		}
 	})
 }
+
+func TestProvisionEKSCluster(t *testing.T) {
+	t.Run("uses eksctl with args", func(t *testing.T) {
+		mock := &MockExecutor{}
+		err := provisionEKSCluster(zap.NewNop(), mock, "us-west-2", 3, "my-eks")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		cmd := mock.LastCommand()
+		if cmd.Name != "eksctl" {
+			t.Fatalf("expected eksctl command, got %q", cmd.Name)
+		}
+		if !contains(cmd.Args, "create") || !contains(cmd.Args, "cluster") {
+			t.Fatalf("expected eksctl create cluster args, got %v", cmd.Args)
+		}
+		if !contains(cmd.Args, "--name") || !contains(cmd.Args, "my-eks") {
+			t.Fatalf("expected --name my-eks, got %v", cmd.Args)
+		}
+		if !contains(cmd.Args, "--region") || !contains(cmd.Args, "us-west-2") {
+			t.Fatalf("expected --region us-west-2, got %v", cmd.Args)
+		}
+		if !contains(cmd.Args, "--nodes") || !contains(cmd.Args, "3") {
+			t.Fatalf("expected --nodes 3, got %v", cmd.Args)
+		}
+	})
+
+	t.Run("defaults cluster name when empty", func(t *testing.T) {
+		mock := &MockExecutor{}
+		err := provisionEKSCluster(zap.NewNop(), mock, "us-west-2", 2, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		cmd := mock.LastCommand()
+		if !contains(cmd.Args, "--name") || !contains(cmd.Args, defaultClusterName) {
+			t.Fatalf("expected --name %s, got %v", defaultClusterName, cmd.Args)
+		}
+	})
+}
+
+func TestConfigureEKSKubeconfig(t *testing.T) {
+	t.Run("uses aws eks update-kubeconfig", func(t *testing.T) {
+		mock := &MockExecutor{}
+		err := configureEKSKubeconfig(mock, "us-west-2", "my-eks", "/tmp/kubeconfig")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		cmd := mock.LastCommand()
+		if cmd.Name != "aws" {
+			t.Fatalf("expected aws command, got %q", cmd.Name)
+		}
+		if !contains(cmd.Args, "eks") || !contains(cmd.Args, "update-kubeconfig") {
+			t.Fatalf("expected aws eks update-kubeconfig args, got %v", cmd.Args)
+		}
+		if !contains(cmd.Args, "--name") || !contains(cmd.Args, "my-eks") {
+			t.Fatalf("expected --name my-eks, got %v", cmd.Args)
+		}
+		if !contains(cmd.Args, "--region") || !contains(cmd.Args, "us-west-2") {
+			t.Fatalf("expected --region us-west-2, got %v", cmd.Args)
+		}
+		if !contains(cmd.Args, "--kubeconfig") || !contains(cmd.Args, "/tmp/kubeconfig") {
+			t.Fatalf("expected --kubeconfig /tmp/kubeconfig, got %v", cmd.Args)
+		}
+	})
+
+	t.Run("defaults cluster name when empty", func(t *testing.T) {
+		mock := &MockExecutor{}
+		err := configureEKSKubeconfig(mock, "us-west-2", "", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		cmd := mock.LastCommand()
+		if !contains(cmd.Args, "--name") || !contains(cmd.Args, defaultClusterName) {
+			t.Fatalf("expected --name %s, got %v", defaultClusterName, cmd.Args)
+		}
+	})
+}

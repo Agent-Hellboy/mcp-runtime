@@ -1,0 +1,12 @@
+Generate Kubernetes CRD files from metadata/registry files.
+This command reads server definitions and creates CRD YAML files that
+the operator will use to deploy MCP servers.
+
+Usage:
+  mcp-runtime pipeline generate [flags]
+
+Flags:
+      --dir string      Directory containing metadata files (default ".mcp")
+      --file string     Path to metadata file (YAML)
+  -h, --help            help for generate
+      --output string   Output directory for CRD files (default "manifests")

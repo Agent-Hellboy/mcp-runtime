@@ -1,0 +1,11 @@
+Provision a new Kubernetes cluster (requires cloud provider credentials)
+
+Usage:
+  mcp-runtime cluster provision [flags]
+
+Flags:
+  -h, --help              help for provision
+      --name string       Cluster name (used by supported providers) (default "mcp-runtime")
+      --nodes int         Number of nodes (default 3)
+      --provider string   Cloud provider (kind, gke, eks, aks) (default "kind")
+      --region string     Region for cluster (default "us-west-1")

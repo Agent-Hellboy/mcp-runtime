@@ -1,0 +1,9 @@
+View logs from an MCP server
+
+Usage:
+  mcp-runtime server logs [name] [flags]
+
+Flags:
+      --follow             Follow log output
+  -h, --help               help for logs
+      --namespace string   Namespace (default "mcp-servers")

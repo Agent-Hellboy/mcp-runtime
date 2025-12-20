@@ -1,0 +1,11 @@
+Configure an external registry to be used for operator/runtime images
+
+Usage:
+  mcp-runtime registry provision [flags]
+
+Flags:
+  -h, --help                    help for provision
+      --operator-image string   Optional: build and push operator image to this external registry (e.g., <registry>/mcp-runtime-operator:latest)
+      --password string         Registry password (optional)
+      --url string              External registry URL (e.g., registry.example.com)
+      --username string         Registry username (optional)

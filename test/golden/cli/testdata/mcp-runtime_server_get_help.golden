@@ -1,0 +1,8 @@
+Get detailed information about an MCP server
+
+Usage:
+  mcp-runtime server get [name] [flags]
+
+Flags:
+  -h, --help               help for get
+      --namespace string   Namespace (default "mcp-servers")

@@ -54,3 +54,14 @@ func TestPrinterQuietMode(t *testing.T) {
 	p.Step("test")
 	p.Info("test")
 }
+
+func TestPrinterSpinnerQuietMode(t *testing.T) {
+	p := &Printer{Quiet: true}
+	stop := p.SpinnerStart("working")
+	stop(true, "done")
+}
+
+func TestPrinterPrintf(t *testing.T) {
+	p := &Printer{}
+	p.Printf("value=%d\n", 1)
+}

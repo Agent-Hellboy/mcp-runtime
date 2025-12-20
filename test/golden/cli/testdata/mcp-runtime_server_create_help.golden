@@ -1,0 +1,11 @@
+Create a new MCP server deployment
+
+Usage:
+  mcp-runtime server create [name] [flags]
+
+Flags:
+      --file string        YAML file with server spec
+  -h, --help               help for create
+      --image string       Container image
+      --namespace string   Namespace (default "mcp-servers")
+      --tag string         Image tag (default "latest")

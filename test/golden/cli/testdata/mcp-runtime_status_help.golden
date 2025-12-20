@@ -1,0 +1,7 @@
+Show the overall status of the MCP platform
+
+Usage:
+  mcp-runtime status [flags]
+
+Flags:
+  -h, --help   help for status

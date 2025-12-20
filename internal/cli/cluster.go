@@ -97,12 +97,30 @@ func (m *ClusterManager) newClusterConfigCmd() *cobra.Command {
 	var ingressMode string
 	var ingressManifest string
 	var forceIngressInstall bool
+	var kubeconfig string
+	var context string
+	var provider string
+	var region string
+	var clusterName string
+	var resourceGroup string
+	var project string
+	var zone string
 
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Configure cluster settings",
-		Long:  "Configure cluster settings like ingress, storage, etc.",
+		Long:  "Configure cluster settings like ingress and kubeconfig context",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if provider != "" {
+				if err := m.ConfigureKubeconfigFromProvider(provider, region, clusterName, resourceGroup, project, zone, kubeconfig); err != nil {
+					return err
+				}
+			}
+			if kubeconfig != "" || context != "" || provider != "" {
+				if err := m.ConfigureKubeconfig(kubeconfig, context); err != nil {
+					return err
+				}
+			}
 			opts := ingressOptions{
 				mode:     ingressMode,
 				manifest: ingressManifest,
@@ -115,6 +133,14 @@ func (m *ClusterManager) newClusterConfigCmd() *cobra.Command {
 	cmd.Flags().StringVar(&ingressMode, "ingress", "traefik", "Ingress controller to install (traefik|none)")
 	cmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/overlays/prod", "Manifest to apply when installing the ingress controller")
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force ingress install even if an ingress class already exists")
+	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (default: ~/.kube/config)")
+	cmd.Flags().StringVar(&context, "context", "", "Kubernetes context to use")
+	cmd.Flags().StringVar(&provider, "provider", "", "Cloud provider for kubeconfig (eks; aks/gke planned)")
+	cmd.Flags().StringVar(&region, "region", "us-west-1", "Region for cloud provider kubeconfig")
+	cmd.Flags().StringVar(&clusterName, "name", defaultClusterName, "Cluster name for cloud provider kubeconfig")
+	cmd.Flags().StringVar(&resourceGroup, "resource-group", "", "Resource group (AKS, planned)")
+	cmd.Flags().StringVar(&project, "project", "", "Project ID (GKE, planned)")
+	cmd.Flags().StringVar(&zone, "zone", "", "Zone (GKE, planned)")
 
 	return cmd
 }
@@ -146,29 +172,8 @@ func (m *ClusterManager) newClusterProvisionCmd() *cobra.Command {
 func (m *ClusterManager) InitCluster(kubeconfig, context string) error {
 	m.logger.Info("Initializing cluster configuration")
 
-	if kubeconfig == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("failed to get home directory: %w", err)
-		}
-		kubeconfig = filepath.Join(home, ".kube", "config")
-	}
-
-	if _, err := os.Stat(kubeconfig); err != nil {
-		return fmt.Errorf("kubeconfig %q not found or not readable: %w", kubeconfig, err)
-	}
-
-	// Set KUBECONFIG environment variable
-	if err := os.Setenv("KUBECONFIG", kubeconfig); err != nil {
-		return fmt.Errorf("failed to set KUBECONFIG: %w", err)
-	}
-
-	if context != "" {
-		// Switch to specified context
-		// #nosec G204 -- context from CLI flag, kubectl validates context names.
-		if err := m.kubectl.Run([]string{"config", "use-context", context}); err != nil {
-			return fmt.Errorf("failed to set context: %w", err)
-		}
+	if err := m.ConfigureKubeconfig(kubeconfig, context); err != nil {
+		return err
 	}
 
 	// Install CRD
@@ -191,6 +196,77 @@ func (m *ClusterManager) InitCluster(kubeconfig, context string) error {
 
 	m.logger.Info("Cluster initialized successfully")
 	return nil
+}
+
+func resolveKubeconfigPath(kubeconfig string) (string, error) {
+	if kubeconfig != "" {
+		return kubeconfig, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+	return filepath.Join(home, ".kube", "config"), nil
+}
+
+// ConfigureKubeconfig sets KUBECONFIG and optionally switches context.
+func (m *ClusterManager) ConfigureKubeconfig(kubeconfig, context string) error {
+	path, err := resolveKubeconfigPath(kubeconfig)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("kubeconfig %q not found or not readable: %w", path, err)
+	}
+
+	if err := os.Setenv("KUBECONFIG", path); err != nil {
+		return fmt.Errorf("failed to set KUBECONFIG: %w", err)
+	}
+
+	if context != "" {
+		// #nosec G204 -- context from CLI flag, kubectl validates context names.
+		if err := m.kubectl.Run([]string{"config", "use-context", context}); err != nil {
+			return fmt.Errorf("failed to set context: %w", err)
+		}
+	}
+	return nil
+}
+
+// ConfigureKubeconfigFromProvider updates kubeconfig using a cloud provider CLI.
+func (m *ClusterManager) ConfigureKubeconfigFromProvider(provider, region, clusterName, resourceGroup, project, zone, kubeconfig string) error {
+	switch strings.ToLower(provider) {
+	case "eks":
+		return configureEKSKubeconfig(m.exec, region, clusterName, kubeconfig)
+	case "aks":
+		return fmt.Errorf("AKS kubeconfig not yet implemented; planned support (use `az aks get-credentials --name <cluster> --resource-group <rg>`)")
+	case "gke":
+		return fmt.Errorf("GKE kubeconfig not yet implemented; planned support (use `gcloud container clusters get-credentials <cluster> --region <region> --project <project>`)")
+	default:
+		return fmt.Errorf("unsupported provider: %s", provider)
+	}
+}
+
+func configureEKSKubeconfig(exec Executor, region, clusterName, kubeconfig string) error {
+	if clusterName == "" {
+		clusterName = defaultClusterName
+	}
+	args := []string{
+		"eks",
+		"update-kubeconfig",
+		"--name", clusterName,
+		"--region", region,
+	}
+	if kubeconfig != "" {
+		args = append(args, "--kubeconfig", kubeconfig)
+	}
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
+	cmd, err := exec.Command("aws", args, AllowlistBins("aws"), NoShellMeta(), NoControlChars())
+	if err != nil {
+		return err
+	}
+	cmd.SetStdout(os.Stdout)
+	cmd.SetStderr(os.Stderr)
+	return cmd.Run()
 }
 
 // CheckClusterStatus checks and displays cluster status.
@@ -300,7 +376,7 @@ func (m *ClusterManager) ProvisionCluster(provider, region string, nodeCount int
 	case "gke":
 		return provisionGKECluster(m.logger, region, nodeCount, clusterName)
 	case "eks":
-		return provisionEKSCluster(m.logger, region, nodeCount, clusterName)
+		return provisionEKSCluster(m.logger, m.exec, region, nodeCount, clusterName)
 	case "aks":
 		return provisionAKSCluster(m.logger, region, nodeCount, clusterName)
 	default:
@@ -364,11 +440,32 @@ func provisionGKECluster(logger *zap.Logger, region string, nodeCount int, clust
 	return fmt.Errorf("GKE provisioning not yet implemented; create the cluster with gcloud, e.g. `gcloud container clusters create %s --region %s --num-nodes %d`", clusterName, region, nodeCount)
 }
 
-func provisionEKSCluster(logger *zap.Logger, region string, nodeCount int, clusterName string) error {
+func provisionEKSCluster(logger *zap.Logger, exec Executor, region string, nodeCount int, clusterName string) error {
 	if clusterName == "" {
 		clusterName = defaultClusterName
 	}
-	return fmt.Errorf("EKS provisioning not yet implemented; create the cluster with eksctl, e.g. `eksctl create cluster --name %s --region %s --nodes %d`", clusterName, region, nodeCount)
+
+	args := []string{
+		"create",
+		"cluster",
+		"--name", clusterName,
+		"--region", region,
+		"--nodes", fmt.Sprintf("%d", nodeCount),
+	}
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
+	cmd, err := exec.Command("eksctl", args, AllowlistBins("eksctl"), NoShellMeta(), NoControlChars())
+	if err != nil {
+		return err
+	}
+	cmd.SetStdout(os.Stdout)
+	cmd.SetStderr(os.Stderr)
+
+	logger.Info("Provisioning EKS cluster with eksctl", zap.String("name", clusterName), zap.String("region", region), zap.Int("nodes", nodeCount))
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to provision EKS cluster: %w", err)
+	}
+	logger.Info("EKS cluster provisioned successfully", zap.String("name", clusterName))
+	return nil
 }
 
 func provisionAKSCluster(logger *zap.Logger, region string, nodeCount int, clusterName string) error {

@@ -1,0 +1,7 @@
+Show registry URL and connection information
+
+Usage:
+  mcp-runtime registry info [flags]
+
+Flags:
+  -h, --help   help for info

@@ -1,0 +1,9 @@
+Initialize and configure the Kubernetes cluster for MCP platform
+
+Usage:
+  mcp-runtime cluster init [flags]
+
+Flags:
+      --context string      Kubernetes context to use
+  -h, --help                help for init
+      --kubeconfig string   Path to kubeconfig file (default: ~/.kube/config)

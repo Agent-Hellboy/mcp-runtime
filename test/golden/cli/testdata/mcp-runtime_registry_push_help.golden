@@ -1,0 +1,12 @@
+Retag and push an image to the platform or provisioned registry
+
+Usage:
+  mcp-runtime registry push [flags]
+
+Flags:
+  -h, --help               help for push
+      --image string       Local image to push (required)
+      --mode string        Push mode: in-cluster (default, uses skopeo helper) or direct (docker push) (default "in-cluster")
+      --name string        Override target repo/name (default: source name without registry)
+      --namespace string   Namespace to run the in-cluster helper pod (default "registry")
+      --registry string    Target registry (defaults to provisioned or internal)

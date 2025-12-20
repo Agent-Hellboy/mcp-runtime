@@ -1,0 +1,8 @@
+List MCPServer resources with their Deployment/pod status, image, and pull secrets.
+
+Usage:
+  mcp-runtime server status [flags]
+
+Flags:
+  -h, --help               help for status
+      --namespace string   Namespace to inspect (default "mcp-servers")

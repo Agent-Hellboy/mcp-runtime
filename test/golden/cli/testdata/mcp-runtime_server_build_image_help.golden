@@ -1,0 +1,13 @@
+Build a Docker image from Dockerfile and update metadata file.
+
+Usage:
+  mcp-runtime server build image <server-name> [flags]
+
+Flags:
+      --context string         Build context directory (default ".")
+      --dockerfile string      Path to Dockerfile (default "Dockerfile")
+  -h, --help                   help for image
+      --metadata-dir string    Directory containing metadata files (default ".mcp")
+      --metadata-file string   Path to metadata file
+      --registry string        Registry URL (defaults to platform registry)
+      --tag string             Image tag (defaults to git SHA or 'latest')

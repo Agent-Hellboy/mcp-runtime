@@ -1,0 +1,7 @@
+Check the status of the Kubernetes cluster
+
+Usage:
+  mcp-runtime cluster status [flags]
+
+Flags:
+  -h, --help   help for status

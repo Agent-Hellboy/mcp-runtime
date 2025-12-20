@@ -1,0 +1,8 @@
+List all MCP server deployments
+
+Usage:
+  mcp-runtime server list [flags]
+
+Flags:
+  -h, --help               help for list
+      --namespace string   Namespace to list servers from (default "mcp-servers")

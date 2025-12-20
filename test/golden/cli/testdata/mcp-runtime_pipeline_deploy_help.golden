@@ -1,0 +1,11 @@
+Deploy generated CRD files to the Kubernetes cluster.
+This applies all CRD manifests to the cluster, which triggers
+the operator to create the necessary Kubernetes resources.
+
+Usage:
+  mcp-runtime pipeline deploy [flags]
+
+Flags:
+      --dir string         Directory containing CRD files (default "manifests")
+  -h, --help               help for deploy
+      --namespace string   Namespace to deploy to (overrides metadata)

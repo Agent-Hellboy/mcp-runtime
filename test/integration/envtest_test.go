@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"os"
 	"testing"
 	"time"
 
@@ -51,10 +52,18 @@ func TestControllerWithEnvtest(t *testing.T) {
 
 	// Find CRD path (relative to test/integration/)
 	crdPath := filepath.Join("..", "..", "config", "crd", "bases")
+	assetsDir := os.Getenv("KUBEBUILDER_ASSETS")
+	if assetsDir == "" {
+		t.Skip("KUBEBUILDER_ASSETS is not set; skipping envtest integration")
+	}
+	if _, err := os.Stat(filepath.Join(assetsDir, "etcd")); err != nil {
+		t.Skipf("envtest binaries not found in KUBEBUILDER_ASSETS: %v", err)
+	}
 
 	testEnv := &envtest.Environment{
 		CRDDirectoryPaths:     []string{crdPath},
 		ErrorIfCRDPathMissing: true,
+		BinaryAssetsDirectory: assetsDir,
 	}
 
 	cfg, err := testEnv.Start()
