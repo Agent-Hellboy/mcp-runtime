@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
 
@@ -77,6 +78,112 @@ func TestClusterManager_CheckClusterStatus(t *testing.T) {
 			t.Error("expected kubectl cluster-info to be called")
 		}
 	})
+}
+
+func TestClusterConfigRunE_WithProviderAndContext(t *testing.T) {
+	mockExec := &MockExecutor{}
+	mockKubectl := &MockExecutor{}
+	kubectl := &KubectlClient{exec: mockKubectl, validators: nil}
+	mgr := NewClusterManager(kubectl, mockExec, zap.NewNop())
+
+	configCmd := findClusterSubcommand(t, NewClusterCmdWithManager(mgr), "config")
+
+	tempDir := t.TempDir()
+	kubeconfigPath := filepath.Join(tempDir, "config")
+	if err := os.WriteFile(kubeconfigPath, []byte("kubeconfig"), 0o644); err != nil {
+		t.Fatalf("write kubeconfig: %v", err)
+	}
+	manifestPath := filepath.Join(tempDir, "ingress.yaml")
+	if err := os.WriteFile(manifestPath, []byte("kind: List\n"), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	if err := configCmd.Flags().Set("provider", "eks"); err != nil {
+		t.Fatalf("set provider: %v", err)
+	}
+	if err := configCmd.Flags().Set("region", "us-east-1"); err != nil {
+		t.Fatalf("set region: %v", err)
+	}
+	if err := configCmd.Flags().Set("name", "cluster-1"); err != nil {
+		t.Fatalf("set name: %v", err)
+	}
+	if err := configCmd.Flags().Set("kubeconfig", kubeconfigPath); err != nil {
+		t.Fatalf("set kubeconfig: %v", err)
+	}
+	if err := configCmd.Flags().Set("context", "dev"); err != nil {
+		t.Fatalf("set context: %v", err)
+	}
+	if err := configCmd.Flags().Set("ingress-manifest", manifestPath); err != nil {
+		t.Fatalf("set ingress-manifest: %v", err)
+	}
+
+	if err := configCmd.RunE(configCmd, nil); err != nil {
+		t.Fatalf("config RunE error: %v", err)
+	}
+
+	if !hasCommand(mockExec.Commands, "aws", "eks", "update-kubeconfig", "--name", "cluster-1", "--region", "us-east-1", "--kubeconfig", kubeconfigPath) {
+		t.Fatalf("expected aws update-kubeconfig call, got: %#v", mockExec.Commands)
+	}
+	if !hasCommand(mockKubectl.Commands, "kubectl", "config", "use-context", "dev") {
+		t.Fatalf("expected kubectl config use-context call, got: %#v", mockKubectl.Commands)
+	}
+	if !hasCommand(mockKubectl.Commands, "kubectl", "get", "ingressclass", "-o", "name") {
+		t.Fatalf("expected kubectl get ingressclass call, got: %#v", mockKubectl.Commands)
+	}
+	if !hasCommand(mockKubectl.Commands, "kubectl", "apply", "-f", manifestPath) {
+		t.Fatalf("expected kubectl apply call, got: %#v", mockKubectl.Commands)
+	}
+}
+
+func TestClusterConfigRunE_UnsupportedProvider(t *testing.T) {
+	mockExec := &MockExecutor{}
+	mockKubectl := &MockExecutor{}
+	kubectl := &KubectlClient{exec: mockKubectl, validators: nil}
+	mgr := NewClusterManager(kubectl, mockExec, zap.NewNop())
+
+	configCmd := findClusterSubcommand(t, NewClusterCmdWithManager(mgr), "config")
+	if err := configCmd.Flags().Set("provider", "unknown"); err != nil {
+		t.Fatalf("set provider: %v", err)
+	}
+
+	if err := configCmd.RunE(configCmd, nil); err == nil {
+		t.Fatal("expected error for unsupported provider")
+	}
+	if len(mockExec.Commands) > 0 || len(mockKubectl.Commands) > 0 {
+		t.Fatalf("expected no commands to be executed, got exec=%v kubectl=%v", mockExec.Commands, mockKubectl.Commands)
+	}
+}
+
+func findClusterSubcommand(t *testing.T, root *cobra.Command, name string) *cobra.Command {
+	t.Helper()
+	for _, cmd := range root.Commands() {
+		if cmd.Use == name {
+			return cmd
+		}
+	}
+	t.Fatalf("subcommand %q not found", name)
+	return nil
+}
+
+func hasCommand(cmds []ExecSpec, name string, args ...string) bool {
+	for _, cmd := range cmds {
+		if cmd.Name != name {
+			continue
+		}
+		if containsAll(cmd.Args, args) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAll(slice []string, vals []string) bool {
+	for _, val := range vals {
+		if !contains(slice, val) {
+			return false
+		}
+	}
+	return true
 }
 
 func TestClusterManager_EnsureNamespace(t *testing.T) {

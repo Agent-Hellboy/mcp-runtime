@@ -1,4 +1,4 @@
-FROM golang:1.24.0-bullseye
+FROM golang:1.24.11-bullseye
 
 ENV DEBIAN_FRONTEND=noninteractive
 ARG DOCKERCLI_VERSION=26.1.4

@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -151,6 +153,68 @@ func TestCertManagerApplyMissingCASecret(t *testing.T) {
 	}
 }
 
+func TestCertManagerApplyClusterIssuerError(t *testing.T) {
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			cmd := &MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "apply", "-f", clusterIssuerManifestPath) {
+				cmd.RunErr = errors.New("apply issuer failed")
+			}
+			return cmd
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	manager := NewCertManager(kubectl, zap.NewNop())
+
+	if err := manager.Apply(); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCertManagerApplyEnsureNamespaceError(t *testing.T) {
+	origKubectl := kubectlClient
+	t.Cleanup(func() { kubectlClient = origKubectl })
+
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			cmd := &MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "apply", "-f", "-") {
+				cmd.RunErr = errors.New("apply namespace failed")
+			}
+			return cmd
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	kubectlClient = kubectl
+	manager := NewCertManager(kubectl, zap.NewNop())
+
+	if err := manager.Apply(); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCertManagerApplyRegistryCertificateError(t *testing.T) {
+	origKubectl := kubectlClient
+	t.Cleanup(func() { kubectlClient = origKubectl })
+
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			cmd := &MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "apply", "-f", registryCertificateManifestPath) {
+				cmd.RunErr = errors.New("apply cert failed")
+			}
+			return cmd
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	kubectlClient = kubectl
+	manager := NewCertManager(kubectl, zap.NewNop())
+
+	if err := manager.Apply(); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestCertManagerWaitFailure(t *testing.T) {
 	mock := &MockExecutor{
 		CommandFunc: func(spec ExecSpec) *MockCommand {
@@ -166,5 +230,103 @@ func TestCertManagerWaitFailure(t *testing.T) {
 
 	if err := manager.Wait(time.Second); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestCertWaitCmdUsesDefaultTimeout(t *testing.T) {
+	var waitArgs []string
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			if commandHasArgs(spec, "wait", "--for=condition=Ready", "certificate/"+registryCertificateName, "-n", NamespaceRegistry) {
+				waitArgs = spec.Args
+			}
+			return &MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	manager := NewCertManager(kubectl, zap.NewNop())
+
+	var buf bytes.Buffer
+	setDefaultPrinterWriter(t, &buf)
+
+	cmd := manager.newCertWaitCmd()
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if waitArgs == nil {
+		t.Fatal("expected wait command to be invoked")
+	}
+	wantTimeout := fmt.Sprintf("--timeout=%s", GetCertTimeout())
+	if !contains(waitArgs, wantTimeout) {
+		t.Fatalf("expected timeout %q, got args: %v", wantTimeout, waitArgs)
+	}
+}
+
+func TestCertWaitCmdUsesFlagTimeout(t *testing.T) {
+	var waitArgs []string
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			if commandHasArgs(spec, "wait", "--for=condition=Ready", "certificate/"+registryCertificateName, "-n", NamespaceRegistry) {
+				waitArgs = spec.Args
+			}
+			return &MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	manager := NewCertManager(kubectl, zap.NewNop())
+
+	var buf bytes.Buffer
+	setDefaultPrinterWriter(t, &buf)
+
+	cmd := manager.newCertWaitCmd()
+	if err := cmd.Flags().Set("timeout", "5s"); err != nil {
+		t.Fatalf("set timeout flag: %v", err)
+	}
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if waitArgs == nil {
+		t.Fatal("expected wait command to be invoked")
+	}
+	if !contains(waitArgs, "--timeout=5s") {
+		t.Fatalf("expected timeout flag to be used, got args: %v", waitArgs)
+	}
+}
+
+func TestCertApplyCmdInvokesApply(t *testing.T) {
+	origKubectl := kubectlClient
+	t.Cleanup(func() { kubectlClient = origKubectl })
+
+	mock := &MockExecutor{}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	kubectlClient = kubectl
+	manager := NewCertManager(kubectl, zap.NewNop())
+
+	var buf bytes.Buffer
+	setDefaultPrinterWriter(t, &buf)
+
+	cmd := manager.newCertApplyCmd()
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mock.Commands) == 0 {
+		t.Fatal("expected kubectl commands to be invoked")
+	}
+}
+
+func TestCertStatusCmdInvokesStatus(t *testing.T) {
+	mock := &MockExecutor{}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	manager := NewCertManager(kubectl, zap.NewNop())
+
+	var buf bytes.Buffer
+	setDefaultPrinterWriter(t, &buf)
+
+	cmd := manager.newCertStatusCmd()
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mock.Commands) == 0 {
+		t.Fatal("expected kubectl commands to be invoked")
 	}
 }
