@@ -1,5 +1,8 @@
 .PHONY: all build test clean install dev fmt lint coverage build-unix install-bin
 
+GOCACHE ?= $(CURDIR)/.gocache
+export GOCACHE
+
 all: build-cli
 
 -include Makefile.runtime

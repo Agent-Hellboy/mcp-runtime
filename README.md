@@ -246,6 +246,43 @@ kind load docker-image docker.io/library/mcp-runtime-operator:latest --name <clu
 3. Run `make fmt && make lint && make test`
 4. Submit a pull request
 
+### Custom API Group (Branding)
+
+The platform uses `mcp-runtime.org` as the default API group. If you want to use your organization's domain for branding:
+
+1. Fork the repository
+2. Update the API group in these files:
+   ```bash
+   # Core API definition
+   api/v1alpha1/doc.go                    # +groupName=your.domain.com
+   api/v1alpha1/groupversion_info.go      # Group: "your.domain.com"
+   
+   # Operator RBAC
+   internal/operator/controller.go        # kubebuilder RBAC comments
+   config/rbac/role.yaml                  # apiGroups
+   
+   # CLI references  
+   internal/cli/constants.go              # MCPServerCRDName
+   internal/cli/server.go                 # APIVersion
+   internal/cli/setup.go                  # CRD file paths
+   internal/cli/cluster.go                # CRD file paths
+   
+   # CRD and configs
+   config/crd/bases/                      # Rename file and update content
+   config/crd/kustomization.yaml          # File reference
+   
+   # Other
+   cmd/operator/main.go                   # LeaderElectionID
+   pkg/metadata/crd_generator.go          # APIVersion
+   ```
+
+3. Regenerate manifests:
+   ```bash
+   make -f Makefile.operator manifests generate
+   ```
+
+4. Build and deploy your branded version
+
 ## Troubleshooting
 
 ```bash

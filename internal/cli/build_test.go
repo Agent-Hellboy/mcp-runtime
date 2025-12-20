@@ -14,9 +14,9 @@ func TestNewBuildImageCmd(t *testing.T) {
 		if cmd == nil {
 			t.Fatal("newBuildImageCmd should not return nil")
 		}
-		// Use includes the argument pattern
-		if cmd.Use != "image [server-name]" {
-			t.Errorf("expected Use='image [server-name]', got %q", cmd.Use)
+		// Use includes the argument pattern (required arg uses <>)
+		if cmd.Use != "image <server-name>" {
+			t.Errorf("expected Use='image <server-name>', got %q", cmd.Use)
 		}
 	})
 

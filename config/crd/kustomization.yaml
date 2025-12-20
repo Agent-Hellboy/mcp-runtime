@@ -1,3 +1,3 @@
 resources:
-- bases/mcp.agent-hellboy.io_mcpservers.yaml
+- bases/mcp-runtime.org_mcpservers.yaml
 

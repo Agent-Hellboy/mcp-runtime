@@ -1,9 +1,16 @@
-// Package integration provides end-to-end integration tests for mcp-runtime.
-// These tests require a running Kubernetes cluster (e.g., kind, minikube).
+// Package e2e provides end-to-end tests for mcp-runtime.
 //
-// Run with: go test -v ./test/integration/... -tags=integration
+// These tests require a REAL Kubernetes cluster with mcp-runtime fully deployed.
+// Use these tests to verify the complete system works end-to-end.
+//
+// Prerequisites:
+//   - A running Kubernetes cluster (kind, minikube, etc.)
+//   - mcp-runtime deployed: mcp-runtime setup cluster
+//   - kubectl configured to access the cluster
+//
+// Run with: go test -v ./test/e2e/...
 // Skip with: go test -short ./...
-package integration
+package e2e
 
 import (
 	"bytes"
@@ -18,7 +25,7 @@ import (
 // skipIfShort skips the test if running in short mode.
 func skipIfShort(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+		t.Skip("skipping e2e test in short mode")
 	}
 }
 
@@ -26,7 +33,7 @@ func skipIfShort(t *testing.T) {
 func skipIfNoCluster(t *testing.T) {
 	cmd := exec.Command("kubectl", "cluster-info")
 	if err := cmd.Run(); err != nil {
-		t.Skip("skipping integration test: no Kubernetes cluster accessible")
+		t.Skip("skipping: no Kubernetes cluster accessible (run 'kind create cluster' or similar)")
 	}
 }
 
@@ -84,6 +91,7 @@ func TestClusterConnectivity(t *testing.T) {
 	if !strings.Contains(output, "Kubernetes") {
 		t.Errorf("unexpected cluster-info output: %s", output)
 	}
+	t.Log("Cluster is accessible")
 }
 
 // TestCRDInstalled verifies the MCPServer CRD is installed.
@@ -91,10 +99,11 @@ func TestCRDInstalled(t *testing.T) {
 	skipIfShort(t)
 	skipIfNoCluster(t)
 
-	output := runCommand(t, "kubectl", "get", "crd", "mcpservers.mcp.agent-hellboy.io")
-	if !strings.Contains(output, "mcpservers.mcp.agent-hellboy.io") {
+	output := runCommand(t, "kubectl", "get", "crd", "mcpservers.mcp-runtime.org")
+	if !strings.Contains(output, "mcpservers.mcp-runtime.org") {
 		t.Errorf("CRD not found: %s", output)
 	}
+	t.Log("MCPServer CRD is installed")
 }
 
 // TestOperatorRunning verifies the operator is running.
@@ -110,6 +119,7 @@ func TestOperatorRunning(t *testing.T) {
 	if strings.TrimSpace(output) != "1" {
 		t.Errorf("operator not ready, replicas: %s", output)
 	}
+	t.Log("Operator is running")
 }
 
 // TestRegistryRunning verifies the registry is running.
@@ -125,14 +135,15 @@ func TestRegistryRunning(t *testing.T) {
 	if strings.TrimSpace(output) != "1" {
 		t.Errorf("registry not ready, replicas: %s", output)
 	}
+	t.Log("Registry is running")
 }
 
-// TestMCPServerCreate tests creating an MCPServer resource.
-func TestMCPServerCreate(t *testing.T) {
+// TestMCPServerLifecycle tests creating and deleting an MCPServer resource end-to-end.
+func TestMCPServerLifecycle(t *testing.T) {
 	skipIfShort(t)
 	skipIfNoCluster(t)
 
-	serverName := "integration-test-server"
+	serverName := "e2e-test-server"
 	namespace := "mcp-servers"
 
 	// Clean up before and after
@@ -146,7 +157,7 @@ func TestMCPServerCreate(t *testing.T) {
 	_, _ = runCommandAllowFail("kubectl", "create", "namespace", namespace)
 
 	// Create MCPServer
-	manifest := `apiVersion: mcp.agent-hellboy.io/v1alpha1
+	manifest := `apiVersion: mcp-runtime.org/v1alpha1
 kind: MCPServer
 metadata:
   name: ` + serverName + `
@@ -165,25 +176,34 @@ spec:
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to create MCPServer: %v\n%s", err, output)
 	}
+	t.Log("MCPServer created")
 
 	// Wait for deployment to be created
 	waitForCondition(t, 60*time.Second, 2*time.Second, func() bool {
 		output, err := runCommandAllowFail("kubectl", "get", "deployment", serverName, "-n", namespace)
 		return err == nil && strings.Contains(output, serverName)
 	}, "deployment to be created")
+	t.Log("Deployment created")
+
+	// Wait for deployment to be ready
+	waitForCondition(t, 120*time.Second, 5*time.Second, func() bool {
+		output, _ := runCommandAllowFail("kubectl", "get", "deployment", serverName, "-n", namespace,
+			"-o", "jsonpath={.status.readyReplicas}")
+		return strings.TrimSpace(output) == "1"
+	}, "deployment to be ready")
+	t.Log("Deployment is ready")
+
+	// Verify Service exists
+	runCommand(t, "kubectl", "get", "service", serverName, "-n", namespace)
+	t.Log("Service exists")
 
 	// Verify MCPServer status
-	output := runCommand(t, "kubectl", "get", "mcpserver", serverName, "-n", namespace, "-o", "yaml")
-	t.Logf("MCPServer status:\n%s", output)
+	output := runCommand(t, "kubectl", "get", "mcpserver", serverName, "-n", namespace,
+		"-o", "jsonpath={.status.phase}")
+	t.Logf("MCPServer phase: %s", output)
 }
 
 // TestMain sets up and tears down test fixtures.
 func TestMain(m *testing.M) {
-	// Check if we should run integration tests
-	if os.Getenv("INTEGRATION_TEST") != "1" && !strings.Contains(strings.Join(os.Args, " "), "-test.run") {
-		// Not explicitly running integration tests
-		os.Exit(0)
-	}
-
 	os.Exit(m.Run())
 }

@@ -6,7 +6,7 @@ set -euo pipefail
 
 # Ensure we're in project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${PROJECT_ROOT}"
 echo "[info] Running from: ${PROJECT_ROOT}"
 
@@ -45,7 +45,9 @@ cp "${KUBECONFIG_FILE}" "${HOME}/.kube/config"
 echo "[kind] preloading images into kind"
 for img in traefik:v2.10 curlimages/curl:latest registry:2.8.3; do
   docker pull "${img}"
-  kind load docker-image "${img}" --name "${CLUSTER_NAME}"
+  if ! kind load docker-image "${img}" --name "${CLUSTER_NAME}"; then
+    echo "[warn] preload failed for ${img}; will rely on in-cluster pull"
+  fi
 done
 
 echo "[build] rebuilding CLI"
@@ -115,7 +117,7 @@ kind load docker-image docker.io/library/example-app:latest --name "${CLUSTER_NA
 echo "[cr] applying MCPServer for example app (using local image)"
 # Note: kind stores local images with docker.io/library/ prefix
 cat <<EOF | kubectl apply -f -
-apiVersion: mcp.agent-hellboy.io/v1alpha1
+apiVersion: mcp-runtime.org/v1alpha1
 kind: MCPServer
 metadata:
   name: example-mcp-server

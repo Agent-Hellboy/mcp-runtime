@@ -1,3 +1,9 @@
+// Package cli provides CLI commands for the mcp-runtime.
+//
+// Example usage:
+//
+//	mcp-runtime server build image my-server --tag v1.0.0
+//	mcp-runtime server build image my-server --dockerfile custom.Dockerfile --registry my-registry.com
 package cli
 
 import (
@@ -23,17 +29,12 @@ func newBuildImageCmd(logger *zap.Logger) *cobra.Command {
 	var context string
 
 	cmd := &cobra.Command{
-		Use:   "image [server-name]",
+		Use:   "image <server-name>",
 		Short: "Build Docker image for an MCP server",
-		Long: `Build a Docker image from Dockerfile and update metadata file.
-If server-name is provided, builds that specific server.
-Otherwise, builds all servers found in metadata files.`,
+		Long:  `Build a Docker image from Dockerfile and update metadata file.`,
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			serverName := ""
-			if len(args) > 0 {
-				serverName = args[0]
-			}
-			return buildImage(logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, context)
+			return buildImage(logger, args[0], dockerfile, metadataFile, metadataDir, registryURL, tag, context)
 		},
 	}
 
@@ -48,20 +49,6 @@ Otherwise, builds all servers found in metadata files.`,
 }
 
 func buildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, context string) error {
-	// Load metadata
-	var registry *metadata.RegistryFile
-	var err error
-
-	if metadataFile != "" {
-		registry, err = metadata.LoadFromFile(metadataFile)
-	} else {
-		registry, err = metadata.LoadFromDirectory(metadataDir)
-	}
-
-	if err != nil {
-		return fmt.Errorf("failed to load metadata: %w", err)
-	}
-
 	// Get registry URL
 	if registryURL == "" {
 		registryURL = getPlatformRegistryURL(logger)
@@ -72,54 +59,35 @@ func buildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metada
 		tag = getGitTag()
 	}
 
-	// Filter servers if serverName provided
-	servers := registry.Servers
-	if serverName != "" {
-		found := false
-		for _, s := range servers {
-			if s.Name == serverName {
-				servers = []metadata.ServerMetadata{s}
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("server '%s' not found in metadata", serverName)
-		}
+	logger.Info("Building image", zap.String("server", serverName))
+
+	// Determine image name
+	imageName := fmt.Sprintf("%s/%s", registryURL, serverName)
+	fullImage := fmt.Sprintf("%s:%s", imageName, tag)
+
+	// Build Docker image
+	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
+	buildCmd, err := execCommandWithValidators("docker", []string{
+		"build",
+		"-f", dockerfile,
+		"-t", fullImage,
+		context,
+	})
+	if err != nil {
+		return err
+	}
+	buildCmd.SetStdout(os.Stdout)
+	buildCmd.SetStderr(os.Stderr)
+
+	if err := buildCmd.Run(); err != nil {
+		return fmt.Errorf("failed to build image for %s: %w", serverName, err)
 	}
 
-	// Build images
-	for _, server := range servers {
-		logger.Info("Building image", zap.String("server", server.Name))
+	logger.Info("Image built successfully", zap.String("image", fullImage))
 
-		// Determine image name
-		imageName := fmt.Sprintf("%s/%s", registryURL, server.Name)
-		fullImage := fmt.Sprintf("%s:%s", imageName, tag)
-
-		// Build Docker image
-		// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-		buildCmd, err := execCommandWithValidators("docker", []string{
-			"build",
-			"-f", dockerfile,
-			"-t", fullImage,
-			context,
-		})
-		if err != nil {
-			return err
-		}
-		buildCmd.SetStdout(os.Stdout)
-		buildCmd.SetStderr(os.Stderr)
-
-		if err := buildCmd.Run(); err != nil {
-			return fmt.Errorf("failed to build image for %s: %w", server.Name, err)
-		}
-
-		logger.Info("Image built successfully", zap.String("image", fullImage))
-
-		// Update metadata file
-		if err := updateMetadataImage(server.Name, imageName, tag, metadataFile, metadataDir); err != nil {
-			logger.Warn("Failed to update metadata", zap.Error(err))
-		}
+	// Update metadata file
+	if err := updateMetadataImage(serverName, imageName, tag, metadataFile, metadataDir); err != nil {
+		logger.Warn("Failed to update metadata", zap.Error(err))
 	}
 
 	return nil
