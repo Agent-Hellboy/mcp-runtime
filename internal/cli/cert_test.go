@@ -97,7 +97,7 @@ func TestWaitForCertificateReadyWithKubectl(t *testing.T) {
 	if len(mock.Commands) != 1 {
 		t.Fatalf("expected 1 kubectl command, got %d", len(mock.Commands))
 	}
-	if !commandHasArgs(mock.Commands[0], "wait", "--for=condition=Ready", "certificate/"+registryCertificateName, "-n", NamespaceRegistry) {
+	if !commandHasArgs(mock.Commands[0], "wait", "--for=condition=Ready", "certificate/"+registryCertificateName, "-n", NamespaceRegistry, "--timeout=15s") {
 		t.Fatalf("unexpected args: %v", mock.Commands[0].Args)
 	}
 }
