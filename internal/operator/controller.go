@@ -33,7 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+	mcpv1alpha1 "github.com/Agent-Hellboy/mcp-runtime/api/v1alpha1"
 )
 
 // RegistryConfig holds configuration for a provisioned container registry.

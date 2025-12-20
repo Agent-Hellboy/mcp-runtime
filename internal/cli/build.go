@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
-	"mcp-runtime/pkg/metadata"
+	"github.com/Agent-Hellboy/mcp-runtime/pkg/metadata"
 
 	"gopkg.in/yaml.v3"
 )

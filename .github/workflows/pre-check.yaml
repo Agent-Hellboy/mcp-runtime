@@ -58,7 +58,7 @@ jobs:
       - name: Run unit tests with coverage
         run: |
           go test -v -race -coverprofile=unit.out \
-            $(go list ./... | grep -v '^mcp-runtime/test' | grep -v '^mcp-runtime/examples/example-app$')
+            $(go list ./... | grep -v '^github.com/Agent-Hellboy/mcp-runtime/test' | grep -v '^github.com/Agent-Hellboy/mcp-runtime/examples/example-app$')
 
       - name: Run integration tests with coverage
         run: |

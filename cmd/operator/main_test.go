@@ -5,7 +5,7 @@ import (
 	"io"
 	"testing"
 
-	"mcp-runtime/internal/operator"
+	"github.com/Agent-Hellboy/mcp-runtime/internal/operator"
 )
 
 func TestRegistryConfigFromEnv(t *testing.T) {

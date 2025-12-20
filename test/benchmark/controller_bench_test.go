@@ -15,8 +15,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
-	operator "mcp-runtime/internal/operator"
+	mcpv1alpha1 "github.com/Agent-Hellboy/mcp-runtime/api/v1alpha1"
+	operator "github.com/Agent-Hellboy/mcp-runtime/internal/operator"
 )
 
 func BenchmarkReconcile(b *testing.B) {

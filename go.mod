@@ -1,4 +1,4 @@
-module mcp-runtime
+module github.com/Agent-Hellboy/mcp-runtime
 
 go 1.24.11
 

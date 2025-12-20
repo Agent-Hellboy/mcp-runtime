@@ -12,8 +12,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
-	"mcp-runtime/internal/operator"
+	mcpv1alpha1 "github.com/Agent-Hellboy/mcp-runtime/api/v1alpha1"
+	"github.com/Agent-Hellboy/mcp-runtime/internal/operator"
 )
 
 var (
