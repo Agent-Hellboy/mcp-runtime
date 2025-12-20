@@ -70,7 +70,7 @@ jobs:
       - name: Run unit tests with coverage
         run: |
           go test -v -race -coverprofile=coverage.out \
-            $(go list ./... | grep -v '^mcp-runtime/test')
+            $(go list ./... | grep -v '^mcp-runtime/test' | grep -v '^mcp-runtime/examples/example-app$')
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4

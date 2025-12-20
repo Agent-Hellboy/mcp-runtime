@@ -27,43 +27,24 @@ func init() {
 }
 
 func main() {
-	var metricsAddr string
-	var enableLeaderElection bool
-	var probeAddr string
-
-	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
-	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	flag.BoolVar(&enableLeaderElection, "leader-elect", false, "Enable leader election for controller manager.")
-	opts := zap.Options{
-		Development: true,
+	cfg, err := parseConfig(flag.CommandLine, os.Args[1:])
+	if err != nil {
+		setupLog.Error(err, "failed to parse flags")
+		os.Exit(1)
 	}
-	opts.BindFlags(flag.CommandLine)
-	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&cfg.zapOptions)))
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                server.Options{BindAddress: metricsAddr},
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "mcp-runtime-operator.mcp-runtime.org",
-	})
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), newManagerOptions(cfg))
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
 
 	// Build registry config from environment variables
-	var registryConfig *operator.RegistryConfig
-	if url := os.Getenv("PROVISIONED_REGISTRY_URL"); url != "" {
-		registryConfig = &operator.RegistryConfig{
-			URL:        url,
-			Username:   os.Getenv("PROVISIONED_REGISTRY_USERNAME"),
-			Password:   os.Getenv("PROVISIONED_REGISTRY_PASSWORD"),
-			SecretName: os.Getenv("PROVISIONED_REGISTRY_SECRET_NAME"),
-		}
-		setupLog.Info("Provisioned registry configured", "url", url)
+	registryConfig := registryConfigFromEnv(os.Getenv)
+	if registryConfig != nil {
+		setupLog.Info("Provisioned registry configured", "url", registryConfig.URL)
 	}
 
 	if err = (&operator.MCPServerReconciler{
@@ -89,5 +70,55 @@ func main() {
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
+	}
+}
+
+type operatorConfig struct {
+	metricsAddr          string
+	probeAddr            string
+	enableLeaderElection bool
+	zapOptions           zap.Options
+}
+
+func parseConfig(fs *flag.FlagSet, args []string) (*operatorConfig, error) {
+	cfg := operatorConfig{
+		zapOptions: zap.Options{
+			Development: true,
+		},
+	}
+
+	fs.StringVar(&cfg.metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
+	fs.StringVar(&cfg.probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	fs.BoolVar(&cfg.enableLeaderElection, "leader-elect", false, "Enable leader election for controller manager.")
+	cfg.zapOptions.BindFlags(fs)
+
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
+}
+
+func newManagerOptions(cfg *operatorConfig) ctrl.Options {
+	return ctrl.Options{
+		Scheme:                 scheme,
+		Metrics:                server.Options{BindAddress: cfg.metricsAddr},
+		HealthProbeBindAddress: cfg.probeAddr,
+		LeaderElection:         cfg.enableLeaderElection,
+		LeaderElectionID:       "mcp-runtime-operator.mcp-runtime.org",
+	}
+}
+
+func registryConfigFromEnv(getenv func(string) string) *operator.RegistryConfig {
+	url := getenv("PROVISIONED_REGISTRY_URL")
+	if url == "" {
+		return nil
+	}
+
+	return &operator.RegistryConfig{
+		URL:        url,
+		Username:   getenv("PROVISIONED_REGISTRY_USERNAME"),
+		Password:   getenv("PROVISIONED_REGISTRY_PASSWORD"),
+		SecretName: getenv("PROVISIONED_REGISTRY_SECRET_NAME"),
 	}
 }
