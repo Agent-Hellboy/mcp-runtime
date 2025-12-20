@@ -5,8 +5,6 @@ import (
 	"io"
 	"testing"
 
-	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
-
 	"mcp-runtime/internal/operator"
 )
 
@@ -20,9 +18,9 @@ func TestRegistryConfigFromEnv(t *testing.T) {
 
 	t.Run("builds_config_from_env", func(t *testing.T) {
 		env := map[string]string{
-			"PROVISIONED_REGISTRY_URL":        "registry.example.com",
-			"PROVISIONED_REGISTRY_USERNAME":   "user",
-			"PROVISIONED_REGISTRY_PASSWORD":   "pass",
+			"PROVISIONED_REGISTRY_URL":         "registry.example.com",
+			"PROVISIONED_REGISTRY_USERNAME":    "user",
+			"PROVISIONED_REGISTRY_PASSWORD":    "pass",
 			"PROVISIONED_REGISTRY_SECRET_NAME": "secret",
 		}
 		getenv := func(key string) string { return env[key] }
@@ -107,8 +105,8 @@ func TestNewManagerOptions(t *testing.T) {
 	if opts.Scheme != scheme {
 		t.Fatalf("expected scheme to be set")
 	}
-	if opts.Metrics != (server.Options{BindAddress: "localhost:9999"}) {
-		t.Fatalf("unexpected metrics options: %+v", opts.Metrics)
+	if opts.Metrics.BindAddress != "localhost:9999" {
+		t.Fatalf("unexpected metrics bind address: %q", opts.Metrics.BindAddress)
 	}
 	if opts.HealthProbeBindAddress != "localhost:9998" {
 		t.Fatalf("unexpected probe addr: %q", opts.HealthProbeBindAddress)

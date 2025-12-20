@@ -24,7 +24,7 @@ func TestRootCommandHelp(t *testing.T) {
 		t.Fatalf("rootCmd.Execute() error: %v", err)
 	}
 
-	if !strings.Contains(out.String(), "MCP Runtime Management CLI") {
+	if !strings.Contains(out.String(), "MCP Runtime CLI provides commands to manage the MCP platform") {
 		t.Fatalf("help output missing expected text")
 	}
 }
