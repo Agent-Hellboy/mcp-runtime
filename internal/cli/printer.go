@@ -4,8 +4,10 @@ package cli
 
 import (
 	"io"
+	"os"
 
 	"github.com/pterm/pterm"
+	"golang.org/x/term"
 )
 
 // Printer provides formatted terminal output methods.
@@ -174,10 +176,33 @@ func (p *Printer) Cyan(msg string) string {
 
 // --- Spinners ---
 
+func isTerminalWriter(writer io.Writer) bool {
+	if writer == nil {
+		return term.IsTerminal(int(os.Stdout.Fd()))
+	}
+	if f, ok := writer.(interface{ Fd() uintptr }); ok {
+		return term.IsTerminal(int(f.Fd()))
+	}
+	return false
+}
+
 // SpinnerStart starts a spinner with the given message. Returns a stop function.
 func (p *Printer) SpinnerStart(msg string) func(success bool, finalMsg string) {
 	if p.Quiet {
 		return func(bool, string) {}
+	}
+	if !isTerminalWriter(p.Writer) {
+		p.Println(msg)
+		return func(success bool, finalMsg string) {
+			if finalMsg == "" {
+				return
+			}
+			if success {
+				p.Success(finalMsg)
+			} else {
+				p.Error(finalMsg)
+			}
+		}
 	}
 	spinner := pterm.DefaultSpinner
 	if p.Writer != nil {
