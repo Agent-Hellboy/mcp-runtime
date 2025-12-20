@@ -1,6 +1,10 @@
 package metadata
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestLoadFromFile(t *testing.T) {
 	tests := []struct {
@@ -164,6 +168,109 @@ func TestSetDefaults(t *testing.T) {
 			t.Errorf("setDefaults(%q) = %q, want %q", test.server.Namespace, test.server.Namespace, test.want.Namespace)
 		}
 	}
+}
+
+func TestLoadFromDirectory(t *testing.T) {
+	t.Run("loads_all_yaml_files_from_directory", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create test YAML files
+		file1 := filepath.Join(tmpDir, "server1.yaml")
+		file2 := filepath.Join(tmpDir, "server2.yml")
+
+		yaml1 := `version: v1
+servers:
+  - name: server1
+    image: img1
+`
+		yaml2 := `version: v1
+servers:
+  - name: server2
+    image: img2
+`
+		if err := os.WriteFile(file1, []byte(yaml1), 0644); err != nil {
+			t.Fatalf("failed to write file1: %v", err)
+		}
+		if err := os.WriteFile(file2, []byte(yaml2), 0644); err != nil {
+			t.Fatalf("failed to write file2: %v", err)
+		}
+
+		registry, err := LoadFromDirectory(tmpDir)
+		if err != nil {
+			t.Fatalf("LoadFromDirectory() unexpected error: %v", err)
+		}
+
+		if len(registry.Servers) != 2 {
+			t.Errorf("LoadFromDirectory() servers = %d, want 2", len(registry.Servers))
+		}
+
+		// Check both servers are loaded (order may vary)
+		names := make(map[string]bool)
+		for _, s := range registry.Servers {
+			names[s.Name] = true
+		}
+		if !names["server1"] || !names["server2"] {
+			t.Errorf("LoadFromDirectory() missing servers, got names: %v", names)
+		}
+	})
+
+	t.Run("returns_empty_registry_for_empty_directory", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		registry, err := LoadFromDirectory(tmpDir)
+		if err != nil {
+			t.Fatalf("LoadFromDirectory() unexpected error: %v", err)
+		}
+
+		if len(registry.Servers) != 0 {
+			t.Errorf("LoadFromDirectory() servers = %d, want 0", len(registry.Servers))
+		}
+		if registry.Version != "v1" {
+			t.Errorf("LoadFromDirectory() version = %q, want v1", registry.Version)
+		}
+	})
+
+	t.Run("returns_error_for_invalid_yaml_in_directory", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		invalidFile := filepath.Join(tmpDir, "invalid.yaml")
+		if err := os.WriteFile(invalidFile, []byte("{{invalid yaml"), 0644); err != nil {
+			t.Fatalf("failed to write invalid file: %v", err)
+		}
+
+		_, err := LoadFromDirectory(tmpDir)
+		if err == nil {
+			t.Fatal("LoadFromDirectory() expected error for invalid YAML, got nil")
+		}
+	})
+
+	t.Run("ignores_non_yaml_files", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create a YAML file and a non-YAML file
+		yamlFile := filepath.Join(tmpDir, "server.yaml")
+		txtFile := filepath.Join(tmpDir, "readme.txt")
+
+		yaml := `version: v1
+servers:
+  - name: test-server
+`
+		if err := os.WriteFile(yamlFile, []byte(yaml), 0644); err != nil {
+			t.Fatalf("failed to write yaml file: %v", err)
+		}
+		if err := os.WriteFile(txtFile, []byte("not yaml"), 0644); err != nil {
+			t.Fatalf("failed to write txt file: %v", err)
+		}
+
+		registry, err := LoadFromDirectory(tmpDir)
+		if err != nil {
+			t.Fatalf("LoadFromDirectory() unexpected error: %v", err)
+		}
+
+		if len(registry.Servers) != 1 {
+			t.Errorf("LoadFromDirectory() servers = %d, want 1", len(registry.Servers))
+		}
+	})
 }
 
 func int32Ptr(i int32) *int32 {

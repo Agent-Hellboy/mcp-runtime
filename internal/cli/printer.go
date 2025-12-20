@@ -102,7 +102,15 @@ func (p *Printer) Table(data [][]string) {
 	}
 	table := pterm.DefaultTable.WithHasHeader().WithData(data)
 	if p.Writer != nil {
-		table = table.WithWriter(p.Writer)
+		s, err := table.Srender()
+		if err != nil {
+			pterm.Error.Println("failed to render table:", err)
+			return
+		}
+		if _, err := io.WriteString(p.Writer, s+"\n"); err != nil {
+			pterm.Error.Println("failed to render table:", err)
+		}
+		return
 	}
 	if err := table.Render(); err != nil {
 		pterm.Error.Println("failed to render table:", err)
@@ -116,7 +124,15 @@ func (p *Printer) TableBoxed(data [][]string) {
 	}
 	table := pterm.DefaultTable.WithHasHeader().WithBoxed().WithData(data)
 	if p.Writer != nil {
-		table = table.WithWriter(p.Writer)
+		s, err := table.Srender()
+		if err != nil {
+			pterm.Error.Println("failed to render table:", err)
+			return
+		}
+		if _, err := io.WriteString(p.Writer, s+"\n"); err != nil {
+			pterm.Error.Println("failed to render table:", err)
+		}
+		return
 	}
 	if err := table.Render(); err != nil {
 		pterm.Error.Println("failed to render table:", err)

@@ -20,6 +20,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// yamlMarshal is a test seam for yaml.Marshal.
+var yamlMarshal = yaml.Marshal
+
 func newBuildImageCmd(logger *zap.Logger) *cobra.Command {
 	var dockerfile string
 	var metadataFile string
@@ -148,7 +151,7 @@ func updateMetadataImage(serverName, imageName, tag, metadataFile, metadataDir s
 	}
 
 	// Write back
-	data, err := yaml.Marshal(registry)
+	data, err := yamlMarshal(registry)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}

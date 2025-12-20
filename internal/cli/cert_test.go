@@ -330,3 +330,184 @@ func TestCertStatusCmdInvokesStatus(t *testing.T) {
 		t.Fatal("expected kubectl commands to be invoked")
 	}
 }
+
+func TestNewClusterCertCmd(t *testing.T) {
+	mock := &MockExecutor{}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	clusterMgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+	cmd := clusterMgr.newClusterCertCmd()
+
+	t.Run("command_created", func(t *testing.T) {
+		if cmd == nil {
+			t.Fatal("newClusterCertCmd should not return nil")
+		}
+		if cmd.Use != "cert" {
+			t.Errorf("expected Use='cert', got %q", cmd.Use)
+		}
+	})
+
+	t.Run("has_subcommands", func(t *testing.T) {
+		subcommands := cmd.Commands()
+		if len(subcommands) != 3 {
+			t.Errorf("expected 3 subcommands (status, apply, wait), got %d", len(subcommands))
+		}
+
+		expectedSubs := map[string]bool{"status": false, "apply": false, "wait": false}
+		for _, sub := range subcommands {
+			if _, ok := expectedSubs[sub.Use]; ok {
+				expectedSubs[sub.Use] = true
+			}
+		}
+
+		for name, found := range expectedSubs {
+			if !found {
+				t.Errorf("expected subcommand %q not found", name)
+			}
+		}
+	})
+}
+
+func TestCertManagerStatusMissingCertManager(t *testing.T) {
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			cmd := &MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "crd", CertManagerCRDName) {
+				cmd.RunErr = errors.New("not found")
+			}
+			return cmd
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	manager := NewCertManager(kubectl, zap.NewNop())
+
+	var buf bytes.Buffer
+	setDefaultPrinterWriter(t, &buf)
+
+	if err := manager.Status(); err == nil {
+		t.Fatal("expected error when cert-manager not installed")
+	}
+}
+
+func TestCertManagerStatusMissingCASecret(t *testing.T) {
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			cmd := &MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "secret", certCASecretName, "-n", certManagerNamespace) {
+				cmd.RunErr = errors.New("not found")
+			}
+			return cmd
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	manager := NewCertManager(kubectl, zap.NewNop())
+
+	var buf bytes.Buffer
+	setDefaultPrinterWriter(t, &buf)
+
+	if err := manager.Status(); err == nil {
+		t.Fatal("expected error when CA secret not found")
+	}
+}
+
+func TestCertManagerStatusMissingClusterIssuer(t *testing.T) {
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			cmd := &MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "clusterissuer", certClusterIssuerName) {
+				cmd.RunErr = errors.New("not found")
+			}
+			return cmd
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	manager := NewCertManager(kubectl, zap.NewNop())
+
+	var buf bytes.Buffer
+	setDefaultPrinterWriter(t, &buf)
+
+	if err := manager.Status(); err == nil {
+		t.Fatal("expected error when ClusterIssuer not found")
+	}
+}
+
+func TestCertManagerApplyMissingCertManager(t *testing.T) {
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			cmd := &MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "crd", CertManagerCRDName) {
+				cmd.RunErr = errors.New("not found")
+			}
+			return cmd
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	manager := NewCertManager(kubectl, zap.NewNop())
+
+	var buf bytes.Buffer
+	setDefaultPrinterWriter(t, &buf)
+
+	if err := manager.Apply(); err == nil {
+		t.Fatal("expected error when cert-manager not installed")
+	}
+}
+
+func TestCheckClusterIssuerWithKubectlSuccess(t *testing.T) {
+	mock := &MockExecutor{}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+
+	if err := checkClusterIssuerWithKubectl(kubectl); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mock.Commands) != 1 {
+		t.Fatalf("expected 1 kubectl command, got %d", len(mock.Commands))
+	}
+	if !commandHasArgs(mock.Commands[0], "get", "clusterissuer", certClusterIssuerName) {
+		t.Fatalf("unexpected args: %v", mock.Commands[0].Args)
+	}
+}
+
+func TestCheckClusterIssuerWithKubectlError(t *testing.T) {
+	mock := &MockExecutor{DefaultRunErr: errors.New("not found")}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+
+	if err := checkClusterIssuerWithKubectl(kubectl); err == nil {
+		t.Fatal("expected error when cluster issuer not found")
+	}
+}
+
+func TestCheckCertificateWithKubectlError(t *testing.T) {
+	mock := &MockExecutor{DefaultRunErr: errors.New("not found")}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+
+	if err := checkCertificateWithKubectl(kubectl, "test-cert", "test-ns"); err == nil {
+		t.Fatal("expected error when certificate not found")
+	}
+}
+
+func TestApplyClusterIssuerWithKubectlError(t *testing.T) {
+	mock := &MockExecutor{DefaultRunErr: errors.New("apply failed")}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+
+	if err := applyClusterIssuerWithKubectl(kubectl); err == nil {
+		t.Fatal("expected error when apply fails")
+	}
+}
+
+func TestApplyRegistryCertificateWithKubectlError(t *testing.T) {
+	mock := &MockExecutor{DefaultRunErr: errors.New("apply failed")}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+
+	if err := applyRegistryCertificateWithKubectl(kubectl); err == nil {
+		t.Fatal("expected error when apply fails")
+	}
+}
+
+func TestWaitForCertificateReadyWithKubectlError(t *testing.T) {
+	mock := &MockExecutor{DefaultRunErr: errors.New("timeout")}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+
+	if err := waitForCertificateReadyWithKubectl(kubectl, "test-cert", "test-ns", time.Second); err == nil {
+		t.Fatal("expected error when wait times out")
+	}
+}

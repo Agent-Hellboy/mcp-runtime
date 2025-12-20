@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"testing"
 )
 
@@ -158,4 +159,71 @@ func TestExecCommandWithValidators(t *testing.T) {
 			t.Errorf("expected no error with valid command, got: %v", err)
 		}
 	})
+}
+
+func TestMockExecutorReset(t *testing.T) {
+	mock := &MockExecutor{}
+
+	// Execute some commands
+	_, _ = mock.Command("kubectl", []string{"get", "pods"})
+	_, _ = mock.Command("docker", []string{"build", "."})
+
+	if len(mock.Commands) != 2 {
+		t.Fatalf("expected 2 commands, got %d", len(mock.Commands))
+	}
+
+	// Reset and verify cleared
+	mock.Reset()
+
+	if len(mock.Commands) != 0 {
+		t.Errorf("expected 0 commands after Reset, got %d", len(mock.Commands))
+	}
+}
+
+func TestMockCommandSetStdin(t *testing.T) {
+	mock := &MockCommand{}
+
+	// Create a simple reader
+	r, w, _ := os.Pipe()
+	defer r.Close()
+	defer w.Close()
+
+	mock.SetStdin(r)
+
+	if mock.StdinR != r {
+		t.Errorf("SetStdin did not set StdinR correctly")
+	}
+}
+
+func TestMockExecutorLastCommand(t *testing.T) {
+	t.Run("returns_empty_when_no_commands", func(t *testing.T) {
+		mock := &MockExecutor{}
+		last := mock.LastCommand()
+		if last.Name != "" || len(last.Args) != 0 {
+			t.Errorf("expected empty ExecSpec, got %+v", last)
+		}
+	})
+
+	t.Run("returns_last_command", func(t *testing.T) {
+		mock := &MockExecutor{}
+		_, _ = mock.Command("first", []string{"arg1"})
+		_, _ = mock.Command("second", []string{"arg2"})
+
+		last := mock.LastCommand()
+		if last.Name != "second" {
+			t.Errorf("expected name 'second', got %q", last.Name)
+		}
+	})
+}
+
+func TestMockExecutorHasCommand(t *testing.T) {
+	mock := &MockExecutor{}
+	_, _ = mock.Command("kubectl", []string{"get", "pods"})
+
+	if !mock.HasCommand("kubectl") {
+		t.Error("expected HasCommand('kubectl') to be true")
+	}
+	if mock.HasCommand("docker") {
+		t.Error("expected HasCommand('docker') to be false")
+	}
 }

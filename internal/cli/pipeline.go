@@ -11,6 +11,9 @@ import (
 	"mcp-runtime/pkg/metadata"
 )
 
+// filepathGlob is a test seam for filepath.Glob.
+var filepathGlob = filepath.Glob
+
 // PipelineManager handles pipeline operations with injected dependencies.
 type PipelineManager struct {
 	kubectl *KubectlClient
@@ -137,12 +140,12 @@ func (m *PipelineManager) DeployCRDs(manifestsDir, namespace string) error {
 	m.logger.Info("Deploying CRD files", zap.String("dir", manifestsDir))
 
 	// Find all YAML files
-	files, err := filepath.Glob(filepath.Join(manifestsDir, "*.yaml"))
+	files, err := filepathGlob(filepath.Join(manifestsDir, "*.yaml"))
 	if err != nil {
 		return fmt.Errorf("failed to list manifest files: %w", err)
 	}
 
-	ymlFiles, err := filepath.Glob(filepath.Join(manifestsDir, "*.yml"))
+	ymlFiles, err := filepathGlob(filepath.Join(manifestsDir, "*.yml"))
 	if err != nil {
 		return fmt.Errorf("failed to list manifest files: %w", err)
 	}

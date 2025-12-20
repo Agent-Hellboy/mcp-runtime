@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"go.uber.org/zap"
@@ -417,4 +420,314 @@ func contains(slice []string, val string) bool {
 		}
 	}
 	return false
+}
+
+func TestServerCmdSubcommandRunE(t *testing.T) {
+	t.Run("list_cmd_executes", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		cmd := mgr.newServerListCmd()
+		err := cmd.RunE(cmd, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.HasCommand("kubectl") {
+			t.Error("expected kubectl to be called")
+		}
+	})
+
+	t.Run("get_cmd_executes", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		cmd := mgr.newServerGetCmd()
+		err := cmd.RunE(cmd, []string{"my-server"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.HasCommand("kubectl") {
+			t.Error("expected kubectl to be called")
+		}
+	})
+
+	t.Run("delete_cmd_executes", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		cmd := mgr.newServerDeleteCmd()
+		err := cmd.RunE(cmd, []string{"my-server"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.HasCommand("kubectl") {
+			t.Error("expected kubectl to be called")
+		}
+	})
+
+	t.Run("status_cmd_executes", func(t *testing.T) {
+		mock := &MockExecutor{
+			DefaultOutput: []byte("server1|image:tag|1|/path|false\n"),
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		var buf bytes.Buffer
+		setDefaultPrinterWriter(t, &buf)
+
+		cmd := mgr.newServerStatusCmd()
+		err := cmd.RunE(cmd, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("logs_cmd_executes", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		cmd := mgr.newServerLogsCmd()
+		err := cmd.RunE(cmd, []string{"my-server"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("create_cmd_with_file", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		tmpFile, err := os.CreateTemp("", "mcpserver-*.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.Remove(tmpFile.Name())
+		if _, err := tmpFile.WriteString("apiVersion: v1\nkind: MCPServer\n"); err != nil {
+			t.Fatal(err)
+		}
+		tmpFile.Close()
+
+		cmd := mgr.newServerCreateCmd()
+		if err := cmd.Flags().Set("file", tmpFile.Name()); err != nil {
+			t.Fatal(err)
+		}
+		err = cmd.RunE(cmd, []string{"my-server"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !contains(mock.LastCommand().Args, "apply") {
+			t.Error("expected apply command")
+		}
+	})
+}
+
+func TestValidateServerInputErrors(t *testing.T) {
+	t.Run("rejects invalid namespace", func(t *testing.T) {
+		_, _, err := validateServerInput("my-server", "bad\tns")
+		if err == nil {
+			t.Fatal("expected error for invalid namespace")
+		}
+	})
+
+	t.Run("rejects empty namespace", func(t *testing.T) {
+		_, _, err := validateServerInput("my-server", "   ")
+		if err == nil {
+			t.Fatal("expected error for empty namespace")
+		}
+	})
+}
+
+func TestServerManager_GetServerSuccess(t *testing.T) {
+	mock := &MockExecutor{
+		DefaultOutput: []byte("apiVersion: v1\nkind: MCPServer"),
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	mgr := NewServerManager(kubectl, zap.NewNop())
+
+	err := mgr.GetServer("my-server", "test-ns")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !contains(mock.LastCommand().Args, "get") {
+		t.Error("expected get command")
+	}
+}
+
+func TestServerManager_CreateServerErrors(t *testing.T) {
+	t.Run("rejects invalid image with control chars", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		err := mgr.CreateServer("my-server", "test-ns", "bad\nimage", "latest")
+		if err == nil {
+			t.Fatal("expected error for invalid image")
+		}
+	})
+
+	t.Run("handles kubectl apply error", func(t *testing.T) {
+		mock := &MockExecutor{DefaultRunErr: errors.New("apply failed")}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		err := mgr.CreateServer("my-server", "test-ns", "repo/image", "latest")
+		if err == nil {
+			t.Fatal("expected error when kubectl fails")
+		}
+	})
+}
+
+func TestServerManager_ViewServerLogsError(t *testing.T) {
+	mock := &MockExecutor{}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	mgr := NewServerManager(kubectl, zap.NewNop())
+
+	err := mgr.ViewServerLogs("bad;name", "test-ns", false)
+	if err == nil {
+		t.Fatal("expected error for invalid name")
+	}
+	if len(mock.Commands) > 0 {
+		t.Error("should not call kubectl with invalid name")
+	}
+}
+
+func TestServerManager_ServerStatus(t *testing.T) {
+	t.Run("handles empty servers list", func(t *testing.T) {
+		mock := &MockExecutor{
+			DefaultOutput: []byte(""),
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		var buf bytes.Buffer
+		setDefaultPrinterWriter(t, &buf)
+
+		err := mgr.ServerStatus("test-ns")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(buf.String(), "No MCP servers found") {
+			t.Errorf("expected 'No MCP servers found' message, got: %s", buf.String())
+		}
+	})
+
+	t.Run("handles server list with provisioned registry", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				cmd := &MockCommand{Args: spec.Args}
+				if contains(spec.Args, "mcpserver") {
+					cmd.OutputData = []byte("server1|image:tag|1|/path|true\n")
+				} else if contains(spec.Args, "pods") {
+					cmd.OutputData = []byte("NAME READY STATUS RESTARTS\npod-1 true Running 0\n")
+				}
+				return cmd
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		var buf bytes.Buffer
+		setDefaultPrinterWriter(t, &buf)
+
+		err := mgr.ServerStatus("test-ns")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(buf.String(), "provisioned") {
+			t.Errorf("expected 'provisioned' in output, got: %s", buf.String())
+		}
+	})
+
+	t.Run("handles kubectl get mcpserver error", func(t *testing.T) {
+		mock := &MockExecutor{
+			DefaultErr: errors.New("not found"),
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		var buf bytes.Buffer
+		setDefaultPrinterWriter(t, &buf)
+
+		err := mgr.ServerStatus("test-ns")
+		if err == nil {
+			t.Fatal("expected error when kubectl fails")
+		}
+	})
+
+	t.Run("handles get pods error gracefully", func(t *testing.T) {
+		callCount := 0
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				callCount++
+				cmd := &MockCommand{Args: spec.Args}
+				if contains(spec.Args, "mcpserver") {
+					cmd.OutputData = []byte("server1|image:tag|1|/path|false\n")
+				} else if contains(spec.Args, "pods") {
+					cmd.RunErr = errors.New("pods not found")
+				}
+				return cmd
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		var buf bytes.Buffer
+		setDefaultPrinterWriter(t, &buf)
+
+		err := mgr.ServerStatus("test-ns")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("handles whitespace-only lines in server output", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				cmd := &MockCommand{Args: spec.Args}
+				if contains(spec.Args, "mcpserver") {
+					cmd.OutputData = []byte("server1|image:tag|1|/path|false\n   \n\n")
+				}
+				return cmd
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		var buf bytes.Buffer
+		setDefaultPrinterWriter(t, &buf)
+
+		err := mgr.ServerStatus("test-ns")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("handles pods command with no pods found", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				cmd := &MockCommand{Args: spec.Args}
+				if contains(spec.Args, "mcpserver") {
+					cmd.OutputData = []byte("server1|image:tag|1|/path|false\n")
+				} else if contains(spec.Args, "pods") {
+					cmd.OutputData = []byte("NAME READY STATUS RESTARTS\n")
+				}
+				return cmd
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		var buf bytes.Buffer
+		setDefaultPrinterWriter(t, &buf)
+
+		err := mgr.ServerStatus("test-ns")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 }

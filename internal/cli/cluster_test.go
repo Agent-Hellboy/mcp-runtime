@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -444,4 +446,548 @@ func TestConfigureEKSKubeconfig(t *testing.T) {
 			t.Fatalf("expected --name %s, got %v", defaultClusterName, cmd.Args)
 		}
 	})
+
+	t.Run("returns error when aws command fails", func(t *testing.T) {
+		mock := &MockExecutor{DefaultRunErr: errors.New("aws failed")}
+		err := configureEKSKubeconfig(mock, "us-west-2", "my-eks", "")
+		if err == nil {
+			t.Fatal("expected error when aws fails")
+		}
+	})
+}
+
+func TestClusterInitCmdRunE(t *testing.T) {
+	tmpDir := t.TempDir()
+	kubeconfig := filepath.Join(tmpDir, "config")
+	if err := os.WriteFile(kubeconfig, []byte("apiVersion: v1\nkind: Config\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &MockExecutor{}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+	cmd := mgr.newClusterInitCmd()
+	_ = cmd.Flags().Set("kubeconfig", kubeconfig)
+
+	err := cmd.RunE(cmd, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClusterStatusCmdRunE(t *testing.T) {
+	mock := &MockExecutor{
+		DefaultOutput: []byte("Kubernetes control plane is running"),
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+	var buf bytes.Buffer
+	setDefaultPrinterWriter(t, &buf)
+
+	cmd := mgr.newClusterStatusCmd()
+	err := cmd.RunE(cmd, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClusterProvisionCmdRunE(t *testing.T) {
+	mock := &MockExecutor{}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+	cmd := mgr.newClusterProvisionCmd()
+	_ = cmd.Flags().Set("provider", "kind")
+
+	err := cmd.RunE(cmd, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestProvisionCluster(t *testing.T) {
+	t.Run("dispatches to kind", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ProvisionCluster("kind", "us-west-2", 3, "test-cluster")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.HasCommand("kind") {
+			t.Error("expected kind command")
+		}
+	})
+
+	t.Run("returns gke not implemented error", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ProvisionCluster("gke", "us-west-2", 3, "test-cluster")
+		if err == nil {
+			t.Fatal("expected error for gke")
+		}
+		if !strings.Contains(err.Error(), "not yet implemented") {
+			t.Fatalf("expected not implemented error, got: %v", err)
+		}
+	})
+
+	t.Run("returns aks not implemented error", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ProvisionCluster("aks", "us-west-2", 3, "test-cluster")
+		if err == nil {
+			t.Fatal("expected error for aks")
+		}
+		if !strings.Contains(err.Error(), "not yet implemented") {
+			t.Fatalf("expected not implemented error, got: %v", err)
+		}
+	})
+
+	t.Run("returns error for unsupported provider", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ProvisionCluster("unknown", "us-west-2", 3, "test-cluster")
+		if err == nil {
+			t.Fatal("expected error for unknown provider")
+		}
+		if !strings.Contains(err.Error(), "unsupported provider") {
+			t.Fatalf("expected unsupported provider error, got: %v", err)
+		}
+	})
+
+	t.Run("eks provisioning", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ProvisionCluster("eks", "us-west-2", 3, "test-cluster")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.HasCommand("eksctl") {
+			t.Error("expected eksctl command")
+		}
+	})
+}
+
+func TestProvisionKindCluster(t *testing.T) {
+	t.Run("creates cluster with default name", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.provisionKindCluster(3, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		cmd := mock.LastCommand()
+		if cmd.Name != "kind" {
+			t.Fatalf("expected kind command, got %q", cmd.Name)
+		}
+		if !contains(cmd.Args, "--name") || !contains(cmd.Args, defaultClusterName) {
+			t.Fatalf("expected --name %s, got %v", defaultClusterName, cmd.Args)
+		}
+	})
+
+	t.Run("creates cluster with custom name", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.provisionKindCluster(2, "my-cluster")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		cmd := mock.LastCommand()
+		if !contains(cmd.Args, "--name") || !contains(cmd.Args, "my-cluster") {
+			t.Fatalf("expected --name my-cluster, got %v", cmd.Args)
+		}
+	})
+
+	t.Run("returns error when kind fails", func(t *testing.T) {
+		mock := &MockExecutor{DefaultRunErr: errors.New("kind failed")}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.provisionKindCluster(1, "test")
+		if err == nil {
+			t.Fatal("expected error when kind fails")
+		}
+	})
+}
+
+func TestProvisionGKECluster(t *testing.T) {
+	t.Run("defaults cluster name", func(t *testing.T) {
+		err := provisionGKECluster(zap.NewNop(), "us-west-2", 3, "")
+		if err == nil {
+			t.Fatal("expected not implemented error")
+		}
+		if !strings.Contains(err.Error(), defaultClusterName) {
+			t.Fatalf("expected default cluster name in error, got: %v", err)
+		}
+	})
+}
+
+func TestProvisionAKSCluster(t *testing.T) {
+	t.Run("defaults cluster name", func(t *testing.T) {
+		err := provisionAKSCluster(zap.NewNop(), "us-west-2", 3, "")
+		if err == nil {
+			t.Fatal("expected not implemented error")
+		}
+		if !strings.Contains(err.Error(), defaultClusterName) {
+			t.Fatalf("expected default cluster name in error, got: %v", err)
+		}
+	})
+}
+
+func TestProvisionEKSClusterError(t *testing.T) {
+	mock := &MockExecutor{DefaultRunErr: errors.New("eksctl failed")}
+	err := provisionEKSCluster(zap.NewNop(), mock, "us-west-2", 3, "test")
+	if err == nil {
+		t.Fatal("expected error when eksctl fails")
+	}
+}
+
+func TestCheckClusterStatusError(t *testing.T) {
+	mock := &MockExecutor{
+		DefaultErr: errors.New("cluster not accessible"),
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+	err := mgr.CheckClusterStatus()
+	if err == nil {
+		t.Fatal("expected error when cluster not accessible")
+	}
+}
+
+func TestConfigureCluster(t *testing.T) {
+	t.Run("skips ingress when mode is none", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ConfigureCluster(ingressOptions{mode: "none"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Should not have called kubectl for ingress
+		for _, cmd := range mock.Commands {
+			if contains(cmd.Args, "ingressclass") {
+				t.Error("should not check ingress class when mode is none")
+			}
+		}
+	})
+
+	t.Run("returns error for unsupported ingress", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ConfigureCluster(ingressOptions{mode: "nginx"})
+		if err == nil {
+			t.Fatal("expected error for unsupported ingress")
+		}
+		if !strings.Contains(err.Error(), "unsupported ingress") {
+			t.Fatalf("expected unsupported ingress error, got: %v", err)
+		}
+	})
+
+	t.Run("skips install when ingress already present", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				cmd := &MockCommand{Args: spec.Args}
+				if contains(spec.Args, "ingressclass") {
+					cmd.OutputData = []byte("ingressclass.networking.k8s.io/traefik\n")
+				}
+				return cmd
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ConfigureCluster(ingressOptions{mode: "traefik"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Should not have called apply
+		for _, cmd := range mock.Commands {
+			if contains(cmd.Args, "apply") {
+				t.Error("should not apply when ingress already present")
+			}
+		}
+	})
+
+	t.Run("forces install when flag set", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		manifestPath := filepath.Join(tmpDir, "ingress.yaml")
+		if err := os.WriteFile(manifestPath, []byte("kind: List\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				cmd := &MockCommand{Args: spec.Args}
+				if contains(spec.Args, "ingressclass") {
+					cmd.OutputData = []byte("ingressclass.networking.k8s.io/traefik\n")
+				}
+				return cmd
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ConfigureCluster(ingressOptions{mode: "traefik", force: true, manifest: manifestPath})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Should have called apply despite ingress present
+		found := false
+		for _, cmd := range mock.Commands {
+			if contains(cmd.Args, "apply") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected apply when force is true")
+		}
+	})
+
+	t.Run("uses kustomize for directory manifest", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		manifestDir := filepath.Join(tmpDir, "ingress")
+		if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(manifestDir, "kustomization.yaml"), []byte("resources: []\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ConfigureCluster(ingressOptions{mode: "traefik", manifest: manifestDir})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Should have called apply with -k
+		found := false
+		for _, cmd := range mock.Commands {
+			if contains(cmd.Args, "apply") && contains(cmd.Args, "-k") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected apply -k for directory manifest")
+		}
+	})
+
+	t.Run("uses kustomize for kustomization.yaml file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		manifestDir := filepath.Join(tmpDir, "ingress")
+		if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		kustomizePath := filepath.Join(manifestDir, "kustomization.yaml")
+		if err := os.WriteFile(kustomizePath, []byte("resources: []\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ConfigureCluster(ingressOptions{mode: "traefik", manifest: kustomizePath})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Should have called apply with -k pointing to directory
+		found := false
+		for _, cmd := range mock.Commands {
+			if contains(cmd.Args, "apply") && contains(cmd.Args, "-k") && contains(cmd.Args, manifestDir) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected apply -k with directory for kustomization.yaml")
+		}
+	})
+
+	t.Run("returns error when apply fails", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		manifestPath := filepath.Join(tmpDir, "ingress.yaml")
+		if err := os.WriteFile(manifestPath, []byte("kind: List\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				cmd := &MockCommand{Args: spec.Args}
+				if contains(spec.Args, "apply") {
+					cmd.RunErr = errors.New("apply failed")
+				}
+				return cmd
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ConfigureCluster(ingressOptions{mode: "traefik", manifest: manifestPath})
+		if err == nil {
+			t.Fatal("expected error when apply fails")
+		}
+	})
+}
+
+func TestInitClusterErrors(t *testing.T) {
+	t.Run("returns error when CRD install fails", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		kubeconfig := filepath.Join(tmpDir, "config")
+		if err := os.WriteFile(kubeconfig, []byte("apiVersion: v1\nkind: Config\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				cmd := &MockCommand{Args: spec.Args}
+				if contains(spec.Args, "apply") &&
+					contains(spec.Args, "-f") &&
+					contains(spec.Args, "config/crd/bases/mcp-runtime.org_mcpservers.yaml") {
+					cmd.RunErr = errors.New("crd install failed")
+				}
+				return cmd
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.InitCluster(kubeconfig, "")
+		if err == nil {
+			t.Fatal("expected error when CRD install fails")
+		}
+	})
+
+	t.Run("returns error when namespace creation fails", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		kubeconfig := filepath.Join(tmpDir, "config")
+		if err := os.WriteFile(kubeconfig, []byte("apiVersion: v1\nkind: Config\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		callCount := 0
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				callCount++
+				cmd := &MockCommand{Args: spec.Args}
+				// Fail on second apply (namespace creation)
+				if contains(spec.Args, "apply") && callCount > 1 {
+					cmd.RunErr = errors.New("namespace creation failed")
+				}
+				return cmd
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.InitCluster(kubeconfig, "")
+		if err == nil {
+			t.Fatal("expected error when namespace creation fails")
+		}
+	})
+}
+
+func TestEnsureNamespaceError(t *testing.T) {
+	mock := &MockExecutor{DefaultRunErr: errors.New("apply failed")}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+	err := mgr.EnsureNamespace("test-ns")
+	if err == nil {
+		t.Fatal("expected error when apply fails")
+	}
+}
+
+func TestConfigureKubeconfigFromProviderAKS(t *testing.T) {
+	mock := &MockExecutor{}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+	err := mgr.ConfigureKubeconfigFromProvider("aks", "us-west-2", "cluster", "rg", "", "", "")
+	if err == nil {
+		t.Fatal("expected error for aks")
+	}
+	if !strings.Contains(err.Error(), "not yet implemented") {
+		t.Fatalf("expected not implemented error, got: %v", err)
+	}
+}
+
+func TestConfigureKubeconfigFromProviderGKE(t *testing.T) {
+	mock := &MockExecutor{}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+	err := mgr.ConfigureKubeconfigFromProvider("gke", "us-west-2", "cluster", "", "project", "zone", "")
+	if err == nil {
+		t.Fatal("expected error for gke")
+	}
+	if !strings.Contains(err.Error(), "not yet implemented") {
+		t.Fatalf("expected not implemented error, got: %v", err)
+	}
+}
+
+func TestResolveKubeconfigPath(t *testing.T) {
+	t.Run("returns provided path", func(t *testing.T) {
+		path, err := resolveKubeconfigPath("/custom/path")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if path != "/custom/path" {
+			t.Fatalf("expected /custom/path, got %q", path)
+		}
+	})
+
+	t.Run("returns default path when empty", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("HOME", tmpDir)
+
+		path, err := resolveKubeconfigPath("")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		expected := filepath.Join(tmpDir, ".kube", "config")
+		if path != expected {
+			t.Fatalf("expected %q, got %q", expected, path)
+		}
+	})
+}
+
+func TestConfigureClusterConfigCmdFlags(t *testing.T) {
+	mock := &MockExecutor{}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+	cmd := mgr.newClusterConfigCmd()
+
+	// Verify all flags are registered
+	flags := []string{"ingress", "ingress-manifest", "force-ingress-install", "kubeconfig", "context", "provider", "region", "name", "resource-group", "project", "zone"}
+	for _, flag := range flags {
+		if cmd.Flags().Lookup(flag) == nil {
+			t.Errorf("expected flag %q to be registered", flag)
+		}
+	}
 }
