@@ -28,8 +28,8 @@ import (
 	"testing"
 	"time"
 
-	mcpv1alpha1 "github.com/Agent-Hellboy/mcp-runtime/api/v1alpha1"
-	"github.com/Agent-Hellboy/mcp-runtime/internal/operator"
+	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+	"mcp-runtime/internal/operator"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"

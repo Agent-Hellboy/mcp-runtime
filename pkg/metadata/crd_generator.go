@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	mcpv1alpha1 "github.com/Agent-Hellboy/mcp-runtime/api/v1alpha1"
+	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 
 	"gopkg.in/yaml.v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

@@ -15,7 +15,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	mcpv1alpha1 "github.com/Agent-Hellboy/mcp-runtime/api/v1alpha1"
+	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 )
 
 func TestRewriteRegistry(t *testing.T) {

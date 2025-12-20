@@ -8,7 +8,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/Agent-Hellboy/mcp-runtime/internal/cli"
+	"mcp-runtime/internal/cli"
 )
 
 var (
