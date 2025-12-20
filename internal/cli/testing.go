@@ -24,9 +24,9 @@ func (m *MockCommand) Run() error {
 	}
 	return m.RunErr
 }
-func (m *MockCommand) SetStdout(w io.Writer)           { m.StdoutW = w }
-func (m *MockCommand) SetStderr(w io.Writer)           { m.StderrW = w }
-func (m *MockCommand) SetStdin(r io.Reader)            { m.StdinR = r }
+func (m *MockCommand) SetStdout(w io.Writer) { m.StdoutW = w }
+func (m *MockCommand) SetStderr(w io.Writer) { m.StderrW = w }
+func (m *MockCommand) SetStdin(r io.Reader)  { m.StdinR = r }
 
 // MockExecutor is a test double for Executor interface.
 type MockExecutor struct {

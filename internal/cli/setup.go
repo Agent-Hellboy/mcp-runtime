@@ -172,7 +172,7 @@ func setupPlatformWithDeps(logger *zap.Logger, plan SetupPlan, deps SetupDeps) e
 
 	extRegistry, usingExternalRegistry, registrySecretName := resolveRegistrySetup(logger, deps)
 	ctx := &SetupContext{
-		Plan:                 plan,
+		Plan:                  plan,
 		ExternalRegistry:      extRegistry,
 		UsingExternalRegistry: usingExternalRegistry,
 		RegistrySecretName:    registrySecretName,
@@ -415,10 +415,6 @@ func configureProvisionedRegistryEnvWithKubectl(kubectl KubectlRunner, ext *Exte
 	return kubectl.RunWithOutput(args, os.Stdout, os.Stderr)
 }
 
-func ensureProvisionedRegistrySecret(name, username, password string) error {
-	return ensureProvisionedRegistrySecretWithKubectl(kubectlClient, name, username, password)
-}
-
 func ensureProvisionedRegistrySecretWithKubectl(kubectl KubectlRunner, name, username, password string) error {
 	var envData strings.Builder
 	if username != "" {
@@ -467,11 +463,6 @@ func ensureProvisionedRegistrySecretWithKubectl(kubectl KubectlRunner, name, use
 	}
 
 	return nil
-}
-
-// ensureImagePullSecret creates or updates a dockerconfigjson secret for image pulls.
-func ensureImagePullSecret(namespace, name, registry, username, password string) error {
-	return ensureImagePullSecretWithKubectl(kubectlClient, namespace, name, registry, username, password)
 }
 
 func ensureImagePullSecretWithKubectl(kubectl KubectlRunner, namespace, name, registry, username, password string) error {
@@ -700,24 +691,21 @@ func setupTLS(logger *zap.Logger) error {
 func setupTLSWithKubectl(kubectl KubectlRunner, logger *zap.Logger) error {
 	// Check if cert-manager CRDs are installed
 	Info("Checking cert-manager installation")
-	// #nosec G204 -- fixed kubectl command to check CRD.
-	if err := kubectl.Run([]string{"get", "crd", CertManagerCRDName}); err != nil {
+	if err := checkCertManagerInstalledWithKubectl(kubectl); err != nil {
 		return fmt.Errorf("cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true")
 	}
 	Info("cert-manager CRDs found")
 
 	// Check if CA secret exists
 	Info("Checking CA secret")
-	// #nosec G204 -- fixed kubectl command to check secret.
-	if err := kubectl.Run([]string{"get", "secret", "mcp-runtime-ca", "-n", "cert-manager"}); err != nil {
+	if err := checkCASecretWithKubectl(kubectl); err != nil {
 		return fmt.Errorf("CA secret 'mcp-runtime-ca' not found in cert-manager namespace. Create it first:\n  kubectl create secret tls mcp-runtime-ca --cert=ca.crt --key=ca.key -n cert-manager")
 	}
 	Info("CA secret found")
 
 	// Apply ClusterIssuer
 	Info("Applying ClusterIssuer")
-	// #nosec G204 -- fixed file path from repository.
-	if err := kubectl.RunWithOutput([]string{"apply", "-f", "config/cert-manager/cluster-issuer.yaml"}, os.Stdout, os.Stderr); err != nil {
+	if err := applyClusterIssuerWithKubectl(kubectl); err != nil {
 		return fmt.Errorf("failed to apply ClusterIssuer: %w", err)
 	}
 
@@ -728,20 +716,14 @@ func setupTLSWithKubectl(kubectl KubectlRunner, logger *zap.Logger) error {
 
 	// Apply Certificate
 	Info("Applying Certificate for registry")
-	// #nosec G204 -- fixed file path from repository.
-	if err := kubectl.RunWithOutput([]string{"apply", "-f", "config/cert-manager/example-registry-certificate.yaml"}, os.Stdout, os.Stderr); err != nil {
+	if err := applyRegistryCertificateWithKubectl(kubectl); err != nil {
 		return fmt.Errorf("failed to apply Certificate: %w", err)
 	}
 
 	// Wait for certificate to be ready using kubectl wait
 	certTimeout := GetCertTimeout()
 	Info(fmt.Sprintf("Waiting for certificate to be issued (timeout: %s)", certTimeout))
-	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	if err := kubectl.RunWithOutput([]string{
-		"wait", "--for=condition=Ready",
-		"certificate/registry-cert", "-n", NamespaceRegistry,
-		fmt.Sprintf("--timeout=%s", certTimeout),
-	}, os.Stdout, os.Stderr); err != nil {
+	if err := waitForCertificateReadyWithKubectl(kubectl, registryCertificateName, NamespaceRegistry, certTimeout); err != nil {
 		return fmt.Errorf("certificate not ready after %s. Check cert-manager logs: kubectl logs -n cert-manager deployment/cert-manager", certTimeout)
 	}
 	Info("Certificate issued successfully")

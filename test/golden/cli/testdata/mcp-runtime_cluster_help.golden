@@ -4,6 +4,7 @@ Usage:
   mcp-runtime cluster [command]
 
 Available Commands:
+  cert        Manage cert-manager resources
   config      Configure cluster settings
   init        Initialize cluster configuration
   provision   Provision a new cluster

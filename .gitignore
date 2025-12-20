@@ -11,3 +11,4 @@ benchmarking.md
 .fakehome/
 .cache/
 DIFF*.md
+.gomodcache/

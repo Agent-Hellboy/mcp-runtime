@@ -2,14 +2,14 @@ package cli
 
 // SetupPlanInput captures the raw CLI inputs for setup.
 type SetupPlanInput struct {
-	RegistryType            string
-	RegistryStorageSize     string
-	IngressMode             string
-	IngressManifest         string
-	IngressManifestChanged  bool
-	ForceIngressInstall     bool
-	TLSEnabled              bool
-	TestMode                bool
+	RegistryType           string
+	RegistryStorageSize    string
+	IngressMode            string
+	IngressManifest        string
+	IngressManifestChanged bool
+	ForceIngressInstall    bool
+	TLSEnabled             bool
+	TestMode               bool
 }
 
 // SetupPlan captures the resolved setup decisions.

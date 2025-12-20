@@ -83,19 +83,17 @@ func runCLI(t *testing.T, args ...string) []byte {
 		root := repoRoot(t)
 		binaryPath = filepath.Join(root, "bin", "mcp-runtime")
 
-		// Build binary if it doesn't exist
-		if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
-			t.Logf("Building binary at %s", binaryPath)
-			if err := os.MkdirAll(filepath.Dir(binaryPath), 0o755); err != nil {
-				t.Fatalf("failed to create bin directory: %v", err)
-			}
+		// Always build to ensure the binary matches the current GOOS/GOARCH.
+		t.Logf("Building binary at %s", binaryPath)
+		if err := os.MkdirAll(filepath.Dir(binaryPath), 0o755); err != nil {
+			t.Fatalf("failed to create bin directory: %v", err)
+		}
 
-			// #nosec G204 -- test code with trusted paths
-			buildCmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/mcp-runtime")
-			buildCmd.Dir = root
-			if err := buildCmd.Run(); err != nil {
-				t.Fatalf("failed to build binary: %v", err)
-			}
+		// #nosec G204 -- test code with trusted paths
+		buildCmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/mcp-runtime")
+		buildCmd.Dir = root
+		if err := buildCmd.Run(); err != nil {
+			t.Fatalf("failed to build binary: %v", err)
 		}
 	})
 

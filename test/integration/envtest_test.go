@@ -23,8 +23,8 @@ package integration
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 

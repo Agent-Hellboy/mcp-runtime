@@ -158,7 +158,10 @@ func TestSetupPlatformWithDeps_ExternalRegistry(t *testing.T) {
 		CheckCRDInstalled:    func(string) error { rec.add("check-crd"); return nil },
 		GetDeploymentTimeout: func() time.Duration { return time.Second },
 		GetRegistryPort:      func() int { return 5000 },
-		OperatorImageFor:     func(*ExternalRegistryConfig, bool) string { rec.add("operator-image"); return "registry.example.com/mcp-runtime-operator:latest" },
+		OperatorImageFor: func(*ExternalRegistryConfig, bool) string {
+			rec.add("operator-image")
+			return "registry.example.com/mcp-runtime-operator:latest"
+		},
 	}
 
 	plan := SetupPlan{
@@ -198,7 +201,7 @@ func TestSetupPlatformWithDeps_InternalRegistryTLS(t *testing.T) {
 		ResolveExternalRegistryConfig: func(*ExternalRegistryConfig) (*ExternalRegistryConfig, error) {
 			return nil, nil
 		},
-		ClusterManager: &fakeClusterManager{rec: rec},
+		ClusterManager:  &fakeClusterManager{rec: rec},
 		RegistryManager: &fakeRegistryManager{rec: rec},
 		LoginRegistry: func(*zap.Logger, string, string, string) error {
 			rec.add("login")
@@ -225,7 +228,10 @@ func TestSetupPlatformWithDeps_InternalRegistryTLS(t *testing.T) {
 		CheckCRDInstalled:    func(string) error { rec.add("check-crd"); return nil },
 		GetDeploymentTimeout: func() time.Duration { return time.Second },
 		GetRegistryPort:      func() int { return 5000 },
-		OperatorImageFor:     func(*ExternalRegistryConfig, bool) string { rec.add("operator-image"); return "registry.local/mcp-runtime-operator:latest" },
+		OperatorImageFor: func(*ExternalRegistryConfig, bool) string {
+			rec.add("operator-image")
+			return "registry.local/mcp-runtime-operator:latest"
+		},
 	}
 
 	plan := SetupPlan{
@@ -275,7 +281,7 @@ func TestSetupPlatformWithDeps_ExternalRegistryTLS(t *testing.T) {
 				Password: "pass",
 			}, nil
 		},
-		ClusterManager: &fakeClusterManager{rec: rec},
+		ClusterManager:  &fakeClusterManager{rec: rec},
 		RegistryManager: &fakeRegistryManager{rec: rec},
 		LoginRegistry: func(*zap.Logger, string, string, string) error {
 			rec.add("login")
@@ -302,7 +308,10 @@ func TestSetupPlatformWithDeps_ExternalRegistryTLS(t *testing.T) {
 		CheckCRDInstalled:    func(string) error { rec.add("check-crd"); return nil },
 		GetDeploymentTimeout: func() time.Duration { return time.Second },
 		GetRegistryPort:      func() int { return 5000 },
-		OperatorImageFor:     func(*ExternalRegistryConfig, bool) string { rec.add("operator-image"); return "registry.example.com/mcp-runtime-operator:latest" },
+		OperatorImageFor: func(*ExternalRegistryConfig, bool) string {
+			rec.add("operator-image")
+			return "registry.example.com/mcp-runtime-operator:latest"
+		},
 	}
 
 	plan := SetupPlan{
@@ -345,7 +354,7 @@ func TestSetupPlatformWithDeps_DiagnosticsOnRegistryWaitFailure(t *testing.T) {
 		ResolveExternalRegistryConfig: func(*ExternalRegistryConfig) (*ExternalRegistryConfig, error) {
 			return nil, nil
 		},
-		ClusterManager: &fakeClusterManager{rec: rec},
+		ClusterManager:  &fakeClusterManager{rec: rec},
 		RegistryManager: &fakeRegistryManager{rec: rec},
 		LoginRegistry: func(*zap.Logger, string, string, string) error {
 			rec.add("login")
@@ -407,10 +416,10 @@ func TestSetupPlatformWithDeps_DiagnosticsOnOperatorWaitFailure(t *testing.T) {
 		ResolveExternalRegistryConfig: func(*ExternalRegistryConfig) (*ExternalRegistryConfig, error) {
 			return &ExternalRegistryConfig{URL: "registry.example.com"}, nil
 		},
-		ClusterManager: &fakeClusterManager{rec: rec},
+		ClusterManager:  &fakeClusterManager{rec: rec},
 		RegistryManager: &fakeRegistryManager{rec: rec},
-		LoginRegistry: func(*zap.Logger, string, string, string) error { return nil },
-		DeployRegistry: func(*zap.Logger, string, int, string, string, string) error { return nil },
+		LoginRegistry:   func(*zap.Logger, string, string, string) error { return nil },
+		DeployRegistry:  func(*zap.Logger, string, int, string, string, string) error { return nil },
 		WaitForDeploymentAvailable: func(_ *zap.Logger, name, _, _ string, _ time.Duration) error {
 			rec.addWait(name)
 			if name == "mcp-runtime-operator-controller-manager" {
@@ -466,10 +475,10 @@ func TestSetupPlatformWithDeps_CRDCheckFailure(t *testing.T) {
 		ResolveExternalRegistryConfig: func(*ExternalRegistryConfig) (*ExternalRegistryConfig, error) {
 			return &ExternalRegistryConfig{URL: "registry.example.com"}, nil
 		},
-		ClusterManager: &fakeClusterManager{rec: rec},
+		ClusterManager:  &fakeClusterManager{rec: rec},
 		RegistryManager: &fakeRegistryManager{rec: rec},
-		LoginRegistry: func(*zap.Logger, string, string, string) error { return nil },
-		DeployRegistry: func(*zap.Logger, string, int, string, string, string) error { return nil },
+		LoginRegistry:   func(*zap.Logger, string, string, string) error { return nil },
+		DeployRegistry:  func(*zap.Logger, string, int, string, string, string) error { return nil },
 		WaitForDeploymentAvailable: func(_ *zap.Logger, name, _, _ string, _ time.Duration) error {
 			rec.addWait(name)
 			return nil
@@ -524,10 +533,10 @@ func TestSetupPlatformWithDeps_InternalRegistryPushFailure(t *testing.T) {
 		ResolveExternalRegistryConfig: func(*ExternalRegistryConfig) (*ExternalRegistryConfig, error) {
 			return nil, nil
 		},
-		ClusterManager: &fakeClusterManager{rec: rec},
+		ClusterManager:  &fakeClusterManager{rec: rec},
 		RegistryManager: &fakeRegistryManager{rec: rec},
-		LoginRegistry: func(*zap.Logger, string, string, string) error { return nil },
-		DeployRegistry: func(*zap.Logger, string, int, string, string, string) error { return nil },
+		LoginRegistry:   func(*zap.Logger, string, string, string) error { return nil },
+		DeployRegistry:  func(*zap.Logger, string, int, string, string, string) error { return nil },
 		WaitForDeploymentAvailable: func(_ *zap.Logger, name, _, _ string, _ time.Duration) error {
 			rec.addWait(name)
 			return nil

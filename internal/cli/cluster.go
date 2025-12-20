@@ -57,6 +57,7 @@ func NewClusterCmdWithManager(mgr *ClusterManager) *cobra.Command {
 	cmd.AddCommand(mgr.newClusterStatusCmd())
 	cmd.AddCommand(mgr.newClusterConfigCmd())
 	cmd.AddCommand(mgr.newClusterProvisionCmd())
+	cmd.AddCommand(mgr.newClusterCertCmd())
 
 	return cmd
 }

@@ -8,7 +8,7 @@ import (
 
 // SetupContext carries state shared across setup steps.
 type SetupContext struct {
-	Plan                 SetupPlan
+	Plan                  SetupPlan
 	ExternalRegistry      *ExternalRegistryConfig
 	UsingExternalRegistry bool
 	RegistrySecretName    string
