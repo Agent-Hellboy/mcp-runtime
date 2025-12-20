@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"go.uber.org/zap"
@@ -129,6 +130,131 @@ func TestClusterManager_InitCluster(t *testing.T) {
 		}
 		if !found {
 			t.Error("expected kubectl config use-context my-context to be called")
+		}
+	})
+}
+
+func TestClusterManager_ConfigureKubeconfig(t *testing.T) {
+	t.Run("sets KUBECONFIG and switches context", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		kubeconfig := filepath.Join(tmpDir, "config")
+		if err := os.WriteFile(kubeconfig, []byte("apiVersion: v1\nkind: Config\n"), 0644); err != nil {
+			t.Fatalf("failed to write kubeconfig: %v", err)
+		}
+
+		mock := &MockExecutor{
+			DefaultOutput: []byte("Switched to context"),
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		previous := os.Getenv("KUBECONFIG")
+		t.Cleanup(func() {
+			if err := os.Setenv("KUBECONFIG", previous); err != nil {
+				t.Fatalf("failed to restore KUBECONFIG: %v", err)
+			}
+		})
+
+		if err := mgr.ConfigureKubeconfig(kubeconfig, "my-context"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got := os.Getenv("KUBECONFIG"); got != kubeconfig {
+			t.Fatalf("expected KUBECONFIG=%q, got %q", kubeconfig, got)
+		}
+
+		found := false
+		for _, cmd := range mock.Commands {
+			if cmd.Name == "kubectl" && contains(cmd.Args, "use-context") && contains(cmd.Args, "my-context") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected kubectl config use-context my-context to be called")
+		}
+	})
+
+	t.Run("uses default kubeconfig when empty path provided", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("HOME", tmpDir)
+		defaultPath := filepath.Join(tmpDir, ".kube", "config")
+		if err := os.MkdirAll(filepath.Dir(defaultPath), 0755); err != nil {
+			t.Fatalf("failed to create .kube dir: %v", err)
+		}
+		if err := os.WriteFile(defaultPath, []byte("apiVersion: v1\nkind: Config\n"), 0644); err != nil {
+			t.Fatalf("failed to write kubeconfig: %v", err)
+		}
+
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		previous := os.Getenv("KUBECONFIG")
+		t.Cleanup(func() {
+			if err := os.Setenv("KUBECONFIG", previous); err != nil {
+				t.Fatalf("failed to restore KUBECONFIG: %v", err)
+			}
+		})
+
+		if err := mgr.ConfigureKubeconfig("", ""); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got := os.Getenv("KUBECONFIG"); got != defaultPath {
+			t.Fatalf("expected KUBECONFIG=%q, got %q", defaultPath, got)
+		}
+	})
+
+	t.Run("errors when kubeconfig is missing", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		if err := mgr.ConfigureKubeconfig("/path/does/not/exist", ""); err == nil {
+			t.Fatal("expected error for missing kubeconfig")
+		}
+	})
+}
+
+func TestClusterManager_ConfigureKubeconfigFromProvider(t *testing.T) {
+	t.Run("dispatches to eks config", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ConfigureKubeconfigFromProvider("EKS", "us-west-2", "my-eks", "", "", "", "/tmp/kubeconfig")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		cmd := mock.LastCommand()
+		if cmd.Name != "aws" {
+			t.Fatalf("expected aws command, got %q", cmd.Name)
+		}
+		if !contains(cmd.Args, "eks") || !contains(cmd.Args, "update-kubeconfig") {
+			t.Fatalf("expected aws eks update-kubeconfig args, got %v", cmd.Args)
+		}
+		if !contains(cmd.Args, "--name") || !contains(cmd.Args, "my-eks") {
+			t.Fatalf("expected --name my-eks, got %v", cmd.Args)
+		}
+		if !contains(cmd.Args, "--region") || !contains(cmd.Args, "us-west-2") {
+			t.Fatalf("expected --region us-west-2, got %v", cmd.Args)
+		}
+		if !contains(cmd.Args, "--kubeconfig") || !contains(cmd.Args, "/tmp/kubeconfig") {
+			t.Fatalf("expected --kubeconfig /tmp/kubeconfig, got %v", cmd.Args)
+		}
+	})
+
+	t.Run("errors on unsupported provider", func(t *testing.T) {
+		mock := &MockExecutor{}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		if err := mgr.ConfigureKubeconfigFromProvider("digitalocean", "us-west-2", "cluster", "", "", "", ""); err == nil {
+			t.Fatal("expected error for unsupported provider")
+		} else if !strings.Contains(err.Error(), "unsupported provider") {
+			t.Fatalf("expected unsupported provider error, got %v", err)
 		}
 	})
 }

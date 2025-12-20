@@ -8,12 +8,10 @@ repos:
         types: [go]
       - id: staticcheck
         name: staticcheck
-        entry: staticcheck
-        language: golang
+        entry: hack/staticcheck.sh
+        language: system
         pass_filenames: false
         args: [./...]
-        additional_dependencies:
-          - honnef.co/go/tools/cmd/staticcheck@latest
       - id: govet
         name: go vet
         entry: go vet ./...
