@@ -17,12 +17,10 @@ func TestErrors(t *testing.T) {
 		"resource":  "test",
 		"operation": "test",
 	})
-	if errx.UserString(err) != "test" {
-		t.Errorf("UserString(err) = %q, want %q", errx.UserString(err), "test")
-	}
-	if errx.DebugString(err) != "1: *errx.Error: test | code=73000 | description=\"Operator error\" | message=\"test\" | context={mcpServer=test, namespace=test, resource=test, operation=test}" {
-		t.Errorf("DebugString(err) = %q, want %q", errx.DebugString(err), "1: *errx.Error: test | code=73000 | description=\"Operator error\" | message=\"test\" | context={mcpServer=test, namespace=test, resource=test, operation=test}")
-	}
+	assert.Equal(t, "test", errx.UserString(err), "UserString(err) should match")
+	debug := errx.DebugString(err)
+	assert.Contains(t, debug, "1: *errx.Error: test | code=73000 | description=\"Operator error\" | message=\"test\" | context={mcpServer=test, namespace=test, operation=test, resource=test}", "DebugString(err) should include operator error")
+	assert.Contains(t, debug, "2: *errors.errorString: failed to reconcile deployment", "DebugString(err) should include wrapped cause")
 }
 
 func TestErrors_NewOperatorError(t *testing.T) {
@@ -35,8 +33,8 @@ func TestErrors_NewOperatorError(t *testing.T) {
 	if errx.UserString(err) != "test" {
 		t.Errorf("UserString(err) = %q, want %q", errx.UserString(err), "test")
 	}
-	if errx.DebugString(err) != "1: *errx.Error: test | code=73000 | description=\"Operator error\" | message=\"test\" | context={mcpServer=test, namespace=test, resource=test, operation=test}" {
-		t.Errorf("DebugString(err) = %q, want %q", errx.DebugString(err), "1: *errx.Error: test | code=73000 | description=\"Operator error\" | message=\"test\" | context={mcpServer=test, namespace=test, resource=test, operation=test}")
+	if errx.DebugString(err) != "1: *errx.Error: test | code=73000 | description=\"Operator error\" | message=\"test\" | context={mcpServer=test, namespace=test, operation=test, resource=test}" {
+		t.Errorf("DebugString(err) = %q, want %q", errx.DebugString(err), "1: *errx.Error: test | code=73000 | description=\"Operator error\" | message=\"test\" | context={mcpServer=test, namespace=test, operation=test, resource=test}")
 	}
 }
 
