@@ -428,10 +428,10 @@ func TestError_Error(t *testing.T) {
 			t.Errorf("Error() on nil receiver = %q, want empty string", nilErr.Error())
 		}
 	})
-	t.Run("with nil error", func(t *testing.T) {
-		var nilErr = &Error{}
-		if nilErr.Error() != "error" {
-			t.Errorf("Error() on nil receiver = %q, want %q", nilErr.Error(), "error")
+	t.Run("with zero-value error", func(t *testing.T) {
+		zeroErr := &Error{}
+		if zeroErr.Error() != "error" {
+			t.Errorf("Error() on zero-value error = %q, want %q", zeroErr.Error(), "error")
 		}
 	})
 }
