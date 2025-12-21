@@ -13,3 +13,4 @@ benchmarking.md
 DIFF*.md
 .gomodcache/
 FUTURE_PLAN.md
+.DS_Store
