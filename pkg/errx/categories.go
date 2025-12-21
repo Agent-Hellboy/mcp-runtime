@@ -1,35 +1,8 @@
 package errx
 
-// CategoryFunc represents a pair of category-specific error creation functions.
-type CategoryFunc struct {
-	Create func(string) *Error
-	Wrap   func(string, error) *Error
-}
-
-// CategoryMap maps error codes to their category-specific functions.
-var CategoryMap = map[string]CategoryFunc{
-	CodeCLI:      {Create: CLI, Wrap: WrapCLI},
-	CodeCluster:  {Create: Cluster, Wrap: WrapCluster},
-	CodeRegistry: {Create: Registry, Wrap: WrapRegistry},
-	CodeOperator: {Create: Operator, Wrap: WrapOperator},
-	CodePipeline: {Create: Pipeline, Wrap: WrapPipeline},
-	CodeBuild:    {Create: Build, Wrap: WrapBuild},
-	CodeServer:   {Create: Server, Wrap: WrapServer},
-	CodeCert:     {Create: Cert, Wrap: WrapCert},
-	CodeSetup:    {Create: Setup, Wrap: WrapSetup},
-	CodeConfig:   {Create: Config, Wrap: WrapConfig},
-}
-
-// CreateByCode creates an Error using the appropriate category helper function.
-// If the code is not in CategoryMap, it falls back to generic error creation.
+// CreateByCode creates an Error using the provided code, description, and message.
+// This is a convenience function that directly calls New() or Wrap().
 func CreateByCode(code, description, message string, cause error) *Error {
-	if cat, ok := CategoryMap[code]; ok {
-		if cause != nil {
-			return cat.Wrap(message, cause)
-		}
-		return cat.Create(message)
-	}
-	// Fallback to generic error creation for unknown codes
 	if cause != nil {
 		return Wrap(code, description, message, cause)
 	}
@@ -51,6 +24,7 @@ func FromSentinel(sentinel error, lookup func(error) (code, description string),
 // CLI creates a CLI/argument validation error with code 70000.
 // Use this for errors related to command-line argument validation,
 // invalid user input, or CLI-specific issues.
+// This is heavily used in internal/cli/errors.go for CLI sentinel errors.
 func CLI(message string) *Error {
 	return New(CodeCLI, DescCLI, message)
 }
@@ -61,92 +35,14 @@ func WrapCLI(message string, cause error) *Error {
 	return Wrap(CodeCLI, DescCLI, message, cause)
 }
 
-// Cluster creates a cluster/provisioning error.
-func Cluster(message string) *Error {
-	return New(CodeCluster, DescCluster, message)
-}
-
-// WrapCluster wraps a cause with a cluster/provisioning error.
-func WrapCluster(message string, cause error) *Error {
-	return Wrap(CodeCluster, DescCluster, message, cause)
-}
-
-// Registry creates a registry error.
-func Registry(message string) *Error {
-	return New(CodeRegistry, DescRegistry, message)
-}
-
-// WrapRegistry wraps a cause with a registry error.
-func WrapRegistry(message string, cause error) *Error {
-	return Wrap(CodeRegistry, DescRegistry, message, cause)
-}
-
 // Operator creates an operator error.
+// This is used in internal/operator/errors.go for operator-specific errors.
 func Operator(message string) *Error {
 	return New(CodeOperator, DescOperator, message)
 }
 
 // WrapOperator wraps a cause with an operator error.
+// This is used in internal/operator/errors.go for operator-specific errors.
 func WrapOperator(message string, cause error) *Error {
 	return Wrap(CodeOperator, DescOperator, message, cause)
-}
-
-// Pipeline creates a pipeline error.
-func Pipeline(message string) *Error {
-	return New(CodePipeline, DescPipeline, message)
-}
-
-// WrapPipeline wraps a cause with a pipeline error.
-func WrapPipeline(message string, cause error) *Error {
-	return Wrap(CodePipeline, DescPipeline, message, cause)
-}
-
-// Build creates a build error.
-func Build(message string) *Error {
-	return New(CodeBuild, DescBuild, message)
-}
-
-// WrapBuild wraps a cause with a build error.
-func WrapBuild(message string, cause error) *Error {
-	return Wrap(CodeBuild, DescBuild, message, cause)
-}
-
-// Server creates a server definition error.
-func Server(message string) *Error {
-	return New(CodeServer, DescServer, message)
-}
-
-// WrapServer wraps a cause with a server definition error.
-func WrapServer(message string, cause error) *Error {
-	return Wrap(CodeServer, DescServer, message, cause)
-}
-
-// Cert creates a certificate/TLS error.
-func Cert(message string) *Error {
-	return New(CodeCert, DescCert, message)
-}
-
-// WrapCert wraps a cause with a certificate/TLS error.
-func WrapCert(message string, cause error) *Error {
-	return Wrap(CodeCert, DescCert, message, cause)
-}
-
-// Setup creates a setup/installation error.
-func Setup(message string) *Error {
-	return New(CodeSetup, DescSetup, message)
-}
-
-// WrapSetup wraps a cause with a setup/installation error.
-func WrapSetup(message string, cause error) *Error {
-	return Wrap(CodeSetup, DescSetup, message, cause)
-}
-
-// Config creates a configuration error.
-func Config(message string) *Error {
-	return New(CodeConfig, DescConfig, message)
-}
-
-// WrapConfig wraps a cause with a configuration error.
-func WrapConfig(message string, cause error) *Error {
-	return Wrap(CodeConfig, DescConfig, message, cause)
 }

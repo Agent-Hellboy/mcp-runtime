@@ -16,7 +16,7 @@ type KubectlClient struct {
 func NewKubectlClient(exec Executor) (*KubectlClient, error) {
 	root, err := os.Getwd()
 	if err != nil {
-		return nil, wrapUserError(ErrGetWorkingDirectoryFailed, err, fmt.Sprintf("get working directory: %v", err))
+		return nil, wrapWithSentinel(ErrGetWorkingDirectoryFailed, err, fmt.Sprintf("get working directory: %v", err))
 	}
 	return &KubectlClient{
 		exec: exec,

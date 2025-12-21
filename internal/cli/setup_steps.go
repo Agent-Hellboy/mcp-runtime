@@ -134,7 +134,7 @@ func buildSetupSteps(ctx *SetupContext) []SetupStep {
 func runSetupSteps(logger *zap.Logger, deps SetupDeps, ctx *SetupContext, steps []SetupStep) error {
 	for _, step := range steps {
 		if err := step.Run(logger, deps, ctx); err != nil {
-			wrappedErr := wrapUserErrorWithContext(
+			wrappedErr := wrapWithSentinelAndContext(
 				ErrSetupStepFailed,
 				err,
 				fmt.Sprintf("setup step %q failed: %v", step.Name(), err),

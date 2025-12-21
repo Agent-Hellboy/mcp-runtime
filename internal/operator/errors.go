@@ -56,6 +56,11 @@ func newOperatorError(msg string, context map[string]any) error {
 	return err
 }
 
+// TODO: Consider moving this to pkg/errx as a generic logging utility for errx.Error.
+// The structured logging logic could be useful for other components beyond the operator.
+// Note: Moving this would require mocking logr.Logger dependencies in tests (see error_test.go),
+// which suggests it might be better suited as a library function with a testable interface.
+
 // logOperatorError logs an errx.Error with structured fields using controller-runtime's logger.
 // This extracts all context from errx.Error and logs it with structured fields for Elasticsearch:
 //   - error.code: "73000"

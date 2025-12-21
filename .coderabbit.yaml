@@ -1,0 +1,4 @@
+issue_enrichment:
+  auto_enrich:
+    enabled: false
+

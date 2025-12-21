@@ -111,7 +111,7 @@ func (m *PipelineManager) GenerateCRDsFromMetadata(metadataFile, metadataDir, ou
 	}
 
 	if err != nil {
-		wrappedErr := wrapUserError(ErrLoadMetadataFailed, err, fmt.Sprintf("failed to load metadata: %v", err))
+		wrappedErr := wrapWithSentinel(ErrLoadMetadataFailed, err, fmt.Sprintf("failed to load metadata: %v", err))
 		Error("Failed to load metadata")
 		logStructuredError(m.logger, wrappedErr, "Failed to load metadata")
 		return wrappedErr
@@ -127,7 +127,7 @@ func (m *PipelineManager) GenerateCRDsFromMetadata(metadataFile, metadataDir, ou
 	m.logger.Info("Generating CRD files", zap.Int("count", len(registry.Servers)), zap.String("output", outputDir))
 
 	if err := metadata.GenerateCRDsFromRegistry(registry, outputDir); err != nil {
-		wrappedErr := wrapUserErrorWithContext(
+		wrappedErr := wrapWithSentinelAndContext(
 			ErrGenerateCRDsFailed,
 			err,
 			fmt.Sprintf("failed to generate CRDs: %v", err),
@@ -156,7 +156,7 @@ func (m *PipelineManager) DeployCRDs(manifestsDir, namespace string) error {
 	// Find all YAML files
 	files, err := filepathGlob(filepath.Join(manifestsDir, "*.yaml"))
 	if err != nil {
-		wrappedErr := wrapUserErrorWithContext(
+		wrappedErr := wrapWithSentinelAndContext(
 			ErrListManifestFilesFailed,
 			err,
 			fmt.Sprintf("failed to list manifest files: %v", err),
@@ -169,7 +169,7 @@ func (m *PipelineManager) DeployCRDs(manifestsDir, namespace string) error {
 
 	ymlFiles, err := filepathGlob(filepath.Join(manifestsDir, "*.yml"))
 	if err != nil {
-		wrappedErr := wrapUserErrorWithContext(
+		wrappedErr := wrapWithSentinelAndContext(
 			ErrListManifestFilesFailed,
 			err,
 			fmt.Sprintf("failed to list manifest files: %v", err),
@@ -183,7 +183,7 @@ func (m *PipelineManager) DeployCRDs(manifestsDir, namespace string) error {
 	files = append(files, ymlFiles...)
 
 	if len(files) == 0 {
-		err := newUserError(ErrNoManifestFilesFound, fmt.Sprintf("no manifest files found in %s", manifestsDir))
+		err := newWithSentinel(ErrNoManifestFilesFound, fmt.Sprintf("no manifest files found in %s", manifestsDir))
 		Error("No manifest files found")
 		logStructuredError(m.logger, err, "No manifest files found")
 		return err
@@ -200,7 +200,7 @@ func (m *PipelineManager) DeployCRDs(manifestsDir, namespace string) error {
 
 		// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 		if err := m.kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
-			wrappedErr := wrapUserErrorWithContext(
+			wrappedErr := wrapWithSentinelAndContext(
 				ErrApplyManifestFailed,
 				err,
 				fmt.Sprintf("failed to apply %s: %v", file, err),

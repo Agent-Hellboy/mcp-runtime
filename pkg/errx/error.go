@@ -48,21 +48,29 @@ func (e *Error) Error() string {
 	return "error"
 }
 
-// Unwrap returns the error cause and/or base sentinel for errors.Is/As.
+// Unwrap returns the immediate wrapped error (cause).
+// This follows Go's error wrapping convention where Unwrap() returns
+// the direct cause, not the base sentinel.
 func (e *Error) Unwrap() error {
 	if e == nil {
 		return nil
 	}
-	if e.base != nil && e.cause != nil {
-		return errors.Join(e.base, e.cause)
+	return e.cause
+}
+
+// Is implements error matching for sentinel errors.
+// This allows errors.Is(err, sentinel) to match the base sentinel
+// even though Unwrap() returns the cause.
+func (e *Error) Is(target error) bool {
+	if e == nil {
+		return false
 	}
-	if e.base != nil {
-		return e.base
+	// Check if target matches the base sentinel
+	if e.base != nil && errors.Is(e.base, target) {
+		return true
 	}
-	if e.cause != nil {
-		return e.cause
-	}
-	return nil
+	// Also check if target matches the error itself (for direct comparison)
+	return errors.Is(e.cause, target)
 }
 
 // Code returns the stable error code.
@@ -137,9 +145,10 @@ func (e *Error) WithContext(key string, value any) *Error {
 
 // WithContextMap merges a context map into the error context.
 // Returns a new error with the merged context to avoid mutating the original.
+// Always returns a clone to maintain immutability, even if ctx is empty.
 func (e *Error) WithContextMap(ctx map[string]any) *Error {
-	if e == nil || len(ctx) == 0 {
-		return e
+	if e == nil {
+		return nil
 	}
 	// Clone the error to avoid mutating the original
 	clone := &Error{
@@ -150,11 +159,14 @@ func (e *Error) WithContextMap(ctx map[string]any) *Error {
 		base:        e.base,
 		context:     cloneContext(e.context),
 	}
-	if clone.context == nil {
-		clone.context = make(map[string]any, len(ctx))
-	}
-	for key, value := range ctx {
-		clone.context[key] = value
+	// Only merge context if ctx is not empty
+	if len(ctx) > 0 {
+		if clone.context == nil {
+			clone.context = make(map[string]any, len(ctx))
+		}
+		for key, value := range ctx {
+			clone.context[key] = value
+		}
 	}
 	return clone
 }
