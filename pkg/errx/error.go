@@ -13,7 +13,11 @@ type Error struct {
 }
 
 // New creates a new Error with the provided code, description, and message.
+// Panics if code is empty (code is required for error identification).
 func New(code, description, message string) *Error {
+	if code == "" {
+		panic("errx.New: code cannot be empty")
+	}
 	return &Error{
 		code:        code,
 		description: description,
@@ -22,7 +26,11 @@ func New(code, description, message string) *Error {
 }
 
 // Wrap creates a new Error and attaches a cause error.
+// Panics if code is empty (code is required for error identification).
 func Wrap(code, description, message string, cause error) *Error {
+	if code == "" {
+		panic("errx.Wrap: code cannot be empty")
+	}
 	return &Error{
 		code:        code,
 		description: description,
@@ -123,9 +131,13 @@ func (e *Error) Base() error {
 
 // WithContext adds a context key/value pair.
 // Returns a new error with the added context to avoid mutating the original.
+// Panics if called on a nil receiver or if key is empty.
 func (e *Error) WithContext(key string, value any) *Error {
 	if e == nil {
-		return nil
+		panic("errx.Error.WithContext called on nil receiver")
+	}
+	if key == "" {
+		panic("errx.Error.WithContext: key cannot be empty")
 	}
 	// Clone the error to avoid mutating the original
 	clone := &Error{
@@ -146,9 +158,10 @@ func (e *Error) WithContext(key string, value any) *Error {
 // WithContextMap merges a context map into the error context.
 // Returns a new error with the merged context to avoid mutating the original.
 // Always returns a clone to maintain immutability, even if ctx is empty.
+// Panics if called on a nil receiver or if any key in ctx is empty.
 func (e *Error) WithContextMap(ctx map[string]any) *Error {
 	if e == nil {
-		return nil
+		panic("errx.Error.WithContextMap called on nil receiver")
 	}
 	// Clone the error to avoid mutating the original
 	clone := &Error{
@@ -161,6 +174,12 @@ func (e *Error) WithContextMap(ctx map[string]any) *Error {
 	}
 	// Only merge context if ctx is not empty
 	if len(ctx) > 0 {
+		// Validate all keys are non-empty
+		for key := range ctx {
+			if key == "" {
+				panic("errx.Error.WithContextMap: context map contains empty key")
+			}
+		}
 		if clone.context == nil {
 			clone.context = make(map[string]any, len(ctx))
 		}
@@ -173,9 +192,10 @@ func (e *Error) WithContextMap(ctx map[string]any) *Error {
 
 // WithBase sets the sentinel base error used for errors.Is matching.
 // Returns a new error with the base set to avoid mutating the original.
+// Panics if called on a nil receiver.
 func (e *Error) WithBase(base error) *Error {
 	if e == nil {
-		return nil
+		panic("errx.Error.WithBase called on nil receiver")
 	}
 	// Clone the error to avoid mutating the original
 	return &Error{
@@ -189,6 +209,9 @@ func (e *Error) WithBase(base error) *Error {
 }
 
 func cloneContext(ctx map[string]any) map[string]any {
+	if ctx == nil {
+		return nil
+	}
 	clone := make(map[string]any, len(ctx))
 	for key, value := range ctx {
 		clone[key] = value

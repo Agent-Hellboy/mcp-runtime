@@ -12,7 +12,11 @@ func CreateByCode(code, description, message string, cause error) *Error {
 // FromSentinel creates an Error from a sentinel error and optional message/cause.
 // This is useful when you have a sentinel error and want to create an errx.Error
 // with the same category. The sentinel is used to determine the category via a lookup function.
+// Panics if sentinel is nil (sentinel is required for error identification).
 func FromSentinel(sentinel error, lookup func(error) (code, description string), message string, cause error) *Error {
+	if sentinel == nil {
+		panic("errx.FromSentinel: sentinel cannot be nil")
+	}
 	code, desc := lookup(sentinel)
 	if code == "" {
 		code = CodeCLI
