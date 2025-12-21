@@ -66,11 +66,16 @@ MCP Runtime Platform provides a streamlined workflow for teams to deploy a suite
 
 ### Required
 
-- Go 1.21+
+- Go 1.24+ (Tested on 1.24.11)
 - Make
-- kubectl (configured for your cluster)
+- kubectl (Tested on)
+```
+kubectl version
+Client Version: v1.34.1
+Kustomize Version: v5.7.1
+Server Version: v1.34.0
+```
 - Docker
-- Kubernetes cluster (1.21+) with default StorageClass
 
 
 ### Registry
@@ -125,6 +130,10 @@ Override any defaults in your server metadata if needed.
 
 ### Environment Variables
 
+#### CLI Environment Variables
+
+These variables control the behavior of the `mcp-runtime` CLI tool:
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MCP_DEPLOYMENT_TIMEOUT` | `5m` | Timeout for deployment readiness checks |
@@ -133,6 +142,24 @@ Override any defaults in your server metadata if needed.
 | `MCP_SKOPEO_IMAGE` | `quay.io/skopeo/stable:v1.14` | Skopeo image for in-cluster image transfers (useful for air-gapped environments) |
 | `MCP_OPERATOR_IMAGE` | (auto) | Override operator image (bypasses build/push) |
 | `MCP_DEFAULT_SERVER_PORT` | `8088` | Default container port for MCP servers |
+| `PROVISIONED_REGISTRY_URL` | (none) | URL of external/provisioned registry (used by CLI for registry operations) |
+| `PROVISIONED_REGISTRY_USERNAME` | (none) | Username for external registry authentication |
+| `PROVISIONED_REGISTRY_PASSWORD` | (none) | Password for external registry authentication |
+
+#### Operator Environment Variables
+
+These variables are set in the operator deployment and control operator behavior:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_DEFAULT_INGRESS_HOST` | (none) | Default hostname for ingress resources (used when `spec.ingressHost` is not set) |
+| `DEFAULT_INGRESS_HOST` | (none) | Alternative name for default ingress host (same as `MCP_DEFAULT_INGRESS_HOST`) |
+| `DEFAULT_INGRESS_CLASS` | `traefik` | Default ingress class to use for ingress resources |
+| `PROVISIONED_REGISTRY_URL` | (none) | URL of provisioned registry (used when `useProvisionedRegistry: true` in MCPServer spec) |
+| `PROVISIONED_REGISTRY_USERNAME` | (none) | Username for provisioned registry authentication |
+| `PROVISIONED_REGISTRY_PASSWORD` | (none) | Password for provisioned registry authentication |
+| `PROVISIONED_REGISTRY_SECRET_NAME` | `mcp-runtime-registry-creds` | Name of the Kubernetes secret for registry credentials |
+| `REQUEUE_DELAY_SECONDS` | `10` | Delay in seconds before requeueing when resources aren't ready |
 
 Examples:
 ```bash
@@ -144,6 +171,20 @@ MCP_SKOPEO_IMAGE=my-registry.local/skopeo:v1.14 mcp-runtime registry push myimag
 
 # Use pre-built operator image
 MCP_OPERATOR_IMAGE=ghcr.io/myorg/mcp-operator:v1.0 mcp-runtime setup
+
+# Configure external registry for CLI
+PROVISIONED_REGISTRY_URL=registry.example.com \
+PROVISIONED_REGISTRY_USERNAME=admin \
+PROVISIONED_REGISTRY_PASSWORD=secret \
+mcp-runtime registry provision --url registry.example.com
+
+# Configure operator to use external registry (set in operator deployment)
+# This allows MCPServer resources with useProvisionedRegistry: true to use the external registry
+kubectl set env deployment/mcp-runtime-operator-controller-manager \
+  -n mcp-runtime \
+  PROVISIONED_REGISTRY_URL=registry.example.com \
+  PROVISIONED_REGISTRY_USERNAME=admin \
+  PROVISIONED_REGISTRY_PASSWORD=secret
 ```
 
 
@@ -202,17 +243,6 @@ mcp-runtime cluster    # Cluster operations
 
 
 ## Development
-
-### Code Structure
-
-```
-├── cmd/                 # CLI and operator entry points
-├── internal/            # CLI and operator implementations
-├── api/                 # Kubernetes CRD definitions
-├── config/              # Kubernetes manifests
-├── examples/            # Working examples
-└── test/                # Tests
-```
 
 ### Building
 
@@ -286,8 +316,10 @@ The platform uses `mcp-runtime.org` as the default API group. If you want to use
 ## Troubleshooting
 
 ```bash
-# Check platform health
+# Check platform health 
 mcp-runtime status
+
+almost all subcommands has status 
 
 # View logs
 kubectl logs -n mcp-runtime deployment/mcp-runtime-operator-controller-manager
