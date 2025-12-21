@@ -1,10 +1,10 @@
 # MCP Runtime Platform
 
-[![Post-Merge Checks](https://mcp-runtime/actions/workflows/post-merge.yaml/badge.svg)](https://mcp-runtime/actions/workflows/post-merge.yaml)
-[![Gosec Scan](https://img.shields.io/github/actions/workflow/status/Agent-Hellboy/mcp-runtime/post-merge.yaml?branch=main&label=Gosec%20Scan)](https://mcp-runtime/actions/workflows/post-merge.yaml)
-[![Trivy Scan](https://img.shields.io/github/actions/workflow/status/Agent-Hellboy/mcp-runtime/post-merge.yaml?branch=main&label=Trivy%20Scan)](https://mcp-runtime/actions/workflows/post-merge.yaml)
-[![Coverage](https://codecov.io/gh/Agent-Hellboy/mcp-runtime/branch/main/graph/badge.svg)](https://codecov.io/gh/Agent-Hellboy/mcp-runtime)
-[![Go Report Card](https://goreportcard.com/badge/mcp-runtime)](https://goreportcard.com/report/mcp-runtime)
+[![Post-Merge Checks](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/post-merge.yaml/badge.svg)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/post-merge.yaml)
+[![Gosec Scan](https://img.shields.io/github/actions/workflow/status/Agent-Hellboy/mcp-runtime/post-merge.yaml?branch=main&label=Gosec%20Scan)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/post-merge.yaml)
+[![Trivy Scan](https://img.shields.io/github/actions/workflow/status/Agent-Hellboy/mcp-runtime/post-merge.yaml?branch=main&label=Trivy%20Scan)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/post-merge.yaml)
+[![Coverage](https://codecov.io/gh/Agent-Hellboy/mcp-runtime/branch/main/graph/badge.svg)](https://codecov.io/gh/Agent-Hellboy/mcp-runtime/branch/main)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Agent-Hellboy/mcp-runtime)](https://goreportcard.com/report/github.com/Agent-Hellboy/mcp-runtime)
 
 A complete platform for deploying and managing MCP (Model Context Protocol) servers. 
 

@@ -70,6 +70,9 @@ func (p *Printer) Info(msg string) {
 
 // Success prints a success message.
 func (p *Printer) Success(msg string) {
+	if p.Quiet {
+		return
+	}
 	if p.Writer != nil {
 		pterm.Success.WithWriter(p.Writer).Println(msg)
 		return
@@ -78,6 +81,8 @@ func (p *Printer) Success(msg string) {
 }
 
 // Warn prints a warning message.
+// Note: Warnings are intentionally not suppressed in quiet mode to ensure
+// important notices are visible even when non-essential output is disabled.
 func (p *Printer) Warn(msg string) {
 	if p.Writer != nil {
 		pterm.Warning.WithWriter(p.Writer).Println(msg)
@@ -87,6 +92,8 @@ func (p *Printer) Warn(msg string) {
 }
 
 // Error prints an error message.
+// Note: Errors are intentionally not suppressed in quiet mode to ensure
+// critical issues are always visible, even when non-essential output is disabled.
 func (p *Printer) Error(msg string) {
 	if p.Writer != nil {
 		pterm.Error.WithWriter(p.Writer).Println(msg)
