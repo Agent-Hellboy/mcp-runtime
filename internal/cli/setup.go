@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -200,8 +201,10 @@ func setupClusterSteps(logger *zap.Logger, ingressOpts ingressOptions, deps Setu
 	Step("Step 1: Initialize cluster")
 	Info("Installing CRD")
 	if err := deps.ClusterManager.InitCluster("", ""); err != nil {
-		Error(fmt.Sprintf("Cluster initialization failed: %v", err))
-		return fmt.Errorf("failed to initialize cluster: %w", err)
+		wrappedErr := wrapUserError(ErrClusterInitFailed, err, fmt.Sprintf("failed to initialize cluster: %v", err))
+		Error("Cluster initialization failed")
+		logStructuredError(logger, wrappedErr, "Cluster initialization failed")
+		return wrappedErr
 	}
 	Info("Cluster initialized")
 
@@ -209,8 +212,10 @@ func setupClusterSteps(logger *zap.Logger, ingressOpts ingressOptions, deps Setu
 	Step("Step 2: Configure cluster")
 	Info("Checking ingress controller")
 	if err := deps.ClusterManager.ConfigureCluster(ingressOpts); err != nil {
-		Error(fmt.Sprintf("Cluster configuration failed: %v", err))
-		return fmt.Errorf("cluster configuration failed: %w", err)
+		wrappedErr := wrapUserError(ErrClusterConfigFailed, err, fmt.Sprintf("cluster configuration failed: %v", err))
+		Error("Cluster configuration failed")
+		logStructuredError(logger, wrappedErr, "Cluster configuration failed")
+		return wrappedErr
 	}
 	Info("Cluster configuration complete")
 	return nil
@@ -224,8 +229,10 @@ func setupTLSStep(logger *zap.Logger, tlsEnabled bool, deps SetupDeps) error {
 		return nil
 	}
 	if err := deps.SetupTLS(logger); err != nil {
-		Error(fmt.Sprintf("TLS setup failed: %v", err))
-		return fmt.Errorf("TLS setup failed: %w", err)
+		wrappedErr := wrapUserError(ErrTLSSetupFailed, err, fmt.Sprintf("TLS setup failed: %v", err))
+		Error("TLS setup failed")
+		logStructuredError(logger, wrappedErr, "TLS setup failed")
+		return wrappedErr
 	}
 	Success("TLS configured successfully")
 	return nil
@@ -239,8 +246,10 @@ func setupRegistryStep(logger *zap.Logger, extRegistry *ExternalRegistryConfig, 
 		if extRegistry.Username != "" || extRegistry.Password != "" {
 			Info("Logging into external registry")
 			if err := deps.LoginRegistry(logger, extRegistry.URL, extRegistry.Username, extRegistry.Password); err != nil {
-				Error(fmt.Sprintf("Registry login failed: %v", err))
-				return err
+				wrappedErr := wrapUserError(ErrRegistryLoginFailed, err, fmt.Sprintf("failed to login to registry %q: %v", extRegistry.URL, err))
+				Error("Registry login failed")
+				logStructuredError(logger, wrappedErr, "Registry login failed")
+				return wrappedErr
 			}
 		}
 		return nil
@@ -253,15 +262,40 @@ func setupRegistryStep(logger *zap.Logger, extRegistry *ExternalRegistryConfig, 
 		Info("TLS: disabled (dev HTTP mode)")
 	}
 	if err := deps.DeployRegistry(logger, "registry", deps.GetRegistryPort(), registryType, registryStorageSize, registryManifest); err != nil {
-		Error(fmt.Sprintf("Registry deployment failed: %v", err))
-		return fmt.Errorf("failed to deploy registry: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrDeployRegistryFailed,
+			err,
+			fmt.Sprintf("failed to deploy registry (type: %s, manifest: %s): %v", registryType, registryManifest, err),
+			map[string]any{
+				"namespace":     "registry",
+				"registry_type": registryType,
+				"manifest_path": registryManifest,
+				"storage_size":  registryStorageSize,
+				"registry_port": deps.GetRegistryPort(),
+			},
+		)
+		Error("Registry deployment failed")
+		logStructuredError(logger, wrappedErr, "Registry deployment failed")
+		return wrappedErr
 	}
 
 	Info("Waiting for registry to be ready...")
 	if err := deps.WaitForDeploymentAvailable(logger, "registry", "registry", "app=registry", deps.GetDeploymentTimeout()); err != nil {
 		deps.PrintDeploymentDiagnostics("registry", "registry", "app=registry")
-		Error(fmt.Sprintf("Registry failed to become ready: %v", err))
-		return err
+		wrappedErr := wrapUserErrorWithContext(
+			ErrRegistryNotReady,
+			err,
+			fmt.Sprintf("registry deployment not ready in namespace %q: %v", "registry", err),
+			map[string]any{
+				"deployment": "registry",
+				"namespace":  "registry",
+				"selector":   "app=registry",
+				"component":  "registry",
+			},
+		)
+		Error("Registry failed to become ready")
+		logStructuredError(logger, wrappedErr, "Registry failed to become ready")
+		return wrappedErr
 	}
 
 	if err := deps.RegistryManager.ShowRegistryInfo(); err != nil {
@@ -284,8 +318,18 @@ func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfi
 
 	Info("Building operator image")
 	if err := deps.BuildOperatorImage(operatorImage); err != nil {
-		Error(fmt.Sprintf("Operator image build failed: %v", err))
-		return "", fmt.Errorf("operator image build failed: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrOperatorImageBuildFailed,
+			err,
+			fmt.Sprintf("operator image build failed for image %q: %v", operatorImage, err),
+			map[string]any{
+				"image":     operatorImage,
+				"component": "operator",
+			},
+		)
+		Error("Operator image build failed")
+		logStructuredError(logger, wrappedErr, "Operator image build failed")
+		return "", wrappedErr
 	}
 
 	if usingExternalRegistry {
@@ -301,12 +345,32 @@ func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfi
 	internalOperatorImage := internalRegistryURL + "/mcp-runtime-operator:latest"
 
 	if err := deps.EnsureNamespace("registry"); err != nil {
-		return "", fmt.Errorf("failed to ensure registry namespace: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrEnsureRegistryNamespaceFailed,
+			err,
+			fmt.Sprintf("failed to ensure registry namespace: %v", err),
+			map[string]any{"namespace": "registry", "component": "setup"},
+		)
+		Error("Failed to ensure registry namespace")
+		logStructuredError(logger, wrappedErr, "Failed to ensure registry namespace")
+		return "", wrappedErr
 	}
 
 	if err := deps.PushOperatorImageToInternal(logger, operatorImage, internalOperatorImage, "registry"); err != nil {
-		Error(fmt.Sprintf("Could not push image to internal registry via in-cluster helper: %v", err))
-		return "", fmt.Errorf("failed to push operator image to internal registry: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrPushOperatorImageInternalFailed,
+			err,
+			fmt.Sprintf("failed to push operator image %q to internal registry %q: %v", operatorImage, internalOperatorImage, err),
+			map[string]any{
+				"source_image": operatorImage,
+				"target_image": internalOperatorImage,
+				"namespace":    "registry",
+				"component":    "operator",
+			},
+		)
+		Error("Failed to push operator image to internal registry")
+		logStructuredError(logger, wrappedErr, "Failed to push operator image to internal registry")
+		return "", wrappedErr
 	}
 	Info(fmt.Sprintf("Using internal registry image: %s", internalOperatorImage))
 	return internalOperatorImage, nil
@@ -315,21 +379,46 @@ func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfi
 func deployOperatorStep(logger *zap.Logger, operatorImage string, extRegistry *ExternalRegistryConfig, registrySecretName string, usingExternalRegistry bool, deps SetupDeps) error {
 	Info("Deploying operator manifests")
 	if err := deps.DeployOperatorManifests(logger, operatorImage); err != nil {
-		Error(fmt.Sprintf("Operator deployment failed: %v", err))
-		return fmt.Errorf("operator deployment failed: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrOperatorDeploymentFailed,
+			err,
+			fmt.Sprintf("operator deployment failed for image %q: %v", operatorImage, err),
+			map[string]any{
+				"image":     operatorImage,
+				"namespace": NamespaceMCPRuntime,
+				"component": "operator",
+			},
+		)
+		Error("Operator deployment failed")
+		logStructuredError(logger, wrappedErr, "Operator deployment failed")
+		return wrappedErr
 	}
 
 	if usingExternalRegistry {
 		if err := deps.ConfigureProvisionedRegistryEnv(extRegistry, registrySecretName); err != nil {
-			Error(fmt.Sprintf("Failed to set PROVISIONED_REGISTRY_* env on operator: %v", err))
-			return fmt.Errorf("failed to configure external registry env on operator: %w", err)
+			wrappedErr := wrapUserErrorWithContext(
+				ErrConfigureExternalRegistryEnvFailed,
+				err,
+				fmt.Sprintf("failed to configure external registry env on operator (registry: %q, secret: %q): %v", extRegistry.URL, registrySecretName, err),
+				map[string]any{
+					"registry_url": extRegistry.URL,
+					"secret_name":  registrySecretName,
+					"namespace":    NamespaceMCPRuntime,
+					"component":    "operator",
+				},
+			)
+			Error("Failed to configure external registry environment")
+			logStructuredError(logger, wrappedErr, "Failed to configure external registry environment")
+			return wrappedErr
 		}
 	}
 
 	if err := deps.RestartDeployment("mcp-runtime-operator-controller-manager", "mcp-runtime"); err != nil {
 		if usingExternalRegistry {
-			Error(fmt.Sprintf("Failed to restart operator deployment to pick up registry env: %v", err))
-			return fmt.Errorf("failed to restart operator deployment after registry env update: %w", err)
+			wrappedErr := wrapUserError(ErrRestartOperatorDeploymentFailed, err, fmt.Sprintf("failed to restart operator deployment after registry env update: %v", err))
+			Error("Failed to restart operator deployment")
+			logStructuredError(logger, wrappedErr, "Failed to restart operator deployment")
+			return wrappedErr
 		}
 		Warn(fmt.Sprintf("Could not restart operator deployment: %v", err))
 	}
@@ -345,19 +434,38 @@ func verifySetup(usingExternalRegistry bool, deps SetupDeps) error {
 		Info("Waiting for registry deployment to be available")
 		if err := deps.WaitForDeploymentAvailable(nil, "registry", "registry", "app=registry", deps.GetDeploymentTimeout()); err != nil {
 			deps.PrintDeploymentDiagnostics("registry", "registry", "app=registry")
-			return fmt.Errorf("registry not ready: %w", err)
+			wrappedErr := wrapUserErrorWithContext(
+				ErrRegistryNotReady,
+				err,
+				fmt.Sprintf("registry not ready: %v", err),
+				map[string]any{"deployment": "registry", "namespace": "registry", "component": "registry"},
+			)
+			Error("Registry not ready")
+			// Note: logger not available in verifySetup, but error will be logged by caller
+			return wrappedErr
 		}
 	}
 
 	Info("Waiting for operator deployment to be available")
 	if err := deps.WaitForDeploymentAvailable(nil, "mcp-runtime-operator-controller-manager", "mcp-runtime", "control-plane=controller-manager", deps.GetDeploymentTimeout()); err != nil {
 		deps.PrintDeploymentDiagnostics("mcp-runtime-operator-controller-manager", "mcp-runtime", "control-plane=controller-manager")
-		return fmt.Errorf("operator not ready: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrOperatorNotReady,
+			err,
+			fmt.Sprintf("operator not ready: %v", err),
+			map[string]any{"deployment": "mcp-runtime-operator-controller-manager", "namespace": "mcp-runtime", "component": "operator"},
+		)
+		Error("Operator not ready")
+		// Note: logger not available in verifySetup, but error will be logged by caller
+		return wrappedErr
 	}
 
 	Info("Checking MCPServer CRD presence")
 	if err := deps.CheckCRDInstalled("mcpservers.mcp-runtime.org"); err != nil {
-		return fmt.Errorf("CRD check failed: %w", err)
+		wrappedErr := wrapUserError(ErrCRDCheckFailed, err, fmt.Sprintf("CRD check failed: %v", err))
+		Error("CRD check failed")
+		// Note: logger not available in verifySetup, but error will be logged by caller
+		return wrappedErr
 	}
 
 	Success("Verification complete")
@@ -447,7 +555,15 @@ func ensureProvisionedRegistrySecretWithKubectl(kubectl KubectlRunner, name, use
 	createCmd.SetStdout(&rendered)
 	createCmd.SetStderr(os.Stderr)
 	if err := createCmd.Run(); err != nil {
-		return fmt.Errorf("render secret manifest: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrRenderSecretManifestFailed,
+			err,
+			fmt.Sprintf("render secret manifest: %v", err),
+			map[string]any{"secret_name": name, "namespace": NamespaceMCPRuntime, "component": "setup"},
+		)
+		Error("Failed to render secret manifest")
+		// Note: logger not available in this helper, but error will be logged by caller
+		return wrappedErr
 	}
 
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
@@ -459,7 +575,15 @@ func ensureProvisionedRegistrySecretWithKubectl(kubectl KubectlRunner, name, use
 	applyCmd.SetStdout(os.Stdout)
 	applyCmd.SetStderr(os.Stderr)
 	if err := applyCmd.Run(); err != nil {
-		return fmt.Errorf("apply secret manifest: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrApplySecretManifestFailed,
+			err,
+			fmt.Sprintf("apply secret manifest: %v", err),
+			map[string]any{"secret_name": name, "namespace": NamespaceMCPRuntime, "component": "setup"},
+		)
+		Error("Failed to apply secret manifest")
+		// Note: logger not available in this helper, but error will be logged by caller
+		return wrappedErr
 	}
 
 	return nil
@@ -481,7 +605,15 @@ func ensureImagePullSecretWithKubectl(kubectl KubectlRunner, namespace, name, re
 	}
 	dockerCfgJSON, err := json.Marshal(dockerCfg)
 	if err != nil {
-		return fmt.Errorf("marshal docker config: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrMarshalDockerConfigFailed,
+			err,
+			fmt.Sprintf("marshal docker config: %v", err),
+			map[string]any{"registry": registry, "namespace": namespace, "component": "setup"},
+		)
+		Error("Failed to marshal docker config")
+		// Note: logger not available in this helper, but error will be logged by caller
+		return wrappedErr
 	}
 
 	// Build secret manifest
@@ -504,7 +636,15 @@ data:
 	applyCmd.SetStdout(os.Stdout)
 	applyCmd.SetStderr(os.Stderr)
 	if err := applyCmd.Run(); err != nil {
-		return fmt.Errorf("apply imagePullSecret: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrApplyImagePullSecretFailed,
+			err,
+			fmt.Sprintf("apply imagePullSecret: %v", err),
+			map[string]any{"secret_name": name, "namespace": namespace, "registry": registry, "component": "setup"},
+		)
+		Error("Failed to apply image pull secret")
+		// Note: logger not available in this helper, but error will be logged by caller
+		return wrappedErr
 	}
 
 	return nil
@@ -545,7 +685,15 @@ func pushOperatorImage(image string) error {
 func pushOperatorImageToInternalRegistry(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error {
 	mgr := DefaultRegistryManager(logger)
 	if err := mgr.PushInCluster(sourceImage, targetImage, helperNamespace); err != nil {
-		return fmt.Errorf("failed to push image in-cluster: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrPushImageInClusterFailed,
+			err,
+			fmt.Sprintf("failed to push image in-cluster: %v", err),
+			map[string]any{"source_image": sourceImage, "target_image": targetImage, "namespace": helperNamespace, "component": "setup"},
+		)
+		Error("Failed to push image in-cluster")
+		logStructuredError(logger, wrappedErr, "Failed to push image in-cluster")
+		return wrappedErr
 	}
 	return nil
 }
@@ -586,13 +734,15 @@ func waitForDeploymentAvailableWithKubectl(kubectl KubectlRunner, logger *zap.Lo
 		}
 		if time.Since(lastLog) > 10*time.Second {
 			Info(fmt.Sprintf("Still waiting for deployment/%s in %s (selector %s, timeout %s)", name, namespace, selector, timeout.Round(time.Second)))
-			if logger != nil {
-				logger.Info("Waiting for deployment", zap.String("deployment", name), zap.String("namespace", namespace), zap.String("selector", selector))
-			}
 			lastLog = time.Now()
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("timed out waiting for deployment %s in namespace %s", name, namespace)
+			err := newUserError(ErrDeploymentTimeout, fmt.Sprintf("timed out waiting for deployment %s in namespace %s", name, namespace))
+			Error("Deployment timeout")
+			if logger != nil {
+				logStructuredError(logger, err, "Deployment timeout")
+			}
+			return err
 		}
 		time.Sleep(5 * time.Second)
 	}
@@ -623,18 +773,38 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 	Info("Applying CRD manifests")
 	// #nosec G204 -- fixed file path from repository.
 	if err := kubectl.RunWithOutput([]string{"apply", "--validate=false", "-f", "config/crd/bases/mcp-runtime.org_mcpservers.yaml"}, os.Stdout, os.Stderr); err != nil {
-		return fmt.Errorf("failed to apply CRD: %w", err)
+		wrappedErr := wrapUserError(ErrApplyCRDFailed, err, fmt.Sprintf("failed to apply CRD: %v", err))
+		Error("Failed to apply CRD")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to apply CRD")
+		}
+		return wrappedErr
 	}
 
 	// Step 2: Apply RBAC (ServiceAccount, Role, RoleBinding)
 	Info("Applying RBAC manifests")
 	if err := ensureNamespace(NamespaceMCPRuntime); err != nil {
-		return fmt.Errorf("failed to ensure operator namespace: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrEnsureOperatorNamespaceFailed,
+			err,
+			fmt.Sprintf("failed to ensure operator namespace: %v", err),
+			map[string]any{"namespace": NamespaceMCPRuntime, "component": "setup"},
+		)
+		Error("Failed to ensure operator namespace")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to ensure operator namespace")
+		}
+		return wrappedErr
 	}
 
 	// #nosec G204 -- fixed kustomize path from repository.
 	if err := kubectl.RunWithOutput([]string{"apply", "-k", "config/rbac/"}, os.Stdout, os.Stderr); err != nil {
-		return fmt.Errorf("failed to apply RBAC: %w", err)
+		wrappedErr := wrapUserError(ErrApplyRBACFailed, err, fmt.Sprintf("failed to apply RBAC: %v", err))
+		Error("Failed to apply RBAC")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to apply RBAC")
+		}
+		return wrappedErr
 	}
 
 	// Step 3: Apply manager deployment with image replacement
@@ -642,7 +812,12 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 	// Read manager.yaml, replace image, and apply
 	managerYAML, err := os.ReadFile("config/manager/manager.yaml")
 	if err != nil {
-		return fmt.Errorf("failed to read manager.yaml: %w", err)
+		wrappedErr := wrapUserError(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to read manager.yaml: %v", err))
+		Error("Failed to read manager.yaml")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to read manager.yaml")
+		}
+		return wrappedErr
 	}
 
 	// Replace image name using a broad regex with captured indentation to handle registry-customized image values.
@@ -653,18 +828,38 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 	// Write to temp file under the working directory so kubectl path validation passes.
 	tmpFile, err := os.CreateTemp(".", "manager-*.yaml")
 	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
+		wrappedErr := wrapUserError(ErrCreateTempFileFailed, err, fmt.Sprintf("failed to create temp file: %v", err))
+		Error("Failed to create temp file")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to create temp file")
+		}
+		return wrappedErr
 	}
 	defer os.Remove(tmpFile.Name())
 
 	if _, err := tmpFile.WriteString(managerYAMLStr); err != nil {
 		if closeErr := tmpFile.Close(); closeErr != nil {
-			return fmt.Errorf("failed to close temp file after write error: %w", closeErr)
+			wrappedErr := wrapUserError(ErrCloseTempFileFailed, errors.Join(err, closeErr), fmt.Sprintf("failed to close temp file after write error: %v", closeErr))
+			Error("Failed to close temp file")
+			if logger != nil {
+				logStructuredError(logger, wrappedErr, "Failed to close temp file")
+			}
+			return wrappedErr
 		}
-		return fmt.Errorf("failed to write temp file: %w", err)
+		wrappedErr := wrapUserError(ErrWriteTempFileFailed, err, fmt.Sprintf("failed to write temp file: %v", err))
+		Error("Failed to write temp file")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to write temp file")
+		}
+		return wrappedErr
 	}
 	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("failed to close temp file: %w", err)
+		wrappedErr := wrapUserError(ErrCloseTempFileFailed, err, fmt.Sprintf("failed to close temp file: %v", err))
+		Error("Failed to close temp file")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to close temp file")
+		}
+		return wrappedErr
 	}
 
 	// Delete existing deployment to avoid immutable selector conflicts on reapply.
@@ -673,7 +868,17 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	if err := kubectl.RunWithOutput([]string{"apply", "-f", tmpFile.Name()}, os.Stdout, os.Stderr); err != nil {
-		return fmt.Errorf("failed to apply manager deployment: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrApplyManagerDeploymentFailed,
+			err,
+			fmt.Sprintf("failed to apply manager deployment: %v", err),
+			map[string]any{"operator_image": operatorImage, "namespace": NamespaceMCPRuntime, "component": "setup"},
+		)
+		Error("Failed to apply manager deployment")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to apply manager deployment")
+		}
+		return wrappedErr
 	}
 
 	Success("Operator manifests deployed successfully")
@@ -692,40 +897,80 @@ func setupTLSWithKubectl(kubectl KubectlRunner, logger *zap.Logger) error {
 	// Check if cert-manager CRDs are installed
 	Info("Checking cert-manager installation")
 	if err := checkCertManagerInstalledWithKubectl(kubectl); err != nil {
-		return fmt.Errorf("cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true")
+		err := newUserError(ErrCertManagerNotInstalled, "cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true")
+		Error("Cert-manager not installed")
+		if logger != nil {
+			logStructuredError(logger, err, "Cert-manager not installed")
+		}
+		return err
 	}
 	Info("cert-manager CRDs found")
 
 	// Check if CA secret exists
 	Info("Checking CA secret")
 	if err := checkCASecretWithKubectl(kubectl); err != nil {
-		return fmt.Errorf("CA secret 'mcp-runtime-ca' not found in cert-manager namespace. Create it first:\n  kubectl create secret tls mcp-runtime-ca --cert=ca.crt --key=ca.key -n cert-manager")
+		err := newUserError(ErrCASecretNotFound, "CA secret 'mcp-runtime-ca' not found in cert-manager namespace. Create it first:\n  kubectl create secret tls mcp-runtime-ca --cert=ca.crt --key=ca.key -n cert-manager")
+		Error("CA secret not found")
+		if logger != nil {
+			logStructuredError(logger, err, "CA secret not found")
+		}
+		return err
 	}
 	Info("CA secret found")
 
 	// Apply ClusterIssuer
 	Info("Applying ClusterIssuer")
 	if err := applyClusterIssuerWithKubectl(kubectl); err != nil {
-		return fmt.Errorf("failed to apply ClusterIssuer: %w", err)
+		wrappedErr := wrapUserError(ErrClusterIssuerApplyFailed, err, fmt.Sprintf("failed to apply ClusterIssuer: %v", err))
+		Error("Failed to apply ClusterIssuer")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to apply ClusterIssuer")
+		}
+		return wrappedErr
 	}
 
 	// Ensure registry namespace exists before applying Certificate
 	if err := ensureNamespace(NamespaceRegistry); err != nil {
-		return fmt.Errorf("failed to create registry namespace: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrCreateRegistryNamespaceFailed,
+			err,
+			fmt.Sprintf("failed to create registry namespace: %v", err),
+			map[string]any{"namespace": NamespaceRegistry, "component": "setup"},
+		)
+		Error("Failed to create registry namespace")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to create registry namespace")
+		}
+		return wrappedErr
 	}
 
 	// Apply Certificate
 	Info("Applying Certificate for registry")
 	if err := applyRegistryCertificateWithKubectl(kubectl); err != nil {
-		return fmt.Errorf("failed to apply Certificate: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrApplyCertificateFailed,
+			err,
+			fmt.Sprintf("failed to apply Certificate: %v", err),
+			map[string]any{"certificate": registryCertificateName, "namespace": NamespaceRegistry, "component": "setup"},
+		)
+		Error("Failed to apply Certificate")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to apply Certificate")
+		}
+		return wrappedErr
 	}
 
 	// Wait for certificate to be ready using kubectl wait
 	certTimeout := GetCertTimeout()
 	Info(fmt.Sprintf("Waiting for certificate to be issued (timeout: %s)", certTimeout))
 	if err := waitForCertificateReadyWithKubectl(kubectl, registryCertificateName, NamespaceRegistry, certTimeout); err != nil {
-		return fmt.Errorf("certificate not ready after %s. Check cert-manager logs: kubectl logs -n cert-manager deployment/cert-manager", certTimeout)
+		err := newUserError(ErrCertificateNotReady, fmt.Sprintf("certificate not ready after %s. Check cert-manager logs: kubectl logs -n cert-manager deployment/cert-manager", certTimeout))
+		Error("Certificate not ready")
+		if logger != nil {
+			logStructuredError(logger, err, "Certificate not ready")
+		}
+		return err
 	}
-	Info("Certificate issued successfully")
+	Success("Certificate issued successfully")
 	return nil
 }

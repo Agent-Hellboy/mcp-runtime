@@ -7,3 +7,6 @@ Flags:
       --follow             Follow log output
   -h, --help               help for logs
       --namespace string   Namespace (default "mcp-servers")
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

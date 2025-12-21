@@ -10,3 +10,6 @@ Flags:
       --name string        Override target repo/name (default: source name without registry)
       --namespace string   Namespace to run the in-cluster helper pod (default "registry")
       --registry string    Target registry (defaults to provisioned or internal)
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

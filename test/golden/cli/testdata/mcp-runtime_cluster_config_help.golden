@@ -16,3 +16,6 @@ Flags:
       --region string             Region for cloud provider kubeconfig (default "us-west-1")
       --resource-group string     Resource group (AKS, planned)
       --zone string               Zone (GKE, planned)
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

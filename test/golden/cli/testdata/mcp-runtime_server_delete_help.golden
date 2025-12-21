@@ -6,3 +6,6 @@ Usage:
 Flags:
   -h, --help               help for delete
       --namespace string   Namespace (default "mcp-servers")
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

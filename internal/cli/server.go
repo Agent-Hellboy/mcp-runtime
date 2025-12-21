@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,7 +39,7 @@ var validServerName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 // Returns sanitized values or an error if validation fails.
 func validateServerInput(name, namespace string) (string, string, error) {
 	if !validServerName.MatchString(name) {
-		return "", "", fmt.Errorf("invalid server name %q: must be lowercase alphanumeric with optional hyphens", name)
+		return "", "", newUserError(ErrInvalidServerName, fmt.Sprintf("invalid server name %q: must be lowercase alphanumeric with optional hyphens", name))
 	}
 
 	var err error
@@ -218,7 +219,18 @@ func (m *ServerManager) ListServers(namespace string) error {
 	}
 
 	// #nosec G204 -- namespace validated above; kubectl validates resource names.
-	return m.kubectl.RunWithOutput([]string{"get", "mcpserver", "-n", namespace}, os.Stdout, os.Stderr)
+	if err := m.kubectl.RunWithOutput([]string{"get", "mcpserver", "-n", namespace}, os.Stdout, os.Stderr); err != nil {
+		wrappedErr := wrapUserErrorWithContext(
+			ErrListServersFailed,
+			err,
+			fmt.Sprintf("failed to list servers in namespace %q: %v", namespace, err),
+			map[string]any{"namespace": namespace, "component": "server"},
+		)
+		Error("Failed to list servers")
+		logStructuredError(m.logger, wrappedErr, "Failed to list servers")
+		return wrappedErr
+	}
+	return nil
 }
 
 // GetServer retrieves details for a specific MCP server.
@@ -229,7 +241,18 @@ func (m *ServerManager) GetServer(name, namespace string) error {
 	}
 
 	// #nosec G204 -- name/namespace validated via validateServerInput.
-	return m.kubectl.RunWithOutput([]string{"get", "mcpserver", name, "-n", namespace, "-o", "yaml"}, os.Stdout, os.Stderr)
+	if err := m.kubectl.RunWithOutput([]string{"get", "mcpserver", name, "-n", namespace, "-o", "yaml"}, os.Stdout, os.Stderr); err != nil {
+		wrappedErr := wrapUserErrorWithContext(
+			ErrGetMCPServerFailed,
+			err,
+			fmt.Sprintf("failed to get server %q in namespace %q: %v", name, namespace, err),
+			map[string]any{"server": name, "namespace": namespace, "component": "server"},
+		)
+		Error("Failed to get server")
+		logStructuredError(m.logger, wrappedErr, "Failed to get server")
+		return wrappedErr
+	}
+	return nil
 }
 
 // CreateServer creates a new MCP server with the given parameters.
@@ -270,13 +293,29 @@ func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) er
 
 	manifestBytes, err := yaml.Marshal(manifest)
 	if err != nil {
-		return fmt.Errorf("failed to marshal manifest: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrMarshalManifestFailed,
+			err,
+			fmt.Sprintf("failed to marshal manifest: %v", err),
+			map[string]any{"server": name, "namespace": namespace, "component": "server"},
+		)
+		Error("Failed to marshal manifest")
+		logStructuredError(m.logger, wrappedErr, "Failed to marshal manifest")
+		return wrappedErr
 	}
 
 	// Use os.CreateTemp for secure temp file creation (random suffix, no race conditions)
 	tmpFile, err := os.CreateTemp("", "mcpserver-*.yaml")
 	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrCreateTempFileFailed,
+			err,
+			fmt.Sprintf("failed to create temp file: %v", err),
+			map[string]any{"server": name, "namespace": namespace, "component": "server"},
+		)
+		Error("Failed to create temp file")
+		logStructuredError(m.logger, wrappedErr, "Failed to create temp file")
+		return wrappedErr
 	}
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
@@ -284,16 +323,51 @@ func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) er
 	if _, err := tmpFile.Write(manifestBytes); err != nil {
 		closeErr := tmpFile.Close()
 		if closeErr != nil {
-			return fmt.Errorf("failed to write manifest: %w; failed to close temp file: %v", err, closeErr)
+			wrappedErr := wrapUserErrorWithContext(
+				ErrWriteManifestFailed,
+				errors.Join(err, closeErr),
+				fmt.Sprintf("failed to write manifest: %v; failed to close temp file: %v", err, closeErr),
+				map[string]any{"server": name, "namespace": namespace, "component": "server"},
+			)
+			Error("Failed to write manifest")
+			logStructuredError(m.logger, wrappedErr, "Failed to write manifest")
+			return wrappedErr
 		}
-		return fmt.Errorf("failed to write manifest: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrWriteManifestFailed,
+			err,
+			fmt.Sprintf("failed to write manifest: %v", err),
+			map[string]any{"server": name, "namespace": namespace, "component": "server"},
+		)
+		Error("Failed to write manifest")
+		logStructuredError(m.logger, wrappedErr, "Failed to write manifest")
+		return wrappedErr
 	}
 	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("failed to close temp file: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrCloseTempFileFailed,
+			err,
+			fmt.Sprintf("failed to close temp file: %v", err),
+			map[string]any{"server": name, "namespace": namespace, "component": "server"},
+		)
+		Error("Failed to close temp file")
+		logStructuredError(m.logger, wrappedErr, "Failed to close temp file")
+		return wrappedErr
 	}
 
 	// #nosec G204 -- tmpPath is from os.CreateTemp, kubectl is a fixed command.
-	return m.kubectl.RunWithOutput([]string{"apply", "-f", tmpPath}, os.Stdout, os.Stderr)
+	if err := m.kubectl.RunWithOutput([]string{"apply", "-f", tmpPath}, os.Stdout, os.Stderr); err != nil {
+		wrappedErr := wrapUserErrorWithContext(
+			ErrCreateServerFailed,
+			err,
+			fmt.Sprintf("failed to create server %q: %v", name, err),
+			map[string]any{"server": name, "namespace": namespace, "image": image, "component": "server"},
+		)
+		Error("Failed to create server")
+		logStructuredError(m.logger, wrappedErr, "Failed to create server")
+		return wrappedErr
+	}
+	return nil
 }
 
 // CreateServerFromFile creates an MCP server from a YAML file.
@@ -301,20 +375,40 @@ func (m *ServerManager) CreateServerFromFile(file string) error {
 	// Validate file path exists and is a regular file
 	absPath, err := filepath.Abs(file)
 	if err != nil {
-		return fmt.Errorf("invalid file path: %w", err)
+		wrappedErr := wrapUserError(ErrInvalidFilePath, err, fmt.Sprintf("invalid file path: %v", err))
+		Error("Invalid file path")
+		logStructuredError(m.logger, wrappedErr, "Invalid file path")
+		return wrappedErr
 	}
 
 	info, err := os.Stat(absPath)
 	if err != nil {
-		return fmt.Errorf("cannot access file %q: %w", file, err)
+		wrappedErr := wrapUserError(ErrFileNotAccessible, err, fmt.Sprintf("cannot access file %q: %v", file, err))
+		Error("Cannot access file")
+		logStructuredError(m.logger, wrappedErr, "Cannot access file")
+		return wrappedErr
 	}
 	if info.IsDir() {
-		return fmt.Errorf("path %q is a directory, not a file", file)
+		err := newUserError(ErrFileIsDirectory, fmt.Sprintf("path %q is a directory, not a file", file))
+		Error("Path is a directory")
+		logStructuredError(m.logger, err, "Path is a directory")
+		return err
 	}
 
 	// #nosec G204 -- execCommand passes arguments directly without shell interpretation;
 	// file path validated above (exists, is regular file); kubectl validates manifest contents.
-	return m.kubectl.RunWithOutput([]string{"apply", "-f", absPath}, os.Stdout, os.Stderr)
+	if err := m.kubectl.RunWithOutput([]string{"apply", "-f", absPath}, os.Stdout, os.Stderr); err != nil {
+		wrappedErr := wrapUserErrorWithContext(
+			ErrCreateServerFailed,
+			err,
+			fmt.Sprintf("failed to create server from file %q: %v", file, err),
+			map[string]any{"file": file, "component": "server"},
+		)
+		Error("Failed to create server from file")
+		logStructuredError(m.logger, wrappedErr, "Failed to create server from file")
+		return wrappedErr
+	}
+	return nil
 }
 
 // DeleteServer deletes an MCP server.
@@ -327,7 +421,18 @@ func (m *ServerManager) DeleteServer(name, namespace string) error {
 	m.logger.Info("Deleting MCP server", zap.String("name", name))
 
 	// #nosec G204 -- name/namespace validated via validateServerInput.
-	return m.kubectl.RunWithOutput([]string{"delete", "mcpserver", name, "-n", namespace}, os.Stdout, os.Stderr)
+	if err := m.kubectl.RunWithOutput([]string{"delete", "mcpserver", name, "-n", namespace}, os.Stdout, os.Stderr); err != nil {
+		wrappedErr := wrapUserErrorWithContext(
+			ErrDeleteServerFailed,
+			err,
+			fmt.Sprintf("failed to delete server %q in namespace %q: %v", name, namespace, err),
+			map[string]any{"server": name, "namespace": namespace, "component": "server"},
+		)
+		Error("Failed to delete server")
+		logStructuredError(m.logger, wrappedErr, "Failed to delete server")
+		return wrappedErr
+	}
+	return nil
 }
 
 // ViewServerLogs views logs from an MCP server.
@@ -343,7 +448,18 @@ func (m *ServerManager) ViewServerLogs(name, namespace string, follow bool) erro
 	}
 
 	// #nosec G204 -- name/namespace validated via validateServerInput.
-	return m.kubectl.RunWithOutput(args, os.Stdout, os.Stderr)
+	if err := m.kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
+		wrappedErr := wrapUserErrorWithContext(
+			ErrViewServerLogsFailed,
+			err,
+			fmt.Sprintf("failed to view logs for server %q in namespace %q: %v", name, namespace, err),
+			map[string]any{"server": name, "namespace": namespace, "component": "server"},
+		)
+		Error("Failed to view server logs")
+		logStructuredError(m.logger, wrappedErr, "Failed to view server logs")
+		return wrappedErr
+	}
+	return nil
 }
 
 // ServerStatus shows the status of MCP servers in a namespace.
@@ -364,7 +480,14 @@ func (m *ServerManager) ServerStatus(namespace string) error {
 			errDetails = err.Error()
 		}
 		DefaultPrinter.Println("ERROR: Failed to list MCP servers: " + errDetails)
-		return fmt.Errorf("kubectl get mcpserver failed: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrGetMCPServerFailed,
+			err,
+			fmt.Sprintf("kubectl get mcpserver failed: %v", err),
+			map[string]any{"namespace": namespace, "component": "server"},
+		)
+		logStructuredError(m.logger, wrappedErr, "Failed to get MCP servers")
+		return wrappedErr
 	}
 
 	trimmed := strings.TrimSpace(string(out))
@@ -478,11 +601,11 @@ type manifestSpec struct {
 // validateManifestValue ensures basic values do not contain control characters that would break YAML.
 func validateManifestValue(field, value string) (string, error) {
 	if strings.ContainsAny(value, "\r\n\t") {
-		return "", fmt.Errorf("%s must not contain control characters", field)
+		return "", newUserError(ErrControlCharsNotAllowed, fmt.Sprintf("%s must not contain control characters", field))
 	}
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "", fmt.Errorf("%s is required", field)
+		return "", newUserError(ErrFieldRequired, fmt.Sprintf("%s is required", field))
 	}
 	return value, nil
 }

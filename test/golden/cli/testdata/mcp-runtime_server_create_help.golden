@@ -9,3 +9,6 @@ Flags:
       --image string       Container image
       --namespace string   Namespace (default "mcp-servers")
       --tag string         Image tag (default "latest")
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

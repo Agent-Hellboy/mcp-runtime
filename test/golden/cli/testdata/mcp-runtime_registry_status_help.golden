@@ -6,3 +6,6 @@ Usage:
 Flags:
   -h, --help               help for status
       --namespace string   Registry namespace (default "registry")
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

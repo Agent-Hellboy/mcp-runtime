@@ -83,7 +83,15 @@ func buildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metada
 	buildCmd.SetStderr(os.Stderr)
 
 	if err := buildCmd.Run(); err != nil {
-		return fmt.Errorf("failed to build image for %s: %w", serverName, err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrBuildImageFailed,
+			err,
+			fmt.Sprintf("failed to build image for %s: %v", serverName, err),
+			map[string]any{"server": serverName, "image": fullImage, "dockerfile": dockerfile, "component": "build"},
+		)
+		Error("Failed to build image")
+		logStructuredError(logger, wrappedErr, "Failed to build image")
+		return wrappedErr
 	}
 
 	logger.Info("Image built successfully", zap.String("image", fullImage))
@@ -126,13 +134,19 @@ func updateMetadataImage(serverName, imageName, tag, metadataFile, metadataDir s
 	}
 
 	if targetFile == "" {
-		return fmt.Errorf("metadata file not found for server %s", serverName)
+		err := newUserError(ErrMetadataFileNotFound, fmt.Sprintf("metadata file not found for server %s", serverName))
+		Error("Metadata file not found")
+		// Note: No logger available in this helper function
+		return err
 	}
 
 	// Load and update
 	registry, err := metadata.LoadFromFile(targetFile)
 	if err != nil {
-		return fmt.Errorf("failed to load metadata: %w", err)
+		wrappedErr := wrapUserError(ErrLoadMetadataFailed, err, fmt.Sprintf("failed to load metadata: %v", err))
+		Error("Failed to load metadata")
+		// Note: No logger available in this helper function
+		return wrappedErr
 	}
 
 	// Update server image
@@ -147,17 +161,26 @@ func updateMetadataImage(serverName, imageName, tag, metadataFile, metadataDir s
 	}
 
 	if !updated {
-		return fmt.Errorf("server %s not found in metadata", serverName)
+		err := newUserError(ErrServerNotFoundInMetadata, fmt.Sprintf("server %s not found in metadata", serverName))
+		Error("Server not found in metadata")
+		// Note: No logger available in this helper function
+		return err
 	}
 
 	// Write back
 	data, err := yamlMarshal(registry)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
+		wrappedErr := wrapUserError(ErrMarshalMetadataFailed, err, fmt.Sprintf("failed to marshal metadata: %v", err))
+		Error("Failed to marshal metadata")
+		// Note: No logger available in this helper function
+		return wrappedErr
 	}
 
 	if err := os.WriteFile(targetFile, data, 0o600); err != nil {
-		return fmt.Errorf("failed to write metadata: %w", err)
+		wrappedErr := wrapUserError(ErrWriteMetadataFailed, err, fmt.Sprintf("failed to write metadata: %v", err))
+		Error("Failed to write metadata")
+		// Note: No logger available in this helper function
+		return wrappedErr
 	}
 
 	return nil

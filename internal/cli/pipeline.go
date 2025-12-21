@@ -111,17 +111,31 @@ func (m *PipelineManager) GenerateCRDsFromMetadata(metadataFile, metadataDir, ou
 	}
 
 	if err != nil {
-		return fmt.Errorf("failed to load metadata: %w", err)
+		wrappedErr := wrapUserError(ErrLoadMetadataFailed, err, fmt.Sprintf("failed to load metadata: %v", err))
+		Error("Failed to load metadata")
+		logStructuredError(m.logger, wrappedErr, "Failed to load metadata")
+		return wrappedErr
 	}
 
 	if len(registry.Servers) == 0 {
-		return fmt.Errorf("no servers found in metadata")
+		err := ErrNoServersInMetadata
+		Error("No servers found in metadata")
+		logStructuredError(m.logger, err, "No servers found in metadata")
+		return err
 	}
 
 	m.logger.Info("Generating CRD files", zap.Int("count", len(registry.Servers)), zap.String("output", outputDir))
 
 	if err := metadata.GenerateCRDsFromRegistry(registry, outputDir); err != nil {
-		return fmt.Errorf("failed to generate CRDs: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrGenerateCRDsFailed,
+			err,
+			fmt.Sprintf("failed to generate CRDs: %v", err),
+			map[string]any{"output_dir": outputDir, "server_count": len(registry.Servers), "component": "pipeline"},
+		)
+		Error("Failed to generate CRDs")
+		logStructuredError(m.logger, wrappedErr, "Failed to generate CRDs")
+		return wrappedErr
 	}
 
 	m.logger.Info("CRD files generated successfully", zap.String("output", outputDir))
@@ -142,18 +156,37 @@ func (m *PipelineManager) DeployCRDs(manifestsDir, namespace string) error {
 	// Find all YAML files
 	files, err := filepathGlob(filepath.Join(manifestsDir, "*.yaml"))
 	if err != nil {
-		return fmt.Errorf("failed to list manifest files: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrListManifestFilesFailed,
+			err,
+			fmt.Sprintf("failed to list manifest files: %v", err),
+			map[string]any{"manifest_dir": manifestsDir, "component": "pipeline"},
+		)
+		Error("Failed to list manifest files")
+		logStructuredError(m.logger, wrappedErr, "Failed to list manifest files")
+		return wrappedErr
 	}
 
 	ymlFiles, err := filepathGlob(filepath.Join(manifestsDir, "*.yml"))
 	if err != nil {
-		return fmt.Errorf("failed to list manifest files: %w", err)
+		wrappedErr := wrapUserErrorWithContext(
+			ErrListManifestFilesFailed,
+			err,
+			fmt.Sprintf("failed to list manifest files: %v", err),
+			map[string]any{"manifest_dir": manifestsDir, "component": "pipeline"},
+		)
+		Error("Failed to list manifest files")
+		logStructuredError(m.logger, wrappedErr, "Failed to list manifest files")
+		return wrappedErr
 	}
 
 	files = append(files, ymlFiles...)
 
 	if len(files) == 0 {
-		return fmt.Errorf("no manifest files found in %s", manifestsDir)
+		err := newUserError(ErrNoManifestFilesFound, fmt.Sprintf("no manifest files found in %s", manifestsDir))
+		Error("No manifest files found")
+		logStructuredError(m.logger, err, "No manifest files found")
+		return err
 	}
 
 	// Apply each file
@@ -167,7 +200,15 @@ func (m *PipelineManager) DeployCRDs(manifestsDir, namespace string) error {
 
 		// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 		if err := m.kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
-			return fmt.Errorf("failed to apply %s: %w", file, err)
+			wrappedErr := wrapUserErrorWithContext(
+				ErrApplyManifestFailed,
+				err,
+				fmt.Sprintf("failed to apply %s: %v", file, err),
+				map[string]any{"file": file, "namespace": namespace, "component": "pipeline"},
+			)
+			Error("Failed to apply manifest")
+			logStructuredError(m.logger, wrappedErr, "Failed to apply manifest")
+			return wrappedErr
 		}
 	}
 

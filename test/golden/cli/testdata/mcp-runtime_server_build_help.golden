@@ -9,4 +9,7 @@ Available Commands:
 Flags:
   -h, --help   help for build
 
+Global Flags:
+      --debug   Enable debug mode with structured error logging
+
 Use "mcp-runtime server build [command] --help" for more information about a command.

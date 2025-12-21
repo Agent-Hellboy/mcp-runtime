@@ -9,3 +9,6 @@ Flags:
       --password string         Registry password (optional)
       --url string              External registry URL (e.g., registry.example.com)
       --username string         Registry username (optional)
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging
