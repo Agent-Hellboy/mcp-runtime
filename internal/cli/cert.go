@@ -92,7 +92,7 @@ func (m *CertManager) newCertWaitCmd() *cobra.Command {
 func (m *CertManager) Status() error {
 	Info("Checking cert-manager installation")
 	if err := checkCertManagerInstalledWithKubectl(m.kubectl); err != nil {
-		err := newWithSentinel(ErrCertManagerNotInstalled, "cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true")
+		err := wrapWithSentinel(ErrCertManagerNotInstalled, err, "cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true")
 		Error("Cert-manager not installed")
 		logStructuredError(m.logger, err, "Cert-manager not installed")
 		return err
@@ -126,7 +126,7 @@ func (m *CertManager) Status() error {
 func (m *CertManager) Apply() error {
 	Info("Checking cert-manager installation")
 	if err := checkCertManagerInstalledWithKubectl(m.kubectl); err != nil {
-		err := newWithSentinel(ErrCertManagerNotInstalled, "cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true")
+		err := wrapWithSentinel(ErrCertManagerNotInstalled, err, "cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true")
 		Error("Cert-manager not installed")
 		logStructuredError(m.logger, err, "Cert-manager not installed")
 		return err

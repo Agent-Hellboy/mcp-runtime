@@ -897,7 +897,7 @@ func setupTLSWithKubectl(kubectl KubectlRunner, logger *zap.Logger) error {
 	// Check if cert-manager CRDs are installed
 	Info("Checking cert-manager installation")
 	if err := checkCertManagerInstalledWithKubectl(kubectl); err != nil {
-		err := newWithSentinel(ErrCertManagerNotInstalled, "cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true")
+		err := wrapWithSentinel(ErrCertManagerNotInstalled, err, "cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true")
 		Error("Cert-manager not installed")
 		if logger != nil {
 			logStructuredError(logger, err, "Cert-manager not installed")
@@ -909,7 +909,7 @@ func setupTLSWithKubectl(kubectl KubectlRunner, logger *zap.Logger) error {
 	// Check if CA secret exists
 	Info("Checking CA secret")
 	if err := checkCASecretWithKubectl(kubectl); err != nil {
-		err := newWithSentinel(ErrCASecretNotFound, "CA secret 'mcp-runtime-ca' not found in cert-manager namespace. Create it first:\n  kubectl create secret tls mcp-runtime-ca --cert=ca.crt --key=ca.key -n cert-manager")
+		err := wrapWithSentinel(ErrCASecretNotFound, err, "CA secret 'mcp-runtime-ca' not found in cert-manager namespace. Create it first:\n  kubectl create secret tls mcp-runtime-ca --cert=ca.crt --key=ca.key -n cert-manager")
 		Error("CA secret not found")
 		if logger != nil {
 			logStructuredError(logger, err, "CA secret not found")
