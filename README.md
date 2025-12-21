@@ -25,13 +25,13 @@ MCP Runtime Platform provides a streamlined workflow for teams to deploy a suite
 ## Features
 
 - **Complete Platform** - Internal registry deployment plus cluster setup helpers
-- **CLI Tool** - Manage platform, registry, cluster, and servers
+- **CLI Tool** - Manage platform, registry, cluster, certificate, pipeline, and servers
 - **Automated Setup** - One-command platform deployment
 - **CI/CD Integration** - Automated build and deployment pipeline
 - **Kubernetes Operator** - Automatically creates Deployment, Service, and Ingress
 - **Metadata-Driven** - Simple YAML files, no Kubernetes knowledge needed
 - **Unified URLs** - All servers get consistent `/{server-name}/mcp` routes
-- **Auto Image Building** - Builds from Dockerfiles and updates metadata automatically
+- **Auto Image Building** - Builds from Dockerfiles (through server build cmd) and updates metadata automatically
 
 ## Architecture
 
