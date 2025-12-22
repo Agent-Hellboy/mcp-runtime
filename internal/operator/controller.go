@@ -624,14 +624,46 @@ func (r *MCPServerReconciler) checkIngressReady(ctx context.Context, mcpServer *
 }
 
 func (r *MCPServerReconciler) updateStatus(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, phase, message string, deploymentReady, serviceReady, ingressReady bool) {
-	mcpServer.Status.Phase = phase
-	mcpServer.Status.Message = message
-	mcpServer.Status.DeploymentReady = deploymentReady
-	mcpServer.Status.ServiceReady = serviceReady
-	mcpServer.Status.IngressReady = ingressReady
+	// Re-fetch the object to get the latest resourceVersion before updating status.
+	// This prevents "object has been modified" errors due to optimistic concurrency control.
+	// The object might have been updated by:
+	// 1. applyDefaultsIfNeeded() updating the spec
+	// 2. Another reconcile loop running concurrently
+	// 3. External modifications
+	latest := &mcpv1alpha1.MCPServer{}
+	if err := r.Get(ctx, types.NamespacedName{Name: mcpServer.Name, Namespace: mcpServer.Namespace}, latest); err != nil {
+		// If object not found, it may have been deleted - skip status update
+		if errors.IsNotFound(err) {
+			log.FromContext(ctx).V(1).Info("MCPServer not found, skipping status update (may have been deleted)")
+			return
+		}
+		// For other errors, log but try to update with the original object as fallback
+		log.FromContext(ctx).Error(err, "Failed to fetch MCPServer for status update, using original object")
+		latest = mcpServer
+	}
 
-	if err := r.Status().Update(ctx, mcpServer); err != nil {
-		log.FromContext(ctx).Error(err, "Failed to update MCPServer status")
+	// Update status fields
+	latest.Status.Phase = phase
+	latest.Status.Message = message
+	latest.Status.DeploymentReady = deploymentReady
+	latest.Status.ServiceReady = serviceReady
+	latest.Status.IngressReady = ingressReady
+
+	// Use Status().Update() which only updates the status subresource
+	// This is safer than Update() which would update the entire object
+	if err := r.Status().Update(ctx, latest); err != nil {
+		// If it's a conflict error, that's expected in concurrent scenarios - log at debug level
+		if errors.IsConflict(err) {
+			log.FromContext(ctx).V(1).Info("Status update conflict (expected in concurrent reconciles), will retry on next reconcile", "resourceVersion", latest.ResourceVersion)
+		} else {
+			// Some environments (like the fake client) may not support status subresources.
+			if updateErr := r.Update(ctx, latest); updateErr != nil {
+				log.FromContext(ctx).Error(updateErr, "Failed to update MCPServer after status update failure", "resourceVersion", latest.ResourceVersion)
+			}
+			// Log other errors but don't fail the reconcile - status update failures are non-fatal
+			// The next reconcile will retry the status update
+			log.FromContext(ctx).Error(err, "Failed to update MCPServer status", "resourceVersion", latest.ResourceVersion)
+		}
 	}
 }
 

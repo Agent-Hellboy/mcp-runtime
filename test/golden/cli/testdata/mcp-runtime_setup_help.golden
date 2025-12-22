@@ -11,11 +11,14 @@ Usage:
   mcp-runtime setup [flags]
 
 Flags:
-      --force-ingress-install     Force ingress install even if an ingress class already exists
-  -h, --help                      help for setup
-      --ingress string            Ingress controller to install automatically during setup (traefik|none) (default "traefik")
-      --ingress-manifest string   Manifest to apply when installing the ingress controller (default "config/ingress/overlays/http")
-      --registry-storage string   Registry storage size (default: 20Gi) (default "20Gi")
-      --registry-type string      Registry type (docker; harbor coming soon) (default "docker")
-      --test-mode                 Test mode: skip operator build and use kind-loaded image
-      --with-tls                  Enable TLS overlays (ingress/registry); default is HTTP for dev
+      --force-ingress-install          Force ingress install even if an ingress class already exists
+  -h, --help                           help for setup
+      --ingress string                 Ingress controller to install automatically during setup (traefik|none) (default "traefik")
+      --ingress-manifest string        Manifest to apply when installing the ingress controller (default "config/ingress/overlays/http")
+      --operator-leader-elect          Enable leader election for operator (default: false, set in manager.yaml)
+      --operator-metrics-addr string   Operator metrics bind address (default: :8080 from manager.yaml)
+      --operator-probe-addr string     Operator health probe bind address (default: :8081 from manager.yaml)
+      --registry-storage string        Registry storage size (default: 20Gi) (default "20Gi")
+      --registry-type string           Registry type (docker; harbor coming soon) (default "docker")
+      --test-mode                      Test mode: skip operator build and use kind-loaded image
+      --with-tls                       Enable TLS overlays (ingress/registry); default is HTTP for dev
