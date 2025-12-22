@@ -149,7 +149,7 @@ func TestSetupPlatformWithDeps_ExternalRegistry(t *testing.T) {
 		EnsureNamespace:             func(string) error { rec.add("ensure-ns"); return nil },
 		GetPlatformRegistryURL:      func(*zap.Logger) string { return "registry.local" },
 		PushOperatorImageToInternal: func(*zap.Logger, string, string, string) error { rec.add("push-internal"); return nil },
-		DeployOperatorManifests:     func(*zap.Logger, string) error { rec.add("deploy-operator"); return nil },
+		DeployOperatorManifests:     func(*zap.Logger, string, []string) error { rec.add("deploy-operator"); return nil },
 		ConfigureProvisionedRegistryEnv: func(*ExternalRegistryConfig, string) error {
 			rec.add("configure-env")
 			return nil
@@ -219,7 +219,7 @@ func TestSetupPlatformWithDeps_InternalRegistryTLS(t *testing.T) {
 			rec.add("push-internal")
 			return nil
 		},
-		DeployOperatorManifests: func(*zap.Logger, string) error { rec.add("deploy-operator"); return nil },
+		DeployOperatorManifests: func(*zap.Logger, string, []string) error { rec.add("deploy-operator"); return nil },
 		ConfigureProvisionedRegistryEnv: func(*ExternalRegistryConfig, string) error {
 			rec.add("configure-env")
 			return nil
@@ -299,7 +299,7 @@ func TestSetupPlatformWithDeps_ExternalRegistryTLS(t *testing.T) {
 			rec.add("push-internal")
 			return nil
 		},
-		DeployOperatorManifests: func(*zap.Logger, string) error { rec.add("deploy-operator"); return nil },
+		DeployOperatorManifests: func(*zap.Logger, string, []string) error { rec.add("deploy-operator"); return nil },
 		ConfigureProvisionedRegistryEnv: func(*ExternalRegistryConfig, string) error {
 			rec.add("configure-env")
 			return nil
@@ -380,7 +380,7 @@ func TestSetupPlatformWithDeps_DiagnosticsOnRegistryWaitFailure(t *testing.T) {
 		PushOperatorImageToInternal: func(*zap.Logger, string, string, string) error {
 			return nil
 		},
-		DeployOperatorManifests:         func(*zap.Logger, string) error { return nil },
+		DeployOperatorManifests:         func(*zap.Logger, string, []string) error { return nil },
 		ConfigureProvisionedRegistryEnv: func(*ExternalRegistryConfig, string) error { return nil },
 		RestartDeployment:               func(string, string) error { return nil },
 		CheckCRDInstalled:               func(string) error { return nil },
@@ -436,7 +436,7 @@ func TestSetupPlatformWithDeps_DiagnosticsOnOperatorWaitFailure(t *testing.T) {
 		PushOperatorImageToInternal: func(*zap.Logger, string, string, string) error {
 			return nil
 		},
-		DeployOperatorManifests:         func(*zap.Logger, string) error { return nil },
+		DeployOperatorManifests:         func(*zap.Logger, string, []string) error { return nil },
 		ConfigureProvisionedRegistryEnv: func(*ExternalRegistryConfig, string) error { return nil },
 		RestartDeployment:               func(string, string) error { return nil },
 		CheckCRDInstalled:               func(string) error { return nil },
@@ -492,7 +492,7 @@ func TestSetupPlatformWithDeps_CRDCheckFailure(t *testing.T) {
 		PushOperatorImageToInternal: func(*zap.Logger, string, string, string) error {
 			return nil
 		},
-		DeployOperatorManifests:         func(*zap.Logger, string) error { return nil },
+		DeployOperatorManifests:         func(*zap.Logger, string, []string) error { return nil },
 		ConfigureProvisionedRegistryEnv: func(*ExternalRegistryConfig, string) error { return nil },
 		RestartDeployment:               func(string, string) error { return nil },
 		CheckCRDInstalled: func(string) error {
@@ -551,7 +551,7 @@ func TestSetupPlatformWithDeps_InternalRegistryPushFailure(t *testing.T) {
 			rec.add("push-internal")
 			return fmt.Errorf("push failed")
 		},
-		DeployOperatorManifests:         func(*zap.Logger, string) error { rec.add("deploy-operator"); return nil },
+		DeployOperatorManifests:         func(*zap.Logger, string, []string) error { rec.add("deploy-operator"); return nil },
 		ConfigureProvisionedRegistryEnv: func(*ExternalRegistryConfig, string) error { return nil },
 		RestartDeployment:               func(string, string) error { return nil },
 		CheckCRDInstalled:               func(string) error { return nil },

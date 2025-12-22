@@ -495,7 +495,7 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	kubectlClient = kubectl
 
 	operatorImage := "registry.example.com/mcp-runtime-operator:dev"
-	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), operatorImage); err != nil {
+	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), operatorImage, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if managerManifest == "" {
@@ -550,7 +550,7 @@ func TestDeployOperatorManifestsWithKubectlCRDError(t *testing.T) {
 	}
 	kubectl := &KubectlClient{exec: mock, validators: nil}
 
-	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "example"); err == nil {
+	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "example", nil); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -572,7 +572,7 @@ func TestDeployOperatorManifestsWithKubectlRBACError(t *testing.T) {
 	kubectl := &KubectlClient{exec: mock, validators: nil}
 	kubectlClient = kubectl
 
-	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "example"); err == nil {
+	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "example", nil); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -609,7 +609,7 @@ func TestDeployOperatorManifestsWithKubectlManagerApplyError(t *testing.T) {
 	kubectl := &KubectlClient{exec: mock, validators: nil}
 	kubectlClient = kubectl
 
-	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "example"); err == nil {
+	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "example", nil); err == nil {
 		t.Fatal("expected error")
 	}
 }
