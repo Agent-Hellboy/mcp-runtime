@@ -42,7 +42,7 @@ type SetupDeps struct {
 	EnsureNamespace                 func(namespace string) error
 	GetPlatformRegistryURL          func(logger *zap.Logger) string
 	PushOperatorImageToInternal     func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
-	DeployOperatorManifests         func(logger *zap.Logger, operatorImage string) error
+	DeployOperatorManifests         func(logger *zap.Logger, operatorImage string, operatorArgs []string) error
 	ConfigureProvisionedRegistryEnv func(ext *ExternalRegistryConfig, secretName string) error
 	RestartDeployment               func(name, namespace string) error
 	CheckCRDInstalled               func(name string) error
@@ -124,6 +124,9 @@ func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 	var forceIngressInstall bool
 	var tlsEnabled bool
 	var testMode bool
+	var operatorMetricsAddr string
+	var operatorProbeAddr string
+	var operatorLeaderElect bool
 
 	cmd := &cobra.Command{
 		Use:   "setup",
@@ -137,6 +140,9 @@ func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 The platform deploys an internal Docker registry by default, which teams
 will use to push and pull container images.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Build operator args from flags
+			operatorArgs := buildOperatorArgs(operatorMetricsAddr, operatorProbeAddr, operatorLeaderElect)
+
 			plan := BuildSetupPlan(SetupPlanInput{
 				RegistryType:           registryType,
 				RegistryStorageSize:    registryStorageSize,
@@ -146,6 +152,7 @@ will use to push and pull container images.`,
 				ForceIngressInstall:    forceIngressInstall,
 				TLSEnabled:             tlsEnabled,
 				TestMode:               testMode,
+				OperatorArgs:           operatorArgs,
 			})
 
 			return setupPlatform(logger, plan)
@@ -159,8 +166,29 @@ will use to push and pull container images.`,
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force ingress install even if an ingress class already exists")
 	cmd.Flags().BoolVar(&tlsEnabled, "with-tls", false, "Enable TLS overlays (ingress/registry); default is HTTP for dev")
 	cmd.Flags().BoolVar(&testMode, "test-mode", false, "Test mode: skip operator build and use kind-loaded image")
+	cmd.Flags().StringVar(&operatorMetricsAddr, "operator-metrics-addr", "", "Operator metrics bind address (default: :8080 from manager.yaml)")
+	cmd.Flags().StringVar(&operatorProbeAddr, "operator-probe-addr", "", "Operator health probe bind address (default: :8081 from manager.yaml)")
+	cmd.Flags().BoolVar(&operatorLeaderElect, "operator-leader-elect", false, "Enable leader election for operator (default: false, set in manager.yaml)")
 
 	return cmd
+}
+
+// buildOperatorArgs constructs operator command-line arguments from flags.
+// Only includes flags that were explicitly set (non-empty/non-default values).
+func buildOperatorArgs(metricsAddr, probeAddr string, leaderElect bool) []string {
+	var args []string
+
+	if metricsAddr != "" {
+		args = append(args, "--metrics-bind-address="+metricsAddr)
+	}
+	if probeAddr != "" {
+		args = append(args, "--health-probe-bind-address="+probeAddr)
+	}
+	if leaderElect {
+		args = append(args, "--leader-elect")
+	}
+
+	return args
 }
 
 func setupPlatform(logger *zap.Logger, plan SetupPlan) error {
@@ -376,7 +404,7 @@ func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfi
 	return internalOperatorImage, nil
 }
 
-func deployOperatorStep(logger *zap.Logger, operatorImage string, extRegistry *ExternalRegistryConfig, registrySecretName string, usingExternalRegistry bool, deps SetupDeps) error {
+func deployOperatorStep(logger *zap.Logger, operatorImage string, extRegistry *ExternalRegistryConfig, registrySecretName string, usingExternalRegistry bool, operatorArgs []string, deps SetupDeps) error {
 	Info("Deploying operator manifests")
 	if err := deps.DeployOperatorManifests(logger, operatorImage); err != nil {
 		wrappedErr := wrapWithSentinelAndContext(
@@ -762,13 +790,13 @@ func printDeploymentDiagnosticsWithKubectl(kubectl KubectlRunner, deploy, namesp
 
 // deployOperatorManifests deploys operator manifests without requiring kustomize or controller-gen.
 // It applies CRD, RBAC, and manager manifests directly, replacing the image name in the process.
-func deployOperatorManifests(logger *zap.Logger, operatorImage string) error {
-	return deployOperatorManifestsWithKubectl(kubectlClient, logger, operatorImage)
+func deployOperatorManifests(logger *zap.Logger, operatorImage string, operatorArgs []string) error {
+	return deployOperatorManifestsWithKubectl(kubectlClient, logger, operatorImage, operatorArgs)
 }
 
 // deployOperatorManifestsWithKubectl deploys operator manifests without requiring kustomize or controller-gen.
-// It applies CRD, RBAC, and manager manifests directly, replacing the image name in the process.
-func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logger, operatorImage string) error {
+// It applies CRD, RBAC, and manager manifests directly, replacing the image name and injecting operator args.
+func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logger, operatorImage string, operatorArgs []string) error {
 	// Step 1: Apply CRD
 	Info("Applying CRD manifests")
 	// #nosec G204 -- fixed file path from repository.
@@ -824,6 +852,11 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 	// This targets the first image field in the file (the manager container).
 	re := regexp.MustCompile(`(?m)^(\s*)image:\s*\S+`)
 	managerYAMLStr := re.ReplaceAllString(string(managerYAML), fmt.Sprintf("${1}image: %s", operatorImage))
+
+	// Inject operator args if provided
+	if len(operatorArgs) > 0 {
+		managerYAMLStr = injectOperatorArgs(managerYAMLStr, operatorArgs)
+	}
 
 	// Write to temp file under the working directory so kubectl path validation passes.
 	tmpFile, err := os.CreateTemp(".", "manager-*.yaml")
@@ -883,6 +916,46 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 
 	Success("Operator manifests deployed successfully")
 	return nil
+}
+
+// injectOperatorArgs injects operator command-line arguments into the manager deployment YAML.
+// It replaces the existing args section or adds one if it doesn't exist.
+func injectOperatorArgs(yamlContent string, args []string) string {
+	if len(args) == 0 {
+		return yamlContent
+	}
+
+	// Build the new args section
+	indent := "        " // 8 spaces (standard YAML indentation for args in containers)
+	argsYAML := indent + "args:\n"
+	for _, arg := range args {
+		argsYAML += fmt.Sprintf("%s- %s\n", indent, arg)
+	}
+
+	// Pattern to match the args section - find "args:" line and everything after it until next key
+	// Match: "args:" followed by any number of indented list items (using [0-9] instead of backreference)
+	argsPattern := regexp.MustCompile(`(?m)^(\s*)args:\s*$\n((?:\s+-\s+[^\n]+\n?)*)`)
+	if argsPattern.MatchString(yamlContent) {
+		// Replace existing args section - capture the indentation from group 1
+		return argsPattern.ReplaceAllString(yamlContent, "${1}args:\n"+argsYAML)
+	}
+
+	// If no args section exists, find the command line and add args after it
+	// Pattern: matches "command:" followed by command array items
+	commandPattern := regexp.MustCompile(`(?m)^(\s*)command:\s*$\n((?:\s+-\s+[^\n]+\n?)+)`)
+	if commandPattern.MatchString(yamlContent) {
+		// Add args after command
+		return commandPattern.ReplaceAllString(yamlContent, "${0}"+argsYAML)
+	}
+
+	// Fallback: if we can't find command, try to add after image
+	imagePattern := regexp.MustCompile(`(?m)^(\s*)image:\s*\S+$`)
+	if imagePattern.MatchString(yamlContent) {
+		return imagePattern.ReplaceAllString(yamlContent, "${0}\n"+argsYAML)
+	}
+
+	// If all else fails, return original (shouldn't happen with valid manager.yaml)
+	return yamlContent
 }
 
 // setupTLS configures TLS by applying cert-manager resources.

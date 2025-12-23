@@ -271,7 +271,13 @@ func TestValidateIngressConfig(t *testing.T) {
 				IngressPath: "/test-server",
 			},
 		}
-		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer).Build()
+		client := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&mcpv1alpha1.MCPServer{}).
+			Build()
+		if err := client.Create(context.Background(), mcpServer); err != nil {
+			t.Fatalf("failed to create MCPServer: %v", err)
+		}
 		r := MCPServerReconciler{Client: client, Scheme: scheme}
 
 		err := r.validateIngressConfig(context.Background(), mcpServer, logr.Discard())
@@ -465,8 +471,15 @@ func TestUpdateStatus(t *testing.T) {
 		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer).Build()
 		r := MCPServerReconciler{Client: client, Scheme: scheme}
 		r.updateStatus(context.Background(), mcpServer, "Ready", "All resources reconciled", true, true, true)
-		assertEqual(t, "phase", mcpServer.Status.Phase, "Ready")
-		assertEqual(t, "message", mcpServer.Status.Message, "All resources reconciled")
+		updated := &mcpv1alpha1.MCPServer{}
+		if err := client.Get(context.Background(), types.NamespacedName{
+			Name:      "test-server",
+			Namespace: "default",
+		}, updated); err != nil {
+			t.Fatalf("failed to fetch updated MCPServer: %v", err)
+		}
+		assertEqual(t, "phase", updated.Status.Phase, "Ready")
+		assertEqual(t, "message", updated.Status.Message, "All resources reconciled")
 	})
 }
 

@@ -104,6 +104,7 @@ func (s deployOperatorStepCmd) Run(logger *zap.Logger, deps SetupDeps, ctx *Setu
 		ctx.ExternalRegistry,
 		ctx.RegistrySecretName,
 		ctx.UsingExternalRegistry,
+		ctx.Plan.OperatorArgs,
 		deps,
 	)
 }
