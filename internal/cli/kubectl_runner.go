@@ -1,5 +1,8 @@
 package cli
 
+// This file defines the KubectlRunner interface for kubectl operations.
+// This interface is used by setup helpers to abstract kubectl command execution.
+
 import "io"
 
 // KubectlRunner captures the kubectl methods used by setup helpers.

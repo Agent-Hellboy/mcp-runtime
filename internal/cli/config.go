@@ -1,5 +1,7 @@
-// Package cli provides CLI configuration and commands for the mcp-runtime.
 package cli
+
+// This file defines CLI configuration loading from environment variables.
+// CLIConfig holds all CLI settings including timeouts, registry settings, and server defaults.
 
 import (
 	"os"

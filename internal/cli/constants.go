@@ -1,7 +1,10 @@
-// Package cli provides CLI commands for the mcp-runtime.
 package cli
 
-// Namespace constants used across the CLI.
+// This file defines constants used across the CLI, including:
+//   - Kubernetes namespace names
+//   - Deployment and resource names
+//   - Label selectors
+//   - Default values
 const (
 	// NamespaceMCPRuntime is the namespace for the MCP runtime operator.
 	NamespaceMCPRuntime = "mcp-runtime"

@@ -1,5 +1,9 @@
 package cli
 
+// This file implements the "setup" command for installing and configuring the MCP platform.
+// It handles cluster initialization, registry deployment, operator installation, and TLS setup.
+// The setup process is organized as a series of steps with dependency injection for testability.
+
 import (
 	"bytes"
 	"encoding/base64"

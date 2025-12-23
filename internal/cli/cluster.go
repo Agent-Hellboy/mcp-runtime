@@ -1,5 +1,8 @@
 package cli
 
+// This file implements the "cluster" command for managing Kubernetes cluster operations.
+// It handles cluster initialization, status checks, configuration, provisioning, and certificate management.
+
 import (
 	"errors"
 	"fmt"

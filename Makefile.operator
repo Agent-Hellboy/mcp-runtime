@@ -1,6 +1,6 @@
-.PHONY: install-operator deploy-operator undeploy-operator generate manifests
+.PHONY: help manifests generate controller-gen install uninstall deploy undeploy build run docker-build docker-push test fmt vet kustomize
 
-# Image URL to use all building/pushing image targets
+# Variables
 IMG ?= mcp-runtime-operator:latest
 ARCH ?= $(shell go env GOARCH)
 DOCKER_PLATFORM ?= linux/$(ARCH)
@@ -20,17 +20,11 @@ SHELL = /usr/bin/env bash -o pipefail
 
 ##@ General
 
-# The help target prints out all targets with their descriptions organized
-# beneath their categories. The categories are represented by '##@' and the
-# target descriptions by '##'. The awk commands is responsible for reading the
-# entire set of makefiles included in this invocation, looking for lines of the
-# file as xyz: ## something, and then pretty-format the target and help. Then,
-# if there's a line with ##@ something, that gets pretty-printed as a category.
-# More info on the usage of ANSI control characters for terminal formatting:
-# https://en.wikipedia.org/wiki/ANSI_escape_code#SGR
-.PHONY: help
-help: ## Display this help.
-	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
+help: ## Display this help message.
+	@echo "Usage: make -f Makefile.operator [target]"
+	@echo ""
+	@echo "Available targets:"
+	@awk 'BEGIN {FS = ":.*##"; printf ""} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
 ##@ Development
 
@@ -44,6 +38,10 @@ CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
 controller-gen: ## Download controller-gen locally if necessary.
 	@mkdir -p $(shell dirname $(CONTROLLER_GEN))
 	$(call go-get-tool,sigs.k8s.io/controller-tools/cmd/controller-gen@v0.19.0,$(CONTROLLER_GEN))
+
+KUSTOMIZE = $(shell pwd)/bin/kustomize
+kustomize: ## Download kustomize locally if necessary.
+	$(call go-get-tool,sigs.k8s.io/kustomize/kustomize/v5@latest,$(KUSTOMIZE))
 
 ##@ Deployment
 
@@ -61,24 +59,36 @@ undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/confi
 
 ##@ Build
 
-build-operator: generate fmt vet ## Build operator binary.
+build: generate fmt vet ## Build operator binary.
+	@echo "Building operator..."
 	go build -o bin/manager cmd/operator/main.go
+	@echo "Operator binary built: bin/manager"
 
-run-operator: manifests generate fmt vet ## Run operator against the configured Kubernetes cluster in ~/.kube/config
+run: manifests generate fmt vet ## Run operator against the configured Kubernetes cluster in ~/.kube/config.
 	go run ./cmd/operator/main.go
 
-docker-build-operator: test ## Build docker image with the operator.
+docker-build: test ## Build Docker image with the operator.
+	@echo "Building Docker image: ${IMG}"
 	DOCKER_BUILDKIT=0 docker build --platform=${DOCKER_PLATFORM} -t ${IMG} -f Dockerfile.operator .
+	@echo "Docker image built: ${IMG}"
 
-docker-push-operator: ## Push docker image.
+docker-push: ## Push Docker image to registry.
+	@echo "Pushing Docker image: ${IMG}"
 	docker push ${IMG}
+	@echo "Docker image pushed: ${IMG}"
 
 ##@ Testing
 
-test: manifests generate fmt vet ## Run tests.
+test: manifests generate fmt vet ## Run all tests.
 	go test ./... -coverprofile cover.out
 
-fmt: ## Run go fmt against code.
+coverage: test ## Generate code coverage report.
+	@echo "Coverage report generated: cover.out"
+	@go tool cover -func=cover.out | tail -1
+
+##@ Code Quality
+
+fmt: ## Format Go code using go fmt.
 	go fmt ./...
 
 vet: ## Run go vet against code.
@@ -98,7 +108,3 @@ CGO_ENABLED=0 GOBIN=$(PROJECT_DIR)/bin go install $(1) ;\
 rm -rf $$TMP_DIR ;\
 }
 endef
-
-KUSTOMIZE = $(shell pwd)/bin/kustomize
-kustomize: ## Download kustomize locally if necessary.
-	$(call go-get-tool,sigs.k8s.io/kustomize/kustomize/v5@latest,$(KUSTOMIZE))

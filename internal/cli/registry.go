@@ -1,5 +1,8 @@
 package cli
 
+// This file implements the "registry" command for managing the container registry.
+// It handles registry provisioning, status checks, image pushing, and registry information display.
+
 import (
 	"bytes"
 	"fmt"

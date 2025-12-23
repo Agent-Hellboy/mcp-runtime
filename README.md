@@ -13,7 +13,7 @@ When working with large language models, context window limitations often requir
 
 The platform targets organizations that need to ship many MCP servers internally, maintaining a centralized registry where any team can discover and use available MCP servers across the company.
 
-> ⚠️ **Caution**: This platform is currently under active development. APIs, commands, and behavior may change. Some features are "vibe-coded" and need thorough testing. Not recommended for production use yet. Contributions and feedback welcome!
+> ⚠️ **Caution**: This platform is currently under active development. APIs, commands, and behavior may change. Some features need thorough testing. Not recommended for production use yet. Contributions and feedback welcome!
 
 ## Overview
 
@@ -37,29 +37,31 @@ MCP Runtime Platform provides a streamlined workflow for teams to deploy a suite
 ## Architecture
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Developer     │    │   CI/CD Runner  │    │   Kubernetes    │
-│   Workstations  │    │                 │    │   Cluster       │
-│                 │    │  1. Build Image │    │                 │
-│  • VS Code      │────│  2. Push to     │────│  ┌─────────────┐│
-│  • Terminal     │    │     Registry    │    │  │  Registry   ││
-│                 │    │  3. Generate    │    │  │  (Docker)   ││
-└─────────────────┘    │     CRDs        │    │  └─────────────┘│
-                       │  4. Deploy      │    │                 │
-                       └─────────────────┘    │  ┌─────────────┐│
-                                              │  │  Operator   ││
-                                              │  │  Controller ││
-                                              │  └─────────────┘│
-                                              │        │        │
-                                              │        ▼        │
-                                              │  ┌─────────────┐│
-                                              │  │ MCPServer   ││
-                                              │  │ Resources   ││
-                                              │  │ • Deployment││
-                                              │  │ • Service   ││
-                                              │  │ • Ingress   ││
-                                              │  └─────────────┘│
-                                              └─────────────────┘
+┌─────────────────────┐         ┌──────────────────────┐         ┌──────────────────────┐
+│   Developer         │         │   CI/CD Pipeline     │         │   Kubernetes         │
+│   Workstation       │         │                      │         │   Cluster            │
+│                     │         │  1. Build Image      │         │                      │
+│  • VS Code          │────────▶│  2. Push to Registry │────────▶│  ┌────────────────┐  │
+│  • Terminal         │         │  3. Generate CRDs    │         │  │  Registry      │  │
+│  • Git Push         │         │  4. Deploy Manifests │         │  │  (Internal)    │  │
+└─────────────────────┘         └──────────────────────┘         │  └────────────────┘  │
+                                                                 │                      │
+                                                                 │  ┌────────────────┐  │
+                                                                 │  │  Operator      │  │
+                                                                 │  │  Controller    │  │
+                                                                 │  │  (Watches CRDs)│  │
+                                                                 │  └────────┬───────┘  │
+                                                                 │           │          │
+                                                                 │           ▼          │
+                                                                 │  ┌────────────────┐  │
+                                                                 │  │ MCPServer CRD  │  │
+                                                                 │  │                │  │
+                                                                 │  │ Creates:       │  │
+                                                                 │  │ • Deployment   │  │
+                                                                 │  │ • Service      │  │
+                                                                 │  │ • Ingress      │  │
+                                                                 │  └────────────────┘  │
+                                                                 └──────────────────────┘
 ```
 
 
@@ -195,7 +197,7 @@ kubectl set env deployment/mcp-runtime-operator-controller-manager \
 # 1. Clone and build
 git clone https://mcp-runtime.git
 cd mcp-runtime
-make install && make build-runtime
+make install && make build
 
 # 2. Setup platform
 ./bin/mcp-runtime setup
@@ -253,8 +255,8 @@ make fmt               # Format code
 make lint              # Lint code
 
 # Operator development
-make -f Makefile.operator manifests generate  # Regenerate CRDs
-make -f Makefile.operator docker-build-operator IMG=<image>
+make operator-manifests operator-generate  # Regenerate CRDs
+make operator-docker-build IMG=<image>
 ```
 
 ### Testing
@@ -309,7 +311,7 @@ The platform uses `mcp-runtime.org` as the default API group. If you want to use
 
 3. Regenerate manifests:
    ```bash
-   make -f Makefile.operator manifests generate
+   make operator-manifests operator-generate
    ```
 
 4. Build and deploy your branded version

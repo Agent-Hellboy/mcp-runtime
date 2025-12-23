@@ -1,50 +1,71 @@
-.PHONY: all build test clean install dev fmt lint coverage build-unix install-bin
+.PHONY: all build test clean deps dev fmt lint coverage build-all install help \
+	operator-build operator-run operator-docker-build operator-docker-push \
+	operator-test operator-deploy operator-undeploy operator-install operator-uninstall \
+	operator-manifests operator-generate operator-coverage \
+	registry-deploy
 
+# Variables
+BINARY_NAME ?= mcp-runtime
+BUILD_DIR ?= bin
 GOCACHE ?= $(CURDIR)/.gocache
 export GOCACHE
 
-all: build-cli
 
--include Makefile.runtime
+##@ General
 
-# Binary name
-BINARY_NAME=mcp-runtime
-BUILD_DIR=bin
+help: ## Display this help message.
+	@echo "Usage: make [target]"
+	@echo ""
+	@echo "Available targets:"
+	@awk 'BEGIN {FS = ":.*##"; printf ""} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
-# Build the mcp-runtime CLI for current platform
-build-cli:
+##@ Build
+
+all: build ## Default target: build CLI
+
+build: ## Build CLI binary for current platform.
 	@echo "Building $(BINARY_NAME) CLI..."
 	@mkdir -p $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/mcp-runtime
 
-# Alias for backward compatibility
-build: build-cli
+build-all: ## Build CLI for all Unix platforms (macOS and Linux, ARM64 and AMD64).
+	@echo "Building for all Unix platforms..."
+	@mkdir -p $(BUILD_DIR)
+	@echo "Building macOS ARM64..."
+	GOOS=darwin GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/mcp-runtime
+	@echo "Building macOS AMD64..."
+	GOOS=darwin GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/mcp-runtime
+	@echo "Building Linux ARM64..."
+	GOOS=linux GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/mcp-runtime
+	@echo "Building Linux AMD64..."
+	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/mcp-runtime
+	@echo "Build complete. Binaries in $(BUILD_DIR)/"
 
-# Run tests
-test:
-	go test -v ./...
+##@ Development
 
-# Clean build artifacts
-clean:
-	@echo "Cleaning..."
-	@rm -rf $(BUILD_DIR)
-	go clean
+dev: build ## Build and run CLI in development mode.
+	./$(BUILD_DIR)/$(BINARY_NAME)
 
-# Install dependencies
-install:
+deps: ## Download and tidy Go module dependencies.
 	go mod download
 	go mod tidy
 
-# Development mode
-dev: build-cli
-	./$(BUILD_DIR)/$(BINARY_NAME)
+##@ Testing
 
-# Format code
-fmt:
+test: ## Run all tests.
+	go test -v ./...
+
+coverage: ## Generate code coverage report.
+	go test -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report generated: coverage.html"
+
+##@ Code Quality
+
+fmt: ## Format Go code using go fmt.
 	go fmt ./...
 
-# Lint code (requires golangci-lint)
-lint:
+lint: ## Lint code using golangci-lint (requires golangci-lint to be installed).
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run; \
 	else \
@@ -52,25 +73,63 @@ lint:
 		exit 1; \
 	fi
 
-# Generate code coverage report
-coverage:
-	go test -coverprofile=coverage.out ./...
-	go tool cover -html=coverage.out -o coverage.html
+vet: ## Run go vet.
+	go vet ./...
 
-# Build for Unix platforms (macOS and Ubuntu)
-build-unix:
-	@echo "Building for Unix platforms..."
-	@mkdir -p $(BUILD_DIR)
-	# macOS ARM64 (M1/M4)
-	GOOS=darwin GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/mcp-runtime
-	# macOS AMD64 (Intel)
-	GOOS=darwin GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/mcp-runtime
-	# Linux ARM64
-	GOOS=linux GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/mcp-runtime
-	# Linux AMD64
-	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/mcp-runtime
+##@ Cleanup
 
-# Install binary to system PATH
-install-bin: build-cli
+clean: ## Remove build artifacts and clean Go cache.
+	@echo "Cleaning build artifacts..."
+	@rm -rf $(BUILD_DIR)
+	@rm -f coverage.out coverage.html
+	go clean
+
+##@ Installation
+
+install: build ## Install CLI binary to /usr/local/bin (requires sudo).
 	@echo "Installing $(BINARY_NAME) to /usr/local/bin..."
 	@sudo cp $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/
+	@echo "Installation complete. Run '$(BINARY_NAME)' to use."
+
+##@ Operator
+
+operator-build: ## Build operator binary.
+	@$(MAKE) -f Makefile.operator build
+
+operator-run: ## Run operator against the configured Kubernetes cluster.
+	@$(MAKE) -f Makefile.operator run
+
+operator-docker-build: ## Build Docker image with the operator.
+	@$(MAKE) -f Makefile.operator docker-build
+
+operator-docker-push: ## Push Docker image to registry.
+	@$(MAKE) -f Makefile.operator docker-push
+
+operator-test: ## Run operator tests.
+	@$(MAKE) -f Makefile.operator test
+
+operator-coverage: ## Generate operator code coverage report.
+	@$(MAKE) -f Makefile.operator coverage
+
+operator-deploy: ## Deploy operator to Kubernetes cluster.
+	@$(MAKE) -f Makefile.operator deploy
+
+operator-undeploy: ## Undeploy operator from Kubernetes cluster.
+	@$(MAKE) -f Makefile.operator undeploy
+
+operator-install: ## Install operator CRDs into Kubernetes cluster.
+	@$(MAKE) -f Makefile.operator install
+
+operator-uninstall: ## Uninstall operator CRDs from Kubernetes cluster.
+	@$(MAKE) -f Makefile.operator uninstall
+
+operator-manifests: ## Generate operator manifests (CRDs, RBAC).
+	@$(MAKE) -f Makefile.operator manifests
+
+operator-generate: ## Generate operator code (DeepCopy methods).
+	@$(MAKE) -f Makefile.operator generate
+
+##@ Registry
+
+registry-deploy: ## Deploy container registry to Kubernetes cluster.
+	kubectl apply -k config/registry/

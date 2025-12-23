@@ -1,5 +1,8 @@
 package cli
 
+// This file implements the "pipeline" command for CI/CD integration.
+// It handles generating CRDs from metadata and deploying manifests to Kubernetes clusters.
+
 import (
 	"fmt"
 	"os"

@@ -1,5 +1,8 @@
 package cli
 
+// This file provides test doubles (mocks) for testing CLI functionality.
+// It includes MockCommand and MockExecutor for testing command execution.
+
 import "io"
 
 // MockCommand is a test double for Command interface.

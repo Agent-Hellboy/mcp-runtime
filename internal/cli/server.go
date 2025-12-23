@@ -1,5 +1,8 @@
 package cli
 
+// This file implements the "server" command for managing MCP server resources.
+// It handles creating, listing, viewing, and deleting MCPServer custom resources.
+
 import (
 	"errors"
 	"fmt"
