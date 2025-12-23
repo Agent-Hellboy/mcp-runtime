@@ -107,10 +107,16 @@ func (m *RegistryManager) newRegistryProvisionCmd() *cobra.Command {
 				return err
 			}
 			if cfg == nil || cfg.URL == "" {
-				return fmt.Errorf("registry url is required (flag, env PROVISIONED_REGISTRY_URL, or config file)")
+				err := newWithSentinel(ErrRegistryURLRequired, "registry url is required (flag, env PROVISIONED_REGISTRY_URL, or config file)")
+				Error("Registry URL required")
+				logStructuredError(m.logger, err, "Registry URL required")
+				return err
 			}
 			if err := saveExternalRegistryConfig(cfg); err != nil {
-				return fmt.Errorf("failed to save registry config: %w", err)
+				wrappedErr := wrapWithSentinel(ErrSaveRegistryConfigFailed, err, fmt.Sprintf("failed to save registry config: %v", err))
+				Error("Failed to save registry config")
+				logStructuredError(m.logger, wrappedErr, "Failed to save registry config")
+				return wrappedErr
 			}
 			if cfg.Username != "" && cfg.Password != "" {
 				m.logger.Info("Performing docker login to external registry", zap.String("url", cfg.URL))
@@ -121,10 +127,26 @@ func (m *RegistryManager) newRegistryProvisionCmd() *cobra.Command {
 			if operatorImage != "" {
 				m.logger.Info("Building and pushing operator image to external registry", zap.String("image", operatorImage))
 				if err := buildOperatorImage(operatorImage); err != nil {
-					return fmt.Errorf("failed to build operator image: %w", err)
+					wrappedErr := wrapWithSentinelAndContext(
+						ErrBuildOperatorImageFailed,
+						err,
+						fmt.Sprintf("failed to build operator image: %v", err),
+						map[string]any{"image": operatorImage, "component": "registry"},
+					)
+					Error("Failed to build operator image")
+					logStructuredError(m.logger, wrappedErr, "Failed to build operator image")
+					return wrappedErr
 				}
 				if err := pushOperatorImage(operatorImage); err != nil {
-					return fmt.Errorf("failed to push operator image: %w", err)
+					wrappedErr := wrapWithSentinelAndContext(
+						ErrPushOperatorImageFailed,
+						err,
+						fmt.Sprintf("failed to push operator image: %v", err),
+						map[string]any{"image": operatorImage, "component": "registry"},
+					)
+					Error("Failed to push operator image")
+					logStructuredError(m.logger, wrappedErr, "Failed to push operator image")
+					return wrappedErr
 				}
 			}
 			m.logger.Info("External registry configured", zap.String("url", cfg.URL))
@@ -153,7 +175,10 @@ func (m *RegistryManager) newRegistryPushCmd() *cobra.Command {
 		Short: "Retag and push an image to the platform or provisioned registry",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if image == "" {
-				return fmt.Errorf("image is required (use --image)")
+				err := newWithSentinel(ErrImageRequired, "image is required (use --image)")
+				Error("Image required")
+				logStructuredError(m.logger, err, "Image required")
+				return err
 			}
 			targetRegistry := registryURL
 			if targetRegistry == "" {
@@ -184,7 +209,10 @@ func (m *RegistryManager) newRegistryPushCmd() *cobra.Command {
 			case "in-cluster":
 				return m.PushInCluster(image, target, helperNamespace)
 			default:
-				return fmt.Errorf("unknown mode %q (use direct|in-cluster)", mode)
+				err := newWithSentinel(ErrUnknownRegistryMode, fmt.Sprintf("unknown mode %q (use direct|in-cluster)", mode))
+				Error("Unknown registry mode")
+				logStructuredError(m.logger, err, "Unknown registry mode")
+				return err
 			}
 		},
 	}
@@ -214,7 +242,10 @@ func registryConfigPath() (string, error) {
 
 func saveExternalRegistryConfig(cfg *ExternalRegistryConfig) error {
 	if cfg == nil || cfg.URL == "" {
-		return fmt.Errorf("registry url is required")
+		err := newWithSentinel(ErrRegistryURLRequired, "registry url is required")
+		Error("Registry URL required")
+		// Note: No logger available in this helper function
+		return err
 	}
 	path, err := registryConfigPath()
 	if err != nil {
@@ -241,14 +272,14 @@ func loadExternalRegistryConfig() (*ExternalRegistryConfig, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, wrapWithSentinel(ErrReadRegistryConfigFailed, err, fmt.Sprintf("failed to read registry config: %v", err))
 	}
 	var cfg ExternalRegistryConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, err
+		return nil, wrapWithSentinel(ErrUnmarshalRegistryConfigFailed, err, fmt.Sprintf("failed to unmarshal registry config: %v", err))
 	}
 	if cfg.URL == "" {
-		return nil, fmt.Errorf("registry url missing in config")
+		return nil, newWithSentinel(ErrRegistryURLMissingInConfig, "registry url missing in config")
 	}
 	return &cfg, nil
 }
@@ -265,7 +296,8 @@ func resolveExternalRegistryConfig(flagCfg *ExternalRegistryConfig) (*ExternalRe
 		if cfg.URL != "" {
 			sourceFound = true
 		}
-	} else if err != nil && !os.IsNotExist(err) {
+	} else if err != nil {
+		// os.IsNotExist is already handled in loadExternalRegistryConfig
 		return nil, err
 	}
 
@@ -300,7 +332,10 @@ func resolveExternalRegistryConfig(flagCfg *ExternalRegistryConfig) (*ExternalRe
 
 	if cfg.URL == "" {
 		if sourceFound {
-			return nil, fmt.Errorf("registry url is required")
+			err := newWithSentinel(ErrRegistryURLRequired, "registry url is required")
+			Error("Registry URL required")
+			// Note: No logger available in this helper function
+			return nil, err
 		}
 		return nil, nil
 	}
@@ -319,7 +354,10 @@ func deployRegistry(logger *zap.Logger, namespace string, port int, registryType
 	case "docker":
 		// continue
 	default:
-		return fmt.Errorf("unsupported registry type %q (supported: docker; harbor coming soon)", registryType)
+		err := newWithSentinel(ErrUnsupportedRegistryType, fmt.Sprintf("unsupported registry type %q (supported: docker; harbor coming soon)", registryType))
+		Error("Unsupported registry type")
+		logStructuredError(logger, err, "Unsupported registry type")
+		return err
 	}
 
 	if manifestPath == "" {
@@ -328,13 +366,29 @@ func deployRegistry(logger *zap.Logger, namespace string, port int, registryType
 
 	// Ensure Namespace
 	if err := ensureNamespace(namespace); err != nil {
-		return fmt.Errorf("failed to ensure namespace: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrEnsureNamespaceFailed,
+			err,
+			fmt.Sprintf("failed to ensure namespace: %v", err),
+			map[string]any{"namespace": namespace, "component": "registry"},
+		)
+		Error("Failed to ensure namespace")
+		logStructuredError(logger, wrappedErr, "Failed to ensure namespace")
+		return wrappedErr
 	}
 	// Apply registry manifests via kustomize with namespace override
 	logger.Info("Applying registry manifests")
 	// #nosec G204 -- manifestPath from internal config, namespace from setup flags.
 	if err := kubectlClient.RunWithOutput([]string{"apply", "-k", manifestPath, "-n", namespace}, os.Stdout, os.Stderr); err != nil {
-		return fmt.Errorf("failed to deploy registry: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrDeployRegistryFailed,
+			err,
+			fmt.Sprintf("failed to deploy registry: %v", err),
+			map[string]any{"namespace": namespace, "manifest_path": manifestPath, "registry_type": registryType, "component": "registry"},
+		)
+		Error("Failed to deploy registry")
+		logStructuredError(logger, wrappedErr, "Failed to deploy registry")
+		return wrappedErr
 	}
 
 	if err := ensureRegistryStorageSize(logger, namespace, registryStorageSize); err != nil {
@@ -367,7 +421,15 @@ func ensureRegistryStorageSize(logger *zap.Logger, namespace, registryStorageSiz
 	getCmd.SetStdout(&stdout)
 	getCmd.SetStderr(&stderr)
 	if err := getCmd.Run(); err != nil {
-		return fmt.Errorf("failed to read current registry storage size: %w (%s)", err, strings.TrimSpace(stderr.String()))
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrReadRegistryStorageFailed,
+			err,
+			fmt.Sprintf("failed to read current registry storage size: %v (%s)", err, strings.TrimSpace(stderr.String())),
+			map[string]any{"namespace": namespace, "pvc": RegistryPVCName, "component": "registry"},
+		)
+		Error("Failed to read registry storage size")
+		logStructuredError(logger, wrappedErr, "Failed to read registry storage size")
+		return wrappedErr
 	}
 
 	currentSize := strings.TrimSpace(stdout.String())
@@ -380,7 +442,15 @@ func ensureRegistryStorageSize(logger *zap.Logger, namespace, registryStorageSiz
 	patchPayload := fmt.Sprintf(`{"spec":{"resources":{"requests":{"storage":"%s"}}}}`, storageSize)
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	if err := kubectlClient.RunWithOutput([]string{"patch", "pvc", RegistryPVCName, "-n", namespace, "-p", patchPayload}, os.Stdout, os.Stderr); err != nil {
-		return fmt.Errorf("failed to update registry storage size to %s: %w", storageSize, err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrUpdateRegistryStorageFailed,
+			err,
+			fmt.Sprintf("failed to update registry storage size to %s: %v", storageSize, err),
+			map[string]any{"namespace": namespace, "pvc": RegistryPVCName, "storage_size": storageSize, "component": "registry"},
+		)
+		Error("Failed to update registry storage size")
+		logStructuredError(logger, wrappedErr, "Failed to update registry storage size")
+		return wrappedErr
 	}
 
 	return nil
@@ -443,7 +513,15 @@ func (m *RegistryManager) LoginRegistry(registryURL, username, password string) 
 	cmd.SetStderr(os.Stderr)
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to login to registry: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrRegistryLoginFailed,
+			err,
+			fmt.Sprintf("failed to login to registry: %v", err),
+			map[string]any{"registry_url": registryURL, "component": "registry"},
+		)
+		Error("Failed to login to registry")
+		logStructuredError(m.logger, wrappedErr, "Failed to login to registry")
+		return wrappedErr
 	}
 
 	m.logger.Info("Successfully logged into registry")
@@ -535,7 +613,15 @@ func (m *RegistryManager) PushDirect(source, target string) error {
 	tagCmd.SetStdout(os.Stdout)
 	tagCmd.SetStderr(os.Stderr)
 	if err := tagCmd.Run(); err != nil {
-		return fmt.Errorf("failed to tag image: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrTagImageFailed,
+			err,
+			fmt.Sprintf("failed to tag image: %v", err),
+			map[string]any{"source": source, "target": target, "component": "registry"},
+		)
+		Error("Failed to tag image")
+		logStructuredError(m.logger, wrappedErr, "Failed to tag image")
+		return wrappedErr
 	}
 
 	// #nosec G204 -- target is image reference from internal push logic.
@@ -546,7 +632,15 @@ func (m *RegistryManager) PushDirect(source, target string) error {
 	pushCmd.SetStdout(os.Stdout)
 	pushCmd.SetStderr(os.Stderr)
 	if err := pushCmd.Run(); err != nil {
-		return fmt.Errorf("failed to push image: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrPushImageFailed,
+			err,
+			fmt.Sprintf("failed to push image: %v", err),
+			map[string]any{"target": target, "component": "registry"},
+		)
+		Error("Failed to push image")
+		logStructuredError(m.logger, wrappedErr, "Failed to push image")
+		return wrappedErr
 	}
 
 	Success(fmt.Sprintf("Pushed %s", target))
@@ -559,17 +653,31 @@ func (m *RegistryManager) PushInCluster(source, target, helperNS string) error {
 
 	// #nosec G204 -- helperNS from CLI flag, kubectl validates namespace names.
 	if err := m.kubectl.Run([]string{"get", "namespace", helperNS}); err != nil {
-		return fmt.Errorf("helper namespace %q not found (create it or pass --namespace): %w", helperNS, err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrHelperNamespaceNotFound,
+			err,
+			fmt.Sprintf("helper namespace %q not found (create it or pass --namespace): %v", helperNS, err),
+			map[string]any{"namespace": helperNS, "component": "registry"},
+		)
+		Error("Helper namespace not found")
+		logStructuredError(m.logger, wrappedErr, "Helper namespace not found")
+		return wrappedErr
 	}
 
 	// Ensure source is saved to tar
 	tmpFile, err := os.CreateTemp("", "mcp-img-*.tar")
 	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
+		wrappedErr := wrapWithSentinel(ErrCreateTempFileFailed, err, fmt.Sprintf("failed to create temp file: %v", err))
+		Error("Failed to create temp file")
+		logStructuredError(m.logger, wrappedErr, "Failed to create temp file")
+		return wrappedErr
 	}
 	tmpPath := tmpFile.Name()
 	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("failed to close temp file: %w", err)
+		wrappedErr := wrapWithSentinel(ErrCloseTempFileFailed, err, fmt.Sprintf("failed to close temp file: %v", err))
+		Error("Failed to close temp file")
+		logStructuredError(m.logger, wrappedErr, "Failed to close temp file")
+		return wrappedErr
 	}
 	defer os.Remove(tmpPath)
 
@@ -581,13 +689,29 @@ func (m *RegistryManager) PushInCluster(source, target, helperNS string) error {
 	saveCmd.SetStdout(os.Stdout)
 	saveCmd.SetStderr(os.Stderr)
 	if err := saveCmd.Run(); err != nil {
-		return fmt.Errorf("failed to save image: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrSaveImageFailed,
+			err,
+			fmt.Sprintf("failed to save image: %v", err),
+			map[string]any{"source": source, "component": "registry"},
+		)
+		Error("Failed to save image")
+		logStructuredError(m.logger, wrappedErr, "Failed to save image")
+		return wrappedErr
 	}
 
 	// Start helper pod with skopeo
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	if err := m.kubectl.RunWithOutput([]string{"run", helperName, "-n", helperNS, "--image=" + GetSkopeoImage(), "--restart=Never", "--command", "--", "sh", "-c", "while true; do sleep 3600; done"}, os.Stdout, os.Stderr); err != nil {
-		return fmt.Errorf("failed to start helper pod: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrStartHelperPodFailed,
+			err,
+			fmt.Sprintf("failed to start helper pod: %v", err),
+			map[string]any{"pod": helperName, "namespace": helperNS, "component": "registry"},
+		)
+		Error("Failed to start helper pod")
+		logStructuredError(m.logger, wrappedErr, "Failed to start helper pod")
+		return wrappedErr
 	}
 	defer func() {
 		// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
@@ -596,20 +720,44 @@ func (m *RegistryManager) PushInCluster(source, target, helperNS string) error {
 
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	if err := m.kubectl.RunWithOutput([]string{"wait", "--for=condition=Ready", "pod/" + helperName, "-n", helperNS, "--timeout=60s"}, os.Stdout, os.Stderr); err != nil {
-		return fmt.Errorf("helper pod not ready: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrHelperPodNotReady,
+			err,
+			fmt.Sprintf("helper pod not ready: %v", err),
+			map[string]any{"pod": helperName, "namespace": helperNS, "component": "registry"},
+		)
+		Error("Helper pod not ready")
+		logStructuredError(m.logger, wrappedErr, "Helper pod not ready")
+		return wrappedErr
 	}
 
 	// Copy tar into pod
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	if err := m.kubectl.RunWithOutput([]string{"cp", tmpPath, fmt.Sprintf("%s/%s:%s", helperNS, helperName, "/tmp/image.tar")}, os.Stdout, os.Stderr); err != nil {
-		return fmt.Errorf("failed to copy image tar to helper pod: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrCopyImageToHelperFailed,
+			err,
+			fmt.Sprintf("failed to copy image tar to helper pod: %v", err),
+			map[string]any{"pod": helperName, "namespace": helperNS, "component": "registry"},
+		)
+		Error("Failed to copy image to helper pod")
+		logStructuredError(m.logger, wrappedErr, "Failed to copy image to helper pod")
+		return wrappedErr
 	}
 
 	// Push using skopeo from inside cluster (registry is http, so disable tls verify)
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	if err := m.kubectl.RunWithOutput([]string{"exec", "-n", helperNS, helperName, "--",
 		"skopeo", "copy", "--dest-tls-verify=false", "docker-archive:/tmp/image.tar", "docker://" + target}, os.Stdout, os.Stderr); err != nil {
-		return fmt.Errorf("failed to push image from helper pod: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrPushImageFromHelperFailed,
+			err,
+			fmt.Sprintf("failed to push image from helper pod: %v", err),
+			map[string]any{"pod": helperName, "namespace": helperNS, "target": target, "component": "registry"},
+		)
+		Error("Failed to push image from helper pod")
+		logStructuredError(m.logger, wrappedErr, "Failed to push image from helper pod")
+		return wrappedErr
 	}
 
 	Success(fmt.Sprintf("Pushed %s via in-cluster helper", target))

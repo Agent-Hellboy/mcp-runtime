@@ -10,3 +10,6 @@ Flags:
       --file string     Path to metadata file (YAML)
   -h, --help            help for generate
       --output string   Output directory for CRD files (default "manifests")
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

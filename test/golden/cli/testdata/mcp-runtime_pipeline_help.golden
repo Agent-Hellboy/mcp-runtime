@@ -10,4 +10,7 @@ Available Commands:
 Flags:
   -h, --help   help for pipeline
 
+Global Flags:
+      --debug   Enable debug mode with structured error logging
+
 Use "mcp-runtime pipeline [command] --help" for more information about a command.

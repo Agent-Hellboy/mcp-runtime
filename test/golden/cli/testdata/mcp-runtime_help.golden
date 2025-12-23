@@ -18,6 +18,7 @@ Available Commands:
   status      Show platform status
 
 Flags:
+      --debug     Enable debug mode with structured error logging
   -h, --help      help for mcp-runtime
   -v, --version   version for mcp-runtime
 

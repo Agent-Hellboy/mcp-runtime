@@ -9,3 +9,6 @@ Flags:
       --nodes int         Number of nodes (default 3)
       --provider string   Cloud provider (kind, gke, eks, aks) (default "kind")
       --region string     Region for cluster (default "us-west-1")
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

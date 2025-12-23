@@ -15,10 +15,11 @@ var (
 	version = "dev"
 	commit  = "none"
 	date    = "unknown"
+	debug   = false
 )
 
 func main() {
-	logger, err := newConsoleLogger()
+	logger, err := newConsoleLogger(debug)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to init logger: %v\n", err)
 		os.Exit(1)
@@ -42,6 +43,14 @@ var rootCmd = &cobra.Command{
 - MCP server deployments
 - Platform configuration`,
 	Version: fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// Set debug mode globally so logStructuredError can check it
+		cli.SetDebugMode(debug)
+	},
+}
+
+func init() {
+	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug mode with structured error logging")
 }
 
 func initCommands(logger *zap.Logger) {
@@ -54,10 +63,16 @@ func initCommands(logger *zap.Logger) {
 }
 
 // newConsoleLogger returns a human-friendly console logger with timestamps and caller info.
-func newConsoleLogger() (*zap.Logger, error) {
+// If debug is true, sets log level to Debug to enable all debug logs.
+// Otherwise, sets to ErrorLevel so structured error logs (when debug flag is enabled) will show.
+func newConsoleLogger(debug bool) (*zap.Logger, error) {
 	cfg := zap.NewProductionConfig()
 	cfg.Encoding = "console"
-	cfg.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
+	level := zap.ErrorLevel // Error level allows Error logs to show
+	if debug {
+		level = zap.DebugLevel // Debug level shows all logs
+	}
+	cfg.Level = zap.NewAtomicLevelAt(level)
 	cfg.EncoderConfig = zapcore.EncoderConfig{
 		TimeKey:        "ts",
 		LevelKey:       "level",

@@ -9,3 +9,6 @@ Flags:
       --dir string         Directory containing CRD files (default "manifests")
   -h, --help               help for deploy
       --namespace string   Namespace to deploy to (overrides metadata)
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

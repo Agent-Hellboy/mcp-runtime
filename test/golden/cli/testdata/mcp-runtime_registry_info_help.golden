@@ -5,3 +5,6 @@ Usage:
 
 Flags:
   -h, --help   help for info
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

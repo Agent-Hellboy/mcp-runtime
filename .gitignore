@@ -14,3 +14,6 @@ DIFF*.md
 .gomodcache/
 FUTURE_PLAN.md
 .DS_Store
+*ARCHITECTURE.md
+f.go
+inspirations/
