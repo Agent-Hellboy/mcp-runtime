@@ -197,7 +197,11 @@ kubectl set env deployment/mcp-runtime-operator-controller-manager \
 # 1. Clone and build
 git clone https://mcp-runtime.git
 cd mcp-runtime
+<<<<<<< Updated upstream
 make install && make build
+=======
+make deps && make build-runtime
+>>>>>>> Stashed changes
 
 # 2. Setup platform
 ./bin/mcp-runtime setup
@@ -223,6 +227,26 @@ docker build -t my-server:latest .
 Your server will be available at: `http://<ingress-host>/my-server/mcp`
 
 For HTTPS, see the [TLS Setup](#tls-setup) section.
+
+## Developer Setup
+
+This repo includes a dev helper script for contributors:
+
+```bash
+# Install dev tools, generate CRDs/DeepCopy, format, and vet
+./hack/dev-setup.sh
+```
+
+Command breakdown:
+- `./hack/dev-setup.sh install` installs `controller-gen` and `kustomize` into `bin/`
+- `./hack/dev-setup.sh generate` regenerates CRDs in `config/crd/bases/` and DeepCopy code in `api/v1alpha1/zz_generated.deepcopy.go`
+- `./hack/dev-setup.sh format` runs `go fmt`
+- `./hack/dev-setup.sh validate` runs `go vet`
+
+Make targets:
+- `make deps` downloads Go module dependencies
+- `make build-cli` builds `bin/mcp-runtime`
+- `make install-bin` installs the binary to `/usr/local/bin` (requires sudo)
 
 ## Examples
 

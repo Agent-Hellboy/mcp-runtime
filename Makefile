@@ -1,8 +1,12 @@
+<<<<<<< Updated upstream
 .PHONY: all build test clean deps dev fmt lint coverage build-all install help \
 	operator-build operator-run operator-docker-build operator-docker-push \
 	operator-test operator-deploy operator-undeploy operator-install operator-uninstall \
 	operator-manifests operator-generate operator-coverage \
 	registry-deploy
+=======
+.PHONY: all build test clean deps dev fmt lint coverage build-unix install-bin
+>>>>>>> Stashed changes
 
 # Variables
 BINARY_NAME ?= mcp-runtime
@@ -46,7 +50,12 @@ build-all: ## Build CLI for all Unix platforms (macOS and Linux, ARM64 and AMD64
 dev: build ## Build and run CLI in development mode.
 	./$(BUILD_DIR)/$(BINARY_NAME)
 
+<<<<<<< Updated upstream
 deps: ## Download and tidy Go module dependencies.
+=======
+# Download Go module dependencies
+deps:
+>>>>>>> Stashed changes
 	go mod download
 	go mod tidy
 
