@@ -7,3 +7,6 @@ Flags:
       --context string      Kubernetes context to use
   -h, --help                help for init
       --kubeconfig string   Path to kubeconfig file (default: ~/.kube/config)
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

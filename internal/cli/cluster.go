@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -181,18 +182,37 @@ func (m *ClusterManager) InitCluster(kubeconfig, context string) error {
 	m.logger.Info("Installing CRD")
 	// #nosec G204 -- fixed file path from repository.
 	if err := m.kubectl.Run([]string{"apply", "--validate=false", "-f", "config/crd/bases/mcp-runtime.org_mcpservers.yaml"}); err != nil {
-		return fmt.Errorf("failed to install CRD: %w", err)
+		wrappedErr := wrapWithSentinel(ErrInstallCRDFailed, err, fmt.Sprintf("failed to install CRD: %v", err))
+		Error("Failed to install CRD")
+		logStructuredError(m.logger, wrappedErr, "Failed to install CRD")
+		return wrappedErr
 	}
 
 	// Create namespace
 	m.logger.Info("Creating mcp-runtime namespace")
 	if err := m.EnsureNamespace(NamespaceMCPRuntime); err != nil {
-		return fmt.Errorf("failed to ensure mcp-runtime namespace: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrEnsureRuntimeNamespaceFailed,
+			err,
+			fmt.Sprintf("failed to ensure mcp-runtime namespace: %v", err),
+			map[string]any{"namespace": NamespaceMCPRuntime, "component": "cluster"},
+		)
+		Error("Failed to ensure mcp-runtime namespace")
+		logStructuredError(m.logger, wrappedErr, "Failed to ensure mcp-runtime namespace")
+		return wrappedErr
 	}
 
 	m.logger.Info("Creating mcp-servers namespace")
 	if err := m.EnsureNamespace(NamespaceMCPServers); err != nil {
-		return fmt.Errorf("failed to ensure mcp-servers namespace: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrEnsureServersNamespaceFailed,
+			err,
+			fmt.Sprintf("failed to ensure mcp-servers namespace: %v", err),
+			map[string]any{"namespace": NamespaceMCPServers, "component": "cluster"},
+		)
+		Error("Failed to ensure mcp-servers namespace")
+		logStructuredError(m.logger, wrappedErr, "Failed to ensure mcp-servers namespace")
+		return wrappedErr
 	}
 
 	m.logger.Info("Cluster initialized successfully")
@@ -205,7 +225,10 @@ func resolveKubeconfigPath(kubeconfig string) (string, error) {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("failed to get home directory: %w", err)
+		wrappedErr := wrapWithSentinel(ErrGetHomeDirectoryFailed, err, fmt.Sprintf("failed to get home directory: %v", err))
+		Error("Failed to get home directory")
+		// Note: No logger available in this helper function
+		return "", wrappedErr
 	}
 	return filepath.Join(home, ".kube", "config"), nil
 }
@@ -217,17 +240,41 @@ func (m *ClusterManager) ConfigureKubeconfig(kubeconfig, context string) error {
 		return err
 	}
 	if _, err := os.Stat(path); err != nil {
-		return fmt.Errorf("kubeconfig %q not found or not readable: %w", path, err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrKubeconfigNotReadable,
+			err,
+			fmt.Sprintf("kubeconfig %q not found or not readable: %v", path, err),
+			map[string]any{"kubeconfig": path, "component": "cluster"},
+		)
+		Error("Kubeconfig not readable")
+		logStructuredError(m.logger, wrappedErr, "Kubeconfig not readable")
+		return wrappedErr
 	}
 
 	if err := os.Setenv("KUBECONFIG", path); err != nil {
-		return fmt.Errorf("failed to set KUBECONFIG: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrSetKubeconfigFailed,
+			err,
+			fmt.Sprintf("failed to set KUBECONFIG: %v", err),
+			map[string]any{"kubeconfig": path, "component": "cluster"},
+		)
+		Error("Failed to set KUBECONFIG")
+		logStructuredError(m.logger, wrappedErr, "Failed to set KUBECONFIG")
+		return wrappedErr
 	}
 
 	if context != "" {
 		// #nosec G204 -- context from CLI flag, kubectl validates context names.
 		if err := m.kubectl.Run([]string{"config", "use-context", context}); err != nil {
-			return fmt.Errorf("failed to set context: %w", err)
+			wrappedErr := wrapWithSentinelAndContext(
+				ErrSetContextFailed,
+				err,
+				fmt.Sprintf("failed to set context: %v", err),
+				map[string]any{"context": context, "component": "cluster"},
+			)
+			Error("Failed to set context")
+			logStructuredError(m.logger, wrappedErr, "Failed to set context")
+			return wrappedErr
 		}
 	}
 	return nil
@@ -239,11 +286,20 @@ func (m *ClusterManager) ConfigureKubeconfigFromProvider(provider, region, clust
 	case "eks":
 		return configureEKSKubeconfig(m.exec, region, clusterName, kubeconfig)
 	case "aks":
-		return fmt.Errorf("AKS kubeconfig not yet implemented; planned support (use `az aks get-credentials --name <cluster> --resource-group <rg>`)")
+		err := newWithSentinel(ErrAKSKubeconfigNotImplemented, "AKS kubeconfig not yet implemented; planned support (use `az aks get-credentials --name <cluster> --resource-group <rg>`)")
+		Error("AKS kubeconfig not implemented")
+		logStructuredError(m.logger, err, "AKS kubeconfig not implemented")
+		return err
 	case "gke":
-		return fmt.Errorf("GKE kubeconfig not yet implemented; planned support (use `gcloud container clusters get-credentials <cluster> --region <region> --project <project>`)")
+		err := newWithSentinel(ErrGKEKubeconfigNotImplemented, "GKE kubeconfig not yet implemented; planned support (use `gcloud container clusters get-credentials <cluster> --region <region> --project <project>`)")
+		Error("GKE kubeconfig not implemented")
+		logStructuredError(m.logger, err, "GKE kubeconfig not implemented")
+		return err
 	default:
-		return fmt.Errorf("unsupported provider: %s", provider)
+		err := newWithSentinel(ErrUnsupportedProvider, fmt.Sprintf("unsupported provider: %s", provider))
+		Error("Unsupported provider")
+		logStructuredError(m.logger, err, "Unsupported provider")
+		return err
 	}
 }
 
@@ -278,7 +334,10 @@ func (m *ClusterManager) CheckClusterStatus() error {
 	// #nosec G204 -- fixed kubectl command.
 	output, err := m.kubectl.CombinedOutput([]string{"cluster-info"})
 	if err != nil {
-		return fmt.Errorf("cluster not accessible: %w", err)
+		wrappedErr := wrapWithSentinel(ErrClusterNotAccessible, err, fmt.Sprintf("cluster not accessible: %v", err))
+		Error("Cluster not accessible")
+		logStructuredError(m.logger, wrappedErr, "Cluster not accessible")
+		return wrappedErr
 	}
 	DefaultPrinter.Println(string(output))
 
@@ -317,7 +376,10 @@ func (m *ClusterManager) ConfigureCluster(ingress ingressOptions) error {
 		return nil
 	case "traefik":
 	default:
-		return fmt.Errorf("unsupported ingress controller: %s", ingress.mode)
+		err := newWithSentinel(ErrUnsupportedIngressController, fmt.Sprintf("unsupported ingress controller: %s", ingress.mode))
+		Error("Unsupported ingress controller")
+		logStructuredError(m.logger, err, "Unsupported ingress controller")
+		return err
 	}
 
 	// Detect existing ingress classes to avoid double-install unless forced.
@@ -359,7 +421,15 @@ func (m *ClusterManager) ConfigureCluster(ingress ingressOptions) error {
 
 	// #nosec G204 -- manifest path from internal config or CLI flag with file validation.
 	if err := m.kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
-		return fmt.Errorf("failed to install ingress controller (%s): %w", ingress.mode, err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrInstallIngressControllerFailed,
+			err,
+			fmt.Sprintf("failed to install ingress controller (%s): %v", ingress.mode, err),
+			map[string]any{"ingress_mode": ingress.mode, "manifest": manifest, "component": "cluster"},
+		)
+		Error("Failed to install ingress controller")
+		logStructuredError(m.logger, wrappedErr, "Failed to install ingress controller")
+		return wrappedErr
 	}
 
 	m.logger.Info("Ingress controller installed successfully", zap.String("ingress", ingress.mode))
@@ -381,7 +451,10 @@ func (m *ClusterManager) ProvisionCluster(provider, region string, nodeCount int
 	case "aks":
 		return provisionAKSCluster(m.logger, region, nodeCount, clusterName)
 	default:
-		return fmt.Errorf("unsupported provider: %s", provider)
+		err := newWithSentinel(ErrUnsupportedProvider, fmt.Sprintf("unsupported provider: %s", provider))
+		Error("Unsupported provider")
+		logStructuredError(m.logger, err, "Unsupported provider")
+		return err
 	}
 }
 
@@ -405,17 +478,29 @@ nodes:
 	// Write config to temp file
 	tmp, err := os.CreateTemp("", "mcp-kind-config-*.yaml")
 	if err != nil {
-		return fmt.Errorf("failed to create temp kind config: %w", err)
+		wrappedErr := wrapWithSentinel(ErrCreateKindConfigFailed, err, fmt.Sprintf("failed to create temp kind config: %v", err))
+		Error("Failed to create kind config")
+		logStructuredError(m.logger, wrappedErr, "Failed to create kind config")
+		return wrappedErr
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.WriteString(config); err != nil {
 		if closeErr := tmp.Close(); closeErr != nil {
-			return fmt.Errorf("failed to close kind config after write error: %w", closeErr)
+			wrappedErr := wrapWithSentinel(ErrCloseKindConfigFailed, errors.Join(err, closeErr), fmt.Sprintf("failed to close kind config after write error: %v", closeErr))
+			Error("Failed to close kind config")
+			logStructuredError(m.logger, wrappedErr, "Failed to close kind config")
+			return wrappedErr
 		}
-		return fmt.Errorf("failed to write kind config: %w", err)
+		wrappedErr := wrapWithSentinel(ErrWriteKindConfigFailed, err, fmt.Sprintf("failed to write kind config: %v", err))
+		Error("Failed to write kind config")
+		logStructuredError(m.logger, wrappedErr, "Failed to write kind config")
+		return wrappedErr
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("failed to close kind config: %w", err)
+		wrappedErr := wrapWithSentinel(ErrCloseKindConfigFailed, err, fmt.Sprintf("failed to close kind config: %v", err))
+		Error("Failed to close kind config")
+		logStructuredError(m.logger, wrappedErr, "Failed to close kind config")
+		return wrappedErr
 	}
 
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
@@ -427,7 +512,15 @@ nodes:
 	cmd.SetStderr(os.Stderr)
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to create kind cluster: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrCreateKindClusterFailed,
+			err,
+			fmt.Sprintf("failed to create kind cluster: %v", err),
+			map[string]any{"cluster_name": clusterName, "node_count": nodeCount, "component": "cluster"},
+		)
+		Error("Failed to create kind cluster")
+		logStructuredError(m.logger, wrappedErr, "Failed to create kind cluster")
+		return wrappedErr
 	}
 
 	m.logger.Info("Kind cluster provisioned successfully")
@@ -438,7 +531,10 @@ func provisionGKECluster(logger *zap.Logger, region string, nodeCount int, clust
 	if clusterName == "" {
 		clusterName = defaultClusterName
 	}
-	return fmt.Errorf("GKE provisioning not yet implemented; create the cluster with gcloud, e.g. `gcloud container clusters create %s --region %s --num-nodes %d`", clusterName, region, nodeCount)
+	err := newWithSentinel(ErrGKEProvisioningNotImplemented, fmt.Sprintf("GKE provisioning not yet implemented; create the cluster with gcloud, e.g. `gcloud container clusters create %s --region %s --num-nodes %d`", clusterName, region, nodeCount))
+	Error("GKE provisioning not implemented")
+	logStructuredError(logger, err, "GKE provisioning not implemented")
+	return err
 }
 
 func provisionEKSCluster(logger *zap.Logger, exec Executor, region string, nodeCount int, clusterName string) error {
@@ -463,7 +559,15 @@ func provisionEKSCluster(logger *zap.Logger, exec Executor, region string, nodeC
 
 	logger.Info("Provisioning EKS cluster with eksctl", zap.String("name", clusterName), zap.String("region", region), zap.Int("nodes", nodeCount))
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to provision EKS cluster: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrProvisionEKSFailed,
+			err,
+			fmt.Sprintf("failed to provision EKS cluster: %v", err),
+			map[string]any{"cluster_name": clusterName, "region": region, "node_count": nodeCount, "component": "cluster"},
+		)
+		Error("Failed to provision EKS cluster")
+		logStructuredError(logger, wrappedErr, "Failed to provision EKS cluster")
+		return wrappedErr
 	}
 	logger.Info("EKS cluster provisioned successfully", zap.String("name", clusterName))
 	return nil
@@ -473,7 +577,10 @@ func provisionAKSCluster(logger *zap.Logger, region string, nodeCount int, clust
 	if clusterName == "" {
 		clusterName = defaultClusterName
 	}
-	return fmt.Errorf("AKS provisioning not yet implemented; create the cluster with az, e.g. `az aks create --name %s --resource-group <rg> --location %s --node-count %d`", clusterName, region, nodeCount)
+	err := newWithSentinel(ErrAKSProvisioningNotImplemented, fmt.Sprintf("AKS provisioning not yet implemented; create the cluster with az, e.g. `az aks create --name %s --resource-group <rg> --location %s --node-count %d`", clusterName, region, nodeCount))
+	Error("AKS provisioning not implemented")
+	logStructuredError(logger, err, "AKS provisioning not implemented")
+	return err
 }
 
 // EnsureNamespace applies/creates a namespace idempotently.

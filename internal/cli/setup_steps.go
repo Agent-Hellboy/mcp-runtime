@@ -113,7 +113,8 @@ type verifyStep struct{}
 func (s verifyStep) Name() string { return "verify" }
 func (s verifyStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error {
 	if err := verifySetup(ctx.UsingExternalRegistry, deps); err != nil {
-		Error(fmt.Sprintf("Post-setup verification failed: %v", err))
+		Error("Post-setup verification failed")
+		logStructuredError(logger, err, "Post-setup verification failed")
 		return err
 	}
 	return nil
@@ -133,7 +134,15 @@ func buildSetupSteps(ctx *SetupContext) []SetupStep {
 func runSetupSteps(logger *zap.Logger, deps SetupDeps, ctx *SetupContext, steps []SetupStep) error {
 	for _, step := range steps {
 		if err := step.Run(logger, deps, ctx); err != nil {
-			return fmt.Errorf("setup step %q failed: %w", step.Name(), err)
+			wrappedErr := wrapWithSentinelAndContext(
+				ErrSetupStepFailed,
+				err,
+				fmt.Sprintf("setup step %q failed: %v", step.Name(), err),
+				map[string]any{"step": step.Name(), "component": "setup"},
+			)
+			Error("Setup step failed")
+			logStructuredError(logger, wrappedErr, "Setup step failed")
+			return wrappedErr
 		}
 	}
 	return nil

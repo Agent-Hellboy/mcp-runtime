@@ -11,3 +11,6 @@ Flags:
       --metadata-file string   Path to metadata file
       --registry string        Registry URL (defaults to platform registry)
       --tag string             Image tag (defaults to git SHA or 'latest')
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

@@ -92,19 +92,31 @@ func (m *CertManager) newCertWaitCmd() *cobra.Command {
 func (m *CertManager) Status() error {
 	Info("Checking cert-manager installation")
 	if err := checkCertManagerInstalledWithKubectl(m.kubectl); err != nil {
-		return fmt.Errorf("cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true")
+		err := wrapWithSentinel(ErrCertManagerNotInstalled, err, "cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true")
+		Error("Cert-manager not installed")
+		logStructuredError(m.logger, err, "Cert-manager not installed")
+		return err
 	}
 	Info("Checking CA secret")
 	if err := checkCASecretWithKubectl(m.kubectl); err != nil {
-		return fmt.Errorf("CA secret %q not found in cert-manager namespace. Create it first:\n  kubectl create secret tls %s --cert=ca.crt --key=ca.key -n %s", certCASecretName, certCASecretName, certManagerNamespace)
+		err := newWithSentinel(ErrCASecretNotFound, fmt.Sprintf("CA secret %q not found in cert-manager namespace. Create it first:\n  kubectl create secret tls %s --cert=ca.crt --key=ca.key -n %s", certCASecretName, certCASecretName, certManagerNamespace))
+		Error("CA secret not found")
+		logStructuredError(m.logger, err, "CA secret not found")
+		return err
 	}
 	Info("Checking ClusterIssuer")
 	if err := checkClusterIssuerWithKubectl(m.kubectl); err != nil {
-		return fmt.Errorf("ClusterIssuer %q not found. Apply it first:\n  kubectl apply -f %s", certClusterIssuerName, clusterIssuerManifestPath)
+		err := newWithSentinel(ErrClusterIssuerNotFound, fmt.Sprintf("ClusterIssuer %q not found. Apply it first:\n  kubectl apply -f %s", certClusterIssuerName, clusterIssuerManifestPath))
+		Error("ClusterIssuer not found")
+		logStructuredError(m.logger, err, "ClusterIssuer not found")
+		return err
 	}
 	Info("Checking registry Certificate")
 	if err := checkCertificateWithKubectl(m.kubectl, registryCertificateName, NamespaceRegistry); err != nil {
-		return fmt.Errorf("registry Certificate not found. Apply it first:\n  kubectl apply -f %s", registryCertificateManifestPath)
+		err := newWithSentinel(ErrRegistryCertificateNotFound, fmt.Sprintf("registry Certificate not found. Apply it first:\n  kubectl apply -f %s", registryCertificateManifestPath))
+		Error("Registry Certificate not found")
+		logStructuredError(m.logger, err, "Registry Certificate not found")
+		return err
 	}
 	Success("Cert-manager resources are present")
 	return nil
@@ -114,23 +126,48 @@ func (m *CertManager) Status() error {
 func (m *CertManager) Apply() error {
 	Info("Checking cert-manager installation")
 	if err := checkCertManagerInstalledWithKubectl(m.kubectl); err != nil {
-		return fmt.Errorf("cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true")
+		err := wrapWithSentinel(ErrCertManagerNotInstalled, err, "cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true")
+		Error("Cert-manager not installed")
+		logStructuredError(m.logger, err, "Cert-manager not installed")
+		return err
 	}
 	Info("Checking CA secret")
 	if err := checkCASecretWithKubectl(m.kubectl); err != nil {
-		return fmt.Errorf("CA secret %q not found in cert-manager namespace. Create it first:\n  kubectl create secret tls %s --cert=ca.crt --key=ca.key -n %s", certCASecretName, certCASecretName, certManagerNamespace)
+		err := newWithSentinel(ErrCASecretNotFound, fmt.Sprintf("CA secret %q not found in cert-manager namespace. Create it first:\n  kubectl create secret tls %s --cert=ca.crt --key=ca.key -n %s", certCASecretName, certCASecretName, certManagerNamespace))
+		Error("CA secret not found")
+		logStructuredError(m.logger, err, "CA secret not found")
+		return err
 	}
 
 	Info("Applying ClusterIssuer")
 	if err := applyClusterIssuerWithKubectl(m.kubectl); err != nil {
-		return fmt.Errorf("failed to apply ClusterIssuer: %w", err)
+		wrappedErr := wrapWithSentinel(ErrClusterIssuerApplyFailed, err, fmt.Sprintf("failed to apply ClusterIssuer: %v", err))
+		Error("Failed to apply ClusterIssuer")
+		logStructuredError(m.logger, wrappedErr, "Failed to apply ClusterIssuer")
+		return wrappedErr
 	}
 	if err := ensureNamespace(NamespaceRegistry); err != nil {
-		return fmt.Errorf("failed to create registry namespace: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrCreateRegistryNamespaceFailed,
+			err,
+			fmt.Sprintf("failed to create registry namespace: %v", err),
+			map[string]any{"namespace": NamespaceRegistry, "component": "cert"},
+		)
+		Error("Failed to create registry namespace")
+		logStructuredError(m.logger, wrappedErr, "Failed to create registry namespace")
+		return wrappedErr
 	}
 	Info("Applying Certificate for registry")
 	if err := applyRegistryCertificateWithKubectl(m.kubectl); err != nil {
-		return fmt.Errorf("failed to apply Certificate: %w", err)
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrApplyCertificateFailed,
+			err,
+			fmt.Sprintf("failed to apply Certificate: %v", err),
+			map[string]any{"certificate": registryCertificateName, "namespace": NamespaceRegistry, "component": "cert"},
+		)
+		Error("Failed to apply Certificate")
+		logStructuredError(m.logger, wrappedErr, "Failed to apply Certificate")
+		return wrappedErr
 	}
 
 	Success("Cert-manager resources applied")
@@ -141,7 +178,10 @@ func (m *CertManager) Apply() error {
 func (m *CertManager) Wait(timeout time.Duration) error {
 	Info(fmt.Sprintf("Waiting for certificate to be issued (timeout: %s)", timeout))
 	if err := waitForCertificateReadyWithKubectl(m.kubectl, registryCertificateName, NamespaceRegistry, timeout); err != nil {
-		return fmt.Errorf("certificate not ready after %s. Check cert-manager logs: kubectl logs -n cert-manager deployment/cert-manager", timeout)
+		err := newWithSentinel(ErrCertificateNotReady, fmt.Sprintf("certificate not ready after %s. Check cert-manager logs: kubectl logs -n cert-manager deployment/cert-manager", timeout))
+		Error("Certificate not ready")
+		logStructuredError(m.logger, err, "Certificate not ready")
+		return err
 	}
 	Success("Certificate issued successfully")
 	return nil
@@ -166,7 +206,7 @@ func checkCASecretWithKubectl(kubectl KubectlRunner) error {
 func checkClusterIssuerWithKubectl(kubectl KubectlRunner) error {
 	// #nosec G204 -- fixed kubectl command to check ClusterIssuer.
 	if err := kubectl.Run([]string{"get", "clusterissuer", certClusterIssuerName}); err != nil {
-		return err
+		return wrapWithSentinel(ErrClusterIssuerNotFound, err, fmt.Sprintf("ClusterIssuer %q not found: %v", certClusterIssuerName, err))
 	}
 	return nil
 }
@@ -174,7 +214,7 @@ func checkClusterIssuerWithKubectl(kubectl KubectlRunner) error {
 func checkCertificateWithKubectl(kubectl KubectlRunner, name, namespace string) error {
 	// #nosec G204 -- fixed kubectl command to check certificate.
 	if err := kubectl.Run([]string{"get", "certificate", name, "-n", namespace}); err != nil {
-		return err
+		return wrapWithSentinel(ErrRegistryCertificateNotFound, err, fmt.Sprintf("Certificate %q not found in namespace %q: %v", name, namespace, err))
 	}
 	return nil
 }

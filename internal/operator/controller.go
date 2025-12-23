@@ -164,27 +164,43 @@ func (r *MCPServerReconciler) requireSpecField(ctx context.Context, mcpServer *m
 	if value != "" {
 		return nil
 	}
-	err := fmt.Errorf("%s", message)
+	contextMap := map[string]any{
+		"mcpServer": mcpServer.Name,
+		"namespace": mcpServer.Namespace,
+		"field":     field,
+	}
+	err := newOperatorError(message, contextMap)
 	r.updateStatus(ctx, mcpServer, "Error", err.Error(), false, false, false)
-	logger.Error(err, "Missing "+field)
+	logOperatorError(logger, err, "Missing "+field)
 	return err
 }
 
 func (r *MCPServerReconciler) reconcileResources(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, logger logr.Logger) error {
+	contextMap := map[string]any{
+		"mcpServer": mcpServer.Name,
+		"namespace": mcpServer.Namespace,
+	}
+
 	if err := r.reconcileDeployment(ctx, mcpServer); err != nil {
-		logger.Error(err, "Failed to reconcile Deployment")
+		contextMap["resource"] = "deployment"
+		wrappedErr := wrapOperatorError(err, "Failed to reconcile Deployment", contextMap)
+		logOperatorError(logger, wrappedErr, "Failed to reconcile Deployment")
 		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile Deployment: %v", err), false, false, false)
-		return err
+		return wrappedErr
 	}
 	if err := r.reconcileService(ctx, mcpServer); err != nil {
-		logger.Error(err, "Failed to reconcile Service")
+		contextMap["resource"] = "service"
+		wrappedErr := wrapOperatorError(err, "Failed to reconcile Service", contextMap)
+		logOperatorError(logger, wrappedErr, "Failed to reconcile Service")
 		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile Service: %v", err), false, false, false)
-		return err
+		return wrappedErr
 	}
 	if err := r.reconcileIngress(ctx, mcpServer); err != nil {
-		logger.Error(err, "Failed to reconcile Ingress")
+		contextMap["resource"] = "ingress"
+		wrappedErr := wrapOperatorError(err, "Failed to reconcile Ingress", contextMap)
+		logOperatorError(logger, wrappedErr, "Failed to reconcile Ingress")
 		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile Ingress: %v", err), false, false, false)
-		return err
+		return wrappedErr
 	}
 	return nil
 }
@@ -361,14 +377,24 @@ func applyContainerResources(container *corev1.Container, resources mcpv1alpha1.
 		if resources.Requests.CPU != "" {
 			cpu, err := resource.ParseQuantity(resources.Requests.CPU)
 			if err != nil {
-				return fmt.Errorf("invalid CPU request %q: %w", resources.Requests.CPU, err)
+				contextMap := map[string]any{
+					"resource": "cpu",
+					"type":     "request",
+					"value":    resources.Requests.CPU,
+				}
+				return wrapOperatorError(err, fmt.Sprintf("invalid CPU request %q", resources.Requests.CPU), contextMap)
 			}
 			container.Resources.Requests[corev1.ResourceCPU] = cpu
 		}
 		if resources.Requests.Memory != "" {
 			mem, err := resource.ParseQuantity(resources.Requests.Memory)
 			if err != nil {
-				return fmt.Errorf("invalid memory request %q: %w", resources.Requests.Memory, err)
+				contextMap := map[string]any{
+					"resource": "memory",
+					"type":     "request",
+					"value":    resources.Requests.Memory,
+				}
+				return wrapOperatorError(err, fmt.Sprintf("invalid memory request %q", resources.Requests.Memory), contextMap)
 			}
 			container.Resources.Requests[corev1.ResourceMemory] = mem
 		}
@@ -378,14 +404,24 @@ func applyContainerResources(container *corev1.Container, resources mcpv1alpha1.
 		if resources.Limits.CPU != "" {
 			cpu, err := resource.ParseQuantity(resources.Limits.CPU)
 			if err != nil {
-				return fmt.Errorf("invalid CPU limit %q: %w", resources.Limits.CPU, err)
+				contextMap := map[string]any{
+					"resource": "cpu",
+					"type":     "limit",
+					"value":    resources.Limits.CPU,
+				}
+				return wrapOperatorError(err, fmt.Sprintf("invalid CPU limit %q", resources.Limits.CPU), contextMap)
 			}
 			container.Resources.Limits[corev1.ResourceCPU] = cpu
 		}
 		if resources.Limits.Memory != "" {
 			mem, err := resource.ParseQuantity(resources.Limits.Memory)
 			if err != nil {
-				return fmt.Errorf("invalid memory limit %q: %w", resources.Limits.Memory, err)
+				contextMap := map[string]any{
+					"resource": "memory",
+					"type":     "limit",
+					"value":    resources.Limits.Memory,
+				}
+				return wrapOperatorError(err, fmt.Sprintf("invalid memory limit %q", resources.Limits.Memory), contextMap)
 			}
 			container.Resources.Limits[corev1.ResourceMemory] = mem
 		}

@@ -7,7 +7,7 @@ import (
 )
 
 func TestRootCommandHelp(t *testing.T) {
-	logger, err := newConsoleLogger()
+	logger, err := newConsoleLogger(false)
 	if err != nil {
 		t.Fatalf("newConsoleLogger() error: %v", err)
 	}

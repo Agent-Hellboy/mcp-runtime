@@ -19,3 +19,6 @@ Flags:
       --registry-type string      Registry type (docker; harbor coming soon) (default "docker")
       --test-mode                 Test mode: skip operator build and use kind-loaded image
       --with-tls                  Enable TLS overlays (ingress/registry); default is HTTP for dev
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

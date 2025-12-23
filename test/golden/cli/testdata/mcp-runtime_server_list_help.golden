@@ -6,3 +6,6 @@ Usage:
 Flags:
   -h, --help               help for list
       --namespace string   Namespace to list servers from (default "mcp-servers")
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging
