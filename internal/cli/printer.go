@@ -1,6 +1,16 @@
-// Package cli provides terminal output utilities for the mcp-runtime CLI.
-// All terminal formatting is centralized here to abstract the underlying library (pterm).
 package cli
+
+// This file defines the Printer type and its implementation for formatted terminal output.
+// All terminal formatting is centralized here to abstract the underlying library (pterm).
+//
+// The Printer struct provides methods for:
+//   - Section/step headers
+//   - Status messages (Info, Success, Warn, Error)
+//   - Tables (regular and boxed)
+//   - Colors and formatting
+//   - Spinners for long-running operations
+//
+// Package-level convenience functions delegate to DefaultPrinter for easy usage.
 
 import (
 	"io"

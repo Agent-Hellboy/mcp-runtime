@@ -1,5 +1,8 @@
 package cli
 
+// This file defines interfaces and implementations for command execution.
+// It provides abstractions for running shell commands with validation and testability.
+
 import (
 	"errors"
 	"io"

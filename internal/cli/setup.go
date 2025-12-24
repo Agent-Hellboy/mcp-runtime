@@ -1,5 +1,9 @@
 package cli
 
+// This file implements the "setup" command for installing and configuring the MCP platform.
+// It handles cluster initialization, registry deployment, operator installation, and TLS setup.
+// The setup process is organized as a series of steps with dependency injection for testability.
+
 import (
 	"bytes"
 	"encoding/base64"
@@ -48,7 +52,7 @@ type SetupDeps struct {
 	CheckCRDInstalled               func(name string) error
 	GetDeploymentTimeout            func() time.Duration
 	GetRegistryPort                 func() int
-	OperatorImageFor                func(ext *ExternalRegistryConfig, testMode bool) string
+	OperatorImageFor                func(ext *ExternalRegistryConfig) string
 }
 
 func (d SetupDeps) withDefaults(logger *zap.Logger) SetupDeps {
@@ -123,8 +127,6 @@ func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 	var ingressManifest string
 	var forceIngressInstall bool
 	var tlsEnabled bool
-	var testMode bool
-
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Setup the complete MCP platform",
@@ -145,7 +147,6 @@ will use to push and pull container images.`,
 				IngressManifestChanged: cmd.Flags().Changed("ingress-manifest"),
 				ForceIngressInstall:    forceIngressInstall,
 				TLSEnabled:             tlsEnabled,
-				TestMode:               testMode,
 			})
 
 			return setupPlatform(logger, plan)
@@ -158,8 +159,6 @@ will use to push and pull container images.`,
 	cmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/overlays/http", "Manifest to apply when installing the ingress controller")
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force ingress install even if an ingress class already exists")
 	cmd.Flags().BoolVar(&tlsEnabled, "with-tls", false, "Enable TLS overlays (ingress/registry); default is HTTP for dev")
-	cmd.Flags().BoolVar(&testMode, "test-mode", false, "Test mode: skip operator build and use kind-loaded image")
-
 	return cmd
 }
 
@@ -304,17 +303,12 @@ func setupRegistryStep(logger *zap.Logger, extRegistry *ExternalRegistryConfig, 
 	return nil
 }
 
-func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfig, usingExternalRegistry, testMode bool, deps SetupDeps) (string, error) {
+func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfig, usingExternalRegistry bool, deps SetupDeps) (string, error) {
 	// Step 5: Deploy operator
 	Step("Step 5: Deploy operator")
 
-	operatorImage := deps.OperatorImageFor(extRegistry, testMode)
+	operatorImage := deps.OperatorImageFor(extRegistry)
 	Info(fmt.Sprintf("Image: %s", operatorImage))
-
-	if testMode {
-		Info("Test mode: skipping operator build, using kind-loaded image")
-		return operatorImage, nil
-	}
 
 	Info("Building operator image")
 	if err := deps.BuildOperatorImage(operatorImage); err != nil {
@@ -472,15 +466,10 @@ func verifySetup(usingExternalRegistry bool, deps SetupDeps) error {
 	return nil
 }
 
-func getOperatorImage(ext *ExternalRegistryConfig, testMode bool) string {
+func getOperatorImage(ext *ExternalRegistryConfig) string {
 	// Check for explicit override first
 	if override := GetOperatorImageOverride(); override != "" {
 		return override
-	}
-
-	// In test mode, use the standard kind-loaded image
-	if testMode {
-		return "docker.io/library/mcp-runtime-operator:latest"
 	}
 
 	if ext != nil && ext.URL != "" {

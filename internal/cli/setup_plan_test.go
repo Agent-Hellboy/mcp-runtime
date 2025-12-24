@@ -17,7 +17,6 @@ func TestBuildSetupPlan_DefaultHTTP(t *testing.T) {
 		IngressManifestChanged: false,
 		ForceIngressInstall:    false,
 		TLSEnabled:             false,
-		TestMode:               false,
 	})
 
 	if plan.Ingress.manifest != "config/ingress/overlays/http" {
@@ -37,7 +36,6 @@ func TestBuildSetupPlan_DefaultTLS(t *testing.T) {
 		IngressManifestChanged: false,
 		ForceIngressInstall:    false,
 		TLSEnabled:             true,
-		TestMode:               false,
 	})
 
 	if plan.Ingress.manifest != "config/ingress/overlays/prod" {
@@ -57,7 +55,6 @@ func TestBuildSetupPlan_CustomIngressManifest(t *testing.T) {
 		IngressManifestChanged: true,
 		ForceIngressInstall:    true,
 		TLSEnabled:             true,
-		TestMode:               false,
 	})
 
 	if plan.Ingress.manifest != "custom/manifest" {
@@ -158,7 +155,7 @@ func TestSetupPlatformWithDeps_ExternalRegistry(t *testing.T) {
 		CheckCRDInstalled:    func(string) error { rec.add("check-crd"); return nil },
 		GetDeploymentTimeout: func() time.Duration { return time.Second },
 		GetRegistryPort:      func() int { return 5000 },
-		OperatorImageFor: func(*ExternalRegistryConfig, bool) string {
+		OperatorImageFor: func(*ExternalRegistryConfig) string {
 			rec.add("operator-image")
 			return "registry.example.com/mcp-runtime-operator:latest"
 		},
@@ -174,7 +171,6 @@ func TestSetupPlatformWithDeps_ExternalRegistry(t *testing.T) {
 		},
 		RegistryManifest: "config/registry",
 		TLSEnabled:       false,
-		TestMode:         true,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err != nil {
@@ -190,8 +186,11 @@ func TestSetupPlatformWithDeps_ExternalRegistry(t *testing.T) {
 	if rec.has("registry-info") {
 		t.Fatalf("did not expect internal registry info")
 	}
-	if rec.has("build") || rec.has("push") || rec.has("push-internal") {
-		t.Fatalf("did not expect image build/push in test mode")
+	if !rec.has("build") || !rec.has("push") {
+		t.Fatalf("expected image build/push for external registry")
+	}
+	if rec.has("push-internal") {
+		t.Fatalf("did not expect internal registry push")
 	}
 }
 
@@ -228,7 +227,7 @@ func TestSetupPlatformWithDeps_InternalRegistryTLS(t *testing.T) {
 		CheckCRDInstalled:    func(string) error { rec.add("check-crd"); return nil },
 		GetDeploymentTimeout: func() time.Duration { return time.Second },
 		GetRegistryPort:      func() int { return 5000 },
-		OperatorImageFor: func(*ExternalRegistryConfig, bool) string {
+		OperatorImageFor: func(*ExternalRegistryConfig) string {
 			rec.add("operator-image")
 			return "registry.local/mcp-runtime-operator:latest"
 		},
@@ -244,7 +243,6 @@ func TestSetupPlatformWithDeps_InternalRegistryTLS(t *testing.T) {
 		},
 		RegistryManifest: "config/registry/overlays/tls",
 		TLSEnabled:       true,
-		TestMode:         false,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err != nil {
@@ -308,7 +306,7 @@ func TestSetupPlatformWithDeps_ExternalRegistryTLS(t *testing.T) {
 		CheckCRDInstalled:    func(string) error { rec.add("check-crd"); return nil },
 		GetDeploymentTimeout: func() time.Duration { return time.Second },
 		GetRegistryPort:      func() int { return 5000 },
-		OperatorImageFor: func(*ExternalRegistryConfig, bool) string {
+		OperatorImageFor: func(*ExternalRegistryConfig) string {
 			rec.add("operator-image")
 			return "registry.example.com/mcp-runtime-operator:latest"
 		},
@@ -324,7 +322,6 @@ func TestSetupPlatformWithDeps_ExternalRegistryTLS(t *testing.T) {
 		},
 		RegistryManifest: "config/registry/overlays/tls",
 		TLSEnabled:       true,
-		TestMode:         false,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err != nil {
@@ -386,7 +383,7 @@ func TestSetupPlatformWithDeps_DiagnosticsOnRegistryWaitFailure(t *testing.T) {
 		CheckCRDInstalled:               func(string) error { return nil },
 		GetDeploymentTimeout:            func() time.Duration { return time.Second },
 		GetRegistryPort:                 func() int { return 5000 },
-		OperatorImageFor:                func(*ExternalRegistryConfig, bool) string { return "registry.local/mcp-runtime-operator:latest" },
+		OperatorImageFor:                func(*ExternalRegistryConfig) string { return "registry.local/mcp-runtime-operator:latest" },
 	}
 
 	plan := SetupPlan{
@@ -399,7 +396,6 @@ func TestSetupPlatformWithDeps_DiagnosticsOnRegistryWaitFailure(t *testing.T) {
 		},
 		RegistryManifest: "config/registry",
 		TLSEnabled:       false,
-		TestMode:         false,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err == nil {
@@ -442,7 +438,7 @@ func TestSetupPlatformWithDeps_DiagnosticsOnOperatorWaitFailure(t *testing.T) {
 		CheckCRDInstalled:               func(string) error { return nil },
 		GetDeploymentTimeout:            func() time.Duration { return time.Second },
 		GetRegistryPort:                 func() int { return 5000 },
-		OperatorImageFor:                func(*ExternalRegistryConfig, bool) string { return "registry.example.com/mcp-runtime-operator:latest" },
+		OperatorImageFor:                func(*ExternalRegistryConfig) string { return "registry.example.com/mcp-runtime-operator:latest" },
 	}
 
 	plan := SetupPlan{
@@ -455,7 +451,6 @@ func TestSetupPlatformWithDeps_DiagnosticsOnOperatorWaitFailure(t *testing.T) {
 		},
 		RegistryManifest: "config/registry",
 		TLSEnabled:       false,
-		TestMode:         false,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err == nil {
@@ -500,7 +495,7 @@ func TestSetupPlatformWithDeps_CRDCheckFailure(t *testing.T) {
 		},
 		GetDeploymentTimeout: func() time.Duration { return time.Second },
 		GetRegistryPort:      func() int { return 5000 },
-		OperatorImageFor:     func(*ExternalRegistryConfig, bool) string { return "registry.example.com/mcp-runtime-operator:latest" },
+		OperatorImageFor:     func(*ExternalRegistryConfig) string { return "registry.example.com/mcp-runtime-operator:latest" },
 	}
 
 	plan := SetupPlan{
@@ -513,7 +508,6 @@ func TestSetupPlatformWithDeps_CRDCheckFailure(t *testing.T) {
 		},
 		RegistryManifest: "config/registry",
 		TLSEnabled:       false,
-		TestMode:         false,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err == nil {
@@ -557,7 +551,7 @@ func TestSetupPlatformWithDeps_InternalRegistryPushFailure(t *testing.T) {
 		CheckCRDInstalled:               func(string) error { return nil },
 		GetDeploymentTimeout:            func() time.Duration { return time.Second },
 		GetRegistryPort:                 func() int { return 5000 },
-		OperatorImageFor:                func(*ExternalRegistryConfig, bool) string { return "registry.local/mcp-runtime-operator:latest" },
+		OperatorImageFor:                func(*ExternalRegistryConfig) string { return "registry.local/mcp-runtime-operator:latest" },
 	}
 
 	plan := SetupPlan{
@@ -570,7 +564,6 @@ func TestSetupPlatformWithDeps_InternalRegistryPushFailure(t *testing.T) {
 		},
 		RegistryManifest: "config/registry",
 		TLSEnabled:       false,
-		TestMode:         false,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err == nil {

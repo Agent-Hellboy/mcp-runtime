@@ -1,5 +1,8 @@
 package cli
 
+// This file implements certificate and TLS management functionality.
+// It handles cert-manager integration, CA secret management, and certificate provisioning.
+
 import (
 	"fmt"
 	"os"
