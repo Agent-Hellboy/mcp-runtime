@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ title or "MCP Runtime Platform" }}</title>
+    <meta
+      name="description"
+      content="MCP Runtime Platform is a complete platform for deploying and managing MCP servers with a CLI, registry, and Kubernetes operator."
+    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <div class="page">
+      <div class="bg-shape one" aria-hidden="true"></div>
+      <div class="bg-shape two" aria-hidden="true"></div>
+      <div class="bg-shape three" aria-hidden="true"></div>
+      <header class="site-header">
+        <div class="container nav">
+          <div class="brand">
+            <div class="brand-mark" aria-hidden="true">MCP</div>
+            <div>
+              <div class="brand-title">MCP Runtime Platform</div>
+              <div class="brand-subtitle">Registry, operator, and CLI</div>
+            </div>
+          </div>
+          <nav class="nav-links">
+            {% for link in nav_links %}
+              <a href="{{ link.href }}">{{ link.label }}</a>
+            {% endfor %}
+          </nav>
+        </div>
+      </header>
+
+      <main>
+        {% block content %}{% endblock %}
+      </main>
+
+      <footer class="container footer">
+        <div>
+          MCP Runtime Platform provides a self-hosted path to deploy and manage
+          MCP servers across your organization.
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>

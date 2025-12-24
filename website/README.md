@@ -4,9 +4,11 @@ Basic website project.
 
 ## Files
 
-- `index.html` - main page
-- `style.css` - styles
-- `app.py` - simple server entry point
+- `templates/index.html` - main page template
+- `templates/base.html` - shared layout
+- `static/style.css` - landing page styles
+- `static/docs.css` - documentation styles
+- `app.py` - Flask server entry point
 - `Dockerfile` - container setup
 
 ## Run
@@ -28,5 +30,5 @@ python3 app.py
 
 ```sh
 docker build -t website .
-docker run --rm -p 8000:8000 website
+docker run --rm -p 8080:8080 website
 ```

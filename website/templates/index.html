@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <section class="hero container">
+    <div class="hero-copy">
+      <span class="eyebrow">{{ hero.badge }}</span>
+      <h1>{{ hero.title }}</h1>
+      <p>{{ hero.subtitle }}</p>
+      <div class="hero-actions">
+        <a class="button primary" href="{{ hero.primary.href }}">{{ hero.primary.label }}</a>
+        <a class="button secondary" href="{{ hero.secondary.href }}">{{ hero.secondary.label }}</a>
+      </div>
+    </div>
+    <div class="hero-panel">
+      <div class="panel-header">
+        <div>
+          <h3>At a glance</h3>
+          <p>Everything you need to ship MCP servers confidently.</p>
+        </div>
+        <span class="chip">Platform stack</span>
+      </div>
+      <ul>
+        {% for item in at_a_glance %}
+          <li>{{ item }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+
+  <section class="stats container">
+    {% for stat in stats %}
+      <div class="stat-card" style="--delay: {{ loop.index0 * 0.08 }}s;">
+        <div class="stat-value">{{ stat.value }}</div>
+        <div class="stat-label">{{ stat.label }}</div>
+      </div>
+    {% endfor %}
+  </section>
+
+  <section id="overview" class="section container">
+    <div class="section-header">
+      <h2>{{ overview.title }}</h2>
+      <p>{{ overview.intro }}</p>
+    </div>
+    <div class="card-grid">
+      {% for item in overview.items %}
+        <article class="card" style="--delay: {{ loop.index0 * 0.08 }}s;">
+          <h3>{{ item.title }}</h3>
+          <p>{{ item.body }}</p>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section id="features" class="section container">
+    <div class="section-header">
+      <h2>Platform features</h2>
+      <p>Ship repeatable deployments with tooling built for MCP server fleets.</p>
+    </div>
+    <div class="card-grid">
+      {% for item in features %}
+        <article class="card" style="--delay: {{ loop.index0 * 0.08 }}s;">
+          <h3>{{ item.title }}</h3>
+          <p>{{ item.body }}</p>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section id="workflow" class="section container">
+    <div class="section-header">
+      <h2>End-to-end workflow</h2>
+      <p>Standardize how teams go from definition to routed MCP servers.</p>
+    </div>
+    <div class="workflow-grid">
+      {% for item in workflow %}
+        <article class="step-card" style="--delay: {{ loop.index0 * 0.08 }}s;">
+          <div class="step-number">{{ item.step }}</div>
+          <div>
+            <h3>{{ item.title }}</h3>
+            <p>{{ item.body }}</p>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section id="architecture" class="section container">
+    <div class="section-header">
+      <h2>Platform architecture</h2>
+      <p>Designed to fit right into your existing delivery pipeline.</p>
+    </div>
+    <div class="card-grid">
+      {% for item in architecture %}
+        <article class="card" style="--delay: {{ loop.index0 * 0.08 }}s;">
+          <h3>{{ item.title }}</h3>
+          <p>{{ item.body }}</p>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="container callout">
+    <div>
+      <h2>{{ callout.title }}</h2>
+      <p>{{ callout.body }}</p>
+    </div>
+    <a class="button secondary" href="{{ callout.cta.href }}">{{ callout.cta.label }}</a>
+  </section>
+{% endblock %}
