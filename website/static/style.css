@@ -238,6 +238,36 @@ a {
   line-height: 1.6;
 }
 
+.footer {
+  padding: 30px 0 50px;
+  font-size: 14px;
+  color: rgba(22, 23, 29, 0.75);
+}
+
+.footer-links {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.icon-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(22, 23, 29, 0.08);
+  border: 1px solid rgba(22, 23, 29, 0.12);
+  font-weight: 600;
+}
+
+.icon-link svg {
+  width: 16px;
+  height: 16px;
+}
+
 .stats {
   display: grid;
   gap: 18px;
