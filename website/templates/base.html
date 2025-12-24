@@ -42,7 +42,14 @@
           MCP servers across your organization. It is open source; contribute at
           <a href="https://github.com/Agent-Hellboy/mcp-runtime">github.com/Agent-Hellboy/mcp-runtime</a>
           or write to us at
-          <a href="mailto:princekrroshan01@gmail.com">princekrroshan01@gmail.com</a>.
+          <a
+            class="js-email-link"
+            data-email-user="10nahsorkecnirp"
+            data-email-domain="moc.liamg"
+            data-email-reverse="true"
+            data-email-text="address"
+            href="#"
+          >Email us</a>.
         </div>
         <div class="footer-links">
           <a class="icon-link" href="https://github.com/Agent-Hellboy/mcp-runtime">
@@ -54,7 +61,13 @@
             </svg>
             GitHub
           </a>
-          <a class="icon-link" href="mailto:princekrroshan01@gmail.com">
+          <a
+            class="icon-link js-email-link"
+            data-email-user="10nahsorkecnirp"
+            data-email-domain="moc.liamg"
+            data-email-reverse="true"
+            href="#"
+          >
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path
                 fill="currentColor"
@@ -66,5 +79,26 @@
         </div>
       </footer>
     </div>
+    <script>
+      (function () {
+        var links = document.querySelectorAll(".js-email-link");
+        if (!links.length) {
+          return;
+        }
+        var decodePart = function (value, reverse) {
+          return reverse ? value.split("").reverse().join("") : value;
+        };
+        links.forEach(function (link) {
+          var user = link.getAttribute("data-email-user") || "";
+          var domain = link.getAttribute("data-email-domain") || "";
+          var reverse = link.getAttribute("data-email-reverse") === "true";
+          var address = decodePart(user, reverse) + "@" + decodePart(domain, reverse);
+          link.setAttribute("href", "mailto:" + address);
+          if (link.getAttribute("data-email-text") === "address") {
+            link.textContent = address;
+          }
+        });
+      })();
+    </script>
   </body>
 </html>
