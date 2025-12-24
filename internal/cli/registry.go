@@ -667,8 +667,8 @@ func (m *RegistryManager) PushInCluster(source, target, helperNS string) error {
 		return wrappedErr
 	}
 
-	// Ensure source is saved to tar
-	tmpFile, err := os.CreateTemp("", "mcp-img-*.tar")
+	// Ensure source is saved to tar; use CWD to satisfy kubectl path validation.
+	tmpFile, err := os.CreateTemp(".", "mcp-img-*.tar")
 	if err != nil {
 		wrappedErr := wrapWithSentinel(ErrCreateTempFileFailed, err, fmt.Sprintf("failed to create temp file: %v", err))
 		Error("Failed to create temp file")

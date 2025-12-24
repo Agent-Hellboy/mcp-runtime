@@ -77,6 +77,9 @@ docker-push: ## Push Docker image to registry.
 	docker push ${IMG}
 	@echo "Docker image pushed: ${IMG}"
 
+docker-build-operator: docker-build ## Alias for docker-build for compatibility.
+	@echo "Operator Docker build completed"
+
 ##@ Testing
 
 test: manifests generate fmt vet ## Run all tests.

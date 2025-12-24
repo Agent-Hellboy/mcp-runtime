@@ -36,24 +36,16 @@ func TestGetOperatorImage(t *testing.T) {
 
 	t.Run("uses override when set", func(t *testing.T) {
 		DefaultCLIConfig.OperatorImage = "override/operator:v1"
-		got := getOperatorImage(nil, false)
+		got := getOperatorImage(nil)
 		if got != "override/operator:v1" {
 			t.Fatalf("expected override image, got %q", got)
-		}
-	})
-
-	t.Run("uses test mode image", func(t *testing.T) {
-		DefaultCLIConfig.OperatorImage = ""
-		got := getOperatorImage(nil, true)
-		if got != "docker.io/library/mcp-runtime-operator:latest" {
-			t.Fatalf("unexpected test mode image: %q", got)
 		}
 	})
 
 	t.Run("uses external registry URL", func(t *testing.T) {
 		DefaultCLIConfig.OperatorImage = ""
 		ext := &ExternalRegistryConfig{URL: "registry.example.com/"}
-		got := getOperatorImage(ext, false)
+		got := getOperatorImage(ext)
 		if got != "registry.example.com/mcp-runtime-operator:latest" {
 			t.Fatalf("unexpected external registry image: %q", got)
 		}
@@ -73,7 +65,7 @@ func TestGetOperatorImage(t *testing.T) {
 			},
 		}
 		kubectlClient = &KubectlClient{exec: mock, validators: nil}
-		got := getOperatorImage(nil, false)
+		got := getOperatorImage(nil)
 		if got != "10.0.0.1:5000/mcp-runtime-operator:latest" {
 			t.Fatalf("unexpected platform registry image: %q", got)
 		}
@@ -361,7 +353,7 @@ func TestSetupDepsWithDefaultsPreservesNonNil(t *testing.T) {
 		ClusterManager:  cluster,
 		RegistryManager: registry,
 		GetRegistryPort: func() int { return 123 },
-		OperatorImageFor: func(_ *ExternalRegistryConfig, _ bool) string {
+		OperatorImageFor: func(_ *ExternalRegistryConfig) string {
 			return "custom-image"
 		},
 	}
@@ -376,7 +368,7 @@ func TestSetupDepsWithDefaultsPreservesNonNil(t *testing.T) {
 	if got.GetRegistryPort() != 123 {
 		t.Fatal("expected GetRegistryPort to be preserved")
 	}
-	if got.OperatorImageFor(nil, false) != "custom-image" {
+	if got.OperatorImageFor(nil) != "custom-image" {
 		t.Fatal("expected OperatorImageFor to be preserved")
 	}
 }

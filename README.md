@@ -292,8 +292,6 @@ For e2e testing with pre-loaded images (kind/minikube):
 docker build -t mcp-runtime-operator:latest -f Dockerfile.operator .
 kind load docker-image docker.io/library/mcp-runtime-operator:latest --name <cluster>
 
-# Run setup in test mode (skips operator build, uses pre-loaded image)
-./bin/mcp-runtime setup --test-mode
 ```
 
 ### Contributing

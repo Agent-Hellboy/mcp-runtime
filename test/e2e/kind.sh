@@ -79,10 +79,9 @@ kubectl rollout status deploy/registry -n registry --timeout=180s
 echo "[debug] verifying operator image is available in kind"
 docker exec "${CLUSTER_NAME}-control-plane" crictl images | grep -E "mcp-runtime-operator|REPOSITORY" || true
 
-# Run setup with pre-loaded operator image (skip building/pushing operator)
-# Note: kind stores images with docker.io/library/ prefix for local images
-echo "[setup] running platform setup with pre-loaded operator image"
-./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http
+# Run setup using the default flow.
+echo "[setup] running platform setup"
+./bin/mcp-runtime setup --ingress-manifest config/ingress/overlays/http
 SETUP_EXIT=$?
 
 # Debug: Check pod status right after setup
