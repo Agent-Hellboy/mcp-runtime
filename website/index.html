@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MCP Runtime Platform</title>
+    <meta
+      name="description"
+      content="MCP Runtime Platform is a complete platform for deploying and managing MCP (Model Context Protocol) servers with a CLI, registry, and Kubernetes operator."
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="container nav">
+          <div class="brand">
+            <div class="brand-mark" aria-hidden="true"></div>
+            MCP Runtime Platform
+          </div>
+          <nav class="nav-links">
+            <a href="#overview">Overview</a>
+            <a href="#features">Features</a>
+            <a href="#workflow">Workflow</a>
+            <a href="#architecture">Architecture</a>
+            <a href="docs/">Docs</a>
+          </nav>
+        </div>
+      </header>
+
+      <section class="hero container">
+        <div>
+          <div class="badge">docs.mcp-runtime.org</div>
+          <h1>A complete platform for deploying MCP servers.</h1>
+          <p>
+            MCP Runtime Platform helps teams build, deploy, and manage Model
+            Context Protocol servers with a self-hosted registry, a Kubernetes
+            operator, and a CLI that standardizes the entire workflow.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="docs/">Open Documentation</a>
+            <a class="button secondary" href="#features">View features</a>
+          </div>
+        </div>
+        <div class="hero-card">
+          <h3>At a glance</h3>
+          <ul>
+            <li>Metadata-driven server definitions in simple YAML.</li>
+            <li>Operator creates Deployment, Service, and Ingress.</li>
+            <li>Internal registry and CI/CD-friendly pipelines.</li>
+            <li>Unified URLs: <strong>/{server-name}/mcp</strong>.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="overview" class="section container">
+        <h2>Why MCP Runtime Platform</h2>
+        <div class="grid">
+          <article class="card">
+            <strong>Built for scale</strong>
+            <p>
+              Move from a single MCP server to a full internal catalog without
+              relying on third-party gateways or bespoke routing layers.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Designed for teams</strong>
+            <p>
+              A centralized registry and consistent deployment workflow make it
+              easy for teams to discover and reuse MCP servers across the org.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="features" class="section container">
+        <h2>Platform features</h2>
+        <div class="grid">
+          <article class="card">
+            <strong>Complete platform</strong>
+            <p>
+              Deploy the registry, operator, and cluster helpers in one setup
+              flow built for MCP server fleets.
+            </p>
+          </article>
+          <article class="card">
+            <strong>CLI tooling</strong>
+            <p>
+              Manage platform setup, registry operations, cluster tasks, and
+              server pipelines from a single CLI.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Kubernetes operator</strong>
+            <p>
+              Automatically creates Deployment, Service, and Ingress resources
+              based on MCP server metadata.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Metadata-driven</strong>
+            <p>
+              Define MCP servers in YAML without hand-writing Kubernetes
+              manifests or custom automation.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Unified routing</strong>
+            <p>
+              Every MCP server is reachable at a consistent
+              <strong>/{server-name}/mcp</strong> path.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Automated builds</strong>
+            <p>
+              Build Docker images from server metadata and keep registry entries
+              up to date automatically.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="workflow" class="section container">
+        <h2>End-to-end workflow</h2>
+        <div class="grid">
+          <article class="card">
+            <strong>1. Define</strong>
+            <p>
+              Capture server metadata in YAML, including name, route, and
+              container port.
+            </p>
+          </article>
+          <article class="card">
+            <strong>2. Build</strong>
+            <p>
+              Build Docker images locally or in CI/CD pipelines and push them to
+              the registry.
+            </p>
+          </article>
+          <article class="card">
+            <strong>3. Deploy</strong>
+            <p>
+              Use the CLI or automated pipelines to generate manifests and
+              deploy MCP servers through the operator.
+            </p>
+          </article>
+          <article class="card">
+            <strong>4. Access</strong>
+            <p>
+              Reach every MCP server through consistent URLs managed by the
+              platform gateway and ingress.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="architecture" class="section container">
+        <h2>Platform architecture</h2>
+        <div class="grid">
+          <article class="card">
+            <strong>Developer workstation</strong>
+            <p>
+              Teams define MCP servers, build images, and push updates from
+              their local development environments.
+            </p>
+          </article>
+          <article class="card">
+            <strong>CI/CD pipeline</strong>
+            <p>
+              Pipelines build images, publish to the registry, and generate CRDs
+              for automated deployment.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Kubernetes cluster</strong>
+            <p>
+              The operator watches MCPServer resources and creates Deployments,
+              Services, and Ingress routes automatically.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Internal registry</strong>
+            <p>
+              A built-in registry stores MCP server images and keeps metadata
+              in sync for discovery.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="container callout">
+        <h3>Active development notice</h3>
+        <p>
+          MCP Runtime Platform is under active development. APIs, commands, and
+          behavior may change, and production usage is not recommended yet.
+        </p>
+        <a class="button secondary" href="docs/">Read the documentation</a>
+      </section>
+
+      <footer class="container footer">
+        <div>
+          MCP Runtime Platform provides a self-hosted path to deploy and manage
+          MCP servers across your organization.
+        </div>
+      </footer>
+    </main>
+  </body>
+</html>
