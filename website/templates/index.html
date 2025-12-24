@@ -42,7 +42,7 @@
       <p>{{ overview.intro }}</p>
     </div>
     <div class="card-grid">
-      {% for item in overview.items %}
+      {% for item in overview["items"] %}
         <article class="card" style="--delay: {{ loop.index0 * 0.08 }}s;">
           <h3>{{ item.title }}</h3>
           <p>{{ item.body }}</p>
