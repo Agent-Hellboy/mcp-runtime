@@ -1,4 +1,4 @@
-apiVersion: mcp-runtime.org/v1alpha1
+apiVersion: mcpruntime.org/v1alpha1
 kind: MCPServer
 metadata:
   name: example-mcp-server

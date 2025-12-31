@@ -505,7 +505,7 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 		hasNamespace    bool
 	)
 	for _, cmd := range mock.Commands {
-		if commandHasArgs(cmd, "apply", "--validate=false", "-f", "config/crd/bases/mcp-runtime.org_mcpservers.yaml") {
+		if commandHasArgs(cmd, "apply", "--validate=false", "-f", "config/crd/bases/mcpruntime.org_mcpservers.yaml") {
 			hasCRD = true
 		}
 		if commandHasArgs(cmd, "apply", "-k", "config/rbac/") {
@@ -534,7 +534,7 @@ func TestDeployOperatorManifestsWithKubectlCRDError(t *testing.T) {
 	mock := &MockExecutor{
 		CommandFunc: func(spec ExecSpec) *MockCommand {
 			cmd := &MockCommand{Args: spec.Args}
-			if commandHasArgs(spec, "apply", "--validate=false", "-f", "config/crd/bases/mcp-runtime.org_mcpservers.yaml") {
+			if commandHasArgs(spec, "apply", "--validate=false", "-f", "config/crd/bases/mcpruntime.org_mcpservers.yaml") {
 				cmd.RunErr = mockErr
 			}
 			return cmd

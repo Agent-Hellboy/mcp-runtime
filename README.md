@@ -299,7 +299,7 @@ kind load docker-image docker.io/library/mcp-runtime-operator:latest --name <clu
 
 ### Custom API Group (Branding)
 
-The platform uses `mcp-runtime.org` as the default API group. If you want to use your organization's domain for branding:
+The platform uses `mcpruntime.org` as the default API group. If you want to use your organization's domain for branding:
 
 1. Fork the repository
 2. Update the API group in these files:

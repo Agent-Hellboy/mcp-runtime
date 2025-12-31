@@ -34,7 +34,7 @@ const (
 // CRD identifiers.
 const (
 	// MCPServerCRDName is the full name of the MCPServer CRD.
-	MCPServerCRDName = "mcpservers.mcp-runtime.org"
+	MCPServerCRDName = "mcpservers.mcpruntime.org"
 
 	// CertManagerCRDName is the full name of the cert-manager Certificate CRD.
 	CertManagerCRDName = "certificates.cert-manager.io"

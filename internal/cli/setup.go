@@ -455,7 +455,7 @@ func verifySetup(usingExternalRegistry bool, deps SetupDeps) error {
 	}
 
 	Info("Checking MCPServer CRD presence")
-	if err := deps.CheckCRDInstalled("mcpservers.mcp-runtime.org"); err != nil {
+	if err := deps.CheckCRDInstalled("mcpservers.mcpruntime.org"); err != nil {
 		wrappedErr := wrapWithSentinel(ErrCRDCheckFailed, err, fmt.Sprintf("CRD check failed: %v", err))
 		Error("CRD check failed")
 		// Note: logger not available in verifySetup, but error will be logged by caller
@@ -761,7 +761,7 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 	// Step 1: Apply CRD
 	Info("Applying CRD manifests")
 	// #nosec G204 -- fixed file path from repository.
-	if err := kubectl.RunWithOutput([]string{"apply", "--validate=false", "-f", "config/crd/bases/mcp-runtime.org_mcpservers.yaml"}, os.Stdout, os.Stderr); err != nil {
+	if err := kubectl.RunWithOutput([]string{"apply", "--validate=false", "-f", "config/crd/bases/mcpruntime.org_mcpservers.yaml"}, os.Stdout, os.Stderr); err != nil {
 		wrappedErr := wrapWithSentinel(ErrApplyCRDFailed, err, fmt.Sprintf("failed to apply CRD: %v", err))
 		Error("Failed to apply CRD")
 		if logger != nil {

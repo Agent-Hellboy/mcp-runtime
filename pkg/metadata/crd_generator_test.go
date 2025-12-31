@@ -37,7 +37,7 @@ func TestGenerateCRD(t *testing.T) {
 		content := string(data)
 
 		// Verify YAML content (yaml.v3 uses lowercase keys)
-		assertContains(t, content, "apiversion: mcp-runtime.org/v1alpha1")
+		assertContains(t, content, "apiversion: mcpruntime.org/v1alpha1")
 		assertContains(t, content, "kind: MCPServer")
 		assertContains(t, content, "name: test-server")
 		assertContains(t, content, "namespace: custom-ns")

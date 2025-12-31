@@ -116,7 +116,7 @@ kind load docker-image docker.io/library/example-app:latest --name "${CLUSTER_NA
 echo "[cr] applying MCPServer for example app (using local image)"
 # Note: kind stores local images with docker.io/library/ prefix
 cat <<EOF | kubectl apply -f -
-apiVersion: mcp-runtime.org/v1alpha1
+apiVersion: mcpruntime.org/v1alpha1
 kind: MCPServer
 metadata:
   name: example-mcp-server

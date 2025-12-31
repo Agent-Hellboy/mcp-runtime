@@ -60,7 +60,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - mcp-runtime.org
+  - mcpruntime.org
   resources:
   - mcpservers
   verbs:
@@ -72,13 +72,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - mcp-runtime.org
+  - mcpruntime.org
   resources:
   - mcpservers/finalizers
   verbs:
   - update
 - apiGroups:
-  - mcp-runtime.org
+  - mcpruntime.org
   resources:
   - mcpservers/status
   verbs:
