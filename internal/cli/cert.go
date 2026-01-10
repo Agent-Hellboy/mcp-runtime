@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	certManagerNamespace            = "cert-manager"
+	certManagerNamespace = "cert-manager"
+	// #nosec G101 -- This is the name of a Kubernetes secret resource, not actual credentials
 	certCASecretName                = "mcp-runtime-ca"
 	certClusterIssuerName           = "mcp-runtime-ca"
 	registryCertificateName         = "registry-cert"
