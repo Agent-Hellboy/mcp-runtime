@@ -5,6 +5,8 @@ cover.out
 coverage.out
 *.test
 docs/
+!website/docs/
+!website/docs/index.html
 unittesting_strategy.md
 benchmarking.md
 # controller-runtime client
