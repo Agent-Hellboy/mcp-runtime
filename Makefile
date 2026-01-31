@@ -1,4 +1,4 @@
-.PHONY: all build test clean deps dev fmt lint coverage build-all install help \
+.PHONY: all build test clean deps dev fmt lint coverage build-all build-unix install help \
 	operator-build operator-run operator-docker-build operator-docker-push \
 	operator-test operator-deploy operator-undeploy operator-install operator-uninstall \
 	operator-manifests operator-generate operator-coverage \
@@ -40,6 +40,8 @@ build-all: ## Build CLI for all Unix platforms (macOS and Linux, ARM64 and AMD64
 	@echo "Building Linux AMD64..."
 	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/mcp-runtime
 	@echo "Build complete. Binaries in $(BUILD_DIR)/"
+
+build-unix: build-all ## Alias for build-all to keep CI targets stable.
 
 ##@ Development
 
