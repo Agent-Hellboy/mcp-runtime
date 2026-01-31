@@ -3,6 +3,8 @@ name: Pre-Check
 on:
   pull_request:
     branches: [ "*" ]
+  push:
+    branches: [ "main" ]
   workflow_dispatch: {}
 
 jobs:
