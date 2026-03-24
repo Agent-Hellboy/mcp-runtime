@@ -692,10 +692,6 @@ func (r *MCPServerReconciler) updateStatus(ctx context.Context, mcpServer *mcpv1
 		if errors.IsConflict(err) {
 			log.FromContext(ctx).V(1).Info("Status update conflict (expected in concurrent reconciles), will retry on next reconcile", "resourceVersion", latest.ResourceVersion)
 		} else {
-			// Some environments (like the fake client) may not support status subresources.
-			if updateErr := r.Update(ctx, latest); updateErr != nil {
-				log.FromContext(ctx).Error(updateErr, "Failed to update MCPServer after status update failure", "resourceVersion", latest.ResourceVersion)
-			}
 			// Log other errors but don't fail the reconcile - status update failures are non-fatal
 			// The next reconcile will retry the status update
 			log.FromContext(ctx).Error(err, "Failed to update MCPServer status", "resourceVersion", latest.ResourceVersion)

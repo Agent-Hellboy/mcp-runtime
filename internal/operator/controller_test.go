@@ -468,7 +468,13 @@ func TestUpdateStatus(t *testing.T) {
 		mcpServer := &mcpv1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
 		}
-		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer).Build()
+		client := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&mcpv1alpha1.MCPServer{}).
+			Build()
+		if err := client.Create(context.Background(), mcpServer); err != nil {
+			t.Fatalf("failed to create MCPServer: %v", err)
+		}
 		r := MCPServerReconciler{Client: client, Scheme: scheme}
 		r.updateStatus(context.Background(), mcpServer, "Ready", "All resources reconciled", true, true, true)
 		updated := &mcpv1alpha1.MCPServer{}
