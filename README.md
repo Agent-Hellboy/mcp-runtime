@@ -1,6 +1,6 @@
 # MCP Runtime Platform
 
-[![Post-Merge Checks](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/post-merge.yaml/badge.svg)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/post-merge.yaml)
+[![CI](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/ci.yaml/badge.svg)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/ci.yaml)
 [![Gosec Scan](https://img.shields.io/github/actions/workflow/status/Agent-Hellboy/mcp-runtime/security-gosec.yaml?branch=main&label=Gosec%20Scan)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/security-gosec.yaml)
 [![Trivy FS Scan](https://img.shields.io/github/actions/workflow/status/Agent-Hellboy/mcp-runtime/security-trivy.yaml?branch=main&label=Trivy%20FS%20Scan&job=Trivy%20FS%20Scan)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/security-trivy.yaml?query=branch%3Amain+job%3ATrivy%20FS%20Scan)
 [![Trivy Image Scan](https://img.shields.io/github/actions/workflow/status/Agent-Hellboy/mcp-runtime/security-trivy.yaml?branch=main&label=Trivy%20Image%20Scan&job=Trivy%20Operator%20Image%20Scan)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/security-trivy.yaml?query=branch%3Amain+job%3ATrivy%20Operator%20Image%20Scan)
@@ -13,7 +13,7 @@ When working with large language models, context window limitations often requir
 
 The platform targets organizations that need to ship many MCP servers internally, maintaining a centralized registry where any team can discover and use available MCP servers across the company.
 
-> ⚠️ **Caution**: This platform is currently under active development. APIs, commands, and behavior may change. Some features are "vibe-coded" and need thorough testing. Not recommended for production use yet. Contributions and feedback welcome!
+> ⚠️ **Caution**: This platform is currently under active development. APIs, commands, and behavior may change. Some features need thorough testing. Not recommended for production use yet. Contributions and feedback welcome!
 
 ## Overview
 
@@ -37,29 +37,31 @@ MCP Runtime Platform provides a streamlined workflow for teams to deploy a suite
 ## Architecture
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Developer     │    │   CI/CD Runner  │    │   Kubernetes    │
-│   Workstations  │    │                 │    │   Cluster       │
-│                 │    │  1. Build Image │    │                 │
-│  • VS Code      │────│  2. Push to     │────│  ┌─────────────┐│
-│  • Terminal     │    │     Registry    │    │  │  Registry   ││
-│                 │    │  3. Generate    │    │  │  (Docker)   ││
-└─────────────────┘    │     CRDs        │    │  └─────────────┘│
-                       │  4. Deploy      │    │                 │
-                       └─────────────────┘    │  ┌─────────────┐│
-                                              │  │  Operator   ││
-                                              │  │  Controller ││
-                                              │  └─────────────┘│
-                                              │        │        │
-                                              │        ▼        │
-                                              │  ┌─────────────┐│
-                                              │  │ MCPServer   ││
-                                              │  │ Resources   ││
-                                              │  │ • Deployment││
-                                              │  │ • Service   ││
-                                              │  │ • Ingress   ││
-                                              │  └─────────────┘│
-                                              └─────────────────┘
+┌─────────────────────┐         ┌──────────────────────┐         ┌──────────────────────┐
+│   Developer         │         │   CI/CD Pipeline     │         │   Kubernetes         │
+│   Workstation       │         │                      │         │   Cluster            │
+│                     │         │  1. Build Image      │         │                      │
+│  • VS Code          │────────▶│  2. Push to Registry │────────▶│  ┌────────────────┐  │
+│  • Terminal         │         │  3. Generate CRDs    │         │  │  Registry      │  │
+│  • Git Push         │         │  4. Deploy Manifests │         │  │  (Internal)    │  │
+└─────────────────────┘         └──────────────────────┘         │  └────────────────┘  │
+                                                                 │                      │
+                                                                 │  ┌────────────────┐  │
+                                                                 │  │  Operator      │  │
+                                                                 │  │  Controller    │  │
+                                                                 │  │  (Watches CRDs)│  │
+                                                                 │  └────────┬───────┘  │
+                                                                 │           │          │
+                                                                 │           ▼          │
+                                                                 │  ┌────────────────┐  │
+                                                                 │  │ MCPServer CRD  │  │
+                                                                 │  │                │  │
+                                                                 │  │ Creates:       │  │
+                                                                 │  │ • Deployment   │  │
+                                                                 │  │ • Service      │  │
+                                                                 │  │ • Ingress      │  │
+                                                                 │  └────────────────┘  │
+                                                                 └──────────────────────┘
 ```
 
 
@@ -195,7 +197,7 @@ kubectl set env deployment/mcp-runtime-operator-controller-manager \
 # 1. Clone and build
 git clone https://mcp-runtime.git
 cd mcp-runtime
-make install && make build-runtime
+make deps && make build-runtime
 
 # 2. Setup platform
 ./bin/mcp-runtime setup
@@ -221,6 +223,26 @@ docker build -t my-server:latest .
 Your server will be available at: `http://<ingress-host>/my-server/mcp`
 
 For HTTPS, see the [TLS Setup](#tls-setup) section.
+
+## Developer Setup
+
+This repo includes a dev helper script for contributors:
+
+```bash
+# Install dev tools, generate CRDs/DeepCopy, format, and vet
+./hack/dev-setup.sh
+```
+
+Command breakdown:
+- `./hack/dev-setup.sh install` installs `controller-gen` and `kustomize` into `bin/`
+- `./hack/dev-setup.sh generate` regenerates CRDs in `config/crd/bases/` and DeepCopy code in `api/v1alpha1/zz_generated.deepcopy.go`
+- `./hack/dev-setup.sh format` runs `go fmt`
+- `./hack/dev-setup.sh validate` runs `go vet`
+
+Make targets:
+- `make deps` downloads Go module dependencies
+- `make build-cli` builds `bin/mcp-runtime`
+- `make install-bin` installs the binary to `/usr/local/bin` (requires sudo)
 
 ## Examples
 
@@ -253,8 +275,8 @@ make fmt               # Format code
 make lint              # Lint code
 
 # Operator development
-make -f Makefile.operator manifests generate  # Regenerate CRDs
-make -f Makefile.operator docker-build-operator IMG=<image>
+make operator-manifests operator-generate  # Regenerate CRDs
+make operator-docker-build IMG=<image>
 ```
 
 ### Testing
@@ -266,8 +288,6 @@ For e2e testing with pre-loaded images (kind/minikube):
 docker build -t mcp-runtime-operator:latest -f Dockerfile.operator .
 kind load docker-image docker.io/library/mcp-runtime-operator:latest --name <cluster>
 
-# Run setup in test mode (skips operator build, uses pre-loaded image)
-./bin/mcp-runtime setup --test-mode
 ```
 
 ### Contributing
@@ -279,7 +299,7 @@ kind load docker-image docker.io/library/mcp-runtime-operator:latest --name <clu
 
 ### Custom API Group (Branding)
 
-The platform uses `mcp-runtime.org` as the default API group. If you want to use your organization's domain for branding:
+The platform uses `mcpruntime.org` as the default API group. If you want to use your organization's domain for branding:
 
 1. Fork the repository
 2. Update the API group in these files:
@@ -309,7 +329,7 @@ The platform uses `mcp-runtime.org` as the default API group. If you want to use
 
 3. Regenerate manifests:
    ```bash
-   make -f Makefile.operator manifests generate
+   make operator-manifests operator-generate
    ```
 
 4. Build and deploy your branded version

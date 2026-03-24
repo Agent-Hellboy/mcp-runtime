@@ -76,21 +76,25 @@ func TestBuildSetupStepsOrderWithoutTLS(t *testing.T) {
 
 func TestOperatorImageStepSetsContext(t *testing.T) {
 	ctx := &SetupContext{
-		Plan: SetupPlan{
-			TestMode: true,
+		Plan: SetupPlan{},
+		ExternalRegistry: &ExternalRegistryConfig{
+			URL: "registry.example.com",
 		},
+		UsingExternalRegistry: true,
 	}
 	deps := SetupDeps{
-		OperatorImageFor: func(_ *ExternalRegistryConfig, _ bool) string {
-			return "docker.io/example/operator:latest"
+		OperatorImageFor: func(_ *ExternalRegistryConfig) string {
+			return "registry.example.com/mcp-runtime-operator:latest"
 		},
+		BuildOperatorImage: func(string) error { return nil },
+		PushOperatorImage:  func(string) error { return nil },
 	}
 
 	step := operatorImageStep{}
 	if err := step.Run(zap.NewNop(), deps, ctx); err != nil {
 		t.Fatalf("operator image step failed: %v", err)
 	}
-	if ctx.OperatorImage != "docker.io/example/operator:latest" {
+	if ctx.OperatorImage != "registry.example.com/mcp-runtime-operator:latest" {
 		t.Fatalf("expected operator image to be set, got %q", ctx.OperatorImage)
 	}
 }

@@ -16,7 +16,7 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 	// Convert metadata to CRD
 	mcpServer := &mcpv1alpha1.MCPServer{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "mcp-runtime.org/v1alpha1",
+			APIVersion: "mcpruntime.org/v1alpha1",
 			Kind:       "MCPServer",
 		},
 		ObjectMeta: metav1.ObjectMeta{

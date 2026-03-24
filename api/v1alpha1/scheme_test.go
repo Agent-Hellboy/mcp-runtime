@@ -9,7 +9,7 @@ import (
 
 func TestGroupVersion(t *testing.T) {
 	t.Run("has correct group", func(t *testing.T) {
-		expected := "mcp-runtime.org"
+		expected := "mcpruntime.org"
 		if GroupVersion.Group != expected {
 			t.Errorf("GroupVersion.Group = %q, want %q", GroupVersion.Group, expected)
 		}
@@ -34,7 +34,7 @@ func TestAddToScheme(t *testing.T) {
 
 		// Verify MCPServer is registered
 		gvk := schema.GroupVersionKind{
-			Group:   "mcp-runtime.org",
+			Group:   "mcpruntime.org",
 			Version: "v1alpha1",
 			Kind:    "MCPServer",
 		}
@@ -59,7 +59,7 @@ func TestAddToScheme(t *testing.T) {
 
 		// Verify MCPServerList is registered
 		gvk := schema.GroupVersionKind{
-			Group:   "mcp-runtime.org",
+			Group:   "mcpruntime.org",
 			Version: "v1alpha1",
 			Kind:    "MCPServerList",
 		}
@@ -117,8 +117,8 @@ func TestMCPServerTypeMeta(t *testing.T) {
 		}
 
 		gvk := gvks[0]
-		if gvk.Group != "mcp-runtime.org" {
-			t.Errorf("GVK.Group = %q, want %q", gvk.Group, "mcp-runtime.org")
+		if gvk.Group != "mcpruntime.org" {
+			t.Errorf("GVK.Group = %q, want %q", gvk.Group, "mcpruntime.org")
 		}
 		if gvk.Version != "v1alpha1" {
 			t.Errorf("GVK.Version = %q, want %q", gvk.Version, "v1alpha1")
@@ -140,8 +140,8 @@ func TestMCPServerTypeMeta(t *testing.T) {
 		}
 
 		gvk := gvks[0]
-		if gvk.Group != "mcp-runtime.org" {
-			t.Errorf("GVK.Group = %q, want %q", gvk.Group, "mcp-runtime.org")
+		if gvk.Group != "mcpruntime.org" {
+			t.Errorf("GVK.Group = %q, want %q", gvk.Group, "mcpruntime.org")
 		}
 		if gvk.Version != "v1alpha1" {
 			t.Errorf("GVK.Version = %q, want %q", gvk.Version, "v1alpha1")

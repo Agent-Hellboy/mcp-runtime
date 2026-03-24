@@ -36,24 +36,16 @@ func TestGetOperatorImage(t *testing.T) {
 
 	t.Run("uses override when set", func(t *testing.T) {
 		DefaultCLIConfig.OperatorImage = "override/operator:v1"
-		got := getOperatorImage(nil, false)
+		got := getOperatorImage(nil)
 		if got != "override/operator:v1" {
 			t.Fatalf("expected override image, got %q", got)
-		}
-	})
-
-	t.Run("uses test mode image", func(t *testing.T) {
-		DefaultCLIConfig.OperatorImage = ""
-		got := getOperatorImage(nil, true)
-		if got != "docker.io/library/mcp-runtime-operator:latest" {
-			t.Fatalf("unexpected test mode image: %q", got)
 		}
 	})
 
 	t.Run("uses external registry URL", func(t *testing.T) {
 		DefaultCLIConfig.OperatorImage = ""
 		ext := &ExternalRegistryConfig{URL: "registry.example.com/"}
-		got := getOperatorImage(ext, false)
+		got := getOperatorImage(ext)
 		if got != "registry.example.com/mcp-runtime-operator:latest" {
 			t.Fatalf("unexpected external registry image: %q", got)
 		}
@@ -73,11 +65,52 @@ func TestGetOperatorImage(t *testing.T) {
 			},
 		}
 		kubectlClient = &KubectlClient{exec: mock, validators: nil}
-		got := getOperatorImage(nil, false)
+		got := getOperatorImage(nil)
 		if got != "10.0.0.1:5000/mcp-runtime-operator:latest" {
 			t.Fatalf("unexpected platform registry image: %q", got)
 		}
 	})
+}
+
+func TestBuildOperatorArgs(t *testing.T) {
+	t.Run("omits defaults", func(t *testing.T) {
+		if got := buildOperatorArgs("", "", false, false); len(got) != 0 {
+			t.Fatalf("expected no operator args, got %v", got)
+		}
+	})
+
+	t.Run("includes explicit overrides", func(t *testing.T) {
+		got := buildOperatorArgs(":9090", ":9091", false, true)
+		want := []string{
+			"--metrics-bind-address=:9090",
+			"--health-probe-bind-address=:9091",
+			"--leader-elect=false",
+		}
+		if len(got) != len(want) {
+			t.Fatalf("expected %d args, got %d (%v)", len(want), len(got), got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("expected arg %d to be %q, got %q", i, want[i], got[i])
+			}
+		}
+	})
+}
+
+func TestMergeOperatorArgs(t *testing.T) {
+	existing := []string{"--leader-elect", "--metrics-bind-address=:8080"}
+	overrides := []string{"--metrics-bind-address=:9090", "--health-probe-bind-address=:9091", "--leader-elect=false"}
+
+	got := mergeOperatorArgs(existing, overrides)
+	want := []string{"--leader-elect=false", "--metrics-bind-address=:9090", "--health-probe-bind-address=:9091"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d merged args, got %d (%v)", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected merged arg %d to be %q, got %q", i, want[i], got[i])
+		}
+	}
 }
 
 func TestConfigureProvisionedRegistryEnv(t *testing.T) {
@@ -361,7 +394,7 @@ func TestSetupDepsWithDefaultsPreservesNonNil(t *testing.T) {
 		ClusterManager:  cluster,
 		RegistryManager: registry,
 		GetRegistryPort: func() int { return 123 },
-		OperatorImageFor: func(_ *ExternalRegistryConfig, _ bool) string {
+		OperatorImageFor: func(_ *ExternalRegistryConfig) string {
 			return "custom-image"
 		},
 	}
@@ -376,7 +409,7 @@ func TestSetupDepsWithDefaultsPreservesNonNil(t *testing.T) {
 	if got.GetRegistryPort() != 123 {
 		t.Fatal("expected GetRegistryPort to be preserved")
 	}
-	if got.OperatorImageFor(nil, false) != "custom-image" {
+	if got.OperatorImageFor(nil) != "custom-image" {
 		t.Fatal("expected OperatorImageFor to be preserved")
 	}
 }
@@ -495,7 +528,11 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	kubectlClient = kubectl
 
 	operatorImage := "registry.example.com/mcp-runtime-operator:dev"
-	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), operatorImage, nil); err != nil {
+	operatorArgs := []string{
+		"--metrics-bind-address=:9090",
+		"--health-probe-bind-address=:9091",
+	}
+	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), operatorImage, operatorArgs); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if managerManifest == "" {
@@ -503,6 +540,15 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	}
 	if !strings.Contains(managerManifest, "image: "+operatorImage) {
 		t.Fatalf("expected manager manifest to include image %q", operatorImage)
+	}
+	if !strings.Contains(managerManifest, "- --leader-elect") {
+		t.Fatalf("expected manager manifest to preserve leader election flag, got:\n%s", managerManifest)
+	}
+	if !strings.Contains(managerManifest, "- --metrics-bind-address=:9090") {
+		t.Fatalf("expected manager manifest to include custom metrics arg, got:\n%s", managerManifest)
+	}
+	if !strings.Contains(managerManifest, "- --health-probe-bind-address=:9091") {
+		t.Fatalf("expected manager manifest to include custom probe arg, got:\n%s", managerManifest)
 	}
 
 	var (
@@ -513,7 +559,7 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 		hasNamespace    bool
 	)
 	for _, cmd := range mock.Commands {
-		if commandHasArgs(cmd, "apply", "--validate=false", "-f", "config/crd/bases/mcp-runtime.org_mcpservers.yaml") {
+		if commandHasArgs(cmd, "apply", "--validate=false", "-f", "config/crd/bases/mcpruntime.org_mcpservers.yaml") {
 			hasCRD = true
 		}
 		if commandHasArgs(cmd, "apply", "-k", "config/rbac/") {
@@ -542,7 +588,7 @@ func TestDeployOperatorManifestsWithKubectlCRDError(t *testing.T) {
 	mock := &MockExecutor{
 		CommandFunc: func(spec ExecSpec) *MockCommand {
 			cmd := &MockCommand{Args: spec.Args}
-			if commandHasArgs(spec, "apply", "--validate=false", "-f", "config/crd/bases/mcp-runtime.org_mcpservers.yaml") {
+			if commandHasArgs(spec, "apply", "--validate=false", "-f", "config/crd/bases/mcpruntime.org_mcpservers.yaml") {
 				cmd.RunErr = mockErr
 			}
 			return cmd

@@ -98,10 +98,10 @@ func TestShowPlatformStatus(t *testing.T) {
 		var calls []string
 
 		responses := map[string]commandResponse{
-			commandKey("kubectl", "cluster-info"):                             {Stdout: "cluster ok\n"},
-			commandKey("kubectl", "get", "nodes"):                             {},
-			commandKey("kubectl", "get", "crd", "mcpservers.mcp-runtime.org"): {},
-			commandKey("kubectl", "get", "pods", "-n", "mcp-runtime"):         {},
+			commandKey("kubectl", "cluster-info"):                            {Stdout: "cluster ok\n"},
+			commandKey("kubectl", "get", "nodes"):                            {},
+			commandKey("kubectl", "get", "crd", "mcpservers.mcpruntime.org"): {},
+			commandKey("kubectl", "get", "pods", "-n", "mcp-runtime"):        {},
 			commandKey("kubectl", "get", "deployment", "registry", "-n", "registry", "-o", "jsonpath={.status.readyReplicas}"): {
 				Stdout: "1",
 			},

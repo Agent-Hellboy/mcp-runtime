@@ -1,5 +1,8 @@
 package cli
 
+// This file implements KubectlClient, a wrapper around kubectl command execution.
+// It provides validation, security checks, and a clean interface for running kubectl commands.
+
 import (
 	"fmt"
 	"io"

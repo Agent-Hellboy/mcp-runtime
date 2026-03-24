@@ -1,5 +1,9 @@
 package cli
 
+// This file defines the setup planning types and logic.
+// SetupPlanInput captures raw CLI inputs, and BuildSetupPlan resolves them into a concrete SetupPlan
+// that determines which manifests and configurations to use during setup.
+
 // SetupPlanInput captures the raw CLI inputs for setup.
 type SetupPlanInput struct {
 	RegistryType           string
@@ -9,7 +13,6 @@ type SetupPlanInput struct {
 	IngressManifestChanged bool
 	ForceIngressInstall    bool
 	TLSEnabled             bool
-	TestMode               bool
 	OperatorArgs           []string
 }
 
@@ -20,7 +23,6 @@ type SetupPlan struct {
 	Ingress             ingressOptions
 	RegistryManifest    string
 	TLSEnabled          bool
-	TestMode            bool
 	OperatorArgs        []string
 }
 
@@ -50,7 +52,6 @@ func BuildSetupPlan(input SetupPlanInput) SetupPlan {
 		},
 		RegistryManifest: registryManifest,
 		TLSEnabled:       input.TLSEnabled,
-		TestMode:         input.TestMode,
 		OperatorArgs:     input.OperatorArgs,
 	}
 }

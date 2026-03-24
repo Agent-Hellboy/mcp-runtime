@@ -1,5 +1,8 @@
 package cli
 
+// This file implements the "status" command for checking platform health.
+// It displays the status of cluster, registry, and operator components.
+
 import (
 	"strings"
 

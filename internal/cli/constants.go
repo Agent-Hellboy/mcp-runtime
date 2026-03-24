@@ -1,7 +1,10 @@
-// Package cli provides CLI commands for the mcp-runtime.
 package cli
 
-// Namespace constants used across the CLI.
+// This file defines constants used across the CLI, including:
+//   - Kubernetes namespace names
+//   - Deployment and resource names
+//   - Label selectors
+//   - Default values
 const (
 	// NamespaceMCPRuntime is the namespace for the MCP runtime operator.
 	NamespaceMCPRuntime = "mcp-runtime"
@@ -31,7 +34,7 @@ const (
 // CRD identifiers.
 const (
 	// MCPServerCRDName is the full name of the MCPServer CRD.
-	MCPServerCRDName = "mcpservers.mcp-runtime.org"
+	MCPServerCRDName = "mcpservers.mcpruntime.org"
 
 	// CertManagerCRDName is the full name of the cert-manager Certificate CRD.
 	CertManagerCRDName = "certificates.cert-manager.io"

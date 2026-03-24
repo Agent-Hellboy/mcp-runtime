@@ -114,7 +114,7 @@ func TestNewManagerOptions(t *testing.T) {
 	if !opts.LeaderElection {
 		t.Fatalf("expected leader election enabled")
 	}
-	if opts.LeaderElectionID != "mcp-runtime-operator.mcp-runtime.org" {
+	if opts.LeaderElectionID != "mcp-runtime-operator.mcpruntime.org" {
 		t.Fatalf("unexpected leader election id: %q", opts.LeaderElectionID)
 	}
 }

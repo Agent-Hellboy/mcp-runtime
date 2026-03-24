@@ -1,10 +1,11 @@
-// Package cli provides CLI commands for the mcp-runtime.
+package cli
+
+// This file implements the "server build" command for building Docker images.
+// It handles Docker image building, metadata file updates, and registry integration.
 //
 // Example usage:
-//
-//	mcp-runtime server build image my-server --tag v1.0.0
-//	mcp-runtime server build image my-server --dockerfile custom.Dockerfile --registry my-registry.com
-package cli
+//   mcp-runtime server build image my-server --tag v1.0.0
+//   mcp-runtime server build image my-server --dockerfile custom.Dockerfile --registry my-registry.com
 
 import (
 	"fmt"

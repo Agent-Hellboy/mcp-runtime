@@ -1,9 +1,20 @@
-// Package cli provides terminal output utilities for the mcp-runtime CLI.
-// All terminal formatting is centralized here to abstract the underlying library (pterm).
 package cli
+
+// This file defines the Printer type and its implementation for formatted terminal output.
+// All terminal formatting is centralized here to abstract the underlying library (pterm).
+//
+// The Printer struct provides methods for:
+//   - Section/step headers
+//   - Status messages (Info, Success, Warn, Error)
+//   - Tables (regular and boxed)
+//   - Colors and formatting
+//   - Spinners for long-running operations
+//
+// Package-level convenience functions delegate to DefaultPrinter for easy usage.
 
 import (
 	"io"
+	"math"
 	"os"
 
 	"github.com/pterm/pterm"
@@ -185,12 +196,19 @@ func (p *Printer) Cyan(msg string) string {
 
 func isTerminalWriter(writer io.Writer) bool {
 	if writer == nil {
-		return term.IsTerminal(int(os.Stdout.Fd()))
+		return isTerminalFD(os.Stdout.Fd())
 	}
 	if f, ok := writer.(interface{ Fd() uintptr }); ok {
-		return term.IsTerminal(int(f.Fd()))
+		return isTerminalFD(f.Fd())
 	}
 	return false
+}
+
+func isTerminalFD(fd uintptr) bool {
+	if fd > uintptr(math.MaxInt) {
+		return false
+	}
+	return term.IsTerminal(int(fd)) // #nosec G115 -- fd is range-checked above before conversion.
 }
 
 // SpinnerStart starts a spinner with the given message. Returns a stop function.

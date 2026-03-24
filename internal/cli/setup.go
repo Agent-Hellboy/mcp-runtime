@@ -1,5 +1,9 @@
 package cli
 
+// This file implements the "setup" command for installing and configuring the MCP platform.
+// It handles cluster initialization, registry deployment, operator installation, and TLS setup.
+// The setup process is organized as a series of steps with dependency injection for testability.
+
 import (
 	"bytes"
 	"encoding/base64"
@@ -48,7 +52,7 @@ type SetupDeps struct {
 	CheckCRDInstalled               func(name string) error
 	GetDeploymentTimeout            func() time.Duration
 	GetRegistryPort                 func() int
-	OperatorImageFor                func(ext *ExternalRegistryConfig, testMode bool) string
+	OperatorImageFor                func(ext *ExternalRegistryConfig) string
 }
 
 func (d SetupDeps) withDefaults(logger *zap.Logger) SetupDeps {
@@ -123,11 +127,9 @@ func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 	var ingressManifest string
 	var forceIngressInstall bool
 	var tlsEnabled bool
-	var testMode bool
 	var operatorMetricsAddr string
 	var operatorProbeAddr string
 	var operatorLeaderElect bool
-
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Setup the complete MCP platform",
@@ -141,7 +143,12 @@ The platform deploys an internal Docker registry by default, which teams
 will use to push and pull container images.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Build operator args from flags
-			operatorArgs := buildOperatorArgs(operatorMetricsAddr, operatorProbeAddr, operatorLeaderElect)
+			operatorArgs := buildOperatorArgs(
+				operatorMetricsAddr,
+				operatorProbeAddr,
+				operatorLeaderElect,
+				cmd.Flags().Changed("operator-leader-elect"),
+			)
 
 			plan := BuildSetupPlan(SetupPlanInput{
 				RegistryType:           registryType,
@@ -151,7 +158,6 @@ will use to push and pull container images.`,
 				IngressManifestChanged: cmd.Flags().Changed("ingress-manifest"),
 				ForceIngressInstall:    forceIngressInstall,
 				TLSEnabled:             tlsEnabled,
-				TestMode:               testMode,
 				OperatorArgs:           operatorArgs,
 			})
 
@@ -165,17 +171,15 @@ will use to push and pull container images.`,
 	cmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/overlays/http", "Manifest to apply when installing the ingress controller")
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force ingress install even if an ingress class already exists")
 	cmd.Flags().BoolVar(&tlsEnabled, "with-tls", false, "Enable TLS overlays (ingress/registry); default is HTTP for dev")
-	cmd.Flags().BoolVar(&testMode, "test-mode", false, "Test mode: skip operator build and use kind-loaded image")
 	cmd.Flags().StringVar(&operatorMetricsAddr, "operator-metrics-addr", "", "Operator metrics bind address (default: :8080 from manager.yaml)")
 	cmd.Flags().StringVar(&operatorProbeAddr, "operator-probe-addr", "", "Operator health probe bind address (default: :8081 from manager.yaml)")
-	cmd.Flags().BoolVar(&operatorLeaderElect, "operator-leader-elect", false, "Enable leader election for operator (default: false, set in manager.yaml)")
-
+	cmd.Flags().BoolVar(&operatorLeaderElect, "operator-leader-elect", false, "Override operator leader election when set")
 	return cmd
 }
 
 // buildOperatorArgs constructs operator command-line arguments from flags.
-// Only includes flags that were explicitly set (non-empty/non-default values).
-func buildOperatorArgs(metricsAddr, probeAddr string, leaderElect bool) []string {
+// Only includes flags that were explicitly set.
+func buildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectChanged bool) []string {
 	var args []string
 
 	if metricsAddr != "" {
@@ -184,8 +188,8 @@ func buildOperatorArgs(metricsAddr, probeAddr string, leaderElect bool) []string
 	if probeAddr != "" {
 		args = append(args, "--health-probe-bind-address="+probeAddr)
 	}
-	if leaderElect {
-		args = append(args, "--leader-elect")
+	if leaderElectChanged {
+		args = append(args, fmt.Sprintf("--leader-elect=%t", leaderElect))
 	}
 
 	return args
@@ -332,17 +336,12 @@ func setupRegistryStep(logger *zap.Logger, extRegistry *ExternalRegistryConfig, 
 	return nil
 }
 
-func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfig, usingExternalRegistry, testMode bool, deps SetupDeps) (string, error) {
+func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfig, usingExternalRegistry bool, deps SetupDeps) (string, error) {
 	// Step 5: Deploy operator
 	Step("Step 5: Deploy operator")
 
-	operatorImage := deps.OperatorImageFor(extRegistry, testMode)
+	operatorImage := deps.OperatorImageFor(extRegistry)
 	Info(fmt.Sprintf("Image: %s", operatorImage))
-
-	if testMode {
-		Info("Test mode: skipping operator build, using kind-loaded image")
-		return operatorImage, nil
-	}
 
 	Info("Building operator image")
 	if err := deps.BuildOperatorImage(operatorImage); err != nil {
@@ -406,7 +405,7 @@ func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfi
 
 func deployOperatorStep(logger *zap.Logger, operatorImage string, extRegistry *ExternalRegistryConfig, registrySecretName string, usingExternalRegistry bool, operatorArgs []string, deps SetupDeps) error {
 	Info("Deploying operator manifests")
-	if err := deps.DeployOperatorManifests(logger, operatorImage); err != nil {
+	if err := deps.DeployOperatorManifests(logger, operatorImage, operatorArgs); err != nil {
 		wrappedErr := wrapWithSentinelAndContext(
 			ErrOperatorDeploymentFailed,
 			err,
@@ -489,7 +488,7 @@ func verifySetup(usingExternalRegistry bool, deps SetupDeps) error {
 	}
 
 	Info("Checking MCPServer CRD presence")
-	if err := deps.CheckCRDInstalled("mcpservers.mcp-runtime.org"); err != nil {
+	if err := deps.CheckCRDInstalled("mcpservers.mcpruntime.org"); err != nil {
 		wrappedErr := wrapWithSentinel(ErrCRDCheckFailed, err, fmt.Sprintf("CRD check failed: %v", err))
 		Error("CRD check failed")
 		// Note: logger not available in verifySetup, but error will be logged by caller
@@ -500,15 +499,10 @@ func verifySetup(usingExternalRegistry bool, deps SetupDeps) error {
 	return nil
 }
 
-func getOperatorImage(ext *ExternalRegistryConfig, testMode bool) string {
+func getOperatorImage(ext *ExternalRegistryConfig) string {
 	// Check for explicit override first
 	if override := GetOperatorImageOverride(); override != "" {
 		return override
-	}
-
-	// In test mode, use the standard kind-loaded image
-	if testMode {
-		return "docker.io/library/mcp-runtime-operator:latest"
 	}
 
 	if ext != nil && ext.URL != "" {
@@ -800,7 +794,7 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 	// Step 1: Apply CRD
 	Info("Applying CRD manifests")
 	// #nosec G204 -- fixed file path from repository.
-	if err := kubectl.RunWithOutput([]string{"apply", "--validate=false", "-f", "config/crd/bases/mcp-runtime.org_mcpservers.yaml"}, os.Stdout, os.Stderr); err != nil {
+	if err := kubectl.RunWithOutput([]string{"apply", "--validate=false", "-f", "config/crd/bases/mcpruntime.org_mcpservers.yaml"}, os.Stdout, os.Stderr); err != nil {
 		wrappedErr := wrapWithSentinel(ErrApplyCRDFailed, err, fmt.Sprintf("failed to apply CRD: %v", err))
 		Error("Failed to apply CRD")
 		if logger != nil {
@@ -919,43 +913,81 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 }
 
 // injectOperatorArgs injects operator command-line arguments into the manager deployment YAML.
-// It replaces the existing args section or adds one if it doesn't exist.
+// It merges explicit overrides into the existing args section or adds one if it doesn't exist.
 func injectOperatorArgs(yamlContent string, args []string) string {
 	if len(args) == 0 {
 		return yamlContent
 	}
 
-	// Build the new args section
-	indent := "        " // 8 spaces (standard YAML indentation for args in containers)
-	argsYAML := indent + "args:\n"
-	for _, arg := range args {
-		argsYAML += fmt.Sprintf("%s- %s\n", indent, arg)
-	}
-
-	// Pattern to match the args section - find "args:" line and everything after it until next key
-	// Match: "args:" followed by any number of indented list items (using [0-9] instead of backreference)
 	argsPattern := regexp.MustCompile(`(?m)^(\s*)args:\s*$\n((?:\s+-\s+[^\n]+\n?)*)`)
-	if argsPattern.MatchString(yamlContent) {
-		// Replace existing args section - capture the indentation from group 1
-		return argsPattern.ReplaceAllString(yamlContent, "${1}args:\n"+argsYAML)
+	if matches := argsPattern.FindStringSubmatch(yamlContent); len(matches) == 3 {
+		replacement := renderOperatorArgsBlock(matches[1], mergeOperatorArgs(parseOperatorArgs(matches[2]), args))
+		loc := argsPattern.FindStringIndex(yamlContent)
+		return yamlContent[:loc[0]] + replacement + yamlContent[loc[1]:]
 	}
 
-	// If no args section exists, find the command line and add args after it
-	// Pattern: matches "command:" followed by command array items
 	commandPattern := regexp.MustCompile(`(?m)^(\s*)command:\s*$\n((?:\s+-\s+[^\n]+\n?)+)`)
-	if commandPattern.MatchString(yamlContent) {
-		// Add args after command
-		return commandPattern.ReplaceAllString(yamlContent, "${0}"+argsYAML)
+	if matches := commandPattern.FindStringSubmatch(yamlContent); len(matches) == 3 {
+		loc := commandPattern.FindStringIndex(yamlContent)
+		return yamlContent[:loc[0]] + yamlContent[loc[0]:loc[1]] + renderOperatorArgsBlock(matches[1], args) + yamlContent[loc[1]:]
 	}
 
-	// Fallback: if we can't find command, try to add after image
 	imagePattern := regexp.MustCompile(`(?m)^(\s*)image:\s*\S+$`)
-	if imagePattern.MatchString(yamlContent) {
-		return imagePattern.ReplaceAllString(yamlContent, "${0}\n"+argsYAML)
+	if matches := imagePattern.FindStringSubmatch(yamlContent); len(matches) == 2 {
+		loc := imagePattern.FindStringIndex(yamlContent)
+		return yamlContent[:loc[1]] + "\n" + renderOperatorArgsBlock(matches[1], args) + yamlContent[loc[1]:]
 	}
 
-	// If all else fails, return original (shouldn't happen with valid manager.yaml)
 	return yamlContent
+}
+
+func renderOperatorArgsBlock(indent string, args []string) string {
+	var builder strings.Builder
+	builder.WriteString(indent)
+	builder.WriteString("args:\n")
+	for _, arg := range args {
+		builder.WriteString(indent)
+		builder.WriteString("- ")
+		builder.WriteString(arg)
+		builder.WriteByte('\n')
+	}
+	return builder.String()
+}
+
+func parseOperatorArgs(block string) []string {
+	var args []string
+	for _, line := range strings.Split(strings.TrimSpace(block), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "- ") {
+			args = append(args, strings.TrimSpace(strings.TrimPrefix(line, "- ")))
+		}
+	}
+	return args
+}
+
+func mergeOperatorArgs(existing, overrides []string) []string {
+	merged := append([]string(nil), existing...)
+	indexByKey := make(map[string]int, len(existing))
+	for i, arg := range merged {
+		indexByKey[operatorArgKey(arg)] = i
+	}
+	for _, arg := range overrides {
+		key := operatorArgKey(arg)
+		if idx, ok := indexByKey[key]; ok {
+			merged[idx] = arg
+			continue
+		}
+		indexByKey[key] = len(merged)
+		merged = append(merged, arg)
+	}
+	return merged
+}
+
+func operatorArgKey(arg string) string {
+	if idx := strings.Index(arg, "="); idx >= 0 {
+		return arg[:idx]
+	}
+	return arg
 }
 
 // setupTLS configures TLS by applying cert-manager resources.

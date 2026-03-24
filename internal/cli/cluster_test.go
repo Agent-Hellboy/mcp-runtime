@@ -867,7 +867,7 @@ func TestInitClusterErrors(t *testing.T) {
 				cmd := &MockCommand{Args: spec.Args}
 				if contains(spec.Args, "apply") &&
 					contains(spec.Args, "-f") &&
-					contains(spec.Args, "config/crd/bases/mcp-runtime.org_mcpservers.yaml") {
+					contains(spec.Args, "config/crd/bases/mcpruntime.org_mcpservers.yaml") {
 					cmd.RunErr = errors.New("crd install failed")
 				}
 				return cmd

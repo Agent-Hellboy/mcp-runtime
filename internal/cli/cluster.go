@@ -1,5 +1,8 @@
 package cli
 
+// This file implements the "cluster" command for managing Kubernetes cluster operations.
+// It handles cluster initialization, status checks, configuration, provisioning, and certificate management.
+
 import (
 	"errors"
 	"fmt"
@@ -181,7 +184,7 @@ func (m *ClusterManager) InitCluster(kubeconfig, context string) error {
 	// Install CRD
 	m.logger.Info("Installing CRD")
 	// #nosec G204 -- fixed file path from repository.
-	if err := m.kubectl.Run([]string{"apply", "--validate=false", "-f", "config/crd/bases/mcp-runtime.org_mcpservers.yaml"}); err != nil {
+	if err := m.kubectl.Run([]string{"apply", "--validate=false", "-f", "config/crd/bases/mcpruntime.org_mcpservers.yaml"}); err != nil {
 		wrappedErr := wrapWithSentinel(ErrInstallCRDFailed, err, fmt.Sprintf("failed to install CRD: %v", err))
 		Error("Failed to install CRD")
 		logStructuredError(m.logger, wrappedErr, "Failed to install CRD")

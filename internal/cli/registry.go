@@ -1,5 +1,8 @@
 package cli
 
+// This file implements the "registry" command for managing the container registry.
+// It handles registry provisioning, status checks, image pushing, and registry information display.
+
 import (
 	"bytes"
 	"fmt"
@@ -254,11 +257,24 @@ func saveExternalRegistryConfig(cfg *ExternalRegistryConfig) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
-	data, err := yaml.Marshal(cfg)
+	data, err := marshalExternalRegistryConfig(cfg)
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(path, data, 0o600)
+}
+
+func marshalExternalRegistryConfig(cfg *ExternalRegistryConfig) ([]byte, error) {
+	data := map[string]string{
+		"url": cfg.URL,
+	}
+	if cfg.Username != "" {
+		data["username"] = cfg.Username
+	}
+	if cfg.Password != "" {
+		data["password"] = cfg.Password
+	}
+	return yaml.Marshal(data)
 }
 
 func loadExternalRegistryConfig() (*ExternalRegistryConfig, error) {
@@ -664,8 +680,8 @@ func (m *RegistryManager) PushInCluster(source, target, helperNS string) error {
 		return wrappedErr
 	}
 
-	// Ensure source is saved to tar
-	tmpFile, err := os.CreateTemp("", "mcp-img-*.tar")
+	// Ensure source is saved to tar; use CWD to satisfy kubectl path validation.
+	tmpFile, err := os.CreateTemp(".", "mcp-img-*.tar")
 	if err != nil {
 		wrappedErr := wrapWithSentinel(ErrCreateTempFileFailed, err, fmt.Sprintf("failed to create temp file: %v", err))
 		Error("Failed to create temp file")

@@ -1,5 +1,8 @@
 package cli
 
+// This file defines the setup step execution framework.
+// It provides a pipeline-based approach for running setup steps with dependency injection and testability.
+
 import (
 	"fmt"
 
@@ -84,7 +87,6 @@ func (s operatorImageStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupCon
 		logger,
 		ctx.ExternalRegistry,
 		ctx.UsingExternalRegistry,
-		ctx.Plan.TestMode,
 		deps,
 	)
 	if err != nil {

@@ -1,5 +1,10 @@
-// Package cli provides CLI commands for the mcp-runtime.
 package cli
+
+// This file defines error handling utilities for the CLI, including:
+//   - Sentinel errors for different error categories (CLI, Cluster, Registry, etc.)
+//   - Error wrapping functions that integrate with the errx error system
+//   - Structured error logging with context
+//   - Debug mode management for error output
 
 import (
 	"errors"

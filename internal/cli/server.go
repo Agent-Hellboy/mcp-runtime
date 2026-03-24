@@ -1,5 +1,8 @@
 package cli
 
+// This file implements the "server" command for managing MCP server resources.
+// It handles creating, listing, viewing, and deleting MCPServer custom resources.
+
 import (
 	"errors"
 	"fmt"
@@ -275,7 +278,7 @@ func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) er
 	m.logger.Info("Creating MCP server", zap.String("name", name), zap.String("image", image))
 
 	manifest := mcpServerManifest{
-		APIVersion: "mcp-runtime.org/v1alpha1",
+		APIVersion: "mcpruntime.org/v1alpha1",
 		Kind:       "MCPServer",
 		Metadata: manifestMetadata{
 			Name:      name,

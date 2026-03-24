@@ -105,7 +105,7 @@ func newManagerOptions(cfg *operatorConfig) ctrl.Options {
 		Metrics:                server.Options{BindAddress: cfg.metricsAddr},
 		HealthProbeBindAddress: cfg.probeAddr,
 		LeaderElection:         cfg.enableLeaderElection,
-		LeaderElectionID:       "mcp-runtime-operator.mcp-runtime.org",
+		LeaderElectionID:       "mcp-runtime-operator.mcpruntime.org",
 	}
 }
 

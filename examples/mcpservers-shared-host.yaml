@@ -1,4 +1,4 @@
-apiVersion: mcp-runtime.org/v1alpha1
+apiVersion: mcpruntime.org/v1alpha1
 kind: MCPServer
 metadata:
   name: mcp-alpha
@@ -9,7 +9,7 @@ spec:
   ingressHost: mcp.example.com
   ingressPath: /mcp-alpha/mcp
 ---
-apiVersion: mcp-runtime.org/v1alpha1
+apiVersion: mcpruntime.org/v1alpha1
 kind: MCPServer
 metadata:
   name: mcp-beta

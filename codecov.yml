@@ -5,7 +5,7 @@ coverage:
   status:
     project:
       default:
-        target: 0.60
+        target: 0.90
         threshold: 2%
         paths:
           - cmd/
@@ -14,7 +14,7 @@ coverage:
           - api/
     patch:
       default:
-        target: 0.60
+        target: 0.95
         threshold: 1%
         paths:
           - cmd/

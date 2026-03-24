@@ -65,9 +65,9 @@ const (
 	defaultLimitMemory   = DefaultLimitMemory
 )
 
-//+kubebuilder:rbac:groups=mcp-runtime.org,resources=mcpservers,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=mcp-runtime.org,resources=mcpservers/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=mcp-runtime.org,resources=mcpservers/finalizers,verbs=update
+//+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpservers,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpservers/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpservers/finalizers,verbs=update
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
