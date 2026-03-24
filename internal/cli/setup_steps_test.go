@@ -99,6 +99,82 @@ func TestOperatorImageStepSetsContext(t *testing.T) {
 	}
 }
 
+func TestOperatorImageStepTestModeSkipsBuildAndUsesPreloadedImage(t *testing.T) {
+	var buildCalls int32
+	ctx := &SetupContext{
+		Plan: SetupPlan{
+			TestMode: true,
+		},
+		ExternalRegistry:      &ExternalRegistryConfig{URL: "registry.example.com"},
+		UsingExternalRegistry: true,
+	}
+	deps := SetupDeps{
+		OperatorImageFor:   func(_ *ExternalRegistryConfig) string { return "registry.example.com/mcp-runtime-operator:latest" },
+		BuildOperatorImage: func(string) error { atomic.AddInt32(&buildCalls, 1); return nil },
+		PushOperatorImage:  func(string) error { t.Fatal("did not expect push in test mode"); return nil },
+	}
+
+	step := operatorImageStep{}
+	if err := step.Run(zap.NewNop(), deps, ctx); err != nil {
+		t.Fatalf("operator image step failed: %v", err)
+	}
+	if ctx.OperatorImage != testModeOperatorImage {
+		t.Fatalf("expected test mode image %q, got %q", testModeOperatorImage, ctx.OperatorImage)
+	}
+	if atomic.LoadInt32(&buildCalls) != 0 {
+		t.Fatalf("expected build to be skipped in test mode, got %d calls", buildCalls)
+	}
+}
+
+func TestDeployOperatorStepCmdPassesOperatorArgs(t *testing.T) {
+	ctx := &SetupContext{
+		Plan: SetupPlan{
+			OperatorArgs: []string{"--metrics-bind-address=:9090", "--leader-elect=false"},
+		},
+		OperatorImage:         "registry.example.com/mcp-runtime-operator:latest",
+		UsingExternalRegistry: false,
+	}
+	var gotArgs []string
+	deps := SetupDeps{
+		DeployOperatorManifests: func(_ *zap.Logger, image string, args []string) error {
+			if image != ctx.OperatorImage {
+				t.Fatalf("expected operator image %q, got %q", ctx.OperatorImage, image)
+			}
+			gotArgs = append([]string(nil), args...)
+			return nil
+		},
+		RestartDeployment: func(string, string) error { return nil },
+	}
+
+	step := deployOperatorStepCmd{}
+	if err := step.Run(zap.NewNop(), deps, ctx); err != nil {
+		t.Fatalf("deploy operator step failed: %v", err)
+	}
+	if len(gotArgs) != len(ctx.Plan.OperatorArgs) {
+		t.Fatalf("expected %d operator args, got %d (%v)", len(ctx.Plan.OperatorArgs), len(gotArgs), gotArgs)
+	}
+	for i := range ctx.Plan.OperatorArgs {
+		if gotArgs[i] != ctx.Plan.OperatorArgs[i] {
+			t.Fatalf("expected operator arg %d to be %q, got %q", i, ctx.Plan.OperatorArgs[i], gotArgs[i])
+		}
+	}
+}
+
+func TestNewSetupCmdIncludesFeatureFlags(t *testing.T) {
+	cmd := NewSetupCmd(zap.NewNop())
+
+	for _, name := range []string{
+		"test-mode",
+		"operator-metrics-addr",
+		"operator-probe-addr",
+		"operator-leader-elect",
+	} {
+		if flag := cmd.Flags().Lookup(name); flag == nil {
+			t.Fatalf("expected %q flag to exist", name)
+		}
+	}
+}
+
 func TestRegistryStepDeploysInternalRegistry(t *testing.T) {
 	var deployCalls int32
 	var waitCalls int32

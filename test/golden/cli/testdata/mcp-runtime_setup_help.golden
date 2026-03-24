@@ -20,6 +20,7 @@ Flags:
       --operator-probe-addr string     Operator health probe bind address (default: :8081 from manager.yaml)
       --registry-storage string        Registry storage size (default: 20Gi) (default "20Gi")
       --registry-type string           Registry type (docker; harbor coming soon) (default "docker")
+      --test-mode                      Test mode: skip operator build and use kind-loaded image
       --with-tls                       Enable TLS overlays (ingress/registry); default is HTTP for dev
 
 Global Flags:

@@ -21,6 +21,7 @@ import (
 )
 
 const defaultRegistrySecretName = "mcp-runtime-registry-creds" // #nosec G101 -- default secret name, not a credential.
+const testModeOperatorImage = "docker.io/library/mcp-runtime-operator:latest"
 
 type ClusterManagerAPI interface {
 	InitCluster(kubeconfig, context string) error
@@ -127,6 +128,7 @@ func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 	var ingressManifest string
 	var forceIngressInstall bool
 	var tlsEnabled bool
+	var testMode bool
 	var operatorMetricsAddr string
 	var operatorProbeAddr string
 	var operatorLeaderElect bool
@@ -158,6 +160,7 @@ will use to push and pull container images.`,
 				IngressManifestChanged: cmd.Flags().Changed("ingress-manifest"),
 				ForceIngressInstall:    forceIngressInstall,
 				TLSEnabled:             tlsEnabled,
+				TestMode:               testMode,
 				OperatorArgs:           operatorArgs,
 			})
 
@@ -171,6 +174,7 @@ will use to push and pull container images.`,
 	cmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/overlays/http", "Manifest to apply when installing the ingress controller")
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force ingress install even if an ingress class already exists")
 	cmd.Flags().BoolVar(&tlsEnabled, "with-tls", false, "Enable TLS overlays (ingress/registry); default is HTTP for dev")
+	cmd.Flags().BoolVar(&testMode, "test-mode", false, "Test mode: skip operator build and use kind-loaded image")
 	cmd.Flags().StringVar(&operatorMetricsAddr, "operator-metrics-addr", "", "Operator metrics bind address (default: :8080 from manager.yaml)")
 	cmd.Flags().StringVar(&operatorProbeAddr, "operator-probe-addr", "", "Operator health probe bind address (default: :8081 from manager.yaml)")
 	cmd.Flags().BoolVar(&operatorLeaderElect, "operator-leader-elect", false, "Override operator leader election when set")
@@ -336,12 +340,20 @@ func setupRegistryStep(logger *zap.Logger, extRegistry *ExternalRegistryConfig, 
 	return nil
 }
 
-func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfig, usingExternalRegistry bool, deps SetupDeps) (string, error) {
+func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfig, usingExternalRegistry, testMode bool, deps SetupDeps) (string, error) {
 	// Step 5: Deploy operator
 	Step("Step 5: Deploy operator")
 
 	operatorImage := deps.OperatorImageFor(extRegistry)
+	if testMode && GetOperatorImageOverride() == "" {
+		operatorImage = testModeOperatorImage
+	}
 	Info(fmt.Sprintf("Image: %s", operatorImage))
+
+	if testMode {
+		Info("Test mode: skipping operator build and push, using kind-loaded image")
+		return operatorImage, nil
+	}
 
 	Info("Building operator image")
 	if err := deps.BuildOperatorImage(operatorImage); err != nil {

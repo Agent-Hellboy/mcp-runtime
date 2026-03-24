@@ -87,6 +87,7 @@ func (s operatorImageStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupCon
 		logger,
 		ctx.ExternalRegistry,
 		ctx.UsingExternalRegistry,
+		ctx.Plan.TestMode,
 		deps,
 	)
 	if err != nil {

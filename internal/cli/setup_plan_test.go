@@ -65,6 +65,33 @@ func TestBuildSetupPlan_CustomIngressManifest(t *testing.T) {
 	}
 }
 
+func TestBuildSetupPlan_PreservesTestModeAndOperatorArgs(t *testing.T) {
+	operatorArgs := []string{"--metrics-bind-address=:9090", "--leader-elect=false"}
+	plan := BuildSetupPlan(SetupPlanInput{
+		RegistryType:           "docker",
+		RegistryStorageSize:    "20Gi",
+		IngressMode:            "traefik",
+		IngressManifest:        "config/ingress/overlays/http",
+		IngressManifestChanged: false,
+		ForceIngressInstall:    false,
+		TLSEnabled:             false,
+		TestMode:               true,
+		OperatorArgs:           operatorArgs,
+	})
+
+	if !plan.TestMode {
+		t.Fatal("expected test mode to be preserved")
+	}
+	if len(plan.OperatorArgs) != len(operatorArgs) {
+		t.Fatalf("expected %d operator args, got %d", len(operatorArgs), len(plan.OperatorArgs))
+	}
+	for i := range operatorArgs {
+		if plan.OperatorArgs[i] != operatorArgs[i] {
+			t.Fatalf("expected operator arg %d to be %q, got %q", i, operatorArgs[i], plan.OperatorArgs[i])
+		}
+	}
+}
+
 type callRecorder struct {
 	calls []string
 	waits []string

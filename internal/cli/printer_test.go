@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 )
@@ -148,6 +149,12 @@ func TestPrinterSpinnerWithWriter(t *testing.T) {
 
 	stop = p.SpinnerStart("working")
 	stop(false, "failed")
+}
+
+func TestIsTerminalFDOverflowGuard(t *testing.T) {
+	if isTerminalFD(uintptr(math.MaxInt) + 1) {
+		t.Fatal("expected overflow guard to report non-terminal")
+	}
 }
 
 func TestPrinterTablesWithWriterError(t *testing.T) {
