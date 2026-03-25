@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestGenerateCRD(t *testing.T) {
@@ -180,31 +182,53 @@ func TestGenerateCRD(t *testing.T) {
 			t.Fatalf("failed to read output file: %v", err)
 		}
 
-		content := string(data)
-		assertContains(t, content, "gateway:")
-		assertContains(t, content, "image: example.com/mcp-proxy:latest")
-		assertContains(t, content, "upstreamurl: http://127.0.0.1:8088")
-		assertContains(t, content, "stripprefix: /gateway-server")
-		assertContains(t, content, "auth:")
-		assertContains(t, content, "mode: header")
-		assertContains(t, content, "policy:")
-		assertContains(t, content, "defaultdecision: deny")
-		assertContains(t, content, "session:")
-		assertContains(t, content, "required: true")
-		assertContains(t, content, "tools:")
-		assertContains(t, content, "requiredtrust: high")
-		assertContains(t, content, "secretenvvars:")
-		assertContains(t, content, "provider-creds")
-		assertContains(t, content, "analytics:")
-		assertContains(t, content, "ingesturl: http://analytics.default.svc/api/events")
-		assertContains(t, content, "source: gateway-server")
-		assertContains(t, content, "eventtype: mcp.request")
-		assertContains(t, content, "apikeysecretref:")
-		assertContains(t, content, "name: analytics-creds")
-		assertContains(t, content, "key: api-key")
-		assertContains(t, content, "rollout:")
-		assertContains(t, content, "strategy: Canary")
-		assertContains(t, content, "canaryreplicas: 1")
+		var rendered map[string]any
+		if err := yaml.Unmarshal(data, &rendered); err != nil {
+			t.Fatalf("failed to unmarshal generated yaml: %v", err)
+		}
+
+		spec := assertMapValue(t, rendered, "spec")
+		gateway := assertMapValue(t, spec, "gateway")
+		assertMapStringValue(t, gateway, "image", "example.com/mcp-proxy:latest")
+		assertMapStringValue(t, gateway, "upstreamurl", "http://127.0.0.1:8088")
+		assertMapStringValue(t, gateway, "stripprefix", "/gateway-server")
+
+		auth := assertMapValue(t, spec, "auth")
+		assertMapStringValue(t, auth, "mode", "header")
+
+		policy := assertMapValue(t, spec, "policy")
+		assertMapStringValue(t, policy, "defaultdecision", "deny")
+
+		session := assertMapValue(t, spec, "session")
+		assertMapBoolValue(t, session, "required", true)
+
+		tools := assertSliceValue(t, spec, "tools")
+		if len(tools) != 1 {
+			t.Fatalf("expected 1 tool, got %d", len(tools))
+		}
+		tool := assertMapItem(t, tools[0], "tools[0]")
+		assertMapStringValue(t, tool, "requiredtrust", "high")
+
+		secretEnvVars := assertSliceValue(t, spec, "secretenvvars")
+		if len(secretEnvVars) != 1 {
+			t.Fatalf("expected 1 secret env var, got %d", len(secretEnvVars))
+		}
+		secretEnv := assertMapItem(t, secretEnvVars[0], "secretenvvars[0]")
+		secretKeyRef := assertMapValue(t, secretEnv, "secretkeyref")
+		assertMapStringValue(t, secretKeyRef, "name", "provider-creds")
+		assertMapStringValue(t, secretKeyRef, "key", "openai")
+
+		analytics := assertMapValue(t, spec, "analytics")
+		assertMapStringValue(t, analytics, "ingesturl", "http://analytics.default.svc/api/events")
+		assertMapStringValue(t, analytics, "source", "gateway-server")
+		assertMapStringValue(t, analytics, "eventtype", "mcp.request")
+		apiKeySecretRef := assertMapValue(t, analytics, "apikeysecretref")
+		assertMapStringValue(t, apiKeySecretRef, "name", "analytics-creds")
+		assertMapStringValue(t, apiKeySecretRef, "key", "api-key")
+
+		rollout := assertMapValue(t, spec, "rollout")
+		assertMapStringValue(t, rollout, "strategy", "Canary")
+		assertMapIntValue(t, rollout, "canaryreplicas", 1)
 	})
 
 	t.Run("creates parent directories", func(t *testing.T) {
@@ -322,5 +346,81 @@ func assertContains(t *testing.T, content, substr string) {
 	t.Helper()
 	if !strings.Contains(content, substr) {
 		t.Errorf("expected content to contain %q, got:\n%s", substr, content)
+	}
+}
+
+func assertMapValue(t *testing.T, data map[string]any, key string) map[string]any {
+	t.Helper()
+	value, ok := data[key]
+	if !ok {
+		t.Fatalf("expected key %q to exist", key)
+	}
+	return assertMapItem(t, value, key)
+}
+
+func assertSliceValue(t *testing.T, data map[string]any, key string) []any {
+	t.Helper()
+	value, ok := data[key]
+	if !ok {
+		t.Fatalf("expected key %q to exist", key)
+	}
+	items, ok := value.([]any)
+	if !ok {
+		t.Fatalf("expected key %q to be a slice, got %T", key, value)
+	}
+	return items
+}
+
+func assertMapItem(t *testing.T, value any, label string) map[string]any {
+	t.Helper()
+	item, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("expected %s to be a map, got %T", label, value)
+	}
+	return item
+}
+
+func assertMapStringValue(t *testing.T, data map[string]any, key, want string) {
+	t.Helper()
+	value, ok := data[key]
+	if !ok {
+		t.Fatalf("expected key %q to exist", key)
+	}
+	got, ok := value.(string)
+	if !ok {
+		t.Fatalf("expected key %q to be a string, got %T", key, value)
+	}
+	if got != want {
+		t.Fatalf("%s = %q, want %q", key, got, want)
+	}
+}
+
+func assertMapBoolValue(t *testing.T, data map[string]any, key string, want bool) {
+	t.Helper()
+	value, ok := data[key]
+	if !ok {
+		t.Fatalf("expected key %q to exist", key)
+	}
+	got, ok := value.(bool)
+	if !ok {
+		t.Fatalf("expected key %q to be a bool, got %T", key, value)
+	}
+	if got != want {
+		t.Fatalf("%s = %t, want %t", key, got, want)
+	}
+}
+
+func assertMapIntValue(t *testing.T, data map[string]any, key string, want int) {
+	t.Helper()
+	value, ok := data[key]
+	if !ok {
+		t.Fatalf("expected key %q to exist", key)
+	}
+	got, ok := value.(int)
+	if !ok {
+		t.Fatalf("expected key %q to be an int, got %T", key, value)
+	}
+	if got != want {
+		t.Fatalf("%s = %d, want %d", key, got, want)
 	}
 }

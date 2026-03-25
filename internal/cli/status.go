@@ -70,6 +70,8 @@ func showPlatformStatus(logger *zap.Logger) error {
 
 	extRegistry, err := resolveExternalRegistryConfig(nil)
 	if err != nil {
+		// resolveExternalRegistryConfig already returns (nil, nil) when no config exists,
+		// so any error here is a real load/parse/validation problem rather than a missing file.
 		Warn("Failed to load external registry config: " + err.Error())
 	}
 	if extRegistry != nil && extRegistry.URL != "" {
@@ -164,7 +166,7 @@ func analyticsNamespaceInstalled(clusterReachable bool) (bool, error) {
 
 	output, err := runKubectlCombinedOutput([]string{"get", "namespace", defaultAnalyticsNamespace, "-o", "jsonpath={.metadata.name}"})
 	if err == nil {
-		return strings.TrimSpace(output) != "", nil
+		return strings.TrimSpace(output) == defaultAnalyticsNamespace, nil
 	}
 
 	lower := strings.ToLower(output)

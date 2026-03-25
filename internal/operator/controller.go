@@ -175,7 +175,7 @@ type gatewayToolAccess struct {
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpservers/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpservers/finalizers,verbs=update
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;delete
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingressclasses,verbs=get;list;watch
@@ -333,7 +333,17 @@ func (r *MCPServerReconciler) validateGatewayConfig(ctx context.Context, mcpServ
 			logOperatorError(logger, err, "Invalid canary rollout")
 			return err
 		}
-		if mcpServer.Spec.Replicas != nil && *mcpServer.Spec.Rollout.CanaryReplicas >= *mcpServer.Spec.Replicas {
+		if mcpServer.Spec.Replicas == nil {
+			contextMap := map[string]any{
+				"mcpServer": mcpServer.Name,
+				"namespace": mcpServer.Namespace,
+			}
+			err := newOperatorError("spec.replicas must be set when rollout.strategy=Canary", contextMap)
+			r.updateStatus(ctx, mcpServer, "Error", err.Error(), resourceReadiness{})
+			logOperatorError(logger, err, "Missing replicas for canary rollout")
+			return err
+		}
+		if *mcpServer.Spec.Rollout.CanaryReplicas >= *mcpServer.Spec.Replicas {
 			contextMap := map[string]any{
 				"mcpServer":      mcpServer.Name,
 				"namespace":      mcpServer.Namespace,
@@ -343,6 +353,15 @@ func (r *MCPServerReconciler) validateGatewayConfig(ctx context.Context, mcpServ
 			err := newOperatorError("rollout.canaryReplicas must be less than spec.replicas", contextMap)
 			r.updateStatus(ctx, mcpServer, "Error", err.Error(), resourceReadiness{})
 			logOperatorError(logger, err, "Invalid canary replica split")
+			return err
+		}
+	}
+
+	if rollout := mcpServer.Spec.Rollout; rollout != nil {
+		if err := r.validateRolloutValue(ctx, mcpServer, logger, "rollout.maxUnavailable", rollout.MaxUnavailable); err != nil {
+			return err
+		}
+		if err := r.validateRolloutValue(ctx, mcpServer, logger, "rollout.maxSurge", rollout.MaxSurge); err != nil {
 			return err
 		}
 	}
@@ -372,6 +391,46 @@ func (r *MCPServerReconciler) validateGatewayConfig(ctx context.Context, mcpServ
 			logOperatorError(logger, err, "Invalid analytics secret reference")
 			return err
 		}
+	}
+
+	return nil
+}
+
+func (r *MCPServerReconciler) validateRolloutValue(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, logger logr.Logger, fieldName, value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+
+	numeric := trimmed
+	if strings.HasSuffix(numeric, "%") {
+		numeric = strings.TrimSuffix(numeric, "%")
+	}
+	if numeric == "" {
+		contextMap := map[string]any{
+			"mcpServer": mcpServer.Name,
+			"namespace": mcpServer.Namespace,
+			"field":     fieldName,
+			"value":     trimmed,
+		}
+		err := newOperatorError(fieldName+" must be an integer or percentage", contextMap)
+		r.updateStatus(ctx, mcpServer, "Error", err.Error(), resourceReadiness{})
+		logOperatorError(logger, err, "Invalid rollout value")
+		return err
+	}
+
+	parsed, err := strconv.Atoi(numeric)
+	if err != nil || parsed < 0 {
+		contextMap := map[string]any{
+			"mcpServer": mcpServer.Name,
+			"namespace": mcpServer.Namespace,
+			"field":     fieldName,
+			"value":     trimmed,
+		}
+		validationErr := newOperatorError(fieldName+" must be an integer or percentage", contextMap)
+		r.updateStatus(ctx, mcpServer, "Error", validationErr.Error(), resourceReadiness{})
+		logOperatorError(logger, validationErr, "Invalid rollout value")
+		return validationErr
 	}
 
 	return nil
@@ -494,7 +553,7 @@ func (r *MCPServerReconciler) setDefaults(mcpServer *mcpv1alpha1.MCPServer) {
 		mcpServer.Spec.Replicas = &replicas
 	}
 	if mcpServer.Spec.Port == 0 {
-		mcpServer.Spec.Port = 8088
+		mcpServer.Spec.Port = DefaultPort
 	}
 	if mcpServer.Spec.ServicePort == 0 {
 		mcpServer.Spec.ServicePort = 80
@@ -976,7 +1035,7 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 		}
 	}
 
-	return corev1.Container{
+	container := corev1.Container{
 		Name:            "mcp-gateway",
 		Image:           image,
 		ImagePullPolicy: corev1.PullIfNotPresent,
@@ -1009,7 +1068,11 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 			InitialDelaySeconds: 3,
 			PeriodSeconds:       5,
 		},
-	}, nil
+	}
+	if err := applyContainerResources(&container, mcpv1alpha1.ResourceRequirements{}); err != nil {
+		return corev1.Container{}, err
+	}
+	return container, nil
 }
 
 func (r *MCPServerReconciler) reconcilePolicyConfigMap(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
@@ -1477,8 +1540,12 @@ func (r *MCPServerReconciler) checkIngressReady(ctx context.Context, mcpServer *
 	}
 
 	// Local/dev ingress controllers such as Traefik may not populate loadBalancer status
-	// on individual Ingress objects. If the referenced IngressClass exists and the Ingress
-	// has at least one rule, treat the resource as admitted.
+	// on individual Ingress objects. This fallback only checks that ingress.Spec.IngressClassName
+	// is set, len(ingress.Spec.Rules) > 0, and r.Get() can load the referenced IngressClass.
+	// That heuristic is good enough for local/dev admission checks, but it can report readiness
+	// before a production controller has actually programmed traffic. Production deployments
+	// should prefer ingress.Status.LoadBalancer, controller-specific status/annotations, or
+	// controller-specific readiness conditions instead of relying on this shortcut.
 	if ingress.Spec.IngressClassName != nil && *ingress.Spec.IngressClassName != "" && len(ingress.Spec.Rules) > 0 {
 		ingressClass := &networkingv1.IngressClass{}
 		if err := r.Get(ctx, types.NamespacedName{Name: *ingress.Spec.IngressClassName}, ingressClass); err == nil {
@@ -1526,6 +1593,7 @@ func (r *MCPServerReconciler) updateStatus(ctx context.Context, mcpServer *mcpv1
 		Reason:             phase,
 		Message:            message,
 		LastTransitionTime: metav1.Now(),
+		ObservedGeneration: latest.Generation,
 	})
 	meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
 		Type:               "ServiceReady",
@@ -1533,6 +1601,7 @@ func (r *MCPServerReconciler) updateStatus(ctx context.Context, mcpServer *mcpv1
 		Reason:             phase,
 		Message:            message,
 		LastTransitionTime: metav1.Now(),
+		ObservedGeneration: latest.Generation,
 	})
 	meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
 		Type:               "IngressReady",
@@ -1540,6 +1609,7 @@ func (r *MCPServerReconciler) updateStatus(ctx context.Context, mcpServer *mcpv1
 		Reason:             phase,
 		Message:            message,
 		LastTransitionTime: metav1.Now(),
+		ObservedGeneration: latest.Generation,
 	})
 	meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
 		Type:               "GatewayReady",
@@ -1547,6 +1617,7 @@ func (r *MCPServerReconciler) updateStatus(ctx context.Context, mcpServer *mcpv1
 		Reason:             phase,
 		Message:            message,
 		LastTransitionTime: metav1.Now(),
+		ObservedGeneration: latest.Generation,
 	})
 	meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
 		Type:               "PolicyReady",
@@ -1554,6 +1625,7 @@ func (r *MCPServerReconciler) updateStatus(ctx context.Context, mcpServer *mcpv1
 		Reason:             phase,
 		Message:            message,
 		LastTransitionTime: metav1.Now(),
+		ObservedGeneration: latest.Generation,
 	})
 	meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
 		Type:               "CanaryReady",
@@ -1561,6 +1633,7 @@ func (r *MCPServerReconciler) updateStatus(ctx context.Context, mcpServer *mcpv1
 		Reason:             phase,
 		Message:            message,
 		LastTransitionTime: metav1.Now(),
+		ObservedGeneration: latest.Generation,
 	})
 
 	// Use Status().Update() which only updates the status subresource

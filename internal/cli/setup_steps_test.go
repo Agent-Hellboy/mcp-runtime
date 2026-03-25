@@ -74,6 +74,34 @@ func TestBuildSetupStepsOrderWithoutTLS(t *testing.T) {
 	}
 }
 
+func TestBuildSetupStepsOrderWithAnalytics(t *testing.T) {
+	ctx := &SetupContext{
+		Plan: SetupPlan{
+			DeployAnalytics: true,
+		},
+	}
+	steps := buildSetupSteps(ctx)
+	if len(steps) != 7 {
+		t.Fatalf("expected 7 steps, got %d", len(steps))
+	}
+
+	got := []string{
+		steps[0].Name(),
+		steps[1].Name(),
+		steps[2].Name(),
+		steps[3].Name(),
+		steps[4].Name(),
+		steps[5].Name(),
+		steps[6].Name(),
+	}
+	want := []string{"cluster", "registry", "operator-image", "analytics-images", "operator-deploy", "analytics-deploy", "verify"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("step %d: expected %q, got %q", i, want[i], got[i])
+		}
+	}
+}
+
 func TestOperatorImageStepSetsContext(t *testing.T) {
 	ctx := &SetupContext{
 		Plan: SetupPlan{},

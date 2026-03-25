@@ -1,4 +1,5 @@
 from flask import Flask, abort, redirect, render_template, send_from_directory
+from werkzeug.exceptions import NotFound
 
 app = Flask(__name__)
 
@@ -173,7 +174,7 @@ def docs_page(page: str):
         page = f"{page}.html"
     try:
         return send_from_directory("docs", page)
-    except Exception:
+    except NotFound:
         abort(404)
 
 

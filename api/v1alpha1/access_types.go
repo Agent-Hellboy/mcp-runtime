@@ -20,7 +20,7 @@ type SubjectRef struct {
 // +kubebuilder:object:generate=true
 type ToolRule struct {
 	Name          string         `json:"name"`
-	Decision      PolicyDecision `json:"decision,omitempty"`
+	Decision      PolicyDecision `json:"decision"`
 	RequiredTrust TrustLevel     `json:"requiredTrust,omitempty"`
 }
 

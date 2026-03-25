@@ -185,6 +185,7 @@ func TestGetEnvIntOrDefault(t *testing.T) {
 }
 
 func TestLoadOperatorConfig(t *testing.T) {
+	t.Setenv("MCP_CLUSTER_NAME", "prod-cluster")
 	t.Setenv("DEFAULT_INGRESS_HOST", "mcp.example.com")
 	t.Setenv("DEFAULT_INGRESS_CLASS", "nginx")
 	t.Setenv("PROVISIONED_REGISTRY_URL", "registry.example.com:5000")
@@ -219,6 +220,9 @@ func TestLoadOperatorConfig(t *testing.T) {
 	}
 	if cfg.AnalyticsIngestURL != "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events" {
 		t.Fatalf("expected analytics ingest url override, got %q", cfg.AnalyticsIngestURL)
+	}
+	if cfg.ClusterName != "prod-cluster" {
+		t.Fatalf("expected cluster name override, got %q", cfg.ClusterName)
 	}
 }
 

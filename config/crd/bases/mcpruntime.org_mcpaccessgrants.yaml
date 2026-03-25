@@ -106,6 +106,7 @@ spec:
                       - high
                       type: string
                   required:
+                  - decision
                   - name
                   type: object
                 type: array

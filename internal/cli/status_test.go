@@ -202,6 +202,28 @@ func TestShowPlatformStatus(t *testing.T) {
 	})
 }
 
+func TestAnalyticsNamespaceInstalledRequiresExactMatch(t *testing.T) {
+	resetStatusTestConfig(t)
+
+	responses := map[string]commandResponse{
+		commandKey("kubectl", "get", "namespace", "mcp-sentinel", "-o", "jsonpath={.metadata.name}"): {
+			Stdout: "unexpected-namespace",
+		},
+	}
+
+	origExec := execCommand
+	execCommand = fakeExecCommand(t, origExec, responses, nil)
+	t.Cleanup(func() { execCommand = origExec })
+
+	installed, err := analyticsNamespaceInstalled(true)
+	if err != nil {
+		t.Fatalf("analyticsNamespaceInstalled() unexpected error = %v", err)
+	}
+	if installed {
+		t.Fatal("expected namespace check to fail on mismatched namespace name")
+	}
+}
+
 func TestServerStatus(t *testing.T) {
 	t.Run("returns-error-and-logs-combined-output-on-mcpserver-list-failure", func(t *testing.T) {
 		logger := zap.NewNop()

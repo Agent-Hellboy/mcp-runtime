@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -119,6 +120,87 @@ func TestApplyContainerResources(t *testing.T) {
 			t.Fatal("expected error for invalid memory value")
 		}
 	})
+}
+
+func TestBuildGatewayContainerAppliesDefaultResources(t *testing.T) {
+	mcpServer := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gateway-server",
+			Namespace: "default",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Gateway: &mcpv1alpha1.GatewayConfig{
+				Enabled:     true,
+				Port:        defaultGatewayPort,
+				UpstreamURL: "http://127.0.0.1:8088",
+			},
+		},
+	}
+
+	r := MCPServerReconciler{GatewayProxyImage: "example.com/mcp-proxy:latest"}
+	container, err := r.buildGatewayContainer(mcpServer)
+	if err != nil {
+		t.Fatalf("buildGatewayContainer() error = %v", err)
+	}
+
+	if got := container.Resources.Requests[corev1.ResourceCPU]; got.Cmp(resource.MustParse(defaultRequestCPU)) != 0 {
+		t.Fatalf("gateway requests.cpu = %q, want %q", got.String(), defaultRequestCPU)
+	}
+	if got := container.Resources.Requests[corev1.ResourceMemory]; got.Cmp(resource.MustParse(defaultRequestMemory)) != 0 {
+		t.Fatalf("gateway requests.memory = %q, want %q", got.String(), defaultRequestMemory)
+	}
+	if got := container.Resources.Limits[corev1.ResourceCPU]; got.Cmp(resource.MustParse(defaultLimitCPU)) != 0 {
+		t.Fatalf("gateway limits.cpu = %q, want %q", got.String(), defaultLimitCPU)
+	}
+	if got := container.Resources.Limits[corev1.ResourceMemory]; got.Cmp(resource.MustParse(defaultLimitMemory)) != 0 {
+		t.Fatalf("gateway limits.memory = %q, want %q", got.String(), defaultLimitMemory)
+	}
+}
+
+func TestValidateGatewayConfigRejectsInvalidRolloutValues(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme() error = %v", err)
+	}
+
+	replicas := int32(2)
+	server := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gateway-server",
+			Namespace: "default",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image:    "example.com/server",
+			Replicas: &replicas,
+			Port:     DefaultPort,
+			Gateway: &mcpv1alpha1.GatewayConfig{
+				Enabled: true,
+				Port:    defaultGatewayPort,
+				Image:   "example.com/mcp-proxy:latest",
+			},
+			Rollout: &mcpv1alpha1.RolloutConfig{
+				MaxUnavailable: "invalid%",
+			},
+		},
+	}
+
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(server).
+		WithObjects(server.DeepCopy()).
+		Build()
+	reconciler := &MCPServerReconciler{
+		Client: client,
+		Scheme: scheme,
+	}
+
+	err := reconciler.validateGatewayConfig(context.Background(), server, logr.Discard())
+	if err == nil {
+		t.Fatal("expected rollout validation error")
+	}
+	if !strings.Contains(err.Error(), "rollout.maxUnavailable") {
+		t.Fatalf("expected rollout.maxUnavailable error, got %v", err)
+	}
 }
 
 func TestSetDefaults(t *testing.T) {

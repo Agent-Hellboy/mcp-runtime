@@ -15,9 +15,10 @@ import (
 )
 
 var (
-	_ webhook.Validator = &MCPServer{}
-	_ webhook.Validator = &MCPAccessGrant{}
-	_ webhook.Validator = &MCPAgentSession{}
+	_       webhook.Validator = &MCPServer{}
+	_       webhook.Validator = &MCPAccessGrant{}
+	_       webhook.Validator = &MCPAgentSession{}
+	nowFunc                   = time.Now
 )
 
 // +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpserver,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpservers,verbs=create;update,versions=v1alpha1,name=vmcpserver.kb.io,admissionReviewVersions=v1
@@ -132,6 +133,9 @@ func (r *MCPAccessGrant) validate() error {
 			allErrs = append(allErrs, field.Required(rulePath.Child("name"), "tool rule name is required"))
 			continue
 		}
+		if strings.TrimSpace(string(rule.Decision)) == "" {
+			allErrs = append(allErrs, field.Required(rulePath.Child("decision"), "tool rule decision is required"))
+		}
 		if _, exists := toolNames[rule.Name]; exists {
 			allErrs = append(allErrs, field.Duplicate(rulePath.Child("name"), rule.Name))
 		}
@@ -171,7 +175,7 @@ func (r *MCPAgentSession) validate() error {
 	if strings.TrimSpace(r.Spec.Subject.HumanID) == "" && strings.TrimSpace(r.Spec.Subject.AgentID) == "" {
 		allErrs = append(allErrs, field.Required(specPath.Child("subject"), "either subject.humanID or subject.agentID is required"))
 	}
-	if r.Spec.ExpiresAt != nil && r.Spec.ExpiresAt.Time.Before(time.Now().UTC().Add(-1*time.Minute)) {
+	if r.Spec.ExpiresAt != nil && r.Spec.ExpiresAt.Time.Before(nowFunc().UTC().Add(-1*time.Minute)) {
 		allErrs = append(allErrs, field.Invalid(specPath.Child("expiresAt"), r.Spec.ExpiresAt.Time.Format(time.RFC3339), "expiresAt must be in the future"))
 	}
 	if ref := r.Spec.UpstreamTokenSecretRef; ref != nil {

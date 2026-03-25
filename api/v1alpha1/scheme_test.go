@@ -208,6 +208,12 @@ func TestMCPServerTypeMeta(t *testing.T) {
 		if len(gvks) == 0 {
 			t.Fatal("expected at least one GVK")
 		}
+		if gvks[0].Group != GroupVersion.Group {
+			t.Errorf("GVK.Group = %q, want %q", gvks[0].Group, GroupVersion.Group)
+		}
+		if gvks[0].Version != GroupVersion.Version {
+			t.Errorf("GVK.Version = %q, want %q", gvks[0].Version, GroupVersion.Version)
+		}
 		if gvks[0].Kind != "MCPAccessGrant" {
 			t.Errorf("GVK.Kind = %q, want %q", gvks[0].Kind, "MCPAccessGrant")
 		}
@@ -221,6 +227,12 @@ func TestMCPServerTypeMeta(t *testing.T) {
 		}
 		if len(gvks) == 0 {
 			t.Fatal("expected at least one GVK")
+		}
+		if gvks[0].Group != GroupVersion.Group {
+			t.Errorf("GVK.Group = %q, want %q", gvks[0].Group, GroupVersion.Group)
+		}
+		if gvks[0].Version != GroupVersion.Version {
+			t.Errorf("GVK.Version = %q, want %q", gvks[0].Version, GroupVersion.Version)
 		}
 		if gvks[0].Kind != "MCPAgentSession" {
 			t.Errorf("GVK.Kind = %q, want %q", gvks[0].Kind, "MCPAgentSession")
