@@ -189,7 +189,9 @@ func TestGenerateCRD(t *testing.T) {
 
 		spec := assertMapValue(t, rendered, "spec")
 		gateway := assertMapValue(t, spec, "gateway")
+		assertMapBoolValue(t, gateway, "enabled", true)
 		assertMapStringValue(t, gateway, "image", "example.com/mcp-proxy:latest")
+		assertMapIntValue(t, gateway, "port", 8091)
 		assertMapStringValue(t, gateway, "upstreamurl", "http://127.0.0.1:8088")
 		assertMapStringValue(t, gateway, "stripprefix", "/gateway-server")
 
@@ -197,6 +199,7 @@ func TestGenerateCRD(t *testing.T) {
 		assertMapStringValue(t, auth, "mode", "header")
 
 		policy := assertMapValue(t, spec, "policy")
+		assertMapStringValue(t, policy, "mode", "allow-list")
 		assertMapStringValue(t, policy, "defaultdecision", "deny")
 
 		session := assertMapValue(t, spec, "session")
@@ -207,6 +210,7 @@ func TestGenerateCRD(t *testing.T) {
 			t.Fatalf("expected 1 tool, got %d", len(tools))
 		}
 		tool := assertMapItem(t, tools[0], "tools[0]")
+		assertMapStringValue(t, tool, "name", "delete_user")
 		assertMapStringValue(t, tool, "requiredtrust", "high")
 
 		secretEnvVars := assertSliceValue(t, spec, "secretenvvars")
@@ -214,11 +218,13 @@ func TestGenerateCRD(t *testing.T) {
 			t.Fatalf("expected 1 secret env var, got %d", len(secretEnvVars))
 		}
 		secretEnv := assertMapItem(t, secretEnvVars[0], "secretenvvars[0]")
+		assertMapStringValue(t, secretEnv, "name", "OPENAI_API_KEY")
 		secretKeyRef := assertMapValue(t, secretEnv, "secretkeyref")
 		assertMapStringValue(t, secretKeyRef, "name", "provider-creds")
 		assertMapStringValue(t, secretKeyRef, "key", "openai")
 
 		analytics := assertMapValue(t, spec, "analytics")
+		assertMapBoolValue(t, analytics, "enabled", true)
 		assertMapStringValue(t, analytics, "ingesturl", "http://analytics.default.svc/api/events")
 		assertMapStringValue(t, analytics, "source", "gateway-server")
 		assertMapStringValue(t, analytics, "eventtype", "mcp.request")

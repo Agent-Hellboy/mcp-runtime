@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+	"gopkg.in/yaml.v3"
 )
 
 const defaultRegistrySecretName = "mcp-runtime-registry-creds" // #nosec G101 -- default secret name, not a credential.
@@ -1297,17 +1299,22 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 		"mcp-sentinel/k8s/01-config.yaml",
 	}
 	for _, manifest := range manifests {
-		if err := applyRenderedManifest(kubectl, manifest, images); err != nil {
+		if err := applyRenderedManifest(kubectl, manifest, images, ""); err != nil {
 			return err
 		}
 	}
 
 	Info("Applying mcp-sentinel managed secrets")
-	secretManifest, err := renderAnalyticsSecretManifest()
+	secretManifest, err := renderAnalyticsSecretManifest(kubectl)
 	if err != nil {
 		return err
 	}
 	if err := applyManifestContent(kubectl, secretManifest); err != nil {
+		return err
+	}
+
+	imagePullSecretName, err := ensureAnalyticsImagePullSecret(kubectl)
+	if err != nil {
 		return err
 	}
 
@@ -1316,7 +1323,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 		"mcp-sentinel/k8s/03-clickhouse.yaml",
 		"mcp-sentinel/k8s/05-kafka.yaml",
 	} {
-		if err := applyRenderedManifest(kubectl, manifest, images); err != nil {
+		if err := applyRenderedManifest(kubectl, manifest, images, imagePullSecretName); err != nil {
 			return err
 		}
 	}
@@ -1332,7 +1339,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 	}
 
 	Info("Initializing ClickHouse schema")
-	if err := applyRenderedManifest(kubectl, "mcp-sentinel/k8s/04-clickhouse-init.yaml", images); err != nil {
+	if err := applyRenderedManifest(kubectl, "mcp-sentinel/k8s/04-clickhouse-init.yaml", images, imagePullSecretName); err != nil {
 		return err
 	}
 	if err := waitForJobCompletionWithKubectl(kubectl, "clickhouse-init", defaultAnalyticsNamespace, "180s"); err != nil {
@@ -1354,11 +1361,12 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 		"mcp-sentinel/k8s/19-grafana-datasources.yaml",
 		"mcp-sentinel/k8s/12-grafana.yaml",
 	} {
-		if err := applyRenderedManifest(kubectl, manifest, images); err != nil {
+		if err := applyRenderedManifest(kubectl, manifest, images, imagePullSecretName); err != nil {
 			return err
 		}
 	}
 
+	var rolloutFailures []string
 	for _, target := range []struct {
 		kind    string
 		name    string
@@ -1376,20 +1384,26 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 		{kind: "statefulset", name: "loki", timeout: "180s"},
 	} {
 		if err := waitForRolloutStatusWithKubectl(kubectl, target.kind, target.name, defaultAnalyticsNamespace, target.timeout); err != nil {
-			Warn(fmt.Sprintf("Analytics component %s/%s did not report ready: %v", target.kind, target.name, err))
+			rolloutFailures = append(rolloutFailures, fmt.Sprintf("%s/%s: %v", target.kind, target.name, err))
 		}
+	}
+	if len(rolloutFailures) > 0 {
+		return fmt.Errorf("analytics components failed to roll out: %s", strings.Join(rolloutFailures, "; "))
 	}
 
 	Success("mcp-sentinel manifests deployed successfully")
 	return nil
 }
 
-func applyRenderedManifest(kubectl KubectlRunner, manifestPath string, images AnalyticsImageSet) error {
+func applyRenderedManifest(kubectl KubectlRunner, manifestPath string, images AnalyticsImageSet, imagePullSecretName string) error {
 	content, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to read manifest %s: %v", manifestPath, err))
 	}
-	rendered := renderAnalyticsManifest(string(content), images)
+	rendered, err := renderAnalyticsManifest(string(content), images, imagePullSecretName)
+	if err != nil {
+		return fmt.Errorf("render manifest %s: %w", manifestPath, err)
+	}
 	return applyManifestContent(kubectl, rendered)
 }
 
@@ -1404,7 +1418,7 @@ func applyManifestContent(kubectl KubectlRunner, manifest string) error {
 	return applyCmd.Run()
 }
 
-func renderAnalyticsManifest(content string, images AnalyticsImageSet) string {
+func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePullSecretName string) (string, error) {
 	replacements := map[string]string{
 		"image: mcp-sentinel-ingest:latest":    "image: " + images.Ingest,
 		"image: mcp-sentinel-api:latest":       "image: " + images.API,
@@ -1415,13 +1429,27 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet) string {
 	for oldValue, newValue := range replacements {
 		rendered = strings.ReplaceAll(rendered, oldValue, newValue)
 	}
-	return rendered
+	if strings.TrimSpace(imagePullSecretName) == "" {
+		return rendered, nil
+	}
+
+	rendered, err := injectImagePullSecretsIntoManifest(rendered, imagePullSecretName)
+	if err != nil {
+		return "", err
+	}
+	return rendered, nil
 }
 
-func renderAnalyticsSecretManifest() (string, error) {
-	grafanaPassword, err := randomHex(16)
+func renderAnalyticsSecretManifest(kubectl KubectlRunner) (string, error) {
+	grafanaPassword, err := existingSecretDataValue(kubectl, defaultAnalyticsNamespace, "mcp-sentinel-secrets", "GRAFANA_ADMIN_PASSWORD")
 	if err != nil {
-		return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to generate analytics secrets: %v", err))
+		return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	if grafanaPassword == "" {
+		grafanaPassword, err = randomHex(16)
+		if err != nil {
+			return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to generate analytics secrets: %v", err))
+		}
 	}
 	secretManifest := fmt.Sprintf(`apiVersion: v1
 kind: Secret
@@ -1436,6 +1464,127 @@ stringData:
   GRAFANA_ADMIN_PASSWORD: "%s"
 `, defaultAnalyticsNamespace, grafanaPassword)
 	return secretManifest, nil
+}
+
+func ensureAnalyticsImagePullSecret(kubectl KubectlRunner) (string, error) {
+	extRegistry, err := resolveExternalRegistryConfig(nil)
+	if err != nil {
+		return "", err
+	}
+	if extRegistry == nil || extRegistry.URL == "" || (extRegistry.Username == "" && extRegistry.Password == "") {
+		return "", nil
+	}
+	if err := ensureImagePullSecretWithKubectl(kubectl, defaultAnalyticsNamespace, defaultRegistrySecretName, extRegistry.URL, extRegistry.Username, extRegistry.Password); err != nil {
+		return "", err
+	}
+	return defaultRegistrySecretName, nil
+}
+
+func existingSecretDataValue(kubectl KubectlRunner, namespace, name, key string) (string, error) {
+	cmd, err := kubectl.CommandArgs([]string{"get", "secret", name, "-n", namespace, "-o", "jsonpath={.data." + key + "}"})
+	if err != nil {
+		return "", err
+	}
+
+	output, err := cmd.CombinedOutput()
+	trimmed := strings.TrimSpace(string(output))
+	if err != nil {
+		lower := strings.ToLower(trimmed)
+		if strings.Contains(lower, "not found") || strings.Contains(lower, "notfound") {
+			return "", nil
+		}
+		return "", fmt.Errorf("read secret %s/%s key %s: %w", namespace, name, key, err)
+	}
+	if trimmed == "" {
+		return "", nil
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("decode secret %s/%s key %s: %w", namespace, name, key, err)
+	}
+	return string(decoded), nil
+}
+
+func injectImagePullSecretsIntoManifest(manifest, secretName string) (string, error) {
+	decoder := yaml.NewDecoder(strings.NewReader(manifest))
+	var renderedDocs []string
+
+	for {
+		var doc map[string]any
+		err := decoder.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		if len(doc) == 0 {
+			continue
+		}
+
+		injectImagePullSecretIntoDocument(doc, secretName)
+		data, err := yaml.Marshal(doc)
+		if err != nil {
+			return "", err
+		}
+		renderedDocs = append(renderedDocs, strings.TrimRight(string(data), "\n"))
+	}
+
+	if len(renderedDocs) == 0 {
+		return manifest, nil
+	}
+	return strings.Join(renderedDocs, "\n---\n") + "\n", nil
+}
+
+func injectImagePullSecretIntoDocument(doc map[string]any, secretName string) {
+	podSpec := manifestPodSpec(doc)
+	if podSpec == nil {
+		return
+	}
+
+	if existing, ok := podSpec["imagePullSecrets"].([]any); ok {
+		for _, item := range existing {
+			entry, ok := item.(map[string]any)
+			if ok && strings.TrimSpace(fmt.Sprint(entry["name"])) == secretName {
+				return
+			}
+		}
+		podSpec["imagePullSecrets"] = append(existing, map[string]any{"name": secretName})
+		return
+	}
+
+	podSpec["imagePullSecrets"] = []map[string]any{{"name": secretName}}
+}
+
+func manifestPodSpec(doc map[string]any) map[string]any {
+	kind := strings.ToLower(strings.TrimSpace(fmt.Sprint(doc["kind"])))
+	spec, _ := doc["spec"].(map[string]any)
+	if spec == nil {
+		return nil
+	}
+
+	switch kind {
+	case "deployment", "statefulset", "daemonset", "job":
+		template := ensureMap(spec, "template")
+		return ensureMap(template, "spec")
+	case "cronjob":
+		jobTemplate := ensureMap(spec, "jobTemplate")
+		jobSpec := ensureMap(jobTemplate, "spec")
+		template := ensureMap(jobSpec, "template")
+		return ensureMap(template, "spec")
+	default:
+		return nil
+	}
+}
+
+func ensureMap(root map[string]any, key string) map[string]any {
+	if existing, ok := root[key].(map[string]any); ok && existing != nil {
+		return existing
+	}
+	created := map[string]any{}
+	root[key] = created
+	return created
 }
 
 func randomHex(size int) (string, error) {

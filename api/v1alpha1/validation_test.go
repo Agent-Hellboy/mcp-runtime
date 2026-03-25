@@ -43,7 +43,7 @@ func TestMCPAgentSessionValidateUsesInjectedTimeSource(t *testing.T) {
 			ServerRef:      ServerReference{Name: "payments"},
 			Subject:        SubjectRef{AgentID: "ops-agent"},
 			ConsentedTrust: TrustLevelMedium,
-			ExpiresAt:      &metav1.Time{Time: fixedNow.Add(-2 * time.Minute)},
+			ExpiresAt:      &metav1.Time{Time: fixedNow},
 		},
 	}
 

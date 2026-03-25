@@ -69,14 +69,15 @@ func showPlatformStatus(logger *zap.Logger) error {
 	tableData = append(tableData, []string{"Cluster", "-", "kube-api", clusterStatus, clusterDetails})
 
 	extRegistry, err := resolveExternalRegistryConfig(nil)
-	if err != nil {
+	switch {
+	case err != nil:
 		// resolveExternalRegistryConfig already returns (nil, nil) when no config exists,
 		// so any error here is a real load/parse/validation problem rather than a missing file.
 		Warn("Failed to load external registry config: " + err.Error())
-	}
-	if extRegistry != nil && extRegistry.URL != "" {
+		tableData = append(tableData, []string{"Registry", "-", "config", Red("ERROR"), err.Error()})
+	case extRegistry != nil && extRegistry.URL != "":
 		tableData = append(tableData, []string{"Registry", "-", "external", Cyan("EXTERNAL"), "Configured: " + extRegistry.URL})
-	} else {
+	default:
 		tableData = append(tableData, workloadStatusRow(
 			platformWorkload{Component: "Registry", Namespace: NamespaceRegistry, Kind: "deployment", Name: RegistryDeploymentName},
 			clusterReachable,
@@ -168,9 +169,12 @@ func analyticsNamespaceInstalled(clusterReachable bool) (bool, error) {
 	if err == nil {
 		return strings.TrimSpace(output) == defaultAnalyticsNamespace, nil
 	}
+	if strings.TrimSpace(output) == "" {
+		return false, fmt.Errorf("empty output from namespace probe")
+	}
 
 	lower := strings.ToLower(output)
-	if output == "" || strings.Contains(lower, "not found") || strings.Contains(lower, "notfound") {
+	if strings.Contains(lower, "not found") || strings.Contains(lower, "notfound") {
 		return false, nil
 	}
 

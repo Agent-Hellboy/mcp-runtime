@@ -915,7 +915,7 @@ func TestCheckIngressReady(t *testing.T) {
 		assertEqual(t, "ready", ready, true)
 	})
 
-	t.Run("returns true when ingress class exists for local ingress", func(t *testing.T) {
+	t.Run("returns false when only ingress class exists without admitted status", func(t *testing.T) {
 		ingressClassName := "traefik"
 		pathType := networkingv1.PathTypePrefix
 		mcpServer := &mcpv1alpha1.MCPServer{
@@ -947,8 +947,70 @@ func TestCheckIngressReady(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to check ingress readiness: %v", err)
 		}
-		assertEqual(t, "ready", ready, true)
+		assertEqual(t, "ready", ready, false)
 	})
+}
+
+func TestRenderGatewayPolicyIncludesCrossNamespaceReferences(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = mcpv1alpha1.AddToScheme(scheme)
+
+	mcpServer := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "payments", Namespace: "servers"},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Tools: []mcpv1alpha1.ToolConfig{
+				{Name: "refund_invoice"},
+			},
+		},
+	}
+	grant := &mcpv1alpha1.MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant-a", Namespace: "team-a"},
+		Spec: mcpv1alpha1.MCPAccessGrantSpec{
+			ServerRef: mcpv1alpha1.ServerReference{Name: "payments", Namespace: "servers"},
+			Subject:   mcpv1alpha1.SubjectRef{HumanID: "user-1"},
+			ToolRules: []mcpv1alpha1.ToolRule{
+				{Name: "refund_invoice", Decision: mcpv1alpha1.PolicyDecisionAllow},
+			},
+		},
+	}
+	session := &mcpv1alpha1.MCPAgentSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-a", Namespace: "team-b"},
+		Spec: mcpv1alpha1.MCPAgentSessionSpec{
+			ServerRef:      mcpv1alpha1.ServerReference{Name: "payments", Namespace: "servers"},
+			Subject:        mcpv1alpha1.SubjectRef{AgentID: "agent-1"},
+			ConsentedTrust: mcpv1alpha1.TrustLevelMedium,
+		},
+	}
+	unrelatedGrant := &mcpv1alpha1.MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant-b", Namespace: "team-a"},
+		Spec: mcpv1alpha1.MCPAccessGrantSpec{
+			ServerRef: mcpv1alpha1.ServerReference{Name: "inventory", Namespace: "servers"},
+			Subject:   mcpv1alpha1.SubjectRef{HumanID: "user-2"},
+		},
+	}
+
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(mcpServer, grant, session, unrelatedGrant).
+		Build()
+	r := MCPServerReconciler{Client: client, Scheme: scheme}
+
+	doc, err := r.renderGatewayPolicy(context.Background(), mcpServer)
+	if err != nil {
+		t.Fatalf("renderGatewayPolicy() error = %v", err)
+	}
+	if len(doc.Grants) != 1 {
+		t.Fatalf("expected 1 matching grant, got %d", len(doc.Grants))
+	}
+	if doc.Grants[0].Name != "grant-a" {
+		t.Fatalf("expected cross-namespace grant to be rendered, got %+v", doc.Grants[0])
+	}
+	if len(doc.Sessions) != 1 {
+		t.Fatalf("expected 1 matching session, got %d", len(doc.Sessions))
+	}
+	if doc.Sessions[0].Name != "session-a" {
+		t.Fatalf("expected cross-namespace session to be rendered, got %+v", doc.Sessions[0])
+	}
 }
 
 func TestBuildIngressAnnotations(t *testing.T) {

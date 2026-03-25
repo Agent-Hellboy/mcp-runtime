@@ -191,13 +191,19 @@ func TestOperatorEnvOverrides(t *testing.T) {
 	})
 
 	t.Run("prefers explicit setup image over config override", func(t *testing.T) {
-		DefaultCLIConfig = &CLIConfig{GatewayProxyImage: "example.com/mcp-proxy:config"}
+		DefaultCLIConfig = &CLIConfig{
+			GatewayProxyImage:  "example.com/mcp-proxy:config",
+			AnalyticsIngestURL: "http://custom-analytics-ingest",
+		}
 		got := operatorEnvOverrides("example.com/mcp-proxy:setup")
 		if len(got) != 2 {
 			t.Fatalf("expected gateway and analytics env overrides, got %d (%v)", len(got), got)
 		}
 		if got[0].Value != "example.com/mcp-proxy:setup" {
 			t.Fatalf("expected explicit setup image to win, got %+v", got[0])
+		}
+		if got[1].Name != "MCP_SENTINEL_INGEST_URL" || got[1].Value != "http://custom-analytics-ingest" {
+			t.Fatalf("expected custom analytics env override, got %+v", got[1])
 		}
 	})
 
@@ -474,6 +480,156 @@ func TestEnsureImagePullSecret(t *testing.T) {
 			t.Fatalf("decoded docker config missing registry: %s", string(decoded))
 		}
 	})
+}
+
+func TestEnsureAnalyticsImagePullSecret(t *testing.T) {
+	orig := DefaultCLIConfig
+	t.Cleanup(func() {
+		DefaultCLIConfig = orig
+	})
+
+	DefaultCLIConfig = &CLIConfig{
+		ProvisionedRegistryURL:      "registry.example.com",
+		ProvisionedRegistryUsername: "user",
+		ProvisionedRegistryPassword: "pass",
+	}
+
+	var manifest string
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			cmd := &MockCommand{Args: spec.Args}
+			if contains(spec.Args, "apply") && contains(spec.Args, "-f") && contains(spec.Args, "-") {
+				cmd.RunFunc = func() error {
+					if cmd.StdinR != nil {
+						data, _ := io.ReadAll(cmd.StdinR)
+						manifest = string(data)
+					}
+					return nil
+				}
+			}
+			return cmd
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+
+	secretName, err := ensureAnalyticsImagePullSecret(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if secretName != defaultRegistrySecretName {
+		t.Fatalf("expected secret name %q, got %q", defaultRegistrySecretName, secretName)
+	}
+	if !strings.Contains(manifest, "namespace: "+defaultAnalyticsNamespace) {
+		t.Fatalf("expected analytics namespace in secret manifest, got %q", manifest)
+	}
+	if !strings.Contains(manifest, "kubernetes.io/dockerconfigjson") {
+		t.Fatalf("expected dockerconfigjson secret manifest, got %q", manifest)
+	}
+}
+
+func TestRenderAnalyticsSecretManifestReusesExistingPassword(t *testing.T) {
+	encoded := base64.StdEncoding.EncodeToString([]byte("keep-me"))
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			if contains(spec.Args, "get") && contains(spec.Args, "secret") {
+				return &MockCommand{Args: spec.Args, OutputData: []byte(encoded)}
+			}
+			return &MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+
+	manifest, err := renderAnalyticsSecretManifest(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(manifest, `GRAFANA_ADMIN_PASSWORD: "keep-me"`) {
+		t.Fatalf("expected existing grafana password to be reused, got %q", manifest)
+	}
+}
+
+func TestRenderAnalyticsManifestInjectsImagePullSecrets(t *testing.T) {
+	content := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-sentinel-ingest
+spec:
+  template:
+    spec:
+      containers:
+        - name: ingest
+          image: mcp-sentinel-ingest:latest
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: promtail
+spec:
+  template:
+    spec:
+      containers:
+        - name: promtail
+          image: grafana/promtail:2.9.4
+`
+
+	rendered, err := renderAnalyticsManifest(content, AnalyticsImageSet{Ingest: "registry.example.com/mcp-sentinel-ingest:latest"}, defaultRegistrySecretName)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(rendered, "image: registry.example.com/mcp-sentinel-ingest:latest") {
+		t.Fatalf("expected image replacement, got %s", rendered)
+	}
+	if !strings.Contains(rendered, "imagePullSecrets:") || !strings.Contains(rendered, "name: "+defaultRegistrySecretName) {
+		t.Fatalf("expected injected imagePullSecrets, got %s", rendered)
+	}
+}
+
+func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
+	orig := DefaultCLIConfig
+	t.Cleanup(func() {
+		DefaultCLIConfig = orig
+	})
+	DefaultCLIConfig = &CLIConfig{}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	root := filepath.Clean(filepath.Join(cwd, "..", ".."))
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("failed to chdir to repo root: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(cwd)
+	})
+
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			cmd := &MockCommand{Args: spec.Args}
+			switch {
+			case contains(spec.Args, "get") && contains(spec.Args, "secret"):
+				cmd.OutputData = []byte("Error from server (NotFound): secrets \"mcp-sentinel-secrets\" not found")
+				cmd.OutputErr = errors.New("not found")
+			case contains(spec.Args, "rollout") && contains(spec.Args, "deployment/mcp-sentinel-api"):
+				cmd.RunErr = errors.New("image pull failed")
+			}
+			return cmd
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+
+	err = deployAnalyticsManifestsWithKubectl(kubectl, zap.NewNop(), AnalyticsImageSet{
+		Ingest:    "example.com/mcp-sentinel-ingest:latest",
+		API:       "example.com/mcp-sentinel-api:latest",
+		Processor: "example.com/mcp-sentinel-processor:latest",
+		UI:        "example.com/mcp-sentinel-ui:latest",
+	})
+	if err == nil {
+		t.Fatal("expected rollout failure")
+	}
+	if !strings.Contains(err.Error(), "deployment/mcp-sentinel-api") {
+		t.Fatalf("expected failing workload in error, got %v", err)
+	}
 }
 
 func TestSetupDepsWithDefaultsSetsNil(t *testing.T) {

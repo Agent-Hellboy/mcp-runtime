@@ -1172,7 +1172,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 	}
 
 	var grants mcpv1alpha1.MCPAccessGrantList
-	if err := r.List(ctx, &grants, client.InNamespace(mcpServer.Namespace)); err != nil {
+	if err := r.List(ctx, &grants); err != nil {
 		return nil, err
 	}
 	for _, grant := range grants.Items {
@@ -1198,7 +1198,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 	}
 
 	var sessions mcpv1alpha1.MCPAgentSessionList
-	if err := r.List(ctx, &sessions, client.InNamespace(mcpServer.Namespace)); err != nil {
+	if err := r.List(ctx, &sessions); err != nil {
 		return nil, err
 	}
 	for _, session := range sessions.Items {
@@ -1536,18 +1536,12 @@ func (r *MCPServerReconciler) checkIngressReady(ctx context.Context, mcpServer *
 		return true, nil
 	}
 
-	// Local/dev ingress controllers such as Traefik may not populate loadBalancer status
-	// on individual Ingress objects. This fallback only checks that ingress.Spec.IngressClassName
-	// is set, len(ingress.Spec.Rules) > 0, and r.Get() can load the referenced IngressClass.
-	// That heuristic is good enough for local/dev admission checks, but it can report readiness
-	// before a production controller has actually programmed traffic. Production deployments
-	// should prefer ingress.Status.LoadBalancer, controller-specific status/annotations, or
-	// controller-specific readiness conditions instead of relying on this shortcut.
+	// The presence of an IngressClass alone is not a readiness signal. Some local/dev
+	// controllers will accept ingress resources before publishing any admitted status, but
+	// marking the route ready here can hide real traffic-programming delays in production.
 	if ingress.Spec.IngressClassName != nil && *ingress.Spec.IngressClassName != "" && len(ingress.Spec.Rules) > 0 {
 		ingressClass := &networkingv1.IngressClass{}
-		if err := r.Get(ctx, types.NamespacedName{Name: *ingress.Spec.IngressClassName}, ingressClass); err == nil {
-			return true, nil
-		} else if !errors.IsNotFound(err) {
+		if err := r.Get(ctx, types.NamespacedName{Name: *ingress.Spec.IngressClassName}, ingressClass); err != nil && !errors.IsNotFound(err) {
 			return false, err
 		}
 	}

@@ -175,7 +175,8 @@ func (r *MCPAgentSession) validate() error {
 	if strings.TrimSpace(r.Spec.Subject.HumanID) == "" && strings.TrimSpace(r.Spec.Subject.AgentID) == "" {
 		allErrs = append(allErrs, field.Required(specPath.Child("subject"), "either subject.humanID or subject.agentID is required"))
 	}
-	if r.Spec.ExpiresAt != nil && r.Spec.ExpiresAt.Time.Before(nowFunc().UTC().Add(-1*time.Minute)) {
+	now := nowFunc().UTC()
+	if r.Spec.ExpiresAt != nil && !r.Spec.ExpiresAt.Time.After(now) {
 		allErrs = append(allErrs, field.Invalid(specPath.Child("expiresAt"), r.Spec.ExpiresAt.Time.Format(time.RFC3339), "expiresAt must be in the future"))
 	}
 	if ref := r.Spec.UpstreamTokenSecretRef; ref != nil {
