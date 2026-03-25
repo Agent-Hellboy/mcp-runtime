@@ -27,6 +27,15 @@ type OperatorConfig struct {
 
 	// RequeueDelaySeconds is the delay in seconds before requeueing when resources aren't ready.
 	RequeueDelaySeconds int
+
+	// GatewayProxyImage is the default image used for the optional MCP gateway sidecar.
+	GatewayProxyImage string
+
+	// AnalyticsIngestURL is the default analytics ingest endpoint for gateway sidecars.
+	AnalyticsIngestURL string
+
+	// ClusterName is the cluster label attached to emitted audit events.
+	ClusterName string
 }
 
 // LoadOperatorConfig loads operator configuration from environment variables.
@@ -39,6 +48,9 @@ func LoadOperatorConfig() *OperatorConfig {
 		ProvisionedRegistryPassword:   os.Getenv("PROVISIONED_REGISTRY_PASSWORD"),
 		ProvisionedRegistrySecretName: getEnvOrDefault("PROVISIONED_REGISTRY_SECRET_NAME", DefaultRegistrySecretName),
 		RequeueDelaySeconds:           getEnvIntOrDefault("REQUEUE_DELAY_SECONDS", RequeueDelayNotReady),
+		GatewayProxyImage:             os.Getenv("MCP_GATEWAY_PROXY_IMAGE"),
+		AnalyticsIngestURL:            os.Getenv("MCP_ANALYTICS_INGEST_URL"),
+		ClusterName:                   getEnvOrDefault("MCP_CLUSTER_NAME", "local"),
 	}
 	return cfg
 }

@@ -116,6 +116,97 @@ func TestGenerateCRD(t *testing.T) {
 		assertContains(t, content, "value: debug")
 	})
 
+	t.Run("generates CRD with gateway and analytics", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		outputPath := filepath.Join(tmpDir, "gateway-server.yaml")
+
+		server := &ServerMetadata{
+			Name:      "gateway-server",
+			Image:     "my-image",
+			Namespace: "default",
+			Gateway: &GatewayConfig{
+				Enabled:     true,
+				Image:       "example.com/mcp-proxy:latest",
+				Port:        8091,
+				UpstreamURL: "http://127.0.0.1:8088",
+				StripPrefix: "/gateway-server",
+			},
+			Auth: &AuthConfig{
+				Mode: AuthMode("header"),
+			},
+			Policy: &PolicyConfig{
+				Mode:            PolicyMode("allow-list"),
+				DefaultDecision: PolicyDecision("deny"),
+			},
+			Session: &SessionConfig{
+				Required:   true,
+				HeaderName: "X-MCP-Agent-Session",
+			},
+			Tools: []ToolConfig{
+				{Name: "delete_user", RequiredTrust: TrustLevel("high")},
+			},
+			SecretEnvVars: []SecretEnvVar{
+				{
+					Name: "OPENAI_API_KEY",
+					SecretKeyRef: &SecretKeyRef{
+						Name: "provider-creds",
+						Key:  "openai",
+					},
+				},
+			},
+			Analytics: &AnalyticsConfig{
+				Enabled:   true,
+				IngestURL: "http://analytics.default.svc/api/events",
+				Source:    "gateway-server",
+				EventType: "mcp.request",
+				APIKeySecretRef: &SecretKeyRef{
+					Name: "analytics-creds",
+					Key:  "api-key",
+				},
+			},
+			Rollout: &RolloutConfig{
+				Strategy:       RolloutStrategy("Canary"),
+				CanaryReplicas: int32Ptr(1),
+			},
+		}
+
+		err := GenerateCRD(server, outputPath)
+		if err != nil {
+			t.Fatalf("GenerateCRD failed: %v", err)
+		}
+
+		data, err := os.ReadFile(outputPath)
+		if err != nil {
+			t.Fatalf("failed to read output file: %v", err)
+		}
+
+		content := string(data)
+		assertContains(t, content, "gateway:")
+		assertContains(t, content, "image: example.com/mcp-proxy:latest")
+		assertContains(t, content, "upstreamurl: http://127.0.0.1:8088")
+		assertContains(t, content, "stripprefix: /gateway-server")
+		assertContains(t, content, "auth:")
+		assertContains(t, content, "mode: header")
+		assertContains(t, content, "policy:")
+		assertContains(t, content, "defaultdecision: deny")
+		assertContains(t, content, "session:")
+		assertContains(t, content, "required: true")
+		assertContains(t, content, "tools:")
+		assertContains(t, content, "requiredtrust: high")
+		assertContains(t, content, "secretenvvars:")
+		assertContains(t, content, "provider-creds")
+		assertContains(t, content, "analytics:")
+		assertContains(t, content, "ingesturl: http://analytics.default.svc/api/events")
+		assertContains(t, content, "source: gateway-server")
+		assertContains(t, content, "eventtype: mcp.request")
+		assertContains(t, content, "apikeysecretref:")
+		assertContains(t, content, "name: analytics-creds")
+		assertContains(t, content, "key: api-key")
+		assertContains(t, content, "rollout:")
+		assertContains(t, content, "strategy: Canary")
+		assertContains(t, content, "canaryreplicas: 1")
+	})
+
 	t.Run("creates parent directories", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		outputPath := filepath.Join(tmpDir, "nested", "dirs", "server.yaml")

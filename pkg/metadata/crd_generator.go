@@ -66,6 +66,104 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 		}
 	}
 
+	if len(server.SecretEnvVars) > 0 {
+		mcpServer.Spec.SecretEnvVars = make([]mcpv1alpha1.SecretEnvVar, 0, len(server.SecretEnvVars))
+		for _, env := range server.SecretEnvVars {
+			secretEnv := mcpv1alpha1.SecretEnvVar{Name: env.Name}
+			if env.SecretKeyRef != nil {
+				secretEnv.SecretKeyRef = &mcpv1alpha1.SecretKeyRef{
+					Name: env.SecretKeyRef.Name,
+					Key:  env.SecretKeyRef.Key,
+				}
+			}
+			mcpServer.Spec.SecretEnvVars = append(mcpServer.Spec.SecretEnvVars, secretEnv)
+		}
+	}
+
+	if len(server.Tools) > 0 {
+		mcpServer.Spec.Tools = make([]mcpv1alpha1.ToolConfig, 0, len(server.Tools))
+		for _, tool := range server.Tools {
+			mcpTool := mcpv1alpha1.ToolConfig{
+				Name:          tool.Name,
+				Description:   tool.Description,
+				RequiredTrust: mcpv1alpha1.TrustLevel(tool.RequiredTrust),
+			}
+			if len(tool.Labels) > 0 {
+				mcpTool.Labels = make(map[string]string, len(tool.Labels))
+				for k, v := range tool.Labels {
+					mcpTool.Labels[k] = v
+				}
+			}
+			mcpServer.Spec.Tools = append(mcpServer.Spec.Tools, mcpTool)
+		}
+	}
+
+	if server.Auth != nil {
+		mcpServer.Spec.Auth = &mcpv1alpha1.AuthConfig{
+			Mode:            mcpv1alpha1.AuthMode(server.Auth.Mode),
+			HumanIDHeader:   server.Auth.HumanIDHeader,
+			AgentIDHeader:   server.Auth.AgentIDHeader,
+			SessionIDHeader: server.Auth.SessionIDHeader,
+			TokenHeader:     server.Auth.TokenHeader,
+			IssuerURL:       server.Auth.IssuerURL,
+			Audience:        server.Auth.Audience,
+		}
+	}
+
+	if server.Policy != nil {
+		mcpServer.Spec.Policy = &mcpv1alpha1.PolicyConfig{
+			Mode:            mcpv1alpha1.PolicyMode(server.Policy.Mode),
+			DefaultDecision: mcpv1alpha1.PolicyDecision(server.Policy.DefaultDecision),
+			EnforceOn:       server.Policy.EnforceOn,
+			PolicyVersion:   server.Policy.PolicyVersion,
+		}
+	}
+
+	if server.Session != nil {
+		mcpServer.Spec.Session = &mcpv1alpha1.SessionConfig{
+			Required:            server.Session.Required,
+			Store:               server.Session.Store,
+			HeaderName:          server.Session.HeaderName,
+			MaxLifetime:         server.Session.MaxLifetime,
+			IdleTimeout:         server.Session.IdleTimeout,
+			UpstreamTokenHeader: server.Session.UpstreamTokenHeader,
+		}
+	}
+
+	if server.Gateway != nil {
+		mcpServer.Spec.Gateway = &mcpv1alpha1.GatewayConfig{
+			Enabled:     server.Gateway.Enabled,
+			Image:       server.Gateway.Image,
+			Port:        server.Gateway.Port,
+			UpstreamURL: server.Gateway.UpstreamURL,
+			StripPrefix: server.Gateway.StripPrefix,
+		}
+	}
+
+	if server.Rollout != nil {
+		mcpServer.Spec.Rollout = &mcpv1alpha1.RolloutConfig{
+			Strategy:       mcpv1alpha1.RolloutStrategy(server.Rollout.Strategy),
+			MaxUnavailable: server.Rollout.MaxUnavailable,
+			MaxSurge:       server.Rollout.MaxSurge,
+			CanaryReplicas: server.Rollout.CanaryReplicas,
+		}
+	}
+
+	if server.Analytics != nil {
+		mcpServer.Spec.Analytics = &mcpv1alpha1.AnalyticsConfig{
+			Enabled:   server.Analytics.Enabled,
+			IngestURL: server.Analytics.IngestURL,
+			Source:    server.Analytics.Source,
+			EventType: server.Analytics.EventType,
+		}
+		if server.Analytics.APIKeySecretRef != nil {
+			mcpServer.Spec.Analytics.APIKeySecretRef = &mcpv1alpha1.SecretKeyRef{
+				Name: server.Analytics.APIKeySecretRef.Name,
+				Key:  server.Analytics.APIKeySecretRef.Key,
+			}
+		}
+	}
+
 	// Marshal to YAML
 	data, err := yaml.Marshal(mcpServer)
 	if err != nil {

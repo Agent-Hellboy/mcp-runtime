@@ -18,9 +18,12 @@ spec:
     - jsonPath: .status.phase
       name: Phase
       type: string
-    - jsonPath: .spec.image
-      name: Image
-      type: string
+    - jsonPath: .status.policyReady
+      name: Policy
+      type: boolean
+    - jsonPath: .status.gatewayReady
+      name: Gateway
+      type: boolean
     - jsonPath: .status.deploymentReady
       name: Ready
       type: boolean
@@ -30,7 +33,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: MCPServer is the Schema for the mcpservers API
+        description: MCPServer is the Schema for the mcpservers API.
         properties:
           apiVersion:
             description: |-
@@ -50,12 +53,69 @@ spec:
           metadata:
             type: object
           spec:
-            description: MCPServerSpec defines the desired state of MCPServer
+            description: MCPServerSpec defines the desired state of MCPServer.
             properties:
+              analytics:
+                description: |-
+                  Analytics configures audit/analytics emission for the gateway sidecar.
+                  Analytics is only applied when Gateway is enabled.
+                properties:
+                  apiKeySecretRef:
+                    description: APIKeySecretRef points to a secret key containing
+                      the analytics API key.
+                    properties:
+                      key:
+                        type: string
+                      name:
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  enabled:
+                    description: Enabled turns on analytics emission from the gateway
+                      sidecar.
+                    type: boolean
+                  eventType:
+                    description: EventType is the event type label attached to emitted
+                      analytics events.
+                    type: string
+                  ingestURL:
+                    description: IngestURL is the analytics ingest endpoint.
+                    type: string
+                  source:
+                    description: Source is the event source label attached to emitted
+                      analytics events.
+                    type: string
+                type: object
+              auth:
+                description: Auth configures how the gateway extracts human, agent,
+                  and session identity.
+                properties:
+                  agentIDHeader:
+                    type: string
+                  audience:
+                    type: string
+                  humanIDHeader:
+                    type: string
+                  issuerURL:
+                    type: string
+                  mode:
+                    enum:
+                    - none
+                    - header
+                    - oauth
+                    type: string
+                  sessionIDHeader:
+                    type: string
+                  tokenHeader:
+                    type: string
+                type: object
               envVars:
-                description: EnvVars are environment variables to pass to the container
+                description: EnvVars are literal environment variables to pass to
+                  the container.
                 items:
-                  description: EnvVar represents an environment variable
+                  description: EnvVar represents a literal environment variable.
                   properties:
                     name:
                       type: string
@@ -66,55 +126,99 @@ spec:
                   - value
                   type: object
                 type: array
+              gateway:
+                description: Gateway configures an optional MCP proxy sidecar in front
+                  of the server container.
+                properties:
+                  enabled:
+                    description: Enabled turns on the gateway sidecar for this server.
+                    type: boolean
+                  image:
+                    description: Image overrides the proxy container image for this
+                      server.
+                    type: string
+                  port:
+                    description: Port is the port the gateway listens on inside the
+                      pod (defaults to 8091).
+                    format: int32
+                    type: integer
+                  stripPrefix:
+                    description: StripPrefix removes a path prefix before forwarding
+                      to the upstream server.
+                    type: string
+                  upstreamURL:
+                    description: |-
+                      UpstreamURL is the upstream URL the gateway proxies to.
+                      Defaults to http://127.0.0.1:<spec.port>.
+                    type: string
+                type: object
               image:
-                description: Image is the container image for the MCP server
+                description: Image is the container image for the MCP server.
                 type: string
               imagePullSecrets:
-                description: ImagePullSecrets are secrets to use for pulling the image
+                description: ImagePullSecrets are secrets to use for pulling the image.
                 items:
                   type: string
                 type: array
               imageTag:
                 description: ImageTag is the tag of the container image (defaults
-                  to "latest")
+                  to "latest").
                 type: string
               ingressAnnotations:
                 additionalProperties:
                   type: string
                 description: IngressAnnotations are additional annotations for the
-                  ingress controller
+                  ingress controller.
                 type: object
               ingressClass:
                 description: IngressClass is the ingress class to use (e.g., "traefik",
-                  "nginx", "istio"). Defaults to "traefik"
+                  "nginx", "istio"). Defaults to "traefik".
                 type: string
               ingressHost:
                 description: IngressHost is the hostname for the ingress (optional;
-                  defaults from MCP_DEFAULT_INGRESS_HOST env var if set on the operator)
+                  defaults from MCP_DEFAULT_INGRESS_HOST env var if set on the operator).
                 type: string
               ingressPath:
                 description: IngressPath is the path for the ingress route (defaults
-                  to /{name}/mcp)
+                  to /{name}/mcp).
                 type: string
+              policy:
+                description: Policy configures gateway-side authorization behavior.
+                properties:
+                  defaultDecision:
+                    enum:
+                    - allow
+                    - deny
+                    type: string
+                  enforceOn:
+                    type: string
+                  mode:
+                    enum:
+                    - allow-list
+                    - observe
+                    type: string
+                  policyVersion:
+                    type: string
+                type: object
               port:
                 description: Port is the port the container listens on (defaults to
-                  8088)
+                  8088).
                 format: int32
                 type: integer
               registryOverride:
                 description: RegistryOverride, if set, overrides the registry portion
-                  of the image (e.g., registry.example.com)
+                  of the image (e.g., registry.example.com).
                 type: string
               replicas:
                 description: Replicas is the number of desired replicas (defaults
-                  to 1)
+                  to 1).
                 format: int32
                 type: integer
               resources:
-                description: Resources defines resource limits and requests
+                description: Resources defines resource limits and requests.
                 properties:
                   limits:
-                    description: ResourceList defines CPU and memory resources
+                    description: ResourceList defines CPU and memory resources.
                     properties:
                       cpu:
                         type: string
@@ -122,7 +226,7 @@ spec:
                         type: string
                     type: object
                   requests:
-                    description: ResourceList defines CPU and memory resources
+                    description: ResourceList defines CPU and memory resources.
                     properties:
                       cpu:
                         type: string
@@ -130,56 +234,187 @@ spec:
                         type: string
                     type: object
                 type: object
+              rollout:
+                description: Rollout configures deployment rollout behavior for this
+                  server.
+                properties:
+                  canaryReplicas:
+                    format: int32
+                    type: integer
+                  maxSurge:
+                    type: string
+                  maxUnavailable:
+                    type: string
+                  strategy:
+                    enum:
+                    - RollingUpdate
+                    - Recreate
+                    - Canary
+                    type: string
+                type: object
+              secretEnvVars:
+                description: SecretEnvVars are secret-backed environment variables
+                  to pass to the container.
+                items:
+                  description: SecretEnvVar represents a secret-backed environment
+                    variable.
+                  properties:
+                    name:
+                      type: string
+                    secretKeyRef:
+                      description: SecretKeyRef points to a single key in a Kubernetes
+                        Secret.
+                      properties:
+                        key:
+                          type: string
+                        name:
+                          type: string
+                      required:
+                      - key
+                      - name
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
               servicePort:
                 description: ServicePort is the port exposed by the service (defaults
-                  to 80)
+                  to 80).
                 format: int32
                 type: integer
+              session:
+                description: Session configures server-side agent session behavior.
+                properties:
+                  headerName:
+                    type: string
+                  idleTimeout:
+                    type: string
+                  maxLifetime:
+                    type: string
+                  required:
+                    type: boolean
+                  store:
+                    type: string
+                  upstreamTokenHeader:
+                    type: string
+                type: object
+              tools:
+                description: Tools describes the MCP tool inventory exposed by the
+                  server.
+                items:
+                  description: ToolConfig describes one MCP tool exposed by a server.
+                  properties:
+                    description:
+                      type: string
+                    labels:
+                      additionalProperties:
+                        type: string
+                      type: object
+                    name:
+                      type: string
+                    requiredTrust:
+                      enum:
+                      - low
+                      - medium
+                      - high
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
               useProvisionedRegistry:
                 description: UseProvisionedRegistry tells the controller to use the
-                  provisioned registry (from operator env) for this server
+                  provisioned registry (from operator env) for this server.
                 type: boolean
             required:
             - image
             type: object
           status:
-            description: MCPServerStatus defines the observed state of MCPServer
+            description: MCPServerStatus defines the observed state of MCPServer.
             properties:
+              canaryReady:
+                description: CanaryReady indicates if the canary deployment, when
+                  configured, is ready.
+                type: boolean
               conditions:
-                description: Conditions represent the latest available observations
+                description: Conditions represent the latest available observations.
                 items:
-                  description: Condition represents a condition status
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
                   properties:
                     lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
                       format: date-time
                       type: string
                     message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
                       type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
                     reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
                       type: string
                     status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
                       type: string
                     type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
                       type: string
                   required:
+                  - lastTransitionTime
+                  - message
+                  - reason
                   - status
                   - type
                   type: object
                 type: array
               deploymentReady:
-                description: DeploymentReady indicates if the deployment is ready
+                description: DeploymentReady indicates if the deployment is ready.
+                type: boolean
+              gatewayReady:
+                description: GatewayReady indicates if the gateway configuration and
+                  sidecar are ready.
                 type: boolean
               ingressReady:
-                description: IngressReady indicates if the ingress is ready
+                description: IngressReady indicates if the ingress is ready.
                 type: boolean
               message:
-                description: Message provides additional information about the status
+                description: Message provides additional information about the status.
                 type: string
               phase:
-                description: Phase represents the current phase of the MCPServer
+                description: Phase represents the current phase of the MCPServer.
                 type: string
+              policyReady:
+                description: PolicyReady indicates if policy data for the gateway
+                  has been generated.
+                type: boolean
               serviceReady:
-                description: ServiceReady indicates if the service is ready
+                description: ServiceReady indicates if the service is ready.
                 type: boolean
             type: object
         type: object

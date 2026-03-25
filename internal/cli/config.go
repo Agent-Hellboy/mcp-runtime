@@ -17,9 +17,12 @@ type CLIConfig struct {
 	CertTimeout       time.Duration
 
 	// Registry settings
-	RegistryPort  int
-	SkopeoImage   string
-	OperatorImage string // Override for operator image
+	RegistryPort       int
+	SkopeoImage        string
+	OperatorImage      string // Override for operator image
+	GatewayProxyImage  string // Optional default image for the MCP gateway sidecar
+	AnalyticsIngestURL string // Optional analytics ingest URL override for the MCP gateway sidecar
+	ClusterName        string // Optional cluster label attached to analytics/audit events
 
 	// Server defaults
 	DefaultServerPort int
@@ -50,6 +53,9 @@ func LoadCLIConfig() *CLIConfig {
 		RegistryPort:                parseIntEnv("MCP_REGISTRY_PORT", defaultRegistryPort),
 		SkopeoImage:                 getEnvOrDefault("MCP_SKOPEO_IMAGE", defaultSkopeoImage),
 		OperatorImage:               os.Getenv("MCP_OPERATOR_IMAGE"), // No default, empty means auto
+		GatewayProxyImage:           os.Getenv("MCP_GATEWAY_PROXY_IMAGE"),
+		AnalyticsIngestURL:          os.Getenv("MCP_ANALYTICS_INGEST_URL"),
+		ClusterName:                 getEnvOrDefault("MCP_CLUSTER_NAME", "local"),
 		DefaultServerPort:           parseIntEnv("MCP_DEFAULT_SERVER_PORT", defaultServerPort),
 		ProvisionedRegistryURL:      os.Getenv("PROVISIONED_REGISTRY_URL"),
 		ProvisionedRegistryUsername: os.Getenv("PROVISIONED_REGISTRY_USERNAME"),
@@ -110,6 +116,21 @@ func GetSkopeoImage() string {
 // GetOperatorImageOverride returns the operator image override, empty if not set.
 func GetOperatorImageOverride() string {
 	return DefaultCLIConfig.OperatorImage
+}
+
+// GetGatewayProxyImageOverride returns the gateway proxy image override, empty if not set.
+func GetGatewayProxyImageOverride() string {
+	return DefaultCLIConfig.GatewayProxyImage
+}
+
+// GetAnalyticsIngestURLOverride returns the analytics ingest URL override, empty if not set.
+func GetAnalyticsIngestURLOverride() string {
+	return DefaultCLIConfig.AnalyticsIngestURL
+}
+
+// GetClusterName returns the cluster label attached to analytics/audit events.
+func GetClusterName() string {
+	return DefaultCLIConfig.ClusterName
 }
 
 // GetDefaultServerPort returns the default MCP server port.

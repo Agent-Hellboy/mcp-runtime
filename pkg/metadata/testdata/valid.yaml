@@ -8,3 +8,31 @@ servers:
     port: 9090
     replicas: 3
     namespace: custom-namespace
+    gateway:
+      enabled: true
+      image: example.com/mcp-proxy:latest
+    auth:
+      mode: header
+    policy:
+      mode: allow-list
+    session:
+      required: true
+    tools:
+      - name: list_tools
+        requiredTrust: low
+      - name: delete_user
+        requiredTrust: high
+    analytics:
+      enabled: true
+      ingestURL: http://analytics.custom-namespace.svc/api/events
+      apiKeySecretRef:
+        name: analytics-creds
+        key: api-key
+    secretEnvVars:
+      - name: OPENAI_API_KEY
+        secretKeyRef:
+          name: provider-creds
+          key: openai
+    rollout:
+      strategy: Canary
+      canaryReplicas: 1

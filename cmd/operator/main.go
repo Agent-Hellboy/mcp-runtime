@@ -48,13 +48,31 @@ func main() {
 	}
 
 	if err = (&operator.MCPServerReconciler{
-		Client:              mgr.GetClient(),
-		Scheme:              mgr.GetScheme(),
-		DefaultIngressHost:  os.Getenv("MCP_DEFAULT_INGRESS_HOST"),
-		ProvisionedRegistry: registryConfig,
+		Client:                    mgr.GetClient(),
+		Scheme:                    mgr.GetScheme(),
+		DefaultIngressHost:        os.Getenv("MCP_DEFAULT_INGRESS_HOST"),
+		ProvisionedRegistry:       registryConfig,
+		GatewayProxyImage:         gatewayProxyImageFromEnv(os.Getenv),
+		DefaultAnalyticsIngestURL: analyticsIngestURLFromEnv(os.Getenv),
+		ClusterName:               clusterNameFromEnv(os.Getenv),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPServer")
 		os.Exit(1)
+	}
+
+	if webhooksEnabledFromEnv(os.Getenv) {
+		for _, resource := range []interface {
+			SetupWebhookWithManager(ctrl.Manager) error
+		}{
+			&mcpv1alpha1.MCPServer{},
+			&mcpv1alpha1.MCPAccessGrant{},
+			&mcpv1alpha1.MCPAgentSession{},
+		} {
+			if err := resource.SetupWebhookWithManager(mgr); err != nil {
+				setupLog.Error(err, "unable to create webhook")
+				os.Exit(1)
+			}
+		}
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -121,4 +139,24 @@ func registryConfigFromEnv(getenv func(string) string) *operator.RegistryConfig 
 		Password:   getenv("PROVISIONED_REGISTRY_PASSWORD"),
 		SecretName: getenv("PROVISIONED_REGISTRY_SECRET_NAME"),
 	}
+}
+
+func gatewayProxyImageFromEnv(getenv func(string) string) string {
+	return getenv("MCP_GATEWAY_PROXY_IMAGE")
+}
+
+func analyticsIngestURLFromEnv(getenv func(string) string) string {
+	return getenv("MCP_ANALYTICS_INGEST_URL")
+}
+
+func clusterNameFromEnv(getenv func(string) string) string {
+	if value := getenv("MCP_CLUSTER_NAME"); value != "" {
+		return value
+	}
+	return "local"
+}
+
+func webhooksEnabledFromEnv(getenv func(string) string) bool {
+	value := getenv("MCP_ENABLE_WEBHOOKS")
+	return value == "true" || value == "1"
 }

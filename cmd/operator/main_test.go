@@ -43,6 +43,44 @@ func TestRegistryConfigFromEnv(t *testing.T) {
 	})
 }
 
+func TestGatewayProxyImageFromEnv(t *testing.T) {
+	t.Run("returns empty when unset", func(t *testing.T) {
+		getenv := func(string) string { return "" }
+		if got := gatewayProxyImageFromEnv(getenv); got != "" {
+			t.Fatalf("expected empty gateway proxy image, got %q", got)
+		}
+	})
+
+	t.Run("returns configured image", func(t *testing.T) {
+		env := map[string]string{
+			"MCP_GATEWAY_PROXY_IMAGE": "example.com/mcp-proxy:latest",
+		}
+		getenv := func(key string) string { return env[key] }
+		if got := gatewayProxyImageFromEnv(getenv); got != "example.com/mcp-proxy:latest" {
+			t.Fatalf("unexpected gateway proxy image: %q", got)
+		}
+	})
+}
+
+func TestAnalyticsIngestURLFromEnv(t *testing.T) {
+	t.Run("returns empty when unset", func(t *testing.T) {
+		getenv := func(string) string { return "" }
+		if got := analyticsIngestURLFromEnv(getenv); got != "" {
+			t.Fatalf("expected empty analytics ingest url, got %q", got)
+		}
+	})
+
+	t.Run("returns configured ingest url", func(t *testing.T) {
+		env := map[string]string{
+			"MCP_ANALYTICS_INGEST_URL": "http://mcp-analytics-ingest.mcp-analytics.svc.cluster.local:8081/events",
+		}
+		getenv := func(key string) string { return env[key] }
+		if got := analyticsIngestURLFromEnv(getenv); got != "http://mcp-analytics-ingest.mcp-analytics.svc.cluster.local:8081/events" {
+			t.Fatalf("unexpected analytics ingest url: %q", got)
+		}
+	})
+}
+
 func TestParseConfig(t *testing.T) {
 	t.Run("defaults", func(t *testing.T) {
 		fs := flag.NewFlagSet("test", flag.ContinueOnError)

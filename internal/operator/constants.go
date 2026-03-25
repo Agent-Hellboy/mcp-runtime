@@ -18,7 +18,9 @@ const (
 	// DefaultReplicas is the default number of replicas.
 	DefaultReplicas = 1
 	// DefaultPort is the default container port.
-	DefaultPort = 8080
+	DefaultPort = 8088
+	// DefaultGatewayPort is the default container port for the MCP proxy sidecar.
+	DefaultGatewayPort = 8091
 	// DefaultServicePort is the default service port.
 	DefaultServicePort = 80
 )

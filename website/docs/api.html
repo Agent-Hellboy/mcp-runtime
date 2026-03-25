@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MCP Runtime API Reference</title>
+    <meta
+      name="description"
+      content="API reference for MCP Runtime resources, gateway headers, and analytics endpoints."
+    />
+    <link rel="stylesheet" href="/static/docs.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="container nav">
+          <div class="brand">
+            <div class="brand-mark" aria-hidden="true"></div>
+            <span>MCP Runtime API</span>
+          </div>
+          <nav class="nav-links">
+            <a href="/docs/">Docs</a>
+            <a href="#resources">Resources</a>
+            <a href="#gateway-flow">Gateway</a>
+            <a href="#analytics-api">Analytics API</a>
+          </nav>
+        </div>
+      </header>
+
+      <section class="hero container">
+        <div>
+          <h1>API reference for runtime, policy, and analytics.</h1>
+          <p>
+            The control plane is now split between deployment config on <code>MCPServer</code>, access
+            grants on <code>MCPAccessGrant</code>, consent/session state on <code>MCPAgentSession</code>,
+            and audit events emitted through <code>mcp-analytics</code>.
+          </p>
+        </div>
+        <aside class="hero-card">
+          <h3>Quick index</h3>
+          <ul>
+            <li><a href="#mcpserver">MCPServer</a></li>
+            <li><a href="#mcpaccessgrant">MCPAccessGrant</a></li>
+            <li><a href="#mcpagentsession">MCPAgentSession</a></li>
+            <li><a href="#headers">Gateway headers</a></li>
+            <li><a href="#analytics-api">Analytics endpoints</a></li>
+          </ul>
+        </aside>
+      </section>
+
+      <section id="resources" class="section container">
+        <h2>Core Resources</h2>
+        <div class="grid">
+          <article class="card">
+            <strong>MCPServer</strong>
+            <p>
+              Runtime deployment spec plus gateway, auth, policy, session, tool inventory, rollout, and
+              analytics settings.
+            </p>
+          </article>
+          <article class="card">
+            <strong>MCPAccessGrant</strong>
+            <p>
+              Who can use which server, for which tools, and with what admin-side maximum trust level.
+            </p>
+          </article>
+          <article class="card">
+            <strong>MCPAgentSession</strong>
+            <p>
+              Server-side consented trust, expiry, revocation, and upstream token references per agent
+              session.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="mcpserver" class="section container">
+        <h2>MCPServer</h2>
+        <p>
+          Use <code>spec.gateway.enabled</code> to put a transparent proxy in front of the server route.
+          Use <code>spec.tools</code> to declare tool inventory and required trust. Use
+          <code>spec.analytics.enabled</code> to emit audit events on every allow or deny decision.
+        </p>
+        <pre><code>apiVersion: mcpruntime.org/v1alpha1
+kind: MCPServer
+metadata:
+  name: payments
+  namespace: mcp-servers
+spec:
+  image: registry.example.com/payments-mcp
+  port: 8088
+  ingressHost: mcp.example.com
+  ingressPath: /payments/mcp
+  gateway:
+    enabled: true
+  auth:
+    mode: header
+    humanIDHeader: X-MCP-Human-ID
+    agentIDHeader: X-MCP-Agent-ID
+    sessionIDHeader: X-MCP-Agent-Session
+  policy:
+    mode: allow-list
+    defaultDecision: deny
+    enforceOn: call_tool
+    policyVersion: v1
+  session:
+    required: true
+    store: kubernetes
+    headerName: X-MCP-Agent-Session
+    maxLifetime: 24h
+    idleTimeout: 1h
+  tools:
+    - name: list_invoices
+      requiredTrust: low
+    - name: refund_invoice
+      requiredTrust: high
+  analytics:
+    enabled: true
+    ingestURL: http://mcp-analytics-ingest.mcp-analytics.svc.cluster.local:8081/events
+  rollout:
+    strategy: Canary
+    canaryReplicas: 1</code></pre>
+      </section>
+
+      <section id="mcpaccessgrant" class="section container">
+        <h2>MCPAccessGrant</h2>
+        <p>
+          Grants are separate from server deployment. They target one server and one human/agent subject,
+          set the admin-side max trust ceiling, and optionally allow or deny individual tools.
+        </p>
+        <pre><code>apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAccessGrant
+metadata:
+  name: payments-ops-agent
+  namespace: mcp-servers
+spec:
+  serverRef:
+    name: payments
+  subject:
+    humanID: user-123
+    agentID: ops-agent
+  maxTrust: high
+  policyVersion: v1
+  toolRules:
+    - name: list_invoices
+      decision: allow
+      requiredTrust: low
+    - name: refund_invoice
+      decision: allow
+      requiredTrust: high</code></pre>
+      </section>
+
+      <section id="mcpagentsession" class="section container">
+        <h2>MCPAgentSession</h2>
+        <p>
+          Sessions carry the consented trust level and revocation state. Effective trust is the minimum of
+          grant max trust and session consented trust.
+        </p>
+        <pre><code>apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAgentSession
+metadata:
+  name: sess-8f1b9d
+  namespace: mcp-servers
+spec:
+  serverRef:
+    name: payments
+  subject:
+    humanID: user-123
+    agentID: ops-agent
+  consentedTrust: medium
+  expiresAt: "2026-03-26T12:00:00Z"
+  upstreamTokenSecretRef:
+    name: payments-upstream-token
+    key: access-token</code></pre>
+      </section>
+
+      <section id="gateway-flow" class="section container">
+        <h2>Gateway Flow</h2>
+        <p>
+          Service traffic stays direct unless gateway mode is enabled. In gateway mode the pod path becomes
+          <code>client -&gt; gateway sidecar -&gt; MCP server</code>. The service points at the sidecar, and the
+          sidecar enforces policy only for tool invocation methods.
+        </p>
+        <div class="grid">
+          <article class="card">
+            <strong>Enforcement point</strong>
+            <p>Authorization is evaluated at <code>call_tool</code> or <code>tools/call</code>, not at discovery time.</p>
+          </article>
+          <article class="card">
+            <strong>Allow-list first</strong>
+            <p>Missing grants or missing tool rules deny by default unless the policy explicitly overrides the default decision.</p>
+          </article>
+          <article class="card">
+            <strong>Audit on allow and deny</strong>
+            <p>The gateway emits decision, reason, trust levels, human, agent, session, server, cluster, and namespace fields.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="headers" class="section container">
+        <h2>Gateway Headers</h2>
+        <pre><code>X-MCP-Human-ID: user-123
+X-MCP-Agent-ID: ops-agent
+X-MCP-Agent-Session: sess-8f1b9d</code></pre>
+        <p>
+          These are configurable on <code>spec.auth</code>. The proxy reads them, loads the rendered policy
+          document from the operator-managed ConfigMap, and writes decision events to the analytics ingest
+          endpoint.
+        </p>
+      </section>
+
+      <section id="analytics-api" class="section container">
+        <h2>mcp-analytics API</h2>
+        <p>The bundled analytics stack exposes a read API over the ClickHouse-backed event stream.</p>
+        <pre><code>GET /api/events?limit=100
+GET /api/stats
+GET /api/sources
+GET /api/event-types
+GET /api/events/filter?server=payments&amp;decision=deny&amp;agent_id=ops-agent&amp;limit=50</code></pre>
+        <div class="grid">
+          <article class="card">
+            <strong>Filter fields</strong>
+            <p><code>source</code>, <code>event_type</code>, <code>server</code>, <code>namespace</code>, <code>cluster</code>, <code>human_id</code>, <code>agent_id</code>, <code>session_id</code>, <code>decision</code>, <code>tool_name</code>.</p>
+          </article>
+          <article class="card">
+            <strong>Audit payload fields</strong>
+            <p><code>decision</code>, <code>reason</code>, <code>policy_version</code>, <code>required_trust</code>, <code>admin_trust</code>, <code>consented_trust</code>, <code>effective_trust</code>.</p>
+          </article>
+          <article class="card">
+            <strong>Transport fields</strong>
+            <p><code>method</code>, <code>path</code>, <code>status</code>, <code>latency_ms</code>, <code>bytes_in</code>, <code>bytes_out</code>, <code>rpc_method</code>.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="setup" class="section container">
+        <h2>Setup</h2>
+        <p>
+          <code>mcp-runtime setup</code> now builds the runtime operator image, the gateway proxy image, the
+          analytics service images, and deploys the bundled analytics stack by default. Use
+          <code>--without-analytics</code> if you only want the runtime/operator footprint.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

@@ -290,7 +290,7 @@ func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) er
 			Replicas:    1,
 			Port:        GetDefaultServerPort(),
 			ServicePort: 80,
-			IngressPath: "/" + name,
+			IngressPath: "/" + name + "/mcp",
 		},
 	}
 

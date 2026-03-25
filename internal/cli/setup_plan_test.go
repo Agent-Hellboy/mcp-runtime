@@ -170,10 +170,19 @@ func TestSetupPlatformWithDeps_ExternalRegistry(t *testing.T) {
 		SetupTLS:                    func(*zap.Logger) error { rec.add("tls"); return nil },
 		BuildOperatorImage:          func(string) error { rec.add("build"); return nil },
 		PushOperatorImage:           func(string) error { rec.add("push"); return nil },
+		BuildGatewayProxyImage:      func(string) error { rec.add("build-gateway"); return nil },
+		PushGatewayProxyImage:       func(string) error { rec.add("push-gateway"); return nil },
 		EnsureNamespace:             func(string) error { rec.add("ensure-ns"); return nil },
 		GetPlatformRegistryURL:      func(*zap.Logger) string { return "registry.local" },
 		PushOperatorImageToInternal: func(*zap.Logger, string, string, string) error { rec.add("push-internal"); return nil },
-		DeployOperatorManifests:     func(*zap.Logger, string, []string) error { rec.add("deploy-operator"); return nil },
+		PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error {
+			rec.add("push-gateway-internal")
+			return nil
+		},
+		DeployOperatorManifests: func(*zap.Logger, string, string, []string) error {
+			rec.add("deploy-operator")
+			return nil
+		},
 		ConfigureProvisionedRegistryEnv: func(*ExternalRegistryConfig, string) error {
 			rec.add("configure-env")
 			return nil
@@ -185,6 +194,10 @@ func TestSetupPlatformWithDeps_ExternalRegistry(t *testing.T) {
 		OperatorImageFor: func(*ExternalRegistryConfig) string {
 			rec.add("operator-image")
 			return "registry.example.com/mcp-runtime-operator:latest"
+		},
+		GatewayProxyImageFor: func(*ExternalRegistryConfig) string {
+			rec.add("gateway-image")
+			return "registry.example.com/mcp-analytics-mcp-proxy:latest"
 		},
 	}
 
@@ -213,10 +226,10 @@ func TestSetupPlatformWithDeps_ExternalRegistry(t *testing.T) {
 	if rec.has("registry-info") {
 		t.Fatalf("did not expect internal registry info")
 	}
-	if !rec.has("build") || !rec.has("push") {
+	if !rec.has("build") || !rec.has("push") || !rec.has("build-gateway") || !rec.has("push-gateway") {
 		t.Fatalf("expected image build/push for external registry")
 	}
-	if rec.has("push-internal") {
+	if rec.has("push-internal") || rec.has("push-gateway-internal") {
 		t.Fatalf("did not expect internal registry push")
 	}
 }
@@ -239,13 +252,19 @@ func TestSetupPlatformWithDeps_InternalRegistryTLS(t *testing.T) {
 		SetupTLS:                   func(*zap.Logger) error { rec.add("tls"); return nil },
 		BuildOperatorImage:         func(string) error { rec.add("build"); return nil },
 		PushOperatorImage:          func(string) error { rec.add("push"); return nil },
+		BuildGatewayProxyImage:     func(string) error { rec.add("build-gateway"); return nil },
+		PushGatewayProxyImage:      func(string) error { rec.add("push-gateway"); return nil },
 		EnsureNamespace:            func(string) error { rec.add("ensure-ns"); return nil },
 		GetPlatformRegistryURL:     func(*zap.Logger) string { return "registry.local" },
 		PushOperatorImageToInternal: func(*zap.Logger, string, string, string) error {
 			rec.add("push-internal")
 			return nil
 		},
-		DeployOperatorManifests: func(*zap.Logger, string, []string) error { rec.add("deploy-operator"); return nil },
+		PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error {
+			rec.add("push-gateway-internal")
+			return nil
+		},
+		DeployOperatorManifests: func(*zap.Logger, string, string, []string) error { rec.add("deploy-operator"); return nil },
 		ConfigureProvisionedRegistryEnv: func(*ExternalRegistryConfig, string) error {
 			rec.add("configure-env")
 			return nil
@@ -257,6 +276,10 @@ func TestSetupPlatformWithDeps_InternalRegistryTLS(t *testing.T) {
 		OperatorImageFor: func(*ExternalRegistryConfig) string {
 			rec.add("operator-image")
 			return "registry.local/mcp-runtime-operator:latest"
+		},
+		GatewayProxyImageFor: func(*ExternalRegistryConfig) string {
+			rec.add("gateway-image")
+			return "registry.local/mcp-analytics-mcp-proxy:latest"
 		},
 	}
 
@@ -285,7 +308,7 @@ func TestSetupPlatformWithDeps_InternalRegistryTLS(t *testing.T) {
 	if !rec.has("registry-info") {
 		t.Fatalf("expected registry info")
 	}
-	if !rec.has("build") || !rec.has("push-internal") || !rec.has("ensure-ns") {
+	if !rec.has("build") || !rec.has("build-gateway") || !rec.has("push-internal") || !rec.has("push-gateway-internal") || !rec.has("ensure-ns") {
 		t.Fatalf("expected internal build/push path, got calls: %v", rec.calls)
 	}
 	if rec.has("configure-env") || rec.has("login") {
@@ -318,13 +341,19 @@ func TestSetupPlatformWithDeps_ExternalRegistryTLS(t *testing.T) {
 		SetupTLS:                   func(*zap.Logger) error { rec.add("tls"); return nil },
 		BuildOperatorImage:         func(string) error { rec.add("build"); return nil },
 		PushOperatorImage:          func(string) error { rec.add("push"); return nil },
+		BuildGatewayProxyImage:     func(string) error { rec.add("build-gateway"); return nil },
+		PushGatewayProxyImage:      func(string) error { rec.add("push-gateway"); return nil },
 		EnsureNamespace:            func(string) error { rec.add("ensure-ns"); return nil },
 		GetPlatformRegistryURL:     func(*zap.Logger) string { return "registry.local" },
 		PushOperatorImageToInternal: func(*zap.Logger, string, string, string) error {
 			rec.add("push-internal")
 			return nil
 		},
-		DeployOperatorManifests: func(*zap.Logger, string, []string) error { rec.add("deploy-operator"); return nil },
+		PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error {
+			rec.add("push-gateway-internal")
+			return nil
+		},
+		DeployOperatorManifests: func(*zap.Logger, string, string, []string) error { rec.add("deploy-operator"); return nil },
 		ConfigureProvisionedRegistryEnv: func(*ExternalRegistryConfig, string) error {
 			rec.add("configure-env")
 			return nil
@@ -336,6 +365,10 @@ func TestSetupPlatformWithDeps_ExternalRegistryTLS(t *testing.T) {
 		OperatorImageFor: func(*ExternalRegistryConfig) string {
 			rec.add("operator-image")
 			return "registry.example.com/mcp-runtime-operator:latest"
+		},
+		GatewayProxyImageFor: func(*ExternalRegistryConfig) string {
+			rec.add("gateway-image")
+			return "registry.example.com/mcp-analytics-mcp-proxy:latest"
 		},
 	}
 
@@ -361,7 +394,7 @@ func TestSetupPlatformWithDeps_ExternalRegistryTLS(t *testing.T) {
 	if !rec.has("login") {
 		t.Fatalf("expected external registry login")
 	}
-	if rec.has("deploy-registry") || rec.has("registry-info") || rec.has("push-internal") {
+	if rec.has("deploy-registry") || rec.has("registry-info") || rec.has("push-internal") || rec.has("push-gateway-internal") {
 		t.Fatalf("did not expect internal registry path")
 	}
 	if !rec.hasWait("mcp-runtime-operator-controller-manager") {
@@ -399,18 +432,22 @@ func TestSetupPlatformWithDeps_DiagnosticsOnRegistryWaitFailure(t *testing.T) {
 		SetupTLS:                   func(*zap.Logger) error { return nil },
 		BuildOperatorImage:         func(string) error { return nil },
 		PushOperatorImage:          func(string) error { return nil },
+		BuildGatewayProxyImage:     func(string) error { return nil },
+		PushGatewayProxyImage:      func(string) error { return nil },
 		EnsureNamespace:            func(string) error { return nil },
 		GetPlatformRegistryURL:     func(*zap.Logger) string { return "registry.local" },
 		PushOperatorImageToInternal: func(*zap.Logger, string, string, string) error {
 			return nil
 		},
-		DeployOperatorManifests:         func(*zap.Logger, string, []string) error { return nil },
+		PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
+		DeployOperatorManifests:         func(*zap.Logger, string, string, []string) error { return nil },
 		ConfigureProvisionedRegistryEnv: func(*ExternalRegistryConfig, string) error { return nil },
 		RestartDeployment:               func(string, string) error { return nil },
 		CheckCRDInstalled:               func(string) error { return nil },
 		GetDeploymentTimeout:            func() time.Duration { return time.Second },
 		GetRegistryPort:                 func() int { return 5000 },
 		OperatorImageFor:                func(*ExternalRegistryConfig) string { return "registry.local/mcp-runtime-operator:latest" },
+		GatewayProxyImageFor:            func(*ExternalRegistryConfig) string { return "registry.local/mcp-analytics-mcp-proxy:latest" },
 	}
 
 	plan := SetupPlan{
@@ -454,18 +491,22 @@ func TestSetupPlatformWithDeps_DiagnosticsOnOperatorWaitFailure(t *testing.T) {
 		SetupTLS:                   func(*zap.Logger) error { return nil },
 		BuildOperatorImage:         func(string) error { return nil },
 		PushOperatorImage:          func(string) error { return nil },
+		BuildGatewayProxyImage:     func(string) error { return nil },
+		PushGatewayProxyImage:      func(string) error { return nil },
 		EnsureNamespace:            func(string) error { return nil },
 		GetPlatformRegistryURL:     func(*zap.Logger) string { return "registry.local" },
 		PushOperatorImageToInternal: func(*zap.Logger, string, string, string) error {
 			return nil
 		},
-		DeployOperatorManifests:         func(*zap.Logger, string, []string) error { return nil },
+		PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
+		DeployOperatorManifests:         func(*zap.Logger, string, string, []string) error { return nil },
 		ConfigureProvisionedRegistryEnv: func(*ExternalRegistryConfig, string) error { return nil },
 		RestartDeployment:               func(string, string) error { return nil },
 		CheckCRDInstalled:               func(string) error { return nil },
 		GetDeploymentTimeout:            func() time.Duration { return time.Second },
 		GetRegistryPort:                 func() int { return 5000 },
 		OperatorImageFor:                func(*ExternalRegistryConfig) string { return "registry.example.com/mcp-runtime-operator:latest" },
+		GatewayProxyImageFor:            func(*ExternalRegistryConfig) string { return "registry.example.com/mcp-analytics-mcp-proxy:latest" },
 	}
 
 	plan := SetupPlan{
@@ -509,12 +550,15 @@ func TestSetupPlatformWithDeps_CRDCheckFailure(t *testing.T) {
 		SetupTLS:                   func(*zap.Logger) error { return nil },
 		BuildOperatorImage:         func(string) error { return nil },
 		PushOperatorImage:          func(string) error { return nil },
+		BuildGatewayProxyImage:     func(string) error { return nil },
+		PushGatewayProxyImage:      func(string) error { return nil },
 		EnsureNamespace:            func(string) error { return nil },
 		GetPlatformRegistryURL:     func(*zap.Logger) string { return "registry.local" },
 		PushOperatorImageToInternal: func(*zap.Logger, string, string, string) error {
 			return nil
 		},
-		DeployOperatorManifests:         func(*zap.Logger, string, []string) error { return nil },
+		PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
+		DeployOperatorManifests:         func(*zap.Logger, string, string, []string) error { return nil },
 		ConfigureProvisionedRegistryEnv: func(*ExternalRegistryConfig, string) error { return nil },
 		RestartDeployment:               func(string, string) error { return nil },
 		CheckCRDInstalled: func(string) error {
@@ -523,6 +567,7 @@ func TestSetupPlatformWithDeps_CRDCheckFailure(t *testing.T) {
 		GetDeploymentTimeout: func() time.Duration { return time.Second },
 		GetRegistryPort:      func() int { return 5000 },
 		OperatorImageFor:     func(*ExternalRegistryConfig) string { return "registry.example.com/mcp-runtime-operator:latest" },
+		GatewayProxyImageFor: func(*ExternalRegistryConfig) string { return "registry.example.com/mcp-analytics-mcp-proxy:latest" },
 	}
 
 	plan := SetupPlan{
@@ -566,19 +611,26 @@ func TestSetupPlatformWithDeps_InternalRegistryPushFailure(t *testing.T) {
 		SetupTLS:                   func(*zap.Logger) error { return nil },
 		BuildOperatorImage:         func(string) error { rec.add("build"); return nil },
 		PushOperatorImage:          func(string) error { rec.add("push"); return nil },
+		BuildGatewayProxyImage:     func(string) error { rec.add("build-gateway"); return nil },
+		PushGatewayProxyImage:      func(string) error { rec.add("push-gateway"); return nil },
 		EnsureNamespace:            func(string) error { rec.add("ensure-ns"); return nil },
 		GetPlatformRegistryURL:     func(*zap.Logger) string { return "registry.local" },
 		PushOperatorImageToInternal: func(*zap.Logger, string, string, string) error {
 			rec.add("push-internal")
 			return fmt.Errorf("push failed")
 		},
-		DeployOperatorManifests:         func(*zap.Logger, string, []string) error { rec.add("deploy-operator"); return nil },
+		PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error {
+			rec.add("push-gateway-internal")
+			return nil
+		},
+		DeployOperatorManifests:         func(*zap.Logger, string, string, []string) error { rec.add("deploy-operator"); return nil },
 		ConfigureProvisionedRegistryEnv: func(*ExternalRegistryConfig, string) error { return nil },
 		RestartDeployment:               func(string, string) error { return nil },
 		CheckCRDInstalled:               func(string) error { return nil },
 		GetDeploymentTimeout:            func() time.Duration { return time.Second },
 		GetRegistryPort:                 func() int { return 5000 },
 		OperatorImageFor:                func(*ExternalRegistryConfig) string { return "registry.local/mcp-runtime-operator:latest" },
+		GatewayProxyImageFor:            func(*ExternalRegistryConfig) string { return "registry.local/mcp-analytics-mcp-proxy:latest" },
 	}
 
 	plan := SetupPlan{

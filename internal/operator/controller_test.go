@@ -183,6 +183,62 @@ func TestSetDefaults(t *testing.T) {
 
 		assertEqual(t, "ingressPath", mcpServer.Spec.IngressPath, "")
 	})
+
+	t.Run("applies gateway and analytics defaults", func(t *testing.T) {
+		mcpServer := mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "gateway-server"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				Image: "example.com/gateway-server",
+				Gateway: &mcpv1alpha1.GatewayConfig{
+					Enabled: true,
+				},
+				Analytics: &mcpv1alpha1.AnalyticsConfig{
+					Enabled:   true,
+					IngestURL: "http://analytics.default.svc/api/events",
+				},
+			},
+		}
+
+		r := MCPServerReconciler{Scheme: runtime.NewScheme()}
+		r.setDefaults(&mcpServer)
+
+		if mcpServer.Spec.Gateway == nil {
+			t.Fatal("expected gateway defaults to be applied")
+		}
+		assertEqual(t, "gatewayPort", mcpServer.Spec.Gateway.Port, int32(defaultGatewayPort))
+		assertEqual(t, "gatewayUpstreamURL", mcpServer.Spec.Gateway.UpstreamURL, "http://127.0.0.1:8088")
+		if mcpServer.Spec.Analytics == nil {
+			t.Fatal("expected analytics defaults to be applied")
+		}
+		assertEqual(t, "analyticsSource", mcpServer.Spec.Analytics.Source, "gateway-server")
+		assertEqual(t, "analyticsEventType", mcpServer.Spec.Analytics.EventType, "mcp.request")
+	})
+
+	t.Run("applies default analytics ingest url from reconciler config", func(t *testing.T) {
+		mcpServer := mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "gateway-server"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				Image: "example.com/gateway-server",
+				Gateway: &mcpv1alpha1.GatewayConfig{
+					Enabled: true,
+				},
+				Analytics: &mcpv1alpha1.AnalyticsConfig{
+					Enabled: true,
+				},
+			},
+		}
+
+		r := MCPServerReconciler{
+			Scheme:                    runtime.NewScheme(),
+			DefaultAnalyticsIngestURL: "http://mcp-analytics-ingest.mcp-analytics.svc.cluster.local:8081/events",
+		}
+		r.setDefaults(&mcpServer)
+
+		if mcpServer.Spec.Analytics == nil {
+			t.Fatal("expected analytics defaults to be applied")
+		}
+		assertEqual(t, "analyticsIngestURL", mcpServer.Spec.Analytics.IngestURL, "http://mcp-analytics-ingest.mcp-analytics.svc.cluster.local:8081/events")
+	})
 }
 
 func TestReconcileDeploymentLabels(t *testing.T) {
@@ -240,6 +296,193 @@ func TestReconcileDeploymentLabels(t *testing.T) {
 	if deployment.Spec.Template.Labels["app.kubernetes.io/managed-by"] != "mcp-runtime" {
 		t.Fatalf("pod template label managed-by = %q, want %q", deployment.Spec.Template.Labels["app.kubernetes.io/managed-by"], "mcp-runtime")
 	}
+}
+
+func TestReconcileDeploymentAddsGatewaySidecar(t *testing.T) {
+	replicas := int32(1)
+	mcpServer := mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gateway-server",
+			Namespace: "default",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image:       "example.com/gateway-server",
+			ImageTag:    "latest",
+			Port:        8088,
+			ServicePort: 80,
+			Replicas:    &replicas,
+			Gateway: &mcpv1alpha1.GatewayConfig{
+				Enabled: true,
+				Image:   "example.com/mcp-proxy:latest",
+				Port:    8091,
+			},
+			Analytics: &mcpv1alpha1.AnalyticsConfig{
+				Enabled:   true,
+				IngestURL: "http://analytics.default.svc/api/events",
+				Source:    "gateway-server",
+				EventType: "mcp.request",
+				APIKeySecretRef: &mcpv1alpha1.SecretKeyRef{
+					Name: "analytics-creds",
+					Key:  "api-key",
+				},
+			},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add mcp scheme: %v", err)
+	}
+	if err := appsv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add apps scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add core scheme: %v", err)
+	}
+
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&mcpServer).Build()
+	reconciler := MCPServerReconciler{
+		Client: client,
+		Scheme: scheme,
+	}
+	reconciler.setDefaults(&mcpServer)
+
+	if err := reconciler.reconcileDeployment(context.Background(), &mcpServer); err != nil {
+		t.Fatalf("reconcileDeployment() error = %v", err)
+	}
+
+	var deployment appsv1.Deployment
+	if err := client.Get(context.Background(), types.NamespacedName{Name: mcpServer.Name, Namespace: mcpServer.Namespace}, &deployment); err != nil {
+		t.Fatalf("failed to fetch deployment: %v", err)
+	}
+
+	if len(deployment.Spec.Template.Spec.Containers) != 2 {
+		t.Fatalf("expected 2 containers, got %d", len(deployment.Spec.Template.Spec.Containers))
+	}
+
+	gateway := deployment.Spec.Template.Spec.Containers[1]
+	assertEqual(t, "gatewayName", gateway.Name, "mcp-gateway")
+	assertEqual(t, "gatewayImage", gateway.Image, "example.com/mcp-proxy:latest")
+
+	envByName := make(map[string]corev1.EnvVar, len(gateway.Env))
+	for _, envVar := range gateway.Env {
+		envByName[envVar.Name] = envVar
+	}
+	assertEqual(t, "gatewayPortEnv", envByName["PORT"].Value, "8091")
+	assertEqual(t, "gatewayUpstreamEnv", envByName["UPSTREAM_URL"].Value, "http://127.0.0.1:8088")
+	assertEqual(t, "analyticsIngestEnv", envByName["ANALYTICS_INGEST_URL"].Value, "http://analytics.default.svc/api/events")
+	assertEqual(t, "analyticsSourceEnv", envByName["ANALYTICS_SOURCE"].Value, "gateway-server")
+	assertEqual(t, "analyticsEventTypeEnv", envByName["ANALYTICS_EVENT_TYPE"].Value, "mcp.request")
+	if envByName["ANALYTICS_API_KEY"].ValueFrom == nil || envByName["ANALYTICS_API_KEY"].ValueFrom.SecretKeyRef == nil {
+		t.Fatal("expected analytics api key env var to come from a secret")
+	}
+	assertEqual(t, "analyticsAPIKeySecretName", envByName["ANALYTICS_API_KEY"].ValueFrom.SecretKeyRef.Name, "analytics-creds")
+	assertEqual(t, "analyticsAPIKeySecretKey", envByName["ANALYTICS_API_KEY"].ValueFrom.SecretKeyRef.Key, "api-key")
+}
+
+func TestReconcileServiceUsesGatewayPortWhenEnabled(t *testing.T) {
+	replicas := int32(1)
+	mcpServer := mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gateway-service",
+			Namespace: "default",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image:       "example.com/gateway-service",
+			ImageTag:    "latest",
+			Port:        8088,
+			ServicePort: 80,
+			Replicas:    &replicas,
+			Gateway: &mcpv1alpha1.GatewayConfig{
+				Enabled: true,
+				Image:   "example.com/mcp-proxy:latest",
+				Port:    8091,
+			},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add mcp scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add core scheme: %v", err)
+	}
+
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&mcpServer).Build()
+	reconciler := MCPServerReconciler{
+		Client: client,
+		Scheme: scheme,
+	}
+
+	if err := reconciler.reconcileService(context.Background(), &mcpServer); err != nil {
+		t.Fatalf("reconcileService() error = %v", err)
+	}
+
+	var service corev1.Service
+	if err := client.Get(context.Background(), types.NamespacedName{Name: mcpServer.Name, Namespace: mcpServer.Namespace}, &service); err != nil {
+		t.Fatalf("failed to fetch service: %v", err)
+	}
+
+	if len(service.Spec.Ports) != 1 {
+		t.Fatalf("expected 1 service port, got %d", len(service.Spec.Ports))
+	}
+	assertEqual(t, "serviceTargetPort", service.Spec.Ports[0].TargetPort.IntVal, int32(8091))
+}
+
+func TestResolveGatewayImage(t *testing.T) {
+	t.Run("uses per-server image when set", func(t *testing.T) {
+		reconciler := MCPServerReconciler{}
+		mcpServer := &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "gateway"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				Gateway: &mcpv1alpha1.GatewayConfig{
+					Enabled: true,
+					Image:   "example.com/proxy:latest",
+				},
+			},
+		}
+
+		got, err := reconciler.resolveGatewayImage(mcpServer)
+		if err != nil {
+			t.Fatalf("resolveGatewayImage() unexpected error: %v", err)
+		}
+		assertEqual(t, "gatewayImage", got, "example.com/proxy:latest")
+	})
+
+	t.Run("falls back to reconciler default image", func(t *testing.T) {
+		reconciler := MCPServerReconciler{GatewayProxyImage: "example.com/default-proxy:latest"}
+		mcpServer := &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "gateway"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				Gateway: &mcpv1alpha1.GatewayConfig{
+					Enabled: true,
+				},
+			},
+		}
+
+		got, err := reconciler.resolveGatewayImage(mcpServer)
+		if err != nil {
+			t.Fatalf("resolveGatewayImage() unexpected error: %v", err)
+		}
+		assertEqual(t, "gatewayImage", got, "example.com/default-proxy:latest")
+	})
+
+	t.Run("returns error when no image is configured", func(t *testing.T) {
+		reconciler := MCPServerReconciler{}
+		mcpServer := &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "gateway", Namespace: "default"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				Gateway: &mcpv1alpha1.GatewayConfig{
+					Enabled: true,
+				},
+			},
+		}
+
+		if _, err := reconciler.resolveGatewayImage(mcpServer); err == nil {
+			t.Fatal("expected resolveGatewayImage() to return an error")
+		}
+	})
 }
 
 func assertReplicas(t *testing.T, replicas *int32, want int32) {
@@ -382,14 +625,16 @@ func TestCheckResourceReadiness(t *testing.T) {
 		}
 		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer).Build()
 		r := MCPServerReconciler{Client: client, Scheme: scheme}
-		deploymentReady, serviceReady, ingressReady, err := r.checkResourceReadiness(context.Background(), mcpServer)
+		readiness, err := r.checkResourceReadiness(context.Background(), mcpServer)
 		if err != nil {
 			t.Fatalf("failed to check resource readiness: %v", err)
 		}
 		// Resources don't exist yet, so they're not ready
-		assertEqual(t, "deploymentReady", deploymentReady, false)
-		assertEqual(t, "serviceReady", serviceReady, false)
-		assertEqual(t, "ingressReady", ingressReady, false)
+		assertEqual(t, "deploymentReady", readiness.Deployment, false)
+		assertEqual(t, "serviceReady", readiness.Service, false)
+		assertEqual(t, "ingressReady", readiness.Ingress, false)
+		assertEqual(t, "policyReady", readiness.Policy, true)
+		assertEqual(t, "canaryReady", readiness.Canary, true)
 	})
 }
 
@@ -476,7 +721,14 @@ func TestUpdateStatus(t *testing.T) {
 			t.Fatalf("failed to create MCPServer: %v", err)
 		}
 		r := MCPServerReconciler{Client: client, Scheme: scheme}
-		r.updateStatus(context.Background(), mcpServer, "Ready", "All resources reconciled", true, true, true)
+		r.updateStatus(context.Background(), mcpServer, "Ready", "All resources reconciled", resourceReadiness{
+			Deployment: true,
+			Service:    true,
+			Ingress:    true,
+			Gateway:    true,
+			Policy:     true,
+			Canary:     true,
+		})
 		updated := &mcpv1alpha1.MCPServer{}
 		if err := client.Get(context.Background(), types.NamespacedName{
 			Name:      "test-server",
@@ -491,10 +743,14 @@ func TestUpdateStatus(t *testing.T) {
 
 func TestDeterminePhase(t *testing.T) {
 	t.Run("succeeds with valid phase", func(t *testing.T) {
-		deploymentReady := true
-		serviceReady := true
-		ingressReady := true
-		phase, allReady := determinePhase(deploymentReady, serviceReady, ingressReady)
+		phase, allReady := determinePhase(resourceReadiness{
+			Deployment: true,
+			Service:    true,
+			Ingress:    true,
+			Gateway:    true,
+			Policy:     true,
+			Canary:     true,
+		})
 		assertEqual(t, "phase", phase, "Ready")
 		assertEqual(t, "allReady", allReady, true)
 	})
@@ -660,7 +916,7 @@ func TestBuildEnvVars(t *testing.T) {
 			{Name: "FOO", Value: "bar"},
 			{Name: "BAZ", Value: "qux"},
 		}
-		envVars := r.buildEnvVars(input)
+		envVars := r.buildEnvVars(input, nil)
 		assertEqual(t, "len", len(envVars), 2)
 		assertEqual(t, "envVars[0].Name", envVars[0].Name, "FOO")
 		assertEqual(t, "envVars[0].Value", envVars[0].Value, "bar")
@@ -670,7 +926,7 @@ func TestBuildEnvVars(t *testing.T) {
 
 	t.Run("returns empty slice for nil input", func(t *testing.T) {
 		r := MCPServerReconciler{}
-		envVars := r.buildEnvVars(nil)
+		envVars := r.buildEnvVars(nil, nil)
 		assertEqual(t, "len", len(envVars), 0)
 	})
 }

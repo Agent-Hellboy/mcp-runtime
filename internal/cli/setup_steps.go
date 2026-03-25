@@ -16,6 +16,8 @@ type SetupContext struct {
 	UsingExternalRegistry bool
 	RegistrySecretName    string
 	OperatorImage         string
+	GatewayProxyImage     string
+	AnalyticsImages       AnalyticsImageSet
 }
 
 // SetupStep models a single setup phase.
@@ -83,7 +85,7 @@ type operatorImageStep struct{}
 
 func (s operatorImageStep) Name() string { return "operator-image" }
 func (s operatorImageStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error {
-	operatorImage, err := prepareOperatorImage(
+	operatorImage, gatewayProxyImage, err := prepareDeploymentImages(
 		logger,
 		ctx.ExternalRegistry,
 		ctx.UsingExternalRegistry,
@@ -94,6 +96,7 @@ func (s operatorImageStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupCon
 		return err
 	}
 	ctx.OperatorImage = operatorImage
+	ctx.GatewayProxyImage = gatewayProxyImage
 	return nil
 }
 
@@ -104,12 +107,38 @@ func (s deployOperatorStepCmd) Run(logger *zap.Logger, deps SetupDeps, ctx *Setu
 	return deployOperatorStep(
 		logger,
 		ctx.OperatorImage,
+		ctx.GatewayProxyImage,
 		ctx.ExternalRegistry,
 		ctx.RegistrySecretName,
 		ctx.UsingExternalRegistry,
 		ctx.Plan.OperatorArgs,
 		deps,
 	)
+}
+
+type analyticsImageStep struct{}
+
+func (s analyticsImageStep) Name() string { return "analytics-images" }
+func (s analyticsImageStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error {
+	images, err := prepareAnalyticsImages(
+		logger,
+		ctx.ExternalRegistry,
+		ctx.UsingExternalRegistry,
+		ctx.Plan.TestMode,
+		deps,
+	)
+	if err != nil {
+		return err
+	}
+	ctx.AnalyticsImages = images
+	return nil
+}
+
+type deployAnalyticsStep struct{}
+
+func (s deployAnalyticsStep) Name() string { return "analytics-deploy" }
+func (s deployAnalyticsStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error {
+	return deployAnalyticsStepCmd(logger, ctx.AnalyticsImages, deps)
 }
 
 type verifyStep struct{}
@@ -130,7 +159,9 @@ func buildSetupSteps(ctx *SetupContext) []SetupStep {
 		WithIf(ctx.Plan.TLSEnabled, tlsStep{}).
 		With(registryStep{}).
 		With(operatorImageStep{}).
+		WithIf(ctx.Plan.DeployAnalytics, analyticsImageStep{}).
 		With(deployOperatorStepCmd{}).
+		WithIf(ctx.Plan.DeployAnalytics, deployAnalyticsStep{}).
 		With(verifyStep{}).
 		Build()
 }

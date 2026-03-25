@@ -1,4 +1,4 @@
-from flask import Flask, redirect, render_template, send_from_directory
+from flask import Flask, abort, redirect, render_template, send_from_directory
 
 app = Flask(__name__)
 
@@ -165,6 +165,16 @@ def docs_redirect():
 @app.route("/docs/")
 def docs_index():
     return send_from_directory("docs", "index.html")
+
+
+@app.route("/docs/<path:page>")
+def docs_page(page: str):
+    if not page.endswith(".html"):
+        page = f"{page}.html"
+    try:
+        return send_from_directory("docs", page)
+    except Exception:
+        abort(404)
 
 
 if __name__ == "__main__":

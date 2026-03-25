@@ -82,4 +82,84 @@ func setDefaults(server *ServerMetadata) {
 	if server.Namespace == "" {
 		server.Namespace = "mcp-servers"
 	}
+	if server.Auth != nil {
+		if server.Auth.Mode == "" {
+			server.Auth.Mode = AuthModeHeader
+		}
+		if server.Auth.HumanIDHeader == "" {
+			server.Auth.HumanIDHeader = "X-MCP-Human-ID"
+		}
+		if server.Auth.AgentIDHeader == "" {
+			server.Auth.AgentIDHeader = "X-MCP-Agent-ID"
+		}
+		if server.Auth.SessionIDHeader == "" {
+			server.Auth.SessionIDHeader = "X-MCP-Agent-Session"
+		}
+		if server.Auth.TokenHeader == "" {
+			server.Auth.TokenHeader = "Authorization"
+		}
+	}
+	if server.Policy != nil {
+		if server.Policy.Mode == "" {
+			server.Policy.Mode = PolicyModeAllowList
+		}
+		if server.Policy.DefaultDecision == "" {
+			server.Policy.DefaultDecision = PolicyDecisionDeny
+		}
+		if server.Policy.EnforceOn == "" {
+			server.Policy.EnforceOn = "call_tool"
+		}
+		if server.Policy.PolicyVersion == "" {
+			server.Policy.PolicyVersion = "v1"
+		}
+	}
+	if server.Session != nil {
+		if server.Session.Store == "" {
+			server.Session.Store = "kubernetes"
+		}
+		if server.Session.HeaderName == "" {
+			server.Session.HeaderName = "X-MCP-Agent-Session"
+		}
+		if server.Session.MaxLifetime == "" {
+			server.Session.MaxLifetime = "24h"
+		}
+		if server.Session.IdleTimeout == "" {
+			server.Session.IdleTimeout = "1h"
+		}
+		if server.Session.UpstreamTokenHeader == "" {
+			server.Session.UpstreamTokenHeader = "Authorization"
+		}
+	}
+	for i := range server.Tools {
+		if server.Tools[i].RequiredTrust == "" {
+			server.Tools[i].RequiredTrust = TrustLevelLow
+		}
+	}
+	if server.Gateway != nil && server.Gateway.Enabled {
+		if server.Gateway.Port == 0 {
+			server.Gateway.Port = 8091
+		}
+		if server.Gateway.UpstreamURL == "" {
+			server.Gateway.UpstreamURL = fmt.Sprintf("http://127.0.0.1:%d", server.Port)
+		}
+	}
+	if server.Analytics != nil && server.Analytics.Enabled {
+		if server.Analytics.Source == "" {
+			server.Analytics.Source = server.Name
+		}
+		if server.Analytics.EventType == "" {
+			server.Analytics.EventType = "mcp.request"
+		}
+	}
+	if server.Rollout != nil {
+		if server.Rollout.Strategy == "" {
+			server.Rollout.Strategy = RolloutStrategyRollingUpdate
+		}
+		if server.Rollout.MaxUnavailable == "" {
+			server.Rollout.MaxUnavailable = "25%"
+		}
+		if server.Rollout.MaxSurge == "" {
+			server.Rollout.MaxSurge = "25%"
+		}
+	}
 }

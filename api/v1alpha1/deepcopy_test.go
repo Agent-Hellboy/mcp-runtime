@@ -246,6 +246,23 @@ func TestMCPServerSpecDeepCopy(t *testing.T) {
 			{Name: "ENV1", Value: "value1"},
 			{Name: "ENV2", Value: "value2"},
 		},
+		Gateway: &GatewayConfig{
+			Enabled:     true,
+			Image:       "example.com/mcp-proxy:latest",
+			Port:        8091,
+			UpstreamURL: "http://127.0.0.1:8088",
+			StripPrefix: "/test-server",
+		},
+		Analytics: &AnalyticsConfig{
+			Enabled:   true,
+			IngestURL: "http://analytics.default.svc/api/events",
+			Source:    "test-server",
+			EventType: "mcp.request",
+			APIKeySecretRef: &SecretKeyRef{
+				Name: "analytics-creds",
+				Key:  "api-key",
+			},
+		},
 	}
 
 	// Perform deep copy
@@ -257,6 +274,8 @@ func TestMCPServerSpecDeepCopy(t *testing.T) {
 	assertIngressAnnotationsDeepCopy(t, copied, &original)
 	assertResourcesDeepCopy(t, copied, &original)
 	assertEnvVarsDeepCopy(t, copied, &original)
+	assertGatewayDeepCopy(t, copied, &original)
+	assertAnalyticsDeepCopy(t, copied, &original)
 }
 
 // TestMCPServerSpecDeepCopyNilFields tests that MCPServerSpec.DeepCopy() handles nil pointer fields correctly
@@ -282,6 +301,12 @@ func TestMCPServerSpecDeepCopyNilFields(t *testing.T) {
 	}
 	if copied.Resources.Requests != nil {
 		t.Errorf("Deep copy failed: copied Resources.Requests should be nil, got %v", copied.Resources.Requests)
+	}
+	if copied.Gateway != nil {
+		t.Errorf("Deep copy failed: copied Gateway should be nil, got %v", copied.Gateway)
+	}
+	if copied.Analytics != nil {
+		t.Errorf("Deep copy failed: copied Analytics should be nil, got %v", copied.Analytics)
 	}
 }
 
@@ -356,5 +381,47 @@ func assertEnvVarsDeepCopy(t *testing.T, copied *MCPServerSpec, original *MCPSer
 	original.EnvVars[0].Value = "modified-value"
 	if copied.EnvVars[0].Value != "value1" {
 		t.Errorf("Deep copy failed: copied EnvVars[0].Value was modified to %q, expected it to remain \"value1\"", copied.EnvVars[0].Value)
+	}
+}
+
+func assertGatewayDeepCopy(t *testing.T, copied *MCPServerSpec, original *MCPServerSpec) {
+	t.Helper()
+	if copied.Gateway == nil {
+		t.Fatal("Gateway should not be nil")
+	}
+	if copied.Gateway.Image != original.Gateway.Image {
+		t.Errorf("Gateway.Image = %q, want %q", copied.Gateway.Image, original.Gateway.Image)
+	}
+	if copied.Gateway.UpstreamURL != original.Gateway.UpstreamURL {
+		t.Errorf("Gateway.UpstreamURL = %q, want %q", copied.Gateway.UpstreamURL, original.Gateway.UpstreamURL)
+	}
+	original.Gateway.Image = "example.com/mcp-proxy:v2"
+	original.Gateway.UpstreamURL = "http://127.0.0.1:9090"
+	if copied.Gateway.Image != "example.com/mcp-proxy:latest" {
+		t.Errorf("Deep copy failed: copied Gateway.Image was modified to %q", copied.Gateway.Image)
+	}
+	if copied.Gateway.UpstreamURL != "http://127.0.0.1:8088" {
+		t.Errorf("Deep copy failed: copied Gateway.UpstreamURL was modified to %q", copied.Gateway.UpstreamURL)
+	}
+}
+
+func assertAnalyticsDeepCopy(t *testing.T, copied *MCPServerSpec, original *MCPServerSpec) {
+	t.Helper()
+	if copied.Analytics == nil {
+		t.Fatal("Analytics should not be nil")
+	}
+	if copied.Analytics.IngestURL != original.Analytics.IngestURL {
+		t.Errorf("Analytics.IngestURL = %q, want %q", copied.Analytics.IngestURL, original.Analytics.IngestURL)
+	}
+	if copied.Analytics.APIKeySecretRef == nil {
+		t.Fatal("Analytics.APIKeySecretRef should not be nil")
+	}
+	original.Analytics.IngestURL = "http://analytics.default.svc/api/v2/events"
+	original.Analytics.APIKeySecretRef.Name = "updated-creds"
+	if copied.Analytics.IngestURL != "http://analytics.default.svc/api/events" {
+		t.Errorf("Deep copy failed: copied Analytics.IngestURL was modified to %q", copied.Analytics.IngestURL)
+	}
+	if copied.Analytics.APIKeySecretRef.Name != "analytics-creds" {
+		t.Errorf("Deep copy failed: copied Analytics.APIKeySecretRef.Name was modified to %q", copied.Analytics.APIKeySecretRef.Name)
 	}
 }

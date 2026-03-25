@@ -3,6 +3,7 @@ package metadata
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -36,6 +37,62 @@ func TestLoadFromFile(t *testing.T) {
 						Port:      9090,
 						Replicas:  int32Ptr(3),
 						Namespace: "custom-namespace",
+						Gateway: &GatewayConfig{
+							Enabled:     true,
+							Image:       "example.com/mcp-proxy:latest",
+							Port:        8091,
+							UpstreamURL: "http://127.0.0.1:9090",
+						},
+						Auth: &AuthConfig{
+							Mode:            AuthMode("header"),
+							HumanIDHeader:   "X-MCP-Human-ID",
+							AgentIDHeader:   "X-MCP-Agent-ID",
+							SessionIDHeader: "X-MCP-Agent-Session",
+							TokenHeader:     "Authorization",
+						},
+						Policy: &PolicyConfig{
+							Mode:            PolicyMode("allow-list"),
+							DefaultDecision: PolicyDecision("deny"),
+							EnforceOn:       "call_tool",
+							PolicyVersion:   "v1",
+						},
+						Session: &SessionConfig{
+							Required:            true,
+							Store:               "kubernetes",
+							HeaderName:          "X-MCP-Agent-Session",
+							MaxLifetime:         "24h",
+							IdleTimeout:         "1h",
+							UpstreamTokenHeader: "Authorization",
+						},
+						Tools: []ToolConfig{
+							{Name: "list_tools", RequiredTrust: TrustLevel("low")},
+							{Name: "delete_user", RequiredTrust: TrustLevel("high")},
+						},
+						SecretEnvVars: []SecretEnvVar{
+							{
+								Name: "OPENAI_API_KEY",
+								SecretKeyRef: &SecretKeyRef{
+									Name: "provider-creds",
+									Key:  "openai",
+								},
+							},
+						},
+						Analytics: &AnalyticsConfig{
+							Enabled:   true,
+							IngestURL: "http://analytics.custom-namespace.svc/api/events",
+							Source:    "custom-server",
+							EventType: "mcp.request",
+							APIKeySecretRef: &SecretKeyRef{
+								Name: "analytics-creds",
+								Key:  "api-key",
+							},
+						},
+						Rollout: &RolloutConfig{
+							Strategy:       RolloutStrategy("Canary"),
+							MaxUnavailable: "25%",
+							MaxSurge:       "25%",
+							CanaryReplicas: int32Ptr(1),
+						},
 					},
 				},
 			},
@@ -95,6 +152,30 @@ func TestLoadFromFile(t *testing.T) {
 				if got.Namespace != want.Namespace {
 					t.Errorf("server[%d].Namespace = %q, want %q", i, got.Namespace, want.Namespace)
 				}
+				if !gatewayConfigEqual(got.Gateway, want.Gateway) {
+					t.Errorf("server[%d].Gateway = %#v, want %#v", i, got.Gateway, want.Gateway)
+				}
+				if !reflect.DeepEqual(got.Auth, want.Auth) {
+					t.Errorf("server[%d].Auth = %#v, want %#v", i, got.Auth, want.Auth)
+				}
+				if !reflect.DeepEqual(got.Policy, want.Policy) {
+					t.Errorf("server[%d].Policy = %#v, want %#v", i, got.Policy, want.Policy)
+				}
+				if !reflect.DeepEqual(got.Session, want.Session) {
+					t.Errorf("server[%d].Session = %#v, want %#v", i, got.Session, want.Session)
+				}
+				if !reflect.DeepEqual(got.Tools, want.Tools) {
+					t.Errorf("server[%d].Tools = %#v, want %#v", i, got.Tools, want.Tools)
+				}
+				if !reflect.DeepEqual(got.SecretEnvVars, want.SecretEnvVars) {
+					t.Errorf("server[%d].SecretEnvVars = %#v, want %#v", i, got.SecretEnvVars, want.SecretEnvVars)
+				}
+				if !analyticsConfigEqual(got.Analytics, want.Analytics) {
+					t.Errorf("server[%d].Analytics = %#v, want %#v", i, got.Analytics, want.Analytics)
+				}
+				if !reflect.DeepEqual(got.Rollout, want.Rollout) {
+					t.Errorf("server[%d].Rollout = %#v, want %#v", i, got.Rollout, want.Rollout)
+				}
 			}
 		})
 	}
@@ -143,6 +224,93 @@ func TestSetDefaults(t *testing.T) {
 				Namespace: "mcp-servers",
 			},
 		},
+		{
+			name: "applies-gateway-and-analytics-defaults",
+			server: &ServerMetadata{
+				Name:  "gateway-server",
+				Image: "test-image",
+				Port:  9090,
+				Gateway: &GatewayConfig{
+					Enabled: true,
+				},
+				Auth:   &AuthConfig{},
+				Policy: &PolicyConfig{},
+				Session: &SessionConfig{
+					Required: true,
+				},
+				Tools: []ToolConfig{
+					{Name: "delete_user", RequiredTrust: TrustLevel("high")},
+				},
+				SecretEnvVars: []SecretEnvVar{
+					{
+						Name:         "OPENAI_API_KEY",
+						SecretKeyRef: &SecretKeyRef{Name: "provider-creds", Key: "openai"},
+					},
+				},
+				Analytics: &AnalyticsConfig{
+					Enabled:   true,
+					IngestURL: "http://analytics.default.svc/api/events",
+				},
+				Rollout: &RolloutConfig{
+					Strategy: RolloutStrategy("Canary"),
+				},
+			},
+			want: &ServerMetadata{
+				Name:      "gateway-server",
+				Image:     "test-image",
+				ImageTag:  "latest",
+				Route:     "/gateway-server/mcp",
+				Port:      9090,
+				Replicas:  int32Ptr(1),
+				Namespace: "mcp-servers",
+				Gateway: &GatewayConfig{
+					Enabled:     true,
+					Port:        8091,
+					UpstreamURL: "http://127.0.0.1:9090",
+				},
+				Auth: &AuthConfig{
+					Mode:            AuthModeHeader,
+					HumanIDHeader:   "X-MCP-Human-ID",
+					AgentIDHeader:   "X-MCP-Agent-ID",
+					SessionIDHeader: "X-MCP-Agent-Session",
+					TokenHeader:     "Authorization",
+				},
+				Policy: &PolicyConfig{
+					Mode:            PolicyModeAllowList,
+					DefaultDecision: PolicyDecisionDeny,
+					EnforceOn:       "call_tool",
+					PolicyVersion:   "v1",
+				},
+				Session: &SessionConfig{
+					Required:            true,
+					Store:               "kubernetes",
+					HeaderName:          "X-MCP-Agent-Session",
+					MaxLifetime:         "24h",
+					IdleTimeout:         "1h",
+					UpstreamTokenHeader: "Authorization",
+				},
+				Tools: []ToolConfig{
+					{Name: "delete_user", RequiredTrust: TrustLevel("high")},
+				},
+				SecretEnvVars: []SecretEnvVar{
+					{
+						Name:         "OPENAI_API_KEY",
+						SecretKeyRef: &SecretKeyRef{Name: "provider-creds", Key: "openai"},
+					},
+				},
+				Analytics: &AnalyticsConfig{
+					Enabled:   true,
+					IngestURL: "http://analytics.default.svc/api/events",
+					Source:    "gateway-server",
+					EventType: "mcp.request",
+				},
+				Rollout: &RolloutConfig{
+					Strategy:       RolloutStrategyCanary,
+					MaxUnavailable: "25%",
+					MaxSurge:       "25%",
+				},
+			},
+		},
 	}
 	for _, test := range tests {
 		setDefaults(test.server)
@@ -166,6 +334,30 @@ func TestSetDefaults(t *testing.T) {
 		}
 		if test.server.Namespace != test.want.Namespace {
 			t.Errorf("setDefaults(%q) = %q, want %q", test.server.Namespace, test.server.Namespace, test.want.Namespace)
+		}
+		if !gatewayConfigEqual(test.server.Gateway, test.want.Gateway) {
+			t.Errorf("setDefaults Gateway = %#v, want %#v", test.server.Gateway, test.want.Gateway)
+		}
+		if !reflect.DeepEqual(test.server.Auth, test.want.Auth) {
+			t.Errorf("setDefaults Auth = %#v, want %#v", test.server.Auth, test.want.Auth)
+		}
+		if !reflect.DeepEqual(test.server.Policy, test.want.Policy) {
+			t.Errorf("setDefaults Policy = %#v, want %#v", test.server.Policy, test.want.Policy)
+		}
+		if !reflect.DeepEqual(test.server.Session, test.want.Session) {
+			t.Errorf("setDefaults Session = %#v, want %#v", test.server.Session, test.want.Session)
+		}
+		if !reflect.DeepEqual(test.server.Tools, test.want.Tools) {
+			t.Errorf("setDefaults Tools = %#v, want %#v", test.server.Tools, test.want.Tools)
+		}
+		if !reflect.DeepEqual(test.server.SecretEnvVars, test.want.SecretEnvVars) {
+			t.Errorf("setDefaults SecretEnvVars = %#v, want %#v", test.server.SecretEnvVars, test.want.SecretEnvVars)
+		}
+		if !analyticsConfigEqual(test.server.Analytics, test.want.Analytics) {
+			t.Errorf("setDefaults Analytics = %#v, want %#v", test.server.Analytics, test.want.Analytics)
+		}
+		if !reflect.DeepEqual(test.server.Rollout, test.want.Rollout) {
+			t.Errorf("setDefaults Rollout = %#v, want %#v", test.server.Rollout, test.want.Rollout)
 		}
 	}
 }
@@ -285,4 +477,42 @@ func int32PtrEqual(a, b *int32) bool {
 		return false
 	}
 	return *a == *b
+}
+
+func gatewayConfigEqual(a, b *GatewayConfig) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Enabled == b.Enabled &&
+		a.Image == b.Image &&
+		a.Port == b.Port &&
+		a.UpstreamURL == b.UpstreamURL &&
+		a.StripPrefix == b.StripPrefix
+}
+
+func analyticsConfigEqual(a, b *AnalyticsConfig) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Enabled == b.Enabled &&
+		a.IngestURL == b.IngestURL &&
+		a.Source == b.Source &&
+		a.EventType == b.EventType &&
+		secretKeyRefEqual(a.APIKeySecretRef, b.APIKeySecretRef)
+}
+
+func secretKeyRefEqual(a, b *SecretKeyRef) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Name == b.Name && a.Key == b.Key
 }
