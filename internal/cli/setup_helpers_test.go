@@ -595,21 +595,37 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get working directory: %v", err)
 	}
-	root := cwd
-	for {
-		if _, statErr := os.Stat(filepath.Join(root, "go.mod")); statErr == nil {
-			if _, statErr = os.Stat(filepath.Join(root, "mcp-sentinel", "k8s", "00-namespace.yaml")); statErr == nil {
-				break
-			}
+	root := t.TempDir()
+	manifestDir := filepath.Join(root, "mcp-sentinel", "k8s")
+	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+		t.Fatalf("failed to create manifest dir: %v", err)
+	}
+	manifestContent := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: fixture\n  namespace: mcp-sentinel\n"
+	for _, name := range []string{
+		"00-namespace.yaml",
+		"01-config.yaml",
+		"03-clickhouse.yaml",
+		"04-clickhouse-init.yaml",
+		"05-kafka.yaml",
+		"06-ingest.yaml",
+		"07-processor.yaml",
+		"08-api.yaml",
+		"09-ui.yaml",
+		"10-gateway.yaml",
+		"11-prometheus.yaml",
+		"12-grafana.yaml",
+		"15-otel-collector.yaml",
+		"16-tempo.yaml",
+		"17-loki.yaml",
+		"18-promtail.yaml",
+		"19-grafana-datasources.yaml",
+	} {
+		if err := os.WriteFile(filepath.Join(manifestDir, name), []byte(manifestContent), 0o644); err != nil {
+			t.Fatalf("failed to write fixture manifest %s: %v", name, err)
 		}
-		parent := filepath.Dir(root)
-		if parent == root {
-			t.Fatalf("failed to locate repo root from %q", cwd)
-		}
-		root = parent
 	}
 	if err := os.Chdir(root); err != nil {
-		t.Fatalf("failed to chdir to repo root: %v", err)
+		t.Fatalf("failed to chdir to fixture root: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = os.Chdir(cwd)
