@@ -8,138 +8,207 @@ NAV_LINKS = [
     {"label": "Features", "href": "#features"},
     {"label": "Workflow", "href": "#workflow"},
     {"label": "Architecture", "href": "#architecture"},
+    {"label": "Contact", "href": "#contact"},
     {"label": "Docs", "href": "/docs/"},
 ]
 
 HERO = {
-    "badge": "docs.mcp-runtime.org",
-    "title": "Launch MCP servers with a platform, not a patchwork.",
+    "badge": "mcpruntime.org",
+    "title": "Self-hosted runtime for internal MCP servers.",
     "subtitle": (
-        "MCP Runtime Platform gives teams a registry, Kubernetes operator, and "
-        "CLI that standardizes how MCP servers are defined, built, and routed."
+        "Deploy, govern, and observe MCP servers with one CLI, one Kubernetes "
+        "control plane, and a bundled path for gateway policy and analytics."
     ),
     "primary": {"label": "Open Documentation", "href": "/docs/"},
-    "secondary": {"label": "View features", "href": "#features"},
+    "secondary": {"label": "View API surface", "href": "/docs/api"},
 }
 
 AT_A_GLANCE = [
-    "Metadata-driven server definitions in YAML.",
-    "Operator creates Deployment, Service, and Ingress automatically.",
-    "Internal registry keeps images and metadata in sync.",
-    "Unified routes for every server at /{server-name}/mcp.",
+    "CLI groups cover setup, cluster, registry, server, pipeline, and status.",
+    "Three core resources model deployment, access, and agent session state.",
+    "Gateway mode can enforce per-tool policy and emit audit events.",
+    "mcp-sentinel provides ingest, processor, API, UI, and observability services.",
 ]
 
 STATS = [
-    {"value": "1 CLI", "label": "Unified workflow for platform and servers."},
-    {"value": "3 core services", "label": "Registry, operator, and cluster helpers."},
-    {"value": "0 bespoke YAML", "label": "No hand-written manifests for each server."},
+    {"value": "3 core resources", "label": "MCPServer, MCPAccessGrant, and MCPAgentSession."},
+    {"value": "1 setup path", "label": "CLI-driven install for runtime, ingress, registry, and sentinel."},
+    {"value": "Built-in audit flow", "label": "Gateway decisions can flow into the bundled analytics stack."},
 ]
 
 OVERVIEW = {
-    "title": "Why MCP Runtime Platform",
+    "title": "Core resources",
     "intro": (
-        "Move from experiments to production with a clear, repeatable approach "
-        "to deploying and cataloging MCP servers."
+        "These resources are the center of the current `v1alpha1` surface."
     ),
     "items": [
         {
-            "title": "Built for scale",
+            "title": "MCPServer",
             "body": (
-                "Manage a fleet of MCP servers without third-party gateways or "
-                "bespoke routing layers."
+                "Defines workload, route, tools, gateway behavior, rollout, and "
+                "analytics settings for one MCP server."
             ),
         },
         {
-            "title": "Designed for teams",
+            "title": "MCPAccessGrant",
             "body": (
-                "A centralized registry and consistent deployment flow make it "
-                "easy to discover and reuse servers."
+                "Maps a human or agent to a server and sets max trust and per-tool "
+                "allow or deny rules."
             ),
         },
         {
-            "title": "Opinionated safety",
-            "body": "Promote best practices with standardized metadata and CI-ready pipelines.",
+            "title": "MCPAgentSession",
+            "body": (
+                "Stores consented trust, expiry, revocation, and upstream token "
+                "references for active agent sessions."
+            ),
         },
     ],
 }
 
 FEATURES = [
     {
-        "title": "Complete platform",
-        "body": "Deploy registry, operator, and helpers in one setup flow built for MCP fleets.",
+        "title": "CLI-first setup",
+        "body": (
+            "`mcp-runtime setup` installs the runtime stack, with flags for TLS, "
+            "sentinel, ingress mode, and registry behavior."
+        ),
     },
     {
-        "title": "CLI tooling",
-        "body": "Manage platform setup, registry operations, and server pipelines from one CLI.",
+        "title": "Registry workflows",
+        "body": (
+            "Use the built-in registry or provision an external registry for "
+            "runtime and operator images."
+        ),
     },
     {
-        "title": "Kubernetes operator",
-        "body": "Creates Deployment, Service, and Ingress resources from MCP metadata.",
+        "title": "Gateway policy",
+        "body": (
+            "Run allow-list or observe mode, read identity headers, enforce trust, "
+            "and write allow or deny events."
+        ),
     },
     {
-        "title": "Metadata-driven",
-        "body": "Define MCP servers in YAML without hand-writing Kubernetes manifests.",
+        "title": "Tool inventory and trust",
+        "body": (
+            "Declare tools on the server, set required trust levels, and combine "
+            "that with grants and sessions."
+        ),
     },
     {
-        "title": "Unified routing",
-        "body": "Every MCP server is reachable at a consistent /{server-name}/mcp path.",
+        "title": "Sentinel analytics",
+        "body": (
+            "The repo includes ingest, processor, API, UI, gateway, and "
+            "observability pieces under `mcp-sentinel`."
+        ),
     },
     {
-        "title": "Automated builds",
-        "body": "Build Docker images from metadata and keep registry entries up to date.",
+        "title": "TLS and rollout controls",
+        "body": (
+            "Enable HTTPS overlays and use rolling, recreate, or canary rollout "
+            "strategies from the control plane."
+        ),
     },
 ]
 
 WORKFLOW = [
     {
         "step": "01",
-        "title": "Define",
-        "body": "Capture server metadata in YAML, including name, route, and container port.",
+        "title": "Bootstrap",
+        "body": (
+            "Run setup to install registry, operator, ingress, and optionally the "
+            "bundled sentinel stack."
+        ),
     },
     {
         "step": "02",
-        "title": "Build",
-        "body": "Build Docker images locally or in CI/CD and push them to the registry.",
+        "title": "Describe",
+        "body": (
+            "Define server metadata, tool inventory, auth headers, gateway, "
+            "policy, and analytics settings."
+        ),
     },
     {
         "step": "03",
-        "title": "Deploy",
-        "body": "Generate manifests and deploy MCP servers through the operator.",
+        "title": "Build and push",
+        "body": (
+            "Build images locally or in CI/CD and push them to the internal or "
+            "provisioned registry."
+        ),
     },
     {
         "step": "04",
-        "title": "Access",
-        "body": "Reach every MCP server through consistent URLs managed by ingress.",
+        "title": "Deploy and grant",
+        "body": (
+            "Apply the CRDs, then create access grants and agent sessions for the "
+            "subjects that should reach each server."
+        ),
+    },
+    {
+        "step": "05",
+        "title": "Observe",
+        "body": (
+            "Use status commands and mcp-sentinel APIs and UI to inspect runtime "
+            "health and allow or deny decisions."
+        ),
     },
 ]
 
 ARCHITECTURE = [
     {
-        "title": "Developer workstation",
-        "body": "Define servers, build images, and push updates from local development.",
+        "title": "CLI and CI entrypoint",
+        "body": "The CLI remains the main entrypoint for setup, publish, deploy, and runtime status checks.",
     },
     {
-        "title": "CI/CD pipeline",
-        "body": "Build images, publish to the registry, and generate CRDs automatically.",
+        "title": "Control-plane resources",
+        "body": "The current API surface centers on MCPServer, MCPAccessGrant, and MCPAgentSession.",
     },
     {
-        "title": "Kubernetes cluster",
-        "body": "The operator watches MCPServer resources and provisions services.",
+        "title": "Operator, registry, and ingress",
+        "body": "The cluster layer reconciles workloads and keeps consistent routing at /{server-name}/mcp.",
     },
     {
-        "title": "Internal registry",
-        "body": "Stores MCP server images and keeps metadata in sync for discovery.",
+        "title": "Gateway sidecar",
+        "body": "Gateway mode adds identity extraction, policy enforcement, trust checks, and audit emission.",
+    },
+    {
+        "title": "mcp-sentinel stack",
+        "body": "Ingest, processor, API, UI, and observability services provide the analytics path.",
     },
 ]
 
 CALLOUT = {
-    "title": "Active development notice",
+    "title": "Still alpha, but much broader than the original runtime surface.",
     "body": (
-        "MCP Runtime Platform is under active development. APIs, commands, and "
-        "behavior may change, and production usage is not recommended yet."
+        "The project now spans runtime deployment, gateway policy, grants, "
+        "sessions, and sentinel analytics. Use the docs and the v1alpha1 types "
+        "as the contract while the platform continues to evolve."
     ),
-    "cta": {"label": "Read the documentation", "href": "/docs/"},
+    "cta": {"label": "Read the API reference", "href": "/docs/api"},
 }
+
+CONTACTS = [
+    {
+        "title": "Email",
+        "body": "Reach out directly if you want to discuss the project or collaborate.",
+        "label": "princekrroshan01@gmail.com",
+        "href": "mailto:princekrroshan01@gmail.com",
+    },
+    {
+        "title": "Book a meeting",
+        "body": "Use the calendar link if you want to discuss the project or anything in general.",
+        "label": "Book a meeting",
+        "href": "https://cal.com/prince-roshan-izyp81",
+        "new_tab": True,
+    },
+    {
+        "title": "LinkedIn",
+        "body": "Connect on LinkedIn for updates, questions, or follow-up conversations.",
+        "label": "Prince Roshan",
+        "href": "https://www.linkedin.com/in/prince-roshan-91131116b/",
+        "new_tab": True,
+    },
+]
 
 
 @app.route("/")
@@ -155,6 +224,7 @@ def home():
         workflow=WORKFLOW,
         architecture=ARCHITECTURE,
         callout=CALLOUT,
+        contacts=CONTACTS,
     )
 
 

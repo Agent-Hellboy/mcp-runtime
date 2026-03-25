@@ -6,22 +6,19 @@
     <title>{{ title or "MCP Runtime Platform" }}</title>
     <meta
       name="description"
-      content="MCP Runtime Platform is a complete platform for deploying and managing MCP servers with a CLI, registry, and Kubernetes operator."
+      content="MCP Runtime Platform is a self-hosted control plane for deploying, governing, and observing MCP servers with CLI, operator, gateway, and analytics components."
     />
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   </head>
   <body>
     <div class="page">
-      <div class="bg-shape one" aria-hidden="true"></div>
-      <div class="bg-shape two" aria-hidden="true"></div>
-      <div class="bg-shape three" aria-hidden="true"></div>
       <header class="site-header">
         <div class="container nav">
           <div class="brand">
             <div class="brand-mark" aria-hidden="true">MCP</div>
             <div>
               <div class="brand-title">MCP Runtime Platform</div>
-              <div class="brand-subtitle">Registry, operator, and CLI</div>
+              <div class="brand-subtitle">Control plane for internal MCP servers</div>
             </div>
           </div>
           <nav class="nav-links">
@@ -37,22 +34,15 @@
       </main>
 
       <footer class="container footer">
-        <div>
-          MCP Runtime Platform provides a self-hosted path to deploy and manage
-          MCP servers across your organization. It is open source; contribute at
-          <a href="https://github.com/Agent-Hellboy/mcp-runtime">github.com/Agent-Hellboy/mcp-runtime</a>
-          or write to us at
-          <a
-            class="js-email-link"
-            data-email-user="10nahsorkecnirp"
-            data-email-domain="moc.liamg"
-            data-email-reverse="true"
-            data-email-text="address"
-            href="#"
-          >Email us</a>.
+        <div class="footer-copy">
+          MCP Runtime Platform is a self-hosted control plane for internal MCP
+          servers. Start at
+          <a href="https://mcpruntime.org/" target="_blank" rel="noreferrer">mcpruntime.org</a>,
+          browse the <a href="/docs/">docs</a>, or reach Prince Roshan directly at
+          <a href="mailto:princekrroshan01@gmail.com">princekrroshan01@gmail.com</a>.
         </div>
         <div class="footer-links">
-          <a class="icon-link" href="https://github.com/Agent-Hellboy/mcp-runtime">
+          <a class="icon-link" href="https://github.com/Agent-Hellboy/mcp-runtime" target="_blank" rel="noreferrer">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path
                 fill="currentColor"
@@ -61,13 +51,10 @@
             </svg>
             GitHub
           </a>
-          <a
-            class="icon-link js-email-link"
-            data-email-user="10nahsorkecnirp"
-            data-email-domain="moc.liamg"
-            data-email-reverse="true"
-            href="#"
-          >
+          <a class="icon-link" href="/docs/">
+            Docs
+          </a>
+          <a class="icon-link" href="mailto:princekrroshan01@gmail.com">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path
                 fill="currentColor"
@@ -76,29 +63,14 @@
             </svg>
             Email
           </a>
+          <a class="icon-link" href="https://cal.com/prince-roshan-izyp81" target="_blank" rel="noreferrer">
+            Book a meeting
+          </a>
+          <a class="icon-link" href="https://www.linkedin.com/in/prince-roshan-91131116b/" target="_blank" rel="noreferrer">
+            LinkedIn
+          </a>
         </div>
       </footer>
     </div>
-    <script>
-      (function () {
-        var links = document.querySelectorAll(".js-email-link");
-        if (!links.length) {
-          return;
-        }
-        var decodePart = function (value, reverse) {
-          return reverse ? value.split("").reverse().join("") : value;
-        };
-        links.forEach(function (link) {
-          var user = link.getAttribute("data-email-user") || "";
-          var domain = link.getAttribute("data-email-domain") || "";
-          var reverse = link.getAttribute("data-email-reverse") === "true";
-          var address = decodePart(user, reverse) + "@" + decodePart(domain, reverse);
-          link.setAttribute("href", "mailto:" + address);
-          if (link.getAttribute("data-email-text") === "address") {
-            link.textContent = address;
-          }
-        });
-      })();
-    </script>
   </body>
 </html>

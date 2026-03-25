@@ -14,10 +14,10 @@
     <div class="hero-panel">
       <div class="panel-header">
         <div>
-          <h3>At a glance</h3>
-          <p>Everything you need to ship MCP servers confidently.</p>
+          <h3>Current surface</h3>
+          <p>A plain summary of what already exists in the repo.</p>
         </div>
-        <span class="chip">Platform stack</span>
+        <span class="chip">v1alpha1</span>
       </div>
       <ul>
         {% for item in at_a_glance %}
@@ -29,7 +29,7 @@
 
   <section class="stats container">
     {% for stat in stats %}
-      <div class="stat-card" style="--delay: {{ loop.index0 * 0.08 }}s;">
+      <div class="stat-card">
         <div class="stat-value">{{ stat.value }}</div>
         <div class="stat-label">{{ stat.label }}</div>
       </div>
@@ -43,7 +43,7 @@
     </div>
     <div class="card-grid">
       {% for item in overview["items"] %}
-        <article class="card" style="--delay: {{ loop.index0 * 0.08 }}s;">
+        <article class="card">
           <h3>{{ item.title }}</h3>
           <p>{{ item.body }}</p>
         </article>
@@ -53,12 +53,12 @@
 
   <section id="features" class="section container">
     <div class="section-header">
-      <h2>Platform features</h2>
-      <p>Ship repeatable deployments with tooling built for MCP server fleets.</p>
+      <h2>Platform surface</h2>
+      <p>The current runtime combines deployment, policy, registry, and analytics pieces.</p>
     </div>
     <div class="card-grid">
       {% for item in features %}
-        <article class="card" style="--delay: {{ loop.index0 * 0.08 }}s;">
+        <article class="card">
           <h3>{{ item.title }}</h3>
           <p>{{ item.body }}</p>
         </article>
@@ -69,11 +69,11 @@
   <section id="workflow" class="section container">
     <div class="section-header">
       <h2>End-to-end workflow</h2>
-      <p>Standardize how teams go from definition to routed MCP servers.</p>
+      <p>Move from setup to grants, sessions, and audit events with one control-plane path.</p>
     </div>
     <div class="workflow-grid">
       {% for item in workflow %}
-        <article class="step-card" style="--delay: {{ loop.index0 * 0.08 }}s;">
+        <article class="step-card">
           <div class="step-number">{{ item.step }}</div>
           <div>
             <h3>{{ item.title }}</h3>
@@ -86,14 +86,30 @@
 
   <section id="architecture" class="section container">
     <div class="section-header">
-      <h2>Platform architecture</h2>
-      <p>Designed to fit right into your existing delivery pipeline.</p>
+      <h2>Platform components</h2>
+      <p>The repo is organized around a small set of runtime building blocks.</p>
     </div>
     <div class="card-grid">
       {% for item in architecture %}
-        <article class="card" style="--delay: {{ loop.index0 * 0.08 }}s;">
+        <article class="card">
           <h3>{{ item.title }}</h3>
           <p>{{ item.body }}</p>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section id="contact" class="section container">
+    <div class="section-header">
+      <h2>Contact</h2>
+      <p>If you want to discuss the project, your MCP rollout, or anything in general, reach out directly.</p>
+    </div>
+    <div class="card-grid contact-grid">
+      {% for item in contacts %}
+        <article class="card contact-card">
+          <h3>{{ item.title }}</h3>
+          <p>{{ item.body }}</p>
+          <a class="button secondary" href="{{ item.href }}"{% if item.new_tab %} target="_blank" rel="noreferrer"{% endif %}>{{ item.label }}</a>
         </article>
       {% endfor %}
     </div>
