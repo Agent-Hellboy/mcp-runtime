@@ -43,7 +43,7 @@
           <ul>
             <li><code>MCPServer</code> gateway, auth, policy, session, rollout, and analytics fields.</li>
             <li><code>MCPAccessGrant</code> and <code>MCPAgentSession</code> resources.</li>
-            <li>Gateway headers, trust rules, and audit payload fields.</li>
+            <li>Gateway headers, OIDC/JWT bearer-token validation, trust rules, and audit payload fields.</li>
             <li><code>mcp-sentinel</code> API endpoints and setup defaults.</li>
           </ul>
         </aside>
@@ -84,8 +84,9 @@
           <h2>Current scope</h2>
           <p>
             This reference covers the new gateway, access/session resources, audit fields, and bundled
-            analytics install path. A full hosted consent product and deeper policy engine are intentionally
-            out of scope for this first cut.
+            analytics install path. OIDC/JWT bearer-token validation is supported for
+            <code>mcp-sentinel</code> services, but a full OAuth 2.1 authorization server, consent flow,
+            and Dynamic Client Registration are intentionally out of scope for this first cut.
           </p>
         </div>
       </section>

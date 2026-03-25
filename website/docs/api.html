@@ -21,6 +21,7 @@
           <nav class="nav-links">
             <a href="/docs/">Docs</a>
             <a href="#resources">Resources</a>
+            <a href="#security-auth">Security</a>
             <a href="#gateway-flow">Gateway</a>
             <a href="#analytics-api">Analytics API</a>
           </nav>
@@ -42,6 +43,7 @@
             <li><a href="#mcpserver">MCPServer</a></li>
             <li><a href="#mcpaccessgrant">MCPAccessGrant</a></li>
             <li><a href="#mcpagentsession">MCPAgentSession</a></li>
+            <li><a href="#security-auth">Security and auth</a></li>
             <li><a href="#headers">Gateway headers</a></li>
             <li><a href="#analytics-api">Analytics endpoints</a></li>
           </ul>
@@ -172,6 +174,42 @@ spec:
   upstreamTokenSecretRef:
     name: payments-upstream-token
     key: access-token</code></pre>
+      </section>
+
+      <section id="security-auth" class="section container">
+        <h2>Security and Auth</h2>
+        <p>
+          The current stack supports gateway-side identity extraction, server-side agent sessions, and
+          optional OIDC/JWT bearer-token validation for <code>mcp-sentinel</code> API and ingest services.
+          It does not currently implement a full OAuth 2.1 authorization server or Dynamic Client
+          Registration flow.
+        </p>
+        <div class="grid">
+          <article class="card">
+            <strong>Implemented today</strong>
+            <p>
+              <code>spec.auth</code> can model <code>oauth</code>, but the working path today is header-based
+              identity extraction at the gateway plus optional bearer-token validation against JWKS,
+              issuer, and audience on <code>mcp-sentinel</code> services.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Not implemented yet</strong>
+            <p>
+              There is no <code>/authorize</code>, <code>/token</code>,
+              <code>/.well-known/oauth-authorization-server</code>, PKCE flow, or Dynamic Client
+              Registration endpoint in this release.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Practical model</strong>
+            <p>
+              Use the gateway for human, agent, and session identity; use
+              <code>MCPAccessGrant</code>/<code>MCPAgentSession</code> for trust and revocation; and use
+              OIDC-issued bearer tokens only where the <code>mcp-sentinel</code> services validate them.
+            </p>
+          </article>
+        </div>
       </section>
 
       <section id="gateway-flow" class="section container">
