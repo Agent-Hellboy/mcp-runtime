@@ -402,10 +402,7 @@ func (r *MCPServerReconciler) validateRolloutValue(ctx context.Context, mcpServe
 		return nil
 	}
 
-	numeric := trimmed
-	if strings.HasSuffix(numeric, "%") {
-		numeric = strings.TrimSuffix(numeric, "%")
-	}
+	numeric := strings.TrimSuffix(trimmed, "%")
 	if numeric == "" {
 		contextMap := map[string]any{
 			"mcpServer": mcpServer.Name,
