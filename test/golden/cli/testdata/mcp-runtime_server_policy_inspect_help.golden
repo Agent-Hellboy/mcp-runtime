@@ -1,0 +1,11 @@
+Show the rendered gateway policy document for a server
+
+Usage:
+  mcp-runtime server policy inspect [name] [flags]
+
+Flags:
+  -h, --help               help for inspect
+      --namespace string   Namespace (default "mcp-servers")
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

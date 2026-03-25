@@ -1,0 +1,11 @@
+Apply an MCP server manifest
+
+Usage:
+  mcp-runtime server apply [flags]
+
+Flags:
+      --file string   YAML file with MCPServer manifest
+  -h, --help          help for apply
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

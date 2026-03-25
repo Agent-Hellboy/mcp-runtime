@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -77,9 +76,13 @@ For pushing images, use 'registry push'.`,
 	cmd.AddCommand(mgr.newServerListCmd())
 	cmd.AddCommand(mgr.newServerGetCmd())
 	cmd.AddCommand(mgr.newServerCreateCmd())
+	cmd.AddCommand(mgr.newServerApplyCmd())
+	cmd.AddCommand(mgr.newServerExportCmd())
+	cmd.AddCommand(mgr.newServerPatchCmd())
 	cmd.AddCommand(mgr.newServerDeleteCmd())
 	cmd.AddCommand(mgr.newServerLogsCmd())
 	cmd.AddCommand(mgr.newServerStatusCmd())
+	cmd.AddCommand(mgr.newServerPolicyCmd())
 	cmd.AddCommand(newServerBuildCmd(mgr.logger))
 
 	return cmd
@@ -159,6 +162,65 @@ func (m *ServerManager) newServerCreateCmd() *cobra.Command {
 	return cmd
 }
 
+func (m *ServerManager) newServerApplyCmd() *cobra.Command {
+	var file string
+
+	cmd := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply an MCP server manifest",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return m.ApplyServerFromFile(file)
+		},
+	}
+
+	cmd.Flags().StringVar(&file, "file", "", "YAML file with MCPServer manifest")
+	_ = cmd.MarkFlagRequired("file")
+
+	return cmd
+}
+
+func (m *ServerManager) newServerExportCmd() *cobra.Command {
+	var namespace string
+	var file string
+
+	cmd := &cobra.Command{
+		Use:   "export [name]",
+		Short: "Export an MCP server manifest",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return m.ExportServer(args[0], namespace, file)
+		},
+	}
+
+	cmd.Flags().StringVar(&namespace, "namespace", NamespaceMCPServers, "Namespace")
+	cmd.Flags().StringVar(&file, "file", "", "Write the manifest to a file instead of stdout")
+
+	return cmd
+}
+
+func (m *ServerManager) newServerPatchCmd() *cobra.Command {
+	var namespace string
+	var patchType string
+	var patch string
+	var patchFile string
+
+	cmd := &cobra.Command{
+		Use:   "patch [name]",
+		Short: "Patch an MCP server manifest",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return m.PatchServer(args[0], namespace, patchType, patch, patchFile)
+		},
+	}
+
+	cmd.Flags().StringVar(&namespace, "namespace", NamespaceMCPServers, "Namespace")
+	cmd.Flags().StringVar(&patchType, "type", "merge", "Patch type (merge|json|strategic)")
+	cmd.Flags().StringVar(&patch, "patch", "", "Inline JSON/YAML patch document")
+	cmd.Flags().StringVar(&patchFile, "patch-file", "", "Path to a JSON/YAML patch document")
+
+	return cmd
+}
+
 func (m *ServerManager) newServerDeleteCmd() *cobra.Command {
 	var namespace string
 
@@ -210,6 +272,34 @@ func (m *ServerManager) newServerStatusCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&namespace, "namespace", NamespaceMCPServers, "Namespace to inspect")
+
+	return cmd
+}
+
+func (m *ServerManager) newServerPolicyCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "policy",
+		Short: "Inspect rendered gateway policy for an MCP server",
+	}
+
+	cmd.AddCommand(m.newServerPolicyInspectCmd())
+
+	return cmd
+}
+
+func (m *ServerManager) newServerPolicyInspectCmd() *cobra.Command {
+	var namespace string
+
+	cmd := &cobra.Command{
+		Use:   "inspect [name]",
+		Short: "Show the rendered gateway policy document for a server",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return m.InspectServerPolicy(args[0], namespace)
+		},
+	}
+
+	cmd.Flags().StringVar(&namespace, "namespace", NamespaceMCPServers, "Namespace")
 
 	return cmd
 }
@@ -308,7 +398,7 @@ func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) er
 	}
 
 	// Use os.CreateTemp for secure temp file creation (random suffix, no race conditions)
-	tmpFile, err := os.CreateTemp("", "mcpserver-*.yaml")
+	tmpFile, err := os.CreateTemp(".", "mcpserver-*.yaml")
 	if err != nil {
 		wrappedErr := wrapWithSentinelAndContext(
 			ErrCreateTempFileFailed,
@@ -373,44 +463,180 @@ func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) er
 	return nil
 }
 
+// ApplyServerFromFile applies an MCPServer manifest from disk.
+func (m *ServerManager) ApplyServerFromFile(file string) error {
+	if err := applyManifestFromFile(m.kubectl, file, os.Stdout, os.Stderr); err != nil {
+		wrappedErr := wrapWithSentinelAndContext(
+			nil,
+			err,
+			fmt.Sprintf("failed to apply server manifest from file %q: %v", file, err),
+			map[string]any{"file": file, "component": "server"},
+		)
+		Error("Failed to apply server manifest")
+		logStructuredError(m.logger, wrappedErr, "Failed to apply server manifest")
+		return wrappedErr
+	}
+	return nil
+}
+
 // CreateServerFromFile creates an MCP server from a YAML file.
 func (m *ServerManager) CreateServerFromFile(file string) error {
-	// Validate file path exists and is a regular file
-	absPath, err := filepath.Abs(file)
-	if err != nil {
-		wrappedErr := wrapWithSentinel(ErrInvalidFilePath, err, fmt.Sprintf("invalid file path: %v", err))
-		Error("Invalid file path")
-		logStructuredError(m.logger, wrappedErr, "Invalid file path")
-		return wrappedErr
-	}
+	return m.ApplyServerFromFile(file)
+}
 
-	info, err := os.Stat(absPath)
+// ExportServer exports an MCPServer manifest to stdout or a file.
+func (m *ServerManager) ExportServer(name, namespace, file string) error {
+	name, namespace, err := validateServerInput(name, namespace)
 	if err != nil {
-		wrappedErr := wrapWithSentinel(ErrFileNotAccessible, err, fmt.Sprintf("cannot access file %q: %v", file, err))
-		Error("Cannot access file")
-		logStructuredError(m.logger, wrappedErr, "Cannot access file")
-		return wrappedErr
-	}
-	if info.IsDir() {
-		err := newWithSentinel(ErrFileIsDirectory, fmt.Sprintf("path %q is a directory, not a file", file))
-		Error("Path is a directory")
-		logStructuredError(m.logger, err, "Path is a directory")
 		return err
 	}
 
-	// #nosec G204 -- execCommand passes arguments directly without shell interpretation;
-	// file path validated above (exists, is regular file); kubectl validates manifest contents.
-	if err := m.kubectl.RunWithOutput([]string{"apply", "-f", absPath}, os.Stdout, os.Stderr); err != nil {
+	cmd, err := m.kubectl.CommandArgs([]string{"get", "mcpserver", name, "-n", namespace, "-o", "yaml"})
+	if err != nil {
+		return err
+	}
+	output, execErr := cmd.CombinedOutput()
+	if execErr != nil {
 		wrappedErr := wrapWithSentinelAndContext(
-			ErrCreateServerFailed,
-			err,
-			fmt.Sprintf("failed to create server from file %q: %v", file, err),
-			map[string]any{"file": file, "component": "server"},
+			nil,
+			execErr,
+			fmt.Sprintf("failed to export server %q in namespace %q: %s", name, namespace, commandErrorDetail(string(output), execErr)),
+			map[string]any{"server": name, "namespace": namespace, "component": "server"},
 		)
-		Error("Failed to create server from file")
-		logStructuredError(m.logger, wrappedErr, "Failed to create server from file")
+		Error("Failed to export server")
+		logStructuredError(m.logger, wrappedErr, "Failed to export server")
 		return wrappedErr
 	}
+
+	if file != "" {
+		if err := writeOutputFile(file, output); err != nil {
+			wrappedErr := wrapWithSentinelAndContext(
+				nil,
+				err,
+				fmt.Sprintf("failed to write server manifest to %q: %v", file, err),
+				map[string]any{"server": name, "namespace": namespace, "file": file, "component": "server"},
+			)
+			Error("Failed to write server manifest")
+			logStructuredError(m.logger, wrappedErr, "Failed to write server manifest")
+			return wrappedErr
+		}
+		return nil
+	}
+
+	if _, err := os.Stdout.Write(output); err != nil {
+		wrappedErr := wrapWithSentinelAndContext(
+			nil,
+			err,
+			fmt.Sprintf("failed to write server manifest to stdout: %v", err),
+			map[string]any{"server": name, "namespace": namespace, "component": "server"},
+		)
+		Error("Failed to write server manifest")
+		logStructuredError(m.logger, wrappedErr, "Failed to write server manifest")
+		return wrappedErr
+	}
+	return nil
+}
+
+// PatchServer patches an existing MCPServer resource using merge/json/strategic patch types.
+func (m *ServerManager) PatchServer(name, namespace, patchType, patch, patchFile string) error {
+	name, namespace, err := validateServerInput(name, namespace)
+	if err != nil {
+		return err
+	}
+
+	patchType = strings.TrimSpace(strings.ToLower(patchType))
+	switch patchType {
+	case "merge", "json", "strategic":
+	default:
+		return newWithSentinel(nil, fmt.Sprintf("unsupported patch type %q (use merge|json|strategic)", patchType))
+	}
+
+	inlinePatch := strings.TrimSpace(patch)
+	patchFile = strings.TrimSpace(patchFile)
+	switch {
+	case inlinePatch == "" && patchFile == "":
+		return newWithSentinel(nil, "either --patch or --patch-file is required")
+	case inlinePatch != "" && patchFile != "":
+		return newWithSentinel(nil, "use either --patch or --patch-file, not both")
+	}
+
+	normalizedPatch := inlinePatch
+	if patchFile != "" {
+		normalizedPatch, err = normalizePatchFile(patchFile)
+	} else {
+		normalizedPatch, err = normalizePatchDocument(inlinePatch)
+	}
+	if err != nil {
+		wrappedErr := wrapWithSentinelAndContext(
+			nil,
+			err,
+			fmt.Sprintf("failed to prepare patch for server %q: %v", name, err),
+			map[string]any{"server": name, "namespace": namespace, "patch_type": patchType, "component": "server"},
+		)
+		Error("Failed to prepare server patch")
+		logStructuredError(m.logger, wrappedErr, "Failed to prepare server patch")
+		return wrappedErr
+	}
+
+	args := []string{"patch", "mcpserver", name, "-n", namespace, "--type", patchType, "--patch", normalizedPatch}
+	if err := m.kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
+		wrappedErr := wrapWithSentinelAndContext(
+			nil,
+			err,
+			fmt.Sprintf("failed to patch server %q in namespace %q: %v", name, namespace, err),
+			map[string]any{"server": name, "namespace": namespace, "patch_type": patchType, "component": "server"},
+		)
+		Error("Failed to patch server")
+		logStructuredError(m.logger, wrappedErr, "Failed to patch server")
+		return wrappedErr
+	}
+
+	return nil
+}
+
+// InspectServerPolicy prints the rendered gateway policy ConfigMap content for a server.
+func (m *ServerManager) InspectServerPolicy(name, namespace string) error {
+	name, namespace, err := validateServerInput(name, namespace)
+	if err != nil {
+		return err
+	}
+
+	configMapName := name + "-gateway-policy"
+	args := []string{"get", "configmap", configMapName, "-n", namespace, "-o", `go-template={{index .data "policy.json"}}`}
+	cmd, err := m.kubectl.CommandArgs(args)
+	if err != nil {
+		return err
+	}
+	output, execErr := cmd.CombinedOutput()
+	if execErr != nil {
+		wrappedErr := wrapWithSentinelAndContext(
+			nil,
+			execErr,
+			fmt.Sprintf("failed to inspect rendered policy for server %q in namespace %q: %s", name, namespace, commandErrorDetail(string(output), execErr)),
+			map[string]any{"server": name, "namespace": namespace, "component": "server"},
+		)
+		Error("Failed to inspect server policy")
+		logStructuredError(m.logger, wrappedErr, "Failed to inspect server policy")
+		return wrappedErr
+	}
+
+	if len(output) > 0 {
+		if _, err := os.Stdout.Write(output); err != nil {
+			wrappedErr := wrapWithSentinelAndContext(
+				nil,
+				err,
+				fmt.Sprintf("failed to write rendered policy to stdout: %v", err),
+				map[string]any{"server": name, "namespace": namespace, "component": "server"},
+			)
+			Error("Failed to inspect server policy")
+			logStructuredError(m.logger, wrappedErr, "Failed to inspect server policy")
+			return wrappedErr
+		}
+	}
+	if len(output) == 0 || output[len(output)-1] != '\n' {
+		fmt.Fprintln(os.Stdout)
+	}
+
 	return nil
 }
 

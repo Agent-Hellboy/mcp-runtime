@@ -1,0 +1,16 @@
+Commands for managing MCPAccessGrant and MCPAgentSession resources that feed the gateway policy layer.
+
+Usage:
+  mcp-runtime access [command]
+
+Available Commands:
+  grant       Manage MCPAccessGrant resources
+  session     Manage MCPAgentSession resources
+
+Flags:
+  -h, --help   help for access
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging
+
+Use "mcp-runtime access [command] --help" for more information about a command.

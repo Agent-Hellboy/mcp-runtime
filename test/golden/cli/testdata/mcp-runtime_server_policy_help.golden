@@ -1,0 +1,15 @@
+Inspect rendered gateway policy for an MCP server
+
+Usage:
+  mcp-runtime server policy [command]
+
+Available Commands:
+  inspect     Show the rendered gateway policy document for a server
+
+Flags:
+  -h, --help   help for policy
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging
+
+Use "mcp-runtime server policy [command] --help" for more information about a command.
