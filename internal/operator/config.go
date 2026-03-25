@@ -49,7 +49,7 @@ func LoadOperatorConfig() *OperatorConfig {
 		ProvisionedRegistrySecretName: getEnvOrDefault("PROVISIONED_REGISTRY_SECRET_NAME", DefaultRegistrySecretName),
 		RequeueDelaySeconds:           getEnvIntOrDefault("REQUEUE_DELAY_SECONDS", RequeueDelayNotReady),
 		GatewayProxyImage:             os.Getenv("MCP_GATEWAY_PROXY_IMAGE"),
-		AnalyticsIngestURL:            os.Getenv("MCP_ANALYTICS_INGEST_URL"),
+		AnalyticsIngestURL:            getEnvCompat("MCP_SENTINEL_INGEST_URL", "MCP_ANALYTICS_INGEST_URL"),
 		ClusterName:                   getEnvOrDefault("MCP_CLUSTER_NAME", "local"),
 	}
 	return cfg
@@ -87,6 +87,15 @@ func getEnvIntOrDefault(key string, defaultValue int) int {
 		}
 	}
 	return defaultValue
+}
+
+func getEnvCompat(keys ...string) string {
+	for _, key := range keys {
+		if value := os.Getenv(key); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // DefaultOperatorConfig is the default configuration loaded at startup.

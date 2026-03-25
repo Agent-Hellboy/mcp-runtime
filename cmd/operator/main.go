@@ -146,6 +146,9 @@ func gatewayProxyImageFromEnv(getenv func(string) string) string {
 }
 
 func analyticsIngestURLFromEnv(getenv func(string) string) string {
+	if value := getenv("MCP_SENTINEL_INGEST_URL"); value != "" {
+		return value
+	}
 	return getenv("MCP_ANALYTICS_INGEST_URL")
 }
 

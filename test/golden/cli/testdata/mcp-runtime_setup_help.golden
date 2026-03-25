@@ -22,7 +22,7 @@ Flags:
       --registry-type string           Registry type (docker; harbor coming soon) (default "docker")
       --test-mode                      Test mode: skip operator/gateway image builds and use kind-loaded images
       --with-tls                       Enable TLS overlays (ingress/registry); default is HTTP for dev
-      --without-analytics              Skip deploying the bundled mcp-analytics stack
+      --without-sentinel               Skip deploying the bundled mcp-sentinel stack
 
 Global Flags:
       --debug   Enable debug mode with structured error logging

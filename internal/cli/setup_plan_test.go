@@ -197,7 +197,7 @@ func TestSetupPlatformWithDeps_ExternalRegistry(t *testing.T) {
 		},
 		GatewayProxyImageFor: func(*ExternalRegistryConfig) string {
 			rec.add("gateway-image")
-			return "registry.example.com/mcp-analytics-mcp-proxy:latest"
+			return "registry.example.com/mcp-sentinel-mcp-proxy:latest"
 		},
 	}
 
@@ -279,7 +279,7 @@ func TestSetupPlatformWithDeps_InternalRegistryTLS(t *testing.T) {
 		},
 		GatewayProxyImageFor: func(*ExternalRegistryConfig) string {
 			rec.add("gateway-image")
-			return "registry.local/mcp-analytics-mcp-proxy:latest"
+			return "registry.local/mcp-sentinel-mcp-proxy:latest"
 		},
 	}
 
@@ -368,7 +368,7 @@ func TestSetupPlatformWithDeps_ExternalRegistryTLS(t *testing.T) {
 		},
 		GatewayProxyImageFor: func(*ExternalRegistryConfig) string {
 			rec.add("gateway-image")
-			return "registry.example.com/mcp-analytics-mcp-proxy:latest"
+			return "registry.example.com/mcp-sentinel-mcp-proxy:latest"
 		},
 	}
 
@@ -447,7 +447,7 @@ func TestSetupPlatformWithDeps_DiagnosticsOnRegistryWaitFailure(t *testing.T) {
 		GetDeploymentTimeout:            func() time.Duration { return time.Second },
 		GetRegistryPort:                 func() int { return 5000 },
 		OperatorImageFor:                func(*ExternalRegistryConfig) string { return "registry.local/mcp-runtime-operator:latest" },
-		GatewayProxyImageFor:            func(*ExternalRegistryConfig) string { return "registry.local/mcp-analytics-mcp-proxy:latest" },
+		GatewayProxyImageFor:            func(*ExternalRegistryConfig) string { return "registry.local/mcp-sentinel-mcp-proxy:latest" },
 	}
 
 	plan := SetupPlan{
@@ -506,7 +506,7 @@ func TestSetupPlatformWithDeps_DiagnosticsOnOperatorWaitFailure(t *testing.T) {
 		GetDeploymentTimeout:            func() time.Duration { return time.Second },
 		GetRegistryPort:                 func() int { return 5000 },
 		OperatorImageFor:                func(*ExternalRegistryConfig) string { return "registry.example.com/mcp-runtime-operator:latest" },
-		GatewayProxyImageFor:            func(*ExternalRegistryConfig) string { return "registry.example.com/mcp-analytics-mcp-proxy:latest" },
+		GatewayProxyImageFor:            func(*ExternalRegistryConfig) string { return "registry.example.com/mcp-sentinel-mcp-proxy:latest" },
 	}
 
 	plan := SetupPlan{
@@ -567,7 +567,7 @@ func TestSetupPlatformWithDeps_CRDCheckFailure(t *testing.T) {
 		GetDeploymentTimeout: func() time.Duration { return time.Second },
 		GetRegistryPort:      func() int { return 5000 },
 		OperatorImageFor:     func(*ExternalRegistryConfig) string { return "registry.example.com/mcp-runtime-operator:latest" },
-		GatewayProxyImageFor: func(*ExternalRegistryConfig) string { return "registry.example.com/mcp-analytics-mcp-proxy:latest" },
+		GatewayProxyImageFor: func(*ExternalRegistryConfig) string { return "registry.example.com/mcp-sentinel-mcp-proxy:latest" },
 	}
 
 	plan := SetupPlan{
@@ -630,7 +630,7 @@ func TestSetupPlatformWithDeps_InternalRegistryPushFailure(t *testing.T) {
 		GetDeploymentTimeout:            func() time.Duration { return time.Second },
 		GetRegistryPort:                 func() int { return 5000 },
 		OperatorImageFor:                func(*ExternalRegistryConfig) string { return "registry.local/mcp-runtime-operator:latest" },
-		GatewayProxyImageFor:            func(*ExternalRegistryConfig) string { return "registry.local/mcp-analytics-mcp-proxy:latest" },
+		GatewayProxyImageFor:            func(*ExternalRegistryConfig) string { return "registry.local/mcp-sentinel-mcp-proxy:latest" },
 	}
 
 	plan := SetupPlan{

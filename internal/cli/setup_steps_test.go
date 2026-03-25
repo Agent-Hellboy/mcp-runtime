@@ -87,7 +87,7 @@ func TestOperatorImageStepSetsContext(t *testing.T) {
 			return "registry.example.com/mcp-runtime-operator:latest"
 		},
 		GatewayProxyImageFor: func(_ *ExternalRegistryConfig) string {
-			return "registry.example.com/mcp-analytics-mcp-proxy:latest"
+			return "registry.example.com/mcp-sentinel-mcp-proxy:latest"
 		},
 		BuildOperatorImage:     func(string) error { return nil },
 		PushOperatorImage:      func(string) error { return nil },
@@ -102,7 +102,7 @@ func TestOperatorImageStepSetsContext(t *testing.T) {
 	if ctx.OperatorImage != "registry.example.com/mcp-runtime-operator:latest" {
 		t.Fatalf("expected operator image to be set, got %q", ctx.OperatorImage)
 	}
-	if ctx.GatewayProxyImage != "registry.example.com/mcp-analytics-mcp-proxy:latest" {
+	if ctx.GatewayProxyImage != "registry.example.com/mcp-sentinel-mcp-proxy:latest" {
 		t.Fatalf("expected gateway proxy image to be set, got %q", ctx.GatewayProxyImage)
 	}
 }
@@ -119,7 +119,7 @@ func TestOperatorImageStepTestModeSkipsBuildAndUsesPreloadedImage(t *testing.T) 
 	}
 	deps := SetupDeps{
 		OperatorImageFor:     func(_ *ExternalRegistryConfig) string { return "registry.example.com/mcp-runtime-operator:latest" },
-		GatewayProxyImageFor: func(_ *ExternalRegistryConfig) string { return "registry.example.com/mcp-analytics-mcp-proxy:latest" },
+		GatewayProxyImageFor: func(_ *ExternalRegistryConfig) string { return "registry.example.com/mcp-sentinel-mcp-proxy:latest" },
 		BuildOperatorImage:   func(string) error { atomic.AddInt32(&buildCalls, 1); return nil },
 		PushOperatorImage:    func(string) error { t.Fatal("did not expect operator push in test mode"); return nil },
 		BuildGatewayProxyImage: func(string) error {
@@ -153,7 +153,7 @@ func TestDeployOperatorStepCmdPassesOperatorArgs(t *testing.T) {
 			OperatorArgs: []string{"--metrics-bind-address=:9090", "--leader-elect=false"},
 		},
 		OperatorImage:         "registry.example.com/mcp-runtime-operator:latest",
-		GatewayProxyImage:     "registry.example.com/mcp-analytics-mcp-proxy:latest",
+		GatewayProxyImage:     "registry.example.com/mcp-sentinel-mcp-proxy:latest",
 		UsingExternalRegistry: false,
 	}
 	var gotArgs []string

@@ -53,7 +53,7 @@ func TestLoadCLIConfigWithProvisionedRegistry(t *testing.T) {
 	t.Setenv("MCP_SKOPEO_IMAGE", "example/skopeo:latest")
 	t.Setenv("MCP_OPERATOR_IMAGE", "example/operator:latest")
 	t.Setenv("MCP_GATEWAY_PROXY_IMAGE", "example/mcp-proxy:latest")
-	t.Setenv("MCP_ANALYTICS_INGEST_URL", "http://mcp-analytics-ingest.mcp-analytics.svc.cluster.local:8081/events")
+	t.Setenv("MCP_SENTINEL_INGEST_URL", "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events")
 	t.Setenv("MCP_DEFAULT_SERVER_PORT", "9000")
 	t.Setenv("PROVISIONED_REGISTRY_URL", "registry.example.com")
 	t.Setenv("PROVISIONED_REGISTRY_USERNAME", "user")
@@ -78,7 +78,7 @@ func TestLoadCLIConfigWithProvisionedRegistry(t *testing.T) {
 	if cfg.GatewayProxyImage != "example/mcp-proxy:latest" {
 		t.Fatalf("expected gateway proxy image override, got %q", cfg.GatewayProxyImage)
 	}
-	if cfg.AnalyticsIngestURL != "http://mcp-analytics-ingest.mcp-analytics.svc.cluster.local:8081/events" {
+	if cfg.AnalyticsIngestURL != "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events" {
 		t.Fatalf("expected analytics ingest url override, got %q", cfg.AnalyticsIngestURL)
 	}
 	if cfg.DefaultServerPort != 9000 {
@@ -89,6 +89,16 @@ func TestLoadCLIConfigWithProvisionedRegistry(t *testing.T) {
 	}
 	if cfg.ProvisionedRegistryUsername != "user" || cfg.ProvisionedRegistryPassword != "pass" {
 		t.Fatalf("expected registry credentials, got %q/%q", cfg.ProvisionedRegistryUsername, cfg.ProvisionedRegistryPassword)
+	}
+}
+
+func TestLoadCLIConfigUsesLegacyAnalyticsEnv(t *testing.T) {
+	t.Setenv("MCP_SENTINEL_INGEST_URL", "")
+	t.Setenv("MCP_ANALYTICS_INGEST_URL", "http://legacy-ingest")
+
+	cfg := LoadCLIConfig()
+	if cfg.AnalyticsIngestURL != "http://legacy-ingest" {
+		t.Fatalf("expected legacy analytics ingest url override, got %q", cfg.AnalyticsIngestURL)
 	}
 }
 

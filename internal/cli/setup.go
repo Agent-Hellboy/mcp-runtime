@@ -24,12 +24,12 @@ import (
 
 const defaultRegistrySecretName = "mcp-runtime-registry-creds" // #nosec G101 -- default secret name, not a credential.
 const testModeOperatorImage = "docker.io/library/mcp-runtime-operator:latest"
-const testModeGatewayProxyImage = "docker.io/library/mcp-analytics-mcp-proxy:latest"
-const defaultGatewayProxyRepository = "mcp-analytics-mcp-proxy"
-const defaultAnalyticsNamespace = "mcp-analytics"
-const defaultAnalyticsIngestURL = "http://mcp-analytics-ingest.mcp-analytics.svc.cluster.local:8081/events"
-const gatewayProxyDockerfilePath = "mcp-analytics/services/mcp-proxy/Dockerfile"
-const gatewayProxyBuildContext = "mcp-analytics/services/mcp-proxy"
+const testModeGatewayProxyImage = "docker.io/library/mcp-sentinel-mcp-proxy:latest"
+const defaultGatewayProxyRepository = "mcp-sentinel-mcp-proxy"
+const defaultAnalyticsNamespace = "mcp-sentinel"
+const defaultAnalyticsIngestURL = "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
+const gatewayProxyDockerfilePath = "mcp-sentinel/services/mcp-proxy/Dockerfile"
+const gatewayProxyBuildContext = "mcp-sentinel/services/mcp-proxy"
 
 type analyticsComponent struct {
 	Name         string
@@ -48,27 +48,27 @@ type AnalyticsImageSet struct {
 var analyticsComponents = []analyticsComponent{
 	{
 		Name:         "ingest",
-		Repository:   "mcp-analytics-ingest",
-		Dockerfile:   "mcp-analytics/services/ingest/Dockerfile",
-		BuildContext: "mcp-analytics/services/ingest",
+		Repository:   "mcp-sentinel-ingest",
+		Dockerfile:   "mcp-sentinel/services/ingest/Dockerfile",
+		BuildContext: "mcp-sentinel/services/ingest",
 	},
 	{
 		Name:         "api",
-		Repository:   "mcp-analytics-api",
-		Dockerfile:   "mcp-analytics/services/api/Dockerfile",
-		BuildContext: "mcp-analytics/services/api",
+		Repository:   "mcp-sentinel-api",
+		Dockerfile:   "mcp-sentinel/services/api/Dockerfile",
+		BuildContext: "mcp-sentinel/services/api",
 	},
 	{
 		Name:         "processor",
-		Repository:   "mcp-analytics-processor",
-		Dockerfile:   "mcp-analytics/services/processor/Dockerfile",
-		BuildContext: "mcp-analytics/services/processor",
+		Repository:   "mcp-sentinel-processor",
+		Dockerfile:   "mcp-sentinel/services/processor/Dockerfile",
+		BuildContext: "mcp-sentinel/services/processor",
 	},
 	{
 		Name:         "ui",
-		Repository:   "mcp-analytics-ui",
-		Dockerfile:   "mcp-analytics/services/ui/Dockerfile",
-		BuildContext: "mcp-analytics/services/ui",
+		Repository:   "mcp-sentinel-ui",
+		Dockerfile:   "mcp-sentinel/services/ui/Dockerfile",
+		BuildContext: "mcp-sentinel/services/ui",
 	},
 }
 
@@ -258,7 +258,10 @@ will use to push and pull container images.`,
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force ingress install even if an ingress class already exists")
 	cmd.Flags().BoolVar(&tlsEnabled, "with-tls", false, "Enable TLS overlays (ingress/registry); default is HTTP for dev")
 	cmd.Flags().BoolVar(&testMode, "test-mode", false, "Test mode: skip operator/gateway image builds and use kind-loaded images")
-	cmd.Flags().BoolVar(&withoutAnalytics, "without-analytics", false, "Skip deploying the bundled mcp-analytics stack")
+	cmd.Flags().BoolVar(&withoutAnalytics, "without-sentinel", false, "Skip deploying the bundled mcp-sentinel stack")
+	cmd.Flags().BoolVar(&withoutAnalytics, "without-analytics", false, "Deprecated alias for --without-sentinel")
+	_ = cmd.Flags().MarkDeprecated("without-analytics", "use --without-sentinel")
+	_ = cmd.Flags().MarkHidden("without-analytics")
 	cmd.Flags().StringVar(&operatorMetricsAddr, "operator-metrics-addr", "", "Operator metrics bind address (default: :8080 from manager.yaml)")
 	cmd.Flags().StringVar(&operatorProbeAddr, "operator-probe-addr", "", "Operator health probe bind address (default: :8081 from manager.yaml)")
 	cmd.Flags().BoolVar(&operatorLeaderElect, "operator-leader-elect", false, "Override operator leader election when set")
@@ -637,13 +640,13 @@ func prepareAnalyticsImages(logger *zap.Logger, extRegistry *ExternalRegistryCon
 			)
 		}
 		switch component.Repository {
-		case "mcp-analytics-ingest":
+		case "mcp-sentinel-ingest":
 			images.Ingest = internalImage
-		case "mcp-analytics-api":
+		case "mcp-sentinel-api":
 			images.API = internalImage
-		case "mcp-analytics-processor":
+		case "mcp-sentinel-processor":
 			images.Processor = internalImage
-		case "mcp-analytics-ui":
+		case "mcp-sentinel-ui":
 			images.UI = internalImage
 		}
 	}
@@ -652,13 +655,13 @@ func prepareAnalyticsImages(logger *zap.Logger, extRegistry *ExternalRegistryCon
 }
 
 func deployAnalyticsStepCmd(logger *zap.Logger, images AnalyticsImageSet, deps SetupDeps) error {
-	Info("Deploying mcp-analytics manifests")
+	Info("Deploying mcp-sentinel manifests")
 	if err := deps.DeployAnalyticsManifests(logger, images); err != nil {
 		wrappedErr := wrapWithSentinelAndContext(
 			ErrOperatorDeploymentFailed,
 			err,
 			fmt.Sprintf("analytics deployment failed: %v", err),
-			map[string]any{"component": "mcp-analytics"},
+			map[string]any{"component": "mcp-sentinel"},
 		)
 		Error("Analytics deployment failed")
 		logStructuredError(logger, wrappedErr, "Analytics deployment failed")
@@ -1288,10 +1291,10 @@ func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet) erro
 }
 
 func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logger, images AnalyticsImageSet) error {
-	Info("Applying mcp-analytics namespace and config")
+	Info("Applying mcp-sentinel namespace and config")
 	manifests := []string{
-		"mcp-analytics/k8s/00-namespace.yaml",
-		"mcp-analytics/k8s/01-config.yaml",
+		"mcp-sentinel/k8s/00-namespace.yaml",
+		"mcp-sentinel/k8s/01-config.yaml",
 	}
 	for _, manifest := range manifests {
 		if err := applyRenderedManifest(kubectl, manifest, images); err != nil {
@@ -1299,7 +1302,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 		}
 	}
 
-	Info("Applying mcp-analytics managed secrets")
+	Info("Applying mcp-sentinel managed secrets")
 	secretManifest, err := renderAnalyticsSecretManifest()
 	if err != nil {
 		return err
@@ -1310,8 +1313,8 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 
 	Info("Applying analytics storage and messaging components")
 	for _, manifest := range []string{
-		"mcp-analytics/k8s/03-clickhouse.yaml",
-		"mcp-analytics/k8s/05-kafka.yaml",
+		"mcp-sentinel/k8s/03-clickhouse.yaml",
+		"mcp-sentinel/k8s/05-kafka.yaml",
 	} {
 		if err := applyRenderedManifest(kubectl, manifest, images); err != nil {
 			return err
@@ -1329,7 +1332,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 	}
 
 	Info("Initializing ClickHouse schema")
-	if err := applyRenderedManifest(kubectl, "mcp-analytics/k8s/04-clickhouse-init.yaml", images); err != nil {
+	if err := applyRenderedManifest(kubectl, "mcp-sentinel/k8s/04-clickhouse-init.yaml", images); err != nil {
 		return err
 	}
 	if err := waitForJobCompletionWithKubectl(kubectl, "clickhouse-init", defaultAnalyticsNamespace, "180s"); err != nil {
@@ -1338,18 +1341,18 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 
 	Info("Applying analytics services")
 	for _, manifest := range []string{
-		"mcp-analytics/k8s/06-ingest.yaml",
-		"mcp-analytics/k8s/07-processor.yaml",
-		"mcp-analytics/k8s/08-api.yaml",
-		"mcp-analytics/k8s/09-ui.yaml",
-		"mcp-analytics/k8s/10-gateway.yaml",
-		"mcp-analytics/k8s/11-prometheus.yaml",
-		"mcp-analytics/k8s/15-otel-collector.yaml",
-		"mcp-analytics/k8s/16-tempo.yaml",
-		"mcp-analytics/k8s/17-loki.yaml",
-		"mcp-analytics/k8s/18-promtail.yaml",
-		"mcp-analytics/k8s/19-grafana-datasources.yaml",
-		"mcp-analytics/k8s/12-grafana.yaml",
+		"mcp-sentinel/k8s/06-ingest.yaml",
+		"mcp-sentinel/k8s/07-processor.yaml",
+		"mcp-sentinel/k8s/08-api.yaml",
+		"mcp-sentinel/k8s/09-ui.yaml",
+		"mcp-sentinel/k8s/10-gateway.yaml",
+		"mcp-sentinel/k8s/11-prometheus.yaml",
+		"mcp-sentinel/k8s/15-otel-collector.yaml",
+		"mcp-sentinel/k8s/16-tempo.yaml",
+		"mcp-sentinel/k8s/17-loki.yaml",
+		"mcp-sentinel/k8s/18-promtail.yaml",
+		"mcp-sentinel/k8s/19-grafana-datasources.yaml",
+		"mcp-sentinel/k8s/12-grafana.yaml",
 	} {
 		if err := applyRenderedManifest(kubectl, manifest, images); err != nil {
 			return err
@@ -1361,11 +1364,11 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 		name    string
 		timeout string
 	}{
-		{kind: "deployment", name: "mcp-analytics-ingest", timeout: "180s"},
-		{kind: "deployment", name: "mcp-analytics-processor", timeout: "180s"},
-		{kind: "deployment", name: "mcp-analytics-api", timeout: "180s"},
-		{kind: "deployment", name: "mcp-analytics-ui", timeout: "180s"},
-		{kind: "deployment", name: "mcp-analytics-gateway", timeout: "180s"},
+		{kind: "deployment", name: "mcp-sentinel-ingest", timeout: "180s"},
+		{kind: "deployment", name: "mcp-sentinel-processor", timeout: "180s"},
+		{kind: "deployment", name: "mcp-sentinel-api", timeout: "180s"},
+		{kind: "deployment", name: "mcp-sentinel-ui", timeout: "180s"},
+		{kind: "deployment", name: "mcp-sentinel-gateway", timeout: "180s"},
 		{kind: "deployment", name: "prometheus", timeout: "180s"},
 		{kind: "deployment", name: "grafana", timeout: "180s"},
 		{kind: "deployment", name: "otel-collector", timeout: "180s"},
@@ -1377,7 +1380,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 		}
 	}
 
-	Success("mcp-analytics manifests deployed successfully")
+	Success("mcp-sentinel manifests deployed successfully")
 	return nil
 }
 
@@ -1403,10 +1406,10 @@ func applyManifestContent(kubectl KubectlRunner, manifest string) error {
 
 func renderAnalyticsManifest(content string, images AnalyticsImageSet) string {
 	replacements := map[string]string{
-		"image: mcp-analytics-ingest:latest":    "image: " + images.Ingest,
-		"image: mcp-analytics-api:latest":       "image: " + images.API,
-		"image: mcp-analytics-processor:latest": "image: " + images.Processor,
-		"image: mcp-analytics-ui:latest":        "image: " + images.UI,
+		"image: mcp-sentinel-ingest:latest":    "image: " + images.Ingest,
+		"image: mcp-sentinel-api:latest":       "image: " + images.API,
+		"image: mcp-sentinel-processor:latest": "image: " + images.Processor,
+		"image: mcp-sentinel-ui:latest":        "image: " + images.UI,
 	}
 	rendered := content
 	for oldValue, newValue := range replacements {
@@ -1423,7 +1426,7 @@ func renderAnalyticsSecretManifest() (string, error) {
 	secretManifest := fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
-  name: mcp-analytics-secrets
+  name: mcp-sentinel-secrets
   namespace: %s
 type: Opaque
 stringData:
@@ -1541,7 +1544,7 @@ func operatorEnvOverrides(gatewayProxyImage string) []operatorEnvVar {
 		ingestURL = defaultAnalyticsIngestURL
 	}
 	if ingestURL != "" {
-		envVars = append(envVars, operatorEnvVar{Name: "MCP_ANALYTICS_INGEST_URL", Value: ingestURL})
+		envVars = append(envVars, operatorEnvVar{Name: "MCP_SENTINEL_INGEST_URL", Value: ingestURL})
 	}
 	clusterName := strings.TrimSpace(GetClusterName())
 	if clusterName != "" {

@@ -230,14 +230,14 @@ func TestSetDefaults(t *testing.T) {
 
 		r := MCPServerReconciler{
 			Scheme:                    runtime.NewScheme(),
-			DefaultAnalyticsIngestURL: "http://mcp-analytics-ingest.mcp-analytics.svc.cluster.local:8081/events",
+			DefaultAnalyticsIngestURL: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events",
 		}
 		r.setDefaults(&mcpServer)
 
 		if mcpServer.Spec.Analytics == nil {
 			t.Fatal("expected analytics defaults to be applied")
 		}
-		assertEqual(t, "analyticsIngestURL", mcpServer.Spec.Analytics.IngestURL, "http://mcp-analytics-ingest.mcp-analytics.svc.cluster.local:8081/events")
+		assertEqual(t, "analyticsIngestURL", mcpServer.Spec.Analytics.IngestURL, "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events")
 	})
 }
 

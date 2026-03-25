@@ -33,7 +33,7 @@
           <p>
             The control plane is now split between deployment config on <code>MCPServer</code>, access
             grants on <code>MCPAccessGrant</code>, consent/session state on <code>MCPAgentSession</code>,
-            and audit events emitted through <code>mcp-analytics</code>.
+            and audit events emitted through <code>mcp-sentinel</code>.
           </p>
         </div>
         <aside class="hero-card">
@@ -116,7 +116,7 @@ spec:
       requiredTrust: high
   analytics:
     enabled: true
-    ingestURL: http://mcp-analytics-ingest.mcp-analytics.svc.cluster.local:8081/events
+    ingestURL: http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events
   rollout:
     strategy: Canary
     canaryReplicas: 1</code></pre>
@@ -210,7 +210,7 @@ X-MCP-Agent-Session: sess-8f1b9d</code></pre>
       </section>
 
       <section id="analytics-api" class="section container">
-        <h2>mcp-analytics API</h2>
+        <h2>mcp-sentinel API</h2>
         <p>The bundled analytics stack exposes a read API over the ClickHouse-backed event stream.</p>
         <pre><code>GET /api/events?limit=100
 GET /api/stats

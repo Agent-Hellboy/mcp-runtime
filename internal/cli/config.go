@@ -54,7 +54,7 @@ func LoadCLIConfig() *CLIConfig {
 		SkopeoImage:                 getEnvOrDefault("MCP_SKOPEO_IMAGE", defaultSkopeoImage),
 		OperatorImage:               os.Getenv("MCP_OPERATOR_IMAGE"), // No default, empty means auto
 		GatewayProxyImage:           os.Getenv("MCP_GATEWAY_PROXY_IMAGE"),
-		AnalyticsIngestURL:          os.Getenv("MCP_ANALYTICS_INGEST_URL"),
+		AnalyticsIngestURL:          getEnvCompat("MCP_SENTINEL_INGEST_URL", "MCP_ANALYTICS_INGEST_URL"),
 		ClusterName:                 getEnvOrDefault("MCP_CLUSTER_NAME", "local"),
 		DefaultServerPort:           parseIntEnv("MCP_DEFAULT_SERVER_PORT", defaultServerPort),
 		ProvisionedRegistryURL:      os.Getenv("PROVISIONED_REGISTRY_URL"),
@@ -89,6 +89,15 @@ func getEnvOrDefault(key, defaultVal string) string {
 		return val
 	}
 	return defaultVal
+}
+
+func getEnvCompat(keys ...string) string {
+	for _, key := range keys {
+		if val := os.Getenv(key); val != "" {
+			return val
+		}
+	}
+	return ""
 }
 
 // --- Convenience accessors using DefaultCLIConfig ---

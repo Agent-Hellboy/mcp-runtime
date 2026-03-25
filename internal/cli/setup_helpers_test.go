@@ -92,7 +92,7 @@ func TestGetGatewayProxyImage(t *testing.T) {
 		DefaultCLIConfig.GatewayProxyImage = ""
 		ext := &ExternalRegistryConfig{URL: "registry.example.com/"}
 		got := getGatewayProxyImage(ext)
-		if got != "registry.example.com/mcp-analytics-mcp-proxy:latest" {
+		if got != "registry.example.com/mcp-sentinel-mcp-proxy:latest" {
 			t.Fatalf("unexpected external registry image: %q", got)
 		}
 	})
@@ -112,7 +112,7 @@ func TestGetGatewayProxyImage(t *testing.T) {
 		}
 		kubectlClient = &KubectlClient{exec: mock, validators: nil}
 		got := getGatewayProxyImage(nil)
-		if got != "10.0.0.1:5000/mcp-analytics-mcp-proxy:latest" {
+		if got != "10.0.0.1:5000/mcp-sentinel-mcp-proxy:latest" {
 			t.Fatalf("unexpected platform registry image: %q", got)
 		}
 	})
@@ -171,7 +171,7 @@ func TestOperatorEnvOverrides(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("expected default analytics ingest env only, got %v", got)
 		}
-		if got[0].Name != "MCP_ANALYTICS_INGEST_URL" || got[0].Value != defaultAnalyticsIngestURL {
+		if got[0].Name != "MCP_SENTINEL_INGEST_URL" || got[0].Value != defaultAnalyticsIngestURL {
 			t.Fatalf("unexpected default env override: %+v", got[0])
 		}
 	})
@@ -185,7 +185,7 @@ func TestOperatorEnvOverrides(t *testing.T) {
 		if got[0].Name != "MCP_GATEWAY_PROXY_IMAGE" || got[0].Value != "example.com/mcp-proxy:latest" {
 			t.Fatalf("unexpected env override: %+v", got[0])
 		}
-		if got[1].Name != "MCP_ANALYTICS_INGEST_URL" || got[1].Value != defaultAnalyticsIngestURL {
+		if got[1].Name != "MCP_SENTINEL_INGEST_URL" || got[1].Value != defaultAnalyticsIngestURL {
 			t.Fatalf("unexpected analytics env override: %+v", got[1])
 		}
 	})
@@ -699,7 +699,7 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	kubectlClient = kubectl
 
 	operatorImage := "registry.example.com/mcp-runtime-operator:dev"
-	gatewayProxyImage := "registry.example.com/mcp-analytics-mcp-proxy:dev"
+	gatewayProxyImage := "registry.example.com/mcp-sentinel-mcp-proxy:dev"
 	operatorArgs := []string{
 		"--metrics-bind-address=:9090",
 		"--health-probe-bind-address=:9091",
@@ -725,7 +725,7 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	if !strings.Contains(managerManifest, "name: MCP_GATEWAY_PROXY_IMAGE") || !strings.Contains(managerManifest, "value: "+gatewayProxyImage) {
 		t.Fatalf("expected manager manifest to include gateway proxy image env, got:\n%s", managerManifest)
 	}
-	if !strings.Contains(managerManifest, "name: MCP_ANALYTICS_INGEST_URL") || !strings.Contains(managerManifest, "value: "+defaultAnalyticsIngestURL) {
+	if !strings.Contains(managerManifest, "name: MCP_SENTINEL_INGEST_URL") || !strings.Contains(managerManifest, "value: "+defaultAnalyticsIngestURL) {
 		t.Fatalf("expected manager manifest to include analytics ingest env, got:\n%s", managerManifest)
 	}
 

@@ -104,7 +104,7 @@ func TestShowPlatformStatus(t *testing.T) {
 			commandKey("kubectl", "get", "deployment", "mcp-runtime-operator-controller-manager", "-n", "mcp-runtime", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "0/1",
 			},
-			commandKey("kubectl", "get", "namespace", "mcp-analytics", "-o", "jsonpath={.metadata.name}"): {
+			commandKey("kubectl", "get", "namespace", "mcp-sentinel", "-o", "jsonpath={.metadata.name}"): {
 				ExitCode: 1,
 			},
 			commandKey("kubectl", "get", "mcpserver", "--all-namespaces", "-o", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,IMAGE:.spec.image,REPLICAS:.spec.replicas,PATH:.spec.ingressPath"): {},
@@ -134,49 +134,49 @@ func TestShowPlatformStatus(t *testing.T) {
 			commandKey("kubectl", "get", "deployment", "mcp-runtime-operator-controller-manager", "-n", "mcp-runtime", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "1/1",
 			},
-			commandKey("kubectl", "get", "namespace", "mcp-analytics", "-o", "jsonpath={.metadata.name}"): {
-				Stdout: "mcp-analytics",
+			commandKey("kubectl", "get", "namespace", "mcp-sentinel", "-o", "jsonpath={.metadata.name}"): {
+				Stdout: "mcp-sentinel",
 			},
-			commandKey("kubectl", "get", "statefulset", "clickhouse", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+			commandKey("kubectl", "get", "statefulset", "clickhouse", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "1/1",
 			},
-			commandKey("kubectl", "get", "deployment", "zookeeper", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+			commandKey("kubectl", "get", "deployment", "zookeeper", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "1/1",
 			},
-			commandKey("kubectl", "get", "statefulset", "kafka", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+			commandKey("kubectl", "get", "statefulset", "kafka", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "1/1",
 			},
-			commandKey("kubectl", "get", "deployment", "mcp-analytics-ingest", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+			commandKey("kubectl", "get", "deployment", "mcp-sentinel-ingest", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "2/2",
 			},
-			commandKey("kubectl", "get", "deployment", "mcp-analytics-processor", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+			commandKey("kubectl", "get", "deployment", "mcp-sentinel-processor", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "1/1",
 			},
-			commandKey("kubectl", "get", "deployment", "mcp-analytics-api", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+			commandKey("kubectl", "get", "deployment", "mcp-sentinel-api", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "1/1",
 			},
-			commandKey("kubectl", "get", "deployment", "mcp-analytics-ui", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+			commandKey("kubectl", "get", "deployment", "mcp-sentinel-ui", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "1/1",
 			},
-			commandKey("kubectl", "get", "deployment", "mcp-analytics-gateway", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+			commandKey("kubectl", "get", "deployment", "mcp-sentinel-gateway", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "1/1",
 			},
-			commandKey("kubectl", "get", "deployment", "prometheus", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+			commandKey("kubectl", "get", "deployment", "prometheus", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "1/1",
 			},
-			commandKey("kubectl", "get", "deployment", "grafana", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+			commandKey("kubectl", "get", "deployment", "grafana", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "1/1",
 			},
-			commandKey("kubectl", "get", "deployment", "otel-collector", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+			commandKey("kubectl", "get", "deployment", "otel-collector", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "1/1",
 			},
-			commandKey("kubectl", "get", "statefulset", "tempo", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+			commandKey("kubectl", "get", "statefulset", "tempo", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "1/1",
 			},
-			commandKey("kubectl", "get", "statefulset", "loki", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+			commandKey("kubectl", "get", "statefulset", "loki", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "1/1",
 			},
-			commandKey("kubectl", "get", "daemonset", "promtail", "-n", "mcp-analytics", "-o", "jsonpath={.status.numberReady}/{.status.desiredNumberScheduled}"): {
+			commandKey("kubectl", "get", "daemonset", "promtail", "-n", "mcp-sentinel", "-o", "jsonpath={.status.numberReady}/{.status.desiredNumberScheduled}"): {
 				Stdout: "3/3",
 			},
 			commandKey("kubectl", "get", "mcpserver", "--all-namespaces", "-o", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,IMAGE:.spec.image,REPLICAS:.spec.replicas,PATH:.spec.ingressPath"): {},
