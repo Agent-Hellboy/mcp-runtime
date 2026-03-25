@@ -1,3 +1,3 @@
 [submodule "mcp-analytics"]
 	path = mcp-analytics
-	url = https://github.com/Agent-Hellboy/mcp-analytics
+	url = https://github.com/Agent-Hellboy/mcp-sentinel
