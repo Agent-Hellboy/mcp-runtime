@@ -1,14 +1,40 @@
 package cli
 
 // This file implements the "status" command for checking platform health.
-// It displays the status of cluster, registry, and operator components.
+// It summarizes the core runtime plus the bundled analytics stack.
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
+
+type platformWorkload struct {
+	Component string
+	Namespace string
+	Kind      string
+	Name      string
+}
+
+var analyticsStatusWorkloads = []platformWorkload{
+	{Component: "ClickHouse", Namespace: defaultAnalyticsNamespace, Kind: "statefulset", Name: "clickhouse"},
+	{Component: "Zookeeper", Namespace: defaultAnalyticsNamespace, Kind: "deployment", Name: "zookeeper"},
+	{Component: "Kafka", Namespace: defaultAnalyticsNamespace, Kind: "statefulset", Name: "kafka"},
+	{Component: "Ingest", Namespace: defaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-analytics-ingest"},
+	{Component: "Processor", Namespace: defaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-analytics-processor"},
+	{Component: "API", Namespace: defaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-analytics-api"},
+	{Component: "UI", Namespace: defaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-analytics-ui"},
+	{Component: "Gateway", Namespace: defaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-analytics-gateway"},
+	{Component: "Prometheus", Namespace: defaultAnalyticsNamespace, Kind: "deployment", Name: "prometheus"},
+	{Component: "Grafana", Namespace: defaultAnalyticsNamespace, Kind: "deployment", Name: "grafana"},
+	{Component: "OTel Collector", Namespace: defaultAnalyticsNamespace, Kind: "deployment", Name: "otel-collector"},
+	{Component: "Tempo", Namespace: defaultAnalyticsNamespace, Kind: "statefulset", Name: "tempo"},
+	{Component: "Loki", Namespace: defaultAnalyticsNamespace, Kind: "statefulset", Name: "loki"},
+	{Component: "Promtail", Namespace: defaultAnalyticsNamespace, Kind: "daemonset", Name: "promtail"},
+}
 
 // NewStatusCmd returns the status subcommand for platform health checks.
 func NewStatusCmd(logger *zap.Logger) *cobra.Command {
@@ -28,58 +54,63 @@ func showPlatformStatus(logger *zap.Logger) error {
 	Header("MCP Platform Status")
 	DefaultPrinter.Println()
 
-	// Component status table
 	tableData := [][]string{
-		{"Component", "Status", "Details"},
+		{"Component", "Namespace", "Resource", "Status", "Details"},
 	}
 
-	// Cluster
+	clusterReachable := true
 	clusterStatus := Green("OK")
 	clusterDetails := "Connected"
-	clusterMgr := DefaultClusterManager(logger)
-	if err := clusterMgr.CheckClusterStatus(); err != nil {
+	if err := checkClusterStatusQuiet(); err != nil {
+		clusterReachable = false
 		clusterStatus = Red("ERROR")
 		clusterDetails = err.Error()
 	}
-	tableData = append(tableData, []string{"Cluster", clusterStatus, clusterDetails})
+	tableData = append(tableData, []string{"Cluster", "-", "kube-api", clusterStatus, clusterDetails})
 
-	// Registry
-	registryStatus := Green("OK")
-	registryDetails := "Running"
-	if err := checkRegistryStatusQuiet(logger, NamespaceRegistry); err != nil {
-		registryStatus = Red("ERROR")
-		registryDetails = err.Error()
-	}
-	tableData = append(tableData, []string{"Registry", registryStatus, registryDetails})
-
-	// Operator
-	operatorStatus := Green("OK")
-	operatorDetails := ""
-	// #nosec G204 -- fixed kubectl command with hardcoded deployment name.
-	replicasCmd, err := kubectlClient.CommandArgs([]string{"get", "deployment", OperatorDeploymentName, "-n", NamespaceMCPRuntime, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"})
+	extRegistry, err := resolveExternalRegistryConfig(nil)
 	if err != nil {
-		operatorStatus = Red("ERROR")
-		operatorDetails = err.Error()
+		Warn("Failed to load external registry config: " + err.Error())
+	}
+	if extRegistry != nil && extRegistry.URL != "" {
+		tableData = append(tableData, []string{"Registry", "-", "external", Cyan("EXTERNAL"), "Configured: " + extRegistry.URL})
 	} else {
-		replicasOut, execErr := replicasCmd.Output()
-		if execErr != nil {
-			operatorStatus = Red("ERROR")
-			operatorDetails = "Not found"
-		} else {
-			replicas := strings.TrimSpace(string(replicasOut))
-			if replicas == "" || strings.HasPrefix(replicas, "/") || strings.HasPrefix(replicas, "0/") {
-				operatorStatus = Yellow("PENDING")
-			}
-			operatorDetails = "Replicas: " + replicas
+		tableData = append(tableData, workloadStatusRow(
+			platformWorkload{Component: "Registry", Namespace: NamespaceRegistry, Kind: "deployment", Name: RegistryDeploymentName},
+			clusterReachable,
+		))
+	}
+
+	tableData = append(tableData, workloadStatusRow(
+		platformWorkload{Component: "Operator", Namespace: NamespaceMCPRuntime, Kind: "deployment", Name: OperatorDeploymentName},
+		clusterReachable,
+	))
+
+	switch installed, analyticsErr := analyticsNamespaceInstalled(clusterReachable); {
+	case !clusterReachable:
+		tableData = append(tableData, analyticsStackRow(Red("ERROR"), "Cluster unavailable"))
+	case analyticsErr != nil:
+		tableData = append(tableData, analyticsStackRow(Red("ERROR"), analyticsErr.Error()))
+	case !installed:
+		tableData = append(tableData, analyticsStackRow(Yellow("SKIPPED"), "Namespace not found"))
+	default:
+		for _, workload := range analyticsStatusWorkloads {
+			tableData = append(tableData, workloadStatusRow(workload, true))
 		}
 	}
-	tableData = append(tableData, []string{"Operator", operatorStatus, operatorDetails})
 
 	TableBoxed(tableData)
 
 	// MCP Servers section
 	DefaultPrinter.Println()
 	Section("MCP Servers")
+
+	if !clusterReachable {
+		Warn("Skipping MCP server status: cluster unavailable")
+		DefaultPrinter.Println()
+		Info("Use 'mcp-runtime server list' for detailed server info")
+		return nil
+	}
 
 	// #nosec G204 -- fixed kubectl command.
 	cmd, err := kubectlClient.CommandArgs([]string{"get", "mcpserver", "--all-namespaces", "-o", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,IMAGE:.spec.image,REPLICAS:.spec.replicas,PATH:.spec.ingressPath"})
@@ -117,19 +148,115 @@ func showPlatformStatus(logger *zap.Logger) error {
 	return nil
 }
 
-// checkRegistryStatusQuiet checks registry without printing output
-func checkRegistryStatusQuiet(logger *zap.Logger, namespace string) error {
-	// #nosec G204 -- fixed kubectl command; namespace from internal config.
-	cmd, err := kubectlClient.CommandArgs([]string{"get", "deployment", RegistryDeploymentName, "-n", namespace, "-o", "jsonpath={.status.readyReplicas}"})
+func checkClusterStatusQuiet() error {
+	output, err := runKubectlCombinedOutput([]string{"cluster-info"})
+	if err == nil {
+		return nil
+	}
+	detail := commandErrorDetail(output, err)
+	return wrapWithSentinel(ErrClusterNotAccessible, err, fmt.Sprintf("cluster not accessible: %s", detail))
+}
+
+func analyticsNamespaceInstalled(clusterReachable bool) (bool, error) {
+	if !clusterReachable {
+		return false, nil
+	}
+
+	output, err := runKubectlCombinedOutput([]string{"get", "namespace", defaultAnalyticsNamespace, "-o", "jsonpath={.metadata.name}"})
+	if err == nil {
+		return strings.TrimSpace(output) != "", nil
+	}
+
+	lower := strings.ToLower(output)
+	if output == "" || strings.Contains(lower, "not found") || strings.Contains(lower, "notfound") {
+		return false, nil
+	}
+
+	return false, fmt.Errorf("%s", commandErrorDetail(output, err))
+}
+
+func analyticsStackRow(status, details string) []string {
+	return []string{"Analytics Stack", defaultAnalyticsNamespace, "namespace/" + defaultAnalyticsNamespace, status, details}
+}
+
+func workloadStatusRow(workload platformWorkload, clusterReachable bool) []string {
+	resource := fmt.Sprintf("%s/%s", workload.Kind, workload.Name)
+	if !clusterReachable {
+		return []string{workload.Component, workload.Namespace, resource, Red("ERROR"), "Cluster unavailable"}
+	}
+
+	status, details := workloadReadinessStatus(workload)
+	return []string{workload.Component, workload.Namespace, resource, status, details}
+}
+
+func workloadReadinessStatus(workload platformWorkload) (string, string) {
+	jsonPath, err := workloadReadyJSONPath(workload.Kind)
 	if err != nil {
-		return err
+		return Red("ERROR"), err.Error()
 	}
-	out, execErr := cmd.Output()
-	if execErr != nil {
-		return ErrRegistryNotFound
+
+	output, cmdErr := runKubectlCombinedOutput([]string{
+		"get", workload.Kind, workload.Name,
+		"-n", workload.Namespace,
+		"-o", "jsonpath=" + jsonPath,
+	})
+	if cmdErr != nil {
+		return Red("ERROR"), commandErrorDetail(output, cmdErr)
 	}
-	if strings.TrimSpace(string(out)) == "" || strings.TrimSpace(string(out)) == "0" {
-		return ErrRegistryNotReady
+
+	if workloadReady(output) {
+		return Green("OK"), "Ready: " + output
 	}
-	return nil
+	return Yellow("PENDING"), "Ready: " + output
+}
+
+func workloadReadyJSONPath(kind string) (string, error) {
+	switch strings.ToLower(kind) {
+	case "deployment", "statefulset":
+		return "{.status.readyReplicas}/{.spec.replicas}", nil
+	case "daemonset":
+		return "{.status.numberReady}/{.status.desiredNumberScheduled}", nil
+	default:
+		return "", fmt.Errorf("unsupported workload kind %q", kind)
+	}
+}
+
+func workloadReady(value string) bool {
+	parts := strings.Split(strings.TrimSpace(value), "/")
+	if len(parts) != 2 {
+		return false
+	}
+
+	ready, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return false
+	}
+	desired, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil {
+		return false
+	}
+	return desired > 0 && ready >= desired
+}
+
+func runKubectlCombinedOutput(args []string) (string, error) {
+	cmd, err := kubectlClient.CommandArgs(args)
+	if err != nil {
+		return "", err
+	}
+	output, execErr := cmd.CombinedOutput()
+	return strings.TrimSpace(string(output)), execErr
+}
+
+func commandErrorDetail(output string, fallback error) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			return line
+		}
+	}
+	if fallback != nil {
+		return fallback.Error()
+	}
+	return "Unknown error"
 }

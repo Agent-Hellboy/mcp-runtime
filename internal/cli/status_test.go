@@ -94,46 +94,110 @@ func TestHelperProcess(t *testing.T) {
 
 func TestShowPlatformStatus(t *testing.T) {
 	t.Run("marks-operator-pending-when-replicas-start-with-zero", func(t *testing.T) {
-		logger := zap.NewNop()
-		var calls []string
+		resetStatusTestConfig(t)
 
 		responses := map[string]commandResponse{
-			commandKey("kubectl", "cluster-info"):                            {Stdout: "cluster ok\n"},
-			commandKey("kubectl", "get", "nodes"):                            {},
-			commandKey("kubectl", "get", "crd", "mcpservers.mcpruntime.org"): {},
-			commandKey("kubectl", "get", "pods", "-n", "mcp-runtime"):        {},
-			commandKey("kubectl", "get", "deployment", "registry", "-n", "registry", "-o", "jsonpath={.status.readyReplicas}"): {
-				Stdout: "1",
+			commandKey("kubectl", "cluster-info"): {Stdout: "cluster ok\n"},
+			commandKey("kubectl", "get", "deployment", "registry", "-n", "registry", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
 			},
 			commandKey("kubectl", "get", "deployment", "mcp-runtime-operator-controller-manager", "-n", "mcp-runtime", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "0/1",
 			},
+			commandKey("kubectl", "get", "namespace", "mcp-analytics", "-o", "jsonpath={.metadata.name}"): {
+				ExitCode: 1,
+			},
 			commandKey("kubectl", "get", "mcpserver", "--all-namespaces", "-o", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,IMAGE:.spec.image,REPLICAS:.spec.replicas,PATH:.spec.ingressPath"): {},
 		}
 
-		origExec := execCommand
-		execCommand = fakeExecCommand(t, origExec, responses, &calls)
-		t.Cleanup(func() { execCommand = origExec })
-
-		var buf bytes.Buffer
-		pterm.SetDefaultOutput(&buf)
-		pterm.DisableStyling()
-		setDefaultPrinterWriter(t, &buf)
-		t.Cleanup(func() {
-			pterm.SetDefaultOutput(os.Stdout)
-			pterm.EnableStyling()
-		})
-
-		if err := showPlatformStatus(logger); err != nil {
-			t.Fatalf("showPlatformStatus() unexpected error = %v", err)
-		}
-
-		output := buf.String()
+		output := runShowPlatformStatus(t, responses)
 		if !strings.Contains(output, "PENDING") {
 			t.Fatalf("expected operator status to be PENDING, got output: %s", output)
 		}
-		if !strings.Contains(output, "Replicas: 0/1") {
+		if !strings.Contains(output, "Ready: 0/1") {
 			t.Fatalf("expected operator replica details, got output: %s", output)
+		}
+		if !strings.Contains(output, "Analytics Stack") || !strings.Contains(output, "SKIPPED") {
+			t.Fatalf("expected analytics stack to be reported as skipped, got output: %s", output)
+		}
+	})
+
+	t.Run("lists-analytics-services-when-installed", func(t *testing.T) {
+		resetStatusTestConfig(t)
+		var calls []string
+
+		responses := map[string]commandResponse{
+			commandKey("kubectl", "cluster-info"): {Stdout: "cluster ok\n"},
+			commandKey("kubectl", "get", "deployment", "registry", "-n", "registry", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
+			},
+			commandKey("kubectl", "get", "deployment", "mcp-runtime-operator-controller-manager", "-n", "mcp-runtime", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
+			},
+			commandKey("kubectl", "get", "namespace", "mcp-analytics", "-o", "jsonpath={.metadata.name}"): {
+				Stdout: "mcp-analytics",
+			},
+			commandKey("kubectl", "get", "statefulset", "clickhouse", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
+			},
+			commandKey("kubectl", "get", "deployment", "zookeeper", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
+			},
+			commandKey("kubectl", "get", "statefulset", "kafka", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
+			},
+			commandKey("kubectl", "get", "deployment", "mcp-analytics-ingest", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "2/2",
+			},
+			commandKey("kubectl", "get", "deployment", "mcp-analytics-processor", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
+			},
+			commandKey("kubectl", "get", "deployment", "mcp-analytics-api", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
+			},
+			commandKey("kubectl", "get", "deployment", "mcp-analytics-ui", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
+			},
+			commandKey("kubectl", "get", "deployment", "mcp-analytics-gateway", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
+			},
+			commandKey("kubectl", "get", "deployment", "prometheus", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
+			},
+			commandKey("kubectl", "get", "deployment", "grafana", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
+			},
+			commandKey("kubectl", "get", "deployment", "otel-collector", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
+			},
+			commandKey("kubectl", "get", "statefulset", "tempo", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
+			},
+			commandKey("kubectl", "get", "statefulset", "loki", "-n", "mcp-analytics", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
+			},
+			commandKey("kubectl", "get", "daemonset", "promtail", "-n", "mcp-analytics", "-o", "jsonpath={.status.numberReady}/{.status.desiredNumberScheduled}"): {
+				Stdout: "3/3",
+			},
+			commandKey("kubectl", "get", "mcpserver", "--all-namespaces", "-o", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,IMAGE:.spec.image,REPLICAS:.spec.replicas,PATH:.spec.ingressPath"): {},
+		}
+
+		output := runShowPlatformStatusWithCalls(t, responses, &calls)
+		for _, component := range []string{"ClickHouse", "Ingest", "Gateway", "Promtail"} {
+			if !strings.Contains(output, component) {
+				t.Fatalf("expected %s in output, got: %s", component, output)
+			}
+		}
+
+		foundPromtail := false
+		for _, call := range calls {
+			if strings.Contains(call, "get daemonset promtail") {
+				foundPromtail = true
+				break
+			}
+		}
+		if !foundPromtail {
+			t.Fatalf("expected daemonset readiness check for promtail, got calls: %v", calls)
 		}
 	})
 }
@@ -278,15 +342,6 @@ func TestServerStatus(t *testing.T) {
 	})
 }
 
-func TestCheckRegistryStatusQuiet(t *testing.T) {
-	t.Run("returns-error-when-registry-not-found", func(t *testing.T) {
-		logger := zap.NewNop()
-		// This will likely fail in test env without a cluster
-		// but we're testing that it handles errors gracefully
-		_ = checkRegistryStatusQuiet(logger, "nonexistent-namespace")
-	})
-}
-
 func TestNewStatusCmd(t *testing.T) {
 	logger := zap.NewNop()
 	cmd := NewStatusCmd(logger)
@@ -317,4 +372,43 @@ func setDefaultPrinterWriter(t *testing.T, w *bytes.Buffer) {
 	t.Cleanup(func() {
 		DefaultPrinter.Writer = orig
 	})
+}
+
+func resetStatusTestConfig(t *testing.T) {
+	t.Helper()
+	orig := DefaultCLIConfig
+	DefaultCLIConfig = &CLIConfig{}
+	t.Cleanup(func() {
+		DefaultCLIConfig = orig
+	})
+	t.Setenv("HOME", t.TempDir())
+}
+
+func runShowPlatformStatus(t *testing.T, responses map[string]commandResponse) string {
+	t.Helper()
+	return runShowPlatformStatusWithCalls(t, responses, nil)
+}
+
+func runShowPlatformStatusWithCalls(t *testing.T, responses map[string]commandResponse, calls *[]string) string {
+	t.Helper()
+
+	logger := zap.NewNop()
+	origExec := execCommand
+	execCommand = fakeExecCommand(t, origExec, responses, calls)
+	t.Cleanup(func() { execCommand = origExec })
+
+	var buf bytes.Buffer
+	pterm.SetDefaultOutput(&buf)
+	pterm.DisableStyling()
+	setDefaultPrinterWriter(t, &buf)
+	t.Cleanup(func() {
+		pterm.SetDefaultOutput(os.Stdout)
+		pterm.EnableStyling()
+	})
+
+	if err := showPlatformStatus(logger); err != nil {
+		t.Fatalf("showPlatformStatus() unexpected error = %v", err)
+	}
+
+	return buf.String()
 }

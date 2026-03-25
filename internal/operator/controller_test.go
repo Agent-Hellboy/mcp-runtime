@@ -811,6 +811,62 @@ func TestCheckIngressReady(t *testing.T) {
 		}
 		assertEqual(t, "ready", ready, false)
 	})
+
+	t.Run("returns true when ingress has load balancer status", func(t *testing.T) {
+		mcpServer := &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
+		}
+		ingress := &networkingv1.Ingress{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
+			Status: networkingv1.IngressStatus{
+				LoadBalancer: networkingv1.IngressLoadBalancerStatus{
+					Ingress: []networkingv1.IngressLoadBalancerIngress{{IP: "10.0.0.1"}},
+				},
+			},
+		}
+		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer, ingress).Build()
+		r := MCPServerReconciler{Client: client, Scheme: scheme}
+		ready, err := r.checkIngressReady(context.Background(), mcpServer)
+		if err != nil {
+			t.Fatalf("failed to check ingress readiness: %v", err)
+		}
+		assertEqual(t, "ready", ready, true)
+	})
+
+	t.Run("returns true when ingress class exists for local ingress", func(t *testing.T) {
+		ingressClassName := "traefik"
+		pathType := networkingv1.PathTypePrefix
+		mcpServer := &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
+		}
+		ingress := &networkingv1.Ingress{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
+			Spec: networkingv1.IngressSpec{
+				IngressClassName: &ingressClassName,
+				Rules: []networkingv1.IngressRule{
+					{
+						IngressRuleValue: networkingv1.IngressRuleValue{
+							HTTP: &networkingv1.HTTPIngressRuleValue{
+								Paths: []networkingv1.HTTPIngressPath{
+									{Path: "/", PathType: &pathType},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		class := &networkingv1.IngressClass{
+			ObjectMeta: metav1.ObjectMeta{Name: ingressClassName},
+		}
+		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer, ingress, class).Build()
+		r := MCPServerReconciler{Client: client, Scheme: scheme}
+		ready, err := r.checkIngressReady(context.Background(), mcpServer)
+		if err != nil {
+			t.Fatalf("failed to check ingress readiness: %v", err)
+		}
+		assertEqual(t, "ready", ready, true)
+	})
 }
 
 func TestBuildIngressAnnotations(t *testing.T) {

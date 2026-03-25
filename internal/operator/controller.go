@@ -178,6 +178,7 @@ type gatewayToolAccess struct {
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=networking.k8s.io,resources=ingressclasses,verbs=get;list;watch
 //+kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch;update
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
@@ -1474,6 +1475,19 @@ func (r *MCPServerReconciler) checkIngressReady(ctx context.Context, mcpServer *
 	if len(ingress.Status.LoadBalancer.Ingress) > 0 {
 		return true, nil
 	}
+
+	// Local/dev ingress controllers such as Traefik may not populate loadBalancer status
+	// on individual Ingress objects. If the referenced IngressClass exists and the Ingress
+	// has at least one rule, treat the resource as admitted.
+	if ingress.Spec.IngressClassName != nil && *ingress.Spec.IngressClassName != "" && len(ingress.Spec.Rules) > 0 {
+		ingressClass := &networkingv1.IngressClass{}
+		if err := r.Get(ctx, types.NamespacedName{Name: *ingress.Spec.IngressClassName}, ingressClass); err == nil {
+			return true, nil
+		} else if !errors.IsNotFound(err) {
+			return false, err
+		}
+	}
+
 	return false, nil
 }
 
