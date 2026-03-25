@@ -6,7 +6,7 @@
     <title>{{ title or "MCP Runtime Platform" }}</title>
     <meta
       name="description"
-      content="MCP Runtime Platform is a self-hosted control plane for deploying, governing, and observing MCP servers with CLI, operator, gateway, and analytics components."
+      content="MCP Runtime is a self-hosted runtime and analytics plane for internal MCP servers, with CLI, CRDs, operator, gateway, registry, and mcp-sentinel documentation."
     />
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   </head>
@@ -17,15 +17,21 @@
           <div class="brand">
             <div class="brand-mark" aria-hidden="true">MCP</div>
             <div>
-              <div class="brand-title">MCP Runtime Platform</div>
-              <div class="brand-subtitle">Control plane for internal MCP servers</div>
+              <div class="brand-title">MCP Runtime</div>
+              <div class="brand-subtitle">Runtime and analytics plane for internal MCP servers</div>
             </div>
           </div>
-          <nav class="nav-links">
-            {% for link in nav_links %}
-              <a href="{{ link.href }}">{{ link.label }}</a>
-            {% endfor %}
-          </nav>
+          <div class="nav-shell">
+            <nav class="nav-links">
+              {% for link in nav_links %}
+                <a href="{{ link.href }}">{{ link.label }}</a>
+              {% endfor %}
+            </nav>
+            <div class="nav-actions">
+              <a class="button ghost nav-button" href="https://github.com/Agent-Hellboy/mcp-runtime" target="_blank" rel="noreferrer">GitHub</a>
+              <a class="button primary nav-button" href="/docs/">Read docs</a>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -35,7 +41,7 @@
 
       <footer class="container footer">
         <div class="footer-copy">
-          MCP Runtime Platform is a self-hosted control plane for internal MCP
+          MCP Runtime is a self-hosted runtime and analytics plane for internal MCP
           servers. Start at
           <a href="https://mcpruntime.org/" target="_blank" rel="noreferrer">mcpruntime.org</a>,
           browse the <a href="/docs/">docs</a>, or reach Prince Roshan directly at

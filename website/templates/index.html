@@ -14,12 +14,12 @@
     <div class="hero-panel">
       <div class="panel-header">
         <div>
-          <h3>Current surface</h3>
-          <p>A plain summary of what already exists in the repo.</p>
+          <h3>What exists right now</h3>
+          <p>The site now mirrors the actual runtime plus sentinel surface in the repo.</p>
         </div>
-        <span class="chip">v1alpha1</span>
+        <span class="chip">alpha</span>
       </div>
-      <ul>
+      <ul class="panel-list">
         {% for item in at_a_glance %}
           <li>{{ item }}</li>
         {% endfor %}
@@ -36,31 +36,22 @@
     {% endfor %}
   </section>
 
-  <section id="overview" class="section container">
+  <section id="product" class="section container">
     <div class="section-header">
-      <h2>{{ overview.title }}</h2>
-      <p>{{ overview.intro }}</p>
+      <h2>{{ platform.title }}</h2>
+      <p>{{ platform.intro }}</p>
     </div>
     <div class="card-grid">
-      {% for item in overview["items"] %}
+      {% for item in platform["items"] %}
         <article class="card">
+          <span class="card-tag">{{ item.tag }}</span>
           <h3>{{ item.title }}</h3>
           <p>{{ item.body }}</p>
-        </article>
-      {% endfor %}
-    </div>
-  </section>
-
-  <section id="features" class="section container">
-    <div class="section-header">
-      <h2>Platform surface</h2>
-      <p>The current runtime combines deployment, policy, registry, and analytics pieces.</p>
-    </div>
-    <div class="card-grid">
-      {% for item in features %}
-        <article class="card">
-          <h3>{{ item.title }}</h3>
-          <p>{{ item.body }}</p>
+          <ul class="card-list">
+            {% for point in item.highlights %}
+              <li>{{ point }}</li>
+            {% endfor %}
+          </ul>
         </article>
       {% endfor %}
     </div>
@@ -69,7 +60,7 @@
   <section id="workflow" class="section container">
     <div class="section-header">
       <h2>End-to-end workflow</h2>
-      <p>Move from setup to grants, sessions, and audit events with one control-plane path.</p>
+      <p>Move from cluster bootstrap to grants, sessions, and audit trails with one control-plane path.</p>
     </div>
     <div class="workflow-grid">
       {% for item in workflow %}
@@ -84,16 +75,60 @@
     </div>
   </section>
 
-  <section id="architecture" class="section container">
+  <section id="cli" class="section container">
     <div class="section-header">
-      <h2>Platform components</h2>
-      <p>The repo is organized around a small set of runtime building blocks.</p>
+      <h2>{{ cli_surface.title }}</h2>
+      <p>{{ cli_surface.intro }}</p>
     </div>
     <div class="card-grid">
-      {% for item in architecture %}
+      {% for item in cli_surface["items"] %}
         <article class="card">
+          <div class="card-command"><code>{{ item.command }}</code></div>
           <h3>{{ item.title }}</h3>
           <p>{{ item.body }}</p>
+          <ul class="card-list">
+            {% for point in item.highlights %}
+              <li>{{ point }}</li>
+            {% endfor %}
+          </ul>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section id="sentinel" class="section container">
+    <div class="section-header">
+      <h2>{{ sentinel.title }}</h2>
+      <p>{{ sentinel.intro }}</p>
+    </div>
+    <div class="card-grid">
+      {% for item in sentinel["items"] %}
+        <article class="card">
+          <span class="card-tag">{{ item.tag }}</span>
+          <h3>{{ item.title }}</h3>
+          <p>{{ item.body }}</p>
+          <ul class="card-list">
+            {% for point in item.highlights %}
+              <li>{{ point }}</li>
+            {% endfor %}
+          </ul>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section id="docs" class="section container">
+    <div class="section-header">
+      <h2>{{ docs_library.title }}</h2>
+      <p>{{ docs_library.intro }}</p>
+    </div>
+    <div class="card-grid">
+      {% for item in docs_library["items"] %}
+        <article class="card action-card">
+          <span class="card-tag">{{ item.tag }}</span>
+          <h3>{{ item.title }}</h3>
+          <p>{{ item.body }}</p>
+          <a class="button secondary" href="{{ item.href }}">{{ item.label }}</a>
         </article>
       {% endfor %}
     </div>
@@ -104,7 +139,7 @@
       <h2>Contact</h2>
       <p>If you want to discuss the project, your MCP rollout, or anything in general, reach out directly.</p>
     </div>
-    <div class="card-grid contact-grid">
+    <div class="card-grid">
       {% for item in contacts %}
         <article class="card contact-card">
           <h3>{{ item.title }}</h3>

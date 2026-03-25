@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MCP Runtime Docs | Sentinel</title>
+    <meta
+      name="description"
+      content="mcp-sentinel stack overview covering ingest, processor, API, UI, gateway, storage, and observability."
+    />
+    <link rel="stylesheet" href="/static/docs.css" />
+  </head>
+  <body>
+    <main>
+      <header class="site-header">
+        <div class="container nav">
+          <a class="brand" href="/docs/">
+            <div class="brand-mark" aria-hidden="true">MCP</div>
+            <div>
+              <div class="brand-title">MCP Runtime Docs</div>
+              <div class="brand-subtitle">mcp-sentinel analytics and gateway plane</div>
+            </div>
+          </a>
+          <div class="nav-shell">
+            <nav class="nav-links">
+              <a href="/docs/">Overview</a>
+              <a href="/docs/runtime">Runtime</a>
+              <a href="/docs/cli">CLI</a>
+              <a class="active" href="/docs/sentinel">Sentinel</a>
+              <a href="/docs/api">API</a>
+            </nav>
+            <div class="nav-actions">
+              <a class="button ghost" href="/">Website</a>
+              <a class="button primary" href="https://github.com/Agent-Hellboy/mcp-runtime" target="_blank" rel="noreferrer">GitHub</a>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section class="hero container">
+        <div class="hero-copy">
+          <span class="eyebrow">Sentinel</span>
+          <h1>mcp-sentinel analytics and gateway plane.</h1>
+          <p>
+            <code>mcp-sentinel</code> is the companion repo and bundled install path for analytics, gateway,
+            proxy, and observability services around MCP servers. It is broader than a dashboard and broader
+            than a single proxy.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="/docs/runtime">Runtime docs</a>
+            <a class="button secondary" href="/docs/api#analytics-api">Analytics API</a>
+          </div>
+        </div>
+        <aside class="hero-card">
+          <h3>What ships here</h3>
+          <ul>
+            <li>Ingest, processor, API, UI, and gateway services</li>
+            <li>Proxy sidecar for MCP tool-call enforcement</li>
+            <li>ClickHouse, Kafka, and observability manifests</li>
+            <li>Example MCP server and sidecar wiring</li>
+          </ul>
+        </aside>
+      </section>
+
+      <section class="section container">
+        <div class="section-header">
+          <h2>Services</h2>
+          <p>The stack already includes these main application services.</p>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <strong>mcp-proxy</strong>
+            <p>
+              Transparent sidecar that extracts identity, evaluates tool-level policy, emits allow or deny
+              audit events, and forwards traffic upstream to the MCP server.
+            </p>
+          </article>
+          <article class="card">
+            <strong>ingest</strong>
+            <p>
+              Receives <code>POST /events</code>, validates API keys or optional JWTs, and writes events to
+              Kafka.
+            </p>
+          </article>
+          <article class="card">
+            <strong>processor</strong>
+            <p>
+              Consumes Kafka, batches events, and writes them into ClickHouse with indexed audit fields for
+              filtering.
+            </p>
+          </article>
+          <article class="card">
+            <strong>api</strong>
+            <p>
+              Exposes <code>/api/events</code>, <code>/api/stats</code>, <code>/api/sources</code>,
+              <code>/api/event-types</code>, and filtered event queries.
+            </p>
+          </article>
+          <article class="card">
+            <strong>ui</strong>
+            <p>
+              Shows total events, latest source, last event, limit controls, auto refresh, and the event
+              stream table against the API.
+            </p>
+          </article>
+          <article class="card">
+            <strong>gateway</strong>
+            <p>
+              Kubernetes gateway deployment that fronts the sentinel API, ingest, and UI surfaces.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section container">
+        <div class="section-header">
+          <h2>Event path</h2>
+          <p>This is the current data path from an MCP tool call to audit exploration.</p>
+        </div>
+        <div class="step-grid">
+          <article class="step-card">
+            <div class="step-number">01</div>
+            <div>
+              <h3>Proxy evaluates the request</h3>
+              <p>The sidecar reads identity headers, loads policy data, checks trust, and decides allow or deny at tool-call time.</p>
+            </div>
+          </article>
+          <article class="step-card">
+            <div class="step-number">02</div>
+            <div>
+              <h3>Ingest receives the event</h3>
+              <p>The event is sent to <code>/events</code> on the ingest service and written into the Kafka topic <code>mcp.events</code>.</p>
+            </div>
+          </article>
+          <article class="step-card">
+            <div class="step-number">03</div>
+            <div>
+              <h3>Processor batches to ClickHouse</h3>
+              <p>The processor reads Kafka, batches messages, and writes them to the ClickHouse-backed event table.</p>
+            </div>
+          </article>
+          <article class="step-card">
+            <div class="step-number">04</div>
+            <div>
+              <h3>API exposes query surfaces</h3>
+              <p>The API returns recent events, stats, sources, event types, and filtered audit views over the stored event stream.</p>
+            </div>
+          </article>
+          <article class="step-card">
+            <div class="step-number">05</div>
+            <div>
+              <h3>UI and dashboards consume the data</h3>
+              <p>The UI shows the stream directly, while Grafana, Prometheus, Tempo, Loki, and Promtail cover the broader observability path.</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section container">
+        <div class="section-header">
+          <h2>Storage and observability</h2>
+          <p>The sentinel install is opinionated about storage and telemetry so teams can start with one stack.</p>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <strong>ClickHouse</strong>
+            <p>
+              Stores the event stream. The init manifest creates an <code>events</code> table with
+              materialized fields for server, namespace, cluster, human, agent, session, decision, and tool.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Kafka and Zookeeper</strong>
+            <p>
+              Back the ingestion pipeline so events can be buffered before the processor writes them to
+              ClickHouse.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Prometheus and Grafana</strong>
+            <p>
+              The manifests include scrape configuration and a Grafana deployment so service metrics are part
+              of the out-of-box story.
+            </p>
+          </article>
+          <article class="card">
+            <strong>OTel, Tempo, Loki, Promtail</strong>
+            <p>
+              Trace and log plumbing are part of the same install path so the stack goes beyond one audit
+              table.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section container">
+        <div class="section-header">
+          <h2>Auth and APIs</h2>
+          <p>The API and ingest services support both simple API keys and optional OIDC JWT validation.</p>
+        </div>
+        <pre><code>POST /events
+GET /api/events?limit=100
+GET /api/stats
+GET /api/sources
+GET /api/event-types
+GET /api/events/filter?server=payments&amp;decision=deny&amp;agent_id=ops-agent&amp;limit=50
+GET /health
+GET /metrics</code></pre>
+      </section>
+
+      <section class="section container">
+        <div class="section-header">
+          <h2>Included manifests</h2>
+          <p>The Kubernetes directory already carries a real deployment set, not just placeholders.</p>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <strong>Core app manifests</strong>
+            <p>
+              <code>00-namespace</code>, <code>01-config</code>, <code>02-secrets</code>,
+              <code>03-clickhouse</code>, <code>04-clickhouse-init</code>, <code>05-kafka</code>,
+              <code>06-ingest</code>, <code>07-processor</code>, <code>08-api</code>,
+              <code>09-ui</code>, and <code>10-gateway</code>.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Observability manifests</strong>
+            <p>
+              <code>11-prometheus</code>, <code>12-grafana</code>, <code>15-otel-collector</code>,
+              <code>16-tempo</code>, <code>17-loki</code>, <code>18-promtail</code>, and
+              <code>19-grafana-datasources</code>.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Example MCP wiring</strong>
+            <p>
+              <code>13-mcp-example</code>, <code>14-mcp-proxy-sidecar</code>, and the example README show
+              how an in-cluster MCP server emits analytics events through sentinel.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Runtime integration</strong>
+            <p>
+              <code>mcp-runtime setup</code> builds the sentinel images and deploys this stack by default.
+              Use <code>--without-sentinel</code> to skip it.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="container callout">
+        <div>
+          <h2>Companion plane, not an addon afterthought</h2>
+          <p>
+            Sentinel is where analytics, gateway behavior, and lightweight policy-enforcement services live
+            around MCP servers. That is why the website and docs now treat it as a first-class part of the
+            product.
+          </p>
+        </div>
+      </section>
+
+      <footer class="container footer">
+        The sentinel docs track the services and manifests shipped under <code>mcp-sentinel</code> today.
+      </footer>
+    </main>
+  </body>
+</html>

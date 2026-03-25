@@ -12,37 +12,47 @@
   </head>
   <body>
     <main>
-      <header>
+      <header class="site-header">
         <div class="container nav">
-          <div class="brand">
-            <div class="brand-mark" aria-hidden="true"></div>
-            <span>MCP Runtime API</span>
+          <a class="brand" href="/docs/">
+            <div class="brand-mark" aria-hidden="true">MCP</div>
+            <div>
+              <div class="brand-title">MCP Runtime API</div>
+              <div class="brand-subtitle">Current v1alpha1 resource and gateway reference</div>
+            </div>
+          </a>
+          <div class="nav-shell">
+            <nav class="nav-links">
+              <a href="/docs/">Overview</a>
+              <a href="/docs/runtime">Runtime</a>
+              <a href="/docs/cli">CLI</a>
+              <a href="/docs/sentinel">Sentinel</a>
+              <a class="active" href="/docs/api">API</a>
+            </nav>
+            <div class="nav-actions">
+              <a class="button ghost" href="/">Website</a>
+              <a class="button primary" href="https://github.com/Agent-Hellboy/mcp-runtime" target="_blank" rel="noreferrer">GitHub</a>
+            </div>
           </div>
-          <nav class="nav-links">
-            <a href="/docs/">Docs</a>
-            <a href="#resources">Resources</a>
-            <a href="#security-auth">Security</a>
-            <a href="#gateway-flow">Gateway</a>
-            <a href="#analytics-api">Analytics API</a>
-          </nav>
         </div>
       </header>
 
       <section class="hero container">
-        <div>
+        <div class="hero-copy">
+          <span class="eyebrow">API</span>
           <h1>API reference for runtime, policy, and analytics.</h1>
           <p>
-            The control plane is now split between deployment config on <code>MCPServer</code>, access
-            grants on <code>MCPAccessGrant</code>, consent/session state on <code>MCPAgentSession</code>,
-            and audit events emitted through <code>mcp-sentinel</code>.
+            The control plane is split between deployment config on <code>MCPServer</code>, access grants on
+            <code>MCPAccessGrant</code>, consent or session state on <code>MCPAgentSession</code>, and audit
+            events emitted through <code>mcp-sentinel</code>.
           </p>
         </div>
         <aside class="hero-card">
           <h3>Quick index</h3>
           <ul>
-            <li><a href="#mcpserver">MCPServer</a></li>
-            <li><a href="#mcpaccessgrant">MCPAccessGrant</a></li>
-            <li><a href="#mcpagentsession">MCPAgentSession</a></li>
+            <li><a href="#resources">Core resources</a></li>
+            <li><a href="#surface">MCPServer surface</a></li>
+            <li><a href="#mcpserver">MCPServer example</a></li>
             <li><a href="#security-auth">Security and auth</a></li>
             <li><a href="#headers">Gateway headers</a></li>
             <li><a href="#analytics-api">Analytics endpoints</a></li>
@@ -51,7 +61,10 @@
       </section>
 
       <section id="resources" class="section container">
-        <h2>Core Resources</h2>
+        <div class="section-header">
+          <h2>Core resources</h2>
+          <p>The current control-plane contract centers on three resource types.</p>
+        </div>
         <div class="grid">
           <article class="card">
             <strong>MCPServer</strong>
@@ -72,6 +85,68 @@
               Server-side consented trust, expiry, revocation, and upstream token references per agent
               session.
             </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="surface" class="section container">
+        <div class="section-header">
+          <h2>MCPServer surface</h2>
+          <p>The deployment resource now owns more than image and replicas. These are the main groups on the spec.</p>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <strong>Workload and routing</strong>
+            <p>
+              Image, imageTag, registryOverride, replicas, port, servicePort, ingressPath, ingressHost,
+              ingressClass, and ingress annotations live directly on <code>MCPServer</code>.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Resources and environment</strong>
+            <p>
+              CPU and memory requests or limits, literal env vars, secret-backed env vars, and image pull
+              secrets are part of the same resource.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Policy and identity</strong>
+            <p>
+              Tool inventory, auth mode, policy mode, session requirements, and gateway config define how a
+              server is reached and governed.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Analytics and rollout</strong>
+            <p>
+              Analytics emission config and rollout strategy stay with the server resource so runtime,
+              gateway, and release behavior can ship together.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section container">
+        <div class="section-header">
+          <h2>Enums and semantics</h2>
+          <p>The type system is small, but the enums matter because they drive runtime and gateway behavior.</p>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <strong>Auth modes</strong>
+            <p><code>none</code>, <code>header</code>, and <code>oauth</code> exist on the type. The working path today is header-based identity extraction.</p>
+          </article>
+          <article class="card">
+            <strong>Policy modes</strong>
+            <p><code>allow-list</code> enforces explicit policy. <code>observe</code> keeps the decision path visible without the same deny posture.</p>
+          </article>
+          <article class="card">
+            <strong>Trust levels</strong>
+            <p><code>low</code>, <code>medium</code>, and <code>high</code> are used on tools, grants, and sessions. Effective trust is the minimum of grant and session trust.</p>
+          </article>
+          <article class="card">
+            <strong>Rollout strategies</strong>
+            <p><code>RollingUpdate</code>, <code>Recreate</code>, and <code>Canary</code> are available on <code>spec.rollout</code>.</p>
           </article>
         </div>
       </section>
@@ -127,7 +202,7 @@ spec:
       <section id="mcpaccessgrant" class="section container">
         <h2>MCPAccessGrant</h2>
         <p>
-          Grants are separate from server deployment. They target one server and one human/agent subject,
+          Grants are separate from server deployment. They target one server and one human or agent subject,
           set the admin-side max trust ceiling, and optionally allow or deny individual tools.
         </p>
         <pre><code>apiVersion: mcpruntime.org/v1alpha1
@@ -177,18 +252,18 @@ spec:
       </section>
 
       <section id="security-auth" class="section container">
-        <h2>Security and Auth</h2>
-        <p>
-          The current stack supports gateway-side identity extraction, server-side agent sessions, and
-          optional OIDC/JWT bearer-token validation for <code>mcp-sentinel</code> API and ingest services.
-          It does not currently implement a full OAuth 2.1 authorization server or Dynamic Client
-          Registration flow.
-        </p>
+        <div class="section-header">
+          <h2>Security and auth</h2>
+          <p>
+            The current stack supports gateway-side identity extraction, server-side agent sessions, and
+            optional OIDC or JWT bearer-token validation for <code>mcp-sentinel</code> API and ingest services.
+          </p>
+        </div>
         <div class="grid">
           <article class="card">
             <strong>Implemented today</strong>
             <p>
-              <code>spec.auth</code> can model <code>oauth</code>, but the working path today is header-based
+              <code>spec.auth</code> can model <code>oauth</code>, but the practical path today is header-based
               identity extraction at the gateway plus optional bearer-token validation against JWKS,
               issuer, and audience on <code>mcp-sentinel</code> services.
             </p>
@@ -205,7 +280,7 @@ spec:
             <strong>Practical model</strong>
             <p>
               Use the gateway for human, agent, and session identity; use
-              <code>MCPAccessGrant</code>/<code>MCPAgentSession</code> for trust and revocation; and use
+              <code>MCPAccessGrant</code> and <code>MCPAgentSession</code> for trust and revocation; and use
               OIDC-issued bearer tokens only where the <code>mcp-sentinel</code> services validate them.
             </p>
           </article>
@@ -213,12 +288,13 @@ spec:
       </section>
 
       <section id="gateway-flow" class="section container">
-        <h2>Gateway Flow</h2>
-        <p>
-          Service traffic stays direct unless gateway mode is enabled. In gateway mode the pod path becomes
-          <code>client -&gt; gateway sidecar -&gt; MCP server</code>. The service points at the sidecar, and the
-          sidecar enforces policy only for tool invocation methods.
-        </p>
+        <div class="section-header">
+          <h2>Gateway flow</h2>
+          <p>
+            Service traffic stays direct unless gateway mode is enabled. In gateway mode the pod path becomes
+            <code>client -&gt; gateway sidecar -&gt; MCP server</code>.
+          </p>
+        </div>
         <div class="grid">
           <article class="card">
             <strong>Enforcement point</strong>
@@ -236,7 +312,7 @@ spec:
       </section>
 
       <section id="headers" class="section container">
-        <h2>Gateway Headers</h2>
+        <h2>Gateway headers</h2>
         <pre><code>X-MCP-Human-ID: user-123
 X-MCP-Agent-ID: ops-agent
 X-MCP-Agent-Session: sess-8f1b9d</code></pre>
@@ -248,8 +324,10 @@ X-MCP-Agent-Session: sess-8f1b9d</code></pre>
       </section>
 
       <section id="analytics-api" class="section container">
-        <h2>mcp-sentinel API</h2>
-        <p>The bundled analytics stack exposes a read API over the ClickHouse-backed event stream.</p>
+        <div class="section-header">
+          <h2>mcp-sentinel API</h2>
+          <p>The bundled analytics stack exposes a read API over the ClickHouse-backed event stream.</p>
+        </div>
         <pre><code>GET /api/events?limit=100
 GET /api/stats
 GET /api/sources
@@ -274,11 +352,16 @@ GET /api/events/filter?server=payments&amp;decision=deny&amp;agent_id=ops-agent&
       <section id="setup" class="section container">
         <h2>Setup</h2>
         <p>
-          <code>mcp-runtime setup</code> now builds the runtime operator image, the gateway proxy image, the
+          <code>mcp-runtime setup</code> builds the runtime operator image, the gateway proxy image, the
           analytics service images, and deploys the bundled analytics stack by default. Use
-          <code>--without-analytics</code> if you only want the runtime/operator footprint.
+          <code>--without-sentinel</code> if you only want the runtime or operator footprint.
         </p>
       </section>
+
+      <footer class="container footer">
+        The API reference follows the current alpha types in <code>api/v1alpha1</code> and the bundled
+        sentinel endpoints shipped with this repo.
+      </footer>
     </main>
   </body>
 </html>

@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MCP Runtime Docs | Runtime</title>
+    <meta
+      name="description"
+      content="Runtime architecture, control-plane resources, setup flow, and traffic model for MCP Runtime."
+    />
+    <link rel="stylesheet" href="/static/docs.css" />
+  </head>
+  <body>
+    <main>
+      <header class="site-header">
+        <div class="container nav">
+          <a class="brand" href="/docs/">
+            <div class="brand-mark" aria-hidden="true">MCP</div>
+            <div>
+              <div class="brand-title">MCP Runtime Docs</div>
+              <div class="brand-subtitle">Runtime architecture and control plane</div>
+            </div>
+          </a>
+          <div class="nav-shell">
+            <nav class="nav-links">
+              <a href="/docs/">Overview</a>
+              <a class="active" href="/docs/runtime">Runtime</a>
+              <a href="/docs/cli">CLI</a>
+              <a href="/docs/sentinel">Sentinel</a>
+              <a href="/docs/api">API</a>
+            </nav>
+            <div class="nav-actions">
+              <a class="button ghost" href="/">Website</a>
+              <a class="button primary" href="https://github.com/Agent-Hellboy/mcp-runtime" target="_blank" rel="noreferrer">GitHub</a>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section class="hero container">
+        <div class="hero-copy">
+          <span class="eyebrow">Runtime</span>
+          <h1>Runtime architecture and control plane.</h1>
+          <p>
+            MCP Runtime is the Kubernetes control plane for internal MCP servers. It owns cluster bootstrap,
+            registry and ingress setup, operator reconciliation, deployment resources, rollout, and the
+            access model that sits beside each server.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="/docs/cli">Open CLI docs</a>
+            <a class="button secondary" href="/docs/api">Open API docs</a>
+          </div>
+        </div>
+        <aside class="hero-card">
+          <h3>On this page</h3>
+          <ul>
+            <li><a href="#overview">What the runtime owns</a></li>
+            <li><a href="#resources">Core resources</a></li>
+            <li><a href="#topology">Runtime topology</a></li>
+            <li><a href="#install-flow">Install and delivery flow</a></li>
+            <li><a href="#traffic">Traffic and enforcement</a></li>
+          </ul>
+        </aside>
+      </section>
+
+      <section id="overview" class="section container">
+        <div class="section-header">
+          <h2>What the runtime owns</h2>
+          <p>The runtime is broader than deployment alone. These are the main control-plane jobs in the current repo.</p>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <strong>Bootstrap</strong>
+            <p>
+              <code>cluster</code> and <code>setup</code> commands initialize CRDs and namespaces, configure
+              ingress, provision clusters, and optionally wire in cert-manager based TLS.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Server delivery</strong>
+            <p>
+              The operator reconciles <code>MCPServer</code> resources into Deployments, Services, and
+              Ingress objects so each MCP server lands at a stable route.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Access and consent</strong>
+            <p>
+              Grants and sessions are modeled as separate resources so policy, trust ceilings, consent,
+              expiry, and revocation are not embedded into deployment YAML.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Gateway-aware rollout</strong>
+            <p>
+              Servers can stay direct or run behind the proxy sidecar, while rollout settings still live on
+              the same server resource.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="resources" class="section container">
+        <div class="section-header">
+          <h2>Core resources</h2>
+          <p>The control plane centers on three resource types in <code>v1alpha1</code>.</p>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <strong>MCPServer</strong>
+            <p>
+              Declares workload, image, route, resources, tool inventory, auth, policy, session, gateway,
+              analytics, and rollout settings for one MCP server.
+            </p>
+          </article>
+          <article class="card">
+            <strong>MCPAccessGrant</strong>
+            <p>
+              Maps a human or agent subject to a target server, applies an admin-side maximum trust ceiling,
+              and optionally sets per-tool allow or deny rules.
+            </p>
+          </article>
+          <article class="card">
+            <strong>MCPAgentSession</strong>
+            <p>
+              Stores consented trust, expiry, revocation, and upstream token secret references for an active
+              agent session on a server.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="topology" class="section container">
+        <div class="section-header">
+          <h2>Runtime topology</h2>
+          <p>This architecture block is carried forward from the README so the docs keep the full platform map.</p>
+        </div>
+        <pre><code>Developer / CI
+      |
+      v
++----------------------+
+|   mcp-runtime CLI    |
++----------+-----------+
+           |
+           v
++----------------------+
+|   v1alpha1 surface   |
+|   MCPServer          |
+|   MCPAccessGrant     |
+|   MCPAgentSession    |
++----------+-----------+
+           |
+           v
++----------------------+        +----------------------+
+| Operator + Registry  |------->| Deployments /        |
+| + Ingress            |        | Services / Ingress   |
++----------+-----------+        +----------+-----------+
+           |                               |
+           | gateway enabled               | direct or gateway path
+           v                               v
+      +----------------+            /{server-name}/mcp
+      | MCP proxy      |---------------------> MCP server
+      | sidecar        |
+      +--------+-------+
+               |
+               v
++------------------------------+
+| mcp-sentinel                 |
+| ingest | processor | API     |
+| UI | gateway | metrics       |
++------------------------------+</code></pre>
+      </section>
+
+      <section id="install-flow" class="section container">
+        <div class="section-header">
+          <h2>Install and delivery flow</h2>
+          <p>The current runtime is easiest to understand as one operating path from cluster setup to observation.</p>
+        </div>
+        <div class="step-grid">
+          <article class="step-card">
+            <div class="step-number">01</div>
+            <div>
+              <h3>Initialize the cluster</h3>
+              <p>Use <code>cluster init</code> or <code>setup</code> to install CRDs and ensure the <code>mcp-runtime</code> and <code>mcp-servers</code> namespaces exist.</p>
+            </div>
+          </article>
+          <article class="step-card">
+            <div class="step-number">02</div>
+            <div>
+              <h3>Configure ingress and registry</h3>
+              <p>Install or point at ingress, deploy the internal registry or provision an external one, and enable TLS if your environment needs it.</p>
+            </div>
+          </article>
+          <article class="step-card">
+            <div class="step-number">03</div>
+            <div>
+              <h3>Describe servers</h3>
+              <p>Define tools, auth headers, policy mode, session requirements, analytics emission, and rollout settings on <code>MCPServer</code>.</p>
+            </div>
+          </article>
+          <article class="step-card">
+            <div class="step-number">04</div>
+            <div>
+              <h3>Publish and deploy images</h3>
+              <p>Build images, push them to the selected registry, generate manifests from metadata where needed, and apply them to the cluster.</p>
+            </div>
+          </article>
+          <article class="step-card">
+            <div class="step-number">05</div>
+            <div>
+              <h3>Grant access and watch behavior</h3>
+              <p>Create grants and sessions, then use the status command and sentinel surfaces to inspect runtime health and audit decisions.</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="traffic" class="section container">
+        <div class="section-header">
+          <h2>Traffic and enforcement model</h2>
+          <p>Client traffic can stay direct or flow through the proxy sidecar depending on how the server is configured.</p>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <strong>Direct path</strong>
+            <p>
+              Without gateway mode, the reconciled service points at the MCP server directly and the server
+              is exposed at <code>/{server-name}/mcp</code>.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Gateway path</strong>
+            <p>
+              With <code>spec.gateway.enabled</code>, traffic moves through the proxy sidecar first so the
+              runtime can evaluate policy and emit audit decisions.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Trust evaluation</strong>
+            <p>
+              Tool required trust, grant max trust, and session consented trust combine to determine the
+              effective trust available at the moment of a tool call.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section container">
+        <div class="section-header">
+          <h2>Gateway headers</h2>
+          <p>These header defaults are used by the proxy unless the auth config overrides them.</p>
+        </div>
+        <pre><code>X-MCP-Human-ID: user-123
+X-MCP-Agent-ID: ops-agent
+X-MCP-Agent-Session: sess-8f1b9d</code></pre>
+      </section>
+
+      <section class="container callout">
+        <div>
+          <h2>Current scope</h2>
+          <p>
+            Deployment, routing, grants, sessions, gateway policy, trust, and audit flow are implemented in
+            the current repo. Sentinel supports bearer-token validation on API and ingest surfaces, but this
+            is not a full OAuth 2.1 authorization server.
+          </p>
+        </div>
+      </section>
+
+      <footer class="container footer">
+        The runtime docs focus on the control-plane behavior that already exists in the repo today.
+      </footer>
+    </main>
+  </body>
+</html>

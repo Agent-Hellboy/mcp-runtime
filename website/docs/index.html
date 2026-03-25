@@ -6,75 +6,190 @@
     <title>MCP Runtime Docs</title>
     <meta
       name="description"
-      content="Reference docs for MCP Runtime gateway, policy, and analytics APIs."
+      content="Documentation for MCP Runtime, the bundled mcp-sentinel stack, CLI workflows, and the v1alpha1 API surface."
     />
     <link rel="stylesheet" href="/static/docs.css" />
   </head>
   <body>
     <main>
-      <header>
+      <header class="site-header">
         <div class="container nav">
-          <div class="brand">
-            <div class="brand-mark" aria-hidden="true"></div>
-            <span>MCP Runtime Docs</span>
+          <a class="brand" href="/docs/">
+            <div class="brand-mark" aria-hidden="true">MCP</div>
+            <div>
+              <div class="brand-title">MCP Runtime Docs</div>
+              <div class="brand-subtitle">Runtime, CLI, sentinel, and API guides</div>
+            </div>
+          </a>
+          <div class="nav-shell">
+            <nav class="nav-links">
+              <a class="active" href="/docs/">Overview</a>
+              <a href="/docs/runtime">Runtime</a>
+              <a href="/docs/cli">CLI</a>
+              <a href="/docs/sentinel">Sentinel</a>
+              <a href="/docs/api">API</a>
+            </nav>
+            <div class="nav-actions">
+              <a class="button ghost" href="/">Website</a>
+              <a class="button primary" href="https://github.com/Agent-Hellboy/mcp-runtime" target="_blank" rel="noreferrer">GitHub</a>
+            </div>
           </div>
-          <nav class="nav-links">
-            <a href="/">Overview</a>
-            <a href="/docs/api">API Reference</a>
-          </nav>
         </div>
       </header>
 
       <section class="hero container">
-        <div>
-          <h1>Gateway, policy, and analytics docs for the runtime control plane.</h1>
+        <div class="hero-copy">
+          <span class="eyebrow">Docs</span>
+          <h1>Docs for the runtime, not just the CRDs.</h1>
           <p>
-            MCP Runtime now ships a Permit-inspired gateway mode, separate access/session resources,
-            and a bundled <code>mcp-sentinel</code> install path. This docs area is the reference for
-            that API surface.
+            This docs area now carries the README essentials plus deeper guides for the runtime, CLI,
+            <code>mcp-sentinel</code>, and the current <code>v1alpha1</code> API surface.
           </p>
           <div class="hero-actions">
-            <a class="button primary" href="/docs/api">Open API reference</a>
-            <a class="button secondary" href="https://github.com/Agent-Hellboy/mcp-runtime">Repository</a>
+            <a class="button primary" href="/docs/runtime">Start with runtime docs</a>
+            <a class="button secondary" href="/docs/cli">Open CLI guide</a>
           </div>
         </div>
         <aside class="hero-card">
-          <h3>What is documented here</h3>
+          <h3>Read this first</h3>
           <ul>
-            <li><code>MCPServer</code> gateway, auth, policy, session, rollout, and analytics fields.</li>
-            <li><code>MCPAccessGrant</code> and <code>MCPAgentSession</code> resources.</li>
-            <li>Gateway headers, OIDC/JWT bearer-token validation, trust rules, and audit payload fields.</li>
-            <li><code>mcp-sentinel</code> API endpoints and setup defaults.</li>
+            <li><a href="/docs/runtime">Runtime docs</a> explain topology, traffic, and control-plane scope.</li>
+            <li><a href="/docs/cli">CLI docs</a> map command groups, flags, and practical flows.</li>
+            <li><a href="/docs/sentinel">Sentinel docs</a> cover ingest, processor, API, UI, and observability.</li>
+            <li><a href="/docs/api">API docs</a> cover resources, headers, trust, and endpoint contracts.</li>
           </ul>
         </aside>
       </section>
 
       <section class="section container">
-        <h2>Reference Sets</h2>
+        <div class="section-header">
+          <h2>Requirements</h2>
+          <p>These are the current repo-level requirements carried over from the README.</p>
+        </div>
         <div class="grid">
           <article class="card">
-            <strong>API reference</strong>
-            <p>
-              YAML examples, gateway headers, rollout rules, analytics fields, and control-plane resource
-              definitions.
-            </p>
+            <strong>Go</strong>
+            <p><code>1.24+</code></p>
+          </article>
+          <article class="card">
+            <strong>kubectl</strong>
+            <p>Required for cluster, status, registry, and manifest operations.</p>
+          </article>
+          <article class="card">
+            <strong>Docker</strong>
+            <p>Used for image build and push flows.</p>
+          </article>
+          <article class="card">
+            <strong>Make</strong>
+            <p>Used for build, test, and development helpers.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section container">
+        <div class="section-header">
+          <h2>Quick start</h2>
+          <p>These commands are the current short path from a fresh repo checkout to a running platform flow.</p>
+        </div>
+        <pre><code>make deps && make build-runtime
+
+./bin/mcp-runtime setup
+./bin/mcp-runtime status
+
+# Optional:
+# ./bin/mcp-runtime setup --with-tls
+# ./bin/mcp-runtime setup --without-sentinel
+
+./bin/mcp-runtime registry push --image my-server:latest
+./bin/mcp-runtime pipeline generate --dir .mcp --output manifests/
+./bin/mcp-runtime pipeline deploy --dir manifests/</code></pre>
+      </section>
+
+      <section class="section container">
+        <div class="section-header">
+          <h2>Key commands</h2>
+          <p>The high-level command groups below are the same ones exposed in the README and the CLI code.</p>
+        </div>
+        <pre><code>./bin/mcp-runtime setup
+./bin/mcp-runtime status
+./bin/mcp-runtime registry
+./bin/mcp-runtime server
+./bin/mcp-runtime pipeline
+./bin/mcp-runtime cluster</code></pre>
+      </section>
+
+      <section class="section container">
+        <div class="section-header">
+          <h2>Documentation map</h2>
+          <p>Each page is scoped to the way the repo is actually organized today.</p>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <strong>Runtime</strong>
+            <p>Control-plane architecture, core resources, ingress and registry wiring, traffic flow, and rollout behavior.</p>
+            <a class="button secondary" href="/docs/runtime">Read runtime docs</a>
+          </article>
+          <article class="card">
+            <strong>CLI</strong>
+            <p>Command groups, useful flags, and practical commands for setup, cluster, server, registry, pipeline, and status flows.</p>
+            <a class="button secondary" href="/docs/cli">Read CLI docs</a>
+          </article>
+          <article class="card">
+            <strong>Sentinel</strong>
+            <p>The bundled analytics and gateway plane, including ingest, processor, API, UI, storage, auth, and observability manifests.</p>
+            <a class="button secondary" href="/docs/sentinel">Read sentinel docs</a>
+          </article>
+          <article class="card">
+            <strong>API</strong>
+            <p>YAML examples, gateway headers, trust semantics, rollout rules, analytics fields, and resource definitions.</p>
             <a class="button secondary" href="/docs/api">Read API docs</a>
           </article>
+        </div>
+      </section>
+
+      <section class="section container">
+        <div class="section-header">
+          <h2>Development</h2>
+          <p>The README development helpers now live here too.</p>
+        </div>
+        <pre><code>./hack/dev-setup.sh
+make test
+make operator-manifests operator-generate</code></pre>
+      </section>
+
+      <section class="section container">
+        <div class="section-header">
+          <h2>Platform at a glance</h2>
+          <p>The docs follow the same separation of concerns the codebase already uses.</p>
+        </div>
+        <div class="grid">
           <article class="card">
-            <strong>Runtime model</strong>
+            <strong>Control plane</strong>
             <p>
-              Client traffic can stay direct or move through the gateway sidecar for per-tool policy and
-              allow/deny audit events.
+              The runtime CLI and operator manage cluster setup, image flow, MCPServer deployment, ingress,
+              and rollout behavior.
             </p>
-            <a class="button secondary" href="/docs/api#gateway-flow">View flow</a>
           </article>
           <article class="card">
-            <strong>Analytics install</strong>
+            <strong>Access model</strong>
             <p>
-              <code>mcp-runtime setup</code> deploys the bundled analytics stack by default. Use
-              <code>--without-analytics</code> to skip it.
+              <code>MCPAccessGrant</code> and <code>MCPAgentSession</code> separate human and agent access,
+              trust ceilings, consent, and revocation from deployment config.
             </p>
-            <a class="button secondary" href="/docs/api#setup">View setup notes</a>
+          </article>
+          <article class="card">
+            <strong>Gateway path</strong>
+            <p>
+              Gateway mode moves traffic through the proxy sidecar so policy is enforced at tool call time
+              and audit events are emitted into sentinel.
+            </p>
+          </article>
+          <article class="card">
+            <strong>Analytics plane</strong>
+            <p>
+              Sentinel owns ingest, processor, API, UI, gateway, ClickHouse, Kafka, and observability
+              services around the MCP servers.
+            </p>
           </article>
         </div>
       </section>
@@ -83,13 +198,17 @@
         <div>
           <h2>Current scope</h2>
           <p>
-            This reference covers the new gateway, access/session resources, audit fields, and bundled
-            analytics install path. OIDC/JWT bearer-token validation is supported for
-            <code>mcp-sentinel</code> services, but a full OAuth 2.1 authorization server, consent flow,
-            and Dynamic Client Registration are intentionally out of scope for this first cut.
+            Deployment, routing, grants, sessions, gateway policy, and audit flow are implemented in the
+            current repo. Sentinel supports bearer-token validation, but a full OAuth 2.1 authorization
+            server and Dynamic Client Registration flow are still out of scope.
           </p>
         </div>
       </section>
+
+      <footer class="container footer">
+        MCP Runtime docs track the current repo surface for the alpha platform. Use the runtime and API
+        pages as the closest contract while the product evolves.
+      </footer>
     </main>
   </body>
 </html>
