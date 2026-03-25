@@ -465,12 +465,17 @@ def docs_redirect():
 
 
 @app.route("/docs/")
+@app.route("/docs/welcome")
+@app.route("/docs/welcome/")
 def docs_index():
     return send_from_directory("docs", "index.html")
 
 
 @app.route("/docs/<path:page>")
 def docs_page(page: str):
+    page = page.rstrip("/")
+    if page in {"", "welcome", "index"}:
+        return send_from_directory("docs", "index.html")
     if not page.endswith(".html"):
         page = f"{page}.html"
     try:
