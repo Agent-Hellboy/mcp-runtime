@@ -595,7 +595,19 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get working directory: %v", err)
 	}
-	root := filepath.Clean(filepath.Join(cwd, "..", ".."))
+	root := cwd
+	for {
+		if _, statErr := os.Stat(filepath.Join(root, "go.mod")); statErr == nil {
+			if _, statErr = os.Stat(filepath.Join(root, "mcp-sentinel", "k8s", "00-namespace.yaml")); statErr == nil {
+				break
+			}
+		}
+		parent := filepath.Dir(root)
+		if parent == root {
+			t.Fatalf("failed to locate repo root from %q", cwd)
+		}
+		root = parent
+	}
 	if err := os.Chdir(root); err != nil {
 		t.Fatalf("failed to chdir to repo root: %v", err)
 	}

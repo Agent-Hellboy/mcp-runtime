@@ -9,22 +9,32 @@ jobs:
   trivy-fs:
     name: Trivy FS Scan
     runs-on: ubuntu-latest
+    env:
+      TRIVY_IMAGE: aquasec/trivy:0.65.0
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          scan-type: fs
-          scan-ref: .
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
+        run: |
+          docker pull "$TRIVY_IMAGE"
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            "$TRIVY_IMAGE" \
+            fs \
+            --exit-code 1 \
+            --ignore-unfixed \
+            --vuln-type os,library \
+            --severity CRITICAL,HIGH \
+            --no-progress \
+            .
 
   trivy-image:
     name: Trivy Operator Image Scan
     runs-on: ubuntu-latest
+    env:
+      TRIVY_IMAGE: aquasec/trivy:0.65.0
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,10 +42,19 @@ jobs:
       - name: Build operator image
         run: docker build --pull -f Dockerfile.operator -t mcp-runtime-operator:ci .
 
+      - name: Save operator image tarball
+        run: docker save mcp-runtime-operator:ci -o /tmp/mcp-runtime-operator-ci.tar
+
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          image-ref: mcp-runtime-operator:ci
-          vuln-type: 'os,library'
-          ignore-unfixed: true
-          severity: 'CRITICAL,HIGH'
+        run: |
+          docker pull "$TRIVY_IMAGE"
+          docker run --rm \
+            -v /tmp:/tmp \
+            "$TRIVY_IMAGE" \
+            image \
+            --input /tmp/mcp-runtime-operator-ci.tar \
+            --exit-code 1 \
+            --ignore-unfixed \
+            --vuln-type os,library \
+            --severity CRITICAL,HIGH \
+            --no-progress
