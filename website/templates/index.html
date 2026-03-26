@@ -18,7 +18,7 @@
     </div>
     <div class="hero-stage">
       <div class="stage-toolbar">
-        <span class="stage-heading">MCPServer blueprint</span>
+        <span class="stage-heading">Example MCPServer</span>
         <span class="stage-kicker">{{ status.label }}</span>
       </div>
       <div class="stage-main">
@@ -55,6 +55,25 @@
     </div>
   </section>
 
+  <section id="docs" class="section container section-shell">
+    <div class="section-header">
+      <h2>{{ docs_library.title }}</h2>
+      <p>{{ docs_library.intro }}</p>
+    </div>
+    <div class="docs-list">
+      {% for item in docs_library["items"] %}
+        <a class="docs-row" href="{{ item.href }}">
+          <div class="docs-copy">
+            <span class="row-label">{{ item.tag }}</span>
+            <h3>{{ item.title }}</h3>
+            <p>{{ item.body }}</p>
+          </div>
+          <span class="docs-cta">{{ item.label }}</span>
+        </a>
+      {% endfor %}
+    </div>
+  </section>
+
   <section id="product" class="section container section-shell">
     <div class="section-header">
       <h2>{{ product.title }}</h2>
@@ -80,7 +99,7 @@
 
   <section id="workflow" class="section container section-shell">
     <div class="section-header">
-      <h2>From service spec to governed traffic</h2>
+      <h2>From service definition to governed traffic</h2>
       <p>Follow the path from definition to rollout, enforcement, and audit without leaving the platform model.</p>
     </div>
     <div class="workflow-list">
@@ -110,25 +129,6 @@
           </div>
           <p>{{ item.body }}</p>
         </article>
-      {% endfor %}
-    </div>
-  </section>
-
-  <section id="docs" class="section container section-shell">
-    <div class="section-header">
-      <h2>{{ docs_library.title }}</h2>
-      <p>{{ docs_library.intro }}</p>
-    </div>
-    <div class="docs-list">
-      {% for item in docs_library["items"] %}
-        <a class="docs-row" href="{{ item.href }}">
-          <div class="docs-copy">
-            <span class="row-label">{{ item.tag }}</span>
-            <h3>{{ item.title }}</h3>
-            <p>{{ item.body }}</p>
-          </div>
-          <span class="docs-cta">{{ item.label }}</span>
-        </a>
       {% endfor %}
     </div>
   </section>

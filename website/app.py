@@ -6,31 +6,32 @@ from werkzeug.exceptions import NotFound
 app = Flask(__name__)
 
 NAV_LINKS = [
-    {"label": "Platform", "href": "#product"},
+    {"label": "Overview", "href": "#product"},
+    {"label": "Documentation", "href": "#docs"},
     {"label": "Workflow", "href": "#workflow"},
     {"label": "Surfaces", "href": "#surfaces"},
-    {"label": "Docs", "href": "#docs"},
 ]
 
 HERO = {
-    "eyebrow": "Open source Kubernetes platform for MCP",
+    "eyebrow": "Open source MCP platform for Kubernetes",
     "title": "Deploy, govern, and observe MCP services on Kubernetes.",
     "subtitle": (
         "MCP Runtime gives platform teams a higher-level control plane for MCP "
         "delivery, access, policy, audit, and observability."
     ),
-    "primary": {"label": "Open docs", "href": "/docs/"},
-    "secondary": {"label": "See architecture", "href": "/docs/runtime"},
+    "primary": {"label": "Documentation", "href": "/docs/"},
+    "secondary": {"label": "Runtime guide", "href": "/docs/runtime"},
     "highlights": [
-        "Self-hosted",
-        "Operator-managed",
+        "Open source",
+        "Kubernetes-native",
         "Governed request path",
     ],
-    "proof_kicker": "Platform blueprint",
-    "proof_title": "One MCP service. One operating model.",
+    "proof_kicker": "Reference manifest",
+    "proof_title": "One service definition. One operating model.",
     "proof_intro": (
-        "Define the service once. Runtime handles rollout and routing. Sentinel "
-        "handles policy, audit, and observability on live MCP requests."
+        "The runtime owns rollout and routing from this service definition. "
+        "Sentinel governs the live request path with policy, audit, and "
+        "observability."
     ),
     "proof_code": """apiVersion: mcpruntime.org/v1alpha1
 kind: MCPServer
@@ -73,15 +74,15 @@ STATUS = {
     "label": "Alpha",
     "body": (
         "Runtime, access, and the governed request path already work end to end. "
-        "The product direction is real. The API surface is still evolving."
+        "The architecture is stable enough to evaluate. The API and UX are still evolving."
     ),
 }
 
 PRODUCT = {
-    "title": "One operating model across runtime, access, and request governance.",
+    "title": "Three jobs, one platform boundary.",
     "intro": (
-        "This is the clean split: runtime owns service lifecycle, access stays "
-        "explicit, and sentinel governs the live request path."
+        "Keep lifecycle, grants, and request governance distinct without splitting them "
+        "across unrelated tools."
     ),
     "items": [
         {
@@ -162,10 +163,9 @@ WORKFLOW = [
 ]
 
 SURFACES = {
-    "title": "Use the platform through four surfaces",
+    "title": "Four surfaces, one documentation model",
     "intro": (
-        "Operators can move from architecture to day-two operations without leaving "
-        "the product story."
+        "Move from architecture to day-two operations without switching mental models."
     ),
     "items": [
         {
@@ -192,9 +192,9 @@ SURFACES = {
 }
 
 DOCS_LIBRARY = {
-    "title": "Start with architecture or operations",
+    "title": "Start with the page that matches the task",
     "intro": (
-        "Pick the path that matches how your team evaluates infrastructure."
+        "Documentation is the fastest way to understand the platform boundary and the operator workflow."
     ),
     "items": [
         {
