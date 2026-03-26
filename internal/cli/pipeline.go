@@ -196,13 +196,20 @@ func (m *PipelineManager) DeployCRDs(manifestsDir, namespace string) error {
 	for _, file := range files {
 		m.logger.Info("Applying manifest", zap.String("file", file))
 
-		args := []string{"apply", "-f", file}
-		if namespace != "" {
-			args = append(args, "-n", namespace)
+		manifestBytes, err := os.ReadFile(file)
+		if err != nil {
+			wrappedErr := wrapWithSentinelAndContext(
+				ErrApplyManifestFailed,
+				err,
+				fmt.Sprintf("failed to read %s: %v", file, err),
+				map[string]any{"file": file, "namespace": namespace, "component": "pipeline"},
+			)
+			Error("Failed to apply manifest")
+			logStructuredError(m.logger, wrappedErr, "Failed to apply manifest")
+			return wrappedErr
 		}
 
-		// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-		if err := m.kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
+		if err := applyManifestContentWithNamespace(m.kubectl, string(manifestBytes), namespace); err != nil {
 			wrappedErr := wrapWithSentinelAndContext(
 				ErrApplyManifestFailed,
 				err,

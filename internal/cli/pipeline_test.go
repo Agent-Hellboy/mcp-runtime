@@ -3,8 +3,10 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"go.uber.org/zap"
@@ -60,8 +62,27 @@ func TestPipelineManager_DeployCRDs(t *testing.T) {
 	})
 
 	t.Run("applies each manifest file", func(t *testing.T) {
-		mock := &MockExecutor{}
-		kubectl := &KubectlClient{exec: mock, validators: nil}
+		var appliedManifests []string
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				cmd := &MockCommand{Args: spec.Args}
+				cmd.RunFunc = func() error {
+					if cmd.StdinR != nil {
+						data, err := io.ReadAll(cmd.StdinR)
+						if err != nil {
+							return err
+						}
+						appliedManifests = append(appliedManifests, string(data))
+					}
+					return nil
+				}
+				return cmd
+			},
+		}
+		kubectl, err := NewKubectlClient(mock)
+		if err != nil {
+			t.Fatalf("failed to create kubectl client: %v", err)
+		}
 		mgr := NewPipelineManager(kubectl, zap.NewNop())
 
 		// Create temp dir with manifest files
@@ -73,7 +94,7 @@ func TestPipelineManager_DeployCRDs(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err := mgr.DeployCRDs(tmpDir, "test-ns")
+		err = mgr.DeployCRDs(tmpDir, "test-ns")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -82,11 +103,21 @@ func TestPipelineManager_DeployCRDs(t *testing.T) {
 		applyCount := 0
 		for _, cmd := range mock.Commands {
 			if cmd.Name == "kubectl" && contains(cmd.Args, "apply") {
+				if !contains(cmd.Args, "-") {
+					t.Errorf("expected kubectl apply to stream manifest over stdin, got %v", cmd.Args)
+				}
 				applyCount++
 			}
 		}
 		if applyCount != 2 {
 			t.Errorf("expected 2 kubectl apply calls, got %d", applyCount)
+		}
+		if len(appliedManifests) != 2 {
+			t.Fatalf("expected 2 applied manifests, got %d", len(appliedManifests))
+		}
+		applied := strings.Join(appliedManifests, "\n---\n")
+		if !strings.Contains(applied, "apiVersion: v1") {
+			t.Fatalf("expected manifest contents on stdin, got %q", applied)
 		}
 	})
 
