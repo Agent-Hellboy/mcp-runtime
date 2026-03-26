@@ -2,24 +2,24 @@
 
 :root {
   --header-height: 96px;
-  --bg: #f7f9fc;
-  --bg-strong: #f1f5fb;
+  --bg: #f9fbfd;
+  --bg-strong: #f3f7fb;
   --surface: #ffffff;
-  --surface-alt: #f7faff;
-  --ink: #162033;
-  --muted: #586476;
-  --line: #dce5f0;
-  --line-strong: #c9d6e6;
-  --blue: #1b63d0;
-  --blue-soft: #edf4ff;
+  --surface-alt: #f6f9fd;
+  --ink: #152032;
+  --muted: #526177;
+  --line: #d8e2ee;
+  --line-strong: #c4d3e6;
+  --blue: #1559c2;
+  --blue-soft: #ecf3ff;
   --teal: #0f766e;
   --teal-soft: rgba(15, 118, 110, 0.12);
   --dark: #0f1728;
   --dark-soft: #162033;
   --dark-line: rgba(22, 32, 51, 0.1);
   --dark-text: #162033;
-  --shadow: 0 10px 26px rgba(15, 23, 42, 0.05);
-  --shadow-strong: 0 18px 48px rgba(15, 23, 42, 0.08);
+  --shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+  --shadow-strong: 0 14px 34px rgba(15, 23, 42, 0.04);
 }
 
 * {
@@ -34,9 +34,26 @@ body {
   margin: 0;
   font-family: Manrope, "Segoe UI", sans-serif;
   color: var(--ink);
-  background: linear-gradient(180deg, #ffffff 0%, var(--bg-strong) 180px, var(--bg) 100%);
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(180deg, #ffffff 0%, var(--bg-strong) 160px, var(--bg) 100%);
   min-height: 100vh;
   line-height: 1.6;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(216, 226, 238, 0.62) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(216, 226, 238, 0.62) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: 0.42;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.36), transparent 72%);
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.36), transparent 72%);
 }
 
 a {
@@ -80,6 +97,7 @@ pre {
 
 .page {
   position: relative;
+  z-index: 1;
 }
 
 .bg-shape {
@@ -95,13 +113,12 @@ pre {
   position: sticky;
   top: 0;
   z-index: 40;
-  border-bottom: 1px solid rgba(220, 229, 240, 0.92);
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.96);
 }
 
 .nav {
-  min-height: 78px;
+  min-height: 74px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -116,13 +133,13 @@ pre {
 }
 
 .brand-mark {
-  width: 40px;
-  height: 40px;
+  width: 38px;
+  height: 38px;
   display: grid;
   place-items: center;
-  border-radius: 12px;
+  border-radius: 10px;
   border: 1px solid var(--line);
-  background: linear-gradient(180deg, #ffffff, #edf4ff);
+  background: linear-gradient(180deg, #ffffff, #eef4ff);
   color: var(--blue);
   font-size: 11px;
   font-weight: 700;
@@ -130,7 +147,7 @@ pre {
 }
 
 .brand-title {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 700;
   line-height: 1.15;
   letter-spacing: -0.03em;
@@ -138,7 +155,7 @@ pre {
 
 .brand-subtitle {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--muted);
 }
@@ -171,7 +188,7 @@ pre {
 .nav-links a:hover,
 .nav-links a:focus-visible {
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--surface-alt);
 }
 
 .nav-actions {
@@ -182,10 +199,10 @@ pre {
 }
 
 .hero {
-  padding: 60px 0 24px;
+  padding: 72px 0 28px;
   display: grid;
   grid-template-columns: minmax(320px, 0.96fr) minmax(360px, 1.04fr);
-  gap: 42px;
+  gap: 52px;
   align-items: start;
 }
 
@@ -196,7 +213,7 @@ pre {
   padding: 7px 11px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.96);
   color: var(--blue);
   font-size: 12px;
   font-weight: 700;
@@ -206,8 +223,8 @@ pre {
 
 .hero-copy h1 {
   margin: 20px 0 16px;
-  max-width: 10.5ch;
-  font-size: clamp(3rem, 5.2vw, 4.75rem);
+  max-width: 11.5ch;
+  font-size: clamp(3.2rem, 5.6vw, 5rem);
   font-weight: 800;
   line-height: 0.98;
   letter-spacing: -0.06em;
@@ -216,8 +233,8 @@ pre {
 .hero-copy p {
   margin: 0 0 26px;
   max-width: 34rem;
-  font-size: 17px;
-  line-height: 1.7;
+  font-size: 18px;
+  line-height: 1.72;
   color: var(--muted);
 }
 
@@ -232,13 +249,13 @@ pre {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 44px;
+  min-height: 42px;
   padding: 10px 16px;
-  border-radius: 12px;
+  border-radius: 10px;
   border: 1px solid transparent;
   text-decoration: none;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   transition:
     background 0.2s ease,
     border-color 0.2s ease,
@@ -251,7 +268,7 @@ pre {
 }
 
 .button.primary {
-  background: var(--ink);
+  background: var(--blue);
   color: #ffffff;
 }
 
@@ -288,10 +305,11 @@ pre {
 
 .hero-stage {
   border: 1px solid var(--line);
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.98);
+  border-top: 3px solid var(--blue);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 251, 255, 0.98));
   color: var(--ink);
-  box-shadow: var(--shadow-strong);
+  box-shadow: var(--shadow);
   overflow: hidden;
 }
 
@@ -300,9 +318,9 @@ pre {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 18px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--line);
-  background: rgba(248, 251, 255, 0.94);
+  background: rgba(248, 251, 255, 0.88);
 }
 
 .stage-heading,
@@ -311,16 +329,18 @@ pre {
   align-items: center;
   min-height: 30px;
   padding: 0 10px;
-  border-radius: 999px;
+  border-radius: 8px;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .stage-heading {
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, monospace;
   color: var(--muted);
-  background: transparent;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--line);
 }
 
 .stage-kicker {
@@ -336,7 +356,7 @@ pre {
 }
 
 .stage-copy {
-  padding: 24px 22px 18px;
+  padding: 24px 22px 20px;
   border-right: 1px solid var(--line);
 }
 
@@ -352,8 +372,8 @@ pre {
 
 .stage-copy h2 {
   margin: 0 0 12px;
-  max-width: 12ch;
-  font-size: clamp(1.9rem, 2.7vw, 2.45rem);
+  max-width: 13ch;
+  font-size: clamp(2rem, 2.9vw, 2.5rem);
   font-weight: 800;
   line-height: 1.02;
   letter-spacing: -0.05em;
@@ -403,15 +423,15 @@ pre {
 
 .code-sample {
   margin: 0;
-  padding: 24px 22px 18px;
-  background: linear-gradient(180deg, #fbfdff 0%, #f5f8fd 100%);
+  padding: 24px 22px 20px;
+  background: #f8fbff;
   overflow-x: auto;
 }
 
 .code-sample code {
   color: var(--ink);
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: 12.5px;
+  line-height: 1.8;
   white-space: pre;
 }
 
@@ -419,9 +439,9 @@ pre {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  padding: 14px 20px 18px;
+  padding: 14px 18px 18px;
   border-top: 1px solid var(--line);
-  background: rgba(250, 252, 255, 0.96);
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .stage-signal {
@@ -429,7 +449,7 @@ pre {
   align-items: center;
   gap: 8px;
   padding: 7px 10px;
-  border-radius: 999px;
+  border-radius: 8px;
   border: 1px solid var(--line);
   background: #ffffff;
   color: var(--muted);
@@ -482,14 +502,14 @@ pre {
 }
 
 .section {
-  padding: 42px 0 8px;
+  padding: 48px 0 10px;
   scroll-margin-top: var(--header-height);
 }
 
 .section-shell {
   display: grid;
-  grid-template-columns: minmax(240px, 0.78fr) minmax(320px, 1.22fr);
-  gap: 40px;
+  grid-template-columns: minmax(240px, 0.72fr) minmax(340px, 1.28fr);
+  gap: 52px;
   align-items: start;
   border-top: 1px solid var(--line);
 }
@@ -501,7 +521,7 @@ pre {
 .section-header h2 {
   margin: 0 0 12px;
   max-width: 14ch;
-  font-size: clamp(1.9rem, 3vw, 2.65rem);
+  font-size: clamp(1.95rem, 3vw, 2.75rem);
   font-weight: 800;
   line-height: 1.02;
   letter-spacing: -0.05em;
@@ -526,7 +546,7 @@ pre {
   display: grid;
   grid-template-columns: 120px minmax(0, 1fr);
   gap: 20px;
-  padding: 22px 0;
+  padding: 24px 0;
   border-top: 1px solid var(--line);
 }
 
@@ -566,8 +586,8 @@ pre {
   align-items: center;
   min-height: 32px;
   padding: 0 11px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.94);
+  border-radius: 8px;
+  background: var(--surface-alt);
   border: 1px solid var(--line);
   color: var(--muted);
   font-size: 12px;
@@ -598,7 +618,7 @@ pre {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 18px;
   align-items: center;
-  padding: 22px 0;
+  padding: 24px 0;
   border-top: 1px solid var(--line);
   text-decoration: none;
 }
@@ -615,7 +635,7 @@ pre {
   min-width: 126px;
   min-height: 40px;
   padding: 0 14px;
-  border-radius: 12px;
+  border-radius: 8px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.94);
   color: var(--ink);
@@ -626,10 +646,10 @@ pre {
 
 .cta-band {
   margin-top: 48px;
-  padding: 44px 0;
+  padding: 40px 0;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, #ffffff 0%, var(--bg-strong) 100%);
+  background: linear-gradient(180deg, #fcfdff 0%, var(--bg-strong) 100%);
   color: var(--ink);
 }
 
@@ -666,7 +686,7 @@ pre {
 }
 
 .cta-band .button.primary {
-  background: var(--ink);
+  background: var(--blue);
   color: #ffffff;
 }
 
@@ -754,7 +774,7 @@ pre {
   }
 
   .hero {
-    padding-top: 56px;
+    padding-top: 52px;
   }
 
   .hero-copy h1 {

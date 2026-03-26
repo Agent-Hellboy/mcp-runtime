@@ -1,17 +1,17 @@
 @import "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Manrope:wght@400;500;600;700;800&display=swap";
 
 :root {
-  --bg: #f7f9fc;
-  --bg-strong: #f1f5fb;
+  --bg: #f9fbfd;
+  --bg-strong: #f3f7fb;
   --surface: #ffffff;
   --surface-strong: #ffffff;
-  --ink: #162033;
-  --muted: #586476;
-  --line: #dce5f0;
-  --accent: #1b63d0;
-  --accent-soft: #edf4ff;
+  --ink: #152032;
+  --muted: #526177;
+  --line: #d8e2ee;
+  --accent: #1559c2;
+  --accent-soft: #ecf3ff;
   --accent-warm: #c37a36;
-  --shadow: 0 10px 26px rgba(15, 23, 42, 0.05);
+  --shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
 }
 
 * {
@@ -26,11 +26,26 @@ body {
   margin: 0;
   font-family: Manrope, "Segoe UI", sans-serif;
   color: var(--ink);
-  background:
-    radial-gradient(circle at top right, rgba(27, 99, 208, 0.05), transparent 26%),
-    linear-gradient(180deg, #ffffff 0%, var(--bg-strong) 140px, var(--bg) 100%);
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(180deg, #ffffff 0%, var(--bg-strong) 140px, var(--bg) 100%);
   min-height: 100vh;
   line-height: 1.6;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(216, 226, 238, 0.62) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(216, 226, 238, 0.62) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: 0.4;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.34), transparent 72%);
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.34), transparent 72%);
 }
 
 a {
@@ -67,6 +82,11 @@ pre {
   top: 16px;
 }
 
+main {
+  position: relative;
+  z-index: 1;
+}
+
 .container {
   width: min(1220px, calc(100vw - 32px));
   margin: 0 auto;
@@ -76,13 +96,12 @@ pre {
   position: sticky;
   top: 0;
   z-index: 30;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid rgba(220, 229, 240, 0.92);
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom: 1px solid var(--line);
 }
 
 .nav {
-  min-height: 82px;
+  min-height: 76px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -97,27 +116,27 @@ pre {
 }
 
 .brand-mark {
-  width: 44px;
-  height: 44px;
-  border-radius: 14px;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
   border: 1px solid var(--line);
-  background: linear-gradient(180deg, var(--surface-strong), #edf4ff);
+  background: linear-gradient(180deg, var(--surface-strong), #eef4ff);
   color: var(--accent);
   font-weight: 700;
-  font-size: 13px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   display: grid;
   place-items: center;
 }
 
 .brand-title {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 700;
   line-height: 1.2;
 }
 
 .brand-subtitle {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
 }
 
@@ -148,7 +167,7 @@ pre {
 .nav-links a:hover,
 .nav-links a.active {
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.9);
+  background: rgba(246, 249, 253, 0.96);
 }
 
 .nav-actions,
@@ -162,22 +181,20 @@ pre {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 44px;
+  min-height: 42px;
   padding: 10px 16px;
-  border-radius: 12px;
+  border-radius: 10px;
   border: 1px solid transparent;
   text-decoration: none;
   font-size: 14px;
   font-weight: 600;
   transition:
-    transform 160ms ease,
-    box-shadow 160ms ease,
     background-color 160ms ease,
     border-color 160ms ease;
 }
 
 .button.primary {
-  background: var(--ink);
+  background: var(--accent);
   color: #ffffff;
 }
 
@@ -189,21 +206,21 @@ pre {
 }
 
 .button:hover {
-  transform: translateY(-1px);
+  border-color: rgba(21, 89, 194, 0.26);
 }
 
 .docs-shell {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr) 220px;
-  gap: 28px;
-  padding: 32px 0 56px;
+  gap: 32px;
+  padding: 28px 0 56px;
   align-items: start;
 }
 
 .docs-sidebar,
 .docs-toc {
   position: sticky;
-  top: 106px;
+  top: 96px;
 }
 
 .docs-panel,
@@ -213,7 +230,7 @@ pre {
   background: rgba(255, 255, 255, 0.98);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
-  border-radius: 16px;
+  border-radius: 12px;
 }
 
 .docs-panel {
@@ -273,8 +290,8 @@ pre {
 }
 
 .doc-header {
-  padding-bottom: 24px;
-  margin-bottom: 28px;
+  padding-bottom: 20px;
+  margin-bottom: 24px;
   border-bottom: 1px solid rgba(217, 228, 240, 0.92);
 }
 
@@ -295,7 +312,7 @@ pre {
 .doc-header h1 {
   margin: 14px 0 16px;
   max-width: 860px;
-  font-size: clamp(2.15rem, 3.8vw, 3.25rem);
+  font-size: clamp(2.25rem, 4vw, 3.35rem);
   line-height: 1.02;
   letter-spacing: -0.045em;
 }
@@ -345,11 +362,12 @@ pre {
 .doc-card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
+  gap: 14px;
 }
 
 .doc-card {
-  padding: 20px;
+  padding: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
 }
 
 .doc-card strong,
@@ -375,7 +393,7 @@ pre {
 .table-wrap {
   overflow-x: auto;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.96);
   box-shadow: var(--shadow);
 }
@@ -405,11 +423,12 @@ pre {
 pre {
   margin: 0;
   padding: 16px 18px;
-  border-radius: 14px;
+  border-radius: 12px;
   overflow-x: auto;
   background: #0f1728;
   color: #eef4ff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  border: 1px solid #1a2742;
+  box-shadow: none;
 }
 
 .toc-title {
@@ -495,10 +514,11 @@ pre {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.75fr);
   gap: 28px;
-  padding: 32px;
+  padding: 28px;
   border: 1px solid var(--line);
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.98);
+  border-top: 3px solid var(--accent);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 251, 255, 0.98));
   box-shadow: var(--shadow);
   overflow: hidden;
 }
@@ -516,7 +536,7 @@ pre {
 .home-hero-copy h1 {
   margin: 14px 0 16px;
   max-width: 780px;
-  font-size: clamp(2.45rem, 4.6vw, 3.9rem);
+  font-size: clamp(2.6rem, 4.8vw, 4rem);
   line-height: 1;
   letter-spacing: -0.055em;
 }
@@ -530,10 +550,10 @@ pre {
 
 .home-hero-rail {
   align-self: start;
-  padding: 22px 22px 20px;
+  padding: 20px 20px 18px;
   border: 1px solid var(--line);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.98);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
 }
 
 .home-rail-label,
@@ -658,16 +678,18 @@ pre {
   grid-template-columns: 120px minmax(0, 1fr) 150px;
   gap: 18px;
   align-items: start;
-  padding: 20px 0;
+  margin: 0 -12px;
+  padding: 20px 12px;
+  border-radius: 12px;
   border-bottom: 1px solid var(--line);
   text-decoration: none;
   transition:
-    transform 160ms ease,
+    background-color 160ms ease,
     color 160ms ease;
 }
 
 .home-entry:hover {
-  transform: translateX(2px);
+  background: rgba(236, 243, 255, 0.55);
 }
 
 .home-entry:hover .home-entry-body strong,
@@ -698,12 +720,12 @@ pre {
 .home-columns {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 24px;
+  gap: 18px;
 }
 
 .home-column {
   padding-top: 18px;
-  border-top: 3px solid var(--line);
+  border-top: 2px solid var(--line);
 }
 
 .home-column-accent {
@@ -728,9 +750,10 @@ pre {
 }
 
 .home-note {
-  padding: 22px;
+  padding: 20px 20px 20px 18px;
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.94);
   box-shadow: var(--shadow);
 }
@@ -751,6 +774,10 @@ pre {
   align-items: center;
   justify-content: space-between;
   gap: 24px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(246, 249, 253, 0.92);
   margin-bottom: 18px;
 }
 
@@ -841,8 +868,8 @@ pre {
   }
 
   .docs-home-hero {
-    padding: 24px;
-    border-radius: 22px;
+    padding: 22px;
+    border-radius: 14px;
   }
 
   .home-hero-copy h1 {
@@ -852,7 +879,7 @@ pre {
   .home-hero-rail,
   .home-note {
     padding: 18px;
-    border-radius: 18px;
+    border-radius: 12px;
   }
 
   .doc-pager {

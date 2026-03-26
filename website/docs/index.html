@@ -39,11 +39,11 @@
       </header>
 
       <section class="docs-home container">
-        <article id="main-content" class="docs-home-main">
+        <article id="main-content" class="docs-home-main" tabindex="-1">
           <header class="docs-home-hero">
             <div class="home-hero-copy">
-              <span class="eyebrow">Docs</span>
-              <h1>Documentation for MCP Runtime.</h1>
+              <span class="eyebrow">Documentation</span>
+              <h1>MCP Runtime documentation</h1>
               <p class="doc-lead">
                 Architecture, CLI workflows, request-path governance, and API reference for operating MCP
                 services on Kubernetes. Start with runtime for the model, then use the CLI, sentinel, and
@@ -60,7 +60,7 @@
             </div>
 
             <aside class="home-hero-rail">
-              <div class="home-rail-label">Browse by task</div>
+              <div class="home-rail-label">Documentation map</div>
               <ol class="home-rail-list">
                 <li>
                   <div>
@@ -105,7 +105,7 @@
 ./bin/mcp-runtime setup
 ./bin/mcp-runtime status
 
-./bin/mcp-runtime registry push --image my-server:latest
+./bin/mcp-runtime registry push --image my-server:v1.0.0
 ./bin/mcp-runtime pipeline generate --dir .mcp --output manifests/
 ./bin/mcp-runtime pipeline deploy --dir manifests/</code></pre>
           </section>
