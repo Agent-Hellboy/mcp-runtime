@@ -6,7 +6,7 @@
     <title>MCP Runtime Docs | Sentinel</title>
     <meta
       name="description"
-      content="mcp-sentinel stack overview covering ingest, processor, API, UI, gateway, storage, and observability."
+      content="mcp-sentinel overview covering governed MCP requests, ingest, processor, API, UI, gateway, storage, and observability."
     />
     <link rel="stylesheet" href="/static/docs.css" />
   </head>
@@ -19,7 +19,7 @@
             <div class="brand-mark" aria-hidden="true">MCP</div>
             <div>
               <div class="brand-title">MCP Runtime Docs</div>
-              <div class="brand-subtitle">mcp-sentinel analytics and gateway plane</div>
+              <div class="brand-subtitle">mcp-sentinel request-path governance and observability</div>
             </div>
           </a>
           <div class="nav-shell">
@@ -56,7 +56,7 @@
               <a class="sidebar-link" href="/docs/api">API</a>
             </div>
             <div class="sidebar-note">
-              Sentinel is the analytics and gateway plane around the runtime.
+              Sentinel is the governed MCP request path and observability layer around the runtime.
             </div>
           </div>
         </aside>
@@ -64,11 +64,12 @@
         <article id="main-content" class="docs-main">
           <header class="doc-header">
             <span class="eyebrow">Sentinel</span>
-            <h1>mcp-sentinel analytics and gateway plane.</h1>
+            <h1>mcp-sentinel policy, audit, and observability on the MCP request path.</h1>
             <p class="doc-lead">
-              <code>mcp-sentinel</code> is the companion repo and bundled install path for analytics,
-              gateway, proxy, and observability services around MCP servers. It is broader than a dashboard
-              and broader than a single proxy.
+              <code>mcp-sentinel</code> is the companion repo and bundled install path for proxy
+              enforcement, audit, query, and observability services around MCP servers. It is where live
+              MCP requests are governed and observed around the runtime, not arbitrary cluster traffic,
+              not just a dashboard, and not just a single proxy.
             </p>
             <div class="doc-actions">
               <a class="button primary" href="/docs/runtime">Runtime docs</a>

@@ -6,7 +6,7 @@
     <title>MCP Runtime Docs</title>
     <meta
       name="description"
-      content="Documentation for MCP Runtime, the bundled mcp-sentinel stack, CLI workflows, and the v1alpha1 API surface."
+      content="Documentation for MCP Runtime, the bundled mcp-sentinel request-path governance layer, CLI workflows, and the v1alpha1 API surface."
     />
     <link rel="stylesheet" href="/static/docs.css" />
   </head>
@@ -56,7 +56,7 @@
               <a class="sidebar-link" href="/docs/api">API</a>
             </div>
             <div class="sidebar-note">
-              Alpha docs for the current repo surface.
+              Start here to understand the control-plane and traffic-plane split.
             </div>
           </div>
         </aside>
@@ -64,11 +64,11 @@
         <article id="main-content" class="docs-main">
           <header class="doc-header">
             <span class="eyebrow">Welcome</span>
-            <h1>Welcome to MCP Runtime: self-hosted platform for internal MCP servers.</h1>
+            <h1>MCP Runtime is a higher-level Kubernetes platform for internal MCP services.</h1>
             <p class="doc-lead">
-              MCP Runtime combines cluster bootstrap, operator-managed MCP server deployment, separate access
-              and session resources, gateway enforcement, registry workflows, and the bundled
-              <code>mcp-sentinel</code> analytics plane in one Kubernetes-first stack.
+              MCP Runtime sits above ingress and service-mesh layers. It combines cluster bootstrap,
+              operator-managed deployment, and explicit access resources with <code>mcp-sentinel</code>,
+              which adds policy enforcement, audit, and observability around live MCP requests.
             </p>
             <div class="doc-actions">
               <a class="button primary" href="/docs/runtime">Start with runtime docs</a>
@@ -79,11 +79,23 @@
           <section id="why" class="doc-section">
             <h2>Why MCP Runtime?</h2>
             <ul class="doc-list">
-              <li>One control plane for setup, deployment, grants, sessions, and observation.</li>
-              <li>Per-tool policy and trust checks can happen at the gateway instead of only in app code.</li>
+              <li>mcp-runtime owns setup, deployment, grants, and sessions as the control plane.</li>
+              <li>mcp-sentinel owns policy enforcement, audit, query, and observability on the request path.</li>
               <li>Registry, ingress, and rollout workflows are part of the same runtime surface.</li>
-              <li>The bundled sentinel plane gives audit, query, and observability paths without another product hop.</li>
+              <li>The split is clear enough to explain internally and practical enough to operate.</li>
             </ul>
+          </section>
+
+          <section id="positioning" class="doc-section">
+            <h2>What this is not</h2>
+            <div class="note-box">
+              <h3>Not an Istio-style mesh control plane or a generic proxy fleet manager</h3>
+              <p>
+                MCP Runtime sits above lower-level ingress, gateway, and service-mesh infrastructure.
+                It standardizes MCP deployment, access, policy, and audit for MCP services rather than
+                trying to become the network control plane for every workload in the cluster.
+              </p>
+            </div>
           </section>
 
           <section id="benefits" class="doc-section">
@@ -96,6 +108,10 @@
                     <th>Description</th>
                   </tr>
                   <tr>
+                    <td>Clear plane split</td>
+                    <td>Use runtime for lifecycle and cluster state, and sentinel for live MCP request governance, instead of mixing both concerns into ad hoc services.</td>
+                  </tr>
+                  <tr>
                     <td>Unified delivery path</td>
                     <td>Use one CLI and one API surface for cluster setup, image flow, manifest generation, and MCP server rollout.</td>
                   </tr>
@@ -104,12 +120,12 @@
                     <td>Separate grants and sessions keep trust ceilings, consent, expiry, and revocation out of deployment-only YAML.</td>
                   </tr>
                   <tr>
-                    <td>Gateway-aware governance</td>
+                    <td>Request-path enforcement</td>
                     <td>Evaluate policy at tool-call time with identity headers, trust rules, and allow or deny audit decisions.</td>
                   </tr>
                   <tr>
-                    <td>Built-in analytics plane</td>
-                    <td>Bundle ingest, processor, API, UI, gateway, storage, and observability instead of stitching them on later.</td>
+                    <td>Bundled operator visibility</td>
+                    <td>Route audit and telemetry into sentinel ingest, processor, API, UI, and observability surfaces without adding a second product path.</td>
                   </tr>
                 </tbody>
               </table>
@@ -171,7 +187,7 @@
             <div class="doc-card-grid">
               <article class="doc-card">
                 <strong>Runtime</strong>
-                <p>Control-plane architecture, core resources, ingress and registry wiring, traffic flow, and rollout behavior.</p>
+                <p>Control-plane architecture, core resources, delivery model, traffic handoff, and rollout behavior.</p>
                 <a class="button secondary" href="/docs/runtime">Read runtime docs</a>
               </article>
               <article class="doc-card">
@@ -181,7 +197,7 @@
               </article>
               <article class="doc-card">
                 <strong>Sentinel</strong>
-                <p>The bundled analytics and gateway plane, including ingest, processor, API, UI, storage, auth, and observability manifests.</p>
+                <p>The bundled request-path governance and observability layer, including ingest, processor, API, UI, storage, auth, gateway, and telemetry surfaces.</p>
                 <a class="button secondary" href="/docs/sentinel">Read sentinel docs</a>
               </article>
               <article class="doc-card">
@@ -228,6 +244,7 @@ make operator-manifests operator-generate</code></pre>
           <div class="docs-panel">
             <div class="toc-title">On this page</div>
             <a class="toc-link" href="#why">Why MCP Runtime?</a>
+            <a class="toc-link" href="#positioning">What this is not</a>
             <a class="toc-link" href="#benefits">Core benefits</a>
             <a class="toc-link" href="#requirements">Requirements</a>
             <a class="toc-link" href="#quick-start">Quick start</a>

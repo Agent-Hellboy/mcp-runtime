@@ -6,40 +6,48 @@
     <title>{{ title or "MCP Runtime Platform" }}</title>
     <meta
       name="description"
-      content="MCP Runtime is the control plane for deploying and operating MCP services on Kubernetes with one repeatable platform workflow."
+      content="MCP Runtime is an open source Kubernetes platform for MCP, with a higher-level control plane and a bundled governed request path through mcp-sentinel."
     />
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   </head>
   <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <div class="page">
       <div class="bg-shape one" aria-hidden="true"></div>
       <div class="bg-shape two" aria-hidden="true"></div>
       <div class="bg-shape three" aria-hidden="true"></div>
       <header class="site-header">
         <div class="container nav">
-          <div class="brand">
+          <a class="brand" href="/">
             <div class="brand-mark" aria-hidden="true">MCP</div>
             <div>
               <div class="brand-title">MCP Runtime Platform</div>
-              <div class="brand-subtitle">Control plane for MCP</div>
+              <div class="brand-subtitle">MCP platform + request governance</div>
+            </div>
+          </a>
+          <div class="nav-shell">
+            <nav class="nav-links">
+              {% for link in nav_links %}
+                <a href="{{ link.href }}">{{ link.label }}</a>
+              {% endfor %}
+            </nav>
+            <div class="nav-actions">
+              <a class="button ghost" href="https://github.com/Agent-Hellboy/mcp-runtime">GitHub</a>
+              <a class="button primary nav-button" href="/docs/">Read docs</a>
             </div>
           </div>
-          <nav class="nav-links">
-            {% for link in nav_links %}
-              <a href="{{ link.href }}">{{ link.label }}</a>
-            {% endfor %}
-          </nav>
         </div>
       </header>
 
-      <main>
+      <main id="main-content">
         {% block content %}{% endblock %}
       </main>
 
       <footer class="container footer">
         <div>
-          MCP Runtime Platform provides a self-hosted path to deploy and manage
-          MCP servers across your organization. It is open source; contribute at
+          MCP Runtime Platform provides a self-hosted MCP control plane and a bundled
+          governed request path for internal MCP services. It is open source;
+          contribute at
           <a href="https://github.com/Agent-Hellboy/mcp-runtime">github.com/Agent-Hellboy/mcp-runtime</a>
           or write to us at
           <a
@@ -52,6 +60,9 @@
           >Email us</a>.
         </div>
         <div class="footer-links">
+          <a class="icon-link" href="/docs/">
+            Docs
+          </a>
           <a class="icon-link" href="https://github.com/Agent-Hellboy/mcp-runtime">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path

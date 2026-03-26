@@ -16,22 +16,35 @@
         {% endfor %}
       </div>
     </div>
-    <div class="hero-proof">
-      <div class="proof-header">
-        <div>
+    <div class="hero-stage">
+      <div class="stage-toolbar">
+        <div class="stage-tabs">
+          <span class="stage-tab active">mcpserver.yaml</span>
+          <span class="stage-tab">policy</span>
+          <span class="stage-tab">events</span>
+        </div>
+        <span class="stage-kicker">{{ status.label }}</span>
+      </div>
+      <div class="stage-main">
+        <div class="stage-copy">
           <span class="proof-kicker">{{ hero.proof_kicker }}</span>
           <h2>{{ hero.proof_title }}</h2>
           <p>{{ hero.proof_intro }}</p>
+          <div class="stage-items">
+            {% for item in hero.stage_items %}
+              <article class="stage-item">
+                <span class="stage-item-label">{{ item.label }}</span>
+                <h3>{{ item.value }}</h3>
+                <p>{{ item.body }}</p>
+              </article>
+            {% endfor %}
+          </div>
         </div>
-        <span class="chip">{{ status.label }}</span>
+        <pre class="code-sample"><code>{{ hero.proof_code }}</code></pre>
       </div>
-      <pre class="code-sample"><code>{{ hero.proof_code }}</code></pre>
-      <div class="proof-notes">
-        {% for item in hero.proof_points %}
-          <article class="proof-note">
-            <h3>{{ item.title }}</h3>
-            <p>{{ item.body }}</p>
-          </article>
+      <div class="stage-footer">
+        {% for item in hero.stage_signals %}
+          <span class="stage-signal">{{ item }}</span>
         {% endfor %}
       </div>
     </div>
@@ -39,33 +52,68 @@
 
   <section class="container status-band">
     <div class="status-rail">
-      <div>
+      <div class="status-copy">
         <span class="status-label">{{ status.label }}</span>
         <p>{{ status.body }}</p>
       </div>
-      <a class="button secondary" href="{{ status.cta.href }}">{{ status.cta.label }}</a>
+      <div class="status-actions">
+        <a class="button secondary" href="{{ status.secondary.href }}">{{ status.secondary.label }}</a>
+        <a class="button primary" href="{{ status.primary.href }}">{{ status.primary.label }}</a>
+      </div>
     </div>
   </section>
 
   <section class="container signal-strip">
-    {% for item in outcomes %}
+    {% for item in signals %}
       <article class="signal" style="--delay: {{ loop.index0 * 0.08 }}s;">
+        <span class="signal-label">{{ item.label }}</span>
         <h2>{{ item.title }}</h2>
         <p>{{ item.body }}</p>
       </article>
     {% endfor %}
   </section>
 
-  <section id="why" class="section container section-shell">
+  <section id="positioning" class="section container section-shell">
     <div class="section-header">
-      <h2>{{ why.title }}</h2>
-      <p>{{ why.intro }}</p>
+      <h2>{{ positioning.title }}</h2>
+      <p>{{ positioning.intro }}</p>
     </div>
-    <div class="value-list">
-      {% for item in why["items"] %}
-        <article class="value-item" style="--delay: {{ loop.index0 * 0.08 }}s;">
-          <h3>{{ item.title }}</h3>
-          <p>{{ item.body }}</p>
+    <div class="capability-list">
+      {% for item in positioning["items"] %}
+        <article class="capability-row" style="--delay: {{ loop.index0 * 0.08 }}s;">
+          <span class="row-label">{{ item.label }}</span>
+          <div class="row-content">
+            <h3>{{ item.title }}</h3>
+            <p>{{ item.body }}</p>
+            <div class="point-rail">
+              {% for point in item.points %}
+                <span class="point-pill">{{ point }}</span>
+              {% endfor %}
+            </div>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section id="product" class="section container section-shell">
+    <div class="section-header">
+      <h2>{{ product.title }}</h2>
+      <p>{{ product.intro }}</p>
+    </div>
+    <div class="capability-list">
+      {% for item in product["items"] %}
+        <article class="capability-row" style="--delay: {{ loop.index0 * 0.08 }}s;">
+          <span class="row-label">{{ item.label }}</span>
+          <div class="row-content">
+            <h3>{{ item.title }}</h3>
+            <p>{{ item.body }}</p>
+            <div class="point-rail">
+              {% for point in item.points %}
+                <span class="point-pill">{{ point }}</span>
+              {% endfor %}
+            </div>
+          </div>
         </article>
       {% endfor %}
     </div>
@@ -73,14 +121,14 @@
 
   <section id="workflow" class="section container section-shell">
     <div class="section-header">
-      <h2>From definition to routed server in four moves</h2>
-      <p>See how a team goes from one MCP spec to a stable cluster route without rebuilding the deployment story for every new server.</p>
+      <h2>From service spec to governed traffic</h2>
+      <p>Follow the path from definition to rollout, enforcement, and audit without leaving the platform model.</p>
     </div>
     <div class="workflow-list">
       {% for item in workflow %}
-        <article class="workflow-item" style="--delay: {{ loop.index0 * 0.08 }}s;">
-          <div class="step-number">{{ item.step }}</div>
-          <div class="step-body">
+        <article class="workflow-row" style="--delay: {{ loop.index0 * 0.08 }}s;">
+          <span class="workflow-step">{{ item.step }}</span>
+          <div class="row-content">
             <h3>{{ item.title }}</h3>
             <p>{{ item.body }}</p>
           </div>
@@ -89,58 +137,62 @@
     </div>
   </section>
 
-  <section id="teams" class="section container section-shell">
+  <section id="surfaces" class="section container section-shell">
     <div class="section-header">
-      <h2>Who it is for</h2>
-      <p>MCP Runtime fits teams that want a self-hosted, repeatable way to define, publish, and route multiple MCP services inside an existing cluster.</p>
-    </div>
-    <div class="audience-list">
-      {% for item in teams %}
-        <article class="audience-row" style="--delay: {{ loop.index0 * 0.08 }}s;">
-          <span class="audience-tag">{{ item.tag }}</span>
-          <div>
-            <h3>{{ item.title }}</h3>
-            <p>{{ item.body }}</p>
+      <h2>{{ surfaces.title }}</h2>
+      <p>{{ surfaces.intro }}</p>
+      <div class="company-strip">
+        {% for item in company %}
+          <div class="company-line">
+            <span class="company-label">{{ item.label }}</span>
+            <strong>{{ item.title }}</strong>
+            <span>{{ item.body }}</span>
           </div>
-        </article>
-      {% endfor %}
-    </div>
-  </section>
-
-  <section id="platform" class="section container section-shell platform-shell">
-    <div class="section-header">
-      <h2>{{ platform.title }}</h2>
-      <p>{{ platform.intro }}</p>
-    </div>
-    <div class="platform-layout">
-      <aside class="platform-note">
-        <h3>The operating model</h3>
-        <p>Define servers, publish images, let the operator route them, and keep the workflow consistent across the fleet. That gives teams one repeatable path instead of ad hoc infrastructure decisions.</p>
-      </aside>
-      <div class="stack-list">
-        {% for item in platform_components %}
-          <article class="stack-row" style="--delay: {{ loop.index0 * 0.08 }}s;">
-            <span class="stack-index">0{{ loop.index }}</span>
-            <div>
-              <h3>{{ item.title }}</h3>
-              <p>{{ item.body }}</p>
-            </div>
-          </article>
         {% endfor %}
       </div>
+    </div>
+    <div class="surface-list">
+      {% for item in surfaces["items"] %}
+        <article class="surface-row" style="--delay: {{ loop.index0 * 0.08 }}s;">
+          <div class="surface-meta">
+            <span class="row-label">{{ item.name }}</span>
+            <code>{{ item.path }}</code>
+          </div>
+          <p>{{ item.body }}</p>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section id="docs" class="section container section-shell">
+    <div class="section-header">
+      <h2>{{ docs_library.title }}</h2>
+      <p>{{ docs_library.intro }}</p>
+    </div>
+    <div class="docs-list">
+      {% for item in docs_library["items"] %}
+        <a class="docs-row" href="{{ item.href }}" style="--delay: {{ loop.index0 * 0.08 }}s;">
+          <div class="docs-copy">
+            <span class="row-label">{{ item.tag }}</span>
+            <h3>{{ item.title }}</h3>
+            <p>{{ item.body }}</p>
+          </div>
+          <span class="docs-cta">{{ item.label }}</span>
+        </a>
+      {% endfor %}
     </div>
   </section>
 
   <section class="cta-band">
     <div class="container cta-inner">
       <div>
-        <span class="callout-kicker">Start here</span>
+        <span class="callout-kicker">Read the platform split</span>
         <h2>{{ callout.title }}</h2>
         <p>{{ callout.body }}</p>
       </div>
       <div class="callout-actions">
-        <a class="button primary" href="{{ callout.primary.href }}">{{ callout.primary.label }}</a>
         <a class="button secondary" href="{{ callout.secondary.href }}">{{ callout.secondary.label }}</a>
+        <a class="button primary" href="{{ callout.primary.href }}">{{ callout.primary.label }}</a>
       </div>
     </div>
   </section>

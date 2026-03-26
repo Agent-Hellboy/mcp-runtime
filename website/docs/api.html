@@ -6,7 +6,7 @@
     <title>MCP Runtime API Reference</title>
     <meta
       name="description"
-      content="API reference for MCP Runtime resources, gateway headers, and analytics endpoints."
+      content="API reference for MCP Runtime control-plane resources, gateway headers, and mcp-sentinel request semantics."
     />
     <link rel="stylesheet" href="/static/docs.css" />
   </head>
@@ -19,7 +19,7 @@
             <div class="brand-mark" aria-hidden="true">MCP</div>
             <div>
               <div class="brand-title">MCP Runtime API</div>
-              <div class="brand-subtitle">Current v1alpha1 resource and gateway reference</div>
+              <div class="brand-subtitle">Current v1alpha1 MCP control-plane and request-path reference</div>
             </div>
           </a>
           <div class="nav-shell">
@@ -56,7 +56,7 @@
               <a class="sidebar-link active" href="/docs/api">API</a>
             </div>
             <div class="sidebar-note">
-              Current resource, trust, gateway, and analytics contract.
+              Current resource, trust, gateway, and request-path contract.
             </div>
           </div>
         </aside>
@@ -64,11 +64,11 @@
         <article id="main-content" class="docs-main">
           <header class="doc-header">
             <span class="eyebrow">API</span>
-            <h1>API reference for runtime, policy, and analytics.</h1>
+            <h1>API reference for the MCP control plane and governed request path.</h1>
             <p class="doc-lead">
               The control plane is split between deployment config on <code>MCPServer</code>, access grants
               on <code>MCPAccessGrant</code>, consent or session state on <code>MCPAgentSession</code>, and
-              audit events emitted through <code>mcp-sentinel</code>.
+              gateway and audit fields emitted through <code>mcp-sentinel</code>.
             </p>
           </header>
 

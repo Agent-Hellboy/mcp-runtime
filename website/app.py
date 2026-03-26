@@ -4,32 +4,33 @@ from werkzeug.exceptions import NotFound
 app = Flask(__name__)
 
 NAV_LINKS = [
-    {"label": "Why it works", "href": "#why"},
+    {"label": "Platform", "href": "#product"},
     {"label": "Workflow", "href": "#workflow"},
-    {"label": "Who it's for", "href": "#teams"},
-    {"label": "Platform", "href": "#platform"},
-    {"label": "Docs", "href": "/docs/"},
+    {"label": "Surfaces", "href": "#surfaces"},
+    {"label": "Docs", "href": "#docs"},
 ]
 
 HERO = {
-    "eyebrow": "Platform preview",
-    "title": "The control plane for MCP deployments on Kubernetes.",
+    "eyebrow": "Open source Kubernetes platform for MCP",
+    "title": "Operate MCP services with a higher-level platform control plane.",
     "subtitle": (
-        "MCP Runtime gives platform teams one path for defining, publishing, "
-        "routing, and operating internal MCP services on their own cluster."
+        "MCP Runtime sits above ingress and service-mesh layers. It standardizes "
+        "MCP delivery, access, and rollout, while mcp-sentinel governs identity, "
+        "policy, audit, and observability on the MCP request path."
     ),
-    "primary": {"label": "Start with docs", "href": "/docs/"},
-    "secondary": {"label": "Open API reference", "href": "/docs/api"},
+    "primary": {"label": "Read the docs", "href": "/docs/"},
+    "secondary": {"label": "See runtime guide", "href": "/docs/runtime"},
     "highlights": [
         "Self-hosted",
-        "Registry + operator + CLI",
-        "Consistent /{server-name}/mcp routes",
+        "Higher-level than ingress or mesh",
+        "Operator-managed",
     ],
-    "proof_kicker": "Runtime definition",
-    "proof_title": "One spec in. A working cluster path out.",
+    "proof_kicker": "MCP platform layer",
+    "proof_title": "Above the network layer. Closer to the MCP lifecycle.",
     "proof_intro": (
-        "The runtime owns the infrastructure glue so teams can standardize how "
-        "MCP services enter the platform."
+        "Think of the runtime as the MCP operating layer on Kubernetes: it "
+        "reconciles service delivery and access state, while Sentinel governs "
+        "identity, policy, audit, and observability around live MCP requests."
     ),
     "proof_code": """apiVersion: mcpruntime.org/v1alpha1
 kind: MCPServer
@@ -41,79 +42,171 @@ spec:
   ingressHost: mcp.example.com
   ingressPath: /payments/mcp
   gateway:
+    enabled: true
+  analytics:
     enabled: true""",
-    "proof_points": [
+    "stage_items": [
         {
-            "title": "A single deployment contract",
-            "body": "Keep routing, image, and MCP-specific settings in one definition instead of reassembling infrastructure by hand for every service.",
+            "label": "Runtime",
+            "value": "MCP platform control plane",
+            "body": "Owns bootstrap, reconciliation, rollout, ingress, and service lifecycle instead of acting as a generic network controller.",
         },
         {
-            "title": "Fleet-level conventions",
-            "body": "Use one route shape and one deployment model so new MCP services fit the platform without bespoke exceptions.",
+            "label": "Access",
+            "value": "Grants + sessions stay explicit",
+            "body": "Keeps consent, trust ceilings, expiry, and revocation out of app-specific code.",
         },
+        {
+            "label": "Sentinel",
+            "value": "Governed MCP request path",
+            "body": "Places proxy enforcement, audit, and observability on MCP requests without claiming to be a mesh-wide data plane.",
+        },
+    ],
+    "stage_signals": [
+        "payments route admitted",
+        "policy state synced",
+        "audit and telemetry flowing",
     ],
 }
 
 STATUS = {
-    "label": "Preview release",
+    "label": "Alpha platform",
     "body": (
-        "APIs and behavior are still moving. Use MCP Runtime for evaluation, "
-        "internal pilots, and feedback loops, not production rollout yet."
+        "The repo already covers runtime bootstrap, MCP deployment, access and "
+        "session resources, gateway policy, and the bundled sentinel request path. "
+        "This is a real MCP platform layer, not a generic service-mesh control plane, "
+        "and the API surface is still alpha."
     ),
-    "cta": {"label": "See current docs", "href": "/docs/"},
+    "primary": {"label": "Read docs", "href": "/docs/"},
+    "secondary": {"label": "View GitHub", "href": "https://github.com/Agent-Hellboy/mcp-runtime"},
 }
 
-OUTCOMES = [
+SIGNALS = [
     {
-        "title": "One deployment contract",
+        "label": "Control",
+        "title": "One MCP platform control plane",
         "body": (
-            "Describe each MCP service in metadata instead of maintaining a new "
-            "bundle of Kubernetes YAML for every deployment."
+            "Use one resource contract for service definition, route, rollout, "
+            "grants, and sessions instead of rebuilding deployment patterns for "
+            "every MCP workload on top of lower-level cluster networking."
         ),
     },
     {
-        "title": "One release path",
+        "label": "Enforce",
+        "title": "Policy runs on the request path",
         "body": (
-            "Keep platform setup, image publishing, and server deployment under "
-            "one CLI-driven path that fits local development and CI."
+            "Put identity extraction, trust checks, and allow or deny decisions in "
+            "the proxy path so governance does not depend on each service "
+            "implementation."
         ),
     },
     {
-        "title": "One route shape",
+        "label": "Observe",
+        "title": "Policy, audit, and observability ship with the platform",
         "body": (
-            "Give every server the same URL pattern and deployment conventions "
-            "so teams spend less time re-learning infrastructure."
+            "Route audit and telemetry events into the sentinel ingest, processor, "
+            "API, UI, and observability stack without stitching a separate product "
+            "into every rollout."
         ),
     },
 ]
 
-WHY = {
-    "title": "Why platform teams adopt it",
+PRODUCT = {
+    "title": "A higher-level MCP platform above ingress and service-mesh layers.",
     "intro": (
-        "The value is not a collection of components. It is a control plane "
-        "that keeps definitions, release steps, and runtime conventions aligned."
+        "Use the control-plane term in the MCP sense: mcp-runtime owns lifecycle and "
+        "cluster state, while mcp-sentinel governs the MCP request path with policy, "
+        "audit, and operator visibility around live requests."
     ),
     "items": [
         {
-            "title": "Less infrastructure drift",
+            "label": "Runtime",
+            "title": "mcp-runtime owns service definition, rollout, and cluster wiring",
             "body": (
-                "Stop re-answering naming, ingress, and deployment questions every "
-                "time a new MCP service appears."
+                "Use one Kubernetes-native control plane for setup, registry, ingress, "
+                "MCPServer reconciliation, and rollout behavior on top of the lower-level network stack."
             ),
+            "points": [
+                "Setup and cluster bootstrap",
+                "Deployment / Service / Ingress reconciliation",
+                "Stable service routes and rollout settings",
+            ],
         },
         {
-            "title": "Shared contracts across teams",
+            "label": "Sentinel",
+            "title": "mcp-sentinel owns policy, audit, observability, and the governed request path",
             "body": (
-                "A single metadata model gives platform engineers, product teams, "
-                "and CI pipelines the same object to work from."
+                "Run the proxy, gateway, ingest, processor, API, and UI path around "
+                "MCP requests so governance is a platform capability, not an "
+                "app-by-app patch."
             ),
+            "points": [
+                "Proxy sidecar on the request path",
+                "Per-tool policy and trust evaluation",
+                "Audit pipeline, UI, and observability stack",
+            ],
         },
         {
-            "title": "A cleaner path from pilot to standard",
+            "label": "Access",
+            "title": "Access and consent stay explicit instead of disappearing into app code",
             "body": (
-                "You can start with a small internal service catalog without "
-                "locking yourself into ad hoc scripts and hand-maintained manifests."
+                "Model who can call what, with which trust level, and for how long, "
+                "using dedicated resources that evolve separately from deployment YAML."
             ),
+            "points": [
+                "MCPAccessGrant for entitlement",
+                "MCPAgentSession for consent and expiry",
+                "Revocation and trust ceilings",
+            ],
+        },
+    ],
+}
+
+POSITIONING = {
+    "title": "What this platform is, and what it is not.",
+    "intro": (
+        "This site uses control-plane language in an MCP-specific sense. The product "
+        "is a higher-level operating layer on Kubernetes, not a generic network fabric."
+    ),
+    "items": [
+        {
+            "label": "Is",
+            "title": "An MCP platform layer on Kubernetes",
+            "body": (
+                "It standardizes MCP service definition, rollout, ingress wiring, "
+                "grants, sessions, and operator workflows for internal MCP services."
+            ),
+            "points": [
+                "MCP-specific resource model",
+                "Delivery + access lifecycle",
+                "Operator-managed setup and rollout",
+            ],
+        },
+        {
+            "label": "Not",
+            "title": "Not a general-purpose mesh or proxy control plane",
+            "body": (
+                "It does not try to replace lower-level ingress, gateway, or service-mesh "
+                "infrastructure across every workload in the cluster."
+            ),
+            "points": [
+                "Not a mesh-wide traffic fabric",
+                "Not cluster networking for every workload",
+                "Not a generic proxy fleet manager",
+            ],
+        },
+        {
+            "label": "Sits",
+            "title": "Above ingress and service-mesh infrastructure",
+            "body": (
+                "If the cluster already has ingress, gateway, or mesh tooling, MCP "
+                "Runtime should be understood as the MCP operating layer that sits on top."
+            ),
+            "points": [
+                "Above ingress",
+                "Above service mesh",
+                "Focused on MCP request governance",
+            ],
         },
     ],
 }
@@ -121,106 +214,132 @@ WHY = {
 WORKFLOW = [
     {
         "step": "01",
-        "title": "Define",
+        "title": "Define the service and trust contract",
         "body": (
-            "Write the MCP server spec once with the image, port, and route "
-            "shape the operator should own."
+            "Describe image, route, gateway, analytics, and access expectations in a "
+            "single runtime definition instead of separate hand-wired layers."
         ),
     },
     {
         "step": "02",
-        "title": "Build and publish",
+        "title": "Reconcile the control plane",
         "body": (
-            "Use the CLI locally or in CI to build images and keep registry "
-            "metadata in sync with what is actually deployable."
+            "Use the CLI and operator to prepare cluster state, publish images, and "
+            "reconcile the Kubernetes objects that expose the MCP service."
         ),
     },
     {
         "step": "03",
-        "title": "Deploy and route",
+        "title": "Route through the governed traffic path",
         "body": (
-            "Let the operator generate the Deployment, Service, and Ingress "
-            "resources needed to expose the server at a stable path."
+            "Send live traffic through the proxy path when gateway mode is enabled so "
+            "identity, policy, and audit happen on the request path."
         ),
     },
     {
         "step": "04",
-        "title": "Operate as a fleet",
+        "title": "Inspect audit and iterate",
         "body": (
-            "Manage multiple MCP servers with the same conventions rather than "
-            "stacking separate gateway or manifest patterns for each one."
+            "Use grants, sessions, and the sentinel surfaces to review behavior, tighten "
+            "policy, and keep operators close to production reality."
         ),
     },
 ]
 
-TEAMS = [
-    {
-        "title": "Platform teams",
-        "body": (
-            "For groups building the paved road for internal MCP services and "
-            "trying to avoid a different deployment pattern per team."
-        ),
-        "tag": "Internal platform",
-    },
-    {
-        "title": "AI infrastructure teams",
-        "body": (
-            "For teams operating multiple MCP integrations and wanting one "
-            "runtime contract across routing, deployment, and discovery."
-        ),
-        "tag": "AI infra",
-    },
-    {
-        "title": "Developer platform builders",
-        "body": (
-            "For organizations that want self-hosted MCP infrastructure to fit "
-            "into their existing cluster and CI systems."
-        ),
-        "tag": "Developer experience",
-    },
-]
-
-PLATFORM = {
-    "title": "Built like platform infrastructure",
+SURFACES = {
+    "title": "What teams actually buy into",
     "intro": (
-        "The CLI, operator, and registry matter because they form one control "
-        "plane, not because they appear as three disconnected features."
+        "A credible platform needs a clear operating story across the MCP control "
+        "plane, access model, request path, and docs."
     ),
+    "items": [
+        {
+            "name": "Runtime",
+            "path": "setup / cluster / operator / MCPServer",
+            "body": "Own the control plane surface that prepares clusters and keeps MCP services reconciled.",
+        },
+        {
+            "name": "Access",
+            "path": "MCPAccessGrant / MCPAgentSession",
+            "body": "Make entitlement, consent, and revocation explicit platform objects instead of app-side conventions.",
+        },
+        {
+            "name": "Sentinel",
+            "path": "proxy / gateway / ingest / processor / api / ui",
+            "body": "Handle live MCP request governance, audit, and observability with a bundled request-path layer.",
+        },
+        {
+            "name": "Docs",
+            "path": "runtime / cli / sentinel / api",
+            "body": "Explain the plane split clearly so operators can understand the architecture before they adopt it.",
+        },
+    ],
 }
 
-PLATFORM_COMPONENTS = [
+DOCS_LIBRARY = {
+    "title": "Start with the plane you care about",
+    "intro": (
+        "Some teams begin with runtime operations. Others start at the governed "
+        "request path. The docs are split the same way the platform is."
+    ),
+    "items": [
+        {
+            "tag": "Runtime",
+            "title": "See the control plane and service lifecycle",
+            "body": "Understand cluster bootstrap, MCPServer reconciliation, rollout, ingress, and how delivery state is modeled.",
+            "href": "/docs/runtime",
+            "label": "Runtime docs",
+        },
+        {
+            "tag": "CLI",
+            "title": "See the commands operators run day to day",
+            "body": "Start with setup, cluster, server, registry, pipeline, and status workflows exposed by the CLI.",
+            "href": "/docs/cli",
+            "label": "CLI docs",
+        },
+        {
+            "tag": "Sentinel",
+            "title": "See the governed request path and observability layer",
+            "body": "Review the bundled sentinel stack around proxy enforcement, audit events, query APIs, and observability.",
+            "href": "/docs/sentinel",
+            "label": "Sentinel docs",
+        },
+        {
+            "tag": "API",
+            "title": "See the contract behind both planes",
+            "body": "Use the API reference for YAML examples, field semantics, gateway headers, resource status, and traffic semantics.",
+            "href": "/docs/api",
+            "label": "API reference",
+        },
+    ],
+}
+
+COMPANY = [
     {
-        "title": "CLI",
-        "body": (
-            "Bootstraps platform setup and drives the same server lifecycle "
-            "from local iteration to CI execution."
-        ),
+        "label": "Platform engineering",
+        "title": "Standardize MCP delivery",
+        "body": "Give internal teams one paved road for MCP service rollout instead of a different Kubernetes pattern per workload.",
     },
     {
-        "title": "Operator",
-        "body": (
-            "Watches MCPServer resources and turns intent into Kubernetes "
-            "objects without hand-authoring every manifest."
-        ),
+        "label": "Security and governance",
+        "title": "Move policy onto the request path",
+        "body": "Apply trust, identity, consent, and audit at a platform layer rather than relying on every service to implement it.",
     },
     {
-        "title": "Registry",
-        "body": (
-            "Keeps image and metadata records aligned so deployment and "
-            "discovery are tied to the same source of truth."
-        ),
+        "label": "AI infrastructure",
+        "title": "Operate governed MCP traffic at cluster level",
+        "body": "Run MCP integrations with a consistent control plane and traffic policy model across clusters your org already owns.",
     },
 ]
 
 CALLOUT = {
-    "title": "Read the docs, then inspect the platform surface",
+    "title": "Start with the two-plane architecture.",
     "body": (
-        "The docs currently focus on the runtime API, gateway model, access "
-        "grants, sessions, and analytics-related resources. That is the fastest "
-        "way to understand the current shape of the system."
+        "Runtime docs explain lifecycle and delivery. Sentinel docs explain traffic, "
+        "policy, and audit. Together they tell the actual platform story."
     ),
-    "primary": {"label": "Open documentation", "href": "/docs/"},
-    "secondary": {"label": "Browse repository", "href": "https://github.com/Agent-Hellboy/mcp-runtime"},
+    "primary": {"label": "Runtime docs", "href": "/docs/runtime"},
+    "secondary": {"label": "Sentinel docs", "href": "/docs/sentinel"},
 }
 
 
@@ -231,12 +350,13 @@ def home():
         nav_links=NAV_LINKS,
         hero=HERO,
         status=STATUS,
-        outcomes=OUTCOMES,
-        why=WHY,
+        signals=SIGNALS,
+        product=PRODUCT,
+        positioning=POSITIONING,
         workflow=WORKFLOW,
-        teams=TEAMS,
-        platform=PLATFORM,
-        platform_components=PLATFORM_COMPONENTS,
+        surfaces=SURFACES,
+        docs_library=DOCS_LIBRARY,
+        company=COMPANY,
         callout=CALLOUT,
     )
 

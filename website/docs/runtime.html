@@ -6,7 +6,7 @@
     <title>MCP Runtime Docs | Runtime</title>
     <meta
       name="description"
-      content="Runtime architecture, control-plane resources, setup flow, and traffic model for MCP Runtime."
+      content="Runtime architecture, control-plane resources, service lifecycle, and the handoff to the governed MCP request path for MCP Runtime."
     />
     <link rel="stylesheet" href="/static/docs.css" />
   </head>
@@ -19,7 +19,7 @@
             <div class="brand-mark" aria-hidden="true">MCP</div>
             <div>
               <div class="brand-title">MCP Runtime Docs</div>
-              <div class="brand-subtitle">Runtime architecture and control plane</div>
+              <div class="brand-subtitle">Runtime control plane for MCP services</div>
             </div>
           </a>
           <div class="nav-shell">
@@ -68,13 +68,29 @@
             <p class="doc-lead">
               MCP Runtime is the Kubernetes control plane for internal MCP servers. It owns cluster
               bootstrap, registry and ingress setup, operator reconciliation, deployment resources, rollout,
-              and the access model that sits beside each server.
+              and the access model that sits beside each server before requests reach the sentinel path.
             </p>
             <div class="doc-actions">
               <a class="button primary" href="/docs/cli">Open CLI docs</a>
               <a class="button secondary" href="/docs/api">Open API docs</a>
             </div>
           </header>
+
+          <section id="positioning" class="doc-section">
+            <h2>How to think about the runtime</h2>
+            <div class="note-box">
+              <h3>Higher-level than ingress and service mesh</h3>
+              <p>
+                The runtime is not a generic networking control plane. It sits above lower-level ingress,
+                gateway, and service-mesh infrastructure and models MCP-specific delivery, access, and
+                rollout concerns.
+              </p>
+              <p>
+                When gateway mode is enabled, <code>mcp-sentinel</code> governs the MCP request path. That
+                still does not make the product a general-purpose data plane for arbitrary cluster traffic.
+              </p>
+            </div>
+          </section>
 
           <section id="overview" class="doc-section">
             <h2>What the runtime owns</h2>
@@ -252,6 +268,7 @@ X-MCP-Agent-Session: sess-8f1b9d</code></pre>
         <aside class="docs-toc">
           <div class="docs-panel">
             <div class="toc-title">On this page</div>
+            <a class="toc-link" href="#positioning">How to think about the runtime</a>
             <a class="toc-link" href="#overview">What the runtime owns</a>
             <a class="toc-link" href="#resources">Core resources</a>
             <a class="toc-link" href="#reconciliation">Reconciliation outputs</a>
