@@ -1,3 +1,5 @@
+"""Flask app serving the marketing site and static documentation."""
+
 from flask import Flask, abort, redirect, render_template, send_from_directory
 from werkzeug.exceptions import NotFound
 
@@ -35,7 +37,7 @@ kind: MCPServer
 metadata:
   name: payments
 spec:
-  image: registry.example.com/payments-mcp:latest
+  image: registry.example.com/payments-mcp:v1.0.0
   port: 8088
   ingressHost: mcp.example.com
   ingressPath: /payments/mcp
@@ -239,6 +241,7 @@ CALLOUT = {
 
 @app.route("/")
 def home():
+    """Render the main marketing site."""
     return render_template(
         "index.html",
         nav_links=NAV_LINKS,
@@ -254,16 +257,20 @@ def home():
 
 @app.route("/docs")
 def docs_redirect():
+    """Redirect the bare docs path to the canonical trailing-slash URL."""
     return redirect("/docs/")
 
 
 @app.route("/docs/")
 def docs_index():
+    """Serve the docs landing page."""
     return send_from_directory("docs", "index.html")
 
 
 @app.route("/docs/<path:page>")
 def docs_page(page: str):
+    """Serve a static docs page by path, accepting slash-terminated URLs."""
+    page = page.rstrip("/")
     if not page.endswith(".html"):
         page = f"{page}.html"
     try:

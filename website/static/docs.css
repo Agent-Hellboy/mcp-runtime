@@ -1,17 +1,17 @@
-@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700&display=swap");
+@import "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Manrope:wght@400;500;600;700;800&display=swap";
 
 :root {
-  --bg: #f5f8fc;
-  --bg-strong: #edf3fb;
+  --bg: #f7f9fc;
+  --bg-strong: #f1f5fb;
   --surface: #ffffff;
   --surface-strong: #ffffff;
-  --ink: #0e1726;
-  --muted: #5c677b;
-  --line: #d9e4f0;
-  --accent: #0a63c7;
-  --accent-soft: #eaf2ff;
-  --accent-warm: #c07a34;
-  --shadow: 0 18px 42px rgba(14, 23, 38, 0.06);
+  --ink: #162033;
+  --muted: #586476;
+  --line: #dce5f0;
+  --accent: #1b63d0;
+  --accent-soft: #edf4ff;
+  --accent-warm: #c37a36;
+  --shadow: 0 10px 26px rgba(15, 23, 42, 0.05);
 }
 
 * {
@@ -24,12 +24,11 @@ html {
 
 body {
   margin: 0;
-  font-family: "Bricolage Grotesque", "Segoe UI", sans-serif;
+  font-family: Manrope, "Segoe UI", sans-serif;
   color: var(--ink);
   background:
-    radial-gradient(circle at top right, rgba(10, 99, 199, 0.09), transparent 30%),
-    radial-gradient(circle at top left, rgba(192, 122, 52, 0.06), transparent 28%),
-    linear-gradient(180deg, var(--bg-strong) 0%, var(--bg) 180px, var(--bg) 100%);
+    radial-gradient(circle at top right, rgba(27, 99, 208, 0.05), transparent 26%),
+    linear-gradient(180deg, #ffffff 0%, var(--bg-strong) 140px, var(--bg) 100%);
   min-height: 100vh;
   line-height: 1.6;
 }
@@ -40,7 +39,7 @@ a {
 
 code,
 pre {
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-family: "JetBrains Mono", SFMono-Regular, Consolas, Menlo, monospace;
 }
 
 :not(pre) > code {
@@ -77,9 +76,9 @@ pre {
   position: sticky;
   top: 0;
   z-index: 30;
-  background: rgba(245, 248, 252, 0.88);
+  background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(12px);
-  border-bottom: 1px solid rgba(217, 228, 240, 0.86);
+  border-bottom: 1px solid rgba(220, 229, 240, 0.92);
 }
 
 .nav {
@@ -211,10 +210,10 @@ pre {
 .doc-card,
 .note-box,
 .pager-link {
-  background: rgba(255, 255, 255, 0.94);
+  background: rgba(255, 255, 255, 0.98);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
-  border-radius: 18px;
+  border-radius: 16px;
 }
 
 .docs-panel {
@@ -296,15 +295,15 @@ pre {
 .doc-header h1 {
   margin: 14px 0 16px;
   max-width: 860px;
-  font-size: clamp(2.4rem, 4vw, 3.9rem);
-  line-height: 0.97;
-  letter-spacing: -0.05em;
+  font-size: clamp(2.15rem, 3.8vw, 3.25rem);
+  line-height: 1.02;
+  letter-spacing: -0.045em;
 }
 
 .doc-lead {
   margin: 0;
   max-width: 860px;
-  font-size: 18px;
+  font-size: 17px;
   color: var(--muted);
 }
 
@@ -319,8 +318,8 @@ pre {
 
 .doc-section h2 {
   margin: 0 0 10px;
-  font-size: clamp(1.55rem, 2.4vw, 2.05rem);
-  line-height: 1.06;
+  font-size: clamp(1.45rem, 2vw, 1.85rem);
+  line-height: 1.1;
   letter-spacing: -0.03em;
 }
 
@@ -357,7 +356,7 @@ pre {
 .doc-card h3 {
   display: block;
   margin: 0 0 8px;
-  font-size: 18px;
+  font-size: 17px;
 }
 
 .doc-card p {
@@ -376,7 +375,7 @@ pre {
 .table-wrap {
   overflow-x: auto;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.96);
   box-shadow: var(--shadow);
 }
@@ -406,7 +405,7 @@ pre {
 pre {
   margin: 0;
   padding: 16px 18px;
-  border-radius: 16px;
+  border-radius: 14px;
   overflow-x: auto;
   background: #0f1728;
   color: #eef4ff;
@@ -496,25 +495,16 @@ pre {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.75fr);
   gap: 28px;
-  padding: 36px;
+  padding: 32px;
   border: 1px solid var(--line);
-  border-radius: 30px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 251, 255, 0.96)),
-    linear-gradient(135deg, rgba(10, 99, 199, 0.03), transparent 48%);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.98);
   box-shadow: var(--shadow);
   overflow: hidden;
 }
 
 .docs-home-hero::after {
-  content: "";
-  position: absolute;
-  inset: auto -12% -120px auto;
-  width: 340px;
-  height: 340px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(10, 99, 199, 0.08), transparent 68%);
-  pointer-events: none;
+  display: none;
 }
 
 .home-hero-copy,
@@ -526,9 +516,9 @@ pre {
 .home-hero-copy h1 {
   margin: 14px 0 16px;
   max-width: 780px;
-  font-size: clamp(2.8rem, 5vw, 4.7rem);
-  line-height: 0.94;
-  letter-spacing: -0.06em;
+  font-size: clamp(2.45rem, 4.6vw, 3.9rem);
+  line-height: 1;
+  letter-spacing: -0.055em;
 }
 
 .home-hero-meta {
@@ -541,9 +531,9 @@ pre {
 .home-hero-rail {
   align-self: start;
   padding: 22px 22px 20px;
-  border: 1px solid rgba(10, 99, 199, 0.12);
-  border-radius: 22px;
-  background: rgba(248, 251, 255, 0.92);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.98);
 }
 
 .home-rail-label,
@@ -677,7 +667,7 @@ pre {
 }
 
 .home-entry:hover {
-  transform: translateX(4px);
+  transform: translateX(2px);
 }
 
 .home-entry:hover .home-entry-body strong,
@@ -740,7 +730,7 @@ pre {
 .home-note {
   padding: 22px;
   border: 1px solid var(--line);
-  border-radius: 22px;
+  border-radius: 18px;
   background: rgba(255, 255, 255, 0.94);
   box-shadow: var(--shadow);
 }

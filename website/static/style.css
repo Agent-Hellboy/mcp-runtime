@@ -1,6 +1,7 @@
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Manrope:wght@400;500;600;700;800&display=swap");
+@import "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Manrope:wght@400;500;600;700;800&display=swap";
 
 :root {
+  --header-height: 96px;
   --bg: #f5f7fb;
   --surface: #ffffff;
   --surface-alt: #eff3f9;
@@ -29,7 +30,7 @@ html {
 
 body {
   margin: 0;
-  font-family: "Manrope", "Segoe UI", sans-serif;
+  font-family: Manrope, "Segoe UI", sans-serif;
   color: var(--ink);
   background:
     radial-gradient(circle at 85% 8%, rgba(37, 99, 235, 0.08), transparent 26%),
@@ -45,7 +46,7 @@ a {
 
 code,
 pre {
-  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, monospace;
 }
 
 :not(pre) > code {
@@ -80,7 +81,6 @@ pre {
 
 .page {
   position: relative;
-  overflow: hidden;
 }
 
 .bg-shape {
@@ -492,6 +492,7 @@ pre {
 
 .section {
   padding: 38px 0 8px;
+  scroll-margin-top: var(--header-height);
 }
 
 .section-shell {
