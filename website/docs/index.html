@@ -175,10 +175,59 @@
             <p>The high-level command groups below are the same ones exposed in the README and the CLI code.</p>
             <pre><code>./bin/mcp-runtime setup
 ./bin/mcp-runtime status
+./bin/mcp-runtime access
+./bin/mcp-runtime sentinel
 ./bin/mcp-runtime registry
 ./bin/mcp-runtime server
 ./bin/mcp-runtime pipeline
 ./bin/mcp-runtime cluster</code></pre>
+          </section>
+
+          <section id="command-groups" class="doc-section">
+            <h2>Command groups at a glance</h2>
+            <div class="table-wrap">
+              <table class="doc-table">
+                <tbody>
+                  <tr>
+                    <th>Command</th>
+                    <th>Role in the platform</th>
+                  </tr>
+                  <tr>
+                    <td><code>setup</code></td>
+                    <td>Install the runtime stack, operator, ingress, registry, and bundled sentinel path.</td>
+                  </tr>
+                  <tr>
+                    <td><code>status</code></td>
+                    <td>Show an aggregated view of the platform surface after install or rollout changes.</td>
+                  </tr>
+                  <tr>
+                    <td><code>cluster</code></td>
+                    <td>Initialize cluster state, wire kubeconfig and ingress, provision clusters, and manage cert resources.</td>
+                  </tr>
+                  <tr>
+                    <td><code>registry</code></td>
+                    <td>Inspect the bundled registry, provision an external registry, and push runtime images.</td>
+                  </tr>
+                  <tr>
+                    <td><code>server</code></td>
+                    <td>Create, apply, export, patch, inspect, and observe <code>MCPServer</code> resources.</td>
+                  </tr>
+                  <tr>
+                    <td><code>access</code></td>
+                    <td>Manage grants and agent sessions that drive request-path trust and revocation behavior.</td>
+                  </tr>
+                  <tr>
+                    <td><code>sentinel</code></td>
+                    <td>Operate the bundled gateway, audit, analytics, and observability stack.</td>
+                  </tr>
+                  <tr>
+                    <td><code>pipeline</code></td>
+                    <td>Generate manifests from metadata and deploy them into the cluster.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p>Open the CLI guide for concrete examples, flags, and subcommands behind each group.</p>
           </section>
 
           <section id="docs-map" class="doc-section">
@@ -191,7 +240,7 @@
               </article>
               <article class="doc-card">
                 <strong>CLI</strong>
-                <p>Command groups, useful flags, and practical commands for setup, cluster, server, registry, pipeline, and status flows.</p>
+                <p>Command groups, useful flags, and practical commands for setup, cluster, registry, server, access, sentinel, pipeline, and status flows.</p>
                 <a class="button secondary" href="/docs/cli">Read CLI docs</a>
               </article>
               <article class="doc-card">
@@ -248,6 +297,7 @@ make operator-manifests operator-generate</code></pre>
             <a class="toc-link" href="#requirements">Requirements</a>
             <a class="toc-link" href="#quick-start">Quick start</a>
             <a class="toc-link" href="#key-commands">Key commands</a>
+            <a class="toc-link" href="#command-groups">Command groups</a>
             <a class="toc-link" href="#docs-map">Docs map</a>
             <a class="toc-link" href="#development">Development</a>
             <a class="toc-link" href="#scope">Current scope</a>

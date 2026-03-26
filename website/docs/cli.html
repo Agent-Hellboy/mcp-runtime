@@ -6,7 +6,7 @@
     <title>MCP Runtime Docs | CLI</title>
     <meta
       name="description"
-      content="CLI guide for MCP Runtime covering setup, cluster, server, registry, pipeline, and status commands."
+      content="CLI guide for MCP Runtime covering setup, cluster, registry, server, access, sentinel, pipeline, status, and related operational commands."
     />
     <link rel="stylesheet" href="/static/docs.css" />
   </head>
@@ -66,9 +66,9 @@
             <span class="eyebrow">CLI</span>
             <h1>CLI surface and practical commands.</h1>
             <p class="doc-lead">
-              The CLI bootstraps clusters, manages registries, builds and deploys server images, and
-              inspects the runtime plus sentinel stack. If you want to operate MCP Runtime today, this is
-              the surface you will actually use.
+              The CLI bootstraps clusters, manages registries, applies MCPServer manifests, operates
+              access grants and agent sessions, and inspects the runtime plus sentinel stack. If you want
+              to operate MCP Runtime today, this is the surface you will actually use.
             </p>
             <div class="doc-actions">
               <a class="button primary" href="/docs/runtime">Runtime docs</a>
@@ -90,50 +90,245 @@
           </section>
 
           <section id="groups" class="doc-section">
-            <h2>Command groups</h2>
+            <h2>Command map</h2>
+            <div class="table-wrap">
+              <table class="doc-table">
+                <tbody>
+                  <tr>
+                    <th>Group</th>
+                    <th>What it covers</th>
+                    <th>Important subcommands</th>
+                  </tr>
+                  <tr>
+                    <td><code>setup</code></td>
+                    <td>Install the platform stack, wire registry and ingress, deploy the operator, and optionally include sentinel.</td>
+                    <td><code>setup</code>, <code>--with-tls</code>, <code>--without-sentinel</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>cluster</code></td>
+                    <td>Initialize clusters, inspect health, configure kubeconfig and ingress, provision clusters, and manage cert-manager resources.</td>
+                    <td><code>init</code>, <code>status</code>, <code>config</code>, <code>provision</code>, <code>cert status</code>, <code>cert apply</code>, <code>cert wait</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>registry</code></td>
+                    <td>Inspect the internal registry, configure an external registry, and push images with direct or in-cluster modes.</td>
+                    <td><code>status</code>, <code>info</code>, <code>provision</code>, <code>push</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>server</code></td>
+                    <td>Manage MCPServer resources and related operator-facing actions.</td>
+                    <td><code>list</code>, <code>get</code>, <code>create</code>, <code>apply</code>, <code>export</code>, <code>patch</code>, <code>delete</code>, <code>logs</code>, <code>status</code>, <code>policy inspect</code>, <code>build image</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>access</code></td>
+                    <td>Manage <code>MCPAccessGrant</code> and <code>MCPAgentSession</code> resources that feed the gateway policy layer.</td>
+                    <td><code>grant list/get/apply/delete/disable/enable</code>, <code>session list/get/apply/delete/revoke/unrevoke</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>sentinel</code></td>
+                    <td>Inspect and operate the bundled analytics, gateway, and observability stack.</td>
+                    <td><code>status</code>, <code>events</code>, <code>logs</code>, <code>port-forward</code>, <code>restart</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>pipeline</code></td>
+                    <td>Generate MCPServer manifests from metadata and deploy those manifests into the cluster.</td>
+                    <td><code>generate</code>, <code>deploy</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>status</code></td>
+                    <td>Show overall platform status across cluster, registry, operator, MCP servers, and sentinel workloads.</td>
+                    <td><code>status</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>completion</code></td>
+                    <td>Generate shell completion scripts from the Cobra root command.</td>
+                    <td><code>completion bash</code>, <code>completion zsh</code>, <code>completion fish</code></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="setup-status" class="doc-section">
+            <h2>Setup and platform status</h2>
             <div class="doc-card-grid">
               <article class="doc-card">
-                <strong>setup</strong>
-                <p>Installs the platform stack, including CRDs, ingress, registry, operator, proxy image wiring, and the bundled sentinel stack.</p>
+                <strong>Install the stack</strong>
+                <p><code>setup</code> remains the broad install path for the runtime namespace, internal registry, operator, ingress wiring, and bundled sentinel stack unless you explicitly skip it.</p>
                 <pre><code>mcp-runtime setup
 mcp-runtime setup --with-tls
-mcp-runtime setup --without-sentinel</code></pre>
+mcp-runtime setup --without-sentinel
+mcp-runtime setup --test-mode</code></pre>
               </article>
               <article class="doc-card">
-                <strong>cluster</strong>
-                <p>Handles cluster initialization, status checks, kubeconfig and ingress configuration, provider-based provisioning, and cert-manager actions.</p>
-                <pre><code>mcp-runtime cluster init
-mcp-runtime cluster config --ingress traefik
-mcp-runtime cluster provision --provider kind
-mcp-runtime cluster cert status</code></pre>
+                <strong>Read platform health</strong>
+                <p>Use <code>status</code> for the aggregated platform view, then drop to the narrower trees when you need cluster, registry, or sentinel detail.</p>
+                <pre><code>mcp-runtime status
+mcp-runtime cluster status
+mcp-runtime registry status
+mcp-runtime sentinel status</code></pre>
               </article>
+            </div>
+          </section>
+
+          <section id="registry" class="doc-section">
+            <h2>Registry and image flow</h2>
+            <div class="doc-card-grid">
               <article class="doc-card">
-                <strong>status</strong>
-                <p>Shows platform status across cluster, registry, operator, MCP servers, and the bundled sentinel workloads.</p>
-                <pre><code>mcp-runtime status</code></pre>
-              </article>
-              <article class="doc-card">
-                <strong>server</strong>
-                <p>Lists, creates, deletes, inspects, and tails logs for MCPServer resources. Build helpers live under <code>server build</code>.</p>
-                <pre><code>mcp-runtime server list
-mcp-runtime server create payments --image repo/payments
-mcp-runtime server create payments --file server.yaml
-mcp-runtime server build image payments</code></pre>
-              </article>
-              <article class="doc-card">
-                <strong>registry</strong>
-                <p>Shows registry info, provisions external registry settings, and pushes images by Docker or in-cluster skopeo helper job.</p>
-                <pre><code>mcp-runtime registry info
+                <strong>Inspect and provision registry state</strong>
+                <p>The registry tree covers both the bundled internal registry and external registry configuration for runtime images.</p>
+                <pre><code>mcp-runtime registry status
+mcp-runtime registry info
 mcp-runtime registry provision --url registry.example.com
-mcp-runtime registry push --image my-server:latest
-mcp-runtime registry push --image my-server:latest --mode direct</code></pre>
+mcp-runtime registry provision --url registry.example.com --operator-image registry.example.com/mcp-runtime-operator:latest</code></pre>
               </article>
               <article class="doc-card">
-                <strong>pipeline</strong>
-                <p>Turns metadata into manifests and applies those manifests to the cluster for CI/CD friendly delivery.</p>
-                <pre><code>mcp-runtime pipeline generate --dir .mcp --output manifests
-mcp-runtime pipeline deploy --dir manifests</code></pre>
+                <strong>Push images into the runtime path</strong>
+                <p><code>registry push</code> can use the default in-cluster helper or switch to direct local pushes when the environment already has access.</p>
+                <pre><code>mcp-runtime registry push --image payments:v1
+mcp-runtime registry push --image payments:v1 --mode direct
+mcp-runtime registry push --image payments:v1 --name payments-api</code></pre>
               </article>
+            </div>
+          </section>
+
+          <section id="pipeline" class="doc-section">
+            <h2>Pipeline generation and deploy</h2>
+            <div class="doc-card-grid">
+              <article class="doc-card">
+                <strong>Generate MCPServer manifests</strong>
+                <p><code>pipeline generate</code> turns metadata files into CRD manifests that the operator can reconcile.</p>
+                <pre><code>mcp-runtime pipeline generate --dir .mcp --output manifests
+mcp-runtime pipeline generate --file .mcp/payments.yaml --output manifests</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>Deploy generated manifests</strong>
+                <p><code>pipeline deploy</code> applies a directory of generated CRDs and can override namespace placement when needed.</p>
+                <pre><code>mcp-runtime pipeline deploy --dir manifests
+mcp-runtime pipeline deploy --dir manifests --namespace mcp-servers</code></pre>
+              </article>
+            </div>
+          </section>
+
+          <section id="access" class="doc-section">
+            <h2>Access grants and agent sessions</h2>
+            <div class="doc-card-grid">
+              <article class="doc-card">
+                <strong>Grant operations</strong>
+                <p>Use <code>access grant</code> to manage <code>MCPAccessGrant</code> resources for entitlement and admin-side enable or disable state.</p>
+                <pre><code>mcp-runtime access grant list
+mcp-runtime access grant get payments-admin --namespace mcp-servers
+mcp-runtime access grant apply --file grant.yaml
+mcp-runtime access grant disable payments-admin
+mcp-runtime access grant enable payments-admin</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>Session operations</strong>
+                <p>Use <code>access session</code> to inspect and mutate <code>MCPAgentSession</code> resources that carry consent, expiry, and revocation.</p>
+                <pre><code>mcp-runtime access session list
+mcp-runtime access session get ops-agent --namespace mcp-servers
+mcp-runtime access session apply --file session.yaml
+mcp-runtime access session revoke ops-agent
+mcp-runtime access session unrevoke ops-agent</code></pre>
+              </article>
+            </div>
+          </section>
+
+          <section id="server" class="doc-section">
+            <h2>Server resource operations</h2>
+            <div class="doc-card-grid">
+              <article class="doc-card">
+                <strong>Create, apply, and export</strong>
+                <p>The server tree now supports both simple creation and full manifest workflows.</p>
+                <pre><code>mcp-runtime server create payments --image repo/payments --tag latest
+mcp-runtime server create payments --file server.yaml
+mcp-runtime server apply --file server.yaml
+mcp-runtime server export payments --file payments.yaml</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>Patch, inspect, and tail</strong>
+                <p>Patch live resources, inspect policy, and check runtime state without leaving the CLI.</p>
+                <pre><code>mcp-runtime server patch payments --patch '{"spec":{"imageTag":"v2"}}'
+mcp-runtime server status --namespace mcp-servers
+mcp-runtime server policy inspect payments
+mcp-runtime server logs payments --follow</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>Build images</strong>
+                <p>Image build helpers still live under <code>server build</code>; pushing remains under <code>registry push</code>.</p>
+                <pre><code>mcp-runtime server build image payments --tag v1
+mcp-runtime server build image payments --dockerfile Dockerfile
+mcp-runtime registry push --image payments:v1</code></pre>
+              </article>
+            </div>
+          </section>
+
+          <section id="sentinel" class="doc-section">
+            <h2>Sentinel operations</h2>
+            <div class="doc-card-grid">
+              <article class="doc-card">
+                <strong>Status, events, and restarts</strong>
+                <p>Use the sentinel tree to inspect stack health, recent Kubernetes events, and restart one workload or the full stack.</p>
+                <pre><code>mcp-runtime sentinel status
+mcp-runtime sentinel events
+mcp-runtime sentinel restart gateway
+mcp-runtime sentinel restart --all</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>Logs and local access</strong>
+                <p><code>logs</code> accepts sentinel component names, while <code>port-forward</code> provides shortcuts for common service endpoints.</p>
+                <pre><code>mcp-runtime sentinel logs ingest --since 15m --follow
+mcp-runtime sentinel logs grafana --tail 500
+mcp-runtime sentinel port-forward ui
+mcp-runtime sentinel port-forward api --port 18080</code></pre>
+              </article>
+            </div>
+            <div class="note-box">
+              <h3>Known component keys</h3>
+              <p>
+                <code>sentinel logs</code> and <code>sentinel restart</code> understand
+                <code>clickhouse</code>, <code>zookeeper</code>, <code>kafka</code>, <code>ingest</code>,
+                <code>api</code>, <code>processor</code>, <code>ui</code>, <code>gateway</code>,
+                <code>prometheus</code>, <code>grafana</code>, <code>otel-collector</code>,
+                <code>tempo</code>, <code>loki</code>, and <code>promtail</code>. Port-forward shortcuts
+                are currently built in for <code>api</code>, <code>ui</code>, <code>prometheus</code>, and
+                <code>grafana</code>.
+              </p>
+            </div>
+          </section>
+
+          <section id="cluster" class="doc-section">
+            <h2>Cluster configuration and TLS</h2>
+            <div class="doc-card-grid">
+              <article class="doc-card">
+                <strong>Initialize or re-target a cluster</strong>
+                <p>Use <code>cluster init</code> for initial kubeconfig wiring and CRD plus namespace bootstrapping before the broader <code>setup</code> path.</p>
+                <pre><code>mcp-runtime cluster init
+mcp-runtime cluster init --kubeconfig ~/.kube/config --context dev</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>Cluster config and provision</strong>
+                <p><code>cluster config</code> covers kubeconfig, ingress, and provider-aware kubeconfig wiring, while <code>cluster provision</code> exposes local and cloud entry points.</p>
+                <pre><code>mcp-runtime cluster config --ingress traefik
+mcp-runtime cluster config --provider eks --name mcp-runtime --region us-west-1
+mcp-runtime cluster provision --provider kind --nodes 3
+mcp-runtime cluster provision --provider eks --name prod-mcp</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>Cert-manager helpers</strong>
+                <p>The <code>cluster cert</code> subtree manages TLS prerequisites for the platform registry path.</p>
+                <pre><code>mcp-runtime cluster cert status
+mcp-runtime cluster cert apply
+mcp-runtime cluster cert wait --timeout 10m</code></pre>
+              </article>
+            </div>
+            <div class="note-box">
+              <h3>Provider status today</h3>
+              <p>
+                <code>kind</code> and <code>eks</code> have active CLI paths today. The <code>gke</code> and
+                <code>aks</code> flags are present in the cluster commands, but their kubeconfig and provisioning
+                helpers still return planned or not implemented paths in the current code.
+              </p>
             </div>
           </section>
 
@@ -142,19 +337,43 @@ mcp-runtime pipeline deploy --dir manifests</code></pre>
             <div class="doc-card-grid">
               <article class="doc-card">
                 <strong>setup flags</strong>
-                <p><code>--registry-type</code>, <code>--registry-storage</code>, <code>--ingress</code>, <code>--ingress-manifest</code>, <code>--force-ingress-install</code>, <code>--with-tls</code>, <code>--test-mode</code>, and <code>--without-sentinel</code>.</p>
+                <p><code>--registry-type</code>, <code>--registry-storage</code>, <code>--ingress</code>, <code>--ingress-manifest</code>, <code>--force-ingress-install</code>, <code>--with-tls</code>, <code>--test-mode</code>, <code>--without-sentinel</code>, and the operator override flags <code>--operator-leader-elect</code>, <code>--operator-metrics-addr</code>, and <code>--operator-probe-addr</code>.</p>
               </article>
               <article class="doc-card">
-                <strong>cluster provider wiring</strong>
-                <p><code>cluster config</code> can work with kubeconfig plus cloud provider inputs, while <code>cluster provision</code> supports <code>kind</code>, <code>gke</code>, <code>eks</code>, and <code>aks</code> entry points.</p>
+                <strong>global debug flag</strong>
+                <p>Every command inherits <code>--debug</code>, which turns on structured error logging from the root command.</p>
               </article>
               <article class="doc-card">
                 <strong>registry push modes</strong>
-                <p><code>registry push</code> defaults to <code>in-cluster</code>, which uses a helper pod, but can switch to <code>direct</code> when local Docker push is the right fit.</p>
+                <p><code>registry push</code> defaults to <code>in-cluster</code>, which uses a helper pod, but can switch to <code>direct</code> when local Docker push is the right fit. It also accepts <code>--registry</code>, <code>--name</code>, and <code>--namespace</code>.</p>
               </article>
               <article class="doc-card">
-                <strong>server creation</strong>
-                <p><code>server create</code> supports simple image and tag flags or a file path when you want to apply a fuller manifest with gateway and analytics fields.</p>
+                <strong>cluster provider wiring</strong>
+                <p><code>cluster config</code> can work with kubeconfig plus cloud provider inputs. <code>--provider eks</code> is implemented for kubeconfig updates today, while <code>cluster provision</code> has active paths for <code>kind</code> and <code>eks</code>; <code>gke</code> and <code>aks</code> are still planned.</p>
+              </article>
+              <article class="doc-card">
+                <strong>server mutation workflows</strong>
+                <p><code>server apply</code>, <code>server export</code>, and <code>server patch</code> cover manifest-driven operations. <code>server patch</code> accepts inline <code>--patch</code> or a <code>--patch-file</code> with <code>merge</code>, <code>json</code>, or <code>strategic</code> modes.</p>
+              </article>
+              <article class="doc-card">
+                <strong>pipeline input and output flags</strong>
+                <p><code>pipeline generate</code> accepts <code>--dir</code>, <code>--file</code>, and <code>--output</code>. <code>pipeline deploy</code> accepts <code>--dir</code> and <code>--namespace</code> when you need to override metadata placement.</p>
+              </article>
+              <article class="doc-card">
+                <strong>access list scope</strong>
+                <p><code>access grant list</code> and <code>access session list</code> default to <code>--all-namespaces</code>. Add <code>--namespace</code> when you want a narrower operational view.</p>
+              </article>
+              <article class="doc-card">
+                <strong>sentinel logs and port-forward</strong>
+                <p><code>sentinel logs</code> adds <code>--follow</code>, <code>--previous</code>, <code>--tail</code>, and <code>--since</code>. <code>sentinel port-forward</code> adds <code>--port</code> and <code>--address</code>.</p>
+              </article>
+              <article class="doc-card">
+                <strong>server build image</strong>
+                <p><code>server build image</code> accepts <code>--dockerfile</code>, <code>--metadata-file</code>, <code>--metadata-dir</code>, <code>--registry</code>, <code>--tag</code>, and <code>--context</code> before you push with <code>registry push</code>.</p>
+              </article>
+              <article class="doc-card">
+                <strong>shell completion and version</strong>
+                <p>The Cobra root command also exposes <code>completion bash</code>, <code>completion zsh</code>, and <code>completion fish</code>, plus the inherited <code>--version</code> flag.</p>
               </article>
             </div>
           </section>
@@ -177,6 +396,24 @@ mcp-runtime registry push --image payments:latest</code></pre>
                 <pre><code>mcp-runtime pipeline generate --dir .mcp --output manifests
 mcp-runtime pipeline deploy --dir manifests</code></pre>
               </article>
+              <article class="doc-card">
+                <strong>Apply access and inspect policy</strong>
+                <pre><code>mcp-runtime access grant apply --file grant.yaml
+mcp-runtime access session apply --file session.yaml
+mcp-runtime server policy inspect payments</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>Open the sentinel UI locally</strong>
+                <pre><code>mcp-runtime sentinel status
+mcp-runtime sentinel port-forward ui
+mcp-runtime sentinel logs api --since 10m</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>Patch a running server</strong>
+                <pre><code>mcp-runtime server patch payments --patch '{"spec":{"imageTag":"v2"}}'
+mcp-runtime server status
+mcp-runtime status</code></pre>
+              </article>
             </div>
           </section>
 
@@ -185,9 +422,9 @@ mcp-runtime pipeline deploy --dir manifests</code></pre>
             <div class="note-box">
               <h3>More than a thin wrapper</h3>
               <p>
-                The CLI already owns install planning, registry and image handling, status aggregation, and
-                the bridge from metadata to cluster state. That is why the docs treat it as a primary product
-                surface instead of a footnote.
+                The CLI already owns install planning, registry and image handling, access resource
+                operations, status aggregation, sentinel operations, and the bridge from metadata to cluster
+                state. That is why the docs treat it as a primary product surface instead of a footnote.
               </p>
             </div>
           </section>
@@ -208,7 +445,14 @@ mcp-runtime pipeline deploy --dir manifests</code></pre>
           <div class="docs-panel">
             <div class="toc-title">On this page</div>
             <a class="toc-link" href="#bootstrap">Bootstrap commands</a>
-            <a class="toc-link" href="#groups">Command groups</a>
+            <a class="toc-link" href="#groups">Command map</a>
+            <a class="toc-link" href="#setup-status">Setup and status</a>
+            <a class="toc-link" href="#registry">Registry and image flow</a>
+            <a class="toc-link" href="#pipeline">Pipeline generation and deploy</a>
+            <a class="toc-link" href="#access">Access grants and sessions</a>
+            <a class="toc-link" href="#server">Server resource operations</a>
+            <a class="toc-link" href="#sentinel">Sentinel operations</a>
+            <a class="toc-link" href="#cluster">Cluster configuration and TLS</a>
             <a class="toc-link" href="#flags">Useful flags</a>
             <a class="toc-link" href="#flows">Common flows</a>
             <a class="toc-link" href="#notes">Operator-first CLI</a>
@@ -217,7 +461,7 @@ mcp-runtime pipeline deploy --dir manifests</code></pre>
       </section>
 
       <footer class="container docs-footer">
-        The CLI docs track the command groups and flags already present in <code>internal/cli</code>.
+        The CLI docs track the current command tree shipped from <code>cmd/mcp-runtime</code> and <code>internal/cli</code>.
       </footer>
     </main>
   </body>
