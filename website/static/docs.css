@@ -211,6 +211,7 @@ header {
   right: -60px;
 }
 
+.callout h2,
 .callout h3 {
   margin: 0 0 8px;
   font-family: "Fraunces", "Georgia", serif;
@@ -282,6 +283,7 @@ header {
   border-radius: 999px;
   background: rgba(12, 16, 32, 0.1);
   font-size: 12px;
+  margin-bottom: 14px;
 }
 
 @keyframes rise {

@@ -4,141 +4,224 @@ from werkzeug.exceptions import NotFound
 app = Flask(__name__)
 
 NAV_LINKS = [
-    {"label": "Overview", "href": "#overview"},
-    {"label": "Features", "href": "#features"},
+    {"label": "Why it works", "href": "#why"},
     {"label": "Workflow", "href": "#workflow"},
-    {"label": "Architecture", "href": "#architecture"},
+    {"label": "Who it's for", "href": "#teams"},
+    {"label": "Platform", "href": "#platform"},
     {"label": "Docs", "href": "/docs/"},
 ]
 
 HERO = {
-    "badge": "docs.mcp-runtime.org",
-    "title": "Launch MCP servers with a platform, not a patchwork.",
+    "eyebrow": "Kubernetes-native MCP deployment",
+    "title": "Run MCP servers on Kubernetes without hand-written manifests.",
     "subtitle": (
-        "MCP Runtime Platform gives teams a registry, Kubernetes operator, and "
-        "CLI that standardizes how MCP servers are defined, built, and routed."
+        "MCP Runtime gives platform teams a registry, operator, and CLI that "
+        "standardize how MCP servers are defined, built, deployed, and routed "
+        "across a cluster."
     ),
-    "primary": {"label": "Open Documentation", "href": "/docs/"},
-    "secondary": {"label": "View features", "href": "#features"},
-}
-
-AT_A_GLANCE = [
-    "Metadata-driven server definitions in YAML.",
-    "Operator creates Deployment, Service, and Ingress automatically.",
-    "Internal registry keeps images and metadata in sync.",
-    "Unified routes for every server at /{server-name}/mcp.",
-]
-
-STATS = [
-    {"value": "1 CLI", "label": "Unified workflow for platform and servers."},
-    {"value": "3 core services", "label": "Registry, operator, and cluster helpers."},
-    {"value": "0 bespoke YAML", "label": "No hand-written manifests for each server."},
-]
-
-OVERVIEW = {
-    "title": "Why MCP Runtime Platform",
-    "intro": (
-        "Move from experiments to production with a clear, repeatable approach "
-        "to deploying and cataloging MCP servers."
+    "primary": {"label": "Start with docs", "href": "/docs/"},
+    "secondary": {"label": "Open API reference", "href": "/docs/api"},
+    "highlights": [
+        "Self-hosted control plane",
+        "Consistent /{server-name}/mcp routes",
+        "No per-server manifests to maintain",
+    ],
+    "proof_kicker": "What the runtime owns",
+    "proof_title": "Describe the server once. Let the platform wire the rest.",
+    "proof_intro": (
+        "The operator turns one MCP definition into the deployment, service, "
+        "and ingress path your team actually uses."
     ),
-    "items": [
+    "proof_code": """apiVersion: mcpruntime.org/v1alpha1
+kind: MCPServer
+metadata:
+  name: payments
+spec:
+  image: registry.example.com/payments-mcp:latest
+  port: 8088
+  ingressHost: mcp.example.com
+  ingressPath: /payments/mcp
+  gateway:
+    enabled: true""",
+    "proof_points": [
         {
-            "title": "Built for scale",
-            "body": (
-                "Manage a fleet of MCP servers without third-party gateways or "
-                "bespoke routing layers."
-            ),
+            "title": "Definition stays human-sized",
+            "body": "Keep routing, image, and MCP-specific settings in one place instead of spreading them across bespoke manifests.",
         },
         {
-            "title": "Designed for teams",
-            "body": (
-                "A centralized registry and consistent deployment flow make it "
-                "easy to discover and reuse servers."
-            ),
-        },
-        {
-            "title": "Opinionated safety",
-            "body": "Promote best practices with standardized metadata and CI-ready pipelines.",
+            "title": "Rollouts stay predictable",
+            "body": "Use the same path from local build to cluster deployment for every server your team ships.",
         },
     ],
 }
 
-FEATURES = [
+STATUS = {
+    "label": "Developer preview",
+    "body": (
+        "APIs and behavior are still changing. Use MCP Runtime for evaluation, "
+        "internal prototypes, and team feedback loops, not production rollout yet."
+    ),
+    "cta": {"label": "See current docs", "href": "/docs/"},
+}
+
+OUTCOMES = [
     {
-        "title": "Complete platform",
-        "body": "Deploy registry, operator, and helpers in one setup flow built for MCP fleets.",
+        "title": "Define once",
+        "body": (
+            "Describe each MCP server in metadata instead of maintaining a new "
+            "bundle of Kubernetes YAML for every service."
+        ),
     },
     {
-        "title": "CLI tooling",
-        "body": "Manage platform setup, registry operations, and server pipelines from one CLI.",
+        "title": "Ship with one workflow",
+        "body": (
+            "Keep platform setup, image publishing, and server deployment under "
+            "one CLI-driven path that fits local development and CI."
+        ),
     },
     {
-        "title": "Kubernetes operator",
-        "body": "Creates Deployment, Service, and Ingress resources from MCP metadata.",
-    },
-    {
-        "title": "Metadata-driven",
-        "body": "Define MCP servers in YAML without hand-writing Kubernetes manifests.",
-    },
-    {
-        "title": "Unified routing",
-        "body": "Every MCP server is reachable at a consistent /{server-name}/mcp path.",
-    },
-    {
-        "title": "Automated builds",
-        "body": "Build Docker images from metadata and keep registry entries up to date.",
+        "title": "Route consistently",
+        "body": (
+            "Give every server the same URL pattern and deployment conventions "
+            "so teams spend less time re-learning infrastructure."
+        ),
     },
 ]
+
+WHY = {
+    "title": "Why teams reach for it",
+    "intro": (
+        "The value is a clean operating model for MCP servers that keeps "
+        "definitions, build steps, and routing conventions aligned across teams."
+    ),
+    "items": [
+        {
+            "title": "Fewer one-off deployment decisions",
+            "body": (
+                "Stop re-answering the same questions around service names, "
+                "ingress paths, and deployment shape every time a new MCP server appears."
+            ),
+        },
+        {
+            "title": "Shared language across teams",
+            "body": (
+                "A single metadata model makes it easier for platform engineers, "
+                "application teams, and CI pipelines to talk about the same object."
+            ),
+        },
+        {
+            "title": "A better path from experiment to standard",
+            "body": (
+                "You can start with a small internal server catalog without "
+                "locking yourself into ad hoc scripts and hand-maintained manifests."
+            ),
+        },
+    ],
+}
 
 WORKFLOW = [
     {
         "step": "01",
         "title": "Define",
-        "body": "Capture server metadata in YAML, including name, route, and container port.",
+        "body": (
+            "Write the MCP server spec once with the image, port, and route "
+            "shape the operator should own."
+        ),
     },
     {
         "step": "02",
-        "title": "Build",
-        "body": "Build Docker images locally or in CI/CD and push them to the registry.",
+        "title": "Build and publish",
+        "body": (
+            "Use the CLI locally or in CI to build images and keep registry "
+            "metadata in sync with what is actually deployable."
+        ),
     },
     {
         "step": "03",
-        "title": "Deploy",
-        "body": "Generate manifests and deploy MCP servers through the operator.",
+        "title": "Deploy and route",
+        "body": (
+            "Let the operator generate the Deployment, Service, and Ingress "
+            "resources needed to expose the server at a stable path."
+        ),
     },
     {
         "step": "04",
-        "title": "Access",
-        "body": "Reach every MCP server through consistent URLs managed by ingress.",
+        "title": "Operate as a fleet",
+        "body": (
+            "Manage multiple MCP servers with the same conventions rather than "
+            "stacking separate gateway or manifest patterns for each one."
+        ),
     },
 ]
 
-ARCHITECTURE = [
+TEAMS = [
     {
-        "title": "Developer workstation",
-        "body": "Define servers, build images, and push updates from local development.",
+        "title": "Platform teams",
+        "body": (
+            "For groups that need one paved road for internal MCP services "
+            "instead of many per-team deployment patterns."
+        ),
+        "tag": "Standardize rollout",
     },
     {
-        "title": "CI/CD pipeline",
-        "body": "Build images, publish to the registry, and generate CRDs automatically.",
+        "title": "AI infrastructure teams",
+        "body": (
+            "For teams operating several MCP integrations and wanting consistent "
+            "routing, discovery, and deployment shape across them."
+        ),
+        "tag": "Operate a catalog",
     },
     {
-        "title": "Kubernetes cluster",
-        "body": "The operator watches MCPServer resources and provisions services.",
+        "title": "Developer platform builders",
+        "body": (
+            "For organizations that want self-hosted MCP infrastructure to fit "
+            "into their existing cluster and CI systems."
+        ),
+        "tag": "Stay self-hosted",
+    },
+]
+
+PLATFORM = {
+    "title": "One platform path, not a bag of parts",
+    "intro": (
+        "Registry, operator, and CLI matter because they support one standard "
+        "flow from definition to deployment, not because they exist as isolated components."
+    ),
+}
+
+PLATFORM_COMPONENTS = [
+    {
+        "title": "CLI",
+        "body": (
+            "Bootstraps platform setup and drives the same server lifecycle "
+            "from local iteration to CI execution."
+        ),
     },
     {
-        "title": "Internal registry",
-        "body": "Stores MCP server images and keeps metadata in sync for discovery.",
+        "title": "Operator",
+        "body": (
+            "Watches MCPServer resources and turns intent into Kubernetes "
+            "objects without hand-authoring every manifest."
+        ),
+    },
+    {
+        "title": "Registry",
+        "body": (
+            "Keeps image and metadata records aligned so deployment and "
+            "discovery are tied to the same source of truth."
+        ),
     },
 ]
 
 CALLOUT = {
-    "title": "Active development notice",
+    "title": "Start with the docs, then inspect the API surface",
     "body": (
-        "MCP Runtime Platform is under active development. APIs, commands, and "
-        "behavior may change, and production usage is not recommended yet."
+        "The docs currently focus on the runtime API, gateway model, access "
+        "grants, sessions, and analytics-related resources. That is the right "
+        "place to understand the current shape of the project."
     ),
-    "cta": {"label": "Read the documentation", "href": "/docs/"},
+    "primary": {"label": "Open documentation", "href": "/docs/"},
+    "secondary": {"label": "Browse repository", "href": "https://github.com/Agent-Hellboy/mcp-runtime"},
 }
 
 
@@ -148,12 +231,13 @@ def home():
         "index.html",
         nav_links=NAV_LINKS,
         hero=HERO,
-        at_a_glance=AT_A_GLANCE,
-        stats=STATS,
-        overview=OVERVIEW,
-        features=FEATURES,
+        status=STATUS,
+        outcomes=OUTCOMES,
+        why=WHY,
         workflow=WORKFLOW,
-        architecture=ARCHITECTURE,
+        teams=TEAMS,
+        platform=PLATFORM,
+        platform_components=PLATFORM_COMPONENTS,
         callout=CALLOUT,
     )
 
