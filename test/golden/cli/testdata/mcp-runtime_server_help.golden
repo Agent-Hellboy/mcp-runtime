@@ -7,12 +7,16 @@ Usage:
   mcp-runtime server [command]
 
 Available Commands:
+  apply       Apply an MCP server manifest
   build       Build MCP server images (push via `registry push`)
   create      Create an MCP server
   delete      Delete an MCP server
+  export      Export an MCP server manifest
   get         Get MCP server details
   list        List MCP servers
   logs        View server logs
+  patch       Patch an MCP server manifest
+  policy      Inspect rendered gateway policy for an MCP server
   status      Show MCP server runtime status (pods, images, pull secrets)
 
 Flags:

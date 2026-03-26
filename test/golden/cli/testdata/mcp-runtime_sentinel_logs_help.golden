@@ -1,0 +1,14 @@
+View logs for a mcp-sentinel component
+
+Usage:
+  mcp-runtime sentinel logs [component] [flags]
+
+Flags:
+      --follow         Follow log output
+  -h, --help           help for logs
+      --previous       Show logs from the previous container instance
+      --since string   Only return logs newer than a relative duration like 5m or 1h
+      --tail int       Number of recent log lines to show (-1 for all) (default 200)
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

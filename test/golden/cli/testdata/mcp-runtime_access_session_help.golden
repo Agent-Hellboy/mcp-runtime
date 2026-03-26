@@ -1,0 +1,20 @@
+Manage MCPAgentSession resources
+
+Usage:
+  mcp-runtime access session [command]
+
+Available Commands:
+  apply       Apply a session manifest
+  delete      Delete an access session
+  get         Get an access session
+  list        List access sessions
+  revoke      Revoke an agent session
+  unrevoke    Clear the revoked flag on an agent session
+
+Flags:
+  -h, --help   help for session
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging
+
+Use "mcp-runtime access session [command] --help" for more information about a command.

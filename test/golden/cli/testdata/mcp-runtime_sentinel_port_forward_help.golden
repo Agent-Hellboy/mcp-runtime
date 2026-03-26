@@ -1,0 +1,12 @@
+Port-forward a common mcp-sentinel service
+
+Usage:
+  mcp-runtime sentinel port-forward [target] [flags]
+
+Flags:
+      --address string   Addresses to listen on (default "127.0.0.1")
+  -h, --help             help for port-forward
+      --port int         Local port to bind (defaults to the target service port)
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

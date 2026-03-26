@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MCP Runtime Docs | CLI</title>
+    <meta
+      name="description"
+      content="CLI guide for MCP Runtime covering setup, cluster, server, registry, pipeline, and status commands."
+    />
+    <link rel="stylesheet" href="/static/docs.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <main>
+      <header class="site-header">
+        <div class="container nav">
+          <a class="brand" href="/docs/">
+            <div class="brand-mark" aria-hidden="true">MCP</div>
+            <div>
+              <div class="brand-title">MCP Runtime Docs</div>
+              <div class="brand-subtitle">CLI surface and operational commands</div>
+            </div>
+          </a>
+          <div class="nav-shell">
+            <nav class="nav-links">
+              <a href="/docs/">Overview</a>
+              <a href="/docs/runtime">Runtime</a>
+              <a class="active" href="/docs/cli">CLI</a>
+              <a href="/docs/sentinel">Sentinel</a>
+              <a href="/docs/api">API</a>
+            </nav>
+            <div class="nav-actions">
+              <a class="button ghost" href="/">Website</a>
+              <a class="button primary" href="https://github.com/Agent-Hellboy/mcp-runtime" target="_blank" rel="noreferrer">GitHub</a>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section class="docs-shell container">
+        <aside class="docs-sidebar">
+          <div class="docs-panel">
+            <div class="sidebar-group">
+              <div class="sidebar-label">Start here</div>
+              <a class="sidebar-link" href="/docs/">Welcome</a>
+              <a class="sidebar-link" href="/docs/runtime">Runtime</a>
+            </div>
+            <div class="sidebar-group">
+              <div class="sidebar-label">Operate</div>
+              <a class="sidebar-link active" href="/docs/cli">CLI</a>
+              <a class="sidebar-link" href="/docs/sentinel">Sentinel</a>
+            </div>
+            <div class="sidebar-group">
+              <div class="sidebar-label">Reference</div>
+              <a class="sidebar-link" href="/docs/api">API</a>
+            </div>
+            <div class="sidebar-note">
+              The CLI is the current operating front door for the platform.
+            </div>
+          </div>
+        </aside>
+
+        <article id="main-content" class="docs-main">
+          <header class="doc-header">
+            <span class="eyebrow">CLI</span>
+            <h1>CLI surface and practical commands.</h1>
+            <p class="doc-lead">
+              The CLI bootstraps clusters, manages registries, builds and deploys server images, and
+              inspects the runtime plus sentinel stack. If you want to operate MCP Runtime today, this is
+              the surface you will actually use.
+            </p>
+            <div class="doc-actions">
+              <a class="button primary" href="/docs/runtime">Runtime docs</a>
+              <a class="button secondary" href="/docs/api">API docs</a>
+            </div>
+          </header>
+
+          <section id="bootstrap" class="doc-section">
+            <h2>Bootstrap commands</h2>
+            <p>These are the shortest useful commands for getting the platform and one delivery path moving.</p>
+            <pre><code>make deps && make build-runtime
+
+./bin/mcp-runtime setup
+./bin/mcp-runtime status
+
+./bin/mcp-runtime registry push --image my-server:latest
+./bin/mcp-runtime pipeline generate --dir .mcp --output manifests/
+./bin/mcp-runtime pipeline deploy --dir manifests/</code></pre>
+          </section>
+
+          <section id="groups" class="doc-section">
+            <h2>Command groups</h2>
+            <div class="doc-card-grid">
+              <article class="doc-card">
+                <strong>setup</strong>
+                <p>Installs the platform stack, including CRDs, ingress, registry, operator, proxy image wiring, and the bundled sentinel stack.</p>
+                <pre><code>mcp-runtime setup
+mcp-runtime setup --with-tls
+mcp-runtime setup --without-sentinel</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>cluster</strong>
+                <p>Handles cluster initialization, status checks, kubeconfig and ingress configuration, provider-based provisioning, and cert-manager actions.</p>
+                <pre><code>mcp-runtime cluster init
+mcp-runtime cluster config --ingress traefik
+mcp-runtime cluster provision --provider kind
+mcp-runtime cluster cert status</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>status</strong>
+                <p>Shows platform status across cluster, registry, operator, MCP servers, and the bundled sentinel workloads.</p>
+                <pre><code>mcp-runtime status</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>server</strong>
+                <p>Lists, creates, deletes, inspects, and tails logs for MCPServer resources. Build helpers live under <code>server build</code>.</p>
+                <pre><code>mcp-runtime server list
+mcp-runtime server create payments --image repo/payments
+mcp-runtime server create payments --file server.yaml
+mcp-runtime server build image payments</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>registry</strong>
+                <p>Shows registry info, provisions external registry settings, and pushes images by Docker or in-cluster skopeo helper job.</p>
+                <pre><code>mcp-runtime registry info
+mcp-runtime registry provision --url registry.example.com
+mcp-runtime registry push --image my-server:latest
+mcp-runtime registry push --image my-server:latest --mode direct</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>pipeline</strong>
+                <p>Turns metadata into manifests and applies those manifests to the cluster for CI/CD friendly delivery.</p>
+                <pre><code>mcp-runtime pipeline generate --dir .mcp --output manifests
+mcp-runtime pipeline deploy --dir manifests</code></pre>
+              </article>
+            </div>
+          </section>
+
+          <section id="flags" class="doc-section">
+            <h2>Useful flags and behaviors</h2>
+            <div class="doc-card-grid">
+              <article class="doc-card">
+                <strong>setup flags</strong>
+                <p><code>--registry-type</code>, <code>--registry-storage</code>, <code>--ingress</code>, <code>--ingress-manifest</code>, <code>--force-ingress-install</code>, <code>--with-tls</code>, <code>--test-mode</code>, and <code>--without-sentinel</code>.</p>
+              </article>
+              <article class="doc-card">
+                <strong>cluster provider wiring</strong>
+                <p><code>cluster config</code> can work with kubeconfig plus cloud provider inputs, while <code>cluster provision</code> supports <code>kind</code>, <code>gke</code>, <code>eks</code>, and <code>aks</code> entry points.</p>
+              </article>
+              <article class="doc-card">
+                <strong>registry push modes</strong>
+                <p><code>registry push</code> defaults to <code>in-cluster</code>, which uses a helper pod, but can switch to <code>direct</code> when local Docker push is the right fit.</p>
+              </article>
+              <article class="doc-card">
+                <strong>server creation</strong>
+                <p><code>server create</code> supports simple image and tag flags or a file path when you want to apply a fuller manifest with gateway and analytics fields.</p>
+              </article>
+            </div>
+          </section>
+
+          <section id="flows" class="doc-section">
+            <h2>Common flows</h2>
+            <div class="doc-card-grid">
+              <article class="doc-card">
+                <strong>Create a local cluster path</strong>
+                <pre><code>mcp-runtime cluster provision --provider kind --nodes 3
+mcp-runtime setup</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>Push a server image</strong>
+                <pre><code>mcp-runtime server build image payments
+mcp-runtime registry push --image payments:latest</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>Deploy from metadata</strong>
+                <pre><code>mcp-runtime pipeline generate --dir .mcp --output manifests
+mcp-runtime pipeline deploy --dir manifests</code></pre>
+              </article>
+            </div>
+          </section>
+
+          <section id="notes" class="doc-section">
+            <h2>Operator-first CLI</h2>
+            <div class="note-box">
+              <h3>More than a thin wrapper</h3>
+              <p>
+                The CLI already owns install planning, registry and image handling, status aggregation, and
+                the bridge from metadata to cluster state. That is why the docs treat it as a primary product
+                surface instead of a footnote.
+              </p>
+            </div>
+          </section>
+
+          <nav class="doc-pager">
+            <a class="pager-link" href="/docs/runtime">
+              <span class="pager-label">Previous</span>
+              <span class="pager-title">Runtime docs</span>
+            </a>
+            <a class="pager-link" href="/docs/sentinel">
+              <span class="pager-label">Next</span>
+              <span class="pager-title">Sentinel docs</span>
+            </a>
+          </nav>
+        </article>
+
+        <aside class="docs-toc">
+          <div class="docs-panel">
+            <div class="toc-title">On this page</div>
+            <a class="toc-link" href="#bootstrap">Bootstrap commands</a>
+            <a class="toc-link" href="#groups">Command groups</a>
+            <a class="toc-link" href="#flags">Useful flags</a>
+            <a class="toc-link" href="#flows">Common flows</a>
+            <a class="toc-link" href="#notes">Operator-first CLI</a>
+          </div>
+        </aside>
+      </section>
+
+      <footer class="container docs-footer">
+        The CLI docs track the command groups and flags already present in <code>internal/cli</code>.
+      </footer>
+    </main>
+  </body>
+</html>

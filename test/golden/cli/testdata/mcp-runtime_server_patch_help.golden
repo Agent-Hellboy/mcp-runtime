@@ -1,0 +1,14 @@
+Patch an MCP server manifest
+
+Usage:
+  mcp-runtime server patch [name] [flags]
+
+Flags:
+  -h, --help                help for patch
+      --namespace string    Namespace (default "mcp-servers")
+      --patch string        Inline JSON/YAML patch document
+      --patch-file string   Path to a JSON/YAML patch document
+      --type string         Patch type (merge|json|strategic) (default "merge")
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

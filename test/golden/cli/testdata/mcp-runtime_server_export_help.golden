@@ -1,0 +1,12 @@
+Export an MCP server manifest
+
+Usage:
+  mcp-runtime server export [name] [flags]
+
+Flags:
+      --file string        Write the manifest to a file instead of stdout
+  -h, --help               help for export
+      --namespace string   Namespace (default "mcp-servers")
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging
