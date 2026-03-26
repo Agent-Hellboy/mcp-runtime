@@ -7,8 +7,8 @@ import (
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 
-	"gopkg.in/yaml.v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/yaml"
 )
 
 // GenerateCRD generates a Kubernetes CRD YAML file for a single server metadata entry at the given output path.
@@ -33,6 +33,7 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 
 	// Set route (ingress path)
 	mcpServer.Spec.IngressPath = server.Route
+	mcpServer.Spec.IngressHost = server.IngressHost
 
 	// Set service port (default 80)
 	if mcpServer.Spec.ServicePort == 0 {

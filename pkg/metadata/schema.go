@@ -57,6 +57,9 @@ type ServerMetadata struct {
 	// Route is the route path for the server (defaults to name/mcp).
 	Route string `yaml:"route,omitempty" json:"route,omitempty"`
 
+	// IngressHost is the hostname for the server ingress route.
+	IngressHost string `yaml:"ingressHost,omitempty" json:"ingressHost,omitempty"`
+
 	// Port is the port the container listens on (defaults to 8088).
 	Port int32 `yaml:"port,omitempty" json:"port,omitempty"`
 

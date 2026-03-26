@@ -16,13 +16,14 @@ func TestGenerateCRD(t *testing.T) {
 
 		replicas := int32(2)
 		server := &ServerMetadata{
-			Name:      "test-server",
-			Image:     "my-image",
-			ImageTag:  "v1.0.0",
-			Route:     "/test/mcp",
-			Port:      9000,
-			Replicas:  &replicas,
-			Namespace: "custom-ns",
+			Name:        "test-server",
+			Image:       "my-image",
+			ImageTag:    "v1.0.0",
+			Route:       "/test/mcp",
+			IngressHost: "example.local",
+			Port:        9000,
+			Replicas:    &replicas,
+			Namespace:   "custom-ns",
 		}
 
 		err := GenerateCRD(server, outputPath)
@@ -38,16 +39,16 @@ func TestGenerateCRD(t *testing.T) {
 
 		content := string(data)
 
-		// Verify YAML content (yaml.v3 uses lowercase keys)
-		assertContains(t, content, "apiversion: mcpruntime.org/v1alpha1")
+		assertContains(t, content, "apiVersion: mcpruntime.org/v1alpha1")
 		assertContains(t, content, "kind: MCPServer")
 		assertContains(t, content, "name: test-server")
 		assertContains(t, content, "namespace: custom-ns")
 		assertContains(t, content, "image: my-image")
-		assertContains(t, content, "imagetag: v1.0.0")
+		assertContains(t, content, "imageTag: v1.0.0")
 		assertContains(t, content, "port: 9000")
 		assertContains(t, content, "replicas: 2")
-		assertContains(t, content, "ingresspath: /test/mcp")
+		assertContains(t, content, "ingressPath: /test/mcp")
+		assertContains(t, content, "ingressHost: example.local")
 	})
 
 	t.Run("generates CRD with resources", func(t *testing.T) {
@@ -192,15 +193,15 @@ func TestGenerateCRD(t *testing.T) {
 		assertMapBoolValue(t, gateway, "enabled", true)
 		assertMapStringValue(t, gateway, "image", "example.com/mcp-proxy:latest")
 		assertMapIntValue(t, gateway, "port", 8091)
-		assertMapStringValue(t, gateway, "upstreamurl", "http://127.0.0.1:8088")
-		assertMapStringValue(t, gateway, "stripprefix", "/gateway-server")
+		assertMapStringValue(t, gateway, "upstreamURL", "http://127.0.0.1:8088")
+		assertMapStringValue(t, gateway, "stripPrefix", "/gateway-server")
 
 		auth := assertMapValue(t, spec, "auth")
 		assertMapStringValue(t, auth, "mode", "header")
 
 		policy := assertMapValue(t, spec, "policy")
 		assertMapStringValue(t, policy, "mode", "allow-list")
-		assertMapStringValue(t, policy, "defaultdecision", "deny")
+		assertMapStringValue(t, policy, "defaultDecision", "deny")
 
 		session := assertMapValue(t, spec, "session")
 		assertMapBoolValue(t, session, "required", true)
@@ -211,30 +212,30 @@ func TestGenerateCRD(t *testing.T) {
 		}
 		tool := assertMapItem(t, tools[0], "tools[0]")
 		assertMapStringValue(t, tool, "name", "delete_user")
-		assertMapStringValue(t, tool, "requiredtrust", "high")
+		assertMapStringValue(t, tool, "requiredTrust", "high")
 
-		secretEnvVars := assertSliceValue(t, spec, "secretenvvars")
+		secretEnvVars := assertSliceValue(t, spec, "secretEnvVars")
 		if len(secretEnvVars) != 1 {
 			t.Fatalf("expected 1 secret env var, got %d", len(secretEnvVars))
 		}
-		secretEnv := assertMapItem(t, secretEnvVars[0], "secretenvvars[0]")
+		secretEnv := assertMapItem(t, secretEnvVars[0], "secretEnvVars[0]")
 		assertMapStringValue(t, secretEnv, "name", "OPENAI_API_KEY")
-		secretKeyRef := assertMapValue(t, secretEnv, "secretkeyref")
+		secretKeyRef := assertMapValue(t, secretEnv, "secretKeyRef")
 		assertMapStringValue(t, secretKeyRef, "name", "provider-creds")
 		assertMapStringValue(t, secretKeyRef, "key", "openai")
 
 		analytics := assertMapValue(t, spec, "analytics")
 		assertMapBoolValue(t, analytics, "enabled", true)
-		assertMapStringValue(t, analytics, "ingesturl", "http://analytics.default.svc/api/events")
+		assertMapStringValue(t, analytics, "ingestURL", "http://analytics.default.svc/api/events")
 		assertMapStringValue(t, analytics, "source", "gateway-server")
-		assertMapStringValue(t, analytics, "eventtype", "mcp.request")
-		apiKeySecretRef := assertMapValue(t, analytics, "apikeysecretref")
+		assertMapStringValue(t, analytics, "eventType", "mcp.request")
+		apiKeySecretRef := assertMapValue(t, analytics, "apiKeySecretRef")
 		assertMapStringValue(t, apiKeySecretRef, "name", "analytics-creds")
 		assertMapStringValue(t, apiKeySecretRef, "key", "api-key")
 
 		rollout := assertMapValue(t, spec, "rollout")
 		assertMapStringValue(t, rollout, "strategy", "Canary")
-		assertMapIntValue(t, rollout, "canaryreplicas", 1)
+		assertMapIntValue(t, rollout, "canaryReplicas", 1)
 	})
 
 	t.Run("creates parent directories", func(t *testing.T) {
