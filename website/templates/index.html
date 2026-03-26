@@ -26,9 +26,9 @@
         <span class="chip">{{ status.label }}</span>
       </div>
       <pre class="code-sample"><code>{{ hero.proof_code }}</code></pre>
-      <div class="proof-grid">
+      <div class="proof-notes">
         {% for item in hero.proof_points %}
-          <article class="proof-card">
+          <article class="proof-note">
             <h3>{{ item.title }}</h3>
             <p>{{ item.body }}</p>
           </article>
@@ -38,7 +38,7 @@
   </section>
 
   <section class="container status-band">
-    <div class="status-card">
+    <div class="status-rail">
       <div>
         <span class="status-label">{{ status.label }}</span>
         <p>{{ status.body }}</p>
@@ -47,23 +47,23 @@
     </div>
   </section>
 
-  <section class="container outcomes">
+  <section class="container signal-strip">
     {% for item in outcomes %}
-      <article class="outcome-card" style="--delay: {{ loop.index0 * 0.08 }}s;">
+      <article class="signal" style="--delay: {{ loop.index0 * 0.08 }}s;">
         <h2>{{ item.title }}</h2>
         <p>{{ item.body }}</p>
       </article>
     {% endfor %}
   </section>
 
-  <section id="why" class="section container">
+  <section id="why" class="section container section-shell">
     <div class="section-header">
       <h2>{{ why.title }}</h2>
       <p>{{ why.intro }}</p>
     </div>
-    <div class="card-grid">
+    <div class="value-list">
       {% for item in why["items"] %}
-        <article class="card" style="--delay: {{ loop.index0 * 0.08 }}s;">
+        <article class="value-item" style="--delay: {{ loop.index0 * 0.08 }}s;">
           <h3>{{ item.title }}</h3>
           <p>{{ item.body }}</p>
         </article>
@@ -71,15 +71,33 @@
     </div>
   </section>
 
-  <section id="workflow" class="section container">
+  <section id="workflow" class="section container section-shell">
     <div class="section-header">
       <h2>From definition to routed server in four moves</h2>
       <p>See how a team goes from one MCP spec to a stable cluster route without rebuilding the deployment story for every new server.</p>
     </div>
-    <div class="workflow-grid">
+    <div class="workflow-list">
       {% for item in workflow %}
-        <article class="step-card" style="--delay: {{ loop.index0 * 0.08 }}s;">
+        <article class="workflow-item" style="--delay: {{ loop.index0 * 0.08 }}s;">
           <div class="step-number">{{ item.step }}</div>
+          <div class="step-body">
+            <h3>{{ item.title }}</h3>
+            <p>{{ item.body }}</p>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section id="teams" class="section container section-shell">
+    <div class="section-header">
+      <h2>Who it is for</h2>
+      <p>MCP Runtime fits teams that want a self-hosted, repeatable way to define, publish, and route multiple MCP services inside an existing cluster.</p>
+    </div>
+    <div class="audience-list">
+      {% for item in teams %}
+        <article class="audience-row" style="--delay: {{ loop.index0 * 0.08 }}s;">
+          <span class="audience-tag">{{ item.tag }}</span>
           <div>
             <h3>{{ item.title }}</h3>
             <p>{{ item.body }}</p>
@@ -89,35 +107,19 @@
     </div>
   </section>
 
-  <section id="teams" class="section container">
-    <div class="section-header">
-      <h2>Who it is for</h2>
-      <p>MCP Runtime fits teams that want a self-hosted, repeatable way to define, publish, and route multiple MCP services inside an existing cluster.</p>
-    </div>
-    <div class="card-grid team-grid">
-      {% for item in teams %}
-        <article class="card team-card" style="--delay: {{ loop.index0 * 0.08 }}s;">
-          <span class="card-tag">{{ item.tag }}</span>
-          <h3>{{ item.title }}</h3>
-          <p>{{ item.body }}</p>
-        </article>
-      {% endfor %}
-    </div>
-  </section>
-
-  <section id="platform" class="section container platform-section">
+  <section id="platform" class="section container section-shell platform-shell">
     <div class="section-header">
       <h2>{{ platform.title }}</h2>
       <p>{{ platform.intro }}</p>
     </div>
-    <div class="platform-grid">
+    <div class="platform-layout">
       <aside class="platform-note">
         <h3>The operating model</h3>
         <p>Define servers, publish images, let the operator route them, and keep the workflow consistent across the fleet. That gives teams one repeatable path instead of ad hoc infrastructure decisions.</p>
       </aside>
       <div class="stack-list">
         {% for item in platform_components %}
-          <article class="stack-card" style="--delay: {{ loop.index0 * 0.08 }}s;">
+          <article class="stack-row" style="--delay: {{ loop.index0 * 0.08 }}s;">
             <span class="stack-index">0{{ loop.index }}</span>
             <div>
               <h3>{{ item.title }}</h3>
@@ -129,15 +131,17 @@
     </div>
   </section>
 
-  <section class="container callout">
-    <div>
-      <span class="callout-kicker">Start here</span>
-      <h2>{{ callout.title }}</h2>
-      <p>{{ callout.body }}</p>
-    </div>
-    <div class="callout-actions">
-      <a class="button primary" href="{{ callout.primary.href }}">{{ callout.primary.label }}</a>
-      <a class="button secondary" href="{{ callout.secondary.href }}">{{ callout.secondary.label }}</a>
+  <section class="cta-band">
+    <div class="container cta-inner">
+      <div>
+        <span class="callout-kicker">Start here</span>
+        <h2>{{ callout.title }}</h2>
+        <p>{{ callout.body }}</p>
+      </div>
+      <div class="callout-actions">
+        <a class="button primary" href="{{ callout.primary.href }}">{{ callout.primary.label }}</a>
+        <a class="button secondary" href="{{ callout.secondary.href }}">{{ callout.secondary.label }}</a>
+      </div>
     </div>
   </section>
 {% endblock %}
