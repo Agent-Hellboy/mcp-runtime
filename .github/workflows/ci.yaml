@@ -84,6 +84,56 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
+  e2e-kind:
+    name: Kind E2E
+    runs-on: ubuntu-24.04
+    needs: [lint, test]
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install kubectl
+        run: |
+          curl -fsSL -o kubectl "https://dl.k8s.io/release/v1.34.1/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+
+      - name: Install kind
+        run: |
+          curl -fsSL -o kind "https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64"
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+
+      - name: Show tool versions
+        run: |
+          docker version
+          kubectl version --client
+          kind version
+
+      - name: Run kind e2e
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/.e2e-artifacts/kind
+        run: bash test/e2e/kind.sh
+
+      - name: Upload e2e artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kind-e2e-artifacts
+          path: .e2e-artifacts/kind
+          if-no-files-found: ignore
+
   benchmark:
     name: Benchmarks
     runs-on: ubuntu-latest

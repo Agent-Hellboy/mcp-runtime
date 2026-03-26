@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ARG DOCKERCLI_VERSION=26.1.4
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates curl gnupg lsb-release iptables && \
+    apt-get install -y --no-install-recommends ca-certificates curl git gnupg iptables lsb-release python3 && \
     rm -rf /var/lib/apt/lists/*
 
 # Install docker CLI (newer API than distro docker.io), kubectl, kind

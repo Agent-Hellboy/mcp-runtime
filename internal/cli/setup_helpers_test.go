@@ -548,6 +548,83 @@ func TestRenderAnalyticsSecretManifestReusesExistingPassword(t *testing.T) {
 	}
 }
 
+func TestRenderAnalyticsSecretManifestReusesExistingAPIKeys(t *testing.T) {
+	apiKeyEncoded := base64.StdEncoding.EncodeToString([]byte("api-key"))
+	uiKeyEncoded := base64.StdEncoding.EncodeToString([]byte("ui-key"))
+	passwordEncoded := base64.StdEncoding.EncodeToString([]byte("grafana-password"))
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			switch {
+			case contains(spec.Args, "jsonpath={.data.API_KEYS}"):
+				return &MockCommand{Args: spec.Args, OutputData: []byte(apiKeyEncoded)}
+			case contains(spec.Args, "jsonpath={.data.UI_API_KEY}"):
+				return &MockCommand{Args: spec.Args, OutputData: []byte(uiKeyEncoded)}
+			case contains(spec.Args, "jsonpath={.data.GRAFANA_ADMIN_PASSWORD}"):
+				return &MockCommand{Args: spec.Args, OutputData: []byte(passwordEncoded)}
+			default:
+				return &MockCommand{Args: spec.Args}
+			}
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+
+	manifest, err := renderAnalyticsSecretManifest(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(manifest, `API_KEYS: "api-key"`) {
+		t.Fatalf("expected existing API key to be reused, got %q", manifest)
+	}
+	if !strings.Contains(manifest, `UI_API_KEY: "ui-key"`) {
+		t.Fatalf("expected existing UI API key to be reused, got %q", manifest)
+	}
+	if !strings.Contains(manifest, `GRAFANA_ADMIN_PASSWORD: "grafana-password"`) {
+		t.Fatalf("expected existing grafana password to be reused, got %q", manifest)
+	}
+}
+
+func TestRenderAnalyticsSecretManifestGeneratesKeysWhenMissing(t *testing.T) {
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			if contains(spec.Args, "get") && contains(spec.Args, "secret") {
+				return &MockCommand{
+					Args:       spec.Args,
+					OutputData: []byte("Error from server (NotFound): secrets \"mcp-sentinel-secrets\" not found"),
+					OutputErr:  errors.New("not found"),
+				}
+			}
+			return &MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+
+	manifest, err := renderAnalyticsSecretManifest(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(manifest, `API_KEYS: ""`) {
+		t.Fatalf("expected generated API key, got %q", manifest)
+	}
+	if strings.Contains(manifest, `UI_API_KEY: ""`) {
+		t.Fatalf("expected generated UI API key, got %q", manifest)
+	}
+	if strings.Contains(manifest, `GRAFANA_ADMIN_PASSWORD: ""`) {
+		t.Fatalf("expected generated grafana password, got %q", manifest)
+	}
+}
+
+func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
+	got, err := prepareAnalyticsImages(zap.NewNop(), &ExternalRegistryConfig{URL: "registry.example.com"}, true, true, SetupDeps{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := testModeAnalyticsImageSet()
+	if got != want {
+		t.Fatalf("prepareAnalyticsImages() = %+v, want %+v", got, want)
+	}
+}
+
 func TestRenderAnalyticsManifestInjectsImagePullSecrets(t *testing.T) {
 	content := `apiVersion: apps/v1
 kind: Deployment
@@ -897,6 +974,9 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	if !strings.Contains(managerManifest, "image: "+operatorImage) {
 		t.Fatalf("expected manager manifest to include image %q", operatorImage)
 	}
+	if !strings.Contains(managerManifest, "imagePullPolicy: Always") {
+		t.Fatalf("expected non-test operator image to preserve imagePullPolicy Always, got:\n%s", managerManifest)
+	}
 	if !strings.Contains(managerManifest, "- --leader-elect") {
 		t.Fatalf("expected manager manifest to preserve leader election flag, got:\n%s", managerManifest)
 	}
@@ -942,6 +1022,56 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	}
 	if !hasCRD || !hasRBAC || !hasDelete || !hasManagerApply || !hasNamespace {
 		t.Fatalf("missing expected kubectl commands: crd=%t rbac=%t delete=%t manager=%t namespace=%t", hasCRD, hasRBAC, hasDelete, hasManagerApply, hasNamespace)
+	}
+}
+
+func TestDeployOperatorManifestsWithKubectlUsesIfNotPresentForTestModeImage(t *testing.T) {
+	origKubectl := kubectlClient
+	t.Cleanup(func() { kubectlClient = origKubectl })
+
+	root := repoRootForTest(t)
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working dir: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir to repo root: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(origDir)
+	})
+
+	var managerManifest string
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			cmd := &MockCommand{Args: spec.Args}
+			if idx := argIndex(spec.Args, "-f"); idx != -1 && idx+1 < len(spec.Args) {
+				path := spec.Args[idx+1]
+				if strings.Contains(path, "manager-") && strings.HasSuffix(path, ".yaml") {
+					cmd.RunFunc = func() error {
+						data, err := os.ReadFile(path)
+						if err != nil {
+							return err
+						}
+						managerManifest = string(data)
+						return nil
+					}
+				}
+			}
+			return cmd
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	kubectlClient = kubectl
+
+	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), testModeOperatorImage, "", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if managerManifest == "" {
+		t.Fatal("expected manager manifest to be captured")
+	}
+	if !strings.Contains(managerManifest, "imagePullPolicy: IfNotPresent") {
+		t.Fatalf("expected test mode operator image to use IfNotPresent, got:\n%s", managerManifest)
 	}
 }
 

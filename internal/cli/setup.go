@@ -41,10 +41,29 @@ type analyticsComponent struct {
 }
 
 type AnalyticsImageSet struct {
-	Ingest    string
-	API       string
-	Processor string
-	UI        string
+	Ingest        string
+	API           string
+	Processor     string
+	UI            string
+	Traefik       string
+	ClickHouse    string
+	Zookeeper     string
+	Kafka         string
+	Prometheus    string
+	OTelCollector string
+	Tempo         string
+	Loki          string
+	Promtail      string
+	Grafana       string
+}
+
+func testModeAnalyticsImageSet() AnalyticsImageSet {
+	return AnalyticsImageSet{
+		Ingest:    "docker.io/library/mcp-sentinel-ingest:latest",
+		API:       "docker.io/library/mcp-sentinel-api:latest",
+		Processor: "docker.io/library/mcp-sentinel-processor:latest",
+		UI:        "docker.io/library/mcp-sentinel-ui:latest",
+	}
 }
 
 var analyticsComponents = []analyticsComponent{
@@ -599,8 +618,8 @@ func prepareAnalyticsImages(logger *zap.Logger, extRegistry *ExternalRegistryCon
 	}
 
 	if testMode {
-		Info("Test mode: skipping analytics image build and push, using local image names")
-		return images, nil
+		Info("Test mode: skipping analytics image build and push, using test-mode image names")
+		return testModeAnalyticsImageSet(), nil
 	}
 
 	for _, component := range analyticsComponents {
@@ -1219,6 +1238,7 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 	// This targets the first image field in the file (the manager container).
 	re := regexp.MustCompile(`(?m)^(\s*)image:\s*\S+`)
 	managerYAMLStr := re.ReplaceAllString(string(managerYAML), fmt.Sprintf("${1}image: %s", operatorImage))
+	managerYAMLStr = injectOperatorImagePullPolicy(managerYAMLStr, operatorImagePullPolicy(operatorImage))
 
 	// Inject operator args if provided
 	if len(operatorArgs) > 0 {
@@ -1408,7 +1428,15 @@ func applyRenderedManifest(kubectl KubectlRunner, manifestPath string, images An
 }
 
 func applyManifestContent(kubectl KubectlRunner, manifest string) error {
-	applyCmd, err := kubectl.CommandArgs([]string{"apply", "-f", "-"})
+	return applyManifestContentWithNamespace(kubectl, manifest, "")
+}
+
+func applyManifestContentWithNamespace(kubectl KubectlRunner, manifest, namespace string) error {
+	args := []string{"apply", "-f", "-"}
+	if strings.TrimSpace(namespace) != "" {
+		args = append(args, "-n", namespace)
+	}
+	applyCmd, err := kubectl.CommandArgs(args)
 	if err != nil {
 		return err
 	}
@@ -1419,11 +1447,48 @@ func applyManifestContent(kubectl KubectlRunner, manifest string) error {
 }
 
 func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePullSecretName string) (string, error) {
-	replacements := map[string]string{
-		"image: mcp-sentinel-ingest:latest":    "image: " + images.Ingest,
-		"image: mcp-sentinel-api:latest":       "image: " + images.API,
-		"image: mcp-sentinel-processor:latest": "image: " + images.Processor,
-		"image: mcp-sentinel-ui:latest":        "image: " + images.UI,
+	replacements := map[string]string{}
+	if strings.TrimSpace(images.Ingest) != "" {
+		replacements["image: mcp-sentinel-ingest:latest"] = "image: " + images.Ingest
+	}
+	if strings.TrimSpace(images.API) != "" {
+		replacements["image: mcp-sentinel-api:latest"] = "image: " + images.API
+	}
+	if strings.TrimSpace(images.Processor) != "" {
+		replacements["image: mcp-sentinel-processor:latest"] = "image: " + images.Processor
+	}
+	if strings.TrimSpace(images.UI) != "" {
+		replacements["image: mcp-sentinel-ui:latest"] = "image: " + images.UI
+	}
+	if strings.TrimSpace(images.Traefik) != "" {
+		replacements["image: traefik:v3.0"] = "image: " + images.Traefik
+	}
+	if strings.TrimSpace(images.ClickHouse) != "" {
+		replacements["image: clickhouse/clickhouse-server:23.8"] = "image: " + images.ClickHouse
+	}
+	if strings.TrimSpace(images.Zookeeper) != "" {
+		replacements["image: confluentinc/cp-zookeeper:7.5.1"] = "image: " + images.Zookeeper
+	}
+	if strings.TrimSpace(images.Kafka) != "" {
+		replacements["image: confluentinc/cp-kafka:7.5.1"] = "image: " + images.Kafka
+	}
+	if strings.TrimSpace(images.Prometheus) != "" {
+		replacements["image: prom/prometheus:v2.49.1"] = "image: " + images.Prometheus
+	}
+	if strings.TrimSpace(images.OTelCollector) != "" {
+		replacements["image: otel/opentelemetry-collector:0.92.0"] = "image: " + images.OTelCollector
+	}
+	if strings.TrimSpace(images.Tempo) != "" {
+		replacements["image: grafana/tempo:2.3.1"] = "image: " + images.Tempo
+	}
+	if strings.TrimSpace(images.Loki) != "" {
+		replacements["image: grafana/loki:2.9.4"] = "image: " + images.Loki
+	}
+	if strings.TrimSpace(images.Promtail) != "" {
+		replacements["image: grafana/promtail:2.9.4"] = "image: " + images.Promtail
+	}
+	if strings.TrimSpace(images.Grafana) != "" {
+		replacements["image: grafana/grafana:10.2.3"] = "image: " + images.Grafana
 	}
 	rendered := content
 	for oldValue, newValue := range replacements {
@@ -1441,15 +1506,17 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 }
 
 func renderAnalyticsSecretManifest(kubectl KubectlRunner) (string, error) {
-	grafanaPassword, err := existingSecretDataValue(kubectl, defaultAnalyticsNamespace, "mcp-sentinel-secrets", "GRAFANA_ADMIN_PASSWORD")
+	apiKeys, err := existingSecretDataValueOrRandom(kubectl, defaultAnalyticsNamespace, "mcp-sentinel-secrets", "API_KEYS", 16)
 	if err != nil {
 		return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	if grafanaPassword == "" {
-		grafanaPassword, err = randomHex(16)
-		if err != nil {
-			return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to generate analytics secrets: %v", err))
-		}
+	uiAPIKey, err := existingSecretDataValueOrRandom(kubectl, defaultAnalyticsNamespace, "mcp-sentinel-secrets", "UI_API_KEY", 16)
+	if err != nil {
+		return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	grafanaPassword, err := existingSecretDataValueOrRandom(kubectl, defaultAnalyticsNamespace, "mcp-sentinel-secrets", "GRAFANA_ADMIN_PASSWORD", 16)
+	if err != nil {
+		return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
 	secretManifest := fmt.Sprintf(`apiVersion: v1
 kind: Secret
@@ -1458,11 +1525,11 @@ metadata:
   namespace: %s
 type: Opaque
 stringData:
-  API_KEYS: ""
-  UI_API_KEY: ""
+  API_KEYS: "%s"
+  UI_API_KEY: "%s"
   GRAFANA_ADMIN_USER: "admin"
   GRAFANA_ADMIN_PASSWORD: "%s"
-`, defaultAnalyticsNamespace, grafanaPassword)
+`, defaultAnalyticsNamespace, apiKeys, uiAPIKey, grafanaPassword)
 	return secretManifest, nil
 }
 
@@ -1504,6 +1571,17 @@ func existingSecretDataValue(kubectl KubectlRunner, namespace, name, key string)
 		return "", fmt.Errorf("decode secret %s/%s key %s: %w", namespace, name, key, err)
 	}
 	return string(decoded), nil
+}
+
+func existingSecretDataValueOrRandom(kubectl KubectlRunner, namespace, name, key string, size int) (string, error) {
+	value, err := existingSecretDataValue(kubectl, namespace, name, key)
+	if err != nil {
+		return "", err
+	}
+	if value != "" {
+		return value, nil
+	}
+	return randomHex(size)
 }
 
 func injectImagePullSecretsIntoManifest(manifest, secretName string) (string, error) {
@@ -1630,6 +1708,21 @@ func injectOperatorArgs(yamlContent string, args []string) string {
 	}
 
 	return yamlContent
+}
+
+func operatorImagePullPolicy(operatorImage string) string {
+	if strings.TrimSpace(operatorImage) == testModeOperatorImage {
+		return "IfNotPresent"
+	}
+	return "Always"
+}
+
+func injectOperatorImagePullPolicy(yamlContent, pullPolicy string) string {
+	if strings.TrimSpace(pullPolicy) == "" {
+		return yamlContent
+	}
+	pullPolicyPattern := regexp.MustCompile(`(?m)^(\s*imagePullPolicy:\s*)\S+`)
+	return pullPolicyPattern.ReplaceAllString(yamlContent, "${1}"+pullPolicy)
 }
 
 func renderOperatorArgsBlock(indent string, args []string) string {
