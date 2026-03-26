@@ -18,11 +18,7 @@
     </div>
     <div class="hero-stage">
       <div class="stage-toolbar">
-        <div class="stage-tabs">
-          <span class="stage-tab active">mcpserver.yaml</span>
-          <span class="stage-tab">policy</span>
-          <span class="stage-tab">events</span>
-        </div>
+        <span class="stage-heading">MCPServer blueprint</span>
         <span class="stage-kicker">{{ status.label }}</span>
       </div>
       <div class="stage-main">
@@ -56,43 +52,6 @@
         <span class="status-label">{{ status.label }}</span>
         <p>{{ status.body }}</p>
       </div>
-      <div class="status-actions">
-        <a class="button secondary" href="{{ status.secondary.href }}">{{ status.secondary.label }}</a>
-        <a class="button primary" href="{{ status.primary.href }}">{{ status.primary.label }}</a>
-      </div>
-    </div>
-  </section>
-
-  <section class="container signal-strip">
-    {% for item in signals %}
-      <article class="signal" style="--delay: {{ loop.index0 * 0.08 }}s;">
-        <span class="signal-label">{{ item.label }}</span>
-        <h2>{{ item.title }}</h2>
-        <p>{{ item.body }}</p>
-      </article>
-    {% endfor %}
-  </section>
-
-  <section id="positioning" class="section container section-shell">
-    <div class="section-header">
-      <h2>{{ positioning.title }}</h2>
-      <p>{{ positioning.intro }}</p>
-    </div>
-    <div class="capability-list">
-      {% for item in positioning["items"] %}
-        <article class="capability-row" style="--delay: {{ loop.index0 * 0.08 }}s;">
-          <span class="row-label">{{ item.label }}</span>
-          <div class="row-content">
-            <h3>{{ item.title }}</h3>
-            <p>{{ item.body }}</p>
-            <div class="point-rail">
-              {% for point in item.points %}
-                <span class="point-pill">{{ point }}</span>
-              {% endfor %}
-            </div>
-          </div>
-        </article>
-      {% endfor %}
     </div>
   </section>
 
@@ -103,7 +62,7 @@
     </div>
     <div class="capability-list">
       {% for item in product["items"] %}
-        <article class="capability-row" style="--delay: {{ loop.index0 * 0.08 }}s;">
+        <article class="capability-row">
           <span class="row-label">{{ item.label }}</span>
           <div class="row-content">
             <h3>{{ item.title }}</h3>
@@ -126,7 +85,7 @@
     </div>
     <div class="workflow-list">
       {% for item in workflow %}
-        <article class="workflow-row" style="--delay: {{ loop.index0 * 0.08 }}s;">
+        <article class="workflow-row">
           <span class="workflow-step">{{ item.step }}</span>
           <div class="row-content">
             <h3>{{ item.title }}</h3>
@@ -141,19 +100,10 @@
     <div class="section-header">
       <h2>{{ surfaces.title }}</h2>
       <p>{{ surfaces.intro }}</p>
-      <div class="company-strip">
-        {% for item in company %}
-          <div class="company-line">
-            <span class="company-label">{{ item.label }}</span>
-            <strong>{{ item.title }}</strong>
-            <span>{{ item.body }}</span>
-          </div>
-        {% endfor %}
-      </div>
     </div>
     <div class="surface-list">
       {% for item in surfaces["items"] %}
-        <article class="surface-row" style="--delay: {{ loop.index0 * 0.08 }}s;">
+        <article class="surface-row">
           <div class="surface-meta">
             <span class="row-label">{{ item.name }}</span>
             <code>{{ item.path }}</code>
@@ -171,7 +121,7 @@
     </div>
     <div class="docs-list">
       {% for item in docs_library["items"] %}
-        <a class="docs-row" href="{{ item.href }}" style="--delay: {{ loop.index0 * 0.08 }}s;">
+        <a class="docs-row" href="{{ item.href }}">
           <div class="docs-copy">
             <span class="row-label">{{ item.tag }}</span>
             <h3>{{ item.title }}</h3>
@@ -186,7 +136,7 @@
   <section class="cta-band">
     <div class="container cta-inner">
       <div>
-        <span class="callout-kicker">Read the platform split</span>
+        <span class="callout-kicker">Start with the docs</span>
         <h2>{{ callout.title }}</h2>
         <p>{{ callout.body }}</p>
       </div>

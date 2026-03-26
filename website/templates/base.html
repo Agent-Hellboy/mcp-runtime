@@ -6,7 +6,7 @@
     <title>{{ title or "MCP Runtime Platform" }}</title>
     <meta
       name="description"
-      content="MCP Runtime is an open source Kubernetes platform for MCP, with a higher-level control plane and a bundled governed request path through mcp-sentinel."
+      content="Deploy, govern, and observe MCP services on Kubernetes with a higher-level platform for MCP delivery, access, policy, audit, and observability."
     />
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   </head>
@@ -22,7 +22,7 @@
             <div class="brand-mark" aria-hidden="true">MCP</div>
             <div>
               <div class="brand-title">MCP Runtime Platform</div>
-              <div class="brand-subtitle">MCP platform + request governance</div>
+              <div class="brand-subtitle">Deploy. Govern. Observe.</div>
             </div>
           </a>
           <div class="nav-shell">
@@ -33,7 +33,6 @@
             </nav>
             <div class="nav-actions">
               <a class="button ghost" href="https://github.com/Agent-Hellboy/mcp-runtime">GitHub</a>
-              <a class="button primary nav-button" href="/docs/">Read docs</a>
             </div>
           </div>
         </div>
@@ -45,9 +44,8 @@
 
       <footer class="container footer">
         <div>
-          MCP Runtime Platform provides a self-hosted MCP control plane and a bundled
-          governed request path for internal MCP services. It is open source;
-          contribute at
+          MCP Runtime Platform is an open source Kubernetes platform for deploying,
+          governing, and observing internal MCP services. Contribute at
           <a href="https://github.com/Agent-Hellboy/mcp-runtime">github.com/Agent-Hellboy/mcp-runtime</a>
           or write to us at
           <a
