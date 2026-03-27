@@ -1,0 +1,44 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: clickhouse-init
+  namespace: mcp-sentinel
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: clickhouse/clickhouse-server:23.8
+          envFrom:
+            - configMapRef:
+                name: mcp-sentinel-config
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              clickhouse-client --host=clickhouse --query "CREATE DATABASE IF NOT EXISTS ${CLICKHOUSE_DB}";
+              clickhouse-client --host=clickhouse --query "CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_DB}.events (timestamp DateTime64(3), source String, event_type String, payload String, server String MATERIALIZED JSONExtractString(payload, 'server'), namespace String MATERIALIZED JSONExtractString(payload, 'namespace'), cluster String MATERIALIZED JSONExtractString(payload, 'cluster'), human_id String MATERIALIZED JSONExtractString(payload, 'human_id'), agent_id String MATERIALIZED JSONExtractString(payload, 'agent_id'), session_id String MATERIALIZED JSONExtractString(payload, 'session_id'), decision String MATERIALIZED JSONExtractString(payload, 'decision'), tool_name String MATERIALIZED JSONExtractString(payload, 'tool_name')) ENGINE = MergeTree ORDER BY timestamp";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD COLUMN IF NOT EXISTS server String MATERIALIZED JSONExtractString(payload, 'server')";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD COLUMN IF NOT EXISTS namespace String MATERIALIZED JSONExtractString(payload, 'namespace')";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD COLUMN IF NOT EXISTS cluster String MATERIALIZED JSONExtractString(payload, 'cluster')";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD COLUMN IF NOT EXISTS human_id String MATERIALIZED JSONExtractString(payload, 'human_id')";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD COLUMN IF NOT EXISTS agent_id String MATERIALIZED JSONExtractString(payload, 'agent_id')";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD COLUMN IF NOT EXISTS session_id String MATERIALIZED JSONExtractString(payload, 'session_id')";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD COLUMN IF NOT EXISTS decision String MATERIALIZED JSONExtractString(payload, 'decision')";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD COLUMN IF NOT EXISTS tool_name String MATERIALIZED JSONExtractString(payload, 'tool_name')";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events MATERIALIZE COLUMN server";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events MATERIALIZE COLUMN namespace";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events MATERIALIZE COLUMN cluster";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events MATERIALIZE COLUMN human_id";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events MATERIALIZE COLUMN agent_id";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events MATERIALIZE COLUMN session_id";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events MATERIALIZE COLUMN decision";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events MATERIALIZE COLUMN tool_name";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD INDEX IF NOT EXISTS idx_events_server server TYPE set(1024) GRANULARITY 1";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD INDEX IF NOT EXISTS idx_events_namespace namespace TYPE set(1024) GRANULARITY 1";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD INDEX IF NOT EXISTS idx_events_decision decision TYPE set(32) GRANULARITY 1";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD INDEX IF NOT EXISTS idx_events_tool_name tool_name TYPE set(1024) GRANULARITY 1";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events MATERIALIZE INDEX idx_events_server";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events MATERIALIZE INDEX idx_events_namespace";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events MATERIALIZE INDEX idx_events_decision";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events MATERIALIZE INDEX idx_events_tool_name";

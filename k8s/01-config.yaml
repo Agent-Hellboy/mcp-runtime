@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-sentinel-config
+  namespace: mcp-sentinel
+data:
+  CLICKHOUSE_ADDR: "clickhouse:9000"
+  CLICKHOUSE_DB: "mcp"
+  KAFKA_BROKERS: "kafka:9092"
+  KAFKA_TOPIC: "mcp.events"
+  OIDC_ISSUER: ""
+  OIDC_AUDIENCE: ""
+  OIDC_JWKS_URL: ""
+  API_BASE: "/api"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+  # Dashboard observability links
+  GRAFANA_URL: "/grafana"
+  PROMETHEUS_URL: "/prometheus"
+  DASHBOARD_REFRESH_INTERVAL: "30"

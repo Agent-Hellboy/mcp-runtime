@@ -13,6 +13,13 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${PROJECT_ROOT}"
 echo "[info] Running from: ${PROJECT_ROOT}"
 
+SENTINEL_ROOT="${PROJECT_ROOT}"
+if [[ ! -d "${SENTINEL_ROOT}/services" || ! -d "${SENTINEL_ROOT}/k8s" ]]; then
+  echo "expected flattened services/ and k8s/ layout under ${SENTINEL_ROOT}" >&2
+  exit 1
+fi
+echo "[info] Sentinel root: ${SENTINEL_ROOT}"
+
 git config --global --add safe.directory "${PROJECT_ROOT}" >/dev/null 2>&1 || true
 
 CLUSTER_NAME="${CLUSTER_NAME:-mcp-e2e}"
@@ -917,11 +924,11 @@ mirror_upstream_image "grafana/grafana:10.2.3"
 mirror_upstream_image "nginx:1.27-alpine"
 build_and_publish_image "docker.io/library/mcp-runtime-operator:latest" "Dockerfile.operator" "."
 build_and_publish_image "${TEST_MODE_REGISTRY_IMAGE}" "test/e2e/registry.Dockerfile" "."
-build_and_publish_image "docker.io/library/mcp-sentinel-mcp-proxy:latest" "mcp-sentinel/services/mcp-proxy/Dockerfile" "mcp-sentinel/services/mcp-proxy"
-build_and_publish_image "docker.io/library/mcp-sentinel-ingest:latest" "mcp-sentinel/services/ingest/Dockerfile" "mcp-sentinel/services/ingest"
-build_and_publish_image "docker.io/library/mcp-sentinel-api:latest" "mcp-sentinel/services/api/Dockerfile" "mcp-sentinel/services/api"
-build_and_publish_image "docker.io/library/mcp-sentinel-processor:latest" "mcp-sentinel/services/processor/Dockerfile" "mcp-sentinel/services/processor"
-build_and_publish_image "docker.io/library/mcp-sentinel-ui:latest" "mcp-sentinel/services/ui/Dockerfile" "mcp-sentinel/services/ui"
+build_and_publish_image "docker.io/library/mcp-sentinel-mcp-proxy:latest" "${SENTINEL_ROOT}/services/mcp-proxy/Dockerfile" "${SENTINEL_ROOT}/services/mcp-proxy"
+build_and_publish_image "docker.io/library/mcp-sentinel-ingest:latest" "${SENTINEL_ROOT}/services/ingest/Dockerfile" "${SENTINEL_ROOT}/services/ingest"
+build_and_publish_image "docker.io/library/mcp-sentinel-api:latest" "${SENTINEL_ROOT}/services/api/Dockerfile" "${SENTINEL_ROOT}"
+build_and_publish_image "docker.io/library/mcp-sentinel-processor:latest" "${SENTINEL_ROOT}/services/processor/Dockerfile" "${SENTINEL_ROOT}/services/processor"
+build_and_publish_image "docker.io/library/mcp-sentinel-ui:latest" "${SENTINEL_ROOT}/services/ui/Dockerfile" "${SENTINEL_ROOT}/services/ui"
 
 echo "[setup] running platform setup in test mode"
 MCP_RUNTIME_REGISTRY_IMAGE_OVERRIDE="${TEST_MODE_REGISTRY_IMAGE}" \
@@ -1012,10 +1019,10 @@ EOF
 echo "[cli] building MCP server image via CLI"
 ./bin/mcp-runtime server build image "${SERVER_NAME}" \
   --metadata-file "${METADATA_FILE}" \
-  --dockerfile mcp-sentinel/services/mcp-server/Dockerfile \
+  --dockerfile "${SENTINEL_ROOT}/services/mcp-server/Dockerfile" \
   --registry docker.io/library \
   --tag latest \
-  --context mcp-sentinel/services/mcp-server
+  --context "${SENTINEL_ROOT}/services/mcp-server"
 
 publish_image_to_local_registry "${SERVER_IMAGE}"
 

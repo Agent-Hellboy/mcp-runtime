@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-example-server
+  namespace: mcp-sentinel
+spec:
+  selector:
+    app: mcp-example-server
+  ports:
+    - name: http
+      port: 8090
+      targetPort: 8090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-example-server
+  namespace: mcp-sentinel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-example-server
+  template:
+    metadata:
+      labels:
+        app: mcp-example-server
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: mcp-example-server
+          image: mcp-sentinel-mcp-server:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - containerPort: 8090
+          env:
+            - name: PORT
+              value: "8090"
+            - name: MCP_SENTINEL_INGEST_URL
+              value: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
+            - name: MCP_SENTINEL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: API_KEYS
+            - name: OTEL_SERVICE_NAME
+              value: mcp-example-server
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: mcp-sentinel-config
+                  key: OTEL_EXPORTER_OTLP_ENDPOINT
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8090
+            initialDelaySeconds: 15
+            periodSeconds: 20
