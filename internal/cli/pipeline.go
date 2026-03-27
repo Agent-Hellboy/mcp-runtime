@@ -204,8 +204,8 @@ func (m *PipelineManager) DeployCRDs(manifestsDir, namespace string) error {
 				fmt.Sprintf("failed to read %s: %v", file, err),
 				map[string]any{"file": file, "namespace": namespace, "component": "pipeline"},
 			)
-			Error("Failed to apply manifest")
-			logStructuredError(m.logger, wrappedErr, "Failed to apply manifest")
+			Error("Failed to read manifest file")
+			logStructuredError(m.logger, wrappedErr, "Failed to read manifest file")
 			return wrappedErr
 		}
 
