@@ -293,6 +293,12 @@ func (r *MCPServerReconciler) validateGatewayConfig(ctx context.Context, mcpServ
 			logOperatorError(logger, err, "Missing gateway image")
 			return err
 		}
+		if mcpServer.Spec.Auth != nil && mcpServer.Spec.Auth.Mode == mcpv1alpha1.AuthModeOAuth {
+			if err := r.requireSpecField(ctx, mcpServer, logger, "issuer URL", mcpServer.Spec.Auth.IssuerURL,
+				"auth.issuerURL is required when auth.mode is oauth"); err != nil {
+				return err
+			}
+		}
 	}
 
 	for _, tool := range mcpServer.Spec.Tools {

@@ -203,6 +203,50 @@ func TestValidateGatewayConfigRejectsInvalidRolloutValues(t *testing.T) {
 	}
 }
 
+func TestValidateGatewayConfigRequiresOAuthIssuer(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme() error = %v", err)
+	}
+
+	server := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gateway-server",
+			Namespace: "default",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image: "example.com/server",
+			Port:  DefaultPort,
+			Gateway: &mcpv1alpha1.GatewayConfig{
+				Enabled: true,
+				Port:    defaultGatewayPort,
+				Image:   "example.com/mcp-proxy:latest",
+			},
+			Auth: &mcpv1alpha1.AuthConfig{
+				Mode: mcpv1alpha1.AuthModeOAuth,
+			},
+		},
+	}
+
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(server).
+		WithObjects(server.DeepCopy()).
+		Build()
+	reconciler := &MCPServerReconciler{
+		Client: client,
+		Scheme: scheme,
+	}
+
+	err := reconciler.validateGatewayConfig(context.Background(), server, logr.Discard())
+	if err == nil {
+		t.Fatal("expected oauth issuer validation error")
+	}
+	if !strings.Contains(err.Error(), "auth.issuerURL") {
+		t.Fatalf("expected auth.issuerURL error, got %v", err)
+	}
+}
+
 func TestSetDefaults(t *testing.T) {
 	t.Run("fills all defaults when unset", func(t *testing.T) {
 		mcpServer := mcpv1alpha1.MCPServer{
