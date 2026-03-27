@@ -248,7 +248,15 @@ else:
 rows = []
 for step_name in required_steps:
     step = steps[step_name]
-    status = "ok" if step.get("ok") else "skip" if step.get("skipped") else "fail"
+    if (
+        not expected_ok
+        and step_name == "tools/call"
+        and not step.get("ok")
+        and (not expected_tool_error or expected_tool_error in step.get("error", ""))
+    ):
+        status = "expected_fail"
+    else:
+        status = "ok" if step.get("ok") else "skip" if step.get("skipped") else "fail"
     error = step.get("error", "")
     if error:
         status = f"{status} ({error})"
@@ -256,7 +264,10 @@ for step_name in required_steps:
 
 width = max(len(step_name) for step_name, _ in rows)
 print(f"{name}:")
-print(f"  exit code{' ' * (width - len('exit code'))}  {smoke_exit_code}")
+exit_code = str(smoke_exit_code)
+if not expected_ok and smoke_exit_code != 0:
+    exit_code = f"{smoke_exit_code} (expected non-zero)"
+print(f"  exit code{' ' * (width - len('exit code'))}  {exit_code}")
 for step_name, status in rows:
     print(f"  {step_name:{width}}  {status}")
 PY
