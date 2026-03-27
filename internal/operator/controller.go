@@ -1459,20 +1459,7 @@ func (r *MCPServerReconciler) reconcileIngress(ctx context.Context, mcpServer *m
 					Host: mcpServer.Spec.IngressHost,
 					IngressRuleValue: networkingv1.IngressRuleValue{
 						HTTP: &networkingv1.HTTPIngressRuleValue{
-							Paths: []networkingv1.HTTPIngressPath{
-								{
-									Path:     mcpServer.Spec.IngressPath,
-									PathType: &pathType,
-									Backend: networkingv1.IngressBackend{
-										Service: &networkingv1.IngressServiceBackend{
-											Name: mcpServer.Name,
-											Port: networkingv1.ServiceBackendPort{
-												Number: mcpServer.Spec.ServicePort,
-											},
-										},
-									},
-								},
-							},
+							Paths: ingressPathsForServer(mcpServer, pathType),
 						},
 					},
 				},
@@ -1499,6 +1486,51 @@ func (r *MCPServerReconciler) reconcileIngress(ctx context.Context, mcpServer *m
 	}
 
 	return nil
+}
+
+func ingressPathsForServer(mcpServer *mcpv1alpha1.MCPServer, pathType networkingv1.PathType) []networkingv1.HTTPIngressPath {
+	backend := networkingv1.IngressBackend{
+		Service: &networkingv1.IngressServiceBackend{
+			Name: mcpServer.Name,
+			Port: networkingv1.ServiceBackendPort{
+				Number: mcpServer.Spec.ServicePort,
+			},
+		},
+	}
+	paths := []networkingv1.HTTPIngressPath{
+		{
+			Path:     normalizeIngressPath(mcpServer.Spec.IngressPath),
+			PathType: &pathType,
+			Backend:  backend,
+		},
+	}
+	if serverUsesOAuth(mcpServer) {
+		paths = append(paths, networkingv1.HTTPIngressPath{
+			Path:     oauthProtectedResourceIngressPath(mcpServer.Spec.IngressPath),
+			PathType: &pathType,
+			Backend:  backend,
+		})
+	}
+	return paths
+}
+
+func normalizeIngressPath(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || trimmed == "/" {
+		return "/"
+	}
+	if !strings.HasPrefix(trimmed, "/") {
+		return "/" + trimmed
+	}
+	return trimmed
+}
+
+func oauthProtectedResourceIngressPath(ingressPath string) string {
+	normalized := normalizeIngressPath(ingressPath)
+	if normalized == "/" {
+		return "/.well-known/oauth-protected-resource"
+	}
+	return "/.well-known/oauth-protected-resource" + normalized
 }
 
 func (r *MCPServerReconciler) checkDeploymentReady(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (bool, error) {
@@ -1731,6 +1763,10 @@ func (r *MCPServerReconciler) buildIngressAnnotations(mcpServer *mcpv1alpha1.MCP
 
 func gatewayEnabled(mcpServer *mcpv1alpha1.MCPServer) bool {
 	return mcpServer != nil && mcpServer.Spec.Gateway != nil && mcpServer.Spec.Gateway.Enabled
+}
+
+func serverUsesOAuth(mcpServer *mcpv1alpha1.MCPServer) bool {
+	return mcpServer != nil && mcpServer.Spec.Auth != nil && mcpServer.Spec.Auth.Mode == mcpv1alpha1.AuthModeOAuth
 }
 
 func analyticsEnabled(mcpServer *mcpv1alpha1.MCPServer) bool {

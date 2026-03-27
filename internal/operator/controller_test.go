@@ -1150,6 +1150,46 @@ func TestReconcileIngress(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to reconcile ingress: %v", err)
 		}
+
+		var ingress networkingv1.Ingress
+		if err := client.Get(context.Background(), types.NamespacedName{Name: mcpServer.Name, Namespace: mcpServer.Namespace}, &ingress); err != nil {
+			t.Fatalf("failed to fetch ingress: %v", err)
+		}
+		if got := ingress.Spec.Rules[0].HTTP.Paths; len(got) != 1 {
+			t.Fatalf("expected 1 ingress path, got %d", len(got))
+		} else {
+			assertEqual(t, "ingressPath", got[0].Path, "/test")
+		}
+	})
+
+	t.Run("adds oauth protected resource path for oauth servers", func(t *testing.T) {
+		mcpServer := &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "oauth-server", Namespace: "default"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				Image:       "test-image",
+				IngressHost: "example.com",
+				IngressPath: "/oauth-server/mcp",
+				Auth: &mcpv1alpha1.AuthConfig{
+					Mode: mcpv1alpha1.AuthModeOAuth,
+				},
+			},
+		}
+		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer).Build()
+		r := MCPServerReconciler{Client: client, Scheme: scheme}
+		if err := r.reconcileIngress(context.Background(), mcpServer); err != nil {
+			t.Fatalf("failed to reconcile ingress: %v", err)
+		}
+
+		var ingress networkingv1.Ingress
+		if err := client.Get(context.Background(), types.NamespacedName{Name: mcpServer.Name, Namespace: mcpServer.Namespace}, &ingress); err != nil {
+			t.Fatalf("failed to fetch ingress: %v", err)
+		}
+		if got := ingress.Spec.Rules[0].HTTP.Paths; len(got) != 2 {
+			t.Fatalf("expected 2 ingress paths, got %d", len(got))
+		} else {
+			assertEqual(t, "primaryPath", got[0].Path, "/oauth-server/mcp")
+			assertEqual(t, "protectedResourcePath", got[1].Path, "/.well-known/oauth-protected-resource/oauth-server/mcp")
+		}
 	})
 }
 

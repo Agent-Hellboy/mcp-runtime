@@ -18,9 +18,17 @@ git config --global --add safe.directory "${PROJECT_ROOT}" >/dev/null 2>&1 || tr
 CLUSTER_NAME="${CLUSTER_NAME:-mcp-e2e}"
 SERVER_NAME="${SERVER_NAME:-policy-mcp-server}"
 SERVER_HOST="${SERVER_HOST:-policy.example.local}"
+OAUTH_SERVER_NAME="${OAUTH_SERVER_NAME:-oauth-mcp-server}"
+OAUTH_SERVER_HOST="${OAUTH_SERVER_HOST:-oauth.example.local}"
 HUMAN_ID="${HUMAN_ID:-user-123}"
 AGENT_ID="${AGENT_ID:-ops-agent}"
 SESSION_ID="${SESSION_ID:-sess-ops-agent}"
+OAUTH_HUMAN_ID="${OAUTH_HUMAN_ID:-oauth-user-123}"
+OAUTH_AGENT_ID="${OAUTH_AGENT_ID:-oauth-client}"
+OAUTH_SESSION_ID="${OAUTH_SESSION_ID:-oauth-session-1}"
+OAUTH_AUDIENCE="${OAUTH_AUDIENCE:-mcp-runtime-e2e}"
+OAUTH_ISSUER_NAME="${OAUTH_ISSUER_NAME:-oauth-issuer}"
+OAUTH_ISSUER_URL="http://${OAUTH_ISSUER_NAME}.mcp-servers.svc.cluster.local:8080"
 TRAEFIK_PORT="${TRAEFIK_PORT:-18080}"
 SENTINEL_PORT="${SENTINEL_PORT:-18083}"
 TEMPO_PORT="${TEMPO_PORT:-13200}"
@@ -32,6 +40,10 @@ MCP_SMOKE_TIMEOUT="${MCP_SMOKE_TIMEOUT:-20s}"
 MCP_SMOKE_ANON_PORT="${MCP_SMOKE_ANON_PORT:-18084}"
 MCP_SMOKE_IDENTITY_PORT="${MCP_SMOKE_IDENTITY_PORT:-18085}"
 MCP_SMOKE_SESSION_PORT="${MCP_SMOKE_SESSION_PORT:-18086}"
+MCP_SMOKE_BAD_SESSION_PORT="${MCP_SMOKE_BAD_SESSION_PORT:-18087}"
+MCP_SMOKE_OAUTH_ANON_PORT="${MCP_SMOKE_OAUTH_ANON_PORT:-18088}"
+MCP_SMOKE_OAUTH_INVALID_PORT="${MCP_SMOKE_OAUTH_INVALID_PORT:-18089}"
+MCP_SMOKE_OAUTH_VALID_PORT="${MCP_SMOKE_OAUTH_VALID_PORT:-18090}"
 MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION:-2025-06-18}"
 MCP_POLICY_WAIT_TRIES="${MCP_POLICY_WAIT_TRIES:-90}"
 MCP_SMOKE_AGENT_ENV_FILE="${MCP_SMOKE_AGENT_ENV_FILE:-.env}"
@@ -39,6 +51,7 @@ MCP_SMOKE_AGENT_PROMPT="${MCP_SMOKE_AGENT_PROMPT:-Use the MCP upper tool to conv
 MCP_SMOKE_AGENT_PROVIDER="${MCP_SMOKE_AGENT_PROVIDER:-}"
 MCP_SMOKE_AGENT_MODEL="${MCP_SMOKE_AGENT_MODEL:-}"
 MCP_SMOKE_AGENT_TIMEOUT="${MCP_SMOKE_AGENT_TIMEOUT:-90s}"
+UNKNOWN_SESSION_ID="${UNKNOWN_SESSION_ID:-sess-does-not-exist}"
 TEST_MODE_REGISTRY_IMAGE="${TEST_MODE_REGISTRY_IMAGE:-docker.io/library/mcp-runtime-registry:latest}"
 LOCAL_REGISTRY_NAME="${LOCAL_REGISTRY_NAME:-${CLUSTER_NAME}-dockerhub-mirror}"
 LOCAL_REGISTRY_PORT="${LOCAL_REGISTRY_PORT:-5001}"
@@ -158,6 +171,139 @@ resolve_mcp_smoke_dir() {
   local clone_dir="${WORKDIR}/mcp-smoke-${MCP_SMOKE_REF}"
   git clone --depth 1 --branch "${MCP_SMOKE_REF}" "${MCP_SMOKE_REPO_URL}" "${clone_dir}" >&2
   echo "${clone_dir}"
+}
+
+generate_oauth_fixtures() {
+  local out_dir="$1"
+  local generator="${out_dir}/oauth-fixtures.go"
+
+  mkdir -p "${out_dir}"
+  cat >"${generator}" <<'EOF'
+package main
+
+import (
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"math/big"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+func mustWrite(path string, data []byte) {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		panic(err)
+	}
+}
+
+func encodeJSON(value any) string {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(data)
+}
+
+func signToken(privateKey *rsa.PrivateKey, claims map[string]any) string {
+	header := map[string]any{
+		"alg": "RS256",
+		"kid": "e2e-test-key",
+		"typ": "JWT",
+	}
+	signingInput := encodeJSON(header) + "." + encodeJSON(claims)
+	digest := sha256.Sum256([]byte(signingInput))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, digest[:])
+	if err != nil {
+		panic(err)
+	}
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(signature)
+}
+
+func main() {
+	outDir := os.Getenv("OAUTH_FIXTURE_DIR")
+	issuerURL := os.Getenv("OAUTH_ISSUER_URL")
+	audience := os.Getenv("OAUTH_AUDIENCE")
+	humanID := os.Getenv("OAUTH_HUMAN_ID")
+	agentID := os.Getenv("OAUTH_AGENT_ID")
+	sessionID := os.Getenv("OAUTH_SESSION_ID")
+	if outDir == "" || issuerURL == "" || audience == "" || humanID == "" || agentID == "" || sessionID == "" {
+		panic("missing required OAuth fixture environment")
+	}
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic(err)
+	}
+	exponent := big.NewInt(int64(privateKey.PublicKey.E)).Bytes()
+
+	now := time.Now().UTC()
+	validClaims := map[string]any{
+		"iss": issuerURL,
+		"sub": humanID,
+		"azp": agentID,
+		"sid": sessionID,
+		"aud": []string{audience},
+		"iat": now.Add(-1 * time.Minute).Unix(),
+		"exp": now.Add(24 * time.Hour).Unix(),
+	}
+	invalidAudienceClaims := map[string]any{
+		"iss": issuerURL,
+		"sub": humanID,
+		"azp": agentID,
+		"sid": sessionID,
+		"aud": []string{"wrong-audience"},
+		"iat": now.Add(-1 * time.Minute).Unix(),
+		"exp": now.Add(24 * time.Hour).Unix(),
+	}
+
+	jwks := map[string]any{
+		"keys": []map[string]string{
+			{
+				"kty": "RSA",
+				"alg": "RS256",
+				"use": "sig",
+				"kid": "e2e-test-key",
+				"n":   base64.RawURLEncoding.EncodeToString(privateKey.PublicKey.N.Bytes()),
+				"e":   base64.RawURLEncoding.EncodeToString(exponent),
+			},
+		},
+	}
+	metadata := map[string]any{
+		"issuer":         issuerURL,
+		"jwks_uri":       issuerURL + "/keys",
+		"token_endpoint": issuerURL + "/token",
+	}
+
+	jwksJSON, err := json.MarshalIndent(jwks, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+
+	mustWrite(filepath.Join(outDir, "oauth-authorization-server"), append(metadataJSON, '\n'))
+	mustWrite(filepath.Join(outDir, "keys"), append(jwksJSON, '\n'))
+	mustWrite(filepath.Join(outDir, "valid-token.txt"), []byte(signToken(privateKey, validClaims)))
+	mustWrite(filepath.Join(outDir, "invalid-token.txt"), []byte(signToken(privateKey, invalidAudienceClaims)))
+
+	fmt.Println("generated oauth fixtures in", outDir)
+}
+EOF
+
+  OAUTH_FIXTURE_DIR="${out_dir}" \
+  OAUTH_ISSUER_URL="${OAUTH_ISSUER_URL}" \
+  OAUTH_AUDIENCE="${OAUTH_AUDIENCE}" \
+  OAUTH_HUMAN_ID="${OAUTH_HUMAN_ID}" \
+  OAUTH_AGENT_ID="${OAUTH_AGENT_ID}" \
+  OAUTH_SESSION_ID="${OAUTH_SESSION_ID}" \
+  go run "${generator}"
 }
 
 run_mcp_smoke_expect() {
@@ -361,6 +507,87 @@ wait_for_policy_text() {
   return 1
 }
 
+wait_for_mcp_initialize_result() {
+  local base_url="$1"
+  local expected_status="$2"
+  local expected_body_text="${3:-}"
+  local expected_header_name="${4:-}"
+  local expected_header_text="${5:-}"
+  local tries="${6:-${MCP_POLICY_WAIT_TRIES}}"
+  local i
+  local last_result_file="${WORKDIR}/last-mcp-initialize-result.json"
+
+  for i in $(seq 1 "${tries}"); do
+    if MCP_BASE="${base_url}" \
+      MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION}" \
+      MCP_EXPECT_STATUS="${expected_status}" \
+      MCP_EXPECT_BODY_TEXT="${expected_body_text}" \
+      MCP_EXPECT_HEADER_NAME="${expected_header_name}" \
+      MCP_EXPECT_HEADER_TEXT="${expected_header_text}" \
+      MCP_RESULT_FILE="${last_result_file}" \
+      python3 <<'PY' >/dev/null 2>&1
+import json
+import os
+import urllib.error
+import urllib.request
+
+base = os.environ["MCP_BASE"]
+protocol = os.environ["MCP_PROTOCOL_VERSION"]
+expected_status = int(os.environ["MCP_EXPECT_STATUS"])
+expected_body_text = os.environ.get("MCP_EXPECT_BODY_TEXT", "")
+expected_header_name = os.environ.get("MCP_EXPECT_HEADER_NAME", "")
+expected_header_text = os.environ.get("MCP_EXPECT_HEADER_TEXT", "")
+result_file = os.environ["MCP_RESULT_FILE"]
+
+headers = {
+    "content-type": "application/json",
+    "accept": "application/json, text/event-stream",
+    "Mcp-Protocol-Version": protocol,
+}
+req = urllib.request.Request(
+    base,
+    data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}).encode(),
+    headers=headers,
+)
+try:
+    resp = urllib.request.urlopen(req, timeout=10)
+    status = resp.status
+    response_headers = dict(resp.headers.items())
+    body = resp.read().decode()
+except urllib.error.HTTPError as exc:
+    status = exc.code
+    response_headers = dict(exc.headers.items())
+    body = exc.read().decode()
+
+with open(result_file, "w", encoding="utf-8") as fh:
+    json.dump({"status": status, "headers": response_headers, "body": body}, fh)
+
+if status != expected_status:
+    raise SystemExit(1)
+if expected_body_text and expected_body_text not in body:
+    raise SystemExit(1)
+if expected_header_name:
+    header_value = response_headers.get(expected_header_name) or response_headers.get(expected_header_name.title())
+    if not header_value:
+        raise SystemExit(1)
+    if expected_header_text and expected_header_text not in header_value:
+        raise SystemExit(1)
+PY
+    then
+      echo "[mcp] observed initialize returning ${expected_status}"
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "timed out waiting for initialize to return ${expected_status}" >&2
+  if [[ -f "${last_result_file}" ]]; then
+    echo "[debug] last initialize response while waiting:" >&2
+    cat "${last_result_file}" >&2 || true
+  fi
+  return 1
+}
+
 wait_for_mcp_tool_result() {
   local base_url="$1"
   local tool_name="$2"
@@ -445,6 +672,30 @@ PY
   return 1
 }
 
+wait_for_named_server_ready() {
+  local server_name="$1"
+  local namespace="${2:-mcp-servers}"
+  local tries="${3:-60}"
+  local i
+  for i in $(seq 1 "${tries}"); do
+    local deployment_ready
+    local gateway_ready
+    local policy_ready
+    local service_ready
+    deployment_ready="$(kubectl get mcpserver "${server_name}" -n "${namespace}" -o jsonpath='{.status.deploymentReady}' 2>/dev/null || true)"
+    gateway_ready="$(kubectl get mcpserver "${server_name}" -n "${namespace}" -o jsonpath='{.status.gatewayReady}' 2>/dev/null || true)"
+    policy_ready="$(kubectl get mcpserver "${server_name}" -n "${namespace}" -o jsonpath='{.status.policyReady}' 2>/dev/null || true)"
+    service_ready="$(kubectl get mcpserver "${server_name}" -n "${namespace}" -o jsonpath='{.status.serviceReady}' 2>/dev/null || true)"
+    if [[ "${deployment_ready}" == "true" && "${gateway_ready}" == "true" && "${policy_ready}" == "true" && "${service_ready}" == "true" ]]; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "timed out waiting for MCPServer ${server_name} to report service/deployment/gateway/policy readiness" >&2
+  kubectl get mcpserver "${server_name}" -n "${namespace}" -o yaml || true
+  return 1
+}
+
 print_gateway_policy_debug() {
   local policy_json
   policy_json="$(kubectl get configmap "${SERVER_NAME}-gateway-policy" -n mcp-servers -o "jsonpath={.data.policy\.json}" 2>/dev/null || true)"
@@ -484,25 +735,7 @@ PY
 }
 
 wait_for_server_ready() {
-  local tries="${1:-60}"
-  local i
-  for i in $(seq 1 "${tries}"); do
-    local deployment_ready
-    local gateway_ready
-    local policy_ready
-    local service_ready
-    deployment_ready="$(kubectl get mcpserver "${SERVER_NAME}" -n mcp-servers -o jsonpath='{.status.deploymentReady}' 2>/dev/null || true)"
-    gateway_ready="$(kubectl get mcpserver "${SERVER_NAME}" -n mcp-servers -o jsonpath='{.status.gatewayReady}' 2>/dev/null || true)"
-    policy_ready="$(kubectl get mcpserver "${SERVER_NAME}" -n mcp-servers -o jsonpath='{.status.policyReady}' 2>/dev/null || true)"
-    service_ready="$(kubectl get mcpserver "${SERVER_NAME}" -n mcp-servers -o jsonpath='{.status.serviceReady}' 2>/dev/null || true)"
-    if [[ "${deployment_ready}" == "true" && "${gateway_ready}" == "true" && "${policy_ready}" == "true" && "${service_ready}" == "true" ]]; then
-      return 0
-    fi
-    sleep 2
-  done
-  echo "timed out waiting for MCPServer ${SERVER_NAME} to report service/deployment/gateway/policy readiness" >&2
-  kubectl get mcpserver "${SERVER_NAME}" -n mcp-servers -o yaml || true
-  return 1
+  wait_for_named_server_ready "${SERVER_NAME}" "mcp-servers" "${1:-60}"
 }
 
 wait_for_deployment_exists() {
@@ -681,6 +914,7 @@ mirror_upstream_image "grafana/tempo:2.3.1"
 mirror_upstream_image "grafana/loki:2.9.4"
 mirror_upstream_image "grafana/promtail:2.9.4"
 mirror_upstream_image "grafana/grafana:10.2.3"
+mirror_upstream_image "nginx:1.27-alpine"
 build_and_publish_image "docker.io/library/mcp-runtime-operator:latest" "Dockerfile.operator" "."
 build_and_publish_image "${TEST_MODE_REGISTRY_IMAGE}" "test/e2e/registry.Dockerfile" "."
 build_and_publish_image "docker.io/library/mcp-sentinel-mcp-proxy:latest" "mcp-sentinel/services/mcp-proxy/Dockerfile" "mcp-sentinel/services/mcp-proxy"
@@ -851,6 +1085,16 @@ wait_for_policy_text "\"name\": \"${SESSION_ID}\""
 wait_for_policy_text "\"consented_trust\": \"low\""
 print_gateway_policy_debug
 
+echo "[cli] checking access management commands"
+./bin/mcp-runtime access grant list --namespace mcp-servers >"${WORKDIR}/access-grant-list.txt"
+rg -q "${SERVER_NAME}-grant" "${WORKDIR}/access-grant-list.txt"
+./bin/mcp-runtime access grant get "${SERVER_NAME}-grant" --namespace mcp-servers >"${WORKDIR}/access-grant-get.yaml"
+rg -q "maxTrust: high" "${WORKDIR}/access-grant-get.yaml"
+./bin/mcp-runtime access session list --namespace mcp-servers >"${WORKDIR}/access-session-list.txt"
+rg -q "${SESSION_ID}" "${WORKDIR}/access-session-list.txt"
+./bin/mcp-runtime access session get "${SESSION_ID}" --namespace mcp-servers >"${WORKDIR}/access-session-get.yaml"
+rg -q "consentedTrust: low" "${WORKDIR}/access-session-get.yaml"
+
 echo "[port-forward] exposing ingress and observability services"
 port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${WORKDIR}/traefik-port-forward.log"
 port_forward_bg mcp-sentinel mcp-sentinel-gateway "${SENTINEL_PORT}" 8083 "${WORKDIR}/sentinel-port-forward.log"
@@ -886,22 +1130,53 @@ start_header_proxy_bg "${MCP_SMOKE_SESSION_PORT}" \
   --header "X-MCP-Human-ID=${HUMAN_ID}" \
   --header "X-MCP-Agent-ID=${AGENT_ID}" \
   --header "X-MCP-Agent-Session=${SESSION_ID}"
+start_header_proxy_bg "${MCP_SMOKE_BAD_SESSION_PORT}" \
+  "http://127.0.0.1:${TRAEFIK_PORT}" \
+  "${WORKDIR}/mcp-smoke-bad-session-proxy.log" \
+  --host-header "${SERVER_HOST}" \
+  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
+  --header "X-MCP-Human-ID=${HUMAN_ID}" \
+  --header "X-MCP-Agent-ID=${AGENT_ID}" \
+  --header "X-MCP-Agent-Session=${UNKNOWN_SESSION_ID}"
 
 wait_port "${MCP_SMOKE_ANON_PORT}"
 wait_port "${MCP_SMOKE_IDENTITY_PORT}"
 wait_port "${MCP_SMOKE_SESSION_PORT}"
+wait_port "${MCP_SMOKE_BAD_SESSION_PORT}"
 
 MCP_INGRESS_PATH="/${SERVER_NAME}/mcp"
 MCP_ANON_URL="http://127.0.0.1:${MCP_SMOKE_ANON_PORT}${MCP_INGRESS_PATH}"
 MCP_IDENTITY_URL="http://127.0.0.1:${MCP_SMOKE_IDENTITY_PORT}${MCP_INGRESS_PATH}"
 MCP_SESSION_URL="http://127.0.0.1:${MCP_SMOKE_SESSION_PORT}${MCP_INGRESS_PATH}"
+MCP_BAD_SESSION_URL="http://127.0.0.1:${MCP_SMOKE_BAD_SESSION_PORT}${MCP_INGRESS_PATH}"
 
 echo "[mcp] running external mcp-smoke smoke checks against ingress"
 run_mcp_smoke_expect "mcp-smoke-missing-identity" "${MCP_ANON_URL}" false "missing_identity"
 run_mcp_smoke_expect "mcp-smoke-missing-session" "${MCP_IDENTITY_URL}" false "missing_session"
+run_mcp_smoke_expect "mcp-smoke-session-not-found" "${MCP_BAD_SESSION_URL}" false "session_not_found"
 echo "[mcp] waiting for session-backed allow policy to reach the gateway"
 wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
 run_mcp_smoke_expect "mcp-smoke-allow-aaa-ping" "${MCP_SESSION_URL}" true
+
+echo "[policy] revoking access session via CLI"
+./bin/mcp-runtime access session revoke "${SESSION_ID}" --namespace mcp-servers
+wait_for_policy_text "\"revoked\": true"
+print_gateway_policy_debug
+wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 401 "session_revoked"
+
+echo "[policy] restoring access session via CLI"
+./bin/mcp-runtime access session unrevoke "${SESSION_ID}" --namespace mcp-servers
+wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
+
+echo "[policy] disabling access grant via CLI"
+./bin/mcp-runtime access grant disable "${SERVER_NAME}-grant" --namespace mcp-servers
+wait_for_policy_text "\"disabled\": true"
+print_gateway_policy_debug
+wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 403 "tool_not_granted"
+
+echo "[policy] re-enabling access grant via CLI"
+./bin/mcp-runtime access grant enable "${SERVER_NAME}-grant" --namespace mcp-servers
+wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
 
 echo "[mcp] validating targeted echo and upper tool behavior"
 MCP_BASE="${MCP_SESSION_URL}" \
@@ -1113,10 +1388,242 @@ if status != 403 or payload.get("error") != "tool_denied":
 print("echo deny:", body)
 PY
 
+OAUTH_FIXTURE_DIR="${WORKDIR}/oauth-fixtures"
+generate_oauth_fixtures "${OAUTH_FIXTURE_DIR}"
+cat >"${OAUTH_FIXTURE_DIR}/default.conf" <<'EOF'
+server {
+  listen 8080;
+  server_name _;
+
+  location / {
+    root /usr/share/nginx/html;
+    try_files $uri =404;
+  }
+}
+EOF
+OAUTH_VALID_TOKEN="$(tr -d '\n' <"${OAUTH_FIXTURE_DIR}/valid-token.txt")"
+OAUTH_INVALID_TOKEN="$(tr -d '\n' <"${OAUTH_FIXTURE_DIR}/invalid-token.txt")"
+
+echo "[oauth] deploying mock OAuth issuer"
+kubectl create configmap "${OAUTH_ISSUER_NAME}-files" \
+  -n mcp-servers \
+  --from-file=oauth-authorization-server="${OAUTH_FIXTURE_DIR}/oauth-authorization-server" \
+  --from-file=keys="${OAUTH_FIXTURE_DIR}/keys" \
+  --from-file=default.conf="${OAUTH_FIXTURE_DIR}/default.conf" \
+  --dry-run=client -o yaml | kubectl apply -f -
+cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${OAUTH_ISSUER_NAME}
+  namespace: mcp-servers
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${OAUTH_ISSUER_NAME}
+  template:
+    metadata:
+      labels:
+        app: ${OAUTH_ISSUER_NAME}
+    spec:
+      containers:
+        - name: nginx
+          image: docker.io/library/nginx:1.27-alpine
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: files
+              mountPath: /usr/share/nginx/html/.well-known/oauth-authorization-server
+              subPath: oauth-authorization-server
+            - name: files
+              mountPath: /usr/share/nginx/html/keys
+              subPath: keys
+            - name: files
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+      volumes:
+        - name: files
+          configMap:
+            name: ${OAUTH_ISSUER_NAME}-files
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${OAUTH_ISSUER_NAME}
+  namespace: mcp-servers
+spec:
+  selector:
+    app: ${OAUTH_ISSUER_NAME}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+EOF
+kubectl rollout status "deploy/${OAUTH_ISSUER_NAME}" -n mcp-servers --timeout=180s
+
+OAUTH_METADATA_FILE="${WORKDIR}/oauth-metadata.yaml"
+OAUTH_MANIFEST_DIR="${WORKDIR}/oauth-manifests"
+cat > "${OAUTH_METADATA_FILE}" <<EOF
+version: v1
+servers:
+  - name: ${OAUTH_SERVER_NAME}
+    image: ${SERVER_IMAGE%:*}
+    imageTag: ${SERVER_IMAGE##*:}
+    route: /${OAUTH_SERVER_NAME}/mcp
+    ingressHost: ${OAUTH_SERVER_HOST}
+    port: 8090
+    namespace: mcp-servers
+    envVars:
+      - name: PORT
+        value: "8090"
+      - name: MCP_SENTINEL_INGEST_URL
+        value: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
+      - name: OTEL_EXPORTER_OTLP_ENDPOINT
+        value: "http://otel-collector.mcp-sentinel.svc.cluster.local:4318"
+      - name: OTEL_SERVICE_NAME
+        value: "${OAUTH_SERVER_NAME}"
+    secretEnvVars:
+      - name: MCP_SENTINEL_API_KEY
+        secretKeyRef:
+          name: ${SERVER_SECRET_NAME}
+          key: api-key
+    tools:
+      - name: aaa-ping
+        requiredTrust: low
+      - name: upper
+        requiredTrust: low
+    auth:
+      mode: oauth
+      humanIDHeader: X-MCP-Human-ID
+      agentIDHeader: X-MCP-Agent-ID
+      sessionIDHeader: X-MCP-Agent-Session
+      tokenHeader: Authorization
+      issuerURL: ${OAUTH_ISSUER_URL}
+      audience: ${OAUTH_AUDIENCE}
+    policy:
+      mode: allow-list
+      defaultDecision: deny
+      policyVersion: v1
+    session:
+      required: false
+      upstreamTokenHeader: Authorization
+    gateway:
+      enabled: true
+    analytics:
+      enabled: true
+      ingestURL: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
+      apiKeySecretRef:
+        name: ${SERVER_SECRET_NAME}
+        key: api-key
+EOF
+
+echo "[oauth] deploying OAuth-protected MCP server"
+./bin/mcp-runtime pipeline generate --file "${OAUTH_METADATA_FILE}" --output "${OAUTH_MANIFEST_DIR}"
+./bin/mcp-runtime pipeline deploy --dir "${OAUTH_MANIFEST_DIR}"
+wait_for_deployment_exists mcp-servers "${OAUTH_SERVER_NAME}"
+if ! kubectl rollout status "deploy/${OAUTH_SERVER_NAME}" -n mcp-servers --timeout=180s; then
+  echo "[debug] OAuth MCP server rollout failed; collecting diagnostics" >&2
+  kubectl get mcpserver "${OAUTH_SERVER_NAME}" -n mcp-servers -o yaml || true
+  kubectl get deploy,rs,pods,svc,ingress,configmap -n mcp-servers || true
+  kubectl describe deployment "${OAUTH_SERVER_NAME}" -n mcp-servers || true
+  kubectl describe pods -n mcp-servers || true
+  kubectl logs -n mcp-servers -l "app=${OAUTH_SERVER_NAME}" --all-containers=true --tail=200 || true
+  exit 1
+fi
+wait_for_named_server_ready "${OAUTH_SERVER_NAME}"
+
+echo "[oauth] applying OAuth grant"
+cat <<EOF | kubectl apply -f -
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAccessGrant
+metadata:
+  name: ${OAUTH_SERVER_NAME}-grant
+  namespace: mcp-servers
+spec:
+  serverRef:
+    name: ${OAUTH_SERVER_NAME}
+  subject:
+    humanID: ${OAUTH_HUMAN_ID}
+    agentID: ${OAUTH_AGENT_ID}
+  maxTrust: low
+  policyVersion: v1
+  toolRules:
+    - name: aaa-ping
+      decision: allow
+    - name: upper
+      decision: allow
+EOF
+
+echo "[oauth] starting local ingress proxies"
+start_header_proxy_bg "${MCP_SMOKE_OAUTH_ANON_PORT}" \
+  "http://127.0.0.1:${TRAEFIK_PORT}" \
+  "${WORKDIR}/mcp-smoke-oauth-anon-proxy.log" \
+  --host-header "${OAUTH_SERVER_HOST}" \
+  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
+start_header_proxy_bg "${MCP_SMOKE_OAUTH_INVALID_PORT}" \
+  "http://127.0.0.1:${TRAEFIK_PORT}" \
+  "${WORKDIR}/mcp-smoke-oauth-invalid-proxy.log" \
+  --host-header "${OAUTH_SERVER_HOST}" \
+  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
+  --header "Authorization=Bearer ${OAUTH_INVALID_TOKEN}"
+start_header_proxy_bg "${MCP_SMOKE_OAUTH_VALID_PORT}" \
+  "http://127.0.0.1:${TRAEFIK_PORT}" \
+  "${WORKDIR}/mcp-smoke-oauth-valid-proxy.log" \
+  --host-header "${OAUTH_SERVER_HOST}" \
+  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
+  --header "Authorization=Bearer ${OAUTH_VALID_TOKEN}"
+
+wait_port "${MCP_SMOKE_OAUTH_ANON_PORT}"
+wait_port "${MCP_SMOKE_OAUTH_INVALID_PORT}"
+wait_port "${MCP_SMOKE_OAUTH_VALID_PORT}"
+
+OAUTH_INGRESS_PATH="/${OAUTH_SERVER_NAME}/mcp"
+MCP_OAUTH_ANON_URL="http://127.0.0.1:${MCP_SMOKE_OAUTH_ANON_PORT}${OAUTH_INGRESS_PATH}"
+MCP_OAUTH_INVALID_URL="http://127.0.0.1:${MCP_SMOKE_OAUTH_INVALID_PORT}${OAUTH_INGRESS_PATH}"
+MCP_OAUTH_VALID_URL="http://127.0.0.1:${MCP_SMOKE_OAUTH_VALID_PORT}${OAUTH_INGRESS_PATH}"
+MCP_OAUTH_METADATA_URL="http://127.0.0.1:${MCP_SMOKE_OAUTH_ANON_PORT}/.well-known/oauth-protected-resource${OAUTH_INGRESS_PATH}"
+
+echo "[oauth] validating protected-resource metadata"
+wait_http "${MCP_OAUTH_METADATA_URL}"
+MCP_OAUTH_METADATA_URL="${MCP_OAUTH_METADATA_URL}" \
+OAUTH_ISSUER_URL="${OAUTH_ISSUER_URL}" \
+OAUTH_RESOURCE_URL="http://${OAUTH_SERVER_HOST}${OAUTH_INGRESS_PATH}" \
+python3 <<'PY'
+import json
+import os
+import urllib.request
+
+req = urllib.request.Request(os.environ["MCP_OAUTH_METADATA_URL"], headers={"accept": "application/json"})
+resp = urllib.request.urlopen(req, timeout=10)
+doc = json.loads(resp.read().decode())
+
+if resp.status != 200:
+    raise AssertionError(f"expected 200 from protected resource metadata, got {resp.status}")
+if doc.get("authorization_servers") != [os.environ["OAUTH_ISSUER_URL"]]:
+    raise AssertionError(f"unexpected authorization_servers: {doc}")
+if doc.get("resource") != os.environ["OAUTH_RESOURCE_URL"]:
+    raise AssertionError(f"unexpected resource URL: {doc}")
+if "header" not in doc.get("bearer_methods_supported", []):
+    raise AssertionError(f"expected bearer_methods_supported to include header, got {doc}")
+print("oauth metadata:", json.dumps(doc))
+PY
+
+echo "[oauth] validating missing and invalid bearer token challenges"
+wait_for_mcp_initialize_result "${MCP_OAUTH_ANON_URL}" 401 "missing_bearer_token" "www-authenticate" "resource_metadata="
+wait_for_mcp_initialize_result "${MCP_OAUTH_INVALID_URL}" 401 "invalid_token" "www-authenticate" 'error="invalid_token"'
+
+echo "[oauth] validating valid bearer token MCP flow"
+wait_for_mcp_tool_result "${MCP_OAUTH_VALID_URL}" "aaa-ping" '{}' 200
+run_mcp_smoke_expect "mcp-smoke-oauth-valid" "${MCP_OAUTH_VALID_URL}" true
+
 echo "[observe] validating audit, traces, and logs"
 API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api" \
 API_KEY="${API_KEY}" \
 SERVER_NAME="${SERVER_NAME}" \
+OAUTH_SERVER_NAME="${OAUTH_SERVER_NAME}" \
+OAUTH_HUMAN_ID="${OAUTH_HUMAN_ID}" \
+OAUTH_AGENT_ID="${OAUTH_AGENT_ID}" \
 TEMPO_BASE="http://127.0.0.1:${TEMPO_PORT}" \
 LOKI_BASE="http://127.0.0.1:${LOKI_PORT}" \
 python3 <<'PY'
@@ -1129,6 +1636,9 @@ import urllib.request
 api_base = os.environ["API_BASE"]
 api_key = os.environ["API_KEY"]
 server_name = os.environ["SERVER_NAME"]
+oauth_server_name = os.environ["OAUTH_SERVER_NAME"]
+oauth_human_id = os.environ["OAUTH_HUMAN_ID"]
+oauth_agent_id = os.environ["OAUTH_AGENT_ID"]
 tempo_base = os.environ["TEMPO_BASE"]
 loki_base = os.environ["LOKI_BASE"]
 
@@ -1190,10 +1700,22 @@ deny_echo = wait_for_json(
     description="deny audit event for echo",
 ).get("events", [])
 deny_aaa_ping = wait_for_json(
-    f"{api_base}/events/filter?server={server_name}&decision=deny&tool_name=aaa-ping&limit=20",
+    f"{api_base}/events/filter?server={server_name}&decision=deny&tool_name=aaa-ping&limit=50",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="deny audit event for aaa-ping",
+).get("events", [])
+oauth_allow_aaa_ping = wait_for_json(
+    f"{api_base}/events/filter?server={oauth_server_name}&decision=allow&tool_name=aaa-ping&limit=20",
+    lambda doc: bool(doc.get("events", [])),
+    headers=headers,
+    description="oauth allow audit event for aaa-ping",
+).get("events", [])
+oauth_deny_events = wait_for_json(
+    f"{api_base}/events/filter?server={oauth_server_name}&decision=deny&limit=50",
+    lambda doc: bool(doc.get("events", [])),
+    headers=headers,
+    description="oauth deny audit events",
 ).get("events", [])
 allow_upper = wait_for_json(
     f"{api_base}/events/filter?server={server_name}&decision=allow&tool_name=upper&limit=20",
@@ -1212,8 +1734,8 @@ sources = wait_for_json(
     lambda doc: all(
         int(item.get("count", 0)) >= 1
         for item in doc.get("sources", [])
-        if item.get("source") in {server_name, "mcp-example-server"}
-    ) and {item.get("source") for item in doc.get("sources", [])} >= {server_name, "mcp-example-server"},
+        if item.get("source") in {server_name, oauth_server_name, "mcp-example-server"}
+    ) and {item.get("source") for item in doc.get("sources", [])} >= {server_name, oauth_server_name, "mcp-example-server"},
     headers=headers,
     description="analytics sources",
 ).get("sources", [])
@@ -1242,10 +1764,26 @@ routing_methods = {
 }
 source_counts = {item.get("source"): int(item.get("count", 0)) for item in sources}
 event_type_counts = {item.get("event_type"): int(item.get("count", 0)) for item in event_types}
+deny_aaa_ping_reasons = {
+    payload.get("reason")
+    for payload in (payload_dict(event) for event in deny_aaa_ping)
+    if payload.get("reason")
+}
+oauth_deny_reasons = {
+    payload.get("reason")
+    for payload in (payload_dict(event) for event in oauth_deny_events)
+    if payload.get("reason")
+}
+oauth_routing_methods = {
+    payload.get("rpc_method")
+    for payload in (payload_dict(event) for event in oauth_allow_aaa_ping + oauth_deny_events)
+    if payload.get("rpc_method")
+}
 
 deny_payload = deny_upper[0].get("payload", {})
 deny_echo_payload = deny_echo[0].get("payload", {})
 allow_payload = allow_upper[0].get("payload", {})
+oauth_allow_payload = oauth_allow_aaa_ping[0].get("payload", {})
 if deny_payload.get("reason") != "trust_too_low":
     raise AssertionError(f"unexpected deny payload: {deny_payload}")
 if deny_payload.get("required_trust") != "medium":
@@ -1256,11 +1794,22 @@ if deny_echo_payload.get("reason") != "tool_denied":
     raise AssertionError(f"unexpected deny echo payload: {deny_echo_payload}")
 if allow_payload.get("effective_trust") != "medium":
     raise AssertionError(f"expected effective_trust=medium after update, got {allow_payload}")
+for reason in ("session_revoked", "tool_not_granted", "tool_denied"):
+    if reason not in deny_aaa_ping_reasons:
+        raise AssertionError(f"missing aaa-ping deny reason {reason}: {deny_aaa_ping_reasons}")
+for reason in ("missing_bearer_token", "invalid_token"):
+    if reason not in oauth_deny_reasons:
+        raise AssertionError(f"missing oauth deny reason {reason}: {oauth_deny_reasons}")
 for rpc_method in ("initialize", "tools/list", "tools/call"):
     if rpc_method not in routing_methods:
         raise AssertionError(f"missing gateway audit event for {rpc_method}: {routing_methods}")
+for rpc_method in ("initialize", "tools/call"):
+    if rpc_method not in oauth_routing_methods:
+        raise AssertionError(f"missing oauth gateway audit event for {rpc_method}: {oauth_routing_methods}")
 if source_counts.get(server_name, 0) < 1:
     raise AssertionError(f"missing gateway source counts for {server_name}: {source_counts}")
+if source_counts.get(oauth_server_name, 0) < 1:
+    raise AssertionError(f"missing gateway source counts for {oauth_server_name}: {source_counts}")
 if source_counts.get("mcp-example-server", 0) < 1:
     raise AssertionError(f"missing upstream server analytics source: {source_counts}")
 for event_type in ("mcp.request", "tool.call", "resource.read", "prompt.render"):
@@ -1268,6 +1817,8 @@ for event_type in ("mcp.request", "tool.call", "resource.read", "prompt.render")
         raise AssertionError(f"missing analytics event type {event_type}: {event_type_counts}")
 if int(stats.get("events_total", 0)) < 8:
     raise AssertionError(f"expected at least 8 events after smoke and policy checks, got {stats}")
+if oauth_allow_payload.get("human_id") != oauth_human_id or oauth_allow_payload.get("agent_id") != oauth_agent_id:
+    raise AssertionError(f"unexpected oauth allow identity payload: {oauth_allow_payload}")
 
 tempo = wait_for_json(
     f"{tempo_base}/api/search?limit=20",
@@ -1306,8 +1857,11 @@ rows = [
     ("audit.deny_aaa_ping", str(len(deny_aaa_ping))),
     ("audit.deny_echo", str(len(deny_echo))),
     ("audit.allow_upper", str(len(allow_upper))),
+    ("audit.oauth_allow_aaa_ping", str(len(oauth_allow_aaa_ping))),
+    ("audit.oauth_deny_events", str(len(oauth_deny_events))),
     ("audit.rpc_methods", str(len(routing_methods))),
     ("analytics.source.gateway", str(source_counts.get(server_name, 0))),
+    ("analytics.source.oauth", str(source_counts.get(oauth_server_name, 0))),
     ("analytics.source.server", str(source_counts.get("mcp-example-server", 0))),
     ("analytics.type.mcp.request", str(event_type_counts.get("mcp.request", 0))),
     ("analytics.type.tool.call", str(event_type_counts.get("tool.call", 0))),
@@ -1323,7 +1877,9 @@ for key, value in rows:
     print(f"{key:{width}}  {value}")
 PY
 
-echo "[cli] deleting deployed MCP server"
+echo "[cli] deleting deployed MCP servers"
+./bin/mcp-runtime server delete "${OAUTH_SERVER_NAME}" --namespace mcp-servers
+kubectl wait --for=delete "mcpserver/${OAUTH_SERVER_NAME}" -n mcp-servers --timeout=120s || true
 ./bin/mcp-runtime server delete "${SERVER_NAME}" --namespace mcp-servers
 kubectl wait --for=delete "mcpserver/${SERVER_NAME}" -n mcp-servers --timeout=120s || true
 
