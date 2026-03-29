@@ -398,25 +398,40 @@ if expected_ok:
 else:
     if smoke_exit_code == 0:
         raise AssertionError(f"{name}: expected non-zero exit code for failed smoke run")
-    tool_step = steps["tools/call"]
-    if tool_step.get("ok"):
-        raise AssertionError(f"{name}: expected tools/call to fail: {json.dumps(tool_step, indent=2)}")
-    if expected_tool_error and expected_tool_error not in tool_step.get("error", ""):
-        raise AssertionError(
-            f"{name}: expected tools/call error to contain {expected_tool_error!r}, got {tool_step.get('error')!r}"
-        )
-    for step_name in ("prompts/get", "resources/read"):
+    failed_steps = {
+        step_name: step
+        for step_name, step in steps.items()
+        if not step.get("ok") and not step.get("skipped")
+    }
+    if not failed_steps:
+        raise AssertionError(f"{name}: expected at least one failed step: {json.dumps(doc, indent=2)}")
+    if expected_tool_error:
+        matching_steps = {
+            step_name: step
+            for step_name, step in failed_steps.items()
+            if expected_tool_error in step.get("error", "")
+        }
+        if not matching_steps:
+            rendered = json.dumps(failed_steps, indent=2)
+            raise AssertionError(
+                f"{name}: expected a failed step error to contain {expected_tool_error!r}, got {rendered}"
+            )
+    for step_name in ("tools/call", "prompts/get", "resources/read"):
         step = steps[step_name]
         if not step.get("ok") and not step.get("skipped"):
-            raise AssertionError(f"{name}: expected {step_name} to succeed or skip: {json.dumps(step, indent=2)}")
+            if not expected_tool_error or expected_tool_error not in step.get("error", ""):
+                raise AssertionError(
+                    f"{name}: expected {step_name} to succeed, skip, or fail with {expected_tool_error!r}: "
+                    f"{json.dumps(step, indent=2)}"
+                )
 
 rows = []
 for step_name in required_steps:
     step = steps[step_name]
     if (
         not expected_ok
-        and step_name == "tools/call"
         and not step.get("ok")
+        and not step.get("skipped")
         and (not expected_tool_error or expected_tool_error in step.get("error", ""))
     ):
         status = "expected_fail"

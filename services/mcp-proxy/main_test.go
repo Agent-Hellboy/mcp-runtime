@@ -8,7 +8,6 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httputil"
 	"net/url"
 	"strings"
 	"testing"
@@ -173,6 +172,47 @@ func TestApplyUpstreamTokenClearsHeaderWhenTokenMissing(t *testing.T) {
 	}
 }
 
+func TestHandleProxyRewritesUpstreamHostHeader(t *testing.T) {
+	t.Parallel()
+
+	var upstreamHost string
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHost = r.Host
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(upstreamServer.Close)
+
+	target, err := url.Parse(upstreamServer.URL)
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+
+	proxy := &proxyServer{
+		proxy:                 newUpstreamReverseProxy(target),
+		httpClient:            &http.Client{Timeout: 2 * time.Second},
+		defaultHumanHeader:    defaultHumanHeader,
+		defaultAgentHeader:    defaultAgentHeader,
+		defaultSessionHeader:  defaultSessionHeader,
+		defaultPolicyMode:     defaultPolicyMode,
+		defaultPolicyDecision: defaultPolicyDecision,
+		defaultPolicyVersion:  "test-policy",
+		oauthProviders:        map[string]*oauthProvider{},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://policy.example.local/mcp", nil)
+	req.Host = "policy.example.local"
+	recorder := httptest.NewRecorder()
+
+	proxy.handleProxy(recorder, req)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	if upstreamHost != target.Host {
+		t.Fatalf("upstream host = %q, want %q", upstreamHost, target.Host)
+	}
+}
+
 type testJWTIssuer struct {
 	privateKey *rsa.PrivateKey
 	server     *httptest.Server
@@ -228,7 +268,7 @@ func newTestProxyServer(t *testing.T, policy *gatewayPolicyDocument, upstream ht
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	reverseProxy := httputil.NewSingleHostReverseProxy(target)
+	reverseProxy := newUpstreamReverseProxy(target)
 	reverseProxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
 		t.Fatalf("proxy error: %v", err)
 	}

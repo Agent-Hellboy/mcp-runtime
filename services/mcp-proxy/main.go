@@ -226,7 +226,7 @@ func main() {
 		log.Fatalf("invalid UPSTREAM_URL: %v", err)
 	}
 
-	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy := newUpstreamReverseProxy(target)
 	proxy.Transport = otelhttp.NewTransport(http.DefaultTransport)
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		log.Printf("proxy error: %v", err)
@@ -299,6 +299,16 @@ func main() {
 	if err := httpServer.ListenAndServe(); err != nil {
 		log.Fatalf("server failed: %v", err)
 	}
+}
+
+func newUpstreamReverseProxy(target *url.URL) *httputil.ReverseProxy {
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		req.Host = target.Host
+	}
+	return proxy
 }
 
 // handleProxy handles incoming MCP requests and forwards them to upstream servers.
