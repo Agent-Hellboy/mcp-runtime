@@ -115,7 +115,7 @@ func (m *Manager) getDeploymentStatus(ctx context.Context, component Component) 
 	}
 
 	readyReplicas := deployment.Status.ReadyReplicas
-	desiredReplicas := *deployment.Spec.Replicas
+	desiredReplicas := desiredReplicaCount(deployment.Spec.Replicas)
 
 	message := ""
 	if len(deployment.Status.Conditions) > 0 {
@@ -137,7 +137,7 @@ func (m *Manager) getStatefulSetStatus(ctx context.Context, component Component)
 	}
 
 	readyReplicas := sts.Status.ReadyReplicas
-	desiredReplicas := *sts.Spec.Replicas
+	desiredReplicas := desiredReplicaCount(sts.Spec.Replicas)
 
 	message := ""
 	if sts.Status.UpdateRevision != "" && sts.Status.CurrentRevision != sts.Status.UpdateRevision {
@@ -162,6 +162,13 @@ func (m *Manager) getDaemonSetStatus(ctx context.Context, component Component) (
 	}
 
 	return StatusFromWorkload(component, readyReplicas, desiredReplicas, message), nil
+}
+
+func desiredReplicaCount(replicas *int32) int32 {
+	if replicas == nil {
+		return 1
+	}
+	return *replicas
 }
 
 // RestartComponent performs a rolling restart of a component by patching its pod template.

@@ -188,11 +188,17 @@ func (m *Manager) GetServerPolicy(ctx context.Context, namespace, serverName str
 	}
 
 	policy := make(map[string]interface{})
+	hasPolicyDocument := false
 	if policyYAML, ok := configMap.Data["policy.yaml"]; ok {
 		policy["yaml"] = policyYAML
+		hasPolicyDocument = true
 	}
 	if policyJSON, ok := configMap.Data["policy.json"]; ok {
 		policy["json"] = policyJSON
+		hasPolicyDocument = true
+	}
+	if !hasPolicyDocument {
+		return nil, fmt.Errorf("policy configmap %s/%s does not contain policy.yaml or policy.json", namespace, configMapName)
 	}
 	policy["source"] = fmt.Sprintf("configmap/%s/%s", namespace, configMapName)
 

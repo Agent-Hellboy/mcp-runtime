@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -131,7 +132,9 @@ func IsInCluster() bool {
 func GetNamespace() string {
 	// Try to read from service account namespace file
 	if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
-		return string(data)
+		if namespace := strings.TrimSpace(string(data)); namespace != "" {
+			return namespace
+		}
 	}
 
 	// Fall back to env var

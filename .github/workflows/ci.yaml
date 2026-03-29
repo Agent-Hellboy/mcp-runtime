@@ -115,11 +115,18 @@ jobs:
           chmod +x kind
           sudo mv kind /usr/local/bin/kind
 
+      - name: Install E2E dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 ripgrep
+
       - name: Show tool versions
         run: |
           docker version
           kubectl version --client
           kind version
+          python3 --version
+          rg --version
 
       - name: Run kind e2e
         env:

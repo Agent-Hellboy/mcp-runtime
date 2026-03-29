@@ -45,11 +45,17 @@ function initTabs() {
     tab.addEventListener("click", () => {
       const target = tab.dataset.tab;
 
-      tabs.forEach((t) => t.classList.remove("active"));
-      contents.forEach((c) => c.classList.remove("active"));
+      tabs.forEach((t) => {
+        const isActive = t === tab;
+        t.classList.toggle("active", isActive);
+        t.setAttribute("aria-selected", String(isActive));
+      });
 
-      tab.classList.add("active");
-      document.getElementById(`tab-${target}`).classList.add("active");
+      contents.forEach((content) => {
+        const isActive = content.id === `tab-${target}`;
+        content.classList.toggle("active", isActive);
+        content.hidden = !isActive;
+      });
 
       // Load data when switching to certain tabs
       if (target === "governance") {
@@ -153,6 +159,10 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+function encodePathSegment(value) {
+  return encodeURIComponent(String(value));
+}
+
 function initDashboard() {
   loadDashboardSummary();
   loadEvents();
@@ -223,6 +233,8 @@ async function loadGrants() {
       const subject = grant.subject?.humanID || grant.subject?.agentID || "-";
       const status = grant.disabled ? "Disabled" : "Active";
       const statusClass = grant.disabled ? "badge-muted" : "badge-success";
+      const namespaceArg = JSON.stringify(grant.namespace || "");
+      const nameArg = JSON.stringify(grant.name || "");
 
       const row = document.createElement("tr");
       row.innerHTML = `
@@ -232,7 +244,7 @@ async function loadGrants() {
         <td>${escapeHtml(grant.maxTrust || "-")}</td>
         <td><span class="badge ${statusClass}">${status}</span></td>
         <td>
-          <button class="ghost action-btn" onclick="toggleGrant('${grant.namespace}', '${grant.name}', ${grant.disabled})">
+          <button class="ghost action-btn" onclick='toggleGrant(${namespaceArg}, ${nameArg}, ${grant.disabled})'>
             ${grant.disabled ? "Enable" : "Disable"}
           </button>
         </td>
@@ -257,9 +269,12 @@ async function toggleGrant(namespace, name, currentlyDisabled) {
   if (!(await confirmModal(confirmMessage))) return;
 
   try {
-    await fetchJSON(`/runtime/grants/${namespace}/${name}/${action}`, {
+    await fetchJSON(
+      `/runtime/grants/${encodePathSegment(namespace)}/${encodePathSegment(name)}/${action}`,
+      {
       method: "POST",
-    });
+      }
+    );
     showToast(`Grant ${action}d successfully`);
     loadGrants();
   } catch (err) {
@@ -301,6 +316,8 @@ async function loadSessions() {
         session.subject?.humanID || session.subject?.agentID || "-";
       const status = session.revoked ? "Revoked" : "Active";
       const statusClass = session.revoked ? "badge-error" : "badge-success";
+      const namespaceArg = JSON.stringify(session.namespace || "");
+      const nameArg = JSON.stringify(session.name || "");
 
       const row = document.createElement("tr");
       row.innerHTML = `
@@ -310,7 +327,7 @@ async function loadSessions() {
         <td>${escapeHtml(session.consentedTrust || "-")}</td>
         <td><span class="badge ${statusClass}">${status}</span></td>
         <td>
-          <button class="ghost action-btn" onclick="toggleSession('${session.namespace}', '${session.name}', ${session.revoked})">
+          <button class="ghost action-btn" onclick='toggleSession(${namespaceArg}, ${nameArg}, ${session.revoked})'>
             ${session.revoked ? "Unrevoke" : "Revoke"}
           </button>
         </td>
@@ -335,9 +352,12 @@ async function toggleSession(namespace, name, currentlyRevoked) {
   if (!(await confirmModal(confirmMessage))) return;
 
   try {
-    await fetchJSON(`/runtime/sessions/${namespace}/${name}/${action}`, {
+    await fetchJSON(
+      `/runtime/sessions/${encodePathSegment(namespace)}/${encodePathSegment(name)}/${action}`,
+      {
       method: "POST",
-    });
+      }
+    );
     showToast(`Session ${action}d successfully`);
     loadSessions();
   } catch (err) {

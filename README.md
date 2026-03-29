@@ -155,14 +155,14 @@ make operator-manifests operator-generate
 
 ```bash
 # API service
-docker build -f services/api/Dockerfile -t mcp-runtime-api:latest .
+docker build -f services/api/Dockerfile -t mcp-sentinel-api:latest .
 
 # UI service
-docker build -f services/ui/Dockerfile -t mcp-runtime-ui:latest .
+docker build -f services/ui/Dockerfile -t mcp-sentinel-ui:latest .
 
 # Other services
-docker build -f services/ingest/Dockerfile -t mcp-runtime-ingest:latest .
-docker build -f services/processor/Dockerfile -t mcp-runtime-processor:latest .
+docker build -f services/ingest/Dockerfile -t mcp-sentinel-ingest:latest .
+docker build -f services/processor/Dockerfile -t mcp-sentinel-processor:latest .
 ```
 
 Tested on macOS, Kind, and Minikube.

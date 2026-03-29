@@ -126,6 +126,18 @@ wait_http() {
   return 1
 }
 
+assert_file_contains() {
+  local needle="$1"
+  local file="$2"
+
+  if command -v rg >/dev/null 2>&1; then
+    rg -F -q -- "${needle}" "${file}"
+    return
+  fi
+
+  grep -F -q -- "${needle}" "${file}"
+}
+
 decode_base64() {
   if base64 --help 2>/dev/null | grep -q -- "--decode"; then
     base64 --decode
@@ -1094,13 +1106,13 @@ print_gateway_policy_debug
 
 echo "[cli] checking access management commands"
 ./bin/mcp-runtime access grant list --namespace mcp-servers >"${WORKDIR}/access-grant-list.txt"
-rg -q "${SERVER_NAME}-grant" "${WORKDIR}/access-grant-list.txt"
+assert_file_contains "${SERVER_NAME}-grant" "${WORKDIR}/access-grant-list.txt"
 ./bin/mcp-runtime access grant get "${SERVER_NAME}-grant" --namespace mcp-servers >"${WORKDIR}/access-grant-get.yaml"
-rg -q "maxTrust: high" "${WORKDIR}/access-grant-get.yaml"
+assert_file_contains "maxTrust: high" "${WORKDIR}/access-grant-get.yaml"
 ./bin/mcp-runtime access session list --namespace mcp-servers >"${WORKDIR}/access-session-list.txt"
-rg -q "${SESSION_ID}" "${WORKDIR}/access-session-list.txt"
+assert_file_contains "${SESSION_ID}" "${WORKDIR}/access-session-list.txt"
 ./bin/mcp-runtime access session get "${SESSION_ID}" --namespace mcp-servers >"${WORKDIR}/access-session-get.yaml"
-rg -q "consentedTrust: low" "${WORKDIR}/access-session-get.yaml"
+assert_file_contains "consentedTrust: low" "${WORKDIR}/access-session-get.yaml"
 
 echo "[port-forward] exposing ingress and observability services"
 port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${WORKDIR}/traefik-port-forward.log"

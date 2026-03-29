@@ -221,7 +221,6 @@ func (c *Client) QueryEventsFiltered(ctx context.Context, filters EventFilters) 
 
 	query := fmt.Sprintf("SELECT %s FROM %s.events %s ORDER BY timestamp DESC LIMIT %d",
 		eventSelectColumns, c.DBName, whereClause, filters.Limit)
-	args = append(args, filters.Limit)
 
 	rows, err := c.Conn.Query(ctx, query, args...)
 	if err != nil {

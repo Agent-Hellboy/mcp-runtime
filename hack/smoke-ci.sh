@@ -3,6 +3,21 @@ set -euo pipefail
 
 echo "🚀 Running CI Smoke Tests"
 
+summary_icon() {
+    case "$1" in
+        passed) echo "✅" ;;
+        skipped) echo "⚠️ " ;;
+        *) echo "❌" ;;
+    esac
+}
+
+binaries_status="skipped"
+docker_status="skipped"
+k8s_status="skipped"
+yaml_status="skipped"
+files_status="pending"
+integration_status="skipped"
+
 # Test 0: Build and test services/api
 echo "🔨 Building and testing services/api"
 if command -v go >/dev/null 2>&1; then
@@ -35,6 +50,7 @@ done
 
 if [ $binaries_found -gt 0 ]; then
     echo "✅ Found $binaries_tested executable binaries"
+    binaries_status="passed"
 else
     echo "⚠️  No binaries found (run 'go build' first)"
 fi
@@ -57,6 +73,7 @@ if command -v docker >/dev/null 2>&1; then
             exit 1
         fi
     done
+    docker_status="passed"
 else
     echo "⚠️  Docker not available, skipping Docker tests"
 fi
@@ -72,6 +89,7 @@ if command -v kubectl >/dev/null 2>&1; then
             echo "❌ Kubernetes manifest validation failed"
             exit 1
         fi
+        k8s_status="passed"
     else
         echo "⚠️  kubeconform not available, skipping detailed K8s validation"
     fi
@@ -84,7 +102,7 @@ echo "📄 Testing YAML syntax..."
 if command -v python3 >/dev/null 2>&1 && python3 -c "import yaml" >/dev/null 2>&1; then
     yaml_errors=0
     while IFS= read -r -d '' yaml_file; do
-        if ! python3 -c "import yaml, sys; yaml.safe_load_all(open(sys.argv[1]))" "$yaml_file" 2>/dev/null; then
+        if ! python3 -c "import pathlib, sys, yaml; list(yaml.safe_load_all(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')))" "$yaml_file" 2>/dev/null; then
             echo "❌ YAML syntax error in $yaml_file"
             yaml_errors=$((yaml_errors + 1))
         fi
@@ -92,6 +110,7 @@ if command -v python3 >/dev/null 2>&1 && python3 -c "import yaml" >/dev/null 2>&
 
     if [ $yaml_errors -eq 0 ]; then
         echo "✅ All YAML files syntactically valid"
+        yaml_status="passed"
     else
         echo "❌ Found $yaml_errors YAML syntax errors"
         exit 1
@@ -124,6 +143,7 @@ done
 
 if [ $missing_files -eq 0 ]; then
     echo "✅ All required files present"
+    files_status="passed"
 else
     echo "❌ $missing_files required files missing"
     exit 1
@@ -138,6 +158,7 @@ if [ "${RUN_FULL_SMOKE_TEST:-false}" = "true" ]; then
         # Run in background and capture exit code
         if tests/smoketest.sh; then
             echo "✅ Full integration test passed"
+            integration_status="passed"
         else
             echo "❌ Full integration test failed"
             exit 1
@@ -152,11 +173,11 @@ fi
 echo "🎉 All CI smoke tests passed!"
 echo ""
 echo "📊 Test Summary:"
-echo "  ✅ Binaries: Compiled and executable"
-echo "  ✅ Docker: Images build successfully"
-echo "  ✅ Kubernetes: Manifests valid"
-echo "  ✅ YAML: Syntax correct"
-echo "  ✅ Files: All required files present"
+echo "  $(summary_icon "${binaries_status}") Binaries: ${binaries_status}"
+echo "  $(summary_icon "${docker_status}") Docker: ${docker_status}"
+echo "  $(summary_icon "${k8s_status}") Kubernetes: ${k8s_status}"
+echo "  $(summary_icon "${yaml_status}") YAML: ${yaml_status}"
+echo "  $(summary_icon "${files_status}") Files: ${files_status}"
 if [ "${RUN_FULL_SMOKE_TEST:-false}" = "true" ]; then
-    echo "  ✅ Integration: Full Kind cluster test"
+    echo "  $(summary_icon "${integration_status}") Integration: ${integration_status}"
 fi

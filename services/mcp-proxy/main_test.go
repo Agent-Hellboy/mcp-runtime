@@ -131,6 +131,48 @@ func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 	}
 }
 
+func TestApplyIdentityHeadersClearsSpoofedValues(t *testing.T) {
+	t.Parallel()
+
+	proxy := &proxyServer{
+		defaultHumanHeader:   defaultHumanHeader,
+		defaultAgentHeader:   defaultAgentHeader,
+		defaultSessionHeader: defaultSessionHeader,
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://proxy.example.com/mcp", nil)
+	req.Header.Set(defaultHumanHeader, "spoofed-human")
+	req.Header.Set(defaultAgentHeader, "spoofed-agent")
+	req.Header.Set(defaultSessionHeader, "spoofed-session")
+
+	proxy.applyIdentityHeaders(req, oauthPolicy("https://issuer.example.com"), identityContext{
+		HumanID: "human-1",
+	})
+
+	if got := req.Header.Get(defaultHumanHeader); got != "human-1" {
+		t.Fatalf("%s = %q, want %q", defaultHumanHeader, got, "human-1")
+	}
+	if got := req.Header.Get(defaultAgentHeader); got != "" {
+		t.Fatalf("%s = %q, want empty", defaultAgentHeader, got)
+	}
+	if got := req.Header.Get(defaultSessionHeader); got != "" {
+		t.Fatalf("%s = %q, want empty", defaultSessionHeader, got)
+	}
+}
+
+func TestApplyUpstreamTokenClearsHeaderWhenTokenMissing(t *testing.T) {
+	t.Parallel()
+
+	proxy := &proxyServer{}
+	req := httptest.NewRequest(http.MethodGet, "http://proxy.example.com/mcp", nil)
+	req.Header.Set("Authorization", "Bearer spoofed-token")
+
+	proxy.applyUpstreamToken(req, oauthPolicy("https://issuer.example.com"), "")
+
+	if got := req.Header.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization = %q, want empty", got)
+	}
+}
+
 type testJWTIssuer struct {
 	privateKey *rsa.PrivateKey
 	server     *httptest.Server

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -162,6 +163,10 @@ func (s *ingestServer) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if payload.Source == "" || payload.EventType == "" || len(payload.Payload) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_fields"})
+		return
+	}
+	if bytes.Equal(bytes.TrimSpace(payload.Payload), []byte("null")) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_fields"})
 		return
 	}

@@ -21,14 +21,49 @@
         </div>
       </header>
 
-      <nav class="tabs">
-        <button class="tab active" data-tab="dashboard">Dashboard</button>
-        <button class="tab" data-tab="governance">Governance</button>
-        <button class="tab" data-tab="operations">Operations</button>
+      <nav class="tabs" role="tablist" aria-label="Dashboard sections">
+        <button
+          id="tab-button-dashboard"
+          class="tab active"
+          data-tab="dashboard"
+          role="tab"
+          type="button"
+          aria-controls="tab-dashboard"
+          aria-selected="true"
+        >
+          Dashboard
+        </button>
+        <button
+          id="tab-button-governance"
+          class="tab"
+          data-tab="governance"
+          role="tab"
+          type="button"
+          aria-controls="tab-governance"
+          aria-selected="false"
+        >
+          Governance
+        </button>
+        <button
+          id="tab-button-operations"
+          class="tab"
+          data-tab="operations"
+          role="tab"
+          type="button"
+          aria-controls="tab-operations"
+          aria-selected="false"
+        >
+          Operations
+        </button>
       </nav>
 
       <!-- Dashboard Tab -->
-      <section id="tab-dashboard" class="tab-content active">
+      <section
+        id="tab-dashboard"
+        class="tab-content active"
+        role="tabpanel"
+        aria-labelledby="tab-button-dashboard"
+      >
         <div class="metrics-grid">
           <div class="metric-card">
             <span class="metric-label">Total Events</span>
@@ -81,7 +116,13 @@
       </section>
 
       <!-- Governance Tab -->
-      <section id="tab-governance" class="tab-content">
+      <section
+        id="tab-governance"
+        class="tab-content"
+        role="tabpanel"
+        aria-labelledby="tab-button-governance"
+        hidden
+      >
         <div class="panel">
           <div class="panel-head">
             <h2>Access Grants</h2>
@@ -142,7 +183,13 @@
       </section>
 
       <!-- Operations Tab -->
-      <section id="tab-operations" class="tab-content">
+      <section
+        id="tab-operations"
+        class="tab-content"
+        role="tabpanel"
+        aria-labelledby="tab-button-operations"
+        hidden
+      >
         <div class="panel">
           <div class="panel-head">
             <h2>Component Health</h2>

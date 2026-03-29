@@ -813,23 +813,36 @@ func (s *proxyServer) fetchAuthServerMetadata(ctx context.Context, issuerURL str
 
 func (s *proxyServer) applyIdentityHeaders(r *http.Request, policy *gatewayPolicyDocument, identity identityContext) {
 	humanHeader, agentHeader, sessionHeader := s.identityHeaderNames(policy)
-	if humanHeader != "" && identity.HumanID != "" {
-		r.Header.Set(humanHeader, identity.HumanID)
+	if humanHeader != "" {
+		r.Header.Del(humanHeader)
+		if identity.HumanID != "" {
+			r.Header.Set(humanHeader, identity.HumanID)
+		}
 	}
-	if agentHeader != "" && identity.AgentID != "" {
-		r.Header.Set(agentHeader, identity.AgentID)
+	if agentHeader != "" {
+		r.Header.Del(agentHeader)
+		if identity.AgentID != "" {
+			r.Header.Set(agentHeader, identity.AgentID)
+		}
 	}
-	if sessionHeader != "" && identity.SessionID != "" {
-		r.Header.Set(sessionHeader, identity.SessionID)
+	if sessionHeader != "" {
+		r.Header.Del(sessionHeader)
+		if identity.SessionID != "" {
+			r.Header.Set(sessionHeader, identity.SessionID)
+		}
 	}
 }
 
 func (s *proxyServer) applyUpstreamToken(r *http.Request, policy *gatewayPolicyDocument, token string) {
-	if token == "" || policy == nil {
+	if policy == nil {
 		return
 	}
 	headerName := strings.TrimSpace(policy.Session.UpstreamTokenHeader)
 	if headerName == "" {
+		return
+	}
+	r.Header.Del(headerName)
+	if token == "" {
 		return
 	}
 	r.Header.Set(headerName, formatTokenHeaderValue(headerName, token))
