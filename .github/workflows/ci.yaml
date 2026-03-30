@@ -103,6 +103,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Validate E2E scenario selectors
+        run: bash test/e2e/scenarios_test.sh
+
       - name: Install kubectl
         run: |
           curl -fsSL -o kubectl "https://dl.k8s.io/release/v1.34.1/bin/linux/amd64/kubectl"
@@ -133,6 +136,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/.e2e-artifacts/kind
+          E2E_SCENARIOS: all
         run: bash test/e2e/kind.sh
 
       - name: Upload e2e artifacts

@@ -112,9 +112,16 @@ func (s *RuntimeServer) handleRuntimeServers(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// List deployments with MCP server labels
-	deployments, err := s.k8sClients.Clientset.AppsV1().Deployments("").List(ctx, metav1.ListOptions{
-		LabelSelector: "mcp-server=true",
+	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
+	if namespace == "" {
+		namespace = "mcp-servers"
+	}
+
+	// MCPServer deployments are reconciled by the runtime operator into the mcp-servers
+	// namespace and labeled as managed-by=mcp-runtime with a stable/canary rollout track.
+	// The UI needs the stable server set, not every deployment in the cluster.
+	deployments, err := s.k8sClients.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/managed-by=mcp-runtime,mcpruntime.org/rollout-track=stable",
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list servers"})

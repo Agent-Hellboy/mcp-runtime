@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	APIGroup              = "access.mcp-sentinel.io"
+	APIGroup              = "mcpruntime.org"
 	APIVersion            = "v1alpha1"
 	AccessGrantResource   = "mcpaccessgrants"
 	AccessSessionResource = "mcpagentsessions"
@@ -181,7 +181,7 @@ func (m *Manager) patchSession(ctx context.Context, name, namespace string, patc
 // GetServerPolicy returns the rendered policy for a specific server if available.
 func (m *Manager) GetServerPolicy(ctx context.Context, namespace, serverName string) (map[string]interface{}, error) {
 	// First, try to find a ConfigMap with the rendered policy
-	configMapName := fmt.Sprintf("mcp-policy-%s", serverName)
+	configMapName := fmt.Sprintf("%s-gateway-policy", serverName)
 	configMap, err := m.clientset.CoreV1().ConfigMaps(namespace).Get(ctx, configMapName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("policy not found for server %s/%s: %w", namespace, serverName, err)
@@ -194,6 +194,13 @@ func (m *Manager) GetServerPolicy(ctx context.Context, namespace, serverName str
 		hasPolicyDocument = true
 	}
 	if policyJSON, ok := configMap.Data["policy.json"]; ok {
+		var decoded map[string]interface{}
+		if err := json.Unmarshal([]byte(policyJSON), &decoded); err != nil {
+			return nil, fmt.Errorf("failed to parse policy configmap %s/%s policy.json: %w", namespace, configMapName, err)
+		}
+		for key, value := range decoded {
+			policy[key] = value
+		}
 		policy["json"] = policyJSON
 		hasPolicyDocument = true
 	}

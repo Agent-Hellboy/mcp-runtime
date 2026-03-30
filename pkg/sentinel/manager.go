@@ -261,14 +261,15 @@ func (m *Manager) GetComponentLogs(ctx context.Context, key string, tailLines in
 	}
 	defer stream.Close()
 
-	// Read logs into string slice
-	buf := make([]byte, 1024*1024) // 1MB buffer
-	n, err := stream.Read(buf)
-	if err != nil && err != io.EOF {
+	data, err := io.ReadAll(stream)
+	if err != nil {
 		return nil, fmt.Errorf("failed to read logs: %w", err)
 	}
 
-	logs := string(buf[:n])
+	logs := string(data)
+	if strings.TrimSpace(logs) == "" {
+		return []string{}, nil
+	}
 	lines := strings.Split(strings.TrimSpace(logs), "\n")
 	return lines, nil
 }

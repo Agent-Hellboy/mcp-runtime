@@ -15,7 +15,6 @@ import (
 // Config provides Kubernetes client configuration options.
 type Config struct {
 	KubeconfigPath string
-	Namespace      string
 }
 
 // Clients holds all Kubernetes clients.
@@ -114,7 +113,7 @@ func getDefaultKubeconfigPath() string {
 	// Default to ~/.kube/config
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ""
+		return "~/.kube/config"
 	}
 	return filepath.Join(home, ".kube", "config")
 }

@@ -4,20 +4,20 @@ metadata:
   name: mcp-sentinel-api
 rules:
   # Read access to MCP custom resources
-  - apiGroups: ["access.mcp-sentinel.io"]
+  - apiGroups: ["mcpruntime.org"]
     resources: ["mcpaccessgrants", "mcpagentsessions"]
     verbs: ["get", "list", "watch"]
   # Safe mutations (enable/disable/revoke/unrevoke)
-  - apiGroups: ["access.mcp-sentinel.io"]
+  - apiGroups: ["mcpruntime.org"]
     resources: ["mcpaccessgrants"]
     verbs: ["patch"]
-  - apiGroups: ["access.mcp-sentinel.io"]
+  - apiGroups: ["mcpruntime.org"]
     resources: ["mcpagentsessions"]
     verbs: ["patch"]
   # Restart deployments (for safe ops)
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets"]
-    verbs: ["get", "patch"]
+    verbs: ["get", "list", "patch"]
   # List pods for health checks and logs
   - apiGroups: [""]
     resources: ["pods"]
@@ -31,7 +31,7 @@ rules:
     resources: ["configmaps"]
     verbs: ["get", "list"]
   # Read MCPServer resources
-  - apiGroups: ["runtime.mcp-sentinel.io"]
+  - apiGroups: ["mcpruntime.org"]
     resources: ["mcpservers"]
     verbs: ["get", "list", "watch"]
 ---

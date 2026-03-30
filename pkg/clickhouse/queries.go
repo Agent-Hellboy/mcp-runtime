@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -55,12 +56,7 @@ type RowScanner interface {
 
 // QueryEvents returns events from ClickHouse with optional limit.
 func (c *Client) QueryEvents(ctx context.Context, limit int) ([]EventRow, error) {
-	if limit < 1 {
-		limit = 100
-	}
-	if limit > 1000 {
-		limit = 1000
-	}
+	limit = normalizeEventLimit(limit)
 
 	query := fmt.Sprintf("SELECT %s FROM %s.events ORDER BY timestamp DESC LIMIT %d", eventSelectColumns, c.DBName, limit)
 	rows, err := c.Conn.Query(ctx, query)
@@ -163,12 +159,7 @@ type EventFilters struct {
 
 // QueryEventsFiltered returns events filtered by various fields.
 func (c *Client) QueryEventsFiltered(ctx context.Context, filters EventFilters) ([]EventRow, error) {
-	if filters.Limit < 1 {
-		filters.Limit = 100
-	}
-	if filters.Limit > 1000 {
-		filters.Limit = 1000
-	}
+	filters.Limit = normalizeEventLimit(filters.Limit)
 
 	var conditions []string
 	var args []interface{}
@@ -246,33 +237,38 @@ func (c *Client) QueryEventsFiltered(ctx context.Context, filters EventFilters) 
 
 // QueryDashboardSummary returns summary statistics for the dashboard.
 func (c *Client) QueryDashboardSummary(ctx context.Context) (*DashboardSummary, error) {
-	// Get total events
 	totalEvents, err := c.QueryStats(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Get unique servers count
+	summary := &DashboardSummary{
+		TotalEvents:   totalEvents,
+		LatestSource:  "-",
+		LastEventType: "-",
+	}
+	if totalEvents == 0 {
+		return summary, nil
+	}
+
 	serversQuery := fmt.Sprintf("SELECT count(DISTINCT server) FROM %s.events WHERE server != ''", c.DBName)
 	var serversCount uint64
 	if err := c.Conn.QueryRow(ctx, serversQuery).Scan(&serversCount); err != nil {
-		serversCount = 0
+		return nil, fmt.Errorf("failed to query active servers: %w", err)
 	}
+	summary.ActiveServers = int(serversCount)
 
-	// Get latest event info
 	latestQuery := fmt.Sprintf("SELECT source, event_type, timestamp FROM %s.events ORDER BY timestamp DESC LIMIT 1", c.DBName)
 	var latestSource, latestEventType string
 	var latestTime time.Time
 	if err := c.Conn.QueryRow(ctx, latestQuery).Scan(&latestSource, &latestEventType, &latestTime); err != nil {
-		latestSource = "-"
-		latestEventType = "-"
+		return nil, fmt.Errorf("failed to query latest event: %w", err)
 	}
-
-	summary := &DashboardSummary{
-		TotalEvents:   totalEvents,
-		ActiveServers: int(serversCount),
-		LatestSource:  latestSource,
-		LastEventType: latestEventType,
+	if latestSource = strings.TrimSpace(latestSource); latestSource != "" {
+		summary.LatestSource = latestSource
+	}
+	if latestEventType = strings.TrimSpace(latestEventType); latestEventType != "" {
+		summary.LastEventType = latestEventType
 	}
 
 	if !latestTime.IsZero() {
@@ -324,4 +320,14 @@ func joinConditions(conditions []string, sep string) string {
 		result += c
 	}
 	return result
+}
+
+func normalizeEventLimit(limit int) int {
+	if limit < 1 {
+		return 100
+	}
+	if limit > 1000 {
+		return 1000
+	}
+	return limit
 }

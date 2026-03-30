@@ -71,13 +71,13 @@ spec:
               memory: 256Mi
           readinessProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: 8081
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /health
+              path: /live
               port: 8081
             initialDelaySeconds: 15
             periodSeconds: 20

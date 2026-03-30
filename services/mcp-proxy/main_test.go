@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -81,6 +82,34 @@ func TestHandleProxyOAuthChallengesWithoutBearer(t *testing.T) {
 	}
 	if payload["error"] != "missing_bearer_token" {
 		t.Fatalf("error = %q, want %q", payload["error"], "missing_bearer_token")
+	}
+}
+
+func TestHandleProxyOAuthChallengeUsesExternalBaseURL(t *testing.T) {
+	issuer := newTestJWTIssuer(t)
+	proxy := newTestProxyServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	externalBaseURL, err := parseExternalBaseURL("https://public.example.com")
+	if err != nil {
+		t.Fatalf("parseExternalBaseURL() error = %v", err)
+	}
+	proxy.externalBaseURL = externalBaseURL
+
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"echo"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-Host", "evil.example.com")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	recorder := httptest.NewRecorder()
+
+	proxy.handleProxy(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+	if got := recorder.Header().Get("Www-Authenticate"); !strings.Contains(got, `resource_metadata="https://public.example.com/.well-known/oauth-protected-resource/mcp"`) {
+		t.Fatalf("WWW-Authenticate = %q, missing external resource metadata URL", got)
 	}
 }
 
@@ -210,6 +239,33 @@ func TestHandleProxyRewritesUpstreamHostHeader(t *testing.T) {
 	}
 	if upstreamHost != target.Host {
 		t.Fatalf("upstream host = %q, want %q", upstreamHost, target.Host)
+	}
+}
+
+func TestInspectRPCRequestAcceptsChunkedBody(t *testing.T) {
+	t.Parallel()
+
+	payload := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo"}}`
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.ContentLength = -1
+
+	inspection := inspectRPCRequest(req)
+	if inspection.Indeterminate {
+		t.Fatalf("inspection = %#v, want determinate request", inspection)
+	}
+	if !inspection.ToolCall {
+		t.Fatalf("inspection.ToolCall = %v, want true", inspection.ToolCall)
+	}
+	if inspection.Method != "tools/call" {
+		t.Fatalf("inspection.Method = %q, want %q", inspection.Method, "tools/call")
+	}
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if string(body) != payload {
+		t.Fatalf("request body = %q, want %q", string(body), payload)
 	}
 }
 

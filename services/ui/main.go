@@ -34,6 +34,11 @@ func main() {
 	apiKey := strings.TrimSpace(os.Getenv("API_KEY"))
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
 	mux.HandleFunc("/config.js", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "application/javascript")
 		baseJSON, _ := json.Marshal(apiBase)

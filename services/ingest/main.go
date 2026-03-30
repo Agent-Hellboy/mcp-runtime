@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -36,6 +37,7 @@ type eventPayload struct {
 
 type ingestServer struct {
 	writer       *kafka.Writer
+	brokers      []string
 	apiKeys      map[string]struct{}
 	jwks         *keyfunc.JWKS
 	oidcIssuer   string
@@ -62,7 +64,12 @@ func main() {
 		}
 	}
 
+	oidcIssuer := strings.TrimSpace(os.Getenv("OIDC_ISSUER"))
+	oidcAudience := strings.TrimSpace(os.Getenv("OIDC_AUDIENCE"))
 	jwksURL := strings.TrimSpace(os.Getenv("OIDC_JWKS_URL"))
+	if (oidcIssuer != "" || oidcAudience != "") && jwksURL == "" {
+		log.Fatal("OIDC_JWKS_URL is required when OIDC_ISSUER or OIDC_AUDIENCE is configured")
+	}
 	jwks := (*keyfunc.JWKS)(nil)
 	if jwksURL != "" {
 		var err error
@@ -80,13 +87,18 @@ func main() {
 
 	server := &ingestServer{
 		writer:       writer,
+		brokers:      brokers,
 		apiKeys:      apiKeys,
 		jwks:         jwks,
-		oidcIssuer:   strings.TrimSpace(os.Getenv("OIDC_ISSUER")),
-		oidcAudience: strings.TrimSpace(os.Getenv("OIDC_AUDIENCE")),
+		oidcIssuer:   oidcIssuer,
+		oidcAudience: oidcAudience,
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/live", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+	mux.HandleFunc("/ready", server.handleReady)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
@@ -145,6 +157,41 @@ func main() {
 
 const maxBodySize = 1 << 20 // 1MB
 
+func (s *ingestServer) handleReady(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	if err := s.checkKafkaReady(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"ok":    false,
+			"error": "kafka_unavailable",
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *ingestServer) checkKafkaReady(ctx context.Context) error {
+	var lastErr error
+	for _, broker := range s.brokers {
+		broker = strings.TrimSpace(broker)
+		if broker == "" {
+			continue
+		}
+		conn, err := kafka.DialContext(ctx, "tcp", broker)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("no Kafka brokers configured")
+}
+
 // handleEvents handles POST /events requests.
 // It validates incoming MCP events, enriches them with metadata,
 // and produces them to the configured Kafka topic.
@@ -162,6 +209,8 @@ func (s *ingestServer) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	payload.Source = strings.TrimSpace(payload.Source)
+	payload.EventType = strings.TrimSpace(payload.EventType)
 	if payload.Source == "" || payload.EventType == "" || len(payload.Payload) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_fields"})
 		return

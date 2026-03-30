@@ -76,6 +76,8 @@ spec:
               value: "mcp-proxy"
             - name: STRIP_PREFIX
               value: "/mcp-auto"
+            - name: POLICY_MODE
+              value: "observe"
             - name: OTEL_SERVICE_NAME
               value: mcp-example-proxy
             - name: OTEL_EXPORTER_OTLP_ENDPOINT

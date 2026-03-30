@@ -33,6 +33,8 @@ MCP Runtime is a self-hosted control plane for internal MCP servers on Kubernete
 - Docker
 - Make
 
+`mcp-runtime setup` provisions the bundled Sentinel stack, including ClickHouse and Kafka, for the default local and CI flow. You do not need to install those services separately before setup.
+
 ## Architecture
 
 ```text

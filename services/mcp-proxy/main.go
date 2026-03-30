@@ -176,6 +176,7 @@ type proxyServer struct {
 	source                string
 	eventType             string
 	stripPrefix           string
+	externalBaseURL       *url.URL
 	httpClient            *http.Client
 	policyFile            string
 	serverName            string
@@ -220,6 +221,10 @@ func main() {
 	source := envOr("ANALYTICS_SOURCE", "mcp-proxy")
 	eventType := envOr("ANALYTICS_EVENT_TYPE", "mcp.request")
 	stripPrefix := strings.TrimSpace(os.Getenv("STRIP_PREFIX"))
+	externalBaseURL, err := parseExternalBaseURL(strings.TrimSpace(os.Getenv("EXTERNAL_BASE_URL")))
+	if err != nil {
+		log.Fatalf("invalid EXTERNAL_BASE_URL: %v", err)
+	}
 
 	target, err := url.Parse(upstream)
 	if err != nil {
@@ -251,6 +256,7 @@ func main() {
 		source:                source,
 		eventType:             eventType,
 		stripPrefix:           stripPrefix,
+		externalBaseURL:       externalBaseURL,
 		httpClient:            sharedClient,
 		policyFile:            strings.TrimSpace(os.Getenv("POLICY_FILE")),
 		serverName:            strings.TrimSpace(os.Getenv("MCP_SERVER_NAME")),
@@ -663,7 +669,7 @@ func (s *proxyServer) handleOAuthProtectedResource(w http.ResponseWriter, r *htt
 		return true
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"resource":                 absoluteRequestURL(r, resourcePath),
+		"resource":                 s.publicRequestURL(r, resourcePath),
 		"authorization_servers":    []string{strings.TrimSpace(policy.Auth.IssuerURL)},
 		"bearer_methods_supported": []string{"header"},
 	})
@@ -1108,7 +1114,7 @@ func shouldChallengeOAuth(policy *gatewayPolicyDocument, decision authzDecision)
 func (s *proxyServer) oauthAuthenticateHeader(r *http.Request, originalPath, reason string) string {
 	values := []string{
 		`realm="mcp-runtime"`,
-		fmt.Sprintf(`resource_metadata="%s"`, absoluteRequestURL(r, oauthMetadataPath(originalPath))),
+		fmt.Sprintf(`resource_metadata="%s"`, s.publicRequestURL(r, oauthMetadataPath(originalPath))),
 	}
 	if reason == "invalid_token" {
 		values = append(values, `error="invalid_token"`)
@@ -1289,48 +1295,63 @@ func authServerMetadataCandidates(issuerURL string) []string {
 }
 
 func absoluteRequestURL(r *http.Request, requestPath string) string {
+	path := normalizeURLPath(requestPath)
+	if r == nil {
+		return path
+	}
+
+	host := ""
+	if r.URL != nil && strings.TrimSpace(r.URL.Host) != "" {
+		host = strings.TrimSpace(r.URL.Host)
+	}
+	if host == "" {
+		return path
+	}
+
+	scheme := "http"
+	if r.URL != nil && r.URL.Scheme != "" {
+		scheme = r.URL.Scheme
+	} else if r.TLS != nil {
+		scheme = "https"
+	}
+
 	return (&url.URL{
-		Scheme: requestScheme(r),
-		Host:   requestHost(r),
-		Path:   normalizeURLPath(requestPath),
+		Scheme: scheme,
+		Host:   host,
+		Path:   path,
 	}).String()
 }
 
-func requestScheme(r *http.Request) string {
-	if value := firstHeaderValue(r.Header.Get("X-Forwarded-Proto")); value != "" {
-		return value
+func parseExternalBaseURL(raw string) (*url.URL, error) {
+	if raw == "" {
+		return nil, nil
 	}
-	if r.URL != nil && r.URL.Scheme != "" {
-		return r.URL.Scheme
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return nil, err
 	}
-	if r.TLS != nil {
-		return "https"
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return nil, fmt.Errorf("must be an absolute URL")
 	}
-	return "http"
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed, nil
 }
 
-func requestHost(r *http.Request) string {
-	if value := firstHeaderValue(r.Header.Get("X-Forwarded-Host")); value != "" {
-		return value
+func (s *proxyServer) publicRequestURL(r *http.Request, requestPath string) string {
+	if s.externalBaseURL != nil {
+		return resolveBaseURLPath(s.externalBaseURL, requestPath)
 	}
-	if value := strings.TrimSpace(r.Host); value != "" {
-		return value
-	}
-	if r.URL != nil {
-		return strings.TrimSpace(r.URL.Host)
-	}
-	return ""
+	return absoluteRequestURL(r, requestPath)
 }
 
-func firstHeaderValue(value string) string {
-	parts := strings.Split(value, ",")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			return part
-		}
+func resolveBaseURLPath(base *url.URL, requestPath string) string {
+	if base == nil {
+		return normalizeURLPath(requestPath)
 	}
-	return ""
+	return base.ResolveReference(&url.URL{Path: normalizeURLPath(requestPath)}).String()
 }
 
 func normalizeURLPath(value string) string {
@@ -1466,15 +1487,18 @@ func inspectRPCRequest(r *http.Request) rpcInspection {
 	if contentType != "" && !strings.Contains(contentType, "application/json") {
 		return rpcInspection{Indeterminate: true, FailureReason: "rpc_inspection_failed"}
 	}
-	if r.Body == nil || r.ContentLength == 0 || r.ContentLength == -1 || r.ContentLength > maxRPCBodyBytes {
+	if r.Body == nil || r.ContentLength == 0 || r.ContentLength > maxRPCBodyBytes {
 		return rpcInspection{Indeterminate: true, FailureReason: "rpc_inspection_failed"}
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxRPCBodyBytes+1))
 	if err != nil {
 		return rpcInspection{Indeterminate: true, FailureReason: "rpc_inspection_failed"}
 	}
-	r.Body = io.NopCloser(bytes.NewBuffer(body))
+	if len(body) == 0 || len(body) > maxRPCBodyBytes {
+		return rpcInspection{Indeterminate: true, FailureReason: "rpc_inspection_failed"}
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
 
 	var req rpcRequest
 	if err := json.Unmarshal(body, &req); err != nil {

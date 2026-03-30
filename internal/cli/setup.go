@@ -1389,6 +1389,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 		"k8s/06-ingest.yaml",
 		"k8s/07-processor.yaml",
 		"k8s/08-api.yaml",
+		"k8s/08-api-rbac.yaml",
 		"k8s/09-ui.yaml",
 		"k8s/10-gateway.yaml",
 		"k8s/11-prometheus.yaml",

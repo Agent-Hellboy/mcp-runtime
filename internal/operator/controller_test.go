@@ -436,6 +436,7 @@ func TestReconcileDeploymentAddsGatewaySidecar(t *testing.T) {
 			ImageTag:    "latest",
 			Port:        8088,
 			ServicePort: 80,
+			IngressHost: "gateway.example.com",
 			Replicas:    &replicas,
 			Gateway: &mcpv1alpha1.GatewayConfig{
 				Enabled: true,
@@ -496,6 +497,7 @@ func TestReconcileDeploymentAddsGatewaySidecar(t *testing.T) {
 	}
 	assertEqual(t, "gatewayPortEnv", envByName["PORT"].Value, "8091")
 	assertEqual(t, "gatewayUpstreamEnv", envByName["UPSTREAM_URL"].Value, "http://127.0.0.1:8088")
+	assertEqual(t, "externalBaseURLEnv", envByName["EXTERNAL_BASE_URL"].Value, "http://gateway.example.com")
 	assertEqual(t, "analyticsIngestEnv", envByName["ANALYTICS_INGEST_URL"].Value, "http://analytics.default.svc/api/events")
 	assertEqual(t, "analyticsSourceEnv", envByName["ANALYTICS_SOURCE"].Value, "gateway-server")
 	assertEqual(t, "analyticsEventTypeEnv", envByName["ANALYTICS_EVENT_TYPE"].Value, "mcp.request")

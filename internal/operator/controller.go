@@ -986,6 +986,14 @@ func (r *MCPServerReconciler) resolveGatewayImage(mcpServer *mcpv1alpha1.MCPServ
 	return "", newOperatorError("gateway.image is required when gateway.enabled is true (set spec.gateway.image or MCP_GATEWAY_PROXY_IMAGE on the operator)", contextMap)
 }
 
+func gatewayExternalBaseURL(mcpServer *mcpv1alpha1.MCPServer) string {
+	host := strings.TrimSpace(mcpServer.Spec.IngressHost)
+	if host == "" {
+		return ""
+	}
+	return "http://" + host
+}
+
 func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPServer) (corev1.Container, error) {
 	image, err := r.resolveGatewayImage(mcpServer)
 	if err != nil {
@@ -1000,6 +1008,9 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 		{Name: "MCP_SERVER_NAME", Value: mcpServer.Name},
 		{Name: "MCP_SERVER_NAMESPACE", Value: mcpServer.Namespace},
 		{Name: "MCP_CLUSTER_NAME", Value: strings.TrimSpace(r.ClusterName)},
+	}
+	if externalBaseURL := gatewayExternalBaseURL(mcpServer); externalBaseURL != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "EXTERNAL_BASE_URL", Value: externalBaseURL})
 	}
 	if mcpServer.Spec.Policy != nil {
 		envVars = append(envVars,

@@ -693,6 +693,7 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		"06-ingest.yaml",
 		"07-processor.yaml",
 		"08-api.yaml",
+		"08-api-rbac.yaml",
 		"09-ui.yaml",
 		"10-gateway.yaml",
 		"11-prometheus.yaml",

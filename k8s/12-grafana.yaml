@@ -47,6 +47,10 @@ spec:
                 secretKeyRef:
                   name: mcp-sentinel-secrets
                   key: GRAFANA_ADMIN_PASSWORD
+            - name: GF_SERVER_SERVE_FROM_SUB_PATH
+              value: "true"
+            - name: GF_SERVER_ROOT_URL
+              value: "%(protocol)s://%(domain)s/grafana/"
       volumes:
         - name: datasources
           configMap:

@@ -23,12 +23,30 @@ async function fetchJSON(path, options = {}) {
 // Toast Notifications
 function showToast(message, type = "success") {
   const container = document.getElementById("toasts");
+  if (!container) {
+    return;
+  }
+
+  const safeType = ["success", "error", "warning"].includes(type)
+    ? type
+    : "success";
   const toast = document.createElement("div");
-  toast.className = `toast ${type}`;
-  toast.innerHTML = `
-    <span class="toast-message">${message}</span>
-    <button class="toast-close" onclick="this.parentElement.remove()">×</button>
-  `;
+  toast.className = `toast ${safeType}`;
+
+  const text = document.createElement("span");
+  text.className = "toast-message";
+  text.textContent = String(message);
+
+  const close = document.createElement("button");
+  close.className = "toast-close";
+  close.type = "button";
+  close.setAttribute("aria-label", "Dismiss notification");
+  close.textContent = "×";
+  close.addEventListener("click", () => {
+    toast.remove();
+  });
+
+  toast.append(text, close);
   container.appendChild(toast);
 
   setTimeout(() => {
@@ -163,6 +181,45 @@ function encodePathSegment(value) {
   return encodeURIComponent(String(value));
 }
 
+function debounce(fn, waitMs) {
+  let timeoutId = null;
+  return (...args) => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    timeoutId = setTimeout(() => {
+      timeoutId = null;
+      fn(...args);
+    }, waitMs);
+  };
+}
+
+function createTextCell(text) {
+  const cell = document.createElement("td");
+  cell.textContent = text;
+  return cell;
+}
+
+function createBadgeCell(text, className) {
+  const cell = document.createElement("td");
+  const badge = document.createElement("span");
+  badge.className = `badge ${className}`;
+  badge.textContent = text;
+  cell.appendChild(badge);
+  return cell;
+}
+
+function createActionCell(label, onClick) {
+  const cell = document.createElement("td");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ghost action-btn";
+  button.textContent = label;
+  button.addEventListener("click", onClick);
+  cell.appendChild(button);
+  return cell;
+}
+
 function initDashboard() {
   loadDashboardSummary();
   loadEvents();
@@ -233,22 +290,18 @@ async function loadGrants() {
       const subject = grant.subject?.humanID || grant.subject?.agentID || "-";
       const status = grant.disabled ? "Disabled" : "Active";
       const statusClass = grant.disabled ? "badge-muted" : "badge-success";
-      const namespaceArg = JSON.stringify(grant.namespace || "");
-      const nameArg = JSON.stringify(grant.name || "");
 
       const row = document.createElement("tr");
-      row.innerHTML = `
-        <td>${escapeHtml(grant.name)}</td>
-        <td>${escapeHtml(grant.serverRef?.name || "-")}</td>
-        <td>${escapeHtml(subject)}</td>
-        <td>${escapeHtml(grant.maxTrust || "-")}</td>
-        <td><span class="badge ${statusClass}">${status}</span></td>
-        <td>
-          <button class="ghost action-btn" onclick='toggleGrant(${namespaceArg}, ${nameArg}, ${grant.disabled})'>
-            ${grant.disabled ? "Enable" : "Disable"}
-          </button>
-        </td>
-      `;
+      row.appendChild(createTextCell(grant.name || "-"));
+      row.appendChild(createTextCell(grant.serverRef?.name || "-"));
+      row.appendChild(createTextCell(subject));
+      row.appendChild(createTextCell(grant.maxTrust || "-"));
+      row.appendChild(createBadgeCell(status, statusClass));
+      row.appendChild(
+        createActionCell(grant.disabled ? "Enable" : "Disable", () =>
+          toggleGrant(grant.namespace || "", grant.name || "", grant.disabled)
+        )
+      );
       fragment.appendChild(row);
     });
 
@@ -316,22 +369,22 @@ async function loadSessions() {
         session.subject?.humanID || session.subject?.agentID || "-";
       const status = session.revoked ? "Revoked" : "Active";
       const statusClass = session.revoked ? "badge-error" : "badge-success";
-      const namespaceArg = JSON.stringify(session.namespace || "");
-      const nameArg = JSON.stringify(session.name || "");
 
       const row = document.createElement("tr");
-      row.innerHTML = `
-        <td>${escapeHtml(session.name)}</td>
-        <td>${escapeHtml(session.serverRef?.name || "-")}</td>
-        <td>${escapeHtml(subject)}</td>
-        <td>${escapeHtml(session.consentedTrust || "-")}</td>
-        <td><span class="badge ${statusClass}">${status}</span></td>
-        <td>
-          <button class="ghost action-btn" onclick='toggleSession(${namespaceArg}, ${nameArg}, ${session.revoked})'>
-            ${session.revoked ? "Unrevoke" : "Revoke"}
-          </button>
-        </td>
-      `;
+      row.appendChild(createTextCell(session.name || "-"));
+      row.appendChild(createTextCell(session.serverRef?.name || "-"));
+      row.appendChild(createTextCell(subject));
+      row.appendChild(createTextCell(session.consentedTrust || "-"));
+      row.appendChild(createBadgeCell(status, statusClass));
+      row.appendChild(
+        createActionCell(session.revoked ? "Unrevoke" : "Revoke", () =>
+          toggleSession(
+            session.namespace || "",
+            session.name || "",
+            session.revoked
+          )
+        )
+      );
       fragment.appendChild(row);
     });
 
@@ -368,14 +421,11 @@ async function toggleSession(namespace, name, currentlyRevoked) {
 function initGovernance() {
   document.getElementById("refresh-grants")?.addEventListener("click", loadGrants);
   document.getElementById("refresh-sessions")?.addEventListener("click", loadSessions);
+  const debouncedLoadGrants = debounce(loadGrants, 200);
+  const debouncedLoadSessions = debounce(loadSessions, 200);
 
-  document.getElementById("grant-filter")?.addEventListener("input", () => {
-    loadGrants();
-  });
-
-  document.getElementById("session-filter")?.addEventListener("input", () => {
-    loadSessions();
-  });
+  document.getElementById("grant-filter")?.addEventListener("input", debouncedLoadGrants);
+  document.getElementById("session-filter")?.addEventListener("input", debouncedLoadSessions);
 }
 
 // Operations - Components
@@ -496,7 +546,3 @@ document.addEventListener("DOMContentLoaded", () => {
   initOperations();
   initModal();
 });
-
-// Expose functions for inline onclick handlers
-window.toggleGrant = toggleGrant;
-window.toggleSession = toggleSession;
