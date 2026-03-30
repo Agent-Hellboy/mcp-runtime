@@ -74,6 +74,17 @@ spec:
                   key: API_KEYS
             - name: ANALYTICS_SOURCE
               value: "mcp-proxy"
+            - name: MCP_SERVER_NAME
+              value: "mcp-example-sidecar"
+            - name: MCP_SERVER_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: MCP_CLUSTER_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: mcp-sentinel-config
+                  key: MCP_CLUSTER_NAME
             - name: STRIP_PREFIX
               value: "/mcp-auto"
             - name: POLICY_MODE

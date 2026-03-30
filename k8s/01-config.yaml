@@ -13,6 +13,7 @@ data:
   OIDC_JWKS_URL: ""
   API_BASE: "/api"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+  MCP_CLUSTER_NAME: "local"
   # Dashboard observability links
   GRAFANA_URL: "/grafana"
   PROMETHEUS_URL: "/prometheus"
