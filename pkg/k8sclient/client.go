@@ -65,6 +65,10 @@ func NewWithConfig(cfg Config) (*Clients, error) {
 
 // NewFromConfig creates clients from an existing rest.Config.
 func NewFromConfig(restConfig *rest.Config) (*Clients, error) {
+	if restConfig == nil {
+		return nil, fmt.Errorf("rest config cannot be nil")
+	}
+
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kubernetes clientset: %w", err)
@@ -119,6 +123,10 @@ func splitKubeconfigPaths(raw string) []string {
 	return paths
 }
 
+func envNamespace() string {
+	return strings.TrimSpace(os.Getenv("NAMESPACE"))
+}
+
 // IsInCluster returns true if running inside a Kubernetes cluster.
 func IsInCluster() bool {
 	// Check for service account token
@@ -138,7 +146,7 @@ func GetNamespace() string {
 	}
 
 	// Fall back to env var
-	if ns := os.Getenv("NAMESPACE"); ns != "" {
+	if ns := envNamespace(); ns != "" {
 		return ns
 	}
 

@@ -175,6 +175,7 @@ type proxyServer struct {
 	apiKey                string
 	source                string
 	eventType             string
+	analyticsQueue        chan analyticsEvent
 	stripPrefix           string
 	externalBaseURL       *url.URL
 	httpClient            *http.Client
@@ -188,6 +189,8 @@ type proxyServer struct {
 	defaultPolicyMode     string
 	defaultPolicyDecision string
 	defaultPolicyVersion  string
+	analyticsCancel       context.CancelFunc
+	analyticsOnce         sync.Once
 	oauthMu               sync.Mutex
 	oauthProviders        map[string]*oauthProvider
 	policyState           atomic.Value
@@ -201,6 +204,8 @@ type statusRecorder struct {
 
 const (
 	maxRPCBodyBytes       = 1 << 20
+	analyticsQueueSize    = 256
+	analyticsWorkerCount  = 4
 	defaultHumanHeader    = "X-MCP-Human-ID"
 	defaultAgentHeader    = "X-MCP-Agent-ID"
 	defaultSessionHeader  = "X-MCP-Agent-Session"
@@ -271,7 +276,7 @@ func main() {
 		oauthProviders:        map[string]*oauthProvider{},
 	}
 	if err := srv.startPolicyCache(); err != nil {
-		log.Printf("initial policy load failed: %v", err)
+		log.Fatalf("initial policy load failed: %v", err)
 	}
 
 	mux := http.NewServeMux()
@@ -303,6 +308,7 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 	if err := httpServer.ListenAndServe(); err != nil {
+		srv.stopAnalyticsDispatcher()
 		log.Fatalf("server failed: %v", err)
 	}
 }
@@ -323,7 +329,6 @@ func (s *proxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	originalPath := r.URL.Path
-	originalQuery := r.URL.RawQuery
 	inspection := inspectRPCRequest(r)
 	rpcMethod, toolName := inspection.Method, inspection.ToolName
 
@@ -354,7 +359,7 @@ func (s *proxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 				oauthResult.Reason,
 				choosePolicyVersion(policyVersion(policy), s.defaultPolicyVersion),
 			)
-			s.writeDeniedResponse(recorder, r, originalPath, originalQuery, rpcMethod, toolName, authCtx, policy, decision, start)
+			s.writeDeniedResponse(recorder, r, originalPath, rpcMethod, toolName, authCtx, policy, decision, start)
 			return
 		}
 	}
@@ -379,17 +384,17 @@ func (s *proxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !decision.Allowed {
-		s.writeDeniedResponse(recorder, r, originalPath, originalQuery, rpcMethod, toolName, authCtx, policy, decision, start)
+		s.writeDeniedResponse(recorder, r, originalPath, rpcMethod, toolName, authCtx, policy, decision, start)
 		return
 	}
 
 	s.applyIdentityHeaders(r, policy, authCtx)
 	s.applyUpstreamToken(r, policy, oauthResult.Token)
 
-	if s.stripPrefix != "" && strings.HasPrefix(r.URL.Path, s.stripPrefix) {
-		r.URL.Path = strings.TrimPrefix(r.URL.Path, s.stripPrefix)
-		if r.URL.RawPath != "" {
-			r.URL.RawPath = strings.TrimPrefix(r.URL.RawPath, s.stripPrefix)
+	if trimmedPath, ok := trimRequestPathPrefix(r.URL.Path, s.stripPrefix); ok {
+		r.URL.Path = trimmedPath
+		if trimmedRawPath, rawPathTrimmed := trimRequestPathPrefix(r.URL.RawPath, s.stripPrefix); rawPathTrimmed {
+			r.URL.RawPath = trimmedRawPath
 		}
 		if r.URL.Path == "" {
 			r.URL.Path = "/"
@@ -405,14 +410,13 @@ func (s *proxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		decision.PolicyVersion = s.defaultPolicyVersion
 	}
 
-	s.emitIfEnabled(context.WithoutCancel(r.Context()), analyticsEvent{
+	s.emitIfEnabled(analyticsEvent{
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		Source:    s.source,
 		EventType: s.eventType,
 		Payload: s.auditPayload(
 			r,
 			originalPath,
-			originalQuery,
 			rpcMethod,
 			toolName,
 			authCtx,
@@ -428,7 +432,7 @@ func (s *proxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 func (s *proxyServer) writeDeniedResponse(
 	recorder *statusRecorder,
 	r *http.Request,
-	originalPath, originalQuery, rpcMethod, toolName string,
+	originalPath, rpcMethod, toolName string,
 	authCtx identityContext,
 	policy *gatewayPolicyDocument,
 	decision authzDecision,
@@ -440,14 +444,13 @@ func (s *proxyServer) writeDeniedResponse(
 	}
 	recorder.WriteHeader(decision.Status)
 	_ = json.NewEncoder(recorder).Encode(map[string]any{"error": decision.Reason})
-	s.emitIfEnabled(context.WithoutCancel(r.Context()), analyticsEvent{
+	s.emitIfEnabled(analyticsEvent{
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		Source:    s.source,
 		EventType: s.eventType,
 		Payload: s.auditPayload(
 			r,
 			originalPath,
-			originalQuery,
 			rpcMethod,
 			toolName,
 			authCtx,
@@ -462,7 +465,7 @@ func (s *proxyServer) writeDeniedResponse(
 
 func (s *proxyServer) auditPayload(
 	r *http.Request,
-	path, query, rpcMethod, toolName string,
+	path, rpcMethod, toolName string,
 	authCtx identityContext,
 	policy *gatewayPolicyDocument,
 	decision authzDecision,
@@ -473,7 +476,6 @@ func (s *proxyServer) auditPayload(
 	payload := map[string]any{
 		"method":         r.Method,
 		"path":           path,
-		"query":          query,
 		"status":         status,
 		"latency_ms":     latencyMs,
 		"bytes_in":       maxInt64(r.ContentLength, 0),
@@ -511,7 +513,7 @@ func (s *proxyServer) auditPayload(
 
 func (s *proxyServer) startPolicyCache() error {
 	s.snapshotPolicy(policySnapshot{Policy: s.defaultPolicyDocument()})
-	if err := s.reloadPolicy(); err != nil && s.policyFile == "" {
+	if err := s.reloadPolicy(); err != nil {
 		return err
 	}
 	if s.policyFile == "" {
@@ -570,9 +572,7 @@ func (s *proxyServer) loadPolicy() (*gatewayPolicyDocument, error) {
 	if s.policyFile != "" {
 		data, err := os.ReadFile(s.policyFile)
 		if err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				return nil, err
-			}
+			return nil, err
 		} else if len(data) > 0 {
 			if err := json.Unmarshal(data, doc); err != nil {
 				return nil, err
@@ -1357,7 +1357,13 @@ func resolveBaseURLPath(base *url.URL, requestPath string) string {
 	if base == nil {
 		return normalizeURLPath(requestPath)
 	}
-	return base.ResolveReference(&url.URL{Path: normalizeURLPath(requestPath)}).String()
+	resolved := *base
+	resolved.Path = path.Join(strings.TrimRight(base.Path, "/"), normalizeURLPath(requestPath))
+	if !strings.HasPrefix(resolved.Path, "/") {
+		resolved.Path = "/" + resolved.Path
+	}
+	resolved.RawPath = ""
+	return resolved.String()
 }
 
 func normalizeURLPath(value string) string {
@@ -1410,11 +1416,66 @@ func policyVersion(policy *gatewayPolicyDocument) string {
 	return policy.Policy.PolicyVersion
 }
 
-func (s *proxyServer) emitIfEnabled(ctx context.Context, event analyticsEvent) {
+func trimRequestPathPrefix(value, prefix string) (string, bool) {
+	prefix = strings.TrimSpace(prefix)
+	prefix = strings.TrimRight(prefix, "/")
+	if prefix == "" {
+		return value, false
+	}
+	if value != prefix && !strings.HasPrefix(value, prefix+"/") {
+		return value, false
+	}
+	return strings.TrimPrefix(value, prefix), true
+}
+
+func (s *proxyServer) startAnalyticsDispatcher() {
 	if s.analyticsURL == "" {
 		return
 	}
-	go s.emit(ctx, event)
+	s.analyticsOnce.Do(func() {
+		if s.analyticsQueue == nil {
+			s.analyticsQueue = make(chan analyticsEvent, analyticsQueueSize)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		s.analyticsCancel = cancel
+		for i := 0; i < analyticsWorkerCount; i++ {
+			go func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case event, ok := <-s.analyticsQueue:
+						if !ok {
+							return
+						}
+						s.emit(ctx, event)
+					}
+				}
+			}()
+		}
+	})
+}
+
+func (s *proxyServer) stopAnalyticsDispatcher() {
+	if s.analyticsCancel != nil {
+		s.analyticsCancel()
+	}
+}
+
+func (s *proxyServer) emitIfEnabled(event analyticsEvent) {
+	if s.analyticsURL == "" {
+		return
+	}
+	if s.analyticsQueue == nil {
+		s.startAnalyticsDispatcher()
+	}
+	if s.analyticsQueue == nil {
+		return
+	}
+	select {
+	case s.analyticsQueue <- event:
+	default:
+	}
 }
 
 // emit sends analytics events to the ingest service.

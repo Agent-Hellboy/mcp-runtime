@@ -119,7 +119,11 @@ function formatNumber(num) {
     return (num / 1000000).toFixed(1) + "M";
   }
   if (num >= 1000) {
-    return (num / 1000).toFixed(1) + "K";
+    const roundedThousands = Math.round((num / 1000) * 10) / 10;
+    if (roundedThousands >= 1000) {
+      return (num / 1000000).toFixed(1) + "M";
+    }
+    return roundedThousands.toFixed(1) + "K";
   }
   return num.toString();
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -91,7 +92,7 @@ func TestHandleProxyOAuthChallengeUsesExternalBaseURL(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	externalBaseURL, err := parseExternalBaseURL("https://public.example.com")
+	externalBaseURL, err := parseExternalBaseURL("https://public.example.com/proxy")
 	if err != nil {
 		t.Fatalf("parseExternalBaseURL() error = %v", err)
 	}
@@ -108,7 +109,7 @@ func TestHandleProxyOAuthChallengeUsesExternalBaseURL(t *testing.T) {
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
 	}
-	if got := recorder.Header().Get("Www-Authenticate"); !strings.Contains(got, `resource_metadata="https://public.example.com/.well-known/oauth-protected-resource/mcp"`) {
+	if got := recorder.Header().Get("Www-Authenticate"); !strings.Contains(got, `resource_metadata="https://public.example.com/proxy/.well-known/oauth-protected-resource/mcp"`) {
 		t.Fatalf("WWW-Authenticate = %q, missing external resource metadata URL", got)
 	}
 }
@@ -395,6 +396,125 @@ func TestAbsoluteRequestURLUsesRequestHost(t *testing.T) {
 
 	if got := absoluteRequestURL(req, "/mcp"); got != "http://proxy.example.com/mcp" {
 		t.Fatalf("absoluteRequestURL() = %q, want %q", got, "http://proxy.example.com/mcp")
+	}
+}
+
+func TestTrimRequestPathPrefixMatchesOnlyPathBoundaries(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name   string
+		value  string
+		prefix string
+		want   string
+		ok     bool
+	}{
+		{name: "exact match", value: "/mcp", prefix: "/mcp", want: "", ok: true},
+		{name: "child path", value: "/mcp/tools", prefix: "/mcp", want: "/tools", ok: true},
+		{name: "segment prefix only", value: "/mcp-tools", prefix: "/mcp", want: "/mcp-tools", ok: false},
+		{name: "unrelated path", value: "/health", prefix: "/mcp", want: "/health", ok: false},
+		{name: "trailing slash in config", value: "/mcp/tools", prefix: "/mcp/", want: "/tools", ok: true},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := trimRequestPathPrefix(tc.value, tc.prefix)
+			if got != tc.want || ok != tc.ok {
+				t.Fatalf("trimRequestPathPrefix(%q, %q) = (%q, %v), want (%q, %v)", tc.value, tc.prefix, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+func TestResolveBaseURLPathPreservesBaseSubpath(t *testing.T) {
+	t.Parallel()
+
+	base, err := parseExternalBaseURL("https://public.example.com/proxy")
+	if err != nil {
+		t.Fatalf("parseExternalBaseURL() error = %v", err)
+	}
+
+	if got := resolveBaseURLPath(base, "/.well-known/oauth-protected-resource/mcp"); got != "https://public.example.com/proxy/.well-known/oauth-protected-resource/mcp" {
+		t.Fatalf("resolveBaseURLPath() = %q, want %q", got, "https://public.example.com/proxy/.well-known/oauth-protected-resource/mcp")
+	}
+}
+
+func TestAuditPayloadDoesNotPersistRawQueryString(t *testing.T) {
+	t.Parallel()
+
+	proxy := &proxyServer{
+		serverName:           "example-server",
+		serverNamespace:      "mcp-servers",
+		clusterName:          "kind",
+		defaultPolicyVersion: "test-policy",
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://proxy.example.com/mcp?code=secret&state=opaque", nil)
+
+	payload := proxy.auditPayload(
+		req,
+		"/mcp",
+		"",
+		"",
+		identityContext{HumanID: "human-1"},
+		nil,
+		authzDecision{Allowed: true, Reason: "allowed", PolicyVersion: "test-policy"},
+		http.StatusOK,
+		12,
+		34,
+	)
+
+	if _, exists := payload["query"]; exists {
+		t.Fatalf("audit payload unexpectedly retained query string: %#v", payload)
+	}
+}
+
+func TestStartPolicyCacheRequiresConfiguredPolicyFile(t *testing.T) {
+	t.Parallel()
+
+	proxy := &proxyServer{
+		policyFile:            filepath.Join(t.TempDir(), "missing-policy.json"),
+		defaultHumanHeader:    defaultHumanHeader,
+		defaultAgentHeader:    defaultAgentHeader,
+		defaultSessionHeader:  defaultSessionHeader,
+		defaultPolicyMode:     defaultPolicyMode,
+		defaultPolicyDecision: defaultPolicyDecision,
+		defaultPolicyVersion:  "test-policy",
+	}
+
+	if err := proxy.startPolicyCache(); err == nil {
+		t.Fatal("startPolicyCache() error = nil, want missing policy file error")
+	}
+}
+
+func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
+	t.Parallel()
+
+	proxy := &proxyServer{
+		analyticsURL:   "http://analytics.example.com",
+		analyticsQueue: make(chan analyticsEvent, 1),
+	}
+	proxy.analyticsQueue <- analyticsEvent{Source: "existing"}
+
+	done := make(chan struct{})
+	go func() {
+		proxy.emitIfEnabled(analyticsEvent{Source: "dropped"})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("emitIfEnabled() blocked with a full queue")
+	}
+
+	select {
+	case event := <-proxy.analyticsQueue:
+		if event.Source != "existing" {
+			t.Fatalf("analytics queue head = %#v, want existing event to remain", event)
+		}
+	default:
+		t.Fatal("analytics queue unexpectedly drained")
 	}
 }
 

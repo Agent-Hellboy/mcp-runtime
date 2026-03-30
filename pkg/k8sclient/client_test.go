@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -33,6 +34,33 @@ func TestBuildKubeconfigUsesKubeconfigEnvPathList(t *testing.T) {
 	}
 	if cfg.Host != "https://env.example.com" {
 		t.Fatalf("config.Host = %q, want %q", cfg.Host, "https://env.example.com")
+	}
+}
+
+func TestNewFromConfigRejectsNil(t *testing.T) {
+	clients, err := NewFromConfig(nil)
+	if err == nil {
+		t.Fatal("NewFromConfig(nil) error = nil, want non-nil")
+	}
+	if clients != nil {
+		t.Fatalf("NewFromConfig(nil) clients = %#v, want nil", clients)
+	}
+	if !strings.Contains(err.Error(), "rest config cannot be nil") {
+		t.Fatalf("NewFromConfig(nil) error = %q, want nil-config message", err)
+	}
+}
+
+func TestEnvNamespaceTrimsWhitespace(t *testing.T) {
+	t.Setenv("NAMESPACE", "  mcp-servers  ")
+	if got := envNamespace(); got != "mcp-servers" {
+		t.Fatalf("envNamespace() = %q, want %q", got, "mcp-servers")
+	}
+}
+
+func TestEnvNamespaceWhitespaceFallsBackToDefault(t *testing.T) {
+	t.Setenv("NAMESPACE", "   ")
+	if got := envNamespace(); got != "" {
+		t.Fatalf("envNamespace() = %q, want empty string", got)
 	}
 }
 

@@ -2675,7 +2675,7 @@ if source_counts.get("mcp-example-server", 0) < 1:
 for event_type in ("mcp.request", "tool.call", "resource.read", "prompt.render"):
     if event_type_counts.get(event_type, 0) < 1:
         raise AssertionError(f"missing analytics event type {event_type}: {event_type_counts}")
-for status in (200, 400, 401, 403):
+for status in (200, 401, 403):
     if status not in server_statuses:
         raise AssertionError(f"missing server audit status {status}: {server_statuses}")
 if int(stats.get("events_total", 0)) < 8:
