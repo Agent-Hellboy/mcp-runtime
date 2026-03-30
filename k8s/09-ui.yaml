@@ -1,0 +1,82 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-sentinel-ui
+  namespace: mcp-sentinel
+spec:
+  selector:
+    app: mcp-sentinel-ui
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-sentinel-ui
+  namespace: mcp-sentinel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-sentinel-ui
+  template:
+    metadata:
+      labels:
+        app: mcp-sentinel-ui
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: ui
+          image: mcp-sentinel-ui:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: mcp-sentinel-config
+            - secretRef:
+                name: mcp-sentinel-secrets
+          env:
+            - name: PORT
+              value: "8082"
+            - name: API_BASE
+              valueFrom:
+                configMapKeyRef:
+                  name: mcp-sentinel-config
+                  key: API_BASE
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: UI_API_KEY
+            - name: OTEL_SERVICE_NAME
+              value: mcp-sentinel-ui
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8082
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8082
+            initialDelaySeconds: 10
+            periodSeconds: 20

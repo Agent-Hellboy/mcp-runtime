@@ -282,8 +282,49 @@ X-MCP-Agent-ID: ops-agent
 X-MCP-Agent-Session: sess-8f1b9d</code></pre>
           </section>
 
+          <section id="dashboard-api" class="doc-section">
+            <h2>Dashboard API</h2>
+            <p>Overview statistics for the dashboard overview cards.</p>
+            <pre><code>GET /api/dashboard/summary</code></pre>
+            <p>Returns: <code>total_events</code>, <code>active_servers</code>, <code>active_grants</code>, <code>active_sessions</code>, <code>latest_source</code>, <code>last_event_type</code>, <code>last_event_time</code>.</p>
+          </section>
+
+          <section id="runtime-api" class="doc-section">
+            <h2>Runtime Governance API</h2>
+            <p>Manage access grants, sessions, and view runtime state.</p>
+            <pre><code>GET /api/runtime/servers              # List MCP server deployments
+GET /api/runtime/grants               # List MCPAccessGrant resources
+GET /api/runtime/sessions             # List MCPAgentSession resources
+GET /api/runtime/components           # Sentinel component health status
+GET /api/runtime/policy?namespace=&amp;server=  # Get rendered policy for server</code></pre>
+          </section>
+
+          <section id="actions-api" class="doc-section">
+            <h2>Governance Actions API</h2>
+            <p>Safe operational actions for grants, sessions, and components.</p>
+            <pre><code>POST /api/runtime/grants/{namespace}/{name}/disable
+POST /api/runtime/grants/{namespace}/{name}/enable
+POST /api/runtime/sessions/{namespace}/{name}/revoke
+POST /api/runtime/sessions/{namespace}/{name}/unrevoke
+POST /api/runtime/actions/restart     # Body: {component: "api"} or {all: true}</code></pre>
+            <div class="doc-card-grid">
+              <article class="doc-card">
+                <strong>Grant Toggle</strong>
+                <p>Enable or disable an MCPAccessGrant without deleting it. Disabled grants deny access at the gateway.</p>
+              </article>
+              <article class="doc-card">
+                <strong>Session Revoke</strong>
+                <p>Revoke or unrevoke an MCPAgentSession. Revoked sessions cannot be used for tool calls.</p>
+              </article>
+              <article class="doc-card">
+                <strong>Component Restart</strong>
+                <p>Perform rolling restarts of Sentinel components (api, ingest, processor, gateway, ui) or restart all.</p>
+              </article>
+            </div>
+          </section>
+
           <section id="analytics-api" class="doc-section">
-            <h2>mcp-sentinel API</h2>
+            <h2>Analytics API</h2>
             <p>The bundled analytics stack exposes a read API over the ClickHouse-backed event stream.</p>
             <pre><code>GET /api/events?limit=100
 GET /api/stats
@@ -341,6 +382,9 @@ GET /api/events/filter?server=payments&amp;decision=deny&amp;agent_id=ops-agent&
             <a class="toc-link" href="#status-validation">Status and validation</a>
             <a class="toc-link" href="#security-auth">Security and auth</a>
             <a class="toc-link" href="#gateway-flow">Gateway flow and headers</a>
+            <a class="toc-link" href="#dashboard-api">Dashboard API</a>
+            <a class="toc-link" href="#runtime-api">Runtime Governance API</a>
+            <a class="toc-link" href="#actions-api">Governance Actions API</a>
             <a class="toc-link" href="#analytics-api">Analytics API</a>
             <a class="toc-link" href="#setup">Setup integration</a>
           </div>
@@ -349,7 +393,7 @@ GET /api/events/filter?server=payments&amp;decision=deny&amp;agent_id=ops-agent&
 
       <footer class="container docs-footer">
         The API reference follows the current alpha types in <code>api/v1alpha1</code> and the bundled
-        sentinel endpoints shipped with this repo.
+        service endpoints in <code>services/api/</code> shipped with this repo.
       </footer>
     </main>
   </body>

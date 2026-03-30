@@ -673,9 +673,15 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		t.Fatalf("failed to get working directory: %v", err)
 	}
 	root := t.TempDir()
-	manifestDir := filepath.Join(root, "mcp-sentinel", "k8s")
+	manifestDir := filepath.Join(root, "k8s")
 	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
 		t.Fatalf("failed to create manifest dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "services"), 0o755); err != nil {
+		t.Fatalf("failed to create services dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("failed to write go.mod: %v", err)
 	}
 	manifestContent := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: fixture\n  namespace: mcp-sentinel\n"
 	for _, name := range []string{
@@ -687,6 +693,7 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		"06-ingest.yaml",
 		"07-processor.yaml",
 		"08-api.yaml",
+		"08-api-rbac.yaml",
 		"09-ui.yaml",
 		"10-gateway.yaml",
 		"11-prometheus.yaml",

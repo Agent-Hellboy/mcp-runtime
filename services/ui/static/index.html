@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP Sentinel Control Plane</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/config.js"></script>
+  </head>
+  <body>
+    <div class="canvas">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">MCP Sentinel</p>
+          <h1>Control Plane Dashboard</h1>
+          <p class="lede">Monitor, govern, and operate your MCP infrastructure.</p>
+        </div>
+        <div class="hero-links">
+          <a href="/grafana" target="_blank" class="link-badge">Grafana</a>
+          <a href="/prometheus" target="_blank" class="link-badge">Prometheus</a>
+        </div>
+      </header>
+
+      <nav class="tabs" role="tablist" aria-label="Dashboard sections">
+        <button
+          id="tab-button-dashboard"
+          class="tab active"
+          data-tab="dashboard"
+          role="tab"
+          type="button"
+          aria-controls="tab-dashboard"
+          aria-selected="true"
+        >
+          Dashboard
+        </button>
+        <button
+          id="tab-button-governance"
+          class="tab"
+          data-tab="governance"
+          role="tab"
+          type="button"
+          aria-controls="tab-governance"
+          aria-selected="false"
+        >
+          Governance
+        </button>
+        <button
+          id="tab-button-operations"
+          class="tab"
+          data-tab="operations"
+          role="tab"
+          type="button"
+          aria-controls="tab-operations"
+          aria-selected="false"
+        >
+          Operations
+        </button>
+      </nav>
+
+      <!-- Dashboard Tab -->
+      <section
+        id="tab-dashboard"
+        class="tab-content active"
+        role="tabpanel"
+        aria-labelledby="tab-button-dashboard"
+      >
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <span class="metric-label">Total Events</span>
+            <strong class="metric-value" id="dash-total-events">-</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Active Servers</span>
+            <strong class="metric-value" id="dash-active-servers">-</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Active Grants</span>
+            <strong class="metric-value" id="dash-active-grants">-</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Active Sessions</span>
+            <strong class="metric-value" id="dash-active-sessions">-</strong>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Recent Events</h2>
+            <div class="panel-actions">
+              <button class="ghost" id="refresh-events">Refresh</button>
+              <label class="toggle">
+                <input type="checkbox" id="auto-refresh" checked />
+                Auto
+              </label>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Source</th>
+                  <th>Type</th>
+                  <th>Server</th>
+                  <th>Decision</th>
+                </tr>
+              </thead>
+              <tbody id="events-body">
+                <tr>
+                  <td colspan="5" class="empty">No events yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Governance Tab -->
+      <section
+        id="tab-governance"
+        class="tab-content"
+        role="tabpanel"
+        aria-labelledby="tab-button-governance"
+        hidden
+      >
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Access Grants</h2>
+            <div class="panel-actions">
+              <input type="text" id="grant-filter" placeholder="Filter by server or subject..." />
+              <button class="ghost" id="refresh-grants">Refresh</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Server</th>
+                  <th>Subject</th>
+                  <th>Trust</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="grants-body">
+                <tr>
+                  <td colspan="6" class="empty">No grants found.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Agent Sessions</h2>
+            <div class="panel-actions">
+              <input type="text" id="session-filter" placeholder="Filter by server or subject..." />
+              <button class="ghost" id="refresh-sessions">Refresh</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Server</th>
+                  <th>Subject</th>
+                  <th>Trust</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="sessions-body">
+                <tr>
+                  <td colspan="6" class="empty">No sessions found.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Operations Tab -->
+      <section
+        id="tab-operations"
+        class="tab-content"
+        role="tabpanel"
+        aria-labelledby="tab-button-operations"
+        hidden
+      >
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Component Health</h2>
+            <div class="panel-actions">
+              <button class="ghost" id="refresh-components">Refresh</button>
+            </div>
+          </div>
+          <div class="components-grid" id="components-grid">
+            <div class="component-card loading">Loading components...</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Safe Operations</h2>
+          </div>
+          <div class="ops-grid">
+            <div class="ops-section">
+              <h3>Restart Component</h3>
+              <p class="ops-desc">Perform a rolling restart of a Sentinel component.</p>
+              <div class="ops-form">
+                <select id="restart-component-select">
+                  <option value="">Select component...</option>
+                  <option value="api">API</option>
+                  <option value="ingest">Ingest</option>
+                  <option value="processor">Processor</option>
+                  <option value="gateway">Gateway</option>
+                  <option value="ui">UI</option>
+                </select>
+                <button class="primary" id="restart-component-btn">Restart</button>
+              </div>
+            </div>
+            <div class="ops-section">
+              <h3>MCP Server Operations</h3>
+              <p class="ops-desc">Manage MCP server deployments (coming soon).</p>
+              <div class="ops-form disabled">
+                <select disabled>
+                  <option>Select server...</option>
+                </select>
+                <button class="primary" disabled>Restart</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="modal" class="modal hidden">
+      <div class="modal-content">
+        <h3 id="modal-title">Confirm Action</h3>
+        <p id="modal-message">Are you sure?</p>
+        <div class="modal-actions">
+          <button class="ghost" id="modal-cancel">Cancel</button>
+          <button class="primary" id="modal-confirm">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toasts" class="toasts"></div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

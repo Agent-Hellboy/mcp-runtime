@@ -30,8 +30,8 @@ const testModeGatewayProxyImage = "docker.io/library/mcp-sentinel-mcp-proxy:late
 const defaultGatewayProxyRepository = "mcp-sentinel-mcp-proxy"
 const defaultAnalyticsNamespace = "mcp-sentinel"
 const defaultAnalyticsIngestURL = "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
-const gatewayProxyDockerfilePath = "mcp-sentinel/services/mcp-proxy/Dockerfile"
-const gatewayProxyBuildContext = "mcp-sentinel/services/mcp-proxy"
+const gatewayProxyDockerfilePath = "services/mcp-proxy/Dockerfile"
+const gatewayProxyBuildContext = "services/mcp-proxy"
 
 type analyticsComponent struct {
 	Name         string
@@ -70,26 +70,26 @@ var analyticsComponents = []analyticsComponent{
 	{
 		Name:         "ingest",
 		Repository:   "mcp-sentinel-ingest",
-		Dockerfile:   "mcp-sentinel/services/ingest/Dockerfile",
-		BuildContext: "mcp-sentinel/services/ingest",
+		Dockerfile:   "services/ingest/Dockerfile",
+		BuildContext: "services/ingest",
 	},
 	{
 		Name:         "api",
 		Repository:   "mcp-sentinel-api",
-		Dockerfile:   "mcp-sentinel/services/api/Dockerfile",
-		BuildContext: "mcp-sentinel/services/api",
+		Dockerfile:   "services/api/Dockerfile",
+		BuildContext: ".",
 	},
 	{
 		Name:         "processor",
 		Repository:   "mcp-sentinel-processor",
-		Dockerfile:   "mcp-sentinel/services/processor/Dockerfile",
-		BuildContext: "mcp-sentinel/services/processor",
+		Dockerfile:   "services/processor/Dockerfile",
+		BuildContext: "services/processor",
 	},
 	{
 		Name:         "ui",
 		Repository:   "mcp-sentinel-ui",
-		Dockerfile:   "mcp-sentinel/services/ui/Dockerfile",
-		BuildContext: "mcp-sentinel/services/ui",
+		Dockerfile:   "services/ui/Dockerfile",
+		BuildContext: "services/ui",
 	},
 }
 
@@ -990,12 +990,21 @@ func buildOperatorImage(image string) error {
 }
 
 func buildGatewayProxyImage(image string) error {
+	dockerfilePath, err := resolveRepoAssetPath(gatewayProxyDockerfilePath)
+	if err != nil {
+		return err
+	}
+	buildContext, err := resolveRepoAssetPath(gatewayProxyBuildContext)
+	if err != nil {
+		return err
+	}
+
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	cmd, err := execCommandWithValidators("docker", []string{
 		"build",
-		"-f", gatewayProxyDockerfilePath,
+		"-f", dockerfilePath,
 		"-t", image,
-		gatewayProxyBuildContext,
+		buildContext,
 	})
 	if err != nil {
 		return err
@@ -1006,12 +1015,21 @@ func buildGatewayProxyImage(image string) error {
 }
 
 func buildAnalyticsImage(image, dockerfilePath, buildContext string) error {
+	resolvedDockerfilePath, err := resolveRepoAssetPath(dockerfilePath)
+	if err != nil {
+		return err
+	}
+	resolvedBuildContext, err := resolveRepoAssetPath(buildContext)
+	if err != nil {
+		return err
+	}
+
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	cmd, err := execCommandWithValidators("docker", []string{
 		"build",
-		"-f", dockerfilePath,
+		"-f", resolvedDockerfilePath,
 		"-t", image,
-		buildContext,
+		resolvedBuildContext,
 	})
 	if err != nil {
 		return err
@@ -1315,8 +1333,8 @@ func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet) erro
 func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logger, images AnalyticsImageSet) error {
 	Info("Applying mcp-sentinel namespace and config")
 	manifests := []string{
-		"mcp-sentinel/k8s/00-namespace.yaml",
-		"mcp-sentinel/k8s/01-config.yaml",
+		"k8s/00-namespace.yaml",
+		"k8s/01-config.yaml",
 	}
 	for _, manifest := range manifests {
 		if err := applyRenderedManifest(kubectl, manifest, images, ""); err != nil {
@@ -1340,8 +1358,8 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 
 	Info("Applying analytics storage and messaging components")
 	for _, manifest := range []string{
-		"mcp-sentinel/k8s/03-clickhouse.yaml",
-		"mcp-sentinel/k8s/05-kafka.yaml",
+		"k8s/03-clickhouse.yaml",
+		"k8s/05-kafka.yaml",
 	} {
 		if err := applyRenderedManifest(kubectl, manifest, images, imagePullSecretName); err != nil {
 			return err
@@ -1359,7 +1377,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 	}
 
 	Info("Initializing ClickHouse schema")
-	if err := applyRenderedManifest(kubectl, "mcp-sentinel/k8s/04-clickhouse-init.yaml", images, imagePullSecretName); err != nil {
+	if err := applyRenderedManifest(kubectl, "k8s/04-clickhouse-init.yaml", images, imagePullSecretName); err != nil {
 		return err
 	}
 	if err := waitForJobCompletionWithKubectl(kubectl, "clickhouse-init", defaultAnalyticsNamespace, "180s"); err != nil {
@@ -1368,18 +1386,19 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 
 	Info("Applying analytics services")
 	for _, manifest := range []string{
-		"mcp-sentinel/k8s/06-ingest.yaml",
-		"mcp-sentinel/k8s/07-processor.yaml",
-		"mcp-sentinel/k8s/08-api.yaml",
-		"mcp-sentinel/k8s/09-ui.yaml",
-		"mcp-sentinel/k8s/10-gateway.yaml",
-		"mcp-sentinel/k8s/11-prometheus.yaml",
-		"mcp-sentinel/k8s/15-otel-collector.yaml",
-		"mcp-sentinel/k8s/16-tempo.yaml",
-		"mcp-sentinel/k8s/17-loki.yaml",
-		"mcp-sentinel/k8s/18-promtail.yaml",
-		"mcp-sentinel/k8s/19-grafana-datasources.yaml",
-		"mcp-sentinel/k8s/12-grafana.yaml",
+		"k8s/06-ingest.yaml",
+		"k8s/07-processor.yaml",
+		"k8s/08-api.yaml",
+		"k8s/08-api-rbac.yaml",
+		"k8s/09-ui.yaml",
+		"k8s/10-gateway.yaml",
+		"k8s/11-prometheus.yaml",
+		"k8s/15-otel-collector.yaml",
+		"k8s/16-tempo.yaml",
+		"k8s/17-loki.yaml",
+		"k8s/18-promtail.yaml",
+		"k8s/19-grafana-datasources.yaml",
+		"k8s/12-grafana.yaml",
 	} {
 		if err := applyRenderedManifest(kubectl, manifest, images, imagePullSecretName); err != nil {
 			return err
@@ -1416,9 +1435,14 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 }
 
 func applyRenderedManifest(kubectl KubectlRunner, manifestPath string, images AnalyticsImageSet, imagePullSecretName string) error {
-	content, err := os.ReadFile(manifestPath)
+	resolvedManifestPath, err := resolveRepoAssetPath(manifestPath)
 	if err != nil {
-		return wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to read manifest %s: %v", manifestPath, err))
+		return wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to resolve manifest %s: %v", manifestPath, err))
+	}
+
+	content, err := os.ReadFile(resolvedManifestPath)
+	if err != nil {
+		return wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to read manifest %s: %v", resolvedManifestPath, err))
 	}
 	rendered, err := renderAnalyticsManifest(string(content), images, imagePullSecretName)
 	if err != nil {

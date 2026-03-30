@@ -1,0 +1,93 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-example-sidecar
+  namespace: mcp-sentinel
+spec:
+  selector:
+    app: mcp-example-sidecar
+  ports:
+    - name: http
+      port: 8091
+      targetPort: 8091
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-example-sidecar
+  namespace: mcp-sentinel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-example-sidecar
+  template:
+    metadata:
+      labels:
+        app: mcp-example-sidecar
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mcp-server
+          image: mcp-sentinel-mcp-server:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: PORT
+              value: "8090"
+        - name: mcp-proxy
+          image: mcp-sentinel-mcp-proxy:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - containerPort: 8091
+          env:
+            - name: PORT
+              value: "8091"
+            - name: UPSTREAM_URL
+              value: "http://127.0.0.1:8090"
+            - name: ANALYTICS_INGEST_URL
+              value: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
+            - name: ANALYTICS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: API_KEYS
+            - name: ANALYTICS_SOURCE
+              value: "mcp-proxy"
+            - name: STRIP_PREFIX
+              value: "/mcp-auto"
+            - name: POLICY_MODE
+              value: "observe"
+            - name: OTEL_SERVICE_NAME
+              value: mcp-example-proxy
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: mcp-sentinel-config
+                  key: OTEL_EXPORTER_OTLP_ENDPOINT
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8091
+            initialDelaySeconds: 5
+            periodSeconds: 10

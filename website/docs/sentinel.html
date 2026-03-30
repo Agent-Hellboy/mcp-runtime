@@ -56,7 +56,7 @@
               <a class="sidebar-link" href="/docs/api">API</a>
             </div>
             <div class="sidebar-note">
-              Sentinel is the governed MCP request path and observability layer around the runtime.
+              The services/ directory contains the governed MCP request path and observability layer around the runtime.
             </div>
           </div>
         </aside>
@@ -66,8 +66,8 @@
             <span class="eyebrow">Sentinel</span>
             <h1>mcp-sentinel policy, audit, and observability on the MCP request path.</h1>
             <p class="doc-lead">
-              <code>mcp-sentinel</code> is the companion repo and bundled install path for proxy
-              enforcement, audit, query, and observability services around MCP servers. It is where live
+              The <code>services/</code> directory contains the bundled service stack for proxy
+              enforcement, audit, query, governance UI, and observability around MCP servers. It is where live
               MCP requests are governed and observed around the runtime, not arbitrary cluster traffic,
               not just a dashboard, and not just a single proxy.
             </p>
@@ -94,11 +94,11 @@
               </article>
               <article class="doc-card">
                 <strong>api</strong>
-                <p>Exposes <code>/api/events</code>, <code>/api/stats</code>, <code>/api/sources</code>, <code>/api/event-types</code>, and filtered event queries.</p>
+                <p>Exposes analytics endpoints, dashboard summaries, runtime governance APIs for grants/sessions, and component operations.</p>
               </article>
               <article class="doc-card">
                 <strong>ui</strong>
-                <p>Shows total events, latest source, last event, limit controls, auto refresh, and the event stream table against the API.</p>
+                <p>Three-tab dashboard: overview metrics and events, governance for grants/sessions with enable/disable/revoke actions, and operations for component health and safe restarts.</p>
               </article>
               <article class="doc-card">
                 <strong>gateway</strong>
@@ -195,11 +195,15 @@ GET /metrics</code></pre>
           </section>
 
           <section id="compatibility" class="doc-section">
-            <h2>Compatibility and naming</h2>
+            <h2>Repository structure</h2>
             <div class="doc-card-grid">
               <article class="doc-card">
-                <strong>Sentinel is the repo name now</strong>
-                <p>Docs, manifests, images, namespace defaults, and runtime integration now use <code>mcp-sentinel</code> rather than the older analytics-only naming.</p>
+                <strong>Flattened structure</strong>
+                <p>Services are now in <code>services/</code>, manifests in <code>k8s/</code>, and shared libraries in <code>pkg/</code>. This replaces the nested <code>mcp-sentinel/</code> directory.</p>
+              </article>
+              <article class="doc-card">
+                <strong>Shared libraries</strong>
+                <p>New <code>pkg/access</code>, <code>pkg/sentinel</code>, <code>pkg/clickhouse</code>, and <code>pkg/k8sclient</code> packages are used by both CLI and API services.</p>
               </article>
               <article class="doc-card">
                 <strong>Compatibility aliases remain</strong>
@@ -247,7 +251,7 @@ GET /metrics</code></pre>
       </section>
 
       <footer class="container docs-footer">
-        The sentinel docs track the services and manifests shipped under <code>mcp-sentinel</code> today.
+        The sentinel docs track the services and manifests in the <code>services/</code> and <code>k8s/</code> directories.
       </footer>
     </main>
   </body>

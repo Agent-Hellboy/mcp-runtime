@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcp-sentinel-api
+  namespace: mcp-sentinel
+automountServiceAccountToken: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-sentinel-api
+  namespace: mcp-sentinel
+spec:
+  selector:
+    app: mcp-sentinel-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-sentinel-api
+  namespace: mcp-sentinel
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mcp-sentinel-api
+  template:
+    metadata:
+      labels:
+        app: mcp-sentinel-api
+    spec:
+      serviceAccountName: mcp-sentinel-api
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: api
+          image: mcp-sentinel-api:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - containerPort: 8080
+            - containerPort: 9090
+          envFrom:
+            - configMapRef:
+                name: mcp-sentinel-config
+            - secretRef:
+                name: mcp-sentinel-secrets
+          env:
+            - name: PORT
+              value: "8080"
+            - name: METRICS_PORT
+              value: "9090"
+            - name: API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: API_KEYS
+            - name: OTEL_SERVICE_NAME
+              value: mcp-sentinel-api
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
