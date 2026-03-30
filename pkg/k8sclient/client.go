@@ -83,39 +83,40 @@ func NewFromConfig(restConfig *rest.Config) (*Clients, error) {
 }
 
 func buildKubeconfig(kubeconfigPath string) (*rest.Config, error) {
-	if kubeconfigPath == "" {
-		kubeconfigPath = getDefaultKubeconfigPath()
-	}
-
-	// Check if kubeconfig exists
-	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("kubeconfig not found at %s", kubeconfigPath)
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if paths := splitKubeconfigPaths(kubeconfigPath); len(paths) == 1 {
+		loadingRules.ExplicitPath = paths[0]
+	} else if len(paths) > 1 {
+		loadingRules.Precedence = paths
 	}
 
 	// Build from kubeconfig
 	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
+		loadingRules,
 		&clientcmd.ConfigOverrides{},
 	).ClientConfig()
 	if err != nil {
-		return nil, fmt.Errorf("failed to load kubeconfig: %w", err)
+		return nil, fmt.Errorf("failed to load kubeconfig (searched: %v): %w", loadingRules.GetLoadingPrecedence(), err)
 	}
 
 	return config, nil
 }
 
-func getDefaultKubeconfigPath() string {
-	// Check KUBECONFIG env var first
-	if envPath := os.Getenv("KUBECONFIG"); envPath != "" {
-		return envPath
+func splitKubeconfigPaths(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
 	}
 
-	// Default to ~/.kube/config
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "~/.kube/config"
+	parts := filepath.SplitList(raw)
+	paths := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			paths = append(paths, part)
+		}
 	}
-	return filepath.Join(home, ".kube", "config")
+	return paths
 }
 
 // IsInCluster returns true if running inside a Kubernetes cluster.

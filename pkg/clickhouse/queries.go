@@ -278,12 +278,6 @@ func (c *Client) QueryDashboardSummary(ctx context.Context) (*DashboardSummary, 
 	return summary, nil
 }
 
-// SetDashboardGrantsAndSessions updates the grants and sessions counts in the summary.
-func SetDashboardGrantsAndSessions(summary *DashboardSummary, grants, sessions int) {
-	summary.ActiveGrants = grants
-	summary.ActiveSessions = sessions
-}
-
 func scanEventRow(scanner RowScanner, row *EventRow) error {
 	var payloadStr string
 	if err := scanner.Scan(

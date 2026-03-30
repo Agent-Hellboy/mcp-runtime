@@ -245,6 +245,8 @@ function initDashboard() {
 
 function startAutoRefresh() {
   if (autoRefreshInterval) return;
+  const autoRefreshCheckbox = document.getElementById("auto-refresh");
+  if (autoRefreshCheckbox && !autoRefreshCheckbox.checked) return;
   autoRefreshInterval = setInterval(() => {
     loadDashboardSummary();
     loadEvents();

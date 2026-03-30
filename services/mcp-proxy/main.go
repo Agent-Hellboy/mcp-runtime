@@ -913,6 +913,9 @@ func authorizeRequest(policy *gatewayPolicyDocument, identity identityContext, r
 		if isExpired(session.ExpiresAt) {
 			return deny(http.StatusUnauthorized, "session_expired", choosePolicyVersion(session.PolicyVersion, policy.Policy.PolicyVersion))
 		}
+	} else if identity.SessionID == "" || !sessionFound || session.Revoked || isExpired(session.ExpiresAt) {
+		session = gatewayPolicyBinding{}
+		sessionFound = false
 	}
 
 	requiredTrust := resolveToolTrust(policy.Tools, toolName)
@@ -1301,7 +1304,10 @@ func absoluteRequestURL(r *http.Request, requestPath string) string {
 	}
 
 	host := ""
-	if r.URL != nil && strings.TrimSpace(r.URL.Host) != "" {
+	if strings.TrimSpace(r.Host) != "" {
+		host = strings.TrimSpace(r.Host)
+	}
+	if host == "" && r.URL != nil && strings.TrimSpace(r.URL.Host) != "" {
 		host = strings.TrimSpace(r.URL.Host)
 	}
 	if host == "" {

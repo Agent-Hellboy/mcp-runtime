@@ -269,6 +269,135 @@ func TestInspectRPCRequestAcceptsChunkedBody(t *testing.T) {
 	}
 }
 
+func TestAuthorizeRequestOptionalSessionDoesNotApplyWithoutSessionHeader(t *testing.T) {
+	t.Parallel()
+
+	policy := &gatewayPolicyDocument{
+		Policy: gatewayPolicyConfig{
+			Mode:            "allow-list",
+			DefaultDecision: "deny",
+			PolicyVersion:   "test-policy",
+		},
+		Session: gatewayPolicySession{
+			Required: false,
+		},
+		Tools: []gatewayPolicyTool{
+			{Name: "upper", RequiredTrust: "medium"},
+		},
+		Grants: []gatewayPolicyGrant{
+			{
+				Name:      "grant-1",
+				HumanID:   "human-1",
+				AgentID:   "agent-1",
+				MaxTrust:  "high",
+				ToolRules: []gatewayToolAccess{{Name: "upper", Decision: "allow"}},
+			},
+		},
+		Sessions: []gatewayPolicyBinding{
+			{
+				Name:           "session-1",
+				HumanID:        "human-1",
+				AgentID:        "agent-1",
+				ConsentedTrust: "low",
+			},
+		},
+	}
+
+	decision := authorizeRequest(policy, identityContext{
+		HumanID: "human-1",
+		AgentID: "agent-1",
+	}, "tools/call", "upper")
+
+	if !decision.Allowed {
+		t.Fatalf("decision = %#v, want allowed request", decision)
+	}
+	if decision.ConsentedTrust != "high" || decision.EffectiveTrust != "high" {
+		t.Fatalf("decision = %#v, want optional session ignored without header", decision)
+	}
+}
+
+func TestAuthorizeRequestOptionalSessionRequiresLiveSessionHeader(t *testing.T) {
+	t.Parallel()
+
+	basePolicy := &gatewayPolicyDocument{
+		Policy: gatewayPolicyConfig{
+			Mode:            "allow-list",
+			DefaultDecision: "deny",
+			PolicyVersion:   "test-policy",
+		},
+		Session: gatewayPolicySession{
+			Required: false,
+		},
+		Tools: []gatewayPolicyTool{
+			{Name: "upper", RequiredTrust: "medium"},
+		},
+		Grants: []gatewayPolicyGrant{
+			{
+				Name:      "grant-1",
+				HumanID:   "human-1",
+				AgentID:   "agent-1",
+				MaxTrust:  "high",
+				ToolRules: []gatewayToolAccess{{Name: "upper", Decision: "allow"}},
+			},
+		},
+	}
+
+	liveSessionPolicy := *basePolicy
+	liveSessionPolicy.Sessions = []gatewayPolicyBinding{
+		{
+			Name:           "session-1",
+			HumanID:        "human-1",
+			AgentID:        "agent-1",
+			ConsentedTrust: "low",
+		},
+	}
+
+	denyDecision := authorizeRequest(&liveSessionPolicy, identityContext{
+		HumanID:   "human-1",
+		AgentID:   "agent-1",
+		SessionID: "session-1",
+	}, "tools/call", "upper")
+
+	if denyDecision.Reason != "trust_too_low" {
+		t.Fatalf("deny decision = %#v, want trust_too_low", denyDecision)
+	}
+
+	revokedSessionPolicy := *basePolicy
+	revokedSessionPolicy.Sessions = []gatewayPolicyBinding{
+		{
+			Name:           "session-1",
+			HumanID:        "human-1",
+			AgentID:        "agent-1",
+			ConsentedTrust: "low",
+			Revoked:        true,
+		},
+	}
+
+	allowDecision := authorizeRequest(&revokedSessionPolicy, identityContext{
+		HumanID:   "human-1",
+		AgentID:   "agent-1",
+		SessionID: "session-1",
+	}, "tools/call", "upper")
+
+	if !allowDecision.Allowed {
+		t.Fatalf("allow decision = %#v, want revoked optional session ignored", allowDecision)
+	}
+	if allowDecision.ConsentedTrust != "high" || allowDecision.EffectiveTrust != "high" {
+		t.Fatalf("allow decision = %#v, want admin trust when optional session is revoked", allowDecision)
+	}
+}
+
+func TestAbsoluteRequestURLUsesRequestHost(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	req.Host = "proxy.example.com"
+
+	if got := absoluteRequestURL(req, "/mcp"); got != "http://proxy.example.com/mcp" {
+		t.Fatalf("absoluteRequestURL() = %q, want %q", got, "http://proxy.example.com/mcp")
+	}
+}
+
 type testJWTIssuer struct {
 	privateKey *rsa.PrivateKey
 	server     *httptest.Server
