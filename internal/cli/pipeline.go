@@ -5,7 +5,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -196,12 +195,25 @@ func (m *PipelineManager) DeployCRDs(manifestsDir, namespace string) error {
 	for _, file := range files {
 		m.logger.Info("Applying manifest", zap.String("file", file))
 
-		manifestBytes, err := os.ReadFile(file)
+		absPath, err := resolveRegularFilePath(file)
 		if err != nil {
 			wrappedErr := wrapWithSentinelAndContext(
 				ErrApplyManifestFailed,
 				err,
-				fmt.Sprintf("failed to read %s: %v", file, err),
+				fmt.Sprintf("failed to resolve %s: %v", file, err),
+				map[string]any{"file": file, "namespace": namespace, "component": "pipeline"},
+			)
+			Error("Failed to resolve manifest file")
+			logStructuredError(m.logger, wrappedErr, "Failed to resolve manifest file")
+			return wrappedErr
+		}
+
+		manifestBytes, err := readFileAtPath(absPath)
+		if err != nil {
+			wrappedErr := wrapWithSentinelAndContext(
+				ErrApplyManifestFailed,
+				err,
+				fmt.Sprintf("failed to read %s: %v", absPath, err),
 				map[string]any{"file": file, "namespace": namespace, "component": "pipeline"},
 			)
 			Error("Failed to read manifest file")

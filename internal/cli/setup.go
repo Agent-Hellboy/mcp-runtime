@@ -1440,7 +1440,7 @@ func applyRenderedManifest(kubectl KubectlRunner, manifestPath string, images An
 		return wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to resolve manifest %s: %v", manifestPath, err))
 	}
 
-	content, err := os.ReadFile(resolvedManifestPath)
+	content, err := readFileAtPath(resolvedManifestPath)
 	if err != nil {
 		return wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to read manifest %s: %v", resolvedManifestPath, err))
 	}

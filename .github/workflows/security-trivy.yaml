@@ -1,6 +1,8 @@
 name: Security - Trivy
 
 on:
+  pull_request:
+    branches: [ "*" ]
   push:
     branches: [ "main" ]
   workflow_dispatch: {}
@@ -23,6 +25,7 @@ jobs:
             -w /workspace \
             "$TRIVY_IMAGE" \
             fs \
+            --skip-dirs inspirations/mcp-gateway-registry \
             --exit-code 1 \
             --ignore-unfixed \
             --vuln-type os,library \

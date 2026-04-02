@@ -27,6 +27,21 @@ func resolveRegularFilePath(file string) (string, error) {
 	return absPath, nil
 }
 
+func readFileAtPath(path string) ([]byte, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve file path: %w", err)
+	}
+
+	root, err := os.OpenRoot(filepath.Dir(absPath))
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+
+	return root.ReadFile(filepath.Base(absPath))
+}
+
 func applyManifestFromFile(kubectl *KubectlClient, file string, stdout, stderr io.Writer) error {
 	absPath, err := resolveRegularFilePath(file)
 	if err != nil {
@@ -81,7 +96,7 @@ func normalizePatchFile(file string) (string, error) {
 		return "", err
 	}
 
-	data, err := os.ReadFile(absPath)
+	data, err := readFileAtPath(absPath)
 	if err != nil {
 		return "", wrapWithSentinel(ErrFileNotAccessible, err, fmt.Sprintf("cannot read file %q: %v", file, err))
 	}
@@ -94,10 +109,16 @@ func writeOutputFile(file string, data []byte) error {
 	if err != nil {
 		return fmt.Errorf("resolve output path: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+	dir := filepath.Dir(absPath)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
 	}
-	if err := os.WriteFile(absPath, data, 0o600); err != nil {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return fmt.Errorf("open output directory: %w", err)
+	}
+	defer root.Close()
+	if err := root.WriteFile(filepath.Base(absPath), data, 0o600); err != nil {
 		return fmt.Errorf("write output file: %w", err)
 	}
 	return nil

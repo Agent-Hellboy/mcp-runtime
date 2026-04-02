@@ -452,7 +452,7 @@ func (m *ServerManager) CreateServerFromFile(file string) error {
 		return err
 	}
 
-	manifestBytes, err := os.ReadFile(absPath)
+	manifestBytes, err := readFileAtPath(absPath)
 	if err != nil {
 		wrappedErr := wrapWithSentinel(ErrFileNotAccessible, err, fmt.Sprintf("cannot read file %q: %v", file, err))
 		Error("Cannot access file")
