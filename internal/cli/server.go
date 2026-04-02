@@ -6,7 +6,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -429,26 +428,10 @@ func (m *ServerManager) ApplyServerFromFile(file string) error {
 
 // CreateServerFromFile creates an MCP server from a YAML file.
 func (m *ServerManager) CreateServerFromFile(file string) error {
-	// Validate file path exists and is a regular file.
-	absPath, err := filepath.Abs(file)
+	absPath, err := resolveRegularFilePath(file)
 	if err != nil {
-		wrappedErr := wrapWithSentinel(ErrInvalidFilePath, err, fmt.Sprintf("invalid file path: %v", err))
-		Error("Invalid file path")
-		logStructuredError(m.logger, wrappedErr, "Invalid file path")
-		return wrappedErr
-	}
-
-	info, err := os.Stat(absPath)
-	if err != nil {
-		wrappedErr := wrapWithSentinel(ErrFileNotAccessible, err, fmt.Sprintf("cannot access file %q: %v", file, err))
 		Error("Cannot access file")
-		logStructuredError(m.logger, wrappedErr, "Cannot access file")
-		return wrappedErr
-	}
-	if info.IsDir() {
-		err := newWithSentinel(ErrFileIsDirectory, fmt.Sprintf("path %q is a directory, not a file", file))
-		Error("Path is a directory")
-		logStructuredError(m.logger, err, "Path is a directory")
+		logStructuredError(m.logger, err, "Cannot access file")
 		return err
 	}
 

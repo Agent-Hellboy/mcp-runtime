@@ -39,7 +39,13 @@ func readFileAtPath(path string) ([]byte, error) {
 	}
 	defer root.Close()
 
-	return root.ReadFile(filepath.Base(absPath))
+	file, err := root.Open(filepath.Base(absPath))
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	return io.ReadAll(file)
 }
 
 func applyManifestFromFile(kubectl *KubectlClient, file string, stdout, stderr io.Writer) error {
@@ -118,7 +124,25 @@ func writeOutputFile(file string, data []byte) error {
 		return fmt.Errorf("open output directory: %w", err)
 	}
 	defer root.Close()
-	if err := root.WriteFile(filepath.Base(absPath), data, 0o600); err != nil {
+
+	f, err := root.OpenFile(filepath.Base(absPath), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("write output file: %w", err)
+	}
+
+	n, err := f.Write(data)
+	if err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write output file: %w", err)
+	}
+	if n != len(data) {
+		_ = f.Close()
+		return fmt.Errorf("write output file: %w", io.ErrShortWrite)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("write output file: %w", err)
+	}
+	if err := os.Chmod(absPath, 0o600); err != nil {
 		return fmt.Errorf("write output file: %w", err)
 	}
 	return nil
