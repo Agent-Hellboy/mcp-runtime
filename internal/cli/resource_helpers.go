@@ -39,7 +39,16 @@ func readFileAtPath(path string) ([]byte, error) {
 	}
 	defer root.Close()
 
-	file, err := root.Open(filepath.Base(absPath))
+	base := filepath.Base(absPath)
+	info, err := root.Stat(base)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("read file %q: not a regular file", path)
+	}
+
+	file, err := root.Open(base)
 	if err != nil {
 		return nil, err
 	}

@@ -3,6 +3,9 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -45,6 +48,25 @@ func TestReadFileAtPath(t *testing.T) {
 
 		if _, err := readFileAtPath(linkPath); err == nil {
 			t.Fatal("readFileAtPath() error = nil, want symlink escape rejection")
+		}
+	})
+
+	t.Run("rejects non-regular files", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("named pipes are not exercised in this test on Windows")
+		}
+
+		pipePath := filepath.Join(t.TempDir(), "manifest.pipe")
+		if err := syscall.Mkfifo(pipePath, 0o600); err != nil {
+			t.Skipf("Mkfifo() unavailable: %v", err)
+		}
+
+		_, err := readFileAtPath(pipePath)
+		if err == nil {
+			t.Fatal("readFileAtPath() error = nil, want non-regular file rejection")
+		}
+		if !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("readFileAtPath() error = %v, want non-regular file rejection", err)
 		}
 	})
 }
