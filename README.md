@@ -13,6 +13,8 @@ API Reference: https://mcpruntime.org/docs/api
 
 MCP Runtime is a self-hosted control plane for internal MCP servers on Kubernetes. It provides metadata-driven deployment, operator reconciliation, optional gateway enforcement, dedicated access/session resources, registry workflows, and bundled audit/analytics services.
 
+For local dev/debug quick steps, see `AGENTS.md`.
+
 > Alpha status: APIs, commands, and behavior are still evolving. Use the docs and `v1alpha1` types as the source of truth. Not recommended for production yet.
 
 ## What ships now

@@ -22,3 +22,8 @@ inspirations/
 c.go
 r.go 
 tags
+
+# Local/generated artifacts
+/mcp-sentinel/
+/services/mcp-server/mcp-sentinel-mcp-server
+/unit.out
