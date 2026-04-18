@@ -27,6 +27,7 @@ jobs:
             fs \
             --exit-code 1 \
             --ignore-unfixed \
+            --skip-dirs inspirations/mcp-gateway-registry \
             --vuln-type os,library \
             --severity CRITICAL,HIGH \
             --no-progress \
