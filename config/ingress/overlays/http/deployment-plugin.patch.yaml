@@ -1,0 +1,52 @@
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts
+  value: []
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts/-
+  value:
+    name: traefik-dynamic
+    mountPath: /etc/traefik/dynamic
+    readOnly: true
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts/-
+  value:
+    name: traefik-plugin-source
+    mountPath: /plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor
+    readOnly: true
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts/-
+  value:
+    name: traefik-plugin-storage
+    mountPath: /plugins-storage
+- op: add
+  path: /spec/template/spec/volumes
+  value: []
+- op: add
+  path: /spec/template/spec/volumes/-
+  value:
+    name: traefik-dynamic
+    configMap:
+          name: traefik-dynamic
+          items:
+            - key: dynamic.yml
+              path: dynamic.yml
+- op: add
+  path: /spec/template/spec/volumes/-
+  value:
+    name: traefik-plugin-source
+    configMap:
+      name: traefik-plugin-pii-redactor
+- op: add
+  path: /spec/template/spec/volumes/-
+  value:
+    name: traefik-plugin-storage
+    emptyDir: {}
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --providers.file.filename=/etc/traefik/dynamic/dynamic.yml
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --providers.file.watch=true
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --experimental.localplugins.pii-redactor.modulename=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor

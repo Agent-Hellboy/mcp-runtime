@@ -1,0 +1,12 @@
+displayName: PII Redactor
+type: middleware
+import: github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor
+summary: Redacts PII from request and response bodies and sensitive headers.
+testData:
+  maskReplacement: "[redacted]"
+  hashIDs: true
+  maxBodyBytes: 1048576
+  bypassHeaders:
+    - Authorization
+    - X-Internal-Auth
+    - X-Api-Key

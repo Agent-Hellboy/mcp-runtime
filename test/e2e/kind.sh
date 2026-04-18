@@ -2399,6 +2399,7 @@ PY
   OAUTH_SERVER_NAME="${OAUTH_SERVER_NAME}" \
   OAUTH_HUMAN_ID="${OAUTH_HUMAN_ID}" \
   OAUTH_AGENT_ID="${OAUTH_AGENT_ID}" \
+  SENTINEL_BASE="http://127.0.0.1:${SENTINEL_PORT}" \
   TEMPO_BASE="http://127.0.0.1:${TEMPO_PORT}" \
   LOKI_BASE="http://127.0.0.1:${LOKI_PORT}" \
   python3 <<'PY'
@@ -2416,6 +2417,7 @@ oauth_human_id = os.environ["OAUTH_HUMAN_ID"]
 oauth_agent_id = os.environ["OAUTH_AGENT_ID"]
 tempo_base = os.environ["TEMPO_BASE"]
 loki_base = os.environ["LOKI_BASE"]
+sentinel_base = os.environ["SENTINEL_BASE"]
 
 
 def get_json(url, headers=None, retries=30, delay=2):
@@ -2447,8 +2449,60 @@ def wait_for_json(url, predicate, *, headers=None, retries=60, delay=2, descript
         raise last_error
     raise AssertionError(f"timed out waiting for {description}")
 
+def post_json(url, body, headers):
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return resp.getcode(), resp.read().decode()
+
+def payload_dict(event):
+    payload = event.get("payload", {})
+    return payload if isinstance(payload, dict) else {}
+
 
 headers = {"x-api-key": api_key}
+
+# PII redaction check via the Sentinel gateway Traefik route.
+pii_source = "pii-redaction-e2e"
+pii_event_body = {
+    "timestamp": "2026-03-29T00:00:00Z",
+    "source": pii_source,
+    "event_type": "pii.check",
+    "payload": {
+        "email": "alice@example.com",
+        "phone": "+1-202-555-0188",
+        "user_id": "123e4567-e89b-12d3-a456-426614174000",
+        "secret": "tok-abcdef123",
+    },
+}
+status, resp_body = post_json(
+    f"{sentinel_base}/ingest/events",
+    pii_event_body,
+    {"content-type": "application/json", "x-api-key": api_key},
+)
+if status not in (200, 202):
+    raise AssertionError(f"pii redaction: unexpected status {status}, body={resp_body}")
+
+pii_events = wait_for_json(
+    f"{api_base}/events/filter?source={urllib.parse.quote(pii_source)}&event_type=pii.check&limit=1",
+    lambda doc: bool(doc.get("events", [])),
+    headers=headers,
+    description="pii redaction event",
+).get("events", [])
+pii_payload = payload_dict(pii_events[0])
+serialized_pii = json.dumps(pii_payload)
+
+if "example.com" in serialized_pii or "202-555" in serialized_pii or "tok-abcdef" in serialized_pii:
+    raise AssertionError(f"pii redaction failed: found raw PII in payload {serialized_pii}")
+if pii_payload.get("email") != "[redacted]":
+    raise AssertionError(f"pii redaction failed for email: {pii_payload}")
+if pii_payload.get("phone") != "[redacted]":
+    raise AssertionError(f"pii redaction failed for phone: {pii_payload}")
+if not str(pii_payload.get("user_id", "")).startswith("hash:"):
+    raise AssertionError(f"pii redaction failed to hash uuid: {pii_payload}")
+if pii_payload.get("secret") != "[redacted]":
+    raise AssertionError(f"pii redaction failed for secret: {pii_payload}")
+
 
 allow_aaa_ping = wait_for_json(
     f"{api_base}/events/filter?server={server_name}&decision=allow&tool_name=aaa-ping&limit=20",
@@ -2573,11 +2627,6 @@ stats = wait_for_json(
     headers=headers,
     description="analytics stats",
 )
-
-def payload_dict(event):
-    payload = event.get("payload", {})
-    return payload if isinstance(payload, dict) else {}
-
 
 routing_methods = {
     payload.get("rpc_method")

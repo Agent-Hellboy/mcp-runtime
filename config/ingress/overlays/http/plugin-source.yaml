@@ -1,39 +1,8 @@
-apiVersion: networking.k8s.io/v1
-kind: IngressClass
-metadata:
-  name: traefik
-spec:
-  controller: traefik.io/ingress-controller
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: traefik-dynamic
-  namespace: mcp-sentinel
-data:
-  dynamic.yml: |
-    http:
-      middlewares:
-        pii-redactor:
-          plugin:
-            pii-redactor:
-              maskReplacement: "[redacted]"
-              hashIDs: true
-              maxBodyBytes: 1048576
-              bypassHeaders:
-                - Authorization
-                - X-Internal-Auth
-                - X-Api-Key
-        strip-ingest-prefix:
-          stripPrefix:
-            prefixes:
-              - /ingest
----
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: traefik-plugin-pii-redactor
-  namespace: mcp-sentinel
+  namespace: traefik
 data:
   go.mod: |
     module github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor
@@ -69,6 +38,7 @@ data:
     	"strings"
     )
 
+    // Config holds middleware configuration.
     type Config struct {
     	MaskReplacement string   `json:"maskReplacement,omitempty"`
     	BypassHeaders   []string `json:"bypassHeaders,omitempty"`
@@ -76,15 +46,17 @@ data:
     	HashIDs         bool     `json:"hashIDs,omitempty"`
     }
 
+    // CreateConfig returns the default plugin configuration.
     func CreateConfig() *Config {
     	return &Config{
     		MaskReplacement: "[redacted]",
     		BypassHeaders:   []string{"Authorization", "X-Internal-Auth", "X-Api-Key"},
-    		MaxBodyBytes:    1 << 20,
+    		MaxBodyBytes:    1 << 20, // 1 MiB
     		HashIDs:         true,
     	}
     }
 
+    // New creates a new redaction middleware.
     func New(_ context.Context, next http.Handler, cfg *Config, name string) (http.Handler, error) {
     	if next == nil {
     		return nil, errors.New("next handler is required")
@@ -110,6 +82,7 @@ data:
     	}, nil
     }
 
+    // Middleware implements http.Handler and performs redaction.
     type Middleware struct {
     	next      http.Handler
     	name      string
@@ -143,6 +116,7 @@ data:
     	raw, _ := io.ReadAll(limited)
     	_ = req.Body.Close()
     	if int64(len(raw)) > m.maxBody {
+    		// Too large: drop body to avoid unbounded memory usage.
     		req.Body = io.NopCloser(bytes.NewReader([]byte{}))
     		req.ContentLength = 0
     		return
@@ -231,6 +205,7 @@ data:
     	return strconv.Itoa(v)
     }
 
+    // hashPrefix returns a deterministic short hash for correlating redacted IDs.
     func hashPrefix(v string) string {
     	sum := sha256.Sum256([]byte(v))
     	return hex.EncodeToString(sum[:])[:12]
@@ -244,189 +219,3 @@ data:
     	secretRegex = regexp.MustCompile(`(?i)((?:api[_-]?key|token|secret|password|passcode)"?\s*[:=]\s*"?)\s*([A-Za-z0-9/+._\-]{6,})`)
     	uuidRegex   = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b`)
     )
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: mcp-sentinel-gateway
-  namespace: mcp-sentinel
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: mcp-sentinel-gateway
-rules:
-  - apiGroups: [""]
-    resources: ["services", "endpoints", "secrets"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses", "ingressclasses"]
-    verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: mcp-sentinel-gateway
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: mcp-sentinel-gateway
-subjects:
-  - kind: ServiceAccount
-    name: mcp-sentinel-gateway
-    namespace: mcp-sentinel
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: mcp-sentinel-gateway
-  namespace: mcp-sentinel
-spec:
-  selector:
-    app: mcp-sentinel-gateway
-  ports:
-    - name: web
-      port: 8083
-      targetPort: 8083
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mcp-sentinel-gateway
-  namespace: mcp-sentinel
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mcp-sentinel-gateway
-  template:
-    metadata:
-      labels:
-        app: mcp-sentinel-gateway
-    spec:
-      serviceAccountName: mcp-sentinel-gateway
-      securityContext:
-        runAsNonRoot: true
-        seccompProfile:
-          type: RuntimeDefault
-      containers:
-        - name: traefik
-          image: traefik:v3.0
-          securityContext:
-            allowPrivilegeEscalation: false
-            runAsNonRoot: true
-            runAsUser: 65532
-            runAsGroup: 65532
-            readOnlyRootFilesystem: true
-            seccompProfile:
-              type: RuntimeDefault
-            capabilities:
-              drop:
-                - ALL
-          args:
-            - "--entrypoints.web.address=:8083"
-            - "--providers.kubernetesingress=true"
-            - "--providers.kubernetesingress.namespaces=mcp-sentinel"
-            - "--providers.kubernetesingress.ingressclass=traefik"
-            - "--providers.file.filename=/etc/traefik/dynamic/dynamic.yml"
-            - "--providers.file.watch=true"
-            - "--experimental.localplugins.pii-redactor.modulename=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor"
-            - "--ping=true"
-            - "--ping.entryPoint=web"
-            - "--accesslog=true"
-          ports:
-            - containerPort: 8083
-          volumeMounts:
-            - name: traefik-dynamic
-              mountPath: /etc/traefik/dynamic
-              readOnly: true
-            - name: traefik-plugin-source
-              mountPath: /plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor
-              readOnly: true
-            - name: traefik-plugins
-              mountPath: /plugins-storage
-          readinessProbe:
-            httpGet:
-              path: /ping
-              port: 8083
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              path: /ping
-              port: 8083
-            initialDelaySeconds: 15
-            periodSeconds: 20
-      volumes:
-        - name: traefik-dynamic
-          configMap:
-            name: traefik-dynamic
-            items:
-              - key: dynamic.yml
-                path: dynamic.yml
-        - name: traefik-plugin-source
-          configMap:
-            name: traefik-plugin-pii-redactor
-        - name: traefik-plugins
-          emptyDir: {}
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: mcp-sentinel-gateway
-  namespace: mcp-sentinel
-  annotations:
-    traefik.ingress.kubernetes.io/router.middlewares: pii-redactor@file
-spec:
-  ingressClassName: traefik
-  rules:
-    - http:
-        paths:
-          - path: /api
-            pathType: Prefix
-            backend:
-              service:
-                name: mcp-sentinel-api
-                port:
-                  number: 8080
-          - path: /grafana
-            pathType: Prefix
-            backend:
-              service:
-                name: grafana
-                port:
-                  number: 3000
-          - path: /prometheus
-            pathType: Prefix
-            backend:
-              service:
-                name: prometheus
-                port:
-                  number: 9090
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: mcp-sentinel-ui
-                port:
-                  number: 8082
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: mcp-sentinel-gateway-ingest
-  namespace: mcp-sentinel
-  annotations:
-    traefik.ingress.kubernetes.io/router.middlewares: strip-ingest-prefix@file,pii-redactor@file
-spec:
-  ingressClassName: traefik
-  rules:
-    - http:
-        paths:
-          - path: /ingest
-            pathType: Prefix
-            backend:
-              service:
-                name: mcp-sentinel-ingest
-                port:
-                  number: 8081

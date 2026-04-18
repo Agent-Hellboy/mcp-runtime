@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: traefik-dynamic
+  namespace: traefik
+data:
+  dynamic.yml: |
+    http:
+      middlewares:
+        pii-redactor:
+          plugin:
+            pii-redactor:
+              maskReplacement: "[redacted]"
+              hashIDs: true
+              maxBodyBytes: 1048576
+              bypassHeaders:
+                - Authorization
+                - X-Internal-Auth
+                - X-Api-Key
+        strip-ingest-prefix:
+          stripPrefix:
+            prefixes:
+              - /ingest

@@ -2,6 +2,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../base
+  - dynamic-config.yaml
+  - plugin-source.yaml
 patchesJson6902:
   - target:
       group: ""
@@ -17,3 +19,10 @@ patchesJson6902:
       name: traefik
       namespace: traefik
     path: deployment-args.patch.yaml
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: traefik
+      namespace: traefik
+    path: deployment-plugin.patch.yaml

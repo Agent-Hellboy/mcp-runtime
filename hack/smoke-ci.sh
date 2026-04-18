@@ -152,11 +152,11 @@ fi
 # Test 6: Optional full integration test with minikube
 if [ "${RUN_FULL_SMOKE_TEST:-false}" = "true" ]; then
     echo "🧪 Running full integration test (smoketest.sh)..."
-    if [ -f "tests/smoketest.sh" ]; then
-        chmod +x tests/smoketest.sh
+    if [ -f "test/smoketest.sh" ]; then
+        chmod +x test/smoketest.sh
         echo "Starting comprehensive smoke test with Kind cluster..."
         # Run in background and capture exit code
-        if tests/smoketest.sh; then
+        if test/smoketest.sh; then
             echo "✅ Full integration test passed"
             integration_status="passed"
         else

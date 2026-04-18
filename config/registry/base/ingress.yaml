@@ -5,6 +5,7 @@ metadata:
   namespace: registry
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.middlewares: pii-redactor@file
 spec:
   rules:
   - host: registry.local
