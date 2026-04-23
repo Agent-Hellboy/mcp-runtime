@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -31,6 +33,8 @@ const defaultAnalyticsNamespace = "mcp-sentinel"
 const defaultAnalyticsIngestURL = "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
 const gatewayProxyDockerfilePath = "services/mcp-proxy/Dockerfile"
 const gatewayProxyBuildContext = "services/mcp-proxy"
+
+var setupImageTagResolver = getGitTag
 
 type analyticsComponent struct {
 	Name         string
@@ -221,6 +225,7 @@ func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 	var forceIngressInstall bool
 	var tlsEnabled bool
 	var testMode bool
+	var strictProd bool
 	var withoutAnalytics bool
 	var operatorMetricsAddr string
 	var operatorProbeAddr string
@@ -254,6 +259,7 @@ will use to push and pull container images.`,
 				ForceIngressInstall:    forceIngressInstall,
 				TLSEnabled:             tlsEnabled,
 				TestMode:               testMode,
+				StrictProd:             strictProd,
 				DeployAnalytics:        !withoutAnalytics,
 				OperatorArgs:           operatorArgs,
 			})
@@ -269,6 +275,7 @@ will use to push and pull container images.`,
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force ingress install even if an ingress class already exists")
 	cmd.Flags().BoolVar(&tlsEnabled, "with-tls", false, "Enable TLS overlays (ingress/registry); default is HTTP for dev")
 	cmd.Flags().BoolVar(&testMode, "test-mode", false, "Test mode: skip operator/gateway image builds and use kind-loaded images")
+	cmd.Flags().BoolVar(&strictProd, "strict-prod", false, "Require production-style registry and TLS validation for non-test setup")
 	cmd.Flags().BoolVar(&withoutAnalytics, "without-sentinel", false, "Skip deploying the bundled mcp-sentinel stack")
 	cmd.Flags().BoolVar(&withoutAnalytics, "without-analytics", false, "Deprecated alias for --without-sentinel")
 	_ = cmd.Flags().MarkDeprecated("without-analytics", "use --without-sentinel")
@@ -313,6 +320,13 @@ func setupPlatformWithDeps(logger *zap.Logger, plan SetupPlan, deps SetupDeps) e
 	}
 
 	extRegistry, usingExternalRegistry, registrySecretName := resolveRegistrySetup(logger, deps)
+	if err := validateNonTestSetup(plan, extRegistry, usingExternalRegistry); err != nil {
+		logStructuredError(logger, err, "Invalid non-test setup configuration")
+		return err
+	}
+	for _, warning := range setupWarnings(plan, extRegistry, usingExternalRegistry) {
+		Warn(warning)
+	}
 	ctx := &SetupContext{
 		Plan:                  plan,
 		ExternalRegistry:      extRegistry,
@@ -335,6 +349,111 @@ func resolveRegistrySetup(logger *zap.Logger, deps SetupDeps) (*ExternalRegistry
 	}
 	usingExternalRegistry := extRegistry != nil
 	return extRegistry, usingExternalRegistry, defaultRegistrySecretName
+}
+
+func validateNonTestSetup(plan SetupPlan, extRegistry *ExternalRegistryConfig, usingExternalRegistry bool) error {
+	if plan.TestMode {
+		return nil
+	}
+	if !plan.StrictProd {
+		return nil
+	}
+	if !plan.TLSEnabled {
+		return newWithSentinel(
+			ErrSetupStepFailed,
+			"strict production setup requires --with-tls; use normal setup for local HTTP/internal registry flows",
+		)
+	}
+	if usingExternalRegistry && extRegistry != nil && strings.TrimSpace(extRegistry.URL) != "" {
+		if isDevRegistryURL(extRegistry.URL) {
+			return newWithSentinel(
+				ErrSetupStepFailed,
+				fmt.Sprintf("strict production setup requires a stable production registry, got dev-only registry URL %q", extRegistry.URL),
+			)
+		}
+		return nil
+	}
+	if isDevRegistryURL(GetRegistryEndpoint()) {
+		return newWithSentinel(
+			ErrSetupStepFailed,
+			fmt.Sprintf("strict production setup requires a stable internal registry endpoint; set MCP_REGISTRY_ENDPOINT (current %q)", GetRegistryEndpoint()),
+		)
+	}
+	return nil
+}
+
+func setupWarnings(plan SetupPlan, extRegistry *ExternalRegistryConfig, usingExternalRegistry bool) []string {
+	if plan.TestMode {
+		return nil
+	}
+
+	var warnings []string
+	if !plan.TLSEnabled {
+		warnings = append(warnings, "Non-test setup is running without TLS. This is fine for local/internal registries but not recommended for production.")
+	}
+
+	if usingExternalRegistry && extRegistry != nil && strings.TrimSpace(extRegistry.URL) != "" {
+		registryURL := strings.TrimSpace(extRegistry.URL)
+		if strings.HasPrefix(strings.ToLower(registryURL), "http://") {
+			warnings = append(warnings, fmt.Sprintf("External registry %q is using HTTP. This is acceptable for local environments but not recommended for production.", registryURL))
+		}
+		if isDevRegistryURL(registryURL) {
+			warnings = append(warnings, fmt.Sprintf("External registry %q looks local/internal. Normal setup allows this, but use --strict-prod to enforce production-style validation.", registryURL))
+		}
+		return warnings
+	}
+
+	registryEndpoint := strings.TrimSpace(GetRegistryEndpoint())
+	if registryEndpoint == "" {
+		warnings = append(warnings, "Internal registry host is empty; setup will fall back to service DNS. This is fine for local clusters but not recommended for production.")
+		return warnings
+	}
+	if isDevRegistryURL(registryEndpoint) {
+		warnings = append(warnings, fmt.Sprintf("Internal registry endpoint %q looks local/internal. Normal setup allows this for local clusters, but use --strict-prod to enforce production-style validation.", registryEndpoint))
+	}
+	return warnings
+}
+
+func isDevRegistryURL(raw string) bool {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(raw, "/"))
+	if trimmed == "" {
+		return true
+	}
+	if strings.HasPrefix(strings.ToLower(trimmed), "http://") {
+		return true
+	}
+
+	host := trimmed
+	if strings.Contains(trimmed, "://") {
+		if parsed, err := url.Parse(trimmed); err == nil && parsed.Host != "" {
+			host = parsed.Host
+		}
+	}
+	if slash := strings.Index(host, "/"); slash >= 0 {
+		host = host[:slash]
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	} else if idx := strings.LastIndex(host, ":"); idx >= 0 && strings.Count(host, ":") == 1 {
+		host = host[:idx]
+	}
+
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	switch host {
+	case "", "localhost", "registry.local":
+		return true
+	}
+	if strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".svc.cluster.local") {
+		return true
+	}
+	return net.ParseIP(host) != nil
+}
+
+func setupImageTag() string {
+	if os.Getenv("MCP_RUNTIME_TEST_MODE") == "1" {
+		return "latest"
+	}
+	return setupImageTagResolver()
 }
 
 func setupClusterSteps(logger *zap.Logger, ingressOpts ingressOptions, deps SetupDeps) error {
@@ -493,7 +612,11 @@ func prepareOperatorImage(logger *zap.Logger, extRegistry *ExternalRegistryConfi
 
 	Info("Pushing operator image to internal registry")
 	internalRegistryURL := deps.GetPlatformRegistryURL(logger)
-	internalOperatorImage := internalRegistryURL + "/mcp-runtime-operator:latest"
+	_, operatorTag := splitImage(operatorImage)
+	if operatorTag == "" {
+		operatorTag = setupImageTag()
+	}
+	internalOperatorImage := fmt.Sprintf("%s/mcp-runtime-operator:%s", internalRegistryURL, operatorTag)
 
 	if err := deps.EnsureNamespace("registry"); err != nil {
 		wrappedErr := wrapWithSentinelAndContext(
@@ -561,7 +684,11 @@ func prepareGatewayProxyImage(logger *zap.Logger, extRegistry *ExternalRegistryC
 
 	Info("Pushing gateway proxy image to internal registry")
 	internalRegistryURL := deps.GetPlatformRegistryURL(logger)
-	internalGatewayProxyImage := internalRegistryURL + "/" + defaultGatewayProxyRepository + ":latest"
+	_, gatewayTag := splitImage(gatewayProxyImage)
+	if gatewayTag == "" {
+		gatewayTag = setupImageTag()
+	}
+	internalGatewayProxyImage := fmt.Sprintf("%s/%s:%s", internalRegistryURL, defaultGatewayProxyRepository, gatewayTag)
 
 	if err := deps.EnsureNamespace("registry"); err != nil {
 		wrappedErr := wrapWithSentinelAndContext(
@@ -639,7 +766,11 @@ func prepareAnalyticsImages(logger *zap.Logger, extRegistry *ExternalRegistryCon
 			Info(fmt.Sprintf("Pushing analytics %s image to internal registry", component.Name))
 		}
 		internalRegistryURL := deps.GetPlatformRegistryURL(logger)
-		internalImage := fmt.Sprintf("%s/%s:latest", internalRegistryURL, component.Repository)
+		_, imageTag := splitImage(image)
+		if imageTag == "" {
+			imageTag = setupImageTag()
+		}
+		internalImage := fmt.Sprintf("%s/%s:%s", internalRegistryURL, component.Repository, imageTag)
 		if err := deps.EnsureNamespace("registry"); err != nil {
 			return AnalyticsImageSet{}, wrapWithSentinelAndContext(
 				ErrEnsureRegistryNamespaceFailed,
@@ -784,34 +915,39 @@ func verifySetup(usingExternalRegistry bool, deps SetupDeps) error {
 }
 
 func getOperatorImage(ext *ExternalRegistryConfig) string {
+	tag := setupImageTag()
+
 	// Check for explicit override first
 	if override := GetOperatorImageOverride(); override != "" {
 		return override
 	}
 
 	if ext != nil && ext.URL != "" {
-		return strings.TrimSuffix(ext.URL, "/") + "/mcp-runtime-operator:latest"
+		return strings.TrimSuffix(ext.URL, "/") + "/mcp-runtime-operator:" + tag
 	}
-	// Fallback to an internal-cluster reachable URL (resolved via ClusterIP).
-	return fmt.Sprintf("%s/mcp-runtime-operator:latest", getPlatformRegistryURL(nil))
+	return fmt.Sprintf("%s/mcp-runtime-operator:%s", getPlatformRegistryURL(nil), tag)
 }
 
 func getGatewayProxyImage(ext *ExternalRegistryConfig) string {
+	tag := setupImageTag()
+
 	if override := GetGatewayProxyImageOverride(); override != "" {
 		return override
 	}
 
 	if ext != nil && ext.URL != "" {
-		return strings.TrimSuffix(ext.URL, "/") + "/" + defaultGatewayProxyRepository + ":latest"
+		return strings.TrimSuffix(ext.URL, "/") + "/" + defaultGatewayProxyRepository + ":" + tag
 	}
-	return fmt.Sprintf("%s/%s:latest", getPlatformRegistryURL(nil), defaultGatewayProxyRepository)
+	return fmt.Sprintf("%s/%s:%s", getPlatformRegistryURL(nil), defaultGatewayProxyRepository, tag)
 }
 
 func analyticsImageFor(ext *ExternalRegistryConfig, repository string) string {
+	tag := setupImageTag()
+
 	if ext != nil && ext.URL != "" {
-		return strings.TrimSuffix(ext.URL, "/") + "/" + repository + ":latest"
+		return strings.TrimSuffix(ext.URL, "/") + "/" + repository + ":" + tag
 	}
-	return fmt.Sprintf("%s/%s:latest", getPlatformRegistryURL(nil), repository)
+	return fmt.Sprintf("%s/%s:%s", getPlatformRegistryURL(nil), repository, tag)
 }
 
 func configureProvisionedRegistryEnv(ext *ExternalRegistryConfig, secretName string) error {
@@ -975,11 +1111,7 @@ data:
 }
 
 func buildOperatorImage(image string) error {
-	testMode := os.Getenv("MCP_RUNTIME_TEST_MODE") == "1"
-	target := "docker-build-operator"
-	if testMode {
-		target = "docker-build-operator-no-test"
-	}
+	target := "docker-build-operator-no-test"
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	cmd, err := execCommandWithValidators("make", []string{"-f", "Makefile.operator", target, "IMG=" + image})
 	if err != nil {
@@ -988,19 +1120,6 @@ func buildOperatorImage(image string) error {
 	cmd.SetStdout(os.Stdout)
 	cmd.SetStderr(os.Stderr)
 	if err := cmd.Run(); err != nil {
-		// Fallback: skip tests if the full build target fails (e.g., missing covdata tool or flaky tests).
-		if !testMode && os.Getenv("MCP_RUNTIME_ALLOW_NO_TEST_FALLBACK") != "0" {
-			Warn(fmt.Sprintf("Operator image build failed with target %s, retrying without tests: %v", target, err))
-			cmdNoTest, cmdErr := execCommandWithValidators("make", []string{"-f", "Makefile.operator", "docker-build-operator-no-test", "IMG=" + image})
-			if cmdErr != nil {
-				return err
-			}
-			cmdNoTest.SetStdout(os.Stdout)
-			cmdNoTest.SetStderr(os.Stderr)
-			if retryErr := cmdNoTest.Run(); retryErr == nil {
-				return nil
-			}
-		}
 		return err
 	}
 	return nil
@@ -1828,6 +1947,14 @@ func operatorEnvOverrides(gatewayProxyImage string) []operatorEnvVar {
 	}
 	if ingestURL != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_SENTINEL_INGEST_URL", Value: ingestURL})
+	}
+	registryEndpoint := strings.TrimSpace(GetRegistryEndpoint())
+	if registryEndpoint != "" {
+		envVars = append(envVars, operatorEnvVar{Name: "MCP_REGISTRY_ENDPOINT", Value: registryEndpoint})
+	}
+	registryIngressHost := strings.TrimSpace(GetRegistryIngressHost())
+	if registryIngressHost != "" {
+		envVars = append(envVars, operatorEnvVar{Name: "MCP_REGISTRY_INGRESS_HOST", Value: registryIngressHost})
 	}
 	clusterName := strings.TrimSpace(GetClusterName())
 	if clusterName != "" {

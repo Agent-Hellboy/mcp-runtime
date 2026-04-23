@@ -17,12 +17,14 @@ type CLIConfig struct {
 	CertTimeout       time.Duration
 
 	// Registry settings
-	RegistryPort       int
-	SkopeoImage        string
-	OperatorImage      string // Override for operator image
-	GatewayProxyImage  string // Optional default image for the MCP gateway sidecar
-	AnalyticsIngestURL string // Optional analytics ingest URL override for the MCP gateway sidecar
-	ClusterName        string // Optional cluster label attached to analytics/audit events
+	RegistryPort        int
+	RegistryEndpoint    string
+	RegistryIngressHost string
+	SkopeoImage         string
+	OperatorImage       string // Override for operator image
+	GatewayProxyImage   string // Optional default image for the MCP gateway sidecar
+	AnalyticsIngestURL  string // Optional analytics ingest URL override for the MCP gateway sidecar
+	ClusterName         string // Optional cluster label attached to analytics/audit events
 
 	// Server defaults
 	DefaultServerPort int
@@ -35,11 +37,13 @@ type CLIConfig struct {
 
 // Default values
 const (
-	defaultDeploymentTimeout = 5 * time.Minute
-	defaultCertTimeout       = 60 * time.Second
-	defaultRegistryPort      = 5000
-	defaultSkopeoImage       = "quay.io/skopeo/stable:v1.14"
-	defaultServerPort        = 8088
+	defaultDeploymentTimeout   = 5 * time.Minute
+	defaultCertTimeout         = 60 * time.Second
+	defaultRegistryPort        = 5000
+	defaultRegistryEndpoint    = "registry.local"
+	defaultRegistryIngressHost = "registry.local"
+	defaultSkopeoImage         = "quay.io/skopeo/stable:v1.14"
+	defaultServerPort          = 8088
 )
 
 // DefaultCLIConfig is the global CLI configuration loaded at startup.
@@ -47,10 +51,20 @@ var DefaultCLIConfig = LoadCLIConfig()
 
 // LoadCLIConfig loads CLI configuration from environment variables.
 func LoadCLIConfig() *CLIConfig {
+	registryEndpoint := os.Getenv("MCP_REGISTRY_ENDPOINT")
+	if registryEndpoint == "" {
+		registryEndpoint = getEnvOrDefault("MCP_REGISTRY_HOST", defaultRegistryEndpoint)
+	}
+	registryIngressHost := os.Getenv("MCP_REGISTRY_INGRESS_HOST")
+	if registryIngressHost == "" {
+		registryIngressHost = getEnvOrDefault("MCP_REGISTRY_HOST", defaultRegistryIngressHost)
+	}
 	return &CLIConfig{
 		DeploymentTimeout:           parseDurationEnv("MCP_DEPLOYMENT_TIMEOUT", defaultDeploymentTimeout),
 		CertTimeout:                 parseDurationEnv("MCP_CERT_TIMEOUT", defaultCertTimeout),
 		RegistryPort:                parseIntEnv("MCP_REGISTRY_PORT", defaultRegistryPort),
+		RegistryEndpoint:            registryEndpoint,
+		RegistryIngressHost:         registryIngressHost,
 		SkopeoImage:                 getEnvOrDefault("MCP_SKOPEO_IMAGE", defaultSkopeoImage),
 		OperatorImage:               os.Getenv("MCP_OPERATOR_IMAGE"), // No default, empty means auto
 		GatewayProxyImage:           os.Getenv("MCP_GATEWAY_PROXY_IMAGE"),
@@ -115,6 +129,16 @@ func GetCertTimeout() time.Duration {
 // GetRegistryPort returns the registry port.
 func GetRegistryPort() int {
 	return DefaultCLIConfig.RegistryPort
+}
+
+// GetRegistryEndpoint returns the configured registry endpoint for image refs and pushes.
+func GetRegistryEndpoint() string {
+	return DefaultCLIConfig.RegistryEndpoint
+}
+
+// GetRegistryIngressHost returns the configured registry ingress host.
+func GetRegistryIngressHost() string {
+	return DefaultCLIConfig.RegistryIngressHost
 }
 
 // GetSkopeoImage returns the skopeo image for in-cluster operations.

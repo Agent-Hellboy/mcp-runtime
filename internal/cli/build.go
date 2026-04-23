@@ -200,26 +200,31 @@ func updateMetadataImage(serverName, imageName, tag, metadataFile, metadataDir s
 }
 
 func getPlatformRegistryURL(logger *zap.Logger) string {
-	// Try to get from kubectl
-	// #nosec G204 -- fixed arguments, no user input.
-	ipCmd, ipErr := kubectlClient.CommandArgs([]string{"get", "service", "registry", "-n", "registry", "-o", "jsonpath={.spec.clusterIP}"})
-	var clusterIP []byte
-	if ipErr == nil {
-		clusterIP, ipErr = ipCmd.Output()
+	const registryServiceDNS = "registry.registry.svc.cluster.local"
+
+	// Prefer the configured registry host when available so setup, pushes, and deployed image
+	// references use the same stable registry name.
+	if endpoint := strings.TrimSpace(GetRegistryEndpoint()); endpoint != "" {
+		return endpoint
 	}
+
+	// Otherwise read the service port from the live registry service and use the stable
+	// in-cluster service DNS for image references.
 	// #nosec G204 -- fixed arguments, no user input.
 	portCmd, portErr := kubectlClient.CommandArgs([]string{"get", "service", "registry", "-n", "registry", "-o", "jsonpath={.spec.ports[0].port}"})
 	var port []byte
 	if portErr == nil {
 		port, portErr = portCmd.Output()
 	}
-	if ipErr == nil && len(clusterIP) > 0 && portErr == nil && len(port) > 0 {
-		return fmt.Sprintf("%s:%s", strings.TrimSpace(string(clusterIP)), strings.TrimSpace(string(port)))
+	if portErr == nil && len(port) > 0 {
+		return fmt.Sprintf("%s:%s", registryServiceDNS, strings.TrimSpace(string(port)))
 	}
 
 	// Fallback to default
-	logger.Warn("Could not detect platform registry, using default host:port")
-	return fmt.Sprintf("registry.registry.svc.cluster.local:%d", GetRegistryPort())
+	if logger != nil {
+		logger.Warn("Could not detect registry ingress host or service port, using default service DNS:port")
+	}
+	return fmt.Sprintf("%s:%d", registryServiceDNS, GetRegistryPort())
 }
 
 func getGitTag() string {

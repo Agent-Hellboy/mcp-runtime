@@ -29,8 +29,8 @@ func TestRewriteRegistry(t *testing.T) {
 		{
 			name:     "test-image",
 			image:    "test-image",
-			registry: "registry.registry.svc.cluster.local:5000",
-			want:     "registry.registry.svc.cluster.local:5000/test-image",
+			registry: "registry.local",
+			want:     "registry.local/test-image",
 		},
 	}
 	for _, test := range tests {
