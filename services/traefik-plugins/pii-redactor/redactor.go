@@ -7,8 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
-	"net/http/httptest"
 	"regexp"
 	"strconv"
 	"strings"
@@ -36,6 +36,9 @@ func CreateConfig() *Config {
 func New(_ context.Context, next http.Handler, cfg *Config, name string) (http.Handler, error) {
 	if next == nil {
 		return nil, errors.New("next handler is required")
+	}
+	if cfg == nil {
+		cfg = CreateConfig()
 	}
 
 	mask := cfg.MaskReplacement
@@ -70,36 +73,44 @@ type Middleware struct {
 
 func (m *Middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	m.redactRequestHeaders(req.Header)
-	m.redactRequestBody(req)
+	if m.redactRequestBody(req) {
+		http.Error(rw, http.StatusText(http.StatusRequestEntityTooLarge), http.StatusRequestEntityTooLarge)
+		return
+	}
 
-	rec := httptest.NewRecorder()
+	rec := newResponseCapture(rw, m.maxBody)
 	m.next.ServeHTTP(rec, req)
+	if rec.streaming {
+		return
+	}
 
-	m.redactHeaders(rec.Header())
-	body := m.redactBody(rec.Body.Bytes())
+	hdr := rec.Header()
+	m.redactHeaders(hdr)
+	body := rec.bodyBytes()
+	if shouldRedactResponse(hdr.Get("Content-Type")) {
+		body = m.redactBody(body)
+	}
 
-	copyHeader(rw.Header(), rec.Header())
+	copyHeader(rw.Header(), hdr)
 	rw.Header().Set("Content-Length", intToString(len(body)))
-	rw.WriteHeader(rec.Code)
+	rw.WriteHeader(rec.statusCode())
 	_, _ = rw.Write(body)
 }
 
-func (m *Middleware) redactRequestBody(req *http.Request) {
+func (m *Middleware) redactRequestBody(req *http.Request) bool {
 	if req.Body == nil {
-		return
+		return false
 	}
 	limited := io.LimitReader(req.Body, m.maxBody+1)
 	raw, _ := io.ReadAll(limited)
 	_ = req.Body.Close()
 	if int64(len(raw)) > m.maxBody {
-		// Too large: drop body to avoid unbounded memory usage.
-		req.Body = io.NopCloser(bytes.NewReader([]byte{}))
-		req.ContentLength = 0
-		return
+		return true
 	}
 	redacted := m.redactBody(raw)
 	req.Body = io.NopCloser(bytes.NewReader(redacted))
 	req.ContentLength = int64(len(redacted))
+	return false
 }
 
 func (m *Middleware) redactRequestHeaders(h http.Header) {
@@ -179,6 +190,105 @@ func copyHeader(dst, src http.Header) {
 
 func intToString(v int) string {
 	return strconv.Itoa(v)
+}
+
+type responseCapture struct {
+	rw        http.ResponseWriter
+	header    http.Header
+	code      int
+	buf       bytes.Buffer
+	maxBody   int64
+	streaming bool
+}
+
+func newResponseCapture(rw http.ResponseWriter, maxBody int64) *responseCapture {
+	return &responseCapture{
+		rw:      rw,
+		header:  make(http.Header),
+		maxBody: maxBody,
+	}
+}
+
+func (r *responseCapture) Header() http.Header {
+	return r.header
+}
+
+func (r *responseCapture) WriteHeader(statusCode int) {
+	if r.code == 0 {
+		r.code = statusCode
+	}
+}
+
+func (r *responseCapture) Write(p []byte) (int, error) {
+	if r.streaming {
+		return r.rw.Write(p)
+	}
+	if r.code == 0 {
+		r.code = http.StatusOK
+	}
+	if !shouldRedactResponse(r.header.Get("Content-Type")) || int64(r.buf.Len()+len(p)) > r.maxBody {
+		if err := r.startPassthrough(); err != nil {
+			return 0, err
+		}
+		return r.rw.Write(p)
+	}
+	return r.buf.Write(p)
+}
+
+func (r *responseCapture) Flush() {
+	if !r.streaming {
+		_ = r.startPassthrough()
+	}
+	if flusher, ok := r.rw.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (r *responseCapture) startPassthrough() error {
+	if r.streaming {
+		return nil
+	}
+	copyHeader(r.rw.Header(), r.header)
+	r.rw.Header().Del("Content-Length")
+	r.rw.WriteHeader(r.statusCode())
+	if r.buf.Len() > 0 {
+		if _, err := r.rw.Write(r.buf.Bytes()); err != nil {
+			return err
+		}
+		r.buf.Reset()
+	}
+	r.streaming = true
+	return nil
+}
+
+func (r *responseCapture) statusCode() int {
+	if r.code == 0 {
+		return http.StatusOK
+	}
+	return r.code
+}
+
+func (r *responseCapture) bodyBytes() []byte {
+	return r.buf.Bytes()
+}
+
+func shouldRedactResponse(contentType string) bool {
+	if contentType == "" {
+		return true
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		mediaType = strings.ToLower(strings.TrimSpace(contentType))
+	} else {
+		mediaType = strings.ToLower(mediaType)
+	}
+	if strings.HasPrefix(mediaType, "text/") {
+		return true
+	}
+	return mediaType == "application/json" ||
+		strings.HasSuffix(mediaType, "+json") ||
+		mediaType == "application/xml" ||
+		strings.HasSuffix(mediaType, "+xml")
 }
 
 // hashPrefix returns a deterministic short hash for correlating redacted IDs.

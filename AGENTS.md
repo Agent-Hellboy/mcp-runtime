@@ -22,7 +22,7 @@ Practical notes for spinning up, debugging, and exercising the MCP Runtime stack
 - Prometheus: `/prometheus`
 - API base: `http://localhost:18080/api`
 - MCP servers (test): `http://localhost:18080/demo-one/mcp`, `http://localhost:18080/demo-two/mcp`
-- PII redaction middleware: enabled in the `config/ingress/overlays/http` overlay via Traefik plugin `pii-redactor@file` (Go 1.24.11). To (re)apply locally: `./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http`. Local Kind/dev flows mount the bundled plugin source from `services/traefik-plugins/pii-redactor` via Traefik `localplugins` so the middleware works without a separately published plugin tag.
+- PII redaction middleware: enabled in the `config/ingress/overlays/http` overlay via Traefik plugin `pii-redactor@file` (Go 1.22). To (re)apply locally: `./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http`. Local Kind/dev flows mount the bundled plugin source from `services/traefik-plugins/pii-redactor` via Traefik `localplugins` so the middleware works without a separately published plugin tag.
 - API key (for UI/API):
   ```bash
   kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \

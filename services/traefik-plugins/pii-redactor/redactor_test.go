@@ -51,6 +51,67 @@ func TestRedactionPipeline(t *testing.T) {
 	}
 }
 
+func TestNewNilConfigUsesDefaults(t *testing.T) {
+	handler, err := New(context.Background(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), nil, "pii")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	middleware, ok := handler.(*Middleware)
+	if !ok {
+		t.Fatalf("handler type = %T, want *Middleware", handler)
+	}
+	if middleware.mask != "[redacted]" {
+		t.Fatalf("mask = %q, want [redacted]", middleware.mask)
+	}
+	if middleware.maxBody != 1<<20 {
+		t.Fatalf("maxBody = %d, want %d", middleware.maxBody, 1<<20)
+	}
+}
+
+func TestOversizedRequestReturns413(t *testing.T) {
+	called := false
+	handler, err := New(context.Background(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}), &Config{MaxBodyBytes: 8}, "pii")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://traefik.local/api", strings.NewReader("0123456789"))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+	if called {
+		t.Fatal("upstream handler should not be called for oversized body")
+	}
+}
+
+func TestStreamingResponsesBypassBodyRedaction(t *testing.T) {
+	handler, err := New(context.Background(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: alice@example.com\n\n"))
+		w.(http.Flusher).Flush()
+		_, _ = w.Write([]byte("data: tok-abcdef123\n\n"))
+	}), CreateConfig(), "pii")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://traefik.local/api", nil))
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "alice@example.com") || !strings.Contains(body, "tok-abcdef123") {
+		t.Fatalf("streaming body should pass through unredacted, got %q", body)
+	}
+}
+
 func assertGolden(t *testing.T, path, actual string) {
 	t.Helper()
 	want, err := os.ReadFile(path)
