@@ -842,15 +842,22 @@ func (m *RegistryManager) PushInCluster(source, target, helperNS string) error {
 		return wrappedErr
 	}
 
+	// The helper pod uses cluster DNS, which does not resolve the external ingress host
+	// (e.g. registry.local). Rewrite the destination host to the in-cluster registry
+	// service DNS so skopeo can reach the registry from inside the cluster. The Docker
+	// registry stores images by repository path, so the resulting image is still
+	// addressable via any hostname that routes to the same registry service.
+	pushTarget := rewriteTargetHostForInClusterPush(target, m.kubectl)
+
 	// Push using skopeo from inside cluster (registry is http, so disable tls verify)
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	if err := m.kubectl.RunWithOutput([]string{"exec", "-n", helperNS, helperName, "--",
-		"skopeo", "copy", "--dest-tls-verify=false", "docker-archive:/tmp/image.tar", "docker://" + target}, os.Stdout, os.Stderr); err != nil {
+		"skopeo", "copy", "--dest-tls-verify=false", "docker-archive:/tmp/image.tar", "docker://" + pushTarget}, os.Stdout, os.Stderr); err != nil {
 		wrappedErr := wrapWithSentinelAndContext(
 			ErrPushImageFromHelperFailed,
 			err,
 			fmt.Sprintf("failed to push image from helper pod: %v", err),
-			map[string]any{"pod": helperName, "namespace": helperNS, "target": target, "component": "registry"},
+			map[string]any{"pod": helperName, "namespace": helperNS, "target": target, "push_target": pushTarget, "component": "registry"},
 		)
 		Error("Failed to push image from helper pod")
 		logStructuredError(m.logger, wrappedErr, "Failed to push image from helper pod")
@@ -859,4 +866,72 @@ func (m *RegistryManager) PushInCluster(source, target, helperNS string) error {
 
 	Success(fmt.Sprintf("Pushed %s via in-cluster helper", target))
 	return nil
+}
+
+// rewriteTargetHostForInClusterPush replaces the host portion of an image reference
+// with the in-cluster registry service DNS when the target points at the bundled
+// internal registry (identified by the configured endpoint or ingress host). Image
+// data in a Docker registry is keyed by repository path, so pushing via the service
+// DNS stores the image at the same repo path, leaving the original hostname (e.g. the
+// ingress host) usable for subsequent pulls. Targets outside the internal registry
+// (e.g. a user-provided external registry) are returned unchanged.
+func rewriteTargetHostForInClusterPush(target string, kubectl *KubectlClient) string {
+	slash := strings.Index(target, "/")
+	if slash <= 0 {
+		return target
+	}
+	host := target[:slash]
+	rest := target[slash:]
+
+	lowerHost := strings.ToLower(host)
+	if strings.Contains(lowerHost, ".svc.cluster.local") {
+		return target
+	}
+
+	hostNoPort := lowerHost
+	if idx := strings.LastIndex(hostNoPort, ":"); idx >= 0 {
+		hostNoPort = hostNoPort[:idx]
+	}
+
+	internal := map[string]struct{}{}
+	if ep := strings.ToLower(strings.TrimSpace(GetRegistryEndpoint())); ep != "" {
+		if idx := strings.LastIndex(ep, ":"); idx >= 0 {
+			ep = ep[:idx]
+		}
+		internal[ep] = struct{}{}
+	}
+	if ih := strings.ToLower(strings.TrimSpace(GetRegistryIngressHost())); ih != "" {
+		internal[ih] = struct{}{}
+	}
+
+	if _, ok := internal[hostNoPort]; !ok {
+		return target
+	}
+
+	port := GetRegistryPort()
+	if kubectl != nil {
+		// #nosec G204 -- fixed arguments, no user input.
+		if portCmd, err := kubectl.CommandArgs([]string{"get", "service", "registry", "-n", "registry", "-o", "jsonpath={.spec.ports[0].port}"}); err == nil {
+			if out, err := portCmd.Output(); err == nil {
+				if p := strings.TrimSpace(string(out)); p != "" {
+					port = parsePortOrDefault(p, port)
+				}
+			}
+		}
+	}
+	return fmt.Sprintf("registry.registry.svc.cluster.local:%d%s", port, rest)
+}
+
+func parsePortOrDefault(s string, def int) int {
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return def
+		}
+		n = n*10 + int(c-'0')
+	}
+	if n <= 0 || n > 65535 {
+		return def
+	}
+	return n
 }

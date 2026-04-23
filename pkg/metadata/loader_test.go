@@ -22,7 +22,7 @@ func TestLoadFromFile(t *testing.T) {
 				Servers: []ServerMetadata{
 					{
 						Name:      "test-server",
-						Image:     "registry.registry.svc.cluster.local:5000/test-server",
+						Image:     "registry.local/test-server",
 						ImageTag:  "latest",
 						Route:     "/test-server/mcp",
 						Port:      8088,
@@ -359,6 +359,53 @@ func TestSetDefaults(t *testing.T) {
 		if !reflect.DeepEqual(test.server.Rollout, test.want.Rollout) {
 			t.Errorf("setDefaults Rollout = %#v, want %#v", test.server.Rollout, test.want.Rollout)
 		}
+	}
+}
+
+func TestSetDefaultsImageResolution(t *testing.T) {
+	cases := []struct {
+		name      string
+		env       map[string]string
+		input     *ServerMetadata
+		wantImage string
+	}{
+		{
+			name:      "default when no env",
+			env:       nil,
+			input:     &ServerMetadata{Name: "srv"},
+			wantImage: "registry.local/srv",
+		},
+		{
+			name:      "honors MCP_REGISTRY_INGRESS_HOST",
+			env:       map[string]string{"MCP_REGISTRY_INGRESS_HOST": "registry.example.com"},
+			input:     &ServerMetadata{Name: "srv"},
+			wantImage: "registry.example.com/srv",
+		},
+		{
+			name:      "falls back to legacy MCP_REGISTRY_HOST",
+			env:       map[string]string{"MCP_REGISTRY_HOST": "legacy.example.com"},
+			input:     &ServerMetadata{Name: "srv"},
+			wantImage: "legacy.example.com/srv",
+		},
+		{
+			name:      "does not overwrite explicit image",
+			env:       map[string]string{"MCP_REGISTRY_INGRESS_HOST": "registry.example.com"},
+			input:     &ServerMetadata{Name: "srv", Image: "custom/image"},
+			wantImage: "custom/image",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("MCP_REGISTRY_INGRESS_HOST", "")
+			t.Setenv("MCP_REGISTRY_HOST", "")
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			setDefaults(tc.input)
+			if tc.input.Image != tc.wantImage {
+				t.Fatalf("Image = %q, want %q", tc.input.Image, tc.wantImage)
+			}
+		})
 	}
 }
 

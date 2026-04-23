@@ -656,6 +656,11 @@ func TestRenderAnalyticsSecretManifestGeneratesKeysWhenMissing(t *testing.T) {
 }
 
 func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
+	// setupImageTag() reads MCP_RUNTIME_TEST_MODE, not the boolean testMode argument,
+	// to decide between the "latest" tag and a git SHA. Opt into the test-mode tag
+	// here so the expected ":latest" image refs line up.
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "1")
+
 	var buildCalls int32
 	var pushCalls int32
 	deps := SetupDeps{
@@ -1259,7 +1264,9 @@ func TestSetupTLSWithKubectl(t *testing.T) {
 		if commandHasArgs(cmd, "apply", "-f", "-") {
 			hasNamespace = true
 		}
-		if commandHasArgs(cmd, "apply", "-f", "config/cert-manager/example-registry-certificate.yaml") {
+		// Registry Certificate is applied via `kubectl apply -f - -n registry` with the
+		// manifest piped over stdin, not via `apply -f <path>`.
+		if commandHasArgs(cmd, "apply", "-f", "-", "-n", NamespaceRegistry) {
 			hasCert = true
 		}
 		if commandHasArgs(cmd, "wait", "--for=condition=Ready", "certificate/registry-cert", "-n", NamespaceRegistry, timeoutArg) {

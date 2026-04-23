@@ -20,6 +20,7 @@ Flags:
       --operator-probe-addr string     Operator health probe bind address (default: :8081 from manager.yaml)
       --registry-storage string        Registry storage size (default: 20Gi) (default "20Gi")
       --registry-type string           Registry type (docker; harbor coming soon) (default "docker")
+      --strict-prod                    Require production-style registry and TLS validation for non-test setup
       --test-mode                      Test mode: skip operator/gateway image builds and use kind-loaded images
       --with-tls                       Enable TLS overlays (ingress/registry); default is HTTP for dev
       --without-sentinel               Skip deploying the bundled mcp-sentinel stack

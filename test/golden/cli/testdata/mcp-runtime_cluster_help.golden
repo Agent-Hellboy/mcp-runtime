@@ -6,6 +6,7 @@ Usage:
 Available Commands:
   cert        Manage cert-manager resources
   config      Configure cluster settings
+  doctor      Preflight: verify the cluster is ready for mcp-runtime setup
   init        Initialize cluster configuration
   provision   Provision a new cluster
   status      Check cluster status

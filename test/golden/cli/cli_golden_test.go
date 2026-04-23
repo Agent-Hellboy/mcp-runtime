@@ -64,6 +64,7 @@ func TestCLIHelpGoldens(t *testing.T) {
 		{name: "cluster_cert_status_help", args: []string{"cluster", "cert", "status", "--help"}, golden: "mcp-runtime_cluster_cert_status_help.golden"},
 		{name: "cluster_cert_apply_help", args: []string{"cluster", "cert", "apply", "--help"}, golden: "mcp-runtime_cluster_cert_apply_help.golden"},
 		{name: "cluster_cert_wait_help", args: []string{"cluster", "cert", "wait", "--help"}, golden: "mcp-runtime_cluster_cert_wait_help.golden"},
+		{name: "cluster_doctor_help", args: []string{"cluster", "doctor", "--help"}, golden: "mcp-runtime_cluster_doctor_help.golden"},
 	}
 
 	for _, tc := range cases {

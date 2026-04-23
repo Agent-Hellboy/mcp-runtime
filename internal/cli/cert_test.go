@@ -232,10 +232,13 @@ func TestCertManagerApplyRegistryCertificateError(t *testing.T) {
 	origKubectl := kubectlClient
 	t.Cleanup(func() { kubectlClient = origKubectl })
 
+	// The registry certificate is applied via `kubectl apply -f - -n registry` with the
+	// manifest content piped over stdin, so match on those args rather than on the
+	// on-disk manifest path.
 	mock := &MockExecutor{
 		CommandFunc: func(spec ExecSpec) *MockCommand {
 			cmd := &MockCommand{Args: spec.Args}
-			if commandHasArgs(spec, "apply", "-f", registryCertificateManifestPath) {
+			if commandHasArgs(spec, "apply", "-f", "-", "-n", NamespaceRegistry) {
 				cmd.RunErr = errors.New("apply cert failed")
 			}
 			return cmd
