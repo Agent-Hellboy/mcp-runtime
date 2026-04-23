@@ -50,6 +50,8 @@ func TestLoadCLIConfigWithProvisionedRegistry(t *testing.T) {
 	t.Setenv("MCP_DEPLOYMENT_TIMEOUT", "3s")
 	t.Setenv("MCP_CERT_TIMEOUT", "30s")
 	t.Setenv("MCP_REGISTRY_PORT", "6000")
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.43.39.164:5000")
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.prod.example.com")
 	t.Setenv("MCP_SKOPEO_IMAGE", "example/skopeo:latest")
 	t.Setenv("MCP_OPERATOR_IMAGE", "example/operator:latest")
 	t.Setenv("MCP_GATEWAY_PROXY_IMAGE", "example/mcp-proxy:latest")
@@ -68,6 +70,12 @@ func TestLoadCLIConfigWithProvisionedRegistry(t *testing.T) {
 	}
 	if cfg.RegistryPort != 6000 {
 		t.Fatalf("expected registry port 6000, got %d", cfg.RegistryPort)
+	}
+	if cfg.RegistryEndpoint != "10.43.39.164:5000" {
+		t.Fatalf("expected registry endpoint override, got %q", cfg.RegistryEndpoint)
+	}
+	if cfg.RegistryIngressHost != "registry.prod.example.com" {
+		t.Fatalf("expected registry ingress host override, got %q", cfg.RegistryIngressHost)
 	}
 	if cfg.SkopeoImage != "example/skopeo:latest" {
 		t.Fatalf("expected skopeo image override, got %q", cfg.SkopeoImage)
@@ -107,14 +115,16 @@ func TestConfigAccessors(t *testing.T) {
 	t.Cleanup(func() { DefaultCLIConfig = orig })
 
 	DefaultCLIConfig = &CLIConfig{
-		DeploymentTimeout:  10 * time.Second,
-		CertTimeout:        15 * time.Second,
-		RegistryPort:       7000,
-		SkopeoImage:        "skopeo:test",
-		OperatorImage:      "operator:test",
-		GatewayProxyImage:  "proxy:test",
-		AnalyticsIngestURL: "http://analytics-ingest",
-		DefaultServerPort:  7070,
+		DeploymentTimeout:   10 * time.Second,
+		CertTimeout:         15 * time.Second,
+		RegistryPort:        7000,
+		RegistryEndpoint:    "10.43.39.164:5000",
+		RegistryIngressHost: "registry.prod.example.com",
+		SkopeoImage:         "skopeo:test",
+		OperatorImage:       "operator:test",
+		GatewayProxyImage:   "proxy:test",
+		AnalyticsIngestURL:  "http://analytics-ingest",
+		DefaultServerPort:   7070,
 	}
 
 	if GetDeploymentTimeout() != 10*time.Second {
@@ -125,6 +135,12 @@ func TestConfigAccessors(t *testing.T) {
 	}
 	if GetRegistryPort() != 7000 {
 		t.Fatalf("GetRegistryPort mismatch")
+	}
+	if GetRegistryEndpoint() != "10.43.39.164:5000" {
+		t.Fatalf("GetRegistryEndpoint mismatch")
+	}
+	if GetRegistryIngressHost() != "registry.prod.example.com" {
+		t.Fatalf("GetRegistryIngressHost mismatch")
 	}
 	if GetSkopeoImage() != "skopeo:test" {
 		t.Fatalf("GetSkopeoImage mismatch")

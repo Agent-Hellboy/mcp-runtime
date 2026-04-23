@@ -954,9 +954,9 @@ func (r *MCPServerReconciler) resolveImage(ctx context.Context, mcpServer *mcpv1
 		if r.ProvisionedRegistry != nil && r.ProvisionedRegistry.URL != "" {
 			regOverride = r.ProvisionedRegistry.URL
 		} else if regOverride == "" {
-			// Fallback to internal registry service if not configured
-			regOverride = "registry.registry.svc.cluster.local:5000"
-			logger.Info("useProvisionedRegistry set without ProvisionedRegistry config; falling back to internal registry service", "mcpServer", mcpServer.Name, "registry", regOverride)
+			// Fallback to the ingress-backed internal registry when not explicitly configured.
+			regOverride = DefaultOperatorConfig.InternalRegistryEndpoint
+			logger.Info("useProvisionedRegistry set without ProvisionedRegistry config; falling back to internal registry ingress", "mcpServer", mcpServer.Name, "registry", regOverride)
 		}
 	}
 	if regOverride != "" {

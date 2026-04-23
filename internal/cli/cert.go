@@ -229,8 +229,12 @@ func applyClusterIssuerWithKubectl(kubectl KubectlRunner) error {
 }
 
 func applyRegistryCertificateWithKubectl(kubectl KubectlRunner) error {
-	// #nosec G204 -- fixed file path from repository.
-	return kubectl.RunWithOutput([]string{"apply", "-f", registryCertificateManifestPath}, os.Stdout, os.Stderr)
+	content, err := os.ReadFile(registryCertificateManifestPath)
+	if err != nil {
+		return err
+	}
+	manifest := rewriteRegistryHost(string(content), GetRegistryIngressHost())
+	return applyManifestContentWithNamespace(kubectl, manifest, NamespaceRegistry)
 }
 
 func waitForCertificateReadyWithKubectl(kubectl KubectlRunner, name, namespace string, timeout time.Duration) error {

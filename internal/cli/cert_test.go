@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,7 +77,32 @@ func TestApplyClusterIssuerWithKubectl(t *testing.T) {
 }
 
 func TestApplyRegistryCertificateWithKubectl(t *testing.T) {
-	mock := &MockExecutor{}
+	orig := DefaultCLIConfig
+	t.Cleanup(func() { DefaultCLIConfig = orig })
+	DefaultCLIConfig = &CLIConfig{RegistryEndpoint: "10.43.39.164:5000", RegistryIngressHost: "registry.prod.example.com"}
+
+	root := repoRootForTest(t)
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working dir: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir to repo root: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(origDir)
+	})
+
+	var applyCmd *MockCommand
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			cmd := &MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "apply", "-f", "-") {
+				applyCmd = cmd
+			}
+			return cmd
+		},
+	}
 	kubectl := &KubectlClient{exec: mock, validators: nil}
 
 	if err := applyRegistryCertificateWithKubectl(kubectl); err != nil {
@@ -83,8 +111,15 @@ func TestApplyRegistryCertificateWithKubectl(t *testing.T) {
 	if len(mock.Commands) != 1 {
 		t.Fatalf("expected 1 kubectl command, got %d", len(mock.Commands))
 	}
-	if !commandHasArgs(mock.Commands[0], "apply", "-f", registryCertificateManifestPath) {
-		t.Fatalf("unexpected args: %v", mock.Commands[0].Args)
+	if applyCmd == nil {
+		t.Fatal("expected apply command")
+	}
+	captured, err := io.ReadAll(applyCmd.StdinR)
+	if err != nil {
+		t.Fatalf("read apply stdin: %v", err)
+	}
+	if !strings.Contains(string(captured), "registry.prod.example.com") {
+		t.Fatalf("expected rewritten registry host, got: %s", string(captured))
 	}
 }
 

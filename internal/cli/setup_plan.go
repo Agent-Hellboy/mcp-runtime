@@ -14,6 +14,7 @@ type SetupPlanInput struct {
 	ForceIngressInstall    bool
 	TLSEnabled             bool
 	TestMode               bool
+	StrictProd             bool
 	DeployAnalytics        bool
 	OperatorArgs           []string
 }
@@ -26,6 +27,7 @@ type SetupPlan struct {
 	RegistryManifest    string
 	TLSEnabled          bool
 	TestMode            bool
+	StrictProd          bool
 	DeployAnalytics     bool
 	OperatorArgs        []string
 }
@@ -57,6 +59,7 @@ func BuildSetupPlan(input SetupPlanInput) SetupPlan {
 		RegistryManifest: registryManifest,
 		TLSEnabled:       input.TLSEnabled,
 		TestMode:         input.TestMode,
+		StrictProd:       input.StrictProd,
 		DeployAnalytics:  input.DeployAnalytics,
 		OperatorArgs:     input.OperatorArgs,
 	}

@@ -228,6 +228,7 @@ func TestNewSetupCmdIncludesFeatureFlags(t *testing.T) {
 
 	for _, name := range []string{
 		"test-mode",
+		"strict-prod",
 		"operator-metrics-addr",
 		"operator-probe-addr",
 		"operator-leader-elect",

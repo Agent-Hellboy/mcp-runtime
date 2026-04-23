@@ -398,20 +398,21 @@ func deployRegistry(logger *zap.Logger, namespace string, port int, registryType
 	// Apply registry manifests via kustomize with namespace override
 	logger.Info("Applying registry manifests")
 	overrideImage := strings.TrimSpace(os.Getenv(registryImageOverrideEnv))
+	manifest, err := renderKustomizeManifest(kubectlClient, manifestPath)
+	if err != nil {
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrDeployRegistryFailed,
+			err,
+			fmt.Sprintf("failed to render registry manifest %q: %v", manifestPath, err),
+			map[string]any{"namespace": namespace, "manifest_path": manifestPath, "registry_type": registryType, "component": "registry"},
+		)
+		Error("Failed to render registry manifest")
+		logStructuredError(logger, wrappedErr, "Failed to render registry manifest")
+		return wrappedErr
+	}
+	manifest = rewriteRegistryHost(manifest, GetRegistryIngressHost())
 	if overrideImage != "" {
 		logger.Info("Applying registry image override", zap.String("image", overrideImage))
-		manifest, err := renderKustomizeManifest(kubectlClient, manifestPath)
-		if err != nil {
-			wrappedErr := wrapWithSentinelAndContext(
-				ErrDeployRegistryFailed,
-				err,
-				fmt.Sprintf("failed to render registry manifest %q: %v", manifestPath, err),
-				map[string]any{"namespace": namespace, "manifest_path": manifestPath, "registry_type": registryType, "component": "registry"},
-			)
-			Error("Failed to render registry manifest")
-			logStructuredError(logger, wrappedErr, "Failed to render registry manifest")
-			return wrappedErr
-		}
 		updated := strings.Replace(manifest, "image: "+defaultRegistryImage, "image: "+overrideImage, 1)
 		if updated == manifest {
 			err := fmt.Errorf("registry image reference %q not found in manifest", defaultRegistryImage)
@@ -437,8 +438,7 @@ func deployRegistry(logger *zap.Logger, namespace string, port int, registryType
 			return wrappedErr
 		}
 	} else {
-		// #nosec G204 -- manifestPath from internal config, namespace from setup flags.
-		if err := kubectlClient.RunWithOutput([]string{"apply", "-k", manifestPath, "-n", namespace}, os.Stdout, os.Stderr); err != nil {
+		if err := applyManifestContentWithNamespace(kubectlClient, manifest, namespace); err != nil {
 			wrappedErr := wrapWithSentinelAndContext(
 				ErrDeployRegistryFailed,
 				err,
@@ -464,6 +464,14 @@ func deployRegistry(logger *zap.Logger, namespace string, port int, registryType
 
 	logger.Info("Registry deployed successfully")
 	return nil
+}
+
+func rewriteRegistryHost(manifest, host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" || host == "registry.local" {
+		return manifest
+	}
+	return strings.ReplaceAll(manifest, "registry.local", host)
 }
 
 func renderKustomizeManifest(kubectl KubectlRunner, manifestPath string) (string, error) {
@@ -605,6 +613,12 @@ func (m *RegistryManager) LoginRegistry(registryURL, username, password string) 
 // ShowRegistryInfo displays registry connection information.
 func (m *RegistryManager) ShowRegistryInfo() error {
 	ns := NamespaceRegistry
+	// #nosec G204 -- fixed kubectl command with hardcoded namespace.
+	ingressHost, err := m.kubectl.Output([]string{"get", "ingress", RegistryServiceName, "-n", ns, "-o", "jsonpath={.spec.rules[0].host}"})
+	if err != nil {
+		m.logger.Debug("Failed to get registry ingress host", zap.Error(err))
+	}
+
 	// Get registry service
 	// #nosec G204 -- fixed kubectl command with hardcoded namespace.
 	clusterIP, err := m.kubectl.Output([]string{"get", "service", RegistryServiceName, "-n", ns, "-o", "jsonpath={.spec.clusterIP}"})
@@ -624,9 +638,11 @@ func (m *RegistryManager) ShowRegistryInfo() error {
 
 		ip := strings.TrimSpace(string(clusterIP))
 		p := strings.TrimSpace(string(port))
+		host := strings.TrimSpace(string(ingressHost))
 
 		tableData := [][]string{
 			{"Property", "Value"},
+			{"Ingress Host", host},
 			{"Internal URL", fmt.Sprintf("%s:%s", ip, p)},
 			{"Service DNS", fmt.Sprintf("registry.registry.svc.cluster.local:%s", p)},
 		}
@@ -634,10 +650,17 @@ func (m *RegistryManager) ShowRegistryInfo() error {
 
 		DefaultPrinter.Println()
 		Section("Local Access")
-		Info("Option 1: Add to /etc/docker/daemon.json:")
+		if host != "" {
+			Info("Option 1: Use the ingress host:")
+			DefaultPrinter.Printf("  %s\n", host)
+			DefaultPrinter.Println()
+			Info("If running without TLS, add the ingress host to your runtime's insecure registry list.")
+			DefaultPrinter.Println()
+		}
+		Info("Option 2: Add the internal service IP to /etc/docker/daemon.json:")
 		DefaultPrinter.Printf("  \"insecure-registries\": [\"%s:%s\"]\n", ip, p)
 		DefaultPrinter.Println()
-		Info("Option 2: Use port-forward:")
+		Info("Option 3: Use port-forward:")
 		DefaultPrinter.Printf("  kubectl port-forward -n registry svc/registry %s:%s\n", p, p)
 		DefaultPrinter.Printf("  Then use: localhost:%s\n", p)
 	} else {

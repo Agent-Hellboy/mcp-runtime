@@ -150,13 +150,14 @@ func TestBuildImage(t *testing.T) {
 		originalKubectl := kubectlClient
 		defer func() { kubectlClient = originalKubectl }()
 
-		// Mock kubectl to return cluster IP and port
+		origConfig := DefaultCLIConfig
+		defer func() { DefaultCLIConfig = origConfig }()
+		DefaultCLIConfig = &CLIConfig{RegistryEndpoint: "", RegistryIngressHost: "", RegistryPort: 5000}
+
+		// Mock kubectl to return service port so the helper falls back to service DNS.
 		kubectlMock := &MockExecutor{
 			CommandFunc: func(spec ExecSpec) *MockCommand {
 				for _, arg := range spec.Args {
-					if arg == "jsonpath={.spec.clusterIP}" {
-						return &MockCommand{OutputData: []byte("10.0.0.1")}
-					}
 					if arg == "jsonpath={.spec.ports[0].port}" {
 						return &MockCommand{OutputData: []byte("5000")}
 					}
@@ -179,7 +180,7 @@ func TestBuildImage(t *testing.T) {
 			if cmd.Name == "docker" {
 				found := false
 				for _, arg := range cmd.Args {
-					if arg == "10.0.0.1:5000/my-server:v1.0" {
+					if arg == "registry.registry.svc.cluster.local:5000/my-server:v1.0" {
 						found = true
 						break
 					}
@@ -333,16 +334,19 @@ func TestGetGitTagWithMock(t *testing.T) {
 
 func TestGetPlatformRegistryURLWithMock(t *testing.T) {
 	logger := zap.NewNop()
+	origConfig := DefaultCLIConfig
+	t.Cleanup(func() { DefaultCLIConfig = origConfig })
 
-	t.Run("returns_cluster_ip_and_port", func(t *testing.T) {
+	t.Run("returns_configured_registry_endpoint_when_available", func(t *testing.T) {
+		DefaultCLIConfig = &CLIConfig{RegistryEndpoint: "10.43.39.164:5000", RegistryIngressHost: "registry.prod.example.com", RegistryPort: 5000}
 		originalKubectl := kubectlClient
 		defer func() { kubectlClient = originalKubectl }()
 
 		mock := &MockExecutor{
 			CommandFunc: func(spec ExecSpec) *MockCommand {
 				for _, arg := range spec.Args {
-					if arg == "jsonpath={.spec.clusterIP}" {
-						return &MockCommand{OutputData: []byte("10.96.0.100")}
+					if arg == "jsonpath={.spec.rules[0].host}" {
+						return &MockCommand{OutputData: []byte("registry.local")}
 					}
 					if arg == "jsonpath={.spec.ports[0].port}" {
 						return &MockCommand{OutputData: []byte("5000")}
@@ -354,19 +358,20 @@ func TestGetPlatformRegistryURLWithMock(t *testing.T) {
 		kubectlClient = &KubectlClient{exec: mock, validators: nil}
 
 		url := getPlatformRegistryURL(logger)
-		if url != "10.96.0.100:5000" {
-			t.Errorf("expected '10.96.0.100:5000', got %q", url)
+		if url != "10.43.39.164:5000" {
+			t.Errorf("expected configured registry endpoint, got %q", url)
 		}
 	})
 
-	t.Run("returns_default_when_ip_command_fails", func(t *testing.T) {
+	t.Run("falls_back_to_service_dns_when_ingress_host_missing", func(t *testing.T) {
+		DefaultCLIConfig = &CLIConfig{RegistryEndpoint: "", RegistryIngressHost: "", RegistryPort: 5000}
 		originalKubectl := kubectlClient
 		defer func() { kubectlClient = originalKubectl }()
 
 		mock := &MockExecutor{
 			CommandFunc: func(spec ExecSpec) *MockCommand {
 				for _, arg := range spec.Args {
-					if arg == "jsonpath={.spec.clusterIP}" {
+					if arg == "jsonpath={.spec.rules[0].host}" {
 						return &MockCommand{OutputErr: errors.New("kubectl error")}
 					}
 					if arg == "jsonpath={.spec.ports[0].port}" {
@@ -379,20 +384,21 @@ func TestGetPlatformRegistryURLWithMock(t *testing.T) {
 		kubectlClient = &KubectlClient{exec: mock, validators: nil}
 
 		url := getPlatformRegistryURL(logger)
-		if !strings.Contains(url, "registry.registry.svc.cluster.local") {
-			t.Errorf("expected default registry URL, got %q", url)
+		if url != "registry.registry.svc.cluster.local:5000" {
+			t.Errorf("expected service DNS registry URL, got %q", url)
 		}
 	})
 
 	t.Run("returns_default_when_port_command_fails", func(t *testing.T) {
+		DefaultCLIConfig = &CLIConfig{RegistryEndpoint: "", RegistryIngressHost: "", RegistryPort: 5000}
 		originalKubectl := kubectlClient
 		defer func() { kubectlClient = originalKubectl }()
 
 		mock := &MockExecutor{
 			CommandFunc: func(spec ExecSpec) *MockCommand {
 				for _, arg := range spec.Args {
-					if arg == "jsonpath={.spec.clusterIP}" {
-						return &MockCommand{OutputData: []byte("10.96.0.100")}
+					if arg == "jsonpath={.spec.rules[0].host}" {
+						return &MockCommand{OutputData: []byte("")}
 					}
 					if arg == "jsonpath={.spec.ports[0].port}" {
 						return &MockCommand{OutputErr: errors.New("kubectl error")}
@@ -409,14 +415,15 @@ func TestGetPlatformRegistryURLWithMock(t *testing.T) {
 		}
 	})
 
-	t.Run("returns_default_when_ip_empty", func(t *testing.T) {
+	t.Run("returns_service_dns_when_ip_empty", func(t *testing.T) {
+		DefaultCLIConfig = &CLIConfig{RegistryEndpoint: "", RegistryIngressHost: "", RegistryPort: 5000}
 		originalKubectl := kubectlClient
 		defer func() { kubectlClient = originalKubectl }()
 
 		mock := &MockExecutor{
 			CommandFunc: func(spec ExecSpec) *MockCommand {
 				for _, arg := range spec.Args {
-					if arg == "jsonpath={.spec.clusterIP}" {
+					if arg == "jsonpath={.spec.rules[0].host}" {
 						return &MockCommand{OutputData: []byte("")}
 					}
 					if arg == "jsonpath={.spec.ports[0].port}" {
@@ -435,14 +442,15 @@ func TestGetPlatformRegistryURLWithMock(t *testing.T) {
 	})
 
 	t.Run("returns_default_when_port_empty", func(t *testing.T) {
+		DefaultCLIConfig = &CLIConfig{RegistryEndpoint: "", RegistryIngressHost: "", RegistryPort: 5000}
 		originalKubectl := kubectlClient
 		defer func() { kubectlClient = originalKubectl }()
 
 		mock := &MockExecutor{
 			CommandFunc: func(spec ExecSpec) *MockCommand {
 				for _, arg := range spec.Args {
-					if arg == "jsonpath={.spec.clusterIP}" {
-						return &MockCommand{OutputData: []byte("10.96.0.100")}
+					if arg == "jsonpath={.spec.rules[0].host}" {
+						return &MockCommand{OutputData: []byte("")}
 					}
 					if arg == "jsonpath={.spec.ports[0].port}" {
 						return &MockCommand{OutputData: []byte("")}
@@ -631,6 +639,10 @@ servers:
 	})
 
 	t.Run("returns_error_when_file_write_fails", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root can bypass read-only file mode semantics in this environment")
+		}
+
 		tmpDir := t.TempDir()
 		metadataFile := filepath.Join(tmpDir, "servers.yaml")
 

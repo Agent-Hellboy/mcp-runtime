@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,11 +77,15 @@ func TestBuildSetupPlan_PreservesTestModeAndOperatorArgs(t *testing.T) {
 		ForceIngressInstall:    false,
 		TLSEnabled:             false,
 		TestMode:               true,
+		StrictProd:             true,
 		OperatorArgs:           operatorArgs,
 	})
 
 	if !plan.TestMode {
 		t.Fatal("expected test mode to be preserved")
+	}
+	if !plan.StrictProd {
+		t.Fatal("expected strict prod to be preserved")
 	}
 	if len(plan.OperatorArgs) != len(operatorArgs) {
 		t.Fatalf("expected %d operator args, got %d", len(operatorArgs), len(plan.OperatorArgs))
@@ -89,6 +94,95 @@ func TestBuildSetupPlan_PreservesTestModeAndOperatorArgs(t *testing.T) {
 		if plan.OperatorArgs[i] != operatorArgs[i] {
 			t.Fatalf("expected operator arg %d to be %q, got %q", i, operatorArgs[i], plan.OperatorArgs[i])
 		}
+	}
+}
+
+func TestValidateNonTestSetupAllowsLenientDefaultMode(t *testing.T) {
+	err := validateNonTestSetup(
+		SetupPlan{TLSEnabled: false, TestMode: false},
+		&ExternalRegistryConfig{URL: "registry.example.com"},
+		true,
+	)
+	if err != nil {
+		t.Fatalf("expected lenient default mode to allow non-TLS registry, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupAllowsStableInternalRegistry(t *testing.T) {
+	orig := DefaultCLIConfig
+	t.Cleanup(func() { DefaultCLIConfig = orig })
+	DefaultCLIConfig = &CLIConfig{RegistryEndpoint: "registry.prod.example.com", RegistryIngressHost: "registry.prod.example.com"}
+
+	err := validateNonTestSetup(
+		SetupPlan{TLSEnabled: true, TestMode: false},
+		nil,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("expected stable internal registry to be allowed, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupAllowsDevRegistryURLByDefault(t *testing.T) {
+	err := validateNonTestSetup(
+		SetupPlan{TLSEnabled: true, TestMode: false},
+		&ExternalRegistryConfig{URL: "registry.local"},
+		true,
+	)
+	if err != nil {
+		t.Fatalf("expected default mode to allow local/internal registry, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupAllowsDevInternalRegistryEndpointByDefault(t *testing.T) {
+	orig := DefaultCLIConfig
+	t.Cleanup(func() { DefaultCLIConfig = orig })
+	DefaultCLIConfig = &CLIConfig{RegistryEndpoint: "10.43.39.164:5000", RegistryIngressHost: "registry.local"}
+
+	err := validateNonTestSetup(
+		SetupPlan{TLSEnabled: true, TestMode: false},
+		nil,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("expected default mode to allow local/internal registry host, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupRejectsMissingTLSInStrictProd(t *testing.T) {
+	err := validateNonTestSetup(
+		SetupPlan{TLSEnabled: false, TestMode: false, StrictProd: true},
+		&ExternalRegistryConfig{URL: "registry.example.com"},
+		true,
+	)
+	if err == nil || !strings.Contains(err.Error(), "--with-tls") {
+		t.Fatalf("expected strict-prod TLS validation error, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupRejectsDevRegistryURLInStrictProd(t *testing.T) {
+	err := validateNonTestSetup(
+		SetupPlan{TLSEnabled: true, TestMode: false, StrictProd: true},
+		&ExternalRegistryConfig{URL: "registry.local"},
+		true,
+	)
+	if err == nil || !strings.Contains(err.Error(), "dev-only registry URL") {
+		t.Fatalf("expected strict-prod dev registry validation error, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupRejectsDevInternalRegistryEndpointInStrictProd(t *testing.T) {
+	orig := DefaultCLIConfig
+	t.Cleanup(func() { DefaultCLIConfig = orig })
+	DefaultCLIConfig = &CLIConfig{RegistryEndpoint: "10.43.39.164:5000", RegistryIngressHost: "registry.local"}
+
+	err := validateNonTestSetup(
+		SetupPlan{TLSEnabled: true, TestMode: false, StrictProd: true},
+		nil,
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "stable internal registry endpoint") {
+		t.Fatalf("expected strict-prod dev internal registry validation error, got %v", err)
 	}
 }
 
@@ -210,7 +304,7 @@ func TestSetupPlatformWithDeps_ExternalRegistry(t *testing.T) {
 			force:    false,
 		},
 		RegistryManifest: "config/registry",
-		TLSEnabled:       false,
+		TLSEnabled:       true,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err != nil {
@@ -293,6 +387,7 @@ func TestSetupPlatformWithDeps_InternalRegistryTLS(t *testing.T) {
 		},
 		RegistryManifest: "config/registry/overlays/tls",
 		TLSEnabled:       true,
+		TestMode:         true,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err != nil {
@@ -459,7 +554,8 @@ func TestSetupPlatformWithDeps_DiagnosticsOnRegistryWaitFailure(t *testing.T) {
 			force:    false,
 		},
 		RegistryManifest: "config/registry",
-		TLSEnabled:       false,
+		TLSEnabled:       true,
+		TestMode:         true,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err == nil {
@@ -517,8 +613,8 @@ func TestSetupPlatformWithDeps_DiagnosticsOnOperatorWaitFailure(t *testing.T) {
 			manifest: "config/ingress/overlays/http",
 			force:    false,
 		},
-		RegistryManifest: "config/registry",
-		TLSEnabled:       false,
+		RegistryManifest: "config/registry/overlays/tls",
+		TLSEnabled:       true,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err == nil {
@@ -578,8 +674,8 @@ func TestSetupPlatformWithDeps_CRDCheckFailure(t *testing.T) {
 			manifest: "config/ingress/overlays/http",
 			force:    false,
 		},
-		RegistryManifest: "config/registry",
-		TLSEnabled:       false,
+		RegistryManifest: "config/registry/overlays/tls",
+		TLSEnabled:       true,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err == nil {
@@ -643,6 +739,7 @@ func TestSetupPlatformWithDeps_InternalRegistryPushFailure(t *testing.T) {
 		},
 		RegistryManifest: "config/registry",
 		TLSEnabled:       false,
+		TestMode:         true,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err == nil {

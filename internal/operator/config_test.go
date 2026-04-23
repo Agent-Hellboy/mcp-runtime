@@ -189,6 +189,7 @@ func TestLoadOperatorConfig(t *testing.T) {
 	t.Setenv("DEFAULT_INGRESS_HOST", "mcp.example.com")
 	t.Setenv("DEFAULT_INGRESS_CLASS", "nginx")
 	t.Setenv("PROVISIONED_REGISTRY_URL", "registry.example.com:5000")
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.43.39.164:5000")
 	t.Setenv("PROVISIONED_REGISTRY_USERNAME", "user")
 	t.Setenv("PROVISIONED_REGISTRY_PASSWORD", "pass")
 	t.Setenv("PROVISIONED_REGISTRY_SECRET_NAME", "registry-creds")
@@ -205,6 +206,9 @@ func TestLoadOperatorConfig(t *testing.T) {
 	}
 	if cfg.ProvisionedRegistryURL != "registry.example.com:5000" {
 		t.Fatalf("expected registry url override, got %q", cfg.ProvisionedRegistryURL)
+	}
+	if cfg.InternalRegistryEndpoint != "10.43.39.164:5000" {
+		t.Fatalf("expected internal registry endpoint override, got %q", cfg.InternalRegistryEndpoint)
 	}
 	if cfg.ProvisionedRegistryUsername != "user" || cfg.ProvisionedRegistryPassword != "pass" {
 		t.Fatalf("expected registry credentials, got %q/%q", cfg.ProvisionedRegistryUsername, cfg.ProvisionedRegistryPassword)

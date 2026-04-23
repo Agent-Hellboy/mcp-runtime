@@ -1044,8 +1044,11 @@ func TestDeployRegistry(t *testing.T) {
 
 	t.Run("applies image override via rendered manifest", func(t *testing.T) {
 		origKubectl := kubectlClient
+		origConfig := DefaultCLIConfig
 		t.Cleanup(func() { kubectlClient = origKubectl })
+		t.Cleanup(func() { DefaultCLIConfig = origConfig })
 		t.Setenv(registryImageOverrideEnv, "docker.io/library/mcp-runtime-registry:latest")
+		DefaultCLIConfig = &CLIConfig{RegistryEndpoint: "10.43.39.164:5000", RegistryIngressHost: "registry.prod.example.com"}
 
 		var applyCmd *MockCommand
 		mock := &MockExecutor{
@@ -1098,6 +1101,17 @@ spec:
 		}
 	})
 
+	t.Run("rewrites registry host in rendered manifest", func(t *testing.T) {
+		manifest := "spec:\n  tls:\n  - hosts:\n    - registry.local\n"
+		got := rewriteRegistryHost(manifest, "registry.prod.example.com")
+		if !strings.Contains(got, "registry.prod.example.com") {
+			t.Fatalf("expected rewritten registry host, got: %s", got)
+		}
+		if strings.Contains(got, "registry.local") {
+			t.Fatalf("expected registry.local to be replaced, got: %s", got)
+		}
+	})
+
 	t.Run("rejects unsupported registry type", func(t *testing.T) {
 		origKubectl := kubectlClient
 		t.Cleanup(func() { kubectlClient = origKubectl })
@@ -1131,12 +1145,19 @@ spec:
 		origKubectl := kubectlClient
 		t.Cleanup(func() { kubectlClient = origKubectl })
 
-		callCount := 0
 		mock := &MockExecutor{
 			CommandFunc: func(spec ExecSpec) *MockCommand {
-				callCount++
 				cmd := &MockCommand{Args: spec.Args}
-				if contains(spec.Args, "apply") && contains(spec.Args, "-k") {
+				switch {
+				case contains(spec.Args, "kustomize"):
+					cmd.OutputData = []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: registry\n")
+					cmd.RunFunc = func() error {
+						if cmd.StdoutW != nil {
+							_, _ = cmd.StdoutW.Write(cmd.OutputData)
+						}
+						return nil
+					}
+				case contains(spec.Args, "apply") && contains(spec.Args, "-f") && contains(spec.Args, "-"):
 					cmd.RunErr = errors.New("apply failed")
 				}
 				return cmd
