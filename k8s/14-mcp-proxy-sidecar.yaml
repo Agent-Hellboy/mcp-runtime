@@ -32,7 +32,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: mcp-server
-          image: mcp-sentinel-mcp-server:latest
+          image: go-example-mcp:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false

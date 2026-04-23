@@ -16,6 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${PROJECT_ROOT}"
 echo "[info] Running from: ${PROJECT_ROOT}"
+export E2E_HELPERS="${PROJECT_ROOT}/test/e2e/e2e_helpers.py"
 
 SENTINEL_ROOT="${PROJECT_ROOT}"
 if [[ ! -d "${SENTINEL_ROOT}/services" || ! -d "${SENTINEL_ROOT}/k8s" ]]; then
@@ -25,10 +26,27 @@ fi
 echo "[info] Sentinel root: ${SENTINEL_ROOT}"
 
 CLUSTER_NAME="${CLUSTER_NAME:-mcp-e2e}"
+PLATFORM_HOST="${PLATFORM_HOST:-mcp.example.local}"
 SERVER_NAME="${SERVER_NAME:-policy-mcp-server}"
-SERVER_HOST="${SERVER_HOST:-policy.example.local}"
+SERVER_HOST="${SERVER_HOST:-${PLATFORM_HOST}}"
 OAUTH_SERVER_NAME="${OAUTH_SERVER_NAME:-oauth-mcp-server}"
-OAUTH_SERVER_HOST="${OAUTH_SERVER_HOST:-oauth.example.local}"
+OAUTH_SERVER_HOST="${OAUTH_SERVER_HOST:-${PLATFORM_HOST}}"
+PYTHON_EXAMPLE_SERVER_NAME="${PYTHON_EXAMPLE_SERVER_NAME:-python-example-mcp}"
+PYTHON_EXAMPLE_SERVER_HOST="${PYTHON_EXAMPLE_SERVER_HOST:-${PLATFORM_HOST}}"
+PYTHON_EXAMPLE_SERVER_ROUTE="${PYTHON_EXAMPLE_SERVER_ROUTE:-/${PYTHON_EXAMPLE_SERVER_NAME}/mcp}"
+RUST_EXAMPLE_SERVER_NAME="${RUST_EXAMPLE_SERVER_NAME:-rust-example-mcp}"
+RUST_EXAMPLE_SERVER_HOST="${RUST_EXAMPLE_SERVER_HOST:-${PLATFORM_HOST}}"
+RUST_EXAMPLE_SERVER_ROUTE="${RUST_EXAMPLE_SERVER_ROUTE:-/${RUST_EXAMPLE_SERVER_NAME}/mcp}"
+GO_EXAMPLE_SERVER_NAME="${GO_EXAMPLE_SERVER_NAME:-go-example-mcp}"
+GO_EXAMPLE_SERVER_HOST="${GO_EXAMPLE_SERVER_HOST:-${PLATFORM_HOST}}"
+GO_EXAMPLE_SERVER_ROUTE="${GO_EXAMPLE_SERVER_ROUTE:-/${GO_EXAMPLE_SERVER_NAME}/mcp}"
+SHARED_SDK_HOST="${SHARED_SDK_HOST:-${PLATFORM_HOST}}"
+PYTHON_SHARED_SERVER_NAME="${PYTHON_SHARED_SERVER_NAME:-python-shared-mcp}"
+PYTHON_SHARED_SERVER_ROUTE="${PYTHON_SHARED_SERVER_ROUTE:-/${PYTHON_SHARED_SERVER_NAME}/mcp}"
+RUST_SHARED_SERVER_NAME="${RUST_SHARED_SERVER_NAME:-rust-shared-mcp}"
+RUST_SHARED_SERVER_ROUTE="${RUST_SHARED_SERVER_ROUTE:-/${RUST_SHARED_SERVER_NAME}/mcp}"
+GO_SHARED_SERVER_NAME="${GO_SHARED_SERVER_NAME:-go-shared-mcp}"
+GO_SHARED_SERVER_ROUTE="${GO_SHARED_SERVER_ROUTE:-/${GO_SHARED_SERVER_NAME}/mcp}"
 HUMAN_ID="${HUMAN_ID:-user-123}"
 AGENT_ID="${AGENT_ID:-ops-agent}"
 SESSION_ID="${SESSION_ID:-sess-ops-agent}"
@@ -49,6 +67,12 @@ SERVER_PROXY_PORT="${SERVER_PROXY_PORT:-18094}"
 SERVER_UPSTREAM_PORT="${SERVER_UPSTREAM_PORT:-18095}"
 OAUTH_PROXY_PORT="${OAUTH_PROXY_PORT:-18096}"
 OAUTH_UPSTREAM_PORT="${OAUTH_UPSTREAM_PORT:-18097}"
+PYTHON_EXAMPLE_PROXY_PORT="${PYTHON_EXAMPLE_PROXY_PORT:-18098}"
+RUST_EXAMPLE_PROXY_PORT="${RUST_EXAMPLE_PROXY_PORT:-18099}"
+PYTHON_SHARED_PROXY_PORT="${PYTHON_SHARED_PROXY_PORT:-18100}"
+RUST_SHARED_PROXY_PORT="${RUST_SHARED_PROXY_PORT:-18101}"
+GO_EXAMPLE_PROXY_PORT="${GO_EXAMPLE_PROXY_PORT:-18102}"
+GO_SHARED_PROXY_PORT="${GO_SHARED_PROXY_PORT:-18103}"
 API_METRICS_PORT="${API_METRICS_PORT:-19090}"
 INGEST_METRICS_PORT="${INGEST_METRICS_PORT:-19091}"
 PROCESSOR_METRICS_PORT="${PROCESSOR_METRICS_PORT:-19092}"
@@ -77,6 +101,8 @@ LOCAL_REGISTRY_NAME="${LOCAL_REGISTRY_NAME:-${CLUSTER_NAME}-dockerhub-mirror}"
 LOCAL_REGISTRY_PORT="${LOCAL_REGISTRY_PORT:-5001}"
 LOCAL_REGISTRY_PUSH_HOST="${LOCAL_REGISTRY_PUSH_HOST:-127.0.0.1:${LOCAL_REGISTRY_PORT}}"
 LOCAL_REGISTRY_MIRROR_ENDPOINT="${LOCAL_REGISTRY_NAME}:5000"
+LOCAL_REGISTRY_RETRY_TRIES="${LOCAL_REGISTRY_RETRY_TRIES:-5}"
+LOCAL_REGISTRY_RETRY_DELAY="${LOCAL_REGISTRY_RETRY_DELAY:-5}"
 E2E_ARTIFACT_DIR="${E2E_ARTIFACT_DIR:-}"
 E2E_SCENARIOS="${E2E_SCENARIOS-all}"
 E2E_SCENARIOS="${E2E_SCENARIOS//[[:space:]]/}"
@@ -88,6 +114,25 @@ if [[ ${#E2E_SCENARIO_LIST[@]} -eq 0 || -z "${E2E_SCENARIO_LIST[0]}" ]]; then
   echo "E2E_SCENARIOS must not be empty" >&2
   exit 1
 fi
+
+# Deduplicate while preserving order. Keep this Bash 3 compatible for macOS.
+declare -a _e2e_deduped=()
+for _e2e_s in "${E2E_SCENARIO_LIST[@]}"; do
+  _e2e_seen=0
+  if [[ ${#_e2e_deduped[@]} -gt 0 ]]; then
+    for _e2e_existing in "${_e2e_deduped[@]}"; do
+      if [[ "${_e2e_existing}" == "${_e2e_s}" ]]; then
+        _e2e_seen=1
+        break
+      fi
+    done
+  fi
+  if [[ "${_e2e_seen}" -eq 0 ]]; then
+    _e2e_deduped+=("${_e2e_s}")
+  fi
+done
+E2E_SCENARIO_LIST=("${_e2e_deduped[@]}")
+unset _e2e_deduped _e2e_existing _e2e_seen _e2e_s
 
 scenario_requested() {
   local wanted="$1"
@@ -270,6 +315,20 @@ start_header_proxy_bg() {
     --upstream-origin "${upstream_origin}" \
     "$@" >"${log_file}" 2>&1 &
   PIDS+=("$!")
+}
+
+build_headers_json() {
+  # Usage: build_headers_json "Name=value" "Name2=value2" ...
+  # Safely encodes header key=value pairs into a JSON object via Python so
+  # that values containing quotes or backslashes never corrupt the JSON.
+  python3 -c "
+import json, sys
+d = {}
+for arg in sys.argv[1:]:
+    k, _, v = arg.partition('=')
+    d[k] = v
+print(json.dumps(d))
+" "$@"
 }
 
 resolve_mcp_smoke_dir() {
@@ -464,11 +523,17 @@ expected_ok = os.environ["EXPECTED_OK"].lower() == "true"
 expected_tool_error = os.environ.get("EXPECTED_TOOL_ERROR", "")
 smoke_exit_code = int(os.environ.get("SMOKE_EXIT_CODE", "0"))
 
+
+import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
+
 with open(os.environ["SMOKE_OUTPUT"], "r", encoding="utf-8") as fh:
     doc = json.load(fh)
 
-if doc.get("transport") != "http":
-    raise AssertionError(f"{name}: expected transport=http, got {doc.get('transport')!r}")
+check(
+    doc.get("transport") == "http",
+    f"{name}: transport=http",
+    f"{name}: expected transport=http, got {doc.get('transport')!r}",
+)
 
 steps = {step["name"]: step for step in doc.get("steps", [])}
 required_steps = [
@@ -481,50 +546,72 @@ required_steps = [
     "resources/read",
 ]
 for step_name in required_steps:
-    if step_name not in steps:
-        raise AssertionError(f"{name}: missing step {step_name}")
-
-if bool(doc.get("ok")) != expected_ok:
-    raise AssertionError(
-        f"{name}: expected ok={expected_ok}, got {doc.get('ok')}: {json.dumps(doc, indent=2)}"
+    check(
+        step_name in steps,
+        f"{name}: step present {step_name}",
+        f"{name}: missing step {step_name}",
     )
 
+check(
+    bool(doc.get("ok")) == expected_ok,
+    f"{name}: ok={expected_ok}",
+    f"{name}: expected ok={expected_ok}, got {doc.get('ok')}: {json.dumps(doc, indent=2)}",
+)
+
 if expected_ok:
-    if smoke_exit_code != 0:
-        raise AssertionError(f"{name}: expected exit code 0, got {smoke_exit_code}")
+    check(
+        smoke_exit_code == 0,
+        f"{name}: exit code 0",
+        f"{name}: expected exit code 0, got {smoke_exit_code}",
+    )
     for step_name in ("tools/call", "prompts/get", "resources/read"):
         step = steps[step_name]
-        if not step.get("ok"):
-            raise AssertionError(f"{name}: expected {step_name} to succeed: {json.dumps(step, indent=2)}")
+        check(
+            bool(step.get("ok")),
+            f"{name}: {step_name} succeeded",
+            f"{name}: expected {step_name} to succeed: {json.dumps(step, indent=2)}",
+        )
 else:
-    if smoke_exit_code == 0:
-        raise AssertionError(f"{name}: expected non-zero exit code for failed smoke run")
+    check(
+        smoke_exit_code != 0,
+        f"{name}: non-zero exit code for expected failure",
+        f"{name}: expected non-zero exit code for failed smoke run",
+    )
     failed_steps = {
         step_name: step
         for step_name, step in steps.items()
         if not step.get("ok") and not step.get("skipped")
     }
-    if not failed_steps:
-        raise AssertionError(f"{name}: expected at least one failed step: {json.dumps(doc, indent=2)}")
+    check(
+        bool(failed_steps),
+        f"{name}: observed failed step(s)",
+        f"{name}: expected at least one failed step: {json.dumps(doc, indent=2)}",
+    )
     if expected_tool_error:
         matching_steps = {
             step_name: step
             for step_name, step in failed_steps.items()
             if expected_tool_error in step.get("error", "")
         }
-        if not matching_steps:
-            rendered = json.dumps(failed_steps, indent=2)
-            raise AssertionError(
-                f"{name}: expected a failed step error to contain {expected_tool_error!r}, got {rendered}"
-            )
+        rendered = json.dumps(failed_steps, indent=2)
+        check(
+            bool(matching_steps),
+            f"{name}: failed step contains {expected_tool_error!r}",
+            f"{name}: expected a failed step error to contain {expected_tool_error!r}, got {rendered}",
+        )
     for step_name in ("tools/call", "prompts/get", "resources/read"):
         step = steps[step_name]
-        if not step.get("ok") and not step.get("skipped"):
-            if not expected_tool_error or expected_tool_error not in step.get("error", ""):
-                raise AssertionError(
-                    f"{name}: expected {step_name} to succeed, skip, or fail with {expected_tool_error!r}: "
-                    f"{json.dumps(step, indent=2)}"
-                )
+        allowed = (
+            step.get("ok")
+            or step.get("skipped")
+            or (expected_tool_error and expected_tool_error in step.get("error", ""))
+        )
+        check(
+            allowed,
+            f"{name}: {step_name} outcome allowed",
+            f"{name}: expected {step_name} to succeed, skip, or fail with {expected_tool_error!r}: "
+            f"{json.dumps(step, indent=2)}",
+        )
 
 rows = []
 for step_name in required_steps:
@@ -610,15 +697,24 @@ import re
 stdout_path = os.environ["MCP_SMOKE_AGENT_STDOUT"]
 stderr_path = os.environ["MCP_SMOKE_AGENT_STDERR"]
 
+
+import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
+
 with open(stdout_path, "r", encoding="utf-8") as fh:
     stdout = fh.read()
 with open(stderr_path, "r", encoding="utf-8") as fh:
     stderr = fh.read()
 
-if not re.search(r"^tool>\s+upper\s+", stderr, re.MULTILINE):
-    raise AssertionError(f"mcp-smoke-agent did not call upper:\n{stderr}")
-if "GOVERNANCE" not in stdout and "GOVERNANCE" not in stderr:
-    raise AssertionError(f"mcp-smoke-agent did not produce the expected uppercase result:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}")
+check(
+    bool(re.search(r"^tool>\s+upper\s+", stderr, re.MULTILINE)),
+    "mcp-smoke-agent called upper",
+    f"mcp-smoke-agent did not call upper:\n{stderr}",
+)
+check(
+    "GOVERNANCE" in stdout or "GOVERNANCE" in stderr,
+    "mcp-smoke-agent produced GOVERNANCE",
+    f"mcp-smoke-agent did not produce the expected uppercase result:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}",
+)
 
 print("mcp-smoke-agent:")
 print("  tool call    upper")
@@ -651,6 +747,7 @@ wait_for_mcp_initialize_result() {
   local tries="${6:-${MCP_POLICY_WAIT_TRIES}}"
   local i
   local last_result_file="${WORKDIR}/last-mcp-initialize-result.json"
+  local last_stderr_file="${WORKDIR}/last-mcp-initialize-stderr.txt"
 
   for i in $(seq 1 "${tries}"); do
     if MCP_BASE="${base_url}" \
@@ -660,7 +757,7 @@ wait_for_mcp_initialize_result() {
       MCP_EXPECT_HEADER_NAME="${expected_header_name}" \
       MCP_EXPECT_HEADER_TEXT="${expected_header_text}" \
       MCP_RESULT_FILE="${last_result_file}" \
-      python3 <<'PY' >/dev/null 2>&1
+      python3 <<'PY' >/dev/null 2>"${last_stderr_file}"
 import json
 import http.client
 import os
@@ -675,6 +772,16 @@ expected_body_text = os.environ.get("MCP_EXPECT_BODY_TEXT", "")
 expected_header_name = os.environ.get("MCP_EXPECT_HEADER_NAME", "")
 expected_header_text = os.environ.get("MCP_EXPECT_HEADER_TEXT", "")
 result_file = os.environ["MCP_RESULT_FILE"]
+initialize_payload = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": protocol,
+        "capabilities": {},
+        "clientInfo": {"name": "mcp-runtime-e2e", "version": "1.0.0"},
+    },
+}
 
 headers = {
     "content-type": "application/json",
@@ -683,7 +790,7 @@ headers = {
 }
 req = urllib.request.Request(
     base,
-    data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}).encode(),
+    data=json.dumps(initialize_payload).encode(),
     headers=headers,
 )
 try:
@@ -718,6 +825,10 @@ PY
   done
 
   echo "timed out waiting for initialize to return ${expected_status}" >&2
+  if [[ -s "${last_stderr_file}" ]]; then
+    echo "[debug] last initialize python stderr:" >&2
+    cat "${last_stderr_file}" >&2 || true
+  fi
   if [[ -f "${last_result_file}" ]]; then
     echo "[debug] last initialize response while waiting:" >&2
     cat "${last_result_file}" >&2 || true
@@ -738,6 +849,7 @@ wait_for_http_result() {
   local tries="${10:-${RAW_REQUEST_TRIES}}"
   local i
   local last_result_file="${WORKDIR}/last-http-result.json"
+  local last_stderr_file="${WORKDIR}/last-http-stderr.txt"
 
   for i in $(seq 1 "${tries}"); do
     if MCP_URL="${url}" \
@@ -750,7 +862,7 @@ wait_for_http_result() {
       MCP_EXPECT_HEADER_NAME="${expected_header_name}" \
       MCP_EXPECT_HEADER_TEXT="${expected_header_text}" \
       MCP_RESULT_FILE="${last_result_file}" \
-      python3 <<'PY' >/dev/null 2>&1
+      python3 <<'PY' >/dev/null 2>"${last_stderr_file}"
 import json
 import http.client
 import os
@@ -810,7 +922,7 @@ elif body_mode == "chunked-text":
             raise SystemExit(1)
     raise SystemExit(0)
 else:
-    raise SystemExit(1)
+    raise SystemExit(f"unknown body_mode: {body_mode!r}")
 
 req = urllib.request.Request(url, data=data, headers=headers, method=method)
 try:
@@ -845,6 +957,10 @@ PY
   done
 
   echo "timed out waiting for ${method} ${url} to return ${expected_status}" >&2
+  if [[ -s "${last_stderr_file}" ]]; then
+    echo "[debug] last http python stderr:" >&2
+    cat "${last_stderr_file}" >&2 || true
+  fi
   if [[ -f "${last_result_file}" ]]; then
     echo "[debug] last HTTP response while waiting:" >&2
     cat "${last_result_file}" >&2 || true
@@ -859,8 +975,10 @@ wait_for_mcp_tool_result() {
   local expected_status="$4"
   local expected_body_text="${5:-}"
   local tries="${6:-${MCP_POLICY_WAIT_TRIES}}"
+  local host_header="${7:-}"
   local i
   local last_result_file="${WORKDIR}/last-mcp-tool-result.json"
+  local last_stderr_file="${WORKDIR}/last-mcp-tool-stderr.txt"
 
   for i in $(seq 1 "${tries}"); do
     if MCP_BASE="${base_url}" \
@@ -870,51 +988,85 @@ wait_for_mcp_tool_result() {
       MCP_EXPECT_STATUS="${expected_status}" \
       MCP_EXPECT_BODY_TEXT="${expected_body_text}" \
       MCP_RESULT_FILE="${last_result_file}" \
-      python3 <<'PY' >/dev/null 2>&1
+      MCP_HOST_HEADER="${host_header}" \
+      python3 <<'PY' >/dev/null 2>"${last_stderr_file}"
+import http.client
 import json
 import os
-import urllib.error
-import urllib.request
+import urllib.parse
 
 base = os.environ["MCP_BASE"]
 protocol = os.environ["MCP_PROTOCOL_VERSION"]
+initialize_payload = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": protocol,
+        "capabilities": {},
+        "clientInfo": {"name": "mcp-runtime-e2e", "version": "1.0.0"},
+    },
+}
+
+
+import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
 tool_name = os.environ["MCP_TOOL_NAME"]
 tool_args = json.loads(os.environ["MCP_TOOL_ARGS"])
 expected_status = int(os.environ["MCP_EXPECT_STATUS"])
 expected_body_text = os.environ.get("MCP_EXPECT_BODY_TEXT", "")
 result_file = os.environ["MCP_RESULT_FILE"]
+host_header = os.environ.get("MCP_HOST_HEADER", "")
+
+
+def write_result(phase, status, body):
+    with open(result_file, "w", encoding="utf-8") as fh:
+        json.dump({"phase": phase, "status": status, "body": body}, fh)
 
 
 def post(msg, mcp_session_id=None):
+    parsed = urllib.parse.urlsplit(base)
+    target = parsed.path or "/"
+    if parsed.query:
+        target += "?" + parsed.query
     headers = {
         "content-type": "application/json",
         "accept": "application/json, text/event-stream",
         "Mcp-Protocol-Version": protocol,
     }
+    host_value = host_header or parsed.netloc
     if mcp_session_id:
         headers["Mcp-Session-Id"] = mcp_session_id
-    req = urllib.request.Request(base, data=json.dumps(msg).encode(), headers=headers)
+    body = json.dumps(msg).encode()
+    headers["Content-Length"] = str(len(body))
+    conn_class = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+    conn = conn_class(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), timeout=10)
     try:
-        resp = urllib.request.urlopen(req, timeout=10)
-        return resp.status, resp.headers.get("Mcp-Session-Id") or mcp_session_id, resp.read().decode()
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.headers.get("Mcp-Session-Id") or mcp_session_id, exc.read().decode()
+        conn.putrequest("POST", target, skip_host=True)
+        conn.putheader("Host", host_value)
+        for key, value in headers.items():
+            conn.putheader(key, value)
+        conn.endheaders(body)
+        resp = conn.getresponse()
+        return resp.status, resp.getheader("Mcp-Session-Id") or mcp_session_id, resp.read().decode()
+    finally:
+        conn.close()
 
 
-status, mcp_session_id, body = post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+status, mcp_session_id, body = post(initialize_payload)
 if status != 200 or not mcp_session_id:
+    write_result("initialize", status, body)
     raise SystemExit(1)
 
 status, _, body = post({"jsonrpc": "2.0", "method": "notifications/initialized"}, mcp_session_id=mcp_session_id)
 if status not in (200, 202):
+    write_result("notifications/initialized", status, body)
     raise SystemExit(1)
 
 status, _, body = post(
     {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": tool_name, "arguments": tool_args}},
     mcp_session_id=mcp_session_id,
 )
-with open(result_file, "w", encoding="utf-8") as fh:
-    json.dump({"status": status, "body": body}, fh)
+write_result("tools/call", status, body)
 if status != expected_status:
     raise SystemExit(1)
 if expected_body_text and expected_body_text not in body:
@@ -928,6 +1080,10 @@ PY
   done
 
   echo "timed out waiting for ${tool_name} to return ${expected_status}" >&2
+  if [[ -s "${last_stderr_file}" ]]; then
+    echo "[debug] last tool python stderr:" >&2
+    cat "${last_stderr_file}" >&2 || true
+  fi
   if [[ -f "${last_result_file}" ]]; then
     echo "[debug] last ${tool_name} response while waiting:" >&2
     cat "${last_result_file}" >&2 || true
@@ -1018,6 +1174,152 @@ wait_for_deployment_exists() {
   return 1
 }
 
+prepare_example_metadata() {
+  local metadata_dir="$1"
+  local server_name="$2"
+  local ingress_host="$3"
+  local route_path="$4"
+  local image_repo="$5"
+
+  SERVER_NAME_OVERRIDE="${server_name}" \
+  SERVER_HOST_OVERRIDE="${ingress_host}" \
+  SERVER_ROUTE_OVERRIDE="${route_path}" \
+  SERVER_IMAGE_OVERRIDE="${image_repo}" \
+  METADATA_DIR_OVERRIDE="${metadata_dir}" \
+  python3 <<'PY'
+from pathlib import Path
+import os
+
+metadata_dir = Path(os.environ["METADATA_DIR_OVERRIDE"])
+path = metadata_dir / "servers.yaml"
+lines = path.read_text(encoding="utf-8").splitlines()
+updated = []
+server_name_updated = False
+server_image_updated = False
+mcp_path_updated = False
+in_env_vars = False
+current_env_name = None
+for line in lines:
+    stripped = line.lstrip()
+    indent = line[: len(line) - len(stripped)]
+    if not server_name_updated and indent == "  " and stripped.startswith("- name: "):
+        updated.append(f"{indent}- name: {os.environ['SERVER_NAME_OVERRIDE']}")
+        server_name_updated = True
+    elif stripped.startswith("ingressHost: "):
+        updated.append(f"{indent}ingressHost: {os.environ['SERVER_HOST_OVERRIDE']}")
+    elif stripped.startswith("route: "):
+        updated.append(f"{indent}route: {os.environ['SERVER_ROUTE_OVERRIDE']}")
+    elif not server_image_updated and indent == "    " and stripped.startswith("image: "):
+        updated.append(f"{indent}image: {os.environ['SERVER_IMAGE_OVERRIDE']}")
+        server_image_updated = True
+    elif indent == "    " and stripped == "envVars:":
+        in_env_vars = True
+        current_env_name = None
+        updated.append(line)
+    elif in_env_vars and indent == "      " and stripped.startswith("- name: "):
+        current_env_name = stripped.split(": ", 1)[1]
+        updated.append(line)
+    elif in_env_vars and current_env_name == "MCP_PATH" and indent == "        " and stripped.startswith("value: "):
+        updated.append(f'{indent}value: "{os.environ["SERVER_ROUTE_OVERRIDE"]}"')
+        mcp_path_updated = True
+    else:
+        if in_env_vars and indent.startswith("    ") and indent != "      " and indent != "        ":
+            in_env_vars = False
+            current_env_name = None
+        updated.append(line)
+if not server_image_updated:
+    final = []
+    inserted = False
+    for line in updated:
+        final.append(line)
+        stripped = line.lstrip()
+        indent = line[: len(line) - len(stripped)]
+        if not inserted and indent == "  " and stripped.startswith("- name: "):
+            final.append(f"{indent}  image: {os.environ['SERVER_IMAGE_OVERRIDE']}")
+            inserted = True
+    updated = final
+    server_image_updated = inserted
+if not mcp_path_updated:
+    final = []
+    inserted = False
+    for line in updated:
+        final.append(line)
+        stripped = line.lstrip()
+        indent = line[: len(line) - len(stripped)]
+        if not inserted and indent == "    " and stripped.startswith("namespace: "):
+            final.append(f"{indent}envVars:")
+            final.append(f"{indent}  - name: MCP_PATH")
+            final.append(f'{indent}    value: "{os.environ["SERVER_ROUTE_OVERRIDE"]}"')
+            inserted = True
+    updated = final
+    mcp_path_updated = inserted
+path.write_text("\n".join(updated) + "\n", encoding="utf-8")
+
+# Verify substitutions landed; missing fields cause silent failures later.
+if not server_name_updated:
+    raise SystemExit(f"prepare_example_metadata: no '- name:' entry found to replace in {path}")
+if not server_image_updated:
+    raise SystemExit(f"prepare_example_metadata: image field was not updated in {path}")
+if not mcp_path_updated:
+    raise SystemExit(f"prepare_example_metadata: MCP_PATH env var was not updated in {path}")
+PY
+}
+
+deploy_example_server_via_pipeline() {
+  local server_name="$1"
+  local ingress_host="$2"
+  local route_path="$3"
+  local example_source_dir="$4"
+  local example_workspace_dir="$5"
+  local image_repo
+  local image_ref
+
+  rm -rf "${example_workspace_dir}"
+  mkdir -p "$(dirname "${example_workspace_dir}")"
+  cp -R "${example_source_dir}" "${example_workspace_dir}"
+
+  image_repo="docker.io/library/${server_name}"
+  image_ref="${image_repo}:latest"
+  prepare_example_metadata "${example_workspace_dir}/.mcp" "${server_name}" "${ingress_host}" "${route_path}" "${image_repo}"
+
+  echo "[deploy] building example image ${server_name}:latest"
+  (
+    cd "${example_workspace_dir}"
+    "${PROJECT_ROOT}/bin/mcp-runtime" server build image "${server_name}" \
+      --metadata-dir .mcp \
+      --dockerfile Dockerfile \
+      --registry "docker.io/library" \
+      --tag latest \
+      --context .
+  )
+
+  echo "[deploy] pushing ${server_name}:latest via registry CLI"
+  (
+    cd "${example_workspace_dir}"
+    "${PROJECT_ROOT}/bin/mcp-runtime" registry push \
+      --image "${image_ref}" \
+      --mode direct \
+      --registry "${LOCAL_REGISTRY_PUSH_HOST}" \
+      --name "library/${server_name}"
+    "${PROJECT_ROOT}/bin/mcp-runtime" pipeline generate --dir .mcp --output manifests
+    "${PROJECT_ROOT}/bin/mcp-runtime" pipeline deploy --dir manifests
+  )
+
+  echo "[deploy] waiting for ${server_name} rollout"
+  wait_for_deployment_exists mcp-servers "${server_name}"
+  if ! kubectl rollout status "deploy/${server_name}" -n mcp-servers --timeout=180s; then
+    echo "[debug] ${server_name} rollout failed; collecting diagnostics" >&2
+    kubectl get mcpserver "${server_name}" -n mcp-servers -o yaml || true
+    kubectl get deploy,rs,pods,svc,ingress,configmap -n mcp-servers || true
+    kubectl describe deployment "${server_name}" -n mcp-servers || true
+    kubectl describe pods -n mcp-servers -l "app=${server_name}" || true
+    kubectl logs -n mcp-servers -l "app=${server_name}" --all-containers=true --tail=200 || true
+    kubectl logs -n mcp-runtime deploy/mcp-runtime-operator-controller-manager --all-containers=true --tail=200 || true
+    exit 1
+  fi
+  wait_for_named_server_ready "${server_name}" "mcp-servers" 60
+}
+
 wait_for_grant_tool_rule() {
   local grant_name="$1"
   local tool_name="$2"
@@ -1080,14 +1382,36 @@ local_registry_target() {
   echo "${LOCAL_REGISTRY_PUSH_HOST}/$(mirror_repository_path "${image}")"
 }
 
+run_with_retry() {
+  local description="$1"
+  shift
+
+  local attempt
+  local exit_code=0
+  for attempt in $(seq 1 "${LOCAL_REGISTRY_RETRY_TRIES}"); do
+    if "$@"; then
+      return 0
+    fi
+    exit_code=$?
+    if [[ "${attempt}" -lt "${LOCAL_REGISTRY_RETRY_TRIES}" ]]; then
+      echo "[retry] ${description} failed (attempt ${attempt}/${LOCAL_REGISTRY_RETRY_TRIES}, exit ${exit_code}); retrying in ${LOCAL_REGISTRY_RETRY_DELAY}s" >&2
+      sleep "${LOCAL_REGISTRY_RETRY_DELAY}"
+    fi
+  done
+
+  echo "[retry] ${description} failed after ${LOCAL_REGISTRY_RETRY_TRIES} attempts" >&2
+  return "${exit_code}"
+}
+
 publish_image_to_local_registry() {
   local image="$1"
   local target
   target="$(local_registry_target "${image}")"
 
+  ensure_local_registry_running
   echo "[registry] publishing ${image} to ${target}"
   docker tag "${image}" "${target}"
-  docker push "${target}"
+  run_with_retry "docker push ${target}" docker push "${target}"
 }
 
 build_and_publish_image() {
@@ -1102,9 +1426,18 @@ build_and_publish_image() {
 
 mirror_upstream_image() {
   local image="$1"
+  local target
 
   echo "[image] mirroring ${image} into ${LOCAL_REGISTRY_NAME}"
-  docker pull "${image}"
+  target="$(local_registry_target "${image}")"
+  ensure_local_registry_running
+  if docker pull "${target}" >/dev/null 2>&1; then
+    echo "[image] found ${image} in local mirror ${target}"
+    docker tag "${target}" "${image}"
+  else
+    echo "[image] ${image} not present in local mirror; falling back to upstream"
+    run_with_retry "docker pull ${image}" docker pull "${image}"
+  fi
   publish_image_to_local_registry "${image}"
 }
 
@@ -1125,15 +1458,25 @@ connect_local_registry_to_kind_network() {
   docker network connect kind "${LOCAL_REGISTRY_NAME}" >/dev/null 2>&1 || true
 }
 
+ensure_local_registry_running() {
+  if ! docker ps --format '{{.Names}}' | grep -qx "${LOCAL_REGISTRY_NAME}"; then
+    echo "[registry] local mirror ${LOCAL_REGISTRY_NAME} is not running; restarting"
+    start_local_registry
+    if docker network inspect kind >/dev/null 2>&1; then
+      connect_local_registry_to_kind_network
+    fi
+  fi
+}
+
 cat > "${KIND_CONFIG}" <<EOF
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 containerdConfigPatches:
 - |-
   [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
-    endpoint = ["http://${LOCAL_REGISTRY_MIRROR_ENDPOINT}"]
+    endpoint = ["http://${LOCAL_REGISTRY_MIRROR_ENDPOINT}", "https://registry-1.docker.io"]
   [plugins."io.containerd.grpc.v1.cri".registry.mirrors."registry-1.docker.io"]
-    endpoint = ["http://${LOCAL_REGISTRY_MIRROR_ENDPOINT}"]
+    endpoint = ["http://${LOCAL_REGISTRY_MIRROR_ENDPOINT}", "https://registry-1.docker.io"]
   [plugins."io.containerd.grpc.v1.cri".registry.mirrors."registry.registry.svc.cluster.local:5000"]
     endpoint = ["http://registry.registry.svc.cluster.local:5000"]
 EOF
@@ -1216,6 +1559,12 @@ METADATA_FILE="${WORKDIR}/metadata.yaml"
 MANIFEST_DIR="${WORKDIR}/manifests"
 SERVER_IMAGE="docker.io/library/${SERVER_NAME}:latest"
 SERVER_SECRET_NAME="${SERVER_NAME}-analytics-creds"
+PYTHON_EXAMPLE_SOURCE_DIR="${PROJECT_ROOT}/examples/python-mcp-server"
+PYTHON_EXAMPLE_WORKDIR="${WORKDIR}/python-mcp-server"
+RUST_EXAMPLE_SOURCE_DIR="${PROJECT_ROOT}/examples/rust-mcp-server"
+RUST_EXAMPLE_WORKDIR="${WORKDIR}/rust-mcp-server"
+GO_EXAMPLE_SOURCE_DIR="${PROJECT_ROOT}/examples/go-mcp-server"
+GO_EXAMPLE_WORKDIR="${WORKDIR}/go-mcp-server"
 
 echo "[deploy] creating server-local analytics credentials secret"
 kubectl create secret generic "${SERVER_SECRET_NAME}" \
@@ -1234,17 +1583,8 @@ servers:
     envVars:
       - name: PORT
         value: "8090"
-      - name: MCP_SENTINEL_INGEST_URL
-        value: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
-      - name: OTEL_EXPORTER_OTLP_ENDPOINT
-        value: "http://otel-collector.mcp-sentinel.svc.cluster.local:4318"
-      - name: OTEL_SERVICE_NAME
-        value: "${SERVER_NAME}"
-    secretEnvVars:
-      - name: MCP_SENTINEL_API_KEY
-        secretKeyRef:
-          name: ${SERVER_SECRET_NAME}
-          key: api-key
+      - name: MCP_PATH
+        value: "/${SERVER_NAME}/mcp"
     tools:
       - name: aaa-ping
         requiredTrust: low
@@ -1276,10 +1616,10 @@ EOF
 echo "[cli] building MCP server image via CLI"
 ./bin/mcp-runtime server build image "${SERVER_NAME}" \
   --metadata-file "${METADATA_FILE}" \
-  --dockerfile "${SENTINEL_ROOT}/services/mcp-server/Dockerfile" \
+  --dockerfile "${GO_EXAMPLE_SOURCE_DIR}/Dockerfile" \
   --registry docker.io/library \
   --tag latest \
-  --context "${SENTINEL_ROOT}/services/mcp-server"
+  --context "${GO_EXAMPLE_SOURCE_DIR}"
 
 publish_image_to_local_registry "${SERVER_IMAGE}"
 
@@ -1301,10 +1641,119 @@ if ! kubectl rollout status "deploy/${SERVER_NAME}" -n mcp-servers --timeout=180
 fi
 wait_for_server_ready
 
+echo "[deploy] deploying official SDK example MCP servers"
+deploy_example_server_via_pipeline \
+  "${PYTHON_EXAMPLE_SERVER_NAME}" \
+  "${PYTHON_EXAMPLE_SERVER_HOST}" \
+  "${PYTHON_EXAMPLE_SERVER_ROUTE}" \
+  "${PYTHON_EXAMPLE_SOURCE_DIR}" \
+  "${PYTHON_EXAMPLE_WORKDIR}"
+deploy_example_server_via_pipeline \
+  "${RUST_EXAMPLE_SERVER_NAME}" \
+  "${RUST_EXAMPLE_SERVER_HOST}" \
+  "${RUST_EXAMPLE_SERVER_ROUTE}" \
+  "${RUST_EXAMPLE_SOURCE_DIR}" \
+  "${RUST_EXAMPLE_WORKDIR}"
+deploy_example_server_via_pipeline \
+  "${GO_EXAMPLE_SERVER_NAME}" \
+  "${GO_EXAMPLE_SERVER_HOST}" \
+  "${GO_EXAMPLE_SERVER_ROUTE}" \
+  "${GO_EXAMPLE_SOURCE_DIR}" \
+  "${GO_EXAMPLE_WORKDIR}"
+deploy_example_server_via_pipeline \
+  "${PYTHON_SHARED_SERVER_NAME}" \
+  "${SHARED_SDK_HOST}" \
+  "${PYTHON_SHARED_SERVER_ROUTE}" \
+  "${PYTHON_EXAMPLE_SOURCE_DIR}" \
+  "${WORKDIR}/python-shared-mcp-server"
+deploy_example_server_via_pipeline \
+  "${RUST_SHARED_SERVER_NAME}" \
+  "${SHARED_SDK_HOST}" \
+  "${RUST_SHARED_SERVER_ROUTE}" \
+  "${RUST_EXAMPLE_SOURCE_DIR}" \
+  "${WORKDIR}/rust-shared-mcp-server"
+deploy_example_server_via_pipeline \
+  "${GO_SHARED_SERVER_NAME}" \
+  "${SHARED_SDK_HOST}" \
+  "${GO_SHARED_SERVER_ROUTE}" \
+  "${GO_EXAMPLE_SOURCE_DIR}" \
+  "${WORKDIR}/go-shared-mcp-server"
+
 echo "[cli] checking server commands"
-./bin/mcp-runtime server list --namespace mcp-servers
-./bin/mcp-runtime server get "${SERVER_NAME}" --namespace mcp-servers
-./bin/mcp-runtime server status --namespace mcp-servers
+
+# --- server list: assert the primary server appears ---
+_cli_list_out="$(./bin/mcp-runtime server list --namespace mcp-servers 2>&1)"
+if ! printf '%s\n' "${_cli_list_out}" | grep -qF "${SERVER_NAME}"; then
+  echo "[cli][fail] 'server list' output does not contain ${SERVER_NAME}" >&2
+  printf '%s\n' "${_cli_list_out}" >&2
+  exit 1
+fi
+echo "[cli][pass] server list contains ${SERVER_NAME}"
+
+# --- server get: capture YAML and assert readiness fields ---
+_cli_get_out="$(./bin/mcp-runtime server get "${SERVER_NAME}" --namespace mcp-servers 2>&1)"
+_cli_get_file="${WORKDIR}/${SERVER_NAME}-get.yaml"
+printf '%s\n' "${_cli_get_out}" >"${_cli_get_file}"
+
+PY_SERVER_NAME="${SERVER_NAME}" \
+PY_SERVER_HOST="${SERVER_HOST}" \
+PY_WORKDIR="${WORKDIR}" \
+PY_TRAEFIK_PORT="${TRAEFIK_PORT}" \
+E2E_HELPERS="${PROJECT_ROOT}/test/e2e/e2e_helpers.py" \
+python3 <<'PYEOF'
+import os
+import re
+
+helpers_path = os.environ.get("E2E_HELPERS", "")
+if helpers_path:
+    exec(open(helpers_path).read())
+
+server_name = os.environ["PY_SERVER_NAME"]
+server_host = os.environ["PY_SERVER_HOST"]
+workdir     = os.environ["PY_WORKDIR"]
+
+get_yaml = open(f"{workdir}/{server_name}-get.yaml").read()
+
+# Assert readiness flags are true in status
+check("deploymentReady: true" in get_yaml,
+      "deploymentReady: true",
+      f"server get: deploymentReady is not true\n{get_yaml}")
+check("serviceReady: true" in get_yaml,
+      "serviceReady: true",
+      f"server get: serviceReady is not true\n{get_yaml}")
+
+# Assert spec fields reflect what was deployed
+expected_path = f"/{server_name}/mcp"
+check(f"ingressPath: {expected_path}" in get_yaml,
+      f"ingressPath: {expected_path}",
+      f"server get: ingressPath not '{expected_path}'\n{get_yaml}")
+check(f"ingressHost: {server_host}" in get_yaml,
+      f"ingressHost: {server_host}",
+      f"server get: ingressHost not '{server_host}'\n{get_yaml}")
+
+# Extract ingressPath and ingressHost to build MCP client config URL
+m_path = re.search(r'ingressPath:\s*(\S+)', get_yaml)
+m_host = re.search(r'ingressHost:\s*(\S+)', get_yaml)
+ingress_path = m_path.group(1) if m_path else expected_path
+ingress_host = m_host.group(1) if m_host else server_host
+
+traefik_port = os.environ.get("PY_TRAEFIK_PORT", "18080")
+mcp_url = f"http://{ingress_host}:{traefik_port}{ingress_path}"
+import json
+config = {"mcpServers": {server_name: {"url": mcp_url}}}
+print(f"[cli] MCP client config for {server_name}:")
+print(json.dumps(config, indent=2))
+PYEOF
+
+# --- server status: assert the primary server appears ---
+_cli_status_out="$(./bin/mcp-runtime server status --namespace mcp-servers 2>&1)"
+if ! printf '%s\n' "${_cli_status_out}" | grep -qF "${SERVER_NAME}"; then
+  echo "[cli][fail] 'server status' output does not contain ${SERVER_NAME}" >&2
+  printf '%s\n' "${_cli_status_out}" >&2
+  exit 1
+fi
+echo "[cli][pass] server status contains ${SERVER_NAME}"
+
 ./bin/mcp-runtime server logs "${SERVER_NAME}" --namespace mcp-servers >"${WORKDIR}/${SERVER_NAME}.logs"
 
 echo "[policy] applying access grant and low-trust session"
@@ -1424,11 +1873,47 @@ start_header_proxy_bg "${MCP_SMOKE_BAD_SESSION_PORT}" \
   --header "X-MCP-Human-ID=${HUMAN_ID}" \
   --header "X-MCP-Agent-ID=${AGENT_ID}" \
   --header "X-MCP-Agent-Session=${UNKNOWN_SESSION_ID}"
+start_header_proxy_bg "${PYTHON_EXAMPLE_PROXY_PORT}" \
+  "http://127.0.0.1:${TRAEFIK_PORT}" \
+  "${WORKDIR}/python-example-proxy.log" \
+  --host-header "${PYTHON_EXAMPLE_SERVER_HOST}" \
+  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
+start_header_proxy_bg "${RUST_EXAMPLE_PROXY_PORT}" \
+  "http://127.0.0.1:${TRAEFIK_PORT}" \
+  "${WORKDIR}/rust-example-proxy.log" \
+  --host-header "${RUST_EXAMPLE_SERVER_HOST}" \
+  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
+start_header_proxy_bg "${GO_EXAMPLE_PROXY_PORT}" \
+  "http://127.0.0.1:${TRAEFIK_PORT}" \
+  "${WORKDIR}/go-example-proxy.log" \
+  --host-header "${GO_EXAMPLE_SERVER_HOST}" \
+  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
+start_header_proxy_bg "${PYTHON_SHARED_PROXY_PORT}" \
+  "http://127.0.0.1:${TRAEFIK_PORT}" \
+  "${WORKDIR}/python-shared-proxy.log" \
+  --host-header "${SHARED_SDK_HOST}" \
+  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
+start_header_proxy_bg "${RUST_SHARED_PROXY_PORT}" \
+  "http://127.0.0.1:${TRAEFIK_PORT}" \
+  "${WORKDIR}/rust-shared-proxy.log" \
+  --host-header "${SHARED_SDK_HOST}" \
+  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
+start_header_proxy_bg "${GO_SHARED_PROXY_PORT}" \
+  "http://127.0.0.1:${TRAEFIK_PORT}" \
+  "${WORKDIR}/go-shared-proxy.log" \
+  --host-header "${SHARED_SDK_HOST}" \
+  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
 
 wait_port "${MCP_SMOKE_ANON_PORT}"
 wait_port "${MCP_SMOKE_IDENTITY_PORT}"
 wait_port "${MCP_SMOKE_SESSION_PORT}"
 wait_port "${MCP_SMOKE_BAD_SESSION_PORT}"
+wait_port "${PYTHON_EXAMPLE_PROXY_PORT}"
+wait_port "${RUST_EXAMPLE_PROXY_PORT}"
+wait_port "${GO_EXAMPLE_PROXY_PORT}"
+wait_port "${PYTHON_SHARED_PROXY_PORT}"
+wait_port "${RUST_SHARED_PROXY_PORT}"
+wait_port "${GO_SHARED_PROXY_PORT}"
 
 MCP_INGRESS_PATH="/${SERVER_NAME}/mcp"
 MCP_DIRECT_URL="http://127.0.0.1:${TRAEFIK_PORT}${MCP_INGRESS_PATH}"
@@ -1436,13 +1921,28 @@ MCP_ANON_URL="http://127.0.0.1:${MCP_SMOKE_ANON_PORT}${MCP_INGRESS_PATH}"
 MCP_IDENTITY_URL="http://127.0.0.1:${MCP_SMOKE_IDENTITY_PORT}${MCP_INGRESS_PATH}"
 MCP_SESSION_URL="http://127.0.0.1:${MCP_SMOKE_SESSION_PORT}${MCP_INGRESS_PATH}"
 MCP_BAD_SESSION_URL="http://127.0.0.1:${MCP_SMOKE_BAD_SESSION_PORT}${MCP_INGRESS_PATH}"
+PYTHON_EXAMPLE_URL="http://127.0.0.1:${PYTHON_EXAMPLE_PROXY_PORT}${PYTHON_EXAMPLE_SERVER_ROUTE}"
+RUST_EXAMPLE_URL="http://127.0.0.1:${RUST_EXAMPLE_PROXY_PORT}${RUST_EXAMPLE_SERVER_ROUTE}"
+GO_EXAMPLE_URL="http://127.0.0.1:${GO_EXAMPLE_PROXY_PORT}${GO_EXAMPLE_SERVER_ROUTE}"
+PYTHON_SHARED_URL="http://127.0.0.1:${PYTHON_SHARED_PROXY_PORT}${PYTHON_SHARED_SERVER_ROUTE}"
+RUST_SHARED_URL="http://127.0.0.1:${RUST_SHARED_PROXY_PORT}${RUST_SHARED_SERVER_ROUTE}"
+GO_SHARED_URL="http://127.0.0.1:${GO_SHARED_PROXY_PORT}${GO_SHARED_SERVER_ROUTE}"
+
+echo "[ingress] validating distinct MCP server behaviors across routes"
+wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200 "pong"
+wait_for_mcp_tool_result "${PYTHON_EXAMPLE_URL}" "echo" '{"message":"python example ready"}' 200 "python example ready"
+wait_for_mcp_tool_result "${RUST_EXAMPLE_URL}" "repeat" '{"message":"rust","times":3}' 200 "rustrustrust"
+wait_for_mcp_tool_result "${GO_EXAMPLE_URL}" "lower" '{"message":"GO Example Ready"}' 200 "go example ready"
+wait_for_mcp_tool_result "${PYTHON_SHARED_URL}" "reverse" '{"message":"shared host python"}' 200 "nohtyp tsoh derahs"
+wait_for_mcp_tool_result "${RUST_SHARED_URL}" "word_count" '{"message":"shared host rust route"}' 200 "4"
+wait_for_mcp_tool_result "${GO_SHARED_URL}" "slugify" '{"message":"Shared Host Go Route"}' 200 "shared-host-go-route"
 
 if scenario_selected "smoke-auth"; then
   echo "[mcp] validating raw MCP request edge cases"
   wait_for_http_result \
     "${MCP_DIRECT_URL}" \
     POST \
-    "{\"Host\":\"${SERVER_HOST}\",\"content-type\":\"application/json\",\"accept\":\"application/json, text/event-stream\",\"Mcp-Protocol-Version\":\"2099-01-01\"}" \
+    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=2099-01-01")" \
     text \
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
     400 \
@@ -1450,7 +1950,7 @@ if scenario_selected "smoke-auth"; then
   wait_for_http_result \
     "${MCP_DIRECT_URL}" \
     POST \
-    "{\"Host\":\"${SERVER_HOST}\",\"content-type\":\"text/plain\",\"accept\":\"application/json, text/event-stream\",\"Mcp-Protocol-Version\":\"${MCP_PROTOCOL_VERSION}\"}" \
+    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=text/plain" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
     text \
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
     403 \
@@ -1458,7 +1958,7 @@ if scenario_selected "smoke-auth"; then
   wait_for_http_result \
     "${MCP_DIRECT_URL}" \
     POST \
-    "{\"Host\":\"${SERVER_HOST}\",\"content-type\":\"application/json\",\"accept\":\"application/json, text/event-stream\",\"Mcp-Protocol-Version\":\"${MCP_PROTOCOL_VERSION}\"}" \
+    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
     text \
     '' \
     403 \
@@ -1466,7 +1966,7 @@ if scenario_selected "smoke-auth"; then
   wait_for_http_result \
     "${MCP_DIRECT_URL}" \
     POST \
-    "{\"Host\":\"${SERVER_HOST}\",\"content-type\":\"application/json\",\"accept\":\"application/json, text/event-stream\",\"Mcp-Protocol-Version\":\"${MCP_PROTOCOL_VERSION}\"}" \
+    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
     text \
     '{"jsonrpc":' \
     403 \
@@ -1474,7 +1974,7 @@ if scenario_selected "smoke-auth"; then
   wait_for_http_result \
     "${MCP_DIRECT_URL}" \
     POST \
-    "{\"Host\":\"${SERVER_HOST}\",\"content-type\":\"application/json\",\"accept\":\"application/json, text/event-stream\",\"Mcp-Protocol-Version\":\"${MCP_PROTOCOL_VERSION}\"}" \
+    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
     text \
     '{"jsonrpc":"2.0","id":1,"params":{}}' \
     403 \
@@ -1482,21 +1982,21 @@ if scenario_selected "smoke-auth"; then
   wait_for_http_result \
     "${MCP_DIRECT_URL}" \
     POST \
-    "{\"Host\":\"${SERVER_HOST}\",\"content-type\":\"application/json\",\"accept\":\"application/json, text/event-stream\"}" \
+    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream")" \
     text \
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
     200
   wait_for_http_result \
     "${MCP_DIRECT_URL}" \
     POST \
-    "{\"Host\":\"${SERVER_HOST}\",\"content-type\":\"application/json\",\"accept\":\"application/json, text/event-stream\",\"Mcp-Protocol-Version\":\"${MCP_PROTOCOL_VERSION}\"}" \
+    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
     chunked-text \
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
     200
   wait_for_http_result \
     "${MCP_DIRECT_URL}" \
     GET \
-    "{\"Host\":\"${SERVER_HOST}\",\"accept\":\"text/event-stream\",\"Mcp-Protocol-Version\":\"${MCP_PROTOCOL_VERSION}\"}" \
+    "$(build_headers_json "Host=${SERVER_HOST}" "accept=text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
     none \
     '' \
     400 \
@@ -1504,7 +2004,7 @@ if scenario_selected "smoke-auth"; then
   wait_for_http_result \
     "${MCP_DIRECT_URL}" \
     DELETE \
-    "{\"Host\":\"${SERVER_HOST}\",\"Mcp-Protocol-Version\":\"${MCP_PROTOCOL_VERSION}\"}" \
+    "$(build_headers_json "Host=${SERVER_HOST}" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
     none \
     '' \
     400 \
@@ -1600,6 +2100,19 @@ import urllib.request
 
 base = os.environ["MCP_BASE"]
 protocol = os.environ["MCP_PROTOCOL_VERSION"]
+initialize_payload = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": protocol,
+        "capabilities": {},
+        "clientInfo": {"name": "mcp-runtime-e2e", "version": "1.0.0"},
+    },
+}
+
+
+import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
 
 
 def post(msg, mcp_session_id=None):
@@ -1618,20 +2131,29 @@ def post(msg, mcp_session_id=None):
         return exc.code, exc.headers.get("Mcp-Session-Id") or mcp_session_id, exc.read().decode()
 
 
-status, mcp_session_id, body = post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
-if status != 200 or not mcp_session_id:
-    raise AssertionError(f"initialize failed before trust update: {status} {body}")
+status, mcp_session_id, body = post(initialize_payload)
+check(
+    status == 200 and bool(mcp_session_id),
+    "trust pre-update initialize succeeded",
+    f"initialize failed before trust update: {status} {body}",
+)
 
 status, _, body = post({"jsonrpc": "2.0", "method": "notifications/initialized"}, mcp_session_id=mcp_session_id)
-if status not in (200, 202):
-    raise AssertionError(f"notifications/initialized failed: {status} {body}")
+check(
+    status in (200, 202),
+    "trust pre-update notifications/initialized succeeded",
+    f"notifications/initialized failed: {status} {body}",
+)
 
 status, _, body = post(
     {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "echo", "arguments": {"message": "hello"}}},
     mcp_session_id=mcp_session_id,
 )
-if status != 200 or "hello" not in body:
-    raise AssertionError(f"expected echo to succeed before trust update, got {status}: {body}")
+check(
+    status == 200 and "hello" in body,
+    "trust pre-update echo allowed",
+    f"expected echo to succeed before trust update, got {status}: {body}",
+)
 print("echo allow:", body)
 
 status, _, body = post(
@@ -1639,8 +2161,11 @@ status, _, body = post(
     mcp_session_id=mcp_session_id,
 )
 payload = json.loads(body)
-if status != 403 or payload.get("error") != "trust_too_low":
-    raise AssertionError(f"expected upper to be denied before trust update, got {status}: {body}")
+check(
+    status == 403 and payload.get("error") == "trust_too_low",
+    "trust pre-update upper denied with trust_too_low",
+    f"expected upper to be denied before trust update, got {status}: {body}",
+)
 print("upper deny:", body)
 PY
 
@@ -1680,6 +2205,11 @@ base = os.environ["MCP_BASE"]
 protocol = os.environ["MCP_PROTOCOL_VERSION"]
 
 
+import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
+
+initialize_payload = make_initialize_payload(protocol)
+
+
 def post(msg, mcp_session_id=None):
     headers = {
         "content-type": "application/json",
@@ -1696,22 +2226,37 @@ def post(msg, mcp_session_id=None):
         return exc.code, exc.headers.get("Mcp-Session-Id") or mcp_session_id, exc.read().decode()
 
 
-status, mcp_session_id, body = post({"jsonrpc": "2.0", "id": 6, "method": "initialize", "params": {}})
-if status != 200 or not mcp_session_id:
-    raise AssertionError(f"initialize failed after trust update: {status} {body}")
+status, mcp_session_id, body = post({
+    **initialize_payload,
+    "id": 6,
+})
+check(
+    status == 200 and bool(mcp_session_id),
+    "trust post-update initialize succeeded",
+    f"initialize failed after trust update: {status} {body}",
+)
 
 status, _, body = post({"jsonrpc": "2.0", "method": "notifications/initialized"}, mcp_session_id=mcp_session_id)
-if status not in (200, 202):
-    raise AssertionError(f"notifications/initialized failed: {status} {body}")
+check(
+    status in (200, 202),
+    "trust post-update notifications/initialized succeeded",
+    f"notifications/initialized failed: {status} {body}",
+)
 
 status, _, body = post(
     {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "upper", "arguments": {"message": "governance"}}},
     mcp_session_id=mcp_session_id,
 )
-if status != 200:
-    raise AssertionError(f"expected upper to succeed after trust update, got {status}: {body}")
-if "GOVERNANCE" not in body:
-    raise AssertionError(f"expected uppercase result, got {body}")
+check(
+    status == 200,
+    "trust post-update upper returned 200",
+    f"expected upper to succeed after trust update, got {status}: {body}",
+)
+check(
+    "GOVERNANCE" in body,
+    "trust post-update upper returned GOVERNANCE",
+    f"expected uppercase result, got {body}",
+)
 print("upper allow:", body)
 PY
 
@@ -1766,6 +2311,9 @@ base = os.environ["MCP_BASE"]
 protocol = os.environ["MCP_PROTOCOL_VERSION"]
 
 
+import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
+
+
 def post(msg, mcp_session_id=None):
     headers = {
         "content-type": "application/json",
@@ -1783,20 +2331,29 @@ def post(msg, mcp_session_id=None):
 
 
 status, mcp_session_id, body = post({"jsonrpc": "2.0", "id": 8, "method": "initialize", "params": {}})
-if status != 200 or not mcp_session_id:
-    raise AssertionError(f"initialize failed after grant update: {status} {body}")
+check(
+    status == 200 and bool(mcp_session_id),
+    "grant update initialize succeeded",
+    f"initialize failed after grant update: {status} {body}",
+)
 
 status, _, body = post({"jsonrpc": "2.0", "method": "notifications/initialized"}, mcp_session_id=mcp_session_id)
-if status not in (200, 202):
-    raise AssertionError(f"notifications/initialized failed: {status} {body}")
+check(
+    status in (200, 202),
+    "grant update notifications/initialized succeeded",
+    f"notifications/initialized failed: {status} {body}",
+)
 
 status, _, body = post(
     {"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": "echo", "arguments": {"message": "analytics"}}},
     mcp_session_id=mcp_session_id,
 )
 payload = json.loads(body)
-if status != 403 or payload.get("error") != "tool_denied":
-    raise AssertionError(f"expected echo to be denied after grant update, got {status}: {body}")
+check(
+    status == 403 and payload.get("error") == "tool_denied",
+    "grant update echo denied with tool_denied",
+    f"expected echo to be denied after grant update, got {status}: {body}",
+)
 print("echo deny:", body)
 PY
 fi
@@ -1891,19 +2448,12 @@ servers:
     envVars:
       - name: PORT
         value: "8090"
-      - name: MCP_SENTINEL_INGEST_URL
-        value: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
-      - name: OTEL_EXPORTER_OTLP_ENDPOINT
-        value: "http://otel-collector.mcp-sentinel.svc.cluster.local:4318"
-      - name: OTEL_SERVICE_NAME
-        value: "${OAUTH_SERVER_NAME}"
-    secretEnvVars:
-      - name: MCP_SENTINEL_API_KEY
-        secretKeyRef:
-          name: ${SERVER_SECRET_NAME}
-          key: api-key
+      - name: MCP_PATH
+        value: "/${OAUTH_SERVER_NAME}/mcp"
     tools:
       - name: aaa-ping
+        requiredTrust: low
+      - name: add
         requiredTrust: low
       - name: upper
         requiredTrust: low
@@ -1965,11 +2515,16 @@ spec:
   toolRules:
     - name: aaa-ping
       decision: allow
+    - name: add
+      decision: allow
     - name: upper
       decision: allow
 EOF
   
   echo "[oauth] starting local ingress proxies"
+  # mcp_header_proxy.py uses NAME=VALUE syntax: the part after the first '='
+  # becomes the HTTP header value, so "Authorization=Bearer <token>" sets the
+  # Authorization header to "Bearer <token>" (not "=Bearer <token>").
   start_header_proxy_bg "${MCP_SMOKE_OAUTH_ANON_PORT}" \
   "http://127.0.0.1:${TRAEFIK_PORT}" \
   "${WORKDIR}/mcp-smoke-oauth-anon-proxy.log" \
@@ -2015,18 +2570,34 @@ import json
 import os
 import urllib.request
 
+
+import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
+
+
 req = urllib.request.Request(os.environ["MCP_OAUTH_METADATA_URL"], headers={"accept": "application/json"})
 resp = urllib.request.urlopen(req, timeout=10)
 doc = json.loads(resp.read().decode())
 
-if resp.status != 200:
-    raise AssertionError(f"expected 200 from protected resource metadata, got {resp.status}")
-if doc.get("authorization_servers") != [os.environ["OAUTH_ISSUER_URL"]]:
-    raise AssertionError(f"unexpected authorization_servers: {doc}")
-if doc.get("resource") != os.environ["OAUTH_RESOURCE_URL"]:
-    raise AssertionError(f"unexpected resource URL: {doc}")
-if "header" not in doc.get("bearer_methods_supported", []):
-    raise AssertionError(f"expected bearer_methods_supported to include header, got {doc}")
+check(
+    resp.status == 200,
+    "oauth protected-resource metadata returned 200",
+    f"expected 200 from protected resource metadata, got {resp.status}",
+)
+check(
+    doc.get("authorization_servers") == [os.environ["OAUTH_ISSUER_URL"]],
+    "oauth metadata authorization_servers matched issuer",
+    f"unexpected authorization_servers: {doc}",
+)
+check(
+    doc.get("resource") == os.environ["OAUTH_RESOURCE_URL"],
+    "oauth metadata resource URL matched",
+    f"unexpected resource URL: {doc}",
+)
+check(
+    "header" in doc.get("bearer_methods_supported", []),
+    "oauth metadata bearer_methods_supported includes header",
+    f"expected bearer_methods_supported to include header, got {doc}",
+)
 print("oauth metadata:", json.dumps(doc))
 PY
 
@@ -2036,7 +2607,7 @@ PY
   wait_for_http_result \
     "${MCP_OAUTH_DIRECT_URL}" \
     POST \
-    "{\"Host\":\"${OAUTH_SERVER_HOST}\",\"content-type\":\"application/json\",\"accept\":\"application/json, text/event-stream\",\"Mcp-Protocol-Version\":\"${MCP_PROTOCOL_VERSION}\",\"Authorization\":\"${OAUTH_VALID_TOKEN}\"}" \
+    "$(build_headers_json "Host=${OAUTH_SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" "Authorization=${OAUTH_VALID_TOKEN}")" \
     text \
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
     401 \
@@ -2047,11 +2618,11 @@ PY
   run_mcp_smoke_expect "mcp-smoke-oauth-invalid-token" "${MCP_OAUTH_INVALID_URL}" false "invalid_token"
 
   echo "[oauth] validating valid bearer token MCP flow"
-  wait_for_mcp_tool_result "${MCP_OAUTH_VALID_URL}" "aaa-ping" '{}' 200
+  wait_for_mcp_tool_result "${MCP_OAUTH_VALID_URL}" "add" '{"a":7,"b":5}' 200 "12"
   wait_for_http_result \
     "${MCP_OAUTH_DIRECT_URL}" \
     POST \
-    "{\"Host\":\"${OAUTH_SERVER_HOST}\",\"content-type\":\"application/json\",\"accept\":\"application/json, text/event-stream\",\"Mcp-Protocol-Version\":\"${MCP_PROTOCOL_VERSION}\",\"Authorization\":\"Bearer ${OAUTH_VALID_TOKEN}\"}" \
+    "$(build_headers_json "Host=${OAUTH_SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" "Authorization=Bearer ${OAUTH_VALID_TOKEN}")" \
     chunked-text \
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
     200
@@ -2113,6 +2684,11 @@ oauth_valid_token = os.environ["OAUTH_VALID_TOKEN"]
 protocol = os.environ["MCP_PROTOCOL_VERSION"]
 grant_name = f"{server_name}-grant"
 oauth_public_base = f"http://{oauth_server_host}"
+server_mcp_path = f"/{server_name}/mcp"
+oauth_mcp_path = f"/{oauth_server_name}/mcp"
+
+
+import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
 
 
 def request(url, *, method="GET", headers=None, body=None):
@@ -2134,10 +2710,17 @@ def request(url, *, method="GET", headers=None, body=None):
 
 def expect_status(url, status, *, method="GET", headers=None, body=None, contains=None):
     got_status, _, got_body = request(url, method=method, headers=headers, body=body)
-    if got_status != status:
-        raise AssertionError(f"{method} {url} returned {got_status}: {got_body}")
-    if contains and contains not in got_body:
-        raise AssertionError(f"{method} {url} missing {contains!r}: {got_body}")
+    check(
+        got_status == status,
+        f"{method} {url} returned {status}",
+        f"{method} {url} returned {got_status}: {got_body}",
+    )
+    if contains:
+        check(
+            contains in got_body,
+            f"{method} {url} contained {contains!r}",
+            f"{method} {url} missing {contains!r}: {got_body}",
+        )
     return got_body
 
 
@@ -2157,19 +2740,41 @@ def expect_mcp_initialize(url, *, headers=None, status=200, contains=None):
         url,
         method="POST",
         headers=req_headers,
-        body={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        body={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": protocol,
+                "capabilities": {},
+                "clientInfo": {"name": "mcp-runtime-e2e", "version": "1.0.0"},
+            },
+        },
     )
-    if got_status != status:
-        raise AssertionError(f"POST {url} initialize returned {got_status}: {got_body}")
-    if contains and contains not in got_body:
-        raise AssertionError(f"POST {url} initialize missing {contains!r}: {got_body}")
+    check(
+        got_status == status,
+        f"POST {url} initialize returned {status}",
+        f"POST {url} initialize returned {got_status}: {got_body}",
+    )
+    if contains:
+        check(
+            contains in got_body,
+            f"POST {url} initialize contained {contains!r}",
+            f"POST {url} initialize missing {contains!r}: {got_body}",
+        )
     if got_status == 200:
         doc = json.loads(got_body)
-        if "result" not in doc:
-            raise AssertionError(f"POST {url} initialize missing result: {doc}")
+        check(
+            "result" in doc,
+            f"POST {url} initialize returned result",
+            f"POST {url} initialize missing result: {doc}",
+        )
         header_map = {k.lower(): v for k, v in got_headers.items()}
-        if "mcp-session-id" not in header_map:
-            raise AssertionError(f"POST {url} initialize missing Mcp-Session-Id: {got_headers}")
+        check(
+            "mcp-session-id" in header_map,
+            f"POST {url} initialize returned Mcp-Session-Id",
+            f"POST {url} initialize missing Mcp-Session-Id: {got_headers}",
+        )
     return got_body
 
 
@@ -2178,8 +2783,11 @@ auth_headers = {"x-api-key": api_key}
 # Gateway-routed UI, API, and example MCP routes.
 gateway_summary = expect_json(f"{gateway_base}/api/dashboard/summary", headers=auth_headers)
 for key in ("total_events", "active_servers", "active_grants", "active_sessions"):
-    if key not in gateway_summary:
-        raise AssertionError(f"gateway dashboard summary missing {key}: {gateway_summary}")
+    check(
+        key in gateway_summary,
+        f"gateway dashboard summary contains {key}",
+        f"gateway dashboard summary missing {key}: {gateway_summary}",
+    )
 expect_status(f"{gateway_base}/ping", 200, contains="OK")
 expect_status(f"{gateway_base}/", 200, contains="MCP Sentinel Control Plane")
 expect_status(f"{gateway_base}/config.js", 200, contains="window.MCP_API_BASE")
@@ -2198,7 +2806,7 @@ expect_status(f"{ui_base}/styles.css", 200, contains=".canvas")
 # Direct MCP proxy and upstream server surfaces.
 expect_status(f"{server_proxy_base}/health", 200, contains="ok")
 expect_mcp_initialize(
-    f"{server_proxy_base}/",
+    f"{server_proxy_base}{server_mcp_path}",
     headers={
         "X-MCP-Human-ID": human_id,
         "X-MCP-Agent-ID": agent_id,
@@ -2206,75 +2814,120 @@ expect_mcp_initialize(
     },
 )
 expect_status(f"{server_upstream_base}/health", 200, contains='"ok":true')
-expect_mcp_initialize(f"{server_upstream_base}/")
+expect_mcp_initialize(f"{server_upstream_base}{server_mcp_path}")
 
 expect_status(f"{oauth_proxy_base}/health", 200, contains="ok")
 oauth_metadata = expect_json(f"{oauth_proxy_base}/.well-known/oauth-protected-resource")
-if oauth_metadata.get("authorization_servers") != [oauth_issuer_url]:
-    raise AssertionError(f"unexpected oauth metadata authorization servers: {oauth_metadata}")
-if oauth_metadata.get("bearer_methods_supported") != ["header"]:
-    raise AssertionError(f"unexpected oauth metadata bearer methods: {oauth_metadata}")
-if oauth_metadata.get("resource") != f"{oauth_public_base}/":
-    raise AssertionError(f"unexpected oauth metadata resource URL: {oauth_metadata}")
+check(
+    oauth_metadata.get("authorization_servers") == [oauth_issuer_url],
+    "oauth proxy metadata authorization_servers matched issuer",
+    f"unexpected oauth metadata authorization servers: {oauth_metadata}",
+)
+check(
+    oauth_metadata.get("bearer_methods_supported") == ["header"],
+    "oauth proxy metadata bearer_methods_supported matched",
+    f"unexpected oauth metadata bearer methods: {oauth_metadata}",
+)
+check(
+    oauth_metadata.get("resource") == f"{oauth_public_base}/",
+    "oauth proxy metadata root resource URL matched",
+    f"unexpected oauth metadata resource URL: {oauth_metadata}",
+)
 oauth_metadata_path = expect_json(
     f"{oauth_proxy_base}/.well-known/oauth-protected-resource/{oauth_server_name}/mcp"
 )
-if oauth_metadata_path.get("resource") != f"{oauth_public_base}/{oauth_server_name}/mcp":
-    raise AssertionError(f"unexpected oauth metadata path resource URL: {oauth_metadata_path}")
+check(
+    oauth_metadata_path.get("resource") == f"{oauth_public_base}/{oauth_server_name}/mcp",
+    "oauth proxy metadata path resource URL matched",
+    f"unexpected oauth metadata path resource URL: {oauth_metadata_path}",
+)
 expect_mcp_initialize(
-    f"{oauth_proxy_base}/",
+    f"{oauth_proxy_base}{oauth_mcp_path}",
     headers={"Authorization": f"Bearer {oauth_valid_token}"},
 )
 expect_status(f"{oauth_upstream_base}/health", 200, contains='"ok":true')
-expect_mcp_initialize(f"{oauth_upstream_base}/")
+expect_mcp_initialize(f"{oauth_upstream_base}{oauth_mcp_path}")
 
 # API service surfaces.
 expect_status(f"{api_base}/health", 200, contains='"ok":true')
 expect_status(api_metrics_url, 200, contains="# HELP")
 events = expect_json(f"{api_base}/api/events?limit=5", headers=auth_headers)
-if not events.get("events"):
-    raise AssertionError(f"expected /api/events to return events: {events}")
+check(
+    bool(events.get("events")),
+    "api /api/events returned events",
+    f"expected /api/events to return events: {events}",
+)
 stats = expect_json(f"{api_base}/api/stats", headers=auth_headers)
-if int(stats.get("events_total", 0)) < 1:
-    raise AssertionError(f"expected /api/stats events_total >= 1: {stats}")
+check(
+    int(stats.get("events_total", 0)) >= 1,
+    "api /api/stats events_total >= 1",
+    f"expected /api/stats events_total >= 1: {stats}",
+)
 sources = expect_json(f"{api_base}/api/sources", headers=auth_headers)
-if not sources.get("sources"):
-    raise AssertionError(f"expected /api/sources to return sources: {sources}")
+check(
+    bool(sources.get("sources")),
+    "api /api/sources returned sources",
+    f"expected /api/sources to return sources: {sources}",
+)
 event_types = expect_json(f"{api_base}/api/event-types", headers=auth_headers)
-if not event_types.get("event_types"):
-    raise AssertionError(f"expected /api/event-types to return event types: {event_types}")
+check(
+    bool(event_types.get("event_types")),
+    "api /api/event-types returned event types",
+    f"expected /api/event-types to return event types: {event_types}",
+)
 filtered = expect_json(
     f"{api_base}/api/events/filter?server={urllib.parse.quote(server_name)}&limit=5",
     headers=auth_headers,
 )
-if not filtered.get("events"):
-    raise AssertionError(f"expected /api/events/filter to return events: {filtered}")
+check(
+    bool(filtered.get("events")),
+    "api /api/events/filter returned events",
+    f"expected /api/events/filter to return events: {filtered}",
+)
 summary = expect_json(f"{api_base}/api/dashboard/summary", headers=auth_headers)
 for key in ("total_events", "active_servers", "active_grants", "active_sessions"):
-    if key not in summary:
-        raise AssertionError(f"dashboard summary missing {key}: {summary}")
+    check(
+        key in summary,
+        f"api dashboard summary contains {key}",
+        f"dashboard summary missing {key}: {summary}",
+    )
 servers = expect_json(f"{api_base}/api/runtime/servers", headers=auth_headers)
 server_names = {item.get("name") for item in servers.get("servers", [])}
-if server_name not in server_names or oauth_server_name not in server_names:
-    raise AssertionError(f"runtime servers missing expected entries: {servers}")
+check(
+    server_name in server_names and oauth_server_name in server_names,
+    "runtime servers contain expected entries",
+    f"runtime servers missing expected entries: {servers}",
+)
 grants = expect_json(f"{api_base}/api/runtime/grants", headers=auth_headers)
 grant_names = {item.get("name") for item in grants.get("grants", [])}
-if grant_name not in grant_names:
-    raise AssertionError(f"runtime grants missing {grant_name}: {grants}")
+check(
+    grant_name in grant_names,
+    f"runtime grants contain {grant_name}",
+    f"runtime grants missing {grant_name}: {grants}",
+)
 sessions = expect_json(f"{api_base}/api/runtime/sessions", headers=auth_headers)
 session_names = {item.get("name") for item in sessions.get("sessions", [])}
-if session_id not in session_names:
-    raise AssertionError(f"runtime sessions missing {session_id}: {sessions}")
+check(
+    session_id in session_names,
+    f"runtime sessions contain {session_id}",
+    f"runtime sessions missing {session_id}: {sessions}",
+)
 components = expect_json(f"{api_base}/api/runtime/components", headers=auth_headers)
 component_keys = {item.get("key") for item in components.get("components", [])}
-if not {"api", "gateway", "ui"}.issubset(component_keys):
-    raise AssertionError(f"runtime components missing expected keys: {components}")
+check(
+    {"api", "gateway", "ui"}.issubset(component_keys),
+    "runtime components contain api/gateway/ui",
+    f"runtime components missing expected keys: {components}",
+)
 policy = expect_json(
     f"{api_base}/api/runtime/policy?namespace=mcp-servers&server={urllib.parse.quote(server_name)}",
     headers=auth_headers,
 )
-if policy.get("server", {}).get("name") != server_name:
-    raise AssertionError(f"runtime policy missing server {server_name}: {policy}")
+check(
+    policy.get("server", {}).get("name") == server_name,
+    f"runtime policy resolved server {server_name}",
+    f"runtime policy missing server {server_name}: {policy}",
+)
 
 # Runtime mutation paths through the API.
 disable = expect_json(
@@ -2282,29 +2935,41 @@ disable = expect_json(
     method="POST",
     headers=auth_headers,
 )
-if disable.get("disabled") is not True:
-    raise AssertionError(f"grant disable response unexpected: {disable}")
+check(
+    disable.get("disabled") is True,
+    "grant disable response marked disabled=true",
+    f"grant disable response unexpected: {disable}",
+)
 enable = expect_json(
     f"{api_base}/api/runtime/grants/mcp-servers/{urllib.parse.quote(grant_name)}/enable",
     method="POST",
     headers=auth_headers,
 )
-if enable.get("disabled") is not False:
-    raise AssertionError(f"grant enable response unexpected: {enable}")
+check(
+    enable.get("disabled") is False,
+    "grant enable response marked disabled=false",
+    f"grant enable response unexpected: {enable}",
+)
 revoke = expect_json(
     f"{api_base}/api/runtime/sessions/mcp-servers/{urllib.parse.quote(session_id)}/revoke",
     method="POST",
     headers=auth_headers,
 )
-if revoke.get("revoked") is not True:
-    raise AssertionError(f"session revoke response unexpected: {revoke}")
+check(
+    revoke.get("revoked") is True,
+    "session revoke response marked revoked=true",
+    f"session revoke response unexpected: {revoke}",
+)
 unrevoke = expect_json(
     f"{api_base}/api/runtime/sessions/mcp-servers/{urllib.parse.quote(session_id)}/unrevoke",
     method="POST",
     headers=auth_headers,
 )
-if unrevoke.get("revoked") is not False:
-    raise AssertionError(f"session unrevoke response unexpected: {unrevoke}")
+check(
+    unrevoke.get("revoked") is False,
+    "session unrevoke response marked revoked=false",
+    f"session unrevoke response unexpected: {unrevoke}",
+)
 expect_json(
     f"{api_base}/api/runtime/actions/restart",
     status=400,
@@ -2330,8 +2995,11 @@ ingest_event = expect_json(
         "payload": {"service": "ingest", "route": "/events"},
     },
 )
-if ingest_event.get("ok") is not True:
-    raise AssertionError(f"ingest /events response unexpected: {ingest_event}")
+check(
+    ingest_event.get("ok") is True,
+    "ingest /events returned ok=true",
+    f"ingest /events response unexpected: {ingest_event}",
+)
 expect_status(f"{processor_base}/health", 200, contains="ok")
 expect_status(f"{processor_base}/metrics", 200, contains="# HELP")
 
@@ -2420,6 +3088,9 @@ loki_base = os.environ["LOKI_BASE"]
 sentinel_base = os.environ["SENTINEL_BASE"]
 
 
+import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
+
+
 def get_json(url, headers=None, retries=30, delay=2):
     last = None
     for _ in range(retries):
@@ -2439,15 +3110,16 @@ def wait_for_json(url, predicate, *, headers=None, retries=60, delay=2, descript
         try:
             last = get_json(url, headers=headers, retries=1, delay=delay)
             if predicate(last):
+                ok(f"waited for {description}")
                 return last
         except Exception as exc:
             last_error = exc
         time.sleep(delay)
     if last is not None:
-        raise AssertionError(f"timed out waiting for {description}: {json.dumps(last, indent=2)}")
+        fail(f"timed out waiting for {description}: {json.dumps(last, indent=2)}")
     if last_error is not None:
         raise last_error
-    raise AssertionError(f"timed out waiting for {description}")
+    fail(f"timed out waiting for {description}")
 
 def post_json(url, body, headers):
     data = json.dumps(body).encode()
@@ -2480,8 +3152,11 @@ status, resp_body = post_json(
     pii_event_body,
     {"content-type": "application/json", "x-api-key": api_key},
 )
-if status not in (200, 202):
-    raise AssertionError(f"pii redaction: unexpected status {status}, body={resp_body}")
+check(
+    status in (200, 202),
+    "pii redaction ingest accepted event",
+    f"pii redaction: unexpected status {status}, body={resp_body}",
+)
 
 pii_events = wait_for_json(
     f"{api_base}/events/filter?source={urllib.parse.quote(pii_source)}&event_type=pii.check&limit=1",
@@ -2492,16 +3167,31 @@ pii_events = wait_for_json(
 pii_payload = payload_dict(pii_events[0])
 serialized_pii = json.dumps(pii_payload)
 
-if "example.com" in serialized_pii or "202-555" in serialized_pii or "tok-abcdef" in serialized_pii:
-    raise AssertionError(f"pii redaction failed: found raw PII in payload {serialized_pii}")
-if pii_payload.get("email") != "[redacted]":
-    raise AssertionError(f"pii redaction failed for email: {pii_payload}")
-if pii_payload.get("phone") != "[redacted]":
-    raise AssertionError(f"pii redaction failed for phone: {pii_payload}")
-if not str(pii_payload.get("user_id", "")).startswith("hash:"):
-    raise AssertionError(f"pii redaction failed to hash uuid: {pii_payload}")
-if pii_payload.get("secret") != "[redacted]":
-    raise AssertionError(f"pii redaction failed for secret: {pii_payload}")
+check(
+    "example.com" not in serialized_pii and "202-555" not in serialized_pii and "tok-abcdef" not in serialized_pii,
+    "pii redaction removed raw PII from payload",
+    f"pii redaction failed: found raw PII in payload {serialized_pii}",
+)
+check(
+    pii_payload.get("email") == "[redacted]",
+    "pii redaction masked email",
+    f"pii redaction failed for email: {pii_payload}",
+)
+check(
+    pii_payload.get("phone") == "[redacted]",
+    "pii redaction masked phone",
+    f"pii redaction failed for phone: {pii_payload}",
+)
+check(
+    str(pii_payload.get("user_id", "")).startswith("hash:"),
+    "pii redaction hashed uuid",
+    f"pii redaction failed to hash uuid: {pii_payload}",
+)
+check(
+    pii_payload.get("secret") == "[redacted]",
+    "pii redaction masked secret",
+    f"pii redaction failed for secret: {pii_payload}",
+)
 
 
 allow_aaa_ping = wait_for_json(
@@ -2610,14 +3300,14 @@ sources = wait_for_json(
     lambda doc: all(
         int(item.get("count", 0)) >= 1
         for item in doc.get("sources", [])
-        if item.get("source") in {server_name, oauth_server_name, "mcp-example-server"}
-    ) and {item.get("source") for item in doc.get("sources", [])} >= {server_name, oauth_server_name, "mcp-example-server"},
+        if item.get("source") in {server_name, oauth_server_name}
+    ) and {item.get("source") for item in doc.get("sources", [])} >= {server_name, oauth_server_name},
     headers=headers,
     description="analytics sources",
 ).get("sources", [])
 event_types = wait_for_json(
     f"{api_base}/event-types",
-    lambda doc: {item.get("event_type") for item in doc.get("event_types", [])} >= {"mcp.request", "tool.call", "resource.read", "prompt.render"},
+    lambda doc: {item.get("event_type") for item in doc.get("event_types", [])} >= {"mcp.request", "pii.check", "service.route.check"},
     headers=headers,
     description="analytics event types",
 ).get("event_types", [])
@@ -2665,16 +3355,31 @@ deny_payload = deny_upper[0].get("payload", {})
 deny_echo_payload = deny_echo[0].get("payload", {})
 allow_payload = allow_upper[0].get("payload", {})
 oauth_allow_payload = oauth_allow_aaa_ping[0].get("payload", {})
-if deny_payload.get("reason") != "trust_too_low":
-    raise AssertionError(f"unexpected deny payload: {deny_payload}")
-if deny_payload.get("required_trust") != "medium":
-    raise AssertionError(f"expected required_trust=medium, got {deny_payload}")
-if deny_payload.get("effective_trust") != "low":
-    raise AssertionError(f"expected effective_trust=low, got {deny_payload}")
-if deny_echo_payload.get("reason") != "tool_denied":
-    raise AssertionError(f"unexpected deny echo payload: {deny_echo_payload}")
-if allow_payload.get("effective_trust") != "medium":
-    raise AssertionError(f"expected effective_trust=medium after update, got {allow_payload}")
+check(
+    deny_payload.get("reason") == "trust_too_low",
+    "deny payload reason is trust_too_low",
+    f"unexpected deny payload: {deny_payload}",
+)
+check(
+    deny_payload.get("required_trust") == "medium",
+    "deny payload required_trust is medium",
+    f"expected required_trust=medium, got {deny_payload}",
+)
+check(
+    deny_payload.get("effective_trust") == "low",
+    "deny payload effective_trust is low",
+    f"expected effective_trust=low, got {deny_payload}",
+)
+check(
+    deny_echo_payload.get("reason") == "tool_denied",
+    "deny echo payload reason is tool_denied",
+    f"unexpected deny echo payload: {deny_echo_payload}",
+)
+check(
+    allow_payload.get("effective_trust") == "medium",
+    "allow payload effective_trust updated to medium",
+    f"expected effective_trust=medium after update, got {allow_payload}",
+)
 for reason in (
     "missing_identity",
     "missing_session",
@@ -2686,11 +3391,17 @@ for reason in (
     "tool_not_granted",
     "tool_denied",
 ):
-    if reason not in server_deny_reasons:
-        raise AssertionError(f"missing server deny reason {reason}: {server_deny_reasons}")
+    check(
+        reason in server_deny_reasons,
+        f"server deny reasons include {reason}",
+        f"missing server deny reason {reason}: {server_deny_reasons}",
+    )
 for reason in ("missing_bearer_token", "invalid_token"):
-    if reason not in oauth_deny_reasons:
-        raise AssertionError(f"missing oauth deny reason {reason}: {oauth_deny_reasons}")
+    check(
+        reason in oauth_deny_reasons,
+        f"oauth deny reasons include {reason}",
+        f"missing oauth deny reason {reason}: {oauth_deny_reasons}",
+    )
 for rpc_method in (
     "initialize",
     "notifications/initialized",
@@ -2701,8 +3412,11 @@ for rpc_method in (
     "resources/read",
     "tools/call",
 ):
-    if rpc_method not in routing_methods:
-        raise AssertionError(f"missing gateway audit event for {rpc_method}: {routing_methods}")
+    check(
+        rpc_method in routing_methods,
+        f"gateway audit events include {rpc_method}",
+        f"missing gateway audit event for {rpc_method}: {routing_methods}",
+    )
 for rpc_method in (
     "initialize",
     "notifications/initialized",
@@ -2713,24 +3427,43 @@ for rpc_method in (
     "resources/read",
     "tools/call",
 ):
-    if rpc_method not in oauth_routing_methods:
-        raise AssertionError(f"missing oauth gateway audit event for {rpc_method}: {oauth_routing_methods}")
-if source_counts.get(server_name, 0) < 1:
-    raise AssertionError(f"missing gateway source counts for {server_name}: {source_counts}")
-if source_counts.get(oauth_server_name, 0) < 1:
-    raise AssertionError(f"missing gateway source counts for {oauth_server_name}: {source_counts}")
-if source_counts.get("mcp-example-server", 0) < 1:
-    raise AssertionError(f"missing upstream server analytics source: {source_counts}")
-for event_type in ("mcp.request", "tool.call", "resource.read", "prompt.render"):
-    if event_type_counts.get(event_type, 0) < 1:
-        raise AssertionError(f"missing analytics event type {event_type}: {event_type_counts}")
+    check(
+        rpc_method in oauth_routing_methods,
+        f"oauth gateway audit events include {rpc_method}",
+        f"missing oauth gateway audit event for {rpc_method}: {oauth_routing_methods}",
+    )
+check(
+    source_counts.get(server_name, 0) >= 1,
+    f"gateway source counts include {server_name}",
+    f"missing gateway source counts for {server_name}: {source_counts}",
+)
+check(
+    source_counts.get(oauth_server_name, 0) >= 1,
+    f"gateway source counts include {oauth_server_name}",
+    f"missing gateway source counts for {oauth_server_name}: {source_counts}",
+)
+for event_type in ("mcp.request", "pii.check", "service.route.check"):
+    check(
+        event_type_counts.get(event_type, 0) >= 1,
+        f"analytics event types include {event_type}",
+        f"missing analytics event type {event_type}: {event_type_counts}",
+    )
 for status in (200, 401, 403):
-    if status not in server_statuses:
-        raise AssertionError(f"missing server audit status {status}: {server_statuses}")
-if int(stats.get("events_total", 0)) < 8:
-    raise AssertionError(f"expected at least 8 events after smoke and policy checks, got {stats}")
-if oauth_allow_payload.get("human_id") != oauth_human_id or oauth_allow_payload.get("agent_id") != oauth_agent_id:
-    raise AssertionError(f"unexpected oauth allow identity payload: {oauth_allow_payload}")
+    check(
+        status in server_statuses,
+        f"server audit statuses include {status}",
+        f"missing server audit status {status}: {server_statuses}",
+    )
+check(
+    int(stats.get("events_total", 0)) >= 8,
+    "analytics stats events_total >= 8",
+    f"expected at least 8 events after smoke and policy checks, got {stats}",
+)
+check(
+    oauth_allow_payload.get("human_id") == oauth_human_id and oauth_allow_payload.get("agent_id") == oauth_agent_id,
+    "oauth allow payload identity matched",
+    f"unexpected oauth allow identity payload: {oauth_allow_payload}",
+)
 
 tempo = wait_for_json(
     f"{tempo_base}/api/search?limit=20",
@@ -2774,11 +3507,9 @@ rows = [
     ("audit.rpc_methods", str(len(routing_methods))),
     ("analytics.source.gateway", str(source_counts.get(server_name, 0))),
     ("analytics.source.oauth", str(source_counts.get(oauth_server_name, 0))),
-    ("analytics.source.server", str(source_counts.get("mcp-example-server", 0))),
     ("analytics.type.mcp.request", str(event_type_counts.get("mcp.request", 0))),
-    ("analytics.type.tool.call", str(event_type_counts.get("tool.call", 0))),
-    ("analytics.type.resource.read", str(event_type_counts.get("resource.read", 0))),
-    ("analytics.type.prompt.render", str(event_type_counts.get("prompt.render", 0))),
+    ("analytics.type.pii.check", str(event_type_counts.get("pii.check", 0))),
+    ("analytics.type.service.route.check", str(event_type_counts.get("service.route.check", 0))),
     ("traces.tempo_found", str(len(traces))),
     ("logs.loki_streams", str(len(streams))),
 ]
@@ -2795,6 +3526,18 @@ if scenario_selected "oauth"; then
   ./bin/mcp-runtime server delete "${OAUTH_SERVER_NAME}" --namespace mcp-servers
   kubectl wait --for=delete "mcpserver/${OAUTH_SERVER_NAME}" -n mcp-servers --timeout=120s || true
 fi
+./bin/mcp-runtime server delete "${PYTHON_EXAMPLE_SERVER_NAME}" --namespace mcp-servers
+kubectl wait --for=delete "mcpserver/${PYTHON_EXAMPLE_SERVER_NAME}" -n mcp-servers --timeout=120s || true
+./bin/mcp-runtime server delete "${RUST_EXAMPLE_SERVER_NAME}" --namespace mcp-servers
+kubectl wait --for=delete "mcpserver/${RUST_EXAMPLE_SERVER_NAME}" -n mcp-servers --timeout=120s || true
+./bin/mcp-runtime server delete "${GO_EXAMPLE_SERVER_NAME}" --namespace mcp-servers
+kubectl wait --for=delete "mcpserver/${GO_EXAMPLE_SERVER_NAME}" -n mcp-servers --timeout=120s || true
+./bin/mcp-runtime server delete "${PYTHON_SHARED_SERVER_NAME}" --namespace mcp-servers
+kubectl wait --for=delete "mcpserver/${PYTHON_SHARED_SERVER_NAME}" -n mcp-servers --timeout=120s || true
+./bin/mcp-runtime server delete "${RUST_SHARED_SERVER_NAME}" --namespace mcp-servers
+kubectl wait --for=delete "mcpserver/${RUST_SHARED_SERVER_NAME}" -n mcp-servers --timeout=120s || true
+./bin/mcp-runtime server delete "${GO_SHARED_SERVER_NAME}" --namespace mcp-servers
+kubectl wait --for=delete "mcpserver/${GO_SHARED_SERVER_NAME}" -n mcp-servers --timeout=120s || true
 ./bin/mcp-runtime server delete "${SERVER_NAME}" --namespace mcp-servers
 kubectl wait --for=delete "mcpserver/${SERVER_NAME}" -n mcp-servers --timeout=120s || true
 

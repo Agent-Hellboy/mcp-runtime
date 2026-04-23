@@ -1,0 +1,15 @@
+version: v1
+servers:
+  - name: rust-example-mcp
+    route: /mcp
+    ingressHost: rust.example.local
+    port: 8088
+    namespace: mcp-servers
+    envVars:
+      - name: MCP_PATH
+        value: "/mcp"
+    tools:
+      - name: repeat
+        requiredTrust: low
+      - name: word_count
+        requiredTrust: low

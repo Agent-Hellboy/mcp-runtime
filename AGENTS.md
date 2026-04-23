@@ -32,10 +32,10 @@ Practical notes for spinning up, debugging, and exercising the MCP Runtime stack
 
 ## 4) Common Debugging Checklist
 - Ingress host missing -> operator error “ingressHost is required”; set `spec.ingressHost` or env `MCP_DEFAULT_INGRESS_HOST`.
-- Port mismatch -> sample server listens on 8090; set MCPServer `port` and `servicePort` to 8090 (defaults use 8088).
-- Analytics 401 -> add envs on each MCPServer:
-  - `MCP_SENTINEL_INGEST_URL=http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events`
-  - `MCP_SENTINEL_API_KEY` (from `mcp-sentinel-secrets`, `API_KEYS` key)
+- Port mismatch -> the bundled Go example listens on 8088 by default; set MCPServer `port` and `servicePort` to 8088 unless you intentionally override `PORT`.
+- Analytics 401 -> verify proxy/gateway analytics wiring, not app-server env vars:
+  - `ANALYTICS_INGEST_URL=http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events`
+  - `ANALYTICS_API_KEY` (from `mcp-sentinel-secrets`, `API_KEYS` key)
 - Secret not found -> copy `mcp-sentinel-secrets` into `mcp-servers` or reference a central secret.
 - Dashboard/API 401 -> align `API_KEYS` and `UI_API_KEY`; restart API deployment if changed.
 - Ingress/paths -> verify with `kubectl get ingress -A`.
@@ -119,5 +119,5 @@ PY
 ## 8) Reference Links
 - Project README: `README.md`
 - K8s manifests: `k8s/`
-- Sample MCP server: `services/mcp-server/`
+- Sample MCP server: `examples/go-mcp-server/`
 - CRDs: `config/crd/bases/`

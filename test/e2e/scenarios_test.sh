@@ -54,7 +54,7 @@ run_valid "trust" "trust" "trust"
 run_valid "oauth" "oauth" "oauth"
 run_valid "observability-with-deps" "smoke-auth,governance,trust,oauth,observability" "smoke-auth,governance,trust,oauth,observability"
 run_valid "whitespace-trimmed" " smoke-auth , governance " "smoke-auth,governance"
-run_valid "duplicates" "smoke-auth,smoke-auth" "smoke-auth,smoke-auth"
+run_valid "duplicates-deduped" "smoke-auth,smoke-auth" "smoke-auth"
 run_valid "all-overrides-subsets" "all,smoke-auth" "all"
 
 run_invalid "empty" "" "E2E_SCENARIOS must not be empty"

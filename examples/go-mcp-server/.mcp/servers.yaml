@@ -1,0 +1,23 @@
+version: v1
+servers:
+  - name: go-example-mcp
+    route: /mcp
+    ingressHost: go.example.local
+    port: 8088
+    namespace: mcp-servers
+    envVars:
+      - name: MCP_PATH
+        value: "/mcp"
+    tools:
+      - name: aaa-ping
+        requiredTrust: low
+      - name: echo
+        requiredTrust: low
+      - name: add
+        requiredTrust: low
+      - name: upper
+        requiredTrust: medium
+      - name: lower
+        requiredTrust: low
+      - name: slugify
+        requiredTrust: low

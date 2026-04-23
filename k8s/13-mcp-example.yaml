@@ -30,7 +30,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: mcp-example-server
-          image: mcp-sentinel-mcp-server:latest
+          image: go-example-mcp:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -44,20 +44,6 @@ spec:
           env:
             - name: PORT
               value: "8090"
-            - name: MCP_SENTINEL_INGEST_URL
-              value: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
-            - name: MCP_SENTINEL_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: mcp-sentinel-secrets
-                  key: API_KEYS
-            - name: OTEL_SERVICE_NAME
-              value: mcp-example-server
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              valueFrom:
-                configMapKeyRef:
-                  name: mcp-sentinel-config
-                  key: OTEL_EXPORTER_OTLP_ENDPOINT
           resources:
             requests:
               cpu: 50m

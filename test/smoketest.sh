@@ -32,14 +32,14 @@ docker build -t mcp-sentinel-api:latest services/api
 docker build -t mcp-sentinel-ingest:latest services/ingest
 docker build -t mcp-sentinel-processor:latest services/processor
 docker build -t mcp-sentinel-ui:latest services/ui
-docker build -t mcp-sentinel-mcp-server:latest services/mcp-server
+docker build -t go-example-mcp:latest examples/go-mcp-server
 docker build -t mcp-sentinel-mcp-proxy:latest services/mcp-proxy
 
 kind load docker-image mcp-sentinel-api:latest --name "$KIND_CLUSTER_NAME"
 kind load docker-image mcp-sentinel-ingest:latest --name "$KIND_CLUSTER_NAME"
 kind load docker-image mcp-sentinel-processor:latest --name "$KIND_CLUSTER_NAME"
 kind load docker-image mcp-sentinel-ui:latest --name "$KIND_CLUSTER_NAME"
-kind load docker-image mcp-sentinel-mcp-server:latest --name "$KIND_CLUSTER_NAME"
+kind load docker-image go-example-mcp:latest --name "$KIND_CLUSTER_NAME"
 kind load docker-image mcp-sentinel-mcp-proxy:latest --name "$KIND_CLUSTER_NAME"
 
 kubectl apply -f k8s
@@ -273,7 +273,7 @@ try:
     types = Counter([e.get("event_type", "") for e in events])
     mcp_events = [
         e for e in events
-        if (e.get("source") in ("mcp-example-server", "mcp-proxy")
+        if (e.get("source") in ("mcp-proxy",)
             and e.get("event_type") in ("tool.call", "resource.read", "prompt.render"))
     ]
     mcp_sources = Counter([e.get("source", "") for e in mcp_events])
