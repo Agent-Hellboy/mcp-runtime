@@ -54,7 +54,7 @@ data:
         - X-Api-Key
   redactor.go: |
     package pii_redactor
-
+    
     import (
     	"bytes"
     	"context"
@@ -68,23 +68,26 @@ data:
     	"strconv"
     	"strings"
     )
-
+    
+    // Config holds middleware configuration.
     type Config struct {
     	MaskReplacement string   `json:"maskReplacement,omitempty"`
     	BypassHeaders   []string `json:"bypassHeaders,omitempty"`
     	MaxBodyBytes    int64    `json:"maxBodyBytes,omitempty"`
     	HashIDs         bool     `json:"hashIDs,omitempty"`
     }
-
+    
+    // CreateConfig returns the default plugin configuration.
     func CreateConfig() *Config {
     	return &Config{
     		MaskReplacement: "[redacted]",
     		BypassHeaders:   []string{"Authorization", "X-Internal-Auth", "X-Api-Key"},
-    		MaxBodyBytes:    1 << 20,
+    		MaxBodyBytes:    1 << 20, // 1 MiB
     		HashIDs:         true,
     	}
     }
-
+    
+    // New creates a new redaction middleware.
     func New(_ context.Context, next http.Handler, cfg *Config, name string) (http.Handler, error) {
     	if next == nil {
     		return nil, errors.New("next handler is required")
@@ -92,17 +95,17 @@ data:
     	if cfg == nil {
     		cfg = CreateConfig()
     	}
-
+    
     	mask := cfg.MaskReplacement
     	if mask == "" {
     		mask = "[redacted]"
     	}
-
+    
     	maxBody := cfg.MaxBodyBytes
     	if maxBody <= 0 {
     		maxBody = 1 << 20
     	}
-
+    
     	return &Middleware{
     		next:      next,
     		name:      name,
@@ -112,7 +115,8 @@ data:
     		bypassSet: toLowerSet(cfg.BypassHeaders),
     	}, nil
     }
-
+    
+    // Middleware implements http.Handler and performs redaction.
     type Middleware struct {
     	next      http.Handler
     	name      string
@@ -121,35 +125,38 @@ data:
     	maxBody   int64
     	bypassSet map[string]struct{}
     }
-
+    
     func (m *Middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
     	m.redactRequestHeaders(req.Header)
     	if m.redactRequestBody(req) {
     		http.Error(rw, http.StatusText(http.StatusRequestEntityTooLarge), http.StatusRequestEntityTooLarge)
     		return
     	}
-
-    	rec := newResponseCapture(rw, m.maxBody)
+    
+    	rec := newResponseCapture(rw, m.maxBody, m.redactResponseHeaders)
     	m.next.ServeHTTP(rec, req)
     	if rec.streaming {
     		return
     	}
-
+    
     	hdr := rec.Header()
-    	m.redactHeaders(hdr)
+    	m.redactResponseHeaders(hdr)
     	body := rec.bodyBytes()
     	if shouldRedactResponse(hdr.Get("Content-Type")) {
     		body = m.redactBody(body)
     	}
-
+    
     	copyHeader(rw.Header(), hdr)
     	rw.Header().Set("Content-Length", intToString(len(body)))
     	rw.WriteHeader(rec.statusCode())
     	_, _ = rw.Write(body)
     }
-
+    
     func (m *Middleware) redactRequestBody(req *http.Request) bool {
     	if req.Body == nil {
+    		return false
+    	}
+    	if !shouldRedactRequest(req.Header) {
     		return false
     	}
     	limited := io.LimitReader(req.Body, m.maxBody+1)
@@ -163,14 +170,18 @@ data:
     	req.ContentLength = int64(len(redacted))
     	return false
     }
-
+    
     func (m *Middleware) redactRequestHeaders(h http.Header) {
-    	m.redactHeaders(h)
+    	m.redactHeaders(h, true)
     }
-
-    func (m *Middleware) redactHeaders(h http.Header) {
+    
+    func (m *Middleware) redactResponseHeaders(h http.Header) {
+    	m.redactHeaders(h, false)
+    }
+    
+    func (m *Middleware) redactHeaders(h http.Header, allowBypass bool) {
     	for key, values := range h {
-    		if m.isBypassed(key) {
+    		if allowBypass && m.isBypassed(key) {
     			continue
     		}
     		for i, v := range values {
@@ -182,7 +193,7 @@ data:
     		}
     	}
     }
-
+    
     func (m *Middleware) redactBody(body []byte) []byte {
     	if len(body) == 0 {
     		return body
@@ -190,7 +201,7 @@ data:
     	redacted := m.redactText(string(body))
     	return []byte(redacted)
     }
-
+    
     func (m *Middleware) redactText(s string) string {
     	out := s
     	if m.hashIDs {
@@ -198,21 +209,21 @@ data:
     			return "hash:" + hashPrefix(val)
     		})
     	}
-
+    
     	out = emailRegex.ReplaceAllString(out, m.mask)
     	out = phoneRegex.ReplaceAllString(out, m.mask)
     	out = ssnRegex.ReplaceAllString(out, m.mask)
     	out = secretRegex.ReplaceAllString(out, "${1}"+m.mask)
     	out = bearerRegex.ReplaceAllString(out, "Bearer "+m.mask)
-
+    
     	return out
     }
-
+    
     func (m *Middleware) isBypassed(header string) bool {
     	_, ok := m.bypassSet[strings.ToLower(header)]
     	return ok
     }
-
+    
     func isSensitiveHeader(header string) bool {
     	h := strings.ToLower(header)
     	return strings.Contains(h, "token") ||
@@ -221,7 +232,7 @@ data:
     		strings.Contains(h, "apikey") ||
     		strings.Contains(h, "authorization")
     }
-
+    
     func toLowerSet(items []string) map[string]struct{} {
     	set := make(map[string]struct{}, len(items))
     	for _, it := range items {
@@ -232,44 +243,46 @@ data:
     	}
     	return set
     }
-
+    
     func copyHeader(dst, src http.Header) {
     	for k, vv := range src {
     		dst[k] = append([]string(nil), vv...)
     	}
     }
-
+    
     func intToString(v int) string {
     	return strconv.Itoa(v)
     }
-
+    
     type responseCapture struct {
-    	rw        http.ResponseWriter
-    	header    http.Header
-    	code      int
-    	buf       bytes.Buffer
-    	maxBody   int64
-    	streaming bool
+    	rw            http.ResponseWriter
+    	header        http.Header
+    	code          int
+    	buf           bytes.Buffer
+    	maxBody       int64
+    	streaming     bool
+    	redactHeaders func(http.Header)
     }
-
-    func newResponseCapture(rw http.ResponseWriter, maxBody int64) *responseCapture {
+    
+    func newResponseCapture(rw http.ResponseWriter, maxBody int64, redactHeaders func(http.Header)) *responseCapture {
     	return &responseCapture{
-    		rw:      rw,
-    		header:  make(http.Header),
-    		maxBody: maxBody,
+    		rw:            rw,
+    		header:        make(http.Header),
+    		maxBody:       maxBody,
+    		redactHeaders: redactHeaders,
     	}
     }
-
+    
     func (r *responseCapture) Header() http.Header {
     	return r.header
     }
-
+    
     func (r *responseCapture) WriteHeader(statusCode int) {
     	if r.code == 0 {
     		r.code = statusCode
     	}
     }
-
+    
     func (r *responseCapture) Write(p []byte) (int, error) {
     	if r.streaming {
     		return r.rw.Write(p)
@@ -285,7 +298,7 @@ data:
     	}
     	return r.buf.Write(p)
     }
-
+    
     func (r *responseCapture) Flush() {
     	if !r.streaming {
     		_ = r.startPassthrough()
@@ -294,10 +307,13 @@ data:
     		flusher.Flush()
     	}
     }
-
+    
     func (r *responseCapture) startPassthrough() error {
     	if r.streaming {
     		return nil
+    	}
+    	if r.redactHeaders != nil {
+    		r.redactHeaders(r.header)
     	}
     	copyHeader(r.rw.Header(), r.header)
     	r.rw.Header().Del("Content-Length")
@@ -311,18 +327,18 @@ data:
     	r.streaming = true
     	return nil
     }
-
+    
     func (r *responseCapture) statusCode() int {
     	if r.code == 0 {
     		return http.StatusOK
     	}
     	return r.code
     }
-
+    
     func (r *responseCapture) bodyBytes() []byte {
     	return r.buf.Bytes()
     }
-
+    
     func shouldRedactResponse(contentType string) bool {
     	if contentType == "" {
     		return true
@@ -341,12 +357,27 @@ data:
     		mediaType == "application/xml" ||
     		strings.HasSuffix(mediaType, "+xml")
     }
-
+    
+    func shouldRedactRequest(h http.Header) bool {
+    	encoding := strings.ToLower(strings.TrimSpace(h.Get("Content-Encoding")))
+    	if encoding != "" && encoding != "identity" {
+    		return false
+    	}
+    
+    	contentType := h.Get("Content-Type")
+    	if strings.TrimSpace(contentType) == "" {
+    		return false
+    	}
+    
+    	return shouldRedactResponse(contentType)
+    }
+    
+    // hashPrefix returns a deterministic short hash for correlating redacted IDs.
     func hashPrefix(v string) string {
     	sum := sha256.Sum256([]byte(v))
     	return hex.EncodeToString(sum[:])[:12]
     }
-
+    
     var (
     	emailRegex  = regexp.MustCompile(`(?i)[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}`)
     	phoneRegex  = regexp.MustCompile(`(?i)(\+?\d{1,3}[\s.-]?)?(\(\d{2,3}\)|\d{2,3})[\s.-]?\d{3}[\s.-]?\d{4}`)

@@ -78,14 +78,14 @@ func (m *Middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	rec := newResponseCapture(rw, m.maxBody)
+	rec := newResponseCapture(rw, m.maxBody, m.redactResponseHeaders)
 	m.next.ServeHTTP(rec, req)
 	if rec.streaming {
 		return
 	}
 
 	hdr := rec.Header()
-	m.redactHeaders(hdr)
+	m.redactResponseHeaders(hdr)
 	body := rec.bodyBytes()
 	if shouldRedactResponse(hdr.Get("Content-Type")) {
 		body = m.redactBody(body)
@@ -101,6 +101,9 @@ func (m *Middleware) redactRequestBody(req *http.Request) bool {
 	if req.Body == nil {
 		return false
 	}
+	if !shouldRedactRequest(req.Header) {
+		return false
+	}
 	limited := io.LimitReader(req.Body, m.maxBody+1)
 	raw, _ := io.ReadAll(limited)
 	_ = req.Body.Close()
@@ -114,12 +117,16 @@ func (m *Middleware) redactRequestBody(req *http.Request) bool {
 }
 
 func (m *Middleware) redactRequestHeaders(h http.Header) {
-	m.redactHeaders(h)
+	m.redactHeaders(h, true)
 }
 
-func (m *Middleware) redactHeaders(h http.Header) {
+func (m *Middleware) redactResponseHeaders(h http.Header) {
+	m.redactHeaders(h, false)
+}
+
+func (m *Middleware) redactHeaders(h http.Header, allowBypass bool) {
 	for key, values := range h {
-		if m.isBypassed(key) {
+		if allowBypass && m.isBypassed(key) {
 			continue
 		}
 		for i, v := range values {
@@ -193,19 +200,21 @@ func intToString(v int) string {
 }
 
 type responseCapture struct {
-	rw        http.ResponseWriter
-	header    http.Header
-	code      int
-	buf       bytes.Buffer
-	maxBody   int64
-	streaming bool
+	rw            http.ResponseWriter
+	header        http.Header
+	code          int
+	buf           bytes.Buffer
+	maxBody       int64
+	streaming     bool
+	redactHeaders func(http.Header)
 }
 
-func newResponseCapture(rw http.ResponseWriter, maxBody int64) *responseCapture {
+func newResponseCapture(rw http.ResponseWriter, maxBody int64, redactHeaders func(http.Header)) *responseCapture {
 	return &responseCapture{
-		rw:      rw,
-		header:  make(http.Header),
-		maxBody: maxBody,
+		rw:            rw,
+		header:        make(http.Header),
+		maxBody:       maxBody,
+		redactHeaders: redactHeaders,
 	}
 }
 
@@ -248,6 +257,9 @@ func (r *responseCapture) startPassthrough() error {
 	if r.streaming {
 		return nil
 	}
+	if r.redactHeaders != nil {
+		r.redactHeaders(r.header)
+	}
 	copyHeader(r.rw.Header(), r.header)
 	r.rw.Header().Del("Content-Length")
 	r.rw.WriteHeader(r.statusCode())
@@ -289,6 +301,20 @@ func shouldRedactResponse(contentType string) bool {
 		strings.HasSuffix(mediaType, "+json") ||
 		mediaType == "application/xml" ||
 		strings.HasSuffix(mediaType, "+xml")
+}
+
+func shouldRedactRequest(h http.Header) bool {
+	encoding := strings.ToLower(strings.TrimSpace(h.Get("Content-Encoding")))
+	if encoding != "" && encoding != "identity" {
+		return false
+	}
+
+	contentType := h.Get("Content-Type")
+	if strings.TrimSpace(contentType) == "" {
+		return false
+	}
+
+	return shouldRedactResponse(contentType)
 }
 
 // hashPrefix returns a deterministic short hash for correlating redacted IDs.
