@@ -690,10 +690,22 @@ func checkIngressRouteProbe(kubectl KubectlRunner, namespace string) DoctorCheck
 		"--quiet",
 		"--image=curlimages/curl:8.7.1",
 		podName,
-		"--command", "--", "sh", "-c",
-		fmt.Sprintf("curl -sS -o /dev/null -w \"%%{http_code}\" --connect-timeout 5 --max-time 20 -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H 'Mcp-Protocol-Version: 2025-06-18' %s -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}' http://traefik.%s.svc.cluster.local:%d%s",
-			hostHeaderArg(host), doctorTraefikNamespace, doctorTraefikWebPort, path),
+		"--command", "--", "curl",
+		"-sS", "-o", "/dev/null",
+		"-w", "%{http_code}",
+		"--connect-timeout", "5",
+		"--max-time", "20",
+		"-H", "content-type: application/json",
+		"-H", "accept: application/json, text/event-stream",
+		"-H", "Mcp-Protocol-Version: 2025-06-18",
 	}
+	if host != "" {
+		curlArgs = append(curlArgs, "-H", "Host: "+host)
+	}
+	curlArgs = append(curlArgs,
+		"-d", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		fmt.Sprintf("http://traefik.%s.svc.cluster.local:%d%s", doctorTraefikNamespace, doctorTraefikWebPort, path),
+	)
 	cmd, err := kubectl.CommandArgs(curlArgs)
 	if err != nil {
 		return DoctorCheck{
@@ -966,8 +978,13 @@ func checkSentinelAPIAuthProbe(kubectl KubectlRunner) DoctorCheck {
 		"--quiet",
 		"--image=curlimages/curl:8.7.1",
 		podName,
-		"--command", "--", "sh", "-c",
-		fmt.Sprintf("curl -sS -o /dev/null -w '%%{http_code}' -H 'x-api-key: %s' --connect-timeout 5 --max-time 20 http://%s.%s.svc.cluster.local:8080/api/runtime/components", apiKey, doctorSentinelAPIService, doctorSentinelNamespace),
+		"--command", "--", "curl",
+		"-sS", "-o", "/dev/null",
+		"-w", "%{http_code}",
+		"--connect-timeout", "5",
+		"--max-time", "20",
+		"-H", "x-api-key: " + apiKey,
+		fmt.Sprintf("http://%s.%s.svc.cluster.local:8080/api/runtime/components", doctorSentinelAPIService, doctorSentinelNamespace),
 	}
 	cmd, cmdErr := kubectl.CommandArgs(args)
 	if cmdErr != nil {
@@ -1203,14 +1220,6 @@ func readKubectlOutput(kubectl KubectlRunner, args []string) (string, error) {
 		return "", execErr
 	}
 	return string(out), nil
-}
-
-func hostHeaderArg(host string) string {
-	trimmed := strings.TrimSpace(host)
-	if trimmed == "" {
-		return ""
-	}
-	return "-H 'Host: " + trimmed + "'"
 }
 
 func decodeBase64(value string) string {

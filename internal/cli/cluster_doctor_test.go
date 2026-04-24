@@ -347,3 +347,324 @@ func TestRemediationHintPerDistro(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckNamespacePodAdmission(t *testing.T) {
+	t.Run("ok on dry-run success", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				return &MockCommand{OutputData: []byte("pod/doctor-admission created (dry run)")}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkNamespacePodAdmission(kubectl, "mcp-servers")
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+	})
+
+	t.Run("fails when admission rejects", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				return &MockCommand{
+					OutputData: []byte("pods \"doctor-admission\" is forbidden: exceeds quota"),
+					OutputErr:  errors.New("exit status 1"),
+				}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkNamespacePodAdmission(kubectl, "mcp-servers")
+		if check.OK {
+			t.Fatalf("expected failure when dry-run rejected; detail=%q", check.Detail)
+		}
+		if !strings.Contains(check.Detail, "forbidden") {
+			t.Fatalf("expected server error passthrough in detail, got %q", check.Detail)
+		}
+		if check.Remedy == "" {
+			t.Fatal("expected remedy hint")
+		}
+	})
+}
+
+func TestCheckTraefikDeploymentReady(t *testing.T) {
+	cases := []struct {
+		name   string
+		output string
+		outErr error
+		wantOK bool
+	}{
+		{name: "ready 2/2", output: "2/2", wantOK: true},
+		{name: "partially ready 1/3", output: "1/3", wantOK: false},
+		{name: "zero desired", output: "0/0", wantOK: false},
+		{name: "empty output", output: "", wantOK: false},
+		{name: "malformed pair", output: "ready", wantOK: false},
+		{name: "non-numeric ready", output: "x/2", wantOK: false},
+		{name: "kubectl error", output: "", outErr: errors.New("not found"), wantOK: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := &MockExecutor{
+				CommandFunc: func(spec ExecSpec) *MockCommand {
+					return &MockCommand{OutputData: []byte(tc.output), OutputErr: tc.outErr}
+				},
+			}
+			kubectl := &KubectlClient{exec: mock, validators: nil}
+			check := checkTraefikDeploymentReady(kubectl)
+			if check.OK != tc.wantOK {
+				t.Fatalf("OK=%v want %v; detail=%q", check.OK, tc.wantOK, check.Detail)
+			}
+		})
+	}
+}
+
+func TestCheckTraefikServiceExposure(t *testing.T) {
+	cases := []struct {
+		name       string
+		output     string
+		wantOK     bool
+		wantDetail string
+	}{
+		{
+			name:       "LoadBalancer with IP",
+			output:     "LoadBalancer|10.1.2.3||8000:0,",
+			wantOK:     true,
+			wantDetail: "10.1.2.3",
+		},
+		{
+			name:       "LoadBalancer with hostname only",
+			output:     "LoadBalancer||lb.example.com|8000:0,",
+			wantOK:     true,
+			wantDetail: "lb.example.com",
+		},
+		{
+			name:   "NodePort exposes web port",
+			output: "NodePort|||8000:32080,8443:32443,",
+			wantOK: true,
+		},
+		{
+			name:   "LoadBalancer pending, no NodePort for web",
+			output: "LoadBalancer|||9999:32099,",
+			wantOK: false,
+		},
+		{
+			name:   "ClusterIP only",
+			output: "ClusterIP|||9999:0,",
+			wantOK: false,
+		},
+		{
+			name:   "malformed payload",
+			output: "LoadBalancer",
+			wantOK: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := &MockExecutor{
+				CommandFunc: func(spec ExecSpec) *MockCommand {
+					return &MockCommand{OutputData: []byte(tc.output)}
+				},
+			}
+			kubectl := &KubectlClient{exec: mock, validators: nil}
+			check := checkTraefikServiceExposure(kubectl)
+			if check.OK != tc.wantOK {
+				t.Fatalf("OK=%v want %v; detail=%q", check.OK, tc.wantOK, check.Detail)
+			}
+			if tc.wantDetail != "" && !strings.Contains(check.Detail, tc.wantDetail) {
+				t.Fatalf("detail=%q does not contain %q", check.Detail, tc.wantDetail)
+			}
+		})
+	}
+}
+
+func TestCheckOperatorRecentReconcileErrors(t *testing.T) {
+	cases := []struct {
+		name   string
+		logs   string
+		outErr error
+		wantOK bool
+	}{
+		{name: "clean logs", logs: "started reconciler\nresource synced\n", wantOK: true},
+		{name: "reconciler error pattern", logs: "ERROR Reconciler error: something broke\n", wantOK: false},
+		{name: "failed to reconcile pattern", logs: "msg=\"failed to reconcile\" server=foo\n", wantOK: false},
+		{name: "error syncing pattern", logs: "level=error error syncing mcpserver/foo\n", wantOK: false},
+		{name: "case-insensitive match", logs: "FAILED TO RECONCILE\n", wantOK: false},
+		{name: "no logs, OK", logs: "", wantOK: true},
+		{name: "kubectl error surfaces", outErr: errors.New("no such deploy"), wantOK: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := &MockExecutor{
+				CommandFunc: func(spec ExecSpec) *MockCommand {
+					return &MockCommand{OutputData: []byte(tc.logs), OutputErr: tc.outErr}
+				},
+			}
+			kubectl := &KubectlClient{exec: mock, validators: nil}
+			check := checkOperatorRecentReconcileErrors(kubectl)
+			if check.OK != tc.wantOK {
+				t.Fatalf("OK=%v want %v; detail=%q", check.OK, tc.wantOK, check.Detail)
+			}
+		})
+	}
+}
+
+func TestCheckNodeCapacity(t *testing.T) {
+	t.Run("metrics-server healthy", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				if contains(spec.Args, "top") {
+					return &MockCommand{OutputData: []byte("node-a  200m  10%  1Gi  20%\nnode-b  400m  20%  2Gi  40%\n")}
+				}
+				return &MockCommand{}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkNodeCapacity(kubectl)
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+		if !strings.Contains(check.Detail, "2 node") {
+			t.Fatalf("detail should mention node count, got %q", check.Detail)
+		}
+	})
+
+	t.Run("flags hot node at CPU>=95%%", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				if contains(spec.Args, "top") {
+					return &MockCommand{OutputData: []byte("node-a  3800m  96%  7Gi  80%\n")}
+				}
+				return &MockCommand{}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkNodeCapacity(kubectl)
+		if check.OK {
+			t.Fatal("expected failure for 96% CPU")
+		}
+		if !strings.Contains(check.Detail, "node-a") {
+			t.Fatalf("detail should name the hot node, got %q", check.Detail)
+		}
+	})
+
+	t.Run("flags hot node at memory>=95%%", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				if contains(spec.Args, "top") {
+					return &MockCommand{OutputData: []byte("node-a  100m  10%  8Gi  97%\n")}
+				}
+				return &MockCommand{}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkNodeCapacity(kubectl)
+		if check.OK {
+			t.Fatal("expected failure for 97% memory")
+		}
+	})
+
+	t.Run("falls back to allocatable when metrics-server missing", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				switch {
+				case contains(spec.Args, "top"):
+					return &MockCommand{OutputData: []byte("error: Metrics API not available"), OutputErr: errors.New("exit status 1")}
+				case contains(spec.Args, "nodes"):
+					return &MockCommand{OutputData: []byte("node-a  4  16Gi\nnode-b  4  16Gi\n")}
+				}
+				return &MockCommand{}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkNodeCapacity(kubectl)
+		if !check.OK {
+			t.Fatalf("expected OK fallback, got detail=%q", check.Detail)
+		}
+		if !strings.Contains(check.Detail, "metrics-server unavailable") {
+			t.Fatalf("detail should note metrics-server fallback, got %q", check.Detail)
+		}
+	})
+
+	t.Run("fails when both metrics and allocatable are unavailable", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				return &MockCommand{OutputErr: errors.New("cluster unreachable")}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkNodeCapacity(kubectl)
+		if check.OK {
+			t.Fatal("expected failure when both paths fail")
+		}
+	})
+}
+
+func TestCheckMCPServersImagePullSecrets(t *testing.T) {
+	t.Run("ok when no imagePullSecrets configured", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				return &MockCommand{OutputData: []byte("")}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkMCPServersImagePullSecrets(kubectl, "mcp-servers")
+		if !check.OK {
+			t.Fatalf("expected OK when no secrets configured, got detail=%q", check.Detail)
+		}
+	})
+
+	t.Run("ok when all referenced secrets exist", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				switch {
+				case contains(spec.Args, "serviceaccount"):
+					return &MockCommand{OutputData: []byte("reg-creds\ngcr-creds\n")}
+				case contains(spec.Args, "secret"):
+					// both secret lookups succeed
+					return &MockCommand{OutputData: []byte("reg-creds")}
+				}
+				return &MockCommand{}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkMCPServersImagePullSecrets(kubectl, "mcp-servers")
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+	})
+
+	t.Run("fails when a referenced secret is missing", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				switch {
+				case contains(spec.Args, "serviceaccount"):
+					return &MockCommand{OutputData: []byte("reg-creds\nmissing-creds\n")}
+				case contains(spec.Args, "missing-creds"):
+					return &MockCommand{OutputErr: errors.New("secrets \"missing-creds\" not found")}
+				case contains(spec.Args, "secret"):
+					return &MockCommand{OutputData: []byte("reg-creds")}
+				}
+				return &MockCommand{}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkMCPServersImagePullSecrets(kubectl, "mcp-servers")
+		if check.OK {
+			t.Fatalf("expected failure when a pull secret is missing; detail=%q", check.Detail)
+		}
+		if !strings.Contains(check.Detail, "missing-creds") {
+			t.Fatalf("detail should name the missing secret, got %q", check.Detail)
+		}
+	})
+
+	t.Run("fails when serviceaccount lookup errors", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				return &MockCommand{OutputErr: errors.New("serviceaccount default not found")}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkMCPServersImagePullSecrets(kubectl, "mcp-servers")
+		if check.OK {
+			t.Fatal("expected failure when serviceaccount lookup fails")
+		}
+	})
+}
