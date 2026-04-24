@@ -31,12 +31,12 @@ spec:
 		t.Fatalf("NewMutator failed: %v", err)
 	}
 
-	deployment := m.FindDeployment("test-deployment")
+	deployment := m.FindDeployment("test-deployment", "")
 	if deployment == nil {
 		t.Error("FindDeployment should find the deployment")
 	}
 
-	notFound := m.FindDeployment("non-existent")
+	notFound := m.FindDeployment("non-existent", "")
 	if notFound != nil {
 		t.Error("FindDeployment should return nil for non-existent deployment")
 	}
@@ -63,7 +63,7 @@ spec:
 	}
 
 	// Verify the image was set
-	deployment := m.FindDeployment("test-deployment")
+	deployment := m.FindDeployment("test-deployment", "")
 	spec := getMap(getMap(deployment, "spec"), "template", "spec")
 	containers := spec["containers"].([]any)
 	container := containers[0].(map[string]any)
@@ -123,7 +123,7 @@ spec:
 	}
 
 	// Verify the environment variables
-	deployment := m.FindDeployment("test-deployment")
+	deployment := m.FindDeployment("test-deployment", "")
 	spec := getMap(getMap(deployment, "spec"), "template", "spec")
 	containers := spec["containers"].([]any)
 	container := containers[0].(map[string]any)
@@ -221,7 +221,7 @@ spec:
 	}
 
 	// Verify both keys are present
-	deployment := m.FindDeployment("test-deployment")
+	deployment := m.FindDeployment("test-deployment", "")
 	if deployment == nil {
 		t.Fatal("Deployment not found")
 	}

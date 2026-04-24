@@ -1393,7 +1393,7 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 	// Use structured manifest mutation instead of regex
 	mutator, err := manifest.NewMutator(managerYAML)
 	if err != nil {
-		wrappedErr := wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to parse manager.yaml: %v", err))
+		wrappedErr := wrapWithSentinel(ErrParseManagerYAMLFailed, err, fmt.Sprintf("failed to parse manager.yaml: %v", err))
 		Error("Failed to parse manager.yaml")
 		if logger != nil {
 			logStructuredError(logger, wrappedErr, "Failed to parse manager.yaml")
@@ -1403,7 +1403,7 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 
 	// Set the operator image
 	if err := mutator.SetDeploymentImage(OperatorDeploymentName, "", operatorImage); err != nil {
-		wrappedErr := wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to set operator image: %v", err))
+		wrappedErr := wrapWithSentinel(ErrSetOperatorImageFailed, err, fmt.Sprintf("failed to set operator image: %v", err))
 		Error("Failed to set operator image")
 		if logger != nil {
 			logStructuredError(logger, wrappedErr, "Failed to set operator image")
@@ -1451,7 +1451,7 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 	// Render the mutated manifest
 	mutatedYAML, err := mutator.ToYAML()
 	if err != nil {
-		wrappedErr := wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to render mutated manifest: %v", err))
+		wrappedErr := wrapWithSentinel(ErrRenderManagerYAMLFailed, err, fmt.Sprintf("failed to render mutated manifest: %v", err))
 		Error("Failed to render mutated manifest")
 		if logger != nil {
 			logStructuredError(logger, wrappedErr, "Failed to render mutated manifest")
