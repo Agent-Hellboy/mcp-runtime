@@ -345,8 +345,8 @@ func TestGetPlatformRegistryURLWithMock(t *testing.T) {
 		mock := &MockExecutor{
 			CommandFunc: func(spec ExecSpec) *MockCommand {
 				for _, arg := range spec.Args {
-					if arg == "jsonpath={.spec.rules[0].host}" {
-						return &MockCommand{OutputData: []byte("registry.local")}
+					if arg == "jsonpath={.spec.clusterIP}" {
+						return &MockCommand{OutputData: []byte("10.96.201.51")}
 					}
 					if arg == "jsonpath={.spec.ports[0].port}" {
 						return &MockCommand{OutputData: []byte("5000")}
@@ -363,7 +363,43 @@ func TestGetPlatformRegistryURLWithMock(t *testing.T) {
 		}
 	})
 
-	t.Run("falls_back_to_service_dns_when_ingress_host_missing", func(t *testing.T) {
+	t.Run("falls_back_from_implicit_default_endpoint", func(t *testing.T) {
+		DefaultCLIConfig = &CLIConfig{RegistryEndpoint: defaultRegistryEndpoint, RegistryIngressHost: defaultRegistryIngressHost, RegistryPort: 5000}
+		originalKubectl := kubectlClient
+		defer func() { kubectlClient = originalKubectl }()
+
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				for _, arg := range spec.Args {
+					if arg == "jsonpath={.spec.clusterIP}" {
+						return &MockCommand{OutputData: []byte("10.96.201.51")}
+					}
+					if arg == "jsonpath={.spec.ports[0].port}" {
+						return &MockCommand{OutputData: []byte("5000")}
+					}
+				}
+				return &MockCommand{}
+			},
+		}
+		kubectlClient = &KubectlClient{exec: mock, validators: nil}
+
+		url := getPlatformRegistryURL(logger)
+		if url != "10.96.201.51:5000" {
+			t.Errorf("expected service IP registry URL, got %q", url)
+		}
+	})
+
+	t.Run("respects_explicit_default_endpoint_override", func(t *testing.T) {
+		DefaultCLIConfig = &CLIConfig{RegistryEndpoint: defaultRegistryEndpoint, RegistryIngressHost: defaultRegistryIngressHost, RegistryPort: 5000}
+		t.Setenv("MCP_REGISTRY_ENDPOINT", defaultRegistryEndpoint)
+
+		url := getPlatformRegistryURL(logger)
+		if url != defaultRegistryEndpoint {
+			t.Errorf("expected explicitly configured endpoint %q, got %q", defaultRegistryEndpoint, url)
+		}
+	})
+
+	t.Run("falls_back_to_service_dns_when_cluster_ip_missing", func(t *testing.T) {
 		DefaultCLIConfig = &CLIConfig{RegistryEndpoint: "", RegistryIngressHost: "", RegistryPort: 5000}
 		originalKubectl := kubectlClient
 		defer func() { kubectlClient = originalKubectl }()
@@ -371,7 +407,7 @@ func TestGetPlatformRegistryURLWithMock(t *testing.T) {
 		mock := &MockExecutor{
 			CommandFunc: func(spec ExecSpec) *MockCommand {
 				for _, arg := range spec.Args {
-					if arg == "jsonpath={.spec.rules[0].host}" {
+					if arg == "jsonpath={.spec.clusterIP}" {
 						return &MockCommand{OutputErr: errors.New("kubectl error")}
 					}
 					if arg == "jsonpath={.spec.ports[0].port}" {
@@ -397,8 +433,8 @@ func TestGetPlatformRegistryURLWithMock(t *testing.T) {
 		mock := &MockExecutor{
 			CommandFunc: func(spec ExecSpec) *MockCommand {
 				for _, arg := range spec.Args {
-					if arg == "jsonpath={.spec.rules[0].host}" {
-						return &MockCommand{OutputData: []byte("")}
+					if arg == "jsonpath={.spec.clusterIP}" {
+						return &MockCommand{OutputData: []byte("10.96.201.51")}
 					}
 					if arg == "jsonpath={.spec.ports[0].port}" {
 						return &MockCommand{OutputErr: errors.New("kubectl error")}
@@ -423,7 +459,7 @@ func TestGetPlatformRegistryURLWithMock(t *testing.T) {
 		mock := &MockExecutor{
 			CommandFunc: func(spec ExecSpec) *MockCommand {
 				for _, arg := range spec.Args {
-					if arg == "jsonpath={.spec.rules[0].host}" {
+					if arg == "jsonpath={.spec.clusterIP}" {
 						return &MockCommand{OutputData: []byte("")}
 					}
 					if arg == "jsonpath={.spec.ports[0].port}" {
@@ -449,8 +485,8 @@ func TestGetPlatformRegistryURLWithMock(t *testing.T) {
 		mock := &MockExecutor{
 			CommandFunc: func(spec ExecSpec) *MockCommand {
 				for _, arg := range spec.Args {
-					if arg == "jsonpath={.spec.rules[0].host}" {
-						return &MockCommand{OutputData: []byte("")}
+					if arg == "jsonpath={.spec.clusterIP}" {
+						return &MockCommand{OutputData: []byte("10.96.201.51")}
 					}
 					if arg == "jsonpath={.spec.ports[0].port}" {
 						return &MockCommand{OutputData: []byte("")}

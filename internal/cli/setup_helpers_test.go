@@ -61,15 +61,15 @@ func TestGetOperatorImage(t *testing.T) {
 		DefaultCLIConfig.OperatorImage = ""
 		mock := &MockExecutor{
 			CommandFunc: func(spec ExecSpec) *MockCommand {
-				if contains(spec.Args, "jsonpath={.spec.rules[0].host}") {
-					return &MockCommand{OutputData: []byte("registry.local")}
+				if contains(spec.Args, "jsonpath={.spec.ports[0].port}") {
+					return &MockCommand{OutputData: []byte("5000")}
 				}
 				return &MockCommand{}
 			},
 		}
 		kubectlClient = &KubectlClient{exec: mock, validators: nil}
 		got := getOperatorImage(nil)
-		if got != "registry.local/mcp-runtime-operator:latest" {
+		if got != "registry.registry.svc.cluster.local:5000/mcp-runtime-operator:latest" {
 			t.Fatalf("unexpected platform registry image: %q", got)
 		}
 	})
@@ -119,15 +119,15 @@ func TestGetGatewayProxyImage(t *testing.T) {
 		DefaultCLIConfig.GatewayProxyImage = ""
 		mock := &MockExecutor{
 			CommandFunc: func(spec ExecSpec) *MockCommand {
-				if contains(spec.Args, "jsonpath={.spec.rules[0].host}") {
-					return &MockCommand{OutputData: []byte("registry.local")}
+				if contains(spec.Args, "jsonpath={.spec.ports[0].port}") {
+					return &MockCommand{OutputData: []byte("5000")}
 				}
 				return &MockCommand{}
 			},
 		}
 		kubectlClient = &KubectlClient{exec: mock, validators: nil}
 		got := getGatewayProxyImage(nil)
-		if got != "registry.local/mcp-sentinel-mcp-proxy:latest" {
+		if got != "registry.registry.svc.cluster.local:5000/mcp-sentinel-mcp-proxy:latest" {
 			t.Fatalf("unexpected platform registry image: %q", got)
 		}
 	})

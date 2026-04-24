@@ -1501,7 +1501,7 @@ containerdConfigPatches:
   [plugins."io.containerd.grpc.v1.cri".registry.mirrors."registry-1.docker.io"]
     endpoint = ["http://${LOCAL_REGISTRY_MIRROR_ENDPOINT}", "https://registry-1.docker.io"]
   [plugins."io.containerd.grpc.v1.cri".registry.mirrors."registry.registry.svc.cluster.local:5000"]
-    endpoint = ["http://registry.registry.svc.cluster.local:5000"]
+    endpoint = ["http://127.0.0.1:32000"]
 EOF
 
 start_local_registry
@@ -1555,6 +1555,7 @@ build_and_publish_image "docker.io/library/mcp-sentinel-ui:latest" "${SENTINEL_R
 
 echo "[setup] running platform setup in test mode"
 export MCP_SETUP_WAIT_TIMEOUT="${MCP_SETUP_WAIT_TIMEOUT:-900}"
+export MCP_REGISTRY_ENDPOINT="${MCP_REGISTRY_ENDPOINT:-registry.registry.svc.cluster.local:5000}"
 MCP_RUNTIME_REGISTRY_IMAGE_OVERRIDE="${TEST_MODE_REGISTRY_IMAGE}" \
 ./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http
 

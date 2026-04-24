@@ -202,22 +202,36 @@ func updateMetadataImage(serverName, imageName, tag, metadataFile, metadataDir s
 func getPlatformRegistryURL(logger *zap.Logger) string {
 	const registryServiceDNS = "registry.registry.svc.cluster.local"
 
-	// Prefer the configured registry host when available so setup, pushes, and deployed image
-	// references use the same stable registry name.
-	if endpoint := strings.TrimSpace(GetRegistryEndpoint()); endpoint != "" {
+	// Respect an explicitly configured endpoint. For the implicit local default
+	// (registry.local), prefer service-discovered endpoints that are known to work
+	// in kind-based CI/e2e flows.
+	if endpoint := strings.TrimSpace(GetRegistryEndpoint()); endpoint != "" &&
+		(endpoint != defaultRegistryEndpoint || registryEndpointExplicitlyConfigured()) {
 		return endpoint
 	}
 
-	// Otherwise read the service port from the live registry service and use the stable
-	// in-cluster service DNS for image references.
+	// Otherwise read registry service IP/port and use the concrete service endpoint.
+	// This is resolvable from kind/containerd nodes where cluster DNS names may not be.
+	// #nosec G204 -- fixed arguments, no user input.
+	ipCmd, ipErr := kubectlClient.CommandArgs([]string{"get", "service", "registry", "-n", "registry", "-o", "jsonpath={.spec.clusterIP}"})
+	var clusterIP []byte
+	if ipErr == nil {
+		clusterIP, ipErr = ipCmd.Output()
+	}
+
+	ip := strings.TrimSpace(string(clusterIP))
 	// #nosec G204 -- fixed arguments, no user input.
 	portCmd, portErr := kubectlClient.CommandArgs([]string{"get", "service", "registry", "-n", "registry", "-o", "jsonpath={.spec.ports[0].port}"})
 	var port []byte
 	if portErr == nil {
 		port, portErr = portCmd.Output()
 	}
-	if portErr == nil && len(port) > 0 {
-		return fmt.Sprintf("%s:%s", registryServiceDNS, strings.TrimSpace(string(port)))
+	portValue := strings.TrimSpace(string(port))
+	if ipErr == nil && ip != "" && portErr == nil && portValue != "" {
+		return fmt.Sprintf("%s:%s", ip, portValue)
+	}
+	if portErr == nil && portValue != "" {
+		return fmt.Sprintf("%s:%s", registryServiceDNS, portValue)
 	}
 
 	// Fallback to default
@@ -225,6 +239,16 @@ func getPlatformRegistryURL(logger *zap.Logger) string {
 		logger.Warn("Could not detect registry ingress host or service port, using default service DNS:port")
 	}
 	return fmt.Sprintf("%s:%d", registryServiceDNS, GetRegistryPort())
+}
+
+func registryEndpointExplicitlyConfigured() bool {
+	if value, ok := os.LookupEnv("MCP_REGISTRY_ENDPOINT"); ok && strings.TrimSpace(value) != "" {
+		return true
+	}
+	if value, ok := os.LookupEnv("MCP_REGISTRY_HOST"); ok && strings.TrimSpace(value) != "" {
+		return true
+	}
+	return false
 }
 
 func getGitTag() string {
