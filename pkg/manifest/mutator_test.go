@@ -127,7 +127,7 @@ spec:
 	spec := getMap(getMap(deployment, "spec"), "template", "spec")
 	containers := spec["containers"].([]any)
 	container := containers[0].(map[string]any)
-	env := container["env"].([]map[string]any)
+	env := container["env"].([]any)
 
 	if len(env) != 2 {
 		t.Errorf("Expected 2 env vars, got %d", len(env))
@@ -136,8 +136,9 @@ spec:
 	foundExisting := false
 	foundNew := false
 	for _, e := range env {
-		name := e["name"].(string)
-		value := e["value"].(string)
+		envEntry := e.(map[string]any)
+		name := envEntry["name"].(string)
+		value := envEntry["value"].(string)
 		if name == "EXISTING_VAR" && value == "updated_value" {
 			foundExisting = true
 		}
