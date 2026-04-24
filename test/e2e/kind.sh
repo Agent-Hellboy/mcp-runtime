@@ -92,8 +92,8 @@ MCP_POLICY_WAIT_TRIES="${MCP_POLICY_WAIT_TRIES:-90}"
 RAW_REQUEST_TRIES="${RAW_REQUEST_TRIES:-10}"
 MCP_SMOKE_AGENT_ENV_FILE="${MCP_SMOKE_AGENT_ENV_FILE:-.env}"
 MCP_SMOKE_AGENT_PROMPT="${MCP_SMOKE_AGENT_PROMPT:-Use the MCP upper tool to convert the exact word governance to uppercase. Reply with only the uppercase result.}"
-MCP_SMOKE_AGENT_PROVIDER="${MCP_SMOKE_AGENT_PROVIDER:-}"
-MCP_SMOKE_AGENT_MODEL="${MCP_SMOKE_AGENT_MODEL:-}"
+MCP_SMOKE_AGENT_PROVIDER="${MCP_SMOKE_AGENT_PROVIDER:-openai}"
+MCP_SMOKE_AGENT_MODEL="${MCP_SMOKE_AGENT_MODEL:-gpt-4o-mini}"
 MCP_SMOKE_AGENT_TIMEOUT="${MCP_SMOKE_AGENT_TIMEOUT:-90s}"
 UNKNOWN_SESSION_ID="${UNKNOWN_SESSION_ID:-sess-does-not-exist}"
 TEST_MODE_REGISTRY_IMAGE="${TEST_MODE_REGISTRY_IMAGE:-docker.io/library/mcp-runtime-registry:latest}"
@@ -678,14 +678,39 @@ should_run_mcp_smoke_agent() {
 
 run_mcp_smoke_agent_prompt() {
   local url="$1"
-  local stdout_file="${WORKDIR}/mcp-smoke-agent.stdout"
-  local stderr_file="${WORKDIR}/mcp-smoke-agent.stderr"
+  local case_name="${2:-governance}"
+  local prompt expected_tool expected_text
+
+  case "${case_name}" in
+    governance)
+      prompt="${MCP_SMOKE_AGENT_PROMPT}"
+      expected_tool="upper"
+      expected_text="GOVERNANCE"
+      ;;
+    add)
+      prompt="Use the MCP add tool to add 41 and 1. Reply with only the numeric result."
+      expected_tool="add"
+      expected_text="42"
+      ;;
+    slugify)
+      prompt="Use the MCP slugify tool to turn the text 'Hello World' into a URL slug. Reply with only the slug."
+      expected_tool="slugify"
+      expected_text="hello-world"
+      ;;
+    *)
+      echo "unknown smoke agent case: ${case_name}" >&2
+      return 2
+      ;;
+  esac
+
+  local stdout_file="${WORKDIR}/mcp-smoke-agent-${case_name}.stdout"
+  local stderr_file="${WORKDIR}/mcp-smoke-agent-${case_name}.stderr"
   local agent_exit_code=0
   local agent_cmd=(
     "${MCP_SMOKE_BIN}" agent
     --server "${url}"
     --env-file "${MCP_SMOKE_AGENT_ENV_FILE}"
-    --prompt "${MCP_SMOKE_AGENT_PROMPT}"
+    --prompt "${prompt}"
     --timeout "${MCP_SMOKE_AGENT_TIMEOUT}"
   )
 
@@ -703,20 +728,26 @@ run_mcp_smoke_agent_prompt() {
   fi
 
   if [[ "${agent_exit_code}" -ne 0 ]]; then
-    echo "mcp-smoke-agent exited with code ${agent_exit_code}" >&2
-    echo "--- mcp-smoke-agent stderr ---" >&2
+    echo "mcp-smoke-agent (${case_name}) exited with code ${agent_exit_code}" >&2
+    echo "--- mcp-smoke-agent stderr (${case_name}) ---" >&2
     cat "${stderr_file}" >&2 || true
-    echo "--- mcp-smoke-agent stdout ---" >&2
+    echo "--- mcp-smoke-agent stdout (${case_name}) ---" >&2
     cat "${stdout_file}" >&2 || true
     return "${agent_exit_code}"
   fi
 
+  MCP_SMOKE_AGENT_CASE="${case_name}" \
+  MCP_SMOKE_AGENT_EXPECTED_TOOL="${expected_tool}" \
+  MCP_SMOKE_AGENT_EXPECTED_TEXT="${expected_text}" \
   MCP_SMOKE_AGENT_STDOUT="${stdout_file}" \
   MCP_SMOKE_AGENT_STDERR="${stderr_file}" \
   python3 <<'PY'
 import os
 import re
 
+case = os.environ["MCP_SMOKE_AGENT_CASE"]
+expected_tool = os.environ["MCP_SMOKE_AGENT_EXPECTED_TOOL"]
+expected_text = os.environ["MCP_SMOKE_AGENT_EXPECTED_TEXT"]
 stdout_path = os.environ["MCP_SMOKE_AGENT_STDOUT"]
 stderr_path = os.environ["MCP_SMOKE_AGENT_STDERR"]
 
@@ -729,19 +760,20 @@ with open(stderr_path, "r", encoding="utf-8") as fh:
     stderr = fh.read()
 
 check(
-    bool(re.search(r"^tool>\s+upper\s+", stderr, re.MULTILINE)),
-    "mcp-smoke-agent called upper",
-    f"mcp-smoke-agent did not call upper:\n{stderr}",
+    bool(re.search(rf"^tool>\s+{re.escape(expected_tool)}\s+", stderr, re.MULTILINE)),
+    f"mcp-smoke-agent[{case}] called {expected_tool}",
+    f"mcp-smoke-agent[{case}] did not call {expected_tool}:\n{stderr}",
 )
+haystack = stdout + "\n" + stderr
 check(
-    "GOVERNANCE" in stdout or "GOVERNANCE" in stderr,
-    "mcp-smoke-agent produced GOVERNANCE",
-    f"mcp-smoke-agent did not produce the expected uppercase result:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}",
+    expected_text.lower() in haystack.lower(),
+    f"mcp-smoke-agent[{case}] produced {expected_text}",
+    f"mcp-smoke-agent[{case}] did not produce {expected_text!r}:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}",
 )
 
-print("mcp-smoke-agent:")
-print("  tool call    upper")
-print("  final answer GOVERNANCE")
+print(f"mcp-smoke-agent[{case}]:")
+print(f"  tool call    {expected_tool}")
+print(f"  final answer {expected_text}")
 PY
 }
 
@@ -2286,8 +2318,40 @@ print("upper allow:", body)
 PY
 
   if should_run_mcp_smoke_agent; then
-    echo "[mcp] running optional real-client mcp-smoke agent prompt"
-    run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}"
+    echo "[policy] temporarily expanding grant for multi-tool agent prompts"
+    cat <<EOF | kubectl apply -f -
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAccessGrant
+metadata:
+  name: ${SERVER_NAME}-grant
+  namespace: mcp-servers
+spec:
+  serverRef:
+    name: ${SERVER_NAME}
+  subject:
+    humanID: ${HUMAN_ID}
+    agentID: ${AGENT_ID}
+  maxTrust: high
+  policyVersion: v1
+  toolRules:
+    - name: aaa-ping
+      decision: allow
+    - name: echo
+      decision: allow
+    - name: upper
+      decision: allow
+    - name: add
+      decision: allow
+    - name: slugify
+      decision: allow
+EOF
+    wait_for_policy_text "\"slugify\""
+    wait_for_mcp_tool_result "${MCP_SESSION_URL}" "add" '{"a":2,"b":3}' 200 "5"
+
+    echo "[mcp] running real-client mcp-smoke agent prompts (governance, add, slugify)"
+    run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" governance
+    run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" add
+    run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" slugify
   else
     echo "[mcp] skipping optional real-client mcp-smoke agent prompt (no OPENAI_API_KEY/ANTHROPIC_API_KEY in env or ${MCP_SMOKE_AGENT_ENV_FILE})"
   fi
