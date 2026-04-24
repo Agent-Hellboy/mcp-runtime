@@ -207,7 +207,7 @@ func (m *Mutator) MergeDeploymentArgs(deploymentName, containerName string, newA
 			// Merge new args: replace if key exists, append otherwise
 			mergedArgs := make([]string, len(existingArgs))
 			copy(mergedArgs, existingArgs)
-			
+
 			for _, newArg := range newArgs {
 				key := extractArgKey(newArg)
 				if idx, exists := argIndex[key]; exists {
@@ -323,7 +323,7 @@ func (m *Mutator) MergeDeploymentEnv(deploymentName, containerName string, envVa
 			// Build ordered slice of env entries and name->index map
 			orderedEnv := make([]any, 0)
 			nameToIndex := make(map[string]int)
-			
+
 			if existing, ok := container["env"].([]any); ok {
 				for _, e := range existing {
 					if envEntry, ok := e.(map[string]any); ok {

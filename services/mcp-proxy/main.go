@@ -1428,4 +1428,3 @@ func initTracer(serviceName string) (func(context.Context) error, error) {
 	otel.SetTracerProvider(provider)
 	return provider.Shutdown, nil
 }
-
