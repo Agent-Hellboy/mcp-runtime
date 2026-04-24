@@ -108,6 +108,146 @@ func TestCheckRegistryService(t *testing.T) {
 	})
 }
 
+func TestCheckNamespaceExists(t *testing.T) {
+	t.Run("ok when namespace exists", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				return &MockCommand{OutputData: []byte("mcp-servers")}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkNamespaceExists(kubectl, "mcp-servers")
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+	})
+
+	t.Run("fails when namespace missing", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				return &MockCommand{OutputErr: errors.New("not found")}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkNamespaceExists(kubectl, "mcp-servers")
+		if check.OK {
+			t.Fatal("expected failure when namespace is missing")
+		}
+	})
+}
+
+func TestCheckMCPServerCRD(t *testing.T) {
+	t.Run("ok when CRD exists", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				return &MockCommand{OutputData: []byte("mcpservers.mcpruntime.org")}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkMCPServerCRD(kubectl)
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+	})
+
+	t.Run("fails when CRD missing", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				return &MockCommand{OutputErr: errors.New("not found")}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkMCPServerCRD(kubectl)
+		if check.OK {
+			t.Fatal("expected failure when CRD is missing")
+		}
+	})
+}
+
+func TestCheckOperatorReady(t *testing.T) {
+	t.Run("ok when desired replicas are ready", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				return &MockCommand{OutputData: []byte("1/1")}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkOperatorReady(kubectl)
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+	})
+
+	t.Run("fails when not enough replicas are ready", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				return &MockCommand{OutputData: []byte("0/1")}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkOperatorReady(kubectl)
+		if check.OK {
+			t.Fatal("expected failure for 0/1 ready replicas")
+		}
+	})
+}
+
+func TestCheckTraefikIngressClass(t *testing.T) {
+	t.Run("ok when ingressClass exists", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				return &MockCommand{OutputData: []byte("traefik")}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkTraefikIngressClass(kubectl)
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+	})
+
+	t.Run("fails when ingressClass is missing", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				return &MockCommand{OutputErr: errors.New("not found")}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkTraefikIngressClass(kubectl)
+		if check.OK {
+			t.Fatal("expected failure when ingressClass missing")
+		}
+	})
+}
+
+func TestCheckTraefikWebEntrypoint(t *testing.T) {
+	t.Run("ok when service exposes 8000", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				return &MockCommand{OutputData: []byte("web:8000:32080\nwebsecure:8443:32443\n")}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkTraefikWebEntrypoint(kubectl)
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+	})
+
+	t.Run("fails when service does not expose 8000", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				return &MockCommand{OutputData: []byte("web:80:32080\n")}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkTraefikWebEntrypoint(kubectl)
+		if check.OK {
+			t.Fatal("expected failure when port 8000 is not exposed")
+		}
+	})
+}
+
 func TestCheckRegistryReachableFromCluster(t *testing.T) {
 	t.Run("ok on HTTP 200", func(t *testing.T) {
 		mock := &MockExecutor{
@@ -168,6 +308,16 @@ func TestRunDoctorAggregates(t *testing.T) {
 			switch {
 			case contains(spec.Args, "jsonpath={.items[*].status.nodeInfo.kubeletVersion}"):
 				return &MockCommand{OutputData: []byte("v1.34.6+k3s1")}
+			case contains(spec.Args, "namespace mcp-servers"):
+				return &MockCommand{OutputData: []byte("mcp-servers")}
+			case contains(spec.Args, "crd mcpservers.mcpruntime.org"):
+				return &MockCommand{OutputData: []byte("mcpservers.mcpruntime.org")}
+			case contains(spec.Args, "mcp-runtime-operator-controller-manager"):
+				return &MockCommand{OutputData: []byte("1/1")}
+			case contains(spec.Args, "ingressclass traefik"):
+				return &MockCommand{OutputData: []byte("traefik")}
+			case contains(spec.Args, "svc -n traefik traefik"):
+				return &MockCommand{OutputData: []byte("web:8000:32080\n")}
 			case contains(spec.Args, "jsonpath={.spec.ports[0].nodePort}"):
 				return &MockCommand{OutputData: []byte("32000")}
 			case contains(spec.Args, "curl"):
@@ -184,7 +334,7 @@ func TestRunDoctorAggregates(t *testing.T) {
 	if report.AllOK() {
 		t.Fatal("expected at least one failing check (registry reachability 503)")
 	}
-	if len(report.Checks) < 2 {
+	if len(report.Checks) < 7 {
 		t.Fatalf("expected multiple checks, got %d", len(report.Checks))
 	}
 }

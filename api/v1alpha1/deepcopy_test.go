@@ -227,6 +227,7 @@ func TestMCPServerSpecDeepCopy(t *testing.T) {
 		ServicePort:            80,
 		IngressPath:            "/test/mcp",
 		IngressHost:            "test.example.com",
+		PublicPathPrefix:       "test-public",
 		IngressClass:           "traefik",
 		IngressAnnotations: map[string]string{
 			"key1": "value1",
@@ -326,6 +327,9 @@ func assertSpecSimpleFields(t *testing.T, copied, original *MCPServerSpec) {
 	}
 	if copied.UseProvisionedRegistry != original.UseProvisionedRegistry {
 		t.Errorf("UseProvisionedRegistry = %v, want %v", copied.UseProvisionedRegistry, original.UseProvisionedRegistry)
+	}
+	if copied.PublicPathPrefix != original.PublicPathPrefix {
+		t.Errorf("PublicPathPrefix = %q, want %q", copied.PublicPathPrefix, original.PublicPathPrefix)
 	}
 }
 

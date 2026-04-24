@@ -80,6 +80,10 @@ type MCPServerSpec struct {
 	// IngressHost is the hostname for the ingress (optional; defaults from MCP_DEFAULT_INGRESS_HOST env var if set on the operator).
 	IngressHost string `json:"ingressHost,omitempty"`
 
+	// PublicPathPrefix enables path-based public routing and is used to compute /<publicPathPrefix>/mcp.
+	// When set, the operator prefers path-based ingress rules without a host match.
+	PublicPathPrefix string `json:"publicPathPrefix,omitempty"`
+
 	// IngressClass is the ingress class to use (e.g., "traefik", "nginx", "istio"). Defaults to "traefik".
 	IngressClass string `json:"ingressClass,omitempty"`
 

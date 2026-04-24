@@ -53,6 +53,12 @@ func (r *MCPServer) validate() error {
 			allErrs = append(allErrs, field.Invalid(specPath.Child("analytics", "enabled"), true, "analytics requires gateway.enabled"))
 		}
 	}
+	if strings.TrimSpace(r.Spec.PublicPathPrefix) != "" {
+		trimmed := strings.Trim(strings.TrimSpace(r.Spec.PublicPathPrefix), "/")
+		if trimmed == "" {
+			allErrs = append(allErrs, field.Invalid(specPath.Child("publicPathPrefix"), r.Spec.PublicPathPrefix, "publicPathPrefix must contain at least one non-slash character"))
+		}
+	}
 	if r.Spec.Rollout != nil && r.Spec.Rollout.Strategy == RolloutStrategyCanary {
 		if r.Spec.Rollout.CanaryReplicas == nil || *r.Spec.Rollout.CanaryReplicas <= 0 {
 			allErrs = append(allErrs, field.Required(specPath.Child("rollout", "canaryReplicas"), "canaryReplicas must be greater than zero for canary strategy"))

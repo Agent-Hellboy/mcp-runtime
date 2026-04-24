@@ -262,11 +262,7 @@ func (r *MCPServerReconciler) applyDefaultsIfNeeded(ctx context.Context, mcpServ
 }
 
 func (r *MCPServerReconciler) validateIngressConfig(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, logger logr.Logger) error {
-	if err := r.requireSpecField(ctx, mcpServer, logger, "ingress host", mcpServer.Spec.IngressHost,
-		"ingressHost is required; set spec.ingressHost or MCP_DEFAULT_INGRESS_HOST"); err != nil {
-		return err
-	}
-	if err := r.requireSpecField(ctx, mcpServer, logger, "ingress path", mcpServer.Spec.IngressPath,
+	if err := r.requireSpecField(ctx, mcpServer, logger, "ingress path", effectiveIngressPath(mcpServer),
 		"ingressPath is required; set spec.ingressPath or ensure metadata.name is set"); err != nil {
 		return err
 	}
@@ -563,9 +559,6 @@ func (r *MCPServerReconciler) setDefaults(mcpServer *mcpv1alpha1.MCPServer) {
 	}
 	if mcpServer.Spec.IngressPath == "" && mcpServer.Name != "" {
 		mcpServer.Spec.IngressPath = "/" + mcpServer.Name + "/mcp"
-	}
-	if mcpServer.Spec.IngressHost == "" && r.DefaultIngressHost != "" {
-		mcpServer.Spec.IngressHost = r.DefaultIngressHost
 	}
 	if mcpServer.Spec.IngressClass == "" {
 		mcpServer.Spec.IngressClass = "traefik"
@@ -1467,7 +1460,6 @@ func (r *MCPServerReconciler) reconcileIngress(ctx context.Context, mcpServer *m
 			IngressClassName: &ingressClassName,
 			Rules: []networkingv1.IngressRule{
 				{
-					Host: mcpServer.Spec.IngressHost,
 					IngressRuleValue: networkingv1.IngressRuleValue{
 						HTTP: &networkingv1.HTTPIngressRuleValue{
 							Paths: ingressPathsForServer(mcpServer, pathType),
@@ -1510,19 +1502,27 @@ func ingressPathsForServer(mcpServer *mcpv1alpha1.MCPServer, pathType networking
 	}
 	paths := []networkingv1.HTTPIngressPath{
 		{
-			Path:     normalizeIngressPath(mcpServer.Spec.IngressPath),
+			Path:     normalizeIngressPath(effectiveIngressPath(mcpServer)),
 			PathType: &pathType,
 			Backend:  backend,
 		},
 	}
 	if serverUsesOAuth(mcpServer) {
 		paths = append(paths, networkingv1.HTTPIngressPath{
-			Path:     oauthProtectedResourceIngressPath(mcpServer.Spec.IngressPath),
+			Path:     oauthProtectedResourceIngressPath(effectiveIngressPath(mcpServer)),
 			PathType: &pathType,
 			Backend:  backend,
 		})
 	}
 	return paths
+}
+
+func effectiveIngressPath(mcpServer *mcpv1alpha1.MCPServer) string {
+	prefix := strings.Trim(strings.TrimSpace(mcpServer.Spec.PublicPathPrefix), "/")
+	if prefix == "" {
+		return mcpServer.Spec.IngressPath
+	}
+	return "/" + prefix + "/mcp"
 }
 
 func normalizeIngressPath(value string) string {

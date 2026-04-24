@@ -55,3 +55,21 @@ func TestMCPAgentSessionValidateUsesInjectedTimeSource(t *testing.T) {
 		t.Fatalf("expected expiresAt validation error, got %v", err)
 	}
 }
+
+func TestMCPServerValidatePublicPathPrefix(t *testing.T) {
+	server := &MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "server"},
+		Spec: MCPServerSpec{
+			Image:            "example.com/server",
+			PublicPathPrefix: "///",
+		},
+	}
+
+	err := server.validate()
+	if err == nil {
+		t.Fatal("expected validation error for invalid publicPathPrefix")
+	}
+	if !strings.Contains(err.Error(), "publicPathPrefix") {
+		t.Fatalf("expected publicPathPrefix validation error, got %v", err)
+	}
+}

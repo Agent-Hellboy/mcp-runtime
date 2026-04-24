@@ -205,6 +205,11 @@ spec:
                   8088).
                 format: int32
                 type: integer
+              publicPathPrefix:
+                description: |-
+                  PublicPathPrefix enables path-based public routing and is used to compute /<publicPathPrefix>/mcp.
+                  When set, the operator prefers path-based ingress rules without a host match.
+                type: string
               registryOverride:
                 description: RegistryOverride, if set, overrides the registry portion
                   of the image (e.g., registry.example.com).

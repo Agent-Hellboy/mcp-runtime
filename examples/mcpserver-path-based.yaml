@@ -1,0 +1,14 @@
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPServer
+metadata:
+  name: go-example-mcp
+  namespace: mcp-servers
+spec:
+  image: your-registry.local/go-mcp-server
+  imageTag: latest
+  port: 8088
+  servicePort: 80
+  publicPathPrefix: go-mcp
+  ingressClass: traefik
+  ingressAnnotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web

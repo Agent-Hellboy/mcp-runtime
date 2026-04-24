@@ -266,6 +266,18 @@ func TestSetDefaults(t *testing.T) {
 		assertEqual(t, "ingressClass", mcpServer.Spec.IngressClass, "traefik")
 	})
 
+	t.Run("does not apply default ingress host", func(t *testing.T) {
+		mcpServer := mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-server"},
+		}
+		r := MCPServerReconciler{
+			Scheme:             runtime.NewScheme(),
+			DefaultIngressHost: "example.com",
+		}
+		r.setDefaults(&mcpServer)
+		assertEqual(t, "ingressHost", mcpServer.Spec.IngressHost, "")
+	})
+
 	t.Run("preserves existing values", func(t *testing.T) {
 		replicas := int32(5)
 		mcpServer := mcpv1alpha1.MCPServer{
@@ -657,21 +669,20 @@ func TestValidateIngressConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("fails when ingressHost missing", func(t *testing.T) {
+	t.Run("succeeds when ingressHost missing", func(t *testing.T) {
 		mcpServer := &mcpv1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
 			Spec: mcpv1alpha1.MCPServerSpec{
 				Image:       "test-image",
 				IngressPath: "/test-server",
-				// IngressHost intentionally missing
 			},
 		}
 		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer).Build()
 		r := MCPServerReconciler{Client: client, Scheme: scheme}
 
 		err := r.validateIngressConfig(context.Background(), mcpServer, logr.Discard())
-		if err == nil {
-			t.Fatal("expected error for missing ingressHost")
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
 		}
 	})
 
@@ -1162,6 +1173,34 @@ func TestReconcileIngress(t *testing.T) {
 		} else {
 			assertEqual(t, "ingressPath", got[0].Path, "/test")
 		}
+		assertEqual(t, "ingressHost", ingress.Spec.Rules[0].Host, "")
+	})
+
+	t.Run("uses publicPathPrefix for path-based routing", func(t *testing.T) {
+		mcpServer := &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "go-example-mcp", Namespace: "default"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				Image:            "test-image",
+				IngressPath:      "/ignored-when-prefix-set",
+				PublicPathPrefix: "go-mcp",
+			},
+		}
+		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer).Build()
+		r := MCPServerReconciler{Client: client, Scheme: scheme}
+		if err := r.reconcileIngress(context.Background(), mcpServer); err != nil {
+			t.Fatalf("failed to reconcile ingress: %v", err)
+		}
+
+		var ingress networkingv1.Ingress
+		if err := client.Get(context.Background(), types.NamespacedName{Name: mcpServer.Name, Namespace: mcpServer.Namespace}, &ingress); err != nil {
+			t.Fatalf("failed to fetch ingress: %v", err)
+		}
+		if got := ingress.Spec.Rules[0].HTTP.Paths; len(got) != 1 {
+			t.Fatalf("expected 1 ingress path, got %d", len(got))
+		} else {
+			assertEqual(t, "ingressPath", got[0].Path, "/go-mcp/mcp")
+		}
+		assertEqual(t, "ingressHost", ingress.Spec.Rules[0].Host, "")
 	})
 
 	t.Run("adds oauth protected resource path for oauth servers", func(t *testing.T) {
