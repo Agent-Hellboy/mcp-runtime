@@ -679,7 +679,9 @@ should_run_mcp_smoke_agent() {
 run_mcp_smoke_agent_prompt() {
   local url="$1"
   local case_name="${2:-governance}"
-  local prompt expected_tool expected_text
+  local prompt expected_tool expected_text mode
+  mode="allow"
+  expected_text=""
 
   case "${case_name}" in
     governance)
@@ -696,6 +698,21 @@ run_mcp_smoke_agent_prompt() {
       prompt="Use the MCP slugify tool to turn the text 'Hello World' into a URL slug. Reply with only the slug."
       expected_tool="slugify"
       expected_text="hello-world"
+      ;;
+    governance_denied_low_trust)
+      prompt="${MCP_SMOKE_AGENT_PROMPT}"
+      expected_tool="upper"
+      mode="deny"
+      ;;
+    add_denied_not_granted)
+      prompt="Use the MCP add tool to add 41 and 1. Reply with only the numeric result."
+      expected_tool="add"
+      mode="deny"
+      ;;
+    echo_denied_revoked)
+      prompt="Use the MCP echo tool to repeat the word analytics. Reply with only the tool's output."
+      expected_tool="echo"
+      mode="deny"
       ;;
     *)
       echo "unknown smoke agent case: ${case_name}" >&2
@@ -737,6 +754,7 @@ run_mcp_smoke_agent_prompt() {
   fi
 
   MCP_SMOKE_AGENT_CASE="${case_name}" \
+  MCP_SMOKE_AGENT_MODE="${mode}" \
   MCP_SMOKE_AGENT_EXPECTED_TOOL="${expected_tool}" \
   MCP_SMOKE_AGENT_EXPECTED_TEXT="${expected_text}" \
   MCP_SMOKE_AGENT_STDOUT="${stdout_file}" \
@@ -746,6 +764,7 @@ import os
 import re
 
 case = os.environ["MCP_SMOKE_AGENT_CASE"]
+mode = os.environ["MCP_SMOKE_AGENT_MODE"]
 expected_tool = os.environ["MCP_SMOKE_AGENT_EXPECTED_TOOL"]
 expected_text = os.environ["MCP_SMOKE_AGENT_EXPECTED_TEXT"]
 stdout_path = os.environ["MCP_SMOKE_AGENT_STDOUT"]
@@ -759,21 +778,39 @@ with open(stdout_path, "r", encoding="utf-8") as fh:
 with open(stderr_path, "r", encoding="utf-8") as fh:
     stderr = fh.read()
 
-check(
-    bool(re.search(rf"^tool>\s+{re.escape(expected_tool)}\s+", stderr, re.MULTILINE)),
-    f"mcp-smoke-agent[{case}] called {expected_tool}",
-    f"mcp-smoke-agent[{case}] did not call {expected_tool}:\n{stderr}",
-)
-haystack = stdout + "\n" + stderr
-check(
-    expected_text.lower() in haystack.lower(),
-    f"mcp-smoke-agent[{case}] produced {expected_text}",
-    f"mcp-smoke-agent[{case}] did not produce {expected_text!r}:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}",
-)
+tool_attempted = bool(re.search(rf"^tool>\s+{re.escape(expected_tool)}\s+", stderr, re.MULTILINE))
 
-print(f"mcp-smoke-agent[{case}]:")
-print(f"  tool call    {expected_tool}")
-print(f"  final answer {expected_text}")
+if mode == "allow":
+    check(
+        tool_attempted,
+        f"mcp-smoke-agent[{case}] called {expected_tool}",
+        f"mcp-smoke-agent[{case}] did not call {expected_tool}:\n{stderr}",
+    )
+    haystack = stdout + "\n" + stderr
+    check(
+        expected_text.lower() in haystack.lower(),
+        f"mcp-smoke-agent[{case}] produced {expected_text}",
+        f"mcp-smoke-agent[{case}] did not produce {expected_text!r}:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}",
+    )
+    print(f"mcp-smoke-agent[{case}]:")
+    print(f"  mode         allow")
+    print(f"  tool call    {expected_tool}")
+    print(f"  final answer {expected_text}")
+else:
+    # Deny path: the governance layer at the gateway enforces denial
+    # deterministically (the adjacent raw-MCP wait_for_mcp_tool_result calls
+    # already prove that). What we verify at the real-LLM agent level is that
+    # the full stack stays graceful under denial: the agent exits cleanly
+    # (already enforced above) and surfaces either a tool-call attempt with
+    # a denial marker, or a soft decline from the model. We log both signals
+    # for post-mortem but intentionally avoid brittle content assertions on
+    # LLM output.
+    denial_markers = ["trust_too_low", "tool_not_granted", "tool_denied", "tool execution failed"]
+    denial_seen = any(marker in stdout + stderr for marker in denial_markers)
+    print(f"mcp-smoke-agent[{case}]:")
+    print(f"  mode         deny")
+    print(f"  tool attempt {'yes' if tool_attempted else 'no'}")
+    print(f"  denial seen  {'yes' if denial_seen else 'no'}")
 PY
 }
 
@@ -2226,6 +2263,11 @@ check(
 print("upper deny:", body)
 PY
 
+  if should_run_mcp_smoke_agent; then
+    echo "[mcp] running real-client agent against trust_too_low governance (expect denial)"
+    run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" governance_denied_low_trust
+  fi
+
   echo "[policy] raising consented trust to medium"
   cat <<EOF | kubectl apply -f -
 apiVersion: mcpruntime.org/v1alpha1
@@ -2248,6 +2290,11 @@ EOF
   echo "[mcp] waiting for updated consented trust to reach the gateway"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "upper" '{"message":"governance"}' 200 "GOVERNANCE"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "add" '{"a":2,"b":3}' 403 "tool_not_granted"
+
+  if should_run_mcp_smoke_agent; then
+    echo "[mcp] running real-client agent against tool_not_granted add (expect denial)"
+    run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" add_denied_not_granted
+  fi
 
   echo "[mcp] validating updated policy allows the higher-trust tool"
   MCP_BASE="${MCP_SESSION_URL}" \
@@ -2388,6 +2435,10 @@ EOF
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 403 "tool_denied"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "echo" '{"message":"analytics"}' 403 "tool_denied"
   run_mcp_smoke_expect "mcp-smoke-aaa-ping-deny" "${MCP_SESSION_URL}" false "tool_denied"
+  if should_run_mcp_smoke_agent; then
+    echo "[mcp] running real-client agent against revoked echo (expect denial)"
+    run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" echo_denied_revoked
+  fi
   MCP_BASE="${MCP_SESSION_URL}" \
   MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION}" \
   python3 <<'PY'
