@@ -8,6 +8,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const DefaultRegistryHost = "registry.local"
+
+// ResolveRegistryHost resolves the host used for default image names.
+// Precedence: MCP_REGISTRY_INGRESS_HOST, legacy MCP_REGISTRY_HOST, fallback default.
+func ResolveRegistryHost() string {
+	if host := os.Getenv("MCP_REGISTRY_INGRESS_HOST"); host != "" {
+		return host
+	}
+	if host := os.Getenv("MCP_REGISTRY_HOST"); host != "" {
+		return host
+	}
+	return DefaultRegistryHost
+}
+
 // LoadFromFile reads a single registry YAML file from disk and applies default values.
 func LoadFromFile(filePath string) (*RegistryFile, error) {
 	cleanPath := filepath.Clean(filePath)
@@ -66,14 +80,7 @@ func setDefaults(server *ServerMetadata) {
 	// cluster CoreDNS. MCP_REGISTRY_INGRESS_HOST (or the legacy MCP_REGISTRY_HOST)
 	// overrides the default for users running a different ingress host.
 	if server.Image == "" {
-		host := os.Getenv("MCP_REGISTRY_INGRESS_HOST")
-		if host == "" {
-			host = os.Getenv("MCP_REGISTRY_HOST")
-		}
-		if host == "" {
-			host = "registry.local"
-		}
-		server.Image = fmt.Sprintf("%s/%s", host, server.Name)
+		server.Image = fmt.Sprintf("%s/%s", ResolveRegistryHost(), server.Name)
 	}
 	if server.ImageTag == "" {
 		server.ImageTag = "latest"

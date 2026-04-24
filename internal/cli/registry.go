@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -911,7 +912,7 @@ func rewriteTargetHostForInClusterPush(target string, kubectl *KubectlClient) st
 	port := GetRegistryPort()
 	if kubectl != nil {
 		// #nosec G204 -- fixed arguments, no user input.
-		if portCmd, err := kubectl.CommandArgs([]string{"get", "service", "registry", "-n", "registry", "-o", "jsonpath={.spec.ports[0].port}"}); err == nil {
+		if portCmd, err := kubectl.CommandArgs([]string{"get", "service", RegistryServiceName, "-n", NamespaceRegistry, "-o", "jsonpath={.spec.ports[0].port}"}); err == nil {
 			if out, err := portCmd.Output(); err == nil {
 				if p := strings.TrimSpace(string(out)); p != "" {
 					port = parsePortOrDefault(p, port)
@@ -919,18 +920,12 @@ func rewriteTargetHostForInClusterPush(target string, kubectl *KubectlClient) st
 			}
 		}
 	}
-	return fmt.Sprintf("registry.registry.svc.cluster.local:%d%s", port, rest)
+	return fmt.Sprintf("%s.%s.svc.cluster.local:%d%s", RegistryServiceName, NamespaceRegistry, port, rest)
 }
 
 func parsePortOrDefault(s string, def int) int {
-	n := 0
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return def
-		}
-		n = n*10 + int(c-'0')
-	}
-	if n <= 0 || n > 65535 {
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 || n > 65535 {
 		return def
 	}
 	return n

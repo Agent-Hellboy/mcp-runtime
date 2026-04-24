@@ -25,6 +25,11 @@ func TestDetectDistribution(t *testing.T) {
 			want:  DistroKind,
 		},
 		{
+			name:  "does not treat generic control-plane names as kind",
+			names: "prod-control-plane",
+			want:  DistroGeneric,
+		},
+		{
 			name:  "minikube from node name",
 			names: "minikube",
 			want:  DistroMinikube,
@@ -127,6 +132,19 @@ func TestCheckRegistryReachableFromCluster(t *testing.T) {
 		check := checkRegistryReachableFromCluster(kubectl)
 		if check.OK {
 			t.Fatal("expected failure for non-200")
+		}
+	})
+
+	t.Run("does not false-pass when body includes non-status 200", func(t *testing.T) {
+		mock := &MockExecutor{
+			CommandFunc: func(spec ExecSpec) *MockCommand {
+				return &MockCommand{OutputData: []byte("diagnostic: 200 retries\nHTTP/1.1 503 Service Unavailable\n")}
+			},
+		}
+		kubectl := &KubectlClient{exec: mock, validators: nil}
+		check := checkRegistryReachableFromCluster(kubectl)
+		if check.OK {
+			t.Fatal("expected failure when HTTP status line is not 200")
 		}
 	})
 

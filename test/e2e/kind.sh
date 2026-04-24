@@ -261,6 +261,29 @@ wait_http() {
   return 1
 }
 
+# Run rollout status with diagnostics on failure.
+rollout_status_with_logs() {
+  local namespace="$1"
+  local kind="$2"
+  local name="$3"
+  local timeout="$4"
+
+  set +e
+  kubectl rollout status "${kind}/${name}" -n "${namespace}" --timeout="${timeout}"
+  local status=$?
+  set -e
+
+  if [[ ${status} -ne 0 ]]; then
+    echo "[debug] rollout failed for ${kind}/${name}; collecting diagnostics" >&2
+    kubectl describe "${kind}/${name}" -n "${namespace}" || true
+    kubectl get pods -n "${namespace}" -l "app=${name}" -o wide || true
+    kubectl logs -n "${namespace}" -l "app=${name}" --all-containers=true --tail=200 || true
+    kubectl logs -n "${namespace}" "deploy/${name}" --all-containers=true --tail=200 || true
+  fi
+
+  return ${status}
+}
+
 assert_file_contains() {
   local needle="$1"
   local file="$2"
@@ -1531,17 +1554,18 @@ build_and_publish_image "docker.io/library/mcp-sentinel-processor:latest" "${SEN
 build_and_publish_image "docker.io/library/mcp-sentinel-ui:latest" "${SENTINEL_ROOT}/services/ui/Dockerfile" "${SENTINEL_ROOT}/services/ui"
 
 echo "[setup] running platform setup in test mode"
+export MCP_SETUP_WAIT_TIMEOUT="${MCP_SETUP_WAIT_TIMEOUT:-900}"
 MCP_RUNTIME_REGISTRY_IMAGE_OVERRIDE="${TEST_MODE_REGISTRY_IMAGE}" \
 ./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http
 
 echo "[verify] waiting for core platform components"
-kubectl rollout status deploy/registry -n registry --timeout=180s
-kubectl rollout status deploy/mcp-runtime-operator-controller-manager -n mcp-runtime --timeout=180s
-kubectl rollout status deploy/traefik -n traefik --timeout=180s
-kubectl rollout status deploy/mcp-sentinel-api -n mcp-sentinel --timeout=180s
-kubectl rollout status deploy/mcp-sentinel-gateway -n mcp-sentinel --timeout=180s
-kubectl rollout status statefulset/tempo -n mcp-sentinel --timeout=180s
-kubectl rollout status statefulset/loki -n mcp-sentinel --timeout=300s
+rollout_status_with_logs registry deploy registry 180s
+rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
+rollout_status_with_logs traefik deploy traefik 180s
+rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
+rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-gateway 180s
+rollout_status_with_logs mcp-sentinel statefulset tempo 180s
+rollout_status_with_logs mcp-sentinel statefulset loki 300s
 
 echo "[cli] checking platform status commands"
 ./bin/mcp-runtime status

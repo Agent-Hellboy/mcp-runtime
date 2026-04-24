@@ -9,6 +9,7 @@ package cli
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -96,7 +97,7 @@ func DetectDistribution(kubectl KubectlRunner) Distribution {
 		if out, err := cmd.Output(); err == nil {
 			names := strings.ToLower(string(out))
 			switch {
-			case strings.Contains(names, "kind-"), strings.Contains(names, "-control-plane"):
+			case strings.Contains(names, "kind-"):
 				return DistroKind
 			case strings.Contains(names, "minikube"):
 				return DistroMinikube
@@ -154,13 +155,15 @@ func checkRegistryService(kubectl KubectlRunner) DoctorCheck {
 // remediation hint, not as a pass/fail check — we can't reach into kubelet
 // non-destructively.
 func checkRegistryReachableFromCluster(kubectl KubectlRunner) DoctorCheck {
+	podName := fmt.Sprintf("mcp-runtime-doctor-curl-%d", time.Now().UnixNano())
 	args := []string{
 		"run", "-n", "registry",
 		"--rm", "--restart=Never", "--attach",
+		"--pod-running-timeout=30s",
 		"--quiet",
 		"--image=curlimages/curl:8.7.1",
-		"mcp-runtime-doctor-curl",
-		"--command", "--", "curl", "-sSI",
+		podName,
+		"--command", "--", "curl", "-sSI", "--connect-timeout", "5", "--max-time", "15",
 		"http://registry.registry.svc.cluster.local:5000/v2/",
 	}
 	cmd, err := kubectl.CommandArgs(args)
@@ -182,7 +185,7 @@ func checkRegistryReachableFromCluster(kubectl KubectlRunner) DoctorCheck {
 			Remedy: "run `./bin/mcp-runtime setup` if the registry is missing; check `kubectl -n registry get pods`",
 		}
 	}
-	if !strings.Contains(body, "200") {
+	if !hasHTTP200Status(body) {
 		return DoctorCheck{
 			Name:   "registry reachability (in-cluster)",
 			OK:     false,
@@ -195,6 +198,18 @@ func checkRegistryReachableFromCluster(kubectl KubectlRunner) DoctorCheck {
 		OK:     true,
 		Detail: "HTTP 200 from registry.registry.svc.cluster.local:5000/v2/",
 	}
+}
+
+func hasHTTP200Status(body string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "HTTP/") {
+			continue
+		}
+		fields := strings.Fields(line)
+		return len(fields) >= 2 && fields[1] == "200"
+	}
+	return false
 }
 
 // PrintDoctorReport emits a human-readable report using the standard printer.

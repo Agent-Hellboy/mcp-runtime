@@ -8,6 +8,9 @@ import (
 )
 
 func TestLoadFromFile(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "")
+	t.Setenv("MCP_REGISTRY_HOST", "")
+
 	tests := []struct {
 		name     string
 		filePath string

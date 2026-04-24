@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,7 +13,10 @@ import (
 // resolve the same way they do when the binary is invoked from the repo root.
 func TestMain(m *testing.M) {
 	if root, err := findModuleRoot(); err == nil {
-		_ = os.Chdir(root)
+		if err := os.Chdir(root); err != nil {
+			fmt.Fprintf(os.Stderr, "TestMain: chdir to module root %q failed: %v\n", root, err)
+			os.Exit(1)
+		}
 	}
 	os.Exit(m.Run())
 }
