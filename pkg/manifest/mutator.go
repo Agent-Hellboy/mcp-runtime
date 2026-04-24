@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -184,12 +185,18 @@ func (m *Mutator) SetDeploymentEnv(deploymentName, containerName string, envVars
 			continue
 		}
 		if containerName == "" || getString(container, "name") == containerName {
-			// Build env array
-			env := make([]map[string]any, 0, len(envVars))
-			for name, value := range envVars {
+			// Build env array, sorted by key for deterministic output
+			names := make([]string, 0, len(envVars))
+			for name := range envVars {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+
+			env := make([]any, 0, len(envVars))
+			for _, name := range names {
 				env = append(env, map[string]any{
 					"name":  name,
-					"value": value,
+					"value": envVars[name],
 				})
 			}
 			container["env"] = env
@@ -228,32 +235,47 @@ func (m *Mutator) MergeDeploymentEnv(deploymentName, containerName string, envVa
 			continue
 		}
 		if containerName == "" || getString(container, "name") == containerName {
-			// Get existing env
-			existingEnv := make(map[string]map[string]any)
+			// Build ordered slice of env entries and name->index map
+			orderedEnv := make([]any, 0)
+			nameToIndex := make(map[string]int)
+			
 			if existing, ok := container["env"].([]any); ok {
 				for _, e := range existing {
 					if envEntry, ok := e.(map[string]any); ok {
 						if name := getString(envEntry, "name"); name != "" {
-							existingEnv[name] = envEntry
+							nameToIndex[name] = len(orderedEnv)
+							orderedEnv = append(orderedEnv, envEntry)
 						}
 					}
 				}
 			}
 
-			// Merge new values
+			// Merge new values: update in-place if exists, append if new
+			newNames := make([]string, 0)
 			for name, value := range envVars {
-				existingEnv[name] = map[string]any{
-					"name":  name,
-					"value": value,
+				if idx, exists := nameToIndex[name]; exists {
+					// Update existing entry in-place
+					if envEntry, ok := orderedEnv[idx].(map[string]any); ok {
+						envEntry["value"] = value
+					}
+				} else {
+					// Track new names to append
+					newNames = append(newNames, name)
 				}
 			}
 
-			// Convert back to array
-			env := make([]map[string]any, 0, len(existingEnv))
-			for _, entry := range existingEnv {
-				env = append(env, entry)
+			// Append new entries in deterministic order
+			if len(newNames) > 0 {
+				sort.Strings(newNames)
+				for _, name := range newNames {
+					orderedEnv = append(orderedEnv, map[string]any{
+						"name":  name,
+						"value": envVars[name],
+					})
+				}
 			}
-			container["env"] = env
+
+			container["env"] = orderedEnv
 			return nil
 		}
 	}

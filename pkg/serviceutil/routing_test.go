@@ -76,6 +76,13 @@ func TestExtractGrantActionParams(t *testing.T) {
 			prefix:  "/api/runtime/grants/",
 			wantErr: ErrInvalidPath,
 		},
+		{
+			name:    "too many path parts",
+			method:  http.MethodPost,
+			path:    "/api/runtime/grants/default/my-grant/extra/disable",
+			prefix:  "/api/runtime/grants/",
+			wantErr: ErrInvalidPath,
+		},
 	}
 
 	for _, tc := range tests {
@@ -152,6 +159,13 @@ func TestExtractSessionActionParams(t *testing.T) {
 			path:    "/api/runtime/sessions/default/my-session/invalid",
 			prefix:  "/api/runtime/sessions/",
 			wantErr: ErrInvalidAction,
+		},
+		{
+			name:    "too many path parts",
+			method:  http.MethodPost,
+			path:    "/api/runtime/sessions/default/my-session/extra/revoke",
+			prefix:  "/api/runtime/sessions/",
+			wantErr: ErrInvalidPath,
 		},
 	}
 

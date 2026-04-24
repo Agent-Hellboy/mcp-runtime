@@ -91,13 +91,13 @@ func TestPolicyDocumentRoundTrip(t *testing.T) {
 		},
 		Sessions: []Binding{
 			{
-				Name:           "session-1",
-				HumanID:        "user@example.com",
-				AgentID:        "agent-123",
-				ConsentedTrust: "high",
-				Revoked:        false,
-				ExpiresAt:      time.Now().Add(24 * time.Hour).Format(time.RFC3339),
-				PolicyVersion:  "v1",
+				Name:             "session-1",
+				HumanID:          "user@example.com",
+				AgentID:          "agent-123",
+				ConsentedTrust:   "high",
+				Revoked:          false,
+				ExpiresAt:        time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+				PolicyVersion:    "v1",
 				UpstreamTokenRef: "upstream-token/key",
 			},
 		},
@@ -200,6 +200,7 @@ func verifySession(t *testing.T, expected, actual Session) {
 func verifyTools(t *testing.T, expected, actual []Tool) {
 	if len(expected) != len(actual) {
 		t.Fatalf("Tools length mismatch: expected %d, got %d", len(expected), len(actual))
+		return
 	}
 	for i, exp := range expected {
 		act := actual[i]
@@ -226,6 +227,7 @@ func verifyTools(t *testing.T, expected, actual []Tool) {
 func verifyGrants(t *testing.T, expected, actual []Grant) {
 	if len(expected) != len(actual) {
 		t.Fatalf("Grants length mismatch: expected %d, got %d", len(expected), len(actual))
+		return
 	}
 	for i, exp := range expected {
 		act := actual[i]
@@ -248,7 +250,8 @@ func verifyGrants(t *testing.T, expected, actual []Grant) {
 			t.Errorf("Grant[%d].Disabled mismatch: expected %v, got %v", i, exp.Disabled, act.Disabled)
 		}
 		if len(exp.ToolRules) != len(act.ToolRules) {
-			t.Errorf("Grant[%d].ToolRules length mismatch: expected %d, got %d", i, len(exp.ToolRules), len(act.ToolRules))
+			t.Fatalf("Grant[%d].ToolRules length mismatch: expected %d, got %d", i, len(exp.ToolRules), len(act.ToolRules))
+			return
 		}
 		for j, rule := range exp.ToolRules {
 			if act.ToolRules[j].Name != rule.Name {
@@ -267,6 +270,7 @@ func verifyGrants(t *testing.T, expected, actual []Grant) {
 func verifySessions(t *testing.T, expected, actual []Binding) {
 	if len(expected) != len(actual) {
 		t.Fatalf("Sessions length mismatch: expected %d, got %d", len(expected), len(actual))
+		return
 	}
 	for i, exp := range expected {
 		act := actual[i]

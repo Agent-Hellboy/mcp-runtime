@@ -113,7 +113,7 @@ spec:
 	m, _ := NewMutator([]byte(yaml))
 
 	envVars := map[string]string{
-		"NEW_VAR":     "new_value",
+		"NEW_VAR":      "new_value",
 		"EXISTING_VAR": "updated_value",
 	}
 
@@ -182,5 +182,72 @@ func TestSimpleManifestRenderer(t *testing.T) {
 	result := SimpleManifestRenderer(content, images)
 	if result != "image: nginx:1.20" {
 		t.Errorf("Expected 'image: nginx:1.20', got %q", result)
+	}
+}
+
+func TestMergeDeploymentEnvIdempotent(t *testing.T) {
+	yaml := `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: test-container
+        image: nginx
+`
+	m, err := NewMutator([]byte(yaml))
+	if err != nil {
+		t.Fatalf("NewMutator failed: %v", err)
+	}
+
+	// First merge: add A=1
+	err = m.MergeDeploymentEnv("test-deployment", "", map[string]string{
+		"A": "1",
+	})
+	if err != nil {
+		t.Fatalf("First MergeDeploymentEnv failed: %v", err)
+	}
+
+	// Second merge: add B=2
+	err = m.MergeDeploymentEnv("test-deployment", "", map[string]string{
+		"B": "2",
+	})
+	if err != nil {
+		t.Fatalf("Second MergeDeploymentEnv failed: %v", err)
+	}
+
+	// Verify both keys are present
+	deployment := m.FindDeployment("test-deployment")
+	if deployment == nil {
+		t.Fatal("Deployment not found")
+	}
+
+	spec := getMap(getMap(deployment, "spec"), "template", "spec")
+	containers := spec["containers"].([]any)
+	container := containers[0].(map[string]any)
+	env := container["env"].([]any)
+
+	foundA := false
+	foundB := false
+	for _, e := range env {
+		envEntry := e.(map[string]any)
+		name := envEntry["name"].(string)
+		value := envEntry["value"].(string)
+		if name == "A" && value == "1" {
+			foundA = true
+		}
+		if name == "B" && value == "2" {
+			foundB = true
+		}
+	}
+
+	if !foundA {
+		t.Error("Variable A should be present after idempotent merge")
+	}
+	if !foundB {
+		t.Error("Variable B should be present after idempotent merge")
 	}
 }

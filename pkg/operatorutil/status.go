@@ -4,7 +4,7 @@ package operatorutil
 import (
 	"context"
 
-	"k8s.io/apimachinery/pkg/api/meta"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -84,7 +84,7 @@ func UpdateMCPServerStatus(ctx context.Context, c client.Client, obj client.Obje
 	// Use Status().Update() which only updates the status subresource
 	if err := c.Status().Update(ctx, latest); err != nil {
 		// If it's a conflict error, that's expected in concurrent scenarios - log at debug level
-		if meta.IsNoMatchError(err) {
+		if apierrors.IsConflict(err) {
 			logger.V(1).Info("Status update conflict (expected in concurrent reconciles), will retry on next reconcile", "key", key)
 		} else {
 			logger.Error(err, "Failed to update status", "key", key)
@@ -97,6 +97,7 @@ func UpdateMCPServerStatus(ctx context.Context, c client.Client, obj client.Obje
 
 // SetCondition sets a condition in the conditions slice.
 // It updates an existing condition if present, or appends a new one.
+// LastTransitionTime is only updated when the condition's Status actually flips.
 func SetCondition(conditions *[]metav1.Condition, condType ConditionType, ready bool, reason, message string, generation int64) {
 	status := metav1.ConditionFalse
 	if ready {
@@ -122,6 +123,11 @@ func SetCondition(conditions *[]metav1.Condition, condType ConditionType, ready 
 	}
 
 	if existingIdx >= 0 {
+		// Preserve LastTransitionTime if Status hasn't changed
+		existingCond := (*conditions)[existingIdx]
+		if existingCond.Status == newCond.Status {
+			newCond.LastTransitionTime = existingCond.LastTransitionTime
+		}
 		(*conditions)[existingIdx] = newCond
 	} else {
 		*conditions = append(*conditions, newCond)

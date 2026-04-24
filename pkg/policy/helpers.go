@@ -62,12 +62,13 @@ func PolicyUsesOAuth(policy *Document) bool {
 	return policy != nil && strings.EqualFold(policy.Auth.Mode, "oauth")
 }
 
-// ChoosePolicyVersion returns the first non-empty policy version from the provided values.
+// ChoosePolicyVersion returns the first non-empty policy version from the provided values,
+// or empty string if none found. Callers should pass their own default as the last value.
 func ChoosePolicyVersion(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
 			return value
 		}
 	}
-	return "v1"
+	return ""
 }

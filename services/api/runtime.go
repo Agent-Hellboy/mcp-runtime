@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	sentinelaccess "mcp-runtime/pkg/access"
 	chpkg "mcp-runtime/pkg/clickhouse"
 	"mcp-runtime/pkg/k8sclient"
 	"mcp-runtime/pkg/sentinel"
 	"mcp-runtime/pkg/serviceutil"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // RuntimeServer extends apiServer with Kubernetes and enhanced ClickHouse capabilities.

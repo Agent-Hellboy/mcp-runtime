@@ -5,12 +5,12 @@ package policy
 
 // Document is the root gateway policy document that contains all policy configuration.
 type Document struct {
-	Server   Server   `json:"server"`
-	Auth     Auth     `json:"auth"`
-	Policy   Config   `json:"policy"`
-	Session  Session  `json:"session"`
-	Tools    []Tool   `json:"tools,omitempty"`
-	Grants   []Grant  `json:"grants,omitempty"`
+	Server   Server    `json:"server"`
+	Auth     Auth      `json:"auth"`
+	Policy   Config    `json:"policy"`
+	Session  Session   `json:"session"`
+	Tools    []Tool    `json:"tools,omitempty"`
+	Grants   []Grant   `json:"grants,omitempty"`
 	Sessions []Binding `json:"sessions,omitempty"`
 }
 

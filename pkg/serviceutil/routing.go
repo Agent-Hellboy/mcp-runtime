@@ -49,7 +49,7 @@ func ExtractGrantActionParams(r *http.Request, prefix string) (RouteParams, erro
 	path := strings.TrimPrefix(r.URL.Path, prefix)
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 
-	if len(parts) < 3 {
+	if len(parts) != 3 {
 		return params, fmt.Errorf("%w: expected {namespace}/{name}/{action}, got %d path parts", ErrInvalidPath, len(parts))
 	}
 
@@ -87,7 +87,7 @@ func ExtractSessionActionParams(r *http.Request, prefix string) (RouteParams, er
 	path := strings.TrimPrefix(r.URL.Path, prefix)
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 
-	if len(parts) < 3 {
+	if len(parts) != 3 {
 		return params, fmt.Errorf("%w: expected {namespace}/{name}/{action}, got %d path parts", ErrInvalidPath, len(parts))
 	}
 

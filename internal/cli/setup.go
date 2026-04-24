@@ -1423,7 +1423,12 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 	// Inject operator args if provided
 	if len(operatorArgs) > 0 {
 		if err := mutator.SetDeploymentArgs(OperatorDeploymentName, "", operatorArgs); err != nil {
-			Warn(fmt.Sprintf("Could not set operator args: %v", err))
+			wrappedErr := wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to set operator args: %v", err))
+			Error("Failed to set operator args")
+			if logger != nil {
+				logStructuredError(logger, wrappedErr, "Failed to set operator args")
+			}
+			return wrappedErr
 		}
 	}
 
@@ -1434,7 +1439,12 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 			envMap[ev.Name] = ev.Value
 		}
 		if err := mutator.MergeDeploymentEnv(OperatorDeploymentName, "", envMap); err != nil {
-			Warn(fmt.Sprintf("Could not set operator env vars: %v", err))
+			wrappedErr := wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to merge operator env vars: %v", err))
+			Error("Failed to merge operator env vars")
+			if logger != nil {
+				logStructuredError(logger, wrappedErr, "Failed to merge operator env vars")
+			}
+			return wrappedErr
 		}
 	}
 
