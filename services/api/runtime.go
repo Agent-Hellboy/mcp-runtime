@@ -3,16 +3,18 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
-	sentinelaccess "github.com/proshan/mcp-runtime/pkg/access"
-	chpkg "github.com/proshan/mcp-runtime/pkg/clickhouse"
-	"github.com/proshan/mcp-runtime/pkg/k8sclient"
-	"github.com/proshan/mcp-runtime/pkg/sentinel"
+	sentinelaccess "mcp-runtime/pkg/access"
+	chpkg "mcp-runtime/pkg/clickhouse"
+	"mcp-runtime/pkg/k8sclient"
+	"mcp-runtime/pkg/sentinel"
+	"mcp-runtime/pkg/serviceutil"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -262,34 +264,18 @@ func (s *RuntimeServer) handleRuntimePolicy(w http.ResponseWriter, r *http.Reque
 
 // handleGrantTogglePath handles POST /api/runtime/grants/{namespace}/{name}/disable|enable
 func (s *RuntimeServer) handleGrantTogglePath(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	params, err := serviceutil.ExtractGrantActionParams(r, "/api/runtime/grants/")
+	if err != nil {
+		if errors.Is(err, serviceutil.ErrMethodNotAllowed) {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": err.Error()})
+		} else {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
 		return
 	}
 
-	path := strings.TrimPrefix(r.URL.Path, "/api/runtime/grants/")
-	parts := strings.Split(path, "/")
-	if len(parts) < 3 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
-		return
-	}
-
-	namespace := parts[0]
-	name := parts[1]
-	action := parts[2]
-
-	var disable bool
-	switch action {
-	case "disable":
-		disable = true
-	case "enable":
-		disable = false
-	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid action"})
-		return
-	}
-
-	s.handleGrantToggle(w, r, namespace, name, disable)
+	disable := params.Action == "disable"
+	s.handleGrantToggle(w, r, params.Namespace, params.Name, disable)
 }
 
 func (s *RuntimeServer) handleGrantToggle(w http.ResponseWriter, r *http.Request, namespace, name string, disable bool) {
@@ -323,34 +309,18 @@ func (s *RuntimeServer) handleGrantToggle(w http.ResponseWriter, r *http.Request
 
 // handleSessionTogglePath handles POST /api/runtime/sessions/{namespace}/{name}/revoke|unrevoke
 func (s *RuntimeServer) handleSessionTogglePath(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	params, err := serviceutil.ExtractSessionActionParams(r, "/api/runtime/sessions/")
+	if err != nil {
+		if errors.Is(err, serviceutil.ErrMethodNotAllowed) {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": err.Error()})
+		} else {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
 		return
 	}
 
-	path := strings.TrimPrefix(r.URL.Path, "/api/runtime/sessions/")
-	parts := strings.Split(path, "/")
-	if len(parts) < 3 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
-		return
-	}
-
-	namespace := parts[0]
-	name := parts[1]
-	action := parts[2]
-
-	var revoke bool
-	switch action {
-	case "revoke":
-		revoke = true
-	case "unrevoke":
-		revoke = false
-	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid action"})
-		return
-	}
-
-	s.handleSessionToggle(w, r, namespace, name, revoke)
+	revoke := params.Action == "revoke"
+	s.handleSessionToggle(w, r, params.Namespace, params.Name, revoke)
 }
 
 func (s *RuntimeServer) handleSessionToggle(w http.ResponseWriter, r *http.Request, namespace, name string, revoke bool) {

@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,6 +28,9 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+
+	"mcp-runtime/pkg/policy"
+	"mcp-runtime/pkg/serviceutil"
 )
 
 type analyticsEvent struct {
@@ -47,81 +49,31 @@ type toolParams struct {
 	Name string `json:"name"`
 }
 
-type gatewayPolicyDocument struct {
-	Server   gatewayPolicyServer    `json:"server"`
-	Auth     gatewayPolicyAuth      `json:"auth"`
-	Policy   gatewayPolicyConfig    `json:"policy"`
-	Session  gatewayPolicySession   `json:"session"`
-	Tools    []gatewayPolicyTool    `json:"tools,omitempty"`
-	Grants   []gatewayPolicyGrant   `json:"grants,omitempty"`
-	Sessions []gatewayPolicyBinding `json:"sessions,omitempty"`
-}
+// Use shared policy types from pkg/policy
+// This ensures contract compatibility with the operator
 
-type gatewayPolicyServer struct {
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
-	Cluster   string `json:"cluster,omitempty"`
-}
+type gatewayPolicyDocument = policy.Document
+type gatewayPolicyServer = policy.Server
+type gatewayPolicyAuth = policy.Auth
+type gatewayPolicyConfig = policy.Config
+type gatewayPolicySession = policy.Session
+type gatewayPolicyTool = policy.Tool
+type gatewayPolicyGrant = policy.Grant
+type gatewayPolicyBinding = policy.Binding
+type gatewayToolAccess = policy.ToolAccess
 
-type gatewayPolicyAuth struct {
-	Mode            string `json:"mode,omitempty"`
-	HumanIDHeader   string `json:"human_id_header,omitempty"`
-	AgentIDHeader   string `json:"agent_id_header,omitempty"`
-	SessionIDHeader string `json:"session_id_header,omitempty"`
-	TokenHeader     string `json:"token_header,omitempty"`
-	IssuerURL       string `json:"issuer_url,omitempty"`
-	Audience        string `json:"audience,omitempty"`
-}
-
-type gatewayPolicyConfig struct {
-	Mode            string `json:"mode,omitempty"`
-	DefaultDecision string `json:"default_decision,omitempty"`
-	EnforceOn       string `json:"enforce_on,omitempty"`
-	PolicyVersion   string `json:"policy_version,omitempty"`
-}
-
-type gatewayPolicySession struct {
-	Required            bool   `json:"required,omitempty"`
-	Store               string `json:"store,omitempty"`
-	HeaderName          string `json:"header_name,omitempty"`
-	MaxLifetime         string `json:"max_lifetime,omitempty"`
-	IdleTimeout         string `json:"idle_timeout,omitempty"`
-	UpstreamTokenHeader string `json:"upstream_token_header,omitempty"`
-}
-
-type gatewayPolicyTool struct {
-	Name          string            `json:"name"`
-	Description   string            `json:"description,omitempty"`
-	RequiredTrust string            `json:"required_trust,omitempty"`
-	Labels        map[string]string `json:"labels,omitempty"`
-}
-
-type gatewayPolicyGrant struct {
-	Name          string              `json:"name"`
-	HumanID       string              `json:"human_id,omitempty"`
-	AgentID       string              `json:"agent_id,omitempty"`
-	MaxTrust      string              `json:"max_trust,omitempty"`
-	PolicyVersion string              `json:"policy_version,omitempty"`
-	Disabled      bool                `json:"disabled,omitempty"`
-	ToolRules     []gatewayToolAccess `json:"tool_rules,omitempty"`
-}
-
-type gatewayPolicyBinding struct {
-	Name             string `json:"name"`
-	HumanID          string `json:"human_id,omitempty"`
-	AgentID          string `json:"agent_id,omitempty"`
-	ConsentedTrust   string `json:"consented_trust,omitempty"`
-	Revoked          bool   `json:"revoked,omitempty"`
-	ExpiresAt        string `json:"expires_at,omitempty"`
-	PolicyVersion    string `json:"policy_version,omitempty"`
-	UpstreamTokenRef string `json:"upstream_token_ref,omitempty"`
-}
-
-type gatewayToolAccess struct {
-	Name          string `json:"name"`
-	Decision      string `json:"decision,omitempty"`
-	RequiredTrust string `json:"required_trust,omitempty"`
-}
+// Compile-time checks to ensure type aliases are compatible with policy package types
+var (
+	_ = policy.Document(gatewayPolicyDocument{})
+	_ = policy.Server(gatewayPolicyServer{})
+	_ = policy.Auth(gatewayPolicyAuth{})
+	_ = policy.Config(gatewayPolicyConfig{})
+	_ = policy.Session(gatewayPolicySession{})
+	_ = policy.Tool(gatewayPolicyTool{})
+	_ = policy.Grant(gatewayPolicyGrant{})
+	_ = policy.Binding(gatewayPolicyBinding{})
+	_ = policy.ToolAccess(gatewayToolAccess{})
+)
 
 type identityContext struct {
 	HumanID   string
@@ -1211,24 +1163,9 @@ func stringClaim(claims jwt.MapClaims, key string) string {
 	return ""
 }
 
+// audienceMatches uses the shared serviceutil implementation
 func audienceMatches(audClaim any, expected string) bool {
-	switch aud := audClaim.(type) {
-	case string:
-		return aud == expected
-	case []any:
-		for _, item := range aud {
-			if value, ok := item.(string); ok && value == expected {
-				return true
-			}
-		}
-	case []string:
-		for _, value := range aud {
-			if value == expected {
-				return true
-			}
-		}
-	}
-	return false
+	return serviceutil.AudienceMatches(audClaim, expected)
 }
 
 func extractToken(headerName, value string) string {
@@ -1245,18 +1182,14 @@ func extractToken(headerName, value string) string {
 	return value
 }
 
+// extractBearer uses the shared serviceutil implementation
 func extractBearer(value string) string {
-	if strings.HasPrefix(strings.ToLower(value), "bearer ") {
-		return strings.TrimSpace(value[7:])
-	}
-	return ""
+	return serviceutil.ExtractBearer(value)
 }
 
+// formatTokenHeaderValue uses the shared serviceutil implementation
 func formatTokenHeaderValue(headerName, token string) string {
-	if strings.EqualFold(strings.TrimSpace(headerName), "authorization") {
-		return "Bearer " + token
-	}
-	return token
+	return serviceutil.FormatTokenHeaderValue(headerName, token)
 }
 
 func authServerMetadataCandidates(issuerURL string) []string {
@@ -1591,11 +1524,9 @@ func inspectRPCRequest(r *http.Request) rpcInspection {
 }
 
 // envOr returns the value of an environment variable or a fallback if not set.
+// envOr uses the shared serviceutil implementation
 func envOr(key, fallback string) string {
-	if val := strings.TrimSpace(os.Getenv(key)); val != "" {
-		return val
-	}
-	return fallback
+	return serviceutil.EnvOr(key, fallback)
 }
 
 // maxInt64 returns the maximum of two int64 values.
@@ -1638,46 +1569,12 @@ func initTracer(serviceName string) (func(context.Context) error, error) {
 }
 
 // otlpTraceOptions configures OTLP HTTP exporter options.
+// otlpTraceOptions uses the shared serviceutil implementation
 func otlpTraceOptions(endpoint string) []otlptracehttp.Option {
-	insecure, insecureSet := boolEnv("OTEL_EXPORTER_OTLP_INSECURE")
-	if u, err := url.Parse(endpoint); err == nil {
-		if u.Scheme != "" && u.Host == "" {
-			// Fall through and treat this like host:port.
-		} else if u.Scheme != "" && u.Host != "" {
-			opts := []otlptracehttp.Option{otlptracehttp.WithEndpoint(u.Host)}
-			if u.Path != "" {
-				opts = append(opts, otlptracehttp.WithURLPath(u.Path))
-			}
-			if insecureSet {
-				if insecure {
-					opts = append(opts, otlptracehttp.WithInsecure())
-				}
-				return opts
-			}
-			if u.Scheme == "http" {
-				opts = append(opts, otlptracehttp.WithInsecure())
-			}
-			return opts
-		}
-	}
-
-	opts := []otlptracehttp.Option{otlptracehttp.WithEndpoint(endpoint)}
-	if insecureSet {
-		if insecure {
-			opts = append(opts, otlptracehttp.WithInsecure())
-		}
-		return opts
-	}
-	return opts
+	return serviceutil.OTLPTraceOptions(endpoint)
 }
 
-// boolEnv parses a boolean environment variable.
+// boolEnv uses the shared serviceutil implementation
 func boolEnv(key string) (bool, bool) {
-	if val := strings.TrimSpace(os.Getenv(key)); val != "" {
-		parsed, err := strconv.ParseBool(val)
-		if err == nil {
-			return parsed, true
-		}
-	}
-	return false, false
+	return serviceutil.BoolEnv(key)
 }

@@ -7,7 +7,7 @@ require (
 	github.com/MicahParks/keyfunc v1.9.0
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/prometheus/client_golang v1.23.2
-	github.com/proshan/mcp-runtime v0.0.0
+	mcp-runtime v0.0.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.43.0
@@ -15,7 +15,7 @@ require (
 	k8s.io/apimachinery v0.31.0
 )
 
-replace github.com/proshan/mcp-runtime => ../../
+replace mcp-runtime => ../../
 
 require (
 	github.com/ClickHouse/ch-go v0.68.0 // indirect

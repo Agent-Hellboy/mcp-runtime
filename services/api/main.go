@@ -30,7 +30,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -47,6 +46,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+
+	"mcp-runtime/pkg/serviceutil"
 )
 
 type eventRow struct {
@@ -515,37 +516,18 @@ func (s *apiServer) auth(next http.Handler) http.Handler {
 }
 
 // audienceMatches validates if the JWT audience claim matches the expected value.
-// It handles both string and string slice audience claims as per JWT specifications.
 func audienceMatches(audClaim any, expected string) bool {
-	switch aud := audClaim.(type) {
-	case string:
-		return aud == expected
-	case []any:
-		for _, item := range aud {
-			if s, ok := item.(string); ok && s == expected {
-				return true
-			}
-		}
-	}
-	return false
+	return serviceutil.AudienceMatches(audClaim, expected)
 }
 
 // extractBearer extracts the JWT token from an Authorization header.
-// It expects the format "Bearer <token>" and returns the token part.
-// Returns empty string if the format is invalid.
 func extractBearer(auth string) string {
-	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-		return strings.TrimSpace(auth[7:])
-	}
-	return ""
+	return serviceutil.ExtractBearer(auth)
 }
 
 // writeJSON writes a JSON response with the specified status code.
-// It sets appropriate Content-Type headers and handles JSON marshaling errors.
 func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("content-type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	serviceutil.WriteJSON(w, status, payload)
 }
 
 type statusRecorder struct {
@@ -570,64 +552,18 @@ func logRequests(next http.Handler) http.Handler {
 }
 
 // otlpTraceOptions configures OTLP HTTP exporter options.
-// It sets up the endpoint URL and configures secure/insecure connections
-// based on whether the endpoint uses HTTPS or HTTP.
 func otlpTraceOptions(endpoint string) []otlptracehttp.Option {
-	insecure, insecureSet := boolEnv("OTEL_EXPORTER_OTLP_INSECURE")
-	if u, err := url.Parse(endpoint); err == nil {
-		// Handle URLs with schemes (http://host:port/path)
-		if u.Scheme != "" && u.Host == "" {
-			// This is a scheme-less endpoint, fall through to treat as host:port
-		} else if u.Scheme != "" && u.Host != "" {
-			opts := []otlptracehttp.Option{otlptracehttp.WithEndpoint(u.Host)}
-			if u.Path != "" {
-				opts = append(opts, otlptracehttp.WithURLPath(u.Path))
-			}
-			if insecureSet {
-				if insecure {
-					opts = append(opts, otlptracehttp.WithInsecure())
-				}
-				return opts
-			}
-			if u.Scheme == "http" {
-				opts = append(opts, otlptracehttp.WithInsecure())
-			}
-			return opts
-		}
-	}
-
-	// Fallback: treat entire endpoint as host:port
-	opts := []otlptracehttp.Option{otlptracehttp.WithEndpoint(endpoint)}
-	if insecureSet {
-		if insecure {
-			opts = append(opts, otlptracehttp.WithInsecure())
-		}
-		return opts
-	}
-	return opts
+	return serviceutil.OTLPTraceOptions(endpoint)
 }
 
 // boolEnv parses a boolean environment variable.
-// It returns the parsed boolean value and true if parsing succeeded.
-// Returns false, false if the variable is not set or parsing failed.
 func boolEnv(key string) (bool, bool) {
-	if val := strings.TrimSpace(os.Getenv(key)); val != "" {
-		parsed, err := strconv.ParseBool(val)
-		if err == nil {
-			return parsed, true
-		}
-	}
-	return false, false
+	return serviceutil.BoolEnv(key)
 }
 
 // envOr returns the value of an environment variable or a fallback if not set.
-// If the environment variable is set to a non-empty value, it returns that value.
-// Otherwise, it returns the provided fallback value.
 func envOr(key, fallback string) string {
-	if val := strings.TrimSpace(os.Getenv(key)); val != "" {
-		return val
-	}
-	return fallback
+	return serviceutil.EnvOr(key, fallback)
 }
 
 // queryInt extracts an integer value from URL query parameters.

@@ -16,7 +16,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +23,8 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
+
+	"mcp-runtime/pkg/manifest"
 )
 
 const defaultRegistrySecretName = "mcp-runtime-registry-creds" // #nosec G101 -- default secret name, not a credential.
@@ -1375,9 +1376,10 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 		return wrappedErr
 	}
 
-	// Step 3: Apply manager deployment with image replacement
+	// Step 3: Apply manager deployment with structured image replacement
 	Info("Applying operator deployment")
-	// Read manager.yaml, replace image, and apply
+
+	// Read manager.yaml and apply structured mutations
 	managerYAML, err := os.ReadFile("config/manager/manager.yaml")
 	if err != nil {
 		wrappedErr := wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to read manager.yaml: %v", err))
@@ -1388,18 +1390,63 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 		return wrappedErr
 	}
 
-	// Replace image name using a broad regex with captured indentation to handle registry-customized image values.
-	// This targets the first image field in the file (the manager container).
-	re := regexp.MustCompile(`(?m)^(\s*)image:\s*\S+`)
-	managerYAMLStr := re.ReplaceAllString(string(managerYAML), fmt.Sprintf("${1}image: %s", operatorImage))
-	managerYAMLStr = injectOperatorImagePullPolicy(managerYAMLStr, operatorImagePullPolicy(operatorImage))
+	// Use structured manifest mutation instead of regex
+	mutator, err := manifest.NewMutator(managerYAML)
+	if err != nil {
+		wrappedErr := wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to parse manager.yaml: %v", err))
+		Error("Failed to parse manager.yaml")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to parse manager.yaml")
+		}
+		return wrappedErr
+	}
+
+	// Set the operator image
+	if err := mutator.SetDeploymentImage(OperatorDeploymentName, "", operatorImage); err != nil {
+		wrappedErr := wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to set operator image: %v", err))
+		Error("Failed to set operator image")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to set operator image")
+		}
+		return wrappedErr
+	}
+
+	// Set image pull policy based on image
+	pullPolicy := operatorImagePullPolicy(operatorImage)
+	if pullPolicy != "" {
+		if err := mutator.SetDeploymentImagePullPolicy(OperatorDeploymentName, "", pullPolicy); err != nil {
+			// Non-fatal: log warning but continue
+			Warn(fmt.Sprintf("Could not set image pull policy: %v", err))
+		}
+	}
 
 	// Inject operator args if provided
 	if len(operatorArgs) > 0 {
-		managerYAMLStr = injectOperatorArgs(managerYAMLStr, operatorArgs)
+		if err := mutator.SetDeploymentArgs(OperatorDeploymentName, "", operatorArgs); err != nil {
+			Warn(fmt.Sprintf("Could not set operator args: %v", err))
+		}
 	}
+
+	// Inject environment variables if provided
 	if envVars := operatorEnvOverrides(gatewayProxyImage); len(envVars) > 0 {
-		managerYAMLStr = injectOperatorEnvVars(managerYAMLStr, envVars)
+		envMap := make(map[string]string, len(envVars))
+		for _, ev := range envVars {
+			envMap[ev.Name] = ev.Value
+		}
+		if err := mutator.MergeDeploymentEnv(OperatorDeploymentName, "", envMap); err != nil {
+			Warn(fmt.Sprintf("Could not set operator env vars: %v", err))
+		}
+	}
+
+	// Render the mutated manifest
+	mutatedYAML, err := mutator.ToYAML()
+	if err != nil {
+		wrappedErr := wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to render mutated manifest: %v", err))
+		Error("Failed to render mutated manifest")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to render mutated manifest")
+		}
+		return wrappedErr
 	}
 
 	// Write to temp file under the working directory so kubectl path validation passes.
@@ -1414,7 +1461,7 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 	}
 	defer os.Remove(tmpFile.Name())
 
-	if _, err := tmpFile.WriteString(managerYAMLStr); err != nil {
+	if _, err := tmpFile.Write(mutatedYAML); err != nil {
 		if closeErr := tmpFile.Close(); closeErr != nil {
 			wrappedErr := wrapWithSentinel(ErrCloseTempFileFailed, errors.Join(err, closeErr), fmt.Sprintf("failed to close temp file after write error: %v", closeErr))
 			Error("Failed to close temp file")
@@ -1841,35 +1888,6 @@ func waitForJobCompletionWithKubectl(kubectl KubectlRunner, name, namespace, tim
 	return kubectl.RunWithOutput([]string{"wait", "--for=condition=complete", "job/" + name, "-n", namespace, "--timeout=" + timeout}, os.Stdout, os.Stderr)
 }
 
-// injectOperatorArgs injects operator command-line arguments into the manager deployment YAML.
-// It merges explicit overrides into the existing args section or adds one if it doesn't exist.
-func injectOperatorArgs(yamlContent string, args []string) string {
-	if len(args) == 0 {
-		return yamlContent
-	}
-
-	argsPattern := regexp.MustCompile(`(?m)^(\s*)args:\s*$\n((?:\s+-\s+[^\n]+\n?)*)`)
-	if matches := argsPattern.FindStringSubmatch(yamlContent); len(matches) == 3 {
-		replacement := renderOperatorArgsBlock(matches[1], mergeOperatorArgs(parseOperatorArgs(matches[2]), args))
-		loc := argsPattern.FindStringIndex(yamlContent)
-		return yamlContent[:loc[0]] + replacement + yamlContent[loc[1]:]
-	}
-
-	commandPattern := regexp.MustCompile(`(?m)^(\s*)command:\s*$\n((?:\s+-\s+[^\n]+\n?)+)`)
-	if matches := commandPattern.FindStringSubmatch(yamlContent); len(matches) == 3 {
-		loc := commandPattern.FindStringIndex(yamlContent)
-		return yamlContent[:loc[0]] + yamlContent[loc[0]:loc[1]] + renderOperatorArgsBlock(matches[1], args) + yamlContent[loc[1]:]
-	}
-
-	imagePattern := regexp.MustCompile(`(?m)^(\s*)image:\s*\S+$`)
-	if matches := imagePattern.FindStringSubmatch(yamlContent); len(matches) == 2 {
-		loc := imagePattern.FindStringIndex(yamlContent)
-		return yamlContent[:loc[1]] + "\n" + renderOperatorArgsBlock(matches[1], args) + yamlContent[loc[1]:]
-	}
-
-	return yamlContent
-}
-
 func operatorImagePullPolicy(operatorImage string) string {
 	if strings.TrimSpace(operatorImage) == testModeOperatorImage {
 		return "IfNotPresent"
@@ -1877,61 +1895,13 @@ func operatorImagePullPolicy(operatorImage string) string {
 	return "Always"
 }
 
-func injectOperatorImagePullPolicy(yamlContent, pullPolicy string) string {
-	if strings.TrimSpace(pullPolicy) == "" {
-		return yamlContent
-	}
-	pullPolicyPattern := regexp.MustCompile(`(?m)^(\s*imagePullPolicy:\s*)\S+`)
-	return pullPolicyPattern.ReplaceAllString(yamlContent, "${1}"+pullPolicy)
-}
-
-func renderOperatorArgsBlock(indent string, args []string) string {
-	var builder strings.Builder
-	builder.WriteString(indent)
-	builder.WriteString("args:\n")
-	for _, arg := range args {
-		builder.WriteString(indent)
-		builder.WriteString("- ")
-		builder.WriteString(arg)
-		builder.WriteByte('\n')
-	}
-	return builder.String()
-}
-
-func parseOperatorArgs(block string) []string {
-	var args []string
-	for _, line := range strings.Split(strings.TrimSpace(block), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "- ") {
-			args = append(args, strings.TrimSpace(strings.TrimPrefix(line, "- ")))
-		}
-	}
-	return args
-}
-
-func mergeOperatorArgs(existing, overrides []string) []string {
-	merged := append([]string(nil), existing...)
-	indexByKey := make(map[string]int, len(existing))
-	for i, arg := range merged {
-		indexByKey[operatorArgKey(arg)] = i
-	}
-	for _, arg := range overrides {
-		key := operatorArgKey(arg)
-		if idx, ok := indexByKey[key]; ok {
-			merged[idx] = arg
-			continue
-		}
-		indexByKey[key] = len(merged)
-		merged = append(merged, arg)
-	}
-	return merged
-}
-
+// operatorEnvVar represents an environment variable for the operator.
 type operatorEnvVar struct {
 	Name  string
 	Value string
 }
 
+// operatorEnvOverrides returns the environment variables to set on the operator deployment.
 func operatorEnvOverrides(gatewayProxyImage string) []operatorEnvVar {
 	var envVars []operatorEnvVar
 	image := strings.TrimSpace(gatewayProxyImage)
@@ -1961,46 +1931,6 @@ func operatorEnvOverrides(gatewayProxyImage string) []operatorEnvVar {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_CLUSTER_NAME", Value: clusterName})
 	}
 	return envVars
-}
-
-func injectOperatorEnvVars(yamlContent string, envVars []operatorEnvVar) string {
-	if len(envVars) == 0 {
-		return yamlContent
-	}
-
-	imagePattern := regexp.MustCompile(`(?m)^(\s*)image:\s*\S+$`)
-	if matches := imagePattern.FindStringSubmatch(yamlContent); len(matches) == 2 {
-		loc := imagePattern.FindStringIndex(yamlContent)
-		suffix := yamlContent[loc[1]:]
-		suffix = strings.TrimPrefix(suffix, "\n")
-		return yamlContent[:loc[1]] + "\n" + renderOperatorEnvBlock(matches[1], envVars) + suffix
-	}
-
-	return yamlContent
-}
-
-func renderOperatorEnvBlock(indent string, envVars []operatorEnvVar) string {
-	var builder strings.Builder
-	builder.WriteString(indent)
-	builder.WriteString("env:\n")
-	for _, envVar := range envVars {
-		builder.WriteString(indent)
-		builder.WriteString("- name: ")
-		builder.WriteString(envVar.Name)
-		builder.WriteByte('\n')
-		builder.WriteString(indent)
-		builder.WriteString("  value: ")
-		builder.WriteString(envVar.Value)
-		builder.WriteByte('\n')
-	}
-	return builder.String()
-}
-
-func operatorArgKey(arg string) string {
-	if idx := strings.Index(arg, "="); idx >= 0 {
-		return arg[:idx]
-	}
-	return arg
 }
 
 // setupTLS configures TLS by applying cert-manager resources.
