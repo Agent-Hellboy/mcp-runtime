@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+	"mcp-runtime/pkg/operatorutil"
 	"mcp-runtime/pkg/policy"
 )
 
@@ -1547,13 +1548,13 @@ func (r *MCPServerReconciler) updateStatus(ctx context.Context, mcpServer *mcpv1
 	latest.Status.PolicyReady = readiness.Policy
 	latest.Status.CanaryReady = readiness.Canary
 
-	// Update all conditions using the helper
-	SetStatusCondition(&latest.Status.Conditions, "DeploymentReady", readiness.Deployment, phase, message, latest.Generation)
-	SetStatusCondition(&latest.Status.Conditions, "ServiceReady", readiness.Service, phase, message, latest.Generation)
-	SetStatusCondition(&latest.Status.Conditions, "IngressReady", readiness.Ingress, phase, message, latest.Generation)
-	SetStatusCondition(&latest.Status.Conditions, "GatewayReady", readiness.Gateway, phase, message, latest.Generation)
-	SetStatusCondition(&latest.Status.Conditions, "PolicyReady", readiness.Policy, phase, message, latest.Generation)
-	SetStatusCondition(&latest.Status.Conditions, "CanaryReady", readiness.Canary, phase, message, latest.Generation)
+	// Update all conditions using the centralized helper
+	operatorutil.SetCondition(&latest.Status.Conditions, operatorutil.DeploymentReady, readiness.Deployment, phase, message, latest.Generation)
+	operatorutil.SetCondition(&latest.Status.Conditions, operatorutil.ServiceReady, readiness.Service, phase, message, latest.Generation)
+	operatorutil.SetCondition(&latest.Status.Conditions, operatorutil.IngressReady, readiness.Ingress, phase, message, latest.Generation)
+	operatorutil.SetCondition(&latest.Status.Conditions, operatorutil.GatewayReady, readiness.Gateway, phase, message, latest.Generation)
+	operatorutil.SetCondition(&latest.Status.Conditions, operatorutil.PolicyReady, readiness.Policy, phase, message, latest.Generation)
+	operatorutil.SetCondition(&latest.Status.Conditions, operatorutil.CanaryReady, readiness.Canary, phase, message, latest.Generation)
 
 	// Use Status().Update() which only updates the status subresource
 	if err := r.Status().Update(ctx, latest); err != nil {
@@ -1563,41 +1564,6 @@ func (r *MCPServerReconciler) updateStatus(ctx context.Context, mcpServer *mcpv1
 			logger.Error(err, "Failed to update MCPServer status", "resourceVersion", latest.ResourceVersion)
 		}
 	}
-}
-
-// SetStatusCondition sets or updates a condition in the conditions slice.
-// It only updates LastTransitionTime when the status actually changes,
-// following Kubernetes conventions to avoid unnecessary updates.
-func SetStatusCondition(conditions *[]metav1.Condition, condType string, ready bool, reason, message string, generation int64) {
-	status := metav1.ConditionFalse
-	if ready {
-		status = metav1.ConditionTrue
-	}
-
-	newCond := metav1.Condition{
-		Type:               condType,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		ObservedGeneration: generation,
-	}
-
-	// Find and update existing condition, or append new one
-	for i, c := range *conditions {
-		if c.Type == condType {
-			// Only update transition time if status actually changes
-			if c.Status != status {
-				newCond.LastTransitionTime = metav1.Now()
-			} else {
-				newCond.LastTransitionTime = c.LastTransitionTime
-			}
-			(*conditions)[i] = newCond
-			return
-		}
-	}
-	// New condition - set transition time
-	newCond.LastTransitionTime = metav1.Now()
-	*conditions = append(*conditions, newCond)
 }
 
 func (r *MCPServerReconciler) buildEnvVars(envVars []mcpv1alpha1.EnvVar, secretEnvVars []mcpv1alpha1.SecretEnvVar) []corev1.EnvVar {
