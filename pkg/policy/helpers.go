@@ -51,7 +51,7 @@ func PolicyServerCluster(policy *Document) string {
 
 // PolicyVersion returns the policy version from a policy document.
 func PolicyVersion(policy *Document) string {
-	if policy == nil {
+	if policy == nil || policy.Policy == nil {
 		return ""
 	}
 	return policy.Policy.PolicyVersion
@@ -59,7 +59,7 @@ func PolicyVersion(policy *Document) string {
 
 // PolicyUsesOAuth returns true if the policy uses OAuth authentication.
 func PolicyUsesOAuth(policy *Document) bool {
-	return policy != nil && strings.EqualFold(policy.Auth.Mode, "oauth")
+	return policy != nil && policy.Auth != nil && strings.EqualFold(policy.Auth.Mode, "oauth")
 }
 
 // ChoosePolicyVersion returns the first non-empty policy version from the provided values,

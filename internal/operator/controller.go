@@ -1061,7 +1061,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 	}
 
 	if mcpServer.Spec.Auth != nil {
-		doc.Auth = policy.Auth{
+		doc.Auth = &policy.Auth{
 			Mode:            string(mcpServer.Spec.Auth.Mode),
 			HumanIDHeader:   mcpServer.Spec.Auth.HumanIDHeader,
 			AgentIDHeader:   mcpServer.Spec.Auth.AgentIDHeader,
@@ -1072,7 +1072,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 		}
 	}
 	if mcpServer.Spec.Policy != nil {
-		doc.Policy = policy.Config{
+		doc.Policy = &policy.Config{
 			Mode:            string(mcpServer.Spec.Policy.Mode),
 			DefaultDecision: string(mcpServer.Spec.Policy.DefaultDecision),
 			EnforceOn:       mcpServer.Spec.Policy.EnforceOn,
@@ -1080,7 +1080,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 		}
 	}
 	if mcpServer.Spec.Session != nil {
-		doc.Session = policy.Session{
+		doc.Session = &policy.Session{
 			Required:            mcpServer.Spec.Session.Required,
 			Store:               mcpServer.Spec.Session.Store,
 			HeaderName:          mcpServer.Spec.Session.HeaderName,

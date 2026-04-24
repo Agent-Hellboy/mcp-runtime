@@ -276,12 +276,12 @@ func TestAuthorizeRequestOptionalSessionDoesNotApplyWithoutSessionHeader(t *test
 	t.Parallel()
 
 	policy := &policypkg.Document{
-		Policy: policypkg.Config{
+		Policy: &policypkg.Config{
 			Mode:            "allow-list",
 			DefaultDecision: "deny",
 			PolicyVersion:   "test-policy",
 		},
-		Session: policypkg.Session{
+		Session: &policypkg.Session{
 			Required: false,
 		},
 		Tools: []policypkg.Tool{
@@ -323,12 +323,12 @@ func TestAuthorizeRequestOptionalSessionRequiresLiveSessionHeader(t *testing.T) 
 	t.Parallel()
 
 	basePolicy := &policypkg.Document{
-		Policy: policypkg.Config{
+		Policy: &policypkg.Config{
 			Mode:            "allow-list",
 			DefaultDecision: "deny",
 			PolicyVersion:   "test-policy",
 		},
-		Session: policypkg.Session{
+		Session: &policypkg.Session{
 			Required: false,
 		},
 		Tools: []policypkg.Tool{
@@ -597,7 +597,7 @@ func newTestProxyServer(t *testing.T, policy *policypkg.Document, upstream http.
 
 func oauthPolicy(issuerURL string) *policypkg.Document {
 	return &policypkg.Document{
-		Auth: policypkg.Auth{
+		Auth: &policypkg.Auth{
 			Mode:            "oauth",
 			HumanIDHeader:   defaultHumanHeader,
 			AgentIDHeader:   defaultAgentHeader,
@@ -606,12 +606,12 @@ func oauthPolicy(issuerURL string) *policypkg.Document {
 			IssuerURL:       issuerURL,
 			Audience:        "mcp-runtime",
 		},
-		Policy: policypkg.Config{
+		Policy: &policypkg.Config{
 			Mode:            "allow-list",
 			DefaultDecision: "deny",
 			PolicyVersion:   "test-policy",
 		},
-		Session: policypkg.Session{
+		Session: &policypkg.Session{
 			Required:            true,
 			UpstreamTokenHeader: "Authorization",
 		},

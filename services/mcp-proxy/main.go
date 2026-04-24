@@ -558,14 +558,14 @@ func (s *proxyServer) defaultPolicyDocument() *policypkg.Document {
 			Namespace: s.serverNamespace,
 			Cluster:   s.clusterName,
 		},
-		Auth: policypkg.Auth{
+		Auth: &policypkg.Auth{
 			Mode:            "header",
 			HumanIDHeader:   s.defaultHumanHeader,
 			AgentIDHeader:   s.defaultAgentHeader,
 			SessionIDHeader: s.defaultSessionHeader,
 			TokenHeader:     defaultTokenHeader,
 		},
-		Policy: policypkg.Config{
+		Policy: &policypkg.Config{
 			Mode:            s.defaultPolicyMode,
 			DefaultDecision: s.defaultPolicyDecision,
 			PolicyVersion:   s.defaultPolicyVersion,
@@ -612,6 +612,14 @@ func (s *proxyServer) authenticateOAuth(r *http.Request, policy *policypkg.Docum
 	if !policypkg.PolicyUsesOAuth(policy) {
 		result.Identity = headerIdentity
 		return result
+	}
+
+	if policy.Auth == nil {
+		return oauthAuthResult{
+			Status:   http.StatusServiceUnavailable,
+			Reason:   "oauth_config_missing",
+			Identity: result.Identity,
+		}
 	}
 
 	issuerURL := strings.TrimSpace(policy.Auth.IssuerURL)
@@ -776,7 +784,7 @@ func (s *proxyServer) applyIdentityHeaders(r *http.Request, policy *policypkg.Do
 }
 
 func (s *proxyServer) applyUpstreamToken(r *http.Request, policy *policypkg.Document, token string) {
-	if policy == nil {
+	if policy == nil || policy.Session == nil {
 		return
 	}
 	headerName := strings.TrimSpace(policy.Session.UpstreamTokenHeader)
@@ -794,7 +802,7 @@ func (s *proxyServer) identityHeaderNames(policy *policypkg.Document) (string, s
 	humanHeader := s.defaultHumanHeader
 	agentHeader := s.defaultAgentHeader
 	sessionHeader := s.defaultSessionHeader
-	if policy != nil {
+	if policy != nil && policy.Auth != nil {
 		if policy.Auth.HumanIDHeader != "" {
 			humanHeader = policy.Auth.HumanIDHeader
 		}
@@ -813,31 +821,31 @@ func authorizeRequest(policy *policypkg.Document, identity identityContext, rpcM
 		Allowed:       true,
 		Status:        http.StatusOK,
 		Reason:        "allowed",
-		PolicyVersion: policy.Policy.PolicyVersion,
+		PolicyVersion: policyVersionOrDefault(policy, ""),
 	}
 	if !policypkg.IsToolCallMethod(rpcMethod) {
 		return decision
 	}
-	if strings.EqualFold(policy.Policy.Mode, "observe") {
+	if policyModeObserve(policy) {
 		return decision
 	}
 	if identity.HumanID == "" && identity.AgentID == "" {
-		return deny(http.StatusUnauthorized, "missing_identity", policy.Policy.PolicyVersion)
+		return deny(http.StatusUnauthorized, "missing_identity", policyVersionOrDefault(policy, ""))
 	}
-	if policy.Session.Required && identity.SessionID == "" {
-		return deny(http.StatusUnauthorized, "missing_session", policy.Policy.PolicyVersion)
+	if sessionRequired(policy) && identity.SessionID == "" {
+		return deny(http.StatusUnauthorized, "missing_session", policyVersionOrDefault(policy, ""))
 	}
 
 	session, sessionFound := findSession(policy.Sessions, identity)
-	if policy.Session.Required {
+	if sessionRequired(policy) {
 		if !sessionFound {
-			return deny(http.StatusUnauthorized, "session_not_found", policy.Policy.PolicyVersion)
+			return deny(http.StatusUnauthorized, "session_not_found", policyVersionOrDefault(policy, ""))
 		}
 		if session.Revoked {
-			return deny(http.StatusUnauthorized, "session_revoked", policypkg.ChoosePolicyVersion(session.PolicyVersion, policy.Policy.PolicyVersion))
+			return deny(http.StatusUnauthorized, "session_revoked", policypkg.ChoosePolicyVersion(session.PolicyVersion, policyVersionOrDefault(policy, "")))
 		}
 		if isExpired(session.ExpiresAt) {
-			return deny(http.StatusUnauthorized, "session_expired", policypkg.ChoosePolicyVersion(session.PolicyVersion, policy.Policy.PolicyVersion))
+			return deny(http.StatusUnauthorized, "session_expired", policypkg.ChoosePolicyVersion(session.PolicyVersion, policyVersionOrDefault(policy, "")))
 		}
 	} else if identity.SessionID == "" || !sessionFound || session.Revoked || isExpired(session.ExpiresAt) {
 		session = policypkg.Binding{}
@@ -854,7 +862,7 @@ func authorizeRequest(policy *policypkg.Document, identity identityContext, rpcM
 
 	bestAdminRank := 0
 	toolAllowed := false
-	policyVersion := policy.Policy.PolicyVersion
+	policyVersion := policyVersionOrDefault(policy, "")
 	for _, grant := range matchingGrants {
 		if grant.Disabled {
 			continue
@@ -875,7 +883,7 @@ func authorizeRequest(policy *policypkg.Document, identity identityContext, rpcM
 				continue
 			}
 			if strings.EqualFold(rule.Decision, "deny") {
-				return deny(http.StatusForbidden, "tool_denied", policypkg.ChoosePolicyVersion(grant.PolicyVersion, policy.Policy.PolicyVersion))
+				return deny(http.StatusForbidden, "tool_denied", policypkg.ChoosePolicyVersion(grant.PolicyVersion, policyVersionOrDefault(policy, "")))
 			}
 			toolAllowed = true
 			ruleRank := policypkg.TrustRank(rule.RequiredTrust)
@@ -928,15 +936,16 @@ func authorizeRequest(policy *policypkg.Document, identity identityContext, rpcM
 }
 
 func decideByDefault(policy *policypkg.Document, reason string) authzDecision {
-	if strings.EqualFold(policy.Policy.DefaultDecision, "allow") {
+	policyVersion := policyVersionOrDefault(policy, "")
+	if defaultDecisionAllow(policy) {
 		return authzDecision{
 			Allowed:       true,
 			Status:        http.StatusOK,
 			Reason:        reason,
-			PolicyVersion: policy.Policy.PolicyVersion,
+			PolicyVersion: policyVersion,
 		}
 	}
-	return deny(http.StatusForbidden, reason, policy.Policy.PolicyVersion)
+	return deny(http.StatusForbidden, reason, policyVersion)
 }
 
 func matchingGrants(grants []policypkg.Grant, identity identityContext) []policypkg.Grant {
@@ -1009,10 +1018,33 @@ func oauthMetadataPath(value string) string {
 }
 
 func oauthTokenHeader(policy *policypkg.Document) string {
-	if policy != nil && strings.TrimSpace(policy.Auth.TokenHeader) != "" {
+	if policy != nil && policy.Auth != nil && strings.TrimSpace(policy.Auth.TokenHeader) != "" {
 		return strings.TrimSpace(policy.Auth.TokenHeader)
 	}
 	return defaultTokenHeader
+}
+
+// policyVersionOrDefault safely retrieves the policy version with a default
+func policyVersionOrDefault(policy *policypkg.Document, def string) string {
+	if policy != nil && policy.Policy != nil && policy.Policy.PolicyVersion != "" {
+		return policy.Policy.PolicyVersion
+	}
+	return def
+}
+
+// sessionRequired safely checks if session is required
+func sessionRequired(policy *policypkg.Document) bool {
+	return policy != nil && policy.Session != nil && policy.Session.Required
+}
+
+// policyModeObserve safely checks if policy mode is observe
+func policyModeObserve(policy *policypkg.Document) bool {
+	return policy != nil && policy.Policy != nil && strings.EqualFold(policy.Policy.Mode, "observe")
+}
+
+// defaultDecisionAllow safely checks if default decision is allow
+func defaultDecisionAllow(policy *policypkg.Document) bool {
+	return policy != nil && policy.Policy != nil && strings.EqualFold(policy.Policy.DefaultDecision, "allow")
 }
 
 func shouldChallengeOAuth(policy *policypkg.Document, decision authzDecision) bool {

@@ -18,7 +18,7 @@ func TestPolicyDocumentRoundTrip(t *testing.T) {
 			Namespace: "mcp-servers",
 			Cluster:   "test-cluster",
 		},
-		Auth: Auth{
+		Auth: &Auth{
 			Mode:            "oauth",
 			HumanIDHeader:   "X-MCP-Human-ID",
 			AgentIDHeader:   "X-MCP-Agent-ID",
@@ -27,13 +27,13 @@ func TestPolicyDocumentRoundTrip(t *testing.T) {
 			IssuerURL:       "https://auth.example.com",
 			Audience:        "mcp-runtime",
 		},
-		Policy: Config{
+		Policy: &Config{
 			Mode:            "allow-list",
 			DefaultDecision: "deny",
 			EnforceOn:       "call_tool",
 			PolicyVersion:   "v1",
 		},
-		Session: Session{
+		Session: &Session{
 			Required:            true,
 			Store:               "kubernetes",
 			HeaderName:          "X-MCP-Session",
@@ -137,7 +137,14 @@ func verifyServer(t *testing.T, expected, actual Server) {
 	}
 }
 
-func verifyAuth(t *testing.T, expected, actual Auth) {
+func verifyAuth(t *testing.T, expected, actual *Auth) {
+	if expected == nil && actual == nil {
+		return
+	}
+	if expected == nil || actual == nil {
+		t.Fatalf("Auth nil mismatch: expected %v, got %v", expected == nil, actual == nil)
+		return
+	}
 	if expected.Mode != actual.Mode {
 		t.Errorf("Auth.Mode mismatch: expected %q, got %q", expected.Mode, actual.Mode)
 	}
@@ -161,7 +168,14 @@ func verifyAuth(t *testing.T, expected, actual Auth) {
 	}
 }
 
-func verifyPolicy(t *testing.T, expected, actual Config) {
+func verifyPolicy(t *testing.T, expected, actual *Config) {
+	if expected == nil && actual == nil {
+		return
+	}
+	if expected == nil || actual == nil {
+		t.Fatalf("Policy nil mismatch: expected %v, got %v", expected == nil, actual == nil)
+		return
+	}
 	if expected.Mode != actual.Mode {
 		t.Errorf("Policy.Mode mismatch: expected %q, got %q", expected.Mode, actual.Mode)
 	}
@@ -176,7 +190,14 @@ func verifyPolicy(t *testing.T, expected, actual Config) {
 	}
 }
 
-func verifySession(t *testing.T, expected, actual Session) {
+func verifySession(t *testing.T, expected, actual *Session) {
+	if expected == nil && actual == nil {
+		return
+	}
+	if expected == nil || actual == nil {
+		t.Fatalf("Session nil mismatch: expected %v, got %v", expected == nil, actual == nil)
+		return
+	}
 	if expected.Required != actual.Required {
 		t.Errorf("Session.Required mismatch: expected %v, got %v", expected.Required, actual.Required)
 	}
@@ -367,13 +388,13 @@ func TestPolicyHelperFunctions(t *testing.T) {
 	})
 
 	t.Run("PolicyUsesOAuth", func(t *testing.T) {
-		if !PolicyUsesOAuth(&Document{Auth: Auth{Mode: "oauth"}}) {
+		if !PolicyUsesOAuth(&Document{Auth: &Auth{Mode: "oauth"}}) {
 			t.Error("PolicyUsesOAuth with mode 'oauth' should be true")
 		}
-		if !PolicyUsesOAuth(&Document{Auth: Auth{Mode: "OAUTH"}}) {
+		if !PolicyUsesOAuth(&Document{Auth: &Auth{Mode: "OAUTH"}}) {
 			t.Error("PolicyUsesOAuth with mode 'OAUTH' should be true (case insensitive)")
 		}
-		if PolicyUsesOAuth(&Document{Auth: Auth{Mode: "header"}}) {
+		if PolicyUsesOAuth(&Document{Auth: &Auth{Mode: "header"}}) {
 			t.Error("PolicyUsesOAuth with mode 'header' should be false")
 		}
 		if PolicyUsesOAuth(nil) {
