@@ -665,11 +665,33 @@ PY
 }
 
 should_run_mcp_smoke_agent() {
-  if [[ -n "${OPENAI_API_KEY:-}" || -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  local required_var required_pattern
+  case "${MCP_SMOKE_AGENT_PROVIDER}" in
+    anthropic)
+      required_var="ANTHROPIC_API_KEY"
+      required_pattern='^[[:space:]]*(export[[:space:]]+)?ANTHROPIC_API_KEY='
+      ;;
+    openai|"")
+      required_var="OPENAI_API_KEY"
+      required_pattern='^[[:space:]]*(export[[:space:]]+)?OPENAI_API_KEY='
+      ;;
+    *)
+      # Unknown provider — fall back to accepting either key.
+      if [[ -n "${OPENAI_API_KEY:-}" || -n "${ANTHROPIC_API_KEY:-}" ]]; then
+        return 0
+      fi
+      if [[ -f "${MCP_SMOKE_AGENT_ENV_FILE}" ]] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?(OPENAI_API_KEY|ANTHROPIC_API_KEY)=' "${MCP_SMOKE_AGENT_ENV_FILE}"; then
+        return 0
+      fi
+      return 1
+      ;;
+  esac
+
+  if [[ -n "${!required_var:-}" ]]; then
     return 0
   fi
 
-  if [[ -f "${MCP_SMOKE_AGENT_ENV_FILE}" ]] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?(OPENAI_API_KEY|ANTHROPIC_API_KEY)=' "${MCP_SMOKE_AGENT_ENV_FILE}"; then
+  if [[ -f "${MCP_SMOKE_AGENT_ENV_FILE}" ]] && grep -Eq "${required_pattern}" "${MCP_SMOKE_AGENT_ENV_FILE}"; then
     return 0
   fi
 
