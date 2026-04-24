@@ -1422,11 +1422,11 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 
 	// Inject operator args if provided
 	if len(operatorArgs) > 0 {
-		if err := mutator.SetDeploymentArgs(OperatorDeploymentName, "", operatorArgs); err != nil {
-			wrappedErr := wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to set operator args: %v", err))
-			Error("Failed to set operator args")
+		if err := mutator.MergeDeploymentArgs(OperatorDeploymentName, "", operatorArgs); err != nil {
+			wrappedErr := wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to merge operator args: %v", err))
+			Error("Failed to merge operator args")
 			if logger != nil {
-				logStructuredError(logger, wrappedErr, "Failed to set operator args")
+				logStructuredError(logger, wrappedErr, "Failed to merge operator args")
 			}
 			return wrappedErr
 		}

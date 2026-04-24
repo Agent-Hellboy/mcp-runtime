@@ -161,6 +161,91 @@ func (m *Mutator) SetDeploymentArgs(deploymentName, containerName string, args [
 	return fmt.Errorf("no containers found in deployment %s", deploymentName)
 }
 
+// MergeDeploymentArgs merges command-line arguments with existing ones.
+// If containerName is empty, it merges for the first container.
+// Args with the same key (extracted from the flag name) will be replaced;
+// new args will be appended.
+func (m *Mutator) MergeDeploymentArgs(deploymentName, containerName string, newArgs []string) error {
+	deployment := m.FindDeployment(deploymentName)
+	if deployment == nil {
+		return fmt.Errorf("deployment %s not found", deploymentName)
+	}
+
+	spec := getMap(getMap(deployment, "spec"), "template", "spec")
+	if spec == nil {
+		return fmt.Errorf("deployment %s has no pod spec", deploymentName)
+	}
+
+	containers, ok := spec["containers"].([]any)
+	if !ok || len(containers) == 0 {
+		return fmt.Errorf("deployment %s has no containers", deploymentName)
+	}
+
+	for _, c := range containers {
+		container, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		if containerName == "" || getString(container, "name") == containerName {
+			// Get existing args
+			existingArgs := []string{}
+			if existing, ok := container["args"].([]any); ok {
+				for _, arg := range existing {
+					if argStr, ok := arg.(string); ok {
+						existingArgs = append(existingArgs, argStr)
+					}
+				}
+			}
+
+			// Build index by arg key (flag name)
+			argIndex := make(map[string]int)
+			for i, arg := range existingArgs {
+				key := extractArgKey(arg)
+				argIndex[key] = i
+			}
+
+			// Merge new args: replace if key exists, append otherwise
+			mergedArgs := make([]string, len(existingArgs))
+			copy(mergedArgs, existingArgs)
+			
+			for _, newArg := range newArgs {
+				key := extractArgKey(newArg)
+				if idx, exists := argIndex[key]; exists {
+					// Replace existing arg
+					mergedArgs[idx] = newArg
+				} else {
+					// Append new arg
+					argIndex[key] = len(mergedArgs)
+					mergedArgs = append(mergedArgs, newArg)
+				}
+			}
+
+			// Convert to []any for YAML
+			argsAny := make([]any, len(mergedArgs))
+			for i, arg := range mergedArgs {
+				argsAny[i] = arg
+			}
+			container["args"] = argsAny
+			return nil
+		}
+	}
+
+	if containerName != "" {
+		return fmt.Errorf("container %s not found in deployment %s", containerName, deploymentName)
+	}
+
+	return fmt.Errorf("no containers found in deployment %s", deploymentName)
+}
+
+// extractArgKey extracts the flag name from a command-line argument.
+// For example, "--leader-elect=true" returns "--leader-elect".
+func extractArgKey(arg string) string {
+	if idx := strings.Index(arg, "="); idx > 0 {
+		return arg[:idx]
+	}
+	return arg
+}
+
 // SetDeploymentEnv sets environment variables for a specific container.
 // If containerName is empty, it sets for the first container.
 func (m *Mutator) SetDeploymentEnv(deploymentName, containerName string, envVars map[string]string) error {
