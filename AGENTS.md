@@ -116,7 +116,29 @@ PY
 - Status table: `./bin/mcp-runtime status`
 - Grafana/Prometheus reachable via the ingress base URL.
 
-## 8) Reference Links
+## 8) Clean Start (keep cluster, wipe workloads)
+Use this when you want a “fresh start” without uninstalling k3s/kind itself.
+
+⚠️ Destructive: deletes resources cluster-wide.
+
+```bash
+# sanity: confirm you are targeting the intended cluster
+kubectl config current-context
+kubectl get nodes
+
+# delete everything in every namespace (pods/deployments/jobs/services/ingresses/etc.)
+kubectl delete all,cm,secret,ing,svc,sa,role,rolebinding,deploy,ds,sts,job,cronjob --all -A
+
+# delete all non-system namespaces (wipes everything inside them)
+kubectl get ns --no-headers | awk '{print $1}' \
+  | egrep -v '^(kube-system|kube-public|kube-node-lease|default)$' \
+  | xargs -r kubectl delete ns
+
+# optional: also wipe the default namespace
+kubectl delete all,cm,secret,ing,svc,sa,role,rolebinding,deploy,ds,sts,job,cronjob --all -n default
+```
+
+## 9) Reference Links
 - Project README: `README.md`
 - K8s manifests: `k8s/`
 - Sample MCP server: `examples/go-mcp-server/`
