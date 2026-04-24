@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
+
+	policypkg "mcp-runtime/pkg/policy"
 )
 
 func TestHandleProxyOAuthProtectedResourceMetadata(t *testing.T) {
@@ -273,28 +275,28 @@ func TestInspectRPCRequestAcceptsChunkedBody(t *testing.T) {
 func TestAuthorizeRequestOptionalSessionDoesNotApplyWithoutSessionHeader(t *testing.T) {
 	t.Parallel()
 
-	policy := &gatewayPolicyDocument{
-		Policy: gatewayPolicyConfig{
+	policy := &policypkg.Document{
+		Policy: policypkg.Config{
 			Mode:            "allow-list",
 			DefaultDecision: "deny",
 			PolicyVersion:   "test-policy",
 		},
-		Session: gatewayPolicySession{
+		Session: policypkg.Session{
 			Required: false,
 		},
-		Tools: []gatewayPolicyTool{
+		Tools: []policypkg.Tool{
 			{Name: "upper", RequiredTrust: "medium"},
 		},
-		Grants: []gatewayPolicyGrant{
+		Grants: []policypkg.Grant{
 			{
 				Name:      "grant-1",
 				HumanID:   "human-1",
 				AgentID:   "agent-1",
 				MaxTrust:  "high",
-				ToolRules: []gatewayToolAccess{{Name: "upper", Decision: "allow"}},
+				ToolRules: []policypkg.ToolAccess{{Name: "upper", Decision: "allow"}},
 			},
 		},
-		Sessions: []gatewayPolicyBinding{
+		Sessions: []policypkg.Binding{
 			{
 				Name:           "session-1",
 				HumanID:        "human-1",
@@ -320,31 +322,31 @@ func TestAuthorizeRequestOptionalSessionDoesNotApplyWithoutSessionHeader(t *test
 func TestAuthorizeRequestOptionalSessionRequiresLiveSessionHeader(t *testing.T) {
 	t.Parallel()
 
-	basePolicy := &gatewayPolicyDocument{
-		Policy: gatewayPolicyConfig{
+	basePolicy := &policypkg.Document{
+		Policy: policypkg.Config{
 			Mode:            "allow-list",
 			DefaultDecision: "deny",
 			PolicyVersion:   "test-policy",
 		},
-		Session: gatewayPolicySession{
+		Session: policypkg.Session{
 			Required: false,
 		},
-		Tools: []gatewayPolicyTool{
+		Tools: []policypkg.Tool{
 			{Name: "upper", RequiredTrust: "medium"},
 		},
-		Grants: []gatewayPolicyGrant{
+		Grants: []policypkg.Grant{
 			{
 				Name:      "grant-1",
 				HumanID:   "human-1",
 				AgentID:   "agent-1",
 				MaxTrust:  "high",
-				ToolRules: []gatewayToolAccess{{Name: "upper", Decision: "allow"}},
+				ToolRules: []policypkg.ToolAccess{{Name: "upper", Decision: "allow"}},
 			},
 		},
 	}
 
 	liveSessionPolicy := *basePolicy
-	liveSessionPolicy.Sessions = []gatewayPolicyBinding{
+	liveSessionPolicy.Sessions = []policypkg.Binding{
 		{
 			Name:           "session-1",
 			HumanID:        "human-1",
@@ -364,7 +366,7 @@ func TestAuthorizeRequestOptionalSessionRequiresLiveSessionHeader(t *testing.T) 
 	}
 
 	revokedSessionPolicy := *basePolicy
-	revokedSessionPolicy.Sessions = []gatewayPolicyBinding{
+	revokedSessionPolicy.Sessions = []policypkg.Binding{
 		{
 			Name:           "session-1",
 			HumanID:        "human-1",
@@ -563,7 +565,7 @@ func (i *testJWTIssuer) sign(t *testing.T, claims jwt.MapClaims) string {
 	return signed
 }
 
-func newTestProxyServer(t *testing.T, policy *gatewayPolicyDocument, upstream http.HandlerFunc) *proxyServer {
+func newTestProxyServer(t *testing.T, policy *policypkg.Document, upstream http.HandlerFunc) *proxyServer {
 	t.Helper()
 
 	upstreamServer := httptest.NewServer(upstream)
@@ -593,9 +595,9 @@ func newTestProxyServer(t *testing.T, policy *gatewayPolicyDocument, upstream ht
 	return server
 }
 
-func oauthPolicy(issuerURL string) *gatewayPolicyDocument {
-	return &gatewayPolicyDocument{
-		Auth: gatewayPolicyAuth{
+func oauthPolicy(issuerURL string) *policypkg.Document {
+	return &policypkg.Document{
+		Auth: policypkg.Auth{
 			Mode:            "oauth",
 			HumanIDHeader:   defaultHumanHeader,
 			AgentIDHeader:   defaultAgentHeader,
@@ -604,28 +606,28 @@ func oauthPolicy(issuerURL string) *gatewayPolicyDocument {
 			IssuerURL:       issuerURL,
 			Audience:        "mcp-runtime",
 		},
-		Policy: gatewayPolicyConfig{
+		Policy: policypkg.Config{
 			Mode:            "allow-list",
 			DefaultDecision: "deny",
 			PolicyVersion:   "test-policy",
 		},
-		Session: gatewayPolicySession{
+		Session: policypkg.Session{
 			Required:            true,
 			UpstreamTokenHeader: "Authorization",
 		},
-		Tools: []gatewayPolicyTool{
+		Tools: []policypkg.Tool{
 			{Name: "echo", RequiredTrust: "low"},
 		},
-		Grants: []gatewayPolicyGrant{
+		Grants: []policypkg.Grant{
 			{
 				Name:      "grant-1",
 				HumanID:   "human-1",
 				AgentID:   "client-1",
 				MaxTrust:  "high",
-				ToolRules: []gatewayToolAccess{{Name: "echo", Decision: "allow"}},
+				ToolRules: []policypkg.ToolAccess{{Name: "echo", Decision: "allow"}},
 			},
 		},
-		Sessions: []gatewayPolicyBinding{
+		Sessions: []policypkg.Binding{
 			{
 				Name:           "session-1",
 				HumanID:        "human-1",
