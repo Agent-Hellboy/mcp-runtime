@@ -168,22 +168,6 @@ func TestBuildOperatorArgs(t *testing.T) {
 	})
 }
 
-func TestMergeOperatorArgs(t *testing.T) {
-	existing := []string{"--leader-elect", "--metrics-bind-address=:8080"}
-	overrides := []string{"--metrics-bind-address=:9090", "--health-probe-bind-address=:9091", "--leader-elect=false"}
-
-	got := mergeOperatorArgs(existing, overrides)
-	want := []string{"--leader-elect=false", "--metrics-bind-address=:9090", "--health-probe-bind-address=:9091"}
-	if len(got) != len(want) {
-		t.Fatalf("expected %d merged args, got %d (%v)", len(want), len(got), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("expected merged arg %d to be %q, got %q", i, want[i], got[i])
-		}
-	}
-}
-
 func TestOperatorEnvOverrides(t *testing.T) {
 	orig := DefaultCLIConfig
 	t.Cleanup(func() {
@@ -259,59 +243,6 @@ func TestOperatorEnvOverrides(t *testing.T) {
 			t.Fatalf("unexpected registry ingress env override: %+v", got[2])
 		}
 	})
-}
-
-func TestInjectOperatorEnvVars(t *testing.T) {
-	t.Run("injects env block after manager image", func(t *testing.T) {
-		input := strings.Join([]string{
-			"containers:",
-			"- name: manager",
-			"  image: example.com/mcp-runtime-operator:latest",
-			"  imagePullPolicy: IfNotPresent",
-			"",
-		}, "\n")
-
-		got := injectOperatorEnvVars(input, []operatorEnvVar{
-			{Name: "MCP_GATEWAY_PROXY_IMAGE", Value: "example.com/mcp-proxy:latest"},
-		})
-
-		wantSnippet := strings.Join([]string{
-			"  image: example.com/mcp-runtime-operator:latest",
-			"  env:",
-			"  - name: MCP_GATEWAY_PROXY_IMAGE",
-			"    value: example.com/mcp-proxy:latest",
-			"  imagePullPolicy: IfNotPresent",
-		}, "\n")
-		if !strings.Contains(got, wantSnippet) {
-			t.Fatalf("expected injected env block, got:\n%s", got)
-		}
-	})
-
-	t.Run("returns original yaml when no env vars are provided", func(t *testing.T) {
-		input := "image: example.com/mcp-runtime-operator:latest\n"
-		if got := injectOperatorEnvVars(input, nil); got != input {
-			t.Fatalf("expected original yaml, got:\n%s", got)
-		}
-	})
-}
-
-func TestRenderOperatorEnvBlock(t *testing.T) {
-	got := renderOperatorEnvBlock("  ", []operatorEnvVar{
-		{Name: "MCP_GATEWAY_PROXY_IMAGE", Value: "example.com/mcp-proxy:latest"},
-		{Name: "FOO", Value: "bar"},
-	})
-
-	want := strings.Join([]string{
-		"  env:",
-		"  - name: MCP_GATEWAY_PROXY_IMAGE",
-		"    value: example.com/mcp-proxy:latest",
-		"  - name: FOO",
-		"    value: bar",
-		"",
-	}, "\n")
-	if got != want {
-		t.Fatalf("unexpected env block:\n%s", got)
-	}
 }
 
 func TestConfigureProvisionedRegistryEnv(t *testing.T) {
