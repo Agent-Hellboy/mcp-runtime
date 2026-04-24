@@ -10,6 +10,7 @@ func TestLoadCLIConfig(t *testing.T) {
 	// Save original env vars
 	origDeployTimeout := os.Getenv("MCP_DEPLOYMENT_TIMEOUT")
 	origCertTimeout := os.Getenv("MCP_CERT_TIMEOUT")
+	origHelperTimeout := os.Getenv("MCP_HELPER_POD_TIMEOUT")
 	origRegistryPort := os.Getenv("MCP_REGISTRY_PORT")
 	origSkopeoImage := os.Getenv("MCP_SKOPEO_IMAGE")
 	origOperatorImage := os.Getenv("MCP_OPERATOR_IMAGE")
@@ -19,6 +20,7 @@ func TestLoadCLIConfig(t *testing.T) {
 	defer func() {
 		os.Setenv("MCP_DEPLOYMENT_TIMEOUT", origDeployTimeout)
 		os.Setenv("MCP_CERT_TIMEOUT", origCertTimeout)
+		os.Setenv("MCP_HELPER_POD_TIMEOUT", origHelperTimeout)
 		os.Setenv("MCP_REGISTRY_PORT", origRegistryPort)
 		os.Setenv("MCP_SKOPEO_IMAGE", origSkopeoImage)
 		os.Setenv("MCP_OPERATOR_IMAGE", origOperatorImage)
@@ -28,6 +30,7 @@ func TestLoadCLIConfig(t *testing.T) {
 	t.Run("uses defaults when env vars not set", func(t *testing.T) {
 		os.Unsetenv("MCP_DEPLOYMENT_TIMEOUT")
 		os.Unsetenv("MCP_CERT_TIMEOUT")
+		os.Unsetenv("MCP_HELPER_POD_TIMEOUT")
 		os.Unsetenv("MCP_REGISTRY_PORT")
 		os.Unsetenv("MCP_SKOPEO_IMAGE")
 		os.Unsetenv("MCP_OPERATOR_IMAGE")
@@ -41,6 +44,7 @@ func TestLoadCLIConfig(t *testing.T) {
 		assertCLIConfig(t, *cfg, cliConfigExpectation{
 			deploymentTimeout: defaultDeploymentTimeout,
 			certTimeout:       defaultCertTimeout,
+			helperPodTimeout:  defaultHelperPodTimeout,
 			registryPort:      defaultRegistryPort,
 			skopeoImage:       defaultSkopeoImage,
 			operatorImage:     "",
@@ -51,6 +55,7 @@ func TestLoadCLIConfig(t *testing.T) {
 	t.Run("reads env vars when set", func(t *testing.T) {
 		os.Setenv("MCP_DEPLOYMENT_TIMEOUT", "10m")
 		os.Setenv("MCP_CERT_TIMEOUT", "2m")
+		os.Setenv("MCP_HELPER_POD_TIMEOUT", "4m")
 		os.Setenv("MCP_REGISTRY_PORT", "5001")
 		os.Setenv("MCP_SKOPEO_IMAGE", "custom/skopeo:v2")
 		os.Setenv("MCP_OPERATOR_IMAGE", "custom/operator:v1")
@@ -64,6 +69,7 @@ func TestLoadCLIConfig(t *testing.T) {
 		assertCLIConfig(t, *cfg, cliConfigExpectation{
 			deploymentTimeout: 10 * time.Minute,
 			certTimeout:       2 * time.Minute,
+			helperPodTimeout:  4 * time.Minute,
 			registryPort:      5001,
 			skopeoImage:       "custom/skopeo:v2",
 			operatorImage:     "custom/operator:v1",
@@ -74,6 +80,7 @@ func TestLoadCLIConfig(t *testing.T) {
 	t.Run("handles invalid values gracefully", func(t *testing.T) {
 		os.Setenv("MCP_DEPLOYMENT_TIMEOUT", "invalid")
 		os.Setenv("MCP_CERT_TIMEOUT", "invalid")
+		os.Setenv("MCP_HELPER_POD_TIMEOUT", "invalid")
 		os.Setenv("MCP_REGISTRY_PORT", "not-a-number")
 		os.Setenv("MCP_DEFAULT_SERVER_PORT", "-1")
 		os.Setenv("MCP_SKOPEO_IMAGE", "")
@@ -87,6 +94,7 @@ func TestLoadCLIConfig(t *testing.T) {
 		assertCLIConfig(t, *cfg, cliConfigExpectation{
 			deploymentTimeout: defaultDeploymentTimeout,
 			certTimeout:       defaultCertTimeout,
+			helperPodTimeout:  defaultHelperPodTimeout,
 			registryPort:      defaultRegistryPort,
 			skopeoImage:       defaultSkopeoImage,
 			operatorImage:     "",
@@ -126,6 +134,7 @@ func TestProvisionedRegistryConfig(t *testing.T) {
 type cliConfigExpectation struct {
 	deploymentTimeout time.Duration
 	certTimeout       time.Duration
+	helperPodTimeout  time.Duration
 	registryPort      int
 	skopeoImage       string
 	operatorImage     string
@@ -139,6 +148,9 @@ func assertCLIConfig(t *testing.T, cfg CLIConfig, want cliConfigExpectation) {
 	}
 	if cfg.CertTimeout != want.certTimeout {
 		t.Errorf("CertTimeout = %v, want %v", cfg.CertTimeout, want.certTimeout)
+	}
+	if cfg.HelperPodTimeout != want.helperPodTimeout {
+		t.Errorf("HelperPodTimeout = %v, want %v", cfg.HelperPodTimeout, want.helperPodTimeout)
 	}
 	if cfg.RegistryPort != want.registryPort {
 		t.Errorf("RegistryPort = %v, want %v", cfg.RegistryPort, want.registryPort)

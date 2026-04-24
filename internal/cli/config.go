@@ -15,6 +15,7 @@ type CLIConfig struct {
 	// Timeouts
 	DeploymentTimeout time.Duration
 	CertTimeout       time.Duration
+	HelperPodTimeout  time.Duration
 
 	// Registry settings
 	RegistryPort        int
@@ -39,6 +40,7 @@ type CLIConfig struct {
 const (
 	defaultDeploymentTimeout   = 5 * time.Minute
 	defaultCertTimeout         = 60 * time.Second
+	defaultHelperPodTimeout    = 3 * time.Minute
 	defaultRegistryPort        = 5000
 	defaultRegistryEndpoint    = "registry.local"
 	defaultRegistryIngressHost = "registry.local"
@@ -62,6 +64,7 @@ func LoadCLIConfig() *CLIConfig {
 	return &CLIConfig{
 		DeploymentTimeout:           parseDurationEnv("MCP_DEPLOYMENT_TIMEOUT", defaultDeploymentTimeout),
 		CertTimeout:                 parseDurationEnv("MCP_CERT_TIMEOUT", defaultCertTimeout),
+		HelperPodTimeout:            parseDurationEnv("MCP_HELPER_POD_TIMEOUT", defaultHelperPodTimeout),
 		RegistryPort:                parseIntEnv("MCP_REGISTRY_PORT", defaultRegistryPort),
 		RegistryEndpoint:            registryEndpoint,
 		RegistryIngressHost:         registryIngressHost,
@@ -124,6 +127,11 @@ func GetDeploymentTimeout() time.Duration {
 // GetCertTimeout returns the certificate issuance timeout.
 func GetCertTimeout() time.Duration {
 	return DefaultCLIConfig.CertTimeout
+}
+
+// GetHelperPodTimeout returns the helper pod ready timeout (e.g. registry pusher pod).
+func GetHelperPodTimeout() time.Duration {
+	return DefaultCLIConfig.HelperPodTimeout
 }
 
 // GetRegistryPort returns the registry port.

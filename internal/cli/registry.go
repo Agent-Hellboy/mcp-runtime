@@ -817,12 +817,19 @@ func (m *RegistryManager) PushInCluster(source, target, helperNS string) error {
 	}()
 
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	if err := m.kubectl.RunWithOutput([]string{"wait", "--for=condition=Ready", "pod/" + helperName, "-n", helperNS, "--timeout=60s"}, os.Stdout, os.Stderr); err != nil {
+	timeout := GetHelperPodTimeout()
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	if err := m.kubectl.RunWithOutput([]string{"wait", "--for=condition=Ready", "pod/" + helperName, "-n", helperNS, "--timeout=" + timeout.String()}, os.Stdout, os.Stderr); err != nil {
+		// Best-effort diagnostics for common real-cluster failures (DiskPressure, taints, quotas, etc).
+		_ = m.kubectl.RunWithOutput([]string{"describe", "pod", helperName, "-n", helperNS}, os.Stderr, os.Stderr)
+		_ = m.kubectl.RunWithOutput([]string{"get", "events", "-n", helperNS, "--field-selector", "involvedObject.name=" + helperName, "--sort-by=.lastTimestamp"}, os.Stderr, os.Stderr)
 		wrappedErr := wrapWithSentinelAndContext(
 			ErrHelperPodNotReady,
 			err,
 			fmt.Sprintf("helper pod not ready: %v", err),
-			map[string]any{"pod": helperName, "namespace": helperNS, "component": "registry"},
+			map[string]any{"pod": helperName, "namespace": helperNS, "timeout": timeout.String(), "component": "registry"},
 		)
 		Error("Helper pod not ready")
 		logStructuredError(m.logger, wrappedErr, "Helper pod not ready")
