@@ -570,12 +570,21 @@ function parseToolRules(text) {
     .filter(Boolean)
     .map((line) => {
       const parts = line.split(":").map((part) => part.trim());
-      if (parts.length < 2 || parts.length > 3 || !parts[0] || !parts[1]) {
+      let decision = parts.pop()?.toLowerCase() || "";
+      let requiredTrust = "";
+      const trustLevels = new Set(["low", "medium", "high"]);
+      const decisions = new Set(["allow", "deny"]);
+      if (!decisions.has(decision) && trustLevels.has(decision) && parts.length >= 2) {
+        requiredTrust = decision;
+        decision = parts.pop()?.toLowerCase() || "";
+      }
+      const name = parts.join(":").trim();
+      if (!name || !decisions.has(decision) || (requiredTrust && !trustLevels.has(requiredTrust))) {
         throw new Error(`Invalid tool rule "${line}". Use tool:allow or tool:allow:trust.`);
       }
-      const rule = { name: parts[0], decision: parts[1] };
-      if (parts[2]) {
-        rule.requiredTrust = parts[2];
+      const rule = { name, decision };
+      if (requiredTrust) {
+        rule.requiredTrust = requiredTrust;
       }
       return rule;
     });

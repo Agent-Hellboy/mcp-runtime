@@ -217,7 +217,84 @@ func (m *Manager) applyUnstructured(ctx context.Context, gvr schema.GroupVersion
 		return nil, err
 	}
 	obj.SetResourceVersion(existing.GetResourceVersion())
+	preserveExistingObjectMeta(existing, obj)
 	return resource.Update(ctx, obj, metav1.UpdateOptions{})
+}
+
+func preserveExistingObjectMeta(existing, obj *unstructured.Unstructured) {
+	obj.SetLabels(mergeStringMap(existing.GetLabels(), obj.GetLabels()))
+	obj.SetAnnotations(mergeStringMap(existing.GetAnnotations(), obj.GetAnnotations()))
+	obj.SetFinalizers(mergeStringSlice(existing.GetFinalizers(), obj.GetFinalizers()))
+	obj.SetOwnerReferences(mergeOwnerReferences(existing.GetOwnerReferences(), obj.GetOwnerReferences()))
+}
+
+func mergeStringMap(existing, desired map[string]string) map[string]string {
+	if len(existing) == 0 && len(desired) == 0 {
+		return nil
+	}
+	merged := make(map[string]string, len(existing)+len(desired))
+	for key, value := range existing {
+		merged[key] = value
+	}
+	for key, value := range desired {
+		merged[key] = value
+	}
+	return merged
+}
+
+func mergeStringSlice(existing, desired []string) []string {
+	if len(existing) == 0 {
+		return desired
+	}
+	seen := make(map[string]struct{}, len(existing)+len(desired))
+	merged := make([]string, 0, len(existing)+len(desired))
+	for _, value := range existing {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		merged = append(merged, value)
+	}
+	for _, value := range desired {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		merged = append(merged, value)
+	}
+	return merged
+}
+
+func mergeOwnerReferences(existing, desired []metav1.OwnerReference) []metav1.OwnerReference {
+	if len(existing) == 0 {
+		return desired
+	}
+	seen := make(map[string]struct{}, len(existing)+len(desired))
+	merged := make([]metav1.OwnerReference, 0, len(existing)+len(desired))
+	for _, owner := range existing {
+		key := ownerReferenceKey(owner)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, owner)
+	}
+	for _, owner := range desired {
+		key := ownerReferenceKey(owner)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, owner)
+	}
+	return merged
+}
+
+func ownerReferenceKey(owner metav1.OwnerReference) string {
+	if owner.UID != "" {
+		return string(owner.UID)
+	}
+	return owner.APIVersion + "/" + owner.Kind + "/" + owner.Name
 }
 
 func toUnstructured(obj interface{}, kind string) (*unstructured.Unstructured, error) {

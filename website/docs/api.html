@@ -291,12 +291,12 @@ X-MCP-Agent-Session: sess-8f1b9d</code></pre>
 
           <section id="runtime-api" class="doc-section">
             <h2>Runtime Governance API</h2>
-            <p>Manage access grants, sessions, and view runtime state. Collection <code>POST</code> requests create or update the Kubernetes CRs that the operator renders into the gateway policy ConfigMap.</p>
+            <p>Manage access grants, sessions, and view runtime state. All <code>/api/runtime/*</code> routes require an <code>x-api-key</code> header; requests without it receive <code>401</code>. Collection <code>POST</code> requests create or update the Kubernetes CRs that the operator renders into the gateway policy ConfigMap.</p>
             <pre><code>GET /api/runtime/servers              # List MCP server deployments
 GET /api/runtime/grants               # List MCPAccessGrant resources
-POST /api/runtime/grants              # Create or update an MCPAccessGrant
+POST /api/runtime/grants              # Create or update an MCPAccessGrant (requires x-api-key)
 GET /api/runtime/sessions             # List MCPAgentSession resources
-POST /api/runtime/sessions            # Create or update an MCPAgentSession
+POST /api/runtime/sessions            # Create or update an MCPAgentSession (requires x-api-key)
 GET /api/runtime/components           # Sentinel component health status
 GET /api/runtime/policy?namespace=&amp;server=  # Get rendered policy for server</code></pre>
             <h3>Grant apply body</h3>
@@ -320,7 +320,7 @@ GET /api/runtime/policy?namespace=&amp;server=  # Get rendered policy for server
   "subject": {"humanID": "user-123", "agentID": "ops-agent"},
   "consentedTrust": "medium",
   "policyVersion": "v1",
-  "expiresAt": "2026-01-31T23:59:00Z"
+  "expiresAt": "2026-12-31T23:59:00Z"
 }</code></pre>
           </section>
 

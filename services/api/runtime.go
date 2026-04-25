@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	sentinelaccess "mcp-runtime/pkg/access"
 	chpkg "mcp-runtime/pkg/clickhouse"
@@ -25,7 +26,7 @@ type accessGrantRequest struct {
 	Subject       sentinelaccess.SubjectRef      `json:"subject"`
 	MaxTrust      sentinelaccess.TrustLevel      `json:"maxTrust"`
 	PolicyVersion string                         `json:"policyVersion"`
-	Disabled      bool                           `json:"disabled"`
+	Disabled      *bool                          `json:"disabled,omitempty"`
 	ToolRules     []sentinelaccess.ToolRule      `json:"toolRules"`
 }
 
@@ -36,7 +37,7 @@ type accessSessionRequest struct {
 	Subject        sentinelaccess.SubjectRef      `json:"subject"`
 	ConsentedTrust sentinelaccess.TrustLevel      `json:"consentedTrust"`
 	ExpiresAt      *metav1.Time                   `json:"expiresAt"`
-	Revoked        bool                           `json:"revoked"`
+	Revoked        *bool                          `json:"revoked,omitempty"`
 	PolicyVersion  string                         `json:"policyVersion"`
 }
 
@@ -244,6 +245,12 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	disabled, err := s.grantDisabledForApply(ctx, req)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read grant state"})
+		return
+	}
+
 	grant := &sentinelaccess.MCPAccessGrant{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      req.Name,
@@ -254,7 +261,7 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 			Subject:       req.Subject,
 			MaxTrust:      req.MaxTrust,
 			PolicyVersion: defaultPolicyVersion(req.PolicyVersion),
-			Disabled:      req.Disabled,
+			Disabled:      disabled,
 			ToolRules:     req.ToolRules,
 		},
 	}
@@ -323,6 +330,12 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	revoked, err := s.sessionRevokedForApply(ctx, req)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read session state"})
+		return
+	}
+
 	session := &sentinelaccess.MCPAgentSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      req.Name,
@@ -333,7 +346,7 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 			Subject:        req.Subject,
 			ConsentedTrust: req.ConsentedTrust,
 			ExpiresAt:      req.ExpiresAt,
-			Revoked:        req.Revoked,
+			Revoked:        revoked,
 			PolicyVersion:  defaultPolicyVersion(req.PolicyVersion),
 		},
 	}
@@ -343,6 +356,34 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"session": sentinelaccess.ToSessionSummary(*applied)})
+}
+
+func (s *RuntimeServer) grantDisabledForApply(ctx context.Context, req accessGrantRequest) (bool, error) {
+	if req.Disabled != nil {
+		return *req.Disabled, nil
+	}
+	existing, err := s.accessMgr.GetGrant(ctx, req.Name, defaultAccessNamespace(req.Namespace))
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return existing.Spec.Disabled, nil
+}
+
+func (s *RuntimeServer) sessionRevokedForApply(ctx context.Context, req accessSessionRequest) (bool, error) {
+	if req.Revoked != nil {
+		return *req.Revoked, nil
+	}
+	existing, err := s.accessMgr.GetSession(ctx, req.Name, defaultAccessNamespace(req.Namespace))
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return existing.Spec.Revoked, nil
 }
 
 // handleRuntimeComponents returns Sentinel component health.

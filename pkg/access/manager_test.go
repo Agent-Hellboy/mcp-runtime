@@ -27,7 +27,16 @@ func TestApplyGrantCreatesAndUpdates(t *testing.T) {
 	manager := NewManager(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), nil)
 
 	created, err := manager.ApplyGrant(ctx, &MCPAccessGrant{
-		ObjectMeta: metav1.ObjectMeta{Name: "grant-a", Namespace: "mcp-servers"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "grant-a",
+			Namespace:   "mcp-servers",
+			Labels:      map[string]string{"operator": "owned"},
+			Annotations: map[string]string{"note": "keep"},
+			Finalizers:  []string{"mcpruntime.org/finalizer"},
+			OwnerReferences: []metav1.OwnerReference{
+				{APIVersion: "mcpruntime.org/v1alpha1", Kind: "MCPServer", Name: "demo"},
+			},
+		},
 		Spec: MCPAccessGrantSpec{
 			ServerRef: ServerReference{Name: "demo"},
 			Subject:   SubjectRef{HumanID: "user-1", AgentID: "agent-1"},
@@ -59,6 +68,18 @@ func TestApplyGrantCreatesAndUpdates(t *testing.T) {
 	}
 	if got := updated.Spec.ToolRules[0].Decision; got != DecisionDeny {
 		t.Fatalf("updated decision = %q, want %q", got, DecisionDeny)
+	}
+	if got := updated.Labels["operator"]; got != "owned" {
+		t.Fatalf("updated label operator = %q, want owned", got)
+	}
+	if got := updated.Annotations["note"]; got != "keep" {
+		t.Fatalf("updated annotation note = %q, want keep", got)
+	}
+	if len(updated.Finalizers) != 1 || updated.Finalizers[0] != "mcpruntime.org/finalizer" {
+		t.Fatalf("updated finalizers = %#v, want preserved finalizer", updated.Finalizers)
+	}
+	if len(updated.OwnerReferences) != 1 || updated.OwnerReferences[0].Name != "demo" {
+		t.Fatalf("updated owner references = %#v, want preserved owner reference", updated.OwnerReferences)
 	}
 }
 
