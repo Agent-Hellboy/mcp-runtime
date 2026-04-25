@@ -134,11 +134,12 @@ func TestShowPlatformStatus(t *testing.T) {
 		}
 
 		output := runShowPlatformStatus(t, responses)
-		if !strings.Contains(strings.ToLower(output), "not set up yet") {
-			t.Fatalf("expected setup hint when cluster missing, got output: %s", output)
+		lower := strings.ToLower(output)
+		if !strings.Contains(lower, "kubectl is missing") {
+			t.Fatalf("expected kubectl missing hint when cluster missing, got output: %s", output)
 		}
-		if !strings.Contains(output, "setup") {
-			t.Fatalf("expected setup guidance in output, got: %s", output)
+		if !strings.Contains(lower, "install kubectl") {
+			t.Fatalf("expected install guidance in output, got: %s", output)
 		}
 	})
 

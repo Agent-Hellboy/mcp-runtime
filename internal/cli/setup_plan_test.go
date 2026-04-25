@@ -11,6 +11,8 @@ import (
 
 func TestBuildSetupPlan_DefaultHTTP(t *testing.T) {
 	plan := BuildSetupPlan(SetupPlanInput{
+		Kubeconfig:             "/tmp/kubeconfig",
+		Context:                "my-context",
 		RegistryType:           "docker",
 		RegistryStorageSize:    "20Gi",
 		StorageMode:            "dynamic",
@@ -23,6 +25,12 @@ func TestBuildSetupPlan_DefaultHTTP(t *testing.T) {
 
 	if plan.Ingress.manifest != "config/ingress/overlays/http" {
 		t.Fatalf("expected http ingress manifest, got %q", plan.Ingress.manifest)
+	}
+	if plan.Kubeconfig != "/tmp/kubeconfig" {
+		t.Fatalf("expected kubeconfig to be preserved, got %q", plan.Kubeconfig)
+	}
+	if plan.Context != "my-context" {
+		t.Fatalf("expected context to be preserved, got %q", plan.Context)
 	}
 	if plan.RegistryManifest != "config/registry" {
 		t.Fatalf("expected default registry manifest, got %q", plan.RegistryManifest)

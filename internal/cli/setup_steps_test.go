@@ -21,6 +21,19 @@ func (f *fakeRegistryManagerForSteps) PushInCluster(_, _, _ string) error {
 	return nil
 }
 
+type fakeClusterManagerForKubeconfig struct {
+	init func(kubeconfig, context string) error
+}
+
+func (f *fakeClusterManagerForKubeconfig) InitCluster(kubeconfig, context string) error {
+	if f.init != nil {
+		return f.init(kubeconfig, context)
+	}
+	return nil
+}
+
+func (f *fakeClusterManagerForKubeconfig) ConfigureCluster(ingressOptions) error { return nil }
+
 func TestBuildSetupStepsOrderWithTLS(t *testing.T) {
 	ctx := &SetupContext{
 		Plan: SetupPlan{
@@ -227,6 +240,8 @@ func TestNewSetupCmdIncludesFeatureFlags(t *testing.T) {
 	cmd := NewSetupCmd(zap.NewNop())
 
 	for _, name := range []string{
+		"kubeconfig",
+		"context",
 		"test-mode",
 		"strict-prod",
 		"operator-metrics-addr",
@@ -236,6 +251,43 @@ func TestNewSetupCmdIncludesFeatureFlags(t *testing.T) {
 		if flag := cmd.Flags().Lookup(name); flag == nil {
 			t.Fatalf("expected %q flag to exist", name)
 		}
+	}
+}
+
+func TestClusterStepPassesKubeconfigAndContext(t *testing.T) {
+	var gotKubeconfig string
+	var gotContext string
+
+	deps := SetupDeps{
+		ClusterManager: &fakeClusterManagerForKubeconfig{
+			init: func(kubeconfig, context string) error {
+				gotKubeconfig = kubeconfig
+				gotContext = context
+				return nil
+			},
+		},
+	}
+
+	ctx := &SetupContext{
+		Plan: SetupPlan{
+			Kubeconfig: "/etc/rancher/k3s/k3s.yaml",
+			Context:    "k3s",
+			Ingress: ingressOptions{
+				mode:     "traefik",
+				manifest: "config/ingress/overlays/http",
+			},
+		},
+	}
+
+	step := clusterStep{}
+	if err := step.Run(zap.NewNop(), deps, ctx); err != nil {
+		t.Fatalf("cluster step failed: %v", err)
+	}
+	if gotKubeconfig != ctx.Plan.Kubeconfig {
+		t.Fatalf("expected kubeconfig %q, got %q", ctx.Plan.Kubeconfig, gotKubeconfig)
+	}
+	if gotContext != ctx.Plan.Context {
+		t.Fatalf("expected context %q, got %q", ctx.Plan.Context, gotContext)
 	}
 }
 

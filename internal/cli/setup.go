@@ -221,6 +221,8 @@ func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 	var registryType string
 	var registryStorageSize string
 	var storageMode string
+	var kubeconfig string
+	var kubeContext string
 	var ingressMode string
 	var ingressManifest string
 	var forceIngressInstall bool
@@ -256,6 +258,8 @@ will use to push and pull container images.`,
 			)
 
 			plan := BuildSetupPlan(SetupPlanInput{
+				Kubeconfig:             kubeconfig,
+				Context:                kubeContext,
 				RegistryType:           registryType,
 				RegistryStorageSize:    registryStorageSize,
 				StorageMode:            storageMode,
@@ -277,6 +281,8 @@ will use to push and pull container images.`,
 	cmd.Flags().StringVar(&registryType, "registry-type", "docker", "Registry type (docker; harbor coming soon)")
 	cmd.Flags().StringVar(&registryStorageSize, "registry-storage", "20Gi", "Registry storage size (default: 20Gi)")
 	cmd.Flags().StringVar(&storageMode, "storage-mode", "dynamic", "Storage mode for local/dev clusters (dynamic|hostpath). Use hostpath for single-node k3s/minikube/kind without a provisioner.")
+	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (default: ~/.kube/config)")
+	cmd.Flags().StringVar(&kubeContext, "context", "", "Kubernetes context to use")
 	cmd.Flags().StringVar(&ingressMode, "ingress", "traefik", "Ingress controller to install automatically during setup (traefik|none)")
 	cmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/overlays/http", "Manifest to apply when installing the ingress controller")
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force ingress install even if an ingress class already exists")
@@ -472,11 +478,11 @@ func setupImageTag() string {
 	return setupImageTagResolver()
 }
 
-func setupClusterSteps(logger *zap.Logger, ingressOpts ingressOptions, deps SetupDeps) error {
+func setupClusterSteps(logger *zap.Logger, kubeconfig, context string, ingressOpts ingressOptions, deps SetupDeps) error {
 	// Step 1: Initialize cluster
 	Step("Step 1: Initialize cluster")
 	Info("Installing CRD")
-	if err := deps.ClusterManager.InitCluster("", ""); err != nil {
+	if err := deps.ClusterManager.InitCluster(kubeconfig, context); err != nil {
 		wrappedErr := wrapWithSentinel(ErrClusterInitFailed, err, fmt.Sprintf("failed to initialize cluster: %v", err))
 		Error("Cluster initialization failed")
 		logStructuredError(logger, wrappedErr, "Cluster initialization failed")

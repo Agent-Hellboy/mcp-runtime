@@ -55,7 +55,7 @@ type clusterStep struct{}
 
 func (s clusterStep) Name() string { return "cluster" }
 func (s clusterStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error {
-	return setupClusterSteps(logger, ctx.Plan.Ingress, deps)
+	return setupClusterSteps(logger, ctx.Plan.Kubeconfig, ctx.Plan.Context, ctx.Plan.Ingress, deps)
 }
 
 type tlsStep struct{}

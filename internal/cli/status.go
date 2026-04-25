@@ -170,14 +170,16 @@ func clusterSetupHint(detail string) (string, bool) {
 
 	switch {
 	case strings.Contains(lower, "executable file not found"),
-		strings.Contains(lower, "no such file or directory"):
-		return "Cluster not set up yet: kubectl is not installed. Install kubectl and run './bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http'", true
+		strings.Contains(lower, "kubectl: not found"):
+		return "kubectl is missing. Install kubectl and re-run the command.", true
+	case strings.Contains(lower, "kubeconfig"),
+		strings.Contains(lower, "no configuration has been provided"):
+		return "kubeconfig is missing or not readable. Either copy your cluster kubeconfig to ~/.kube/config, or re-run with `./bin/mcp-runtime setup --kubeconfig /etc/rancher/k3s/k3s.yaml` (for k3s) and optionally `--context <name>`.", true
 	case strings.Contains(lower, "connection refused"),
 		strings.Contains(lower, "unable to connect to the server"),
-		strings.Contains(lower, "no configuration has been provided"),
 		strings.Contains(lower, "context deadline exceeded"),
 		strings.Contains(lower, "the connection to the server"):
-		return "Cluster not set up yet: no Kubernetes API reachable. Run './bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http' to create the local Kind cluster", true
+		return "no Kubernetes API reachable. Verify your kubeconfig/context (or pass `--kubeconfig`/`--context` to setup) and ensure the cluster control plane is reachable.", true
 	default:
 		return "", false
 	}

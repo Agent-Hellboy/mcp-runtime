@@ -11,10 +11,12 @@ Usage:
   mcp-runtime setup [flags]
 
 Flags:
+      --context string                 Kubernetes context to use
       --force-ingress-install          Force ingress install even if an ingress class already exists
   -h, --help                           help for setup
       --ingress string                 Ingress controller to install automatically during setup (traefik|none) (default "traefik")
       --ingress-manifest string        Manifest to apply when installing the ingress controller (default "config/ingress/overlays/http")
+      --kubeconfig string              Path to kubeconfig file (default: ~/.kube/config)
       --operator-leader-elect          Override operator leader election when set
       --operator-metrics-addr string   Operator metrics bind address (default: :8080 from manager.yaml)
       --operator-probe-addr string     Operator health probe bind address (default: :8081 from manager.yaml)

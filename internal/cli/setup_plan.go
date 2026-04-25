@@ -11,6 +11,8 @@ const (
 
 // SetupPlanInput captures the raw CLI inputs for setup.
 type SetupPlanInput struct {
+	Kubeconfig             string
+	Context                string
 	RegistryType           string
 	RegistryStorageSize    string
 	StorageMode            string
@@ -27,6 +29,8 @@ type SetupPlanInput struct {
 
 // SetupPlan captures the resolved setup decisions.
 type SetupPlan struct {
+	Kubeconfig          string
+	Context             string
 	RegistryType        string
 	RegistryStorageSize string
 	StorageMode         string
@@ -66,6 +70,8 @@ func BuildSetupPlan(input SetupPlanInput) SetupPlan {
 	}
 
 	return SetupPlan{
+		Kubeconfig:          input.Kubeconfig,
+		Context:             input.Context,
 		RegistryType:        input.RegistryType,
 		RegistryStorageSize: input.RegistryStorageSize,
 		StorageMode:         input.StorageMode,
