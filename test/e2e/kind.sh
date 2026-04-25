@@ -2789,6 +2789,66 @@ PY
 
   echo "[oauth] validating valid bearer token MCP flow"
   wait_for_mcp_tool_result "${MCP_OAUTH_VALID_URL}" "add" '{"a":7,"b":5}' 200 "12"
+  API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api" \
+  API_KEY="${API_KEY}" \
+  OAUTH_SERVER_NAME="${OAUTH_SERVER_NAME}" \
+  OAUTH_HUMAN_ID="${OAUTH_HUMAN_ID}" \
+  OAUTH_AGENT_ID="${OAUTH_AGENT_ID}" \
+  OAUTH_SESSION_ID="${OAUTH_SESSION_ID}" \
+  python3 <<'PY'
+import json
+import os
+import time
+import urllib.parse
+import urllib.request
+
+
+import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
+
+
+api_base = os.environ["API_BASE"]
+api_key = os.environ["API_KEY"]
+server_name = os.environ["OAUTH_SERVER_NAME"]
+human_id = os.environ["OAUTH_HUMAN_ID"]
+agent_id = os.environ["OAUTH_AGENT_ID"]
+session_id = os.environ["OAUTH_SESSION_ID"]
+
+params = urllib.parse.urlencode(
+    {
+        "server": server_name,
+        "decision": "allow",
+        "tool_name": "add",
+        "human_id": human_id,
+        "agent_id": agent_id,
+        "session_id": session_id,
+        "limit": "20",
+    }
+)
+url = f"{api_base}/events/filter?{params}"
+headers = {"x-api-key": api_key}
+last_doc = {}
+
+for _ in range(60):
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        last_doc = json.loads(resp.read().decode())
+    events = last_doc.get("events", [])
+    if events:
+        payload = events[0].get("payload", {})
+        check(
+            payload.get("human_id") == human_id
+            and payload.get("agent_id") == agent_id
+            and payload.get("session_id") == session_id
+            and payload.get("tool_name") == "add"
+            and payload.get("decision") == "allow",
+            "oauth bearer token identity appeared in allow audit event",
+            f"unexpected oauth allow audit payload: {payload}",
+        )
+        break
+    time.sleep(2)
+else:
+    fail(f"timed out waiting for oauth allow audit event: {json.dumps(last_doc, indent=2)}")
+PY
   wait_for_http_result \
     "${MCP_OAUTH_DIRECT_URL}" \
     POST \
