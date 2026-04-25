@@ -1,5 +1,5 @@
 const apiBase = window.MCP_API_BASE || "/api";
-let authenticated = false;
+let authenticated = null;
 
 // API Helper
 async function fetchJSON(path, options = {}) {
@@ -66,6 +66,13 @@ function initTabs() {
     tab.addEventListener("click", () => {
       const target = tab.dataset.tab;
 
+      if (authenticated !== true) {
+        if (authenticated === false) {
+          showAuthModal();
+        }
+        return;
+      }
+
       tabs.forEach((t) => {
         const isActive = t === tab;
         t.classList.toggle("active", isActive);
@@ -77,11 +84,6 @@ function initTabs() {
         content.classList.toggle("active", isActive);
         content.hidden = !isActive;
       });
-
-      if (!authenticated) {
-        showAuthModal();
-        return;
-      }
 
       // Load data when switching to certain tabs
       if (target === "governance") {
@@ -273,7 +275,7 @@ async function handleAuthSubmit(event) {
       body: JSON.stringify({ api_key: apiKey }),
     });
     if (!response.ok) {
-      throw new Error("Invalid API key");
+      throw new Error(await authFailureMessage(response));
     }
     if (input) input.value = "";
     hideAuthModal();
@@ -285,6 +287,24 @@ async function handleAuthSubmit(event) {
   } finally {
     if (submit) submit.disabled = false;
   }
+}
+
+async function authFailureMessage(response) {
+  let serverError = "";
+  try {
+    const body = await response.json();
+    serverError = body?.error || "";
+  } catch (_) {
+    // Non-JSON failures still get a useful status-based message below.
+  }
+
+  if (response.status === 401) {
+    return "Invalid API key";
+  }
+  if (response.status === 503 && serverError === "api_key_not_configured") {
+    return "Server is not configured for API key auth";
+  }
+  return serverError || `Sign-in failed (${response.status})`;
 }
 
 async function logout() {

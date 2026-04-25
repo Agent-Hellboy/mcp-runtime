@@ -10,7 +10,7 @@ import (
 )
 
 func TestConfigDoesNotExposeAPIKey(t *testing.T) {
-	mux, err := newMux("/api", "http://127.0.0.1:1", "secret")
+	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret")
 	if err != nil {
 		t.Fatalf("newMux() error = %v", err)
 	}
@@ -32,10 +32,11 @@ func TestConfigDoesNotExposeAPIKey(t *testing.T) {
 
 func TestAPIProxyRequiresAuthenticatedSession(t *testing.T) {
 	upstreamCalled := false
+	sessionKey := deriveSessionKey("ui-secret")
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		upstreamCalled = true
-		if got := r.Header.Get("x-api-key"); got != "secret" {
-			t.Fatalf("x-api-key = %q, want %q", got, "secret")
+		if got := r.Header.Get("x-api-key"); got != "api-secret" {
+			t.Fatalf("x-api-key = %q, want %q", got, "api-secret")
 		}
 		if got := r.Header.Get("Cookie"); got != "" {
 			t.Fatalf("Cookie header forwarded upstream: %q", got)
@@ -53,7 +54,7 @@ func TestAPIProxyRequiresAuthenticatedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "secret", transport)
+	proxy := newAPIProxyWithTransport(target, "api-secret", "api-secret", sessionKey, transport)
 
 	recorder := httptest.NewRecorder()
 	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/dashboard/summary", nil))
@@ -65,7 +66,7 @@ func TestAPIProxyRequiresAuthenticatedSession(t *testing.T) {
 	}
 
 	login := httptest.NewRecorder()
-	handleLogin("secret").ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"api_key":"secret"}`)))
+	handleLogin("ui-secret", sessionKey).ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"api_key":"ui-secret"}`)))
 	if login.Code != http.StatusOK {
 		t.Fatalf("login status = %d, want %d; body=%s", login.Code, http.StatusOK, login.Body.String())
 	}
@@ -73,7 +74,7 @@ func TestAPIProxyRequiresAuthenticatedSession(t *testing.T) {
 	if len(cookies) != 1 {
 		t.Fatalf("login cookies = %d, want 1", len(cookies))
 	}
-	if strings.Contains(cookies[0].Value, "secret") {
+	if strings.Contains(cookies[0].Value, "ui-secret") {
 		t.Fatal("session cookie contains raw API key")
 	}
 
@@ -86,6 +87,37 @@ func TestAPIProxyRequiresAuthenticatedSession(t *testing.T) {
 	}
 	if !upstreamCalled {
 		t.Fatal("authenticated request did not reach upstream")
+	}
+}
+
+func TestAPIProxyAllowsDirectAPIKeyClients(t *testing.T) {
+	upstreamCalled := false
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		upstreamCalled = true
+		if got := r.Header.Get("x-api-key"); got != "api-secret" {
+			t.Fatalf("x-api-key forwarded upstream = %q, want %q", got, "api-secret")
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"content-type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+		}, nil
+	})
+	target, err := url.Parse("http://api.example")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	proxy := newAPIProxyWithTransport(target, "api-secret", "api-secret,backup-secret", deriveSessionKey("ui-secret"), transport)
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	req.Header.Set("x-api-key", "backup-secret")
+	proxy.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("direct API-key status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !upstreamCalled {
+		t.Fatal("direct API-key request did not reach upstream")
 	}
 }
 

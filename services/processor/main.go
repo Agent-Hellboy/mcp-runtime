@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel"
@@ -31,6 +32,21 @@ type eventPayload struct {
 	Source    string          `json:"source"`
 	EventType string          `json:"event_type"`
 	Payload   json.RawMessage `json:"payload"`
+}
+
+var (
+	processorIntakePaused = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "processor_intake_paused",
+		Help: "Whether Kafka intake is paused because the pending ClickHouse batch is full.",
+	})
+	processorIntakePauseTransitions = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "processor_intake_pause_transitions_total",
+		Help: "Total number of times Kafka intake entered the paused state.",
+	})
+)
+
+func init() {
+	prometheus.MustRegister(processorIntakePaused, processorIntakePauseTransitions)
 }
 
 // main initializes and starts the MCP Sentinel Processor service.
@@ -168,8 +184,11 @@ func main() {
 		if messageInput == nil && !pausedForFlush {
 			log.Printf("batch reached BATCH_SIZE=%d; pausing Kafka intake until ClickHouse insert succeeds", batchSize)
 			pausedForFlush = true
+			processorIntakePaused.Set(1)
+			processorIntakePauseTransitions.Inc()
 		} else if messageInput != nil {
 			pausedForFlush = false
+			processorIntakePaused.Set(0)
 		}
 
 		select {

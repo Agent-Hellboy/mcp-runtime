@@ -32,6 +32,9 @@ spec:
                 matchLabels:
                   control-plane: controller-manager
               topologyKey: kubernetes.io/hostname
+      volumes:
+      - name: tmp
+        emptyDir: {}
       containers:
       - command:
         - /manager
@@ -55,6 +58,9 @@ spec:
           requests:
             cpu: 100m
             memory: 128Mi
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
         livenessProbe:
           httpGet:
             path: /healthz

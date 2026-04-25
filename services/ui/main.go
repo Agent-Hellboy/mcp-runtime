@@ -45,9 +45,10 @@ func main() {
 	port := envOr("PORT", "8082")
 	apiBase := envOr("API_BASE", "/api")
 	apiKey := strings.TrimSpace(os.Getenv("API_KEY"))
+	apiKeys := strings.TrimSpace(os.Getenv("API_KEYS"))
 	apiUpstream := envOr("API_UPSTREAM", "http://mcp-sentinel-api:8080")
 
-	mux, err := newMux(apiBase, apiUpstream, apiKey)
+	mux, err := newMux(apiBase, apiUpstream, apiKey, apiKeys)
 	if err != nil {
 		log.Fatalf("invalid API upstream: %v", err)
 	}
@@ -78,8 +79,14 @@ func main() {
 	}
 }
 
-func newMux(apiBase, apiUpstream, apiKey string) (*http.ServeMux, error) {
+func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error) {
 	apiBase = normalizePathPrefix(apiBase)
+	sessionKey := deriveSessionKey(apiKey)
+	upstreamAPIKey := firstAPIKey(apiKeys)
+	if upstreamAPIKey == "" {
+		upstreamAPIKey = apiKey
+		apiKeys = apiKey
+	}
 	target, err := url.Parse(apiUpstream)
 	if err != nil {
 		return nil, err
@@ -100,11 +107,11 @@ func newMux(apiBase, apiUpstream, apiKey string) (*http.ServeMux, error) {
 		config := "window.MCP_API_BASE = " + string(baseJSON) + ";"
 		_, _ = w.Write([]byte(config))
 	})
-	mux.HandleFunc("/auth/login", handleLogin(apiKey))
+	mux.HandleFunc("/auth/login", handleLogin(apiKey, sessionKey))
 	mux.HandleFunc("/auth/logout", handleLogout)
-	mux.HandleFunc("/auth/status", handleStatus(apiKey))
+	mux.HandleFunc("/auth/status", handleStatus(apiKey, sessionKey))
 
-	apiProxy := newAPIProxy(target, apiKey)
+	apiProxy := newAPIProxy(target, upstreamAPIKey, apiKeys, sessionKey)
 	mux.Handle(apiBase+"/", apiProxy)
 	mux.Handle(apiBase, apiProxy)
 
@@ -134,11 +141,11 @@ func newMux(apiBase, apiUpstream, apiKey string) (*http.ServeMux, error) {
 	return mux, nil
 }
 
-func newAPIProxy(target *url.URL, apiKey string) http.Handler {
-	return newAPIProxyWithTransport(target, apiKey, nil)
+func newAPIProxy(target *url.URL, upstreamAPIKey, apiKeys string, sessionKey []byte) http.Handler {
+	return newAPIProxyWithTransport(target, upstreamAPIKey, apiKeys, sessionKey, nil)
 }
 
-func newAPIProxyWithTransport(target *url.URL, apiKey string, transport http.RoundTripper) http.Handler {
+func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, sessionKey []byte, transport http.RoundTripper) http.Handler {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	if transport != nil {
 		proxy.Transport = transport
@@ -149,7 +156,7 @@ func newAPIProxyWithTransport(target *url.URL, apiKey string, transport http.Rou
 		req.Host = target.Host
 		req.Header.Del("Cookie")
 		req.Header.Del("x-api-key")
-		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("x-api-key", upstreamAPIKey)
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
 		log.Printf("api proxy error: %v", err)
@@ -157,7 +164,7 @@ func newAPIProxyWithTransport(target *url.URL, apiKey string, transport http.Rou
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !validSession(r, apiKey) {
+		if !validSession(r, sessionKey) && !validAPIKeyHeader(r, apiKeys) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
@@ -165,7 +172,7 @@ func newAPIProxyWithTransport(target *url.URL, apiKey string, transport http.Rou
 	})
 }
 
-func handleLogin(apiKey string) http.HandlerFunc {
+func handleLogin(apiKey string, sessionKey []byte) http.HandlerFunc {
 	type loginRequest struct {
 		APIKey string `json:"api_key"`
 	}
@@ -191,7 +198,7 @@ func handleLogin(apiKey string) http.HandlerFunc {
 			return
 		}
 
-		http.SetCookie(w, newSessionCookie(r, apiKey))
+		http.SetCookie(w, newSessionCookie(r, sessionKey))
 		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
 	}
 }
@@ -206,17 +213,17 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": false})
 }
 
-func handleStatus(apiKey string) http.HandlerFunc {
+func handleStatus(apiKey string, sessionKey []byte) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": validSession(r, apiKey)})
+		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": validSession(r, sessionKey)})
 	}
 }
 
-func newSessionCookie(r *http.Request, apiKey string) *http.Cookie {
+func newSessionCookie(r *http.Request, sessionKey []byte) *http.Cookie {
 	payload := sessionPayload{ExpiresAt: time.Now().Add(sessionDuration).Unix()}
 	payloadBytes, _ := json.Marshal(payload)
 	payloadPart := base64.RawURLEncoding.EncodeToString(payloadBytes)
-	signaturePart := signSession(payloadBytes, apiKey)
+	signaturePart := signSession(payloadBytes, sessionKey)
 
 	return &http.Cookie{
 		Name:     sessionCookieName,
@@ -241,8 +248,8 @@ func expiredSessionCookie(r *http.Request) *http.Cookie {
 	}
 }
 
-func validSession(r *http.Request, apiKey string) bool {
-	if apiKey == "" {
+func validSession(r *http.Request, sessionKey []byte) bool {
+	if len(sessionKey) == 0 {
 		return false
 	}
 	cookie, err := r.Cookie(sessionCookieName)
@@ -257,7 +264,7 @@ func validSession(r *http.Request, apiKey string) bool {
 	if err != nil {
 		return false
 	}
-	if !hmac.Equal([]byte(parts[1]), []byte(signSession(payloadBytes, apiKey))) {
+	if !hmac.Equal([]byte(parts[1]), []byte(signSession(payloadBytes, sessionKey))) {
 		return false
 	}
 	var payload sessionPayload
@@ -267,10 +274,46 @@ func validSession(r *http.Request, apiKey string) bool {
 	return time.Now().Unix() < payload.ExpiresAt
 }
 
-func signSession(payload []byte, apiKey string) string {
-	mac := hmac.New(sha256.New, []byte(apiKey))
+func signSession(payload []byte, sessionKey []byte) string {
+	mac := hmac.New(sha256.New, sessionKey)
 	_, _ = mac.Write(payload)
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func validAPIKeyHeader(r *http.Request, apiKeys string) bool {
+	presented := strings.TrimSpace(r.Header.Get("x-api-key"))
+	if presented == "" {
+		return false
+	}
+	for _, key := range strings.Split(apiKeys, ",") {
+		if hmac.Equal([]byte(presented), []byte(strings.TrimSpace(key))) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstAPIKey(apiKeys string) string {
+	for _, key := range strings.Split(apiKeys, ",") {
+		if trimmed := strings.TrimSpace(key); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func deriveSessionKey(apiKey string) []byte {
+	if apiKey == "" {
+		return nil
+	}
+	prkMAC := hmac.New(sha256.New, []byte("mcp-sentinel-ui-session-key"))
+	_, _ = prkMAC.Write([]byte(apiKey))
+	prk := prkMAC.Sum(nil)
+
+	expandMAC := hmac.New(sha256.New, prk)
+	_, _ = expandMAC.Write([]byte("mcp-ui-session-cookie"))
+	_, _ = expandMAC.Write([]byte{1})
+	return expandMAC.Sum(nil)
 }
 
 func secureCookie(r *http.Request) bool {
