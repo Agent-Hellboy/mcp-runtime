@@ -70,7 +70,7 @@ func (m *Mutator) withContainer(deploymentName, containerName string, fn func(ma
 		return fmt.Errorf("deployment %s not found", deploymentName)
 	}
 
-	spec := getMap(getMap(deployment, "spec"), "template", "spec")
+	spec := getMap(deployment, "spec", "template", "spec")
 	if spec == nil {
 		return fmt.Errorf("deployment %s has no pod spec", deploymentName)
 	}
@@ -230,6 +230,7 @@ func (m *Mutator) MergeDeploymentEnv(deploymentName, containerName string, envVa
 			if idx, exists := nameToIndex[name]; exists {
 				// Update existing entry in-place
 				if envEntry, ok := orderedEnv[idx].(map[string]any); ok {
+					delete(envEntry, "valueFrom")
 					envEntry["value"] = value
 				}
 			} else {
@@ -258,12 +259,15 @@ func (m *Mutator) MergeDeploymentEnv(deploymentName, containerName string, envVa
 func (m *Mutator) ToYAML() ([]byte, error) {
 	var buf bytes.Buffer
 	encoder := yaml.NewEncoder(&buf)
-	defer encoder.Close()
 
 	for i, doc := range m.docs {
 		if err := encoder.Encode(doc); err != nil {
 			return nil, fmt.Errorf("encode document %d: %w", i, err)
 		}
+	}
+
+	if err := encoder.Close(); err != nil {
+		return nil, fmt.Errorf("close encoder: %w", err)
 	}
 
 	return buf.Bytes(), nil

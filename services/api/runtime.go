@@ -274,7 +274,7 @@ func (s *RuntimeServer) handleGrantTogglePath(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	disable := params.Action == "disable"
+	disable := !serviceutil.IsActionEnabled(params.Action)
 	s.handleGrantToggle(w, r, params.Namespace, params.Name, disable)
 }
 
@@ -319,7 +319,7 @@ func (s *RuntimeServer) handleSessionTogglePath(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	revoke := params.Action == "revoke"
+	revoke := !serviceutil.IsActionEnabled(params.Action)
 	s.handleSessionToggle(w, r, params.Namespace, params.Name, revoke)
 }
 

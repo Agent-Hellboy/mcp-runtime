@@ -21,6 +21,9 @@ const (
 	// OperatorDeploymentName is the name of the operator deployment.
 	OperatorDeploymentName = "mcp-runtime-operator-controller-manager"
 
+	// OperatorManagerContainerName is the main manager container in the operator deployment.
+	OperatorManagerContainerName = "manager"
+
 	// RegistryDeploymentName is the name of the registry deployment.
 	RegistryDeploymentName = "registry"
 

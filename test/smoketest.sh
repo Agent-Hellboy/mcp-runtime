@@ -33,7 +33,7 @@ docker build -t mcp-sentinel-ingest:latest services/ingest
 docker build -t mcp-sentinel-processor:latest services/processor
 docker build -t mcp-sentinel-ui:latest services/ui
 docker build -t go-example-mcp:latest examples/go-mcp-server
-docker build -t mcp-sentinel-mcp-proxy:latest services/mcp-proxy
+docker build -t mcp-sentinel-mcp-proxy:latest -f services/mcp-proxy/Dockerfile .
 
 kind load docker-image mcp-sentinel-api:latest --name "$KIND_CLUSTER_NAME"
 kind load docker-image mcp-sentinel-ingest:latest --name "$KIND_CLUSTER_NAME"

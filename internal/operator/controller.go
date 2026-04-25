@@ -88,14 +88,7 @@ const (
 )
 
 // resourceReadiness tracks the readiness state of different resources.
-type resourceReadiness struct {
-	Deployment bool
-	Service    bool
-	Ingress    bool
-	Gateway    bool
-	Policy     bool
-	Canary     bool
-}
+type resourceReadiness = operatorutil.ResourceReadiness
 
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpservers,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpservers/status,verbs=get;update;patch

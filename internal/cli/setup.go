@@ -33,7 +33,7 @@ const defaultGatewayProxyRepository = "mcp-sentinel-mcp-proxy"
 const defaultAnalyticsNamespace = "mcp-sentinel"
 const defaultAnalyticsIngestURL = "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
 const gatewayProxyDockerfilePath = "services/mcp-proxy/Dockerfile"
-const gatewayProxyBuildContext = "services/mcp-proxy"
+const gatewayProxyBuildContext = "."
 
 var setupImageTagResolver = getGitTag
 
@@ -1402,7 +1402,7 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 	}
 
 	// Set the operator image
-	if err := mutator.SetDeploymentImage(OperatorDeploymentName, "", operatorImage); err != nil {
+	if err := mutator.SetDeploymentImage(OperatorDeploymentName, OperatorManagerContainerName, operatorImage); err != nil {
 		wrappedErr := wrapWithSentinel(ErrSetOperatorImageFailed, err, fmt.Sprintf("failed to set operator image: %v", err))
 		Error("Failed to set operator image")
 		if logger != nil {
@@ -1414,16 +1414,20 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 	// Set image pull policy based on image
 	pullPolicy := operatorImagePullPolicy(operatorImage)
 	if pullPolicy != "" {
-		if err := mutator.SetDeploymentImagePullPolicy(OperatorDeploymentName, "", pullPolicy); err != nil {
-			// Non-fatal: log warning but continue
-			Warn(fmt.Sprintf("Could not set image pull policy: %v", err))
+		if err := mutator.SetDeploymentImagePullPolicy(OperatorDeploymentName, OperatorManagerContainerName, pullPolicy); err != nil {
+			wrappedErr := wrapWithSentinel(ErrMutateManagerYAMLFailed, err, fmt.Sprintf("failed to set operator image pull policy: %v", err))
+			Error("Failed to set operator image pull policy")
+			if logger != nil {
+				logStructuredError(logger, wrappedErr, "Failed to set operator image pull policy")
+			}
+			return wrappedErr
 		}
 	}
 
 	// Inject operator args if provided
 	if len(operatorArgs) > 0 {
-		if err := mutator.MergeDeploymentArgs(OperatorDeploymentName, "", operatorArgs); err != nil {
-			wrappedErr := wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to merge operator args: %v", err))
+		if err := mutator.MergeDeploymentArgs(OperatorDeploymentName, OperatorManagerContainerName, operatorArgs); err != nil {
+			wrappedErr := wrapWithSentinel(ErrMutateManagerYAMLFailed, err, fmt.Sprintf("failed to merge operator args: %v", err))
 			Error("Failed to merge operator args")
 			if logger != nil {
 				logStructuredError(logger, wrappedErr, "Failed to merge operator args")
@@ -1438,8 +1442,8 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 		for _, ev := range envVars {
 			envMap[ev.Name] = ev.Value
 		}
-		if err := mutator.MergeDeploymentEnv(OperatorDeploymentName, "", envMap); err != nil {
-			wrappedErr := wrapWithSentinel(ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to merge operator env vars: %v", err))
+		if err := mutator.MergeDeploymentEnv(OperatorDeploymentName, OperatorManagerContainerName, envMap); err != nil {
+			wrappedErr := wrapWithSentinel(ErrMutateManagerYAMLFailed, err, fmt.Sprintf("failed to merge operator env vars: %v", err))
 			Error("Failed to merge operator env vars")
 			if logger != nil {
 				logStructuredError(logger, wrappedErr, "Failed to merge operator env vars")

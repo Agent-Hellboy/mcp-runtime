@@ -137,6 +137,7 @@ var (
 	ErrReadManagerYAMLFailed               = newSentinelError("failed to read manager.yaml", errx.CodeSetup, errx.DescSetup)
 	ErrParseManagerYAMLFailed              = newSentinelError("failed to parse manager.yaml", errx.CodeSetup, errx.DescSetup)
 	ErrSetOperatorImageFailed              = newSentinelError("failed to set operator image", errx.CodeSetup, errx.DescSetup)
+	ErrMutateManagerYAMLFailed             = newSentinelError("failed to mutate manager.yaml", errx.CodeSetup, errx.DescSetup)
 	ErrRenderManagerYAMLFailed             = newSentinelError("failed to render mutated manager.yaml", errx.CodeSetup, errx.DescSetup)
 	ErrCreateTempFileFailed                = newSentinelError("failed to create temp file", errx.CodeSetup, errx.DescSetup)
 	ErrCloseTempFileFailed                 = newSentinelError("failed to close temp file", errx.CodeSetup, errx.DescSetup)

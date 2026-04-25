@@ -3,9 +3,11 @@ package operatorutil
 
 import (
 	"context"
+	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -58,21 +60,23 @@ func UpdateMCPServerStatus(ctx context.Context, c client.Client, obj client.Obje
 		latest = obj
 	}
 
-	// Get the status interface
-	status := latest.(interface{ GetStatus() MCPStatus }).GetStatus()
+	mcpServer, ok := latest.(*mcpv1alpha1.MCPServer)
+	if !ok {
+		return fmt.Errorf("unsupported status object type %T", latest)
+	}
 
 	// Update status fields
-	status.SetPhase(phase)
-	status.SetMessage(message)
-	status.SetDeploymentReady(readiness.Deployment)
-	status.SetServiceReady(readiness.Service)
-	status.SetIngressReady(readiness.Ingress)
-	status.SetGatewayReady(readiness.Gateway)
-	status.SetPolicyReady(readiness.Policy)
-	status.SetCanaryReady(readiness.Canary)
+	mcpServer.Status.Phase = phase
+	mcpServer.Status.Message = message
+	mcpServer.Status.DeploymentReady = readiness.Deployment
+	mcpServer.Status.ServiceReady = readiness.Service
+	mcpServer.Status.IngressReady = readiness.Ingress
+	mcpServer.Status.GatewayReady = readiness.Gateway
+	mcpServer.Status.PolicyReady = readiness.Policy
+	mcpServer.Status.CanaryReady = readiness.Canary
 
 	// Update conditions
-	conditions := latest.(interface{ GetConditions() *[]metav1.Condition }).GetConditions()
+	conditions := &mcpServer.Status.Conditions
 
 	SetCondition(conditions, DeploymentReady, readiness.Deployment, phase, message, latest.GetGeneration())
 	SetCondition(conditions, ServiceReady, readiness.Service, phase, message, latest.GetGeneration())
@@ -132,16 +136,4 @@ func SetCondition(conditions *[]metav1.Condition, condType ConditionType, ready 
 	} else {
 		*conditions = append(*conditions, newCond)
 	}
-}
-
-// MCPStatus is the interface for MCP server status.
-type MCPStatus interface {
-	SetPhase(phase string)
-	SetMessage(message string)
-	SetDeploymentReady(ready bool)
-	SetServiceReady(ready bool)
-	SetIngressReady(ready bool)
-	SetGatewayReady(ready bool)
-	SetPolicyReady(ready bool)
-	SetCanaryReady(ready bool)
 }

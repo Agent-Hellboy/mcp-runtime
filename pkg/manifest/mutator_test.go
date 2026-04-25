@@ -42,6 +42,36 @@ spec:
 	}
 }
 
+func TestFindDeploymentByNamespace(t *testing.T) {
+	yaml := `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-deployment
+  namespace: first
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-deployment
+  namespace: second
+`
+	m, err := NewMutator([]byte(yaml))
+	if err != nil {
+		t.Fatalf("NewMutator failed: %v", err)
+	}
+
+	deployment := m.FindDeployment("test-deployment", "second")
+	if deployment == nil {
+		t.Fatal("FindDeployment should find deployment in requested namespace")
+	}
+
+	metadata := deployment["metadata"].(map[string]any)
+	if got := metadata["namespace"]; got != "second" {
+		t.Fatalf("Expected namespace second, got %v", got)
+	}
+}
+
 func TestSetDeploymentImage(t *testing.T) {
 	yaml := `
 apiVersion: apps/v1
@@ -152,6 +182,49 @@ spec:
 	}
 	if !foundNew {
 		t.Error("NEW_VAR should have been added")
+	}
+}
+
+func TestMergeDeploymentEnvClearsValueFrom(t *testing.T) {
+	yaml := `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: test-container
+        image: nginx:latest
+        env:
+        - name: FROM_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: test-secret
+              key: password
+`
+	m, err := NewMutator([]byte(yaml))
+	if err != nil {
+		t.Fatalf("NewMutator failed: %v", err)
+	}
+
+	if err := m.MergeDeploymentEnv("test-deployment", "", map[string]string{"FROM_SECRET": "literal"}); err != nil {
+		t.Fatalf("MergeDeploymentEnv failed: %v", err)
+	}
+
+	deployment := m.FindDeployment("test-deployment", "")
+	spec := getMap(deployment, "spec", "template", "spec")
+	containers := spec["containers"].([]any)
+	container := containers[0].(map[string]any)
+	env := container["env"].([]any)
+	envEntry := env[0].(map[string]any)
+
+	if _, exists := envEntry["valueFrom"]; exists {
+		t.Fatal("valueFrom should be removed when a literal value overrides an env var")
+	}
+	if got := envEntry["value"]; got != "literal" {
+		t.Fatalf("Expected literal value, got %v", got)
 	}
 }
 
