@@ -11,13 +11,20 @@ spec:
     - ReadWriteOnce
   volumeMode: Filesystem
   storageClassName: local-path
-  persistentVolumeReclaimPolicy: Delete
+  persistentVolumeReclaimPolicy: Retain
   claimRef:
     namespace: mcp-sentinel
     name: data-clickhouse-0
-  hostPath:
+  local:
     path: /var/lib/mcp-runtime/clickhouse
-    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: mcp-runtime.org/local-storage
+              operator: In
+              values:
+                - "true"
 ---
 apiVersion: v1
 kind: Service
@@ -67,15 +74,38 @@ spec:
       containers:
         - name: clickhouse
           image: clickhouse/clickhouse-server:23.8
+          securityContext:
+            runAsUser: 101
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
           ports:
             - containerPort: 9000
             - containerPort: 8123
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 8123
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 8123
+            initialDelaySeconds: 10
+            periodSeconds: 10
           env:
             - name: CLICKHOUSE_DB
               valueFrom:
                 configMapKeyRef:
                   name: mcp-sentinel-config
                   key: CLICKHOUSE_DB
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
           volumeMounts:
             - name: data
               mountPath: /var/lib/clickhouse
@@ -83,6 +113,7 @@ spec:
     - metadata:
         name: data
       spec:
+        storageClassName: local-path
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:

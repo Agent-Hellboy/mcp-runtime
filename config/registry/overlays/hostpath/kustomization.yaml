@@ -3,6 +3,6 @@ kind: Kustomization
 resources:
   - ../../base
   - pv.yaml
-patchesStrategicMerge:
-  - pvc-hostpath.yaml
-  - deployment-hostpath.yaml
+patches:
+  - path: pvc-hostpath.yaml
+  - path: deployment-hostpath.yaml

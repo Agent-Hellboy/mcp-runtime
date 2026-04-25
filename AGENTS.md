@@ -127,15 +127,16 @@ kubectl config current-context
 kubectl get nodes
 
 # delete everything in every namespace (pods/deployments/jobs/services/ingresses/etc.)
-kubectl delete all,cm,secret,ing,svc,sa,role,rolebinding,deploy,ds,sts,job,cronjob --all -A
+kubectl delete all,cm,secret,ing,svc,sa,role,rolebinding,deploy,ds,sts,job,cronjob,pvc,pv,crd,clusterrole,clusterrolebinding,validatingwebhookconfigurations,mutatingwebhookconfigurations,networkpolicy,podsecuritypolicy --all -A --ignore-not-found --grace-period=0 --force
 
 # delete all non-system namespaces (wipes everything inside them)
-kubectl get ns --no-headers | awk '{print $1}' \
-  | egrep -v '^(kube-system|kube-public|kube-node-lease|default)$' \
-  | xargs -r kubectl delete ns
+ns_to_delete="$(kubectl get ns --no-headers | awk '{print $1}' | grep -E -v '^(kube-system|kube-public|kube-node-lease|default)$')"
+if [ -n "$ns_to_delete" ]; then
+  printf '%s\n' "$ns_to_delete" | xargs kubectl delete ns
+fi
 
 # optional: also wipe the default namespace
-kubectl delete all,cm,secret,ing,svc,sa,role,rolebinding,deploy,ds,sts,job,cronjob --all -n default
+kubectl delete all,cm,secret,ing,svc,sa,role,rolebinding,deploy,ds,sts,job,cronjob,pvc --all -n default --ignore-not-found --grace-period=0 --force
 ```
 
 ## 9) Reference Links

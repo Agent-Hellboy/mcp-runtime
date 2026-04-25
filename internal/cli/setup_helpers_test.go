@@ -759,8 +759,10 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		"00-namespace.yaml",
 		"01-config.yaml",
 		"03-clickhouse.yaml",
+		"03-clickhouse-hostpath.yaml",
 		"04-clickhouse-init.yaml",
 		"05-kafka.yaml",
+		"05-kafka-hostpath.yaml",
 		"06-ingest.yaml",
 		"07-processor.yaml",
 		"08-api.yaml",
@@ -786,10 +788,17 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		_ = os.Chdir(cwd)
 	})
 
+	var applied []string
 	mock := &MockExecutor{
 		CommandFunc: func(spec ExecSpec) *MockCommand {
 			cmd := &MockCommand{Args: spec.Args}
 			switch {
+			case contains(spec.Args, "apply") && contains(spec.Args, "-f"):
+				for i := 0; i+1 < len(spec.Args); i++ {
+					if spec.Args[i] == "-f" {
+						applied = append(applied, spec.Args[i+1])
+					}
+				}
 			case contains(spec.Args, "get") && contains(spec.Args, "secret"):
 				cmd.OutputData = []byte("Error from server (NotFound): secrets \"mcp-sentinel-secrets\" not found")
 				cmd.OutputErr = errors.New("not found")
@@ -806,12 +815,78 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		API:       "example.com/mcp-sentinel-api:latest",
 		Processor: "example.com/mcp-sentinel-processor:latest",
 		UI:        "example.com/mcp-sentinel-ui:latest",
-	}, "dynamic")
+	}, "")
 	if err == nil {
 		t.Fatal("expected rollout failure")
 	}
 	if !strings.Contains(err.Error(), "deployment/mcp-sentinel-api") {
 		t.Fatalf("expected failing workload in error, got %v", err)
+	}
+}
+
+func TestDeployAnalyticsManifestsWithKubectl_HostpathUsesHostpathManifests(t *testing.T) {
+	orig := DefaultCLIConfig
+	t.Cleanup(func() { DefaultCLIConfig = orig })
+	DefaultCLIConfig = &CLIConfig{}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	root := t.TempDir()
+	manifestDir := filepath.Join(root, "k8s")
+	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+		t.Fatalf("failed to create manifest dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "services"), 0o755); err != nil {
+		t.Fatalf("failed to create services dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("failed to write go.mod: %v", err)
+	}
+	manifestContent := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: fixture\n  namespace: mcp-sentinel\n"
+	for _, name := range []string{
+		"00-namespace.yaml",
+		"01-config.yaml",
+		"03-clickhouse-hostpath.yaml",
+		"04-clickhouse-init.yaml",
+		"05-kafka-hostpath.yaml",
+	} {
+		if err := os.WriteFile(filepath.Join(manifestDir, name), []byte(manifestContent), 0o644); err != nil {
+			t.Fatalf("failed to write fixture manifest %s: %v", name, err)
+		}
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("failed to chdir to fixture root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			cmd := &MockCommand{Args: spec.Args}
+			if contains(spec.Args, "get") && contains(spec.Args, "secret") {
+				cmd.OutputData = []byte("Error from server (NotFound): secrets \"mcp-sentinel-secrets\" not found")
+				cmd.OutputErr = errors.New("not found")
+			}
+			if contains(spec.Args, "rollout") && contains(spec.Args, "statefulset") && contains(spec.Args, "clickhouse") {
+				cmd.RunErr = errors.New("rollout timeout")
+			}
+			return cmd
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+
+	err = deployAnalyticsManifestsWithKubectl(kubectl, zap.NewNop(), AnalyticsImageSet{
+		Ingest:    "example.com/mcp-sentinel-ingest:latest",
+		API:       "example.com/mcp-sentinel-api:latest",
+		Processor: "example.com/mcp-sentinel-processor:latest",
+		UI:        "example.com/mcp-sentinel-ui:latest",
+	}, StorageModeHostpath)
+	if err == nil {
+		t.Fatal("expected failure from rollout timeout")
+	}
+	if strings.Contains(err.Error(), "03-clickhouse.yaml") || strings.Contains(err.Error(), "05-kafka.yaml") {
+		t.Fatalf("expected hostpath manifests to be used (default manifests are not present), got err=%v", err)
 	}
 }
 

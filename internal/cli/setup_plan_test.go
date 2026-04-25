@@ -105,7 +105,7 @@ func TestBuildSetupPlan_HostpathRegistryManifest(t *testing.T) {
 	plan := BuildSetupPlan(SetupPlanInput{
 		RegistryType:           "docker",
 		RegistryStorageSize:    "20Gi",
-		StorageMode:            "hostpath",
+		StorageMode:            StorageModeHostpath,
 		IngressMode:            "traefik",
 		IngressManifest:        "config/ingress/overlays/http",
 		IngressManifestChanged: false,
@@ -115,6 +115,23 @@ func TestBuildSetupPlan_HostpathRegistryManifest(t *testing.T) {
 
 	if plan.RegistryManifest != "config/registry/overlays/hostpath" {
 		t.Fatalf("expected hostpath registry manifest, got %q", plan.RegistryManifest)
+	}
+}
+
+func TestBuildSetupPlan_HostpathRegistryManifest_TLS(t *testing.T) {
+	plan := BuildSetupPlan(SetupPlanInput{
+		RegistryType:           "docker",
+		RegistryStorageSize:    "20Gi",
+		StorageMode:            StorageModeHostpath,
+		IngressMode:            "traefik",
+		IngressManifest:        "config/ingress/overlays/http",
+		IngressManifestChanged: false,
+		ForceIngressInstall:    false,
+		TLSEnabled:             true,
+	})
+
+	if plan.RegistryManifest != "config/registry/overlays/hostpath-tls" {
+		t.Fatalf("expected hostpath tls registry manifest, got %q", plan.RegistryManifest)
 	}
 }
 

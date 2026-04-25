@@ -11,7 +11,14 @@ spec:
     - ReadWriteOnce
   volumeMode: Filesystem
   storageClassName: local-path
-  persistentVolumeReclaimPolicy: Delete
-  hostPath:
+  persistentVolumeReclaimPolicy: Retain
+  local:
     path: /var/lib/mcp-runtime/registry
-    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: mcp-runtime.org/local-storage
+              operator: In
+              values:
+                - "true"

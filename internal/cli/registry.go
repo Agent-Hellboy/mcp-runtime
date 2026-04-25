@@ -821,14 +821,14 @@ func (m *RegistryManager) PushInCluster(source, target, helperNS string) error {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
-	if err := m.kubectl.RunWithOutput([]string{"wait", "--for=condition=Ready", "pod/" + helperName, "-n", helperNS, "--timeout=" + timeout.String()}, os.Stdout, os.Stderr); err != nil {
-		// Best-effort diagnostics for common real-cluster failures (DiskPressure, taints, quotas, etc).
-		_ = m.kubectl.RunWithOutput([]string{"describe", "pod", helperName, "-n", helperNS}, os.Stderr, os.Stderr)
-		_ = m.kubectl.RunWithOutput([]string{"get", "events", "-n", helperNS, "--field-selector", "involvedObject.name=" + helperName, "--sort-by=.lastTimestamp"}, os.Stderr, os.Stderr)
-		wrappedErr := wrapWithSentinelAndContext(
-			ErrHelperPodNotReady,
-			err,
-			fmt.Sprintf("helper pod not ready: %v", err),
+		if err := m.kubectl.RunWithOutput([]string{"wait", "--for=condition=Ready", "pod/" + helperName, "-n", helperNS, "--timeout=" + timeout.String()}, os.Stdout, os.Stderr); err != nil {
+			// Best-effort diagnostics for common real-cluster failures (DiskPressure, taints, quotas, etc).
+			_ = m.kubectl.RunWithOutput([]string{"describe", "pod", helperName, "-n", helperNS, "--request-timeout=10s"}, os.Stderr, os.Stderr)
+			_ = m.kubectl.RunWithOutput([]string{"get", "events", "-n", helperNS, "--request-timeout=10s", "--field-selector", "involvedObject.name=" + helperName, "--sort-by=.lastTimestamp"}, os.Stderr, os.Stderr)
+			wrappedErr := wrapWithSentinelAndContext(
+				ErrHelperPodNotReady,
+				err,
+				fmt.Sprintf("helper pod not ready: %v", err),
 			map[string]any{"pod": helperName, "namespace": helperNS, "timeout": timeout.String(), "component": "registry"},
 		)
 		Error("Helper pod not ready")

@@ -11,13 +11,104 @@ spec:
     - ReadWriteOnce
   volumeMode: Filesystem
   storageClassName: local-path
-  persistentVolumeReclaimPolicy: Delete
+  persistentVolumeReclaimPolicy: Retain
   claimRef:
     namespace: mcp-sentinel
     name: kafka-data-kafka-0
-  hostPath:
+  local:
     path: /var/lib/mcp-runtime/kafka
-    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: mcp-runtime.org/local-storage
+              operator: In
+              values:
+                - "true"
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: zookeeper-data-pv
+  labels:
+    app: zookeeper
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  storageClassName: local-path
+  persistentVolumeReclaimPolicy: Retain
+  claimRef:
+    namespace: mcp-sentinel
+    name: zookeeper-data-pvc
+  local:
+    path: /var/lib/mcp-runtime/zookeeper/data
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: mcp-runtime.org/local-storage
+              operator: In
+              values:
+                - "true"
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: zookeeper-log-pv
+  labels:
+    app: zookeeper
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  storageClassName: local-path
+  persistentVolumeReclaimPolicy: Retain
+  claimRef:
+    namespace: mcp-sentinel
+    name: zookeeper-log-pvc
+  local:
+    path: /var/lib/mcp-runtime/zookeeper/log
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: mcp-runtime.org/local-storage
+              operator: In
+              values:
+                - "true"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zookeeper-data-pvc
+  namespace: mcp-sentinel
+spec:
+  storageClassName: local-path
+  volumeName: zookeeper-data-pv
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zookeeper-log-pvc
+  namespace: mcp-sentinel
+spec:
+  storageClassName: local-path
+  volumeName: zookeeper-log-pv
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
 ---
 apiVersion: v1
 kind: Service
@@ -47,6 +138,21 @@ spec:
       labels:
         app: zookeeper
     spec:
+      initContainers:
+        - name: init-perms
+          image: alpine:3.23
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "chown -R 1000:1000 /var/lib/zookeeper/data /var/lib/zookeeper/log"]
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: zookeeper-data
+              mountPath: /var/lib/zookeeper/data
+            - name: zookeeper-log
+              mountPath: /var/lib/zookeeper/log
       containers:
         - name: zookeeper
           image: confluentinc/cp-zookeeper:7.5.1
@@ -55,8 +161,24 @@ spec:
               value: "2181"
             - name: ZOOKEEPER_TICK_TIME
               value: "2000"
+            - name: ZOOKEEPER_DATA_DIR
+              value: /var/lib/zookeeper/data
+            - name: ZOOKEEPER_LOG_DIR
+              value: /var/lib/zookeeper/log
           ports:
             - containerPort: 2181
+          volumeMounts:
+            - name: zookeeper-data
+              mountPath: /var/lib/zookeeper/data
+            - name: zookeeper-log
+              mountPath: /var/lib/zookeeper/log
+      volumes:
+        - name: zookeeper-data
+          persistentVolumeClaim:
+            claimName: zookeeper-data-pvc
+        - name: zookeeper-log
+          persistentVolumeClaim:
+            claimName: zookeeper-log-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -140,6 +262,7 @@ spec:
     - metadata:
         name: kafka-data
       spec:
+        storageClassName: local-path
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:

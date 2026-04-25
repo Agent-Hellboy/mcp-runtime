@@ -243,6 +243,10 @@ func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 The platform deploys an internal Docker registry by default, which teams
 will use to push and pull container images.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateStorageMode(storageMode); err != nil {
+				return err
+			}
+
 			// Build operator args from flags
 			operatorArgs := buildOperatorArgs(
 				operatorMetricsAddr,
@@ -272,7 +276,7 @@ will use to push and pull container images.`,
 
 	cmd.Flags().StringVar(&registryType, "registry-type", "docker", "Registry type (docker; harbor coming soon)")
 	cmd.Flags().StringVar(&registryStorageSize, "registry-storage", "20Gi", "Registry storage size (default: 20Gi)")
-	cmd.Flags().StringVar(&storageMode, "storage-mode", "dynamic", "Storage mode for local/dev clusters (dynamic|hostpath). Use hostpath for single-node k3s/minikube without a provisioner.")
+	cmd.Flags().StringVar(&storageMode, "storage-mode", "dynamic", "Storage mode for local/dev clusters (dynamic|hostpath). Use hostpath for single-node k3s/minikube/kind without a provisioner.")
 	cmd.Flags().StringVar(&ingressMode, "ingress", "traefik", "Ingress controller to install automatically during setup (traefik|none)")
 	cmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/overlays/http", "Manifest to apply when installing the ingress controller")
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force ingress install even if an ingress class already exists")
@@ -305,6 +309,15 @@ func buildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectCh
 	}
 
 	return args
+}
+
+func validateStorageMode(mode string) error {
+	switch mode {
+	case StorageModeDynamic, StorageModeHostpath:
+		return nil
+	default:
+		return wrapWithSentinel(ErrFieldRequired, fmt.Errorf("invalid storage mode %q", mode), "invalid --storage-mode; expected dynamic or hostpath")
+	}
 }
 
 func setupPlatform(logger *zap.Logger, plan SetupPlan) error {
@@ -1497,7 +1510,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 
 	clickhouseManifest := "k8s/03-clickhouse.yaml"
 	kafkaManifest := "k8s/05-kafka.yaml"
-	if storageMode == "hostpath" {
+	if storageMode == StorageModeHostpath {
 		clickhouseManifest = "k8s/03-clickhouse-hostpath.yaml"
 		kafkaManifest = "k8s/05-kafka-hostpath.yaml"
 	}

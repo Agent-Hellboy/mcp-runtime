@@ -3,11 +3,13 @@ Bootstrap validates and (optionally) installs cluster prerequisites needed by mc
 By design, this does not provision Kubernetes clusters end-to-end across all distributions.
 Use this to prepare an existing cluster for running 'mcp-runtime setup'.
 
+Note: bootstrap --apply is automated for k3s only and must be executed on the k3s server node (it expects local manifests under /var/lib/rancher/k3s/server/manifests).
+
 Usage:
   mcp-runtime bootstrap [flags]
 
 Flags:
-      --apply             Apply safe bootstrap fixes when possible (k3s only today)
+      --apply             Apply safe bootstrap fixes when possible (k3s only today; run on the k3s server node)
   -h, --help              help for bootstrap
       --provider string   Cluster provider hint (auto|k3s|rke2|kubeadm|generic) (default "auto")
 

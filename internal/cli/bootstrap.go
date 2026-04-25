@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"strings"
@@ -24,16 +23,18 @@ func NewBootstrapCmd(logger *zap.Logger) *cobra.Command {
 		Long: `Bootstrap validates and (optionally) installs cluster prerequisites needed by mcp-runtime setup.
 
 By design, this does not provision Kubernetes clusters end-to-end across all distributions.
-Use this to prepare an existing cluster for running 'mcp-runtime setup'.`,
+Use this to prepare an existing cluster for running 'mcp-runtime setup'.
+
+Note: bootstrap --apply is automated for k3s only and must be executed on the k3s server node (it expects local manifests under /var/lib/rancher/k3s/server/manifests).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			Section("MCP Runtime Bootstrap")
 
-			detectedProvider, err := detectProvider(kubectlClient)
-			if err != nil {
-				return err
-			}
 			chosenProvider := provider
 			if chosenProvider == "" || chosenProvider == "auto" {
+				detectedProvider, err := detectProvider(kubectlClient)
+				if err != nil {
+					return err
+				}
 				chosenProvider = detectedProvider
 			}
 			Info(fmt.Sprintf("Provider: %s", chosenProvider))
@@ -65,7 +66,7 @@ Use this to prepare an existing cluster for running 'mcp-runtime setup'.`,
 		},
 	}
 
-	cmd.Flags().BoolVar(&apply, "apply", false, "Apply safe bootstrap fixes when possible (k3s only today)")
+	cmd.Flags().BoolVar(&apply, "apply", false, "Apply safe bootstrap fixes when possible (k3s only today; run on the k3s server node)")
 	cmd.Flags().StringVar(&provider, "provider", "auto", "Cluster provider hint (auto|k3s|rke2|kubeadm|generic)")
 	return cmd
 }
@@ -172,9 +173,7 @@ func bootstrapApplyK3s(kubectl KubectlRunner) error {
 	Info("Node disk-pressure check")
 	cond, err := kubectlOutput(kubectl, []string{"get", "nodes", "-o", "jsonpath={range .items[*]}{.metadata.name}{\" \"}{range .status.conditions[?(@.type==\"DiskPressure\")]}{.status}{end}{\"\\n\"}{end}"})
 	if err == nil {
-		var buf bytes.Buffer
-		buf.Write(cond)
-		Info(strings.TrimSpace(buf.String()))
+		Info(strings.TrimSpace(string(cond)))
 	}
 
 	return nil

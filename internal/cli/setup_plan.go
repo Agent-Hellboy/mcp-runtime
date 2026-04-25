@@ -4,6 +4,11 @@ package cli
 // SetupPlanInput captures raw CLI inputs, and BuildSetupPlan resolves them into a concrete SetupPlan
 // that determines which manifests and configurations to use during setup.
 
+const (
+	StorageModeDynamic  = "dynamic"
+	StorageModeHostpath = "hostpath"
+)
+
 // SetupPlanInput captures the raw CLI inputs for setup.
 type SetupPlanInput struct {
 	RegistryType           string
@@ -36,6 +41,10 @@ type SetupPlan struct {
 
 // BuildSetupPlan resolves CLI inputs into a concrete setup plan.
 func BuildSetupPlan(input SetupPlanInput) SetupPlan {
+	if input.StorageMode == "" {
+		input.StorageMode = StorageModeDynamic
+	}
+
 	manifestPath := input.IngressManifest
 	if !input.IngressManifestChanged {
 		if input.TLSEnabled {
@@ -46,7 +55,7 @@ func BuildSetupPlan(input SetupPlanInput) SetupPlan {
 	}
 
 	registryManifest := "config/registry"
-	if input.StorageMode == "hostpath" {
+	if input.StorageMode == StorageModeHostpath {
 		if input.TLSEnabled {
 			registryManifest = "config/registry/overlays/hostpath-tls"
 		} else {
