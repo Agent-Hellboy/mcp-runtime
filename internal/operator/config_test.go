@@ -230,6 +230,16 @@ func TestLoadOperatorConfig(t *testing.T) {
 	}
 }
 
+func TestLoadOperatorConfigPrefersMCPDefaultIngressHost(t *testing.T) {
+	t.Setenv("MCP_DEFAULT_INGRESS_HOST", "mcp-default.example.com")
+	t.Setenv("DEFAULT_INGRESS_HOST", "legacy-default.example.com")
+
+	cfg := LoadOperatorConfig()
+	if cfg.DefaultIngressHost != "mcp-default.example.com" {
+		t.Fatalf("expected MCP_DEFAULT_INGRESS_HOST override, got %q", cfg.DefaultIngressHost)
+	}
+}
+
 func TestLoadOperatorConfigUsesLegacyAnalyticsEnv(t *testing.T) {
 	t.Setenv("MCP_SENTINEL_INGEST_URL", "")
 	t.Setenv("MCP_ANALYTICS_INGEST_URL", "http://legacy-ingest")

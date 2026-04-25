@@ -1,19 +1,22 @@
 const apiBase = window.MCP_API_BASE || "/api";
+let authenticated = false;
 
 // API Helper
 async function fetchJSON(path, options = {}) {
   const headers = { ...options.headers };
-  if (window.MCP_API_KEY) {
-    headers["x-api-key"] = window.MCP_API_KEY;
-  }
 
   const response = await fetch(`${apiBase}${path}`, {
     ...options,
+    credentials: "same-origin",
     headers,
   });
 
   if (!response.ok) {
     const error = await response.text();
+    if (response.status === 401) {
+      setAuthenticated(false);
+      showAuthModal("Enter a valid API key to continue.");
+    }
     throw new Error(error || `Request failed: ${response.status}`);
   }
 
@@ -74,6 +77,11 @@ function initTabs() {
         content.classList.toggle("active", isActive);
         content.hidden = !isActive;
       });
+
+      if (!authenticated) {
+        showAuthModal();
+        return;
+      }
 
       // Load data when switching to certain tabs
       if (target === "governance") {
@@ -224,10 +232,126 @@ function createActionCell(label, onClick) {
   return cell;
 }
 
-function initDashboard() {
-  loadDashboardSummary();
-  loadEvents();
+// Authentication
+async function initAuth() {
+  document.getElementById("auth-form")?.addEventListener("submit", handleAuthSubmit);
+  document.getElementById("auth-open")?.addEventListener("click", () => {
+    showAuthModal();
+  });
+  document.getElementById("auth-logout")?.addEventListener("click", logout);
 
+  try {
+    const response = await fetch("/auth/status", { credentials: "same-origin" });
+    const data = await response.json();
+    setAuthenticated(Boolean(data.authenticated));
+  } catch (err) {
+    console.error("Failed to check auth status:", err);
+    setAuthenticated(false);
+  }
+
+  if (authenticated) {
+    loadActiveTab();
+    startAutoRefresh();
+  } else {
+    showAuthModal();
+  }
+}
+
+async function handleAuthSubmit(event) {
+  event.preventDefault();
+  const input = document.getElementById("api-key-input");
+  const submit = document.getElementById("auth-submit");
+  const apiKey = input?.value || "";
+
+  setAuthError("");
+  if (submit) submit.disabled = true;
+  try {
+    const response = await fetch("/auth/login", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key: apiKey }),
+    });
+    if (!response.ok) {
+      throw new Error("Invalid API key");
+    }
+    if (input) input.value = "";
+    hideAuthModal();
+    setAuthenticated(true);
+    loadActiveTab();
+    startAutoRefresh();
+  } catch (err) {
+    setAuthError(err.message);
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+}
+
+async function logout() {
+  try {
+    await fetch("/auth/logout", {
+      method: "POST",
+      credentials: "same-origin",
+    });
+  } catch (err) {
+    console.error("Failed to sign out:", err);
+  }
+  stopAutoRefresh();
+  setAuthenticated(false);
+  resetDashboard();
+  showAuthModal();
+}
+
+function setAuthenticated(value) {
+  authenticated = value;
+  document.getElementById("auth-open")?.classList.toggle("hidden", value);
+  document.getElementById("auth-logout")?.classList.toggle("hidden", !value);
+}
+
+function showAuthModal(message = "") {
+  stopAutoRefresh();
+  setAuthError(message);
+  const modal = document.getElementById("auth-modal");
+  modal?.classList.remove("hidden");
+  setTimeout(() => document.getElementById("api-key-input")?.focus(), 0);
+}
+
+function hideAuthModal() {
+  document.getElementById("auth-modal")?.classList.add("hidden");
+  setAuthError("");
+}
+
+function setAuthError(message) {
+  const error = document.getElementById("auth-error");
+  if (!error) return;
+  error.textContent = message;
+  error.classList.toggle("hidden", !message);
+}
+
+function loadActiveTab() {
+  if (!authenticated) return;
+  const active = document.querySelector(".tab.active")?.dataset.tab || "dashboard";
+  if (active === "dashboard") {
+    loadDashboardSummary();
+    loadEvents();
+  } else if (active === "governance") {
+    loadGrants();
+    loadSessions();
+  } else if (active === "operations") {
+    loadComponents();
+  }
+}
+
+function resetDashboard() {
+  document.getElementById("dash-total-events").textContent = "-";
+  document.getElementById("dash-active-servers").textContent = "-";
+  document.getElementById("dash-active-grants").textContent = "-";
+  document.getElementById("dash-active-sessions").textContent = "-";
+  document.getElementById("events-body").innerHTML =
+    '<tr><td colspan="5" class="empty">No events yet.</td></tr>';
+}
+
+function initDashboard() {
   // Auto refresh
   const autoRefreshCheckbox = document.getElementById("auto-refresh");
   if (autoRefreshCheckbox) {
@@ -243,11 +367,10 @@ function initDashboard() {
   document.getElementById("refresh-events")?.addEventListener("click", () => {
     loadEvents();
   });
-
-  startAutoRefresh();
 }
 
 function startAutoRefresh() {
+  if (!authenticated) return;
   if (autoRefreshInterval) return;
   const autoRefreshCheckbox = document.getElementById("auto-refresh");
   if (autoRefreshCheckbox && !autoRefreshCheckbox.checked) return;
@@ -551,4 +674,5 @@ document.addEventListener("DOMContentLoaded", () => {
   initGovernance();
   initOperations();
   initModal();
+  initAuth();
 });

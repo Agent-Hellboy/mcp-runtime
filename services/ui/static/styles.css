@@ -71,6 +71,7 @@ h1 {
   align-items: center;
   padding: 8px 16px;
   border-radius: 999px;
+  border: 0;
   background: var(--panel);
   color: var(--text);
   text-decoration: none;
@@ -243,6 +244,7 @@ button:disabled {
 /* Inputs */
 input[type="text"],
 input[type="number"],
+input[type="password"],
 select {
   padding: 10px 14px;
   border-radius: 10px;
@@ -254,6 +256,16 @@ select {
 }
 
 input[type="text"]::placeholder {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+input[type="password"] {
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+input[type="password"]::placeholder {
   color: var(--muted);
   opacity: 0.7;
 }
@@ -458,6 +470,12 @@ tr:hover td {
   color: var(--muted);
 }
 
+.auth-error {
+  color: var(--error) !important;
+  margin-bottom: 16px !important;
+  font-size: 14px;
+}
+
 .modal-actions {
   display: flex;
   gap: 12px;
@@ -511,6 +529,10 @@ tr:hover td {
   cursor: pointer;
   padding: 4px;
   font-size: 16px;
+}
+
+.hidden {
+  display: none !important;
 }
 
 /* Animations */
