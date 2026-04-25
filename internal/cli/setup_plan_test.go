@@ -13,6 +13,7 @@ func TestBuildSetupPlan_DefaultHTTP(t *testing.T) {
 	plan := BuildSetupPlan(SetupPlanInput{
 		RegistryType:           "docker",
 		RegistryStorageSize:    "20Gi",
+		StorageMode:            "dynamic",
 		IngressMode:            "traefik",
 		IngressManifest:        "config/ingress/overlays/http",
 		IngressManifestChanged: false,
@@ -32,6 +33,7 @@ func TestBuildSetupPlan_DefaultTLS(t *testing.T) {
 	plan := BuildSetupPlan(SetupPlanInput{
 		RegistryType:           "docker",
 		RegistryStorageSize:    "20Gi",
+		StorageMode:            "dynamic",
 		IngressMode:            "traefik",
 		IngressManifest:        "config/ingress/overlays/http",
 		IngressManifestChanged: false,
@@ -51,6 +53,7 @@ func TestBuildSetupPlan_CustomIngressManifest(t *testing.T) {
 	plan := BuildSetupPlan(SetupPlanInput{
 		RegistryType:           "docker",
 		RegistryStorageSize:    "20Gi",
+		StorageMode:            "dynamic",
 		IngressMode:            "traefik",
 		IngressManifest:        "custom/manifest",
 		IngressManifestChanged: true,
@@ -71,6 +74,7 @@ func TestBuildSetupPlan_PreservesTestModeAndOperatorArgs(t *testing.T) {
 	plan := BuildSetupPlan(SetupPlanInput{
 		RegistryType:           "docker",
 		RegistryStorageSize:    "20Gi",
+		StorageMode:            "dynamic",
 		IngressMode:            "traefik",
 		IngressManifest:        "config/ingress/overlays/http",
 		IngressManifestChanged: false,
@@ -94,6 +98,23 @@ func TestBuildSetupPlan_PreservesTestModeAndOperatorArgs(t *testing.T) {
 		if plan.OperatorArgs[i] != operatorArgs[i] {
 			t.Fatalf("expected operator arg %d to be %q, got %q", i, operatorArgs[i], plan.OperatorArgs[i])
 		}
+	}
+}
+
+func TestBuildSetupPlan_HostpathRegistryManifest(t *testing.T) {
+	plan := BuildSetupPlan(SetupPlanInput{
+		RegistryType:           "docker",
+		RegistryStorageSize:    "20Gi",
+		StorageMode:            "hostpath",
+		IngressMode:            "traefik",
+		IngressManifest:        "config/ingress/overlays/http",
+		IngressManifestChanged: false,
+		ForceIngressInstall:    false,
+		TLSEnabled:             false,
+	})
+
+	if plan.RegistryManifest != "config/registry/overlays/hostpath" {
+		t.Fatalf("expected hostpath registry manifest, got %q", plan.RegistryManifest)
 	}
 }
 

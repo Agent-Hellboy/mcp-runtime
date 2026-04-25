@@ -118,7 +118,7 @@ type SetupDeps struct {
 	PushGatewayProxyImageToInternal func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
 	PushAnalyticsImageToInternal    func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
 	DeployOperatorManifests         func(logger *zap.Logger, operatorImage, gatewayProxyImage string, operatorArgs []string) error
-	DeployAnalyticsManifests        func(logger *zap.Logger, images AnalyticsImageSet) error
+	DeployAnalyticsManifests        func(logger *zap.Logger, images AnalyticsImageSet, storageMode string) error
 	ConfigureProvisionedRegistryEnv func(ext *ExternalRegistryConfig, secretName string) error
 	RestartDeployment               func(name, namespace string) error
 	CheckCRDInstalled               func(name string) error
@@ -220,6 +220,7 @@ func (d SetupDeps) withDefaults(logger *zap.Logger) SetupDeps {
 func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 	var registryType string
 	var registryStorageSize string
+	var storageMode string
 	var ingressMode string
 	var ingressManifest string
 	var forceIngressInstall bool
@@ -253,6 +254,7 @@ will use to push and pull container images.`,
 			plan := BuildSetupPlan(SetupPlanInput{
 				RegistryType:           registryType,
 				RegistryStorageSize:    registryStorageSize,
+				StorageMode:            storageMode,
 				IngressMode:            ingressMode,
 				IngressManifest:        ingressManifest,
 				IngressManifestChanged: cmd.Flags().Changed("ingress-manifest"),
@@ -270,6 +272,7 @@ will use to push and pull container images.`,
 
 	cmd.Flags().StringVar(&registryType, "registry-type", "docker", "Registry type (docker; harbor coming soon)")
 	cmd.Flags().StringVar(&registryStorageSize, "registry-storage", "20Gi", "Registry storage size (default: 20Gi)")
+	cmd.Flags().StringVar(&storageMode, "storage-mode", "dynamic", "Storage mode for local/dev clusters (dynamic|hostpath). Use hostpath for single-node k3s/minikube without a provisioner.")
 	cmd.Flags().StringVar(&ingressMode, "ingress", "traefik", "Ingress controller to install automatically during setup (traefik|none)")
 	cmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/overlays/http", "Manifest to apply when installing the ingress controller")
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force ingress install even if an ingress class already exists")
@@ -802,9 +805,9 @@ func prepareAnalyticsImages(logger *zap.Logger, extRegistry *ExternalRegistryCon
 	return images, nil
 }
 
-func deployAnalyticsStepCmd(logger *zap.Logger, images AnalyticsImageSet, deps SetupDeps) error {
+func deployAnalyticsStepCmd(logger *zap.Logger, images AnalyticsImageSet, storageMode string, deps SetupDeps) error {
 	Info("Deploying mcp-sentinel manifests")
-	if err := deps.DeployAnalyticsManifests(logger, images); err != nil {
+	if err := deps.DeployAnalyticsManifests(logger, images, storageMode); err != nil {
 		wrappedErr := wrapWithSentinelAndContext(
 			ErrOperatorDeploymentFailed,
 			err,
@@ -1462,11 +1465,11 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 	return nil
 }
 
-func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet) error {
-	return deployAnalyticsManifestsWithKubectl(kubectlClient, logger, images)
+func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet, storageMode string) error {
+	return deployAnalyticsManifestsWithKubectl(kubectlClient, logger, images, storageMode)
 }
 
-func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logger, images AnalyticsImageSet) error {
+func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logger, images AnalyticsImageSet, storageMode string) error {
 	Info("Applying mcp-sentinel namespace and config")
 	manifests := []string{
 		"k8s/00-namespace.yaml",
@@ -1492,10 +1495,17 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 		return err
 	}
 
+	clickhouseManifest := "k8s/03-clickhouse.yaml"
+	kafkaManifest := "k8s/05-kafka.yaml"
+	if storageMode == "hostpath" {
+		clickhouseManifest = "k8s/03-clickhouse-hostpath.yaml"
+		kafkaManifest = "k8s/05-kafka-hostpath.yaml"
+	}
+
 	Info("Applying analytics storage and messaging components")
 	for _, manifest := range []string{
-		"k8s/03-clickhouse.yaml",
-		"k8s/05-kafka.yaml",
+		clickhouseManifest,
+		kafkaManifest,
 	} {
 		if err := applyRenderedManifest(kubectl, manifest, images, imagePullSecretName); err != nil {
 			return err

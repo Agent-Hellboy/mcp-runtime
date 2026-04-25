@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: clickhouse-pv
+  labels:
+    app: clickhouse
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  storageClassName: local-path
+  persistentVolumeReclaimPolicy: Delete
+  claimRef:
+    namespace: mcp-sentinel
+    name: data-clickhouse-0
+  hostPath:
+    path: /var/lib/mcp-runtime/clickhouse
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  namespace: mcp-sentinel
+spec:
+  selector:
+    app: clickhouse
+  ports:
+    - name: native
+      port: 9000
+      targetPort: 9000
+    - name: http
+      port: 8123
+      targetPort: 8123
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse
+  namespace: mcp-sentinel
+spec:
+  serviceName: clickhouse
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clickhouse
+  template:
+    metadata:
+      labels:
+        app: clickhouse
+    spec:
+      initContainers:
+        - name: init-perms
+          image: alpine:3.23
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "chown -R 101:101 /var/lib/clickhouse"]
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:23.8
+          ports:
+            - containerPort: 9000
+            - containerPort: 8123
+          env:
+            - name: CLICKHOUSE_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: mcp-sentinel-config
+                  key: CLICKHOUSE_DB
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi

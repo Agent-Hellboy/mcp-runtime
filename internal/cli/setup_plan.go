@@ -8,6 +8,7 @@ package cli
 type SetupPlanInput struct {
 	RegistryType           string
 	RegistryStorageSize    string
+	StorageMode            string
 	IngressMode            string
 	IngressManifest        string
 	IngressManifestChanged bool
@@ -23,6 +24,7 @@ type SetupPlanInput struct {
 type SetupPlan struct {
 	RegistryType        string
 	RegistryStorageSize string
+	StorageMode         string
 	Ingress             ingressOptions
 	RegistryManifest    string
 	TLSEnabled          bool
@@ -44,13 +46,20 @@ func BuildSetupPlan(input SetupPlanInput) SetupPlan {
 	}
 
 	registryManifest := "config/registry"
-	if input.TLSEnabled {
+	if input.StorageMode == "hostpath" {
+		if input.TLSEnabled {
+			registryManifest = "config/registry/overlays/hostpath-tls"
+		} else {
+			registryManifest = "config/registry/overlays/hostpath"
+		}
+	} else if input.TLSEnabled {
 		registryManifest = "config/registry/overlays/tls"
 	}
 
 	return SetupPlan{
 		RegistryType:        input.RegistryType,
 		RegistryStorageSize: input.RegistryStorageSize,
+		StorageMode:         input.StorageMode,
 		Ingress: ingressOptions{
 			mode:     input.IngressMode,
 			manifest: manifestPath,

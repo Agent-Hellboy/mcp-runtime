@@ -806,7 +806,7 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		API:       "example.com/mcp-sentinel-api:latest",
 		Processor: "example.com/mcp-sentinel-processor:latest",
 		UI:        "example.com/mcp-sentinel-ui:latest",
-	})
+	}, "dynamic")
 	if err == nil {
 		t.Fatal("expected rollout failure")
 	}

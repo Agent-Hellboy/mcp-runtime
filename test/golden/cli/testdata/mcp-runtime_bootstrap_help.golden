@@ -1,0 +1,15 @@
+Bootstrap validates and (optionally) installs cluster prerequisites needed by mcp-runtime setup.
+
+By design, this does not provision Kubernetes clusters end-to-end across all distributions.
+Use this to prepare an existing cluster for running 'mcp-runtime setup'.
+
+Usage:
+  mcp-runtime bootstrap [flags]
+
+Flags:
+      --apply             Apply safe bootstrap fixes when possible (k3s only today)
+  -h, --help              help for bootstrap
+      --provider string   Cluster provider hint (auto|k3s|rke2|kubeadm|generic) (default "auto")
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

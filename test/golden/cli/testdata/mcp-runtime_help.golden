@@ -9,6 +9,7 @@ Usage:
 
 Available Commands:
   access      Manage grants and agent sessions
+  bootstrap   Bootstrap cluster prerequisites (on-prem focused)
   cluster     Manage Kubernetes cluster
   completion  Generate the autocompletion script for the specified shell
   help        Help about any command

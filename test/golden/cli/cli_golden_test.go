@@ -51,6 +51,7 @@ func TestCLIHelpGoldens(t *testing.T) {
 		{name: "registry_info_help", args: []string{"registry", "info", "--help"}, golden: "mcp-runtime_registry_info_help.golden"},
 		{name: "registry_provision_help", args: []string{"registry", "provision", "--help"}, golden: "mcp-runtime_registry_provision_help.golden"},
 		{name: "registry_push_help", args: []string{"registry", "push", "--help"}, golden: "mcp-runtime_registry_push_help.golden"},
+		{name: "bootstrap_help", args: []string{"bootstrap", "--help"}, golden: "mcp-runtime_bootstrap_help.golden"},
 		{name: "setup_help", args: []string{"setup", "--help"}, golden: "mcp-runtime_setup_help.golden"},
 		{name: "pipeline_help", args: []string{"pipeline", "--help"}, golden: "mcp-runtime_pipeline_help.golden"},
 		{name: "pipeline_generate_help", args: []string{"pipeline", "generate", "--help"}, golden: "mcp-runtime_pipeline_generate_help.golden"},
