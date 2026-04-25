@@ -471,7 +471,7 @@ func scanEventRow(scanner rowScanner, row *eventRow) error {
 
 // auth is middleware that enforces API key authentication.
 // It checks for x-api-key header or supports optional OIDC JWT validation.
-// If no API keys are configured, authentication is bypassed.
+// If neither API keys nor OIDC JWT validation are configured, requests are rejected.
 func (s *apiServer) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if len(s.apiKeys) > 0 {

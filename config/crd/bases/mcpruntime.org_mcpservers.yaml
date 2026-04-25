@@ -175,8 +175,9 @@ spec:
                   "nginx", "istio"). Defaults to "traefik".
                 type: string
               ingressHost:
-                description: IngressHost is the hostname for the ingress (optional;
-                  defaults from MCP_DEFAULT_INGRESS_HOST env var if set on the operator).
+                description: IngressHost is the hostname for the ingress (required
+                  unless publicPathPrefix is set; defaults from MCP_DEFAULT_INGRESS_HOST
+                  env var if set on the operator).
                 type: string
               ingressPath:
                 description: IngressPath is the path for the ingress route (defaults

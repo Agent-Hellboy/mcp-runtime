@@ -16,6 +16,8 @@
           <p class="lede">Monitor, govern, and operate your MCP infrastructure.</p>
         </div>
         <div class="hero-links">
+          <button id="auth-open" type="button" class="link-badge hidden">API Key</button>
+          <button id="auth-logout" type="button" class="link-badge hidden">Sign Out</button>
           <a href="/grafana" target="_blank" class="link-badge">Grafana</a>
           <a href="/prometheus" target="_blank" class="link-badge">Prometheus</a>
         </div>
@@ -235,6 +237,25 @@
           </div>
         </div>
       </section>
+    </div>
+
+    <!-- Authentication Modal -->
+    <div id="auth-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+      <form class="modal-content" id="auth-form">
+        <h3 id="auth-title">API Key Required</h3>
+        <p>Enter an MCP Sentinel API key to continue.</p>
+        <input
+          type="password"
+          id="api-key-input"
+          autocomplete="current-password"
+          placeholder="API key"
+          required
+        />
+        <p id="auth-error" class="auth-error hidden"></p>
+        <div class="modal-actions">
+          <button class="primary" id="auth-submit" type="submit">Continue</button>
+        </div>
+      </form>
     </div>
 
     <!-- Confirmation Modal -->

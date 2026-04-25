@@ -19,6 +19,10 @@ spec:
         control-plane: controller-manager
     spec:
       serviceAccountName: mcp-runtime-operator-controller-manager
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -36,6 +40,14 @@ spec:
         image: mcp-runtime-operator:latest
         imagePullPolicy: Always
         name: manager
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
+          capabilities:
+            drop:
+            - ALL
         resources:
           limits:
             cpu: 500m

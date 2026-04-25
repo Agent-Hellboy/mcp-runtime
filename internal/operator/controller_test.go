@@ -266,9 +266,24 @@ func TestSetDefaults(t *testing.T) {
 		assertEqual(t, "ingressClass", mcpServer.Spec.IngressClass, "traefik")
 	})
 
-	t.Run("does not apply default ingress host", func(t *testing.T) {
+	t.Run("applies default ingress host", func(t *testing.T) {
 		mcpServer := mcpv1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-server"},
+		}
+		r := MCPServerReconciler{
+			Scheme:             runtime.NewScheme(),
+			DefaultIngressHost: "example.com",
+		}
+		r.setDefaults(&mcpServer)
+		assertEqual(t, "ingressHost", mcpServer.Spec.IngressHost, "example.com")
+	})
+
+	t.Run("does not apply default ingress host for public path routing", func(t *testing.T) {
+		mcpServer := mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-server"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				PublicPathPrefix: "test-server",
+			},
 		}
 		r := MCPServerReconciler{
 			Scheme:             runtime.NewScheme(),
@@ -669,12 +684,29 @@ func TestValidateIngressConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("succeeds when ingressHost missing", func(t *testing.T) {
+	t.Run("fails when ingressHost missing", func(t *testing.T) {
 		mcpServer := &mcpv1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
 			Spec: mcpv1alpha1.MCPServerSpec{
 				Image:       "test-image",
 				IngressPath: "/test-server",
+			},
+		}
+		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer).Build()
+		r := MCPServerReconciler{Client: client, Scheme: scheme}
+
+		err := r.validateIngressConfig(context.Background(), mcpServer, logr.Discard())
+		if err == nil {
+			t.Fatal("expected error for missing ingressHost")
+		}
+	})
+
+	t.Run("succeeds when publicPathPrefix uses hostless routing", func(t *testing.T) {
+		mcpServer := &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				Image:            "test-image",
+				PublicPathPrefix: "test-server",
 			},
 		}
 		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer).Build()
@@ -1173,7 +1205,7 @@ func TestReconcileIngress(t *testing.T) {
 		} else {
 			assertEqual(t, "ingressPath", got[0].Path, "/test")
 		}
-		assertEqual(t, "ingressHost", ingress.Spec.Rules[0].Host, "")
+		assertEqual(t, "ingressHost", ingress.Spec.Rules[0].Host, "example.com")
 	})
 
 	t.Run("uses publicPathPrefix for path-based routing", func(t *testing.T) {

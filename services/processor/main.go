@@ -119,6 +119,7 @@ func main() {
 
 	batch := make([]eventPayload, 0, batchSize)
 	batchMessages := make([]kafka.Message, 0, batchSize)
+	pausedForFlush := false
 
 	flush := func() {
 		if len(batch) == 0 {
@@ -163,6 +164,14 @@ func main() {
 	}()
 
 	for {
+		messageInput := messageInputForBatch(len(batch), batchSize, msgChan)
+		if messageInput == nil && !pausedForFlush {
+			log.Printf("batch reached BATCH_SIZE=%d; pausing Kafka intake until ClickHouse insert succeeds", batchSize)
+			pausedForFlush = true
+		} else if messageInput != nil {
+			pausedForFlush = false
+		}
+
 		select {
 		case <-ticker.C:
 			flush()
@@ -172,7 +181,7 @@ func main() {
 			log.Printf("shutdown signal received, flushing final batch...")
 			flush()
 			return
-		case msg := <-msgChan:
+		case msg := <-messageInput:
 			_, span := tracer.Start(ctx, "kafka.consume")
 			span.SetAttributes(
 				attribute.String("kafka.topic", msg.Topic),
@@ -203,6 +212,13 @@ func main() {
 			}
 		}
 	}
+}
+
+func messageInputForBatch(batchLen, batchSize int, input <-chan kafka.Message) <-chan kafka.Message {
+	if batchLen >= batchSize {
+		return nil
+	}
+	return input
 }
 
 // initTracer initializes OpenTelemetry tracing for the service.

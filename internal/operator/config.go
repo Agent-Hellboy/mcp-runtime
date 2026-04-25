@@ -44,7 +44,7 @@ type OperatorConfig struct {
 // LoadOperatorConfig loads operator configuration from environment variables.
 func LoadOperatorConfig() *OperatorConfig {
 	cfg := &OperatorConfig{
-		DefaultIngressHost:            getEnvOrDefault("DEFAULT_INGRESS_HOST", ""),
+		DefaultIngressHost:            getEnvCompat("MCP_DEFAULT_INGRESS_HOST", "DEFAULT_INGRESS_HOST"),
 		DefaultIngressClass:           getEnvOrDefault("DEFAULT_INGRESS_CLASS", DefaultIngressClass),
 		ProvisionedRegistryURL:        os.Getenv("PROVISIONED_REGISTRY_URL"),
 		ProvisionedRegistryUsername:   os.Getenv("PROVISIONED_REGISTRY_USERNAME"),

@@ -116,6 +116,7 @@ type proxyServer struct {
 	defaultPolicyDecision string
 	defaultPolicyVersion  string
 	analyticsCancel       context.CancelFunc
+	analyticsMu           sync.Mutex
 	analyticsOnce         sync.Once
 	oauthMu               sync.Mutex
 	oauthProviders        map[string]*oauthProvider
@@ -230,7 +231,7 @@ func main() {
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
+		WriteTimeout:      0,
 		IdleTimeout:       60 * time.Second,
 	}
 	if err := httpServer.ListenAndServe(); err != nil {
@@ -1265,18 +1266,21 @@ func (s *proxyServer) startAnalyticsDispatcher() {
 		return
 	}
 	s.analyticsOnce.Do(func() {
+		s.analyticsMu.Lock()
 		if s.analyticsQueue == nil {
 			s.analyticsQueue = make(chan analyticsEvent, analyticsQueueSize)
 		}
+		queue := s.analyticsQueue
 		ctx, cancel := context.WithCancel(context.Background())
 		s.analyticsCancel = cancel
+		s.analyticsMu.Unlock()
 		for i := 0; i < analyticsWorkerCount; i++ {
 			go func() {
 				for {
 					select {
 					case <-ctx.Done():
 						return
-					case event, ok := <-s.analyticsQueue:
+					case event, ok := <-queue:
 						if !ok {
 							return
 						}
@@ -1289,8 +1293,11 @@ func (s *proxyServer) startAnalyticsDispatcher() {
 }
 
 func (s *proxyServer) stopAnalyticsDispatcher() {
-	if s.analyticsCancel != nil {
-		s.analyticsCancel()
+	s.analyticsMu.Lock()
+	cancel := s.analyticsCancel
+	s.analyticsMu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 }
 
@@ -1298,16 +1305,30 @@ func (s *proxyServer) emitIfEnabled(event analyticsEvent) {
 	if s.analyticsURL == "" {
 		return
 	}
-	if s.analyticsQueue == nil {
-		s.startAnalyticsDispatcher()
-	}
-	if s.analyticsQueue == nil {
+	queue := s.analyticsEventQueue()
+	if queue == nil {
 		return
 	}
 	select {
-	case s.analyticsQueue <- event:
+	case queue <- event:
 	default:
 	}
+}
+
+func (s *proxyServer) analyticsEventQueue() chan analyticsEvent {
+	s.analyticsMu.Lock()
+	queue := s.analyticsQueue
+	s.analyticsMu.Unlock()
+	if queue != nil {
+		return queue
+	}
+
+	if s.analyticsURL != "" {
+		s.startAnalyticsDispatcher()
+	}
+	s.analyticsMu.Lock()
+	defer s.analyticsMu.Unlock()
+	return s.analyticsQueue
 }
 
 // emit sends analytics events to the ingest service.

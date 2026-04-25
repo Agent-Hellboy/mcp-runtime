@@ -90,7 +90,7 @@ const (
 // resourceReadiness tracks the readiness state of different resources.
 type resourceReadiness = operatorutil.ResourceReadiness
 
-//+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpservers,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpservers,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpservers/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpservers/finalizers,verbs=update
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
@@ -100,7 +100,7 @@ type resourceReadiness = operatorutil.ResourceReadiness
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingressclasses,verbs=get;list;watch
 //+kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch;update
-//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpaccessgrants,verbs=get;list;watch
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpagentsessions,verbs=get;list;watch
 
@@ -184,6 +184,12 @@ func (r *MCPServerReconciler) validateIngressConfig(ctx context.Context, mcpServ
 	if err := r.requireSpecField(ctx, mcpServer, logger, "ingress path", effectiveIngressPath(mcpServer),
 		"ingressPath is required; set spec.ingressPath or ensure metadata.name is set"); err != nil {
 		return err
+	}
+	if strings.TrimSpace(mcpServer.Spec.PublicPathPrefix) == "" {
+		if err := r.requireSpecField(ctx, mcpServer, logger, "ingress host", effectiveIngressHost(mcpServer),
+			"ingressHost is required; set spec.ingressHost, set MCP_DEFAULT_INGRESS_HOST on the operator, or use spec.publicPathPrefix for hostless routing"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -478,6 +484,9 @@ func (r *MCPServerReconciler) setDefaults(mcpServer *mcpv1alpha1.MCPServer) {
 	}
 	if mcpServer.Spec.IngressPath == "" && mcpServer.Name != "" {
 		mcpServer.Spec.IngressPath = "/" + mcpServer.Name + "/mcp"
+	}
+	if mcpServer.Spec.IngressHost == "" && strings.TrimSpace(mcpServer.Spec.PublicPathPrefix) == "" {
+		mcpServer.Spec.IngressHost = strings.TrimSpace(r.DefaultIngressHost)
 	}
 	if mcpServer.Spec.IngressClass == "" {
 		mcpServer.Spec.IngressClass = "traefik"
@@ -899,7 +908,7 @@ func (r *MCPServerReconciler) resolveGatewayImage(mcpServer *mcpv1alpha1.MCPServ
 }
 
 func gatewayExternalBaseURL(mcpServer *mcpv1alpha1.MCPServer) string {
-	host := strings.TrimSpace(mcpServer.Spec.IngressHost)
+	host := effectiveIngressHost(mcpServer)
 	if host == "" {
 		return ""
 	}
@@ -1379,6 +1388,7 @@ func (r *MCPServerReconciler) reconcileIngress(ctx context.Context, mcpServer *m
 			IngressClassName: &ingressClassName,
 			Rules: []networkingv1.IngressRule{
 				{
+					Host: effectiveIngressHost(mcpServer),
 					IngressRuleValue: networkingv1.IngressRuleValue{
 						HTTP: &networkingv1.HTTPIngressRuleValue{
 							Paths: ingressPathsForServer(mcpServer, pathType),
@@ -1434,6 +1444,13 @@ func ingressPathsForServer(mcpServer *mcpv1alpha1.MCPServer, pathType networking
 		})
 	}
 	return paths
+}
+
+func effectiveIngressHost(mcpServer *mcpv1alpha1.MCPServer) string {
+	if strings.TrimSpace(mcpServer.Spec.PublicPathPrefix) != "" {
+		return ""
+	}
+	return strings.TrimSpace(mcpServer.Spec.IngressHost)
 }
 
 func effectiveIngressPath(mcpServer *mcpv1alpha1.MCPServer) string {

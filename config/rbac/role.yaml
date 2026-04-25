@@ -28,12 +28,7 @@ rules:
   resources:
   - secrets
   verbs:
-  - create
   - get
-  - list
-  - patch
-  - update
-  - watch
 - apiGroups:
   - ""
   resources:
@@ -91,8 +86,6 @@ rules:
   resources:
   - mcpservers
   verbs:
-  - create
-  - delete
   - get
   - list
   - patch

@@ -560,9 +560,9 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: mcp-sentinel-api
+                name: mcp-sentinel-ui
                 port:
-                  number: 8080
+                  number: 8082
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

@@ -77,7 +77,7 @@ type MCPServerSpec struct {
 	// IngressPath is the path for the ingress route (defaults to /{name}/mcp).
 	IngressPath string `json:"ingressPath,omitempty"`
 
-	// IngressHost is the hostname for the ingress (optional; defaults from MCP_DEFAULT_INGRESS_HOST env var if set on the operator).
+	// IngressHost is the hostname for the ingress (required unless publicPathPrefix is set; defaults from MCP_DEFAULT_INGRESS_HOST env var if set on the operator).
 	IngressHost string `json:"ingressHost,omitempty"`
 
 	// PublicPathPrefix enables path-based public routing and is used to compute /<publicPathPrefix>/mcp.

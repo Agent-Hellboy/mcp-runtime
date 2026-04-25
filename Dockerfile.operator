@@ -13,10 +13,14 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o manager ./cmd/ope
 
 FROM alpine:3.23
 
-RUN apk --no-cache upgrade && apk --no-cache add ca-certificates tzdata
+RUN apk --no-cache upgrade && apk --no-cache add ca-certificates tzdata \
+    && addgroup -S -g 65532 nonroot \
+    && adduser -S -D -H -u 65532 -G nonroot nonroot
 
 WORKDIR /
 
 COPY --from=builder /build/manager /manager
+
+USER 65532:65532
 
 ENTRYPOINT ["/manager"]
