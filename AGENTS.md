@@ -11,10 +11,12 @@ Practical notes for spinning up, debugging, and exercising the MCP Runtime stack
 - Quick start (Kind):
   ```bash
   kind create cluster --name mcp-runtime
+  ./bin/mcp-runtime bootstrap                              # preflight cluster prerequisites
   ./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http
   kubectl port-forward -n traefik svc/traefik 18080:8000   # expose ingress
   ```
 - Status check: `./bin/mcp-runtime status`
+- Preflight only (no changes): `./bin/mcp-runtime bootstrap`. Add `--apply --provider k3s` (k3s server node only) to install bundled CoreDNS / local-path manifests.
 
 ## 3) Endpoints & Auth Reference
 - UI / Dashboard: `http://localhost:18080/`

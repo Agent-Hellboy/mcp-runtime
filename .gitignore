@@ -4,7 +4,6 @@ man/
 cover.out
 coverage.out
 *.test
-docs/
 !website/docs/
 !website/docs/index.html
 unittesting_strategy.md
@@ -26,4 +25,8 @@ tags
 # Local/generated artifacts
 /mcp-sentinel/
 /services/mcp-server/mcp-sentinel-mcp-server
+/services/ui/mcp-sentinel-ui
 /unit.out
+docs/COVERAGE_IMPROVEMENT_PLAN.md
+__pycache__/
+*.pyc

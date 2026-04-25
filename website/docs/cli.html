@@ -100,6 +100,11 @@
                     <th>Important subcommands</th>
                   </tr>
                   <tr>
+                    <td><code>bootstrap</code></td>
+                    <td>Run preflight checks for cluster prerequisites (DNS, default StorageClass, ingress class, MetalLB) before <code>setup</code>. With <code>--apply</code> on k3s only, install the bundled CoreDNS and local-path manifests.</td>
+                    <td><code>bootstrap</code>, <code>--apply</code>, <code>--provider auto|k3s|rke2|kubeadm|generic</code></td>
+                  </tr>
+                  <tr>
                     <td><code>setup</code></td>
                     <td>Install the platform stack, wire registry and ingress, deploy the operator, and optionally include sentinel.</td>
                     <td><code>setup</code>, <code>--with-tls</code>, <code>--without-sentinel</code></td>
@@ -146,6 +151,27 @@
                   </tr>
                 </tbody>
               </table>
+            </div>
+          </section>
+
+          <section id="bootstrap-cmd" class="doc-section">
+            <h2>Bootstrap preflight</h2>
+            <div class="doc-card-grid">
+              <article class="doc-card">
+                <strong>Preflight a cluster</strong>
+                <p><code>bootstrap</code> validates kubectl connectivity, CoreDNS, a default StorageClass, the Traefik <code>IngressClass</code>, and MetalLB. It only warns on missing pieces so you can decide whether to fix them with your platform tooling.</p>
+                <pre><code>mcp-runtime bootstrap
+mcp-runtime bootstrap --provider k3s</code></pre>
+              </article>
+              <article class="doc-card">
+                <strong>Apply k3s addons (server node only)</strong>
+                <p><code>bootstrap --apply</code> is automated for k3s: it applies the embedded CoreDNS and local-path manifests under <code>/var/lib/rancher/k3s/server/manifests</code> and waits for both rollouts. Other distributions print guidance instead.</p>
+                <pre><code>mcp-runtime bootstrap --apply --provider k3s</code></pre>
+              </article>
+            </div>
+            <div class="note-box">
+              <h3>When to run it</h3>
+              <p>Run <code>bootstrap</code> on a fresh cluster before <code>setup</code> to surface missing prerequisites early. Skip it if your platform team already provides DNS, default storage, ingress, and load-balancing — <code>setup</code> does not require it.</p>
             </div>
           </section>
 
@@ -447,6 +473,7 @@ mcp-runtime status</code></pre>
             <div class="toc-title">On this page</div>
             <a class="toc-link" href="#bootstrap">Bootstrap commands</a>
             <a class="toc-link" href="#groups">Command map</a>
+            <a class="toc-link" href="#bootstrap-cmd">Bootstrap preflight</a>
             <a class="toc-link" href="#setup-status">Setup and status</a>
             <a class="toc-link" href="#registry">Registry and image flow</a>
             <a class="toc-link" href="#pipeline">Pipeline generation and deploy</a>

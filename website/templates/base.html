@@ -8,6 +8,21 @@
       name="description"
       content="Deploy, govern, and observe MCP services on Kubernetes with a higher-level platform for MCP delivery, access, policy, audit, and observability."
     />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="MCP Runtime" />
+    <meta property="og:title" content="{{ title or 'MCP Runtime' }}" />
+    <meta
+      property="og:description"
+      content="Deploy, govern, and observe MCP services on Kubernetes with a higher-level platform for MCP delivery, access, policy, audit, and observability."
+    />
+    <meta property="og:url" content="{{ request.url }}" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="{{ title or 'MCP Runtime' }}" />
+    <meta
+      name="twitter:description"
+      content="Open source MCP platform for Kubernetes: delivery, access, policy, audit, and observability."
+    />
+    <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml" />
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   </head>
   <body>

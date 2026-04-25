@@ -1,9 +1,26 @@
 """Flask app serving the marketing site and static documentation."""
 
-from flask import Flask, abort, redirect, render_template, send_from_directory
+from flask import Flask, Response, abort, redirect, render_template, request, send_from_directory, url_for
 from werkzeug.exceptions import NotFound
 
 app = Flask(__name__)
+
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; "
+    "img-src 'self' data:; "
+    "style-src 'self' 'unsafe-inline'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "connect-src 'self'; "
+    "font-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "frame-ancestors 'none'"
+)
+
+STATIC_CACHE_CONTROL = "public, max-age=31536000, immutable"
+DOCS_CACHE_CONTROL = "public, max-age=300"
+
+SITEMAP_PATHS = ("/", "/docs/", "/docs/runtime", "/docs/cli", "/docs/sentinel", "/docs/api")
 
 NAV_LINKS = [
     {"label": "Overview", "href": "#product"},
@@ -277,6 +294,48 @@ def docs_page(page: str):
         return send_from_directory("docs", page)
     except NotFound:
         abort(404)
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        f"Sitemap: {url_for('sitemap_xml', _external=True)}\n"
+    )
+    return Response(body, mimetype="text/plain")
+
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    base = request.url_root.rstrip("/")
+    urls = "\n".join(
+        f"  <url><loc>{base}{path}</loc></url>" for path in SITEMAP_PATHS
+    )
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"{urls}\n"
+        "</urlset>\n"
+    )
+    return Response(body, mimetype="application/xml")
+
+
+@app.after_request
+def apply_response_headers(response):
+    response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "interest-cohort=()")
+
+    if response.status_code < 400:
+        path = request.path or ""
+        if path.startswith("/static/"):
+            response.headers["Cache-Control"] = STATIC_CACHE_CONTROL
+        elif path.startswith("/docs/"):
+            response.headers["Cache-Control"] = DOCS_CACHE_CONTROL
+    return response
 
 
 if __name__ == "__main__":
