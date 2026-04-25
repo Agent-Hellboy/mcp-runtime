@@ -290,3 +290,75 @@ func TestAccessApplyRequestPointersDecodeOmittedState(t *testing.T) {
 		t.Fatalf("revoked pointer = %#v, want nil for omitted field", session.Revoked)
 	}
 }
+
+func TestValidateGrantRequestRejectsInvalidName(t *testing.T) {
+	cases := map[string]*accessGrantRequest{
+		"underscore in name": {
+			Name:      "grant_a",
+			ServerRef: sentinelaccess.ServerReference{Name: "demo"},
+			Subject:   sentinelaccess.SubjectRef{HumanID: "user-1"},
+		},
+		"uppercase serverRef.name": {
+			Name:      "grant-a",
+			ServerRef: sentinelaccess.ServerReference{Name: "Demo"},
+			Subject:   sentinelaccess.SubjectRef{HumanID: "user-1"},
+		},
+		"invalid serverRef.namespace": {
+			Name:      "grant-a",
+			ServerRef: sentinelaccess.ServerReference{Name: "demo", Namespace: "Bad_NS"},
+			Subject:   sentinelaccess.SubjectRef{HumanID: "user-1"},
+		},
+	}
+	for label, req := range cases {
+		t.Run(label, func(t *testing.T) {
+			if err := validateGrantRequest(req); err == nil {
+				t.Fatalf("expected validation error for %q", label)
+			}
+		})
+	}
+}
+
+func TestValidateSessionRequestRejectsInvalidName(t *testing.T) {
+	req := &accessSessionRequest{
+		Name:           "Session-A",
+		ServerRef:      sentinelaccess.ServerReference{Name: "demo"},
+		Subject:        sentinelaccess.SubjectRef{HumanID: "user-1"},
+		ConsentedTrust: sentinelaccess.TrustLevel("low"),
+	}
+	if err := validateSessionRequest(req); err == nil {
+		t.Fatal("expected validation error for uppercase session name")
+	}
+}
+
+func TestRuntimeGrantApplyRejectsOversizedBody(t *testing.T) {
+	server := &RuntimeServer{accessMgr: sentinelaccess.NewManager(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), nil)}
+	body := oversizedJSON(accessApplyMaxBytes + 1)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/grants", bytes.NewReader(body))
+	server.handleRuntimeGrantApply(recorder, request)
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "exceeds") {
+		t.Fatalf("body should mention size limit, got %q", recorder.Body.String())
+	}
+}
+
+func TestRuntimeSessionApplyRejectsOversizedBody(t *testing.T) {
+	server := &RuntimeServer{accessMgr: sentinelaccess.NewManager(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), nil)}
+	body := oversizedJSON(accessApplyMaxBytes + 1)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/sessions", bytes.NewReader(body))
+	server.handleRuntimeSessionApply(recorder, request)
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413; body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// oversizedJSON returns a syntactically-valid JSON object whose serialized size
+// exceeds approxBytes, so http.MaxBytesReader trips before json decoding fails
+// on a structural error.
+func oversizedJSON(approxBytes int) []byte {
+	pad := strings.Repeat("x", approxBytes)
+	return []byte(`{"name":"grant-a","note":"` + pad + `"}`)
+}

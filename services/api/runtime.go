@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -232,9 +233,9 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 	}
 
 	var req accessGrantRequest
-	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, accessApplyMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		writeBodyDecodeError(w, err)
 		return
 	}
 	if err := validateGrantRequest(&req); err != nil {
@@ -245,6 +246,8 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	// serverRef is checked with a live Get, not a transaction with ApplyGrant. Another actor
+	// may delete the MCPServer after this call; the grant can still be written. Clients should retry on policy errors.
 	if err := s.accessMgr.AssertMCPServerRef(ctx, req.ServerRef); err != nil {
 		if sentinelaccess.IsMCPServerNotFoundForRef(err) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -256,6 +259,7 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 
 	disabled, err := s.grantDisabledForApply(ctx, req)
 	if err != nil {
+		log.Printf("read grant state %s/%s failed: %v", req.Namespace, req.Name, err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read grant state"})
 		return
 	}
@@ -276,7 +280,7 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 	}
 	applied, err := s.accessMgr.ApplyGrant(ctx, grant)
 	if err != nil {
-		writeK8sApplyError(w, "grant", err)
+		writeK8sApplyError(w, "grant", grant.Namespace, grant.Name, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"grant": sentinelaccess.ToGrantSummary(*applied)})
@@ -326,9 +330,9 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 	}
 
 	var req accessSessionRequest
-	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, accessApplyMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		writeBodyDecodeError(w, err)
 		return
 	}
 	if err := validateSessionRequest(&req); err != nil {
@@ -339,6 +343,7 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	// See handleRuntimeGrantApply: serverRef check is not transactional with the session write.
 	if err := s.accessMgr.AssertMCPServerRef(ctx, req.ServerRef); err != nil {
 		if sentinelaccess.IsMCPServerNotFoundForRef(err) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -350,6 +355,7 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 
 	revoked, err := s.sessionRevokedForApply(ctx, req)
 	if err != nil {
+		log.Printf("read session state %s/%s failed: %v", req.Namespace, req.Name, err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read session state"})
 		return
 	}
@@ -370,7 +376,7 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 	}
 	applied, err := s.accessMgr.ApplySession(ctx, session)
 	if err != nil {
-		writeK8sApplyError(w, "session", err)
+		writeK8sApplyError(w, "session", session.Namespace, session.Name, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"session": sentinelaccess.ToSessionSummary(*applied)})
@@ -505,11 +511,17 @@ func validateGrantRequest(req *accessGrantRequest) error {
 	req.Subject.AgentID = strings.TrimSpace(req.Subject.AgentID)
 	req.PolicyVersion = defaultPolicyVersion(req.PolicyVersion)
 	req.MaxTrust = normalizeTrust(req.MaxTrust)
-	if req.Name == "" {
-		return errors.New("name is required")
+	if err := sentinelaccess.ValidateResourceName("name", req.Name); err != nil {
+		return err
 	}
-	if req.ServerRef.Name == "" {
-		return errors.New("serverRef.name is required")
+	if err := sentinelaccess.ValidateResourceName("namespace", req.Namespace); err != nil {
+		return err
+	}
+	if err := sentinelaccess.ValidateResourceName("serverRef.name", req.ServerRef.Name); err != nil {
+		return err
+	}
+	if err := sentinelaccess.ValidateOptionalResourceName("serverRef.namespace", req.ServerRef.Namespace); err != nil {
+		return err
 	}
 	if req.Subject.HumanID == "" && req.Subject.AgentID == "" {
 		return errors.New("either subject.humanID or subject.agentID is required")
@@ -543,11 +555,17 @@ func validateSessionRequest(req *accessSessionRequest) error {
 	req.Subject.AgentID = strings.TrimSpace(req.Subject.AgentID)
 	req.PolicyVersion = defaultPolicyVersion(req.PolicyVersion)
 	req.ConsentedTrust = normalizeTrust(req.ConsentedTrust)
-	if req.Name == "" {
-		return errors.New("name is required")
+	if err := sentinelaccess.ValidateResourceName("name", req.Name); err != nil {
+		return err
 	}
-	if req.ServerRef.Name == "" {
-		return errors.New("serverRef.name is required")
+	if err := sentinelaccess.ValidateResourceName("namespace", req.Namespace); err != nil {
+		return err
+	}
+	if err := sentinelaccess.ValidateResourceName("serverRef.name", req.ServerRef.Name); err != nil {
+		return err
+	}
+	if err := sentinelaccess.ValidateOptionalResourceName("serverRef.namespace", req.ServerRef.Namespace); err != nil {
+		return err
 	}
 	if req.Subject.HumanID == "" && req.Subject.AgentID == "" {
 		return errors.New("either subject.humanID or subject.agentID is required")
@@ -572,9 +590,25 @@ func defaultPolicyVersion(policyVersion string) string {
 	return "v1"
 }
 
-func writeK8sApplyError(w http.ResponseWriter, kind string, err error) {
+func writeK8sApplyError(w http.ResponseWriter, kind, namespace, name string, err error) {
 	code, msg := k8sclient.HTTPStatusFromK8sError(err)
+	log.Printf("apply %s %s/%s failed (status=%d): %v", kind, namespace, name, code, err)
 	writeJSON(w, code, map[string]string{"error": fmt.Sprintf("failed to apply %s: %s", kind, msg)})
+}
+
+const accessApplyMaxBytes = 64 * 1024
+
+// writeBodyDecodeError distinguishes a body-size cap from a generic JSON decode
+// failure so clients see a helpful 413 + size hint instead of a vague 400.
+func writeBodyDecodeError(w http.ResponseWriter, err error) {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
+			"error": fmt.Sprintf("request body exceeds %d bytes", accessApplyMaxBytes),
+		})
+		return
+	}
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 }
 
 func normalizeTrust(trust sentinelaccess.TrustLevel) sentinelaccess.TrustLevel {

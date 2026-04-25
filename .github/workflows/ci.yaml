@@ -62,6 +62,11 @@ jobs:
           go test -v -race -coverprofile=unit.out \
             $(go list ./... | grep -v '^github.com/Agent-Hellboy/mcp-runtime/test')
 
+      - name: Test Sentinel service modules (api, ui)
+        run: |
+          (cd services/api && go test -v -race -count=1 ./...)
+          (cd services/ui && go test -v -race -count=1 ./...)
+
       - name: Run integration tests with coverage
         run: |
           go test -v -race -timeout 30m -coverprofile=integration.out \

@@ -4,9 +4,12 @@ import (
 	"context"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	clienttesting "k8s.io/client-go/testing"
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 )
 
@@ -151,5 +154,126 @@ func TestAssertMCPServerRef(t *testing.T) {
 func TestResolveServerRefNamespace(t *testing.T) {
 	if got := ResolveServerRefNamespace(ServerReference{Namespace: "  \t"}); got != DefaultMCPResourceNamespace {
 		t.Fatalf("whitespace only namespace = %q, want default", got)
+	}
+}
+
+func TestApplyGrantRetriesOnConflict(t *testing.T) {
+	ctx := context.Background()
+	fake := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	manager := NewManager(fake, nil)
+
+	if _, err := manager.ApplyGrant(ctx, &MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant-a", Namespace: "mcp-servers"},
+		Spec: MCPAccessGrantSpec{
+			ServerRef: ServerReference{Name: "demo"},
+			Subject:   SubjectRef{HumanID: "user-1"},
+			MaxTrust:  TrustLevel("low"),
+		},
+	}); err != nil {
+		t.Fatalf("seed grant: %v", err)
+	}
+
+	var conflicts int
+	fake.PrependReactor("update", "mcpaccessgrants", func(clienttesting.Action) (bool, runtime.Object, error) {
+		if conflicts < 2 {
+			conflicts++
+			return true, nil, apierrors.NewConflict(
+				schema.GroupResource{Group: APIGroup, Resource: "mcpaccessgrants"},
+				"grant-a",
+				apierrors.NewConflict(schema.GroupResource{}, "", nil),
+			)
+		}
+		return false, nil, nil
+	})
+
+	updated, err := manager.ApplyGrant(ctx, &MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant-a", Namespace: "mcp-servers"},
+		Spec: MCPAccessGrantSpec{
+			ServerRef: ServerReference{Name: "demo"},
+			Subject:   SubjectRef{HumanID: "user-1"},
+			MaxTrust:  TrustLevel("high"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyGrant after retries: %v", err)
+	}
+	if conflicts != 2 {
+		t.Fatalf("expected 2 simulated conflicts, observed %d", conflicts)
+	}
+	if updated.Spec.MaxTrust != TrustLevel("high") {
+		t.Fatalf("post-retry MaxTrust = %q, want high", updated.Spec.MaxTrust)
+	}
+}
+
+func TestApplyGrantGivesUpAfterMaxConflicts(t *testing.T) {
+	ctx := context.Background()
+	fake := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	manager := NewManager(fake, nil)
+
+	if _, err := manager.ApplyGrant(ctx, &MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant-a", Namespace: "mcp-servers"},
+		Spec: MCPAccessGrantSpec{
+			ServerRef: ServerReference{Name: "demo"},
+			Subject:   SubjectRef{HumanID: "user-1"},
+			MaxTrust:  TrustLevel("low"),
+		},
+	}); err != nil {
+		t.Fatalf("seed grant: %v", err)
+	}
+
+	fake.PrependReactor("update", "mcpaccessgrants", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewConflict(
+			schema.GroupResource{Group: APIGroup, Resource: "mcpaccessgrants"},
+			"grant-a",
+			apierrors.NewConflict(schema.GroupResource{}, "", nil),
+		)
+	})
+
+	_, err := manager.ApplyGrant(ctx, &MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant-a", Namespace: "mcp-servers"},
+		Spec: MCPAccessGrantSpec{
+			ServerRef: ServerReference{Name: "demo"},
+			Subject:   SubjectRef{HumanID: "user-1"},
+			MaxTrust:  TrustLevel("high"),
+		},
+	})
+	if err == nil {
+		t.Fatal("expected persistent conflict to surface as error")
+	}
+	if !apierrors.IsConflict(err) {
+		t.Fatalf("expected IsConflict error, got %v", err)
+	}
+}
+
+func TestValidateResourceName(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"empty", "", true},
+		{"valid", "grant-a", false},
+		{"underscores", "grant_a", true},
+		{"uppercase", "GrantA", true},
+		{"leading-hyphen", "-grant", true},
+		{"trailing-hyphen", "grant-", true},
+		{"too-long", "g123456789012345678901234567890123456789012345678901234567890123", true}, // 64 chars
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateResourceName("name", tc.input)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ValidateResourceName(%q) err=%v, wantErr=%v", tc.input, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateOptionalResourceName(t *testing.T) {
+	if err := ValidateOptionalResourceName("namespace", ""); err != nil {
+		t.Fatalf("empty optional should be allowed: %v", err)
+	}
+	if err := ValidateOptionalResourceName("namespace", "Bad_Name"); err == nil {
+		t.Fatal("expected error for invalid optional name")
 	}
 }

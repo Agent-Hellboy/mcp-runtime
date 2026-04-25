@@ -258,21 +258,50 @@ func (m *Manager) patchSession(ctx context.Context, name, namespace string, patc
 	return nil
 }
 
+// maxApplyConflictRetries bounds the Get→Update retry loop in applyUnstructured.
+// Concurrent toggle endpoints (enable/disable, revoke/unrevoke) and the operator
+// status writer can bump the resourceVersion between our Get and Update; retrying
+// with a fresh read converges quickly without the client having to refresh.
+const maxApplyConflictRetries = 3
+
 // applyUnstructured creates the object or, if it already exists, updates it while
 // preserving server-side metadata the API does not set (finalizers, ownerReferences,
 // and merged label/annotation maps) so operator-injected state is not dropped.
+// Retries on 409 conflicts so concurrent toggles do not surface as a write failure.
 func (m *Manager) applyUnstructured(ctx context.Context, gvr schema.GroupVersionResource, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	resource := m.dynamic.Resource(gvr).Namespace(obj.GetNamespace())
-	existing, err := resource.Get(ctx, obj.GetName(), metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return resource.Create(ctx, obj, metav1.CreateOptions{})
+	desiredLabels := obj.GetLabels()
+	desiredAnnotations := obj.GetAnnotations()
+	desiredFinalizers := obj.GetFinalizers()
+	desiredOwnerRefs := obj.GetOwnerReferences()
+
+	var lastErr error
+	for attempt := 0; attempt < maxApplyConflictRetries; attempt++ {
+		existing, err := resource.Get(ctx, obj.GetName(), metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return resource.Create(ctx, obj, metav1.CreateOptions{})
+		}
+		if err != nil {
+			return nil, err
+		}
+		// Reset the desired metadata each attempt; preserveExistingObjectMeta merges
+		// against the latest server state, not whatever a previous attempt produced.
+		obj.SetLabels(desiredLabels)
+		obj.SetAnnotations(desiredAnnotations)
+		obj.SetFinalizers(desiredFinalizers)
+		obj.SetOwnerReferences(desiredOwnerRefs)
+		obj.SetResourceVersion(existing.GetResourceVersion())
+		preserveExistingObjectMeta(existing, obj)
+		updated, err := resource.Update(ctx, obj, metav1.UpdateOptions{})
+		if err == nil {
+			return updated, nil
+		}
+		if !apierrors.IsConflict(err) {
+			return nil, err
+		}
+		lastErr = err
 	}
-	if err != nil {
-		return nil, err
-	}
-	obj.SetResourceVersion(existing.GetResourceVersion())
-	preserveExistingObjectMeta(existing, obj)
-	return resource.Update(ctx, obj, metav1.UpdateOptions{})
+	return nil, lastErr
 }
 
 func preserveExistingObjectMeta(existing, obj *unstructured.Unstructured) {

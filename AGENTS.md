@@ -71,7 +71,7 @@ Practical notes for spinning up, debugging, and exercising the MCP Runtime stack
     consentedTrust: high
     policyVersion: v1
   ```
-- Apply through the runtime API: `POST /api/runtime/grants` and `POST /api/runtime/sessions` (requires `x-api-key`).
+- Apply through the runtime API: `POST /api/runtime/grants` and `POST /api/runtime/sessions` (requires `x-api-key`). The API checks that `serverRef` names an existing `MCPServer` before apply; that check is not atomic with the write, so a server could be deleted in between (fail-fast for typos, not a distributed transaction).
 - Toggle endpoints: `POST /api/runtime/grants/{ns}/{name}/enable|disable`, `POST /api/runtime/sessions/{ns}/{name}/revoke|unrevoke` (requires `x-api-key`).
 - Kind e2e writes generated access YAML into its work directory, applies it through the CLI subcommands, waits for the gateway policy ConfigMap/cache to reflect the rendered policy, then verifies allow/deny behavior with real MCP traffic.
 

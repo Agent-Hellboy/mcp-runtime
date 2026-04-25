@@ -37,8 +37,8 @@ const (
 
 	defaultLoginRateLimitCapacity = 10
 	defaultLoginRateLimitRefill   = time.Minute
-	loginFailureWindow            = 15 * time.Minute
-	loginFailureThreshold         = 5
+	defaultLoginFailureWindow     = 15 * time.Minute
+	defaultLoginFailureThreshold  = 5
 	defaultLoginLockoutDuration   = 5 * time.Minute
 	loginFailureLogEvery          = 3
 )
@@ -46,6 +46,8 @@ const (
 var (
 	loginRateLimitCapacity = intEnvOr("UI_LOGIN_RATE_CAPACITY", defaultLoginRateLimitCapacity)
 	loginRateLimitRefill   = durationEnvOr("UI_LOGIN_RATE_REFILL", defaultLoginRateLimitRefill)
+	loginFailureWindow     = durationEnvOr("UI_LOGIN_FAILURE_WINDOW", defaultLoginFailureWindow)
+	loginFailureThreshold  = intEnvOr("UI_LOGIN_FAILURE_THRESHOLD", defaultLoginFailureThreshold)
 	loginLockoutDuration   = durationEnvOr("UI_LOGIN_LOCKOUT", defaultLoginLockoutDuration)
 )
 
