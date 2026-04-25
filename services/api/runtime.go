@@ -245,6 +245,15 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	if err := s.accessMgr.AssertMCPServerRef(ctx, req.ServerRef); err != nil {
+		if sentinelaccess.IsMCPServerNotFoundForRef(err) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return
+	}
+
 	disabled, err := s.grantDisabledForApply(ctx, req)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read grant state"})
@@ -267,7 +276,7 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 	}
 	applied, err := s.accessMgr.ApplyGrant(ctx, grant)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to apply grant"})
+		writeK8sApplyError(w, "grant", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"grant": sentinelaccess.ToGrantSummary(*applied)})
@@ -330,6 +339,15 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	if err := s.accessMgr.AssertMCPServerRef(ctx, req.ServerRef); err != nil {
+		if sentinelaccess.IsMCPServerNotFoundForRef(err) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return
+	}
+
 	revoked, err := s.sessionRevokedForApply(ctx, req)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read session state"})
@@ -352,7 +370,7 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 	}
 	applied, err := s.accessMgr.ApplySession(ctx, session)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to apply session"})
+		writeK8sApplyError(w, "session", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"session": sentinelaccess.ToSessionSummary(*applied)})
@@ -544,7 +562,7 @@ func defaultAccessNamespace(namespace string) string {
 	if namespace = strings.TrimSpace(namespace); namespace != "" {
 		return namespace
 	}
-	return "mcp-servers"
+	return sentinelaccess.DefaultMCPResourceNamespace
 }
 
 func defaultPolicyVersion(policyVersion string) string {
@@ -552,6 +570,11 @@ func defaultPolicyVersion(policyVersion string) string {
 		return policyVersion
 	}
 	return "v1"
+}
+
+func writeK8sApplyError(w http.ResponseWriter, kind string, err error) {
+	code, msg := k8sclient.HTTPStatusFromK8sError(err)
+	writeJSON(w, code, map[string]string{"error": fmt.Sprintf("failed to apply %s: %s", kind, msg)})
 }
 
 func normalizeTrust(trust sentinelaccess.TrustLevel) sentinelaccess.TrustLevel {

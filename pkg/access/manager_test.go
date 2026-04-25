@@ -121,3 +121,35 @@ func TestApplySessionCreatesAndUpdates(t *testing.T) {
 		t.Fatalf("updated Revoked = false, want true")
 	}
 }
+
+func TestAssertMCPServerRef(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	srv := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "payments", Namespace: "mcp-servers",
+		},
+	}
+	manager := NewManager(dynamicfake.NewSimpleDynamicClient(scheme, srv), nil)
+
+	if err := manager.AssertMCPServerRef(ctx, ServerReference{Name: "payments", Namespace: "mcp-servers"}); err != nil {
+		t.Fatalf("valid ref: %v", err)
+	}
+
+	err := manager.AssertMCPServerRef(ctx, ServerReference{Name: "missing", Namespace: "mcp-servers"})
+	if err == nil {
+		t.Fatal("expected error for missing server")
+	}
+	if !IsMCPServerNotFoundForRef(err) {
+		t.Fatalf("expected ErrMCPServerNotFound, got %v", err)
+	}
+}
+
+func TestResolveServerRefNamespace(t *testing.T) {
+	if got := ResolveServerRefNamespace(ServerReference{Namespace: "  \t"}); got != DefaultMCPResourceNamespace {
+		t.Fatalf("whitespace only namespace = %q, want default", got)
+	}
+}

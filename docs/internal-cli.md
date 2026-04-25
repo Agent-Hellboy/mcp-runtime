@@ -118,4 +118,4 @@ This package implements the `mcp-runtime` CLI commands. Each subsection walks th
 - L549-L623: `deployRegistry` and `printDeploymentDiagnostics` are re-used; setup.go calls into registry helpers above when needed.
 
 ## pipeline/build/server/status tests
-- `output_test.go`, `registry_test.go`, `server_test.go`, `controller_test.go`, and `pipeline`/`build` related tests validate the CLI wiring and behaviors using mocks, golden output snapshots, or stub command executions.
+- `output_test.go`, `registry_test.go`, `server_test.go`, `controller_test.go`, and `pipeline`/`build`-related tests validate the CLI wiring and behaviors using mocks, golden output snapshots, or stub command executions.

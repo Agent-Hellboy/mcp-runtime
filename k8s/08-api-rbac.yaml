@@ -7,6 +7,10 @@ rules:
   - apiGroups: ["mcpruntime.org"]
     resources: ["mcpaccessgrants", "mcpagentsessions"]
     verbs: ["get", "list", "watch"]
+  # Create/update via POST /api/runtime/grants|sessions (apply semantics)
+  - apiGroups: ["mcpruntime.org"]
+    resources: ["mcpaccessgrants", "mcpagentsessions"]
+    verbs: ["create", "update"]
   # Safe mutations (enable/disable/revoke/unrevoke)
   - apiGroups: ["mcpruntime.org"]
     resources: ["mcpaccessgrants"]

@@ -8,16 +8,17 @@ app = Flask(__name__)
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
     "img-src 'self' data:; "
-    "style-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "script-src 'self' 'unsafe-inline'; "
     "connect-src 'self'; "
-    "font-src 'self'; "
+    "font-src 'self' https://fonts.gstatic.com; "
     "object-src 'none'; "
     "base-uri 'self'; "
     "frame-ancestors 'none'"
 )
 
-STATIC_CACHE_CONTROL = "public, max-age=31536000, immutable"
+# Unhashed static filenames: avoid long immutable cache until assets are fingerprinted.
+STATIC_CACHE_CONTROL = "public, max-age=3600, must-revalidate"
 DOCS_CACHE_CONTROL = "public, max-age=300"
 
 SITEMAP_PATHS = ("/", "/docs/", "/docs/runtime", "/docs/cli", "/docs/sentinel", "/docs/api")

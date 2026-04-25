@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	sentinelaccess "mcp-runtime/pkg/access"
 )
 
@@ -36,7 +37,7 @@ func TestValidateGrantRequestDefaultsAndNormalizes(t *testing.T) {
 	if req.Name != "grant-a" {
 		t.Fatalf("Name = %q, want grant-a", req.Name)
 	}
-	if req.Namespace != "mcp-servers" {
+	if req.Namespace != sentinelaccess.DefaultMCPResourceNamespace {
 		t.Fatalf("Namespace = %q, want mcp-servers", req.Namespace)
 	}
 	if req.PolicyVersion != "v1" {
@@ -76,9 +77,61 @@ func TestValidateSessionRequestRequiresSubject(t *testing.T) {
 	}
 }
 
+func newTestAccessManager(t *testing.T) *sentinelaccess.Manager {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	srv := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "demo",
+			Namespace: sentinelaccess.DefaultMCPResourceNamespace,
+		},
+	}
+	return sentinelaccess.NewManager(dynamicfake.NewSimpleDynamicClient(scheme, srv), nil)
+}
+
+func TestRuntimeGrantApplyRejectsUnknownServer(t *testing.T) {
+	accessMgr := newTestAccessManager(t)
+	server := &RuntimeServer{accessMgr: accessMgr}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/grants", bytes.NewReader([]byte(`{
+		"name": "grant-orphan",
+		"namespace": "mcp-servers",
+		"serverRef": {"name": "definitely-missing", "namespace": "mcp-servers"},
+		"subject": {"humanID": "user-1"},
+		"maxTrust": "low"
+	}`)))
+	server.handleRuntimeGrantApply(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "unknown serverRef") {
+		t.Fatalf("body = %q, want unknown serverRef", recorder.Body.String())
+	}
+}
+
+func TestRuntimeSessionApplyRejectsUnknownServer(t *testing.T) {
+	accessMgr := newTestAccessManager(t)
+	server := &RuntimeServer{accessMgr: accessMgr}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/sessions", bytes.NewReader([]byte(`{
+		"name": "sess-orphan",
+		"namespace": "mcp-servers",
+		"serverRef": {"name": "definitely-missing", "namespace": "mcp-servers"},
+		"subject": {"humanID": "user-1"},
+		"consentedTrust": "low"
+	}`)))
+	server.handleRuntimeSessionApply(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestRuntimeGrantApplyPreservesOmittedDisabled(t *testing.T) {
 	ctx := context.Background()
-	accessMgr := sentinelaccess.NewManager(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), nil)
+	accessMgr := newTestAccessManager(t)
 	server := &RuntimeServer{accessMgr: accessMgr}
 
 	recorder := httptest.NewRecorder()
@@ -150,7 +203,7 @@ func TestRuntimeGrantApplyPreservesOmittedDisabled(t *testing.T) {
 
 func TestRuntimeSessionApplyPreservesOmittedRevoked(t *testing.T) {
 	ctx := context.Background()
-	accessMgr := sentinelaccess.NewManager(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), nil)
+	accessMgr := newTestAccessManager(t)
 	server := &RuntimeServer{accessMgr: accessMgr}
 
 	recorder := httptest.NewRecorder()

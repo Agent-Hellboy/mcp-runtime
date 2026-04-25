@@ -302,6 +302,13 @@ select:disabled {
   margin-bottom: 14px;
 }
 
+.governance-form .expires-utc-hint {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 4px;
+}
+
 .governance-form label {
   color: var(--muted);
   display: flex;

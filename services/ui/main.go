@@ -137,16 +137,22 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error
 	})
 	defaultNamespace := envOr("UI_DEFAULT_NAMESPACE", "mcp-servers")
 	defaultPolicyVersion := envOr("UI_DEFAULT_POLICY_VERSION", "v1")
+	baseJSON, err := json.Marshal(apiBase)
+	if err != nil {
+		return nil, err
+	}
+	defaultsJSON, err := json.Marshal(map[string]string{
+		"namespace":     defaultNamespace,
+		"policyVersion": defaultPolicyVersion,
+	})
+	if err != nil {
+		return nil, err
+	}
+	configJS := "window.MCP_API_BASE = " + string(baseJSON) + ";\n" +
+		"window.MCP_DEFAULTS = " + string(defaultsJSON) + ";"
 	mux.HandleFunc("/config.js", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "application/javascript")
-		baseJSON, _ := json.Marshal(apiBase)
-		defaultsJSON, _ := json.Marshal(map[string]string{
-			"namespace":     defaultNamespace,
-			"policyVersion": defaultPolicyVersion,
-		})
-		config := "window.MCP_API_BASE = " + string(baseJSON) + ";\n" +
-			"window.MCP_DEFAULTS = " + string(defaultsJSON) + ";"
-		_, _ = w.Write([]byte(config))
+		_, _ = w.Write([]byte(configJS))
 	})
 	mux.HandleFunc("/auth/login", handleLogin(apiKey, sessionKey))
 	mux.HandleFunc("/auth/logout", handleLogout)

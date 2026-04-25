@@ -446,7 +446,9 @@ function renderGrants() {
 
   const filtered = grantsCache.filter((g) => {
     if (!filter) return true;
-    const search = `${g.serverRef?.name || ""} ${g.subject?.humanID || ""} ${g.subject?.agentID || ""}`.toLowerCase();
+    const search = `${g.name || ""} ${g.serverRef?.name || ""} ${
+      g.subject?.humanID || ""
+    } ${g.subject?.agentID || ""}`.toLowerCase();
     return search.includes(filter);
   });
 
@@ -580,7 +582,9 @@ function parseToolRules(text) {
       }
       const name = parts.join(":").trim();
       if (!name || !decisions.has(decision) || (requiredTrust && !trustLevels.has(requiredTrust))) {
-        throw new Error(`Invalid tool rule "${line}". Use tool:allow or tool:allow:trust.`);
+        throw new Error(
+          `Invalid tool rule "${line}". Use <name>:allow or <name>:deny or <name>:allow:<trust> (names may include ":"; decision is allow or deny; trust is low, medium, or high).`
+        );
       }
       const rule = { name, decision };
       if (requiredTrust) {
@@ -617,7 +621,9 @@ function renderSessions() {
 
   const filtered = sessionsCache.filter((s) => {
     if (!filter) return true;
-    const search = `${s.serverRef?.name || ""} ${s.subject?.humanID || ""} ${s.subject?.agentID || ""}`.toLowerCase();
+    const search = `${s.name || ""} ${s.serverRef?.name || ""} ${
+      s.subject?.humanID || ""
+    } ${s.subject?.agentID || ""}`.toLowerCase();
     return search.includes(filter);
   });
 
@@ -764,11 +770,39 @@ function dateTimeLocalToISOString(value) {
   return date.toISOString();
 }
 
+function updateSessionExpiresUTCHint() {
+  const hint = document.getElementById("session-expires-utc");
+  if (!hint) {
+    return;
+  }
+  const val = fieldValue("session-expires-at");
+  if (!val) {
+    hint.textContent = "";
+    hint.classList.add("hidden");
+    return;
+  }
+  try {
+    const iso = dateTimeLocalToISOString(val);
+    hint.textContent = `Sent to API as UTC: ${iso}`;
+    hint.classList.remove("hidden");
+  } catch {
+    hint.textContent = "";
+    hint.classList.add("hidden");
+  }
+}
+
 function initGovernance() {
   setFieldValue("grant-namespace", defaults.namespace);
   setFieldValue("grant-policy-version", defaults.policyVersion);
   setFieldValue("session-namespace", defaults.namespace);
   setFieldValue("session-policy-version", defaults.policyVersion);
+
+  document
+    .getElementById("session-expires-at")
+    ?.addEventListener("input", updateSessionExpiresUTCHint);
+  document
+    .getElementById("session-expires-at")
+    ?.addEventListener("change", updateSessionExpiresUTCHint);
 
   document.getElementById("refresh-grants")?.addEventListener("click", loadGrants);
   document.getElementById("refresh-sessions")?.addEventListener("click", loadSessions);

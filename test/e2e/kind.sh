@@ -3142,6 +3142,95 @@ check(
     f"runtime sessions contain {session_id}",
     f"runtime sessions missing {session_id}: {sessions}",
 )
+not_a_server = f"{server_name}-e2e-not-mcpserver"
+bad_grant_body = expect_status(
+    f"{api_base}/api/runtime/grants",
+    400,
+    method="POST",
+    headers=auth_headers,
+    body={
+        "name": f"{server_name}-e2e-bad-grant",
+        "namespace": "mcp-servers",
+        "serverRef": {"name": not_a_server, "namespace": "mcp-servers"},
+        "subject": {"humanID": human_id, "agentID": agent_id},
+        "maxTrust": "low",
+        "toolRules": [{"name": "add", "decision": "allow", "requiredTrust": "low"}],
+    },
+)
+check(
+    "unknown serverRef" in bad_grant_body,
+    "POST /api/runtime/grants rejects unknown serverRef",
+    f"body: {bad_grant_body}",
+)
+bad_session_body = expect_status(
+    f"{api_base}/api/runtime/sessions",
+    400,
+    method="POST",
+    headers=auth_headers,
+    body={
+        "name": f"{server_name}-e2e-bad-session",
+        "namespace": "mcp-servers",
+        "serverRef": {"name": not_a_server, "namespace": "mcp-servers"},
+        "subject": {"humanID": human_id, "agentID": agent_id},
+        "consentedTrust": "low",
+    },
+)
+check(
+    "unknown serverRef" in bad_session_body,
+    "POST /api/runtime/sessions rejects unknown serverRef",
+    f"body: {bad_session_body}",
+)
+api_runtime_grant = f"{server_name}-e2e-api-grant"
+api_runtime_session = f"{server_name}-e2e-api-session"
+created_grant = expect_json(
+    f"{api_base}/api/runtime/grants",
+    method="POST",
+    headers=auth_headers,
+    body={
+        "name": api_runtime_grant,
+        "namespace": "mcp-servers",
+        "serverRef": {"name": server_name, "namespace": "mcp-servers"},
+        "subject": {"humanID": human_id, "agentID": agent_id},
+        "maxTrust": "low",
+        "toolRules": [{"name": "add", "decision": "allow", "requiredTrust": "low"}],
+    },
+)
+check(
+    created_grant.get("grant", {}).get("name") == api_runtime_grant,
+    "POST /api/runtime/grants created grant",
+    f"body: {created_grant}",
+)
+created_session = expect_json(
+    f"{api_base}/api/runtime/sessions",
+    method="POST",
+    headers=auth_headers,
+    body={
+        "name": api_runtime_session,
+        "namespace": "mcp-servers",
+        "serverRef": {"name": server_name, "namespace": "mcp-servers"},
+        "subject": {"humanID": human_id, "agentID": agent_id},
+        "consentedTrust": "low",
+    },
+)
+check(
+    created_session.get("session", {}).get("name") == api_runtime_session,
+    "POST /api/runtime/sessions created session",
+    f"body: {created_session}",
+)
+grants_after = expect_json(f"{api_base}/api/runtime/grants", headers=auth_headers)
+grant_names_after = {item.get("name") for item in grants_after.get("grants", [])}
+check(
+    api_runtime_grant in grant_names_after,
+    "list grants after API create",
+    f"missing {api_runtime_grant}: {grants_after}",
+)
+sessions_after = expect_json(f"{api_base}/api/runtime/sessions", headers=auth_headers)
+session_names_after = {item.get("name") for item in sessions_after.get("sessions", [])}
+check(
+    api_runtime_session in session_names_after,
+    "list sessions after API create",
+    f"missing {api_runtime_session}: {sessions_after}",
+)
 components = expect_json(f"{api_base}/api/runtime/components", headers=auth_headers)
 component_keys = {item.get("key") for item in components.get("components", [])}
 check(

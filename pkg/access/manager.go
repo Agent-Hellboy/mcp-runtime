@@ -3,7 +3,9 @@ package access
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,11 +22,15 @@ const (
 	APIVersion            = "v1alpha1"
 	AccessGrantResource   = "mcpaccessgrants"
 	AccessSessionResource = "mcpagentsessions"
+	MCPServerResource     = "mcpservers"
+	// DefaultMCPResourceNamespace is used when a ServerReference or access resource omits a namespace.
+	DefaultMCPResourceNamespace = "mcp-servers"
 )
 
 var (
 	grantGVR   = schema.GroupVersionResource{Group: APIGroup, Version: APIVersion, Resource: AccessGrantResource}
 	sessionGVR = schema.GroupVersionResource{Group: APIGroup, Version: APIVersion, Resource: AccessSessionResource}
+	serverGVR  = schema.GroupVersionResource{Group: APIGroup, Version: APIVersion, Resource: MCPServerResource}
 )
 
 // Manager provides operations for MCPAccessGrant and MCPAgentSession resources.
@@ -39,6 +45,51 @@ func NewManager(dynamic dynamic.Interface, clientset kubernetes.Interface) *Mana
 		dynamic:   dynamic,
 		clientset: clientset,
 	}
+}
+
+// ResolveServerRefNamespace returns the namespace to resolve serverRef against.
+// Empty or whitespace ref.Namespace defaults to DefaultMCPResourceNamespace.
+func ResolveServerRefNamespace(ref ServerReference) string {
+	if ns := strings.TrimSpace(ref.Namespace); ns != "" {
+		return ns
+	}
+	return DefaultMCPResourceNamespace
+}
+
+// ErrMCPServerNotFound is returned by AssertMCPServerRef when the target MCPServer is missing.
+type ErrMCPServerNotFound struct {
+	Name, Namespace string
+}
+
+func (e *ErrMCPServerNotFound) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("unknown serverRef: MCPServer %q not found in namespace %q", e.Name, e.Namespace)
+}
+
+// IsMCPServerNotFoundForRef returns true if err is an *ErrMCPServerNotFound.
+func IsMCPServerNotFoundForRef(err error) bool {
+	var missing *ErrMCPServerNotFound
+	return err != nil && errors.As(err, &missing)
+}
+
+// AssertMCPServerRef returns an error if no MCPServer exists at the given ref.
+// Use this before creating grants or sessions so the API can reject unknown targets early.
+func (m *Manager) AssertMCPServerRef(ctx context.Context, ref ServerReference) error {
+	name := strings.TrimSpace(ref.Name)
+	if name == "" {
+		return fmt.Errorf("serverRef.name is required")
+	}
+	ns := ResolveServerRefNamespace(ref)
+	_, err := m.dynamic.Resource(serverGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return &ErrMCPServerNotFound{Name: name, Namespace: ns}
+		}
+		return fmt.Errorf("lookup serverRef: %w", err)
+	}
+	return nil
 }
 
 // ListGrants returns all MCPAccessGrant resources, optionally filtered by namespace.
@@ -207,6 +258,9 @@ func (m *Manager) patchSession(ctx context.Context, name, namespace string, patc
 	return nil
 }
 
+// applyUnstructured creates the object or, if it already exists, updates it while
+// preserving server-side metadata the API does not set (finalizers, ownerReferences,
+// and merged label/annotation maps) so operator-injected state is not dropped.
 func (m *Manager) applyUnstructured(ctx context.Context, gvr schema.GroupVersionResource, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	resource := m.dynamic.Resource(gvr).Namespace(obj.GetNamespace())
 	existing, err := resource.Get(ctx, obj.GetName(), metav1.GetOptions{})

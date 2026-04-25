@@ -163,9 +163,9 @@
               <label>
                 Max Trust
                 <select id="grant-trust">
-                  <option value="low">low</option>
+                  <option value="low" selected>low</option>
                   <option value="medium">medium</option>
-                  <option value="high" selected>high</option>
+                  <option value="high">high</option>
                 </select>
               </label>
               <label>
@@ -254,6 +254,7 @@
                 Expires At
                 <input type="datetime-local" id="session-expires-at" />
               </label>
+              <p id="session-expires-utc" class="expires-utc-hint hidden" aria-live="polite"></p>
             </div>
             <div class="form-actions">
               <button class="ghost" id="cancel-session-form" type="button">Cancel</button>

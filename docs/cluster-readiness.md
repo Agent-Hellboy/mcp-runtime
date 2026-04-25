@@ -51,7 +51,7 @@ k3s uses embedded containerd. Point it at the registry NodePort on loopback (sam
 
 2. **Host DNS.** Add to `/etc/hosts`:
 
-   ```
+   ```text
    127.0.0.1 registry.local
    ```
 
@@ -84,7 +84,7 @@ kind's nodes are containers, so the registry NodePort needs an `extraPortMapping
 
 2. **Host /etc/hosts** (on your laptop, so `docker push` / `curl` work):
 
-   ```
+   ```text
    127.0.0.1 registry.local
    ```
 
@@ -96,19 +96,19 @@ Two options.
 
 **Option A — insecure registry flag at start time:**
 
-```
+```bash
 minikube start --insecure-registry=registry.local --insecure-registry=10.43.39.164:5000
 minikube addons enable ingress
 echo "$(minikube ip) registry.local" | sudo tee -a /etc/hosts
 ```
 
-The `--insecure-registry` flag is read only on initial `start`. Re-creating the VM is required to change it.
+The `--insecure-registry` flag is read-only on initial `start`. Re-creating the VM is required to change it.
 
 **Option B — `minikube image load`:**
 
 Skip the registry entirely and push images directly into the node's image store:
 
-```
+```bash
 docker build -t registry.local/my-server:latest .
 minikube image load registry.local/my-server:latest
 ```
@@ -129,7 +129,7 @@ Fine for quick iteration, but `./bin/mcp-runtime registry push` won't help — i
 
 2. `/etc/hosts`:
 
-   ```
+   ```text
    127.0.0.1 registry.local
    ```
 
@@ -158,7 +158,7 @@ For production, swap HTTP for HTTPS with a real cert via cert-manager (setup sup
 
 ## Generic checks you can run
 
-```
+```bash
 # Is the registry Service up?
 kubectl get svc -n registry registry
 
