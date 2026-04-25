@@ -74,7 +74,7 @@ Note: bootstrap --apply is automated for k3s only and must be executed on the k3
 func detectProvider(kubectl KubectlRunner) (string, error) {
 	out, err := kubectlOutput(kubectl, []string{"get", "nodes", "-o", "jsonpath={range .items[*]}{.status.nodeInfo.kubeletVersion}{\"\\n\"}{end}"})
 	if err != nil {
-		return "generic", wrapWithSentinel(ErrClusterNotAccessible, err, fmt.Sprintf("kubectl get nodes failed: %v", err))
+		return "", wrapWithSentinel(ErrClusterNotAccessible, err, fmt.Sprintf("kubectl get nodes failed: %v", err))
 	}
 	lower := strings.ToLower(string(out))
 	switch {
@@ -152,7 +152,8 @@ func bootstrapApplyK3s(kubectl KubectlRunner) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("k3s manifests missing on disk (%s); bootstrap --apply expects to run on the k3s server node", strings.Join(missing, ", "))
+		msg := fmt.Sprintf("k3s manifests missing on disk (%s); bootstrap --apply expects to run on the k3s server node", strings.Join(missing, ", "))
+		return wrapWithSentinel(ErrClusterConfigFailed, fmt.Errorf("missing manifests"), msg)
 	}
 
 	for _, p := range paths {
@@ -163,10 +164,10 @@ func bootstrapApplyK3s(kubectl KubectlRunner) error {
 
 	Info("Waiting for kube-system addons to be ready")
 	if err := kubectl.Run([]string{"rollout", "status", "deployment/coredns", "-n", "kube-system", "--timeout=180s"}); err != nil {
-		return err
+		return wrapWithSentinel(ErrDeploymentTimeout, err, fmt.Sprintf("coredns rollout failed: %v", err))
 	}
 	if err := kubectl.Run([]string{"rollout", "status", "deployment/local-path-provisioner", "-n", "kube-system", "--timeout=180s"}); err != nil {
-		return err
+		return wrapWithSentinel(ErrDeploymentTimeout, err, fmt.Sprintf("local-path-provisioner rollout failed: %v", err))
 	}
 
 	// Best-effort: show disk-pressure so users don't get surprised by evictions.

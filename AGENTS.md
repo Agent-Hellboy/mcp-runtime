@@ -127,7 +127,16 @@ kubectl config current-context
 kubectl get nodes
 
 # delete everything in every namespace (pods/deployments/jobs/services/ingresses/etc.)
-kubectl delete all,cm,secret,ing,svc,sa,role,rolebinding,deploy,ds,sts,job,cronjob,pvc,pv,crd,clusterrole,clusterrolebinding,validatingwebhookconfigurations,mutatingwebhookconfigurations,networkpolicy,podsecuritypolicy --all -A --ignore-not-found --grace-period=0 --force
+# NOTE: build deletable resource list dynamically to avoid errors on clusters where some optional APIs (e.g. PodSecurityPolicy) are absent.
+to_delete="$(kubectl api-resources --verbs=delete --namespaced -o name | paste -sd, -)"
+if [ -n "$to_delete" ]; then
+  kubectl delete "$to_delete" --all -A --ignore-not-found --grace-period=0 --force
+fi
+
+# cluster-scoped resources (best-effort; some may not exist depending on cluster/version)
+for r in $(kubectl api-resources --verbs=delete --namespaced=false -o name); do
+  kubectl delete "$r" --all --ignore-not-found --grace-period=0 --force || true
+done
 
 # delete all non-system namespaces (wipes everything inside them)
 ns_to_delete="$(kubectl get ns --no-headers | awk '{print $1}' | grep -E -v '^(kube-system|kube-public|kube-node-lease|default)$')"
