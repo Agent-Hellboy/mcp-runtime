@@ -245,6 +245,8 @@ button:disabled {
 input[type="text"],
 input[type="number"],
 input[type="password"],
+input[type="datetime-local"],
+textarea,
 select {
   padding: 10px 14px;
   border-radius: 10px;
@@ -255,9 +257,16 @@ select {
   font-size: 14px;
 }
 
-input[type="text"]::placeholder {
+input[type="text"]::placeholder,
+textarea::placeholder {
   color: var(--muted);
   opacity: 0.7;
+}
+
+textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
 }
 
 input[type="password"] {
@@ -277,6 +286,42 @@ input[type="number"] {
 select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.governance-form {
+  background: var(--bg-secondary);
+  border-radius: 14px;
+  margin-bottom: 20px;
+  padding: 18px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.governance-form label {
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 6px;
+  letter-spacing: 0.04em;
+}
+
+.governance-form input,
+.governance-form select {
+  width: 100%;
+}
+
+.form-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 14px;
 }
 
 /* Tables */
@@ -591,8 +636,13 @@ tr:hover td {
     flex-direction: column;
   }
 
+  .form-actions {
+    flex-direction: column;
+  }
+
   .ops-form select,
-  .ops-form button {
+  .ops-form button,
+  .form-actions button {
     width: 100%;
   }
 

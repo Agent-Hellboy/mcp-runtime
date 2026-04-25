@@ -41,7 +41,8 @@ Practical notes for spinning up, debugging, and exercising the MCP Runtime stack
 - Ingress/paths -> verify with `kubectl get ingress -A`.
 
 ## 5) Governance (Grants & Sessions)
-- UI can list/toggle grants/sessions; creation is CLI/kubectl today.
+- UI can create/apply grants and sessions, then toggle grant enablement and session revocation.
+- CLI flows use `mcp-runtime access grant apply --file <file.yaml>` and `mcp-runtime access session apply --file <file.yaml>`. Raw `kubectl apply -f <file.yaml>` remains a low-level fallback for the same CRDs.
 - Example manifests:
   ```yaml
   apiVersion: mcpruntime.org/v1alpha1
@@ -68,8 +69,9 @@ Practical notes for spinning up, debugging, and exercising the MCP Runtime stack
     consentedTrust: high
     policyVersion: v1
   ```
-- Apply: `kubectl apply -f <file.yaml>`
+- Apply through the runtime API: `POST /api/runtime/grants` and `POST /api/runtime/sessions` (requires `x-api-key`).
 - Toggle endpoints: `POST /api/runtime/grants/{ns}/{name}/enable|disable`, `POST /api/runtime/sessions/{ns}/{name}/revoke|unrevoke` (requires `x-api-key`).
+- Kind e2e writes generated access YAML into its work directory, applies it through the CLI subcommands, waits for the gateway policy ConfigMap/cache to reflect the rendered policy, then verifies allow/deny behavior with real MCP traffic.
 
 ## 6) Traffic Generation (MCP JSON-RPC)
 - Single call (replace `<session>` after initialize):

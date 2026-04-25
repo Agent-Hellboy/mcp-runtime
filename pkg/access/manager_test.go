@@ -1,8 +1,12 @@
 package access
 
 import (
+	"context"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 )
 
@@ -15,5 +19,84 @@ func TestManagerUsesRuntimeCRDGroup(t *testing.T) {
 	}
 	if grantGVR.Group != APIGroup || sessionGVR.Group != APIGroup {
 		t.Fatalf("expected grant/session GVRs to use APIGroup %q, got %q and %q", APIGroup, grantGVR.Group, sessionGVR.Group)
+	}
+}
+
+func TestApplyGrantCreatesAndUpdates(t *testing.T) {
+	ctx := context.Background()
+	manager := NewManager(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), nil)
+
+	created, err := manager.ApplyGrant(ctx, &MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant-a", Namespace: "mcp-servers"},
+		Spec: MCPAccessGrantSpec{
+			ServerRef: ServerReference{Name: "demo"},
+			Subject:   SubjectRef{HumanID: "user-1", AgentID: "agent-1"},
+			MaxTrust:  TrustLevel("low"),
+			ToolRules: []ToolRule{{Name: "aaa-ping", Decision: DecisionAllow}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyGrant create returned error: %v", err)
+	}
+	if created.Name != "grant-a" || created.Spec.MaxTrust != TrustLevel("low") {
+		t.Fatalf("created grant mismatch: %#v", created)
+	}
+
+	updated, err := manager.ApplyGrant(ctx, &MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant-a", Namespace: "mcp-servers"},
+		Spec: MCPAccessGrantSpec{
+			ServerRef: ServerReference{Name: "demo"},
+			Subject:   SubjectRef{HumanID: "user-1", AgentID: "agent-1"},
+			MaxTrust:  TrustLevel("high"),
+			ToolRules: []ToolRule{{Name: "aaa-ping", Decision: DecisionDeny}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyGrant update returned error: %v", err)
+	}
+	if updated.Spec.MaxTrust != TrustLevel("high") {
+		t.Fatalf("updated MaxTrust = %q, want high", updated.Spec.MaxTrust)
+	}
+	if got := updated.Spec.ToolRules[0].Decision; got != DecisionDeny {
+		t.Fatalf("updated decision = %q, want %q", got, DecisionDeny)
+	}
+}
+
+func TestApplySessionCreatesAndUpdates(t *testing.T) {
+	ctx := context.Background()
+	manager := NewManager(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), nil)
+
+	created, err := manager.ApplySession(ctx, &MCPAgentSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-a", Namespace: "mcp-servers"},
+		Spec: MCPAgentSessionSpec{
+			ServerRef:      ServerReference{Name: "demo"},
+			Subject:        SubjectRef{HumanID: "user-1", AgentID: "agent-1"},
+			ConsentedTrust: TrustLevel("low"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplySession create returned error: %v", err)
+	}
+	if created.Name != "session-a" || created.Spec.ConsentedTrust != TrustLevel("low") {
+		t.Fatalf("created session mismatch: %#v", created)
+	}
+
+	updated, err := manager.ApplySession(ctx, &MCPAgentSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-a", Namespace: "mcp-servers"},
+		Spec: MCPAgentSessionSpec{
+			ServerRef:      ServerReference{Name: "demo"},
+			Subject:        SubjectRef{HumanID: "user-1", AgentID: "agent-1"},
+			ConsentedTrust: TrustLevel("medium"),
+			Revoked:        true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplySession update returned error: %v", err)
+	}
+	if updated.Spec.ConsentedTrust != TrustLevel("medium") {
+		t.Fatalf("updated ConsentedTrust = %q, want medium", updated.Spec.ConsentedTrust)
+	}
+	if !updated.Spec.Revoked {
+		t.Fatalf("updated Revoked = false, want true")
 	}
 }

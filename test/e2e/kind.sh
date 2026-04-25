@@ -1872,8 +1872,8 @@ echo "[cli][pass] server status contains ${SERVER_NAME}"
 
 ./bin/mcp-runtime server logs "${SERVER_NAME}" --namespace mcp-servers >"${WORKDIR}/${SERVER_NAME}.logs"
 
-echo "[policy] applying access grant and low-trust session"
-cat <<EOF | kubectl apply -f -
+echo "[policy] applying access grant via CLI"
+cat >"${WORKDIR}/access-grant.yaml" <<EOF
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
 metadata:
@@ -1894,7 +1894,11 @@ spec:
       decision: allow
     - name: upper
       decision: allow
----
+EOF
+./bin/mcp-runtime access grant apply --file "${WORKDIR}/access-grant.yaml"
+
+echo "[policy] applying low-trust session via CLI"
+cat >"${WORKDIR}/access-session.yaml" <<EOF
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAgentSession
 metadata:
@@ -1909,6 +1913,7 @@ spec:
   consentedTrust: low
   policyVersion: v1
 EOF
+./bin/mcp-runtime access session apply --file "${WORKDIR}/access-session.yaml"
 
 wait_for_policy_text "\"name\": \"${SESSION_ID}\""
 wait_for_policy_text "\"consented_trust\": \"low\""
@@ -2153,7 +2158,7 @@ from datetime import datetime, timedelta, timezone
 print((datetime.now(timezone.utc) - timedelta(minutes=5)).replace(microsecond=0).isoformat().replace("+00:00", "Z"))
 PY
 )"
-  cat <<EOF | kubectl apply -f -
+  cat >"${WORKDIR}/access-session-expired.yaml" <<EOF
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAgentSession
 metadata:
@@ -2169,13 +2174,14 @@ spec:
   policyVersion: v1
   expiresAt: ${EXPIRED_AT}
 EOF
+  ./bin/mcp-runtime access session apply --file "${WORKDIR}/access-session-expired.yaml"
   wait_for_policy_text "\"expires_at\": \"${EXPIRED_AT}\""
   print_gateway_policy_debug
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 401 "session_expired"
   run_mcp_smoke_expect "mcp-smoke-session-expired" "${MCP_SESSION_URL}" false "session_expired"
 
   echo "[policy] restoring non-expired access session"
-  cat <<EOF | kubectl apply -f -
+  cat >"${WORKDIR}/access-session-restored.yaml" <<EOF
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAgentSession
 metadata:
@@ -2190,6 +2196,7 @@ spec:
   consentedTrust: low
   policyVersion: v1
 EOF
+  ./bin/mcp-runtime access session apply --file "${WORKDIR}/access-session-restored.yaml"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
 
   echo "[policy] disabling access grant via CLI"
@@ -2426,7 +2433,7 @@ EOF
   fi
 
   echo "[policy] updating access grant to deny aaa-ping and echo"
-  cat <<EOF | kubectl apply -f -
+  cat >"${WORKDIR}/access-grant-deny.yaml" <<EOF
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
 metadata:
@@ -2448,6 +2455,7 @@ spec:
     - name: upper
       decision: allow
 EOF
+  ./bin/mcp-runtime access grant apply --file "${WORKDIR}/access-grant-deny.yaml"
 
   wait_for_grant_tool_rule "${SERVER_NAME}-grant" "aaa-ping" "deny"
   wait_for_grant_tool_rule "${SERVER_NAME}-grant" "echo" "deny"

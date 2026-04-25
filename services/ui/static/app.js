@@ -499,6 +499,65 @@ async function toggleGrant(namespace, name, currentlyDisabled) {
   }
 }
 
+async function applyGrant(event) {
+  event.preventDefault();
+  const submit = event.submitter;
+  if (submit) submit.disabled = true;
+
+  try {
+    const payload = {
+      name: fieldValue("grant-name"),
+      namespace: fieldValue("grant-namespace") || "mcp-servers",
+      serverRef: {
+        name: fieldValue("grant-server"),
+        namespace: fieldValue("grant-server-namespace"),
+      },
+      subject: {
+        humanID: fieldValue("grant-human"),
+        agentID: fieldValue("grant-agent"),
+      },
+      maxTrust: fieldValue("grant-trust"),
+      policyVersion: fieldValue("grant-policy-version") || "v1",
+      toolRules: parseToolRules(fieldValue("grant-tool-rules")),
+    };
+    await fetchJSON("/runtime/grants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    showToast(`Grant "${payload.name}" applied successfully`);
+    document.getElementById("grant-form")?.reset();
+    setFieldValue("grant-namespace", "mcp-servers");
+    setFieldValue("grant-policy-version", "v1");
+    document.getElementById("grant-form")?.classList.add("hidden");
+    loadGrants();
+    loadDashboardSummary();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    showToast(`Failed to apply grant: ${err.message}`, "error");
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+}
+
+function parseToolRules(text) {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split(":").map((part) => part.trim());
+      if (parts.length < 2 || parts.length > 3 || !parts[0] || !parts[1]) {
+        throw new Error(`Invalid tool rule "${line}". Use tool:allow or tool:allow:trust.`);
+      }
+      const rule = { name: parts[0], decision: parts[1] };
+      if (parts[2]) {
+        rule.requiredTrust = parts[2];
+      }
+      return rule;
+    });
+}
+
 // Governance - Sessions
 async function loadSessions() {
   try {
@@ -584,9 +643,90 @@ async function toggleSession(namespace, name, currentlyRevoked) {
   }
 }
 
+async function applySession(event) {
+  event.preventDefault();
+  const submit = event.submitter;
+  if (submit) submit.disabled = true;
+
+  try {
+    const payload = {
+      name: fieldValue("session-name"),
+      namespace: fieldValue("session-namespace") || "mcp-servers",
+      serverRef: {
+        name: fieldValue("session-server"),
+        namespace: fieldValue("session-server-namespace"),
+      },
+      subject: {
+        humanID: fieldValue("session-human"),
+        agentID: fieldValue("session-agent"),
+      },
+      consentedTrust: fieldValue("session-trust"),
+      policyVersion: fieldValue("session-policy-version") || "v1",
+    };
+    const expiresAt = dateTimeLocalToISOString(fieldValue("session-expires-at"));
+    if (expiresAt) {
+      payload.expiresAt = expiresAt;
+    }
+
+    await fetchJSON("/runtime/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    showToast(`Session "${payload.name}" applied successfully`);
+    document.getElementById("session-form")?.reset();
+    setFieldValue("session-namespace", "mcp-servers");
+    setFieldValue("session-policy-version", "v1");
+    document.getElementById("session-form")?.classList.add("hidden");
+    loadSessions();
+    loadDashboardSummary();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    showToast(`Failed to apply session: ${err.message}`, "error");
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+}
+
+function fieldValue(id) {
+  return document.getElementById(id)?.value.trim() || "";
+}
+
+function setFieldValue(id, value) {
+  const input = document.getElementById(id);
+  if (input) {
+    input.value = value;
+  }
+}
+
+function dateTimeLocalToISOString(value) {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("Expires At must be a valid date and time.");
+  }
+  return date.toISOString();
+}
+
 function initGovernance() {
   document.getElementById("refresh-grants")?.addEventListener("click", loadGrants);
   document.getElementById("refresh-sessions")?.addEventListener("click", loadSessions);
+  document.getElementById("show-grant-form")?.addEventListener("click", () => {
+    document.getElementById("grant-form")?.classList.toggle("hidden");
+  });
+  document.getElementById("cancel-grant-form")?.addEventListener("click", () => {
+    document.getElementById("grant-form")?.classList.add("hidden");
+  });
+  document.getElementById("grant-form")?.addEventListener("submit", applyGrant);
+  document.getElementById("show-session-form")?.addEventListener("click", () => {
+    document.getElementById("session-form")?.classList.toggle("hidden");
+  });
+  document.getElementById("cancel-session-form")?.addEventListener("click", () => {
+    document.getElementById("session-form")?.classList.add("hidden");
+  });
+  document.getElementById("session-form")?.addEventListener("submit", applySession);
   const debouncedLoadGrants = debounce(loadGrants, 200);
   const debouncedLoadSessions = debounce(loadSessions, 200);
 

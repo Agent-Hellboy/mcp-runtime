@@ -291,12 +291,37 @@ X-MCP-Agent-Session: sess-8f1b9d</code></pre>
 
           <section id="runtime-api" class="doc-section">
             <h2>Runtime Governance API</h2>
-            <p>Manage access grants, sessions, and view runtime state.</p>
+            <p>Manage access grants, sessions, and view runtime state. Collection <code>POST</code> requests create or update the Kubernetes CRs that the operator renders into the gateway policy ConfigMap.</p>
             <pre><code>GET /api/runtime/servers              # List MCP server deployments
 GET /api/runtime/grants               # List MCPAccessGrant resources
+POST /api/runtime/grants              # Create or update an MCPAccessGrant
 GET /api/runtime/sessions             # List MCPAgentSession resources
+POST /api/runtime/sessions            # Create or update an MCPAgentSession
 GET /api/runtime/components           # Sentinel component health status
 GET /api/runtime/policy?namespace=&amp;server=  # Get rendered policy for server</code></pre>
+            <h3>Grant apply body</h3>
+            <pre><code>{
+  "name": "payments-ops-agent",
+  "namespace": "mcp-servers",
+  "serverRef": {"name": "payments", "namespace": "mcp-servers"},
+  "subject": {"humanID": "user-123", "agentID": "ops-agent"},
+  "maxTrust": "high",
+  "policyVersion": "v1",
+  "toolRules": [
+    {"name": "read_invoice", "decision": "allow"},
+    {"name": "refund_invoice", "decision": "allow", "requiredTrust": "high"}
+  ]
+}</code></pre>
+            <h3>Session apply body</h3>
+            <pre><code>{
+  "name": "sess-8f1b9d",
+  "namespace": "mcp-servers",
+  "serverRef": {"name": "payments", "namespace": "mcp-servers"},
+  "subject": {"humanID": "user-123", "agentID": "ops-agent"},
+  "consentedTrust": "medium",
+  "policyVersion": "v1",
+  "expiresAt": "2026-01-31T23:59:00Z"
+}</code></pre>
           </section>
 
           <section id="actions-api" class="doc-section">

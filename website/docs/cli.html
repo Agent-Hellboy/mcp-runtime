@@ -398,6 +398,7 @@ mcp-runtime pipeline deploy --dir manifests</code></pre>
               </article>
               <article class="doc-card">
                 <strong>Apply access and inspect policy</strong>
+                <p>These apply commands are the same access setup path used by the Kind e2e flow; the operator renders the resulting CRs into gateway policy.</p>
                 <pre><code>mcp-runtime access grant apply --file grant.yaml
 mcp-runtime access session apply --file session.yaml
 mcp-runtime server policy inspect payments</code></pre>

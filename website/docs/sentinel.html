@@ -94,11 +94,11 @@
               </article>
               <article class="doc-card">
                 <strong>api</strong>
-                <p>Exposes analytics endpoints, dashboard summaries, runtime governance APIs for grants/sessions, and component operations.</p>
+                <p>Exposes analytics endpoints, dashboard summaries, runtime governance APIs for creating or updating grants/sessions, and component operations.</p>
               </article>
               <article class="doc-card">
                 <strong>ui</strong>
-                <p>Three-tab dashboard: overview metrics and events, governance for grants/sessions with enable/disable/revoke actions, and operations for component health and safe restarts.</p>
+                <p>Three-tab dashboard: overview metrics and events, governance forms for creating grants/sessions plus enable/disable/revoke actions, and operations for component health and safe restarts.</p>
               </article>
               <article class="doc-card">
                 <strong>gateway</strong>
@@ -116,7 +116,7 @@
             <div class="doc-card-grid">
               <article class="doc-card">
                 <strong>01. Proxy evaluates the request</strong>
-                <p>The sidecar reads identity headers, loads policy data, checks trust, and decides allow or deny at tool-call time.</p>
+                <p>The sidecar reads identity headers, loads policy data rendered from MCPAccessGrant and MCPAgentSession CRs, checks trust, and decides allow or deny at tool-call time.</p>
               </article>
               <article class="doc-card">
                 <strong>02. Ingest receives the event</strong>

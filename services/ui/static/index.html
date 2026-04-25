@@ -130,9 +130,58 @@
             <h2>Access Grants</h2>
             <div class="panel-actions">
               <input type="text" id="grant-filter" placeholder="Filter by server or subject..." />
+              <button class="ghost" id="show-grant-form" type="button">Create Grant</button>
               <button class="ghost" id="refresh-grants">Refresh</button>
             </div>
           </div>
+          <form class="governance-form hidden" id="grant-form">
+            <div class="form-grid">
+              <label>
+                Name
+                <input type="text" id="grant-name" required />
+              </label>
+              <label>
+                Namespace
+                <input type="text" id="grant-namespace" value="mcp-servers" required />
+              </label>
+              <label>
+                Server
+                <input type="text" id="grant-server" required />
+              </label>
+              <label>
+                Server Namespace
+                <input type="text" id="grant-server-namespace" placeholder="mcp-servers" />
+              </label>
+              <label>
+                Human ID
+                <input type="text" id="grant-human" />
+              </label>
+              <label>
+                Agent ID
+                <input type="text" id="grant-agent" />
+              </label>
+              <label>
+                Max Trust
+                <select id="grant-trust">
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high" selected>high</option>
+                </select>
+              </label>
+              <label>
+                Policy Version
+                <input type="text" id="grant-policy-version" value="v1" />
+              </label>
+            </div>
+            <label>
+              Tool Rules
+              <textarea id="grant-tool-rules" rows="4" placeholder="aaa-ping:allow&#10;upper:allow:medium"></textarea>
+            </label>
+            <div class="form-actions">
+              <button class="ghost" id="cancel-grant-form" type="button">Cancel</button>
+              <button class="primary" type="submit">Apply Grant</button>
+            </div>
+          </form>
           <div class="table-wrap">
             <table>
               <thead>
@@ -159,9 +208,58 @@
             <h2>Agent Sessions</h2>
             <div class="panel-actions">
               <input type="text" id="session-filter" placeholder="Filter by server or subject..." />
+              <button class="ghost" id="show-session-form" type="button">Create Session</button>
               <button class="ghost" id="refresh-sessions">Refresh</button>
             </div>
           </div>
+          <form class="governance-form hidden" id="session-form">
+            <div class="form-grid">
+              <label>
+                Name
+                <input type="text" id="session-name" required />
+              </label>
+              <label>
+                Namespace
+                <input type="text" id="session-namespace" value="mcp-servers" required />
+              </label>
+              <label>
+                Server
+                <input type="text" id="session-server" required />
+              </label>
+              <label>
+                Server Namespace
+                <input type="text" id="session-server-namespace" placeholder="mcp-servers" />
+              </label>
+              <label>
+                Human ID
+                <input type="text" id="session-human" />
+              </label>
+              <label>
+                Agent ID
+                <input type="text" id="session-agent" />
+              </label>
+              <label>
+                Consented Trust
+                <select id="session-trust">
+                  <option value="low" selected>low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                </select>
+              </label>
+              <label>
+                Policy Version
+                <input type="text" id="session-policy-version" value="v1" />
+              </label>
+              <label>
+                Expires At
+                <input type="datetime-local" id="session-expires-at" />
+              </label>
+            </div>
+            <div class="form-actions">
+              <button class="ghost" id="cancel-session-form" type="button">Cancel</button>
+              <button class="primary" type="submit">Apply Session</button>
+            </div>
+          </form>
           <div class="table-wrap">
             <table>
               <thead>

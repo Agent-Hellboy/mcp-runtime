@@ -113,7 +113,7 @@ Servers are exposed at `/{server-name}/mcp`.
 The web UI (served by `services/ui`) provides:
 
 - **Dashboard tab**: Overview metrics (total events, active servers, grants, sessions) and event stream
-- **Governance tab**: Manage MCPAccessGrant (enable/disable) and MCPAgentSession (revoke/unrevoke) resources
+- **Governance tab**: Create/apply MCPAccessGrant and MCPAgentSession resources, then enable/disable grants and revoke/unrevoke sessions
 - **Operations tab**: Component health view and safe restart actions
 
 Access the dashboard at `/` after setup, with links to Grafana (`/grafana`) and Prometheus (`/prometheus`).
@@ -136,6 +136,8 @@ The API service (`services/api`) exposes:
 - `GET /api/runtime/grants` - Access grants
 - `GET /api/runtime/sessions` - Agent sessions
 - `GET /api/runtime/components` - Component health
+- `POST /api/runtime/grants` - Create or update an access grant
+- `POST /api/runtime/sessions` - Create or update an agent session
 - `POST /api/runtime/grants/{ns}/{name}/disable|enable`
 - `POST /api/runtime/sessions/{ns}/{name}/revoke|unrevoke`
 - `POST /api/runtime/actions/restart` - Safe component restart
@@ -143,7 +145,7 @@ The API service (`services/api`) exposes:
 ## Current scope
 
 - Deployment, routing, grants, sessions, gateway policy, audit/event flow are implemented
-- Dashboard with governance UI for managing grants and sessions
+- Dashboard with governance UI for creating, applying, and toggling grants and sessions
 - Services support bearer-token validation, but this is not a full OAuth 2.1 authorization server
 - Shared libraries (`pkg/`) used by both CLI and API services
 

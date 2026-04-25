@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
@@ -73,6 +76,19 @@ func (m *Manager) GetGrant(ctx context.Context, name, namespace string) (*MCPAcc
 		return nil, fmt.Errorf("failed to get grant %s/%s: %w", namespace, name, err)
 	}
 	return convertToGrant(obj)
+}
+
+// ApplyGrant creates or updates an MCPAccessGrant resource.
+func (m *Manager) ApplyGrant(ctx context.Context, grant *MCPAccessGrant) (*MCPAccessGrant, error) {
+	obj, err := toUnstructured(grant, "MCPAccessGrant")
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert grant %s/%s: %w", grant.Namespace, grant.Name, err)
+	}
+	created, err := m.applyUnstructured(ctx, grantGVR, obj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply grant %s/%s: %w", grant.Namespace, grant.Name, err)
+	}
+	return convertToGrant(created)
 }
 
 // DisableGrant disables an MCPAccessGrant by setting spec.disabled to true.
@@ -145,6 +161,19 @@ func (m *Manager) GetSession(ctx context.Context, name, namespace string) (*MCPA
 	return convertToSession(obj)
 }
 
+// ApplySession creates or updates an MCPAgentSession resource.
+func (m *Manager) ApplySession(ctx context.Context, session *MCPAgentSession) (*MCPAgentSession, error) {
+	obj, err := toUnstructured(session, "MCPAgentSession")
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert session %s/%s: %w", session.Namespace, session.Name, err)
+	}
+	created, err := m.applyUnstructured(ctx, sessionGVR, obj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply session %s/%s: %w", session.Namespace, session.Name, err)
+	}
+	return convertToSession(created)
+}
+
 // RevokeSession revokes an MCPAgentSession by setting spec.revoked to true.
 func (m *Manager) RevokeSession(ctx context.Context, name, namespace string) error {
 	patch := map[string]interface{}{
@@ -176,6 +205,30 @@ func (m *Manager) patchSession(ctx context.Context, name, namespace string, patc
 		return fmt.Errorf("failed to patch session %s/%s: %w", namespace, name, err)
 	}
 	return nil
+}
+
+func (m *Manager) applyUnstructured(ctx context.Context, gvr schema.GroupVersionResource, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	resource := m.dynamic.Resource(gvr).Namespace(obj.GetNamespace())
+	existing, err := resource.Get(ctx, obj.GetName(), metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return resource.Create(ctx, obj, metav1.CreateOptions{})
+	}
+	if err != nil {
+		return nil, err
+	}
+	obj.SetResourceVersion(existing.GetResourceVersion())
+	return resource.Update(ctx, obj, metav1.UpdateOptions{})
+}
+
+func toUnstructured(obj interface{}, kind string) (*unstructured.Unstructured, error) {
+	content, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
+	if err != nil {
+		return nil, err
+	}
+	u := &unstructured.Unstructured{Object: content}
+	u.SetAPIVersion(APIGroup + "/" + APIVersion)
+	u.SetKind(kind)
+	return u, nil
 }
 
 // GetServerPolicy returns the rendered policy for a specific server if available.
