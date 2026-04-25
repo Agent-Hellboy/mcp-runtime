@@ -1895,7 +1895,7 @@ spec:
     - name: upper
       decision: allow
 EOF
-./bin/mcp-runtime access grant apply --file "${WORKDIR}/access-grant.yaml"
+(cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access grant apply --file access-grant.yaml)
 
 echo "[policy] applying low-trust session via CLI"
 cat >"${WORKDIR}/access-session.yaml" <<EOF
@@ -1913,7 +1913,7 @@ spec:
   consentedTrust: low
   policyVersion: v1
 EOF
-./bin/mcp-runtime access session apply --file "${WORKDIR}/access-session.yaml"
+(cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access session apply --file access-session.yaml)
 
 wait_for_policy_text "\"name\": \"${SESSION_ID}\""
 wait_for_policy_text "\"consented_trust\": \"low\""
@@ -2174,7 +2174,7 @@ spec:
   policyVersion: v1
   expiresAt: ${EXPIRED_AT}
 EOF
-  ./bin/mcp-runtime access session apply --file "${WORKDIR}/access-session-expired.yaml"
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access session apply --file access-session-expired.yaml)
   wait_for_policy_text "\"expires_at\": \"${EXPIRED_AT}\""
   print_gateway_policy_debug
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 401 "session_expired"
@@ -2196,7 +2196,7 @@ spec:
   consentedTrust: low
   policyVersion: v1
 EOF
-  ./bin/mcp-runtime access session apply --file "${WORKDIR}/access-session-restored.yaml"
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access session apply --file access-session-restored.yaml)
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
 
   echo "[policy] disabling access grant via CLI"
@@ -2455,7 +2455,7 @@ spec:
     - name: upper
       decision: allow
 EOF
-  ./bin/mcp-runtime access grant apply --file "${WORKDIR}/access-grant-deny.yaml"
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access grant apply --file access-grant-deny.yaml)
 
   wait_for_grant_tool_rule "${SERVER_NAME}-grant" "aaa-ping" "deny"
   wait_for_grant_tool_rule "${SERVER_NAME}-grant" "echo" "deny"
