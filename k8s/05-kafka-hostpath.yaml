@@ -124,13 +124,12 @@ spec:
       targetPort: 2181
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: zookeeper
   namespace: mcp-sentinel
 spec:
-  strategy:
-    type: Recreate
+  serviceName: zookeeper
   replicas: 1
   selector:
     matchLabels:
