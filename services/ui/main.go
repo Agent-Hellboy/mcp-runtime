@@ -47,6 +47,9 @@ func main() {
 	apiKey := strings.TrimSpace(os.Getenv("API_KEY"))
 	apiKeys := strings.TrimSpace(os.Getenv("API_KEYS"))
 	apiUpstream := envOr("API_UPSTREAM", "http://mcp-sentinel-api:8080")
+	if apiKey == "" && apiKeys == "" {
+		log.Printf("WARNING: neither API_KEY nor API_KEYS is set; UI login is disabled and all /api requests will be rejected with 401")
+	}
 
 	mux, err := newMux(apiBase, apiUpstream, apiKey, apiKeys)
 	if err != nil {

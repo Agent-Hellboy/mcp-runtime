@@ -140,46 +140,71 @@ func (m *Mutator) MergeDeploymentArgs(deploymentName, containerName string, newA
 			}
 		}
 
+		existingUnits := groupArgTokens(existingArgs)
+		newUnits := groupArgTokens(newArgs)
+
 		// Build index by arg key (flag name)
 		argIndex := make(map[string]int)
-		for i, arg := range existingArgs {
+		for i, arg := range existingUnits {
 			key := extractArgKey(arg)
 			argIndex[key] = i
 		}
 
 		// Merge new args: replace if key exists, append otherwise
-		mergedArgs := make([]string, len(existingArgs))
-		copy(mergedArgs, existingArgs)
+		mergedUnits := append(make([]string, 0, len(existingUnits)+len(newUnits)), existingUnits...)
 
-		for _, newArg := range newArgs {
+		for _, newArg := range newUnits {
 			key := extractArgKey(newArg)
 			if idx, exists := argIndex[key]; exists {
 				// Replace existing arg
-				mergedArgs[idx] = newArg
+				mergedUnits[idx] = newArg
 			} else {
 				// Append new arg
-				argIndex[key] = len(mergedArgs)
-				mergedArgs = append(mergedArgs, newArg)
+				argIndex[key] = len(mergedUnits)
+				mergedUnits = append(mergedUnits, newArg)
 			}
 		}
 
 		// Convert to []any for YAML
-		argsAny := make([]any, len(mergedArgs))
-		for i, arg := range mergedArgs {
-			argsAny[i] = arg
-		}
-		container["args"] = argsAny
+		container["args"] = flattenArgUnits(mergedUnits)
 		return nil
 	})
 }
 
 // extractArgKey extracts the flag name from a command-line argument.
-// For example, "--leader-elect=true" returns "--leader-elect".
+// For example, "--leader-elect=true" and "--leader-elect true" return "--leader-elect".
 func extractArgKey(arg string) string {
+	arg, _, _ = strings.Cut(strings.TrimSpace(arg), " ")
 	if idx := strings.Index(arg, "="); idx > 0 {
 		return arg[:idx]
 	}
 	return arg
+}
+
+func groupArgTokens(args []string) []string {
+	grouped := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") && !strings.Contains(arg, "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			grouped = append(grouped, arg+" "+args[i+1])
+			i++
+			continue
+		}
+		grouped = append(grouped, arg)
+	}
+	return grouped
+}
+
+func flattenArgUnits(units []string) []any {
+	args := make([]any, 0, len(units))
+	for _, unit := range units {
+		if flag, value, ok := strings.Cut(unit, " "); ok {
+			args = append(args, flag, value)
+			continue
+		}
+		args = append(args, unit)
+	}
+	return args
 }
 
 // SetDeploymentEnv sets environment variables for a specific container.

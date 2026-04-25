@@ -228,6 +228,50 @@ spec:
 	}
 }
 
+func TestMergeDeploymentArgsHandlesSpaceSeparatedFlags(t *testing.T) {
+	yaml := `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: test-container
+        args:
+        - --leader-elect
+        - "true"
+        - --zap-log-level=info
+`
+	m, err := NewMutator([]byte(yaml))
+	if err != nil {
+		t.Fatalf("NewMutator failed: %v", err)
+	}
+
+	if err := m.MergeDeploymentArgs("test-deployment", "", []string{
+		"--leader-elect", "false",
+		"--health-probe-bind-address=:8081",
+	}); err != nil {
+		t.Fatalf("MergeDeploymentArgs failed: %v", err)
+	}
+
+	deployment := m.FindDeployment("test-deployment", "")
+	spec := getMap(deployment, "spec", "template", "spec")
+	containers := spec["containers"].([]any)
+	container := containers[0].(map[string]any)
+	args := container["args"].([]any)
+	want := []any{"--leader-elect", "false", "--zap-log-level=info", "--health-probe-bind-address=:8081"}
+	if len(args) != len(want) {
+		t.Fatalf("args len = %d, want %d: %#v", len(args), len(want), args)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("args[%d] = %v, want %v; full args=%#v", i, args[i], want[i], args)
+		}
+	}
+}
+
 func TestToYAML(t *testing.T) {
 	yaml := `
 apiVersion: apps/v1

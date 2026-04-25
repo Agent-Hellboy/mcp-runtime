@@ -16,11 +16,22 @@ async function fetchJSON(path, options = {}) {
     if (response.status === 401) {
       setAuthenticated(false);
       showAuthModal("Enter a valid API key to continue.");
+      throw unauthorizedError();
     }
     throw new Error(error || `Request failed: ${response.status}`);
   }
 
   return response.json();
+}
+
+function unauthorizedError() {
+  const err = new Error("Unauthorized");
+  err.name = "UnauthorizedError";
+  return err;
+}
+
+function isUnauthorizedError(err) {
+  return err?.name === "UnauthorizedError";
 }
 
 // Toast Notifications
@@ -120,6 +131,7 @@ async function loadDashboardSummary() {
       );
     }
   } catch (err) {
+    if (isUnauthorizedError(err)) return;
     console.error("Failed to load dashboard summary:", err);
   }
 }
@@ -167,6 +179,7 @@ async function loadEvents() {
 
     tbody.appendChild(fragment);
   } catch (err) {
+    if (isUnauthorizedError(err)) return;
     console.error("Failed to load events:", err);
   }
 }
@@ -456,6 +469,7 @@ async function loadGrants() {
 
     tbody.appendChild(fragment);
   } catch (err) {
+    if (isUnauthorizedError(err)) return;
     console.error("Failed to load grants:", err);
     document.getElementById("grants-body").innerHTML =
       '<tr><td colspan="6" class="empty">Error loading grants.</td></tr>';
@@ -480,6 +494,7 @@ async function toggleGrant(namespace, name, currentlyDisabled) {
     showToast(`Grant ${action}d successfully`);
     loadGrants();
   } catch (err) {
+    if (isUnauthorizedError(err)) return;
     showToast(`Failed to ${action} grant: ${err.message}`, "error");
   }
 }
@@ -539,6 +554,7 @@ async function loadSessions() {
 
     tbody.appendChild(fragment);
   } catch (err) {
+    if (isUnauthorizedError(err)) return;
     console.error("Failed to load sessions:", err);
     document.getElementById("sessions-body").innerHTML =
       '<tr><td colspan="6" class="empty">Error loading sessions.</td></tr>';
@@ -563,6 +579,7 @@ async function toggleSession(namespace, name, currentlyRevoked) {
     showToast(`Session ${action}d successfully`);
     loadSessions();
   } catch (err) {
+    if (isUnauthorizedError(err)) return;
     showToast(`Failed to ${action} session: ${err.message}`, "error");
   }
 }
@@ -617,6 +634,7 @@ async function loadComponents() {
 
     grid.appendChild(fragment);
   } catch (err) {
+    if (isUnauthorizedError(err)) return;
     console.error("Failed to load components:", err);
     grid.innerHTML =
       '<div class="component-card loading">Error loading components.</div>';
@@ -649,6 +667,7 @@ async function restartComponent() {
     select.value = "";
     setTimeout(loadComponents, 3000);
   } catch (err) {
+    if (isUnauthorizedError(err)) return;
     showToast(`Failed to restart component: ${err.message}`, "error");
   }
 }
