@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestConfigDoesNotExposeAPIKey(t *testing.T) {
@@ -119,6 +120,80 @@ func TestAPIProxyAllowsDirectAPIKeyClients(t *testing.T) {
 	if !upstreamCalled {
 		t.Fatal("direct API-key request did not reach upstream")
 	}
+}
+
+func TestLoginClientIDUsesForwardedFor(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+	req.RemoteAddr = "10.0.0.2:12345"
+	req.Header.Set("x-forwarded-for", "203.0.113.10, 10.0.0.2")
+
+	if got := loginClientID(req); got != "203.0.113.10" {
+		t.Fatalf("loginClientID() = %q, want forwarded client", got)
+	}
+}
+
+func TestHandleLoginLocksOutRepeatedFailures(t *testing.T) {
+	restore := useLoginAttemptTrackerForTest(t)
+	defer restore()
+
+	handler := handleLogin("secret", deriveSessionKey("secret"))
+	for i := 0; i < loginFailureThreshold; i++ {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, loginRequestFrom("198.51.100.10", `{"api_key":"wrong"}`))
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("failure %d status = %d, want %d", i+1, recorder.Code, http.StatusUnauthorized)
+		}
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, loginRequestFrom("198.51.100.10", `{"api_key":"secret"}`))
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("locked-out status = %d, want %d", recorder.Code, http.StatusTooManyRequests)
+	}
+}
+
+func TestHandleLoginSuccessResetsFailureCounter(t *testing.T) {
+	restore := useLoginAttemptTrackerForTest(t)
+	defer restore()
+
+	handler := handleLogin("secret", deriveSessionKey("secret"))
+	for i := 0; i < 2; i++ {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, loginRequestFrom("198.51.100.11", `{"api_key":"wrong"}`))
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("failure %d status = %d, want %d", i+1, recorder.Code, http.StatusUnauthorized)
+		}
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, loginRequestFrom("198.51.100.11", `{"api_key":"secret"}`))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("success status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	loginAttempts.mu.Lock()
+	defer loginAttempts.mu.Unlock()
+	if got := loginAttempts.clients["198.51.100.11"].failures; got != 0 {
+		t.Fatalf("failure count after success = %d, want 0", got)
+	}
+}
+
+func useLoginAttemptTrackerForTest(t *testing.T) func() {
+	t.Helper()
+	previous := loginAttempts
+	loginAttempts = newLoginAttemptTracker(func() time.Time {
+		return time.Unix(1_700_000_000, 0)
+	})
+	return func() {
+		loginAttempts = previous
+	}
+}
+
+func loginRequestFrom(clientID, body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(body))
+	req.RemoteAddr = "10.0.0.2:12345"
+	req.Header.Set("x-forwarded-for", clientID)
+	return req
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

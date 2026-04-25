@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -32,11 +34,34 @@ var staticFS embed.FS
 const (
 	sessionCookieName = "mcp_ui_session"
 	sessionDuration   = 8 * time.Hour
+
+	loginRateLimitCapacity = 10
+	loginRateLimitRefill   = time.Minute
+	loginFailureWindow     = 15 * time.Minute
+	loginFailureThreshold  = 5
+	loginLockoutDuration   = 5 * time.Minute
+	loginFailureLogEvery   = 3
 )
 
 type sessionPayload struct {
 	ExpiresAt int64 `json:"exp"`
 }
+
+type loginAttemptTracker struct {
+	mu      sync.Mutex
+	clients map[string]*loginClientState
+	now     func() time.Time
+}
+
+type loginClientState struct {
+	tokens         int
+	lastRefill     time.Time
+	failures       int
+	failuresExpire time.Time
+	lockedUntil    time.Time
+}
+
+var loginAttempts = newLoginAttemptTracker(time.Now)
 
 // main initializes and starts the MCP Sentinel UI server.
 // It serves static web assets and provides a dynamic /config.js endpoint
@@ -185,6 +210,11 @@ func handleLogin(apiKey string, sessionKey []byte) http.HandlerFunc {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
 			return
 		}
+		clientID := loginClientID(r)
+		if !loginAttempts.allow(clientID) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too_many_requests"})
+			return
+		}
 		if apiKey == "" {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "api_key_not_configured"})
 			return
@@ -197,13 +227,105 @@ func handleLogin(apiKey string, sessionKey []byte) http.HandlerFunc {
 			return
 		}
 		if !hmac.Equal([]byte(strings.TrimSpace(req.APIKey)), []byte(apiKey)) {
+			failures := loginAttempts.recordFailure(clientID)
+			if failures >= loginFailureLogEvery {
+				log.Printf(`auth_login_failure client=%q timestamp=%q failure_count=%d`, clientID, time.Now().UTC().Format(time.RFC3339), failures)
+			}
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
 
+		loginAttempts.recordSuccess(clientID)
 		http.SetCookie(w, newSessionCookie(r, sessionKey))
 		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
 	}
+}
+
+func loginClientID(r *http.Request) string {
+	if forwardedFor := strings.TrimSpace(r.Header.Get("x-forwarded-for")); forwardedFor != "" {
+		client, _, _ := strings.Cut(forwardedFor, ",")
+		if client = strings.TrimSpace(client); client != "" {
+			return client
+		}
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil && host != "" {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func newLoginAttemptTracker(now func() time.Time) *loginAttemptTracker {
+	return &loginAttemptTracker{clients: map[string]*loginClientState{}, now: now}
+}
+
+func (t *loginAttemptTracker) allow(clientID string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	state := t.stateForLocked(clientID)
+	now := t.now()
+	refillLoginTokens(state, now)
+	if now.Before(state.lockedUntil) {
+		return false
+	}
+	if state.tokens <= 0 {
+		return false
+	}
+	state.tokens--
+	return true
+}
+
+func (t *loginAttemptTracker) recordFailure(clientID string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	state := t.stateForLocked(clientID)
+	now := t.now()
+	if now.After(state.failuresExpire) {
+		state.failures = 0
+	}
+	state.failures++
+	state.failuresExpire = now.Add(loginFailureWindow)
+	if state.failures >= loginFailureThreshold {
+		state.lockedUntil = now.Add(loginLockoutDuration)
+	}
+	return state.failures
+}
+
+func (t *loginAttemptTracker) recordSuccess(clientID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	state := t.stateForLocked(clientID)
+	state.failures = 0
+	state.failuresExpire = time.Time{}
+	state.lockedUntil = time.Time{}
+}
+
+func (t *loginAttemptTracker) stateForLocked(clientID string) *loginClientState {
+	state := t.clients[clientID]
+	if state == nil {
+		now := t.now()
+		state = &loginClientState{tokens: loginRateLimitCapacity, lastRefill: now}
+		t.clients[clientID] = state
+	}
+	return state
+}
+
+func refillLoginTokens(state *loginClientState, now time.Time) {
+	if state.lastRefill.IsZero() {
+		state.lastRefill = now
+	}
+	elapsed := now.Sub(state.lastRefill)
+	if elapsed < loginRateLimitRefill {
+		return
+	}
+	refill := int(elapsed / loginRateLimitRefill)
+	state.tokens += refill
+	if state.tokens > loginRateLimitCapacity {
+		state.tokens = loginRateLimitCapacity
+	}
+	state.lastRefill = state.lastRefill.Add(time.Duration(refill) * loginRateLimitRefill)
 }
 
 func handleLogout(w http.ResponseWriter, r *http.Request) {
