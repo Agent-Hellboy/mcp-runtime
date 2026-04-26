@@ -8,6 +8,8 @@ import (
 )
 
 func TestLoadFromFile(t *testing.T) {
+	t.Setenv("MCP_PLATFORM_DOMAIN", "")
+	t.Setenv("MCP_MCP_INGRESS_HOST", "")
 	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "")
 	t.Setenv("MCP_REGISTRY_HOST", "")
 
@@ -391,6 +393,12 @@ func TestSetDefaultsImageResolution(t *testing.T) {
 			wantImage: "legacy.example.com/srv",
 		},
 		{
+			name:      "honors MCP_PLATFORM_DOMAIN for registry host",
+			env:       map[string]string{"MCP_PLATFORM_DOMAIN": "mcpruntime.com"},
+			input:     &ServerMetadata{Name: "srv"},
+			wantImage: "registry.mcpruntime.com/srv",
+		},
+		{
 			name:      "does not overwrite explicit image",
 			env:       map[string]string{"MCP_REGISTRY_INGRESS_HOST": "registry.example.com"},
 			input:     &ServerMetadata{Name: "srv", Image: "custom/image"},
@@ -399,6 +407,8 @@ func TestSetDefaultsImageResolution(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("MCP_PLATFORM_DOMAIN", "")
+			t.Setenv("MCP_MCP_INGRESS_HOST", "")
 			t.Setenv("MCP_REGISTRY_INGRESS_HOST", "")
 			t.Setenv("MCP_REGISTRY_HOST", "")
 			for k, v := range tc.env {

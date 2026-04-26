@@ -47,17 +47,20 @@ func TestGetEnvOrDefault(t *testing.T) {
 }
 
 func TestLoadCLIConfigWithProvisionedRegistry(t *testing.T) {
+	t.Setenv("MCP_PLATFORM_DOMAIN", "")
+	t.Setenv("MCP_MCP_INGRESS_HOST", "")
 	t.Setenv("MCP_DEPLOYMENT_TIMEOUT", "3s")
 	t.Setenv("MCP_CERT_TIMEOUT", "30s")
 	t.Setenv("MCP_REGISTRY_PORT", "6000")
+	t.Setenv("MCP_REGISTRY_HOST", "")
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.43.39.164:5000")
-	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.prod.example.com")
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.prod.mcpruntime.com")
 	t.Setenv("MCP_SKOPEO_IMAGE", "example/skopeo:latest")
 	t.Setenv("MCP_OPERATOR_IMAGE", "example/operator:latest")
 	t.Setenv("MCP_GATEWAY_PROXY_IMAGE", "example/mcp-proxy:latest")
 	t.Setenv("MCP_SENTINEL_INGEST_URL", "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events")
 	t.Setenv("MCP_DEFAULT_SERVER_PORT", "9000")
-	t.Setenv("PROVISIONED_REGISTRY_URL", "registry.example.com")
+	t.Setenv("PROVISIONED_REGISTRY_URL", "registry.mcpruntime.com")
 	t.Setenv("PROVISIONED_REGISTRY_USERNAME", "user")
 	t.Setenv("PROVISIONED_REGISTRY_PASSWORD", "pass")
 
@@ -74,8 +77,11 @@ func TestLoadCLIConfigWithProvisionedRegistry(t *testing.T) {
 	if cfg.RegistryEndpoint != "10.43.39.164:5000" {
 		t.Fatalf("expected registry endpoint override, got %q", cfg.RegistryEndpoint)
 	}
-	if cfg.RegistryIngressHost != "registry.prod.example.com" {
+	if cfg.RegistryIngressHost != "registry.prod.mcpruntime.com" {
 		t.Fatalf("expected registry ingress host override, got %q", cfg.RegistryIngressHost)
+	}
+	if cfg.McpIngressHost != "" {
+		t.Fatalf("expected empty mcp ingress host, got %q", cfg.McpIngressHost)
 	}
 	if cfg.SkopeoImage != "example/skopeo:latest" {
 		t.Fatalf("expected skopeo image override, got %q", cfg.SkopeoImage)
@@ -92,7 +98,7 @@ func TestLoadCLIConfigWithProvisionedRegistry(t *testing.T) {
 	if cfg.DefaultServerPort != 9000 {
 		t.Fatalf("expected default server port 9000, got %d", cfg.DefaultServerPort)
 	}
-	if cfg.ProvisionedRegistryURL != "registry.example.com" {
+	if cfg.ProvisionedRegistryURL != "registry.mcpruntime.com" {
 		t.Fatalf("expected registry url, got %q", cfg.ProvisionedRegistryURL)
 	}
 	if cfg.ProvisionedRegistryUsername != "user" || cfg.ProvisionedRegistryPassword != "pass" {
@@ -100,7 +106,27 @@ func TestLoadCLIConfigWithProvisionedRegistry(t *testing.T) {
 	}
 }
 
+func TestLoadCLIConfigPlatformDomain(t *testing.T) {
+	for _, k := range []string{
+		"MCP_REGISTRY_ENDPOINT", "MCP_REGISTRY_HOST", "MCP_REGISTRY_INGRESS_HOST", "MCP_MCP_INGRESS_HOST",
+	} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("MCP_PLATFORM_DOMAIN", "mcpruntime.com")
+	cfg := LoadCLIConfig()
+	if cfg.RegistryEndpoint != "registry.mcpruntime.com" {
+		t.Fatalf("expected registry endpoint from platform, got %q", cfg.RegistryEndpoint)
+	}
+	if cfg.RegistryIngressHost != "registry.mcpruntime.com" {
+		t.Fatalf("expected registry ingress from platform, got %q", cfg.RegistryIngressHost)
+	}
+	if cfg.McpIngressHost != "mcp.mcpruntime.com" {
+		t.Fatalf("expected mcp host from platform, got %q", cfg.McpIngressHost)
+	}
+}
+
 func TestLoadCLIConfigUsesLegacyAnalyticsEnv(t *testing.T) {
+	t.Setenv("MCP_PLATFORM_DOMAIN", "")
 	t.Setenv("MCP_SENTINEL_INGEST_URL", "")
 	t.Setenv("MCP_ANALYTICS_INGEST_URL", "http://legacy-ingest")
 
@@ -119,7 +145,8 @@ func TestConfigAccessors(t *testing.T) {
 		CertTimeout:         15 * time.Second,
 		RegistryPort:        7000,
 		RegistryEndpoint:    "10.43.39.164:5000",
-		RegistryIngressHost: "registry.prod.example.com",
+		RegistryIngressHost: "registry.prod.mcpruntime.com",
+		McpIngressHost:      "mcp.prod.mcpruntime.com",
 		SkopeoImage:         "skopeo:test",
 		OperatorImage:       "operator:test",
 		GatewayProxyImage:   "proxy:test",
@@ -139,8 +166,11 @@ func TestConfigAccessors(t *testing.T) {
 	if GetRegistryEndpoint() != "10.43.39.164:5000" {
 		t.Fatalf("GetRegistryEndpoint mismatch")
 	}
-	if GetRegistryIngressHost() != "registry.prod.example.com" {
+	if GetRegistryIngressHost() != "registry.prod.mcpruntime.com" {
 		t.Fatalf("GetRegistryIngressHost mismatch")
+	}
+	if GetMcpIngressHost() != "mcp.prod.mcpruntime.com" {
+		t.Fatalf("GetMcpIngressHost mismatch")
 	}
 	if GetSkopeoImage() != "skopeo:test" {
 		t.Fatalf("GetSkopeoImage mismatch")
@@ -156,5 +186,23 @@ func TestConfigAccessors(t *testing.T) {
 	}
 	if GetDefaultServerPort() != 7070 {
 		t.Fatalf("GetDefaultServerPort mismatch")
+	}
+}
+
+func TestApplySetupPlanToCLIConfig_TLSClusterIssuer(t *testing.T) {
+	orig := DefaultCLIConfig
+	t.Cleanup(func() { DefaultCLIConfig = orig })
+	DefaultCLIConfig = &CLIConfig{RegistryClusterIssuerName: "unset"}
+	applySetupPlanToCLIConfig(SetupPlan{TLSEnabled: true, TLSClusterIssuer: "internal-ca", ACMEmail: ""})
+	if GetRegistryClusterIssuerName() != "internal-ca" {
+		t.Fatalf("expected custom issuer, got %q", GetRegistryClusterIssuerName())
+	}
+	applySetupPlanToCLIConfig(SetupPlan{TLSEnabled: true, TLSClusterIssuer: "ignored", ACMEmail: "ops@mcpruntime.com"})
+	if want := ClusterIssuerNameForACME(false); GetRegistryClusterIssuerName() != want {
+		t.Fatalf("expected ACME issuer to take precedence, got %q", GetRegistryClusterIssuerName())
+	}
+	applySetupPlanToCLIConfig(SetupPlan{TLSEnabled: false})
+	if GetRegistryClusterIssuerName() != "" {
+		t.Fatalf("expected cleared when TLS off, got %q", GetRegistryClusterIssuerName())
 	}
 }

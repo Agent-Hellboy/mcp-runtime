@@ -162,7 +162,7 @@ func (m *RegistryManager) newRegistryProvisionCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&url, "url", "", "External registry URL (e.g., registry.example.com)")
+	cmd.Flags().StringVar(&url, "url", "", "External registry URL (e.g., registry.mcpruntime.com)")
 	cmd.Flags().StringVar(&username, "username", "", "Registry username (optional)")
 	cmd.Flags().StringVar(&password, "password", "", "Registry password (optional)")
 	cmd.Flags().StringVar(&operatorImage, "operator-image", "", "Optional: build and push operator image to this external registry (e.g., <registry>/mcp-runtime-operator:latest)")
@@ -709,7 +709,7 @@ func splitImage(image string) (string, string) {
 }
 
 // dropRegistryPrefix removes registry prefix from image repository name
-// Example: "registry.example.com/my-image" -> "my-image"
+// Example: "registry.mcpruntime.com/my-image" -> "my-image"
 func dropRegistryPrefix(repo string) string {
 	parts := strings.Split(repo, "/")
 	if len(parts) <= 1 {

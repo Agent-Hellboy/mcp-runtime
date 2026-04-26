@@ -38,10 +38,32 @@ func acmeServerURL(staging bool) string {
 	return letsencryptProdURL
 }
 
+func acmeTLSDNSNames() []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, h := range []string{GetRegistryIngressHost(), GetMcpIngressHost()} {
+		h = strings.TrimSpace(h)
+		if h == "" {
+			continue
+		}
+		if _, ok := seen[h]; ok {
+			continue
+		}
+		seen[h] = struct{}{}
+		out = append(out, h)
+	}
+	return out
+}
+
 func validateACMEHostnameForPublicCA() error {
-	host := strings.TrimSpace(GetRegistryIngressHost())
-	if isDevRegistryURL(host) {
-		return fmt.Errorf("ACME public CA requires a public DNS name; set MCP_REGISTRY_HOST (or MCP_REGISTRY_INGRESS_HOST) to a hostname that resolves to this cluster (not %q)", host)
+	names := acmeTLSDNSNames()
+	if len(names) == 0 {
+		return fmt.Errorf("ACME public CA requires a public DNS name; set MCP_PLATFORM_DOMAIN, MCP_REGISTRY_HOST, or MCP_REGISTRY_INGRESS_HOST")
+	}
+	for _, host := range names {
+		if isDevRegistryURL(host) {
+			return fmt.Errorf("ACME public CA requires a public DNS name; set MCP_PLATFORM_DOMAIN (e.g. mcpruntime.com for registry. and mcp. names) or MCP_REGISTRY_INGRESS_HOST, not %q", host)
+		}
 	}
 	return nil
 }
@@ -142,16 +164,34 @@ func renderLetsEncryptClusterIssuerManifest(name, email, serverURL string) strin
 	return b.String()
 }
 
-func applyRegistryCertificateForACME(kubectl KubectlRunner, dnsName, issuerName string) error {
-	dnsName = strings.TrimSpace(dnsName)
-	if dnsName == "" {
-		return fmt.Errorf("registry DNS name is empty")
+func applyRegistryCertificateForACME(kubectl KubectlRunner, dnsNames []string, issuerName string) error {
+	uniq := dedupeHostnames(dnsNames)
+	if len(uniq) == 0 {
+		return fmt.Errorf("registry TLS has no DNS names to request")
 	}
-	manifest := renderRegistryCertificateForACME(registryCertificateName, dnsName, issuerName)
+	manifest := renderRegistryCertificateForACME(registryCertificateName, uniq, issuerName)
 	return applyManifestContent(kubectl, manifest)
 }
 
-func renderRegistryCertificateForACME(certName, dnsName, issuerName string) string {
+func dedupeHostnames(hs []string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, h := range hs {
+		h = strings.TrimSpace(h)
+		if h == "" {
+			continue
+		}
+		if _, ok := seen[h]; ok {
+			continue
+		}
+		seen[h] = struct{}{}
+		out = append(out, h)
+	}
+	return out
+}
+
+func renderRegistryCertificateForACME(certName string, dnsNames []string, issuerName string) string {
+	uniq := dedupeHostnames(dnsNames)
 	var b strings.Builder
 	b.WriteString("apiVersion: cert-manager.io/v1\n")
 	b.WriteString("kind: Certificate\n")
@@ -170,8 +210,10 @@ func renderRegistryCertificateForACME(certName, dnsName, issuerName string) stri
 	b.WriteString("\n")
 	b.WriteString("    kind: ClusterIssuer\n")
 	b.WriteString("  dnsNames:\n")
-	b.WriteString("    - ")
-	b.WriteString(strconv.Quote(dnsName))
-	b.WriteString("\n")
+	for _, name := range uniq {
+		b.WriteString("    - ")
+		b.WriteString(strconv.Quote(name))
+		b.WriteString("\n")
+	}
 	return b.String()
 }

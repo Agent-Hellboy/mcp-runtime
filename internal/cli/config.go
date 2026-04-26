@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"mcp-runtime/pkg/metadata"
 )
 
 // CLIConfig holds all CLI configuration loaded from environment variables.
@@ -21,7 +23,11 @@ type CLIConfig struct {
 	RegistryPort        int
 	RegistryEndpoint    string
 	RegistryIngressHost string
-	// RegistryClusterIssuerName is the cert-manager.io/cluster-issuer name for the registry ingress (e.g. letsencrypt-prod). Set by setup --with-tls, not from env.
+	// McpIngressHost is the public gateway / MCP host (e.g. mcp.mcpruntime.com), from
+	// MCP_MCP_INGRESS_HOST or mcp.<MCP_PLATFORM_DOMAIN>. Empty if unset.
+	McpIngressHost string
+	// RegistryClusterIssuerName is the cert-manager.io/cluster-issuer name for the registry ingress
+	// (e.g. letsencrypt-prod, mcp-runtime-ca, or an org issuer from --tls-cluster-issuer). Set by setup --with-tls, not from env.
 	RegistryClusterIssuerName string
 	SkopeoImage               string
 	OperatorImage             string // Override for operator image
@@ -44,7 +50,7 @@ const (
 	defaultCertTimeout         = 60 * time.Second
 	defaultHelperPodTimeout    = 3 * time.Minute
 	defaultRegistryPort        = 5000
-	defaultRegistryEndpoint    = "registry.local"
+	defaultRegistryEndpoint    = "registry.local" // used by build paths; same default as metadata.DefaultRegistryHost
 	defaultRegistryIngressHost = "registry.local"
 	defaultSkopeoImage         = "quay.io/skopeo/stable:v1.14"
 	defaultServerPort          = 8088
@@ -55,14 +61,9 @@ var DefaultCLIConfig = LoadCLIConfig()
 
 // LoadCLIConfig loads CLI configuration from environment variables.
 func LoadCLIConfig() *CLIConfig {
-	registryEndpoint := os.Getenv("MCP_REGISTRY_ENDPOINT")
-	if registryEndpoint == "" {
-		registryEndpoint = getEnvOrDefault("MCP_REGISTRY_HOST", defaultRegistryEndpoint)
-	}
-	registryIngressHost := os.Getenv("MCP_REGISTRY_INGRESS_HOST")
-	if registryIngressHost == "" {
-		registryIngressHost = getEnvOrDefault("MCP_REGISTRY_HOST", defaultRegistryIngressHost)
-	}
+	registryEndpoint := metadata.ResolveRegistryEndpoint()
+	registryIngressHost := metadata.ResolveRegistryHost()
+	mcpIngressHost := metadata.ResolveMcpIngressHost()
 	return &CLIConfig{
 		// Applies to core deployment waits and mcp-sentinel rollouts (ingest, Kafka, etc.).
 		DeploymentTimeout:           parseDurationEnv("MCP_DEPLOYMENT_TIMEOUT", defaultDeploymentTimeout),
@@ -71,6 +72,7 @@ func LoadCLIConfig() *CLIConfig {
 		RegistryPort:                parseIntEnv("MCP_REGISTRY_PORT", defaultRegistryPort),
 		RegistryEndpoint:            registryEndpoint,
 		RegistryIngressHost:         registryIngressHost,
+		McpIngressHost:              mcpIngressHost,
 		SkopeoImage:                 getEnvOrDefault("MCP_SKOPEO_IMAGE", defaultSkopeoImage),
 		OperatorImage:               os.Getenv("MCP_OPERATOR_IMAGE"), // No default, empty means auto
 		GatewayProxyImage:           os.Getenv("MCP_GATEWAY_PROXY_IMAGE"),
@@ -150,6 +152,12 @@ func GetRegistryEndpoint() string {
 // GetRegistryIngressHost returns the configured registry ingress host.
 func GetRegistryIngressHost() string {
 	return DefaultCLIConfig.RegistryIngressHost
+}
+
+// GetMcpIngressHost returns the public MCP / gateway host (mcp.<domain> when
+// MCP_PLATFORM_DOMAIN is set), or empty if not configured.
+func GetMcpIngressHost() string {
+	return DefaultCLIConfig.McpIngressHost
 }
 
 // GetRegistryClusterIssuerName returns the cluster issuer name used on the registry TLS ingress annotation (empty if unset).

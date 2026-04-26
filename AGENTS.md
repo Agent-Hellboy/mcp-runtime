@@ -1,100 +1,163 @@
-# Agent Dev & Debug Guide
+# AGENTS.md — developer and AI-agent guide
 
-Practical notes for spinning up, debugging, and exercising the MCP Runtime stack locally—optimized for agent-driven workflows (but still fine for humans).
+This file is the **onboarding and operations runbook** for the MCP Runtime repo. Humans and coding agents (Cursor, Copilot, Codex, etc.) should use it to **run the right checks**, **find the right code**, and **debug the stack** without re-deriving structure from scratch. It complements `README.md` (product overview) with **workstation commands**, **layout**, and **failure modes**.
 
-## 1) Overview
-- Audience: anyone developing or debugging the control plane, services, or MCP servers.
-- Scope: local Kind flow, endpoints, auth, common break/fix steps, traffic generation, governance resources.
+If instructions conflict, prefer **this repo** (`README`, CRDs, `v1alpha1` types) over generic Kubernetes or MCP advice.
 
-## 2) Dev Setup
-- Prereqs: Docker Desktop running, Kind, kubectl, curl, jq, Python 3.
-- Quick start (Kind):
-  ```bash
-  kind create cluster --name mcp-runtime
-  ./bin/mcp-runtime bootstrap                              # preflight cluster prerequisites
-  ./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http
-  kubectl port-forward -n traefik svc/traefik 18080:8000   # expose ingress
-  ```
-- Status check: `./bin/mcp-runtime status`
-- Preflight only (no changes): `./bin/mcp-runtime bootstrap`. Add `--apply --provider k3s` (k3s server node only) to install bundled CoreDNS / local-path manifests.
+## Repository map (where to look)
 
-## 3) Endpoints & Auth Reference
-- UI / Dashboard: `http://localhost:18080/`
-- Grafana: `/grafana`
-- Prometheus: `/prometheus`
-- API base: `http://localhost:18080/api`
-- MCP servers (test): `http://localhost:18080/demo-one/mcp`, `http://localhost:18080/demo-two/mcp`
-- PII redaction middleware: enabled in the `config/ingress/overlays/http` overlay via Traefik plugin `pii-redactor@file` (Go 1.22). To (re)apply locally: `./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http`. Local Kind/dev flows mount the bundled plugin source from `services/traefik-plugins/pii-redactor` via Traefik `localplugins` so the middleware works without a separately published plugin tag.
-- API key (for UI/API):
-  ```bash
-  kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
-    -o jsonpath='{.data.UI_API_KEY}' | base64 -d
-  ```
-  Ensure `API_KEYS` and `UI_API_KEY` in that secret match; copy the secret to `mcp-servers` namespace when servers need it.
-- Public TLS (Let's Encrypt): `./bin/mcp-runtime setup --with-tls --acme-email you@example.com` with `MCP_REGISTRY_HOST` set to a **public DNS name** that resolves to your ingress (port 80 must reach Traefik for HTTP-01). Setup installs cert-manager if missing, creates a ClusterIssuer, and issues the registry certificate. Use `--acme-staging` while testing. Private CA: omit `--acme-email` and create the `mcp-runtime-ca` secret in `cert-manager` as in `config/cert-manager/`.
+| Area | Path | Notes |
+|------|------|--------|
+| User-facing CLI | `cmd/mcp-runtime/`, `internal/cli/` | `setup`, `status`, `registry`, `server`, `access`, … |
+| Operator (controller) | `cmd/operator/`, `internal/operator/` | `MCPServer` reconciliation, ingress, gateway wiring |
+| API & CRD types | `api/v1alpha1/` | Source of truth for object shapes; CRD YAML in `config/crd/bases/` |
+| Access control (shared) | `pkg/access/` | Grants, sessions, policy pieces used by API and gateway |
+| K8s helpers, manifests, metadata | `pkg/k8sclient/`, `pkg/manifest/`, `pkg/metadata/` | Registry image resolution, YAML helpers |
+| Sentinel services | `services/api`, `services/ui`, `services/ingest`, `services/processor`, `services/mcp-proxy`, … | Separate `go.mod` where present; test in subdirs in CI |
+| Example MCP server | `examples/go-mcp-server/` | Reference for tools and routes |
+| Default cluster install YAML | `k8s/`, `config/` | Overlays, CRDs, cert-manager examples |
+| Traefik plugins (dev) | `services/traefik-plugins/` | e.g. PII redactor source for local overlays |
+| Site / public docs (if editing) | `website/` | Not required for control-plane work |
+| E2E | `test/e2e/`, `test/integration/` | Kind script and envtest-based integration tests |
 
-## 4) Common Debugging Checklist
-- Ingress host missing -> operator error “ingressHost is required”; set `spec.ingressHost` or env `MCP_DEFAULT_INGRESS_HOST`.
-- Port mismatch -> the bundled Go example listens on 8088 by default; set MCPServer `port` and `servicePort` to 8088 unless you intentionally override `PORT`.
-- Analytics 401 -> verify proxy/gateway analytics wiring, not app-server env vars:
-  - `ANALYTICS_INGEST_URL=http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events`
-  - `ANALYTICS_API_KEY` (from `mcp-sentinel-secrets`, `API_KEYS` key)
-- Secret not found -> copy `mcp-sentinel-secrets` into `mcp-servers` or reference a central secret.
-- Dashboard/API 401 -> align `API_KEYS` and `UI_API_KEY`; restart API deployment if changed.
-- Ingress/paths -> verify with `kubectl get ingress -A`.
+**Patterns worth mirroring:** search for similar packages before adding new abstractions; keep CLI errors consistent with `internal/cli/errors.go` and `pkg/errx/`.
 
-## 5) Governance (Grants & Sessions)
-- UI can create/apply grants and sessions, then toggle grant enablement and session revocation.
-- CLI flows use `mcp-runtime access grant apply --file <file.yaml>` and `mcp-runtime access session apply --file <file.yaml>`. Raw `kubectl apply -f <file.yaml>` remains a low-level fallback for the same CRDs.
-- Example manifests:
-  ```yaml
-  apiVersion: mcpruntime.org/v1alpha1
-  kind: MCPAccessGrant
-  metadata:
-    name: demo-one-grant
-    namespace: mcp-servers
-  spec:
-    subject: {humanID: user-123, agentID: ops-agent}
-    serverRef: {name: demo-one, namespace: mcp-servers}
-    maxTrust: high
-    toolRules:
-      - {name: add, decision: allow, requiredTrust: low}
-      - {name: upper, decision: allow, requiredTrust: low}
-  ---
-  apiVersion: mcpruntime.org/v1alpha1
-  kind: MCPAgentSession
-  metadata:
-    name: sess-ops-agent
-    namespace: mcp-servers
-  spec:
-    subject: {humanID: user-123, agentID: ops-agent}
-    serverRef: {name: demo-one, namespace: mcp-servers}
-    consentedTrust: high
-    policyVersion: v1
-  ```
-- Apply through the runtime API: `POST /api/runtime/grants` and `POST /api/runtime/sessions` (requires `x-api-key`). The API checks that `serverRef` names an existing `MCPServer` before apply; that check is not atomic with the write, so a server could be deleted in between (fail-fast for typos, not a distributed transaction).
-- Toggle endpoints: `POST /api/runtime/grants/{ns}/{name}/enable|disable`, `POST /api/runtime/sessions/{ns}/{name}/revoke|unrevoke` (requires `x-api-key`).
-- Kind e2e writes generated access YAML into its work directory, applies it through the CLI subcommands, waits for the gateway policy ConfigMap/cache to reflect the rendered policy, then verifies allow/deny behavior with real MCP traffic.
+## Build, test, and quality (before you push)
 
-## 6) Traffic Generation (MCP JSON-RPC)
-- Single call (replace `<session>` after initialize):
-  ```bash
-  PROTO=2025-06-18
-  BASE=http://localhost:18080/demo-one/mcp
-  curl -i -H "content-type: application/json" \
-       -H "accept: application/json, text/event-stream" \
-       -H "Mcp-Protocol-Version: $PROTO" \
-       -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' $BASE
-  # then
-  curl -i -H "content-type: application/json" \
-       -H "accept: application/json, text/event-stream" \
-       -H "Mcp-Protocol-Version: $PROTO" \
-       -H "Mcp-Session-Id: <session>" \
-       -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"add","arguments":{"a":2,"b":3}}}' $BASE
-  ```
-- Bulk generator (events into ingest):
-  ```bash
-  python3 - <<'PY'
+Use **Go** from `go.mod` (see `go version` / toolchain). From the repo root:
+
+```bash
+# Format (CI fails if this prints paths)
+gofmt -s -l .   # if empty, OK; else run: gofmt -s -w .
+
+go build -o bin/mcp-runtime ./cmd/mcp-runtime
+
+# Fast feedback (matches most of CI for the main module)
+go test ./... -count=1 -race
+go vet ./...
+```
+
+Optional but used in CI: `staticcheck ./...` (install: `go install honnef.co/go/tools/cmd/staticcheck@latest`).
+
+**Targeted tests** (prefer these while iterating; full `./...` can be slow):
+
+- `go test ./internal/operator/... ./internal/cli/... -race -count=1`
+- `go test ./test/golden/... -count=1` (CLI help snapshots; update `test/golden/cli/testdata/*.golden` when you change Cobra help text on purpose)
+- `go test ./test/integration/...` (needs `KUBEBUILDER_ASSETS`; see `Makefile.operator` and CI for envtest setup)
+- `services/api` and `services/ui`: `go test -race -count=1 ./...` inside each directory (CI runs these explicitly)
+
+**CI** (`.github/workflows/ci.yaml`) runs: `gofmt` check, `go vet`, `staticcheck`, unit tests, golden tests, service tests, `test/integration`, then Kind e2e on `main`/`PR` branches. Align local changes with that before opening a PR.
+
+## Conventions for code changes
+
+- **Scope:** Change only what the task needs; do not “clean up” unrelated files. Match naming and patterns in the nearest similar code.
+- **Tests:** Add or adjust tests in the same package when behavior changes. For CLI output, expect golden file updates.
+- **Docs you were not asked to edit:** Avoid adding new top-level docs unless the task needs them; this file, `README`, and existing doc trees are the defaults for agents.
+- **Secrets and prod:** This repo is **alpha**; do not hardcode real credentials. Use the existing secret and env patterns documented below.
+
+## Local dev setup (Kind and CLI)
+
+- **Prereqs:** Docker, Kind, `kubectl`, `curl`, `jq`, Python 3; Go for building the CLI.
+- **Quick start:**
+
+```bash
+kind create cluster --name mcp-runtime
+./bin/mcp-runtime bootstrap                              # preflight cluster prerequisites
+./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http
+kubectl port-forward -n traefik svc/traefik 18080:8000   # expose ingress
+```
+
+- **Status:** `./bin/mcp-runtime status`
+- **Preflight only (no apply):** `./bin/mcp-runtime bootstrap`. For k3s: add `--apply --provider k3s` to install bundled CoreDNS / local-path manifests (server node only).
+
+## Endpoints and auth
+
+- UI: `http://localhost:18080/`
+- Grafana: `/grafana` · Prometheus: `/prometheus` · API base: `http://localhost:18080/api`
+- MCP (test): `http://localhost:18080/demo-one/mcp`, `http://localhost:18080/demo-two/mcp`
+- PII redaction: `config/ingress/overlays/http` with Traefik plugin `pii-redactor@file`. Reapply: `./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http`. The plugin is built from `services/traefik-plugins/pii-redactor` (local `localplugins` mount) so a published image tag is not required for local dev.
+- **API key:**
+
+```bash
+kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
+  -o jsonpath='{.data.UI_API_KEY}' | base64 -d
+```
+
+  Keep `API_KEYS` and `UI_API_KEY` aligned; copy the secret to `mcp-servers` if MCP servers need it.
+
+### Platform domain and TLS (short)
+
+- **Let’s Encrypt:** `./bin/mcp-runtime setup --with-tls --acme-email <addr>`. Set `MCP_PLATFORM_DOMAIN` to an apex (e.g. `mcpruntime.com`) and DNS for `registry.<domain>` and `mcp.<domain>`, or set `MCP_REGISTRY_HOST` / `MCP_REGISTRY_INGRESS_HOST` for public names. Port 80 must hit Traefik for HTTP-01. With a platform domain, cert-manager can issue one `Certificate` with both SANs; the `registry-tls` `Secret` lives in the `registry` namespace (copy to other namespaces if the `mcp.` `Ingress` is elsewhere). Staging: `--acme-staging` / `MCP_ACME_STAGING=1`. Private CA without ACME: omit `--acme-email` and use the `mcp-runtime-ca` path per `config/cert-manager/`.
+- **Internal / enterprise CA:** Install your `ClusterIssuer` first, then: `--with-tls --tls-cluster-issuer <name>` (or `MCP_TLS_CLUSTER_ISSUER`). Setup does not create the issuer; it applies the `Certificate` and waits. Mutually exclusive with `--acme-email`.
+- **Operator default host:** `MCP_PLATFORM_DOMAIN` and related env can drive `MCP_DEFAULT_INGRESS_HOST` to `mcp.<domain>` when configured.
+
+## Debugging checklist (common failures)
+
+- **“ingressHost is required” (operator):** set `spec.ingressHost` on the `MCPServer`, or operator env `MCP_DEFAULT_INGRESS_HOST`, or `MCP_PLATFORM_DOMAIN` for `mcp.<domain>` defaults.
+- **Port mismatch:** the bundled Go example listens on `8088` by default; align `MCPServer` `port` / `servicePort` and container `PORT` if you overrode them.
+- **Analytics 401:** use gateway/ingest URL and key, not the app’s random env. Example: `ANALYTICS_INGEST_URL=http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events` and `ANALYTICS_API_KEY` from `mcp-sentinel-secrets` (`API_KEYS` key).
+- **Secret not found in workload namespace:** copy `mcp-sentinel-secrets` or use a shared secret reference.
+- **Dashboard / API 401:** align `API_KEYS` and `UI_API_KEY` and roll the API deployment.
+- **Ingress / routes:** `kubectl get ingress -A` and confirm paths match the gateway and demo servers you expect.
+
+## Governance (grants and sessions)
+
+- **UI** can create/apply grants and sessions and toggle grant enablement and session state.
+- **CLI:** `mcp-runtime access grant apply --file <file.yaml>` and `mcp-runtime access session apply --file <file.yaml>`. `kubectl apply -f` is still a valid fallback.
+- **Example**
+
+```yaml
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAccessGrant
+metadata:
+  name: demo-one-grant
+  namespace: mcp-servers
+spec:
+  subject: {humanID: user-123, agentID: ops-agent}
+  serverRef: {name: demo-one, namespace: mcp-servers}
+  maxTrust: high
+  toolRules:
+    - {name: add, decision: allow, requiredTrust: low}
+    - {name: upper, decision: allow, requiredTrust: low}
+---
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAgentSession
+metadata:
+  name: sess-ops-agent
+  namespace: mcp-servers
+spec:
+  subject: {humanID: user-123, agentID: ops-agent}
+  serverRef: {name: demo-one, namespace: mcp-servers}
+  consentedTrust: high
+  policyVersion: v1
+```
+
+- **HTTP API (requires `x-api-key`):** `POST /api/runtime/grants`, `POST /api/runtime/sessions`; the API checks that `serverRef` matches an existing `MCPServer` (best-effort, not transactional). Toggles: `POST /api/runtime/grants/{ns}/{name}/enable|disable`, `POST /api/runtime/sessions/{ns}/{name}/revoke|unrevoke`.
+- **Kind e2e** applies generated access YAML, waits for gateway policy materialization, and exercises real MCP JSON-RPC for allow/deny.
+
+## Traffic generation (MCP JSON-RPC)
+
+**Single call** (set `<session>` from the `initialize` response):
+
+```bash
+PROTO=2025-06-18
+BASE=http://localhost:18080/demo-one/mcp
+curl -i -H "content-type: application/json" \
+     -H "accept: application/json, text/event-stream" \
+     -H "Mcp-Protocol-Version: $PROTO" \
+     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' $BASE
+# then
+curl -i -H "content-type: application/json" \
+     -H "accept: application/json, text/event-stream" \
+     -H "Mcp-Protocol-Version: $PROTO" \
+     -H "Mcp-Session-Id: <session>" \
+     -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"add","arguments":{"a":2,"b":3}}}' $BASE
+```
+
+**Bulk (Python)** — fires many `tools/call` events for ingest testing:
+
+```bash
+python3 - <<'PY'
 import json, urllib.request, random, time
 bases = ["http://localhost:18080/demo-one/mcp","http://localhost:18080/demo-two/mcp"]
 proto = "2025-06-18"; calls = 200
@@ -113,48 +176,49 @@ for base in bases:
         time.sleep(0.01)
 print("done")
 PY
-  ```
+```
 
-## 7) Logs & Observability
+## Logs and observability
+
 - Operator: `kubectl logs -n mcp-runtime deploy/mcp-runtime-operator-controller-manager`
-- Components: `kubectl logs -n mcp-sentinel deploy/<api|ingest|processor|ui|gateway>`
-- Status table: `./bin/mcp-runtime status`
-- Grafana/Prometheus reachable via the ingress base URL.
+- Sentinel: `kubectl logs -n mcp-sentinel deploy/<api|ingest|processor|ui|gateway>`
+- **Cluster summary:** `./bin/mcp-runtime status`
+- Dashboards: Grafana and Prometheus via the ingress base URL in dev.
 
-## 8) Clean Start (keep cluster, wipe workloads)
-Use this when you want a “fresh start” without uninstalling k3s/kind itself.
+## Clean start (keep the cluster, wipe user workloads)
 
-⚠️ Destructive: deletes resources cluster-wide.
+Use when you need a **fresh** install without removing Kind/k3s. **Destructive** to application namespaces and most namespaced resources.
 
 ```bash
-# sanity: confirm you are targeting the intended cluster
 kubectl config current-context
 kubectl get nodes
 
-# delete everything in every namespace (pods/deployments/jobs/services/ingresses/etc.)
-# NOTE: build deletable resource list dynamically to avoid errors on clusters where some optional APIs (e.g. PodSecurityPolicy) are absent.
 to_delete="$(kubectl api-resources --verbs=delete --namespaced -o name | paste -sd, -)"
 if [ -n "$to_delete" ]; then
   kubectl delete "$to_delete" --all -A --ignore-not-found --grace-period=0 --force
 fi
 
-# cluster-scoped resources (best-effort; some may not exist depending on cluster/version)
 for r in $(kubectl api-resources --verbs=delete --namespaced=false -o name); do
   kubectl delete "$r" --all --ignore-not-found --grace-period=0 --force || true
 done
 
-# delete all non-system namespaces (wipes everything inside them)
 ns_to_delete="$(kubectl get ns --no-headers | awk '{print $1}' | grep -E -v '^(kube-system|kube-public|kube-node-lease|default)$')"
 if [ -n "$ns_to_delete" ]; then
   printf '%s\n' "$ns_to_delete" | xargs kubectl delete ns
 fi
 
-# optional: also wipe the default namespace
 kubectl delete all,cm,secret,ing,svc,sa,role,rolebinding,deploy,ds,sts,job,cronjob,pvc --all -n default --ignore-not-found --grace-period=0 --force
 ```
 
-## 9) Reference Links
-- Project README: `README.md`
-- K8s manifests: `k8s/`
-- Sample MCP server: `examples/go-mcp-server/`
-- CRDs: `config/crd/bases/`
+## Further reading
+
+- **README** (`README.md`) — high-level product and quick start
+- **K8s YAML** — `k8s/`
+- **CRDs** — `config/crd/bases/`
+- **API docs (published)** — https://mcpruntime.org/docs/ and https://mcpruntime.org/docs/api
+- **Sample server** — `examples/go-mcp-server/`
+- **Website source** — `website/` (documentation site, separate from the Go control plane)
+
+---
+
+*Tip for agents: after substantive edits, run the narrowest `go test` for touched packages, then `go test ./...` before suggesting merge. Update golden files only when help text or CLI output should change on purpose.*

@@ -6,6 +6,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -211,6 +212,20 @@ func checkClusterIssuerWithKubectl(kubectl KubectlRunner) error {
 	// #nosec G204 -- fixed kubectl command to check ClusterIssuer.
 	if err := kubectl.Run([]string{"get", "clusterissuer", certClusterIssuerName}); err != nil {
 		return wrapWithSentinel(ErrClusterIssuerNotFound, err, fmt.Sprintf("ClusterIssuer %q not found: %v", certClusterIssuerName, err))
+	}
+	return nil
+}
+
+// checkNamedClusterIssuerWithKubectl verifies a cert-manager ClusterIssuer exists
+// (e.g. a company-managed CA; setup does not apply it).
+func checkNamedClusterIssuerWithKubectl(kubectl KubectlRunner, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("ClusterIssuer name is empty")
+	}
+	// #nosec G204 -- issuer name is validated, fixed kubectl subresource.
+	if err := kubectl.Run([]string{"get", "clusterissuer", name}); err != nil {
+		return wrapWithSentinel(ErrClusterIssuerNotFound, err, fmt.Sprintf("ClusterIssuer %q not found. Install your org issuer first (cert-manager) or fix --tls-cluster-issuer / MCP_TLS_CLUSTER_ISSUER: %v", name, err))
 	}
 	return nil
 }

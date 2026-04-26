@@ -236,6 +236,7 @@ func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 	var operatorLeaderElect bool
 	var acmeEmail string
 	var acmeStaging bool
+	var tlsClusterIssuer string
 	var skipCertManagerInstall bool
 	cmd := &cobra.Command{
 		Use:   "setup",
@@ -270,6 +271,16 @@ will use to push and pull container images.`,
 			if v := strings.TrimSpace(os.Getenv("MCP_ACME_STAGING")); v == "1" || strings.EqualFold(v, "true") {
 				acmeStagingResolved = true
 			}
+			tlsCIResolved := strings.TrimSpace(tlsClusterIssuer)
+			if tlsCIResolved == "" {
+				tlsCIResolved = strings.TrimSpace(os.Getenv("MCP_TLS_CLUSTER_ISSUER"))
+			}
+			if acmeEmailResolved != "" && tlsCIResolved != "" {
+				return fmt.Errorf("use either --acme-email (or MCP_ACME_EMAIL) for public Let's Encrypt, or --tls-cluster-issuer (or MCP_TLS_CLUSTER_ISSUER) for an existing internal ClusterIssuer, not both")
+			}
+			if tlsCIResolved != "" && !tlsEnabled {
+				return fmt.Errorf("--tls-cluster-issuer requires --with-tls")
+			}
 
 			plan := BuildSetupPlan(SetupPlanInput{
 				Kubeconfig:             kubeconfig,
@@ -288,6 +299,7 @@ will use to push and pull container images.`,
 				OperatorArgs:           operatorArgs,
 				ACMEmail:               acmeEmailResolved,
 				ACMEStaging:            acmeStagingResolved,
+				TLSClusterIssuer:       tlsCIResolved,
 				InstallCertManager:     !skipCertManagerInstall,
 			})
 
@@ -303,8 +315,9 @@ will use to push and pull container images.`,
 	cmd.Flags().StringVar(&ingressMode, "ingress", "traefik", "Ingress controller to install automatically during setup (traefik|none)")
 	cmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/overlays/http", "Manifest to apply when installing the ingress controller")
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force ingress install even if an ingress class already exists")
-	cmd.Flags().BoolVar(&tlsEnabled, "with-tls", false, "Enable TLS overlays (ingress/registry); use --acme-email for Let's Encrypt (cert-manager) or provide a private CA secret for mcp-runtime-ca")
-	cmd.Flags().StringVar(&acmeEmail, "acme-email", "", "Contact email for Let's Encrypt (HTTP-01 via cert-manager). Overrides env MCP_ACME_EMAIL")
+	cmd.Flags().BoolVar(&tlsEnabled, "with-tls", false, "Enable TLS overlays (ingress/registry). Use --acme-email for public Let's Encrypt, --tls-cluster-issuer for an org ClusterIssuer, or the bundled mcp-runtime-ca private CA (no ACME) when neither is set")
+	cmd.Flags().StringVar(&acmeEmail, "acme-email", "", "Contact email for Let's Encrypt (HTTP-01 via cert-manager). Mutually exclusive with --tls-cluster-issuer. Overrides env MCP_ACME_EMAIL")
+	cmd.Flags().StringVar(&tlsClusterIssuer, "tls-cluster-issuer", "", "Use an existing cert-manager ClusterIssuer (e.g. internal CA; setup does not create it). Mutually exclusive with --acme-email. Overrides env MCP_TLS_CLUSTER_ISSUER")
 	cmd.Flags().BoolVar(&acmeStaging, "acme-staging", false, "Use Let's Encrypt staging CA (also set MCP_ACME_STAGING=1)")
 	cmd.Flags().BoolVar(&skipCertManagerInstall, "skip-cert-manager-install", false, "Do not install cert-manager; require CRDs to already exist")
 	cmd.Flags().BoolVar(&testMode, "test-mode", false, "Test mode: skip operator/gateway image builds and use kind-loaded images")
@@ -2257,6 +2270,9 @@ func operatorEnvOverrides(gatewayProxyImage string) []operatorEnvVar {
 	if registryIngressHost != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_REGISTRY_INGRESS_HOST", Value: registryIngressHost})
 	}
+	if mcpHost := strings.TrimSpace(GetMcpIngressHost()); mcpHost != "" {
+		envVars = append(envVars, operatorEnvVar{Name: "MCP_DEFAULT_INGRESS_HOST", Value: mcpHost})
+	}
 	clusterName := strings.TrimSpace(GetClusterName())
 	if clusterName != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_CLUSTER_NAME", Value: clusterName})
@@ -2276,13 +2292,21 @@ func applySetupPlanToCLIConfig(plan SetupPlan) {
 		DefaultCLIConfig.RegistryClusterIssuerName = ClusterIssuerNameForACME(plan.ACMEStaging)
 		return
 	}
+	if strings.TrimSpace(plan.TLSClusterIssuer) != "" {
+		DefaultCLIConfig.RegistryClusterIssuerName = strings.TrimSpace(plan.TLSClusterIssuer)
+		return
+	}
 	DefaultCLIConfig.RegistryClusterIssuerName = certClusterIssuerName
 }
 
-// setupTLSWithKubectlAndPlan provisions TLS: Let's Encrypt when plan.ACMEmail is set, otherwise a private CA (mcp-runtime-ca).
+// setupTLSWithKubectlAndPlan provisions TLS: Let's Encrypt when plan.ACMEmail is set, an existing
+// ClusterIssuer when plan.TLSClusterIssuer is set, otherwise the bundled private CA (mcp-runtime-ca).
 func setupTLSWithKubectlAndPlan(kubectl KubectlRunner, logger *zap.Logger, plan SetupPlan) error {
 	if strings.TrimSpace(plan.ACMEmail) != "" {
 		return setupTLSLetsEncrypt(kubectl, logger, plan)
+	}
+	if strings.TrimSpace(plan.TLSClusterIssuer) != "" {
+		return setupTLSWithExistingClusterIssuer(kubectl, logger, plan)
 	}
 	return setupTLSPrivateCA(kubectl, logger)
 }
@@ -2334,9 +2358,9 @@ func setupTLSLetsEncrypt(kubectl KubectlRunner, logger *zap.Logger, plan SetupPl
 	}
 
 	issuerName := ClusterIssuerNameForACME(plan.ACMEStaging)
-	dnsName := strings.TrimSpace(GetRegistryIngressHost())
-	Info("Applying Certificate for registry")
-	if err := applyRegistryCertificateForACME(kubectl, dnsName, issuerName); err != nil {
+	dnsNames := acmeTLSDNSNames()
+	Info("Applying Certificate for registry (Let's Encrypt SANs)")
+	if err := applyRegistryCertificateForACME(kubectl, dnsNames, issuerName); err != nil {
 		wrappedErr := wrapWithSentinelAndContext(
 			ErrApplyCertificateFailed,
 			err,
@@ -2357,6 +2381,93 @@ func setupTLSLetsEncrypt(kubectl KubectlRunner, logger *zap.Logger, plan SetupPl
 	Info(fmt.Sprintf("Waiting for certificate to be issued (timeout: %s)", certTimeout))
 	if err := waitForCertificateReadyWithKubectl(kubectl, registryCertificateName, NamespaceRegistry, certTimeout); err != nil {
 		err := newWithSentinel(ErrCertificateNotReady, fmt.Sprintf("certificate not ready after %s. Check cert-manager logs: kubectl logs -n cert-manager deployment/cert-manager", certTimeout))
+		Error("Certificate not ready")
+		if logger != nil {
+			logStructuredError(logger, err, "Certificate not ready")
+		}
+		return err
+	}
+	Success("Certificate issued successfully")
+	return nil
+}
+
+// setupTLSWithExistingClusterIssuer issues the registry (and optional mcp SAN) Certificate using a
+// ClusterIssuer that already exists in the cluster (internal / enterprise CA).
+func setupTLSWithExistingClusterIssuer(kubectl KubectlRunner, logger *zap.Logger, plan SetupPlan) error {
+	issuerName := strings.TrimSpace(plan.TLSClusterIssuer)
+	Info("Configuring TLS with existing ClusterIssuer: " + issuerName)
+	if plan.InstallCertManager {
+		if err := ensureCertManagerInstalled(kubectl, logger); err != nil {
+			return err
+		}
+	} else {
+		Info("Checking cert-manager installation (--skip-cert-manager-install)")
+		if err := checkCertManagerInstalledWithKubectl(kubectl); err != nil {
+			err := wrapWithSentinel(ErrCertManagerNotInstalled, err, "cert-manager not installed. Install it, or omit --skip-cert-manager-install to let setup apply it from upstream")
+			Error("Cert-manager not installed")
+			if logger != nil {
+				logStructuredError(logger, err, "Cert-manager not installed")
+			}
+			return err
+		}
+		Info("cert-manager CRDs found")
+	}
+
+	if err := checkNamedClusterIssuerWithKubectl(kubectl, issuerName); err != nil {
+		Error("Cluster issuer not found")
+		if logger != nil {
+			logStructuredError(logger, err, "Cluster issuer not found")
+		}
+		return err
+	}
+
+	if err := ensureNamespace(NamespaceRegistry); err != nil {
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrCreateRegistryNamespaceFailed,
+			err,
+			fmt.Sprintf("failed to create registry namespace: %v", err),
+			map[string]any{"namespace": NamespaceRegistry, "component": "setup"},
+		)
+		Error("Failed to create registry namespace")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to create registry namespace")
+		}
+		return wrappedErr
+	}
+
+	dnsNames := acmeTLSDNSNames()
+	if len(dnsNames) == 0 {
+		err := fmt.Errorf("no DNS names resolved for the Certificate; set MCP_PLATFORM_DOMAIN, MCP_REGISTRY_HOST, or MCP_REGISTRY_INGRESS_HOST (and optional MCP_MCP_INGRESS_HOST)")
+		wrappedErr := wrapWithSentinel(ErrTLSSetupFailed, err, err.Error())
+		Error("Invalid TLS host configuration")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Invalid TLS host configuration")
+		}
+		return wrappedErr
+	}
+
+	Info("Applying Certificate for registry (custom ClusterIssuer)")
+	if err := applyRegistryCertificateForACME(kubectl, dnsNames, issuerName); err != nil {
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrApplyCertificateFailed,
+			err,
+			fmt.Sprintf("failed to apply Certificate: %v", err),
+			map[string]any{"certificate": registryCertificateName, "namespace": NamespaceRegistry, "component": "setup"},
+		)
+		Error("Failed to apply Certificate")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to apply Certificate")
+		}
+		return wrappedErr
+	}
+
+	certTimeout := GetCertTimeout()
+	if certTimeout < 5*time.Minute {
+		certTimeout = 5 * time.Minute
+	}
+	Info(fmt.Sprintf("Waiting for certificate to be issued (timeout: %s)", certTimeout))
+	if err := waitForCertificateReadyWithKubectl(kubectl, registryCertificateName, NamespaceRegistry, certTimeout); err != nil {
+		err := newWithSentinel(ErrCertificateNotReady, fmt.Sprintf("certificate not ready after %s. Check cert-manager and your ClusterIssuer configuration: kubectl logs -n cert-manager deployment/cert-manager", certTimeout))
 		Error("Certificate not ready")
 		if logger != nil {
 			logStructuredError(logger, err, "Certificate not ready")

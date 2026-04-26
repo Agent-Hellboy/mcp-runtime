@@ -10,18 +10,6 @@ import (
 
 const DefaultRegistryHost = "registry.local"
 
-// ResolveRegistryHost resolves the host used for default image names.
-// Precedence: MCP_REGISTRY_INGRESS_HOST, legacy MCP_REGISTRY_HOST, fallback default.
-func ResolveRegistryHost() string {
-	if host := os.Getenv("MCP_REGISTRY_INGRESS_HOST"); host != "" {
-		return host
-	}
-	if host := os.Getenv("MCP_REGISTRY_HOST"); host != "" {
-		return host
-	}
-	return DefaultRegistryHost
-}
-
 // LoadFromFile reads a single registry YAML file from disk and applies default values.
 func LoadFromFile(filePath string) (*RegistryFile, error) {
 	cleanPath := filepath.Clean(filePath)

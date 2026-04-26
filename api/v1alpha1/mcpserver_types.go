@@ -56,7 +56,7 @@ type MCPServerSpec struct {
 	// ImageTag is the tag of the container image (defaults to "latest").
 	ImageTag string `json:"imageTag,omitempty"`
 
-	// RegistryOverride, if set, overrides the registry portion of the image (e.g., registry.example.com).
+	// RegistryOverride, if set, overrides the registry portion of the image (e.g., registry.mcpruntime.com).
 	RegistryOverride string `json:"registryOverride,omitempty"`
 
 	// UseProvisionedRegistry tells the controller to use the provisioned registry (from operator env) for this server.

@@ -24,7 +24,7 @@
 // Example usage:
 //
 //	err := errx.Registry("failed to connect to registry").
-//		WithContext("url", "registry.example.com").
+//		WithContext("url", "registry.mcpruntime.com").
 //		WithBase(sentinelErr)
 //
 //	if errors.Is(err, sentinelErr) {

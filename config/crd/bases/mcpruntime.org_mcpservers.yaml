@@ -213,7 +213,7 @@ spec:
                 type: string
               registryOverride:
                 description: RegistryOverride, if set, overrides the registry portion
-                  of the image (e.g., registry.example.com).
+                  of the image (e.g., registry.mcpruntime.com).
                 type: string
               replicas:
                 description: Replicas is the number of desired replicas (defaults

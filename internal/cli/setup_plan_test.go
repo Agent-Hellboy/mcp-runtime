@@ -57,6 +57,16 @@ func TestBuildSetupPlan_DefaultTLS(t *testing.T) {
 	}
 }
 
+func TestBuildSetupPlan_TLSClusterIssuer(t *testing.T) {
+	plan := BuildSetupPlan(SetupPlanInput{
+		TLSEnabled:       true,
+		TLSClusterIssuer: "company-ca",
+	})
+	if plan.TLSClusterIssuer != "company-ca" {
+		t.Fatalf("expected TLSClusterIssuer preserved, got %q", plan.TLSClusterIssuer)
+	}
+}
+
 func TestBuildSetupPlan_CustomIngressManifest(t *testing.T) {
 	plan := BuildSetupPlan(SetupPlanInput{
 		RegistryType:           "docker",

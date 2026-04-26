@@ -514,6 +514,32 @@ func TestCheckClusterIssuerWithKubectlError(t *testing.T) {
 	}
 }
 
+func TestCheckNamedClusterIssuerWithKubectl(t *testing.T) {
+	mock := &MockExecutor{}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	if err := checkNamedClusterIssuerWithKubectl(kubectl, " company-ca "); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mock.Commands) != 1 || !commandHasArgs(mock.Commands[0], "get", "clusterissuer", "company-ca") {
+		t.Fatalf("unexpected command: %v", mock.Commands)
+	}
+}
+
+func TestCheckNamedClusterIssuerWithKubectlError(t *testing.T) {
+	mock := &MockExecutor{DefaultRunErr: errors.New("not found")}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+	if err := checkNamedClusterIssuerWithKubectl(kubectl, "missing"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCheckNamedClusterIssuerWithKubectlEmptyName(t *testing.T) {
+	kubectl := &KubectlClient{exec: &MockExecutor{}, validators: nil}
+	if err := checkNamedClusterIssuerWithKubectl(kubectl, "  "); err == nil {
+		t.Fatal("expected error for empty name")
+	}
+}
+
 func TestCheckCertificateWithKubectlError(t *testing.T) {
 	mock := &MockExecutor{DefaultRunErr: errors.New("not found")}
 	kubectl := &KubectlClient{exec: mock, validators: nil}

@@ -25,9 +25,11 @@ type SetupPlanInput struct {
 	StrictProd             bool
 	DeployAnalytics        bool
 	OperatorArgs           []string
-	// Let's Encrypt (HTTP-01 via cert-manager). If empty, private CA (mcp-runtime-ca) flow is used when TLS is enabled.
-	ACMEmail           string
-	ACMEStaging        bool
+	// Let's Encrypt (HTTP-01 via cert-manager). If empty, other TLS modes apply; mutually exclusive with TLSClusterIssuer.
+	ACMEmail    string
+	ACMEStaging bool
+	// TLSClusterIssuer is a pre-existing cert-manager.io ClusterIssuer (e.g. org internal CA / Vault / ADCS). Mutually exclusive with ACMEmail.
+	TLSClusterIssuer   string
 	InstallCertManager bool
 }
 
@@ -47,6 +49,7 @@ type SetupPlan struct {
 	OperatorArgs        []string
 	ACMEmail            string
 	ACMEStaging         bool
+	TLSClusterIssuer    string
 	InstallCertManager  bool
 }
 
@@ -96,5 +99,6 @@ func BuildSetupPlan(input SetupPlanInput) SetupPlan {
 		ACMEmail:           input.ACMEmail,
 		ACMEStaging:        input.ACMEStaging,
 		InstallCertManager: input.InstallCertManager,
+		TLSClusterIssuer:   input.TLSClusterIssuer,
 	}
 }
