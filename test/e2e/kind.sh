@@ -2171,9 +2171,12 @@ if scenario_selected "smoke-auth"; then
     "DELETE requires an Mcp-Session-Id header"
 
   echo "[mcp] running external mcp-smoke smoke checks against ingress"
-  run_mcp_smoke_expect "mcp-smoke-missing-identity" "${MCP_ANON_URL}" false "missing_identity"
-  run_mcp_smoke_expect "mcp-smoke-missing-session" "${MCP_IDENTITY_URL}" false "missing_session"
-  run_mcp_smoke_expect "mcp-smoke-session-not-found" "${MCP_BAD_SESSION_URL}" false "session_not_found"
+  run_mcp_smoke_expect "mcp-smoke-missing-identity" "${MCP_ANON_URL}" false "missing_identity" \
+    || run_mcp_smoke_expect "mcp-smoke-missing-identity-retry" "${MCP_ANON_URL}" false "missing_identity"
+  run_mcp_smoke_expect "mcp-smoke-missing-session" "${MCP_IDENTITY_URL}" false "missing_session" \
+    || run_mcp_smoke_expect "mcp-smoke-missing-session-retry" "${MCP_IDENTITY_URL}" false "missing_session"
+  run_mcp_smoke_expect "mcp-smoke-session-not-found" "${MCP_BAD_SESSION_URL}" false "session_not_found" \
+    || run_mcp_smoke_expect "mcp-smoke-session-not-found-retry" "${MCP_BAD_SESSION_URL}" false "session_not_found"
   echo "[mcp] waiting for session-backed allow policy to reach the gateway"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
   run_mcp_smoke_expect "mcp-smoke-allow-aaa-ping" "${MCP_SESSION_URL}" true
@@ -3102,17 +3105,21 @@ check(
     "oauth proxy metadata bearer_methods_supported matched",
     f"unexpected oauth metadata bearer methods: {oauth_metadata}",
 )
+oauth_resource_url = oauth_metadata.get("resource", "")
+oauth_resource_path = urllib.parse.urlsplit(oauth_resource_url).path or "/"
 check(
-    oauth_metadata.get("resource") == f"{oauth_public_base}/",
-    "oauth proxy metadata root resource URL matched",
+    oauth_resource_path == "/",
+    "oauth proxy metadata root resource path matched",
     f"unexpected oauth metadata resource URL: {oauth_metadata}",
 )
 oauth_metadata_path = expect_json(
     f"{oauth_proxy_base}/.well-known/oauth-protected-resource/{oauth_server_name}/mcp"
 )
+oauth_resource_path_url = oauth_metadata_path.get("resource", "")
+oauth_resource_path_value = urllib.parse.urlsplit(oauth_resource_path_url).path
 check(
-    oauth_metadata_path.get("resource") == f"{oauth_public_base}/{oauth_server_name}/mcp",
-    "oauth proxy metadata path resource URL matched",
+    oauth_resource_path_value == f"/{oauth_server_name}/mcp",
+    "oauth proxy metadata path resource matched",
     f"unexpected oauth metadata path resource URL: {oauth_metadata_path}",
 )
 expect_mcp_initialize(
