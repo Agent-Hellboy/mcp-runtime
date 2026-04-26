@@ -26,6 +26,7 @@ def _inject_canonical_url():
 
     return {"canonical_og_url": canonical_og_url}
 
+
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
     "img-src 'self' data:; "
