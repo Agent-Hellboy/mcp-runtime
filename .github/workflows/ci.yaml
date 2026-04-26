@@ -300,7 +300,6 @@ jobs:
           test -n "$WEBSITE_DEPLOY_USER"
           test -n "$WEBSITE_DEPLOY_PATH"
           test -n "$WEBSITE_DEPLOY_SSH_KEY"
-          test -n "$WEBSITE_BASE_URL"
 
       - name: Set up SSH key
         run: |
@@ -335,7 +334,7 @@ jobs:
           host_port="${WEBSITE_HOST_PORT:-8080}"
           container_port="${WEBSITE_CONTAINER_PORT:-8080}"
           docs_url="${WEBSITE_DOCS_URL:-https://docs.mcpruntime.org/}"
-          base_url="${WEBSITE_BASE_URL}"
+          base_url="${WEBSITE_BASE_URL:-https://mcpruntime.org}"
 
           ssh "${{ secrets.WEBSITE_DEPLOY_USER }}@${{ secrets.WEBSITE_DEPLOY_HOST }}" \
             "set -euo pipefail; \
