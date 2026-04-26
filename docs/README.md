@@ -22,7 +22,7 @@ Documentation for using and operating the MCP Runtime platform — a Kubernetes-
 - **Operating a cluster:** [Getting started](getting-started.md) → [CLI](cli.md) → [Cluster readiness](cluster-readiness.md).
 - **Understanding the platform:** [Architecture](architecture.md) → [Runtime](runtime.md) → [Sentinel](sentinel.md).
 - **Writing manifests / integrating:** [API reference](api.md).
-- **Hacking on the codebase:** [Internals](internals/README.md) plus [`AGENTS.md`](../AGENTS.md) at the repo root.
+- **Hacking on the codebase:** [Internals](internals/README.md) plus [`AGENTS.md`](https://github.com/Agent-Hellboy/mcp-runtime/blob/main/AGENTS.md) at the repo root.
 
 ## Status
 
@@ -30,7 +30,7 @@ Alpha. The architecture is stable enough to evaluate. The API and UX are still e
 
 ## Production deploy (GitHub Actions)
 
-The `deploy-docs` job in [`.github/workflows/ci.yaml`](../.github/workflows/ci.yaml)
+The `deploy-docs` job in [`.github/workflows/ci.yaml`](https://github.com/Agent-Hellboy/mcp-runtime/blob/main/.github/workflows/ci.yaml)
 syncs `docs/` to your remote host and, by default, builds/runs a Docker
 container there.
 
