@@ -2,148 +2,57 @@
 
 {% block content %}
   <section class="hero container">
-    <div class="hero-copy">
-      <span class="eyebrow">{{ hero.eyebrow }}</span>
-      <h1>{{ hero.title }}</h1>
-      <p>{{ hero.subtitle }}</p>
-      <div class="hero-actions">
-        <a class="button primary" href="{{ hero.primary.href }}">{{ hero.primary.label }}</a>
-        <a class="button secondary" href="{{ hero.secondary.href }}">{{ hero.secondary.label }}</a>
-      </div>
-      <div class="hero-highlights">
-        {% for item in hero.highlights %}
-          <span class="highlight-pill">{{ item }}</span>
-        {% endfor %}
-      </div>
-    </div>
-    <div class="hero-stage">
-      <div class="stage-toolbar">
-        <span class="stage-heading">MCPServer.yaml</span>
-        <span class="stage-kicker">{{ status.label }}</span>
-      </div>
-      <div class="stage-main">
-        <div class="stage-copy">
-          <span class="proof-kicker">{{ hero.proof_kicker }}</span>
-          <h2>{{ hero.proof_title }}</h2>
-          <p>{{ hero.proof_intro }}</p>
-          <div class="stage-items">
-            {% for item in hero.stage_items %}
-              <article class="stage-item">
-                <span class="stage-item-label">{{ item.label }}</span>
-                <h3>{{ item.value }}</h3>
-                <p>{{ item.body }}</p>
-              </article>
-            {% endfor %}
-          </div>
-        </div>
-        <pre class="code-sample"><code>{{ hero.proof_code }}</code></pre>
-      </div>
-      <div class="stage-footer">
-        {% for item in hero.stage_signals %}
-          <span class="stage-signal">{{ item }}</span>
-        {% endfor %}
-      </div>
+    <span class="eyebrow">Open source · Kubernetes-native · Alpha</span>
+    <h1>The MCP control plane for Kubernetes.</h1>
+    <p class="lede">
+      Deploy, govern, and observe internal Model Context Protocol services with
+      a single open-source platform. One service definition. One operating
+      model. Policy, audit, and analytics on every live request.
+    </p>
+    <div class="hero-actions">
+      <a class="button primary" href="{{ docs_url }}">Read the docs</a>
+      <a class="button secondary" href="{{ github_url }}">View on GitHub</a>
     </div>
   </section>
 
-  <section class="container status-band">
-    <div class="status-rail">
-      <div class="status-copy">
-        <span class="status-label">{{ status.label }}</span>
-        <p>{{ status.body }}</p>
-      </div>
-    </div>
+  <section class="container code-band">
+    <pre><code>apiVersion: mcpruntime.org/v1alpha1
+kind: MCPServer
+metadata:
+  name: payments
+spec:
+  image: registry.example.com/payments-mcp:v1.0.0
+  port: 8088
+  ingressHost: mcp.example.com
+  ingressPath: /payments/mcp
+  gateway:
+    enabled: true
+  analytics:
+    enabled: true</code></pre>
+    <p class="caption">Apply once. The runtime owns rollout, routing, and the governed request path from there.</p>
   </section>
 
-  <section id="docs" class="section container section-shell">
-    <div class="section-header">
-      <h2>{{ docs_library.title }}</h2>
-      <p>{{ docs_library.intro }}</p>
-    </div>
-    <div class="docs-list">
-      {% for item in docs_library["items"] %}
-        <a class="docs-row" href="{{ item.href }}">
-          <div class="docs-copy">
-            <span class="row-label">{{ item.tag }}</span>
-            <h3>{{ item.title }}</h3>
-            <p>{{ item.body }}</p>
-          </div>
-          <span class="docs-cta">{{ item.label }}</span>
-        </a>
-      {% endfor %}
-    </div>
+  <section class="container pillars">
+    <article>
+      <h2>Runtime</h2>
+      <p>Cluster bootstrap, registry, ingress, operator reconciliation, and rollout for every MCP server.</p>
+    </article>
+    <article>
+      <h2>Access</h2>
+      <p>Grants and sessions as first-class CRDs — explicit consent, trust ceilings, expiry, and revocation.</p>
+    </article>
+    <article>
+      <h2>Sentinel</h2>
+      <p>Policy, audit, and observability on the live request path. Bundled gateway, analytics, and dashboards.</p>
+    </article>
   </section>
 
-  <section id="product" class="section container section-shell">
-    <div class="section-header">
-      <h2>{{ product.title }}</h2>
-      <p>{{ product.intro }}</p>
-    </div>
-    <div class="capability-list">
-      {% for item in product["items"] %}
-        <article class="capability-row">
-          <span class="row-label">{{ item.label }}</span>
-          <div class="row-content">
-            <h3>{{ item.title }}</h3>
-            <p>{{ item.body }}</p>
-            <div class="point-rail">
-              {% for point in item.points %}
-                <span class="point-pill">{{ point }}</span>
-              {% endfor %}
-            </div>
-          </div>
-        </article>
-      {% endfor %}
-    </div>
-  </section>
-
-  <section id="workflow" class="section container section-shell">
-    <div class="section-header">
-      <h2>From service definition to governed traffic</h2>
-      <p>Follow the path from definition to rollout, enforcement, and audit without leaving the platform model.</p>
-    </div>
-    <div class="workflow-list">
-      {% for item in workflow %}
-        <article class="workflow-row">
-          <span class="workflow-step">{{ item.step }}</span>
-          <div class="row-content">
-            <h3>{{ item.title }}</h3>
-            <p>{{ item.body }}</p>
-          </div>
-        </article>
-      {% endfor %}
-    </div>
-  </section>
-
-  <section id="surfaces" class="section container section-shell">
-    <div class="section-header">
-      <h2>{{ surfaces.title }}</h2>
-      <p>{{ surfaces.intro }}</p>
-    </div>
-    <div class="surface-list">
-      {% for item in surfaces["items"] %}
-        <article class="surface-row">
-          <div class="surface-meta">
-            <span class="row-label">{{ item.name }}</span>
-            <code>{{ item.path }}</code>
-          </div>
-          <p>{{ item.body }}</p>
-        </article>
-      {% endfor %}
-    </div>
-  </section>
-
-  <section class="cta-band">
-    <div class="container cta-inner">
-      <div>
-        <span class="callout-kicker">Start with the docs</span>
-        <h2>{{ callout.title }}</h2>
-        <p>{{ callout.body }}</p>
-      </div>
-      <div class="callout-actions">
-        <a class="button secondary" href="{{ callout.secondary.href }}">{{ callout.secondary.label }}</a>
-        <a class="button primary" href="{{ callout.primary.href }}">{{ callout.primary.label }}</a>
-      </div>
+  <section class="container cta-band">
+    <h2>Built for platform teams running internal MCP services.</h2>
+    <p>Self-hosted. MIT-licensed. Works on k3s, kind, minikube, and EKS today.</p>
+    <div class="hero-actions">
+      <a class="button primary" href="{{ docs_url }}getting-started">Get started</a>
+      <a class="button secondary" href="{{ github_url }}">Star on GitHub</a>
     </div>
   </section>
 {% endblock %}

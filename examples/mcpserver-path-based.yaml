@@ -8,7 +8,10 @@ spec:
   imageTag: latest
   port: 8088
   servicePort: 80
-  publicPathPrefix: go-mcp
+  publicPathPrefix: go-example-mcp
   ingressClass: traefik
   ingressAnnotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+  envVars:
+    - name: MCP_PATH
+      value: /go-example-mcp/mcp

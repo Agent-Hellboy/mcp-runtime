@@ -1,13 +1,13 @@
 version: v1
 servers:
   - name: python-example-mcp
-    route: /mcp
-    ingressHost: python.example.local
+    route: /python-example-mcp/mcp
+    publicPathPrefix: python-example-mcp
     port: 8088
     namespace: mcp-servers
     envVars:
       - name: MCP_PATH
-        value: "/mcp"
+        value: /python-example-mcp/mcp
     tools:
       - name: echo
         requiredTrust: low

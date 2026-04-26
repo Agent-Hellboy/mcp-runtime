@@ -2,7 +2,10 @@ package cli
 
 import (
 	"fmt"
+	"io"
+	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +20,10 @@ const (
 	letsencryptStagingURL        = "https://acme-staging-v02.api.letsencrypt.org/directory"
 	letsencryptProdIssuerName    = "letsencrypt-prod"
 	letsencryptStagingIssuerName = "letsencrypt-staging"
+	// acmeHTTP01DevIngressOverlay is the kustomize overlay that binds Traefik to 8000/8443 for local port-forwards, not public :80.
+	acmeHTTP01DevIngressOverlay = "config/ingress/overlays/http"
+	traefikManagedNamespace     = "traefik"
+	traefikManagedDeployment    = "traefik"
 )
 
 func certManagerInstallManifestURL() string {
@@ -66,6 +73,59 @@ func validateACMEHostnameForPublicCA() error {
 		}
 	}
 	return nil
+}
+
+// validateIngressManifestForACME rejects the dev "http" overlay, which does not listen on 80/443, so Let’s Encrypt HTTP-01 cannot work.
+func validateIngressManifestForACME(ingressManifest string) error {
+	m := strings.TrimSpace(ingressManifest)
+	if m == "" {
+		return nil
+	}
+	if filepath.Base(filepath.Clean(m)) == "http" {
+		return fmt.Errorf(
+			"http-01 (Let's Encrypt) must reach your hostnames on port 80, but the %q overlay uses 8000/8443. Omit --ingress-manifest so setup uses the prod overlay, or set --ingress-manifest %q, then re-run (use --force-ingress-install if an old ingress is already present)",
+			acmeHTTP01DevIngressOverlay, "config/ingress/overlays/prod",
+		)
+	}
+	return nil
+}
+
+// waitForTraefikDeploymentForACME waits for the Traefik this repo installs in namespace "traefik". If it is missing (e.g. skipped install, or another cluster ingress), a warning is printed and we continue.
+func waitForTraefikDeploymentForACME(kubectl KubectlRunner) error {
+	if err := kubectl.RunWithOutput(
+		[]string{"get", "deployment", traefikManagedDeployment, "-n", traefikManagedNamespace},
+		io.Discard, io.Discard,
+	); err != nil {
+		Warn("No " + traefikManagedNamespace + "/" + traefikManagedDeployment + " deployment found; skipping Traefik wait. cert-manager still needs the Traefik ingress class to serve HTTP-01, with port 80 on your public hostnames")
+		return nil
+	}
+	Info("Waiting for " + traefikManagedNamespace + "/" + traefikManagedDeployment + " (ingress must be up before the ACME request)")
+	// #nosec G204 -- fixed resource names; timeout is fixed.
+	if err := kubectl.RunWithOutput([]string{
+		"wait", "--for=condition=Available",
+		"deployment/" + traefikManagedDeployment, "-n", traefikManagedNamespace, "--timeout=3m",
+	}, os.Stdout, os.Stderr); err != nil {
+		return fmt.Errorf("traefik not ready: %w", err)
+	}
+	Info(traefikManagedNamespace + "/" + traefikManagedDeployment + " is available")
+	return nil
+}
+
+// preflightACMEHostnamesPort80 tries TCP dials to host:80 from the machine running setup. Failing does not block setup (Operator may be off-node); success helps confirm DNS and a listener before a long cert wait.
+func preflightACMEHostnamesPort80(dnsNames []string) {
+	for _, h := range dedupeHostnames(dnsNames) {
+		if h == "" {
+			continue
+		}
+		addr := net.JoinHostPort(h, "80")
+		c, err := net.DialTimeout("tcp", addr, 5*time.Second)
+		if err != nil {
+			Warn("From this host, could not open TCP to " + addr + " (" + err.Error() + "). Let's Encrypt will try from the public internet, so check DNS, firewall, and that Traefik listens on port 80. If the cluster is on another network, you can ignore this if port 80 is open publicly")
+			continue
+		}
+		_ = c.Close()
+		Info("TCP to " + addr + " succeeded from this host (a good sign for HTTP-01)")
+	}
 }
 
 // ensureCertManagerInstalled applies upstream cert-manager if CRDs are missing and waits for deployments.

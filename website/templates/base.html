@@ -6,21 +6,21 @@
     <title>{{ title or "MCP Runtime" }}</title>
     <meta
       name="description"
-      content="Deploy, govern, and observe MCP services on Kubernetes with a higher-level platform for MCP delivery, access, policy, audit, and observability."
+      content="MCP Runtime is an open-source Kubernetes platform for deploying, governing, and observing internal Model Context Protocol services."
     />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="MCP Runtime" />
     <meta property="og:title" content="{{ title or 'MCP Runtime' }}" />
     <meta
       property="og:description"
-      content="Deploy, govern, and observe MCP services on Kubernetes with a higher-level platform for MCP delivery, access, policy, audit, and observability."
+      content="Open source MCP platform for Kubernetes: delivery, access, policy, audit, and observability."
     />
     <meta property="og:url" content="{{ canonical_og_url() }}" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="{{ title or 'MCP Runtime' }}" />
     <meta
       name="twitter:description"
-      content="Open source MCP platform for Kubernetes: delivery, access, policy, audit, and observability."
+      content="Open source MCP platform for Kubernetes."
     />
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml" />
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
@@ -37,15 +37,9 @@
               <div class="brand-subtitle">Open source MCP platform for Kubernetes</div>
             </div>
           </a>
-          <div class="nav-shell">
-            <nav class="nav-links">
-              {% for link in nav_links %}
-                <a href="{{ link.href }}">{{ link.label }}</a>
-              {% endfor %}
-            </nav>
-            <div class="nav-actions">
-              <a class="button ghost" href="https://github.com/Agent-Hellboy/mcp-runtime">GitHub</a>
-            </div>
+          <div class="nav-actions">
+            <a href="{{ docs_url }}">Docs</a>
+            <a class="button ghost" href="{{ github_url }}">GitHub</a>
           </div>
         </div>
       </header>
@@ -56,9 +50,8 @@
 
       <footer class="container footer">
         <div>
-          MCP Runtime is an open source Kubernetes platform for operating internal MCP
-          services with delivery, governance, and observability built in. Contribute at
-          <a href="https://github.com/Agent-Hellboy/mcp-runtime">github.com/Agent-Hellboy/mcp-runtime</a>
+          MCP Runtime is an open source Kubernetes platform for operating internal MCP services.
+          Contribute at <a href="{{ github_url }}">github.com/Agent-Hellboy/mcp-runtime</a>
           or write to us at
           <a
             class="js-email-link"
@@ -70,33 +63,8 @@
           >Email us</a>.
         </div>
         <div class="footer-links">
-          <a class="icon-link" href="/docs/">
-            Docs
-          </a>
-          <a class="icon-link" href="https://github.com/Agent-Hellboy/mcp-runtime">
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path
-                fill="currentColor"
-                d="M12 2c-5.52 0-10 4.58-10 10.23 0 4.52 2.87 8.34 6.84 9.7.5.1.68-.22.68-.49 0-.24-.01-.87-.01-1.7-2.78.62-3.37-1.37-3.37-1.37-.46-1.19-1.12-1.51-1.12-1.51-.91-.64.07-.63.07-.63 1.01.07 1.55 1.06 1.55 1.06.9 1.58 2.36 1.12 2.94.86.09-.67.35-1.12.64-1.38-2.22-.26-4.56-1.13-4.56-5.02 0-1.11.39-2.02 1.03-2.74-.1-.26-.45-1.3.1-2.71 0 0 .85-.28 2.8 1.05a9.4 9.4 0 0 1 2.55-.35c.86 0 1.72.12 2.55.35 1.95-1.33 2.8-1.05 2.8-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.74 0 3.9-2.35 4.76-4.59 5.01.36.32.68.95.68 1.92 0 1.39-.01 2.5-.01 2.84 0 .27.18.6.69.49A10.19 10.19 0 0 0 22 12.23C22 6.58 17.52 2 12 2z"
-              />
-            </svg>
-            GitHub
-          </a>
-          <a
-            class="icon-link js-email-link"
-            data-email-user="10nahsorkecnirp"
-            data-email-domain="moc.liamg"
-            data-email-reverse="true"
-            href="#"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path
-                fill="currentColor"
-                d="M4 5h16c1.1 0 2 .9 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7c0-1.1.9-2 2-2zm0 2v.1l8 4.9 8-4.9V7H4zm16 10V9.25l-7.48 4.6a1 1 0 0 1-1.04 0L4 9.25V17h16z"
-              />
-            </svg>
-            Email
-          </a>
+          <a href="{{ docs_url }}">Docs</a>
+          <a href="{{ github_url }}">GitHub</a>
         </div>
       </footer>
     </div>

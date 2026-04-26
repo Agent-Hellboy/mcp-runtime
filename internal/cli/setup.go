@@ -2334,6 +2334,14 @@ func setupTLSLetsEncrypt(kubectl KubectlRunner, logger *zap.Logger, plan SetupPl
 		}
 		return wrappedErr
 	}
+	if err := validateIngressManifestForACME(plan.Ingress.manifest); err != nil {
+		wrappedErr := wrapWithSentinel(ErrTLSSetupFailed, err, err.Error())
+		Error("Ingress configuration blocks Let's Encrypt")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Ingress configuration blocks Let's Encrypt")
+		}
+		return wrappedErr
+	}
 	if plan.InstallCertManager {
 		if err := ensureCertManagerInstalled(kubectl, logger); err != nil {
 			return err
@@ -2350,6 +2358,16 @@ func setupTLSLetsEncrypt(kubectl KubectlRunner, logger *zap.Logger, plan SetupPl
 		}
 		Info("cert-manager CRDs found")
 	}
+	if err := waitForTraefikDeploymentForACME(kubectl); err != nil {
+		wrappedErr := wrapWithSentinel(ErrTLSSetupFailed, err, err.Error())
+		Error("Traefik is not ready for HTTP-01")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Traefik is not ready for HTTP-01")
+		}
+		return wrappedErr
+	}
+	Info("Checking TCP connectivity to your ACME hostnames on port 80 (best effort from this machine)")
+	preflightACMEHostnamesPort80(acmeTLSDNSNames())
 
 	Info("Applying Let's Encrypt ClusterIssuer")
 	if err := applyLetsEncryptClusterIssuer(kubectl, plan.ACMEmail, plan.ACMEStaging, logger); err != nil {

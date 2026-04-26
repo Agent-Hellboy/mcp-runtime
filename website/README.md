@@ -1,27 +1,11 @@
 # Website
 
-Marketing site and tracked documentation for MCP Runtime. Flask app, served behind gunicorn in production.
+Minimal Flask landing page for MCP Runtime. Serves a single home page with
+links to GitHub and the documentation site.
 
-## Prerequisites
-
-- Python 3.10+
-- (optional) Docker for the container build
-
-## Structure
-
-- `templates/index.html` - main page template
-- `templates/base.html` - shared layout (security headers, OG/Twitter, favicon)
-- `static/style.css` - landing page styles
-- `static/docs.css` - documentation styles
-- `static/favicon.svg` - brand mark
-- `docs/` - tracked documentation pages
-  - `index.html` - Docs home
-  - `runtime.html` - Runtime architecture
-  - `cli.html` - CLI reference
-  - `sentinel.html` - Services stack (services/)
-  - `api.html` - API reference
-- `app.py` - Flask server entry point (also serves `/robots.txt` and `/sitemap.xml`)
-- `Dockerfile` - container setup
+Documentation lives at `docs.mcpruntime.org` (deployed separately) and is
+authored as Markdown under [`../docs/`](../docs/) at the repo root. Any
+`/docs*` request to this site 302-redirects to `MCP_DOCS_URL`.
 
 ## Run locally
 
@@ -32,19 +16,27 @@ pip install -r requirements.txt
 python3 app.py
 ```
 
+Then open <http://localhost:8080>.
+
+## Configuration
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `MCP_DOCS_URL` | `https://docs.mcpruntime.org/` | Target for the Docs link and `/docs*` redirects. |
+| `MCP_WEBSITE_BASE_URL` | derived from request | Trusted canonical origin for OG/sitemap URLs. |
+
 ## Docker
 
 ```sh
-docker build -t website .
-docker run --rm -p 8080:8080 website
+docker build -t mcp-runtime-website .
+docker run --rm -p 8080:8080 mcp-runtime-website
 ```
 
-## Repository Structure
+## Files
 
-The main repository follows a flat structure:
-- `services/` - Service implementations (api, ui, ingest, processor, etc.)
-- `k8s/` - Kubernetes manifests
-- `pkg/` - Shared libraries (access, sentinel, clickhouse, k8sclient)
-- `internal/` - CLI implementation
-- `api/` - CRD types
-- `website/` - This documentation website
+- `app.py` — Flask app (home, robots, sitemap, `/docs*` redirect).
+- `templates/base.html` — shared shell (header, footer, security headers).
+- `templates/index.html` — single landing page.
+- `static/style.css` — page styles.
+- `static/favicon.svg` — brand mark.
+- `Dockerfile` — container build.

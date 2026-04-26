@@ -8,8 +8,8 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/Agent-Hellboy/mcp-runtime)](https://goreportcard.com/report/github.com/Agent-Hellboy/mcp-runtime)
 
 Website: https://mcpruntime.org/  
-Docs: https://mcpruntime.org/docs/  
-API Reference: https://mcpruntime.org/docs/api
+Docs: https://docs.mcpruntime.org/ (also browseable in [`docs/`](docs/))  
+API Reference: https://docs.mcpruntime.org/api ([`docs/api.md`](docs/api.md))
 
 MCP Runtime is a self-hosted control plane for internal MCP servers on Kubernetes. It provides metadata-driven deployment, operator reconciliation, optional gateway enforcement, dedicated access/session resources, registry workflows, and bundled audit/analytics services.
 
