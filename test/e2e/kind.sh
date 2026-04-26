@@ -1311,8 +1311,17 @@ updated = []
 server_name_updated = False
 server_image_updated = False
 mcp_path_updated = False
+public_path_prefix_updated = False
 in_env_vars = False
 current_env_name = None
+
+route_override = os.environ["SERVER_ROUTE_OVERRIDE"].strip()
+route_prefix = route_override.strip("/")
+if route_prefix.endswith("/mcp"):
+    route_prefix = route_prefix[: -len("/mcp")].rstrip("/")
+if not route_prefix:
+    route_prefix = os.environ["SERVER_NAME_OVERRIDE"]
+
 for line in lines:
     stripped = line.lstrip()
     indent = line[: len(line) - len(stripped)]
@@ -1323,6 +1332,9 @@ for line in lines:
         updated.append(f"{indent}ingressHost: {os.environ['SERVER_HOST_OVERRIDE']}")
     elif stripped.startswith("route: "):
         updated.append(f"{indent}route: {os.environ['SERVER_ROUTE_OVERRIDE']}")
+    elif stripped.startswith("publicPathPrefix: "):
+        updated.append(f"{indent}publicPathPrefix: {route_prefix}")
+        public_path_prefix_updated = True
     elif not server_image_updated and indent == "    " and stripped.startswith("image: "):
         updated.append(f"{indent}image: {os.environ['SERVER_IMAGE_OVERRIDE']}")
         server_image_updated = True
@@ -1367,6 +1379,18 @@ if not mcp_path_updated:
             inserted = True
     updated = final
     mcp_path_updated = inserted
+if not public_path_prefix_updated:
+    final = []
+    inserted = False
+    for line in updated:
+        final.append(line)
+        stripped = line.lstrip()
+        indent = line[: len(line) - len(stripped)]
+        if not inserted and indent == "    " and stripped.startswith("route: "):
+            final.append(f"{indent}publicPathPrefix: {route_prefix}")
+            inserted = True
+    updated = final
+    public_path_prefix_updated = inserted
 path.write_text("\n".join(updated) + "\n", encoding="utf-8")
 
 # Verify substitutions landed; missing fields cause silent failures later.
@@ -1376,6 +1400,8 @@ if not server_image_updated:
     raise SystemExit(f"prepare_example_metadata: image field was not updated in {path}")
 if not mcp_path_updated:
     raise SystemExit(f"prepare_example_metadata: MCP_PATH env var was not updated in {path}")
+if not public_path_prefix_updated:
+    raise SystemExit(f"prepare_example_metadata: publicPathPrefix was not updated in {path}")
 PY
 }
 
