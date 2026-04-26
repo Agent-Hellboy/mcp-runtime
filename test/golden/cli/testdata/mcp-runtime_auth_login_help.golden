@@ -1,0 +1,15 @@
+Save a platform API token and optional registry host
+
+Usage:
+  mcp-runtime auth login [flags]
+
+Flags:
+      --api-url string         Sentinel API base URL (scheme and host, no /api path)
+  -h, --help                   help for login
+      --registry-host string   Optional host:port for the platform image registry for later use with docker
+      --skip-verify            Store credentials without calling the API to validate the token
+      --token string           API token (or use --token-stdin, or the interactive prompt)
+      --token-stdin            Read the token from stdin (non-interactive)
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

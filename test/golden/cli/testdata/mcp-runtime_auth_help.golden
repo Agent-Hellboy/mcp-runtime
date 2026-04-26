@@ -1,0 +1,27 @@
+Authenticate to the Sentinel platform using an API token (not Kubernetes).
+
+Use this for day-to-day deploy and registry-related flows. Cluster install and admin work
+use Kubernetes and the cluster commands, not this command.
+
+The token is stored in a local file (mode 0600) under the user config directory, unless you set MCP_PLATFORM_API_TOKEN.
+
+Optional environment:
+  MCP_PLATFORM_API_URL            default API base for login, e.g. https://platform.example.com
+  MCP_PLATFORM_API_TOKEN         use this token for API calls; overrides a saved file
+  MCP_RUNTIME_CONFIG_DIR  override the config directory (mainly for tests)
+
+Usage:
+  mcp-runtime auth [command]
+
+Available Commands:
+  login       Save a platform API token and optional registry host
+  logout      Delete saved platform credentials on this machine
+  status      Show whether platform API credentials are configured
+
+Flags:
+  -h, --help   help for auth
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging
+
+Use "mcp-runtime auth [command] --help" for more information about a command.

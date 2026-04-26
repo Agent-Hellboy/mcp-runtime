@@ -1,0 +1,10 @@
+Show whether platform API credentials are configured
+
+Usage:
+  mcp-runtime auth status [flags]
+
+Flags:
+  -h, --help   help for status
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

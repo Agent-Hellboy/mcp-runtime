@@ -1,0 +1,10 @@
+Delete saved platform credentials on this machine
+
+Usage:
+  mcp-runtime auth logout [flags]
+
+Flags:
+  -h, --help   help for logout
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

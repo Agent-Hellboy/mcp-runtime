@@ -58,6 +58,7 @@ func initCommands(logger *zap.Logger) {
 	rootCmd.AddCommand(cli.NewRegistryCmd(logger))
 	rootCmd.AddCommand(cli.NewServerCmd(logger))
 	rootCmd.AddCommand(cli.NewAccessCmd(logger))
+	rootCmd.AddCommand(cli.NewAuthCmd(logger))
 	rootCmd.AddCommand(cli.NewBootstrapCmd(logger))
 	rootCmd.AddCommand(cli.NewSetupCmd(logger))
 	rootCmd.AddCommand(cli.NewStatusCmd(logger))
