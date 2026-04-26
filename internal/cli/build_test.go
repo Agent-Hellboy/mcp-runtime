@@ -65,7 +65,16 @@ func TestBuildImage(t *testing.T) {
 		mock := &MockExecutor{}
 		execExecutor = mock
 
-		err := buildImage(logger, "test-server", "Dockerfile", "", ".", "test-registry", "test-tag", ".")
+		tmp := t.TempDir()
+		metadataFile := filepath.Join(tmp, "servers.yaml")
+		if err := os.WriteFile(metadataFile, []byte(`version: v1
+servers:
+  - name: test-server
+`), 0o600); err != nil {
+			t.Fatalf("write metadata: %v", err)
+		}
+
+		err := buildImage(logger, "test-server", "Dockerfile", metadataFile, ".", "test-registry", "test-tag", ".")
 		if err != nil {
 			t.Fatalf("failed to build image: %v", err)
 		}
@@ -85,6 +94,23 @@ func TestBuildImage(t *testing.T) {
 		expectedArgs := []string{"build", "-f", "Dockerfile", "-t", "test-registry/test-server:test-tag", "."}
 		if !equalStringSlices(last.Args, expectedArgs) {
 			t.Errorf("docker args = %v, want %v", last.Args, expectedArgs)
+		}
+	})
+
+	t.Run("returns_error_after_build_when_metadata_missing", func(t *testing.T) {
+		originalExecutor := execExecutor
+		defer func() { execExecutor = originalExecutor }()
+
+		mock := &MockExecutor{}
+		execExecutor = mock
+
+		tmp := t.TempDir() // no *.yaml: updateMetadataFile cannot find server
+		err := buildImage(logger, "missing-server", "Dockerfile", "", tmp, "test-registry", "test-tag", ".")
+		if err == nil {
+			t.Fatal("expected error when metadata file not found for server name")
+		}
+		if !errors.Is(err, ErrMetadataFileNotFound) {
+			t.Fatalf("expected ErrMetadataFileNotFound, got %v", err)
 		}
 	})
 
@@ -120,7 +146,16 @@ func TestBuildImage(t *testing.T) {
 		}
 		execExecutor = mock
 
-		err := buildImage(logger, "my-server", "Dockerfile", "", ".", "registry.io", "", ".")
+		tmp := t.TempDir()
+		metadataFile := filepath.Join(tmp, "servers.yaml")
+		if err := os.WriteFile(metadataFile, []byte(`version: v1
+servers:
+  - name: my-server
+`), 0o600); err != nil {
+			t.Fatalf("write metadata: %v", err)
+		}
+
+		err := buildImage(logger, "my-server", "Dockerfile", metadataFile, ".", "registry.io", "", ".")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -170,7 +205,16 @@ func TestBuildImage(t *testing.T) {
 		mock := &MockExecutor{}
 		execExecutor = mock
 
-		err := buildImage(logger, "my-server", "Dockerfile", "", ".", "", "v1.0", ".")
+		tmp := t.TempDir()
+		metadataFile := filepath.Join(tmp, "servers.yaml")
+		if err := os.WriteFile(metadataFile, []byte(`version: v1
+servers:
+  - name: my-server
+`), 0o600); err != nil {
+			t.Fatalf("write metadata: %v", err)
+		}
+
+		err := buildImage(logger, "my-server", "Dockerfile", metadataFile, ".", "", "v1.0", ".")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -246,8 +290,17 @@ func TestNewBuildImageCmdRunE(t *testing.T) {
 		mock := &MockExecutor{}
 		execExecutor = mock
 
+		tmp := t.TempDir()
+		metadataFile := filepath.Join(tmp, "servers.yaml")
+		if err := os.WriteFile(metadataFile, []byte(`version: v1
+servers:
+  - name: my-server
+`), 0o600); err != nil {
+			t.Fatalf("write metadata: %v", err)
+		}
+
 		cmd := newBuildImageCmd(logger)
-		cmd.SetArgs([]string{"my-server", "--registry", "test-registry", "--tag", "v1.0"})
+		cmd.SetArgs([]string{"my-server", "--registry", "test-registry", "--tag", "v1.0", "--metadata-file", metadataFile})
 
 		err := cmd.Execute()
 		if err != nil {

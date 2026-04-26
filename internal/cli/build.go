@@ -97,9 +97,10 @@ func buildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metada
 
 	logger.Info("Image built successfully", zap.String("image", fullImage))
 
-	// Update metadata file
+	// Update metadata file (required for a successful build: CI and scripts rely on non-zero exit)
 	if err := updateMetadataImage(serverName, imageName, tag, metadataFile, metadataDir); err != nil {
-		logger.Warn("Failed to update metadata", zap.Error(err))
+		logStructuredError(logger, err, "Image built but metadata update failed")
+		return err
 	}
 
 	return nil

@@ -99,6 +99,60 @@ kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
 - **Secret not found in workload namespace:** copy `mcp-sentinel-secrets` or use a shared secret reference.
 - **Dashboard / API 401:** align `API_KEYS` and `UI_API_KEY` and roll the API deployment.
 - **Ingress / routes:** `kubectl get ingress -A` and confirm paths match the gateway and demo servers you expect.
+- **Private / HTTP in-cluster registry / k3s:** Pull and push can fail with `https` vs `http` or `registry.local` DNS on nodes. See **k3s and HTTP registry (config files)** below, set **`MCP_REGISTRY_*`** before `pipeline generate` when you want `ClusterIP:port` in manifests, and raise **`MCP_DEPLOYMENT_TIMEOUT`** if setup rollouts time out on slow first pulls.
+
+### k3s and HTTP registry (dev / test without registry TLS)
+
+**When this section applies**
+
+- **Dev HTTP registry (typical on k3s or lab):** run `./bin/mcp-runtime setup` **without** `--with-tls`. Setup logs `TLS: disabled (dev HTTP mode)` for the internal registry; the registry serves **HTTP**, so you need the **Docker** and **k3s** config in the table below on every machine that builds/pushes or pulls.
+- **`--test-mode`:** meant mainly for **Kind** flows. It **skips building and pushing** operator/gateway images and expects images to be **loaded into Kind** already. It does not remove the need for HTTP registry config if other workloads still pull from an in-cluster HTTP registry. On a real k3s cluster you usually run **full setup without `--test-mode`** so images are built and pushed, then you still need **insecure** registry settings for that HTTP registry on Docker and k3s as below.
+
+The platform can install a **plain HTTP** Docker distribution registry (typical in dev with `./bin/mcp-runtime setup` **without** `--with-tls`). Runtimes default to **HTTPS** for any registry; you must allow **HTTP (insecure)** in two places: the host where you run **Docker** (build/push) and every **k3s node** (kubelet/containerd pull for Pods).
+
+| Component | Config file (path) | What to set |
+|----------|--------------------|------------|
+| **Docker** (laptop, CI, bastion) | **Docker Desktop:** *Settings* → *Docker Engine* (JSON editor) | Add `insecure-registries` (see example below) |
+| **Docker** (Linux, `dockerd`) | `/etc/docker/daemon.json` | Same JSON; then restart Docker (below) |
+| **k3s** (server and each agent) | `/etc/rancher/k3s/registries.yaml` | Mirror the registry to `http://…` and allow TLS skip for that host (see example); then restart `k3s` / `k3s-agent` on that node |
+
+**1. Docker — `insecure-registries` (push/pull from your workstation)**  
+Create or merge into the JSON (use your real registry `host:port` from `kubectl get svc -n registry` or the address you push to, e.g. a node IP and node port, or a LoadBalancer address):
+
+```json
+{
+  "insecure-registries": ["10.0.0.1:5000", "registry.local:5000"]
+}
+```
+
+- **macOS/Windows (Docker Desktop):** apply the JSON in **Settings → Docker Engine** → **Apply & restart** (or restart the app).
+- **Linux:** write `/etc/docker/daemon.json` (merge with any existing keys such as `log-drivers` if you already have a file), then `sudo systemctl restart docker` (or your distro’s equivalent). Any user running `docker push` that targets this host must have this in effect on that machine.
+
+**2. k3s — `registries.yaml` (Pod image pulls on the node)**  
+On **each** k3s node that can schedule Pods that use the registry, edit or create `/etc/rancher/k3s/registries.yaml`. The key under `mirrors` must **match the registry host and port** used in the image name (e.g. if the image is `10.43.109.51:5000/my-app:tag`, the mirror key must be `10.43.109.51:5000`).
+
+```yaml
+mirrors:
+  "10.43.109.51:5000":
+    endpoint:
+      - "http://10.43.109.51:5000"
+configs:
+  "10.43.109.51:5000":
+    tls:
+      insecure_skip_verify: true
+```
+
+- **Control plane:** `sudo systemctl restart k3s`  
+- **Agent nodes:** the same `registries.yaml` and `sudo systemctl restart k3s-agent` (paths can differ in air-gapped installs; match your k3s version docs).
+
+If you use the hostname `registry.local` in image refs, add a second `mirrors` / `configs` block for that name. Kubelet uses **node** name resolution, not the cluster’s **CoreDNS**, so for `registry.local` you still need a real DNS name or an entry in **`/etc/hosts` on each node**, unless you set **`MCP_REGISTRY_INGRESS_HOST` to a reachable `IP:port` before** `mcp-runtime pipeline generate` so manifests use a pull address nodes can use without a fake host.
+
+**3. Align with MCP server manifests and CI**  
+- **Before** `mcp-runtime pipeline generate`, set **`MCP_REGISTRY_INGRESS_HOST`**, **`MCP_REGISTRY_HOST`**, or **`MCP_PLATFORM_DOMAIN`** (see `pkg/metadata/host_resolve.go`) so default image names are **pullable** from the node, not only `registry.local/...` unless you intend to manage DNS/hosts.  
+- **`mcp-runtime server build image <name>`** must match the **`name`** in `.mcp/*.yaml`. Use **`mcp-runtime pipeline generate --dir .mcp --output manifests`** then **`mcp-runtime pipeline deploy --dir manifests`**. A single file: `mcp-runtime server apply --file <path>`. There is no `mcp-runtime server deploy --dir`.
+
+**4. Quick registry reachability (optional)**  
+From a network that can reach the registry: `curl -sS "http://<host>:<port>/v2/"` should return `{}`. That does not replace Docker/k3s configuration for TLS mode of the **client** runtimes.
 
 ## Governance (grants and sessions)
 
