@@ -2,7 +2,7 @@
 
 Documentation for using and operating the MCP Runtime platform — a Kubernetes-native control plane for internal Model Context Protocol (MCP) servers.
 
-> Eventually served at **docs.mcpruntime.org**. Today these are plain Markdown files; render them on GitHub or with any static site generator.
+> Served at **docs.mcpruntime.org** as a generated MkDocs site. Source remains plain Markdown in this directory.
 
 ## Map
 
@@ -27,3 +27,31 @@ Documentation for using and operating the MCP Runtime platform — a Kubernetes-
 ## Status
 
 Alpha. The architecture is stable enough to evaluate. The API and UX are still evolving — treat the `v1alpha1` types as the source of truth.
+
+## Production deploy (GitHub Actions)
+
+The `deploy-docs` job in [`.github/workflows/ci.yaml`](../.github/workflows/ci.yaml)
+syncs `docs/` to your remote host and, by default, builds/runs a Docker
+container there.
+
+Docker build context is this `docs/` directory:
+
+- `Dockerfile` builds a static MkDocs site and packages it in `nginx`.
+- `mkdocs.yml` defines nav/theme/site settings.
+- `requirements.txt` pins MkDocs dependencies.
+
+Required GitHub secrets:
+
+- `DOCS_DEPLOY_HOST`
+- `DOCS_DEPLOY_USER`
+- `DOCS_DEPLOY_PATH`
+- `DOCS_DEPLOY_SSH_KEY`
+
+Optional GitHub secrets:
+
+- `DOCS_CONTAINER_NAME` (default `mcp-runtime-docs`)
+- `DOCS_IMAGE_NAME` (default `mcp-runtime-docs:latest`)
+- `DOCS_HOST_PORT` (default `8081`)
+- `DOCS_CONTAINER_PORT` (default `80`)
+- `DOCS_DEPLOY_COMMAND` (if set, CI runs this instead of the default
+  Docker build/run sequence)
