@@ -37,6 +37,9 @@ container there.
 Docker build context is this `docs/` directory:
 
 - `Dockerfile` builds a static MkDocs site and packages it in `nginx`.
+- `nginx.conf` serves the generated site for `docs.mcpruntime.org` with
+  MkDocs directory URL handling, static asset caching, gzip, and basic
+  hardening headers.
 - `mkdocs.yml` defines nav/theme/site settings.
 - `requirements.txt` pins MkDocs dependencies.
 
@@ -49,9 +52,9 @@ Required GitHub secrets:
 
 Optional GitHub secrets:
 
-- `DOCS_CONTAINER_NAME` (default `mcp-runtime-docs`)
-- `DOCS_IMAGE_NAME` (default `mcp-runtime-docs:latest`)
-- `DOCS_HOST_PORT` (default `8081`)
-- `DOCS_CONTAINER_PORT` (default `80`)
+- `DOCS_HOST_PORT=8081`
+- `DOCS_CONTAINER_PORT=80`
+- `DOCS_CONTAINER_NAME=mcp-runtime-docs`
+- `DOCS_IMAGE_NAME=mcp-runtime-docs:latest`
 - `DOCS_DEPLOY_COMMAND` (if set, CI runs this instead of the default
   Docker build/run sequence)
