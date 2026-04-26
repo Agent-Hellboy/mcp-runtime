@@ -26,7 +26,7 @@ fi
 echo "[info] Sentinel root: ${SENTINEL_ROOT}"
 
 CLUSTER_NAME="${CLUSTER_NAME:-mcp-e2e}"
-PLATFORM_HOST="${PLATFORM_HOST:-mcp.example.local}"
+PLATFORM_HOST="${PLATFORM_HOST:-localhost}"
 SERVER_NAME="${SERVER_NAME:-policy-mcp-server}"
 SERVER_HOST="${SERVER_HOST:-${PLATFORM_HOST}}"
 OAUTH_SERVER_NAME="${OAUTH_SERVER_NAME:-oauth-mcp-server}"
@@ -1693,7 +1693,7 @@ version: v1
 servers:
   - name: ${SERVER_NAME}
     route: /${SERVER_NAME}/mcp
-    ingressHost: ${SERVER_HOST}
+    publicPathPrefix: ${SERVER_NAME}
     port: 8090
     namespace: mcp-servers
     envVars:
@@ -1815,6 +1815,8 @@ PY_SERVER_NAME="${SERVER_NAME}" \
 PY_SERVER_HOST="${SERVER_HOST}" \
 PY_WORKDIR="${WORKDIR}" \
 PY_TRAEFIK_PORT="${TRAEFIK_PORT}" \
+PY_MCP_SMOKE_ANON_PORT="${MCP_SMOKE_ANON_PORT}" \
+PY_MCP_SMOKE_SESSION_PORT="${MCP_SMOKE_SESSION_PORT}" \
 E2E_HELPERS="${PROJECT_ROOT}/test/e2e/e2e_helpers.py" \
 python3 <<'PYEOF'
 import os
@@ -1843,21 +1845,32 @@ expected_path = f"/{server_name}/mcp"
 check(f"ingressPath: {expected_path}" in get_yaml,
       f"ingressPath: {expected_path}",
       f"server get: ingressPath not '{expected_path}'\n{get_yaml}")
-check(f"ingressHost: {server_host}" in get_yaml,
-      f"ingressHost: {server_host}",
-      f"server get: ingressHost not '{server_host}'\n{get_yaml}")
+check(f"publicPathPrefix: {server_name}" in get_yaml,
+      f"publicPathPrefix: {server_name}",
+      f"server get: publicPathPrefix not '{server_name}'\n{get_yaml}")
 
 # Extract ingressPath and ingressHost to build MCP client config URL
 m_path = re.search(r'ingressPath:\s*(\S+)', get_yaml)
-m_host = re.search(r'ingressHost:\s*(\S+)', get_yaml)
 ingress_path = m_path.group(1) if m_path else expected_path
-ingress_host = m_host.group(1) if m_host else server_host
 
 traefik_port = os.environ.get("PY_TRAEFIK_PORT", "18080")
-mcp_url = f"http://{ingress_host}:{traefik_port}{ingress_path}"
+anon_proxy_port = os.environ.get("PY_MCP_SMOKE_ANON_PORT", "18084")
+session_proxy_port = os.environ.get("PY_MCP_SMOKE_SESSION_PORT", "18086")
+
+# Path-based local e2e usage should prefer local header proxies that already inject
+# MCP protocol and identity headers where needed.
+canonical_mcp_url = f"http://127.0.0.1:{traefik_port}{ingress_path}"
+local_anon_url = f"http://127.0.0.1:{anon_proxy_port}{ingress_path}"
+local_session_url = f"http://127.0.0.1:{session_proxy_port}{ingress_path}"
 import json
-config = {"mcpServers": {server_name: {"url": mcp_url}}}
-print(f"[cli] MCP client config for {server_name}:")
+config = {
+    "mcpServers": {
+        server_name: {"url": local_session_url},
+        f"{server_name}-anon": {"url": local_anon_url},
+    }
+}
+print(f"[cli] Canonical ingress URL for {server_name}: {canonical_mcp_url}")
+print(f"[cli] Local e2e MCP client config for {server_name}:")
 print(json.dumps(config, indent=2))
 PYEOF
 
@@ -2612,7 +2625,7 @@ servers:
     image: ${SERVER_IMAGE%:*}
     imageTag: ${SERVER_IMAGE##*:}
     route: /${OAUTH_SERVER_NAME}/mcp
-    ingressHost: ${OAUTH_SERVER_HOST}
+    publicPathPrefix: ${OAUTH_SERVER_NAME}
     port: 8090
     namespace: mcp-servers
     envVars:

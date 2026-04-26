@@ -485,8 +485,8 @@ func (r *MCPServerReconciler) setDefaults(mcpServer *mcpv1alpha1.MCPServer) {
 	if mcpServer.Spec.IngressPath == "" && mcpServer.Name != "" {
 		mcpServer.Spec.IngressPath = "/" + mcpServer.Name + "/mcp"
 	}
-	if mcpServer.Spec.IngressHost == "" && strings.TrimSpace(mcpServer.Spec.PublicPathPrefix) == "" {
-		mcpServer.Spec.IngressHost = strings.TrimSpace(r.DefaultIngressHost)
+	if strings.TrimSpace(mcpServer.Spec.PublicPathPrefix) == "" && mcpServer.Name != "" {
+		mcpServer.Spec.PublicPathPrefix = mcpServer.Name
 	}
 	if mcpServer.Spec.IngressClass == "" {
 		mcpServer.Spec.IngressClass = "traefik"

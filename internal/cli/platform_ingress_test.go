@@ -59,13 +59,16 @@ func TestRenderPlatformIngressManifestWithTLS(t *testing.T) {
 		"cert-manager.io/cluster-issuer: letsencrypt-prod",
 		"tls:",
 		`- "platform.mcpruntime.org"`,
-		"secretName: mcp-sentinel-platform-tls",
+		"secretName: " + platformTLSSecretName,
 		`- host: "platform.mcpruntime.org"`,
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in manifest:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "\n    traefik.ingress.kubernetes.io/router.entrypoints: web\n") {
+		t.Fatalf("did not expect plain web entrypoint when TLS issuer is set:\n%s", got)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 )
 
 const platformIngressName = "mcp-sentinel-platform-ui"
+const platformTLSSecretName = "mcp-sentinel-platform-tls"
 
 // applyPlatformIngressIfConfigured applies a host-based ingress for the
 // dashboard UI on platform.<MCP_PLATFORM_DOMAIN> when MCP_PLATFORM_INGRESS_HOST
@@ -63,7 +64,9 @@ func renderPlatformIngressManifest(host, issuerName string) string {
 		b.WriteString("        - ")
 		b.WriteString(strconv.Quote(host))
 		b.WriteString("\n")
-		b.WriteString("      secretName: mcp-sentinel-platform-tls\n")
+		b.WriteString("      secretName: ")
+		b.WriteString(platformTLSSecretName)
+		b.WriteString("\n")
 	}
 	b.WriteString("  rules:\n")
 	b.WriteString("    - host: ")

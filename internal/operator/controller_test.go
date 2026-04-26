@@ -263,10 +263,11 @@ func TestSetDefaults(t *testing.T) {
 		assertEqual(t, "servicePort", mcpServer.Spec.ServicePort, int32(80))
 		assertEqual(t, "imageTag", mcpServer.Spec.ImageTag, "latest")
 		assertEqual(t, "ingressPath", mcpServer.Spec.IngressPath, "/test-server/mcp")
+		assertEqual(t, "publicPathPrefix", mcpServer.Spec.PublicPathPrefix, "test-server")
 		assertEqual(t, "ingressClass", mcpServer.Spec.IngressClass, "traefik")
 	})
 
-	t.Run("applies default ingress host", func(t *testing.T) {
+	t.Run("derives publicPathPrefix from server name", func(t *testing.T) {
 		mcpServer := mcpv1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-server"},
 		}
@@ -275,14 +276,15 @@ func TestSetDefaults(t *testing.T) {
 			DefaultIngressHost: "example.com",
 		}
 		r.setDefaults(&mcpServer)
-		assertEqual(t, "ingressHost", mcpServer.Spec.IngressHost, "example.com")
+		assertEqual(t, "publicPathPrefix", mcpServer.Spec.PublicPathPrefix, "test-server")
+		assertEqual(t, "ingressHost", mcpServer.Spec.IngressHost, "")
 	})
 
-	t.Run("does not apply default ingress host for public path routing", func(t *testing.T) {
+	t.Run("preserves explicit publicPathPrefix", func(t *testing.T) {
 		mcpServer := mcpv1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-server"},
 			Spec: mcpv1alpha1.MCPServerSpec{
-				PublicPathPrefix: "test-server",
+				PublicPathPrefix: "custom-prefix",
 			},
 		}
 		r := MCPServerReconciler{
@@ -290,6 +292,7 @@ func TestSetDefaults(t *testing.T) {
 			DefaultIngressHost: "example.com",
 		}
 		r.setDefaults(&mcpServer)
+		assertEqual(t, "publicPathPrefix", mcpServer.Spec.PublicPathPrefix, "custom-prefix")
 		assertEqual(t, "ingressHost", mcpServer.Spec.IngressHost, "")
 	})
 
@@ -524,7 +527,9 @@ func TestReconcileDeploymentAddsGatewaySidecar(t *testing.T) {
 	}
 	assertEqual(t, "gatewayPortEnv", envByName["PORT"].Value, "8091")
 	assertEqual(t, "gatewayUpstreamEnv", envByName["UPSTREAM_URL"].Value, "http://127.0.0.1:8088")
-	assertEqual(t, "externalBaseURLEnv", envByName["EXTERNAL_BASE_URL"].Value, "http://gateway.example.com")
+	if _, ok := envByName["EXTERNAL_BASE_URL"]; ok {
+		t.Fatal("expected EXTERNAL_BASE_URL to be unset for hostless path-based routing")
+	}
 	assertEqual(t, "analyticsIngestEnv", envByName["ANALYTICS_INGEST_URL"].Value, "http://analytics.default.svc/api/events")
 	assertEqual(t, "analyticsSourceEnv", envByName["ANALYTICS_SOURCE"].Value, "gateway-server")
 	assertEqual(t, "analyticsEventTypeEnv", envByName["ANALYTICS_EVENT_TYPE"].Value, "mcp.request")
@@ -833,13 +838,14 @@ func TestApplyDefaultsIfNeeded(t *testing.T) {
 		mcpServer := &mcpv1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
 			Spec: mcpv1alpha1.MCPServerSpec{
-				Image:        "test-image",
-				ImageTag:     "latest",
-				Port:         8088,
-				ServicePort:  80,
-				Replicas:     &replicas,
-				IngressPath:  "/test-server/mcp",
-				IngressClass: "traefik",
+				Image:            "test-image",
+				ImageTag:         "latest",
+				Port:             8088,
+				ServicePort:      80,
+				Replicas:         &replicas,
+				IngressPath:      "/test-server/mcp",
+				IngressClass:     "traefik",
+				PublicPathPrefix: "test-server",
 			},
 		}
 		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer).Build()
@@ -1402,14 +1408,15 @@ func TestReconcile(t *testing.T) {
 		mcpServer := &mcpv1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
 			Spec: mcpv1alpha1.MCPServerSpec{
-				Image:        "test-image",
-				ImageTag:     "latest",
-				Port:         8088,
-				ServicePort:  80,
-				Replicas:     &replicas,
-				IngressHost:  "example.com",
-				IngressPath:  "/test-server/mcp",
-				IngressClass: "traefik",
+				Image:            "test-image",
+				ImageTag:         "latest",
+				Port:             8088,
+				ServicePort:      80,
+				Replicas:         &replicas,
+				IngressHost:      "example.com",
+				IngressPath:      "/test-server/mcp",
+				IngressClass:     "traefik",
+				PublicPathPrefix: "test-server",
 			},
 		}
 		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer).Build()
