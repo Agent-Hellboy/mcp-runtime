@@ -535,8 +535,12 @@ func TestCheckNamedClusterIssuerWithKubectlError(t *testing.T) {
 
 func TestCheckNamedClusterIssuerWithKubectlEmptyName(t *testing.T) {
 	kubectl := &KubectlClient{exec: &MockExecutor{}, validators: nil}
-	if err := checkNamedClusterIssuerWithKubectl(kubectl, "  "); err == nil {
+	err := checkNamedClusterIssuerWithKubectl(kubectl, "  ")
+	if err == nil {
 		t.Fatal("expected error for empty name")
+	}
+	if !errors.Is(err, ErrClusterIssuerNotFound) {
+		t.Fatalf("expected ErrClusterIssuerNotFound, got %v", err)
 	}
 }
 

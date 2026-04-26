@@ -221,7 +221,7 @@ func checkClusterIssuerWithKubectl(kubectl KubectlRunner) error {
 func checkNamedClusterIssuerWithKubectl(kubectl KubectlRunner, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return fmt.Errorf("ClusterIssuer name is empty")
+		return newWithSentinel(ErrClusterIssuerNotFound, "ClusterIssuer name is empty (set --tls-cluster-issuer or MCP_TLS_CLUSTER_ISSUER)")
 	}
 	// #nosec G204 -- issuer name is validated, fixed kubectl subresource.
 	if err := kubectl.Run([]string{"get", "clusterissuer", name}); err != nil {

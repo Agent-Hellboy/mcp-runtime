@@ -217,6 +217,22 @@ func (d SetupDeps) withDefaults(logger *zap.Logger) SetupDeps {
 	return d
 }
 
+// validateTLSSetupCLIFlags enforces ACME / internal-issuer mutual exclusion and
+// requires --with-tls when any TLS or cert-manager-related options are set.
+func validateTLSSetupCLIFlags(
+	tlsEnabled bool,
+	acmeEmailResolved, tlsCIResolved string,
+	acmeStagingResolved, skipCertManagerInstall bool,
+) error {
+	if acmeEmailResolved != "" && tlsCIResolved != "" {
+		return newWithSentinel(ErrFieldRequired, "use either --acme-email (or MCP_ACME_EMAIL) for public Let's Encrypt, or --tls-cluster-issuer (or MCP_TLS_CLUSTER_ISSUER) for an existing internal ClusterIssuer, not both")
+	}
+	if !tlsEnabled && (tlsCIResolved != "" || acmeEmailResolved != "" || acmeStagingResolved || skipCertManagerInstall) {
+		return newWithSentinel(ErrFieldRequired, "--with-tls is required when using --acme-email, --tls-cluster-issuer, --acme-staging, --skip-cert-manager-install, or related environment variables (MCP_ACME_EMAIL, MCP_ACME_STAGING, MCP_TLS_CLUSTER_ISSUER)")
+	}
+	return nil
+}
+
 // NewSetupCmd constructs the top-level setup command for installing the platform.
 func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 	var registryType string
@@ -275,11 +291,8 @@ will use to push and pull container images.`,
 			if tlsCIResolved == "" {
 				tlsCIResolved = strings.TrimSpace(os.Getenv("MCP_TLS_CLUSTER_ISSUER"))
 			}
-			if acmeEmailResolved != "" && tlsCIResolved != "" {
-				return fmt.Errorf("use either --acme-email (or MCP_ACME_EMAIL) for public Let's Encrypt, or --tls-cluster-issuer (or MCP_TLS_CLUSTER_ISSUER) for an existing internal ClusterIssuer, not both")
-			}
-			if tlsCIResolved != "" && !tlsEnabled {
-				return fmt.Errorf("--tls-cluster-issuer requires --with-tls")
+			if err := validateTLSSetupCLIFlags(tlsEnabled, acmeEmailResolved, tlsCIResolved, acmeStagingResolved, skipCertManagerInstall); err != nil {
+				return err
 			}
 
 			plan := BuildSetupPlan(SetupPlanInput{
