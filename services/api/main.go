@@ -112,7 +112,15 @@ func main() {
 	adminAPIKeys := splitCSVSet(envOr("ADMIN_API_KEYS", ""))
 	adminUsers := splitCSVSet(envOr("ADMIN_USERS", ""))
 
+	oidcIssuer := strings.TrimSpace(os.Getenv("OIDC_ISSUER"))
+	oidcAudience := strings.TrimSpace(os.Getenv("OIDC_AUDIENCE"))
 	jwksURL := strings.TrimSpace(os.Getenv("OIDC_JWKS_URL"))
+	if (oidcIssuer != "" || oidcAudience != "") && jwksURL == "" {
+		log.Fatal("OIDC_JWKS_URL is required when OIDC_ISSUER or OIDC_AUDIENCE is configured")
+	}
+	if jwksURL != "" && (oidcIssuer == "" || oidcAudience == "") {
+		log.Fatal("OIDC_ISSUER and OIDC_AUDIENCE are required when OIDC_JWKS_URL is configured")
+	}
 	jwks := (*keyfunc.JWKS)(nil)
 	if jwksURL != "" {
 		var err error
@@ -140,8 +148,8 @@ func main() {
 		adminAPIKeys: adminAPIKeys,
 		adminUsers:   adminUsers,
 		jwks:         jwks,
-		oidcIssuer:   strings.TrimSpace(os.Getenv("OIDC_ISSUER")),
-		oidcAudience: strings.TrimSpace(os.Getenv("OIDC_AUDIENCE")),
+		oidcIssuer:   oidcIssuer,
+		oidcAudience: oidcAudience,
 	}
 
 	mux := http.NewServeMux()
@@ -538,10 +546,13 @@ func (s *apiServer) authenticateRequest(r *http.Request) (principal, bool, error
 	if !ok {
 		return principal{}, false, nil
 	}
-	if s.oidcIssuer != "" && claims["iss"] != s.oidcIssuer {
+	if s.oidcIssuer == "" || s.oidcAudience == "" {
 		return principal{}, false, nil
 	}
-	if s.oidcAudience != "" && !audienceMatches(claims["aud"], s.oidcAudience) {
+	if claims["iss"] != s.oidcIssuer {
+		return principal{}, false, nil
+	}
+	if !audienceMatches(claims["aud"], s.oidcAudience) {
 		return principal{}, false, nil
 	}
 	sub := strings.TrimSpace(fmt.Sprint(claims["sub"]))
