@@ -60,6 +60,9 @@ type ServerMetadata struct {
 	// IngressHost is the hostname for the server ingress route.
 	IngressHost string `yaml:"ingressHost,omitempty" json:"ingressHost,omitempty"`
 
+	// PublicPathPrefix enables hostless path-based routing and resolves to /<publicPathPrefix>/mcp.
+	PublicPathPrefix string `yaml:"publicPathPrefix,omitempty" json:"publicPathPrefix,omitempty"`
+
 	// Port is the port the container listens on (defaults to 8088).
 	Port int32 `yaml:"port,omitempty" json:"port,omitempty"`
 

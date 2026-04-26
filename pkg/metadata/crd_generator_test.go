@@ -16,14 +16,15 @@ func TestGenerateCRD(t *testing.T) {
 
 		replicas := int32(2)
 		server := &ServerMetadata{
-			Name:        "test-server",
-			Image:       "my-image",
-			ImageTag:    "v1.0.0",
-			Route:       "/test/mcp",
-			IngressHost: "example.local",
-			Port:        9000,
-			Replicas:    &replicas,
-			Namespace:   "custom-ns",
+			Name:             "test-server",
+			Image:            "my-image",
+			ImageTag:         "v1.0.0",
+			Route:            "/test/mcp",
+			IngressHost:      "example.local",
+			PublicPathPrefix: "test-server",
+			Port:             9000,
+			Replicas:         &replicas,
+			Namespace:        "custom-ns",
 		}
 
 		err := GenerateCRD(server, outputPath)
@@ -49,6 +50,7 @@ func TestGenerateCRD(t *testing.T) {
 		assertContains(t, content, "replicas: 2")
 		assertContains(t, content, "ingressPath: /test/mcp")
 		assertContains(t, content, "ingressHost: example.local")
+		assertContains(t, content, "publicPathPrefix: test-server")
 	})
 
 	t.Run("generates CRD with resources", func(t *testing.T) {

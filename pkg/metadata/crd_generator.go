@@ -34,6 +34,7 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 	// Set route (ingress path)
 	mcpServer.Spec.IngressPath = server.Route
 	mcpServer.Spec.IngressHost = server.IngressHost
+	mcpServer.Spec.PublicPathPrefix = server.PublicPathPrefix
 
 	// Set service port (default 80)
 	if mcpServer.Spec.ServicePort == 0 {
