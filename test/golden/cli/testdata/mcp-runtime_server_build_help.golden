@@ -10,6 +10,7 @@ Flags:
   -h, --help   help for build
 
 Global Flags:
-      --debug   Enable debug mode with structured error logging
+      --debug      Enable debug mode with structured error logging
+      --use-kube   Use kubectl and local kubeconfig instead of the platform API for supported commands
 
 Use "mcp-runtime server build [command] --help" for more information about a command.

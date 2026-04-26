@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -17,6 +19,8 @@ const (
 type AccessManager struct {
 	kubectl *KubectlClient
 	logger  *zap.Logger
+	// useKube forces kubectl; when false, the platform API is used when logged in via mcp-runtime auth.
+	useKube bool
 }
 
 func NewAccessManager(kubectl *KubectlClient, logger *zap.Logger) *AccessManager {
@@ -36,8 +40,13 @@ func NewAccessCmdWithManager(mgr *AccessManager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "access",
 		Short: "Manage grants and agent sessions",
-		Long:  "Commands for managing MCPAccessGrant and MCPAgentSession resources that feed the gateway policy layer.",
+		Long: `Commands for managing MCPAccessGrant and MCPAgentSession resources that feed the gateway policy layer.
+
+With mcp-runtime auth login, commands use the platform API by default. Use --use-kube
+to target the cluster with kubectl and a kubeconfig (cluster admin path).`,
 	}
+
+	cmd.PersistentFlags().BoolVar(&mgr.useKube, "use-kube", false, "Use kubectl and local kubeconfig instead of the platform API")
 
 	cmd.AddCommand(mgr.newAccessGrantCmd())
 	cmd.AddCommand(mgr.newAccessSessionCmd())
@@ -163,7 +172,27 @@ func (m *AccessManager) newAccessToggleCmd(resource, use, short string, value bo
 	return cmd
 }
 
+func (m *AccessManager) accessListQueryNamespace(namespace string, allNamespaces bool) string {
+	switch {
+	case namespace != "":
+		return namespace
+	case allNamespaces:
+		return ""
+	default:
+		return NamespaceMCPServers
+	}
+}
+
+// ListAccessResources lists grants or sessions via the platform API when configured, else kubectl.
 func (m *AccessManager) ListAccessResources(resource, namespace string, allNamespaces bool) error {
+	plat, kube, err := m.platformOrKube()
+	if err != nil {
+		return err
+	}
+	if !kube {
+		return m.listAccessPlatform(context.Background(), plat, resource, m.accessListQueryNamespace(namespace, allNamespaces))
+	}
+
 	args := []string{"get", resource}
 	switch {
 	case namespace != "":
@@ -182,10 +211,49 @@ func (m *AccessManager) ListAccessResources(resource, namespace string, allNames
 	return nil
 }
 
+func (m *AccessManager) listAccessPlatform(ctx context.Context, plat *platformClient, resource, nsFilter string) error {
+	switch resource {
+	case accessGrantResource:
+		grants, err := plat.listGrants(ctx, nsFilter)
+		if err != nil {
+			return wrapWithSentinelAndContext(nil, err, fmt.Sprintf("list grants: %v", err), map[string]any{"component": "access"})
+		}
+		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(tw, "NAME\tNAMESPACE\tSERVER\tDISABLED")
+		for _, g := range grants {
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%v\n", g.Name, g.Namespace, g.ServerRef.Name, g.Disabled)
+		}
+		_ = tw.Flush()
+		return nil
+	case accessSessionResource:
+		sessions, err := plat.listSessions(ctx, nsFilter)
+		if err != nil {
+			return wrapWithSentinelAndContext(nil, err, fmt.Sprintf("list sessions: %v", err), map[string]any{"component": "access"})
+		}
+		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(tw, "NAME\tNAMESPACE\tSERVER\tREVOKED")
+		for _, s := range sessions {
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%v\n", s.Name, s.Namespace, s.ServerRef.Name, s.Revoked)
+		}
+		_ = tw.Flush()
+		return nil
+	default:
+		return newWithSentinel(nil, fmt.Sprintf("unsupported access resource %q", resource))
+	}
+}
+
 func (m *AccessManager) GetAccessResource(resource, name, namespace string) error {
 	name, namespace, err := validateAccessInput(name, namespace)
 	if err != nil {
 		return err
+	}
+
+	plat, kube, err := m.platformOrKube()
+	if err != nil {
+		return err
+	}
+	if !kube {
+		return m.getAccessPlatform(context.Background(), plat, resource, name, namespace)
 	}
 
 	args := []string{"get", resource, name, "-n", namespace, "-o", "yaml"}
@@ -200,7 +268,52 @@ func (m *AccessManager) GetAccessResource(resource, name, namespace string) erro
 	return nil
 }
 
+func (m *AccessManager) getAccessPlatform(ctx context.Context, plat *platformClient, resource, name, namespace string) error {
+	switch resource {
+	case accessGrantResource:
+		grants, err := plat.listGrants(ctx, namespace)
+		if err != nil {
+			return err
+		}
+		for _, g := range grants {
+			if g.Name == name && g.Namespace == namespace {
+				b, _ := json.MarshalIndent(g, "", "  ")
+				_, _ = os.Stdout.Write(append(b, '\n'))
+				return nil
+			}
+		}
+	case accessSessionResource:
+		sessions, err := plat.listSessions(ctx, namespace)
+		if err != nil {
+			return err
+		}
+		for _, s := range sessions {
+			if s.Name == name && s.Namespace == namespace {
+				b, _ := json.MarshalIndent(s, "", "  ")
+				_, _ = os.Stdout.Write(append(b, '\n'))
+				return nil
+			}
+		}
+	default:
+		return newWithSentinel(nil, fmt.Sprintf("unsupported access resource %q", resource))
+	}
+	return newWithSentinel(nil, fmt.Sprintf("no %s %q in namespace %q (platform API)", resource, name, namespace))
+}
+
 func (m *AccessManager) ApplyAccessResource(file string) error {
+	plat, kube, err := m.platformOrKube()
+	if err != nil {
+		return err
+	}
+	if !kube {
+		if err := plat.applyAccessFromYAMLFile(context.Background(), file); err != nil {
+			return wrapWithSentinelAndContext(nil, err, fmt.Sprintf("apply access resource from file %q: %v", file, err), map[string]any{
+				"file":      file,
+				"component": "access",
+			})
+		}
+		return nil
+	}
 	if err := applyManifestFromFile(m.kubectl, file, os.Stdout, os.Stderr); err != nil {
 		return wrapWithSentinelAndContext(nil, err, fmt.Sprintf("failed to apply access resource from file %q: %v", file, err), map[string]any{
 			"file":      file,
@@ -214,6 +327,32 @@ func (m *AccessManager) DeleteAccessResource(resource, name, namespace string) e
 	name, namespace, err := validateAccessInput(name, namespace)
 	if err != nil {
 		return err
+	}
+
+	plat, kube, err := m.platformOrKube()
+	if err != nil {
+		return err
+	}
+	if !kube {
+		ctx := context.Background()
+		switch resource {
+		case accessGrantResource:
+			err = plat.deleteGrant(ctx, namespace, name)
+		case accessSessionResource:
+			err = plat.deleteSession(ctx, namespace, name)
+		default:
+			return newWithSentinel(nil, fmt.Sprintf("unsupported access resource %q", resource))
+		}
+		if err != nil {
+			return wrapWithSentinelAndContext(nil, err, fmt.Sprintf("delete %s %q: %v", resource, name, err), map[string]any{
+				"resource":  resource,
+				"name":      name,
+				"namespace": namespace,
+				"component": "access",
+			})
+		}
+		_, _ = fmt.Fprintf(os.Stdout, "%s %q deleted\n", resource, name)
+		return nil
 	}
 
 	args := []string{"delete", resource, name, "-n", namespace}
@@ -232,6 +371,40 @@ func (m *AccessManager) ToggleAccessResource(resource, name, namespace string, v
 	name, namespace, err := validateAccessInput(name, namespace)
 	if err != nil {
 		return err
+	}
+
+	plat, kube, err := m.platformOrKube()
+	if err != nil {
+		return err
+	}
+	if !kube {
+		ctx := context.Background()
+		switch resource {
+		case accessGrantResource:
+			if value {
+				err = plat.postGrantToggle(ctx, namespace, name, "disable")
+			} else {
+				err = plat.postGrantToggle(ctx, namespace, name, "enable")
+			}
+		case accessSessionResource:
+			if value {
+				err = plat.postSessionToggle(ctx, namespace, name, "revoke")
+			} else {
+				err = plat.postSessionToggle(ctx, namespace, name, "unrevoke")
+			}
+		default:
+			return newWithSentinel(nil, fmt.Sprintf("unsupported access resource %q", resource))
+		}
+		if err != nil {
+			return wrapWithSentinelAndContext(nil, err, fmt.Sprintf("toggle %s %q: %v", resource, name, err), map[string]any{
+				"resource":  resource,
+				"name":      name,
+				"namespace": namespace,
+				"component": "access",
+			})
+		}
+		_, _ = fmt.Fprintf(os.Stdout, "updated %s %q\n", resource, name)
+		return nil
 	}
 
 	patchValue := map[string]any{"spec": map[string]any{}}

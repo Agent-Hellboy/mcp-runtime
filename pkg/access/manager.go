@@ -162,6 +162,14 @@ func (m *Manager) EnableGrant(ctx context.Context, name, namespace string) error
 	return m.patchGrant(ctx, name, namespace, patch)
 }
 
+// DeleteGrant removes an MCPAccessGrant.
+func (m *Manager) DeleteGrant(ctx context.Context, name, namespace string) error {
+	if err := m.dynamic.Resource(grantGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+		return fmt.Errorf("delete grant %s/%s: %w", namespace, name, err)
+	}
+	return nil
+}
+
 func (m *Manager) patchGrant(ctx context.Context, name, namespace string, patch map[string]interface{}) error {
 	patchData, err := json.Marshal(patch)
 	if err != nil {
@@ -243,6 +251,14 @@ func (m *Manager) UnrevokeSession(ctx context.Context, name, namespace string) e
 		},
 	}
 	return m.patchSession(ctx, name, namespace, patch)
+}
+
+// DeleteSession removes an MCPAgentSession.
+func (m *Manager) DeleteSession(ctx context.Context, name, namespace string) error {
+	if err := m.dynamic.Resource(sessionGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+		return fmt.Errorf("delete session %s/%s: %w", namespace, name, err)
+	}
+	return nil
 }
 
 func (m *Manager) patchSession(ctx context.Context, name, namespace string, patch map[string]interface{}) error {

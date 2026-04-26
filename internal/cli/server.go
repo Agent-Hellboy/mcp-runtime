@@ -4,10 +4,13 @@ package cli
 // It handles creating, listing, viewing, and deleting MCPServer custom resources.
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -18,6 +21,8 @@ import (
 type ServerManager struct {
 	kubectl *KubectlClient
 	logger  *zap.Logger
+	// useKube forces kubectl; when false, platform API is used for supported read-only commands when logged in.
+	useKube bool
 }
 
 // NewServerManager creates a ServerManager with the given dependencies.
@@ -68,9 +73,15 @@ func NewServerCmdWithManager(mgr *ServerManager) *cobra.Command {
 		Short: "Manage MCP servers",
 		Long: `Commands for managing MCP server deployments.
 
+With mcp-runtime auth login, list, status, and policy use the platform API when
+--use-kube is not set. Create, apply, delete, patch, and logs require kubectl
+and a cluster kubeconfig (or --use-kube for those operations).
+
 For building images from source, use 'server build'.
 For pushing images, use 'registry push'.`,
 	}
+
+	cmd.PersistentFlags().BoolVar(&mgr.useKube, "use-kube", false, "Use kubectl and local kubeconfig instead of the platform API for supported commands")
 
 	cmd.AddCommand(mgr.newServerListCmd())
 	cmd.AddCommand(mgr.newServerGetCmd())
@@ -310,6 +321,24 @@ func (m *ServerManager) ListServers(namespace string) error {
 		return err
 	}
 
+	plat, useK, err := m.platformOrKube()
+	if err != nil {
+		return err
+	}
+	if !useK {
+		items, err := plat.listRuntimeServers(context.Background(), namespace)
+		if err != nil {
+			return err
+		}
+		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(tw, "NAME\tNAMESPACE\tREADY\tSTATUS\tAGE")
+		for _, s := range items {
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Name, s.Namespace, s.Ready, s.Status, s.Age)
+		}
+		_ = tw.Flush()
+		return nil
+	}
+
 	// #nosec G204 -- namespace validated above; kubectl validates resource names.
 	if err := m.kubectl.RunWithOutput([]string{"get", "mcpserver", "-n", namespace}, os.Stdout, os.Stderr); err != nil {
 		wrappedErr := wrapWithSentinelAndContext(
@@ -332,6 +361,26 @@ func (m *ServerManager) GetServer(name, namespace string) error {
 		return err
 	}
 
+	plat, useK, err := m.platformOrKube()
+	if err != nil {
+		return err
+	}
+	if !useK {
+		items, err := plat.listRuntimeServers(context.Background(), namespace)
+		if err != nil {
+			return err
+		}
+		for _, s := range items {
+			if s.Name == name && s.Namespace == namespace {
+				b, _ := json.MarshalIndent(s, "", "  ")
+				_, _ = os.Stdout.Write(append(b, '\n'))
+				_, _ = os.Stdout.WriteString("# For the full MCPServer YAML, use mcp-runtime server get --use-kube ... with kubectl.\n")
+				return nil
+			}
+		}
+		return newWithSentinel(ErrGetMCPServerFailed, fmt.Sprintf("server %q not found in namespace %q (platform API)", name, namespace))
+	}
+
 	// #nosec G204 -- name/namespace validated via validateServerInput.
 	if err := m.kubectl.RunWithOutput([]string{"get", "mcpserver", name, "-n", namespace, "-o", "yaml"}, os.Stdout, os.Stderr); err != nil {
 		wrappedErr := wrapWithSentinelAndContext(
@@ -349,6 +398,9 @@ func (m *ServerManager) GetServer(name, namespace string) error {
 
 // CreateServer creates a new MCP server with the given parameters.
 func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) error {
+	if err := m.requireKubectlForMutation(); err != nil {
+		return err
+	}
 	if image == "" {
 		return ErrImageRequired
 	}
@@ -412,6 +464,9 @@ func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) er
 
 // ApplyServerFromFile applies an MCPServer manifest from disk.
 func (m *ServerManager) ApplyServerFromFile(file string) error {
+	if err := m.requireKubectlForMutation(); err != nil {
+		return err
+	}
 	if err := applyManifestFromFile(m.kubectl, file, os.Stdout, os.Stderr); err != nil {
 		wrappedErr := wrapWithSentinelAndContext(
 			nil,
@@ -428,6 +483,9 @@ func (m *ServerManager) ApplyServerFromFile(file string) error {
 
 // CreateServerFromFile creates an MCP server from a YAML file.
 func (m *ServerManager) CreateServerFromFile(file string) error {
+	if err := m.requireKubectlForMutation(); err != nil {
+		return err
+	}
 	absPath, err := resolveRegularFilePath(file)
 	if err != nil {
 		Error("Cannot access file")
@@ -459,6 +517,9 @@ func (m *ServerManager) CreateServerFromFile(file string) error {
 
 // ExportServer exports an MCPServer manifest to stdout or a file.
 func (m *ServerManager) ExportServer(name, namespace, file string) error {
+	if err := m.requireKubectlForMutation(); err != nil {
+		return err
+	}
 	name, namespace, err := validateServerInput(name, namespace)
 	if err != nil {
 		return err
@@ -512,6 +573,9 @@ func (m *ServerManager) ExportServer(name, namespace, file string) error {
 
 // PatchServer patches an existing MCPServer resource using merge/json/strategic patch types.
 func (m *ServerManager) PatchServer(name, namespace, patchType, patch, patchFile string) error {
+	if err := m.requireKubectlForMutation(); err != nil {
+		return err
+	}
 	name, namespace, err := validateServerInput(name, namespace)
 	if err != nil {
 		return err
@@ -574,6 +638,34 @@ func (m *ServerManager) InspectServerPolicy(name, namespace string) error {
 		return err
 	}
 
+	plat, useK, err := m.platformOrKube()
+	if err != nil {
+		return err
+	}
+	if !useK {
+		b, err := plat.getRuntimePolicy(context.Background(), namespace, name)
+		if err != nil {
+			wrappedErr := wrapWithSentinelAndContext(
+				nil,
+				err,
+				fmt.Sprintf("platform API policy for server %q: %v", name, err),
+				map[string]any{"server": name, "namespace": namespace, "component": "server"},
+			)
+			Error("Failed to read server policy")
+			logStructuredError(m.logger, wrappedErr, "Failed to read server policy")
+			return wrappedErr
+		}
+		var pretty map[string]interface{}
+		if err := json.Unmarshal(b, &pretty); err != nil {
+			_, _ = os.Stdout.Write(b)
+			_, _ = os.Stdout.WriteString("\n")
+		} else {
+			enc, _ := json.MarshalIndent(pretty, "", "  ")
+			_, _ = os.Stdout.Write(append(enc, '\n'))
+		}
+		return nil
+	}
+
 	configMapName := name + "-gateway-policy"
 	args := []string{"get", "configmap", configMapName, "-n", namespace, "-o", `go-template={{index .data "policy.json"}}`}
 	cmd, err := m.kubectl.CommandArgs(args)
@@ -615,6 +707,9 @@ func (m *ServerManager) InspectServerPolicy(name, namespace string) error {
 
 // DeleteServer deletes an MCP server.
 func (m *ServerManager) DeleteServer(name, namespace string) error {
+	if err := m.requireKubectlForMutation(); err != nil {
+		return err
+	}
 	name, namespace, err := validateServerInput(name, namespace)
 	if err != nil {
 		return err
@@ -639,6 +734,9 @@ func (m *ServerManager) DeleteServer(name, namespace string) error {
 
 // ViewServerLogs views logs from an MCP server.
 func (m *ServerManager) ViewServerLogs(name, namespace string, follow bool) error {
+	if err := m.requireKubectlForMutation(); err != nil {
+		return err
+	}
 	name, namespace, err := validateServerInput(name, namespace)
 	if err != nil {
 		return err
@@ -668,6 +766,29 @@ func (m *ServerManager) ViewServerLogs(name, namespace string, follow bool) erro
 func (m *ServerManager) ServerStatus(namespace string) error {
 	Header(fmt.Sprintf("MCP Servers in %s", namespace))
 	DefaultPrinter.Println()
+
+	plat, useK, err := m.platformOrKube()
+	if err != nil {
+		return err
+	}
+	if !useK {
+		items, err := plat.listRuntimeServers(context.Background(), namespace)
+		if err != nil {
+			return err
+		}
+		if len(items) == 0 {
+			Warn("No MCP servers found in namespace " + namespace)
+		} else {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			_, _ = fmt.Fprintln(tw, "NAME\tNAMESPACE\tREADY\tSTATUS\tAGE")
+			for _, s := range items {
+				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Name, s.Namespace, s.Ready, s.Status, s.Age)
+			}
+			_ = tw.Flush()
+		}
+		Info("Pod details need kubectl. Run with --use-kube for full status including pods.")
+		return nil
+	}
 
 	// Get MCPServer details
 	// #nosec G204 -- namespace from CLI flag; kubectl validates namespace names.

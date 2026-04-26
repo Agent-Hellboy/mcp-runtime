@@ -160,10 +160,10 @@ func main() {
 		mux.Handle("/api/runtime/components", server.auth(http.HandlerFunc(runtimeServer.handleRuntimeComponents)))
 		mux.Handle("/api/runtime/policy", server.auth(http.HandlerFunc(runtimeServer.handleRuntimePolicy)))
 		mux.Handle("/api/runtime/actions/restart", server.auth(http.HandlerFunc(runtimeServer.handleActionRestart)))
-		// Grant toggle endpoints (POST /api/runtime/grants/{namespace}/{name}/disable|enable)
-		mux.Handle("/api/runtime/grants/", server.auth(http.HandlerFunc(runtimeServer.handleGrantTogglePath)))
-		// Session toggle endpoints (POST /api/runtime/sessions/{namespace}/{name}/revoke|unrevoke)
-		mux.Handle("/api/runtime/sessions/", server.auth(http.HandlerFunc(runtimeServer.handleSessionTogglePath)))
+		// Grant item (POST /api/runtime/grants/{ns}/{name}/disable|enable, DELETE /api/runtime/grants/{ns}/{name})
+		mux.Handle("/api/runtime/grants/", server.auth(http.HandlerFunc(runtimeServer.handleGrantItemPath)))
+		// Session item (POST /api/runtime/sessions/{ns}/{name}/revoke|unrevoke, DELETE /api/runtime/sessions/{ns}/{name})
+		mux.Handle("/api/runtime/sessions/", server.auth(http.HandlerFunc(runtimeServer.handleSessionItemPath)))
 	}
 
 	shutdown, err := initTracer("mcp-sentinel-api")

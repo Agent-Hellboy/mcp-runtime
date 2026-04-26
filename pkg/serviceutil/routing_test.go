@@ -219,3 +219,17 @@ func TestIsActionEnabled(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractNamespacedResourceDelete(t *testing.T) {
+	req := &http.Request{Method: http.MethodDelete, URL: &url.URL{Path: "/api/runtime/grants/ns-1/g1"}}
+	ns, name, err := ExtractNamespacedResourceDelete(req, "/api/runtime/grants/")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if ns != "ns-1" || name != "g1" {
+		t.Fatalf("got %q %q", ns, name)
+	}
+	if _, _, err := ExtractNamespacedResourceDelete(&http.Request{Method: http.MethodGet, URL: &url.URL{Path: "/api/runtime/grants/n/g"}}, "/api/runtime/grants/"); !errors.Is(err, ErrMethodNotAllowed) {
+		t.Fatalf("GET: %v", err)
+	}
+}

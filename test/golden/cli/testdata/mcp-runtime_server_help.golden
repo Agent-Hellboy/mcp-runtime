@@ -1,5 +1,9 @@
 Commands for managing MCP server deployments.
 
+With mcp-runtime auth login, list, status, and policy use the platform API when
+--use-kube is not set. Create, apply, delete, patch, and logs require kubectl
+and a cluster kubeconfig (or --use-kube for those operations).
+
 For building images from source, use 'server build'.
 For pushing images, use 'registry push'.
 
@@ -20,7 +24,8 @@ Available Commands:
   status      Show MCP server runtime status (pods, images, pull secrets)
 
 Flags:
-  -h, --help   help for server
+  -h, --help       help for server
+      --use-kube   Use kubectl and local kubeconfig instead of the platform API for supported commands
 
 Global Flags:
       --debug   Enable debug mode with structured error logging

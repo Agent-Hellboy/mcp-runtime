@@ -459,8 +459,52 @@ func (s *RuntimeServer) handleRuntimePolicy(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, policy)
 }
 
-// handleGrantTogglePath handles POST /api/runtime/grants/{namespace}/{name}/disable|enable
-func (s *RuntimeServer) handleGrantTogglePath(w http.ResponseWriter, r *http.Request) {
+// handleGrantItemPath handles POST /api/runtime/grants/{namespace}/{name}/disable|enable
+// and DELETE /api/runtime/grants/{namespace}/{name}.
+func (s *RuntimeServer) handleGrantItemPath(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodDelete:
+		ns, name, err := serviceutil.ExtractNamespacedResourceDelete(r, "/api/runtime/grants/")
+		if err != nil {
+			if errors.Is(err, serviceutil.ErrMethodNotAllowed) {
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": err.Error()})
+			} else {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			}
+			return
+		}
+		s.handleGrantDelete(w, r, ns, name)
+		return
+	case http.MethodPost:
+		s.handleGrantPostTogglePath(w, r)
+		return
+	default:
+		w.Header().Set("allow", "POST, DELETE")
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+	}
+}
+
+func (s *RuntimeServer) handleGrantDelete(w http.ResponseWriter, r *http.Request, namespace, name string) {
+	if s.accessMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if err := s.accessMgr.DeleteGrant(ctx, name, namespace); err != nil {
+		log.Printf("delete grant %s/%s: %v", namespace, name, err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete grant"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":   true,
+		"name":      name,
+		"namespace": namespace,
+	})
+}
+
+// handleGrantPostTogglePath handles POST /api/runtime/grants/{namespace}/{name}/disable|enable
+func (s *RuntimeServer) handleGrantPostTogglePath(w http.ResponseWriter, r *http.Request) {
 	params, err := serviceutil.ExtractGrantActionParams(r, "/api/runtime/grants/")
 	if err != nil {
 		if errors.Is(err, serviceutil.ErrMethodNotAllowed) {
@@ -635,8 +679,52 @@ func validDecision(decision sentinelaccess.PolicyDecision) bool {
 	}
 }
 
-// handleSessionTogglePath handles POST /api/runtime/sessions/{namespace}/{name}/revoke|unrevoke
-func (s *RuntimeServer) handleSessionTogglePath(w http.ResponseWriter, r *http.Request) {
+// handleSessionItemPath handles POST /api/runtime/sessions/{namespace}/{name}/revoke|unrevoke
+// and DELETE /api/runtime/sessions/{namespace}/{name}.
+func (s *RuntimeServer) handleSessionItemPath(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodDelete:
+		ns, name, err := serviceutil.ExtractNamespacedResourceDelete(r, "/api/runtime/sessions/")
+		if err != nil {
+			if errors.Is(err, serviceutil.ErrMethodNotAllowed) {
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": err.Error()})
+			} else {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			}
+			return
+		}
+		s.handleSessionDelete(w, r, ns, name)
+		return
+	case http.MethodPost:
+		s.handleSessionPostTogglePath(w, r)
+		return
+	default:
+		w.Header().Set("allow", "POST, DELETE")
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+	}
+}
+
+func (s *RuntimeServer) handleSessionDelete(w http.ResponseWriter, r *http.Request, namespace, name string) {
+	if s.accessMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if err := s.accessMgr.DeleteSession(ctx, name, namespace); err != nil {
+		log.Printf("delete session %s/%s: %v", namespace, name, err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete session"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":   true,
+		"name":      name,
+		"namespace": namespace,
+	})
+}
+
+// handleSessionPostTogglePath handles POST /api/runtime/sessions/{namespace}/{name}/revoke|unrevoke
+func (s *RuntimeServer) handleSessionPostTogglePath(w http.ResponseWriter, r *http.Request) {
 	params, err := serviceutil.ExtractSessionActionParams(r, "/api/runtime/sessions/")
 	if err != nil {
 		if errors.Is(err, serviceutil.ErrMethodNotAllowed) {

@@ -121,3 +121,23 @@ func IsActionEnabled(action string) bool {
 		return false
 	}
 }
+
+// ExtractNamespacedResourceDelete validates DELETE /{prefix}{namespace}/{name} (two path segments after prefix).
+func ExtractNamespacedResourceDelete(r *http.Request, prefix string) (namespace, name string, err error) {
+	if r.Method != http.MethodDelete {
+		return "", "", ErrMethodNotAllowed
+	}
+	path := strings.TrimPrefix(r.URL.Path, prefix)
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("%w: expected {namespace}/{name} for DELETE, got %d path parts", ErrInvalidPath, len(parts))
+	}
+	namespace, name = parts[0], parts[1]
+	if !validResourceName(namespace) {
+		return "", "", fmt.Errorf("%w: invalid namespace %q", ErrInvalidPath, namespace)
+	}
+	if !validResourceName(name) {
+		return "", "", fmt.Errorf("%w: invalid name %q", ErrInvalidPath, name)
+	}
+	return namespace, name, nil
+}

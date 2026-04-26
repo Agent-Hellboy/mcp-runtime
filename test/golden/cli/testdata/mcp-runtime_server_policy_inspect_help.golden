@@ -8,4 +8,5 @@ Flags:
       --namespace string   Namespace (default "mcp-servers")
 
 Global Flags:
-      --debug   Enable debug mode with structured error logging
+      --debug      Enable debug mode with structured error logging
+      --use-kube   Use kubectl and local kubeconfig instead of the platform API for supported commands
