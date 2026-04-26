@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/sha256"
+	"crypto/rand"
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"mime"
 	"net"
@@ -51,8 +53,25 @@ var (
 	loginLockoutDuration   = durationEnvOr("UI_LOGIN_LOCKOUT", defaultLoginLockoutDuration)
 )
 
-type sessionPayload struct {
-	ExpiresAt int64 `json:"exp"`
+type sessionPrincipal struct {
+	Role     string `json:"role,omitempty"`
+	Subject  string `json:"subject,omitempty"`
+	Email    string `json:"email,omitempty"`
+	AuthType string `json:"auth_type,omitempty"`
+}
+
+type uiSession struct {
+	ID                 string
+	ExpiresAt          time.Time
+	Principal          sessionPrincipal
+	UpstreamAuthHeader string
+	UpstreamAPIKey     string
+}
+
+type uiSessionStore struct {
+	mu       sync.Mutex
+	sessions map[string]uiSession
+	now      func() time.Time
 }
 
 type loginAttemptTracker struct {
@@ -69,7 +88,11 @@ type loginClientState struct {
 	lockedUntil    time.Time
 }
 
-var loginAttempts = newLoginAttemptTracker(time.Now)
+var (
+	loginAttempts  = newLoginAttemptTracker(time.Now)
+	sessions       = newUISessionStore(time.Now)
+	oidcVerifyHook func(context.Context, string, string) (sessionPrincipal, error)
+)
 
 // main initializes and starts the MCP Sentinel UI server.
 // It serves static web assets and provides a dynamic /config.js endpoint
@@ -81,7 +104,7 @@ func main() {
 	apiKeys := strings.TrimSpace(os.Getenv("API_KEYS"))
 	apiUpstream := envOr("API_UPSTREAM", "http://mcp-sentinel-api:8080")
 	if apiKey == "" && apiKeys == "" {
-		log.Printf("WARNING: neither API_KEY nor API_KEYS is set; UI login is disabled and all /api requests will be rejected with 401")
+		log.Printf("WARNING: neither API_KEY nor API_KEYS is set; UI API-key login is disabled")
 	}
 
 	mux, err := newMux(apiBase, apiUpstream, apiKey, apiKeys)
@@ -117,7 +140,6 @@ func main() {
 
 func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error) {
 	apiBase = normalizePathPrefix(apiBase)
-	sessionKey := deriveSessionKey(apiKey)
 	upstreamAPIKey := firstAPIKey(apiKeys)
 	if upstreamAPIKey == "" {
 		upstreamAPIKey = apiKey
@@ -150,17 +172,22 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error
 	if err != nil {
 		return nil, err
 	}
+	googleClientIDJSON, err := json.Marshal(strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")))
+	if err != nil {
+		return nil, err
+	}
 	configJS := "window.MCP_API_BASE = " + string(baseJSON) + ";\n" +
-		"window.MCP_DEFAULTS = " + string(defaultsJSON) + ";"
+		"window.MCP_DEFAULTS = " + string(defaultsJSON) + ";\n" +
+		"window.MCP_GOOGLE_CLIENT_ID = " + string(googleClientIDJSON) + ";"
 	mux.HandleFunc("/config.js", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "application/javascript")
 		_, _ = w.Write([]byte(configJS))
 	})
-	mux.HandleFunc("/auth/login", handleLogin(apiKey, sessionKey))
-	mux.HandleFunc("/auth/logout", handleLogout)
-	mux.HandleFunc("/auth/status", handleStatus(apiKey, sessionKey))
+	mux.HandleFunc("/auth/login", handleLogin(apiKey, upstreamAPIKey, apiUpstream, sessions))
+	mux.HandleFunc("/auth/logout", handleLogout(sessions))
+	mux.HandleFunc("/auth/status", handleStatus(sessions))
 
-	apiProxy := newAPIProxy(target, upstreamAPIKey, apiKeys, sessionKey)
+	apiProxy := newAPIProxy(target, upstreamAPIKey, apiKeys, sessions)
 	mux.Handle(apiBase+"/", apiProxy)
 	mux.Handle(apiBase, apiProxy)
 
@@ -184,17 +211,18 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error
 			}
 		}
 		w.WriteHeader(http.StatusOK)
+		// #nosec G705 -- assets are bundled from repository static/ at build time.
 		_, _ = w.Write(data)
 	})
 
 	return mux, nil
 }
 
-func newAPIProxy(target *url.URL, upstreamAPIKey, apiKeys string, sessionKey []byte) http.Handler {
-	return newAPIProxyWithTransport(target, upstreamAPIKey, apiKeys, sessionKey, nil)
+func newAPIProxy(target *url.URL, upstreamAPIKey, apiKeys string, store *uiSessionStore) http.Handler {
+	return newAPIProxyWithTransport(target, upstreamAPIKey, apiKeys, store, nil)
 }
 
-func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, sessionKey []byte, transport http.RoundTripper) http.Handler {
+func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, store *uiSessionStore, transport http.RoundTripper) http.Handler {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	if transport != nil {
 		proxy.Transport = transport
@@ -204,8 +232,9 @@ func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, s
 		originalDirector(req)
 		req.Host = target.Host
 		req.Header.Del("Cookie")
-		req.Header.Del("x-api-key")
-		req.Header.Set("x-api-key", upstreamAPIKey)
+		if strings.TrimSpace(req.Header.Get("authorization")) == "" && strings.TrimSpace(req.Header.Get("x-api-key")) == "" {
+			req.Header.Set("x-api-key", upstreamAPIKey)
+		}
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
 		log.Printf("api proxy error: %v", err)
@@ -213,17 +242,36 @@ func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, s
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !validSession(r, sessionKey) && !validAPIKeyHeader(r, apiKeys) {
+		if validAPIKeyHeader(r, apiKeys) {
+			req := r.Clone(r.Context())
+			req.Header.Del("x-api-key")
+			req.Header.Del("authorization")
+			proxy.ServeHTTP(w, req)
+			return
+		}
+
+		sess, ok := store.sessionFromRequest(r)
+		if !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
-		proxy.ServeHTTP(w, r)
+
+		req := r.Clone(r.Context())
+		req.Header.Del("x-api-key")
+		req.Header.Del("authorization")
+		if sess.UpstreamAuthHeader != "" {
+			req.Header.Set("authorization", sess.UpstreamAuthHeader)
+		} else if sess.UpstreamAPIKey != "" {
+			req.Header.Set("x-api-key", sess.UpstreamAPIKey)
+		}
+		proxy.ServeHTTP(w, req)
 	})
 }
 
-func handleLogin(apiKey string, sessionKey []byte) http.HandlerFunc {
+func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionStore) http.HandlerFunc {
 	type loginRequest struct {
-		APIKey string `json:"api_key"`
+		APIKey  string `json:"api_key"`
+		IDToken string `json:"id_token"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -236,38 +284,127 @@ func handleLogin(apiKey string, sessionKey []byte) http.HandlerFunc {
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too_many_requests"})
 			return
 		}
-		if apiKey == "" {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "api_key_not_configured"})
-			return
-		}
 
 		var req loginRequest
-		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		r.Body = http.MaxBytesReader(w, r.Body, 8192)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 			return
 		}
-		presented := strings.TrimSpace(req.APIKey)
-		if presented == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_api_key"})
+
+		presentedAPIKey := strings.TrimSpace(req.APIKey)
+		idToken := strings.TrimSpace(req.IDToken)
+		if presentedAPIKey == "" && idToken == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_credentials"})
 			return
 		}
-		if !hmac.Equal([]byte(presented), []byte(apiKey)) {
-			failures := loginAttempts.recordFailure(clientID)
-			if failures >= loginFailureLogEvery {
-				log.Printf(`auth_login_failure client=%q timestamp=%q failure_count=%d`, clientID, time.Now().UTC().Format(time.RFC3339), failures)
+
+		var (
+			sess uiSession
+			err  error
+		)
+
+		if idToken != "" {
+			var (
+				p         sessionPrincipal
+				verifyErr error
+			)
+			if oidcVerifyHook != nil {
+				p, verifyErr = oidcVerifyHook(r.Context(), apiUpstream, idToken)
+			} else {
+				p, verifyErr = verifyOIDCTokenWithAPI(r.Context(), apiUpstream, idToken)
 			}
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			if verifyErr != nil {
+				failures := loginAttempts.recordFailure(clientID)
+				if failures >= loginFailureLogEvery {
+					// #nosec G706 -- authentication telemetry log with bounded fields.
+					log.Printf(`auth_login_failure client=%q timestamp=%q failure_count=%d mode=%q`, clientID, time.Now().UTC().Format(time.RFC3339), failures, "oidc")
+				}
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+				return
+			}
+			sess, err = store.createSession(r.Context(), uiSession{
+				Principal:          p,
+				UpstreamAuthHeader: "Bearer " + idToken,
+			})
+		} else {
+			if apiKey == "" {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "api_key_not_configured"})
+				return
+			}
+			if !hmac.Equal([]byte(presentedAPIKey), []byte(apiKey)) {
+				failures := loginAttempts.recordFailure(clientID)
+				if failures >= loginFailureLogEvery {
+					// #nosec G706 -- authentication telemetry log with bounded fields.
+					log.Printf(`auth_login_failure client=%q timestamp=%q failure_count=%d mode=%q`, clientID, time.Now().UTC().Format(time.RFC3339), failures, "api_key")
+				}
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+				return
+			}
+			sess, err = store.createSession(r.Context(), uiSession{
+				Principal: sessionPrincipal{
+					Role:     "admin",
+					AuthType: "ui_api_key",
+				},
+				UpstreamAPIKey: upstreamAPIKey,
+			})
+		}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "session_create_failed"})
 			return
 		}
 
 		priorFailures := loginAttempts.recordSuccess(clientID)
 		if priorFailures > 0 {
+			// #nosec G706 -- authentication telemetry log with bounded fields.
 			log.Printf(`auth_login_success_after_failures timestamp=%q prior_failures=%d`, time.Now().UTC().Format(time.RFC3339), priorFailures)
 		}
-		http.SetCookie(w, newSessionCookie(r, sessionKey))
-		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
+		http.SetCookie(w, newSessionCookie(r, sess.ID, sess.ExpiresAt))
+		writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "principal": sess.Principal})
 	}
+}
+
+func verifyOIDCTokenWithAPI(ctx context.Context, apiUpstream, idToken string) (sessionPrincipal, error) {
+	apiUpstream = strings.TrimSpace(strings.TrimRight(apiUpstream, "/"))
+	if apiUpstream == "" {
+		return sessionPrincipal{}, errors.New("api upstream is empty")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiUpstream+"/api/auth/me", nil)
+	if err != nil {
+		return sessionPrincipal{}, err
+	}
+	req.Header.Set("authorization", "Bearer "+idToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return sessionPrincipal{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return sessionPrincipal{}, fmt.Errorf("auth check failed: status %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		Authenticated bool             `json:"authenticated"`
+		Principal     sessionPrincipal `json:"principal"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return sessionPrincipal{}, err
+	}
+	if !payload.Authenticated {
+		return sessionPrincipal{}, errors.New("not authenticated")
+	}
+	if strings.TrimSpace(payload.Principal.Role) == "" {
+		payload.Principal.Role = "user"
+	}
+	if payload.Principal.AuthType == "" {
+		payload.Principal.AuthType = "oidc_jwt"
+	}
+	return payload.Principal, nil
 }
 
 func loginClientID(r *http.Request) string {
@@ -359,33 +496,104 @@ func refillLoginTokens(state *loginClientState, now time.Time) {
 	state.lastRefill = state.lastRefill.Add(time.Duration(refill) * loginRateLimitRefill)
 }
 
-func handleLogout(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("allow", http.MethodPost)
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
-		return
-	}
-	http.SetCookie(w, expiredSessionCookie(r))
-	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": false})
+func newUISessionStore(now func() time.Time) *uiSessionStore {
+	return &uiSessionStore{sessions: map[string]uiSession{}, now: now}
 }
 
-func handleStatus(apiKey string, sessionKey []byte) http.HandlerFunc {
+func (s *uiSessionStore) createSession(_ context.Context, session uiSession) (uiSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.purgeExpiredLocked()
+	id, err := randomURLToken(24)
+	if err != nil {
+		return uiSession{}, err
+	}
+	session.ID = id
+	session.ExpiresAt = s.now().Add(sessionDuration)
+	s.sessions[session.ID] = session
+	return session, nil
+}
+
+func (s *uiSessionStore) sessionFromRequest(r *http.Request) (uiSession, bool) {
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		return uiSession{}, false
+	}
+	sessionID := strings.TrimSpace(cookie.Value)
+	if sessionID == "" {
+		return uiSession{}, false
+	}
+	return s.get(sessionID)
+}
+
+func (s *uiSessionStore) get(id string) (uiSession, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.purgeExpiredLocked()
+	sess, ok := s.sessions[id]
+	if !ok {
+		return uiSession{}, false
+	}
+	return sess, true
+}
+
+func (s *uiSessionStore) delete(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, id)
+}
+
+func (s *uiSessionStore) purgeExpiredLocked() {
+	now := s.now()
+	for id, sess := range s.sessions {
+		if !sess.ExpiresAt.After(now) {
+			delete(s.sessions, id)
+		}
+	}
+}
+
+func handleLogout(store *uiSessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": validSession(r, sessionKey)})
+		if r.Method != http.MethodPost {
+			w.Header().Set("allow", http.MethodPost)
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+			return
+		}
+		if cookie, err := r.Cookie(sessionCookieName); err == nil {
+			store.delete(strings.TrimSpace(cookie.Value))
+		}
+		http.SetCookie(w, expiredSessionCookie(r))
+		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": false})
 	}
 }
 
-func newSessionCookie(r *http.Request, sessionKey []byte) *http.Cookie {
-	payload := sessionPayload{ExpiresAt: time.Now().Add(sessionDuration).Unix()}
-	payloadBytes, _ := json.Marshal(payload)
-	payloadPart := base64.RawURLEncoding.EncodeToString(payloadBytes)
-	signaturePart := signSession(payloadBytes, sessionKey)
+func handleStatus(store *uiSessionStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sess, ok := store.sessionFromRequest(r)
+		if !ok {
+			writeJSON(w, http.StatusOK, map[string]any{"authenticated": false})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"authenticated": true,
+			"principal":     sess.Principal,
+		})
+	}
+}
 
+func newSessionCookie(r *http.Request, sessionID string, expiresAt time.Time) *http.Cookie {
+	maxAge := int(time.Until(expiresAt).Seconds())
+	if maxAge < 1 {
+		maxAge = int(sessionDuration.Seconds())
+	}
+	// #nosec G124 -- Secure is enabled automatically for TLS / x-forwarded-proto=https; HttpOnly and SameSite are set.
 	return &http.Cookie{
 		Name:     sessionCookieName,
-		Value:    payloadPart + "." + signaturePart,
+		Value:    sessionID,
 		Path:     "/",
-		MaxAge:   int(sessionDuration.Seconds()),
+		MaxAge:   maxAge,
 		HttpOnly: true,
 		Secure:   secureCookie(r),
 		SameSite: http.SameSiteStrictMode,
@@ -393,6 +601,7 @@ func newSessionCookie(r *http.Request, sessionKey []byte) *http.Cookie {
 }
 
 func expiredSessionCookie(r *http.Request) *http.Cookie {
+	// #nosec G124 -- Secure is enabled automatically for TLS / x-forwarded-proto=https; HttpOnly and SameSite are set.
 	return &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",
@@ -404,36 +613,12 @@ func expiredSessionCookie(r *http.Request) *http.Cookie {
 	}
 }
 
-func validSession(r *http.Request, sessionKey []byte) bool {
-	if len(sessionKey) == 0 {
-		return false
+func randomURLToken(rawBytes int) (string, error) {
+	b := make([]byte, rawBytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
 	}
-	cookie, err := r.Cookie(sessionCookieName)
-	if err != nil {
-		return false
-	}
-	parts := strings.Split(cookie.Value, ".")
-	if len(parts) != 2 {
-		return false
-	}
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
-	if err != nil {
-		return false
-	}
-	if !hmac.Equal([]byte(parts[1]), []byte(signSession(payloadBytes, sessionKey))) {
-		return false
-	}
-	var payload sessionPayload
-	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-		return false
-	}
-	return time.Now().Unix() < payload.ExpiresAt
-}
-
-func signSession(payload []byte, sessionKey []byte) string {
-	mac := hmac.New(sha256.New, sessionKey)
-	_, _ = mac.Write(payload)
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 func validAPIKeyHeader(r *http.Request, apiKeys string) bool {
@@ -456,20 +641,6 @@ func firstAPIKey(apiKeys string) string {
 		}
 	}
 	return ""
-}
-
-func deriveSessionKey(apiKey string) []byte {
-	if apiKey == "" {
-		return nil
-	}
-	prkMAC := hmac.New(sha256.New, []byte("mcp-sentinel-ui-session-key"))
-	_, _ = prkMAC.Write([]byte(apiKey))
-	prk := prkMAC.Sum(nil)
-
-	expandMAC := hmac.New(sha256.New, prk)
-	_, _ = expandMAC.Write([]byte("mcp-ui-session-cookie"))
-	_, _ = expandMAC.Write([]byte{1})
-	return expandMAC.Sum(nil)
 }
 
 func secureCookie(r *http.Request) bool {
@@ -509,6 +680,7 @@ func logRequests(next http.Handler) http.Handler {
 		start := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(recorder, r)
+		// #nosec G706 -- request path/method logging for operational diagnostics.
 		log.Printf("%s %s %d %s", r.Method, r.URL.Path, recorder.status, time.Since(start))
 	})
 }
@@ -574,6 +746,7 @@ func intEnvOr(key string, fallback int) int {
 	}
 	parsed, err := strconv.Atoi(val)
 	if err != nil || parsed <= 0 {
+		// #nosec G706 -- fixed-format env validation log for local operator diagnostics.
 		log.Printf("invalid %s=%q; using default %d", key, val, fallback)
 		return fallback
 	}
@@ -587,6 +760,7 @@ func durationEnvOr(key string, fallback time.Duration) time.Duration {
 	}
 	parsed, err := time.ParseDuration(val)
 	if err != nil || parsed <= 0 {
+		// #nosec G706 -- fixed-format env validation log for local operator diagnostics.
 		log.Printf("invalid %s=%q; using default %s", key, val, fallback)
 		return fallback
 	}
@@ -620,7 +794,6 @@ func otlpTraceOptions(endpoint string) []otlptracehttp.Option {
 		}
 	}
 
-	// Fallback: treat entire endpoint as host:port
 	opts := []otlptracehttp.Option{otlptracehttp.WithEndpoint(endpoint)}
 	if insecureSet {
 		if insecure {
@@ -628,18 +801,25 @@ func otlpTraceOptions(endpoint string) []otlptracehttp.Option {
 		}
 		return opts
 	}
+	if strings.HasPrefix(strings.ToLower(endpoint), "http://") {
+		opts = append(opts, otlptracehttp.WithInsecure())
+	}
 	return opts
 }
 
-// boolEnv parses a boolean environment variable.
-// It returns the parsed boolean value and true if parsing succeeded.
-// Returns false, false if the variable is not set or parsing failed.
 func boolEnv(key string) (bool, bool) {
-	if val := strings.TrimSpace(os.Getenv(key)); val != "" {
-		parsed, err := strconv.ParseBool(val)
-		if err == nil {
-			return parsed, true
-		}
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return false, false
 	}
-	return false, false
+	switch strings.ToLower(v) {
+	case "1", "true", "yes", "on":
+		return true, true
+	case "0", "false", "no", "off":
+		return false, true
+	default:
+		// #nosec G706 -- fixed-format env validation log for local operator diagnostics.
+		log.Printf("invalid %s=%q; ignoring", key, v)
+		return false, false
+	}
 }

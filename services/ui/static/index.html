@@ -6,6 +6,7 @@
     <title>MCP Sentinel Control Plane</title>
     <link rel="stylesheet" href="/styles.css" />
     <script src="/config.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body>
     <div class="canvas">
@@ -16,6 +17,7 @@
           <p class="lede">Monitor, govern, and operate your MCP infrastructure.</p>
         </div>
         <div class="hero-links">
+          <span id="auth-role" class="link-badge hidden"></span>
           <button id="auth-open" type="button" class="link-badge hidden">API Key</button>
           <button id="auth-logout" type="button" class="link-badge hidden">Sign Out</button>
           <a href="/grafana" target="_blank" class="link-badge">Grafana</a>
@@ -25,9 +27,21 @@
 
       <nav class="tabs" role="tablist" aria-label="Dashboard sections">
         <button
+          id="tab-button-userkeys"
+          class="tab"
+          data-tab="userkeys"
+          role="tab"
+          type="button"
+          aria-controls="tab-userkeys"
+          aria-selected="false"
+        >
+          API Keys
+        </button>
+        <button
           id="tab-button-dashboard"
           class="tab active"
           data-tab="dashboard"
+          data-admin-only="true"
           role="tab"
           type="button"
           aria-controls="tab-dashboard"
@@ -39,6 +53,7 @@
           id="tab-button-governance"
           class="tab"
           data-tab="governance"
+          data-admin-only="true"
           role="tab"
           type="button"
           aria-controls="tab-governance"
@@ -50,6 +65,7 @@
           id="tab-button-operations"
           class="tab"
           data-tab="operations"
+          data-admin-only="true"
           role="tab"
           type="button"
           aria-controls="tab-operations"
@@ -59,10 +75,50 @@
         </button>
       </nav>
 
+      <!-- User API Keys Tab -->
+      <section
+        id="tab-userkeys"
+        class="tab-content"
+        role="tabpanel"
+        aria-labelledby="tab-button-userkeys"
+        hidden
+      >
+        <div class="panel">
+          <div class="panel-head">
+            <h2>User API Keys</h2>
+            <div class="panel-actions">
+              <input type="text" id="user-api-key-name" placeholder="Key name (e.g. laptop-ci)" />
+              <button class="primary" id="create-user-api-key" type="button">Create Key</button>
+              <button class="ghost" id="refresh-user-api-keys" type="button">Refresh</button>
+            </div>
+          </div>
+          <p id="user-api-key-once" class="auth-error hidden"></p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Prefix</th>
+                  <th>Created</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="user-api-keys-body">
+                <tr>
+                  <td colspan="5" class="empty">No API keys found.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <!-- Dashboard Tab -->
       <section
         id="tab-dashboard"
         class="tab-content active"
+        data-admin-only="true"
         role="tabpanel"
         aria-labelledby="tab-button-dashboard"
       >
@@ -121,6 +177,7 @@
       <section
         id="tab-governance"
         class="tab-content"
+        data-admin-only="true"
         role="tabpanel"
         aria-labelledby="tab-button-governance"
         hidden
@@ -287,6 +344,7 @@
       <section
         id="tab-operations"
         class="tab-content"
+        data-admin-only="true"
         role="tabpanel"
         aria-labelledby="tab-button-operations"
         hidden
@@ -341,8 +399,8 @@
     <!-- Authentication Modal -->
     <div id="auth-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="auth-title">
       <form class="modal-content" id="auth-form" action="javascript:void(0)" method="dialog">
-        <h3 id="auth-title">API Key Required</h3>
-        <p>Enter an MCP Sentinel API key to continue.</p>
+        <h3 id="auth-title">Sign In</h3>
+        <p>Use Google sign-in or enter an MCP Sentinel API key.</p>
         <input
           type="password"
           id="api-key-input"
@@ -354,6 +412,7 @@
         <div class="modal-actions">
           <button class="primary" id="auth-submit" type="submit">Continue</button>
         </div>
+        <div id="google-signin" style="margin-top: 12px"></div>
       </form>
     </div>
 

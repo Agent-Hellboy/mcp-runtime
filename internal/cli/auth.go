@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -97,17 +98,17 @@ func (m *authManager) runAuthLogin(f loginFlags) error {
 	} else if strings.TrimSpace(f.token) != "" {
 		token = strings.TrimSpace(f.token)
 	} else {
-		if term.IsTerminal(int(os.Stdin.Fd())) {
-			fmt.Fprint(os.Stderr, "Enter platform API token: ")
-			tok, err := term.ReadPassword(int(os.Stdin.Fd()))
-			fmt.Fprintln(os.Stderr)
-			if err != nil {
-				return newWithSentinel(nil, fmt.Sprintf("read token: %v", err))
-			}
-			token = strings.TrimSpace(string(tok))
-		} else {
+		stdinFD, err := terminalFD(os.Stdin.Fd())
+		if err != nil || !term.IsTerminal(stdinFD) {
 			return newWithSentinel(ErrFieldRequired, "not a TTY: pass --token, --token-stdin, or run in an interactive terminal")
 		}
+		fmt.Fprint(os.Stderr, "Enter platform API token: ")
+		tok, err := term.ReadPassword(stdinFD)
+		fmt.Fprintln(os.Stderr)
+		if err != nil {
+			return newWithSentinel(nil, fmt.Sprintf("read token: %v", err))
+		}
+		token = strings.TrimSpace(string(tok))
 	}
 	if token == "" {
 		return newWithSentinel(ErrFieldRequired, "token is required")
@@ -147,6 +148,13 @@ func (m *authManager) runAuthLogin(f loginFlags) error {
 		fmt.Printf("Registry host recorded: %s\n", c.RegistryHost)
 	}
 	return nil
+}
+
+func terminalFD(fd uintptr) (int, error) {
+	if fd > uintptr(math.MaxInt) {
+		return 0, errors.New("file descriptor out of range")
+	}
+	return int(fd), nil
 }
 
 func (m *authManager) newAuthLogoutCmd() *cobra.Command {

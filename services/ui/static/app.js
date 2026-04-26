@@ -4,8 +4,10 @@ const defaults = Object.assign(
   window.MCP_DEFAULTS || {}
 );
 let authenticated = null;
+let authPrincipal = null;
 let grantsCache = [];
 let sessionsCache = [];
+let userAPIKeysCache = [];
 
 // API Helper
 async function fetchJSON(path, options = {}) {
@@ -21,7 +23,7 @@ async function fetchJSON(path, options = {}) {
     const error = await response.text();
     if (response.status === 401) {
       setAuthenticated(false);
-      showAuthModal("Enter a valid API key to continue.");
+      showAuthModal("Sign in to continue.");
       throw unauthorizedError();
     }
     throw new Error(error || `Request failed: ${response.status}`);
@@ -77,7 +79,6 @@ function showToast(message, type = "success") {
 // Tab Switching
 function initTabs() {
   const tabs = document.querySelectorAll(".tab");
-  const contents = document.querySelectorAll(".tab-content");
 
   tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -90,17 +91,7 @@ function initTabs() {
         return;
       }
 
-      tabs.forEach((t) => {
-        const isActive = t === tab;
-        t.classList.toggle("active", isActive);
-        t.setAttribute("aria-selected", String(isActive));
-      });
-
-      contents.forEach((content) => {
-        const isActive = content.id === `tab-${target}`;
-        content.classList.toggle("active", isActive);
-        content.hidden = !isActive;
-      });
+      activateTab(target);
 
       // Load data when switching to certain tabs
       if (target === "governance") {
@@ -108,6 +99,8 @@ function initTabs() {
         loadSessions();
       } else if (target === "operations") {
         loadComponents();
+      } else if (target === "userkeys") {
+        loadUserAPIKeys();
       }
     });
   });
@@ -253,13 +246,16 @@ async function initAuth() {
     showAuthModal();
   });
   document.getElementById("auth-logout")?.addEventListener("click", logout);
+  initGoogleSignIn();
 
   try {
     const response = await fetch("/auth/status", { credentials: "same-origin" });
     const data = await response.json();
+    authPrincipal = data?.principal || null;
     setAuthenticated(Boolean(data.authenticated));
   } catch (err) {
     console.error("Failed to check auth status:", err);
+    authPrincipal = null;
     setAuthenticated(false);
   }
 
@@ -280,15 +276,8 @@ async function handleAuthSubmit(event) {
   setAuthError("");
   if (submit) submit.disabled = true;
   try {
-    const response = await fetch("/auth/login", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api_key: apiKey }),
-    });
-    if (!response.ok) {
-      throw new Error(await authFailureMessage(response));
-    }
+    const data = await performLogin({ api_key: apiKey });
+    authPrincipal = data?.principal || null;
     if (input) input.value = "";
     hideAuthModal();
     setAuthenticated(true);
@@ -301,6 +290,67 @@ async function handleAuthSubmit(event) {
   }
 }
 
+function initGoogleSignIn(attempt = 0) {
+  const clientID = window.MCP_GOOGLE_CLIENT_ID || "";
+  if (!clientID) {
+    return;
+  }
+  const container = document.getElementById("google-signin");
+  if (!container) {
+    return;
+  }
+  if (!window.google?.accounts?.id) {
+    if (attempt < 20) {
+      setTimeout(() => initGoogleSignIn(attempt + 1), 250);
+    }
+    return;
+  }
+  window.google.accounts.id.initialize({
+    client_id: clientID,
+    callback: handleGoogleSignIn,
+  });
+  container.innerHTML = "";
+  window.google.accounts.id.renderButton(container, {
+    theme: "outline",
+    size: "large",
+    shape: "pill",
+    text: "continue_with",
+    width: 280,
+  });
+}
+
+async function handleGoogleSignIn(response) {
+  const token = response?.credential || "";
+  if (!token) {
+    setAuthError("Google sign-in did not return a token.");
+    return;
+  }
+  setAuthError("");
+  try {
+    const data = await performLogin({ id_token: token });
+    authPrincipal = data?.principal || null;
+    hideAuthModal();
+    setAuthenticated(true);
+    loadActiveTab();
+    startAutoRefresh();
+  } catch (err) {
+    setAuthError(err.message);
+  }
+}
+
+async function performLogin(payload) {
+  const response = await fetch("/auth/login", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await authFailureMessage(response));
+  }
+  return response.json();
+}
+
 async function authFailureMessage(response) {
   let serverError = "";
   try {
@@ -311,10 +361,13 @@ async function authFailureMessage(response) {
   }
 
   if (response.status === 401) {
-    return "Invalid API key";
+    return "Invalid credentials";
   }
   if (response.status === 503 && serverError === "api_key_not_configured") {
     return "Server is not configured for API key auth";
+  }
+  if (response.status === 400 && serverError === "missing_credentials") {
+    return "Provide an API key or sign in with Google.";
   }
   return serverError || `Sign-in failed (${response.status})`;
 }
@@ -329,15 +382,25 @@ async function logout() {
     console.error("Failed to sign out:", err);
   }
   stopAutoRefresh();
+  authPrincipal = null;
   setAuthenticated(false);
   resetDashboard();
+  resetUserAPIKeys();
   showAuthModal();
 }
 
 function setAuthenticated(value) {
   authenticated = value;
-  document.getElementById("auth-open")?.classList.toggle("hidden", value);
+  const role = authPrincipal?.role || "";
+  const roleLabel = role ? `Role: ${role}` : "";
+  const roleEl = document.getElementById("auth-role");
+  if (roleEl) {
+    roleEl.textContent = roleLabel;
+    roleEl.classList.toggle("hidden", !value || !roleLabel);
+  }
+  document.getElementById("auth-open")?.classList.toggle("hidden", value || !!window.MCP_GOOGLE_CLIENT_ID);
   document.getElementById("auth-logout")?.classList.toggle("hidden", !value);
+  applyRoleVisibility();
 }
 
 function showAuthModal(message = "") {
@@ -362,7 +425,7 @@ function setAuthError(message) {
 
 function loadActiveTab() {
   if (!authenticated) return;
-  const active = document.querySelector(".tab.active")?.dataset.tab || "dashboard";
+  const active = resolveActiveTab();
   if (active === "dashboard") {
     loadDashboardSummary();
     loadEvents();
@@ -371,6 +434,8 @@ function loadActiveTab() {
     loadSessions();
   } else if (active === "operations") {
     loadComponents();
+  } else if (active === "userkeys") {
+    loadUserAPIKeys();
   }
 }
 
@@ -403,6 +468,7 @@ function initDashboard() {
 
 function startAutoRefresh() {
   if (!authenticated) return;
+  if (authPrincipal?.role !== "admin") return;
   if (autoRefreshInterval) return;
   const autoRefreshCheckbox = document.getElementById("auto-refresh");
   if (autoRefreshCheckbox && !autoRefreshCheckbox.checked) return;
@@ -410,6 +476,42 @@ function startAutoRefresh() {
     loadDashboardSummary();
     loadEvents();
   }, 5000);
+}
+
+function isAdminUser() {
+  return authPrincipal?.role === "admin";
+}
+
+function applyRoleVisibility() {
+  const adminOnly = document.querySelectorAll('[data-admin-only="true"]');
+  adminOnly.forEach((node) => {
+    node.classList.toggle("hidden", !isAdminUser());
+  });
+  const active = resolveActiveTab();
+  activateTab(active);
+}
+
+function resolveActiveTab() {
+  const active = document.querySelector(".tab.active")?.dataset.tab;
+  if (active && (isAdminUser() || active === "userkeys")) {
+    return active;
+  }
+  return isAdminUser() ? "dashboard" : "userkeys";
+}
+
+function activateTab(target) {
+  const tabs = document.querySelectorAll(".tab");
+  const contents = document.querySelectorAll(".tab-content");
+  tabs.forEach((t) => {
+    const isActive = t.dataset.tab === target && !t.classList.contains("hidden");
+    t.classList.toggle("active", isActive);
+    t.setAttribute("aria-selected", String(isActive));
+  });
+  contents.forEach((content) => {
+    const isActive = content.id === `tab-${target}` && !content.classList.contains("hidden");
+    content.classList.toggle("active", isActive);
+    content.hidden = !isActive;
+  });
 }
 
 function stopAutoRefresh() {
@@ -827,6 +929,105 @@ function initGovernance() {
   document.getElementById("session-filter")?.addEventListener("input", debouncedRenderSessions);
 }
 
+// User API Keys
+async function loadUserAPIKeys() {
+  try {
+    const data = await fetchJSON("/user/api-keys");
+    userAPIKeysCache = Array.isArray(data.keys) ? data.keys : [];
+    renderUserAPIKeys();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load user api keys:", err);
+    showToast("Failed to load API keys", "error");
+  }
+}
+
+function renderUserAPIKeys() {
+  const tbody = document.getElementById("user-api-keys-body");
+  if (!tbody) return;
+  if (!userAPIKeysCache.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No API keys found.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  userAPIKeysCache.forEach((key) => {
+    const row = document.createElement("tr");
+    row.appendChild(createTextCell(key.name || "-"));
+    row.appendChild(createTextCell(key.prefix || "-"));
+    row.appendChild(createTextCell(key.created_at ? new Date(key.created_at).toLocaleString() : "-"));
+    row.appendChild(createBadgeCell(key.revoked ? "Revoked" : "Active", key.revoked ? "badge-error" : "badge-success"));
+    if (key.revoked) {
+      row.appendChild(createTextCell("-"));
+    } else {
+      row.appendChild(
+        createActionCell("Revoke", async () => {
+          if (!(await confirmModal(`Revoke API key "${key.name}"?`))) return;
+          await revokeUserAPIKey(key.id);
+        })
+      );
+    }
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+async function createUserAPIKey() {
+  const input = document.getElementById("user-api-key-name");
+  const name = (input?.value || "").trim();
+  if (!name) {
+    showToast("Enter a name for the API key", "warning");
+    return;
+  }
+  try {
+    const data = await fetchJSON("/user/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const oneTime = document.getElementById("user-api-key-once");
+    if (oneTime && data.api_key) {
+      oneTime.textContent = `Copy now (shown once): ${data.api_key}`;
+      oneTime.classList.remove("hidden");
+    }
+    if (input) input.value = "";
+    showToast("API key created");
+    await loadUserAPIKeys();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    showToast(`Failed to create API key: ${err.message}`, "error");
+  }
+}
+
+async function revokeUserAPIKey(id) {
+  try {
+    await fetchJSON(`/user/api-keys/${encodePathSegment(id)}/revoke`, { method: "POST" });
+    showToast("API key revoked");
+    await loadUserAPIKeys();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    showToast(`Failed to revoke API key: ${err.message}`, "error");
+  }
+}
+
+function resetUserAPIKeys() {
+  userAPIKeysCache = [];
+  const once = document.getElementById("user-api-key-once");
+  if (once) {
+    once.textContent = "";
+    once.classList.add("hidden");
+  }
+  const tbody = document.getElementById("user-api-keys-body");
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No API keys found.</td></tr>';
+  }
+}
+
+function initUserAPIKeys() {
+  document.getElementById("refresh-user-api-keys")?.addEventListener("click", loadUserAPIKeys);
+  document.getElementById("create-user-api-key")?.addEventListener("click", createUserAPIKey);
+}
+
 // Operations - Components
 async function loadComponents() {
   const grid = document.getElementById("components-grid");
@@ -944,6 +1145,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initTabs();
   initDashboard();
   initGovernance();
+  initUserAPIKeys();
   initOperations();
   initModal();
   initAuth();

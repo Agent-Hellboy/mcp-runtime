@@ -492,6 +492,7 @@ func (s *RuntimeServer) handleGrantDelete(w http.ResponseWriter, r *http.Request
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if err := s.accessMgr.DeleteGrant(ctx, name, namespace); err != nil {
+		// #nosec G706 -- namespace/name are validated path params and logged for operator diagnostics.
 		log.Printf("delete grant %s/%s: %v", namespace, name, err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete grant"})
 		return
@@ -712,6 +713,7 @@ func (s *RuntimeServer) handleSessionDelete(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if err := s.accessMgr.DeleteSession(ctx, name, namespace); err != nil {
+		// #nosec G706 -- namespace/name are validated path params and logged for operator diagnostics.
 		log.Printf("delete session %s/%s: %v", namespace, name, err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete session"})
 		return

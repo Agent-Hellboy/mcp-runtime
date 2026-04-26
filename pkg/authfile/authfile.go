@@ -51,6 +51,7 @@ type Credentials struct {
 
 // Load reads credentials from path. If the file is missing, returns [ErrNotFound].
 func Load(path string) (*Credentials, error) {
+	// #nosec G304 -- path is a direct CLI/user-configured credentials file location.
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -112,6 +113,7 @@ func MaskToken(s string) string {
 }
 
 // EnvAPIToken is the environment variable for a platform API token without using a saved file.
+// #nosec G101 -- environment variable name only; no secret value is embedded.
 const EnvAPIToken = "MCP_PLATFORM_API_TOKEN"
 
 // EnvAPIURL is the default platform API base URL (e.g. https://platform.example.com).
