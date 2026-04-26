@@ -3,6 +3,7 @@ site_url: https://docs.mcpruntime.org/
 repo_url: https://github.com/Agent-Hellboy/mcp-runtime
 repo_name: Agent-Hellboy/mcp-runtime
 docs_dir: .
+site_dir: /tmp/site
 theme:
   name: material
   features:
