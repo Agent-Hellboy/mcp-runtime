@@ -139,6 +139,13 @@ func (s *RuntimeServer) handleRuntimeServers(w http.ResponseWriter, r *http.Requ
 	defer cancel()
 
 	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
+	if p, ok := principalFromContext(r.Context()); ok && p.Role != roleAdmin {
+		if p.Namespace == "" {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "user namespace is not configured"})
+			return
+		}
+		namespace = p.Namespace
+	}
 	if namespace == "" {
 		namespace = "mcp-servers"
 	}
@@ -466,11 +473,7 @@ func (s *RuntimeServer) handleGrantItemPath(w http.ResponseWriter, r *http.Reque
 	case http.MethodDelete:
 		ns, name, err := serviceutil.ExtractNamespacedResourceDelete(r, "/api/runtime/grants/")
 		if err != nil {
-			if errors.Is(err, serviceutil.ErrMethodNotAllowed) {
-				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": err.Error()})
-			} else {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			}
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 		s.handleGrantDelete(w, r, ns, name)
@@ -687,11 +690,7 @@ func (s *RuntimeServer) handleSessionItemPath(w http.ResponseWriter, r *http.Req
 	case http.MethodDelete:
 		ns, name, err := serviceutil.ExtractNamespacedResourceDelete(r, "/api/runtime/sessions/")
 		if err != nil {
-			if errors.Is(err, serviceutil.ErrMethodNotAllowed) {
-				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": err.Error()})
-			} else {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			}
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 		s.handleSessionDelete(w, r, ns, name)

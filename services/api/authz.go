@@ -14,6 +14,7 @@ type principal struct {
 	Role      string `json:"role"`
 	Subject   string `json:"subject,omitempty"`
 	Email     string `json:"email,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
 	AuthType  string `json:"auth_type,omitempty"`
 	APIKeyID  string `json:"api_key_id,omitempty"`
 	IsService bool   `json:"is_service,omitempty"`

@@ -40,9 +40,6 @@ type platformClient struct {
 func newPlatformClient() (*platformClient, error) {
 	tok, base, _, err := authfile.ResolveToken()
 	if err != nil {
-		if errors.Is(err, authfile.ErrNotFound) {
-			return nil, err
-		}
 		return nil, err
 	}
 	if strings.TrimSpace(base) == "" {
@@ -77,6 +74,7 @@ func (c *platformClient) do(ctx context.Context, method, relPath, query string, 
 		return nil, err
 	}
 	req.Header.Set("x-api-key", c.token)
+	req.Header.Set("authorization", "Bearer "+c.token)
 	if body != nil {
 		req.Header.Set("content-type", "application/json")
 	}
@@ -294,9 +292,6 @@ func grantFromV1(g *mcpv1alpha1.MCPAccessGrant) grantAPIBody {
 			RequiredTrust: sentinelaccess.TrustLevel(tr.RequiredTrust),
 		})
 	}
-	if rules == nil {
-		rules = []sentinelaccess.ToolRule{}
-	}
 	dis := g.Spec.Disabled
 	return grantAPIBody{
 		Name:          g.Name,
@@ -407,7 +402,6 @@ func (c *platformClient) getRuntimePolicy(ctx context.Context, namespace, server
 }
 
 func (m *AccessManager) platformOrKube() (plat *platformClient, useKubectl bool, err error) {
-	_ = m
 	if m.useKube {
 		return nil, true, nil
 	}

@@ -160,7 +160,7 @@ func (m *PipelineManager) GenerateCRDsFromMetadata(metadataFile, metadataDir, ou
 
 // DeployCRDs deploys CRD files to the cluster.
 func (m *PipelineManager) DeployCRDs(manifestsDir, namespace string) error {
-	if _, kerr := m.kubectl.CombinedOutput([]string{"get", "ns", "-o", "name", "--request-timeout=5s"}); kerr != nil {
+	if _, kerr := m.kubectl.CombinedOutput([]string{"version", "--request-timeout=5s"}); kerr != nil {
 		if _, perr := newPlatformClient(); perr == nil {
 			return newWithSentinel(ErrApplyManifestFailed, "pipeline deploy applies YAML with kubectl and needs a working kubeconfig. mcp-runtime auth is for the platform API only, not for applying manifests. Run deploy from a host with cluster access, or fix KUBECONFIG, then retry.")
 		}

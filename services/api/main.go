@@ -75,6 +75,8 @@ type apiServer struct {
 	oidcIssuer   string
 	oidcAudience string
 	userKeys     userAPIKeyStore
+	platform     *platformStore
+	runtime      *RuntimeServer
 }
 
 const eventSelectColumns = "timestamp, source, event_type, server, namespace, cluster, human_id, agent_id, session_id, decision, tool_name, payload"
@@ -151,27 +153,49 @@ func main() {
 		oidcIssuer:   oidcIssuer,
 		oidcAudience: oidcAudience,
 	}
+	if dsn := platformDSNFromEnv(); dsn != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		store, err := newPlatformStore(ctx, dsn, platformJWTSecretFromEnv())
+		if err != nil {
+			log.Fatalf("failed to initialize platform identity database: %v", err)
+		}
+		defer store.close()
+		server.platform = store
+		server.userKeys = store
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
+	mux.HandleFunc("/api/auth/login", server.handleLogin)
+	mux.HandleFunc("/api/auth/signup", server.handleSignup)
 	mux.Handle("/api/events", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleEvents))))
 	mux.Handle("/api/stats", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleStats))))
 	mux.Handle("/api/sources", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleSources))))
 	mux.Handle("/api/event-types", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleEventTypes))))
 	mux.Handle("/api/events/filter", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleEventsFilter))))
 	mux.Handle("/api/auth/me", server.auth(http.HandlerFunc(server.handleAuthMe)))
+	mux.Handle("/api/user/registry-credentials", server.auth(http.HandlerFunc(server.handleRegistryCredentials)))
+	mux.Handle("/api/user/registry-credentials/", server.auth(http.HandlerFunc(server.handleRegistryCredentialItem)))
 
 	// Initialize and register runtime server with Kubernetes support
 	runtimeServer, err := NewRuntimeServer(conn, dbName, apiKeys)
 	if err != nil {
 		log.Printf("runtime server initialization warning: %v", err)
 	} else {
-		server.userKeys = runtimeServer
+		server.runtime = runtimeServer
+		if server.userKeys == nil {
+			server.userKeys = runtimeServer
+		}
 		// Register all runtime endpoints with auth
 		mux.Handle("/api/dashboard/summary", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleDashboardSummary))))
-		mux.Handle("/api/runtime/servers", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleRuntimeServers))))
+		mux.Handle("/api/runtime/servers", server.auth(http.HandlerFunc(runtimeServer.handleRuntimeServers)))
+		mux.Handle("/api/deployments", server.auth(http.HandlerFunc(runtimeServer.handleDeployments)))
+		mux.Handle("/api/deployments/", server.auth(http.HandlerFunc(runtimeServer.handleDeploymentItem)))
+		mux.Handle("/api/admin/namespaces", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleAdminNamespaces))))
+		mux.Handle("/api/admin/deployments", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleAdminDeployments))))
 		mux.Handle("/api/runtime/grants", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleRuntimeGrants))))
 		mux.Handle("/api/runtime/sessions", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleRuntimeSessions))))
 		mux.Handle("/api/runtime/components", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleRuntimeComponents))))
@@ -534,7 +558,15 @@ func (s *apiServer) authenticateRequest(r *http.Request) (principal, bool, error
 	}
 
 	token := extractBearer(r.Header.Get("authorization"))
-	if token == "" || s.jwks == nil {
+	if token == "" {
+		return principal{}, false, nil
+	}
+	if s.platform != nil {
+		if p, ok := s.platform.AuthenticateJWT(token); ok {
+			return p, true, nil
+		}
+	}
+	if s.jwks == nil {
 		return principal{}, false, nil
 	}
 	parser := jwt.NewParser(jwt.WithValidMethods([]string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512"}))

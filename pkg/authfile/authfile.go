@@ -131,9 +131,6 @@ func ResolveToken() (token, apiBase, source string, err error) {
 	}
 	c, err := Load(path)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return "", "", "", err
-		}
 		return "", "", "", err
 	}
 	return c.Token, c.APIBaseURL, "credentials file", nil

@@ -4,7 +4,9 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -30,7 +32,7 @@ func NewAuthCmd(logger *zap.Logger) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "auth",
 		Short: "Log in to the platform API and manage saved credentials",
-		Long: `Authenticate to the Sentinel platform using an API token (not Kubernetes).
+		Long: `Authenticate to the Sentinel platform using email/password or an API token (not Kubernetes).
 
 Use this for day-to-day deploy and registry-related flows. Cluster install and admin work
 use Kubernetes and the cluster commands, not this command.
@@ -56,6 +58,8 @@ type authManager struct {
 
 type loginFlags struct {
 	apiURL         string
+	email          string
+	password       string
 	token          string
 	tokenFromStdin bool
 	registryHost   string
@@ -73,6 +77,8 @@ func (m *authManager) newAuthLoginCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&f.apiURL, "api-url", os.Getenv(authfile.EnvAPIURL), "Sentinel API base URL (scheme and host, no /api path)")
+	cmd.Flags().StringVar(&f.email, "email", "", "Platform account email for password login")
+	cmd.Flags().StringVar(&f.password, "password", "", "Platform account password (prefer interactive prompt or token auth in shared shells)")
 	cmd.Flags().StringVar(&f.token, "token", "", "API token (or use --token-stdin, or the interactive prompt)")
 	cmd.Flags().BoolVar(&f.tokenFromStdin, "token-stdin", false, "Read the token from stdin (non-interactive)")
 	cmd.Flags().StringVar(&f.registryHost, "registry-host", "", "Optional host:port for the platform image registry for later use with docker")
@@ -88,8 +94,19 @@ func (m *authManager) runAuthLogin(f loginFlags) error {
 	}
 	apiURL = strings.TrimRight(apiURL, "/")
 
-	var token string
-	if f.tokenFromStdin {
+	var token, loginRole string
+	if strings.TrimSpace(f.email) != "" || strings.TrimSpace(f.password) != "" {
+		if strings.TrimSpace(f.email) == "" || strings.TrimSpace(f.password) == "" {
+			return newWithSentinel(ErrFieldRequired, "email and password are both required for password login")
+		}
+		tok, role, err := loginPlatformPassword(context.Background(), apiURL, f.email, f.password)
+		if err != nil {
+			return newWithSentinel(nil, fmt.Sprintf("platform login failed: %v", err))
+		}
+		token = tok
+		loginRole = role
+		f.skipVerify = true
+	} else if f.tokenFromStdin {
 		b, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return newWithSentinel(nil, fmt.Sprintf("read stdin: %v", err))
@@ -135,6 +152,7 @@ func (m *authManager) runAuthLogin(f loginFlags) error {
 	c := &authfile.Credentials{
 		APIBaseURL:   apiURL,
 		Token:        token,
+		Role:         loginRole,
 		RegistryHost: strings.TrimSpace(f.registryHost),
 	}
 	if err := authfile.Save(path, c); err != nil {
@@ -148,6 +166,42 @@ func (m *authManager) runAuthLogin(f loginFlags) error {
 		fmt.Printf("Registry host recorded: %s\n", c.RegistryHost)
 	}
 	return nil
+}
+
+func loginPlatformPassword(ctx context.Context, apiBaseURL, email, password string) (token, role string, err error) {
+	body, err := json.Marshal(map[string]string{"email": strings.TrimSpace(email), "password": password})
+	if err != nil {
+		return "", "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	u := strings.TrimRight(apiBaseURL, "/") + "/api/auth/login"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("content-type", "application/json")
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		AccessToken string `json:"access_token"`
+		User        struct {
+			Role string `json:"role"`
+		} `json:"user"`
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", "", fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(out.AccessToken) == "" {
+		return "", "", errors.New("login response did not include access_token")
+	}
+	return strings.TrimSpace(out.AccessToken), strings.TrimSpace(out.User.Role), nil
 }
 
 func terminalFD(fd uintptr) (int, error) {
@@ -236,15 +290,16 @@ func fileCredentialsIfRelevant() (*authfile.Credentials, error) {
 	return authfile.Load(path)
 }
 
-// verifyPlatformAPIToken issues GET /api/runtime/servers to confirm the key is accepted.
+// verifyPlatformAPIToken issues GET /api/auth/me to confirm the key is accepted.
 func verifyPlatformAPIToken(ctx context.Context, apiBaseURL, token string) error {
 	s := strings.TrimRight(apiBaseURL, "/")
-	u := s + "/api/runtime/servers"
+	u := s + "/api/auth/me"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("x-api-key", token)
+	req.Header.Set("authorization", "Bearer "+token)
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {

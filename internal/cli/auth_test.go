@@ -16,7 +16,7 @@ import (
 func TestVerifyPlatformAPIToken(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/runtime/servers" {
+		if r.URL.Path != "/api/auth/me" {
 			t.Errorf("path: %q", r.URL.Path)
 			w.WriteHeader(500)
 			return
@@ -54,7 +54,7 @@ func TestAuthLoginSavesAndVerifies(t *testing.T) {
 	t.Setenv("MCP_RUNTIME_CONFIG_DIR", d)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/runtime/servers" {
+		if r.URL.Path != "/api/auth/me" {
 			t.Errorf("path: %q", r.URL.Path)
 		}
 		if r.Header.Get("x-api-key") != "good" {

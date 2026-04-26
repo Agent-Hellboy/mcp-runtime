@@ -374,7 +374,7 @@ func (m *ServerManager) GetServer(name, namespace string) error {
 			if s.Name == name && s.Namespace == namespace {
 				b, _ := json.MarshalIndent(s, "", "  ")
 				_, _ = os.Stdout.Write(append(b, '\n'))
-				_, _ = os.Stdout.WriteString("# For the full MCPServer YAML, use mcp-runtime server get --use-kube ... with kubectl.\n")
+				_, _ = os.Stderr.WriteString("# For the full MCPServer YAML, use mcp-runtime server get --use-kube ... with kubectl.\n")
 				return nil
 			}
 		}
