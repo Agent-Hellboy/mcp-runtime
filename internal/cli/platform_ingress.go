@@ -26,9 +26,12 @@ func applyPlatformIngressIfConfigured(kubectl KubectlRunner) error {
 }
 
 // renderPlatformIngressManifest emits an Ingress that maps platform.<domain>
-// to the dashboard UI (and the in-cluster Grafana / Prometheus paths). When
-// issuerName is set, a TLS section and cert-manager annotation are added so
-// the bundled cert covers platform.<domain> alongside registry/mcp hostnames.
+// to the dashboard UI, /api on the same UI service (which reverse-proxies to
+// mcp-sentinel-api via API_UPSTREAM), and the in-cluster Grafana / Prometheus
+// paths. When issuerName is set, a TLS section and cert-manager annotation are
+// added so cert-manager's ingress-shim provisions a Certificate for
+// platform.<domain> into the mcp-sentinel-platform-tls Secret in the same
+// namespace as the Ingress.
 func renderPlatformIngressManifest(host, issuerName string) string {
 	host = strings.TrimSpace(host)
 	issuerName = strings.TrimSpace(issuerName)
@@ -68,6 +71,13 @@ func renderPlatformIngressManifest(host, issuerName string) string {
 	b.WriteString("\n")
 	b.WriteString("      http:\n")
 	b.WriteString("        paths:\n")
+	b.WriteString("          - path: /api\n")
+	b.WriteString("            pathType: Prefix\n")
+	b.WriteString("            backend:\n")
+	b.WriteString("              service:\n")
+	b.WriteString("                name: mcp-sentinel-ui\n")
+	b.WriteString("                port:\n")
+	b.WriteString("                  number: 8082\n")
 	b.WriteString("          - path: /grafana\n")
 	b.WriteString("            pathType: Prefix\n")
 	b.WriteString("            backend:\n")

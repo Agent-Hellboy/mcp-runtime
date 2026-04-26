@@ -45,10 +45,16 @@ func acmeServerURL(staging bool) string {
 	return letsencryptProdURL
 }
 
+// acmeTLSDNSNames returns the SANs for the unified registry Certificate in the
+// registry namespace. The platform UI hostname is intentionally NOT included:
+// the platform Ingress in the mcp-sentinel namespace owns its own cert via
+// cert-manager's ingress-shim because Kubernetes Ingress resources cannot
+// reference TLS Secrets across namespaces. Adding the platform host here would
+// cause a redundant ACME order for the same name on every renewal.
 func acmeTLSDNSNames() []string {
 	seen := make(map[string]struct{})
 	var out []string
-	for _, h := range []string{GetRegistryIngressHost(), GetMcpIngressHost(), GetPlatformIngressHost()} {
+	for _, h := range []string{GetRegistryIngressHost(), GetMcpIngressHost()} {
 		h = strings.TrimSpace(h)
 		if h == "" {
 			continue
@@ -65,11 +71,11 @@ func acmeTLSDNSNames() []string {
 func validateACMEHostnameForPublicCA() error {
 	names := acmeTLSDNSNames()
 	if len(names) == 0 {
-		return fmt.Errorf("ACME public CA requires a public DNS name; set MCP_PLATFORM_DOMAIN, MCP_REGISTRY_HOST, MCP_REGISTRY_INGRESS_HOST, MCP_MCP_INGRESS_HOST, or MCP_PLATFORM_INGRESS_HOST")
+		return fmt.Errorf("ACME public CA requires a public DNS name; set MCP_PLATFORM_DOMAIN, MCP_REGISTRY_HOST, MCP_REGISTRY_INGRESS_HOST, or MCP_MCP_INGRESS_HOST")
 	}
 	for _, host := range names {
 		if isDevRegistryURL(host) {
-			return fmt.Errorf("ACME public CA requires a public DNS name; set MCP_PLATFORM_DOMAIN (e.g. mcpruntime.com for registry., mcp., and platform. names) or MCP_REGISTRY_INGRESS_HOST, not %q", host)
+			return fmt.Errorf("ACME public CA requires a public DNS name; set MCP_PLATFORM_DOMAIN (e.g. mcpruntime.com for registry. and mcp. names) or MCP_REGISTRY_INGRESS_HOST, not %q", host)
 		}
 	}
 	return nil
