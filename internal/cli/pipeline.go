@@ -126,6 +126,13 @@ func (m *PipelineManager) GenerateCRDsFromMetadata(metadataFile, metadataDir, ou
 		return err
 	}
 
+	// Kubelet pulls use the node DNS / containerd config, not in-cluster CoreDNS. When defaults
+	// use registry.local, set MCP_REGISTRY_INGRESS_HOST to a node-reachable host:port and configure
+	// HTTP (insecure) registries in Docker / k3s, or add registry.local in node /etc/hosts.
+	if metadata.ResolveRegistryHost() == metadata.DefaultRegistryHost {
+		m.logger.Warn("Using default image host registry.local for generated MCPServer image refs. If cluster pulls fail, set MCP_REGISTRY_INGRESS_HOST to your registry (e.g. ClusterIP:port) and configure containerd/k3s for HTTP, or use public DNS and TLS.")
+	}
+
 	m.logger.Info("Generating CRD files", zap.Int("count", len(registry.Servers)), zap.String("output", outputDir))
 
 	if err := metadata.GenerateCRDsFromRegistry(registry, outputDir); err != nil {
