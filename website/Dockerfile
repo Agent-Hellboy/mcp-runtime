@@ -1,5 +1,9 @@
 FROM python:3.12-slim
 
+LABEL org.opencontainers.image.source="https://github.com/Agent-Hellboy/mcp-runtime" \
+      org.opencontainers.image.title="mcp-runtime-website" \
+      org.opencontainers.image.description="Marketing site for mcp-runtime (Flask + Gunicorn)"
+
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

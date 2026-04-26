@@ -268,12 +268,14 @@ jobs:
           ssh "${{ secrets.DOCS_DEPLOY_USER }}@${{ secrets.DOCS_DEPLOY_HOST }}" \
             "set -euo pipefail; \
              cd '${DOCS_DEPLOY_PATH}'; \
-             docker build -t '${image_name}' .; \
              docker rm -f '${container_name}' >/dev/null 2>&1 || true; \
+             docker ps -aq --filter publish='${host_port}' | xargs -r docker rm -f; \
+             docker build --no-cache --pull -t '${image_name}' .; \
              docker run -d --name '${container_name}' \
                --restart unless-stopped \
                -p '${host_port}:${container_port}' \
-               '${image_name}'"
+               '${image_name}'; \
+             docker image prune -f >/dev/null"
 
   deploy-website:
     name: Deploy Website (mcpruntime.org)
@@ -336,11 +338,13 @@ jobs:
           ssh "${{ secrets.WEBSITE_DEPLOY_USER }}@${{ secrets.WEBSITE_DEPLOY_HOST }}" \
             "set -euo pipefail; \
              cd '${WEBSITE_DEPLOY_PATH}'; \
-             docker build -t '${image_name}' .; \
              docker rm -f '${container_name}' >/dev/null 2>&1 || true; \
+             docker ps -aq --filter publish='${host_port}' | xargs -r docker rm -f; \
+             docker build --no-cache --pull -t '${image_name}' .; \
              docker run -d --name '${container_name}' \
                --restart unless-stopped \
                -p '${host_port}:${container_port}' \
                -e MCP_DOCS_URL='${docs_url}' \
                -e MCP_WEBSITE_BASE_URL='${base_url}' \
-               '${image_name}'"
+               '${image_name}'; \
+             docker image prune -f >/dev/null"
