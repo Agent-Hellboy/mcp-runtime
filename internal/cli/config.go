@@ -26,6 +26,9 @@ type CLIConfig struct {
 	// McpIngressHost is the public gateway / MCP host (e.g. mcp.mcpruntime.com), from
 	// MCP_MCP_INGRESS_HOST or mcp.<MCP_PLATFORM_DOMAIN>. Empty if unset.
 	McpIngressHost string
+	// PlatformIngressHost is the public dashboard UI host (e.g. platform.mcpruntime.com), from
+	// MCP_PLATFORM_INGRESS_HOST or platform.<MCP_PLATFORM_DOMAIN>. Empty falls back to path-based dev routing.
+	PlatformIngressHost string
 	// RegistryClusterIssuerName is the cert-manager.io/cluster-issuer name for the registry ingress
 	// (e.g. letsencrypt-prod, mcp-runtime-ca, or an org issuer from --tls-cluster-issuer). Set by setup --with-tls, not from env.
 	RegistryClusterIssuerName string
@@ -64,6 +67,7 @@ func LoadCLIConfig() *CLIConfig {
 	registryEndpoint := metadata.ResolveRegistryEndpoint()
 	registryIngressHost := metadata.ResolveRegistryHost()
 	mcpIngressHost := metadata.ResolveMcpIngressHost()
+	platformIngressHost := metadata.ResolvePlatformIngressHost()
 	return &CLIConfig{
 		// Applies to core deployment waits and mcp-sentinel rollouts (ingest, Kafka, etc.).
 		DeploymentTimeout:           parseDurationEnv("MCP_DEPLOYMENT_TIMEOUT", defaultDeploymentTimeout),
@@ -73,6 +77,7 @@ func LoadCLIConfig() *CLIConfig {
 		RegistryEndpoint:            registryEndpoint,
 		RegistryIngressHost:         registryIngressHost,
 		McpIngressHost:              mcpIngressHost,
+		PlatformIngressHost:         platformIngressHost,
 		SkopeoImage:                 getEnvOrDefault("MCP_SKOPEO_IMAGE", defaultSkopeoImage),
 		OperatorImage:               os.Getenv("MCP_OPERATOR_IMAGE"), // No default, empty means auto
 		GatewayProxyImage:           os.Getenv("MCP_GATEWAY_PROXY_IMAGE"),
@@ -158,6 +163,13 @@ func GetRegistryIngressHost() string {
 // MCP_PLATFORM_DOMAIN is set), or empty if not configured.
 func GetMcpIngressHost() string {
 	return DefaultCLIConfig.McpIngressHost
+}
+
+// GetPlatformIngressHost returns the public dashboard UI host (platform.<domain>
+// when MCP_PLATFORM_DOMAIN is set), or empty if not configured. When empty the
+// dev path-based routing on the gateway ingress is used.
+func GetPlatformIngressHost() string {
+	return DefaultCLIConfig.PlatformIngressHost
 }
 
 // GetRegistryClusterIssuerName returns the cluster issuer name used on the registry TLS ingress annotation (empty if unset).

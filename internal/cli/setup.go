@@ -408,7 +408,38 @@ func setupPlatformWithDeps(logger *zap.Logger, plan SetupPlan, deps SetupDeps) e
 
 	Success("Platform setup complete")
 	fmt.Println(Green("\nPlatform is ready. Use 'mcp-runtime status' to check everything."))
+	printPlatformEntrypoints(plan.TLSEnabled)
 	return nil
+}
+
+// printPlatformEntrypoints prints the public URLs derived from
+// MCP_PLATFORM_DOMAIN / MCP_*_INGRESS_HOST so the operator knows which
+// hostnames must resolve in DNS and what the dashboard URL is.
+func printPlatformEntrypoints(tlsEnabled bool) {
+	scheme := "http://"
+	if tlsEnabled {
+		scheme = "https://"
+	}
+	registry := strings.TrimSpace(GetRegistryIngressHost())
+	mcp := strings.TrimSpace(GetMcpIngressHost())
+	platform := strings.TrimSpace(GetPlatformIngressHost())
+	if registry == "" && mcp == "" && platform == "" {
+		return
+	}
+	fmt.Println()
+	fmt.Println("Public entrypoints:")
+	if platform != "" {
+		fmt.Printf("  Dashboard:  %s%s/\n", scheme, platform)
+	}
+	if registry != "" {
+		fmt.Printf("  Registry:   %s%s/v2/\n", scheme, registry)
+	}
+	if mcp != "" {
+		fmt.Printf("  MCP:        %s%s/<server-name>/mcp\n", scheme, mcp)
+	}
+	if platform != "" {
+		fmt.Println("  (Make sure DNS A/AAAA records point platform./registry./mcp.<domain> at the cluster ingress.)")
+	}
 }
 
 func resolveRegistrySetup(logger *zap.Logger, deps SetupDeps) (*ExternalRegistryConfig, bool, string) {
@@ -1837,6 +1868,10 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 		if err := applyRenderedManifest(kubectl, manifest, images, imagePullSecretName); err != nil {
 			return err
 		}
+	}
+
+	if err := applyPlatformIngressIfConfigured(kubectl); err != nil {
+		return err
 	}
 
 	Info(fmt.Sprintf("Waiting for mcp-sentinel workload rollouts (per-resource timeout %s; override with MCP_DEPLOYMENT_TIMEOUT)", rolloutTimeout))

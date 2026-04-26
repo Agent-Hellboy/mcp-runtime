@@ -27,7 +27,7 @@ func TestNormalizePlatformDomain(t *testing.T) {
 func TestResolveHostsWithPlatformDomain(t *testing.T) {
 	for _, k := range []string{
 		envMCPRegistryEndpoint, envMCPRegistryHost, envMCPRegistryIngressHost,
-		envMCPPlatformDomain, envMCPMcpIngressHost,
+		envMCPPlatformDomain, envMCPMcpIngressHost, envMCPPlatformIngressHost,
 	} {
 		t.Setenv(k, "")
 	}
@@ -42,6 +42,9 @@ func TestResolveHostsWithPlatformDomain(t *testing.T) {
 	if got := ResolveMcpIngressHost(); got != "mcp.mcpruntime.com" {
 		t.Fatalf("ResolveMcpIngressHost: got %q", got)
 	}
+	if got := ResolvePlatformIngressHost(); got != "platform.mcpruntime.com" {
+		t.Fatalf("ResolvePlatformIngressHost: got %q", got)
+	}
 }
 
 func TestResolveHostsExplicitOverride(t *testing.T) {
@@ -51,6 +54,7 @@ func TestResolveHostsExplicitOverride(t *testing.T) {
 		envMCPRegistryIngressHost: "reg.public.mcpruntime.com",
 		envMCPPlatformDomain:      "should-not-matter",
 		envMCPMcpIngressHost:      "mcp.custom.mcpruntime.com",
+		envMCPPlatformIngressHost: "platform.custom.mcpruntime.com",
 	} {
 		t.Setenv(k, v)
 	}
@@ -62,5 +66,17 @@ func TestResolveHostsExplicitOverride(t *testing.T) {
 	}
 	if got := ResolveMcpIngressHost(); got != "mcp.custom.mcpruntime.com" {
 		t.Fatalf("got %q", got)
+	}
+	if got := ResolvePlatformIngressHost(); got != "platform.custom.mcpruntime.com" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestResolvePlatformIngressHostUnset(t *testing.T) {
+	for _, k := range []string{envMCPPlatformDomain, envMCPPlatformIngressHost} {
+		t.Setenv(k, "")
+	}
+	if got := ResolvePlatformIngressHost(); got != "" {
+		t.Fatalf("expected empty platform host when env is unset; got %q", got)
 	}
 }

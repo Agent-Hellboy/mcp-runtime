@@ -48,7 +48,7 @@ func acmeServerURL(staging bool) string {
 func acmeTLSDNSNames() []string {
 	seen := make(map[string]struct{})
 	var out []string
-	for _, h := range []string{GetRegistryIngressHost(), GetMcpIngressHost()} {
+	for _, h := range []string{GetRegistryIngressHost(), GetMcpIngressHost(), GetPlatformIngressHost()} {
 		h = strings.TrimSpace(h)
 		if h == "" {
 			continue
@@ -65,11 +65,11 @@ func acmeTLSDNSNames() []string {
 func validateACMEHostnameForPublicCA() error {
 	names := acmeTLSDNSNames()
 	if len(names) == 0 {
-		return fmt.Errorf("ACME public CA requires a public DNS name; set MCP_PLATFORM_DOMAIN, MCP_REGISTRY_HOST, or MCP_REGISTRY_INGRESS_HOST")
+		return fmt.Errorf("ACME public CA requires a public DNS name; set MCP_PLATFORM_DOMAIN, MCP_REGISTRY_HOST, MCP_REGISTRY_INGRESS_HOST, MCP_MCP_INGRESS_HOST, or MCP_PLATFORM_INGRESS_HOST")
 	}
 	for _, host := range names {
 		if isDevRegistryURL(host) {
-			return fmt.Errorf("ACME public CA requires a public DNS name; set MCP_PLATFORM_DOMAIN (e.g. mcpruntime.com for registry. and mcp. names) or MCP_REGISTRY_INGRESS_HOST, not %q", host)
+			return fmt.Errorf("ACME public CA requires a public DNS name; set MCP_PLATFORM_DOMAIN (e.g. mcpruntime.com for registry., mcp., and platform. names) or MCP_REGISTRY_INGRESS_HOST, not %q", host)
 		}
 	}
 	return nil

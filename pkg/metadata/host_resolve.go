@@ -12,6 +12,7 @@ const envMCPRegistryHost = "MCP_REGISTRY_HOST"
 const envMCPRegistryIngressHost = "MCP_REGISTRY_INGRESS_HOST"
 const envMCPPlatformDomain = "MCP_PLATFORM_DOMAIN"
 const envMCPMcpIngressHost = "MCP_MCP_INGRESS_HOST"
+const envMCPPlatformIngressHost = "MCP_PLATFORM_INGRESS_HOST"
 
 // NormalizePlatformDomain returns a lowercased FQDN suitable for
 // "registry." + d and "mcp." + d, or an empty string if the input is unusable.
@@ -73,6 +74,19 @@ func ResolveMcpIngressHost() string {
 	}
 	if p := platformDomainFromEnv(); p != "" {
 		return "mcp." + p
+	}
+	return ""
+}
+
+// ResolvePlatformIngressHost is the public hostname for the platform / admin
+// dashboard UI: MCP_PLATFORM_INGRESS_HOST, else platform.<MCP_PLATFORM_DOMAIN>
+// when the platform domain is set, else empty (path-based dev routing is used).
+func ResolvePlatformIngressHost() string {
+	if h := strings.TrimSpace(os.Getenv(envMCPPlatformIngressHost)); h != "" {
+		return h
+	}
+	if p := platformDomainFromEnv(); p != "" {
+		return "platform." + p
 	}
 	return ""
 }
