@@ -252,7 +252,8 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 		if sentinelaccess.IsMCPServerNotFoundForRef(err) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		} else {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			log.Printf("runtime grant: assert MCPServer ref failed: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to verify server reference"})
 		}
 		return
 	}
@@ -348,7 +349,8 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 		if sentinelaccess.IsMCPServerNotFoundForRef(err) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		} else {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			log.Printf("runtime session: assert MCPServer ref failed: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to verify server reference"})
 		}
 		return
 	}

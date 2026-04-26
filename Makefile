@@ -54,7 +54,7 @@ deps-go: ## Go mod download and tidy (root) plus go mod download for each nested
 	@./hack/deps.sh go
 
 deps-check: ## Verify toolchain on PATH. Set STRICT_DEPS_CHECK=1 to fail the recipe if a tool is missing.
-	@STRICT_DEPS_CHECK="${STRICT_DEPS_CHECK:-0}" ./hack/deps.sh check
+	@./hack/deps.sh check
 
 deps-install: ## Best-effort install of docker, kubectl, and Go (apt as root, or Homebrew on macOS).
 	@./hack/deps.sh install

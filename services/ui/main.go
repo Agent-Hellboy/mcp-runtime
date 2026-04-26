@@ -263,7 +263,7 @@ func handleLogin(apiKey string, sessionKey []byte) http.HandlerFunc {
 
 		priorFailures := loginAttempts.recordSuccess(clientID)
 		if priorFailures > 0 {
-			log.Printf(`auth_login_success_after_failures client=%q timestamp=%q prior_failures=%d`, clientID, time.Now().UTC().Format(time.RFC3339), priorFailures)
+			log.Printf(`auth_login_success_after_failures timestamp=%q prior_failures=%d`, time.Now().UTC().Format(time.RFC3339), priorFailures)
 		}
 		http.SetCookie(w, newSessionCookie(r, sessionKey))
 		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true})

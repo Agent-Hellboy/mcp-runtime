@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,7 +40,7 @@ func acmeServerURL(staging bool) string {
 
 func validateACMEHostnameForPublicCA() error {
 	host := strings.TrimSpace(GetRegistryIngressHost())
-	if host == "" || strings.EqualFold(host, "registry.local") || strings.HasSuffix(strings.ToLower(host), ".local") {
+	if isDevRegistryURL(host) {
 		return fmt.Errorf("ACME public CA requires a public DNS name; set MCP_REGISTRY_HOST (or MCP_REGISTRY_INGRESS_HOST) to a hostname that resolves to this cluster (not %q)", host)
 	}
 	return nil
@@ -64,14 +65,25 @@ func ensureCertManagerInstalled(kubectl KubectlRunner, logger *zap.Logger) error
 		}
 		return wrapped
 	}
-	deadline := 5 * time.Minute
-	Info(fmt.Sprintf("Waiting for cert-manager deployments (timeout %s)", deadline))
+	overall := 5 * time.Minute
+	start := time.Now()
+	Info(fmt.Sprintf("Waiting for cert-manager deployments (combined timeout %s across three deployments)", overall))
 	for _, dep := range []string{"cert-manager", "cert-manager-cainjector", "cert-manager-webhook"} {
-		// #nosec G204 -- fixed deployment name.
+		remaining := time.Until(start.Add(overall))
+		if remaining <= 0 {
+			err := fmt.Errorf("timed out waiting for cert-manager before deployment/%s", dep)
+			wrapped := wrapWithSentinel(ErrCertManagerInstallFailed, err, err.Error())
+			Error("cert-manager did not become ready")
+			if logger != nil {
+				logStructuredError(logger, wrapped, "cert-manager did not become ready")
+			}
+			return wrapped
+		}
+		// #nosec G204 -- fixed deployment name; timeout is remaining wall-clock budget.
 		if err := kubectl.RunWithOutput([]string{
 			"wait", "--for=condition=Available",
 			"deployment/" + dep, "-n", certManagerNamespace,
-			"--timeout=" + deadline.String(),
+			"--timeout=" + remaining.Round(time.Second).String(),
 		}, os.Stdout, os.Stderr); err != nil {
 			wrapped := wrapWithSentinel(ErrCertManagerInstallFailed, err, fmt.Sprintf("cert-manager component %s not ready: %v", dep, err))
 			Error("cert-manager did not become ready")
@@ -114,10 +126,10 @@ func renderLetsEncryptClusterIssuerManifest(name, email, serverURL string) strin
 	b.WriteString("spec:\n")
 	b.WriteString("  acme:\n")
 	b.WriteString("    email: ")
-	b.WriteString(email)
+	b.WriteString(strconv.Quote(email))
 	b.WriteString("\n")
 	b.WriteString("    server: ")
-	b.WriteString(serverURL)
+	b.WriteString(strconv.Quote(serverURL))
 	b.WriteString("\n")
 	b.WriteString("    privateKeySecretRef:\n")
 	b.WriteString("      name: ")
@@ -159,7 +171,7 @@ func renderRegistryCertificateForACME(certName, dnsName, issuerName string) stri
 	b.WriteString("    kind: ClusterIssuer\n")
 	b.WriteString("  dnsNames:\n")
 	b.WriteString("    - ")
-	b.WriteString(dnsName)
+	b.WriteString(strconv.Quote(dnsName))
 	b.WriteString("\n")
 	return b.String()
 }

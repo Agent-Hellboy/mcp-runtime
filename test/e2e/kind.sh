@@ -2799,6 +2799,7 @@ PY
 import json
 import os
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -2830,8 +2831,12 @@ last_doc = {}
 
 for _ in range(60):
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        last_doc = json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            last_doc = json.loads(resp.read().decode())
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
+        time.sleep(2)
+        continue
     events = last_doc.get("events", [])
     if events:
         payload = events[0].get("payload", {})

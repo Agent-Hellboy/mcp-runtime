@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -253,11 +254,13 @@ func TestValidateResourceName(t *testing.T) {
 	}{
 		{"empty", "", true},
 		{"valid", "grant-a", false},
+		{"valid-with-dots", "my.mcp.server", false},
 		{"underscores", "grant_a", true},
 		{"uppercase", "GrantA", true},
 		{"leading-hyphen", "-grant", true},
 		{"trailing-hyphen", "grant-", true},
-		{"too-long", "g123456789012345678901234567890123456789012345678901234567890123", true}, // 64 chars
+		{"64chars-ok", "g123456789012345678901234567890123456789012345678901234567890123", false},
+		{"too-long-254", strings.Repeat("a", 254), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

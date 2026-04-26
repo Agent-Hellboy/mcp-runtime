@@ -68,10 +68,34 @@ cmd_check() {
 	if command -v kubectl >/dev/null 2>&1; then
 		log "kubectl: present ($(command -v kubectl))"
 	elif command -v k3s >/dev/null 2>&1; then
-		log "kubectl: not found, but k3s is available (use 'k3s kubectl' or install kubectl from your distro)."
+		warn "kubectl not found. k3s provides 'k3s kubectl', but this repo and CI invoke plain kubectl."
+		missing=1
 	else
 		warn "kubectl not found. Install kubernetes CLI or use a cluster admin kubeconfig on this host."
 		missing=1
+	fi
+	if command -v curl >/dev/null 2>&1; then
+		log "curl: present ($(command -v curl))"
+	else
+		warn "curl not in PATH (used by e2e and many docs examples)."
+		missing=1
+	fi
+	if command -v jq >/dev/null 2>&1; then
+		log "jq: present ($(command -v jq))"
+	else
+		warn "jq not in PATH (AGENTS.md and scripts use it)."
+		missing=1
+	fi
+	if command -v python3 >/dev/null 2>&1; then
+		log "python3: present ($(command -v python3))"
+	else
+		warn "python3 not in PATH (e2e and traffic generation use it)."
+		missing=1
+	fi
+	if command -v kind >/dev/null 2>&1; then
+		log "kind: present ($(command -v kind)) (optional local clusters)"
+	else
+		warn "kind not in PATH (optional; see AGENTS.md for Kind-based dev)"
 	fi
 	if [[ ${STRICT_DEPS_CHECK:-0} == 1 ]] && (( missing )); then
 		return 1

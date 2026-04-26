@@ -5,25 +5,24 @@ import (
 	"regexp"
 )
 
-// rfc1123LabelRegexp matches a Kubernetes RFC 1123 label / resource name:
-// lowercase alphanumeric and hyphens, must start and end with alphanumeric.
-// Length is bounded separately; the regexp itself does not enforce 63 chars.
-var rfc1123LabelRegexp = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+// dns1123SubdomainRegexp matches a Kubernetes-style DNS-1123 subdomain
+// (metadata.name / namespace: lowercase, digits, '.', '-'; max 253 per convention).
+var dns1123SubdomainRegexp = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 
-const rfc1123MaxLength = 63
+const k8sNameMaxLength = 253
 
-// ValidateResourceName returns nil if name is a valid Kubernetes resource name
-// (RFC 1123 label, <= 63 chars). The field argument is used in the error message
-// so callers can distinguish, e.g., "name" from "serverRef.name".
+// ValidateResourceName returns nil if name is a valid Kubernetes object name
+// (DNS-1123 subdomain, <= 253 characters). The field argument is used in the error
+// message so callers can distinguish, e.g., "name" from "serverRef.name".
 func ValidateResourceName(field, name string) error {
 	if name == "" {
 		return fmt.Errorf("%s is required", field)
 	}
-	if len(name) > rfc1123MaxLength {
-		return fmt.Errorf("%s %q exceeds %d characters", field, name, rfc1123MaxLength)
+	if len(name) > k8sNameMaxLength {
+		return fmt.Errorf("%s %q exceeds %d characters", field, name, k8sNameMaxLength)
 	}
-	if !rfc1123LabelRegexp.MatchString(name) {
-		return fmt.Errorf("%s %q must be lowercase alphanumeric with optional hyphens", field, name)
+	if !dns1123SubdomainRegexp.MatchString(name) {
+		return fmt.Errorf("%s %q must be a valid DNS-1123 name (lowercase alphanumeric, dots, hyphens)", field, name)
 	}
 	return nil
 }

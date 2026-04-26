@@ -1692,40 +1692,38 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 	return nil
 }
 
-// mcpSentinelDependencyRolloutFailed wraps early mcp-sentinel storage/messaging rollouts with cluster snapshots when --debug.
+// mcpSentinelDependencyRolloutFailed wraps early mcp-sentinel storage/messaging rollouts; diagnostics are attached only in --debug.
 func mcpSentinelDependencyRolloutFailed(kubectl KubectlRunner, err error, kind, name, namespace, phase string) error {
-	if !IsDebugMode() {
-		return err
+	ctx := map[string]any{
+		"component": "mcp-sentinel",
+		"phase":     phase,
+		"resource":  fmt.Sprintf("%s/%s", kind, name),
+		"namespace": namespace,
 	}
-	diag := buildNamespacedResourceDebugDetail(kubectl, kind, name, namespace)
+	if IsDebugMode() {
+		if diag := buildNamespacedResourceDebugDetail(kubectl, kind, name, namespace); diag != "" {
+			ctx["diagnostics"] = trimDiagnosticsString(diag)
+		}
+	}
 	return wrapWithSentinelAndContext(ErrOperatorDeploymentFailed, err,
-		fmt.Sprintf("mcp-sentinel %s: %s/%s: %v", phase, kind, name, err),
-		map[string]any{
-			"component":   "mcp-sentinel",
-			"phase":       phase,
-			"resource":    fmt.Sprintf("%s/%s", kind, name),
-			"namespace":   namespace,
-			"diagnostics": trimDiagnosticsString(diag),
-		},
-	)
+		fmt.Sprintf("mcp-sentinel %s: %s/%s: %v", phase, kind, name, err), ctx)
 }
 
-// mcpSentinelDependencyJobFailed wraps the clickhouse init job with cluster snapshots when --debug.
+// mcpSentinelDependencyJobFailed wraps the clickhouse init job; diagnostics are attached only in --debug.
 func mcpSentinelDependencyJobFailed(kubectl KubectlRunner, err error, name, namespace, phase string) error {
-	if !IsDebugMode() {
-		return err
+	ctx := map[string]any{
+		"component": "mcp-sentinel",
+		"phase":     phase,
+		"resource":  "job/" + name,
+		"namespace": namespace,
 	}
-	diag := buildNamespacedResourceDebugDetail(kubectl, "job", name, namespace)
+	if IsDebugMode() {
+		if diag := buildNamespacedResourceDebugDetail(kubectl, "job", name, namespace); diag != "" {
+			ctx["diagnostics"] = trimDiagnosticsString(diag)
+		}
+	}
 	return wrapWithSentinelAndContext(ErrOperatorDeploymentFailed, err,
-		fmt.Sprintf("mcp-sentinel %s: job/%s: %v", phase, name, err),
-		map[string]any{
-			"component":   "mcp-sentinel",
-			"phase":       phase,
-			"resource":    "job/" + name,
-			"namespace":   namespace,
-			"diagnostics": trimDiagnosticsString(diag),
-		},
-	)
+		fmt.Sprintf("mcp-sentinel %s: job/%s: %v", phase, name, err), ctx)
 }
 
 func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet, storageMode string) error {

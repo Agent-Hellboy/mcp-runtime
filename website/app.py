@@ -1,9 +1,30 @@
 """Flask app serving the marketing site and static documentation."""
 
+import os
+
 from flask import Flask, Response, abort, redirect, render_template, request, send_from_directory, url_for
 from werkzeug.exceptions import NotFound
 
 app = Flask(__name__)
+
+
+def _canonical_site_base() -> str:
+    """Trusted site origin; prefer MCP_WEBSITE_BASE_URL in production to avoid Host-header poisoning."""
+    u = (os.environ.get("MCP_WEBSITE_BASE_URL") or "").strip().rstrip("/")
+    if u:
+        return u
+    return url_for("home", _external=True).rstrip("/")
+
+
+@app.context_processor
+def _inject_canonical_url():
+    def canonical_og_url():
+        path = request.path or "/"
+        if path != "/" and not path.startswith("/"):
+            path = "/" + path
+        return _canonical_site_base() + (path if path != "/" else "/")
+
+    return {"canonical_og_url": canonical_og_url}
 
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
@@ -309,9 +330,9 @@ def robots_txt():
 
 @app.route("/sitemap.xml")
 def sitemap_xml():
-    base = request.url_root.rstrip("/")
+    base = _canonical_site_base()
     urls = "\n".join(
-        f"  <url><loc>{base}{path}</loc></url>" for path in SITEMAP_PATHS
+        f"  <url><loc>{base}{path if path != '/' else '/'}</loc></url>" for path in SITEMAP_PATHS
     )
     body = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'

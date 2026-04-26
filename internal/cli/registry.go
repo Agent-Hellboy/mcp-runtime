@@ -412,7 +412,12 @@ func deployRegistry(logger *zap.Logger, namespace string, port int, registryType
 		return wrappedErr
 	}
 	manifest = rewriteRegistryHost(manifest, GetRegistryIngressHost())
-	manifest = rewriteRegistryClusterIssuerAnnotation(manifest, GetRegistryClusterIssuerName())
+	issuer := GetRegistryClusterIssuerName()
+	manifest = rewriteRegistryClusterIssuerAnnotation(manifest, issuer)
+	if s := strings.TrimSpace(issuer); s != "" && !strings.Contains(manifest, "cert-manager.io/cluster-issuer: "+s) {
+		logger.Warn("registry manifest does not show expected cert-manager.io/cluster-issuer; ingress TLS issuer may be wrong (check overlay for cert-manager.io/cluster-issuer: mcp-runtime-ca)",
+			zap.String("expected_issuer", s))
+	}
 	if overrideImage != "" {
 		logger.Info("Applying registry image override", zap.String("image", overrideImage))
 		updated := strings.Replace(manifest, "image: "+defaultRegistryImage, "image: "+overrideImage, 1)
