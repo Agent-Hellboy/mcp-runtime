@@ -106,7 +106,7 @@ type SetupDeps struct {
 	DeployRegistry                  func(logger *zap.Logger, namespace string, port int, registryType, registryStorageSize, manifestPath string) error
 	WaitForDeploymentAvailable      func(logger *zap.Logger, name, namespace, selector string, timeout time.Duration) error
 	PrintDeploymentDiagnostics      func(deploy, namespace, selector string)
-	SetupTLS                        func(logger *zap.Logger) error
+	SetupTLS                        func(logger *zap.Logger, plan SetupPlan) error
 	BuildOperatorImage              func(image string) error
 	PushOperatorImage               func(image string) error
 	BuildGatewayProxyImage          func(image string) error
@@ -152,7 +152,7 @@ func (d SetupDeps) withDefaults(logger *zap.Logger) SetupDeps {
 		d.PrintDeploymentDiagnostics = printDeploymentDiagnostics
 	}
 	if d.SetupTLS == nil {
-		d.SetupTLS = setupTLS
+		d.SetupTLS = func(l *zap.Logger, p SetupPlan) error { return setupTLSWithKubectlAndPlan(kubectlClient, l, p) }
 	}
 	if d.BuildOperatorImage == nil {
 		d.BuildOperatorImage = buildOperatorImage
@@ -234,6 +234,9 @@ func NewSetupCmd(logger *zap.Logger) *cobra.Command {
 	var operatorMetricsAddr string
 	var operatorProbeAddr string
 	var operatorLeaderElect bool
+	var acmeEmail string
+	var acmeStaging bool
+	var skipCertManagerInstall bool
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Setup the complete MCP platform",
@@ -247,6 +250,7 @@ The platform deploys an internal Docker registry by default, which teams
 will use to push and pull container images.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateStorageMode(storageMode); err != nil {
+				logStructuredError(logger, err, "Invalid --storage-mode")
 				return err
 			}
 
@@ -257,6 +261,15 @@ will use to push and pull container images.`,
 				operatorLeaderElect,
 				cmd.Flags().Changed("operator-leader-elect"),
 			)
+
+			acmeEmailResolved := strings.TrimSpace(acmeEmail)
+			if acmeEmailResolved == "" {
+				acmeEmailResolved = strings.TrimSpace(os.Getenv("MCP_ACME_EMAIL"))
+			}
+			acmeStagingResolved := acmeStaging
+			if v := strings.TrimSpace(os.Getenv("MCP_ACME_STAGING")); v == "1" || strings.EqualFold(v, "true") {
+				acmeStagingResolved = true
+			}
 
 			plan := BuildSetupPlan(SetupPlanInput{
 				Kubeconfig:             kubeconfig,
@@ -273,6 +286,9 @@ will use to push and pull container images.`,
 				StrictProd:             strictProd,
 				DeployAnalytics:        !withoutAnalytics,
 				OperatorArgs:           operatorArgs,
+				ACMEmail:               acmeEmailResolved,
+				ACMEStaging:            acmeStagingResolved,
+				InstallCertManager:     !skipCertManagerInstall,
 			})
 
 			return setupPlatform(logger, plan)
@@ -287,7 +303,10 @@ will use to push and pull container images.`,
 	cmd.Flags().StringVar(&ingressMode, "ingress", "traefik", "Ingress controller to install automatically during setup (traefik|none)")
 	cmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/overlays/http", "Manifest to apply when installing the ingress controller")
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force ingress install even if an ingress class already exists")
-	cmd.Flags().BoolVar(&tlsEnabled, "with-tls", false, "Enable TLS overlays (ingress/registry); default is HTTP for dev")
+	cmd.Flags().BoolVar(&tlsEnabled, "with-tls", false, "Enable TLS overlays (ingress/registry); use --acme-email for Let's Encrypt (cert-manager) or provide a private CA secret for mcp-runtime-ca")
+	cmd.Flags().StringVar(&acmeEmail, "acme-email", "", "Contact email for Let's Encrypt (HTTP-01 via cert-manager). Overrides env MCP_ACME_EMAIL")
+	cmd.Flags().BoolVar(&acmeStaging, "acme-staging", false, "Use Let's Encrypt staging CA (also set MCP_ACME_STAGING=1)")
+	cmd.Flags().BoolVar(&skipCertManagerInstall, "skip-cert-manager-install", false, "Do not install cert-manager; require CRDs to already exist")
 	cmd.Flags().BoolVar(&testMode, "test-mode", false, "Test mode: skip operator/gateway image builds and use kind-loaded images")
 	cmd.Flags().BoolVar(&strictProd, "strict-prod", false, "Require production-style registry and TLS validation for non-test setup")
 	cmd.Flags().BoolVar(&withoutAnalytics, "without-sentinel", false, "Skip deploying the bundled mcp-sentinel stack")
@@ -347,6 +366,7 @@ func setupPlatformWithDeps(logger *zap.Logger, plan SetupPlan, deps SetupDeps) e
 		logStructuredError(logger, err, "Invalid non-test setup configuration")
 		return err
 	}
+	applySetupPlanToCLIConfig(plan)
 	for _, warning := range setupWarnings(plan, extRegistry, usingExternalRegistry) {
 		Warn(warning)
 	}
@@ -504,14 +524,14 @@ func setupClusterSteps(logger *zap.Logger, kubeconfig, context string, ingressOp
 	return nil
 }
 
-func setupTLSStep(logger *zap.Logger, tlsEnabled bool, deps SetupDeps) error {
+func setupTLSStep(logger *zap.Logger, plan SetupPlan, deps SetupDeps) error {
 	// Step 3: Configure TLS (if enabled)
 	Step("Step 3: Configure TLS")
-	if !tlsEnabled {
+	if !plan.TLSEnabled {
 		Info("Skipped (TLS disabled, use --with-tls to enable)")
 		return nil
 	}
-	if err := deps.SetupTLS(logger); err != nil {
+	if err := deps.SetupTLS(logger, plan); err != nil {
 		wrappedErr := wrapWithSentinel(ErrTLSSetupFailed, err, fmt.Sprintf("TLS setup failed: %v", err))
 		Error("TLS setup failed")
 		logStructuredError(logger, wrappedErr, "TLS setup failed")
@@ -565,16 +585,18 @@ func setupRegistryStep(logger *zap.Logger, extRegistry *ExternalRegistryConfig, 
 	Info("Waiting for registry to be ready...")
 	if err := deps.WaitForDeploymentAvailable(logger, "registry", "registry", "app=registry", deps.GetDeploymentTimeout()); err != nil {
 		deps.PrintDeploymentDiagnostics("registry", "registry", "app=registry")
+		regCtx := map[string]any{
+			"deployment": "registry",
+			"namespace":  "registry",
+			"selector":   "app=registry",
+			"component":  "registry",
+		}
+		mergeDeploymentDebugDiagnosticsIfNeeded(kubectlClient, regCtx, "registry", "registry", "app=registry")
 		wrappedErr := wrapWithSentinelAndContext(
 			ErrRegistryNotReady,
 			err,
 			fmt.Sprintf("registry deployment not ready in namespace %q: %v", "registry", err),
-			map[string]any{
-				"deployment": "registry",
-				"namespace":  "registry",
-				"selector":   "app=registry",
-				"component":  "registry",
-			},
+			regCtx,
 		)
 		Error("Registry failed to become ready")
 		logStructuredError(logger, wrappedErr, "Registry failed to become ready")
@@ -828,15 +850,9 @@ func prepareAnalyticsImages(logger *zap.Logger, extRegistry *ExternalRegistryCon
 func deployAnalyticsStepCmd(logger *zap.Logger, images AnalyticsImageSet, storageMode string, deps SetupDeps) error {
 	Info("Deploying mcp-sentinel manifests")
 	if err := deps.DeployAnalyticsManifests(logger, images, storageMode); err != nil {
-		wrappedErr := wrapWithSentinelAndContext(
-			ErrOperatorDeploymentFailed,
-			err,
-			fmt.Sprintf("analytics deployment failed: %v", err),
-			map[string]any{"component": "mcp-sentinel"},
-		)
 		Error("Analytics deployment failed")
-		logStructuredError(logger, wrappedErr, "Analytics deployment failed")
-		return wrappedErr
+		logStructuredError(logger, err, "Analytics deployment failed")
+		return err
 	}
 	return nil
 }
@@ -890,46 +906,63 @@ func deployOperatorStep(logger *zap.Logger, operatorImage, gatewayProxyImage str
 	return nil
 }
 
-func verifySetup(usingExternalRegistry bool, deps SetupDeps) error {
+func verifySetup(logger *zap.Logger, usingExternalRegistry bool, deps SetupDeps) error {
 	Step("Step 6: Verify platform components")
 
 	if usingExternalRegistry {
 		Info("Skipping internal registry availability check (using external registry)")
 	} else {
 		Info("Waiting for registry deployment to be available")
-		if err := deps.WaitForDeploymentAvailable(nil, "registry", "registry", "app=registry", deps.GetDeploymentTimeout()); err != nil {
+		if err := deps.WaitForDeploymentAvailable(logger, "registry", "registry", "app=registry", deps.GetDeploymentTimeout()); err != nil {
 			deps.PrintDeploymentDiagnostics("registry", "registry", "app=registry")
+			regCtx := map[string]any{
+				"deployment": "registry",
+				"namespace":  "registry",
+				"selector":   "app=registry",
+				"component":  "registry",
+			}
+			mergeDeploymentDebugDiagnosticsIfNeeded(kubectlClient, regCtx, "registry", "registry", "app=registry")
 			wrappedErr := wrapWithSentinelAndContext(
 				ErrRegistryNotReady,
 				err,
 				fmt.Sprintf("registry not ready: %v", err),
-				map[string]any{"deployment": "registry", "namespace": "registry", "component": "registry"},
+				regCtx,
 			)
 			Error("Registry not ready")
-			// Note: logger not available in verifySetup, but error will be logged by caller
+			logStructuredError(logger, wrappedErr, "Registry not ready")
 			return wrappedErr
 		}
 	}
 
 	Info("Waiting for operator deployment to be available")
-	if err := deps.WaitForDeploymentAvailable(nil, "mcp-runtime-operator-controller-manager", "mcp-runtime", "control-plane=controller-manager", deps.GetDeploymentTimeout()); err != nil {
+	if err := deps.WaitForDeploymentAvailable(logger, "mcp-runtime-operator-controller-manager", "mcp-runtime", "control-plane=controller-manager", deps.GetDeploymentTimeout()); err != nil {
 		deps.PrintDeploymentDiagnostics("mcp-runtime-operator-controller-manager", "mcp-runtime", "control-plane=controller-manager")
+		opCtx := map[string]any{
+			"deployment": "mcp-runtime-operator-controller-manager",
+			"namespace":  "mcp-runtime",
+			"selector":   "control-plane=controller-manager",
+			"component":  "operator",
+		}
+		mergeDeploymentDebugDiagnosticsIfNeeded(kubectlClient, opCtx, "mcp-runtime-operator-controller-manager", "mcp-runtime", "control-plane=controller-manager")
 		wrappedErr := wrapWithSentinelAndContext(
 			ErrOperatorNotReady,
 			err,
 			fmt.Sprintf("operator not ready: %v", err),
-			map[string]any{"deployment": "mcp-runtime-operator-controller-manager", "namespace": "mcp-runtime", "component": "operator"},
+			opCtx,
 		)
 		Error("Operator not ready")
-		// Note: logger not available in verifySetup, but error will be logged by caller
+		logStructuredError(logger, wrappedErr, "Operator not ready")
 		return wrappedErr
 	}
 
 	Info("Checking MCPServer CRD presence")
 	if err := deps.CheckCRDInstalled("mcpservers.mcpruntime.org"); err != nil {
-		wrappedErr := wrapWithSentinel(ErrCRDCheckFailed, err, fmt.Sprintf("CRD check failed: %v", err))
+		crdName := "mcpservers.mcpruntime.org"
+		crdCtx := map[string]any{"crd": crdName, "component": "crd-check"}
+		mergeCRDCheckDebugDiagnosticsIfNeeded(kubectlClient, crdCtx, crdName)
+		wrappedErr := wrapWithSentinelAndContext(ErrCRDCheckFailed, err, fmt.Sprintf("CRD check failed: %v", err), crdCtx)
 		Error("CRD check failed")
-		// Note: logger not available in verifySetup, but error will be logged by caller
+		logStructuredError(logger, wrappedErr, "CRD check failed")
 		return wrappedErr
 	}
 
@@ -1328,12 +1361,21 @@ func waitForDeploymentAvailableWithKubectl(kubectl KubectlRunner, logger *zap.Lo
 			lastLog = time.Now()
 		}
 		if time.Now().After(deadline) {
-			err := newWithSentinel(ErrDeploymentTimeout, fmt.Sprintf("timed out waiting for deployment %s in namespace %s", name, namespace))
+			msg := fmt.Sprintf("timed out waiting for deployment %s in namespace %s", name, namespace)
+			cause := errors.New("deployment readiness deadline exceeded")
+			ctx := map[string]any{
+				"deployment": name,
+				"namespace":  namespace,
+				"selector":   selector,
+				"component":  "deployment-wait",
+			}
+			mergeDeploymentDebugDiagnosticsIfNeeded(kubectl, ctx, name, namespace, selector)
+			wrappedErr := wrapWithSentinelAndContext(ErrDeploymentTimeout, cause, msg, ctx)
 			Error("Deployment timeout")
 			if logger != nil {
-				logStructuredError(logger, err, "Deployment timeout")
+				logStructuredError(logger, wrappedErr, "Deployment timeout")
 			}
-			return err
+			return wrappedErr
 		}
 		time.Sleep(5 * time.Second)
 	}
@@ -1349,6 +1391,111 @@ func printDeploymentDiagnosticsWithKubectl(kubectl KubectlRunner, deploy, namesp
 	Warn(fmt.Sprintf("Deployment %s in %s is not ready. Showing pod statuses:", deploy, namespace))
 	// #nosec G204 -- namespace/selector from internal diagnostics, not user input.
 	_ = kubectl.RunWithOutput([]string{"get", "pods", "-n", namespace, "-l", selector, "-o", "wide"}, os.Stdout, os.Stderr)
+}
+
+// mergeDeploymentDebugDiagnosticsIfNeeded fetches describe/events/pods from the API when --debug is set
+// and attaches a bounded blob to the errx context (cluster-backed failures, not local validation).
+func mergeDeploymentDebugDiagnosticsIfNeeded(kubectl KubectlRunner, m map[string]any, deployName, namespace, selector string) {
+	if !IsDebugMode() {
+		return
+	}
+	if d := buildDeploymentWaitDebugDetail(kubectl, deployName, namespace, selector); d != "" {
+		m["diagnostics"] = trimDiagnosticsString(d)
+	}
+}
+
+// buildDeploymentWaitDebugDetail returns kubectl text for a stuck or timed-out deployment wait.
+func buildDeploymentWaitDebugDetail(kubectl KubectlRunner, deployName, namespace, selector string) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("---- describe deployment %s\n", deployName))
+	// #nosec G204 -- deploy/namespace/selector are internal setup identifiers, not user shell input.
+	if out, err := kubectlText(kubectl, []string{
+		"describe", "deployment", deployName, "-n", namespace, "--request-timeout=30s",
+	}); err != nil {
+		b.WriteString(fmt.Sprintf("error: %v\n", err))
+	} else {
+		b.WriteString(out)
+	}
+	b.WriteString("---- get pods (selector)\n")
+	if out, err := kubectlText(kubectl, []string{
+		"get", "pods", "-n", namespace, "-l", selector, "-o", "wide", "--request-timeout=30s",
+	}); err != nil {
+		b.WriteString(fmt.Sprintf("error: %v\n", err))
+	} else {
+		b.WriteString(out)
+	}
+	b.WriteString("---- get events (sorted)\n")
+	if out, err := kubectlText(kubectl, []string{
+		"get", "events", "-n", namespace, "--sort-by", ".lastTimestamp", "--request-timeout=30s",
+	}); err != nil {
+		b.WriteString(fmt.Sprintf("error: %v\n", err))
+	} else {
+		b.WriteString(out)
+	}
+	return b.String()
+}
+
+// buildNamespacedResourceDebugDetail returns describe, pods, and events for a namespaced object (e.g. StatefulSet, Job).
+func buildNamespacedResourceDebugDetail(kubectl KubectlRunner, kind, name, namespace string) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("---- describe %s %s\n", kind, name))
+	// #nosec G204 -- kind/name/namespace are internal resource identifiers, not user shell input.
+	if out, err := kubectlText(kubectl, []string{
+		"describe", kind, name, "-n", namespace, "--request-timeout=30s",
+	}); err != nil {
+		b.WriteString(fmt.Sprintf("error: %v\n", err))
+	} else {
+		b.WriteString(out)
+	}
+	b.WriteString("---- get pods (namespace)\n")
+	if out, err := kubectlText(kubectl, []string{
+		"get", "pods", "-n", namespace, "-o", "wide", "--request-timeout=30s",
+	}); err != nil {
+		b.WriteString(fmt.Sprintf("error: %v\n", err))
+	} else {
+		b.WriteString(out)
+	}
+	b.WriteString("---- get events (sorted)\n")
+	if out, err := kubectlText(kubectl, []string{
+		"get", "events", "-n", namespace, "--sort-by", ".lastTimestamp", "--request-timeout=30s",
+	}); err != nil {
+		b.WriteString(fmt.Sprintf("error: %v\n", err))
+	} else {
+		b.WriteString(out)
+	}
+	return b.String()
+}
+
+// buildCRDCheckDebugDetail returns CRD and api-resources text when a CRD presence check fails.
+func buildCRDCheckDebugDetail(kubectl KubectlRunner, crdName string) string {
+	var b strings.Builder
+	b.WriteString("---- get crd\n")
+	// #nosec G204 -- crdName is a hardcoded internal API identity.
+	if out, err := kubectlText(kubectl, []string{
+		"get", "crd", crdName, "-o", "wide", "--request-timeout=30s",
+	}); err != nil {
+		b.WriteString(fmt.Sprintf("get crd: %v\n", err))
+	} else {
+		b.WriteString(out)
+	}
+	b.WriteString("---- api-resources (group mcpruntime.org)\n")
+	if out, err := kubectlText(kubectl, []string{
+		"api-resources", "--api-group=mcpruntime.org", "--request-timeout=30s",
+	}); err != nil {
+		b.WriteString(fmt.Sprintf("error: %v\n", err))
+	} else {
+		b.WriteString(out)
+	}
+	return b.String()
+}
+
+func mergeCRDCheckDebugDiagnosticsIfNeeded(kubectl KubectlRunner, m map[string]any, crdName string) {
+	if !IsDebugMode() {
+		return
+	}
+	if d := buildCRDCheckDebugDetail(kubectl, crdName); d != "" {
+		m["diagnostics"] = trimDiagnosticsString(d)
+	}
 }
 
 // deployOperatorManifests deploys operator manifests without requiring kustomize or controller-gen.
@@ -1545,11 +1692,48 @@ func deployOperatorManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logge
 	return nil
 }
 
+// mcpSentinelDependencyRolloutFailed wraps early mcp-sentinel storage/messaging rollouts with cluster snapshots when --debug.
+func mcpSentinelDependencyRolloutFailed(kubectl KubectlRunner, err error, kind, name, namespace, phase string) error {
+	if !IsDebugMode() {
+		return err
+	}
+	diag := buildNamespacedResourceDebugDetail(kubectl, kind, name, namespace)
+	return wrapWithSentinelAndContext(ErrOperatorDeploymentFailed, err,
+		fmt.Sprintf("mcp-sentinel %s: %s/%s: %v", phase, kind, name, err),
+		map[string]any{
+			"component":   "mcp-sentinel",
+			"phase":       phase,
+			"resource":    fmt.Sprintf("%s/%s", kind, name),
+			"namespace":   namespace,
+			"diagnostics": trimDiagnosticsString(diag),
+		},
+	)
+}
+
+// mcpSentinelDependencyJobFailed wraps the clickhouse init job with cluster snapshots when --debug.
+func mcpSentinelDependencyJobFailed(kubectl KubectlRunner, err error, name, namespace, phase string) error {
+	if !IsDebugMode() {
+		return err
+	}
+	diag := buildNamespacedResourceDebugDetail(kubectl, "job", name, namespace)
+	return wrapWithSentinelAndContext(ErrOperatorDeploymentFailed, err,
+		fmt.Sprintf("mcp-sentinel %s: job/%s: %v", phase, name, err),
+		map[string]any{
+			"component":   "mcp-sentinel",
+			"phase":       phase,
+			"resource":    "job/" + name,
+			"namespace":   namespace,
+			"diagnostics": trimDiagnosticsString(diag),
+		},
+	)
+}
+
 func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet, storageMode string) error {
 	return deployAnalyticsManifestsWithKubectl(kubectlClient, logger, images, storageMode)
 }
 
 func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logger, images AnalyticsImageSet, storageMode string) error {
+	rolloutTimeout := analyticsRolloutTimeoutString()
 	Info("Applying mcp-sentinel namespace and config")
 	manifests := []string{
 		"k8s/00-namespace.yaml",
@@ -1592,22 +1776,22 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 		}
 	}
 
-	if err := waitForRolloutStatusWithKubectl(kubectl, "statefulset", "clickhouse", defaultAnalyticsNamespace, "180s"); err != nil {
-		return err
+	if err := waitForRolloutStatusWithKubectl(kubectl, "statefulset", "clickhouse", defaultAnalyticsNamespace, rolloutTimeout); err != nil {
+		return mcpSentinelDependencyRolloutFailed(kubectl, err, "statefulset", "clickhouse", defaultAnalyticsNamespace, "storage (clickhouse)")
 	}
-	if err := waitForRolloutStatusWithKubectl(kubectl, "deployment", "zookeeper", defaultAnalyticsNamespace, "180s"); err != nil {
-		return err
+	if err := waitForRolloutStatusWithKubectl(kubectl, "deployment", "zookeeper", defaultAnalyticsNamespace, rolloutTimeout); err != nil {
+		return mcpSentinelDependencyRolloutFailed(kubectl, err, "deployment", "zookeeper", defaultAnalyticsNamespace, "messaging (zookeeper)")
 	}
-	if err := waitForRolloutStatusWithKubectl(kubectl, "statefulset", "kafka", defaultAnalyticsNamespace, "180s"); err != nil {
-		return err
+	if err := waitForRolloutStatusWithKubectl(kubectl, "statefulset", "kafka", defaultAnalyticsNamespace, rolloutTimeout); err != nil {
+		return mcpSentinelDependencyRolloutFailed(kubectl, err, "statefulset", "kafka", defaultAnalyticsNamespace, "messaging (kafka)")
 	}
 
 	Info("Initializing ClickHouse schema")
 	if err := applyRenderedManifest(kubectl, "k8s/04-clickhouse-init.yaml", images, imagePullSecretName); err != nil {
 		return err
 	}
-	if err := waitForJobCompletionWithKubectl(kubectl, "clickhouse-init", defaultAnalyticsNamespace, "180s"); err != nil {
-		return err
+	if err := waitForJobCompletionWithKubectl(kubectl, "clickhouse-init", defaultAnalyticsNamespace, rolloutTimeout); err != nil {
+		return mcpSentinelDependencyJobFailed(kubectl, err, "clickhouse-init", defaultAnalyticsNamespace, "clickhouse init schema")
 	}
 
 	Info("Applying analytics services")
@@ -1631,33 +1815,120 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 		}
 	}
 
+	Info(fmt.Sprintf("Waiting for mcp-sentinel workload rollouts (per-resource timeout %s; override with MCP_DEPLOYMENT_TIMEOUT)", rolloutTimeout))
+	targets := []struct{ kind, name string }{
+		{kind: "deployment", name: "mcp-sentinel-ingest"},
+		{kind: "deployment", name: "mcp-sentinel-processor"},
+		{kind: "deployment", name: "mcp-sentinel-api"},
+		{kind: "deployment", name: "mcp-sentinel-ui"},
+		{kind: "deployment", name: "mcp-sentinel-gateway"},
+		{kind: "deployment", name: "prometheus"},
+		{kind: "deployment", name: "grafana"},
+		{kind: "deployment", name: "otel-collector"},
+		{kind: "statefulset", name: "tempo"},
+		{kind: "statefulset", name: "loki"},
+	}
 	var rolloutFailures []string
-	for _, target := range []struct {
-		kind    string
-		name    string
-		timeout string
-	}{
-		{kind: "deployment", name: "mcp-sentinel-ingest", timeout: "180s"},
-		{kind: "deployment", name: "mcp-sentinel-processor", timeout: "180s"},
-		{kind: "deployment", name: "mcp-sentinel-api", timeout: "180s"},
-		{kind: "deployment", name: "mcp-sentinel-ui", timeout: "180s"},
-		{kind: "deployment", name: "mcp-sentinel-gateway", timeout: "180s"},
-		{kind: "deployment", name: "prometheus", timeout: "180s"},
-		{kind: "deployment", name: "grafana", timeout: "180s"},
-		{kind: "deployment", name: "otel-collector", timeout: "180s"},
-		{kind: "statefulset", name: "tempo", timeout: "180s"},
-		{kind: "statefulset", name: "loki", timeout: "180s"},
-	} {
-		if err := waitForRolloutStatusWithKubectl(kubectl, target.kind, target.name, defaultAnalyticsNamespace, target.timeout); err != nil {
+	var failedForDebug []analyticsFailedRollout
+	for _, target := range targets {
+		rolloutLog, err := runRolloutWithOptionalDebugCapture(kubectl, target.kind, target.name, defaultAnalyticsNamespace, rolloutTimeout)
+		if err != nil {
 			rolloutFailures = append(rolloutFailures, fmt.Sprintf("%s/%s: %v", target.kind, target.name, err))
+			failedForDebug = append(failedForDebug, analyticsFailedRollout{
+				kind: target.kind, name: target.name, rolloutLog: rolloutLog,
+			})
 		}
 	}
-	if len(rolloutFailures) > 0 {
-		return fmt.Errorf("analytics components failed to roll out: %s", strings.Join(rolloutFailures, "; "))
+	if len(rolloutFailures) == 0 {
+		Success("mcp-sentinel manifests deployed successfully")
+		return nil
 	}
 
-	Success("mcp-sentinel manifests deployed successfully")
-	return nil
+	printAnalyticsRolloutDiagnostics(kubectl)
+	summary := strings.Join(rolloutFailures, "; ")
+	cause := errors.New(summary)
+	msg := fmt.Sprintf("analytics components failed to roll out: %s", summary)
+	ctx := map[string]any{"component": "mcp-sentinel", "rollout_failures": summary}
+	if IsDebugMode() {
+		if diag := buildAnalyticsRolloutDebugDetail(kubectl, failedForDebug); diag != "" {
+			ctx["diagnostics"] = trimDiagnosticsString(diag)
+		}
+	}
+	return wrapWithSentinelAndContext(ErrOperatorDeploymentFailed, cause, msg, ctx)
+}
+
+func trimDiagnosticsString(s string) string {
+	const maxBytes = 300 * 1024
+	if len(s) <= maxBytes {
+		return s
+	}
+	return s[:maxBytes] + "\n... [diagnostics truncated]\n"
+}
+
+// runRolloutWithOptionalDebugCapture runs kubectl rollout status, teeing output to a buffer
+// in --debug mode so it can be attached to the structured error.
+func runRolloutWithOptionalDebugCapture(kubectl KubectlRunner, kind, name, namespace, timeout string) (capture string, err error) {
+	args := []string{
+		"rollout", "status",
+		fmt.Sprintf("%s/%s", kind, name),
+		"-n", namespace, "--timeout=" + timeout,
+	}
+	if !IsDebugMode() {
+		return "", kubectl.RunWithOutput(args, os.Stdout, os.Stderr)
+	}
+	var buf bytes.Buffer
+	w := io.MultiWriter(os.Stdout, &buf)
+	err = kubectl.RunWithOutput(args, w, w)
+	return buf.String(), err
+}
+
+func kubectlText(kubectl KubectlRunner, args []string) (string, error) {
+	cmd, err := kubectl.CommandArgs(args)
+	if err != nil {
+		return "", err
+	}
+	b, err := cmd.CombinedOutput()
+	return string(b), err
+}
+
+// analyticsFailedRollout records a failed rollout and optional tee capture from runRolloutWithOptionalDebugCapture.
+type analyticsFailedRollout struct {
+	kind, name, rolloutLog string
+}
+
+// buildAnalyticsRolloutDebugDetail collects kubectl output for mcp-sentinel (describe + get) when --debug is set.
+func buildAnalyticsRolloutDebugDetail(kubectl KubectlRunner, failed []analyticsFailedRollout) string {
+	var b strings.Builder
+	for _, w := range failed {
+		if strings.TrimSpace(w.rolloutLog) != "" {
+			b.WriteString(fmt.Sprintf("---- kubectl rollout status %s/%s\n", w.kind, w.name))
+			b.WriteString(w.rolloutLog)
+		}
+		b.WriteString(fmt.Sprintf("---- describe %s %s\n", w.kind, w.name))
+		out, err := kubectlText(kubectl, []string{
+			"describe", w.kind, w.name, "-n", defaultAnalyticsNamespace, "--request-timeout=30s",
+		})
+		if err != nil {
+			b.WriteString(fmt.Sprintf("error: %v\n", err))
+			continue
+		}
+		b.WriteString(out)
+	}
+	b.WriteString("---- get pods (wide)\n")
+	if out, err := kubectlText(kubectl, []string{"get", "pods", "-n", defaultAnalyticsNamespace, "-o", "wide", "--request-timeout=30s"}); err != nil {
+		b.WriteString(fmt.Sprintf("error: %v\n", err))
+	} else {
+		b.WriteString(out)
+	}
+	b.WriteString("---- get events (sorted)\n")
+	if out, err := kubectlText(kubectl, []string{
+		"get", "events", "-n", defaultAnalyticsNamespace, "--sort-by", ".lastTimestamp", "--request-timeout=30s",
+	}); err != nil {
+		b.WriteString(fmt.Sprintf("error: %v\n", err))
+	} else {
+		b.WriteString(out)
+	}
+	return b.String()
 }
 
 func applyRenderedManifest(kubectl KubectlRunner, manifestPath string, images AnalyticsImageSet, imagePullSecretName string) error {
@@ -1927,6 +2198,25 @@ func waitForRolloutStatusWithKubectl(kubectl KubectlRunner, kind, name, namespac
 	return kubectl.RunWithOutput([]string{"rollout", "status", fmt.Sprintf("%s/%s", kind, name), "-n", namespace, "--timeout=" + timeout}, os.Stdout, os.Stderr)
 }
 
+// analyticsRolloutTimeoutString returns the kubectl --timeout value for mcp-sentinel rollouts.
+// Uses MCP_DEPLOYMENT_TIMEOUT (see GetDeploymentTimeout); if unset or non-positive, uses the default 5m.
+func analyticsRolloutTimeoutString() string {
+	d := GetDeploymentTimeout()
+	if d <= 0 {
+		d = defaultDeploymentTimeout
+	}
+	return d.String()
+}
+
+// printAnalyticsRolloutDiagnostics prints pods and events to help triage stuck mcp-sentinel rollouts.
+func printAnalyticsRolloutDiagnostics(kubectl KubectlRunner) {
+	Warn("mcp-sentinel rollouts failed. Namespace snapshot (pods):")
+	// #nosec G204 -- fixed namespace for diagnostics.
+	_ = kubectl.RunWithOutput([]string{"get", "pods", "-n", defaultAnalyticsNamespace, "-o", "wide"}, os.Stdout, os.Stderr)
+	Warn("Recent events in mcp-sentinel (newest last):")
+	_ = kubectl.RunWithOutput([]string{"get", "events", "-n", defaultAnalyticsNamespace, "--sort-by", ".lastTimestamp"}, os.Stdout, os.Stderr)
+}
+
 func waitForJobCompletionWithKubectl(kubectl KubectlRunner, name, namespace, timeout string) error {
 	return kubectl.RunWithOutput([]string{"wait", "--for=condition=complete", "job/" + name, "-n", namespace, "--timeout=" + timeout}, os.Stdout, os.Stderr)
 }
@@ -1976,51 +2266,61 @@ func operatorEnvOverrides(gatewayProxyImage string) []operatorEnvVar {
 	return envVars
 }
 
-// setupTLS configures TLS by applying cert-manager resources.
-// Prerequisites: cert-manager must be installed and CA secret must exist.
-func setupTLS(logger *zap.Logger) error {
-	return setupTLSWithKubectl(kubectlClient, logger)
+func applySetupPlanToCLIConfig(plan SetupPlan) {
+	if DefaultCLIConfig == nil {
+		return
+	}
+	if !plan.TLSEnabled {
+		DefaultCLIConfig.RegistryClusterIssuerName = ""
+		return
+	}
+	if strings.TrimSpace(plan.ACMEmail) != "" {
+		DefaultCLIConfig.RegistryClusterIssuerName = ClusterIssuerNameForACME(plan.ACMEStaging)
+		return
+	}
+	DefaultCLIConfig.RegistryClusterIssuerName = certClusterIssuerName
 }
 
-// setupTLSWithKubectl configures TLS by applying cert-manager resources.
-// Prerequisites: cert-manager must be installed and CA secret must exist.
-func setupTLSWithKubectl(kubectl KubectlRunner, logger *zap.Logger) error {
-	// Check if cert-manager CRDs are installed
-	Info("Checking cert-manager installation")
-	if err := checkCertManagerInstalledWithKubectl(kubectl); err != nil {
-		err := wrapWithSentinel(ErrCertManagerNotInstalled, err, "cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true")
-		Error("Cert-manager not installed")
-		if logger != nil {
-			logStructuredError(logger, err, "Cert-manager not installed")
-		}
-		return err
+// setupTLSWithKubectlAndPlan provisions TLS: Let's Encrypt when plan.ACMEmail is set, otherwise a private CA (mcp-runtime-ca).
+func setupTLSWithKubectlAndPlan(kubectl KubectlRunner, logger *zap.Logger, plan SetupPlan) error {
+	if strings.TrimSpace(plan.ACMEmail) != "" {
+		return setupTLSLetsEncrypt(kubectl, logger, plan)
 	}
-	Info("cert-manager CRDs found")
+	return setupTLSPrivateCA(kubectl, logger)
+}
 
-	// Check if CA secret exists
-	Info("Checking CA secret")
-	if err := checkCASecretWithKubectl(kubectl); err != nil {
-		err := wrapWithSentinel(ErrCASecretNotFound, err, "CA secret 'mcp-runtime-ca' not found in cert-manager namespace. Create it first:\n  kubectl create secret tls mcp-runtime-ca --cert=ca.crt --key=ca.key -n cert-manager")
-		Error("CA secret not found")
+func setupTLSLetsEncrypt(kubectl KubectlRunner, logger *zap.Logger, plan SetupPlan) error {
+	Info("Configuring TLS with Let's Encrypt (cert-manager HTTP-01)")
+	if err := validateACMEHostnameForPublicCA(); err != nil {
+		wrappedErr := wrapWithSentinel(ErrTLSSetupFailed, err, err.Error())
+		Error("Invalid configuration for Let's Encrypt")
 		if logger != nil {
-			logStructuredError(logger, err, "CA secret not found")
-		}
-		return err
-	}
-	Info("CA secret found")
-
-	// Apply ClusterIssuer
-	Info("Applying ClusterIssuer")
-	if err := applyClusterIssuerWithKubectl(kubectl); err != nil {
-		wrappedErr := wrapWithSentinel(ErrClusterIssuerApplyFailed, err, fmt.Sprintf("failed to apply ClusterIssuer: %v", err))
-		Error("Failed to apply ClusterIssuer")
-		if logger != nil {
-			logStructuredError(logger, wrappedErr, "Failed to apply ClusterIssuer")
+			logStructuredError(logger, wrappedErr, "Invalid configuration for Let's Encrypt")
 		}
 		return wrappedErr
 	}
+	if plan.InstallCertManager {
+		if err := ensureCertManagerInstalled(kubectl, logger); err != nil {
+			return err
+		}
+	} else {
+		Info("Checking cert-manager installation (--skip-cert-manager-install)")
+		if err := checkCertManagerInstalledWithKubectl(kubectl); err != nil {
+			err := wrapWithSentinel(ErrCertManagerNotInstalled, err, "cert-manager not installed. Install it, or omit --skip-cert-manager-install to let setup apply it from upstream")
+			Error("Cert-manager not installed")
+			if logger != nil {
+				logStructuredError(logger, err, "Cert-manager not installed")
+			}
+			return err
+		}
+		Info("cert-manager CRDs found")
+	}
 
-	// Ensure registry namespace exists before applying Certificate
+	Info("Applying Let's Encrypt ClusterIssuer")
+	if err := applyLetsEncryptClusterIssuer(kubectl, plan.ACMEmail, plan.ACMEStaging, logger); err != nil {
+		return err
+	}
+
 	if err := ensureNamespace(NamespaceRegistry); err != nil {
 		wrappedErr := wrapWithSentinelAndContext(
 			ErrCreateRegistryNamespaceFailed,
@@ -2035,7 +2335,88 @@ func setupTLSWithKubectl(kubectl KubectlRunner, logger *zap.Logger) error {
 		return wrappedErr
 	}
 
-	// Apply Certificate
+	issuerName := ClusterIssuerNameForACME(plan.ACMEStaging)
+	dnsName := strings.TrimSpace(GetRegistryIngressHost())
+	Info("Applying Certificate for registry")
+	if err := applyRegistryCertificateForACME(kubectl, dnsName, issuerName); err != nil {
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrApplyCertificateFailed,
+			err,
+			fmt.Sprintf("failed to apply Certificate: %v", err),
+			map[string]any{"certificate": registryCertificateName, "namespace": NamespaceRegistry, "component": "setup"},
+		)
+		Error("Failed to apply Certificate")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to apply Certificate")
+		}
+		return wrappedErr
+	}
+
+	certTimeout := GetCertTimeout()
+	if certTimeout < 5*time.Minute {
+		certTimeout = 5 * time.Minute
+	}
+	Info(fmt.Sprintf("Waiting for certificate to be issued (timeout: %s)", certTimeout))
+	if err := waitForCertificateReadyWithKubectl(kubectl, registryCertificateName, NamespaceRegistry, certTimeout); err != nil {
+		err := newWithSentinel(ErrCertificateNotReady, fmt.Sprintf("certificate not ready after %s. Check cert-manager logs: kubectl logs -n cert-manager deployment/cert-manager", certTimeout))
+		Error("Certificate not ready")
+		if logger != nil {
+			logStructuredError(logger, err, "Certificate not ready")
+		}
+		return err
+	}
+	Success("Certificate issued successfully")
+	return nil
+}
+
+// setupTLSPrivateCA uses a pre-created TLS secret mcp-runtime-ca in cert-manager (see config/cert-manager/cluster-issuer.yaml).
+func setupTLSPrivateCA(kubectl KubectlRunner, logger *zap.Logger) error {
+	Info("Checking cert-manager installation")
+	if err := checkCertManagerInstalledWithKubectl(kubectl); err != nil {
+		err := wrapWithSentinel(ErrCertManagerNotInstalled, err, "cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true\n  or run setup with --with-tls --acme-email <addr> to install cert-manager automatically")
+		Error("Cert-manager not installed")
+		if logger != nil {
+			logStructuredError(logger, err, "Cert-manager not installed")
+		}
+		return err
+	}
+	Info("cert-manager CRDs found")
+
+	Info("Checking CA secret")
+	if err := checkCASecretWithKubectl(kubectl); err != nil {
+		err := wrapWithSentinel(ErrCASecretNotFound, err, "CA secret 'mcp-runtime-ca' not found in cert-manager namespace. For Let's Encrypt use --acme-email, or create a private CA:\n  kubectl create secret tls mcp-runtime-ca --cert=ca.crt --key=ca.key -n cert-manager")
+		Error("CA secret not found")
+		if logger != nil {
+			logStructuredError(logger, err, "CA secret not found")
+		}
+		return err
+	}
+	Info("CA secret found")
+
+	Info("Applying ClusterIssuer")
+	if err := applyClusterIssuerWithKubectl(kubectl); err != nil {
+		wrappedErr := wrapWithSentinel(ErrClusterIssuerApplyFailed, err, fmt.Sprintf("failed to apply ClusterIssuer: %v", err))
+		Error("Failed to apply ClusterIssuer")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to apply ClusterIssuer")
+		}
+		return wrappedErr
+	}
+
+	if err := ensureNamespace(NamespaceRegistry); err != nil {
+		wrappedErr := wrapWithSentinelAndContext(
+			ErrCreateRegistryNamespaceFailed,
+			err,
+			fmt.Sprintf("failed to create registry namespace: %v", err),
+			map[string]any{"namespace": NamespaceRegistry, "component": "setup"},
+		)
+		Error("Failed to create registry namespace")
+		if logger != nil {
+			logStructuredError(logger, wrappedErr, "Failed to create registry namespace")
+		}
+		return wrappedErr
+	}
+
 	Info("Applying Certificate for registry")
 	if err := applyRegistryCertificateWithKubectl(kubectl); err != nil {
 		wrappedErr := wrapWithSentinelAndContext(
@@ -2051,7 +2432,6 @@ func setupTLSWithKubectl(kubectl KubectlRunner, logger *zap.Logger) error {
 		return wrappedErr
 	}
 
-	// Wait for certificate to be ready using kubectl wait
 	certTimeout := GetCertTimeout()
 	Info(fmt.Sprintf("Waiting for certificate to be issued (timeout: %s)", certTimeout))
 	if err := waitForCertificateReadyWithKubectl(kubectl, registryCertificateName, NamespaceRegistry, certTimeout); err != nil {

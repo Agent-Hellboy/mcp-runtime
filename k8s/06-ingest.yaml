@@ -20,7 +20,8 @@ metadata:
   name: mcp-sentinel-ingest
   namespace: mcp-sentinel
 spec:
-  replicas: 2
+  # Single replica by default: single-node k3s/minikube often lacks capacity for 2+ HA replicas here.
+  replicas: 1
   selector:
     matchLabels:
       app: mcp-sentinel-ingest

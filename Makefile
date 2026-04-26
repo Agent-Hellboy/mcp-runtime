@@ -1,4 +1,4 @@
-.PHONY: all build test clean deps dev fmt lint coverage build-all build-unix install help \
+.PHONY: all build test clean deps deps-go deps-check deps-install dev fmt lint coverage build-all build-unix install help \
 	operator-build operator-run operator-docker-build operator-docker-push \
 	operator-test operator-deploy operator-undeploy operator-install operator-uninstall \
 	operator-manifests operator-generate operator-coverage \
@@ -48,9 +48,16 @@ build-unix: build-all ## Alias for build-all to keep CI targets stable.
 dev: build ## Build and run CLI in development mode.
 	./$(BUILD_DIR)/$(BINARY_NAME)
 
-deps: ## Download and tidy Go module dependencies.
-	go mod download
-	go mod tidy
+deps: deps-go deps-check ## Download all Go modules and report missing dev tools (Go 1.25+, docker, kubectl).
+
+deps-go: ## Go mod download and tidy (root) plus go mod download for each nested module in services/ and examples/.
+	@./hack/deps.sh go
+
+deps-check: ## Verify toolchain on PATH. Set STRICT_DEPS_CHECK=1 to fail the recipe if a tool is missing.
+	@STRICT_DEPS_CHECK="${STRICT_DEPS_CHECK:-0}" ./hack/deps.sh check
+
+deps-install: ## Best-effort install of docker, kubectl, and Go (apt as root, or Homebrew on macOS).
+	@./hack/deps.sh install
 
 ##@ Testing
 

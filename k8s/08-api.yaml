@@ -27,7 +27,7 @@ metadata:
   name: mcp-sentinel-api
   namespace: mcp-sentinel
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: mcp-sentinel-api

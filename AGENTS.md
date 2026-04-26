@@ -31,6 +31,7 @@ Practical notes for spinning up, debugging, and exercising the MCP Runtime stack
     -o jsonpath='{.data.UI_API_KEY}' | base64 -d
   ```
   Ensure `API_KEYS` and `UI_API_KEY` in that secret match; copy the secret to `mcp-servers` namespace when servers need it.
+- Public TLS (Let's Encrypt): `./bin/mcp-runtime setup --with-tls --acme-email you@example.com` with `MCP_REGISTRY_HOST` set to a **public DNS name** that resolves to your ingress (port 80 must reach Traefik for HTTP-01). Setup installs cert-manager if missing, creates a ClusterIssuer, and issues the registry certificate. Use `--acme-staging` while testing. Private CA: omit `--acme-email` and create the `mcp-runtime-ca` secret in `cert-manager` as in `config/cert-manager/`.
 
 ## 4) Common Debugging Checklist
 - Ingress host missing -> operator error “ingressHost is required”; set `spec.ingressHost` or env `MCP_DEFAULT_INGRESS_HOST`.

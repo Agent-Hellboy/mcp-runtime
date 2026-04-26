@@ -62,7 +62,7 @@ type tlsStep struct{}
 
 func (s tlsStep) Name() string { return "tls" }
 func (s tlsStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error {
-	return setupTLSStep(logger, ctx.Plan.TLSEnabled, deps)
+	return setupTLSStep(logger, ctx.Plan, deps)
 }
 
 type registryStep struct{}
@@ -145,9 +145,8 @@ type verifyStep struct{}
 
 func (s verifyStep) Name() string { return "verify" }
 func (s verifyStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error {
-	if err := verifySetup(ctx.UsingExternalRegistry, deps); err != nil {
+	if err := verifySetup(logger, ctx.UsingExternalRegistry, deps); err != nil {
 		Error("Post-setup verification failed")
-		logStructuredError(logger, err, "Post-setup verification failed")
 		return err
 	}
 	return nil

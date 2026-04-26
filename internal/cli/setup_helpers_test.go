@@ -1244,7 +1244,7 @@ func TestSetupTLSWithKubectl(t *testing.T) {
 	kubectl := &KubectlClient{exec: mock, validators: nil}
 	kubectlClient = kubectl
 
-	if err := setupTLSWithKubectl(kubectl, zap.NewNop()); err != nil {
+	if err := setupTLSPrivateCA(kubectl, zap.NewNop()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -1296,7 +1296,7 @@ func TestSetupTLSWithKubectlMissingCRD(t *testing.T) {
 	}
 	kubectl := &KubectlClient{exec: mock, validators: nil}
 
-	if err := setupTLSWithKubectl(kubectl, zap.NewNop()); err == nil {
+	if err := setupTLSPrivateCA(kubectl, zap.NewNop()); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -1313,7 +1313,7 @@ func TestSetupTLSWithKubectlMissingSecret(t *testing.T) {
 	}
 	kubectl := &KubectlClient{exec: mock, validators: nil}
 
-	if err := setupTLSWithKubectl(kubectl, zap.NewNop()); err == nil {
+	if err := setupTLSPrivateCA(kubectl, zap.NewNop()); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -1334,7 +1334,7 @@ func TestSetupTLSWithKubectlWaitError(t *testing.T) {
 	kubectl := &KubectlClient{exec: mock, validators: nil}
 	kubectlClient = kubectl
 
-	if err := setupTLSWithKubectl(kubectl, zap.NewNop()); err == nil {
+	if err := setupTLSPrivateCA(kubectl, zap.NewNop()); err == nil {
 		t.Fatal("expected error")
 	}
 }

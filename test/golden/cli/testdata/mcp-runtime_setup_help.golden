@@ -11,6 +11,8 @@ Usage:
   mcp-runtime setup [flags]
 
 Flags:
+      --acme-email string              Contact email for Let's Encrypt (HTTP-01 via cert-manager). Overrides env MCP_ACME_EMAIL
+      --acme-staging                   Use Let's Encrypt staging CA (also set MCP_ACME_STAGING=1)
       --context string                 Kubernetes context to use
       --force-ingress-install          Force ingress install even if an ingress class already exists
   -h, --help                           help for setup
@@ -22,10 +24,11 @@ Flags:
       --operator-probe-addr string     Operator health probe bind address (default: :8081 from manager.yaml)
       --registry-storage string        Registry storage size (default: 20Gi) (default "20Gi")
       --registry-type string           Registry type (docker; harbor coming soon) (default "docker")
+      --skip-cert-manager-install      Do not install cert-manager; require CRDs to already exist
       --storage-mode string            Storage mode for local/dev clusters (dynamic|hostpath). Use hostpath for single-node k3s/minikube/kind without a provisioner. (default "dynamic")
       --strict-prod                    Require production-style registry and TLS validation for non-test setup
       --test-mode                      Test mode: skip operator/gateway image builds and use kind-loaded images
-      --with-tls                       Enable TLS overlays (ingress/registry); default is HTTP for dev
+      --with-tls                       Enable TLS overlays (ingress/registry); use --acme-email for Let's Encrypt (cert-manager) or provide a private CA secret for mcp-runtime-ca
       --without-sentinel               Skip deploying the bundled mcp-sentinel stack
 
 Global Flags:

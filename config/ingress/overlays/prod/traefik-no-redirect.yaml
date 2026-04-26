@@ -1,0 +1,17 @@
+# Traefik base enables HTTP to HTTPS on :80, which breaks HTTP-01 ACME challenges
+# (Let's Encrypt). Use plain HTTP on :80; HTTPS on :443 remains.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  namespace: traefik
+spec:
+  template:
+    spec:
+      containers:
+        - name: traefik
+          args:
+            - --providers.kubernetesingress=true
+            - --entrypoints.web.address=:80
+            - --entrypoints.websecure.address=:443
+            - --entrypoints.websecure.http.tls=true

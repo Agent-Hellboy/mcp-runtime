@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# Development dependency helpers: Go modules, tool checks, optional OS package installs.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+# Minimum Go for the main module (align with go.mod "go" directive).
+REQUIRED_GO_MAJOR=1
+REQUIRED_GO_MINOR=25
+
+log() { printf '%s\n' "$*"; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
+
+go_version_ok() {
+	if ! command -v go >/dev/null 2>&1; then
+		return 1
+	fi
+	# e.g. "go version go1.25.0 darwin/arm64" or "go1.25.0"
+	local ver
+	ver=$(go version | awk '{print $3}' | sed 's/^go//')
+	local major minor
+	IFS=. read -r major minor _ <<<"$ver"
+	[[ -n "${major:-}" && -n "${minor:-}" ]] || return 1
+	if (( major > REQUIRED_GO_MAJOR )); then return 0; fi
+	if (( major < REQUIRED_GO_MAJOR )); then return 1; fi
+	if (( minor >= REQUIRED_GO_MINOR )); then return 0; fi
+	return 1
+}
+
+cmd_go_modules() {
+	log "Resolving Go modules (root)..."
+	go mod download
+	go mod tidy
+
+	local mods=(
+		"examples/go-mcp-server"
+		"services/api"
+		"services/ingest"
+		"services/mcp-proxy"
+		"services/processor"
+		"services/ui"
+		"services/traefik-plugins/pii-redactor"
+	)
+	for mod in "${mods[@]}"; do
+		if [[ -f "$mod/go.mod" ]]; then
+			log "Resolving Go modules ($mod)..."
+			( cd "$mod" && go mod download )
+		fi
+	done
+	log "Go modules are ready."
+}
+
+cmd_check() {
+	local missing=0
+	if go_version_ok; then
+		log "Go: $(go version) (ok)"
+	else
+		warn "Go 1.${REQUIRED_GO_MINOR}+ is required (https://go.dev/dl/)."
+		missing=1
+	fi
+	if command -v docker >/dev/null 2>&1; then
+		log "docker: present ($(command -v docker))"
+	else
+		warn "docker is not in PATH. Image builds and mcp-runtime setup (non test-mode) need a Docker (or compatible) client."
+		missing=1
+	fi
+	if command -v kubectl >/dev/null 2>&1; then
+		log "kubectl: present ($(command -v kubectl))"
+	elif command -v k3s >/dev/null 2>&1; then
+		log "kubectl: not found, but k3s is available (use 'k3s kubectl' or install kubectl from your distro)."
+	else
+		warn "kubectl not found. Install kubernetes CLI or use a cluster admin kubeconfig on this host."
+		missing=1
+	fi
+	if [[ ${STRICT_DEPS_CHECK:-0} == 1 ]] && (( missing )); then
+		return 1
+	fi
+	return 0
+}
+
+have_apt() {
+	command -v apt-get >/dev/null 2>&1
+}
+
+have_brew() {
+	command -v brew >/dev/null 2>&1
+}
+
+cmd_install() {
+	if go_version_ok; then
+		log "Go: ok ($(go version | awk '{print $3}'))"
+	else
+		if have_brew; then
+			log "Installing Go with Homebrew..."
+			brew install go
+		elif have_apt; then
+			warn "Go 1.25+ is not in default Debian/Ubuntu apt on many versions."
+			warn "Install from https://go.dev/dl/ or use Homebrew; then re-run: make deps-check"
+		else
+			warn "Install Go 1.25+ from https://go.dev/dl/ for this OS."
+		fi
+	fi
+	if ! command -v docker >/dev/null 2>&1; then
+		if have_brew; then
+			warn "Install a container runtime, then a Docker client (Docker Desktop, Colima, or: brew install docker; follow brew caveats to start the daemon)."
+		elif have_apt; then
+			if [[ "$(id -u)" -eq 0 ]]; then
+				apt-get update
+				apt-get install -y docker.io
+				log "Installed docker.io. Add your user to the docker group if needed: usermod -aG docker \"\$USER\""
+			else
+				log "Run with sudo to install docker.io, or: sudo apt-get update && sudo apt-get install -y docker.io"
+			fi
+		else
+			warn "Install Docker or a Docker-compatible CLI (e.g. podman-docker). See https://docs.docker.com/engine/install/"
+		fi
+	else
+		log "docker: already installed."
+	fi
+	if ! command -v kubectl >/dev/null 2>&1; then
+		if have_apt; then
+			if [[ "$(id -u)" -eq 0 ]]; then
+				apt-get update
+				apt-get install -y kubectl || warn "Package kubectl not found; your distro may use a different package name."
+			else
+				log "Install kubectl, e.g.: sudo apt-get update && sudo apt-get install -y kubectl"
+			fi
+		elif have_brew; then
+			brew install kubectl
+		else
+			warn "Install kubectl: https://kubernetes.io/docs/tasks/tools/"
+		fi
+	else
+		log "kubectl: already installed."
+	fi
+}
+
+usage() {
+	log "Usage: $0 {go|check|install}"
+	log "  go      Download and tidy main module, download all nested go.mod modules"
+	log "  check   Verify Go, docker, kubectl (set STRICT_DEPS_CHECK=1 to fail on missing)"
+	log "  install Best-effort install of missing tools (apt as root, or Homebrew on macOS)"
+}
+
+main() {
+	case "${1:-}" in
+	go) cmd_go_modules ;;
+	check) cmd_check ;;
+	install) cmd_install ;;
+	*) usage; exit 1 ;;
+	esac
+}
+
+main "$@"

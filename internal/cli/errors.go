@@ -149,6 +149,7 @@ var (
 
 	// Cert errors.
 	ErrCertManagerNotInstalled     = newSentinelError("cert-manager not installed", errx.CodeCert, errx.DescCert)
+	ErrCertManagerInstallFailed    = newSentinelError("cert-manager install failed", errx.CodeCert, errx.DescCert)
 	ErrCASecretNotFound            = newSentinelError("CA secret not found", errx.CodeCert, errx.DescCert)
 	ErrCertificateNotReady         = newSentinelError("certificate not ready", errx.CodeCert, errx.DescCert)
 	ErrClusterIssuerNotFound       = newSentinelError("ClusterIssuer not found", errx.CodeCert, errx.DescCert)
@@ -239,6 +240,15 @@ func specFor(base error) errorSpec {
 // Note: Moving this would require mocking zap.Logger dependencies in tests,
 // which suggests it might be better suited as a library function with a testable interface.
 
+const maxDebugChainBytes = 64 * 1024
+
+func trimDebugChainString(s string) string {
+	if len(s) <= maxDebugChainBytes {
+		return s
+	}
+	return s[:maxDebugChainBytes] + "\n... [error.debug_chain truncated]\n"
+}
+
 // logStructuredError logs an error with structured fields to terminal.
 // Only logs when debug mode is enabled (via --debug flag).
 // The zap logger is configured with console encoding, so structured fields
@@ -250,6 +260,7 @@ func specFor(base error) errorSpec {
 // - error.context.namespace: "registry"
 // - error.context.image: "my-image:latest"
 // - error.context.component: "registry" | "operator" | "server"
+// - error.debug_chain: full flattened chain from errx.DebugString (all setup errors)
 //
 // Note: The Kubernetes operator (which runs in-cluster) uses controller-runtime's
 // zap logger for structured logging that can be collected by log aggregation systems.
@@ -258,6 +269,7 @@ func logStructuredError(logger *zap.Logger, err error, msg string) {
 		return
 	}
 
+	chain := trimDebugChainString(errx.DebugString(err))
 	var errxErr *errx.Error
 	if errors.As(err, &errxErr) {
 		fields := []zap.Field{
@@ -279,9 +291,16 @@ func logStructuredError(logger *zap.Logger, err error, msg string) {
 			fields = append(fields, zap.NamedError("error.cause", cause))
 		}
 
+		if chain != "" {
+			fields = append(fields, zap.String("error.debug_chain", chain))
+		}
 		logger.Error(msg, fields...)
 	} else {
 		// Fallback for non-errx errors
-		logger.Error(msg, zap.Error(err))
+		if chain != "" {
+			logger.Error(msg, zap.Error(err), zap.String("error.debug_chain", chain))
+		} else {
+			logger.Error(msg, zap.Error(err))
+		}
 	}
 }

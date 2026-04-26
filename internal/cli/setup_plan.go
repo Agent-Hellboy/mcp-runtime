@@ -25,6 +25,10 @@ type SetupPlanInput struct {
 	StrictProd             bool
 	DeployAnalytics        bool
 	OperatorArgs           []string
+	// Let's Encrypt (HTTP-01 via cert-manager). If empty, private CA (mcp-runtime-ca) flow is used when TLS is enabled.
+	ACMEmail           string
+	ACMEStaging        bool
+	InstallCertManager bool
 }
 
 // SetupPlan captures the resolved setup decisions.
@@ -41,6 +45,9 @@ type SetupPlan struct {
 	StrictProd          bool
 	DeployAnalytics     bool
 	OperatorArgs        []string
+	ACMEmail            string
+	ACMEStaging         bool
+	InstallCertManager  bool
 }
 
 // BuildSetupPlan resolves CLI inputs into a concrete setup plan.
@@ -80,11 +87,14 @@ func BuildSetupPlan(input SetupPlanInput) SetupPlan {
 			manifest: manifestPath,
 			force:    input.ForceIngressInstall,
 		},
-		RegistryManifest: registryManifest,
-		TLSEnabled:       input.TLSEnabled,
-		TestMode:         input.TestMode,
-		StrictProd:       input.StrictProd,
-		DeployAnalytics:  input.DeployAnalytics,
-		OperatorArgs:     input.OperatorArgs,
+		RegistryManifest:   registryManifest,
+		TLSEnabled:         input.TLSEnabled,
+		TestMode:           input.TestMode,
+		StrictProd:         input.StrictProd,
+		DeployAnalytics:    input.DeployAnalytics,
+		OperatorArgs:       input.OperatorArgs,
+		ACMEmail:           input.ACMEmail,
+		ACMEStaging:        input.ACMEStaging,
+		InstallCertManager: input.InstallCertManager,
 	}
 }

@@ -21,11 +21,13 @@ type CLIConfig struct {
 	RegistryPort        int
 	RegistryEndpoint    string
 	RegistryIngressHost string
-	SkopeoImage         string
-	OperatorImage       string // Override for operator image
-	GatewayProxyImage   string // Optional default image for the MCP gateway sidecar
-	AnalyticsIngestURL  string // Optional analytics ingest URL override for the MCP gateway sidecar
-	ClusterName         string // Optional cluster label attached to analytics/audit events
+	// RegistryClusterIssuerName is the cert-manager.io/cluster-issuer name for the registry ingress (e.g. letsencrypt-prod). Set by setup --with-tls, not from env.
+	RegistryClusterIssuerName string
+	SkopeoImage               string
+	OperatorImage             string // Override for operator image
+	GatewayProxyImage         string // Optional default image for the MCP gateway sidecar
+	AnalyticsIngestURL        string // Optional analytics ingest URL override for the MCP gateway sidecar
+	ClusterName               string // Optional cluster label attached to analytics/audit events
 
 	// Server defaults
 	DefaultServerPort int
@@ -62,6 +64,7 @@ func LoadCLIConfig() *CLIConfig {
 		registryIngressHost = getEnvOrDefault("MCP_REGISTRY_HOST", defaultRegistryIngressHost)
 	}
 	return &CLIConfig{
+		// Applies to core deployment waits and mcp-sentinel rollouts (ingest, Kafka, etc.).
 		DeploymentTimeout:           parseDurationEnv("MCP_DEPLOYMENT_TIMEOUT", defaultDeploymentTimeout),
 		CertTimeout:                 parseDurationEnv("MCP_CERT_TIMEOUT", defaultCertTimeout),
 		HelperPodTimeout:            parseDurationEnv("MCP_HELPER_POD_TIMEOUT", defaultHelperPodTimeout),
@@ -147,6 +150,11 @@ func GetRegistryEndpoint() string {
 // GetRegistryIngressHost returns the configured registry ingress host.
 func GetRegistryIngressHost() string {
 	return DefaultCLIConfig.RegistryIngressHost
+}
+
+// GetRegistryClusterIssuerName returns the cluster issuer name used on the registry TLS ingress annotation (empty if unset).
+func GetRegistryClusterIssuerName() string {
+	return DefaultCLIConfig.RegistryClusterIssuerName
 }
 
 // GetSkopeoImage returns the skopeo image for in-cluster operations.
