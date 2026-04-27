@@ -1,66 +1,94 @@
-# MCP Runtime Documentation
+# MCP Runtime
 
-Documentation for using and operating MCP Runtime: an open source manager, registry, broker, and infrastructure layer for company Model Context Protocol (MCP) servers on Kubernetes.
+MCP Runtime is an open source control plane for operating company MCP servers on Kubernetes. It packages server deployment, registry workflows, gateway routing, access policy, audit, and observability into one infrastructure layer.
 
-> Served at **docs.mcpruntime.org** as a generated MkDocs site. Source remains plain Markdown in this directory.
+<div class="docs-home">
+<section class="docs-hero">
+  <div class="docs-hero-copy">
+  <p class="docs-eyebrow">MCP infrastructure for platform teams</p>
 
-MCP Runtime helps platform and security teams turn MCP from scattered experiments into managed infrastructure. Use it to deploy internal MCP servers, publish them through controlled registry workflows, broker agent traffic through governed routes, and keep policy, audit, and observability attached to every endpoint.
+  <p class="docs-lead">Deploy internal MCP servers, expose them through governed routes, and keep policy and telemetry attached to every agent call.</p>
 
-## Map
+  <div class="docs-actions">
+    <a class="docs-button docs-button-primary" href="getting-started/">Get started</a>
+    <a class="docs-button" href="architecture/">Architecture</a>
+    <a class="docs-button" href="api/">API reference</a>
+  </div>
+  </div>
 
-| Page | What it covers |
+  <div class="docs-snapshot">
+  <strong>Core surfaces</strong>
+
+  <ul>
+    <li>Operator and <code>MCPServer</code> CRDs</li>
+    <li>Registry-backed build and deploy flow</li>
+    <li>Sentinel gateway policy and analytics</li>
+    <li>CLI for setup, status, grants, sessions, and servers</li>
+  </ul>
+  </div>
+</section>
+</div>
+
+## Choose a path
+
+<div class="docs-grid docs-grid-3">
+<a class="docs-card" href="getting-started/">
+  <span class="docs-card-kicker">Start</span>
+  <strong>Install the platform</strong>
+  <span>Build the CLI, run preflight checks, install the stack, and deploy the first server.</span>
+</a>
+
+<a class="docs-card" href="architecture/">
+  <span class="docs-card-kicker">Understand</span>
+  <strong>Read the architecture</strong>
+  <span>Trace how the manager, registry, broker, operator, and Sentinel services fit together.</span>
+</a>
+
+<a class="docs-card" href="cluster-readiness/">
+  <span class="docs-card-kicker">Prepare</span>
+  <strong>Check your cluster</strong>
+  <span>Review prerequisites for k3s, kind, minikube, Docker Desktop Kubernetes, kubeadm, and EKS.</span>
+</a>
+</div>
+
+## Operate MCP Runtime
+
+<div class="docs-grid docs-grid-2">
+<a class="docs-card" href="runtime/">
+  <span class="docs-card-kicker">Runtime</span>
+  <strong>Control plane</strong>
+  <span>CRDs, reconciliation outputs, image resolution, ingress wiring, and rollout flow.</span>
+</a>
+
+<a class="docs-card" href="sentinel/">
+  <span class="docs-card-kicker">Governance</span>
+  <strong>Sentinel request path</strong>
+  <span>Gateway policy, grant/session evaluation, analytics, audit events, and dashboard services.</span>
+</a>
+
+<a class="docs-card" href="cli/">
+  <span class="docs-card-kicker">CLI</span>
+  <strong>Command reference</strong>
+  <span>Setup, status, registry, server, access, pipeline, and Sentinel commands.</span>
+</a>
+
+<a class="docs-card" href="api/">
+  <span class="docs-card-kicker">Reference</span>
+  <strong>API and CRDs</strong>
+  <span><code>MCPServer</code>, access grants, sessions, gateway headers, and HTTP APIs.</span>
+</a>
+</div>
+
+## Common workflows
+
+| Workflow | Start here |
 |---|---|
-| [Getting started](getting-started.md) | Install the stack, deploy a server, grant access, and observe live traffic. |
-| [Architecture](architecture.md) | How the manager, registry, broker, operator, and Sentinel services fit together. |
-| [Runtime](runtime.md) | Control-plane responsibilities, core resources, reconciliation outputs, and rollout flow. |
-| [CLI](cli.md) | Every `mcp-runtime` command, flag, and operational flow. |
-| [Sentinel](sentinel.md) | Governed request path, policy enforcement, audit, and observability. |
-| [API reference](api.md) | CRD fields, gateway headers, runtime/governance/analytics HTTP APIs. |
-| [Cluster readiness](cluster-readiness.md) | Per-distribution prerequisites (k3s / kind / minikube / kubeadm). |
-| [Internals](internals/README.md) | Source-tree walkthroughs for contributors. |
+| Evaluate MCP Runtime for a company platform | [Getting started](getting-started.md), then [Architecture](architecture.md) |
+| Run MCP Runtime on a real cluster | [Cluster readiness](cluster-readiness.md), then [Runtime](runtime.md) |
+| Govern tools and sessions | [Sentinel](sentinel.md), then [API reference](api.md) |
+| Integrate from automation | [CLI](cli.md), then [API reference](api.md) |
+| Work on the codebase | [Internals](internals/README.md) |
 
-## Where to start
+## Project status
 
-- **Evaluating for a company platform:** [Getting started](getting-started.md) → [Architecture](architecture.md) → [Sentinel](sentinel.md).
-- **Operating a cluster:** [Getting started](getting-started.md) → [CLI](cli.md) → [Cluster readiness](cluster-readiness.md).
-- **Writing manifests / integrating:** [API reference](api.md).
-- **Hacking on the codebase:** [Internals](internals/README.md) plus [`AGENTS.md`](https://github.com/Agent-Hellboy/mcp-runtime/blob/main/AGENTS.md) at the repo root.
-
-## Status
-
-Alpha. The architecture is stable enough to evaluate as internal MCP infrastructure. The API and UX are still evolving — treat the `v1alpha1` types as the source of truth.
-
-## Production deploy (GitHub Actions)
-
-The `deploy-docs` job in [`.github/workflows/ci.yaml`](https://github.com/Agent-Hellboy/mcp-runtime/blob/main/.github/workflows/ci.yaml)
-syncs `docs/` to your remote host and, by default, builds/runs a Docker
-container there. On `main`, docs-only changes deploy as soon as the path
-filter detects changes under `docs/`; the deploy job does not wait for Go unit,
-integration, or Kind e2e jobs.
-
-Docker build context is this `docs/` directory:
-
-- `Dockerfile` builds a static MkDocs site and packages it in `nginx`.
-- `nginx.conf` serves the generated site for `docs.mcpruntime.org` with
-  MkDocs directory URL handling, static asset caching, gzip, and basic
-  hardening headers.
-- `mkdocs.yml` defines nav/theme/site settings.
-- `requirements.txt` pins MkDocs dependencies.
-
-Required GitHub secrets:
-
-- `DOCS_DEPLOY_HOST`
-- `DOCS_DEPLOY_USER`
-- `DOCS_DEPLOY_PATH`
-- `DOCS_DEPLOY_SSH_KEY`
-
-Optional GitHub secrets:
-
-| Secret | Default | Purpose |
-|---|---:|---|
-| `DOCS_DEPLOY_HOST_KEY` | `ssh-keyscan` fallback | Pinned SSH host key for `DOCS_DEPLOY_HOST`; use either a full known-hosts line such as `203.0.113.10 ssh-ed25519 AAAA...` or a bare host key such as `ssh-ed25519 AAAA...`. |
-| `DOCS_HOST_PORT` | `8081` | Host port published by Docker. |
-| `DOCS_CONTAINER_PORT` | `80` | Container port exposed by the docs image. |
-| `DOCS_CONTAINER_NAME` | `mcp-runtime-docs` | Remote Docker container name. |
-| `DOCS_IMAGE_NAME` | `mcp-runtime-docs:latest` | Remote Docker image tag. |
-| `DOCS_DEPLOY_COMMAND` | none | If set, CI runs this remote command instead of the default Docker build/run sequence. |
+MCP Runtime is alpha. The architecture is stable enough to evaluate as internal MCP infrastructure, but API and UX details are still evolving. Treat the `v1alpha1` types as the source of truth.
