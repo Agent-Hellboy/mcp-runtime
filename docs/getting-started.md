@@ -1,6 +1,6 @@
 # Getting Started
 
-The shortest path from an empty Kubernetes cluster to a deployed, governed MCP server.
+The shortest path from an empty Kubernetes cluster to a company-ready MCP endpoint: install the manager, registry, broker, and Sentinel stack; deploy one MCP server; grant access; and observe live traffic.
 
 ## Prerequisites
 
@@ -44,7 +44,7 @@ Validates: kubectl connectivity, CoreDNS, default `StorageClass`, Traefik `Ingre
 ./bin/mcp-runtime setup
 ```
 
-`setup` installs: CRDs, `mcp-runtime` and `mcp-servers` namespaces, the internal Docker registry, ingress wiring, the operator, and the bundled Sentinel stack (analytics, gateway, observability).
+`setup` installs the platform pieces companies need for MCP operations: CRDs, `mcp-runtime` and `mcp-servers` namespaces, the internal Docker registry, ingress wiring, the operator, and the bundled Sentinel stack for gateway policy, analytics, audit, and observability.
 
 Common variants:
 
@@ -63,7 +63,7 @@ Common variants:
 ./bin/mcp-runtime sentinel status
 ```
 
-## 5. Deploy your first MCP server
+## 5. Connect your first MCP server
 
 ### Option A — direct manifest
 
@@ -100,9 +100,9 @@ Author lightweight metadata YAML, generate CRDs, and deploy:
 ./bin/mcp-runtime pipeline deploy --dir manifests/
 ```
 
-The server lands at `/{server-name}/mcp` on the configured ingress host.
+The server lands at `/{server-name}/mcp` on the configured ingress host, behind the same platform surface you use for future company MCP servers.
 
-## 6. Grant access (for gateway-enabled servers)
+## 6. Grant governed access (for gateway-enabled servers)
 
 ```yaml
 # grant.yaml
@@ -133,7 +133,7 @@ spec:
 ./bin/mcp-runtime server policy inspect payments
 ```
 
-## 7. Observe live traffic
+## 7. Observe live traffic and policy
 
 ```bash
 ./bin/mcp-runtime sentinel port-forward ui          # Governance + dashboard

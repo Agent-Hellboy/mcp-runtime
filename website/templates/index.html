@@ -3,33 +3,34 @@
 {% block content %}
   <section class="hero container" aria-labelledby="hero-title">
     <div class="hero-copy reveal">
-      <span class="eyebrow">Spec 00 · Kubernetes MCP Runtime · Alpha</span>
-      <h1 id="hero-title">Operate MCP servers like infrastructure, not side projects.</h1>
+      <span class="eyebrow">Spec 00 · MCP infrastructure for Kubernetes · Alpha</span>
+      <h1 id="hero-title">The control plane for company MCP servers.</h1>
       <p class="lede">
-        MCP Runtime gives platform teams a Kubernetes-native control plane for deploying,
-        governing, and observing internal Model Context Protocol services. CRDs define the
-        service. Sentinel governs the live request path. Operators keep the cluster honest.
+        MCP Runtime gives companies a manager, registry, broker, and infrastructure layer
+        to manage, deploy, govern, and use Model Context Protocol servers. Platform teams
+        define services once, enforce access on the live request path, and give AI agents
+        a controlled way to reach internal tools.
       </p>
       <div class="hero-actions" aria-label="Primary actions">
-        <a class="button primary" href="{{ docs_url }}getting-started/">Start the runbook</a>
-        <a class="button secondary" href="{{ github_url }}">Inspect the source</a>
+        <a class="button primary" href="{{ docs_url }}getting-started/">Install the platform</a>
+        <a class="button secondary" href="{{ github_url }}">View GitHub</a>
       </div>
     </div>
 
     <aside class="hero-spec reveal" aria-label="Platform control surface summary">
-      <div class="spec-kicker">Control Surface</div>
+      <div class="spec-kicker">Company MCP Stack</div>
       <dl class="spec-list">
         <div>
-          <dt>Delivery</dt>
-          <dd>CRD · operator · registry · ingress</dd>
+          <dt>Manager</dt>
+          <dd>CRDs · operator · rollouts · status</dd>
         </div>
         <div>
-          <dt>Governance</dt>
-          <dd>grants · sessions · trust ceilings</dd>
+          <dt>Registry</dt>
+          <dd>images · publishing · cluster install</dd>
         </div>
         <div>
-          <dt>Runtime Path</dt>
-          <dd>gateway · policy · audit · analytics</dd>
+          <dt>Broker</dt>
+          <dd>gateway · access · policy · audit</dd>
         </div>
       </dl>
       <div class="spec-stamp">v1alpha1</div>
@@ -39,7 +40,7 @@
   <section class="container blueprint" aria-labelledby="blueprint-title">
     <div class="section-heading">
       <span class="section-label">01 / Definition</span>
-      <h2 id="blueprint-title">One manifest becomes the governed route.</h2>
+      <h2 id="blueprint-title">One manifest becomes a governed MCP endpoint.</h2>
     </div>
     <div class="blueprint-grid">
       <div class="code-panel" aria-label="Example MCPServer Kubernetes manifest">
@@ -61,11 +62,11 @@ spec:
     enabled: true</code></pre>
       </div>
       <div class="blueprint-notes">
-        <p class="caption">Apply once. The runtime owns rollout, routing, policy attachment, and telemetry from there.</p>
+        <p class="caption">Ship internal MCP servers with the same discipline as any other production service.</p>
         <ul class="check-list">
-          <li>Operator reconciles Kubernetes primitives from the CRD.</li>
-          <li>Gateway keeps access decisions on the request path.</li>
-          <li>Sentinel records policy outcomes and service analytics.</li>
+          <li>Define the server, image, port, route, gateway, and analytics in one resource.</li>
+          <li>Let the operator reconcile services, ingress, rollouts, and updates.</li>
+          <li>Keep policy, audit, and analytics attached to the endpoint from day one.</li>
         </ul>
       </div>
     </div>
@@ -74,58 +75,59 @@ spec:
   <section id="architecture" class="container pillars" aria-labelledby="architecture-title">
     <div class="section-heading span-two">
       <span class="section-label">02 / Architecture</span>
-      <h2 id="architecture-title">The platform is split across three operating planes.</h2>
+      <h2 id="architecture-title">The pieces companies need to run MCP safely.</h2>
     </div>
     <article>
       <span class="card-index">A</span>
-      <h3>Runtime</h3>
-      <p>Cluster bootstrap, registry, ingress, operator reconciliation, and rollout for every MCP server.</p>
+      <h3>Manager</h3>
+      <p>A Kubernetes-native control plane to install the stack, reconcile MCPServer resources, and keep deployments healthy.</p>
     </article>
     <article>
       <span class="card-index">B</span>
-      <h3>Access</h3>
-      <p>Grants and sessions as first-class CRDs with explicit consent, trust ceilings, expiry, and revocation.</p>
+      <h3>Registry</h3>
+      <p>Image and deployment workflows for publishing MCP servers into environments your platform team controls.</p>
     </article>
     <article>
       <span class="card-index">C</span>
-      <h3>Sentinel</h3>
-      <p>Policy, audit, and observability on the live request path through a bundled gateway and dashboards.</p>
+      <h3>Broker</h3>
+      <p>A governed gateway that brokers agent access, applies policy before tool calls run, and records what happened.</p>
     </article>
   </section>
 
   <section class="container features" aria-labelledby="features-title">
     <div class="section-heading">
       <span class="section-label">03 / Capabilities</span>
-      <h2 id="features-title">Built for platform ownership.</h2>
+      <h2 id="features-title">Built for enterprise MCP operations.</h2>
       <p>
-        The product surface is intentionally operational: install the control plane,
-        describe servers, issue access, then watch policy and traffic from one place.
+        MCP Runtime turns scattered MCP experiments into a company platform: install the
+        control plane, publish servers, grant access, broker requests, and watch policy
+        and traffic from one place.
       </p>
     </div>
     <div class="features-grid">
       <article class="feature-card">
-        <h3>Declarative deployments</h3>
+        <h3>Managed deployments</h3>
         <p>Define MCP servers once as Kubernetes CRDs. The operator handles services, rollouts, routes, and updates.</p>
       </article>
       <article class="feature-card accent">
-        <h3>Access without ambiguity</h3>
+        <h3>Company access model</h3>
         <p>Grants and sessions make consent, trust level, expiry, and revocation inspectable Kubernetes resources.</p>
       </article>
       <article class="feature-card">
-        <h3>Request-path analytics</h3>
-        <p>Observe every MCP call with policy decisions, timing, tool names, status, and dashboard-ready event data.</p>
+        <h3>Brokered tool calls</h3>
+        <p>Route agent traffic through a gateway that can enforce policy before sensitive tools are executed.</p>
       </article>
       <article class="feature-card">
-        <h3>Immediate policy enforcement</h3>
-        <p>Sentinel evaluates live traffic at the gateway, so governance is applied before tools execute.</p>
+        <h3>Operational visibility</h3>
+        <p>Observe MCP calls with policy decisions, timing, tool names, status, and dashboard-ready event data.</p>
       </article>
       <article class="feature-card accent">
-        <h3>Audit-ready traces</h3>
+        <h3>Audit-ready history</h3>
         <p>Every governed request is recorded for security review, incident response, and compliance workflows.</p>
       </article>
       <article class="feature-card">
-        <h3>Bundled dashboards</h3>
-        <p>Grafana, Prometheus, API, ingest, processor, and UI services ship as part of the local evaluation stack.</p>
+        <h3>Platform stack included</h3>
+        <p>Registry, ingress, API, ingest, processor, UI, Grafana, and Prometheus are wired for local evaluation.</p>
       </article>
     </div>
   </section>
@@ -133,7 +135,7 @@ spec:
   <section class="container runbook" aria-labelledby="runbook-title">
     <div class="section-heading">
       <span class="section-label">04 / Runbook</span>
-      <h2 id="runbook-title">From empty cluster to governed MCP endpoint.</h2>
+      <h2 id="runbook-title">Install the stack, then connect servers.</h2>
     </div>
     <ol class="runbook-steps">
       <li>
@@ -158,19 +160,19 @@ spec:
   <section class="container use-cases" aria-labelledby="use-cases-title">
     <div class="section-heading">
       <span class="section-label">05 / Use Cases</span>
-      <h2 id="use-cases-title">Where the runtime earns its keep.</h2>
+      <h2 id="use-cases-title">Where companies put it to work.</h2>
     </div>
     <div class="use-cases-grid">
       <article class="use-case">
-        <h3>AI tool use</h3>
-        <p>Safely expose internal tools to agents with controlled access, request inspection, and audit trails.</p>
+        <h3>Agent tool access</h3>
+        <p>Expose internal tools to agents with controlled access, request inspection, and audit trails.</p>
       </article>
       <article class="use-case">
-        <h3>Internal APIs</h3>
-        <p>Govern access to databases, services, and data APIs without modifying every application.</p>
+        <h3>Internal MCP catalog</h3>
+        <p>Give teams a shared place to publish, discover, and operate MCP servers instead of one-off sidecars.</p>
       </article>
       <article class="use-case">
-        <h3>Cross-team integrations</h3>
+        <h3>Cross-team governance</h3>
         <p>Grant temporary, reviewable access between teams with clear trust ceilings and easy revocation.</p>
       </article>
       <article class="use-case">
@@ -183,8 +185,8 @@ spec:
   <section class="container platforms" aria-labelledby="platforms-title">
     <div class="section-heading compact">
       <span class="section-label">06 / Targets</span>
-      <h2 id="platforms-title">Works anywhere you run Kubernetes.</h2>
-      <p>Kubernetes 1.25+. Self-hosted. No proprietary control plane.</p>
+      <h2 id="platforms-title">Runs where your company already runs Kubernetes.</h2>
+      <p>Kubernetes 1.25+. Self-hosted. Open source. No proprietary control plane.</p>
     </div>
     <div class="platforms-list" aria-label="Supported Kubernetes environments">
       <span class="platform-badge">k3s</span>
@@ -200,10 +202,10 @@ spec:
 
   <section class="container cta-band" aria-labelledby="cta-title">
     <span class="section-label">Next action</span>
-    <h2 id="cta-title">Read the operations path before you install.</h2>
-    <p>Start with the getting-started guide, then keep the CLI and cluster-readiness docs open while you evaluate.</p>
+    <h2 id="cta-title">Start with one governed MCP server.</h2>
+    <p>Install the platform, deploy a server, issue access, and prove that MCP can be managed like company infrastructure.</p>
     <div class="hero-actions">
-      <a class="button primary" href="{{ docs_url }}getting-started/">Open getting started</a>
+      <a class="button primary" href="{{ docs_url }}getting-started/">Open install guide</a>
       <a class="button secondary" href="{{ docs_url }}architecture/">Read architecture</a>
     </div>
   </section>

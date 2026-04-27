@@ -1,6 +1,6 @@
 # Runtime
 
-The runtime is the Kubernetes control plane for internal MCP servers. It owns cluster bootstrap, registry and ingress setup, operator reconciliation, deployment resources, rollout, and the access model that sits beside each server before requests reach the [Sentinel](sentinel.md) request path.
+The runtime is the Kubernetes control plane for internal MCP servers. It owns the manager, registry, broker wiring, cluster bootstrap, ingress setup, operator reconciliation, deployment resources, rollout, and the access model that sits beside each server before requests reach the [Sentinel](sentinel.md) request path.
 
 > Higher-level than ingress and service mesh. The runtime sits **above** lower-level networking infrastructure and models MCP-specific delivery, access, and rollout concerns. It is not a generic data plane for arbitrary cluster traffic.
 
@@ -9,9 +9,10 @@ The runtime is the Kubernetes control plane for internal MCP servers. It owns cl
 | Area | Responsibility |
 |---|---|
 | **Bootstrap** | `cluster` and `setup` initialize CRDs and namespaces, configure ingress, provision clusters, optionally wire cert-manager TLS. |
+| **Registry workflow** | Registry commands and setup wiring give teams a controlled place to publish and pull MCP server images. |
 | **Server delivery** | The operator reconciles `MCPServer` into Deployments, Services, and Ingress so each server lands at a stable route. |
 | **Access and consent** | Grants and sessions are separate resources so policy, trust ceilings, consent, expiry, and revocation stay outside deployment-only YAML. |
-| **Gateway-aware rollout** | Servers can stay direct or run behind the proxy sidecar while rollout settings live on the same server resource. |
+| **Brokered rollout** | Servers can stay direct or run behind the proxy sidecar while rollout settings live on the same server resource. |
 
 ## Core resources
 

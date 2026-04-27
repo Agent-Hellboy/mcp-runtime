@@ -6,21 +6,21 @@
     <title>{{ title or "MCP Runtime" }}</title>
     <meta
       name="description"
-      content="MCP Runtime is an open-source Kubernetes platform for deploying, governing, and observing internal Model Context Protocol services."
+      content="MCP Runtime is an open-source manager, registry, broker, and infrastructure layer for deploying, governing, and using MCP servers across Kubernetes."
     />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="MCP Runtime" />
     <meta property="og:title" content="{{ title or 'MCP Runtime' }}" />
     <meta
       property="og:description"
-      content="Open source MCP platform for Kubernetes: delivery, access, policy, audit, and observability."
+      content="Open source MCP infrastructure for companies: deploy, govern, broker, audit, and operate MCP servers on Kubernetes."
     />
     <meta property="og:url" content="{{ canonical_og_url() }}" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="{{ title or 'MCP Runtime' }}" />
     <meta
       name="twitter:description"
-      content="Open source MCP platform for Kubernetes."
+      content="Open source infrastructure to manage, deploy, govern, and use MCP servers."
     />
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -37,7 +37,7 @@
             <div class="brand-mark" aria-hidden="true">MCP</div>
             <div>
               <div class="brand-title">MCP Runtime</div>
-              <div class="brand-subtitle">Governed MCP infrastructure</div>
+              <div class="brand-subtitle">MCP infrastructure platform</div>
             </div>
           </a>
           <nav class="nav-actions" aria-label="Primary navigation">
@@ -55,7 +55,7 @@
 
       <footer class="container footer">
         <div>
-          <strong>MCP Runtime</strong> is an open source Kubernetes platform for operating internal MCP services.
+          <strong>MCP Runtime</strong> is open source infrastructure for companies running internal MCP servers.
           Contribute at <a href="{{ github_url }}">github.com/Agent-Hellboy/mcp-runtime</a>
           or write to us at
           <a

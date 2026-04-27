@@ -1,7 +1,8 @@
 # Website
 
-Minimal Flask landing page for MCP Runtime. Serves a single home page with
-links to GitHub and the documentation site.
+Minimal Flask landing page for MCP Runtime, an open source manager, registry,
+broker, and infrastructure layer for company MCP servers. Serves a single home
+page with links to GitHub and the documentation site.
 
 Documentation lives at `docs.mcpruntime.org` (deployed separately) and is
 authored as Markdown under [`../docs/`](../docs/) at the repo root. Any
@@ -36,7 +37,9 @@ docker run --rm -p 8080:8080 mcp-runtime-website
 
 The `deploy-website` job in [`.github/workflows/ci.yaml`](../.github/workflows/ci.yaml)
 syncs `website/` to your remote host and, by default, builds/runs a Docker
-container there:
+container there. On `main`, website-only changes deploy as soon as the path
+filter detects changes under `website/`; the deploy job does not wait for Go
+unit, integration, or Kind e2e jobs.
 
 ```sh
 docker build -t mcp-runtime-website:latest .
