@@ -28,6 +28,7 @@ jobs:
               - '**'
               - '!docs/**'
               - '!website/**'
+              - '!README.md'
             docs:
               - 'docs/**'
             website:

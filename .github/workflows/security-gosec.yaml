@@ -6,11 +6,13 @@ on:
     paths-ignore:
       - 'docs/**'
       - 'website/**'
+      - 'README.md'
   push:
     branches: [ "main" ]
     paths-ignore:
       - 'docs/**'
       - 'website/**'
+      - 'README.md'
   workflow_dispatch: {}
 
 jobs:
