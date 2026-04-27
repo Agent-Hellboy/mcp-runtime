@@ -102,6 +102,15 @@ type MCPServerSpec struct {
 	// Tools describes the MCP tool inventory exposed by the server.
 	Tools []ToolConfig `json:"tools,omitempty"`
 
+	// Prompts describes the MCP prompt inventory exposed by the server.
+	Prompts []InventoryItem `json:"prompts,omitempty"`
+
+	// MCPResources describes the MCP resource inventory exposed by the server.
+	MCPResources []InventoryItem `json:"mcpResources,omitempty"`
+
+	// Tasks describes task templates or workflows exposed by the server.
+	Tasks []InventoryItem `json:"tasks,omitempty"`
+
 	// Auth configures how the gateway extracts human, agent, and session identity.
 	Auth *AuthConfig `json:"auth,omitempty"`
 
@@ -157,6 +166,14 @@ type ToolConfig struct {
 	Description   string            `json:"description,omitempty"`
 	RequiredTrust TrustLevel        `json:"requiredTrust,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
+}
+
+// InventoryItem describes a named MCP prompt, resource, or task.
+// +kubebuilder:object:generate=true
+type InventoryItem struct {
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
 }
 
 // AuthConfig configures how identities are extracted at the gateway.

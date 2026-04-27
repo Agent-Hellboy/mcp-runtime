@@ -84,6 +84,15 @@ type ServerMetadata struct {
 	// Tools describes the MCP tool inventory exposed by the server.
 	Tools []ToolConfig `yaml:"tools,omitempty" json:"tools,omitempty"`
 
+	// Prompts describes the MCP prompt inventory exposed by the server.
+	Prompts []InventoryItem `yaml:"prompts,omitempty" json:"prompts,omitempty"`
+
+	// MCPResources describes the MCP resource inventory exposed by the server.
+	MCPResources []InventoryItem `yaml:"mcpResources,omitempty" json:"mcpResources,omitempty"`
+
+	// Tasks describes task templates or workflows exposed by the server.
+	Tasks []InventoryItem `yaml:"tasks,omitempty" json:"tasks,omitempty"`
+
 	// Auth configures how the gateway extracts human, agent, and session identity.
 	Auth *AuthConfig `yaml:"auth,omitempty" json:"auth,omitempty"`
 
@@ -133,6 +142,13 @@ type ToolConfig struct {
 	Description   string            `yaml:"description,omitempty" json:"description,omitempty"`
 	RequiredTrust TrustLevel        `yaml:"requiredTrust,omitempty" json:"requiredTrust,omitempty"`
 	Labels        map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+}
+
+// InventoryItem describes a named MCP prompt, resource, or task.
+type InventoryItem struct {
+	Name        string            `yaml:"name" json:"name"`
+	Description string            `yaml:"description,omitempty" json:"description,omitempty"`
+	Labels      map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
 }
 
 // AuthConfig configures how identities are extracted at the gateway.

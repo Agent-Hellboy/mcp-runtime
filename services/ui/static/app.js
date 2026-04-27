@@ -8,6 +8,7 @@ let authPrincipal = null;
 let grantsCache = [];
 let sessionsCache = [];
 let userAPIKeysCache = [];
+let serversCache = [];
 
 // API Helper
 async function fetchJSON(path, options = {}) {
@@ -84,7 +85,7 @@ function initTabs() {
     tab.addEventListener("click", () => {
       const target = tab.dataset.tab;
 
-      if (authenticated !== true) {
+      if (authenticated !== true && target !== "servers") {
         if (authenticated === false) {
           showAuthModal();
         }
@@ -101,6 +102,8 @@ function initTabs() {
         loadComponents();
       } else if (target === "userkeys") {
         loadUserAPIKeys();
+      } else if (target === "servers") {
+        loadServers();
       }
     });
   });
@@ -263,22 +266,30 @@ async function initAuth() {
     loadActiveTab();
     startAutoRefresh();
   } else {
-    showAuthModal();
+    activateTab("servers");
+    loadServers();
   }
 }
 
 async function handleAuthSubmit(event) {
   event.preventDefault();
-  const input = document.getElementById("api-key-input");
+  const apiKeyInput = document.getElementById("api-key-input");
+  const emailInput = document.getElementById("auth-email-input");
+  const passwordInput = document.getElementById("auth-password-input");
   const submit = document.getElementById("auth-submit");
-  const apiKey = input?.value || "";
+  const apiKey = apiKeyInput?.value || "";
+  const email = emailInput?.value || "";
+  const password = passwordInput?.value || "";
 
   setAuthError("");
   if (submit) submit.disabled = true;
   try {
-    const data = await performLogin({ api_key: apiKey });
+    const payload =
+      email || password ? { email, password } : { api_key: apiKey };
+    const data = await performLogin(payload);
     authPrincipal = data?.principal || null;
-    if (input) input.value = "";
+    if (apiKeyInput) apiKeyInput.value = "";
+    if (passwordInput) passwordInput.value = "";
     hideAuthModal();
     setAuthenticated(true);
     loadActiveTab();
@@ -367,7 +378,7 @@ async function authFailureMessage(response) {
     return "Server is not configured for API key auth";
   }
   if (response.status === 400 && serverError === "missing_credentials") {
-    return "Provide an API key or sign in with Google.";
+    return "Provide email and password, an API key, or sign in with Google.";
   }
   return serverError || `Sign-in failed (${response.status})`;
 }
@@ -386,7 +397,8 @@ async function logout() {
   setAuthenticated(false);
   resetDashboard();
   resetUserAPIKeys();
-  showAuthModal();
+  activateTab("servers");
+  loadServers();
 }
 
 function setAuthenticated(value) {
@@ -398,7 +410,7 @@ function setAuthenticated(value) {
     roleEl.textContent = roleLabel;
     roleEl.classList.toggle("hidden", !value || !roleLabel);
   }
-  document.getElementById("auth-open")?.classList.toggle("hidden", value || !!window.MCP_GOOGLE_CLIENT_ID);
+  document.getElementById("auth-open")?.classList.toggle("hidden", value);
   document.getElementById("auth-logout")?.classList.toggle("hidden", !value);
   applyRoleVisibility();
 }
@@ -408,7 +420,7 @@ function showAuthModal(message = "") {
   setAuthError(message);
   const modal = document.getElementById("auth-modal");
   modal?.classList.remove("hidden");
-  setTimeout(() => document.getElementById("api-key-input")?.focus(), 0);
+  setTimeout(() => document.getElementById("auth-email-input")?.focus(), 0);
 }
 
 function hideAuthModal() {
@@ -429,6 +441,8 @@ function loadActiveTab() {
   if (active === "dashboard") {
     loadDashboardSummary();
     loadEvents();
+  } else if (active === "servers") {
+    loadServers();
   } else if (active === "governance") {
     loadGrants();
     loadSessions();
@@ -448,6 +462,111 @@ function resetDashboard() {
     '<tr><td colspan="5" class="empty">No events yet.</td></tr>';
 }
 
+async function loadServers() {
+  try {
+    const data = await fetchJSON("/runtime/servers");
+    serversCache = Array.isArray(data.servers) ? data.servers : [];
+    renderServers();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load servers:", err);
+    serversCache = [];
+    const grid = document.getElementById("servers-grid");
+    if (grid) {
+      grid.innerHTML = '<div class="component-card error">Error loading MCP servers.</div>';
+    }
+  }
+}
+
+function renderServers() {
+  const grid = document.getElementById("servers-grid");
+  if (!grid) return;
+  if (serversCache.length === 0) {
+    grid.innerHTML = '<div class="component-card">No MCP servers found.</div>';
+    return;
+  }
+
+  grid.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  serversCache.forEach((server) => {
+    const card = document.createElement("article");
+    card.className = "server-card";
+
+    const title = document.createElement("div");
+    title.className = "server-card-head";
+    title.innerHTML = `
+      <div>
+        <h3>${escapeHtml(server.name || "-")}</h3>
+        <p>${escapeHtml(server.namespace || "-")}</p>
+      </div>
+      <span class="badge ${server.status === "Ready" ? "badge-success" : "badge-muted"}">${escapeHtml(server.status || "Unknown")}</span>
+    `;
+    card.appendChild(title);
+
+    if (server.endpoint) {
+      const endpoint = document.createElement("code");
+      endpoint.className = "server-endpoint";
+      endpoint.textContent = server.endpoint;
+      card.appendChild(endpoint);
+    }
+
+    card.appendChild(renderInventoryBlock("Tools", server.tools || [], renderToolItem));
+    card.appendChild(renderInventoryBlock("Prompts", server.prompts || [], renderInventoryItem));
+    card.appendChild(renderInventoryBlock("Resources", server.resources || [], renderInventoryItem));
+    card.appendChild(renderInventoryBlock("Tasks", server.tasks || [], renderInventoryItem));
+
+    const json = document.createElement("pre");
+    json.className = "access-json";
+    json.textContent = JSON.stringify(server.access_json || {}, null, 2);
+    card.appendChild(json);
+
+    fragment.appendChild(card);
+  });
+  grid.appendChild(fragment);
+}
+
+function renderInventoryBlock(label, items, itemRenderer) {
+  const block = document.createElement("div");
+  block.className = "inventory-block";
+  const heading = document.createElement("h4");
+  heading.textContent = label;
+  block.appendChild(heading);
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "inventory-empty";
+    empty.textContent = "None declared.";
+    block.appendChild(empty);
+    return block;
+  }
+  const list = document.createElement("ul");
+  items.forEach((item) => {
+    const li = document.createElement("li");
+    li.innerHTML = itemRenderer(item);
+    list.appendChild(li);
+  });
+  block.appendChild(list);
+  return block;
+}
+
+function renderToolItem(tool) {
+  const trust = tool.requiredTrust ? ` <span>${escapeHtml(tool.requiredTrust)}</span>` : "";
+  const desc = tool.description ? `<small>${escapeHtml(tool.description)}</small>` : "";
+  return `<strong>${escapeHtml(tool.name || "-")}</strong>${trust}${desc}`;
+}
+
+function renderInventoryItem(item) {
+  if (typeof item === "string") {
+    return `<strong>${escapeHtml(item || "-")}</strong>`;
+  }
+  const name = item?.name || "-";
+  const desc = item?.description ? `<small>${escapeHtml(item.description)}</small>` : "";
+  const labels = item?.labels && typeof item.labels === "object" ? Object.entries(item.labels) : [];
+  const labelsText = labels.length
+    ? `<small>${escapeHtml(labels.map(([k, v]) => `${k}=${v}`).join(", "))}</small>`
+    : "";
+  return `<strong>${escapeHtml(name)}</strong>${desc}${labelsText}`;
+}
+
 function initDashboard() {
   // Auto refresh
   const autoRefreshCheckbox = document.getElementById("auto-refresh");
@@ -463,6 +582,9 @@ function initDashboard() {
 
   document.getElementById("refresh-events")?.addEventListener("click", () => {
     loadEvents();
+  });
+  document.getElementById("refresh-servers")?.addEventListener("click", () => {
+    loadServers();
   });
 }
 
@@ -493,10 +615,10 @@ function applyRoleVisibility() {
 
 function resolveActiveTab() {
   const active = document.querySelector(".tab.active")?.dataset.tab;
-  if (active && (isAdminUser() || active === "userkeys")) {
+  if (active && (isAdminUser() || active === "userkeys" || active === "servers")) {
     return active;
   }
-  return isAdminUser() ? "dashboard" : "userkeys";
+  return "servers";
 }
 
 function activateTab(target) {

@@ -160,6 +160,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("failed to initialize platform identity database: %v", err)
 		}
+		if err := seedPlatformAdminFromEnv(ctx, store); err != nil {
+			log.Fatalf("failed to seed platform admin: %v", err)
+		}
 		defer store.close()
 		server.platform = store
 		server.userKeys = store

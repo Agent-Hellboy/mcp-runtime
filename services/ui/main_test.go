@@ -123,6 +123,38 @@ func TestAPIProxyAllowsDirectAPIKeyClients(t *testing.T) {
 	}
 }
 
+func TestAPIProxyAllowsPublicRuntimeServers(t *testing.T) {
+	upstreamCalled := false
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		upstreamCalled = true
+		if got := r.Header.Get("x-api-key"); got != "api-secret" {
+			t.Fatalf("x-api-key = %q, want %q", got, "api-secret")
+		}
+		if got := r.URL.Path; got != "/api/runtime/servers" {
+			t.Fatalf("path = %q, want /api/runtime/servers", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"content-type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"servers":[]}`)),
+		}, nil
+	})
+	target, err := url.Parse("http://api.example")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	proxy := newAPIProxyWithTransport(target, "api-secret", "api-secret", newUISessionStore(time.Now), transport)
+
+	recorder := httptest.NewRecorder()
+	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/runtime/servers", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("public runtime servers status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !upstreamCalled {
+		t.Fatal("public runtime servers request did not reach upstream")
+	}
+}
+
 func TestHandleLoginWithOIDCToken(t *testing.T) {
 	previousHook := oidcVerifyHook
 	oidcVerifyHook = func(_ context.Context, upstream, token string) (sessionPrincipal, error) {
@@ -159,6 +191,58 @@ func TestHandleLoginWithOIDCToken(t *testing.T) {
 		}
 		if got := r.Header.Get("x-api-key"); got != "" {
 			t.Fatalf("x-api-key unexpectedly set: %q", got)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"content-type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
+	})
+	target, _ := url.Parse("http://api.example")
+	proxy := newAPIProxyWithTransport(target, "api-secret", "api-secret", store, transport)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/user/api-keys", nil)
+	req.AddCookie(cookies[0])
+	proxy.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("proxy status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !upstreamCalled {
+		t.Fatal("proxy did not call upstream")
+	}
+}
+
+func TestHandleLoginWithPassword(t *testing.T) {
+	previousHook := passwordLoginHook
+	passwordLoginHook = func(_ context.Context, upstream, email, password string) (sessionPrincipal, string, error) {
+		if upstream != "http://api.example" {
+			t.Fatalf("upstream = %q, want http://api.example", upstream)
+		}
+		if email != "admin@example.com" || password != "test-password" {
+			t.Fatalf("credentials = %q/%q", email, password)
+		}
+		return sessionPrincipal{
+			Role:     "admin",
+			Subject:  "user-1",
+			Email:    "admin@example.com",
+			AuthType: "platform_jwt",
+		}, "platform-token", nil
+	}
+	defer func() { passwordLoginHook = previousHook }()
+
+	store := newUISessionStore(time.Now)
+	login := httptest.NewRecorder()
+	handleLogin("", "api-secret", "http://api.example", store).ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"email":"admin@example.com","password":"test-password"}`)))
+	if login.Code != http.StatusOK {
+		t.Fatalf("login status = %d, want %d; body=%s", login.Code, http.StatusOK, login.Body.String())
+	}
+	cookies := login.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %d, want 1", len(cookies))
+	}
+
+	upstreamCalled := false
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		upstreamCalled = true
+		if got := r.Header.Get("authorization"); got != "Bearer platform-token" {
+			t.Fatalf("authorization forwarded = %q", got)
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"content-type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
 	})

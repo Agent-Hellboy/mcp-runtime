@@ -51,6 +51,7 @@ var (
 	loginFailureWindow     = durationEnvOr("UI_LOGIN_FAILURE_WINDOW", defaultLoginFailureWindow)
 	loginFailureThreshold  = intEnvOr("UI_LOGIN_FAILURE_THRESHOLD", defaultLoginFailureThreshold)
 	loginLockoutDuration   = durationEnvOr("UI_LOGIN_LOCKOUT", defaultLoginLockoutDuration)
+	passwordLoginHook      func(context.Context, string, string, string) (sessionPrincipal, string, error)
 )
 
 type sessionPrincipal struct {
@@ -249,6 +250,13 @@ func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, s
 			proxy.ServeHTTP(w, req)
 			return
 		}
+		if allowsPublicRead(r) {
+			req := r.Clone(r.Context())
+			req.Header.Del("x-api-key")
+			req.Header.Del("authorization")
+			proxy.ServeHTTP(w, req)
+			return
+		}
 
 		sess, ok := store.sessionFromRequest(r)
 		if !ok {
@@ -268,10 +276,20 @@ func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, s
 	})
 }
 
+func allowsPublicRead(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	path := strings.TrimSpace(strings.TrimSuffix(r.URL.Path, "/"))
+	return strings.HasSuffix(path, "/runtime/servers")
+}
+
 func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionStore) http.HandlerFunc {
 	type loginRequest struct {
-		APIKey  string `json:"api_key"`
-		IDToken string `json:"id_token"`
+		APIKey   string `json:"api_key"`
+		IDToken  string `json:"id_token"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -294,7 +312,9 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 
 		presentedAPIKey := strings.TrimSpace(req.APIKey)
 		idToken := strings.TrimSpace(req.IDToken)
-		if presentedAPIKey == "" && idToken == "" {
+		email := strings.TrimSpace(req.Email)
+		password := strings.TrimSpace(req.Password)
+		if presentedAPIKey == "" && idToken == "" && (email == "" || password == "") {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_credentials"})
 			return
 		}
@@ -304,7 +324,31 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 			err  error
 		)
 
-		if idToken != "" {
+		if email != "" || password != "" {
+			var (
+				p         sessionPrincipal
+				token     string
+				verifyErr error
+			)
+			if passwordLoginHook != nil {
+				p, token, verifyErr = passwordLoginHook(r.Context(), apiUpstream, email, password)
+			} else {
+				p, token, verifyErr = loginPasswordWithAPI(r.Context(), apiUpstream, email, password)
+			}
+			if verifyErr != nil {
+				failures := loginAttempts.recordFailure(clientID)
+				if failures >= loginFailureLogEvery {
+					// #nosec G706 -- authentication telemetry log with bounded fields.
+					log.Printf(`auth_login_failure client=%q timestamp=%q failure_count=%d mode=%q`, clientID, time.Now().UTC().Format(time.RFC3339), failures, "password")
+				}
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+				return
+			}
+			sess, err = store.createSession(r.Context(), uiSession{
+				Principal:          p,
+				UpstreamAuthHeader: "Bearer " + token,
+			})
+		} else if idToken != "" {
 			var (
 				p         sessionPrincipal
 				verifyErr error
@@ -362,6 +406,61 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 		http.SetCookie(w, newSessionCookie(r, sess.ID, sess.ExpiresAt))
 		writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "principal": sess.Principal})
 	}
+}
+
+func loginPasswordWithAPI(ctx context.Context, apiUpstream, email, password string) (sessionPrincipal, string, error) {
+	apiUpstream = strings.TrimSpace(strings.TrimRight(apiUpstream, "/"))
+	if apiUpstream == "" {
+		return sessionPrincipal{}, "", errors.New("api upstream is empty")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	body, err := json.Marshal(map[string]string{
+		"email":    email,
+		"password": password,
+	})
+	if err != nil {
+		return sessionPrincipal{}, "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiUpstream+"/api/auth/login", strings.NewReader(string(body)))
+	if err != nil {
+		return sessionPrincipal{}, "", err
+	}
+	req.Header.Set("content-type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return sessionPrincipal{}, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return sessionPrincipal{}, "", fmt.Errorf("password auth failed: status %d", resp.StatusCode)
+	}
+	var payload struct {
+		AccessToken string `json:"access_token"`
+		User        struct {
+			ID        string `json:"id"`
+			Email     string `json:"email"`
+			Role      string `json:"role"`
+			Namespace string `json:"namespace"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return sessionPrincipal{}, "", err
+	}
+	if strings.TrimSpace(payload.AccessToken) == "" {
+		return sessionPrincipal{}, "", errors.New("missing access token")
+	}
+	role := strings.TrimSpace(payload.User.Role)
+	if role == "" {
+		role = "user"
+	}
+	return sessionPrincipal{
+		Role:     role,
+		Subject:  strings.TrimSpace(payload.User.ID),
+		Email:    strings.TrimSpace(payload.User.Email),
+		AuthType: "platform_jwt",
+	}, payload.AccessToken, nil
 }
 
 func verifyOIDCTokenWithAPI(ctx context.Context, apiUpstream, idToken string) (sessionPrincipal, error) {

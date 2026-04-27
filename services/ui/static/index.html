@@ -18,7 +18,7 @@
         </div>
         <div class="hero-links">
           <span id="auth-role" class="link-badge hidden"></span>
-          <button id="auth-open" type="button" class="link-badge hidden">API Key</button>
+          <button id="auth-open" type="button" class="link-badge hidden">Sign In</button>
           <button id="auth-logout" type="button" class="link-badge hidden">Sign Out</button>
           <a href="/grafana" target="_blank" class="link-badge">Grafana</a>
           <a href="/prometheus" target="_blank" class="link-badge">Prometheus</a>
@@ -26,6 +26,17 @@
       </header>
 
       <nav class="tabs" role="tablist" aria-label="Dashboard sections">
+        <button
+          id="tab-button-servers"
+          class="tab active"
+          data-tab="servers"
+          role="tab"
+          type="button"
+          aria-controls="tab-servers"
+          aria-selected="true"
+        >
+          MCP Servers
+        </button>
         <button
           id="tab-button-userkeys"
           class="tab"
@@ -39,13 +50,13 @@
         </button>
         <button
           id="tab-button-dashboard"
-          class="tab active"
+          class="tab"
           data-tab="dashboard"
           data-admin-only="true"
           role="tab"
           type="button"
           aria-controls="tab-dashboard"
-          aria-selected="true"
+          aria-selected="false"
         >
           Dashboard
         </button>
@@ -74,6 +85,26 @@
           Operations
         </button>
       </nav>
+
+      <!-- MCP Servers Tab -->
+      <section
+        id="tab-servers"
+        class="tab-content active"
+        role="tabpanel"
+        aria-labelledby="tab-button-servers"
+      >
+        <div class="panel">
+          <div class="panel-head">
+            <h2>MCP Servers</h2>
+            <div class="panel-actions">
+              <button class="ghost" id="refresh-servers" type="button">Refresh</button>
+            </div>
+          </div>
+          <div class="server-grid" id="servers-grid">
+            <div class="component-card loading">Loading servers...</div>
+          </div>
+        </div>
+      </section>
 
       <!-- User API Keys Tab -->
       <section
@@ -117,10 +148,11 @@
       <!-- Dashboard Tab -->
       <section
         id="tab-dashboard"
-        class="tab-content active"
+        class="tab-content"
         data-admin-only="true"
         role="tabpanel"
         aria-labelledby="tab-button-dashboard"
+        hidden
       >
         <div class="metrics-grid">
           <div class="metric-card">
@@ -400,13 +432,24 @@
     <div id="auth-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="auth-title">
       <form class="modal-content" id="auth-form" action="javascript:void(0)" method="dialog">
         <h3 id="auth-title">Sign In</h3>
-        <p>Use Google sign-in or enter an MCP Sentinel API key.</p>
+        <p>Use your platform account, Google sign-in, or an MCP Sentinel API key.</p>
+        <input
+          type="email"
+          id="auth-email-input"
+          autocomplete="username"
+          placeholder="Email"
+        />
+        <input
+          type="password"
+          id="auth-password-input"
+          autocomplete="current-password"
+          placeholder="Password"
+        />
         <input
           type="password"
           id="api-key-input"
-          autocomplete="current-password"
+          autocomplete="off"
           placeholder="API key"
-          required
         />
         <p id="auth-error" class="auth-error hidden"></p>
         <div class="modal-actions">

@@ -12,8 +12,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	kubernetesfake "k8s.io/client-go/kubernetes/fake"
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	sentinelaccess "mcp-runtime/pkg/access"
+	"mcp-runtime/pkg/k8sclient"
 )
 
 func TestValidateGrantRequestDefaultsAndNormalizes(t *testing.T) {
@@ -125,6 +127,164 @@ func TestRuntimeSessionApplyRejectsUnknownServer(t *testing.T) {
 	}`)))
 	server.handleRuntimeSessionApply(recorder, request)
 	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestRuntimeServersIncludesMCPServerInventory(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	srv := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "demo-one",
+			Namespace:         "mcp-servers",
+			CreationTimestamp: metav1.Now(),
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image:            "demo:latest",
+			PublicPathPrefix: "demo-one",
+			Tools: []mcpv1alpha1.ToolConfig{
+				{Name: "add", Description: "Add two numbers", RequiredTrust: mcpv1alpha1.TrustLevelLow},
+			},
+			Prompts: []mcpv1alpha1.InventoryItem{
+				{Name: "summarize"},
+			},
+			MCPResources: []mcpv1alpha1.InventoryItem{
+				{Name: "repo://README.md"},
+			},
+			Tasks: []mcpv1alpha1.InventoryItem{
+				{Name: "triage-incident"},
+			},
+		},
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme, srv),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/servers", nil)
+	server.handleRuntimeServers(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Servers []serverInfo `json:"servers"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Servers) != 1 {
+		t.Fatalf("servers = %d, want 1", len(payload.Servers))
+	}
+	got := payload.Servers[0]
+	if got.Name != "demo-one" || len(got.Tools) != 1 || got.Tools[0].Name != "add" {
+		t.Fatalf("server inventory = %#v", got)
+	}
+	if len(got.Prompts) != 1 || got.Prompts[0].Name != "summarize" {
+		t.Fatalf("prompts = %#v", got.Prompts)
+	}
+	if len(got.Resources) != 1 || got.Resources[0].Name != "repo://README.md" {
+		t.Fatalf("resources = %#v", got.Resources)
+	}
+	if len(got.Tasks) != 1 || got.Tasks[0].Name != "triage-incident" {
+		t.Fatalf("tasks = %#v", got.Tasks)
+	}
+	if got.Endpoint != "/demo-one/mcp" {
+		t.Fatalf("endpoint = %q, want /demo-one/mcp", got.Endpoint)
+	}
+	if got.AccessJSON == nil {
+		t.Fatalf("access_json missing: %#v", got)
+	}
+	rawServers, ok := got.AccessJSON["mcpServers"].(map[string]any)
+	if !ok {
+		t.Fatalf("access_json.mcpServers = %#v", got.AccessJSON["mcpServers"])
+	}
+	rawServer, ok := rawServers["demo-one"].(map[string]any)
+	if !ok {
+		t.Fatalf("access_json.mcpServers.demo-one = %#v", rawServers["demo-one"])
+	}
+	if rawServer["type"] != "http" || rawServer["url"] != "/demo-one/mcp" {
+		t.Fatalf("access_json server payload = %#v", rawServer)
+	}
+	if _, ok := rawServer["headers"]; ok {
+		t.Fatalf("access_json should not include headers: %#v", rawServer)
+	}
+}
+
+func TestRuntimeServersNonAdminDefaultsToSharedNamespace(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	shared := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "shared-server",
+			Namespace: "mcp-servers",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image: "demo:latest",
+		},
+	}
+	private := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "private-server",
+			Namespace: "user-1",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image: "demo:latest",
+		},
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme, shared, private),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/servers", nil)
+	request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+	}))
+	recorder := httptest.NewRecorder()
+	server.handleRuntimeServers(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	var payload struct {
+		Servers []serverInfo `json:"servers"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Servers) != 1 || payload.Servers[0].Name != "shared-server" {
+		t.Fatalf("servers = %#v, want only shared-server", payload.Servers)
+	}
+}
+
+func TestRuntimeServersNonAdminRejectsOtherNamespace(t *testing.T) {
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/servers?namespace=another-ns", nil)
+	request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+	}))
+	recorder := httptest.NewRecorder()
+	server.handleRuntimeServers(recorder, request)
+	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 }

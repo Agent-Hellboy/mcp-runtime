@@ -183,6 +183,25 @@ spec:
                 description: IngressPath is the path for the ingress route (defaults
                   to /{name}/mcp).
                 type: string
+              mcpResources:
+                description: MCPResources describes the MCP resource inventory exposed
+                  by the server.
+                items:
+                  description: InventoryItem describes a named MCP prompt, resource,
+                    or task.
+                  properties:
+                    description:
+                      type: string
+                    labels:
+                      additionalProperties:
+                        type: string
+                      type: object
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
               policy:
                 description: Policy configures gateway-side authorization behavior.
                 properties:
@@ -206,6 +225,25 @@ spec:
                   8088).
                 format: int32
                 type: integer
+              prompts:
+                description: Prompts describes the MCP prompt inventory exposed by
+                  the server.
+                items:
+                  description: InventoryItem describes a named MCP prompt, resource,
+                    or task.
+                  properties:
+                    description:
+                      type: string
+                    labels:
+                      additionalProperties:
+                        type: string
+                      type: object
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
               publicPathPrefix:
                 description: |-
                   PublicPathPrefix enables path-based public routing and is used to compute /<publicPathPrefix>/mcp.
@@ -304,6 +342,25 @@ spec:
                   upstreamTokenHeader:
                     type: string
                 type: object
+              tasks:
+                description: Tasks describes task templates or workflows exposed by
+                  the server.
+                items:
+                  description: InventoryItem describes a named MCP prompt, resource,
+                    or task.
+                  properties:
+                    description:
+                      type: string
+                    labels:
+                      additionalProperties:
+                        type: string
+                      type: object
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
               tools:
                 description: Tools describes the MCP tool inventory exposed by the
                   server.

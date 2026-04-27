@@ -99,6 +99,9 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 			mcpServer.Spec.Tools = append(mcpServer.Spec.Tools, mcpTool)
 		}
 	}
+	mcpServer.Spec.Prompts = convertInventoryItems(server.Prompts)
+	mcpServer.Spec.MCPResources = convertInventoryItems(server.MCPResources)
+	mcpServer.Spec.Tasks = convertInventoryItems(server.Tasks)
 
 	if server.Auth != nil {
 		mcpServer.Spec.Auth = &mcpv1alpha1.AuthConfig{
@@ -183,6 +186,27 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 	}
 
 	return nil
+}
+
+func convertInventoryItems(items []InventoryItem) []mcpv1alpha1.InventoryItem {
+	if len(items) == 0 {
+		return nil
+	}
+	converted := make([]mcpv1alpha1.InventoryItem, 0, len(items))
+	for _, item := range items {
+		mcpItem := mcpv1alpha1.InventoryItem{
+			Name:        item.Name,
+			Description: item.Description,
+		}
+		if len(item.Labels) > 0 {
+			mcpItem.Labels = make(map[string]string, len(item.Labels))
+			for k, v := range item.Labels {
+				mcpItem.Labels[k] = v
+			}
+		}
+		converted = append(converted, mcpItem)
+	}
+	return converted
 }
 
 // GenerateCRDsFromRegistry renders CRD YAML files for every server in a registry into outputDir.

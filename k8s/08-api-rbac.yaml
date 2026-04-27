@@ -62,3 +62,31 @@ subjects:
   - kind: ServiceAccount
     name: mcp-sentinel-api
     namespace: mcp-sentinel
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mcp-sentinel-api-user-key-secret
+  namespace: mcp-sentinel
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["mcp-sentinel-user-api-keys"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcp-sentinel-api-user-key-secret
+  namespace: mcp-sentinel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mcp-sentinel-api-user-key-secret
+subjects:
+  - kind: ServiceAccount
+    name: mcp-sentinel-api
+    namespace: mcp-sentinel

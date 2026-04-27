@@ -1851,6 +1851,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 
 	Info("Applying analytics services")
 	for _, manifest := range []string{
+		"k8s/20-postgres.yaml",
 		"k8s/06-ingest.yaml",
 		"k8s/07-processor.yaml",
 		"k8s/08-api.yaml",
@@ -1876,6 +1877,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 
 	Info(fmt.Sprintf("Waiting for mcp-sentinel workload rollouts (per-resource timeout %s; override with MCP_DEPLOYMENT_TIMEOUT)", rolloutTimeout))
 	targets := []struct{ kind, name string }{
+		{kind: "deployment", name: "mcp-sentinel-postgres"},
 		{kind: "deployment", name: "mcp-sentinel-ingest"},
 		{kind: "deployment", name: "mcp-sentinel-processor"},
 		{kind: "deployment", name: "mcp-sentinel-api"},
@@ -2098,6 +2100,47 @@ func renderAnalyticsSecretManifest(kubectl KubectlRunner) (string, error) {
 	if err != nil {
 		return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
+	postgresUser, err := existingSecretDataValueOrDefault(kubectl, defaultAnalyticsNamespace, "mcp-sentinel-secrets", "POSTGRES_USER", "mcp_runtime")
+	if err != nil {
+		return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	postgresPassword, err := existingSecretDataValueOrRandom(kubectl, defaultAnalyticsNamespace, "mcp-sentinel-secrets", "POSTGRES_PASSWORD", 16)
+	if err != nil {
+		return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	postgresDB, err := existingSecretDataValueOrDefault(kubectl, defaultAnalyticsNamespace, "mcp-sentinel-secrets", "POSTGRES_DB", "mcp_runtime")
+	if err != nil {
+		return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	postgresDSN, err := existingSecretDataValue(kubectl, defaultAnalyticsNamespace, "mcp-sentinel-secrets", "POSTGRES_DSN")
+	if err != nil {
+		return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	if postgresDSN == "" {
+		postgresDSN = fmt.Sprintf(
+			"postgres://%s:%s@mcp-sentinel-postgres.%s.svc.cluster.local:5432/%s?sslmode=disable",
+			postgresUser, postgresPassword, defaultAnalyticsNamespace, postgresDB,
+		)
+	}
+	platformJWTSecret, err := existingSecretDataValueOrRandom(kubectl, defaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_JWT_SECRET", 32)
+	if err != nil {
+		return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	platformAdminEmail, err := existingSecretDataValue(kubectl, defaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_ADMIN_EMAIL")
+	if err != nil {
+		return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	platformAdminPassword, err := existingSecretDataValue(kubectl, defaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_ADMIN_PASSWORD")
+	if err != nil {
+		return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	adminUsers, err := existingSecretDataValue(kubectl, defaultAnalyticsNamespace, "mcp-sentinel-secrets", "ADMIN_USERS")
+	if err != nil {
+		return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	if adminUsers == "" && platformAdminEmail != "" {
+		adminUsers = platformAdminEmail
+	}
 	secretManifest := fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
@@ -2107,9 +2150,17 @@ type: Opaque
 stringData:
   API_KEYS: "%s"
   UI_API_KEY: "%s"
+  ADMIN_USERS: "%s"
+  PLATFORM_ADMIN_EMAIL: "%s"
+  PLATFORM_ADMIN_PASSWORD: "%s"
+  POSTGRES_USER: "%s"
+  POSTGRES_PASSWORD: "%s"
+  POSTGRES_DB: "%s"
+  POSTGRES_DSN: "%s"
+  PLATFORM_JWT_SECRET: "%s"
   GRAFANA_ADMIN_USER: "admin"
   GRAFANA_ADMIN_PASSWORD: "%s"
-`, defaultAnalyticsNamespace, apiKeys, uiAPIKey, grafanaPassword)
+`, defaultAnalyticsNamespace, apiKeys, uiAPIKey, adminUsers, platformAdminEmail, platformAdminPassword, postgresUser, postgresPassword, postgresDB, postgresDSN, platformJWTSecret, grafanaPassword)
 	return secretManifest, nil
 }
 
@@ -2162,6 +2213,17 @@ func existingSecretDataValueOrRandom(kubectl KubectlRunner, namespace, name, key
 		return value, nil
 	}
 	return randomHex(size)
+}
+
+func existingSecretDataValueOrDefault(kubectl KubectlRunner, namespace, name, key, fallback string) (string, error) {
+	value, err := existingSecretDataValue(kubectl, namespace, name, key)
+	if err != nil {
+		return "", err
+	}
+	if value != "" {
+		return value, nil
+	}
+	return fallback, nil
 }
 
 func injectImagePullSecretsIntoManifest(manifest, secretName string) (string, error) {

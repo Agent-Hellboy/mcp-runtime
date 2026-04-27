@@ -551,6 +551,15 @@ func TestRenderAnalyticsSecretManifestReusesExistingAPIKeys(t *testing.T) {
 	if !strings.Contains(manifest, `UI_API_KEY: "ui-key"`) {
 		t.Fatalf("expected existing UI API key to be reused, got %q", manifest)
 	}
+	if !strings.Contains(manifest, `POSTGRES_USER: "mcp_runtime"`) {
+		t.Fatalf("expected default postgres user to be rendered, got %q", manifest)
+	}
+	if !strings.Contains(manifest, `POSTGRES_DB: "mcp_runtime"`) {
+		t.Fatalf("expected default postgres db to be rendered, got %q", manifest)
+	}
+	if !strings.Contains(manifest, `POSTGRES_DSN: "postgres://mcp_runtime:`) {
+		t.Fatalf("expected derived postgres DSN to be rendered, got %q", manifest)
+	}
 	if !strings.Contains(manifest, `GRAFANA_ADMIN_PASSWORD: "grafana-password"`) {
 		t.Fatalf("expected existing grafana password to be reused, got %q", manifest)
 	}
@@ -583,6 +592,15 @@ func TestRenderAnalyticsSecretManifestGeneratesKeysWhenMissing(t *testing.T) {
 	}
 	if strings.Contains(manifest, `GRAFANA_ADMIN_PASSWORD: ""`) {
 		t.Fatalf("expected generated grafana password, got %q", manifest)
+	}
+	if strings.Contains(manifest, `POSTGRES_PASSWORD: ""`) {
+		t.Fatalf("expected generated postgres password, got %q", manifest)
+	}
+	if strings.Contains(manifest, `POSTGRES_DSN: ""`) {
+		t.Fatalf("expected generated postgres DSN, got %q", manifest)
+	}
+	if strings.Contains(manifest, `PLATFORM_JWT_SECRET: ""`) {
+		t.Fatalf("expected generated platform jwt secret, got %q", manifest)
 	}
 }
 
@@ -707,6 +725,7 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		"17-loki.yaml",
 		"18-promtail.yaml",
 		"19-grafana-datasources.yaml",
+		"20-postgres.yaml",
 	} {
 		if err := os.WriteFile(filepath.Join(manifestDir, name), []byte(manifestContent), 0o644); err != nil {
 			t.Fatalf("failed to write fixture manifest %s: %v", name, err)

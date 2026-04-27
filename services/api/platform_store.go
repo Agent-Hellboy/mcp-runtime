@@ -127,6 +127,77 @@ func (s *platformStore) CreatePasswordUser(ctx context.Context, email, password 
 	return platformUser{ID: userID, Email: email, Role: role, Namespace: namespace}, nil
 }
 
+func (s *platformStore) EnsurePasswordUser(ctx context.Context, email, password string, role string) (platformUser, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	role = strings.TrimSpace(role)
+	if role == "" {
+		role = roleUser
+	}
+	if role != roleUser && role != roleAdmin {
+		return platformUser{}, errors.New("role must be user or admin")
+	}
+	if !validEmail(email) {
+		return platformUser{}, errors.New("valid email required")
+	}
+	if len(password) < 8 {
+		return platformUser{}, errors.New("password must be at least 8 characters")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	if err != nil {
+		return platformUser{}, err
+	}
+
+	var u platformUser
+	err = s.db.QueryRowContext(ctx, `
+SELECT u.id, u.email, u.role, COALESCE(n.namespace, '')
+FROM users u
+LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
+WHERE u.email = $1 AND u.deleted_at IS NULL`, email).
+		Scan(&u.ID, &u.Email, &u.Role, &u.Namespace)
+	if errors.Is(err, sql.ErrNoRows) {
+		return s.CreatePasswordUser(ctx, email, password, role)
+	}
+	if err != nil {
+		return platformUser{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return platformUser{}, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.ExecContext(ctx, `UPDATE users SET role = $1 WHERE id = $2`, role, u.ID); err != nil {
+		return platformUser{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `
+INSERT INTO auth_identities (user_id, provider, subject, password_hash)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (provider, subject)
+DO UPDATE SET user_id = EXCLUDED.user_id, password_hash = EXCLUDED.password_hash`, u.ID, passwordProvider, email, string(hash)); err != nil {
+		return platformUser{}, err
+	}
+	if u.Namespace == "" {
+		var seq int64
+		if err = tx.QueryRowContext(ctx, `SELECT nextval('platform_namespace_seq')`).Scan(&seq); err != nil {
+			return platformUser{}, err
+		}
+		u.Namespace = fmt.Sprintf("user-%d", seq)
+		if _, err = tx.ExecContext(ctx, `INSERT INTO namespaces (id,user_id,namespace) VALUES ($1,$2,$3)`, uuid.NewString(), u.ID, u.Namespace); err != nil {
+			return platformUser{}, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return platformUser{}, err
+	}
+	u.Role = role
+	return u, nil
+}
+
 func (s *platformStore) AuthenticatePassword(ctx context.Context, email, password string) (platformUser, bool, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	var u platformUser

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -31,6 +33,23 @@ func platformJWTSecretFromEnv() []byte {
 	}
 	log.Printf("warning: PLATFORM_JWT_SECRET is not set; generated an ephemeral JWT secret")
 	return []byte(base64.RawURLEncoding.EncodeToString(b))
+}
+
+func seedPlatformAdminFromEnv(ctx context.Context, store *platformStore) error {
+	email := strings.TrimSpace(os.Getenv("PLATFORM_ADMIN_EMAIL"))
+	password := strings.TrimSpace(os.Getenv("PLATFORM_ADMIN_PASSWORD"))
+	if email == "" && password == "" {
+		return nil
+	}
+	if email == "" || password == "" {
+		return errors.New("PLATFORM_ADMIN_EMAIL and PLATFORM_ADMIN_PASSWORD must both be set")
+	}
+	u, err := store.EnsurePasswordUser(ctx, email, password, roleAdmin)
+	if err != nil {
+		return err
+	}
+	log.Printf("platform admin user ensured email=%q namespace=%q", u.Email, u.Namespace)
+	return nil
 }
 
 func (s *apiServer) handleSignup(w http.ResponseWriter, r *http.Request) {

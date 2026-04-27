@@ -7,18 +7,29 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apiruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	sentinelaccess "mcp-runtime/pkg/access"
 	chpkg "mcp-runtime/pkg/clickhouse"
 	"mcp-runtime/pkg/k8sclient"
 	"mcp-runtime/pkg/sentinel"
 	"mcp-runtime/pkg/serviceutil"
 )
+
+var mcpServerGVR = schema.GroupVersionResource{
+	Group:    sentinelaccess.APIGroup,
+	Version:  sentinelaccess.APIVersion,
+	Resource: sentinelaccess.MCPServerResource,
+}
 
 type accessGrantRequest struct {
 	Name          string                         `json:"name"`
@@ -140,19 +151,51 @@ func (s *RuntimeServer) handleRuntimeServers(w http.ResponseWriter, r *http.Requ
 
 	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
 	if p, ok := principalFromContext(r.Context()); ok && p.Role != roleAdmin {
-		if p.Namespace == "" {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "user namespace is not configured"})
+		switch {
+		case namespace == "":
+			// Non-admin users should still see the shared MCP catalog by default.
+			namespace = "mcp-servers"
+		case namespace == "mcp-servers":
+			// Allow explicit shared catalog lookup.
+		case p.Namespace != "" && namespace == p.Namespace:
+			// Allow user's private namespace lookup.
+		default:
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
 			return
 		}
-		namespace = p.Namespace
 	}
 	if namespace == "" {
 		namespace = "mcp-servers"
 	}
 
-	// MCPServer deployments are reconciled by the runtime operator into the mcp-servers
-	// namespace and labeled as managed-by=mcp-runtime with a stable/canary rollout track.
-	// The UI needs the stable server set, not every deployment in the cluster.
+	serverObjects, err := s.k8sClients.Dynamic.Resource(mcpServerGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err == nil {
+		deployments, deployErr := s.k8sClients.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: "app.kubernetes.io/managed-by=mcp-runtime,mcpruntime.org/rollout-track=stable",
+		})
+		deploymentStatus := map[string]serverDeploymentStatus{}
+		if deployErr == nil {
+			for _, d := range deployments.Items {
+				deploymentStatus[d.Name] = statusForDeployment(d)
+			}
+		}
+		servers := make([]serverInfo, 0, len(serverObjects.Items))
+		for _, obj := range serverObjects.Items {
+			var mcpServer mcpv1alpha1.MCPServer
+			if convertErr := apiruntime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &mcpServer); convertErr != nil {
+				log.Printf("runtime servers: convert MCPServer %s/%s: %v", obj.GetNamespace(), obj.GetName(), convertErr)
+				continue
+			}
+			servers = append(servers, serverInfoFromMCPServer(mcpServer, deploymentStatus[mcpServer.Name]))
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"servers": servers})
+		return
+	}
+	if !apierrors.IsNotFound(err) {
+		log.Printf("runtime servers: list MCPServers failed: %v", err)
+	}
+
+	// Fall back to stable deployments for older clusters where the MCPServer CRD is not available.
 	deployments, err := s.k8sClients.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app.kubernetes.io/managed-by=mcp-runtime,mcpruntime.org/rollout-track=stable",
 	})
@@ -161,39 +204,129 @@ func (s *RuntimeServer) handleRuntimeServers(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	type ServerInfo struct {
-		Name      string            `json:"name"`
-		Namespace string            `json:"namespace"`
-		Ready     string            `json:"ready"`
-		Status    string            `json:"status"`
-		Labels    map[string]string `json:"labels"`
-		Age       string            `json:"age"`
-	}
-
-	servers := make([]ServerInfo, 0, len(deployments.Items))
+	servers := make([]serverInfo, 0, len(deployments.Items))
 	for _, d := range deployments.Items {
-		ready := "0/0"
-		status := "NotReady"
-		if d.Spec.Replicas != nil {
-			ready = fmt.Sprintf("%d/%d", d.Status.ReadyReplicas, *d.Spec.Replicas)
-			if d.Status.ReadyReplicas == *d.Spec.Replicas && *d.Spec.Replicas > 0 {
-				status = "Ready"
-			} else if d.Status.ReadyReplicas > 0 {
-				status = "Degraded"
-			}
-		}
-
-		servers = append(servers, ServerInfo{
+		deploymentStatus := statusForDeployment(d)
+		servers = append(servers, serverInfo{
 			Name:      d.Name,
 			Namespace: d.Namespace,
-			Ready:     ready,
-			Status:    status,
+			Ready:     deploymentStatus.Ready,
+			Status:    deploymentStatus.Status,
 			Labels:    d.Labels,
 			Age:       d.CreationTimestamp.Format("2006-01-02T15:04:05Z"),
+			Prompts:   []mcpv1alpha1.InventoryItem{},
+			Resources: []mcpv1alpha1.InventoryItem{},
+			Tasks:     []mcpv1alpha1.InventoryItem{},
 		})
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"servers": servers})
+}
+
+type serverInfo struct {
+	Name       string                      `json:"name"`
+	Namespace  string                      `json:"namespace"`
+	Ready      string                      `json:"ready"`
+	Status     string                      `json:"status"`
+	Labels     map[string]string           `json:"labels,omitempty"`
+	Age        string                      `json:"age"`
+	Endpoint   string                      `json:"endpoint,omitempty"`
+	Tools      []mcpv1alpha1.ToolConfig    `json:"tools,omitempty"`
+	Prompts    []mcpv1alpha1.InventoryItem `json:"prompts"`
+	Resources  []mcpv1alpha1.InventoryItem `json:"resources"`
+	Tasks      []mcpv1alpha1.InventoryItem `json:"tasks"`
+	AccessJSON map[string]any              `json:"access_json,omitempty"`
+}
+
+type serverDeploymentStatus struct {
+	Ready  string
+	Status string
+}
+
+func statusForDeployment(d appsv1.Deployment) serverDeploymentStatus {
+	ready := "0/0"
+	status := "NotReady"
+	if d.Spec.Replicas != nil {
+		ready = fmt.Sprintf("%d/%d", d.Status.ReadyReplicas, *d.Spec.Replicas)
+		if d.Status.ReadyReplicas == *d.Spec.Replicas && *d.Spec.Replicas > 0 {
+			status = "Ready"
+		} else if d.Status.ReadyReplicas > 0 {
+			status = "Degraded"
+		}
+	}
+	return serverDeploymentStatus{Ready: ready, Status: status}
+}
+
+func serverInfoFromMCPServer(mcpServer mcpv1alpha1.MCPServer, deploymentStatus serverDeploymentStatus) serverInfo {
+	if deploymentStatus.Ready == "" {
+		deploymentStatus = serverDeploymentStatus{Ready: "0/0", Status: strings.TrimSpace(mcpServer.Status.Phase)}
+		if deploymentStatus.Status == "" {
+			deploymentStatus.Status = "Unknown"
+		}
+	}
+	endpoint := publicMCPEndpoint(mcpServer)
+	info := serverInfo{
+		Name:      mcpServer.Name,
+		Namespace: mcpServer.Namespace,
+		Ready:     deploymentStatus.Ready,
+		Status:    deploymentStatus.Status,
+		Labels:    mcpServer.Labels,
+		Age:       mcpServer.CreationTimestamp.Format("2006-01-02T15:04:05Z"),
+		Endpoint:  endpoint,
+		Tools:     mcpServer.Spec.Tools,
+		Prompts:   inventoryItemsOrEmpty(mcpServer.Spec.Prompts),
+		Resources: inventoryItemsOrEmpty(mcpServer.Spec.MCPResources),
+		Tasks:     inventoryItemsOrEmpty(mcpServer.Spec.Tasks),
+	}
+	if endpoint != "" {
+		info.AccessJSON = map[string]any{
+			"mcpServers": map[string]any{
+				mcpServer.Name: map[string]any{
+					"type": "http",
+					"url":  endpoint,
+				},
+			},
+		}
+	}
+	return info
+}
+
+func inventoryItemsOrEmpty(items []mcpv1alpha1.InventoryItem) []mcpv1alpha1.InventoryItem {
+	if len(items) == 0 {
+		return []mcpv1alpha1.InventoryItem{}
+	}
+	return items
+}
+
+func publicMCPEndpoint(mcpServer mcpv1alpha1.MCPServer) string {
+	path := strings.TrimSpace(mcpServer.Spec.IngressPath)
+	if path == "" {
+		prefix := strings.Trim(strings.TrimSpace(mcpServer.Spec.PublicPathPrefix), "/")
+		if prefix == "" {
+			prefix = mcpServer.Name
+		}
+		path = "/" + prefix + "/mcp"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	host := strings.TrimSpace(mcpServer.Spec.IngressHost)
+	if host == "" {
+		host = strings.TrimSpace(os.Getenv("MCP_MCP_INGRESS_HOST"))
+	}
+	if host == "" {
+		if domain := strings.TrimSpace(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
+			host = "mcp." + strings.Trim(strings.TrimPrefix(strings.TrimPrefix(domain, "https://"), "http://"), "/")
+		}
+	}
+	if host == "" {
+		return path
+	}
+	scheme := "https"
+	if strings.HasPrefix(host, "localhost") || strings.HasPrefix(host, "127.0.0.1") {
+		scheme = "http"
+	}
+	return scheme + "://" + strings.TrimRight(host, "/") + path
 }
 
 // handleRuntimeGrants returns MCPAccessGrant resources.
