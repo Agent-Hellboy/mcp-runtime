@@ -16,7 +16,6 @@ import (
 )
 
 func TestVerifyPlatformAPIToken(t *testing.T) {
-	t.Parallel()
 	prevHook := authHTTPDoHook
 	authHTTPDoHook = func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path != "/api/auth/me" {
@@ -38,7 +37,6 @@ func TestVerifyPlatformAPIToken(t *testing.T) {
 }
 
 func TestVerifyPlatformAPIToken_Unauthorized(t *testing.T) {
-	t.Parallel()
 	prevHook := authHTTPDoHook
 	authHTTPDoHook = func(_ *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusUnauthorized, Body: io.NopCloser(bytes.NewReader(nil))}, nil
