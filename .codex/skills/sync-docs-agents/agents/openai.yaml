@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sync Docs and AGENTS"
+  short_description: "Keep docs and AGENTS.md aligned with changes"
+  default_prompt: "Use $sync-docs-agents to update documentation and AGENTS.md for the recent code, design, or product changes."
