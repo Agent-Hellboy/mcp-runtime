@@ -125,7 +125,7 @@ Common edits:
 
 - Set `spec.ingressHost` if you use host-based routing instead of the default path-based shape.
 - Set `spec.servicePort` if you need a Service port other than `80`.
-- Add `spec.env` or `spec.envFromSecret` when the server needs configuration or credentials.
+- Add `spec.envVars` or `spec.secretEnvVars` when the server needs configuration or credentials.
 - Add `spec.imagePullSecrets` if the image registry requires explicit pull auth.
 - Add `spec.tools`, `spec.auth`, `spec.policy`, `spec.session`, or `spec.rollout` when you are ready to describe stricter governance or delivery behavior.
 
@@ -136,7 +136,7 @@ For the full field surface, use the [API reference](api.md).
 Author lightweight metadata YAML, generate CRDs, and deploy:
 
 ```bash
-./bin/mcp-runtime server build image my-server
+./bin/mcp-runtime server build image my-server --tag v1.0.0
 ./bin/mcp-runtime registry push --image my-server:v1.0.0
 ./bin/mcp-runtime pipeline generate --dir .mcp --output manifests/
 ./bin/mcp-runtime pipeline deploy --dir manifests/

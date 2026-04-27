@@ -65,7 +65,7 @@ spec:
 
 - Add `spec.ingressHost` for host-based routing instead of path-based routing.
 - Add `spec.servicePort` when you want a Service port other than `80`.
-- Add `spec.env` or `spec.envFromSecret` for runtime configuration.
+- Add `spec.envVars` or `spec.secretEnvVars` for runtime configuration.
 - Add `spec.imagePullSecrets` if your registry requires explicit pull credentials.
 - Add `spec.tools`, `spec.auth`, `spec.policy`, `spec.session`, or `spec.rollout` when you want stricter governance or more delivery control.
 
