@@ -1879,7 +1879,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 
 	Info(fmt.Sprintf("Waiting for mcp-sentinel workload rollouts (per-resource timeout %s; override with MCP_DEPLOYMENT_TIMEOUT)", rolloutTimeout))
 	targets := []struct{ kind, name string }{
-		{kind: "deployment", name: "mcp-sentinel-postgres"},
+		{kind: "statefulset", name: "mcp-sentinel-postgres"},
 		{kind: "deployment", name: "mcp-sentinel-ingest"},
 		{kind: "deployment", name: "mcp-sentinel-processor"},
 		{kind: "deployment", name: "mcp-sentinel-api"},
