@@ -93,6 +93,9 @@ func (s *RuntimeServer) AuthenticateUserAPIKey(ctx context.Context, rawKey strin
 }
 
 func (s *RuntimeServer) ListUserAPIKeys(ctx context.Context, userID string) ([]userAPIKeySummary, error) {
+	if s.k8sClients == nil {
+		return nil, errors.New("kubernetes not available")
+	}
 	records, err := s.loadUserAPIKeyRecords(ctx)
 	if err != nil {
 		return nil, err
