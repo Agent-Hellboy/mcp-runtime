@@ -21,10 +21,7 @@ type principal struct {
 }
 
 func (p principal) userID() string {
-	if s := strings.TrimSpace(p.Subject); s != "" {
-		return s
-	}
-	return strings.TrimSpace(p.Email)
+	return strings.TrimSpace(p.Subject)
 }
 
 type principalContextKey struct{}

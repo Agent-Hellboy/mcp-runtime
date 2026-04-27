@@ -65,6 +65,7 @@ Notes:
 ## Common commands
 
 ```bash
+./bin/mcp-runtime bootstrap              # preflight cluster prerequisites
 ./bin/mcp-runtime setup                  # install platform stack
 ./bin/mcp-runtime status                 # show platform health
 ./bin/mcp-runtime registry status        # inspect registry

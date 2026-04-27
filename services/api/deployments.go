@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -25,6 +26,8 @@ const (
 	createdByLabel       = "created-by"
 	defaultDeployPort    = int32(8088)
 )
+
+var errPrincipalIdentityRequired = errors.New("authenticated user identity required")
 
 type deployRequest struct {
 	Name      string `json:"name"`
@@ -69,6 +72,10 @@ func (s *RuntimeServer) handleDeploymentItem(w http.ResponseWriter, r *http.Requ
 	}
 	client, err := s.clientForPrincipal(p)
 	if err != nil {
+		if errors.Is(err, errPrincipalIdentityRequired) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "authenticated user identity required"})
+			return
+		}
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
 		return
 	}
@@ -101,6 +108,10 @@ func (s *RuntimeServer) handleDeploymentList(w http.ResponseWriter, r *http.Requ
 	}
 	client, err := s.clientForPrincipal(p)
 	if err != nil {
+		if errors.Is(err, errPrincipalIdentityRequired) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "authenticated user identity required"})
+			return
+		}
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
 		return
 	}
@@ -165,12 +176,18 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	}
 	client, err := s.clientForPrincipal(p)
 	if err != nil {
+		if errors.Is(err, errPrincipalIdentityRequired) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "authenticated user identity required"})
+			return
+		}
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	if err := s.ensureUserNamespace(ctx, p); err != nil {
+	target := p
+	target.Namespace = namespace
+	if err := s.ensureUserNamespace(ctx, target); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure namespace"})
 		return
 	}
@@ -199,7 +216,15 @@ func (s *RuntimeServer) clientForPrincipal(p principal) (kubernetes.Interface, e
 	if s.k8sClients == nil {
 		return nil, fmt.Errorf("kubernetes not available")
 	}
-	if s.k8sClients.Config == nil || p.userID() == "" {
+	if p.userID() == "" {
+		// Service-level admin keys may run platform ops intentionally; all other callers
+		// must carry a stable subject to keep operations tenant-scoped.
+		if p.IsService && p.Role == roleAdmin {
+			return s.k8sClients.Clientset, nil
+		}
+		return nil, errPrincipalIdentityRequired
+	}
+	if s.k8sClients.Config == nil {
 		return s.k8sClients.Clientset, nil
 	}
 	cfg := rest.CopyConfig(s.k8sClients.Config)
@@ -269,11 +294,42 @@ func ensureLimitRange(ctx context.Context, client kubernetes.Interface, ns strin
 }
 
 func ensureDefaultDenyNetworkPolicy(ctx context.Context, client kubernetes.Interface, ns string) error {
+	udpProtocol := corev1.ProtocolUDP
+	tcpProtocol := corev1.ProtocolTCP
 	policy := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "platform-default-deny", Namespace: ns},
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
+			Egress: []networkingv1.NetworkPolicyEgressRule{
+				{
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"kubernetes.io/metadata.name": "kube-system"},
+							},
+							PodSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"k8s-app": "kube-dns"},
+							},
+						},
+					},
+					Ports: []networkingv1.NetworkPolicyPort{
+						{Protocol: &udpProtocol, Port: intstrPtr(53)},
+						{Protocol: &tcpProtocol, Port: intstrPtr(53)},
+					},
+				},
+				{
+					To: []networkingv1.NetworkPolicyPeer{
+						{PodSelector: &metav1.LabelSelector{}},
+					},
+				},
+				{
+					Ports: []networkingv1.NetworkPolicyPort{
+						{Protocol: &tcpProtocol, Port: intstrPtr(80)},
+						{Protocol: &tcpProtocol, Port: intstrPtr(443)},
+					},
+				},
+			},
 		},
 	}
 	if _, err := client.NetworkingV1().NetworkPolicies(ns).Create(ctx, policy, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
@@ -303,6 +359,11 @@ func desiredService(name, namespace string, port int32, labels map[string]string
 		Ports:    []corev1.ServicePort{{Name: "http", Port: 80, TargetPort: intstrFromInt32(port)}},
 		Type:     corev1.ServiceTypeClusterIP,
 	}}
+}
+
+func intstrPtr(port int) *intstr.IntOrString {
+	v := intstr.FromInt(port)
+	return &v
 }
 
 func upsertDeployment(ctx context.Context, client kubernetes.Interface, dep *appsv1.Deployment) (*appsv1.Deployment, error) {

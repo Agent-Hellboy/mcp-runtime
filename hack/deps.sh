@@ -61,7 +61,7 @@ cmd_check() {
 	fi
 	if command -v docker >/dev/null 2>&1; then
 		log "docker: present ($(command -v docker))"
-		if docker info >/dev/null 2>&1; then
+		if docker_daemon_reachable; then
 			log "docker daemon: reachable"
 		else
 			warn "docker is installed, but the daemon is not reachable. Start Docker Desktop, Colima, dockerd, or your compatible runtime before setup/image builds."
@@ -123,16 +123,40 @@ have_brew() {
 	command -v brew >/dev/null 2>&1
 }
 
+docker_daemon_reachable() {
+	if command -v timeout >/dev/null 2>&1; then
+		timeout 5 docker info >/dev/null 2>&1
+		return $?
+	fi
+	if command -v gtimeout >/dev/null 2>&1; then
+		gtimeout 5 docker info >/dev/null 2>&1
+		return $?
+	fi
+	docker info >/dev/null 2>&1 &
+	local pid=$!
+	local waited=0
+	while kill -0 "$pid" >/dev/null 2>&1; do
+		if (( waited >= 5 )); then
+			kill "$pid" >/dev/null 2>&1 || true
+			wait "$pid" >/dev/null 2>&1 || true
+			return 1
+		fi
+		sleep 1
+		waited=$((waited + 1))
+	done
+	wait "$pid" >/dev/null 2>&1
+}
+
 cmd_install() {
-	local apt_basics=()
+	local missing_basics=()
 	for tool in make curl jq python3; do
 		if ! command -v "$tool" >/dev/null 2>&1; then
-			apt_basics+=("$tool")
+			missing_basics+=("$tool")
 		fi
 	done
-	if ((${#apt_basics[@]})); then
+	if ((${#missing_basics[@]})); then
 		if have_brew; then
-			for tool in "${apt_basics[@]}"; do
+			for tool in "${missing_basics[@]}"; do
 				case "$tool" in
 				python3) brew install python ;;
 				make) warn "Install command line tools or GNU make for this macOS host." ;;
@@ -142,12 +166,12 @@ cmd_install() {
 		elif have_apt; then
 			if [[ "$(id -u)" -eq 0 ]]; then
 				apt-get update
-				apt-get install -y "${apt_basics[@]}"
+				apt-get install -y "${missing_basics[@]}"
 			else
-				log "Install basics: sudo apt-get update && sudo apt-get install -y ${apt_basics[*]}"
+				log "Install basics: sudo apt-get update && sudo apt-get install -y ${missing_basics[*]}"
 			fi
 		else
-			warn "Missing basic tools: ${apt_basics[*]}. Install them with your OS package manager (for example dnf, pacman, apk, zypper) or use a supported Homebrew/apt-based image."
+			warn "Missing basic tools: ${missing_basics[*]}. Install them with your OS package manager (for example dnf, pacman, apk, zypper) or use a supported Homebrew/apt-based image."
 		fi
 	fi
 	if go_version_ok; then

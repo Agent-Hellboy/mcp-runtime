@@ -27,13 +27,16 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -77,6 +80,7 @@ type apiServer struct {
 	userKeys     userAPIKeyStore
 	platform     *platformStore
 	runtime      *RuntimeServer
+	runtimeInit  string
 }
 
 const eventSelectColumns = "timestamp, source, event_type, server, namespace, cluster, human_id, agent_id, session_id, decision, tool_name, payload"
@@ -100,6 +104,15 @@ func main() {
 	metricsPort := envOr("METRICS_PORT", "9090")
 	clickhouseAddr := envOr("CLICKHOUSE_ADDR", "clickhouse:9000")
 	dbName := envOr("CLICKHOUSE_DB", "mcp")
+	if bootstrapOnly, ok := boolEnv("PLATFORM_ADMIN_BOOTSTRAP_ONLY"); ok && bootstrapOnly {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := runPlatformAdminBootstrap(ctx); err != nil {
+			log.Fatalf("platform admin bootstrap failed: %v", err)
+		}
+		log.Printf("platform admin bootstrap complete")
+		return
+	}
 	if err := validateDBName(dbName); err != nil {
 		log.Fatalf("invalid CLICKHOUSE_DB: %v", err)
 	}
@@ -113,6 +126,23 @@ func main() {
 	}
 	adminAPIKeys := splitCSVSet(envOr("ADMIN_API_KEYS", ""))
 	adminUsers := splitCSVSet(envOr("ADMIN_USERS", ""))
+	for entry := range adminUsers {
+		normalized := strings.ToLower(strings.TrimSpace(entry))
+		if normalized != "" {
+			adminUsers[normalized] = struct{}{}
+		}
+	}
+	if len(adminAPIKeys) > 0 {
+		demoted := make([]string, 0, len(apiKeys))
+		for key := range apiKeys {
+			if _, ok := adminAPIKeys[key]; !ok {
+				demoted = append(demoted, maskCredentialForLog(key))
+			}
+		}
+		if len(demoted) > 0 {
+			log.Printf("warning: ADMIN_API_KEYS is set; %d API_KEYS value(s) not listed in ADMIN_API_KEYS will authenticate as role=user (demoted_keys=%v)", len(demoted), demoted)
+		}
+	}
 
 	oidcIssuer := strings.TrimSpace(os.Getenv("OIDC_ISSUER"))
 	oidcAudience := strings.TrimSpace(os.Getenv("OIDC_AUDIENCE"))
@@ -153,24 +183,40 @@ func main() {
 		oidcIssuer:   oidcIssuer,
 		oidcAudience: oidcAudience,
 	}
+	var store *platformStore
 	if dsn := platformDSNFromEnv(); dsn != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		store, err := newPlatformStore(ctx, dsn, platformJWTSecretFromEnv())
+		secretValue := strings.TrimSpace(os.Getenv("PLATFORM_JWT_SECRET"))
+		if secretValue == "" {
+			log.Fatal("PLATFORM_JWT_SECRET is required when POSTGRES_DSN or DATABASE_URL is configured")
+		}
+		var err error
+		store, err = newPlatformStore(ctx, dsn, []byte(secretValue))
 		if err != nil {
 			log.Fatalf("failed to initialize platform identity database: %v", err)
 		}
 		if err := seedPlatformAdminFromEnv(ctx, store); err != nil {
 			log.Fatalf("failed to seed platform admin: %v", err)
 		}
-		defer store.close()
 		server.platform = store
 		server.userKeys = store
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		if strings.TrimSpace(server.runtimeInit) != "" {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"ok":                  false,
+				"runtime_initialized": false,
+				"runtime_error":       server.runtimeInit,
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":                  true,
+			"runtime_initialized": true,
+		})
 	})
 	mux.HandleFunc("/api/auth/login", server.handleLogin)
 	mux.HandleFunc("/api/auth/signup", server.handleSignup)
@@ -186,7 +232,8 @@ func main() {
 	// Initialize and register runtime server with Kubernetes support
 	runtimeServer, err := NewRuntimeServer(conn, dbName, apiKeys)
 	if err != nil {
-		log.Printf("runtime server initialization warning: %v", err)
+		server.runtimeInit = err.Error()
+		log.Printf("ERROR: runtime server initialization failed: %v", err)
 	} else {
 		server.runtime = runtimeServer
 		if server.userKeys == nil {
@@ -199,18 +246,18 @@ func main() {
 		mux.Handle("/api/deployments/", server.auth(http.HandlerFunc(runtimeServer.handleDeploymentItem)))
 		mux.Handle("/api/admin/namespaces", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleAdminNamespaces))))
 		mux.Handle("/api/admin/deployments", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleAdminDeployments))))
-		mux.Handle("/api/runtime/grants", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleRuntimeGrants))))
-		mux.Handle("/api/runtime/sessions", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleRuntimeSessions))))
-		mux.Handle("/api/runtime/components", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleRuntimeComponents))))
-		mux.Handle("/api/runtime/policy", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleRuntimePolicy))))
+		mux.Handle("/api/runtime/grants", server.auth(http.HandlerFunc(runtimeServer.handleRuntimeGrants)))
+		mux.Handle("/api/runtime/sessions", server.auth(http.HandlerFunc(runtimeServer.handleRuntimeSessions)))
+		mux.Handle("/api/runtime/components", server.auth(http.HandlerFunc(runtimeServer.handleRuntimeComponents)))
+		mux.Handle("/api/runtime/policy", server.auth(http.HandlerFunc(runtimeServer.handleRuntimePolicy)))
 		mux.Handle("/api/runtime/actions/restart", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleActionRestart))))
 		// Grant item (POST /api/runtime/grants/{ns}/{name}/disable|enable, DELETE /api/runtime/grants/{ns}/{name})
-		mux.Handle("/api/runtime/grants/", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleGrantItemPath))))
+		mux.Handle("/api/runtime/grants/", server.auth(http.HandlerFunc(runtimeServer.handleGrantItemPath)))
 		// Session item (POST /api/runtime/sessions/{ns}/{name}/revoke|unrevoke, DELETE /api/runtime/sessions/{ns}/{name})
-		mux.Handle("/api/runtime/sessions/", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleSessionItemPath))))
+		mux.Handle("/api/runtime/sessions/", server.auth(http.HandlerFunc(runtimeServer.handleSessionItemPath)))
 		// User-scoped API key lifecycle.
-		mux.Handle("/api/user/api-keys", server.auth(http.HandlerFunc(runtimeServer.handleUserAPIKeys)))
-		mux.Handle("/api/user/api-keys/", server.auth(http.HandlerFunc(runtimeServer.handleUserAPIKeyItem)))
+		mux.Handle("/api/user/api-keys", server.auth(http.HandlerFunc(server.handleUserAPIKeys)))
+		mux.Handle("/api/user/api-keys/", server.auth(http.HandlerFunc(server.handleUserAPIKeyItem)))
 	}
 
 	shutdown, err := initTracer("mcp-sentinel-api")
@@ -224,22 +271,16 @@ func main() {
 		}()
 	}
 
-	go func() {
-		metricsMux := http.NewServeMux()
-		metricsMux.Handle("/metrics", promhttp.Handler())
-		metricsServer := &http.Server{
-			Addr:              ":" + metricsPort,
-			Handler:           metricsMux,
-			ReadHeaderTimeout: 5 * time.Second,
-			ReadTimeout:       15 * time.Second,
-			WriteTimeout:      15 * time.Second,
-			IdleTimeout:       60 * time.Second,
-		}
-		if err := metricsServer.ListenAndServe(); err != nil {
-			log.Printf("metrics server stopped: %v", err)
-		}
-	}()
-
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+	metricsServer := &http.Server{
+		Addr:              ":" + metricsPort,
+		Handler:           metricsMux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	log.Printf("mcp-sentinel-api listening on :%s", port)
 	handler := otelhttp.NewHandler(logRequests(mux), "http.server")
 	httpServer := &http.Server{
@@ -250,8 +291,38 @@ func main() {
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	if err := httpServer.ListenAndServe(); err != nil {
-		log.Fatalf("server failed: %v", err)
+
+	shutdownSignals, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	serverErrs := make(chan error, 2)
+	go func() {
+		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErrs <- fmt.Errorf("metrics server failed: %w", err)
+		}
+	}()
+	go func() {
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErrs <- fmt.Errorf("api server failed: %w", err)
+		}
+	}()
+
+	select {
+	case <-shutdownSignals.Done():
+		log.Printf("shutdown signal received")
+	case err := <-serverErrs:
+		log.Printf("%v", err)
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Printf("api shutdown error: %v", err)
+	}
+	if err := metricsServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Printf("metrics shutdown error: %v", err)
+	}
+	if store != nil {
+		store.close()
 	}
 }
 
@@ -540,8 +611,10 @@ func (s *apiServer) authenticateRequest(r *http.Request) (principal, bool, error
 	apiKey := strings.TrimSpace(r.Header.Get("x-api-key"))
 	if apiKey != "" {
 		if _, ok := s.apiKeys[apiKey]; ok {
-			role := roleAdmin // backward-compatible: legacy global keys keep full platform access.
+			role := roleAdmin // backward-compatible default when ADMIN_API_KEYS is unset.
 			if len(s.adminAPIKeys) > 0 {
+				// When ADMIN_API_KEYS is configured, API_KEYS values not present in
+				// ADMIN_API_KEYS are intentionally demoted to role=user.
 				role = roleUser
 				if _, admin := s.adminAPIKeys[apiKey]; admin {
 					role = roleAdmin
@@ -591,13 +664,18 @@ func (s *apiServer) authenticateRequest(r *http.Request) (principal, bool, error
 		return principal{}, false, nil
 	}
 	sub := strings.TrimSpace(fmt.Sprint(claims["sub"]))
-	email := strings.TrimSpace(fmt.Sprint(claims["email"]))
+	email := strings.ToLower(strings.TrimSpace(fmt.Sprint(claims["email"])))
+	emailVerified, emailVerifiedPresent := emailVerifiedClaim(claims["email_verified"])
 	role := roleUser
 	if _, ok := s.adminUsers[sub]; ok {
 		role = roleAdmin
 	}
-	if _, ok := s.adminUsers[email]; ok {
-		role = roleAdmin
+	if email != "" {
+		if !emailVerifiedPresent || emailVerified {
+			if _, ok := s.adminUsers[email]; ok {
+				role = roleAdmin
+			}
+		}
 	}
 	return principal{
 		Role:     role,
@@ -624,15 +702,41 @@ func (s *apiServer) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	type authPrincipal struct {
+		Role      string `json:"role"`
+		Subject   string `json:"subject,omitempty"`
+		Email     string `json:"email,omitempty"`
+		Namespace string `json:"namespace,omitempty"`
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated": true,
-		"principal":     p,
+		"principal": authPrincipal{
+			Role:      p.Role,
+			Subject:   p.Subject,
+			Email:     p.Email,
+			Namespace: p.Namespace,
+		},
 	})
 }
 
 // audienceMatches validates if the JWT audience claim matches the expected value.
 func audienceMatches(audClaim any, expected string) bool {
 	return serviceutil.AudienceMatches(audClaim, expected)
+}
+
+func emailVerifiedClaim(claim any) (bool, bool) {
+	switch v := claim.(type) {
+	case bool:
+		return v, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1", "yes":
+			return true, true
+		case "false", "0", "no":
+			return false, true
+		}
+	}
+	return false, false
 }
 
 // extractBearer extracts the JWT token from an Authorization header.
@@ -692,6 +796,14 @@ func splitCSVSet(raw string) map[string]struct{} {
 		out[part] = struct{}{}
 	}
 	return out
+}
+
+func maskCredentialForLog(value string) string {
+	v := strings.TrimSpace(value)
+	if len(v) <= 6 {
+		return "***"
+	}
+	return v[:3] + "..." + v[len(v)-2:]
 }
 
 // queryInt extracts an integer value from URL query parameters.

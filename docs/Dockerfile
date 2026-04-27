@@ -18,6 +18,6 @@ LABEL org.opencontainers.image.source="https://github.com/Agent-Hellboy/mcp-runt
       org.opencontainers.image.description="MkDocs-built documentation site for mcp-runtime"
 
 COPY nginx.conf /etc/nginx/nginx.conf
-COPY --from=build /tmp/site /usr/share/nginx/html
+COPY --from=build /app/site /usr/share/nginx/html
 
 EXPOSE 80

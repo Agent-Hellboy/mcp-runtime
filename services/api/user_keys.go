@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -307,15 +308,19 @@ func randomURLToken(rawBytes int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-func (s *RuntimeServer) handleUserAPIKeys(w http.ResponseWriter, r *http.Request) {
+func (s *apiServer) handleUserAPIKeys(w http.ResponseWriter, r *http.Request) {
 	p, ok := principalFromContext(r.Context())
 	if !ok || p.userID() == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	if s.userKeys == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "user api key store not configured"})
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
-		keys, err := s.ListUserAPIKeys(r.Context(), p.userID())
+		keys, err := s.userKeys.ListUserAPIKeys(r.Context(), p.userID())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list user api keys"})
 			return
@@ -330,7 +335,7 @@ func (s *RuntimeServer) handleUserAPIKeys(w http.ResponseWriter, r *http.Request
 			writeBodyDecodeError(w, err)
 			return
 		}
-		key, cleartext, err := s.CreateUserAPIKey(r.Context(), p.userID(), req.Name)
+		key, cleartext, err := s.userKeys.CreateUserAPIKey(r.Context(), p.userID(), req.Name)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -342,10 +347,14 @@ func (s *RuntimeServer) handleUserAPIKeys(w http.ResponseWriter, r *http.Request
 	}
 }
 
-func (s *RuntimeServer) handleUserAPIKeyItem(w http.ResponseWriter, r *http.Request) {
+func (s *apiServer) handleUserAPIKeyItem(w http.ResponseWriter, r *http.Request) {
 	p, ok := principalFromContext(r.Context())
 	if !ok || p.userID() == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	if s.userKeys == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "user api key store not configured"})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -360,9 +369,9 @@ func (s *RuntimeServer) handleUserAPIKeyItem(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid key path"})
 		return
 	}
-	key, revokeErr := s.RevokeUserAPIKey(r.Context(), p.userID(), parts[0])
+	key, revokeErr := s.userKeys.RevokeUserAPIKey(r.Context(), p.userID(), parts[0])
 	if revokeErr != nil {
-		if apierrors.IsNotFound(revokeErr) {
+		if apierrors.IsNotFound(revokeErr) || errors.Is(revokeErr, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "key not found"})
 			return
 		}

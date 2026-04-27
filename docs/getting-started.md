@@ -10,7 +10,6 @@ The shortest path from an empty Kubernetes cluster to a company-ready MCP endpoi
 - `kubectl` on `PATH`, configured for the target cluster
 - `curl`, `jq`, and `python3` for documented dev and traffic-generation flows
 - A Kubernetes cluster (k3s, kind, minikube, Docker Desktop Kubernetes, EKS — see [cluster-readiness.md](cluster-readiness.md) for distribution-specific prep)
-- `kind` for local Kind-based clusters
 
 Host bootstrap:
 
@@ -125,6 +124,23 @@ spec:
     - name: refund_invoice
       decision: allow
       requiredTrust: high
+```
+
+```yaml
+# session.yaml (MCPAgentSession)
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAgentSession
+metadata:
+  name: payments-ops-agent-session
+  namespace: mcp-servers
+spec:
+  serverRef:
+    name: payments
+  subject:
+    humanID: user-123
+    agentID: ops-agent
+  consentedTrust: high
+  policyVersion: v1
 ```
 
 ```bash

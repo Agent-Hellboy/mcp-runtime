@@ -56,8 +56,6 @@ spec:
           envFrom:
             - configMapRef:
                 name: mcp-sentinel-config
-            - secretRef:
-                name: mcp-sentinel-secrets
           env:
             - name: PORT
               value: "8080"
@@ -91,12 +89,6 @@ spec:
                 secretKeyRef:
                   name: mcp-sentinel-secrets
                   key: PLATFORM_ADMIN_EMAIL
-                  optional: true
-            - name: PLATFORM_ADMIN_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: mcp-sentinel-secrets
-                  key: PLATFORM_ADMIN_PASSWORD
                   optional: true
             - name: OTEL_SERVICE_NAME
               value: mcp-sentinel-api

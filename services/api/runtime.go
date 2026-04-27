@@ -351,7 +351,11 @@ func (s *RuntimeServer) handleRuntimeGrantList(w http.ResponseWriter, r *http.Re
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	namespace := r.URL.Query().Get("namespace")
+	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), r.URL.Query().Get("namespace"))
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
 	grants, err := s.accessMgr.ListGrants(ctx, namespace)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list grants"})
@@ -378,10 +382,19 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 		writeBodyDecodeError(w, err)
 		return
 	}
+	if p, ok := principalFromContext(r.Context()); ok && p.Role != roleAdmin && strings.TrimSpace(req.Namespace) == "" {
+		req.Namespace = strings.TrimSpace(p.Namespace)
+	}
 	if err := validateGrantRequest(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	scopedNamespace, err := s.scopedNamespaceForPrincipal(r.Context(), req.Namespace)
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
+	req.Namespace = scopedNamespace
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -449,7 +462,11 @@ func (s *RuntimeServer) handleRuntimeSessionList(w http.ResponseWriter, r *http.
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	namespace := r.URL.Query().Get("namespace")
+	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), r.URL.Query().Get("namespace"))
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
 	sessions, err := s.accessMgr.ListSessions(ctx, namespace)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list sessions"})
@@ -476,10 +493,19 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 		writeBodyDecodeError(w, err)
 		return
 	}
+	if p, ok := principalFromContext(r.Context()); ok && p.Role != roleAdmin && strings.TrimSpace(req.Namespace) == "" {
+		req.Namespace = strings.TrimSpace(p.Namespace)
+	}
 	if err := validateSessionRequest(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	scopedNamespace, err := s.scopedNamespaceForPrincipal(r.Context(), req.Namespace)
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
+	req.Namespace = scopedNamespace
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -582,15 +608,19 @@ func (s *RuntimeServer) handleRuntimePolicy(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	namespace := r.URL.Query().Get("namespace")
+	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), r.URL.Query().Get("namespace"))
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
 	server := r.URL.Query().Get("server")
 
-	if namespace == "" || server == "" {
+	if strings.TrimSpace(namespace) == "" || server == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace and server parameters required"})
 		return
 	}
 
-	policy, err := s.accessMgr.GetServerPolicy(ctx, namespace, server)
+	policy, err := s.accessMgr.GetServerPolicy(ctx, strings.TrimSpace(namespace), server)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
 		return
@@ -625,12 +655,17 @@ func (s *RuntimeServer) handleGrantDelete(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
 		return
 	}
+	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), namespace)
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if err := s.accessMgr.DeleteGrant(ctx, name, namespace); err != nil {
-		// #nosec G706 -- namespace/name are validated path params and logged for operator diagnostics.
-		log.Printf("delete grant %s/%s: %v", namespace, name, err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete grant"})
+		code, msg := k8sclient.HTTPStatusFromK8sError(err)
+		log.Printf("delete grant %s/%s failed (status=%d): %v", namespace, name, code, err)
+		writeJSON(w, code, map[string]string{"error": fmt.Sprintf("failed to delete grant: %s", msg)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -659,6 +694,12 @@ func (s *RuntimeServer) handleGrantPostTogglePath(w http.ResponseWriter, r *http
 func (s *RuntimeServer) handleGrantToggle(w http.ResponseWriter, r *http.Request, namespace, name string, disable bool) {
 	if s.accessMgr == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		return
+	}
+
+	namespace, nsErr := s.scopedNamespaceForPrincipal(r.Context(), namespace)
+	if nsErr != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": nsErr.Error()})
 		return
 	}
 
@@ -842,12 +883,17 @@ func (s *RuntimeServer) handleSessionDelete(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
 		return
 	}
+	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), namespace)
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if err := s.accessMgr.DeleteSession(ctx, name, namespace); err != nil {
-		// #nosec G706 -- namespace/name are validated path params and logged for operator diagnostics.
-		log.Printf("delete session %s/%s: %v", namespace, name, err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete session"})
+		code, msg := k8sclient.HTTPStatusFromK8sError(err)
+		log.Printf("delete session %s/%s failed (status=%d): %v", namespace, name, code, err)
+		writeJSON(w, code, map[string]string{"error": fmt.Sprintf("failed to delete session: %s", msg)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -879,6 +925,12 @@ func (s *RuntimeServer) handleSessionToggle(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	namespace, nsErr := s.scopedNamespaceForPrincipal(r.Context(), namespace)
+	if nsErr != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": nsErr.Error()})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -900,6 +952,25 @@ func (s *RuntimeServer) handleSessionToggle(w http.ResponseWriter, r *http.Reque
 		"namespace": namespace,
 		"revoked":   revoke,
 	})
+}
+
+func (s *RuntimeServer) scopedNamespaceForPrincipal(ctx context.Context, requested string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	p, ok := principalFromContext(ctx)
+	if !ok || p.Role == roleAdmin {
+		return requested, nil
+	}
+	subjectNamespace := strings.TrimSpace(p.Namespace)
+	if subjectNamespace == "" {
+		return "", errPrincipalIdentityRequired
+	}
+	if requested == "" {
+		return subjectNamespace, nil
+	}
+	if requested != subjectNamespace {
+		return "", errors.New("forbidden namespace")
+	}
+	return requested, nil
 }
 
 // handleActionRestart handles restart requests for components.

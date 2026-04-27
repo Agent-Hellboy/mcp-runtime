@@ -1,0 +1,44 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mcp-sentinel-platform-admin-bootstrap
+  namespace: mcp-sentinel
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: mcp-sentinel-platform-admin-bootstrap
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: mcp-sentinel-api:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: mcp-sentinel-config
+          env:
+            - name: PLATFORM_ADMIN_BOOTSTRAP_ONLY
+              value: "true"
+            - name: POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: POSTGRES_DSN
+            - name: PLATFORM_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: PLATFORM_JWT_SECRET
+            - name: PLATFORM_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: PLATFORM_ADMIN_EMAIL
+            - name: PLATFORM_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: PLATFORM_ADMIN_PASSWORD

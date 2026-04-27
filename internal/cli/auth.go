@@ -26,6 +26,9 @@ import (
 // authAPITestHook, if set, runs instead of the default API probe (unit tests only).
 var authAPITestHook func(ctx context.Context, apiBaseURL, token string) error
 
+// authHTTPDoHook, if set, runs HTTP requests instead of the default client (unit tests only).
+var authHTTPDoHook func(req *http.Request) (*http.Response, error)
+
 // NewAuthCmd is the `auth` command (login, logout, status) for platform credentials.
 func NewAuthCmd(logger *zap.Logger) *cobra.Command {
 	m := &authManager{logger: logger}
@@ -40,9 +43,9 @@ use Kubernetes and the cluster commands, not this command.
 The token is stored in a local file (mode 0600) under the user config directory, unless you set ` + authfile.EnvAPIToken + `.
 
 Optional environment:
-  ` + authfile.EnvAPIURL + `            default API base for login, e.g. https://platform.example.com
-  ` + authfile.EnvAPIToken + `         use this token for API calls; overrides a saved file
-  MCP_RUNTIME_CONFIG_DIR  override the config directory (mainly for tests)`,
+  ` + authfile.EnvAPIURL + `      default API base for login, e.g. https://platform.example.com
+  ` + authfile.EnvAPIToken + `    use this token for API calls; overrides a saved file
+  MCP_RUNTIME_CONFIG_DIR    override the config directory (mainly for tests)`,
 	}
 
 	cmd.AddCommand(m.newAuthLoginCmd())
@@ -92,7 +95,10 @@ func (m *authManager) runAuthLogin(f loginFlags) error {
 	if apiURL == "" {
 		return newWithSentinel(ErrFieldRequired, "api URL is required (set --api-url or "+authfile.EnvAPIURL+")")
 	}
-	apiURL = strings.TrimRight(apiURL, "/")
+	apiURL = normalizePlatformAPIBaseURL(apiURL)
+	if apiURL == "" {
+		return newWithSentinel(ErrFieldRequired, "api URL must include scheme and host")
+	}
 
 	var token, loginRole string
 	if strings.TrimSpace(f.email) != "" || strings.TrimSpace(f.password) != "" {
@@ -175,13 +181,18 @@ func loginPlatformPassword(ctx context.Context, apiBaseURL, email, password stri
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	u := strings.TrimRight(apiBaseURL, "/") + "/api/auth/login"
+	u := normalizePlatformAPIBaseURL(apiBaseURL) + "/api/auth/login"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
 	if err != nil {
 		return "", "", err
 	}
 	req.Header.Set("content-type", "application/json")
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	var resp *http.Response
+	if authHTTPDoHook != nil {
+		resp, err = authHTTPDoHook(req)
+	} else {
+		resp, err = (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	}
 	if err != nil {
 		return "", "", err
 	}
@@ -292,7 +303,7 @@ func fileCredentialsIfRelevant() (*authfile.Credentials, error) {
 
 // verifyPlatformAPIToken issues GET /api/auth/me to confirm the key is accepted.
 func verifyPlatformAPIToken(ctx context.Context, apiBaseURL, token string) error {
-	s := strings.TrimRight(apiBaseURL, "/")
+	s := normalizePlatformAPIBaseURL(apiBaseURL)
 	u := s + "/api/auth/me"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -300,8 +311,13 @@ func verifyPlatformAPIToken(ctx context.Context, apiBaseURL, token string) error
 	}
 	req.Header.Set("x-api-key", token)
 	req.Header.Set("authorization", "Bearer "+token)
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	var resp *http.Response
+	if authHTTPDoHook != nil {
+		resp, err = authHTTPDoHook(req)
+	} else {
+		client := &http.Client{Timeout: 30 * time.Second}
+		resp, err = client.Do(req)
+	}
 	if err != nil {
 		return err
 	}
@@ -316,4 +332,14 @@ func verifyPlatformAPIToken(ctx context.Context, apiBaseURL, token string) error
 		return nil
 	}
 	return fmt.Errorf("verify request failed: HTTP %d", resp.StatusCode)
+}
+
+func normalizePlatformAPIBaseURL(raw string) string {
+	s := strings.TrimSpace(raw)
+	s = strings.TrimRight(s, "/")
+	if strings.HasSuffix(strings.ToLower(s), "/api") {
+		s = strings.TrimSpace(s[:len(s)-len("/api")])
+		s = strings.TrimRight(s, "/")
+	}
+	return s
 }

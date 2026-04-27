@@ -18,6 +18,9 @@ const subDir = "mcp-runtime"
 // ErrNotFound is returned when no credentials file exists or it is empty.
 var ErrNotFound = errors.New("not logged in: no saved credentials")
 
+// ErrInvalid is returned when a credentials file exists but is malformed.
+var ErrInvalid = errors.New("saved credentials are invalid")
+
 // ConfigDir is the per-user mcp-runtime configuration directory. If the environment
 // variable MCP_RUNTIME_CONFIG_DIR is set, that path is used (useful in tests).
 func ConfigDir() (string, error) {
@@ -64,10 +67,10 @@ func Load(path string) (*Credentials, error) {
 	}
 	var c Credentials
 	if err := json.Unmarshal(b, &c); err != nil {
-		return nil, fmt.Errorf("parse credentials: %w", err)
+		return nil, fmt.Errorf("%w: parse credentials: %v", ErrInvalid, err)
 	}
 	if c.Token == "" || c.APIBaseURL == "" {
-		return nil, ErrNotFound
+		return nil, fmt.Errorf("%w: api_url and token are required", ErrInvalid)
 	}
 	return &c, nil
 }
@@ -81,14 +84,41 @@ func Save(path string, c *Credentials) error {
 		return errors.New("api_url and token are required")
 	}
 	c.UpdatedAt = time.Now().UTC()
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o600)
+	tmp, err := os.CreateTemp(dir, "credentials-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		_ = os.Remove(tmpName)
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
 
 // Remove deletes the credentials file at path if it exists.

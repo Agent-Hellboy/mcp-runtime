@@ -9,6 +9,7 @@ let grantsCache = [];
 let sessionsCache = [];
 let userAPIKeysCache = [];
 let serversCache = [];
+let userAPIKeyClearTimer = null;
 
 // API Helper
 async function fetchJSON(path, options = {}) {
@@ -1053,6 +1054,7 @@ function initGovernance() {
 
 // User API Keys
 async function loadUserAPIKeys() {
+  clearOneTimeUserAPIKey();
   try {
     const data = await fetchJSON("/user/api-keys");
     userAPIKeysCache = Array.isArray(data.keys) ? data.keys : [];
@@ -1111,6 +1113,12 @@ async function createUserAPIKey() {
     if (oneTime && data.api_key) {
       oneTime.textContent = `Copy now (shown once): ${data.api_key}`;
       oneTime.classList.remove("hidden");
+      if (userAPIKeyClearTimer) {
+        clearTimeout(userAPIKeyClearTimer);
+      }
+      userAPIKeyClearTimer = setTimeout(() => {
+        clearOneTimeUserAPIKey();
+      }, 60000);
     }
     if (input) input.value = "";
     showToast("API key created");
@@ -1134,15 +1142,22 @@ async function revokeUserAPIKey(id) {
 
 function resetUserAPIKeys() {
   userAPIKeysCache = [];
-  const once = document.getElementById("user-api-key-once");
-  if (once) {
-    once.textContent = "";
-    once.classList.add("hidden");
-  }
+  clearOneTimeUserAPIKey();
   const tbody = document.getElementById("user-api-keys-body");
   if (tbody) {
     tbody.innerHTML = '<tr><td colspan="5" class="empty">No API keys found.</td></tr>';
   }
+}
+
+function clearOneTimeUserAPIKey() {
+  if (userAPIKeyClearTimer) {
+    clearTimeout(userAPIKeyClearTimer);
+    userAPIKeyClearTimer = null;
+  }
+  const once = document.getElementById("user-api-key-once");
+  if (!once) return;
+  once.textContent = "";
+  once.classList.add("hidden");
 }
 
 function initUserAPIKeys() {

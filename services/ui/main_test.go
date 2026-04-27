@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -133,6 +135,9 @@ func TestAPIProxyAllowsPublicRuntimeServers(t *testing.T) {
 		if got := r.URL.Path; got != "/api/runtime/servers" {
 			t.Fatalf("path = %q, want /api/runtime/servers", got)
 		}
+		if got := r.URL.Query().Get("namespace"); got != "mcp-servers" {
+			t.Fatalf("namespace = %q, want %q", got, "mcp-servers")
+		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"content-type": []string{"application/json"}},
@@ -146,7 +151,7 @@ func TestAPIProxyAllowsPublicRuntimeServers(t *testing.T) {
 	proxy := newAPIProxyWithTransport(target, "api-secret", "api-secret", newUISessionStore(time.Now), transport)
 
 	recorder := httptest.NewRecorder()
-	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/runtime/servers", nil))
+	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/runtime/servers?namespace=user-private", nil))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("public runtime servers status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
@@ -206,6 +211,49 @@ func TestHandleLoginWithOIDCToken(t *testing.T) {
 	}
 	if !upstreamCalled {
 		t.Fatal("proxy did not call upstream")
+	}
+}
+
+func TestHandleLoginWithOIDCTokenCapsSessionToTokenExpiry(t *testing.T) {
+	now := time.Now().UTC().Add(2 * time.Minute)
+	previousHook := oidcVerifyHook
+	oidcVerifyHook = func(_ context.Context, upstream, token string) (sessionPrincipal, error) {
+		if upstream != "http://api.example" {
+			t.Fatalf("upstream = %q, want http://api.example", upstream)
+		}
+		if token == "" {
+			t.Fatal("token should not be empty")
+		}
+		return sessionPrincipal{
+			Role:     "user",
+			Subject:  "user-123",
+			AuthType: "oidc_jwt",
+		}, nil
+	}
+	defer func() { oidcVerifyHook = previousHook }()
+
+	exp := now.Add(30 * time.Minute)
+	payload := fmt.Sprintf(`{"exp":%d}`, exp.Unix())
+	idToken := "eyJhbGciOiJub25lIn0." + base64.RawURLEncoding.EncodeToString([]byte(payload)) + ".sig"
+	store := newUISessionStore(func() time.Time { return now })
+	login := httptest.NewRecorder()
+	handleLogin("", "api-secret", "http://api.example", store).ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"id_token":"`+idToken+`"}`)))
+	if login.Code != http.StatusOK {
+		t.Fatalf("login status = %d, want %d; body=%s", login.Code, http.StatusOK, login.Body.String())
+	}
+	cookies := login.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %d, want 1", len(cookies))
+	}
+	if cookies[0].MaxAge > int((33 * time.Minute).Seconds()) {
+		t.Fatalf("cookie MaxAge = %d, expected <= 33 minutes", cookies[0].MaxAge)
+	}
+	sess, ok := store.get(cookies[0].Value)
+	if !ok {
+		t.Fatal("expected persisted session")
+	}
+	if sess.ExpiresAt.After(exp.Add(time.Second)) || sess.ExpiresAt.Before(exp.Add(-1*time.Second)) {
+		t.Fatalf("session expiry = %s, want %s", sess.ExpiresAt.Format(time.RFC3339), exp.Format(time.RFC3339))
 	}
 }
 

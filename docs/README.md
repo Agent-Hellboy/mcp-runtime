@@ -10,9 +10,9 @@ MCP Runtime is an open source control plane for operating company MCP servers on
   <p class="docs-lead">Deploy internal MCP servers, expose them through governed routes, and keep policy and telemetry attached to every agent call.</p>
 
   <div class="docs-actions">
-    <a class="docs-button docs-button-primary" href="getting-started/">Get started</a>
-    <a class="docs-button" href="architecture/">Architecture</a>
-    <a class="docs-button" href="api/">API reference</a>
+    <a class="docs-button docs-button-primary" href="getting-started.md">Get started</a>
+    <a class="docs-button" href="architecture.md">Architecture</a>
+    <a class="docs-button" href="api.md">API reference</a>
   </div>
   </div>
 
@@ -32,19 +32,19 @@ MCP Runtime is an open source control plane for operating company MCP servers on
 ## Choose a path
 
 <div class="docs-grid docs-grid-3">
-<a class="docs-card" href="getting-started/">
+<a class="docs-card" href="getting-started.md">
   <span class="docs-card-kicker">Start</span>
   <strong>Install the platform</strong>
   <span>Build the CLI, run preflight checks, install the stack, and deploy the first server.</span>
 </a>
 
-<a class="docs-card" href="architecture/">
+<a class="docs-card" href="architecture.md">
   <span class="docs-card-kicker">Understand</span>
   <strong>Read the architecture</strong>
   <span>Trace how the manager, registry, broker, operator, and Sentinel services fit together.</span>
 </a>
 
-<a class="docs-card" href="cluster-readiness/">
+<a class="docs-card" href="cluster-readiness.md">
   <span class="docs-card-kicker">Prepare</span>
   <strong>Check your cluster</strong>
   <span>Review prerequisites for k3s, kind, minikube, Docker Desktop Kubernetes, kubeadm, and EKS.</span>
@@ -54,25 +54,25 @@ MCP Runtime is an open source control plane for operating company MCP servers on
 ## Operate MCP Runtime
 
 <div class="docs-grid docs-grid-2">
-<a class="docs-card" href="runtime/">
+<a class="docs-card" href="runtime.md">
   <span class="docs-card-kicker">Runtime</span>
   <strong>Control plane</strong>
   <span>CRDs, reconciliation outputs, image resolution, ingress wiring, and rollout flow.</span>
 </a>
 
-<a class="docs-card" href="sentinel/">
+<a class="docs-card" href="sentinel.md">
   <span class="docs-card-kicker">Governance</span>
   <strong>Sentinel request path</strong>
   <span>Gateway policy, grant/session evaluation, analytics, audit events, and dashboard services.</span>
 </a>
 
-<a class="docs-card" href="cli/">
+<a class="docs-card" href="cli.md">
   <span class="docs-card-kicker">CLI</span>
   <strong>Command reference</strong>
   <span>Setup, status, registry, server, access, pipeline, and Sentinel commands.</span>
 </a>
 
-<a class="docs-card" href="api/">
+<a class="docs-card" href="api.md">
   <span class="docs-card-kicker">Reference</span>
   <strong>API and CRDs</strong>
   <span><code>MCPServer</code>, access grants, sessions, gateway headers, and HTTP APIs.</span>

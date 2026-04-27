@@ -168,6 +168,7 @@ func TestRuntimeServersIncludesMCPServerInventory(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/runtime/servers", nil)
+	request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, principal{Role: roleAdmin, Subject: "admin-1"}))
 	server.handleRuntimeServers(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
@@ -286,6 +287,72 @@ func TestRuntimeServersNonAdminRejectsOtherNamespace(t *testing.T) {
 	server.handleRuntimeServers(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestScopedNamespaceForPrincipal(t *testing.T) {
+	server := &RuntimeServer{}
+	userCtx := context.WithValue(context.Background(), principalContextKey{}, principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+	})
+
+	got, err := server.scopedNamespaceForPrincipal(userCtx, "")
+	if err != nil || got != "user-1" {
+		t.Fatalf("scoped namespace default = %q err=%v, want user-1 nil", got, err)
+	}
+	got, err = server.scopedNamespaceForPrincipal(userCtx, "user-1")
+	if err != nil || got != "user-1" {
+		t.Fatalf("scoped namespace explicit = %q err=%v, want user-1 nil", got, err)
+	}
+	if _, err := server.scopedNamespaceForPrincipal(userCtx, "mcp-servers"); err == nil {
+		t.Fatal("expected forbidden namespace error")
+	}
+}
+
+func TestRuntimeGrantApplyNonAdminDefaultsToPrincipalNamespace(t *testing.T) {
+	ctx := context.Background()
+	accessMgr := newTestAccessManager(t)
+	server := &RuntimeServer{accessMgr: accessMgr}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/grants", bytes.NewReader([]byte(`{
+		"name": "grant-user",
+		"serverRef": {"name": "demo"},
+		"subject": {"humanID": "user-1"},
+		"maxTrust": "low"
+	}`)))
+	request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+	}))
+	server.handleRuntimeGrantApply(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if _, err := accessMgr.GetGrant(ctx, "grant-user", "user-1"); err != nil {
+		t.Fatalf("expected grant in user namespace: %v", err)
+	}
+}
+
+func TestRuntimeGrantDeleteMapsNotFound(t *testing.T) {
+	server := &RuntimeServer{accessMgr: newTestAccessManager(t)}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/api/runtime/grants/mcp-servers/missing", nil)
+	server.handleGrantDelete(recorder, request, "mcp-servers", "missing")
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestRuntimeSessionDeleteMapsNotFound(t *testing.T) {
+	server := &RuntimeServer{accessMgr: newTestAccessManager(t)}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/api/runtime/sessions/mcp-servers/missing", nil)
+	server.handleSessionDelete(recorder, request, "mcp-servers", "missing")
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

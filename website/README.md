@@ -58,16 +58,16 @@ Required GitHub secrets:
 - `WEBSITE_DEPLOY_USER`
 - `WEBSITE_DEPLOY_PATH`
 - `WEBSITE_DEPLOY_SSH_KEY`
-- `WEBSITE_BASE_URL=https://mcpruntime.org`
+- `WEBSITE_BASE_URL`
 
 Optional GitHub secrets:
 
 - `WEBSITE_DEPLOY_HOST_KEY` — pinned SSH host key for `WEBSITE_DEPLOY_HOST`; use either a full known-hosts line such as `203.0.113.10 ssh-ed25519 AAAA...` or a bare host key such as `ssh-ed25519 AAAA...`. If omitted or malformed, CI falls back to `ssh-keyscan`.
-- `WEBSITE_DOCS_URL` (default `https://docs.mcpruntime.org/`)
-- `WEBSITE_HOST_PORT=8080`
-- `WEBSITE_CONTAINER_PORT=8080`
-- `WEBSITE_CONTAINER_NAME=mcp-runtime-website`
-- `WEBSITE_IMAGE_NAME=mcp-runtime-website:latest`
+- `WEBSITE_DOCS_URL` (default: `https://docs.mcpruntime.org/`)
+- `WEBSITE_HOST_PORT` (default: `8080`)
+- `WEBSITE_CONTAINER_PORT` (default: `8080`)
+- `WEBSITE_CONTAINER_NAME` (default: `mcp-runtime-website`)
+- `WEBSITE_IMAGE_NAME` (default: `mcp-runtime-website:latest`)
 - `WEBSITE_DEPLOY_COMMAND` (if set, CI runs this instead of the default
   Docker build/run sequence)
 

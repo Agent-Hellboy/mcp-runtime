@@ -46,7 +46,7 @@ With mcp-runtime auth login, commands use the platform API by default. Use --use
 to target the cluster with kubectl and a kubeconfig (cluster admin path).`,
 	}
 
-	cmd.PersistentFlags().BoolVar(&mgr.useKube, "use-kube", false, "Use kubectl and local kubeconfig instead of the platform API")
+	cmd.PersistentFlags().BoolVar(&mgr.useKube, "use-kube", false, "Use kubectl and local kubeconfig instead of the platform API for supported commands")
 
 	cmd.AddCommand(mgr.newAccessGrantCmd())
 	cmd.AddCommand(mgr.newAccessSessionCmd())

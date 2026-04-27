@@ -254,6 +254,7 @@ func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, s
 			req := r.Clone(r.Context())
 			req.Header.Del("x-api-key")
 			req.Header.Del("authorization")
+			forcePublicRuntimeNamespace(req)
 			proxy.ServeHTTP(w, req)
 			return
 		}
@@ -282,6 +283,16 @@ func allowsPublicRead(r *http.Request) bool {
 	}
 	path := strings.TrimSpace(strings.TrimSuffix(r.URL.Path, "/"))
 	return strings.HasSuffix(path, "/runtime/servers")
+}
+
+func forcePublicRuntimeNamespace(r *http.Request) {
+	path := strings.TrimSpace(strings.TrimSuffix(r.URL.Path, "/"))
+	if !strings.HasSuffix(path, "/runtime/servers") {
+		return
+	}
+	query := r.URL.Query()
+	query.Set("namespace", "mcp-servers")
+	r.URL.RawQuery = query.Encode()
 }
 
 func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionStore) http.HandlerFunc {
@@ -370,6 +381,7 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 			sess, err = store.createSession(r.Context(), uiSession{
 				Principal:          p,
 				UpstreamAuthHeader: "Bearer " + idToken,
+				ExpiresAt:          idTokenExpiry(idToken),
 			})
 		} else {
 			if apiKey == "" {
@@ -461,6 +473,27 @@ func loginPasswordWithAPI(ctx context.Context, apiUpstream, email, password stri
 		Email:    strings.TrimSpace(payload.User.Email),
 		AuthType: "platform_jwt",
 	}, payload.AccessToken, nil
+}
+
+func idTokenExpiry(idToken string) time.Time {
+	parts := strings.Split(strings.TrimSpace(idToken), ".")
+	if len(parts) < 2 {
+		return time.Time{}
+	}
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
+		return time.Time{}
+	}
+	if claims.Exp <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(claims.Exp, 0).UTC()
 }
 
 func verifyOIDCTokenWithAPI(ctx context.Context, apiUpstream, idToken string) (sessionPrincipal, error) {
@@ -609,7 +642,13 @@ func (s *uiSessionStore) createSession(_ context.Context, session uiSession) (ui
 		return uiSession{}, err
 	}
 	session.ID = id
-	session.ExpiresAt = s.now().Add(sessionDuration)
+	maxExpiry := s.now().Add(sessionDuration)
+	if session.ExpiresAt.IsZero() || session.ExpiresAt.After(maxExpiry) {
+		session.ExpiresAt = maxExpiry
+	}
+	if !session.ExpiresAt.After(s.now()) {
+		return uiSession{}, errors.New("session expiry is in the past")
+	}
 	s.sessions[session.ID] = session
 	return session, nil
 }

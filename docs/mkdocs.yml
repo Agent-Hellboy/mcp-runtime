@@ -3,7 +3,7 @@ site_url: https://docs.mcpruntime.org/
 repo_url: https://github.com/Agent-Hellboy/mcp-runtime
 repo_name: Agent-Hellboy/mcp-runtime
 docs_dir: .
-site_dir: /tmp/site
+site_dir: site
 exclude_docs: |
   .dockerignore
   Dockerfile
@@ -46,7 +46,6 @@ markdown_extensions:
   - md_in_html
 
 extra_javascript:
-  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
   - js/mermaid-init.js
 
 extra_css:

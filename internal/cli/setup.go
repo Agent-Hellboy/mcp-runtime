@@ -2118,8 +2118,10 @@ func renderAnalyticsSecretManifest(kubectl KubectlRunner) (string, error) {
 	}
 	if postgresDSN == "" {
 		postgresDSN = fmt.Sprintf(
-			"postgres://%s:%s@mcp-sentinel-postgres.%s.svc.cluster.local:5432/%s?sslmode=disable",
-			postgresUser, postgresPassword, defaultAnalyticsNamespace, postgresDB,
+			"postgres://%s@mcp-sentinel-postgres.%s.svc.cluster.local:5432/%s?sslmode=disable",
+			url.UserPassword(postgresUser, postgresPassword).String(),
+			defaultAnalyticsNamespace,
+			postgresDB,
 		)
 	}
 	platformJWTSecret, err := existingSecretDataValueOrRandom(kubectl, defaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_JWT_SECRET", 32)
@@ -2141,27 +2143,34 @@ func renderAnalyticsSecretManifest(kubectl KubectlRunner) (string, error) {
 	if adminUsers == "" && platformAdminEmail != "" {
 		adminUsers = platformAdminEmail
 	}
-	secretManifest := fmt.Sprintf(`apiVersion: v1
-kind: Secret
-metadata:
-  name: mcp-sentinel-secrets
-  namespace: %s
-type: Opaque
-stringData:
-  API_KEYS: "%s"
-  UI_API_KEY: "%s"
-  ADMIN_USERS: "%s"
-  PLATFORM_ADMIN_EMAIL: "%s"
-  PLATFORM_ADMIN_PASSWORD: "%s"
-  POSTGRES_USER: "%s"
-  POSTGRES_PASSWORD: "%s"
-  POSTGRES_DB: "%s"
-  POSTGRES_DSN: "%s"
-  PLATFORM_JWT_SECRET: "%s"
-  GRAFANA_ADMIN_USER: "admin"
-  GRAFANA_ADMIN_PASSWORD: "%s"
-`, defaultAnalyticsNamespace, apiKeys, uiAPIKey, adminUsers, platformAdminEmail, platformAdminPassword, postgresUser, postgresPassword, postgresDB, postgresDSN, platformJWTSecret, grafanaPassword)
-	return secretManifest, nil
+	secretManifest := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]string{
+			"name":      "mcp-sentinel-secrets",
+			"namespace": defaultAnalyticsNamespace,
+		},
+		"type": "Opaque",
+		"stringData": map[string]string{
+			"API_KEYS":                apiKeys,
+			"UI_API_KEY":              uiAPIKey,
+			"ADMIN_USERS":             adminUsers,
+			"PLATFORM_ADMIN_EMAIL":    platformAdminEmail,
+			"PLATFORM_ADMIN_PASSWORD": platformAdminPassword,
+			"POSTGRES_USER":           postgresUser,
+			"POSTGRES_PASSWORD":       postgresPassword,
+			"POSTGRES_DB":             postgresDB,
+			"POSTGRES_DSN":            postgresDSN,
+			"PLATFORM_JWT_SECRET":     platformJWTSecret,
+			"GRAFANA_ADMIN_USER":      "admin",
+			"GRAFANA_ADMIN_PASSWORD":  grafanaPassword,
+		},
+	}
+	rendered, err := yaml.Marshal(secretManifest)
+	if err != nil {
+		return "", wrapWithSentinel(ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to render analytics secrets: %v", err))
+	}
+	return string(rendered), nil
 }
 
 func ensureAnalyticsImagePullSecret(kubectl KubectlRunner) (string, error) {

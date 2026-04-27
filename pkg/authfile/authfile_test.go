@@ -85,6 +85,32 @@ func TestLoad_Missing(t *testing.T) {
 	}
 }
 
+func TestLoad_InvalidJSON(t *testing.T) {
+	t.Parallel()
+	d := t.TempDir()
+	p := filepath.Join(d, "credentials.json")
+	if err := os.WriteFile(p, []byte(`{"api_url"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(p)
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Load() = %v, want ErrInvalid", err)
+	}
+}
+
+func TestLoad_IncompleteCredentials(t *testing.T) {
+	t.Parallel()
+	d := t.TempDir()
+	p := filepath.Join(d, "credentials.json")
+	if err := os.WriteFile(p, []byte(`{"api_url":"https://platform.example.com"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(p)
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Load() = %v, want ErrInvalid", err)
+	}
+}
+
 func TestMaskToken(t *testing.T) {
 	t.Parallel()
 	if g := MaskToken(""); g != "(empty)" {

@@ -46,10 +46,17 @@ CREATE TABLE IF NOT EXISTS registry_credentials (
 CREATE TABLE IF NOT EXISTS namespaces (
   id uuid primary key,
   user_id uuid not null references users(id) on delete cascade,
-  namespace text unique not null,
+  namespace text not null,
   created_at timestamptz not null default now(),
   deleted_at timestamptz
 );
+
+ALTER TABLE IF EXISTS namespaces
+  DROP CONSTRAINT IF EXISTS namespaces_namespace_key;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_namespaces_active
+ON namespaces(namespace)
+WHERE deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS refresh_tokens (
   id uuid primary key,

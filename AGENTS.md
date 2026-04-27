@@ -85,6 +85,16 @@ kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
 
   Keep `API_KEYS` and `UI_API_KEY` aligned; copy the secret to `mcp-servers` if MCP servers need it.
 
+- **Platform admin bootstrap (one-shot):**
+
+```bash
+kubectl apply -f k8s/21-platform-admin-bootstrap-job.yaml
+kubectl wait --for=condition=complete job/mcp-sentinel-platform-admin-bootstrap -n mcp-sentinel --timeout=120s
+kubectl patch secret mcp-sentinel-secrets -n mcp-sentinel --type merge -p '{"stringData":{"PLATFORM_ADMIN_PASSWORD":""}}'
+```
+
+  `PLATFORM_ADMIN_PASSWORD` is bootstrap-only; the API deployment should not keep it in steady-state environment variables.
+
 ### Platform domain and TLS (short)
 
 - **What `MCP_PLATFORM_DOMAIN` does:** with `export MCP_PLATFORM_DOMAIN=mcpruntime.org` (apex only, no `https://`), the CLI/operator resolve **registry**, **MCP**, and **platform** hostnames as:

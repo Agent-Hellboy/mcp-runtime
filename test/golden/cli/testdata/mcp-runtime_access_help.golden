@@ -12,7 +12,7 @@ Available Commands:
 
 Flags:
   -h, --help       help for access
-      --use-kube   Use kubectl and local kubeconfig instead of the platform API
+      --use-kube   Use kubectl and local kubeconfig instead of the platform API for supported commands
 
 Global Flags:
       --debug   Enable debug mode with structured error logging

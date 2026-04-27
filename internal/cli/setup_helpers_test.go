@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"gopkg.in/yaml.v3"
 )
 
 type helperFakeClusterManager struct{}
@@ -25,6 +27,20 @@ type helperFakeRegistryManager struct{}
 func (f *helperFakeRegistryManager) ShowRegistryInfo() error { return nil }
 func (f *helperFakeRegistryManager) PushInCluster(_, _, _ string) error {
 	return nil
+}
+
+func secretStringDataFromManifest(t *testing.T, manifest string) map[string]string {
+	t.Helper()
+	var payload struct {
+		StringData map[string]string `yaml:"stringData"`
+	}
+	if err := yaml.Unmarshal([]byte(manifest), &payload); err != nil {
+		t.Fatalf("unmarshal secret manifest: %v", err)
+	}
+	if payload.StringData == nil {
+		t.Fatalf("secret manifest missing stringData: %q", manifest)
+	}
+	return payload.StringData
 }
 
 func TestGetOperatorImage(t *testing.T) {
@@ -516,8 +532,9 @@ func TestRenderAnalyticsSecretManifestReusesExistingPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(manifest, `GRAFANA_ADMIN_PASSWORD: "keep-me"`) {
-		t.Fatalf("expected existing grafana password to be reused, got %q", manifest)
+	data := secretStringDataFromManifest(t, manifest)
+	if data["GRAFANA_ADMIN_PASSWORD"] != "keep-me" {
+		t.Fatalf("expected existing grafana password to be reused, got %q", data["GRAFANA_ADMIN_PASSWORD"])
 	}
 }
 
@@ -545,23 +562,54 @@ func TestRenderAnalyticsSecretManifestReusesExistingAPIKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(manifest, `API_KEYS: "api-key"`) {
-		t.Fatalf("expected existing API key to be reused, got %q", manifest)
+	data := secretStringDataFromManifest(t, manifest)
+	if data["API_KEYS"] != "api-key" {
+		t.Fatalf("expected existing API key to be reused, got %q", data["API_KEYS"])
 	}
-	if !strings.Contains(manifest, `UI_API_KEY: "ui-key"`) {
-		t.Fatalf("expected existing UI API key to be reused, got %q", manifest)
+	if data["UI_API_KEY"] != "ui-key" {
+		t.Fatalf("expected existing UI API key to be reused, got %q", data["UI_API_KEY"])
 	}
-	if !strings.Contains(manifest, `POSTGRES_USER: "mcp_runtime"`) {
-		t.Fatalf("expected default postgres user to be rendered, got %q", manifest)
+	if data["POSTGRES_USER"] != "mcp_runtime" {
+		t.Fatalf("expected default postgres user to be rendered, got %q", data["POSTGRES_USER"])
 	}
-	if !strings.Contains(manifest, `POSTGRES_DB: "mcp_runtime"`) {
-		t.Fatalf("expected default postgres db to be rendered, got %q", manifest)
+	if data["POSTGRES_DB"] != "mcp_runtime" {
+		t.Fatalf("expected default postgres db to be rendered, got %q", data["POSTGRES_DB"])
 	}
-	if !strings.Contains(manifest, `POSTGRES_DSN: "postgres://mcp_runtime:`) {
-		t.Fatalf("expected derived postgres DSN to be rendered, got %q", manifest)
+	if !strings.HasPrefix(data["POSTGRES_DSN"], "postgres://mcp_runtime:") {
+		t.Fatalf("expected derived postgres DSN to be rendered, got %q", data["POSTGRES_DSN"])
 	}
-	if !strings.Contains(manifest, `GRAFANA_ADMIN_PASSWORD: "grafana-password"`) {
-		t.Fatalf("expected existing grafana password to be reused, got %q", manifest)
+	if data["GRAFANA_ADMIN_PASSWORD"] != "grafana-password" {
+		t.Fatalf("expected existing grafana password to be reused, got %q", data["GRAFANA_ADMIN_PASSWORD"])
+	}
+}
+
+func TestRenderAnalyticsSecretManifestEscapesPostgresCredentialsInDSN(t *testing.T) {
+	postgresUserEncoded := base64.StdEncoding.EncodeToString([]byte("user@runtime"))
+	postgresPasswordEncoded := base64.StdEncoding.EncodeToString([]byte(`pa:ss?/#[%]`))
+	mock := &MockExecutor{
+		CommandFunc: func(spec ExecSpec) *MockCommand {
+			switch {
+			case contains(spec.Args, "jsonpath={.data.POSTGRES_USER}"):
+				return &MockCommand{Args: spec.Args, OutputData: []byte(postgresUserEncoded)}
+			case contains(spec.Args, "jsonpath={.data.POSTGRES_PASSWORD}"):
+				return &MockCommand{Args: spec.Args, OutputData: []byte(postgresPasswordEncoded)}
+			default:
+				return &MockCommand{Args: spec.Args}
+			}
+		},
+	}
+	kubectl := &KubectlClient{exec: mock, validators: nil}
+
+	manifest, err := renderAnalyticsSecretManifest(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data := secretStringDataFromManifest(t, manifest)
+
+	encodedUserInfo := url.UserPassword("user@runtime", `pa:ss?/#[%]`).String()
+	want := "postgres://" + encodedUserInfo + "@mcp-sentinel-postgres.mcp-sentinel.svc.cluster.local:5432/mcp_runtime?sslmode=disable"
+	if data["POSTGRES_DSN"] != want {
+		t.Fatalf("expected encoded postgres DSN %q, got %q", want, data["POSTGRES_DSN"])
 	}
 }
 
@@ -584,22 +632,23 @@ func TestRenderAnalyticsSecretManifestGeneratesKeysWhenMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Contains(manifest, `API_KEYS: ""`) {
+	data := secretStringDataFromManifest(t, manifest)
+	if data["API_KEYS"] == "" {
 		t.Fatalf("expected generated API key, got %q", manifest)
 	}
-	if strings.Contains(manifest, `UI_API_KEY: ""`) {
+	if data["UI_API_KEY"] == "" {
 		t.Fatalf("expected generated UI API key, got %q", manifest)
 	}
-	if strings.Contains(manifest, `GRAFANA_ADMIN_PASSWORD: ""`) {
+	if data["GRAFANA_ADMIN_PASSWORD"] == "" {
 		t.Fatalf("expected generated grafana password, got %q", manifest)
 	}
-	if strings.Contains(manifest, `POSTGRES_PASSWORD: ""`) {
+	if data["POSTGRES_PASSWORD"] == "" {
 		t.Fatalf("expected generated postgres password, got %q", manifest)
 	}
-	if strings.Contains(manifest, `POSTGRES_DSN: ""`) {
+	if data["POSTGRES_DSN"] == "" {
 		t.Fatalf("expected generated postgres DSN, got %q", manifest)
 	}
-	if strings.Contains(manifest, `PLATFORM_JWT_SECRET: ""`) {
+	if data["PLATFORM_JWT_SECRET"] == "" {
 		t.Fatalf("expected generated platform jwt secret, got %q", manifest)
 	}
 }

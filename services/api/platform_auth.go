@@ -2,18 +2,91 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
 const platformAccessTokenTTL = 15 * time.Minute
+const (
+	apiLoginLockoutBase = 15 * time.Second
+	apiLoginLockoutMax  = 5 * time.Minute
+)
+
+var platformLoginAttempts = newAPILoginAttemptTracker(time.Now)
+
+type apiLoginAttempt struct {
+	failures    int
+	lockedUntil time.Time
+}
+
+type apiLoginAttemptTracker struct {
+	mu      sync.Mutex
+	nowFunc func() time.Time
+	entries map[string]apiLoginAttempt
+}
+
+func newAPILoginAttemptTracker(nowFn func() time.Time) *apiLoginAttemptTracker {
+	return &apiLoginAttemptTracker{
+		nowFunc: nowFn,
+		entries: map[string]apiLoginAttempt{},
+	}
+}
+
+func (t *apiLoginAttemptTracker) allow(key string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	state := t.entries[key]
+	now := t.nowFunc()
+	if state.lockedUntil.IsZero() || !state.lockedUntil.After(now) {
+		return true
+	}
+	return false
+}
+
+func (t *apiLoginAttemptTracker) recordFailure(key string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.nowFunc()
+	state := t.entries[key]
+	state.failures++
+	state.lockedUntil = now.Add(lockoutDurationForFailures(state.failures))
+	t.entries[key] = state
+	return state.failures
+}
+
+func (t *apiLoginAttemptTracker) recordSuccess(key string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	state := t.entries[key]
+	failures := state.failures
+	delete(t.entries, key)
+	return failures
+}
+
+func lockoutDurationForFailures(failures int) time.Duration {
+	if failures <= 2 {
+		return 0
+	}
+	steps := failures - 2
+	lockout := apiLoginLockoutBase
+	for i := 1; i < steps; i++ {
+		lockout *= 2
+		if lockout >= apiLoginLockoutMax {
+			return apiLoginLockoutMax
+		}
+	}
+	if lockout > apiLoginLockoutMax {
+		return apiLoginLockoutMax
+	}
+	return lockout
+}
 
 func platformDSNFromEnv() string {
 	if v := strings.TrimSpace(os.Getenv("POSTGRES_DSN")); v != "" {
@@ -22,17 +95,29 @@ func platformDSNFromEnv() string {
 	return strings.TrimSpace(os.Getenv("DATABASE_URL"))
 }
 
-func platformJWTSecretFromEnv() []byte {
-	if v := strings.TrimSpace(os.Getenv("PLATFORM_JWT_SECRET")); v != "" {
-		return []byte(v)
+func platformJWTSecretFromEnv() ([]byte, error) {
+	secret := strings.TrimSpace(os.Getenv("PLATFORM_JWT_SECRET"))
+	if secret == "" {
+		return nil, errors.New("PLATFORM_JWT_SECRET is required when platform identity is enabled")
 	}
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		log.Printf("warning: failed to generate platform JWT secret: %v", err)
-		return []byte("dev-only-mcp-runtime-platform-secret")
+	return []byte(secret), nil
+}
+
+func runPlatformAdminBootstrap(ctx context.Context) error {
+	dsn := platformDSNFromEnv()
+	if dsn == "" {
+		return errors.New("POSTGRES_DSN (or DATABASE_URL) is required for PLATFORM_ADMIN_BOOTSTRAP_ONLY")
 	}
-	log.Printf("warning: PLATFORM_JWT_SECRET is not set; generated an ephemeral JWT secret")
-	return []byte(base64.RawURLEncoding.EncodeToString(b))
+	jwtSecret, err := platformJWTSecretFromEnv()
+	if err != nil {
+		return err
+	}
+	store, err := newPlatformStore(ctx, dsn, jwtSecret)
+	if err != nil {
+		return err
+	}
+	defer store.close()
+	return seedPlatformAdminFromEnv(ctx, store)
 }
 
 func seedPlatformAdminFromEnv(ctx context.Context, store *platformStore) error {
@@ -72,8 +157,13 @@ func (s *apiServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 		writeBodyDecodeError(w, err)
 		return
 	}
+	req.Role = strings.ToLower(strings.TrimSpace(req.Role))
 	if req.Role == "" {
 		req.Role = roleUser
+	}
+	if req.Role != roleUser && req.Role != roleAdmin {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid role"})
+		return
 	}
 	if req.Role == roleAdmin {
 		p, ok, err := s.authenticateRequest(r)
@@ -126,16 +216,40 @@ func (s *apiServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeBodyDecodeError(w, err)
 		return
 	}
-	u, ok, err := s.platform.AuthenticatePassword(r.Context(), req.Email, req.Password)
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	attemptKey := requestIP(r)
+	if email != "" {
+		attemptKey += "|" + email
+	}
+	if !platformLoginAttempts.allow(attemptKey) {
+		s.platform.WriteAudit(r.Context(), auditEvent{
+			Action:   "login",
+			Resource: email,
+			Status:   "denied",
+			Message:  "rate_limited",
+			ActorIP:  requestIP(r),
+		})
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too_many_requests"})
+		return
+	}
+	u, ok, err := s.platform.AuthenticatePassword(r.Context(), email, req.Password)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "login_failed"})
 		return
 	}
 	if !ok {
-		s.platform.WriteAudit(r.Context(), auditEvent{Action: "login", Resource: strings.ToLower(strings.TrimSpace(req.Email)), Status: "denied", Message: "invalid credentials", ActorIP: requestIP(r)})
+		failures := platformLoginAttempts.recordFailure(attemptKey)
+		s.platform.WriteAudit(r.Context(), auditEvent{
+			Action:   "login",
+			Resource: email,
+			Status:   "denied",
+			Message:  fmt.Sprintf("invalid credentials (failures=%d)", failures),
+			ActorIP:  requestIP(r),
+		})
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
+	platformLoginAttempts.recordSuccess(attemptKey)
 	token, err := s.platform.CreateAccessToken(u, platformAccessTokenTTL)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to issue token"})

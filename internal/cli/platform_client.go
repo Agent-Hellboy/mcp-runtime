@@ -16,10 +16,10 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	sentinelaccess "mcp-runtime/pkg/access"
 	"mcp-runtime/pkg/authfile"
-	"sigs.k8s.io/yaml"
 )
 
 const maxAPIBodyRead = 4 << 20
@@ -49,7 +49,7 @@ func newPlatformClient() (*platformClient, error) {
 		return nil, authfile.ErrNotFound
 	}
 	return &platformClient{
-		baseURL:   strings.TrimRight(strings.TrimSpace(base), "/"),
+		baseURL:   normalizePlatformAPIBaseURL(base),
 		token:     tok,
 		http:      &http.Client{Timeout: 2 * time.Minute},
 		apiPrefix: "/api",
@@ -254,28 +254,55 @@ func (c *platformClient) applyAccessFromYAMLFile(ctx context.Context, path strin
 	if err != nil {
 		return err
 	}
-	var meta struct {
-		Kind string `json:"kind" yaml:"kind"`
-	}
-	if err := yaml.Unmarshal(b, &meta); err != nil {
-		return err
-	}
-	switch strings.TrimSpace(meta.Kind) {
-	case "MCPAccessGrant":
-		var g mcpv1alpha1.MCPAccessGrant
-		if err := yaml.Unmarshal(b, &g); err != nil {
-			return err
+	decoder := k8syaml.NewYAMLOrJSONDecoder(bytes.NewReader(b), 4096)
+	docIndex := 0
+	for {
+		var rawDoc map[string]any
+		if err := decoder.Decode(&rawDoc); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return fmt.Errorf("decode %s document %d: %w", path, docIndex+1, err)
 		}
-		return c.postGrant(ctx, grantFromV1(&g))
-	case "MCPAgentSession":
-		var s mcpv1alpha1.MCPAgentSession
-		if err := yaml.Unmarshal(b, &s); err != nil {
-			return err
+		if len(rawDoc) == 0 {
+			continue
 		}
-		return c.postSession(ctx, sessionFromV1(&s))
-	default:
-		return newWithSentinel(ErrFieldRequired, fmt.Sprintf("manifest kind %q is not supported for platform apply (use MCPAccessGrant or MCPAgentSession)", meta.Kind))
+		docIndex++
+		metaBytes, err := json.Marshal(rawDoc)
+		if err != nil {
+			return fmt.Errorf("encode %s document %d: %w", path, docIndex, err)
+		}
+		var meta struct {
+			Kind string `json:"kind"`
+		}
+		if err := json.Unmarshal(metaBytes, &meta); err != nil {
+			return fmt.Errorf("parse %s document %d metadata: %w", path, docIndex, err)
+		}
+		switch strings.TrimSpace(meta.Kind) {
+		case "MCPAccessGrant":
+			var g mcpv1alpha1.MCPAccessGrant
+			if err := json.Unmarshal(metaBytes, &g); err != nil {
+				return fmt.Errorf("parse %s document %d grant: %w", path, docIndex, err)
+			}
+			if err := c.postGrant(ctx, grantFromV1(&g)); err != nil {
+				return fmt.Errorf("apply %s document %d grant: %w", path, docIndex, err)
+			}
+		case "MCPAgentSession":
+			var s mcpv1alpha1.MCPAgentSession
+			if err := json.Unmarshal(metaBytes, &s); err != nil {
+				return fmt.Errorf("parse %s document %d session: %w", path, docIndex, err)
+			}
+			if err := c.postSession(ctx, sessionFromV1(&s)); err != nil {
+				return fmt.Errorf("apply %s document %d session: %w", path, docIndex, err)
+			}
+		default:
+			return newWithSentinel(ErrFieldRequired, fmt.Sprintf("manifest document %d kind %q is not supported for platform apply (use MCPAccessGrant or MCPAgentSession)", docIndex, meta.Kind))
+		}
 	}
+	if docIndex == 0 {
+		return newWithSentinel(ErrFieldRequired, "manifest does not contain MCPAccessGrant or MCPAgentSession")
+	}
+	return nil
 }
 
 func grantFromV1(g *mcpv1alpha1.MCPAccessGrant) grantAPIBody {

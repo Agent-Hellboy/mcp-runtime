@@ -216,6 +216,9 @@ jobs:
   deploy-docs:
     name: Deploy Docs (docs.mcpruntime.org)
     runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-docs-${{ github.ref }}
+      cancel-in-progress: true
     needs: [changed-paths]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changed-paths.outputs.docs == 'true'
     steps:
@@ -305,6 +308,7 @@ jobs:
           container_port="${DOCS_CONTAINER_PORT:-80}"
 
           b64() { printf '%s' "$1" | base64 -w 0; }
+          # shellcheck disable=SC2029
           ssh "${{ secrets.DOCS_DEPLOY_USER }}@$DOCS_DEPLOY_HOST_CLEAN" \
             "DOCS_DEPLOY_PATH_B64=$(b64 "$DOCS_DEPLOY_PATH") \
              DOCS_CONTAINER_NAME_B64=$(b64 "$container_name") \
@@ -333,6 +337,9 @@ jobs:
   deploy-website:
     name: Deploy Website (mcpruntime.org)
     runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-website-${{ github.ref }}
+      cancel-in-progress: true
     needs: [changed-paths]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changed-paths.outputs.website == 'true'
     steps:
@@ -352,6 +359,7 @@ jobs:
           test -n "$WEBSITE_DEPLOY_USER"
           test -n "$WEBSITE_DEPLOY_PATH"
           test -n "$WEBSITE_DEPLOY_SSH_KEY"
+          test -n "$WEBSITE_BASE_URL"
 
       - name: Set up SSH key
         env:
@@ -428,6 +436,7 @@ jobs:
           git_sha="${GITHUB_SHA:-unknown}"
 
           b64() { printf '%s' "$1" | base64 -w 0; }
+          # shellcheck disable=SC2029
           ssh "${{ secrets.WEBSITE_DEPLOY_USER }}@$WEBSITE_DEPLOY_HOST_CLEAN" \
             "WEBSITE_DEPLOY_PATH_B64=$(b64 "$WEBSITE_DEPLOY_PATH") \
              WEBSITE_CONTAINER_NAME_B64=$(b64 "$container_name") \
