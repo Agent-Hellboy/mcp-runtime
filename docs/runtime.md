@@ -19,7 +19,8 @@ The runtime is the Kubernetes control plane for internal MCP servers. It owns cl
 classDiagram
     class MCPServer {
       +image, imageTag
-      +port, ingressHost, ingressPath
+      +port, publicPathPrefix
+      +ingressHost, ingressPath
       +tools[]
       +auth, policy, session
       +gateway.enabled
@@ -57,7 +58,7 @@ For every `MCPServer`, the operator reconciles:
 
 - **Deployment** — image, replicas, resource requests/limits, env, image-pull secrets.
 - **Service** — ClusterIP exposing `spec.servicePort` → `spec.port`.
-- **Ingress** — routes `spec.ingressHost` + `spec.ingressPath` to the Service, with per-class annotations (Traefik / NGINX / Istio).
+- **Ingress** — routes `spec.publicPathPrefix` as `/<prefix>/mcp`, or explicit `spec.ingressHost` + `spec.ingressPath`, to the Service with per-class annotations (Traefik / NGINX / Istio).
 - **Policy ConfigMap** — rendered from the matching `MCPAccessGrant` + `MCPAgentSession` resources, consumed by the proxy sidecar when `gateway.enabled`.
 
 `MCPServer.status` exposes:
@@ -69,7 +70,8 @@ For every `MCPServer`, the operator reconciles:
 
 ### Useful defaults
 
-- Servers default to `/{server-name}/mcp`.
+- Servers default to `/{server-name}/mcp`; set `spec.publicPathPrefix` to choose the public path prefix explicitly.
+- Hostless path-based routing is supported through `spec.publicPathPrefix`; otherwise provide `spec.ingressHost` or configure the operator default host.
 - Container port defaults to `8088`, service port to `80`.
 - Gateway listens on `8091`.
 - `setup` provisions the `mcp-runtime` and `mcp-servers` namespaces.
