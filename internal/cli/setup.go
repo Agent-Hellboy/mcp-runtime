@@ -1816,9 +1816,11 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 
 	clickhouseManifest := "k8s/03-clickhouse.yaml"
 	kafkaManifest := "k8s/05-kafka.yaml"
+	postgresManifest := "k8s/20-postgres.yaml"
 	if storageMode == StorageModeHostpath {
 		clickhouseManifest = "k8s/03-clickhouse-hostpath.yaml"
 		kafkaManifest = "k8s/05-kafka-hostpath.yaml"
+		postgresManifest = "k8s/20-postgres-hostpath.yaml"
 	}
 
 	Info("Applying analytics storage and messaging components")
@@ -1851,7 +1853,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl KubectlRunner, logger *zap.Logg
 
 	Info("Applying analytics services")
 	for _, manifest := range []string{
-		"k8s/20-postgres.yaml",
+		postgresManifest,
 		"k8s/06-ingest.yaml",
 		"k8s/07-processor.yaml",
 		"k8s/08-api.yaml",

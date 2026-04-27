@@ -775,6 +775,7 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		"18-promtail.yaml",
 		"19-grafana-datasources.yaml",
 		"20-postgres.yaml",
+		"20-postgres-hostpath.yaml",
 	} {
 		if err := os.WriteFile(filepath.Join(manifestDir, name), []byte(manifestContent), 0o644); err != nil {
 			t.Fatalf("failed to write fixture manifest %s: %v", name, err)
@@ -850,6 +851,7 @@ func TestDeployAnalyticsManifestsWithKubectl_HostpathUsesHostpathManifests(t *te
 		"03-clickhouse-hostpath.yaml",
 		"04-clickhouse-init.yaml",
 		"05-kafka-hostpath.yaml",
+		"20-postgres-hostpath.yaml",
 	} {
 		if err := os.WriteFile(filepath.Join(manifestDir, name), []byte(manifestContent), 0o644); err != nil {
 			t.Fatalf("failed to write fixture manifest %s: %v", name, err)
