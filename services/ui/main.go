@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"mime"
 	"net"
@@ -93,6 +94,7 @@ var (
 	loginAttempts  = newLoginAttemptTracker(time.Now)
 	sessions       = newUISessionStore(time.Now)
 	oidcVerifyHook func(context.Context, string, string) (sessionPrincipal, error)
+	authHTTPClient = &http.Client{Timeout: 10 * time.Second}
 )
 
 // main initializes and starts the MCP Sentinel UI server.
@@ -421,9 +423,9 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 }
 
 func loginPasswordWithAPI(ctx context.Context, apiUpstream, email, password string) (sessionPrincipal, string, error) {
-	apiUpstream = strings.TrimSpace(strings.TrimRight(apiUpstream, "/"))
-	if apiUpstream == "" {
-		return sessionPrincipal{}, "", errors.New("api upstream is empty")
+	loginURL, err := apiUpstreamURL(apiUpstream, "api", "auth", "login")
+	if err != nil {
+		return sessionPrincipal{}, "", err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -435,16 +437,16 @@ func loginPasswordWithAPI(ctx context.Context, apiUpstream, email, password stri
 	if err != nil {
 		return sessionPrincipal{}, "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiUpstream+"/api/auth/login", strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(string(body)))
 	if err != nil {
 		return sessionPrincipal{}, "", err
 	}
 	req.Header.Set("content-type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := authHTTPClient.Do(req)
 	if err != nil {
 		return sessionPrincipal{}, "", err
 	}
-	defer resp.Body.Close()
+	defer drainAndClose(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return sessionPrincipal{}, "", fmt.Errorf("password auth failed: status %d", resp.StatusCode)
 	}
@@ -497,26 +499,27 @@ func idTokenExpiry(idToken string) time.Time {
 }
 
 func verifyOIDCTokenWithAPI(ctx context.Context, apiUpstream, idToken string) (sessionPrincipal, error) {
-	apiUpstream = strings.TrimSpace(strings.TrimRight(apiUpstream, "/"))
-	if apiUpstream == "" {
-		return sessionPrincipal{}, errors.New("api upstream is empty")
+	meURL, err := apiUpstreamURL(apiUpstream, "api", "auth", "me")
+	if err != nil {
+		return sessionPrincipal{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiUpstream+"/api/auth/me", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, meURL, nil)
 	if err != nil {
 		return sessionPrincipal{}, err
 	}
 	req.Header.Set("authorization", "Bearer "+idToken)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := authHTTPClient.Do(req)
 	if err != nil {
 		return sessionPrincipal{}, err
 	}
-	defer resp.Body.Close()
+	defer drainAndClose(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return sessionPrincipal{}, fmt.Errorf("auth check failed: status %d", resp.StatusCode)
 	}
 
@@ -537,6 +540,29 @@ func verifyOIDCTokenWithAPI(ctx context.Context, apiUpstream, idToken string) (s
 		payload.Principal.AuthType = "oidc_jwt"
 	}
 	return payload.Principal, nil
+}
+
+func apiUpstreamURL(apiUpstream string, parts ...string) (string, error) {
+	base := strings.TrimSpace(apiUpstream)
+	if base == "" {
+		return "", errors.New("api upstream is empty")
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return "", errors.New("api upstream must include scheme and host")
+	}
+	return url.JoinPath(base, parts...)
+}
+
+func drainAndClose(body io.ReadCloser) {
+	if body == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, body)
+	_ = body.Close()
 }
 
 func loginClientID(r *http.Request) string {

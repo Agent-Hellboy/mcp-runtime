@@ -97,6 +97,14 @@ type sessionsListResponse struct {
 	Sessions []sentinelaccess.SessionSummary `json:"sessions"`
 }
 
+type grantGetResponse struct {
+	Grant sentinelaccess.GrantSummary `json:"grant"`
+}
+
+type sessionGetResponse struct {
+	Session sentinelaccess.SessionSummary `json:"session"`
+}
+
 type grantAPIBody struct {
 	Name          string                         `json:"name"`
 	Namespace     string                         `json:"namespace"`
@@ -157,6 +165,48 @@ func (c *platformClient) listSessions(ctx context.Context, namespace string) ([]
 		return nil, err
 	}
 	return out.Sessions, nil
+}
+
+func (c *platformClient) getGrant(ctx context.Context, namespace, name string) (sentinelaccess.GrantSummary, error) {
+	p := fmt.Sprintf("/runtime/grants/%s/%s", url.PathEscape(namespace), url.PathEscape(name))
+	resp, err := c.do(ctx, http.MethodGet, p, "", nil)
+	if err != nil {
+		return sentinelaccess.GrantSummary{}, err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return sentinelaccess.GrantSummary{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return sentinelaccess.GrantSummary{}, httpAPIError(resp.StatusCode, b)
+	}
+	var out grantGetResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return sentinelaccess.GrantSummary{}, err
+	}
+	return out.Grant, nil
+}
+
+func (c *platformClient) getSession(ctx context.Context, namespace, name string) (sentinelaccess.SessionSummary, error) {
+	p := fmt.Sprintf("/runtime/sessions/%s/%s", url.PathEscape(namespace), url.PathEscape(name))
+	resp, err := c.do(ctx, http.MethodGet, p, "", nil)
+	if err != nil {
+		return sentinelaccess.SessionSummary{}, err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return sentinelaccess.SessionSummary{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return sentinelaccess.SessionSummary{}, httpAPIError(resp.StatusCode, b)
+	}
+	var out sessionGetResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return sentinelaccess.SessionSummary{}, err
+	}
+	return out.Session, nil
 }
 
 func (c *platformClient) postGrant(ctx context.Context, body grantAPIBody) error {

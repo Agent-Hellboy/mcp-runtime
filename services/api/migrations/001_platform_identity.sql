@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
   revoked boolean not null default false,
   revoked_at timestamptz
 );
+CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 
 CREATE TABLE IF NOT EXISTS registry_credentials (
   id text primary key,
@@ -42,6 +43,7 @@ CREATE TABLE IF NOT EXISTS registry_credentials (
   revoked boolean not null default false,
   revoked_at timestamptz
 );
+CREATE INDEX IF NOT EXISTS idx_registry_credentials_user_id ON registry_credentials(user_id);
 
 CREATE TABLE IF NOT EXISTS namespaces (
   id uuid primary key,
@@ -57,6 +59,7 @@ ALTER TABLE IF EXISTS namespaces
 CREATE UNIQUE INDEX IF NOT EXISTS uq_namespaces_active
 ON namespaces(namespace)
 WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_namespaces_user_id ON namespaces(user_id);
 
 CREATE TABLE IF NOT EXISTS refresh_tokens (
   id uuid primary key,
@@ -67,6 +70,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
   user_agent text,
   client_ip inet
 );
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
 
 CREATE TABLE IF NOT EXISTS audit_logs (
   id bigserial primary key,
@@ -78,5 +82,27 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   message text,
   actor_ip text,
   request_id text,
-  timestamp timestamptz not null default now()
+  created_at timestamptz not null default now()
 );
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'audit_logs'
+      AND column_name = 'timestamp'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'audit_logs'
+      AND column_name = 'created_at'
+  ) THEN
+    EXECUTE 'ALTER TABLE audit_logs RENAME COLUMN "timestamp" TO created_at';
+  END IF;
+END
+$$;
+
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);

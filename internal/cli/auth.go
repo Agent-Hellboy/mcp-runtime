@@ -74,8 +74,8 @@ func (m *authManager) newAuthLoginCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Save a platform API token and optional registry host",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return m.runAuthLogin(f)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return m.runAuthLogin(cmd, f)
 		},
 	}
 
@@ -90,7 +90,14 @@ func (m *authManager) newAuthLoginCmd() *cobra.Command {
 	return cmd
 }
 
-func (m *authManager) runAuthLogin(f loginFlags) error {
+func (m *authManager) runAuthLogin(cmd *cobra.Command, f loginFlags) error {
+	stdout := io.Writer(os.Stdout)
+	stderr := io.Writer(os.Stderr)
+	if cmd != nil {
+		stdout = cmd.OutOrStdout()
+		stderr = cmd.ErrOrStderr()
+	}
+
 	apiURL := strings.TrimSpace(f.apiURL)
 	if apiURL == "" {
 		return newWithSentinel(ErrFieldRequired, "api URL is required (set --api-url or "+authfile.EnvAPIURL+")")
@@ -125,9 +132,9 @@ func (m *authManager) runAuthLogin(f loginFlags) error {
 		if err != nil || !term.IsTerminal(stdinFD) {
 			return newWithSentinel(ErrFieldRequired, "not a TTY: pass --token, --token-stdin, or run in an interactive terminal")
 		}
-		fmt.Fprint(os.Stderr, "Enter platform API token: ")
+		fmt.Fprint(stderr, "Enter platform API token: ")
 		tok, err := term.ReadPassword(stdinFD)
-		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(stderr)
 		if err != nil {
 			return newWithSentinel(nil, fmt.Sprintf("read token: %v", err))
 		}
@@ -167,9 +174,9 @@ func (m *authManager) runAuthLogin(f loginFlags) error {
 	if m.logger != nil {
 		m.logger.Info("saved platform credentials", zap.String("api", apiURL), zap.String("path", path))
 	}
-	fmt.Printf("Platform credentials saved to %s\n", path)
+	fmt.Fprintf(stdout, "Platform credentials saved to %s\n", path)
 	if c.RegistryHost != "" {
-		fmt.Printf("Registry host recorded: %s\n", c.RegistryHost)
+		fmt.Fprintf(stdout, "Registry host recorded: %s\n", c.RegistryHost)
 	}
 	return nil
 }
@@ -196,7 +203,7 @@ func loginPlatformPassword(ctx context.Context, apiBaseURL, email, password stri
 	if err != nil {
 		return "", "", err
 	}
-	defer resp.Body.Close()
+	defer drainAndCloseBody(resp.Body)
 	var out struct {
 		AccessToken string `json:"access_token"`
 		User        struct {
@@ -226,7 +233,7 @@ func (m *authManager) newAuthLogoutCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
 		Short: "Delete saved platform credentials on this machine",
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			path, err := authfile.FilePath()
 			if err != nil {
 				return err
@@ -234,7 +241,7 @@ func (m *authManager) newAuthLogoutCmd() *cobra.Command {
 			if err := authfile.Remove(path); err != nil {
 				return err
 			}
-			fmt.Println("Logged out from the platform (local credentials removed).")
+			fmt.Fprintln(cmd.OutOrStdout(), "Logged out from the platform (local credentials removed).")
 			return nil
 		},
 	}
@@ -244,46 +251,48 @@ func (m *authManager) newAuthStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show whether platform API credentials are configured",
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			stdout := cmd.OutOrStdout()
+			stderr := cmd.ErrOrStderr()
 			if t := strings.TrimSpace(os.Getenv(authfile.EnvAPIToken)); t != "" {
-				fmt.Println("A platform API token is set in " + authfile.EnvAPIToken + " and overrides any saved file.")
+				fmt.Fprintln(stdout, "A platform API token is set in "+authfile.EnvAPIToken+" and overrides any saved file.")
 				if b := strings.TrimSpace(os.Getenv(authfile.EnvAPIURL)); b == "" {
-					fmt.Fprintln(os.Stderr, "Note: "+authfile.EnvAPIURL+" is not set. Commands that need a base URL require it (or a saved `mcp-runtime auth login`).")
+					fmt.Fprintln(stderr, "Note: "+authfile.EnvAPIURL+" is not set. Commands that need a base URL require it (or a saved `mcp-runtime auth login`).")
 				}
 			} else {
 				p, perr := authfile.FilePath()
 				if perr == nil {
 					if _, fErr := os.Stat(p); fErr == nil {
-						fmt.Println("Credentials file: " + p)
+						fmt.Fprintln(stdout, "Credentials file: "+p)
 					} else {
-						fmt.Println("Credentials file: " + p + " (not present)")
+						fmt.Fprintln(stdout, "Credentials file: "+p+" (not present)")
 					}
 				}
 			}
 			tok, api, src, rerr := authfile.ResolveToken()
 			if rerr != nil {
 				if errors.Is(rerr, authfile.ErrNotFound) {
-					fmt.Println("Not logged in. Run `mcp-runtime auth login` or set " + authfile.EnvAPIToken + ".")
+					fmt.Fprintln(stdout, "Not logged in. Run `mcp-runtime auth login` or set "+authfile.EnvAPIToken+".")
 					return nil
 				}
 				return rerr
 			}
-			fmt.Println("Status: have platform API token")
-			fmt.Println("  source:", src)
+			fmt.Fprintln(stdout, "Status: have platform API token")
+			fmt.Fprintln(stdout, "  source:", src)
 			if api != "" {
-				fmt.Println("  API base URL:", api)
+				fmt.Fprintln(stdout, "  API base URL:", api)
 			} else {
-				fmt.Println("  API base URL: (set --api-url on login or " + authfile.EnvAPIURL + " if using " + authfile.EnvAPIToken + " only)")
+				fmt.Fprintln(stdout, "  API base URL: (set --api-url on login or "+authfile.EnvAPIURL+" if using "+authfile.EnvAPIToken+" only)")
 			}
 			if c, cErr := fileCredentialsIfRelevant(); cErr == nil && c != nil {
 				if c.RegistryHost != "" {
-					fmt.Println("  saved registry host:", c.RegistryHost)
+					fmt.Fprintln(stdout, "  saved registry host:", c.RegistryHost)
 				}
 				if c.Role != "" {
-					fmt.Println("  role (from saved file):", c.Role)
+					fmt.Fprintln(stdout, "  role (from saved file):", c.Role)
 				}
 			}
-			fmt.Println("  token (masked):", authfile.MaskToken(tok))
+			fmt.Fprintln(stdout, "  token (masked):", authfile.MaskToken(tok))
 			return nil
 		},
 	}
@@ -321,7 +330,7 @@ func verifyPlatformAPIToken(ctx context.Context, apiBaseURL, token string) error
 	if err != nil {
 		return err
 	}
-	_ = resp.Body.Close()
+	defer drainAndCloseBody(resp.Body)
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return fmt.Errorf("server rejected the token (HTTP %d)", resp.StatusCode)
@@ -342,4 +351,12 @@ func normalizePlatformAPIBaseURL(raw string) string {
 		s = strings.TrimRight(s, "/")
 	}
 	return s
+}
+
+func drainAndCloseBody(body io.ReadCloser) {
+	if body == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, body)
+	_ = body.Close()
 }

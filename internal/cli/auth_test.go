@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"mcp-runtime/pkg/authfile"
 )
 
 func TestVerifyPlatformAPIToken(t *testing.T) {
@@ -78,8 +80,15 @@ func TestAuthLoginSavesAndVerifies(t *testing.T) {
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
-	if !bytes.Contains(b, []byte("good")) {
-		t.Fatalf("credentials: %s", b)
+	var creds authfile.Credentials
+	if err := json.Unmarshal(b, &creds); err != nil {
+		t.Fatalf("unmarshal credentials: %v", err)
+	}
+	if creds.Token != "good" {
+		t.Fatalf("token = %q, want good", creds.Token)
+	}
+	if creds.APIBaseURL != "https://platform.example.com" {
+		t.Fatalf("api_url = %q, want https://platform.example.com", creds.APIBaseURL)
 	}
 }
 
@@ -107,7 +116,14 @@ func TestAuthLoginNormalizesTrailingAPIPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(b, []byte(`"api_url": "https://platform.example.com"`)) {
-		t.Fatalf("credentials api_url mismatch: %s", b)
+	var creds authfile.Credentials
+	if err := json.Unmarshal(b, &creds); err != nil {
+		t.Fatalf("unmarshal credentials: %v", err)
+	}
+	if creds.APIBaseURL != "https://platform.example.com" {
+		t.Fatalf("api_url = %q, want https://platform.example.com", creds.APIBaseURL)
+	}
+	if creds.Token != "good" {
+		t.Fatalf("token = %q, want good", creds.Token)
 	}
 }

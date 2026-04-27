@@ -126,7 +126,35 @@ func (s *RuntimeServer) handleDeploymentList(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *RuntimeServer) handleAdminDeployments(w http.ResponseWriter, r *http.Request) {
-	s.handleDeploymentList(w, r)
+	if r.Method != http.MethodGet {
+		w.Header().Set("allow", http.MethodGet)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		return
+	}
+	p, ok := principalFromContext(r.Context())
+	if !ok || p.Role != roleAdmin {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
+	if s.k8sClients == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		return
+	}
+
+	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
+	listNamespace := metav1.NamespaceAll
+	if namespace != "" {
+		listNamespace = namespace
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	list, err := s.k8sClients.Clientset.AppsV1().Deployments(listNamespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deployments"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deployments": deploymentSummaries(list.Items)})
 }
 
 func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Request) {
@@ -217,11 +245,6 @@ func (s *RuntimeServer) clientForPrincipal(p principal) (kubernetes.Interface, e
 		return nil, fmt.Errorf("kubernetes not available")
 	}
 	if p.userID() == "" {
-		// Service-level admin keys may run platform ops intentionally; all other callers
-		// must carry a stable subject to keep operations tenant-scoped.
-		if p.IsService && p.Role == roleAdmin {
-			return s.k8sClients.Clientset, nil
-		}
 		return nil, errPrincipalIdentityRequired
 	}
 	if s.k8sClients.Config == nil {

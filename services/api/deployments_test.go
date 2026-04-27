@@ -33,17 +33,21 @@ func TestClientForPrincipalRequiresIdentityForUserRole(t *testing.T) {
 	}
 }
 
-func TestClientForPrincipalAllowsServiceAdmin(t *testing.T) {
+func TestClientForPrincipalRejectsServiceAdminWithoutIdentity(t *testing.T) {
 	server := &RuntimeServer{
 		k8sClients: &k8sclient.Clients{
 			Clientset: kubernetesfake.NewSimpleClientset(),
 		},
 	}
-	if _, err := server.clientForPrincipal(principal{
+	_, err := server.clientForPrincipal(principal{
 		Role:      roleAdmin,
 		IsService: true,
-	}); err != nil {
-		t.Fatalf("clientForPrincipal() error = %v, want nil", err)
+	})
+	if err == nil {
+		t.Fatal("expected identity-required error")
+	}
+	if err != errPrincipalIdentityRequired {
+		t.Fatalf("error = %v, want %v", err, errPrincipalIdentityRequired)
 	}
 }
 

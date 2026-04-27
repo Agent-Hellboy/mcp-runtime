@@ -46,24 +46,14 @@ func ExtractGrantActionParams(r *http.Request, prefix string) (RouteParams, erro
 		return params, ErrMethodNotAllowed
 	}
 
-	path := strings.TrimPrefix(r.URL.Path, prefix)
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-
-	if len(parts) != 3 {
-		return params, fmt.Errorf("%w: expected {namespace}/{name}/{action}, got %d path parts", ErrInvalidPath, len(parts))
+	parts, err := splitNamespacedPath(r, prefix, 3, "expected {namespace}/{name}/{action}")
+	if err != nil {
+		return params, err
 	}
 
 	params.Namespace = parts[0]
 	params.Name = parts[1]
 	params.Action = parts[2]
-
-	// Validate namespace and name
-	if !validResourceName(params.Namespace) {
-		return params, fmt.Errorf("%w: invalid namespace %q", ErrInvalidPath, params.Namespace)
-	}
-	if !validResourceName(params.Name) {
-		return params, fmt.Errorf("%w: invalid name %q", ErrInvalidPath, params.Name)
-	}
 
 	// Validate action
 	switch params.Action {
@@ -84,24 +74,14 @@ func ExtractSessionActionParams(r *http.Request, prefix string) (RouteParams, er
 		return params, ErrMethodNotAllowed
 	}
 
-	path := strings.TrimPrefix(r.URL.Path, prefix)
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-
-	if len(parts) != 3 {
-		return params, fmt.Errorf("%w: expected {namespace}/{name}/{action}, got %d path parts", ErrInvalidPath, len(parts))
+	parts, err := splitNamespacedPath(r, prefix, 3, "expected {namespace}/{name}/{action}")
+	if err != nil {
+		return params, err
 	}
 
 	params.Namespace = parts[0]
 	params.Name = parts[1]
 	params.Action = parts[2]
-
-	// Validate namespace and name
-	if !validResourceName(params.Namespace) {
-		return params, fmt.Errorf("%w: invalid namespace %q", ErrInvalidPath, params.Namespace)
-	}
-	if !validResourceName(params.Name) {
-		return params, fmt.Errorf("%w: invalid name %q", ErrInvalidPath, params.Name)
-	}
 
 	// Validate action
 	switch params.Action {
@@ -127,17 +107,24 @@ func ExtractNamespacedResourceDelete(r *http.Request, prefix string) (namespace,
 	if r.Method != http.MethodDelete {
 		return "", "", ErrMethodNotAllowed
 	}
-	path := strings.TrimPrefix(r.URL.Path, prefix)
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("%w: expected {namespace}/{name} for DELETE, got %d path parts", ErrInvalidPath, len(parts))
+	parts, err := splitNamespacedPath(r, prefix, 2, "expected {namespace}/{name} for DELETE")
+	if err != nil {
+		return "", "", err
 	}
 	namespace, name = parts[0], parts[1]
-	if !validResourceName(namespace) {
-		return "", "", fmt.Errorf("%w: invalid namespace %q", ErrInvalidPath, namespace)
-	}
-	if !validResourceName(name) {
-		return "", "", fmt.Errorf("%w: invalid name %q", ErrInvalidPath, name)
-	}
 	return namespace, name, nil
+}
+
+func splitNamespacedPath(r *http.Request, prefix string, expectedParts int, expectedShape string) ([]string, error) {
+	path := strings.TrimPrefix(r.URL.Path, prefix)
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != expectedParts {
+		return nil, fmt.Errorf("%w: %s, got %d path parts", ErrInvalidPath, expectedShape, len(parts))
+	}
+	for _, part := range parts {
+		if !validResourceName(part) {
+			return nil, fmt.Errorf("%w: invalid path segment %q", ErrInvalidPath, part)
+		}
+	}
+	return parts, nil
 }

@@ -23,7 +23,16 @@ curl -sS -X POST http://localhost:8080/api/auth/login \
   -d '{"email":"prince@example.com","password":"change-me-now"}'
 ```
 
-Both return a bearer `access_token`. Admin signup requires an existing admin credential on the request, such as an admin API key.
+Both return a bearer `access_token`. Admin signup requires an existing admin credential on the request.
+
+Example (admin creates another admin user using an admin API key):
+
+```bash
+curl -sS -X POST http://localhost:8080/api/auth/signup \
+  -H "x-api-key: $ADMIN_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"email":"admin2@example.com","password":"change-me-now","role":"admin"}'
+```
 
 ## API Keys
 

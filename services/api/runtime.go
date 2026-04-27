@@ -633,6 +633,14 @@ func (s *RuntimeServer) handleRuntimePolicy(w http.ResponseWriter, r *http.Reque
 // and DELETE /api/runtime/grants/{namespace}/{name}.
 func (s *RuntimeServer) handleGrantItemPath(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
+	case http.MethodGet:
+		ns, name, err := extractNamespacedPath(r.URL.Path, "/api/runtime/grants/", 2)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		s.handleGrantGet(w, r, ns, name)
+		return
 	case http.MethodDelete:
 		ns, name, err := serviceutil.ExtractNamespacedResourceDelete(r, "/api/runtime/grants/")
 		if err != nil {
@@ -645,9 +653,30 @@ func (s *RuntimeServer) handleGrantItemPath(w http.ResponseWriter, r *http.Reque
 		s.handleGrantPostTogglePath(w, r)
 		return
 	default:
-		w.Header().Set("allow", "POST, DELETE")
+		w.Header().Set("allow", "GET, POST, DELETE")
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
 	}
+}
+
+func (s *RuntimeServer) handleGrantGet(w http.ResponseWriter, r *http.Request, namespace, name string) {
+	if s.accessMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		return
+	}
+	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), namespace)
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	grant, err := s.accessMgr.GetGrant(ctx, name, namespace)
+	if err != nil {
+		code, msg := k8sclient.HTTPStatusFromK8sError(err)
+		writeJSON(w, code, map[string]string{"error": msg})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"grant": sentinelaccess.ToGrantSummary(*grant)})
 }
 
 func (s *RuntimeServer) handleGrantDelete(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -861,6 +890,14 @@ func validDecision(decision sentinelaccess.PolicyDecision) bool {
 // and DELETE /api/runtime/sessions/{namespace}/{name}.
 func (s *RuntimeServer) handleSessionItemPath(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
+	case http.MethodGet:
+		ns, name, err := extractNamespacedPath(r.URL.Path, "/api/runtime/sessions/", 2)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		s.handleSessionGet(w, r, ns, name)
+		return
 	case http.MethodDelete:
 		ns, name, err := serviceutil.ExtractNamespacedResourceDelete(r, "/api/runtime/sessions/")
 		if err != nil {
@@ -873,9 +910,50 @@ func (s *RuntimeServer) handleSessionItemPath(w http.ResponseWriter, r *http.Req
 		s.handleSessionPostTogglePath(w, r)
 		return
 	default:
-		w.Header().Set("allow", "POST, DELETE")
+		w.Header().Set("allow", "GET, POST, DELETE")
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
 	}
+}
+
+func (s *RuntimeServer) handleSessionGet(w http.ResponseWriter, r *http.Request, namespace, name string) {
+	if s.accessMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		return
+	}
+	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), namespace)
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	session, err := s.accessMgr.GetSession(ctx, name, namespace)
+	if err != nil {
+		code, msg := k8sclient.HTTPStatusFromK8sError(err)
+		writeJSON(w, code, map[string]string{"error": msg})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"session": sentinelaccess.ToSessionSummary(*session)})
+}
+
+func extractNamespacedPath(path, prefix string, expectedParts int) (string, string, error) {
+	path = strings.TrimPrefix(path, prefix)
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != expectedParts {
+		return "", "", fmt.Errorf("invalid path")
+	}
+	namespace := strings.TrimSpace(parts[0])
+	name := strings.TrimSpace(parts[1])
+	if namespace == "" || name == "" {
+		return "", "", fmt.Errorf("invalid path")
+	}
+	if err := sentinelaccess.ValidateResourceName("namespace", namespace); err != nil {
+		return "", "", err
+	}
+	if err := sentinelaccess.ValidateResourceName("name", name); err != nil {
+		return "", "", err
+	}
+	return namespace, name, nil
 }
 
 func (s *RuntimeServer) handleSessionDelete(w http.ResponseWriter, r *http.Request, namespace, name string) {

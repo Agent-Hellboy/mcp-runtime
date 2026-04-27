@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"database/sql"
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,8 +18,11 @@ import (
 )
 
 const (
-	platformJWTIssuer = "mcp-runtime"
-	passwordProvider  = "password"
+	platformJWTIssuer   = "mcp-runtime"
+	platformJWTAudience = "platform"
+	passwordProvider    = "password"
+	defaultDBMaxConns   = 10
+	defaultDBMaxIdle    = 5
 )
 
 type platformStore struct {
@@ -49,8 +53,8 @@ func newPlatformStore(ctx context.Context, dsn string, jwtSecret []byte) (*platf
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
+	db.SetMaxOpenConns(intEnvOrDefault("PLATFORM_DB_MAX_CONNS", defaultDBMaxConns))
+	db.SetMaxIdleConns(intEnvOrDefault("PLATFORM_DB_MAX_IDLE_CONNS", defaultDBMaxIdle))
 	db.SetConnMaxLifetime(30 * time.Minute)
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
@@ -74,6 +78,18 @@ func (s *platformStore) close() error {
 		return nil
 	}
 	return s.db.Close()
+}
+
+func intEnvOrDefault(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v <= 0 {
+		return fallback
+	}
+	return v
 }
 
 func (s *platformStore) CreatePasswordUser(ctx context.Context, email, password string, role string) (platformUser, error) {
@@ -238,10 +254,26 @@ WHERE u.id = $1 AND u.deleted_at IS NULL`, userID).
 	return u, true, nil
 }
 
+func (s *platformStore) DeleteUser(ctx context.Context, userID string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, strings.TrimSpace(userID))
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (s *platformStore) CreateAccessToken(u platformUser, ttl time.Duration) (string, error) {
 	now := time.Now().UTC()
 	claims := jwt.MapClaims{
 		"iss":       platformJWTIssuer,
+		"aud":       platformJWTAudience,
 		"sub":       u.ID,
 		"email":     u.Email,
 		"role":      u.Role,
@@ -269,33 +301,43 @@ func (s *platformStore) AuthenticateJWT(token string) (principal, bool) {
 	if !ok || claims["iss"] != platformJWTIssuer {
 		return principal{}, false
 	}
-	return principal{
-		Role:      strings.TrimSpace(fmt.Sprint(claims["role"])),
-		Subject:   strings.TrimSpace(fmt.Sprint(claims["sub"])),
-		Email:     strings.TrimSpace(fmt.Sprint(claims["email"])),
-		Namespace: strings.TrimSpace(fmt.Sprint(claims["namespace"])),
-		AuthType:  "platform_jwt",
-	}, true
+	if !audienceMatches(claims["aud"], platformJWTAudience) {
+		return principal{}, false
+	}
+	subject := strings.TrimSpace(fmt.Sprint(claims["sub"]))
+	if subject == "" {
+		return principal{}, false
+	}
+
+	var p principal
+	err = s.db.QueryRow(`
+SELECT u.id, u.email, u.role, COALESCE(n.namespace, '')
+FROM users u
+LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
+WHERE u.id = $1 AND u.deleted_at IS NULL`, subject).
+		Scan(&p.Subject, &p.Email, &p.Role, &p.Namespace)
+	if err != nil {
+		return principal{}, false
+	}
+	p.AuthType = "platform_jwt"
+	return p, true
 }
 
 func (s *platformStore) AuthenticateUserAPIKey(ctx context.Context, rawKey string) (principal, bool, error) {
 	targetHash := hashAPIKey(rawKey)
-	var keyID, userID, email, role, namespace, storedHash string
+	var keyID, userID, email, role, namespace string
 	err := s.db.QueryRowContext(ctx, `
-SELECT ak.id, ak.user_id, u.email, u.role, COALESCE(n.namespace, ''), ak.key_hash
+SELECT ak.id, ak.user_id, u.email, u.role, COALESCE(n.namespace, '')
 FROM api_keys ak
 JOIN users u ON u.id = ak.user_id AND u.deleted_at IS NULL
 LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
 WHERE ak.key_hash = $1 AND ak.revoked = false`, targetHash).
-		Scan(&keyID, &userID, &email, &role, &namespace, &storedHash)
+		Scan(&keyID, &userID, &email, &role, &namespace)
 	if errors.Is(err, sql.ErrNoRows) {
 		return principal{}, false, nil
 	}
 	if err != nil {
 		return principal{}, false, err
-	}
-	if subtle.ConstantTimeCompare([]byte(targetHash), []byte(storedHash)) != 1 {
-		return principal{}, false, nil
 	}
 	_, _ = s.db.ExecContext(ctx, `UPDATE api_keys SET last_used_at = now() WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '5 minutes')`, keyID)
 	return principal{Role: role, Subject: userID, Email: email, Namespace: namespace, AuthType: "user_api_key", APIKeyID: keyID}, true, nil
@@ -337,20 +379,20 @@ func (s *platformStore) CreateUserAPIKey(ctx context.Context, userID, name strin
 }
 
 func (s *platformStore) RevokeUserAPIKey(ctx context.Context, userID, id string) (userAPIKeySummary, error) {
-	_, err := s.db.ExecContext(ctx, `UPDATE api_keys SET revoked = true, revoked_at = COALESCE(revoked_at, now()) WHERE user_id = $1 AND id = $2`, userID, id)
+	var rec userAPIKeySummary
+	err := s.db.QueryRowContext(ctx, `
+UPDATE api_keys
+SET revoked = true, revoked_at = COALESCE(revoked_at, now())
+WHERE user_id = $1 AND id = $2
+RETURNING id, name, prefix, created_at, revoked, revoked_at`, userID, id).
+		Scan(&rec.ID, &rec.Name, &rec.Prefix, &rec.CreatedAt, &rec.Revoked, &rec.RevokedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return userAPIKeySummary{}, sql.ErrNoRows
+	}
 	if err != nil {
 		return userAPIKeySummary{}, err
 	}
-	keys, err := s.ListUserAPIKeys(ctx, userID)
-	if err != nil {
-		return userAPIKeySummary{}, err
-	}
-	for _, key := range keys {
-		if key.ID == id {
-			return key, nil
-		}
-	}
-	return userAPIKeySummary{}, sql.ErrNoRows
+	return rec, nil
 }
 
 func (s *platformStore) ListRegistryCredentials(ctx context.Context, userID string) ([]userAPIKeySummary, error) {
@@ -390,20 +432,20 @@ func (s *platformStore) CreateRegistryCredential(ctx context.Context, userID, na
 }
 
 func (s *platformStore) RevokeRegistryCredential(ctx context.Context, userID, id string) (userAPIKeySummary, error) {
-	_, err := s.db.ExecContext(ctx, `UPDATE registry_credentials SET revoked = true, revoked_at = COALESCE(revoked_at, now()) WHERE user_id = $1 AND id = $2`, userID, id)
+	var rec userAPIKeySummary
+	err := s.db.QueryRowContext(ctx, `
+UPDATE registry_credentials
+SET revoked = true, revoked_at = COALESCE(revoked_at, now())
+WHERE user_id = $1 AND id = $2
+RETURNING id, name, prefix, created_at, revoked, revoked_at`, userID, id).
+		Scan(&rec.ID, &rec.Name, &rec.Prefix, &rec.CreatedAt, &rec.Revoked, &rec.RevokedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return userAPIKeySummary{}, sql.ErrNoRows
+	}
 	if err != nil {
 		return userAPIKeySummary{}, err
 	}
-	keys, err := s.ListRegistryCredentials(ctx, userID)
-	if err != nil {
-		return userAPIKeySummary{}, err
-	}
-	for _, key := range keys {
-		if key.ID == id {
-			return key, nil
-		}
-	}
-	return userAPIKeySummary{}, sql.ErrNoRows
+	return rec, nil
 }
 
 func (s *platformStore) ListNamespaces(ctx context.Context) ([]map[string]any, error) {
@@ -469,6 +511,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
   revoked boolean not null default false,
   revoked_at timestamptz
 );
+CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 CREATE TABLE IF NOT EXISTS registry_credentials (
   id text primary key,
   key_hash text unique not null,
@@ -480,13 +523,18 @@ CREATE TABLE IF NOT EXISTS registry_credentials (
   revoked boolean not null default false,
   revoked_at timestamptz
 );
+CREATE INDEX IF NOT EXISTS idx_registry_credentials_user_id ON registry_credentials(user_id);
 CREATE TABLE IF NOT EXISTS namespaces (
   id uuid primary key,
   user_id uuid not null references users(id) on delete cascade,
-  namespace text unique not null,
+  namespace text not null,
   created_at timestamptz not null default now(),
   deleted_at timestamptz
 );
+CREATE INDEX IF NOT EXISTS idx_namespaces_user_id ON namespaces(user_id);
+ALTER TABLE IF EXISTS namespaces
+  DROP CONSTRAINT IF EXISTS namespaces_namespace_key;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_namespaces_active ON namespaces(namespace) WHERE deleted_at IS NULL;
 CREATE TABLE IF NOT EXISTS refresh_tokens (
   id uuid primary key,
   user_id uuid not null references users(id) on delete cascade,
@@ -496,6 +544,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
   user_agent text,
   client_ip inet
 );
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
 CREATE TABLE IF NOT EXISTS audit_logs (
   id bigserial primary key,
   user_id uuid references users(id),
@@ -506,6 +555,26 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   message text,
   actor_ip text,
   request_id text,
-  timestamp timestamptz not null default now()
+  created_at timestamptz not null default now()
 );
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'audit_logs'
+      AND column_name = 'timestamp'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'audit_logs'
+      AND column_name = 'created_at'
+  ) THEN
+    EXECUTE 'ALTER TABLE audit_logs RENAME COLUMN "timestamp" TO created_at';
+  END IF;
+END
+$$;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
 `

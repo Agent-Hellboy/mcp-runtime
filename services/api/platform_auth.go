@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -184,6 +185,27 @@ func (s *apiServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 	if s.runtime != nil {
 		if err := s.runtime.ensureUserNamespace(r.Context(), principal{Subject: u.ID, Role: u.Role, Email: u.Email, Namespace: u.Namespace}); err != nil {
 			s.platform.WriteAudit(r.Context(), auditEvent{UserID: u.ID, Action: "namespace_create", Resource: u.Namespace, Namespace: u.Namespace, Status: "error", Message: err.Error(), ActorIP: requestIP(r)})
+			if cleanupErr := s.platform.DeleteUser(r.Context(), u.ID); cleanupErr != nil {
+				log.Printf("signup cleanup failed for user %s: %v", u.ID, cleanupErr)
+				s.platform.WriteAudit(r.Context(), auditEvent{
+					UserID:    u.ID,
+					Action:    "signup_cleanup",
+					Resource:  "user",
+					Namespace: u.Namespace,
+					Status:    "error",
+					Message:   cleanupErr.Error(),
+					ActorIP:   requestIP(r),
+				})
+			} else {
+				s.platform.WriteAudit(r.Context(), auditEvent{
+					UserID:    u.ID,
+					Action:    "signup_cleanup",
+					Resource:  "user",
+					Namespace: u.Namespace,
+					Status:    "success",
+					ActorIP:   requestIP(r),
+				})
+			}
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to provision namespace"})
 			return
 		}
@@ -263,5 +285,9 @@ func requestIP(r *http.Request) string {
 	if xff := strings.TrimSpace(r.Header.Get("x-forwarded-for")); xff != "" {
 		return strings.TrimSpace(strings.Split(xff, ",")[0])
 	}
-	return strings.TrimSpace(r.RemoteAddr)
+	remote := strings.TrimSpace(r.RemoteAddr)
+	if host, _, err := net.SplitHostPort(remote); err == nil {
+		return strings.TrimSpace(host)
+	}
+	return remote
 }

@@ -199,6 +199,8 @@ func (m *AccessManager) ListAccessResources(resource, namespace string, allNames
 		args = append(args, "-n", namespace)
 	case allNamespaces:
 		args = append(args, "-A")
+	default:
+		args = append(args, "-n", m.accessListQueryNamespace(namespace, allNamespaces))
 	}
 
 	if err := m.kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
@@ -271,33 +273,24 @@ func (m *AccessManager) GetAccessResource(resource, name, namespace string) erro
 func (m *AccessManager) getAccessPlatform(ctx context.Context, plat *platformClient, resource, name, namespace string) error {
 	switch resource {
 	case accessGrantResource:
-		grants, err := plat.listGrants(ctx, namespace)
+		grant, err := plat.getGrant(ctx, namespace, name)
 		if err != nil {
 			return err
 		}
-		for _, g := range grants {
-			if g.Name == name && g.Namespace == namespace {
-				b, _ := json.MarshalIndent(g, "", "  ")
-				_, _ = os.Stdout.Write(append(b, '\n'))
-				return nil
-			}
-		}
+		b, _ := json.MarshalIndent(grant, "", "  ")
+		_, _ = os.Stdout.Write(append(b, '\n'))
+		return nil
 	case accessSessionResource:
-		sessions, err := plat.listSessions(ctx, namespace)
+		session, err := plat.getSession(ctx, namespace, name)
 		if err != nil {
 			return err
 		}
-		for _, s := range sessions {
-			if s.Name == name && s.Namespace == namespace {
-				b, _ := json.MarshalIndent(s, "", "  ")
-				_, _ = os.Stdout.Write(append(b, '\n'))
-				return nil
-			}
-		}
+		b, _ := json.MarshalIndent(session, "", "  ")
+		_, _ = os.Stdout.Write(append(b, '\n'))
+		return nil
 	default:
 		return newWithSentinel(nil, fmt.Sprintf("unsupported access resource %q", resource))
 	}
-	return newWithSentinel(nil, fmt.Sprintf("no %s %q in namespace %q (platform API)", resource, name, namespace))
 }
 
 func (m *AccessManager) ApplyAccessResource(file string) error {

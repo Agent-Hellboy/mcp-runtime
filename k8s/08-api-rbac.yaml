@@ -29,7 +29,7 @@ rules:
   # User namespace provisioning guardrails
   - apiGroups: [""]
     resources: ["namespaces", "resourcequotas", "limitranges"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
