@@ -3,8 +3,14 @@ name: Security - Gosec
 on:
   pull_request:
     branches: [ "*" ]
+    paths-ignore:
+      - 'docs/**'
+      - 'website/**'
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - 'docs/**'
+      - 'website/**'
   workflow_dispatch: {}
 
 jobs:
