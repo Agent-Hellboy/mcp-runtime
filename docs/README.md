@@ -53,7 +53,7 @@ Required GitHub secrets:
 - `DOCS_DEPLOY_USER`
 - `DOCS_DEPLOY_PATH`
 - `DOCS_DEPLOY_SSH_KEY`
-- `DOCS_DEPLOY_HOST_KEY` — pinned SSH host key line for the exact `DOCS_DEPLOY_HOST`; if `DOCS_DEPLOY_HOST` is an IP address, the line must start with that IP, for example `203.0.113.10 ssh-ed25519 AAAA...`
+- `DOCS_DEPLOY_HOST_KEY` — pinned SSH host key for `DOCS_DEPLOY_HOST`; use either a full known-hosts line such as `203.0.113.10 ssh-ed25519 AAAA...` or a bare host key such as `ssh-ed25519 AAAA...`
 
 Optional GitHub secrets:
 

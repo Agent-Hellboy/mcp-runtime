@@ -245,10 +245,14 @@ jobs:
           install -m 700 -d ~/.ssh
           printf "%s\n" "$DOCS_DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          printf "%s\n" "$DOCS_DEPLOY_HOST_KEY" > ~/.ssh/known_hosts
+          docs_known_host="${DOCS_DEPLOY_HOST_KEY//$'\r'/}"
+          case "$docs_known_host" in
+            ssh-*|ecdsa-*) docs_known_host="$DOCS_DEPLOY_HOST $docs_known_host" ;;
+          esac
+          printf "%s\n" "$docs_known_host" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
           if ! ssh-keygen -F "$DOCS_DEPLOY_HOST" -f ~/.ssh/known_hosts >/dev/null; then
-            echo "::error::DOCS_DEPLOY_HOST_KEY must include a known_hosts entry for DOCS_DEPLOY_HOST. When DOCS_DEPLOY_HOST is an IP address, the host key line must start with that same IP address."
+            echo "::error::DOCS_DEPLOY_HOST_KEY must be either a full known_hosts entry for DOCS_DEPLOY_HOST or a bare SSH host key such as 'ssh-ed25519 AAAA...'."
             exit 1
           fi
 
@@ -348,10 +352,14 @@ jobs:
           install -m 700 -d ~/.ssh
           printf "%s\n" "$WEBSITE_DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          printf "%s\n" "$WEBSITE_DEPLOY_HOST_KEY" > ~/.ssh/known_hosts
+          website_known_host="${WEBSITE_DEPLOY_HOST_KEY//$'\r'/}"
+          case "$website_known_host" in
+            ssh-*|ecdsa-*) website_known_host="$WEBSITE_DEPLOY_HOST $website_known_host" ;;
+          esac
+          printf "%s\n" "$website_known_host" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
           if ! ssh-keygen -F "$WEBSITE_DEPLOY_HOST" -f ~/.ssh/known_hosts >/dev/null; then
-            echo "::error::WEBSITE_DEPLOY_HOST_KEY must include a known_hosts entry for WEBSITE_DEPLOY_HOST. When WEBSITE_DEPLOY_HOST is an IP address, the host key line must start with that same IP address."
+            echo "::error::WEBSITE_DEPLOY_HOST_KEY must be either a full known_hosts entry for WEBSITE_DEPLOY_HOST or a bare SSH host key such as 'ssh-ed25519 AAAA...'."
             exit 1
           fi
 
