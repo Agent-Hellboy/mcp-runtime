@@ -6,12 +6,22 @@ docs_dir: .
 site_dir: /tmp/site
 theme:
   name: material
+  logo: assets/favicon.svg
+  favicon: assets/favicon.svg
+  font: false
   features:
     - navigation.sections
     - navigation.expand
     - navigation.top
+    - navigation.tabs
+    - navigation.tracking
     - search.highlight
+    - search.suggest
     - content.code.copy
+  palette:
+    scheme: default
+    primary: black
+    accent: blue
 markdown_extensions:
   - admonition
   - toc:
@@ -30,6 +40,9 @@ markdown_extensions:
 extra_javascript:
   - https://unpkg.com/mermaid@10/dist/mermaid.min.js
   - js/mermaid-init.js
+
+extra_css:
+  - stylesheets/extra.css
 nav:
   - Home: README.md
   - Getting Started: getting-started.md

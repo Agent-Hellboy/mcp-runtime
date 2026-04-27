@@ -30,17 +30,19 @@
     <div class="page">
       <header class="site-header">
         <div class="container nav">
-          <a class="brand" href="/">
+          <a class="brand" href="/" aria-label="MCP Runtime home">
             <div class="brand-mark" aria-hidden="true">MCP</div>
             <div>
               <div class="brand-title">MCP Runtime</div>
-              <div class="brand-subtitle">Open source MCP platform for Kubernetes</div>
+              <div class="brand-subtitle">Governed MCP infrastructure</div>
             </div>
           </a>
-          <div class="nav-actions">
+          <nav class="nav-actions" aria-label="Primary navigation">
+            <a href="#architecture">Architecture</a>
+            <a href="{{ docs_url }}getting-started/">Install</a>
             <a href="{{ docs_url }}">Docs</a>
             <a class="button ghost" href="{{ github_url }}">GitHub</a>
-          </div>
+          </nav>
         </div>
       </header>
 
@@ -50,7 +52,7 @@
 
       <footer class="container footer">
         <div>
-          MCP Runtime is an open source Kubernetes platform for operating internal MCP services.
+          <strong>MCP Runtime</strong> is an open source Kubernetes platform for operating internal MCP services.
           Contribute at <a href="{{ github_url }}">github.com/Agent-Hellboy/mcp-runtime</a>
           or write to us at
           <a
@@ -64,6 +66,7 @@
         </div>
         <div class="footer-links">
           <a href="{{ docs_url }}">Docs</a>
+          <a href="{{ docs_url }}api/">API</a>
           <a href="{{ github_url }}">GitHub</a>
         </div>
       </footer>

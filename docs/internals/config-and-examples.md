@@ -15,7 +15,7 @@
 - `mcpserver-path-based.yaml` is the maintained MCPServer manifest example for path-based ingress.
 
 ## Makefiles
-- `Makefile` exposes high-level tasks (fmt, lint, test, build-runtime) for the CLI binary.
+- `Makefile` exposes high-level tasks (fmt, lint, test, build) for the CLI binary.
 - `Makefile.runtime` bundles runtime-specific build/install tasks.
 - `Makefile.operator` builds operator manifests, docker image, and runs controller-gen tools; used by setup/build scripts.
 
