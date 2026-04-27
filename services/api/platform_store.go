@@ -25,6 +25,8 @@ const (
 	defaultDBMaxIdle    = 5
 )
 
+const oidcProviderPrefix = "oidc:"
+
 type platformStore struct {
 	db        *sql.DB
 	jwtSecret []byte
@@ -235,6 +237,134 @@ WHERE ai.provider = $1 AND ai.subject = $2`, passwordProvider, email).
 		return platformUser{}, false, nil
 	}
 	return u, true, nil
+}
+
+func (s *platformStore) EnsureOIDCUser(ctx context.Context, provider, subject, email, role string) (platformUser, error) {
+	provider = strings.TrimSpace(provider)
+	subject = strings.TrimSpace(subject)
+	email = strings.ToLower(strings.TrimSpace(email))
+	role = strings.TrimSpace(role)
+	if role == "" {
+		role = roleUser
+	}
+	if role != roleUser && role != roleAdmin {
+		return platformUser{}, errors.New("role must be user or admin")
+	}
+	if provider == "" {
+		return platformUser{}, errors.New("oidc provider required")
+	}
+	if subject == "" {
+		return platformUser{}, errors.New("oidc subject required")
+	}
+
+	var u platformUser
+	err := s.db.QueryRowContext(ctx, `
+SELECT u.id, u.email, u.role, COALESCE(n.namespace, '')
+FROM auth_identities ai
+JOIN users u ON u.id = ai.user_id AND u.deleted_at IS NULL
+LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
+WHERE ai.provider = $1 AND ai.subject = $2`, provider, subject).
+		Scan(&u.ID, &u.Email, &u.Role, &u.Namespace)
+	if err == nil {
+		return s.ensureOIDCUserRoleAndNamespace(ctx, u, role)
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return platformUser{}, err
+	}
+	if !validEmail(email) {
+		return platformUser{}, errors.New("valid email required for oidc user")
+	}
+
+	userExists := true
+	err = s.db.QueryRowContext(ctx, `
+SELECT u.id, u.email, u.role, COALESCE(n.namespace, '')
+FROM users u
+LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
+WHERE u.email = $1 AND u.deleted_at IS NULL`, email).
+		Scan(&u.ID, &u.Email, &u.Role, &u.Namespace)
+	if errors.Is(err, sql.ErrNoRows) {
+		u = platformUser{ID: uuid.NewString(), Email: email, Role: role}
+		userExists = false
+	} else if err != nil {
+		return platformUser{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return platformUser{}, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if !userExists {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO users (id,email,role) VALUES ($1,$2,$3)`, u.ID, u.Email, u.Role); err != nil {
+			return platformUser{}, err
+		}
+	} else if role == roleAdmin && u.Role != roleAdmin {
+		if _, err = tx.ExecContext(ctx, `UPDATE users SET role = $1 WHERE id = $2`, roleAdmin, u.ID); err != nil {
+			return platformUser{}, err
+		}
+		u.Role = roleAdmin
+	}
+	if _, err = tx.ExecContext(ctx, `
+INSERT INTO auth_identities (user_id, provider, subject)
+VALUES ($1, $2, $3)
+ON CONFLICT (provider, subject)
+DO UPDATE SET user_id = EXCLUDED.user_id`, u.ID, provider, subject); err != nil {
+		return platformUser{}, err
+	}
+	if u.Namespace == "" {
+		var seq int64
+		if err = tx.QueryRowContext(ctx, `SELECT nextval('platform_namespace_seq')`).Scan(&seq); err != nil {
+			return platformUser{}, err
+		}
+		u.Namespace = fmt.Sprintf("user-%d", seq)
+		if _, err = tx.ExecContext(ctx, `INSERT INTO namespaces (id,user_id,namespace) VALUES ($1,$2,$3)`, uuid.NewString(), u.ID, u.Namespace); err != nil {
+			return platformUser{}, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return platformUser{}, err
+	}
+	return u, nil
+}
+
+func (s *platformStore) ensureOIDCUserRoleAndNamespace(ctx context.Context, u platformUser, role string) (platformUser, error) {
+	if role != roleAdmin && u.Namespace != "" {
+		return u, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return platformUser{}, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if role == roleAdmin && u.Role != roleAdmin {
+		if _, err = tx.ExecContext(ctx, `UPDATE users SET role = $1 WHERE id = $2`, roleAdmin, u.ID); err != nil {
+			return platformUser{}, err
+		}
+		u.Role = roleAdmin
+	}
+	if u.Namespace == "" {
+		var seq int64
+		if err = tx.QueryRowContext(ctx, `SELECT nextval('platform_namespace_seq')`).Scan(&seq); err != nil {
+			return platformUser{}, err
+		}
+		u.Namespace = fmt.Sprintf("user-%d", seq)
+		if _, err = tx.ExecContext(ctx, `INSERT INTO namespaces (id,user_id,namespace) VALUES ($1,$2,$3)`, uuid.NewString(), u.ID, u.Namespace); err != nil {
+			return platformUser{}, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return platformUser{}, err
+	}
+	return u, nil
 }
 
 func (s *platformStore) GetUser(ctx context.Context, userID string) (platformUser, bool, error) {

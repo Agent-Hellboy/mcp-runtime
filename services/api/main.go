@@ -677,6 +677,19 @@ func (s *apiServer) authenticateRequest(r *http.Request) (principal, bool, error
 			}
 		}
 	}
+	if s.platform != nil {
+		u, err := s.platform.EnsureOIDCUser(r.Context(), oidcProvider(s.oidcIssuer), sub, email, role)
+		if err != nil {
+			return principal{}, false, err
+		}
+		return principal{
+			Role:      u.Role,
+			Subject:   u.ID,
+			Email:     u.Email,
+			Namespace: u.Namespace,
+			AuthType:  "oidc_jwt",
+		}, true, nil
+	}
 	return principal{
 		Role:     role,
 		Subject:  sub,
@@ -694,6 +707,14 @@ func (s *apiServer) requireRole(role string, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func oidcProvider(issuer string) string {
+	issuer = strings.TrimSpace(issuer)
+	if issuer == "" {
+		return oidcProviderPrefix + "default"
+	}
+	return oidcProviderPrefix + issuer
 }
 
 func (s *apiServer) handleAuthMe(w http.ResponseWriter, r *http.Request) {
