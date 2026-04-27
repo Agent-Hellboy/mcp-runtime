@@ -1,58 +1,210 @@
 {% extends "base.html" %}
 
 {% block content %}
-  <section class="hero container">
-    <span class="eyebrow">Open source · Kubernetes-native · Alpha</span>
-    <h1>The MCP control plane for Kubernetes.</h1>
-    <p class="lede">
-      Deploy, govern, and observe internal Model Context Protocol services with
-      a single open-source platform. One service definition. One operating
-      model. Policy, audit, and analytics on every live request.
-    </p>
-    <div class="hero-actions">
-      <a class="button primary" href="{{ docs_url }}">Read the docs</a>
-      <a class="button secondary" href="{{ github_url }}">View on GitHub</a>
+  <section class="hero container" aria-labelledby="hero-title">
+    <div class="hero-copy reveal">
+      <span class="eyebrow">Spec 00 · Kubernetes MCP Runtime · Alpha</span>
+      <h1 id="hero-title">Operate MCP servers like infrastructure, not side projects.</h1>
+      <p class="lede">
+        MCP Runtime gives platform teams a Kubernetes-native control plane for deploying,
+        governing, and observing internal Model Context Protocol services. CRDs define the
+        service. Sentinel governs the live request path. Operators keep the cluster honest.
+      </p>
+      <div class="hero-actions" aria-label="Primary actions">
+        <a class="button primary" href="{{ docs_url }}getting-started/">Start the runbook</a>
+        <a class="button secondary" href="{{ github_url }}">Inspect the source</a>
+      </div>
     </div>
+
+    <aside class="hero-spec reveal" aria-label="Platform control surface summary">
+      <div class="spec-kicker">Control Surface</div>
+      <dl class="spec-list">
+        <div>
+          <dt>Delivery</dt>
+          <dd>CRD · operator · registry · ingress</dd>
+        </div>
+        <div>
+          <dt>Governance</dt>
+          <dd>grants · sessions · trust ceilings</dd>
+        </div>
+        <div>
+          <dt>Runtime Path</dt>
+          <dd>gateway · policy · audit · analytics</dd>
+        </div>
+      </dl>
+      <div class="spec-stamp">v1alpha1</div>
+    </aside>
   </section>
 
-  <section class="container code-band">
-    <pre><code>apiVersion: mcpruntime.org/v1alpha1
+  <section class="container blueprint" aria-labelledby="blueprint-title">
+    <div class="section-heading">
+      <span class="section-label">01 / Definition</span>
+      <h2 id="blueprint-title">One manifest becomes the governed route.</h2>
+    </div>
+    <div class="blueprint-grid">
+      <div class="code-panel" aria-label="Example MCPServer Kubernetes manifest">
+        <div class="code-panel-bar">
+          <span>mcpserver.yaml</span>
+          <span>mcpruntime.org/v1alpha1</span>
+        </div>
+        <pre><code>apiVersion: mcpruntime.org/v1alpha1
 kind: MCPServer
 metadata:
   name: payments
 spec:
   image: registry.example.com/payments-mcp:v1.0.0
   port: 8088
-  ingressHost: mcp.example.com
-  ingressPath: /payments/mcp
+  publicPathPrefix: payments
   gateway:
     enabled: true
   analytics:
     enabled: true</code></pre>
-    <p class="caption">Apply once. The runtime owns rollout, routing, and the governed request path from there.</p>
+      </div>
+      <div class="blueprint-notes">
+        <p class="caption">Apply once. The runtime owns rollout, routing, policy attachment, and telemetry from there.</p>
+        <ul class="check-list">
+          <li>Operator reconciles Kubernetes primitives from the CRD.</li>
+          <li>Gateway keeps access decisions on the request path.</li>
+          <li>Sentinel records policy outcomes and service analytics.</li>
+        </ul>
+      </div>
+    </div>
   </section>
 
-  <section class="container pillars">
+  <section id="architecture" class="container pillars" aria-labelledby="architecture-title">
+    <div class="section-heading span-two">
+      <span class="section-label">02 / Architecture</span>
+      <h2 id="architecture-title">The platform is split across three operating planes.</h2>
+    </div>
     <article>
-      <h2>Runtime</h2>
+      <span class="card-index">A</span>
+      <h3>Runtime</h3>
       <p>Cluster bootstrap, registry, ingress, operator reconciliation, and rollout for every MCP server.</p>
     </article>
     <article>
-      <h2>Access</h2>
-      <p>Grants and sessions as first-class CRDs — explicit consent, trust ceilings, expiry, and revocation.</p>
+      <span class="card-index">B</span>
+      <h3>Access</h3>
+      <p>Grants and sessions as first-class CRDs with explicit consent, trust ceilings, expiry, and revocation.</p>
     </article>
     <article>
-      <h2>Sentinel</h2>
-      <p>Policy, audit, and observability on the live request path. Bundled gateway, analytics, and dashboards.</p>
+      <span class="card-index">C</span>
+      <h3>Sentinel</h3>
+      <p>Policy, audit, and observability on the live request path through a bundled gateway and dashboards.</p>
     </article>
   </section>
 
-  <section class="container cta-band">
-    <h2>Built for platform teams running internal MCP services.</h2>
-    <p>Self-hosted. MIT-licensed. Works on k3s, kind, minikube, and EKS today.</p>
+  <section class="container features" aria-labelledby="features-title">
+    <div class="section-heading">
+      <span class="section-label">03 / Capabilities</span>
+      <h2 id="features-title">Built for platform ownership.</h2>
+      <p>
+        The product surface is intentionally operational: install the control plane,
+        describe servers, issue access, then watch policy and traffic from one place.
+      </p>
+    </div>
+    <div class="features-grid">
+      <article class="feature-card">
+        <h3>Declarative deployments</h3>
+        <p>Define MCP servers once as Kubernetes CRDs. The operator handles services, rollouts, routes, and updates.</p>
+      </article>
+      <article class="feature-card accent">
+        <h3>Access without ambiguity</h3>
+        <p>Grants and sessions make consent, trust level, expiry, and revocation inspectable Kubernetes resources.</p>
+      </article>
+      <article class="feature-card">
+        <h3>Request-path analytics</h3>
+        <p>Observe every MCP call with policy decisions, timing, tool names, status, and dashboard-ready event data.</p>
+      </article>
+      <article class="feature-card">
+        <h3>Immediate policy enforcement</h3>
+        <p>Sentinel evaluates live traffic at the gateway, so governance is applied before tools execute.</p>
+      </article>
+      <article class="feature-card accent">
+        <h3>Audit-ready traces</h3>
+        <p>Every governed request is recorded for security review, incident response, and compliance workflows.</p>
+      </article>
+      <article class="feature-card">
+        <h3>Bundled dashboards</h3>
+        <p>Grafana, Prometheus, API, ingest, processor, and UI services ship as part of the local evaluation stack.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="container runbook" aria-labelledby="runbook-title">
+    <div class="section-heading">
+      <span class="section-label">04 / Runbook</span>
+      <h2 id="runbook-title">From empty cluster to governed MCP endpoint.</h2>
+    </div>
+    <ol class="runbook-steps">
+      <li>
+        <span>Build</span>
+        <code>go build -o bin/mcp-runtime ./cmd/mcp-runtime</code>
+      </li>
+      <li>
+        <span>Bootstrap</span>
+        <code>./bin/mcp-runtime bootstrap</code>
+      </li>
+      <li>
+        <span>Install</span>
+        <code>./bin/mcp-runtime setup --test-mode</code>
+      </li>
+      <li>
+        <span>Verify</span>
+        <code>./bin/mcp-runtime status</code>
+      </li>
+    </ol>
+  </section>
+
+  <section class="container use-cases" aria-labelledby="use-cases-title">
+    <div class="section-heading">
+      <span class="section-label">05 / Use Cases</span>
+      <h2 id="use-cases-title">Where the runtime earns its keep.</h2>
+    </div>
+    <div class="use-cases-grid">
+      <article class="use-case">
+        <h3>AI tool use</h3>
+        <p>Safely expose internal tools to agents with controlled access, request inspection, and audit trails.</p>
+      </article>
+      <article class="use-case">
+        <h3>Internal APIs</h3>
+        <p>Govern access to databases, services, and data APIs without modifying every application.</p>
+      </article>
+      <article class="use-case">
+        <h3>Cross-team integrations</h3>
+        <p>Grant temporary, reviewable access between teams with clear trust ceilings and easy revocation.</p>
+      </article>
+      <article class="use-case">
+        <h3>Compliance review</h3>
+        <p>Give security and compliance teams searchable request history instead of scattered service logs.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="container platforms" aria-labelledby="platforms-title">
+    <div class="section-heading compact">
+      <span class="section-label">06 / Targets</span>
+      <h2 id="platforms-title">Works anywhere you run Kubernetes.</h2>
+      <p>Kubernetes 1.25+. Self-hosted. No proprietary control plane.</p>
+    </div>
+    <div class="platforms-list" aria-label="Supported Kubernetes environments">
+      <span class="platform-badge">k3s</span>
+      <span class="platform-badge">kind</span>
+      <span class="platform-badge">minikube</span>
+      <span class="platform-badge">kubeadm</span>
+      <span class="platform-badge">EKS</span>
+      <span class="platform-badge">GKE</span>
+      <span class="platform-badge">AKS</span>
+      <span class="platform-badge">OpenShift</span>
+    </div>
+  </section>
+
+  <section class="container cta-band" aria-labelledby="cta-title">
+    <span class="section-label">Next action</span>
+    <h2 id="cta-title">Read the operations path before you install.</h2>
+    <p>Start with the getting-started guide, then keep the CLI and cluster-readiness docs open while you evaluate.</p>
     <div class="hero-actions">
-      <a class="button primary" href="{{ docs_url }}getting-started">Get started</a>
-      <a class="button secondary" href="{{ github_url }}">Star on GitHub</a>
+      <a class="button primary" href="{{ docs_url }}getting-started/">Open getting started</a>
+      <a class="button secondary" href="{{ docs_url }}architecture/">Read architecture</a>
     </div>
   </section>
 {% endblock %}

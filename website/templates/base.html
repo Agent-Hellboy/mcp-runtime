@@ -23,6 +23,9 @@
       content="Open source MCP platform for Kubernetes."
     />
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600;6..72,700&display=swap" />
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   </head>
   <body>
@@ -30,17 +33,19 @@
     <div class="page">
       <header class="site-header">
         <div class="container nav">
-          <a class="brand" href="/">
+          <a class="brand" href="/" aria-label="MCP Runtime home">
             <div class="brand-mark" aria-hidden="true">MCP</div>
             <div>
               <div class="brand-title">MCP Runtime</div>
-              <div class="brand-subtitle">Open source MCP platform for Kubernetes</div>
+              <div class="brand-subtitle">Governed MCP infrastructure</div>
             </div>
           </a>
-          <div class="nav-actions">
+          <nav class="nav-actions" aria-label="Primary navigation">
+            <a href="/#architecture">Architecture</a>
+            <a href="{{ docs_url }}getting-started/">Install</a>
             <a href="{{ docs_url }}">Docs</a>
             <a class="button ghost" href="{{ github_url }}">GitHub</a>
-          </div>
+          </nav>
         </div>
       </header>
 
@@ -50,7 +55,7 @@
 
       <footer class="container footer">
         <div>
-          MCP Runtime is an open source Kubernetes platform for operating internal MCP services.
+          <strong>MCP Runtime</strong> is an open source Kubernetes platform for operating internal MCP services.
           Contribute at <a href="{{ github_url }}">github.com/Agent-Hellboy/mcp-runtime</a>
           or write to us at
           <a
@@ -64,6 +69,7 @@
         </div>
         <div class="footer-links">
           <a href="{{ docs_url }}">Docs</a>
+          <a href="{{ docs_url }}api/">API</a>
           <a href="{{ github_url }}">GitHub</a>
         </div>
       </footer>

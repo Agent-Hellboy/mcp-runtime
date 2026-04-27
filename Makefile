@@ -48,7 +48,7 @@ build-unix: build-all ## Alias for build-all to keep CI targets stable.
 dev: build ## Build and run CLI in development mode.
 	./$(BUILD_DIR)/$(BINARY_NAME)
 
-deps: deps-go deps-check ## Download all Go modules and report missing dev tools (Go 1.25+, docker, kubectl).
+deps: deps-check deps-go ## Verify host tools, then download Go modules (Go 1.25+, docker, kubectl).
 
 deps-go: ## Go mod download and tidy (root) plus go mod download for each nested module in services/ and examples/.
 	@./hack/deps.sh go
@@ -56,7 +56,7 @@ deps-go: ## Go mod download and tidy (root) plus go mod download for each nested
 deps-check: ## Verify toolchain on PATH. Set STRICT_DEPS_CHECK=1 to fail the recipe if a tool is missing.
 	@./hack/deps.sh check
 
-deps-install: ## Best-effort install of docker, kubectl, and Go (apt as root, or Homebrew on macOS).
+deps-install: ## Best-effort install of host tools where supported (Go, Docker client, kubectl).
 	@./hack/deps.sh install
 
 ##@ Testing
