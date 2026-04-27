@@ -19,6 +19,7 @@ If instructions conflict, prefer **this repo** (`README`, CRDs, `v1alpha1` types
 | Traefik plugins (dev) | `services/traefik-plugins/` | e.g. PII redactor source for local overlays |
 | Site / public docs (if editing) | `website/` | Not required for control-plane work |
 | E2E | `test/e2e/`, `test/integration/` | Kind script and envtest-based integration tests |
+| Agent tool config | `.claude/`, `.codex/skills/` | `.claude/skills` should symlink to `../.codex/skills` so Claude Desktop and the Codex CLI use the same local skills |
 
 **Patterns worth mirroring:** search for similar packages before adding new abstractions; keep CLI errors consistent with `internal/cli/errors.go` and `pkg/errx/`.
 
@@ -54,6 +55,7 @@ Optional but used in CI: `staticcheck ./...` (install: `go install honnef.co/go/
 - **Tests:** Add or adjust tests in the same package when behavior changes. For CLI output, expect golden file updates.
 - **Docs you were not asked to edit:** Avoid adding new top-level docs unless the task needs them; this file, `README`, and existing doc trees are the defaults for agents.
 - **Secrets and prod:** This repo is **alpha**; do not hardcode real credentials. Use the existing secret and env patterns documented below.
+- **Agent skills:** Keep `.claude/skills` as a symlink to `../.codex/skills`; see `.claude/README.md` before changing local agent-tool configuration.
 
 ## Local dev setup (Kind and CLI)
 

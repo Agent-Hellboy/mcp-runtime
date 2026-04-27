@@ -89,6 +89,10 @@ go vet ./...
 
 For targeted tests, e2e setup, and debugging runbooks, use [`AGENTS.md`](AGENTS.md) and the docs site.
 
+## Agent tool configuration
+
+The repo keeps Claude-specific local configuration in [`.claude/`](.claude/README.md). Its `skills` entry is expected to be a symlink to `../.codex/skills`, so Claude Desktop and the Codex CLI discover the same repository skills during local development.
+
 ## License
 
 MIT
