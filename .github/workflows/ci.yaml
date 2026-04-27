@@ -234,7 +234,6 @@ jobs:
           test -n "$DOCS_DEPLOY_USER"
           test -n "$DOCS_DEPLOY_PATH"
           test -n "$DOCS_DEPLOY_SSH_KEY"
-          test -n "$DOCS_DEPLOY_HOST_KEY"
 
       - name: Set up SSH key
         env:
@@ -245,14 +244,26 @@ jobs:
           install -m 700 -d ~/.ssh
           printf "%s\n" "$DOCS_DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
+          docs_host="${DOCS_DEPLOY_HOST//$'\r'/}"
+          docs_host="${docs_host#"${docs_host%%[![:space:]]*}"}"
+          docs_host="${docs_host%"${docs_host##*[![:space:]]}"}"
+          printf "DOCS_DEPLOY_HOST_CLEAN=%s\n" "$docs_host" >> "$GITHUB_ENV"
+          docs_known_hosts="$(mktemp)"
           docs_known_host="${DOCS_DEPLOY_HOST_KEY//$'\r'/}"
-          case "$docs_known_host" in
-            ssh-*|ecdsa-*) docs_known_host="$DOCS_DEPLOY_HOST $docs_known_host" ;;
-          esac
-          printf "%s\n" "$docs_known_host" > ~/.ssh/known_hosts
+          if [ -n "$docs_known_host" ]; then
+            case "$docs_known_host" in
+              ssh-*|ecdsa-*) printf "%s %s\n" "$docs_host" "$docs_known_host" > "$docs_known_hosts" ;;
+              *" ssh-"*|*" ecdsa-"*) printf "%s\n" "$docs_known_host" > "$docs_known_hosts" ;;
+              *) echo "::warning::Ignoring DOCS_DEPLOY_HOST_KEY because it is not a known_hosts entry or bare SSH host key." ;;
+            esac
+          fi
+          if ! ssh-keygen -F "$docs_host" -f "$docs_known_hosts" >/dev/null 2>&1; then
+            ssh-keyscan -T 10 -t ed25519,rsa "$docs_host" > "$docs_known_hosts"
+          fi
+          mv "$docs_known_hosts" ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
-          if ! ssh-keygen -F "$DOCS_DEPLOY_HOST" -f ~/.ssh/known_hosts >/dev/null; then
-            echo "::error::DOCS_DEPLOY_HOST_KEY must be either a full known_hosts entry for DOCS_DEPLOY_HOST or a bare SSH host key such as 'ssh-ed25519 AAAA...'."
+          if ! ssh-keygen -F "$docs_host" -f ~/.ssh/known_hosts >/dev/null; then
+            echo "::error::Could not create a known_hosts entry for DOCS_DEPLOY_HOST."
             exit 1
           fi
 
@@ -264,7 +275,7 @@ jobs:
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-            "${{ secrets.DOCS_DEPLOY_USER }}@${{ secrets.DOCS_DEPLOY_HOST }}" \
+            "${{ secrets.DOCS_DEPLOY_USER }}@$DOCS_DEPLOY_HOST_CLEAN" \
             "true"
 
       - name: Sync docs/
@@ -272,7 +283,7 @@ jobs:
           rsync -az --delete \
             -e "ssh -i $HOME/.ssh/id_ed25519 -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts" \
             docs/ \
-            "${{ secrets.DOCS_DEPLOY_USER }}@${{ secrets.DOCS_DEPLOY_HOST }}:${{ secrets.DOCS_DEPLOY_PATH }}/"
+            "${{ secrets.DOCS_DEPLOY_USER }}@$DOCS_DEPLOY_HOST_CLEAN:${{ secrets.DOCS_DEPLOY_PATH }}/"
 
       - name: Deploy docs container on remote host
         env:
@@ -284,7 +295,7 @@ jobs:
           DOCS_CONTAINER_PORT: ${{ secrets.DOCS_CONTAINER_PORT }}
         run: |
           if [ -n "$DOCS_DEPLOY_COMMAND" ]; then
-            ssh "${{ secrets.DOCS_DEPLOY_USER }}@${{ secrets.DOCS_DEPLOY_HOST }}" "$DOCS_DEPLOY_COMMAND"
+            ssh "${{ secrets.DOCS_DEPLOY_USER }}@$DOCS_DEPLOY_HOST_CLEAN" "$DOCS_DEPLOY_COMMAND"
             exit 0
           fi
 
@@ -294,7 +305,7 @@ jobs:
           container_port="${DOCS_CONTAINER_PORT:-80}"
 
           b64() { printf '%s' "$1" | base64 -w 0; }
-          ssh "${{ secrets.DOCS_DEPLOY_USER }}@${{ secrets.DOCS_DEPLOY_HOST }}" \
+          ssh "${{ secrets.DOCS_DEPLOY_USER }}@$DOCS_DEPLOY_HOST_CLEAN" \
             "DOCS_DEPLOY_PATH_B64=$(b64 "$DOCS_DEPLOY_PATH") \
              DOCS_CONTAINER_NAME_B64=$(b64 "$container_name") \
              DOCS_IMAGE_NAME_B64=$(b64 "$image_name") \
@@ -341,7 +352,6 @@ jobs:
           test -n "$WEBSITE_DEPLOY_USER"
           test -n "$WEBSITE_DEPLOY_PATH"
           test -n "$WEBSITE_DEPLOY_SSH_KEY"
-          test -n "$WEBSITE_DEPLOY_HOST_KEY"
 
       - name: Set up SSH key
         env:
@@ -352,14 +362,26 @@ jobs:
           install -m 700 -d ~/.ssh
           printf "%s\n" "$WEBSITE_DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
+          website_host="${WEBSITE_DEPLOY_HOST//$'\r'/}"
+          website_host="${website_host#"${website_host%%[![:space:]]*}"}"
+          website_host="${website_host%"${website_host##*[![:space:]]}"}"
+          printf "WEBSITE_DEPLOY_HOST_CLEAN=%s\n" "$website_host" >> "$GITHUB_ENV"
+          website_known_hosts="$(mktemp)"
           website_known_host="${WEBSITE_DEPLOY_HOST_KEY//$'\r'/}"
-          case "$website_known_host" in
-            ssh-*|ecdsa-*) website_known_host="$WEBSITE_DEPLOY_HOST $website_known_host" ;;
-          esac
-          printf "%s\n" "$website_known_host" > ~/.ssh/known_hosts
+          if [ -n "$website_known_host" ]; then
+            case "$website_known_host" in
+              ssh-*|ecdsa-*) printf "%s %s\n" "$website_host" "$website_known_host" > "$website_known_hosts" ;;
+              *" ssh-"*|*" ecdsa-"*) printf "%s\n" "$website_known_host" > "$website_known_hosts" ;;
+              *) echo "::warning::Ignoring WEBSITE_DEPLOY_HOST_KEY because it is not a known_hosts entry or bare SSH host key." ;;
+            esac
+          fi
+          if ! ssh-keygen -F "$website_host" -f "$website_known_hosts" >/dev/null 2>&1; then
+            ssh-keyscan -T 10 -t ed25519,rsa "$website_host" > "$website_known_hosts"
+          fi
+          mv "$website_known_hosts" ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
-          if ! ssh-keygen -F "$WEBSITE_DEPLOY_HOST" -f ~/.ssh/known_hosts >/dev/null; then
-            echo "::error::WEBSITE_DEPLOY_HOST_KEY must be either a full known_hosts entry for WEBSITE_DEPLOY_HOST or a bare SSH host key such as 'ssh-ed25519 AAAA...'."
+          if ! ssh-keygen -F "$website_host" -f ~/.ssh/known_hosts >/dev/null; then
+            echo "::error::Could not create a known_hosts entry for WEBSITE_DEPLOY_HOST."
             exit 1
           fi
 
@@ -371,7 +393,7 @@ jobs:
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-            "${{ secrets.WEBSITE_DEPLOY_USER }}@${{ secrets.WEBSITE_DEPLOY_HOST }}" \
+            "${{ secrets.WEBSITE_DEPLOY_USER }}@$WEBSITE_DEPLOY_HOST_CLEAN" \
             "true"
 
       - name: Sync website/
@@ -379,7 +401,7 @@ jobs:
           rsync -az --delete \
             -e "ssh -i $HOME/.ssh/id_ed25519 -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts" \
             website/ \
-            "${{ secrets.WEBSITE_DEPLOY_USER }}@${{ secrets.WEBSITE_DEPLOY_HOST }}:${{ secrets.WEBSITE_DEPLOY_PATH }}/"
+            "${{ secrets.WEBSITE_DEPLOY_USER }}@$WEBSITE_DEPLOY_HOST_CLEAN:${{ secrets.WEBSITE_DEPLOY_PATH }}/"
 
       - name: Deploy website container on remote host
         env:
@@ -393,7 +415,7 @@ jobs:
           WEBSITE_CONTAINER_PORT: ${{ secrets.WEBSITE_CONTAINER_PORT }}
         run: |
           if [ -n "$WEBSITE_DEPLOY_COMMAND" ]; then
-            ssh "${{ secrets.WEBSITE_DEPLOY_USER }}@${{ secrets.WEBSITE_DEPLOY_HOST }}" "$WEBSITE_DEPLOY_COMMAND"
+            ssh "${{ secrets.WEBSITE_DEPLOY_USER }}@$WEBSITE_DEPLOY_HOST_CLEAN" "$WEBSITE_DEPLOY_COMMAND"
             exit 0
           fi
 
@@ -406,7 +428,7 @@ jobs:
           git_sha="${GITHUB_SHA:-unknown}"
 
           b64() { printf '%s' "$1" | base64 -w 0; }
-          ssh "${{ secrets.WEBSITE_DEPLOY_USER }}@${{ secrets.WEBSITE_DEPLOY_HOST }}" \
+          ssh "${{ secrets.WEBSITE_DEPLOY_USER }}@$WEBSITE_DEPLOY_HOST_CLEAN" \
             "WEBSITE_DEPLOY_PATH_B64=$(b64 "$WEBSITE_DEPLOY_PATH") \
              WEBSITE_CONTAINER_NAME_B64=$(b64 "$container_name") \
              WEBSITE_IMAGE_NAME_B64=$(b64 "$image_name") \

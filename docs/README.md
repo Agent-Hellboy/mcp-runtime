@@ -53,12 +53,12 @@ Required GitHub secrets:
 - `DOCS_DEPLOY_USER`
 - `DOCS_DEPLOY_PATH`
 - `DOCS_DEPLOY_SSH_KEY`
-- `DOCS_DEPLOY_HOST_KEY` — pinned SSH host key for `DOCS_DEPLOY_HOST`; use either a full known-hosts line such as `203.0.113.10 ssh-ed25519 AAAA...` or a bare host key such as `ssh-ed25519 AAAA...`
 
 Optional GitHub secrets:
 
 | Secret | Default | Purpose |
 |---|---:|---|
+| `DOCS_DEPLOY_HOST_KEY` | `ssh-keyscan` fallback | Pinned SSH host key for `DOCS_DEPLOY_HOST`; use either a full known-hosts line such as `203.0.113.10 ssh-ed25519 AAAA...` or a bare host key such as `ssh-ed25519 AAAA...`. |
 | `DOCS_HOST_PORT` | `8081` | Host port published by Docker. |
 | `DOCS_CONTAINER_PORT` | `80` | Container port exposed by the docs image. |
 | `DOCS_CONTAINER_NAME` | `mcp-runtime-docs` | Remote Docker container name. |
