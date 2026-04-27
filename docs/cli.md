@@ -24,6 +24,9 @@ make build
 ./bin/mcp-runtime setup
 ./bin/mcp-runtime status
 
+./bin/mcp-runtime auth login --api-url https://platform.example.com --token-stdin < token.txt
+./bin/mcp-runtime auth status
+
 ./bin/mcp-runtime registry push --image my-server:v1.0.0
 ./bin/mcp-runtime pipeline generate --dir .mcp --output manifests/
 ./bin/mcp-runtime pipeline deploy --dir manifests/
@@ -37,6 +40,7 @@ For a new workstation, run `make deps-install` first where supported, then `STRI
 |---|---|---|
 | `bootstrap` | Preflight checks for cluster prerequisites (DNS, default StorageClass, ingress class, MetalLB). With `--apply` on k3s only, install bundled CoreDNS + local-path manifests. | `bootstrap`, `--apply`, `--provider auto\|k3s\|rke2\|kubeadm\|generic` |
 | `setup` | Install the platform stack, wire registry and ingress, deploy the operator, optionally include sentinel. | `setup`, `--with-tls`, `--without-sentinel` |
+| `auth` | Save and inspect platform API credentials for non-kubeconfig platform flows. | `login`, `logout`, `status` |
 | `cluster` | Initialize clusters, inspect health, configure kubeconfig and ingress, provision clusters, manage cert-manager. | `init`, `status`, `config`, `provision`, `cert status\|apply\|wait`, `doctor` |
 | `registry` | Inspect the internal registry, configure an external one, push images. | `status`, `info`, `provision`, `push` |
 | `server` | Manage `MCPServer` resources and operator-facing actions. | `list`, `get`, `create`, `apply`, `export`, `patch`, `delete`, `logs`, `status`, `policy inspect`, `build image` |
@@ -72,6 +76,60 @@ mcp-runtime setup --test-mode                  # use kind-loaded operator image
 ```
 
 Flags: `--registry-type`, `--registry-storage`, `--ingress`, `--ingress-manifest`, `--force-ingress-install`, `--with-tls`, `--test-mode`, `--without-sentinel`, plus operator overrides `--operator-leader-elect`, `--operator-metrics-addr`, `--operator-probe-addr`.
+
+## auth
+
+Use `auth` for platform API credentials, not for Kubernetes cluster access.
+
+Use cases:
+
+- saving a platform API token locally for day-to-day platform flows
+- recording a registry host alongside that token
+- checking whether local platform credentials are already configured
+
+Do not use `auth` for:
+
+- `setup`
+- cluster bootstrap
+- cluster admin operations
+- raw Kubernetes access
+
+Examples:
+
+```bash
+# Save a token interactively
+mcp-runtime auth login --api-url https://platform.example.com
+
+# Save a token non-interactively
+cat token.txt | mcp-runtime auth login \
+  --api-url https://platform.example.com \
+  --token-stdin
+
+# Email/password login when the platform supports it
+mcp-runtime auth login \
+  --api-url https://platform.example.com \
+  --email admin@example.com \
+  --password '...'
+
+# Record the platform registry host too
+mcp-runtime auth login \
+  --api-url https://platform.example.com \
+  --token-stdin \
+  --registry-host registry.example.com < token.txt
+
+# Check current auth state
+mcp-runtime auth status
+
+# Remove saved local credentials
+mcp-runtime auth logout
+```
+
+Notes:
+
+- saved credentials are local to the workstation
+- `MCP_PLATFORM_API_TOKEN` overrides any saved token when set
+- `MCP_PLATFORM_API_URL` can provide the default API base URL
+- kubeconfig-based cluster commands are separate from platform auth
 
 ## status
 
@@ -110,6 +168,8 @@ mcp-runtime pipeline generate --file .mcp/payments.yaml --output manifests
 mcp-runtime pipeline deploy --dir manifests
 mcp-runtime pipeline deploy --dir manifests --namespace mcp-servers
 ```
+
+For the full build, push, deploy, and verify flow, see [Publish an MCP Server](publish-mcp-server.md).
 
 ## access
 
@@ -152,6 +212,8 @@ mcp-runtime registry push --image payments:v1
 ```
 
 `server patch` accepts inline `--patch` or `--patch-file` with `merge`, `json`, or `strategic` modes.
+
+`server build image` updates matching `.mcp` metadata when you use the metadata-driven pipeline. It does not deploy by itself; push and deploy are separate steps.
 
 ## sentinel
 
@@ -234,5 +296,6 @@ mcp-runtime status
 ## Next
 
 - [API](api.md) — exact resource fields the CLI is wrapping.
+- [Publish an MCP Server](publish-mcp-server.md) — manifest, metadata, image push, deploy, and verification flow.
 - [Sentinel](sentinel.md) — how `sentinel logs / events / restart` map to the bundled stack.
 - [Cluster readiness](cluster-readiness.md) — distro-specific prerequisites.

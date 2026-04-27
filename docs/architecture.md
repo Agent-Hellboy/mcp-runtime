@@ -1,6 +1,6 @@
 # Architecture
 
-MCP Runtime is a Kubernetes-native manager, registry, broker, and infrastructure layer for internal MCP servers. It gives companies one platform surface for deploying servers, publishing images, brokering agent access, and keeping policy, consent, audit, and observability on the request path.
+MCP Runtime is a Kubernetes-native control plane for MCP servers. It gives platform teams one operating surface for deploying servers, publishing images, brokering agent access, and keeping policy, consent, audit, and observability on the live request path across vendor-neutral Kubernetes environments.
 
 ```mermaid
 flowchart LR
@@ -59,6 +59,6 @@ Sentinel services receive those events, process them for analytics, and expose t
 
 `setup` installs the runtime namespaces, CRDs, registry, operator, ingress wiring, and the Sentinel stack unless explicitly disabled. In development, Kind and path-based localhost ingress are enough. In production, `MCP_PLATFORM_DOMAIN` can derive `registry.<domain>`, `mcp.<domain>`, and `platform.<domain>` so registry pulls, MCP traffic, and the dashboard each have stable hostnames.
 
-The intended company workflow is straightforward: platform teams install the stack, application teams publish MCP servers, security teams define grants and sessions, and agents call tools through the governed broker path.
+The intended workflow is straightforward: platform teams install the stack, application teams publish MCP servers, security teams define grants and sessions, and agents call tools through the governed broker path.
 
 For routing details and field semantics, see [Runtime](runtime.md) and [API reference](api.md).

@@ -1,6 +1,6 @@
 # Runtime
 
-The runtime is the Kubernetes control plane for internal MCP servers. It owns the manager, registry, broker wiring, cluster bootstrap, ingress setup, operator reconciliation, deployment resources, rollout, and the access model that sits beside each server before requests reach the [Sentinel](sentinel.md) request path.
+The runtime is the Kubernetes-native control plane for MCP servers. It owns the manager, registry, broker wiring, cluster bootstrap, ingress setup, operator reconciliation, deployment resources, rollout, and the access model that sits beside each server before requests reach the [Sentinel](sentinel.md) request path.
 
 > Higher-level than ingress and service mesh. The runtime sits **above** lower-level networking infrastructure and models MCP-specific delivery, access, and rollout concerns. It is not a generic data plane for arbitrary cluster traffic.
 

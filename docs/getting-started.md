@@ -1,6 +1,6 @@
 # Getting Started
 
-The shortest path from an empty Kubernetes cluster to a company-ready MCP endpoint: install the manager, registry, broker, and Sentinel stack; deploy one MCP server; grant access; and observe live traffic.
+The shortest path from an empty Kubernetes cluster to a governed MCP endpoint: install the control plane, registry, broker, and Sentinel stack; deploy one MCP server; grant access; and observe live traffic.
 
 ## Prerequisites
 
@@ -89,17 +89,103 @@ spec:
 ./bin/mcp-runtime server status
 ```
 
+#### How to write the manifest
+
+Start with the smallest useful `MCPServer` and add features only when you need them.
+
+- `metadata.name` becomes the server identity inside the platform.
+- `metadata.namespace` is usually `mcp-servers`.
+- `spec.image` points at the container image the platform should run.
+- `spec.imageTag` sets the tag when you do not include one directly in `spec.image`.
+- `spec.port` is the port your MCP server process listens on inside the container.
+- `spec.publicPathPrefix` controls the public route prefix. `payments` becomes `/payments/mcp`.
+- `spec.gateway.enabled` turns on brokered access and policy enforcement.
+- `spec.analytics.enabled` turns on audit and analytics emission for governed traffic.
+
+Use this minimal pattern for most first deployments:
+
+```yaml
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPServer
+metadata:
+  name: my-server
+  namespace: mcp-servers
+spec:
+  image: registry.example.com/my-server
+  imageTag: v1.0.0
+  port: 8088
+  publicPathPrefix: my-server
+  gateway:
+    enabled: true
+  analytics:
+    enabled: true
+```
+
+Common edits:
+
+- Set `spec.ingressHost` if you use host-based routing instead of the default path-based shape.
+- Set `spec.servicePort` if you need a Service port other than `80`.
+- Add `spec.env` or `spec.envFromSecret` when the server needs configuration or credentials.
+- Add `spec.imagePullSecrets` if the image registry requires explicit pull auth.
+- Add `spec.tools`, `spec.auth`, `spec.policy`, `spec.session`, or `spec.rollout` when you are ready to describe stricter governance or delivery behavior.
+
+For the full field surface, use the [API reference](api.md).
+
 ### Option B — metadata-driven pipeline
 
 Author lightweight metadata YAML, generate CRDs, and deploy:
 
 ```bash
+./bin/mcp-runtime server build image my-server
 ./bin/mcp-runtime registry push --image my-server:v1.0.0
 ./bin/mcp-runtime pipeline generate --dir .mcp --output manifests/
 ./bin/mcp-runtime pipeline deploy --dir manifests/
 ```
 
-The server lands at `/{server-name}/mcp` on the configured ingress host, behind the same platform surface you use for future company MCP servers.
+The server lands at `/{server-name}/mcp` on the configured ingress host, behind the same platform surface you use for future MCP servers.
+
+#### Publish to the platform: what to do, and what happens next
+
+There are two ways to get a server into the platform:
+
+1. Build and push an image, then apply an `MCPServer` manifest directly.
+2. Build and push an image, then generate and deploy `MCPServer` manifests from `.mcp` metadata.
+
+The end-to-end flow is the same either way:
+
+1. Build the image for your server.
+2. Push that image to the platform registry or another registry the cluster can pull from.
+3. Apply an `MCPServer` resource that points at the image.
+4. Let the operator reconcile the runtime objects for that server.
+
+After the manifest is applied, the platform does the following:
+
+1. Validates and stores the `MCPServer` resource in Kubernetes.
+2. Resolves the final image reference using `spec.image`, `spec.imageTag`, and any registry override behavior.
+3. Creates or updates a `Deployment` for the MCP server.
+4. Creates or updates a `Service` for in-cluster traffic.
+5. Creates or updates an `Ingress` so the server is reachable at `/{publicPathPrefix}/mcp` or the configured ingress path.
+6. If `gateway.enabled` is set, wires traffic through the broker path and renders policy from matching grants and sessions.
+7. If analytics are enabled, emits audit and traffic events into the Sentinel stack.
+8. Reports readiness and status through `MCPServer.status`, `mcp-runtime server status`, and the platform UI.
+
+Useful checks after publish:
+
+```bash
+./bin/mcp-runtime server status
+./bin/mcp-runtime server get payments
+./bin/mcp-runtime server policy inspect payments
+./bin/mcp-runtime status
+```
+
+If the server does not come up, stay in the CLI first:
+
+```bash
+./bin/mcp-runtime server get payments
+./bin/mcp-runtime server logs payments --follow
+./bin/mcp-runtime sentinel logs gateway --follow
+./bin/mcp-runtime status
+```
 
 ## 6. Grant governed access (for gateway-enabled servers)
 
@@ -171,6 +257,7 @@ flowchart LR
 
 ## Next steps
 
+- [Publish an MCP Server](publish-mcp-server.md) — write manifests or `.mcp` metadata, build, push, deploy, and verify.
 - [Architecture](architecture.md) — how the pieces fit together.
 - [CLI](cli.md) — full command reference.
 - [API](api.md) — every CRD field and HTTP endpoint.
