@@ -61,8 +61,20 @@ cmd_check() {
 	fi
 	if command -v docker >/dev/null 2>&1; then
 		log "docker: present ($(command -v docker))"
+		if docker info >/dev/null 2>&1; then
+			log "docker daemon: reachable"
+		else
+			warn "docker is installed, but the daemon is not reachable. Start Docker Desktop, Colima, dockerd, or your compatible runtime before setup/image builds."
+			missing=1
+		fi
 	else
 		warn "docker is not in PATH. Image builds and mcp-runtime setup (non test-mode) need a Docker (or compatible) client."
+		missing=1
+	fi
+	if command -v make >/dev/null 2>&1; then
+		log "make: present ($(command -v make))"
+	else
+		warn "make not found. Install GNU/BSD make before running documented make targets."
 		missing=1
 	fi
 	if command -v kubectl >/dev/null 2>&1; then
@@ -112,6 +124,32 @@ have_brew() {
 }
 
 cmd_install() {
+	local apt_basics=()
+	for tool in make curl jq python3; do
+		if ! command -v "$tool" >/dev/null 2>&1; then
+			apt_basics+=("$tool")
+		fi
+	done
+	if ((${#apt_basics[@]})); then
+		if have_brew; then
+			for tool in "${apt_basics[@]}"; do
+				case "$tool" in
+				python3) brew install python ;;
+				make) warn "Install command line tools or GNU make for this macOS host." ;;
+				*) brew install "$tool" ;;
+				esac
+			done
+		elif have_apt; then
+			if [[ "$(id -u)" -eq 0 ]]; then
+				apt-get update
+				apt-get install -y "${apt_basics[@]}"
+			else
+				log "Install basics: sudo apt-get update && sudo apt-get install -y ${apt_basics[*]}"
+			fi
+		else
+			warn "Missing basic tools: ${apt_basics[*]}. Install them with your OS package manager (for example dnf, pacman, apk, zypper) or use a supported Homebrew/apt-based image."
+		fi
+	fi
 	if go_version_ok; then
 		log "Go: ok ($(go version | awk '{print $3}'))"
 	else
@@ -158,13 +196,22 @@ cmd_install() {
 	else
 		log "kubectl: already installed."
 	fi
+	if ! command -v kind >/dev/null 2>&1; then
+		if have_brew; then
+			brew install kind
+		else
+			warn "kind is optional but recommended for local verification. Install it from https://kind.sigs.k8s.io/docs/user/quick-start/"
+		fi
+	else
+		log "kind: already installed."
+	fi
 }
 
 usage() {
 	log "Usage: $0 {go|check|install}"
-	log "  go      Download and tidy main module, download all nested go.mod modules"
-	log "  check   Verify Go, docker, kubectl (set STRICT_DEPS_CHECK=1 to fail on missing)"
-	log "  install Best-effort install of missing tools (apt as root, or Homebrew on macOS)"
+	log "  go      Download and tidy the main module; download nested service/example modules"
+	log "  check   Verify go, docker daemon, kubectl, make, curl, jq, python3, and optional kind; STRICT_DEPS_CHECK=1 fails on required misses"
+	log "  install Best-effort install of go, docker client, kubectl, make, curl, jq, python3, and kind on Homebrew/apt hosts"
 }
 
 main() {

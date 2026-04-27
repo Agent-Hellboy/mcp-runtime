@@ -18,7 +18,8 @@ flowchart LR
 ## Fast path
 
 ```bash
-make deps && make build-runtime
+make deps
+make build
 
 ./bin/mcp-runtime setup
 ./bin/mcp-runtime status
@@ -27,6 +28,8 @@ make deps && make build-runtime
 ./bin/mcp-runtime pipeline generate --dir .mcp --output manifests/
 ./bin/mcp-runtime pipeline deploy --dir manifests/
 ```
+
+For a new workstation, run `make deps-install` first where supported, then `STRICT_DEPS_CHECK=1 make deps-check`. Required host tools are Go `1.25+`, Make, Docker with a reachable daemon, `kubectl` configured for the cluster, plus `curl`, `jq`, and `python3` for documented dev flows. `kind` is required only for local Kind clusters.
 
 ## Command map
 

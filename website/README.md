@@ -32,6 +32,42 @@ docker build -t mcp-runtime-website .
 docker run --rm -p 8080:8080 mcp-runtime-website
 ```
 
+## Production deploy (GitHub Actions)
+
+The `deploy-website` job in [`.github/workflows/ci.yaml`](../.github/workflows/ci.yaml)
+syncs `website/` to your remote host and, by default, builds/runs a Docker
+container there:
+
+```sh
+docker build -t mcp-runtime-website:latest .
+docker rm -f mcp-runtime-website || true
+docker run -d --name mcp-runtime-website \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -e MCP_DOCS_URL=https://docs.mcpruntime.org/ \
+  -e MCP_WEBSITE_BASE_URL=https://mcpruntime.org \
+  mcp-runtime-website:latest
+```
+
+Required GitHub secrets:
+
+- `WEBSITE_DEPLOY_HOST`
+- `WEBSITE_DEPLOY_USER`
+- `WEBSITE_DEPLOY_PATH`
+- `WEBSITE_DEPLOY_SSH_KEY`
+- `WEBSITE_DEPLOY_HOST_KEY` — pinned SSH host key line, for example `host ssh-ed25519 AAAA...`
+- `WEBSITE_BASE_URL=https://mcpruntime.org`
+
+Optional GitHub secrets:
+
+- `WEBSITE_DOCS_URL` (default `https://docs.mcpruntime.org/`)
+- `WEBSITE_HOST_PORT=8080`
+- `WEBSITE_CONTAINER_PORT=8080`
+- `WEBSITE_CONTAINER_NAME=mcp-runtime-website`
+- `WEBSITE_IMAGE_NAME=mcp-runtime-website:latest`
+- `WEBSITE_DEPLOY_COMMAND` (if set, CI runs this instead of the default
+  Docker build/run sequence)
+
 ## Files
 
 - `app.py` — Flask app (home, robots, sitemap, `/docs*` redirect).

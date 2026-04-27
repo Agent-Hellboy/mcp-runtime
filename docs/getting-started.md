@@ -4,16 +4,28 @@ The shortest path from an empty Kubernetes cluster to a deployed, governed MCP s
 
 ## Prerequisites
 
-- Go `1.24+`
-- `kubectl`
-- Docker
+- Go `1.25+` (matches the repository `go.mod` files)
 - `make`
-- A Kubernetes cluster (k3s, kind, minikube, EKS — see [cluster-readiness.md](cluster-readiness.md) for distribution-specific prep)
+- Docker or a Docker-compatible client, with the daemon running and reachable
+- `kubectl` on `PATH`, configured for the target cluster
+- `curl`, `jq`, and `python3` for documented dev and traffic-generation flows
+- A Kubernetes cluster (k3s, kind, minikube, Docker Desktop Kubernetes, EKS — see [cluster-readiness.md](cluster-readiness.md) for distribution-specific prep)
+- `kind` for local Kind-based clusters
+
+Host bootstrap:
+
+```bash
+make deps-install              # best-effort install for supported macOS/Linux hosts
+STRICT_DEPS_CHECK=1 make deps-check
+```
+
+`make deps-install` is intentionally best-effort: it can install some packages with Homebrew or apt, but it cannot enable Docker Desktop, create cloud credentials, or configure your kubeconfig. Re-run `STRICT_DEPS_CHECK=1 make deps-check` until the required host tools pass.
 
 ## 1. Build the CLI
 
 ```bash
-make deps && make build-runtime
+make deps
+make build
 ```
 
 This produces `./bin/mcp-runtime`.
@@ -66,8 +78,7 @@ spec:
   image: registry.example.com/payments-mcp
   imageTag: v1.0.0
   port: 8088
-  ingressHost: mcp.example.com
-  ingressPath: /payments/mcp
+  publicPathPrefix: payments
   gateway:
     enabled: true
   analytics:
@@ -134,7 +145,7 @@ spec:
 
 ```mermaid
 flowchart LR
-    A[Build CLI<br/>make build-runtime] --> B[bootstrap<br/>preflight checks]
+    A[Build CLI<br/>make build] --> B[bootstrap<br/>cluster preflight]
     B --> C[setup<br/>install platform]
     C --> D[Apply MCPServer]
     D --> E[Apply Grant + Session]
