@@ -238,6 +238,7 @@ jobs:
 
       - name: Set up SSH key
         env:
+          DOCS_DEPLOY_HOST: ${{ secrets.DOCS_DEPLOY_HOST }}
           DOCS_DEPLOY_SSH_KEY: ${{ secrets.DOCS_DEPLOY_SSH_KEY }}
           DOCS_DEPLOY_HOST_KEY: ${{ secrets.DOCS_DEPLOY_HOST_KEY }}
         run: |
@@ -246,10 +247,27 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           printf "%s\n" "$DOCS_DEPLOY_HOST_KEY" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
+          if ! ssh-keygen -F "$DOCS_DEPLOY_HOST" -f ~/.ssh/known_hosts >/dev/null; then
+            echo "::error::DOCS_DEPLOY_HOST_KEY must include a known_hosts entry for DOCS_DEPLOY_HOST. When DOCS_DEPLOY_HOST is an IP address, the host key line must start with that same IP address."
+            exit 1
+          fi
+
+      - name: Verify docs SSH access
+        run: |
+          ssh \
+            -i "$HOME/.ssh/id_ed25519" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "${{ secrets.DOCS_DEPLOY_USER }}@${{ secrets.DOCS_DEPLOY_HOST }}" \
+            "true"
 
       - name: Sync docs/
         run: |
-          rsync -az --delete docs/ \
+          rsync -az --delete \
+            -e "ssh -i $HOME/.ssh/id_ed25519 -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts" \
+            docs/ \
             "${{ secrets.DOCS_DEPLOY_USER }}@${{ secrets.DOCS_DEPLOY_HOST }}:${{ secrets.DOCS_DEPLOY_PATH }}/"
 
       - name: Deploy docs container on remote host
@@ -323,6 +341,7 @@ jobs:
 
       - name: Set up SSH key
         env:
+          WEBSITE_DEPLOY_HOST: ${{ secrets.WEBSITE_DEPLOY_HOST }}
           WEBSITE_DEPLOY_SSH_KEY: ${{ secrets.WEBSITE_DEPLOY_SSH_KEY }}
           WEBSITE_DEPLOY_HOST_KEY: ${{ secrets.WEBSITE_DEPLOY_HOST_KEY }}
         run: |
@@ -331,10 +350,27 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           printf "%s\n" "$WEBSITE_DEPLOY_HOST_KEY" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
+          if ! ssh-keygen -F "$WEBSITE_DEPLOY_HOST" -f ~/.ssh/known_hosts >/dev/null; then
+            echo "::error::WEBSITE_DEPLOY_HOST_KEY must include a known_hosts entry for WEBSITE_DEPLOY_HOST. When WEBSITE_DEPLOY_HOST is an IP address, the host key line must start with that same IP address."
+            exit 1
+          fi
+
+      - name: Verify website SSH access
+        run: |
+          ssh \
+            -i "$HOME/.ssh/id_ed25519" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "${{ secrets.WEBSITE_DEPLOY_USER }}@${{ secrets.WEBSITE_DEPLOY_HOST }}" \
+            "true"
 
       - name: Sync website/
         run: |
-          rsync -az --delete website/ \
+          rsync -az --delete \
+            -e "ssh -i $HOME/.ssh/id_ed25519 -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts" \
+            website/ \
             "${{ secrets.WEBSITE_DEPLOY_USER }}@${{ secrets.WEBSITE_DEPLOY_HOST }}:${{ secrets.WEBSITE_DEPLOY_PATH }}/"
 
       - name: Deploy website container on remote host

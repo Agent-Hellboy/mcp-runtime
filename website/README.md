@@ -58,7 +58,7 @@ Required GitHub secrets:
 - `WEBSITE_DEPLOY_USER`
 - `WEBSITE_DEPLOY_PATH`
 - `WEBSITE_DEPLOY_SSH_KEY`
-- `WEBSITE_DEPLOY_HOST_KEY` — pinned SSH host key line, for example `host ssh-ed25519 AAAA...`
+- `WEBSITE_DEPLOY_HOST_KEY` — pinned SSH host key line for the exact `WEBSITE_DEPLOY_HOST`; if `WEBSITE_DEPLOY_HOST` is an IP address, the line must start with that IP, for example `203.0.113.10 ssh-ed25519 AAAA...`
 - `WEBSITE_BASE_URL=https://mcpruntime.org`
 
 Optional GitHub secrets:
