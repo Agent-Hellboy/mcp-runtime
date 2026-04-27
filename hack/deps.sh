@@ -146,6 +146,8 @@ cmd_install() {
 			else
 				log "Install basics: sudo apt-get update && sudo apt-get install -y ${apt_basics[*]}"
 			fi
+		else
+			warn "Missing basic tools: ${apt_basics[*]}. Install them with your OS package manager (for example dnf, pacman, apk, zypper) or use a supported Homebrew/apt-based image."
 		fi
 	fi
 	if go_version_ok; then
@@ -207,9 +209,9 @@ cmd_install() {
 
 usage() {
 	log "Usage: $0 {go|check|install}"
-	log "  go      Download and tidy main module, download all nested go.mod modules"
-	log "  check   Verify Go, docker, kubectl (set STRICT_DEPS_CHECK=1 to fail on missing)"
-	log "  install Best-effort install of missing tools (apt as root, or Homebrew on macOS)"
+	log "  go      Download and tidy the main module; download nested service/example modules"
+	log "  check   Verify go, docker daemon, kubectl, make, curl, jq, python3, and optional kind; STRICT_DEPS_CHECK=1 fails on required misses"
+	log "  install Best-effort install of go, docker client, kubectl, make, curl, jq, python3, and kind on Homebrew/apt hosts"
 }
 
 main() {

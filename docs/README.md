@@ -49,12 +49,14 @@ Required GitHub secrets:
 - `DOCS_DEPLOY_USER`
 - `DOCS_DEPLOY_PATH`
 - `DOCS_DEPLOY_SSH_KEY`
+- `DOCS_DEPLOY_HOST_KEY` — pinned SSH host key line, for example `host ssh-ed25519 AAAA...`
 
 Optional GitHub secrets:
 
-- `DOCS_HOST_PORT=8081`
-- `DOCS_CONTAINER_PORT=80`
-- `DOCS_CONTAINER_NAME=mcp-runtime-docs`
-- `DOCS_IMAGE_NAME=mcp-runtime-docs:latest`
-- `DOCS_DEPLOY_COMMAND` (if set, CI runs this instead of the default
-  Docker build/run sequence)
+| Secret | Default | Purpose |
+|---|---:|---|
+| `DOCS_HOST_PORT` | `8081` | Host port published by Docker. |
+| `DOCS_CONTAINER_PORT` | `80` | Container port exposed by the docs image. |
+| `DOCS_CONTAINER_NAME` | `mcp-runtime-docs` | Remote Docker container name. |
+| `DOCS_IMAGE_NAME` | `mcp-runtime-docs:latest` | Remote Docker image tag. |
+| `DOCS_DEPLOY_COMMAND` | none | If set, CI runs this remote command instead of the default Docker build/run sequence. |

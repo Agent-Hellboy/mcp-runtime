@@ -78,8 +78,7 @@ spec:
   image: registry.example.com/payments-mcp
   imageTag: v1.0.0
   port: 8088
-  ingressHost: mcp.example.com
-  ingressPath: /payments/mcp
+  publicPathPrefix: payments
   gateway:
     enabled: true
   analytics:

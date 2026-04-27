@@ -37,7 +37,7 @@ flowchart LR
 
 | Group | Fields |
 |---|---|
-| **Workload + routing** | `image`, `imageTag`, `registryOverride`, `replicas`, `port`, `servicePort`, `ingressPath`, `ingressHost`, `ingressClass`, `ingressAnnotations` |
+| **Workload + routing** | `image`, `imageTag`, `registryOverride`, `replicas`, `port`, `servicePort`, `publicPathPrefix`, `ingressPath`, `ingressHost`, `ingressClass`, `ingressAnnotations` |
 | **Resources + env** | CPU/memory `requests`/`limits`, literal `env`, secret-backed `envFromSecret`, `imagePullSecrets` |
 | **Identity + policy** | `tools[]`, `auth`, `policy`, `session`, `gateway` |
 | **Delivery** | `analytics`, `rollout`, `useProvisionedRegistry` |
@@ -73,8 +73,7 @@ metadata:
 spec:
   image: registry.example.com/payments-mcp
   port: 8088
-  ingressHost: mcp.example.com
-  ingressPath: /payments/mcp
+  publicPathPrefix: payments
   gateway:
     enabled: true
   auth:
