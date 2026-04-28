@@ -15,6 +15,19 @@
   --md-default-fg-color--lighter: #6b7890;
   --md-code-bg-color: #f5f7fb;
   --md-code-fg-color: #172033;
+  --md-code-hl-color: rgba(96, 165, 250, 0.16);
+  --md-code-hl-number-color: #93a4bc;
+  --md-code-hl-special-color: #f472b6;
+  --md-code-hl-function-color: #93c5fd;
+  --md-code-hl-constant-color: #fbbf24;
+  --md-code-hl-keyword-color: #c4b5fd;
+  --md-code-hl-string-color: #86efac;
+  --md-code-hl-name-color: #d7e2f1;
+  --md-code-hl-operator-color: #d7e2f1;
+  --md-code-hl-punctuation-color: #a7b7cc;
+  --md-code-hl-comment-color: #8da2bd;
+  --md-code-hl-generic-color: #d7e2f1;
+  --md-code-hl-variable-color: #f9a8d4;
   --md-typeset-a-color: #2563eb;
   --md-footer-bg-color: #f7f9fc;
   --md-footer-bg-color--dark: #edf1f7;
@@ -27,6 +40,12 @@
   --infra-blue-dark: #1d4ed8;
   --infra-blue-soft: #eff6ff;
   --infra-green: #047857;
+  --infra-code-bg: #111827;
+  --infra-code-bg-soft: #162033;
+  --infra-code-bg-strong: #0b1220;
+  --infra-code-fg: #d7e2f1;
+  --infra-code-muted: #93a4bc;
+  --infra-code-line: #263449;
   --infra-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   --infra-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -221,19 +240,82 @@ body {
 
 .md-typeset .highlight {
   border: 1px solid #dbe3ee;
-  background: #0f172a;
+  background: var(--infra-code-bg);
   box-shadow: none;
+  overflow: hidden;
 }
 
 .md-typeset pre > code {
-  background: #0f172a;
-  color: #e5edf8;
+  background: var(--infra-code-bg);
+  color: var(--infra-code-fg);
   font-size: 0.76rem;
   line-height: 1.65;
 }
 
+.md-content__inner > .highlight > .filename,
+.md-typeset .highlight > .filename,
+.md-typeset .highlighttable .filename {
+  border-bottom: 1px solid var(--infra-code-line);
+  background: var(--infra-code-bg-strong);
+  color: #f8fafc;
+  font-family: var(--infra-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.md-content__inner > .highlight > .highlighttable > tbody > tr > .filename span.filename,
+.md-typeset .highlighttable .filename span.filename {
+  color: #f8fafc;
+}
+
+.md-content__inner > .highlight > pre > code,
+.md-content__inner > .highlight > .highlighttable > tbody > tr > .code > div > pre > code,
+.md-typeset .highlight pre code,
+.md-typeset .highlighttable .code pre code {
+  background: var(--infra-code-bg);
+  color: var(--infra-code-fg);
+}
+
+.md-content__inner > .highlight > .highlighttable > tbody > tr > .linenos,
+.md-typeset .highlighttable .linenos {
+  border-right: 1px solid var(--infra-code-line);
+  background: var(--infra-code-bg-soft);
+  color: var(--infra-code-muted);
+}
+
+.md-typeset .highlighttable {
+  border: 1px solid #dbe3ee;
+  background: var(--infra-code-bg);
+  overflow: hidden;
+}
+
+.md-typeset .highlighttable td {
+  padding: 0;
+}
+
+.md-typeset .highlighttable .linenos pre,
+.md-typeset .highlighttable .linenos code {
+  background: transparent;
+  color: inherit;
+}
+
+.md-typeset .highlighttable .code {
+  width: 100%;
+  background: var(--infra-code-bg);
+}
+
+.md-typeset .highlight .hll {
+  background-color: var(--md-code-hl-color);
+}
+
 .md-clipboard {
-  color: rgba(229, 237, 248, 0.78);
+  color: rgba(215, 226, 241, 0.78);
+}
+
+.md-clipboard:hover,
+.md-clipboard:focus {
+  color: #f8fafc;
 }
 
 .md-typeset table:not([class]) {
