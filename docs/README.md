@@ -10,9 +10,9 @@ MCP Runtime is an open source, Kubernetes-native control plane for deploying, go
   <p class="docs-lead">Deploy MCP servers, expose them through governed routes, and keep policy, audit, and telemetry attached to every agent call.</p>
 
   <div class="docs-actions">
-    <a class="docs-button docs-button-primary" href="getting-started.md">Get started</a>
-    <a class="docs-button" href="architecture.md">Architecture</a>
-    <a class="docs-button" href="api.md">API reference</a>
+    <a class="docs-button docs-button-primary" href="getting-started/">Get started</a>
+    <a class="docs-button" href="architecture/">Architecture</a>
+    <a class="docs-button" href="api/">API reference</a>
   </div>
   </div>
 
@@ -32,25 +32,25 @@ MCP Runtime is an open source, Kubernetes-native control plane for deploying, go
 ## Choose a path
 
 <div class="docs-grid docs-grid-3">
-<a class="docs-card" href="getting-started.md">
+<a class="docs-card" href="getting-started/">
   <span class="docs-card-kicker">Start</span>
   <strong>Install the platform</strong>
   <span>Build the CLI, run preflight checks, install the stack, and deploy the first server.</span>
 </a>
 
-<a class="docs-card" href="architecture.md">
+<a class="docs-card" href="architecture/">
   <span class="docs-card-kicker">Understand</span>
   <strong>Read the architecture</strong>
   <span>Trace how the control plane, registry, broker, operator, and Sentinel services fit together.</span>
 </a>
 
-<a class="docs-card" href="cluster-readiness.md">
+<a class="docs-card" href="cluster-readiness/">
   <span class="docs-card-kicker">Prepare</span>
   <strong>Check your cluster</strong>
   <span>Review prerequisites for k3s, kind, minikube, Docker Desktop Kubernetes, kubeadm, and EKS.</span>
 </a>
 
-<a class="docs-card" href="publish-mcp-server.md">
+<a class="docs-card" href="publish-mcp-server/">
   <span class="docs-card-kicker">Ship</span>
   <strong>Publish an MCP server</strong>
   <span>Write a manifest or `.mcp` metadata, push an image, deploy it, and verify what the platform creates.</span>
@@ -60,25 +60,25 @@ MCP Runtime is an open source, Kubernetes-native control plane for deploying, go
 ## Operate MCP Runtime
 
 <div class="docs-grid docs-grid-2">
-<a class="docs-card" href="runtime.md">
+<a class="docs-card" href="runtime/">
   <span class="docs-card-kicker">Runtime</span>
   <strong>Control plane</strong>
   <span>CRDs, reconciliation outputs, image resolution, ingress wiring, and rollout flow.</span>
 </a>
 
-<a class="docs-card" href="sentinel.md">
+<a class="docs-card" href="sentinel/">
   <span class="docs-card-kicker">Governance</span>
   <strong>Sentinel request path</strong>
   <span>Gateway policy, grant/session evaluation, analytics, audit events, and dashboard services.</span>
 </a>
 
-<a class="docs-card" href="cli.md">
+<a class="docs-card" href="cli/">
   <span class="docs-card-kicker">CLI</span>
   <strong>Command reference</strong>
   <span>Setup, status, registry, server, access, pipeline, and Sentinel commands.</span>
 </a>
 
-<a class="docs-card" href="api.md">
+<a class="docs-card" href="api/">
   <span class="docs-card-kicker">Reference</span>
   <strong>API and CRDs</strong>
   <span><code>MCPServer</code>, access grants, sessions, gateway headers, and HTTP APIs.</span>

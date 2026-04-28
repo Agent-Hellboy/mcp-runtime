@@ -19,6 +19,7 @@ Use this skill to decide what documentation must change after a code, design, or
 2. Classify required doc updates.
    - User-facing product change: update README, docs guides, CLI examples, API/reference pages, screenshots or UI copy references if present.
    - Developer workflow change: update AGENTS.md, build/test instructions, local setup notes, failure modes, environment variables, or repo map entries.
+   - Codebase architecture or contributor-flow change: review `docs/internals/` and decide whether the overview, package tours, or Mermaid diagrams need updates. Add or revise diagrams only when they clarify package boundaries, request flow, reconciliation flow, service interactions, or contributor decision points.
    - Design change: update design-system rules, component guidance, UX behavior notes, or docs that describe screens/workflows.
    - Operational change: update install, deployment, TLS, registry, Kubernetes, observability, and rollback/debug instructions.
    - Schema/contract change: update CRD/API docs, examples, generated docs if the repo owns them, and any golden snapshots tied to CLI help.
@@ -31,6 +32,7 @@ Use this skill to decide what documentation must change after a code, design, or
 4. Edit with the right scope.
    - Keep docs concise and task-oriented; remove stale claims instead of layering caveats.
    - Preserve the repo's voice, terminology, command style, and existing document structure.
+   - For `docs/internals/`, prefer updating the nearest existing walkthrough, mental model, or diagram over adding a new page. Use diagrams for relationships and flows, not for listing files that a table can express more clearly.
    - Update AGENTS.md only for durable contributor or agent guidance, not one-off implementation details.
    - Keep examples copy-pasteable: include required tags, namespaces, paths, auth headers, and prerequisite environment variables.
    - Update links and table-of-contents entries when adding or renaming pages.
