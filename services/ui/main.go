@@ -127,7 +127,9 @@ func main() {
 	}
 
 	log.Printf("mcp-sentinel-ui listening on :%s", port)
-	handler := otelhttp.NewHandler(logRequests(mux), "http.server")
+	httpsMode := envOr("UI_REQUIRE_HTTPS", "auto")
+	secured := securityHeadersMiddleware(httpsRedirectMiddleware(mux, httpsMode))
+	handler := otelhttp.NewHandler(logRequests(secured), "http.server")
 	httpServer := &http.Server{
 		Addr:              ":" + port,
 		Handler:           handler,
@@ -835,6 +837,108 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		log.Printf("writeJSON encode error (status=%d): %v", status, err)
 	}
+}
+
+// httpsRedirectMiddleware redirects HTTP requests to HTTPS based on the
+// X-Forwarded-Proto header set by an upstream TLS-terminating proxy.
+//
+// mode controls behavior:
+//   - "false"/"off"/"0":   never redirect (useful in dev or when fronted differently)
+//   - "true"/"on"/"1":     always redirect on X-Forwarded-Proto: http
+//   - anything else (default "auto"): redirect only when Host looks public
+//     (not localhost / not a bare IP). This is safe for the bundled Kind dev
+//     stack where Host is `localhost:18080`.
+func httpsRedirectMiddleware(next http.Handler, mode string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if shouldRedirectToHTTPS(r, mode) {
+			target := "https://" + r.Host + r.URL.RequestURI()
+			http.Redirect(w, r, target, http.StatusPermanentRedirect)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func shouldRedirectToHTTPS(r *http.Request, mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "false", "off", "0", "no":
+		return false
+	case "true", "on", "1", "yes":
+		// fall through, force-mode: redirect on http forwarded scheme
+	default:
+		if isLocalHost(r.Host) {
+			return false
+		}
+	}
+	if r.TLS != nil {
+		return false
+	}
+	proto := strings.ToLower(strings.TrimSpace(r.Header.Get("x-forwarded-proto")))
+	if proto == "https" {
+		return false
+	}
+	if proto == "http" {
+		return true
+	}
+	// No proxy header. Only redirect in forced mode for non-local hosts.
+	return strings.EqualFold(strings.TrimSpace(mode), "true") && !isLocalHost(r.Host)
+}
+
+func isLocalHost(host string) bool {
+	if host == "" {
+		return true
+	}
+	h, _, err := net.SplitHostPort(host)
+	if err != nil {
+		h = host
+	}
+	h = strings.ToLower(h)
+	if h == "localhost" || h == "127.0.0.1" || h == "::1" {
+		return true
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return true
+	}
+	return false
+}
+
+// securityHeadersMiddleware adds baseline security headers on every response.
+// HSTS is added only when the request was served over HTTPS so it never asks a
+// browser to upgrade dev hostnames that have no certificate.
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+		// Google Sign-In needs accounts.google.com for scripts/iframes/connect.
+		h.Set("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self' 'unsafe-inline' https://accounts.google.com https://apis.google.com; "+
+				"style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data: https:; "+
+				"font-src 'self' data:; "+
+				"connect-src 'self' https://accounts.google.com; "+
+				"frame-src https://accounts.google.com; "+
+				"frame-ancestors 'none'; "+
+				"base-uri 'self'; "+
+				"form-action 'self'")
+		if isHTTPSRequest(r) {
+			h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		}
+		path := r.URL.Path
+		if strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/auth/") {
+			h.Set("Cache-Control", "no-store")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isHTTPSRequest(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(r.Header.Get("x-forwarded-proto")), "https")
 }
 
 // logRequests is middleware that logs HTTP requests.

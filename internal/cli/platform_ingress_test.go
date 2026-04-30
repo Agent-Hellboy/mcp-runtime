@@ -13,17 +13,25 @@ func TestRenderPlatformIngressManifestNoTLS(t *testing.T) {
 		"traefik.ingress.kubernetes.io/router.entrypoints: web",
 		`- host: "platform.example.com"`,
 		"- path: /api\n",
-		"- path: /grafana\n",
-		"- path: /prometheus\n",
 		"- path: /\n",
 		"name: mcp-sentinel-ui",
 		"number: 8082",
-		"name: grafana",
-		"name: prometheus",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in manifest:\n%s", want, got)
+		}
+	}
+	mustNotContain := []string{
+		"- path: /grafana",
+		"- path: /prometheus",
+		"name: grafana",
+		"name: prometheus",
+		"name: " + platformHTTPRedirectIngressName,
+	}
+	for _, unwanted := range mustNotContain {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("manifest must not contain %q (Grafana/Prometheus must not be exposed publicly, redirect ingress only emitted with TLS):\n%s", unwanted, got)
 		}
 	}
 	if strings.Contains(got, "tls:") {
@@ -34,21 +42,17 @@ func TestRenderPlatformIngressManifestNoTLS(t *testing.T) {
 	}
 }
 
-func TestRenderPlatformIngressManifestApiBeforeGrafana(t *testing.T) {
+func TestRenderPlatformIngressManifestApiBeforeRoot(t *testing.T) {
 	got := renderPlatformIngressManifest("platform.example.com", "")
 	apiIdx := strings.Index(got, "- path: /api")
-	grafanaIdx := strings.Index(got, "- path: /grafana")
 	rootIdx := strings.Index(got, "- path: /\n")
-	if apiIdx < 0 || grafanaIdx < 0 || rootIdx < 0 {
-		t.Fatalf("missing one of /api, /grafana, / paths:\n%s", got)
+	if apiIdx < 0 || rootIdx < 0 {
+		t.Fatalf("missing /api or / paths:\n%s", got)
 	}
-	// Traefik matches longer/more-specific prefixes before /, so /api must
-	// appear in the manifest and be a sibling of /grafana, /prometheus.
-	if apiIdx > grafanaIdx {
-		t.Fatalf("/api must be listed before /grafana in the rule for readability:\n%s", got)
-	}
-	if grafanaIdx > rootIdx {
-		t.Fatalf("/grafana must be listed before / catch-all:\n%s", got)
+	// Traefik matches longer/more-specific prefixes before /, so /api must be
+	// declared in the rule before the catch-all /.
+	if apiIdx > rootIdx {
+		t.Fatalf("/api must be listed before / catch-all:\n%s", got)
 	}
 }
 
@@ -61,14 +65,42 @@ func TestRenderPlatformIngressManifestWithTLS(t *testing.T) {
 		`- "platform.mcpruntime.org"`,
 		"secretName: " + platformTLSSecretName,
 		`- host: "platform.mcpruntime.org"`,
+		"name: " + platformHTTPRedirectIngressName,
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in manifest:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "\n    traefik.ingress.kubernetes.io/router.entrypoints: web\n") {
-		t.Fatalf("did not expect plain web entrypoint when TLS issuer is set:\n%s", got)
+	if strings.Contains(got, "\n    traefik.ingress.kubernetes.io/router.entrypoints: web\n  ingressClassName") {
+		t.Fatalf("primary ingress should be on websecure when TLS issuer is set:\n%s", got)
+	}
+}
+
+func TestRenderPlatformIngressManifestHTTPRedirectShape(t *testing.T) {
+	got := renderPlatformIngressManifest("platform.mcpruntime.org", "letsencrypt-prod")
+	idx := strings.Index(got, "name: "+platformHTTPRedirectIngressName)
+	if idx < 0 {
+		t.Fatalf("expected HTTP redirect ingress when TLS configured:\n%s", got)
+	}
+	tail := got[idx:]
+	mustContain := []string{
+		"traefik.ingress.kubernetes.io/router.entrypoints: web",
+		`- host: "platform.mcpruntime.org"`,
+		"- path: /\n",
+		"name: mcp-sentinel-ui",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(tail, want) {
+			t.Fatalf("HTTP redirect ingress missing %q:\n%s", want, tail)
+		}
+	}
+	// The HTTP redirect ingress must NOT request its own cert / TLS block.
+	if strings.Contains(tail, "tls:") {
+		t.Fatalf("HTTP redirect ingress must not have a tls block:\n%s", tail)
+	}
+	if strings.Contains(tail, "cert-manager.io/cluster-issuer") {
+		t.Fatalf("HTTP redirect ingress must not request a certificate:\n%s", tail)
 	}
 }
 

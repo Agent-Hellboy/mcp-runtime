@@ -388,3 +388,131 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
+
+func TestSecurityHeadersMiddlewareAlwaysSetsBaselineHeaders(t *testing.T) {
+	handler := securityHeadersMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	wantContains := map[string]string{
+		"X-Content-Type-Options":  "nosniff",
+		"Referrer-Policy":         "strict-origin-when-cross-origin",
+		"Permissions-Policy":      "camera=()",
+		"Content-Security-Policy": "frame-ancestors 'none'",
+	}
+	for header, fragment := range wantContains {
+		got := rec.Header().Get(header)
+		if !strings.Contains(got, fragment) {
+			t.Fatalf("%s = %q, want substring %q", header, got, fragment)
+		}
+	}
+	if rec.Header().Get("Strict-Transport-Security") != "" {
+		t.Fatalf("HSTS should not be set on plain HTTP, got %q", rec.Header().Get("Strict-Transport-Security"))
+	}
+}
+
+func TestSecurityHeadersMiddlewareSetsHSTSWhenForwardedHTTPS(t *testing.T) {
+	handler := securityHeadersMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	handler.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Strict-Transport-Security"); !strings.Contains(got, "max-age=") {
+		t.Fatalf("Strict-Transport-Security = %q, want max-age", got)
+	}
+}
+
+func TestSecurityHeadersMiddlewareSetsCacheControlOnAPI(t *testing.T) {
+	handler := securityHeadersMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/runtime/servers", nil))
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control on /api = %q, want no-store", got)
+	}
+
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/styles.css", nil))
+	if got := rec.Header().Get("Cache-Control"); got != "" {
+		t.Fatalf("Cache-Control on static asset = %q, want empty", got)
+	}
+}
+
+func TestHTTPSRedirectMiddlewareAutoModeRedirectsPublicHTTP(t *testing.T) {
+	handler := httpsRedirectMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("next handler must not be called when redirecting")
+	}), "auto")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/dashboard?x=1", nil)
+	req.Host = "platform.example.com"
+	req.Header.Set("X-Forwarded-Proto", "http")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusPermanentRedirect {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusPermanentRedirect)
+	}
+	if got := rec.Header().Get("Location"); got != "https://platform.example.com/dashboard?x=1" {
+		t.Fatalf("Location = %q", got)
+	}
+}
+
+func TestHTTPSRedirectMiddlewareAutoModeSkipsLocalhost(t *testing.T) {
+	called := false
+	handler := httpsRedirectMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+	}), "auto")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "localhost:18080"
+	req.Header.Set("X-Forwarded-Proto", "http")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || !called {
+		t.Fatalf("expected pass-through for localhost, got status=%d called=%v", rec.Code, called)
+	}
+}
+
+func TestHTTPSRedirectMiddlewareDisabledMode(t *testing.T) {
+	called := false
+	handler := httpsRedirectMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+	}), "false")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "platform.example.com"
+	req.Header.Set("X-Forwarded-Proto", "http")
+	handler.ServeHTTP(rec, req)
+
+	if !called {
+		t.Fatal("expected pass-through when UI_REQUIRE_HTTPS=false")
+	}
+}
+
+func TestHTTPSRedirectMiddlewarePassesThroughHTTPS(t *testing.T) {
+	called := false
+	handler := httpsRedirectMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+	}), "auto")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "platform.example.com"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	handler.ServeHTTP(rec, req)
+
+	if !called {
+		t.Fatal("expected HTTPS request to pass through")
+	}
+}
