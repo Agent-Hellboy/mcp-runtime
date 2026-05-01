@@ -5,11 +5,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"mcp-runtime/internal/cli"
+	"mcp-runtime/internal/cli/certmanager"
+	"mcp-runtime/internal/cli/core"
 )
 
-func newClusterCertCmd(mgr *cli.ClusterManager) *cobra.Command {
-	certMgr := cli.NewCertManager(mgr.KubectlRunner(), mgr.Logger())
+func newClusterCertCmd(mgr *ClusterManager) *cobra.Command {
+	certMgr := certmanager.NewCertManager(mgr.KubectlRunner(), mgr.Logger())
 	cmd := &cobra.Command{
 		Use:   "cert",
 		Short: "Manage cert-manager resources",
@@ -23,7 +24,7 @@ func newClusterCertCmd(mgr *cli.ClusterManager) *cobra.Command {
 	return cmd
 }
 
-func certMgrStatusCmd(mgr *cli.CertManager) *cobra.Command {
+func certMgrStatusCmd(mgr *certmanager.CertManager) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Check cert-manager resources",
@@ -34,18 +35,21 @@ func certMgrStatusCmd(mgr *cli.CertManager) *cobra.Command {
 	}
 }
 
-func certMgrApplyCmd(mgr *cli.CertManager) *cobra.Command {
-	return &cobra.Command{
+func certMgrApplyCmd(mgr *certmanager.CertManager) *cobra.Command {
+	var dryRun bool
+	cmd := &cobra.Command{
 		Use:   "apply",
 		Short: "Apply cert-manager resources",
 		Long:  "Apply ClusterIssuer and registry Certificate manifests",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return mgr.Apply()
+			return mgr.Apply(dryRun)
 		},
 	}
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Run preflight checks and print the resources that would be applied without modifying the cluster")
+	return cmd
 }
 
-func certMgrWaitCmd(mgr *cli.CertManager) *cobra.Command {
+func certMgrWaitCmd(mgr *certmanager.CertManager) *cobra.Command {
 	var timeoutDuration time.Duration
 	cmd := &cobra.Command{
 		Use:   "wait",
@@ -53,7 +57,7 @@ func certMgrWaitCmd(mgr *cli.CertManager) *cobra.Command {
 		Long:  "Wait for the registry certificate to reach Ready state",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if timeoutDuration == 0 {
-				timeoutDuration = cli.GetCertTimeout()
+				timeoutDuration = core.GetCertTimeout()
 			}
 			return mgr.Wait(timeoutDuration)
 		},

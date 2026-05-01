@@ -2,6 +2,6 @@
 // mcp-runtime
 // binary.
 //
-// Each subpackage owns one top-level Cobra command boundary and delegates
-// behavior to the shared internal/cli implementation package.
+// Each subpackage owns one top-level Cobra command boundary and uses
+// internal/cli/core for shared CLI infrastructure.
 package root

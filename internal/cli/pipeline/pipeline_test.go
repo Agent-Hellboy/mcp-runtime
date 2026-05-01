@@ -11,13 +11,13 @@ import (
 
 	"go.uber.org/zap"
 
-	"mcp-runtime/internal/cli"
+	"mcp-runtime/internal/cli/core"
 )
 
 func TestManagerDeployCRDs(t *testing.T) {
 	t.Run("returns error when no manifests found", func(t *testing.T) {
-		mock := &cli.MockExecutor{}
-		kubectl, err := cli.NewKubectlClient(mock)
+		mock := &core.MockExecutor{}
+		kubectl, err := core.NewKubectlClient(mock)
 		if err != nil {
 			t.Fatalf("failed to create kubectl client: %v", err)
 		}
@@ -31,9 +31,9 @@ func TestManagerDeployCRDs(t *testing.T) {
 
 	t.Run("applies each manifest file", func(t *testing.T) {
 		var appliedManifests []string
-		mock := &cli.MockExecutor{
-			CommandFunc: func(spec cli.ExecSpec) *cli.MockCommand {
-				cmd := &cli.MockCommand{Args: spec.Args}
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				cmd := &core.MockCommand{Args: spec.Args}
 				cmd.RunFunc = func() error {
 					if cmd.StdinR != nil {
 						data, err := io.ReadAll(cmd.StdinR)
@@ -47,7 +47,7 @@ func TestManagerDeployCRDs(t *testing.T) {
 				return cmd
 			},
 		}
-		kubectl, err := cli.NewKubectlClient(mock)
+		kubectl, err := core.NewKubectlClient(mock)
 		if err != nil {
 			t.Fatalf("failed to create kubectl client: %v", err)
 		}
@@ -91,11 +91,11 @@ func TestManagerGenerateCRDsFromMetadata(t *testing.T) {
 
 	t.Run("generates CRDs from file successfully", func(t *testing.T) {
 		var buf bytes.Buffer
-		origWriter := cli.DefaultPrinter.Writer
-		cli.DefaultPrinter.Writer = &buf
-		t.Cleanup(func() { cli.DefaultPrinter.Writer = origWriter })
+		origWriter := core.DefaultPrinter.Writer
+		core.DefaultPrinter.Writer = &buf
+		t.Cleanup(func() { core.DefaultPrinter.Writer = origWriter })
 
-		mgr := &manager{kubectl: &cli.KubectlClient{}, logger: zap.NewNop()}
+		mgr := &manager{kubectl: &core.KubectlClient{}, logger: zap.NewNop()}
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
 		metadataFile := filepath.Join(tmpDir, "servers.yaml")
@@ -121,8 +121,8 @@ servers:
 
 func TestManagerDeployCRDsErrors(t *testing.T) {
 	t.Run("apply error", func(t *testing.T) {
-		mock := &cli.MockExecutor{DefaultRunErr: errors.New("apply failed")}
-		kubectl, err := cli.NewKubectlClient(mock)
+		mock := &core.MockExecutor{DefaultRunErr: errors.New("apply failed")}
+		kubectl, err := core.NewKubectlClient(mock)
 		if err != nil {
 			t.Fatalf("failed to create kubectl client: %v", err)
 		}
@@ -145,8 +145,8 @@ func TestManagerDeployCRDsErrors(t *testing.T) {
 			return nil, errors.New("glob error")
 		}
 
-		mock := &cli.MockExecutor{}
-		kubectl, err := cli.NewKubectlClient(mock)
+		mock := &core.MockExecutor{}
+		kubectl, err := core.NewKubectlClient(mock)
 		if err != nil {
 			t.Fatalf("failed to create kubectl client: %v", err)
 		}

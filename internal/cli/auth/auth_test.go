@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"mcp-runtime/internal/cli"
+	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/pkg/authfile"
 )
 
@@ -66,7 +66,7 @@ func TestAuthLoginSavesAndVerifies(t *testing.T) {
 	}
 	defer func() { httpDoHook = prevHTTPHook }()
 
-	cmd := New(cli.NewRuntime(zap.NewNop()))
+	cmd := New(core.NewRuntime(zap.NewNop()))
 	var out, errb bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errb)
@@ -106,7 +106,7 @@ func TestAuthLoginNormalizesTrailingAPIPath(t *testing.T) {
 	}
 	defer func() { apiTestHook = previousHook }()
 
-	cmd := New(cli.NewRuntime(zap.NewNop()))
+	cmd := New(core.NewRuntime(zap.NewNop()))
 	cmd.SetArgs([]string{"login", "--api-url", "https://platform.example.com/api/", "--token", "good"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)

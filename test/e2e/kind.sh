@@ -63,6 +63,7 @@ OAUTH_UPSTREAM_PORT="${OAUTH_UPSTREAM_PORT:-18097}"
 PYTHON_EXAMPLE_PROXY_PORT="${PYTHON_EXAMPLE_PROXY_PORT:-18098}"
 RUST_EXAMPLE_PROXY_PORT="${RUST_EXAMPLE_PROXY_PORT:-18099}"
 GO_EXAMPLE_PROXY_PORT="${GO_EXAMPLE_PROXY_PORT:-18102}"
+CLI_SENTINEL_API_PORT="${CLI_SENTINEL_API_PORT:-18103}"
 API_METRICS_PORT="${API_METRICS_PORT:-19090}"
 INGEST_METRICS_PORT="${INGEST_METRICS_PORT:-19091}"
 PROCESSOR_METRICS_PORT="${PROCESSOR_METRICS_PORT:-19092}"
@@ -284,6 +285,26 @@ assert_file_contains() {
   fi
 
   grep -F -q -- "${needle}" "${file}"
+}
+
+run_cli_allowing_cert_prereq_failure() {
+  local name="$1"
+  shift
+  local log_file="${WORKDIR}/${name}.log"
+
+  if "$@" >"${log_file}" 2>&1; then
+    echo "[cli][pass] ${name}"
+    return 0
+  fi
+
+  if grep -E -q "cert-manager|Certificate not found|Certificate not ready|certificate not ready|ClusterIssuer .* not found|CA secret .* not found" "${log_file}"; then
+    echo "[cli][pass] ${name} reached expected missing TLS prerequisite path"
+    return 0
+  fi
+
+  echo "[cli][fail] ${name}" >&2
+  cat "${log_file}" >&2
+  exit 1
 }
 
 decode_base64() {
@@ -1626,6 +1647,11 @@ cp "${KUBECONFIG_FILE}" "${HOME}/.kube/config"
 echo "[build] rebuilding CLI"
 GOCACHE="${PROJECT_ROOT}/.gocache" go build -o bin/mcp-runtime ./cmd/mcp-runtime
 
+echo "[cli] checking static command output"
+./bin/mcp-runtime --version >/dev/null
+./bin/mcp-runtime help >/dev/null
+./bin/mcp-runtime completion bash >/dev/null
+
 MCP_SMOKE_SOURCE_DIR="$(resolve_mcp_smoke_dir)"
 MCP_SMOKE_BIN="${WORKDIR}/mcp-smoke-agent"
 MCP_SMOKE_GOPATH="${WORKDIR}/mcp-smoke-gopath"
@@ -1682,6 +1708,45 @@ echo "[cli] checking platform status commands"
 ./bin/mcp-runtime cluster status
 ./bin/mcp-runtime registry status
 ./bin/mcp-runtime registry info
+
+echo "[cli] checking auth, bootstrap, cluster, registry, and sentinel commands"
+MCP_RUNTIME_CONFIG_DIR="${WORKDIR}/auth-config" ./bin/mcp-runtime auth status
+MCP_RUNTIME_CONFIG_DIR="${WORKDIR}/auth-config" ./bin/mcp-runtime auth login \
+  --api-url "http://127.0.0.1:${SENTINEL_PORT}" \
+  --token e2e-token \
+  --skip-verify \
+  --registry-host "${LOCAL_REGISTRY_PUSH_HOST}"
+MCP_RUNTIME_CONFIG_DIR="${WORKDIR}/auth-config" ./bin/mcp-runtime auth status
+MCP_RUNTIME_CONFIG_DIR="${WORKDIR}/auth-config" ./bin/mcp-runtime auth logout
+
+./bin/mcp-runtime bootstrap --provider generic
+./bin/mcp-runtime cluster init
+./bin/mcp-runtime cluster config --ingress none
+./bin/mcp-runtime cluster provision \
+  --provider kind \
+  --name "${CLUSTER_NAME}-dry-run" \
+  --nodes 1 \
+  --dry-run >"${WORKDIR}/cluster-provision-dry-run.txt"
+./bin/mcp-runtime cluster doctor
+run_cli_allowing_cert_prereq_failure cluster-cert-status ./bin/mcp-runtime cluster cert status
+run_cli_allowing_cert_prereq_failure cluster-cert-apply-dry-run ./bin/mcp-runtime cluster cert apply --dry-run
+run_cli_allowing_cert_prereq_failure cluster-cert-wait ./bin/mcp-runtime cluster cert wait --timeout 1s
+./bin/mcp-runtime registry provision \
+  --url "${LOCAL_REGISTRY_PUSH_HOST}" \
+  --username e2e \
+  --password e2e \
+  --dry-run >"${WORKDIR}/registry-provision-dry-run.txt"
+./bin/mcp-runtime sentinel status
+./bin/mcp-runtime sentinel events >"${WORKDIR}/sentinel-events.txt"
+./bin/mcp-runtime sentinel logs api --tail 20 >"${WORKDIR}/sentinel-api-logs.txt"
+./bin/mcp-runtime sentinel port-forward api \
+  --port "${CLI_SENTINEL_API_PORT}" \
+  --address 127.0.0.1 >"${WORKDIR}/sentinel-cli-port-forward.log" 2>&1 &
+_cli_pf_pid="$!"
+PIDS+=("${_cli_pf_pid}")
+wait_port "${CLI_SENTINEL_API_PORT}" 30
+kill "${_cli_pf_pid}" >/dev/null 2>&1 || true
+wait "${_cli_pf_pid}" 2>/dev/null || true
 
 API_KEY="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.API_KEYS}' | decode_base64 | cut -d',' -f1)"
 if [[ -z "${API_KEY}" ]]; then
@@ -1775,6 +1840,30 @@ if ! kubectl rollout status "deploy/${SERVER_NAME}" -n mcp-servers --timeout=180
 fi
 wait_for_server_ready
 
+echo "[cli] checking server mutation helpers"
+SERVER_EXPORT_FILE="${WORKDIR}/${SERVER_NAME}-export.yaml"
+./bin/mcp-runtime server --use-kube apply --file "${MANIFEST_DIR}/${SERVER_NAME}.yaml"
+./bin/mcp-runtime server --use-kube export "${SERVER_NAME}" \
+  --namespace mcp-servers \
+  --file "${SERVER_EXPORT_FILE}"
+assert_file_contains "name: ${SERVER_NAME}" "${SERVER_EXPORT_FILE}"
+./bin/mcp-runtime server --use-kube patch "${SERVER_NAME}" \
+  --namespace mcp-servers \
+  --type merge \
+  --patch '{"metadata":{"annotations":{"e2e.mcpruntime.org/cli-patch":"true"}}}'
+./bin/mcp-runtime server --use-kube status --namespace mcp-servers >"${WORKDIR}/server-status.txt"
+assert_file_contains "${SERVER_NAME}" "${WORKDIR}/server-status.txt"
+./bin/mcp-runtime server --use-kube logs "${SERVER_NAME}" \
+  --namespace mcp-servers \
+  --tail 20 >"${WORKDIR}/server-logs.txt"
+TEMP_CLI_SERVER="${SERVER_NAME}-cli-create"
+./bin/mcp-runtime server --use-kube create "${TEMP_CLI_SERVER}" \
+  --namespace mcp-servers \
+  --image docker.io/library/nginx \
+  --tag 1.27-alpine
+./bin/mcp-runtime server --use-kube delete "${TEMP_CLI_SERVER}" --namespace mcp-servers
+kubectl wait --for=delete "mcpserver/${TEMP_CLI_SERVER}" -n mcp-servers --timeout=120s || true
+
 echo "[deploy] deploying official SDK example MCP servers"
 deploy_example_server_via_pipeline \
   "${PYTHON_EXAMPLE_SERVER_NAME}" \
@@ -1798,7 +1887,7 @@ deploy_example_server_via_pipeline \
 echo "[cli] checking server commands"
 
 # --- server list: assert the primary server appears ---
-_cli_list_out="$(./bin/mcp-runtime server list --namespace mcp-servers 2>&1)"
+_cli_list_out="$(./bin/mcp-runtime server --use-kube list --namespace mcp-servers 2>&1)"
 if ! printf '%s\n' "${_cli_list_out}" | grep -qF "${SERVER_NAME}"; then
   echo "[cli][fail] 'server list' output does not contain ${SERVER_NAME}" >&2
   printf '%s\n' "${_cli_list_out}" >&2
@@ -1807,7 +1896,7 @@ fi
 echo "[cli][pass] server list contains ${SERVER_NAME}"
 
 # --- server get: capture YAML and assert readiness fields ---
-_cli_get_out="$(./bin/mcp-runtime server get "${SERVER_NAME}" --namespace mcp-servers 2>&1)"
+_cli_get_out="$(./bin/mcp-runtime server --use-kube get "${SERVER_NAME}" --namespace mcp-servers 2>&1)"
 _cli_get_file="${WORKDIR}/${SERVER_NAME}-get.yaml"
 printf '%s\n' "${_cli_get_out}" >"${_cli_get_file}"
 
@@ -1900,7 +1989,7 @@ spec:
     - name: upper
       decision: allow
 EOF
-(cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access grant apply --file access-grant.yaml)
+(cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant.yaml)
 
 echo "[policy] applying low-trust session via CLI"
 cat >"${WORKDIR}/access-session.yaml" <<EOF
@@ -1918,22 +2007,62 @@ spec:
   consentedTrust: low
   policyVersion: v1
 EOF
-(cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access session apply --file access-session.yaml)
+(cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session apply --file access-session.yaml)
 
 wait_for_policy_text "\"name\": \"${SESSION_ID}\""
 wait_for_policy_text "\"consented_trust\": \"low\""
 print_gateway_policy_debug
+./bin/mcp-runtime server --use-kube policy inspect "${SERVER_NAME}" \
+  --namespace mcp-servers >"${WORKDIR}/server-policy.json"
+assert_file_contains "${SESSION_ID}" "${WORKDIR}/server-policy.json"
 
 if scenario_selected "governance"; then
   echo "[cli] checking access management commands"
-  ./bin/mcp-runtime access grant list --namespace mcp-servers >"${WORKDIR}/access-grant-list.txt"
+  ./bin/mcp-runtime access --use-kube grant list --namespace mcp-servers >"${WORKDIR}/access-grant-list.txt"
   assert_file_contains "${SERVER_NAME}-grant" "${WORKDIR}/access-grant-list.txt"
-  ./bin/mcp-runtime access grant get "${SERVER_NAME}-grant" --namespace mcp-servers >"${WORKDIR}/access-grant-get.yaml"
+  ./bin/mcp-runtime access --use-kube grant get "${SERVER_NAME}-grant" --namespace mcp-servers >"${WORKDIR}/access-grant-get.yaml"
   assert_file_contains "maxTrust: high" "${WORKDIR}/access-grant-get.yaml"
-  ./bin/mcp-runtime access session list --namespace mcp-servers >"${WORKDIR}/access-session-list.txt"
+  ./bin/mcp-runtime access --use-kube session list --namespace mcp-servers >"${WORKDIR}/access-session-list.txt"
   assert_file_contains "${SESSION_ID}" "${WORKDIR}/access-session-list.txt"
-  ./bin/mcp-runtime access session get "${SESSION_ID}" --namespace mcp-servers >"${WORKDIR}/access-session-get.yaml"
+  ./bin/mcp-runtime access --use-kube session get "${SESSION_ID}" --namespace mcp-servers >"${WORKDIR}/access-session-get.yaml"
   assert_file_contains "consentedTrust: low" "${WORKDIR}/access-session-get.yaml"
+
+  cat >"${WORKDIR}/access-temp.yaml" <<EOF
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAccessGrant
+metadata:
+  name: ${SERVER_NAME}-grant-cli-temp
+  namespace: mcp-servers
+spec:
+  serverRef:
+    name: ${SERVER_NAME}
+  subject:
+    humanID: ${HUMAN_ID}-cli-temp
+    agentID: ${AGENT_ID}-cli-temp
+  maxTrust: low
+  policyVersion: v1
+---
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAgentSession
+metadata:
+  name: ${SESSION_ID}-cli-temp
+  namespace: mcp-servers
+spec:
+  serverRef:
+    name: ${SERVER_NAME}
+  subject:
+    humanID: ${HUMAN_ID}-cli-temp
+    agentID: ${AGENT_ID}-cli-temp
+  consentedTrust: low
+  policyVersion: v1
+EOF
+  ./bin/mcp-runtime access --use-kube grant apply --file "${WORKDIR}/access-temp.yaml"
+  ./bin/mcp-runtime access --use-kube grant disable "${SERVER_NAME}-grant-cli-temp" --namespace mcp-servers
+  ./bin/mcp-runtime access --use-kube grant enable "${SERVER_NAME}-grant-cli-temp" --namespace mcp-servers
+  ./bin/mcp-runtime access --use-kube session revoke "${SESSION_ID}-cli-temp" --namespace mcp-servers
+  ./bin/mcp-runtime access --use-kube session unrevoke "${SESSION_ID}-cli-temp" --namespace mcp-servers
+  ./bin/mcp-runtime access --use-kube grant delete "${SERVER_NAME}-grant-cli-temp" --namespace mcp-servers
+  ./bin/mcp-runtime access --use-kube session delete "${SESSION_ID}-cli-temp" --namespace mcp-servers
 fi
 
 echo "[port-forward] exposing ingress and observability services"
@@ -2125,14 +2254,14 @@ fi
 
 if scenario_selected "governance"; then
   echo "[policy] revoking access session via CLI"
-  ./bin/mcp-runtime access session revoke "${SESSION_ID}" --namespace mcp-servers
+  ./bin/mcp-runtime access --use-kube session revoke "${SESSION_ID}" --namespace mcp-servers
   wait_for_policy_text "\"revoked\": true"
   print_gateway_policy_debug
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 401 "session_revoked"
   run_mcp_smoke_expect "mcp-smoke-session-revoked" "${MCP_SESSION_URL}" false "session_revoked"
 
   echo "[policy] restoring access session via CLI"
-  ./bin/mcp-runtime access session unrevoke "${SESSION_ID}" --namespace mcp-servers
+  ./bin/mcp-runtime access --use-kube session unrevoke "${SESSION_ID}" --namespace mcp-servers
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
 
   echo "[policy] expiring access session via manifest update"
@@ -2157,7 +2286,7 @@ spec:
   policyVersion: v1
   expiresAt: ${EXPIRED_AT}
 EOF
-  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access session apply --file access-session-expired.yaml)
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session apply --file access-session-expired.yaml)
   wait_for_policy_text "\"expires_at\": \"${EXPIRED_AT}\""
   print_gateway_policy_debug
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 401 "session_expired"
@@ -2179,18 +2308,18 @@ spec:
   consentedTrust: low
   policyVersion: v1
 EOF
-  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access session apply --file access-session-restored.yaml)
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session apply --file access-session-restored.yaml)
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
 
   echo "[policy] disabling access grant via CLI"
-  ./bin/mcp-runtime access grant disable "${SERVER_NAME}-grant" --namespace mcp-servers
+  ./bin/mcp-runtime access --use-kube grant disable "${SERVER_NAME}-grant" --namespace mcp-servers
   wait_for_policy_text "\"disabled\": true"
   print_gateway_policy_debug
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 403 "tool_not_granted"
   run_mcp_smoke_expect "mcp-smoke-grant-disabled" "${MCP_SESSION_URL}" false "tool_not_granted"
 
   echo "[policy] re-enabling access grant via CLI"
-  ./bin/mcp-runtime access grant enable "${SERVER_NAME}-grant" --namespace mcp-servers
+  ./bin/mcp-runtime access --use-kube grant enable "${SERVER_NAME}-grant" --namespace mcp-servers
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
 fi
 
@@ -2438,7 +2567,7 @@ spec:
     - name: upper
       decision: allow
 EOF
-  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access grant apply --file access-grant-deny.yaml)
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant-deny.yaml)
 
   wait_for_grant_tool_rule "${SERVER_NAME}-grant" "aaa-ping" "deny"
   wait_for_grant_tool_rule "${SERVER_NAME}-grant" "echo" "deny"
@@ -3832,18 +3961,22 @@ for key, value in rows:
 PY
 fi
 
+echo "[cli] checking sentinel restart command"
+./bin/mcp-runtime sentinel restart api
+rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
+
 echo "[cli] deleting deployed MCP servers"
 if scenario_selected "oauth"; then
-  ./bin/mcp-runtime server delete "${OAUTH_SERVER_NAME}" --namespace mcp-servers
+  ./bin/mcp-runtime server --use-kube delete "${OAUTH_SERVER_NAME}" --namespace mcp-servers
   kubectl wait --for=delete "mcpserver/${OAUTH_SERVER_NAME}" -n mcp-servers --timeout=120s || true
 fi
-./bin/mcp-runtime server delete "${PYTHON_EXAMPLE_SERVER_NAME}" --namespace mcp-servers
+./bin/mcp-runtime server --use-kube delete "${PYTHON_EXAMPLE_SERVER_NAME}" --namespace mcp-servers
 kubectl wait --for=delete "mcpserver/${PYTHON_EXAMPLE_SERVER_NAME}" -n mcp-servers --timeout=120s || true
-./bin/mcp-runtime server delete "${RUST_EXAMPLE_SERVER_NAME}" --namespace mcp-servers
+./bin/mcp-runtime server --use-kube delete "${RUST_EXAMPLE_SERVER_NAME}" --namespace mcp-servers
 kubectl wait --for=delete "mcpserver/${RUST_EXAMPLE_SERVER_NAME}" -n mcp-servers --timeout=120s || true
-./bin/mcp-runtime server delete "${GO_EXAMPLE_SERVER_NAME}" --namespace mcp-servers
+./bin/mcp-runtime server --use-kube delete "${GO_EXAMPLE_SERVER_NAME}" --namespace mcp-servers
 kubectl wait --for=delete "mcpserver/${GO_EXAMPLE_SERVER_NAME}" -n mcp-servers --timeout=120s || true
-./bin/mcp-runtime server delete "${SERVER_NAME}" --namespace mcp-servers
+./bin/mcp-runtime server --use-kube delete "${SERVER_NAME}" --namespace mcp-servers
 kubectl wait --for=delete "mcpserver/${SERVER_NAME}" -n mcp-servers --timeout=120s || true
 
 echo "[done] E2E completed successfully"

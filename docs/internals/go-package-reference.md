@@ -15,7 +15,21 @@ python3 docs/scripts/generate_go_package_reference.py
 - [Metadata helpers](#metadata-helpers) `mcp-runtime/pkg/metadata`
 - [Operator internals](#operator-internals) `mcp-runtime/internal/operator`
 - [CLI command routing](#cli-command-routing) `mcp-runtime/internal/cli/root`
-- [CLI internals](#cli-internals) `mcp-runtime/internal/cli`
+- [CLI core](#cli-core) `mcp-runtime/internal/cli/core`
+- [CLI Kubernetes helpers](#cli-kubernetes-helpers) `mcp-runtime/internal/cli/kube`
+- [CLI Kubernetes errors](#cli-kubernetes-errors) `mcp-runtime/internal/cli/kubeerr`
+- [CLI cluster](#cli-cluster) `mcp-runtime/internal/cli/cluster`
+- [CLI cert-manager](#cli-cert-manager) `mcp-runtime/internal/cli/certmanager`
+- [CLI platform API](#cli-platform-api) `mcp-runtime/internal/cli/platformapi`
+- [CLI platform status](#cli-platform-status) `mcp-runtime/internal/cli/platformstatus`
+- [CLI registry](#cli-registry) `mcp-runtime/internal/cli/registry`
+- [CLI registry config](#cli-registry-config) `mcp-runtime/internal/cli/registry/config`
+- [CLI registry references](#cli-registry-references) `mcp-runtime/internal/cli/registry/ref`
+- [CLI registry resolution](#cli-registry-resolution) `mcp-runtime/internal/cli/registry/resolve`
+- [CLI server](#cli-server) `mcp-runtime/internal/cli/server`
+- [CLI setup asset paths](#cli-setup-asset-paths) `mcp-runtime/internal/cli/setup/assetpath`
+- [CLI setup ingress manifests](#cli-setup-ingress-manifests) `mcp-runtime/internal/cli/setup/ingressmanifest`
+- [CLI setup plan](#cli-setup-plan) `mcp-runtime/internal/cli/setup/plan`
 - [CLI binary](#cli-binary) `mcp-runtime/cmd/mcp-runtime`
 - [Operator binary](#operator-binary) `mcp-runtime/cmd/operator`
 
@@ -2015,8 +2029,8 @@ go doc -all ./internal/cli/root
 Package root provides the foldered CLI command routing layer for the mcp-runtime
 binary.
 
-Each subpackage owns one top-level Cobra command boundary and delegates behavior
-to the shared internal/cli implementation package.
+Each subpackage owns one top-level Cobra command boundary and uses
+internal/cli/core for shared CLI infrastructure.
 
 ### Jump To
 
@@ -2038,237 +2052,155 @@ func AddCommands(root *cobra.Command, logger *zap.Logger)
     AddCommands registers every top-level mcp-runtime command on root.
 ```
 
-<a id="cli-internals"></a>
-## CLI internals
+<a id="cli-core"></a>
+## CLI core
 
-Package: `cli`
-Import path: `mcp-runtime/internal/cli`
+Package: `core`
+Import path: `mcp-runtime/internal/cli/core`
 
 Source command:
 
 ```bash
-go doc -all ./internal/cli
+go doc -all ./internal/cli/core
 ```
 
-<a id="cli-internals-overview"></a>
+<a id="cli-core-overview"></a>
 ### Overview
 
-_No package overview is documented._
+Package cli contains shared CLI infrastructure used by command packages.
+
+Command-specific behavior belongs in internal/cli/<command>; this package is
+limited to config, constants, errors, runtime composition, process execution,
+kubectl clients, terminal output, and test doubles.
 
 ### Jump To
 
-- [Overview](#cli-internals-overview)
-- [Index](#cli-internals-index)
-- [Constants](#cli-internals-constants)
-- [Variables](#cli-internals-variables)
-- [Functions](#cli-internals-functions)
-- [Types](#cli-internals-types)
+- [Overview](#cli-core-overview)
+- [Index](#cli-core-index)
+- [Constants](#cli-core-constants)
+- [Variables](#cli-core-variables)
+- [Functions](#cli-core-functions)
+- [Types](#cli-core-types)
 
-<a id="cli-internals-index"></a>
+<a id="cli-core-index"></a>
 ### Index
 
-- [`Constants`](#cli-internals-constants)
-- [`Variables`](#cli-internals-variables)
-- [`func ApplyManifestContentWithNamespace(kubectl KubectlRunner, manifest, namespace string) error`](#cli-internals-func-applymanifestcontentwithnamespace-kubectl-kubectlrunner-manifest-namespace-string-error)
-- [`func BuildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, context string) error`](#cli-internals-func-buildimage-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-context-string-error)
-- [`func BuildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectChanged bool) []string`](#cli-internals-func-buildoperatorargs-metricsaddr-probeaddr-string-leaderelect-leaderelectchanged-bool-string)
-- [`func ClusterIssuerNameForACME(staging bool) string`](#cli-internals-func-clusterissuernameforacme-staging-bool-string)
-- [`func Cyan(msg string) string`](#cli-internals-func-cyan-msg-string-string)
-- [`func Error(msg string)`](#cli-internals-func-error-msg-string)
-- [`func GetAnalyticsIngestURLOverride() string`](#cli-internals-func-getanalyticsingesturloverride-string)
-- [`func GetCertTimeout() time.Duration`](#cli-internals-func-getcerttimeout-time-duration)
-- [`func GetClusterName() string`](#cli-internals-func-getclustername-string)
-- [`func GetDefaultServerPort() int`](#cli-internals-func-getdefaultserverport-int)
-- [`func GetDeploymentTimeout() time.Duration`](#cli-internals-func-getdeploymenttimeout-time-duration)
-- [`func GetGatewayProxyImageOverride() string`](#cli-internals-func-getgatewayproxyimageoverride-string)
-- [`func GetHelperPodTimeout() time.Duration`](#cli-internals-func-gethelperpodtimeout-time-duration)
-- [`func GetMcpIngressHost() string`](#cli-internals-func-getmcpingresshost-string)
-- [`func GetOperatorImageOverride() string`](#cli-internals-func-getoperatorimageoverride-string)
-- [`func GetPlatformIngressHost() string`](#cli-internals-func-getplatformingresshost-string)
-- [`func GetRegistryClusterIssuerName() string`](#cli-internals-func-getregistryclusterissuername-string)
-- [`func GetRegistryEndpoint() string`](#cli-internals-func-getregistryendpoint-string)
-- [`func GetRegistryIngressHost() string`](#cli-internals-func-getregistryingresshost-string)
-- [`func GetRegistryPort() int`](#cli-internals-func-getregistryport-int)
-- [`func GetSkopeoImage() string`](#cli-internals-func-getskopeoimage-string)
-- [`func Green(msg string) string`](#cli-internals-func-green-msg-string-string)
-- [`func HasPlatformClient() bool`](#cli-internals-func-hasplatformclient-bool)
-- [`func Header(title string)`](#cli-internals-func-header-title-string)
-- [`func Info(msg string)`](#cli-internals-func-info-msg-string)
-- [`func IsDebugMode() bool`](#cli-internals-func-isdebugmode-bool)
-- [`func LogStructuredError(logger *zap.Logger, err error, msg string)`](#cli-internals-func-logstructurederror-logger-zap-logger-err-error-msg-string)
-- [`func NewSetupStepFailedError() error`](#cli-internals-func-newsetupstepfailederror-error)
-- [`func NewWithSentinel(base error, msg string) error`](#cli-internals-func-newwithsentinel-base-error-msg-string-error)
-- [`func NormalizePlatformAPIBaseURL(raw string) string`](#cli-internals-func-normalizeplatformapibaseurl-raw-string-string)
-- [`func PrintDoctorReport(r DoctorReport)`](#cli-internals-func-printdoctorreport-r-doctorreport)
-- [`func ReadFileAtPath(path string) ([]byte, error)`](#cli-internals-func-readfileatpath-path-string-byte-error)
-- [`func Red(msg string) string`](#cli-internals-func-red-msg-string-string)
-- [`func ResolveRegularFilePath(file string) (string, error)`](#cli-internals-func-resolveregularfilepath-file-string-string-error)
-- [`func RunRegistryProvision(mgr *RegistryManager, url, username, password, operatorImage string) error`](#cli-internals-func-runregistryprovision-mgr-registrymanager-url-username-password-operatorimage-string-error)
-- [`func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helperNamespace string) error`](#cli-internals-func-runregistrypush-mgr-registrymanager-image-registryurl-name-mode-helpernamespace-string-error)
-- [`func Section(title string)`](#cli-internals-func-section-title-string)
-- [`func SentinelComponentKeys() []string`](#cli-internals-func-sentinelcomponentkeys-string)
-- [`func SetDebugMode(enabled bool)`](#cli-internals-func-setdebugmode-enabled-bool)
-- [`func SetupPlatform(logger *zap.Logger, plan SetupPlan) error`](#cli-internals-func-setupplatform-logger-zap-logger-plan-setupplan-error)
-- [`func ShowPlatformStatus(logger *zap.Logger) error`](#cli-internals-func-showplatformstatus-logger-zap-logger-error)
-- [`func SpinnerStart(msg string) func(success bool, finalMsg string)`](#cli-internals-func-spinnerstart-msg-string-func-success-bool-finalmsg-string)
-- [`func Step(title string)`](#cli-internals-func-step-title-string)
-- [`func Success(msg string)`](#cli-internals-func-success-msg-string)
-- [`func Table(data [][]string)`](#cli-internals-func-table-data-string)
-- [`func TableBoxed(data [][]string)`](#cli-internals-func-tableboxed-data-string)
-- [`func ValidateStorageMode(mode string) error`](#cli-internals-func-validatestoragemode-mode-string-error)
-- [`func ValidateTLSSetupCLIFlags(`](#cli-internals-func-validatetlssetupcliflags)
-- [`func Warn(msg string)`](#cli-internals-func-warn-msg-string)
-- [`func WrapWithSentinel(base, cause error, msg string) error`](#cli-internals-func-wrapwithsentinel-base-cause-error-msg-string-error)
-- [`func WrapWithSentinelAndContext(base, cause error, msg string, context map[string]any) error`](#cli-internals-func-wrapwithsentinelandcontext-base-cause-error-msg-string-context-map-string-any-error)
-- [`func Yellow(msg string) string`](#cli-internals-func-yellow-msg-string-string)
-- [`type AccessManager struct`](#cli-internals-type-accessmanager-struct)
-- [`func DefaultAccessManager(logger *zap.Logger) *AccessManager`](#cli-internals-func-defaultaccessmanager-logger-zap-logger-accessmanager)
-- [`func NewAccessManager(kubectl *KubectlClient, logger *zap.Logger) *AccessManager`](#cli-internals-func-newaccessmanager-kubectl-kubectlclient-logger-zap-logger-accessmanager)
-- [`func (m *AccessManager) ApplyAccessResource(file string) error`](#cli-internals-func-m-accessmanager-applyaccessresource-file-string-error)
-- [`func (m *AccessManager) BindUseKubeFlag(cmd *cobra.Command)`](#cli-internals-func-m-accessmanager-bindusekubeflag-cmd-cobra-command)
-- [`func (m *AccessManager) DeleteAccessResource(resource, name, namespace string) error`](#cli-internals-func-m-accessmanager-deleteaccessresource-resource-name-namespace-string-error)
-- [`func (m *AccessManager) GetAccessResource(resource, name, namespace string) error`](#cli-internals-func-m-accessmanager-getaccessresource-resource-name-namespace-string-error)
-- [`func (m *AccessManager) ListAccessResources(resource, namespace string, allNamespaces bool) error`](#cli-internals-func-m-accessmanager-listaccessresources-resource-namespace-string-allnamespaces-bool-error)
-- [`func (m *AccessManager) ToggleAccessResource(resource, name, namespace string, value bool) error`](#cli-internals-func-m-accessmanager-toggleaccessresource-resource-name-namespace-string-value-bool-error)
-- [`type AnalyticsImageSet struct`](#cli-internals-type-analyticsimageset-struct)
-- [`type CLIConfig struct`](#cli-internals-type-cliconfig-struct)
-- [`func LoadCLIConfig() *CLIConfig`](#cli-internals-func-loadcliconfig-cliconfig)
-- [`type CertManager struct`](#cli-internals-type-certmanager-struct)
-- [`func NewCertManager(kubectl KubectlRunner, logger *zap.Logger) *CertManager`](#cli-internals-func-newcertmanager-kubectl-kubectlrunner-logger-zap-logger-certmanager)
-- [`func (m *CertManager) Apply() error`](#cli-internals-func-m-certmanager-apply-error)
-- [`func (m *CertManager) Status() error`](#cli-internals-func-m-certmanager-status-error)
-- [`func (m *CertManager) Wait(timeout time.Duration) error`](#cli-internals-func-m-certmanager-wait-timeout-time-duration-error)
-- [`type ClusterManager struct`](#cli-internals-type-clustermanager-struct)
-- [`func DefaultClusterManager(logger *zap.Logger) *ClusterManager`](#cli-internals-func-defaultclustermanager-logger-zap-logger-clustermanager)
-- [`func NewClusterManager(kubectl *KubectlClient, exec Executor, logger *zap.Logger) *ClusterManager`](#cli-internals-func-newclustermanager-kubectl-kubectlclient-exec-executor-logger-zap-logger-clustermanager)
-- [`func (m *ClusterManager) CheckClusterStatus() error`](#cli-internals-func-m-clustermanager-checkclusterstatus-error)
-- [`func (m *ClusterManager) ConfigureCluster(ingress ingressOptions) error`](#cli-internals-func-m-clustermanager-configurecluster-ingress-ingressoptions-error)
-- [`func (m *ClusterManager) ConfigureClusterWithValues(mode, manifest string, force bool) error`](#cli-internals-func-m-clustermanager-configureclusterwithvalues-mode-manifest-string-force-bool-error)
-- [`func (m *ClusterManager) ConfigureKubeconfig(kubeconfig, context string) error`](#cli-internals-func-m-clustermanager-configurekubeconfig-kubeconfig-context-string-error)
-- [`func (m *ClusterManager) ConfigureKubeconfigFromProvider(provider, region, clusterName, resourceGroup, project, zone, kubeconfig string) error`](#cli-internals-func-m-clustermanager-configurekubeconfigfromprovider-provider-region-clustername-resourcegroup-project-zone-kubeconfig-string-error)
-- [`func (m *ClusterManager) EnsureNamespace(name string) error`](#cli-internals-func-m-clustermanager-ensurenamespace-name-string-error)
-- [`func (m *ClusterManager) InitCluster(kubeconfig, context string) error`](#cli-internals-func-m-clustermanager-initcluster-kubeconfig-context-string-error)
-- [`func (m *ClusterManager) KubectlRunner() KubectlRunner`](#cli-internals-func-m-clustermanager-kubectlrunner-kubectlrunner)
-- [`func (m *ClusterManager) Logger() *zap.Logger`](#cli-internals-func-m-clustermanager-logger-zap-logger)
-- [`func (m *ClusterManager) ProvisionCluster(provider, region string, nodeCount int, clusterName string) error`](#cli-internals-func-m-clustermanager-provisioncluster-provider-region-string-nodecount-int-clustername-string-error)
-- [`type ClusterManagerAPI interface`](#cli-internals-type-clustermanagerapi-interface)
-- [`type Command interface`](#cli-internals-type-command-interface)
-- [`type Distribution string`](#cli-internals-type-distribution-string)
-- [`func DetectDistribution(kubectl KubectlRunner) Distribution`](#cli-internals-func-detectdistribution-kubectl-kubectlrunner-distribution)
-- [`type DoctorCheck struct`](#cli-internals-type-doctorcheck-struct)
-- [`type DoctorCheckProgress func(DoctorCheckProgressEvent) func(DoctorCheck)`](#cli-internals-type-doctorcheckprogress-func-doctorcheckprogressevent-func-doctorcheck)
-- [`type DoctorCheckProgressEvent struct`](#cli-internals-type-doctorcheckprogressevent-struct)
-- [`type DoctorReport struct`](#cli-internals-type-doctorreport-struct)
-- [`func RunDoctor(kubectl KubectlRunner) DoctorReport`](#cli-internals-func-rundoctor-kubectl-kubectlrunner-doctorreport)
-- [`func RunDoctorAndPrint(kubectl KubectlRunner) DoctorReport`](#cli-internals-func-rundoctorandprint-kubectl-kubectlrunner-doctorreport)
-- [`func RunDoctorWithProgress(kubectl KubectlRunner, progress DoctorCheckProgress) DoctorReport`](#cli-internals-func-rundoctorwithprogress-kubectl-kubectlrunner-progress-doctorcheckprogress-doctorreport)
-- [`func (r DoctorReport) AllOK() bool`](#cli-internals-func-r-doctorreport-allok-bool)
-- [`type ExecSpec struct`](#cli-internals-type-execspec-struct)
-- [`type ExecValidator func(ExecSpec) error`](#cli-internals-type-execvalidator-func-execspec-error)
-- [`func AllowlistBins(allowed ...string) ExecValidator`](#cli-internals-func-allowlistbins-allowed-string-execvalidator)
-- [`func NoControlChars() ExecValidator`](#cli-internals-func-nocontrolchars-execvalidator)
-- [`func NoShellMeta() ExecValidator`](#cli-internals-func-noshellmeta-execvalidator)
-- [`func PathUnder(root string) ExecValidator`](#cli-internals-func-pathunder-root-string-execvalidator)
-- [`type Executor interface`](#cli-internals-type-executor-interface)
-- [`type ExternalRegistryConfig struct`](#cli-internals-type-externalregistryconfig-struct)
-- [`type KubectlClient struct`](#cli-internals-type-kubectlclient-struct)
-- [`func NewKubectlClient(exec Executor) (*KubectlClient, error)`](#cli-internals-func-newkubectlclient-exec-executor-kubectlclient-error)
-- [`func (c *KubectlClient) CombinedOutput(args []string) ([]byte, error)`](#cli-internals-func-c-kubectlclient-combinedoutput-args-string-byte-error)
-- [`func (c *KubectlClient) CommandArgs(args []string) (Command, error)`](#cli-internals-func-c-kubectlclient-commandargs-args-string-command-error)
-- [`func (c *KubectlClient) Output(args []string) ([]byte, error)`](#cli-internals-func-c-kubectlclient-output-args-string-byte-error)
-- [`func (c *KubectlClient) Run(args []string) error`](#cli-internals-func-c-kubectlclient-run-args-string-error)
-- [`func (c *KubectlClient) RunWithOutput(args []string, stdout, stderr io.Writer) error`](#cli-internals-func-c-kubectlclient-runwithoutput-args-string-stdout-stderr-io-writer-error)
-- [`type KubectlRunner interface`](#cli-internals-type-kubectlrunner-interface)
-- [`func DefaultKubectlRunner() KubectlRunner`](#cli-internals-func-defaultkubectlrunner-kubectlrunner)
-- [`type MockCommand struct`](#cli-internals-type-mockcommand-struct)
-- [`func (m *MockCommand) CombinedOutput() ([]byte, error)`](#cli-internals-func-m-mockcommand-combinedoutput-byte-error)
-- [`func (m *MockCommand) Output() ([]byte, error)`](#cli-internals-func-m-mockcommand-output-byte-error)
-- [`func (m *MockCommand) Run() error`](#cli-internals-func-m-mockcommand-run-error)
-- [`func (m *MockCommand) SetStderr(w io.Writer)`](#cli-internals-func-m-mockcommand-setstderr-w-io-writer)
-- [`func (m *MockCommand) SetStdin(r io.Reader)`](#cli-internals-func-m-mockcommand-setstdin-r-io-reader)
-- [`func (m *MockCommand) SetStdout(w io.Writer)`](#cli-internals-func-m-mockcommand-setstdout-w-io-writer)
-- [`type MockExecutor struct`](#cli-internals-type-mockexecutor-struct)
-- [`func (m *MockExecutor) Command(name string, args []string, validators ...ExecValidator) (Command, error)`](#cli-internals-func-m-mockexecutor-command-name-string-args-string-validators-execvalidator-command-error)
-- [`func (m *MockExecutor) HasCommand(name string) bool`](#cli-internals-func-m-mockexecutor-hascommand-name-string-bool)
-- [`func (m *MockExecutor) LastCommand() ExecSpec`](#cli-internals-func-m-mockexecutor-lastcommand-execspec)
-- [`func (m *MockExecutor) Reset()`](#cli-internals-func-m-mockexecutor-reset)
-- [`type Printer struct`](#cli-internals-type-printer-struct)
-- [`func (p *Printer) Cyan(msg string) string`](#cli-internals-func-p-printer-cyan-msg-string-string)
-- [`func (p *Printer) Error(msg string)`](#cli-internals-func-p-printer-error-msg-string)
-- [`func (p *Printer) Green(msg string) string`](#cli-internals-func-p-printer-green-msg-string-string)
-- [`func (p *Printer) Header(title string)`](#cli-internals-func-p-printer-header-title-string)
-- [`func (p *Printer) Info(msg string)`](#cli-internals-func-p-printer-info-msg-string)
-- [`func (p *Printer) Printf(format string, a ...interface`](#cli-internals-func-p-printer-printf-format-string-a-interface)
-- [`func (p *Printer) Println(a ...interface`](#cli-internals-func-p-printer-println-a-interface)
-- [`func (p *Printer) Red(msg string) string`](#cli-internals-func-p-printer-red-msg-string-string)
-- [`func (p *Printer) Section(title string)`](#cli-internals-func-p-printer-section-title-string)
-- [`func (p *Printer) SpinnerStart(msg string) func(success bool, finalMsg string)`](#cli-internals-func-p-printer-spinnerstart-msg-string-func-success-bool-finalmsg-string)
-- [`func (p *Printer) Step(title string)`](#cli-internals-func-p-printer-step-title-string)
-- [`func (p *Printer) Success(msg string)`](#cli-internals-func-p-printer-success-msg-string)
-- [`func (p *Printer) Table(data [][]string)`](#cli-internals-func-p-printer-table-data-string)
-- [`func (p *Printer) TableBoxed(data [][]string)`](#cli-internals-func-p-printer-tableboxed-data-string)
-- [`func (p *Printer) Warn(msg string)`](#cli-internals-func-p-printer-warn-msg-string)
-- [`func (p *Printer) Yellow(msg string) string`](#cli-internals-func-p-printer-yellow-msg-string-string)
-- [`type RegistryManager struct`](#cli-internals-type-registrymanager-struct)
-- [`func DefaultRegistryManager(logger *zap.Logger) *RegistryManager`](#cli-internals-func-defaultregistrymanager-logger-zap-logger-registrymanager)
-- [`func NewRegistryManager(kubectl *KubectlClient, exec Executor, logger *zap.Logger) *RegistryManager`](#cli-internals-func-newregistrymanager-kubectl-kubectlclient-exec-executor-logger-zap-logger-registrymanager)
-- [`func (m *RegistryManager) CheckRegistryStatus(namespace string) error`](#cli-internals-func-m-registrymanager-checkregistrystatus-namespace-string-error)
-- [`func (m *RegistryManager) LoginRegistry(registryURL, username, password string) error`](#cli-internals-func-m-registrymanager-loginregistry-registryurl-username-password-string-error)
-- [`func (m *RegistryManager) PushDirect(source, target string) error`](#cli-internals-func-m-registrymanager-pushdirect-source-target-string-error)
-- [`func (m *RegistryManager) PushInCluster(source, target, helperNS string) error`](#cli-internals-func-m-registrymanager-pushincluster-source-target-helperns-string-error)
-- [`func (m *RegistryManager) ShowRegistryInfo() error`](#cli-internals-func-m-registrymanager-showregistryinfo-error)
-- [`type RegistryManagerAPI interface`](#cli-internals-type-registrymanagerapi-interface)
-- [`type Runtime struct`](#cli-internals-type-runtime-struct)
-- [`func NewRuntime(logger *zap.Logger) *Runtime`](#cli-internals-func-newruntime-logger-zap-logger-runtime)
-- [`func (r *Runtime) AccessManager() *AccessManager`](#cli-internals-func-r-runtime-accessmanager-accessmanager)
-- [`func (r *Runtime) ClusterManager() *ClusterManager`](#cli-internals-func-r-runtime-clustermanager-clustermanager)
-- [`func (r *Runtime) Executor() Executor`](#cli-internals-func-r-runtime-executor-executor)
-- [`func (r *Runtime) KubectlClient() *KubectlClient`](#cli-internals-func-r-runtime-kubectlclient-kubectlclient)
-- [`func (r *Runtime) KubectlRunner() KubectlRunner`](#cli-internals-func-r-runtime-kubectlrunner-kubectlrunner)
-- [`func (r *Runtime) Logger() *zap.Logger`](#cli-internals-func-r-runtime-logger-zap-logger)
-- [`func (r *Runtime) RegistryManager() *RegistryManager`](#cli-internals-func-r-runtime-registrymanager-registrymanager)
-- [`func (r *Runtime) SentinelManager() *SentinelManager`](#cli-internals-func-r-runtime-sentinelmanager-sentinelmanager)
-- [`func (r *Runtime) ServerManager() *ServerManager`](#cli-internals-func-r-runtime-servermanager-servermanager)
-- [`type SentinelManager struct`](#cli-internals-type-sentinelmanager-struct)
-- [`func DefaultSentinelManager(logger *zap.Logger) *SentinelManager`](#cli-internals-func-defaultsentinelmanager-logger-zap-logger-sentinelmanager)
-- [`func NewSentinelManager(kubectl *KubectlClient, logger *zap.Logger) *SentinelManager`](#cli-internals-func-newsentinelmanager-kubectl-kubectlclient-logger-zap-logger-sentinelmanager)
-- [`func (m *SentinelManager) PortForwardSentinelTarget(target string, localPort int, address string) error`](#cli-internals-func-m-sentinelmanager-portforwardsentineltarget-target-string-localport-int-address-string-error)
-- [`func (m *SentinelManager) RestartSentinel(component string, restartAll bool) error`](#cli-internals-func-m-sentinelmanager-restartsentinel-component-string-restartall-bool-error)
-- [`func (m *SentinelManager) ShowSentinelEvents() error`](#cli-internals-func-m-sentinelmanager-showsentinelevents-error)
-- [`func (m *SentinelManager) ShowSentinelStatus() error`](#cli-internals-func-m-sentinelmanager-showsentinelstatus-error)
-- [`func (m *SentinelManager) ViewSentinelLogs(component string, follow, previous bool, tail int, since string) error`](#cli-internals-func-m-sentinelmanager-viewsentinellogs-component-string-follow-previous-bool-tail-int-since-string-error)
-- [`type ServerManager struct`](#cli-internals-type-servermanager-struct)
-- [`func DefaultServerManager(logger *zap.Logger) *ServerManager`](#cli-internals-func-defaultservermanager-logger-zap-logger-servermanager)
-- [`func NewServerManager(kubectl *KubectlClient, logger *zap.Logger) *ServerManager`](#cli-internals-func-newservermanager-kubectl-kubectlclient-logger-zap-logger-servermanager)
-- [`func (m *ServerManager) ApplyServerFromFile(file string) error`](#cli-internals-func-m-servermanager-applyserverfromfile-file-string-error)
-- [`func (m *ServerManager) BindUseKubeFlag(cmd *cobra.Command)`](#cli-internals-func-m-servermanager-bindusekubeflag-cmd-cobra-command)
-- [`func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) error`](#cli-internals-func-m-servermanager-createserver-name-namespace-image-imagetag-string-error)
-- [`func (m *ServerManager) CreateServerFromFile(file string) error`](#cli-internals-func-m-servermanager-createserverfromfile-file-string-error)
-- [`func (m *ServerManager) DeleteServer(name, namespace string) error`](#cli-internals-func-m-servermanager-deleteserver-name-namespace-string-error)
-- [`func (m *ServerManager) ExportServer(name, namespace, file string) error`](#cli-internals-func-m-servermanager-exportserver-name-namespace-file-string-error)
-- [`func (m *ServerManager) GetServer(name, namespace string) error`](#cli-internals-func-m-servermanager-getserver-name-namespace-string-error)
-- [`func (m *ServerManager) InspectServerPolicy(name, namespace string) error`](#cli-internals-func-m-servermanager-inspectserverpolicy-name-namespace-string-error)
-- [`func (m *ServerManager) ListServers(namespace string) error`](#cli-internals-func-m-servermanager-listservers-namespace-string-error)
-- [`func (m *ServerManager) Logger() *zap.Logger`](#cli-internals-func-m-servermanager-logger-zap-logger)
-- [`func (m *ServerManager) PatchServer(name, namespace, patchType, patch, patchFile string) error`](#cli-internals-func-m-servermanager-patchserver-name-namespace-patchtype-patch-patchfile-string-error)
-- [`func (m *ServerManager) ServerStatus(namespace string) error`](#cli-internals-func-m-servermanager-serverstatus-namespace-string-error)
-- [`func (m *ServerManager) ViewServerLogs(name, namespace string, follow bool) error`](#cli-internals-func-m-servermanager-viewserverlogs-name-namespace-string-follow-bool-error)
-- [`type SetupContext struct`](#cli-internals-type-setupcontext-struct)
-- [`type SetupDeps struct`](#cli-internals-type-setupdeps-struct)
-- [`type SetupPipeline struct`](#cli-internals-type-setuppipeline-struct)
-- [`func NewSetupPipeline() *SetupPipeline`](#cli-internals-func-newsetuppipeline-setuppipeline)
-- [`func (p *SetupPipeline) Build() []SetupStep`](#cli-internals-func-p-setuppipeline-build-setupstep)
-- [`func (p *SetupPipeline) With(step SetupStep) *SetupPipeline`](#cli-internals-func-p-setuppipeline-with-step-setupstep-setuppipeline)
-- [`func (p *SetupPipeline) WithIf(condition bool, step SetupStep) *SetupPipeline`](#cli-internals-func-p-setuppipeline-withif-condition-bool-step-setupstep-setuppipeline)
-- [`type SetupPlan struct`](#cli-internals-type-setupplan-struct)
-- [`func BuildSetupPlan(input SetupPlanInput) SetupPlan`](#cli-internals-func-buildsetupplan-input-setupplaninput-setupplan)
-- [`type SetupPlanInput struct`](#cli-internals-type-setupplaninput-struct)
-- [`type SetupStep interface`](#cli-internals-type-setupstep-interface)
+- [`Constants`](#cli-core-constants)
+- [`Variables`](#cli-core-variables)
+- [`func Cyan(msg string) string`](#cli-core-func-cyan-msg-string-string)
+- [`func Error(msg string)`](#cli-core-func-error-msg-string)
+- [`func GetAnalyticsIngestURLOverride() string`](#cli-core-func-getanalyticsingesturloverride-string)
+- [`func GetCertTimeout() time.Duration`](#cli-core-func-getcerttimeout-time-duration)
+- [`func GetClusterName() string`](#cli-core-func-getclustername-string)
+- [`func GetDefaultServerPort() int`](#cli-core-func-getdefaultserverport-int)
+- [`func GetDeploymentTimeout() time.Duration`](#cli-core-func-getdeploymenttimeout-time-duration)
+- [`func GetGatewayProxyImageOverride() string`](#cli-core-func-getgatewayproxyimageoverride-string)
+- [`func GetHelperPodTimeout() time.Duration`](#cli-core-func-gethelperpodtimeout-time-duration)
+- [`func GetMcpIngressHost() string`](#cli-core-func-getmcpingresshost-string)
+- [`func GetOperatorImageOverride() string`](#cli-core-func-getoperatorimageoverride-string)
+- [`func GetPlatformIngressHost() string`](#cli-core-func-getplatformingresshost-string)
+- [`func GetRegistryClusterIssuerName() string`](#cli-core-func-getregistryclusterissuername-string)
+- [`func GetRegistryEndpoint() string`](#cli-core-func-getregistryendpoint-string)
+- [`func GetRegistryIngressHost() string`](#cli-core-func-getregistryingresshost-string)
+- [`func GetRegistryPort() int`](#cli-core-func-getregistryport-int)
+- [`func GetSkopeoImage() string`](#cli-core-func-getskopeoimage-string)
+- [`func Green(msg string) string`](#cli-core-func-green-msg-string-string)
+- [`func Header(title string)`](#cli-core-func-header-title-string)
+- [`func Info(msg string)`](#cli-core-func-info-msg-string)
+- [`func IsDebugMode() bool`](#cli-core-func-isdebugmode-bool)
+- [`func LogStructuredError(logger *zap.Logger, err error, msg string)`](#cli-core-func-logstructurederror-logger-zap-logger-err-error-msg-string)
+- [`func NewSetupStepFailedError() error`](#cli-core-func-newsetupstepfailederror-error)
+- [`func NewWithSentinel(base error, msg string) error`](#cli-core-func-newwithsentinel-base-error-msg-string-error)
+- [`func Red(msg string) string`](#cli-core-func-red-msg-string-string)
+- [`func Section(title string)`](#cli-core-func-section-title-string)
+- [`func SetDebugMode(enabled bool)`](#cli-core-func-setdebugmode-enabled-bool)
+- [`func SpinnerStart(msg string) func(success bool, finalMsg string)`](#cli-core-func-spinnerstart-msg-string-func-success-bool-finalmsg-string)
+- [`func Step(title string)`](#cli-core-func-step-title-string)
+- [`func Success(msg string)`](#cli-core-func-success-msg-string)
+- [`func SwapDefaultKubectlClient(c *KubectlClient) (restore func())`](#cli-core-func-swapdefaultkubectlclient-c-kubectlclient-restore-func)
+- [`func SwapExecExecutor(e Executor) (restore func())`](#cli-core-func-swapexecexecutor-e-executor-restore-func)
+- [`func Table(data [][]string)`](#cli-core-func-table-data-string)
+- [`func TableBoxed(data [][]string)`](#cli-core-func-tableboxed-data-string)
+- [`func ValidateK8sNameAndNamespace(nameLabel string, nameSentinel error, name, namespace string) (string, string, error)`](#cli-core-func-validatek8snameandnamespace-namelabel-string-namesentinel-error-name-namespace-string-string-string-error)
+- [`func ValidateManifestField(field, value string) (string, error)`](#cli-core-func-validatemanifestfield-field-value-string-string-error)
+- [`func Warn(msg string)`](#cli-core-func-warn-msg-string)
+- [`func WrapWithSentinel(base, cause error, msg string) error`](#cli-core-func-wrapwithsentinel-base-cause-error-msg-string-error)
+- [`func WrapWithSentinelAndContext(base, cause error, msg string, context map[string]any) error`](#cli-core-func-wrapwithsentinelandcontext-base-cause-error-msg-string-context-map-string-any-error)
+- [`func Yellow(msg string) string`](#cli-core-func-yellow-msg-string-string)
+- [`type CLIConfig struct`](#cli-core-type-cliconfig-struct)
+- [`func LoadCLIConfig() *CLIConfig`](#cli-core-func-loadcliconfig-cliconfig)
+- [`type Command interface`](#cli-core-type-command-interface)
+- [`func ExecCommandWithValidators(name string, args []string, validators ...ExecValidator) (Command, error)`](#cli-core-func-execcommandwithvalidators-name-string-args-string-validators-execvalidator-command-error)
+- [`type ExecSpec struct`](#cli-core-type-execspec-struct)
+- [`type ExecValidator func(ExecSpec) error`](#cli-core-type-execvalidator-func-execspec-error)
+- [`func AllowlistBins(allowed ...string) ExecValidator`](#cli-core-func-allowlistbins-allowed-string-execvalidator)
+- [`func NoControlChars() ExecValidator`](#cli-core-func-nocontrolchars-execvalidator)
+- [`func NoShellMeta() ExecValidator`](#cli-core-func-noshellmeta-execvalidator)
+- [`func PathUnder(root string) ExecValidator`](#cli-core-func-pathunder-root-string-execvalidator)
+- [`type Executor interface`](#cli-core-type-executor-interface)
+- [`func DefaultExecutor() Executor`](#cli-core-func-defaultexecutor-executor)
+- [`type KubectlClient struct`](#cli-core-type-kubectlclient-struct)
+- [`func DefaultKubectlClient() *KubectlClient`](#cli-core-func-defaultkubectlclient-kubectlclient)
+- [`func NewKubectlClient(exec Executor) (*KubectlClient, error)`](#cli-core-func-newkubectlclient-exec-executor-kubectlclient-error)
+- [`func NewTestKubectlClient(exec Executor) *KubectlClient`](#cli-core-func-newtestkubectlclient-exec-executor-kubectlclient)
+- [`func NewTestKubectlClientWithValidators(exec Executor, validators []ExecValidator) *KubectlClient`](#cli-core-func-newtestkubectlclientwithvalidators-exec-executor-validators-execvalidator-kubectlclient)
+- [`func (c *KubectlClient) CombinedOutput(args []string) ([]byte, error)`](#cli-core-func-c-kubectlclient-combinedoutput-args-string-byte-error)
+- [`func (c *KubectlClient) CommandArgs(args []string) (Command, error)`](#cli-core-func-c-kubectlclient-commandargs-args-string-command-error)
+- [`func (c *KubectlClient) Output(args []string) ([]byte, error)`](#cli-core-func-c-kubectlclient-output-args-string-byte-error)
+- [`func (c *KubectlClient) Run(args []string) error`](#cli-core-func-c-kubectlclient-run-args-string-error)
+- [`func (c *KubectlClient) RunWithOutput(args []string, stdout, stderr io.Writer) error`](#cli-core-func-c-kubectlclient-runwithoutput-args-string-stdout-stderr-io-writer-error)
+- [`type KubectlRunner interface`](#cli-core-type-kubectlrunner-interface)
+- [`func DefaultKubectlRunner() KubectlRunner`](#cli-core-func-defaultkubectlrunner-kubectlrunner)
+- [`type MockCommand struct`](#cli-core-type-mockcommand-struct)
+- [`func (m *MockCommand) CombinedOutput() ([]byte, error)`](#cli-core-func-m-mockcommand-combinedoutput-byte-error)
+- [`func (m *MockCommand) Output() ([]byte, error)`](#cli-core-func-m-mockcommand-output-byte-error)
+- [`func (m *MockCommand) Run() error`](#cli-core-func-m-mockcommand-run-error)
+- [`func (m *MockCommand) SetStderr(w io.Writer)`](#cli-core-func-m-mockcommand-setstderr-w-io-writer)
+- [`func (m *MockCommand) SetStdin(r io.Reader)`](#cli-core-func-m-mockcommand-setstdin-r-io-reader)
+- [`func (m *MockCommand) SetStdout(w io.Writer)`](#cli-core-func-m-mockcommand-setstdout-w-io-writer)
+- [`type MockExecutor struct`](#cli-core-type-mockexecutor-struct)
+- [`func (m *MockExecutor) Command(name string, args []string, validators ...ExecValidator) (Command, error)`](#cli-core-func-m-mockexecutor-command-name-string-args-string-validators-execvalidator-command-error)
+- [`func (m *MockExecutor) HasCommand(name string) bool`](#cli-core-func-m-mockexecutor-hascommand-name-string-bool)
+- [`func (m *MockExecutor) LastCommand() ExecSpec`](#cli-core-func-m-mockexecutor-lastcommand-execspec)
+- [`func (m *MockExecutor) Reset()`](#cli-core-func-m-mockexecutor-reset)
+- [`type Printer struct`](#cli-core-type-printer-struct)
+- [`func (p *Printer) Cyan(msg string) string`](#cli-core-func-p-printer-cyan-msg-string-string)
+- [`func (p *Printer) Error(msg string)`](#cli-core-func-p-printer-error-msg-string)
+- [`func (p *Printer) Green(msg string) string`](#cli-core-func-p-printer-green-msg-string-string)
+- [`func (p *Printer) Header(title string)`](#cli-core-func-p-printer-header-title-string)
+- [`func (p *Printer) Info(msg string)`](#cli-core-func-p-printer-info-msg-string)
+- [`func (p *Printer) Printf(format string, a ...interface`](#cli-core-func-p-printer-printf-format-string-a-interface)
+- [`func (p *Printer) Println(a ...interface`](#cli-core-func-p-printer-println-a-interface)
+- [`func (p *Printer) Red(msg string) string`](#cli-core-func-p-printer-red-msg-string-string)
+- [`func (p *Printer) Section(title string)`](#cli-core-func-p-printer-section-title-string)
+- [`func (p *Printer) SpinnerStart(msg string) func(success bool, finalMsg string)`](#cli-core-func-p-printer-spinnerstart-msg-string-func-success-bool-finalmsg-string)
+- [`func (p *Printer) Step(title string)`](#cli-core-func-p-printer-step-title-string)
+- [`func (p *Printer) Success(msg string)`](#cli-core-func-p-printer-success-msg-string)
+- [`func (p *Printer) Table(data [][]string)`](#cli-core-func-p-printer-table-data-string)
+- [`func (p *Printer) TableBoxed(data [][]string)`](#cli-core-func-p-printer-tableboxed-data-string)
+- [`func (p *Printer) Warn(msg string)`](#cli-core-func-p-printer-warn-msg-string)
+- [`func (p *Printer) Yellow(msg string) string`](#cli-core-func-p-printer-yellow-msg-string-string)
+- [`type Runtime struct`](#cli-core-type-runtime-struct)
+- [`func NewRuntime(logger *zap.Logger) *Runtime`](#cli-core-func-newruntime-logger-zap-logger-runtime)
+- [`func (r *Runtime) Config() *CLIConfig`](#cli-core-func-r-runtime-config-cliconfig)
+- [`func (r *Runtime) Executor() Executor`](#cli-core-func-r-runtime-executor-executor)
+- [`func (r *Runtime) KubectlClient() *KubectlClient`](#cli-core-func-r-runtime-kubectlclient-kubectlclient)
+- [`func (r *Runtime) KubectlRunner() KubectlRunner`](#cli-core-func-r-runtime-kubectlrunner-kubectlrunner)
+- [`func (r *Runtime) Logger() *zap.Logger`](#cli-core-func-r-runtime-logger-zap-logger)
+- [`func (r *Runtime) Printer() *Printer`](#cli-core-func-r-runtime-printer-printer)
 
-<a id="cli-internals-constants"></a>
+<a id="cli-core-constants"></a>
 ### Constants
 
 ```text
+const (
+
+	// Exported aliases for tests and subpackages (same values as above).
+	DefaultRegistryEndpoint    = defaultRegistryEndpoint
+	DefaultRegistryIngressHost = defaultRegistryIngressHost
+)
+    Default values
+
 const (
 	// NamespaceMCPRuntime is the namespace for the MCP runtime operator.
 	NamespaceMCPRuntime = "mcp-runtime"
@@ -2278,6 +2210,9 @@ const (
 
 	// NamespaceMCPServers is the default namespace for MCP server deployments.
 	NamespaceMCPServers = "mcp-servers"
+
+	// DefaultAnalyticsNamespace is the namespace for the bundled mcp-sentinel stack.
+	DefaultAnalyticsNamespace = "mcp-sentinel"
 )
     This file defines constants used across the CLI, including:
       - Kubernetes namespace names
@@ -2335,14 +2270,9 @@ const (
 	SelectorManagedBy = "app.kubernetes.io/managed-by=mcp-runtime"
 )
     Selector strings for kubectl queries.
-
-const (
-	StorageModeDynamic  = "dynamic"
-	StorageModeHostpath = "hostpath"
-)
 ```
 
-<a id="cli-internals-variables"></a>
+<a id="cli-core-variables"></a>
 ### Variables
 
 ```text
@@ -2492,52 +2422,30 @@ var DefaultCLIConfig = LoadCLIConfig()
 var DefaultPrinter = &Printer{}
     DefaultPrinter is the default printer instance used by package-level
     functions.
+
+var ValidK8sName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+    ValidK8sName matches Kubernetes resource name requirements (RFC 1123
+    subdomain).
 ```
 
-<a id="cli-internals-functions"></a>
+<a id="cli-core-functions"></a>
 ### Functions
 
-<a id="cli-internals-func-applymanifestcontentwithnamespace-kubectl-kubectlrunner-manifest-namespace-string-error"></a>
-```text
-func ApplyManifestContentWithNamespace(kubectl KubectlRunner, manifest, namespace string) error
-```
-
-<a id="cli-internals-func-buildimage-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-context-string-error"></a>
-```text
-func BuildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, context string) error
-```
-
-<a id="cli-internals-func-buildoperatorargs-metricsaddr-probeaddr-string-leaderelect-leaderelectchanged-bool-string"></a>
-```text
-func BuildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectChanged bool) []string
-    buildOperatorArgs constructs operator command-line arguments from flags.
-    Only includes flags that were explicitly set.
-
-```
-
-<a id="cli-internals-func-clusterissuernameforacme-staging-bool-string"></a>
-```text
-func ClusterIssuerNameForACME(staging bool) string
-    ClusterIssuerNameForACME returns the ClusterIssuer resource name for Let's
-    Encrypt.
-
-```
-
-<a id="cli-internals-func-cyan-msg-string-string"></a>
+<a id="cli-core-func-cyan-msg-string-string"></a>
 ```text
 func Cyan(msg string) string
     Cyan returns cyan text.
 
 ```
 
-<a id="cli-internals-func-error-msg-string"></a>
+<a id="cli-core-func-error-msg-string"></a>
 ```text
 func Error(msg string)
     Error prints an error message.
 
 ```
 
-<a id="cli-internals-func-getanalyticsingesturloverride-string"></a>
+<a id="cli-core-func-getanalyticsingesturloverride-string"></a>
 ```text
 func GetAnalyticsIngestURLOverride() string
     GetAnalyticsIngestURLOverride returns the analytics ingest URL override,
@@ -2545,35 +2453,35 @@ func GetAnalyticsIngestURLOverride() string
 
 ```
 
-<a id="cli-internals-func-getcerttimeout-time-duration"></a>
+<a id="cli-core-func-getcerttimeout-time-duration"></a>
 ```text
 func GetCertTimeout() time.Duration
     GetCertTimeout returns the certificate issuance timeout.
 
 ```
 
-<a id="cli-internals-func-getclustername-string"></a>
+<a id="cli-core-func-getclustername-string"></a>
 ```text
 func GetClusterName() string
     GetClusterName returns the cluster label attached to analytics/audit events.
 
 ```
 
-<a id="cli-internals-func-getdefaultserverport-int"></a>
+<a id="cli-core-func-getdefaultserverport-int"></a>
 ```text
 func GetDefaultServerPort() int
     GetDefaultServerPort returns the default MCP server port.
 
 ```
 
-<a id="cli-internals-func-getdeploymenttimeout-time-duration"></a>
+<a id="cli-core-func-getdeploymenttimeout-time-duration"></a>
 ```text
 func GetDeploymentTimeout() time.Duration
     GetDeploymentTimeout returns the deployment wait timeout.
 
 ```
 
-<a id="cli-internals-func-getgatewayproxyimageoverride-string"></a>
+<a id="cli-core-func-getgatewayproxyimageoverride-string"></a>
 ```text
 func GetGatewayProxyImageOverride() string
     GetGatewayProxyImageOverride returns the gateway proxy image override,
@@ -2581,7 +2489,7 @@ func GetGatewayProxyImageOverride() string
 
 ```
 
-<a id="cli-internals-func-gethelperpodtimeout-time-duration"></a>
+<a id="cli-core-func-gethelperpodtimeout-time-duration"></a>
 ```text
 func GetHelperPodTimeout() time.Duration
     GetHelperPodTimeout returns the helper pod ready timeout (e.g. registry
@@ -2589,7 +2497,7 @@ func GetHelperPodTimeout() time.Duration
 
 ```
 
-<a id="cli-internals-func-getmcpingresshost-string"></a>
+<a id="cli-core-func-getmcpingresshost-string"></a>
 ```text
 func GetMcpIngressHost() string
     GetMcpIngressHost returns the public MCP / gateway host (mcp.<domain> when
@@ -2597,7 +2505,7 @@ func GetMcpIngressHost() string
 
 ```
 
-<a id="cli-internals-func-getoperatorimageoverride-string"></a>
+<a id="cli-core-func-getoperatorimageoverride-string"></a>
 ```text
 func GetOperatorImageOverride() string
     GetOperatorImageOverride returns the operator image override, empty if not
@@ -2605,7 +2513,7 @@ func GetOperatorImageOverride() string
 
 ```
 
-<a id="cli-internals-func-getplatformingresshost-string"></a>
+<a id="cli-core-func-getplatformingresshost-string"></a>
 ```text
 func GetPlatformIngressHost() string
     GetPlatformIngressHost returns the public dashboard UI host
@@ -2615,7 +2523,7 @@ func GetPlatformIngressHost() string
 
 ```
 
-<a id="cli-internals-func-getregistryclusterissuername-string"></a>
+<a id="cli-core-func-getregistryclusterissuername-string"></a>
 ```text
 func GetRegistryClusterIssuerName() string
     GetRegistryClusterIssuerName returns the cluster issuer name used on the
@@ -2623,7 +2531,7 @@ func GetRegistryClusterIssuerName() string
 
 ```
 
-<a id="cli-internals-func-getregistryendpoint-string"></a>
+<a id="cli-core-func-getregistryendpoint-string"></a>
 ```text
 func GetRegistryEndpoint() string
     GetRegistryEndpoint returns the configured registry endpoint for image refs
@@ -2631,135 +2539,85 @@ func GetRegistryEndpoint() string
 
 ```
 
-<a id="cli-internals-func-getregistryingresshost-string"></a>
+<a id="cli-core-func-getregistryingresshost-string"></a>
 ```text
 func GetRegistryIngressHost() string
     GetRegistryIngressHost returns the configured registry ingress host.
 
 ```
 
-<a id="cli-internals-func-getregistryport-int"></a>
+<a id="cli-core-func-getregistryport-int"></a>
 ```text
 func GetRegistryPort() int
     GetRegistryPort returns the registry port.
 
 ```
 
-<a id="cli-internals-func-getskopeoimage-string"></a>
+<a id="cli-core-func-getskopeoimage-string"></a>
 ```text
 func GetSkopeoImage() string
     GetSkopeoImage returns the skopeo image for in-cluster operations.
 
 ```
 
-<a id="cli-internals-func-green-msg-string-string"></a>
+<a id="cli-core-func-green-msg-string-string"></a>
 ```text
 func Green(msg string) string
     Green returns green text.
 
 ```
 
-<a id="cli-internals-func-hasplatformclient-bool"></a>
-```text
-func HasPlatformClient() bool
-```
-
-<a id="cli-internals-func-header-title-string"></a>
+<a id="cli-core-func-header-title-string"></a>
 ```text
 func Header(title string)
     Header prints a header banner.
 
 ```
 
-<a id="cli-internals-func-info-msg-string"></a>
+<a id="cli-core-func-info-msg-string"></a>
 ```text
 func Info(msg string)
     Info prints an info message.
 
 ```
 
-<a id="cli-internals-func-isdebugmode-bool"></a>
+<a id="cli-core-func-isdebugmode-bool"></a>
 ```text
 func IsDebugMode() bool
     IsDebugMode returns whether debug mode is enabled.
 
 ```
 
-<a id="cli-internals-func-logstructurederror-logger-zap-logger-err-error-msg-string"></a>
+<a id="cli-core-func-logstructurederror-logger-zap-logger-err-error-msg-string"></a>
 ```text
 func LogStructuredError(logger *zap.Logger, err error, msg string)
 ```
 
-<a id="cli-internals-func-newsetupstepfailederror-error"></a>
+<a id="cli-core-func-newsetupstepfailederror-error"></a>
 ```text
 func NewSetupStepFailedError() error
 ```
 
-<a id="cli-internals-func-newwithsentinel-base-error-msg-string-error"></a>
+<a id="cli-core-func-newwithsentinel-base-error-msg-string-error"></a>
 ```text
 func NewWithSentinel(base error, msg string) error
 ```
 
-<a id="cli-internals-func-normalizeplatformapibaseurl-raw-string-string"></a>
-```text
-func NormalizePlatformAPIBaseURL(raw string) string
-    NormalizePlatformAPIBaseURL trims whitespace, trailing slashes, and an
-    optional trailing /api suffix from a platform base URL.
-
-```
-
-<a id="cli-internals-func-printdoctorreport-r-doctorreport"></a>
-```text
-func PrintDoctorReport(r DoctorReport)
-    PrintDoctorReport emits a human-readable report using the standard printer.
-
-```
-
-<a id="cli-internals-func-readfileatpath-path-string-byte-error"></a>
-```text
-func ReadFileAtPath(path string) ([]byte, error)
-```
-
-<a id="cli-internals-func-red-msg-string-string"></a>
+<a id="cli-core-func-red-msg-string-string"></a>
 ```text
 func Red(msg string) string
     Red returns red text.
 
 ```
 
-<a id="cli-internals-func-resolveregularfilepath-file-string-string-error"></a>
-```text
-func ResolveRegularFilePath(file string) (string, error)
-```
-
-<a id="cli-internals-func-runregistryprovision-mgr-registrymanager-url-username-password-operatorimage-string-error"></a>
-```text
-func RunRegistryProvision(mgr *RegistryManager, url, username, password, operatorImage string) error
-    RunRegistryProvision contains the registry provision command flow for folder
-    packages.
-
-```
-
-<a id="cli-internals-func-runregistrypush-mgr-registrymanager-image-registryurl-name-mode-helpernamespace-string-error"></a>
-```text
-func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helperNamespace string) error
-    RunRegistryPush contains the registry push command flow for folder packages.
-
-```
-
-<a id="cli-internals-func-section-title-string"></a>
+<a id="cli-core-func-section-title-string"></a>
 ```text
 func Section(title string)
     Section prints a section header.
 
 ```
 
-<a id="cli-internals-func-sentinelcomponentkeys-string"></a>
-```text
-func SentinelComponentKeys() []string
-```
-
-<a id="cli-internals-func-setdebugmode-enabled-bool"></a>
+<a id="cli-core-func-setdebugmode-enabled-bool"></a>
 ```text
 func SetDebugMode(enabled bool)
     SetDebugMode sets the global debug mode flag. When enabled,
@@ -2767,176 +2625,100 @@ func SetDebugMode(enabled bool)
 
 ```
 
-<a id="cli-internals-func-setupplatform-logger-zap-logger-plan-setupplan-error"></a>
-```text
-func SetupPlatform(logger *zap.Logger, plan SetupPlan) error
-```
-
-<a id="cli-internals-func-showplatformstatus-logger-zap-logger-error"></a>
-```text
-func ShowPlatformStatus(logger *zap.Logger) error
-```
-
-<a id="cli-internals-func-spinnerstart-msg-string-func-success-bool-finalmsg-string"></a>
+<a id="cli-core-func-spinnerstart-msg-string-func-success-bool-finalmsg-string"></a>
 ```text
 func SpinnerStart(msg string) func(success bool, finalMsg string)
     SpinnerStart starts a spinner.
 
 ```
 
-<a id="cli-internals-func-step-title-string"></a>
+<a id="cli-core-func-step-title-string"></a>
 ```text
 func Step(title string)
     Step prints a step header.
 
 ```
 
-<a id="cli-internals-func-success-msg-string"></a>
+<a id="cli-core-func-success-msg-string"></a>
 ```text
 func Success(msg string)
     Success prints a success message.
 
 ```
 
-<a id="cli-internals-func-table-data-string"></a>
+<a id="cli-core-func-swapdefaultkubectlclient-c-kubectlclient-restore-func"></a>
+```text
+func SwapDefaultKubectlClient(c *KubectlClient) (restore func())
+    SwapDefaultKubectlClient replaces the shared kubectl client (tests only).
+
+```
+
+<a id="cli-core-func-swapexecexecutor-e-executor-restore-func"></a>
+```text
+func SwapExecExecutor(e Executor) (restore func())
+    SwapExecExecutor replaces the global process executor (tests only).
+
+```
+
+<a id="cli-core-func-table-data-string"></a>
 ```text
 func Table(data [][]string)
     Table prints a table.
 
 ```
 
-<a id="cli-internals-func-tableboxed-data-string"></a>
+<a id="cli-core-func-tableboxed-data-string"></a>
 ```text
 func TableBoxed(data [][]string)
     TableBoxed prints a boxed table.
 
 ```
 
-<a id="cli-internals-func-validatestoragemode-mode-string-error"></a>
+<a id="cli-core-func-validatek8snameandnamespace-namelabel-string-namesentinel-error-name-namespace-string-string-string-error"></a>
 ```text
-func ValidateStorageMode(mode string) error
-```
-
-<a id="cli-internals-func-validatetlssetupcliflags"></a>
-```text
-func ValidateTLSSetupCLIFlags(
-	tlsEnabled bool,
-	acmeEmailResolved, tlsCIResolved string,
-	acmeStagingResolved, skipCertManagerInstall bool,
-) error
-    validateTLSSetupCLIFlags enforces ACME / internal-issuer mutual exclusion
-    and requires --with-tls when any TLS or cert-manager-related options are
-    set.
+func ValidateK8sNameAndNamespace(nameLabel string, nameSentinel error, name, namespace string) (string, string, error)
+    ValidateK8sNameAndNamespace validates a name+namespace pair against RFC-1123
+    subdomain rules plus ValidateManifestField. nameLabel customizes the
+    invalid-name error message ("server name", "resource name"); nameSentinel
+    (may be nil) selects the sentinel error category.
 
 ```
 
-<a id="cli-internals-func-warn-msg-string"></a>
+<a id="cli-core-func-validatemanifestfield-field-value-string-string-error"></a>
+```text
+func ValidateManifestField(field, value string) (string, error)
+    ValidateManifestField rejects control characters, requires non-empty after
+    trimming, and returns the trimmed value.
+
+```
+
+<a id="cli-core-func-warn-msg-string"></a>
 ```text
 func Warn(msg string)
     Warn prints a warning message.
 
 ```
 
-<a id="cli-internals-func-wrapwithsentinel-base-cause-error-msg-string-error"></a>
+<a id="cli-core-func-wrapwithsentinel-base-cause-error-msg-string-error"></a>
 ```text
 func WrapWithSentinel(base, cause error, msg string) error
 ```
 
-<a id="cli-internals-func-wrapwithsentinelandcontext-base-cause-error-msg-string-context-map-string-any-error"></a>
+<a id="cli-core-func-wrapwithsentinelandcontext-base-cause-error-msg-string-context-map-string-any-error"></a>
 ```text
 func WrapWithSentinelAndContext(base, cause error, msg string, context map[string]any) error
 ```
 
-<a id="cli-internals-func-yellow-msg-string-string"></a>
+<a id="cli-core-func-yellow-msg-string-string"></a>
 ```text
 func Yellow(msg string) string
     Yellow returns yellow text.
 ```
 
-<a id="cli-internals-types"></a>
+<a id="cli-core-types"></a>
 ### Types
 
-<a id="cli-internals-type-accessmanager-struct"></a>
-```text
-type AccessManager struct {
-	// Has unexported fields.
-}
-
-```
-
-<a id="cli-internals-func-defaultaccessmanager-logger-zap-logger-accessmanager"></a>
-```text
-func DefaultAccessManager(logger *zap.Logger) *AccessManager
-
-```
-
-<a id="cli-internals-func-newaccessmanager-kubectl-kubectlclient-logger-zap-logger-accessmanager"></a>
-```text
-func NewAccessManager(kubectl *KubectlClient, logger *zap.Logger) *AccessManager
-
-```
-
-<a id="cli-internals-func-m-accessmanager-applyaccessresource-file-string-error"></a>
-```text
-func (m *AccessManager) ApplyAccessResource(file string) error
-
-```
-
-<a id="cli-internals-func-m-accessmanager-bindusekubeflag-cmd-cobra-command"></a>
-```text
-func (m *AccessManager) BindUseKubeFlag(cmd *cobra.Command)
-    BindUseKubeFlag wires the shared --use-kube flag onto the command.
-
-```
-
-<a id="cli-internals-func-m-accessmanager-deleteaccessresource-resource-name-namespace-string-error"></a>
-```text
-func (m *AccessManager) DeleteAccessResource(resource, name, namespace string) error
-
-```
-
-<a id="cli-internals-func-m-accessmanager-getaccessresource-resource-name-namespace-string-error"></a>
-```text
-func (m *AccessManager) GetAccessResource(resource, name, namespace string) error
-
-```
-
-<a id="cli-internals-func-m-accessmanager-listaccessresources-resource-namespace-string-allnamespaces-bool-error"></a>
-```text
-func (m *AccessManager) ListAccessResources(resource, namespace string, allNamespaces bool) error
-    ListAccessResources lists grants or sessions via the platform API when
-    configured, else kubectl.
-
-```
-
-<a id="cli-internals-func-m-accessmanager-toggleaccessresource-resource-name-namespace-string-value-bool-error"></a>
-```text
-func (m *AccessManager) ToggleAccessResource(resource, name, namespace string, value bool) error
-
-```
-
-<a id="cli-internals-type-analyticsimageset-struct"></a>
-```text
-type AnalyticsImageSet struct {
-	Ingest        string
-	API           string
-	Processor     string
-	UI            string
-	Traefik       string
-	ClickHouse    string
-	Zookeeper     string
-	Kafka         string
-	Prometheus    string
-	OTelCollector string
-	Tempo         string
-	Loki          string
-	Promtail      string
-	Grafana       string
-}
-
-```
-
-<a id="cli-internals-type-cliconfig-struct"></a>
+<a id="cli-core-type-cliconfig-struct"></a>
 ```text
 type CLIConfig struct {
 	// Timeouts
@@ -2977,156 +2759,14 @@ type CLIConfig struct {
 
 ```
 
-<a id="cli-internals-func-loadcliconfig-cliconfig"></a>
+<a id="cli-core-func-loadcliconfig-cliconfig"></a>
 ```text
 func LoadCLIConfig() *CLIConfig
     LoadCLIConfig loads CLI configuration from environment variables.
 
 ```
 
-<a id="cli-internals-type-certmanager-struct"></a>
-```text
-type CertManager struct {
-	// Has unexported fields.
-}
-    CertManager manages cert-manager resources for the platform.
-
-```
-
-<a id="cli-internals-func-newcertmanager-kubectl-kubectlrunner-logger-zap-logger-certmanager"></a>
-```text
-func NewCertManager(kubectl KubectlRunner, logger *zap.Logger) *CertManager
-    NewCertManager creates a CertManager with the given dependencies.
-
-```
-
-<a id="cli-internals-func-m-certmanager-apply-error"></a>
-```text
-func (m *CertManager) Apply() error
-    Apply installs cert-manager resources required for registry TLS.
-
-```
-
-<a id="cli-internals-func-m-certmanager-status-error"></a>
-```text
-func (m *CertManager) Status() error
-    Status verifies cert-manager installation and required resources.
-
-```
-
-<a id="cli-internals-func-m-certmanager-wait-timeout-time-duration-error"></a>
-```text
-func (m *CertManager) Wait(timeout time.Duration) error
-    Wait blocks until the registry certificate is Ready or times out.
-
-```
-
-<a id="cli-internals-type-clustermanager-struct"></a>
-```text
-type ClusterManager struct {
-	// Has unexported fields.
-}
-    ClusterManager handles cluster operations with injected dependencies.
-
-```
-
-<a id="cli-internals-func-defaultclustermanager-logger-zap-logger-clustermanager"></a>
-```text
-func DefaultClusterManager(logger *zap.Logger) *ClusterManager
-    DefaultClusterManager returns a ClusterManager using default clients.
-
-```
-
-<a id="cli-internals-func-newclustermanager-kubectl-kubectlclient-exec-executor-logger-zap-logger-clustermanager"></a>
-```text
-func NewClusterManager(kubectl *KubectlClient, exec Executor, logger *zap.Logger) *ClusterManager
-    NewClusterManager creates a ClusterManager with the given dependencies.
-
-```
-
-<a id="cli-internals-func-m-clustermanager-checkclusterstatus-error"></a>
-```text
-func (m *ClusterManager) CheckClusterStatus() error
-    CheckClusterStatus checks and displays cluster status.
-
-```
-
-<a id="cli-internals-func-m-clustermanager-configurecluster-ingress-ingressoptions-error"></a>
-```text
-func (m *ClusterManager) ConfigureCluster(ingress ingressOptions) error
-    ConfigureCluster configures cluster settings like ingress.
-
-```
-
-<a id="cli-internals-func-m-clustermanager-configureclusterwithvalues-mode-manifest-string-force-bool-error"></a>
-```text
-func (m *ClusterManager) ConfigureClusterWithValues(mode, manifest string, force bool) error
-    ConfigureClusterWithValues adapts exported flag values into the internal
-    ingress options shape.
-
-```
-
-<a id="cli-internals-func-m-clustermanager-configurekubeconfig-kubeconfig-context-string-error"></a>
-```text
-func (m *ClusterManager) ConfigureKubeconfig(kubeconfig, context string) error
-    ConfigureKubeconfig sets KUBECONFIG and optionally switches context.
-
-```
-
-<a id="cli-internals-func-m-clustermanager-configurekubeconfigfromprovider-provider-region-clustername-resourcegroup-project-zone-kubeconfig-string-error"></a>
-```text
-func (m *ClusterManager) ConfigureKubeconfigFromProvider(provider, region, clusterName, resourceGroup, project, zone, kubeconfig string) error
-    ConfigureKubeconfigFromProvider updates kubeconfig using a cloud provider
-    CLI.
-
-```
-
-<a id="cli-internals-func-m-clustermanager-ensurenamespace-name-string-error"></a>
-```text
-func (m *ClusterManager) EnsureNamespace(name string) error
-    EnsureNamespace applies/creates a namespace idempotently.
-
-```
-
-<a id="cli-internals-func-m-clustermanager-initcluster-kubeconfig-context-string-error"></a>
-```text
-func (m *ClusterManager) InitCluster(kubeconfig, context string) error
-    InitCluster initializes cluster configuration.
-
-```
-
-<a id="cli-internals-func-m-clustermanager-kubectlrunner-kubectlrunner"></a>
-```text
-func (m *ClusterManager) KubectlRunner() KubectlRunner
-    KubectlRunner exposes the shared kubectl runner for foldered command
-    routing.
-
-```
-
-<a id="cli-internals-func-m-clustermanager-logger-zap-logger"></a>
-```text
-func (m *ClusterManager) Logger() *zap.Logger
-    Logger exposes the shared logger for foldered command routing.
-
-```
-
-<a id="cli-internals-func-m-clustermanager-provisioncluster-provider-region-string-nodecount-int-clustername-string-error"></a>
-```text
-func (m *ClusterManager) ProvisionCluster(provider, region string, nodeCount int, clusterName string) error
-    ProvisionCluster provisions a new Kubernetes cluster.
-
-```
-
-<a id="cli-internals-type-clustermanagerapi-interface"></a>
-```text
-type ClusterManagerAPI interface {
-	InitCluster(kubeconfig, context string) error
-	ConfigureCluster(opts ingressOptions) error
-}
-
-```
-
-<a id="cli-internals-type-command-interface"></a>
+<a id="cli-core-type-command-interface"></a>
 ```text
 type Command interface {
 	Output() ([]byte, error)
@@ -3140,101 +2780,15 @@ type Command interface {
 
 ```
 
-<a id="cli-internals-type-distribution-string"></a>
+<a id="cli-core-func-execcommandwithvalidators-name-string-args-string-validators-execvalidator-command-error"></a>
 ```text
-type Distribution string
-    Distribution identifies a Kubernetes flavor for remediation messaging.
-
-const (
-	DistroK3s           Distribution = "k3s"
-	DistroKind          Distribution = "kind"
-	DistroMinikube      Distribution = "minikube"
-	DistroDockerDesktop Distribution = "docker-desktop"
-	DistroGeneric       Distribution = "generic"
-)
-```
-
-<a id="cli-internals-func-detectdistribution-kubectl-kubectlrunner-distribution"></a>
-```text
-func DetectDistribution(kubectl KubectlRunner) Distribution
-    DetectDistribution inspects node info to guess which distribution is
-    running. This is best-effort: callers should treat DistroGeneric as
-    "probably kubeadm/unknown".
+func ExecCommandWithValidators(name string, args []string, validators ...ExecValidator) (Command, error)
+    ExecCommandWithValidators runs the named binary with args after validators
+    pass.
 
 ```
 
-<a id="cli-internals-type-doctorcheck-struct"></a>
-```text
-type DoctorCheck struct {
-	Name   string
-	OK     bool
-	Detail string
-	Remedy string // Short hint; detailed steps come from the distro checklist.
-}
-    DoctorCheck is a single preflight check result.
-
-```
-
-<a id="cli-internals-type-doctorcheckprogress-func-doctorcheckprogressevent-func-doctorcheck"></a>
-```text
-type DoctorCheckProgress func(DoctorCheckProgressEvent) func(DoctorCheck)
-    DoctorCheckProgress is called before each doctor check starts. It returns an
-    optional completion callback that receives the finished check result.
-
-```
-
-<a id="cli-internals-type-doctorcheckprogressevent-struct"></a>
-```text
-type DoctorCheckProgressEvent struct {
-	Name   string
-	Detail string
-	Index  int
-	Total  int
-}
-    DoctorCheckProgressEvent describes the check that is about to run.
-
-```
-
-<a id="cli-internals-type-doctorreport-struct"></a>
-```text
-type DoctorReport struct {
-	Distribution Distribution
-	Checks       []DoctorCheck
-}
-    DoctorReport aggregates the full preflight result.
-
-```
-
-<a id="cli-internals-func-rundoctor-kubectl-kubectlrunner-doctorreport"></a>
-```text
-func RunDoctor(kubectl KubectlRunner) DoctorReport
-    RunDoctor executes cluster diagnostics and returns a report.
-
-```
-
-<a id="cli-internals-func-rundoctorandprint-kubectl-kubectlrunner-doctorreport"></a>
-```text
-func RunDoctorAndPrint(kubectl KubectlRunner) DoctorReport
-    RunDoctorAndPrint streams doctor progress and results as checks execute.
-
-```
-
-<a id="cli-internals-func-rundoctorwithprogress-kubectl-kubectlrunner-progress-doctorcheckprogress-doctorreport"></a>
-```text
-func RunDoctorWithProgress(kubectl KubectlRunner, progress DoctorCheckProgress) DoctorReport
-    RunDoctorWithProgress executes cluster diagnostics and calls progress hooks
-    before and after each check. It is useful for UIs that need live feedback.
-
-```
-
-<a id="cli-internals-func-r-doctorreport-allok-bool"></a>
-```text
-func (r DoctorReport) AllOK() bool
-    AllOK reports whether every check passed.
-
-```
-
-<a id="cli-internals-type-execspec-struct"></a>
+<a id="cli-core-type-execspec-struct"></a>
 ```text
 type ExecSpec struct {
 	Name string
@@ -3243,37 +2797,37 @@ type ExecSpec struct {
 
 ```
 
-<a id="cli-internals-type-execvalidator-func-execspec-error"></a>
+<a id="cli-core-type-execvalidator-func-execspec-error"></a>
 ```text
 type ExecValidator func(ExecSpec) error
 
 ```
 
-<a id="cli-internals-func-allowlistbins-allowed-string-execvalidator"></a>
+<a id="cli-core-func-allowlistbins-allowed-string-execvalidator"></a>
 ```text
 func AllowlistBins(allowed ...string) ExecValidator
 
 ```
 
-<a id="cli-internals-func-nocontrolchars-execvalidator"></a>
+<a id="cli-core-func-nocontrolchars-execvalidator"></a>
 ```text
 func NoControlChars() ExecValidator
 
 ```
 
-<a id="cli-internals-func-noshellmeta-execvalidator"></a>
+<a id="cli-core-func-noshellmeta-execvalidator"></a>
 ```text
 func NoShellMeta() ExecValidator
 
 ```
 
-<a id="cli-internals-func-pathunder-root-string-execvalidator"></a>
+<a id="cli-core-func-pathunder-root-string-execvalidator"></a>
 ```text
 func PathUnder(root string) ExecValidator
 
 ```
 
-<a id="cli-internals-type-executor-interface"></a>
+<a id="cli-core-type-executor-interface"></a>
 ```text
 type Executor interface {
 	Command(name string, args []string, validators ...ExecValidator) (Command, error)
@@ -3282,17 +2836,14 @@ type Executor interface {
 
 ```
 
-<a id="cli-internals-type-externalregistryconfig-struct"></a>
+<a id="cli-core-func-defaultexecutor-executor"></a>
 ```text
-type ExternalRegistryConfig struct {
-	URL      string `yaml:"url"`
-	Username string `yaml:"username,omitempty"`
-	Password string `yaml:"password,omitempty"`
-}
+func DefaultExecutor() Executor
+    DefaultExecutor returns the shared process executor used by CLI commands.
 
 ```
 
-<a id="cli-internals-type-kubectlclient-struct"></a>
+<a id="cli-core-type-kubectlclient-struct"></a>
 ```text
 type KubectlClient struct {
 	// Has unexported fields.
@@ -3301,14 +2852,36 @@ type KubectlClient struct {
 
 ```
 
-<a id="cli-internals-func-newkubectlclient-exec-executor-kubectlclient-error"></a>
+<a id="cli-core-func-defaultkubectlclient-kubectlclient"></a>
+```text
+func DefaultKubectlClient() *KubectlClient
+    DefaultKubectlClient returns the shared kubectl client used by CLI commands.
+
+```
+
+<a id="cli-core-func-newkubectlclient-exec-executor-kubectlclient-error"></a>
 ```text
 func NewKubectlClient(exec Executor) (*KubectlClient, error)
     NewKubectlClient creates a KubectlClient with default validators.
 
 ```
 
-<a id="cli-internals-func-c-kubectlclient-combinedoutput-args-string-byte-error"></a>
+<a id="cli-core-func-newtestkubectlclient-exec-executor-kubectlclient"></a>
+```text
+func NewTestKubectlClient(exec Executor) *KubectlClient
+    NewTestKubectlClient returns a KubectlClient for tests (no path validators).
+
+```
+
+<a id="cli-core-func-newtestkubectlclientwithvalidators-exec-executor-validators-execvalidator-kubectlclient"></a>
+```text
+func NewTestKubectlClientWithValidators(exec Executor, validators []ExecValidator) *KubectlClient
+    NewTestKubectlClientWithValidators returns a KubectlClient for tests using
+    the given validator list (or nil for none).
+
+```
+
+<a id="cli-core-func-c-kubectlclient-combinedoutput-args-string-byte-error"></a>
 ```text
 func (c *KubectlClient) CombinedOutput(args []string) ([]byte, error)
     CombinedOutput runs kubectl with the given arguments and returns combined
@@ -3316,7 +2889,7 @@ func (c *KubectlClient) CombinedOutput(args []string) ([]byte, error)
 
 ```
 
-<a id="cli-internals-func-c-kubectlclient-commandargs-args-string-command-error"></a>
+<a id="cli-core-func-c-kubectlclient-commandargs-args-string-command-error"></a>
 ```text
 func (c *KubectlClient) CommandArgs(args []string) (Command, error)
     CommandArgs builds a kubectl command with the given arguments. Validates
@@ -3324,21 +2897,21 @@ func (c *KubectlClient) CommandArgs(args []string) (Command, error)
 
 ```
 
-<a id="cli-internals-func-c-kubectlclient-output-args-string-byte-error"></a>
+<a id="cli-core-func-c-kubectlclient-output-args-string-byte-error"></a>
 ```text
 func (c *KubectlClient) Output(args []string) ([]byte, error)
     Output runs kubectl with the given arguments and returns stdout.
 
 ```
 
-<a id="cli-internals-func-c-kubectlclient-run-args-string-error"></a>
+<a id="cli-core-func-c-kubectlclient-run-args-string-error"></a>
 ```text
 func (c *KubectlClient) Run(args []string) error
     Run runs kubectl with the given arguments.
 
 ```
 
-<a id="cli-internals-func-c-kubectlclient-runwithoutput-args-string-stdout-stderr-io-writer-error"></a>
+<a id="cli-core-func-c-kubectlclient-runwithoutput-args-string-stdout-stderr-io-writer-error"></a>
 ```text
 func (c *KubectlClient) RunWithOutput(args []string, stdout, stderr io.Writer) error
     RunWithOutput runs kubectl with the given arguments, piping to the provided
@@ -3346,7 +2919,7 @@ func (c *KubectlClient) RunWithOutput(args []string, stdout, stderr io.Writer) e
 
 ```
 
-<a id="cli-internals-type-kubectlrunner-interface"></a>
+<a id="cli-core-type-kubectlrunner-interface"></a>
 ```text
 type KubectlRunner interface {
 	CommandArgs(args []string) (Command, error)
@@ -3357,14 +2930,14 @@ type KubectlRunner interface {
 
 ```
 
-<a id="cli-internals-func-defaultkubectlrunner-kubectlrunner"></a>
+<a id="cli-core-func-defaultkubectlrunner-kubectlrunner"></a>
 ```text
 func DefaultKubectlRunner() KubectlRunner
     DefaultKubectlRunner returns the shared kubectl runner used by CLI commands.
 
 ```
 
-<a id="cli-internals-type-mockcommand-struct"></a>
+<a id="cli-core-type-mockcommand-struct"></a>
 ```text
 type MockCommand struct {
 	Args       []string
@@ -3380,43 +2953,43 @@ type MockCommand struct {
 
 ```
 
-<a id="cli-internals-func-m-mockcommand-combinedoutput-byte-error"></a>
+<a id="cli-core-func-m-mockcommand-combinedoutput-byte-error"></a>
 ```text
 func (m *MockCommand) CombinedOutput() ([]byte, error)
 
 ```
 
-<a id="cli-internals-func-m-mockcommand-output-byte-error"></a>
+<a id="cli-core-func-m-mockcommand-output-byte-error"></a>
 ```text
 func (m *MockCommand) Output() ([]byte, error)
 
 ```
 
-<a id="cli-internals-func-m-mockcommand-run-error"></a>
+<a id="cli-core-func-m-mockcommand-run-error"></a>
 ```text
 func (m *MockCommand) Run() error
 
 ```
 
-<a id="cli-internals-func-m-mockcommand-setstderr-w-io-writer"></a>
+<a id="cli-core-func-m-mockcommand-setstderr-w-io-writer"></a>
 ```text
 func (m *MockCommand) SetStderr(w io.Writer)
 
 ```
 
-<a id="cli-internals-func-m-mockcommand-setstdin-r-io-reader"></a>
+<a id="cli-core-func-m-mockcommand-setstdin-r-io-reader"></a>
 ```text
 func (m *MockCommand) SetStdin(r io.Reader)
 
 ```
 
-<a id="cli-internals-func-m-mockcommand-setstdout-w-io-writer"></a>
+<a id="cli-core-func-m-mockcommand-setstdout-w-io-writer"></a>
 ```text
 func (m *MockCommand) SetStdout(w io.Writer)
 
 ```
 
-<a id="cli-internals-type-mockexecutor-struct"></a>
+<a id="cli-core-type-mockexecutor-struct"></a>
 ```text
 type MockExecutor struct {
 	// Commands records all commands that were created.
@@ -3434,34 +3007,34 @@ type MockExecutor struct {
 
 ```
 
-<a id="cli-internals-func-m-mockexecutor-command-name-string-args-string-validators-execvalidator-command-error"></a>
+<a id="cli-core-func-m-mockexecutor-command-name-string-args-string-validators-execvalidator-command-error"></a>
 ```text
 func (m *MockExecutor) Command(name string, args []string, validators ...ExecValidator) (Command, error)
 
 ```
 
-<a id="cli-internals-func-m-mockexecutor-hascommand-name-string-bool"></a>
+<a id="cli-core-func-m-mockexecutor-hascommand-name-string-bool"></a>
 ```text
 func (m *MockExecutor) HasCommand(name string) bool
     HasCommand checks if a command with the given name was executed.
 
 ```
 
-<a id="cli-internals-func-m-mockexecutor-lastcommand-execspec"></a>
+<a id="cli-core-func-m-mockexecutor-lastcommand-execspec"></a>
 ```text
 func (m *MockExecutor) LastCommand() ExecSpec
     LastCommand returns the most recent command spec.
 
 ```
 
-<a id="cli-internals-func-m-mockexecutor-reset"></a>
+<a id="cli-core-func-m-mockexecutor-reset"></a>
 ```text
 func (m *MockExecutor) Reset()
     Reset clears recorded commands.
 
 ```
 
-<a id="cli-internals-type-printer-struct"></a>
+<a id="cli-core-type-printer-struct"></a>
 ```text
 type Printer struct {
 	// Quiet suppresses non-essential output
@@ -3474,14 +3047,14 @@ type Printer struct {
 
 ```
 
-<a id="cli-internals-func-p-printer-cyan-msg-string-string"></a>
+<a id="cli-core-func-p-printer-cyan-msg-string-string"></a>
 ```text
 func (p *Printer) Cyan(msg string) string
     Cyan returns cyan-colored text.
 
 ```
 
-<a id="cli-internals-func-p-printer-error-msg-string"></a>
+<a id="cli-core-func-p-printer-error-msg-string"></a>
 ```text
 func (p *Printer) Error(msg string)
     Error prints an error message. Note: Errors are intentionally not suppressed
@@ -3490,56 +3063,56 @@ func (p *Printer) Error(msg string)
 
 ```
 
-<a id="cli-internals-func-p-printer-green-msg-string-string"></a>
+<a id="cli-core-func-p-printer-green-msg-string-string"></a>
 ```text
 func (p *Printer) Green(msg string) string
     Green returns green-colored text.
 
 ```
 
-<a id="cli-internals-func-p-printer-header-title-string"></a>
+<a id="cli-core-func-p-printer-header-title-string"></a>
 ```text
 func (p *Printer) Header(title string)
     Header prints a full-width header banner.
 
 ```
 
-<a id="cli-internals-func-p-printer-info-msg-string"></a>
+<a id="cli-core-func-p-printer-info-msg-string"></a>
 ```text
 func (p *Printer) Info(msg string)
     Info prints an informational message.
 
 ```
 
-<a id="cli-internals-func-p-printer-printf-format-string-a-interface"></a>
+<a id="cli-core-func-p-printer-printf-format-string-a-interface"></a>
 ```text
 func (p *Printer) Printf(format string, a ...interface{})
     Printf prints formatted text.
 
 ```
 
-<a id="cli-internals-func-p-printer-println-a-interface"></a>
+<a id="cli-core-func-p-printer-println-a-interface"></a>
 ```text
 func (p *Printer) Println(a ...interface{})
     Println prints a plain line.
 
 ```
 
-<a id="cli-internals-func-p-printer-red-msg-string-string"></a>
+<a id="cli-core-func-p-printer-red-msg-string-string"></a>
 ```text
 func (p *Printer) Red(msg string) string
     Red returns red-colored text.
 
 ```
 
-<a id="cli-internals-func-p-printer-section-title-string"></a>
+<a id="cli-core-func-p-printer-section-title-string"></a>
 ```text
 func (p *Printer) Section(title string)
     Section prints a prominent section header.
 
 ```
 
-<a id="cli-internals-func-p-printer-spinnerstart-msg-string-func-success-bool-finalmsg-string"></a>
+<a id="cli-core-func-p-printer-spinnerstart-msg-string-func-success-bool-finalmsg-string"></a>
 ```text
 func (p *Printer) SpinnerStart(msg string) func(success bool, finalMsg string)
     SpinnerStart starts a spinner with the given message. Returns a stop
@@ -3547,35 +3120,35 @@ func (p *Printer) SpinnerStart(msg string) func(success bool, finalMsg string)
 
 ```
 
-<a id="cli-internals-func-p-printer-step-title-string"></a>
+<a id="cli-core-func-p-printer-step-title-string"></a>
 ```text
 func (p *Printer) Step(title string)
     Step prints a step indicator (e.g., "Step 1: Initialize").
 
 ```
 
-<a id="cli-internals-func-p-printer-success-msg-string"></a>
+<a id="cli-core-func-p-printer-success-msg-string"></a>
 ```text
 func (p *Printer) Success(msg string)
     Success prints a success message.
 
 ```
 
-<a id="cli-internals-func-p-printer-table-data-string"></a>
+<a id="cli-core-func-p-printer-table-data-string"></a>
 ```text
 func (p *Printer) Table(data [][]string)
     Table prints a formatted table. First row is treated as header.
 
 ```
 
-<a id="cli-internals-func-p-printer-tableboxed-data-string"></a>
+<a id="cli-core-func-p-printer-tableboxed-data-string"></a>
 ```text
 func (p *Printer) TableBoxed(data [][]string)
     TableBoxed prints a formatted table with box borders.
 
 ```
 
-<a id="cli-internals-func-p-printer-warn-msg-string"></a>
+<a id="cli-core-func-p-printer-warn-msg-string"></a>
 ```text
 func (p *Printer) Warn(msg string)
     Warn prints a warning message. Note: Warnings are intentionally not
@@ -3584,81 +3157,14 @@ func (p *Printer) Warn(msg string)
 
 ```
 
-<a id="cli-internals-func-p-printer-yellow-msg-string-string"></a>
+<a id="cli-core-func-p-printer-yellow-msg-string-string"></a>
 ```text
 func (p *Printer) Yellow(msg string) string
     Yellow returns yellow-colored text.
 
 ```
 
-<a id="cli-internals-type-registrymanager-struct"></a>
-```text
-type RegistryManager struct {
-	// Has unexported fields.
-}
-    RegistryManager handles registry operations with injected dependencies.
-
-```
-
-<a id="cli-internals-func-defaultregistrymanager-logger-zap-logger-registrymanager"></a>
-```text
-func DefaultRegistryManager(logger *zap.Logger) *RegistryManager
-    DefaultRegistryManager returns a RegistryManager using default clients.
-
-```
-
-<a id="cli-internals-func-newregistrymanager-kubectl-kubectlclient-exec-executor-logger-zap-logger-registrymanager"></a>
-```text
-func NewRegistryManager(kubectl *KubectlClient, exec Executor, logger *zap.Logger) *RegistryManager
-    NewRegistryManager creates a RegistryManager with the given dependencies.
-
-```
-
-<a id="cli-internals-func-m-registrymanager-checkregistrystatus-namespace-string-error"></a>
-```text
-func (m *RegistryManager) CheckRegistryStatus(namespace string) error
-    CheckRegistryStatus checks and displays registry status.
-
-```
-
-<a id="cli-internals-func-m-registrymanager-loginregistry-registryurl-username-password-string-error"></a>
-```text
-func (m *RegistryManager) LoginRegistry(registryURL, username, password string) error
-    LoginRegistry logs into a container registry.
-
-```
-
-<a id="cli-internals-func-m-registrymanager-pushdirect-source-target-string-error"></a>
-```text
-func (m *RegistryManager) PushDirect(source, target string) error
-    PushDirect pushes an image directly using docker.
-
-```
-
-<a id="cli-internals-func-m-registrymanager-pushincluster-source-target-helperns-string-error"></a>
-```text
-func (m *RegistryManager) PushInCluster(source, target, helperNS string) error
-    PushInCluster pushes an image using an in-cluster helper pod.
-
-```
-
-<a id="cli-internals-func-m-registrymanager-showregistryinfo-error"></a>
-```text
-func (m *RegistryManager) ShowRegistryInfo() error
-    ShowRegistryInfo displays registry connection information.
-
-```
-
-<a id="cli-internals-type-registrymanagerapi-interface"></a>
-```text
-type RegistryManagerAPI interface {
-	ShowRegistryInfo() error
-	PushInCluster(source, target, helperNS string) error
-}
-
-```
-
-<a id="cli-internals-type-runtime-struct"></a>
+<a id="cli-core-type-runtime-struct"></a>
 ```text
 type Runtime struct {
 	// Has unexported fields.
@@ -3668,127 +3174,1437 @@ type Runtime struct {
 
 ```
 
-<a id="cli-internals-func-newruntime-logger-zap-logger-runtime"></a>
+<a id="cli-core-func-newruntime-logger-zap-logger-runtime"></a>
 ```text
 func NewRuntime(logger *zap.Logger) *Runtime
     NewRuntime builds the shared CLI runtime facade.
 
 ```
 
-<a id="cli-internals-func-r-runtime-accessmanager-accessmanager"></a>
+<a id="cli-core-func-r-runtime-config-cliconfig"></a>
 ```text
-func (r *Runtime) AccessManager() *AccessManager
-    AccessManager returns the access command manager.
+func (r *Runtime) Config() *CLIConfig
+    Config returns the loaded CLI configuration.
 
 ```
 
-<a id="cli-internals-func-r-runtime-clustermanager-clustermanager"></a>
-```text
-func (r *Runtime) ClusterManager() *ClusterManager
-    ClusterManager returns the cluster command manager.
-
-```
-
-<a id="cli-internals-func-r-runtime-executor-executor"></a>
+<a id="cli-core-func-r-runtime-executor-executor"></a>
 ```text
 func (r *Runtime) Executor() Executor
     Executor returns the shared process executor.
 
 ```
 
-<a id="cli-internals-func-r-runtime-kubectlclient-kubectlclient"></a>
+<a id="cli-core-func-r-runtime-kubectlclient-kubectlclient"></a>
 ```text
 func (r *Runtime) KubectlClient() *KubectlClient
     KubectlClient returns the shared kubectl client.
 
 ```
 
-<a id="cli-internals-func-r-runtime-kubectlrunner-kubectlrunner"></a>
+<a id="cli-core-func-r-runtime-kubectlrunner-kubectlrunner"></a>
 ```text
 func (r *Runtime) KubectlRunner() KubectlRunner
     KubectlRunner returns the shared kubectl runner.
 
 ```
 
-<a id="cli-internals-func-r-runtime-logger-zap-logger"></a>
+<a id="cli-core-func-r-runtime-logger-zap-logger"></a>
 ```text
 func (r *Runtime) Logger() *zap.Logger
     Logger returns the shared logger.
 
 ```
 
-<a id="cli-internals-func-r-runtime-registrymanager-registrymanager"></a>
+<a id="cli-core-func-r-runtime-printer-printer"></a>
 ```text
-func (r *Runtime) RegistryManager() *RegistryManager
-    RegistryManager returns the registry command manager.
+func (r *Runtime) Printer() *Printer
+    Printer returns the shared terminal printer.
+```
+
+<a id="cli-kubernetes-helpers"></a>
+## CLI Kubernetes helpers
+
+Package: `kube`
+Import path: `mcp-runtime/internal/cli/kube`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/kube
+```
+
+<a id="cli-kubernetes-helpers-overview"></a>
+### Overview
+
+Package kube contains shared kubectl-oriented helpers for CLI commands.
+
+### Jump To
+
+- [Overview](#cli-kubernetes-helpers-overview)
+- [Index](#cli-kubernetes-helpers-index)
+- [Functions](#cli-kubernetes-helpers-functions)
+- [Types](#cli-kubernetes-helpers-types)
+
+<a id="cli-kubernetes-helpers-index"></a>
+### Index
+
+- [`func ApplyManifestContent[T Command](commandArgs func([]string) (T, error), manifest string) error`](#cli-kubernetes-helpers-func-applymanifestcontent-t-command-commandargs-func-string-t-error-manifest-string-error)
+- [`func ApplyManifestContentWithNamespace[T Command](commandArgs func([]string) (T, error), manifest, namespace string) error`](#cli-kubernetes-helpers-func-applymanifestcontentwithnamespace-t-command-commandargs-func-string-t-error-manifest-namespace-string-error)
+- [`func ApplyManifestFromFile[T Command](commandArgs func([]string) (T, error), file string, stdout, stderr io.Writer) error`](#cli-kubernetes-helpers-func-applymanifestfromfile-t-command-commandargs-func-string-t-error-file-string-stdout-stderr-io-writer-error)
+- [`func EnsureNamespace[T Command](commandArgs func([]string) (T, error), name string) error`](#cli-kubernetes-helpers-func-ensurenamespace-t-command-commandargs-func-string-t-error-name-string-error)
+- [`func NormalizePatchDocument(raw string) (string, error)`](#cli-kubernetes-helpers-func-normalizepatchdocument-raw-string-string-error)
+- [`func NormalizePatchFile(file string) (string, error)`](#cli-kubernetes-helpers-func-normalizepatchfile-file-string-string-error)
+- [`func ReadFileAtPath(path string) ([]byte, error)`](#cli-kubernetes-helpers-func-readfileatpath-path-string-byte-error)
+- [`func ResolveRegularFilePath(file string) (string, error)`](#cli-kubernetes-helpers-func-resolveregularfilepath-file-string-string-error)
+- [`func WriteOutputFile(file string, data []byte) error`](#cli-kubernetes-helpers-func-writeoutputfile-file-string-data-byte-error)
+- [`type Command interface`](#cli-kubernetes-helpers-type-command-interface)
+
+<a id="cli-kubernetes-helpers-functions"></a>
+### Functions
+
+<a id="cli-kubernetes-helpers-func-applymanifestcontent-t-command-commandargs-func-string-t-error-manifest-string-error"></a>
+```text
+func ApplyManifestContent[T Command](commandArgs func([]string) (T, error), manifest string) error
+    ApplyManifestContent applies manifest YAML from a string via kubectl stdin.
 
 ```
 
-<a id="cli-internals-func-r-runtime-sentinelmanager-sentinelmanager"></a>
+<a id="cli-kubernetes-helpers-func-applymanifestcontentwithnamespace-t-command-commandargs-func-string-t-error-manifest-namespace-string-error"></a>
 ```text
-func (r *Runtime) SentinelManager() *SentinelManager
-    SentinelManager returns the sentinel command manager.
+func ApplyManifestContentWithNamespace[T Command](commandArgs func([]string) (T, error), manifest, namespace string) error
+    ApplyManifestContentWithNamespace applies manifest YAML from stdin,
+    optionally scoped to a namespace.
 
 ```
 
-<a id="cli-internals-func-r-runtime-servermanager-servermanager"></a>
+<a id="cli-kubernetes-helpers-func-applymanifestfromfile-t-command-commandargs-func-string-t-error-file-string-stdout-stderr-io-writer-error"></a>
 ```text
-func (r *Runtime) ServerManager() *ServerManager
-    ServerManager returns the server command manager.
+func ApplyManifestFromFile[T Command](commandArgs func([]string) (T, error), file string, stdout, stderr io.Writer) error
+    ApplyManifestFromFile applies a manifest file using kubectl.
 
 ```
 
-<a id="cli-internals-type-sentinelmanager-struct"></a>
+<a id="cli-kubernetes-helpers-func-ensurenamespace-t-command-commandargs-func-string-t-error-name-string-error"></a>
 ```text
-type SentinelManager struct {
+func EnsureNamespace[T Command](commandArgs func([]string) (T, error), name string) error
+    EnsureNamespace applies/creates a namespace idempotently.
+
+```
+
+<a id="cli-kubernetes-helpers-func-normalizepatchdocument-raw-string-string-error"></a>
+```text
+func NormalizePatchDocument(raw string) (string, error)
+    NormalizePatchDocument parses YAML or JSON patch content and returns a JSON
+    string suitable for kubectl patch --type=json (or merge) style inputs.
+
+```
+
+<a id="cli-kubernetes-helpers-func-normalizepatchfile-file-string-string-error"></a>
+```text
+func NormalizePatchFile(file string) (string, error)
+    NormalizePatchFile reads a patch file from disk and returns normalized JSON
+    like NormalizePatchDocument.
+
+```
+
+<a id="cli-kubernetes-helpers-func-readfileatpath-path-string-byte-error"></a>
+```text
+func ReadFileAtPath(path string) ([]byte, error)
+    ReadFileAtPath reads a regular file without following symlink escapes
+    outside its parent directory.
+
+```
+
+<a id="cli-kubernetes-helpers-func-resolveregularfilepath-file-string-string-error"></a>
+```text
+func ResolveRegularFilePath(file string) (string, error)
+    ResolveRegularFilePath resolves a path and rejects directories.
+
+```
+
+<a id="cli-kubernetes-helpers-func-writeoutputfile-file-string-data-byte-error"></a>
+```text
+func WriteOutputFile(file string, data []byte) error
+    WriteOutputFile writes data to a path under a resolved parent directory with
+    0600 file permissions and 0750 (or tighter) directory permissions.
+```
+
+<a id="cli-kubernetes-helpers-types"></a>
+### Types
+
+<a id="cli-kubernetes-helpers-type-command-interface"></a>
+```text
+type Command interface {
+	SetStdin(io.Reader)
+	SetStdout(io.Writer)
+	SetStderr(io.Writer)
+	Run() error
+}
+    Command is the minimal command shape needed for stdin-based kubectl apply.
+```
+
+<a id="cli-kubernetes-errors"></a>
+## CLI Kubernetes errors
+
+Package: `kubeerr`
+Import path: `mcp-runtime/internal/cli/kubeerr`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/kubeerr
+```
+
+<a id="cli-kubernetes-errors-overview"></a>
+### Overview
+
+_No package overview is documented._
+
+### Jump To
+
+- [Overview](#cli-kubernetes-errors-overview)
+- [Index](#cli-kubernetes-errors-index)
+- [Functions](#cli-kubernetes-errors-functions)
+
+<a id="cli-kubernetes-errors-index"></a>
+### Index
+
+- [`func CommandDetail(output string, fallback error) string`](#cli-kubernetes-errors-func-commanddetail-output-string-fallback-error-string)
+- [`func SetupHint(detail string) (string, bool)`](#cli-kubernetes-errors-func-setuphint-detail-string-string-bool)
+
+<a id="cli-kubernetes-errors-functions"></a>
+### Functions
+
+<a id="cli-kubernetes-errors-func-commanddetail-output-string-fallback-error-string"></a>
+```text
+func CommandDetail(output string, fallback error) string
+    CommandDetail extracts a single-line error detail from kubectl output or the
+    exec error.
+
+```
+
+<a id="cli-kubernetes-errors-func-setuphint-detail-string-string-bool"></a>
+```text
+func SetupHint(detail string) (string, bool)
+    SetupHint returns a friendlier message when the cluster has not been
+    provisioned yet.
+```
+
+<a id="cli-cluster"></a>
+## CLI cluster
+
+Package: `cluster`
+Import path: `mcp-runtime/internal/cli/cluster`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/cluster
+```
+
+<a id="cli-cluster-overview"></a>
+### Overview
+
+Package cluster owns routing for the cluster top-level command.
+
+Cluster doctor diagnostics: distribution detection, registry and Traefik checks,
+Sentinel probes, and remediation hints. See docs/cluster-readiness.md.
+
+Package cluster implements cluster operations for the cluster CLI command.
+
+### Jump To
+
+- [Overview](#cli-cluster-overview)
+- [Index](#cli-cluster-index)
+- [Functions](#cli-cluster-functions)
+- [Types](#cli-cluster-types)
+
+<a id="cli-cluster-index"></a>
+### Index
+
+- [`func New(runtime *core.Runtime) *cobra.Command`](#cli-cluster-func-new-runtime-core-runtime-cobra-command)
+- [`func NewWithManager(mgr *ClusterManager) *cobra.Command`](#cli-cluster-func-newwithmanager-mgr-clustermanager-cobra-command)
+- [`func PrintDoctorReport(r DoctorReport)`](#cli-cluster-func-printdoctorreport-r-doctorreport)
+- [`type ClusterManager struct`](#cli-cluster-type-clustermanager-struct)
+- [`func DefaultClusterManager(logger *zap.Logger) *ClusterManager`](#cli-cluster-func-defaultclustermanager-logger-zap-logger-clustermanager)
+- [`func NewClusterManager(kubectl *core.KubectlClient, exec core.Executor, logger *zap.Logger) *ClusterManager`](#cli-cluster-func-newclustermanager-kubectl-core-kubectlclient-exec-core-executor-logger-zap-logger-clustermanager)
+- [`func (m *ClusterManager) CheckClusterStatus() error`](#cli-cluster-func-m-clustermanager-checkclusterstatus-error)
+- [`func (m *ClusterManager) ConfigureCluster(opts IngressOptions) error`](#cli-cluster-func-m-clustermanager-configurecluster-opts-ingressoptions-error)
+- [`func (m *ClusterManager) ConfigureClusterWithValues(mode, manifest string, force bool) error`](#cli-cluster-func-m-clustermanager-configureclusterwithvalues-mode-manifest-string-force-bool-error)
+- [`func (m *ClusterManager) ConfigureKubeconfig(kubeconfig, context string) error`](#cli-cluster-func-m-clustermanager-configurekubeconfig-kubeconfig-context-string-error)
+- [`func (m *ClusterManager) ConfigureKubeconfigFromProvider(provider, region, clusterName, resourceGroup, project, zone, kubeconfig string) error`](#cli-cluster-func-m-clustermanager-configurekubeconfigfromprovider-provider-region-clustername-resourcegroup-project-zone-kubeconfig-string-error)
+- [`func (m *ClusterManager) EnsureNamespace(name string) error`](#cli-cluster-func-m-clustermanager-ensurenamespace-name-string-error)
+- [`func (m *ClusterManager) InitCluster(kubeconfig, context string) error`](#cli-cluster-func-m-clustermanager-initcluster-kubeconfig-context-string-error)
+- [`func (m *ClusterManager) KubectlRunner() core.KubectlRunner`](#cli-cluster-func-m-clustermanager-kubectlrunner-core-kubectlrunner)
+- [`func (m *ClusterManager) Logger() *zap.Logger`](#cli-cluster-func-m-clustermanager-logger-zap-logger)
+- [`func (m *ClusterManager) ProvisionCluster(provider, region string, nodeCount int, clusterName string, dryRun bool) error`](#cli-cluster-func-m-clustermanager-provisioncluster-provider-region-string-nodecount-int-clustername-string-dryrun-bool-error)
+- [`type Distribution string`](#cli-cluster-type-distribution-string)
+- [`func DetectDistribution(kubectl core.KubectlRunner) Distribution`](#cli-cluster-func-detectdistribution-kubectl-core-kubectlrunner-distribution)
+- [`type DoctorCheck struct`](#cli-cluster-type-doctorcheck-struct)
+- [`type DoctorCheckProgress func(DoctorCheckProgressEvent) func(DoctorCheck)`](#cli-cluster-type-doctorcheckprogress-func-doctorcheckprogressevent-func-doctorcheck)
+- [`type DoctorCheckProgressEvent struct`](#cli-cluster-type-doctorcheckprogressevent-struct)
+- [`type DoctorReport struct`](#cli-cluster-type-doctorreport-struct)
+- [`func RunDoctor(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-func-rundoctor-kubectl-core-kubectlrunner-doctorreport)
+- [`func RunDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-func-rundoctorandprint-kubectl-core-kubectlrunner-doctorreport)
+- [`func RunDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport`](#cli-cluster-func-rundoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport)
+- [`func (r DoctorReport) AllOK() bool`](#cli-cluster-func-r-doctorreport-allok-bool)
+- [`type IngressOptions struct`](#cli-cluster-type-ingressoptions-struct)
+
+<a id="cli-cluster-functions"></a>
+### Functions
+
+<a id="cli-cluster-func-new-runtime-core-runtime-cobra-command"></a>
+```text
+func New(runtime *core.Runtime) *cobra.Command
+    New returns the cluster command.
+
+```
+
+<a id="cli-cluster-func-newwithmanager-mgr-clustermanager-cobra-command"></a>
+```text
+func NewWithManager(mgr *ClusterManager) *cobra.Command
+    NewWithManager returns the cluster command using the provided manager.
+
+```
+
+<a id="cli-cluster-func-printdoctorreport-r-doctorreport"></a>
+```text
+func PrintDoctorReport(r DoctorReport)
+    PrintDoctorReport emits a human-readable report using the standard printer.
+```
+
+<a id="cli-cluster-types"></a>
+### Types
+
+<a id="cli-cluster-type-clustermanager-struct"></a>
+```text
+type ClusterManager struct {
 	// Has unexported fields.
+}
+    ClusterManager handles cluster operations with injected dependencies.
+
+```
+
+<a id="cli-cluster-func-defaultclustermanager-logger-zap-logger-clustermanager"></a>
+```text
+func DefaultClusterManager(logger *zap.Logger) *ClusterManager
+    DefaultClusterManager returns a ClusterManager using default clients.
+
+```
+
+<a id="cli-cluster-func-newclustermanager-kubectl-core-kubectlclient-exec-core-executor-logger-zap-logger-clustermanager"></a>
+```text
+func NewClusterManager(kubectl *core.KubectlClient, exec core.Executor, logger *zap.Logger) *ClusterManager
+    NewClusterManager creates a ClusterManager with the given dependencies.
+
+```
+
+<a id="cli-cluster-func-m-clustermanager-checkclusterstatus-error"></a>
+```text
+func (m *ClusterManager) CheckClusterStatus() error
+    CheckClusterStatus checks and displays cluster status.
+
+```
+
+<a id="cli-cluster-func-m-clustermanager-configurecluster-opts-ingressoptions-error"></a>
+```text
+func (m *ClusterManager) ConfigureCluster(opts IngressOptions) error
+    ConfigureCluster configures cluster settings like ingress.
+
+```
+
+<a id="cli-cluster-func-m-clustermanager-configureclusterwithvalues-mode-manifest-string-force-bool-error"></a>
+```text
+func (m *ClusterManager) ConfigureClusterWithValues(mode, manifest string, force bool) error
+    ConfigureClusterWithValues adapts exported flag values into the internal
+    ingress options shape.
+
+```
+
+<a id="cli-cluster-func-m-clustermanager-configurekubeconfig-kubeconfig-context-string-error"></a>
+```text
+func (m *ClusterManager) ConfigureKubeconfig(kubeconfig, context string) error
+    ConfigureKubeconfig sets KUBECONFIG and optionally switches context.
+
+```
+
+<a id="cli-cluster-func-m-clustermanager-configurekubeconfigfromprovider-provider-region-clustername-resourcegroup-project-zone-kubeconfig-string-error"></a>
+```text
+func (m *ClusterManager) ConfigureKubeconfigFromProvider(provider, region, clusterName, resourceGroup, project, zone, kubeconfig string) error
+    ConfigureKubeconfigFromProvider updates kubeconfig using a cloud provider
+    CLI.
+
+```
+
+<a id="cli-cluster-func-m-clustermanager-ensurenamespace-name-string-error"></a>
+```text
+func (m *ClusterManager) EnsureNamespace(name string) error
+    EnsureNamespace applies/creates a namespace idempotently.
+
+```
+
+<a id="cli-cluster-func-m-clustermanager-initcluster-kubeconfig-context-string-error"></a>
+```text
+func (m *ClusterManager) InitCluster(kubeconfig, context string) error
+    InitCluster initializes cluster configuration.
+
+```
+
+<a id="cli-cluster-func-m-clustermanager-kubectlrunner-core-kubectlrunner"></a>
+```text
+func (m *ClusterManager) KubectlRunner() core.KubectlRunner
+    KubectlRunner exposes the shared kubectl runner for foldered command
+    routing.
+
+```
+
+<a id="cli-cluster-func-m-clustermanager-logger-zap-logger"></a>
+```text
+func (m *ClusterManager) Logger() *zap.Logger
+    Logger exposes the shared logger for foldered command routing.
+
+```
+
+<a id="cli-cluster-func-m-clustermanager-provisioncluster-provider-region-string-nodecount-int-clustername-string-dryrun-bool-error"></a>
+```text
+func (m *ClusterManager) ProvisionCluster(provider, region string, nodeCount int, clusterName string, dryRun bool) error
+    ProvisionCluster provisions a new Kubernetes cluster. When dryRun is true,
+    it prints the configuration and command that would run without creating any
+    cluster or calling out to cloud APIs.
+
+```
+
+<a id="cli-cluster-type-distribution-string"></a>
+```text
+type Distribution string
+    Distribution identifies a Kubernetes flavor for remediation messaging.
+
+const (
+	DistroK3s           Distribution = "k3s"
+	DistroKind          Distribution = "kind"
+	DistroMinikube      Distribution = "minikube"
+	DistroDockerDesktop Distribution = "docker-desktop"
+	DistroGeneric       Distribution = "generic"
+)
+```
+
+<a id="cli-cluster-func-detectdistribution-kubectl-core-kubectlrunner-distribution"></a>
+```text
+func DetectDistribution(kubectl core.KubectlRunner) Distribution
+    DetectDistribution inspects node info to guess which distribution is
+    running. This is best-effort: callers should treat DistroGeneric as
+    "probably kubeadm/unknown".
+
+```
+
+<a id="cli-cluster-type-doctorcheck-struct"></a>
+```text
+type DoctorCheck struct {
+	Name   string
+	OK     bool
+	Detail string
+	Remedy string // Short hint; detailed steps come from the distro checklist.
+}
+    DoctorCheck is a single preflight check result.
+
+```
+
+<a id="cli-cluster-type-doctorcheckprogress-func-doctorcheckprogressevent-func-doctorcheck"></a>
+```text
+type DoctorCheckProgress func(DoctorCheckProgressEvent) func(DoctorCheck)
+    DoctorCheckProgress is called before each doctor check starts. It returns an
+    optional completion callback that receives the finished check result.
+
+```
+
+<a id="cli-cluster-type-doctorcheckprogressevent-struct"></a>
+```text
+type DoctorCheckProgressEvent struct {
+	Name   string
+	Detail string
+	Index  int
+	Total  int
+}
+    DoctorCheckProgressEvent describes the check that is about to run.
+
+```
+
+<a id="cli-cluster-type-doctorreport-struct"></a>
+```text
+type DoctorReport struct {
+	Distribution Distribution
+	Checks       []DoctorCheck
+}
+    DoctorReport aggregates the full preflight result.
+
+```
+
+<a id="cli-cluster-func-rundoctor-kubectl-core-kubectlrunner-doctorreport"></a>
+```text
+func RunDoctor(kubectl core.KubectlRunner) DoctorReport
+    RunDoctor executes cluster diagnostics and returns a report.
+
+```
+
+<a id="cli-cluster-func-rundoctorandprint-kubectl-core-kubectlrunner-doctorreport"></a>
+```text
+func RunDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport
+    RunDoctorAndPrint streams doctor progress and results as checks execute.
+
+```
+
+<a id="cli-cluster-func-rundoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport"></a>
+```text
+func RunDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport
+    RunDoctorWithProgress executes cluster diagnostics and calls progress hooks
+    before and after each check. It is useful for UIs that need live feedback.
+
+```
+
+<a id="cli-cluster-func-r-doctorreport-allok-bool"></a>
+```text
+func (r DoctorReport) AllOK() bool
+    AllOK reports whether every check passed.
+
+```
+
+<a id="cli-cluster-type-ingressoptions-struct"></a>
+```text
+type IngressOptions struct {
+	Mode     string
+	Manifest string
+	Force    bool
+}
+    IngressOptions captures ingress install settings used by both cluster
+    configuration and the setup command.
+```
+
+<a id="cli-cert-manager"></a>
+## CLI cert-manager
+
+Package: `certmanager`
+Import path: `mcp-runtime/internal/cli/certmanager`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/certmanager
+```
+
+<a id="cli-cert-manager-overview"></a>
+### Overview
+
+_No package overview is documented._
+
+### Jump To
+
+- [Overview](#cli-cert-manager-overview)
+- [Index](#cli-cert-manager-index)
+- [Constants](#cli-cert-manager-constants)
+- [Functions](#cli-cert-manager-functions)
+- [Types](#cli-cert-manager-types)
+
+<a id="cli-cert-manager-index"></a>
+### Index
+
+- [`Constants`](#cli-cert-manager-constants)
+- [`func ACMETLSDNSNames() []string`](#cli-cert-manager-func-acmetlsdnsnames-string)
+- [`func ApplyClusterIssuerWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-applyclusterissuerwithkubectl-kubectl-core-kubectlrunner-error)
+- [`func ApplyLetsEncryptClusterIssuer(kubectl core.KubectlRunner, email string, staging bool, logger *zap.Logger) error`](#cli-cert-manager-func-applyletsencryptclusterissuer-kubectl-core-kubectlrunner-email-string-staging-bool-logger-zap-logger-error)
+- [`func ApplyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []string, issuerName string) error`](#cli-cert-manager-func-applyregistrycertificateforacme-kubectl-core-kubectlrunner-dnsnames-string-issuername-string-error)
+- [`func ApplyRegistryCertificateWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-applyregistrycertificatewithkubectl-kubectl-core-kubectlrunner-error)
+- [`func CheckCASecretWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkcasecretwithkubectl-kubectl-core-kubectlrunner-error)
+- [`func CheckCertManagerInstalledWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkcertmanagerinstalledwithkubectl-kubectl-core-kubectlrunner-error)
+- [`func CheckCertificateWithKubectl(kubectl core.KubectlRunner, name, namespace string) error`](#cli-cert-manager-func-checkcertificatewithkubectl-kubectl-core-kubectlrunner-name-namespace-string-error)
+- [`func CheckClusterIssuerWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkclusterissuerwithkubectl-kubectl-core-kubectlrunner-error)
+- [`func CheckNamedClusterIssuerWithKubectl(kubectl core.KubectlRunner, name string) error`](#cli-cert-manager-func-checknamedclusterissuerwithkubectl-kubectl-core-kubectlrunner-name-string-error)
+- [`func ClusterIssuerNameForACME(staging bool) string`](#cli-cert-manager-func-clusterissuernameforacme-staging-bool-string)
+- [`func EnsureCertManagerInstalled(kubectl core.KubectlRunner, logger *zap.Logger) error`](#cli-cert-manager-func-ensurecertmanagerinstalled-kubectl-core-kubectlrunner-logger-zap-logger-error)
+- [`func PreflightACMEHostnamesPort80(dnsNames []string)`](#cli-cert-manager-func-preflightacmehostnamesport80-dnsnames-string)
+- [`func ValidateACMEHostnameForPublicCA() error`](#cli-cert-manager-func-validateacmehostnameforpublicca-error)
+- [`func ValidateIngressManifestForACME(ingressManifest string) error`](#cli-cert-manager-func-validateingressmanifestforacme-ingressmanifest-string-error)
+- [`func WaitForCertificateReadyWithKubectl(kubectl core.KubectlRunner, name, namespace string, timeout time.Duration) error`](#cli-cert-manager-func-waitforcertificatereadywithkubectl-kubectl-core-kubectlrunner-name-namespace-string-timeout-time-duration-error)
+- [`func WaitForTraefikDeploymentForACME(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-waitfortraefikdeploymentforacme-kubectl-core-kubectlrunner-error)
+- [`type CertManager struct`](#cli-cert-manager-type-certmanager-struct)
+- [`func NewCertManager(kubectl core.KubectlRunner, logger *zap.Logger) *CertManager`](#cli-cert-manager-func-newcertmanager-kubectl-core-kubectlrunner-logger-zap-logger-certmanager)
+- [`func (m *CertManager) Apply(dryRun bool) error`](#cli-cert-manager-func-m-certmanager-apply-dryrun-bool-error)
+- [`func (m *CertManager) Status() error`](#cli-cert-manager-func-m-certmanager-status-error)
+- [`func (m *CertManager) Wait(timeout time.Duration) error`](#cli-cert-manager-func-m-certmanager-wait-timeout-time-duration-error)
+
+<a id="cli-cert-manager-constants"></a>
+### Constants
+
+```text
+const (
+	CertClusterIssuerName   = certClusterIssuerName
+	RegistryCertificateName = registryCertificateName
+)
+```
+
+<a id="cli-cert-manager-functions"></a>
+### Functions
+
+<a id="cli-cert-manager-func-acmetlsdnsnames-string"></a>
+```text
+func ACMETLSDNSNames() []string
+```
+
+<a id="cli-cert-manager-func-applyclusterissuerwithkubectl-kubectl-core-kubectlrunner-error"></a>
+```text
+func ApplyClusterIssuerWithKubectl(kubectl core.KubectlRunner) error
+```
+
+<a id="cli-cert-manager-func-applyletsencryptclusterissuer-kubectl-core-kubectlrunner-email-string-staging-bool-logger-zap-logger-error"></a>
+```text
+func ApplyLetsEncryptClusterIssuer(kubectl core.KubectlRunner, email string, staging bool, logger *zap.Logger) error
+```
+
+<a id="cli-cert-manager-func-applyregistrycertificateforacme-kubectl-core-kubectlrunner-dnsnames-string-issuername-string-error"></a>
+```text
+func ApplyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []string, issuerName string) error
+```
+
+<a id="cli-cert-manager-func-applyregistrycertificatewithkubectl-kubectl-core-kubectlrunner-error"></a>
+```text
+func ApplyRegistryCertificateWithKubectl(kubectl core.KubectlRunner) error
+```
+
+<a id="cli-cert-manager-func-checkcasecretwithkubectl-kubectl-core-kubectlrunner-error"></a>
+```text
+func CheckCASecretWithKubectl(kubectl core.KubectlRunner) error
+```
+
+<a id="cli-cert-manager-func-checkcertmanagerinstalledwithkubectl-kubectl-core-kubectlrunner-error"></a>
+```text
+func CheckCertManagerInstalledWithKubectl(kubectl core.KubectlRunner) error
+```
+
+<a id="cli-cert-manager-func-checkcertificatewithkubectl-kubectl-core-kubectlrunner-name-namespace-string-error"></a>
+```text
+func CheckCertificateWithKubectl(kubectl core.KubectlRunner, name, namespace string) error
+```
+
+<a id="cli-cert-manager-func-checkclusterissuerwithkubectl-kubectl-core-kubectlrunner-error"></a>
+```text
+func CheckClusterIssuerWithKubectl(kubectl core.KubectlRunner) error
+```
+
+<a id="cli-cert-manager-func-checknamedclusterissuerwithkubectl-kubectl-core-kubectlrunner-name-string-error"></a>
+```text
+func CheckNamedClusterIssuerWithKubectl(kubectl core.KubectlRunner, name string) error
+```
+
+<a id="cli-cert-manager-func-clusterissuernameforacme-staging-bool-string"></a>
+```text
+func ClusterIssuerNameForACME(staging bool) string
+    ClusterIssuerNameForACME returns the ClusterIssuer resource name for Let's
+    Encrypt.
+
+```
+
+<a id="cli-cert-manager-func-ensurecertmanagerinstalled-kubectl-core-kubectlrunner-logger-zap-logger-error"></a>
+```text
+func EnsureCertManagerInstalled(kubectl core.KubectlRunner, logger *zap.Logger) error
+```
+
+<a id="cli-cert-manager-func-preflightacmehostnamesport80-dnsnames-string"></a>
+```text
+func PreflightACMEHostnamesPort80(dnsNames []string)
+```
+
+<a id="cli-cert-manager-func-validateacmehostnameforpublicca-error"></a>
+```text
+func ValidateACMEHostnameForPublicCA() error
+```
+
+<a id="cli-cert-manager-func-validateingressmanifestforacme-ingressmanifest-string-error"></a>
+```text
+func ValidateIngressManifestForACME(ingressManifest string) error
+```
+
+<a id="cli-cert-manager-func-waitforcertificatereadywithkubectl-kubectl-core-kubectlrunner-name-namespace-string-timeout-time-duration-error"></a>
+```text
+func WaitForCertificateReadyWithKubectl(kubectl core.KubectlRunner, name, namespace string, timeout time.Duration) error
+```
+
+<a id="cli-cert-manager-func-waitfortraefikdeploymentforacme-kubectl-core-kubectlrunner-error"></a>
+```text
+func WaitForTraefikDeploymentForACME(kubectl core.KubectlRunner) error
+```
+
+<a id="cli-cert-manager-types"></a>
+### Types
+
+<a id="cli-cert-manager-type-certmanager-struct"></a>
+```text
+type CertManager struct {
+	// Has unexported fields.
+}
+    CertManager manages cert-manager resources for the platform.
+
+```
+
+<a id="cli-cert-manager-func-newcertmanager-kubectl-core-kubectlrunner-logger-zap-logger-certmanager"></a>
+```text
+func NewCertManager(kubectl core.KubectlRunner, logger *zap.Logger) *CertManager
+    NewCertManager creates a CertManager with the given dependencies.
+
+```
+
+<a id="cli-cert-manager-func-m-certmanager-apply-dryrun-bool-error"></a>
+```text
+func (m *CertManager) Apply(dryRun bool) error
+    Apply installs cert-manager resources required for registry TLS. When dryRun
+    is true, the read-only preflight checks still run (to catch obvious problems
+    like missing cert-manager) but no kubectl apply is performed.
+
+```
+
+<a id="cli-cert-manager-func-m-certmanager-status-error"></a>
+```text
+func (m *CertManager) Status() error
+    Status verifies cert-manager installation and required resources.
+
+```
+
+<a id="cli-cert-manager-func-m-certmanager-wait-timeout-time-duration-error"></a>
+```text
+func (m *CertManager) Wait(timeout time.Duration) error
+    Wait blocks until the registry certificate is Ready or times out.
+```
+
+<a id="cli-platform-api"></a>
+## CLI platform API
+
+Package: `platformapi`
+Import path: `mcp-runtime/internal/cli/platformapi`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/platformapi
+```
+
+<a id="cli-platform-api-overview"></a>
+### Overview
+
+_No package overview is documented._
+
+### Jump To
+
+- [Overview](#cli-platform-api-overview)
+- [Index](#cli-platform-api-index)
+- [Functions](#cli-platform-api-functions)
+- [Types](#cli-platform-api-types)
+
+<a id="cli-platform-api-index"></a>
+### Index
+
+- [`func HasPlatformClient() bool`](#cli-platform-api-func-hasplatformclient-bool)
+- [`func NormalizeBaseURL(raw string) string`](#cli-platform-api-func-normalizebaseurl-raw-string-string)
+- [`type PlatformClient struct`](#cli-platform-api-type-platformclient-struct)
+- [`func NewPlatformClient() (*PlatformClient, error)`](#cli-platform-api-func-newplatformclient-platformclient-error)
+- [`func ResolvePlatformOrKube(useKube bool) (*PlatformClient, bool, error)`](#cli-platform-api-func-resolveplatformorkube-usekube-bool-platformclient-bool-error)
+- [`func (c *PlatformClient) ApplyAccessFromYAMLFile(ctx context.Context, path string) error`](#cli-platform-api-func-c-platformclient-applyaccessfromyamlfile-ctx-context-context-path-string-error)
+- [`func (c *PlatformClient) DeleteGrant(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deletegrant-ctx-context-context-namespace-name-string-error)
+- [`func (c *PlatformClient) DeleteSession(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deletesession-ctx-context-context-namespace-name-string-error)
+- [`func (c *PlatformClient) GetGrant(ctx context.Context, namespace, name string) (sentinelaccess.GrantSummary, error)`](#cli-platform-api-func-c-platformclient-getgrant-ctx-context-context-namespace-name-string-sentinelaccess-grantsummary-error)
+- [`func (c *PlatformClient) GetRuntimePolicy(ctx context.Context, namespace, server string) ([]byte, error)`](#cli-platform-api-func-c-platformclient-getruntimepolicy-ctx-context-context-namespace-server-string-byte-error)
+- [`func (c *PlatformClient) GetSession(ctx context.Context, namespace, name string) (sentinelaccess.SessionSummary, error)`](#cli-platform-api-func-c-platformclient-getsession-ctx-context-context-namespace-name-string-sentinelaccess-sessionsummary-error)
+- [`func (c *PlatformClient) ListGrants(ctx context.Context, namespace string) ([]sentinelaccess.GrantSummary, error)`](#cli-platform-api-func-c-platformclient-listgrants-ctx-context-context-namespace-string-sentinelaccess-grantsummary-error)
+- [`func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace string) ([]ServerListItem, error)`](#cli-platform-api-func-c-platformclient-listruntimeservers-ctx-context-context-namespace-string-serverlistitem-error)
+- [`func (c *PlatformClient) ListSessions(ctx context.Context, namespace string) ([]sentinelaccess.SessionSummary, error)`](#cli-platform-api-func-c-platformclient-listsessions-ctx-context-context-namespace-string-sentinelaccess-sessionsummary-error)
+- [`func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postgranttoggle-ctx-context-context-namespace-name-action-string-error)
+- [`func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postsessiontoggle-ctx-context-context-namespace-name-action-string-error)
+- [`type ServerListItem struct`](#cli-platform-api-type-serverlistitem-struct)
+
+<a id="cli-platform-api-functions"></a>
+### Functions
+
+<a id="cli-platform-api-func-hasplatformclient-bool"></a>
+```text
+func HasPlatformClient() bool
+```
+
+<a id="cli-platform-api-func-normalizebaseurl-raw-string-string"></a>
+```text
+func NormalizeBaseURL(raw string) string
+    NormalizeBaseURL trims whitespace, trailing slashes, and an optional
+    trailing /api suffix from a platform base URL.
+```
+
+<a id="cli-platform-api-types"></a>
+### Types
+
+<a id="cli-platform-api-type-platformclient-struct"></a>
+```text
+type PlatformClient struct {
+	// Has unexported fields.
+}
+    PlatformClient calls the mcp-sentinel API with an API key.
+
+```
+
+<a id="cli-platform-api-func-newplatformclient-platformclient-error"></a>
+```text
+func NewPlatformClient() (*PlatformClient, error)
+    NewPlatformClient returns a client when platform credentials and
+    API base URL are configured. If the user is not logged in, returns
+    authfile.ErrNotFound so the caller can fall back to kubectl.
+
+```
+
+<a id="cli-platform-api-func-resolveplatformorkube-usekube-bool-platformclient-bool-error"></a>
+```text
+func ResolvePlatformOrKube(useKube bool) (*PlatformClient, bool, error)
+    ResolvePlatformOrKube returns a platform API client when useKube is false
+    and auth resolves; otherwise useKubectl is true.
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-applyaccessfromyamlfile-ctx-context-context-path-string-error"></a>
+```text
+func (c *PlatformClient) ApplyAccessFromYAMLFile(ctx context.Context, path string) error
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-deletegrant-ctx-context-context-namespace-name-string-error"></a>
+```text
+func (c *PlatformClient) DeleteGrant(ctx context.Context, namespace, name string) error
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-deletesession-ctx-context-context-namespace-name-string-error"></a>
+```text
+func (c *PlatformClient) DeleteSession(ctx context.Context, namespace, name string) error
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-getgrant-ctx-context-context-namespace-name-string-sentinelaccess-grantsummary-error"></a>
+```text
+func (c *PlatformClient) GetGrant(ctx context.Context, namespace, name string) (sentinelaccess.GrantSummary, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-getruntimepolicy-ctx-context-context-namespace-server-string-byte-error"></a>
+```text
+func (c *PlatformClient) GetRuntimePolicy(ctx context.Context, namespace, server string) ([]byte, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-getsession-ctx-context-context-namespace-name-string-sentinelaccess-sessionsummary-error"></a>
+```text
+func (c *PlatformClient) GetSession(ctx context.Context, namespace, name string) (sentinelaccess.SessionSummary, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-listgrants-ctx-context-context-namespace-string-sentinelaccess-grantsummary-error"></a>
+```text
+func (c *PlatformClient) ListGrants(ctx context.Context, namespace string) ([]sentinelaccess.GrantSummary, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-listruntimeservers-ctx-context-context-namespace-string-serverlistitem-error"></a>
+```text
+func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace string) ([]ServerListItem, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-listsessions-ctx-context-context-namespace-string-sentinelaccess-sessionsummary-error"></a>
+```text
+func (c *PlatformClient) ListSessions(ctx context.Context, namespace string) ([]sentinelaccess.SessionSummary, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-postgranttoggle-ctx-context-context-namespace-name-action-string-error"></a>
+```text
+func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, action string) error
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-postsessiontoggle-ctx-context-context-namespace-name-action-string-error"></a>
+```text
+func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name, action string) error
+
+```
+
+<a id="cli-platform-api-type-serverlistitem-struct"></a>
+```text
+type ServerListItem struct {
+	Name      string            `json:"name"`
+	Namespace string            `json:"namespace"`
+	Ready     string            `json:"ready"`
+	Status    string            `json:"status"`
+	Labels    map[string]string `json:"labels"`
+	Age       string            `json:"age"`
+}
+    ServerListItem is one row from the platform API runtime servers list.
+```
+
+<a id="cli-platform-status"></a>
+## CLI platform status
+
+Package: `platformstatus`
+Import path: `mcp-runtime/internal/cli/platformstatus`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/platformstatus
+```
+
+<a id="cli-platform-status-overview"></a>
+### Overview
+
+_No package overview is documented._
+
+### Jump To
+
+- [Overview](#cli-platform-status-overview)
+- [Index](#cli-platform-status-index)
+- [Variables](#cli-platform-status-variables)
+- [Functions](#cli-platform-status-functions)
+- [Types](#cli-platform-status-types)
+
+<a id="cli-platform-status-index"></a>
+### Index
+
+- [`Variables`](#cli-platform-status-variables)
+- [`func AnalyticsNamespaceInstalled(kubectl core.KubectlRunner, clusterReachable bool) (bool, error)`](#cli-platform-status-func-analyticsnamespaceinstalled-kubectl-core-kubectlrunner-clusterreachable-bool-bool-error)
+- [`func AnalyticsStackRow(status, details string) []string`](#cli-platform-status-func-analyticsstackrow-status-details-string-string)
+- [`func CheckClusterStatusQuiet(kubectl core.KubectlRunner) error`](#cli-platform-status-func-checkclusterstatusquiet-kubectl-core-kubectlrunner-error)
+- [`func WorkloadStatusRow(kubectl core.KubectlRunner, workload PlatformWorkload, clusterReachable bool) []string`](#cli-platform-status-func-workloadstatusrow-kubectl-core-kubectlrunner-workload-platformworkload-clusterreachable-bool-string)
+- [`type PlatformWorkload struct`](#cli-platform-status-type-platformworkload-struct)
+
+<a id="cli-platform-status-variables"></a>
+### Variables
+
+```text
+var DefaultPlatformStatusWorkloads = []PlatformWorkload{
+	{Component: "ClickHouse", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Name: "clickhouse"},
+	{Component: "Zookeeper", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "zookeeper"},
+	{Component: "Kafka", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Name: "kafka"},
+	{Component: "Ingest", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-ingest"},
+	{Component: "Processor", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-processor"},
+	{Component: "API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-api"},
+	{Component: "UI", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-ui"},
+	{Component: "Gateway", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-gateway"},
+	{Component: "Prometheus", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "prometheus"},
+	{Component: "Grafana", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "grafana"},
+	{Component: "OTel Collector", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "otel-collector"},
+	{Component: "Tempo", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Name: "tempo"},
+	{Component: "Loki", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Name: "loki"},
+	{Component: "Promtail", Namespace: core.DefaultAnalyticsNamespace, Kind: "daemonset", Name: "promtail"},
+}
+    DefaultPlatformStatusWorkloads lists bundled analytics stack workloads for
+    status output.
+```
+
+<a id="cli-platform-status-functions"></a>
+### Functions
+
+<a id="cli-platform-status-func-analyticsnamespaceinstalled-kubectl-core-kubectlrunner-clusterreachable-bool-bool-error"></a>
+```text
+func AnalyticsNamespaceInstalled(kubectl core.KubectlRunner, clusterReachable bool) (bool, error)
+    AnalyticsNamespaceInstalled reports whether the analytics namespace exists.
+
+```
+
+<a id="cli-platform-status-func-analyticsstackrow-status-details-string-string"></a>
+```text
+func AnalyticsStackRow(status, details string) []string
+    AnalyticsStackRow builds a table row for the analytics namespace aggregate
+    status.
+
+```
+
+<a id="cli-platform-status-func-checkclusterstatusquiet-kubectl-core-kubectlrunner-error"></a>
+```text
+func CheckClusterStatusQuiet(kubectl core.KubectlRunner) error
+    CheckClusterStatusQuiet probes cluster connectivity without printing status.
+
+```
+
+<a id="cli-platform-status-func-workloadstatusrow-kubectl-core-kubectlrunner-workload-platformworkload-clusterreachable-bool-string"></a>
+```text
+func WorkloadStatusRow(kubectl core.KubectlRunner, workload PlatformWorkload, clusterReachable bool) []string
+    WorkloadStatusRow renders one workload row for platform status tables.
+```
+
+<a id="cli-platform-status-types"></a>
+### Types
+
+<a id="cli-platform-status-type-platformworkload-struct"></a>
+```text
+type PlatformWorkload struct {
+	Component string
+	Namespace string
+	Kind      string
+	Name      string
+}
+    PlatformWorkload identifies a namespaced workload for status tables.
+```
+
+<a id="cli-registry"></a>
+## CLI registry
+
+Package: `registry`
+Import path: `mcp-runtime/internal/cli/registry`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/registry
+```
+
+<a id="cli-registry-overview"></a>
+### Overview
+
+Package registry owns routing for the registry top-level command.
+
+### Jump To
+
+- [Overview](#cli-registry-overview)
+- [Index](#cli-registry-index)
+- [Functions](#cli-registry-functions)
+- [Types](#cli-registry-types)
+
+<a id="cli-registry-index"></a>
+### Index
+
+- [`func DefaultGitTag() string`](#cli-registry-func-defaultgittag-string)
+- [`func DeployRegistry(logger *zap.Logger, namespace string, port int, registryType, registryStorageSize, manifestPath string) error`](#cli-registry-func-deployregistry-logger-zap-logger-namespace-string-port-int-registrytype-registrystoragesize-manifestpath-string-error)
+- [`func New(runtime *core.Runtime) *cobra.Command`](#cli-registry-func-new-runtime-core-runtime-cobra-command)
+- [`func NewWithManager(mgr *RegistryManager) *cobra.Command`](#cli-registry-func-newwithmanager-mgr-registrymanager-cobra-command)
+- [`func ResolveExternalRegistryConfig(flagCfg *config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error)`](#cli-registry-func-resolveexternalregistryconfig-flagcfg-config-externalregistryconfig-config-externalregistryconfig-error)
+- [`func ResolvePlatformRegistryURL(logger *zap.Logger) string`](#cli-registry-func-resolveplatformregistryurl-logger-zap-logger-string)
+- [`func RunRegistryProvision(mgr *RegistryManager, url, username, password, operatorImage string, dryRun bool) error`](#cli-registry-func-runregistryprovision-mgr-registrymanager-url-username-password-operatorimage-string-dryrun-bool-error)
+- [`func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helperNamespace string) error`](#cli-registry-func-runregistrypush-mgr-registrymanager-image-registryurl-name-mode-helpernamespace-string-error)
+- [`type RegistryManager struct`](#cli-registry-type-registrymanager-struct)
+- [`func DefaultRegistryManager(logger *zap.Logger) *RegistryManager`](#cli-registry-func-defaultregistrymanager-logger-zap-logger-registrymanager)
+- [`func NewRegistryManager(kubectl *core.KubectlClient, exec core.Executor, logger *zap.Logger) *RegistryManager`](#cli-registry-func-newregistrymanager-kubectl-core-kubectlclient-exec-core-executor-logger-zap-logger-registrymanager)
+- [`func (m *RegistryManager) CheckRegistryStatus(namespace string) error`](#cli-registry-func-m-registrymanager-checkregistrystatus-namespace-string-error)
+- [`func (m *RegistryManager) LoginRegistry(registryURL, username, password string) error`](#cli-registry-func-m-registrymanager-loginregistry-registryurl-username-password-string-error)
+- [`func (m *RegistryManager) PushDirect(source, target string) error`](#cli-registry-func-m-registrymanager-pushdirect-source-target-string-error)
+- [`func (m *RegistryManager) PushInCluster(source, target, helperNS string) error`](#cli-registry-func-m-registrymanager-pushincluster-source-target-helperns-string-error)
+- [`func (m *RegistryManager) ShowRegistryInfo() error`](#cli-registry-func-m-registrymanager-showregistryinfo-error)
+
+<a id="cli-registry-functions"></a>
+### Functions
+
+<a id="cli-registry-func-defaultgittag-string"></a>
+```text
+func DefaultGitTag() string
+```
+
+<a id="cli-registry-func-deployregistry-logger-zap-logger-namespace-string-port-int-registrytype-registrystoragesize-manifestpath-string-error"></a>
+```text
+func DeployRegistry(logger *zap.Logger, namespace string, port int, registryType, registryStorageSize, manifestPath string) error
+```
+
+<a id="cli-registry-func-new-runtime-core-runtime-cobra-command"></a>
+```text
+func New(runtime *core.Runtime) *cobra.Command
+    New returns the registry command.
+
+```
+
+<a id="cli-registry-func-newwithmanager-mgr-registrymanager-cobra-command"></a>
+```text
+func NewWithManager(mgr *RegistryManager) *cobra.Command
+    NewWithManager returns the registry command using the provided manager.
+
+```
+
+<a id="cli-registry-func-resolveexternalregistryconfig-flagcfg-config-externalregistryconfig-config-externalregistryconfig-error"></a>
+```text
+func ResolveExternalRegistryConfig(flagCfg *config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error)
+```
+
+<a id="cli-registry-func-resolveplatformregistryurl-logger-zap-logger-string"></a>
+```text
+func ResolvePlatformRegistryURL(logger *zap.Logger) string
+```
+
+<a id="cli-registry-func-runregistryprovision-mgr-registrymanager-url-username-password-operatorimage-string-dryrun-bool-error"></a>
+```text
+func RunRegistryProvision(mgr *RegistryManager, url, username, password, operatorImage string, dryRun bool) error
+    RunRegistryProvision contains the registry provision command flow for folder
+    packages.
+
+```
+
+<a id="cli-registry-func-runregistrypush-mgr-registrymanager-image-registryurl-name-mode-helpernamespace-string-error"></a>
+```text
+func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helperNamespace string) error
+    RunRegistryPush contains the registry push command flow for folder packages.
+```
+
+<a id="cli-registry-types"></a>
+### Types
+
+<a id="cli-registry-type-registrymanager-struct"></a>
+```text
+type RegistryManager struct {
+	// Has unexported fields.
+}
+    RegistryManager handles registry operations with injected dependencies.
+
+```
+
+<a id="cli-registry-func-defaultregistrymanager-logger-zap-logger-registrymanager"></a>
+```text
+func DefaultRegistryManager(logger *zap.Logger) *RegistryManager
+    DefaultRegistryManager returns a RegistryManager using default clients.
+
+```
+
+<a id="cli-registry-func-newregistrymanager-kubectl-core-kubectlclient-exec-core-executor-logger-zap-logger-registrymanager"></a>
+```text
+func NewRegistryManager(kubectl *core.KubectlClient, exec core.Executor, logger *zap.Logger) *RegistryManager
+    NewRegistryManager creates a RegistryManager with the given dependencies.
+
+```
+
+<a id="cli-registry-func-m-registrymanager-checkregistrystatus-namespace-string-error"></a>
+```text
+func (m *RegistryManager) CheckRegistryStatus(namespace string) error
+    CheckRegistryStatus checks and displays registry status.
+
+```
+
+<a id="cli-registry-func-m-registrymanager-loginregistry-registryurl-username-password-string-error"></a>
+```text
+func (m *RegistryManager) LoginRegistry(registryURL, username, password string) error
+    LoginRegistry logs into a container registry.
+
+```
+
+<a id="cli-registry-func-m-registrymanager-pushdirect-source-target-string-error"></a>
+```text
+func (m *RegistryManager) PushDirect(source, target string) error
+    PushDirect pushes an image directly using docker.
+
+```
+
+<a id="cli-registry-func-m-registrymanager-pushincluster-source-target-helperns-string-error"></a>
+```text
+func (m *RegistryManager) PushInCluster(source, target, helperNS string) error
+    PushInCluster pushes an image using an in-cluster helper pod.
+
+```
+
+<a id="cli-registry-func-m-registrymanager-showregistryinfo-error"></a>
+```text
+func (m *RegistryManager) ShowRegistryInfo() error
+    ShowRegistryInfo displays registry connection information.
+```
+
+<a id="cli-registry-config"></a>
+## CLI registry config
+
+Package: `config`
+Import path: `mcp-runtime/internal/cli/registry/config`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/registry/config
+```
+
+<a id="cli-registry-config-overview"></a>
+### Overview
+
+_No package overview is documented._
+
+### Jump To
+
+- [Overview](#cli-registry-config-overview)
+- [Index](#cli-registry-config-index)
+- [Variables](#cli-registry-config-variables)
+- [Functions](#cli-registry-config-functions)
+- [Types](#cli-registry-config-types)
+
+<a id="cli-registry-config-index"></a>
+### Index
+
+- [`Variables`](#cli-registry-config-variables)
+- [`func Marshal(cfg *ExternalRegistryConfig) ([]byte, error)`](#cli-registry-config-func-marshal-cfg-externalregistryconfig-byte-error)
+- [`func Path() (string, error)`](#cli-registry-config-func-path-string-error)
+- [`func Save(cfg *ExternalRegistryConfig) error`](#cli-registry-config-func-save-cfg-externalregistryconfig-error)
+- [`type Env struct`](#cli-registry-config-type-env-struct)
+- [`type ExternalRegistryConfig struct`](#cli-registry-config-type-externalregistryconfig-struct)
+- [`func Load() (*ExternalRegistryConfig, error)`](#cli-registry-config-func-load-externalregistryconfig-error)
+- [`func Resolve(flagCfg *ExternalRegistryConfig, env Env) (*ExternalRegistryConfig, error)`](#cli-registry-config-func-resolve-flagcfg-externalregistryconfig-env-env-externalregistryconfig-error)
+
+<a id="cli-registry-config-variables"></a>
+### Variables
+
+```text
+var (
+	ErrURLRequired        = errors.New("registry url is required")
+	ErrURLMissingInConfig = errors.New("registry url missing in config")
+)
+```
+
+<a id="cli-registry-config-functions"></a>
+### Functions
+
+<a id="cli-registry-config-func-marshal-cfg-externalregistryconfig-byte-error"></a>
+```text
+func Marshal(cfg *ExternalRegistryConfig) ([]byte, error)
+```
+
+<a id="cli-registry-config-func-path-string-error"></a>
+```text
+func Path() (string, error)
+```
+
+<a id="cli-registry-config-func-save-cfg-externalregistryconfig-error"></a>
+```text
+func Save(cfg *ExternalRegistryConfig) error
+```
+
+<a id="cli-registry-config-types"></a>
+### Types
+
+<a id="cli-registry-config-type-env-struct"></a>
+```text
+type Env struct {
+	URL      string
+	Username string
+	Password string
 }
 
 ```
 
-<a id="cli-internals-func-defaultsentinelmanager-logger-zap-logger-sentinelmanager"></a>
+<a id="cli-registry-config-type-externalregistryconfig-struct"></a>
 ```text
-func DefaultSentinelManager(logger *zap.Logger) *SentinelManager
+type ExternalRegistryConfig struct {
+	URL      string `yaml:"url"`
+	Username string `yaml:"username,omitempty"`
+	Password string `yaml:"password,omitempty"`
+}
 
 ```
 
-<a id="cli-internals-func-newsentinelmanager-kubectl-kubectlclient-logger-zap-logger-sentinelmanager"></a>
+<a id="cli-registry-config-func-load-externalregistryconfig-error"></a>
 ```text
-func NewSentinelManager(kubectl *KubectlClient, logger *zap.Logger) *SentinelManager
+func Load() (*ExternalRegistryConfig, error)
 
 ```
 
-<a id="cli-internals-func-m-sentinelmanager-portforwardsentineltarget-target-string-localport-int-address-string-error"></a>
+<a id="cli-registry-config-func-resolve-flagcfg-externalregistryconfig-env-env-externalregistryconfig-error"></a>
 ```text
-func (m *SentinelManager) PortForwardSentinelTarget(target string, localPort int, address string) error
+func Resolve(flagCfg *ExternalRegistryConfig, env Env) (*ExternalRegistryConfig, error)
+    Resolve returns external registry config using precedence: flags > env >
+    config file.
+```
+
+<a id="cli-registry-references"></a>
+## CLI registry references
+
+Package: `ref`
+Import path: `mcp-runtime/internal/cli/registry/ref`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/registry/ref
+```
+
+<a id="cli-registry-references-overview"></a>
+### Overview
+
+_No package overview is documented._
+
+### Jump To
+
+- [Overview](#cli-registry-references-overview)
+- [Index](#cli-registry-references-index)
+- [Functions](#cli-registry-references-functions)
+
+<a id="cli-registry-references-index"></a>
+### Index
+
+- [`func DropRegistryPrefix(repo string) string`](#cli-registry-references-func-dropregistryprefix-repo-string-string)
+- [`func SplitImage(image string) (string, string)`](#cli-registry-references-func-splitimage-image-string-string-string)
+
+<a id="cli-registry-references-functions"></a>
+### Functions
+
+<a id="cli-registry-references-func-dropregistryprefix-repo-string-string"></a>
+```text
+func DropRegistryPrefix(repo string) string
+    DropRegistryPrefix removes an explicit registry host from an image
+    repository.
 
 ```
 
-<a id="cli-internals-func-m-sentinelmanager-restartsentinel-component-string-restartall-bool-error"></a>
+<a id="cli-registry-references-func-splitimage-image-string-string-string"></a>
 ```text
-func (m *SentinelManager) RestartSentinel(component string, restartAll bool) error
+func SplitImage(image string) (string, string)
+    SplitImage returns the repository/name portion and optional tag for an image
+    reference.
+```
+
+<a id="cli-registry-resolution"></a>
+## CLI registry resolution
+
+Package: `resolve`
+Import path: `mcp-runtime/internal/cli/registry/resolve`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/registry/resolve
+```
+
+<a id="cli-registry-resolution-overview"></a>
+### Overview
+
+_No package overview is documented._
+
+### Jump To
+
+- [Overview](#cli-registry-resolution-overview)
+- [Index](#cli-registry-resolution-index)
+- [Functions](#cli-registry-resolution-functions)
+- [Types](#cli-registry-resolution-types)
+
+<a id="cli-registry-resolution-index"></a>
+### Index
+
+- [`func GitTag(command CommandFactory) string`](#cli-registry-resolution-func-gittag-command-commandfactory-string)
+- [`func PlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string`](#cli-registry-resolution-func-platformurl-logger-zap-logger-kubectl-kubectlcommand-cfg-config-string)
+- [`type CommandFactory func(name string, args []string) (OutputCommand, error)`](#cli-registry-resolution-type-commandfactory-func-name-string-args-string-outputcommand-error)
+- [`type Config struct`](#cli-registry-resolution-type-config-struct)
+- [`type KubectlCommand func(args []string) (OutputCommand, error)`](#cli-registry-resolution-type-kubectlcommand-func-args-string-outputcommand-error)
+- [`type OutputCommand interface`](#cli-registry-resolution-type-outputcommand-interface)
+
+<a id="cli-registry-resolution-functions"></a>
+### Functions
+
+<a id="cli-registry-resolution-func-gittag-command-commandfactory-string"></a>
+```text
+func GitTag(command CommandFactory) string
+    GitTag returns a short git SHA when available, otherwise "latest".
 
 ```
 
-<a id="cli-internals-func-m-sentinelmanager-showsentinelevents-error"></a>
+<a id="cli-registry-resolution-func-platformurl-logger-zap-logger-kubectl-kubectlcommand-cfg-config-string"></a>
 ```text
-func (m *SentinelManager) ShowSentinelEvents() error
+func PlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string
+    PlatformURL resolves the registry host:port used for image names.
+```
+
+<a id="cli-registry-resolution-types"></a>
+### Types
+
+<a id="cli-registry-resolution-type-commandfactory-func-name-string-args-string-outputcommand-error"></a>
+```text
+type CommandFactory func(name string, args []string) (OutputCommand, error)
 
 ```
 
-<a id="cli-internals-func-m-sentinelmanager-showsentinelstatus-error"></a>
+<a id="cli-registry-resolution-type-config-struct"></a>
 ```text
-func (m *SentinelManager) ShowSentinelStatus() error
+type Config struct {
+	RegistryEndpoint        string
+	DefaultRegistryEndpoint string
+	RegistryPort            int
+}
 
 ```
 
-<a id="cli-internals-func-m-sentinelmanager-viewsentinellogs-component-string-follow-previous-bool-tail-int-since-string-error"></a>
+<a id="cli-registry-resolution-type-kubectlcommand-func-args-string-outputcommand-error"></a>
 ```text
-func (m *SentinelManager) ViewSentinelLogs(component string, follow, previous bool, tail int, since string) error
+type KubectlCommand func(args []string) (OutputCommand, error)
 
 ```
 
-<a id="cli-internals-type-servermanager-struct"></a>
+<a id="cli-registry-resolution-type-outputcommand-interface"></a>
+```text
+type OutputCommand interface {
+	Output() ([]byte, error)
+}
+```
+
+<a id="cli-server"></a>
+## CLI server
+
+Package: `server`
+Import path: `mcp-runtime/internal/cli/server`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/server
+```
+
+<a id="cli-server-overview"></a>
+### Overview
+
+Package server owns routing for the server top-level command.
+
+### Jump To
+
+- [Overview](#cli-server-overview)
+- [Index](#cli-server-index)
+- [Functions](#cli-server-functions)
+- [Types](#cli-server-types)
+
+<a id="cli-server-index"></a>
+### Index
+
+- [`func BuildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, context string) error`](#cli-server-func-buildimage-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-context-string-error)
+- [`func New(runtime *core.Runtime) *cobra.Command`](#cli-server-func-new-runtime-core-runtime-cobra-command)
+- [`func NewWithManager(mgr *ServerManager) *cobra.Command`](#cli-server-func-newwithmanager-mgr-servermanager-cobra-command)
+- [`type ServerManager struct`](#cli-server-type-servermanager-struct)
+- [`func DefaultServerManager(logger *zap.Logger) *ServerManager`](#cli-server-func-defaultservermanager-logger-zap-logger-servermanager)
+- [`func NewServerManager(kubectl *core.KubectlClient, logger *zap.Logger) *ServerManager`](#cli-server-func-newservermanager-kubectl-core-kubectlclient-logger-zap-logger-servermanager)
+- [`func (m *ServerManager) ApplyServerFromFile(file string) error`](#cli-server-func-m-servermanager-applyserverfromfile-file-string-error)
+- [`func (m *ServerManager) BindUseKubeFlag(cmd *cobra.Command)`](#cli-server-func-m-servermanager-bindusekubeflag-cmd-cobra-command)
+- [`func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) error`](#cli-server-func-m-servermanager-createserver-name-namespace-image-imagetag-string-error)
+- [`func (m *ServerManager) CreateServerFromFile(file string) error`](#cli-server-func-m-servermanager-createserverfromfile-file-string-error)
+- [`func (m *ServerManager) DeleteServer(name, namespace string) error`](#cli-server-func-m-servermanager-deleteserver-name-namespace-string-error)
+- [`func (m *ServerManager) ExportServer(name, namespace, file string) error`](#cli-server-func-m-servermanager-exportserver-name-namespace-file-string-error)
+- [`func (m *ServerManager) GetServer(name, namespace string) error`](#cli-server-func-m-servermanager-getserver-name-namespace-string-error)
+- [`func (m *ServerManager) InspectServerPolicy(name, namespace string) error`](#cli-server-func-m-servermanager-inspectserverpolicy-name-namespace-string-error)
+- [`func (m *ServerManager) ListServers(namespace string) error`](#cli-server-func-m-servermanager-listservers-namespace-string-error)
+- [`func (m *ServerManager) Logger() *zap.Logger`](#cli-server-func-m-servermanager-logger-zap-logger)
+- [`func (m *ServerManager) PatchServer(name, namespace, patchType, patch, patchFile string) error`](#cli-server-func-m-servermanager-patchserver-name-namespace-patchtype-patch-patchfile-string-error)
+- [`func (m *ServerManager) ServerStatus(namespace string) error`](#cli-server-func-m-servermanager-serverstatus-namespace-string-error)
+- [`func (m *ServerManager) ViewServerLogs(name, namespace string, follow, previous bool, tail int, since string) error`](#cli-server-func-m-servermanager-viewserverlogs-name-namespace-string-follow-previous-bool-tail-int-since-string-error)
+
+<a id="cli-server-functions"></a>
+### Functions
+
+<a id="cli-server-func-buildimage-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-context-string-error"></a>
+```text
+func BuildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, context string) error
+    BuildImage builds a Docker image and updates MCP metadata for the server.
+
+```
+
+<a id="cli-server-func-new-runtime-core-runtime-cobra-command"></a>
+```text
+func New(runtime *core.Runtime) *cobra.Command
+    New returns the server command.
+
+```
+
+<a id="cli-server-func-newwithmanager-mgr-servermanager-cobra-command"></a>
+```text
+func NewWithManager(mgr *ServerManager) *cobra.Command
+    NewWithManager returns the server command using the provided manager.
+```
+
+<a id="cli-server-types"></a>
+### Types
+
+<a id="cli-server-type-servermanager-struct"></a>
 ```text
 type ServerManager struct {
 	// Has unexported fields.
@@ -3797,7 +4613,7 @@ type ServerManager struct {
 
 ```
 
-<a id="cli-internals-func-defaultservermanager-logger-zap-logger-servermanager"></a>
+<a id="cli-server-func-defaultservermanager-logger-zap-logger-servermanager"></a>
 ```text
 func DefaultServerManager(logger *zap.Logger) *ServerManager
     DefaultServerManager returns a ServerManager using the default kubectl
@@ -3805,63 +4621,63 @@ func DefaultServerManager(logger *zap.Logger) *ServerManager
 
 ```
 
-<a id="cli-internals-func-newservermanager-kubectl-kubectlclient-logger-zap-logger-servermanager"></a>
+<a id="cli-server-func-newservermanager-kubectl-core-kubectlclient-logger-zap-logger-servermanager"></a>
 ```text
-func NewServerManager(kubectl *KubectlClient, logger *zap.Logger) *ServerManager
+func NewServerManager(kubectl *core.KubectlClient, logger *zap.Logger) *ServerManager
     NewServerManager creates a ServerManager with the given dependencies.
 
 ```
 
-<a id="cli-internals-func-m-servermanager-applyserverfromfile-file-string-error"></a>
+<a id="cli-server-func-m-servermanager-applyserverfromfile-file-string-error"></a>
 ```text
 func (m *ServerManager) ApplyServerFromFile(file string) error
     ApplyServerFromFile applies an MCPServer manifest from disk.
 
 ```
 
-<a id="cli-internals-func-m-servermanager-bindusekubeflag-cmd-cobra-command"></a>
+<a id="cli-server-func-m-servermanager-bindusekubeflag-cmd-cobra-command"></a>
 ```text
 func (m *ServerManager) BindUseKubeFlag(cmd *cobra.Command)
     BindUseKubeFlag wires the shared --use-kube flag onto the command.
 
 ```
 
-<a id="cli-internals-func-m-servermanager-createserver-name-namespace-image-imagetag-string-error"></a>
+<a id="cli-server-func-m-servermanager-createserver-name-namespace-image-imagetag-string-error"></a>
 ```text
 func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) error
     CreateServer creates a new MCP server with the given parameters.
 
 ```
 
-<a id="cli-internals-func-m-servermanager-createserverfromfile-file-string-error"></a>
+<a id="cli-server-func-m-servermanager-createserverfromfile-file-string-error"></a>
 ```text
 func (m *ServerManager) CreateServerFromFile(file string) error
     CreateServerFromFile creates an MCP server from a YAML file.
 
 ```
 
-<a id="cli-internals-func-m-servermanager-deleteserver-name-namespace-string-error"></a>
+<a id="cli-server-func-m-servermanager-deleteserver-name-namespace-string-error"></a>
 ```text
 func (m *ServerManager) DeleteServer(name, namespace string) error
     DeleteServer deletes an MCP server.
 
 ```
 
-<a id="cli-internals-func-m-servermanager-exportserver-name-namespace-file-string-error"></a>
+<a id="cli-server-func-m-servermanager-exportserver-name-namespace-file-string-error"></a>
 ```text
 func (m *ServerManager) ExportServer(name, namespace, file string) error
     ExportServer exports an MCPServer manifest to stdout or a file.
 
 ```
 
-<a id="cli-internals-func-m-servermanager-getserver-name-namespace-string-error"></a>
+<a id="cli-server-func-m-servermanager-getserver-name-namespace-string-error"></a>
 ```text
 func (m *ServerManager) GetServer(name, namespace string) error
     GetServer retrieves details for a specific MCP server.
 
 ```
 
-<a id="cli-internals-func-m-servermanager-inspectserverpolicy-name-namespace-string-error"></a>
+<a id="cli-server-func-m-servermanager-inspectserverpolicy-name-namespace-string-error"></a>
 ```text
 func (m *ServerManager) InspectServerPolicy(name, namespace string) error
     InspectServerPolicy prints the rendered gateway policy ConfigMap content for
@@ -3869,21 +4685,21 @@ func (m *ServerManager) InspectServerPolicy(name, namespace string) error
 
 ```
 
-<a id="cli-internals-func-m-servermanager-listservers-namespace-string-error"></a>
+<a id="cli-server-func-m-servermanager-listservers-namespace-string-error"></a>
 ```text
 func (m *ServerManager) ListServers(namespace string) error
     ListServers lists all MCP servers in the given namespace.
 
 ```
 
-<a id="cli-internals-func-m-servermanager-logger-zap-logger"></a>
+<a id="cli-server-func-m-servermanager-logger-zap-logger"></a>
 ```text
 func (m *ServerManager) Logger() *zap.Logger
     Logger exposes the manager logger to foldered command packages.
 
 ```
 
-<a id="cli-internals-func-m-servermanager-patchserver-name-namespace-patchtype-patch-patchfile-string-error"></a>
+<a id="cli-server-func-m-servermanager-patchserver-name-namespace-patchtype-patch-patchfile-string-error"></a>
 ```text
 func (m *ServerManager) PatchServer(name, namespace, patchType, patch, patchFile string) error
     PatchServer patches an existing MCPServer resource using
@@ -3891,137 +4707,182 @@ func (m *ServerManager) PatchServer(name, namespace, patchType, patch, patchFile
 
 ```
 
-<a id="cli-internals-func-m-servermanager-serverstatus-namespace-string-error"></a>
+<a id="cli-server-func-m-servermanager-serverstatus-namespace-string-error"></a>
 ```text
 func (m *ServerManager) ServerStatus(namespace string) error
     ServerStatus shows the status of MCP servers in a namespace.
 
 ```
 
-<a id="cli-internals-func-m-servermanager-viewserverlogs-name-namespace-string-follow-bool-error"></a>
+<a id="cli-server-func-m-servermanager-viewserverlogs-name-namespace-string-follow-previous-bool-tail-int-since-string-error"></a>
 ```text
-func (m *ServerManager) ViewServerLogs(name, namespace string, follow bool) error
+func (m *ServerManager) ViewServerLogs(name, namespace string, follow, previous bool, tail int, since string) error
     ViewServerLogs views logs from an MCP server.
+```
+
+<a id="cli-setup-asset-paths"></a>
+## CLI setup asset paths
+
+Package: `assetpath`
+Import path: `mcp-runtime/internal/cli/setup/assetpath`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/setup/assetpath
+```
+
+<a id="cli-setup-asset-paths-overview"></a>
+### Overview
+
+Package assetpath resolves repository-relative asset paths from the current
+working directory by walking upward until go.mod, services/, and k8s/ match.
+
+### Jump To
+
+- [Overview](#cli-setup-asset-paths-overview)
+- [Index](#cli-setup-asset-paths-index)
+- [Functions](#cli-setup-asset-paths-functions)
+
+<a id="cli-setup-asset-paths-index"></a>
+### Index
+
+- [`func IsRepoRoot(dir string) bool`](#cli-setup-asset-paths-func-isreporoot-dir-string-bool)
+- [`func ResolveRepoAssetPath(path string) (string, error)`](#cli-setup-asset-paths-func-resolverepoassetpath-path-string-string-error)
+- [`func ResolveRepoRoot() (string, error)`](#cli-setup-asset-paths-func-resolvereporoot-string-error)
+
+<a id="cli-setup-asset-paths-functions"></a>
+### Functions
+
+<a id="cli-setup-asset-paths-func-isreporoot-dir-string-bool"></a>
+```text
+func IsRepoRoot(dir string) bool
+    IsRepoRoot reports whether dir looks like the mcp-runtime repository root.
 
 ```
 
-<a id="cli-internals-type-setupcontext-struct"></a>
+<a id="cli-setup-asset-paths-func-resolverepoassetpath-path-string-string-error"></a>
 ```text
-type SetupContext struct {
-	Plan                  SetupPlan
-	ExternalRegistry      *ExternalRegistryConfig
-	UsingExternalRegistry bool
-	RegistrySecretName    string
-	OperatorImage         string
-	GatewayProxyImage     string
-	AnalyticsImages       AnalyticsImageSet
-}
-    SetupContext carries state shared across setup steps.
+func ResolveRepoAssetPath(path string) (string, error)
+    ResolveRepoAssetPath finds a repo-relative path from the current working
+    directory by walking upward until the asset exists. The repo assumes a
+    flattened root layout (for example services/ and k8s/ at the top level).
 
 ```
 
-<a id="cli-internals-type-setupdeps-struct"></a>
+<a id="cli-setup-asset-paths-func-resolvereporoot-string-error"></a>
 ```text
-type SetupDeps struct {
-	ResolveExternalRegistryConfig   func(*ExternalRegistryConfig) (*ExternalRegistryConfig, error)
-	ClusterManager                  ClusterManagerAPI
-	RegistryManager                 RegistryManagerAPI
-	LoginRegistry                   func(logger *zap.Logger, registryURL, username, password string) error
-	DeployRegistry                  func(logger *zap.Logger, namespace string, port int, registryType, registryStorageSize, manifestPath string) error
-	WaitForDeploymentAvailable      func(logger *zap.Logger, name, namespace, selector string, timeout time.Duration) error
-	PrintDeploymentDiagnostics      func(deploy, namespace, selector string)
-	SetupTLS                        func(logger *zap.Logger, plan SetupPlan) error
-	BuildOperatorImage              func(image string) error
-	PushOperatorImage               func(image string) error
-	BuildGatewayProxyImage          func(image string) error
-	PushGatewayProxyImage           func(image string) error
-	BuildAnalyticsImage             func(image, dockerfilePath, buildContext string) error
-	PushAnalyticsImage              func(image string) error
-	EnsureNamespace                 func(namespace string) error
-	GetPlatformRegistryURL          func(logger *zap.Logger) string
-	PushOperatorImageToInternal     func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
-	PushGatewayProxyImageToInternal func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
-	PushAnalyticsImageToInternal    func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
-	DeployOperatorManifests         func(logger *zap.Logger, operatorImage, gatewayProxyImage string, operatorArgs []string) error
-	DeployAnalyticsManifests        func(logger *zap.Logger, images AnalyticsImageSet, storageMode string) error
-	ConfigureProvisionedRegistryEnv func(ext *ExternalRegistryConfig, secretName string) error
-	RestartDeployment               func(name, namespace string) error
-	CheckCRDInstalled               func(name string) error
-	GetDeploymentTimeout            func() time.Duration
-	GetRegistryPort                 func() int
-	OperatorImageFor                func(ext *ExternalRegistryConfig) string
-	GatewayProxyImageFor            func(ext *ExternalRegistryConfig) string
-}
-
+func ResolveRepoRoot() (string, error)
+    ResolveRepoRoot walks upward from the working directory until IsRepoRoot
+    reports true.
 ```
 
-<a id="cli-internals-type-setuppipeline-struct"></a>
-```text
-type SetupPipeline struct {
-	// Has unexported fields.
-}
-    SetupPipeline provides a fluent API for building step sequences.
+<a id="cli-setup-ingress-manifests"></a>
+## CLI setup ingress manifests
 
+Package: `ingressmanifest`
+Import path: `mcp-runtime/internal/cli/setup/ingressmanifest`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/setup/ingressmanifest
 ```
 
-<a id="cli-internals-func-newsetuppipeline-setuppipeline"></a>
-```text
-func NewSetupPipeline() *SetupPipeline
+<a id="cli-setup-ingress-manifests-overview"></a>
+### Overview
 
+Package ingressmanifest builds YAML for the host-based Sentinel platform UI
+Ingress.
+
+### Jump To
+
+- [Overview](#cli-setup-ingress-manifests-overview)
+- [Index](#cli-setup-ingress-manifests-index)
+- [Constants](#cli-setup-ingress-manifests-constants)
+- [Functions](#cli-setup-ingress-manifests-functions)
+
+<a id="cli-setup-ingress-manifests-index"></a>
+### Index
+
+- [`Constants`](#cli-setup-ingress-manifests-constants)
+- [`func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string`](#cli-setup-ingress-manifests-func-renderplatformuiingress-host-issuername-analyticsnamespace-string-string)
+
+<a id="cli-setup-ingress-manifests-constants"></a>
+### Constants
+
+```text
+const (
+	// PlatformIngressName is the Kubernetes Ingress resource name for the dashboard.
+	PlatformIngressName = "mcp-sentinel-platform-ui"
+	// PlatformTLSSecretName is the TLS secret name used when TLS is enabled.
+	PlatformTLSSecretName = "mcp-sentinel-platform-tls"
+)
 ```
 
-<a id="cli-internals-func-p-setuppipeline-build-setupstep"></a>
-```text
-func (p *SetupPipeline) Build() []SetupStep
+<a id="cli-setup-ingress-manifests-functions"></a>
+### Functions
 
+<a id="cli-setup-ingress-manifests-func-renderplatformuiingress-host-issuername-analyticsnamespace-string-string"></a>
+```text
+func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string
+    RenderPlatformUIIngress emits an Ingress that maps platform.<domain> to
+    the dashboard UI, /api on the same UI service (which reverse-proxies to
+    mcp-sentinel-api via API_UPSTREAM), and the in-cluster Grafana / Prometheus
+    paths. When issuerName is set, a TLS section and cert-manager annotation
+    are added so cert-manager's ingress-shim provisions a Certificate for
+    platform.<domain> into the mcp-sentinel-platform-tls Secret in the same
+    namespace as the Ingress.
 ```
 
-<a id="cli-internals-func-p-setuppipeline-with-step-setupstep-setuppipeline"></a>
-```text
-func (p *SetupPipeline) With(step SetupStep) *SetupPipeline
+<a id="cli-setup-plan"></a>
+## CLI setup plan
 
+Package: `plan`
+Import path: `mcp-runtime/internal/cli/setup/plan`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/setup/plan
 ```
 
-<a id="cli-internals-func-p-setuppipeline-withif-condition-bool-step-setupstep-setuppipeline"></a>
-```text
-func (p *SetupPipeline) WithIf(condition bool, step SetupStep) *SetupPipeline
+<a id="cli-setup-plan-overview"></a>
+### Overview
 
+Package plan contains pure setup planning types and default resolution.
+
+### Jump To
+
+- [Overview](#cli-setup-plan-overview)
+- [Index](#cli-setup-plan-index)
+- [Constants](#cli-setup-plan-constants)
+- [Types](#cli-setup-plan-types)
+
+<a id="cli-setup-plan-index"></a>
+### Index
+
+- [`Constants`](#cli-setup-plan-constants)
+- [`type Input struct`](#cli-setup-plan-type-input-struct)
+- [`type Plan struct`](#cli-setup-plan-type-plan-struct)
+- [`func Build(input Input) Plan`](#cli-setup-plan-func-build-input-input-plan)
+
+<a id="cli-setup-plan-constants"></a>
+### Constants
+
+```text
+const (
+	StorageModeDynamic  = "dynamic"
+	StorageModeHostpath = "hostpath"
+)
 ```
 
-<a id="cli-internals-type-setupplan-struct"></a>
+<a id="cli-setup-plan-types"></a>
+### Types
+
+<a id="cli-setup-plan-type-input-struct"></a>
 ```text
-type SetupPlan struct {
-	Kubeconfig          string
-	Context             string
-	RegistryType        string
-	RegistryStorageSize string
-	StorageMode         string
-	Ingress             ingressOptions
-	RegistryManifest    string
-	TLSEnabled          bool
-	TestMode            bool
-	StrictProd          bool
-	DeployAnalytics     bool
-	OperatorArgs        []string
-	ACMEmail            string
-	ACMEStaging         bool
-	TLSClusterIssuer    string
-	InstallCertManager  bool
-}
-    SetupPlan captures the resolved setup decisions.
-
-```
-
-<a id="cli-internals-func-buildsetupplan-input-setupplaninput-setupplan"></a>
-```text
-func BuildSetupPlan(input SetupPlanInput) SetupPlan
-    BuildSetupPlan resolves CLI inputs into a concrete setup plan.
-
-```
-
-<a id="cli-internals-type-setupplaninput-struct"></a>
-```text
-type SetupPlanInput struct {
+type Input struct {
 	Kubeconfig             string
 	Context                string
 	RegistryType           string
@@ -4043,17 +4904,38 @@ type SetupPlanInput struct {
 	TLSClusterIssuer   string
 	InstallCertManager bool
 }
-    SetupPlanInput captures the raw CLI inputs for setup.
+    Input captures the raw CLI inputs for setup.
 
 ```
 
-<a id="cli-internals-type-setupstep-interface"></a>
+<a id="cli-setup-plan-type-plan-struct"></a>
 ```text
-type SetupStep interface {
-	Name() string
-	Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error
+type Plan struct {
+	Kubeconfig          string
+	Context             string
+	RegistryType        string
+	RegistryStorageSize string
+	StorageMode         string
+	Ingress             cluster.IngressOptions
+	RegistryManifest    string
+	TLSEnabled          bool
+	TestMode            bool
+	StrictProd          bool
+	DeployAnalytics     bool
+	OperatorArgs        []string
+	ACMEmail            string
+	ACMEStaging         bool
+	TLSClusterIssuer    string
+	InstallCertManager  bool
 }
-    SetupStep models a single setup phase.
+    Plan captures the resolved setup decisions.
+
+```
+
+<a id="cli-setup-plan-func-build-input-input-plan"></a>
+```text
+func Build(input Input) Plan
+    Build resolves CLI inputs into a concrete setup plan.
 ```
 
 <a id="cli-binary"></a>

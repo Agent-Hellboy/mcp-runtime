@@ -89,8 +89,9 @@ jobs:
 
       - name: Run unit tests with coverage
         run: |
+          module_path="$(go list -m)"
           go test -v -race -coverprofile=unit.out \
-            $(go list ./... | grep -v '^github.com/Agent-Hellboy/mcp-runtime/test')
+            $(go list ./... | grep -v -x "${module_path}/test/integration")
 
       - name: Test Sentinel service modules (api, ui)
         run: |

@@ -4,6 +4,7 @@ Usage:
   mcp-runtime registry provision [flags]
 
 Flags:
+      --dry-run                 Print what would be done without saving config, logging in, or pushing images
   -h, --help                    help for provision
       --operator-image string   Optional: build and push operator image to this external registry (e.g., <registry>/mcp-runtime-operator:latest)
       --password string         Registry password (optional)

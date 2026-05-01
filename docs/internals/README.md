@@ -102,11 +102,12 @@ Governance-related changes usually span `api/v1alpha1/access_types.go`, `pkg/acc
 ```mermaid
 flowchart TB
     Cmd[cmd/mcp-runtime] --> CLIRoot[internal/cli/root]
-    CLIRoot --> InternalCLI[internal/cli]
-    InternalCLI --> Metadata[pkg/metadata]
-    InternalCLI --> Manifest[pkg/manifest]
-    InternalCLI --> K8sClient[pkg/k8sclient]
-    InternalCLI --> Access[pkg/access]
+    CLIRoot --> CLICommands[internal/cli/<command>]
+    CLICommands --> CLICore[internal/cli/core]
+    CLICommands --> Metadata[pkg/metadata]
+    CLICommands --> Manifest[pkg/manifest]
+    CLICommands --> K8sClient[pkg/k8sclient]
+    CLICommands --> Access[pkg/access]
     CmdOp[cmd/operator] --> Operator[internal/operator]
     Operator --> API[api/v1alpha1]
     Operator --> K8sClient
@@ -118,7 +119,7 @@ flowchart TB
     Metadata --> API
 ```
 
-Keep shared behavior in `pkg/` only when multiple binaries or services need it. CLI top-level command routing belongs in `internal/cli/root` and `internal/cli/<command>`; CLI-only behavior belongs in `internal/cli`; reconciliation behavior belongs in `internal/operator`; HTTP service glue belongs near the service that owns the endpoint.
+Keep shared behavior in `pkg/` only when multiple binaries or services need it. CLI top-level command routing belongs in `internal/cli/root` and `internal/cli/<command>`; CLI-only shared infrastructure belongs in `internal/cli/core`; reconciliation behavior belongs in `internal/operator`; HTTP service glue belongs near the service that owns the endpoint.
 
 ## Learning path
 
@@ -148,7 +149,7 @@ workflows.
 
 | Change | Read first | Verify with |
 |---|---|---|
-| Add or change a CLI flag | `internal/cli/root`, `internal/cli`, `cmd/mcp-runtime`, golden CLI tests | `go test ./internal/cli/... ./test/golden/... -count=1` |
+| Add or change a CLI flag | `internal/cli/root`, `internal/cli/<command>`, `internal/cli/core`, `cmd/mcp-runtime`, golden CLI tests | `go test ./internal/cli/... ./test/golden/... -count=1` |
 | Change a CRD field | `api/v1alpha1`, CRD YAML, operator reconciliation, docs/API reference | `go test ./api/v1alpha1/... ./internal/operator/... -count=1` |
 | Change generated manifests | `pkg/metadata`, `pkg/manifest`, `config/`, examples | targeted package tests plus manifest diff review |
 | Change reconciliation behavior | `internal/operator`, API types, k8s helpers | `go test ./internal/operator/... -race -count=1` |
