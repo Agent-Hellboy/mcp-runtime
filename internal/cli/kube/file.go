@@ -38,10 +38,11 @@ func WriteOutputFile(file string, data []byte) error {
 		_ = f.Close()
 		return fmt.Errorf("write output file: %w", io.ErrShortWrite)
 	}
-	if err := f.Close(); err != nil {
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("write output file: %w", err)
 	}
-	if err := os.Chmod(absPath, 0o600); err != nil {
+	if err := f.Close(); err != nil {
 		return fmt.Errorf("write output file: %w", err)
 	}
 	return nil

@@ -163,14 +163,14 @@ func (m *SentinelManager) ShowSentinelStatus() error {
 	tableData := [][]string{{"Component", "Namespace", "Resource", "Status", "Details"}}
 
 	clusterReachable := true
-	if err := platformstatus.CheckClusterStatusQuiet(); err != nil {
+	if err := platformstatus.CheckClusterStatusQuiet(m.kubectl); err != nil {
 		clusterReachable = false
 		tableData = append(tableData, platformstatus.AnalyticsStackRow(core.Red("ERROR"), err.Error()))
 		core.TableBoxed(tableData)
 		return nil
 	}
 
-	installed, err := platformstatus.AnalyticsNamespaceInstalled(clusterReachable)
+	installed, err := platformstatus.AnalyticsNamespaceInstalled(m.kubectl, clusterReachable)
 	switch {
 	case err != nil:
 		tableData = append(tableData, platformstatus.AnalyticsStackRow(core.Red("ERROR"), err.Error()))
@@ -178,7 +178,7 @@ func (m *SentinelManager) ShowSentinelStatus() error {
 		tableData = append(tableData, platformstatus.AnalyticsStackRow(core.Yellow("SKIPPED"), "Namespace not found"))
 	default:
 		for _, workload := range platformstatus.DefaultPlatformStatusWorkloads {
-			tableData = append(tableData, platformstatus.WorkloadStatusRow(workload, true))
+			tableData = append(tableData, platformstatus.WorkloadStatusRow(m.kubectl, workload, true))
 		}
 	}
 

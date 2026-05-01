@@ -8,8 +8,8 @@ import (
 	"mcp-runtime/internal/cli/kubeerr"
 )
 
-func runKubectlCombinedOutput(args []string) (string, error) {
-	cmd, err := core.DefaultKubectlClient().CommandArgs(args)
+func runKubectlCombinedOutput(kubectl core.KubectlRunner, args []string) (string, error) {
+	cmd, err := kubectl.CommandArgs(args)
 	if err != nil {
 		return "", err
 	}
@@ -18,8 +18,8 @@ func runKubectlCombinedOutput(args []string) (string, error) {
 }
 
 // CheckClusterStatusQuiet probes cluster connectivity without printing status.
-func CheckClusterStatusQuiet() error {
-	output, err := runKubectlCombinedOutput([]string{"cluster-info"})
+func CheckClusterStatusQuiet(kubectl core.KubectlRunner) error {
+	output, err := runKubectlCombinedOutput(kubectl, []string{"cluster-info"})
 	if err == nil {
 		return nil
 	}

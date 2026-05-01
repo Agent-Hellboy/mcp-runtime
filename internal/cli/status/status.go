@@ -13,11 +13,15 @@ import (
 )
 
 type manager struct {
-	logger *zap.Logger
+	logger  *zap.Logger
+	kubectl core.KubectlRunner
 }
 
 func newManager(runtime *core.Runtime) *manager {
-	return &manager{logger: runtime.Logger()}
+	return &manager{
+		logger:  runtime.Logger(),
+		kubectl: runtime.KubectlRunner(),
+	}
 }
 
 // New returns the status command.
@@ -28,13 +32,13 @@ func New(runtime *core.Runtime) *cobra.Command {
 		Short: "Show platform status",
 		Long:  "Show the overall status of the MCP platform",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return ShowPlatformStatus(mgr.logger)
+			return ShowPlatformStatus(mgr.logger, mgr.kubectl)
 		},
 	}
 }
 
 // ShowPlatformStatus prints the MCP platform status table and MCP server list.
-func ShowPlatformStatus(logger *zap.Logger) error {
+func ShowPlatformStatus(logger *zap.Logger, kubectl core.KubectlRunner) error {
 	core.Header("MCP Platform Status")
 	core.DefaultPrinter.Println()
 
@@ -45,7 +49,7 @@ func ShowPlatformStatus(logger *zap.Logger) error {
 	clusterReachable := true
 	clusterStatus := core.Green("OK")
 	clusterDetails := "Connected"
-	if err := platformstatus.CheckClusterStatusQuiet(); err != nil {
+	if err := platformstatus.CheckClusterStatusQuiet(kubectl); err != nil {
 		clusterReachable = false
 		clusterStatus = core.Red("ERROR")
 		clusterDetails = err.Error()
@@ -65,17 +69,19 @@ func ShowPlatformStatus(logger *zap.Logger) error {
 		tableData = append(tableData, []string{"Registry", "-", "external", core.Cyan("EXTERNAL"), "Configured: " + extRegistry.URL})
 	default:
 		tableData = append(tableData, platformstatus.WorkloadStatusRow(
+			kubectl,
 			platformstatus.PlatformWorkload{Component: "Registry", Namespace: core.NamespaceRegistry, Kind: "deployment", Name: core.RegistryDeploymentName},
 			clusterReachable,
 		))
 	}
 
 	tableData = append(tableData, platformstatus.WorkloadStatusRow(
+		kubectl,
 		platformstatus.PlatformWorkload{Component: "Operator", Namespace: core.NamespaceMCPRuntime, Kind: "deployment", Name: core.OperatorDeploymentName},
 		clusterReachable,
 	))
 
-	switch installed, analyticsErr := platformstatus.AnalyticsNamespaceInstalled(clusterReachable); {
+	switch installed, analyticsErr := platformstatus.AnalyticsNamespaceInstalled(kubectl, clusterReachable); {
 	case !clusterReachable:
 		tableData = append(tableData, platformstatus.AnalyticsStackRow(core.Red("ERROR"), "Cluster unavailable"))
 	case analyticsErr != nil:
@@ -84,7 +90,7 @@ func ShowPlatformStatus(logger *zap.Logger) error {
 		tableData = append(tableData, platformstatus.AnalyticsStackRow(core.Yellow("SKIPPED"), "Namespace not found"))
 	default:
 		for _, workload := range platformstatus.DefaultPlatformStatusWorkloads {
-			tableData = append(tableData, platformstatus.WorkloadStatusRow(workload, true))
+			tableData = append(tableData, platformstatus.WorkloadStatusRow(kubectl, workload, true))
 		}
 	}
 
@@ -100,7 +106,7 @@ func ShowPlatformStatus(logger *zap.Logger) error {
 		return nil
 	}
 
-	cmd, err := core.DefaultKubectlClient().CommandArgs([]string{"get", "mcpserver", "--all-namespaces", "-o", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,IMAGE:.spec.image,REPLICAS:.spec.replicas,PATH:.spec.ingressPath"})
+	cmd, err := kubectl.CommandArgs([]string{"get", "mcpserver", "--all-namespaces", "-o", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,IMAGE:.spec.image,REPLICAS:.spec.replicas,PATH:.spec.ingressPath"})
 	if err != nil {
 		core.Warn("Failed to list MCP servers: " + err.Error())
 	} else {

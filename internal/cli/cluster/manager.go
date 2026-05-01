@@ -370,7 +370,7 @@ nodes:
 	if dryRun {
 		core.Info(fmt.Sprintf("[dry-run] would write kind config and run: kind create cluster --name %s --config <tmp.yaml>", clusterName))
 		core.Info("[dry-run] kind config that would be written:")
-		fmt.Print(config)
+		core.DefaultPrinter.Println(config)
 		core.Success("Dry-run complete; no cluster created")
 		return nil
 	}

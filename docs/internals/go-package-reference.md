@@ -2118,7 +2118,6 @@ kubectl clients, terminal output, and test doubles.
 - [`func Step(title string)`](#cli-core-func-step-title-string)
 - [`func Success(msg string)`](#cli-core-func-success-msg-string)
 - [`func SwapDefaultKubectlClient(c *KubectlClient) (restore func())`](#cli-core-func-swapdefaultkubectlclient-c-kubectlclient-restore-func)
-- [`func SwapExecCommand(f func(string, ...string) *exec.Cmd) (restore func())`](#cli-core-func-swapexeccommand-f-func-string-string-exec-cmd-restore-func)
 - [`func SwapExecExecutor(e Executor) (restore func())`](#cli-core-func-swapexecexecutor-e-executor-restore-func)
 - [`func Table(data [][]string)`](#cli-core-func-table-data-string)
 - [`func TableBoxed(data [][]string)`](#cli-core-func-tableboxed-data-string)
@@ -2651,14 +2650,6 @@ func Success(msg string)
 ```text
 func SwapDefaultKubectlClient(c *KubectlClient) (restore func())
     SwapDefaultKubectlClient replaces the shared kubectl client (tests only).
-
-```
-
-<a id="cli-core-func-swapexeccommand-f-func-string-string-exec-cmd-restore-func"></a>
-```text
-func SwapExecCommand(f func(string, ...string) *exec.Cmd) (restore func())
-    SwapExecCommand replaces the exec.Command seam used by the default executor
-    (tests only).
 
 ```
 
@@ -4080,10 +4071,10 @@ _No package overview is documented._
 ### Index
 
 - [`Variables`](#cli-platform-status-variables)
-- [`func AnalyticsNamespaceInstalled(clusterReachable bool) (bool, error)`](#cli-platform-status-func-analyticsnamespaceinstalled-clusterreachable-bool-bool-error)
+- [`func AnalyticsNamespaceInstalled(kubectl core.KubectlRunner, clusterReachable bool) (bool, error)`](#cli-platform-status-func-analyticsnamespaceinstalled-kubectl-core-kubectlrunner-clusterreachable-bool-bool-error)
 - [`func AnalyticsStackRow(status, details string) []string`](#cli-platform-status-func-analyticsstackrow-status-details-string-string)
-- [`func CheckClusterStatusQuiet() error`](#cli-platform-status-func-checkclusterstatusquiet-error)
-- [`func WorkloadStatusRow(workload PlatformWorkload, clusterReachable bool) []string`](#cli-platform-status-func-workloadstatusrow-workload-platformworkload-clusterreachable-bool-string)
+- [`func CheckClusterStatusQuiet(kubectl core.KubectlRunner) error`](#cli-platform-status-func-checkclusterstatusquiet-kubectl-core-kubectlrunner-error)
+- [`func WorkloadStatusRow(kubectl core.KubectlRunner, workload PlatformWorkload, clusterReachable bool) []string`](#cli-platform-status-func-workloadstatusrow-kubectl-core-kubectlrunner-workload-platformworkload-clusterreachable-bool-string)
 - [`type PlatformWorkload struct`](#cli-platform-status-type-platformworkload-struct)
 
 <a id="cli-platform-status-variables"></a>
@@ -4113,9 +4104,9 @@ var DefaultPlatformStatusWorkloads = []PlatformWorkload{
 <a id="cli-platform-status-functions"></a>
 ### Functions
 
-<a id="cli-platform-status-func-analyticsnamespaceinstalled-clusterreachable-bool-bool-error"></a>
+<a id="cli-platform-status-func-analyticsnamespaceinstalled-kubectl-core-kubectlrunner-clusterreachable-bool-bool-error"></a>
 ```text
-func AnalyticsNamespaceInstalled(clusterReachable bool) (bool, error)
+func AnalyticsNamespaceInstalled(kubectl core.KubectlRunner, clusterReachable bool) (bool, error)
     AnalyticsNamespaceInstalled reports whether the analytics namespace exists.
 
 ```
@@ -4128,16 +4119,16 @@ func AnalyticsStackRow(status, details string) []string
 
 ```
 
-<a id="cli-platform-status-func-checkclusterstatusquiet-error"></a>
+<a id="cli-platform-status-func-checkclusterstatusquiet-kubectl-core-kubectlrunner-error"></a>
 ```text
-func CheckClusterStatusQuiet() error
+func CheckClusterStatusQuiet(kubectl core.KubectlRunner) error
     CheckClusterStatusQuiet probes cluster connectivity without printing status.
 
 ```
 
-<a id="cli-platform-status-func-workloadstatusrow-workload-platformworkload-clusterreachable-bool-string"></a>
+<a id="cli-platform-status-func-workloadstatusrow-kubectl-core-kubectlrunner-workload-platformworkload-clusterreachable-bool-string"></a>
 ```text
-func WorkloadStatusRow(workload PlatformWorkload, clusterReachable bool) []string
+func WorkloadStatusRow(kubectl core.KubectlRunner, workload PlatformWorkload, clusterReachable bool) []string
     WorkloadStatusRow renders one workload row for platform status tables.
 ```
 

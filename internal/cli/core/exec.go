@@ -11,16 +11,6 @@ import (
 	"strings"
 )
 
-// execCommand is a test seam for stubbing command creation in tests.
-var execCommand = exec.Command
-
-// SwapExecCommand replaces the exec.Command seam used by the default executor (tests only).
-func SwapExecCommand(f func(string, ...string) *exec.Cmd) (restore func()) {
-	prev := execCommand
-	execCommand = f
-	return func() { execCommand = prev }
-}
-
 // Command represents a command that can be executed.
 type Command interface {
 	Output() ([]byte, error)
@@ -58,7 +48,7 @@ func (osExecutor) Command(name string, args []string, validators ...ExecValidato
 			return nil, err
 		}
 	}
-	return &execCmd{cmd: execCommand(name, args...)}, nil
+	return &execCmd{cmd: exec.Command(name, args...)}, nil // #nosec G204 -- callers pass ExecValidator checks before command construction.
 }
 
 var execExecutor Executor = osExecutor{}

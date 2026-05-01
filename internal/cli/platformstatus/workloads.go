@@ -36,12 +36,12 @@ var DefaultPlatformStatusWorkloads = []PlatformWorkload{
 }
 
 // AnalyticsNamespaceInstalled reports whether the analytics namespace exists.
-func AnalyticsNamespaceInstalled(clusterReachable bool) (bool, error) {
+func AnalyticsNamespaceInstalled(kubectl core.KubectlRunner, clusterReachable bool) (bool, error) {
 	if !clusterReachable {
 		return false, nil
 	}
 
-	output, err := runKubectlCombinedOutput([]string{"get", "namespace", core.DefaultAnalyticsNamespace, "-o", "jsonpath={.metadata.name}"})
+	output, err := runKubectlCombinedOutput(kubectl, []string{"get", "namespace", core.DefaultAnalyticsNamespace, "-o", "jsonpath={.metadata.name}"})
 	if err == nil {
 		return strings.TrimSpace(output) == core.DefaultAnalyticsNamespace, nil
 	}
@@ -64,23 +64,23 @@ func AnalyticsStackRow(status, details string) []string {
 }
 
 // WorkloadStatusRow renders one workload row for platform status tables.
-func WorkloadStatusRow(workload PlatformWorkload, clusterReachable bool) []string {
+func WorkloadStatusRow(kubectl core.KubectlRunner, workload PlatformWorkload, clusterReachable bool) []string {
 	resource := fmt.Sprintf("%s/%s", workload.Kind, workload.Name)
 	if !clusterReachable {
 		return []string{workload.Component, workload.Namespace, resource, core.Red("ERROR"), "Cluster unavailable"}
 	}
 
-	st, details := workloadReadinessStatus(workload)
+	st, details := workloadReadinessStatus(kubectl, workload)
 	return []string{workload.Component, workload.Namespace, resource, st, details}
 }
 
-func workloadReadinessStatus(workload PlatformWorkload) (string, string) {
+func workloadReadinessStatus(kubectl core.KubectlRunner, workload PlatformWorkload) (string, string) {
 	jsonPath, err := workloadReadyJSONPath(workload.Kind)
 	if err != nil {
 		return core.Red("ERROR"), err.Error()
 	}
 
-	output, cmdErr := runKubectlCombinedOutput([]string{
+	output, cmdErr := runKubectlCombinedOutput(kubectl, []string{
 		"get", workload.Kind, workload.Name,
 		"-n", workload.Namespace,
 		"-o", "jsonpath=" + jsonPath,

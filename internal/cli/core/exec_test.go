@@ -5,8 +5,11 @@ import (
 	"testing"
 )
 
-func TestExecCommand(t *testing.T) {
-	cmd := execCommand("echo", "hello")
+func TestOSExecutorCommand(t *testing.T) {
+	cmd, err := osExecutor{}.Command("echo", []string{"hello"})
+	if err != nil {
+		t.Fatalf("failed to create command: %v", err)
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("failed to execute command: %v", err)

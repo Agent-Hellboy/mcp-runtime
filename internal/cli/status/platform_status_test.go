@@ -3,6 +3,7 @@ package status_test
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -20,6 +21,31 @@ type commandResponse struct {
 	Stdout   string `json:"stdout"`
 	Stderr   string `json:"stderr"`
 	ExitCode int    `json:"exitCode"`
+}
+
+type helperProcessCommand struct {
+	cmd *exec.Cmd
+}
+
+func (c helperProcessCommand) Output() ([]byte, error)         { return c.cmd.Output() }
+func (c helperProcessCommand) CombinedOutput() ([]byte, error) { return c.cmd.CombinedOutput() }
+func (c helperProcessCommand) Run() error                      { return c.cmd.Run() }
+func (c helperProcessCommand) SetStdout(w io.Writer)           { c.cmd.Stdout = w }
+func (c helperProcessCommand) SetStderr(w io.Writer)           { c.cmd.Stderr = w }
+func (c helperProcessCommand) SetStdin(r io.Reader)            { c.cmd.Stdin = r }
+
+type helperProcessExecutor struct {
+	command func(string, ...string) *exec.Cmd
+}
+
+func (e helperProcessExecutor) Command(name string, args []string, validators ...core.ExecValidator) (core.Command, error) {
+	spec := core.ExecSpec{Name: name, Args: args}
+	for _, validate := range validators {
+		if err := validate(spec); err != nil {
+			return nil, err
+		}
+	}
+	return helperProcessCommand{cmd: e.command(name, args...)}, nil
 }
 
 func commandKey(name string, args ...string) string {
@@ -124,8 +150,9 @@ func runShowPlatformStatusWithCalls(t *testing.T, responses map[string]commandRe
 	t.Helper()
 
 	logger := zap.NewNop()
-	restoreExec := core.SwapExecCommand(fakeExecCommand(t, exec.Command, responses, calls))
-	t.Cleanup(restoreExec)
+	kubectl := core.NewTestKubectlClient(helperProcessExecutor{
+		command: fakeExecCommand(t, exec.Command, responses, calls),
+	})
 
 	var buf bytes.Buffer
 	pterm.SetDefaultOutput(&buf)
@@ -136,7 +163,7 @@ func runShowPlatformStatusWithCalls(t *testing.T, responses map[string]commandRe
 		pterm.EnableStyling()
 	})
 
-	if err := status.ShowPlatformStatus(logger); err != nil {
+	if err := status.ShowPlatformStatus(logger, kubectl); err != nil {
 		t.Fatalf("ShowPlatformStatus() unexpected error = %v", err)
 	}
 
@@ -311,10 +338,11 @@ func TestAnalyticsNamespaceInstalledRequiresExactMatch(t *testing.T) {
 		},
 	}
 
-	restore := core.SwapExecCommand(fakeExecCommand(t, exec.Command, responses, nil))
-	t.Cleanup(restore)
+	kubectl := core.NewTestKubectlClient(helperProcessExecutor{
+		command: fakeExecCommand(t, exec.Command, responses, nil),
+	})
 
-	installed, err := platformstatus.AnalyticsNamespaceInstalled(true)
+	installed, err := platformstatus.AnalyticsNamespaceInstalled(kubectl, true)
 	if err != nil {
 		t.Fatalf("AnalyticsNamespaceInstalled() unexpected error = %v", err)
 	}
@@ -332,10 +360,11 @@ func TestAnalyticsNamespaceInstalledReturnsErrorOnEmptyFailure(t *testing.T) {
 		},
 	}
 
-	restore := core.SwapExecCommand(fakeExecCommand(t, exec.Command, responses, nil))
-	t.Cleanup(restore)
+	kubectl := core.NewTestKubectlClient(helperProcessExecutor{
+		command: fakeExecCommand(t, exec.Command, responses, nil),
+	})
 
-	installed, err := platformstatus.AnalyticsNamespaceInstalled(true)
+	installed, err := platformstatus.AnalyticsNamespaceInstalled(kubectl, true)
 	if err == nil {
 		t.Fatal("expected empty namespace probe failure to surface an error")
 	}

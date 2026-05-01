@@ -44,10 +44,11 @@ var rootCmd = &cobra.Command{
 - MCP server deployments
 - Platform configuration`,
 	Version: fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
-	// Runtime errors should not trigger Cobra's usage/help dump; flag/arg
-	// validation errors still do (those happen before RunE). main() prints
-	// the error itself, so silence Cobra's own error print to avoid duplicates.
-	SilenceUsage:  true,
+	// Keep usage enabled during Cobra validation; command wrappers disable it
+	// after validation passes so runtime errors do not dump command help.
+	SilenceUsage: false,
+	// main() prints the error itself, so silence Cobra's own error print to
+	// avoid duplicates.
 	SilenceErrors: true,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// Set debug mode globally so logStructuredError can check it
@@ -61,6 +62,27 @@ func init() {
 
 func initCommands(logger *zap.Logger) {
 	cliroot.AddCommands(rootCmd, logger)
+	silenceUsageAfterValidation(rootCmd)
+}
+
+func silenceUsageAfterValidation(cmd *cobra.Command) {
+	if cmd.RunE != nil {
+		runE := cmd.RunE
+		cmd.RunE = func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			return runE(cmd, args)
+		}
+	}
+	if cmd.Run != nil {
+		run := cmd.Run
+		cmd.Run = func(cmd *cobra.Command, args []string) {
+			cmd.SilenceUsage = true
+			run(cmd, args)
+		}
+	}
+	for _, child := range cmd.Commands() {
+		silenceUsageAfterValidation(child)
+	}
 }
 
 // newConsoleLogger returns a human-friendly console logger with timestamps and caller info.
