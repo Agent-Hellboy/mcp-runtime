@@ -8,21 +8,21 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"mcp-runtime/internal/cli"
+	"mcp-runtime/internal/cli/core"
 )
 
 type manager struct {
-	kubectl cli.KubectlRunner
+	kubectl core.KubectlRunner
 }
 
-func newManager(runtime *cli.Runtime) *manager {
+func newManager(runtime *core.Runtime) *manager {
 	return &manager{kubectl: runtime.KubectlRunner()}
 }
 
-func detectProvider(kubectl cli.KubectlRunner) (string, error) {
+func detectProvider(kubectl core.KubectlRunner) (string, error) {
 	out, err := kubectlOutput(kubectl, []string{"get", "nodes", "-o", "jsonpath={range .items[*]}{.status.nodeInfo.kubeletVersion}{\"\\n\"}{end}"})
 	if err != nil {
-		return "", cli.WrapWithSentinel(cli.ErrClusterNotAccessible, err, fmt.Sprintf("kubectl get nodes failed: %v", err))
+		return "", core.WrapWithSentinel(core.ErrClusterNotAccessible, err, fmt.Sprintf("kubectl get nodes failed: %v", err))
 	}
 	lower := strings.ToLower(string(out))
 	switch {
@@ -35,40 +35,40 @@ func detectProvider(kubectl cli.KubectlRunner) (string, error) {
 	}
 }
 
-func runBootstrapPreflight(kubectl cli.KubectlRunner) error {
-	cli.Info("Preflight: kubectl connectivity")
+func runBootstrapPreflight(kubectl core.KubectlRunner) error {
+	core.Info("Preflight: kubectl connectivity")
 	if err := kubectl.Run([]string{"version", "--client=true"}); err != nil {
-		return cli.WrapWithSentinel(cli.ErrClusterNotAccessible, err, fmt.Sprintf("kubectl not available: %v", err))
+		return core.WrapWithSentinel(core.ErrClusterNotAccessible, err, fmt.Sprintf("kubectl not available: %v", err))
 	}
 	if err := kubectl.Run([]string{"get", "nodes"}); err != nil {
-		return cli.WrapWithSentinel(cli.ErrClusterNotAccessible, err, fmt.Sprintf("kubectl cannot reach cluster: %v", err))
+		return core.WrapWithSentinel(core.ErrClusterNotAccessible, err, fmt.Sprintf("kubectl cannot reach cluster: %v", err))
 	}
 
-	cli.Info("Preflight: CoreDNS")
+	core.Info("Preflight: CoreDNS")
 	if err := checkDeploymentExists(kubectl, "kube-system", "coredns"); err != nil {
-		cli.Warn("CoreDNS not detected (kube-system/deployment coredns). Cluster DNS must be installed for in-cluster service discovery.")
+		core.Warn("CoreDNS not detected (kube-system/deployment coredns). Cluster DNS must be installed for in-cluster service discovery.")
 	}
 
-	cli.Info("Preflight: Default StorageClass")
+	core.Info("Preflight: Default StorageClass")
 	if err := checkHasDefaultStorageClass(kubectl); err != nil {
-		cli.Warn(fmt.Sprintf("No default StorageClass detected: %v", err))
+		core.Warn(fmt.Sprintf("No default StorageClass detected: %v", err))
 	}
 
-	cli.Info("Preflight: IngressClass traefik")
+	core.Info("Preflight: IngressClass traefik")
 	if err := kubectl.Run([]string{"get", "ingressclass", "traefik"}); err != nil {
-		cli.Warn("IngressClass traefik not found. If you plan to use Traefik, install it before running setup (or let setup install it when configured).")
+		core.Warn("IngressClass traefik not found. If you plan to use Traefik, install it before running setup (or let setup install it when configured).")
 	}
 
-	cli.Info("Preflight: MetalLB")
+	core.Info("Preflight: MetalLB")
 	if err := kubectl.Run([]string{"get", "ns", "metallb-system"}); err != nil {
-		cli.Warn("MetalLB not detected (namespace metallb-system). If you need LoadBalancer services on bare metal, install MetalLB.")
+		core.Warn("MetalLB not detected (namespace metallb-system). If you need LoadBalancer services on bare metal, install MetalLB.")
 	}
 
 	return nil
 }
 
-func bootstrapApplyK3s(kubectl cli.KubectlRunner) error {
-	cli.Info("Applying k3s addons: CoreDNS + local-path provisioner (if missing)")
+func bootstrapApplyK3s(kubectl core.KubectlRunner) error {
+	core.Info("Applying k3s addons: CoreDNS + local-path provisioner (if missing)")
 
 	paths := []string{
 		"/var/lib/rancher/k3s/server/manifests/coredns.yaml",
@@ -82,37 +82,37 @@ func bootstrapApplyK3s(kubectl cli.KubectlRunner) error {
 	}
 	if len(missing) > 0 {
 		msg := fmt.Sprintf("k3s manifests missing on disk (%s); bootstrap --apply expects to run on the k3s server node", strings.Join(missing, ", "))
-		return cli.WrapWithSentinel(cli.ErrClusterConfigFailed, fmt.Errorf("missing manifests"), msg)
+		return core.WrapWithSentinel(core.ErrClusterConfigFailed, fmt.Errorf("missing manifests"), msg)
 	}
 
 	for _, p := range paths {
 		if err := kubectl.Run([]string{"apply", "-f", p}); err != nil {
-			return cli.WrapWithSentinel(cli.ErrClusterConfigFailed, err, fmt.Sprintf("failed to apply %s: %v", p, err))
+			return core.WrapWithSentinel(core.ErrClusterConfigFailed, err, fmt.Sprintf("failed to apply %s: %v", p, err))
 		}
 	}
 
-	cli.Info("Waiting for kube-system addons to be ready")
+	core.Info("Waiting for kube-system addons to be ready")
 	if err := kubectl.Run([]string{"rollout", "status", "deployment/coredns", "-n", "kube-system", "--timeout=180s"}); err != nil {
-		return cli.WrapWithSentinel(cli.ErrDeploymentTimeout, err, fmt.Sprintf("coredns rollout failed: %v", err))
+		return core.WrapWithSentinel(core.ErrDeploymentTimeout, err, fmt.Sprintf("coredns rollout failed: %v", err))
 	}
 	if err := kubectl.Run([]string{"rollout", "status", "deployment/local-path-provisioner", "-n", "kube-system", "--timeout=180s"}); err != nil {
-		return cli.WrapWithSentinel(cli.ErrDeploymentTimeout, err, fmt.Sprintf("local-path-provisioner rollout failed: %v", err))
+		return core.WrapWithSentinel(core.ErrDeploymentTimeout, err, fmt.Sprintf("local-path-provisioner rollout failed: %v", err))
 	}
 
-	cli.Info("Node disk-pressure check")
+	core.Info("Node disk-pressure check")
 	cond, err := kubectlOutput(kubectl, []string{"get", "nodes", "-o", "jsonpath={range .items[*]}{.metadata.name}{\" \"}{range .status.conditions[?(@.type==\"DiskPressure\")]}{.status}{end}{\"\\n\"}{end}"})
 	if err == nil {
-		cli.Info(strings.TrimSpace(string(cond)))
+		core.Info(strings.TrimSpace(string(cond)))
 	}
 
 	return nil
 }
 
-func checkDeploymentExists(kubectl cli.KubectlRunner, namespace, name string) error {
+func checkDeploymentExists(kubectl core.KubectlRunner, namespace, name string) error {
 	return kubectl.Run([]string{"get", "deployment", name, "-n", namespace})
 }
 
-func checkHasDefaultStorageClass(kubectl cli.KubectlRunner) error {
+func checkHasDefaultStorageClass(kubectl core.KubectlRunner) error {
 	out, err := kubectlOutput(kubectl, []string{"get", "storageclass", "-o", "jsonpath={range .items[*]}{.metadata.name}{\" \"}{.metadata.annotations.storageclass\\.kubernetes\\.io/is-default-class}{\"\\n\"}{end}"})
 	if err != nil {
 		return err
@@ -126,7 +126,7 @@ func checkHasDefaultStorageClass(kubectl cli.KubectlRunner) error {
 	return fmt.Errorf("no StorageClass annotated with storageclass.kubernetes.io/is-default-class=true")
 }
 
-func kubectlOutput(kubectl cli.KubectlRunner, args []string) ([]byte, error) {
+func kubectlOutput(kubectl core.KubectlRunner, args []string) ([]byte, error) {
 	cmd, err := kubectl.CommandArgs(args)
 	if err != nil {
 		return nil, err
@@ -135,7 +135,7 @@ func kubectlOutput(kubectl cli.KubectlRunner, args []string) ([]byte, error) {
 }
 
 // New returns the bootstrap command.
-func New(runtime *cli.Runtime) *cobra.Command {
+func New(runtime *core.Runtime) *cobra.Command {
 	var apply bool
 	var provider string
 	mgr := newManager(runtime)
@@ -150,7 +150,7 @@ Use this to prepare an existing cluster for running 'mcp-runtime setup'.
 
 Note: bootstrap --apply is automated for k3s only and must be executed on the k3s server node (it expects local manifests under /var/lib/rancher/k3s/server/manifests).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cli.Section("MCP Runtime Bootstrap")
+			core.Section("MCP Runtime Bootstrap")
 			chosenProvider := provider
 			if chosenProvider == "" || chosenProvider == "auto" {
 				detectedProvider, err := detectProvider(mgr.kubectl)
@@ -159,15 +159,15 @@ Note: bootstrap --apply is automated for k3s only and must be executed on the k3
 				}
 				chosenProvider = detectedProvider
 			}
-			cli.Info(fmt.Sprintf("Provider: %s", chosenProvider))
+			core.Info(fmt.Sprintf("Provider: %s", chosenProvider))
 
 			if err := runBootstrapPreflight(mgr.kubectl); err != nil {
 				return err
 			}
 
 			if !apply {
-				cli.Success("Bootstrap preflight complete (no changes applied)")
-				cli.Info("Next: run `./bin/mcp-runtime setup` (or `./bin/mcp-runtime setup --storage-mode hostpath` for single-node dev)")
+				core.Success("Bootstrap preflight complete (no changes applied)")
+				core.Info("Next: run `./bin/mcp-runtime setup` (or `./bin/mcp-runtime setup --storage-mode hostpath` for single-node dev)")
 				return nil
 			}
 
@@ -177,13 +177,13 @@ Note: bootstrap --apply is automated for k3s only and must be executed on the k3
 					return err
 				}
 			case "rke2", "kubeadm", "generic":
-				cli.Warn("Apply mode is currently only automated for k3s. For other distributions, use the preflight output and install DNS/storage/ingress/load-balancer via your standard platform tooling.")
+				core.Warn("Apply mode is currently only automated for k3s. For other distributions, use the preflight output and install DNS/storage/ingress/load-balancer via your standard platform tooling.")
 			default:
-				cli.Warn(fmt.Sprintf("Unknown provider %q; skipping apply", chosenProvider))
+				core.Warn(fmt.Sprintf("Unknown provider %q; skipping apply", chosenProvider))
 			}
 
-			cli.Success("Bootstrap complete")
-			cli.Info("Next: run `./bin/mcp-runtime setup`")
+			core.Success("Bootstrap complete")
+			core.Info("Next: run `./bin/mcp-runtime setup`")
 			return nil
 		},
 	}

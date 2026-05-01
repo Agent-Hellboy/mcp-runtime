@@ -8,7 +8,7 @@ If instructions conflict, prefer **this repo** (`README`, CRDs, `v1alpha1` types
 
 | Area | Path | Notes |
 |------|------|--------|
-| User-facing CLI | `cmd/mcp-runtime/`, `internal/cli/root/`, `internal/cli/` | Entrypoint, foldered Cobra command routing, and command behavior for `setup`, `status`, `registry`, `server`, `access`, … |
+| User-facing CLI | `cmd/mcp-runtime/`, `internal/cli/root/`, `internal/cli/<command>/`, `internal/cli/core/` | Entrypoint, foldered Cobra command routing, command-owned behavior for `setup`, `status`, `registry`, `server`, `access`, …, and shared CLI kernel code |
 | Operator (controller) | `cmd/operator/`, `internal/operator/` | `MCPServer` reconciliation, ingress, gateway wiring |
 | API & CRD types | `api/v1alpha1/` | Source of truth for object shapes; CRD YAML in `config/crd/bases/` |
 | Access control (shared) | `pkg/access/` | Grants, sessions, policy pieces used by API and gateway |
@@ -21,7 +21,7 @@ If instructions conflict, prefer **this repo** (`README`, CRDs, `v1alpha1` types
 | E2E | `test/e2e/`, `test/integration/` | Kind script and envtest-based integration tests |
 | Agent tool config | `.claude/`, `.codex/skills/` | `.claude/skills` should symlink to `../.codex/skills` so Claude Desktop and the Codex CLI use the same local skills |
 
-**Patterns worth mirroring:** search for similar packages before adding new abstractions; keep CLI errors consistent with `internal/cli/errors.go` and `pkg/errx/`.
+**Patterns worth mirroring:** search for similar packages before adding new abstractions; keep CLI errors consistent with `internal/cli/core/errors.go` and `pkg/errx/`.
 
 ## Build, test, and quality (before you push)
 

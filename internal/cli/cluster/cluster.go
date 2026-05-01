@@ -4,16 +4,16 @@ package cluster
 import (
 	"github.com/spf13/cobra"
 
-	"mcp-runtime/internal/cli"
+	"mcp-runtime/internal/cli/core"
 )
 
 // New returns the cluster command.
-func New(runtime *cli.Runtime) *cobra.Command {
-	return NewWithManager(runtime.ClusterManager())
+func New(runtime *core.Runtime) *cobra.Command {
+	return NewWithManager(NewClusterManager(runtime.KubectlClient(), runtime.Executor(), runtime.Logger()))
 }
 
 // NewWithManager returns the cluster command using the provided manager.
-func NewWithManager(mgr *cli.ClusterManager) *cobra.Command {
+func NewWithManager(mgr *ClusterManager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cluster",
 		Short: "Manage Kubernetes cluster",
@@ -87,18 +87,20 @@ func NewWithManager(mgr *cli.ClusterManager) *cobra.Command {
 	var provisionRegion string
 	var nodeCount int
 	var provisionClusterName string
+	var provisionDryRun bool
 	provisionCmd := &cobra.Command{
 		Use:   "provision",
 		Short: "Provision a new cluster",
 		Long:  "Provision a new Kubernetes cluster (requires cloud provider credentials)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return mgr.ProvisionCluster(provisionProvider, provisionRegion, nodeCount, provisionClusterName)
+			return mgr.ProvisionCluster(provisionProvider, provisionRegion, nodeCount, provisionClusterName, provisionDryRun)
 		},
 	}
 	provisionCmd.Flags().StringVar(&provisionProvider, "provider", "kind", "Cloud provider (kind, gke, eks, aks)")
 	provisionCmd.Flags().StringVar(&provisionRegion, "region", "us-west-1", "Region for cluster")
 	provisionCmd.Flags().IntVar(&nodeCount, "nodes", 3, "Number of nodes")
 	provisionCmd.Flags().StringVar(&provisionClusterName, "name", "mcp-runtime", "Cluster name (used by supported providers)")
+	provisionCmd.Flags().BoolVar(&provisionDryRun, "dry-run", false, "Print the cluster config and command that would run without creating any cluster")
 
 	cmd.AddCommand(initCmd)
 	cmd.AddCommand(statusCmd)

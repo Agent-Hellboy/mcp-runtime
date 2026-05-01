@@ -8,7 +8,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"mcp-runtime/internal/cli"
+	"mcp-runtime/internal/cli/core"
 	cliroot "mcp-runtime/internal/cli/root"
 )
 
@@ -44,9 +44,14 @@ var rootCmd = &cobra.Command{
 - MCP server deployments
 - Platform configuration`,
 	Version: fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
+	// Runtime errors should not trigger Cobra's usage/help dump; flag/arg
+	// validation errors still do (those happen before RunE). main() prints
+	// the error itself, so silence Cobra's own error print to avoid duplicates.
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// Set debug mode globally so logStructuredError can check it
-		cli.SetDebugMode(debug)
+		core.SetDebugMode(debug)
 	},
 }
 

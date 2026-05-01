@@ -8,19 +8,23 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
-	"mcp-runtime/internal/cli"
+	"mcp-runtime/internal/cli/core"
+	setupplan "mcp-runtime/internal/cli/setup/plan"
 )
 
 type manager struct {
-	logger *zap.Logger
+	logger     *zap.Logger
+	clusterMgr ClusterManagerAPI
 }
 
-func newManager(runtime *cli.Runtime) *manager {
-	return &manager{logger: runtime.Logger()}
+func newManager(runtime *core.Runtime, clusterMgr ClusterManagerAPI) *manager {
+	return &manager{logger: runtime.Logger(), clusterMgr: clusterMgr}
 }
 
-// New returns the setup command.
-func New(runtime *cli.Runtime) *cobra.Command {
+// New returns the setup command. clusterMgr is the cluster operator that setup
+// uses for cluster init and ingress configuration; it is supplied by the
+// composition root so setup does not import the cluster command package.
+func New(runtime *core.Runtime, clusterMgr ClusterManagerAPI) *cobra.Command {
 	var registryType string
 	var registryStorageSize string
 	var storageMode string
@@ -40,7 +44,7 @@ func New(runtime *cli.Runtime) *cobra.Command {
 	var acmeStaging bool
 	var tlsClusterIssuer string
 	var skipCertManagerInstall bool
-	mgr := newManager(runtime)
+	mgr := newManager(runtime, clusterMgr)
 
 	cmd := &cobra.Command{
 		Use:   "setup",
@@ -54,11 +58,11 @@ func New(runtime *cli.Runtime) *cobra.Command {
 The platform deploys an internal Docker registry by default, which teams
 will use to push and pull container images.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cli.ValidateStorageMode(storageMode); err != nil {
+			if err := ValidateStorageMode(storageMode); err != nil {
 				return err
 			}
 
-			operatorArgs := cli.BuildOperatorArgs(
+			operatorArgs := BuildOperatorArgs(
 				operatorMetricsAddr,
 				operatorProbeAddr,
 				operatorLeaderElect,
@@ -77,11 +81,11 @@ will use to push and pull container images.`,
 			if tlsCIResolved == "" {
 				tlsCIResolved = strings.TrimSpace(os.Getenv("MCP_TLS_CLUSTER_ISSUER"))
 			}
-			if err := cli.ValidateTLSSetupCLIFlags(tlsEnabled, acmeEmailResolved, tlsCIResolved, acmeStagingResolved, skipCertManagerInstall); err != nil {
+			if err := ValidateTLSSetupCLIFlags(tlsEnabled, acmeEmailResolved, tlsCIResolved, acmeStagingResolved, skipCertManagerInstall); err != nil {
 				return err
 			}
 
-			plan := cli.BuildSetupPlan(cli.SetupPlanInput{
+			plan := setupplan.Build(setupplan.Input{
 				Kubeconfig:             kubeconfig,
 				Context:                kubeContext,
 				RegistryType:           registryType,
@@ -102,7 +106,7 @@ will use to push and pull container images.`,
 				InstallCertManager:     !skipCertManagerInstall,
 			})
 
-			return cli.SetupPlatform(mgr.logger, plan)
+			return SetupPlatform(mgr.logger, plan, mgr.clusterMgr)
 		},
 	}
 

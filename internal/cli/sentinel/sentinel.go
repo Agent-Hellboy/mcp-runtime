@@ -4,16 +4,16 @@ package sentinel
 import (
 	"github.com/spf13/cobra"
 
-	"mcp-runtime/internal/cli"
+	"mcp-runtime/internal/cli/core"
 )
 
 // New returns the sentinel command.
-func New(runtime *cli.Runtime) *cobra.Command {
-	return NewWithManager(runtime.SentinelManager())
+func New(runtime *core.Runtime) *cobra.Command {
+	return NewWithManager(DefaultSentinelManager(runtime))
 }
 
 // NewWithManager returns the sentinel command using the provided manager.
-func NewWithManager(mgr *cli.SentinelManager) *cobra.Command {
+func NewWithManager(mgr *SentinelManager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sentinel",
 		Short: "Operate the bundled mcp-sentinel stack",
@@ -36,7 +36,7 @@ func NewWithManager(mgr *cli.SentinelManager) *cobra.Command {
 		Use:       "logs [component]",
 		Short:     "View logs for a mcp-sentinel component",
 		Args:      cobra.ExactArgs(1),
-		ValidArgs: cli.SentinelComponentKeys(),
+		ValidArgs: ComponentKeys(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return mgr.ViewSentinelLogs(args[0], follow, previous, tail, since)
 		},

@@ -1,15 +1,15 @@
 # CLI Internals
 
-Package `internal/cli` implements the command behavior behind the
+The `internal/cli` tree implements the command behavior behind the
 `mcp-runtime` binary. The top-level Cobra command folders live under
-`internal/cli/root` and `internal/cli/<command>`; those packages route to this
-package while command behavior is split out incrementally. Both layers are
-intentionally internal so the CLI can evolve without becoming a public Go API.
+`internal/cli/root` and `internal/cli/<command>`, while shared CLI-only kernel
+code lives in `internal/cli/core`. All layers are intentionally internal so the
+CLI can evolve without becoming a public Go API.
 
 `go doc` is still useful for exported constructors and manager types:
 
 ```bash
-go doc -all ./internal/cli
+go doc -all ./internal/cli/core
 ```
 
 Most command behavior is unexported and should be understood through this page,
@@ -31,25 +31,40 @@ tests, and the command help snapshots.
 
 | File group | Responsibility |
 |---|---|
-| `constants.go` | namespace, deployment, service, and resource names shared by commands |
-| `errors.go` | sentinel error values and wrapping helpers |
-| `exec.go`, `kubectl_runner.go` | external command execution and test seams |
-| `printer.go`, `output.go` | terminal output formatting |
-| `asset_paths.go` | locating repository and manifest assets |
-| `config.go` | environment/config defaults for registry, ingress, and setup |
-| `resource_helpers.go` | shared Kubernetes resource and manifest helpers |
+| `core/constants.go` | namespace, deployment, service, and resource names shared by commands |
+| `core/errors.go` | sentinel error values and wrapping helpers |
+| `core/exec.go`, `core/kubectl_runner.go` | external command execution and test seams |
+| `core/runtime.go` | composition root for shared CLI dependencies (`Config`, logger, kubectl, executor, printer) |
+| `core/printer.go` | terminal output formatting |
+| `kubeerr/` | shared kubectl error-detail extraction and cluster setup hints |
+| `core/config.go` | environment/config defaults for registry, ingress, and setup |
+| `kube/` | manifest apply, namespace, and kubectl-oriented helpers shared by command paths |
+| `platformapi/` | Sentinel platform API client for auth-backed access and runtime reads |
+| `platformapi/baseurl.go` | platform API base URL normalization used by auth and platform API clients |
+| `platformstatus/` | shared workload catalog, readiness rows, and quiet kubectl status probes for `status` and `sentinel status` |
+| `certmanager/` | cert-manager, private CA, and ACME helpers shared by setup and `cluster cert` |
+| `cluster/ingress.go` | ingress configuration option structs shared by setup and cluster managers |
+| `registry/` | registry manager, registry deployment, registry push, and platform registry defaults |
+| `registry/config/` | provisioned external registry config file loading and precedence |
+| `registry/ref/` | shared image reference parsing used by setup image publishing and registry push |
+| `registry/resolve/` | registry URL and image tag resolution shared by setup, server build, and registry push |
 
 When adding a helper, put it near the command that owns it unless two or more
 commands genuinely share it.
 
 ## Setup
 
-Setup is split across:
+Setup is split across `internal/cli/setup/`:
 
-- `setup.go`: Cobra command, setup orchestration, image publishing, manifest
-  application, verification, and deployment diagnostics.
-- `setup_plan.go`: planning and dependency injection seams used by tests.
-- `setup_steps.go`: step-level helpers used by setup orchestration.
+- `setup.go`: Cobra command and flag wiring.
+- `platform.go`: setup orchestration, image publishing, manifest application,
+  verification, and deployment diagnostics.
+- `flow.go`: setup flow validation and user-facing warnings.
+- `steps.go`: step-level helpers used by setup orchestration.
+- `plan/`: planning and dependency injection seams used by tests.
+- `setup/assetpath/`: repo-root and asset path resolution used by setup builds
+  and manifest rendering.
+- `setup/ingressmanifest/`: platform UI ingress manifest rendering.
 
 `setup --test-mode` relaxes production guardrails but still builds and pushes
 the operator, gateway proxy, and Sentinel images with `latest` tags. Pull hosts
@@ -68,8 +83,9 @@ Important setup contracts:
 - Setup verification should fail with diagnostic context instead of reporting
   success after partial deployment.
 
-Tests: `setup_test.go`, `setup_helpers_test.go`, `setup_plan_test.go`, and
-`setup_steps_test.go`.
+Tests live with the setup package, including `helpers_test.go`,
+`plan_flow_test.go`, `steps_test.go`, `config_plan_test.go`, and
+`tls_flags_test.go`.
 
 ## Cluster and Doctor
 
@@ -77,18 +93,23 @@ Tests: `setup_test.go`, `setup_helpers_test.go`, `setup_plan_test.go`, and
 provider-oriented provisioning helpers. `bootstrap.go` performs preflight checks
 and has the only automated apply path for k3s CoreDNS/local-path prerequisites.
 
-`cluster_doctor.go` is post-install diagnostics. It checks CRDs, workloads,
+`internal/cli/cluster/doctor_impl.go` is post-install diagnostics. It checks CRDs, workloads,
 registry reachability, image pull failures, ingress, and platform components.
 Registry protocol mismatch detection must inspect regular containers and init
 containers, and it must surface failed pod inspections instead of returning a
 false pass.
 
-Tests: `cluster_test.go`, `cluster_doctor_test.go`, and bootstrap-related tests.
+Tests: `cluster_test.go`, `doctor_impl_test.go`, and bootstrap-related tests.
 
 ## Registry
 
-`registry.go` owns registry status, info, provisioning, login, direct pushes, and
-in-cluster helper pushes.
+`internal/cli/registry/` owns registry Cobra wiring, status, info,
+provisioning, login, deployment, direct pushes, and in-cluster helper pushes.
+Shared image reference parsing lives in
+`internal/cli/registry/ref/`, registry URL/tag resolution lives in
+`internal/cli/registry/resolve/`, and provisioned registry config lives in
+`internal/cli/registry/config/` so setup and server build can reuse those rules
+without depending on registry command internals.
 
 Registry endpoint precedence is intentionally shared with setup and metadata:
 
@@ -101,13 +122,15 @@ The in-cluster push path uses a temporary helper workload and should clean up
 after itself even on failure. When editing this path, verify both success and
 diagnostic failure output.
 
-Tests: `registry_test.go`, plus setup tests for runtime image publishing.
+Tests live with the registry package, plus setup tests for runtime image
+publishing.
 
 ## Server and Build
 
 `server.go` implements CRUD-style operations for `MCPServer` resources and
 status/log inspection. `build.go` supports metadata-driven image builds for the
-`.mcp` workflow.
+`.mcp` workflow. Server-specific input validation lives with the server manager
+in `internal/cli/server/validation.go`.
 
 Keep these flows distinct:
 
@@ -136,39 +159,41 @@ Tests: `pipeline_test.go` and `pkg/metadata` tests.
 
 ## Access
 
-`access.go` provides commands for grants and sessions:
+`internal/cli/access/` provides commands for grants and sessions:
 
 - `access grant list|get|apply|delete|enable|disable`
 - `access session list|get|apply|delete|revoke|unrevoke`
 
 The implementation patches `spec.disabled` for grants and `spec.revoked` for
 sessions. Input validation should prevent invalid names/namespaces before they
-reach `kubectl`.
+reach `kubectl`; that validation lives in `internal/cli/access/validation.go`.
 
-Tests: `access_test.go`.
+Tests: `access/manager_test.go` and `access/validation_test.go`.
 
 ## Sentinel and Platform API
 
-`sentinel.go`, `auth.go`, `platform_client.go`, and `platform_ingress.go` provide
-CLI access to Sentinel APIs, auth flows, and platform ingress resolution. These
-commands should stay aligned with `services/api` routes and the public docs.
+`internal/cli/sentinel/`, `internal/cli/auth/`, and `internal/cli/platformapi/`
+provide CLI access to Sentinel APIs, auth flows, and platform API URL
+normalization. These commands should stay aligned with `services/api` routes and
+the public docs.
 
-Tests: `sentinel_test.go`, `auth_test.go`, `platform_client_test.go`, and
-`platform_ingress_test.go`.
+Tests: `sentinel/*_test.go`, `auth/*_test.go`, and `platformapi/*_test.go`.
 
 ## Status
 
-`status.go` prints high-level platform health by querying Kubernetes. It should
-be quick, readable, and conservative. Deeper diagnosis belongs in
-`cluster doctor`.
+`internal/cli/status/` prints high-level platform health by querying Kubernetes.
+It uses the shared `internal/cli/platformstatus/` workload catalog so top-level
+status and `sentinel status` do not drift. Shared kubectl diagnostics live in
+`internal/cli/kubeerr/`. Status should be quick, readable, and conservative.
+Deeper diagnosis belongs in `cluster doctor`.
 
-Tests: `status_test.go`.
+Tests: `status/*_test.go` and shared printer helpers in `status_test.go`.
 
 ## Adding a Command
 
-1. Add the command implementation in the closest existing file or a new focused
-   file under `internal/cli`.
-2. Add or update the thin routing package under `internal/cli/<command>`.
+1. Add or update the thin Cobra routing package under `internal/cli/<command>`.
+2. Put command behavior in a focused manager/service file in that command
+   package unless the behavior is genuinely shared.
 3. Register the top-level command from `internal/cli/root/commands.go`.
 4. Add tests with mocked runners or fake dependencies.
 5. Build the CLI and inspect `--help`.

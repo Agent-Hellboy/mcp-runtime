@@ -4,11 +4,11 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
-	"mcp-runtime/internal/cli"
 	"mcp-runtime/internal/cli/access"
 	"mcp-runtime/internal/cli/auth"
 	"mcp-runtime/internal/cli/bootstrap"
 	"mcp-runtime/internal/cli/cluster"
+	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/pipeline"
 	"mcp-runtime/internal/cli/registry"
 	"mcp-runtime/internal/cli/sentinel"
@@ -19,15 +19,16 @@ import (
 
 // AddCommands registers every top-level mcp-runtime command on root.
 func AddCommands(root *cobra.Command, logger *zap.Logger) {
-	runtime := cli.NewRuntime(logger)
+	runtime := core.NewRuntime(logger)
+	clusterMgr := cluster.DefaultClusterManager(logger)
 
-	root.AddCommand(cluster.New(runtime))
+	root.AddCommand(cluster.NewWithManager(clusterMgr))
 	root.AddCommand(registry.New(runtime))
 	root.AddCommand(server.New(runtime))
 	root.AddCommand(access.New(runtime))
 	root.AddCommand(auth.New(runtime))
 	root.AddCommand(bootstrap.New(runtime))
-	root.AddCommand(setup.New(runtime))
+	root.AddCommand(setup.New(runtime, clusterMgr))
 	root.AddCommand(status.New(runtime))
 	root.AddCommand(sentinel.New(runtime))
 	root.AddCommand(pipeline.New(runtime))

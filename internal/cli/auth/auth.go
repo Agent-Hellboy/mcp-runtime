@@ -18,7 +18,8 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/term"
 
-	"mcp-runtime/internal/cli"
+	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/internal/cli/platformapi"
 	"mcp-runtime/pkg/authfile"
 )
 
@@ -42,12 +43,12 @@ type loginFlags struct {
 	skipVerify     bool
 }
 
-func newManager(runtime *cli.Runtime) *manager {
+func newManager(runtime *core.Runtime) *manager {
 	return &manager{logger: runtime.Logger()}
 }
 
 // New returns the auth command.
-func New(runtime *cli.Runtime) *cobra.Command {
+func New(runtime *core.Runtime) *cobra.Command {
 	m := newManager(runtime)
 	cmd := &cobra.Command{
 		Use:   "auth",
@@ -104,7 +105,7 @@ func (m *manager) runLogin(cmd *cobra.Command, f loginFlags) error {
 	if apiURL == "" {
 		return fmt.Errorf("api URL is required (set --api-url or %s)", authfile.EnvAPIURL)
 	}
-	apiURL = cli.NormalizePlatformAPIBaseURL(apiURL)
+	apiURL = platformapi.NormalizeBaseURL(apiURL)
 	if apiURL == "" {
 		return errors.New("api URL must include scheme and host")
 	}
@@ -259,7 +260,7 @@ func loginPlatformPassword(ctx context.Context, apiBaseURL, email, password stri
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	u := cli.NormalizePlatformAPIBaseURL(apiBaseURL) + "/api/auth/login"
+	u := platformapi.NormalizeBaseURL(apiBaseURL) + "/api/auth/login"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
 	if err != nil {
 		return "", "", err
@@ -305,7 +306,7 @@ func fileCredentialsIfRelevant() (*authfile.Credentials, error) {
 }
 
 func verifyPlatformAPIToken(ctx context.Context, apiBaseURL, token string) error {
-	u := cli.NormalizePlatformAPIBaseURL(apiBaseURL) + "/api/auth/me"
+	u := platformapi.NormalizeBaseURL(apiBaseURL) + "/api/auth/me"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return err

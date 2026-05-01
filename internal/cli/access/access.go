@@ -4,21 +4,16 @@ package access
 import (
 	"github.com/spf13/cobra"
 
-	"mcp-runtime/internal/cli"
-)
-
-const (
-	grantResource   = "mcpaccessgrant"
-	sessionResource = "mcpagentsession"
+	"mcp-runtime/internal/cli/core"
 )
 
 // New returns the access command.
-func New(runtime *cli.Runtime) *cobra.Command {
-	return NewWithManager(runtime.AccessManager())
+func New(runtime *core.Runtime) *cobra.Command {
+	return NewWithManager(DefaultAccessManager(runtime))
 }
 
 // NewWithManager returns the access command using the provided manager.
-func NewWithManager(mgr *cli.AccessManager) *cobra.Command {
+func NewWithManager(mgr *AccessManager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "access",
 		Short: "Manage grants and agent sessions",
@@ -34,35 +29,35 @@ to target the cluster with kubectl and a kubeconfig (cluster admin path).`,
 	return cmd
 }
 
-func newGrantCmd(mgr *cli.AccessManager) *cobra.Command {
+func newGrantCmd(mgr *AccessManager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "grant",
 		Short: "Manage MCPAccessGrant resources",
 	}
-	cmd.AddCommand(newListCmd(mgr, grantResource, "grants"))
-	cmd.AddCommand(newGetCmd(mgr, grantResource, "grant"))
+	cmd.AddCommand(newListCmd(mgr, GrantResource, "grants"))
+	cmd.AddCommand(newGetCmd(mgr, GrantResource, "grant"))
 	cmd.AddCommand(newApplyCmd(mgr, "grant"))
-	cmd.AddCommand(newDeleteCmd(mgr, grantResource, "grant"))
-	cmd.AddCommand(newToggleCmd(mgr, grantResource, "disable", "Disable a grant", true))
-	cmd.AddCommand(newToggleCmd(mgr, grantResource, "enable", "Enable a grant", false))
+	cmd.AddCommand(newDeleteCmd(mgr, GrantResource, "grant"))
+	cmd.AddCommand(newToggleCmd(mgr, GrantResource, "disable", "Disable a grant", true))
+	cmd.AddCommand(newToggleCmd(mgr, GrantResource, "enable", "Enable a grant", false))
 	return cmd
 }
 
-func newSessionCmd(mgr *cli.AccessManager) *cobra.Command {
+func newSessionCmd(mgr *AccessManager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "session",
 		Short: "Manage MCPAgentSession resources",
 	}
-	cmd.AddCommand(newListCmd(mgr, sessionResource, "sessions"))
-	cmd.AddCommand(newGetCmd(mgr, sessionResource, "session"))
+	cmd.AddCommand(newListCmd(mgr, SessionResource, "sessions"))
+	cmd.AddCommand(newGetCmd(mgr, SessionResource, "session"))
 	cmd.AddCommand(newApplyCmd(mgr, "session"))
-	cmd.AddCommand(newDeleteCmd(mgr, sessionResource, "session"))
-	cmd.AddCommand(newToggleCmd(mgr, sessionResource, "revoke", "Revoke an agent session", true))
-	cmd.AddCommand(newToggleCmd(mgr, sessionResource, "unrevoke", "Clear the revoked flag on an agent session", false))
+	cmd.AddCommand(newDeleteCmd(mgr, SessionResource, "session"))
+	cmd.AddCommand(newToggleCmd(mgr, SessionResource, "revoke", "Revoke an agent session", true))
+	cmd.AddCommand(newToggleCmd(mgr, SessionResource, "unrevoke", "Clear the revoked flag on an agent session", false))
 	return cmd
 }
 
-func newListCmd(mgr *cli.AccessManager, resource, label string) *cobra.Command {
+func newListCmd(mgr *AccessManager, resource, label string) *cobra.Command {
 	var namespace string
 	var allNamespaces bool
 	cmd := &cobra.Command{
@@ -77,7 +72,7 @@ func newListCmd(mgr *cli.AccessManager, resource, label string) *cobra.Command {
 	return cmd
 }
 
-func newGetCmd(mgr *cli.AccessManager, resource, label string) *cobra.Command {
+func newGetCmd(mgr *AccessManager, resource, label string) *cobra.Command {
 	var namespace string
 	cmd := &cobra.Command{
 		Use:   "get [name]",
@@ -87,11 +82,11 @@ func newGetCmd(mgr *cli.AccessManager, resource, label string) *cobra.Command {
 			return mgr.GetAccessResource(resource, args[0], namespace)
 		},
 	}
-	cmd.Flags().StringVar(&namespace, "namespace", cli.NamespaceMCPServers, "Namespace")
+	cmd.Flags().StringVar(&namespace, "namespace", core.NamespaceMCPServers, "Namespace")
 	return cmd
 }
 
-func newApplyCmd(mgr *cli.AccessManager, label string) *cobra.Command {
+func newApplyCmd(mgr *AccessManager, label string) *cobra.Command {
 	var file string
 	cmd := &cobra.Command{
 		Use:   "apply",
@@ -105,7 +100,7 @@ func newApplyCmd(mgr *cli.AccessManager, label string) *cobra.Command {
 	return cmd
 }
 
-func newDeleteCmd(mgr *cli.AccessManager, resource, label string) *cobra.Command {
+func newDeleteCmd(mgr *AccessManager, resource, label string) *cobra.Command {
 	var namespace string
 	cmd := &cobra.Command{
 		Use:   "delete [name]",
@@ -115,11 +110,11 @@ func newDeleteCmd(mgr *cli.AccessManager, resource, label string) *cobra.Command
 			return mgr.DeleteAccessResource(resource, args[0], namespace)
 		},
 	}
-	cmd.Flags().StringVar(&namespace, "namespace", cli.NamespaceMCPServers, "Namespace")
+	cmd.Flags().StringVar(&namespace, "namespace", core.NamespaceMCPServers, "Namespace")
 	return cmd
 }
 
-func newToggleCmd(mgr *cli.AccessManager, resource, use, short string, value bool) *cobra.Command {
+func newToggleCmd(mgr *AccessManager, resource, use, short string, value bool) *cobra.Command {
 	var namespace string
 	cmd := &cobra.Command{
 		Use:   use + " [name]",
@@ -129,6 +124,6 @@ func newToggleCmd(mgr *cli.AccessManager, resource, use, short string, value boo
 			return mgr.ToggleAccessResource(resource, args[0], namespace, value)
 		},
 	}
-	cmd.Flags().StringVar(&namespace, "namespace", cli.NamespaceMCPServers, "Namespace")
+	cmd.Flags().StringVar(&namespace, "namespace", core.NamespaceMCPServers, "Namespace")
 	return cmd
 }
