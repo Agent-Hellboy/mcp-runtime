@@ -4,6 +4,7 @@ Usage:
   mcp-runtime cluster provision [flags]
 
 Flags:
+      --dry-run           Print the cluster config and command that would run without creating any cluster
   -h, --help              help for provision
       --name string       Cluster name (used by supported providers) (default "mcp-runtime")
       --nodes int         Number of nodes (default 3)

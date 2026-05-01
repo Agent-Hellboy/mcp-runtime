@@ -1841,7 +1841,7 @@ func resolveDoctorSmokeTarget(kubectl core.KubectlRunner, preferredNamespace str
 			}
 			port := int32(8088)
 			if len(parts) == 4 {
-				if parsed, parseErr := strconv.Atoi(strings.TrimSpace(parts[3])); parseErr == nil && parsed > 0 {
+				if parsed, parseErr := strconv.ParseInt(strings.TrimSpace(parts[3]), 10, 32); parseErr == nil && parsed > 0 && parsed <= 65535 {
 					port = int32(parsed)
 				}
 			}
