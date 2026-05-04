@@ -30,6 +30,7 @@ spec:
       labels:
         app: mcp-sentinel-ingest
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
       containers:
@@ -49,18 +50,16 @@ spec:
           envFrom:
             - configMapRef:
                 name: mcp-sentinel-config
-            - secretRef:
-                name: mcp-sentinel-secrets
           env:
             - name: PORT
               value: "8081"
             - name: METRICS_PORT
               value: "9091"
-            - name: API_KEYS
+            - name: INGEST_API_KEYS
               valueFrom:
                 secretKeyRef:
                   name: mcp-sentinel-secrets
-                  key: API_KEYS
+                  key: INGEST_API_KEYS
             - name: OTEL_SERVICE_NAME
               value: mcp-sentinel-ingest
           resources:

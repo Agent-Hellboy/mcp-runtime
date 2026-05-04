@@ -92,7 +92,6 @@ type resourceReadiness = operatorutil.ResourceReadiness
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingressclasses,verbs=get;list;watch
 //+kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch;update
-//+kubebuilder:rbac:groups="",resources=secrets,verbs=get
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpaccessgrants,verbs=get;list;watch
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpagentsessions,verbs=get;list;watch
 
@@ -398,6 +397,13 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 			return err
 		}
 		deployment.Spec.Template.Spec = corev1.PodSpec{
+			AutomountServiceAccountToken: boolPtr(false),
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot: boolPtr(true),
+				SeccompProfile: &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				},
+			},
 			ImagePullSecrets: r.buildImagePullSecrets(mcpServer),
 			Containers:       containers,
 			Volumes:          volumes,
@@ -478,6 +484,13 @@ func (r *MCPServerReconciler) reconcileCanaryDeployment(ctx context.Context, mcp
 			return err
 		}
 		deployment.Spec.Template.Spec = corev1.PodSpec{
+			AutomountServiceAccountToken: boolPtr(false),
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot: boolPtr(true),
+				SeccompProfile: &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				},
+			},
 			ImagePullSecrets: r.buildImagePullSecrets(mcpServer),
 			Containers:       containers,
 			Volumes:          volumes,
@@ -509,6 +522,13 @@ func (r *MCPServerReconciler) buildDeploymentContainers(mcpServer *mcpv1alpha1.M
 			},
 		},
 		Env: r.buildEnvVars(mcpServer.Spec.EnvVars, mcpServer.Spec.SecretEnvVars),
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: boolPtr(false),
+			RunAsNonRoot:             boolPtr(true),
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+		},
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(mcpServer.Spec.Port)},
@@ -746,6 +766,14 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 			},
 		},
 		Env: envVars,
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: boolPtr(false),
+			RunAsNonRoot:             boolPtr(true),
+			ReadOnlyRootFilesystem:   boolPtr(true),
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
 				Name:      gatewayPolicyVolumeName,
@@ -772,6 +800,10 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 		return corev1.Container{}, err
 	}
 	return container, nil
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func (r *MCPServerReconciler) reconcilePolicyConfigMap(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {

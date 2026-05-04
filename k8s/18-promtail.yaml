@@ -3,6 +3,7 @@ kind: ServiceAccount
 metadata:
   name: promtail
   namespace: mcp-sentinel
+automountServiceAccountToken: true
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -10,7 +11,7 @@ metadata:
   name: promtail
 rules:
   - apiGroups: [""]
-    resources: ["pods", "pods/log", "nodes", "nodes/proxy", "namespaces"]
+    resources: ["pods", "nodes", "namespaces"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -37,7 +38,7 @@ data:
       http_listen_port: 9080
       grpc_listen_port: 0
     positions:
-      filename: /var/log/positions.yaml
+      filename: /run/promtail/positions.yaml
     clients:
       - url: http://loki:3100/loki/api/v1/push
     scrape_configs:
@@ -81,15 +82,28 @@ spec:
         app: promtail
     spec:
       serviceAccountName: promtail
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: promtail
           image: grafana/promtail:2.9.4
           args: ["-config.file=/etc/promtail/promtail.yaml"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           volumeMounts:
             - name: config
               mountPath: /etc/promtail
+              readOnly: true
+            - name: positions
+              mountPath: /run/promtail
             - name: varlog
               mountPath: /var/log
+              readOnly: true
             - name: podlogs
               mountPath: /var/log/pods
               readOnly: true
@@ -97,6 +111,8 @@ spec:
         - name: config
           configMap:
             name: promtail-config
+        - name: positions
+          emptyDir: {}
         - name: varlog
           hostPath:
             path: /var/log

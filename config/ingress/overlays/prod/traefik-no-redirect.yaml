@@ -12,6 +12,7 @@ spec:
         - name: traefik
           args:
             - --providers.kubernetesingress=true
+            - --providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers
             - --entrypoints.web.address=:80
             - --entrypoints.websecure.address=:443
             - --entrypoints.websecure.http.tls=true

@@ -17,7 +17,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 )
 
 const (
@@ -247,15 +246,7 @@ func (s *RuntimeServer) clientForPrincipal(p principal) (kubernetes.Interface, e
 	if p.userID() == "" {
 		return nil, errPrincipalIdentityRequired
 	}
-	if s.k8sClients.Config == nil {
-		return s.k8sClients.Clientset, nil
-	}
-	cfg := rest.CopyConfig(s.k8sClients.Config)
-	cfg.Impersonate = rest.ImpersonationConfig{
-		UserName: "platform:user:" + p.userID(),
-		Groups:   []string{"platform:role:" + p.Role},
-	}
-	return kubernetes.NewForConfig(cfg)
+	return s.k8sClients.Clientset, nil
 }
 
 func (s *RuntimeServer) ensureUserNamespace(ctx context.Context, p principal) error {
@@ -367,11 +358,27 @@ func desiredDeployment(name, namespace, image string, port, replicas int32, labe
 		Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": name}},
 		Template: corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{Labels: labels},
-			Spec: corev1.PodSpec{Containers: []corev1.Container{{
-				Name:  "server",
-				Image: image,
-				Ports: []corev1.ContainerPort{{ContainerPort: port}},
-			}}},
+			Spec: corev1.PodSpec{
+				AutomountServiceAccountToken: boolPtr(false),
+				SecurityContext: &corev1.PodSecurityContext{
+					RunAsNonRoot: boolPtr(true),
+					SeccompProfile: &corev1.SeccompProfile{
+						Type: corev1.SeccompProfileTypeRuntimeDefault,
+					},
+				},
+				Containers: []corev1.Container{{
+					Name:  "server",
+					Image: image,
+					Ports: []corev1.ContainerPort{{ContainerPort: port}},
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: boolPtr(false),
+						RunAsNonRoot:             boolPtr(true),
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						},
+					},
+				}},
+			},
 		},
 	}}
 }
@@ -387,6 +394,10 @@ func desiredService(name, namespace string, port int32, labels map[string]string
 func intstrPtr(port int) *intstr.IntOrString {
 	v := intstr.FromInt(port)
 	return &v
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func upsertDeployment(ctx context.Context, client kubernetes.Interface, dep *appsv1.Deployment) (*appsv1.Deployment, error) {

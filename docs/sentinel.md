@@ -7,7 +7,7 @@
 | Service | Role |
 |---|---|
 | **mcp-proxy** | Transparent sidecar. Extracts identity, evaluates tool-level policy, emits allow/deny audit events, forwards traffic upstream. |
-| **ingest** | Receives `POST /events`, validates API keys or optional JWTs, writes to Kafka. |
+| **ingest** | Receives `POST /events`, validates ingest-scoped API keys or optional JWTs, writes to Kafka. |
 | **processor** | Consumes Kafka, batches, writes into ClickHouse with indexed audit fields. |
 | **api** | Analytics endpoints, dashboard summaries, runtime governance APIs (grants/sessions), component operations. |
 | **ui** | Three-tab dashboard: overview metrics + events, governance forms, operations health + safe restart. |
@@ -47,7 +47,9 @@ flowchart LR
 
 ## Auth and APIs
 
-`api` and `ingest` support both API keys and optional OIDC JWT validation (issuer, audience, JWKS).
+`api` accepts `API_KEYS`, with admin elevation only for keys also listed in
+`ADMIN_API_KEYS`. `ingest` accepts only ingest-scoped `INGEST_API_KEYS` (with a
+legacy fallback to `API_KEYS`) and optional OIDC JWT validation when configured.
 
 ```text
 POST /events

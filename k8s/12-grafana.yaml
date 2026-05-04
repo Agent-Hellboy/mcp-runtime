@@ -26,6 +26,7 @@ spec:
       labels:
         app: grafana
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: grafana
           image: grafana/grafana:10.2.3

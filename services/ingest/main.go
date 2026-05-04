@@ -57,7 +57,7 @@ func main() {
 	topic := envOr("KAFKA_TOPIC", "mcp.events")
 
 	apiKeys := map[string]struct{}{}
-	for _, key := range strings.Split(envOr("API_KEYS", ""), ",") {
+	for _, key := range strings.Split(envOr("INGEST_API_KEYS", envOr("API_KEYS", "")), ",") {
 		key = strings.TrimSpace(key)
 		if key != "" {
 			apiKeys[key] = struct{}{}
@@ -240,7 +240,7 @@ func (s *ingestServer) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 // auth is middleware that enforces API key authentication.
-// It checks for x-api-key header or supports optional OIDC JWT validation.
+// It checks for x-api-key from INGEST_API_KEYS (or legacy API_KEYS) or supports optional OIDC JWT validation.
 // If no API keys are configured, authentication is bypassed.
 func (s *ingestServer) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

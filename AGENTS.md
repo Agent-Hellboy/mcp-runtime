@@ -111,9 +111,13 @@ so the documented containerd mirror matches the image host exactly.
 - **API keys:**
 
 ```bash
-# Direct Sentinel API / x-api-key requests.
+# Direct Sentinel API / x-api-key admin requests.
 kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
-  -o jsonpath='{.data.API_KEYS}' | base64 -d
+  -o jsonpath='{.data.UI_API_KEY}' | base64 -d
+
+# Ingest/proxy analytics requests.
+kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
+  -o jsonpath='{.data.INGEST_API_KEYS}' | base64 -d
 
 # Browser/API-key login through the UI.
 kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
@@ -121,9 +125,11 @@ kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
 ```
 
   `setup` should keep `UI_API_KEY` included in the comma-separated `API_KEYS`
-  list. If direct `/api/...` curl calls return `401`, run
-  `./bin/mcp-runtime cluster doctor`; it flags a UI/API key mismatch. Roll the
-  API and UI deployments after patching `mcp-sentinel-secrets`.
+  and `ADMIN_API_KEYS` lists, and should keep ingest-only keys in
+  `INGEST_API_KEYS`. If direct `/api/...` curl calls return `401`, run
+  `./bin/mcp-runtime cluster doctor`; it flags UI/API/admin key mismatches. Roll
+  the API, UI, ingest, and proxy/gateway workloads after patching
+  `mcp-sentinel-secrets`.
 
 - **Platform admin bootstrap (one-shot):**
 
@@ -155,10 +161,11 @@ kubectl patch secret mcp-sentinel-secrets -n mcp-sentinel --type merge -p '{"str
 - **“ingressHost is required” (operator):** set `spec.ingressHost` on the `MCPServer`, or operator env `MCP_DEFAULT_INGRESS_HOST`, or `MCP_PLATFORM_DOMAIN` for `mcp.<domain>` defaults.
 - **MCPServer stuck `PartiallyReady` with working ingress traffic:** default ingress readiness is strict and waits for `Ingress.status.loadBalancer.ingress[]`. For dev / NodePort-style ingress controllers that route without publishing LB status, set operator env `MCP_INGRESS_READINESS_MODE=permissive`; this treats an Ingress with rules as ready. Keep the default `strict` mode for production setups that rely on published LB status.
 - **Port mismatch:** the bundled Go example listens on `8088` by default; align `MCPServer` `port` / `servicePort` and container `PORT` if you overrode them.
-- **Analytics 401:** use gateway/ingest URL and key, not the app’s random env. Example: `ANALYTICS_INGEST_URL=http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events` and `ANALYTICS_API_KEY` from `mcp-sentinel-secrets` (`API_KEYS` key).
+- **Analytics 401:** use gateway/ingest URL and key, not the app’s random env. Example: `ANALYTICS_INGEST_URL=http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events` and `ANALYTICS_API_KEY` from `mcp-sentinel-secrets` (`INGEST_API_KEYS` key).
 - **Secret not found in workload namespace:** copy `mcp-sentinel-secrets` or use a shared secret reference.
-- **Dashboard / API 401:** direct `x-api-key` curl calls use `API_KEYS`; browser login uses `UI_API_KEY`. Keep `UI_API_KEY` present in `API_KEYS`, then roll the API and UI deployments after secret changes.
+- **Dashboard / API 401:** direct admin `x-api-key` curl calls need a key present in both `API_KEYS` and `ADMIN_API_KEYS`; browser login uses `UI_API_KEY`. Keep `UI_API_KEY` present in both lists, then roll the API and UI deployments after secret changes.
 - **Ingress / routes:** `kubectl get ingress -A` and confirm paths match the gateway and demo servers you expect.
+- **Custom ingress namespaces:** bundled Traefik manifests watch `registry`, `mcp-sentinel`, and `mcp-servers` only so the controller does not need cluster-wide Secret access. If you place public Ingresses in another namespace, add that namespace to the Traefik `--providers.kubernetesingress.namespaces` list and bind the `traefik-watch` Role there.
 - **Private / HTTP in-cluster registry / k3s:** Pull and push can fail with `https` vs `http` or `registry.local` DNS on nodes. See **k3s and HTTP registry (config files)** below, set **`MCP_REGISTRY_*`** before `pipeline generate` when you want `ClusterIP:port` in manifests, and raise **`MCP_DEPLOYMENT_TIMEOUT`** if setup rollouts time out on slow first pulls.
 - **Prod DNS / ACME:** with `MCP_PLATFORM_DOMAIN=example.com`, setup derives `registry.example.com`, `mcp.example.com`, and `platform.example.com`. All three public DNS records must point at the ingress IP and port 80 must reach Traefik for HTTP-01. If cert-manager reports NXDOMAIN, verify from outside and inside the cluster: `getent hosts registry.example.com`, `getent hosts mcp.example.com`, `getent hosts platform.example.com`, and `kubectl run dns-check --rm -i --restart=Never --image=busybox:1.36 -- nslookup platform.example.com`.
 - **Platform UI 404 / wrong host:** when `MCP_PLATFORM_DOMAIN` (or `MCP_PLATFORM_INGRESS_HOST`) is set, setup applies a host-based ingress `mcp-sentinel-platform-ui` in `mcp-sentinel`. Verify with `kubectl get ingress mcp-sentinel-platform-ui -n mcp-sentinel -o yaml`; the rule should be host=`platform.<domain>` routing `/` to `mcp-sentinel-ui:8082` (and `/api`, `/grafana`, `/prometheus` to those services). If the dashboard returns Traefik default 404, check that DNS resolves `platform.<domain>` to the cluster ingress, then `kubectl logs -n traefik deploy/traefik --tail=120` for routing errors. The dev path-based gateway (`mcp-sentinel-gateway`) keeps working when `MCP_PLATFORM_DOMAIN` is unset.

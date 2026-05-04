@@ -161,6 +161,29 @@ func TestEnsureUserNamespaceSetsManagedLabel(t *testing.T) {
 	}
 }
 
+func TestDesiredDeploymentUsesRestrictedPodDefaults(t *testing.T) {
+	deployment := desiredDeployment("demo", "user-77", "registry.example.com/demo:latest", 8088, 1, map[string]string{
+		"app.kubernetes.io/name": "demo",
+	})
+	podSpec := deployment.Spec.Template.Spec
+	if podSpec.AutomountServiceAccountToken == nil || *podSpec.AutomountServiceAccountToken {
+		t.Fatal("expected deployed user workloads to disable service account token automount")
+	}
+	if podSpec.SecurityContext == nil || podSpec.SecurityContext.SeccompProfile == nil {
+		t.Fatal("expected pod security context with seccomp profile")
+	}
+	if podSpec.SecurityContext.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Fatalf("seccomp profile = %q, want %q", podSpec.SecurityContext.SeccompProfile.Type, corev1.SeccompProfileTypeRuntimeDefault)
+	}
+	container := podSpec.Containers[0]
+	if container.SecurityContext == nil || container.SecurityContext.AllowPrivilegeEscalation == nil || *container.SecurityContext.AllowPrivilegeEscalation {
+		t.Fatal("expected user workload container to disallow privilege escalation")
+	}
+	if container.SecurityContext.Capabilities == nil || len(container.SecurityContext.Capabilities.Drop) != 1 || container.SecurityContext.Capabilities.Drop[0] != corev1.Capability("ALL") {
+		t.Fatalf("expected user workload container to drop all capabilities, got %#v", container.SecurityContext.Capabilities)
+	}
+}
+
 func TestHandleDeploymentItemRejectsServiceUserWithoutIdentity(t *testing.T) {
 	client := kubernetesfake.NewSimpleClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team-a"}},

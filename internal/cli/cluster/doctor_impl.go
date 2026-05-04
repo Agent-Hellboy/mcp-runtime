@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -219,7 +220,7 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 			Run:    func() DoctorCheck { return checkMCPServersImagePullSmoke(kubectl, doctorMCPServersNamespace) },
 		},
 		{Name: "registry HTTP pull mismatch", Detail: "listing pods and inspecting image-pull failures for HTTP-vs-HTTPS registry errors", Run: func() DoctorCheck { return checkRegistryHTTPPullMismatch(kubectl) }},
-		{Name: "sentinel secrets", Detail: "reading Sentinel API_KEYS and UI_API_KEY from mcp-sentinel-secrets", Run: func() DoctorCheck { return checkSentinelSecrets(kubectl) }},
+		{Name: "sentinel secrets", Detail: "reading Sentinel API, admin, UI, and ingest keys from mcp-sentinel-secrets", Run: func() DoctorCheck { return checkSentinelSecrets(kubectl) }},
 		{Name: "sentinel API auth probe", Detail: "launching a temporary curl pod with UI_API_KEY against the Sentinel API", Run: func() DoctorCheck { return checkSentinelAPIAuthProbe(kubectl) }},
 		{Name: "node capacity", Detail: "checking node metrics, then falling back to allocatable resources if metrics-server is absent", Run: func() DoctorCheck { return checkNodeCapacity(kubectl) }},
 		{Name: "pending pods", Detail: "listing Pending pods across all namespaces", Run: func() DoctorCheck { return checkPendingPodsByNamespace(kubectl) }},
@@ -396,10 +397,21 @@ metadata:
   name: %s
   namespace: %s
 spec:
+  automountServiceAccountToken: false
   restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
   containers:
   - name: pause
     image: registry.k8s.io/pause:3.9
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      capabilities:
+        drop:
+        - ALL
 `, podName, namespace)
 	cmd, err := kubectl.CommandArgs([]string{"apply", "--dry-run=server", "-f", "-"})
 	if err != nil {
@@ -818,15 +830,19 @@ func checkTraefikServiceExposureAt(kubectl core.KubectlRunner, endpoint doctorTr
 
 func checkMCPServersDNSAndNetwork(kubectl core.KubectlRunner) DoctorCheck {
 	podName := fmt.Sprintf("mcp-runtime-doctor-dns-%d", time.Now().UnixNano())
+	image := "curlimages/curl:8.7.1"
+	curlArgs := []string{
+		"-sSI", "--connect-timeout", "5", "--max-time", "15",
+		"http://registry.registry.svc.cluster.local:5000/v2/",
+	}
 	args := []string{
 		"run", "-n", doctorMCPServersNamespace,
 		"--rm", "--restart=Never", "--attach",
 		"--pod-running-timeout=30s",
 		"--quiet",
-		"--image=curlimages/curl:8.7.1",
+		"--image=" + image,
+		"--overrides=" + restrictedRunOverrides(podName, image, []string{"curl"}, curlArgs),
 		podName,
-		"--command", "--", "curl", "-sSI", "--connect-timeout", "5", "--max-time", "15",
-		"http://registry.registry.svc.cluster.local:5000/v2/",
 	}
 	cmd, err := kubectl.CommandArgs(args)
 	if err != nil {
@@ -1091,7 +1107,7 @@ func checkMCPServersImagePullSmoke(kubectl core.KubectlRunner, namespace string)
 	defer func() {
 		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", namespace, "--ignore-not-found"})
 	}()
-	if err := kubectl.Run([]string{"run", podName, "-n", namespace, "--restart=Never", "--image=" + image}); err != nil {
+	if err := kubectl.Run([]string{"run", podName, "-n", namespace, "--restart=Never", "--image=" + image, "--overrides=" + restrictedRunOverrides(podName, image, nil, nil)}); err != nil {
 		return DoctorCheck{
 			Name:   "mcp-servers image pull smoke",
 			OK:     false,
@@ -1125,6 +1141,43 @@ func checkMCPServersImagePullSmoke(kubectl core.KubectlRunner, namespace string)
 	}
 }
 
+func restrictedRunOverrides(containerName, image string, command, args []string) string {
+	container := map[string]any{
+		"name":  strings.TrimSpace(containerName),
+		"image": strings.TrimSpace(image),
+		"securityContext": map[string]any{
+			"allowPrivilegeEscalation": false,
+			"runAsNonRoot":             true,
+			"capabilities": map[string]any{
+				"drop": []string{"ALL"},
+			},
+		},
+	}
+	if len(command) > 0 {
+		container["command"] = command
+	}
+	if len(args) > 0 {
+		container["args"] = args
+	}
+	overrides := map[string]any{
+		"spec": map[string]any{
+			"automountServiceAccountToken": false,
+			"securityContext": map[string]any{
+				"runAsNonRoot": true,
+				"seccompProfile": map[string]any{
+					"type": "RuntimeDefault",
+				},
+			},
+			"containers": []map[string]any{container},
+		},
+	}
+	data, err := json.Marshal(overrides)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
+}
+
 func checkSentinelSecrets(kubectl core.KubectlRunner) DoctorCheck {
 	if _, err := readKubectlOutput(kubectl, []string{"get", "namespace", doctorSentinelNamespace, "-o", "jsonpath={.metadata.name}"}); err != nil {
 		return DoctorCheck{
@@ -1139,7 +1192,25 @@ func checkSentinelSecrets(kubectl core.KubectlRunner) DoctorCheck {
 			Name:   "sentinel secrets",
 			OK:     false,
 			Detail: "secret mcp-sentinel-secrets missing or API_KEYS key absent",
-			Remedy: "create/update mcp-sentinel-secrets with API_KEYS and UI_API_KEY",
+			Remedy: "create/update mcp-sentinel-secrets with API_KEYS, ADMIN_API_KEYS, INGEST_API_KEYS, and UI_API_KEY",
+		}
+	}
+	adminAPIKeysB64, err := readKubectlOutput(kubectl, []string{"get", "secret", "mcp-sentinel-secrets", "-n", doctorSentinelNamespace, "-o", "jsonpath={.data.ADMIN_API_KEYS}"})
+	if err != nil {
+		return DoctorCheck{
+			Name:   "sentinel secrets",
+			OK:     false,
+			Detail: "secret mcp-sentinel-secrets missing ADMIN_API_KEYS key",
+			Remedy: "create/update mcp-sentinel-secrets with ADMIN_API_KEYS; include UI_API_KEY for browser admin access",
+		}
+	}
+	ingestAPIKeysB64, err := readKubectlOutput(kubectl, []string{"get", "secret", "mcp-sentinel-secrets", "-n", doctorSentinelNamespace, "-o", "jsonpath={.data.INGEST_API_KEYS}"})
+	if err != nil {
+		return DoctorCheck{
+			Name:   "sentinel secrets",
+			OK:     false,
+			Detail: "secret mcp-sentinel-secrets missing INGEST_API_KEYS key",
+			Remedy: "create/update mcp-sentinel-secrets with ingest-only INGEST_API_KEYS for MCP proxy analytics",
 		}
 	}
 	uiKeyB64, err := readKubectlOutput(kubectl, []string{"get", "secret", "mcp-sentinel-secrets", "-n", doctorSentinelNamespace, "-o", "jsonpath={.data.UI_API_KEY}"})
@@ -1152,30 +1223,48 @@ func checkSentinelSecrets(kubectl core.KubectlRunner) DoctorCheck {
 		}
 	}
 	apiKeys := strings.TrimSpace(decodeBase64(strings.TrimSpace(apiKeysB64)))
+	adminAPIKeys := strings.TrimSpace(decodeBase64(strings.TrimSpace(adminAPIKeysB64)))
+	ingestAPIKeys := strings.TrimSpace(decodeBase64(strings.TrimSpace(ingestAPIKeysB64)))
 	uiKey := strings.TrimSpace(decodeBase64(strings.TrimSpace(uiKeyB64)))
-	if apiKeys == "" || uiKey == "" {
+	if apiKeys == "" || adminAPIKeys == "" || ingestAPIKeys == "" || uiKey == "" {
 		return DoctorCheck{
 			Name:   "sentinel secrets",
 			OK:     false,
-			Detail: "API_KEYS or UI_API_KEY is empty",
-			Remedy: "populate non-empty API_KEYS and UI_API_KEY in mcp-sentinel-secrets",
+			Detail: "API_KEYS, ADMIN_API_KEYS, INGEST_API_KEYS, or UI_API_KEY is empty",
+			Remedy: "populate non-empty API_KEYS, ADMIN_API_KEYS, INGEST_API_KEYS, and UI_API_KEY in mcp-sentinel-secrets",
 		}
 	}
 	keys := splitCommaTrim(apiKeys)
+	adminKeys := splitCommaTrim(adminAPIKeys)
+	uiInAPIKeys := false
 	for _, k := range keys {
+		if k == uiKey {
+			uiInAPIKeys = true
+			break
+		}
+	}
+	if !uiInAPIKeys {
+		return DoctorCheck{
+			Name:   "sentinel secrets",
+			OK:     false,
+			Detail: "UI_API_KEY not present in API_KEYS",
+			Remedy: "align API_KEYS and UI_API_KEY values in mcp-sentinel-secrets",
+		}
+	}
+	for _, k := range adminKeys {
 		if k == uiKey {
 			return DoctorCheck{
 				Name:   "sentinel secrets",
 				OK:     true,
-				Detail: "UI_API_KEY matches one API_KEYS entry",
+				Detail: "UI_API_KEY is present in API_KEYS and ADMIN_API_KEYS; INGEST_API_KEYS is populated separately",
 			}
 		}
 	}
 	return DoctorCheck{
 		Name:   "sentinel secrets",
 		OK:     false,
-		Detail: "UI_API_KEY not present in API_KEYS",
-		Remedy: "align API_KEYS and UI_API_KEY values in mcp-sentinel-secrets",
+		Detail: "UI_API_KEY not present in ADMIN_API_KEYS",
+		Remedy: "include UI_API_KEY in ADMIN_API_KEYS for browser admin access",
 	}
 }
 

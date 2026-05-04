@@ -139,6 +139,7 @@ spec:
       labels:
         app: zookeeper
     spec:
+      automountServiceAccountToken: false
       initContainers:
         - name: init-perms
           image: alpine:3.23
@@ -210,6 +211,7 @@ spec:
       labels:
         app: kafka
     spec:
+      automountServiceAccountToken: false
       enableServiceLinks: false
       securityContext:
         fsGroup: 1000

@@ -562,6 +562,8 @@ func TestRenderAnalyticsSecretManifestReusesExistingPassword(t *testing.T) {
 
 func TestRenderAnalyticsSecretManifestReusesExistingAPIKeys(t *testing.T) {
 	apiKeyEncoded := base64.StdEncoding.EncodeToString([]byte("api-key"))
+	ingestKeyEncoded := base64.StdEncoding.EncodeToString([]byte("ingest-key"))
+	adminKeyEncoded := base64.StdEncoding.EncodeToString([]byte("admin-key"))
 	uiKeyEncoded := base64.StdEncoding.EncodeToString([]byte("ui-key"))
 	passwordEncoded := base64.StdEncoding.EncodeToString([]byte("grafana-password"))
 	mock := &core.MockExecutor{
@@ -569,6 +571,10 @@ func TestRenderAnalyticsSecretManifestReusesExistingAPIKeys(t *testing.T) {
 			switch {
 			case contains(spec.Args, "jsonpath={.data.API_KEYS}"):
 				return &core.MockCommand{Args: spec.Args, OutputData: []byte(apiKeyEncoded)}
+			case contains(spec.Args, "jsonpath={.data.INGEST_API_KEYS}"):
+				return &core.MockCommand{Args: spec.Args, OutputData: []byte(ingestKeyEncoded)}
+			case contains(spec.Args, "jsonpath={.data.ADMIN_API_KEYS}"):
+				return &core.MockCommand{Args: spec.Args, OutputData: []byte(adminKeyEncoded)}
 			case contains(spec.Args, "jsonpath={.data.UI_API_KEY}"):
 				return &core.MockCommand{Args: spec.Args, OutputData: []byte(uiKeyEncoded)}
 			case contains(spec.Args, "jsonpath={.data.GRAFANA_ADMIN_PASSWORD}"):
@@ -587,6 +593,12 @@ func TestRenderAnalyticsSecretManifestReusesExistingAPIKeys(t *testing.T) {
 	data := secretStringDataFromManifest(t, manifest)
 	if data["API_KEYS"] != "api-key,ui-key" {
 		t.Fatalf("expected existing API key list to include UI key, got %q", data["API_KEYS"])
+	}
+	if data["INGEST_API_KEYS"] != "ingest-key" {
+		t.Fatalf("expected existing ingest API key list to be reused, got %q", data["INGEST_API_KEYS"])
+	}
+	if data["ADMIN_API_KEYS"] != "admin-key,ui-key" {
+		t.Fatalf("expected existing admin API key list to include UI key, got %q", data["ADMIN_API_KEYS"])
 	}
 	if data["UI_API_KEY"] != "ui-key" {
 		t.Fatalf("expected existing UI API key to be reused, got %q", data["UI_API_KEY"])
@@ -661,8 +673,17 @@ func TestRenderAnalyticsSecretManifestGeneratesKeysWhenMissing(t *testing.T) {
 	if data["UI_API_KEY"] == "" {
 		t.Fatalf("expected generated UI API key, got %q", manifest)
 	}
+	if data["INGEST_API_KEYS"] == "" {
+		t.Fatalf("expected generated ingest API key, got %q", manifest)
+	}
+	if data["ADMIN_API_KEYS"] == "" {
+		t.Fatalf("expected admin API key list, got %q", manifest)
+	}
 	if !csvHasValue(data["API_KEYS"], data["UI_API_KEY"]) {
 		t.Fatalf("expected UI_API_KEY to be included in API_KEYS, got API_KEYS=%q UI_API_KEY=%q", data["API_KEYS"], data["UI_API_KEY"])
+	}
+	if !csvHasValue(data["ADMIN_API_KEYS"], data["UI_API_KEY"]) {
+		t.Fatalf("expected UI_API_KEY to be included in ADMIN_API_KEYS, got ADMIN_API_KEYS=%q UI_API_KEY=%q", data["ADMIN_API_KEYS"], data["UI_API_KEY"])
 	}
 	if data["GRAFANA_ADMIN_PASSWORD"] == "" {
 		t.Fatalf("expected generated grafana password, got %q", manifest)

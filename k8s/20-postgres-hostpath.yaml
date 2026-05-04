@@ -28,6 +28,7 @@ spec:
       labels:
         app: mcp-sentinel-postgres
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsUser: 70
         runAsGroup: 70

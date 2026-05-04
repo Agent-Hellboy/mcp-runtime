@@ -26,6 +26,7 @@ spec:
       labels:
         app: mcp-sentinel-processor
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
       containers:

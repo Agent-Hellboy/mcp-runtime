@@ -7,10 +7,10 @@ rules:
   - apiGroups: ["mcpruntime.org"]
     resources: ["mcpaccessgrants", "mcpagentsessions"]
     verbs: ["get", "list", "watch"]
-  # Create/update via POST /api/runtime/grants|sessions (apply semantics)
+  # Create/update/delete via /api/runtime/grants|sessions.
   - apiGroups: ["mcpruntime.org"]
     resources: ["mcpaccessgrants", "mcpagentsessions"]
-    verbs: ["create", "update"]
+    verbs: ["create", "update", "delete"]
   # Safe mutations (enable/disable/revoke/unrevoke)
   - apiGroups: ["mcpruntime.org"]
     resources: ["mcpaccessgrants"]
@@ -20,8 +20,11 @@ rules:
     verbs: ["patch"]
   # Restart deployments (for safe ops)
   - apiGroups: ["apps"]
-    resources: ["deployments", "statefulsets", "daemonsets"]
+    resources: ["deployments"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch", "patch"]
   # User deployment API creates Services in owned namespaces
   - apiGroups: [""]
     resources: ["services"]
@@ -29,14 +32,10 @@ rules:
   # User namespace provisioning guardrails
   - apiGroups: [""]
     resources: ["namespaces", "resourcequotas", "limitranges"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
+    verbs: ["get", "list", "watch", "create"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
-  # Required when user-scoped deployment calls use Kubernetes impersonation.
-  - apiGroups: [""]
-    resources: ["users", "groups"]
-    verbs: ["impersonate"]
+    verbs: ["get", "list", "watch", "create"]
   # List pods for health checks and logs
   - apiGroups: [""]
     resources: ["pods"]
@@ -48,7 +47,7 @@ rules:
   # Read configmaps for policy lookup
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get", "list"]
+    verbs: ["get"]
   # Read MCPServer resources
   - apiGroups: ["mcpruntime.org"]
     resources: ["mcpservers"]

@@ -58,6 +58,7 @@ spec:
       labels:
         app: clickhouse
     spec:
+      automountServiceAccountToken: false
       initContainers:
         - name: init-perms
           image: alpine:3.23
