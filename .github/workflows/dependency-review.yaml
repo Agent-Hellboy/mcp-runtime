@@ -22,7 +22,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Check dependency review support
+        id: dependency-review-support
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          status="$(curl -sS -o /tmp/dependency-review-support.json -w "%{http_code}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}")"
+          if [ "$status" = "200" ]; then
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "supported=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::Dependency Review API is unavailable for this repository (HTTP ${status}). Enable the dependency graph in repository security settings to enforce dependency review."
+
       - name: Review dependency changes
+        if: steps.dependency-review-support.outputs.supported == 'true'
         uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
         with:
           fail-on-severity: high

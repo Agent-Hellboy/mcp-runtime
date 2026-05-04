@@ -36,6 +36,11 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["get", "list", "watch", "create"]
+  # User-scoped deployment requests use Kubernetes impersonation so namespace
+  # RBAC is enforced as the platform user instead of the API service account.
+  - apiGroups: [""]
+    resources: ["users", "groups"]
+    verbs: ["impersonate"]
   # List pods for health checks and logs
   - apiGroups: [""]
     resources: ["pods"]

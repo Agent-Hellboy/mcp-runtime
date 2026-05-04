@@ -909,15 +909,9 @@ func checkIngressRouteProbe(kubectl core.KubectlRunner, namespace string, distro
 		}
 	}
 	podName := fmt.Sprintf("mcp-runtime-doctor-ingress-%d", time.Now().UnixNano())
-	curlArgs := []string{
-		"run", "-n", namespace,
-		"--rm", "--restart=Never", "--attach",
-		"--pod-running-timeout=30s",
-		"--quiet",
-		"--image=curlimages/curl:8.7.1",
-		podName,
-		"--command", "--", "curl",
-		"-sS", "-o", "doctor-response",
+	image := "curlimages/curl:8.7.1"
+	probeArgs := []string{
+		"-sS", "-o", "/tmp/doctor-response",
 		"-w", "%{http_code}",
 		"--connect-timeout", "5",
 		"--max-time", "20",
@@ -926,12 +920,21 @@ func checkIngressRouteProbe(kubectl core.KubectlRunner, namespace string, distro
 		"-H", "Mcp-Protocol-Version: 2025-06-18",
 	}
 	if host != "" {
-		curlArgs = append(curlArgs, "-H", "Host: "+host)
+		probeArgs = append(probeArgs, "-H", "Host: "+host)
 	}
-	curlArgs = append(curlArgs,
+	probeArgs = append(probeArgs,
 		"-d", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
 		fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s", traefik.Name, traefik.Namespace, traefik.WebPort, path),
 	)
+	curlArgs := []string{
+		"run", "-n", namespace,
+		"--rm", "--restart=Never", "--attach",
+		"--pod-running-timeout=30s",
+		"--quiet",
+		"--image=" + image,
+		"--overrides=" + restrictedRunOverrides(podName, image, "curl", probeArgs...),
+		podName,
+	}
 	cmd, err := kubectl.CommandArgs(curlArgs)
 	if err != nil {
 		return DoctorCheck{
@@ -1108,11 +1111,27 @@ func checkMCPServersImagePullSmoke(kubectl core.KubectlRunner, namespace string)
 	defer func() {
 		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", namespace, "--ignore-not-found"})
 	}()
-	if err := kubectl.Run([]string{"run", podName, "-n", namespace, "--restart=Never", "--image=" + image}); err != nil {
+	createCmd, cmdErr := kubectl.CommandArgs([]string{
+		"run", podName,
+		"-n", namespace,
+		"--restart=Never",
+		"--image=" + image,
+		"--overrides=" + restrictedRunOverrides(podName, image, ""),
+	})
+	if cmdErr != nil {
 		return DoctorCheck{
 			Name:   "mcp-servers image pull smoke",
 			OK:     false,
-			Detail: fmt.Sprintf("failed creating smoke pod: %v", err),
+			Detail: fmt.Sprintf("kubectl error: %v", cmdErr),
+			Remedy: "check kubectl setup",
+		}
+	}
+	createOut, err := createCmd.CombinedOutput()
+	if err != nil {
+		return DoctorCheck{
+			Name:   "mcp-servers image pull smoke",
+			OK:     false,
+			Detail: fmt.Sprintf("failed creating smoke pod: %v: %s", err, strings.TrimSpace(string(createOut))),
 			Remedy: "check pull credentials, registry reachability, and image existence",
 		}
 	}

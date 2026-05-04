@@ -17,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 const (
@@ -247,7 +248,15 @@ func (s *RuntimeServer) clientForPrincipal(p principal) (kubernetes.Interface, e
 	if p.userID() == "" {
 		return nil, errPrincipalIdentityRequired
 	}
-	return s.k8sClients.Clientset, nil
+	if s.k8sClients.Config == nil {
+		return s.k8sClients.Clientset, nil
+	}
+	cfg := rest.CopyConfig(s.k8sClients.Config)
+	cfg.Impersonate = rest.ImpersonationConfig{
+		UserName: "platform:user:" + p.userID(),
+		Groups:   []string{"platform:role:" + p.Role},
+	}
+	return kubernetes.NewForConfig(cfg)
 }
 
 func (s *RuntimeServer) ensureUserNamespace(ctx context.Context, p principal) error {

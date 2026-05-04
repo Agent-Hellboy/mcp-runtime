@@ -45,6 +45,7 @@ Optional but used in CI: `staticcheck ./...` (install the pinned CI version with
 - `go test ./internal/operator/... ./internal/cli/... -race -count=1`
 - `go test ./test/golden/... -count=1` (CLI help snapshots; update `test/golden/cli/testdata/*.golden` when you change Cobra help text on purpose)
 - `go test ./test/integration/...` (needs `KUBEBUILDER_ASSETS`; see `Makefile.operator` and CI for envtest setup)
+- `E2E_CACHE_MODE=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh` for repeated local Kind e2e debugging without recreating the cluster or rebuilding cached images; set `OPENAI_API_KEY` in env or `.env` for optional real-client prompts, and omit cache mode for CI-equivalent fresh runs.
 - `services/api` and `services/ui`: `go test -race -count=1 ./...` inside each directory (CI runs these explicitly)
 
 **CI** (`.github/workflows/ci.yaml`) runs: `gofmt` check, `go vet`, `staticcheck`, unit tests, golden tests, service tests, `test/integration`, SBOM generation, then Kind e2e on `main`/`PR` branches. Security workflows add pinned gosec, Trivy, and dependency-review checks. Align local changes with that before opening a PR.

@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 	"mcp-runtime/pkg/k8sclient"
 )
 
@@ -48,6 +49,41 @@ func TestClientForPrincipalRejectsServiceAdminWithoutIdentity(t *testing.T) {
 	}
 	if err != errPrincipalIdentityRequired {
 		t.Fatalf("error = %v, want %v", err, errPrincipalIdentityRequired)
+	}
+}
+
+func TestClientForPrincipalUsesKubernetesImpersonation(t *testing.T) {
+	var gotUser string
+	var gotGroups []string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUser = r.Header.Get("Impersonate-User")
+		gotGroups = append([]string(nil), r.Header.Values("Impersonate-Group")...)
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"kind":"PodList","apiVersion":"v1","metadata":{"resourceVersion":"1"},"items":[]}`))
+	}))
+	t.Cleanup(api.Close)
+
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Clientset: kubernetesfake.NewSimpleClientset(),
+			Config:    &rest.Config{Host: api.URL},
+		},
+	}
+	client, err := server.clientForPrincipal(principal{
+		Role:    roleUser,
+		Subject: "user-123",
+	})
+	if err != nil {
+		t.Fatalf("clientForPrincipal() error = %v", err)
+	}
+	if _, err := client.CoreV1().Pods("default").List(context.Background(), metav1.ListOptions{}); err != nil {
+		t.Fatalf("list pods with impersonated client: %v", err)
+	}
+	if gotUser != "platform:user:user-123" {
+		t.Fatalf("Impersonate-User = %q, want %q", gotUser, "platform:user:user-123")
+	}
+	if !hasString(gotGroups, "platform:role:user") {
+		t.Fatalf("Impersonate-Group values = %v, want platform:role:user", gotGroups)
 	}
 }
 
@@ -205,4 +241,13 @@ func TestHandleDeploymentItemRejectsServiceUserWithoutIdentity(t *testing.T) {
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
+}
+
+func hasString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

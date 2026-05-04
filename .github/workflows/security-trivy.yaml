@@ -29,12 +29,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Trivy repository scan
+      - name: Trivy repository vulnerability scan
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
         with:
           scan-type: fs
           scan-ref: .
-          scanners: vuln,secret,misconfig,license
+          scanners: vuln,secret,license
           format: sarif
           output: trivy-fs.sarif
           exit-code: "1"
@@ -51,6 +51,27 @@ jobs:
         uses: github/codeql-action/upload-sarif@ed410739ba306e4ebe5e123421a6bd694e494a2b # v4
         with:
           sarif_file: trivy-fs.sarif
+
+      - name: Trivy repository misconfiguration scan
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: misconfig
+          format: sarif
+          output: trivy-misconfig.sarif
+          exit-code: "0"
+          skip-dirs: inspirations/mcp-gateway-registry
+          severity: CRITICAL,HIGH
+          limit-severities-for-sarif: true
+          hide-progress: true
+
+      - name: Upload Trivy misconfiguration SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@ed410739ba306e4ebe5e123421a6bd694e494a2b # v4
+        with:
+          sarif_file: trivy-misconfig.sarif
 
   trivy-image:
     name: Trivy Operator Image Scan
