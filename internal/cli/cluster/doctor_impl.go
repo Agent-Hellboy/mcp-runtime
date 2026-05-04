@@ -67,6 +67,7 @@ const (
 	doctorK3sTraefikWebPort   = 80
 	doctorSentinelNamespace   = "mcp-sentinel"
 	doctorSentinelAPIService  = "mcp-sentinel-api"
+	doctorRestrictedRunAsUser = int64(65532)
 
 	registryHTTPPullMismatch = "http: server gave HTTP response to HTTPS client"
 
@@ -841,7 +842,7 @@ func checkMCPServersDNSAndNetwork(kubectl core.KubectlRunner) DoctorCheck {
 		"--pod-running-timeout=30s",
 		"--quiet",
 		"--image=" + image,
-		"--overrides=" + restrictedRunOverrides(podName, image, []string{"curl"}, curlArgs),
+		"--overrides=" + restrictedRunOverrides(podName, image, "curl", curlArgs...),
 		podName,
 	}
 	cmd, err := kubectl.CommandArgs(args)
@@ -1107,7 +1108,7 @@ func checkMCPServersImagePullSmoke(kubectl core.KubectlRunner, namespace string)
 	defer func() {
 		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", namespace, "--ignore-not-found"})
 	}()
-	if err := kubectl.Run([]string{"run", podName, "-n", namespace, "--restart=Never", "--image=" + image, "--overrides=" + restrictedRunOverrides(podName, image, nil, nil)}); err != nil {
+	if err := kubectl.Run([]string{"run", podName, "-n", namespace, "--restart=Never", "--image=" + image}); err != nil {
 		return DoctorCheck{
 			Name:   "mcp-servers image pull smoke",
 			OK:     false,
@@ -1141,20 +1142,21 @@ func checkMCPServersImagePullSmoke(kubectl core.KubectlRunner, namespace string)
 	}
 }
 
-func restrictedRunOverrides(containerName, image string, command, args []string) string {
+func restrictedRunOverrides(containerName, image, command string, args ...string) string {
 	container := map[string]any{
 		"name":  strings.TrimSpace(containerName),
 		"image": strings.TrimSpace(image),
 		"securityContext": map[string]any{
 			"allowPrivilegeEscalation": false,
 			"runAsNonRoot":             true,
+			"runAsUser":                doctorRestrictedRunAsUser,
 			"capabilities": map[string]any{
 				"drop": []string{"ALL"},
 			},
 		},
 	}
-	if len(command) > 0 {
-		container["command"] = command
+	if strings.TrimSpace(command) != "" {
+		container["command"] = []string{strings.TrimSpace(command)}
 	}
 	if len(args) > 0 {
 		container["args"] = args
@@ -1164,6 +1166,7 @@ func restrictedRunOverrides(containerName, image string, command, args []string)
 			"automountServiceAccountToken": false,
 			"securityContext": map[string]any{
 				"runAsNonRoot": true,
+				"runAsUser":    doctorRestrictedRunAsUser,
 				"seccompProfile": map[string]any{
 					"type": "RuntimeDefault",
 				},

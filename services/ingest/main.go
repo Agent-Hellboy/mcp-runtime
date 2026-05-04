@@ -57,7 +57,8 @@ func main() {
 	topic := envOr("KAFKA_TOPIC", "mcp.events")
 
 	apiKeys := map[string]struct{}{}
-	for _, key := range strings.Split(envOr("INGEST_API_KEYS", envOr("API_KEYS", "")), ",") {
+	ingestKeys := envOr("INGEST_API_KEYS", envOr("API_KEYS", ""))
+	for _, key := range strings.Split(ingestKeys, ",") {
 		key = strings.TrimSpace(key)
 		if key != "" {
 			apiKeys[key] = struct{}{}

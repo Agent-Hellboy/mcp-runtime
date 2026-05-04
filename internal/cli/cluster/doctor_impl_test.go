@@ -1209,3 +1209,58 @@ func TestCheckMCPServersImagePullSecrets(t *testing.T) {
 		}
 	})
 }
+
+func TestCheckMCPServersImagePullSmokeUsesNeutralPodSpec(t *testing.T) {
+	var smokeRunArgs []string
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			switch {
+			case contains(spec.Args, "get") && contains(spec.Args, "deploy"):
+				return &core.MockCommand{OutputData: []byte("")}
+			case len(spec.Args) > 0 && spec.Args[0] == "run":
+				smokeRunArgs = append([]string(nil), spec.Args...)
+				return &core.MockCommand{}
+			case contains(spec.Args, "wait"):
+				return &core.MockCommand{}
+			case contains(spec.Args, "delete"):
+				return &core.MockCommand{}
+			default:
+				return &core.MockCommand{}
+			}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+	check := checkMCPServersImagePullSmoke(kubectl, "mcp-servers")
+	if !check.OK {
+		t.Fatalf("expected image pull smoke to pass, got detail=%q", check.Detail)
+	}
+	if len(smokeRunArgs) == 0 {
+		t.Fatal("expected image pull smoke to create a pod")
+	}
+	if containsArgPrefix(smokeRunArgs, "--overrides=") {
+		t.Fatalf("image pull smoke should not inject runtime hardening overrides, got args=%v", smokeRunArgs)
+	}
+}
+
+func TestRestrictedRunOverridesUsesNumericNonRootUser(t *testing.T) {
+	overrides := restrictedRunOverrides("probe", "curlimages/curl:8.7.1", "curl", "-sSI", "http://example.test")
+	for _, want := range []string{
+		`"runAsNonRoot":true`,
+		`"runAsUser":65532`,
+		`"command":["curl"]`,
+		`"args":["-sSI","http://example.test"]`,
+	} {
+		if !strings.Contains(overrides, want) {
+			t.Fatalf("restricted overrides missing %s: %s", want, overrides)
+		}
+	}
+}
+
+func containsArgPrefix(args []string, prefix string) bool {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, prefix) {
+			return true
+		}
+	}
+	return false
+}

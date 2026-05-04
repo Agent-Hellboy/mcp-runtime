@@ -77,6 +77,7 @@ const (
 	gatewayPolicyMountDir   = "/var/run/mcp-runtime/policy"
 	gatewayPolicyFileName   = "policy.json"
 	gatewayPolicyFilePath   = gatewayPolicyMountDir + "/" + gatewayPolicyFileName
+	restrictedRunAsUser     = int64(65532)
 )
 
 // resourceReadiness tracks the readiness state of different resources.
@@ -400,6 +401,7 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 			AutomountServiceAccountToken: boolPtr(false),
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: boolPtr(true),
+				RunAsUser:    int64Ptr(restrictedRunAsUser),
 				SeccompProfile: &corev1.SeccompProfile{
 					Type: corev1.SeccompProfileTypeRuntimeDefault,
 				},
@@ -487,6 +489,7 @@ func (r *MCPServerReconciler) reconcileCanaryDeployment(ctx context.Context, mcp
 			AutomountServiceAccountToken: boolPtr(false),
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: boolPtr(true),
+				RunAsUser:    int64Ptr(restrictedRunAsUser),
 				SeccompProfile: &corev1.SeccompProfile{
 					Type: corev1.SeccompProfileTypeRuntimeDefault,
 				},
@@ -803,6 +806,10 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 }
 
 func boolPtr(value bool) *bool {
+	return &value
+}
+
+func int64Ptr(value int64) *int64 {
 	return &value
 }
 

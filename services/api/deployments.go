@@ -24,6 +24,7 @@ const (
 	platformUserIDLabel  = "platform.mcpruntime.org/user-id"
 	createdByLabel       = "created-by"
 	defaultDeployPort    = int32(8088)
+	restrictedRunAsUser  = int64(65532)
 )
 
 var errPrincipalIdentityRequired = errors.New("authenticated user identity required")
@@ -362,6 +363,7 @@ func desiredDeployment(name, namespace, image string, port, replicas int32, labe
 				AutomountServiceAccountToken: boolPtr(false),
 				SecurityContext: &corev1.PodSecurityContext{
 					RunAsNonRoot: boolPtr(true),
+					RunAsUser:    int64Ptr(restrictedRunAsUser),
 					SeccompProfile: &corev1.SeccompProfile{
 						Type: corev1.SeccompProfileTypeRuntimeDefault,
 					},
@@ -397,6 +399,10 @@ func intstrPtr(port int) *intstr.IntOrString {
 }
 
 func boolPtr(value bool) *bool {
+	return &value
+}
+
+func int64Ptr(value int64) *int64 {
 	return &value
 }
 

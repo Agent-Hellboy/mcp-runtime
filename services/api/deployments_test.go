@@ -175,6 +175,9 @@ func TestDesiredDeploymentUsesRestrictedPodDefaults(t *testing.T) {
 	if podSpec.SecurityContext.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
 		t.Fatalf("seccomp profile = %q, want %q", podSpec.SecurityContext.SeccompProfile.Type, corev1.SeccompProfileTypeRuntimeDefault)
 	}
+	if podSpec.SecurityContext.RunAsUser == nil || *podSpec.SecurityContext.RunAsUser != restrictedRunAsUser {
+		t.Fatalf("runAsUser = %v, want %d", podSpec.SecurityContext.RunAsUser, restrictedRunAsUser)
+	}
 	container := podSpec.Containers[0]
 	if container.SecurityContext == nil || container.SecurityContext.AllowPrivilegeEscalation == nil || *container.SecurityContext.AllowPrivilegeEscalation {
 		t.Fatal("expected user workload container to disallow privilege escalation")

@@ -489,6 +489,9 @@ func TestReconcileDeploymentLabels(t *testing.T) {
 	if deployment.Spec.Template.Spec.SecurityContext.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
 		t.Fatalf("seccomp profile = %q, want %q", deployment.Spec.Template.Spec.SecurityContext.SeccompProfile.Type, corev1.SeccompProfileTypeRuntimeDefault)
 	}
+	if deployment.Spec.Template.Spec.SecurityContext.RunAsUser == nil || *deployment.Spec.Template.Spec.SecurityContext.RunAsUser != restrictedRunAsUser {
+		t.Fatalf("runAsUser = %v, want %d", deployment.Spec.Template.Spec.SecurityContext.RunAsUser, restrictedRunAsUser)
+	}
 	server := deployment.Spec.Template.Spec.Containers[0]
 	if server.SecurityContext == nil || server.SecurityContext.AllowPrivilegeEscalation == nil || *server.SecurityContext.AllowPrivilegeEscalation {
 		t.Fatal("expected MCPServer container to disallow privilege escalation")
