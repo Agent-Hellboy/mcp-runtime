@@ -74,13 +74,13 @@ curl -sS -X POST http://localhost:8080/api/auth/login \
   -d '{"email":"prince@example.com","password":"change-me-now"}'
 ```
 
-Both return a bearer `access_token`:
+Both return a bearer `access_token` with a 15-minute lifetime:
 
 ```json
 {
   "access_token": "...",
   "token_type": "bearer",
-  "expires_in": 43200,
+  "expires_in": 900,
   "user": {
     "id": "...",
     "email": "prince@example.com",

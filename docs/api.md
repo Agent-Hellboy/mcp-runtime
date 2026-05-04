@@ -189,8 +189,8 @@ GET  /api/auth/me
 | Route | Body / response |
 |---|---|
 | `POST /api/auth/signup` | Body: `email`, `password`, optional `role`. Returns `201` with `access_token`, `token_type`, `expires_in`, and `user`. Admin signup requires an admin principal. |
-| `POST /api/auth/login` | Body: `email`, `password`. Returns `access_token`, `token_type`, `expires_in`, and `user`. |
-| `POST /api/auth/oidc` | Body: `id_token`. Requires configured issuer, audience, and JWKS. Returns a platform bearer token and user. |
+| `POST /api/auth/login` | Body: `email`, `password`. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
+| `POST /api/auth/oidc` | Body: `id_token`. Requires configured issuer, audience, and JWKS. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
 | `GET /api/auth/me` | Requires auth. Returns `authenticated=true` and the current principal. |
 
 ## Gateway flow and headers
@@ -247,13 +247,13 @@ For `POST /api/runtime/grants` and `POST /api/runtime/sessions`, the API resolve
 ```text
 GET  /api/runtime/servers              # List MCP server deployments
 GET  /api/runtime/grants               # List MCPAccessGrant resources
-GET  /api/runtime/grants/{ns}/{name}   # Get one MCPAccessGrant
+GET  /api/runtime/grants/{namespace}/{name}   # Get one MCPAccessGrant
 POST /api/runtime/grants               # Create or update an MCPAccessGrant (x-api-key)
-DELETE /api/runtime/grants/{ns}/{name} # Delete one MCPAccessGrant
+DELETE /api/runtime/grants/{namespace}/{name} # Delete one MCPAccessGrant
 GET  /api/runtime/sessions             # List MCPAgentSession resources
-GET  /api/runtime/sessions/{ns}/{name} # Get one MCPAgentSession
+GET  /api/runtime/sessions/{namespace}/{name} # Get one MCPAgentSession
 POST /api/runtime/sessions             # Create or update an MCPAgentSession (x-api-key)
-DELETE /api/runtime/sessions/{ns}/{name} # Delete one MCPAgentSession
+DELETE /api/runtime/sessions/{namespace}/{name} # Delete one MCPAgentSession
 GET  /api/runtime/components           # Sentinel component health status
 GET  /api/runtime/policy?namespace=&server=   # Get rendered policy for a server
 ```

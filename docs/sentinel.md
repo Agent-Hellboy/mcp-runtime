@@ -79,9 +79,9 @@ metrics on `METRICS_PORT` (default `9090`).
 |---|---|---|
 | `GET` | `/health` | API health and runtime initialization status. |
 | `GET` | `/metrics` | Prometheus metrics on the metrics server. |
-| `POST` | `/api/auth/signup` | Create a platform user when platform identity storage is configured. Admin signup requires an admin principal. |
-| `POST` | `/api/auth/login` | Exchange platform email/password for a bearer token. |
-| `POST` | `/api/auth/oidc` | Exchange a configured OIDC ID token for a platform bearer token. |
+| `POST` | `/api/auth/signup` | Create a platform user when platform identity storage is configured. Returns `201` with `access_token`, `token_type`, `expires_in`, and `user`. Admin signup requires an admin principal. |
+| `POST` | `/api/auth/login` | Exchange platform email/password for a bearer token. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
+| `POST` | `/api/auth/oidc` | Exchange a configured OIDC ID token for a platform bearer token. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
 | `GET` | `/api/auth/me` | Return the authenticated principal. |
 | `GET` | `/api/dashboard/summary` | Dashboard cards: event totals, active grants/sessions, latest event metadata. Admin role required. |
 | `GET` | `/api/events` | Recent ClickHouse-backed audit events, newest first. Query: `limit` (1-1000, default 100). Admin role required. |
