@@ -224,23 +224,35 @@ kubectl rollout status deploy/go-example-mcp -n mcp-servers --timeout=180s
 ./bin/mcp-runtime server status --namespace mcp-servers
 ```
 
-Useful checks while iterating:
+Useful server and policy checks while iterating:
 
 ```bash
-kubectl get mcpservers -n mcp-servers
-kubectl get pods -n mcp-servers -o wide
-kubectl get pods -n mcp-servers \
+SERVER=go-example-mcp
+NAMESPACE=mcp-servers
+CONTAINER=go-example-mcp
+
+kubectl get mcpservers -n "$NAMESPACE"
+kubectl get deploy/"$SERVER" svc/"$SERVER" ingress/"$SERVER" -n "$NAMESPACE" -o wide
+kubectl get cm -n "$NAMESPACE" "${SERVER}-gateway-policy" -o yaml
+kubectl get mcpaccessgrant,mcpagentsession -n "$NAMESPACE" -o wide
+kubectl get pods -n "$NAMESPACE" -o wide
+kubectl get pods -n "$NAMESPACE" \
   -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.name}{","}{end}{"\n"}{end}'
 
 POD="$(
-  kubectl get pods -n mcp-servers -l app=go-example-mcp \
+  kubectl get pods -n "$NAMESPACE" -l app="$SERVER" \
     -o jsonpath='{.items[0].metadata.name}'
 )"
 
-kubectl describe pod -n mcp-servers "$POD"
-kubectl logs -n mcp-servers "$POD" -c go-example-mcp
-kubectl logs -n mcp-servers "$POD" -c mcp-gateway
-./bin/mcp-runtime server policy inspect go-example-mcp --namespace mcp-servers
+kubectl describe mcpserver -n "$NAMESPACE" "$SERVER"
+kubectl describe pod -n "$NAMESPACE" "$POD"
+kubectl logs -n "$NAMESPACE" "$POD" -c "$CONTAINER"
+kubectl logs -n "$NAMESPACE" "$POD" -c mcp-gateway
+./bin/mcp-runtime server logs "$SERVER" --namespace "$NAMESPACE"
+./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE"
+kubectl get cm -n "$NAMESPACE" "${SERVER}-gateway-policy" \
+  -o 'go-template={{index .data "policy.json"}}'
+kubectl get events -n "$NAMESPACE" --sort-by=.lastTimestamp
 ```
 
 The governed sidecar container is named `mcp-gateway`; it runs the
@@ -250,9 +262,51 @@ Go example image is distroless, so `kubectl exec ... -- /bin/sh` and
 container when you need a shell in the pod namespace:
 
 ```bash
-kubectl debug -it -n mcp-servers "pod/$POD" \
-  --target=go-example-mcp \
+kubectl debug -it -n "$NAMESPACE" "pod/$POD" \
+  --target="$CONTAINER" \
   --image=busybox:1.36 -- sh
+```
+
+`server policy inspect` prints the rendered `policy.json` from the
+`${SERVER}-gateway-policy` ConfigMap. If a grant or session exists in
+Kubernetes but is missing from that output, check the operator logs in the
+platform block below. If it appears in the rendered policy but calls still fail,
+check the `mcp-gateway` sidecar logs and allow a few seconds for the sidecar to
+reload the mounted file.
+
+Start from the symptom instead of running every command every time:
+
+| Symptom | First checks |
+|---------|--------------|
+| Pod is not ready or image pulls fail | `kubectl describe pod`, namespace events, `cluster doctor` |
+| Grant or session does not affect traffic | `kubectl get mcpaccessgrant,mcpagentsession`, `server policy inspect`, raw policy ConfigMap |
+| Policy renders but tool calls are denied | `kubectl logs ... -c mcp-gateway`, request headers, `Mcp-Session-Id` / `X-MCP-Agent-Session` values |
+| Requests work but analytics are missing | `sentinel logs ingest`, `sentinel logs processor`, analytics secret and ingest URL |
+| Dashboard, API, or MCP route returns 404 | `kubectl get ingress -A`, Sentinel ingress YAML, Traefik logs |
+
+Useful local platform checks:
+
+```bash
+./bin/mcp-runtime cluster doctor
+./bin/mcp-runtime sentinel status
+./bin/mcp-runtime sentinel events
+./bin/mcp-runtime sentinel logs api --since 10m
+./bin/mcp-runtime sentinel logs ui --since 10m
+./bin/mcp-runtime sentinel logs gateway --since 10m
+./bin/mcp-runtime sentinel logs ingest --since 10m
+./bin/mcp-runtime sentinel logs processor --since 10m
+
+kubectl get pods -n mcp-runtime -o wide
+kubectl get pods -n mcp-sentinel -o wide
+kubectl rollout status deploy/mcp-sentinel-api -n mcp-sentinel --timeout=90s
+kubectl rollout status deploy/mcp-sentinel-ingest -n mcp-sentinel --timeout=90s
+kubectl rollout status deploy/mcp-sentinel-processor -n mcp-sentinel --timeout=90s
+kubectl rollout status deploy/mcp-sentinel-ui -n mcp-sentinel --timeout=90s
+kubectl rollout status deploy/mcp-sentinel-gateway -n mcp-sentinel --timeout=90s
+kubectl logs -n mcp-runtime deploy/mcp-runtime-operator-controller-manager --since=10m
+kubectl logs -n traefik deploy/traefik --tail=120
+kubectl get ingress -A
+kubectl get ingress -n mcp-sentinel -o yaml
 ```
 
 Apply an access grant and session for the local request:
@@ -299,7 +353,8 @@ until ./bin/mcp-runtime server policy inspect go-example-mcp --namespace mcp-ser
   sleep 2
 done
 
-# The proxy sidecar reloads the rendered policy file on a short polling loop.
+# The proxy sidecar reloads rendered policy on a short polling loop, so give the
+# gateway a few seconds to observe the new access session before the first tool call.
 sleep 6
 ```
 
@@ -357,6 +412,10 @@ curl -sS \
 
 You should see successful `tools/call` responses containing `5` and
 `HELLO WORLD`. Then verify Sentinel health and query the analytics API:
+
+The bundled Go example server also exposes `upper`, `lower`, `echo`, and
+`slugify`, and each of those tools expects a `message` field in `arguments`
+instead of `input` or `text`.
 
 ```bash
 ./bin/mcp-runtime sentinel status
