@@ -252,9 +252,9 @@ func main() {
 		mux.Handle("/api/runtime/components", server.auth(http.HandlerFunc(runtimeServer.handleRuntimeComponents)))
 		mux.Handle("/api/runtime/policy", server.auth(http.HandlerFunc(runtimeServer.handleRuntimePolicy)))
 		mux.Handle("/api/runtime/actions/restart", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleActionRestart))))
-		// Grant item (POST /api/runtime/grants/{ns}/{name}/disable|enable, DELETE /api/runtime/grants/{ns}/{name})
+		// Grant item (POST /api/runtime/grants/{namespace}/{name}/disable|enable, DELETE /api/runtime/grants/{namespace}/{name})
 		mux.Handle("/api/runtime/grants/", server.auth(http.HandlerFunc(runtimeServer.handleGrantItemPath)))
-		// Session item (POST /api/runtime/sessions/{ns}/{name}/revoke|unrevoke, DELETE /api/runtime/sessions/{ns}/{name})
+		// Session item (POST /api/runtime/sessions/{namespace}/{name}/revoke|unrevoke, DELETE /api/runtime/sessions/{namespace}/{name})
 		mux.Handle("/api/runtime/sessions/", server.auth(http.HandlerFunc(runtimeServer.handleSessionItemPath)))
 		// User-scoped API key lifecycle.
 		mux.Handle("/api/user/api-keys", server.auth(http.HandlerFunc(server.handleUserAPIKeys)))
