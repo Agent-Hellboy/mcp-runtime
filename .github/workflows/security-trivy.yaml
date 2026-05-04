@@ -42,6 +42,7 @@ jobs:
           skip-dirs: inspirations/mcp-gateway-registry
           vuln-type: os,library
           severity: CRITICAL,HIGH
+          limit-severities-for-sarif: true
           hide-progress: true
 
       - name: Upload Trivy repository SARIF
@@ -88,6 +89,7 @@ jobs:
           ignore-unfixed: true
           vuln-type: os,library
           severity: CRITICAL,HIGH
+          limit-severities-for-sarif: true
           hide-progress: true
 
       - name: Upload Trivy image SARIF
