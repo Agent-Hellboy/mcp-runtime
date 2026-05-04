@@ -27,6 +27,7 @@ tags
 /services/mcp-server/mcp-sentinel-mcp-server
 /services/ui/mcp-sentinel-ui
 /unit.out
+/chain-bench-results.json
 docs/COVERAGE_IMPROVEMENT_PLAN.md
 __pycache__/
 *.pyc

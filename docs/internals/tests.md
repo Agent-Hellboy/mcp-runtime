@@ -70,9 +70,11 @@ The main CI workflow runs:
 - golden CLI tests
 - service module tests
 - generated file drift
+- repository SBOM generation
 - Kind e2e for code changes
 
-Security workflows add gosec and Trivy checks.
+Security workflows add pinned gosec, Trivy repository/image scans with SARIF
+upload, operator-image SBOM artifacts, and pull-request dependency review.
 
 ## Choosing Coverage
 

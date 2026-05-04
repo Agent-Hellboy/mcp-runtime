@@ -38,7 +38,7 @@ go test ./... -count=1 -race
 go vet ./...
 ```
 
-Optional but used in CI: `staticcheck ./...` (install: `go install honnef.co/go/tools/cmd/staticcheck@latest`).
+Optional but used in CI: `staticcheck ./...` (install the pinned CI version with `go install honnef.co/go/tools/cmd/staticcheck@v0.7.0`).
 
 **Targeted tests** (prefer these while iterating; full `./...` can be slow):
 
@@ -47,7 +47,7 @@ Optional but used in CI: `staticcheck ./...` (install: `go install honnef.co/go/
 - `go test ./test/integration/...` (needs `KUBEBUILDER_ASSETS`; see `Makefile.operator` and CI for envtest setup)
 - `services/api` and `services/ui`: `go test -race -count=1 ./...` inside each directory (CI runs these explicitly)
 
-**CI** (`.github/workflows/ci.yaml`) runs: `gofmt` check, `go vet`, `staticcheck`, unit tests, golden tests, service tests, `test/integration`, then Kind e2e on `main`/`PR` branches. Align local changes with that before opening a PR.
+**CI** (`.github/workflows/ci.yaml`) runs: `gofmt` check, `go vet`, `staticcheck`, unit tests, golden tests, service tests, `test/integration`, SBOM generation, then Kind e2e on `main`/`PR` branches. Security workflows add pinned gosec, Trivy, and dependency-review checks. Align local changes with that before opening a PR.
 
 **Docs sync for CLI help:** when you edit `docs/cli.md`, `docs/getting-started.md`, `docs/publish-mcp-server.md`, or any page that shows CLI commands, verify the exact command description, subcommands, flags, and defaults from live help output before push. Use:
 

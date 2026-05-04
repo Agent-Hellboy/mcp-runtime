@@ -1,0 +1,87 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      root-go-modules:
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /services/api
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      services-api-go-modules:
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /services/ui
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      services-ui-go-modules:
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /services/ingest
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      services-ingest-go-modules:
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /services/processor
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      services-processor-go-modules:
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /services/mcp-proxy
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      mcp-proxy-go-modules:
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /services/traefik-plugins/pii-redactor
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      pii-redactor-go-modules:
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /examples/go-mcp-server
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      example-server-go-modules:
+        patterns:
+          - "*"
