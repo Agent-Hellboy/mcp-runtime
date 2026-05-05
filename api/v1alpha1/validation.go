@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -11,16 +12,15 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 var (
-	_       webhook.Validator = &MCPServer{}
-	_       webhook.Defaulter = &MCPServer{}
-	_       webhook.Validator = &MCPAccessGrant{}
-	_       webhook.Validator = &MCPAgentSession{}
-	nowFunc                   = time.Now
+	_       admission.Defaulter[*MCPServer]       = mcpServerWebhook{}
+	_       admission.Validator[*MCPServer]       = mcpServerWebhook{}
+	_       admission.Validator[*MCPAccessGrant]  = mcpAccessGrantValidator{}
+	_       admission.Validator[*MCPAgentSession] = mcpAgentSessionValidator{}
+	nowFunc                                       = time.Now
 )
 
 const (
@@ -206,7 +206,29 @@ func (r *MCPServer) Default() {
 
 // +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpserver,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpservers,verbs=create;update,versions=v1alpha1,name=vmcpserver.kb.io,admissionReviewVersions=v1
 func (r *MCPServer) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).For(r).Complete()
+	return ctrl.NewWebhookManagedBy(mgr, r).
+		WithDefaulter(mcpServerWebhook{}).
+		WithValidator(mcpServerWebhook{}).
+		Complete()
+}
+
+type mcpServerWebhook struct{}
+
+func (mcpServerWebhook) Default(_ context.Context, obj *MCPServer) error {
+	obj.Default()
+	return nil
+}
+
+func (mcpServerWebhook) ValidateCreate(_ context.Context, obj *MCPServer) (admission.Warnings, error) {
+	return obj.ValidateCreate()
+}
+
+func (mcpServerWebhook) ValidateUpdate(_ context.Context, oldObj *MCPServer, newObj *MCPServer) (admission.Warnings, error) {
+	return newObj.ValidateUpdate(oldObj)
+}
+
+func (mcpServerWebhook) ValidateDelete(_ context.Context, obj *MCPServer) (admission.Warnings, error) {
+	return obj.ValidateDelete()
 }
 
 func (r *MCPServer) ValidateCreate() (admission.Warnings, error) {
@@ -343,7 +365,23 @@ func validateRolloutValue(fieldPath *field.Path, value string) *field.Error {
 
 // +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpaccessgrant,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpaccessgrants,verbs=create;update,versions=v1alpha1,name=vmcpaccessgrant.kb.io,admissionReviewVersions=v1
 func (r *MCPAccessGrant) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).For(r).Complete()
+	return ctrl.NewWebhookManagedBy(mgr, r).
+		WithValidator(mcpAccessGrantValidator{}).
+		Complete()
+}
+
+type mcpAccessGrantValidator struct{}
+
+func (mcpAccessGrantValidator) ValidateCreate(_ context.Context, obj *MCPAccessGrant) (admission.Warnings, error) {
+	return obj.ValidateCreate()
+}
+
+func (mcpAccessGrantValidator) ValidateUpdate(_ context.Context, oldObj *MCPAccessGrant, newObj *MCPAccessGrant) (admission.Warnings, error) {
+	return newObj.ValidateUpdate(oldObj)
+}
+
+func (mcpAccessGrantValidator) ValidateDelete(_ context.Context, obj *MCPAccessGrant) (admission.Warnings, error) {
+	return obj.ValidateDelete()
 }
 
 func (r *MCPAccessGrant) ValidateCreate() (admission.Warnings, error) {
@@ -393,7 +431,23 @@ func (r *MCPAccessGrant) validate() error {
 
 // +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpagentsession,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpagentsessions,verbs=create;update,versions=v1alpha1,name=vmcpagentsession.kb.io,admissionReviewVersions=v1
 func (r *MCPAgentSession) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).For(r).Complete()
+	return ctrl.NewWebhookManagedBy(mgr, r).
+		WithValidator(mcpAgentSessionValidator{}).
+		Complete()
+}
+
+type mcpAgentSessionValidator struct{}
+
+func (mcpAgentSessionValidator) ValidateCreate(_ context.Context, obj *MCPAgentSession) (admission.Warnings, error) {
+	return obj.ValidateCreate()
+}
+
+func (mcpAgentSessionValidator) ValidateUpdate(_ context.Context, oldObj *MCPAgentSession, newObj *MCPAgentSession) (admission.Warnings, error) {
+	return newObj.ValidateUpdate(oldObj)
+}
+
+func (mcpAgentSessionValidator) ValidateDelete(_ context.Context, obj *MCPAgentSession) (admission.Warnings, error) {
+	return obj.ValidateDelete()
 }
 
 func (r *MCPAgentSession) ValidateCreate() (admission.Warnings, error) {

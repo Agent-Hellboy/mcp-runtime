@@ -142,9 +142,13 @@ func TestSchemeBuilder(t *testing.T) {
 		}
 	})
 
-	t.Run("SchemeBuilder has correct GroupVersion", func(t *testing.T) {
-		if SchemeBuilder.GroupVersion != GroupVersion {
-			t.Errorf("SchemeBuilder.GroupVersion = %v, want %v", SchemeBuilder.GroupVersion, GroupVersion)
+	t.Run("SchemeBuilder registers known types", func(t *testing.T) {
+		scheme := runtime.NewScheme()
+		if err := SchemeBuilder.AddToScheme(scheme); err != nil {
+			t.Fatalf("SchemeBuilder.AddToScheme failed: %v", err)
+		}
+		if !scheme.IsVersionRegistered(GroupVersion) {
+			t.Errorf("SchemeBuilder did not register %v", GroupVersion)
 		}
 	})
 }

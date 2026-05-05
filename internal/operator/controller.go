@@ -102,41 +102,41 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	mcpServer, found, err := r.fetchMCPServer(ctx, req)
 	if err != nil {
-		return ctrl.Result{Requeue: false}, err
+		return ctrl.Result{}, err
 	}
 	if !found {
-		return ctrl.Result{Requeue: false}, nil
+		return ctrl.Result{}, nil
 	}
 
 	logger.Info("Reconciling MCPServer", "name", mcpServer.Name, "namespace", mcpServer.Namespace)
 
 	if err := r.validateMCPServerSpec(ctx, mcpServer, logger); err != nil {
-		return ctrl.Result{Requeue: false}, err
+		return ctrl.Result{}, err
 	}
 
 	// Set defaults and update spec only if changed
 	requeue, err := r.applyDefaultsIfNeeded(ctx, mcpServer, logger)
 	if err != nil {
-		return ctrl.Result{Requeue: false}, err
+		return ctrl.Result{}, err
 	}
 	if requeue {
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{}, nil
 	}
 
 	if err := r.validateIngressConfig(ctx, mcpServer, logger); err != nil {
-		return ctrl.Result{Requeue: false}, err
+		return ctrl.Result{}, err
 	}
 	if err := r.validateGatewayConfig(ctx, mcpServer, logger); err != nil {
-		return ctrl.Result{Requeue: false}, err
+		return ctrl.Result{}, err
 	}
 
 	if err := r.reconcileResources(ctx, mcpServer, logger); err != nil {
-		return ctrl.Result{Requeue: false}, err
+		return ctrl.Result{}, err
 	}
 
 	readiness, err := r.checkResourceReadiness(ctx, mcpServer)
 	if err != nil {
-		return ctrl.Result{Requeue: false}, err
+		return ctrl.Result{}, err
 	}
 
 	phase, allReady := determinePhase(readiness, mcpServer)
@@ -148,7 +148,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if !allReady {
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
-	return ctrl.Result{Requeue: false}, nil
+	return ctrl.Result{}, nil
 }
 
 func (r *MCPServerReconciler) fetchMCPServer(ctx context.Context, req ctrl.Request) (*mcpv1alpha1.MCPServer, bool, error) {
