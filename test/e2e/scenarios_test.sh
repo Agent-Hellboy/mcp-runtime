@@ -11,7 +11,7 @@ run_valid() {
   local expected="$3"
   local output
 
-  if ! output="$(E2E_VALIDATE_SCENARIOS_ONLY=1 E2E_SCENARIOS="${scenarios}" bash "${KIND_SCRIPT}" 2>&1)"; then
+  if ! output="$(E2E_COLOR=never E2E_VALIDATE_SCENARIOS_ONLY=1 E2E_SCENARIOS="${scenarios}" bash "${KIND_SCRIPT}" 2>&1)"; then
     echo "[fail] ${name}: expected validation success" >&2
     printf '%s\n' "${output}" >&2
     exit 1
@@ -32,7 +32,7 @@ run_invalid() {
   local expected_error="$3"
   local output
 
-  if output="$(E2E_VALIDATE_SCENARIOS_ONLY=1 E2E_SCENARIOS="${scenarios}" bash "${KIND_SCRIPT}" 2>&1)"; then
+  if output="$(E2E_COLOR=never E2E_VALIDATE_SCENARIOS_ONLY=1 E2E_SCENARIOS="${scenarios}" bash "${KIND_SCRIPT}" 2>&1)"; then
     echo "[fail] ${name}: expected validation failure" >&2
     printf '%s\n' "${output}" >&2
     exit 1

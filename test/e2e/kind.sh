@@ -5,7 +5,8 @@ set -euo pipefail
 # - build the CLI and publish runtime/sentinel images to a local docker mirror registry
 # - run `mcp-runtime setup --test-mode`
 # - deploy a policy-enabled MCP server through the CLI pipeline flow
-# - exercise the deployed server through `mcp-smoke-agent` plus targeted MCP requests
+# - exercise the deployed server through local smoke checks, targeted MCP requests,
+#   and optional real-client agent prompts
 # - verify audit events plus trace/log backends
 #
 # Set E2E_SCENARIOS to a comma-separated subset for local debugging.
@@ -20,7 +21,69 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${PROJECT_ROOT}"
-echo "[info] Running from: ${PROJECT_ROOT}"
+
+E2E_COLOR="${E2E_COLOR:-auto}"
+export E2E_COLOR
+
+e2e_color_enabled() {
+  if [[ -n "${NO_COLOR:-}" ]]; then
+    return 1
+  fi
+
+  case "${E2E_COLOR}" in
+    always|1|true|yes|on)
+      return 0
+      ;;
+    never|0|false|no|off)
+      return 1
+      ;;
+    auto|"")
+      [[ -t 1 ]]
+      ;;
+    *)
+      [[ -t 1 ]]
+      ;;
+  esac
+}
+
+E2E_COLOR_RESET=""
+E2E_COLOR_INFO=""
+E2E_COLOR_MCP=""
+E2E_COLOR_POLICY=""
+E2E_COLOR_WARN=""
+E2E_COLOR_DEBUG=""
+if e2e_color_enabled; then
+  E2E_COLOR_RESET=$'\033[0m'
+  E2E_COLOR_INFO=$'\033[36m'
+  E2E_COLOR_MCP=$'\033[35m'
+  E2E_COLOR_POLICY=$'\033[33m'
+  E2E_COLOR_WARN=$'\033[31m'
+  E2E_COLOR_DEBUG=$'\033[2m'
+fi
+
+log_line() {
+  local tag="$1"
+  shift
+  local color="${E2E_COLOR_INFO}"
+  case "${tag}" in
+    mcp)
+      color="${E2E_COLOR_MCP}"
+      ;;
+    policy)
+      color="${E2E_COLOR_POLICY}"
+      ;;
+    error|fail|retry)
+      color="${E2E_COLOR_WARN}"
+      ;;
+    debug)
+      color="${E2E_COLOR_DEBUG}"
+      ;;
+  esac
+
+  printf '%b[%s]%b %s\n' "${color}" "${tag}" "${E2E_COLOR_RESET}" "$*"
+}
+
+log_line info "Running from: ${PROJECT_ROOT}"
 export E2E_HELPERS="${PROJECT_ROOT}/test/e2e/e2e_helpers.py"
 
 SENTINEL_ROOT="${PROJECT_ROOT}"
@@ -28,7 +91,7 @@ if [[ ! -d "${SENTINEL_ROOT}/services" || ! -d "${SENTINEL_ROOT}/k8s" ]]; then
   echo "expected flattened services/ and k8s/ layout under ${SENTINEL_ROOT}" >&2
   exit 1
 fi
-echo "[info] Sentinel root: ${SENTINEL_ROOT}"
+log_line info "Sentinel root: ${SENTINEL_ROOT}"
 
 CLUSTER_NAME="${CLUSTER_NAME:-mcp-e2e}"
 PLATFORM_HOST="${PLATFORM_HOST:-localhost}"
@@ -91,6 +154,7 @@ MCP_SMOKE_AGENT_PROMPT="${MCP_SMOKE_AGENT_PROMPT:-Use the MCP upper tool to conv
 MCP_SMOKE_AGENT_PROVIDER="${MCP_SMOKE_AGENT_PROVIDER:-openai}"
 MCP_SMOKE_AGENT_MODEL="${MCP_SMOKE_AGENT_MODEL:-}"
 MCP_SMOKE_AGENT_TIMEOUT="${MCP_SMOKE_AGENT_TIMEOUT:-90s}"
+MCP_SMOKE_AGENT_NOTICE_PRINTED=0
 UNKNOWN_SESSION_ID="${UNKNOWN_SESSION_ID:-sess-does-not-exist}"
 TEST_MODE_REGISTRY_IMAGE="${TEST_MODE_REGISTRY_IMAGE:-docker.io/library/mcp-runtime-registry:latest}"
 LOCAL_REGISTRY_NAME="${LOCAL_REGISTRY_NAME:-${CLUSTER_NAME}-dockerhub-mirror}"
@@ -189,7 +253,8 @@ describe_selected_scenarios() {
 }
 
 validate_scenarios
-echo "[info] E2E scenarios: $(describe_selected_scenarios)"
+log_line info "E2E scenarios: $(describe_selected_scenarios)"
+log_line info "Local smoke/governance checks use direct MCP HTTP only; OpenAI/Anthropic calls happen only in optional real-client agent checks when a provider API key is configured"
 if [[ "${E2E_VALIDATE_SCENARIOS_ONLY}" == "1" ]]; then
   exit 0
 fi
@@ -536,6 +601,12 @@ run_mcp_smoke_expect() {
   local output_file="${WORKDIR}/${name}.json"
   local smoke_exit_code=0
 
+  if [[ "${expected_ok}" == "true" ]]; then
+    log_line mcp "${name}: local smoke client should complete initialize/list/call/read successfully"
+  else
+    log_line mcp "${name}: local smoke client should be rejected with ${expected_tool_error}"
+  fi
+
   if "${MCP_SMOKE_BIN}" smoke \
     --transport=http \
     --url "${url}" \
@@ -732,6 +803,17 @@ mcp_smoke_agent_key_hint() {
   esac
 }
 
+log_mcp_smoke_agent_notice() {
+  if [[ "${MCP_SMOKE_AGENT_NOTICE_PRINTED}" == "1" ]]; then
+    return 0
+  fi
+
+  MCP_SMOKE_AGENT_NOTICE_PRINTED=1
+  local provider="${MCP_SMOKE_AGENT_PROVIDER:-openai}"
+  local model="${MCP_SMOKE_AGENT_MODEL:-provider-default}"
+  log_line mcp "optional real-client agent checks enabled: provider=${provider} model=${model}; this may call the provider API using $(mcp_smoke_agent_key_hint)"
+}
+
 run_mcp_smoke_agent_prompt() {
   local url="$1"
   local case_name="${2:-governance}"
@@ -792,6 +874,13 @@ run_mcp_smoke_agent_prompt() {
   fi
   if [[ -n "${MCP_SMOKE_AGENT_MODEL}" ]]; then
     agent_cmd+=(--model "${MCP_SMOKE_AGENT_MODEL}")
+  fi
+
+  log_mcp_smoke_agent_notice
+  if [[ "${mode}" == "allow" ]]; then
+    log_line mcp "real-client agent ${case_name}: expect model to choose MCP tool '${expected_tool}' and receive '${expected_text}'"
+  else
+    log_line mcp "real-client agent ${case_name}: expect MCP gateway policy to deny tool '${expected_tool}'"
   fi
 
   if "${agent_cmd[@]}" >"${stdout_file}" 2>"${stderr_file}"; then
@@ -2330,14 +2419,14 @@ PYTHON_EXAMPLE_URL="http://127.0.0.1:${PYTHON_EXAMPLE_PROXY_PORT}${PYTHON_EXAMPL
 RUST_EXAMPLE_URL="http://127.0.0.1:${RUST_EXAMPLE_PROXY_PORT}${RUST_EXAMPLE_SERVER_ROUTE}"
 GO_EXAMPLE_URL="http://127.0.0.1:${GO_EXAMPLE_PROXY_PORT}${GO_EXAMPLE_SERVER_ROUTE}"
 
-echo "[ingress] validating distinct MCP server behaviors across routes"
+log_line ingress "validating distinct MCP server behaviors across routes"
 wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200 "pong"
 wait_for_mcp_tool_result "${PYTHON_EXAMPLE_URL}" "echo" '{"message":"python example ready"}' 200 "python example ready"
 wait_for_mcp_tool_result "${RUST_EXAMPLE_URL}" "repeat" '{"message":"rust","times":3}' 200 "rustrustrust"
 wait_for_mcp_tool_result "${GO_EXAMPLE_URL}" "lower" '{"message":"GO Example Ready"}' 200 "go example ready"
 
 if scenario_selected "smoke-auth"; then
-  echo "[mcp] validating raw MCP request edge cases"
+  log_line mcp "validating raw MCP request edge cases"
   wait_for_http_result \
     "${MCP_DIRECT_URL}" \
     POST \
@@ -2409,31 +2498,31 @@ if scenario_selected "smoke-auth"; then
     400 \
     "DELETE requires an Mcp-Session-Id header"
 
-  echo "[mcp] running external mcp-smoke smoke checks against ingress"
+  log_line mcp "running external mcp-smoke smoke checks against ingress"
   run_mcp_smoke_expect "mcp-smoke-missing-identity" "${MCP_ANON_URL}" false "missing_identity" \
     || run_mcp_smoke_expect "mcp-smoke-missing-identity-retry" "${MCP_ANON_URL}" false "missing_identity"
   run_mcp_smoke_expect "mcp-smoke-missing-session" "${MCP_IDENTITY_URL}" false "missing_session" \
     || run_mcp_smoke_expect "mcp-smoke-missing-session-retry" "${MCP_IDENTITY_URL}" false "missing_session"
   run_mcp_smoke_expect "mcp-smoke-session-not-found" "${MCP_BAD_SESSION_URL}" false "session_not_found" \
     || run_mcp_smoke_expect "mcp-smoke-session-not-found-retry" "${MCP_BAD_SESSION_URL}" false "session_not_found"
-  echo "[mcp] waiting for session-backed allow policy to reach the gateway"
+  log_line mcp "waiting for session-backed allow policy to reach the gateway"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
   run_mcp_smoke_expect "mcp-smoke-allow-aaa-ping" "${MCP_SESSION_URL}" true
 fi
 
 if scenario_selected "governance"; then
-  echo "[policy] revoking access session via CLI"
+  log_line policy "revoking access session via CLI; gateway should reject session-backed calls with session_revoked"
   ./bin/mcp-runtime access --use-kube session revoke "${SESSION_ID}" --namespace mcp-servers
   wait_for_policy_text "\"revoked\": true"
   print_gateway_policy_debug
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 401 "session_revoked"
   run_mcp_smoke_expect "mcp-smoke-session-revoked" "${MCP_SESSION_URL}" false "session_revoked"
 
-  echo "[policy] restoring access session via CLI"
+  log_line policy "restoring access session via CLI; gateway should allow low-trust tools again"
   ./bin/mcp-runtime access --use-kube session unrevoke "${SESSION_ID}" --namespace mcp-servers
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
 
-  echo "[policy] expiring access session via manifest update"
+  log_line policy "expiring access session via manifest update; gateway should reject calls with session_expired"
   EXPIRED_AT="$(python3 <<'PY'
 from datetime import datetime, timedelta, timezone
 print((datetime.now(timezone.utc) - timedelta(minutes=5)).replace(microsecond=0).isoformat().replace("+00:00", "Z"))
@@ -2461,7 +2550,7 @@ EOF
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 401 "session_expired"
   run_mcp_smoke_expect "mcp-smoke-session-expired" "${MCP_SESSION_URL}" false "session_expired"
 
-  echo "[policy] restoring non-expired access session"
+  log_line policy "restoring non-expired access session"
   cat >"${WORKDIR}/access-session-restored.yaml" <<EOF
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAgentSession
@@ -2480,20 +2569,20 @@ EOF
   (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session apply --file access-session-restored.yaml)
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
 
-  echo "[policy] disabling access grant via CLI"
+  log_line policy "disabling access grant via CLI; gateway should reject granted tools with tool_not_granted"
   ./bin/mcp-runtime access --use-kube grant disable "${SERVER_NAME}-grant" --namespace mcp-servers
   wait_for_policy_text "\"disabled\": true"
   print_gateway_policy_debug
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 403 "tool_not_granted"
   run_mcp_smoke_expect "mcp-smoke-grant-disabled" "${MCP_SESSION_URL}" false "tool_not_granted"
 
-  echo "[policy] re-enabling access grant via CLI"
+  log_line policy "re-enabling access grant via CLI"
   ./bin/mcp-runtime access --use-kube grant enable "${SERVER_NAME}-grant" --namespace mcp-servers
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
 fi
 
 if scenario_selected "trust"; then
-  echo "[mcp] validating targeted echo and upper tool behavior"
+  log_line mcp "validating targeted echo and upper tool behavior"
   MCP_BASE="${MCP_SESSION_URL}" \
   MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION}" \
   python3 <<'PY'
@@ -2574,11 +2663,11 @@ print("upper deny:", body)
 PY
 
   if should_run_mcp_smoke_agent; then
-    echo "[mcp] running real-client agent against trust_too_low governance (expect denial)"
+    log_line mcp "running real-client agent against trust_too_low governance (expect denial)"
     run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" governance_denied_low_trust
   fi
 
-  echo "[policy] raising consented trust to medium"
+  log_line policy "raising consented trust to medium; upper should become allowed while add stays ungranted"
   cat <<EOF | kubectl apply -f -
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAgentSession
@@ -2597,16 +2686,16 @@ EOF
 
   wait_for_policy_text "\"consented_trust\": \"medium\""
   print_gateway_policy_debug
-  echo "[mcp] waiting for updated consented trust to reach the gateway"
+  log_line mcp "waiting for updated consented trust to reach the gateway"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "upper" '{"message":"governance"}' 200 "GOVERNANCE"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "add" '{"a":2,"b":3}' 403 "tool_not_granted"
 
   if should_run_mcp_smoke_agent; then
-    echo "[mcp] running real-client agent against tool_not_granted add (expect denial)"
+    log_line mcp "running real-client agent against tool_not_granted add (expect denial)"
     run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" add_denied_not_granted
   fi
 
-  echo "[mcp] validating updated policy allows the higher-trust tool"
+  log_line mcp "validating updated policy allows the higher-trust tool"
   MCP_BASE="${MCP_SESSION_URL}" \
   MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION}" \
   python3 <<'PY'
@@ -2675,7 +2764,7 @@ print("upper allow:", body)
 PY
 
   if should_run_mcp_smoke_agent; then
-    echo "[policy] temporarily expanding grant for multi-tool agent prompts"
+    log_line policy "temporarily expanding grant for multi-tool agent prompts"
     cat <<EOF | kubectl apply -f -
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
@@ -2705,15 +2794,15 @@ EOF
     wait_for_policy_text "\"slugify\""
     wait_for_mcp_tool_result "${MCP_SESSION_URL}" "add" '{"a":2,"b":3}' 200 "5"
 
-    echo "[mcp] running real-client mcp-smoke agent prompts (governance, add, slugify)"
+    log_line mcp "running real-client mcp-smoke agent prompts (governance, add, slugify)"
     run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" governance
     run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" add
     run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" slugify
   else
-    echo "[mcp] skipping optional real-client mcp-smoke agent prompt (no $(mcp_smoke_agent_key_hint) in env or ${MCP_SMOKE_AGENT_ENV_FILE})"
+    log_line mcp "skipping optional real-client mcp-smoke agent prompt (no $(mcp_smoke_agent_key_hint) in env or ${MCP_SMOKE_AGENT_ENV_FILE})"
   fi
 
-  echo "[policy] updating access grant to deny aaa-ping and echo"
+  log_line policy "updating access grant to deny aaa-ping and echo"
   cat >"${WORKDIR}/access-grant-deny.yaml" <<EOF
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
@@ -2742,12 +2831,12 @@ EOF
   wait_for_grant_tool_rule "${SERVER_NAME}-grant" "echo" "deny"
   print_gateway_policy_debug
 
-  echo "[mcp] validating updated access grant denies aaa-ping and echo"
+  log_line mcp "validating updated access grant denies aaa-ping and echo"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 403 "tool_denied"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "echo" '{"message":"analytics"}' 403 "tool_denied"
   run_mcp_smoke_expect "mcp-smoke-aaa-ping-deny" "${MCP_SESSION_URL}" false "tool_denied"
   if should_run_mcp_smoke_agent; then
-    echo "[mcp] running real-client agent against revoked echo (expect denial)"
+    log_line mcp "running real-client agent against revoked echo (expect denial)"
     run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" echo_denied_revoked
   fi
   MCP_BASE="${MCP_SESSION_URL}" \
