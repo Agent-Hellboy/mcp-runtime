@@ -247,13 +247,23 @@ func CheckCertificateWithKubectl(kubectl core.KubectlRunner, name, namespace str
 }
 
 func removeRegistryIngressShimAnnotationWithKubectl(kubectl core.KubectlRunner) error {
-	output, err := kubectl.CombinedOutput([]string{"get", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry})
+	cmd, err := kubectl.CommandArgs([]string{"get", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry})
 	if err != nil {
-		detail := strings.ToLower(kubeerr.CommandDetail(string(output), err))
+		return err
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.SetStdout(&stdout)
+	cmd.SetStderr(&stderr)
+	if err := cmd.Run(); err != nil {
+		detailText := strings.TrimSpace(stdout.String())
+		if detailText == "" {
+			detailText = strings.TrimSpace(stderr.String())
+		}
+		detail := strings.ToLower(kubeerr.CommandDetail(detailText, err))
 		if strings.Contains(detail, "not found") || strings.Contains(detail, "notfound") {
 			return nil
 		}
-		return fmt.Errorf("failed to look up registry ingress %s/%s: %s", core.NamespaceRegistry, core.RegistryServiceName, kubeerr.CommandDetail(string(output), err))
+		return fmt.Errorf("failed to look up registry ingress %s/%s: %s", core.NamespaceRegistry, core.RegistryServiceName, kubeerr.CommandDetail(detailText, err))
 	}
 	if err := kubectl.RunWithOutput(
 		[]string{"patch", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry, "--type=merge", "-p", `{"metadata":{"annotations":{"cert-manager.io/cluster-issuer":null}}}`},

@@ -1454,7 +1454,20 @@ func TestDeployOperatorManifestsWithKubectlManagerApplyError(t *testing.T) {
 func TestSetupTLSWithKubectl(t *testing.T) {
 	chdirRepoRootForTest(t)
 
-	mock := &core.MockExecutor{}
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "certificates", "-n", core.NamespaceRegistry, "-o", "json") {
+				cmd.RunFunc = func() error {
+					if cmd.StdoutW != nil {
+						_, _ = cmd.StdoutW.Write([]byte(`{"items":[]}`))
+					}
+					return nil
+				}
+			}
+			return cmd
+		},
+	}
 	kubectl := core.NewTestKubectlClient(mock)
 	swapDefaultKubectlClientForTest(t, kubectl)
 
@@ -1537,6 +1550,14 @@ func TestSetupTLSWithKubectlWaitError(t *testing.T) {
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 			cmd := &core.MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "certificates", "-n", core.NamespaceRegistry, "-o", "json") {
+				cmd.RunFunc = func() error {
+					if cmd.StdoutW != nil {
+						_, _ = cmd.StdoutW.Write([]byte(`{"items":[]}`))
+					}
+					return nil
+				}
+			}
 			if commandHasArgs(spec, "wait", "--for=condition=Ready", "certificate/registry-cert", "-n", core.NamespaceRegistry) {
 				cmd.RunErr = errors.New("wait failed")
 			}

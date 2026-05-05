@@ -453,7 +453,7 @@ func TestRemoveRegistryIngressShimAnnotationWithKubectl(t *testing.T) {
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				cmd := &core.MockCommand{Args: spec.Args}
 				if commandHasArgs(spec, "get", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry) {
-					cmd.OutputErr = errors.New("forbidden")
+					cmd.RunErr = errors.New("forbidden")
 				}
 				return cmd
 			},
