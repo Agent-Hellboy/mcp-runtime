@@ -1,6 +1,6 @@
 # Keep the operator image on the latest patched Go 1.26.x builder so Trivy
 # does not flag fixed stdlib CVEs in the shipped binary.
-FROM golang:1.26.0-alpine3.23 AS builder
+FROM golang:1.26.2-alpine3.23 AS builder
 
 WORKDIR /build
 
