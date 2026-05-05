@@ -223,14 +223,19 @@ query or mutation API.
 gateway port), forwards to `UPSTREAM_URL`, reads policy from `POLICY_FILE`, and
 emits audit events to `ANALYTICS_INGEST_URL` when configured.
 
+Telemetry is proxy-owned by default. User MCP server containers do not need
+Sentinel ingest environment variables or platform analytics code; the operator
+places ingest configuration on the `mcp-gateway` sidecar when
+`spec.analytics.enabled` is true.
+
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/health` | Sidecar health. |
 | `GET`, `HEAD` | `/.well-known/oauth-protected-resource...` | OAuth protected-resource metadata when the rendered policy uses OAuth. Returns `404` when OAuth is not enabled for the server. |
 | any | `/*` | Reverse proxy to the MCP server. `POST` JSON-RPC `tools/call` requests are inspected and authorized before forwarding. |
 
-The sidecar emits audit events on allowed and denied tool calls. Denied calls do
-not reach the upstream MCP server.
+The sidecar emits audit events on allowed and denied MCP requests. Denied tool
+calls do not reach the upstream MCP server.
 
 ## Governance UI walkthrough
 

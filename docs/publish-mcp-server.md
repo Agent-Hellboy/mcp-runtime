@@ -59,7 +59,8 @@ spec:
 - `spec.gateway.enabled`
   Sends requests through the broker path so policy and session checks run before tool calls.
 - `spec.analytics.enabled`
-  Emits governed request data into the Sentinel stack.
+  Emits governed request data into the Sentinel stack from the gateway sidecar.
+  Your MCP server container does not need Sentinel ingest env vars or analytics code.
 
 ### Common edits
 
