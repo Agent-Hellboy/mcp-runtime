@@ -175,6 +175,128 @@
 
         <div class="panel">
           <div class="panel-head">
+            <h2>Usage Analytics</h2>
+            <div class="panel-actions">
+              <select id="analytics-limit" aria-label="Analytics row limit">
+                <option value="10" selected>Top 10</option>
+                <option value="25">Top 25</option>
+                <option value="50">Top 50</option>
+              </select>
+              <button class="ghost" id="refresh-analytics" type="button">Refresh</button>
+            </div>
+          </div>
+
+          <div class="analytics-summary-grid">
+            <div class="metric-card compact">
+              <span class="metric-label">Allowed</span>
+              <strong class="metric-value" id="analytics-allowed">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">Denied</span>
+              <strong class="metric-value" id="analytics-denied">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">Humans</span>
+              <strong class="metric-value" id="analytics-humans">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">Agents</span>
+              <strong class="metric-value" id="analytics-agents">-</strong>
+            </div>
+          </div>
+
+          <div class="analytics-grid">
+            <section class="analytics-section">
+              <h3>MCP Servers</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Server</th>
+                      <th>Namespace</th>
+                      <th>Events</th>
+                      <th>Allow</th>
+                      <th>Deny</th>
+                      <th>Humans</th>
+                      <th>Agents</th>
+                    </tr>
+                  </thead>
+                  <tbody id="analytics-servers-body">
+                    <tr>
+                      <td colspan="7" class="empty">No usage yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="analytics-section">
+              <h3>Users & Agents</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Human</th>
+                      <th>Agent</th>
+                      <th>Events</th>
+                      <th>Servers</th>
+                      <th>Tools</th>
+                      <th>Deny</th>
+                    </tr>
+                  </thead>
+                  <tbody id="analytics-actors-body">
+                    <tr>
+                      <td colspan="6" class="empty">No actors yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="analytics-section">
+              <h3>Tools</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Server</th>
+                      <th>Tool</th>
+                      <th>Events</th>
+                      <th>Deny</th>
+                    </tr>
+                  </thead>
+                  <tbody id="analytics-tools-body">
+                    <tr>
+                      <td colspan="4" class="empty">No tool calls yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="analytics-section">
+              <h3>Decisions</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Decision</th>
+                      <th>Events</th>
+                    </tr>
+                  </thead>
+                  <tbody id="analytics-decisions-body">
+                    <tr>
+                      <td colspan="2" class="empty">No decisions yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
             <h2>Recent Events</h2>
             <div class="panel-actions">
               <button class="ghost" id="refresh-events">Refresh</button>
@@ -430,7 +552,7 @@
 
     <!-- Authentication Modal -->
     <div id="auth-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="auth-title">
-      <form class="modal-content" id="auth-form" method="dialog">
+      <form class="modal-content auth-modal-content" id="auth-form" method="dialog">
         <h3 id="auth-title">Sign In</h3>
         <p>Use your platform account, Google sign-in, or an MCP Sentinel API key.</p>
         <input
@@ -449,7 +571,7 @@
           type="password"
           id="api-key-input"
           autocomplete="off"
-          placeholder="API key"
+          placeholder="API key (optional alternative)"
         />
         <p id="auth-error" class="auth-error hidden"></p>
         <div class="modal-actions">

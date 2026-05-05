@@ -138,6 +138,11 @@ kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
   `./bin/mcp-runtime cluster doctor`; it flags UI/API/admin key mismatches. Roll
   the API, UI, ingest, and proxy/gateway workloads after patching
   `mcp-sentinel-secrets`.
+- **Test-mode platform logins:** `setup --test-mode` seeds local-only
+  email/password accounts through the platform identity store for UI debugging:
+  user `test@mcpruntime.org` / `test@123`, and admin
+  `admin@mcpruntime.org` / `admin@123`. Disable or override them through the
+  `PLATFORM_DEV_*` keys in `mcp-sentinel-secrets`, then roll the API deployment.
 
 - **Platform admin bootstrap (one-shot):**
 

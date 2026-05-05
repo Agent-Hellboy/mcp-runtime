@@ -156,6 +156,39 @@ h1 {
   display: block;
 }
 
+.metric-card.compact {
+  padding: 14px 16px;
+}
+
+.metric-card.compact .metric-value {
+  font-size: 24px;
+}
+
+.analytics-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.analytics-section {
+  min-width: 0;
+}
+
+.analytics-section h3 {
+  color: var(--accent);
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  margin: 0 0 10px;
+  text-transform: uppercase;
+}
+
 /* Panels */
 .panel {
   background: rgba(27, 59, 52, 0.75);
@@ -243,6 +276,7 @@ button:disabled {
 
 /* Inputs */
 input[type="text"],
+input[type="email"],
 input[type="number"],
 input[type="password"],
 input[type="datetime-local"],
@@ -258,6 +292,7 @@ select {
 }
 
 input[type="text"]::placeholder,
+input[type="email"]::placeholder,
 textarea::placeholder {
   color: var(--muted);
   opacity: 0.7;
@@ -269,11 +304,13 @@ textarea {
   resize: vertical;
 }
 
+input[type="email"],
 input[type="password"] {
   width: 100%;
   margin-bottom: 12px;
 }
 
+input[type="email"]::placeholder,
 input[type="password"]::placeholder {
   color: var(--muted);
   opacity: 0.7;
@@ -508,9 +545,13 @@ tr:hover td {
   background: var(--panel);
   border-radius: 20px;
   padding: 32px;
-  max-width: 400px;
+  max-width: 420px;
   width: 90%;
   box-shadow: 0 24px 48px var(--shadow);
+}
+
+.auth-modal-content {
+  border: 1px solid rgba(247, 245, 239, 0.08);
 }
 
 .modal-content h3 {
@@ -728,6 +769,10 @@ tr:hover td {
 
   .metrics-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .analytics-grid {
+    grid-template-columns: 1fr;
   }
 
   .panel-actions {

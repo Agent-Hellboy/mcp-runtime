@@ -96,7 +96,11 @@ function initTabs() {
       activateTab(target);
 
       // Load data when switching to certain tabs
-      if (target === "governance") {
+      if (target === "dashboard") {
+        loadDashboardSummary();
+        loadDashboardAnalytics();
+        loadEvents();
+      } else if (target === "governance") {
         loadGrants();
         loadSessions();
       } else if (target === "operations") {
@@ -130,6 +134,135 @@ async function loadDashboardSummary() {
     if (isUnauthorizedError(err)) return;
     console.error("Failed to load dashboard summary:", err);
   }
+}
+
+async function loadDashboardAnalytics() {
+  try {
+    const limit = document.getElementById("analytics-limit")?.value || "10";
+    const data = await fetchJSON(`/analytics/usage?limit=${encodeURIComponent(limit)}`);
+    renderDashboardAnalytics(data);
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load dashboard analytics:", err);
+    renderAnalyticsError();
+  }
+}
+
+function renderDashboardAnalytics(data) {
+  const totals = data?.totals || {};
+  document.getElementById("analytics-allowed").textContent = formatNumber(totals.allowed || 0);
+  document.getElementById("analytics-denied").textContent = formatNumber(totals.denied || 0);
+  document.getElementById("analytics-humans").textContent = formatNumber(totals.unique_humans || 0);
+  document.getElementById("analytics-agents").textContent = formatNumber(totals.unique_agents || 0);
+
+  renderAnalyticsServers(data?.servers || []);
+  renderAnalyticsActors(data?.actors || []);
+  renderAnalyticsTools(data?.tools || []);
+  renderAnalyticsDecisions(data?.decisions || []);
+}
+
+function renderAnalyticsServers(rows) {
+  const tbody = document.getElementById("analytics-servers-body");
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No usage yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  rows.forEach((item) => {
+    const row = document.createElement("tr");
+    row.appendChild(createTextCell(item.server || "-"));
+    row.appendChild(createTextCell(item.namespace || "-"));
+    row.appendChild(createTextCell(formatNumber(item.events || 0)));
+    row.appendChild(createTextCell(formatNumber(item.allowed || 0)));
+    row.appendChild(createTextCell(formatNumber(item.denied || 0)));
+    row.appendChild(createTextCell(formatNumber(item.unique_humans || 0)));
+    row.appendChild(createTextCell(formatNumber(item.unique_agents || 0)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderAnalyticsActors(rows) {
+  const tbody = document.getElementById("analytics-actors-body");
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No actors yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  rows.forEach((item) => {
+    const row = document.createElement("tr");
+    row.appendChild(createTextCell(item.human_id || "-"));
+    row.appendChild(createTextCell(item.agent_id || "-"));
+    row.appendChild(createTextCell(formatNumber(item.events || 0)));
+    row.appendChild(createTextCell(formatNumber(item.unique_servers || 0)));
+    row.appendChild(createTextCell(formatNumber(item.unique_tools || 0)));
+    row.appendChild(createTextCell(formatNumber(item.denied || 0)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderAnalyticsTools(rows) {
+  const tbody = document.getElementById("analytics-tools-body");
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No tool calls yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  rows.forEach((item) => {
+    const row = document.createElement("tr");
+    row.appendChild(createTextCell(item.server || "-"));
+    row.appendChild(createTextCell(item.tool_name || "-"));
+    row.appendChild(createTextCell(formatNumber(item.events || 0)));
+    row.appendChild(createTextCell(formatNumber(item.denied || 0)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderAnalyticsDecisions(rows) {
+  const tbody = document.getElementById("analytics-decisions-body");
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="2" class="empty">No decisions yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  rows.forEach((item) => {
+    const row = document.createElement("tr");
+    row.appendChild(createBadgeCell(item.decision || "unknown", decisionBadgeClass(item.decision)));
+    row.appendChild(createTextCell(formatNumber(item.events || 0)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function decisionBadgeClass(decision) {
+  if (decision === "allow") return "badge-success";
+  if (decision === "deny") return "badge-error";
+  return "badge-muted";
+}
+
+function renderAnalyticsError() {
+  document.getElementById("analytics-allowed").textContent = "-";
+  document.getElementById("analytics-denied").textContent = "-";
+  document.getElementById("analytics-humans").textContent = "-";
+  document.getElementById("analytics-agents").textContent = "-";
+  document.getElementById("analytics-servers-body").innerHTML =
+    '<tr><td colspan="7" class="empty">Error loading usage.</td></tr>';
+  document.getElementById("analytics-actors-body").innerHTML =
+    '<tr><td colspan="6" class="empty">Error loading actors.</td></tr>';
+  document.getElementById("analytics-tools-body").innerHTML =
+    '<tr><td colspan="4" class="empty">Error loading tools.</td></tr>';
+  document.getElementById("analytics-decisions-body").innerHTML =
+    '<tr><td colspan="2" class="empty">Error loading decisions.</td></tr>';
 }
 
 function formatNumber(num) {
@@ -283,6 +416,14 @@ async function handleAuthSubmit(event) {
   const password = passwordInput?.value || "";
 
   setAuthError("");
+  if ((email && !password) || (!email && password)) {
+    setAuthError("Enter both email and password, or use an API key.");
+    return;
+  }
+  if (!email && !password && !apiKey) {
+    setAuthError("Provide email and password, an API key, or sign in with Google.");
+    return;
+  }
   if (submit) submit.disabled = true;
   try {
     const payload =
@@ -441,6 +582,7 @@ function loadActiveTab() {
   const active = resolveActiveTab();
   if (active === "dashboard") {
     loadDashboardSummary();
+    loadDashboardAnalytics();
     loadEvents();
   } else if (active === "servers") {
     loadServers();
@@ -459,6 +601,18 @@ function resetDashboard() {
   document.getElementById("dash-active-servers").textContent = "-";
   document.getElementById("dash-active-grants").textContent = "-";
   document.getElementById("dash-active-sessions").textContent = "-";
+  document.getElementById("analytics-allowed").textContent = "-";
+  document.getElementById("analytics-denied").textContent = "-";
+  document.getElementById("analytics-humans").textContent = "-";
+  document.getElementById("analytics-agents").textContent = "-";
+  document.getElementById("analytics-servers-body").innerHTML =
+    '<tr><td colspan="7" class="empty">No usage yet.</td></tr>';
+  document.getElementById("analytics-actors-body").innerHTML =
+    '<tr><td colspan="6" class="empty">No actors yet.</td></tr>';
+  document.getElementById("analytics-tools-body").innerHTML =
+    '<tr><td colspan="4" class="empty">No tool calls yet.</td></tr>';
+  document.getElementById("analytics-decisions-body").innerHTML =
+    '<tr><td colspan="2" class="empty">No decisions yet.</td></tr>';
   document.getElementById("events-body").innerHTML =
     '<tr><td colspan="5" class="empty">No events yet.</td></tr>';
 }
@@ -584,6 +738,12 @@ function initDashboard() {
   document.getElementById("refresh-events")?.addEventListener("click", () => {
     loadEvents();
   });
+  document.getElementById("refresh-analytics")?.addEventListener("click", () => {
+    loadDashboardAnalytics();
+  });
+  document.getElementById("analytics-limit")?.addEventListener("change", () => {
+    loadDashboardAnalytics();
+  });
   document.getElementById("refresh-servers")?.addEventListener("click", () => {
     loadServers();
   });
@@ -597,6 +757,7 @@ function startAutoRefresh() {
   if (autoRefreshCheckbox && !autoRefreshCheckbox.checked) return;
   autoRefreshInterval = setInterval(() => {
     loadDashboardSummary();
+    loadDashboardAnalytics();
     loadEvents();
   }, 5000);
 }

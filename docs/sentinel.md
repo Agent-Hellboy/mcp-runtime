@@ -51,9 +51,15 @@ The Sentinel stack has multiple HTTP services. In local test mode, Traefik
 usually exposes them through `http://localhost:18080/`; inside the cluster,
 call the service DNS names directly.
 
+For the local build, push, and rollout loop while editing `services/`, see
+[Iterate on one Sentinel service](getting-started.md#iterate-on-one-sentinel-service).
+
 `api` accepts `API_KEYS`, with admin elevation only for keys also listed in
 `ADMIN_API_KEYS`. `ingest` accepts ingest-scoped `INGEST_API_KEYS`, with legacy
 fallback to `API_KEYS`, and optional OIDC JWT validation when configured.
+For local `setup --test-mode` clusters, setup seeds two email/password logins:
+`test@mcpruntime.org` / `test@123` with role `user`, and
+`admin@mcpruntime.org` / `admin@123` with role `admin`.
 
 | Surface | Public path in dev | In-cluster service | Notes |
 |---|---|---|---|
@@ -88,6 +94,7 @@ metrics on `METRICS_PORT` (default `9090`).
 | `POST` | `/api/auth/oidc` | Exchange a configured OIDC ID token for a platform bearer token. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
 | `GET` | `/api/auth/me` | Return the authenticated principal. |
 | `GET` | `/api/dashboard/summary` | Dashboard cards: event totals, active grants/sessions, latest event metadata. Admin role required. |
+| `GET` | `/api/analytics/usage` | Dashboard usage analytics from ClickHouse: totals, top MCP servers, human/agent pairs, tools, and decision counts. Query: `limit` (1-50, default 10). Admin role required. |
 | `GET` | `/api/events` | Recent ClickHouse-backed audit events, newest first. Query: `limit` (1-1000, default 100). Admin role required. |
 | `GET` | `/api/events/filter` | Filtered audit events. Query: `source`, `event_type`, `server`, `namespace`, `cluster`, `human_id`, `agent_id`, `session_id`, `decision`, `tool_name`, `limit`. Admin role required. |
 | `GET` | `/api/stats` | Total event count. Admin role required. |

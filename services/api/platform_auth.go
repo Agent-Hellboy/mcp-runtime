@@ -21,10 +21,20 @@ const (
 	apiLoginLockoutBase = 15 * time.Second
 	apiLoginLockoutMax  = 5 * time.Minute
 )
+const (
+	defaultDevUserEmail     = "test@mcpruntime.org"
+	defaultDevUserPassword  = "test@123"
+	defaultDevAdminEmail    = "admin@mcpruntime.org"
+	defaultDevAdminPassword = "admin@123"
+)
 
 var platformLoginAttempts = newAPILoginAttemptTracker(time.Now)
 var oidcLoginHook func(context.Context, *apiServer, string) (platformUser, error)
 var errOIDCUnauthorized = errors.New("oidc unauthorized")
+
+type passwordUserEnsurer interface {
+	EnsurePasswordUser(ctx context.Context, email, password string, role string) (platformUser, error)
+}
 
 type apiLoginAttempt struct {
 	failures    int
@@ -125,7 +135,7 @@ func runPlatformAdminBootstrap(ctx context.Context) error {
 	return seedPlatformAdminFromEnv(ctx, store)
 }
 
-func seedPlatformAdminFromEnv(ctx context.Context, store *platformStore) error {
+func seedPlatformAdminFromEnv(ctx context.Context, store passwordUserEnsurer) error {
 	email := strings.TrimSpace(os.Getenv("PLATFORM_ADMIN_EMAIL"))
 	password := strings.TrimSpace(os.Getenv("PLATFORM_ADMIN_PASSWORD"))
 	if email == "" && password == "" {
@@ -139,6 +149,51 @@ func seedPlatformAdminFromEnv(ctx context.Context, store *platformStore) error {
 		return err
 	}
 	log.Printf("platform admin user ensured email=%q namespace=%q", u.Email, u.Namespace)
+	return nil
+}
+
+func seedPlatformDevUsersFromEnv(ctx context.Context, store passwordUserEnsurer) error {
+	enabled, ok := boolEnv("PLATFORM_DEV_LOGIN_ENABLED")
+	if !ok || !enabled {
+		return nil
+	}
+	seeds := []struct {
+		label           string
+		role            string
+		emailEnv        string
+		passwordEnv     string
+		defaultEmail    string
+		defaultPassword string
+	}{
+		{
+			label:           "test",
+			role:            roleUser,
+			emailEnv:        "PLATFORM_DEV_USER_EMAIL",
+			passwordEnv:     "PLATFORM_DEV_USER_PASSWORD",
+			defaultEmail:    defaultDevUserEmail,
+			defaultPassword: defaultDevUserPassword,
+		},
+		{
+			label:           "admin",
+			role:            roleAdmin,
+			emailEnv:        "PLATFORM_DEV_ADMIN_EMAIL",
+			passwordEnv:     "PLATFORM_DEV_ADMIN_PASSWORD",
+			defaultEmail:    defaultDevAdminEmail,
+			defaultPassword: defaultDevAdminPassword,
+		},
+	}
+	for _, seed := range seeds {
+		email := strings.ToLower(strings.TrimSpace(envOr(seed.emailEnv, seed.defaultEmail)))
+		password := strings.TrimSpace(envOr(seed.passwordEnv, seed.defaultPassword))
+		if email == "" || password == "" {
+			return fmt.Errorf("%s dev login requires both email and password", seed.label)
+		}
+		u, err := store.EnsurePasswordUser(ctx, email, password, seed.role)
+		if err != nil {
+			return fmt.Errorf("ensure %s dev login: %w", seed.label, err)
+		}
+		log.Printf("platform dev %s login ensured email=%q namespace=%q", seed.label, u.Email, u.Namespace)
+	}
 	return nil
 }
 

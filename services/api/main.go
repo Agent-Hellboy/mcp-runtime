@@ -68,6 +68,58 @@ type eventRow struct {
 	Payload   json.RawMessage `json:"payload"`
 }
 
+type analyticsServerUsage struct {
+	Server       string    `json:"server"`
+	Namespace    string    `json:"namespace"`
+	Events       uint64    `json:"events"`
+	Allowed      uint64    `json:"allowed"`
+	Denied       uint64    `json:"denied"`
+	UniqueHumans uint64    `json:"unique_humans"`
+	UniqueAgents uint64    `json:"unique_agents"`
+	LastSeen     time.Time `json:"last_seen"`
+}
+
+type analyticsActorUsage struct {
+	HumanID       string    `json:"human_id"`
+	AgentID       string    `json:"agent_id"`
+	Events        uint64    `json:"events"`
+	UniqueServers uint64    `json:"unique_servers"`
+	UniqueTools   uint64    `json:"unique_tools"`
+	Denied        uint64    `json:"denied"`
+	LastSeen      time.Time `json:"last_seen"`
+}
+
+type analyticsToolUsage struct {
+	Server   string    `json:"server"`
+	ToolName string    `json:"tool_name"`
+	Events   uint64    `json:"events"`
+	Denied   uint64    `json:"denied"`
+	LastSeen time.Time `json:"last_seen"`
+}
+
+type analyticsDecisionUsage struct {
+	Decision string `json:"decision"`
+	Events   uint64 `json:"events"`
+}
+
+type analyticsTotals struct {
+	Events         uint64 `json:"events"`
+	Allowed        uint64 `json:"allowed"`
+	Denied         uint64 `json:"denied"`
+	UniqueServers  uint64 `json:"unique_servers"`
+	UniqueHumans   uint64 `json:"unique_humans"`
+	UniqueAgents   uint64 `json:"unique_agents"`
+	UniqueSessions uint64 `json:"unique_sessions"`
+}
+
+type analyticsUsageResponse struct {
+	Totals    analyticsTotals          `json:"totals"`
+	Servers   []analyticsServerUsage   `json:"servers"`
+	Actors    []analyticsActorUsage    `json:"actors"`
+	Tools     []analyticsToolUsage     `json:"tools"`
+	Decisions []analyticsDecisionUsage `json:"decisions"`
+}
+
 type apiServer struct {
 	db           clickhouse.Conn
 	dbName       string
@@ -199,6 +251,9 @@ func main() {
 		if err := seedPlatformAdminFromEnv(ctx, store); err != nil {
 			log.Fatalf("failed to seed platform admin: %v", err)
 		}
+		if err := seedPlatformDevUsersFromEnv(ctx, store); err != nil {
+			log.Fatalf("failed to seed platform dev users: %v", err)
+		}
 		server.platform = store
 		server.userKeys = store
 	}
@@ -225,6 +280,7 @@ func main() {
 	mux.Handle("/api/stats", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleStats))))
 	mux.Handle("/api/sources", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleSources))))
 	mux.Handle("/api/event-types", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleEventTypes))))
+	mux.Handle("/api/analytics/usage", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleAnalyticsUsage))))
 	mux.Handle("/api/events/filter", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleEventsFilter))))
 	mux.Handle("/api/auth/me", server.auth(http.HandlerFunc(server.handleAuthMe)))
 	mux.Handle("/api/user/registry-credentials", server.auth(http.HandlerFunc(server.handleRegistryCredentials)))
@@ -473,6 +529,135 @@ func (s *apiServer) handleEventTypes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"event_types": eventTypes})
+}
+
+func (s *apiServer) handleAnalyticsUsage(w http.ResponseWriter, r *http.Request) {
+	limit := clampInt(queryInt(r, "limit", 10), 1, 50)
+
+	totals, err := s.queryAnalyticsTotals(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query_failed"})
+		return
+	}
+	servers, err := s.queryAnalyticsServers(r.Context(), limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query_failed"})
+		return
+	}
+	actors, err := s.queryAnalyticsActors(r.Context(), limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query_failed"})
+		return
+	}
+	tools, err := s.queryAnalyticsTools(r.Context(), limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query_failed"})
+		return
+	}
+	decisions, err := s.queryAnalyticsDecisions(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query_failed"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, analyticsUsageResponse{
+		Totals:    totals,
+		Servers:   servers,
+		Actors:    actors,
+		Tools:     tools,
+		Decisions: decisions,
+	})
+}
+
+func (s *apiServer) queryAnalyticsTotals(ctx context.Context) (analyticsTotals, error) {
+	query := "SELECT count(), countIf(decision = 'allow'), countIf(decision = 'deny'), uniqExactIf(server, server != ''), uniqExactIf(human_id, human_id != ''), uniqExactIf(agent_id, agent_id != ''), uniqExactIf(session_id, session_id != '') FROM " + s.dbName + ".events"
+	var totals analyticsTotals
+	err := s.db.QueryRow(ctx, query).Scan(
+		&totals.Events,
+		&totals.Allowed,
+		&totals.Denied,
+		&totals.UniqueServers,
+		&totals.UniqueHumans,
+		&totals.UniqueAgents,
+		&totals.UniqueSessions,
+	)
+	return totals, err
+}
+
+func (s *apiServer) queryAnalyticsServers(ctx context.Context, limit int) ([]analyticsServerUsage, error) {
+	query := "SELECT server, namespace, count() AS events, countIf(decision = 'allow') AS allowed, countIf(decision = 'deny') AS denied, uniqExactIf(human_id, human_id != '') AS unique_humans, uniqExactIf(agent_id, agent_id != '') AS unique_agents, max(timestamp) AS last_seen FROM " + s.dbName + ".events WHERE server != '' GROUP BY server, namespace ORDER BY events DESC LIMIT ?"
+	rows, err := s.db.Query(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]analyticsServerUsage, 0, limit)
+	for rows.Next() {
+		var row analyticsServerUsage
+		if err := rows.Scan(&row.Server, &row.Namespace, &row.Events, &row.Allowed, &row.Denied, &row.UniqueHumans, &row.UniqueAgents, &row.LastSeen); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (s *apiServer) queryAnalyticsActors(ctx context.Context, limit int) ([]analyticsActorUsage, error) {
+	query := "SELECT human_id, agent_id, count() AS events, uniqExactIf(server, server != '') AS unique_servers, uniqExactIf(tool_name, tool_name != '') AS unique_tools, countIf(decision = 'deny') AS denied, max(timestamp) AS last_seen FROM " + s.dbName + ".events WHERE human_id != '' OR agent_id != '' GROUP BY human_id, agent_id ORDER BY events DESC LIMIT ?"
+	rows, err := s.db.Query(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]analyticsActorUsage, 0, limit)
+	for rows.Next() {
+		var row analyticsActorUsage
+		if err := rows.Scan(&row.HumanID, &row.AgentID, &row.Events, &row.UniqueServers, &row.UniqueTools, &row.Denied, &row.LastSeen); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (s *apiServer) queryAnalyticsTools(ctx context.Context, limit int) ([]analyticsToolUsage, error) {
+	query := "SELECT server, tool_name, count() AS events, countIf(decision = 'deny') AS denied, max(timestamp) AS last_seen FROM " + s.dbName + ".events WHERE tool_name != '' GROUP BY server, tool_name ORDER BY events DESC LIMIT ?"
+	rows, err := s.db.Query(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]analyticsToolUsage, 0, limit)
+	for rows.Next() {
+		var row analyticsToolUsage
+		if err := rows.Scan(&row.Server, &row.ToolName, &row.Events, &row.Denied, &row.LastSeen); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (s *apiServer) queryAnalyticsDecisions(ctx context.Context) ([]analyticsDecisionUsage, error) {
+	query := "SELECT if(decision = '', 'unknown', decision) AS decision_label, count() AS events FROM " + s.dbName + ".events GROUP BY decision_label ORDER BY events DESC"
+	rows, err := s.db.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]analyticsDecisionUsage, 0)
+	for rows.Next() {
+		var row analyticsDecisionUsage
+		if err := rows.Scan(&row.Decision, &row.Events); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
 }
 
 // handleEventsFilter handles GET /api/events/filter requests.

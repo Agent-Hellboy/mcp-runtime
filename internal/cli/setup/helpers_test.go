@@ -699,6 +699,38 @@ func TestRenderAnalyticsSecretManifestGeneratesKeysWhenMissing(t *testing.T) {
 	}
 }
 
+func TestRenderAnalyticsSecretManifestSeedsDevLoginsInTestMode(t *testing.T) {
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "1")
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if contains(spec.Args, "get") && contains(spec.Args, "secret") {
+				return &core.MockCommand{
+					Args:       spec.Args,
+					OutputData: []byte("Error from server (NotFound): secrets \"mcp-sentinel-secrets\" not found"),
+					OutputErr:  errors.New("not found"),
+				}
+			}
+			return &core.MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	manifest, err := renderAnalyticsSecretManifest(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data := secretStringDataFromManifest(t, manifest)
+	if data["PLATFORM_DEV_LOGIN_ENABLED"] != "true" {
+		t.Fatalf("expected dev login seed to be enabled, got %q", data["PLATFORM_DEV_LOGIN_ENABLED"])
+	}
+	if data["PLATFORM_DEV_USER_EMAIL"] != defaultDevUserEmail || data["PLATFORM_DEV_USER_PASSWORD"] != defaultDevUserPassword {
+		t.Fatalf("unexpected dev user credentials: email=%q password=%q", data["PLATFORM_DEV_USER_EMAIL"], data["PLATFORM_DEV_USER_PASSWORD"])
+	}
+	if data["PLATFORM_DEV_ADMIN_EMAIL"] != defaultDevAdminEmail || data["PLATFORM_DEV_ADMIN_PASSWORD"] != defaultDevAdminPassword {
+		t.Fatalf("unexpected dev admin credentials: email=%q password=%q", data["PLATFORM_DEV_ADMIN_EMAIL"], data["PLATFORM_DEV_ADMIN_PASSWORD"])
+	}
+}
+
 func TestEnsureCSVIncludes(t *testing.T) {
 	tests := []struct {
 		name  string
