@@ -1923,10 +1923,7 @@ func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
 	if adminUsers == "" && platformAdminEmail != "" {
 		adminUsers = platformAdminEmail
 	}
-	platformDevLoginEnabled, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_LOGIN_ENABLED")
-	if err != nil {
-		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
-	}
+	platformDevLoginEnabled := ""
 	platformDevUserEmail, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_USER_EMAIL")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
@@ -1944,9 +1941,7 @@ func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
 	if os.Getenv("MCP_RUNTIME_TEST_MODE") == "1" {
-		if platformDevLoginEnabled == "" {
-			platformDevLoginEnabled = "true"
-		}
+		platformDevLoginEnabled = "true"
 		if platformDevUserEmail == "" {
 			platformDevUserEmail = defaultDevUserEmail
 		}
@@ -1959,6 +1954,12 @@ func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
 		if platformDevAdminPassword == "" {
 			platformDevAdminPassword = defaultDevAdminPassword
 		}
+	} else {
+		platformDevLoginEnabled = "false"
+		platformDevUserEmail = ""
+		platformDevUserPassword = ""
+		platformDevAdminEmail = ""
+		platformDevAdminPassword = ""
 	}
 	stringData := map[string]string{
 		"API_KEYS":                apiKeys,

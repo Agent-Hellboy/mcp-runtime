@@ -583,23 +583,25 @@ async function handleAuthSubmit(event) {
   const emailInput = document.getElementById("auth-email-input");
   const passwordInput = document.getElementById("auth-password-input");
   const submit = document.getElementById("auth-submit");
-  const apiKey = apiKeyInput?.value || "";
-  const email = emailInput?.value || "";
+  const apiKey = apiKeyInput?.value.trim() || "";
+  const email = emailInput?.value.trim() || "";
   const password = passwordInput?.value || "";
+  const hasAPIKey = apiKey !== "";
+  const hasEmail = email !== "";
+  const hasPassword = password !== "";
 
   setAuthError("");
-  if ((email && !password) || (!email && password)) {
+  if (!hasAPIKey && ((hasEmail && !hasPassword) || (!hasEmail && hasPassword))) {
     setAuthError("Enter both email and password, or use an API key.");
     return;
   }
-  if (!email && !password && !apiKey) {
+  if (!hasAPIKey && !hasEmail && !hasPassword) {
     setAuthError("Provide email and password, an API key, or sign in with Google.");
     return;
   }
   if (submit) submit.disabled = true;
   try {
-    const payload =
-      email || password ? { email, password } : { api_key: apiKey };
+    const payload = hasAPIKey ? { api_key: apiKey } : { email, password };
     const data = await performLogin(payload);
     authPrincipal = data?.principal || null;
     if (apiKeyInput) apiKeyInput.value = "";

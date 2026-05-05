@@ -731,6 +731,50 @@ func TestRenderAnalyticsSecretManifestSeedsDevLoginsInTestMode(t *testing.T) {
 	}
 }
 
+func TestRenderAnalyticsSecretManifestDisablesExistingDevLoginsOutsideTestMode(t *testing.T) {
+	encoded := func(value string) []byte {
+		return []byte(base64.StdEncoding.EncodeToString([]byte(value)))
+	}
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			switch {
+			case contains(spec.Args, "jsonpath={.data.PLATFORM_DEV_LOGIN_ENABLED}"):
+				return &core.MockCommand{Args: spec.Args, OutputData: encoded("true")}
+			case contains(spec.Args, "jsonpath={.data.PLATFORM_DEV_USER_EMAIL}"):
+				return &core.MockCommand{Args: spec.Args, OutputData: encoded(defaultDevUserEmail)}
+			case contains(spec.Args, "jsonpath={.data.PLATFORM_DEV_USER_PASSWORD}"):
+				return &core.MockCommand{Args: spec.Args, OutputData: encoded(defaultDevUserPassword)}
+			case contains(spec.Args, "jsonpath={.data.PLATFORM_DEV_ADMIN_EMAIL}"):
+				return &core.MockCommand{Args: spec.Args, OutputData: encoded(defaultDevAdminEmail)}
+			case contains(spec.Args, "jsonpath={.data.PLATFORM_DEV_ADMIN_PASSWORD}"):
+				return &core.MockCommand{Args: spec.Args, OutputData: encoded(defaultDevAdminPassword)}
+			default:
+				return &core.MockCommand{Args: spec.Args}
+			}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	manifest, err := renderAnalyticsSecretManifest(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data := secretStringDataFromManifest(t, manifest)
+	if data["PLATFORM_DEV_LOGIN_ENABLED"] != "false" {
+		t.Fatalf("expected dev login seed to be disabled outside test mode, got %q", data["PLATFORM_DEV_LOGIN_ENABLED"])
+	}
+	for _, key := range []string{
+		"PLATFORM_DEV_USER_EMAIL",
+		"PLATFORM_DEV_USER_PASSWORD",
+		"PLATFORM_DEV_ADMIN_EMAIL",
+		"PLATFORM_DEV_ADMIN_PASSWORD",
+	} {
+		if data[key] != "" {
+			t.Fatalf("expected %s to be cleared outside test mode, got %q", key, data[key])
+		}
+	}
+}
+
 func TestEnsureCSVIncludes(t *testing.T) {
 	tests := []struct {
 		name  string
