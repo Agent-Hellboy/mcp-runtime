@@ -236,7 +236,7 @@ mcp-runtime registry push --image <exact-image-ref-from-build>
 ## sentinel
 
 ```bash
-# Health + recent activity
+# Health + recent Kubernetes events
 mcp-runtime sentinel status
 mcp-runtime sentinel events
 mcp-runtime sentinel restart gateway

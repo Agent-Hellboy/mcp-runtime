@@ -1,0 +1,73 @@
+package sentinel_test
+
+import (
+	"testing"
+
+	"go.uber.org/zap"
+
+	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/internal/cli/sentinel"
+)
+
+func contains(slice []string, val string) bool {
+	for _, s := range slice {
+		if s == val {
+			return true
+		}
+	}
+	return false
+}
+
+func TestSentinelManager_ViewSentinelLogs(t *testing.T) {
+	mock := &core.MockExecutor{}
+	kubectl := core.NewTestKubectlClient(mock)
+	mgr := sentinel.NewSentinelManager(kubectl, zap.NewNop())
+
+	if err := mgr.ViewSentinelLogs("api", true, false, 50, "5m"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cmd := mock.LastCommand()
+	if cmd.Name != "kubectl" {
+		t.Fatalf("expected kubectl, got %q", cmd.Name)
+	}
+	for _, want := range []string{"logs", "-n", core.DefaultAnalyticsNamespace, "-l", "app=mcp-sentinel-api", "--all-containers=true", "--prefix=true", "--tail", "50", "--since", "5m", "-f"} {
+		if !contains(cmd.Args, want) {
+			t.Fatalf("expected %q in args, got %v", want, cmd.Args)
+		}
+	}
+}
+
+func TestSentinelManager_PortForwardSentinelTarget(t *testing.T) {
+	mock := &core.MockExecutor{}
+	kubectl := core.NewTestKubectlClient(mock)
+	mgr := sentinel.NewSentinelManager(kubectl, zap.NewNop())
+
+	if err := mgr.PortForwardSentinelTarget("grafana", 0, "0.0.0.0"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cmd := mock.LastCommand()
+	for _, want := range []string{"port-forward", "-n", core.DefaultAnalyticsNamespace, "service/grafana", "3000:3000", "--address", "0.0.0.0"} {
+		if !contains(cmd.Args, want) {
+			t.Fatalf("expected %q in args, got %v", want, cmd.Args)
+		}
+	}
+}
+
+func TestSentinelManager_RestartSentinel(t *testing.T) {
+	mock := &core.MockExecutor{}
+	kubectl := core.NewTestKubectlClient(mock)
+	mgr := sentinel.NewSentinelManager(kubectl, zap.NewNop())
+
+	if err := mgr.RestartSentinel("processor", false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cmd := mock.LastCommand()
+	for _, want := range []string{"rollout", "restart", "deployment/mcp-sentinel-processor", "-n", core.DefaultAnalyticsNamespace} {
+		if !contains(cmd.Args, want) {
+			t.Fatalf("expected %q in args, got %v", want, cmd.Args)
+		}
+	}
+}

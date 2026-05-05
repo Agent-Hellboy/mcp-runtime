@@ -7,7 +7,7 @@
 | Service | Role |
 |---|---|
 | **mcp-proxy** | Transparent sidecar. Extracts identity, evaluates tool-level policy, emits allow/deny audit events, forwards traffic upstream. |
-| **ingest** | Receives `POST /events`, validates API keys or optional JWTs, writes to Kafka. |
+| **ingest** | Receives `POST /events`, validates ingest-scoped API keys or optional JWTs, writes to Kafka. |
 | **processor** | Consumes Kafka, batches, writes into ClickHouse with indexed audit fields. |
 | **api** | Analytics endpoints, dashboard summaries, runtime governance APIs (grants/sessions), component operations. |
 | **ui** | Three-tab dashboard: overview metrics + events, governance forms, operations health + safe restart. |
@@ -45,22 +45,161 @@ flowchart LR
 | **OTel Collector + Tempo** | Distributed tracing pipeline. |
 | **Loki + Promtail** | Log shipping and storage. |
 
-## Auth and APIs
+## Service HTTP reference
 
-`api` and `ingest` support both API keys and optional OIDC JWT validation (issuer, audience, JWKS).
+The Sentinel stack has multiple HTTP services. In local test mode, Traefik
+usually exposes them through `http://localhost:18080/`; inside the cluster,
+call the service DNS names directly.
 
-```text
-POST /events
-GET  /api/events?limit=100
-GET  /api/stats
-GET  /api/sources
-GET  /api/event-types
-GET  /api/events/filter?server=payments&decision=deny&agent_id=ops-agent&limit=50
-GET  /health
-GET  /metrics
+`api` accepts `API_KEYS`, with admin elevation only for keys also listed in
+`ADMIN_API_KEYS`. `ingest` accepts ingest-scoped `INGEST_API_KEYS`, with legacy
+fallback to `API_KEYS`, and optional OIDC JWT validation when configured.
+
+| Surface | Public path in dev | In-cluster service | Notes |
+|---|---|---|---|
+| **UI** | `/` | `mcp-sentinel-ui:8082` | Browser app, browser login/session routes, and `/api` reverse proxy. |
+| **API** | `/api/*` through UI | `mcp-sentinel-api:8080` | Auth, analytics queries, runtime governance, deployments, admin/user APIs. |
+| **Ingest** | `/ingest/events` | `mcp-sentinel-ingest:8081/events` | Event intake used by `mcp-proxy`; the public ingress strips `/ingest`. |
+| **Grafana** | `/grafana` | `grafana:3000` | Observability UI. |
+| **Prometheus** | `/prometheus` | `prometheus:9090` | Metrics query UI. |
+| **MCP proxy sidecar** | per-server route, for example `/demo-one/mcp` | pod-local sidecar port | Enforces policy and forwards to the MCP server container. |
+
+### Auth model
+
+| Service | Auth behavior |
+|---|---|
+| **api** | `/health` is open. Authenticated `/api/*` routes accept `x-api-key` from `API_KEYS`, user-generated API keys, platform JWT bearer tokens, or OIDC JWT bearer tokens when OIDC is configured. If `ADMIN_API_KEYS` is set, only those keys get admin role; other `API_KEYS` values are user role. |
+| **ui** | `/auth/login` creates an HttpOnly UI session from `api_key`, `id_token`, or `email`/`password`. The UI then proxies `/api/*` with an upstream API key or bearer token. |
+| **ingest** | `/live`, `/ready`, and `/health` are open. `/events` accepts `x-api-key` from `INGEST_API_KEYS`, legacy `API_KEYS`, or a configured OIDC bearer token. If no API keys and no JWKS are configured, intake auth is bypassed. |
+| **processor** | No data API. It exposes metrics and a simple health check on the metrics port. |
+| **mcp-proxy** | No admin API. It authenticates MCP requests according to the rendered server policy: header identity or OAuth bearer tokens, depending on `spec.auth`. |
+
+### API service
+
+`services/api` runs the main API on `PORT` (default `8080`) and Prometheus
+metrics on `METRICS_PORT` (default `9090`).
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/health` | API health and runtime initialization status. |
+| `GET` | `/metrics` | Prometheus metrics on the metrics server. |
+| `POST` | `/api/auth/signup` | Create a platform user when platform identity storage is configured. Returns `201` with `access_token`, `token_type`, `expires_in`, and `user`. Admin signup requires an admin principal. |
+| `POST` | `/api/auth/login` | Exchange platform email/password for a bearer token. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
+| `POST` | `/api/auth/oidc` | Exchange a configured OIDC ID token for a platform bearer token. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
+| `GET` | `/api/auth/me` | Return the authenticated principal. |
+| `GET` | `/api/dashboard/summary` | Dashboard cards: event totals, active grants/sessions, latest event metadata. Admin role required. |
+| `GET` | `/api/events` | Recent ClickHouse-backed audit events, newest first. Query: `limit` (1-1000, default 100). Admin role required. |
+| `GET` | `/api/events/filter` | Filtered audit events. Query: `source`, `event_type`, `server`, `namespace`, `cluster`, `human_id`, `agent_id`, `session_id`, `decision`, `tool_name`, `limit`. Admin role required. |
+| `GET` | `/api/stats` | Total event count. Admin role required. |
+| `GET` | `/api/sources` | Event counts grouped by source. Admin role required. |
+| `GET` | `/api/event-types` | Event counts grouped by event type. Admin role required. |
+| `GET` | `/api/runtime/servers` | List MCP servers. Non-admin users may read `mcp-servers` and their own namespace. |
+| `GET`, `POST` | `/api/runtime/grants` | List or apply `MCPAccessGrant` resources. |
+| `GET`, `DELETE` | `/api/runtime/grants/{namespace}/{name}` | Read or delete one grant. |
+| `POST` | `/api/runtime/grants/{namespace}/{name}/disable` | Set `spec.disabled=true`. |
+| `POST` | `/api/runtime/grants/{namespace}/{name}/enable` | Set `spec.disabled=false`. |
+| `GET`, `POST` | `/api/runtime/sessions` | List or apply `MCPAgentSession` resources. |
+| `GET`, `DELETE` | `/api/runtime/sessions/{namespace}/{name}` | Read or delete one session. |
+| `POST` | `/api/runtime/sessions/{namespace}/{name}/revoke` | Set `spec.revoked=true`. |
+| `POST` | `/api/runtime/sessions/{namespace}/{name}/unrevoke` | Set `spec.revoked=false`. |
+| `GET` | `/api/runtime/components` | Core Sentinel component health from Kubernetes. |
+| `GET` | `/api/runtime/policy?namespace=&server=` | Rendered gateway policy for one server. |
+| `POST` | `/api/runtime/actions/restart` | Restart one Sentinel component or all components. Admin role required. |
+| `GET`, `POST` | `/api/deployments` | User-scoped platform deployment list/apply. |
+| `DELETE` | `/api/deployments/{namespace}/{name}` | Delete a platform-managed deployment and service. |
+| `GET` | `/api/admin/namespaces` | Platform namespace inventory. Admin role required. |
+| `GET` | `/api/admin/deployments` | Deployment inventory across namespaces, optionally filtered by `namespace`. Admin role required. |
+| `GET`, `POST` | `/api/user/api-keys` | List or create caller-owned API keys. |
+| `POST` | `/api/user/api-keys/{id}/revoke` | Revoke one caller-owned API key. |
+| `GET`, `POST` | `/api/user/registry-credentials` | List or create caller-owned registry credentials. |
+| `POST` | `/api/user/registry-credentials/{id}/revoke` | Revoke one registry credential. |
+
+Restart request body examples:
+
+```json
+{"component": "api"}
 ```
 
-Full HTTP surface is in the [API reference](api.md).
+```json
+{"all": true}
+```
+
+The grant/session apply bodies and CRD field details are in the
+[API reference](api.md#runtime-governance-api).
+
+### UI service
+
+`services/ui` runs on `PORT` (default `8082`). It serves static assets and
+wraps API auth for browser users.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/health` | UI health. |
+| `GET` | `/config.js` | Runtime browser config: API base, default namespace/policy version, Google client ID. |
+| `POST` | `/auth/login` | Create a UI session from `{"api_key": "..."}`, `{"id_token": "..."}`, or `{"email": "...", "password": "..."}`. |
+| `POST` | `/auth/logout` | Clear the UI session cookie. |
+| `GET` | `/auth/status` | Return UI session authentication state and principal. |
+| any | `/api/*` | Reverse proxy to `services/api`. Public `GET`/`HEAD /api/runtime/servers` is allowed for the shared `mcp-servers` catalog; other API calls require a UI session or API key. |
+| `GET` | `/*` | Static dashboard assets. |
+
+### Ingest service
+
+`services/ingest` runs event intake on `PORT` (default `8081`) and Prometheus
+metrics on `METRICS_PORT` (default `9091`).
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/live` | Liveness check. |
+| `GET` | `/ready` | Kafka readiness check. Returns `503` with `kafka_unavailable` when no broker is reachable. |
+| `GET` | `/health` | Simple health check. |
+| `POST` | `/events` | Validate and enqueue one event to Kafka topic `KAFKA_TOPIC` (default `mcp.events`). Max body size is 1 MiB. |
+| `GET` | `/metrics` | Prometheus metrics on the metrics server. |
+
+Event intake body:
+
+```json
+{
+  "timestamp": "2026-05-04T18:00:00Z",
+  "source": "mcp-proxy",
+  "event_type": "mcp.request",
+  "payload": {
+    "server": "payments",
+    "namespace": "mcp-servers",
+    "decision": "deny",
+    "reason": "session_not_found"
+  }
+}
+```
+
+`timestamp` is optional; ingest fills it with the current UTC time when absent.
+`source`, `event_type`, and a non-null `payload` are required. Success returns
+`202 {"ok": true}`.
+
+### Processor service
+
+`services/processor` consumes Kafka and writes ClickHouse. It does not expose a
+query or mutation API.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/health` | Simple health check on `METRICS_PORT` (default `9102`). |
+| `GET` | `/metrics` | Prometheus metrics, including processor intake pause gauges/counters. |
+
+### MCP proxy sidecar
+
+`services/mcp-proxy` is injected into gateway-enabled `MCPServer` pods as the
+`mcp-gateway` container. It listens on `PORT` (operator default: the server's
+gateway port), forwards to `UPSTREAM_URL`, reads policy from `POLICY_FILE`, and
+emits audit events to `ANALYTICS_INGEST_URL` when configured.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/health` | Sidecar health. |
+| `GET`, `HEAD` | `/.well-known/oauth-protected-resource...` | OAuth protected-resource metadata when the rendered policy uses OAuth. Returns `404` when OAuth is not enabled for the server. |
+| any | `/*` | Reverse proxy to the MCP server. `POST` JSON-RPC `tools/call` requests are inspected and authorized before forwarding. |
+
+The sidecar emits audit events on allowed and denied tool calls. Denied calls do
+not reach the upstream MCP server.
 
 ## Governance UI walkthrough
 
@@ -96,7 +235,7 @@ CLI parity: `mcp-runtime access grant` and `mcp-runtime access session` cover th
 ## Operating the stack
 
 ```bash
-# Health + events
+# Health + Kubernetes events
 mcp-runtime sentinel status
 mcp-runtime sentinel events
 
@@ -112,6 +251,10 @@ mcp-runtime sentinel port-forward grafana
 mcp-runtime sentinel restart gateway
 mcp-runtime sentinel restart --all
 ```
+
+`sentinel events` is a Kubernetes event view for the `mcp-sentinel` namespace.
+Use `/api/events` or `/api/events/filter` when you need the request/audit
+events emitted by `mcp-proxy`.
 
 See [CLI → sentinel](cli.md#sentinel) for component keys and flag details.
 

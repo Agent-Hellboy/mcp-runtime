@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 	"mcp-runtime/pkg/k8sclient"
 )
 
@@ -48,6 +49,41 @@ func TestClientForPrincipalRejectsServiceAdminWithoutIdentity(t *testing.T) {
 	}
 	if err != errPrincipalIdentityRequired {
 		t.Fatalf("error = %v, want %v", err, errPrincipalIdentityRequired)
+	}
+}
+
+func TestClientForPrincipalUsesKubernetesImpersonation(t *testing.T) {
+	var gotUser string
+	var gotGroups []string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUser = r.Header.Get("Impersonate-User")
+		gotGroups = append([]string(nil), r.Header.Values("Impersonate-Group")...)
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"kind":"PodList","apiVersion":"v1","metadata":{"resourceVersion":"1"},"items":[]}`))
+	}))
+	t.Cleanup(api.Close)
+
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Clientset: kubernetesfake.NewSimpleClientset(),
+			Config:    &rest.Config{Host: api.URL},
+		},
+	}
+	client, err := server.clientForPrincipal(principal{
+		Role:    roleUser,
+		Subject: "user-123",
+	})
+	if err != nil {
+		t.Fatalf("clientForPrincipal() error = %v", err)
+	}
+	if _, err := client.CoreV1().Pods("default").List(context.Background(), metav1.ListOptions{}); err != nil {
+		t.Fatalf("list pods with impersonated client: %v", err)
+	}
+	if gotUser != "platform:user:user-123" {
+		t.Fatalf("Impersonate-User = %q, want %q", gotUser, "platform:user:user-123")
+	}
+	if !hasString(gotGroups, "platform:role:user") {
+		t.Fatalf("Impersonate-Group values = %v, want platform:role:user", gotGroups)
 	}
 }
 
@@ -161,6 +197,32 @@ func TestEnsureUserNamespaceSetsManagedLabel(t *testing.T) {
 	}
 }
 
+func TestDesiredDeploymentUsesRestrictedPodDefaults(t *testing.T) {
+	deployment := desiredDeployment("demo", "user-77", "registry.example.com/demo:latest", 8088, 1, map[string]string{
+		"app.kubernetes.io/name": "demo",
+	})
+	podSpec := deployment.Spec.Template.Spec
+	if podSpec.AutomountServiceAccountToken == nil || *podSpec.AutomountServiceAccountToken {
+		t.Fatal("expected deployed user workloads to disable service account token automount")
+	}
+	if podSpec.SecurityContext == nil || podSpec.SecurityContext.SeccompProfile == nil {
+		t.Fatal("expected pod security context with seccomp profile")
+	}
+	if podSpec.SecurityContext.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Fatalf("seccomp profile = %q, want %q", podSpec.SecurityContext.SeccompProfile.Type, corev1.SeccompProfileTypeRuntimeDefault)
+	}
+	if podSpec.SecurityContext.RunAsUser == nil || *podSpec.SecurityContext.RunAsUser != restrictedRunAsUser {
+		t.Fatalf("runAsUser = %v, want %d", podSpec.SecurityContext.RunAsUser, restrictedRunAsUser)
+	}
+	container := podSpec.Containers[0]
+	if container.SecurityContext == nil || container.SecurityContext.AllowPrivilegeEscalation == nil || *container.SecurityContext.AllowPrivilegeEscalation {
+		t.Fatal("expected user workload container to disallow privilege escalation")
+	}
+	if container.SecurityContext.Capabilities == nil || len(container.SecurityContext.Capabilities.Drop) != 1 || container.SecurityContext.Capabilities.Drop[0] != corev1.Capability("ALL") {
+		t.Fatalf("expected user workload container to drop all capabilities, got %#v", container.SecurityContext.Capabilities)
+	}
+}
+
 func TestHandleDeploymentItemRejectsServiceUserWithoutIdentity(t *testing.T) {
 	client := kubernetesfake.NewSimpleClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team-a"}},
@@ -179,4 +241,13 @@ func TestHandleDeploymentItemRejectsServiceUserWithoutIdentity(t *testing.T) {
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
+}
+
+func hasString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

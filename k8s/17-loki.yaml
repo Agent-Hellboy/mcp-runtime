@@ -69,6 +69,7 @@ spec:
         app: loki
         loki_mode: stateful
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

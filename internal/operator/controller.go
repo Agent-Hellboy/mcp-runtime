@@ -77,6 +77,7 @@ const (
 	gatewayPolicyMountDir   = "/var/run/mcp-runtime/policy"
 	gatewayPolicyFileName   = "policy.json"
 	gatewayPolicyFilePath   = gatewayPolicyMountDir + "/" + gatewayPolicyFileName
+	restrictedRunAsUser     = int64(65532)
 )
 
 // resourceReadiness tracks the readiness state of different resources.
@@ -92,7 +93,6 @@ type resourceReadiness = operatorutil.ResourceReadiness
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingressclasses,verbs=get;list;watch
 //+kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch;update
-//+kubebuilder:rbac:groups="",resources=secrets,verbs=get
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpaccessgrants,verbs=get;list;watch
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpagentsessions,verbs=get;list;watch
 
@@ -139,7 +139,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{Requeue: false}, err
 	}
 
-	phase, allReady := determinePhase(readiness)
+	phase, allReady := determinePhase(readiness, mcpServer)
 	r.updateStatus(ctx, mcpServer, phase, "All resources reconciled", readiness)
 
 	logger.Info("Successfully reconciled MCPServer", "name", mcpServer.Name, "phase", phase)
@@ -299,9 +299,12 @@ func (r *MCPServerReconciler) checkResourceReadiness(ctx context.Context, mcpSer
 		return resourceReadiness{}, err
 	}
 
-	gatewayReady := true
+	gatewayReady := false
 	if gatewayEnabled(mcpServer) {
 		gatewayReady = deploymentReady
+	}
+	if !canaryEnabled(mcpServer) {
+		canaryReady = false
 	}
 
 	return resourceReadiness{
@@ -314,8 +317,14 @@ func (r *MCPServerReconciler) checkResourceReadiness(ctx context.Context, mcpSer
 	}, nil
 }
 
-func determinePhase(readiness resourceReadiness) (string, bool) {
-	allReady := readiness.Deployment && readiness.Service && readiness.Ingress && readiness.Gateway && readiness.Policy && readiness.Canary
+func determinePhase(readiness resourceReadiness, mcpServer *mcpv1alpha1.MCPServer) (string, bool) {
+	allReady := readiness.Deployment && readiness.Service && readiness.Ingress
+	if gatewayEnabled(mcpServer) {
+		allReady = allReady && readiness.Gateway && readiness.Policy
+	}
+	if canaryEnabled(mcpServer) {
+		allReady = allReady && readiness.Canary
+	}
 	if allReady {
 		return "Ready", true
 	}
@@ -389,6 +398,14 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 			return err
 		}
 		deployment.Spec.Template.Spec = corev1.PodSpec{
+			AutomountServiceAccountToken: boolPtr(false),
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot: boolPtr(true),
+				RunAsUser:    int64Ptr(restrictedRunAsUser),
+				SeccompProfile: &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				},
+			},
 			ImagePullSecrets: r.buildImagePullSecrets(mcpServer),
 			Containers:       containers,
 			Volumes:          volumes,
@@ -469,6 +486,14 @@ func (r *MCPServerReconciler) reconcileCanaryDeployment(ctx context.Context, mcp
 			return err
 		}
 		deployment.Spec.Template.Spec = corev1.PodSpec{
+			AutomountServiceAccountToken: boolPtr(false),
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot: boolPtr(true),
+				RunAsUser:    int64Ptr(restrictedRunAsUser),
+				SeccompProfile: &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				},
+			},
 			ImagePullSecrets: r.buildImagePullSecrets(mcpServer),
 			Containers:       containers,
 			Volumes:          volumes,
@@ -500,6 +525,13 @@ func (r *MCPServerReconciler) buildDeploymentContainers(mcpServer *mcpv1alpha1.M
 			},
 		},
 		Env: r.buildEnvVars(mcpServer.Spec.EnvVars, mcpServer.Spec.SecretEnvVars),
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: boolPtr(false),
+			RunAsNonRoot:             boolPtr(true),
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+		},
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(mcpServer.Spec.Port)},
@@ -737,6 +769,14 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 			},
 		},
 		Env: envVars,
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: boolPtr(false),
+			RunAsNonRoot:             boolPtr(true),
+			ReadOnlyRootFilesystem:   boolPtr(true),
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
 				Name:      gatewayPolicyVolumeName,
@@ -763,6 +803,14 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 		return corev1.Container{}, err
 	}
 	return container, nil
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}
+
+func int64Ptr(value int64) *int64 {
+	return &value
 }
 
 func (r *MCPServerReconciler) reconcilePolicyConfigMap(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
@@ -993,7 +1041,7 @@ func canaryEnabled(mcpServer *mcpv1alpha1.MCPServer) bool {
 
 func (r *MCPServerReconciler) checkPolicyConfigMapReady(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (bool, error) {
 	if !gatewayEnabled(mcpServer) {
-		return true, nil
+		return false, nil
 	}
 	configMap := &corev1.ConfigMap{}
 	if err := r.Get(ctx, types.NamespacedName{Name: gatewayPolicyConfigMapName(mcpServer.Name), Namespace: mcpServer.Namespace}, configMap); err != nil {

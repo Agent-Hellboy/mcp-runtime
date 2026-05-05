@@ -8,7 +8,8 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"mcp-runtime/internal/cli"
+	"mcp-runtime/internal/cli/core"
+	cliroot "mcp-runtime/internal/cli/root"
 )
 
 var (
@@ -43,9 +44,15 @@ var rootCmd = &cobra.Command{
 - MCP server deployments
 - Platform configuration`,
 	Version: fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
+	// Keep usage enabled during Cobra validation; command wrappers disable it
+	// after validation passes so runtime errors do not dump command help.
+	SilenceUsage: false,
+	// main() prints the error itself, so silence Cobra's own error print to
+	// avoid duplicates.
+	SilenceErrors: true,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// Set debug mode globally so logStructuredError can check it
-		cli.SetDebugMode(debug)
+		core.SetDebugMode(debug)
 	},
 }
 
@@ -54,16 +61,28 @@ func init() {
 }
 
 func initCommands(logger *zap.Logger) {
-	rootCmd.AddCommand(cli.NewClusterCmd(logger))
-	rootCmd.AddCommand(cli.NewRegistryCmd(logger))
-	rootCmd.AddCommand(cli.NewServerCmd(logger))
-	rootCmd.AddCommand(cli.NewAccessCmd(logger))
-	rootCmd.AddCommand(cli.NewAuthCmd(logger))
-	rootCmd.AddCommand(cli.NewBootstrapCmd(logger))
-	rootCmd.AddCommand(cli.NewSetupCmd(logger))
-	rootCmd.AddCommand(cli.NewStatusCmd(logger))
-	rootCmd.AddCommand(cli.NewSentinelCmd(logger))
-	rootCmd.AddCommand(cli.NewPipelineCmd(logger))
+	cliroot.AddCommands(rootCmd, logger)
+	silenceUsageAfterValidation(rootCmd)
+}
+
+func silenceUsageAfterValidation(cmd *cobra.Command) {
+	if cmd.RunE != nil {
+		runE := cmd.RunE
+		cmd.RunE = func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			return runE(cmd, args)
+		}
+	}
+	if cmd.Run != nil {
+		run := cmd.Run
+		cmd.Run = func(cmd *cobra.Command, args []string) {
+			cmd.SilenceUsage = true
+			run(cmd, args)
+		}
+	}
+	for _, child := range cmd.Commands() {
+		silenceUsageAfterValidation(child)
+	}
 }
 
 // newConsoleLogger returns a human-friendly console logger with timestamps and caller info.

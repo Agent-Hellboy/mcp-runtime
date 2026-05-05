@@ -274,6 +274,10 @@ Multi-node k3s: apply the same `/etc/rancher/k3s/registries.yaml` and `/etc/host
 ## kind
 
 kind's nodes are containers, so the registry NodePort needs an `extraPortMappings` entry to be reachable, and containerd inside the node container needs the same mirror.
+For `setup --test-mode`, MCP Runtime emits image refs such as
+`registry.registry.svc.cluster.local:5000/mcp-sentinel-api:latest` so Kind
+nodes use one stable service-DNS host instead of a mutable registry
+`ClusterIP:port`.
 
 1. **Cluster config.** Pass this to `kind create cluster --config`:
 
@@ -282,7 +286,7 @@ kind's nodes are containers, so the registry NodePort needs an `extraPortMapping
    apiVersion: kind.x-k8s.io/v1alpha4
    containerdConfigPatches:
      - |-
-       [plugins."io.containerd.grpc.v1.cri".registry.mirrors."registry.local"]
+       [plugins."io.containerd.grpc.v1.cri".registry.mirrors."registry.registry.svc.cluster.local:5000"]
          endpoint = ["http://127.0.0.1:32000"]
        [plugins."io.containerd.grpc.v1.cri".registry.configs."127.0.0.1:32000".tls]
          insecure_skip_verify = true
@@ -294,11 +298,9 @@ kind's nodes are containers, so the registry NodePort needs an `extraPortMapping
            protocol: TCP
    ```
 
-2. **Host /etc/hosts** (on your laptop, so `docker push` / `curl` work):
-
-   ```text
-   127.0.0.1 registry.local
-   ```
+2. **Exact host matching.** If pod events show `http: server gave HTTP
+   response to HTTPS client`, compare the pod image host with the mirror key.
+   Containerd only applies the HTTP mirror when the strings match exactly.
 
 Alternative: `kind load docker-image <image>` sideloads without a registry at all — useful for throwaway tests, but bypasses the registry-push flow the CLI is built around.
 
@@ -422,10 +424,12 @@ Missing pieces are warnings, not errors — the command surfaces them so you can
 `./bin/mcp-runtime cluster doctor` runs post-install diagnostics:
 
 - Detects your distribution (k3s / kind / minikube / docker-desktop / generic).
-- Checks the installed MCP Runtime namespaces, CRDs, operator, Traefik ingress, registry, Sentinel, and MCPServer reconciliation path.
+- Checks the installed MCP Runtime namespaces, CRDs, operator, Traefik ingress, registry, Sentinel, and MCPServer reconciliation path. The MCPServer smoke uses an existing ready app image when available; otherwise it falls back to `registry.k8s.io/pause:3.9` and validates deployment/service/ingress reconciliation plus pod scheduling without a TCP readiness wait.
+- Prefers k3s' bundled Traefik in `kube-system/traefik` when the active cluster is k3s, then falls back to the repo-managed `traefik/traefik` install.
 - Verifies registry reachability, registry image-pull smoke behavior, and common pod image-pull failures.
 - Reports `http: server gave HTTP response to HTTPS client` when kubelet/containerd tried HTTPS against the HTTP dev registry, including the affected pod and image where possible.
-- Prints the distribution-specific remediation checklist from this document.
+- Streams the current check before running it, including helper pod probes and waits, so a slow run shows what it is doing.
+- Prints the distribution-specific registry remediation hint only when registry or image-pull checks fail; Traefik and Sentinel failures use their own check-specific remedies.
 
 Run `bootstrap` before `setup` on a fresh cluster. Run `cluster doctor` after
 setup, or when debugging `ImagePullBackOff` on an installed MCP Runtime stack.

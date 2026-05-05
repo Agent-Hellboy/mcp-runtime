@@ -58,6 +58,7 @@ spec:
       labels:
         app: otel-collector
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: otel-collector
           image: otel/opentelemetry-collector:0.92.0

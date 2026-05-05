@@ -70,6 +70,7 @@ type uiSession struct {
 	UpstreamAPIKey     string
 }
 
+// uiSessionStore is intentionally in-memory only; sessions are cleared on UI restart.
 type uiSessionStore struct {
 	mu       sync.Mutex
 	sessions map[string]uiSession
@@ -93,7 +94,7 @@ type loginClientState struct {
 var (
 	loginAttempts  = newLoginAttemptTracker(time.Now)
 	sessions       = newUISessionStore(time.Now)
-	oidcVerifyHook func(context.Context, string, string) (sessionPrincipal, error)
+	oidcLoginHook  func(context.Context, string, string) (sessionPrincipal, string, time.Time, error)
 	authHTTPClient = &http.Client{Timeout: 10 * time.Second}
 )
 
@@ -366,12 +367,14 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 		} else if idToken != "" {
 			var (
 				p         sessionPrincipal
+				token     string
+				expiresAt time.Time
 				verifyErr error
 			)
-			if oidcVerifyHook != nil {
-				p, verifyErr = oidcVerifyHook(r.Context(), apiUpstream, idToken)
+			if oidcLoginHook != nil {
+				p, token, expiresAt, verifyErr = oidcLoginHook(r.Context(), apiUpstream, idToken)
 			} else {
-				p, verifyErr = verifyOIDCTokenWithAPI(r.Context(), apiUpstream, idToken)
+				p, token, expiresAt, verifyErr = loginOIDCSession(r.Context(), apiUpstream, idToken)
 			}
 			if verifyErr != nil {
 				failures := loginAttempts.recordFailure(clientID)
@@ -384,8 +387,8 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 			}
 			sess, err = store.createSession(r.Context(), uiSession{
 				Principal:          p,
-				UpstreamAuthHeader: "Bearer " + idToken,
-				ExpiresAt:          idTokenExpiry(idToken),
+				UpstreamAuthHeader: "Bearer " + token,
+				ExpiresAt:          expiresAt,
 			})
 		} else {
 			if apiKey == "" {
@@ -422,6 +425,22 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 		http.SetCookie(w, newSessionCookie(r, sess.ID, sess.ExpiresAt))
 		writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "principal": sess.Principal})
 	}
+}
+
+func loginOIDCSession(ctx context.Context, apiUpstream, idToken string) (sessionPrincipal, string, time.Time, error) {
+	p, token, expiresAt, err := loginOIDCWithAPI(ctx, apiUpstream, idToken)
+	if err == nil {
+		return p, token, expiresAt, nil
+	}
+	var statusErr *oidcLoginStatusError
+	if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusServiceUnavailable {
+		return sessionPrincipal{}, "", time.Time{}, err
+	}
+	p, verifyErr := verifyOIDCTokenWithAPI(ctx, apiUpstream, idToken)
+	if verifyErr != nil {
+		return sessionPrincipal{}, "", time.Time{}, verifyErr
+	}
+	return p, idToken, idTokenExpiry(idToken), nil
 }
 
 func loginPasswordWithAPI(ctx context.Context, apiUpstream, email, password string) (sessionPrincipal, string, error) {
@@ -498,6 +517,74 @@ func idTokenExpiry(idToken string) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(claims.Exp, 0).UTC()
+}
+
+type oidcLoginStatusError struct {
+	StatusCode int
+}
+
+func (e *oidcLoginStatusError) Error() string {
+	return fmt.Sprintf("oidc login failed: status %d", e.StatusCode)
+}
+
+func loginOIDCWithAPI(ctx context.Context, apiUpstream, idToken string) (sessionPrincipal, string, time.Time, error) {
+	oidcURL, err := apiUpstreamURL(apiUpstream, "api", "auth", "oidc")
+	if err != nil {
+		return sessionPrincipal{}, "", time.Time{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	body, err := json.Marshal(map[string]string{"id_token": idToken})
+	if err != nil {
+		return sessionPrincipal{}, "", time.Time{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, oidcURL, strings.NewReader(string(body)))
+	if err != nil {
+		return sessionPrincipal{}, "", time.Time{}, err
+	}
+	req.Header.Set("content-type", "application/json")
+
+	resp, err := authHTTPClient.Do(req)
+	if err != nil {
+		return sessionPrincipal{}, "", time.Time{}, err
+	}
+	defer drainAndClose(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return sessionPrincipal{}, "", time.Time{}, &oidcLoginStatusError{StatusCode: resp.StatusCode}
+	}
+
+	var payload struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+		User        struct {
+			ID    string `json:"id"`
+			Email string `json:"email"`
+			Role  string `json:"role"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return sessionPrincipal{}, "", time.Time{}, err
+	}
+	if strings.TrimSpace(payload.AccessToken) == "" {
+		return sessionPrincipal{}, "", time.Time{}, errors.New("missing access token")
+	}
+	role := strings.TrimSpace(payload.User.Role)
+	if role == "" {
+		role = "user"
+	}
+	var expiresAt time.Time
+	if payload.ExpiresIn > 0 {
+		expiresAt = time.Now().UTC().Add(time.Duration(payload.ExpiresIn) * time.Second)
+	}
+	return sessionPrincipal{
+		Role:     role,
+		Subject:  strings.TrimSpace(payload.User.ID),
+		Email:    strings.TrimSpace(payload.User.Email),
+		AuthType: "platform_jwt",
+	}, strings.TrimSpace(payload.AccessToken), expiresAt, nil
 }
 
 func verifyOIDCTokenWithAPI(ctx context.Context, apiUpstream, idToken string) (sessionPrincipal, error) {
@@ -843,8 +930,8 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 // X-Forwarded-Proto header set by an upstream TLS-terminating proxy.
 //
 // mode controls behavior:
-//   - "false"/"off"/"0":   never redirect (useful in dev or when fronted differently)
-//   - "true"/"on"/"1":     always redirect on X-Forwarded-Proto: http
+//   - "false"/"off"/"0"/"no": never redirect (useful in dev or when fronted differently)
+//   - "true"/"on"/"1"/"yes": always redirect on X-Forwarded-Proto: http
 //   - anything else (default "auto"): redirect only when Host looks public
 //     (not localhost / not a bare IP). This is safe for the bundled Kind dev
 //     stack where Host is `localhost:18080`.
@@ -860,11 +947,13 @@ func httpsRedirectMiddleware(next http.Handler, mode string) http.Handler {
 }
 
 func shouldRedirectToHTTPS(r *http.Request, mode string) bool {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
+	normalizedMode := strings.ToLower(strings.TrimSpace(mode))
+	forcedMode := false
+	switch normalizedMode {
 	case "false", "off", "0", "no":
 		return false
 	case "true", "on", "1", "yes":
-		// fall through, force-mode: redirect on http forwarded scheme
+		forcedMode = true
 	default:
 		if isLocalHost(r.Host) {
 			return false
@@ -881,7 +970,7 @@ func shouldRedirectToHTTPS(r *http.Request, mode string) bool {
 		return true
 	}
 	// No proxy header. Only redirect in forced mode for non-local hosts.
-	return strings.EqualFold(strings.TrimSpace(mode), "true") && !isLocalHost(r.Host)
+	return forcedMode && !isLocalHost(r.Host)
 }
 
 func isLocalHost(host string) bool {
@@ -910,11 +999,11 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()")
 		// Google Sign-In needs accounts.google.com for scripts/iframes/connect.
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; "+
-				"script-src 'self' 'unsafe-inline' https://accounts.google.com https://apis.google.com; "+
+				"script-src 'self' https://accounts.google.com https://apis.google.com; "+
 				"style-src 'self' 'unsafe-inline'; "+
 				"img-src 'self' data: https:; "+
 				"font-src 'self' data:; "+
@@ -928,7 +1017,7 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 		}
 		path := r.URL.Path
 		if strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/auth/") {
-			h.Set("Cache-Control", "no-store")
+			h.Set("Cache-Control", "no-store, no-cache, must-revalidate")
 		}
 		next.ServeHTTP(w, r)
 	})

@@ -15,57 +15,107 @@ on:
       - 'README.md'
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 jobs:
   trivy-fs:
     name: Trivy FS Scan
-    runs-on: ubuntu-latest
-    env:
-      TRIVY_IMAGE: aquasec/trivy:0.65.0
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Trivy filesystem scan
-        run: |
-          docker pull "$TRIVY_IMAGE"
-          docker run --rm \
-            -v "$PWD:/workspace" \
-            -w /workspace \
-            "$TRIVY_IMAGE" \
-            fs \
-            --exit-code 1 \
-            --ignore-unfixed \
-            --skip-dirs inspirations/mcp-gateway-registry \
-            --vuln-type os,library \
-            --severity CRITICAL,HIGH \
-            --no-progress \
-            .
+      - name: Trivy repository vulnerability scan
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,license
+          format: sarif
+          output: trivy-fs.sarif
+          exit-code: "1"
+          ignore-unfixed: true
+          skip-dirs: inspirations/mcp-gateway-registry
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          limit-severities-for-sarif: true
+          hide-progress: true
+
+      - name: Upload Trivy repository SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@ed410739ba306e4ebe5e123421a6bd694e494a2b # v4
+        with:
+          sarif_file: trivy-fs.sarif
+
+      - name: Trivy repository misconfiguration scan
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: misconfig
+          format: sarif
+          output: trivy-misconfig.sarif
+          exit-code: "0"
+          skip-dirs: inspirations/mcp-gateway-registry
+          severity: CRITICAL,HIGH
+          limit-severities-for-sarif: true
+          hide-progress: true
+
+      - name: Upload Trivy misconfiguration SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@ed410739ba306e4ebe5e123421a6bd694e494a2b # v4
+        with:
+          sarif_file: trivy-misconfig.sarif
 
   trivy-image:
     name: Trivy Operator Image Scan
-    runs-on: ubuntu-latest
-    env:
-      TRIVY_IMAGE: aquasec/trivy:0.65.0
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Build operator image
         run: docker build --pull -f Dockerfile.operator -t mcp-runtime-operator:ci .
 
-      - name: Save operator image tarball
-        run: docker save mcp-runtime-operator:ci -o /tmp/mcp-runtime-operator-ci.tar
+      - name: Generate operator image SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: mcp-runtime-operator:ci
+          format: spdx-json
+          output-file: operator-image.spdx.json
+
+      - name: Upload operator image SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: operator-image-sbom
+          path: operator-image.spdx.json
+          if-no-files-found: error
 
       - name: Trivy image scan
-        run: |
-          docker pull "$TRIVY_IMAGE"
-          docker run --rm \
-            -v /tmp:/tmp \
-            "$TRIVY_IMAGE" \
-            image \
-            --input /tmp/mcp-runtime-operator-ci.tar \
-            --exit-code 1 \
-            --ignore-unfixed \
-            --vuln-type os,library \
-            --severity CRITICAL,HIGH \
-            --no-progress
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          image-ref: mcp-runtime-operator:ci
+          format: sarif
+          output: trivy-image.sarif
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          limit-severities-for-sarif: true
+          hide-progress: true
+
+      - name: Upload Trivy image SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@ed410739ba306e4ebe5e123421a6bd694e494a2b # v4
+        with:
+          sarif_file: trivy-image.sarif

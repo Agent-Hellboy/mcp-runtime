@@ -8,7 +8,7 @@ If instructions conflict, prefer **this repo** (`README`, CRDs, `v1alpha1` types
 
 | Area | Path | Notes |
 |------|------|--------|
-| User-facing CLI | `cmd/mcp-runtime/`, `internal/cli/` | `setup`, `status`, `registry`, `server`, `access`, … |
+| User-facing CLI | `cmd/mcp-runtime/`, `internal/cli/root/`, `internal/cli/<command>/`, `internal/cli/core/` | Entrypoint, foldered Cobra command routing, command-owned behavior for `setup`, `status`, `registry`, `server`, `access`, …, and shared CLI kernel code |
 | Operator (controller) | `cmd/operator/`, `internal/operator/` | `MCPServer` reconciliation, ingress, gateway wiring |
 | API & CRD types | `api/v1alpha1/` | Source of truth for object shapes; CRD YAML in `config/crd/bases/` |
 | Access control (shared) | `pkg/access/` | Grants, sessions, policy pieces used by API and gateway |
@@ -21,7 +21,7 @@ If instructions conflict, prefer **this repo** (`README`, CRDs, `v1alpha1` types
 | E2E | `test/e2e/`, `test/integration/` | Kind script and envtest-based integration tests |
 | Agent tool config | `.claude/`, `.codex/skills/` | `.claude/skills` should symlink to `../.codex/skills` so Claude Desktop and the Codex CLI use the same local skills |
 
-**Patterns worth mirroring:** search for similar packages before adding new abstractions; keep CLI errors consistent with `internal/cli/errors.go` and `pkg/errx/`.
+**Patterns worth mirroring:** search for similar packages before adding new abstractions; keep CLI errors consistent with `internal/cli/core/errors.go` and `pkg/errx/`.
 
 ## Build, test, and quality (before you push)
 
@@ -38,16 +38,17 @@ go test ./... -count=1 -race
 go vet ./...
 ```
 
-Optional but used in CI: `staticcheck ./...` (install: `go install honnef.co/go/tools/cmd/staticcheck@latest`).
+Optional but used in CI: `staticcheck ./...` (install the pinned CI version with `go install honnef.co/go/tools/cmd/staticcheck@v0.7.0`).
 
 **Targeted tests** (prefer these while iterating; full `./...` can be slow):
 
 - `go test ./internal/operator/... ./internal/cli/... -race -count=1`
 - `go test ./test/golden/... -count=1` (CLI help snapshots; update `test/golden/cli/testdata/*.golden` when you change Cobra help text on purpose)
 - `go test ./test/integration/...` (needs `KUBEBUILDER_ASSETS`; see `Makefile.operator` and CI for envtest setup)
+- `E2E_CACHE_MODE=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh` for repeated local Kind e2e debugging without recreating the cluster or rebuilding cached images; set `OPENAI_API_KEY` in env or `.env` for optional real-client prompts, and omit cache mode for CI-equivalent fresh runs.
 - `services/api` and `services/ui`: `go test -race -count=1 ./...` inside each directory (CI runs these explicitly)
 
-**CI** (`.github/workflows/ci.yaml`) runs: `gofmt` check, `go vet`, `staticcheck`, unit tests, golden tests, service tests, `test/integration`, then Kind e2e on `main`/`PR` branches. Align local changes with that before opening a PR.
+**CI** (`.github/workflows/ci.yaml`) runs: `gofmt` check, `go vet`, `staticcheck`, unit tests, golden tests, service tests, `test/integration`, SBOM generation, then Kind e2e on `main`/`PR` branches. Security workflows add pinned gosec, Trivy, and dependency-review checks. Align local changes with that before opening a PR.
 
 **Docs sync for CLI help:** when you edit `docs/cli.md`, `docs/getting-started.md`, `docs/publish-mcp-server.md`, or any page that shows CLI commands, verify the exact command description, subcommands, flags, and defaults from live help output before push. Use:
 
@@ -64,6 +65,7 @@ Do not hand-wave command behavior from memory when the docs are meant to reflect
 - **Scope:** Change only what the task needs; do not “clean up” unrelated files. Match naming and patterns in the nearest similar code.
 - **Tests:** Add or adjust tests in the same package when behavior changes. For CLI output, expect golden file updates.
 - **Branch names:** Use `component/feature_name` for task branches. Pick the component from the same scope list used for commit messages, and write the feature name in lowercase snake_case, for example `doc/commit_message_guidance`, `cli/registry_status`, or `operator/ingress_defaults`.
+- **Agent branch / PR flow:** Agents must create and push changes on a new branch, and open or update a PR from that branch. Agents must not push directly to `main`.
 - **Commit messages:** Use `fix(<component>): ...` for bug fixes and `feat(<component>): ...` for user-facing behavior. Use `doc: ...` for README / AGENTS / docs-only edits, and `website: ...` for `website/` changes. Prefer components that match repo areas, such as `cli`, `operator`, `api`, `crd`, `access`, `policy`, `k8sclient`, `manifest`, `metadata`, `sentinel`, `registry`, `ingress`, `services-api`, `ui`, `ingest`, `processor`, `mcp-proxy`, `traefik-plugin`, `config`, `examples`, `test`, or `ci`. Keep the subject concise and imperative; add a body only when the reason, risk, or verification needs context.
 - **Docs you were not asked to edit:** Avoid adding new top-level docs unless the task needs them; this file, `README`, and existing doc trees are the defaults for agents.
 - **Secrets and prod:** This repo is **alpha**; do not hardcode real credentials. Use the existing secret and env patterns documented below.
@@ -93,7 +95,9 @@ kubectl port-forward -n traefik svc/traefik 18080:8000   # expose ingress
 
 `setup --test-mode` is not a no-build path: it builds and pushes the operator,
 gateway proxy, and Sentinel images with `latest` tags to the configured or
-bundled registry, then deploys pods that pull those images.
+bundled registry, then deploys pods that pull those images. In Kind test mode,
+implicit internal image refs use `registry.registry.svc.cluster.local:5000/...`
+so the documented containerd mirror matches the image host exactly.
 
 - **Status:** `./bin/mcp-runtime status`
 - **Contributor smoke:** for dashboard access, local image push, MCP JSON-RPC request, and Sentinel event checks, follow `docs/getting-started.md#3-contributor-test-mode-cluster`.
@@ -105,14 +109,28 @@ bundled registry, then deploys pods that pull those images.
 - Grafana: `/grafana` · Prometheus: `/prometheus` · API base: `http://localhost:18080/api`
 - MCP (test): `http://localhost:18080/demo-one/mcp`, `http://localhost:18080/demo-two/mcp`
 - PII redaction: `config/ingress/overlays/http` with Traefik plugin `pii-redactor@file`. Reapply: `./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http`. The plugin is built from `services/traefik-plugins/pii-redactor` (local `localplugins` mount) so a published image tag is not required for local dev.
-- **API key:**
+- **API keys:**
 
 ```bash
+# Direct Sentinel API / x-api-key admin requests.
+kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
+  -o jsonpath='{.data.UI_API_KEY}' | base64 -d
+
+# Ingest/proxy analytics requests.
+kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
+  -o jsonpath='{.data.INGEST_API_KEYS}' | base64 -d
+
+# Browser/API-key login through the UI.
 kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
   -o jsonpath='{.data.UI_API_KEY}' | base64 -d
 ```
 
-  Keep `API_KEYS` and `UI_API_KEY` aligned; copy the secret to `mcp-servers` if MCP servers need it.
+  `setup` should keep `UI_API_KEY` included in the comma-separated `API_KEYS`
+  and `ADMIN_API_KEYS` lists, and should keep ingest-only keys in
+  `INGEST_API_KEYS`. If direct `/api/...` curl calls return `401`, run
+  `./bin/mcp-runtime cluster doctor`; it flags UI/API/admin key mismatches. Roll
+  the API, UI, ingest, and proxy/gateway workloads after patching
+  `mcp-sentinel-secrets`.
 
 - **Platform admin bootstrap (one-shot):**
 
@@ -144,23 +162,56 @@ kubectl patch secret mcp-sentinel-secrets -n mcp-sentinel --type merge -p '{"str
 - **“ingressHost is required” (operator):** set `spec.ingressHost` on the `MCPServer`, or operator env `MCP_DEFAULT_INGRESS_HOST`, or `MCP_PLATFORM_DOMAIN` for `mcp.<domain>` defaults.
 - **MCPServer stuck `PartiallyReady` with working ingress traffic:** default ingress readiness is strict and waits for `Ingress.status.loadBalancer.ingress[]`. For dev / NodePort-style ingress controllers that route without publishing LB status, set operator env `MCP_INGRESS_READINESS_MODE=permissive`; this treats an Ingress with rules as ready. Keep the default `strict` mode for production setups that rely on published LB status.
 - **Port mismatch:** the bundled Go example listens on `8088` by default; align `MCPServer` `port` / `servicePort` and container `PORT` if you overrode them.
-- **Analytics 401:** use gateway/ingest URL and key, not the app’s random env. Example: `ANALYTICS_INGEST_URL=http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events` and `ANALYTICS_API_KEY` from `mcp-sentinel-secrets` (`API_KEYS` key).
+- **Analytics 401:** use gateway/ingest URL and key, not the app’s random env. Example: `ANALYTICS_INGEST_URL=http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events` and `ANALYTICS_API_KEY` from `mcp-sentinel-secrets` (`INGEST_API_KEYS` key).
 - **Secret not found in workload namespace:** copy `mcp-sentinel-secrets` or use a shared secret reference.
-- **Dashboard / API 401:** align `API_KEYS` and `UI_API_KEY` and roll the API deployment.
-- **Dashboard 308 redirect loop in dev:** the UI service redirects HTTP→HTTPS for non-local hosts when it sees `X-Forwarded-Proto: http`. Override with the `UI_REQUIRE_HTTPS` env on the `mcp-sentinel-ui` deployment: `auto` (default — redirect public hosts only), `true` (always redirect on http), `false` (never redirect, use this when the UI is fronted by a non-TLS terminator on a real hostname).
+- **Dashboard / API 401:** direct admin `x-api-key` curl calls need a key present in both `API_KEYS` and `ADMIN_API_KEYS`; browser login uses `UI_API_KEY`. Keep `UI_API_KEY` present in both lists, then roll the API and UI deployments after secret changes.
+- **Dashboard 308 redirect loop in dev:** the UI service redirects HTTP→HTTPS for non-local hosts when it sees `X-Forwarded-Proto: http`. Override with the `UI_REQUIRE_HTTPS` env on the `mcp-sentinel-ui` deployment: `auto` (default — redirect public hosts only), `true`/`on`/`1`/`yes` (always redirect HTTP for public hosts), `false`/`off`/`0`/`no` (never redirect, use this when the UI is fronted by a non-TLS terminator on a real hostname).
 - **Ingress / routes:** `kubectl get ingress -A` and confirm paths match the gateway and demo servers you expect.
+- **Custom ingress namespaces:** bundled Traefik manifests watch `registry`, `mcp-sentinel`, and `mcp-servers` only so the controller does not need cluster-wide Secret access. If you place public Ingresses in another namespace, add that namespace to the Traefik `--providers.kubernetesingress.namespaces` list and bind the `traefik-watch` Role there.
 - **Private / HTTP in-cluster registry / k3s:** Pull and push can fail with `https` vs `http` or `registry.local` DNS on nodes. See **k3s and HTTP registry (config files)** below, set **`MCP_REGISTRY_*`** before `pipeline generate` when you want `ClusterIP:port` in manifests, and raise **`MCP_DEPLOYMENT_TIMEOUT`** if setup rollouts time out on slow first pulls.
 - **Prod DNS / ACME:** with `MCP_PLATFORM_DOMAIN=example.com`, setup derives `registry.example.com`, `mcp.example.com`, and `platform.example.com`. All three public DNS records must point at the ingress IP and port 80 must reach Traefik for HTTP-01. If cert-manager reports NXDOMAIN, verify from outside and inside the cluster: `getent hosts registry.example.com`, `getent hosts mcp.example.com`, `getent hosts platform.example.com`, and `kubectl run dns-check --rm -i --restart=Never --image=busybox:1.36 -- nslookup platform.example.com`.
 - **Platform UI 404 / wrong host:** when `MCP_PLATFORM_DOMAIN` (or `MCP_PLATFORM_INGRESS_HOST`) is set, setup applies a host-based ingress `mcp-sentinel-platform-ui` in `mcp-sentinel` (and, when TLS is enabled, a sibling `mcp-sentinel-platform-ui-http` for HTTP→HTTPS redirect). Verify with `kubectl get ingress mcp-sentinel-platform-ui -n mcp-sentinel -o yaml`; the rule should be host=`platform.<domain>` routing `/` to `mcp-sentinel-ui:8082` (and `/api` to the same service). `/grafana` and `/prometheus` are deliberately not on the public host. If the dashboard returns Traefik default 404, check that DNS resolves `platform.<domain>` to the cluster ingress, then `kubectl logs -n traefik deploy/traefik --tail=120` for routing errors. The dev path-based gateway (`mcp-sentinel-gateway`) keeps working when `MCP_PLATFORM_DOMAIN` is unset.
 - **Prod registry 404 / image pulls say “not found”:** if `registry-cert` is Ready but pods fail to pull `registry.<domain>/<repo>:<tag>`, check the public registry route: `curl -k -i https://registry.<domain>/v2/`. Expected is HTTP 200 with `docker-distribution-api-version: registry/2.0`; Traefik `404 page not found` means the ingress/router is not active. Check `kubectl logs -n traefik deploy/traefik --tail=120` and `kubectl get ingress registry -n registry -o yaml`. In prod, the registry ingress must not reference the dev-only `pii-redactor@file` middleware.
 - **Prod MCP server URLs:** prefer path-based public routing for clients: `https://mcp.<domain>/<server-name>/mcp`. Use `spec.publicPathPrefix: <server-name>` and set the server’s `MCP_PATH` to `/<server-name>/mcp`; avoid examples that require a custom `Host` header such as `go.example.local`.
 
+### MCP server pod / sidecar checks
+
+Use these when a server is deployed but gateway behavior, grants, or analytics
+look wrong:
+
+```bash
+SERVER=go-example-mcp
+CONTAINER=go-example-mcp
+
+kubectl get mcpservers -n mcp-servers
+kubectl get pods -n mcp-servers -o wide
+kubectl get pods -n mcp-servers \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.name}{","}{end}{"\n"}{end}'
+
+POD="$(kubectl get pods -n mcp-servers -l app="$SERVER" -o jsonpath='{.items[0].metadata.name}')"
+kubectl describe pod -n mcp-servers "$POD"
+kubectl logs -n mcp-servers "$POD" -c "$CONTAINER"
+kubectl logs -n mcp-servers "$POD" -c mcp-gateway
+./bin/mcp-runtime server policy inspect "$SERVER" --namespace mcp-servers
+kubectl get mcpaccessgrant,mcpagentsession -n mcp-servers -o wide
+```
+
+The sidecar container is named `mcp-gateway`; it runs the `mcp-proxy`
+image/process. Many runtime images are distroless, so `/bin/sh` and
+`/bin/bash` may not exist. Prefer logs/describe, or attach a debug container:
+
+```bash
+kubectl debug -it -n mcp-servers "pod/$POD" \
+  --target="$CONTAINER" \
+  --image=busybox:1.36 -- sh
+```
+
 ### k3s and HTTP registry (dev / test without registry TLS)
 
 **When this section applies**
 
 - **Dev HTTP registry (typical on k3s or lab):** run `./bin/mcp-runtime setup` **without** `--with-tls`. Setup logs `TLS: disabled (dev HTTP mode)` for the internal registry; the registry serves **HTTP**, so you need the **Docker** and **k3s** config in the table below on every machine that builds/pushes or pulls.
-- **`--test-mode`:** meant mainly for **Kind** contributor and CI flows. It keeps production guardrails off, uses local/dev registry behavior, and still builds and pushes operator, gateway proxy, and Sentinel images with `latest` tags. Pods still pull those images from the configured or bundled registry, so k3s/containerd needs an insecure HTTP mirror for the exact image host and port, such as `10.43.x.x:5000`, when using the bundled plain HTTP registry. On k3s hosts with an empty/minimal `~/.kube/config`, pass `--kubeconfig /etc/rancher/k3s/k3s.yaml`.
+- **`--test-mode`:** meant mainly for **Kind** contributor and CI flows. It keeps production guardrails off, uses local/dev registry behavior, and still builds and pushes operator, gateway proxy, and Sentinel images with `latest` tags. In Kind, implicit bundled-registry image refs use `registry.registry.svc.cluster.local:5000/...` to match the documented mirror. On k3s, pods still pull from the exact configured or discovered image host, such as `10.43.x.x:5000`, so k3s/containerd needs a matching insecure HTTP mirror when using the bundled plain HTTP registry. On k3s hosts with an empty/minimal `~/.kube/config`, pass `--kubeconfig /etc/rancher/k3s/k3s.yaml`.
 - **Bundled registry on k3s:** setup prints the selected registry **Internal URL** after creating the registry Service. If you did not preconfigure a stable registry endpoint, copy that exact `host:port` into `/etc/rancher/k3s/registries.yaml`, restart `k3s` / `k3s-agent`, then rerun setup. If StatefulSet storage was interrupted during a failed run, clear the partial runtime namespaces first.
 
 The platform can install a **plain HTTP** Docker distribution registry (typical in dev with `./bin/mcp-runtime setup` **without** `--with-tls`). Runtimes default to **HTTPS** for any registry; you must allow **HTTP (insecure)** in two places: the host where you run **Docker** (build/push) and every **k3s node** (kubelet/containerd pull for Pods).
@@ -279,8 +330,20 @@ curl -i -H "content-type: application/json" \
      -H "accept: application/json, text/event-stream" \
      -H "Mcp-Protocol-Version: $PROTO" \
      -H "Mcp-Session-Id: <session>" \
+     -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' $BASE
+# then
+curl -i -H "content-type: application/json" \
+     -H "accept: application/json, text/event-stream" \
+     -H "Mcp-Protocol-Version: $PROTO" \
+     -H "Mcp-Session-Id: <session>" \
      -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"add","arguments":{"a":2,"b":3}}}' $BASE
 ```
+
+If you just applied `MCPAccessGrant` or `MCPAgentSession` resources, remember
+that `server policy inspect` only confirms the rendered policy. The proxy
+sidecar reloads its local policy file on a short polling loop, so allow a few
+seconds before concluding a fresh session-backed request failed with
+`session_not_found`.
 
 **Bulk (Python)** — fires many `tools/call` events for ingest testing:
 

@@ -15,22 +15,25 @@ on:
       - 'README.md'
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 jobs:
   gosec:
     name: Gosec Scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.26.1
 
       - name: Run gosec
         run: $(go env GOPATH)/bin/gosec ./...

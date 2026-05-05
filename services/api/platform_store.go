@@ -597,7 +597,7 @@ func (s *platformStore) ListNamespaces(ctx context.Context) ([]map[string]any, e
 }
 
 func (s *platformStore) WriteAudit(ctx context.Context, ev auditEvent) {
-	if s == nil {
+	if s == nil || s.db == nil {
 		return
 	}
 	_, _ = s.db.ExecContext(ctx, `INSERT INTO audit_logs (user_id,action,resource,namespace,status,message,actor_ip,request_id) VALUES (NULLIF($1,'')::uuid,$2,$3,$4,$5,$6,$7,$8)`,
