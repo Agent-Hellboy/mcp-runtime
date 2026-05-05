@@ -202,6 +202,7 @@ h1 {
 .panel {
   background: rgba(27, 59, 52, 0.75);
   border-radius: 20px;
+  min-width: 0;
   padding: 24px;
   backdrop-filter: blur(8px);
   box-shadow: 0 20px 40px var(--shadow);
@@ -230,6 +231,8 @@ h1 {
   color: var(--muted);
   font-size: 13px;
   margin: 6px 0 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .panel-actions {
@@ -632,18 +635,20 @@ tr:hover td {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr));
   gap: 18px;
   align-items: start;
+  min-width: 0;
 }
 
 .server-catalog-toolbar {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(320px, 0.9fr);
-  gap: 16px;
+  grid-template-columns: auto auto minmax(240px, 1fr);
+  gap: 12px;
   align-items: center;
   background: rgba(11, 24, 21, 0.42);
   border: 1px solid rgba(247, 245, 239, 0.1);
   border-radius: 8px;
   padding: 14px;
   margin-bottom: 18px;
+  min-width: 0;
 }
 
 .server-catalog-stats,
@@ -652,6 +657,7 @@ tr:hover td {
   align-items: center;
   gap: 10px;
   min-width: 0;
+  max-width: 100%;
 }
 
 .server-catalog-stats {
@@ -678,12 +684,31 @@ tr:hover td {
 
 .server-catalog-controls input {
   min-width: 0;
-  width: min(100%, 340px);
+  width: min(100%, 420px);
 }
 
-.server-catalog-controls select {
-  width: 160px;
-  flex: 0 0 auto;
+.server-status-segment {
+  background: rgba(247, 245, 239, 0.06);
+  border: 1px solid rgba(247, 245, 239, 0.1);
+  border-radius: 8px;
+  display: inline-flex;
+  gap: 3px;
+  min-width: 0;
+  padding: 3px;
+}
+
+.server-status-segment button {
+  background: transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  min-width: 0;
+  padding: 7px 10px;
+}
+
+.server-status-segment button.active {
+  background: rgba(242, 184, 75, 0.16);
+  color: var(--text);
 }
 
 .server-empty-state {
@@ -704,6 +729,7 @@ tr:hover td {
   padding: 20px;
   display: grid;
   gap: 16px;
+  min-width: 0;
   box-shadow: 0 18px 36px rgba(0, 0, 0, 0.24);
 }
 
@@ -783,10 +809,19 @@ tr:hover td {
   font-size: 12px;
 }
 
+.server-meta-wrap {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
 .server-meta-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
 }
 
 .server-meta-pill {
@@ -798,17 +833,25 @@ tr:hover td {
   padding: 6px 10px;
 }
 
+.server-card-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
 .server-endpoint-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
-  align-items: stretch;
 }
 
 .server-endpoint {
   align-items: center;
   display: flex;
   overflow-wrap: anywhere;
+  min-width: 0;
   color: #fff8dc;
   background: rgba(0, 0, 0, 0.28);
   border: 1px solid rgba(247, 245, 239, 0.08);
@@ -821,8 +864,8 @@ tr:hover td {
 .server-action {
   border-color: rgba(247, 245, 239, 0.35);
   border-radius: 8px;
-  min-height: 40px;
-  padding: 8px 12px;
+  min-height: 34px;
+  padding: 7px 11px;
   white-space: nowrap;
 }
 
@@ -1010,26 +1053,47 @@ tr:hover td {
     flex-wrap: wrap;
   }
 
+  .panel {
+    border-radius: 14px;
+    padding: 18px;
+  }
+
   .server-catalog-toolbar,
-  .server-endpoint-row,
   .server-inventory-grid {
     grid-template-columns: 1fr;
   }
 
   .server-catalog-controls {
-    align-items: stretch;
-    flex-direction: column;
     justify-content: flex-start;
   }
 
-  .server-catalog-controls input,
-  .server-catalog-controls select {
+  .server-catalog-controls input {
     width: 100%;
+  }
+
+  .server-status-segment {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .server-status-segment button {
+    font-size: 11px;
+    padding: 7px 4px;
+    white-space: nowrap;
   }
 
   .server-card-hero {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .server-meta-wrap {
+    flex-direction: column;
+  }
+
+  .server-card-actions {
+    justify-content: flex-start;
   }
 
   .server-status-stack {

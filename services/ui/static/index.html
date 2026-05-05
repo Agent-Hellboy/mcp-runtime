@@ -97,7 +97,7 @@
           <div class="panel-head">
             <div>
               <h2>MCP Servers</h2>
-              <p class="panel-kicker">Browse deployed MCP endpoints and client connection details.</p>
+              <p class="panel-kicker">Browse deployed MCP endpoints and connection details.</p>
             </div>
             <div class="panel-actions">
               <button class="ghost" id="refresh-servers" type="button">Refresh</button>
@@ -109,6 +109,11 @@
               <span><strong id="server-count-ready">-</strong> ready</span>
               <span><strong id="server-count-tools">-</strong> tools</span>
             </div>
+            <div class="server-status-segment" aria-label="Filter MCP servers by status">
+              <button class="active" data-server-status="all" type="button">All</button>
+              <button data-server-status="ready" type="button">Ready</button>
+              <button data-server-status="attention" type="button">Issues</button>
+            </div>
             <div class="server-catalog-controls">
               <input
                 type="search"
@@ -116,11 +121,6 @@
                 placeholder="Search servers, namespaces, routes, tools"
                 aria-label="Search MCP servers"
               />
-              <select id="server-status-filter" aria-label="Filter MCP servers by status">
-                <option value="all">All statuses</option>
-                <option value="ready">Ready</option>
-                <option value="attention">Needs attention</option>
-              </select>
             </div>
           </div>
           <div class="server-grid" id="servers-grid">

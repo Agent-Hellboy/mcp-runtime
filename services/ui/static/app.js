@@ -772,6 +772,9 @@ function renderServerHero(server) {
 }
 
 function renderServerMeta(server) {
+  const wrap = document.createElement("div");
+  wrap.className = "server-meta-wrap";
+
   const meta = document.createElement("div");
   meta.className = "server-meta-row";
   meta.appendChild(serverMetaPill("HTTP MCP"));
@@ -779,7 +782,31 @@ function renderServerMeta(server) {
   meta.appendChild(serverMetaPill(`${(server.prompts || []).length} prompts`));
   meta.appendChild(serverMetaPill(`${(server.resources || []).length} resources`));
   meta.appendChild(serverMetaPill(`Created ${formatServerAge(server.age)}`));
-  return meta;
+  wrap.appendChild(meta);
+
+  const actions = document.createElement("div");
+  actions.className = "server-card-actions";
+  if (server.endpoint) {
+    const copyURL = document.createElement("button");
+    copyURL.className = "ghost server-action";
+    copyURL.type = "button";
+    copyURL.textContent = "Copy URL";
+    copyURL.addEventListener("click", () => copyTextToClipboard(server.endpoint, "Endpoint copied"));
+    actions.appendChild(copyURL);
+  }
+  if (server.access_json && Object.keys(server.access_json).length) {
+    const jsonText = JSON.stringify(server.access_json || {}, null, 2);
+    const copyJSON = document.createElement("button");
+    copyJSON.className = "ghost server-action";
+    copyJSON.type = "button";
+    copyJSON.textContent = "Copy JSON";
+    copyJSON.addEventListener("click", () => copyTextToClipboard(jsonText, "Connect JSON copied"));
+    actions.appendChild(copyJSON);
+  }
+  if (actions.children.length) {
+    wrap.appendChild(actions);
+  }
+  return wrap;
 }
 
 function serverMetaPill(text) {
@@ -797,15 +824,6 @@ function renderServerEndpoint(server) {
   endpoint.textContent = server.endpoint || "No public endpoint";
   row.appendChild(endpoint);
 
-  if (server.endpoint) {
-    const copy = document.createElement("button");
-    copy.className = "ghost server-action";
-    copy.type = "button";
-    copy.textContent = "Copy URL";
-    copy.addEventListener("click", () => copyTextToClipboard(server.endpoint, "Endpoint copied"));
-    row.appendChild(copy);
-  }
-
   return row;
 }
 
@@ -822,12 +840,7 @@ function renderServerConnectConfig(server) {
   json.className = "access-json";
   const jsonText = JSON.stringify(server.access_json || {}, null, 2);
   json.textContent = jsonText;
-  const copy = document.createElement("button");
-  copy.className = "ghost server-action";
-  copy.type = "button";
-  copy.textContent = "Copy JSON";
-  copy.addEventListener("click", () => copyTextToClipboard(jsonText, "Connect JSON copied"));
-  body.append(json, copy);
+  body.appendChild(json);
   details.appendChild(body);
   return details;
 }
@@ -932,9 +945,14 @@ function initDashboard() {
     serverSearchQuery = event.target.value || "";
     renderServers();
   });
-  document.getElementById("server-status-filter")?.addEventListener("change", (event) => {
-    serverStatusFilter = event.target.value || "all";
-    renderServers();
+  document.querySelectorAll("[data-server-status]").forEach((button) => {
+    button.addEventListener("click", () => {
+      serverStatusFilter = button.dataset.serverStatus || "all";
+      document.querySelectorAll("[data-server-status]").forEach((node) => {
+        node.classList.toggle("active", node === button);
+      });
+      renderServers();
+    });
   });
 }
 
