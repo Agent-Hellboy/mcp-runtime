@@ -696,6 +696,17 @@ spec:
 		}
 	})
 
+	t.Run("does not strip incidental cluster issuer text", func(t *testing.T) {
+		manifest := "metadata:\n  annotations:\n    note: keep cert-manager.io/cluster-issuer: in docs\n    \"cert-manager.io/cluster-issuer\": mcp-runtime-ca\nspec:\n"
+		got := stripRegistryClusterIssuerAnnotation(manifest)
+		if strings.Contains(got, "\"cert-manager.io/cluster-issuer\"") {
+			t.Fatalf("expected quoted cert-manager annotation to be stripped, got: %s", got)
+		}
+		if !strings.Contains(got, "note: keep cert-manager.io/cluster-issuer: in docs") {
+			t.Fatalf("expected incidental text to remain, got: %s", got)
+		}
+	})
+
 	t.Run("tls overlays do not request ingress-shim certificates", func(t *testing.T) {
 		root := repoRootForRegistryTest(t)
 		for _, rel := range []string{

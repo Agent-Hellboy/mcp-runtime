@@ -2523,7 +2523,7 @@ func ensureRegistryCertificateOwnership(kubectl core.KubectlRunner, logger *zap.
 			core.ErrTLSSetupFailed,
 			err,
 			err.Error(),
-			map[string]any{"secret": certmanager.RegistryTLSSecretName, "namespace": core.NamespaceRegistry, "component": "setup"},
+			map[string]any{"resource_name": certmanager.RegistryTLSSecretName, "namespace": core.NamespaceRegistry, "component": "setup"},
 		)
 		core.Error("Registry TLS Certificate conflict")
 		if logger != nil {

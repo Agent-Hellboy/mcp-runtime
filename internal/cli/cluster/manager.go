@@ -339,6 +339,10 @@ func (i traefikInstall) repoManaged() bool {
 	return i.Namespace == "traefik"
 }
 
+func (i traefikInstall) activeController() bool {
+	return i.Deployment
+}
+
 func (i traefikInstall) summary() string {
 	var resources []string
 	if i.Deployment {
@@ -351,11 +355,29 @@ func (i traefikInstall) summary() string {
 }
 
 func (m *ClusterManager) detectTraefikInstallations() []traefikInstall {
-	var installs []traefikInstall
+	installsByNamespace := map[string]traefikInstall{}
 	for _, ns := range []string{"kube-system", "traefik"} {
-		install := traefikInstall{Namespace: ns}
-		install.Deployment = m.namedTraefikResourceExists("deployment", ns)
-		install.Service = m.namedTraefikResourceExists("service", ns)
+		installsByNamespace[ns] = traefikInstall{
+			Namespace:  ns,
+			Deployment: m.namedTraefikResourceExists("deployment", ns),
+			Service:    m.namedTraefikResourceExists("service", ns),
+		}
+	}
+	for _, kind := range []string{"deployment", "service"} {
+		for _, ns := range m.namedTraefikNamespaces(kind) {
+			install := installsByNamespace[ns]
+			install.Namespace = ns
+			if kind == "deployment" {
+				install.Deployment = true
+			} else {
+				install.Service = true
+			}
+			installsByNamespace[ns] = install
+		}
+	}
+
+	var installs []traefikInstall
+	for _, install := range installsByNamespace {
 		if install.Deployment || install.Service {
 			installs = append(installs, install)
 		}
@@ -369,10 +391,40 @@ func (m *ClusterManager) namedTraefikResourceExists(kind, namespace string) bool
 	return err == nil && strings.TrimSpace(string(out)) == "traefik"
 }
 
+func (m *ClusterManager) namedTraefikNamespaces(kind string) []string {
+	out, err := m.kubectl.CombinedOutput([]string{"get", kind, "-A", "--no-headers", "-o", "custom-columns=NS:.metadata.namespace,NAME:.metadata.name"})
+	if err != nil {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	var namespaces []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[1] != "traefik" {
+			continue
+		}
+		ns := strings.TrimSpace(fields[0])
+		if ns == "" {
+			continue
+		}
+		if _, ok := seen[ns]; ok {
+			continue
+		}
+		seen[ns] = struct{}{}
+		namespaces = append(namespaces, ns)
+	}
+	sort.Strings(namespaces)
+	return namespaces
+}
+
 func validateTraefikInstallPlan(installs []traefikInstall, force bool) error {
 	var managed []string
 	var external []string
 	for _, install := range installs {
+		if !install.activeController() {
+			continue
+		}
 		if install.repoManaged() {
 			managed = append(managed, install.summary())
 			continue
@@ -396,7 +448,7 @@ func validateTraefikInstallPlan(installs []traefikInstall, force bool) error {
 
 func hasExternalTraefikInstall(installs []traefikInstall) bool {
 	for _, install := range installs {
-		if !install.repoManaged() {
+		if !install.repoManaged() && install.activeController() {
 			return true
 		}
 	}

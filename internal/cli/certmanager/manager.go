@@ -17,6 +17,7 @@ import (
 
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/kube"
+	"mcp-runtime/internal/cli/kubeerr"
 )
 
 const (
@@ -143,7 +144,7 @@ func (m *CertManager) Apply(dryRun bool) error {
 			core.ErrTLSSetupFailed,
 			err,
 			err.Error(),
-			map[string]any{"secret": registryTLSSecretName, "namespace": core.NamespaceRegistry, "component": "cert"},
+			map[string]any{"resource_name": registryTLSSecretName, "namespace": core.NamespaceRegistry, "component": "cert"},
 		)
 		core.Error("Registry TLS Certificate conflict")
 		core.LogStructuredError(m.logger, wrappedErr, "Registry TLS Certificate conflict")
@@ -246,11 +247,13 @@ func CheckCertificateWithKubectl(kubectl core.KubectlRunner, name, namespace str
 }
 
 func removeRegistryIngressShimAnnotationWithKubectl(kubectl core.KubectlRunner) error {
-	if err := kubectl.RunWithOutput(
-		[]string{"get", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry},
-		io.Discard, io.Discard,
-	); err != nil {
-		return nil
+	output, err := kubectl.CombinedOutput([]string{"get", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry})
+	if err != nil {
+		detail := strings.ToLower(kubeerr.CommandDetail(string(output), err))
+		if strings.Contains(detail, "not found") || strings.Contains(detail, "notfound") {
+			return nil
+		}
+		return fmt.Errorf("failed to look up registry ingress %s/%s: %s", core.NamespaceRegistry, core.RegistryServiceName, kubeerr.CommandDetail(string(output), err))
 	}
 	if err := kubectl.RunWithOutput(
 		[]string{"patch", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry, "--type=merge", "-p", `{"metadata":{"annotations":{"cert-manager.io/cluster-issuer":null}}}`},
@@ -307,9 +310,6 @@ func registryTLSCertificateOwners(kubectl core.KubectlRunner) ([]string, error) 
 	cmd.SetStderr(&stderr)
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("failed to list cert-manager Certificates in namespace %q: %v (%s)", core.NamespaceRegistry, err, strings.TrimSpace(stderr.String()))
-	}
-	if strings.TrimSpace(stdout.String()) == "" {
-		return nil, nil
 	}
 	var list certificateList
 	if err := json.Unmarshal(stdout.Bytes(), &list); err != nil {

@@ -735,7 +735,7 @@ func TestConfigureCluster(t *testing.T) {
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				cmd := &core.MockCommand{Args: spec.Args}
-				if contains(spec.Args, "traefik") && contains(spec.Args, "-n") && contains(spec.Args, "kube-system") {
+				if contains(spec.Args, "deployment") && contains(spec.Args, "traefik") && contains(spec.Args, "-n") && contains(spec.Args, "kube-system") {
 					cmd.OutputData = []byte("traefik")
 				}
 				return cmd
@@ -759,7 +759,7 @@ func TestConfigureCluster(t *testing.T) {
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				cmd := &core.MockCommand{Args: spec.Args}
-				if contains(spec.Args, "traefik") && contains(spec.Args, "-n") && contains(spec.Args, "kube-system") {
+				if contains(spec.Args, "deployment") && contains(spec.Args, "traefik") && contains(spec.Args, "-n") && contains(spec.Args, "kube-system") {
 					cmd.OutputData = []byte("traefik")
 				}
 				return cmd
@@ -781,7 +781,7 @@ func TestConfigureCluster(t *testing.T) {
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				cmd := &core.MockCommand{Args: spec.Args}
-				if contains(spec.Args, "traefik") && contains(spec.Args, "-n") &&
+				if contains(spec.Args, "deployment") && contains(spec.Args, "traefik") && contains(spec.Args, "-n") &&
 					(contains(spec.Args, "kube-system") || contains(spec.Args, "traefik")) {
 					cmd.OutputData = []byte("traefik")
 				}
@@ -797,6 +797,66 @@ func TestConfigureCluster(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "multiple Traefik installs detected") {
 			t.Fatalf("expected duplicate Traefik error, got: %v", err)
+		}
+	})
+
+	t.Run("does not skip repo install for stale external traefik service alone", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		manifestPath := filepath.Join(tmpDir, "ingress.yaml")
+		if err := os.WriteFile(manifestPath, []byte("kind: List\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				cmd := &core.MockCommand{Args: spec.Args}
+				if contains(spec.Args, "service") && contains(spec.Args, "traefik") && contains(spec.Args, "-n") && contains(spec.Args, "kube-system") {
+					cmd.OutputData = []byte("traefik")
+				}
+				return cmd
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ConfigureCluster(IngressOptions{Mode: "traefik", Manifest: manifestPath})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		foundApply := false
+		for _, cmd := range mock.Commands {
+			if contains(cmd.Args, "apply") {
+				foundApply = true
+				break
+			}
+		}
+		if !foundApply {
+			t.Fatalf("expected repo-managed ingress install when only a stale external service exists: %v", mock.Commands)
+		}
+	})
+
+	t.Run("skips repo install when external traefik exists in a custom namespace", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				cmd := &core.MockCommand{Args: spec.Args}
+				if contains(spec.Args, "get") && contains(spec.Args, "deployment") && contains(spec.Args, "-A") && contains(spec.Args, "custom-columns=NS:.metadata.namespace,NAME:.metadata.name") {
+					cmd.OutputData = []byte("edge traefik\n")
+				}
+				return cmd
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ConfigureCluster(IngressOptions{Mode: "traefik"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, cmd := range mock.Commands {
+			if contains(cmd.Args, "apply") {
+				t.Fatalf("should not apply repo-managed ingress when external traefik exists in a custom namespace: %v", mock.Commands)
+			}
 		}
 	})
 

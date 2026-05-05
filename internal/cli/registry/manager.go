@@ -348,7 +348,8 @@ func stripRegistryClusterIssuerAnnotation(manifest string) string {
 	lines := strings.SplitAfter(manifest, "\n")
 	out := make([]string, 0, len(lines))
 	for _, line := range lines {
-		if strings.Contains(line, "cert-manager.io/cluster-issuer:") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "cert-manager.io/cluster-issuer:") || strings.HasPrefix(trimmed, `"cert-manager.io/cluster-issuer":`) {
 			continue
 		}
 		out = append(out, line)

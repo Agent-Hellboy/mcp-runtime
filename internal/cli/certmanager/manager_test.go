@@ -447,6 +447,27 @@ func TestRemoveRegistryIngressShimAnnotationWithKubectl(t *testing.T) {
 			t.Fatalf("unexpected patch command: %v", mock.Commands[1].Args)
 		}
 	})
+
+	t.Run("returns lookup error when ingress probe fails for reasons other than not found", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				cmd := &core.MockCommand{Args: spec.Args}
+				if commandHasArgs(spec, "get", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry) {
+					cmd.OutputErr = errors.New("forbidden")
+				}
+				return cmd
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+
+		err := removeRegistryIngressShimAnnotationWithKubectl(kubectl)
+		if err == nil {
+			t.Fatal("expected ingress lookup error")
+		}
+		if !strings.Contains(err.Error(), "failed to look up registry ingress") {
+			t.Fatalf("expected lookup error, got: %v", err)
+		}
+	})
 }
 
 func TestCheckRegistryCertificateOwnershipWithKubectl(t *testing.T) {
