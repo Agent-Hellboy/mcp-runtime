@@ -62,10 +62,10 @@ E2E_CACHE_MODE=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh
 present, skips platform setup if the core platform is already ready, and reuses
 image tags already published to the local registry.
 
-Optional real-client `mcp-smoke-agent` prompts default to OpenAI. Set
-`OPENAI_API_KEY` in the environment or `.env` to run them; override
-`MCP_SMOKE_AGENT_PROVIDER` or `MCP_SMOKE_AGENT_MODEL` only when a different
-provider or model is required.
+Optional real-client `mcp-smoke-agent` prompts default to OpenAI with
+`gpt-5-nano`. Set `OPENAI_API_KEY` in the environment or `.env` to run them;
+override `MCP_SMOKE_AGENT_PROVIDER` or `MCP_SMOKE_AGENT_MODEL` only when a
+different provider or model is required.
 
 The script writes artifacts when `E2E_ARTIFACT_DIR` is set. In CI, those
 artifacts are uploaded from `.e2e-artifacts/kind`.
