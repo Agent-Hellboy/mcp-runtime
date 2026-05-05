@@ -59,8 +59,9 @@ Production readiness checklist:
   the registry and Sentinel data paths.
 - Decide certificate management up front: Let's Encrypt with public DNS,
   `--tls-cluster-issuer` for an enterprise CA, or a preinstalled issuer.
-- Review Sentinel sizing, retention, auth, and observability integration before
-  enabling it on production traffic.
+- Review Sentinel sizing, retention, auth, Kubernetes API access, and
+  observability integration before enabling it on production traffic; see
+  [Sentinel Kubernetes awareness and hardening](sentinel.md#kubernetes-awareness-and-hardening).
 - Run `./bin/mcp-runtime setup --with-tls --strict-prod` for production-style
   validation, or document why a non-strict setup is intentional.
 
