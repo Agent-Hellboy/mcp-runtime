@@ -1,0 +1,8 @@
+title = "MCP Runtime Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Go module checksum entries contain expected base64-like hashes."
+paths = ['''go\.sum$''']
