@@ -235,9 +235,26 @@ func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, s
 	}
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
+		forwardedHost := strings.TrimSpace(req.Header.Get("X-Forwarded-Host"))
+		if forwardedHost == "" {
+			forwardedHost = req.Host
+		}
+		forwardedProto := strings.TrimSpace(req.Header.Get("X-Forwarded-Proto"))
+		if forwardedProto == "" {
+			forwardedProto = "http"
+			if req.TLS != nil {
+				forwardedProto = "https"
+			}
+		}
 		originalDirector(req)
 		req.Host = target.Host
 		req.Header.Del("Cookie")
+		if forwardedHost != "" {
+			req.Header.Set("X-Forwarded-Host", forwardedHost)
+		}
+		if forwardedProto != "" {
+			req.Header.Set("X-Forwarded-Proto", forwardedProto)
+		}
 		if strings.TrimSpace(req.Header.Get("authorization")) == "" && strings.TrimSpace(req.Header.Get("x-api-key")) == "" {
 			req.Header.Set("x-api-key", upstreamAPIKey)
 		}

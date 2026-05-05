@@ -117,6 +117,25 @@ Local URLs:
 - API: `http://localhost:18080/api`
 - Demo MCP routes, after applying demo servers: `http://localhost:18080/<server-name>/mcp`
 
+The MCP Servers tab exposes a copyable connect config. In this local test-mode
+flow, that config should use the same reachable local origin, for example:
+
+```json
+{
+  "mcpServers": {
+    "go-example-mcp": {
+      "type": "http",
+      "url": "http://localhost:18080/go-example-mcp/mcp"
+    }
+  }
+}
+```
+
+When the platform is installed with `MCP_PLATFORM_DOMAIN=mcpruntime.org` or an
+explicit `MCP_MCP_INGRESS_HOST`, production connect configs should use the
+public MCP host instead, for example
+`https://mcp.mcpruntime.org/go-example-mcp/mcp`.
+
 `setup --test-mode` also seeds development-only email/password logins in the
 platform identity store:
 
@@ -135,6 +154,20 @@ API deployment.
 After `setup --test-mode` is complete, you do not need to rerun setup for every
 service change. Edit the service under `services/`, build only that image, push
 it to the bundled registry, and update only that Kubernetes Deployment.
+
+Run the targeted service tests before rebuilding the image:
+
+```bash
+(cd services/api && go test ./... -count=1)
+(cd services/ui && go test ./... -count=1)
+node --check services/ui/static/app.js
+```
+
+For API/UI changes that cross the browser-to-API proxy boundary, rebuild and
+roll both services. A common example is the MCP connect config URL: the UI
+forwards the browser origin to the API, and the API uses that origin to return a
+local URL such as `http://localhost:18080/<server-name>/mcp`; production hosts
+map `platform.<domain>` to `mcp.<domain>`.
 
 For the UI, for example:
 

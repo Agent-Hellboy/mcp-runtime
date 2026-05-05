@@ -217,6 +217,70 @@ func TestRuntimeServersIncludesMCPServerInventory(t *testing.T) {
 	}
 }
 
+func TestPublicMCPEndpointHonorsPlatformDomain(t *testing.T) {
+	t.Setenv("MCP_MCP_INGRESS_HOST", "")
+	t.Setenv("MCP_PLATFORM_DOMAIN", "example.com")
+
+	mcpServer := mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-one", Namespace: "mcp-servers"},
+	}
+	endpoint := publicMCPEndpoint(mcpServer)
+	if endpoint != "https://mcp.example.com/demo-one/mcp" {
+		t.Fatalf("endpoint = %q, want platform domain MCP URL", endpoint)
+	}
+}
+
+func TestRuntimeServerAccessJSONUsesForwardedLocalOrigin(t *testing.T) {
+	t.Setenv("MCP_MCP_INGRESS_HOST", "")
+	t.Setenv("MCP_PLATFORM_DOMAIN", "")
+
+	mcpServer := mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-one", Namespace: "mcp-servers"},
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/servers", nil)
+	request.Header.Set("X-Forwarded-Host", "localhost:18080")
+	request.Header.Set("X-Forwarded-Proto", "http")
+
+	got := serverInfoFromMCPServer(mcpServer, serverDeploymentStatus{}, request)
+	if got.Endpoint != "/demo-one/mcp" {
+		t.Fatalf("endpoint = %q, want local path", got.Endpoint)
+	}
+	if url := accessJSONServerURL(t, got, "demo-one"); url != "http://localhost:18080/demo-one/mcp" {
+		t.Fatalf("access_json url = %q, want local origin URL", url)
+	}
+}
+
+func TestRuntimeServerAccessJSONMapsForwardedPlatformOrigin(t *testing.T) {
+	t.Setenv("MCP_MCP_INGRESS_HOST", "")
+	t.Setenv("MCP_PLATFORM_DOMAIN", "")
+
+	mcpServer := mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-one", Namespace: "mcp-servers"},
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/servers", nil)
+	request.Header.Set("X-Forwarded-Host", "platform.mcpruntime.org")
+	request.Header.Set("X-Forwarded-Proto", "https")
+
+	got := serverInfoFromMCPServer(mcpServer, serverDeploymentStatus{}, request)
+	if url := accessJSONServerURL(t, got, "demo-one"); url != "https://mcp.mcpruntime.org/demo-one/mcp" {
+		t.Fatalf("access_json url = %q, want production MCP URL", url)
+	}
+}
+
+func accessJSONServerURL(t *testing.T, info serverInfo, name string) string {
+	t.Helper()
+	rawServers, ok := info.AccessJSON["mcpServers"].(map[string]any)
+	if !ok {
+		t.Fatalf("access_json.mcpServers = %#v", info.AccessJSON["mcpServers"])
+	}
+	rawServer, ok := rawServers[name].(map[string]any)
+	if !ok {
+		t.Fatalf("access_json.mcpServers.%s = %#v", name, rawServers[name])
+	}
+	url, _ := rawServer["url"].(string)
+	return url
+}
+
 func TestRuntimeServersNonAdminDefaultsToSharedNamespace(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
