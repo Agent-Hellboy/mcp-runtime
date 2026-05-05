@@ -340,7 +340,7 @@
 
         <div class="panel">
           <div class="panel-head">
-            <h2>Recent Events</h2>
+            <h2>Decision Audit</h2>
             <div class="panel-actions">
               <button class="ghost" id="refresh-events">Refresh</button>
               <label class="toggle">
@@ -350,19 +350,20 @@
             </div>
           </div>
           <div class="table-wrap">
-            <table>
+            <table class="audit-table">
               <thead>
                 <tr>
-                  <th>Timestamp</th>
-                  <th>Source</th>
-                  <th>Type</th>
-                  <th>Server</th>
+                  <th>Time</th>
+                  <th>Human</th>
+                  <th>Agent</th>
+                  <th>MCP Action</th>
                   <th>Decision</th>
+                  <th>Policy</th>
                 </tr>
               </thead>
               <tbody id="events-body">
                 <tr>
-                  <td colspan="5" class="empty">No events yet.</td>
+                  <td colspan="6" class="empty">No events yet.</td>
                 </tr>
               </tbody>
             </table>

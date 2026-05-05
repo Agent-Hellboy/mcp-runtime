@@ -336,7 +336,7 @@ async function loadEvents() {
 
     if (!data.events || data.events.length === 0) {
       tbody.innerHTML =
-        '<tr><td colspan="5" class="empty">No events yet.</td></tr>';
+        '<tr><td colspan="6" class="empty">No events yet.</td></tr>';
       return;
     }
 
@@ -346,11 +346,12 @@ async function loadEvents() {
     data.events.forEach((event) => {
       const row = document.createElement("tr");
       row.innerHTML = `
-        <td>${new Date(event.timestamp).toLocaleString()}</td>
-        <td>${escapeHtml(event.source || "-")}</td>
-        <td>${escapeHtml(event.event_type || "-")}</td>
-        <td>${escapeHtml(event.server || "-")}</td>
+        <td>${renderAuditTime(event)}</td>
+        <td>${renderAuditIdentity("Human", event.human_id)}</td>
+        <td>${renderAuditIdentity("Agent", event.agent_id)}</td>
+        <td>${renderAuditTarget(event)}</td>
         <td>${renderDecision(event.decision)}</td>
+        <td>${renderPolicySummary(event)}</td>
       `;
       fragment.appendChild(row);
     });
@@ -362,17 +363,63 @@ async function loadEvents() {
   }
 }
 
+function renderAuditTime(event) {
+  const timestamp = event.timestamp ? new Date(event.timestamp).toLocaleString() : "-";
+  const source = event.source || event.event_type
+    ? [event.source, event.event_type].filter(Boolean).join(" / ")
+    : "";
+  return `
+    <div class="audit-cell">
+      <strong>${escapeHtml(timestamp)}</strong>
+      ${source ? `<span>${escapeHtml(source)}</span>` : ""}
+    </div>
+  `;
+}
+
+function renderAuditIdentity(label, value) {
+  if (!value) return '<span class="muted-text">-</span>';
+  return `
+    <span class="subject-chip">
+      <span class="subject-chip-label">${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </span>
+  `;
+}
+
+function renderAuditTarget(event) {
+  const payload = event.payload || {};
+  const server = event.server || payload.server || "-";
+  const namespace = event.namespace || payload.namespace || "";
+  const action = event.tool_name || payload.tool_name || payload.rpc_method || event.event_type || "-";
+  return `
+    <div class="audit-cell">
+      <strong>${escapeHtml(server)}</strong>
+      ${namespace ? `<span>${escapeHtml(namespace)}</span>` : ""}
+      <span class="audit-action">${escapeHtml(action)}</span>
+    </div>
+  `;
+}
+
 function renderDecision(decision) {
-  if (!decision) return "-";
-  const color =
-    decision === "allow"
-      ? "var(--success)"
-      : decision === "deny"
-      ? "var(--error)"
-      : "var(--muted)";
-  return `<span style="color: ${color}; font-weight: 600;">${escapeHtml(
-    decision
-  )}</span>`;
+  if (!decision) return '<span class="muted-text">-</span>';
+  return `<span class="badge ${decisionBadgeClass(decision)}">${escapeHtml(decision)}</span>`;
+}
+
+function renderPolicySummary(event) {
+  const payload = event.payload || {};
+  const reason = payload.reason || event.decision || "-";
+  const trustParts = [
+    payload.effective_trust ? `effective ${payload.effective_trust}` : "",
+    payload.required_trust ? `required ${payload.required_trust}` : "",
+  ].filter(Boolean);
+  const session = event.session_id || payload.session_id || "";
+  return `
+    <div class="audit-cell">
+      <strong>${escapeHtml(reason)}</strong>
+      ${trustParts.length ? `<span>${escapeHtml(trustParts.join(" / "))}</span>` : ""}
+      ${session ? `<span>session ${escapeHtml(session)}</span>` : ""}
+    </div>
+  `;
 }
 
 function escapeHtml(text) {
@@ -742,7 +789,7 @@ function resetDashboard() {
   document.getElementById("analytics-decisions-body").innerHTML =
     '<tr><td colspan="2" class="empty">No decisions yet.</td></tr>';
   document.getElementById("events-body").innerHTML =
-    '<tr><td colspan="5" class="empty">No events yet.</td></tr>';
+    '<tr><td colspan="6" class="empty">No events yet.</td></tr>';
 }
 
 function resetGovernance() {

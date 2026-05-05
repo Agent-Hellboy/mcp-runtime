@@ -483,6 +483,42 @@ select:disabled {
   vertical-align: top;
 }
 
+.audit-table td {
+  vertical-align: top;
+}
+
+.audit-cell {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.audit-cell strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.audit-cell span {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.audit-action {
+  background: rgba(247, 245, 239, 0.06);
+  border: 1px solid rgba(247, 245, 239, 0.08);
+  border-radius: 999px;
+  color: var(--text) !important;
+  display: inline-flex;
+  justify-self: start;
+  max-width: 100%;
+  padding: 3px 8px;
+}
+
+.muted-text {
+  color: var(--muted);
+}
+
 .identity-stack {
   display: grid;
   gap: 4px;
