@@ -1327,7 +1327,7 @@ restart_deployment_pods() {
   local name="$2"
   local timeout="${3:-180s}"
 
-  kubectl delete pod -n "${namespace}" -l "app=${name}" --ignore-not-found --wait=true >/dev/null
+  kubectl rollout restart "deploy/${name}" -n "${namespace}" >/dev/null
   kubectl rollout status "deploy/${name}" -n "${namespace}" --timeout="${timeout}"
 }
 
