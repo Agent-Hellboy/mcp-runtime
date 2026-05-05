@@ -1135,22 +1135,11 @@ func checkMCPServersImagePullSmoke(kubectl core.KubectlRunner, namespace string)
 			Remedy: "check pull credentials, registry reachability, and image existence",
 		}
 	}
-	waitCmd, cmdErr := kubectl.CommandArgs([]string{"wait", "--for=condition=Ready", "pod/" + podName, "-n", namespace, "--timeout=90s"})
-	if cmdErr != nil {
+	if err := waitForDoctorPodImagePulled(kubectl, podName, namespace, 90*time.Second); err != nil {
 		return DoctorCheck{
 			Name:   "mcp-servers image pull smoke",
 			OK:     false,
-			Detail: fmt.Sprintf("kubectl error: %v", cmdErr),
-			Remedy: "check kubectl setup",
-		}
-	}
-	waitOut, waitErr := waitCmd.CombinedOutput()
-	if waitErr != nil {
-		reason, _ := readKubectlOutput(kubectl, []string{"get", "pod", podName, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].state.waiting.reason}"})
-		return DoctorCheck{
-			Name:   "mcp-servers image pull smoke",
-			OK:     false,
-			Detail: fmt.Sprintf("pod failed to become ready (%s): %s", strings.TrimSpace(reason), strings.TrimSpace(string(waitOut))),
+			Detail: fmt.Sprintf("pod image was not pulled: %v", err),
 			Remedy: "inspect pod events: `kubectl -n mcp-servers describe pod " + podName + "`",
 		}
 	}
@@ -1158,6 +1147,54 @@ func checkMCPServersImagePullSmoke(kubectl core.KubectlRunner, namespace string)
 		Name:   "mcp-servers image pull smoke",
 		OK:     true,
 		Detail: fmt.Sprintf("pull/ready succeeded using image %s (%s)", image, imageSource),
+	}
+}
+
+func waitForDoctorPodImagePulled(kubectl core.KubectlRunner, name, namespace string, timeout time.Duration) error {
+	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	var lastStatus string
+	for {
+		imageID, imageErr := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].imageID}"})
+		if imageErr == nil && strings.TrimSpace(imageID) != "" {
+			return nil
+		}
+
+		reason, _ := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].state.waiting.reason}"})
+		reason = strings.TrimSpace(reason)
+		if isImagePullWaitingReason(reason) {
+			return fmt.Errorf("%s", reason)
+		}
+
+		phase, _ := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.phase}"})
+		lastStatus = strings.TrimSpace(phase)
+		if reason != "" {
+			lastStatus = reason
+		}
+		if lastStatus == "" && imageErr != nil {
+			lastStatus = imageErr.Error()
+		}
+
+		select {
+		case <-timeoutTimer.C:
+			if lastStatus == "" {
+				lastStatus = "timed out"
+			}
+			return fmt.Errorf("%s", lastStatus)
+		case <-ticker.C:
+		}
+	}
+}
+
+func isImagePullWaitingReason(reason string) bool {
+	switch reason {
+	case "ErrImagePull", "ImagePullBackOff", "InvalidImageName":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1937,6 +1974,7 @@ func resolveDoctorSmokeImage(kubectl core.KubectlRunner, preferredNamespace stri
 }
 
 func resolveDoctorSmokeTarget(kubectl core.KubectlRunner, preferredNamespace string) doctorSmokeTarget {
+	mcpServerNames, haveMCPServerNames := readDoctorMCPServerNames(kubectl, preferredNamespace)
 	out, err := readKubectlOutput(kubectl, []string{"get", "deploy", "-n", preferredNamespace, "-o", "jsonpath={range .items[*]}{.metadata.name}|{.status.readyReplicas}|{.spec.template.spec.containers[0].image}|{.spec.template.spec.containers[0].ports[0].containerPort}{\"\\n\"}{end}"})
 	if err == nil {
 		for _, line := range filterNonEmptyLines(out) {
@@ -1948,6 +1986,9 @@ func resolveDoctorSmokeTarget(kubectl core.KubectlRunner, preferredNamespace str
 			ready := strings.TrimSpace(parts[1])
 			image := strings.TrimSpace(parts[2])
 			if name == "" || strings.HasPrefix(name, "doctor-smoke-") || ready == "" || ready == "0" || image == "" {
+				continue
+			}
+			if haveMCPServerNames && !mcpServerNames[name] {
 				continue
 			}
 			port := int32(8088)
@@ -1970,6 +2011,21 @@ func resolveDoctorSmokeTarget(kubectl core.KubectlRunner, preferredNamespace str
 		Source:       "fallback image registry.k8s.io/pause:3.9",
 		WaitForReady: false,
 	}
+}
+
+func readDoctorMCPServerNames(kubectl core.KubectlRunner, namespace string) (map[string]bool, bool) {
+	out, err := readKubectlOutput(kubectl, []string{"get", "mcpservers", "-n", namespace, "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}"})
+	if err != nil {
+		return nil, false
+	}
+	names := map[string]bool{}
+	for _, line := range filterNonEmptyLines(out) {
+		name := strings.TrimSpace(line)
+		if name != "" {
+			names[name] = true
+		}
+	}
+	return names, true
 }
 
 // PrintDoctorReport emits a human-readable report using the standard printer.

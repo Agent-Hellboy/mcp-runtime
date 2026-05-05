@@ -951,6 +951,8 @@ func TestCheckMCPServerReconcileSmoke(t *testing.T) {
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				switch {
+				case contains(spec.Args, "get") && contains(spec.Args, "mcpservers"):
+					return &core.MockCommand{OutputData: []byte("go-example\n")}
 				case argContains(spec.Args, "readyReplicas") && argContains(spec.Args, "containerPort"):
 					return &core.MockCommand{OutputData: []byte("go-example|1|registry.local/go-example:dev|8088\n")}
 				case contains(spec.Args, "apply"):
@@ -987,6 +989,8 @@ func TestCheckMCPServerReconcileSmoke(t *testing.T) {
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				switch {
+				case contains(spec.Args, "get") && contains(spec.Args, "mcpservers"):
+					return &core.MockCommand{OutputData: []byte("go-example\n")}
 				case argContains(spec.Args, "readyReplicas") && argContains(spec.Args, "containerPort"):
 					return &core.MockCommand{OutputData: []byte("go-example|1|registry.local/go-example:dev|8088\n")}
 				case contains(spec.Args, "apply"):
@@ -1023,8 +1027,10 @@ func TestCheckMCPServerReconcileSmoke(t *testing.T) {
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				switch {
-				case argContains(spec.Args, "readyReplicas") && argContains(spec.Args, "containerPort"):
+				case contains(spec.Args, "get") && contains(spec.Args, "mcpservers"):
 					return &core.MockCommand{}
+				case argContains(spec.Args, "readyReplicas") && argContains(spec.Args, "containerPort"):
+					return &core.MockCommand{OutputData: []byte("oauth-issuer|1|docker.io/library/python:3.12-alpine|8080\n")}
 				case contains(spec.Args, "apply"):
 					return &core.MockCommand{}
 				case contains(spec.Args, "rollout"):
@@ -1232,13 +1238,15 @@ func TestCheckMCPServersImagePullSmokeUsesRestrictedCompliantPodSpec(t *testing.
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 			switch {
+			case contains(spec.Args, "get") && contains(spec.Args, "mcpservers"):
+				return &core.MockCommand{}
 			case contains(spec.Args, "get") && contains(spec.Args, "deploy"):
 				return &core.MockCommand{OutputData: []byte("")}
 			case len(spec.Args) > 0 && spec.Args[0] == "run":
 				smokeRunArgs = append([]string(nil), spec.Args...)
 				return &core.MockCommand{}
-			case contains(spec.Args, "wait"):
-				return &core.MockCommand{}
+			case contains(spec.Args, "get") && argContains(spec.Args, "imageID"):
+				return &core.MockCommand{OutputData: []byte("docker-pullable://registry.k8s.io/pause@sha256:test")}
 			case contains(spec.Args, "delete"):
 				return &core.MockCommand{}
 			default:

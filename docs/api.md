@@ -173,6 +173,26 @@ No `/authorize`, `/token`, `/.well-known/oauth-authorization-server`, PKCE, or D
 - Use **MCPAccessGrant + MCPAgentSession** for trust and revocation.
 - Use **OIDC-issued bearer tokens** only where Sentinel services validate them.
 
+## Authentication API
+
+These routes are served by `services/api`. Platform identity routes require the
+Postgres-backed platform store (`POSTGRES_DSN` or `DATABASE_URL`) and
+`PLATFORM_JWT_SECRET`.
+
+```text
+POST /api/auth/signup
+POST /api/auth/login
+POST /api/auth/oidc
+GET  /api/auth/me
+```
+
+| Route | Body / response |
+|---|---|
+| `POST /api/auth/signup` | Body: `email`, `password`, optional `role`. Returns `201` with `access_token`, `token_type`, `expires_in`, and `user`. Admin signup requires an admin principal. |
+| `POST /api/auth/login` | Body: `email`, `password`. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
+| `POST /api/auth/oidc` | Body: `id_token`. Requires configured issuer, audience, and JWKS. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
+| `GET /api/auth/me` | Requires auth. Returns `authenticated=true` and the current principal. |
+
 ## Gateway flow and headers
 
 ```mermaid
@@ -228,11 +248,13 @@ For `POST /api/runtime/grants` and `POST /api/runtime/sessions`, the API resolve
 ```text
 GET  /api/runtime/servers              # List MCP server deployments
 GET  /api/runtime/grants               # List MCPAccessGrant resources
-GET  /api/runtime/grants/{ns}/{name}   # Get one MCPAccessGrant
+GET  /api/runtime/grants/{namespace}/{name}   # Get one MCPAccessGrant
 POST /api/runtime/grants               # Create or update an MCPAccessGrant (x-api-key)
+DELETE /api/runtime/grants/{namespace}/{name} # Delete one MCPAccessGrant
 GET  /api/runtime/sessions             # List MCPAgentSession resources
-GET  /api/runtime/sessions/{ns}/{name} # Get one MCPAgentSession
+GET  /api/runtime/sessions/{namespace}/{name} # Get one MCPAgentSession
 POST /api/runtime/sessions             # Create or update an MCPAgentSession (x-api-key)
+DELETE /api/runtime/sessions/{namespace}/{name} # Delete one MCPAgentSession
 GET  /api/runtime/components           # Sentinel component health status
 GET  /api/runtime/policy?namespace=&server=   # Get rendered policy for a server
 ```
@@ -292,13 +314,33 @@ Additional authenticated routes exposed by the API service:
 
 ```text
 GET  /api/deployments                  # User-scoped deployment list
-GET  /api/deployments/{namespace}/{name}
+POST /api/deployments                  # Apply a platform-managed Deployment + Service
+DELETE /api/deployments/{namespace}/{name}
 GET  /api/admin/namespaces             # Admin-only namespace inventory
 GET  /api/admin/deployments            # Admin-only deployment inventory
 GET  /api/user/api-keys                # List caller-owned API keys
 POST /api/user/api-keys                # Create caller-owned API key
 POST /api/user/api-keys/{id}/revoke    # Revoke caller-owned API key
+GET  /api/user/registry-credentials    # List caller-owned registry credentials
+POST /api/user/registry-credentials    # Create a registry credential
+POST /api/user/registry-credentials/{id}/revoke
 ```
+
+Deployment apply body:
+
+```json
+{
+  "name": "payments",
+  "image": "registry.example.com/payments-mcp",
+  "version": "v1.0.0",
+  "port": 8088,
+  "replicas": 1,
+  "namespace": "team-a"
+}
+```
+
+For non-admin users, deployment operations are scoped to the caller's namespace.
+Admins may pass `namespace`; if omitted, admin list calls can span namespaces.
 
 ## Analytics API
 
