@@ -41,6 +41,7 @@ import (
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	controllerconfig "sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -101,8 +102,9 @@ func TestControllerWithEnvtest(t *testing.T) {
 
 func testSetupWithManager(t *testing.T, cfg *rest.Config, scheme *runtime.Scheme) {
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
-		Scheme:  scheme,
-		Metrics: server.Options{BindAddress: "0"},
+		Scheme:     scheme,
+		Metrics:    server.Options{BindAddress: "0"},
+		Controller: skipControllerNameValidation(),
 	})
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
@@ -279,6 +281,7 @@ func startManager(t *testing.T, cfg *rest.Config, scheme *runtime.Scheme) (ctrl.
 		Scheme:         scheme,
 		LeaderElection: false,
 		Metrics:        server.Options{BindAddress: "0"},
+		Controller:     skipControllerNameValidation(),
 	})
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
@@ -304,6 +307,11 @@ func startManager(t *testing.T, cfg *rest.Config, scheme *runtime.Scheme) (ctrl.
 	time.Sleep(2 * time.Second) // Wait for cache to sync
 
 	return mgr, mgr.GetClient(), cancel
+}
+
+func skipControllerNameValidation() controllerconfig.Controller {
+	skip := true
+	return controllerconfig.Controller{SkipNameValidation: &skip}
 }
 
 func createNamespace(t *testing.T, c client.Client, name string) {
