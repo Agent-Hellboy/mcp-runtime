@@ -180,15 +180,32 @@ async function loadDashboardAnalytics() {
 
 function renderDashboardAnalytics(data) {
   const totals = data?.totals || {};
-  document.getElementById("analytics-allowed").textContent = formatNumber(totals.allowed || 0);
-  document.getElementById("analytics-denied").textContent = formatNumber(totals.denied || 0);
-  document.getElementById("analytics-humans").textContent = formatNumber(totals.unique_humans || 0);
-  document.getElementById("analytics-agents").textContent = formatNumber(totals.unique_agents || 0);
+  const events = Number(totals.events || 0);
+  const allowed = Number(totals.allowed || 0);
+  const denied = Number(totals.denied || 0);
+  setText("analytics-total-events", formatNumber(events));
+  setText("analytics-allowed", formatNumber(allowed));
+  setText("analytics-denied", formatNumber(denied));
+  setText("analytics-humans", formatNumber(totals.unique_humans || 0));
+  setText("analytics-agents", formatNumber(totals.unique_agents || 0));
+  renderDecisionMeter(events, allowed, denied);
 
   renderAnalyticsServers(data?.servers || []);
   renderAnalyticsActors(data?.actors || []);
   renderAnalyticsTools(data?.tools || []);
   renderAnalyticsDecisions(data?.decisions || []);
+}
+
+function renderDecisionMeter(events, allowed, denied) {
+  const total = Math.max(Number(events || 0), allowed + denied);
+  const allowRate = total > 0 ? Math.round((allowed / total) * 100) : 0;
+  const denyRate = total > 0 ? Math.round((denied / total) * 100) : 0;
+  const allowEl = document.getElementById("decision-meter-allow");
+  const denyEl = document.getElementById("decision-meter-deny");
+  if (allowEl) allowEl.style.width = `${allowRate}%`;
+  if (denyEl) denyEl.style.width = `${denyRate}%`;
+  setText("analytics-allow-rate", total > 0 ? `${allowRate}% allow` : "-");
+  setText("analytics-deny-rate", total > 0 ? `${denyRate}%` : "-");
 }
 
 function renderAnalyticsServers(rows) {
@@ -281,10 +298,12 @@ function decisionBadgeClass(decision) {
 }
 
 function renderAnalyticsError() {
-  document.getElementById("analytics-allowed").textContent = "-";
-  document.getElementById("analytics-denied").textContent = "-";
-  document.getElementById("analytics-humans").textContent = "-";
-  document.getElementById("analytics-agents").textContent = "-";
+  setText("analytics-total-events", "-");
+  setText("analytics-allowed", "-");
+  setText("analytics-denied", "-");
+  setText("analytics-humans", "-");
+  setText("analytics-agents", "-");
+  renderDecisionMeter(0, 0, 0);
   document.getElementById("analytics-servers-body").innerHTML =
     '<tr><td colspan="7" class="empty">Error loading usage.</td></tr>';
   document.getElementById("analytics-actors-body").innerHTML =
@@ -363,6 +382,11 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+function setText(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
 function encodePathSegment(value) {
   return encodeURIComponent(String(value));
 }
@@ -386,13 +410,84 @@ function createTextCell(text) {
   return cell;
 }
 
-function createBadgeCell(text, className) {
-  const cell = document.createElement("td");
+function createBadge(text, className) {
   const badge = document.createElement("span");
   badge.className = `badge ${className}`;
   badge.textContent = text;
-  cell.appendChild(badge);
+  return badge;
+}
+
+function createBadgeCell(text, className) {
+  const cell = document.createElement("td");
+  cell.appendChild(createBadge(text, className));
   return cell;
+}
+
+function createIdentityCell(primary, secondary = "") {
+  const cell = document.createElement("td");
+  const stack = document.createElement("div");
+  stack.className = "identity-stack";
+
+  const primaryEl = document.createElement("strong");
+  primaryEl.className = "identity-primary";
+  primaryEl.textContent = primary || "-";
+  stack.appendChild(primaryEl);
+
+  if (secondary) {
+    const secondaryEl = document.createElement("span");
+    secondaryEl.className = "identity-secondary";
+    secondaryEl.textContent = secondary;
+    stack.appendChild(secondaryEl);
+  }
+
+  cell.appendChild(stack);
+  return cell;
+}
+
+function createSubjectCell(subject = {}) {
+  const cell = document.createElement("td");
+  const chips = document.createElement("div");
+  chips.className = "subject-chip-list";
+
+  if (subject.humanID) {
+    chips.appendChild(createSubjectChip("Human", subject.humanID));
+  }
+  if (subject.agentID) {
+    chips.appendChild(createSubjectChip("Agent", subject.agentID));
+  }
+  if (!chips.children.length) {
+    chips.textContent = "-";
+  }
+
+  cell.appendChild(chips);
+  return cell;
+}
+
+function createSubjectChip(label, value) {
+  const chip = document.createElement("span");
+  chip.className = "subject-chip";
+
+  const labelEl = document.createElement("span");
+  labelEl.className = "subject-chip-label";
+  labelEl.textContent = label;
+
+  const valueEl = document.createElement("strong");
+  valueEl.textContent = value;
+
+  chip.append(labelEl, valueEl);
+  return chip;
+}
+
+function createTrustCell(trust) {
+  const value = trust || "-";
+  return createBadgeCell(value, trustBadgeClass(value));
+}
+
+function trustBadgeClass(trust) {
+  if (trust === "high") return "badge-trust-high";
+  if (trust === "medium") return "badge-trust-medium";
+  if (trust === "low") return "badge-trust-low";
+  return "badge-muted";
 }
 
 function createActionCell(label, onClick) {
@@ -568,6 +663,7 @@ async function logout() {
   authPrincipal = null;
   setAuthenticated(false);
   resetDashboard();
+  resetGovernance();
   resetUserAPIKeys();
   activateTab("servers");
   loadServers();
@@ -627,14 +723,16 @@ function loadActiveTab() {
 }
 
 function resetDashboard() {
-  document.getElementById("dash-total-events").textContent = "-";
-  document.getElementById("dash-active-servers").textContent = "-";
-  document.getElementById("dash-active-grants").textContent = "-";
-  document.getElementById("dash-active-sessions").textContent = "-";
-  document.getElementById("analytics-allowed").textContent = "-";
-  document.getElementById("analytics-denied").textContent = "-";
-  document.getElementById("analytics-humans").textContent = "-";
-  document.getElementById("analytics-agents").textContent = "-";
+  setText("dash-total-events", "-");
+  setText("dash-active-servers", "-");
+  setText("dash-active-grants", "-");
+  setText("dash-active-sessions", "-");
+  setText("analytics-total-events", "-");
+  setText("analytics-allowed", "-");
+  setText("analytics-denied", "-");
+  setText("analytics-humans", "-");
+  setText("analytics-agents", "-");
+  renderDecisionMeter(0, 0, 0);
   document.getElementById("analytics-servers-body").innerHTML =
     '<tr><td colspan="7" class="empty">No usage yet.</td></tr>';
   document.getElementById("analytics-actors-body").innerHTML =
@@ -645,6 +743,20 @@ function resetDashboard() {
     '<tr><td colspan="2" class="empty">No decisions yet.</td></tr>';
   document.getElementById("events-body").innerHTML =
     '<tr><td colspan="5" class="empty">No events yet.</td></tr>';
+}
+
+function resetGovernance() {
+  grantsCache = [];
+  sessionsCache = [];
+  renderGovernanceSummary();
+  const grantsBody = document.getElementById("grants-body");
+  const sessionsBody = document.getElementById("sessions-body");
+  if (grantsBody) {
+    grantsBody.innerHTML = '<tr><td colspan="6" class="empty">No grants found.</td></tr>';
+  }
+  if (sessionsBody) {
+    sessionsBody.innerHTML = '<tr><td colspan="6" class="empty">No sessions found.</td></tr>';
+  }
 }
 
 async function loadServers() {
@@ -1017,14 +1129,28 @@ async function loadGrants() {
   try {
     const data = await fetchJSON("/runtime/grants");
     grantsCache = Array.isArray(data.grants) ? data.grants : [];
+    renderGovernanceSummary();
     renderGrants();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
     console.error("Failed to load grants:", err);
     grantsCache = [];
+    renderGovernanceSummary();
     document.getElementById("grants-body").innerHTML =
       '<tr><td colspan="6" class="empty">Error loading grants.</td></tr>';
   }
+}
+
+function renderGovernanceSummary() {
+  const activeGrants = grantsCache.filter((grant) => !grant.disabled).length;
+  const disabledGrants = grantsCache.length - activeGrants;
+  const activeSessions = sessionsCache.filter((session) => !session.revoked).length;
+  const revokedSessions = sessionsCache.length - activeSessions;
+
+  setText("gov-active-grants", formatNumber(activeGrants));
+  setText("gov-disabled-grants", formatNumber(disabledGrants));
+  setText("gov-active-sessions", formatNumber(activeSessions));
+  setText("gov-revoked-sessions", formatNumber(revokedSessions));
 }
 
 function renderGrants() {
@@ -1054,15 +1180,16 @@ function renderGrants() {
   const fragment = document.createDocumentFragment();
 
   filtered.forEach((grant) => {
-    const subject = grant.subject?.humanID || grant.subject?.agentID || "-";
     const status = grant.disabled ? "Disabled" : "Active";
     const statusClass = grant.disabled ? "badge-muted" : "badge-success";
+    const namespace = grant.namespace || defaults.namespace;
+    const serverNamespace = grant.serverRef?.namespace || namespace;
 
     const row = document.createElement("tr");
-    row.appendChild(createTextCell(grant.name || "-"));
-    row.appendChild(createTextCell(grant.serverRef?.name || "-"));
-    row.appendChild(createTextCell(subject));
-    row.appendChild(createTextCell(grant.maxTrust || "-"));
+    row.appendChild(createIdentityCell(grant.name || "-", namespace));
+    row.appendChild(createIdentityCell(grant.serverRef?.name || "-", serverNamespace));
+    row.appendChild(createSubjectCell(grant.subject));
+    row.appendChild(createTrustCell(grant.maxTrust));
     row.appendChild(createBadgeCell(status, statusClass));
     row.appendChild(
       createActionCell(grant.disabled ? "Enable" : "Disable", () =>
@@ -1092,6 +1219,7 @@ async function toggleGrant(namespace, name, currentlyDisabled) {
     );
     showToast(`Grant ${action}d successfully`);
     loadGrants();
+    loadDashboardSummary();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
     showToast(`Failed to ${action} grant: ${err.message}`, "error");
@@ -1192,11 +1320,13 @@ async function loadSessions() {
   try {
     const data = await fetchJSON("/runtime/sessions");
     sessionsCache = Array.isArray(data.sessions) ? data.sessions : [];
+    renderGovernanceSummary();
     renderSessions();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
     console.error("Failed to load sessions:", err);
     sessionsCache = [];
+    renderGovernanceSummary();
     document.getElementById("sessions-body").innerHTML =
       '<tr><td colspan="6" class="empty">Error loading sessions.</td></tr>';
   }
@@ -1229,16 +1359,16 @@ function renderSessions() {
   const fragment = document.createDocumentFragment();
 
   filtered.forEach((session) => {
-    const subject =
-      session.subject?.humanID || session.subject?.agentID || "-";
     const status = session.revoked ? "Revoked" : "Active";
     const statusClass = session.revoked ? "badge-error" : "badge-success";
+    const namespace = session.namespace || defaults.namespace;
+    const serverNamespace = session.serverRef?.namespace || namespace;
 
     const row = document.createElement("tr");
-    row.appendChild(createTextCell(session.name || "-"));
-    row.appendChild(createTextCell(session.serverRef?.name || "-"));
-    row.appendChild(createTextCell(subject));
-    row.appendChild(createTextCell(session.consentedTrust || "-"));
+    row.appendChild(createIdentityCell(session.name || "-", namespace));
+    row.appendChild(createIdentityCell(session.serverRef?.name || "-", serverNamespace));
+    row.appendChild(createSubjectCell(session.subject));
+    row.appendChild(createTrustCell(session.consentedTrust));
     row.appendChild(createBadgeCell(status, statusClass));
     row.appendChild(
       createActionCell(session.revoked ? "Unrevoke" : "Revoke", () =>
@@ -1272,6 +1402,7 @@ async function toggleSession(namespace, name, currentlyRevoked) {
     );
     showToast(`Session ${action}d successfully`);
     loadSessions();
+    loadDashboardSummary();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
     showToast(`Failed to ${action} session: ${err.message}`, "error");
