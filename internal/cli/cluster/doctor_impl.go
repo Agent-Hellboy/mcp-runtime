@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -66,6 +67,7 @@ const (
 	doctorK3sTraefikWebPort   = 80
 	doctorSentinelNamespace   = "mcp-sentinel"
 	doctorSentinelAPIService  = "mcp-sentinel-api"
+	doctorRestrictedRunAsUser = int64(65532)
 
 	registryHTTPPullMismatch = "http: server gave HTTP response to HTTPS client"
 
@@ -219,7 +221,7 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 			Run:    func() DoctorCheck { return checkMCPServersImagePullSmoke(kubectl, doctorMCPServersNamespace) },
 		},
 		{Name: "registry HTTP pull mismatch", Detail: "listing pods and inspecting image-pull failures for HTTP-vs-HTTPS registry errors", Run: func() DoctorCheck { return checkRegistryHTTPPullMismatch(kubectl) }},
-		{Name: "sentinel secrets", Detail: "reading Sentinel API_KEYS and UI_API_KEY from mcp-sentinel-secrets", Run: func() DoctorCheck { return checkSentinelSecrets(kubectl) }},
+		{Name: "sentinel secrets", Detail: "reading Sentinel API, admin, UI, and ingest keys from mcp-sentinel-secrets", Run: func() DoctorCheck { return checkSentinelSecrets(kubectl) }},
 		{Name: "sentinel API auth probe", Detail: "launching a temporary curl pod with UI_API_KEY against the Sentinel API", Run: func() DoctorCheck { return checkSentinelAPIAuthProbe(kubectl) }},
 		{Name: "node capacity", Detail: "checking node metrics, then falling back to allocatable resources if metrics-server is absent", Run: func() DoctorCheck { return checkNodeCapacity(kubectl) }},
 		{Name: "pending pods", Detail: "listing Pending pods across all namespaces", Run: func() DoctorCheck { return checkPendingPodsByNamespace(kubectl) }},
@@ -396,10 +398,21 @@ metadata:
   name: %s
   namespace: %s
 spec:
+  automountServiceAccountToken: false
   restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
   containers:
   - name: pause
     image: registry.k8s.io/pause:3.9
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      capabilities:
+        drop:
+        - ALL
 `, podName, namespace)
 	cmd, err := kubectl.CommandArgs([]string{"apply", "--dry-run=server", "-f", "-"})
 	if err != nil {
@@ -818,15 +831,19 @@ func checkTraefikServiceExposureAt(kubectl core.KubectlRunner, endpoint doctorTr
 
 func checkMCPServersDNSAndNetwork(kubectl core.KubectlRunner) DoctorCheck {
 	podName := fmt.Sprintf("mcp-runtime-doctor-dns-%d", time.Now().UnixNano())
+	image := "curlimages/curl:8.7.1"
+	curlArgs := []string{
+		"-sSI", "--connect-timeout", "5", "--max-time", "15",
+		"http://registry.registry.svc.cluster.local:5000/v2/",
+	}
 	args := []string{
 		"run", "-n", doctorMCPServersNamespace,
 		"--rm", "--restart=Never", "--attach",
 		"--pod-running-timeout=30s",
 		"--quiet",
-		"--image=curlimages/curl:8.7.1",
+		"--image=" + image,
+		"--overrides=" + restrictedRunOverrides(podName, image, "curl", curlArgs...),
 		podName,
-		"--command", "--", "curl", "-sSI", "--connect-timeout", "5", "--max-time", "15",
-		"http://registry.registry.svc.cluster.local:5000/v2/",
 	}
 	cmd, err := kubectl.CommandArgs(args)
 	if err != nil {
@@ -892,15 +909,9 @@ func checkIngressRouteProbe(kubectl core.KubectlRunner, namespace string, distro
 		}
 	}
 	podName := fmt.Sprintf("mcp-runtime-doctor-ingress-%d", time.Now().UnixNano())
-	curlArgs := []string{
-		"run", "-n", namespace,
-		"--rm", "--restart=Never", "--attach",
-		"--pod-running-timeout=30s",
-		"--quiet",
-		"--image=curlimages/curl:8.7.1",
-		podName,
-		"--command", "--", "curl",
-		"-sS", "-o", "doctor-response",
+	image := "curlimages/curl:8.7.1"
+	probeArgs := []string{
+		"-sS", "-o", "/tmp/doctor-response",
 		"-w", "%{http_code}",
 		"--connect-timeout", "5",
 		"--max-time", "20",
@@ -909,12 +920,21 @@ func checkIngressRouteProbe(kubectl core.KubectlRunner, namespace string, distro
 		"-H", "Mcp-Protocol-Version: 2025-06-18",
 	}
 	if host != "" {
-		curlArgs = append(curlArgs, "-H", "Host: "+host)
+		probeArgs = append(probeArgs, "-H", "Host: "+host)
 	}
-	curlArgs = append(curlArgs,
+	probeArgs = append(probeArgs,
 		"-d", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
 		fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s", traefik.Name, traefik.Namespace, traefik.WebPort, path),
 	)
+	curlArgs := []string{
+		"run", "-n", namespace,
+		"--rm", "--restart=Never", "--attach",
+		"--pod-running-timeout=30s",
+		"--quiet",
+		"--image=" + image,
+		"--overrides=" + restrictedRunOverrides(podName, image, "curl", probeArgs...),
+		podName,
+	}
 	cmd, err := kubectl.CommandArgs(curlArgs)
 	if err != nil {
 		return DoctorCheck{
@@ -1091,15 +1111,13 @@ func checkMCPServersImagePullSmoke(kubectl core.KubectlRunner, namespace string)
 	defer func() {
 		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", namespace, "--ignore-not-found"})
 	}()
-	if err := kubectl.Run([]string{"run", podName, "-n", namespace, "--restart=Never", "--image=" + image}); err != nil {
-		return DoctorCheck{
-			Name:   "mcp-servers image pull smoke",
-			OK:     false,
-			Detail: fmt.Sprintf("failed creating smoke pod: %v", err),
-			Remedy: "check pull credentials, registry reachability, and image existence",
-		}
-	}
-	waitCmd, cmdErr := kubectl.CommandArgs([]string{"wait", "--for=condition=Ready", "pod/" + podName, "-n", namespace, "--timeout=90s"})
+	createCmd, cmdErr := kubectl.CommandArgs([]string{
+		"run", podName,
+		"-n", namespace,
+		"--restart=Never",
+		"--image=" + image,
+		"--overrides=" + restrictedRunOverrides(podName, image, ""),
+	})
 	if cmdErr != nil {
 		return DoctorCheck{
 			Name:   "mcp-servers image pull smoke",
@@ -1108,13 +1126,20 @@ func checkMCPServersImagePullSmoke(kubectl core.KubectlRunner, namespace string)
 			Remedy: "check kubectl setup",
 		}
 	}
-	waitOut, waitErr := waitCmd.CombinedOutput()
-	if waitErr != nil {
-		reason, _ := readKubectlOutput(kubectl, []string{"get", "pod", podName, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].state.waiting.reason}"})
+	createOut, err := createCmd.CombinedOutput()
+	if err != nil {
 		return DoctorCheck{
 			Name:   "mcp-servers image pull smoke",
 			OK:     false,
-			Detail: fmt.Sprintf("pod failed to become ready (%s): %s", strings.TrimSpace(reason), strings.TrimSpace(string(waitOut))),
+			Detail: fmt.Sprintf("failed creating smoke pod: %v: %s", err, strings.TrimSpace(string(createOut))),
+			Remedy: "check pull credentials, registry reachability, and image existence",
+		}
+	}
+	if err := waitForDoctorPodImagePulled(kubectl, podName, namespace, 90*time.Second); err != nil {
+		return DoctorCheck{
+			Name:   "mcp-servers image pull smoke",
+			OK:     false,
+			Detail: fmt.Sprintf("pod image was not pulled: %v", err),
 			Remedy: "inspect pod events: `kubectl -n mcp-servers describe pod " + podName + "`",
 		}
 	}
@@ -1123,6 +1148,93 @@ func checkMCPServersImagePullSmoke(kubectl core.KubectlRunner, namespace string)
 		OK:     true,
 		Detail: fmt.Sprintf("pull/ready succeeded using image %s (%s)", image, imageSource),
 	}
+}
+
+func waitForDoctorPodImagePulled(kubectl core.KubectlRunner, name, namespace string, timeout time.Duration) error {
+	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	var lastStatus string
+	for {
+		imageID, imageErr := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].imageID}"})
+		if imageErr == nil && strings.TrimSpace(imageID) != "" {
+			return nil
+		}
+
+		reason, _ := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].state.waiting.reason}"})
+		reason = strings.TrimSpace(reason)
+		if isImagePullWaitingReason(reason) {
+			return fmt.Errorf("%s", reason)
+		}
+
+		phase, _ := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.phase}"})
+		lastStatus = strings.TrimSpace(phase)
+		if reason != "" {
+			lastStatus = reason
+		}
+		if lastStatus == "" && imageErr != nil {
+			lastStatus = imageErr.Error()
+		}
+
+		select {
+		case <-timeoutTimer.C:
+			if lastStatus == "" {
+				lastStatus = "timed out"
+			}
+			return fmt.Errorf("%s", lastStatus)
+		case <-ticker.C:
+		}
+	}
+}
+
+func isImagePullWaitingReason(reason string) bool {
+	switch reason {
+	case "ErrImagePull", "ImagePullBackOff", "InvalidImageName":
+		return true
+	default:
+		return false
+	}
+}
+
+func restrictedRunOverrides(containerName, image, command string, args ...string) string {
+	container := map[string]any{
+		"name":  strings.TrimSpace(containerName),
+		"image": strings.TrimSpace(image),
+		"securityContext": map[string]any{
+			"allowPrivilegeEscalation": false,
+			"runAsNonRoot":             true,
+			"runAsUser":                doctorRestrictedRunAsUser,
+			"capabilities": map[string]any{
+				"drop": []string{"ALL"},
+			},
+		},
+	}
+	if strings.TrimSpace(command) != "" {
+		container["command"] = []string{strings.TrimSpace(command)}
+	}
+	if len(args) > 0 {
+		container["args"] = args
+	}
+	overrides := map[string]any{
+		"spec": map[string]any{
+			"automountServiceAccountToken": false,
+			"securityContext": map[string]any{
+				"runAsNonRoot": true,
+				"runAsUser":    doctorRestrictedRunAsUser,
+				"seccompProfile": map[string]any{
+					"type": "RuntimeDefault",
+				},
+			},
+			"containers": []map[string]any{container},
+		},
+	}
+	data, err := json.Marshal(overrides)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
 }
 
 func checkSentinelSecrets(kubectl core.KubectlRunner) DoctorCheck {
@@ -1139,7 +1251,25 @@ func checkSentinelSecrets(kubectl core.KubectlRunner) DoctorCheck {
 			Name:   "sentinel secrets",
 			OK:     false,
 			Detail: "secret mcp-sentinel-secrets missing or API_KEYS key absent",
-			Remedy: "create/update mcp-sentinel-secrets with API_KEYS and UI_API_KEY",
+			Remedy: "create/update mcp-sentinel-secrets with API_KEYS, ADMIN_API_KEYS, INGEST_API_KEYS, and UI_API_KEY",
+		}
+	}
+	adminAPIKeysB64, err := readKubectlOutput(kubectl, []string{"get", "secret", "mcp-sentinel-secrets", "-n", doctorSentinelNamespace, "-o", "jsonpath={.data.ADMIN_API_KEYS}"})
+	if err != nil {
+		return DoctorCheck{
+			Name:   "sentinel secrets",
+			OK:     false,
+			Detail: "secret mcp-sentinel-secrets missing ADMIN_API_KEYS key",
+			Remedy: "create/update mcp-sentinel-secrets with ADMIN_API_KEYS; include UI_API_KEY for browser admin access",
+		}
+	}
+	ingestAPIKeysB64, err := readKubectlOutput(kubectl, []string{"get", "secret", "mcp-sentinel-secrets", "-n", doctorSentinelNamespace, "-o", "jsonpath={.data.INGEST_API_KEYS}"})
+	if err != nil {
+		return DoctorCheck{
+			Name:   "sentinel secrets",
+			OK:     false,
+			Detail: "secret mcp-sentinel-secrets missing INGEST_API_KEYS key",
+			Remedy: "create/update mcp-sentinel-secrets with ingest-only INGEST_API_KEYS for MCP proxy analytics",
 		}
 	}
 	uiKeyB64, err := readKubectlOutput(kubectl, []string{"get", "secret", "mcp-sentinel-secrets", "-n", doctorSentinelNamespace, "-o", "jsonpath={.data.UI_API_KEY}"})
@@ -1152,30 +1282,48 @@ func checkSentinelSecrets(kubectl core.KubectlRunner) DoctorCheck {
 		}
 	}
 	apiKeys := strings.TrimSpace(decodeBase64(strings.TrimSpace(apiKeysB64)))
+	adminAPIKeys := strings.TrimSpace(decodeBase64(strings.TrimSpace(adminAPIKeysB64)))
+	ingestAPIKeys := strings.TrimSpace(decodeBase64(strings.TrimSpace(ingestAPIKeysB64)))
 	uiKey := strings.TrimSpace(decodeBase64(strings.TrimSpace(uiKeyB64)))
-	if apiKeys == "" || uiKey == "" {
+	if apiKeys == "" || adminAPIKeys == "" || ingestAPIKeys == "" || uiKey == "" {
 		return DoctorCheck{
 			Name:   "sentinel secrets",
 			OK:     false,
-			Detail: "API_KEYS or UI_API_KEY is empty",
-			Remedy: "populate non-empty API_KEYS and UI_API_KEY in mcp-sentinel-secrets",
+			Detail: "API_KEYS, ADMIN_API_KEYS, INGEST_API_KEYS, or UI_API_KEY is empty",
+			Remedy: "populate non-empty API_KEYS, ADMIN_API_KEYS, INGEST_API_KEYS, and UI_API_KEY in mcp-sentinel-secrets",
 		}
 	}
 	keys := splitCommaTrim(apiKeys)
+	adminKeys := splitCommaTrim(adminAPIKeys)
+	uiInAPIKeys := false
 	for _, k := range keys {
+		if k == uiKey {
+			uiInAPIKeys = true
+			break
+		}
+	}
+	if !uiInAPIKeys {
+		return DoctorCheck{
+			Name:   "sentinel secrets",
+			OK:     false,
+			Detail: "UI_API_KEY not present in API_KEYS",
+			Remedy: "align API_KEYS and UI_API_KEY values in mcp-sentinel-secrets",
+		}
+	}
+	for _, k := range adminKeys {
 		if k == uiKey {
 			return DoctorCheck{
 				Name:   "sentinel secrets",
 				OK:     true,
-				Detail: "UI_API_KEY matches one API_KEYS entry",
+				Detail: "UI_API_KEY is present in API_KEYS and ADMIN_API_KEYS; INGEST_API_KEYS is populated separately",
 			}
 		}
 	}
 	return DoctorCheck{
 		Name:   "sentinel secrets",
 		OK:     false,
-		Detail: "UI_API_KEY not present in API_KEYS",
-		Remedy: "align API_KEYS and UI_API_KEY values in mcp-sentinel-secrets",
+		Detail: "UI_API_KEY not present in ADMIN_API_KEYS",
+		Remedy: "include UI_API_KEY in ADMIN_API_KEYS for browser admin access",
 	}
 }
 
@@ -1826,6 +1974,7 @@ func resolveDoctorSmokeImage(kubectl core.KubectlRunner, preferredNamespace stri
 }
 
 func resolveDoctorSmokeTarget(kubectl core.KubectlRunner, preferredNamespace string) doctorSmokeTarget {
+	mcpServerNames, haveMCPServerNames := readDoctorMCPServerNames(kubectl, preferredNamespace)
 	out, err := readKubectlOutput(kubectl, []string{"get", "deploy", "-n", preferredNamespace, "-o", "jsonpath={range .items[*]}{.metadata.name}|{.status.readyReplicas}|{.spec.template.spec.containers[0].image}|{.spec.template.spec.containers[0].ports[0].containerPort}{\"\\n\"}{end}"})
 	if err == nil {
 		for _, line := range filterNonEmptyLines(out) {
@@ -1837,6 +1986,9 @@ func resolveDoctorSmokeTarget(kubectl core.KubectlRunner, preferredNamespace str
 			ready := strings.TrimSpace(parts[1])
 			image := strings.TrimSpace(parts[2])
 			if name == "" || strings.HasPrefix(name, "doctor-smoke-") || ready == "" || ready == "0" || image == "" {
+				continue
+			}
+			if haveMCPServerNames && !mcpServerNames[name] {
 				continue
 			}
 			port := int32(8088)
@@ -1859,6 +2011,21 @@ func resolveDoctorSmokeTarget(kubectl core.KubectlRunner, preferredNamespace str
 		Source:       "fallback image registry.k8s.io/pause:3.9",
 		WaitForReady: false,
 	}
+}
+
+func readDoctorMCPServerNames(kubectl core.KubectlRunner, namespace string) (map[string]bool, bool) {
+	out, err := readKubectlOutput(kubectl, []string{"get", "mcpservers", "-n", namespace, "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}"})
+	if err != nil {
+		return nil, false
+	}
+	names := map[string]bool{}
+	for _, line := range filterNonEmptyLines(out) {
+		name := strings.TrimSpace(line)
+		if name != "" {
+			names[name] = true
+		}
+	}
+	return names, true
 }
 
 // PrintDoctorReport emits a human-readable report using the standard printer.

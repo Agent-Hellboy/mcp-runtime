@@ -1856,11 +1856,20 @@ func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
+	ingestAPIKeys, err := existingSecretDataValueOrRandom(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "INGEST_API_KEYS", 16)
+	if err != nil {
+		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
 	uiAPIKey, err := existingSecretDataValueOrRandom(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "UI_API_KEY", 16)
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
 	apiKeys = ensureCSVIncludes(apiKeys, uiAPIKey)
+	adminAPIKeys, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "ADMIN_API_KEYS")
+	if err != nil {
+		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	adminAPIKeys = ensureCSVIncludes(adminAPIKeys, uiAPIKey)
 	grafanaPassword, err := existingSecretDataValueOrRandom(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "GRAFANA_ADMIN_PASSWORD", 16)
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
@@ -1918,6 +1927,8 @@ func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
 		"type": "Opaque",
 		"stringData": map[string]string{
 			"API_KEYS":                apiKeys,
+			"INGEST_API_KEYS":         ingestAPIKeys,
+			"ADMIN_API_KEYS":          adminAPIKeys,
 			"UI_API_KEY":              uiAPIKey,
 			"ADMIN_USERS":             adminUsers,
 			"PLATFORM_ADMIN_EMAIL":    platformAdminEmail,

@@ -25,6 +25,7 @@ const (
 	platformUserIDLabel  = "platform.mcpruntime.org/user-id"
 	createdByLabel       = "created-by"
 	defaultDeployPort    = int32(8088)
+	restrictedRunAsUser  = int64(65532)
 )
 
 var errPrincipalIdentityRequired = errors.New("authenticated user identity required")
@@ -367,11 +368,28 @@ func desiredDeployment(name, namespace, image string, port, replicas int32, labe
 		Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": name}},
 		Template: corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{Labels: labels},
-			Spec: corev1.PodSpec{Containers: []corev1.Container{{
-				Name:  "server",
-				Image: image,
-				Ports: []corev1.ContainerPort{{ContainerPort: port}},
-			}}},
+			Spec: corev1.PodSpec{
+				AutomountServiceAccountToken: boolPtr(false),
+				SecurityContext: &corev1.PodSecurityContext{
+					RunAsNonRoot: boolPtr(true),
+					RunAsUser:    int64Ptr(restrictedRunAsUser),
+					SeccompProfile: &corev1.SeccompProfile{
+						Type: corev1.SeccompProfileTypeRuntimeDefault,
+					},
+				},
+				Containers: []corev1.Container{{
+					Name:  "server",
+					Image: image,
+					Ports: []corev1.ContainerPort{{ContainerPort: port}},
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: boolPtr(false),
+						RunAsNonRoot:             boolPtr(true),
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						},
+					},
+				}},
+			},
 		},
 	}}
 }
@@ -387,6 +405,14 @@ func desiredService(name, namespace string, port int32, labels map[string]string
 func intstrPtr(port int) *intstr.IntOrString {
 	v := intstr.FromInt(port)
 	return &v
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}
+
+func int64Ptr(value int64) *int64 {
+	return &value
 }
 
 func upsertDeployment(ctx context.Context, client kubernetes.Interface, dep *appsv1.Deployment) (*appsv1.Deployment, error) {

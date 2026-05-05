@@ -11,6 +11,11 @@ set -euo pipefail
 # Set E2E_SCENARIOS to a comma-separated subset for local debugging.
 # Supported values: all, smoke-auth, governance, trust, oauth, observability.
 # observability requires the full traffic suite: smoke-auth, governance, trust, oauth.
+#
+# For repeated local debugging, set E2E_CACHE_MODE=1. Cache mode implies
+# E2E_KEEP_CLUSTER=1, reuses an existing kind cluster and local registry, skips
+# platform setup when the core platform is already ready, and reuses cached
+# image tags from the local registry instead of pulling/building them again.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -83,8 +88,8 @@ MCP_POLICY_WAIT_TRIES="${MCP_POLICY_WAIT_TRIES:-90}"
 RAW_REQUEST_TRIES="${RAW_REQUEST_TRIES:-10}"
 MCP_SMOKE_AGENT_ENV_FILE="${MCP_SMOKE_AGENT_ENV_FILE:-.env}"
 MCP_SMOKE_AGENT_PROMPT="${MCP_SMOKE_AGENT_PROMPT:-Use the MCP upper tool to convert the exact word governance to uppercase. Reply with only the uppercase result.}"
-MCP_SMOKE_AGENT_PROVIDER="${MCP_SMOKE_AGENT_PROVIDER:-anthropic}"
-MCP_SMOKE_AGENT_MODEL="${MCP_SMOKE_AGENT_MODEL:-claude-sonnet-4-20250514}"
+MCP_SMOKE_AGENT_PROVIDER="${MCP_SMOKE_AGENT_PROVIDER:-openai}"
+MCP_SMOKE_AGENT_MODEL="${MCP_SMOKE_AGENT_MODEL:-}"
 MCP_SMOKE_AGENT_TIMEOUT="${MCP_SMOKE_AGENT_TIMEOUT:-90s}"
 UNKNOWN_SESSION_ID="${UNKNOWN_SESSION_ID:-sess-does-not-exist}"
 TEST_MODE_REGISTRY_IMAGE="${TEST_MODE_REGISTRY_IMAGE:-docker.io/library/mcp-runtime-registry:latest}"
@@ -99,6 +104,10 @@ E2E_SCENARIOS="${E2E_SCENARIOS-all}"
 E2E_SCENARIOS="${E2E_SCENARIOS//[[:space:]]/}"
 E2E_VALIDATE_SCENARIOS_ONLY="${E2E_VALIDATE_SCENARIOS_ONLY:-0}"
 E2E_KEEP_CLUSTER="${E2E_KEEP_CLUSTER:-0}"
+E2E_CACHE_MODE="${E2E_CACHE_MODE:-0}"
+if [[ "${E2E_CACHE_MODE}" == "1" ]]; then
+  E2E_KEEP_CLUSTER=1
+fi
 
 IFS=',' read -r -a E2E_SCENARIO_LIST <<< "${E2E_SCENARIOS}"
 if [[ ${#E2E_SCENARIO_LIST[@]} -eq 0 || -z "${E2E_SCENARIO_LIST[0]}" ]]; then
@@ -709,6 +718,20 @@ should_run_mcp_smoke_agent() {
   return 1
 }
 
+mcp_smoke_agent_key_hint() {
+  case "${MCP_SMOKE_AGENT_PROVIDER}" in
+    anthropic)
+      echo "ANTHROPIC_API_KEY"
+      ;;
+    openai|"")
+      echo "OPENAI_API_KEY"
+      ;;
+    *)
+      echo "OPENAI_API_KEY/ANTHROPIC_API_KEY"
+      ;;
+  esac
+}
+
 run_mcp_smoke_agent_prompt() {
   local url="$1"
   local case_name="${2:-governance}"
@@ -1299,6 +1322,15 @@ wait_for_deployment_exists() {
   return 1
 }
 
+restart_deployment_pods() {
+  local namespace="$1"
+  local name="$2"
+  local timeout="${3:-180s}"
+
+  kubectl rollout restart "deploy/${name}" -n "${namespace}" >/dev/null
+  kubectl rollout status "deploy/${name}" -n "${namespace}" --timeout="${timeout}"
+}
+
 prepare_example_metadata() {
   local metadata_dir="$1"
   local server_name="$2"
@@ -1433,25 +1465,33 @@ deploy_example_server_via_pipeline() {
   image_ref="${image_repo}:latest"
   prepare_example_metadata "${example_workspace_dir}/.mcp" "${server_name}" "${ingress_host}" "${route_path}" "${image_repo}"
 
-  echo "[deploy] building example image ${server_name}:latest"
-  (
-    cd "${example_workspace_dir}"
-    "${PROJECT_ROOT}/bin/mcp-runtime" server build image "${server_name}" \
-      --metadata-dir .mcp \
-      --dockerfile Dockerfile \
-      --registry "docker.io/library" \
-      --tag latest \
-      --context .
-  )
+  if pull_cached_image "${image_ref}"; then
+    echo "[cache] skipping example image build/push for ${server_name}:latest"
+  else
+    echo "[deploy] building example image ${server_name}:latest"
+    (
+      cd "${example_workspace_dir}"
+      "${PROJECT_ROOT}/bin/mcp-runtime" server build image "${server_name}" \
+        --metadata-dir .mcp \
+        --dockerfile Dockerfile \
+        --registry "docker.io/library" \
+        --tag latest \
+        --context .
+    )
 
-  echo "[deploy] pushing ${server_name}:latest via registry CLI"
+    echo "[deploy] pushing ${server_name}:latest via registry CLI"
+    (
+      cd "${example_workspace_dir}"
+      "${PROJECT_ROOT}/bin/mcp-runtime" registry push \
+        --image "${image_ref}" \
+        --mode direct \
+        --registry "${LOCAL_REGISTRY_PUSH_HOST}" \
+        --name "library/${server_name}"
+    )
+  fi
+
   (
     cd "${example_workspace_dir}"
-    "${PROJECT_ROOT}/bin/mcp-runtime" registry push \
-      --image "${image_ref}" \
-      --mode direct \
-      --registry "${LOCAL_REGISTRY_PUSH_HOST}" \
-      --name "library/${server_name}"
     "${PROJECT_ROOT}/bin/mcp-runtime" pipeline generate --dir .mcp --output manifests
     "${PROJECT_ROOT}/bin/mcp-runtime" pipeline deploy --dir manifests
   )
@@ -1533,6 +1573,48 @@ local_registry_target() {
   echo "${LOCAL_REGISTRY_PUSH_HOST}/$(mirror_repository_path "${image}")"
 }
 
+cache_mode_enabled() {
+  [[ "${E2E_CACHE_MODE}" == "1" ]]
+}
+
+kind_cluster_exists() {
+  kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"
+}
+
+registry_target_exists() {
+  local target="$1"
+  local ref="${target#${LOCAL_REGISTRY_PUSH_HOST}/}"
+  local repo="${ref%:*}"
+  local tag="${ref##*:}"
+
+  if [[ "${repo}" == "${ref}" ]]; then
+    repo="${ref}"
+    tag="latest"
+  fi
+
+  curl -fsS \
+    -H "Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json" \
+    "http://${LOCAL_REGISTRY_PUSH_HOST}/v2/${repo}/manifests/${tag}" >/dev/null 2>&1
+}
+
+pull_cached_image() {
+  local image="$1"
+  local target
+  target="$(local_registry_target "${image}")"
+
+  if ! cache_mode_enabled; then
+    return 1
+  fi
+  ensure_local_registry_running
+  if ! registry_target_exists "${target}"; then
+    return 1
+  fi
+
+  echo "[cache] reusing ${image} from local registry ${target}"
+  docker pull "${target}" >/dev/null
+  docker tag "${target}" "${image}"
+}
+
 run_with_retry() {
   local description="$1"
   shift
@@ -1570,6 +1652,10 @@ build_and_publish_image() {
   local dockerfile="$2"
   local context_dir="$3"
 
+  if pull_cached_image "${image}"; then
+    return 0
+  fi
+
   echo "[image] building ${image}"
   docker build -t "${image}" -f "${dockerfile}" "${context_dir}"
   publish_image_to_local_registry "${image}"
@@ -1580,6 +1666,10 @@ mirror_upstream_image() {
   local target
 
   echo "[image] mirroring ${image} into ${LOCAL_REGISTRY_NAME}"
+  if pull_cached_image "${image}"; then
+    return 0
+  fi
+
   target="$(local_registry_target "${image}")"
   ensure_local_registry_running
   if docker pull "${target}" >/dev/null 2>&1; then
@@ -1594,6 +1684,16 @@ mirror_upstream_image() {
 
 start_local_registry() {
   if docker ps -a --format '{{.Names}}' | grep -qx "${LOCAL_REGISTRY_NAME}"; then
+    if cache_mode_enabled; then
+      if docker ps --format '{{.Names}}' | grep -qx "${LOCAL_REGISTRY_NAME}"; then
+        echo "[registry] reusing local docker hub mirror ${LOCAL_REGISTRY_NAME} on localhost:${LOCAL_REGISTRY_PORT}"
+      else
+        echo "[registry] starting existing local docker hub mirror ${LOCAL_REGISTRY_NAME} on localhost:${LOCAL_REGISTRY_PORT}"
+        docker start "${LOCAL_REGISTRY_NAME}" >/dev/null
+      fi
+      wait_http "http://127.0.0.1:${LOCAL_REGISTRY_PORT}/v2/" "" 30
+      return
+    fi
     docker rm -f "${LOCAL_REGISTRY_NAME}" >/dev/null 2>&1 || true
   fi
 
@@ -1619,6 +1719,18 @@ ensure_local_registry_running() {
   fi
 }
 
+platform_cache_ready() {
+  if ! cache_mode_enabled; then
+    return 1
+  fi
+  kubectl get namespace registry mcp-runtime mcp-sentinel mcp-servers >/dev/null 2>&1 || return 1
+  kubectl rollout status deploy/registry -n registry --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status deploy/mcp-runtime-operator-controller-manager -n mcp-runtime --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status deploy/traefik -n traefik --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status deploy/mcp-sentinel-api -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status deploy/mcp-sentinel-gateway -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+}
+
 cat > "${KIND_CONFIG}" <<EOF
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -1634,8 +1746,12 @@ EOF
 
 start_local_registry
 
-echo "[kind] creating cluster ${CLUSTER_NAME}"
-kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}" --wait 120s
+if cache_mode_enabled && kind_cluster_exists; then
+  echo "[kind] reusing cluster ${CLUSTER_NAME}"
+else
+  echo "[kind] creating cluster ${CLUSTER_NAME}"
+  kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}" --wait 120s
+fi
 connect_local_registry_to_kind_network
 KUBECONFIG_FILE="/tmp/kubeconfig-kind"
 kind get kubeconfig --name "${CLUSTER_NAME}" > "${KUBECONFIG_FILE}"
@@ -1665,34 +1781,44 @@ mkdir -p "${MCP_SMOKE_GOPATH}"
   go build -o "${MCP_SMOKE_BIN}" ./cmd/mcp-smoke-agent
 )
 
-mirror_upstream_image "registry:2.8.3"
-mirror_upstream_image "traefik:v2.10"
-mirror_upstream_image "traefik:v3.0"
-mirror_upstream_image "clickhouse/clickhouse-server:23.8"
-mirror_upstream_image "confluentinc/cp-zookeeper:7.5.1"
-mirror_upstream_image "confluentinc/cp-kafka:7.5.1"
-mirror_upstream_image "prom/prometheus:v2.49.1"
-mirror_upstream_image "otel/opentelemetry-collector:0.92.0"
-mirror_upstream_image "grafana/tempo:2.3.1"
-mirror_upstream_image "grafana/loki:2.9.4"
-mirror_upstream_image "grafana/promtail:2.9.4"
-mirror_upstream_image "grafana/grafana:10.2.3"
-mirror_upstream_image "nginx:1.27-alpine"
-build_and_publish_image "docker.io/library/mcp-runtime-operator:latest" "Dockerfile.operator" "."
-build_and_publish_image "${TEST_MODE_REGISTRY_IMAGE}" "test/e2e/registry.Dockerfile" "."
-build_and_publish_image "docker.io/library/mcp-sentinel-mcp-proxy:latest" "${SENTINEL_ROOT}/services/mcp-proxy/Dockerfile" "${SENTINEL_ROOT}"
-build_and_publish_image "docker.io/library/mcp-sentinel-ingest:latest" "${SENTINEL_ROOT}/services/ingest/Dockerfile" "${SENTINEL_ROOT}/services/ingest"
-build_and_publish_image "docker.io/library/mcp-sentinel-api:latest" "${SENTINEL_ROOT}/services/api/Dockerfile" "${SENTINEL_ROOT}"
-build_and_publish_image "docker.io/library/mcp-sentinel-processor:latest" "${SENTINEL_ROOT}/services/processor/Dockerfile" "${SENTINEL_ROOT}/services/processor"
-build_and_publish_image "docker.io/library/mcp-sentinel-ui:latest" "${SENTINEL_ROOT}/services/ui/Dockerfile" "${SENTINEL_ROOT}/services/ui"
+PLATFORM_CACHE_READY=0
+if platform_cache_ready; then
+  PLATFORM_CACHE_READY=1
+  echo "[cache] reusing ready platform in cluster ${CLUSTER_NAME}"
+else
+  mirror_upstream_image "registry:2.8.3"
+  mirror_upstream_image "traefik:v2.10"
+  mirror_upstream_image "traefik:v3.0"
+  mirror_upstream_image "clickhouse/clickhouse-server:23.8"
+  mirror_upstream_image "confluentinc/cp-zookeeper:7.5.1"
+  mirror_upstream_image "confluentinc/cp-kafka:7.5.1"
+  mirror_upstream_image "prom/prometheus:v2.49.1"
+  mirror_upstream_image "otel/opentelemetry-collector:0.92.0"
+  mirror_upstream_image "grafana/tempo:2.3.1"
+  mirror_upstream_image "grafana/loki:2.9.4"
+  mirror_upstream_image "grafana/promtail:2.9.4"
+  mirror_upstream_image "grafana/grafana:10.2.3"
+  mirror_upstream_image "nginx:1.27-alpine"
+  build_and_publish_image "docker.io/library/mcp-runtime-operator:latest" "Dockerfile.operator" "."
+  build_and_publish_image "${TEST_MODE_REGISTRY_IMAGE}" "test/e2e/registry.Dockerfile" "."
+  build_and_publish_image "docker.io/library/mcp-sentinel-mcp-proxy:latest" "${SENTINEL_ROOT}/services/mcp-proxy/Dockerfile" "${SENTINEL_ROOT}"
+  build_and_publish_image "docker.io/library/mcp-sentinel-ingest:latest" "${SENTINEL_ROOT}/services/ingest/Dockerfile" "${SENTINEL_ROOT}/services/ingest"
+  build_and_publish_image "docker.io/library/mcp-sentinel-api:latest" "${SENTINEL_ROOT}/services/api/Dockerfile" "${SENTINEL_ROOT}"
+  build_and_publish_image "docker.io/library/mcp-sentinel-processor:latest" "${SENTINEL_ROOT}/services/processor/Dockerfile" "${SENTINEL_ROOT}/services/processor"
+  build_and_publish_image "docker.io/library/mcp-sentinel-ui:latest" "${SENTINEL_ROOT}/services/ui/Dockerfile" "${SENTINEL_ROOT}/services/ui"
+fi
 
-echo "[setup] running platform setup in test mode"
 export MCP_SETUP_WAIT_TIMEOUT="${MCP_SETUP_WAIT_TIMEOUT:-900}"
 export MCP_DEPLOYMENT_TIMEOUT="${MCP_DEPLOYMENT_TIMEOUT:-900s}"
 export MCP_REGISTRY_ENDPOINT="${MCP_REGISTRY_ENDPOINT:-registry.registry.svc.cluster.local:5000}"
 export MCP_INGRESS_READINESS_MODE="${MCP_INGRESS_READINESS_MODE:-permissive}"
-MCP_RUNTIME_REGISTRY_IMAGE_OVERRIDE="${TEST_MODE_REGISTRY_IMAGE}" \
-./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http
+if [[ "${PLATFORM_CACHE_READY}" == "1" ]]; then
+  echo "[setup] skipping platform setup because E2E_CACHE_MODE=1 found a ready platform"
+else
+  echo "[setup] running platform setup in test mode"
+  MCP_RUNTIME_REGISTRY_IMAGE_OVERRIDE="${TEST_MODE_REGISTRY_IMAGE}" \
+  ./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http
+fi
 
 echo "[verify] waiting for core platform components"
 rollout_status_with_logs registry deploy registry 180s
@@ -1727,7 +1853,33 @@ MCP_RUNTIME_CONFIG_DIR="${WORKDIR}/auth-config" ./bin/mcp-runtime auth logout
   --name "${CLUSTER_NAME}-dry-run" \
   --nodes 1 \
   --dry-run >"${WORKDIR}/cluster-provision-dry-run.txt"
-./bin/mcp-runtime cluster doctor
+if cache_mode_enabled; then
+  echo "[cache] removing previous policy/OAuth test grants and sessions"
+  kubectl delete mcpaccessgrant -n mcp-servers \
+    "${SERVER_NAME}-grant" \
+    "${SERVER_NAME}-e2e-api-grant" \
+    "${OAUTH_SERVER_NAME}-grant" \
+    --ignore-not-found --wait=true >/dev/null
+  kubectl delete mcpagentsession -n mcp-servers \
+    "${SESSION_ID}" \
+    "${SERVER_NAME}-e2e-api-session" \
+    --ignore-not-found --wait=true >/dev/null
+  echo "[cache] removing previous policy/OAuth test workloads before cluster doctor"
+  kubectl delete mcpserver -n mcp-servers "${SERVER_NAME}" "${OAUTH_SERVER_NAME}" --ignore-not-found --wait=true >/dev/null
+  kubectl delete deployment -n mcp-servers "${SERVER_NAME}" "${OAUTH_SERVER_NAME}" --ignore-not-found --wait=true >/dev/null
+  kubectl delete pod -n mcp-servers -l "app=${SERVER_NAME}" --ignore-not-found --wait=false >/dev/null
+  kubectl delete pod -n mcp-servers -l "app=${OAUTH_SERVER_NAME}" --ignore-not-found --wait=false >/dev/null
+  echo "[cache] deleting stale pending mcp-servers pods before cluster doctor"
+  kubectl delete pod -n mcp-servers --field-selector=status.phase=Pending --ignore-not-found --wait=false >/dev/null
+  echo "[cache] restarting operator before cluster doctor to avoid stale retained reconcile logs"
+  kubectl rollout restart deploy/mcp-runtime-operator-controller-manager -n mcp-runtime >/dev/null
+  rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
+fi
+if cache_mode_enabled; then
+  run_with_retry "cluster doctor" ./bin/mcp-runtime cluster doctor
+else
+  ./bin/mcp-runtime cluster doctor
+fi
 run_cli_allowing_cert_prereq_failure cluster-cert-status ./bin/mcp-runtime cluster cert status
 run_cli_allowing_cert_prereq_failure cluster-cert-apply-dry-run ./bin/mcp-runtime cluster cert apply --dry-run
 run_cli_allowing_cert_prereq_failure cluster-cert-wait ./bin/mcp-runtime cluster cert wait --timeout 1s
@@ -1748,9 +1900,20 @@ wait_port "${CLI_SENTINEL_API_PORT}" 30
 kill "${_cli_pf_pid}" >/dev/null 2>&1 || true
 wait "${_cli_pf_pid}" 2>/dev/null || true
 
-API_KEY="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.API_KEYS}' | decode_base64 | cut -d',' -f1)"
+API_KEY="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.UI_API_KEY}' | decode_base64)"
 if [[ -z "${API_KEY}" ]]; then
-  echo "[error] failed to resolve mcp-sentinel API key from secret" >&2
+  API_KEY="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.API_KEYS}' | decode_base64 | cut -d',' -f1)"
+fi
+if [[ -z "${API_KEY}" ]]; then
+  echo "[error] failed to resolve mcp-sentinel UI/API key from secret" >&2
+  exit 1
+fi
+INGEST_API_KEY="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.INGEST_API_KEYS}' | decode_base64 | cut -d',' -f1)"
+if [[ -z "${INGEST_API_KEY}" ]]; then
+  INGEST_API_KEY="${API_KEY}"
+fi
+if [[ -z "${INGEST_API_KEY}" ]]; then
+  echo "[error] failed to resolve mcp-sentinel ingest API key from secret" >&2
   exit 1
 fi
 
@@ -1768,13 +1931,15 @@ GO_EXAMPLE_WORKDIR="${WORKDIR}/go-mcp-server"
 echo "[deploy] creating server-local analytics credentials secret"
 kubectl create secret generic "${SERVER_SECRET_NAME}" \
   -n mcp-servers \
-  --from-literal=api-key="${API_KEY}" \
+  --from-literal=api-key="${INGEST_API_KEY}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 cat > "${METADATA_FILE}" <<EOF
 version: v1
 servers:
   - name: ${SERVER_NAME}
+    image: ${SERVER_IMAGE%:*}
+    imageTag: ${SERVER_IMAGE##*:}
     route: /${SERVER_NAME}/mcp
     publicPathPrefix: ${SERVER_NAME}
     port: 8090
@@ -1812,15 +1977,19 @@ servers:
         key: api-key
 EOF
 
-echo "[cli] building MCP server image via CLI"
-./bin/mcp-runtime server build image "${SERVER_NAME}" \
-  --metadata-file "${METADATA_FILE}" \
-  --dockerfile "${GO_EXAMPLE_SOURCE_DIR}/Dockerfile" \
-  --registry docker.io/library \
-  --tag latest \
-  --context "${GO_EXAMPLE_SOURCE_DIR}"
+if pull_cached_image "${SERVER_IMAGE}"; then
+  echo "[cache] skipping MCP server image build/push for ${SERVER_IMAGE}"
+else
+  echo "[cli] building MCP server image via CLI"
+  ./bin/mcp-runtime server build image "${SERVER_NAME}" \
+    --metadata-file "${METADATA_FILE}" \
+    --dockerfile "${GO_EXAMPLE_SOURCE_DIR}/Dockerfile" \
+    --registry docker.io/library \
+    --tag latest \
+    --context "${GO_EXAMPLE_SOURCE_DIR}"
 
-publish_image_to_local_registry "${SERVER_IMAGE}"
+  publish_image_to_local_registry "${SERVER_IMAGE}"
+fi
 
 echo "[cli] generating and deploying MCPServer manifests"
 ./bin/mcp-runtime pipeline generate --file "${METADATA_FILE}" --output "${MANIFEST_DIR}"
@@ -1828,7 +1997,7 @@ echo "[cli] generating and deploying MCPServer manifests"
 
 echo "[deploy] waiting for MCP server rollout"
 wait_for_deployment_exists mcp-servers "${SERVER_NAME}"
-if ! kubectl rollout status "deploy/${SERVER_NAME}" -n mcp-servers --timeout=180s; then
+if ! restart_deployment_pods mcp-servers "${SERVER_NAME}" 180s; then
   echo "[debug] MCP server rollout failed; collecting diagnostics" >&2
   kubectl get mcpserver "${SERVER_NAME}" -n mcp-servers -o yaml || true
   kubectl get deploy,rs,pods,svc,ingress,configmap -n mcp-servers || true
@@ -2541,7 +2710,7 @@ EOF
     run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" add
     run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" slugify
   else
-    echo "[mcp] skipping optional real-client mcp-smoke agent prompt (no OPENAI_API_KEY/ANTHROPIC_API_KEY in env or ${MCP_SMOKE_AGENT_ENV_FILE})"
+    echo "[mcp] skipping optional real-client mcp-smoke agent prompt (no $(mcp_smoke_agent_key_hint) in env or ${MCP_SMOKE_AGENT_ENV_FILE})"
   fi
 
   echo "[policy] updating access grant to deny aaa-ping and echo"
@@ -2643,17 +2812,6 @@ fi
 if scenario_selected "oauth"; then
   OAUTH_FIXTURE_DIR="${WORKDIR}/oauth-fixtures"
   generate_oauth_fixtures "${OAUTH_FIXTURE_DIR}"
-  cat >"${OAUTH_FIXTURE_DIR}/default.conf" <<'EOF'
-server {
-  listen 8080;
-  server_name _;
-
-  location / {
-    root /usr/share/nginx/html;
-    try_files $uri =404;
-  }
-}
-EOF
   OAUTH_VALID_TOKEN="$(tr -d '\n' <"${OAUTH_FIXTURE_DIR}/valid-token.txt")"
   OAUTH_INVALID_TOKEN="$(tr -d '\n' <"${OAUTH_FIXTURE_DIR}/invalid-token.txt")"
 
@@ -2662,7 +2820,6 @@ EOF
   -n mcp-servers \
   --from-file=oauth-authorization-server="${OAUTH_FIXTURE_DIR}/oauth-authorization-server" \
   --from-file=keys="${OAUTH_FIXTURE_DIR}/keys" \
-  --from-file=default.conf="${OAUTH_FIXTURE_DIR}/default.conf" \
   --dry-run=client -o yaml | kubectl apply -f -
   cat <<EOF | kubectl apply -f -
 apiVersion: apps/v1
@@ -2680,9 +2837,23 @@ spec:
       labels:
         app: ${OAUTH_ISSUER_NAME}
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
-        - name: nginx
-          image: docker.io/library/nginx:1.27-alpine
+        - name: http
+          image: docker.io/library/python:3.12-alpine
+          command: ["python3"]
+          args: ["-m", "http.server", "8080", "--directory", "/usr/share/nginx/html"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 65532
           ports:
             - containerPort: 8080
           volumeMounts:
@@ -2692,9 +2863,6 @@ spec:
             - name: files
               mountPath: /usr/share/nginx/html/keys
               subPath: keys
-            - name: files
-              mountPath: /etc/nginx/conf.d/default.conf
-              subPath: default.conf
       volumes:
         - name: files
           configMap:
@@ -2713,6 +2881,9 @@ spec:
       port: 8080
       targetPort: 8080
 EOF
+  # The issuer mounts fixture files through subPath, so restart to pick up new
+  # JWKS/token fixtures when E2E cache mode reuses an existing Deployment.
+  kubectl rollout restart "deploy/${OAUTH_ISSUER_NAME}" -n mcp-servers >/dev/null
   kubectl rollout status "deploy/${OAUTH_ISSUER_NAME}" -n mcp-servers --timeout=180s
 
   OAUTH_METADATA_FILE="${WORKDIR}/oauth-metadata.yaml"
@@ -2768,7 +2939,7 @@ EOF
   ./bin/mcp-runtime pipeline generate --file "${OAUTH_METADATA_FILE}" --output "${OAUTH_MANIFEST_DIR}"
   ./bin/mcp-runtime pipeline deploy --dir "${OAUTH_MANIFEST_DIR}"
   wait_for_deployment_exists mcp-servers "${OAUTH_SERVER_NAME}"
-  if ! kubectl rollout status "deploy/${OAUTH_SERVER_NAME}" -n mcp-servers --timeout=180s; then
+  if ! restart_deployment_pods mcp-servers "${OAUTH_SERVER_NAME}" 180s; then
     echo "[debug] OAuth MCP server rollout failed; collecting diagnostics" >&2
     kubectl get mcpserver "${OAUTH_SERVER_NAME}" -n mcp-servers -o yaml || true
     kubectl get deploy,rs,pods,svc,ingress,configmap -n mcp-servers || true
@@ -2990,6 +3161,7 @@ if scenario_selected "observability"; then
   OAUTH_PROXY_BASE="http://127.0.0.1:${OAUTH_PROXY_PORT}" \
   OAUTH_UPSTREAM_BASE="http://127.0.0.1:${OAUTH_UPSTREAM_PORT}" \
   API_KEY="${API_KEY}" \
+  INGEST_API_KEY="${INGEST_API_KEY}" \
   SERVER_NAME="${SERVER_NAME}" \
   SERVER_HOST="${SERVER_HOST}" \
   SESSION_ID="${SESSION_ID}" \
@@ -3003,6 +3175,7 @@ if scenario_selected "observability"; then
   python3 <<'PY'
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -3019,6 +3192,7 @@ server_upstream_base = os.environ["SERVER_UPSTREAM_BASE"]
 oauth_proxy_base = os.environ["OAUTH_PROXY_BASE"]
 oauth_upstream_base = os.environ["OAUTH_UPSTREAM_BASE"]
 api_key = os.environ["API_KEY"]
+ingest_api_key = os.environ["INGEST_API_KEY"]
 server_name = os.environ["SERVER_NAME"]
 server_host = os.environ["SERVER_HOST"]
 session_id = os.environ["SESSION_ID"]
@@ -3076,6 +3250,17 @@ def expect_json(url, status=200, *, method="GET", headers=None, body=None):
     return json.loads(payload)
 
 
+def wait_for_json(url, predicate, *, headers=None, retries=60, delay=2, description="response"):
+    last = None
+    for _ in range(retries):
+        last = expect_json(url, headers=headers)
+        if predicate(last):
+            ok(f"waited for {description}")
+            return last
+        time.sleep(delay)
+    fail(f"timed out waiting for {description}: {json.dumps(last, indent=2)}")
+
+
 def expect_mcp_initialize(url, *, headers=None, status=200, contains=None):
     req_headers = {
         "accept": "application/json, text/event-stream",
@@ -3126,6 +3311,7 @@ def expect_mcp_initialize(url, *, headers=None, status=200, contains=None):
 
 
 auth_headers = {"x-api-key": api_key}
+ingest_headers = {"x-api-key": ingest_api_key}
 
 # Gateway-routed UI, API, and example MCP routes.
 gateway_summary = expect_json(f"{gateway_base}/api/dashboard/summary", headers=auth_headers)
@@ -3226,9 +3412,11 @@ check(
     "api /api/event-types returned event types",
     f"expected /api/event-types to return event types: {event_types}",
 )
-filtered = expect_json(
+filtered = wait_for_json(
     f"{api_base}/api/events/filter?server={urllib.parse.quote(server_name)}&limit=5",
+    lambda doc: bool(doc.get("events")),
     headers=auth_headers,
+    description="api /api/events/filter events",
 )
 check(
     bool(filtered.get("events")),
@@ -3427,7 +3615,7 @@ ingest_event = expect_json(
     f"{ingest_base}/events",
     status=202,
     method="POST",
-    headers=auth_headers,
+    headers=ingest_headers,
     body={
         "timestamp": "2026-03-29T00:00:00Z",
         "source": "e2e-direct-ingest",
@@ -3503,6 +3691,7 @@ PY
   echo "[observe] validating audit, traces, and logs"
   API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api" \
   API_KEY="${API_KEY}" \
+  INGEST_API_KEY="${INGEST_API_KEY}" \
   SERVER_NAME="${SERVER_NAME}" \
   OAUTH_SERVER_NAME="${OAUTH_SERVER_NAME}" \
   OAUTH_HUMAN_ID="${OAUTH_HUMAN_ID}" \
@@ -3519,6 +3708,7 @@ import urllib.request
 
 api_base = os.environ["API_BASE"]
 api_key = os.environ["API_KEY"]
+ingest_api_key = os.environ["INGEST_API_KEY"]
 server_name = os.environ["SERVER_NAME"]
 oauth_server_name = os.environ["OAUTH_SERVER_NAME"]
 oauth_human_id = os.environ["OAUTH_HUMAN_ID"]
@@ -3573,6 +3763,7 @@ def payload_dict(event):
 
 
 headers = {"x-api-key": api_key}
+ingest_headers = {"x-api-key": ingest_api_key}
 
 # PII redaction check via the Sentinel gateway Traefik route.
 pii_source = "pii-redaction-e2e"
@@ -3590,7 +3781,7 @@ pii_event_body = {
 status, resp_body = post_json(
     f"{sentinel_base}/ingest/events",
     pii_event_body,
-    {"content-type": "application/json", "x-api-key": api_key},
+    {"content-type": "application/json", **ingest_headers},
 )
 check(
     status in (200, 202),

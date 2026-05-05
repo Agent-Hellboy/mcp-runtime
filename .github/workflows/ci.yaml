@@ -7,21 +7,24 @@ on:
     branches: [ "main" ]
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 jobs:
   changed-paths:
     name: Detect Docs/Website Changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       code: ${{ steps.filter.outputs.code }}
       docs: ${{ steps.filter.outputs.docs }}
       website: ${{ steps.filter.outputs.website }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Check changed paths
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
         with:
           filters: |
             code:
@@ -36,22 +39,22 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [changed-paths]
     if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Install linters
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
+          go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
 
       - name: Run go fmt check
         run: |
@@ -69,22 +72,22 @@ jobs:
 
   test:
     name: Unit + Integration Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [changed-paths]
     if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Install envtest
         run: |
-          export KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use -p path)
+          export KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.0 use -p path)
           echo "KUBEBUILDER_ASSETS=$KUBEBUILDER_ASSETS" >> $GITHUB_ENV
 
       - name: Run unit tests with coverage
@@ -113,7 +116,7 @@ jobs:
           mv unit.out coverage.out
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
         with:
           files: ./coverage.out
           flags: pre-merge
@@ -130,12 +133,12 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -190,7 +193,7 @@ jobs:
 
       - name: Upload e2e artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: kind-e2e-artifacts
           path: .e2e-artifacts/kind
@@ -198,15 +201,15 @@ jobs:
 
   benchmark:
     name: Benchmarks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [changed-paths]
     if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -217,15 +220,15 @@ jobs:
 
   generated-drift:
     name: Generated File Drift
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [changed-paths]
     if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true' || needs.changed-paths.outputs.docs == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -244,9 +247,32 @@ jobs:
             exit 1
           fi
 
+  sbom:
+    name: SBOM
+    runs-on: ubuntu-24.04
+    needs: [changed-paths]
+    if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Generate repository SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: spdx-json
+          output-file: mcp-runtime-repository.spdx.json
+
+      - name: Upload repository SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mcp-runtime-repository-sbom
+          path: mcp-runtime-repository.spdx.json
+          if-no-files-found: error
+
   deploy-docs:
     name: Deploy Docs (docs.mcpruntime.org)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     concurrency:
       group: deploy-docs-${{ github.ref }}
       cancel-in-progress: true
@@ -254,7 +280,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changed-paths.outputs.docs == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Validate docs deploy secrets
         env:
@@ -367,7 +393,7 @@ jobs:
 
   deploy-website:
     name: Deploy Website (mcpruntime.org)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     concurrency:
       group: deploy-website-${{ github.ref }}
       cancel-in-progress: true
@@ -375,7 +401,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changed-paths.outputs.website == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Validate website deploy secrets
         env:

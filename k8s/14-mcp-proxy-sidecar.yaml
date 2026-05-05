@@ -26,6 +26,7 @@ spec:
       labels:
         app: mcp-example-sidecar
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         seccompProfile:
@@ -71,7 +72,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: mcp-sentinel-secrets
-                  key: API_KEYS
+                  key: INGEST_API_KEYS
             - name: ANALYTICS_SOURCE
               value: "mcp-proxy"
             - name: MCP_SERVER_NAME

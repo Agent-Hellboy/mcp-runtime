@@ -30,6 +30,7 @@ spec:
       labels:
         app: clickhouse
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: clickhouse
           image: clickhouse/clickhouse-server:23.8

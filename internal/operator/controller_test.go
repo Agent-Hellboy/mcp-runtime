@@ -480,6 +480,25 @@ func TestReconcileDeploymentLabels(t *testing.T) {
 	if deployment.Spec.Template.Labels["app.kubernetes.io/managed-by"] != "mcp-runtime" {
 		t.Fatalf("pod template label managed-by = %q, want %q", deployment.Spec.Template.Labels["app.kubernetes.io/managed-by"], "mcp-runtime")
 	}
+	if deployment.Spec.Template.Spec.AutomountServiceAccountToken == nil || *deployment.Spec.Template.Spec.AutomountServiceAccountToken {
+		t.Fatal("expected MCPServer pods to disable service account token automount")
+	}
+	if deployment.Spec.Template.Spec.SecurityContext == nil || deployment.Spec.Template.Spec.SecurityContext.SeccompProfile == nil {
+		t.Fatal("expected MCPServer pod security context with seccomp profile")
+	}
+	if deployment.Spec.Template.Spec.SecurityContext.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Fatalf("seccomp profile = %q, want %q", deployment.Spec.Template.Spec.SecurityContext.SeccompProfile.Type, corev1.SeccompProfileTypeRuntimeDefault)
+	}
+	if deployment.Spec.Template.Spec.SecurityContext.RunAsUser == nil || *deployment.Spec.Template.Spec.SecurityContext.RunAsUser != restrictedRunAsUser {
+		t.Fatalf("runAsUser = %v, want %d", deployment.Spec.Template.Spec.SecurityContext.RunAsUser, restrictedRunAsUser)
+	}
+	server := deployment.Spec.Template.Spec.Containers[0]
+	if server.SecurityContext == nil || server.SecurityContext.AllowPrivilegeEscalation == nil || *server.SecurityContext.AllowPrivilegeEscalation {
+		t.Fatal("expected MCPServer container to disallow privilege escalation")
+	}
+	if server.SecurityContext.Capabilities == nil || len(server.SecurityContext.Capabilities.Drop) != 1 || server.SecurityContext.Capabilities.Drop[0] != corev1.Capability("ALL") {
+		t.Fatalf("expected MCPServer container to drop all capabilities, got %#v", server.SecurityContext.Capabilities)
+	}
 }
 
 func TestReconcileDeploymentAddsGatewaySidecar(t *testing.T) {
@@ -548,6 +567,12 @@ func TestReconcileDeploymentAddsGatewaySidecar(t *testing.T) {
 	gateway := deployment.Spec.Template.Spec.Containers[1]
 	assertEqual(t, "gatewayName", gateway.Name, "mcp-gateway")
 	assertEqual(t, "gatewayImage", gateway.Image, "example.com/mcp-proxy:latest")
+	if gateway.SecurityContext == nil || gateway.SecurityContext.ReadOnlyRootFilesystem == nil || !*gateway.SecurityContext.ReadOnlyRootFilesystem {
+		t.Fatal("expected gateway sidecar to use a read-only root filesystem")
+	}
+	if gateway.SecurityContext.AllowPrivilegeEscalation == nil || *gateway.SecurityContext.AllowPrivilegeEscalation {
+		t.Fatal("expected gateway sidecar to disallow privilege escalation")
+	}
 
 	envByName := make(map[string]corev1.EnvVar, len(gateway.Env))
 	for _, envVar := range gateway.Env {

@@ -54,7 +54,18 @@ Useful local runs:
 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh
 E2E_SCENARIOS=all MCP_DEPLOYMENT_TIMEOUT=900s bash test/e2e/kind.sh
 E2E_KEEP_CLUSTER=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh
+E2E_CACHE_MODE=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh
 ```
+
+`E2E_CACHE_MODE=1` is for repeated local debugging. It implies
+`E2E_KEEP_CLUSTER=1`, reuses the existing Kind cluster and local registry when
+present, skips platform setup if the core platform is already ready, and reuses
+image tags already published to the local registry.
+
+Optional real-client `mcp-smoke-agent` prompts default to OpenAI. Set
+`OPENAI_API_KEY` in the environment or `.env` to run them; override
+`MCP_SMOKE_AGENT_PROVIDER` or `MCP_SMOKE_AGENT_MODEL` only when a different
+provider or model is required.
 
 The script writes artifacts when `E2E_ARTIFACT_DIR` is set. In CI, those
 artifacts are uploaded from `.e2e-artifacts/kind`.
@@ -70,9 +81,11 @@ The main CI workflow runs:
 - golden CLI tests
 - service module tests
 - generated file drift
+- repository SBOM generation
 - Kind e2e for code changes
 
-Security workflows add gosec and Trivy checks.
+Security workflows add pinned gosec, Trivy repository/image scans with SARIF
+upload, operator-image SBOM artifacts, and pull-request dependency review.
 
 ## Choosing Coverage
 

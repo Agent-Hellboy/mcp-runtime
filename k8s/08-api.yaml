@@ -66,6 +66,12 @@ spec:
                 secretKeyRef:
                   name: mcp-sentinel-secrets
                   key: API_KEYS
+            - name: ADMIN_API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: ADMIN_API_KEYS
+                  optional: true
             - name: POSTGRES_DSN
               valueFrom:
                 secretKeyRef:

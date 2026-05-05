@@ -657,15 +657,17 @@ func TestDoctorCurlProbesPassPathValidator(t *testing.T) {
 	validators := []core.ExecValidator{core.NoControlChars(), core.PathUnder("/workspace")}
 
 	t.Run("ingress route probe", func(t *testing.T) {
+		var probeArgs []string
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				switch {
-				case contains(spec.Args, "jsonpath={range .items[*]}{.metadata.name}|{.spec.rules[0].host}|{.spec.rules[0].http.paths[0].path}"):
+				case strings.Contains(strings.Join(spec.Args, "\x00"), "{.metadata.name}|{.spec.rules[0].host}|{.spec.rules[0].http.paths[0].path}"):
 					return &core.MockCommand{OutputData: []byte("doctor-smoke-old||/doctor-smoke-old/mcp\ndemo||/demo/mcp\n")}
-				case contains(spec.Args, "svc"):
+				case contains(spec.Args, "get") && contains(spec.Args, "svc"):
 					return &core.MockCommand{OutputData: []byte("web:8000:32080\n")}
-				case contains(spec.Args, "curl"):
-					if contains(spec.Args, "/dev/null") {
+				case len(spec.Args) > 0 && spec.Args[0] == "run":
+					probeArgs = append([]string(nil), spec.Args...)
+					if strings.Contains(strings.Join(spec.Args, "\x00"), "/dev/null") {
 						t.Fatal("doctor curl helper should not pass /dev/null through kubectl validators")
 					}
 					return &core.MockCommand{OutputData: []byte("200")}
@@ -678,6 +680,21 @@ func TestDoctorCurlProbesPassPathValidator(t *testing.T) {
 		check := checkIngressRouteProbe(kubectl, "mcp-servers", DistroGeneric)
 		if !check.OK {
 			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+		overrides := argValueWithPrefix(probeArgs, "--overrides=")
+		if overrides == "" {
+			t.Fatalf("ingress route probe should use restricted-compliant overrides, got args=%v", probeArgs)
+		}
+		for _, want := range []string{
+			`"allowPrivilegeEscalation":false`,
+			`"runAsNonRoot":true`,
+			`"runAsUser":65532`,
+			`"seccompProfile":{"type":"RuntimeDefault"}`,
+			`"command":["curl"]`,
+		} {
+			if !strings.Contains(overrides, want) {
+				t.Fatalf("ingress route probe overrides missing %s: %s", want, overrides)
+			}
 		}
 	})
 
@@ -934,6 +951,8 @@ func TestCheckMCPServerReconcileSmoke(t *testing.T) {
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				switch {
+				case contains(spec.Args, "get") && contains(spec.Args, "mcpservers"):
+					return &core.MockCommand{OutputData: []byte("go-example\n")}
 				case argContains(spec.Args, "readyReplicas") && argContains(spec.Args, "containerPort"):
 					return &core.MockCommand{OutputData: []byte("go-example|1|registry.local/go-example:dev|8088\n")}
 				case contains(spec.Args, "apply"):
@@ -970,6 +989,8 @@ func TestCheckMCPServerReconcileSmoke(t *testing.T) {
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				switch {
+				case contains(spec.Args, "get") && contains(spec.Args, "mcpservers"):
+					return &core.MockCommand{OutputData: []byte("go-example\n")}
 				case argContains(spec.Args, "readyReplicas") && argContains(spec.Args, "containerPort"):
 					return &core.MockCommand{OutputData: []byte("go-example|1|registry.local/go-example:dev|8088\n")}
 				case contains(spec.Args, "apply"):
@@ -1006,8 +1027,10 @@ func TestCheckMCPServerReconcileSmoke(t *testing.T) {
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				switch {
-				case argContains(spec.Args, "readyReplicas") && argContains(spec.Args, "containerPort"):
+				case contains(spec.Args, "get") && contains(spec.Args, "mcpservers"):
 					return &core.MockCommand{}
+				case argContains(spec.Args, "readyReplicas") && argContains(spec.Args, "containerPort"):
+					return &core.MockCommand{OutputData: []byte("oauth-issuer|1|docker.io/library/python:3.12-alpine|8080\n")}
 				case contains(spec.Args, "apply"):
 					return &core.MockCommand{}
 				case contains(spec.Args, "rollout"):
@@ -1208,4 +1231,79 @@ func TestCheckMCPServersImagePullSecrets(t *testing.T) {
 			t.Fatal("expected failure when serviceaccount lookup fails")
 		}
 	})
+}
+
+func TestCheckMCPServersImagePullSmokeUsesRestrictedCompliantPodSpec(t *testing.T) {
+	var smokeRunArgs []string
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			switch {
+			case contains(spec.Args, "get") && contains(spec.Args, "mcpservers"):
+				return &core.MockCommand{}
+			case contains(spec.Args, "get") && contains(spec.Args, "deploy"):
+				return &core.MockCommand{OutputData: []byte("")}
+			case len(spec.Args) > 0 && spec.Args[0] == "run":
+				smokeRunArgs = append([]string(nil), spec.Args...)
+				return &core.MockCommand{}
+			case contains(spec.Args, "get") && argContains(spec.Args, "imageID"):
+				return &core.MockCommand{OutputData: []byte("docker-pullable://registry.k8s.io/pause@sha256:test")}
+			case contains(spec.Args, "delete"):
+				return &core.MockCommand{}
+			default:
+				return &core.MockCommand{}
+			}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+	check := checkMCPServersImagePullSmoke(kubectl, "mcp-servers")
+	if !check.OK {
+		t.Fatalf("expected image pull smoke to pass, got detail=%q", check.Detail)
+	}
+	if len(smokeRunArgs) == 0 {
+		t.Fatal("expected image pull smoke to create a pod")
+	}
+	overrides := argValueWithPrefix(smokeRunArgs, "--overrides=")
+	if overrides == "" {
+		t.Fatalf("image pull smoke should use restricted-compliant overrides, got args=%v", smokeRunArgs)
+	}
+	for _, want := range []string{
+		`"automountServiceAccountToken":false`,
+		`"allowPrivilegeEscalation":false`,
+		`"runAsNonRoot":true`,
+		`"runAsUser":65532`,
+		`"seccompProfile":{"type":"RuntimeDefault"}`,
+		`"capabilities":{"drop":["ALL"]}`,
+	} {
+		if !strings.Contains(overrides, want) {
+			t.Fatalf("image pull smoke overrides missing %s: %s", want, overrides)
+		}
+	}
+	for _, notWant := range []string{`"command":`, `"args":`} {
+		if strings.Contains(overrides, notWant) {
+			t.Fatalf("image pull smoke overrides should not set %s: %s", notWant, overrides)
+		}
+	}
+}
+
+func TestRestrictedRunOverridesUsesNumericNonRootUser(t *testing.T) {
+	overrides := restrictedRunOverrides("probe", "curlimages/curl:8.7.1", "curl", "-sSI", "http://example.test")
+	for _, want := range []string{
+		`"runAsNonRoot":true`,
+		`"runAsUser":65532`,
+		`"command":["curl"]`,
+		`"args":["-sSI","http://example.test"]`,
+	} {
+		if !strings.Contains(overrides, want) {
+			t.Fatalf("restricted overrides missing %s: %s", want, overrides)
+		}
+	}
+}
+
+func argValueWithPrefix(args []string, prefix string) string {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, prefix) {
+			return strings.TrimPrefix(arg, prefix)
+		}
+	}
+	return ""
 }

@@ -1,9 +1,9 @@
 ---
-name: sync-docs-agents
-description: Keep repository documentation and AGENTS.md aligned with code, design, and product changes. Use when Codex changes or reviews behavior that affects user-facing docs, developer runbooks, architecture notes, CLI/API references, setup instructions, design-system guidance, operational commands, or agent instructions; when a user asks to update docs after implementation; or when stale docs/AGENTS.md could mislead future contributors.
+name: repo-guidance-sync
+description: Keep repository documentation, AGENTS.md, and contributor/test guidance aligned with code, design, and product changes. Use when Codex changes or reviews behavior that affects user-facing docs, developer runbooks, architecture notes, CLI/API references, setup instructions, design-system guidance, operational commands, E2E assumptions, or agent instructions; when a user asks to update docs after implementation; or when stale repo guidance could mislead future contributors.
 ---
 
-# Sync Docs and AGENTS
+# Repo Guidance Sync
 
 ## Overview
 
@@ -13,6 +13,7 @@ Use this skill to decide what documentation must change after a code, design, or
 
 1. Identify the change surface.
    - Inspect the diff, touched packages, new commands, config flags, UI behavior, API shapes, CRDs, generated schemas, deployment manifests, and tests.
+   - If the change affects setup, CLI workflows, operator reconciliation, ingress/gateway behavior, auth/policy, registry/image handling, observability, or cache-mode assumptions, identify the matching E2E scenario in `test/e2e/kind.sh` or adjacent integration tests before editing docs.
    - Search for existing docs before adding new files: `rg -n "<command|field|feature|concept>" README.md AGENTS.md docs website config api internal services`.
    - Prefer updating the nearest existing guide, reference, or runbook over creating a new document.
 
@@ -23,6 +24,7 @@ Use this skill to decide what documentation must change after a code, design, or
    - Design change: update design-system rules, component guidance, UX behavior notes, or docs that describe screens/workflows.
    - Operational change: update install, deployment, TLS, registry, Kubernetes, observability, and rollback/debug instructions.
    - Schema/contract change: update CRD/API docs, examples, generated docs if the repo owns them, and any golden snapshots tied to CLI help.
+   - E2E-visible behavior change: update or add the relevant E2E assertion in `test/e2e/kind.sh` when the behavior is exercised through Kind, real MCP traffic, policy/session state, OAuth, observability, registry/image paths, or `cluster doctor`. If narrower unit/integration coverage is sufficient, note why in the final validation summary.
 
 3. Verify source truth before writing.
    - Treat code, tests, CRD types, OpenAPI specs, CLI definitions, workflow files, and manifests as source of truth.
@@ -38,7 +40,7 @@ Use this skill to decide what documentation must change after a code, design, or
    - Update links and table-of-contents entries when adding or renaming pages.
 
 5. Validate.
-   - Run the narrowest relevant checks: markdown/docs build if available, golden tests for CLI help changes, generated-doc drift checks when docs are generated, and targeted code tests if examples exercise behavior.
+   - Run the narrowest relevant checks: markdown/docs build if available, golden tests for CLI help changes, generated-doc drift checks when docs are generated, E2E scenario checks for behavior covered by `test/e2e/kind.sh`, and targeted code tests if examples exercise behavior.
    - At minimum, run searches for old field names, commands, or stale wording that the change replaces.
    - If validation cannot be run, state the blocker and what was manually checked.
 

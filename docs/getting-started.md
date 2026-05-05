@@ -188,7 +188,7 @@ Create the analytics secret in the server namespace:
 ```bash
 API_KEY="$(
   kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
-    -o jsonpath='{.data.API_KEYS}' | base64 -d | cut -d, -f1
+    -o jsonpath='{.data.INGEST_API_KEYS}' | base64 -d | cut -d, -f1
 )"
 
 kubectl create secret generic go-example-mcp-analytics \
@@ -421,15 +421,15 @@ instead of `input` or `text`.
 ./bin/mcp-runtime sentinel status
 ./bin/mcp-runtime sentinel events
 
-API_KEY="$(
+ADMIN_KEY="$(
   kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
-    -o jsonpath='{.data.API_KEYS}' | base64 -d | cut -d, -f1
+    -o jsonpath='{.data.UI_API_KEY}' | base64 -d
 )"
 
-curl -sS -H "x-api-key: $API_KEY" \
+curl -sS -H "x-api-key: $ADMIN_KEY" \
   http://localhost:18080/api/dashboard/summary | jq .
 
-curl -sS -H "x-api-key: $API_KEY" \
+curl -sS -H "x-api-key: $ADMIN_KEY" \
   "http://localhost:18080/api/events/filter?server=go-example-mcp&tool_name=add&limit=5" | jq .
 ```
 

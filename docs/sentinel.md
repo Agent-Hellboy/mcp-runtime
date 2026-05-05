@@ -7,7 +7,7 @@
 | Service | Role |
 |---|---|
 | **mcp-proxy** | Transparent sidecar. Extracts identity, evaluates tool-level policy, emits allow/deny audit events, forwards traffic upstream. |
-| **ingest** | Receives `POST /events`, validates API keys or optional JWTs, writes to Kafka. |
+| **ingest** | Receives `POST /events`, validates ingest-scoped API keys or optional JWTs, writes to Kafka. |
 | **processor** | Consumes Kafka, batches, writes into ClickHouse with indexed audit fields. |
 | **api** | Analytics endpoints, dashboard summaries, runtime governance APIs (grants/sessions), component operations. |
 | **ui** | Three-tab dashboard: overview metrics + events, governance forms, operations health + safe restart. |
@@ -51,6 +51,10 @@ The Sentinel stack has multiple HTTP services. In local test mode, Traefik
 usually exposes them through `http://localhost:18080/`; inside the cluster,
 call the service DNS names directly.
 
+`api` accepts `API_KEYS`, with admin elevation only for keys also listed in
+`ADMIN_API_KEYS`. `ingest` accepts ingest-scoped `INGEST_API_KEYS`, with legacy
+fallback to `API_KEYS`, and optional OIDC JWT validation when configured.
+
 | Surface | Public path in dev | In-cluster service | Notes |
 |---|---|---|---|
 | **UI** | `/` | `mcp-sentinel-ui:8082` | Browser app, browser login/session routes, and `/api` reverse proxy. |
@@ -66,7 +70,7 @@ call the service DNS names directly.
 |---|---|
 | **api** | `/health` is open. Authenticated `/api/*` routes accept `x-api-key` from `API_KEYS`, user-generated API keys, platform JWT bearer tokens, or OIDC JWT bearer tokens when OIDC is configured. If `ADMIN_API_KEYS` is set, only those keys get admin role; other `API_KEYS` values are user role. |
 | **ui** | `/auth/login` creates an HttpOnly UI session from `api_key`, `id_token`, or `email`/`password`. The UI then proxies `/api/*` with an upstream API key or bearer token. |
-| **ingest** | `/live`, `/ready`, and `/health` are open. `/events` accepts `x-api-key` from `API_KEYS` or a configured OIDC bearer token. If no API keys and no JWKS are configured, intake auth is bypassed. |
+| **ingest** | `/live`, `/ready`, and `/health` are open. `/events` accepts `x-api-key` from `INGEST_API_KEYS`, legacy `API_KEYS`, or a configured OIDC bearer token. If no API keys and no JWKS are configured, intake auth is bypassed. |
 | **processor** | No data API. It exposes metrics and a simple health check on the metrics port. |
 | **mcp-proxy** | No admin API. It authenticates MCP requests according to the rendered server policy: header identity or OAuth bearer tokens, depending on `spec.auth`. |
 
