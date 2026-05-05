@@ -40,6 +40,12 @@ go vet ./...
 
 Optional but used in CI: `staticcheck ./...` (install the pinned CI version with `go install honnef.co/go/tools/cmd/staticcheck@v0.7.0`).
 
+Local pre-commit hooks are configured in `.pre-commit-config.yaml`. Install
+them with `pre-commit install`; they run Go formatting/static checks, targeted
+tests, generated-file drift checks, and a staged secret scan through the pinned
+Gitleaks hook. Use `pre-commit run --all-files` before pushing when you want
+the full local hook suite.
+
 **Targeted tests** (prefer these while iterating; full `./...` can be slow):
 
 - `go test ./internal/operator/... ./internal/cli/... -race -count=1`

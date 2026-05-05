@@ -99,6 +99,14 @@ The main CI workflow runs:
 Security workflows add pinned gosec, Trivy repository/image scans with SARIF
 upload, operator-image SBOM artifacts, and pull-request dependency review.
 
+## Pre-commit Hooks
+
+`.pre-commit-config.yaml` mirrors the local contributor gates: Go formatting,
+`staticcheck`, `go vet`, targeted Go tests, generated-file drift checks, and a
+pinned Gitleaks hook for staged secret detection. Install with
+`pre-commit install`; run `pre-commit run --all-files` before pushing when you
+want the full local hook suite.
+
 ## Choosing Coverage
 
 | Change | Minimum local check |
