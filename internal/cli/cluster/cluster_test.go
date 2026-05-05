@@ -731,6 +731,75 @@ func TestConfigureCluster(t *testing.T) {
 		}
 	})
 
+	t.Run("skips repo install when external traefik exists", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				cmd := &core.MockCommand{Args: spec.Args}
+				if contains(spec.Args, "traefik") && contains(spec.Args, "-n") && contains(spec.Args, "kube-system") {
+					cmd.OutputData = []byte("traefik")
+				}
+				return cmd
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ConfigureCluster(IngressOptions{Mode: "traefik"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, cmd := range mock.Commands {
+			if contains(cmd.Args, "apply") {
+				t.Fatalf("should not apply repo-managed ingress when external traefik exists: %v", mock.Commands)
+			}
+		}
+	})
+
+	t.Run("force refuses external traefik", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				cmd := &core.MockCommand{Args: spec.Args}
+				if contains(spec.Args, "traefik") && contains(spec.Args, "-n") && contains(spec.Args, "kube-system") {
+					cmd.OutputData = []byte("traefik")
+				}
+				return cmd
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ConfigureCluster(IngressOptions{Mode: "traefik", Force: true})
+		if err == nil {
+			t.Fatal("expected force to refuse external traefik")
+		}
+		if !strings.Contains(err.Error(), "external Traefik exists") {
+			t.Fatalf("expected external Traefik error, got: %v", err)
+		}
+	})
+
+	t.Run("fails when duplicate traefik installs exist", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				cmd := &core.MockCommand{Args: spec.Args}
+				if contains(spec.Args, "traefik") && contains(spec.Args, "-n") &&
+					(contains(spec.Args, "kube-system") || contains(spec.Args, "traefik")) {
+					cmd.OutputData = []byte("traefik")
+				}
+				return cmd
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ConfigureCluster(IngressOptions{Mode: "traefik"})
+		if err == nil {
+			t.Fatal("expected duplicate traefik error")
+		}
+		if !strings.Contains(err.Error(), "multiple Traefik installs detected") {
+			t.Fatalf("expected duplicate Traefik error, got: %v", err)
+		}
+	})
+
 	t.Run("uses kustomize for directory manifest", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		manifestDir := filepath.Join(tmpDir, "ingress")

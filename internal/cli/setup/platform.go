@@ -2295,6 +2295,9 @@ func setupTLSLetsEncrypt(kubectl core.KubectlRunner, logger *zap.Logger, plan se
 		}
 		return wrappedErr
 	}
+	if err := ensureRegistryCertificateOwnership(kubectl, logger); err != nil {
+		return err
+	}
 
 	issuerName := certmanager.ClusterIssuerNameForACME(plan.ACMEStaging)
 	dnsNames := certmanager.ACMETLSDNSNames()
@@ -2372,6 +2375,9 @@ func setupTLSWithExistingClusterIssuer(kubectl core.KubectlRunner, logger *zap.L
 			core.LogStructuredError(logger, wrappedErr, "Failed to create registry namespace")
 		}
 		return wrappedErr
+	}
+	if err := ensureRegistryCertificateOwnership(kubectl, logger); err != nil {
+		return err
 	}
 
 	dnsNames := certmanager.ACMETLSDNSNames()
@@ -2464,6 +2470,9 @@ func setupTLSPrivateCA(kubectl core.KubectlRunner, logger *zap.Logger) error {
 		}
 		return wrappedErr
 	}
+	if err := ensureRegistryCertificateOwnership(kubectl, logger); err != nil {
+		return err
+	}
 
 	core.Info("Applying Certificate for registry")
 	if err := certmanager.ApplyRegistryCertificateWithKubectl(kubectl); err != nil {
@@ -2491,5 +2500,36 @@ func setupTLSPrivateCA(kubectl core.KubectlRunner, logger *zap.Logger) error {
 		return err
 	}
 	core.Success("Certificate issued successfully")
+	return nil
+}
+
+func ensureRegistryCertificateOwnership(kubectl core.KubectlRunner, logger *zap.Logger) error {
+	core.Info("Checking registry TLS Certificate ownership")
+	if err := certmanager.RemoveRegistryIngressShimAnnotationWithKubectl(kubectl); err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrTLSSetupFailed,
+			err,
+			err.Error(),
+			map[string]any{"ingress": core.RegistryServiceName, "namespace": core.NamespaceRegistry, "component": "setup"},
+		)
+		core.Error("Failed to remove registry ingress-shim annotation")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to remove registry ingress-shim annotation")
+		}
+		return wrappedErr
+	}
+	if err := certmanager.CheckRegistryCertificateOwnershipWithKubectl(kubectl); err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrTLSSetupFailed,
+			err,
+			err.Error(),
+			map[string]any{"secret": certmanager.RegistryTLSSecretName, "namespace": core.NamespaceRegistry, "component": "setup"},
+		)
+		core.Error("Registry TLS Certificate conflict")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Registry TLS Certificate conflict")
+		}
+		return wrappedErr
+	}
 	return nil
 }

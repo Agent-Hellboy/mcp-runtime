@@ -2526,8 +2526,8 @@ func GetPlatformIngressHost() string
 <a id="cli-core-func-getregistryclusterissuername-string"></a>
 ```text
 func GetRegistryClusterIssuerName() string
-    GetRegistryClusterIssuerName returns the cluster issuer name used on the
-    registry TLS ingress annotation (empty if unset).
+    GetRegistryClusterIssuerName returns the setup-selected cert-manager
+    ClusterIssuer name (empty if unset).
 
 ```
 
@@ -2736,8 +2736,9 @@ type CLIConfig struct {
 	// PlatformIngressHost is the public dashboard UI host (e.g. platform.mcpruntime.com), from
 	// MCP_PLATFORM_INGRESS_HOST or platform.<MCP_PLATFORM_DOMAIN>. Empty falls back to path-based dev routing.
 	PlatformIngressHost string
-	// RegistryClusterIssuerName is the cert-manager.io/cluster-issuer name for the registry ingress
-	// (e.g. letsencrypt-prod, mcp-runtime-ca, or an org issuer from --tls-cluster-issuer). Set by setup --with-tls, not from env.
+	// RegistryClusterIssuerName is the cert-manager ClusterIssuer selected by
+	// setup --with-tls for TLS-rendered resources (e.g. platform UI ingress).
+	// The registry Secret itself is owned by an explicit registry-cert Certificate.
 	RegistryClusterIssuerName string
 	SkopeoImage               string
 	OperatorImage             string // Override for operator image
@@ -3719,9 +3720,11 @@ _No package overview is documented._
 - [`func CheckCertificateWithKubectl(kubectl core.KubectlRunner, name, namespace string) error`](#cli-cert-manager-func-checkcertificatewithkubectl-kubectl-core-kubectlrunner-name-namespace-string-error)
 - [`func CheckClusterIssuerWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkclusterissuerwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func CheckNamedClusterIssuerWithKubectl(kubectl core.KubectlRunner, name string) error`](#cli-cert-manager-func-checknamedclusterissuerwithkubectl-kubectl-core-kubectlrunner-name-string-error)
+- [`func CheckRegistryCertificateOwnershipWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkregistrycertificateownershipwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func ClusterIssuerNameForACME(staging bool) string`](#cli-cert-manager-func-clusterissuernameforacme-staging-bool-string)
 - [`func EnsureCertManagerInstalled(kubectl core.KubectlRunner, logger *zap.Logger) error`](#cli-cert-manager-func-ensurecertmanagerinstalled-kubectl-core-kubectlrunner-logger-zap-logger-error)
 - [`func PreflightACMEHostnamesPort80(dnsNames []string)`](#cli-cert-manager-func-preflightacmehostnamesport80-dnsnames-string)
+- [`func RemoveRegistryIngressShimAnnotationWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-removeregistryingressshimannotationwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func ValidateACMEHostnameForPublicCA() error`](#cli-cert-manager-func-validateacmehostnameforpublicca-error)
 - [`func ValidateIngressManifestForACME(ingressManifest string) error`](#cli-cert-manager-func-validateingressmanifestforacme-ingressmanifest-string-error)
 - [`func WaitForCertificateReadyWithKubectl(kubectl core.KubectlRunner, name, namespace string, timeout time.Duration) error`](#cli-cert-manager-func-waitforcertificatereadywithkubectl-kubectl-core-kubectlrunner-name-namespace-string-timeout-time-duration-error)
@@ -3739,6 +3742,7 @@ _No package overview is documented._
 const (
 	CertClusterIssuerName   = certClusterIssuerName
 	RegistryCertificateName = registryCertificateName
+	RegistryTLSSecretName   = registryTLSSecretName
 )
 ```
 
@@ -3795,6 +3799,11 @@ func CheckClusterIssuerWithKubectl(kubectl core.KubectlRunner) error
 func CheckNamedClusterIssuerWithKubectl(kubectl core.KubectlRunner, name string) error
 ```
 
+<a id="cli-cert-manager-func-checkregistrycertificateownershipwithkubectl-kubectl-core-kubectlrunner-error"></a>
+```text
+func CheckRegistryCertificateOwnershipWithKubectl(kubectl core.KubectlRunner) error
+```
+
 <a id="cli-cert-manager-func-clusterissuernameforacme-staging-bool-string"></a>
 ```text
 func ClusterIssuerNameForACME(staging bool) string
@@ -3811,6 +3820,11 @@ func EnsureCertManagerInstalled(kubectl core.KubectlRunner, logger *zap.Logger) 
 <a id="cli-cert-manager-func-preflightacmehostnamesport80-dnsnames-string"></a>
 ```text
 func PreflightACMEHostnamesPort80(dnsNames []string)
+```
+
+<a id="cli-cert-manager-func-removeregistryingressshimannotationwithkubectl-kubectl-core-kubectlrunner-error"></a>
+```text
+func RemoveRegistryIngressShimAnnotationWithKubectl(kubectl core.KubectlRunner) error
 ```
 
 <a id="cli-cert-manager-func-validateacmehostnameforpublicca-error"></a>

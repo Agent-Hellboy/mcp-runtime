@@ -238,12 +238,7 @@ func deployRegistry(logger *zap.Logger, namespace string, port int, registryType
 		return wrappedErr
 	}
 	manifest = rewriteRegistryHost(manifest, core.GetRegistryIngressHost())
-	issuer := core.GetRegistryClusterIssuerName()
-	manifest = rewriteRegistryClusterIssuerAnnotation(manifest, issuer)
-	if s := strings.TrimSpace(issuer); s != "" && !strings.Contains(manifest, "cert-manager.io/cluster-issuer: "+s) {
-		logger.Warn("registry manifest does not show expected cert-manager.io/cluster-issuer; ingress TLS issuer may be wrong (check overlay for cert-manager.io/cluster-issuer: mcp-runtime-ca)",
-			zap.String("expected_issuer", s))
-	}
+	manifest = stripRegistryClusterIssuerAnnotation(manifest)
 	if overrideImage != "" {
 		logger.Info("Applying registry image override", zap.String("image", overrideImage))
 		updated := strings.Replace(manifest, "image: "+defaultRegistryImage, "image: "+overrideImage, 1)
@@ -347,19 +342,18 @@ func rewriteRegistryHost(manifest, host string) string {
 	return strings.ReplaceAll(manifest, "registry.local", host)
 }
 
-// rewriteRegistryClusterIssuerAnnotation sets cert-manager.io/cluster-issuer on the registry Ingress when
-// the TLS overlay is used (value is mcp-runtime-ca in git; replaced during setup for Let's Encrypt or private CA).
-func rewriteRegistryClusterIssuerAnnotation(manifest, issuerName string) string {
-	issuerName = strings.TrimSpace(issuerName)
-	if issuerName == "" {
-		return manifest
+// stripRegistryClusterIssuerAnnotation keeps registry TLS owned by the explicit
+// registry/registry-cert Certificate instead of cert-manager ingress-shim.
+func stripRegistryClusterIssuerAnnotation(manifest string) string {
+	lines := strings.SplitAfter(manifest, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.Contains(line, "cert-manager.io/cluster-issuer:") {
+			continue
+		}
+		out = append(out, line)
 	}
-	const oldLine = "cert-manager.io/cluster-issuer: mcp-runtime-ca"
-	newLine := "cert-manager.io/cluster-issuer: " + issuerName
-	if !strings.Contains(manifest, oldLine) {
-		return manifest
-	}
-	return strings.ReplaceAll(manifest, oldLine, newLine)
+	return strings.Join(out, "")
 }
 
 func renderKustomizeManifest(kubectl core.KubectlRunner, manifestPath string) (string, error) {

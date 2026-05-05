@@ -412,6 +412,80 @@ func TestCheckCertificateWithKubectlError(t *testing.T) {
 	}
 }
 
+func TestRemoveRegistryIngressShimAnnotationWithKubectl(t *testing.T) {
+	t.Run("skips when registry ingress is absent", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				cmd := &core.MockCommand{Args: spec.Args}
+				if commandHasArgs(spec, "get", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry) {
+					cmd.RunErr = errors.New("not found")
+				}
+				return cmd
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+
+		if err := removeRegistryIngressShimAnnotationWithKubectl(kubectl); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(mock.Commands) != 1 {
+			t.Fatalf("expected only get ingress command, got: %v", mock.Commands)
+		}
+	})
+
+	t.Run("removes annotation when registry ingress exists", func(t *testing.T) {
+		mock := &core.MockExecutor{}
+		kubectl := core.NewTestKubectlClient(mock)
+
+		if err := removeRegistryIngressShimAnnotationWithKubectl(kubectl); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(mock.Commands) != 2 {
+			t.Fatalf("expected get and patch commands, got: %v", mock.Commands)
+		}
+		if !commandHasArgs(mock.Commands[1], "patch", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry, "--type=merge", "-p", `{"metadata":{"annotations":{"cert-manager.io/cluster-issuer":null}}}`) {
+			t.Fatalf("unexpected patch command: %v", mock.Commands[1].Args)
+		}
+	})
+}
+
+func TestCheckRegistryCertificateOwnershipWithKubectl(t *testing.T) {
+	t.Run("allows registry-cert owner", func(t *testing.T) {
+		mock := certificateListMock(`{"items":[{"metadata":{"name":"registry-cert"},"spec":{"secretName":"registry-tls"}}]}`)
+		kubectl := core.NewTestKubectlClient(mock)
+
+		if err := checkRegistryCertificateOwnershipWithKubectl(kubectl); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("rejects ingress-shim owner", func(t *testing.T) {
+		mock := certificateListMock(`{"items":[{"metadata":{"name":"registry-tls"},"spec":{"secretName":"registry-tls"}}]}`)
+		kubectl := core.NewTestKubectlClient(mock)
+
+		err := checkRegistryCertificateOwnershipWithKubectl(kubectl)
+		if err == nil {
+			t.Fatal("expected conflict")
+		}
+		if !strings.Contains(err.Error(), "registry-tls") || !strings.Contains(err.Error(), "registry-cert") {
+			t.Fatalf("expected actionable ownership error, got: %v", err)
+		}
+	})
+
+	t.Run("rejects duplicate owners", func(t *testing.T) {
+		mock := certificateListMock(`{"items":[{"metadata":{"name":"registry-cert"},"spec":{"secretName":"registry-tls"}},{"metadata":{"name":"registry-tls"},"spec":{"secretName":"registry-tls"}}]}`)
+		kubectl := core.NewTestKubectlClient(mock)
+
+		err := checkRegistryCertificateOwnershipWithKubectl(kubectl)
+		if err == nil {
+			t.Fatal("expected conflict")
+		}
+		if !strings.Contains(err.Error(), "registry-cert, registry-tls") {
+			t.Fatalf("expected sorted certificate names, got: %v", err)
+		}
+	})
+}
+
 func TestApplyClusterIssuerWithKubectlError(t *testing.T) {
 	mock := &core.MockExecutor{DefaultRunErr: errors.New("apply failed")}
 	kubectl := core.NewTestKubectlClient(mock)
@@ -456,6 +530,23 @@ func commandHasArgs(cmd core.ExecSpec, args ...string) bool {
 		}
 	}
 	return false
+}
+
+func certificateListMock(output string) *core.MockExecutor {
+	return &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "certificates", "-n", core.NamespaceRegistry, "-o", "json") {
+				cmd.RunFunc = func() error {
+					if cmd.StdoutW != nil {
+						_, _ = cmd.StdoutW.Write([]byte(output))
+					}
+					return nil
+				}
+			}
+			return cmd
+		},
+	}
 }
 
 func repoRootForTest(t *testing.T) string {

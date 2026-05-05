@@ -4,8 +4,12 @@ package certmanager
 // It handles cert-manager integration, CA secret management, and certificate provisioning.
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,6 +25,7 @@ const (
 	certCASecretName                = "mcp-runtime-ca"
 	certClusterIssuerName           = "mcp-runtime-ca"
 	registryCertificateName         = "registry-cert"
+	registryTLSSecretName           = "registry-tls"
 	clusterIssuerManifestPath       = "config/cert-manager/cluster-issuer.yaml"
 	registryCertificateManifestPath = "config/cert-manager/example-registry-certificate.yaml"
 )
@@ -28,6 +33,7 @@ const (
 const (
 	CertClusterIssuerName   = certClusterIssuerName
 	RegistryCertificateName = registryCertificateName
+	RegistryTLSSecretName   = registryTLSSecretName
 )
 
 // CertManager manages cert-manager resources for the platform.
@@ -118,6 +124,29 @@ func (m *CertManager) Apply(dryRun bool) error {
 		)
 		core.Error("Failed to create registry namespace")
 		core.LogStructuredError(m.logger, wrappedErr, "Failed to create registry namespace")
+		return wrappedErr
+	}
+	core.Info("Checking registry TLS Certificate ownership")
+	if err := removeRegistryIngressShimAnnotationWithKubectl(m.kubectl); err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrTLSSetupFailed,
+			err,
+			err.Error(),
+			map[string]any{"ingress": core.RegistryServiceName, "namespace": core.NamespaceRegistry, "component": "cert"},
+		)
+		core.Error("Failed to remove registry ingress-shim annotation")
+		core.LogStructuredError(m.logger, wrappedErr, "Failed to remove registry ingress-shim annotation")
+		return wrappedErr
+	}
+	if err := checkRegistryCertificateOwnershipWithKubectl(m.kubectl); err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrTLSSetupFailed,
+			err,
+			err.Error(),
+			map[string]any{"secret": registryTLSSecretName, "namespace": core.NamespaceRegistry, "component": "cert"},
+		)
+		core.Error("Registry TLS Certificate conflict")
+		core.LogStructuredError(m.logger, wrappedErr, "Registry TLS Certificate conflict")
 		return wrappedErr
 	}
 	core.Info("Applying Certificate for registry")
@@ -214,6 +243,90 @@ func checkCertificateWithKubectl(kubectl core.KubectlRunner, name, namespace str
 
 func CheckCertificateWithKubectl(kubectl core.KubectlRunner, name, namespace string) error {
 	return checkCertificateWithKubectl(kubectl, name, namespace)
+}
+
+func removeRegistryIngressShimAnnotationWithKubectl(kubectl core.KubectlRunner) error {
+	if err := kubectl.RunWithOutput(
+		[]string{"get", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry},
+		io.Discard, io.Discard,
+	); err != nil {
+		return nil
+	}
+	if err := kubectl.RunWithOutput(
+		[]string{"patch", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry, "--type=merge", "-p", `{"metadata":{"annotations":{"cert-manager.io/cluster-issuer":null}}}`},
+		io.Discard, io.Discard,
+	); err != nil {
+		return fmt.Errorf("failed to remove cert-manager.io/cluster-issuer from registry ingress: %w", err)
+	}
+	return nil
+}
+
+func RemoveRegistryIngressShimAnnotationWithKubectl(kubectl core.KubectlRunner) error {
+	return removeRegistryIngressShimAnnotationWithKubectl(kubectl)
+}
+
+type certificateList struct {
+	Items []struct {
+		Metadata struct {
+			Name string `json:"name"`
+		} `json:"metadata"`
+		Spec struct {
+			SecretName string `json:"secretName"`
+		} `json:"spec"`
+	} `json:"items"`
+}
+
+func checkRegistryCertificateOwnershipWithKubectl(kubectl core.KubectlRunner) error {
+	certs, err := registryTLSCertificateOwners(kubectl)
+	if err != nil {
+		return err
+	}
+	if len(certs) == 0 || (len(certs) == 1 && certs[0] == registryCertificateName) {
+		return nil
+	}
+	return fmt.Errorf(
+		"registry TLS secret %q in namespace %q is already referenced by Certificate(s) %s; setup owns this secret with Certificate %q. Delete or rename the extra Certificate resource before re-running setup (old ingress-shim drift is usually fixed with: kubectl delete certificate registry-tls -n registry)",
+		registryTLSSecretName,
+		core.NamespaceRegistry,
+		strings.Join(certs, ", "),
+		registryCertificateName,
+	)
+}
+
+func CheckRegistryCertificateOwnershipWithKubectl(kubectl core.KubectlRunner) error {
+	return checkRegistryCertificateOwnershipWithKubectl(kubectl)
+}
+
+func registryTLSCertificateOwners(kubectl core.KubectlRunner) ([]string, error) {
+	cmd, err := kubectl.CommandArgs([]string{"get", "certificates", "-n", core.NamespaceRegistry, "-o", "json"})
+	if err != nil {
+		return nil, err
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.SetStdout(&stdout)
+	cmd.SetStderr(&stderr)
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("failed to list cert-manager Certificates in namespace %q: %v (%s)", core.NamespaceRegistry, err, strings.TrimSpace(stderr.String()))
+	}
+	if strings.TrimSpace(stdout.String()) == "" {
+		return nil, nil
+	}
+	var list certificateList
+	if err := json.Unmarshal(stdout.Bytes(), &list); err != nil {
+		return nil, fmt.Errorf("failed to parse cert-manager Certificates in namespace %q: %v", core.NamespaceRegistry, err)
+	}
+	var owners []string
+	for _, item := range list.Items {
+		if item.Spec.SecretName != registryTLSSecretName {
+			continue
+		}
+		name := strings.TrimSpace(item.Metadata.Name)
+		if name != "" {
+			owners = append(owners, name)
+		}
+	}
+	sort.Strings(owners)
+	return owners, nil
 }
 
 func applyClusterIssuerWithKubectl(kubectl core.KubectlRunner) error {

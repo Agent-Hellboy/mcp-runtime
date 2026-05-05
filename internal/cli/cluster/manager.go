@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"go.uber.org/zap"
@@ -270,6 +271,16 @@ func (m *ClusterManager) ConfigureCluster(opts IngressOptions) error {
 	if err == nil && strings.TrimSpace(string(out)) != "" {
 		hasIngress = true
 	}
+	traefikInstalls := m.detectTraefikInstallations()
+	if err := validateTraefikInstallPlan(traefikInstalls, opts.Force); err != nil {
+		core.Error("Conflicting Traefik installation")
+		core.LogStructuredError(m.logger, err, "Conflicting Traefik installation")
+		return err
+	}
+	if hasExternalTraefikInstall(traefikInstalls) {
+		m.logger.Info("External Traefik already present; skipping repo-managed ingress install", zap.String("ingress", opts.Mode))
+		return nil
+	}
 	if hasIngress && !opts.Force {
 		m.logger.Info("Ingress controller already present; skipping install", zap.String("ingress", opts.Mode))
 		return nil
@@ -316,6 +327,80 @@ func (m *ClusterManager) ConfigureCluster(opts IngressOptions) error {
 	m.logger.Info("Ingress controller installed successfully", zap.String("ingress", opts.Mode))
 	m.logger.Info("Cluster configuration complete")
 	return nil
+}
+
+type traefikInstall struct {
+	Namespace  string
+	Deployment bool
+	Service    bool
+}
+
+func (i traefikInstall) repoManaged() bool {
+	return i.Namespace == "traefik"
+}
+
+func (i traefikInstall) summary() string {
+	var resources []string
+	if i.Deployment {
+		resources = append(resources, "deployment")
+	}
+	if i.Service {
+		resources = append(resources, "service")
+	}
+	return fmt.Sprintf("%s/traefik (%s)", i.Namespace, strings.Join(resources, "+"))
+}
+
+func (m *ClusterManager) detectTraefikInstallations() []traefikInstall {
+	var installs []traefikInstall
+	for _, ns := range []string{"kube-system", "traefik"} {
+		install := traefikInstall{Namespace: ns}
+		install.Deployment = m.namedTraefikResourceExists("deployment", ns)
+		install.Service = m.namedTraefikResourceExists("service", ns)
+		if install.Deployment || install.Service {
+			installs = append(installs, install)
+		}
+	}
+	sort.Slice(installs, func(i, j int) bool { return installs[i].Namespace < installs[j].Namespace })
+	return installs
+}
+
+func (m *ClusterManager) namedTraefikResourceExists(kind, namespace string) bool {
+	out, err := m.kubectl.CombinedOutput([]string{"get", kind, "traefik", "-n", namespace, "-o", "jsonpath={.metadata.name}"})
+	return err == nil && strings.TrimSpace(string(out)) == "traefik"
+}
+
+func validateTraefikInstallPlan(installs []traefikInstall, force bool) error {
+	var managed []string
+	var external []string
+	for _, install := range installs {
+		if install.repoManaged() {
+			managed = append(managed, install.summary())
+			continue
+		}
+		external = append(external, install.summary())
+	}
+	if len(managed) > 0 && len(external) > 0 {
+		return core.NewWithSentinel(
+			core.ErrInstallIngressControllerFailed,
+			fmt.Sprintf("multiple Traefik installs detected: repo-managed %s and external %s. Remove one Traefik stack before re-running setup; on k3s, prefer kube-system/traefik and skip the repo-managed install with --ingress none if needed", strings.Join(managed, ", "), strings.Join(external, ", ")),
+		)
+	}
+	if force && len(external) > 0 {
+		return core.NewWithSentinel(
+			core.ErrInstallIngressControllerFailed,
+			fmt.Sprintf("--force-ingress-install cannot install repo-managed Traefik while external Traefik exists: %s. Remove or disable the existing controller first, or run setup without forcing and reuse it", strings.Join(external, ", ")),
+		)
+	}
+	return nil
+}
+
+func hasExternalTraefikInstall(installs []traefikInstall) bool {
+	for _, install := range installs {
+		if !install.repoManaged() {
+			return true
+		}
+	}
+	return false
 }
 
 // ConfigureClusterWithValues adapts exported flag values into the internal ingress options shape.

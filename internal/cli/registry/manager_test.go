@@ -685,6 +685,33 @@ spec:
 		}
 	})
 
+	t.Run("strips registry ingress-shim annotation", func(t *testing.T) {
+		manifest := "metadata:\n  annotations:\n    traefik.ingress.kubernetes.io/router.entrypoints: websecure\n    cert-manager.io/cluster-issuer: mcp-runtime-ca\nspec:\n"
+		got := stripRegistryClusterIssuerAnnotation(manifest)
+		if strings.Contains(got, "cert-manager.io/cluster-issuer") {
+			t.Fatalf("expected cert-manager annotation to be stripped, got: %s", got)
+		}
+		if !strings.Contains(got, "traefik.ingress.kubernetes.io/router.entrypoints: websecure") {
+			t.Fatalf("expected Traefik annotation to remain, got: %s", got)
+		}
+	})
+
+	t.Run("tls overlays do not request ingress-shim certificates", func(t *testing.T) {
+		root := repoRootForRegistryTest(t)
+		for _, rel := range []string{
+			"config/registry/overlays/tls/ingress-tls.yaml",
+			"config/registry/overlays/hostpath-tls/ingress-tls.yaml",
+		} {
+			content, err := os.ReadFile(filepath.Join(root, rel))
+			if err != nil {
+				t.Fatalf("read %s: %v", rel, err)
+			}
+			if strings.Contains(string(content), "cert-manager.io/cluster-issuer") {
+				t.Fatalf("%s must not request an ingress-shim Certificate for registry-tls", rel)
+			}
+		}
+	})
+
 	t.Run("rejects unsupported registry type", func(t *testing.T) {
 
 		mock := &core.MockExecutor{}
@@ -819,4 +846,22 @@ func setDefaultPrinterWriter(t *testing.T, w *bytes.Buffer) {
 		core.DefaultPrinter.Writer = prevWriter
 		core.DefaultPrinter.Quiet = prevQuiet
 	})
+}
+
+func repoRootForRegistryTest(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working dir: %v", err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("repo root not found")
+		}
+		dir = parent
+	}
 }
