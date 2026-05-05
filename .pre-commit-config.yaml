@@ -1,4 +1,10 @@
 repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+        name: gitleaks
+        exclude: go\.sum$
   - repo: local
     hooks:
       - id: gofmt
