@@ -10,6 +10,8 @@ let sessionsCache = [];
 let userAPIKeysCache = [];
 let serversCache = [];
 let userAPIKeyClearTimer = null;
+let serverSearchQuery = "";
+let serverStatusFilter = "all";
 
 // API Helper
 async function fetchJSON(path, options = {}) {
@@ -42,6 +44,34 @@ function unauthorizedError() {
 
 function isUnauthorizedError(err) {
   return err?.name === "UnauthorizedError";
+}
+
+async function copyTextToClipboard(text, successMessage = "Copied") {
+  const value = String(text || "");
+  if (!value) {
+    showToast("Nothing to copy", "warning");
+    return;
+  }
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = value;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+    showToast(successMessage);
+  } catch (err) {
+    console.error("Failed to copy text:", err);
+    showToast("Copy failed", "error");
+  }
 }
 
 // Toast Notifications
@@ -636,48 +666,199 @@ async function loadServers() {
 function renderServers() {
   const grid = document.getElementById("servers-grid");
   if (!grid) return;
+  renderServerCatalogSummary();
+
   if (serversCache.length === 0) {
-    grid.innerHTML = '<div class="component-card">No MCP servers found.</div>';
+    grid.innerHTML = '<div class="server-empty-state">No MCP servers found.</div>';
+    return;
+  }
+
+  const servers = filteredServers();
+  if (servers.length === 0) {
+    grid.innerHTML = '<div class="server-empty-state">No servers match this search.</div>';
     return;
   }
 
   grid.innerHTML = "";
   const fragment = document.createDocumentFragment();
-  serversCache.forEach((server) => {
+  servers.forEach((server) => {
     const card = document.createElement("article");
     card.className = "server-card";
 
-    const title = document.createElement("div");
-    title.className = "server-card-head";
-    title.innerHTML = `
-      <div>
-        <h3>${escapeHtml(server.name || "-")}</h3>
-        <p>${escapeHtml(server.namespace || "-")}</p>
-      </div>
-      <span class="badge ${server.status === "Ready" ? "badge-success" : "badge-muted"}">${escapeHtml(server.status || "Unknown")}</span>
-    `;
-    card.appendChild(title);
+    card.appendChild(renderServerHero(server));
+    card.appendChild(renderServerMeta(server));
+    card.appendChild(renderServerEndpoint(server));
 
-    if (server.endpoint) {
-      const endpoint = document.createElement("code");
-      endpoint.className = "server-endpoint";
-      endpoint.textContent = server.endpoint;
-      card.appendChild(endpoint);
+    const inventory = document.createElement("div");
+    inventory.className = "server-inventory-grid";
+    inventory.appendChild(renderInventoryBlock("Tools", server.tools || [], renderToolItem));
+    inventory.appendChild(renderInventoryBlock("Prompts", server.prompts || [], renderInventoryItem));
+    inventory.appendChild(renderInventoryBlock("Resources", server.resources || [], renderInventoryItem));
+    inventory.appendChild(renderInventoryBlock("Tasks", server.tasks || [], renderInventoryItem));
+    card.appendChild(inventory);
+
+    if (server.access_json && Object.keys(server.access_json).length) {
+      card.appendChild(renderServerConnectConfig(server));
     }
-
-    card.appendChild(renderInventoryBlock("Tools", server.tools || [], renderToolItem));
-    card.appendChild(renderInventoryBlock("Prompts", server.prompts || [], renderInventoryItem));
-    card.appendChild(renderInventoryBlock("Resources", server.resources || [], renderInventoryItem));
-    card.appendChild(renderInventoryBlock("Tasks", server.tasks || [], renderInventoryItem));
-
-    const json = document.createElement("pre");
-    json.className = "access-json";
-    json.textContent = JSON.stringify(server.access_json || {}, null, 2);
-    card.appendChild(json);
 
     fragment.appendChild(card);
   });
   grid.appendChild(fragment);
+}
+
+function filteredServers() {
+  const query = serverSearchQuery.trim().toLowerCase();
+  return serversCache.filter((server) => {
+    const status = String(server.status || "Unknown").toLowerCase();
+    if (serverStatusFilter === "ready" && status !== "ready") return false;
+    if (serverStatusFilter === "attention" && status === "ready") return false;
+    if (!query) return true;
+    return serverSearchText(server).includes(query);
+  });
+}
+
+function serverSearchText(server) {
+  const values = [
+    server.name,
+    server.namespace,
+    server.status,
+    server.ready,
+    server.endpoint,
+    ...(server.tools || []).map((tool) => `${tool.name || ""} ${tool.requiredTrust || ""} ${tool.description || ""}`),
+    ...(server.prompts || []).map(inventorySearchText),
+    ...(server.resources || []).map(inventorySearchText),
+    ...(server.tasks || []).map(inventorySearchText),
+  ];
+  return values.filter(Boolean).join(" ").toLowerCase();
+}
+
+function inventorySearchText(item) {
+  if (typeof item === "string") return item;
+  const labels =
+    item?.labels && typeof item.labels === "object"
+      ? Object.entries(item.labels)
+          .map(([k, v]) => `${k} ${v}`)
+          .join(" ")
+      : "";
+  return `${item?.name || ""} ${item?.description || ""} ${labels}`;
+}
+
+function renderServerCatalogSummary() {
+  const total = serversCache.length;
+  const ready = serversCache.filter((server) => server.status === "Ready").length;
+  const tools = serversCache.reduce((sum, server) => sum + (server.tools || []).length, 0);
+  setText("server-count-total", formatNumber(total));
+  setText("server-count-ready", formatNumber(ready));
+  setText("server-count-tools", formatNumber(tools));
+}
+
+function renderServerHero(server) {
+  const hero = document.createElement("div");
+  hero.className = "server-card-hero";
+  hero.innerHTML = `
+    <div class="server-identity">
+      <span class="server-avatar" aria-hidden="true">${escapeHtml(serverInitials(server.name))}</span>
+      <div class="server-title-stack">
+        <h3>${escapeHtml(server.name || "-")}</h3>
+        <p>${escapeHtml(server.namespace || "-")}</p>
+      </div>
+    </div>
+    <div class="server-status-stack">
+      <span class="badge ${serverBadgeClass(server.status)}">${escapeHtml(server.status || "Unknown")}</span>
+      <span>${escapeHtml(server.ready || "0/0")} pods</span>
+    </div>
+  `;
+  return hero;
+}
+
+function renderServerMeta(server) {
+  const meta = document.createElement("div");
+  meta.className = "server-meta-row";
+  meta.appendChild(serverMetaPill("HTTP MCP"));
+  meta.appendChild(serverMetaPill(`${(server.tools || []).length} tools`));
+  meta.appendChild(serverMetaPill(`${(server.prompts || []).length} prompts`));
+  meta.appendChild(serverMetaPill(`${(server.resources || []).length} resources`));
+  meta.appendChild(serverMetaPill(`Created ${formatServerAge(server.age)}`));
+  return meta;
+}
+
+function serverMetaPill(text) {
+  const item = document.createElement("span");
+  item.className = "server-meta-pill";
+  item.textContent = text;
+  return item;
+}
+
+function renderServerEndpoint(server) {
+  const row = document.createElement("div");
+  row.className = "server-endpoint-row";
+  const endpoint = document.createElement("code");
+  endpoint.className = "server-endpoint";
+  endpoint.textContent = server.endpoint || "No public endpoint";
+  row.appendChild(endpoint);
+
+  if (server.endpoint) {
+    const copy = document.createElement("button");
+    copy.className = "ghost server-action";
+    copy.type = "button";
+    copy.textContent = "Copy URL";
+    copy.addEventListener("click", () => copyTextToClipboard(server.endpoint, "Endpoint copied"));
+    row.appendChild(copy);
+  }
+
+  return row;
+}
+
+function renderServerConnectConfig(server) {
+  const details = document.createElement("details");
+  details.className = "server-connect";
+  const summary = document.createElement("summary");
+  summary.textContent = "Connect config";
+  details.appendChild(summary);
+
+  const body = document.createElement("div");
+  body.className = "server-connect-body";
+  const json = document.createElement("pre");
+  json.className = "access-json";
+  const jsonText = JSON.stringify(server.access_json || {}, null, 2);
+  json.textContent = jsonText;
+  const copy = document.createElement("button");
+  copy.className = "ghost server-action";
+  copy.type = "button";
+  copy.textContent = "Copy JSON";
+  copy.addEventListener("click", () => copyTextToClipboard(jsonText, "Connect JSON copied"));
+  body.append(json, copy);
+  details.appendChild(body);
+  return details;
+}
+
+function serverInitials(name) {
+  return String(name || "MCP")
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+}
+
+function serverBadgeClass(status) {
+  if (status === "Ready") return "badge-success";
+  if (status === "Degraded") return "badge-warning";
+  if (status === "NotReady") return "badge-error";
+  return "badge-muted";
+}
+
+function formatServerAge(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function setText(id, value) {
+  const node = document.getElementById(id);
+  if (node) node.textContent = value;
 }
 
 function renderInventoryBlock(label, items, itemRenderer) {
@@ -689,7 +870,7 @@ function renderInventoryBlock(label, items, itemRenderer) {
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "inventory-empty";
-    empty.textContent = "None declared.";
+    empty.textContent = "None";
     block.appendChild(empty);
     return block;
   }
@@ -704,7 +885,7 @@ function renderInventoryBlock(label, items, itemRenderer) {
 }
 
 function renderToolItem(tool) {
-  const trust = tool.requiredTrust ? ` <span>${escapeHtml(tool.requiredTrust)}</span>` : "";
+  const trust = tool.requiredTrust ? ` <span class="trust-chip">${escapeHtml(tool.requiredTrust)}</span>` : "";
   const desc = tool.description ? `<small>${escapeHtml(tool.description)}</small>` : "";
   return `<strong>${escapeHtml(tool.name || "-")}</strong>${trust}${desc}`;
 }
@@ -746,6 +927,14 @@ function initDashboard() {
   });
   document.getElementById("refresh-servers")?.addEventListener("click", () => {
     loadServers();
+  });
+  document.getElementById("server-search")?.addEventListener("input", (event) => {
+    serverSearchQuery = event.target.value || "";
+    renderServers();
+  });
+  document.getElementById("server-status-filter")?.addEventListener("change", (event) => {
+    serverStatusFilter = event.target.value || "all";
+    renderServers();
   });
 }
 
