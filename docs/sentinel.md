@@ -14,6 +14,29 @@
 | **gateway** | Kubernetes deployment fronting the sentinel API, ingest, and UI surfaces. |
 | **reference mcp-server** | Small example server in `examples/go-mcp-server` for end-to-end smoke tests. |
 
+## Kubernetes awareness and hardening
+
+Sentinel services usually run as Kubernetes workloads, but not every service
+needs the Kubernetes API. For hardening, separate **Kubernetes-aware** services
+that hold a service account token and RBAC from **Kubernetes-agnostic** services
+that only use HTTP, Kafka, ClickHouse, Postgres, or local files.
+
+| Component | Kubernetes awareness | Runtime access | Hardening notes |
+|---|---|---|---|
+| **api** | Kubernetes-aware. `services/api` initializes clients through `pkg/k8sclient`, using in-cluster config first and kubeconfig fallback outside the cluster. | Reads `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession`; applies grants/sessions; reads component health; restarts Sentinel workloads; manages platform deployment namespaces, Deployments, Services, quotas, limits, and NetworkPolicies. RBAC is in `k8s/08-api-rbac.yaml`. | Treat this as the main privileged Sentinel service. Keep admin auth tight, keep `ADMIN_API_KEYS` separate from user keys, prefer in-cluster service account credentials in production, and review the broad deployment-management RBAC before enabling user deployment APIs on shared clusters. |
+| **gateway** | Kubernetes-aware Traefik ingress controller. | Watches Ingress, Service, Endpoint, Secret, and IngressClass resources for the namespaces it serves. The bundled Sentinel-local gateway watches `mcp-sentinel`; the shared ingress overlays watch `registry`, `mcp-sentinel`, and `mcp-servers`. | Keep watched namespaces explicit, avoid cluster-wide ingress watches unless required, do not expose Grafana or Prometheus on an unauthenticated public host, and keep redaction middleware limited to routes that need it. |
+| **mcp-proxy** | Kubernetes-integrated but Kubernetes API-agnostic. It is injected into MCP server pods and reads operator-rendered policy from mounted files and env vars. | Does not need a Kubernetes client or service account token. It forwards MCP traffic to the local server container and emits audit events to ingest. | Keep `automountServiceAccountToken: false`, read-only policy mounts, `readOnlyRootFilesystem`, dropped capabilities, and non-root execution. Treat `ANALYTICS_API_KEY` as ingest-scoped, not an admin API key. |
+| **ui** | Kubernetes API-agnostic. | Serves the browser UI and proxies `/api/*` to `api` through `API_UPSTREAM` with UI session credentials or the configured upstream key. | Keep it behind TLS for public hosts, retain the security headers in `services/ui`, set `UI_REQUIRE_HTTPS=false` only for deliberate non-TLS dev ingress, and do not grant it Kubernetes RBAC. |
+| **ingest** | Kubernetes API-agnostic. | Authenticates `/events`, validates request size and event shape, and writes to Kafka. | Require `INGEST_API_KEYS` or OIDC for real deployments, use ingest-only keys, restrict network access to proxy/gateway callers, and keep the public `/ingest` route off production hosts unless intentionally exposed. |
+| **processor** | Kubernetes API-agnostic. | Consumes Kafka and writes ClickHouse. It only exposes health and metrics. | Do not expose it through ingress. Restrict network access to Kafka, ClickHouse, metrics scraping, and tracing endpoints. |
+| **storage and observability** | Mixed. ClickHouse, Kafka, Zookeeper, Postgres, Grafana, Prometheus, Tempo, Loki, and the OTel collector are Kubernetes API-agnostic in the bundled manifests; Promtail is Kubernetes-aware so it can discover pod logs. | Data stores and dashboards back Sentinel audit, identity, metrics, traces, and logs. Promtail has pod read/watch RBAC. | Review persistence, retention, backups, and dashboard auth before production use. Keep Grafana and Prometheus private or behind your own auth-aware ingress, and review Promtail's cluster log visibility before enabling it on multi-tenant clusters. |
+
+Operationally, the safest production posture is to give Kubernetes API access
+only to `api`, ingress controllers, the runtime operator, and log collectors
+that need it. Services that do not call Kubernetes should keep service account
+token automounting disabled and should be isolated with NetworkPolicies where
+the cluster supports them.
+
 ## Event path
 
 ```mermaid
@@ -226,7 +249,7 @@ CLI parity: `mcp-runtime access grant` and `mcp-runtime access session` cover th
 
 | Group | Files |
 |---|---|
-| **Core app** | `00-namespace`, `01-config`, `02-secrets`, `03-clickhouse`, `04-clickhouse-init`, `05-kafka`, `06-ingest`, `07-processor`, `08-api`, `09-ui`, `10-gateway` |
+| **Core app** | `00-namespace`, `01-config`, `02-secrets`, `03-clickhouse`, `04-clickhouse-init`, `05-kafka`, `06-ingest`, `07-processor`, `08-api-rbac`, `08-api`, `09-ui`, `10-gateway`, `20-postgres`, `21-platform-admin-bootstrap-job` |
 | **Observability** | `11-prometheus`, `12-grafana`, `15-otel-collector`, `16-tempo`, `17-loki`, `18-promtail`, `19-grafana-datasources` |
 | **Example wiring** | `13-mcp-example`, `14-mcp-proxy-sidecar` |
 
