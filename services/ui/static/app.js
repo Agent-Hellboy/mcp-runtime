@@ -1240,7 +1240,7 @@ function renderGrants() {
     row.appendChild(createBadgeCell(status, statusClass));
     row.appendChild(
       createActionCell(grant.disabled ? "Enable" : "Disable", () =>
-        toggleGrant(grant.namespace || "", grant.name || "", grant.disabled)
+        toggleGrant(namespace, grant.name || "", grant.disabled)
       )
     );
     fragment.appendChild(row);
@@ -1419,11 +1419,7 @@ function renderSessions() {
     row.appendChild(createBadgeCell(status, statusClass));
     row.appendChild(
       createActionCell(session.revoked ? "Unrevoke" : "Revoke", () =>
-        toggleSession(
-          session.namespace || "",
-          session.name || "",
-          session.revoked
-        )
+        toggleSession(namespace, session.name || "", session.revoked)
       )
     );
     fragment.appendChild(row);
