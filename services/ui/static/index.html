@@ -84,6 +84,18 @@
         >
           Operations
         </button>
+        <button
+          id="tab-button-platform"
+          class="tab"
+          data-tab="platform"
+          data-admin-only="true"
+          role="tab"
+          type="button"
+          aria-controls="tab-platform"
+          aria-selected="false"
+        >
+          Platform
+        </button>
       </nav>
 
       <!-- MCP Servers Tab -->
@@ -95,9 +107,32 @@
       >
         <div class="panel">
           <div class="panel-head">
-            <h2>MCP Servers</h2>
+            <div>
+              <h2>MCP Servers</h2>
+              <p class="panel-kicker">Browse deployed MCP endpoints and connection details.</p>
+            </div>
             <div class="panel-actions">
               <button class="ghost" id="refresh-servers" type="button">Refresh</button>
+            </div>
+          </div>
+          <div class="server-catalog-toolbar">
+            <div class="server-catalog-stats" aria-label="MCP server summary">
+              <span><strong id="server-count-total">-</strong> servers</span>
+              <span><strong id="server-count-ready">-</strong> ready</span>
+              <span><strong id="server-count-tools">-</strong> tools</span>
+            </div>
+            <div class="server-status-segment" aria-label="Filter MCP servers by status">
+              <button class="active" data-server-status="all" type="button">All</button>
+              <button data-server-status="ready" type="button">Ready</button>
+              <button data-server-status="attention" type="button">Issues</button>
+            </div>
+            <div class="server-catalog-controls">
+              <input
+                type="search"
+                id="server-search"
+                placeholder="Search servers, namespaces, routes, tools"
+                aria-label="Search MCP servers"
+              />
             </div>
           </div>
           <div class="server-grid" id="servers-grid">
@@ -175,7 +210,149 @@
 
         <div class="panel">
           <div class="panel-head">
-            <h2>Recent Events</h2>
+            <h2>Usage Analytics</h2>
+            <div class="panel-actions">
+              <select id="analytics-limit" aria-label="Analytics row limit">
+                <option value="10" selected>Top 10</option>
+                <option value="25">Top 25</option>
+                <option value="50">Top 50</option>
+              </select>
+              <button class="ghost" id="refresh-analytics" type="button">Refresh</button>
+            </div>
+          </div>
+
+          <div class="analytics-overview">
+            <div class="analytics-summary-grid">
+              <div class="metric-card compact">
+                <span class="metric-label">Events</span>
+                <strong class="metric-value" id="analytics-total-events">-</strong>
+              </div>
+              <div class="metric-card compact">
+                <span class="metric-label">Allowed</span>
+                <strong class="metric-value" id="analytics-allowed">-</strong>
+              </div>
+              <div class="metric-card compact">
+                <span class="metric-label">Denied</span>
+                <strong class="metric-value" id="analytics-denied">-</strong>
+              </div>
+              <div class="metric-card compact">
+                <span class="metric-label">Humans</span>
+                <strong class="metric-value" id="analytics-humans">-</strong>
+              </div>
+              <div class="metric-card compact">
+                <span class="metric-label">Agents</span>
+                <strong class="metric-value" id="analytics-agents">-</strong>
+              </div>
+            </div>
+            <div class="decision-health-card">
+              <div class="decision-health-head">
+                <span class="metric-label">Decision Health</span>
+                <strong id="analytics-allow-rate">-</strong>
+              </div>
+              <div class="decision-meter" aria-label="Allowed and denied event share">
+                <span class="decision-meter-allow" id="decision-meter-allow"></span>
+                <span class="decision-meter-deny" id="decision-meter-deny"></span>
+              </div>
+              <div class="decision-health-foot">
+                <span><i class="legend-dot allow"></i>Allow</span>
+                <span><i class="legend-dot deny"></i>Deny <strong id="analytics-deny-rate">-</strong></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="analytics-grid">
+            <section class="analytics-section">
+              <h3>MCP Servers</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Server</th>
+                      <th>Namespace</th>
+                      <th>Events</th>
+                      <th>Allow</th>
+                      <th>Deny</th>
+                      <th>Humans</th>
+                      <th>Agents</th>
+                    </tr>
+                  </thead>
+                  <tbody id="analytics-servers-body">
+                    <tr>
+                      <td colspan="7" class="empty">No usage yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="analytics-section">
+              <h3>Users & Agents</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Human</th>
+                      <th>Agent</th>
+                      <th>Events</th>
+                      <th>Servers</th>
+                      <th>Tools</th>
+                      <th>Deny</th>
+                    </tr>
+                  </thead>
+                  <tbody id="analytics-actors-body">
+                    <tr>
+                      <td colspan="6" class="empty">No actors yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="analytics-section">
+              <h3>Tools</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Server</th>
+                      <th>Tool</th>
+                      <th>Events</th>
+                      <th>Deny</th>
+                    </tr>
+                  </thead>
+                  <tbody id="analytics-tools-body">
+                    <tr>
+                      <td colspan="4" class="empty">No tool calls yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="analytics-section">
+              <h3>Decisions</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Decision</th>
+                      <th>Events</th>
+                    </tr>
+                  </thead>
+                  <tbody id="analytics-decisions-body">
+                    <tr>
+                      <td colspan="2" class="empty">No decisions yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Decision Audit</h2>
             <div class="panel-actions">
               <button class="ghost" id="refresh-events">Refresh</button>
               <label class="toggle">
@@ -185,19 +362,20 @@
             </div>
           </div>
           <div class="table-wrap">
-            <table>
+            <table class="audit-table">
               <thead>
                 <tr>
-                  <th>Timestamp</th>
-                  <th>Source</th>
-                  <th>Type</th>
-                  <th>Server</th>
+                  <th>Time</th>
+                  <th>Human</th>
+                  <th>Agent</th>
+                  <th>MCP Action</th>
                   <th>Decision</th>
+                  <th>Policy</th>
                 </tr>
               </thead>
               <tbody id="events-body">
                 <tr>
-                  <td colspan="5" class="empty">No events yet.</td>
+                  <td colspan="6" class="empty">No events yet.</td>
                 </tr>
               </tbody>
             </table>
@@ -214,6 +392,25 @@
         aria-labelledby="tab-button-governance"
         hidden
       >
+        <div class="governance-summary-grid">
+          <div class="governance-summary-card">
+            <span class="metric-label">Active Grants</span>
+            <strong class="metric-value" id="gov-active-grants">-</strong>
+          </div>
+          <div class="governance-summary-card">
+            <span class="metric-label">Disabled Grants</span>
+            <strong class="metric-value" id="gov-disabled-grants">-</strong>
+          </div>
+          <div class="governance-summary-card">
+            <span class="metric-label">Active Sessions</span>
+            <strong class="metric-value" id="gov-active-sessions">-</strong>
+          </div>
+          <div class="governance-summary-card">
+            <span class="metric-label">Revoked Sessions</span>
+            <strong class="metric-value" id="gov-revoked-sessions">-</strong>
+          </div>
+        </div>
+
         <div class="panel">
           <div class="panel-head">
             <h2>Access Grants</h2>
@@ -272,11 +469,11 @@
             </div>
           </form>
           <div class="table-wrap">
-            <table>
+            <table class="governance-table">
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>Server</th>
+                  <th>Grant</th>
+                  <th>Scope</th>
                   <th>Subject</th>
                   <th>Trust</th>
                   <th>Status</th>
@@ -351,11 +548,11 @@
             </div>
           </form>
           <div class="table-wrap">
-            <table>
+            <table class="governance-table">
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>Server</th>
+                  <th>Session</th>
+                  <th>Scope</th>
                   <th>Subject</th>
                   <th>Trust</th>
                   <th>Status</th>
@@ -383,9 +580,155 @@
       >
         <div class="panel">
           <div class="panel-head">
-            <h2>Component Health</h2>
+            <div>
+              <h2>MCP Operations</h2>
+              <p class="panel-kicker">Track deployed MCP servers, user activity, and recent tool decisions.</p>
+            </div>
             <div class="panel-actions">
-              <button class="ghost" id="refresh-components">Refresh</button>
+              <button class="ghost" id="refresh-mcp-ops" type="button">Refresh</button>
+            </div>
+          </div>
+          <div class="ops-summary-grid" aria-label="MCP operations summary">
+            <div class="metric-card compact">
+              <span class="metric-label">MCP Servers</span>
+              <strong class="metric-value" id="ops-mcp-total">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">Ready</span>
+              <strong class="metric-value" id="ops-mcp-ready">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">Issues</span>
+              <strong class="metric-value" id="ops-mcp-issues">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">Recent Logins</span>
+              <strong class="metric-value" id="ops-login-count">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">MCP Events</span>
+              <strong class="metric-value" id="ops-mcp-events">-</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>MCP Server Health</h2>
+              <p class="panel-kicker">See which MCP servers are deployed, their rollout state, and when they were created.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="server-health-table">
+              <thead>
+                <tr>
+                  <th>Server</th>
+                  <th>Status</th>
+                  <th>Ready</th>
+                  <th>Inventory</th>
+                  <th>Deployed</th>
+                  <th>Endpoint</th>
+                </tr>
+              </thead>
+              <tbody id="ops-server-health-body">
+                <tr>
+                  <td colspan="6" class="empty">Loading MCP servers...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="ops-two-column">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>User Activity</h2>
+                <p class="panel-kicker">Recent login and platform audit activity for debugging access.</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>User</th>
+                    <th>Action</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="ops-user-activity-body">
+                  <tr>
+                    <td colspan="4" class="empty">Loading user activity...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>MCP Activity</h2>
+                <p class="panel-kicker">Recent allow and deny decisions from the MCP gateway path.</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="audit-table compact-audit-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Subject</th>
+                    <th>MCP Action</th>
+                    <th>Decision</th>
+                  </tr>
+                </thead>
+                <tbody id="ops-activity-body">
+                  <tr>
+                    <td colspan="4" class="empty">Loading MCP activity...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>MCP Server Inspector</h2>
+              <p class="panel-kicker">Select a server to inspect deployment metadata and MCP inventory.</p>
+            </div>
+            <div class="panel-actions">
+              <select id="ops-server-select" aria-label="Select MCP server">
+                <option value="">Select server...</option>
+              </select>
+            </div>
+          </div>
+          <div class="server-inspector" id="ops-server-detail">
+            <div class="empty">Select a server to inspect deployment details.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Platform Tab -->
+      <section
+        id="tab-platform"
+        class="tab-content"
+        data-admin-only="true"
+        role="tabpanel"
+        aria-labelledby="tab-button-platform"
+        hidden
+      >
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Platform Health</h2>
+              <p class="panel-kicker">Operator, Sentinel services, and observability components.</p>
+            </div>
+            <div class="panel-actions">
+              <button class="ghost" id="refresh-components" type="button">Refresh</button>
             </div>
           </div>
           <div class="components-grid" id="components-grid">
@@ -395,15 +738,59 @@
 
         <div class="panel">
           <div class="panel-head">
-            <h2>Safe Operations</h2>
+            <div>
+              <h2>MCP Server Fleet Health</h2>
+              <p class="panel-kicker">Readiness view for servers governed by the platform.</p>
+            </div>
+          </div>
+          <div class="ops-summary-grid platform-fleet-summary" aria-label="MCP server fleet summary">
+            <div class="metric-card compact">
+              <span class="metric-label">Servers</span>
+              <strong class="metric-value" id="platform-mcp-total">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">Ready</span>
+              <strong class="metric-value" id="platform-mcp-ready">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">Issues</span>
+              <strong class="metric-value" id="platform-mcp-issues">-</strong>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Server</th>
+                  <th>Status</th>
+                  <th>Ready</th>
+                  <th>Deployed</th>
+                </tr>
+              </thead>
+              <tbody id="platform-server-health-body">
+                <tr>
+                  <td colspan="4" class="empty">Loading MCP server health...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Safe Platform Operations</h2>
+              <p class="panel-kicker">Use these for local development recovery and debugging.</p>
+            </div>
           </div>
           <div class="ops-grid">
             <div class="ops-section">
               <h3>Restart Component</h3>
-              <p class="ops-desc">Perform a rolling restart of a Sentinel component.</p>
+              <p class="ops-desc">Perform a rolling restart of a platform component.</p>
               <div class="ops-form">
                 <select id="restart-component-select">
                   <option value="">Select component...</option>
+                  <option value="operator">Operator</option>
                   <option value="api">API</option>
                   <option value="ingest">Ingest</option>
                   <option value="processor">Processor</option>
@@ -414,14 +801,9 @@
               </div>
             </div>
             <div class="ops-section">
-              <h3>MCP Server Operations</h3>
-              <p class="ops-desc">Manage MCP server deployments (coming soon).</p>
-              <div class="ops-form disabled">
-                <select disabled>
-                  <option>Select server...</option>
-                </select>
-                <button class="primary" disabled>Restart</button>
-              </div>
+              <h3>MCP Server Health</h3>
+              <p class="ops-desc">MCP rollout status and deployed-at timestamps now live in the Operations tab.</p>
+              <button class="ghost" id="open-mcp-operations" type="button">Open Operations</button>
             </div>
           </div>
         </div>
@@ -430,7 +812,7 @@
 
     <!-- Authentication Modal -->
     <div id="auth-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="auth-title">
-      <form class="modal-content" id="auth-form" method="dialog">
+      <form class="modal-content auth-modal-content" id="auth-form" method="dialog">
         <h3 id="auth-title">Sign In</h3>
         <p>Use your platform account, Google sign-in, or an MCP Sentinel API key.</p>
         <input
@@ -449,7 +831,7 @@
           type="password"
           id="api-key-input"
           autocomplete="off"
-          placeholder="API key"
+          placeholder="API key (optional alternative)"
         />
         <p id="auth-error" class="auth-error hidden"></p>
         <div class="modal-actions">

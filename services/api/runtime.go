@@ -186,7 +186,7 @@ func (s *RuntimeServer) handleRuntimeServers(w http.ResponseWriter, r *http.Requ
 				log.Printf("runtime servers: convert MCPServer %s/%s: %v", obj.GetNamespace(), obj.GetName(), convertErr)
 				continue
 			}
-			servers = append(servers, serverInfoFromMCPServer(mcpServer, deploymentStatus[mcpServer.Name]))
+			servers = append(servers, serverInfoFromMCPServer(mcpServer, deploymentStatus[mcpServer.Name], r))
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"servers": servers})
 		return
@@ -257,7 +257,7 @@ func statusForDeployment(d appsv1.Deployment) serverDeploymentStatus {
 	return serverDeploymentStatus{Ready: ready, Status: status}
 }
 
-func serverInfoFromMCPServer(mcpServer mcpv1alpha1.MCPServer, deploymentStatus serverDeploymentStatus) serverInfo {
+func serverInfoFromMCPServer(mcpServer mcpv1alpha1.MCPServer, deploymentStatus serverDeploymentStatus, r *http.Request) serverInfo {
 	if deploymentStatus.Ready == "" {
 		deploymentStatus = serverDeploymentStatus{Ready: "0/0", Status: strings.TrimSpace(mcpServer.Status.Phase)}
 		if deploymentStatus.Status == "" {
@@ -265,6 +265,7 @@ func serverInfoFromMCPServer(mcpServer mcpv1alpha1.MCPServer, deploymentStatus s
 		}
 	}
 	endpoint := publicMCPEndpoint(mcpServer)
+	connectEndpoint := publicMCPConnectEndpoint(endpoint, r)
 	info := serverInfo{
 		Name:      mcpServer.Name,
 		Namespace: mcpServer.Namespace,
@@ -278,12 +279,12 @@ func serverInfoFromMCPServer(mcpServer mcpv1alpha1.MCPServer, deploymentStatus s
 		Resources: inventoryItemsOrEmpty(mcpServer.Spec.MCPResources),
 		Tasks:     inventoryItemsOrEmpty(mcpServer.Spec.Tasks),
 	}
-	if endpoint != "" {
+	if connectEndpoint != "" {
 		info.AccessJSON = map[string]any{
 			"mcpServers": map[string]any{
 				mcpServer.Name: map[string]any{
 					"type": "http",
-					"url":  endpoint,
+					"url":  connectEndpoint,
 				},
 			},
 		}
@@ -327,6 +328,50 @@ func publicMCPEndpoint(mcpServer mcpv1alpha1.MCPServer) string {
 		scheme = "http"
 	}
 	return scheme + "://" + strings.TrimRight(host, "/") + path
+}
+
+func publicMCPConnectEndpoint(endpoint string, r *http.Request) string {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" || strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
+		return endpoint
+	}
+	path := endpoint
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	host := forwardedHost(r)
+	if host == "" {
+		return path
+	}
+	if strings.HasPrefix(strings.ToLower(host), "platform.") {
+		host = "mcp." + host[len("platform."):]
+	}
+	return forwardedScheme(r) + "://" + strings.TrimRight(host, "/") + path
+}
+
+func forwardedHost(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	return firstForwardedValue(r.Header.Get("X-Forwarded-Host"))
+}
+
+func forwardedScheme(r *http.Request) string {
+	if r == nil {
+		return "http"
+	}
+	proto := strings.ToLower(firstForwardedValue(r.Header.Get("X-Forwarded-Proto")))
+	if proto == "https" {
+		return "https"
+	}
+	return "http"
+}
+
+func firstForwardedValue(value string) string {
+	if idx := strings.IndexByte(value, ','); idx >= 0 {
+		value = value[:idx]
+	}
+	return strings.TrimSpace(value)
 }
 
 // handleRuntimeGrants returns MCPAccessGrant resources.
@@ -588,8 +633,7 @@ func (s *RuntimeServer) handleRuntimeComponents(w http.ResponseWriter, r *http.R
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Only return core components for the dashboard
-	statuses, err := s.sentinelMgr.GetCoreComponentStatuses(ctx)
+	statuses, err := s.sentinelMgr.GetAllComponentStatuses(ctx)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get component statuses"})
 		return

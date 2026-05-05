@@ -117,6 +117,105 @@ Local URLs:
 - API: `http://localhost:18080/api`
 - Demo MCP routes, after applying demo servers: `http://localhost:18080/<server-name>/mcp`
 
+The MCP Servers tab exposes a copyable connect config. In this local test-mode
+flow, that config should use the same reachable local origin, for example:
+
+```json
+{
+  "mcpServers": {
+    "go-example-mcp": {
+      "type": "http",
+      "url": "http://localhost:18080/go-example-mcp/mcp"
+    }
+  }
+}
+```
+
+When the platform is installed with `MCP_PLATFORM_DOMAIN=mcpruntime.org` or an
+explicit `MCP_MCP_INGRESS_HOST`, production connect configs should use the
+public MCP host instead, for example
+`https://mcp.mcpruntime.org/go-example-mcp/mcp`.
+
+`setup --test-mode` also seeds development-only email/password logins in the
+platform identity store:
+
+| Role | Email | Password |
+|---|---|---|
+| User | `test@mcpruntime.org` | `test@123` |
+| Admin | `admin@mcpruntime.org` | `admin@123` |
+
+These credentials are for local Kind/debugging only. They are enabled by the
+managed `mcp-sentinel-secrets` key `PLATFORM_DEV_LOGIN_ENABLED=true` and can be
+disabled or overridden by editing the `PLATFORM_DEV_*` keys before rolling the
+API deployment.
+
+### Iterate on one Sentinel service
+
+After `setup --test-mode` is complete, you do not need to rerun setup for every
+service change. Edit the service under `services/`, build only that image, push
+it to the bundled registry, and update only that Kubernetes Deployment.
+
+Run the targeted service tests before rebuilding the image:
+
+```bash
+(cd services/api && go test ./... -count=1)
+(cd services/ui && go test ./... -count=1)
+node --check services/ui/static/app.js
+```
+
+For API/UI changes that cross the browser-to-API proxy boundary, rebuild and
+roll both services. A common example is the MCP connect config URL: the UI
+forwards the browser origin to the API, and the API uses that origin to return a
+local URL such as `http://localhost:18080/<server-name>/mcp`; production hosts
+map `platform.<domain>` to `mcp.<domain>`.
+
+For the UI, for example:
+
+```bash
+SERVICE=ui
+IMAGE_REPO=mcp-sentinel-ui
+DOCKERFILE=services/ui/Dockerfile
+BUILD_CONTEXT=services/ui
+DEPLOYMENT=mcp-sentinel-ui
+CONTAINER=ui
+TAG="${SERVICE}-dev-$(date +%s)"
+LOCAL_IMAGE="${IMAGE_REPO}:${TAG}"
+REGISTRY=registry.registry.svc.cluster.local:5000
+
+docker build -t "$LOCAL_IMAGE" -f "$DOCKERFILE" "$BUILD_CONTEXT"
+
+./bin/mcp-runtime registry push \
+  --image "$LOCAL_IMAGE" \
+  --name "$IMAGE_REPO" \
+  --registry "$REGISTRY" \
+  --namespace registry
+
+kubectl -n mcp-sentinel set image \
+  "deployment/$DEPLOYMENT" \
+  "$CONTAINER=$REGISTRY/$IMAGE_REPO:$TAG"
+
+kubectl -n mcp-sentinel rollout status "deployment/$DEPLOYMENT" --timeout=90s
+```
+
+Keep the Traefik port-forward running and refresh the local URL:
+`http://localhost:18080/`. Use a new tag for each build so Kubernetes does not
+reuse an older `IfNotPresent` image from the node cache.
+
+Use the same commands with the variables below for other Sentinel services:
+
+| Service | Edit path | Image repo | Dockerfile | Build context | Deployment | Container |
+|---|---|---|---|---|---|---|
+| UI | `services/ui` | `mcp-sentinel-ui` | `services/ui/Dockerfile` | `services/ui` | `mcp-sentinel-ui` | `ui` |
+| API | `services/api` | `mcp-sentinel-api` | `services/api/Dockerfile` | `.` | `mcp-sentinel-api` | `api` |
+| Ingest | `services/ingest` | `mcp-sentinel-ingest` | `services/ingest/Dockerfile` | `services/ingest` | `mcp-sentinel-ingest` | `ingest` |
+| Processor | `services/processor` | `mcp-sentinel-processor` | `services/processor/Dockerfile` | `services/processor` | `mcp-sentinel-processor` | `processor` |
+
+`services/mcp-proxy` is different: it runs as the `mcp-gateway` sidecar inside
+each MCP server pod. To test proxy changes, build and push
+`mcp-sentinel-mcp-proxy`, update the operator's `MCP_GATEWAY_PROXY_IMAGE`, then
+restart the operator and recreate or restart the affected MCP server pods so
+the sidecar image is injected again.
+
 If pods report `ImagePullBackOff`, run `./bin/mcp-runtime cluster doctor`.
 For Kind test mode, the usual cause is a cluster created without the
 `registry.registry.svc.cluster.local:5000` mirror to `127.0.0.1:32000`. If pod
@@ -223,6 +322,12 @@ rm -rf /tmp/go-example-mcp-manifests
 kubectl rollout status deploy/go-example-mcp -n mcp-servers --timeout=180s
 ./bin/mcp-runtime server status --namespace mcp-servers
 ```
+
+In Kind, `server status` may show `PartiallyReady` while the Deployment is
+ready and traffic works. That usually means Traefik is routing through the local
+port-forward but has not written `Ingress.status.loadBalancer.ingress[]`; see
+[Local development notes](#local-development-notes) when you want permissive
+ingress readiness for this setup.
 
 Useful server and policy checks while iterating:
 
@@ -430,12 +535,17 @@ curl -sS -H "x-api-key: $ADMIN_KEY" \
   http://localhost:18080/api/dashboard/summary | jq .
 
 curl -sS -H "x-api-key: $ADMIN_KEY" \
+  "http://localhost:18080/api/analytics/usage?limit=10" | jq .
+
+curl -sS -H "x-api-key: $ADMIN_KEY" \
   "http://localhost:18080/api/events/filter?server=go-example-mcp&tool_name=add&limit=5" | jq .
 ```
 
 `mcp-runtime sentinel events` shows Kubernetes events for the Sentinel
 namespace. Use `/api/dashboard/summary`, `/api/events`, or
-`/api/events/filter` to verify request analytics.
+`/api/analytics/usage` to verify request analytics. The admin Dashboard tab
+uses `/api/analytics/usage` for its MCP server, human/agent, tool, and decision
+rollups.
 
 ## 4. Install the platform stack
 

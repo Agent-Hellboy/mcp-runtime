@@ -96,6 +96,36 @@ spec:
                   name: mcp-sentinel-secrets
                   key: PLATFORM_ADMIN_EMAIL
                   optional: true
+            - name: PLATFORM_DEV_LOGIN_ENABLED
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: PLATFORM_DEV_LOGIN_ENABLED
+                  optional: true
+            - name: PLATFORM_DEV_USER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: PLATFORM_DEV_USER_EMAIL
+                  optional: true
+            - name: PLATFORM_DEV_USER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: PLATFORM_DEV_USER_PASSWORD
+                  optional: true
+            - name: PLATFORM_DEV_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: PLATFORM_DEV_ADMIN_EMAIL
+                  optional: true
+            - name: PLATFORM_DEV_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: PLATFORM_DEV_ADMIN_PASSWORD
+                  optional: true
             - name: OTEL_SERVICE_NAME
               value: mcp-sentinel-api
           resources:

@@ -9,7 +9,13 @@ let grantsCache = [];
 let sessionsCache = [];
 let userAPIKeysCache = [];
 let serversCache = [];
+let operationsServersCache = [];
+let operationsEventsCache = [];
+let operationsAuditCache = [];
 let userAPIKeyClearTimer = null;
+let serverSearchQuery = "";
+let serverStatusFilter = "all";
+let selectedOperationsServerKey = "";
 
 // API Helper
 async function fetchJSON(path, options = {}) {
@@ -42,6 +48,34 @@ function unauthorizedError() {
 
 function isUnauthorizedError(err) {
   return err?.name === "UnauthorizedError";
+}
+
+async function copyTextToClipboard(text, successMessage = "Copied") {
+  const value = String(text || "");
+  if (!value) {
+    showToast("Nothing to copy", "warning");
+    return;
+  }
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = value;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+    showToast(successMessage);
+  } catch (err) {
+    console.error("Failed to copy text:", err);
+    showToast("Copy failed", "error");
+  }
 }
 
 // Toast Notifications
@@ -96,11 +130,17 @@ function initTabs() {
       activateTab(target);
 
       // Load data when switching to certain tabs
-      if (target === "governance") {
+      if (target === "dashboard") {
+        loadDashboardSummary();
+        loadDashboardAnalytics();
+        loadEvents();
+      } else if (target === "governance") {
         loadGrants();
         loadSessions();
       } else if (target === "operations") {
-        loadComponents();
+        loadMCPOperations();
+      } else if (target === "platform") {
+        loadPlatformManagement();
       } else if (target === "userkeys") {
         loadUserAPIKeys();
       } else if (target === "servers") {
@@ -132,6 +172,154 @@ async function loadDashboardSummary() {
   }
 }
 
+async function loadDashboardAnalytics() {
+  try {
+    const limit = document.getElementById("analytics-limit")?.value || "10";
+    const data = await fetchJSON(`/analytics/usage?limit=${encodeURIComponent(limit)}`);
+    renderDashboardAnalytics(data);
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load dashboard analytics:", err);
+    renderAnalyticsError();
+  }
+}
+
+function renderDashboardAnalytics(data) {
+  const totals = data?.totals || {};
+  const events = Number(totals.events || 0);
+  const allowed = Number(totals.allowed || 0);
+  const denied = Number(totals.denied || 0);
+  setText("analytics-total-events", formatNumber(events));
+  setText("analytics-allowed", formatNumber(allowed));
+  setText("analytics-denied", formatNumber(denied));
+  setText("analytics-humans", formatNumber(totals.unique_humans || 0));
+  setText("analytics-agents", formatNumber(totals.unique_agents || 0));
+  renderDecisionMeter(events, allowed, denied);
+
+  renderAnalyticsServers(data?.servers || []);
+  renderAnalyticsActors(data?.actors || []);
+  renderAnalyticsTools(data?.tools || []);
+  renderAnalyticsDecisions(data?.decisions || []);
+}
+
+function renderDecisionMeter(events, allowed, denied) {
+  const total = Math.max(Number(events || 0), allowed + denied);
+  const allowRate = total > 0 ? Math.round((allowed / total) * 100) : 0;
+  const denyRate = total > 0 ? Math.round((denied / total) * 100) : 0;
+  const allowEl = document.getElementById("decision-meter-allow");
+  const denyEl = document.getElementById("decision-meter-deny");
+  if (allowEl) allowEl.style.width = `${allowRate}%`;
+  if (denyEl) denyEl.style.width = `${denyRate}%`;
+  setText("analytics-allow-rate", total > 0 ? `${allowRate}% allow` : "-");
+  setText("analytics-deny-rate", total > 0 ? `${denyRate}%` : "-");
+}
+
+function renderAnalyticsServers(rows) {
+  const tbody = document.getElementById("analytics-servers-body");
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No usage yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  rows.forEach((item) => {
+    const row = document.createElement("tr");
+    row.appendChild(createTextCell(item.server || "-"));
+    row.appendChild(createTextCell(item.namespace || "-"));
+    row.appendChild(createTextCell(formatNumber(item.events || 0)));
+    row.appendChild(createTextCell(formatNumber(item.allowed || 0)));
+    row.appendChild(createTextCell(formatNumber(item.denied || 0)));
+    row.appendChild(createTextCell(formatNumber(item.unique_humans || 0)));
+    row.appendChild(createTextCell(formatNumber(item.unique_agents || 0)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderAnalyticsActors(rows) {
+  const tbody = document.getElementById("analytics-actors-body");
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No actors yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  rows.forEach((item) => {
+    const row = document.createElement("tr");
+    row.appendChild(createTextCell(item.human_id || "-"));
+    row.appendChild(createTextCell(item.agent_id || "-"));
+    row.appendChild(createTextCell(formatNumber(item.events || 0)));
+    row.appendChild(createTextCell(formatNumber(item.unique_servers || 0)));
+    row.appendChild(createTextCell(formatNumber(item.unique_tools || 0)));
+    row.appendChild(createTextCell(formatNumber(item.denied || 0)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderAnalyticsTools(rows) {
+  const tbody = document.getElementById("analytics-tools-body");
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No tool calls yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  rows.forEach((item) => {
+    const row = document.createElement("tr");
+    row.appendChild(createTextCell(item.server || "-"));
+    row.appendChild(createTextCell(item.tool_name || "-"));
+    row.appendChild(createTextCell(formatNumber(item.events || 0)));
+    row.appendChild(createTextCell(formatNumber(item.denied || 0)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderAnalyticsDecisions(rows) {
+  const tbody = document.getElementById("analytics-decisions-body");
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="2" class="empty">No decisions yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  rows.forEach((item) => {
+    const row = document.createElement("tr");
+    row.appendChild(createBadgeCell(item.decision || "unknown", decisionBadgeClass(item.decision)));
+    row.appendChild(createTextCell(formatNumber(item.events || 0)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function decisionBadgeClass(decision) {
+  if (decision === "allow") return "badge-success";
+  if (decision === "deny") return "badge-error";
+  return "badge-muted";
+}
+
+function renderAnalyticsError() {
+  setText("analytics-total-events", "-");
+  setText("analytics-allowed", "-");
+  setText("analytics-denied", "-");
+  setText("analytics-humans", "-");
+  setText("analytics-agents", "-");
+  renderDecisionMeter(0, 0, 0);
+  document.getElementById("analytics-servers-body").innerHTML =
+    '<tr><td colspan="7" class="empty">Error loading usage.</td></tr>';
+  document.getElementById("analytics-actors-body").innerHTML =
+    '<tr><td colspan="6" class="empty">Error loading actors.</td></tr>';
+  document.getElementById("analytics-tools-body").innerHTML =
+    '<tr><td colspan="4" class="empty">Error loading tools.</td></tr>';
+  document.getElementById("analytics-decisions-body").innerHTML =
+    '<tr><td colspan="2" class="empty">Error loading decisions.</td></tr>';
+}
+
 function formatNumber(num) {
   if (num >= 1000000) {
     return (num / 1000000).toFixed(1) + "M";
@@ -154,7 +342,7 @@ async function loadEvents() {
 
     if (!data.events || data.events.length === 0) {
       tbody.innerHTML =
-        '<tr><td colspan="5" class="empty">No events yet.</td></tr>';
+        '<tr><td colspan="6" class="empty">No events yet.</td></tr>';
       return;
     }
 
@@ -164,11 +352,12 @@ async function loadEvents() {
     data.events.forEach((event) => {
       const row = document.createElement("tr");
       row.innerHTML = `
-        <td>${new Date(event.timestamp).toLocaleString()}</td>
-        <td>${escapeHtml(event.source || "-")}</td>
-        <td>${escapeHtml(event.event_type || "-")}</td>
-        <td>${escapeHtml(event.server || "-")}</td>
+        <td>${renderAuditTime(event)}</td>
+        <td>${renderAuditIdentity("Human", event.human_id)}</td>
+        <td>${renderAuditIdentity("Agent", event.agent_id)}</td>
+        <td>${renderAuditTarget(event)}</td>
         <td>${renderDecision(event.decision)}</td>
+        <td>${renderPolicySummary(event)}</td>
       `;
       fragment.appendChild(row);
     });
@@ -180,17 +369,63 @@ async function loadEvents() {
   }
 }
 
+function renderAuditTime(event) {
+  const timestamp = event.timestamp ? new Date(event.timestamp).toLocaleString() : "-";
+  const source = event.source || event.event_type
+    ? [event.source, event.event_type].filter(Boolean).join(" / ")
+    : "";
+  return `
+    <div class="audit-cell">
+      <strong>${escapeHtml(timestamp)}</strong>
+      ${source ? `<span>${escapeHtml(source)}</span>` : ""}
+    </div>
+  `;
+}
+
+function renderAuditIdentity(label, value) {
+  if (!value) return '<span class="muted-text">-</span>';
+  return `
+    <span class="subject-chip">
+      <span class="subject-chip-label">${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </span>
+  `;
+}
+
+function renderAuditTarget(event) {
+  const payload = event.payload || {};
+  const server = event.server || payload.server || "-";
+  const namespace = event.namespace || payload.namespace || "";
+  const action = event.tool_name || payload.tool_name || payload.rpc_method || event.event_type || "-";
+  return `
+    <div class="audit-cell">
+      <strong>${escapeHtml(server)}</strong>
+      ${namespace ? `<span>${escapeHtml(namespace)}</span>` : ""}
+      <span class="audit-action">${escapeHtml(action)}</span>
+    </div>
+  `;
+}
+
 function renderDecision(decision) {
-  if (!decision) return "-";
-  const color =
-    decision === "allow"
-      ? "var(--success)"
-      : decision === "deny"
-      ? "var(--error)"
-      : "var(--muted)";
-  return `<span style="color: ${color}; font-weight: 600;">${escapeHtml(
-    decision
-  )}</span>`;
+  if (!decision) return '<span class="muted-text">-</span>';
+  return `<span class="badge ${decisionBadgeClass(decision)}">${escapeHtml(decision)}</span>`;
+}
+
+function renderPolicySummary(event) {
+  const payload = event.payload || {};
+  const reason = payload.reason || event.decision || "-";
+  const trustParts = [
+    payload.effective_trust ? `effective ${payload.effective_trust}` : "",
+    payload.required_trust ? `required ${payload.required_trust}` : "",
+  ].filter(Boolean);
+  const session = event.session_id || payload.session_id || "";
+  return `
+    <div class="audit-cell">
+      <strong>${escapeHtml(reason)}</strong>
+      ${trustParts.length ? `<span>${escapeHtml(trustParts.join(" / "))}</span>` : ""}
+      ${session ? `<span>session ${escapeHtml(session)}</span>` : ""}
+    </div>
+  `;
 }
 
 function escapeHtml(text) {
@@ -198,6 +433,11 @@ function escapeHtml(text) {
   const div = document.createElement("div");
   div.textContent = text;
   return div.innerHTML;
+}
+
+function setText(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
 }
 
 function encodePathSegment(value) {
@@ -223,13 +463,84 @@ function createTextCell(text) {
   return cell;
 }
 
-function createBadgeCell(text, className) {
-  const cell = document.createElement("td");
+function createBadge(text, className) {
   const badge = document.createElement("span");
   badge.className = `badge ${className}`;
   badge.textContent = text;
-  cell.appendChild(badge);
+  return badge;
+}
+
+function createBadgeCell(text, className) {
+  const cell = document.createElement("td");
+  cell.appendChild(createBadge(text, className));
   return cell;
+}
+
+function createIdentityCell(primary, secondary = "") {
+  const cell = document.createElement("td");
+  const stack = document.createElement("div");
+  stack.className = "identity-stack";
+
+  const primaryEl = document.createElement("strong");
+  primaryEl.className = "identity-primary";
+  primaryEl.textContent = primary || "-";
+  stack.appendChild(primaryEl);
+
+  if (secondary) {
+    const secondaryEl = document.createElement("span");
+    secondaryEl.className = "identity-secondary";
+    secondaryEl.textContent = secondary;
+    stack.appendChild(secondaryEl);
+  }
+
+  cell.appendChild(stack);
+  return cell;
+}
+
+function createSubjectCell(subject = {}) {
+  const cell = document.createElement("td");
+  const chips = document.createElement("div");
+  chips.className = "subject-chip-list";
+
+  if (subject.humanID) {
+    chips.appendChild(createSubjectChip("Human", subject.humanID));
+  }
+  if (subject.agentID) {
+    chips.appendChild(createSubjectChip("Agent", subject.agentID));
+  }
+  if (!chips.children.length) {
+    chips.textContent = "-";
+  }
+
+  cell.appendChild(chips);
+  return cell;
+}
+
+function createSubjectChip(label, value) {
+  const chip = document.createElement("span");
+  chip.className = "subject-chip";
+
+  const labelEl = document.createElement("span");
+  labelEl.className = "subject-chip-label";
+  labelEl.textContent = label;
+
+  const valueEl = document.createElement("strong");
+  valueEl.textContent = value;
+
+  chip.append(labelEl, valueEl);
+  return chip;
+}
+
+function createTrustCell(trust) {
+  const value = trust || "-";
+  return createBadgeCell(value, trustBadgeClass(value));
+}
+
+function trustBadgeClass(trust) {
+  if (trust === "high") return "badge-trust-high";
+  if (trust === "medium") return "badge-trust-medium";
+  if (trust === "low") return "badge-trust-low";
+  return "badge-muted";
 }
 
 function createActionCell(label, onClick) {
@@ -278,15 +589,25 @@ async function handleAuthSubmit(event) {
   const emailInput = document.getElementById("auth-email-input");
   const passwordInput = document.getElementById("auth-password-input");
   const submit = document.getElementById("auth-submit");
-  const apiKey = apiKeyInput?.value || "";
-  const email = emailInput?.value || "";
+  const apiKey = apiKeyInput?.value.trim() || "";
+  const email = emailInput?.value.trim() || "";
   const password = passwordInput?.value || "";
+  const hasAPIKey = apiKey !== "";
+  const hasEmail = email !== "";
+  const hasPassword = password !== "";
 
   setAuthError("");
+  if (!hasAPIKey && ((hasEmail && !hasPassword) || (!hasEmail && hasPassword))) {
+    setAuthError("Enter both email and password, or use an API key.");
+    return;
+  }
+  if (!hasAPIKey && !hasEmail && !hasPassword) {
+    setAuthError("Provide email and password, an API key, or sign in with Google.");
+    return;
+  }
   if (submit) submit.disabled = true;
   try {
-    const payload =
-      email || password ? { email, password } : { api_key: apiKey };
+    const payload = hasAPIKey ? { api_key: apiKey } : { email, password };
     const data = await performLogin(payload);
     authPrincipal = data?.principal || null;
     if (apiKeyInput) apiKeyInput.value = "";
@@ -397,6 +718,7 @@ async function logout() {
   authPrincipal = null;
   setAuthenticated(false);
   resetDashboard();
+  resetGovernance();
   resetUserAPIKeys();
   activateTab("servers");
   loadServers();
@@ -441,6 +763,7 @@ function loadActiveTab() {
   const active = resolveActiveTab();
   if (active === "dashboard") {
     loadDashboardSummary();
+    loadDashboardAnalytics();
     loadEvents();
   } else if (active === "servers") {
     loadServers();
@@ -448,19 +771,49 @@ function loadActiveTab() {
     loadGrants();
     loadSessions();
   } else if (active === "operations") {
-    loadComponents();
+    loadMCPOperations();
+  } else if (active === "platform") {
+    loadPlatformManagement();
   } else if (active === "userkeys") {
     loadUserAPIKeys();
   }
 }
 
 function resetDashboard() {
-  document.getElementById("dash-total-events").textContent = "-";
-  document.getElementById("dash-active-servers").textContent = "-";
-  document.getElementById("dash-active-grants").textContent = "-";
-  document.getElementById("dash-active-sessions").textContent = "-";
+  setText("dash-total-events", "-");
+  setText("dash-active-servers", "-");
+  setText("dash-active-grants", "-");
+  setText("dash-active-sessions", "-");
+  setText("analytics-total-events", "-");
+  setText("analytics-allowed", "-");
+  setText("analytics-denied", "-");
+  setText("analytics-humans", "-");
+  setText("analytics-agents", "-");
+  renderDecisionMeter(0, 0, 0);
+  document.getElementById("analytics-servers-body").innerHTML =
+    '<tr><td colspan="7" class="empty">No usage yet.</td></tr>';
+  document.getElementById("analytics-actors-body").innerHTML =
+    '<tr><td colspan="6" class="empty">No actors yet.</td></tr>';
+  document.getElementById("analytics-tools-body").innerHTML =
+    '<tr><td colspan="4" class="empty">No tool calls yet.</td></tr>';
+  document.getElementById("analytics-decisions-body").innerHTML =
+    '<tr><td colspan="2" class="empty">No decisions yet.</td></tr>';
   document.getElementById("events-body").innerHTML =
-    '<tr><td colspan="5" class="empty">No events yet.</td></tr>';
+    '<tr><td colspan="6" class="empty">No events yet.</td></tr>';
+}
+
+function resetGovernance() {
+  grantsCache = [];
+  sessionsCache = [];
+  renderGovernanceSummary();
+  const grantsBody = document.getElementById("grants-body");
+  const sessionsBody = document.getElementById("sessions-body");
+  if (grantsBody) {
+    grantsBody.innerHTML = '<tr><td colspan="6" class="empty">No grants found.</td></tr>';
+  }
+  if (sessionsBody) {
+    sessionsBody.innerHTML = '<tr><td colspan="6" class="empty">No sessions found.</td></tr>';
+  }
 }
 
 async function loadServers() {
@@ -482,48 +835,212 @@ async function loadServers() {
 function renderServers() {
   const grid = document.getElementById("servers-grid");
   if (!grid) return;
+  renderServerCatalogSummary();
+
   if (serversCache.length === 0) {
-    grid.innerHTML = '<div class="component-card">No MCP servers found.</div>';
+    grid.innerHTML = '<div class="server-empty-state">No MCP servers found.</div>';
+    return;
+  }
+
+  const servers = filteredServers();
+  if (servers.length === 0) {
+    grid.innerHTML = '<div class="server-empty-state">No servers match this search.</div>';
     return;
   }
 
   grid.innerHTML = "";
   const fragment = document.createDocumentFragment();
-  serversCache.forEach((server) => {
+  servers.forEach((server) => {
     const card = document.createElement("article");
     card.className = "server-card";
 
-    const title = document.createElement("div");
-    title.className = "server-card-head";
-    title.innerHTML = `
-      <div>
-        <h3>${escapeHtml(server.name || "-")}</h3>
-        <p>${escapeHtml(server.namespace || "-")}</p>
-      </div>
-      <span class="badge ${server.status === "Ready" ? "badge-success" : "badge-muted"}">${escapeHtml(server.status || "Unknown")}</span>
-    `;
-    card.appendChild(title);
+    card.appendChild(renderServerHero(server));
+    card.appendChild(renderServerMeta(server));
+    card.appendChild(renderServerEndpoint(server));
 
-    if (server.endpoint) {
-      const endpoint = document.createElement("code");
-      endpoint.className = "server-endpoint";
-      endpoint.textContent = server.endpoint;
-      card.appendChild(endpoint);
+    const inventory = document.createElement("div");
+    inventory.className = "server-inventory-grid";
+    inventory.appendChild(renderInventoryBlock("Tools", server.tools || [], renderToolItem));
+    inventory.appendChild(renderInventoryBlock("Prompts", server.prompts || [], renderInventoryItem));
+    inventory.appendChild(renderInventoryBlock("Resources", server.resources || [], renderInventoryItem));
+    inventory.appendChild(renderInventoryBlock("Tasks", server.tasks || [], renderInventoryItem));
+    card.appendChild(inventory);
+
+    if (server.access_json && Object.keys(server.access_json).length) {
+      card.appendChild(renderServerConnectConfig(server));
     }
-
-    card.appendChild(renderInventoryBlock("Tools", server.tools || [], renderToolItem));
-    card.appendChild(renderInventoryBlock("Prompts", server.prompts || [], renderInventoryItem));
-    card.appendChild(renderInventoryBlock("Resources", server.resources || [], renderInventoryItem));
-    card.appendChild(renderInventoryBlock("Tasks", server.tasks || [], renderInventoryItem));
-
-    const json = document.createElement("pre");
-    json.className = "access-json";
-    json.textContent = JSON.stringify(server.access_json || {}, null, 2);
-    card.appendChild(json);
 
     fragment.appendChild(card);
   });
   grid.appendChild(fragment);
+}
+
+function filteredServers() {
+  const query = serverSearchQuery.trim().toLowerCase();
+  return serversCache.filter((server) => {
+    const status = String(server.status || "Unknown").toLowerCase();
+    if (serverStatusFilter === "ready" && status !== "ready") return false;
+    if (serverStatusFilter === "attention" && status === "ready") return false;
+    if (!query) return true;
+    return serverSearchText(server).includes(query);
+  });
+}
+
+function serverSearchText(server) {
+  const values = [
+    server.name,
+    server.namespace,
+    server.status,
+    server.ready,
+    server.endpoint,
+    ...(server.tools || []).map((tool) => `${tool.name || ""} ${tool.requiredTrust || ""} ${tool.description || ""}`),
+    ...(server.prompts || []).map(inventorySearchText),
+    ...(server.resources || []).map(inventorySearchText),
+    ...(server.tasks || []).map(inventorySearchText),
+  ];
+  return values.filter(Boolean).join(" ").toLowerCase();
+}
+
+function inventorySearchText(item) {
+  if (typeof item === "string") return item;
+  const labels =
+    item?.labels && typeof item.labels === "object"
+      ? Object.entries(item.labels)
+          .map(([k, v]) => `${k} ${v}`)
+          .join(" ")
+      : "";
+  return `${item?.name || ""} ${item?.description || ""} ${labels}`;
+}
+
+function renderServerCatalogSummary() {
+  const total = serversCache.length;
+  const ready = serversCache.filter((server) => server.status === "Ready").length;
+  const tools = serversCache.reduce((sum, server) => sum + (server.tools || []).length, 0);
+  setText("server-count-total", formatNumber(total));
+  setText("server-count-ready", formatNumber(ready));
+  setText("server-count-tools", formatNumber(tools));
+}
+
+function renderServerHero(server) {
+  const hero = document.createElement("div");
+  hero.className = "server-card-hero";
+  hero.innerHTML = `
+    <div class="server-identity">
+      <span class="server-avatar" aria-hidden="true">${escapeHtml(serverInitials(server.name))}</span>
+      <div class="server-title-stack">
+        <h3>${escapeHtml(server.name || "-")}</h3>
+        <p>${escapeHtml(server.namespace || "-")}</p>
+      </div>
+    </div>
+    <div class="server-status-stack">
+      <span class="badge ${serverBadgeClass(server.status)}">${escapeHtml(server.status || "Unknown")}</span>
+      <span>${escapeHtml(server.ready || "0/0")} pods</span>
+    </div>
+  `;
+  return hero;
+}
+
+function renderServerMeta(server) {
+  const wrap = document.createElement("div");
+  wrap.className = "server-meta-wrap";
+
+  const meta = document.createElement("div");
+  meta.className = "server-meta-row";
+  meta.appendChild(serverMetaPill("HTTP MCP"));
+  meta.appendChild(serverMetaPill(`${(server.tools || []).length} tools`));
+  meta.appendChild(serverMetaPill(`${(server.prompts || []).length} prompts`));
+  meta.appendChild(serverMetaPill(`${(server.resources || []).length} resources`));
+  meta.appendChild(serverMetaPill(`Created ${formatServerAge(server.age)}`));
+  wrap.appendChild(meta);
+
+  const actions = document.createElement("div");
+  actions.className = "server-card-actions";
+  if (server.endpoint) {
+    const copyURL = document.createElement("button");
+    copyURL.className = "ghost server-action";
+    copyURL.type = "button";
+    copyURL.textContent = "Copy URL";
+    copyURL.addEventListener("click", () => copyTextToClipboard(server.endpoint, "Endpoint copied"));
+    actions.appendChild(copyURL);
+  }
+  if (server.access_json && Object.keys(server.access_json).length) {
+    const jsonText = JSON.stringify(server.access_json || {}, null, 2);
+    const copyJSON = document.createElement("button");
+    copyJSON.className = "ghost server-action";
+    copyJSON.type = "button";
+    copyJSON.textContent = "Copy JSON";
+    copyJSON.addEventListener("click", () => copyTextToClipboard(jsonText, "Connect JSON copied"));
+    actions.appendChild(copyJSON);
+  }
+  if (actions.children.length) {
+    wrap.appendChild(actions);
+  }
+  return wrap;
+}
+
+function serverMetaPill(text) {
+  const item = document.createElement("span");
+  item.className = "server-meta-pill";
+  item.textContent = text;
+  return item;
+}
+
+function renderServerEndpoint(server) {
+  const row = document.createElement("div");
+  row.className = "server-endpoint-row";
+  const endpoint = document.createElement("code");
+  endpoint.className = "server-endpoint";
+  endpoint.textContent = server.endpoint || "No public endpoint";
+  row.appendChild(endpoint);
+
+  return row;
+}
+
+function renderServerConnectConfig(server) {
+  const details = document.createElement("details");
+  details.className = "server-connect";
+  const summary = document.createElement("summary");
+  summary.textContent = "Connect config";
+  details.appendChild(summary);
+
+  const body = document.createElement("div");
+  body.className = "server-connect-body";
+  const json = document.createElement("pre");
+  json.className = "access-json";
+  const jsonText = JSON.stringify(server.access_json || {}, null, 2);
+  json.textContent = jsonText;
+  body.appendChild(json);
+  details.appendChild(body);
+  return details;
+}
+
+function serverInitials(name) {
+  return String(name || "MCP")
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+}
+
+function serverBadgeClass(status) {
+  if (status === "Ready") return "badge-success";
+  if (status === "Degraded") return "badge-warning";
+  if (status === "NotReady") return "badge-error";
+  return "badge-muted";
+}
+
+function formatServerAge(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function setText(id, value) {
+  const node = document.getElementById(id);
+  if (node) node.textContent = value;
 }
 
 function renderInventoryBlock(label, items, itemRenderer) {
@@ -535,7 +1052,7 @@ function renderInventoryBlock(label, items, itemRenderer) {
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "inventory-empty";
-    empty.textContent = "None declared.";
+    empty.textContent = "None";
     block.appendChild(empty);
     return block;
   }
@@ -550,7 +1067,7 @@ function renderInventoryBlock(label, items, itemRenderer) {
 }
 
 function renderToolItem(tool) {
-  const trust = tool.requiredTrust ? ` <span>${escapeHtml(tool.requiredTrust)}</span>` : "";
+  const trust = tool.requiredTrust ? ` <span class="trust-chip">${escapeHtml(tool.requiredTrust)}</span>` : "";
   const desc = tool.description ? `<small>${escapeHtml(tool.description)}</small>` : "";
   return `<strong>${escapeHtml(tool.name || "-")}</strong>${trust}${desc}`;
 }
@@ -584,8 +1101,27 @@ function initDashboard() {
   document.getElementById("refresh-events")?.addEventListener("click", () => {
     loadEvents();
   });
+  document.getElementById("refresh-analytics")?.addEventListener("click", () => {
+    loadDashboardAnalytics();
+  });
+  document.getElementById("analytics-limit")?.addEventListener("change", () => {
+    loadDashboardAnalytics();
+  });
   document.getElementById("refresh-servers")?.addEventListener("click", () => {
     loadServers();
+  });
+  document.getElementById("server-search")?.addEventListener("input", (event) => {
+    serverSearchQuery = event.target.value || "";
+    renderServers();
+  });
+  document.querySelectorAll("[data-server-status]").forEach((button) => {
+    button.addEventListener("click", () => {
+      serverStatusFilter = button.dataset.serverStatus || "all";
+      document.querySelectorAll("[data-server-status]").forEach((node) => {
+        node.classList.toggle("active", node === button);
+      });
+      renderServers();
+    });
   });
 }
 
@@ -597,6 +1133,7 @@ function startAutoRefresh() {
   if (autoRefreshCheckbox && !autoRefreshCheckbox.checked) return;
   autoRefreshInterval = setInterval(() => {
     loadDashboardSummary();
+    loadDashboardAnalytics();
     loadEvents();
   }, 5000);
 }
@@ -649,14 +1186,28 @@ async function loadGrants() {
   try {
     const data = await fetchJSON("/runtime/grants");
     grantsCache = Array.isArray(data.grants) ? data.grants : [];
+    renderGovernanceSummary();
     renderGrants();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
     console.error("Failed to load grants:", err);
     grantsCache = [];
+    renderGovernanceSummary();
     document.getElementById("grants-body").innerHTML =
       '<tr><td colspan="6" class="empty">Error loading grants.</td></tr>';
   }
+}
+
+function renderGovernanceSummary() {
+  const activeGrants = grantsCache.filter((grant) => !grant.disabled).length;
+  const disabledGrants = grantsCache.length - activeGrants;
+  const activeSessions = sessionsCache.filter((session) => !session.revoked).length;
+  const revokedSessions = sessionsCache.length - activeSessions;
+
+  setText("gov-active-grants", formatNumber(activeGrants));
+  setText("gov-disabled-grants", formatNumber(disabledGrants));
+  setText("gov-active-sessions", formatNumber(activeSessions));
+  setText("gov-revoked-sessions", formatNumber(revokedSessions));
 }
 
 function renderGrants() {
@@ -686,19 +1237,20 @@ function renderGrants() {
   const fragment = document.createDocumentFragment();
 
   filtered.forEach((grant) => {
-    const subject = grant.subject?.humanID || grant.subject?.agentID || "-";
     const status = grant.disabled ? "Disabled" : "Active";
     const statusClass = grant.disabled ? "badge-muted" : "badge-success";
+    const namespace = grant.namespace || defaults.namespace;
+    const serverNamespace = grant.serverRef?.namespace || namespace;
 
     const row = document.createElement("tr");
-    row.appendChild(createTextCell(grant.name || "-"));
-    row.appendChild(createTextCell(grant.serverRef?.name || "-"));
-    row.appendChild(createTextCell(subject));
-    row.appendChild(createTextCell(grant.maxTrust || "-"));
+    row.appendChild(createIdentityCell(grant.name || "-", namespace));
+    row.appendChild(createIdentityCell(grant.serverRef?.name || "-", serverNamespace));
+    row.appendChild(createSubjectCell(grant.subject));
+    row.appendChild(createTrustCell(grant.maxTrust));
     row.appendChild(createBadgeCell(status, statusClass));
     row.appendChild(
       createActionCell(grant.disabled ? "Enable" : "Disable", () =>
-        toggleGrant(grant.namespace || "", grant.name || "", grant.disabled)
+        toggleGrant(namespace, grant.name || "", grant.disabled)
       )
     );
     fragment.appendChild(row);
@@ -724,6 +1276,7 @@ async function toggleGrant(namespace, name, currentlyDisabled) {
     );
     showToast(`Grant ${action}d successfully`);
     loadGrants();
+    loadDashboardSummary();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
     showToast(`Failed to ${action} grant: ${err.message}`, "error");
@@ -824,11 +1377,13 @@ async function loadSessions() {
   try {
     const data = await fetchJSON("/runtime/sessions");
     sessionsCache = Array.isArray(data.sessions) ? data.sessions : [];
+    renderGovernanceSummary();
     renderSessions();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
     console.error("Failed to load sessions:", err);
     sessionsCache = [];
+    renderGovernanceSummary();
     document.getElementById("sessions-body").innerHTML =
       '<tr><td colspan="6" class="empty">Error loading sessions.</td></tr>';
   }
@@ -861,24 +1416,20 @@ function renderSessions() {
   const fragment = document.createDocumentFragment();
 
   filtered.forEach((session) => {
-    const subject =
-      session.subject?.humanID || session.subject?.agentID || "-";
     const status = session.revoked ? "Revoked" : "Active";
     const statusClass = session.revoked ? "badge-error" : "badge-success";
+    const namespace = session.namespace || defaults.namespace;
+    const serverNamespace = session.serverRef?.namespace || namespace;
 
     const row = document.createElement("tr");
-    row.appendChild(createTextCell(session.name || "-"));
-    row.appendChild(createTextCell(session.serverRef?.name || "-"));
-    row.appendChild(createTextCell(subject));
-    row.appendChild(createTextCell(session.consentedTrust || "-"));
+    row.appendChild(createIdentityCell(session.name || "-", namespace));
+    row.appendChild(createIdentityCell(session.serverRef?.name || "-", serverNamespace));
+    row.appendChild(createSubjectCell(session.subject));
+    row.appendChild(createTrustCell(session.consentedTrust));
     row.appendChild(createBadgeCell(status, statusClass));
     row.appendChild(
       createActionCell(session.revoked ? "Unrevoke" : "Revoke", () =>
-        toggleSession(
-          session.namespace || "",
-          session.name || "",
-          session.revoked
-        )
+        toggleSession(namespace, session.name || "", session.revoked)
       )
     );
     fragment.appendChild(row);
@@ -904,6 +1455,7 @@ async function toggleSession(namespace, name, currentlyRevoked) {
     );
     showToast(`Session ${action}d successfully`);
     loadSessions();
+    loadDashboardSummary();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
     showToast(`Failed to ${action} session: ${err.message}`, "error");
@@ -1165,9 +1717,364 @@ function initUserAPIKeys() {
   document.getElementById("create-user-api-key")?.addEventListener("click", createUserAPIKey);
 }
 
-// Operations - Components
+// Operations - MCP runtime
+async function loadMCPOperations() {
+  setOperationLoadingState();
+  await Promise.allSettled([
+    loadOperationServers(),
+    loadOperationEvents(),
+    loadOperationAudit(),
+  ]);
+}
+
+function setOperationLoadingState() {
+  const serversBody = document.getElementById("ops-server-health-body");
+  const activityBody = document.getElementById("ops-activity-body");
+  const usersBody = document.getElementById("ops-user-activity-body");
+  if (serversBody) {
+    serversBody.innerHTML = '<tr><td colspan="6" class="empty">Loading MCP servers...</td></tr>';
+  }
+  if (activityBody) {
+    activityBody.innerHTML = '<tr><td colspan="4" class="empty">Loading MCP activity...</td></tr>';
+  }
+  if (usersBody) {
+    usersBody.innerHTML = '<tr><td colspan="4" class="empty">Loading user activity...</td></tr>';
+  }
+}
+
+async function loadOperationServers() {
+  try {
+    const data = await fetchJSON("/runtime/servers");
+    operationsServersCache = Array.isArray(data.servers) ? data.servers : [];
+    const selectedStillExists = operationsServersCache.some(
+      (server) => operationServerKey(server) === selectedOperationsServerKey
+    );
+    if (!selectedStillExists) {
+      selectedOperationsServerKey = operationsServersCache.length
+        ? operationServerKey(operationsServersCache[0])
+        : "";
+    }
+    renderOperationsSummary();
+    renderOperationServers();
+    renderOperationServerSelect();
+    renderSelectedOperationServer();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load operation servers:", err);
+    operationsServersCache = [];
+    renderOperationsSummary();
+    const tbody = document.getElementById("ops-server-health-body");
+    if (tbody) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">Error loading MCP servers.</td></tr>';
+    }
+    renderOperationServerSelect();
+    renderSelectedOperationServer();
+  }
+}
+
+async function loadOperationEvents() {
+  try {
+    const data = await fetchJSON("/events?limit=20");
+    operationsEventsCache = Array.isArray(data.events) ? data.events : [];
+    renderOperationsSummary();
+    renderOperationEvents();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load operation events:", err);
+    operationsEventsCache = [];
+    renderOperationsSummary();
+    const tbody = document.getElementById("ops-activity-body");
+    if (tbody) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">Error loading MCP activity.</td></tr>';
+    }
+  }
+}
+
+async function loadOperationAudit() {
+  try {
+    const data = await fetchJSON("/admin/audit?limit=20");
+    operationsAuditCache = Array.isArray(data.audit_logs) ? data.audit_logs : [];
+    renderOperationsSummary();
+    renderUserActivity();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load user activity:", err);
+    operationsAuditCache = [];
+    renderOperationsSummary();
+    const tbody = document.getElementById("ops-user-activity-body");
+    if (tbody) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">Platform audit is unavailable.</td></tr>';
+    }
+  }
+}
+
+function renderOperationsSummary() {
+  const total = operationsServersCache.length;
+  const ready = operationsServersCache.filter((server) => server.status === "Ready").length;
+  const loginCount = operationsAuditCache.filter((item) => {
+    const action = String(item.action || "");
+    return action.includes("login") && item.status === "success";
+  }).length;
+  setText("ops-mcp-total", formatNumber(total));
+  setText("ops-mcp-ready", formatNumber(ready));
+  setText("ops-mcp-issues", formatNumber(Math.max(total - ready, 0)));
+  setText("ops-login-count", formatNumber(loginCount));
+  setText("ops-mcp-events", formatNumber(operationsEventsCache.length));
+}
+
+function renderOperationServers() {
+  const tbody = document.getElementById("ops-server-health-body");
+  if (!tbody) return;
+  if (!operationsServersCache.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No MCP servers found.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  operationsServersCache.forEach((server) => {
+    const row = document.createElement("tr");
+    row.appendChild(createIdentityCell(server.name || "-", server.namespace || "-"));
+    row.appendChild(createBadgeCell(server.status || "Unknown", serverBadgeClass(server.status)));
+    row.appendChild(createTextCell(server.ready || "0/0"));
+    row.appendChild(createTextCell(operationInventoryLabel(server)));
+    row.appendChild(createTextCell(formatDateTime(server.age)));
+    row.appendChild(createEndpointCell(server.endpoint));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderOperationServerSelect() {
+  const select = document.getElementById("ops-server-select");
+  if (!select) return;
+  select.innerHTML = '<option value="">Select server...</option>';
+  operationsServersCache.forEach((server) => {
+    const option = document.createElement("option");
+    option.value = operationServerKey(server);
+    option.textContent = `${server.namespace || "-"} / ${server.name || "-"}`;
+    select.appendChild(option);
+  });
+  select.value = selectedOperationsServerKey;
+}
+
+function renderSelectedOperationServer() {
+  const detail = document.getElementById("ops-server-detail");
+  if (!detail) return;
+  const server = operationsServersCache.find(
+    (item) => operationServerKey(item) === selectedOperationsServerKey
+  );
+  if (!server) {
+    detail.innerHTML = '<div class="empty">Select a server to inspect deployment details.</div>';
+    return;
+  }
+
+  const labels = server.labels && typeof server.labels === "object"
+    ? Object.entries(server.labels)
+    : [];
+  detail.innerHTML = `
+    <div class="server-inspector-head">
+      <div class="server-identity">
+        <span class="server-avatar" aria-hidden="true">${escapeHtml(serverInitials(server.name))}</span>
+        <div class="server-title-stack">
+          <h3>${escapeHtml(server.name || "-")}</h3>
+          <p>${escapeHtml(server.namespace || "-")}</p>
+        </div>
+      </div>
+      <span class="badge ${serverBadgeClass(server.status)}">${escapeHtml(server.status || "Unknown")}</span>
+    </div>
+    <div class="server-detail-grid">
+      ${serverDetailStat("Ready Pods", server.ready || "0/0")}
+      ${serverDetailStat("Deployed", formatDateTime(server.age))}
+      ${serverDetailStat("Tools", String((server.tools || []).length))}
+      ${serverDetailStat("Prompts", String((server.prompts || []).length))}
+      ${serverDetailStat("Resources", String((server.resources || []).length))}
+      ${serverDetailStat("Tasks", String((server.tasks || []).length))}
+    </div>
+    <div class="server-detail-block">
+      <span class="server-detail-label">Endpoint</span>
+      <code class="server-endpoint">${escapeHtml(server.endpoint || "No public endpoint")}</code>
+    </div>
+    <div class="server-detail-block">
+      <span class="server-detail-label">Labels</span>
+      <div class="server-label-list">
+        ${
+          labels.length
+            ? labels
+                .map(([key, value]) => `<span>${escapeHtml(key)}=${escapeHtml(value)}</span>`)
+                .join("")
+            : '<span class="muted-text">None</span>'
+        }
+      </div>
+    </div>
+  `;
+}
+
+function renderOperationEvents() {
+  const tbody = document.getElementById("ops-activity-body");
+  if (!tbody) return;
+  if (!operationsEventsCache.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No MCP events yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  operationsEventsCache.forEach((event) => {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${renderAuditTime(event)}</td>
+      <td>${renderOperationSubject(event)}</td>
+      <td>${renderAuditTarget(event)}</td>
+      <td>${renderDecision(event.decision)}</td>
+    `;
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderUserActivity() {
+  const tbody = document.getElementById("ops-user-activity-body");
+  if (!tbody) return;
+  if (!operationsAuditCache.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No user activity yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  operationsAuditCache.forEach((item) => {
+    const row = document.createElement("tr");
+    row.appendChild(createTextCell(formatDateTime(item.created_at)));
+    row.appendChild(createIdentityCell(item.email || item.resource || "-", item.namespace || item.actor_ip || ""));
+    row.appendChild(createIdentityCell(item.action || "-", item.resource || item.message || ""));
+    row.appendChild(createBadgeCell(item.status || "unknown", auditStatusBadgeClass(item.status)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderOperationSubject(event) {
+  const chips = [
+    event.human_id ? renderAuditIdentity("Human", event.human_id) : "",
+    event.agent_id ? renderAuditIdentity("Agent", event.agent_id) : "",
+  ].filter(Boolean);
+  return chips.length ? `<div class="subject-chip-list">${chips.join("")}</div>` : '<span class="muted-text">-</span>';
+}
+
+function operationServerKey(server) {
+  return `${server.namespace || ""}/${server.name || ""}`;
+}
+
+function operationInventoryLabel(server) {
+  const pieces = [
+    `${(server.tools || []).length} tools`,
+    `${(server.prompts || []).length} prompts`,
+    `${(server.resources || []).length} resources`,
+    `${(server.tasks || []).length} tasks`,
+  ];
+  return pieces.join(" / ");
+}
+
+function createEndpointCell(endpoint) {
+  const cell = document.createElement("td");
+  const code = document.createElement("code");
+  code.className = "table-code";
+  code.textContent = endpoint || "No public endpoint";
+  cell.appendChild(code);
+  return cell;
+}
+
+function serverDetailStat(label, value) {
+  return `
+    <div class="server-detail-stat">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value || "-")}</strong>
+    </div>
+  `;
+}
+
+function auditStatusBadgeClass(status) {
+  if (status === "success") return "badge-success";
+  if (status === "denied") return "badge-warning";
+  if (status === "error") return "badge-error";
+  return "badge-muted";
+}
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function initOperations() {
+  document.getElementById("refresh-mcp-ops")?.addEventListener("click", loadMCPOperations);
+  document.getElementById("ops-server-select")?.addEventListener("change", (event) => {
+    selectedOperationsServerKey = event.target.value || "";
+    renderSelectedOperationServer();
+  });
+}
+
+// Platform management
+async function loadPlatformManagement() {
+  await Promise.allSettled([loadComponents(), loadPlatformServerHealth()]);
+}
+
+async function loadPlatformServerHealth() {
+  const tbody = document.getElementById("platform-server-health-body");
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">Loading MCP server health...</td></tr>';
+  }
+  try {
+    const data = await fetchJSON("/runtime/servers");
+    const servers = Array.isArray(data.servers) ? data.servers : [];
+    renderPlatformServerHealth(servers);
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load platform server health:", err);
+    setText("platform-mcp-total", "-");
+    setText("platform-mcp-ready", "-");
+    setText("platform-mcp-issues", "-");
+    if (tbody) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">Error loading MCP server health.</td></tr>';
+    }
+  }
+}
+
+function renderPlatformServerHealth(servers) {
+  const total = servers.length;
+  const ready = servers.filter((server) => server.status === "Ready").length;
+  setText("platform-mcp-total", formatNumber(total));
+  setText("platform-mcp-ready", formatNumber(ready));
+  setText("platform-mcp-issues", formatNumber(Math.max(total - ready, 0)));
+
+  const tbody = document.getElementById("platform-server-health-body");
+  if (!tbody) return;
+  if (!servers.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No MCP servers found.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  servers.forEach((server) => {
+    const row = document.createElement("tr");
+    row.appendChild(createIdentityCell(server.name || "-", server.namespace || "-"));
+    row.appendChild(createBadgeCell(server.status || "Unknown", serverBadgeClass(server.status)));
+    row.appendChild(createTextCell(server.ready || "0/0"));
+    row.appendChild(createTextCell(formatDateTime(server.age)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+// Platform - Components
 async function loadComponents() {
   const grid = document.getElementById("components-grid");
+  if (!grid) return;
   grid.innerHTML = '<div class="component-card loading">Loading components...</div>';
 
   try {
@@ -1198,6 +2105,7 @@ async function loadComponents() {
         <div class="component-name">${escapeHtml(comp.display)}</div>
         <div class="component-status">${escapeHtml(comp.status)}</div>
         <div class="component-ready">${escapeHtml(comp.ready)}</div>
+        <div class="component-meta">${escapeHtml(comp.namespace || "-")} / ${escapeHtml(comp.resource || comp.key || "-")}</div>
         ${comp.message ? `<div style="font-size: 11px; color: var(--muted); margin-top: 4px;">${escapeHtml(comp.message)}</div>` : ""}
       `;
       fragment.appendChild(card);
@@ -1215,6 +2123,7 @@ async function loadComponents() {
 // Operations - Restart
 async function restartComponent() {
   const select = document.getElementById("restart-component-select");
+  if (!select) return;
   const component = select.value;
 
   if (!component) {
@@ -1243,9 +2152,13 @@ async function restartComponent() {
   }
 }
 
-function initOperations() {
-  document.getElementById("refresh-components")?.addEventListener("click", loadComponents);
+function initPlatform() {
+  document.getElementById("refresh-components")?.addEventListener("click", loadPlatformManagement);
   document.getElementById("restart-component-btn")?.addEventListener("click", restartComponent);
+  document.getElementById("open-mcp-operations")?.addEventListener("click", () => {
+    activateTab("operations");
+    loadMCPOperations();
+  });
 }
 
 // Modal
@@ -1284,6 +2197,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initGovernance();
   initUserAPIKeys();
   initOperations();
+  initPlatform();
   initModal();
   initAuth();
 });

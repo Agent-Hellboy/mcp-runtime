@@ -226,10 +226,11 @@ X-MCP-Agent-Session: sess-8f1b9d
 
 ## Dashboard API
 
-Overview statistics for the dashboard cards.
+Overview statistics and usage analytics for the admin dashboard.
 
 ```text
 GET /api/dashboard/summary
+GET /api/analytics/usage?limit=10
 ```
 
 Requires admin authentication. For direct curl/API clients, send an
@@ -237,7 +238,13 @@ Requires admin authentication. For direct curl/API clients, send an
 `setup` keeps `UI_API_KEY` in both lists for browser/API-key admin login.
 `INGEST_API_KEYS` is only for event ingestion and is not accepted here.
 
-Returns: `total_events`, `active_servers`, `active_grants`, `active_sessions`, `latest_source`, `last_event_type`, `last_event_time`.
+`/api/dashboard/summary` returns: `total_events`, `active_servers`,
+`active_grants`, `active_sessions`, `latest_source`, `last_event_type`,
+`last_event_time`.
+
+`/api/analytics/usage` reads the ClickHouse event stream and returns admin
+usage rollups for the dashboard: totals, top MCP servers, top human/agent
+pairs, top tools, and decision counts. Query: `limit` (1-50, default 10).
 
 ## Runtime Governance API
 
@@ -351,6 +358,7 @@ GET /api/events?limit=100
 GET /api/stats
 GET /api/sources
 GET /api/event-types
+GET /api/analytics/usage?limit=10
 GET /api/events/filter?server=payments&decision=deny&agent_id=ops-agent&limit=50
 ```
 

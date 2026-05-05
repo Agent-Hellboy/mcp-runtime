@@ -41,6 +41,12 @@ const defaultGatewayProxyRepository = "mcp-sentinel-mcp-proxy"
 const defaultAnalyticsIngestURL = "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
 const gatewayProxyDockerfilePath = "services/mcp-proxy/Dockerfile"
 const gatewayProxyBuildContext = "."
+const (
+	defaultDevUserEmail     = "test@mcpruntime.org"
+	defaultDevUserPassword  = "test@123"
+	defaultDevAdminEmail    = "admin@mcpruntime.org"
+	defaultDevAdminPassword = "admin@123"
+)
 
 var setupImageTagResolver = registry.DefaultGitTag
 
@@ -1917,6 +1923,71 @@ func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
 	if adminUsers == "" && platformAdminEmail != "" {
 		adminUsers = platformAdminEmail
 	}
+	platformDevLoginEnabled := ""
+	platformDevUserEmail, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_USER_EMAIL")
+	if err != nil {
+		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	platformDevUserPassword, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_USER_PASSWORD")
+	if err != nil {
+		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	platformDevAdminEmail, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_ADMIN_EMAIL")
+	if err != nil {
+		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	platformDevAdminPassword, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_ADMIN_PASSWORD")
+	if err != nil {
+		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	if os.Getenv("MCP_RUNTIME_TEST_MODE") == "1" {
+		platformDevLoginEnabled = "true"
+		if platformDevUserEmail == "" {
+			platformDevUserEmail = defaultDevUserEmail
+		}
+		if platformDevUserPassword == "" {
+			platformDevUserPassword = defaultDevUserPassword
+		}
+		if platformDevAdminEmail == "" {
+			platformDevAdminEmail = defaultDevAdminEmail
+		}
+		if platformDevAdminPassword == "" {
+			platformDevAdminPassword = defaultDevAdminPassword
+		}
+	} else {
+		platformDevLoginEnabled = "false"
+		platformDevUserEmail = ""
+		platformDevUserPassword = ""
+		platformDevAdminEmail = ""
+		platformDevAdminPassword = ""
+	}
+	stringData := map[string]string{
+		"API_KEYS":                apiKeys,
+		"INGEST_API_KEYS":         ingestAPIKeys,
+		"ADMIN_API_KEYS":          adminAPIKeys,
+		"UI_API_KEY":              uiAPIKey,
+		"ADMIN_USERS":             adminUsers,
+		"PLATFORM_ADMIN_EMAIL":    platformAdminEmail,
+		"PLATFORM_ADMIN_PASSWORD": platformAdminPassword,
+		"POSTGRES_USER":           postgresUser,
+		"POSTGRES_PASSWORD":       postgresPassword,
+		"POSTGRES_DB":             postgresDB,
+		"POSTGRES_DSN":            postgresDSN,
+		"PLATFORM_JWT_SECRET":     platformJWTSecret,
+		"GRAFANA_ADMIN_USER":      "admin",
+		"GRAFANA_ADMIN_PASSWORD":  grafanaPassword,
+	}
+	if platformDevLoginEnabled != "" ||
+		platformDevUserEmail != "" ||
+		platformDevUserPassword != "" ||
+		platformDevAdminEmail != "" ||
+		platformDevAdminPassword != "" {
+		stringData["PLATFORM_DEV_LOGIN_ENABLED"] = platformDevLoginEnabled
+		stringData["PLATFORM_DEV_USER_EMAIL"] = platformDevUserEmail
+		stringData["PLATFORM_DEV_USER_PASSWORD"] = platformDevUserPassword
+		stringData["PLATFORM_DEV_ADMIN_EMAIL"] = platformDevAdminEmail
+		stringData["PLATFORM_DEV_ADMIN_PASSWORD"] = platformDevAdminPassword
+	}
 	secretManifest := map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Secret",
@@ -1924,23 +1995,8 @@ func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
 			"name":      "mcp-sentinel-secrets",
 			"namespace": core.DefaultAnalyticsNamespace,
 		},
-		"type": "Opaque",
-		"stringData": map[string]string{
-			"API_KEYS":                apiKeys,
-			"INGEST_API_KEYS":         ingestAPIKeys,
-			"ADMIN_API_KEYS":          adminAPIKeys,
-			"UI_API_KEY":              uiAPIKey,
-			"ADMIN_USERS":             adminUsers,
-			"PLATFORM_ADMIN_EMAIL":    platformAdminEmail,
-			"PLATFORM_ADMIN_PASSWORD": platformAdminPassword,
-			"POSTGRES_USER":           postgresUser,
-			"POSTGRES_PASSWORD":       postgresPassword,
-			"POSTGRES_DB":             postgresDB,
-			"POSTGRES_DSN":            postgresDSN,
-			"PLATFORM_JWT_SECRET":     platformJWTSecret,
-			"GRAFANA_ADMIN_USER":      "admin",
-			"GRAFANA_ADMIN_PASSWORD":  grafanaPassword,
-		},
+		"type":       "Opaque",
+		"stringData": stringData,
 	}
 	rendered, err := yaml.Marshal(secretManifest)
 	if err != nil {

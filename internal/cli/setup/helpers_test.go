@@ -699,6 +699,82 @@ func TestRenderAnalyticsSecretManifestGeneratesKeysWhenMissing(t *testing.T) {
 	}
 }
 
+func TestRenderAnalyticsSecretManifestSeedsDevLoginsInTestMode(t *testing.T) {
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "1")
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if contains(spec.Args, "get") && contains(spec.Args, "secret") {
+				return &core.MockCommand{
+					Args:       spec.Args,
+					OutputData: []byte("Error from server (NotFound): secrets \"mcp-sentinel-secrets\" not found"),
+					OutputErr:  errors.New("not found"),
+				}
+			}
+			return &core.MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	manifest, err := renderAnalyticsSecretManifest(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data := secretStringDataFromManifest(t, manifest)
+	if data["PLATFORM_DEV_LOGIN_ENABLED"] != "true" {
+		t.Fatalf("expected dev login seed to be enabled, got %q", data["PLATFORM_DEV_LOGIN_ENABLED"])
+	}
+	if data["PLATFORM_DEV_USER_EMAIL"] != defaultDevUserEmail || data["PLATFORM_DEV_USER_PASSWORD"] != defaultDevUserPassword {
+		t.Fatalf("unexpected dev user credentials: email=%q password=%q", data["PLATFORM_DEV_USER_EMAIL"], data["PLATFORM_DEV_USER_PASSWORD"])
+	}
+	if data["PLATFORM_DEV_ADMIN_EMAIL"] != defaultDevAdminEmail || data["PLATFORM_DEV_ADMIN_PASSWORD"] != defaultDevAdminPassword {
+		t.Fatalf("unexpected dev admin credentials: email=%q password=%q", data["PLATFORM_DEV_ADMIN_EMAIL"], data["PLATFORM_DEV_ADMIN_PASSWORD"])
+	}
+}
+
+func TestRenderAnalyticsSecretManifestDisablesExistingDevLoginsOutsideTestMode(t *testing.T) {
+	encoded := func(value string) []byte {
+		return []byte(base64.StdEncoding.EncodeToString([]byte(value)))
+	}
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			switch {
+			case contains(spec.Args, "jsonpath={.data.PLATFORM_DEV_LOGIN_ENABLED}"):
+				return &core.MockCommand{Args: spec.Args, OutputData: encoded("true")}
+			case contains(spec.Args, "jsonpath={.data.PLATFORM_DEV_USER_EMAIL}"):
+				return &core.MockCommand{Args: spec.Args, OutputData: encoded(defaultDevUserEmail)}
+			case contains(spec.Args, "jsonpath={.data.PLATFORM_DEV_USER_PASSWORD}"):
+				return &core.MockCommand{Args: spec.Args, OutputData: encoded(defaultDevUserPassword)}
+			case contains(spec.Args, "jsonpath={.data.PLATFORM_DEV_ADMIN_EMAIL}"):
+				return &core.MockCommand{Args: spec.Args, OutputData: encoded(defaultDevAdminEmail)}
+			case contains(spec.Args, "jsonpath={.data.PLATFORM_DEV_ADMIN_PASSWORD}"):
+				return &core.MockCommand{Args: spec.Args, OutputData: encoded(defaultDevAdminPassword)}
+			default:
+				return &core.MockCommand{Args: spec.Args}
+			}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	manifest, err := renderAnalyticsSecretManifest(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data := secretStringDataFromManifest(t, manifest)
+	if data["PLATFORM_DEV_LOGIN_ENABLED"] != "false" {
+		t.Fatalf("expected dev login seed to be disabled outside test mode, got %q", data["PLATFORM_DEV_LOGIN_ENABLED"])
+	}
+	for _, key := range []string{
+		"PLATFORM_DEV_USER_EMAIL",
+		"PLATFORM_DEV_USER_PASSWORD",
+		"PLATFORM_DEV_ADMIN_EMAIL",
+		"PLATFORM_DEV_ADMIN_PASSWORD",
+	} {
+		if data[key] != "" {
+			t.Fatalf("expected %s to be cleared outside test mode, got %q", key, data[key])
+		}
+	}
+}
+
 func TestEnsureCSVIncludes(t *testing.T) {
 	tests := []struct {
 		name  string

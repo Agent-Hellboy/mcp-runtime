@@ -9,8 +9,8 @@
 | **mcp-proxy** | Transparent sidecar. Extracts identity, evaluates tool-level policy, emits allow/deny audit events, forwards traffic upstream. |
 | **ingest** | Receives `POST /events`, validates ingest-scoped API keys or optional JWTs, writes to Kafka. |
 | **processor** | Consumes Kafka, batches, writes into ClickHouse with indexed audit fields. |
-| **api** | Analytics endpoints, dashboard summaries, runtime governance APIs (grants/sessions), component operations. |
-| **ui** | Three-tab dashboard: overview metrics + events, governance forms, operations health + safe restart. |
+| **api** | Analytics endpoints, dashboard summaries, runtime governance APIs (grants/sessions), platform audit, MCP server catalog, component operations. |
+| **ui** | Control-plane dashboard: MCP server catalog and connect config, user API keys, analytics dashboard, governance, MCP operations, and platform management. |
 | **gateway** | Kubernetes deployment fronting the sentinel API, ingest, and UI surfaces. |
 | **reference mcp-server** | Small example server in `examples/go-mcp-server` for end-to-end smoke tests. |
 
@@ -51,14 +51,20 @@ The Sentinel stack has multiple HTTP services. In local test mode, Traefik
 usually exposes them through `http://localhost:18080/`; inside the cluster,
 call the service DNS names directly.
 
+For the local build, push, and rollout loop while editing `services/`, see
+[Iterate on one Sentinel service](getting-started.md#iterate-on-one-sentinel-service).
+
 `api` accepts `API_KEYS`, with admin elevation only for keys also listed in
 `ADMIN_API_KEYS`. `ingest` accepts ingest-scoped `INGEST_API_KEYS`, with legacy
 fallback to `API_KEYS`, and optional OIDC JWT validation when configured.
+For local `setup --test-mode` clusters, setup seeds two email/password logins:
+`test@mcpruntime.org` / `test@123` with role `user`, and
+`admin@mcpruntime.org` / `admin@123` with role `admin`.
 
 | Surface | Public path in dev | In-cluster service | Notes |
 |---|---|---|---|
 | **UI** | `/` | `mcp-sentinel-ui:8082` | Browser app, browser login/session routes, and `/api` reverse proxy. |
-| **API** | `/api/*` through UI | `mcp-sentinel-api:8080` | Auth, analytics queries, runtime governance, deployments, admin/user APIs. |
+| **API** | `/api/*` through UI | `mcp-sentinel-api:8080` | Auth, analytics queries, runtime governance, deployments, admin/user APIs. The UI proxy forwards browser origin headers so local connect configs can point at `http://localhost:18080/<server-name>/mcp`. |
 | **Ingest** | `/ingest/events` | `mcp-sentinel-ingest:8081/events` | Event intake used by `mcp-proxy`; the public ingress strips `/ingest`. |
 | **Grafana** | `/grafana` | `grafana:3000` | Observability UI. |
 | **Prometheus** | `/prometheus` | `prometheus:9090` | Metrics query UI. |
@@ -88,12 +94,13 @@ metrics on `METRICS_PORT` (default `9090`).
 | `POST` | `/api/auth/oidc` | Exchange a configured OIDC ID token for a platform bearer token. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
 | `GET` | `/api/auth/me` | Return the authenticated principal. |
 | `GET` | `/api/dashboard/summary` | Dashboard cards: event totals, active grants/sessions, latest event metadata. Admin role required. |
+| `GET` | `/api/analytics/usage` | Dashboard usage analytics from ClickHouse: totals, top MCP servers, human/agent pairs, tools, and decision counts. Query: `limit` (1-50, default 10). Admin role required. |
 | `GET` | `/api/events` | Recent ClickHouse-backed audit events, newest first. Query: `limit` (1-1000, default 100). Admin role required. |
 | `GET` | `/api/events/filter` | Filtered audit events. Query: `source`, `event_type`, `server`, `namespace`, `cluster`, `human_id`, `agent_id`, `session_id`, `decision`, `tool_name`, `limit`. Admin role required. |
 | `GET` | `/api/stats` | Total event count. Admin role required. |
 | `GET` | `/api/sources` | Event counts grouped by source. Admin role required. |
 | `GET` | `/api/event-types` | Event counts grouped by event type. Admin role required. |
-| `GET` | `/api/runtime/servers` | List MCP servers. Non-admin users may read `mcp-servers` and their own namespace. |
+| `GET` | `/api/runtime/servers` | List MCP servers and connect config JSON. Non-admin users may read `mcp-servers` and their own namespace. Local test-mode configs use the browser origin, for example `http://localhost:18080/go-example-mcp/mcp`; production platform hosts map `platform.<domain>` to `https://mcp.<domain>/<server-name>/mcp`. |
 | `GET`, `POST` | `/api/runtime/grants` | List or apply `MCPAccessGrant` resources. |
 | `GET`, `DELETE` | `/api/runtime/grants/{namespace}/{name}` | Read or delete one grant. |
 | `POST` | `/api/runtime/grants/{namespace}/{name}/disable` | Set `spec.disabled=true`. |
@@ -102,13 +109,14 @@ metrics on `METRICS_PORT` (default `9090`).
 | `GET`, `DELETE` | `/api/runtime/sessions/{namespace}/{name}` | Read or delete one session. |
 | `POST` | `/api/runtime/sessions/{namespace}/{name}/revoke` | Set `spec.revoked=true`. |
 | `POST` | `/api/runtime/sessions/{namespace}/{name}/unrevoke` | Set `spec.revoked=false`. |
-| `GET` | `/api/runtime/components` | Core Sentinel component health from Kubernetes. |
+| `GET` | `/api/runtime/components` | Operator, Sentinel service, and observability component health from Kubernetes. |
 | `GET` | `/api/runtime/policy?namespace=&server=` | Rendered gateway policy for one server. |
 | `POST` | `/api/runtime/actions/restart` | Restart one Sentinel component or all components. Admin role required. |
 | `GET`, `POST` | `/api/deployments` | User-scoped platform deployment list/apply. |
 | `DELETE` | `/api/deployments/{namespace}/{name}` | Delete a platform-managed deployment and service. |
 | `GET` | `/api/admin/namespaces` | Platform namespace inventory. Admin role required. |
 | `GET` | `/api/admin/deployments` | Deployment inventory across namespaces, optionally filtered by `namespace`. Admin role required. |
+| `GET` | `/api/admin/audit` | Recent platform audit logs such as login, signup, namespace, and registry credential activity. Query: `limit` (1-200, default 50). Admin role required. |
 | `GET`, `POST` | `/api/user/api-keys` | List or create caller-owned API keys. |
 | `POST` | `/api/user/api-keys/{id}/revoke` | Revoke one caller-owned API key. |
 | `GET`, `POST` | `/api/user/registry-credentials` | List or create caller-owned registry credentials. |
