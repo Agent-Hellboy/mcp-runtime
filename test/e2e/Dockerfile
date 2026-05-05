@@ -1,4 +1,4 @@
-FROM golang:1.25.9
+FROM golang:1.26.0
 
 ENV DEBIAN_FRONTEND=noninteractive
 ARG DOCKERCLI_VERSION=26.1.4

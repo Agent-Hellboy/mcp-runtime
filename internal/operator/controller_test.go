@@ -1575,7 +1575,7 @@ func TestReconcile(t *testing.T) {
 		assertEqual(t, "result", result, ctrl.Result{RequeueAfter: 10 * time.Second})
 	})
 
-	t.Run("requeues when defaults need to be applied", func(t *testing.T) {
+	t.Run("returns after applying defaults", func(t *testing.T) {
 		mcpServer := &mcpv1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
 			Spec: mcpv1alpha1.MCPServerSpec{
@@ -1594,10 +1594,7 @@ func TestReconcile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// Should requeue to re-reconcile after defaults are applied
-		if result.RequeueAfter == 0 {
-			t.Fatal("expected result to requeue after defaults are applied")
-		}
+		assertEqual(t, "result", result, ctrl.Result{})
 	})
 }
 

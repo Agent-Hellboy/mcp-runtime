@@ -120,7 +120,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 	if requeue {
-		return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
+		return ctrl.Result{}, nil
 	}
 
 	if err := r.validateIngressConfig(ctx, mcpServer, logger); err != nil {

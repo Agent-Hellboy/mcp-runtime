@@ -223,8 +223,8 @@ func (mcpServerWebhook) ValidateCreate(_ context.Context, obj *MCPServer) (admis
 	return obj.ValidateCreate()
 }
 
-func (mcpServerWebhook) ValidateUpdate(_ context.Context, _ *MCPServer, newObj *MCPServer) (admission.Warnings, error) {
-	return newObj.ValidateUpdate(nil)
+func (mcpServerWebhook) ValidateUpdate(_ context.Context, oldObj *MCPServer, newObj *MCPServer) (admission.Warnings, error) {
+	return newObj.ValidateUpdate(oldObj)
 }
 
 func (mcpServerWebhook) ValidateDelete(_ context.Context, obj *MCPServer) (admission.Warnings, error) {
@@ -376,8 +376,8 @@ func (mcpAccessGrantValidator) ValidateCreate(_ context.Context, obj *MCPAccessG
 	return obj.ValidateCreate()
 }
 
-func (mcpAccessGrantValidator) ValidateUpdate(_ context.Context, _ *MCPAccessGrant, newObj *MCPAccessGrant) (admission.Warnings, error) {
-	return newObj.ValidateUpdate(nil)
+func (mcpAccessGrantValidator) ValidateUpdate(_ context.Context, oldObj *MCPAccessGrant, newObj *MCPAccessGrant) (admission.Warnings, error) {
+	return newObj.ValidateUpdate(oldObj)
 }
 
 func (mcpAccessGrantValidator) ValidateDelete(_ context.Context, obj *MCPAccessGrant) (admission.Warnings, error) {
@@ -442,8 +442,8 @@ func (mcpAgentSessionValidator) ValidateCreate(_ context.Context, obj *MCPAgentS
 	return obj.ValidateCreate()
 }
 
-func (mcpAgentSessionValidator) ValidateUpdate(_ context.Context, _ *MCPAgentSession, newObj *MCPAgentSession) (admission.Warnings, error) {
-	return newObj.ValidateUpdate(nil)
+func (mcpAgentSessionValidator) ValidateUpdate(_ context.Context, oldObj *MCPAgentSession, newObj *MCPAgentSession) (admission.Warnings, error) {
+	return newObj.ValidateUpdate(oldObj)
 }
 
 func (mcpAgentSessionValidator) ValidateDelete(_ context.Context, obj *MCPAgentSession) (admission.Warnings, error) {
