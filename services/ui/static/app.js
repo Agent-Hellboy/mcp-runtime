@@ -9,9 +9,13 @@ let grantsCache = [];
 let sessionsCache = [];
 let userAPIKeysCache = [];
 let serversCache = [];
+let operationsServersCache = [];
+let operationsEventsCache = [];
+let operationsAuditCache = [];
 let userAPIKeyClearTimer = null;
 let serverSearchQuery = "";
 let serverStatusFilter = "all";
+let selectedOperationsServerKey = "";
 
 // API Helper
 async function fetchJSON(path, options = {}) {
@@ -134,7 +138,9 @@ function initTabs() {
         loadGrants();
         loadSessions();
       } else if (target === "operations") {
-        loadComponents();
+        loadMCPOperations();
+      } else if (target === "platform") {
+        loadPlatformManagement();
       } else if (target === "userkeys") {
         loadUserAPIKeys();
       } else if (target === "servers") {
@@ -765,7 +771,9 @@ function loadActiveTab() {
     loadGrants();
     loadSessions();
   } else if (active === "operations") {
-    loadComponents();
+    loadMCPOperations();
+  } else if (active === "platform") {
+    loadPlatformManagement();
   } else if (active === "userkeys") {
     loadUserAPIKeys();
   }
@@ -1709,9 +1717,364 @@ function initUserAPIKeys() {
   document.getElementById("create-user-api-key")?.addEventListener("click", createUserAPIKey);
 }
 
-// Operations - Components
+// Operations - MCP runtime
+async function loadMCPOperations() {
+  setOperationLoadingState();
+  await Promise.allSettled([
+    loadOperationServers(),
+    loadOperationEvents(),
+    loadOperationAudit(),
+  ]);
+}
+
+function setOperationLoadingState() {
+  const serversBody = document.getElementById("ops-server-health-body");
+  const activityBody = document.getElementById("ops-activity-body");
+  const usersBody = document.getElementById("ops-user-activity-body");
+  if (serversBody) {
+    serversBody.innerHTML = '<tr><td colspan="6" class="empty">Loading MCP servers...</td></tr>';
+  }
+  if (activityBody) {
+    activityBody.innerHTML = '<tr><td colspan="4" class="empty">Loading MCP activity...</td></tr>';
+  }
+  if (usersBody) {
+    usersBody.innerHTML = '<tr><td colspan="4" class="empty">Loading user activity...</td></tr>';
+  }
+}
+
+async function loadOperationServers() {
+  try {
+    const data = await fetchJSON("/runtime/servers");
+    operationsServersCache = Array.isArray(data.servers) ? data.servers : [];
+    const selectedStillExists = operationsServersCache.some(
+      (server) => operationServerKey(server) === selectedOperationsServerKey
+    );
+    if (!selectedStillExists) {
+      selectedOperationsServerKey = operationsServersCache.length
+        ? operationServerKey(operationsServersCache[0])
+        : "";
+    }
+    renderOperationsSummary();
+    renderOperationServers();
+    renderOperationServerSelect();
+    renderSelectedOperationServer();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load operation servers:", err);
+    operationsServersCache = [];
+    renderOperationsSummary();
+    const tbody = document.getElementById("ops-server-health-body");
+    if (tbody) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">Error loading MCP servers.</td></tr>';
+    }
+    renderOperationServerSelect();
+    renderSelectedOperationServer();
+  }
+}
+
+async function loadOperationEvents() {
+  try {
+    const data = await fetchJSON("/events?limit=20");
+    operationsEventsCache = Array.isArray(data.events) ? data.events : [];
+    renderOperationsSummary();
+    renderOperationEvents();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load operation events:", err);
+    operationsEventsCache = [];
+    renderOperationsSummary();
+    const tbody = document.getElementById("ops-activity-body");
+    if (tbody) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">Error loading MCP activity.</td></tr>';
+    }
+  }
+}
+
+async function loadOperationAudit() {
+  try {
+    const data = await fetchJSON("/admin/audit?limit=20");
+    operationsAuditCache = Array.isArray(data.audit_logs) ? data.audit_logs : [];
+    renderOperationsSummary();
+    renderUserActivity();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load user activity:", err);
+    operationsAuditCache = [];
+    renderOperationsSummary();
+    const tbody = document.getElementById("ops-user-activity-body");
+    if (tbody) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">Platform audit is unavailable.</td></tr>';
+    }
+  }
+}
+
+function renderOperationsSummary() {
+  const total = operationsServersCache.length;
+  const ready = operationsServersCache.filter((server) => server.status === "Ready").length;
+  const loginCount = operationsAuditCache.filter((item) => {
+    const action = String(item.action || "");
+    return action.includes("login") && item.status === "success";
+  }).length;
+  setText("ops-mcp-total", formatNumber(total));
+  setText("ops-mcp-ready", formatNumber(ready));
+  setText("ops-mcp-issues", formatNumber(Math.max(total - ready, 0)));
+  setText("ops-login-count", formatNumber(loginCount));
+  setText("ops-mcp-events", formatNumber(operationsEventsCache.length));
+}
+
+function renderOperationServers() {
+  const tbody = document.getElementById("ops-server-health-body");
+  if (!tbody) return;
+  if (!operationsServersCache.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No MCP servers found.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  operationsServersCache.forEach((server) => {
+    const row = document.createElement("tr");
+    row.appendChild(createIdentityCell(server.name || "-", server.namespace || "-"));
+    row.appendChild(createBadgeCell(server.status || "Unknown", serverBadgeClass(server.status)));
+    row.appendChild(createTextCell(server.ready || "0/0"));
+    row.appendChild(createTextCell(operationInventoryLabel(server)));
+    row.appendChild(createTextCell(formatDateTime(server.age)));
+    row.appendChild(createEndpointCell(server.endpoint));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderOperationServerSelect() {
+  const select = document.getElementById("ops-server-select");
+  if (!select) return;
+  select.innerHTML = '<option value="">Select server...</option>';
+  operationsServersCache.forEach((server) => {
+    const option = document.createElement("option");
+    option.value = operationServerKey(server);
+    option.textContent = `${server.namespace || "-"} / ${server.name || "-"}`;
+    select.appendChild(option);
+  });
+  select.value = selectedOperationsServerKey;
+}
+
+function renderSelectedOperationServer() {
+  const detail = document.getElementById("ops-server-detail");
+  if (!detail) return;
+  const server = operationsServersCache.find(
+    (item) => operationServerKey(item) === selectedOperationsServerKey
+  );
+  if (!server) {
+    detail.innerHTML = '<div class="empty">Select a server to inspect deployment details.</div>';
+    return;
+  }
+
+  const labels = server.labels && typeof server.labels === "object"
+    ? Object.entries(server.labels)
+    : [];
+  detail.innerHTML = `
+    <div class="server-inspector-head">
+      <div class="server-identity">
+        <span class="server-avatar" aria-hidden="true">${escapeHtml(serverInitials(server.name))}</span>
+        <div class="server-title-stack">
+          <h3>${escapeHtml(server.name || "-")}</h3>
+          <p>${escapeHtml(server.namespace || "-")}</p>
+        </div>
+      </div>
+      <span class="badge ${serverBadgeClass(server.status)}">${escapeHtml(server.status || "Unknown")}</span>
+    </div>
+    <div class="server-detail-grid">
+      ${serverDetailStat("Ready Pods", server.ready || "0/0")}
+      ${serverDetailStat("Deployed", formatDateTime(server.age))}
+      ${serverDetailStat("Tools", String((server.tools || []).length))}
+      ${serverDetailStat("Prompts", String((server.prompts || []).length))}
+      ${serverDetailStat("Resources", String((server.resources || []).length))}
+      ${serverDetailStat("Tasks", String((server.tasks || []).length))}
+    </div>
+    <div class="server-detail-block">
+      <span class="server-detail-label">Endpoint</span>
+      <code class="server-endpoint">${escapeHtml(server.endpoint || "No public endpoint")}</code>
+    </div>
+    <div class="server-detail-block">
+      <span class="server-detail-label">Labels</span>
+      <div class="server-label-list">
+        ${
+          labels.length
+            ? labels
+                .map(([key, value]) => `<span>${escapeHtml(key)}=${escapeHtml(value)}</span>`)
+                .join("")
+            : '<span class="muted-text">None</span>'
+        }
+      </div>
+    </div>
+  `;
+}
+
+function renderOperationEvents() {
+  const tbody = document.getElementById("ops-activity-body");
+  if (!tbody) return;
+  if (!operationsEventsCache.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No MCP events yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  operationsEventsCache.forEach((event) => {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${renderAuditTime(event)}</td>
+      <td>${renderOperationSubject(event)}</td>
+      <td>${renderAuditTarget(event)}</td>
+      <td>${renderDecision(event.decision)}</td>
+    `;
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderUserActivity() {
+  const tbody = document.getElementById("ops-user-activity-body");
+  if (!tbody) return;
+  if (!operationsAuditCache.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No user activity yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  operationsAuditCache.forEach((item) => {
+    const row = document.createElement("tr");
+    row.appendChild(createTextCell(formatDateTime(item.created_at)));
+    row.appendChild(createIdentityCell(item.email || item.resource || "-", item.namespace || item.actor_ip || ""));
+    row.appendChild(createIdentityCell(item.action || "-", item.resource || item.message || ""));
+    row.appendChild(createBadgeCell(item.status || "unknown", auditStatusBadgeClass(item.status)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderOperationSubject(event) {
+  const chips = [
+    event.human_id ? renderAuditIdentity("Human", event.human_id) : "",
+    event.agent_id ? renderAuditIdentity("Agent", event.agent_id) : "",
+  ].filter(Boolean);
+  return chips.length ? `<div class="subject-chip-list">${chips.join("")}</div>` : '<span class="muted-text">-</span>';
+}
+
+function operationServerKey(server) {
+  return `${server.namespace || ""}/${server.name || ""}`;
+}
+
+function operationInventoryLabel(server) {
+  const pieces = [
+    `${(server.tools || []).length} tools`,
+    `${(server.prompts || []).length} prompts`,
+    `${(server.resources || []).length} resources`,
+    `${(server.tasks || []).length} tasks`,
+  ];
+  return pieces.join(" / ");
+}
+
+function createEndpointCell(endpoint) {
+  const cell = document.createElement("td");
+  const code = document.createElement("code");
+  code.className = "table-code";
+  code.textContent = endpoint || "No public endpoint";
+  cell.appendChild(code);
+  return cell;
+}
+
+function serverDetailStat(label, value) {
+  return `
+    <div class="server-detail-stat">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value || "-")}</strong>
+    </div>
+  `;
+}
+
+function auditStatusBadgeClass(status) {
+  if (status === "success") return "badge-success";
+  if (status === "denied") return "badge-warning";
+  if (status === "error") return "badge-error";
+  return "badge-muted";
+}
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function initOperations() {
+  document.getElementById("refresh-mcp-ops")?.addEventListener("click", loadMCPOperations);
+  document.getElementById("ops-server-select")?.addEventListener("change", (event) => {
+    selectedOperationsServerKey = event.target.value || "";
+    renderSelectedOperationServer();
+  });
+}
+
+// Platform management
+async function loadPlatformManagement() {
+  await Promise.allSettled([loadComponents(), loadPlatformServerHealth()]);
+}
+
+async function loadPlatformServerHealth() {
+  const tbody = document.getElementById("platform-server-health-body");
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">Loading MCP server health...</td></tr>';
+  }
+  try {
+    const data = await fetchJSON("/runtime/servers");
+    const servers = Array.isArray(data.servers) ? data.servers : [];
+    renderPlatformServerHealth(servers);
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load platform server health:", err);
+    setText("platform-mcp-total", "-");
+    setText("platform-mcp-ready", "-");
+    setText("platform-mcp-issues", "-");
+    if (tbody) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">Error loading MCP server health.</td></tr>';
+    }
+  }
+}
+
+function renderPlatformServerHealth(servers) {
+  const total = servers.length;
+  const ready = servers.filter((server) => server.status === "Ready").length;
+  setText("platform-mcp-total", formatNumber(total));
+  setText("platform-mcp-ready", formatNumber(ready));
+  setText("platform-mcp-issues", formatNumber(Math.max(total - ready, 0)));
+
+  const tbody = document.getElementById("platform-server-health-body");
+  if (!tbody) return;
+  if (!servers.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No MCP servers found.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  servers.forEach((server) => {
+    const row = document.createElement("tr");
+    row.appendChild(createIdentityCell(server.name || "-", server.namespace || "-"));
+    row.appendChild(createBadgeCell(server.status || "Unknown", serverBadgeClass(server.status)));
+    row.appendChild(createTextCell(server.ready || "0/0"));
+    row.appendChild(createTextCell(formatDateTime(server.age)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+// Platform - Components
 async function loadComponents() {
   const grid = document.getElementById("components-grid");
+  if (!grid) return;
   grid.innerHTML = '<div class="component-card loading">Loading components...</div>';
 
   try {
@@ -1742,6 +2105,7 @@ async function loadComponents() {
         <div class="component-name">${escapeHtml(comp.display)}</div>
         <div class="component-status">${escapeHtml(comp.status)}</div>
         <div class="component-ready">${escapeHtml(comp.ready)}</div>
+        <div class="component-meta">${escapeHtml(comp.namespace || "-")} / ${escapeHtml(comp.resource || comp.key || "-")}</div>
         ${comp.message ? `<div style="font-size: 11px; color: var(--muted); margin-top: 4px;">${escapeHtml(comp.message)}</div>` : ""}
       `;
       fragment.appendChild(card);
@@ -1759,6 +2123,7 @@ async function loadComponents() {
 // Operations - Restart
 async function restartComponent() {
   const select = document.getElementById("restart-component-select");
+  if (!select) return;
   const component = select.value;
 
   if (!component) {
@@ -1787,9 +2152,13 @@ async function restartComponent() {
   }
 }
 
-function initOperations() {
-  document.getElementById("refresh-components")?.addEventListener("click", loadComponents);
+function initPlatform() {
+  document.getElementById("refresh-components")?.addEventListener("click", loadPlatformManagement);
   document.getElementById("restart-component-btn")?.addEventListener("click", restartComponent);
+  document.getElementById("open-mcp-operations")?.addEventListener("click", () => {
+    activateTab("operations");
+    loadMCPOperations();
+  });
 }
 
 // Modal
@@ -1828,6 +2197,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initGovernance();
   initUserAPIKeys();
   initOperations();
+  initPlatform();
   initModal();
   initAuth();
 });

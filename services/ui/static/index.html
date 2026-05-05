@@ -84,6 +84,18 @@
         >
           Operations
         </button>
+        <button
+          id="tab-button-platform"
+          class="tab"
+          data-tab="platform"
+          data-admin-only="true"
+          role="tab"
+          type="button"
+          aria-controls="tab-platform"
+          aria-selected="false"
+        >
+          Platform
+        </button>
       </nav>
 
       <!-- MCP Servers Tab -->
@@ -568,9 +580,155 @@
       >
         <div class="panel">
           <div class="panel-head">
-            <h2>Component Health</h2>
+            <div>
+              <h2>MCP Operations</h2>
+              <p class="panel-kicker">Track deployed MCP servers, user activity, and recent tool decisions.</p>
+            </div>
             <div class="panel-actions">
-              <button class="ghost" id="refresh-components">Refresh</button>
+              <button class="ghost" id="refresh-mcp-ops" type="button">Refresh</button>
+            </div>
+          </div>
+          <div class="ops-summary-grid" aria-label="MCP operations summary">
+            <div class="metric-card compact">
+              <span class="metric-label">MCP Servers</span>
+              <strong class="metric-value" id="ops-mcp-total">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">Ready</span>
+              <strong class="metric-value" id="ops-mcp-ready">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">Issues</span>
+              <strong class="metric-value" id="ops-mcp-issues">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">Recent Logins</span>
+              <strong class="metric-value" id="ops-login-count">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">MCP Events</span>
+              <strong class="metric-value" id="ops-mcp-events">-</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>MCP Server Health</h2>
+              <p class="panel-kicker">See which MCP servers are deployed, their rollout state, and when they were created.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="server-health-table">
+              <thead>
+                <tr>
+                  <th>Server</th>
+                  <th>Status</th>
+                  <th>Ready</th>
+                  <th>Inventory</th>
+                  <th>Deployed</th>
+                  <th>Endpoint</th>
+                </tr>
+              </thead>
+              <tbody id="ops-server-health-body">
+                <tr>
+                  <td colspan="6" class="empty">Loading MCP servers...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="ops-two-column">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>User Activity</h2>
+                <p class="panel-kicker">Recent login and platform audit activity for debugging access.</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>User</th>
+                    <th>Action</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="ops-user-activity-body">
+                  <tr>
+                    <td colspan="4" class="empty">Loading user activity...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>MCP Activity</h2>
+                <p class="panel-kicker">Recent allow and deny decisions from the MCP gateway path.</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="audit-table compact-audit-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Subject</th>
+                    <th>MCP Action</th>
+                    <th>Decision</th>
+                  </tr>
+                </thead>
+                <tbody id="ops-activity-body">
+                  <tr>
+                    <td colspan="4" class="empty">Loading MCP activity...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>MCP Server Inspector</h2>
+              <p class="panel-kicker">Select a server to inspect deployment metadata and MCP inventory.</p>
+            </div>
+            <div class="panel-actions">
+              <select id="ops-server-select" aria-label="Select MCP server">
+                <option value="">Select server...</option>
+              </select>
+            </div>
+          </div>
+          <div class="server-inspector" id="ops-server-detail">
+            <div class="empty">Select a server to inspect deployment details.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Platform Tab -->
+      <section
+        id="tab-platform"
+        class="tab-content"
+        data-admin-only="true"
+        role="tabpanel"
+        aria-labelledby="tab-button-platform"
+        hidden
+      >
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Platform Health</h2>
+              <p class="panel-kicker">Operator, Sentinel services, and observability components.</p>
+            </div>
+            <div class="panel-actions">
+              <button class="ghost" id="refresh-components" type="button">Refresh</button>
             </div>
           </div>
           <div class="components-grid" id="components-grid">
@@ -580,15 +738,59 @@
 
         <div class="panel">
           <div class="panel-head">
-            <h2>Safe Operations</h2>
+            <div>
+              <h2>MCP Server Fleet Health</h2>
+              <p class="panel-kicker">Readiness view for servers governed by the platform.</p>
+            </div>
+          </div>
+          <div class="ops-summary-grid platform-fleet-summary" aria-label="MCP server fleet summary">
+            <div class="metric-card compact">
+              <span class="metric-label">Servers</span>
+              <strong class="metric-value" id="platform-mcp-total">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">Ready</span>
+              <strong class="metric-value" id="platform-mcp-ready">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">Issues</span>
+              <strong class="metric-value" id="platform-mcp-issues">-</strong>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Server</th>
+                  <th>Status</th>
+                  <th>Ready</th>
+                  <th>Deployed</th>
+                </tr>
+              </thead>
+              <tbody id="platform-server-health-body">
+                <tr>
+                  <td colspan="4" class="empty">Loading MCP server health...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Safe Platform Operations</h2>
+              <p class="panel-kicker">Use these for local development recovery and debugging.</p>
+            </div>
           </div>
           <div class="ops-grid">
             <div class="ops-section">
               <h3>Restart Component</h3>
-              <p class="ops-desc">Perform a rolling restart of a Sentinel component.</p>
+              <p class="ops-desc">Perform a rolling restart of a platform component.</p>
               <div class="ops-form">
                 <select id="restart-component-select">
                   <option value="">Select component...</option>
+                  <option value="operator">Operator</option>
                   <option value="api">API</option>
                   <option value="ingest">Ingest</option>
                   <option value="processor">Processor</option>
@@ -599,14 +801,9 @@
               </div>
             </div>
             <div class="ops-section">
-              <h3>MCP Server Operations</h3>
-              <p class="ops-desc">Manage MCP server deployments (coming soon).</p>
-              <div class="ops-form disabled">
-                <select disabled>
-                  <option>Select server...</option>
-                </select>
-                <button class="primary" disabled>Restart</button>
-              </div>
+              <h3>MCP Server Health</h3>
+              <p class="ops-desc">MCP rollout status and deployed-at timestamps now live in the Operations tab.</p>
+              <button class="ghost" id="open-mcp-operations" type="button">Open Operations</button>
             </div>
           </div>
         </div>

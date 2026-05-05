@@ -50,6 +50,20 @@ type auditEvent struct {
 	RequestID string
 }
 
+type platformAuditLog struct {
+	ID        int64     `json:"id"`
+	UserID    string    `json:"user_id,omitempty"`
+	Email     string    `json:"email,omitempty"`
+	Action    string    `json:"action"`
+	Resource  string    `json:"resource"`
+	Namespace string    `json:"namespace,omitempty"`
+	Status    string    `json:"status"`
+	Message   string    `json:"message,omitempty"`
+	ActorIP   string    `json:"actor_ip,omitempty"`
+	RequestID string    `json:"request_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 func newPlatformStore(ctx context.Context, dsn string, jwtSecret []byte) (*platformStore, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -592,6 +606,43 @@ func (s *platformStore) ListNamespaces(ctx context.Context) ([]map[string]any, e
 			return nil, err
 		}
 		out = append(out, map[string]any{"id": id, "user_id": userID, "email": email, "namespace": namespace, "created_at": createdAt})
+	}
+	return out, rows.Err()
+}
+
+func (s *platformStore) ListAuditLogs(ctx context.Context, limit int) ([]platformAuditLog, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT a.id, COALESCE(a.user_id::text, ''), COALESCE(u.email, ''), a.action, a.resource,
+       COALESCE(a.namespace, ''), a.status, COALESCE(a.message, ''),
+       COALESCE(a.actor_ip, ''), COALESCE(a.request_id, ''), a.created_at
+FROM audit_logs a
+LEFT JOIN users u ON u.id = a.user_id
+ORDER BY a.created_at DESC, a.id DESC
+LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]platformAuditLog, 0, limit)
+	for rows.Next() {
+		var item platformAuditLog
+		if err := rows.Scan(
+			&item.ID,
+			&item.UserID,
+			&item.Email,
+			&item.Action,
+			&item.Resource,
+			&item.Namespace,
+			&item.Status,
+			&item.Message,
+			&item.ActorIP,
+			&item.RequestID,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
 	}
 	return out, rows.Err()
 }

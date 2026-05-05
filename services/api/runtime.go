@@ -588,8 +588,7 @@ func (s *RuntimeServer) handleRuntimeComponents(w http.ResponseWriter, r *http.R
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Only return core components for the dashboard
-	statuses, err := s.sentinelMgr.GetCoreComponentStatuses(ctx)
+	statuses, err := s.sentinelMgr.GetAllComponentStatuses(ctx)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get component statuses"})
 		return

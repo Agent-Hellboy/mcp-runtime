@@ -27,11 +27,20 @@ type PortTarget struct {
 }
 
 const (
-	DefaultNamespace = "mcp-sentinel"
+	DefaultNamespace  = "mcp-sentinel"
+	OperatorNamespace = "mcp-runtime"
 )
 
 // Components is the registry of all Sentinel stack components.
 var Components = []Component{
+	{
+		Key:       "operator",
+		Display:   "Operator",
+		Namespace: OperatorNamespace,
+		Kind:      "deployment",
+		Resource:  "mcp-runtime-operator-controller-manager",
+		Label:     "mcp-runtime-operator-controller-manager",
+	},
 	{
 		Key:       "clickhouse",
 		Display:   "ClickHouse",
