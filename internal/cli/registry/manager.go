@@ -5,6 +5,7 @@ package registry
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -16,6 +17,7 @@ import (
 
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/kube"
+	"mcp-runtime/internal/cli/platformapi"
 	"mcp-runtime/internal/cli/registry/config"
 	"mcp-runtime/internal/cli/registry/ref"
 )
@@ -145,16 +147,38 @@ func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helpe
 
 	mgr.logger.Info("Pushing image", zap.String("source", image), zap.String("target", target))
 
+	var pushErr error
 	switch mode {
 	case "direct":
-		return mgr.PushDirect(image, target)
+		pushErr = mgr.PushDirect(image, target)
 	case "in-cluster":
-		return mgr.PushInCluster(image, target, helperNamespace)
+		pushErr = mgr.PushInCluster(image, target, helperNamespace)
 	default:
 		err := core.NewWithSentinel(core.ErrUnknownRegistryMode, fmt.Sprintf("unknown mode %q (use direct|in-cluster)", mode))
 		core.Error("Unknown registry mode")
 		core.LogStructuredError(mgr.logger, err, "Unknown registry mode")
 		return err
+	}
+	if pushErr != nil {
+		return pushErr
+	}
+	mgr.recordImagePublish(image, target, mode)
+	return nil
+}
+
+func (m *RegistryManager) recordImagePublish(source, target, mode string) {
+	client, err := platformapi.NewPlatformClient()
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.RecordImagePublish(ctx, platformapi.ImagePublishRecord{
+		ImageRef:    target,
+		SourceImage: source,
+		Mode:        mode,
+	}); err != nil {
+		m.logger.Debug("image publish audit event was not recorded", zap.Error(err), zap.String("image", target))
 	}
 }
 

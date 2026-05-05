@@ -337,8 +337,33 @@ func (s *apiServer) handleUserAPIKeys(w http.ResponseWriter, r *http.Request) {
 		}
 		key, cleartext, err := s.userKeys.CreateUserAPIKey(r.Context(), p.userID(), req.Name)
 		if err != nil {
+			if s.platform != nil {
+				s.platform.WriteAudit(r.Context(), auditEvent{
+					UserID:       p.userID(),
+					Action:       "api_key_create",
+					Resource:     strings.TrimSpace(req.Name),
+					Namespace:    p.Namespace,
+					Status:       "error",
+					Message:      err.Error(),
+					ActorIP:      requestIP(r),
+					Source:       auditSource(r, p),
+					AuthIdentity: auditIdentityLabel(p),
+				})
+			}
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
+		}
+		if s.platform != nil {
+			s.platform.WriteAudit(r.Context(), auditEvent{
+				UserID:       p.userID(),
+				Action:       "api_key_create",
+				Resource:     key.ID,
+				Namespace:    p.Namespace,
+				Status:       "success",
+				ActorIP:      requestIP(r),
+				Source:       auditSource(r, p),
+				AuthIdentity: auditIdentityLabel(p),
+			})
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"key": key, "api_key": cleartext})
 	default:
@@ -371,12 +396,37 @@ func (s *apiServer) handleUserAPIKeyItem(w http.ResponseWriter, r *http.Request)
 	}
 	key, revokeErr := s.userKeys.RevokeUserAPIKey(r.Context(), p.userID(), parts[0])
 	if revokeErr != nil {
+		if s.platform != nil {
+			s.platform.WriteAudit(r.Context(), auditEvent{
+				UserID:       p.userID(),
+				Action:       "api_key_revoke",
+				Resource:     parts[0],
+				Namespace:    p.Namespace,
+				Status:       "error",
+				Message:      revokeErr.Error(),
+				ActorIP:      requestIP(r),
+				Source:       auditSource(r, p),
+				AuthIdentity: auditIdentityLabel(p),
+			})
+		}
 		if apierrors.IsNotFound(revokeErr) || errors.Is(revokeErr, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "key not found"})
 			return
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to revoke key"})
 		return
+	}
+	if s.platform != nil {
+		s.platform.WriteAudit(r.Context(), auditEvent{
+			UserID:       p.userID(),
+			Action:       "api_key_revoke",
+			Resource:     key.ID,
+			Namespace:    p.Namespace,
+			Status:       "success",
+			ActorIP:      requestIP(r),
+			Source:       auditSource(r, p),
+			AuthIdentity: auditIdentityLabel(p),
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"key": key})
 }

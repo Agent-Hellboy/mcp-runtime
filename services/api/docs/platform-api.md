@@ -51,6 +51,9 @@ noted otherwise. Authenticated routes accept `Authorization: Bearer <token>` or
 | `DELETE` | `/api/deployments/{namespace}/{name}` | Delete a platform-managed deployment and service. |
 | `GET` | `/api/admin/namespaces` | Admin namespace inventory. |
 | `GET` | `/api/admin/deployments` | Admin deployment inventory, optionally filtered by `namespace`. |
+| `GET` | `/api/admin/audit` | Admin audit timeline filtered by `user`, `since`, `until`, and `limit`. |
+| `GET` | `/api/admin/operations` | Admin operations snapshot for user activity, image activity, deployments, and timeline events. |
+| `POST` | `/api/user/activity/image-publish` | Record a successful image publish event for the authenticated user. |
 
 The same API service also hosts analytics and runtime governance routes such as
 `/api/events`, `/api/runtime/grants`, and `/api/runtime/sessions`; keep those

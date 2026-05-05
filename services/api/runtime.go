@@ -62,6 +62,7 @@ type RuntimeServer struct {
 	k8sClients  *k8sclient.Clients
 	accessMgr   *sentinelaccess.Manager
 	sentinelMgr *sentinel.Manager
+	audit       auditWriter
 }
 
 // NewRuntimeServer creates a runtime server with Kubernetes access.

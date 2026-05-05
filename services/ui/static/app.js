@@ -12,6 +12,9 @@ let serversCache = [];
 let operationsServersCache = [];
 let operationsEventsCache = [];
 let operationsAuditCache = [];
+let operationsUsersCache = [];
+let operationsImagesCache = [];
+let operationsDeploymentsCache = [];
 let userAPIKeyClearTimer = null;
 let serverSearchQuery = "";
 let serverStatusFilter = "all";
@@ -460,6 +463,15 @@ function debounce(fn, waitMs) {
 function createTextCell(text) {
   const cell = document.createElement("td");
   cell.textContent = text;
+  return cell;
+}
+
+function createCodeCell(text) {
+  const cell = document.createElement("td");
+  const code = document.createElement("code");
+  code.className = "table-code";
+  code.textContent = text || "-";
+  cell.appendChild(code);
   return cell;
 }
 
@@ -1717,7 +1729,7 @@ function initUserAPIKeys() {
   document.getElementById("create-user-api-key")?.addEventListener("click", createUserAPIKey);
 }
 
-// Operations - MCP runtime
+// Operations - admin activity and MCP runtime
 async function loadMCPOperations() {
   setOperationLoadingState();
   await Promise.allSettled([
@@ -1731,6 +1743,8 @@ function setOperationLoadingState() {
   const serversBody = document.getElementById("ops-server-health-body");
   const activityBody = document.getElementById("ops-activity-body");
   const usersBody = document.getElementById("ops-user-activity-body");
+  const userDirectoryBody = document.getElementById("ops-users-body");
+  const imageBody = document.getElementById("ops-image-body");
   if (serversBody) {
     serversBody.innerHTML = '<tr><td colspan="6" class="empty">Loading MCP servers...</td></tr>';
   }
@@ -1738,7 +1752,13 @@ function setOperationLoadingState() {
     activityBody.innerHTML = '<tr><td colspan="4" class="empty">Loading MCP activity...</td></tr>';
   }
   if (usersBody) {
-    usersBody.innerHTML = '<tr><td colspan="4" class="empty">Loading user activity...</td></tr>';
+    usersBody.innerHTML = '<tr><td colspan="5" class="empty">Loading user activity...</td></tr>';
+  }
+  if (userDirectoryBody) {
+    userDirectoryBody.innerHTML = '<tr><td colspan="6" class="empty">Loading users...</td></tr>';
+  }
+  if (imageBody) {
+    imageBody.innerHTML = '<tr><td colspan="6" class="empty">Loading image activity...</td></tr>';
   }
 }
 
@@ -1792,20 +1812,56 @@ async function loadOperationEvents() {
 
 async function loadOperationAudit() {
   try {
-    const data = await fetchJSON("/admin/audit?limit=20");
+    const query = operationFilterQuery();
+    const data = await fetchJSON(`/admin/operations?${query}`);
     operationsAuditCache = Array.isArray(data.audit_logs) ? data.audit_logs : [];
+    operationsUsersCache = Array.isArray(data.users) ? data.users : [];
+    operationsImagesCache = Array.isArray(data.images) ? data.images : [];
+    operationsDeploymentsCache = Array.isArray(data.deployments) ? data.deployments : [];
     renderOperationsSummary();
+    renderOperationUsers();
     renderUserActivity();
+    renderImageActivity();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
     console.error("Failed to load user activity:", err);
     operationsAuditCache = [];
+    operationsUsersCache = [];
+    operationsImagesCache = [];
+    operationsDeploymentsCache = [];
     renderOperationsSummary();
     const tbody = document.getElementById("ops-user-activity-body");
     if (tbody) {
-      tbody.innerHTML = '<tr><td colspan="4" class="empty">Platform audit is unavailable.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">Platform audit is unavailable.</td></tr>';
+    }
+    const usersBody = document.getElementById("ops-users-body");
+    if (usersBody) {
+      usersBody.innerHTML = '<tr><td colspan="6" class="empty">User activity is unavailable.</td></tr>';
+    }
+    const imageBody = document.getElementById("ops-image-body");
+    if (imageBody) {
+      imageBody.innerHTML = '<tr><td colspan="6" class="empty">Image activity is unavailable.</td></tr>';
     }
   }
+}
+
+function operationFilterQuery() {
+  const params = new URLSearchParams();
+  params.set("limit", "50");
+  const user = document.getElementById("ops-filter-user")?.value.trim();
+  const since = datetimeLocalToISOString(document.getElementById("ops-filter-since")?.value);
+  const until = datetimeLocalToISOString(document.getElementById("ops-filter-until")?.value);
+  if (user) params.set("user", user);
+  if (since) params.set("since", since);
+  if (until) params.set("until", until);
+  return params.toString();
+}
+
+function datetimeLocalToISOString(value) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toISOString();
 }
 
 function renderOperationsSummary() {
@@ -1819,7 +1875,32 @@ function renderOperationsSummary() {
   setText("ops-mcp-ready", formatNumber(ready));
   setText("ops-mcp-issues", formatNumber(Math.max(total - ready, 0)));
   setText("ops-login-count", formatNumber(loginCount));
+  setText("ops-user-total", formatNumber(operationsUsersCache.length));
+  setText("ops-image-count", formatNumber(operationsImagesCache.length));
+  setText("ops-deployment-count", formatNumber(operationsDeploymentsCache.length));
   setText("ops-mcp-events", formatNumber(operationsEventsCache.length));
+}
+
+function renderOperationUsers() {
+  const tbody = document.getElementById("ops-users-body");
+  if (!tbody) return;
+  if (!operationsUsersCache.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No users match the current filters.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  operationsUsersCache.forEach((user) => {
+    const row = document.createElement("tr");
+    row.appendChild(createIdentityCell(user.email || user.id || "-", user.id || ""));
+    row.appendChild(createBadgeCell(user.role || "user", user.role === "admin" ? "badge-warning" : "badge-muted"));
+    row.appendChild(createTextCell(user.namespace || "-"));
+    row.appendChild(createTextCell(formatDateTime(user.last_login_at)));
+    row.appendChild(createTextCell(formatDateTime(user.last_activity_at || user.created_at)));
+    row.appendChild(createTextCell(formatNumber(user.failed_action_count || 0)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
 }
 
 function renderOperationServers() {
@@ -1936,7 +2017,7 @@ function renderUserActivity() {
   const tbody = document.getElementById("ops-user-activity-body");
   if (!tbody) return;
   if (!operationsAuditCache.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="empty">No user activity yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No user activity matches the current filters.</td></tr>';
     return;
   }
   tbody.innerHTML = "";
@@ -1945,11 +2026,44 @@ function renderUserActivity() {
     const row = document.createElement("tr");
     row.appendChild(createTextCell(formatDateTime(item.created_at)));
     row.appendChild(createIdentityCell(item.email || item.resource || "-", item.namespace || item.actor_ip || ""));
-    row.appendChild(createIdentityCell(item.action || "-", item.resource || item.message || ""));
+    row.appendChild(createIdentityCell(item.action || "-", auditActivityTarget(item)));
+    row.appendChild(createTextCell(item.source || "-"));
     row.appendChild(createBadgeCell(item.status || "unknown", auditStatusBadgeClass(item.status)));
     fragment.appendChild(row);
   });
   tbody.appendChild(fragment);
+}
+
+function renderImageActivity() {
+  const tbody = document.getElementById("ops-image-body");
+  if (!tbody) return;
+  if (!operationsImagesCache.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No image activity matches the current filters.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  operationsImagesCache.forEach((item) => {
+    const row = document.createElement("tr");
+    row.appendChild(createTextCell(formatDateTime(item.created_at)));
+    row.appendChild(createIdentityCell(item.email || item.user_id || "-", item.namespace || ""));
+    row.appendChild(createCodeCell(item.image_ref || "-"));
+    row.appendChild(createIdentityCell(item.deployment_target || item.server_name || "-", item.source_image || ""));
+    row.appendChild(createIdentityCell(item.action || "-", item.source || ""));
+    row.appendChild(createBadgeCell(item.status || "unknown", auditStatusBadgeClass(item.status)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function auditActivityTarget(item) {
+  return [
+    item.image_ref,
+    item.deployment_target,
+    item.server_name,
+    item.resource,
+    item.message,
+  ].find((value) => String(value || "").trim()) || "";
 }
 
 function renderOperationSubject(event) {
@@ -2013,6 +2127,17 @@ function formatDateTime(value) {
 
 function initOperations() {
   document.getElementById("refresh-mcp-ops")?.addEventListener("click", loadMCPOperations);
+  document.getElementById("ops-filter-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    loadMCPOperations();
+  });
+  document.getElementById("ops-filter-clear")?.addEventListener("click", () => {
+    ["ops-filter-user", "ops-filter-since", "ops-filter-until"].forEach((id) => {
+      const input = document.getElementById(id);
+      if (input) input.value = "";
+    });
+    loadMCPOperations();
+  });
   document.getElementById("ops-server-select")?.addEventListener("change", (event) => {
     selectedOperationsServerKey = event.target.value || "";
     renderSelectedOperationServer();

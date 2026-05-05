@@ -68,11 +68,13 @@ func (s *RuntimeServer) handleDeploymentItem(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if p.Role != roleAdmin && ns != p.Namespace {
+		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "denied", name, ns, "", "forbidden"))
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
 	}
 	client, err := s.clientForPrincipal(p)
 	if err != nil {
+		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "error", name, ns, "", err.Error()))
 		if errors.Is(err, errPrincipalIdentityRequired) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "authenticated user identity required"})
 			return
@@ -83,13 +85,16 @@ func (s *RuntimeServer) handleDeploymentItem(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	if err := client.AppsV1().Deployments(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "error", name, ns, "", err.Error()))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete deployment"})
 		return
 	}
 	if err := client.CoreV1().Services(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "error", name, ns, "", err.Error()))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete service"})
 		return
 	}
+	s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "success", name, ns, "", ""))
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "namespace": ns, "name": name})
 }
 
@@ -143,19 +148,30 @@ func (s *RuntimeServer) handleAdminDeployments(w http.ResponseWriter, r *http.Re
 	}
 
 	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
+	summaries, err := s.listAdminDeploymentSummaries(r.Context(), namespace)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deployments"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deployments": summaries})
+}
+
+func (s *RuntimeServer) listAdminDeploymentSummaries(ctx context.Context, namespace string) ([]map[string]any, error) {
+	if s.k8sClients == nil {
+		return nil, errors.New("kubernetes not available")
+	}
 	listNamespace := metav1.NamespaceAll
 	if namespace != "" {
 		listNamespace = namespace
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	list, err := s.k8sClients.Clientset.AppsV1().Deployments(listNamespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deployments"})
-		return
+		return nil, err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"deployments": deploymentSummaries(list.Items)})
+	return deploymentSummaries(list.Items), nil
 }
 
 func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Request) {
@@ -180,6 +196,7 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 		req.Replicas = 1
 	}
 	if req.Name == "" || req.Image == "" {
+		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, firstNonEmpty(strings.TrimSpace(req.Namespace), p.Namespace), req.Image, "name and image are required"))
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and image are required"})
 		return
 	}
@@ -188,10 +205,12 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 		namespace = strings.TrimSpace(req.Namespace)
 	}
 	if namespace == "" {
+		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, req.Image, "namespace required"))
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace required"})
 		return
 	}
 	if p.Role != roleAdmin && namespace != p.Namespace {
+		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, req.Image, "forbidden"))
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
 	}
@@ -200,11 +219,13 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 		image += ":" + req.Version
 	}
 	if err := validateDeployImage(image, namespace, p.Role); err != nil {
+		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, image, err.Error()))
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	client, err := s.clientForPrincipal(p)
 	if err != nil {
+		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
 		if errors.Is(err, errPrincipalIdentityRequired) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "authenticated user identity required"})
 			return
@@ -217,6 +238,7 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	target := p
 	target.Namespace = namespace
 	if err := s.ensureUserNamespace(ctx, target); err != nil {
+		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure namespace"})
 		return
 	}
@@ -230,14 +252,17 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	dep := desiredDeployment(req.Name, namespace, image, req.Port, req.Replicas, labels)
 	applied, err := upsertDeployment(ctx, client, dep)
 	if err != nil {
+		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to apply deployment"})
 		return
 	}
 	svc := desiredService(req.Name, namespace, req.Port, labels)
 	if _, err := upsertService(ctx, client, svc); err != nil {
+		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to apply service"})
 		return
 	}
+	s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "success", req.Name, namespace, image, ""))
 	writeJSON(w, http.StatusOK, map[string]any{"deployment": deploymentSummary(*applied)})
 }
 
@@ -486,7 +511,51 @@ func deploymentSummary(d appsv1.Deployment) map[string]any {
 	if d.Spec.Replicas != nil {
 		replicas = *d.Spec.Replicas
 	}
-	return map[string]any{"name": d.Name, "namespace": d.Namespace, "replicas": replicas, "ready": d.Status.ReadyReplicas, "labels": d.Labels, "created_at": d.CreationTimestamp.Time}
+	return map[string]any{
+		"name":       d.Name,
+		"namespace":  d.Namespace,
+		"replicas":   replicas,
+		"ready":      d.Status.ReadyReplicas,
+		"image":      firstContainerImage(d),
+		"user_id":    d.Labels[platformUserIDLabel],
+		"created_by": d.Labels[createdByLabel],
+		"labels":     d.Labels,
+		"created_at": d.CreationTimestamp.Time,
+	}
+}
+
+func firstContainerImage(d appsv1.Deployment) string {
+	if len(d.Spec.Template.Spec.Containers) == 0 {
+		return ""
+	}
+	return d.Spec.Template.Spec.Containers[0].Image
+}
+
+func deploymentAuditEvent(r *http.Request, p principal, action, status, name, namespace, image, message string) auditEvent {
+	target := strings.Trim(strings.TrimSpace(namespace)+"/"+strings.TrimSpace(name), "/")
+	return auditEvent{
+		UserID:           p.userID(),
+		Action:           action,
+		Resource:         strings.TrimSpace(name),
+		Namespace:        strings.TrimSpace(namespace),
+		Status:           status,
+		Message:          strings.TrimSpace(message),
+		ActorIP:          requestIP(r),
+		Source:           auditSource(r, p),
+		AuthIdentity:     auditIdentityLabel(p),
+		ImageRef:         strings.TrimSpace(image),
+		ServerName:       strings.TrimSpace(name),
+		DeploymentTarget: target,
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func extractNamespaceName(path, prefix string) (string, string, error) {

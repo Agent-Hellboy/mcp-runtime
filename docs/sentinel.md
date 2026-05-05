@@ -139,11 +139,13 @@ metrics on `METRICS_PORT` (default `9090`).
 | `DELETE` | `/api/deployments/{namespace}/{name}` | Delete a platform-managed deployment and service. |
 | `GET` | `/api/admin/namespaces` | Platform namespace inventory. Admin role required. |
 | `GET` | `/api/admin/deployments` | Deployment inventory across namespaces, optionally filtered by `namespace`. Admin role required. |
-| `GET` | `/api/admin/audit` | Recent platform audit logs such as login, signup, namespace, and registry credential activity. Query: `limit` (1-200, default 50). Admin role required. |
+| `GET` | `/api/admin/audit` | Recent platform audit logs such as login, signup, namespace, deploy, image publish, API key, and registry credential activity. Query: `user`, `since`, `until`, `limit` (1-200, default 50). Admin role required. |
+| `GET` | `/api/admin/operations` | Admin operations snapshot for the UI: user activity, last login/activity, image activity, platform timeline, and deployment inventory. Same filters as `/api/admin/audit`. |
 | `GET`, `POST` | `/api/user/api-keys` | List or create caller-owned API keys. |
 | `POST` | `/api/user/api-keys/{id}/revoke` | Revoke one caller-owned API key. |
 | `GET`, `POST` | `/api/user/registry-credentials` | List or create caller-owned registry credentials. |
 | `POST` | `/api/user/registry-credentials/{id}/revoke` | Revoke one registry credential. |
+| `POST` | `/api/user/activity/image-publish` | Record a successful image publish event for the authenticated user. The CLI calls this after `registry push` when platform credentials are configured. |
 
 Restart request body examples:
 

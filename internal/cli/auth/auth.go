@@ -266,6 +266,7 @@ func loginPlatformPassword(ctx context.Context, apiBaseURL, email, password stri
 		return "", "", err
 	}
 	req.Header.Set("content-type", "application/json")
+	req.Header.Set("x-mcp-source", "cli")
 	var resp *http.Response
 	if httpDoHook != nil {
 		resp, err = httpDoHook(req)

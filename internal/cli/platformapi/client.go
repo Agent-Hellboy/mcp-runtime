@@ -83,6 +83,7 @@ func (c *PlatformClient) do(ctx context.Context, method, relPath, query string, 
 	}
 	req.Header.Set("x-api-key", c.token)
 	req.Header.Set("authorization", "Bearer "+c.token)
+	req.Header.Set("x-mcp-source", "cli")
 	if body != nil {
 		req.Header.Set("content-type", "application/json")
 	}
@@ -153,6 +154,32 @@ func (c *PlatformClient) ListGrants(ctx context.Context, namespace string) ([]se
 		return nil, err
 	}
 	return out.Grants, nil
+}
+
+type ImagePublishRecord struct {
+	ImageRef    string `json:"image_ref"`
+	SourceImage string `json:"source_image,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+}
+
+func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePublishRecord) error {
+	body, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	resp, err := c.do(ctx, http.MethodPost, "/user/activity/image-publish", "", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return httpAPIError(resp.StatusCode, b)
+	}
+	return nil
 }
 
 func (c *PlatformClient) ListSessions(ctx context.Context, namespace string) ([]sentinelaccess.SessionSummary, error) {

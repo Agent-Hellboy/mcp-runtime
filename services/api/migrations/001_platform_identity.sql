@@ -82,6 +82,11 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   message text,
   actor_ip text,
   request_id text,
+  source text,
+  auth_identity text,
+  image_ref text,
+  server_name text,
+  deployment_target text,
   created_at timestamptz not null default now()
 );
 
@@ -104,5 +109,12 @@ END
 $$;
 
 ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS source text;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS auth_identity text;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS image_ref text;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS server_name text;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS deployment_target text;
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_image_ref ON audit_logs(image_ref);

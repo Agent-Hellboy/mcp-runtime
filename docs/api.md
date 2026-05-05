@@ -325,12 +325,15 @@ POST /api/deployments                  # Apply a platform-managed Deployment + S
 DELETE /api/deployments/{namespace}/{name}
 GET  /api/admin/namespaces             # Admin-only namespace inventory
 GET  /api/admin/deployments            # Admin-only deployment inventory
+GET  /api/admin/audit                  # Admin-only audit timeline; supports user/since/until/limit
+GET  /api/admin/operations             # Admin-only user, image, deployment, and timeline view
 GET  /api/user/api-keys                # List caller-owned API keys
 POST /api/user/api-keys                # Create caller-owned API key
 POST /api/user/api-keys/{id}/revoke    # Revoke caller-owned API key
 GET  /api/user/registry-credentials    # List caller-owned registry credentials
 POST /api/user/registry-credentials    # Create a registry credential
 POST /api/user/registry-credentials/{id}/revoke
+POST /api/user/activity/image-publish  # Record a successful user image publish event
 ```
 
 Deployment apply body:
@@ -348,6 +351,15 @@ Deployment apply body:
 
 For non-admin users, deployment operations are scoped to the caller's namespace.
 Admins may pass `namespace`; if omitted, admin list calls can span namespaces.
+Successful and failed platform deployment, API key, registry credential, login,
+and image publish actions are written to platform audit logs where platform
+identity storage is enabled. `GET /api/admin/operations` returns a filtered
+operations snapshot with `users`, `audit_logs`, `images`, and `deployments`.
+Filters: `user` (email, user ID, namespace, resource, or image match), `since`,
+`until` (RFC3339 or `YYYY-MM-DD`), and `limit` (1-200). Image activity includes
+CLI-reported `registry push` events when the CLI has platform credentials plus
+currently deployed image references from platform-managed Kubernetes
+deployments; the bundled Docker registry does not emit a full raw push ledger.
 
 ## Analytics API
 

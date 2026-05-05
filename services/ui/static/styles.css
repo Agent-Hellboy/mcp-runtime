@@ -717,6 +717,35 @@ tr:hover td {
   gap: 12px;
 }
 
+.ops-filter-bar {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  margin-top: 18px;
+  min-width: 0;
+}
+
+.ops-filter-bar label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ops-filter-bar span {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ops-filter-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
 .platform-fleet-summary {
   margin-bottom: 16px;
 }
@@ -1374,9 +1403,14 @@ tr:hover td {
   }
 
   .analytics-overview,
+  .ops-filter-bar,
   .ops-two-column,
   .governance-summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ops-filter-actions {
+    justify-content: flex-start;
   }
 
   .panel-actions {
