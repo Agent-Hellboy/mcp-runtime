@@ -143,6 +143,7 @@ func TestRuntimeServersIncludesMCPServerInventory(t *testing.T) {
 			CreationTimestamp: metav1.Now(),
 		},
 		Spec: mcpv1alpha1.MCPServerSpec{
+			Description:      "Demo server for basic arithmetic and text tools.",
 			Image:            "demo:latest",
 			PublicPathPrefix: "demo-one",
 			Tools: []mcpv1alpha1.ToolConfig{
@@ -185,6 +186,9 @@ func TestRuntimeServersIncludesMCPServerInventory(t *testing.T) {
 	got := payload.Servers[0]
 	if got.Name != "demo-one" || len(got.Tools) != 1 || got.Tools[0].Name != "add" {
 		t.Fatalf("server inventory = %#v", got)
+	}
+	if got.Description != "Demo server for basic arithmetic and text tools." {
+		t.Fatalf("description = %q", got.Description)
 	}
 	if len(got.Prompts) != 1 || got.Prompts[0].Name != "summarize" {
 		t.Fatalf("prompts = %#v", got.Prompts)

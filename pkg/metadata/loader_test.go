@@ -35,13 +35,14 @@ func TestLoadFromFile(t *testing.T) {
 						Namespace: "mcp-servers",
 					},
 					{
-						Name:      "custom-server",
-						Image:     "custom/image",
-						ImageTag:  "v1",
-						Route:     "/custom-route",
-						Port:      9090,
-						Replicas:  int32Ptr(3),
-						Namespace: "custom-namespace",
+						Name:        "custom-server",
+						Description: "Example server for testing metadata loading.",
+						Image:       "custom/image",
+						ImageTag:    "v1",
+						Route:       "/custom-route",
+						Port:        9090,
+						Replicas:    int32Ptr(3),
+						Namespace:   "custom-namespace",
 						Gateway: &GatewayConfig{
 							Enabled:     true,
 							Image:       "example.com/mcp-proxy:latest",
@@ -70,8 +71,8 @@ func TestLoadFromFile(t *testing.T) {
 							UpstreamTokenHeader: "Authorization",
 						},
 						Tools: []ToolConfig{
-							{Name: "list_tools", RequiredTrust: TrustLevel("low")},
-							{Name: "delete_user", RequiredTrust: TrustLevel("high")},
+							{Name: "list_tools", Description: "List tools exposed by the server.", RequiredTrust: TrustLevel("low")},
+							{Name: "delete_user", Description: "Delete a user from the backing system.", RequiredTrust: TrustLevel("high")},
 						},
 						SecretEnvVars: []SecretEnvVar{
 							{
@@ -138,6 +139,9 @@ func TestLoadFromFile(t *testing.T) {
 				want := test.want.Servers[i]
 				if got.Name != want.Name {
 					t.Errorf("server[%d].Name = %q, want %q", i, got.Name, want.Name)
+				}
+				if got.Description != want.Description {
+					t.Errorf("server[%d].Description = %q, want %q", i, got.Description, want.Description)
 				}
 				if got.Image != want.Image {
 					t.Errorf("server[%d].Image = %q, want %q", i, got.Image, want.Image)

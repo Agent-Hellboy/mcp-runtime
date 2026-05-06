@@ -976,6 +976,7 @@ function serverSearchText(server) {
   const values = [
     server.name,
     server.namespace,
+    server.description,
     server.status,
     server.ready,
     server.endpoint,
@@ -1010,12 +1011,16 @@ function renderServerCatalogSummary() {
 function renderServerHero(server) {
   const hero = document.createElement("div");
   hero.className = "server-card-hero";
+  const description = server.description
+    ? `<p class="server-description">${escapeHtml(server.description)}</p>`
+    : "";
   hero.innerHTML = `
     <div class="server-identity">
       <span class="server-avatar" aria-hidden="true">${escapeHtml(serverInitials(server.name))}</span>
       <div class="server-title-stack">
         <h3>${escapeHtml(server.name || "-")}</h3>
         <p>${escapeHtml(server.namespace || "-")}</p>
+        ${description}
       </div>
     </div>
     <div class="server-status-stack">
@@ -2032,6 +2037,9 @@ function renderSelectedOperationServer() {
   const labels = server.labels && typeof server.labels === "object"
     ? Object.entries(server.labels)
     : [];
+  const description = server.description
+    ? `<p class="server-description">${escapeHtml(server.description)}</p>`
+    : "";
   detail.innerHTML = `
     <div class="server-inspector-head">
       <div class="server-identity">
@@ -2039,6 +2047,7 @@ function renderSelectedOperationServer() {
         <div class="server-title-stack">
           <h3>${escapeHtml(server.name || "-")}</h3>
           <p>${escapeHtml(server.namespace || "-")}</p>
+          ${description}
         </div>
       </div>
       <span class="badge ${serverBadgeClass(server.status)}">${escapeHtml(server.status || "Unknown")}</span>

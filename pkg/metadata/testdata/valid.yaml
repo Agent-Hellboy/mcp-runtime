@@ -2,6 +2,7 @@ version: v1
 servers:
   - name: test-server
   - name: custom-server
+    description: Example server for testing metadata loading.
     image: custom/image
     imageTag: v1
     route: custom-route
@@ -19,8 +20,10 @@ servers:
       required: true
     tools:
       - name: list_tools
+        description: List tools exposed by the server.
         requiredTrust: low
       - name: delete_user
+        description: Delete a user from the backing system.
         requiredTrust: high
     analytics:
       enabled: true

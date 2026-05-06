@@ -17,6 +17,7 @@ func TestGenerateCRD(t *testing.T) {
 		replicas := int32(2)
 		server := &ServerMetadata{
 			Name:             "test-server",
+			Description:      "Test server for CRD generation.",
 			Image:            "my-image",
 			ImageTag:         "v1.0.0",
 			Route:            "/test/mcp",
@@ -44,6 +45,7 @@ func TestGenerateCRD(t *testing.T) {
 		assertContains(t, content, "kind: MCPServer")
 		assertContains(t, content, "name: test-server")
 		assertContains(t, content, "namespace: custom-ns")
+		assertContains(t, content, "description: Test server for CRD generation.")
 		assertContains(t, content, "image: my-image")
 		assertContains(t, content, "imageTag: v1.0.0")
 		assertContains(t, content, "port: 9000")
@@ -148,7 +150,7 @@ func TestGenerateCRD(t *testing.T) {
 				HeaderName: "X-MCP-Agent-Session",
 			},
 			Tools: []ToolConfig{
-				{Name: "delete_user", RequiredTrust: TrustLevel("high")},
+				{Name: "delete_user", Description: "Delete a user from the backing system.", RequiredTrust: TrustLevel("high")},
 			},
 			SecretEnvVars: []SecretEnvVar{
 				{
@@ -214,6 +216,7 @@ func TestGenerateCRD(t *testing.T) {
 		}
 		tool := assertMapItem(t, tools[0], "tools[0]")
 		assertMapStringValue(t, tool, "name", "delete_user")
+		assertMapStringValue(t, tool, "description", "Delete a user from the backing system.")
 		assertMapStringValue(t, tool, "requiredTrust", "high")
 
 		secretEnvVars := assertSliceValue(t, spec, "secretEnvVars")

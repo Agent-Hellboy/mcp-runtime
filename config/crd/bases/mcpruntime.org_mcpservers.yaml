@@ -111,6 +111,10 @@ spec:
                   tokenHeader:
                     type: string
                 type: object
+              description:
+                description: Description is a human-readable summary of what the MCP
+                  server provides.
+                type: string
               envVars:
                 description: EnvVars are literal environment variables to pass to
                   the container.

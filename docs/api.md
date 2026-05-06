@@ -71,6 +71,7 @@ metadata:
   name: payments
   namespace: mcp-servers
 spec:
+  description: Payments MCP server for invoice lookup and refund workflows.
   image: registry.example.com/payments-mcp
   port: 8088
   publicPathPrefix: payments
@@ -94,8 +95,10 @@ spec:
     idleTimeout: 1h
   tools:
     - name: list_invoices
+      description: List invoices for a customer account.
       requiredTrust: low
     - name: refund_invoice
+      description: Issue a refund for an invoice.
       requiredTrust: high
   analytics:
     enabled: true

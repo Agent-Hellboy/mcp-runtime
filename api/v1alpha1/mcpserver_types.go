@@ -50,6 +50,9 @@ const (
 // MCPServerSpec defines the desired state of MCPServer.
 // +kubebuilder:object:generate=true
 type MCPServerSpec struct {
+	// Description is a human-readable summary of what the MCP server provides.
+	Description string `json:"description,omitempty"`
+
 	// Image is the container image for the MCP server.
 	Image string `json:"image"`
 

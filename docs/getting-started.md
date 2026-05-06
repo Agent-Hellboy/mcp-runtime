@@ -248,6 +248,7 @@ cat > /tmp/go-example-mcp.yaml <<'EOF'
 version: v1
 servers:
   - name: go-example-mcp
+    description: Go MCP example server with smoke and text transformation tools.
     route: /go-example-mcp/mcp
     publicPathPrefix: go-example-mcp
     port: 8088
@@ -257,8 +258,10 @@ servers:
         value: /go-example-mcp/mcp
     tools:
       - name: add
+        description: Add two numbers.
         requiredTrust: low
       - name: upper
+        description: Uppercase the provided message.
         requiredTrust: medium
     auth:
       mode: header

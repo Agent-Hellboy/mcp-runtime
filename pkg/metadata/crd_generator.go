@@ -24,10 +24,11 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 			Namespace: server.Namespace,
 		},
 		Spec: mcpv1alpha1.MCPServerSpec{
-			Image:    server.Image,
-			ImageTag: server.ImageTag,
-			Port:     server.Port,
-			Replicas: server.Replicas,
+			Description: server.Description,
+			Image:       server.Image,
+			ImageTag:    server.ImageTag,
+			Port:        server.Port,
+			Replicas:    server.Replicas,
 		},
 	}
 

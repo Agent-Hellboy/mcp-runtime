@@ -217,6 +217,7 @@ func TestResourceRequirementsDeepCopyWithNilPointers(t *testing.T) {
 func TestMCPServerSpecDeepCopy(t *testing.T) {
 	replicas := int32(3)
 	original := MCPServerSpec{
+		Description:            "Test server for deepcopy coverage.",
 		Image:                  "test-image",
 		ImageTag:               "v1.0.0",
 		RegistryOverride:       "registry.example.com",
@@ -315,6 +316,9 @@ func assertSpecSimpleFields(t *testing.T, copied, original *MCPServerSpec) {
 	t.Helper()
 	if copied == nil || original == nil {
 		t.Fatal("MCPServerSpec is nil")
+	}
+	if copied.Description != original.Description {
+		t.Errorf("Description = %q, want %q", copied.Description, original.Description)
 	}
 	if copied.Image != original.Image {
 		t.Errorf("Image = %q, want %q", copied.Image, original.Image)
