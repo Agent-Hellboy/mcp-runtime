@@ -123,7 +123,7 @@ metrics on `METRICS_PORT` (default `9090`).
 | `GET` | `/api/stats` | Total event count. Admin role required. |
 | `GET` | `/api/sources` | Event counts grouped by source. Admin role required. |
 | `GET` | `/api/event-types` | Event counts grouped by event type. Admin role required. |
-| `GET` | `/api/runtime/servers` | List MCP servers and connect config JSON. Non-admin users may read `mcp-servers` and their own namespace. Local test-mode configs use the browser origin, for example `http://localhost:18080/go-example-mcp/mcp`; production platform hosts map `platform.<domain>` to `https://mcp.<domain>/<server-name>/mcp`. |
+| `GET`, `POST` | `/api/runtime/servers` | List or apply `MCPServer` resources through runtime authz scope. Non-admin writes to shared `mcp-servers` are rejected; team users write within authorized team namespaces. |
 | `GET`, `POST` | `/api/runtime/grants` | List or apply `MCPAccessGrant` resources. |
 | `GET`, `DELETE` | `/api/runtime/grants/{namespace}/{name}` | Read or delete one grant. |
 | `POST` | `/api/runtime/grants/{namespace}/{name}/disable` | Set `spec.disabled=true`. |
@@ -132,6 +132,12 @@ metrics on `METRICS_PORT` (default `9090`).
 | `GET`, `DELETE` | `/api/runtime/sessions/{namespace}/{name}` | Read or delete one session. |
 | `POST` | `/api/runtime/sessions/{namespace}/{name}/revoke` | Set `spec.revoked=true`. |
 | `POST` | `/api/runtime/sessions/{namespace}/{name}/unrevoke` | Set `spec.revoked=false`. |
+| `GET`, `POST` | `/api/runtime/teams` | List teams (admin: all, user: memberships) or create a team+namespace (admin-only). |
+| `GET` | `/api/runtime/teams/{team}` | Read team metadata for admins and team members. |
+| `POST` | `/api/runtime/teams/{team}/members` | Add/update team membership (admin or team owner). |
+| `DELETE` | `/api/runtime/teams/{team}/members/{userID}` | Remove team membership (admin or team owner). |
+| `GET` | `/api/runtime/namespaces` | List allowed namespaces and shared catalog metadata for caller scope. |
+| `GET` | `/api/runtime/namespaces/{namespace}` | Read one namespace metadata entry when authorized. |
 | `GET` | `/api/runtime/components` | Operator, Sentinel service, and observability component health from Kubernetes. |
 | `GET` | `/api/runtime/policy?namespace=&server=` | Rendered gateway policy for one server. |
 | `POST` | `/api/runtime/actions/restart` | Restart one Sentinel component or all components. Admin role required. |

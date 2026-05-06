@@ -16,6 +16,8 @@ let userAPIKeyClearTimer = null;
 let serverSearchQuery = "";
 let serverStatusFilter = "all";
 let selectedOperationsServerKey = "";
+let namespaceScopes = [];
+let selectedNamespace = defaults.namespace || "mcp-servers";
 
 // API Helper
 async function fetchJSON(path, options = {}) {
@@ -48,6 +50,71 @@ function unauthorizedError() {
 
 function isUnauthorizedError(err) {
   return err?.name === "UnauthorizedError";
+}
+
+function activeScopeNamespace() {
+  return (selectedNamespace || defaults.namespace || "mcp-servers").trim();
+}
+
+function scopedPath(path) {
+  const namespace = activeScopeNamespace();
+  if (!namespace) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}namespace=${encodeURIComponent(namespace)}`;
+}
+
+function namespaceScopeLabel(item) {
+  if (item?.is_shared) {
+    return `shared / ${item.namespace}`;
+  }
+  if (item?.team_slug) {
+    return `team:${item.team_slug} / ${item.namespace}`;
+  }
+  return item?.namespace || "-";
+}
+
+function syncScopeSelector() {
+  const select = document.getElementById("scope-namespace");
+  if (!select) return;
+  select.innerHTML = "";
+  const scopes = Array.isArray(namespaceScopes) && namespaceScopes.length
+    ? namespaceScopes
+    : [{ namespace: defaults.namespace || "mcp-servers", is_shared: true }];
+  scopes.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.namespace || "";
+    option.textContent = namespaceScopeLabel(item);
+    select.appendChild(option);
+  });
+  const hasSelected = scopes.some((item) => (item.namespace || "") === selectedNamespace);
+  if (!hasSelected) {
+    selectedNamespace = scopes[0]?.namespace || defaults.namespace || "mcp-servers";
+  }
+  select.value = selectedNamespace;
+  setFieldValue("grant-namespace", activeScopeNamespace());
+  setFieldValue("session-namespace", activeScopeNamespace());
+}
+
+async function loadNamespaceScopes() {
+  if (!authenticated) {
+    namespaceScopes = [{ namespace: "mcp-servers", scope: "shared", is_shared: true }];
+    selectedNamespace = "mcp-servers";
+    syncScopeSelector();
+    return;
+  }
+  try {
+    const data = await fetchJSON("/runtime/namespaces");
+    namespaceScopes = Array.isArray(data.namespaces) ? data.namespaces.filter((item) => item?.namespace) : [];
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load namespaces:", err);
+    namespaceScopes = [];
+  }
+  const teamNamespaces = namespaceScopes.filter((item) => item.scope === "team").map((item) => item.namespace);
+  if (teamNamespaces.length && !teamNamespaces.includes(selectedNamespace)) {
+    selectedNamespace = teamNamespaces[0];
+  }
+  syncScopeSelector();
 }
 
 async function copyTextToClipboard(text, successMessage = "Copied") {
@@ -575,9 +642,11 @@ async function initAuth() {
   }
 
   if (authenticated) {
+    await loadNamespaceScopes();
     loadActiveTab();
     startAutoRefresh();
   } else {
+    await loadNamespaceScopes();
     activateTab("servers");
     loadServers();
   }
@@ -614,6 +683,7 @@ async function handleAuthSubmit(event) {
     if (passwordInput) passwordInput.value = "";
     hideAuthModal();
     setAuthenticated(true);
+    await loadNamespaceScopes();
     loadActiveTab();
     startAutoRefresh();
   } catch (err) {
@@ -664,6 +734,7 @@ async function handleGoogleSignIn(response) {
     authPrincipal = data?.principal || null;
     hideAuthModal();
     setAuthenticated(true);
+    await loadNamespaceScopes();
     loadActiveTab();
     startAutoRefresh();
   } catch (err) {
@@ -717,6 +788,9 @@ async function logout() {
   stopAutoRefresh();
   authPrincipal = null;
   setAuthenticated(false);
+  namespaceScopes = [{ namespace: "mcp-servers", scope: "shared", is_shared: true }];
+  selectedNamespace = "mcp-servers";
+  syncScopeSelector();
   resetDashboard();
   resetGovernance();
   resetUserAPIKeys();
@@ -818,7 +892,7 @@ function resetGovernance() {
 
 async function loadServers() {
   try {
-    const data = await fetchJSON("/runtime/servers");
+    const data = await fetchJSON(scopedPath("/runtime/servers"));
     serversCache = Array.isArray(data.servers) ? data.servers : [];
     renderServers();
   } catch (err) {
@@ -1110,6 +1184,11 @@ function initDashboard() {
   document.getElementById("refresh-servers")?.addEventListener("click", () => {
     loadServers();
   });
+  document.getElementById("scope-namespace")?.addEventListener("change", (event) => {
+    selectedNamespace = (event.target.value || "").trim();
+    syncScopeSelector();
+    loadActiveTab();
+  });
   document.getElementById("server-search")?.addEventListener("input", (event) => {
     serverSearchQuery = event.target.value || "";
     renderServers();
@@ -1184,7 +1263,7 @@ function stopAutoRefresh() {
 // Governance - Grants
 async function loadGrants() {
   try {
-    const data = await fetchJSON("/runtime/grants");
+    const data = await fetchJSON(scopedPath("/runtime/grants"));
     grantsCache = Array.isArray(data.grants) ? data.grants : [];
     renderGovernanceSummary();
     renderGrants();
@@ -1239,7 +1318,7 @@ function renderGrants() {
   filtered.forEach((grant) => {
     const status = grant.disabled ? "Disabled" : "Active";
     const statusClass = grant.disabled ? "badge-muted" : "badge-success";
-    const namespace = grant.namespace || defaults.namespace;
+    const namespace = grant.namespace || activeScopeNamespace();
     const serverNamespace = grant.serverRef?.namespace || namespace;
 
     const row = document.createElement("tr");
@@ -1313,7 +1392,7 @@ async function applyGrant(event) {
   try {
     const payload = {
       name,
-      namespace: fieldValue("grant-namespace") || defaults.namespace,
+      namespace: fieldValue("grant-namespace") || activeScopeNamespace(),
       serverRef: {
         name: server,
         namespace: fieldValue("grant-server-namespace"),
@@ -1330,7 +1409,7 @@ async function applyGrant(event) {
     });
     showToast(`Grant "${payload.name}" applied successfully`);
     document.getElementById("grant-form")?.reset();
-    setFieldValue("grant-namespace", defaults.namespace);
+    setFieldValue("grant-namespace", activeScopeNamespace());
     setFieldValue("grant-policy-version", defaults.policyVersion);
     document.getElementById("grant-form")?.classList.add("hidden");
     loadGrants();
@@ -1375,7 +1454,7 @@ function parseToolRules(text) {
 // Governance - Sessions
 async function loadSessions() {
   try {
-    const data = await fetchJSON("/runtime/sessions");
+    const data = await fetchJSON(scopedPath("/runtime/sessions"));
     sessionsCache = Array.isArray(data.sessions) ? data.sessions : [];
     renderGovernanceSummary();
     renderSessions();
@@ -1418,7 +1497,7 @@ function renderSessions() {
   filtered.forEach((session) => {
     const status = session.revoked ? "Revoked" : "Active";
     const statusClass = session.revoked ? "badge-error" : "badge-success";
-    const namespace = session.namespace || defaults.namespace;
+    const namespace = session.namespace || activeScopeNamespace();
     const serverNamespace = session.serverRef?.namespace || namespace;
 
     const row = document.createElement("tr");
@@ -1492,7 +1571,7 @@ async function applySession(event) {
   try {
     const payload = {
       name,
-      namespace: fieldValue("session-namespace") || defaults.namespace,
+      namespace: fieldValue("session-namespace") || activeScopeNamespace(),
       serverRef: {
         name: server,
         namespace: fieldValue("session-server-namespace"),
@@ -1512,7 +1591,7 @@ async function applySession(event) {
     });
     showToast(`Session "${payload.name}" applied successfully`);
     document.getElementById("session-form")?.reset();
-    setFieldValue("session-namespace", defaults.namespace);
+    setFieldValue("session-namespace", activeScopeNamespace());
     setFieldValue("session-policy-version", defaults.policyVersion);
     document.getElementById("session-form")?.classList.add("hidden");
     loadSessions();
@@ -1569,9 +1648,9 @@ function updateSessionExpiresUTCHint() {
 }
 
 function initGovernance() {
-  setFieldValue("grant-namespace", defaults.namespace);
+  setFieldValue("grant-namespace", activeScopeNamespace());
   setFieldValue("grant-policy-version", defaults.policyVersion);
-  setFieldValue("session-namespace", defaults.namespace);
+  setFieldValue("session-namespace", activeScopeNamespace());
   setFieldValue("session-policy-version", defaults.policyVersion);
 
   document
@@ -1744,7 +1823,7 @@ function setOperationLoadingState() {
 
 async function loadOperationServers() {
   try {
-    const data = await fetchJSON("/runtime/servers");
+    const data = await fetchJSON(scopedPath("/runtime/servers"));
     operationsServersCache = Array.isArray(data.servers) ? data.servers : [];
     const selectedStillExists = operationsServersCache.some(
       (server) => operationServerKey(server) === selectedOperationsServerKey
@@ -2030,7 +2109,7 @@ async function loadPlatformServerHealth() {
     tbody.innerHTML = '<tr><td colspan="4" class="empty">Loading MCP server health...</td></tr>';
   }
   try {
-    const data = await fetchJSON("/runtime/servers");
+    const data = await fetchJSON(scopedPath("/runtime/servers"));
     const servers = Array.isArray(data.servers) ? data.servers : [];
     renderPlatformServerHealth(servers);
   } catch (err) {

@@ -22,7 +22,7 @@ func TestServerManager_ListServers(t *testing.T) {
 		kubectl := core.NewTestKubectlClient(mock)
 		mgr := NewServerManager(kubectl, zap.NewNop())
 
-		err := mgr.ListServers("test-ns")
+		err := mgr.ListServers("test-ns", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -54,7 +54,7 @@ func TestServerManager_ListServers(t *testing.T) {
 		kubectl := core.NewTestKubectlClient(mock)
 		mgr := NewServerManager(kubectl, zap.NewNop())
 
-		err := mgr.ListServers(" test-ns ")
+		err := mgr.ListServers(" test-ns ", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -77,12 +77,37 @@ func TestServerManager_ListServers(t *testing.T) {
 		kubectl := core.NewTestKubectlClient(mock)
 		mgr := NewServerManager(kubectl, zap.NewNop())
 
-		err := mgr.ListServers("   ")
-		if err == nil {
-			t.Fatal("expected error for empty namespace")
+		err := mgr.ListServers("   ", "")
+		if err != nil {
+			t.Fatalf("unexpected error for empty namespace: %v", err)
 		}
-		if len(mock.Commands) > 0 {
-			t.Error("should not call kubectl with empty namespace")
+		cmd := mock.LastCommand()
+		found := false
+		for i, arg := range cmd.Args {
+			if arg == "-n" && i+1 < len(cmd.Args) && cmd.Args[i+1] == core.NamespaceMCPServers {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected default namespace %q in args, got %v", core.NamespaceMCPServers, cmd.Args)
+		}
+	})
+
+	t.Run("rejects --team when using kubectl mode", func(t *testing.T) {
+		mock := &core.MockExecutor{}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		err := mgr.ListServers("", "team-a")
+		if err == nil {
+			t.Fatal("expected error when team is set in --use-kube mode")
+		}
+		if !strings.Contains(err.Error(), "cannot use --team with --use-kube") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(mock.Commands) != 0 {
+			t.Fatalf("expected no kubectl command on validation error, got %d", len(mock.Commands))
 		}
 	})
 }

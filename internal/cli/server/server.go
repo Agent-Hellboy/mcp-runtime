@@ -2,6 +2,8 @@
 package server
 
 import (
+	"math"
+
 	"github.com/spf13/cobra"
 
 	"mcp-runtime/internal/cli/core"
@@ -30,15 +32,17 @@ For pushing images, use 'registry push'.`,
 	mgr.BindUseKubeFlag(cmd)
 
 	var namespace string
+	var team string
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List MCP servers",
 		Long:  "List all MCP server deployments",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return mgr.ListServers(namespace)
+			return mgr.ListServers(namespace, team)
 		},
 	}
-	listCmd.Flags().StringVar(&namespace, "namespace", core.NamespaceMCPServers, "Namespace to list servers from")
+	listCmd.Flags().StringVar(&namespace, "namespace", "", "Namespace to list servers from")
+	listCmd.Flags().StringVar(&team, "team", "", "Team slug to resolve namespace from via the platform API")
 
 	var getNamespace string
 	getCmd := &cobra.Command{
@@ -83,6 +87,31 @@ For pushing images, use 'registry push'.`,
 	}
 	applyCmd.Flags().StringVar(&applyFile, "file", "", "YAML file with MCPServer manifest")
 	_ = applyCmd.MarkFlagRequired("file")
+
+	var deployNamespace string
+	var deployTeam string
+	var deployImage string
+	var deployTag string
+	var deployReplicas int32
+	var deployPort int32
+	var deployServicePort int32
+	deployCmd := &cobra.Command{
+		Use:   "deploy [name]",
+		Short: "Deploy an MCP server through the platform API",
+		Long:  "Apply an MCPServer resource using the authenticated platform API identity.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return mgr.DeployServer(args[0], deployNamespace, deployTeam, deployImage, deployTag, deployReplicas, deployPort, deployServicePort)
+		},
+	}
+	deployCmd.Flags().StringVar(&deployNamespace, "namespace", "", "Target namespace (optional when --team is provided)")
+	deployCmd.Flags().StringVar(&deployTeam, "team", "", "Team slug to resolve target namespace")
+	deployCmd.Flags().StringVar(&deployImage, "image", "", "Container image repository")
+	deployCmd.Flags().StringVar(&deployTag, "tag", "latest", "Container image tag")
+	deployCmd.Flags().Int32Var(&deployReplicas, "replicas", 1, "Replica count")
+	deployCmd.Flags().Int32Var(&deployPort, "port", defaultDeployPort(), "Container port")
+	deployCmd.Flags().Int32Var(&deployServicePort, "service-port", 80, "Service port")
+	_ = deployCmd.MarkFlagRequired("image")
 
 	var exportNamespace string
 	var exportFile string
@@ -179,6 +208,14 @@ For pushing images, use 'registry push'.`,
 	}
 	buildCmd.AddCommand(newBuildImageCmd(mgr.Logger()))
 
-	cmd.AddCommand(listCmd, getCmd, createCmd, applyCmd, exportCmd, patchCmd, deleteCmd, logsCmd, statusCmd, policyCmd, buildCmd)
+	cmd.AddCommand(listCmd, getCmd, createCmd, applyCmd, deployCmd, exportCmd, patchCmd, deleteCmd, logsCmd, statusCmd, policyCmd, buildCmd)
 	return cmd
+}
+
+func defaultDeployPort() int32 {
+	port := core.GetDefaultServerPort()
+	if port <= 0 || port > math.MaxInt32 {
+		return 8088
+	}
+	return int32(port)
 }

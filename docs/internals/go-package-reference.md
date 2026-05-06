@@ -3907,17 +3907,23 @@ _No package overview is documented._
 - [`func NewPlatformClient() (*PlatformClient, error)`](#cli-platform-api-func-newplatformclient-platformclient-error)
 - [`func ResolvePlatformOrKube(useKube bool) (*PlatformClient, bool, error)`](#cli-platform-api-func-resolveplatformorkube-usekube-bool-platformclient-bool-error)
 - [`func (c *PlatformClient) ApplyAccessFromYAMLFile(ctx context.Context, path string) error`](#cli-platform-api-func-c-platformclient-applyaccessfromyamlfile-ctx-context-context-path-string-error)
+- [`func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error)`](#cli-platform-api-func-c-platformclient-applyruntimeserver-ctx-context-context-name-namespace-string-spec-mcpv1alpha1-mcpserverspec-serverlistitem-error)
+- [`func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Team, error)`](#cli-platform-api-func-c-platformclient-createteam-ctx-context-context-slug-name-string-team-error)
 - [`func (c *PlatformClient) DeleteGrant(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deletegrant-ctx-context-context-namespace-name-string-error)
 - [`func (c *PlatformClient) DeleteSession(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deletesession-ctx-context-context-namespace-name-string-error)
 - [`func (c *PlatformClient) GetGrant(ctx context.Context, namespace, name string) (sentinelaccess.GrantSummary, error)`](#cli-platform-api-func-c-platformclient-getgrant-ctx-context-context-namespace-name-string-sentinelaccess-grantsummary-error)
 - [`func (c *PlatformClient) GetRuntimePolicy(ctx context.Context, namespace, server string) ([]byte, error)`](#cli-platform-api-func-c-platformclient-getruntimepolicy-ctx-context-context-namespace-server-string-byte-error)
 - [`func (c *PlatformClient) GetSession(ctx context.Context, namespace, name string) (sentinelaccess.SessionSummary, error)`](#cli-platform-api-func-c-platformclient-getsession-ctx-context-context-namespace-name-string-sentinelaccess-sessionsummary-error)
+- [`func (c *PlatformClient) GetTeam(ctx context.Context, slug string) (Team, error)`](#cli-platform-api-func-c-platformclient-getteam-ctx-context-context-slug-string-team-error)
 - [`func (c *PlatformClient) ListGrants(ctx context.Context, namespace string) ([]sentinelaccess.GrantSummary, error)`](#cli-platform-api-func-c-platformclient-listgrants-ctx-context-context-namespace-string-sentinelaccess-grantsummary-error)
+- [`func (c *PlatformClient) ListNamespaces(ctx context.Context) ([]namespaceListItem, error)`](#cli-platform-api-func-c-platformclient-listnamespaces-ctx-context-context-namespacelistitem-error)
 - [`func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace string) ([]ServerListItem, error)`](#cli-platform-api-func-c-platformclient-listruntimeservers-ctx-context-context-namespace-string-serverlistitem-error)
 - [`func (c *PlatformClient) ListSessions(ctx context.Context, namespace string) ([]sentinelaccess.SessionSummary, error)`](#cli-platform-api-func-c-platformclient-listsessions-ctx-context-context-namespace-string-sentinelaccess-sessionsummary-error)
+- [`func (c *PlatformClient) ListTeams(ctx context.Context) ([]Team, error)`](#cli-platform-api-func-c-platformclient-listteams-ctx-context-context-team-error)
 - [`func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postgranttoggle-ctx-context-context-namespace-name-action-string-error)
 - [`func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postsessiontoggle-ctx-context-context-namespace-name-action-string-error)
 - [`type ServerListItem struct`](#cli-platform-api-type-serverlistitem-struct)
+- [`type Team struct`](#cli-platform-api-type-team-struct)
 
 <a id="cli-platform-api-functions"></a>
 ### Functions
@@ -3969,6 +3975,18 @@ func (c *PlatformClient) ApplyAccessFromYAMLFile(ctx context.Context, path strin
 
 ```
 
+<a id="cli-platform-api-func-c-platformclient-applyruntimeserver-ctx-context-context-name-namespace-string-spec-mcpv1alpha1-mcpserverspec-serverlistitem-error"></a>
+```text
+func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-createteam-ctx-context-context-slug-name-string-team-error"></a>
+```text
+func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Team, error)
+
+```
+
 <a id="cli-platform-api-func-c-platformclient-deletegrant-ctx-context-context-namespace-name-string-error"></a>
 ```text
 func (c *PlatformClient) DeleteGrant(ctx context.Context, namespace, name string) error
@@ -3999,9 +4017,21 @@ func (c *PlatformClient) GetSession(ctx context.Context, namespace, name string)
 
 ```
 
+<a id="cli-platform-api-func-c-platformclient-getteam-ctx-context-context-slug-string-team-error"></a>
+```text
+func (c *PlatformClient) GetTeam(ctx context.Context, slug string) (Team, error)
+
+```
+
 <a id="cli-platform-api-func-c-platformclient-listgrants-ctx-context-context-namespace-string-sentinelaccess-grantsummary-error"></a>
 ```text
 func (c *PlatformClient) ListGrants(ctx context.Context, namespace string) ([]sentinelaccess.GrantSummary, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-listnamespaces-ctx-context-context-namespacelistitem-error"></a>
+```text
+func (c *PlatformClient) ListNamespaces(ctx context.Context) ([]namespaceListItem, error)
 
 ```
 
@@ -4014,6 +4044,12 @@ func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace strin
 <a id="cli-platform-api-func-c-platformclient-listsessions-ctx-context-context-namespace-string-sentinelaccess-sessionsummary-error"></a>
 ```text
 func (c *PlatformClient) ListSessions(ctx context.Context, namespace string) ([]sentinelaccess.SessionSummary, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-listteams-ctx-context-context-team-error"></a>
+```text
+func (c *PlatformClient) ListTeams(ctx context.Context) ([]Team, error)
 
 ```
 
@@ -4040,6 +4076,18 @@ type ServerListItem struct {
 	Age       string            `json:"age"`
 }
     ServerListItem is one row from the platform API runtime servers list.
+
+```
+
+<a id="cli-platform-api-type-team-struct"></a>
+```text
+type Team struct {
+	ID        string    `json:"id"`
+	Slug      string    `json:"slug"`
+	Name      string    `json:"name"`
+	Namespace string    `json:"namespace"`
+	CreatedAt time.Time `json:"created_at"`
+}
 ```
 
 <a id="cli-platform-status"></a>
@@ -4569,10 +4617,11 @@ Package server owns routing for the server top-level command.
 - [`func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) error`](#cli-server-func-m-servermanager-createserver-name-namespace-image-imagetag-string-error)
 - [`func (m *ServerManager) CreateServerFromFile(file string) error`](#cli-server-func-m-servermanager-createserverfromfile-file-string-error)
 - [`func (m *ServerManager) DeleteServer(name, namespace string) error`](#cli-server-func-m-servermanager-deleteserver-name-namespace-string-error)
+- [`func (m *ServerManager) DeployServer(name, namespace, team, image, imageTag string, replicas, port, servicePort int32) error`](#cli-server-func-m-servermanager-deployserver-name-namespace-team-image-imagetag-string-replicas-port-serviceport-int32-error)
 - [`func (m *ServerManager) ExportServer(name, namespace, file string) error`](#cli-server-func-m-servermanager-exportserver-name-namespace-file-string-error)
 - [`func (m *ServerManager) GetServer(name, namespace string) error`](#cli-server-func-m-servermanager-getserver-name-namespace-string-error)
 - [`func (m *ServerManager) InspectServerPolicy(name, namespace string) error`](#cli-server-func-m-servermanager-inspectserverpolicy-name-namespace-string-error)
-- [`func (m *ServerManager) ListServers(namespace string) error`](#cli-server-func-m-servermanager-listservers-namespace-string-error)
+- [`func (m *ServerManager) ListServers(namespace, team string) error`](#cli-server-func-m-servermanager-listservers-namespace-team-string-error)
 - [`func (m *ServerManager) Logger() *zap.Logger`](#cli-server-func-m-servermanager-logger-zap-logger)
 - [`func (m *ServerManager) PatchServer(name, namespace, patchType, patch, patchFile string) error`](#cli-server-func-m-servermanager-patchserver-name-namespace-patchtype-patch-patchfile-string-error)
 - [`func (m *ServerManager) ServerStatus(namespace string) error`](#cli-server-func-m-servermanager-serverstatus-namespace-string-error)
@@ -4663,6 +4712,12 @@ func (m *ServerManager) DeleteServer(name, namespace string) error
 
 ```
 
+<a id="cli-server-func-m-servermanager-deployserver-name-namespace-team-image-imagetag-string-replicas-port-serviceport-int32-error"></a>
+```text
+func (m *ServerManager) DeployServer(name, namespace, team, image, imageTag string, replicas, port, servicePort int32) error
+
+```
+
 <a id="cli-server-func-m-servermanager-exportserver-name-namespace-file-string-error"></a>
 ```text
 func (m *ServerManager) ExportServer(name, namespace, file string) error
@@ -4685,9 +4740,9 @@ func (m *ServerManager) InspectServerPolicy(name, namespace string) error
 
 ```
 
-<a id="cli-server-func-m-servermanager-listservers-namespace-string-error"></a>
+<a id="cli-server-func-m-servermanager-listservers-namespace-team-string-error"></a>
 ```text
-func (m *ServerManager) ListServers(namespace string) error
+func (m *ServerManager) ListServers(namespace, team string) error
     ListServers lists all MCP servers in the given namespace.
 
 ```

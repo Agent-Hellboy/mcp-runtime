@@ -73,11 +73,12 @@ const (
 )
 
 const (
-	gatewayPolicyVolumeName = "gateway-policy"
-	gatewayPolicyMountDir   = "/var/run/mcp-runtime/policy"
-	gatewayPolicyFileName   = "policy.json"
-	gatewayPolicyFilePath   = gatewayPolicyMountDir + "/" + gatewayPolicyFileName
-	restrictedRunAsUser     = int64(65532)
+	gatewayPolicyVolumeName       = "gateway-policy"
+	gatewayPolicyMountDir         = "/var/run/mcp-runtime/policy"
+	gatewayPolicyFileName         = "policy.json"
+	gatewayPolicyFilePath         = gatewayPolicyMountDir + "/" + gatewayPolicyFileName
+	restrictedRunAsUser           = int64(65532)
+	defaultWorkloadServiceAccount = "mcp-workload"
 )
 
 // resourceReadiness tracks the readiness state of different resources.
@@ -88,6 +89,7 @@ type resourceReadiness = operatorutil.ResourceReadiness
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpservers/finalizers,verbs=update
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;delete
+//+kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingressclasses,verbs=get;list;watch
@@ -358,6 +360,9 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 	if err != nil {
 		return err
 	}
+	if err := r.ensureWorkloadServiceAccount(ctx, mcpServer.Namespace); err != nil {
+		return err
+	}
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -398,6 +403,7 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 			return err
 		}
 		deployment.Spec.Template.Spec = corev1.PodSpec{
+			ServiceAccountName:           defaultWorkloadServiceAccount,
 			AutomountServiceAccountToken: boolPtr(false),
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: boolPtr(true),
@@ -447,6 +453,9 @@ func (r *MCPServerReconciler) reconcileCanaryDeployment(ctx context.Context, mcp
 	if err != nil {
 		return err
 	}
+	if err := r.ensureWorkloadServiceAccount(ctx, mcpServer.Namespace); err != nil {
+		return err
+	}
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -486,6 +495,7 @@ func (r *MCPServerReconciler) reconcileCanaryDeployment(ctx context.Context, mcp
 			return err
 		}
 		deployment.Spec.Template.Spec = corev1.PodSpec{
+			ServiceAccountName:           defaultWorkloadServiceAccount,
 			AutomountServiceAccountToken: boolPtr(false),
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: boolPtr(true),
@@ -646,6 +656,20 @@ func applyContainerResources(container *corev1.Container, resources mcpv1alpha1.
 	}
 
 	return nil
+}
+
+func (r *MCPServerReconciler) ensureWorkloadServiceAccount(ctx context.Context, namespace string) error {
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      defaultWorkloadServiceAccount,
+			Namespace: namespace,
+		},
+	}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, sa, func() error {
+		sa.AutomountServiceAccountToken = boolPtr(false)
+		return nil
+	})
+	return err
 }
 
 func (r *MCPServerReconciler) resolveImage(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (string, error) {

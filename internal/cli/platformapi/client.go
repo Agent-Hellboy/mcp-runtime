@@ -25,7 +25,6 @@ import (
 )
 
 const maxAPIBodyRead = 4 << 20
-const defaultMCPServersNamespace = "mcp-servers"
 
 // errPlatformNoBaseURL is returned when a token exists but the API base URL is missing.
 var errPlatformNoBaseURL = errors.New("set MCP_PLATFORM_API_URL or run mcp-runtime auth login with --api-url to use the platform API")
@@ -442,12 +441,51 @@ type serverListResponse struct {
 	Servers []ServerListItem `json:"servers"`
 }
 
+type runtimeServerApplyRequest struct {
+	Name      string                    `json:"name"`
+	Namespace string                    `json:"namespace,omitempty"`
+	Labels    map[string]string         `json:"labels,omitempty"`
+	Spec      mcpv1alpha1.MCPServerSpec `json:"spec"`
+}
+
+type runtimeServerApplyResponse struct {
+	Server ServerListItem `json:"server"`
+}
+
+type Team struct {
+	ID        string    `json:"id"`
+	Slug      string    `json:"slug"`
+	Name      string    `json:"name"`
+	Namespace string    `json:"namespace"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type teamsResponse struct {
+	Teams []Team `json:"teams"`
+}
+
+type teamResponse struct {
+	Team Team `json:"team"`
+}
+
+type namespaceListItem struct {
+	Namespace string `json:"namespace"`
+	Scope     string `json:"scope,omitempty"`
+	TeamID    string `json:"team_id,omitempty"`
+	TeamSlug  string `json:"team_slug,omitempty"`
+	TeamName  string `json:"team_name,omitempty"`
+	TeamRole  string `json:"team_role,omitempty"`
+	IsShared  bool   `json:"is_shared,omitempty"`
+}
+
+type namespacesResponse struct {
+	Namespaces []namespaceListItem `json:"namespaces"`
+}
+
 func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace string) ([]ServerListItem, error) {
 	v := url.Values{}
 	if strings.TrimSpace(namespace) != "" {
 		v.Set("namespace", namespace)
-	} else {
-		v.Set("namespace", defaultMCPServersNamespace)
 	}
 	resp, err := c.do(ctx, http.MethodGet, "/runtime/servers", v.Encode(), nil)
 	if err != nil {
@@ -466,6 +504,124 @@ func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace strin
 		return nil, err
 	}
 	return out.Servers, nil
+}
+
+func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error) {
+	body := runtimeServerApplyRequest{
+		Name:      strings.TrimSpace(name),
+		Namespace: strings.TrimSpace(namespace),
+		Spec:      spec,
+	}
+	js, err := json.Marshal(body)
+	if err != nil {
+		return ServerListItem{}, err
+	}
+	resp, err := c.do(ctx, http.MethodPost, "/runtime/servers", "", bytes.NewReader(js))
+	if err != nil {
+		return ServerListItem{}, err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return ServerListItem{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return ServerListItem{}, httpAPIError(resp.StatusCode, b)
+	}
+	var out runtimeServerApplyResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return ServerListItem{}, err
+	}
+	return out.Server, nil
+}
+
+func (c *PlatformClient) ListTeams(ctx context.Context) ([]Team, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/runtime/teams", "", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, httpAPIError(resp.StatusCode, b)
+	}
+	var out teamsResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	return out.Teams, nil
+}
+
+func (c *PlatformClient) GetTeam(ctx context.Context, slug string) (Team, error) {
+	rel := "/runtime/teams/" + url.PathEscape(strings.TrimSpace(slug))
+	resp, err := c.do(ctx, http.MethodGet, rel, "", nil)
+	if err != nil {
+		return Team{}, err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return Team{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return Team{}, httpAPIError(resp.StatusCode, b)
+	}
+	var out teamResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return Team{}, err
+	}
+	return out.Team, nil
+}
+
+func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Team, error) {
+	payload := map[string]string{
+		"slug": strings.TrimSpace(slug),
+		"name": strings.TrimSpace(name),
+	}
+	js, err := json.Marshal(payload)
+	if err != nil {
+		return Team{}, err
+	}
+	resp, err := c.do(ctx, http.MethodPost, "/runtime/teams", "", bytes.NewReader(js))
+	if err != nil {
+		return Team{}, err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return Team{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return Team{}, httpAPIError(resp.StatusCode, b)
+	}
+	var out teamResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return Team{}, err
+	}
+	return out.Team, nil
+}
+
+func (c *PlatformClient) ListNamespaces(ctx context.Context) ([]namespaceListItem, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/runtime/namespaces", "", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, httpAPIError(resp.StatusCode, b)
+	}
+	var out namespacesResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	return out.Namespaces, nil
 }
 
 func readFileAtPath(path string) ([]byte, error) {

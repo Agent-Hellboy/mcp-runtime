@@ -15,6 +15,7 @@ import (
 	"mcp-runtime/internal/cli/server"
 	"mcp-runtime/internal/cli/setup"
 	"mcp-runtime/internal/cli/status"
+	"mcp-runtime/internal/cli/team"
 )
 
 // AddCommands registers every top-level mcp-runtime command on root.
@@ -32,4 +33,5 @@ func AddCommands(root *cobra.Command, logger *zap.Logger) {
 	root.AddCommand(status.New(runtime))
 	root.AddCommand(sentinel.New(runtime))
 	root.AddCommand(pipeline.New(runtime))
+	root.AddCommand(team.New(runtime))
 }
