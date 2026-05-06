@@ -68,6 +68,7 @@ const (
 	doctorSentinelNamespace   = "mcp-sentinel"
 	doctorSentinelAPIService  = "mcp-sentinel-api"
 	doctorRestrictedRunAsUser = int64(65532)
+	doctorProbePodRunTimeout  = "90s"
 
 	registryHTTPPullMismatch = "http: server gave HTTP response to HTTPS client"
 
@@ -839,7 +840,7 @@ func checkMCPServersDNSAndNetwork(kubectl core.KubectlRunner) DoctorCheck {
 	args := []string{
 		"run", "-n", doctorMCPServersNamespace,
 		"--rm", "--restart=Never", "--attach",
-		"--pod-running-timeout=30s",
+		"--pod-running-timeout=" + doctorProbePodRunTimeout,
 		"--quiet",
 		"--image=" + image,
 		"--overrides=" + restrictedRunOverrides(podName, image, "curl", curlArgs...),
@@ -929,7 +930,7 @@ func checkIngressRouteProbe(kubectl core.KubectlRunner, namespace string, distro
 	curlArgs := []string{
 		"run", "-n", namespace,
 		"--rm", "--restart=Never", "--attach",
-		"--pod-running-timeout=30s",
+		"--pod-running-timeout=" + doctorProbePodRunTimeout,
 		"--quiet",
 		"--image=" + image,
 		"--overrides=" + restrictedRunOverrides(podName, image, "curl", probeArgs...),
@@ -1015,7 +1016,7 @@ func checkRegistryReachableFromCluster(kubectl core.KubectlRunner) DoctorCheck {
 	args := []string{
 		"run", "-n", "registry",
 		"--rm", "--restart=Never", "--attach",
-		"--pod-running-timeout=30s",
+		"--pod-running-timeout=" + doctorProbePodRunTimeout,
 		"--quiet",
 		"--image=curlimages/curl:8.7.1",
 		podName,
@@ -1357,7 +1358,7 @@ func checkSentinelAPIAuthProbe(kubectl core.KubectlRunner) DoctorCheck {
 	args := []string{
 		"run", "-n", doctorSentinelNamespace,
 		"--rm", "--restart=Never", "--attach",
-		"--pod-running-timeout=30s",
+		"--pod-running-timeout=" + doctorProbePodRunTimeout,
 		"--quiet",
 		"--image=curlimages/curl:8.7.1",
 		podName,

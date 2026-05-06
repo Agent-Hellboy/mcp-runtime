@@ -292,6 +292,7 @@ func main() {
 	mux.Handle("/api/auth/me", server.auth(http.HandlerFunc(server.handleAuthMe)))
 	mux.Handle("/api/user/registry-credentials", server.auth(http.HandlerFunc(server.handleRegistryCredentials)))
 	mux.Handle("/api/user/registry-credentials/", server.auth(http.HandlerFunc(server.handleRegistryCredentialItem)))
+	mux.Handle("/api/user/activity/image-publish", server.auth(http.HandlerFunc(server.handleUserImagePublishActivity)))
 
 	// Initialize and register runtime server with Kubernetes support
 	runtimeServer, err := NewRuntimeServer(conn, dbName, apiKeys, server.platform)
@@ -300,6 +301,7 @@ func main() {
 		log.Printf("ERROR: runtime server initialization failed: %v", err)
 	} else {
 		server.runtime = runtimeServer
+		runtimeServer.audit = server.platform
 		if server.userKeys == nil {
 			server.userKeys = runtimeServer
 		}
@@ -314,6 +316,7 @@ func main() {
 		mux.Handle("/api/deployments/", server.auth(http.HandlerFunc(runtimeServer.handleDeploymentItem)))
 		mux.Handle("/api/admin/namespaces", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleAdminNamespaces))))
 		mux.Handle("/api/admin/audit", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleAdminAudit))))
+		mux.Handle("/api/admin/operations", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleAdminOperations))))
 		mux.Handle("/api/admin/deployments", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleAdminDeployments))))
 		mux.Handle("/api/runtime/grants", server.auth(http.HandlerFunc(runtimeServer.handleRuntimeGrants)))
 		mux.Handle("/api/runtime/sessions", server.auth(http.HandlerFunc(runtimeServer.handleRuntimeSessions)))

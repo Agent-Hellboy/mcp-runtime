@@ -255,6 +255,7 @@ func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, s
 		if forwardedProto != "" {
 			req.Header.Set("X-Forwarded-Proto", forwardedProto)
 		}
+		req.Header.Set("X-MCP-Source", "ui")
 		if strings.TrimSpace(req.Header.Get("authorization")) == "" && strings.TrimSpace(req.Header.Get("x-api-key")) == "" {
 			req.Header.Set("x-api-key", upstreamAPIKey)
 		}
@@ -480,6 +481,7 @@ func loginPasswordWithAPI(ctx context.Context, apiUpstream, email, password stri
 		return sessionPrincipal{}, "", err
 	}
 	req.Header.Set("content-type", "application/json")
+	req.Header.Set("x-mcp-source", "ui")
 	resp, err := authHTTPClient.Do(req)
 	if err != nil {
 		return sessionPrincipal{}, "", err
@@ -561,6 +563,7 @@ func loginOIDCWithAPI(ctx context.Context, apiUpstream, idToken string) (session
 		return sessionPrincipal{}, "", time.Time{}, err
 	}
 	req.Header.Set("content-type", "application/json")
+	req.Header.Set("x-mcp-source", "ui")
 
 	resp, err := authHTTPClient.Do(req)
 	if err != nil {

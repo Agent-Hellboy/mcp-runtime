@@ -38,22 +38,26 @@ func (s *apiServer) handleRegistryCredentials(w http.ResponseWriter, r *http.Req
 		key, cleartext, err := s.platform.CreateRegistryCredential(r.Context(), p.userID(), req.Name)
 		if err != nil {
 			s.platform.WriteAudit(r.Context(), auditEvent{
-				UserID:   p.userID(),
-				Action:   "registry_credential_create",
-				Resource: strings.TrimSpace(req.Name),
-				Status:   "error",
-				Message:  err.Error(),
-				ActorIP:  requestIP(r),
+				UserID:       p.userID(),
+				Action:       "registry_credential_create",
+				Resource:     strings.TrimSpace(req.Name),
+				Status:       "error",
+				Message:      err.Error(),
+				ActorIP:      requestIP(r),
+				Source:       auditSource(r, p),
+				AuthIdentity: auditIdentityLabel(p),
 			})
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 		s.platform.WriteAudit(r.Context(), auditEvent{
-			UserID:   p.userID(),
-			Action:   "registry_credential_create",
-			Resource: key.ID,
-			Status:   "success",
-			ActorIP:  requestIP(r),
+			UserID:       p.userID(),
+			Action:       "registry_credential_create",
+			Resource:     key.ID,
+			Status:       "success",
+			ActorIP:      requestIP(r),
+			Source:       auditSource(r, p),
+			AuthIdentity: auditIdentityLabel(p),
 		})
 		writeJSON(w, http.StatusCreated, map[string]any{"credential": key, "username": p.Namespace, "password": cleartext})
 	default:
@@ -86,12 +90,14 @@ func (s *apiServer) handleRegistryCredentialItem(w http.ResponseWriter, r *http.
 	key, err := s.platform.RevokeRegistryCredential(r.Context(), p.userID(), parts[0])
 	if err != nil {
 		s.platform.WriteAudit(r.Context(), auditEvent{
-			UserID:   p.userID(),
-			Action:   "registry_credential_revoke",
-			Resource: parts[0],
-			Status:   "error",
-			Message:  err.Error(),
-			ActorIP:  requestIP(r),
+			UserID:       p.userID(),
+			Action:       "registry_credential_revoke",
+			Resource:     parts[0],
+			Status:       "error",
+			Message:      err.Error(),
+			ActorIP:      requestIP(r),
+			Source:       auditSource(r, p),
+			AuthIdentity: auditIdentityLabel(p),
 		})
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "credential not found"})
@@ -101,11 +107,13 @@ func (s *apiServer) handleRegistryCredentialItem(w http.ResponseWriter, r *http.
 		return
 	}
 	s.platform.WriteAudit(r.Context(), auditEvent{
-		UserID:   p.userID(),
-		Action:   "registry_credential_revoke",
-		Resource: key.ID,
-		Status:   "success",
-		ActorIP:  requestIP(r),
+		UserID:       p.userID(),
+		Action:       "registry_credential_revoke",
+		Resource:     key.ID,
+		Status:       "success",
+		ActorIP:      requestIP(r),
+		Source:       auditSource(r, p),
+		AuthIdentity: auditIdentityLabel(p),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"credential": key})
 }

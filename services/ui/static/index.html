@@ -582,8 +582,8 @@
         <div class="panel">
           <div class="panel-head">
             <div>
-              <h2>MCP Operations</h2>
-              <p class="panel-kicker">Track deployed MCP servers, user activity, and recent tool decisions.</p>
+              <h2>Admin Operations</h2>
+              <p class="panel-kicker">Track users, logins, image publishing, deployments, MCP servers, and recent platform events.</p>
             </div>
             <div class="panel-actions">
               <button class="ghost" id="refresh-mcp-ops" type="button">Refresh</button>
@@ -607,9 +607,67 @@
               <strong class="metric-value" id="ops-login-count">-</strong>
             </div>
             <div class="metric-card compact">
+              <span class="metric-label">Users</span>
+              <strong class="metric-value" id="ops-user-total">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">Images</span>
+              <strong class="metric-value" id="ops-image-count">-</strong>
+            </div>
+            <div class="metric-card compact">
+              <span class="metric-label">Deployments</span>
+              <strong class="metric-value" id="ops-deployment-count">-</strong>
+            </div>
+            <div class="metric-card compact">
               <span class="metric-label">MCP Events</span>
               <strong class="metric-value" id="ops-mcp-events">-</strong>
             </div>
+          </div>
+          <form class="ops-filter-bar" id="ops-filter-form">
+            <label>
+              <span>User / tenant</span>
+              <input id="ops-filter-user" name="user" type="search" placeholder="email, user ID, namespace" autocomplete="off" />
+            </label>
+            <label>
+              <span>Since</span>
+              <input id="ops-filter-since" name="since" type="datetime-local" />
+            </label>
+            <label>
+              <span>Until</span>
+              <input id="ops-filter-until" name="until" type="datetime-local" />
+            </label>
+            <div class="ops-filter-actions">
+              <button class="ghost" id="ops-filter-clear" type="button">Clear</button>
+              <button type="submit">Apply</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Logged-in Users</h2>
+              <p class="panel-kicker">Platform users with last login, last activity, and owned namespace.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Role</th>
+                  <th>Namespace</th>
+                  <th>Last Login</th>
+                  <th>Last Activity</th>
+                  <th>Failures</th>
+                </tr>
+              </thead>
+              <tbody id="ops-users-body">
+                <tr>
+                  <td colspan="6" class="empty">Loading users...</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -645,8 +703,8 @@
           <div class="panel">
             <div class="panel-head">
               <div>
-                <h2>User Activity</h2>
-                <p class="panel-kicker">Recent login and platform audit activity for debugging access.</p>
+                <h2>Activity Timeline</h2>
+                <p class="panel-kicker">Recent login, deploy, image, credential, and denied platform actions.</p>
               </div>
             </div>
             <div class="table-wrap">
@@ -656,12 +714,13 @@
                     <th>Time</th>
                     <th>User</th>
                     <th>Action</th>
+                    <th>Source</th>
                     <th>Status</th>
                   </tr>
                 </thead>
                 <tbody id="ops-user-activity-body">
                   <tr>
-                    <td colspan="4" class="empty">Loading user activity...</td>
+                    <td colspan="5" class="empty">Loading user activity...</td>
                   </tr>
                 </tbody>
               </table>
@@ -692,6 +751,34 @@
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Images and Deployments</h2>
+              <p class="panel-kicker">Image publish records and currently deployed image references by user or namespace.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>User</th>
+                  <th>Image</th>
+                  <th>Target</th>
+                  <th>Action</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="ops-image-body">
+                <tr>
+                  <td colspan="6" class="empty">Loading image activity...</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
 

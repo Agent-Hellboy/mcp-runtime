@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"strconv"
@@ -68,28 +69,85 @@ type teamMembershipRecord struct {
 }
 
 type auditEvent struct {
-	UserID    string
-	Action    string
-	Resource  string
-	Namespace string
-	Status    string
-	Message   string
-	ActorIP   string
-	RequestID string
+	UserID           string
+	Action           string
+	Resource         string
+	Namespace        string
+	Status           string
+	Message          string
+	ActorIP          string
+	RequestID        string
+	Source           string
+	AuthIdentity     string
+	ImageRef         string
+	ServerName       string
+	DeploymentTarget string
+}
+
+type auditWriter interface {
+	WriteAudit(context.Context, auditEvent)
 }
 
 type platformAuditLog struct {
-	ID        int64     `json:"id"`
-	UserID    string    `json:"user_id,omitempty"`
-	Email     string    `json:"email,omitempty"`
-	Action    string    `json:"action"`
-	Resource  string    `json:"resource"`
-	Namespace string    `json:"namespace,omitempty"`
-	Status    string    `json:"status"`
-	Message   string    `json:"message,omitempty"`
-	ActorIP   string    `json:"actor_ip,omitempty"`
-	RequestID string    `json:"request_id,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID               int64     `json:"id"`
+	UserID           string    `json:"user_id,omitempty"`
+	Email            string    `json:"email,omitempty"`
+	Action           string    `json:"action"`
+	Resource         string    `json:"resource"`
+	Namespace        string    `json:"namespace,omitempty"`
+	Status           string    `json:"status"`
+	Message          string    `json:"message,omitempty"`
+	ActorIP          string    `json:"actor_ip,omitempty"`
+	RequestID        string    `json:"request_id,omitempty"`
+	Source           string    `json:"source,omitempty"`
+	AuthIdentity     string    `json:"auth_identity,omitempty"`
+	ImageRef         string    `json:"image_ref,omitempty"`
+	ServerName       string    `json:"server_name,omitempty"`
+	DeploymentTarget string    `json:"deployment_target,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+type adminOperationsFilter struct {
+	User       string
+	UserSearch string
+	Since      time.Time
+	Until      time.Time
+	Limit      int
+}
+
+type adminOperationsFilterResponse struct {
+	User  string `json:"user,omitempty"`
+	Since string `json:"since,omitempty"`
+	Until string `json:"until,omitempty"`
+	Limit int    `json:"limit"`
+}
+
+type platformUserActivity struct {
+	ID                  string     `json:"id"`
+	Email               string     `json:"email"`
+	Role                string     `json:"role"`
+	Namespace           string     `json:"namespace,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	LastLoginAt         *time.Time `json:"last_login_at,omitempty"`
+	LastActivityAt      *time.Time `json:"last_activity_at,omitempty"`
+	LoginCount          int64      `json:"login_count"`
+	FailedActionCount   int64      `json:"failed_action_count"`
+	RegistryCredentials int64      `json:"registry_credentials"`
+	APIKeys             int64      `json:"api_keys"`
+}
+
+type platformImageActivity struct {
+	UserID           string    `json:"user_id,omitempty"`
+	Email            string    `json:"email,omitempty"`
+	Namespace        string    `json:"namespace,omitempty"`
+	ImageRef         string    `json:"image_ref"`
+	SourceImage      string    `json:"source_image,omitempty"`
+	ServerName       string    `json:"server_name,omitempty"`
+	DeploymentTarget string    `json:"deployment_target,omitempty"`
+	Action           string    `json:"action"`
+	Status           string    `json:"status"`
+	Source           string    `json:"source,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 func newPlatformStore(ctx context.Context, dsn string, jwtSecret []byte) (*platformStore, error) {
@@ -969,15 +1027,101 @@ func (s *platformStore) DeleteTeamMembership(ctx context.Context, teamSlug, user
 	return nil
 }
 
-func (s *platformStore) ListAuditLogs(ctx context.Context, limit int) ([]platformAuditLog, error) {
-	rows, err := s.db.QueryContext(ctx, `
+func (s *platformStore) ListUserActivity(ctx context.Context, filter adminOperationsFilter) ([]platformUserActivity, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	where, args := platformUserActivityWhere(filter)
+	auditTimeWhere := platformAuditTimeWhere("a", filter, &args)
+	args = append(args, limit)
+	limitArg := len(args)
+	query := `
+SELECT u.id::text, u.email, u.role, COALESCE(n.namespace, ''), u.created_at,
+       activity.last_login_at,
+       activity.last_activity_at,
+       COALESCE(activity.login_count, 0) AS login_count,
+       COALESCE(activity.failed_action_count, 0) AS failed_action_count,
+       COALESCE(registry.registry_credentials, 0) AS registry_credentials,
+       COALESCE(keys.api_keys, 0) AS api_keys
+FROM users u
+LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
+LEFT JOIN LATERAL (
+	SELECT
+		MAX(a.created_at) FILTER (WHERE a.action IN ('login', 'oidc_login') AND a.status = 'success') AS last_login_at,
+		MAX(a.created_at) AS last_activity_at,
+		COUNT(*) FILTER (WHERE a.action IN ('login', 'oidc_login') AND a.status = 'success') AS login_count,
+		COUNT(*) FILTER (WHERE a.status IN ('denied', 'error')) AS failed_action_count
+	FROM audit_logs a
+	WHERE a.user_id = u.id` + auditTimeWhere + `
+) activity ON true
+LEFT JOIN LATERAL (
+	SELECT COUNT(*) AS registry_credentials
+	FROM registry_credentials rc
+	WHERE rc.user_id = u.id AND rc.revoked = false
+) registry ON true
+LEFT JOIN LATERAL (
+	SELECT COUNT(*) AS api_keys
+	FROM api_keys ak
+	WHERE ak.user_id = u.id AND ak.revoked = false
+) keys ON true
+` + where + `
+ORDER BY COALESCE(activity.last_activity_at, u.created_at) DESC
+LIMIT $` + strconv.Itoa(limitArg)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]platformUserActivity, 0, limit)
+	for rows.Next() {
+		var item platformUserActivity
+		var lastLogin sql.NullTime
+		var lastActivity sql.NullTime
+		if err := rows.Scan(
+			&item.ID,
+			&item.Email,
+			&item.Role,
+			&item.Namespace,
+			&item.CreatedAt,
+			&lastLogin,
+			&lastActivity,
+			&item.LoginCount,
+			&item.FailedActionCount,
+			&item.RegistryCredentials,
+			&item.APIKeys,
+		); err != nil {
+			return nil, err
+		}
+		item.LastLoginAt = nullTimePtr(lastLogin)
+		item.LastActivityAt = nullTimePtr(lastActivity)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *platformStore) ListAuditLogs(ctx context.Context, filter adminOperationsFilter) ([]platformAuditLog, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	where, args := platformAuditWhere(filter)
+	args = append(args, limit)
+	limitArg := len(args)
+	query := `
 SELECT a.id, COALESCE(a.user_id::text, ''), COALESCE(u.email, ''), a.action, a.resource,
        COALESCE(a.namespace, ''), a.status, COALESCE(a.message, ''),
-       COALESCE(a.actor_ip, ''), COALESCE(a.request_id, ''), a.created_at
+       COALESCE(a.actor_ip, ''), COALESCE(a.request_id, ''),
+       COALESCE(a.source, ''), COALESCE(a.auth_identity, ''),
+       COALESCE(a.image_ref, ''), COALESCE(a.server_name, ''),
+       COALESCE(a.deployment_target, ''), a.created_at
 FROM audit_logs a
 LEFT JOIN users u ON u.id = a.user_id
+` + where + `
 ORDER BY a.created_at DESC, a.id DESC
-LIMIT $1`, limit)
+LIMIT $` + strconv.Itoa(limitArg)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -997,6 +1141,63 @@ LIMIT $1`, limit)
 			&item.Message,
 			&item.ActorIP,
 			&item.RequestID,
+			&item.Source,
+			&item.AuthIdentity,
+			&item.ImageRef,
+			&item.ServerName,
+			&item.DeploymentTarget,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *platformStore) ListImageActivity(ctx context.Context, filter adminOperationsFilter) ([]platformImageActivity, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	where, args := platformAuditWhere(filter)
+	if where == "" {
+		where = "WHERE a.image_ref IS NOT NULL AND a.image_ref <> ''"
+	} else {
+		where += " AND a.image_ref IS NOT NULL AND a.image_ref <> ''"
+	}
+	args = append(args, limit)
+	limitArg := len(args)
+	query := `
+SELECT COALESCE(a.user_id::text, ''), COALESCE(u.email, ''), COALESCE(a.namespace, ''),
+       a.image_ref, COALESCE(a.resource, ''), COALESCE(a.server_name, ''),
+       COALESCE(a.deployment_target, ''), a.action, a.status,
+       COALESCE(a.source, ''), a.created_at
+FROM audit_logs a
+LEFT JOIN users u ON u.id = a.user_id
+` + where + `
+ORDER BY a.created_at DESC, a.id DESC
+LIMIT $` + strconv.Itoa(limitArg)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]platformImageActivity, 0, limit)
+	for rows.Next() {
+		var item platformImageActivity
+		if err := rows.Scan(
+			&item.UserID,
+			&item.Email,
+			&item.Namespace,
+			&item.ImageRef,
+			&item.SourceImage,
+			&item.ServerName,
+			&item.DeploymentTarget,
+			&item.Action,
+			&item.Status,
+			&item.Source,
 			&item.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -1010,8 +1211,74 @@ func (s *platformStore) WriteAudit(ctx context.Context, ev auditEvent) {
 	if s == nil || s.db == nil {
 		return
 	}
-	_, _ = s.db.ExecContext(ctx, `INSERT INTO audit_logs (user_id,action,resource,namespace,status,message,actor_ip,request_id) VALUES (NULLIF($1,'')::uuid,$2,$3,$4,$5,$6,$7,$8)`,
-		ev.UserID, ev.Action, ev.Resource, ev.Namespace, ev.Status, ev.Message, ev.ActorIP, ev.RequestID)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_logs (user_id,action,resource,namespace,status,message,actor_ip,request_id,source,auth_identity,image_ref,server_name,deployment_target) VALUES (NULLIF($1,'')::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		ev.UserID, ev.Action, ev.Resource, ev.Namespace, ev.Status, ev.Message, ev.ActorIP, ev.RequestID, ev.Source, ev.AuthIdentity, ev.ImageRef, ev.ServerName, ev.DeploymentTarget); err != nil {
+		log.Printf("ERROR: failed to write audit log: %v", err)
+	}
+}
+
+func platformUserActivityWhere(filter adminOperationsFilter) (string, []any) {
+	conditions := []string{"u.deleted_at IS NULL"}
+	args := make([]any, 0)
+	if user := adminOperationsUserSearch(filter); user != "" {
+		pattern := "%" + user + "%"
+		args = append(args, user, pattern, pattern)
+		conditions = append(conditions, fmt.Sprintf("(u.id::text = $%d OR u.email ILIKE $%d OR COALESCE(n.namespace, '') ILIKE $%d)", len(args)-2, len(args)-1, len(args)))
+	}
+	return "WHERE " + strings.Join(conditions, " AND "), args
+}
+
+func platformAuditWhere(filter adminOperationsFilter) (string, []any) {
+	conditions := make([]string, 0, 3)
+	args := make([]any, 0, 3)
+	if user := adminOperationsUserSearch(filter); user != "" {
+		pattern := "%" + user + "%"
+		args = append(args, user, pattern, pattern, pattern, pattern, pattern, pattern)
+		conditions = append(conditions, fmt.Sprintf("(a.user_id::text = $%d OR COALESCE(u.email, '') ILIKE $%d OR COALESCE(a.namespace, '') ILIKE $%d OR COALESCE(a.resource, '') ILIKE $%d OR COALESCE(a.image_ref, '') ILIKE $%d OR COALESCE(a.server_name, '') ILIKE $%d OR COALESCE(a.deployment_target, '') ILIKE $%d)", len(args)-6, len(args)-5, len(args)-4, len(args)-3, len(args)-2, len(args)-1, len(args)))
+	}
+	if !filter.Since.IsZero() {
+		args = append(args, filter.Since)
+		conditions = append(conditions, fmt.Sprintf("a.created_at >= $%d", len(args)))
+	}
+	if !filter.Until.IsZero() {
+		args = append(args, filter.Until)
+		conditions = append(conditions, fmt.Sprintf("a.created_at <= $%d", len(args)))
+	}
+	if len(conditions) == 0 {
+		return "", args
+	}
+	return "WHERE " + strings.Join(conditions, " AND "), args
+}
+
+func platformAuditTimeWhere(alias string, filter adminOperationsFilter, args *[]any) string {
+	conditions := make([]string, 0, 2)
+	if !filter.Since.IsZero() {
+		*args = append(*args, filter.Since)
+		conditions = append(conditions, fmt.Sprintf("%s.created_at >= $%d", alias, len(*args)))
+	}
+	if !filter.Until.IsZero() {
+		*args = append(*args, filter.Until)
+		conditions = append(conditions, fmt.Sprintf("%s.created_at <= $%d", alias, len(*args)))
+	}
+	if len(conditions) == 0 {
+		return ""
+	}
+	return " AND " + strings.Join(conditions, " AND ")
+}
+
+func adminOperationsUserSearch(filter adminOperationsFilter) string {
+	if filter.UserSearch != "" {
+		return filter.UserSearch
+	}
+	return strings.ToLower(strings.TrimSpace(filter.User))
+}
+
+func nullTimePtr(value sql.NullTime) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	t := value.Time
+	return &t
 }
 
 func normalizeTeamSlug(raw string) string {
@@ -1194,6 +1461,11 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   message text,
   actor_ip text,
   request_id text,
+  source text,
+  auth_identity text,
+  image_ref text,
+  server_name text,
+  deployment_target text,
   created_at timestamptz not null default now()
 );
 DO $$
@@ -1214,6 +1486,13 @@ BEGIN
 END
 $$;
 ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS source text;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS auth_identity text;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS image_ref text;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS server_name text;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS deployment_target text;
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_image_ref ON audit_logs(image_ref);
 `

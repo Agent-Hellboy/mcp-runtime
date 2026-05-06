@@ -3917,6 +3917,7 @@ _No package overview is documented._
 
 - [`func HasPlatformClient() bool`](#cli-platform-api-func-hasplatformclient-bool)
 - [`func NormalizeBaseURL(raw string) string`](#cli-platform-api-func-normalizebaseurl-raw-string-string)
+- [`type ImagePublishRecord struct`](#cli-platform-api-type-imagepublishrecord-struct)
 - [`type PlatformClient struct`](#cli-platform-api-type-platformclient-struct)
 - [`func NewPlatformClient() (*PlatformClient, error)`](#cli-platform-api-func-newplatformclient-platformclient-error)
 - [`func ResolvePlatformOrKube(useKube bool) (*PlatformClient, bool, error)`](#cli-platform-api-func-resolveplatformorkube-usekube-bool-platformclient-bool-error)
@@ -3936,6 +3937,7 @@ _No package overview is documented._
 - [`func (c *PlatformClient) ListTeams(ctx context.Context) ([]Team, error)`](#cli-platform-api-func-c-platformclient-listteams-ctx-context-context-team-error)
 - [`func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postgranttoggle-ctx-context-context-namespace-name-action-string-error)
 - [`func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postsessiontoggle-ctx-context-context-namespace-name-action-string-error)
+- [`func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePublishRecord) error`](#cli-platform-api-func-c-platformclient-recordimagepublish-ctx-context-context-record-imagepublishrecord-error)
 - [`type ServerListItem struct`](#cli-platform-api-type-serverlistitem-struct)
 - [`type Team struct`](#cli-platform-api-type-team-struct)
 
@@ -3956,6 +3958,16 @@ func NormalizeBaseURL(raw string) string
 
 <a id="cli-platform-api-types"></a>
 ### Types
+
+<a id="cli-platform-api-type-imagepublishrecord-struct"></a>
+```text
+type ImagePublishRecord struct {
+	ImageRef    string `json:"image_ref"`
+	SourceImage string `json:"source_image,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+}
+
+```
 
 <a id="cli-platform-api-type-platformclient-struct"></a>
 ```text
@@ -4076,6 +4088,12 @@ func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, a
 <a id="cli-platform-api-func-c-platformclient-postsessiontoggle-ctx-context-context-namespace-name-action-string-error"></a>
 ```text
 func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name, action string) error
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-recordimagepublish-ctx-context-context-record-imagepublishrecord-error"></a>
+```text
+func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePublishRecord) error
 
 ```
 

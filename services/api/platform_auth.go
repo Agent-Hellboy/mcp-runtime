@@ -243,7 +243,7 @@ func (s *apiServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.runtime != nil {
 		if err := s.runtime.ensureUserNamespace(r.Context(), principal{Subject: u.ID, Role: u.Role, Email: u.Email, Namespace: u.Namespace}); err != nil {
-			s.platform.WriteAudit(r.Context(), auditEvent{UserID: u.ID, Action: "namespace_create", Resource: u.Namespace, Namespace: u.Namespace, Status: "error", Message: err.Error(), ActorIP: requestIP(r)})
+			s.platform.WriteAudit(r.Context(), auditEvent{UserID: u.ID, Action: "namespace_create", Resource: u.Namespace, Namespace: u.Namespace, Status: "error", Message: err.Error(), ActorIP: requestIP(r), Source: requestSource(r), AuthIdentity: "password:" + u.Email})
 			if cleanupErr := s.platform.DeleteUser(r.Context(), u.ID); cleanupErr != nil {
 				log.Printf("signup cleanup failed for user %s: %v", u.ID, cleanupErr)
 				s.platform.WriteAudit(r.Context(), auditEvent{
@@ -254,6 +254,7 @@ func (s *apiServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 					Status:    "error",
 					Message:   cleanupErr.Error(),
 					ActorIP:   requestIP(r),
+					Source:    requestSource(r),
 				})
 			} else {
 				s.platform.WriteAudit(r.Context(), auditEvent{
@@ -263,6 +264,7 @@ func (s *apiServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 					Namespace: u.Namespace,
 					Status:    "success",
 					ActorIP:   requestIP(r),
+					Source:    requestSource(r),
 				})
 			}
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to provision namespace"})
@@ -274,7 +276,7 @@ func (s *apiServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to issue token"})
 		return
 	}
-	s.platform.WriteAudit(r.Context(), auditEvent{UserID: u.ID, Action: "signup", Resource: "user", Namespace: u.Namespace, Status: "success", ActorIP: requestIP(r)})
+	s.platform.WriteAudit(r.Context(), auditEvent{UserID: u.ID, Action: "signup", Resource: "user", Namespace: u.Namespace, Status: "success", ActorIP: requestIP(r), Source: requestSource(r), AuthIdentity: "password:" + u.Email})
 	writeJSON(w, http.StatusCreated, map[string]any{"access_token": token, "token_type": "bearer", "expires_in": int(platformAccessTokenTTL.Seconds()), "user": u})
 }
 
@@ -309,6 +311,7 @@ func (s *apiServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 			Status:   "denied",
 			Message:  "rate_limited",
 			ActorIP:  requestIP(r),
+			Source:   requestSource(r),
 		})
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too_many_requests"})
 		return
@@ -326,6 +329,7 @@ func (s *apiServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 			Status:   "denied",
 			Message:  fmt.Sprintf("invalid credentials (failures=%d)", failures),
 			ActorIP:  requestIP(r),
+			Source:   requestSource(r),
 		})
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
@@ -336,7 +340,7 @@ func (s *apiServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to issue token"})
 		return
 	}
-	s.platform.WriteAudit(r.Context(), auditEvent{UserID: u.ID, Action: "login", Resource: "user", Namespace: u.Namespace, Status: "success", ActorIP: requestIP(r)})
+	s.platform.WriteAudit(r.Context(), auditEvent{UserID: u.ID, Action: "login", Resource: "user", Namespace: u.Namespace, Status: "success", ActorIP: requestIP(r), Source: requestSource(r) + ":password", AuthIdentity: "password:" + u.Email})
 	writeJSON(w, http.StatusOK, map[string]any{"access_token": token, "token_type": "bearer", "expires_in": int(platformAccessTokenTTL.Seconds()), "user": u})
 }
 
@@ -395,6 +399,7 @@ func (s *apiServer) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 			Status:   auditStatus,
 			Message:  err.Error(),
 			ActorIP:  requestIP(r),
+			Source:   requestSource(r) + ":oidc",
 		})
 		if statusCode == http.StatusUnauthorized {
 			writeJSON(w, statusCode, map[string]string{"error": "unauthorized"})
@@ -409,7 +414,7 @@ func (s *apiServer) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to issue token"})
 		return
 	}
-	s.platform.WriteAudit(r.Context(), auditEvent{UserID: u.ID, Action: "oidc_login", Resource: "user", Namespace: u.Namespace, Status: "success", ActorIP: requestIP(r)})
+	s.platform.WriteAudit(r.Context(), auditEvent{UserID: u.ID, Action: "oidc_login", Resource: "user", Namespace: u.Namespace, Status: "success", ActorIP: requestIP(r), Source: requestSource(r) + ":oidc", AuthIdentity: "oidc:" + u.Email})
 	writeJSON(w, http.StatusOK, map[string]any{"access_token": token, "token_type": "bearer", "expires_in": int(platformAccessTokenTTL.Seconds()), "user": u})
 }
 

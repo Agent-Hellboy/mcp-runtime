@@ -16,6 +16,14 @@ import (
 	"mcp-runtime/pkg/k8sclient"
 )
 
+type fakeAuditWriter struct {
+	events []auditEvent
+}
+
+func (f *fakeAuditWriter) WriteAudit(_ context.Context, ev auditEvent) {
+	f.events = append(f.events, ev)
+}
+
 func TestClientForPrincipalRequiresIdentityForUserRole(t *testing.T) {
 	server := &RuntimeServer{
 		k8sClients: &k8sclient.Clients{
@@ -154,6 +162,48 @@ func TestHandleDeploymentApplyAdminUsesRequestedNamespace(t *testing.T) {
 	}
 	if _, err := client.CoreV1().Namespaces().Get(context.Background(), "tenant-a", metav1.GetOptions{}); err != nil {
 		t.Fatalf("target namespace not ensured: %v", err)
+	}
+}
+
+func TestHandleDeploymentApplyWritesAuditEvent(t *testing.T) {
+	client := kubernetesfake.NewSimpleClientset()
+	audit := &fakeAuditWriter{}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{Clientset: client},
+		audit:      audit,
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/deployments", bytes.NewReader([]byte(`{
+		"name": "demo-workload",
+		"image": "registry.mcpruntime.org/team-a/demo:latest",
+		"namespace": "team-a",
+		"replicas": 1,
+		"port": 8088
+	}`)))
+	request.Header.Set("x-mcp-source", "ui")
+	request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, principal{
+		Role:      roleAdmin,
+		Subject:   "admin-1",
+		Email:     "admin@example.com",
+		Namespace: "admin-ns",
+		AuthType:  "platform_jwt",
+	}))
+	recorder := httptest.NewRecorder()
+	server.handleDeploymentApply(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(audit.events) == 0 {
+		t.Fatal("expected audit event")
+	}
+	got := audit.events[len(audit.events)-1]
+	if got.Action != "deployment_apply" || got.Status != "success" {
+		t.Fatalf("audit event = %#v, want successful deployment_apply", got)
+	}
+	if got.UserID != "admin-1" || got.ImageRef != "registry.mcpruntime.org/team-a/demo:latest" || got.DeploymentTarget != "team-a/demo-workload" {
+		t.Fatalf("audit event metadata = %#v", got)
+	}
+	if got.Source != "ui:platform_jwt" || got.AuthIdentity != "platform_jwt:admin@example.com" {
+		t.Fatalf("audit identity = %#v", got)
 	}
 }
 
