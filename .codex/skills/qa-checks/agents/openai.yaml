@@ -1,0 +1,4 @@
+interface:
+  display_name: "QA Checks"
+  short_description: "Plan and run repo validation checks"
+  default_prompt: "Use $qa-checks to choose and run the right validation checks for this MCP Runtime change."
