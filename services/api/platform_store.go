@@ -736,26 +736,53 @@ ORDER BY n.created_at DESC`)
 	defer rows.Close()
 	var out []map[string]any
 	for rows.Next() {
-		var id, userID, email, teamID, teamSlug, teamName, namespace, scope string
-		var createdAt time.Time
-		if err := rows.Scan(&id, &userID, &email, &teamID, &teamSlug, &teamName, &namespace, &scope, &createdAt); err != nil {
+		item, err := scanNamespaceRow(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, map[string]any{
-			"id":         id,
-			"user_id":    userID,
-			"email":      email,
-			"team_id":    teamID,
-			"team_slug":  teamSlug,
-			"team_name":  teamName,
-			"scope":      scope,
-			"namespace":  namespace,
-			"created_at": createdAt,
-			"is_shared":  namespace == sharedCatalogNamespace,
-			"is_managed": strings.HasPrefix(namespace, teamNamespacePrefix),
-		})
+		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func (s *platformStore) GetNamespace(ctx context.Context, namespace string) (map[string]any, bool, error) {
+	namespace = strings.TrimSpace(namespace)
+	var id, userID, email, teamID, teamSlug, teamName, scope string
+	var createdAt time.Time
+	err := s.db.QueryRowContext(ctx, `
+SELECT
+  n.id,
+  COALESCE(n.user_id::text, ''),
+  COALESCE(u.email, ''),
+  COALESCE(n.team_id::text, ''),
+  COALESCE(t.slug, ''),
+  COALESCE(t.display_name, ''),
+  COALESCE(n.scope, 'user'),
+  n.created_at
+FROM namespaces n
+LEFT JOIN users u ON u.id = n.user_id
+LEFT JOIN teams t ON t.id = n.team_id
+WHERE n.deleted_at IS NULL AND n.namespace = $1
+LIMIT 1`, namespace).Scan(&id, &userID, &email, &teamID, &teamSlug, &teamName, &scope, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return map[string]any{
+		"id":         id,
+		"user_id":    userID,
+		"email":      email,
+		"team_id":    teamID,
+		"team_slug":  teamSlug,
+		"team_name":  teamName,
+		"scope":      scope,
+		"namespace":  namespace,
+		"created_at": createdAt,
+		"is_shared":  namespace == sharedCatalogNamespace,
+		"is_managed": strings.HasPrefix(namespace, teamNamespacePrefix),
+	}, true, nil
 }
 
 func (s *platformStore) CreateTeam(ctx context.Context, slug, name, createdByUserID string) (teamRecord, error) {
@@ -797,7 +824,7 @@ VALUES ($1, NULL, $2, $3, $4, $5)`, uuid.NewString(), teamID, namespace, name, n
 		if _, err = tx.ExecContext(ctx, `
 INSERT INTO team_memberships (id, team_id, user_id, role)
 VALUES ($1, $2, $3, $4)
-ON CONFLICT (team_id, user_id)
+ON CONFLICT (team_id, user_id) WHERE deleted_at IS NULL
 DO UPDATE SET role = EXCLUDED.role, deleted_at = NULL`, uuid.NewString(), teamID, createdByUserID, teamRoleOwner); err != nil {
 			return teamRecord{}, err
 		}
@@ -905,7 +932,7 @@ func (s *platformStore) UpsertTeamMembership(ctx context.Context, teamSlug, user
 	if _, err := s.db.ExecContext(ctx, `
 INSERT INTO team_memberships (id, team_id, user_id, role)
 VALUES ($1, $2, $3, $4)
-ON CONFLICT (team_id, user_id)
+ON CONFLICT (team_id, user_id) WHERE deleted_at IS NULL
 DO UPDATE SET role = EXCLUDED.role, deleted_at = NULL`, uuid.NewString(), team.ID, userID, role); err != nil {
 		return teamMembershipRecord{}, err
 	}
@@ -989,6 +1016,27 @@ func (s *platformStore) WriteAudit(ctx context.Context, ev auditEvent) {
 
 func normalizeTeamSlug(raw string) string {
 	return strings.ToLower(strings.TrimSpace(raw))
+}
+
+func scanNamespaceRow(rows *sql.Rows) (map[string]any, error) {
+	var id, userID, email, teamID, teamSlug, teamName, namespace, scope string
+	var createdAt time.Time
+	if err := rows.Scan(&id, &userID, &email, &teamID, &teamSlug, &teamName, &namespace, &scope, &createdAt); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"id":         id,
+		"user_id":    userID,
+		"email":      email,
+		"team_id":    teamID,
+		"team_slug":  teamSlug,
+		"team_name":  teamName,
+		"scope":      scope,
+		"namespace":  namespace,
+		"created_at": createdAt,
+		"is_shared":  namespace == sharedCatalogNamespace,
+		"is_managed": strings.HasPrefix(namespace, teamNamespacePrefix),
+	}, nil
 }
 
 func normalizeTeamMembershipRole(raw string) string {

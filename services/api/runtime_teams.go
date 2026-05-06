@@ -153,16 +153,14 @@ func (s *RuntimeServer) handleRuntimeNamespaceItem(w http.ResponseWriter, r *htt
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	namespaces, err := s.platform.ListNamespaces(ctx)
+	item, ok, err := s.platform.GetNamespace(ctx, namespace)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list namespaces"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch namespace"})
 		return
 	}
-	for _, item := range namespaces {
-		if strings.TrimSpace(asString(item["namespace"])) == namespace {
-			writeJSON(w, http.StatusOK, map[string]any{"namespace": item})
-			return
-		}
+	if ok {
+		writeJSON(w, http.StatusOK, map[string]any{"namespace": item})
+		return
 	}
 	if namespace == sharedCatalogNamespace {
 		writeJSON(w, http.StatusOK, map[string]any{"namespace": map[string]any{
@@ -193,7 +191,17 @@ func (s *RuntimeServer) handleRuntimeTeamList(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list teams"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"teams": teams})
+	out := make([]teamRecord, 0, len(teams))
+	for _, membership := range teams {
+		out = append(out, teamRecord{
+			ID:        membership.TeamID,
+			Slug:      membership.TeamSlug,
+			Name:      membership.TeamName,
+			Namespace: membership.TeamNamespace,
+			CreatedAt: membership.CreatedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"teams": out})
 }
 
 func (s *RuntimeServer) handleRuntimeTeamGet(w http.ResponseWriter, r *http.Request, p principal, teamSlug string) {

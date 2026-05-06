@@ -20,6 +20,7 @@ Available Commands:
   server      Manage MCP servers
   setup       Setup the complete MCP platform
   status      Show platform status
+  team        Manage internal platform teams
 
 Flags:
       --debug     Enable debug mode with structured error logging

@@ -350,17 +350,24 @@ func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace st
 }
 
 func ensureWorkloadServiceAccount(ctx context.Context, client kubernetes.Interface, namespace string) error {
-	sa := &corev1.ServiceAccount{
+	desired := &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      defaultWorkloadServiceAccount,
 			Namespace: namespace,
 		},
 		AutomountServiceAccountToken: boolPtr(false),
 	}
-	if _, err := client.CoreV1().ServiceAccounts(namespace).Create(ctx, sa, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	existing, err := client.CoreV1().ServiceAccounts(namespace).Get(ctx, defaultWorkloadServiceAccount, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, createErr := client.CoreV1().ServiceAccounts(namespace).Create(ctx, desired, metav1.CreateOptions{})
+		return createErr
+	}
+	if err != nil {
 		return err
 	}
-	return nil
+	existing.AutomountServiceAccountToken = boolPtr(false)
+	_, err = client.CoreV1().ServiceAccounts(namespace).Update(ctx, existing, metav1.UpdateOptions{})
+	return err
 }
 
 func ensureResourceQuota(ctx context.Context, client kubernetes.Interface, ns string) error {

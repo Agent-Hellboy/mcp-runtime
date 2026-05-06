@@ -279,16 +279,14 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "shared catalog namespace is read-only for team users"})
 		return
 	}
-	if approved := approvedRegistries(); len(approved) > 0 {
-		parts := strings.Split(req.Spec.Image, "/")
-		if len(parts) < 2 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "image must include a registry/repository path"})
-			return
-		}
-		if _, ok := approved[parts[0]]; !ok {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("registry %q is not approved", parts[0])})
-			return
-		}
+	team, isTeamNamespace := p.teamForNamespace(namespace)
+	teamSlug := ""
+	if isTeamNamespace {
+		teamSlug = strings.TrimSpace(team.Slug)
+	}
+	if err := validateDeployImage(req.Spec.Image, namespace, teamSlug, p.Role); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
 	}
 
 	req.Namespace = namespace

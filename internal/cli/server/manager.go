@@ -76,6 +76,9 @@ func (m *ServerManager) ListServers(namespace, team string) error {
 	if err != nil {
 		return err
 	}
+	if useK && team != "" {
+		return core.NewWithSentinel(nil, "cannot use --team with --use-kube")
+	}
 	if !useK {
 		if team != "" {
 			t, err := plat.GetTeam(context.Background(), team)

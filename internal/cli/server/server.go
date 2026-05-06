@@ -2,6 +2,8 @@
 package server
 
 import (
+	"math"
+
 	"github.com/spf13/cobra"
 
 	"mcp-runtime/internal/cli/core"
@@ -107,7 +109,7 @@ For pushing images, use 'registry push'.`,
 	deployCmd.Flags().StringVar(&deployImage, "image", "", "Container image repository")
 	deployCmd.Flags().StringVar(&deployTag, "tag", "latest", "Container image tag")
 	deployCmd.Flags().Int32Var(&deployReplicas, "replicas", 1, "Replica count")
-	deployCmd.Flags().Int32Var(&deployPort, "port", int32(core.GetDefaultServerPort()), "Container port")
+	deployCmd.Flags().Int32Var(&deployPort, "port", defaultDeployPort(), "Container port")
 	deployCmd.Flags().Int32Var(&deployServicePort, "service-port", 80, "Service port")
 	_ = deployCmd.MarkFlagRequired("image")
 
@@ -208,4 +210,12 @@ For pushing images, use 'registry push'.`,
 
 	cmd.AddCommand(listCmd, getCmd, createCmd, applyCmd, deployCmd, exportCmd, patchCmd, deleteCmd, logsCmd, statusCmd, policyCmd, buildCmd)
 	return cmd
+}
+
+func defaultDeployPort() int32 {
+	port := core.GetDefaultServerPort()
+	if port <= 0 || port > math.MaxInt32 {
+		return 8088
+	}
+	return int32(port)
 }

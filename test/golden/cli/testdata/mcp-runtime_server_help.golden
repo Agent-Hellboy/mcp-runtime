@@ -15,6 +15,7 @@ Available Commands:
   build       Build MCP server images (push via `registry push`)
   create      Create an MCP server
   delete      Delete an MCP server
+  deploy      Deploy an MCP server through the platform API
   export      Export an MCP server manifest
   get         Get MCP server details
   list        List MCP servers
