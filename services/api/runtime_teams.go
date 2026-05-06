@@ -301,12 +301,3 @@ func (s *RuntimeServer) handleRuntimeTeamMemberDelete(w http.ResponseWriter, r *
 		"userID":  userID,
 	})
 }
-
-func asString(v any) string {
-	switch typed := v.(type) {
-	case string:
-		return typed
-	default:
-		return ""
-	}
-}

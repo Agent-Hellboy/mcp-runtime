@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"strconv"
@@ -107,10 +108,11 @@ type platformAuditLog struct {
 }
 
 type adminOperationsFilter struct {
-	User  string
-	Since time.Time
-	Until time.Time
-	Limit int
+	User       string
+	UserSearch string
+	Since      time.Time
+	Until      time.Time
+	Limit      int
 }
 
 type adminOperationsFilterResponse struct {
@@ -1031,24 +1033,40 @@ func (s *platformStore) ListUserActivity(ctx context.Context, filter adminOperat
 		limit = 50
 	}
 	where, args := platformUserActivityWhere(filter)
+	auditTimeWhere := platformAuditTimeWhere("a", filter, &args)
 	args = append(args, limit)
 	limitArg := len(args)
 	query := `
 SELECT u.id::text, u.email, u.role, COALESCE(n.namespace, ''), u.created_at,
-       MAX(a.created_at) FILTER (WHERE a.action IN ('login', 'oidc_login') AND a.status = 'success') AS last_login_at,
-       MAX(a.created_at) AS last_activity_at,
-       COUNT(DISTINCT a.id) FILTER (WHERE a.action IN ('login', 'oidc_login') AND a.status = 'success') AS login_count,
-       COUNT(DISTINCT a.id) FILTER (WHERE a.status IN ('denied', 'error')) AS failed_action_count,
-       COUNT(DISTINCT rc.id) FILTER (WHERE rc.revoked = false) AS registry_credentials,
-       COUNT(DISTINCT ak.id) FILTER (WHERE ak.revoked = false) AS api_keys
+       activity.last_login_at,
+       activity.last_activity_at,
+       COALESCE(activity.login_count, 0) AS login_count,
+       COALESCE(activity.failed_action_count, 0) AS failed_action_count,
+       COALESCE(registry.registry_credentials, 0) AS registry_credentials,
+       COALESCE(keys.api_keys, 0) AS api_keys
 FROM users u
 LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
-LEFT JOIN audit_logs a ON a.user_id = u.id
-LEFT JOIN registry_credentials rc ON rc.user_id = u.id
-LEFT JOIN api_keys ak ON ak.user_id = u.id
+LEFT JOIN LATERAL (
+	SELECT
+		MAX(a.created_at) FILTER (WHERE a.action IN ('login', 'oidc_login') AND a.status = 'success') AS last_login_at,
+		MAX(a.created_at) AS last_activity_at,
+		COUNT(*) FILTER (WHERE a.action IN ('login', 'oidc_login') AND a.status = 'success') AS login_count,
+		COUNT(*) FILTER (WHERE a.status IN ('denied', 'error')) AS failed_action_count
+	FROM audit_logs a
+	WHERE a.user_id = u.id` + auditTimeWhere + `
+) activity ON true
+LEFT JOIN LATERAL (
+	SELECT COUNT(*) AS registry_credentials
+	FROM registry_credentials rc
+	WHERE rc.user_id = u.id AND rc.revoked = false
+) registry ON true
+LEFT JOIN LATERAL (
+	SELECT COUNT(*) AS api_keys
+	FROM api_keys ak
+	WHERE ak.user_id = u.id AND ak.revoked = false
+) keys ON true
 ` + where + `
-GROUP BY u.id, u.email, u.role, n.namespace, u.created_at
-ORDER BY COALESCE(MAX(a.created_at), u.created_at) DESC
+ORDER BY COALESCE(activity.last_activity_at, u.created_at) DESC
 LIMIT $` + strconv.Itoa(limitArg)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -1193,25 +1211,19 @@ func (s *platformStore) WriteAudit(ctx context.Context, ev auditEvent) {
 	if s == nil || s.db == nil {
 		return
 	}
-	_, _ = s.db.ExecContext(ctx, `INSERT INTO audit_logs (user_id,action,resource,namespace,status,message,actor_ip,request_id,source,auth_identity,image_ref,server_name,deployment_target) VALUES (NULLIF($1,'')::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-		ev.UserID, ev.Action, ev.Resource, ev.Namespace, ev.Status, ev.Message, ev.ActorIP, ev.RequestID, ev.Source, ev.AuthIdentity, ev.ImageRef, ev.ServerName, ev.DeploymentTarget)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_logs (user_id,action,resource,namespace,status,message,actor_ip,request_id,source,auth_identity,image_ref,server_name,deployment_target) VALUES (NULLIF($1,'')::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		ev.UserID, ev.Action, ev.Resource, ev.Namespace, ev.Status, ev.Message, ev.ActorIP, ev.RequestID, ev.Source, ev.AuthIdentity, ev.ImageRef, ev.ServerName, ev.DeploymentTarget); err != nil {
+		log.Printf("ERROR: failed to write audit log: %v", err)
+	}
 }
 
 func platformUserActivityWhere(filter adminOperationsFilter) (string, []any) {
 	conditions := []string{"u.deleted_at IS NULL"}
 	args := make([]any, 0)
-	if user := strings.TrimSpace(filter.User); user != "" {
+	if user := adminOperationsUserSearch(filter); user != "" {
 		pattern := "%" + user + "%"
 		args = append(args, user, pattern, pattern)
 		conditions = append(conditions, fmt.Sprintf("(u.id::text = $%d OR u.email ILIKE $%d OR COALESCE(n.namespace, '') ILIKE $%d)", len(args)-2, len(args)-1, len(args)))
-	}
-	if !filter.Since.IsZero() {
-		args = append(args, filter.Since)
-		conditions = append(conditions, fmt.Sprintf("(a.id IS NULL OR a.created_at >= $%d)", len(args)))
-	}
-	if !filter.Until.IsZero() {
-		args = append(args, filter.Until)
-		conditions = append(conditions, fmt.Sprintf("(a.id IS NULL OR a.created_at <= $%d)", len(args)))
 	}
 	return "WHERE " + strings.Join(conditions, " AND "), args
 }
@@ -1219,7 +1231,7 @@ func platformUserActivityWhere(filter adminOperationsFilter) (string, []any) {
 func platformAuditWhere(filter adminOperationsFilter) (string, []any) {
 	conditions := make([]string, 0, 3)
 	args := make([]any, 0, 3)
-	if user := strings.TrimSpace(filter.User); user != "" {
+	if user := adminOperationsUserSearch(filter); user != "" {
 		pattern := "%" + user + "%"
 		args = append(args, user, pattern, pattern, pattern, pattern, pattern, pattern)
 		conditions = append(conditions, fmt.Sprintf("(a.user_id::text = $%d OR COALESCE(u.email, '') ILIKE $%d OR COALESCE(a.namespace, '') ILIKE $%d OR COALESCE(a.resource, '') ILIKE $%d OR COALESCE(a.image_ref, '') ILIKE $%d OR COALESCE(a.server_name, '') ILIKE $%d OR COALESCE(a.deployment_target, '') ILIKE $%d)", len(args)-6, len(args)-5, len(args)-4, len(args)-3, len(args)-2, len(args)-1, len(args)))
@@ -1236,6 +1248,29 @@ func platformAuditWhere(filter adminOperationsFilter) (string, []any) {
 		return "", args
 	}
 	return "WHERE " + strings.Join(conditions, " AND "), args
+}
+
+func platformAuditTimeWhere(alias string, filter adminOperationsFilter, args *[]any) string {
+	conditions := make([]string, 0, 2)
+	if !filter.Since.IsZero() {
+		*args = append(*args, filter.Since)
+		conditions = append(conditions, fmt.Sprintf("%s.created_at >= $%d", alias, len(*args)))
+	}
+	if !filter.Until.IsZero() {
+		*args = append(*args, filter.Until)
+		conditions = append(conditions, fmt.Sprintf("%s.created_at <= $%d", alias, len(*args)))
+	}
+	if len(conditions) == 0 {
+		return ""
+	}
+	return " AND " + strings.Join(conditions, " AND ")
+}
+
+func adminOperationsUserSearch(filter adminOperationsFilter) string {
+	if filter.UserSearch != "" {
+		return filter.UserSearch
+	}
+	return strings.ToLower(strings.TrimSpace(filter.User))
 }
 
 func nullTimePtr(value sql.NullTime) *time.Time {

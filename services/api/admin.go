@@ -87,6 +87,7 @@ func (s *apiServer) handleAdminOperations(w http.ResponseWriter, r *http.Request
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deployments"})
 			return
 		}
+		deployments = filterDeploymentsForOperations(deployments, filter)
 		images = mergeDeploymentImageActivity(images, deployments, filter)
 	}
 
@@ -100,9 +101,11 @@ func (s *apiServer) handleAdminOperations(w http.ResponseWriter, r *http.Request
 }
 
 func adminOperationsFilterFromRequest(r *http.Request) (adminOperationsFilter, error) {
+	user := strings.TrimSpace(r.URL.Query().Get("user"))
 	filter := adminOperationsFilter{
-		User:  strings.TrimSpace(r.URL.Query().Get("user")),
-		Limit: clampInt(queryInt(r, "limit", 50), 1, 200),
+		User:       user,
+		UserSearch: strings.ToLower(user),
+		Limit:      clampInt(queryInt(r, "limit", 50), 1, 200),
 	}
 	since, err := parseOptionalTimeQuery(r, "since", false)
 	if err != nil {
@@ -160,6 +163,10 @@ func adminOperationsFilterResponseFor(filter adminOperationsFilter) adminOperati
 }
 
 func mergeDeploymentImageActivity(items []platformImageActivity, deployments []map[string]any, filter adminOperationsFilter) []platformImageActivity {
+	limit := operationsLimit(filter)
+	if len(items) >= limit {
+		return items[:limit]
+	}
 	seen := map[string]struct{}{}
 	for _, item := range items {
 		key := strings.Join([]string{item.UserID, item.Namespace, item.ImageRef, item.DeploymentTarget}, "\x00")
@@ -173,11 +180,11 @@ func mergeDeploymentImageActivity(items []platformImageActivity, deployments []m
 		userID := strings.TrimSpace(stringFromMap(deployment, "user_id"))
 		namespace := strings.TrimSpace(stringFromMap(deployment, "namespace"))
 		name := strings.TrimSpace(stringFromMap(deployment, "name"))
+		target := namespace + "/" + name
 		createdAt, _ := timeFromMap(deployment, "created_at")
-		if !matchesOperationsFilter(filter, userID, "", namespace, name, imageRef, createdAt) {
+		if !matchesOperationsFilter(filter, createdAt, userID, stringFromMap(deployment, "created_by"), namespace, name, imageRef, name, target) {
 			continue
 		}
-		target := namespace + "/" + name
 		key := strings.Join([]string{userID, namespace, imageRef, target}, "\x00")
 		if _, ok := seen[key]; ok {
 			continue
@@ -194,28 +201,57 @@ func mergeDeploymentImageActivity(items []platformImageActivity, deployments []m
 			Source:           "kubernetes",
 			CreatedAt:        createdAt,
 		})
+		if len(items) >= limit {
+			break
+		}
 	}
 	return items
 }
 
-func matchesOperationsFilter(filter adminOperationsFilter, userID, email, namespace, resource, imageRef string, timestamp time.Time) bool {
+func filterDeploymentsForOperations(deployments []map[string]any, filter adminOperationsFilter) []map[string]any {
+	limit := operationsLimit(filter)
+	out := make([]map[string]any, 0, min(len(deployments), limit))
+	for _, deployment := range deployments {
+		namespace := strings.TrimSpace(stringFromMap(deployment, "namespace"))
+		name := strings.TrimSpace(stringFromMap(deployment, "name"))
+		imageRef := strings.TrimSpace(stringFromMap(deployment, "image"))
+		target := namespace + "/" + name
+		createdAt, _ := timeFromMap(deployment, "created_at")
+		if !matchesOperationsFilter(filter, createdAt, stringFromMap(deployment, "user_id"), stringFromMap(deployment, "created_by"), namespace, name, imageRef, name, target) {
+			continue
+		}
+		out = append(out, deployment)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func matchesOperationsFilter(filter adminOperationsFilter, timestamp time.Time, values ...string) bool {
 	if !filter.Since.IsZero() && !timestamp.IsZero() && timestamp.Before(filter.Since) {
 		return false
 	}
 	if !filter.Until.IsZero() && !timestamp.IsZero() && timestamp.After(filter.Until) {
 		return false
 	}
-	user := strings.ToLower(strings.TrimSpace(filter.User))
+	user := adminOperationsUserSearch(filter)
 	if user == "" {
 		return true
 	}
-	haystack := []string{userID, email, namespace, resource, imageRef}
-	for _, value := range haystack {
+	for _, value := range values {
 		if strings.Contains(strings.ToLower(strings.TrimSpace(value)), user) {
 			return true
 		}
 	}
 	return false
+}
+
+func operationsLimit(filter adminOperationsFilter) int {
+	if filter.Limit <= 0 {
+		return 50
+	}
+	return filter.Limit
 }
 
 func stringFromMap(values map[string]any, key string) string {
