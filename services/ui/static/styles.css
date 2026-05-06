@@ -1154,6 +1154,7 @@ tr:hover td {
 
 .server-description {
   color: var(--text);
+  font-size: 13px;
   line-height: 1.35;
   max-width: 56ch;
 }
