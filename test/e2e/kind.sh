@@ -3841,6 +3841,30 @@ def payload_dict(event):
     return payload if isinstance(payload, dict) else {}
 
 
+expected_gateway_rpc_methods = (
+    "initialize",
+    "notifications/initialized",
+    "tools/list",
+    "prompts/list",
+    "resources/list",
+    "prompts/get",
+    "resources/read",
+    "tools/call",
+)
+expected_gateway_rpc_method_set = set(expected_gateway_rpc_methods)
+
+
+def rpc_methods_from_events_doc(doc):
+    return {
+        payload.get("rpc_method")
+        for payload in (
+            payload_dict(event)
+            for event in doc.get("events", [])
+        )
+        if payload.get("rpc_method")
+    }
+
+
 headers = {"x-api-key": api_key}
 ingest_headers = {"x-api-key": ingest_api_key}
 
@@ -3948,24 +3972,7 @@ oauth_deny_events = wait_for_json(
 ).get("events", [])
 all_oauth_events = wait_for_json(
     f"{api_base}/events/filter?server={oauth_server_name}&limit=1000",
-    lambda doc: {
-        payload.get("rpc_method")
-        for payload in (
-            event.get("payload", {})
-            for event in doc.get("events", [])
-            if isinstance(event.get("payload"), dict)
-        )
-        if payload.get("rpc_method")
-    } >= {
-        "initialize",
-        "notifications/initialized",
-        "tools/list",
-        "prompts/list",
-        "resources/list",
-        "prompts/get",
-        "resources/read",
-        "tools/call",
-    },
+    lambda doc: rpc_methods_from_events_doc(doc) >= expected_gateway_rpc_method_set,
     headers=headers,
     description="oauth server audit events",
 ).get("events", [])
@@ -4001,7 +4008,7 @@ all_server_denies = wait_for_json(
 ).get("events", [])
 all_server_events = wait_for_json(
     f"{api_base}/events/filter?server={server_name}&limit=1000",
-    lambda doc: len(doc.get("events", [])) >= 8,
+    lambda doc: rpc_methods_from_events_doc(doc) >= expected_gateway_rpc_method_set,
     headers=headers,
     description="server audit events",
 ).get("events", [])
@@ -4112,31 +4119,13 @@ for reason in ("missing_bearer_token", "invalid_token"):
         f"oauth deny reasons include {reason}",
         f"missing oauth deny reason {reason}: {oauth_deny_reasons}",
     )
-for rpc_method in (
-    "initialize",
-    "notifications/initialized",
-    "tools/list",
-    "prompts/list",
-    "resources/list",
-    "prompts/get",
-    "resources/read",
-    "tools/call",
-):
+for rpc_method in expected_gateway_rpc_methods:
     check(
         rpc_method in routing_methods,
         f"gateway audit events include {rpc_method}",
         f"missing gateway audit event for {rpc_method}: {routing_methods}",
     )
-for rpc_method in (
-    "initialize",
-    "notifications/initialized",
-    "tools/list",
-    "prompts/list",
-    "resources/list",
-    "prompts/get",
-    "resources/read",
-    "tools/call",
-):
+for rpc_method in expected_gateway_rpc_methods:
     check(
         rpc_method in oauth_routing_methods,
         f"oauth gateway audit events include {rpc_method}",
