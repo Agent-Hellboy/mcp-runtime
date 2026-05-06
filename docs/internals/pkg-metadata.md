@@ -25,6 +25,7 @@ servers:
 `ServerMetadata` mirrors the parts of `MCPServerSpec` that contributors commonly
 author by hand:
 
+- server description
 - image and tag
 - route, ingress host, and public path prefix
 - container port and replicas

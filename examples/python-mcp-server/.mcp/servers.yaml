@@ -1,6 +1,7 @@
 version: v1
 servers:
   - name: python-example-mcp
+    description: Python MCP example server with simple echo and string reversal tools.
     route: /python-example-mcp/mcp
     publicPathPrefix: python-example-mcp
     port: 8088
@@ -10,6 +11,8 @@ servers:
         value: /python-example-mcp/mcp
     tools:
       - name: echo
+        description: Echo the provided message.
         requiredTrust: low
       - name: reverse
+        description: Reverse the provided message.
         requiredTrust: low

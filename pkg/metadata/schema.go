@@ -48,6 +48,9 @@ type ServerMetadata struct {
 	// Name is the unique name of the MCP server.
 	Name string `yaml:"name" json:"name"`
 
+	// Description is a human-readable summary of what the MCP server provides.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+
 	// Image is the container image for the server.
 	Image string `yaml:"image" json:"image"`
 

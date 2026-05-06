@@ -10,7 +10,7 @@ This guide covers the user-facing path for getting an MCP server into MCP Runtim
 
 Use this guide after [Getting started](getting-started.md) once the platform stack is already installed.
 
-## Choose a description format
+## Choose an authoring format
 
 You can describe a server in two ways:
 
@@ -32,6 +32,7 @@ metadata:
   name: payments
   namespace: mcp-servers
 spec:
+  description: Payments MCP server for invoice lookup and refund workflows.
   image: registry.example.com/payments
   imageTag: v1.0.0
   port: 8088
@@ -48,6 +49,8 @@ spec:
   The server name inside the platform. This is also the default public route prefix when you do not override it.
 - `metadata.namespace`
   Usually `mcp-servers`.
+- `spec.description`
+  A short platform-facing summary shown in the server catalog.
 - `spec.image`
   The image repository to run.
 - `spec.imageTag`
@@ -67,7 +70,8 @@ spec:
 - Add `spec.servicePort` when you want a Service port other than `80`.
 - Add `spec.envVars` or `spec.secretEnvVars` for runtime configuration.
 - Add `spec.imagePullSecrets` if your registry requires explicit pull credentials.
-- Add `spec.tools`, `spec.auth`, `spec.policy`, `spec.session`, or `spec.rollout` when you want stricter governance or more delivery control.
+- Add `spec.tools` with tool descriptions and trust levels so the platform catalog mirrors the tool summaries clients see from `tools/list`.
+- Add `spec.auth`, `spec.policy`, `spec.session`, or `spec.rollout` when you want stricter governance or more delivery control.
 
 Apply the manifest:
 
@@ -86,6 +90,7 @@ Example:
 version: v1
 servers:
   - name: payments
+    description: Payments MCP server for invoice lookup and refund workflows.
     image: registry.example.com/payments
     imageTag: v1.0.0
     route: /payments
@@ -98,6 +103,8 @@ servers:
 
 - `name`
   The server name.
+- `description`
+  A short platform-facing summary shown in the server catalog.
 - `image`
   The image repository.
 - `imageTag`
@@ -110,6 +117,8 @@ servers:
   The desired replica count.
 - `namespace`
   The target namespace.
+- `tools`
+  Tool inventory for the platform catalog and policy authoring. Include each tool's description when the MCP server SDK exposes one through `tools/list`.
 
 ### Metadata defaults
 

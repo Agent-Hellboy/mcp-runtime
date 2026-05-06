@@ -456,12 +456,13 @@ func httpAPIError(status int, body []byte) error {
 
 // ServerListItem is one row from the platform API runtime servers list.
 type ServerListItem struct {
-	Name      string            `json:"name"`
-	Namespace string            `json:"namespace"`
-	Ready     string            `json:"ready"`
-	Status    string            `json:"status"`
-	Labels    map[string]string `json:"labels"`
-	Age       string            `json:"age"`
+	Name        string            `json:"name"`
+	Namespace   string            `json:"namespace"`
+	Description string            `json:"description,omitempty"`
+	Ready       string            `json:"ready"`
+	Status      string            `json:"status"`
+	Labels      map[string]string `json:"labels"`
+	Age         string            `json:"age"`
 }
 
 type serverListResponse struct {

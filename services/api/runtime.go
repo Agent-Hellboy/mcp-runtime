@@ -364,18 +364,19 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 }
 
 type serverInfo struct {
-	Name       string                      `json:"name"`
-	Namespace  string                      `json:"namespace"`
-	Ready      string                      `json:"ready"`
-	Status     string                      `json:"status"`
-	Labels     map[string]string           `json:"labels,omitempty"`
-	Age        string                      `json:"age"`
-	Endpoint   string                      `json:"endpoint,omitempty"`
-	Tools      []mcpv1alpha1.ToolConfig    `json:"tools,omitempty"`
-	Prompts    []mcpv1alpha1.InventoryItem `json:"prompts"`
-	Resources  []mcpv1alpha1.InventoryItem `json:"resources"`
-	Tasks      []mcpv1alpha1.InventoryItem `json:"tasks"`
-	AccessJSON map[string]any              `json:"access_json,omitempty"`
+	Name        string                      `json:"name"`
+	Namespace   string                      `json:"namespace"`
+	Description string                      `json:"description,omitempty"`
+	Ready       string                      `json:"ready"`
+	Status      string                      `json:"status"`
+	Labels      map[string]string           `json:"labels,omitempty"`
+	Age         string                      `json:"age"`
+	Endpoint    string                      `json:"endpoint,omitempty"`
+	Tools       []mcpv1alpha1.ToolConfig    `json:"tools,omitempty"`
+	Prompts     []mcpv1alpha1.InventoryItem `json:"prompts"`
+	Resources   []mcpv1alpha1.InventoryItem `json:"resources"`
+	Tasks       []mcpv1alpha1.InventoryItem `json:"tasks"`
+	AccessJSON  map[string]any              `json:"access_json,omitempty"`
 }
 
 type serverDeploymentStatus struct {
@@ -407,17 +408,18 @@ func serverInfoFromMCPServer(mcpServer mcpv1alpha1.MCPServer, deploymentStatus s
 	endpoint := publicMCPEndpoint(mcpServer)
 	connectEndpoint := publicMCPConnectEndpoint(endpoint, r)
 	info := serverInfo{
-		Name:      mcpServer.Name,
-		Namespace: mcpServer.Namespace,
-		Ready:     deploymentStatus.Ready,
-		Status:    deploymentStatus.Status,
-		Labels:    mcpServer.Labels,
-		Age:       mcpServer.CreationTimestamp.Format("2006-01-02T15:04:05Z"),
-		Endpoint:  endpoint,
-		Tools:     mcpServer.Spec.Tools,
-		Prompts:   inventoryItemsOrEmpty(mcpServer.Spec.Prompts),
-		Resources: inventoryItemsOrEmpty(mcpServer.Spec.MCPResources),
-		Tasks:     inventoryItemsOrEmpty(mcpServer.Spec.Tasks),
+		Name:        mcpServer.Name,
+		Namespace:   mcpServer.Namespace,
+		Description: mcpServer.Spec.Description,
+		Ready:       deploymentStatus.Ready,
+		Status:      deploymentStatus.Status,
+		Labels:      mcpServer.Labels,
+		Age:         mcpServer.CreationTimestamp.Format("2006-01-02T15:04:05Z"),
+		Endpoint:    endpoint,
+		Tools:       mcpServer.Spec.Tools,
+		Prompts:     inventoryItemsOrEmpty(mcpServer.Spec.Prompts),
+		Resources:   inventoryItemsOrEmpty(mcpServer.Spec.MCPResources),
+		Tasks:       inventoryItemsOrEmpty(mcpServer.Spec.Tasks),
 	}
 	if connectEndpoint != "" {
 		info.AccessJSON = map[string]any{

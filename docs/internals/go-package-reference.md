@@ -795,6 +795,9 @@ func (in *MCPServerList) DeepCopyObject() runtime.Object
 <a id="api-types-type-mcpserverspec-struct"></a>
 ```text
 type MCPServerSpec struct {
+	// Description is a human-readable summary of what the MCP server provides.
+	Description string `json:"description,omitempty"`
+
 	// Image is the container image for the MCP server.
 	Image string `json:"image"`
 
@@ -1639,6 +1642,9 @@ type SecretKeyRef struct {
 type ServerMetadata struct {
 	// Name is the unique name of the MCP server.
 	Name string `yaml:"name" json:"name"`
+
+	// Description is a human-readable summary of what the MCP server provides.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 
 	// Image is the container image for the server.
 	Image string `yaml:"image" json:"image"`
@@ -4100,12 +4106,13 @@ func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePub
 <a id="cli-platform-api-type-serverlistitem-struct"></a>
 ```text
 type ServerListItem struct {
-	Name      string            `json:"name"`
-	Namespace string            `json:"namespace"`
-	Ready     string            `json:"ready"`
-	Status    string            `json:"status"`
-	Labels    map[string]string `json:"labels"`
-	Age       string            `json:"age"`
+	Name        string            `json:"name"`
+	Namespace   string            `json:"namespace"`
+	Description string            `json:"description,omitempty"`
+	Ready       string            `json:"ready"`
+	Status      string            `json:"status"`
+	Labels      map[string]string `json:"labels"`
+	Age         string            `json:"age"`
 }
     ServerListItem is one row from the platform API runtime servers list.
 
