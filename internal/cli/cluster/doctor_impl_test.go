@@ -1285,6 +1285,34 @@ func TestCheckMCPServersImagePullSmokeUsesRestrictedCompliantPodSpec(t *testing.
 	}
 }
 
+func TestCheckMCPServersDNSAndNetworkAllowsColdCurlImagePull(t *testing.T) {
+	var runArgs []string
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if len(spec.Args) > 0 && spec.Args[0] == "run" {
+				runArgs = append([]string(nil), spec.Args...)
+				return &core.MockCommand{OutputData: []byte("HTTP/1.1 200 OK\r\n")}
+			}
+			return &core.MockCommand{OutputErr: fmt.Errorf("unexpected command: %v", spec.Args)}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+	check := checkMCPServersDNSAndNetwork(kubectl)
+	if !check.OK {
+		t.Fatalf("expected DNS/network probe to pass, got detail=%q", check.Detail)
+	}
+	if len(runArgs) == 0 {
+		t.Fatal("expected DNS/network probe to create a curl pod")
+	}
+	wantTimeout := "--pod-running-timeout=" + doctorProbePodRunTimeout
+	if !contains(runArgs, wantTimeout) {
+		t.Fatalf("DNS/network probe should allow cold curl image pulls with %s, got args=%v", wantTimeout, runArgs)
+	}
+	if contains(runArgs, "--pod-running-timeout=30s") {
+		t.Fatalf("DNS/network probe should not use the old 30s running timeout, got args=%v", runArgs)
+	}
+}
+
 func TestRestrictedRunOverridesUsesNumericNonRootUser(t *testing.T) {
 	overrides := restrictedRunOverrides("probe", "curlimages/curl:8.7.1", "curl", "-sSI", "http://example.test")
 	for _, want := range []string{
