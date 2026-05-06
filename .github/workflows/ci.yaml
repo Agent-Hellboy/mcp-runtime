@@ -183,41 +183,11 @@ jobs:
           python3 --version
           rg --version
 
-      - name: Validate OpenAI API key
-        id: openai-key
-        if: github.actor != 'dependabot[bot]'
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          if [ -z "${OPENAI_API_KEY:-}" ]; then
-            echo "valid=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::OPENAI_API_KEY is not configured; skipping Kind e2e for this non-Dependabot run."
-            exit 0
-          fi
-
-          status="$(curl -sS -o /tmp/openai-key-check.json -w "%{http_code}" \
-            "https://api.openai.com/v1/models" \
-            -H "Authorization: Bearer ${OPENAI_API_KEY}" || true)"
-          if [ "${status}" = "200" ]; then
-            echo "valid=true" >> "$GITHUB_OUTPUT"
-            echo "OpenAI API key was accepted by /v1/models."
-          else
-            echo "valid=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::OpenAI API key validation failed with HTTP ${status}; skipping Kind e2e."
-          fi
-
       - name: Run kind e2e
-        if: github.actor == 'dependabot[bot]' || steps.openai-key.outputs.valid == 'true'
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/.e2e-artifacts/kind
           E2E_SCENARIOS: ${{ github.actor == 'dependabot[bot]' && 'smoke-auth,governance' || 'all' }}
         run: bash test/e2e/kind.sh
-
-      - name: Report skipped Kind e2e
-        if: github.actor != 'dependabot[bot]' && steps.openai-key.outputs.valid != 'true'
-        run: echo "::notice::Kind e2e was skipped because OPENAI_API_KEY was missing or rejected by OpenAI."
 
       - name: Upload e2e artifacts
         if: always()
