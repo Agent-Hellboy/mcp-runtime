@@ -84,6 +84,8 @@ Notes:
 - `make build` produces `./bin/mcp-runtime`.
 - Contributors who want a disposable local Kind install should use the
   test-mode flow in [`docs/getting-started.md`](docs/getting-started.md#3-contributor-test-mode-cluster).
+- To exercise agent-side governance against a real MCP route, use the
+  [`examples/governed-agent`](examples/governed-agent/) demo.
 
 ## Common commands
 
