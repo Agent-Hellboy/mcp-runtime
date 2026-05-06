@@ -29,8 +29,9 @@ type CLIConfig struct {
 	// PlatformIngressHost is the public dashboard UI host (e.g. platform.mcpruntime.com), from
 	// MCP_PLATFORM_INGRESS_HOST or platform.<MCP_PLATFORM_DOMAIN>. Empty falls back to path-based dev routing.
 	PlatformIngressHost string
-	// RegistryClusterIssuerName is the cert-manager.io/cluster-issuer name for the registry ingress
-	// (e.g. letsencrypt-prod, mcp-runtime-ca, or an org issuer from --tls-cluster-issuer). Set by setup --with-tls, not from env.
+	// RegistryClusterIssuerName is the cert-manager ClusterIssuer selected by
+	// setup --with-tls for TLS-rendered resources (e.g. platform UI ingress).
+	// The registry Secret itself is owned by an explicit registry-cert Certificate.
 	RegistryClusterIssuerName string
 	SkopeoImage               string
 	OperatorImage             string // Override for operator image
@@ -177,7 +178,7 @@ func GetPlatformIngressHost() string {
 	return DefaultCLIConfig.PlatformIngressHost
 }
 
-// GetRegistryClusterIssuerName returns the cluster issuer name used on the registry TLS ingress annotation (empty if unset).
+// GetRegistryClusterIssuerName returns the setup-selected cert-manager ClusterIssuer name (empty if unset).
 func GetRegistryClusterIssuerName() string {
 	return DefaultCLIConfig.RegistryClusterIssuerName
 }

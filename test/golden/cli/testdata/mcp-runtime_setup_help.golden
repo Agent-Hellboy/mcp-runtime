@@ -14,7 +14,7 @@ Flags:
       --acme-email string              Contact email for Let's Encrypt (HTTP-01 via cert-manager). Mutually exclusive with --tls-cluster-issuer. Overrides env MCP_ACME_EMAIL
       --acme-staging                   Use Let's Encrypt staging CA (also set MCP_ACME_STAGING=1)
       --context string                 Kubernetes context to use
-      --force-ingress-install          Force ingress install even if an ingress class already exists
+      --force-ingress-install          Force repo-managed ingress install when only an IngressClass exists; refuses active external Traefik
   -h, --help                           help for setup
       --ingress string                 Ingress controller to install automatically during setup (traefik|none) (default "traefik")
       --ingress-manifest string        Manifest to apply when installing the ingress controller (default "config/ingress/overlays/http")

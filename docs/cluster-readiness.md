@@ -179,6 +179,13 @@ Secret and covers `registry.<domain>` plus `mcp.<domain>` when those names are
 derived from `MCP_PLATFORM_DOMAIN` or explicit ingress host environment
 variables.
 
+The registry Ingress intentionally does not carry a
+`cert-manager.io/cluster-issuer` annotation. Registry TLS uses the explicit
+`registry-cert` owner only; this avoids cert-manager ingress-shim creating a
+second `registry-tls` Certificate for the same Secret. If setup reports that
+another Certificate already references `registry-tls`, remove the stale owner
+before applying TLS again.
+
 The platform UI hostname is separate. `platform.<domain>` is owned by the
 `mcp-sentinel-platform-ui` Ingress in the `mcp-sentinel` namespace, and
 cert-manager writes that certificate into the `mcp-sentinel-platform-tls`
@@ -427,6 +434,7 @@ Missing pieces are warnings, not errors — the command surfaces them so you can
 - Detects your distribution (k3s / kind / minikube / docker-desktop / generic).
 - Checks the installed MCP Runtime namespaces, CRDs, operator, Traefik ingress, registry, Sentinel, and MCPServer reconciliation path. The MCPServer smoke uses an existing ready app image when available; otherwise it falls back to `registry.k8s.io/pause:3.9` and validates deployment/service/ingress reconciliation plus pod scheduling without a TCP readiness wait.
 - Prefers k3s' bundled Traefik in `kube-system/traefik` when the active cluster is k3s, then falls back to the repo-managed `traefik/traefik` install.
+- `setup` follows the same ownership model: it reuses active external Traefik and refuses to force-install the repo-managed Traefik when that would create a second active stack.
 - Verifies registry reachability, registry image-pull smoke behavior, and common pod image-pull failures.
 - Reports `http: server gave HTTP response to HTTPS client` when kubelet/containerd tried HTTPS against the HTTP dev registry, including the affected pod and image where possible.
 - Streams the current check before running it, including helper pod probes and waits, so a slow run shows what it is doing.

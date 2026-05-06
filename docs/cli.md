@@ -92,6 +92,16 @@ configured or bundled registry. With the bundled plain HTTP registry, cluster
 nodes still need containerd/Docker trust for the exact image host they pull
 from.
 
+Setup is reconcile-oriented and refuses known control-plane conflicts before
+applying more state. Registry TLS is owned by the explicit
+`registry/registry-cert` Certificate for the `registry-tls` Secret; the
+registry Ingress does not request a second ingress-shim certificate. If an old
+`registry/registry-tls` Certificate or another Certificate already references
+that Secret, delete or rename the extra Certificate before re-running setup.
+For ingress, setup reuses an existing external Traefik such as k3s'
+`kube-system/traefik` and refuses to force-install the repo-managed
+`traefik/traefik` stack on top of it.
+
 For local development where ingress traffic is exposed through port-forward or NodePort and the ingress controller does not publish load-balancer status, set `MCP_INGRESS_READINESS_MODE=permissive` before `setup`. The default is strict and waits for `Ingress.status.loadBalancer.ingress[]`.
 
 ## auth

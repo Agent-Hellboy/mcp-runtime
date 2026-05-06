@@ -73,7 +73,7 @@ func NewWithManager(mgr *ClusterManager) *cobra.Command {
 	}
 	configCmd.Flags().StringVar(&ingressMode, "ingress", "traefik", "Ingress controller to install (traefik|none)")
 	configCmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/overlays/prod", "Manifest to apply when installing the ingress controller")
-	configCmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force ingress install even if an ingress class already exists")
+	configCmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force repo-managed ingress install when only an IngressClass exists; refuses active external Traefik")
 	configCmd.Flags().StringVar(&configKubeconfig, "kubeconfig", "", "Path to kubeconfig file (default: ~/.kube/config)")
 	configCmd.Flags().StringVar(&configContext, "context", "", "Kubernetes context to use")
 	configCmd.Flags().StringVar(&provider, "provider", "", "Cloud provider for kubeconfig (eks; aks/gke planned)")

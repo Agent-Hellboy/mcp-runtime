@@ -5,7 +5,7 @@ Usage:
 
 Flags:
       --context string            Kubernetes context to use
-      --force-ingress-install     Force ingress install even if an ingress class already exists
+      --force-ingress-install     Force repo-managed ingress install when only an IngressClass exists; refuses active external Traefik
   -h, --help                      help for config
       --ingress string            Ingress controller to install (traefik|none) (default "traefik")
       --ingress-manifest string   Manifest to apply when installing the ingress controller (default "config/ingress/overlays/prod")
