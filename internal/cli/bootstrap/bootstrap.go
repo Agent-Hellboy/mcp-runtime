@@ -22,7 +22,7 @@ func newManager(runtime *core.Runtime) *manager {
 func detectProvider(kubectl core.KubectlRunner) (string, error) {
 	out, err := kubectlOutput(kubectl, []string{"get", "nodes", "-o", "jsonpath={range .items[*]}{.status.nodeInfo.kubeletVersion}{\"\\n\"}{end}"})
 	if err != nil {
-		return "", core.WrapWithSentinel(core.ErrClusterNotAccessible, err, fmt.Sprintf("kubectl get nodes failed: %v", err))
+		return "", core.WrapWithSentinel(core.ErrClusterNotAccessible, err, formatKubectlFailure("kubectl get nodes failed", out, err))
 	}
 	lower := strings.ToLower(string(out))
 	switch {
@@ -40,8 +40,9 @@ func runBootstrapPreflight(kubectl core.KubectlRunner) error {
 	if err := kubectl.Run([]string{"version", "--client=true"}); err != nil {
 		return core.WrapWithSentinel(core.ErrClusterNotAccessible, err, fmt.Sprintf("kubectl not available: %v", err))
 	}
-	if err := kubectl.Run([]string{"get", "nodes"}); err != nil {
-		return core.WrapWithSentinel(core.ErrClusterNotAccessible, err, fmt.Sprintf("kubectl cannot reach cluster: %v", err))
+	out, err := kubectlOutput(kubectl, []string{"get", "nodes"})
+	if err != nil {
+		return core.WrapWithSentinel(core.ErrClusterNotAccessible, err, formatKubectlFailure("kubectl cannot reach cluster", out, err))
 	}
 
 	core.Info("Preflight: CoreDNS")
@@ -132,6 +133,24 @@ func kubectlOutput(kubectl core.KubectlRunner, args []string) ([]byte, error) {
 		return nil, err
 	}
 	return cmd.CombinedOutput()
+}
+
+func formatKubectlFailure(prefix string, out []byte, err error) string {
+	detail := strings.TrimSpace(string(out))
+	if detail == "" {
+		detail = strings.TrimSpace(err.Error())
+	}
+	hint := ""
+	lower := strings.ToLower(detail)
+	switch {
+	case strings.Contains(lower, "connection refused"), strings.Contains(lower, " was refused"):
+		hint = " (kube-apiserver endpoint refused the connection; verify the active context points to a running cluster)"
+	case strings.Contains(lower, "no such host"), strings.Contains(lower, "name or service not known"):
+		hint = " (cluster endpoint hostname could not be resolved; verify kubeconfig server host/DNS)"
+	case strings.Contains(lower, "timeout"), strings.Contains(lower, "i/o timeout"):
+		hint = " (cluster endpoint timed out; verify network path and API server health)"
+	}
+	return fmt.Sprintf("%s: %s%s", prefix, detail, hint)
 }
 
 // New returns the bootstrap command.

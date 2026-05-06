@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
+	sentinelaccess "mcp-runtime/pkg/access"
 )
 
 const (
@@ -27,6 +28,15 @@ const (
 
 const oidcProviderPrefix = "oidc:"
 
+const (
+	sharedCatalogNamespace = "mcp-servers"
+	teamNamespacePrefix    = "mcp-team-"
+	teamRoleOwner          = "owner"
+	teamRoleMember         = "member"
+	namespaceScopeUser     = "user"
+	namespaceScopeTeam     = "team"
+)
+
 type platformStore struct {
 	db        *sql.DB
 	jwtSecret []byte
@@ -37,6 +47,24 @@ type platformUser struct {
 	Email     string `json:"email"`
 	Role      string `json:"role"`
 	Namespace string `json:"namespace"`
+}
+
+type teamRecord struct {
+	ID        string    `json:"id"`
+	Slug      string    `json:"slug"`
+	Name      string    `json:"name"`
+	Namespace string    `json:"namespace"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type teamMembershipRecord struct {
+	TeamID        string    `json:"team_id"`
+	TeamSlug      string    `json:"team_slug"`
+	TeamName      string    `json:"team_name"`
+	TeamNamespace string    `json:"team_namespace"`
+	UserID        string    `json:"user_id"`
+	Role          string    `json:"role"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type auditEvent struct {
@@ -508,14 +536,7 @@ func (s *platformStore) AuthenticateJWT(token string) (principal, bool) {
 	if subject == "" {
 		return principal{}, false
 	}
-
-	var p principal
-	err = s.db.QueryRow(`
-SELECT u.id, u.email, u.role, COALESCE(n.namespace, '')
-FROM users u
-LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
-WHERE u.id = $1 AND u.deleted_at IS NULL`, subject).
-		Scan(&p.Subject, &p.Email, &p.Role, &p.Namespace)
+	p, err := s.principalForUserID(context.Background(), subject)
 	if err != nil {
 		return principal{}, false
 	}
@@ -525,14 +546,13 @@ WHERE u.id = $1 AND u.deleted_at IS NULL`, subject).
 
 func (s *platformStore) AuthenticateUserAPIKey(ctx context.Context, rawKey string) (principal, bool, error) {
 	targetHash := hashAPIKey(rawKey)
-	var keyID, userID, email, role, namespace string
+	var keyID, userID string
 	err := s.db.QueryRowContext(ctx, `
-SELECT ak.id, ak.user_id, u.email, u.role, COALESCE(n.namespace, '')
+SELECT ak.id, ak.user_id
 FROM api_keys ak
 JOIN users u ON u.id = ak.user_id AND u.deleted_at IS NULL
-LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
 WHERE ak.key_hash = $1 AND ak.revoked = false`, targetHash).
-		Scan(&keyID, &userID, &email, &role, &namespace)
+		Scan(&keyID, &userID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return principal{}, false, nil
 	}
@@ -540,7 +560,108 @@ WHERE ak.key_hash = $1 AND ak.revoked = false`, targetHash).
 		return principal{}, false, err
 	}
 	_, _ = s.db.ExecContext(ctx, `UPDATE api_keys SET last_used_at = now() WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '5 minutes')`, keyID)
-	return principal{Role: role, Subject: userID, Email: email, Namespace: namespace, AuthType: "user_api_key", APIKeyID: keyID}, true, nil
+	p, err := s.principalForUserID(ctx, userID)
+	if err != nil {
+		return principal{}, false, err
+	}
+	p.AuthType = "user_api_key"
+	p.APIKeyID = keyID
+	return p, true, nil
+}
+
+func (s *platformStore) principalForUserID(ctx context.Context, userID string) (principal, error) {
+	var p principal
+	err := s.db.QueryRowContext(ctx, `
+SELECT u.id, u.email, u.role, COALESCE(legacy.namespace, '')
+FROM users u
+LEFT JOIN LATERAL (
+  SELECT n.namespace
+  FROM namespaces n
+  WHERE n.user_id = u.id
+    AND n.deleted_at IS NULL
+    AND COALESCE(n.scope, 'user') = 'user'
+  ORDER BY n.created_at ASC
+  LIMIT 1
+) legacy ON true
+WHERE u.id = $1 AND u.deleted_at IS NULL`, userID).
+		Scan(&p.Subject, &p.Email, &p.Role, &p.Namespace)
+	if err != nil {
+		return principal{}, err
+	}
+	teams, err := s.listTeamMembershipsForUser(ctx, userID)
+	if err != nil {
+		return principal{}, err
+	}
+	legacyNamespace := p.Namespace
+	p.Teams = teams
+	for _, team := range teams {
+		if ns := strings.TrimSpace(team.Namespace); ns != "" {
+			p.Namespace = ns
+			break
+		}
+	}
+	p.AllowedNamespaces = dedupeNamespaces(append(collectAllowedNamespaces(legacyNamespace, teams), sharedCatalogNamespace))
+	if strings.TrimSpace(p.Namespace) == "" {
+		p.Namespace = strings.TrimSpace(legacyNamespace)
+	}
+	return p, nil
+}
+
+func collectAllowedNamespaces(legacyNamespace string, teams []principalTeam) []string {
+	namespaces := make([]string, 0, len(teams)+1)
+	if ns := strings.TrimSpace(legacyNamespace); ns != "" {
+		namespaces = append(namespaces, ns)
+	}
+	for _, team := range teams {
+		if ns := strings.TrimSpace(team.Namespace); ns != "" {
+			namespaces = append(namespaces, ns)
+		}
+	}
+	return namespaces
+}
+
+func dedupeNamespaces(namespaces []string) []string {
+	if len(namespaces) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(namespaces))
+	out := make([]string, 0, len(namespaces))
+	for _, namespace := range namespaces {
+		namespace = strings.TrimSpace(namespace)
+		if namespace == "" {
+			continue
+		}
+		if _, ok := seen[namespace]; ok {
+			continue
+		}
+		seen[namespace] = struct{}{}
+		out = append(out, namespace)
+	}
+	return out
+}
+
+func (s *platformStore) listTeamMembershipsForUser(ctx context.Context, userID string) ([]principalTeam, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT t.id, t.slug, t.display_name, COALESCE(n.namespace, ''), tm.role
+FROM team_memberships tm
+JOIN teams t ON t.id = tm.team_id AND t.deleted_at IS NULL
+LEFT JOIN namespaces n ON n.team_id = t.id AND n.deleted_at IS NULL AND COALESCE(n.scope, 'team') = 'team'
+WHERE tm.user_id = $1 AND tm.deleted_at IS NULL
+ORDER BY t.slug ASC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	teams := make([]principalTeam, 0)
+	for rows.Next() {
+		var team principalTeam
+		if err := rows.Scan(&team.ID, &team.Slug, &team.Name, &team.Namespace, &team.Role); err != nil {
+			return nil, err
+		}
+		teams = append(teams, team)
+	}
+	return teams, rows.Err()
 }
 
 func (s *platformStore) ListUserAPIKeys(ctx context.Context, userID string) ([]userAPIKeySummary, error) {
@@ -649,21 +770,259 @@ RETURNING id, name, prefix, created_at, revoked, revoked_at`, userID, id).
 }
 
 func (s *platformStore) ListNamespaces(ctx context.Context) ([]map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT n.id, n.user_id, u.email, n.namespace, n.created_at FROM namespaces n JOIN users u ON u.id = n.user_id WHERE n.deleted_at IS NULL ORDER BY n.created_at DESC`)
+	rows, err := s.db.QueryContext(ctx, `
+SELECT
+  n.id,
+  COALESCE(n.user_id::text, ''),
+  COALESCE(u.email, ''),
+  COALESCE(n.team_id::text, ''),
+  COALESCE(t.slug, ''),
+  COALESCE(t.display_name, ''),
+  n.namespace,
+  COALESCE(n.scope, 'user'),
+  n.created_at
+FROM namespaces n
+LEFT JOIN users u ON u.id = n.user_id
+LEFT JOIN teams t ON t.id = n.team_id
+WHERE n.deleted_at IS NULL
+ORDER BY n.created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []map[string]any
 	for rows.Next() {
-		var id, userID, email, namespace string
-		var createdAt time.Time
-		if err := rows.Scan(&id, &userID, &email, &namespace, &createdAt); err != nil {
+		item, err := scanNamespaceRow(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, map[string]any{"id": id, "user_id": userID, "email": email, "namespace": namespace, "created_at": createdAt})
+		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func (s *platformStore) GetNamespace(ctx context.Context, namespace string) (map[string]any, bool, error) {
+	namespace = strings.TrimSpace(namespace)
+	var id, userID, email, teamID, teamSlug, teamName, scope string
+	var createdAt time.Time
+	err := s.db.QueryRowContext(ctx, `
+SELECT
+  n.id,
+  COALESCE(n.user_id::text, ''),
+  COALESCE(u.email, ''),
+  COALESCE(n.team_id::text, ''),
+  COALESCE(t.slug, ''),
+  COALESCE(t.display_name, ''),
+  COALESCE(n.scope, 'user'),
+  n.created_at
+FROM namespaces n
+LEFT JOIN users u ON u.id = n.user_id
+LEFT JOIN teams t ON t.id = n.team_id
+WHERE n.deleted_at IS NULL AND n.namespace = $1
+LIMIT 1`, namespace).Scan(&id, &userID, &email, &teamID, &teamSlug, &teamName, &scope, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return map[string]any{
+		"id":         id,
+		"user_id":    userID,
+		"email":      email,
+		"team_id":    teamID,
+		"team_slug":  teamSlug,
+		"team_name":  teamName,
+		"scope":      scope,
+		"namespace":  namespace,
+		"created_at": createdAt,
+		"is_shared":  namespace == sharedCatalogNamespace,
+		"is_managed": strings.HasPrefix(namespace, teamNamespacePrefix),
+	}, true, nil
+}
+
+func (s *platformStore) CreateTeam(ctx context.Context, slug, name, createdByUserID string) (teamRecord, error) {
+	slug = normalizeTeamSlug(slug)
+	if err := validateTeamSlug(slug); err != nil {
+		return teamRecord{}, err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = slug
+	}
+	namespace := teamNamespacePrefix + slug
+	if err := validateTeamNamespace(namespace); err != nil {
+		return teamRecord{}, err
+	}
+	teamID := uuid.NewString()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return teamRecord{}, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.ExecContext(ctx, `
+INSERT INTO teams (id, slug, display_name, created_by)
+VALUES ($1, $2, $3, NULLIF($4, '')::uuid)`, teamID, slug, name, strings.TrimSpace(createdByUserID)); err != nil {
+		return teamRecord{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `
+INSERT INTO namespaces (id, user_id, team_id, namespace, display_name, scope)
+VALUES ($1, NULL, $2, $3, $4, $5)`, uuid.NewString(), teamID, namespace, name, namespaceScopeTeam); err != nil {
+		return teamRecord{}, err
+	}
+	if strings.TrimSpace(createdByUserID) != "" {
+		if _, err = tx.ExecContext(ctx, `
+INSERT INTO team_memberships (id, team_id, user_id, role)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (team_id, user_id) WHERE deleted_at IS NULL
+DO UPDATE SET role = EXCLUDED.role, deleted_at = NULL`, uuid.NewString(), teamID, createdByUserID, teamRoleOwner); err != nil {
+			return teamRecord{}, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return teamRecord{}, err
+	}
+
+	return teamRecord{
+		ID:        teamID,
+		Slug:      slug,
+		Name:      name,
+		Namespace: namespace,
+		CreatedAt: time.Now().UTC(),
+	}, nil
+}
+
+func (s *platformStore) ListTeams(ctx context.Context) ([]teamRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT t.id, t.slug, t.display_name, COALESCE(n.namespace, ''), t.created_at
+FROM teams t
+LEFT JOIN namespaces n ON n.team_id = t.id AND n.deleted_at IS NULL AND COALESCE(n.scope, 'team') = 'team'
+WHERE t.deleted_at IS NULL
+ORDER BY t.slug ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]teamRecord, 0)
+	for rows.Next() {
+		var team teamRecord
+		if err := rows.Scan(&team.ID, &team.Slug, &team.Name, &team.Namespace, &team.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, team)
+	}
+	return out, rows.Err()
+}
+
+func (s *platformStore) ListUserTeams(ctx context.Context, userID string) ([]teamMembershipRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT t.id, t.slug, t.display_name, COALESCE(n.namespace, ''), tm.user_id::text, tm.role, tm.created_at
+FROM team_memberships tm
+JOIN teams t ON t.id = tm.team_id AND t.deleted_at IS NULL
+LEFT JOIN namespaces n ON n.team_id = t.id AND n.deleted_at IS NULL AND COALESCE(n.scope, 'team') = 'team'
+WHERE tm.user_id = $1 AND tm.deleted_at IS NULL
+ORDER BY t.slug ASC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]teamMembershipRecord, 0)
+	for rows.Next() {
+		var membership teamMembershipRecord
+		if err := rows.Scan(&membership.TeamID, &membership.TeamSlug, &membership.TeamName, &membership.TeamNamespace, &membership.UserID, &membership.Role, &membership.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, membership)
+	}
+	return out, rows.Err()
+}
+
+func (s *platformStore) GetTeamBySlug(ctx context.Context, slug string) (teamRecord, bool, error) {
+	slug = normalizeTeamSlug(slug)
+	var team teamRecord
+	err := s.db.QueryRowContext(ctx, `
+SELECT t.id, t.slug, t.display_name, COALESCE(n.namespace, ''), t.created_at
+FROM teams t
+LEFT JOIN namespaces n ON n.team_id = t.id AND n.deleted_at IS NULL AND COALESCE(n.scope, 'team') = 'team'
+WHERE t.slug = $1 AND t.deleted_at IS NULL`, slug).
+		Scan(&team.ID, &team.Slug, &team.Name, &team.Namespace, &team.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return teamRecord{}, false, nil
+	}
+	if err != nil {
+		return teamRecord{}, false, err
+	}
+	return team, true, nil
+}
+
+func (s *platformStore) UpsertTeamMembership(ctx context.Context, teamSlug, userID, role string) (teamMembershipRecord, error) {
+	teamSlug = normalizeTeamSlug(teamSlug)
+	userID = strings.TrimSpace(userID)
+	role = normalizeTeamMembershipRole(role)
+	if userID == "" {
+		return teamMembershipRecord{}, errors.New("userID is required")
+	}
+	if role == "" {
+		return teamMembershipRecord{}, errors.New("membership role is required")
+	}
+	team, ok, err := s.GetTeamBySlug(ctx, teamSlug)
+	if err != nil {
+		return teamMembershipRecord{}, err
+	}
+	if !ok {
+		return teamMembershipRecord{}, sql.ErrNoRows
+	}
+	if _, exists, err := s.GetUser(ctx, userID); err != nil {
+		return teamMembershipRecord{}, err
+	} else if !exists {
+		return teamMembershipRecord{}, sql.ErrNoRows
+	}
+	if _, err := s.db.ExecContext(ctx, `
+INSERT INTO team_memberships (id, team_id, user_id, role)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (team_id, user_id) WHERE deleted_at IS NULL
+DO UPDATE SET role = EXCLUDED.role, deleted_at = NULL`, uuid.NewString(), team.ID, userID, role); err != nil {
+		return teamMembershipRecord{}, err
+	}
+	return teamMembershipRecord{
+		TeamID:        team.ID,
+		TeamSlug:      team.Slug,
+		TeamName:      team.Name,
+		TeamNamespace: team.Namespace,
+		UserID:        userID,
+		Role:          role,
+		CreatedAt:     time.Now().UTC(),
+	}, nil
+}
+
+func (s *platformStore) DeleteTeamMembership(ctx context.Context, teamSlug, userID string) error {
+	team, ok, err := s.GetTeamBySlug(ctx, teamSlug)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return sql.ErrNoRows
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE team_memberships SET deleted_at = now() WHERE team_id = $1 AND user_id = $2 AND deleted_at IS NULL`, team.ID, strings.TrimSpace(userID))
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (s *platformStore) ListUserActivity(ctx context.Context, filter adminOperationsFilter) ([]platformUserActivity, error) {
@@ -887,6 +1246,70 @@ func nullTimePtr(value sql.NullTime) *time.Time {
 	return &t
 }
 
+func normalizeTeamSlug(raw string) string {
+	return strings.ToLower(strings.TrimSpace(raw))
+}
+
+func scanNamespaceRow(rows *sql.Rows) (map[string]any, error) {
+	var id, userID, email, teamID, teamSlug, teamName, namespace, scope string
+	var createdAt time.Time
+	if err := rows.Scan(&id, &userID, &email, &teamID, &teamSlug, &teamName, &namespace, &scope, &createdAt); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"id":         id,
+		"user_id":    userID,
+		"email":      email,
+		"team_id":    teamID,
+		"team_slug":  teamSlug,
+		"team_name":  teamName,
+		"scope":      scope,
+		"namespace":  namespace,
+		"created_at": createdAt,
+		"is_shared":  namespace == sharedCatalogNamespace,
+		"is_managed": strings.HasPrefix(namespace, teamNamespacePrefix),
+	}, nil
+}
+
+func normalizeTeamMembershipRole(raw string) string {
+	role := strings.ToLower(strings.TrimSpace(raw))
+	switch role {
+	case teamRoleOwner, teamRoleMember:
+		return role
+	default:
+		return ""
+	}
+}
+
+func validateTeamSlug(slug string) error {
+	if slug == "" {
+		return errors.New("team slug is required")
+	}
+	if err := sentinelaccess.ValidateResourceName("team", slug); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateTeamNamespace(namespace string) error {
+	if namespace == "" {
+		return errors.New("namespace required")
+	}
+	if strings.TrimSpace(namespace) == sharedCatalogNamespace {
+		return errors.New("shared catalog namespace is reserved")
+	}
+	reserved := []string{"default", "kube-system", "kube-public", "kube-node-lease", "mcp-runtime", "mcp-sentinel", "registry", "traefik"}
+	for _, disallowed := range reserved {
+		if namespace == disallowed {
+			return fmt.Errorf("namespace %q is reserved", namespace)
+		}
+	}
+	if err := sentinelaccess.ValidateResourceName("namespace", namespace); err != nil {
+		return err
+	}
+	return nil
+}
+
 func validEmail(email string) bool {
 	if len(email) > 254 || !strings.Contains(email, "@") {
 		return false
@@ -939,15 +1362,50 @@ CREATE TABLE IF NOT EXISTS registry_credentials (
 CREATE INDEX IF NOT EXISTS idx_registry_credentials_user_id ON registry_credentials(user_id);
 CREATE TABLE IF NOT EXISTS namespaces (
   id uuid primary key,
-  user_id uuid not null references users(id) on delete cascade,
+  user_id uuid references users(id) on delete cascade,
+  team_id uuid,
   namespace text not null,
+  display_name text,
+  scope text not null default 'user',
   created_at timestamptz not null default now(),
   deleted_at timestamptz
 );
+ALTER TABLE namespaces ADD COLUMN IF NOT EXISTS team_id uuid;
+ALTER TABLE namespaces ADD COLUMN IF NOT EXISTS display_name text;
+ALTER TABLE namespaces ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'user';
+ALTER TABLE namespaces ALTER COLUMN user_id DROP NOT NULL;
+ALTER TABLE namespaces
+  DROP CONSTRAINT IF EXISTS namespaces_scope_check;
+ALTER TABLE namespaces
+  ADD CONSTRAINT namespaces_scope_check CHECK (scope IN ('user', 'team'));
 CREATE INDEX IF NOT EXISTS idx_namespaces_user_id ON namespaces(user_id);
+CREATE INDEX IF NOT EXISTS idx_namespaces_team_id ON namespaces(team_id);
 ALTER TABLE IF EXISTS namespaces
   DROP CONSTRAINT IF EXISTS namespaces_namespace_key;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_namespaces_active ON namespaces(namespace) WHERE deleted_at IS NULL;
+CREATE TABLE IF NOT EXISTS teams (
+  id uuid primary key,
+  slug text unique not null,
+  display_name text not null,
+  created_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  deleted_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_teams_slug_active ON teams(slug) WHERE deleted_at IS NULL;
+ALTER TABLE namespaces
+  DROP CONSTRAINT IF EXISTS namespaces_team_id_fkey;
+ALTER TABLE namespaces
+  ADD CONSTRAINT namespaces_team_id_fkey FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE;
+CREATE TABLE IF NOT EXISTS team_memberships (
+  id uuid primary key,
+  team_id uuid not null references teams(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  role text not null check (role in ('owner', 'member')),
+  created_at timestamptz not null default now(),
+  deleted_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_team_memberships_active ON team_memberships(team_id, user_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_team_memberships_user_id ON team_memberships(user_id);
 CREATE TABLE IF NOT EXISTS refresh_tokens (
   id uuid primary key,
   user_id uuid not null references users(id) on delete cascade,

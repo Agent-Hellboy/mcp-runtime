@@ -2,12 +2,15 @@ package platformapi
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 )
 
 func TestApplyAccessFromYAMLFile_MultiDocument(t *testing.T) {
@@ -110,6 +113,82 @@ func TestRecordImagePublish(t *testing.T) {
 	}
 	if !strings.Contains(seenBody, `"image_ref":"registry.example.com/team/demo:v1"`) {
 		t.Fatalf("body = %s", seenBody)
+	}
+}
+
+func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
+	httpClient := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.Header.Get("x-api-key") != "token-1" {
+				t.Fatalf("x-api-key = %q, want token-1", r.Header.Get("x-api-key"))
+			}
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/teams":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"teams":[{"slug":"core","name":"Core","namespace":"mcp-team-core"}]}`)),
+				}, nil
+			case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/teams/core":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"team":{"slug":"core","name":"Core","namespace":"mcp-team-core"}}`)),
+				}, nil
+			case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/teams":
+				body, _ := io.ReadAll(r.Body)
+				var payload map[string]string
+				_ = json.Unmarshal(body, &payload)
+				if payload["slug"] != "core" || payload["name"] != "Core Team" {
+					t.Fatalf("create team payload = %#v", payload)
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"team":{"slug":"core","name":"Core Team","namespace":"mcp-team-core"}}`)),
+				}, nil
+			case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/servers":
+				if got := r.URL.Query().Get("namespace"); got != "" {
+					t.Fatalf("list runtime servers namespace query = %q, want empty", got)
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"servers":[]}`)),
+				}, nil
+			case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/servers":
+				body, _ := io.ReadAll(r.Body)
+				var payload map[string]any
+				_ = json.Unmarshal(body, &payload)
+				if payload["name"] != "demo" {
+					t.Fatalf("server name payload = %#v", payload)
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"server":{"name":"demo","namespace":"mcp-team-core"}}`)),
+				}, nil
+			default:
+				t.Fatalf("unexpected route %s %s", r.Method, r.URL.Path)
+				return nil, nil
+			}
+		}),
+	}
+	client := &PlatformClient{
+		baseURL:   "https://platform.example.com",
+		token:     "token-1",
+		http:      httpClient,
+		apiPrefix: "/api",
+	}
+	if _, err := client.ListTeams(context.Background()); err != nil {
+		t.Fatalf("ListTeams() error = %v", err)
+	}
+	if _, err := client.GetTeam(context.Background(), "core"); err != nil {
+		t.Fatalf("GetTeam() error = %v", err)
+	}
+	if _, err := client.CreateTeam(context.Background(), "core", "Core Team"); err != nil {
+		t.Fatalf("CreateTeam() error = %v", err)
+	}
+	if _, err := client.ListRuntimeServers(context.Background(), ""); err != nil {
+		t.Fatalf("ListRuntimeServers() error = %v", err)
+	}
+	if _, err := client.ApplyRuntimeServer(context.Background(), "demo", "mcp-team-core", mcpv1alpha1.MCPServerSpec{Image: "registry.example/core/demo", ImageTag: "latest"}); err != nil {
+		t.Fatalf("ApplyRuntimeServer() error = %v", err)
 	}
 }
 

@@ -47,11 +47,22 @@ CREATE INDEX IF NOT EXISTS idx_registry_credentials_user_id ON registry_credenti
 
 CREATE TABLE IF NOT EXISTS namespaces (
   id uuid primary key,
-  user_id uuid not null references users(id) on delete cascade,
+  user_id uuid references users(id) on delete cascade,
+  team_id uuid,
   namespace text not null,
+  display_name text,
+  scope text not null default 'user',
   created_at timestamptz not null default now(),
   deleted_at timestamptz
 );
+ALTER TABLE namespaces ADD COLUMN IF NOT EXISTS team_id uuid;
+ALTER TABLE namespaces ADD COLUMN IF NOT EXISTS display_name text;
+ALTER TABLE namespaces ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'user';
+ALTER TABLE namespaces ALTER COLUMN user_id DROP NOT NULL;
+ALTER TABLE namespaces
+  DROP CONSTRAINT IF EXISTS namespaces_scope_check;
+ALTER TABLE namespaces
+  ADD CONSTRAINT namespaces_scope_check CHECK (scope IN ('user', 'team'));
 
 ALTER TABLE IF EXISTS namespaces
   DROP CONSTRAINT IF EXISTS namespaces_namespace_key;
@@ -60,6 +71,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_namespaces_active
 ON namespaces(namespace)
 WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_namespaces_user_id ON namespaces(user_id);
+CREATE INDEX IF NOT EXISTS idx_namespaces_team_id ON namespaces(team_id);
+
+CREATE TABLE IF NOT EXISTS teams (
+  id uuid primary key,
+  slug text unique not null,
+  display_name text not null,
+  created_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  deleted_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_teams_slug_active ON teams(slug) WHERE deleted_at IS NULL;
+ALTER TABLE namespaces
+  DROP CONSTRAINT IF EXISTS namespaces_team_id_fkey;
+ALTER TABLE namespaces
+  ADD CONSTRAINT namespaces_team_id_fkey FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE;
+
+CREATE TABLE IF NOT EXISTS team_memberships (
+  id uuid primary key,
+  team_id uuid not null references teams(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  role text not null check (role in ('owner', 'member')),
+  created_at timestamptz not null default now(),
+  deleted_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_team_memberships_active ON team_memberships(team_id, user_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_team_memberships_user_id ON team_memberships(user_id);
 
 CREATE TABLE IF NOT EXISTS refresh_tokens (
   id uuid primary key,

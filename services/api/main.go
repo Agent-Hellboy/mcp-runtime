@@ -295,7 +295,7 @@ func main() {
 	mux.Handle("/api/user/activity/image-publish", server.auth(http.HandlerFunc(server.handleUserImagePublishActivity)))
 
 	// Initialize and register runtime server with Kubernetes support
-	runtimeServer, err := NewRuntimeServer(conn, dbName, apiKeys)
+	runtimeServer, err := NewRuntimeServer(conn, dbName, apiKeys, server.platform)
 	if err != nil {
 		server.runtimeInit = err.Error()
 		log.Printf("ERROR: runtime server initialization failed: %v", err)
@@ -308,6 +308,10 @@ func main() {
 		// Register all runtime endpoints with auth
 		mux.Handle("/api/dashboard/summary", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.handleDashboardSummary))))
 		mux.Handle("/api/runtime/servers", server.auth(http.HandlerFunc(runtimeServer.handleRuntimeServers)))
+		mux.Handle("/api/runtime/teams", server.auth(http.HandlerFunc(runtimeServer.handleRuntimeTeams)))
+		mux.Handle("/api/runtime/teams/", server.auth(http.HandlerFunc(runtimeServer.handleRuntimeTeamItemPath)))
+		mux.Handle("/api/runtime/namespaces", server.auth(http.HandlerFunc(runtimeServer.handleRuntimeNamespaces)))
+		mux.Handle("/api/runtime/namespaces/", server.auth(http.HandlerFunc(runtimeServer.handleRuntimeNamespaceItem)))
 		mux.Handle("/api/deployments", server.auth(http.HandlerFunc(runtimeServer.handleDeployments)))
 		mux.Handle("/api/deployments/", server.auth(http.HandlerFunc(runtimeServer.handleDeploymentItem)))
 		mux.Handle("/api/admin/namespaces", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleAdminNamespaces))))
@@ -922,13 +926,12 @@ func (s *apiServer) authenticateRequest(r *http.Request) (principal, bool, error
 		if err != nil {
 			return principal{}, false, err
 		}
-		return principal{
-			Role:      u.Role,
-			Subject:   u.ID,
-			Email:     u.Email,
-			Namespace: u.Namespace,
-			AuthType:  "oidc_jwt",
-		}, true, nil
+		p, err := s.platform.principalForUserID(r.Context(), u.ID)
+		if err != nil {
+			return principal{}, false, err
+		}
+		p.AuthType = "oidc_jwt"
+		return p, true, nil
 	}
 	return principal{
 		Role:     role,
@@ -964,18 +967,23 @@ func (s *apiServer) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type authPrincipal struct {
-		Role      string `json:"role"`
-		Subject   string `json:"subject,omitempty"`
-		Email     string `json:"email,omitempty"`
-		Namespace string `json:"namespace,omitempty"`
+		Role              string          `json:"role"`
+		Subject           string          `json:"subject,omitempty"`
+		Email             string          `json:"email,omitempty"`
+		Namespace         string          `json:"namespace,omitempty"`
+		AllowedNamespaces []string        `json:"allowedNamespaces,omitempty"`
+		Teams             []principalTeam `json:"teams,omitempty"`
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"authenticated": true,
+		"authenticated":          true,
+		"sharedCatalogNamespace": sharedCatalogNamespace,
 		"principal": authPrincipal{
-			Role:      p.Role,
-			Subject:   p.Subject,
-			Email:     p.Email,
-			Namespace: p.Namespace,
+			Role:              p.Role,
+			Subject:           p.Subject,
+			Email:             p.Email,
+			Namespace:         p.Namespace,
+			AllowedNamespaces: p.AllowedNamespaces,
+			Teams:             p.Teams,
 		},
 	})
 }

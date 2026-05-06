@@ -29,9 +29,9 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
-  # User namespace provisioning guardrails
+  # User/team namespace provisioning guardrails
   - apiGroups: [""]
-    resources: ["namespaces", "resourcequotas", "limitranges"]
+    resources: ["namespaces", "resourcequotas", "limitranges", "serviceaccounts"]
     verbs: ["get", "list", "watch", "create"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
@@ -53,10 +53,10 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get"]
-  # Read MCPServer resources
+  # MCPServer lifecycle via /api/runtime/servers and scoped runtime flows
   - apiGroups: ["mcpruntime.org"]
     resources: ["mcpservers"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

@@ -1035,7 +1035,8 @@ tr:hover td {
   justify-content: flex-end;
 }
 
-.server-catalog-controls input {
+.server-catalog-controls input,
+.server-catalog-controls select {
   min-width: 0;
   width: min(100%, 420px);
 }
@@ -1431,7 +1432,8 @@ tr:hover td {
     justify-content: flex-start;
   }
 
-  .server-catalog-controls input {
+  .server-catalog-controls input,
+  .server-catalog-controls select {
     width: 100%;
   }
 

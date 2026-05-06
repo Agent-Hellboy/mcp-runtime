@@ -253,7 +253,8 @@ Manage access grants, sessions, and view runtime state. All `/api/runtime/*` rou
 For `POST /api/runtime/grants` and `POST /api/runtime/sessions`, the API resolves `serverRef` to an `MCPServer` in the cluster. If that server does not exist, the call returns `400` with a clear `unknown serverRef` message. The server lookup is **not** part of a single distributed transaction with the grant/session write — a concurrent delete can leave a stale reference (same as `kubectl apply`). Kubernetes apply errors are surfaced with the status the API server would use, when available.
 
 ```text
-GET  /api/runtime/servers              # List MCP server deployments
+GET  /api/runtime/servers              # List MCP server deployments (team-scoped for non-admin)
+POST /api/runtime/servers              # Create/update MCPServer in an authorized namespace
 GET  /api/runtime/grants               # List MCPAccessGrant resources
 GET  /api/runtime/grants/{namespace}/{name}   # Get one MCPAccessGrant
 POST /api/runtime/grants               # Create or update an MCPAccessGrant (x-api-key)
@@ -262,9 +263,19 @@ GET  /api/runtime/sessions             # List MCPAgentSession resources
 GET  /api/runtime/sessions/{namespace}/{name} # Get one MCPAgentSession
 POST /api/runtime/sessions             # Create or update an MCPAgentSession (x-api-key)
 DELETE /api/runtime/sessions/{namespace}/{name} # Delete one MCPAgentSession
+GET  /api/runtime/teams                # Admin: all teams; user: caller memberships
+POST /api/runtime/teams                # Admin-only team + namespace provisioning
+GET  /api/runtime/teams/{team}         # Team metadata (admin/member)
+POST /api/runtime/teams/{team}/members # Admin/team-owner membership upsert
+DELETE /api/runtime/teams/{team}/members/{userID}
+GET  /api/runtime/namespaces           # Allowed namespaces + shared catalog metadata
+GET  /api/runtime/namespaces/{namespace}
 GET  /api/runtime/components           # Sentinel component health status
 GET  /api/runtime/policy?namespace=&server=   # Get rendered policy for a server
 ```
+
+For non-admin users, runtime write paths enforce namespace ownership through
+team membership and reject writes to the shared `mcp-servers` catalog namespace.
 
 ### Grant apply body
 

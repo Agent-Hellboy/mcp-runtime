@@ -484,6 +484,9 @@ func TestReconcileDeploymentLabels(t *testing.T) {
 	if deployment.Spec.Template.Spec.AutomountServiceAccountToken == nil || *deployment.Spec.Template.Spec.AutomountServiceAccountToken {
 		t.Fatal("expected MCPServer pods to disable service account token automount")
 	}
+	if deployment.Spec.Template.Spec.ServiceAccountName != defaultWorkloadServiceAccount {
+		t.Fatalf("serviceAccountName = %q, want %q", deployment.Spec.Template.Spec.ServiceAccountName, defaultWorkloadServiceAccount)
+	}
 	if deployment.Spec.Template.Spec.SecurityContext == nil || deployment.Spec.Template.Spec.SecurityContext.SeccompProfile == nil {
 		t.Fatal("expected MCPServer pod security context with seccomp profile")
 	}
