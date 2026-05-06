@@ -134,9 +134,9 @@ CLI_SENTINEL_API_PORT="${CLI_SENTINEL_API_PORT:-18103}"
 API_METRICS_PORT="${API_METRICS_PORT:-19090}"
 INGEST_METRICS_PORT="${INGEST_METRICS_PORT:-19091}"
 PROCESSOR_METRICS_PORT="${PROCESSOR_METRICS_PORT:-19092}"
-MCP_CURL_TIMEOUT="${MCP_CURL_TIMEOUT:-20}"
-# Keep the old MCP_SMOKE_* port environment variables as aliases for local
-# scripts that override these proxy ports.
+MCP_CURL_TIMEOUT="${MCP_CURL_TIMEOUT:-${MCP_SMOKE_TIMEOUT:-20}}"
+# Keep the old MCP_SMOKE_* environment variables as aliases for local scripts
+# that override these proxy ports or timeout.
 MCP_CURL_ANON_PORT="${MCP_CURL_ANON_PORT:-${MCP_SMOKE_ANON_PORT:-18084}}"
 MCP_CURL_IDENTITY_PORT="${MCP_CURL_IDENTITY_PORT:-${MCP_SMOKE_IDENTITY_PORT:-18085}}"
 MCP_CURL_SESSION_PORT="${MCP_CURL_SESSION_PORT:-${MCP_SMOKE_SESSION_PORT:-18086}}"
@@ -621,7 +621,7 @@ doc = result_doc()
 
 
 def write_doc():
-    doc["ok"] = all(step.get("ok") for step in doc["steps"] if step.get("name") != "notifications/initialized")
+    doc["ok"] = all(step.get("ok") for step in doc["steps"])
     with open(output_file, "w", encoding="utf-8") as fh:
         json.dump(doc, fh, indent=2)
         fh.write("\n")
