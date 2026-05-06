@@ -5,8 +5,7 @@ set -euo pipefail
 # - build the CLI and publish runtime/sentinel images to a local docker mirror registry
 # - run `mcp-runtime setup --test-mode`
 # - deploy a policy-enabled MCP server through the CLI pipeline flow
-# - exercise the deployed server through local smoke checks, targeted MCP requests,
-#   and optional real-client agent prompts
+# - exercise the deployed server through curl-based smoke checks and targeted MCP requests
 # - verify audit events plus trace/log backends
 #
 # Set E2E_SCENARIOS to a comma-separated subset for local debugging.
@@ -135,26 +134,19 @@ CLI_SENTINEL_API_PORT="${CLI_SENTINEL_API_PORT:-18103}"
 API_METRICS_PORT="${API_METRICS_PORT:-19090}"
 INGEST_METRICS_PORT="${INGEST_METRICS_PORT:-19091}"
 PROCESSOR_METRICS_PORT="${PROCESSOR_METRICS_PORT:-19092}"
-MCP_SMOKE_DIR="${MCP_SMOKE_DIR:-}"
-MCP_SMOKE_REF="${MCP_SMOKE_REF:-v0.3.0}"
-MCP_SMOKE_REPO_URL="${MCP_SMOKE_REPO_URL:-https://github.com/Agent-Hellboy/mcp-smoke}"
-MCP_SMOKE_TIMEOUT="${MCP_SMOKE_TIMEOUT:-20s}"
-MCP_SMOKE_ANON_PORT="${MCP_SMOKE_ANON_PORT:-18084}"
-MCP_SMOKE_IDENTITY_PORT="${MCP_SMOKE_IDENTITY_PORT:-18085}"
-MCP_SMOKE_SESSION_PORT="${MCP_SMOKE_SESSION_PORT:-18086}"
-MCP_SMOKE_BAD_SESSION_PORT="${MCP_SMOKE_BAD_SESSION_PORT:-18087}"
-MCP_SMOKE_OAUTH_ANON_PORT="${MCP_SMOKE_OAUTH_ANON_PORT:-18088}"
-MCP_SMOKE_OAUTH_INVALID_PORT="${MCP_SMOKE_OAUTH_INVALID_PORT:-18089}"
-MCP_SMOKE_OAUTH_VALID_PORT="${MCP_SMOKE_OAUTH_VALID_PORT:-18090}"
+MCP_CURL_TIMEOUT="${MCP_CURL_TIMEOUT:-20}"
+# Keep the old MCP_SMOKE_* port environment variables as aliases for local
+# scripts that override these proxy ports.
+MCP_CURL_ANON_PORT="${MCP_CURL_ANON_PORT:-${MCP_SMOKE_ANON_PORT:-18084}}"
+MCP_CURL_IDENTITY_PORT="${MCP_CURL_IDENTITY_PORT:-${MCP_SMOKE_IDENTITY_PORT:-18085}}"
+MCP_CURL_SESSION_PORT="${MCP_CURL_SESSION_PORT:-${MCP_SMOKE_SESSION_PORT:-18086}}"
+MCP_CURL_BAD_SESSION_PORT="${MCP_CURL_BAD_SESSION_PORT:-${MCP_SMOKE_BAD_SESSION_PORT:-18087}}"
+MCP_CURL_OAUTH_ANON_PORT="${MCP_CURL_OAUTH_ANON_PORT:-${MCP_SMOKE_OAUTH_ANON_PORT:-18088}}"
+MCP_CURL_OAUTH_INVALID_PORT="${MCP_CURL_OAUTH_INVALID_PORT:-${MCP_SMOKE_OAUTH_INVALID_PORT:-18089}}"
+MCP_CURL_OAUTH_VALID_PORT="${MCP_CURL_OAUTH_VALID_PORT:-${MCP_SMOKE_OAUTH_VALID_PORT:-18090}}"
 MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION:-2025-06-18}"
 MCP_POLICY_WAIT_TRIES="${MCP_POLICY_WAIT_TRIES:-90}"
 RAW_REQUEST_TRIES="${RAW_REQUEST_TRIES:-10}"
-MCP_SMOKE_AGENT_ENV_FILE="${MCP_SMOKE_AGENT_ENV_FILE:-.env}"
-MCP_SMOKE_AGENT_PROMPT="${MCP_SMOKE_AGENT_PROMPT:-Use the MCP upper tool to convert the exact word governance to uppercase. Reply with only the uppercase result.}"
-MCP_SMOKE_AGENT_PROVIDER="${MCP_SMOKE_AGENT_PROVIDER:-openai}"
-MCP_SMOKE_AGENT_MODEL="${MCP_SMOKE_AGENT_MODEL:-}"
-MCP_SMOKE_AGENT_TIMEOUT="${MCP_SMOKE_AGENT_TIMEOUT:-90s}"
-MCP_SMOKE_AGENT_NOTICE_PRINTED=0
 UNKNOWN_SESSION_ID="${UNKNOWN_SESSION_ID:-sess-does-not-exist}"
 TEST_MODE_REGISTRY_IMAGE="${TEST_MODE_REGISTRY_IMAGE:-docker.io/library/mcp-runtime-registry:latest}"
 LOCAL_REGISTRY_NAME="${LOCAL_REGISTRY_NAME:-${CLUSTER_NAME}-dockerhub-mirror}"
@@ -254,7 +246,7 @@ describe_selected_scenarios() {
 
 validate_scenarios
 log_line info "E2E scenarios: $(describe_selected_scenarios)"
-log_line info "Local smoke/governance checks use direct MCP HTTP only; OpenAI/Anthropic calls happen only in optional real-client agent checks when a provider API key is configured"
+log_line info "Local smoke/governance checks use direct curl-based MCP HTTP; OpenAI/Anthropic real-client agent checks are disabled"
 if [[ "${E2E_VALIDATE_SCENARIOS_ONLY}" == "1" ]]; then
   exit 0
 fi
@@ -439,27 +431,6 @@ print(json.dumps(d))
 " "$@"
 }
 
-resolve_mcp_smoke_dir() {
-  if [[ -n "${MCP_SMOKE_DIR}" ]]; then
-    if [[ -f "${MCP_SMOKE_DIR}/go.mod" ]]; then
-      echo "${MCP_SMOKE_DIR}"
-      return 0
-    fi
-    echo "MCP_SMOKE_DIR does not point to an mcp-smoke checkout: ${MCP_SMOKE_DIR}" >&2
-    return 1
-  fi
-
-  local cached_dir="/tmp/mcp-smoke-${MCP_SMOKE_REF}"
-  if [[ -f "${cached_dir}/go.mod" ]]; then
-    echo "${cached_dir}"
-    return 0
-  fi
-
-  local clone_dir="${WORKDIR}/mcp-smoke-${MCP_SMOKE_REF}"
-  git clone --depth 1 --branch "${MCP_SMOKE_REF}" "${MCP_SMOKE_REPO_URL}" "${clone_dir}" >&2
-  echo "${clone_dir}"
-}
-
 generate_oauth_fixtures() {
   local out_dir="$1"
   local generator="${out_dir}/oauth-fixtures.go"
@@ -593,41 +564,295 @@ EOF
   go run "${generator}"
 }
 
-run_mcp_smoke_expect() {
+run_mcp_curl_expect() {
   local name="$1"
   local url="$2"
   local expected_ok="$3"
   local expected_tool_error="${4:-}"
   local output_file="${WORKDIR}/${name}.json"
-  local smoke_exit_code=0
+  local curl_exit_code=0
 
   if [[ "${expected_ok}" == "true" ]]; then
-    log_line mcp "${name}: local smoke client should complete initialize/list/call/read successfully"
+    log_line mcp "${name}: curl MCP flow should complete initialize/list/call/read successfully"
   else
-    log_line mcp "${name}: local smoke client should be rejected with ${expected_tool_error}"
+    log_line mcp "${name}: curl MCP flow should be rejected with ${expected_tool_error}"
   fi
 
-  if "${MCP_SMOKE_BIN}" smoke \
-    --transport=http \
-    --url "${url}" \
-    --timeout "${MCP_SMOKE_TIMEOUT}" \
-    --protocol "${MCP_PROTOCOL_VERSION}" \
-    --tool-name "aaa-ping" \
-    --tool-args '{}' \
-    --prompt-name "hello" \
-    --prompt-args '{}' \
-    --resource-uri "embedded:readme" \
-    >"${output_file}"; then
-    smoke_exit_code=0
+  if MCP_CURL_NAME="${name}" \
+    MCP_CURL_URL="${url}" \
+    MCP_CURL_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION}" \
+    MCP_CURL_TIMEOUT="${MCP_CURL_TIMEOUT}" \
+    MCP_CURL_OUTPUT="${output_file}" \
+    python3 <<'PY'; then
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+name = os.environ["MCP_CURL_NAME"]
+url = os.environ["MCP_CURL_URL"]
+protocol = os.environ["MCP_CURL_PROTOCOL_VERSION"]
+output_file = os.environ["MCP_CURL_OUTPUT"]
+curl_bin = os.environ.get("MCP_CURL_BIN", "curl")
+timeout = os.environ.get("MCP_CURL_TIMEOUT", "20").strip()
+if timeout.endswith("s"):
+    timeout = timeout[:-1]
+if not timeout:
+    timeout = "20"
+
+required_steps = [
+    "tools/list",
+    "prompts/list",
+    "resources/list",
+    "tools/call",
+    "prompts/get",
+    "resources/read",
+]
+
+
+def result_doc():
+    return {"transport": "http", "ok": False, "steps": []}
+
+
+doc = result_doc()
+
+
+def write_doc():
+    doc["ok"] = all(step.get("ok") for step in doc["steps"] if step.get("name") != "notifications/initialized")
+    with open(output_file, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=2)
+        fh.write("\n")
+
+
+def parse_session_id(headers):
+    session_id = ""
+    for line in headers.splitlines():
+        key, sep, value = line.partition(":")
+        if sep and key.lower() == "mcp-session-id":
+            session_id = value.strip()
+    return session_id
+
+
+def json_candidates(body):
+    candidates = []
+    try:
+        candidates.append(json.loads(body))
+    except json.JSONDecodeError:
+        pass
+
+    for line in body.splitlines():
+        if not line.startswith("data:"):
+            continue
+        data = line[len("data:"):].strip()
+        if not data or data == "[DONE]":
+            continue
+        try:
+            candidates.append(json.loads(data))
+        except json.JSONDecodeError:
+            continue
+    return candidates
+
+
+def rpc_error_text(body):
+    for candidate in json_candidates(body):
+        if not isinstance(candidate, dict):
+            continue
+        err = candidate.get("error")
+        if not err:
+            continue
+        if isinstance(err, dict):
+            pieces = [str(err.get("code", "")).strip(), str(err.get("message", "")).strip()]
+            data = err.get("data")
+            if data:
+                pieces.append(json.dumps(data, sort_keys=True))
+            return " ".join(piece for piece in pieces if piece)
+        return str(err)
+    return ""
+
+
+def summarize_error(status, body, stderr):
+    rpc_error = rpc_error_text(body)
+    if rpc_error:
+        return rpc_error
+    snippet = " ".join(body.split())
+    if len(snippet) > 500:
+        snippet = snippet[:500] + "..."
+    if snippet:
+        return f"http_status_{status}: {snippet}"
+    stderr = " ".join(stderr.split())
+    if stderr:
+        return f"http_status_{status}: {stderr}"
+    return f"http_status_{status}"
+
+
+def curl_post(step_name, payload, session_id="", allowed_statuses=(200,), require_session=False):
+    with tempfile.TemporaryDirectory(prefix="mcp-curl-") as temp_dir:
+        payload_file = os.path.join(temp_dir, "payload.json")
+        headers_file = os.path.join(temp_dir, "headers.txt")
+        body_file = os.path.join(temp_dir, "body.txt")
+        with open(payload_file, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
+
+        cmd = [
+            curl_bin,
+            "-sS",
+            "--max-time",
+            timeout,
+            "-D",
+            headers_file,
+            "-o",
+            body_file,
+            "-w",
+            "%{http_code}",
+            "-X",
+            "POST",
+            "-H",
+            "content-type: application/json",
+            "-H",
+            "accept: application/json, text/event-stream",
+            "-H",
+            f"Mcp-Protocol-Version: {protocol}",
+        ]
+        if session_id:
+            cmd.extend(["-H", f"Mcp-Session-Id: {session_id}"])
+        cmd.extend(["--data-binary", f"@{payload_file}", url])
+
+        proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
+        status_text = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else "0"
+        try:
+            status = int(status_text)
+        except ValueError:
+            status = 0
+
+        try:
+            with open(headers_file, "r", encoding="utf-8") as fh:
+                headers = fh.read()
+        except FileNotFoundError:
+            headers = ""
+        try:
+            with open(body_file, "r", encoding="utf-8") as fh:
+                body = fh.read()
+        except FileNotFoundError:
+            body = ""
+
+    next_session_id = parse_session_id(headers) or session_id
+    rpc_error = rpc_error_text(body)
+    ok = proc.returncode == 0 and status in allowed_statuses and not rpc_error
+    if require_session and not next_session_id:
+        ok = False
+
+    step = {"name": step_name, "ok": ok, "status": status, "body": body}
+    if proc.returncode != 0:
+        step["error"] = proc.stderr.strip() or f"curl exited {proc.returncode}"
+    elif status not in allowed_statuses:
+        step["error"] = summarize_error(status, body, proc.stderr)
+    elif rpc_error:
+        step["error"] = rpc_error
+    elif require_session and not next_session_id:
+        step["error"] = "missing Mcp-Session-Id response header"
+    return step, next_session_id
+
+
+def append_skipped(step_names, reason):
+    for step_name in step_names:
+        doc["steps"].append({"name": step_name, "ok": False, "skipped": True, "error": reason})
+
+
+if not shutil.which(curl_bin):
+    doc["steps"].append({"name": "initialize", "ok": False, "status": 0, "error": f"{curl_bin} not found"})
+    append_skipped(required_steps, "curl unavailable")
+    write_doc()
+    sys.exit(1)
+
+initialize_payload = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": protocol,
+        "capabilities": {},
+        "clientInfo": {"name": "mcp-runtime-e2e-curl", "version": "1.0.0"},
+    },
+}
+
+step, session_id = curl_post("initialize", initialize_payload, require_session=True)
+doc["steps"].append(step)
+if not step["ok"]:
+    append_skipped(required_steps, "initialize failed")
+    write_doc()
+    sys.exit(1)
+
+step, session_id = curl_post(
+    "notifications/initialized",
+    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+    session_id=session_id,
+    allowed_statuses=(200, 202, 204),
+)
+doc["steps"].append(step)
+if not step["ok"]:
+    append_skipped(required_steps, "notifications/initialized failed")
+    write_doc()
+    sys.exit(1)
+
+requests = [
+    ("tools/list", {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+    ("prompts/list", {"jsonrpc": "2.0", "id": 3, "method": "prompts/list", "params": {}}),
+    ("resources/list", {"jsonrpc": "2.0", "id": 4, "method": "resources/list", "params": {}}),
+    (
+        "tools/call",
+        {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {"name": "aaa-ping", "arguments": {}},
+        },
+    ),
+    (
+        "prompts/get",
+        {
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "prompts/get",
+            "params": {"name": "hello", "arguments": {}},
+        },
+    ),
+    (
+        "resources/read",
+        {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "resources/read",
+            "params": {"uri": "embedded:readme"},
+        },
+    ),
+]
+
+remaining = list(required_steps)
+for step_name, payload in requests:
+    remaining.pop(0)
+    step, session_id = curl_post(step_name, payload, session_id=session_id)
+    doc["steps"].append(step)
+    if not step["ok"]:
+        append_skipped(remaining, f"{step_name} failed")
+        write_doc()
+        sys.exit(1)
+
+write_doc()
+sys.exit(0 if doc["ok"] else 1)
+PY
+    curl_exit_code=0
   else
-    smoke_exit_code=$?
+    curl_exit_code=$?
   fi
 
   SMOKE_NAME="${name}" \
   SMOKE_OUTPUT="${output_file}" \
   EXPECTED_OK="${expected_ok}" \
   EXPECTED_TOOL_ERROR="${expected_tool_error}" \
-  SMOKE_EXIT_CODE="${smoke_exit_code}" \
+  SMOKE_EXIT_CODE="${curl_exit_code}" \
   python3 <<'PY'
 import json
 import os
@@ -635,7 +860,7 @@ import os
 name = os.environ["SMOKE_NAME"]
 expected_ok = os.environ["EXPECTED_OK"].lower() == "true"
 expected_tool_error = os.environ.get("EXPECTED_TOOL_ERROR", "")
-smoke_exit_code = int(os.environ.get("SMOKE_EXIT_CODE", "0"))
+curl_exit_code = int(os.environ.get("SMOKE_EXIT_CODE", "0"))
 
 
 import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
@@ -674,9 +899,9 @@ check(
 
 if expected_ok:
     check(
-        smoke_exit_code == 0,
+        curl_exit_code == 0,
         f"{name}: exit code 0",
-        f"{name}: expected exit code 0, got {smoke_exit_code}",
+        f"{name}: expected exit code 0, got {curl_exit_code}",
     )
     for step_name in ("tools/call", "prompts/get", "resources/read"):
         step = steps[step_name]
@@ -687,9 +912,9 @@ if expected_ok:
         )
 else:
     check(
-        smoke_exit_code != 0,
+        curl_exit_code != 0,
         f"{name}: non-zero exit code for expected failure",
-        f"{name}: expected non-zero exit code for failed smoke run",
+        f"{name}: expected non-zero exit code for failed curl MCP run",
     )
     failed_steps = {
         step_name: step
@@ -746,218 +971,18 @@ for step_name in required_steps:
 
 width = max(len(step_name) for step_name, _ in rows)
 print(f"{name}:")
-exit_code = str(smoke_exit_code)
-if not expected_ok and smoke_exit_code != 0:
-    exit_code = f"{smoke_exit_code} (expected non-zero)"
+exit_code = str(curl_exit_code)
+if not expected_ok and curl_exit_code != 0:
+    exit_code = f"{curl_exit_code} (expected non-zero)"
 print(f"  exit code{' ' * (width - len('exit code'))}  {exit_code}")
 for step_name, status in rows:
     print(f"  {step_name:{width}}  {status}")
 PY
 }
 
-should_run_mcp_smoke_agent() {
-  local required_var required_pattern
-  case "${MCP_SMOKE_AGENT_PROVIDER}" in
-    anthropic)
-      required_var="ANTHROPIC_API_KEY"
-      required_pattern='^[[:space:]]*(export[[:space:]]+)?ANTHROPIC_API_KEY='
-      ;;
-    openai|"")
-      required_var="OPENAI_API_KEY"
-      required_pattern='^[[:space:]]*(export[[:space:]]+)?OPENAI_API_KEY='
-      ;;
-    *)
-      # Unknown provider — fall back to accepting either key.
-      if [[ -n "${OPENAI_API_KEY:-}" || -n "${ANTHROPIC_API_KEY:-}" ]]; then
-        return 0
-      fi
-      if [[ -f "${MCP_SMOKE_AGENT_ENV_FILE}" ]] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?(OPENAI_API_KEY|ANTHROPIC_API_KEY)=' "${MCP_SMOKE_AGENT_ENV_FILE}"; then
-        return 0
-      fi
-      return 1
-      ;;
-  esac
-
-  if [[ -n "${!required_var:-}" ]]; then
-    return 0
-  fi
-
-  if [[ -f "${MCP_SMOKE_AGENT_ENV_FILE}" ]] && grep -Eq "${required_pattern}" "${MCP_SMOKE_AGENT_ENV_FILE}"; then
-    return 0
-  fi
-
-  return 1
-}
-
-mcp_smoke_agent_key_hint() {
-  case "${MCP_SMOKE_AGENT_PROVIDER}" in
-    anthropic)
-      echo "ANTHROPIC_API_KEY"
-      ;;
-    openai|"")
-      echo "OPENAI_API_KEY"
-      ;;
-    *)
-      echo "OPENAI_API_KEY/ANTHROPIC_API_KEY"
-      ;;
-  esac
-}
-
-log_mcp_smoke_agent_notice() {
-  if [[ "${MCP_SMOKE_AGENT_NOTICE_PRINTED}" == "1" ]]; then
-    return 0
-  fi
-
-  MCP_SMOKE_AGENT_NOTICE_PRINTED=1
-  local provider="${MCP_SMOKE_AGENT_PROVIDER:-openai}"
-  local model="${MCP_SMOKE_AGENT_MODEL:-provider-default}"
-  log_line mcp "optional real-client agent checks enabled: provider=${provider} model=${model}; this may call the provider API using $(mcp_smoke_agent_key_hint)"
-}
-
-run_mcp_smoke_agent_prompt() {
-  local url="$1"
-  local case_name="${2:-governance}"
-  local prompt expected_tool expected_text mode
-  mode="allow"
-  expected_text=""
-
-  case "${case_name}" in
-    governance)
-      prompt="${MCP_SMOKE_AGENT_PROMPT}"
-      expected_tool="upper"
-      expected_text="GOVERNANCE"
-      ;;
-    add)
-      prompt="Use the MCP add tool to add 41 and 1. Reply with only the numeric result."
-      expected_tool="add"
-      expected_text="42"
-      ;;
-    slugify)
-      prompt="Use the MCP slugify tool to turn the text 'Hello World' into a URL slug. Reply with only the slug."
-      expected_tool="slugify"
-      expected_text="hello-world"
-      ;;
-    governance_denied_low_trust)
-      prompt="${MCP_SMOKE_AGENT_PROMPT}"
-      expected_tool="upper"
-      mode="deny"
-      ;;
-    add_denied_not_granted)
-      prompt="Use the MCP add tool to add 41 and 1. Reply with only the numeric result."
-      expected_tool="add"
-      mode="deny"
-      ;;
-    echo_denied_revoked)
-      prompt="Use the MCP echo tool to repeat the word analytics. Reply with only the tool's output."
-      expected_tool="echo"
-      mode="deny"
-      ;;
-    *)
-      echo "unknown smoke agent case: ${case_name}" >&2
-      return 2
-      ;;
-  esac
-
-  local stdout_file="${WORKDIR}/mcp-smoke-agent-${case_name}.stdout"
-  local stderr_file="${WORKDIR}/mcp-smoke-agent-${case_name}.stderr"
-  local agent_exit_code=0
-  local agent_cmd=(
-    "${MCP_SMOKE_BIN}" agent
-    --server "${url}"
-    --env-file "${MCP_SMOKE_AGENT_ENV_FILE}"
-    --prompt "${prompt}"
-    --timeout "${MCP_SMOKE_AGENT_TIMEOUT}"
-  )
-
-  if [[ -n "${MCP_SMOKE_AGENT_PROVIDER}" ]]; then
-    agent_cmd+=(--provider "${MCP_SMOKE_AGENT_PROVIDER}")
-  fi
-  if [[ -n "${MCP_SMOKE_AGENT_MODEL}" ]]; then
-    agent_cmd+=(--model "${MCP_SMOKE_AGENT_MODEL}")
-  fi
-
-  log_mcp_smoke_agent_notice
-  if [[ "${mode}" == "allow" ]]; then
-    log_line mcp "real-client agent ${case_name}: expect model to choose MCP tool '${expected_tool}' and receive '${expected_text}'"
-  else
-    log_line mcp "real-client agent ${case_name}: expect MCP gateway policy to deny tool '${expected_tool}'"
-  fi
-
-  if "${agent_cmd[@]}" >"${stdout_file}" 2>"${stderr_file}"; then
-    agent_exit_code=0
-  else
-    agent_exit_code=$?
-  fi
-
-  if [[ "${agent_exit_code}" -ne 0 ]]; then
-    echo "mcp-smoke-agent (${case_name}) exited with code ${agent_exit_code}" >&2
-    echo "--- mcp-smoke-agent stderr (${case_name}) ---" >&2
-    cat "${stderr_file}" >&2 || true
-    echo "--- mcp-smoke-agent stdout (${case_name}) ---" >&2
-    cat "${stdout_file}" >&2 || true
-    return "${agent_exit_code}"
-  fi
-
-  MCP_SMOKE_AGENT_CASE="${case_name}" \
-  MCP_SMOKE_AGENT_MODE="${mode}" \
-  MCP_SMOKE_AGENT_EXPECTED_TOOL="${expected_tool}" \
-  MCP_SMOKE_AGENT_EXPECTED_TEXT="${expected_text}" \
-  MCP_SMOKE_AGENT_STDOUT="${stdout_file}" \
-  MCP_SMOKE_AGENT_STDERR="${stderr_file}" \
-  python3 <<'PY'
-import os
-import re
-
-case = os.environ["MCP_SMOKE_AGENT_CASE"]
-mode = os.environ["MCP_SMOKE_AGENT_MODE"]
-expected_tool = os.environ["MCP_SMOKE_AGENT_EXPECTED_TOOL"]
-expected_text = os.environ["MCP_SMOKE_AGENT_EXPECTED_TEXT"]
-stdout_path = os.environ["MCP_SMOKE_AGENT_STDOUT"]
-stderr_path = os.environ["MCP_SMOKE_AGENT_STDERR"]
-
-
-import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
-
-with open(stdout_path, "r", encoding="utf-8") as fh:
-    stdout = fh.read()
-with open(stderr_path, "r", encoding="utf-8") as fh:
-    stderr = fh.read()
-
-tool_attempted = bool(re.search(rf"^tool>\s+{re.escape(expected_tool)}\s+", stderr, re.MULTILINE))
-
-if mode == "allow":
-    check(
-        tool_attempted,
-        f"mcp-smoke-agent[{case}] called {expected_tool}",
-        f"mcp-smoke-agent[{case}] did not call {expected_tool}:\n{stderr}",
-    )
-    haystack = stdout + "\n" + stderr
-    check(
-        expected_text.lower() in haystack.lower(),
-        f"mcp-smoke-agent[{case}] produced {expected_text}",
-        f"mcp-smoke-agent[{case}] did not produce {expected_text!r}:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}",
-    )
-    print(f"mcp-smoke-agent[{case}]:")
-    print(f"  mode         allow")
-    print(f"  tool call    {expected_tool}")
-    print(f"  final answer {expected_text}")
-else:
-    # Deny path: the governance layer at the gateway enforces denial
-    # deterministically (the adjacent raw-MCP wait_for_mcp_tool_result calls
-    # already prove that). What we verify at the real-LLM agent level is that
-    # the full stack stays graceful under denial: the agent exits cleanly
-    # (already enforced above) and surfaces either a tool-call attempt with
-    # a denial marker, or a soft decline from the model. We log both signals
-    # for post-mortem but intentionally avoid brittle content assertions on
-    # LLM output.
-    denial_markers = ["trust_too_low", "tool_not_granted", "tool_denied", "tool execution failed"]
-    denial_seen = any(marker in stdout + stderr for marker in denial_markers)
-    print(f"mcp-smoke-agent[{case}]:")
-    print(f"  mode         deny")
-    print(f"  tool attempt {'yes' if tool_attempted else 'no'}")
-    print(f"  denial seen  {'yes' if denial_seen else 'no'}")
-PY
-}
+# Real-provider agent prompts are intentionally disabled for now. The e2e suite
+# generates deterministic MCP traffic with curl so CI does not consume provider
+# tokens while validating gateway policy, auth, audit, and observability paths.
 
 wait_for_policy_text() {
   local text="$1"
@@ -1857,19 +1882,6 @@ echo "[cli] checking static command output"
 ./bin/mcp-runtime help >/dev/null
 ./bin/mcp-runtime completion bash >/dev/null
 
-MCP_SMOKE_SOURCE_DIR="$(resolve_mcp_smoke_dir)"
-MCP_SMOKE_BIN="${WORKDIR}/mcp-smoke-agent"
-MCP_SMOKE_GOPATH="${WORKDIR}/mcp-smoke-gopath"
-echo "[build] building mcp-smoke-agent from ${MCP_SMOKE_SOURCE_DIR}"
-mkdir -p "${MCP_SMOKE_GOPATH}"
-(
-  cd "${MCP_SMOKE_SOURCE_DIR}"
-  GOPATH="${MCP_SMOKE_GOPATH}" \
-  GOMODCACHE="${MCP_SMOKE_GOPATH}/pkg/mod" \
-  GOCACHE="${PROJECT_ROOT}/.gocache" \
-  go build -o "${MCP_SMOKE_BIN}" ./cmd/mcp-smoke-agent
-)
-
 PLATFORM_CACHE_READY=0
 if platform_cache_ready; then
   PLATFORM_CACHE_READY=1
@@ -2162,8 +2174,8 @@ PY_SERVER_NAME="${SERVER_NAME}" \
 PY_SERVER_HOST="${SERVER_HOST}" \
 PY_WORKDIR="${WORKDIR}" \
 PY_TRAEFIK_PORT="${TRAEFIK_PORT}" \
-PY_MCP_SMOKE_ANON_PORT="${MCP_SMOKE_ANON_PORT}" \
-PY_MCP_SMOKE_SESSION_PORT="${MCP_SMOKE_SESSION_PORT}" \
+PY_MCP_CURL_ANON_PORT="${MCP_CURL_ANON_PORT}" \
+PY_MCP_CURL_SESSION_PORT="${MCP_CURL_SESSION_PORT}" \
 E2E_HELPERS="${PROJECT_ROOT}/test/e2e/e2e_helpers.py" \
 python3 <<'PYEOF'
 import os
@@ -2204,8 +2216,8 @@ m_path = re.search(r'ingressPath:\s*(\S+)', get_yaml)
 ingress_path = m_path.group(1) if m_path else expected_path
 
 traefik_port = os.environ.get("PY_TRAEFIK_PORT", "18080")
-anon_proxy_port = os.environ.get("PY_MCP_SMOKE_ANON_PORT", "18084")
-session_proxy_port = os.environ.get("PY_MCP_SMOKE_SESSION_PORT", "18086")
+anon_proxy_port = os.environ.get("PY_MCP_CURL_ANON_PORT", "18084")
+session_proxy_port = os.environ.get("PY_MCP_CURL_SESSION_PORT", "18086")
 
 # Path-based local e2e usage should prefer local header proxies that already inject
 # MCP protocol and identity headers where needed.
@@ -2357,30 +2369,30 @@ wait_http "http://127.0.0.1:${SENTINEL_PORT}/api/stats" "x-api-key: ${API_KEY}"
 wait_http "http://127.0.0.1:${TEMPO_PORT}/ready"
 wait_http "http://127.0.0.1:${LOKI_PORT}/ready"
 
-echo "[proxy] starting local ingress proxies for mcp-smoke"
-start_header_proxy_bg "${MCP_SMOKE_ANON_PORT}" \
+echo "[proxy] starting local ingress proxies for curl MCP checks"
+start_header_proxy_bg "${MCP_CURL_ANON_PORT}" \
   "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-smoke-anon-proxy.log" \
+  "${WORKDIR}/mcp-curl-anon-proxy.log" \
   --host-header "${SERVER_HOST}" \
   --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
-start_header_proxy_bg "${MCP_SMOKE_IDENTITY_PORT}" \
+start_header_proxy_bg "${MCP_CURL_IDENTITY_PORT}" \
   "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-smoke-identity-proxy.log" \
+  "${WORKDIR}/mcp-curl-identity-proxy.log" \
   --host-header "${SERVER_HOST}" \
   --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
   --header "X-MCP-Human-ID=${HUMAN_ID}" \
   --header "X-MCP-Agent-ID=${AGENT_ID}"
-start_header_proxy_bg "${MCP_SMOKE_SESSION_PORT}" \
+start_header_proxy_bg "${MCP_CURL_SESSION_PORT}" \
   "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-smoke-session-proxy.log" \
+  "${WORKDIR}/mcp-curl-session-proxy.log" \
   --host-header "${SERVER_HOST}" \
   --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
   --header "X-MCP-Human-ID=${HUMAN_ID}" \
   --header "X-MCP-Agent-ID=${AGENT_ID}" \
   --header "X-MCP-Agent-Session=${SESSION_ID}"
-start_header_proxy_bg "${MCP_SMOKE_BAD_SESSION_PORT}" \
+start_header_proxy_bg "${MCP_CURL_BAD_SESSION_PORT}" \
   "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-smoke-bad-session-proxy.log" \
+  "${WORKDIR}/mcp-curl-bad-session-proxy.log" \
   --host-header "${SERVER_HOST}" \
   --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
   --header "X-MCP-Human-ID=${HUMAN_ID}" \
@@ -2401,20 +2413,20 @@ start_header_proxy_bg "${GO_EXAMPLE_PROXY_PORT}" \
   "${WORKDIR}/go-example-proxy.log" \
   --host-header "${GO_EXAMPLE_SERVER_HOST}" \
   --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
-wait_port "${MCP_SMOKE_ANON_PORT}"
-wait_port "${MCP_SMOKE_IDENTITY_PORT}"
-wait_port "${MCP_SMOKE_SESSION_PORT}"
-wait_port "${MCP_SMOKE_BAD_SESSION_PORT}"
+wait_port "${MCP_CURL_ANON_PORT}"
+wait_port "${MCP_CURL_IDENTITY_PORT}"
+wait_port "${MCP_CURL_SESSION_PORT}"
+wait_port "${MCP_CURL_BAD_SESSION_PORT}"
 wait_port "${PYTHON_EXAMPLE_PROXY_PORT}"
 wait_port "${RUST_EXAMPLE_PROXY_PORT}"
 wait_port "${GO_EXAMPLE_PROXY_PORT}"
 
 MCP_INGRESS_PATH="/${SERVER_NAME}/mcp"
 MCP_DIRECT_URL="http://127.0.0.1:${TRAEFIK_PORT}${MCP_INGRESS_PATH}"
-MCP_ANON_URL="http://127.0.0.1:${MCP_SMOKE_ANON_PORT}${MCP_INGRESS_PATH}"
-MCP_IDENTITY_URL="http://127.0.0.1:${MCP_SMOKE_IDENTITY_PORT}${MCP_INGRESS_PATH}"
-MCP_SESSION_URL="http://127.0.0.1:${MCP_SMOKE_SESSION_PORT}${MCP_INGRESS_PATH}"
-MCP_BAD_SESSION_URL="http://127.0.0.1:${MCP_SMOKE_BAD_SESSION_PORT}${MCP_INGRESS_PATH}"
+MCP_ANON_URL="http://127.0.0.1:${MCP_CURL_ANON_PORT}${MCP_INGRESS_PATH}"
+MCP_IDENTITY_URL="http://127.0.0.1:${MCP_CURL_IDENTITY_PORT}${MCP_INGRESS_PATH}"
+MCP_SESSION_URL="http://127.0.0.1:${MCP_CURL_SESSION_PORT}${MCP_INGRESS_PATH}"
+MCP_BAD_SESSION_URL="http://127.0.0.1:${MCP_CURL_BAD_SESSION_PORT}${MCP_INGRESS_PATH}"
 PYTHON_EXAMPLE_URL="http://127.0.0.1:${PYTHON_EXAMPLE_PROXY_PORT}${PYTHON_EXAMPLE_SERVER_ROUTE}"
 RUST_EXAMPLE_URL="http://127.0.0.1:${RUST_EXAMPLE_PROXY_PORT}${RUST_EXAMPLE_SERVER_ROUTE}"
 GO_EXAMPLE_URL="http://127.0.0.1:${GO_EXAMPLE_PROXY_PORT}${GO_EXAMPLE_SERVER_ROUTE}"
@@ -2498,16 +2510,16 @@ if scenario_selected "smoke-auth"; then
     400 \
     "DELETE requires an Mcp-Session-Id header"
 
-  log_line mcp "running external mcp-smoke smoke checks against ingress"
-  run_mcp_smoke_expect "mcp-smoke-missing-identity" "${MCP_ANON_URL}" false "missing_identity" \
-    || run_mcp_smoke_expect "mcp-smoke-missing-identity-retry" "${MCP_ANON_URL}" false "missing_identity"
-  run_mcp_smoke_expect "mcp-smoke-missing-session" "${MCP_IDENTITY_URL}" false "missing_session" \
-    || run_mcp_smoke_expect "mcp-smoke-missing-session-retry" "${MCP_IDENTITY_URL}" false "missing_session"
-  run_mcp_smoke_expect "mcp-smoke-session-not-found" "${MCP_BAD_SESSION_URL}" false "session_not_found" \
-    || run_mcp_smoke_expect "mcp-smoke-session-not-found-retry" "${MCP_BAD_SESSION_URL}" false "session_not_found"
+  log_line mcp "running curl-based MCP smoke checks against ingress"
+  run_mcp_curl_expect "mcp-curl-missing-identity" "${MCP_ANON_URL}" false "missing_identity" \
+    || run_mcp_curl_expect "mcp-curl-missing-identity-retry" "${MCP_ANON_URL}" false "missing_identity"
+  run_mcp_curl_expect "mcp-curl-missing-session" "${MCP_IDENTITY_URL}" false "missing_session" \
+    || run_mcp_curl_expect "mcp-curl-missing-session-retry" "${MCP_IDENTITY_URL}" false "missing_session"
+  run_mcp_curl_expect "mcp-curl-session-not-found" "${MCP_BAD_SESSION_URL}" false "session_not_found" \
+    || run_mcp_curl_expect "mcp-curl-session-not-found-retry" "${MCP_BAD_SESSION_URL}" false "session_not_found"
   log_line mcp "waiting for session-backed allow policy to reach the gateway"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
-  run_mcp_smoke_expect "mcp-smoke-allow-aaa-ping" "${MCP_SESSION_URL}" true
+  run_mcp_curl_expect "mcp-curl-allow-aaa-ping" "${MCP_SESSION_URL}" true
 fi
 
 if scenario_selected "governance"; then
@@ -2516,7 +2528,7 @@ if scenario_selected "governance"; then
   wait_for_policy_text "\"revoked\": true"
   print_gateway_policy_debug
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 401 "session_revoked"
-  run_mcp_smoke_expect "mcp-smoke-session-revoked" "${MCP_SESSION_URL}" false "session_revoked"
+  run_mcp_curl_expect "mcp-curl-session-revoked" "${MCP_SESSION_URL}" false "session_revoked"
 
   log_line policy "restoring access session via CLI; gateway should allow low-trust tools again"
   ./bin/mcp-runtime access --use-kube session unrevoke "${SESSION_ID}" --namespace mcp-servers
@@ -2548,7 +2560,7 @@ EOF
   wait_for_policy_text "\"expires_at\": \"${EXPIRED_AT}\""
   print_gateway_policy_debug
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 401 "session_expired"
-  run_mcp_smoke_expect "mcp-smoke-session-expired" "${MCP_SESSION_URL}" false "session_expired"
+  run_mcp_curl_expect "mcp-curl-session-expired" "${MCP_SESSION_URL}" false "session_expired"
 
   log_line policy "restoring non-expired access session"
   cat >"${WORKDIR}/access-session-restored.yaml" <<EOF
@@ -2574,7 +2586,7 @@ EOF
   wait_for_policy_text "\"disabled\": true"
   print_gateway_policy_debug
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 403 "tool_not_granted"
-  run_mcp_smoke_expect "mcp-smoke-grant-disabled" "${MCP_SESSION_URL}" false "tool_not_granted"
+  run_mcp_curl_expect "mcp-curl-grant-disabled" "${MCP_SESSION_URL}" false "tool_not_granted"
 
   log_line policy "re-enabling access grant via CLI"
   ./bin/mcp-runtime access --use-kube grant enable "${SERVER_NAME}-grant" --namespace mcp-servers
@@ -2662,11 +2674,6 @@ check(
 print("upper deny:", body)
 PY
 
-  if should_run_mcp_smoke_agent; then
-    log_line mcp "running real-client agent against trust_too_low governance (expect denial)"
-    run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" governance_denied_low_trust
-  fi
-
   log_line policy "raising consented trust to medium; upper should become allowed while add stays ungranted"
   cat <<EOF | kubectl apply -f -
 apiVersion: mcpruntime.org/v1alpha1
@@ -2689,11 +2696,6 @@ EOF
   log_line mcp "waiting for updated consented trust to reach the gateway"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "upper" '{"message":"governance"}' 200 "GOVERNANCE"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "add" '{"a":2,"b":3}' 403 "tool_not_granted"
-
-  if should_run_mcp_smoke_agent; then
-    log_line mcp "running real-client agent against tool_not_granted add (expect denial)"
-    run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" add_denied_not_granted
-  fi
 
   log_line mcp "validating updated policy allows the higher-trust tool"
   MCP_BASE="${MCP_SESSION_URL}" \
@@ -2763,9 +2765,8 @@ check(
 print("upper allow:", body)
 PY
 
-  if should_run_mcp_smoke_agent; then
-    log_line policy "temporarily expanding grant for multi-tool agent prompts"
-    cat <<EOF | kubectl apply -f -
+  log_line policy "temporarily expanding grant for deterministic multi-tool MCP checks"
+  cat <<EOF | kubectl apply -f -
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
 metadata:
@@ -2791,16 +2792,9 @@ spec:
     - name: slugify
       decision: allow
 EOF
-    wait_for_policy_text "\"slugify\""
-    wait_for_mcp_tool_result "${MCP_SESSION_URL}" "add" '{"a":2,"b":3}' 200 "5"
-
-    log_line mcp "running real-client mcp-smoke agent prompts (governance, add, slugify)"
-    run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" governance
-    run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" add
-    run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" slugify
-  else
-    log_line mcp "skipping optional real-client mcp-smoke agent prompt (no $(mcp_smoke_agent_key_hint) in env or ${MCP_SMOKE_AGENT_ENV_FILE})"
-  fi
+  wait_for_policy_text "\"slugify\""
+  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "add" '{"a":41,"b":1}' 200 "42"
+  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "slugify" '{"message":"Hello World"}' 200 "hello-world"
 
   log_line policy "updating access grant to deny aaa-ping and echo"
   cat >"${WORKDIR}/access-grant-deny.yaml" <<EOF
@@ -2834,11 +2828,7 @@ EOF
   log_line mcp "validating updated access grant denies aaa-ping and echo"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 403 "tool_denied"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "echo" '{"message":"analytics"}' 403 "tool_denied"
-  run_mcp_smoke_expect "mcp-smoke-aaa-ping-deny" "${MCP_SESSION_URL}" false "tool_denied"
-  if should_run_mcp_smoke_agent; then
-    log_line mcp "running real-client agent against revoked echo (expect denial)"
-    run_mcp_smoke_agent_prompt "${MCP_SESSION_URL}" echo_denied_revoked
-  fi
+  run_mcp_curl_expect "mcp-curl-aaa-ping-deny" "${MCP_SESSION_URL}" false "tool_denied"
   MCP_BASE="${MCP_SESSION_URL}" \
   MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION}" \
   python3 <<'PY'
@@ -3067,27 +3057,27 @@ EOF
   # mcp_header_proxy.py uses NAME=VALUE syntax: the part after the first '='
   # becomes the HTTP header value, so "Authorization=Bearer <token>" sets the
   # Authorization header to "Bearer <token>" (not "=Bearer <token>").
-  start_header_proxy_bg "${MCP_SMOKE_OAUTH_ANON_PORT}" \
+  start_header_proxy_bg "${MCP_CURL_OAUTH_ANON_PORT}" \
   "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-smoke-oauth-anon-proxy.log" \
+  "${WORKDIR}/mcp-curl-oauth-anon-proxy.log" \
   --host-header "${OAUTH_SERVER_HOST}" \
   --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
-  start_header_proxy_bg "${MCP_SMOKE_OAUTH_INVALID_PORT}" \
+  start_header_proxy_bg "${MCP_CURL_OAUTH_INVALID_PORT}" \
   "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-smoke-oauth-invalid-proxy.log" \
+  "${WORKDIR}/mcp-curl-oauth-invalid-proxy.log" \
   --host-header "${OAUTH_SERVER_HOST}" \
   --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
   --header "Authorization=Bearer ${OAUTH_INVALID_TOKEN}"
-  start_header_proxy_bg "${MCP_SMOKE_OAUTH_VALID_PORT}" \
+  start_header_proxy_bg "${MCP_CURL_OAUTH_VALID_PORT}" \
   "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-smoke-oauth-valid-proxy.log" \
+  "${WORKDIR}/mcp-curl-oauth-valid-proxy.log" \
   --host-header "${OAUTH_SERVER_HOST}" \
   --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
   --header "Authorization=Bearer ${OAUTH_VALID_TOKEN}"
   
-  wait_port "${MCP_SMOKE_OAUTH_ANON_PORT}"
-  wait_port "${MCP_SMOKE_OAUTH_INVALID_PORT}"
-  wait_port "${MCP_SMOKE_OAUTH_VALID_PORT}"
+  wait_port "${MCP_CURL_OAUTH_ANON_PORT}"
+  wait_port "${MCP_CURL_OAUTH_INVALID_PORT}"
+  wait_port "${MCP_CURL_OAUTH_VALID_PORT}"
   if scenario_selected "observability"; then
     port_forward_bg mcp-servers "${OAUTH_SERVER_NAME}" "${OAUTH_PROXY_PORT}" 80 "${WORKDIR}/oauth-proxy-port-forward.log"
     port_forward_resource_bg mcp-servers "deployment/${OAUTH_SERVER_NAME}" "${OAUTH_UPSTREAM_PORT}" 8090 "${WORKDIR}/oauth-upstream-port-forward.log"
@@ -3097,10 +3087,10 @@ EOF
 
   OAUTH_INGRESS_PATH="/${OAUTH_SERVER_NAME}/mcp"
   MCP_OAUTH_DIRECT_URL="http://127.0.0.1:${TRAEFIK_PORT}${OAUTH_INGRESS_PATH}"
-  MCP_OAUTH_ANON_URL="http://127.0.0.1:${MCP_SMOKE_OAUTH_ANON_PORT}${OAUTH_INGRESS_PATH}"
-  MCP_OAUTH_INVALID_URL="http://127.0.0.1:${MCP_SMOKE_OAUTH_INVALID_PORT}${OAUTH_INGRESS_PATH}"
-  MCP_OAUTH_VALID_URL="http://127.0.0.1:${MCP_SMOKE_OAUTH_VALID_PORT}${OAUTH_INGRESS_PATH}"
-  MCP_OAUTH_METADATA_URL="http://127.0.0.1:${MCP_SMOKE_OAUTH_ANON_PORT}/.well-known/oauth-protected-resource${OAUTH_INGRESS_PATH}"
+  MCP_OAUTH_ANON_URL="http://127.0.0.1:${MCP_CURL_OAUTH_ANON_PORT}${OAUTH_INGRESS_PATH}"
+  MCP_OAUTH_INVALID_URL="http://127.0.0.1:${MCP_CURL_OAUTH_INVALID_PORT}${OAUTH_INGRESS_PATH}"
+  MCP_OAUTH_VALID_URL="http://127.0.0.1:${MCP_CURL_OAUTH_VALID_PORT}${OAUTH_INGRESS_PATH}"
+  MCP_OAUTH_METADATA_URL="http://127.0.0.1:${MCP_CURL_OAUTH_ANON_PORT}/.well-known/oauth-protected-resource${OAUTH_INGRESS_PATH}"
 
   echo "[oauth] validating protected-resource metadata"
   wait_http "${MCP_OAUTH_METADATA_URL}"
@@ -3156,8 +3146,8 @@ PY
     "missing_bearer_token" \
     "www-authenticate" \
     "resource_metadata="
-  run_mcp_smoke_expect "mcp-smoke-oauth-missing-token" "${MCP_OAUTH_ANON_URL}" false "missing_bearer_token"
-  run_mcp_smoke_expect "mcp-smoke-oauth-invalid-token" "${MCP_OAUTH_INVALID_URL}" false "invalid_token"
+  run_mcp_curl_expect "mcp-curl-oauth-missing-token" "${MCP_OAUTH_ANON_URL}" false "missing_bearer_token"
+  run_mcp_curl_expect "mcp-curl-oauth-invalid-token" "${MCP_OAUTH_INVALID_URL}" false "invalid_token"
 
   echo "[oauth] validating valid bearer token MCP flow"
   wait_for_mcp_tool_result "${MCP_OAUTH_VALID_URL}" "add" '{"a":7,"b":5}' 200 "12"
@@ -3233,7 +3223,7 @@ PY
     chunked-text \
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
     200
-  run_mcp_smoke_expect "mcp-smoke-oauth-valid" "${MCP_OAUTH_VALID_URL}" true
+  run_mcp_curl_expect "mcp-curl-oauth-valid" "${MCP_OAUTH_VALID_URL}" true
 fi
 
 if scenario_selected "observability"; then

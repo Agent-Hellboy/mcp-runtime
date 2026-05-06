@@ -66,18 +66,15 @@ E2E output uses ANSI color only for an interactive terminal by default. Set
 `E2E_COLOR=always` or `E2E_COLOR=never` to override auto-detection; `NO_COLOR`
 disables color.
 
-Optional real-client `mcp-smoke-agent` prompts default to the OpenAI provider
-and let the agent choose its provider-specific default model. Set
-`OPENAI_API_KEY` in the environment or `.env` to run them; override
-`MCP_SMOKE_AGENT_PROVIDER` or `MCP_SMOKE_AGENT_MODEL` only when a different
-provider or model is required.
+Kind e2e traffic uses deterministic curl-based MCP requests. The previous
+real-client agent prompts are disabled so CI and local runs do not consume
+OpenAI or Anthropic tokens while validating gateway policy, auth, audit, and
+observability paths.
 
-CI validates that `OPENAI_API_KEY` is accepted by OpenAI before full Kind e2e
-on normal PRs, `main`, and manual runs. If validation fails, CI skips Kind e2e
-with a warning instead of entering the real-client path with a bad provider key.
-Dependabot PRs run `smoke-auth,governance` only, so dependency bumps still
-exercise MCP ingress/auth and grant/session behavior without needing provider
-API secrets.
+Normal PRs, `main`, and manual CI runs execute full Kind e2e with
+`E2E_SCENARIOS=all`. Dependabot PRs run `smoke-auth,governance` only, so
+dependency bumps still exercise MCP ingress/auth and grant/session behavior
+while keeping runtime low.
 
 The script writes artifacts when `E2E_ARTIFACT_DIR` is set. In CI, those
 artifacts are uploaded from `.e2e-artifacts/kind`.
