@@ -1135,16 +1135,24 @@ function setText(id, value) {
 }
 
 function renderInventoryBlock(label, items, itemRenderer) {
-  const block = document.createElement("div");
+  const block = document.createElement("details");
   block.className = "inventory-block";
-  const heading = document.createElement("h4");
-  heading.textContent = label;
-  block.appendChild(heading);
+  const summary = document.createElement("summary");
+  summary.className = "inventory-section-summary";
+  summary.innerHTML = `
+    <span>${escapeHtml(label)}</span>
+    <small>${formatNumber(items.length)}</small>
+  `;
+  block.appendChild(summary);
+
+  const body = document.createElement("div");
+  body.className = "inventory-section-body";
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "inventory-empty";
     empty.textContent = "None";
-    block.appendChild(empty);
+    body.appendChild(empty);
+    block.appendChild(body);
     return block;
   }
   const list = document.createElement("ul");
@@ -1153,27 +1161,57 @@ function renderInventoryBlock(label, items, itemRenderer) {
     li.innerHTML = itemRenderer(item);
     list.appendChild(li);
   });
-  block.appendChild(list);
+  body.appendChild(list);
+  block.appendChild(body);
   return block;
 }
 
 function renderToolItem(tool) {
-  const trust = tool.requiredTrust ? ` <span class="trust-chip">${escapeHtml(tool.requiredTrust)}</span>` : "";
-  const desc = tool.description ? `<small>${escapeHtml(tool.description)}</small>` : "";
-  return `<strong>${escapeHtml(tool.name || "-")}</strong>${trust}${desc}`;
+  const trust = tool.requiredTrust ? `<span class="trust-chip">${escapeHtml(tool.requiredTrust)}</span>` : "";
+  const labels = renderInventoryLabels(tool.labels);
+  return renderExpandableInventoryItem({
+    name: tool.name || "-",
+    summaryMeta: trust,
+    description: tool.description,
+    labels,
+  });
 }
 
 function renderInventoryItem(item) {
   if (typeof item === "string") {
-    return `<strong>${escapeHtml(item || "-")}</strong>`;
+    return renderExpandableInventoryItem({ name: item || "-" });
   }
-  const name = item?.name || "-";
-  const desc = item?.description ? `<small>${escapeHtml(item.description)}</small>` : "";
-  const labels = item?.labels && typeof item.labels === "object" ? Object.entries(item.labels) : [];
-  const labelsText = labels.length
-    ? `<small>${escapeHtml(labels.map(([k, v]) => `${k}=${v}`).join(", "))}</small>`
-    : "";
-  return `<strong>${escapeHtml(name)}</strong>${desc}${labelsText}`;
+  return renderExpandableInventoryItem({
+    name: item?.name || "-",
+    description: item?.description,
+    labels: renderInventoryLabels(item?.labels),
+  });
+}
+
+function renderExpandableInventoryItem({ name, summaryMeta = "", description = "", labels = "" }) {
+  const details = description
+    ? `<p>${escapeHtml(description)}</p>`
+    : '<p class="muted-text">No description</p>';
+  const labelRows = labels ? `<div class="inventory-label-list">${labels}</div>` : "";
+  return `
+    <details class="inventory-item">
+      <summary>
+        <strong>${escapeHtml(name || "-")}</strong>
+        ${summaryMeta}
+      </summary>
+      <div class="inventory-item-body">
+        ${details}
+        ${labelRows}
+      </div>
+    </details>
+  `;
+}
+
+function renderInventoryLabels(labels) {
+  if (!labels || typeof labels !== "object") return "";
+  return Object.entries(labels)
+    .map(([key, value]) => `<span>${escapeHtml(key)}=${escapeHtml(value)}</span>`)
+    .join("");
 }
 
 function initDashboard() {
