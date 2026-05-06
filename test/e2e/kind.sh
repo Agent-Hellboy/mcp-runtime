@@ -980,6 +980,73 @@ for step_name, status in rows:
 PY
 }
 
+wait_for_gateway_rpc_methods() {
+  local server_name="$1"
+  local label="$2"
+
+  API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api" \
+  API_KEY="${API_KEY}" \
+  SERVER_NAME="${server_name}" \
+  AUDIT_LABEL="${label}" \
+  python3 <<'PY'
+import json
+import os
+import time
+import urllib.parse
+import urllib.request
+
+
+import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
+
+
+api_base = os.environ["API_BASE"]
+api_key = os.environ["API_KEY"]
+server_name = os.environ["SERVER_NAME"]
+label = os.environ["AUDIT_LABEL"]
+expected = {
+    "initialize",
+    "notifications/initialized",
+    "tools/list",
+    "prompts/list",
+    "resources/list",
+    "prompts/get",
+    "resources/read",
+    "tools/call",
+}
+headers = {"x-api-key": api_key}
+url = f"{api_base}/events/filter?{urllib.parse.urlencode({'server': server_name, 'limit': '1000'})}"
+last = {}
+last_error = None
+
+for _ in range(60):
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            last = json.loads(resp.read().decode())
+        methods = {
+            payload.get("rpc_method")
+            for payload in (
+                event.get("payload", {})
+                for event in last.get("events", [])
+                if isinstance(event.get("payload"), dict)
+            )
+            if payload.get("rpc_method")
+        }
+        if methods >= expected:
+            ok(f"{label} audit events include full MCP curl method set")
+            break
+    except Exception as exc:
+        last_error = exc
+    time.sleep(2)
+else:
+    if last:
+        fail(f"timed out waiting for {label} audit methods: {json.dumps(last, indent=2)}")
+    if last_error is not None:
+        raise last_error
+    fail(f"timed out waiting for {label} audit methods")
+PY
+}
+
 # Real-provider agent prompts are intentionally disabled for now. The e2e suite
 # generates deterministic MCP traffic with curl so CI does not consume provider
 # tokens while validating gateway policy, auth, audit, and observability paths.
@@ -2520,6 +2587,9 @@ if scenario_selected "smoke-auth"; then
   log_line mcp "waiting for session-backed allow policy to reach the gateway"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
   run_mcp_curl_expect "mcp-curl-allow-aaa-ping" "${MCP_SESSION_URL}" true
+  if scenario_selected "observability"; then
+    wait_for_gateway_rpc_methods "${SERVER_NAME}" "policy server MCP curl"
+  fi
 fi
 
 if scenario_selected "governance"; then
@@ -3852,6 +3922,18 @@ expected_gateway_rpc_methods = (
     "tools/call",
 )
 expected_gateway_rpc_method_set = set(expected_gateway_rpc_methods)
+# The full policy-server method set is checked immediately after the successful
+# curl flow. By this final observability pass, later policy traffic can push
+# those older prompt/resource events outside the newest-first 1000-event window.
+expected_recent_gateway_rpc_methods = (
+    "initialize",
+    "notifications/initialized",
+    "tools/list",
+    "prompts/list",
+    "resources/list",
+    "tools/call",
+)
+expected_recent_gateway_rpc_method_set = set(expected_recent_gateway_rpc_methods)
 
 
 def rpc_methods_from_events_doc(doc):
@@ -4008,7 +4090,7 @@ all_server_denies = wait_for_json(
 ).get("events", [])
 all_server_events = wait_for_json(
     f"{api_base}/events/filter?server={server_name}&limit=1000",
-    lambda doc: rpc_methods_from_events_doc(doc) >= expected_gateway_rpc_method_set,
+    lambda doc: rpc_methods_from_events_doc(doc) >= expected_recent_gateway_rpc_method_set,
     headers=headers,
     description="server audit events",
 ).get("events", [])
@@ -4119,7 +4201,7 @@ for reason in ("missing_bearer_token", "invalid_token"):
         f"oauth deny reasons include {reason}",
         f"missing oauth deny reason {reason}: {oauth_deny_reasons}",
     )
-for rpc_method in expected_gateway_rpc_methods:
+for rpc_method in expected_recent_gateway_rpc_methods:
     check(
         rpc_method in routing_methods,
         f"gateway audit events include {rpc_method}",
