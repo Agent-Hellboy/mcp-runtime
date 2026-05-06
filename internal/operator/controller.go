@@ -73,11 +73,12 @@ const (
 )
 
 const (
-	gatewayPolicyVolumeName = "gateway-policy"
-	gatewayPolicyMountDir   = "/var/run/mcp-runtime/policy"
-	gatewayPolicyFileName   = "policy.json"
-	gatewayPolicyFilePath   = gatewayPolicyMountDir + "/" + gatewayPolicyFileName
-	restrictedRunAsUser     = int64(65532)
+	gatewayPolicyVolumeName       = "gateway-policy"
+	gatewayPolicyMountDir         = "/var/run/mcp-runtime/policy"
+	gatewayPolicyFileName         = "policy.json"
+	gatewayPolicyFilePath         = gatewayPolicyMountDir + "/" + gatewayPolicyFileName
+	restrictedRunAsUser           = int64(65532)
+	defaultWorkloadServiceAccount = "mcp-workload"
 )
 
 // resourceReadiness tracks the readiness state of different resources.
@@ -398,6 +399,7 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 			return err
 		}
 		deployment.Spec.Template.Spec = corev1.PodSpec{
+			ServiceAccountName:           defaultWorkloadServiceAccount,
 			AutomountServiceAccountToken: boolPtr(false),
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: boolPtr(true),
@@ -486,6 +488,7 @@ func (r *MCPServerReconciler) reconcileCanaryDeployment(ctx context.Context, mcp
 			return err
 		}
 		deployment.Spec.Template.Spec = corev1.PodSpec{
+			ServiceAccountName:           defaultWorkloadServiceAccount,
 			AutomountServiceAccountToken: boolPtr(false),
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: boolPtr(true),

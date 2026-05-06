@@ -15,6 +15,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	apiruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
@@ -53,19 +54,27 @@ type accessSessionRequest struct {
 	PolicyVersion  string                         `json:"policyVersion"`
 }
 
+type runtimeServerApplyRequest struct {
+	Name      string                    `json:"name"`
+	Namespace string                    `json:"namespace,omitempty"`
+	Labels    map[string]string         `json:"labels,omitempty"`
+	Spec      mcpv1alpha1.MCPServerSpec `json:"spec"`
+}
+
 // RuntimeServer extends apiServer with Kubernetes and enhanced ClickHouse capabilities.
 type RuntimeServer struct {
 	db          *chpkg.Client
 	clickhouse  clickhouse.Conn
 	dbName      string
 	apiKeys     map[string]struct{}
+	platform    *platformStore
 	k8sClients  *k8sclient.Clients
 	accessMgr   *sentinelaccess.Manager
 	sentinelMgr *sentinel.Manager
 }
 
 // NewRuntimeServer creates a runtime server with Kubernetes access.
-func NewRuntimeServer(db clickhouse.Conn, dbName string, apiKeys map[string]struct{}) (*RuntimeServer, error) {
+func NewRuntimeServer(db clickhouse.Conn, dbName string, apiKeys map[string]struct{}, platform *platformStore) (*RuntimeServer, error) {
 	// Create ClickHouse client wrapper
 	chClient := &chpkg.Client{
 		Conn:   db,
@@ -93,6 +102,7 @@ func NewRuntimeServer(db clickhouse.Conn, dbName string, apiKeys map[string]stru
 		clickhouse:  db,
 		dbName:      dbName,
 		apiKeys:     apiKeys,
+		platform:    platform,
 		k8sClients:  k8sClients,
 		accessMgr:   accessMgr,
 		sentinelMgr: sentinelMgr,
@@ -141,6 +151,18 @@ func (s *RuntimeServer) handleDashboardSummary(w http.ResponseWriter, r *http.Re
 
 // handleRuntimeServers returns MCP server deployments.
 func (s *RuntimeServer) handleRuntimeServers(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleRuntimeServerList(w, r)
+	case http.MethodPost:
+		s.handleRuntimeServerApply(w, r)
+	default:
+		w.Header().Set("allow", "GET, POST")
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+	}
+}
+
+func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.Request) {
 	if s.k8sClients == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
 		return
@@ -151,21 +173,19 @@ func (s *RuntimeServer) handleRuntimeServers(w http.ResponseWriter, r *http.Requ
 
 	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
 	if p, ok := principalFromContext(r.Context()); ok && p.Role != roleAdmin {
-		switch {
-		case namespace == "":
-			// Non-admin users should still see the shared MCP catalog by default.
-			namespace = "mcp-servers"
-		case namespace == "mcp-servers":
-			// Allow explicit shared catalog lookup.
-		case p.Namespace != "" && namespace == p.Namespace:
-			// Allow user's private namespace lookup.
-		default:
+		if namespace == "" {
+			namespace = strings.TrimSpace(p.Namespace)
+			if namespace == "" {
+				namespace = sharedCatalogNamespace
+			}
+		}
+		if !p.hasNamespace(namespace) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
 			return
 		}
 	}
 	if namespace == "" {
-		namespace = "mcp-servers"
+		namespace = sharedCatalogNamespace
 	}
 
 	serverObjects, err := s.k8sClients.Dynamic.Resource(mcpServerGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
@@ -221,6 +241,127 @@ func (s *RuntimeServer) handleRuntimeServers(w http.ResponseWriter, r *http.Requ
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"servers": servers})
+}
+
+func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.Request) {
+	if s.k8sClients == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		return
+	}
+	p, ok := principalFromContext(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	var req runtimeServerApplyRequest
+	r.Body = http.MaxBytesReader(w, r.Body, accessApplyMaxBytes)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeBodyDecodeError(w, err)
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Namespace = strings.TrimSpace(req.Namespace)
+	req.Spec.Image = strings.TrimSpace(req.Spec.Image)
+	if req.Name == "" || req.Spec.Image == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and spec.image are required"})
+		return
+	}
+	if req.Namespace == "" {
+		req.Namespace = strings.TrimSpace(p.Namespace)
+	}
+	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), req.Namespace)
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
+	if p.Role != roleAdmin && namespace == sharedCatalogNamespace {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "shared catalog namespace is read-only for team users"})
+		return
+	}
+	if approved := approvedRegistries(); len(approved) > 0 {
+		parts := strings.Split(req.Spec.Image, "/")
+		if len(parts) < 2 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "image must include a registry/repository path"})
+			return
+		}
+		if _, ok := approved[parts[0]]; !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("registry %q is not approved", parts[0])})
+			return
+		}
+	}
+
+	req.Namespace = namespace
+	if req.Spec.PublicPathPrefix == "" {
+		req.Spec.PublicPathPrefix = req.Name
+	}
+	if req.Spec.IngressPath == "" {
+		req.Spec.IngressPath = "/" + req.Spec.PublicPathPrefix + "/mcp"
+	}
+
+	labels := map[string]string{
+		"app.kubernetes.io/managed-by": "mcp-runtime",
+	}
+	for key, value := range req.Labels {
+		labels[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+
+	server := &mcpv1alpha1.MCPServer{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: mcpv1alpha1.GroupVersion.String(),
+			Kind:       "MCPServer",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      req.Name,
+			Namespace: namespace,
+			Labels:    labels,
+		},
+		Spec: req.Spec,
+	}
+
+	payload, err := apiruntime.DefaultUnstructuredConverter.ToUnstructured(server)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to encode server spec"})
+		return
+	}
+	resource := &unstructured.Unstructured{Object: payload}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	current, err := s.k8sClients.Dynamic.Resource(mcpServerGVR).Namespace(namespace).Get(ctx, req.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		applied, createErr := s.k8sClients.Dynamic.Resource(mcpServerGVR).Namespace(namespace).Create(ctx, resource, metav1.CreateOptions{})
+		if createErr != nil {
+			code, msg := k8sclient.HTTPStatusFromK8sError(createErr)
+			writeJSON(w, code, map[string]string{"error": msg})
+			return
+		}
+		var out mcpv1alpha1.MCPServer
+		if convertErr := apiruntime.DefaultUnstructuredConverter.FromUnstructured(applied.Object, &out); convertErr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to decode created server"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"server": serverInfoFromMCPServer(out, serverDeploymentStatus{}, r)})
+		return
+	}
+	if err != nil {
+		code, msg := k8sclient.HTTPStatusFromK8sError(err)
+		writeJSON(w, code, map[string]string{"error": msg})
+		return
+	}
+	resource.SetResourceVersion(current.GetResourceVersion())
+	applied, err := s.k8sClients.Dynamic.Resource(mcpServerGVR).Namespace(namespace).Update(ctx, resource, metav1.UpdateOptions{})
+	if err != nil {
+		code, msg := k8sclient.HTTPStatusFromK8sError(err)
+		writeJSON(w, code, map[string]string{"error": msg})
+		return
+	}
+	var out mcpv1alpha1.MCPServer
+	if convertErr := apiruntime.DefaultUnstructuredConverter.FromUnstructured(applied.Object, &out); convertErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to decode updated server"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"server": serverInfoFromMCPServer(out, serverDeploymentStatus{}, r)})
 }
 
 type serverInfo struct {
@@ -440,6 +581,9 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 		return
 	}
 	req.Namespace = scopedNamespace
+	if strings.TrimSpace(req.ServerRef.Namespace) == "" {
+		req.ServerRef.Namespace = req.Namespace
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -551,6 +695,9 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 		return
 	}
 	req.Namespace = scopedNamespace
+	if strings.TrimSpace(req.ServerRef.Namespace) == "" {
+		req.ServerRef.Namespace = req.Namespace
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -1082,14 +1229,16 @@ func (s *RuntimeServer) scopedNamespaceForPrincipal(ctx context.Context, request
 	if !ok || p.Role == roleAdmin {
 		return requested, nil
 	}
-	subjectNamespace := strings.TrimSpace(p.Namespace)
-	if subjectNamespace == "" {
+	if requested == "" {
+		if preferred := strings.TrimSpace(p.Namespace); preferred != "" {
+			return preferred, nil
+		}
+		if p.hasNamespace(sharedCatalogNamespace) {
+			return sharedCatalogNamespace, nil
+		}
 		return "", errPrincipalIdentityRequired
 	}
-	if requested == "" {
-		return subjectNamespace, nil
-	}
-	if requested != subjectNamespace {
+	if !p.hasNamespace(requested) {
 		return "", errors.New("forbidden namespace")
 	}
 	return requested, nil

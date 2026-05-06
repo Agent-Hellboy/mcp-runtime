@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 
+	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/kube"
 	"mcp-runtime/internal/cli/kubeerr"
@@ -65,17 +66,30 @@ func (m *ServerManager) Logger() *zap.Logger {
 }
 
 // ListServers lists all MCP servers in the given namespace.
-func (m *ServerManager) ListServers(namespace string) error {
-	namespace, err := validateManifestValue("namespace", namespace)
-	if err != nil {
-		return err
+func (m *ServerManager) ListServers(namespace, team string) error {
+	namespace = strings.TrimSpace(namespace)
+	team = strings.TrimSpace(team)
+	if namespace != "" && team != "" {
+		return core.NewWithSentinel(nil, "use either --namespace or --team, not both")
 	}
-
 	plat, useK, err := platformapi.ResolvePlatformOrKube(m.useKube)
 	if err != nil {
 		return err
 	}
 	if !useK {
+		if team != "" {
+			t, err := plat.GetTeam(context.Background(), team)
+			if err != nil {
+				return err
+			}
+			namespace = t.Namespace
+		}
+		if namespace != "" {
+			namespace, err = validateManifestValue("namespace", namespace)
+			if err != nil {
+				return err
+			}
+		}
 		items, err := plat.ListRuntimeServers(context.Background(), namespace)
 		if err != nil {
 			return err
@@ -87,6 +101,13 @@ func (m *ServerManager) ListServers(namespace string) error {
 		}
 		_ = tw.Flush()
 		return nil
+	}
+	if namespace == "" {
+		namespace = core.NamespaceMCPServers
+	}
+	namespace, err = validateManifestValue("namespace", namespace)
+	if err != nil {
+		return err
 	}
 
 	// #nosec G204 -- namespace validated above; kubectl validates resource names.
@@ -209,6 +230,61 @@ func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) er
 		core.LogStructuredError(m.logger, wrappedErr, "Failed to create server")
 		return wrappedErr
 	}
+	return nil
+}
+
+func (m *ServerManager) DeployServer(name, namespace, team, image, imageTag string, replicas, port, servicePort int32) error {
+	if m.useKube {
+		return core.NewWithSentinel(nil, "server deploy uses the platform API; remove --use-kube")
+	}
+	name, err := validateManifestValue("name", name)
+	if err != nil {
+		return err
+	}
+	image, err = validateManifestValue("image", image)
+	if err != nil {
+		return err
+	}
+	imageTag, err = validateManifestValue("tag", imageTag)
+	if err != nil {
+		return err
+	}
+	namespace = strings.TrimSpace(namespace)
+	team = strings.TrimSpace(team)
+	if namespace != "" && team != "" {
+		return core.NewWithSentinel(nil, "use either --namespace or --team, not both")
+	}
+	plat, err := platformapi.NewPlatformClient()
+	if err != nil {
+		return err
+	}
+	if team != "" {
+		t, err := plat.GetTeam(context.Background(), team)
+		if err != nil {
+			return err
+		}
+		namespace = t.Namespace
+	}
+	if namespace != "" {
+		namespace, err = validateManifestValue("namespace", namespace)
+		if err != nil {
+			return err
+		}
+	}
+	spec := mcpv1alpha1.MCPServerSpec{
+		Image:            image,
+		ImageTag:         imageTag,
+		Replicas:         &replicas,
+		Port:             port,
+		ServicePort:      servicePort,
+		PublicPathPrefix: name,
+		IngressPath:      "/" + name + "/mcp",
+	}
+	applied, err := plat.ApplyRuntimeServer(context.Background(), name, namespace, spec)
+	if err != nil {
+		return err
+	}
+	core.Success(fmt.Sprintf("Deployed server %s in namespace %s", applied.Name, applied.Namespace))
 	return nil
 }
 

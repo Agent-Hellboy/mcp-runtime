@@ -281,7 +281,7 @@ func accessJSONServerURL(t *testing.T, info serverInfo, name string) string {
 	return url
 }
 
-func TestRuntimeServersNonAdminDefaultsToSharedNamespace(t *testing.T) {
+func TestRuntimeServersNonAdminDefaultsToPrincipalNamespace(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
@@ -316,6 +316,10 @@ func TestRuntimeServersNonAdminDefaultsToSharedNamespace(t *testing.T) {
 		Role:      roleUser,
 		Subject:   "user-1",
 		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+			sharedCatalogNamespace,
+		},
 	}))
 	recorder := httptest.NewRecorder()
 	server.handleRuntimeServers(recorder, request)
@@ -329,8 +333,8 @@ func TestRuntimeServersNonAdminDefaultsToSharedNamespace(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(payload.Servers) != 1 || payload.Servers[0].Name != "shared-server" {
-		t.Fatalf("servers = %#v, want only shared-server", payload.Servers)
+	if len(payload.Servers) != 1 || payload.Servers[0].Name != "private-server" {
+		t.Fatalf("servers = %#v, want only private-server", payload.Servers)
 	}
 }
 
@@ -346,11 +350,43 @@ func TestRuntimeServersNonAdminRejectsOtherNamespace(t *testing.T) {
 		Role:      roleUser,
 		Subject:   "user-1",
 		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+			sharedCatalogNamespace,
+		},
 	}))
 	recorder := httptest.NewRecorder()
 	server.handleRuntimeServers(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestRuntimeServerApplyNonAdminRejectsSharedCatalogNamespace(t *testing.T) {
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"namespace": "mcp-servers",
+		"spec": {"image":"registry.example.com/core/demo"}
+	}`)))
+	request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "mcp-team-core",
+		AllowedNamespaces: []string{
+			"mcp-team-core",
+			sharedCatalogNamespace,
+		},
+	}))
+	recorder := httptest.NewRecorder()
+	server.handleRuntimeServers(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -377,7 +413,16 @@ func TestScopedNamespaceForPrincipal(t *testing.T) {
 
 func TestRuntimeGrantApplyNonAdminDefaultsToPrincipalNamespace(t *testing.T) {
 	ctx := context.Background()
-	accessMgr := newTestAccessManager(t)
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	accessMgr := sentinelaccess.NewManager(dynamicfake.NewSimpleDynamicClient(scheme, &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "demo",
+			Namespace: "user-1",
+		},
+	}), nil)
 	server := &RuntimeServer{accessMgr: accessMgr}
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/runtime/grants", bytes.NewReader([]byte(`{
@@ -390,6 +435,10 @@ func TestRuntimeGrantApplyNonAdminDefaultsToPrincipalNamespace(t *testing.T) {
 		Role:      roleUser,
 		Subject:   "user-1",
 		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+			sharedCatalogNamespace,
+		},
 	}))
 	server.handleRuntimeGrantApply(recorder, request)
 	if recorder.Code != http.StatusOK {

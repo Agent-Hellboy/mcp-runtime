@@ -51,8 +51,9 @@ mcp-runtime <group> <subcommand> --help
 | `auth` | Save and inspect platform API credentials for non-kubeconfig platform flows. | `login`, `logout`, `status` |
 | `cluster` | Initialize clusters, inspect health, configure kubeconfig and ingress, provision clusters, manage cert-manager. | `init`, `status`, `config`, `provision`, `cert status\|apply\|wait`, `doctor` |
 | `registry` | Inspect the internal registry, configure an external one, push images. | `status`, `info`, `provision`, `push` |
-| `server` | Manage `MCPServer` resources and operator-facing actions. | `list`, `get`, `create`, `apply`, `export`, `patch`, `delete`, `logs`, `status`, `policy inspect`, `build image` |
+| `server` | Manage `MCPServer` resources and operator-facing actions. | `list`, `get`, `create`, `apply`, `deploy`, `export`, `patch`, `delete`, `logs`, `status`, `policy inspect`, `build image` |
 | `access` | Manage `MCPAccessGrant` and `MCPAgentSession` resources that feed the gateway policy layer. | `grant list/get/apply/delete/disable/enable`, `session list/get/apply/delete/revoke/unrevoke` |
+| `team` | Manage internal team tenancy through the platform API. | `list`, `create` |
 | `sentinel` | Inspect and operate the bundled analytics, gateway, and observability stack. | `status`, `events`, `logs`, `port-forward`, `restart` |
 | `pipeline` | Generate `MCPServer` manifests from metadata and deploy them. | `generate`, `deploy` |
 | `status` | Aggregated platform health (cluster, registry, operator, servers, sentinel). | `status` |
