@@ -199,6 +199,7 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 		{Name: "MCPServer CRD", Detail: "checking that the MCPServer API type is installed", Run: func() DoctorCheck { return checkMCPServerCRD(kubectl) }},
 		{Name: "operator readiness", Detail: "reading ready and desired replicas for the operator deployment", Run: func() DoctorCheck { return checkOperatorReady(kubectl) }},
 		{Name: "operator reconcile errors (last 10m)", Detail: "scanning recent operator logs for reconcile failure patterns", Run: func() DoctorCheck { return checkOperatorRecentReconcileErrors(kubectl) }},
+		{Name: "operator ClusterRole rules", Detail: "verifying mcp-runtime-operator-role grants get/list/watch on the resources the informer cache needs", Run: func() DoctorCheck { return checkOperatorClusterRoleRules(kubectl) }},
 		{Name: "traefik ingressClass", Detail: "checking that the traefik IngressClass exists", Run: func() DoctorCheck { return checkTraefikIngressClass(kubectl) }},
 		{Name: "traefik deployment readiness", Detail: "reading ready and desired replicas for Traefik", Run: func() DoctorCheck { return checkTraefikDeploymentReady(kubectl, distro) }},
 		{Name: "traefik web entrypoint", Detail: "checking the Traefik Service ports for the web entrypoint", Run: func() DoctorCheck { return checkTraefikWebEntrypoint(kubectl, distro) }},
@@ -577,6 +578,111 @@ func checkOperatorRecentReconcileErrors(kubectl core.KubectlRunner) DoctorCheck 
 		OK:     true,
 		Detail: "no reconcile error patterns detected",
 	}
+}
+
+type operatorClusterRoleResource struct {
+	Resource string
+	APIGroup string
+}
+
+// operatorClusterRoleResources is the minimum set of resource/API group pairs
+// the deployed operator ClusterRole must allow (verbs at least get;list;watch)
+// for the controller-runtime informer cache to sync. A drift here typically
+// means the cluster was set up against an older config/rbac/role.yaml and never
+// re-ran setup; the symptom is silent: MCPServer creates land in etcd but the
+// operator never reconciles them.
+var operatorClusterRoleResources = []operatorClusterRoleResource{
+	{Resource: "serviceaccounts", APIGroup: ""},
+	{Resource: "configmaps", APIGroup: ""},
+	{Resource: "services", APIGroup: ""},
+	{Resource: "deployments", APIGroup: "apps"},
+	{Resource: "ingresses", APIGroup: "networking.k8s.io"},
+}
+
+func checkOperatorClusterRoleRules(kubectl core.KubectlRunner) DoctorCheck {
+	const name = "operator ClusterRole rules"
+	const remedy = "re-run `./bin/mcp-runtime setup` (or `kubectl apply -k config/rbac/`) to reapply config/rbac/role.yaml; the controller-runtime informer cache will not sync without these"
+
+	cmd, err := kubectl.CommandArgs([]string{"get", "clusterrole", "mcp-runtime-operator-role", "-o", "json"})
+	if err != nil {
+		return DoctorCheck{Name: name, OK: false, Detail: fmt.Sprintf("kubectl error: %v", err), Remedy: remedy}
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return DoctorCheck{Name: name, OK: false, Detail: fmt.Sprintf("ClusterRole mcp-runtime-operator-role not readable: %v", err), Remedy: remedy}
+	}
+
+	var role struct {
+		Rules []struct {
+			APIGroups []string `json:"apiGroups"`
+			Resources []string `json:"resources"`
+			Verbs     []string `json:"verbs"`
+		} `json:"rules"`
+	}
+	if err := json.Unmarshal(out, &role); err != nil {
+		return DoctorCheck{Name: name, OK: false, Detail: fmt.Sprintf("could not parse ClusterRole JSON: %v", err), Remedy: remedy}
+	}
+
+	required := []string{"get", "list", "watch"}
+
+	var missing []string
+	for _, want := range operatorClusterRoleResources {
+		verbs := map[string]bool{}
+		for _, rule := range role.Rules {
+			if !operatorClusterRoleRuleIncludes(rule.APIGroups, want.APIGroup) ||
+				!operatorClusterRoleRuleIncludes(rule.Resources, want.Resource) {
+				continue
+			}
+			for _, verb := range rule.Verbs {
+				verbs[verb] = true
+			}
+		}
+		if !operatorClusterRoleHasRequiredVerbs(verbs, required) {
+			missing = append(missing, operatorClusterRoleResourceLabel(want))
+		}
+	}
+
+	if len(missing) > 0 {
+		return DoctorCheck{
+			Name:   name,
+			OK:     false,
+			Detail: fmt.Sprintf("ClusterRole mcp-runtime-operator-role missing get/list/watch on: %s", strings.Join(missing, ", ")),
+			Remedy: remedy,
+		}
+	}
+	return DoctorCheck{
+		Name:   name,
+		OK:     true,
+		Detail: fmt.Sprintf("get/list/watch present for %d expected resources", len(operatorClusterRoleResources)),
+	}
+}
+
+func operatorClusterRoleRuleIncludes(values []string, want string) bool {
+	for _, got := range values {
+		if got == want || got == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+func operatorClusterRoleHasRequiredVerbs(verbs map[string]bool, required []string) bool {
+	if verbs["*"] {
+		return true
+	}
+	for _, verb := range required {
+		if !verbs[verb] {
+			return false
+		}
+	}
+	return true
+}
+
+func operatorClusterRoleResourceLabel(resource operatorClusterRoleResource) string {
+	if resource.APIGroup == "" {
+		return resource.Resource
+	}
+	return resource.Resource + "." + resource.APIGroup
 }
 
 func checkTraefikIngressClass(kubectl core.KubectlRunner) DoctorCheck {

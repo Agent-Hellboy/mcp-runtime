@@ -1375,6 +1375,7 @@ func deployOperatorManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.
 		}
 		return wrappedErr
 	}
+	core.Info("Reapplied operator ClusterRole mcp-runtime-operator-role from config/rbac/role.yaml; run `mcp-runtime cluster doctor` if MCPServer creates ever appear unreconciled")
 
 	// Step 3: Apply manager deployment with structured image replacement
 	core.Info("Applying operator deployment")
