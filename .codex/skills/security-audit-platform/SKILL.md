@@ -1,0 +1,262 @@
+---
+name: security-audit-platform
+description: Run a deep platform-wide security audit of MCP Runtime — every component, every trust boundary, against an explicit threat model. Use when Codex is asked for a thorough security review (not a single PR), pre-release sign-off, red-team-style assessment, or to produce a structured report of findings across operator, gateway, sentinel services, registry, ingress, governance, and CI. For change-scoped reviews use security-audit; for SBOM/image/dependency work use supply-chain-audit; for cluster RBAC/PSS/NetworkPolicy hygiene use k8s-hardening-audit.
+---
+
+# Security Audit — Platform-wide
+
+## Overview
+
+Use this skill when the goal is a deep, repository-wide security assessment of
+MCP Runtime, not a PR review. The output is a structured report with a threat
+model, a per-endpoint authn/authz matrix, tenant-isolation probes, protocol
+fuzz results, audit-log integrity tests, TLS hygiene, and DAST against a live
+cluster. Findings use the shared template at
+`.codex/skills/_shared/FINDINGS-TEMPLATE.md`.
+
+This skill is intentionally heavy. Expect hours, not minutes. Skip nothing
+silently — every check that did not run becomes a recorded gap.
+
+## Step 1 — Build the threat model before running tools
+
+Produce a STRIDE table per component. Components to cover:
+
+- **operator** (`cmd/operator/`, `internal/operator/`): reconciles `MCPServer`,
+  `MCPAccessGrant`, `MCPAgentSession`; injects gateway sidecar.
+- **mcp-proxy / gateway** (`services/mcp-proxy/`): in-pod sidecar enforcing
+  rendered policy, emitting audit events.
+- **sentinel-api** (`services/api/`): admin and runtime HTTP API.
+- **sentinel-ui** (`services/ui/`): browser UI, login, dashboards.
+- **sentinel-ingest** (`services/ingest/`): high-volume event intake.
+- **sentinel-processor** (`services/processor/`): event processing, ClickHouse
+  writes.
+- **registry** (`k8s/`, `config/`): Distribution v2 registry (HTTP dev or
+  HTTPS prod).
+- **traefik plugins** (`services/traefik-plugins/`): PII redactor, dev-only
+  middleware.
+- **CRD types** (`api/v1alpha1/`): trust source for resource shapes.
+- **CI** (`.github/workflows/`): build, sign, test, release pathways.
+
+For each component fill: Spoofing, Tampering, Repudiation, Information
+disclosure, Denial of service, Elevation of privilege. State preconditions,
+attacker, and impact.
+
+Attacker profiles to enumerate:
+
+- **anon-public**: someone reaching `platform.<domain>` from the internet.
+- **anon-cluster**: a pod inside the cluster with no creds.
+- **authenticated-user**: holds `UI_API_KEY` or a logged-in session.
+- **admin-user**: holds an `ADMIN_API_KEYS` value.
+- **ingest-only**: holds an `INGEST_API_KEYS` value.
+- **rogue-mcp-image**: a malicious image pulled from the registry.
+- **rogue-tenant-agent**: a session for tenant A trying to reach tenant B.
+- **mitm-ingress / mitm-registry**: someone between client and ingress.
+- **compromised-CI-token**: a leaked GH Actions secret.
+
+Out of scope must be stated explicitly (e.g., "physical access to nodes",
+"k8s control plane CVEs not patched by user").
+
+## Step 2 — Authentication and authorization matrix
+
+For every route in `services/api/main.go` produce a row:
+
+| Path | Method | Anon | UI cookie | UI API key | Admin API key | Ingest API key | Notes |
+
+Compare to `docs/security/authz-matrix.md` (the checked-in source of truth).
+Flag any route in code that is not in the matrix, and any matrix row whose
+expected status diverges from the live response.
+
+Verification harness (run against a test cluster with known keys):
+
+```sh
+BASE=http://localhost:18080
+for row in $(jq -c '.[]' docs/security/authz-matrix.json); do
+  path=$(echo "$row"   | jq -r .path)
+  method=$(echo "$row" | jq -r .method)
+  role=$(echo "$row"   | jq -r .role)
+  want=$(echo "$row"   | jq -r .expect)
+  curl -sS -o /dev/null -w "%{http_code}\n" -X "$method" "$BASE$path" \
+    $(case "$role" in
+        anon)   ;;
+        ui)     echo "-H 'x-api-key: $UI_API_KEY'";;
+        admin)  echo "-H 'x-api-key: $ADMIN_API_KEY'";;
+        ingest) echo "-H 'x-api-key: $INGEST_API_KEY'";;
+      esac) | xargs -I{} test {} = "$want" || echo "MISMATCH $method $path role=$role"
+done
+```
+
+If `authz-matrix.json` does not yet exist, generate it from the markdown table
+or treat building it as the first finding.
+
+Any 200/204 response on a path-role combo where the matrix expects 401/403 is
+**Critical** until proven otherwise.
+
+## Step 3 — Tenant and grant isolation probes
+
+Build adversarial cases against governance. Pre-create:
+
+- subjects `user-A`, `user-B`; agents `agent-A`, `agent-B`.
+- servers `srv-one` in namespace `tenant-a`, `srv-two` in namespace `tenant-b`.
+- grants and sessions for each tenant.
+
+Probes (each is a finding when it succeeds):
+
+- Replay `Mcp-Session-Id` from tenant A against `srv-two` URL.
+- POST `MCPAccessGrant` whose `serverRef` targets a server in another
+  namespace; confirm rejection (CLAUDE.md notes the API check is best-effort,
+  not transactional — race it during reconcile).
+- Disable a grant mid-call: hold an in-flight `tools/call` open, toggle
+  `POST /api/runtime/grants/{ns}/{name}/disable`, assert the next request is
+  denied within the proxy poll window.
+- Toggle `revoke` on a session and immediately reuse the session ID.
+- Apply `MCPServer` whose `ingressHost` collides with another tenant's host.
+- Apply a session whose `consentedTrust` exceeds the grant `maxTrust`.
+
+## Step 4 — Protocol fuzzing of the MCP request path
+
+Fuzz the proxy/gateway request handling. Targets:
+
+- `initialize` with malformed JSON, missing `Mcp-Protocol-Version`,
+  unsupported version, oversized params.
+- `notifications/initialized` before any `initialize`.
+- `tools/call` for unknown tool, with a valid tool but malformed arguments,
+  with deeply nested JSON (≥1000 levels), with extremely large argument
+  bodies (≥10MB).
+- Replayed `Mcp-Session-Id` across servers, expired session IDs,
+  session-ID prefix attacks (`../`, NUL bytes).
+- Race: parallel `notifications/initialized` for the same session;
+  parallel `tools/call` against the same session ID from N goroutines.
+
+If a Go fuzz target exists in `services/mcp-proxy/`:
+`go test -run='^$' -fuzz='Fuzz<Name>' -fuzztime=300s ./...`
+
+If no fuzz target exists at this trust boundary, that absence is itself a
+finding (Medium).
+
+## Step 5 — DoS and resource exhaustion
+
+- **Slow read**: open many connections to `mcp.<domain>/<name>/mcp`, send one
+  byte per second; assert connection limits and read-timeout enforcement.
+- **Large body**: `dd if=/dev/urandom bs=1M count=200 | curl -X POST --data-binary @- ...`;
+  assert max-body limits.
+- **Header amplification**: 1000 custom headers; assert max-header limits.
+- **Session map growth**: open 100k sessions without `tools/call`; watch
+  proxy memory and confirm idle eviction.
+- **Audit storm**: drive sustained allow+deny traffic; assert ingest backlog
+  bound and that the proxy fails closed when ingest is unreachable rather
+  than dropping audit events silently.
+- **Ingest endpoint**: replay valid keys at high QPS to confirm rate-limits
+  and backpressure exist; absence is a Medium finding.
+
+## Step 6 — Audit log integrity
+
+Audit events must be tamper-evident at the boundary the operator controls:
+
+- Confirm every `tools/call` (allow and deny) emits exactly one event.
+- Confirm denied calls do not include the unredacted argument payload.
+- Confirm credentials, headers, cookies, and JWTs do not appear in audit
+  fields.
+- Confirm the event includes subject, agent, server, tool, decision, trust,
+  timestamp, and a stable correlation ID.
+- Test an ingest outage: events must buffer or fail closed, not be dropped.
+- Test event ordering under parallel calls; out-of-order without a sequence
+  ID is a Medium finding.
+- Confirm processor writes to ClickHouse use parameterized queries (grep
+  for string concatenation in `services/processor/`).
+
+## Step 7 — TLS hygiene and ingress posture
+
+Run against the live ingress:
+
+- `testssl.sh https://platform.<domain>`,
+  `testssl.sh https://mcp.<domain>`,
+  `testssl.sh https://registry.<domain>`.
+  Expect TLS 1.2+, no weak ciphers, no TLS 1.0/1.1, OCSP-stapling on prod
+  certs, cert lifetime ≤90d for ACME-issued.
+- HTTP→HTTPS redirect on `platform.<domain>`. Confirm via
+  `curl -I http://platform.<domain>` returns 308.
+- Security headers on every UI/API response: `Strict-Transport-Security`,
+  `Content-Security-Policy`, `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`,
+  `Permissions-Policy` for sensors. Each missing header is at least Medium.
+- Confirm Grafana and Prometheus are NOT reachable on the public platform
+  host (CLAUDE.md invariant). Reachability is a High finding.
+- Confirm the registry ingress in production does not reference the dev-only
+  `pii-redactor@file` middleware.
+
+## Step 8 — Log and response leak audit
+
+Static and dynamic checks for credential leakage:
+
+```sh
+grep -RIn -E '(api[_-]?key|password|secret|token|bearer|cookie|x-api-key)' \
+     --include='*.go' services/ internal/ pkg/ cmd/
+```
+
+Triage every match: is the value being logged, returned, or only read into a
+struct? For the dynamic side, run sustained traffic and grep
+`kubectl logs deploy/<name> -n mcp-sentinel` for the actual secret values from
+`mcp-sentinel-secrets` — anything found is at least High.
+
+Check error responses for stack traces, internal paths, or environment
+variables — any of those is Medium.
+
+## Step 9 — Deserialization and injection surfaces
+
+- Confirm YAML loaders use `sigs.k8s.io/yaml`, not bare
+  `gopkg.in/yaml.v2 Unmarshal` against untrusted input. `grep -RIn 'yaml.v2'`
+  and triage.
+- JSON unmarshalling: confirm all HTTP handlers cap body size before
+  `json.NewDecoder(r.Body).Decode(...)`. Missing limit is Medium.
+- SQL/ClickHouse: `grep -RIn 'fmt.Sprintf' services/processor/` for any
+  format-string into a query. Any hit is High until proven safe.
+- Postgres in `mcp-sentinel`: same search across `services/api/` for query
+  building.
+- Shell exec: `grep -RIn 'exec.Command' --include='*.go'`. Any non-constant
+  first arg is High.
+
+## Step 10 — SSRF and path traversal
+
+- Image refs: `pkg/metadata/host_resolve.go` and registry parsing must reject
+  `127.0.0.1`, `169.254.169.254`, `[::1]`, IPv6 zone IDs, schemes other than
+  `http`/`https`, and registry hosts that resolve to private CIDRs in prod.
+- Ingress hosts: confirm `MCP_PLATFORM_DOMAIN` parsing rejects values that
+  contain a path or query (e.g., `example.com/../`).
+- Manifest paths: `--ingress-manifest` and any other CLI path flag must not
+  follow symlinks out of the repo root.
+- Registry credential storage in `services/api/registry_credentials.go`: any
+  file path comes from request input must be normalized via `filepath.Clean`
+  and rejected if it escapes a known base.
+
+## Step 11 — DAST against a live cluster
+
+When a test cluster is available:
+
+- `nuclei -u https://platform.<domain>` with default templates.
+- ZAP baseline: `docker run --rm -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t https://platform.<domain>`.
+- `kube-hunter --remote <ingress-ip>`.
+
+Treat all High and Critical findings as in-scope; deduplicate against earlier
+manual findings.
+
+## Step 12 — Run static and supply-chain scanners (full)
+
+- `gitleaks detect --source . --config .gitleaks.toml --redact`.
+- `gosec ./...` (pinned `v2.26.1` per CI).
+- `govulncheck ./...` from repo root and from each `services/<name>/`.
+- `trivy fs --scanners vuln,secret,license,misconfig --severity CRITICAL,HIGH --ignore-unfixed --skip-dirs inspirations/mcp-gateway-registry .`.
+- `semgrep --config=auto` (and any project rules in `.semgrep/` if added).
+- For container images and SBOM/cosign work, hand off to
+  `supply-chain-audit`.
+- For RBAC, PSS, NetworkPolicy, and manifest hygiene, hand off to
+  `k8s-hardening-audit`.
+
+## Step 13 — Report
+
+Use `.codex/skills/_shared/FINDINGS-TEMPLATE.md`. Required sections in the
+order specified there: Summary, Threat model assumptions, Findings, Scanner
+output, Checks run, Checks skipped, Remediation plan.
+
+State the commit SHA, cluster context (Kind / k3s / prod-like), date, and the
+auditor identity (human or agent name). Tally findings by severity at the
+top.
