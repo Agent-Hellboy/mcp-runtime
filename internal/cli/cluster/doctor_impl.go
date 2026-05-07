@@ -580,18 +580,23 @@ func checkOperatorRecentReconcileErrors(kubectl core.KubectlRunner) DoctorCheck 
 	}
 }
 
-// operatorClusterRoleResources is the minimum set of core/k8s resources the
-// deployed operator ClusterRole must allow (verbs at least get;list;watch) for
-// the controller-runtime informer cache to sync. A drift here typically means
-// the cluster was set up against an older config/rbac/role.yaml and never
+type operatorClusterRoleResource struct {
+	Resource string
+	APIGroup string
+}
+
+// operatorClusterRoleResources is the minimum set of resource/API group pairs
+// the deployed operator ClusterRole must allow (verbs at least get;list;watch)
+// for the controller-runtime informer cache to sync. A drift here typically
+// means the cluster was set up against an older config/rbac/role.yaml and never
 // re-ran setup; the symptom is silent: MCPServer creates land in etcd but the
 // operator never reconciles them.
-var operatorClusterRoleResources = []string{
-	"serviceaccounts",
-	"configmaps",
-	"services",
-	"deployments",
-	"ingresses",
+var operatorClusterRoleResources = []operatorClusterRoleResource{
+	{Resource: "serviceaccounts", APIGroup: ""},
+	{Resource: "configmaps", APIGroup: ""},
+	{Resource: "services", APIGroup: ""},
+	{Resource: "deployments", APIGroup: "apps"},
+	{Resource: "ingresses", APIGroup: "networking.k8s.io"},
 }
 
 func checkOperatorClusterRoleRules(kubectl core.KubectlRunner) DoctorCheck {
@@ -619,43 +624,21 @@ func checkOperatorClusterRoleRules(kubectl core.KubectlRunner) DoctorCheck {
 	}
 
 	required := []string{"get", "list", "watch"}
-	hasVerbs := func(verbs []string) bool {
-		set := map[string]bool{}
-		for _, v := range verbs {
-			set[v] = true
-		}
-		if set["*"] {
-			return true
-		}
-		for _, r := range required {
-			if !set[r] {
-				return false
-			}
-		}
-		return true
-	}
 
 	var missing []string
 	for _, want := range operatorClusterRoleResources {
-		ok := false
+		verbs := map[string]bool{}
 		for _, rule := range role.Rules {
-			covered := false
-			for _, res := range rule.Resources {
-				if res == want || res == "*" {
-					covered = true
-					break
-				}
-			}
-			if !covered {
+			if !operatorClusterRoleRuleIncludes(rule.APIGroups, want.APIGroup) ||
+				!operatorClusterRoleRuleIncludes(rule.Resources, want.Resource) {
 				continue
 			}
-			if hasVerbs(rule.Verbs) {
-				ok = true
-				break
+			for _, verb := range rule.Verbs {
+				verbs[verb] = true
 			}
 		}
-		if !ok {
-			missing = append(missing, want)
+		if !operatorClusterRoleHasRequiredVerbs(verbs, required) {
+			missing = append(missing, operatorClusterRoleResourceLabel(want))
 		}
 	}
 
@@ -672,6 +655,34 @@ func checkOperatorClusterRoleRules(kubectl core.KubectlRunner) DoctorCheck {
 		OK:     true,
 		Detail: fmt.Sprintf("get/list/watch present for %d expected resources", len(operatorClusterRoleResources)),
 	}
+}
+
+func operatorClusterRoleRuleIncludes(values []string, want string) bool {
+	for _, got := range values {
+		if got == want || got == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+func operatorClusterRoleHasRequiredVerbs(verbs map[string]bool, required []string) bool {
+	if verbs["*"] {
+		return true
+	}
+	for _, verb := range required {
+		if !verbs[verb] {
+			return false
+		}
+	}
+	return true
+}
+
+func operatorClusterRoleResourceLabel(resource operatorClusterRoleResource) string {
+	if resource.APIGroup == "" {
+		return resource.Resource
+	}
+	return resource.Resource + "." + resource.APIGroup
 }
 
 func checkTraefikIngressClass(kubectl core.KubectlRunner) DoctorCheck {

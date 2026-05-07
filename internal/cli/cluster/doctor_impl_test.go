@@ -577,6 +577,10 @@ func TestRunDoctorAggregates(t *testing.T) {
 				return &core.MockCommand{OutputData: []byte("web:8000:32080\n")}
 			case contains(spec.Args, "jsonpath={.spec.ports[0].nodePort}"):
 				return &core.MockCommand{OutputData: []byte("32000")}
+			case contains(spec.Args, "get") && contains(spec.Args, "pod") && argContains(spec.Args, "imageID"):
+				return &core.MockCommand{OutputData: []byte("docker-pullable://registry.k8s.io/pause@sha256:test")}
+			case contains(spec.Args, "get") && contains(spec.Args, "pods") && argContains(spec.Args, "spec.nodeName"):
+				return &core.MockCommand{OutputData: []byte("node-a")}
 			case contains(spec.Args, "curl"):
 				return &core.MockCommand{OutputData: []byte("HTTP/1.1 503 Service Unavailable\n")}
 			}
@@ -614,6 +618,10 @@ func TestRunDoctorWithProgressReportsEachCheck(t *testing.T) {
 				return &core.MockCommand{OutputData: []byte("web:8000:32080\n")}
 			case contains(spec.Args, "jsonpath={.spec.ports[0].nodePort}"):
 				return &core.MockCommand{OutputData: []byte("32000")}
+			case contains(spec.Args, "get") && contains(spec.Args, "pod") && argContains(spec.Args, "imageID"):
+				return &core.MockCommand{OutputData: []byte("docker-pullable://registry.k8s.io/pause@sha256:test")}
+			case contains(spec.Args, "get") && contains(spec.Args, "pods") && argContains(spec.Args, "spec.nodeName"):
+				return &core.MockCommand{OutputData: []byte("node-a")}
 			case contains(spec.Args, "curl"):
 				return &core.MockCommand{OutputData: []byte("HTTP/1.1 503 Service Unavailable\n")}
 			}
@@ -943,6 +951,66 @@ func TestCheckOperatorRecentReconcileErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCheckOperatorClusterRoleRules(t *testing.T) {
+	t.Run("accepts split verbs with matching API groups", func(t *testing.T) {
+		check := checkOperatorClusterRoleRulesFromJSON(t, `{
+			"rules": [
+				{"apiGroups":[""],"resources":["serviceaccounts","configmaps","services"],"verbs":["get"]},
+				{"apiGroups":[""],"resources":["serviceaccounts","configmaps","services"],"verbs":["list"]},
+				{"apiGroups":[""],"resources":["serviceaccounts","configmaps","services"],"verbs":["watch"]},
+				{"apiGroups":["apps"],"resources":["deployments"],"verbs":["get","list"]},
+				{"apiGroups":["apps"],"resources":["deployments"],"verbs":["watch"]},
+				{"apiGroups":["networking.k8s.io"],"resources":["ingresses"],"verbs":["get"]},
+				{"apiGroups":["networking.k8s.io"],"resources":["ingresses"],"verbs":["list","watch"]}
+			]
+		}`)
+		if !check.OK {
+			t.Fatalf("expected OK for additive RBAC rules, got detail=%q", check.Detail)
+		}
+	})
+
+	t.Run("requires the expected API group", func(t *testing.T) {
+		check := checkOperatorClusterRoleRulesFromJSON(t, `{
+			"rules": [
+				{"apiGroups":[""],"resources":["serviceaccounts","configmaps","services"],"verbs":["get","list","watch"]},
+				{"apiGroups":["extensions"],"resources":["deployments","ingresses"],"verbs":["get","list","watch"]}
+			]
+		}`)
+		if check.OK {
+			t.Fatal("expected failure for permissions granted on the wrong API groups")
+		}
+		for _, want := range []string{"deployments.apps", "ingresses.networking.k8s.io"} {
+			if !strings.Contains(check.Detail, want) {
+				t.Fatalf("detail should mention %q, got %q", want, check.Detail)
+			}
+		}
+	})
+
+	t.Run("accepts wildcard grants", func(t *testing.T) {
+		check := checkOperatorClusterRoleRulesFromJSON(t, `{
+			"rules": [
+				{"apiGroups":["*"],"resources":["*"],"verbs":["*"]}
+			]
+		}`)
+		if !check.OK {
+			t.Fatalf("expected OK for wildcard RBAC rule, got detail=%q", check.Detail)
+		}
+	})
+}
+
+func checkOperatorClusterRoleRulesFromJSON(t *testing.T, body string) DoctorCheck {
+	t.Helper()
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if !contains(spec.Args, "mcp-runtime-operator-role") {
+				t.Fatalf("unexpected command args: %v", spec.Args)
+			}
+			return &core.MockCommand{OutputData: []byte(body)}
+		},
+	}
+	return checkOperatorClusterRoleRules(core.NewTestKubectlClient(mock))
 }
 
 func TestCheckMCPServerReconcileSmoke(t *testing.T) {
