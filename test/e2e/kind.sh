@@ -107,6 +107,14 @@ RUST_EXAMPLE_SERVER_ROUTE="${RUST_EXAMPLE_SERVER_ROUTE:-/${RUST_EXAMPLE_SERVER_N
 GO_EXAMPLE_SERVER_NAME="${GO_EXAMPLE_SERVER_NAME:-go-example-mcp}"
 GO_EXAMPLE_SERVER_HOST="${GO_EXAMPLE_SERVER_HOST:-${PLATFORM_HOST}}"
 GO_EXAMPLE_SERVER_ROUTE="${GO_EXAMPLE_SERVER_ROUTE:-/${GO_EXAMPLE_SERVER_NAME}/mcp}"
+MT_TENANT_A="${MT_TENANT_A:-mt-tenant-a}"
+MT_TENANT_B="${MT_TENANT_B:-mt-tenant-b}"
+MT_HUMAN_A="${MT_HUMAN_A:-alice}"
+MT_AGENT_A="${MT_AGENT_A:-alice-agent}"
+MT_SESSION_A="${MT_SESSION_A:-alice-session}"
+MT_HUMAN_B="${MT_HUMAN_B:-bob}"
+MT_AGENT_B="${MT_AGENT_B:-bob-agent}"
+MT_SESSION_B="${MT_SESSION_B:-bob-session}"
 HUMAN_ID="${HUMAN_ID:-user-123}"
 AGENT_ID="${AGENT_ID:-ops-agent}"
 SESSION_ID="${SESSION_ID:-sess-ops-agent}"
@@ -290,12 +298,59 @@ wait_port() {
   local tries="${2:-60}"
   local i
   for i in $(seq 1 "${tries}"); do
-    if (echo >/dev/tcp/127.0.0.1/"${port}") >/dev/null 2>&1; then
+    if port_is_listening "${port}"; then
       return 0
     fi
     sleep 1
   done
   echo "timed out waiting for localhost:${port}" >&2
+  return 1
+}
+
+port_is_listening() {
+  local port="$1"
+  (echo >/dev/tcp/127.0.0.1/"${port}") >/dev/null 2>&1
+}
+
+require_port_available() {
+  local port="$1"
+  local label="$2"
+
+  if port_is_listening "${port}"; then
+    echo "[error] localhost:${port} is already in use before starting ${label}" >&2
+    echo "[error] stop the existing listener or override the matching E2E port environment variable" >&2
+    return 1
+  fi
+}
+
+wait_managed_port() {
+  local port="$1"
+  local pid="$2"
+  local log_file="$3"
+  local label="$4"
+  local tries="${5:-60}"
+  local i
+
+  for i in $(seq 1 "${tries}"); do
+    if ! kill -0 "${pid}" >/dev/null 2>&1; then
+      echo "[error] ${label} exited before localhost:${port} became available" >&2
+      if [[ -s "${log_file}" ]]; then
+        echo "[debug] ${label} log:" >&2
+        cat "${log_file}" >&2 || true
+      fi
+      return 1
+    fi
+    if port_is_listening "${port}"; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "timed out waiting for ${label} on localhost:${port}" >&2
+  if [[ -s "${log_file}" ]]; then
+    echo "[debug] ${label} log:" >&2
+    cat "${log_file}" >&2 || true
+  fi
   return 1
 }
 
@@ -387,9 +442,12 @@ port_forward_bg() {
   local local_port="$3"
   local remote_port="$4"
   local log_file="$5"
+  local label="port-forward ${namespace}/svc/${service}"
 
+  require_port_available "${local_port}" "${label}"
   kubectl port-forward -n "${namespace}" "svc/${service}" "${local_port}:${remote_port}" >"${log_file}" 2>&1 &
   PIDS+=("$!")
+  wait_managed_port "${local_port}" "$!" "${log_file}" "${label}"
 }
 
 port_forward_resource_bg() {
@@ -398,23 +456,29 @@ port_forward_resource_bg() {
   local local_port="$3"
   local remote_port="$4"
   local log_file="$5"
+  local label="port-forward ${namespace}/${resource}"
 
+  require_port_available "${local_port}" "${label}"
   kubectl port-forward -n "${namespace}" "${resource}" "${local_port}:${remote_port}" >"${log_file}" 2>&1 &
   PIDS+=("$!")
+  wait_managed_port "${local_port}" "$!" "${log_file}" "${label}"
 }
 
 start_header_proxy_bg() {
   local local_port="$1"
   local upstream_origin="$2"
   local log_file="$3"
+  local label="header proxy ${local_port} -> ${upstream_origin}"
   shift 3
 
+  require_port_available "${local_port}" "${label}"
   python3 "${PROJECT_ROOT}/test/e2e/mcp_header_proxy.py" \
     --listen-host 127.0.0.1 \
     --listen-port "${local_port}" \
     --upstream-origin "${upstream_origin}" \
     "$@" >"${log_file}" 2>&1 &
   PIDS+=("$!")
+  wait_managed_port "${local_port}" "$!" "${log_file}" "${label}"
 }
 
 build_headers_json() {
@@ -2027,16 +2091,22 @@ if cache_mode_enabled; then
     "${SERVER_NAME}-grant" \
     "${SERVER_NAME}-e2e-api-grant" \
     "${OAUTH_SERVER_NAME}-grant" \
+    "alice-${MT_TENANT_A}" \
+    "bob-${MT_TENANT_B}" \
     --ignore-not-found --wait=true >/dev/null
   kubectl delete mcpagentsession -n mcp-servers \
     "${SESSION_ID}" \
     "${SERVER_NAME}-e2e-api-session" \
+    "${MT_SESSION_A}" \
+    "${MT_SESSION_B}" \
     --ignore-not-found --wait=true >/dev/null
   echo "[cache] removing previous policy/OAuth test workloads before cluster doctor"
-  kubectl delete mcpserver -n mcp-servers "${SERVER_NAME}" "${OAUTH_SERVER_NAME}" --ignore-not-found --wait=true >/dev/null
-  kubectl delete deployment -n mcp-servers "${SERVER_NAME}" "${OAUTH_SERVER_NAME}" --ignore-not-found --wait=true >/dev/null
+  kubectl delete mcpserver -n mcp-servers "${SERVER_NAME}" "${OAUTH_SERVER_NAME}" "${MT_TENANT_A}" "${MT_TENANT_B}" --ignore-not-found --wait=true >/dev/null
+  kubectl delete deployment -n mcp-servers "${SERVER_NAME}" "${OAUTH_SERVER_NAME}" "${MT_TENANT_A}" "${MT_TENANT_B}" --ignore-not-found --wait=true >/dev/null
   kubectl delete pod -n mcp-servers -l "app=${SERVER_NAME}" --ignore-not-found --wait=false >/dev/null
   kubectl delete pod -n mcp-servers -l "app=${OAUTH_SERVER_NAME}" --ignore-not-found --wait=false >/dev/null
+  kubectl delete pod -n mcp-servers -l "app=${MT_TENANT_A}" --ignore-not-found --wait=false >/dev/null
+  kubectl delete pod -n mcp-servers -l "app=${MT_TENANT_B}" --ignore-not-found --wait=false >/dev/null
   echo "[cache] deleting stale pending mcp-servers pods before cluster doctor"
   kubectl delete pod -n mcp-servers --field-selector=status.phase=Pending --ignore-not-found --wait=false >/dev/null
   echo "[cache] restarting operator before cluster doctor to avoid stale retained reconcile logs"
@@ -2059,12 +2129,13 @@ run_cli_allowing_cert_prereq_failure cluster-cert-wait ./bin/mcp-runtime cluster
 ./bin/mcp-runtime sentinel status
 ./bin/mcp-runtime sentinel events >"${WORKDIR}/sentinel-events.txt"
 ./bin/mcp-runtime sentinel logs api --tail 20 >"${WORKDIR}/sentinel-api-logs.txt"
+require_port_available "${CLI_SENTINEL_API_PORT}" "sentinel CLI port-forward"
 ./bin/mcp-runtime sentinel port-forward api \
   --port "${CLI_SENTINEL_API_PORT}" \
   --address 127.0.0.1 >"${WORKDIR}/sentinel-cli-port-forward.log" 2>&1 &
 _cli_pf_pid="$!"
 PIDS+=("${_cli_pf_pid}")
-wait_port "${CLI_SENTINEL_API_PORT}" 30
+wait_managed_port "${CLI_SENTINEL_API_PORT}" "${_cli_pf_pid}" "${WORKDIR}/sentinel-cli-port-forward.log" "sentinel CLI port-forward" 30
 kill "${_cli_pf_pid}" >/dev/null 2>&1 || true
 wait "${_cli_pf_pid}" 2>/dev/null || true
 
@@ -4313,16 +4384,8 @@ if scenario_selected "multitenancy"; then
   echo "[multitenancy] preparing two-tenant isolation probe"
 
   MT_NS="mcp-servers"
-  MT_TENANT_A="mt-tenant-a"
-  MT_TENANT_B="mt-tenant-b"
-  MT_HUMAN_A="alice"
-  MT_AGENT_A="alice-agent"
-  MT_SESSION_A="alice-session"
-  MT_HUMAN_B="bob"
-  MT_AGENT_B="bob-agent"
-  MT_SESSION_B="bob-session"
-  MT_IMAGE_REPO="registry.registry.svc.cluster.local:5000/library/${SERVER_NAME}"
-  MT_IMAGE_TAG="latest"
+  MT_IMAGE_REPO="${SERVER_IMAGE%:*}"
+  MT_IMAGE_TAG="${SERVER_IMAGE##*:}"
 
   mt_apply_tenant() {
     local name="$1" prefix="$2"
@@ -4366,8 +4429,8 @@ spec:
 EOF
   }
 
-  mt_apply_tenant "${MT_TENANT_A}" "mt-tenant-a"
-  mt_apply_tenant "${MT_TENANT_B}" "mt-tenant-b"
+  mt_apply_tenant "${MT_TENANT_A}" "${MT_TENANT_A}"
+  mt_apply_tenant "${MT_TENANT_B}" "${MT_TENANT_B}"
 
   echo "[multitenancy] waiting for tenant rollouts"
   wait_for_deployment_exists "${MT_NS}" "${MT_TENANT_A}"
@@ -4436,13 +4499,13 @@ EOF
   }
   mt_wait_for_session_in_policy "${MT_TENANT_A}" "${MT_SESSION_A}"
   mt_wait_for_session_in_policy "${MT_TENANT_B}" "${MT_SESSION_B}"
-  # Sidecar polls the rendered policy file; let it observe the new sessions
-  # before issuing the matrix.
-  sleep 6
+  # The sidecar reloads from a ConfigMap volume, which can lag behind the
+  # rendered ConfigMap. The matrix below retries each expected decision until
+  # the sidecar observes the updated policy.
 
   echo "[multitenancy] running cross-tenant deny matrix"
-  MT_BASE_A="http://localhost:${TRAEFIK_PORT}/mt-tenant-a/mcp"
-  MT_BASE_B="http://localhost:${TRAEFIK_PORT}/mt-tenant-b/mcp"
+  MT_BASE_A="http://localhost:${TRAEFIK_PORT}/${MT_TENANT_A}/mcp"
+  MT_BASE_B="http://localhost:${TRAEFIK_PORT}/${MT_TENANT_B}/mcp"
   MT_REPORT="${WORKDIR}/multitenancy-matrix.json"
 
   MT_BASE_A="${MT_BASE_A}" \
@@ -4452,7 +4515,7 @@ EOF
   MT_HUMAN_B="${MT_HUMAN_B}" MT_AGENT_B="${MT_AGENT_B}" MT_SESSION_B="${MT_SESSION_B}" \
   MT_REPORT="${MT_REPORT}" \
   python3 <<'PY'
-import json, os, subprocess, sys, tempfile
+import json, os, subprocess, sys, tempfile, time
 
 PROTO = os.environ["MT_PROTO"]
 A = os.environ["MT_BASE_A"]
@@ -4484,21 +4547,56 @@ def post(base, body, human, agent, sess, mcp_session=""):
             k, sep, v = line.partition(":")
             if sep and k.lower() == "mcp-session-id":
                 next_sess = v.strip()
-        return status, next_sess
+        with open(bodyf) as fh: response_body = fh.read()
+        return status, next_sess, response_body, proc.stderr
 
-def call(label, base, human, agent, sess, tool, expect_status):
-    init_status, mcp_sess = post(base, {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}, human, agent, sess)
+def run_call(label, base, human, agent, sess, tool, expect_status):
+    init_status, mcp_sess, init_body, init_stderr = post(base, {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}, human, agent, sess)
     if init_status != 200:
         # Cross-tenant or unknown-session requests are rejected at initialize;
         # that is the gateway behavior we want to assert.
-        ok = (init_status == expect_status)
-        report.append({"case": label, "expect": expect_status, "got_at": "initialize", "got": init_status, "ok": ok})
-        return
-    post(base, {"jsonrpc":"2.0","method":"notifications/initialized"}, human, agent, sess, mcp_sess)
+        return {
+            "case": label,
+            "expect": expect_status,
+            "got_at": "initialize",
+            "got": init_status,
+            "body": init_body,
+            "stderr": init_stderr,
+            "ok": init_status == expect_status,
+        }
+    notify_status, _, notify_body, notify_stderr = post(base, {"jsonrpc":"2.0","method":"notifications/initialized"}, human, agent, sess, mcp_sess)
+    if notify_status not in (200, 202):
+        return {
+            "case": label,
+            "expect": expect_status,
+            "got_at": "notifications/initialized",
+            "got": notify_status,
+            "body": notify_body,
+            "stderr": notify_stderr,
+            "ok": notify_status == expect_status,
+        }
     args = {"a": 2, "b": 3} if tool == "add" else {"message": "hello"}
-    call_status, _ = post(base, {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":tool,"arguments":args}}, human, agent, sess, mcp_sess)
-    ok = (call_status == expect_status)
-    report.append({"case": label, "expect": expect_status, "got_at": "tools/call", "got": call_status, "ok": ok})
+    call_status, _, call_body, call_stderr = post(base, {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":tool,"arguments":args}}, human, agent, sess, mcp_sess)
+    return {
+        "case": label,
+        "expect": expect_status,
+        "got_at": "tools/call",
+        "got": call_status,
+        "body": call_body,
+        "stderr": call_stderr,
+        "ok": call_status == expect_status,
+    }
+
+def call(label, base, human, agent, sess, tool, expect_status, retries=90, delay=2):
+    last = {}
+    for attempt in range(1, retries + 1):
+        last = run_call(label, base, human, agent, sess, tool, expect_status)
+        last["attempts"] = attempt
+        if last["ok"]:
+            report.append(last)
+            return
+        time.sleep(delay)
+    report.append(last)
 
 H_A = (os.environ["MT_HUMAN_A"], os.environ["MT_AGENT_A"], os.environ["MT_SESSION_A"])
 H_B = (os.environ["MT_HUMAN_B"], os.environ["MT_AGENT_B"], os.environ["MT_SESSION_B"])
@@ -4518,7 +4616,12 @@ with open(os.environ["MT_REPORT"], "w") as fh:
 failed = [r for r in report if not r["ok"]]
 for r in report:
     mark = "PASS" if r["ok"] else "FAIL"
-    print(f"  [{mark}] {r['case']:<42}  expect={r['expect']}  got={r['got']} ({r['got_at']})")
+    detail = ""
+    if not r["ok"]:
+        body = " ".join(str(r.get("body", "")).split())
+        if body:
+            detail = f" body={body[:160]}"
+    print(f"  [{mark}] {r['case']:<42}  expect={r['expect']}  got={r['got']} ({r['got_at']}, attempts={r.get('attempts', 1)}){detail}")
 sys.exit(1 if failed else 0)
 PY
 
