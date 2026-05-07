@@ -550,6 +550,10 @@ namespace. Use `/api/dashboard/summary`, `/api/events`, or
 uses `/api/analytics/usage` for its MCP server, human/agent, tool, and decision
 rollups.
 
+To exercise tenant isolation between two `MCPServer` resources and per-subject
+grant enforcement on the same cluster, see
+[Sentinel → Verifying multi-tenancy](sentinel.md#verifying-multi-tenancy).
+
 ## 4. Install the platform stack
 
 ```bash

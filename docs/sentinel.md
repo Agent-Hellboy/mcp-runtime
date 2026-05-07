@@ -261,6 +261,45 @@ refund_invoice:allow:high
 
 CLI parity: `mcp-runtime access grant` and `mcp-runtime access session` cover the same CRUD flows. CRs are the source of truth — the UI is a convenience layer.
 
+## Verifying multi-tenancy
+
+Each `MCPServer` is its own tenant: the operator renders a per-server policy ConfigMap (`<server>-gateway-policy`) holding only the grants and sessions whose `serverRef` points at that server, and the `mcp-gateway` sidecar evaluates traffic against that policy alone. To verify isolation end-to-end, deploy two gateway-enabled servers in `mcp-servers` and grant disjoint subjects on each.
+
+Apply two `MCPServer` resources (same image is fine, different `metadata.name` and `publicPathPrefix`) with `gateway.enabled: true`, `auth.mode: header`, `policy.mode: allow-list`, and `session.required: true`. Then apply two grant + session pairs:
+
+```yaml
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAccessGrant
+metadata: {name: alice-tenant-a, namespace: mcp-servers}
+spec:
+  serverRef: {name: tenant-a-mcp}
+  subject:   {humanID: alice, agentID: alice-agent}
+  maxTrust: high
+  toolRules: [{name: add, decision: allow, requiredTrust: low}]
+---
+# bob-tenant-b mirrors the above with serverRef tenant-b-mcp and a different toolRule
+```
+
+Confirm each server's policy contains only its own subject:
+
+```bash
+mcp-runtime server policy inspect tenant-a-mcp --namespace mcp-servers   # alice only
+mcp-runtime server policy inspect tenant-b-mcp --namespace mcp-servers   # bob only
+```
+
+Drive the cross-tenant matrix using the configured identity headers (`X-MCP-Human-ID`, `X-MCP-Agent-ID`, `X-MCP-Agent-Session`). The expected outcomes distinguish the two deny modes:
+
+| Subject | Tenant | Tool | Outcome |
+|---|---|---|---|
+| alice | A | grant-listed tool | **200** allow |
+| alice | A | other tool | **403** — known subject, tool not in grant |
+| alice | B | any | **401** — gateway has no session/grant for alice on B |
+| bob | B | grant-listed tool | **200** allow |
+| bob | A | any | **401** |
+| no headers / unknown session | any | any | **401** (`reason: session_not_found`) |
+
+The 401-vs-403 split is the multi-tenancy signal: cross-tenant traffic is rejected at session lookup before tool evaluation; same-tenant unallowed tools are rejected by allow-list policy. Audit confirms it: `/api/events/filter?server=<name>` returns events scoped to that server only, and cross-tenant attempts appear as denies on the *targeted* server with the source subject preserved — never on the other tenant.
+
 ## Manifests
 
 | Group | Files |
