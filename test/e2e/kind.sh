@@ -9,7 +9,7 @@ set -euo pipefail
 # - verify audit events plus trace/log backends
 #
 # Set E2E_SCENARIOS to a comma-separated subset for local debugging.
-# Supported values: all, smoke-auth, governance, trust, oauth, observability.
+# Supported values: all, smoke-auth, governance, trust, oauth, observability, multitenancy.
 # observability requires the full traffic suite: smoke-auth, governance, trust, oauth.
 #
 # For repeated local debugging, set E2E_CACHE_MODE=1. Cache mode implies
@@ -213,11 +213,11 @@ validate_scenarios() {
   local scenario
   for scenario in "${E2E_SCENARIO_LIST[@]}"; do
     case "${scenario}" in
-      all|smoke-auth|governance|trust|oauth|observability)
+      all|smoke-auth|governance|trust|oauth|observability|multitenancy)
         ;;
       *)
         echo "unsupported E2E scenario: ${scenario}" >&2
-        echo "supported values: all, smoke-auth, governance, trust, oauth, observability" >&2
+        echo "supported values: all, smoke-auth, governance, trust, oauth, observability, multitenancy" >&2
         exit 1
         ;;
     esac
@@ -4300,6 +4300,235 @@ print("-" * (width + 8))
 for key, value in rows:
     print(f"{key:{width}}  {value}")
 PY
+fi
+
+if scenario_selected "multitenancy"; then
+  # Multi-tenancy isolation: deploy two gateway-enabled MCPServers in mcp-servers
+  # that reuse the policy-mcp-server image already in the kind registry, grant
+  # alice on tenant-a and bob on tenant-b, then assert the cross-tenant deny
+  # matrix:
+  #   - allowed tool on own tenant   -> 200
+  #   - same-tenant disallowed tool  -> 403 (subject known, tool not in grant)
+  #   - cross-tenant request         -> 401 (no session/grant for subject on that server)
+  echo "[multitenancy] preparing two-tenant isolation probe"
+
+  MT_NS="mcp-servers"
+  MT_TENANT_A="mt-tenant-a"
+  MT_TENANT_B="mt-tenant-b"
+  MT_HUMAN_A="alice"
+  MT_AGENT_A="alice-agent"
+  MT_SESSION_A="alice-session"
+  MT_HUMAN_B="bob"
+  MT_AGENT_B="bob-agent"
+  MT_SESSION_B="bob-session"
+  MT_IMAGE_REPO="registry.registry.svc.cluster.local:5000/library/${SERVER_NAME}"
+  MT_IMAGE_TAG="latest"
+
+  mt_apply_tenant() {
+    local name="$1" prefix="$2"
+    cat <<EOF | kubectl apply -f -
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPServer
+metadata:
+  name: ${name}
+  namespace: ${MT_NS}
+spec:
+  description: Multi-tenancy verification tenant ${name}.
+  image: ${MT_IMAGE_REPO}
+  imageTag: ${MT_IMAGE_TAG}
+  port: 8088
+  servicePort: 80
+  publicPathPrefix: ${prefix}
+  ingressPath: /${prefix}/mcp
+  envVars:
+    - name: MCP_PATH
+      value: /${prefix}/mcp
+  tools:
+    - name: add
+      description: Add two numbers.
+      requiredTrust: low
+    - name: upper
+      description: Uppercase the provided message.
+      requiredTrust: medium
+  auth:
+    mode: header
+    humanIDHeader: X-MCP-Human-ID
+    agentIDHeader: X-MCP-Agent-ID
+    sessionIDHeader: X-MCP-Agent-Session
+  policy:
+    mode: allow-list
+    defaultDecision: deny
+    policyVersion: v1
+  session:
+    required: true
+  gateway:
+    enabled: true
+EOF
+  }
+
+  mt_apply_tenant "${MT_TENANT_A}" "mt-tenant-a"
+  mt_apply_tenant "${MT_TENANT_B}" "mt-tenant-b"
+
+  echo "[multitenancy] waiting for tenant rollouts"
+  wait_for_deployment_exists "${MT_NS}" "${MT_TENANT_A}"
+  wait_for_deployment_exists "${MT_NS}" "${MT_TENANT_B}"
+  kubectl rollout status "deploy/${MT_TENANT_A}" -n "${MT_NS}" --timeout=180s
+  kubectl rollout status "deploy/${MT_TENANT_B}" -n "${MT_NS}" --timeout=180s
+  wait_for_named_server_ready "${MT_TENANT_A}" "${MT_NS}" 60
+  wait_for_named_server_ready "${MT_TENANT_B}" "${MT_NS}" 60
+
+  echo "[multitenancy] applying alice (tenant-a / add) and bob (tenant-b / upper) grants and sessions"
+  cat <<EOF | kubectl apply -f -
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAccessGrant
+metadata: {name: alice-${MT_TENANT_A}, namespace: ${MT_NS}}
+spec:
+  serverRef: {name: ${MT_TENANT_A}}
+  subject:   {humanID: ${MT_HUMAN_A}, agentID: ${MT_AGENT_A}}
+  maxTrust: high
+  policyVersion: v1
+  toolRules:
+    - {name: add, decision: allow, requiredTrust: low}
+---
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAgentSession
+metadata: {name: ${MT_SESSION_A}, namespace: ${MT_NS}}
+spec:
+  serverRef: {name: ${MT_TENANT_A}}
+  subject:   {humanID: ${MT_HUMAN_A}, agentID: ${MT_AGENT_A}}
+  consentedTrust: high
+  policyVersion: v1
+---
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAccessGrant
+metadata: {name: bob-${MT_TENANT_B}, namespace: ${MT_NS}}
+spec:
+  serverRef: {name: ${MT_TENANT_B}}
+  subject:   {humanID: ${MT_HUMAN_B}, agentID: ${MT_AGENT_B}}
+  maxTrust: high
+  policyVersion: v1
+  toolRules:
+    - {name: upper, decision: allow, requiredTrust: medium}
+---
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAgentSession
+metadata: {name: ${MT_SESSION_B}, namespace: ${MT_NS}}
+spec:
+  serverRef: {name: ${MT_TENANT_B}}
+  subject:   {humanID: ${MT_HUMAN_B}, agentID: ${MT_AGENT_B}}
+  consentedTrust: high
+  policyVersion: v1
+EOF
+
+  echo "[multitenancy] waiting for per-tenant policy materialization"
+  mt_wait_for_session_in_policy() {
+    local server="$1" session="$2" tries=60 i policy_json
+    for i in $(seq 1 "${tries}"); do
+      policy_json="$(kubectl get configmap "${server}-gateway-policy" -n "${MT_NS}" -o "jsonpath={.data.policy\.json}" 2>/dev/null || true)"
+      if [[ -n "${policy_json}" ]] && printf '%s' "${policy_json}" | grep -q "\"name\": \"${session}\""; then
+        return 0
+      fi
+      sleep 2
+    done
+    echo "[multitenancy] timed out waiting for session ${session} in ${server}-gateway-policy" >&2
+    kubectl get configmap "${server}-gateway-policy" -n "${MT_NS}" -o yaml || true
+    return 1
+  }
+  mt_wait_for_session_in_policy "${MT_TENANT_A}" "${MT_SESSION_A}"
+  mt_wait_for_session_in_policy "${MT_TENANT_B}" "${MT_SESSION_B}"
+  # Sidecar polls the rendered policy file; let it observe the new sessions
+  # before issuing the matrix.
+  sleep 6
+
+  echo "[multitenancy] running cross-tenant deny matrix"
+  MT_BASE_A="http://localhost:${TRAEFIK_PORT}/mt-tenant-a/mcp"
+  MT_BASE_B="http://localhost:${TRAEFIK_PORT}/mt-tenant-b/mcp"
+  MT_REPORT="${WORKDIR}/multitenancy-matrix.json"
+
+  MT_BASE_A="${MT_BASE_A}" \
+  MT_BASE_B="${MT_BASE_B}" \
+  MT_PROTO="${MCP_PROTOCOL_VERSION}" \
+  MT_HUMAN_A="${MT_HUMAN_A}" MT_AGENT_A="${MT_AGENT_A}" MT_SESSION_A="${MT_SESSION_A}" \
+  MT_HUMAN_B="${MT_HUMAN_B}" MT_AGENT_B="${MT_AGENT_B}" MT_SESSION_B="${MT_SESSION_B}" \
+  MT_REPORT="${MT_REPORT}" \
+  python3 <<'PY'
+import json, os, subprocess, sys, tempfile
+
+PROTO = os.environ["MT_PROTO"]
+A = os.environ["MT_BASE_A"]
+B = os.environ["MT_BASE_B"]
+report = []
+
+def post(base, body, human, agent, sess, mcp_session=""):
+    with tempfile.TemporaryDirectory() as td:
+        payload = os.path.join(td, "p.json"); headers = os.path.join(td, "h.txt"); bodyf = os.path.join(td, "b.txt")
+        with open(payload, "w") as fh: json.dump(body, fh)
+        cmd = [
+            "curl", "-sS", "--max-time", "20", "-D", headers, "-o", bodyf, "-w", "%{http_code}",
+            "-X", "POST",
+            "-H", "content-type: application/json",
+            "-H", "accept: application/json, text/event-stream",
+            "-H", f"Mcp-Protocol-Version: {PROTO}",
+        ]
+        if human:   cmd += ["-H", f"X-MCP-Human-ID: {human}"]
+        if agent:   cmd += ["-H", f"X-MCP-Agent-ID: {agent}"]
+        if sess:    cmd += ["-H", f"X-MCP-Agent-Session: {sess}"]
+        if mcp_session: cmd += ["-H", f"Mcp-Session-Id: {mcp_session}"]
+        cmd += ["--data-binary", f"@{payload}", base]
+        proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
+        try: status = int(proc.stdout.strip().splitlines()[-1])
+        except Exception: status = 0
+        with open(headers) as fh: h = fh.read()
+        next_sess = ""
+        for line in h.splitlines():
+            k, sep, v = line.partition(":")
+            if sep and k.lower() == "mcp-session-id":
+                next_sess = v.strip()
+        return status, next_sess
+
+def call(label, base, human, agent, sess, tool, expect_status):
+    init_status, mcp_sess = post(base, {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}, human, agent, sess)
+    if init_status != 200:
+        # Cross-tenant or unknown-session requests are rejected at initialize;
+        # that is the gateway behavior we want to assert.
+        ok = (init_status == expect_status)
+        report.append({"case": label, "expect": expect_status, "got_at": "initialize", "got": init_status, "ok": ok})
+        return
+    post(base, {"jsonrpc":"2.0","method":"notifications/initialized"}, human, agent, sess, mcp_sess)
+    args = {"a": 2, "b": 3} if tool == "add" else {"message": "hello"}
+    call_status, _ = post(base, {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":tool,"arguments":args}}, human, agent, sess, mcp_sess)
+    ok = (call_status == expect_status)
+    report.append({"case": label, "expect": expect_status, "got_at": "tools/call", "got": call_status, "ok": ok})
+
+H_A = (os.environ["MT_HUMAN_A"], os.environ["MT_AGENT_A"], os.environ["MT_SESSION_A"])
+H_B = (os.environ["MT_HUMAN_B"], os.environ["MT_AGENT_B"], os.environ["MT_SESSION_B"])
+
+call("alice -> tenant-a / add (allow)",     A, *H_A, "add",   200)
+call("alice -> tenant-a / upper (deny)",    A, *H_A, "upper", 403)
+call("alice -> tenant-b / add (cross)",     B, *H_A, "add",   401)
+call("bob   -> tenant-b / upper (allow)",   B, *H_B, "upper", 200)
+call("bob   -> tenant-b / add (deny)",      B, *H_B, "add",   403)
+call("bob   -> tenant-a / upper (cross)",   A, *H_B, "upper", 401)
+call("no-headers -> tenant-a (deny)",       A, "", "", "",    "add", 401)
+call("bogus-session -> tenant-a (deny)",    A, os.environ["MT_HUMAN_A"], os.environ["MT_AGENT_A"], "bogus-session", "add", 401)
+
+with open(os.environ["MT_REPORT"], "w") as fh:
+    json.dump(report, fh, indent=2)
+
+failed = [r for r in report if not r["ok"]]
+for r in report:
+    mark = "PASS" if r["ok"] else "FAIL"
+    print(f"  [{mark}] {r['case']:<42}  expect={r['expect']}  got={r['got']} ({r['got_at']})")
+sys.exit(1 if failed else 0)
+PY
+
+  echo "[multitenancy] cleaning up tenant resources"
+  kubectl delete mcpaccessgrant "alice-${MT_TENANT_A}" "bob-${MT_TENANT_B}" -n "${MT_NS}" --ignore-not-found --wait=false >/dev/null
+  kubectl delete mcpagentsession "${MT_SESSION_A}" "${MT_SESSION_B}" -n "${MT_NS}" --ignore-not-found --wait=false >/dev/null
+  ./bin/mcp-runtime server --use-kube delete "${MT_TENANT_A}" --namespace "${MT_NS}" >/dev/null
+  ./bin/mcp-runtime server --use-kube delete "${MT_TENANT_B}" --namespace "${MT_NS}" >/dev/null
+  kubectl wait --for=delete "mcpserver/${MT_TENANT_A}" -n "${MT_NS}" --timeout=60s || true
+  kubectl wait --for=delete "mcpserver/${MT_TENANT_B}" -n "${MT_NS}" --timeout=60s || true
 fi
 
 echo "[cli] checking sentinel restart command"
