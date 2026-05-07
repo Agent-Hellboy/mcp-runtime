@@ -81,8 +81,8 @@ func (s *apiServer) handleAdminOperations(w http.ResponseWriter, r *http.Request
 	}
 
 	deployments := []map[string]any{}
-	if s.runtime != nil && s.runtime.k8sClients != nil {
-		deployments, err = s.runtime.listAdminDeploymentSummaries(r.Context(), "")
+	if s.runtime != nil && s.runtime.KubernetesAvailable() {
+		deployments, err = s.runtime.ListAdminDeploymentSummaries(r.Context(), "")
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deployments"})
 			return

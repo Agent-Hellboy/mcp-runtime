@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -69,7 +68,7 @@ func TestRequireRole(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
-	req = req.WithContext(context.WithValue(req.Context(), principalContextKey{}, principal{Role: roleUser}))
+	req = req.WithContext(withPrincipal(req.Context(), principal{Role: roleUser}))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {

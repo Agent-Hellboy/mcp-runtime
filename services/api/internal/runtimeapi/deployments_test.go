@@ -1,4 +1,4 @@
-package main
+package runtimeapi
 
 import (
 	"bytes"
@@ -150,7 +150,7 @@ func TestHandleDeploymentApplyAdminUsesRequestedNamespace(t *testing.T) {
 		"replicas": 1,
 		"port": 8088
 	}`)))
-	request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, principal{
+	request = request.WithContext(withPrincipal(request.Context(), principal{
 		Role:      roleAdmin,
 		Subject:   "admin-1",
 		Namespace: "admin-ns",
@@ -180,7 +180,7 @@ func TestHandleDeploymentApplyWritesAuditEvent(t *testing.T) {
 		"port": 8088
 	}`)))
 	request.Header.Set("x-mcp-source", "ui")
-	request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, principal{
+	request = request.WithContext(withPrincipal(request.Context(), principal{
 		Role:      roleAdmin,
 		Subject:   "admin-1",
 		Email:     "admin@example.com",
@@ -221,12 +221,12 @@ func TestEnsureUserNamespaceSetsManagedLabel(t *testing.T) {
 	server := &RuntimeServer{
 		k8sClients: &k8sclient.Clients{Clientset: client},
 	}
-	if err := server.ensureUserNamespace(context.Background(), principal{
+	if err := server.EnsureUserNamespace(context.Background(), principal{
 		Role:      roleUser,
 		Subject:   "user-77",
 		Namespace: "user-77",
 	}); err != nil {
-		t.Fatalf("ensureUserNamespace() error = %v", err)
+		t.Fatalf("EnsureUserNamespace() error = %v", err)
 	}
 	ns, err := client.CoreV1().Namespaces().Get(context.Background(), "user-77", metav1.GetOptions{})
 	if err != nil {
@@ -281,13 +281,13 @@ func TestHandleDeploymentItemRejectsServiceUserWithoutIdentity(t *testing.T) {
 		k8sClients: &k8sclient.Clients{Clientset: client},
 	}
 	request := httptest.NewRequest(http.MethodDelete, "/api/deployments/team-a/demo", nil)
-	request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, principal{
+	request = request.WithContext(withPrincipal(request.Context(), principal{
 		Role:      roleUser,
 		IsService: true,
 		Namespace: "team-a",
 	}))
 	recorder := httptest.NewRecorder()
-	server.handleDeploymentItem(recorder, request)
+	server.HandleDeploymentItem(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}

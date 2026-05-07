@@ -45,6 +45,10 @@ flowchart LR
 | Kubernetes API types | [`api-types.md`](api-types.md) | Defines the public CRD shapes consumed by users, tests, and the operator. |
 | Generated Go reference | [`go-package-reference.md`](go-package-reference.md) | Captures `go doc` output for the main contributor-facing packages. |
 | Operator | [`cmd-operator.md`](cmd-operator.md) | Explains manager startup and reconciliation from desired state to Kubernetes resources. |
+| Control-plane helpers | `pkg/controlplane/` | Shared MCPServer Kubernetes operations and status projection used outside HTTP/CLI glue. |
+| Shared policy and events | `pkg/policy/`, `pkg/events/`, `pkg/clickhouse/` | Gateway policy contracts/evaluation plus Sentinel event envelopes and ClickHouse query/insert helpers. |
+| Service and workload helpers | `pkg/serviceutil/`, `pkg/kubeworkload/` | Shared service HTTP/env/OTel helpers and restricted Kubernetes workload defaults. |
+| API service internals | `services/api/internal/runtimeapi/`, `services/api/internal/platformstore/`, `services/api/internal/apiauth/`, `services/api/internal/apihttp/` | API-owned runtime HTTP/Kubernetes orchestration, platform Postgres persistence, principal context helpers, and API-specific HTTP decode helpers. |
 | Metadata helpers | [`pkg-metadata.md`](pkg-metadata.md) | Covers `.mcp` metadata loading, host resolution, and CRD generation helpers. |
 | Manifests and examples | [`config-and-examples.md`](config-and-examples.md) | Explains Kustomize overlays, registry/ingress config, and example MCP servers. |
 | Tests | [`tests.md`](tests.md) | Maps unit, golden, integration, and Kind e2e coverage. |
@@ -82,7 +86,7 @@ At request time, clients do not call server pods directly. Traffic flows through
 flowchart TD
     Client[MCP client] --> Route[Ingress route]
     Route --> Gateway[Sentinel gateway or proxy]
-    Gateway --> Authz[Grant/session evaluation]
+    Gateway --> Authz[pkg/policy evaluation]
     Authz -->|allow| Server[MCP server pod]
     Authz -->|deny| Deny[JSON-RPC error]
     Gateway --> Events[Audit and analytics event]
@@ -95,7 +99,7 @@ flowchart TD
     Sessions --> Authz
 ```
 
-Governance-related changes usually span `api/v1alpha1/access_types.go`, `pkg/access/`, `services/api`, `services/mcp-proxy`, `services/ingest`, and the e2e policy scenarios.
+Governance-related changes usually span `api/v1alpha1/access_types.go`, `pkg/access/`, `pkg/policy/`, `services/api`, `services/mcp-proxy`, `services/ingest`, and the e2e policy scenarios.
 
 ## Package dependency guide
 
@@ -110,16 +114,29 @@ flowchart TB
     CLICommands --> Access[pkg/access]
     CmdOp[cmd/operator] --> Operator[internal/operator]
     Operator --> API[api/v1alpha1]
+    Operator --> ControlPlane[pkg/controlplane]
+    Operator --> Policy[pkg/policy]
+    Operator --> Workload[pkg/kubeworkload]
     Operator --> K8sClient
     Operator --> Manifest
     Operator --> Access
     Services[services/*] --> ServiceUtil[pkg/serviceutil]
+    Services --> ControlPlane
     Services --> Access
     Services --> ClickHouse[pkg/clickhouse]
+    Services --> Events[pkg/events]
+    Proxy[services/mcp-proxy] --> Policy
+    APIService[services/api] --> Workload
+    APIService --> RuntimeAPI[services/api/internal/runtimeapi]
+    APIService --> PlatformStore[services/api/internal/platformstore]
+    APIService --> APIAuth[services/api/internal/apiauth]
+    ClickHouse --> Events
+    ControlPlane --> API
+    ControlPlane --> K8sClient
     Metadata --> API
 ```
 
-Keep shared behavior in `pkg/` only when multiple binaries or services need it. CLI top-level command routing belongs in `internal/cli/root` and `internal/cli/<command>`; CLI-only shared infrastructure belongs in `internal/cli/core`; reconciliation behavior belongs in `internal/operator`; HTTP service glue belongs near the service that owns the endpoint.
+Keep shared behavior in `pkg/` only when multiple binaries or services need it. CLI top-level command routing belongs in `internal/cli/root` and `internal/cli/<command>`; CLI-only shared infrastructure belongs in `internal/cli/core`; reconciliation behavior belongs in `internal/operator`; Kubernetes-facing MCPServer operations that are reused outside the operator belong in `pkg/controlplane`; rendered gateway policy evaluation belongs in `pkg/policy`; reusable Sentinel event and storage contracts belong in `pkg/events` and `pkg/clickhouse`; shared pod hardening defaults belong in `pkg/kubeworkload`; API-owned runtime orchestration belongs in `services/api/internal/runtimeapi`; API-owned platform identity, team, key, and audit persistence belongs in `services/api/internal/platformstore`; API principal context helpers belong in `services/api/internal/apiauth`; HTTP service glue belongs near the service that owns the endpoint unless it is repeated across services.
 
 ## Learning path
 
@@ -153,7 +170,8 @@ workflows.
 | Change a CRD field | `api/v1alpha1`, CRD YAML, operator reconciliation, docs/API reference | `go test ./api/v1alpha1/... ./internal/operator/... -count=1` |
 | Change generated manifests | `pkg/metadata`, `pkg/manifest`, `config/`, examples | targeted package tests plus manifest diff review |
 | Change reconciliation behavior | `internal/operator`, API types, k8s helpers | `go test ./internal/operator/... -race -count=1` |
-| Change governance policy | `pkg/access`, `services/api`, `services/mcp-proxy`, access CRDs | targeted service tests plus e2e policy scenario |
+| Change governance policy | `pkg/access`, `pkg/policy`, `services/api`, `services/mcp-proxy`, access CRDs | targeted package/service tests plus e2e policy scenario |
+| Change Sentinel event storage | `pkg/events`, `pkg/clickhouse`, `services/ingest`, `services/processor`, `services/api`, `services/mcp-proxy` | package tests plus touched service tests |
 | Change docs site behavior | `docs/mkdocs.yml`, `docs/nginx.conf`, Markdown pages | MkDocs build or docs container build |
 
 ## Contributor checklist

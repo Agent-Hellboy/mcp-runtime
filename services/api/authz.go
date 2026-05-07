@@ -2,81 +2,108 @@ package main
 
 import (
 	"context"
-	"strings"
+	"net/http"
+
+	"mcp-sentinel-api/internal/apiauth"
+	"mcp-sentinel-api/internal/apihttp"
+	"mcp-sentinel-api/internal/platformstore"
+	"mcp-sentinel-api/internal/runtimeapi"
 )
 
 const (
-	roleAdmin = "admin"
-	roleUser  = "user"
+	roleAdmin = apiauth.RoleAdmin
+	roleUser  = apiauth.RoleUser
 )
 
-type principal struct {
-	Role              string          `json:"role"`
-	Subject           string          `json:"subject,omitempty"`
-	Email             string          `json:"email,omitempty"`
-	Namespace         string          `json:"namespace,omitempty"`
-	AllowedNamespaces []string        `json:"allowed_namespaces,omitempty"`
-	Teams             []principalTeam `json:"teams,omitempty"`
-	AuthType          string          `json:"auth_type,omitempty"`
-	APIKeyID          string          `json:"api_key_id,omitempty"`
-	IsService         bool            `json:"is_service,omitempty"`
+type platformStore = platformstore.Store
+type platformUser = platformstore.User
+type principal = apiauth.Principal
+type principalTeam = apiauth.PrincipalTeam
+type auditEvent = platformstore.AuditEvent
+type platformAuditLog = platformstore.AuditLog
+type adminOperationsFilter = platformstore.OperationsFilter
+type adminOperationsFilterResponse = platformstore.OperationsFilterResponse
+type platformUserActivity = platformstore.UserActivity
+type platformImageActivity = platformstore.ImageActivity
+type teamRecord = platformstore.Team
+type teamMembershipRecord = platformstore.TeamMembership
+type userAPIKeySummary = platformstore.APIKeySummary
+
+type auditWriter interface {
+	WriteAudit(context.Context, auditEvent)
 }
 
-type principalTeam struct {
-	ID        string `json:"id"`
-	Slug      string `json:"slug"`
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
-	Role      string `json:"role"`
+const (
+	sharedCatalogNamespace = platformstore.SharedCatalogNamespace
+	teamNamespacePrefix    = platformstore.TeamNamespacePrefix
+	teamRoleOwner          = platformstore.TeamRoleOwner
+	teamRoleMember         = platformstore.TeamRoleMember
+	namespaceScopeUser     = platformstore.NamespaceScopeUser
+	namespaceScopeTeam     = platformstore.NamespaceScopeTeam
+	oidcProviderPrefix     = platformstore.OIDCProviderPrefix
+	accessApplyMaxBytes    = apihttp.ApplyMaxBytes
+)
+
+func newPlatformStore(ctx context.Context, dsn string, jwtSecret []byte) (*platformStore, error) {
+	return platformstore.Open(ctx, dsn, jwtSecret)
 }
 
-func (p principal) userID() string {
-	return strings.TrimSpace(p.Subject)
+func newTestPlatformStore(jwtSecret []byte) *platformStore {
+	return platformstore.NewForTest(jwtSecret)
 }
 
-func (p principal) hasNamespace(namespace string) bool {
-	namespace = strings.TrimSpace(namespace)
-	if namespace == "" {
-		return false
-	}
-	if strings.TrimSpace(p.Namespace) == namespace {
-		return true
-	}
-	for _, allowed := range p.AllowedNamespaces {
-		if strings.TrimSpace(allowed) == namespace {
-			return true
-		}
-	}
-	return false
+func platformUserActivityWhere(filter adminOperationsFilter) (string, []any) {
+	return platformstore.UserActivityWhere(filter)
 }
 
-func (p principal) teamRole(slug string) string {
-	slug = strings.TrimSpace(slug)
-	for _, team := range p.Teams {
-		if strings.TrimSpace(team.Slug) == slug {
-			return strings.TrimSpace(team.Role)
-		}
-	}
-	return ""
+func platformAuditTimeWhere(alias string, filter adminOperationsFilter, args *[]any) string {
+	return platformstore.AuditTimeWhere(alias, filter, args)
 }
 
-func (p principal) teamForNamespace(namespace string) (principalTeam, bool) {
-	namespace = strings.TrimSpace(namespace)
-	for _, team := range p.Teams {
-		if strings.TrimSpace(team.Namespace) == namespace {
-			return team, true
-		}
-	}
-	return principalTeam{}, false
+func adminOperationsUserSearch(filter adminOperationsFilter) string {
+	return platformstore.AdminOperationsUserSearch(filter)
 }
 
-type principalContextKey struct{}
+func NormalizeTeamSlug(raw string) string {
+	return platformstore.NormalizeTeamSlug(raw)
+}
+
+func ValidateTeamSlug(slug string) error {
+	return platformstore.ValidateTeamSlug(slug)
+}
+
+func ValidateTeamNamespace(namespace string) error {
+	return platformstore.ValidateTeamNamespace(namespace)
+}
+
+func ValidateDeployImage(image, namespace, teamSlug, role string) error {
+	return runtimeapi.ValidateDeployImage(image, namespace, teamSlug, role)
+}
 
 func principalFromContext(ctx context.Context) (principal, bool) {
-	v := ctx.Value(principalContextKey{})
-	if v == nil {
-		return principal{}, false
-	}
-	p, ok := v.(principal)
-	return p, ok
+	return apiauth.FromContext(ctx)
+}
+
+func withPrincipal(ctx context.Context, p principal) context.Context {
+	return apiauth.WithPrincipal(ctx, p)
+}
+
+func writeBodyDecodeError(w http.ResponseWriter, err error) {
+	apihttp.WriteBodyDecodeError(w, err)
+}
+
+func requestIP(r *http.Request) string {
+	return apiauth.RequestIP(r)
+}
+
+func auditSource(r *http.Request, p principal) string {
+	return apiauth.AuditSource(r, p)
+}
+
+func requestSource(r *http.Request) string {
+	return apiauth.RequestSource(r)
+}
+
+func auditIdentityLabel(p principal) string {
+	return apiauth.AuditIdentityLabel(p)
 }

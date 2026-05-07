@@ -52,10 +52,10 @@ flowchart LR
     API --> Graf[Grafana]
 ```
 
-1. **Proxy evaluates the request.** Reads identity headers, loads policy from the operator-rendered ConfigMap, checks trust, decides allow / deny at `tools/call` time.
-2. **Ingest receives the event** on `/events`, writes into Kafka topic `mcp.events`.
-3. **Processor batches to ClickHouse.** Reads Kafka, batches, writes to the event table.
-4. **API exposes query surfaces.** Recent events, stats, sources, types, filtered audit views.
+1. **Proxy evaluates the request.** Reads identity headers, loads policy from the operator-rendered ConfigMap, and calls the shared `pkg/policy` evaluator for allow / deny at `tools/call` time.
+2. **Ingest receives the event** on `/events`, validates the shared `pkg/events` envelope, and writes into Kafka topic `mcp.events`.
+3. **Processor batches to ClickHouse.** Reads Kafka envelopes and uses `pkg/clickhouse` storage helpers to write to the event table.
+4. **API exposes query surfaces.** Recent events, stats, sources, types, and filtered audit views use `pkg/clickhouse` query helpers.
 5. **UI + dashboards consume the data.** UI renders the stream; Grafana / Prometheus / Tempo / Loki / Promtail cover the broader observability path.
 
 ## Storage and observability
@@ -338,7 +338,7 @@ See [CLI → sentinel](cli.md#sentinel) for component keys and flag details.
 
 ## Repository structure note
 
-Services live in `services/`, manifests in `k8s/`, shared libraries in `pkg/` (replacing the older nested `mcp-sentinel/` directory). New `pkg/access`, `pkg/sentinel`, `pkg/clickhouse`, and `pkg/k8sclient` packages are used by both CLI and API services. The runtime and example MCP wiring still accept older `MCP_ANALYTICS_*` env names so existing ingest configuration keeps working during the rename.
+Services live in `services/`, manifests in `k8s/`, shared libraries in `pkg/` (replacing the older nested `mcp-sentinel/` directory). `pkg/access`, `pkg/policy`, `pkg/controlplane`, `pkg/events`, `pkg/clickhouse`, `pkg/serviceutil`, `pkg/kubeworkload`, `pkg/sentinel`, and `pkg/k8sclient` are used by the CLI, operator, or Sentinel services according to their ownership boundaries. The runtime and example MCP wiring still accept older `MCP_ANALYTICS_*` env names so existing ingest configuration keeps working during the rename.
 
 ## Next
 

@@ -15,14 +15,16 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+
+	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 )
 
 const (
-	APIGroup              = "mcpruntime.org"
-	APIVersion            = "v1alpha1"
-	AccessGrantResource   = "mcpaccessgrants"
-	AccessSessionResource = "mcpagentsessions"
-	MCPServerResource     = "mcpservers"
+	APIGroup              = mcpv1alpha1.Group
+	APIVersion            = mcpv1alpha1.Version
+	AccessGrantResource   = mcpv1alpha1.MCPAccessGrantResource
+	AccessSessionResource = mcpv1alpha1.MCPAgentSessionResource
+	MCPServerResource     = mcpv1alpha1.MCPServerResource
 	// DefaultMCPResourceNamespace is used when a ServerReference or access resource omits a namespace.
 	DefaultMCPResourceNamespace = "mcp-servers"
 )

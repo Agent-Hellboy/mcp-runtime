@@ -54,12 +54,14 @@ Package v1alpha1 contains API Schema definitions for the MCP server resource.
 
 - [Overview](#api-types-overview)
 - [Index](#api-types-index)
+- [Constants](#api-types-constants)
 - [Variables](#api-types-variables)
 - [Types](#api-types-types)
 
 <a id="api-types-index"></a>
 ### Index
 
+- [`Constants`](#api-types-constants)
 - [`Variables`](#api-types-variables)
 - [`type AnalyticsConfig struct`](#api-types-type-analyticsconfig-struct)
 - [`func (in *AnalyticsConfig) DeepCopy() *AnalyticsConfig`](#api-types-func-in-analyticsconfig-deepcopy-analyticsconfig)
@@ -171,13 +173,32 @@ Package v1alpha1 contains API Schema definitions for the MCP server resource.
 - [`func (in *ToolRule) DeepCopyInto(out *ToolRule)`](#api-types-func-in-toolrule-deepcopyinto-out-toolrule)
 - [`type TrustLevel string`](#api-types-type-trustlevel-string)
 
+<a id="api-types-constants"></a>
+### Constants
+
+```text
+const (
+	// Group is the Kubernetes API group for MCP Runtime resources.
+	Group = "mcpruntime.org"
+	// Version is the Kubernetes API version for MCP Runtime resources.
+	Version = "v1alpha1"
+
+	// MCPServerResource is the plural resource name for MCPServer objects.
+	MCPServerResource = "mcpservers"
+	// MCPAccessGrantResource is the plural resource name for MCPAccessGrant objects.
+	MCPAccessGrantResource = "mcpaccessgrants"
+	// MCPAgentSessionResource is the plural resource name for MCPAgentSession objects.
+	MCPAgentSessionResource = "mcpagentsessions"
+)
+```
+
 <a id="api-types-variables"></a>
 ### Variables
 
 ```text
 var (
 	// GroupVersion is group version used to register these objects
-	GroupVersion = schema.GroupVersion{Group: "mcpruntime.org", Version: "v1alpha1"}
+	GroupVersion = schema.GroupVersion{Group: Group, Version: Version}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme
 	SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)
@@ -1936,7 +1957,6 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 <a id="operator-internals-func-r-mcpserverreconciler-setupwithmanager-mgr-ctrl-manager-error"></a>
 ```text
 func (r *MCPServerReconciler) SetupWithManager(mgr ctrl.Manager) error
-    SetupWithManager sets up the controller with the Manager.
 
 ```
 
@@ -2014,7 +2034,6 @@ type RegistryConfig struct {
 	Password   string
 	SecretName string
 }
-    RegistryConfig holds configuration for a provisioned container registry.
 ```
 
 <a id="cli-command-routing"></a>

@@ -1,0 +1,602 @@
+package operator
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+	"strings"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+	"mcp-runtime/pkg/kubeworkload"
+)
+
+func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
+	logger := log.FromContext(ctx)
+
+	image, err := r.resolveImage(ctx, mcpServer)
+	if err != nil {
+		return err
+	}
+	if err := r.ensureWorkloadServiceAccount(ctx, mcpServer.Namespace); err != nil {
+		return err
+	}
+
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      mcpServer.Name,
+			Namespace: mcpServer.Namespace,
+		},
+	}
+
+	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
+		selectorLabels := map[string]string{
+			"app":                          mcpServer.Name,
+			"mcpruntime.org/rollout-track": "stable",
+		}
+		templateLabels := map[string]string{
+			"app":                          mcpServer.Name,
+			"app.kubernetes.io/managed-by": "mcp-runtime",
+			"mcpruntime.org/rollout-track": "stable",
+		}
+		replicas := desiredStableReplicas(mcpServer)
+
+		deployment.Labels = map[string]string{
+			"app":                          mcpServer.Name,
+			"app.kubernetes.io/managed-by": "mcp-runtime",
+			"mcpruntime.org/rollout-track": "stable",
+		}
+
+		deployment.Spec = appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: selectorLabels,
+			},
+			Strategy: deploymentStrategy(mcpServer),
+		}
+		deployment.Spec.Template.ObjectMeta.Labels = templateLabels
+
+		containers, volumes, err := r.buildDeploymentContainers(mcpServer, image)
+		if err != nil {
+			return err
+		}
+		deployment.Spec.Template.Spec = corev1.PodSpec{
+			ImagePullSecrets: r.buildImagePullSecrets(mcpServer),
+			Containers:       containers,
+			Volumes:          volumes,
+		}
+		kubeworkload.ApplyRestrictedPodDefaults(&deployment.Spec.Template.Spec)
+
+		if err := ctrl.SetControllerReference(mcpServer, deployment, r.Scheme); err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return err
+	}
+
+	if op != controllerutil.OperationResultNone {
+		logger.Info("Deployment reconciled", "operation", op, "name", deployment.Name)
+	}
+
+	return nil
+}
+
+func (r *MCPServerReconciler) reconcileCanaryDeployment(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
+	if !canaryEnabled(mcpServer) {
+		existing := &appsv1.Deployment{}
+		err := r.Get(ctx, types.NamespacedName{Name: canaryDeploymentName(mcpServer.Name), Namespace: mcpServer.Namespace}, existing)
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return r.Delete(ctx, existing)
+	}
+
+	logger := log.FromContext(ctx)
+	image, err := r.resolveImage(ctx, mcpServer)
+	if err != nil {
+		return err
+	}
+	if err := r.ensureWorkloadServiceAccount(ctx, mcpServer.Namespace); err != nil {
+		return err
+	}
+
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      canaryDeploymentName(mcpServer.Name),
+			Namespace: mcpServer.Namespace,
+		},
+	}
+
+	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
+		replicas := int32(0)
+		if mcpServer.Spec.Rollout != nil && mcpServer.Spec.Rollout.CanaryReplicas != nil {
+			replicas = *mcpServer.Spec.Rollout.CanaryReplicas
+		}
+		selectorLabels := map[string]string{
+			"app":                          mcpServer.Name,
+			"mcpruntime.org/rollout-track": "canary",
+		}
+		deployment.Labels = map[string]string{
+			"app":                          mcpServer.Name,
+			"app.kubernetes.io/managed-by": "mcp-runtime",
+			"mcpruntime.org/rollout-track": "canary",
+		}
+		deployment.Spec = appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: selectorLabels,
+			},
+			Strategy: deploymentStrategy(mcpServer),
+		}
+		deployment.Spec.Template.ObjectMeta.Labels = map[string]string{
+			"app":                          mcpServer.Name,
+			"app.kubernetes.io/managed-by": "mcp-runtime",
+			"mcpruntime.org/rollout-track": "canary",
+		}
+		containers, volumes, err := r.buildDeploymentContainers(mcpServer, image)
+		if err != nil {
+			return err
+		}
+		deployment.Spec.Template.Spec = corev1.PodSpec{
+			ImagePullSecrets: r.buildImagePullSecrets(mcpServer),
+			Containers:       containers,
+			Volumes:          volumes,
+		}
+		kubeworkload.ApplyRestrictedPodDefaults(&deployment.Spec.Template.Spec)
+		if err := ctrl.SetControllerReference(mcpServer, deployment, r.Scheme); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if op != controllerutil.OperationResultNone {
+		logger.Info("Canary deployment reconciled", "operation", op, "name", deployment.Name)
+	}
+	return nil
+}
+
+func (r *MCPServerReconciler) buildDeploymentContainers(mcpServer *mcpv1alpha1.MCPServer, image string) ([]corev1.Container, []corev1.Volume, error) {
+	container := corev1.Container{
+		Name:            mcpServer.Name,
+		Image:           image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Ports: []corev1.ContainerPort{
+			{
+				Name:          "http",
+				ContainerPort: mcpServer.Spec.Port,
+				Protocol:      corev1.ProtocolTCP,
+			},
+		},
+		Env:             r.buildEnvVars(mcpServer.Spec.EnvVars, mcpServer.Spec.SecretEnvVars),
+		SecurityContext: kubeworkload.RestrictedContainerSecurityContext(),
+		LivenessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(mcpServer.Spec.Port)},
+			},
+			InitialDelaySeconds: 5,
+			PeriodSeconds:       10,
+		},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(mcpServer.Spec.Port)},
+			},
+			InitialDelaySeconds: 3,
+			PeriodSeconds:       5,
+		},
+	}
+
+	if err := applyContainerResources(&container, mcpServer.Spec.Resources); err != nil {
+		return nil, nil, err
+	}
+
+	containers := []corev1.Container{container}
+	var volumes []corev1.Volume
+	if gatewayEnabled(mcpServer) {
+		gatewayContainer, err := r.buildGatewayContainer(mcpServer)
+		if err != nil {
+			return nil, nil, err
+		}
+		containers = append(containers, gatewayContainer)
+		volumes = append(volumes, corev1.Volume{
+			Name: gatewayPolicyVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: gatewayPolicyConfigMapName(mcpServer.Name)},
+				},
+			},
+		})
+	}
+
+	return containers, volumes, nil
+}
+
+// applyContainerResources sets container resource requests and limits.
+// It applies defaults first, then overrides with user-specified values.
+func applyContainerResources(container *corev1.Container, resources mcpv1alpha1.ResourceRequirements) error {
+	// Initialize maps
+	if container.Resources.Requests == nil {
+		container.Resources.Requests = corev1.ResourceList{}
+	}
+	if container.Resources.Limits == nil {
+		container.Resources.Limits = corev1.ResourceList{}
+	}
+
+	// Apply defaults
+	container.Resources.Requests[corev1.ResourceCPU] = resource.MustParse(defaultRequestCPU)
+	container.Resources.Requests[corev1.ResourceMemory] = resource.MustParse(defaultRequestMemory)
+	container.Resources.Limits[corev1.ResourceCPU] = resource.MustParse(defaultLimitCPU)
+	container.Resources.Limits[corev1.ResourceMemory] = resource.MustParse(defaultLimitMemory)
+
+	// Override with user-specified values
+	if resources.Requests != nil {
+		if resources.Requests.CPU != "" {
+			cpu, err := resource.ParseQuantity(resources.Requests.CPU)
+			if err != nil {
+				contextMap := map[string]any{
+					"resource": "cpu",
+					"type":     "request",
+					"value":    resources.Requests.CPU,
+				}
+				return wrapOperatorError(err, fmt.Sprintf("invalid CPU request %q", resources.Requests.CPU), contextMap)
+			}
+			container.Resources.Requests[corev1.ResourceCPU] = cpu
+		}
+		if resources.Requests.Memory != "" {
+			mem, err := resource.ParseQuantity(resources.Requests.Memory)
+			if err != nil {
+				contextMap := map[string]any{
+					"resource": "memory",
+					"type":     "request",
+					"value":    resources.Requests.Memory,
+				}
+				return wrapOperatorError(err, fmt.Sprintf("invalid memory request %q", resources.Requests.Memory), contextMap)
+			}
+			container.Resources.Requests[corev1.ResourceMemory] = mem
+		}
+	}
+
+	if resources.Limits != nil {
+		if resources.Limits.CPU != "" {
+			cpu, err := resource.ParseQuantity(resources.Limits.CPU)
+			if err != nil {
+				contextMap := map[string]any{
+					"resource": "cpu",
+					"type":     "limit",
+					"value":    resources.Limits.CPU,
+				}
+				return wrapOperatorError(err, fmt.Sprintf("invalid CPU limit %q", resources.Limits.CPU), contextMap)
+			}
+			container.Resources.Limits[corev1.ResourceCPU] = cpu
+		}
+		if resources.Limits.Memory != "" {
+			mem, err := resource.ParseQuantity(resources.Limits.Memory)
+			if err != nil {
+				contextMap := map[string]any{
+					"resource": "memory",
+					"type":     "limit",
+					"value":    resources.Limits.Memory,
+				}
+				return wrapOperatorError(err, fmt.Sprintf("invalid memory limit %q", resources.Limits.Memory), contextMap)
+			}
+			container.Resources.Limits[corev1.ResourceMemory] = mem
+		}
+	}
+
+	return nil
+}
+
+func (r *MCPServerReconciler) ensureWorkloadServiceAccount(ctx context.Context, namespace string) error {
+	sa := kubeworkload.ServiceAccount(namespace)
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, sa, func() error {
+		sa.AutomountServiceAccountToken = kubeworkload.ServiceAccount(namespace).AutomountServiceAccountToken
+		return nil
+	})
+	return err
+}
+
+func (r *MCPServerReconciler) resolveImage(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (string, error) {
+	logger := log.FromContext(ctx)
+
+	image := mcpServer.Spec.Image
+	// Append tag only if the image does not already include a tag or digest.
+	if mcpServer.Spec.ImageTag != "" && !imageHasTagOrDigest(image) {
+		image = fmt.Sprintf("%s:%s", image, mcpServer.Spec.ImageTag)
+	}
+
+	regOverride := mcpServer.Spec.RegistryOverride
+	if mcpServer.Spec.UseProvisionedRegistry {
+		if r.ProvisionedRegistry != nil && r.ProvisionedRegistry.URL != "" {
+			regOverride = r.ProvisionedRegistry.URL
+		} else if regOverride == "" {
+			// Fallback to the ingress-backed internal registry when not explicitly configured.
+			regOverride = DefaultOperatorConfig.InternalRegistryEndpoint
+			logger.Info("useProvisionedRegistry set without ProvisionedRegistry config; falling back to internal registry ingress", "mcpServer", mcpServer.Name, "registry", regOverride)
+		}
+	}
+	if regOverride != "" {
+		image = rewriteRegistry(image, regOverride)
+	}
+
+	return image, nil
+}
+
+func (r *MCPServerReconciler) resolveGatewayImage(mcpServer *mcpv1alpha1.MCPServer) (string, error) {
+	if !gatewayEnabled(mcpServer) {
+		return "", nil
+	}
+
+	image := strings.TrimSpace(mcpServer.Spec.Gateway.Image)
+	if image == "" {
+		image = strings.TrimSpace(r.GatewayProxyImage)
+	}
+	if image != "" {
+		return image, nil
+	}
+
+	contextMap := map[string]any{
+		"mcpServer": mcpServer.Name,
+		"namespace": mcpServer.Namespace,
+	}
+	return "", newOperatorError("gateway.image is required when gateway.enabled is true (set spec.gateway.image or MCP_GATEWAY_PROXY_IMAGE on the operator)", contextMap)
+}
+
+func gatewayExternalBaseURL(mcpServer *mcpv1alpha1.MCPServer) string {
+	host := effectiveIngressHost(mcpServer)
+	if host == "" {
+		return ""
+	}
+	return "http://" + host
+}
+
+func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPServer) (corev1.Container, error) {
+	image, err := r.resolveGatewayImage(mcpServer)
+	if err != nil {
+		return corev1.Container{}, err
+	}
+
+	port := mcpServer.Spec.Gateway.Port
+	envVars := []corev1.EnvVar{
+		{Name: "PORT", Value: strconv.Itoa(int(port))},
+		{Name: "UPSTREAM_URL", Value: mcpServer.Spec.Gateway.UpstreamURL},
+		{Name: "POLICY_FILE", Value: gatewayPolicyFilePath},
+		{Name: "MCP_SERVER_NAME", Value: mcpServer.Name},
+		{Name: "MCP_SERVER_NAMESPACE", Value: mcpServer.Namespace},
+		{Name: "MCP_CLUSTER_NAME", Value: strings.TrimSpace(r.ClusterName)},
+	}
+	if externalBaseURL := gatewayExternalBaseURL(mcpServer); externalBaseURL != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "EXTERNAL_BASE_URL", Value: externalBaseURL})
+	}
+	if mcpServer.Spec.Policy != nil {
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "POLICY_MODE", Value: string(mcpServer.Spec.Policy.Mode)},
+			corev1.EnvVar{Name: "POLICY_DEFAULT_DECISION", Value: string(mcpServer.Spec.Policy.DefaultDecision)},
+			corev1.EnvVar{Name: "POLICY_VERSION", Value: mcpServer.Spec.Policy.PolicyVersion},
+		)
+	}
+	if mcpServer.Spec.Auth != nil {
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "HUMAN_ID_HEADER", Value: mcpServer.Spec.Auth.HumanIDHeader},
+			corev1.EnvVar{Name: "AGENT_ID_HEADER", Value: mcpServer.Spec.Auth.AgentIDHeader},
+			corev1.EnvVar{Name: "SESSION_ID_HEADER", Value: mcpServer.Spec.Auth.SessionIDHeader},
+			corev1.EnvVar{Name: "AUTH_MODE", Value: string(mcpServer.Spec.Auth.Mode)},
+		)
+	}
+	if mcpServer.Spec.Gateway.StripPrefix != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "STRIP_PREFIX", Value: mcpServer.Spec.Gateway.StripPrefix})
+	}
+	if analyticsEnabled(mcpServer) {
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "ANALYTICS_INGEST_URL", Value: mcpServer.Spec.Analytics.IngestURL},
+			corev1.EnvVar{Name: "ANALYTICS_SOURCE", Value: mcpServer.Spec.Analytics.Source},
+			corev1.EnvVar{Name: "ANALYTICS_EVENT_TYPE", Value: mcpServer.Spec.Analytics.EventType},
+		)
+		if ref := mcpServer.Spec.Analytics.APIKeySecretRef; ref != nil {
+			envVars = append(envVars, corev1.EnvVar{
+				Name: "ANALYTICS_API_KEY",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: ref.Name},
+						Key:                  ref.Key,
+					},
+				},
+			})
+		}
+	}
+
+	container := corev1.Container{
+		Name:            "mcp-gateway",
+		Image:           image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Ports: []corev1.ContainerPort{
+			{
+				Name:          "gateway",
+				ContainerPort: port,
+				Protocol:      corev1.ProtocolTCP,
+			},
+		},
+		Env:             envVars,
+		SecurityContext: kubeworkload.RestrictedReadOnlyContainerSecurityContext(),
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      gatewayPolicyVolumeName,
+				MountPath: gatewayPolicyMountDir,
+				ReadOnly:  true,
+			},
+		},
+		LivenessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)},
+			},
+			InitialDelaySeconds: 5,
+			PeriodSeconds:       10,
+		},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)},
+			},
+			InitialDelaySeconds: 3,
+			PeriodSeconds:       5,
+		},
+	}
+	if err := applyContainerResources(&container, mcpv1alpha1.ResourceRequirements{}); err != nil {
+		return corev1.Container{}, err
+	}
+	return container, nil
+}
+func desiredStableReplicas(mcpServer *mcpv1alpha1.MCPServer) int32 {
+	if mcpServer.Spec.Replicas == nil {
+		return 1
+	}
+	replicas := *mcpServer.Spec.Replicas
+	if canaryEnabled(mcpServer) && mcpServer.Spec.Rollout != nil && mcpServer.Spec.Rollout.CanaryReplicas != nil {
+		replicas -= *mcpServer.Spec.Rollout.CanaryReplicas
+	}
+	if replicas < 0 {
+		return 0
+	}
+	return replicas
+}
+
+func deploymentStrategy(mcpServer *mcpv1alpha1.MCPServer) appsv1.DeploymentStrategy {
+	if mcpServer.Spec.Rollout == nil || mcpServer.Spec.Rollout.Strategy == "" || mcpServer.Spec.Rollout.Strategy == mcpv1alpha1.RolloutStrategyRollingUpdate || mcpServer.Spec.Rollout.Strategy == mcpv1alpha1.RolloutStrategyCanary {
+		maxUnavailable := intstr.FromString("25%")
+		maxSurge := intstr.FromString("25%")
+		if mcpServer.Spec.Rollout != nil {
+			if mcpServer.Spec.Rollout.MaxUnavailable != "" {
+				maxUnavailable = intstr.Parse(mcpServer.Spec.Rollout.MaxUnavailable)
+			}
+			if mcpServer.Spec.Rollout.MaxSurge != "" {
+				maxSurge = intstr.Parse(mcpServer.Spec.Rollout.MaxSurge)
+			}
+		}
+		return appsv1.DeploymentStrategy{
+			Type: appsv1.RollingUpdateDeploymentStrategyType,
+			RollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxUnavailable: &maxUnavailable,
+				MaxSurge:       &maxSurge,
+			},
+		}
+	}
+	return appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+}
+
+func canaryDeploymentName(serverName string) string {
+	return serverName + "-canary"
+}
+
+func canaryEnabled(mcpServer *mcpv1alpha1.MCPServer) bool {
+	return mcpServer != nil &&
+		mcpServer.Spec.Rollout != nil &&
+		mcpServer.Spec.Rollout.Strategy == mcpv1alpha1.RolloutStrategyCanary
+}
+func rewriteRegistry(image, registry string) string {
+	if registry == "" {
+		return image
+	}
+	parts := strings.Split(image, "/")
+	if len(parts) == 1 {
+		return fmt.Sprintf("%s/%s", registry, image)
+	}
+
+	// If first part looks like a registry (contains . or : or is localhost), drop it.
+	first := parts[0]
+	if strings.Contains(first, ".") || strings.Contains(first, ":") || first == "localhost" {
+		parts = parts[1:]
+	}
+	return fmt.Sprintf("%s/%s", registry, strings.Join(parts, "/"))
+}
+
+func imageHasTagOrDigest(image string) bool {
+	if strings.Contains(image, "@") {
+		return true
+	}
+
+	lastSlash := strings.LastIndex(image, "/")
+	lastColon := strings.LastIndex(image, ":")
+	return lastColon > lastSlash
+}
+
+func (r *MCPServerReconciler) buildImagePullSecrets(mcpServer *mcpv1alpha1.MCPServer) []corev1.LocalObjectReference {
+	// If user specified pull secrets, honor them.
+	if len(mcpServer.Spec.ImagePullSecrets) > 0 {
+		out := make([]corev1.LocalObjectReference, 0, len(mcpServer.Spec.ImagePullSecrets))
+		for _, s := range mcpServer.Spec.ImagePullSecrets {
+			if s == "" {
+				continue
+			}
+			out = append(out, corev1.LocalObjectReference{Name: s})
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+
+	// Otherwise, use the provisioned registry secret if configured.
+	// The secret is created during setup (mcp-runtime setup), not during reconciliation.
+	if r.ProvisionedRegistry == nil || r.ProvisionedRegistry.URL == "" ||
+		r.ProvisionedRegistry.Username == "" || r.ProvisionedRegistry.Password == "" {
+		return nil
+	}
+
+	secretName := r.ProvisionedRegistry.SecretName
+	if secretName == "" {
+		secretName = "mcp-runtime-registry-creds" // #nosec G101 -- default secret name, not a credential.
+	}
+
+	return []corev1.LocalObjectReference{{Name: secretName}}
+}
+func (r *MCPServerReconciler) buildEnvVars(envVars []mcpv1alpha1.EnvVar, secretEnvVars []mcpv1alpha1.SecretEnvVar) []corev1.EnvVar {
+	result := make([]corev1.EnvVar, 0, len(envVars)+len(secretEnvVars))
+	for _, ev := range envVars {
+		result = append(result, corev1.EnvVar{
+			Name:  ev.Name,
+			Value: ev.Value,
+		})
+	}
+	for _, ev := range secretEnvVars {
+		if ev.SecretKeyRef == nil {
+			continue
+		}
+		result = append(result, corev1.EnvVar{
+			Name: ev.Name,
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: ev.SecretKeyRef.Name},
+					Key:                  ev.SecretKeyRef.Key,
+				},
+			},
+		})
+	}
+	return result
+}
+func gatewayEnabled(mcpServer *mcpv1alpha1.MCPServer) bool {
+	return mcpServer != nil && mcpServer.Spec.Gateway != nil && mcpServer.Spec.Gateway.Enabled
+}
+
+func serverUsesOAuth(mcpServer *mcpv1alpha1.MCPServer) bool {
+	return mcpServer != nil && mcpServer.Spec.Auth != nil && mcpServer.Spec.Auth.Mode == mcpv1alpha1.AuthModeOAuth
+}
+
+func analyticsEnabled(mcpServer *mcpv1alpha1.MCPServer) bool {
+	return mcpServer != nil && mcpServer.Spec.Analytics != nil && mcpServer.Spec.Analytics.Enabled
+}
