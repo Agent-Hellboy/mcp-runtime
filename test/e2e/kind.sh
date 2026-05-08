@@ -389,6 +389,7 @@ rollout_status_with_logs() {
     echo "[debug] rollout failed for ${kind}/${name}; collecting diagnostics" >&2
     kubectl describe "${kind}/${name}" -n "${namespace}" || true
     kubectl get pods -n "${namespace}" -l "app=${name}" -o wide || true
+    kubectl describe pods -n "${namespace}" -l "app=${name}" || true
     kubectl logs -n "${namespace}" -l "app=${name}" --all-containers=true --tail=200 || true
     kubectl logs -n "${namespace}" "deploy/${name}" --all-containers=true --tail=200 || true
   fi
@@ -4683,6 +4684,8 @@ PY
 fi
 
 echo "[cli] checking sentinel restart command"
+# The full E2E stack packs single-node Kind tightly, so avoid requiring surge CPU for this restart smoke.
+kubectl patch deployment mcp-sentinel-api -n mcp-sentinel --type merge -p '{"spec":{"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":0,"maxUnavailable":1}}}}' >/dev/null
 ./bin/mcp-runtime sentinel restart api
 rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
 
