@@ -1371,8 +1371,9 @@ func isImagePullWaitingReason(reason string) bool {
 
 func restrictedRunOverrides(containerName, image, command string, args ...string) string {
 	container := map[string]any{
-		"name":  strings.TrimSpace(containerName),
-		"image": strings.TrimSpace(image),
+		"name":       strings.TrimSpace(containerName),
+		"image":      strings.TrimSpace(image),
+		"workingDir": "/tmp",
 		"securityContext": map[string]any{
 			"allowPrivilegeEscalation": false,
 			"runAsNonRoot":             true,
@@ -1525,14 +1526,8 @@ func checkSentinelAPIAuthProbe(kubectl core.KubectlRunner) DoctorCheck {
 		}
 	}
 	podName := fmt.Sprintf("doctor-sentinel-probe-%d", time.Now().UnixNano())
-	args := []string{
-		"run", "-n", doctorSentinelNamespace,
-		"--rm", "--restart=Never", "--attach",
-		"--pod-running-timeout=" + doctorProbePodRunTimeout,
-		"--quiet",
-		"--image=curlimages/curl:8.7.1",
-		podName,
-		"--command", "--", "curl",
+	image := "curlimages/curl:8.7.1"
+	curlArgs := []string{
 		"-sS", "-o", "doctor-response",
 		"-w", "%{http_code}",
 		"--connect-timeout", "5",
@@ -1540,7 +1535,16 @@ func checkSentinelAPIAuthProbe(kubectl core.KubectlRunner) DoctorCheck {
 		"-H", "x-api-key: " + apiKey,
 		fmt.Sprintf("http://%s.%s.svc.cluster.local:8080/api/runtime/components", doctorSentinelAPIService, doctorSentinelNamespace),
 	}
-	cmd, cmdErr := kubectl.CommandArgs(args)
+	defer func() {
+		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", doctorSentinelNamespace, "--ignore-not-found"})
+	}()
+	cmd, cmdErr := kubectl.CommandArgs([]string{
+		"run", podName,
+		"-n", doctorSentinelNamespace,
+		"--restart=Never",
+		"--image=" + image,
+		"--overrides=" + restrictedRunOverrides(podName, image, "curl", curlArgs...),
+	})
 	if cmdErr != nil {
 		return DoctorCheck{
 			Name:   "sentinel API auth probe",
@@ -1549,16 +1553,38 @@ func checkSentinelAPIAuthProbe(kubectl core.KubectlRunner) DoctorCheck {
 			Remedy: "check kubectl connectivity and helper image access",
 		}
 	}
-	out, runErr := cmd.CombinedOutput()
-	status := strings.TrimSpace(string(out))
+	createOut, runErr := cmd.CombinedOutput()
 	if runErr != nil {
 		return DoctorCheck{
 			Name:   "sentinel API auth probe",
 			OK:     false,
-			Detail: fmt.Sprintf("probe failed: %s", status),
+			Detail: fmt.Sprintf("failed creating auth probe pod: %v: %s", runErr, strings.TrimSpace(string(createOut))),
 			Remedy: "verify sentinel API deployment/service and API key config",
 		}
 	}
+	if err := waitForDoctorPodSucceeded(kubectl, podName, doctorSentinelNamespace, 90*time.Second); err != nil {
+		logs, _ := readKubectlOutput(kubectl, []string{"logs", podName, "-n", doctorSentinelNamespace, "--tail=50"})
+		detail := fmt.Sprintf("auth probe pod did not complete: %v", err)
+		if strings.TrimSpace(logs) != "" {
+			detail += ": " + strings.TrimSpace(logs)
+		}
+		return DoctorCheck{
+			Name:   "sentinel API auth probe",
+			OK:     false,
+			Detail: detail,
+			Remedy: "verify sentinel API deployment/service and API key config",
+		}
+	}
+	out, logsErr := readKubectlOutput(kubectl, []string{"logs", podName, "-n", doctorSentinelNamespace})
+	if logsErr != nil {
+		return DoctorCheck{
+			Name:   "sentinel API auth probe",
+			OK:     false,
+			Detail: fmt.Sprintf("failed reading auth probe logs: %v", logsErr),
+			Remedy: "inspect auth probe pod logs",
+		}
+	}
+	status := strings.TrimSpace(out)
 	if status == "200" {
 		return DoctorCheck{
 			Name:   "sentinel API auth probe",

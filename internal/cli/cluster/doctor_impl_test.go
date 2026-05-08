@@ -707,6 +707,7 @@ func TestDoctorCurlProbesPassPathValidator(t *testing.T) {
 	})
 
 	t.Run("sentinel API auth probe", func(t *testing.T) {
+		var probeArgs []string
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				switch {
@@ -714,11 +715,18 @@ func TestDoctorCurlProbesPassPathValidator(t *testing.T) {
 					return &core.MockCommand{OutputData: []byte(doctorSentinelNamespace)}
 				case contains(spec.Args, "jsonpath={.data.UI_API_KEY}"):
 					return &core.MockCommand{OutputData: []byte("dGVzdA==")}
-				case contains(spec.Args, "curl"):
+				case len(spec.Args) > 0 && spec.Args[0] == "run":
+					probeArgs = append([]string(nil), spec.Args...)
 					if contains(spec.Args, "/dev/null") {
 						t.Fatal("doctor curl helper should not pass /dev/null through kubectl validators")
 					}
+					return &core.MockCommand{OutputData: []byte("pod/doctor-sentinel-probe created\n")}
+				case len(spec.Args) > 0 && spec.Args[0] == "get" && contains(spec.Args, "jsonpath={.status.phase}"):
+					return &core.MockCommand{OutputData: []byte("Succeeded")}
+				case len(spec.Args) > 0 && spec.Args[0] == "logs":
 					return &core.MockCommand{OutputData: []byte("200")}
+				case len(spec.Args) > 0 && spec.Args[0] == "delete":
+					return &core.MockCommand{}
 				default:
 					return &core.MockCommand{}
 				}
@@ -728,6 +736,15 @@ func TestDoctorCurlProbesPassPathValidator(t *testing.T) {
 		check := checkSentinelAPIAuthProbe(kubectl)
 		if !check.OK {
 			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+		overrides := argValueWithPrefix(probeArgs, "--overrides=")
+		if overrides == "" {
+			t.Fatalf("sentinel auth probe should use restricted-compliant overrides, got args=%v", probeArgs)
+		}
+		for _, notWant := range []string{"--attach", "--rm"} {
+			if contains(probeArgs, notWant) {
+				t.Fatalf("sentinel auth probe should read completed pod logs instead of using %s, got args=%v", notWant, probeArgs)
+			}
 		}
 	})
 }
@@ -1395,6 +1412,7 @@ func TestRestrictedRunOverridesUsesNumericNonRootUser(t *testing.T) {
 	for _, want := range []string{
 		`"runAsNonRoot":true`,
 		`"runAsUser":65532`,
+		`"workingDir":"/tmp"`,
 		`"command":["curl"]`,
 		`"args":["-sSI","http://example.test"]`,
 	} {
