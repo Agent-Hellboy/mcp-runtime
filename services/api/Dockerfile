@@ -12,6 +12,7 @@ RUN cd services/api && go mod download
 
 # Copy service source
 COPY services/api/*.go ./services/api/
+COPY services/api/internal/ ./services/api/internal/
 
 # Build from service directory
 RUN cd services/api && \

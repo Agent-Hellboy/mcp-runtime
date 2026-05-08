@@ -79,7 +79,7 @@ var analyticsComponents = []analyticsComponent{
 		Name:         "ingest",
 		Repository:   "mcp-sentinel-ingest",
 		Dockerfile:   "services/ingest/Dockerfile",
-		BuildContext: "services/ingest",
+		BuildContext: ".",
 	},
 	{
 		Name:         "api",
@@ -91,13 +91,13 @@ var analyticsComponents = []analyticsComponent{
 		Name:         "processor",
 		Repository:   "mcp-sentinel-processor",
 		Dockerfile:   "services/processor/Dockerfile",
-		BuildContext: "services/processor",
+		BuildContext: ".",
 	},
 	{
 		Name:         "ui",
 		Repository:   "mcp-sentinel-ui",
 		Dockerfile:   "services/ui/Dockerfile",
-		BuildContext: "services/ui",
+		BuildContext: ".",
 	},
 }
 
