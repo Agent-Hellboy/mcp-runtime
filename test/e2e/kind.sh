@@ -3140,6 +3140,13 @@ servers:
     publicPathPrefix: ${OAUTH_SERVER_NAME}
     port: 8090
     namespace: mcp-servers
+    resources:
+      requests:
+        cpu: 1m
+        memory: 32Mi
+    rollout:
+      maxUnavailable: 1
+      maxSurge: 0
     envVars:
       - name: PORT
         value: "8090"
@@ -4425,6 +4432,13 @@ spec:
   servicePort: 80
   publicPathPrefix: ${prefix}
   ingressPath: /${prefix}/mcp
+  resources:
+    requests:
+      cpu: 1m
+      memory: 32Mi
+  rollout:
+    maxUnavailable: 1
+    maxSurge: 0
   envVars:
     - name: MCP_PATH
       value: /${prefix}/mcp
