@@ -28,10 +28,10 @@ fi
 
 kubectl config use-context "kind-${KIND_CLUSTER_NAME}" >/dev/null
 
-docker build -t mcp-sentinel-api:latest services/api
-docker build -t mcp-sentinel-ingest:latest services/ingest
-docker build -t mcp-sentinel-processor:latest services/processor
-docker build -t mcp-sentinel-ui:latest services/ui
+docker build -t mcp-sentinel-api:latest -f services/api/Dockerfile .
+docker build -t mcp-sentinel-ingest:latest -f services/ingest/Dockerfile .
+docker build -t mcp-sentinel-processor:latest -f services/processor/Dockerfile .
+docker build -t mcp-sentinel-ui:latest -f services/ui/Dockerfile .
 docker build -t go-example-mcp:latest examples/go-mcp-server
 docker build -t mcp-sentinel-mcp-proxy:latest -f services/mcp-proxy/Dockerfile .
 
