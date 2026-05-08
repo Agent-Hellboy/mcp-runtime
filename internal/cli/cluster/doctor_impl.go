@@ -943,14 +943,15 @@ func checkMCPServersDNSAndNetwork(kubectl core.KubectlRunner) DoctorCheck {
 		"-sSI", "--connect-timeout", "5", "--max-time", "15",
 		"http://registry.registry.svc.cluster.local:5000/v2/",
 	}
+	defer func() {
+		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", doctorMCPServersNamespace, "--ignore-not-found"})
+	}()
 	args := []string{
-		"run", "-n", doctorMCPServersNamespace,
-		"--rm", "--restart=Never", "--attach",
-		"--pod-running-timeout=" + doctorProbePodRunTimeout,
-		"--quiet",
+		"run", podName,
+		"-n", doctorMCPServersNamespace,
+		"--restart=Never",
 		"--image=" + image,
 		"--overrides=" + restrictedRunOverrides(podName, image, "curl", curlArgs...),
-		podName,
 	}
 	cmd, err := kubectl.CommandArgs(args)
 	if err != nil {
@@ -961,20 +962,42 @@ func checkMCPServersDNSAndNetwork(kubectl core.KubectlRunner) DoctorCheck {
 			Remedy: "check kubeconfig and namespace access",
 		}
 	}
-	out, runErr := cmd.CombinedOutput()
+	createOut, runErr := cmd.CombinedOutput()
 	if runErr != nil {
 		return DoctorCheck{
 			Name:   "mcp-servers DNS/network",
 			OK:     false,
-			Detail: strings.TrimSpace(string(out)),
+			Detail: strings.TrimSpace(string(createOut)),
 			Remedy: "check CoreDNS and network policies for namespace mcp-servers",
 		}
 	}
-	if !hasHTTP200Status(string(out)) {
+	if err := waitForDoctorPodSucceeded(kubectl, podName, doctorMCPServersNamespace, 90*time.Second); err != nil {
+		logs, _ := readKubectlOutput(kubectl, []string{"logs", podName, "-n", doctorMCPServersNamespace, "--tail=50"})
+		detail := fmt.Sprintf("helper pod did not succeed: %v", err)
+		if strings.TrimSpace(logs) != "" {
+			detail += ": " + strings.TrimSpace(logs)
+		}
 		return DoctorCheck{
 			Name:   "mcp-servers DNS/network",
 			OK:     false,
-			Detail: fmt.Sprintf("unexpected response: %q", strings.TrimSpace(string(out))),
+			Detail: detail,
+			Remedy: "check CoreDNS and network policies for namespace mcp-servers",
+		}
+	}
+	out, logsErr := readKubectlOutput(kubectl, []string{"logs", podName, "-n", doctorMCPServersNamespace})
+	if logsErr != nil {
+		return DoctorCheck{
+			Name:   "mcp-servers DNS/network",
+			OK:     false,
+			Detail: fmt.Sprintf("failed reading helper pod logs: %v", logsErr),
+			Remedy: "inspect pod events: `kubectl -n mcp-servers describe pod " + podName + "`",
+		}
+	}
+	if !hasHTTP200Status(out) {
+		return DoctorCheck{
+			Name:   "mcp-servers DNS/network",
+			OK:     false,
+			Detail: fmt.Sprintf("unexpected response: %q", strings.TrimSpace(out)),
 			Remedy: "check CoreDNS and service routing from namespace mcp-servers",
 		}
 	}
@@ -1283,6 +1306,47 @@ func waitForDoctorPodImagePulled(kubectl core.KubectlRunner, name, namespace str
 		}
 		if lastStatus == "" && imageErr != nil {
 			lastStatus = imageErr.Error()
+		}
+
+		select {
+		case <-timeoutTimer.C:
+			if lastStatus == "" {
+				lastStatus = "timed out"
+			}
+			return fmt.Errorf("%s", lastStatus)
+		case <-ticker.C:
+		}
+	}
+}
+
+func waitForDoctorPodSucceeded(kubectl core.KubectlRunner, name, namespace string, timeout time.Duration) error {
+	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	var lastStatus string
+	for {
+		phase, phaseErr := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.phase}"})
+		phase = strings.TrimSpace(phase)
+		switch phase {
+		case "Succeeded":
+			return nil
+		case "Failed":
+			return fmt.Errorf("pod phase Failed")
+		}
+
+		reason, _ := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].state.waiting.reason}"})
+		reason = strings.TrimSpace(reason)
+		if isImagePullWaitingReason(reason) {
+			return fmt.Errorf("%s", reason)
+		}
+		lastStatus = phase
+		if reason != "" {
+			lastStatus = reason
+		}
+		if lastStatus == "" && phaseErr != nil {
+			lastStatus = phaseErr.Error()
 		}
 
 		select {

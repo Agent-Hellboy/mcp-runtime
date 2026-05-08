@@ -1353,13 +1353,20 @@ func TestCheckMCPServersImagePullSmokeUsesRestrictedCompliantPodSpec(t *testing.
 	}
 }
 
-func TestCheckMCPServersDNSAndNetworkAllowsColdCurlImagePull(t *testing.T) {
+func TestCheckMCPServersDNSAndNetworkReadsCompletedPodLogs(t *testing.T) {
 	var runArgs []string
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
-			if len(spec.Args) > 0 && spec.Args[0] == "run" {
+			switch {
+			case len(spec.Args) > 0 && spec.Args[0] == "run":
 				runArgs = append([]string(nil), spec.Args...)
+				return &core.MockCommand{OutputData: []byte("pod/mcp-runtime-doctor-dns created\n")}
+			case len(spec.Args) > 0 && spec.Args[0] == "get" && contains(spec.Args, "jsonpath={.status.phase}"):
+				return &core.MockCommand{OutputData: []byte("Succeeded")}
+			case len(spec.Args) > 0 && spec.Args[0] == "logs":
 				return &core.MockCommand{OutputData: []byte("HTTP/1.1 200 OK\r\n")}
+			case len(spec.Args) > 0 && spec.Args[0] == "delete":
+				return &core.MockCommand{}
 			}
 			return &core.MockCommand{OutputErr: fmt.Errorf("unexpected command: %v", spec.Args)}
 		},
@@ -1372,12 +1379,14 @@ func TestCheckMCPServersDNSAndNetworkAllowsColdCurlImagePull(t *testing.T) {
 	if len(runArgs) == 0 {
 		t.Fatal("expected DNS/network probe to create a curl pod")
 	}
-	wantTimeout := "--pod-running-timeout=" + doctorProbePodRunTimeout
-	if !contains(runArgs, wantTimeout) {
-		t.Fatalf("DNS/network probe should allow cold curl image pulls with %s, got args=%v", wantTimeout, runArgs)
+	overrides := argValueWithPrefix(runArgs, "--overrides=")
+	if overrides == "" {
+		t.Fatalf("DNS/network probe should use restricted-compliant overrides, got args=%v", runArgs)
 	}
-	if contains(runArgs, "--pod-running-timeout=30s") {
-		t.Fatalf("DNS/network probe should not use the old 30s running timeout, got args=%v", runArgs)
+	for _, notWant := range []string{"--attach", "--rm"} {
+		if contains(runArgs, notWant) {
+			t.Fatalf("DNS/network probe should read completed pod logs instead of using %s, got args=%v", notWant, runArgs)
+		}
 	}
 }
 
