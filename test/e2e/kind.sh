@@ -3149,8 +3149,8 @@ servers:
         cpu: 1m
         memory: 32Mi
     rollout:
-      maxUnavailable: 1
-      maxSurge: 0
+      maxUnavailable: "1"
+      maxSurge: "0"
     envVars:
       - name: PORT
         value: "8090"
@@ -4445,8 +4445,8 @@ spec:
       cpu: 1m
       memory: 32Mi
   rollout:
-    maxUnavailable: 1
-    maxSurge: 0
+    maxUnavailable: "1"
+    maxSurge: "0"
   envVars:
     - name: MCP_PATH
       value: /${prefix}/mcp
