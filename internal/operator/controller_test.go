@@ -1247,6 +1247,36 @@ func TestBuildIngressAnnotations(t *testing.T) {
 		// Should include default traefik entrypoints annotation
 		assertEqual(t, "traefik annotation", annotations["traefik.ingress.kubernetes.io/router.entrypoints"], "web")
 	})
+
+	t.Run("does not default nginx rewrite target", func(t *testing.T) {
+		mcpServer := &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				IngressClass: "nginx",
+			},
+		}
+		r := MCPServerReconciler{}
+		annotations := r.buildIngressAnnotations(mcpServer)
+		if _, exists := annotations["nginx.ingress.kubernetes.io/rewrite-target"]; exists {
+			t.Fatal("nginx rewrite-target should only be set when provided by the user")
+		}
+		assertEqual(t, "nginx ssl redirect annotation", annotations["nginx.ingress.kubernetes.io/ssl-redirect"], "false")
+	})
+
+	t.Run("preserves user-specified nginx rewrite target", func(t *testing.T) {
+		mcpServer := &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				IngressClass: "nginx",
+				IngressAnnotations: map[string]string{
+					"nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+				},
+			},
+		}
+		r := MCPServerReconciler{}
+		annotations := r.buildIngressAnnotations(mcpServer)
+		assertEqual(t, "nginx rewrite target", annotations["nginx.ingress.kubernetes.io/rewrite-target"], "/$2")
+	})
 }
 
 func TestReconcileDeployment(t *testing.T) {

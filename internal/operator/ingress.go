@@ -151,9 +151,6 @@ func (r *MCPServerReconciler) buildIngressAnnotations(mcpServer *mcpv1alpha1.MCP
 
 	case "nginx":
 		// Nginx Ingress Controller annotations
-		if _, exists := annotations["nginx.ingress.kubernetes.io/rewrite-target"]; !exists {
-			annotations["nginx.ingress.kubernetes.io/rewrite-target"] = "/"
-		}
 		if _, exists := annotations["nginx.ingress.kubernetes.io/ssl-redirect"]; !exists {
 			annotations["nginx.ingress.kubernetes.io/ssl-redirect"] = "false"
 		}

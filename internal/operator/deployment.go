@@ -305,9 +305,15 @@ func applyContainerResources(container *corev1.Container, resources mcpv1alpha1.
 }
 
 func (r *MCPServerReconciler) ensureWorkloadServiceAccount(ctx context.Context, namespace string) error {
-	sa := kubeworkload.ServiceAccount(namespace)
+	desiredSA := kubeworkload.ServiceAccount(namespace)
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      desiredSA.Name,
+			Namespace: desiredSA.Namespace,
+		},
+	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, sa, func() error {
-		sa.AutomountServiceAccountToken = kubeworkload.ServiceAccount(namespace).AutomountServiceAccountToken
+		sa.AutomountServiceAccountToken = desiredSA.AutomountServiceAccountToken
 		return nil
 	})
 	return err
