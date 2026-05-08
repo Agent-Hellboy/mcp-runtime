@@ -1602,6 +1602,7 @@ mcp_path_updated = False
 public_path_prefix_updated = False
 in_env_vars = False
 current_env_name = None
+resources_present = any(line.startswith("    resources:") for line in lines)
 
 route_override = os.environ["SERVER_ROUTE_OVERRIDE"].strip()
 route_prefix = route_override.strip("/")
@@ -1679,6 +1680,21 @@ if not public_path_prefix_updated:
             inserted = True
     updated = final
     public_path_prefix_updated = inserted
+if not resources_present:
+    final = []
+    inserted = False
+    for line in updated:
+        final.append(line)
+        stripped = line.lstrip()
+        indent = line[: len(line) - len(stripped)]
+        if not inserted and indent == "    " and stripped.startswith("namespace: "):
+            final.append(f"{indent}resources:")
+            final.append(f"{indent}  requests:")
+            final.append(f"{indent}    cpu: 1m")
+            final.append(f"{indent}    memory: 32Mi")
+            inserted = True
+    updated = final
+    resources_present = inserted
 path.write_text("\n".join(updated) + "\n", encoding="utf-8")
 
 # Verify substitutions landed; missing fields cause silent failures later.
@@ -1690,6 +1706,8 @@ if not mcp_path_updated:
     raise SystemExit(f"prepare_example_metadata: MCP_PATH env var was not updated in {path}")
 if not public_path_prefix_updated:
     raise SystemExit(f"prepare_example_metadata: publicPathPrefix was not updated in {path}")
+if not resources_present:
+    raise SystemExit(f"prepare_example_metadata: resources were not inserted in {path}")
 PY
 }
 
@@ -2183,6 +2201,10 @@ servers:
     publicPathPrefix: ${SERVER_NAME}
     port: 8090
     namespace: mcp-servers
+    resources:
+      requests:
+        cpu: 1m
+        memory: 32Mi
     envVars:
       - name: PORT
         value: "8090"
