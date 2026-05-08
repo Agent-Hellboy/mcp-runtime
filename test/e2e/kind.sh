@@ -2230,6 +2230,10 @@ servers:
       required: true
     gateway:
       enabled: true
+      resources:
+        requests:
+          cpu: 1m
+          memory: 32Mi
     analytics:
       enabled: true
       ingestURL: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
@@ -3176,6 +3180,10 @@ servers:
       upstreamTokenHeader: Authorization
     gateway:
       enabled: true
+      resources:
+        requests:
+          cpu: 1m
+          memory: 32Mi
     analytics:
       enabled: true
       ingestURL: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
@@ -4462,6 +4470,10 @@ spec:
     required: true
   gateway:
     enabled: true
+    resources:
+      requests:
+        cpu: 1m
+        memory: 32Mi
 EOF
   }
 

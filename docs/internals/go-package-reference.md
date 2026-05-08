@@ -339,6 +339,9 @@ type GatewayConfig struct {
 
 	// StripPrefix removes a path prefix before forwarding to the upstream server.
 	StripPrefix string `json:"stripPrefix,omitempty"`
+
+	// Resources defines resource limits and requests for the gateway sidecar.
+	Resources *ResourceRequirements `json:"resources,omitempty"`
 }
     GatewayConfig configures an optional MCP proxy sidecar for a server.
     +kubebuilder:object:generate=true
@@ -1510,11 +1513,12 @@ type EnvVar struct {
 <a id="metadata-helpers-type-gatewayconfig-struct"></a>
 ```text
 type GatewayConfig struct {
-	Enabled     bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Image       string `yaml:"image,omitempty" json:"image,omitempty"`
-	Port        int32  `yaml:"port,omitempty" json:"port,omitempty"`
-	UpstreamURL string `yaml:"upstreamURL,omitempty" json:"upstreamURL,omitempty"`
-	StripPrefix string `yaml:"stripPrefix,omitempty" json:"stripPrefix,omitempty"`
+	Enabled     bool                  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Image       string                `yaml:"image,omitempty" json:"image,omitempty"`
+	Port        int32                 `yaml:"port,omitempty" json:"port,omitempty"`
+	UpstreamURL string                `yaml:"upstreamURL,omitempty" json:"upstreamURL,omitempty"`
+	StripPrefix string                `yaml:"stripPrefix,omitempty" json:"stripPrefix,omitempty"`
+	Resources   *ResourceRequirements `yaml:"resources,omitempty" json:"resources,omitempty"`
 }
     GatewayConfig configures an optional MCP proxy sidecar for a server.
 

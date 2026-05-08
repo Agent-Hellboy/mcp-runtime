@@ -463,7 +463,11 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 			PeriodSeconds:       5,
 		},
 	}
-	if err := applyContainerResources(&container, mcpv1alpha1.ResourceRequirements{}); err != nil {
+	gatewayResources := mcpv1alpha1.ResourceRequirements{}
+	if mcpServer.Spec.Gateway != nil && mcpServer.Spec.Gateway.Resources != nil {
+		gatewayResources = *mcpServer.Spec.Gateway.Resources
+	}
+	if err := applyContainerResources(&container, gatewayResources); err != nil {
 		return corev1.Container{}, err
 	}
 	return container, nil

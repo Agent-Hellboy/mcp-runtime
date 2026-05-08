@@ -185,11 +185,12 @@ type SessionConfig struct {
 
 // GatewayConfig configures an optional MCP proxy sidecar for a server.
 type GatewayConfig struct {
-	Enabled     bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Image       string `yaml:"image,omitempty" json:"image,omitempty"`
-	Port        int32  `yaml:"port,omitempty" json:"port,omitempty"`
-	UpstreamURL string `yaml:"upstreamURL,omitempty" json:"upstreamURL,omitempty"`
-	StripPrefix string `yaml:"stripPrefix,omitempty" json:"stripPrefix,omitempty"`
+	Enabled     bool                  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Image       string                `yaml:"image,omitempty" json:"image,omitempty"`
+	Port        int32                 `yaml:"port,omitempty" json:"port,omitempty"`
+	UpstreamURL string                `yaml:"upstreamURL,omitempty" json:"upstreamURL,omitempty"`
+	StripPrefix string                `yaml:"stripPrefix,omitempty" json:"stripPrefix,omitempty"`
+	Resources   *ResourceRequirements `yaml:"resources,omitempty" json:"resources,omitempty"`
 }
 
 // AnalyticsConfig configures analytics emission from the gateway sidecar.

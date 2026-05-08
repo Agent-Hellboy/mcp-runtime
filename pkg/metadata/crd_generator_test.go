@@ -137,6 +137,9 @@ func TestGenerateCRD(t *testing.T) {
 				Port:        8091,
 				UpstreamURL: "http://127.0.0.1:8088",
 				StripPrefix: "/gateway-server",
+				Resources: &ResourceRequirements{
+					Requests: &ResourceList{CPU: "5m", Memory: "32Mi"},
+				},
 			},
 			Auth: &AuthConfig{
 				Mode: AuthMode("header"),
@@ -199,6 +202,10 @@ func TestGenerateCRD(t *testing.T) {
 		assertMapIntValue(t, gateway, "port", 8091)
 		assertMapStringValue(t, gateway, "upstreamURL", "http://127.0.0.1:8088")
 		assertMapStringValue(t, gateway, "stripPrefix", "/gateway-server")
+		gatewayResources := assertMapValue(t, gateway, "resources")
+		gatewayRequests := assertMapValue(t, gatewayResources, "requests")
+		assertMapStringValue(t, gatewayRequests, "cpu", "5m")
+		assertMapStringValue(t, gatewayRequests, "memory", "32Mi")
 
 		auth := assertMapValue(t, spec, "auth")
 		assertMapStringValue(t, auth, "mode", "header")

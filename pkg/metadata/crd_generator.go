@@ -44,18 +44,7 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 
 	// Convert resources
 	if server.Resources != nil {
-		if server.Resources.Limits != nil {
-			mcpServer.Spec.Resources.Limits = &mcpv1alpha1.ResourceList{
-				CPU:    server.Resources.Limits.CPU,
-				Memory: server.Resources.Limits.Memory,
-			}
-		}
-		if server.Resources.Requests != nil {
-			mcpServer.Spec.Resources.Requests = &mcpv1alpha1.ResourceList{
-				CPU:    server.Resources.Requests.CPU,
-				Memory: server.Resources.Requests.Memory,
-			}
-		}
+		mcpServer.Spec.Resources = *convertResourceRequirements(server.Resources)
 	}
 
 	// Convert environment variables
@@ -144,6 +133,9 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 			UpstreamURL: server.Gateway.UpstreamURL,
 			StripPrefix: server.Gateway.StripPrefix,
 		}
+		if server.Gateway.Resources != nil {
+			mcpServer.Spec.Gateway.Resources = convertResourceRequirements(server.Gateway.Resources)
+		}
 	}
 
 	if server.Rollout != nil {
@@ -206,6 +198,26 @@ func convertInventoryItems(items []InventoryItem) []mcpv1alpha1.InventoryItem {
 			}
 		}
 		converted = append(converted, mcpItem)
+	}
+	return converted
+}
+
+func convertResourceRequirements(resources *ResourceRequirements) *mcpv1alpha1.ResourceRequirements {
+	if resources == nil {
+		return nil
+	}
+	converted := &mcpv1alpha1.ResourceRequirements{}
+	if resources.Limits != nil {
+		converted.Limits = &mcpv1alpha1.ResourceList{
+			CPU:    resources.Limits.CPU,
+			Memory: resources.Limits.Memory,
+		}
+	}
+	if resources.Requests != nil {
+		converted.Requests = &mcpv1alpha1.ResourceList{
+			CPU:    resources.Requests.CPU,
+			Memory: resources.Requests.Memory,
+		}
 	}
 	return converted
 }
