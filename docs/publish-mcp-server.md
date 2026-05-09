@@ -70,7 +70,7 @@ spec:
 - Add `spec.servicePort` when you want a Service port other than `80`.
 - Add `spec.envVars` or `spec.secretEnvVars` for runtime configuration.
 - Add `spec.imagePullSecrets` if your registry requires explicit pull credentials.
-- Add `spec.tools` with tool descriptions and trust levels so the platform catalog mirrors the tool summaries clients see from `tools/list`.
+- Add `spec.tools` with tool descriptions, trust levels, and side-effect classes so the platform catalog and policy engine mirror the tool summaries clients see from `tools/list`.
 - Add `spec.auth`, `spec.policy`, `spec.session`, or `spec.rollout` when you want stricter governance or more delivery control.
 
 Apply the manifest:
@@ -97,6 +97,15 @@ servers:
     port: 8088
     replicas: 1
     namespace: mcp-servers
+    tools:
+      - name: list_invoices
+        description: List invoices for a customer account.
+        requiredTrust: low
+        sideEffect: read
+      - name: refund_invoice
+        description: Issue a refund for an invoice.
+        requiredTrust: high
+        sideEffect: destructive
 ```
 
 ### Metadata fields
@@ -118,7 +127,7 @@ servers:
 - `namespace`
   The target namespace.
 - `tools`
-  Tool inventory for the platform catalog and policy authoring. Include each tool's description when the MCP server SDK exposes one through `tools/list`.
+  Tool inventory for the platform catalog and policy authoring. Include each tool's description when the MCP server SDK exposes one through `tools/list`, and set `sideEffect` to `read`, `write`, or `destructive`. Tool side effects are required when a tool is listed.
 
 ### Metadata defaults
 

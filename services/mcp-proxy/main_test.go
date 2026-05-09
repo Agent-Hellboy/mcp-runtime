@@ -499,15 +499,16 @@ func oauthPolicy(issuerURL string) *policypkg.Document {
 			UpstreamTokenHeader: "Authorization",
 		},
 		Tools: []policypkg.Tool{
-			{Name: "echo", RequiredTrust: "low"},
+			{Name: "echo", RequiredTrust: "low", SideEffect: "read"},
 		},
 		Grants: []policypkg.Grant{
 			{
-				Name:      "grant-1",
-				HumanID:   "human-1",
-				AgentID:   "client-1",
-				MaxTrust:  "high",
-				ToolRules: []policypkg.ToolAccess{{Name: "echo", Decision: "allow"}},
+				Name:               "grant-1",
+				HumanID:            "human-1",
+				AgentID:            "client-1",
+				MaxTrust:           "high",
+				AllowedSideEffects: []string{"read"},
+				ToolRules:          []policypkg.ToolAccess{{Name: "echo", Decision: "allow"}},
 			},
 		},
 		Sessions: []policypkg.Binding{

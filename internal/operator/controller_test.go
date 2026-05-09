@@ -1208,7 +1208,7 @@ func TestRenderGatewayPolicyIncludesCrossNamespaceReferences(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "payments", Namespace: "servers"},
 		Spec: mcpv1alpha1.MCPServerSpec{
 			Tools: []mcpv1alpha1.ToolConfig{
-				{Name: "refund_invoice"},
+				{Name: "refund_invoice", SideEffect: mcpv1alpha1.ToolSideEffectWrite},
 			},
 		},
 	}
@@ -1217,6 +1217,9 @@ func TestRenderGatewayPolicyIncludesCrossNamespaceReferences(t *testing.T) {
 		Spec: mcpv1alpha1.MCPAccessGrantSpec{
 			ServerRef: mcpv1alpha1.ServerReference{Name: "payments", Namespace: "servers"},
 			Subject:   mcpv1alpha1.SubjectRef{HumanID: "user-1"},
+			AllowedSideEffects: []mcpv1alpha1.ToolSideEffect{
+				mcpv1alpha1.ToolSideEffectWrite,
+			},
 			ToolRules: []mcpv1alpha1.ToolRule{
 				{Name: "refund_invoice", Decision: mcpv1alpha1.PolicyDecisionAllow},
 			},
@@ -1248,11 +1251,17 @@ func TestRenderGatewayPolicyIncludesCrossNamespaceReferences(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderGatewayPolicy() error = %v", err)
 	}
+	if len(doc.Tools) != 1 || doc.Tools[0].SideEffect != "write" {
+		t.Fatalf("expected tool side effect to be rendered, got %+v", doc.Tools)
+	}
 	if len(doc.Grants) != 1 {
 		t.Fatalf("expected 1 matching grant, got %d", len(doc.Grants))
 	}
 	if doc.Grants[0].Name != "grant-a" {
 		t.Fatalf("expected cross-namespace grant to be rendered, got %+v", doc.Grants[0])
+	}
+	if len(doc.Grants[0].AllowedSideEffects) != 1 || doc.Grants[0].AllowedSideEffects[0] != "write" {
+		t.Fatalf("expected grant side effects to be rendered, got %+v", doc.Grants[0].AllowedSideEffects)
 	}
 	if len(doc.Sessions) != 1 {
 		t.Fatalf("expected 1 matching session, got %d", len(doc.Sessions))

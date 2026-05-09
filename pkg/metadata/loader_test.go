@@ -71,8 +71,8 @@ func TestLoadFromFile(t *testing.T) {
 							UpstreamTokenHeader: "Authorization",
 						},
 						Tools: []ToolConfig{
-							{Name: "list_tools", Description: "List tools exposed by the server.", RequiredTrust: TrustLevel("low")},
-							{Name: "delete_user", Description: "Delete a user from the backing system.", RequiredTrust: TrustLevel("high")},
+							{Name: "list_tools", Description: "List tools exposed by the server.", RequiredTrust: TrustLevel("low"), SideEffect: ToolSideEffect("read")},
+							{Name: "delete_user", Description: "Delete a user from the backing system.", RequiredTrust: TrustLevel("high"), SideEffect: ToolSideEffect("destructive")},
 						},
 						SecretEnvVars: []SecretEnvVar{
 							{
@@ -248,7 +248,7 @@ func TestSetDefaults(t *testing.T) {
 					Required: true,
 				},
 				Tools: []ToolConfig{
-					{Name: "delete_user", RequiredTrust: TrustLevel("high")},
+					{Name: "delete_user", RequiredTrust: TrustLevel("high"), SideEffect: ToolSideEffect("destructive")},
 				},
 				SecretEnvVars: []SecretEnvVar{
 					{
@@ -299,7 +299,7 @@ func TestSetDefaults(t *testing.T) {
 					UpstreamTokenHeader: "Authorization",
 				},
 				Tools: []ToolConfig{
-					{Name: "delete_user", RequiredTrust: TrustLevel("high")},
+					{Name: "delete_user", RequiredTrust: TrustLevel("high"), SideEffect: ToolSideEffect("destructive")},
 				},
 				SecretEnvVars: []SecretEnvVar{
 					{

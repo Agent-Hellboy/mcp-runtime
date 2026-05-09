@@ -101,25 +101,27 @@ func convertToSessionList(obj interface{}) (*MCPAgentSessionList, error) {
 
 // GrantSummary provides a simplified view of a grant for UI display.
 type GrantSummary struct {
-	Name      string          `json:"name"`
-	Namespace string          `json:"namespace"`
-	ServerRef ServerReference `json:"serverRef"`
-	Subject   SubjectRef      `json:"subject"`
-	MaxTrust  TrustLevel      `json:"maxTrust"`
-	Disabled  bool            `json:"disabled"`
-	Age       string          `json:"age"`
+	Name               string           `json:"name"`
+	Namespace          string           `json:"namespace"`
+	ServerRef          ServerReference  `json:"serverRef"`
+	Subject            SubjectRef       `json:"subject"`
+	MaxTrust           TrustLevel       `json:"maxTrust"`
+	AllowedSideEffects []ToolSideEffect `json:"allowedSideEffects,omitempty"`
+	Disabled           bool             `json:"disabled"`
+	Age                string           `json:"age"`
 }
 
 // ToGrantSummary converts an MCPAccessGrant to a GrantSummary.
 func ToGrantSummary(grant MCPAccessGrant) GrantSummary {
 	return GrantSummary{
-		Name:      grant.Name,
-		Namespace: grant.Namespace,
-		ServerRef: grant.Spec.ServerRef,
-		Subject:   grant.Spec.Subject,
-		MaxTrust:  grant.Spec.MaxTrust,
-		Disabled:  grant.Spec.Disabled,
-		Age:       grant.CreationTimestamp.Format("2006-01-02T15:04:05Z"),
+		Name:               grant.Name,
+		Namespace:          grant.Namespace,
+		ServerRef:          grant.Spec.ServerRef,
+		Subject:            grant.Spec.Subject,
+		MaxTrust:           grant.Spec.MaxTrust,
+		AllowedSideEffects: append([]ToolSideEffect(nil), grant.Spec.AllowedSideEffects...),
+		Disabled:           grant.Spec.Disabled,
+		Age:                grant.CreationTimestamp.Format("2006-01-02T15:04:05Z"),
 	}
 }
 

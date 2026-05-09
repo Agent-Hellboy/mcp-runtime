@@ -153,7 +153,7 @@ func TestGenerateCRD(t *testing.T) {
 				HeaderName: "X-MCP-Agent-Session",
 			},
 			Tools: []ToolConfig{
-				{Name: "delete_user", Description: "Delete a user from the backing system.", RequiredTrust: TrustLevel("high")},
+				{Name: "delete_user", Description: "Delete a user from the backing system.", RequiredTrust: TrustLevel("high"), SideEffect: ToolSideEffect("destructive")},
 			},
 			SecretEnvVars: []SecretEnvVar{
 				{
@@ -225,6 +225,7 @@ func TestGenerateCRD(t *testing.T) {
 		assertMapStringValue(t, tool, "name", "delete_user")
 		assertMapStringValue(t, tool, "description", "Delete a user from the backing system.")
 		assertMapStringValue(t, tool, "requiredTrust", "high")
+		assertMapStringValue(t, tool, "sideEffect", "destructive")
 
 		secretEnvVars := assertSliceValue(t, spec, "secretEnvVars")
 		if len(secretEnvVars) != 1 {

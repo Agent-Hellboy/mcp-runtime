@@ -455,6 +455,21 @@
                   <option value="high">high</option>
                 </select>
               </label>
+              <div class="checkbox-group" role="group" aria-labelledby="grant-side-effects-label">
+                <span id="grant-side-effects-label">Allowed Side Effects</span>
+                <label class="checkbox-inline">
+                  <input type="checkbox" name="grant-side-effect" value="read" checked />
+                  read
+                </label>
+                <label class="checkbox-inline">
+                  <input type="checkbox" name="grant-side-effect" value="write" />
+                  write
+                </label>
+                <label class="checkbox-inline">
+                  <input type="checkbox" name="grant-side-effect" value="destructive" />
+                  destructive
+                </label>
+              </div>
               <label>
                 Policy Version
                 <input type="text" id="grant-policy-version" />

@@ -615,6 +615,17 @@ function createTrustCell(trust) {
   return createBadgeCell(value, trustBadgeClass(value));
 }
 
+function createGrantRiskCell(trust, sideEffects) {
+  const cell = document.createElement("td");
+  const stack = document.createElement("div");
+  stack.className = "chip-stack";
+  stack.appendChild(createBadge(trust || "-", trustBadgeClass(trust || "-")));
+  const effects = Array.isArray(sideEffects) && sideEffects.length ? sideEffects : ["none"];
+  effects.forEach((effect) => stack.appendChild(createBadge(effect, "badge-muted")));
+  cell.appendChild(stack);
+  return cell;
+}
+
 function trustBadgeClass(trust) {
   if (trust === "high") return "badge-trust-high";
   if (trust === "medium") return "badge-trust-medium";
@@ -1168,10 +1179,11 @@ function renderInventoryBlock(label, items, itemRenderer) {
 
 function renderToolItem(tool) {
   const trust = tool.requiredTrust ? `<span class="trust-chip">${escapeHtml(tool.requiredTrust)}</span>` : "";
+  const sideEffect = tool.sideEffect ? `<span class="trust-chip">${escapeHtml(tool.sideEffect)}</span>` : "";
   const labels = renderInventoryLabels(tool.labels);
   return renderExpandableInventoryItem({
     name: tool.name || "-",
-    summaryMeta: trust,
+    summaryMeta: [trust, sideEffect].filter(Boolean).join(" "),
     description: tool.description,
     labels,
   });
@@ -1380,7 +1392,7 @@ function renderGrants() {
     row.appendChild(createIdentityCell(grant.name || "-", namespace));
     row.appendChild(createIdentityCell(grant.serverRef?.name || "-", serverNamespace));
     row.appendChild(createSubjectCell(grant.subject));
-    row.appendChild(createTrustCell(grant.maxTrust));
+    row.appendChild(createGrantRiskCell(grant.maxTrust, grant.allowedSideEffects));
     row.appendChild(createBadgeCell(status, statusClass));
     row.appendChild(
       createActionCell(grant.disabled ? "Enable" : "Disable", () =>
@@ -1454,6 +1466,7 @@ async function applyGrant(event) {
       },
       subject: { humanID, agentID },
       maxTrust: fieldValue("grant-trust"),
+      allowedSideEffects: selectedGrantSideEffects(),
       policyVersion: fieldValue("grant-policy-version") || defaults.policyVersion,
       toolRules,
     };
@@ -1466,6 +1479,7 @@ async function applyGrant(event) {
     document.getElementById("grant-form")?.reset();
     setFieldValue("grant-namespace", activeScopeNamespace());
     setFieldValue("grant-policy-version", defaults.policyVersion);
+    resetGrantSideEffects();
     document.getElementById("grant-form")?.classList.add("hidden");
     loadGrants();
     loadDashboardSummary();
@@ -1475,6 +1489,18 @@ async function applyGrant(event) {
   } finally {
     if (submit) submit.disabled = false;
   }
+}
+
+function selectedGrantSideEffects() {
+  return Array.from(document.querySelectorAll('input[name="grant-side-effect"]:checked'))
+    .map((input) => input.value)
+    .filter(Boolean);
+}
+
+function resetGrantSideEffects() {
+  document.querySelectorAll('input[name="grant-side-effect"]').forEach((input) => {
+    input.checked = input.value === "read";
+  });
 }
 
 function parseToolRules(text) {

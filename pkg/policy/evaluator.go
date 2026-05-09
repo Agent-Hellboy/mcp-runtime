@@ -22,14 +22,15 @@ type Request struct {
 
 // Decision is the result of evaluating a rendered policy document.
 type Decision struct {
-	Allowed        bool
-	Status         int
-	Reason         string
-	PolicyVersion  string
-	RequiredTrust  string
-	AdminTrust     string
-	ConsentedTrust string
-	EffectiveTrust string
+	Allowed            bool
+	Status             int
+	Reason             string
+	PolicyVersion      string
+	RequiredTrust      string
+	RequiredSideEffect string
+	AdminTrust         string
+	ConsentedTrust     string
+	EffectiveTrust     string
 }
 
 // Deny builds a denied authorization decision.
@@ -85,6 +86,7 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 	}
 
 	requiredTrust := resolveToolTrust(tools, request.ToolName)
+	requiredSideEffect := resolveToolSideEffect(tools, request.ToolName)
 	requiredRank := TrustRank(requiredTrust)
 	matchingGrants := matchingGrants(grants, identity)
 	if len(matchingGrants) == 0 {
@@ -93,6 +95,7 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 
 	bestAdminRank := 0
 	toolAllowed := false
+	sideEffectAllowedByGrant := false
 	policyVersion := policyVersionOrDefault(policy, "")
 	for _, grant := range matchingGrants {
 		if grant.Disabled {
@@ -104,8 +107,11 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 		adminRank := TrustRank(grant.MaxTrust)
 		if len(grant.ToolRules) == 0 {
 			toolAllowed = true
-			if adminRank > bestAdminRank {
-				bestAdminRank = adminRank
+			if sideEffectAllowed(grant.AllowedSideEffects, requiredSideEffect) {
+				sideEffectAllowedByGrant = true
+				if adminRank > bestAdminRank {
+					bestAdminRank = adminRank
+				}
 			}
 			continue
 		}
@@ -117,19 +123,39 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 				return Deny(http.StatusForbidden, "tool_denied", ChoosePolicyVersion(grant.PolicyVersion, policyVersionOrDefault(policy, "")))
 			}
 			toolAllowed = true
-			ruleRank := TrustRank(rule.RequiredTrust)
-			if ruleRank > requiredRank {
-				requiredRank = ruleRank
-				requiredTrust = NormalizeTrust(rule.RequiredTrust)
-			}
-			if adminRank > bestAdminRank {
-				bestAdminRank = adminRank
+			if sideEffectAllowed(grant.AllowedSideEffects, requiredSideEffect) {
+				sideEffectAllowedByGrant = true
+				ruleRank := TrustRank(rule.RequiredTrust)
+				if ruleRank > requiredRank {
+					requiredRank = ruleRank
+					requiredTrust = NormalizeTrust(rule.RequiredTrust)
+				}
+				if adminRank > bestAdminRank {
+					bestAdminRank = adminRank
+				}
 			}
 		}
 	}
 
 	if !toolAllowed {
 		return decideByDefault(policy, "tool_not_granted")
+	}
+	if requiredSideEffect == "" {
+		return Decision{
+			Status:        http.StatusForbidden,
+			Reason:        "tool_side_effect_unknown",
+			PolicyVersion: policyVersion,
+			RequiredTrust: requiredTrust,
+		}
+	}
+	if !sideEffectAllowedByGrant {
+		return Decision{
+			Status:             http.StatusForbidden,
+			Reason:             "side_effect_not_allowed",
+			PolicyVersion:      policyVersion,
+			RequiredTrust:      requiredTrust,
+			RequiredSideEffect: requiredSideEffect,
+		}
 	}
 	if bestAdminRank == 0 {
 		return decideByDefault(policy, "grant_without_trust")
@@ -144,25 +170,27 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 	effectiveRank := minInt(bestAdminRank, consentedRank)
 	if effectiveRank < requiredRank {
 		return Decision{
-			Status:         http.StatusForbidden,
-			Reason:         "trust_too_low",
-			PolicyVersion:  policyVersion,
-			RequiredTrust:  requiredTrust,
-			AdminTrust:     RankToTrust(bestAdminRank),
-			ConsentedTrust: consentedTrust,
-			EffectiveTrust: RankToTrust(effectiveRank),
+			Status:             http.StatusForbidden,
+			Reason:             "trust_too_low",
+			PolicyVersion:      policyVersion,
+			RequiredTrust:      requiredTrust,
+			RequiredSideEffect: requiredSideEffect,
+			AdminTrust:         RankToTrust(bestAdminRank),
+			ConsentedTrust:     consentedTrust,
+			EffectiveTrust:     RankToTrust(effectiveRank),
 		}
 	}
 
 	return Decision{
-		Allowed:        true,
-		Status:         http.StatusOK,
-		Reason:         "allowed",
-		PolicyVersion:  policyVersion,
-		RequiredTrust:  requiredTrust,
-		AdminTrust:     RankToTrust(bestAdminRank),
-		ConsentedTrust: consentedTrust,
-		EffectiveTrust: RankToTrust(effectiveRank),
+		Allowed:            true,
+		Status:             http.StatusOK,
+		Reason:             "allowed",
+		PolicyVersion:      policyVersion,
+		RequiredTrust:      requiredTrust,
+		RequiredSideEffect: requiredSideEffect,
+		AdminTrust:         RankToTrust(bestAdminRank),
+		ConsentedTrust:     consentedTrust,
+		EffectiveTrust:     RankToTrust(effectiveRank),
 	}
 }
 
@@ -230,6 +258,15 @@ func resolveToolTrust(tools []Tool, toolName string) string {
 		}
 	}
 	return TrustLevelLow
+}
+
+func resolveToolSideEffect(tools []Tool, toolName string) string {
+	for _, tool := range tools {
+		if tool.Name == toolName {
+			return NormalizeSideEffect(tool.SideEffect)
+		}
+	}
+	return ""
 }
 
 func policyVersionOrDefault(policy *Document, def string) string {

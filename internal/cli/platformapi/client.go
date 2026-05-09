@@ -114,14 +114,15 @@ type sessionGetResponse struct {
 }
 
 type grantAPIBody struct {
-	Name          string                         `json:"name"`
-	Namespace     string                         `json:"namespace"`
-	ServerRef     sentinelaccess.ServerReference `json:"serverRef"`
-	Subject       sentinelaccess.SubjectRef      `json:"subject"`
-	MaxTrust      sentinelaccess.TrustLevel      `json:"maxTrust"`
-	PolicyVersion string                         `json:"policyVersion,omitempty"`
-	Disabled      *bool                          `json:"disabled,omitempty"`
-	ToolRules     []sentinelaccess.ToolRule      `json:"toolRules"`
+	Name               string                          `json:"name"`
+	Namespace          string                          `json:"namespace"`
+	ServerRef          sentinelaccess.ServerReference  `json:"serverRef"`
+	Subject            sentinelaccess.SubjectRef       `json:"subject"`
+	MaxTrust           sentinelaccess.TrustLevel       `json:"maxTrust"`
+	AllowedSideEffects []sentinelaccess.ToolSideEffect `json:"allowedSideEffects,omitempty"`
+	PolicyVersion      string                          `json:"policyVersion,omitempty"`
+	Disabled           *bool                           `json:"disabled,omitempty"`
+	ToolRules          []sentinelaccess.ToolRule       `json:"toolRules"`
 }
 
 type sessionAPIBody struct {
@@ -395,6 +396,10 @@ func grantFromV1(g *mcpv1alpha1.MCPAccessGrant) grantAPIBody {
 		ns = sentinelaccess.DefaultMCPResourceNamespace
 	}
 	trust := sentinelaccess.TrustLevel(g.Spec.MaxTrust)
+	allowedSideEffects := make([]sentinelaccess.ToolSideEffect, 0, len(g.Spec.AllowedSideEffects))
+	for _, sideEffect := range g.Spec.AllowedSideEffects {
+		allowedSideEffects = append(allowedSideEffects, sentinelaccess.ToolSideEffect(sideEffect))
+	}
 	rules := make([]sentinelaccess.ToolRule, 0, len(g.Spec.ToolRules))
 	for _, tr := range g.Spec.ToolRules {
 		rules = append(rules, sentinelaccess.ToolRule{
@@ -405,14 +410,15 @@ func grantFromV1(g *mcpv1alpha1.MCPAccessGrant) grantAPIBody {
 	}
 	dis := g.Spec.Disabled
 	return grantAPIBody{
-		Name:          g.Name,
-		Namespace:     ns,
-		ServerRef:     sentinelaccess.ServerReference{Name: g.Spec.ServerRef.Name, Namespace: g.Spec.ServerRef.Namespace},
-		Subject:       sentinelaccess.SubjectRef{HumanID: g.Spec.Subject.HumanID, AgentID: g.Spec.Subject.AgentID},
-		MaxTrust:      trust,
-		PolicyVersion: g.Spec.PolicyVersion,
-		Disabled:      &dis,
-		ToolRules:     rules,
+		Name:               g.Name,
+		Namespace:          ns,
+		ServerRef:          sentinelaccess.ServerReference{Name: g.Spec.ServerRef.Name, Namespace: g.Spec.ServerRef.Namespace},
+		Subject:            sentinelaccess.SubjectRef{HumanID: g.Spec.Subject.HumanID, AgentID: g.Spec.Subject.AgentID},
+		MaxTrust:           trust,
+		AllowedSideEffects: allowedSideEffects,
+		PolicyVersion:      g.Spec.PolicyVersion,
+		Disabled:           &dis,
+		ToolRules:          rules,
 	}
 }
 

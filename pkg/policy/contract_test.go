@@ -46,6 +46,7 @@ func TestPolicyDocumentRoundTrip(t *testing.T) {
 				Name:          "read-file",
 				Description:   "Read a file from the filesystem",
 				RequiredTrust: "low",
+				SideEffect:    "read",
 				Labels: map[string]string{
 					"category": "filesystem",
 				},
@@ -54,6 +55,7 @@ func TestPolicyDocumentRoundTrip(t *testing.T) {
 				Name:          "write-file",
 				Description:   "Write a file to the filesystem",
 				RequiredTrust: "high",
+				SideEffect:    "write",
 				Labels: map[string]string{
 					"category": "filesystem",
 					"risk":     "destructive",
@@ -67,6 +69,10 @@ func TestPolicyDocumentRoundTrip(t *testing.T) {
 				MaxTrust:      "high",
 				PolicyVersion: "v1",
 				Disabled:      false,
+				AllowedSideEffects: []string{
+					"read",
+					"write",
+				},
 				ToolRules: []ToolAccess{
 					{
 						Name:          "read-file",
@@ -86,7 +92,10 @@ func TestPolicyDocumentRoundTrip(t *testing.T) {
 				MaxTrust:      "medium",
 				PolicyVersion: "v1",
 				Disabled:      false,
-				ToolRules:     []ToolAccess{}, // No tool rules = all allowed
+				AllowedSideEffects: []string{
+					"read",
+				},
+				ToolRules: []ToolAccess{}, // No tool rules = all read tools allowed
 			},
 		},
 		Sessions: []Binding{
@@ -234,6 +243,9 @@ func verifyTools(t *testing.T, expected, actual []Tool) {
 		if exp.RequiredTrust != act.RequiredTrust {
 			t.Errorf("Tool[%d].RequiredTrust mismatch: expected %q, got %q", i, exp.RequiredTrust, act.RequiredTrust)
 		}
+		if exp.SideEffect != act.SideEffect {
+			t.Errorf("Tool[%d].SideEffect mismatch: expected %q, got %q", i, exp.SideEffect, act.SideEffect)
+		}
 		if len(exp.Labels) != len(act.Labels) {
 			t.Errorf("Tool[%d].Labels length mismatch: expected %d, got %d", i, len(exp.Labels), len(act.Labels))
 		}
@@ -269,6 +281,15 @@ func verifyGrants(t *testing.T, expected, actual []Grant) {
 		}
 		if exp.Disabled != act.Disabled {
 			t.Errorf("Grant[%d].Disabled mismatch: expected %v, got %v", i, exp.Disabled, act.Disabled)
+		}
+		if len(exp.AllowedSideEffects) != len(act.AllowedSideEffects) {
+			t.Fatalf("Grant[%d].AllowedSideEffects length mismatch: expected %d, got %d", i, len(exp.AllowedSideEffects), len(act.AllowedSideEffects))
+			return
+		}
+		for j, sideEffect := range exp.AllowedSideEffects {
+			if act.AllowedSideEffects[j] != sideEffect {
+				t.Errorf("Grant[%d].AllowedSideEffects[%d] mismatch: expected %q, got %q", i, j, sideEffect, act.AllowedSideEffects[j])
+			}
 		}
 		if len(exp.ToolRules) != len(act.ToolRules) {
 			t.Fatalf("Grant[%d].ToolRules length mismatch: expected %d, got %d", i, len(exp.ToolRules), len(act.ToolRules))

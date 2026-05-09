@@ -59,6 +59,14 @@ spec:
             description: MCPAccessGrantSpec defines who can use which MCP server and
               with what trust ceiling.
             properties:
+              allowedSideEffects:
+                items:
+                  enum:
+                  - read
+                  - write
+                  - destructive
+                  type: string
+                type: array
               disabled:
                 type: boolean
               maxTrust:

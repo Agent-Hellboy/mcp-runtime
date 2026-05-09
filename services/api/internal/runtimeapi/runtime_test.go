@@ -28,6 +28,10 @@ func TestValidateGrantRequestDefaultsAndNormalizes(t *testing.T) {
 			HumanID: " user-1 ",
 		},
 		MaxTrust: sentinelaccess.TrustLevel(" high "),
+		AllowedSideEffects: []sentinelaccess.ToolSideEffect{
+			sentinelaccess.ToolSideEffect(" read "),
+			sentinelaccess.ToolSideEffect("write"),
+		},
 		ToolRules: []sentinelaccess.ToolRule{
 			{Name: " aaa-ping ", Decision: sentinelaccess.PolicyDecision(" allow ")},
 		},
@@ -48,6 +52,9 @@ func TestValidateGrantRequestDefaultsAndNormalizes(t *testing.T) {
 	if req.ToolRules[0].Name != "aaa-ping" || req.ToolRules[0].Decision != "allow" {
 		t.Fatalf("tool rule was not normalized: %#v", req.ToolRules[0])
 	}
+	if len(req.AllowedSideEffects) != 2 || req.AllowedSideEffects[0] != "read" || req.AllowedSideEffects[1] != "write" {
+		t.Fatalf("allowed side effects were not normalized: %#v", req.AllowedSideEffects)
+	}
 }
 
 func TestValidateGrantRequestRejectsInvalidToolRule(t *testing.T) {
@@ -63,6 +70,20 @@ func TestValidateGrantRequestRejectsInvalidToolRule(t *testing.T) {
 	err := validateGrantRequest(req)
 	if err == nil || !strings.Contains(err.Error(), "decision must be allow or deny") {
 		t.Fatalf("validateGrantRequest error = %v, want invalid decision", err)
+	}
+}
+
+func TestValidateGrantRequestRejectsInvalidAllowedSideEffect(t *testing.T) {
+	req := &accessGrantRequest{
+		Name:               "grant-a",
+		ServerRef:          sentinelaccess.ServerReference{Name: "demo"},
+		Subject:            sentinelaccess.SubjectRef{HumanID: "user-1"},
+		AllowedSideEffects: []sentinelaccess.ToolSideEffect{"read", "delete"},
+	}
+
+	err := validateGrantRequest(req)
+	if err == nil || !strings.Contains(err.Error(), "allowedSideEffects[1] must be read, write, or destructive") {
+		t.Fatalf("validateGrantRequest error = %v, want invalid side effect", err)
 	}
 }
 

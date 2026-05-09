@@ -17,11 +17,11 @@ import (
 )
 
 func newUpstreamReverseProxy(target *url.URL) *httputil.ReverseProxy {
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		originalDirector(req)
-		req.Host = target.Host
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(req *httputil.ProxyRequest) {
+			req.SetURL(target)
+			req.Out.Host = target.Host
+		},
 	}
 	return proxy
 }
@@ -195,6 +195,9 @@ func (s *proxyServer) auditPayload(
 	}
 	if decision.RequiredTrust != "" {
 		payload["required_trust"] = decision.RequiredTrust
+	}
+	if decision.RequiredSideEffect != "" {
+		payload["required_side_effect"] = decision.RequiredSideEffect
 	}
 	if decision.AdminTrust != "" {
 		payload["admin_trust"] = decision.AdminTrust

@@ -55,18 +55,20 @@ type Tool struct {
 	Name          string            `json:"name"`
 	Description   string            `json:"description,omitempty"`
 	RequiredTrust string            `json:"required_trust,omitempty"`
+	SideEffect    string            `json:"side_effect,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
 }
 
 // Grant defines access grants for subjects (humans/agents).
 type Grant struct {
-	Name          string       `json:"name"`
-	HumanID       string       `json:"human_id,omitempty"`
-	AgentID       string       `json:"agent_id,omitempty"`
-	MaxTrust      string       `json:"max_trust,omitempty"`
-	PolicyVersion string       `json:"policy_version,omitempty"`
-	Disabled      bool         `json:"disabled,omitempty"`
-	ToolRules     []ToolAccess `json:"tool_rules,omitempty"`
+	Name               string       `json:"name"`
+	HumanID            string       `json:"human_id,omitempty"`
+	AgentID            string       `json:"agent_id,omitempty"`
+	MaxTrust           string       `json:"max_trust,omitempty"`
+	AllowedSideEffects []string     `json:"allowed_side_effects,omitempty"`
+	PolicyVersion      string       `json:"policy_version,omitempty"`
+	Disabled           bool         `json:"disabled,omitempty"`
+	ToolRules          []ToolAccess `json:"tool_rules,omitempty"`
 }
 
 // Binding represents an agent session binding.

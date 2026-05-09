@@ -30,7 +30,7 @@ flowchart LR
 | Kind | Purpose |
 |---|---|
 | **MCPServer** | Runtime deployment spec plus gateway, auth, policy, session, tool inventory, rollout, and analytics settings. |
-| **MCPAccessGrant** | Who can use which server, for which tools, with what admin-side maximum trust. |
+| **MCPAccessGrant** | Who can use which server, for which side-effect classes and tools, with what admin-side maximum trust. |
 | **MCPAgentSession** | Server-side consented trust, expiry, revocation, and upstream token references per agent session. |
 
 ## MCPServer surface
@@ -50,12 +50,14 @@ flowchart LR
 | **auth.mode** | `none`, `header`, `oauth` | Working path today is `header` (identity extraction at the gateway). |
 | **policy.mode** | `allow-list`, `observe` | `allow-list` enforces deny-by-default; `observe` keeps the decision path visible. |
 | **trust** | `low`, `medium`, `high` | Used on tools, grants, sessions. Effective trust = min(grant, session). |
+| **tool sideEffect** | `read`, `write`, `destructive` | Required on each listed tool. Grants must include the tool's side effect in `allowedSideEffects` before a tool call can pass. |
 | **rollout.strategy** | `RollingUpdate`, `Recreate`, `Canary` | Available on `spec.rollout`. |
 
 ### Validation rules in code
 
 - `analytics.enabled` requires `gateway.enabled`.
 - `gateway.port` must differ from `spec.port`.
+- Every listed `tools[]` entry must declare `sideEffect`.
 - Canary rollouts require positive `canaryReplicas` strictly less than total replicas.
 
 ### Status
@@ -97,9 +99,11 @@ spec:
     - name: list_invoices
       description: List invoices for a customer account.
       requiredTrust: low
+      sideEffect: read
     - name: refund_invoice
       description: Issue a refund for an invoice.
       requiredTrust: high
+      sideEffect: destructive
   analytics:
     enabled: true
     ingestURL: http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events
@@ -114,6 +118,9 @@ spec:
 
 ### MCPAccessGrant
 
+`allowedSideEffects` is independent from `toolRules`: tool rules select names,
+and side-effect allowances select risk kind. A call must pass both.
+
 ```yaml
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
@@ -127,6 +134,9 @@ spec:
     humanID: user-123
     agentID: ops-agent
   maxTrust: high
+  allowedSideEffects:
+    - read
+    - destructive
   policyVersion: v1
   toolRules:
     - name: list_invoices
@@ -173,7 +183,7 @@ No `/authorize`, `/token`, `/.well-known/oauth-authorization-server`, PKCE, or D
 ### Practical model
 
 - Use the **gateway** for human, agent, and session identity headers.
-- Use **MCPAccessGrant + MCPAgentSession** for trust and revocation.
+- Use **MCPAccessGrant + MCPAgentSession** for side-effect permissions, trust, and revocation.
 - Use **OIDC-issued bearer tokens** only where Sentinel services validate them.
 
 ## Authentication API
@@ -206,7 +216,7 @@ sequenceDiagram
     Client->>Gateway: POST /payments/mcp tools/call
     Note right of Gateway: Read X-MCP-Human-ID,<br/>X-MCP-Agent-ID,<br/>X-MCP-Agent-Session
     Gateway->>Gateway: Lookup grant + session
-    Gateway->>Gateway: effective = min(tool, grant.maxTrust, session.consentedTrust)
+    Gateway->>Gateway: Check sideEffect + min(tool, grant.maxTrust, session.consentedTrust)
     alt allowed
         Gateway->>Server: forward
         Server-->>Gateway: response
@@ -218,8 +228,9 @@ sequenceDiagram
 ```
 
 - **Enforcement point:** authorization is evaluated at `call_tool` / `tools/call`, not at discovery time.
-- **Allow-list first:** missing grants or missing tool rules deny by default unless the policy explicitly overrides the default decision.
-- **Audit on allow and deny:** the gateway emits decision, reason, trust levels, human, agent, session, server, cluster, and namespace fields.
+- **Allow-list first:** missing grants deny by default unless the policy explicitly overrides the default decision. Empty `toolRules` means name-unrestricted access, still constrained by `allowedSideEffects` and trust.
+- **Side-effect guard:** `allowedSideEffects` is fail-closed. If it is omitted or empty, no tool side-effect class is allowed by that grant.
+- **Audit on allow and deny:** the gateway emits decision, reason, trust levels, required side effect, human, agent, session, server, cluster, and namespace fields.
 
 ```text
 X-MCP-Human-ID:    user-123
@@ -289,6 +300,7 @@ team membership and reject writes to the shared `mcp-servers` catalog namespace.
   "serverRef": {"name": "payments", "namespace": "mcp-servers"},
   "subject": {"humanID": "user-123", "agentID": "ops-agent"},
   "maxTrust": "high",
+  "allowedSideEffects": ["read", "destructive"],
   "policyVersion": "v1",
   "toolRules": [
     {"name": "read_invoice", "decision": "allow"},
@@ -391,7 +403,7 @@ GET /api/events/filter?server=payments&decision=deny&agent_id=ops-agent&limit=50
 | Group | Fields |
 |---|---|
 | **Filter fields** | `source`, `event_type`, `server`, `namespace`, `cluster`, `human_id`, `agent_id`, `session_id`, `decision`, `tool_name` |
-| **Audit payload fields** | `decision`, `reason`, `policy_version`, `required_trust`, `admin_trust`, `consented_trust`, `effective_trust` |
+| **Audit payload fields** | `decision`, `reason`, `policy_version`, `required_trust`, `required_side_effect`, `admin_trust`, `consented_trust`, `effective_trust` |
 | **Transport fields** | `method`, `path`, `status`, `latency_ms`, `bytes_in`, `bytes_out`, `rpc_method` |
 
 ## Setup integration

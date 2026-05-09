@@ -73,13 +73,14 @@ one system.
 MCP Runtime keeps governance on the live request path instead of leaving it as
 out-of-band documentation. The gateway evaluates `MCPAccessGrant` and
 `MCPAgentSession` policy before tool calls reach a server, including tool-level
-allow/deny rules, trust requirements, consented trust, expiry, and revocation.
+allow/deny rules, side-effect allowances, trust requirements, consented trust,
+expiry, and revocation.
 
 Each decision can emit audit and analytics events with the server, namespace,
 human ID, agent ID, session ID, tool name, policy version, decision, reason, and
-trust context. That gives platform and security teams a queryable record for
-reviewing access, investigating denied calls, and preparing compliance evidence
-for governed agent workflows.
+trust and side-effect context. That gives platform and security teams a
+queryable record for reviewing access, investigating denied calls, and preparing
+compliance evidence for governed agent workflows.
 
 ## Before setup
 

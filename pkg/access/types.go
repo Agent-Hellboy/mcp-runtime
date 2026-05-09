@@ -27,6 +27,15 @@ const (
 	TrustFull TrustLevel = "full"
 )
 
+// ToolSideEffect classifies whether a tool reads, mutates, or destructively changes state.
+type ToolSideEffect string
+
+const (
+	SideEffectRead        ToolSideEffect = "read"
+	SideEffectWrite       ToolSideEffect = "write"
+	SideEffectDestructive ToolSideEffect = "destructive"
+)
+
 // PolicyDecision defines policy decisions for tool access.
 type PolicyDecision string
 
@@ -51,12 +60,13 @@ type SecretKeyRef struct {
 
 // MCPAccessGrantSpec defines who can use which MCP server and with what trust ceiling.
 type MCPAccessGrantSpec struct {
-	ServerRef     ServerReference `json:"serverRef"`
-	Subject       SubjectRef      `json:"subject"`
-	MaxTrust      TrustLevel      `json:"maxTrust,omitempty"`
-	PolicyVersion string          `json:"policyVersion,omitempty"`
-	Disabled      bool            `json:"disabled,omitempty"`
-	ToolRules     []ToolRule      `json:"toolRules,omitempty"`
+	ServerRef          ServerReference  `json:"serverRef"`
+	Subject            SubjectRef       `json:"subject"`
+	MaxTrust           TrustLevel       `json:"maxTrust,omitempty"`
+	AllowedSideEffects []ToolSideEffect `json:"allowedSideEffects,omitempty"`
+	PolicyVersion      string           `json:"policyVersion,omitempty"`
+	Disabled           bool             `json:"disabled,omitempty"`
+	ToolRules          []ToolRule       `json:"toolRules,omitempty"`
 }
 
 // MCPAccessGrantStatus captures observed grant state.

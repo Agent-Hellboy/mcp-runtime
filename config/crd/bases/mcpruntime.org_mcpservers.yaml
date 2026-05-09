@@ -406,8 +406,15 @@ spec:
                       - medium
                       - high
                       type: string
+                    sideEffect:
+                      enum:
+                      - read
+                      - write
+                      - destructive
+                      type: string
                   required:
                   - name
+                  - sideEffect
                   type: object
                 type: array
               useProvisionedRegistry:

@@ -104,7 +104,7 @@ sequenceDiagram
 
     Client->>Ingress: JSON-RPC tools/call
     Ingress->>Proxy: Forward request
-    Proxy->>Proxy: Evaluate identity, grant, session, trust
+    Proxy->>Proxy: Evaluate identity, grant, session, trust, side effect
     Proxy->>Svc: Forward allowed request
     Svc-->>Proxy: Tool result
     Proxy-->>Client: Success response
@@ -130,7 +130,7 @@ sequenceDiagram
 
     Client->>Ingress: JSON-RPC tools/call
     Ingress->>Proxy: Forward request
-    Proxy->>Proxy: Evaluate identity, grant, session, trust
+    Proxy->>Proxy: Evaluate identity, grant, session, trust, side effect
     Proxy-->>Client: Deny (JSON-RPC error)
     Proxy->>Ingest: Emit deny event (reason + policy context)
     Ingest->>Kafka: Publish mcp.events
@@ -150,7 +150,7 @@ Sentinel services receive those events, process them for analytics, and expose t
 ### Why this path matters
 
 - Policy is enforced before tools execute, not after.
-- Every allow/deny decision can be traced with subject, server, session, trust, and tool context.
+- Every allow/deny decision can be traced with subject, server, session, trust, side-effect, and tool context.
 - Security enforcement stays on the hot request path while analytics is decoupled through Kafka + ClickHouse.
 
 ### Sentinel request flow

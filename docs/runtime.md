@@ -11,7 +11,7 @@ The runtime is the Kubernetes-native control plane for MCP servers. It owns the 
 | **Bootstrap** | `cluster` and `setup` initialize CRDs and namespaces, configure ingress, provision clusters, optionally wire cert-manager TLS. |
 | **Registry workflow** | Registry commands and setup wiring give teams a controlled place to publish and pull MCP server images. |
 | **Server delivery** | The operator reconciles `MCPServer` into Deployments, Services, and Ingress so each server lands at a stable route. |
-| **Access and consent** | Grants and sessions are separate resources so policy, trust ceilings, consent, expiry, and revocation stay outside deployment-only YAML. |
+| **Access and consent** | Grants and sessions are separate resources so policy, side-effect allowances, trust ceilings, consent, expiry, and revocation stay outside deployment-only YAML. |
 | **Brokered rollout** | Servers can stay direct or run behind the proxy sidecar while rollout settings live on the same server resource. |
 
 ## Core resources
@@ -33,6 +33,7 @@ classDiagram
       +serverRef
       +subject (humanID, agentID)
       +maxTrust
+      +allowedSideEffects[]
       +toolRules[]
       +disabled
       +status
@@ -121,6 +122,7 @@ flowchart LR
 | **Direct** | No `gateway.enabled`. Service points at the MCP server directly. Server is exposed at `/{server-name}/mcp`. |
 | **Gateway** | `spec.gateway.enabled: true`. Traffic flows through the proxy sidecar; identity, policy, audit, and telemetry happen in one place. |
 | **Trust evaluation** | Tool `requiredTrust`, grant `maxTrust`, and session `consentedTrust` combine to determine effective trust at tool-call time. |
+| **Side-effect evaluation** | Each listed tool must declare `sideEffect: read`, `write`, or `destructive`; a grant only authorizes tools whose side effect is present in `allowedSideEffects`. Omitted or empty `allowedSideEffects` allows no side-effect classes. |
 
 ### Gateway headers
 

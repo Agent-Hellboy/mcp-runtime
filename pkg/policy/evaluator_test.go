@@ -248,6 +248,103 @@ func TestAuthorizeTrustTooLow(t *testing.T) {
 	}
 }
 
+func TestAuthorizeAllowsGrantBySideEffectWithoutToolRules(t *testing.T) {
+	t.Parallel()
+
+	policy := testPolicyWithGrant()
+	policy.Grants[0].ToolRules = nil
+	policy.Grants[0].AllowedSideEffects = []string{"read"}
+
+	decision := Authorize(policy, Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, time.Time{})
+
+	if !decision.Allowed {
+		t.Fatalf("decision = %#v, want read side-effect grant to allow tool", decision)
+	}
+	if decision.RequiredSideEffect != "read" {
+		t.Fatalf("decision = %#v, want required side effect read", decision)
+	}
+}
+
+func TestAuthorizeDeniesDisallowedSideEffect(t *testing.T) {
+	t.Parallel()
+
+	policy := testPolicyWithGrant()
+	policy.Tools = append(policy.Tools, Tool{Name: "delete_row", RequiredTrust: "high", SideEffect: "destructive"})
+	policy.Grants[0].AllowedSideEffects = []string{"read", "write"}
+	policy.Grants[0].ToolRules = []ToolAccess{{Name: "delete_row", Decision: "allow"}}
+
+	decision := Authorize(policy, Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "delete_row",
+	}, time.Time{})
+
+	if decision.Allowed || decision.Reason != "side_effect_not_allowed" {
+		t.Fatalf("decision = %#v, want side_effect_not_allowed", decision)
+	}
+	if decision.RequiredSideEffect != "destructive" {
+		t.Fatalf("decision = %#v, want destructive side effect context", decision)
+	}
+}
+
+func TestAuthorizeDeniesUnknownToolSideEffect(t *testing.T) {
+	t.Parallel()
+
+	policy := testPolicyWithGrant()
+	policy.Tools[0].SideEffect = ""
+
+	decision := Authorize(policy, Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, time.Time{})
+
+	if decision.Allowed || decision.Reason != "tool_side_effect_unknown" {
+		t.Fatalf("decision = %#v, want tool_side_effect_unknown", decision)
+	}
+}
+
+func TestAuthorizeIgnoresRuleTrustFromGrantWithoutSideEffect(t *testing.T) {
+	t.Parallel()
+
+	policy := testPolicyWithGrant()
+	policy.Grants = []Grant{
+		{
+			Name:               "read-grant",
+			HumanID:            "human-1",
+			AgentID:            "agent-1",
+			MaxTrust:           "medium",
+			AllowedSideEffects: []string{"read"},
+			ToolRules:          []ToolAccess{{Name: "upper", Decision: "allow"}},
+		},
+		{
+			Name:               "wrong-side-effect-grant",
+			HumanID:            "human-1",
+			AgentID:            "agent-1",
+			MaxTrust:           "high",
+			AllowedSideEffects: []string{"write"},
+			ToolRules:          []ToolAccess{{Name: "upper", Decision: "allow", RequiredTrust: "high"}},
+		},
+	}
+
+	decision := Authorize(policy, Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, time.Time{})
+
+	if !decision.Allowed {
+		t.Fatalf("decision = %#v, want side-effect-allowed grant to control trust", decision)
+	}
+	if decision.RequiredTrust != "medium" || decision.AdminTrust != "medium" {
+		t.Fatalf("decision = %#v, want read grant trust only", decision)
+	}
+}
+
 func testPolicyWithGrant() *Document {
 	return &Document{
 		Policy: &Config{
@@ -259,15 +356,16 @@ func testPolicyWithGrant() *Document {
 			Required: false,
 		},
 		Tools: []Tool{
-			{Name: "upper", RequiredTrust: "medium"},
+			{Name: "upper", RequiredTrust: "medium", SideEffect: "read"},
 		},
 		Grants: []Grant{
 			{
-				Name:      "grant-1",
-				HumanID:   "human-1",
-				AgentID:   "agent-1",
-				MaxTrust:  "high",
-				ToolRules: []ToolAccess{{Name: "upper", Decision: "allow"}},
+				Name:               "grant-1",
+				HumanID:            "human-1",
+				AgentID:            "agent-1",
+				MaxTrust:           "high",
+				AllowedSideEffects: []string{"read"},
+				ToolRules:          []ToolAccess{{Name: "upper", Decision: "allow"}},
 			},
 		},
 	}

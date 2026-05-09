@@ -52,6 +52,8 @@ spec:
   subject:
     humanID: user-1
   maxTrust: low
+  allowedSideEffects:
+    - read
   toolRules:
     - name: add
       decision: allow

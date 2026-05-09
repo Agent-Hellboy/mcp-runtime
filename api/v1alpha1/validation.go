@@ -315,6 +315,16 @@ func (r *MCPServer) validate() error {
 			allErrs = append(allErrs, field.Required(toolPath.Child("name"), "tool name is required"))
 			continue
 		}
+		if strings.TrimSpace(string(tool.SideEffect)) == "" {
+			allErrs = append(allErrs, field.Required(toolPath.Child("sideEffect"), "tool sideEffect is required"))
+		}
+		if tool.SideEffect != "" && !validToolSideEffect(tool.SideEffect) {
+			allErrs = append(allErrs, field.NotSupported(toolPath.Child("sideEffect"), tool.SideEffect, []string{
+				string(ToolSideEffectRead),
+				string(ToolSideEffectWrite),
+				string(ToolSideEffectDestructive),
+			}))
+		}
 		if _, exists := toolNames[tool.Name]; exists {
 			allErrs = append(allErrs, field.Duplicate(toolPath.Child("name"), tool.Name))
 		}
@@ -407,6 +417,27 @@ func (r *MCPAccessGrant) validate() error {
 		allErrs = append(allErrs, field.Required(specPath.Child("subject"), "either subject.humanID or subject.agentID is required"))
 	}
 
+	sideEffects := make(map[ToolSideEffect]struct{}, len(r.Spec.AllowedSideEffects))
+	for i, sideEffect := range r.Spec.AllowedSideEffects {
+		effectPath := specPath.Child("allowedSideEffects").Index(i)
+		if strings.TrimSpace(string(sideEffect)) == "" {
+			allErrs = append(allErrs, field.Required(effectPath, "allowed side effect is required"))
+			continue
+		}
+		if !validToolSideEffect(sideEffect) {
+			allErrs = append(allErrs, field.NotSupported(effectPath, sideEffect, []string{
+				string(ToolSideEffectRead),
+				string(ToolSideEffectWrite),
+				string(ToolSideEffectDestructive),
+			}))
+			continue
+		}
+		if _, exists := sideEffects[sideEffect]; exists {
+			allErrs = append(allErrs, field.Duplicate(effectPath, sideEffect))
+		}
+		sideEffects[sideEffect] = struct{}{}
+	}
+
 	toolNames := make(map[string]struct{}, len(r.Spec.ToolRules))
 	for i, rule := range r.Spec.ToolRules {
 		rulePath := specPath.Child("toolRules").Index(i)
@@ -489,6 +520,15 @@ func (r *MCPAgentSession) validate() error {
 		return nil
 	}
 	return apierrors.NewInvalid(schema.GroupKind{Group: GroupVersion.Group, Kind: "MCPAgentSession"}, r.Name, allErrs)
+}
+
+func validToolSideEffect(sideEffect ToolSideEffect) bool {
+	switch sideEffect {
+	case ToolSideEffectRead, ToolSideEffectWrite, ToolSideEffectDestructive:
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *MCPServer) String() string {
