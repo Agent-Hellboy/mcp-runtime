@@ -45,7 +45,7 @@ func TestValidateDBName(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := validateDBName(tc.input)
+			err := ValidateDBName(tc.input)
 			if tc.wantErr && err == nil {
 				t.Fatalf("expected error for %q", tc.input)
 			}

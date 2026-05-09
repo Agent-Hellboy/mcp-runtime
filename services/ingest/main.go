@@ -1,17 +1,14 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -21,19 +18,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
-	"go.opentelemetry.io/otel/sdk/resource"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
-)
 
-type eventPayload struct {
-	Timestamp string          `json:"timestamp"`
-	Source    string          `json:"source"`
-	EventType string          `json:"event_type"`
-	Payload   json.RawMessage `json:"payload"`
-}
+	"mcp-runtime/pkg/events"
+	"mcp-runtime/pkg/serviceutil"
+)
 
 type ingestServer struct {
 	writer       *kafka.Writer
@@ -204,7 +192,7 @@ func (s *ingestServer) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	var payload eventPayload
+	var payload events.Envelope
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
 		return
@@ -212,18 +200,11 @@ func (s *ingestServer) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	payload.Source = strings.TrimSpace(payload.Source)
 	payload.EventType = strings.TrimSpace(payload.EventType)
-	if payload.Source == "" || payload.EventType == "" || len(payload.Payload) == 0 {
+	if err := payload.Validate(); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_fields"})
 		return
 	}
-	if bytes.Equal(bytes.TrimSpace(payload.Payload), []byte("null")) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_fields"})
-		return
-	}
-
-	if payload.Timestamp == "" {
-		payload.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
-	}
+	payload.EnsureTimestamp(time.Now().UTC())
 
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -260,7 +241,7 @@ func (s *ingestServer) auth(next http.Handler) http.Handler {
 			}
 		}
 
-		token := extractBearer(r.Header.Get("authorization"))
+		token := serviceutil.ExtractBearer(r.Header.Get("authorization"))
 		if token != "" && s.jwks != nil {
 			parser := jwt.NewParser(jwt.WithValidMethods([]string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512"}))
 			parsed, err := parser.Parse(token, s.jwks.Keyfunc)
@@ -276,7 +257,7 @@ func (s *ingestServer) auth(next http.Handler) http.Handler {
 						return
 					}
 					if s.oidcAudience != "" {
-						if !audienceMatches(claims["aud"], s.oidcAudience) {
+						if !serviceutil.AudienceMatches(claims["aud"], s.oidcAudience) {
 							writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_token"})
 							return
 						}
@@ -291,59 +272,16 @@ func (s *ingestServer) auth(next http.Handler) http.Handler {
 	})
 }
 
-// audienceMatches validates if the JWT audience claim matches the expected value.
-// It handles both string and string slice audience claims as per JWT specifications.
-func audienceMatches(audClaim any, expected string) bool {
-	switch aud := audClaim.(type) {
-	case string:
-		return aud == expected
-	case []any:
-		for _, item := range aud {
-			if s, ok := item.(string); ok && s == expected {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// extractBearer extracts the JWT token from an Authorization header.
-// It expects the format "Bearer <token>" and returns the token part.
-// Returns empty string if the format is invalid.
-func extractBearer(auth string) string {
-	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-		return strings.TrimSpace(auth[7:])
-	}
-	return ""
-}
-
 // writeJSON writes a JSON response with the specified status code.
 // It sets appropriate Content-Type headers and handles JSON marshaling errors.
 func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("content-type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
-}
-
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (r *statusRecorder) WriteHeader(status int) {
-	r.status = status
-	r.ResponseWriter.WriteHeader(status)
+	serviceutil.WriteJSON(w, status, payload)
 }
 
 // logRequests is middleware that logs HTTP requests.
 // It logs the HTTP method, URL path, response status, and duration.
 func logRequests(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(recorder, r)
-		log.Printf("%s %s %d %s", r.Method, r.URL.Path, recorder.status, time.Since(start))
-	})
+	return serviceutil.LogRequests(next)
 }
 
 // initTracer initializes OpenTelemetry tracing for the service.
@@ -351,92 +289,12 @@ func logRequests(next http.Handler) http.Handler {
 // Returns a shutdown function to clean up resources and any initialization error.
 // If no OTEL_EXPORTER_OTLP_ENDPOINT is configured, returns a no-op shutdown function.
 func initTracer(serviceName string) (func(context.Context) error, error) {
-	if envName := strings.TrimSpace(os.Getenv("OTEL_SERVICE_NAME")); envName != "" {
-		serviceName = envName
-	}
-	endpoint := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
-	if endpoint == "" {
-		return func(context.Context) error { return nil }, nil
-	}
-
-	opts := otlpTraceOptions(endpoint)
-	exporter, err := otlptracehttp.New(context.Background(), opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	res, err := resource.New(context.Background(),
-		resource.WithAttributes(semconv.ServiceName(serviceName)),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	provider := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithResource(res),
-	)
-	otel.SetTracerProvider(provider)
-	return provider.Shutdown, nil
+	return serviceutil.InitTracer(serviceName)
 }
 
 // envOr returns the value of an environment variable or a fallback if not set.
 // If the environment variable is set to a non-empty value, it returns that value.
 // Otherwise, it returns the provided fallback value.
 func envOr(key, fallback string) string {
-	if val := strings.TrimSpace(os.Getenv(key)); val != "" {
-		return val
-	}
-	return fallback
-}
-
-// otlpTraceOptions configures OTLP HTTP exporter options.
-// It sets up the endpoint URL and configures secure/insecure connections
-// based on whether the endpoint uses HTTPS or HTTP.
-func otlpTraceOptions(endpoint string) []otlptracehttp.Option {
-	insecure, insecureSet := boolEnv("OTEL_EXPORTER_OTLP_INSECURE")
-	if u, err := url.Parse(endpoint); err == nil {
-		// Handle URLs with schemes (http://host:port/path)
-		if u.Scheme != "" && u.Host == "" {
-			// This is a scheme-less endpoint, fall through to treat as host:port
-		} else if u.Scheme != "" && u.Host != "" {
-			opts := []otlptracehttp.Option{otlptracehttp.WithEndpoint(u.Host)}
-			if u.Path != "" {
-				opts = append(opts, otlptracehttp.WithURLPath(u.Path))
-			}
-			if insecureSet {
-				if insecure {
-					opts = append(opts, otlptracehttp.WithInsecure())
-				}
-				return opts
-			}
-			if u.Scheme == "http" {
-				opts = append(opts, otlptracehttp.WithInsecure())
-			}
-			return opts
-		}
-	}
-
-	// Fallback: treat entire endpoint as host:port
-	opts := []otlptracehttp.Option{otlptracehttp.WithEndpoint(endpoint)}
-	if insecureSet {
-		if insecure {
-			opts = append(opts, otlptracehttp.WithInsecure())
-		}
-		return opts
-	}
-	return opts
-}
-
-// boolEnv parses a boolean environment variable.
-// It returns the parsed boolean value and true if parsing succeeded.
-// Returns false, false if the variable is not set or parsing failed.
-func boolEnv(key string) (bool, bool) {
-	if val := strings.TrimSpace(os.Getenv(key)); val != "" {
-		parsed, err := strconv.ParseBool(val)
-		if err == nil {
-			return parsed, true
-		}
-	}
-	return false, false
+	return serviceutil.EnvOr(key, fallback)
 }

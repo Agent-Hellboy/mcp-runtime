@@ -17,7 +17,7 @@ func (s *apiServer) handleUserImagePublishActivity(w http.ResponseWriter, r *htt
 		return
 	}
 	p, ok := principalFromContext(r.Context())
-	if !ok || p.userID() == "" {
+	if !ok || p.UserID() == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
@@ -45,7 +45,7 @@ func (s *apiServer) handleUserImagePublishActivity(w http.ResponseWriter, r *htt
 		message = "mode=" + message
 	}
 	s.platform.WriteAudit(r.Context(), auditEvent{
-		UserID:       p.userID(),
+		UserID:       p.UserID(),
 		Action:       "image_publish",
 		Resource:     strings.TrimSpace(req.SourceImage),
 		Namespace:    p.Namespace,

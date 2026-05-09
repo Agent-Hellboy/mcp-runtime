@@ -158,6 +158,45 @@ func TestBuildGatewayContainerAppliesDefaultResources(t *testing.T) {
 	}
 }
 
+func TestBuildGatewayContainerAppliesConfiguredResources(t *testing.T) {
+	mcpServer := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gateway-server",
+			Namespace: "default",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Gateway: &mcpv1alpha1.GatewayConfig{
+				Enabled:     true,
+				Port:        defaultGatewayPort,
+				UpstreamURL: "http://127.0.0.1:8088",
+				Resources: &mcpv1alpha1.ResourceRequirements{
+					Requests: &mcpv1alpha1.ResourceList{CPU: "5m", Memory: "32Mi"},
+					Limits:   &mcpv1alpha1.ResourceList{CPU: "100m", Memory: "128Mi"},
+				},
+			},
+		},
+	}
+
+	r := MCPServerReconciler{GatewayProxyImage: "example.com/mcp-proxy:latest"}
+	container, err := r.buildGatewayContainer(mcpServer)
+	if err != nil {
+		t.Fatalf("buildGatewayContainer() error = %v", err)
+	}
+
+	if got := container.Resources.Requests[corev1.ResourceCPU]; got.Cmp(resource.MustParse("5m")) != 0 {
+		t.Fatalf("gateway requests.cpu = %q, want %q", got.String(), "5m")
+	}
+	if got := container.Resources.Requests[corev1.ResourceMemory]; got.Cmp(resource.MustParse("32Mi")) != 0 {
+		t.Fatalf("gateway requests.memory = %q, want %q", got.String(), "32Mi")
+	}
+	if got := container.Resources.Limits[corev1.ResourceCPU]; got.Cmp(resource.MustParse("100m")) != 0 {
+		t.Fatalf("gateway limits.cpu = %q, want %q", got.String(), "100m")
+	}
+	if got := container.Resources.Limits[corev1.ResourceMemory]; got.Cmp(resource.MustParse("128Mi")) != 0 {
+		t.Fatalf("gateway limits.memory = %q, want %q", got.String(), "128Mi")
+	}
+}
+
 func TestValidateMCPServerSpecRejectsInvalidRolloutValues(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
@@ -1246,6 +1285,36 @@ func TestBuildIngressAnnotations(t *testing.T) {
 		annotations := r.buildIngressAnnotations(mcpServer)
 		// Should include default traefik entrypoints annotation
 		assertEqual(t, "traefik annotation", annotations["traefik.ingress.kubernetes.io/router.entrypoints"], "web")
+	})
+
+	t.Run("does not default nginx rewrite target", func(t *testing.T) {
+		mcpServer := &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				IngressClass: "nginx",
+			},
+		}
+		r := MCPServerReconciler{}
+		annotations := r.buildIngressAnnotations(mcpServer)
+		if _, exists := annotations["nginx.ingress.kubernetes.io/rewrite-target"]; exists {
+			t.Fatal("nginx rewrite-target should only be set when provided by the user")
+		}
+		assertEqual(t, "nginx ssl redirect annotation", annotations["nginx.ingress.kubernetes.io/ssl-redirect"], "false")
+	})
+
+	t.Run("preserves user-specified nginx rewrite target", func(t *testing.T) {
+		mcpServer := &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				IngressClass: "nginx",
+				IngressAnnotations: map[string]string{
+					"nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+				},
+			},
+		}
+		r := MCPServerReconciler{}
+		annotations := r.buildIngressAnnotations(mcpServer)
+		assertEqual(t, "nginx rewrite target", annotations["nginx.ingress.kubernetes.io/rewrite-target"], "/$2")
 	})
 }
 

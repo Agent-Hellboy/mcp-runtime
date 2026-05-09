@@ -1,4 +1,4 @@
-package main
+package runtimeapi
 
 import (
 	"bytes"
@@ -169,8 +169,8 @@ func TestRuntimeServersIncludesMCPServerInventory(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/runtime/servers", nil)
-	request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, principal{Role: roleAdmin, Subject: "admin-1"}))
-	server.handleRuntimeServers(recorder, request)
+	request = request.WithContext(withPrincipal(request.Context(), principal{Role: roleAdmin, Subject: "admin-1"}))
+	server.HandleRuntimeServers(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -316,7 +316,7 @@ func TestRuntimeServersNonAdminDefaultsToPrincipalNamespace(t *testing.T) {
 	}
 
 	request := httptest.NewRequest(http.MethodGet, "/api/runtime/servers", nil)
-	request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, principal{
+	request = request.WithContext(withPrincipal(request.Context(), principal{
 		Role:      roleUser,
 		Subject:   "user-1",
 		Namespace: "user-1",
@@ -326,7 +326,7 @@ func TestRuntimeServersNonAdminDefaultsToPrincipalNamespace(t *testing.T) {
 		},
 	}))
 	recorder := httptest.NewRecorder()
-	server.handleRuntimeServers(recorder, request)
+	server.HandleRuntimeServers(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -350,7 +350,7 @@ func TestRuntimeServersNonAdminRejectsOtherNamespace(t *testing.T) {
 		},
 	}
 	request := httptest.NewRequest(http.MethodGet, "/api/runtime/servers?namespace=another-ns", nil)
-	request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, principal{
+	request = request.WithContext(withPrincipal(request.Context(), principal{
 		Role:      roleUser,
 		Subject:   "user-1",
 		Namespace: "user-1",
@@ -360,7 +360,7 @@ func TestRuntimeServersNonAdminRejectsOtherNamespace(t *testing.T) {
 		},
 	}))
 	recorder := httptest.NewRecorder()
-	server.handleRuntimeServers(recorder, request)
+	server.HandleRuntimeServers(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -378,7 +378,7 @@ func TestRuntimeServerApplyNonAdminRejectsSharedCatalogNamespace(t *testing.T) {
 		"namespace": "mcp-servers",
 		"spec": {"image":"registry.example.com/core/demo"}
 	}`)))
-	request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, principal{
+	request = request.WithContext(withPrincipal(request.Context(), principal{
 		Role:      roleUser,
 		Subject:   "user-1",
 		Namespace: "mcp-team-core",
@@ -388,7 +388,7 @@ func TestRuntimeServerApplyNonAdminRejectsSharedCatalogNamespace(t *testing.T) {
 		},
 	}))
 	recorder := httptest.NewRecorder()
-	server.handleRuntimeServers(recorder, request)
+	server.HandleRuntimeServers(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -396,7 +396,7 @@ func TestRuntimeServerApplyNonAdminRejectsSharedCatalogNamespace(t *testing.T) {
 
 func TestScopedNamespaceForPrincipal(t *testing.T) {
 	server := &RuntimeServer{}
-	userCtx := context.WithValue(context.Background(), principalContextKey{}, principal{
+	userCtx := withPrincipal(context.Background(), principal{
 		Role:      roleUser,
 		Subject:   "user-1",
 		Namespace: "user-1",
@@ -435,7 +435,7 @@ func TestRuntimeGrantApplyNonAdminDefaultsToPrincipalNamespace(t *testing.T) {
 		"subject": {"humanID": "user-1"},
 		"maxTrust": "low"
 	}`)))
-	request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, principal{
+	request = request.WithContext(withPrincipal(request.Context(), principal{
 		Role:      roleUser,
 		Subject:   "user-1",
 		Namespace: "user-1",

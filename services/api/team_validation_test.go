@@ -14,12 +14,12 @@ func TestValidateTeamSlug(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateTeamSlug(tc.slug)
+			err := ValidateTeamSlug(tc.slug)
 			if tc.wantErr && err == nil {
-				t.Fatalf("validateTeamSlug(%q) error = nil, want error", tc.slug)
+				t.Fatalf("ValidateTeamSlug(%q) error = nil, want error", tc.slug)
 			}
 			if !tc.wantErr && err != nil {
-				t.Fatalf("validateTeamSlug(%q) error = %v, want nil", tc.slug, err)
+				t.Fatalf("ValidateTeamSlug(%q) error = %v, want nil", tc.slug, err)
 			}
 		})
 	}
@@ -37,22 +37,22 @@ func TestValidateTeamNamespaceReserved(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateTeamNamespace(tc.namespace)
+			err := ValidateTeamNamespace(tc.namespace)
 			if tc.wantErr && err == nil {
-				t.Fatalf("validateTeamNamespace(%q) error = nil, want error", tc.namespace)
+				t.Fatalf("ValidateTeamNamespace(%q) error = nil, want error", tc.namespace)
 			}
 			if !tc.wantErr && err != nil {
-				t.Fatalf("validateTeamNamespace(%q) error = %v, want nil", tc.namespace, err)
+				t.Fatalf("ValidateTeamNamespace(%q) error = %v, want nil", tc.namespace, err)
 			}
 		})
 	}
 }
 
 func TestValidateDeployImageScope(t *testing.T) {
-	if err := validateDeployImage("registry.example.com/core/demo:latest", "mcp-team-core", "core", roleUser); err != nil {
-		t.Fatalf("validateDeployImage() error = %v, want nil", err)
+	if err := ValidateDeployImage("registry.example.com/core/demo:latest", "mcp-team-core", "core", roleUser); err != nil {
+		t.Fatalf("ValidateDeployImage() error = %v, want nil", err)
 	}
-	if err := validateDeployImage("registry.example.com/other/demo:latest", "mcp-team-core", "core", roleUser); err == nil {
+	if err := ValidateDeployImage("registry.example.com/other/demo:latest", "mcp-team-core", "core", roleUser); err == nil {
 		t.Fatal("expected image scope validation error for non-admin")
 	}
 }

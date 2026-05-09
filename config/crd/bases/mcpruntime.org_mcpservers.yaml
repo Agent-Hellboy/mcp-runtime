@@ -146,6 +146,27 @@ spec:
                       pod (defaults to 8091).
                     format: int32
                     type: integer
+                  resources:
+                    description: Resources defines resource limits and requests for
+                      the gateway sidecar.
+                    properties:
+                      limits:
+                        description: ResourceList defines CPU and memory resources.
+                        properties:
+                          cpu:
+                            type: string
+                          memory:
+                            type: string
+                        type: object
+                      requests:
+                        description: ResourceList defines CPU and memory resources.
+                        properties:
+                          cpu:
+                            type: string
+                          memory:
+                            type: string
+                        type: object
+                    type: object
                   stripPrefix:
                     description: StripPrefix removes a path prefix before forwarding
                       to the upstream server.

@@ -6,9 +6,23 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
+const (
+	// Group is the Kubernetes API group for MCP Runtime resources.
+	Group = "mcpruntime.org"
+	// Version is the Kubernetes API version for MCP Runtime resources.
+	Version = "v1alpha1"
+
+	// MCPServerResource is the plural resource name for MCPServer objects.
+	MCPServerResource = "mcpservers"
+	// MCPAccessGrantResource is the plural resource name for MCPAccessGrant objects.
+	MCPAccessGrantResource = "mcpaccessgrants"
+	// MCPAgentSessionResource is the plural resource name for MCPAgentSession objects.
+	MCPAgentSessionResource = "mcpagentsessions"
+)
+
 var (
 	// GroupVersion is group version used to register these objects
-	GroupVersion = schema.GroupVersion{Group: "mcpruntime.org", Version: "v1alpha1"}
+	GroupVersion = schema.GroupVersion{Group: Group, Version: Version}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme
 	SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)

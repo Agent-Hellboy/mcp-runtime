@@ -11,9 +11,10 @@ If instructions conflict, prefer **this repo** (`README`, CRDs, `v1alpha1` types
 | User-facing CLI | `cmd/mcp-runtime/`, `internal/cli/root/`, `internal/cli/<command>/`, `internal/cli/core/` | Entrypoint, foldered Cobra command routing, command-owned behavior for `setup`, `status`, `registry`, `server`, `access`, …, and shared CLI kernel code |
 | Operator (controller) | `cmd/operator/`, `internal/operator/` | `MCPServer` reconciliation, ingress, gateway wiring |
 | API & CRD types | `api/v1alpha1/` | Source of truth for object shapes; CRD YAML in `config/crd/bases/` |
-| Access control (shared) | `pkg/access/` | Grants, sessions, policy pieces used by API and gateway |
-| K8s helpers, manifests, metadata | `pkg/k8sclient/`, `pkg/manifest/`, `pkg/metadata/` | Registry image resolution, YAML helpers |
-| Sentinel services | `services/api`, `services/ui`, `services/ingest`, `services/processor`, `services/mcp-proxy`, … | Separate `go.mod` where present; test in subdirs in CI |
+| Access and policy (shared) | `pkg/access/`, `pkg/policy/` | Grant/session CRUD helpers plus rendered gateway policy contracts and evaluation semantics used by operator and proxy |
+| Control-plane and K8s helpers | `pkg/controlplane/`, `pkg/k8sclient/`, `pkg/kubeworkload/`, `pkg/manifest/`, `pkg/metadata/` | MCPServer Kubernetes operations/status, client setup, shared workload security defaults, registry image resolution, YAML helpers |
+| Sentinel shared packages | `pkg/events/`, `pkg/clickhouse/`, `pkg/serviceutil/`, `pkg/sentinel/` | Event envelope contract, analytics storage/query helpers, service HTTP/env/OTel utilities, Sentinel component inventory |
+| Sentinel services | `services/api`, `services/ui`, `services/ingest`, `services/processor`, `services/mcp-proxy`, … | Separate `go.mod` where present; Go services that import root shared packages use Go 1.26. API-owned runtime HTTP/Kubernetes orchestration lives under `services/api/internal/runtimeapi/`; platform identity/team/key persistence lives under `services/api/internal/platformstore/`; principal context helpers live under `services/api/internal/apiauth/` |
 | Example MCP server | `examples/go-mcp-server/` | Reference for tools and routes |
 | Default cluster install YAML | `k8s/`, `config/` | Overlays, CRDs, cert-manager examples |
 | Traefik plugins (dev) | `services/traefik-plugins/` | e.g. PII redactor source for local overlays |
@@ -53,7 +54,7 @@ envtest assets and set `KUBEBUILDER_ASSETS`.
 - `go test ./test/golden/... -count=1` (CLI help snapshots; update `test/golden/cli/testdata/*.golden` when you change Cobra help text on purpose)
 - `go test ./test/integration/...` (needs `KUBEBUILDER_ASSETS`; see `Makefile.operator` and CI for envtest setup)
 - `E2E_CACHE_MODE=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh` for repeated local Kind e2e debugging without recreating the cluster or rebuilding cached images. The e2e traffic path uses deterministic curl-based MCP requests; omit cache mode for CI-equivalent fresh runs.
-- `services/api` and `services/ui`: `go test -race -count=1 ./...` inside each directory (CI runs these explicitly)
+- Sentinel services: run `go test -race -count=1 ./...` inside touched service directories such as `services/api`, `services/mcp-proxy`, `services/ingest`, `services/processor`, and `services/ui` (CI runs service tests explicitly)
 
 **CI** (`.github/workflows/ci.yaml`) runs: `gofmt` check, `go vet`, `staticcheck`, unit tests, golden tests, service tests, `test/integration`, SBOM generation, then Kind e2e on `main`/`PR` branches. Normal PRs, `main`, and manual runs use `E2E_SCENARIOS=all`; Dependabot PRs use `E2E_SCENARIOS=smoke-auth,governance` so dependency bumps still cover MCP ingress/auth and grant/session behavior while keeping runtime low. Security workflows add pinned gosec, Gitleaks, Trivy, and dependency-review checks. Align local changes with that before opening a PR.
 

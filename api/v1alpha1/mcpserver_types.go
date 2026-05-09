@@ -229,6 +229,9 @@ type GatewayConfig struct {
 
 	// StripPrefix removes a path prefix before forwarding to the upstream server.
 	StripPrefix string `json:"stripPrefix,omitempty"`
+
+	// Resources defines resource limits and requests for the gateway sidecar.
+	Resources *ResourceRequirements `json:"resources,omitempty"`
 }
 
 // AnalyticsConfig configures analytics emission from the gateway sidecar.

@@ -1,4 +1,4 @@
-package main
+package runtimeapi
 
 import (
 	"context"
@@ -7,30 +7,15 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
-	"github.com/ClickHouse/clickhouse-go/v2"
-	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	apiruntime "k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	sentinelaccess "mcp-runtime/pkg/access"
-	chpkg "mcp-runtime/pkg/clickhouse"
 	"mcp-runtime/pkg/k8sclient"
-	"mcp-runtime/pkg/sentinel"
 	"mcp-runtime/pkg/serviceutil"
 )
-
-var mcpServerGVR = schema.GroupVersionResource{
-	Group:    sentinelaccess.APIGroup,
-	Version:  sentinelaccess.APIVersion,
-	Resource: sentinelaccess.MCPServerResource,
-}
 
 type accessGrantRequest struct {
 	Name          string                         `json:"name"`
@@ -54,470 +39,7 @@ type accessSessionRequest struct {
 	PolicyVersion  string                         `json:"policyVersion"`
 }
 
-type runtimeServerApplyRequest struct {
-	Name      string                    `json:"name"`
-	Namespace string                    `json:"namespace,omitempty"`
-	Labels    map[string]string         `json:"labels,omitempty"`
-	Spec      mcpv1alpha1.MCPServerSpec `json:"spec"`
-}
-
-// RuntimeServer extends apiServer with Kubernetes and enhanced ClickHouse capabilities.
-type RuntimeServer struct {
-	db          *chpkg.Client
-	clickhouse  clickhouse.Conn
-	dbName      string
-	apiKeys     map[string]struct{}
-	platform    *platformStore
-	k8sClients  *k8sclient.Clients
-	accessMgr   *sentinelaccess.Manager
-	sentinelMgr *sentinel.Manager
-	audit       auditWriter
-}
-
-// NewRuntimeServer creates a runtime server with Kubernetes access.
-func NewRuntimeServer(db clickhouse.Conn, dbName string, apiKeys map[string]struct{}, platform *platformStore) (*RuntimeServer, error) {
-	// Create ClickHouse client wrapper
-	chClient := &chpkg.Client{
-		Conn:   db,
-		DBName: dbName,
-	}
-
-	// Initialize Kubernetes clients (in-cluster or kubeconfig)
-	k8sClients, err := k8sclient.New()
-	if err != nil {
-		// Log warning but don't fail - some endpoints will be unavailable
-		fmt.Printf("[WARN] Kubernetes client initialization failed: %v\n", err)
-		k8sClients = nil
-	}
-
-	var accessMgr *sentinelaccess.Manager
-	var sentinelMgr *sentinel.Manager
-
-	if k8sClients != nil {
-		accessMgr = sentinelaccess.NewManager(k8sClients.Dynamic, k8sClients.Clientset)
-		sentinelMgr = sentinel.NewManager(k8sClients.Clientset)
-	}
-
-	return &RuntimeServer{
-		db:          chClient,
-		clickhouse:  db,
-		dbName:      dbName,
-		apiKeys:     apiKeys,
-		platform:    platform,
-		k8sClients:  k8sClients,
-		accessMgr:   accessMgr,
-		sentinelMgr: sentinelMgr,
-	}, nil
-}
-
-// handleDashboardSummary returns overview statistics for the dashboard.
-func (s *RuntimeServer) handleDashboardSummary(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	// Get analytics data from ClickHouse
-	summary, err := s.db.QueryDashboardSummary(ctx)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to query dashboard summary"})
-		return
-	}
-
-	// Get grants and sessions counts from Kubernetes if available
-	if s.accessMgr != nil {
-		grants, err := s.accessMgr.ListGrants(ctx, "")
-		if err == nil {
-			activeGrants := 0
-			for _, g := range grants.Items {
-				if !g.Spec.Disabled {
-					activeGrants++
-				}
-			}
-			summary.ActiveGrants = activeGrants
-		}
-
-		sessions, err := s.accessMgr.ListSessions(ctx, "")
-		if err == nil {
-			activeSessions := 0
-			for _, sess := range sessions.Items {
-				if !sess.Spec.Revoked {
-					activeSessions++
-				}
-			}
-			summary.ActiveSessions = activeSessions
-		}
-	}
-
-	writeJSON(w, http.StatusOK, summary)
-}
-
-// handleRuntimeServers returns MCP server deployments.
-func (s *RuntimeServer) handleRuntimeServers(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.handleRuntimeServerList(w, r)
-	case http.MethodPost:
-		s.handleRuntimeServerApply(w, r)
-	default:
-		w.Header().Set("allow", "GET, POST")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
-	}
-}
-
-func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.Request) {
-	if s.k8sClients == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
-	if p, ok := principalFromContext(r.Context()); ok && p.Role != roleAdmin {
-		if namespace == "" {
-			namespace = strings.TrimSpace(p.Namespace)
-			if namespace == "" {
-				namespace = sharedCatalogNamespace
-			}
-		}
-		if !p.hasNamespace(namespace) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
-			return
-		}
-	}
-	if namespace == "" {
-		namespace = sharedCatalogNamespace
-	}
-
-	serverObjects, err := s.k8sClients.Dynamic.Resource(mcpServerGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
-	if err == nil {
-		deployments, deployErr := s.k8sClients.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
-			LabelSelector: "app.kubernetes.io/managed-by=mcp-runtime,mcpruntime.org/rollout-track=stable",
-		})
-		deploymentStatus := map[string]serverDeploymentStatus{}
-		if deployErr == nil {
-			for _, d := range deployments.Items {
-				deploymentStatus[d.Name] = statusForDeployment(d)
-			}
-		}
-		servers := make([]serverInfo, 0, len(serverObjects.Items))
-		for _, obj := range serverObjects.Items {
-			var mcpServer mcpv1alpha1.MCPServer
-			if convertErr := apiruntime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &mcpServer); convertErr != nil {
-				log.Printf("runtime servers: convert MCPServer %s/%s: %v", obj.GetNamespace(), obj.GetName(), convertErr)
-				continue
-			}
-			servers = append(servers, serverInfoFromMCPServer(mcpServer, deploymentStatus[mcpServer.Name], r))
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"servers": servers})
-		return
-	}
-	if !apierrors.IsNotFound(err) {
-		log.Printf("runtime servers: list MCPServers failed: %v", err)
-	}
-
-	// Fall back to stable deployments for older clusters where the MCPServer CRD is not available.
-	deployments, err := s.k8sClients.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app.kubernetes.io/managed-by=mcp-runtime,mcpruntime.org/rollout-track=stable",
-	})
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list servers"})
-		return
-	}
-
-	servers := make([]serverInfo, 0, len(deployments.Items))
-	for _, d := range deployments.Items {
-		deploymentStatus := statusForDeployment(d)
-		servers = append(servers, serverInfo{
-			Name:      d.Name,
-			Namespace: d.Namespace,
-			Ready:     deploymentStatus.Ready,
-			Status:    deploymentStatus.Status,
-			Labels:    d.Labels,
-			Age:       d.CreationTimestamp.Format("2006-01-02T15:04:05Z"),
-			Prompts:   []mcpv1alpha1.InventoryItem{},
-			Resources: []mcpv1alpha1.InventoryItem{},
-			Tasks:     []mcpv1alpha1.InventoryItem{},
-		})
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{"servers": servers})
-}
-
-func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.Request) {
-	if s.k8sClients == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
-		return
-	}
-	p, ok := principalFromContext(r.Context())
-	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
-	}
-
-	var req runtimeServerApplyRequest
-	r.Body = http.MaxBytesReader(w, r.Body, accessApplyMaxBytes)
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeBodyDecodeError(w, err)
-		return
-	}
-	req.Name = strings.TrimSpace(req.Name)
-	req.Namespace = strings.TrimSpace(req.Namespace)
-	req.Spec.Image = strings.TrimSpace(req.Spec.Image)
-	if req.Name == "" || req.Spec.Image == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and spec.image are required"})
-		return
-	}
-	if req.Namespace == "" {
-		req.Namespace = strings.TrimSpace(p.Namespace)
-	}
-	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), req.Namespace)
-	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
-		return
-	}
-	if p.Role != roleAdmin && namespace == sharedCatalogNamespace {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "shared catalog namespace is read-only for team users"})
-		return
-	}
-	team, isTeamNamespace := p.teamForNamespace(namespace)
-	teamSlug := ""
-	if isTeamNamespace {
-		teamSlug = strings.TrimSpace(team.Slug)
-	}
-	if err := validateDeployImage(req.Spec.Image, namespace, teamSlug, p.Role); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-
-	req.Namespace = namespace
-	if req.Spec.PublicPathPrefix == "" {
-		req.Spec.PublicPathPrefix = req.Name
-	}
-	if req.Spec.IngressPath == "" {
-		req.Spec.IngressPath = "/" + req.Spec.PublicPathPrefix + "/mcp"
-	}
-
-	labels := map[string]string{
-		"app.kubernetes.io/managed-by": "mcp-runtime",
-	}
-	for key, value := range req.Labels {
-		labels[strings.TrimSpace(key)] = strings.TrimSpace(value)
-	}
-
-	server := &mcpv1alpha1.MCPServer{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: mcpv1alpha1.GroupVersion.String(),
-			Kind:       "MCPServer",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      req.Name,
-			Namespace: namespace,
-			Labels:    labels,
-		},
-		Spec: req.Spec,
-	}
-
-	payload, err := apiruntime.DefaultUnstructuredConverter.ToUnstructured(server)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to encode server spec"})
-		return
-	}
-	resource := &unstructured.Unstructured{Object: payload}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-	defer cancel()
-	current, err := s.k8sClients.Dynamic.Resource(mcpServerGVR).Namespace(namespace).Get(ctx, req.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		applied, createErr := s.k8sClients.Dynamic.Resource(mcpServerGVR).Namespace(namespace).Create(ctx, resource, metav1.CreateOptions{})
-		if createErr != nil {
-			code, msg := k8sclient.HTTPStatusFromK8sError(createErr)
-			writeJSON(w, code, map[string]string{"error": msg})
-			return
-		}
-		var out mcpv1alpha1.MCPServer
-		if convertErr := apiruntime.DefaultUnstructuredConverter.FromUnstructured(applied.Object, &out); convertErr != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to decode created server"})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"server": serverInfoFromMCPServer(out, serverDeploymentStatus{}, r)})
-		return
-	}
-	if err != nil {
-		code, msg := k8sclient.HTTPStatusFromK8sError(err)
-		writeJSON(w, code, map[string]string{"error": msg})
-		return
-	}
-	resource.SetResourceVersion(current.GetResourceVersion())
-	applied, err := s.k8sClients.Dynamic.Resource(mcpServerGVR).Namespace(namespace).Update(ctx, resource, metav1.UpdateOptions{})
-	if err != nil {
-		code, msg := k8sclient.HTTPStatusFromK8sError(err)
-		writeJSON(w, code, map[string]string{"error": msg})
-		return
-	}
-	var out mcpv1alpha1.MCPServer
-	if convertErr := apiruntime.DefaultUnstructuredConverter.FromUnstructured(applied.Object, &out); convertErr != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to decode updated server"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"server": serverInfoFromMCPServer(out, serverDeploymentStatus{}, r)})
-}
-
-type serverInfo struct {
-	Name        string                      `json:"name"`
-	Namespace   string                      `json:"namespace"`
-	Description string                      `json:"description,omitempty"`
-	Ready       string                      `json:"ready"`
-	Status      string                      `json:"status"`
-	Labels      map[string]string           `json:"labels,omitempty"`
-	Age         string                      `json:"age"`
-	Endpoint    string                      `json:"endpoint,omitempty"`
-	Tools       []mcpv1alpha1.ToolConfig    `json:"tools,omitempty"`
-	Prompts     []mcpv1alpha1.InventoryItem `json:"prompts"`
-	Resources   []mcpv1alpha1.InventoryItem `json:"resources"`
-	Tasks       []mcpv1alpha1.InventoryItem `json:"tasks"`
-	AccessJSON  map[string]any              `json:"access_json,omitempty"`
-}
-
-type serverDeploymentStatus struct {
-	Ready  string
-	Status string
-}
-
-func statusForDeployment(d appsv1.Deployment) serverDeploymentStatus {
-	ready := "0/0"
-	status := "NotReady"
-	if d.Spec.Replicas != nil {
-		ready = fmt.Sprintf("%d/%d", d.Status.ReadyReplicas, *d.Spec.Replicas)
-		if d.Status.ReadyReplicas == *d.Spec.Replicas && *d.Spec.Replicas > 0 {
-			status = "Ready"
-		} else if d.Status.ReadyReplicas > 0 {
-			status = "Degraded"
-		}
-	}
-	return serverDeploymentStatus{Ready: ready, Status: status}
-}
-
-func serverInfoFromMCPServer(mcpServer mcpv1alpha1.MCPServer, deploymentStatus serverDeploymentStatus, r *http.Request) serverInfo {
-	if deploymentStatus.Ready == "" {
-		deploymentStatus = serverDeploymentStatus{Ready: "0/0", Status: strings.TrimSpace(mcpServer.Status.Phase)}
-		if deploymentStatus.Status == "" {
-			deploymentStatus.Status = "Unknown"
-		}
-	}
-	endpoint := publicMCPEndpoint(mcpServer)
-	connectEndpoint := publicMCPConnectEndpoint(endpoint, r)
-	info := serverInfo{
-		Name:        mcpServer.Name,
-		Namespace:   mcpServer.Namespace,
-		Description: mcpServer.Spec.Description,
-		Ready:       deploymentStatus.Ready,
-		Status:      deploymentStatus.Status,
-		Labels:      mcpServer.Labels,
-		Age:         mcpServer.CreationTimestamp.Format("2006-01-02T15:04:05Z"),
-		Endpoint:    endpoint,
-		Tools:       mcpServer.Spec.Tools,
-		Prompts:     inventoryItemsOrEmpty(mcpServer.Spec.Prompts),
-		Resources:   inventoryItemsOrEmpty(mcpServer.Spec.MCPResources),
-		Tasks:       inventoryItemsOrEmpty(mcpServer.Spec.Tasks),
-	}
-	if connectEndpoint != "" {
-		info.AccessJSON = map[string]any{
-			"mcpServers": map[string]any{
-				mcpServer.Name: map[string]any{
-					"type": "http",
-					"url":  connectEndpoint,
-				},
-			},
-		}
-	}
-	return info
-}
-
-func inventoryItemsOrEmpty(items []mcpv1alpha1.InventoryItem) []mcpv1alpha1.InventoryItem {
-	if len(items) == 0 {
-		return []mcpv1alpha1.InventoryItem{}
-	}
-	return items
-}
-
-func publicMCPEndpoint(mcpServer mcpv1alpha1.MCPServer) string {
-	path := strings.TrimSpace(mcpServer.Spec.IngressPath)
-	if path == "" {
-		prefix := strings.Trim(strings.TrimSpace(mcpServer.Spec.PublicPathPrefix), "/")
-		if prefix == "" {
-			prefix = mcpServer.Name
-		}
-		path = "/" + prefix + "/mcp"
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	host := strings.TrimSpace(mcpServer.Spec.IngressHost)
-	if host == "" {
-		host = strings.TrimSpace(os.Getenv("MCP_MCP_INGRESS_HOST"))
-	}
-	if host == "" {
-		if domain := strings.TrimSpace(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
-			host = "mcp." + strings.Trim(strings.TrimPrefix(strings.TrimPrefix(domain, "https://"), "http://"), "/")
-		}
-	}
-	if host == "" {
-		return path
-	}
-	scheme := "https"
-	if strings.HasPrefix(host, "localhost") || strings.HasPrefix(host, "127.0.0.1") {
-		scheme = "http"
-	}
-	return scheme + "://" + strings.TrimRight(host, "/") + path
-}
-
-func publicMCPConnectEndpoint(endpoint string, r *http.Request) string {
-	endpoint = strings.TrimSpace(endpoint)
-	if endpoint == "" || strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
-		return endpoint
-	}
-	path := endpoint
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	host := forwardedHost(r)
-	if host == "" {
-		return path
-	}
-	if strings.HasPrefix(strings.ToLower(host), "platform.") {
-		host = "mcp." + host[len("platform."):]
-	}
-	return forwardedScheme(r) + "://" + strings.TrimRight(host, "/") + path
-}
-
-func forwardedHost(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-	return firstForwardedValue(r.Header.Get("X-Forwarded-Host"))
-}
-
-func forwardedScheme(r *http.Request) string {
-	if r == nil {
-		return "http"
-	}
-	proto := strings.ToLower(firstForwardedValue(r.Header.Get("X-Forwarded-Proto")))
-	if proto == "https" {
-		return "https"
-	}
-	return "http"
-}
-
-func firstForwardedValue(value string) string {
-	if idx := strings.IndexByte(value, ','); idx >= 0 {
-		value = value[:idx]
-	}
-	return strings.TrimSpace(value)
-}
-
-// handleRuntimeGrants returns MCPAccessGrant resources.
-func (s *RuntimeServer) handleRuntimeGrants(w http.ResponseWriter, r *http.Request) {
+func (s *RuntimeServer) HandleRuntimeGrants(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		s.handleRuntimeGrantList(w, r)
@@ -630,8 +152,8 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, map[string]interface{}{"grant": sentinelaccess.ToGrantSummary(*applied)})
 }
 
-// handleRuntimeSessions returns MCPAgentSession resources.
-func (s *RuntimeServer) handleRuntimeSessions(w http.ResponseWriter, r *http.Request) {
+// HandleRuntimeSessions returns MCPAgentSession resources.
+func (s *RuntimeServer) HandleRuntimeSessions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		s.handleRuntimeSessionList(w, r)
@@ -770,60 +292,7 @@ func (s *RuntimeServer) sessionRevokedForApply(ctx context.Context, req accessSe
 	}
 	return existing.Spec.Revoked, nil
 }
-
-// handleRuntimeComponents returns Sentinel component health.
-func (s *RuntimeServer) handleRuntimeComponents(w http.ResponseWriter, r *http.Request) {
-	if s.sentinelMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	statuses, err := s.sentinelMgr.GetAllComponentStatuses(ctx)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get component statuses"})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{"components": statuses})
-}
-
-// handleRuntimePolicy returns rendered policy for a server.
-func (s *RuntimeServer) handleRuntimePolicy(w http.ResponseWriter, r *http.Request) {
-	if s.accessMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), r.URL.Query().Get("namespace"))
-	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
-		return
-	}
-	server := r.URL.Query().Get("server")
-
-	if strings.TrimSpace(namespace) == "" || server == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace and server parameters required"})
-		return
-	}
-
-	policy, err := s.accessMgr.GetServerPolicy(ctx, strings.TrimSpace(namespace), server)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, policy)
-}
-
-// handleGrantItemPath handles POST /api/runtime/grants/{namespace}/{name}/disable|enable
-// and DELETE /api/runtime/grants/{namespace}/{name}.
-func (s *RuntimeServer) handleGrantItemPath(w http.ResponseWriter, r *http.Request) {
+func (s *RuntimeServer) HandleGrantItemPath(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		ns, name, err := extractNamespacedPath(r.URL.Path, "/api/runtime/grants/", 2)
@@ -1041,21 +510,6 @@ func writeK8sApplyError(w http.ResponseWriter, kind, namespace, name string, err
 	writeJSON(w, code, map[string]string{"error": fmt.Sprintf("failed to apply %s: %s", kind, msg)})
 }
 
-const accessApplyMaxBytes = 64 * 1024
-
-// writeBodyDecodeError distinguishes a body-size cap from a generic JSON decode
-// failure so clients see a helpful 413 + size hint instead of a vague 400.
-func writeBodyDecodeError(w http.ResponseWriter, err error) {
-	var maxBytesErr *http.MaxBytesError
-	if errors.As(err, &maxBytesErr) {
-		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
-			"error": fmt.Sprintf("request body exceeds %d bytes", accessApplyMaxBytes),
-		})
-		return
-	}
-	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-}
-
 func normalizeTrust(trust sentinelaccess.TrustLevel) sentinelaccess.TrustLevel {
 	return sentinelaccess.TrustLevel(strings.TrimSpace(string(trust)))
 }
@@ -1078,9 +532,9 @@ func validDecision(decision sentinelaccess.PolicyDecision) bool {
 	}
 }
 
-// handleSessionItemPath handles POST /api/runtime/sessions/{namespace}/{name}/revoke|unrevoke
+// HandleSessionItemPath handles POST /api/runtime/sessions/{namespace}/{name}/revoke|unrevoke
 // and DELETE /api/runtime/sessions/{namespace}/{name}.
-func (s *RuntimeServer) handleSessionItemPath(w http.ResponseWriter, r *http.Request) {
+func (s *RuntimeServer) HandleSessionItemPath(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		ns, name, err := extractNamespacedPath(r.URL.Path, "/api/runtime/sessions/", 2)
@@ -1234,77 +688,13 @@ func (s *RuntimeServer) scopedNamespaceForPrincipal(ctx context.Context, request
 		if preferred := strings.TrimSpace(p.Namespace); preferred != "" {
 			return preferred, nil
 		}
-		if p.hasNamespace(sharedCatalogNamespace) {
+		if p.HasNamespace(sharedCatalogNamespace) {
 			return sharedCatalogNamespace, nil
 		}
 		return "", errPrincipalIdentityRequired
 	}
-	if !p.hasNamespace(requested) {
+	if !p.HasNamespace(requested) {
 		return "", errors.New("forbidden namespace")
 	}
 	return requested, nil
 }
-
-// handleActionRestart handles restart requests for components.
-func (s *RuntimeServer) handleActionRestart(w http.ResponseWriter, r *http.Request) {
-	if s.sentinelMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
-		return
-	}
-
-	var req struct {
-		Component string `json:"component"`
-		All       bool   `json:"all"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-
-	if req.All {
-		errs := s.sentinelMgr.RestartAllComponents(ctx)
-		if len(errs) > 0 {
-			errMsgs := make([]string, 0, len(errs))
-			for _, e := range errs {
-				errMsgs = append(errMsgs, e.Error())
-			}
-			writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
-				"error":  "some components failed to restart",
-				"errors": errMsgs,
-			})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"success":   true,
-			"restarted": "all",
-		})
-		return
-	}
-
-	if req.Component == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "component required"})
-		return
-	}
-
-	// Validate component exists
-	if _, err := sentinel.FindComponent(req.Component); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown component"})
-		return
-	}
-
-	if err := s.sentinelMgr.RestartComponent(ctx, req.Component); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to restart component"})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"success":   true,
-		"component": req.Component,
-	})
-}
-
-// RuntimeServer is now fully wired up through individual handler functions

@@ -31,7 +31,7 @@ func TestHandleOIDCLoginSuccess(t *testing.T) {
 	defer func() { oidcLoginHook = previousHook }()
 
 	server := &apiServer{
-		platform:     &platformStore{jwtSecret: []byte("test-secret")},
+		platform:     newTestPlatformStore([]byte("test-secret")),
 		jwks:         &keyfunc.JWKS{},
 		oidcIssuer:   "https://issuer.example",
 		oidcAudience: "client-id",
@@ -100,7 +100,7 @@ func TestHandleOIDCLoginRequiresPlatformStore(t *testing.T) {
 
 func TestHandleOIDCLoginRequiresOIDCConfig(t *testing.T) {
 	server := &apiServer{
-		platform: &platformStore{jwtSecret: []byte("test-secret")},
+		platform: newTestPlatformStore([]byte("test-secret")),
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/oidc", strings.NewReader(`{"id_token":"google-id-token"}`))
@@ -112,7 +112,7 @@ func TestHandleOIDCLoginRequiresOIDCConfig(t *testing.T) {
 
 func TestHandleOIDCLoginMissingToken(t *testing.T) {
 	server := &apiServer{
-		platform:     &platformStore{jwtSecret: []byte("test-secret")},
+		platform:     newTestPlatformStore([]byte("test-secret")),
 		jwks:         &keyfunc.JWKS{},
 		oidcIssuer:   "https://issuer.example",
 		oidcAudience: "client-id",
@@ -133,7 +133,7 @@ func TestHandleOIDCLoginInternalError(t *testing.T) {
 	defer func() { oidcLoginHook = previousHook }()
 
 	server := &apiServer{
-		platform:     &platformStore{jwtSecret: []byte("test-secret")},
+		platform:     newTestPlatformStore([]byte("test-secret")),
 		jwks:         &keyfunc.JWKS{},
 		oidcIssuer:   "https://issuer.example",
 		oidcAudience: "client-id",
@@ -154,7 +154,7 @@ func TestHandleOIDCLoginInvalidOIDCToken(t *testing.T) {
 	defer func() { oidcLoginHook = previousHook }()
 
 	server := &apiServer{
-		platform:     &platformStore{jwtSecret: []byte("test-secret")},
+		platform:     newTestPlatformStore([]byte("test-secret")),
 		jwks:         &keyfunc.JWKS{},
 		oidcIssuer:   "https://issuer.example",
 		oidcAudience: "client-id",

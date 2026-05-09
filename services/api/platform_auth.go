@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -131,7 +130,7 @@ func runPlatformAdminBootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer store.close()
+	defer store.Close()
 	return seedPlatformAdminFromEnv(ctx, store)
 }
 
@@ -242,7 +241,7 @@ func (s *apiServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.runtime != nil {
-		if err := s.runtime.ensureUserNamespace(r.Context(), principal{Subject: u.ID, Role: u.Role, Email: u.Email, Namespace: u.Namespace}); err != nil {
+		if err := s.runtime.EnsureUserNamespace(r.Context(), principal{Subject: u.ID, Role: u.Role, Email: u.Email, Namespace: u.Namespace}); err != nil {
 			s.platform.WriteAudit(r.Context(), auditEvent{UserID: u.ID, Action: "namespace_create", Resource: u.Namespace, Namespace: u.Namespace, Status: "error", Message: err.Error(), ActorIP: requestIP(r), Source: requestSource(r), AuthIdentity: "password:" + u.Email})
 			if cleanupErr := s.platform.DeleteUser(r.Context(), u.ID); cleanupErr != nil {
 				log.Printf("signup cleanup failed for user %s: %v", u.ID, cleanupErr)
@@ -455,15 +454,4 @@ func oidcAuditResource(idToken string) string {
 		return "unknown"
 	}
 	return email
-}
-
-func requestIP(r *http.Request) string {
-	if xff := strings.TrimSpace(r.Header.Get("x-forwarded-for")); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
-	}
-	remote := strings.TrimSpace(r.RemoteAddr)
-	if host, _, err := net.SplitHostPort(remote); err == nil {
-		return strings.TrimSpace(host)
-	}
-	return remote
 }

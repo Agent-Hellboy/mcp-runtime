@@ -707,6 +707,7 @@ func TestDoctorCurlProbesPassPathValidator(t *testing.T) {
 	})
 
 	t.Run("sentinel API auth probe", func(t *testing.T) {
+		var probeArgs []string
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				switch {
@@ -714,11 +715,18 @@ func TestDoctorCurlProbesPassPathValidator(t *testing.T) {
 					return &core.MockCommand{OutputData: []byte(doctorSentinelNamespace)}
 				case contains(spec.Args, "jsonpath={.data.UI_API_KEY}"):
 					return &core.MockCommand{OutputData: []byte("dGVzdA==")}
-				case contains(spec.Args, "curl"):
+				case len(spec.Args) > 0 && spec.Args[0] == "run":
+					probeArgs = append([]string(nil), spec.Args...)
 					if contains(spec.Args, "/dev/null") {
 						t.Fatal("doctor curl helper should not pass /dev/null through kubectl validators")
 					}
+					return &core.MockCommand{OutputData: []byte("pod/doctor-sentinel-probe created\n")}
+				case len(spec.Args) > 0 && spec.Args[0] == "get" && contains(spec.Args, "jsonpath={.status.phase}"):
+					return &core.MockCommand{OutputData: []byte("Succeeded")}
+				case len(spec.Args) > 0 && spec.Args[0] == "logs":
 					return &core.MockCommand{OutputData: []byte("200")}
+				case len(spec.Args) > 0 && spec.Args[0] == "delete":
+					return &core.MockCommand{}
 				default:
 					return &core.MockCommand{}
 				}
@@ -728,6 +736,15 @@ func TestDoctorCurlProbesPassPathValidator(t *testing.T) {
 		check := checkSentinelAPIAuthProbe(kubectl)
 		if !check.OK {
 			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+		overrides := argValueWithPrefix(probeArgs, "--overrides=")
+		if overrides == "" {
+			t.Fatalf("sentinel auth probe should use restricted-compliant overrides, got args=%v", probeArgs)
+		}
+		for _, notWant := range []string{"--attach", "--rm"} {
+			if contains(probeArgs, notWant) {
+				t.Fatalf("sentinel auth probe should read completed pod logs instead of using %s, got args=%v", notWant, probeArgs)
+			}
 		}
 	})
 }
@@ -1353,13 +1370,20 @@ func TestCheckMCPServersImagePullSmokeUsesRestrictedCompliantPodSpec(t *testing.
 	}
 }
 
-func TestCheckMCPServersDNSAndNetworkAllowsColdCurlImagePull(t *testing.T) {
+func TestCheckMCPServersDNSAndNetworkReadsCompletedPodLogs(t *testing.T) {
 	var runArgs []string
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
-			if len(spec.Args) > 0 && spec.Args[0] == "run" {
+			switch {
+			case len(spec.Args) > 0 && spec.Args[0] == "run":
 				runArgs = append([]string(nil), spec.Args...)
+				return &core.MockCommand{OutputData: []byte("pod/mcp-runtime-doctor-dns created\n")}
+			case len(spec.Args) > 0 && spec.Args[0] == "get" && contains(spec.Args, "jsonpath={.status.phase}"):
+				return &core.MockCommand{OutputData: []byte("Succeeded")}
+			case len(spec.Args) > 0 && spec.Args[0] == "logs":
 				return &core.MockCommand{OutputData: []byte("HTTP/1.1 200 OK\r\n")}
+			case len(spec.Args) > 0 && spec.Args[0] == "delete":
+				return &core.MockCommand{}
 			}
 			return &core.MockCommand{OutputErr: fmt.Errorf("unexpected command: %v", spec.Args)}
 		},
@@ -1372,12 +1396,14 @@ func TestCheckMCPServersDNSAndNetworkAllowsColdCurlImagePull(t *testing.T) {
 	if len(runArgs) == 0 {
 		t.Fatal("expected DNS/network probe to create a curl pod")
 	}
-	wantTimeout := "--pod-running-timeout=" + doctorProbePodRunTimeout
-	if !contains(runArgs, wantTimeout) {
-		t.Fatalf("DNS/network probe should allow cold curl image pulls with %s, got args=%v", wantTimeout, runArgs)
+	overrides := argValueWithPrefix(runArgs, "--overrides=")
+	if overrides == "" {
+		t.Fatalf("DNS/network probe should use restricted-compliant overrides, got args=%v", runArgs)
 	}
-	if contains(runArgs, "--pod-running-timeout=30s") {
-		t.Fatalf("DNS/network probe should not use the old 30s running timeout, got args=%v", runArgs)
+	for _, notWant := range []string{"--attach", "--rm"} {
+		if contains(runArgs, notWant) {
+			t.Fatalf("DNS/network probe should read completed pod logs instead of using %s, got args=%v", notWant, runArgs)
+		}
 	}
 }
 
@@ -1386,6 +1412,7 @@ func TestRestrictedRunOverridesUsesNumericNonRootUser(t *testing.T) {
 	for _, want := range []string{
 		`"runAsNonRoot":true`,
 		`"runAsUser":65532`,
+		`"workingDir":"/tmp"`,
 		`"command":["curl"]`,
 		`"args":["-sSI","http://example.test"]`,
 	} {

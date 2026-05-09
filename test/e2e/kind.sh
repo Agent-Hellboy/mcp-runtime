@@ -389,6 +389,7 @@ rollout_status_with_logs() {
     echo "[debug] rollout failed for ${kind}/${name}; collecting diagnostics" >&2
     kubectl describe "${kind}/${name}" -n "${namespace}" || true
     kubectl get pods -n "${namespace}" -l "app=${name}" -o wide || true
+    kubectl describe pods -n "${namespace}" -l "app=${name}" || true
     kubectl logs -n "${namespace}" -l "app=${name}" --all-containers=true --tail=200 || true
     kubectl logs -n "${namespace}" "deploy/${name}" --all-containers=true --tail=200 || true
   fi
@@ -1602,6 +1603,7 @@ mcp_path_updated = False
 public_path_prefix_updated = False
 in_env_vars = False
 current_env_name = None
+resources_present = any(line.startswith("    resources:") for line in lines)
 
 route_override = os.environ["SERVER_ROUTE_OVERRIDE"].strip()
 route_prefix = route_override.strip("/")
@@ -1679,6 +1681,21 @@ if not public_path_prefix_updated:
             inserted = True
     updated = final
     public_path_prefix_updated = inserted
+if not resources_present:
+    final = []
+    inserted = False
+    for line in updated:
+        final.append(line)
+        stripped = line.lstrip()
+        indent = line[: len(line) - len(stripped)]
+        if not inserted and indent == "    " and stripped.startswith("namespace: "):
+            final.append(f"{indent}resources:")
+            final.append(f"{indent}  requests:")
+            final.append(f"{indent}    cpu: 1m")
+            final.append(f"{indent}    memory: 32Mi")
+            inserted = True
+    updated = final
+    resources_present = inserted
 path.write_text("\n".join(updated) + "\n", encoding="utf-8")
 
 # Verify substitutions landed; missing fields cause silent failures later.
@@ -1690,6 +1707,8 @@ if not mcp_path_updated:
     raise SystemExit(f"prepare_example_metadata: MCP_PATH env var was not updated in {path}")
 if not public_path_prefix_updated:
     raise SystemExit(f"prepare_example_metadata: publicPathPrefix was not updated in {path}")
+if not resources_present:
+    raise SystemExit(f"prepare_example_metadata: resources were not inserted in {path}")
 PY
 }
 
@@ -2034,10 +2053,10 @@ else
   build_and_publish_image "docker.io/library/mcp-runtime-operator:latest" "Dockerfile.operator" "."
   build_and_publish_image "${TEST_MODE_REGISTRY_IMAGE}" "test/e2e/registry.Dockerfile" "."
   build_and_publish_image "docker.io/library/mcp-sentinel-mcp-proxy:latest" "${SENTINEL_ROOT}/services/mcp-proxy/Dockerfile" "${SENTINEL_ROOT}"
-  build_and_publish_image "docker.io/library/mcp-sentinel-ingest:latest" "${SENTINEL_ROOT}/services/ingest/Dockerfile" "${SENTINEL_ROOT}/services/ingest"
+  build_and_publish_image "docker.io/library/mcp-sentinel-ingest:latest" "${SENTINEL_ROOT}/services/ingest/Dockerfile" "${SENTINEL_ROOT}"
   build_and_publish_image "docker.io/library/mcp-sentinel-api:latest" "${SENTINEL_ROOT}/services/api/Dockerfile" "${SENTINEL_ROOT}"
-  build_and_publish_image "docker.io/library/mcp-sentinel-processor:latest" "${SENTINEL_ROOT}/services/processor/Dockerfile" "${SENTINEL_ROOT}/services/processor"
-  build_and_publish_image "docker.io/library/mcp-sentinel-ui:latest" "${SENTINEL_ROOT}/services/ui/Dockerfile" "${SENTINEL_ROOT}/services/ui"
+  build_and_publish_image "docker.io/library/mcp-sentinel-processor:latest" "${SENTINEL_ROOT}/services/processor/Dockerfile" "${SENTINEL_ROOT}"
+  build_and_publish_image "docker.io/library/mcp-sentinel-ui:latest" "${SENTINEL_ROOT}/services/ui/Dockerfile" "${SENTINEL_ROOT}"
 fi
 
 export MCP_SETUP_WAIT_TIMEOUT="${MCP_SETUP_WAIT_TIMEOUT:-900}"
@@ -2183,6 +2202,10 @@ servers:
     publicPathPrefix: ${SERVER_NAME}
     port: 8090
     namespace: mcp-servers
+    resources:
+      requests:
+        cpu: 1m
+        memory: 32Mi
     envVars:
       - name: PORT
         value: "8090"
@@ -2208,6 +2231,10 @@ servers:
       required: true
     gateway:
       enabled: true
+      resources:
+        requests:
+          cpu: 1m
+          memory: 32Mi
     analytics:
       enabled: true
       ingestURL: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
@@ -3118,6 +3145,13 @@ servers:
     publicPathPrefix: ${OAUTH_SERVER_NAME}
     port: 8090
     namespace: mcp-servers
+    resources:
+      requests:
+        cpu: 1m
+        memory: 32Mi
+    rollout:
+      maxUnavailable: "1"
+      maxSurge: "0"
     envVars:
       - name: PORT
         value: "8090"
@@ -3147,6 +3181,10 @@ servers:
       upstreamTokenHeader: Authorization
     gateway:
       enabled: true
+      resources:
+        requests:
+          cpu: 1m
+          memory: 32Mi
     analytics:
       enabled: true
       ingestURL: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
@@ -4403,6 +4441,13 @@ spec:
   servicePort: 80
   publicPathPrefix: ${prefix}
   ingressPath: /${prefix}/mcp
+  resources:
+    requests:
+      cpu: 1m
+      memory: 32Mi
+  rollout:
+    maxUnavailable: "1"
+    maxSurge: "0"
   envVars:
     - name: MCP_PATH
       value: /${prefix}/mcp
@@ -4426,6 +4471,10 @@ spec:
     required: true
   gateway:
     enabled: true
+    resources:
+      requests:
+        cpu: 1m
+        memory: 32Mi
 EOF
   }
 
@@ -4635,6 +4684,8 @@ PY
 fi
 
 echo "[cli] checking sentinel restart command"
+# The full E2E stack packs single-node Kind tightly, so avoid requiring surge CPU for this restart smoke.
+kubectl patch deployment mcp-sentinel-api -n mcp-sentinel --type merge -p '{"spec":{"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":0,"maxUnavailable":1}}}}' >/dev/null
 ./bin/mcp-runtime sentinel restart api
 rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
 

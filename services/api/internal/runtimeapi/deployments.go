@@ -1,4 +1,4 @@
-package main
+package runtimeapi
 
 import (
 	"context"
@@ -18,18 +18,19 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+
+	"mcp-runtime/pkg/kubeworkload"
 )
 
 const (
-	platformManagedLabel          = "platform.mcpruntime.org/managed"
-	platformUserIDLabel           = "platform.mcpruntime.org/user-id"
-	platformTeamIDLabel           = "mcpruntime.org/team-id"
-	platformTeamSlugLabel         = "mcpruntime.org/team-slug"
-	platformScopeLabel            = "mcpruntime.org/scope"
-	createdByLabel                = "created-by"
-	defaultDeployPort             = int32(8088)
-	restrictedRunAsUser           = int64(65532)
-	defaultWorkloadServiceAccount = "mcp-workload"
+	platformManagedLabel  = "platform.mcpruntime.org/managed"
+	platformUserIDLabel   = "platform.mcpruntime.org/user-id"
+	platformTeamIDLabel   = "mcpruntime.org/team-id"
+	platformTeamSlugLabel = "mcpruntime.org/team-slug"
+	platformScopeLabel    = "mcpruntime.org/scope"
+	createdByLabel        = "created-by"
+	defaultDeployPort     = int32(8088)
+	restrictedRunAsUser   = kubeworkload.RestrictedRunAsUser
 )
 
 var errPrincipalIdentityRequired = errors.New("authenticated user identity required")
@@ -43,7 +44,7 @@ type deployRequest struct {
 	Namespace string `json:"namespace,omitempty"`
 }
 
-func (s *RuntimeServer) handleDeployments(w http.ResponseWriter, r *http.Request) {
+func (s *RuntimeServer) HandleDeployments(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		s.handleDeploymentList(w, r)
@@ -55,7 +56,7 @@ func (s *RuntimeServer) handleDeployments(w http.ResponseWriter, r *http.Request
 	}
 }
 
-func (s *RuntimeServer) handleDeploymentItem(w http.ResponseWriter, r *http.Request) {
+func (s *RuntimeServer) HandleDeploymentItem(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		w.Header().Set("allow", "DELETE")
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
@@ -71,7 +72,7 @@ func (s *RuntimeServer) handleDeploymentItem(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if p.Role != roleAdmin && (!p.hasNamespace(ns) || ns == sharedCatalogNamespace) {
+	if p.Role != roleAdmin && (!p.HasNamespace(ns) || ns == sharedCatalogNamespace) {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "denied", name, ns, "", "forbidden"))
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
@@ -121,7 +122,7 @@ func (s *RuntimeServer) handleDeploymentList(w http.ResponseWriter, r *http.Requ
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 			return
 		}
-		if !p.hasNamespace(namespace) || namespace == sharedCatalogNamespace {
+		if !p.HasNamespace(namespace) || namespace == sharedCatalogNamespace {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 			return
 		}
@@ -145,7 +146,7 @@ func (s *RuntimeServer) handleDeploymentList(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]any{"deployments": deploymentSummaries(list.Items)})
 }
 
-func (s *RuntimeServer) handleAdminDeployments(w http.ResponseWriter, r *http.Request) {
+func (s *RuntimeServer) HandleAdminDeployments(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("allow", http.MethodGet)
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
@@ -162,7 +163,7 @@ func (s *RuntimeServer) handleAdminDeployments(w http.ResponseWriter, r *http.Re
 	}
 
 	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
-	summaries, err := s.listAdminDeploymentSummaries(r.Context(), namespace)
+	summaries, err := s.ListAdminDeploymentSummaries(r.Context(), namespace)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deployments"})
 		return
@@ -170,7 +171,7 @@ func (s *RuntimeServer) handleAdminDeployments(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]any{"deployments": summaries})
 }
 
-func (s *RuntimeServer) listAdminDeploymentSummaries(ctx context.Context, namespace string) ([]map[string]any, error) {
+func (s *RuntimeServer) ListAdminDeploymentSummaries(ctx context.Context, namespace string) ([]map[string]any, error) {
 	if s.k8sClients == nil {
 		return nil, errors.New("kubernetes not available")
 	}
@@ -226,7 +227,7 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace required"})
 		return
 	}
-	if p.Role != roleAdmin && (!p.hasNamespace(namespace) || namespace == sharedCatalogNamespace) {
+	if p.Role != roleAdmin && (!p.HasNamespace(namespace) || namespace == sharedCatalogNamespace) {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, req.Image, "forbidden"))
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
@@ -235,12 +236,12 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	if req.Version != "" && !strings.Contains(image[strings.LastIndex(image, "/")+1:], ":") {
 		image += ":" + req.Version
 	}
-	team, teamNamespace := p.teamForNamespace(namespace)
+	team, teamNamespace := p.TeamForNamespace(namespace)
 	teamSlug := ""
 	if teamNamespace {
 		teamSlug = strings.TrimSpace(team.Slug)
 	}
-	if err := validateDeployImage(image, namespace, teamSlug, p.Role); err != nil {
+	if err := ValidateDeployImage(image, namespace, teamSlug, p.Role); err != nil {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, image, err.Error()))
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -271,7 +272,7 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 			return
 		}
 	} else {
-		if err := s.ensureUserNamespace(ctx, target); err != nil {
+		if err := s.EnsureUserNamespace(ctx, target); err != nil {
 			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure namespace"})
 			return
@@ -281,8 +282,8 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 		"app.kubernetes.io/name":       req.Name,
 		"app.kubernetes.io/managed-by": "mcp-runtime",
 		platformManagedLabel:           "true",
-		platformUserIDLabel:            p.userID(),
-		createdByLabel:                 p.userID(),
+		platformUserIDLabel:            p.UserID(),
+		createdByLabel:                 p.UserID(),
 	}
 	if teamNamespace {
 		labels[platformTeamIDLabel] = team.ID
@@ -310,7 +311,7 @@ func (s *RuntimeServer) clientForPrincipal(p principal) (kubernetes.Interface, e
 	if s.k8sClients == nil {
 		return nil, fmt.Errorf("kubernetes not available")
 	}
-	if p.userID() == "" {
+	if p.UserID() == "" {
 		return nil, errPrincipalIdentityRequired
 	}
 	if s.k8sClients.Config == nil {
@@ -318,19 +319,19 @@ func (s *RuntimeServer) clientForPrincipal(p principal) (kubernetes.Interface, e
 	}
 	cfg := rest.CopyConfig(s.k8sClients.Config)
 	cfg.Impersonate = rest.ImpersonationConfig{
-		UserName: "platform:user:" + p.userID(),
+		UserName: "platform:user:" + p.UserID(),
 		Groups:   []string{"platform:role:" + p.Role},
 	}
 	return kubernetes.NewForConfig(cfg)
 }
 
-func (s *RuntimeServer) ensureUserNamespace(ctx context.Context, p principal) error {
+func (s *RuntimeServer) EnsureUserNamespace(ctx context.Context, p principal) error {
 	if s.k8sClients == nil || p.Namespace == "" {
 		return nil
 	}
 	labels := map[string]string{
 		platformManagedLabel:                 "true",
-		platformUserIDLabel:                  p.userID(),
+		platformUserIDLabel:                  p.UserID(),
 		platformScopeLabel:                   namespaceScopeUser,
 		"pod-security.kubernetes.io/enforce": "restricted",
 	}
@@ -372,28 +373,7 @@ func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace st
 	if err := ensureDefaultDenyNetworkPolicy(ctx, base, namespace); err != nil {
 		return err
 	}
-	return ensureWorkloadServiceAccount(ctx, base, namespace)
-}
-
-func ensureWorkloadServiceAccount(ctx context.Context, client kubernetes.Interface, namespace string) error {
-	desired := &corev1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      defaultWorkloadServiceAccount,
-			Namespace: namespace,
-		},
-		AutomountServiceAccountToken: boolPtr(false),
-	}
-	existing, err := client.CoreV1().ServiceAccounts(namespace).Get(ctx, defaultWorkloadServiceAccount, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, createErr := client.CoreV1().ServiceAccounts(namespace).Create(ctx, desired, metav1.CreateOptions{})
-		return createErr
-	}
-	if err != nil {
-		return err
-	}
-	existing.AutomountServiceAccountToken = boolPtr(false)
-	_, err = client.CoreV1().ServiceAccounts(namespace).Update(ctx, existing, metav1.UpdateOptions{})
-	return err
+	return kubeworkload.EnsureServiceAccount(ctx, base, namespace)
 }
 
 func ensureResourceQuota(ctx context.Context, client kubernetes.Interface, ns string) error {
@@ -475,36 +455,23 @@ func ensureDefaultDenyNetworkPolicy(ctx context.Context, client kubernetes.Inter
 }
 
 func desiredDeployment(name, namespace, image string, port, replicas int32, labels map[string]string) *appsv1.Deployment {
-	return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels}, Spec: appsv1.DeploymentSpec{
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels}, Spec: appsv1.DeploymentSpec{
 		Replicas: &replicas,
 		Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": name}},
 		Template: corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{Labels: labels},
 			Spec: corev1.PodSpec{
-				ServiceAccountName:           defaultWorkloadServiceAccount,
-				AutomountServiceAccountToken: boolPtr(false),
-				SecurityContext: &corev1.PodSecurityContext{
-					RunAsNonRoot: boolPtr(true),
-					RunAsUser:    int64Ptr(restrictedRunAsUser),
-					SeccompProfile: &corev1.SeccompProfile{
-						Type: corev1.SeccompProfileTypeRuntimeDefault,
-					},
-				},
 				Containers: []corev1.Container{{
-					Name:  "server",
-					Image: image,
-					Ports: []corev1.ContainerPort{{ContainerPort: port}},
-					SecurityContext: &corev1.SecurityContext{
-						AllowPrivilegeEscalation: boolPtr(false),
-						RunAsNonRoot:             boolPtr(true),
-						Capabilities: &corev1.Capabilities{
-							Drop: []corev1.Capability{"ALL"},
-						},
-					},
+					Name:            "server",
+					Image:           image,
+					Ports:           []corev1.ContainerPort{{ContainerPort: port}},
+					SecurityContext: kubeworkload.RestrictedContainerSecurityContext(),
 				}},
 			},
 		},
 	}}
+	kubeworkload.ApplyRestrictedPodDefaults(&deployment.Spec.Template.Spec)
+	return deployment
 }
 
 func desiredService(name, namespace string, port int32, labels map[string]string) *corev1.Service {
@@ -518,14 +485,6 @@ func desiredService(name, namespace string, port int32, labels map[string]string
 func intstrPtr(port int) *intstr.IntOrString {
 	v := intstr.FromInt(port)
 	return &v
-}
-
-func boolPtr(value bool) *bool {
-	return &value
-}
-
-func int64Ptr(value int64) *int64 {
-	return &value
 }
 
 func upsertDeployment(ctx context.Context, client kubernetes.Interface, dep *appsv1.Deployment) (*appsv1.Deployment, error) {
@@ -555,7 +514,7 @@ func upsertService(ctx context.Context, client kubernetes.Interface, svc *corev1
 	return client.CoreV1().Services(svc.Namespace).Update(ctx, existing, metav1.UpdateOptions{})
 }
 
-func validateDeployImage(image, namespace, teamSlug, role string) error {
+func ValidateDeployImage(image, namespace, teamSlug, role string) error {
 	parts := strings.Split(image, "/")
 	if len(parts) < 2 {
 		return fmt.Errorf("image must include a registry/repository path")
@@ -628,7 +587,7 @@ func firstContainerImage(d appsv1.Deployment) string {
 func deploymentAuditEvent(r *http.Request, p principal, action, status, name, namespace, image, message string) auditEvent {
 	target := strings.Trim(strings.TrimSpace(namespace)+"/"+strings.TrimSpace(name), "/")
 	return auditEvent{
-		UserID:           p.userID(),
+		UserID:           p.UserID(),
 		Action:           action,
 		Resource:         strings.TrimSpace(name),
 		Namespace:        strings.TrimSpace(namespace),

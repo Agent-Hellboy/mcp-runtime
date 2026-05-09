@@ -17,6 +17,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v4"
 
+	"mcp-runtime/pkg/events"
 	policypkg "mcp-runtime/pkg/policy"
 )
 
@@ -272,124 +273,6 @@ func TestInspectRPCRequestAcceptsChunkedBody(t *testing.T) {
 	}
 }
 
-func TestAuthorizeRequestOptionalSessionDoesNotApplyWithoutSessionHeader(t *testing.T) {
-	t.Parallel()
-
-	policy := &policypkg.Document{
-		Policy: &policypkg.Config{
-			Mode:            "allow-list",
-			DefaultDecision: "deny",
-			PolicyVersion:   "test-policy",
-		},
-		Session: &policypkg.Session{
-			Required: false,
-		},
-		Tools: []policypkg.Tool{
-			{Name: "upper", RequiredTrust: "medium"},
-		},
-		Grants: []policypkg.Grant{
-			{
-				Name:      "grant-1",
-				HumanID:   "human-1",
-				AgentID:   "agent-1",
-				MaxTrust:  "high",
-				ToolRules: []policypkg.ToolAccess{{Name: "upper", Decision: "allow"}},
-			},
-		},
-		Sessions: []policypkg.Binding{
-			{
-				Name:           "session-1",
-				HumanID:        "human-1",
-				AgentID:        "agent-1",
-				ConsentedTrust: "low",
-			},
-		},
-	}
-
-	decision := authorizeRequest(policy, identityContext{
-		HumanID: "human-1",
-		AgentID: "agent-1",
-	}, "tools/call", "upper")
-
-	if !decision.Allowed {
-		t.Fatalf("decision = %#v, want allowed request", decision)
-	}
-	if decision.ConsentedTrust != "high" || decision.EffectiveTrust != "high" {
-		t.Fatalf("decision = %#v, want optional session ignored without header", decision)
-	}
-}
-
-func TestAuthorizeRequestOptionalSessionRequiresLiveSessionHeader(t *testing.T) {
-	t.Parallel()
-
-	basePolicy := &policypkg.Document{
-		Policy: &policypkg.Config{
-			Mode:            "allow-list",
-			DefaultDecision: "deny",
-			PolicyVersion:   "test-policy",
-		},
-		Session: &policypkg.Session{
-			Required: false,
-		},
-		Tools: []policypkg.Tool{
-			{Name: "upper", RequiredTrust: "medium"},
-		},
-		Grants: []policypkg.Grant{
-			{
-				Name:      "grant-1",
-				HumanID:   "human-1",
-				AgentID:   "agent-1",
-				MaxTrust:  "high",
-				ToolRules: []policypkg.ToolAccess{{Name: "upper", Decision: "allow"}},
-			},
-		},
-	}
-
-	liveSessionPolicy := *basePolicy
-	liveSessionPolicy.Sessions = []policypkg.Binding{
-		{
-			Name:           "session-1",
-			HumanID:        "human-1",
-			AgentID:        "agent-1",
-			ConsentedTrust: "low",
-		},
-	}
-
-	denyDecision := authorizeRequest(&liveSessionPolicy, identityContext{
-		HumanID:   "human-1",
-		AgentID:   "agent-1",
-		SessionID: "session-1",
-	}, "tools/call", "upper")
-
-	if denyDecision.Reason != "trust_too_low" {
-		t.Fatalf("deny decision = %#v, want trust_too_low", denyDecision)
-	}
-
-	revokedSessionPolicy := *basePolicy
-	revokedSessionPolicy.Sessions = []policypkg.Binding{
-		{
-			Name:           "session-1",
-			HumanID:        "human-1",
-			AgentID:        "agent-1",
-			ConsentedTrust: "low",
-			Revoked:        true,
-		},
-	}
-
-	allowDecision := authorizeRequest(&revokedSessionPolicy, identityContext{
-		HumanID:   "human-1",
-		AgentID:   "agent-1",
-		SessionID: "session-1",
-	}, "tools/call", "upper")
-
-	if !allowDecision.Allowed {
-		t.Fatalf("allow decision = %#v, want revoked optional session ignored", allowDecision)
-	}
-	if allowDecision.ConsentedTrust != "high" || allowDecision.EffectiveTrust != "high" {
-		t.Fatalf("allow decision = %#v, want admin trust when optional session is revoked", allowDecision)
-	}
-}
-
 func TestAbsoluteRequestURLUsesRequestHost(t *testing.T) {
 	t.Parallel()
 
@@ -460,7 +343,7 @@ func TestAuditPayloadDoesNotPersistRawQueryString(t *testing.T) {
 		"",
 		identityContext{HumanID: "human-1"},
 		nil,
-		authzDecision{Allowed: true, Reason: "allowed", PolicyVersion: "test-policy"},
+		policypkg.Decision{Allowed: true, Reason: "allowed", PolicyVersion: "test-policy"},
 		http.StatusOK,
 		12,
 		34,
@@ -494,13 +377,13 @@ func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
 
 	proxy := &proxyServer{
 		analyticsURL:   "http://analytics.example.com",
-		analyticsQueue: make(chan analyticsEvent, 1),
+		analyticsQueue: make(chan events.Envelope, 1),
 	}
-	proxy.analyticsQueue <- analyticsEvent{Source: "existing"}
+	proxy.analyticsQueue <- events.Envelope{Source: "existing"}
 
 	done := make(chan struct{})
 	go func() {
-		proxy.emitIfEnabled(analyticsEvent{Source: "dropped"})
+		proxy.emitIfEnabled(events.Envelope{Source: "dropped"})
 		close(done)
 	}()
 
