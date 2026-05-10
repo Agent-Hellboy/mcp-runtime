@@ -2218,8 +2218,14 @@ servers:
       - name: echo
         requiredTrust: low
         sideEffect: read
+      - name: add
+        requiredTrust: low
+        sideEffect: read
       - name: upper
         requiredTrust: medium
+        sideEffect: read
+      - name: slugify
+        requiredTrust: low
         sideEffect: read
     auth:
       mode: header
