@@ -73,6 +73,7 @@ metadata:
   name: payments
   namespace: mcp-servers
 spec:
+  teamID: 7d0a0b8f-7c25-4761-a632-3cf0108e31d6
   description: Payments MCP server for invoice lookup and refund workflows.
   image: registry.example.com/payments-mcp
   port: 8088
@@ -83,6 +84,7 @@ spec:
     mode: header
     humanIDHeader: X-MCP-Human-ID
     agentIDHeader: X-MCP-Agent-ID
+    teamIDHeader: X-MCP-Team-ID
     sessionIDHeader: X-MCP-Agent-Session
   policy:
     mode: allow-list
@@ -116,6 +118,19 @@ spec:
 
 `MCPAccessGrant.spec.disabled` and `MCPAgentSession.spec.revoked` are the hard kill switches — they turn off access without deleting the underlying object's history.
 
+`MCPServer.spec.teamID` records the owning platform team. `SubjectRef` has
+`humanID`, `agentID`, and `teamID`; the gateway matches every non-empty subject
+field exactly. A grant with only `subject.teamID` applies to any authenticated
+principal from that team when trusted header or OAuth team identity is present.
+See [Multi-team isolation](multi-team.md).
+
+The platform API enforces the namespace boundary for access writes. Grants and
+sessions must live in the same namespace as their `serverRef`; non-admin
+callers cannot write access resources into the shared `mcp-servers` catalog
+namespace and can only operate in namespaces authorized on their principal.
+Team namespace writes default and validate `spec.teamID` / `subject.teamID`
+against the authenticated principal and referenced server.
+
 ### MCPAccessGrant
 
 `allowedSideEffects` is independent from `toolRules`: tool rules select names,
@@ -133,6 +148,7 @@ spec:
   subject:
     humanID: user-123
     agentID: ops-agent
+    teamID: 7d0a0b8f-7c25-4761-a632-3cf0108e31d6
   maxTrust: high
   allowedSideEffects:
     - read
@@ -161,6 +177,7 @@ spec:
   subject:
     humanID: user-123
     agentID: ops-agent
+    teamID: 7d0a0b8f-7c25-4761-a632-3cf0108e31d6
   consentedTrust: medium
   expiresAt: "2026-03-26T12:00:00Z"
   upstreamTokenSecretRef:

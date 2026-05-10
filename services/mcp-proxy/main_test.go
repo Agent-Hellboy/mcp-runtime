@@ -127,13 +127,14 @@ func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 	})
 
 	token := issuer.sign(t, jwt.MapClaims{
-		"iss": issuer.url,
-		"aud": "mcp-runtime",
-		"sub": "human-1",
-		"azp": "client-1",
-		"sid": "session-1",
-		"exp": time.Now().Add(time.Hour).Unix(),
-		"nbf": time.Now().Add(-time.Minute).Unix(),
+		"iss":     issuer.url,
+		"aud":     "mcp-runtime",
+		"sub":     "human-1",
+		"azp":     "client-1",
+		"team_id": "team-acme",
+		"sid":     "session-1",
+		"exp":     time.Now().Add(time.Hour).Unix(),
+		"nbf":     time.Now().Add(-time.Minute).Unix(),
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"echo"}}`))
@@ -155,6 +156,9 @@ func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 	if got := upstreamHeaders.Get(defaultAgentHeader); got != "client-1" {
 		t.Fatalf("%s = %q, want %q", defaultAgentHeader, got, "client-1")
 	}
+	if got := upstreamHeaders.Get(defaultTeamHeader); got != "team-acme" {
+		t.Fatalf("%s = %q, want %q", defaultTeamHeader, got, "team-acme")
+	}
 	if got := upstreamHeaders.Get(defaultSessionHeader); got != "session-1" {
 		t.Fatalf("%s = %q, want %q", defaultSessionHeader, got, "session-1")
 	}
@@ -169,15 +173,18 @@ func TestApplyIdentityHeadersClearsSpoofedValues(t *testing.T) {
 	proxy := &proxyServer{
 		defaultHumanHeader:   defaultHumanHeader,
 		defaultAgentHeader:   defaultAgentHeader,
+		defaultTeamHeader:    defaultTeamHeader,
 		defaultSessionHeader: defaultSessionHeader,
 	}
 	req := httptest.NewRequest(http.MethodGet, "http://proxy.example.com/mcp", nil)
 	req.Header.Set(defaultHumanHeader, "spoofed-human")
 	req.Header.Set(defaultAgentHeader, "spoofed-agent")
+	req.Header.Set(defaultTeamHeader, "spoofed-team")
 	req.Header.Set(defaultSessionHeader, "spoofed-session")
 
 	proxy.applyIdentityHeaders(req, oauthPolicy("https://issuer.example.com"), identityContext{
 		HumanID: "human-1",
+		TeamID:  "team-acme",
 	})
 
 	if got := req.Header.Get(defaultHumanHeader); got != "human-1" {
@@ -185,6 +192,9 @@ func TestApplyIdentityHeadersClearsSpoofedValues(t *testing.T) {
 	}
 	if got := req.Header.Get(defaultAgentHeader); got != "" {
 		t.Fatalf("%s = %q, want empty", defaultAgentHeader, got)
+	}
+	if got := req.Header.Get(defaultTeamHeader); got != "team-acme" {
+		t.Fatalf("%s = %q, want %q", defaultTeamHeader, got, "team-acme")
 	}
 	if got := req.Header.Get(defaultSessionHeader); got != "" {
 		t.Fatalf("%s = %q, want empty", defaultSessionHeader, got)
@@ -227,6 +237,7 @@ func TestHandleProxyRewritesUpstreamHostAndForwardedHeaders(t *testing.T) {
 		httpClient:            &http.Client{Timeout: 2 * time.Second},
 		defaultHumanHeader:    defaultHumanHeader,
 		defaultAgentHeader:    defaultAgentHeader,
+		defaultTeamHeader:     defaultTeamHeader,
 		defaultSessionHeader:  defaultSessionHeader,
 		defaultPolicyMode:     defaultPolicyMode,
 		defaultPolicyDecision: defaultPolicyDecision,
@@ -372,6 +383,7 @@ func TestStartPolicyCacheRequiresConfiguredPolicyFile(t *testing.T) {
 		policyFile:            filepath.Join(t.TempDir(), "missing-policy.json"),
 		defaultHumanHeader:    defaultHumanHeader,
 		defaultAgentHeader:    defaultAgentHeader,
+		defaultTeamHeader:     defaultTeamHeader,
 		defaultSessionHeader:  defaultSessionHeader,
 		defaultPolicyMode:     defaultPolicyMode,
 		defaultPolicyDecision: defaultPolicyDecision,
@@ -495,6 +507,7 @@ func oauthPolicy(issuerURL string) *policypkg.Document {
 			Mode:            "oauth",
 			HumanIDHeader:   defaultHumanHeader,
 			AgentIDHeader:   defaultAgentHeader,
+			TeamIDHeader:    defaultTeamHeader,
 			SessionIDHeader: defaultSessionHeader,
 			TokenHeader:     "Authorization",
 			IssuerURL:       issuerURL,

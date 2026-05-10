@@ -16,12 +16,14 @@ func TestPolicyDocumentRoundTrip(t *testing.T) {
 		Server: Server{
 			Name:      "test-server",
 			Namespace: "mcp-servers",
+			TeamID:    "team-acme",
 			Cluster:   "test-cluster",
 		},
 		Auth: &Auth{
 			Mode:            "oauth",
 			HumanIDHeader:   "X-MCP-Human-ID",
 			AgentIDHeader:   "X-MCP-Agent-ID",
+			TeamIDHeader:    "X-MCP-Team-ID",
 			SessionIDHeader: "X-MCP-Session",
 			TokenHeader:     "Authorization",
 			IssuerURL:       "https://auth.example.com",
@@ -66,6 +68,7 @@ func TestPolicyDocumentRoundTrip(t *testing.T) {
 			{
 				Name:          "developer-grant",
 				HumanID:       "user@example.com",
+				TeamID:        "team-acme",
 				MaxTrust:      "high",
 				PolicyVersion: "v1",
 				Disabled:      false,
@@ -103,6 +106,7 @@ func TestPolicyDocumentRoundTrip(t *testing.T) {
 				Name:             "session-1",
 				HumanID:          "user@example.com",
 				AgentID:          "agent-123",
+				TeamID:           "team-acme",
 				ConsentedTrust:   "high",
 				Revoked:          false,
 				ExpiresAt:        time.Now().Add(24 * time.Hour).Format(time.RFC3339),
@@ -141,6 +145,9 @@ func verifyServer(t *testing.T, expected, actual Server) {
 	if expected.Namespace != actual.Namespace {
 		t.Errorf("Server.Namespace mismatch: expected %q, got %q", expected.Namespace, actual.Namespace)
 	}
+	if expected.TeamID != actual.TeamID {
+		t.Errorf("Server.TeamID mismatch: expected %q, got %q", expected.TeamID, actual.TeamID)
+	}
 	if expected.Cluster != actual.Cluster {
 		t.Errorf("Server.Cluster mismatch: expected %q, got %q", expected.Cluster, actual.Cluster)
 	}
@@ -162,6 +169,9 @@ func verifyAuth(t *testing.T, expected, actual *Auth) {
 	}
 	if expected.AgentIDHeader != actual.AgentIDHeader {
 		t.Errorf("Auth.AgentIDHeader mismatch: expected %q, got %q", expected.AgentIDHeader, actual.AgentIDHeader)
+	}
+	if expected.TeamIDHeader != actual.TeamIDHeader {
+		t.Errorf("Auth.TeamIDHeader mismatch: expected %q, got %q", expected.TeamIDHeader, actual.TeamIDHeader)
 	}
 	if expected.SessionIDHeader != actual.SessionIDHeader {
 		t.Errorf("Auth.SessionIDHeader mismatch: expected %q, got %q", expected.SessionIDHeader, actual.SessionIDHeader)
@@ -273,6 +283,9 @@ func verifyGrants(t *testing.T, expected, actual []Grant) {
 		if exp.AgentID != act.AgentID {
 			t.Errorf("Grant[%d].AgentID mismatch: expected %q, got %q", i, exp.AgentID, act.AgentID)
 		}
+		if exp.TeamID != act.TeamID {
+			t.Errorf("Grant[%d].TeamID mismatch: expected %q, got %q", i, exp.TeamID, act.TeamID)
+		}
 		if exp.MaxTrust != act.MaxTrust {
 			t.Errorf("Grant[%d].MaxTrust mismatch: expected %q, got %q", i, exp.MaxTrust, act.MaxTrust)
 		}
@@ -324,6 +337,9 @@ func verifySessions(t *testing.T, expected, actual []Binding) {
 		}
 		if exp.AgentID != act.AgentID {
 			t.Errorf("Binding[%d].AgentID mismatch: expected %q, got %q", i, exp.AgentID, act.AgentID)
+		}
+		if exp.TeamID != act.TeamID {
+			t.Errorf("Binding[%d].TeamID mismatch: expected %q, got %q", i, exp.TeamID, act.TeamID)
 		}
 		if exp.ConsentedTrust != act.ConsentedTrust {
 			t.Errorf("Binding[%d].ConsentedTrust mismatch: expected %q, got %q", i, exp.ConsentedTrust, act.ConsentedTrust)

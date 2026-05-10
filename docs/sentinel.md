@@ -62,7 +62,7 @@ flowchart LR
 
 | Component | Role |
 |---|---|
-| **ClickHouse** | Stores the event stream with materialized fields: server, namespace, cluster, human, agent, session, decision, tool name. |
+| **ClickHouse** | Stores the event stream with materialized fields: server, namespace, team ID, cluster, human, agent, session, decision, tool name. |
 | **Kafka + Zookeeper** | Buffer between ingest and processor. |
 | **Prometheus + Grafana** | Service metrics, scrape config, dashboards. |
 | **OTel Collector + Tempo** | Distributed tracing pipeline. |
@@ -119,7 +119,7 @@ metrics on `METRICS_PORT` (default `9090`).
 | `GET` | `/api/dashboard/summary` | Dashboard cards: event totals, active grants/sessions, latest event metadata. Admin role required. |
 | `GET` | `/api/analytics/usage` | Dashboard usage analytics from ClickHouse: totals, top MCP servers, human/agent pairs, tools, and decision counts. Query: `limit` (1-50, default 10). Admin role required. |
 | `GET` | `/api/events` | Recent ClickHouse-backed audit events, newest first. Query: `limit` (1-1000, default 100). Admin role required. |
-| `GET` | `/api/events/filter` | Filtered audit events. Query: `source`, `event_type`, `server`, `namespace`, `cluster`, `human_id`, `agent_id`, `session_id`, `decision`, `tool_name`, `limit`. Admin role required. |
+| `GET` | `/api/events/filter` | Filtered audit events. Query: `source`, `event_type`, `server`, `namespace`, `team_id`, `cluster`, `human_id`, `agent_id`, `session_id`, `decision`, `tool_name`, `limit`. Admin role required. |
 | `GET` | `/api/stats` | Total event count. Admin role required. |
 | `GET` | `/api/sources` | Event counts grouped by source. Admin role required. |
 | `GET` | `/api/event-types` | Event counts grouped by event type. Admin role required. |
@@ -204,6 +204,8 @@ Event intake body:
   "payload": {
     "server": "payments",
     "namespace": "mcp-servers",
+    "team_id": "7d0a0b8f-7c25-4761-a632-3cf0108e31d6",
+    "subject_team_id": "7d0a0b8f-7c25-4761-a632-3cf0108e31d6",
     "decision": "deny",
     "reason": "session_not_found"
   }
@@ -246,7 +248,7 @@ The UI's **Governance** tab creates and operates the same `MCPAccessGrant` and `
 
 | Action | What it does |
 |---|---|
-| **Create grant** | `Create Grant` button. Required: name, namespace, server, at least one of human or agent ID, and the allowed side-effect classes. Tool rules use one rule per line: `tool:allow` or `tool:allow:trust`. |
+| **Create grant** | `Create Grant` button. Required: name, namespace, server, at least one of human, agent, or team ID, and the allowed side-effect classes. Tool rules use one rule per line: `tool:allow` or `tool:allow:trust`. |
 | **Create session** | `Create Session`. Pick a consented trust level and optional expiry. The gateway looks it up at `tools/call` time alongside the grant. |
 | **Disable / enable grant** | Single-action row. Disable flips `spec.disabled=true` — grant is preserved for audit, but the gateway treats it as denying. |
 | **Revoke / unrevoke session** | Same row pattern toggles `spec.revoked`. Revoked sessions deny subsequent tool calls immediately. |
@@ -261,36 +263,52 @@ refund_invoice:allow:high
 
 CLI parity: `mcp-runtime access grant` and `mcp-runtime access session` cover the same CRUD flows. CRs are the source of truth — the UI is a convenience layer.
 
-## Verifying multi-tenancy
+For platform API writes, grants and sessions must reference a server in the same
+namespace as the access resource. Non-admin callers cannot write access
+resources into the shared `mcp-servers` catalog namespace. Team namespace writes
+default and validate `spec.teamID` and `subject.teamID` against the
+authenticated principal and referenced server.
 
-Each `MCPServer` is its own tenant: the operator renders a per-server policy ConfigMap (`<server>-gateway-policy`) holding only the grants and sessions whose `serverRef` points at that server, and the `mcp-gateway` sidecar evaluates traffic against that policy alone. To verify isolation end-to-end, deploy two gateway-enabled servers in `mcp-servers` and grant disjoint subjects on each.
+## Verifying per-server policy isolation
+
+This check verifies that one server's rendered gateway policy does not bleed
+into another server. It is per-server policy isolation, not the team namespace
+model described in [Multi-team isolation](multi-team.md).
+
+The operator renders a per-server policy ConfigMap
+(`<server>-gateway-policy`) holding only the grants and sessions whose
+`serverRef` points at that server, and the `mcp-gateway` sidecar evaluates
+traffic against that policy alone. To verify isolation end-to-end, deploy two
+gateway-enabled servers in `mcp-servers` and grant disjoint subjects on each.
 
 Apply two `MCPServer` resources (same image is fine, different `metadata.name` and `publicPathPrefix`) with `gateway.enabled: true`, `auth.mode: header`, `policy.mode: allow-list`, `session.required: true`, and tool inventory entries that declare `sideEffect`. Then apply two grant + session pairs:
 
 ```yaml
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
-metadata: {name: alice-tenant-a, namespace: mcp-servers}
+metadata: {name: alice-server-a, namespace: mcp-servers}
 spec:
-  serverRef: {name: tenant-a-mcp}
+  serverRef: {name: server-a-mcp}
   subject:   {humanID: alice, agentID: alice-agent}
   maxTrust: high
   allowedSideEffects: [read]
   toolRules: [{name: add, decision: allow, requiredTrust: low}]
 ---
-# bob-tenant-b mirrors the above with serverRef tenant-b-mcp and a different toolRule
+# bob-server-b mirrors the above with serverRef server-b-mcp and a different toolRule
 ```
 
 Confirm each server's policy contains only its own subject:
 
 ```bash
-mcp-runtime server policy inspect tenant-a-mcp --namespace mcp-servers   # alice only
-mcp-runtime server policy inspect tenant-b-mcp --namespace mcp-servers   # bob only
+mcp-runtime server policy inspect server-a-mcp --namespace mcp-servers   # alice only
+mcp-runtime server policy inspect server-b-mcp --namespace mcp-servers   # bob only
 ```
 
-Drive the cross-tenant matrix using the configured identity headers (`X-MCP-Human-ID`, `X-MCP-Agent-ID`, `X-MCP-Agent-Session`). The expected outcomes distinguish the two deny modes:
+Drive the cross-server matrix using the configured identity headers
+(`X-MCP-Human-ID`, `X-MCP-Agent-ID`, `X-MCP-Agent-Session`). The expected
+outcomes distinguish the two deny modes:
 
-| Subject | Tenant | Tool | Outcome |
+| Subject | Target server | Tool | Outcome |
 |---|---|---|---|
 | alice | A | grant-listed tool | **200** allow |
 | alice | A | other tool | **403** — known subject, tool not in grant |
@@ -299,7 +317,12 @@ Drive the cross-tenant matrix using the configured identity headers (`X-MCP-Huma
 | bob | A | any | **401** |
 | no headers / unknown session | any | any | **401** (`reason: session_not_found`) |
 
-The 401-vs-403 split is the multi-tenancy signal: cross-tenant traffic is rejected at session lookup before tool evaluation; same-tenant unallowed tools are rejected by allow-list policy. Audit confirms it: `/api/events/filter?server=<name>` returns events scoped to that server only, and cross-tenant attempts appear as denies on the *targeted* server with the source subject preserved — never on the other tenant.
+The 401-vs-403 split is the isolation signal: cross-server traffic is rejected
+at session lookup before tool evaluation; same-server unallowed tools are
+rejected by allow-list policy. Audit confirms it:
+`/api/events/filter?server=<name>` returns events scoped to that server only,
+and cross-server attempts appear as denies on the targeted server with the
+source subject preserved, never on the other server.
 
 ## Manifests
 

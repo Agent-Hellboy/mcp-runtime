@@ -110,6 +110,23 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "shared catalog namespace is read-only for team users"})
 		return
 	}
+	namespaceTeamID := strings.TrimSpace(s.teamIDForPrincipalNamespace(r.Context(), namespace))
+	req.Spec.TeamID = strings.TrimSpace(req.Spec.TeamID)
+	if req.Spec.TeamID == "" {
+		req.Spec.TeamID = namespaceTeamID
+	}
+	if err := validateTeamIDValue("spec.teamID", req.Spec.TeamID); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if namespaceTeamID != "" && req.Spec.TeamID != namespaceTeamID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "spec.teamID must match namespace team"})
+		return
+	}
+	if p.Role != roleAdmin && namespaceTeamID == "" && req.Spec.TeamID != "" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "spec.teamID is only allowed in a team namespace"})
+		return
+	}
 	team, isTeamNamespace := p.TeamForNamespace(namespace)
 	teamSlug := ""
 	if isTeamNamespace {

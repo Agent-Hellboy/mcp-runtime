@@ -17,6 +17,7 @@ import (
 type identityContext struct {
 	HumanID   string
 	AgentID   string
+	TeamID    string
 	SessionID string
 }
 
@@ -65,6 +66,7 @@ type proxyServer struct {
 	clusterName           string
 	defaultHumanHeader    string
 	defaultAgentHeader    string
+	defaultTeamHeader     string
 	defaultSessionHeader  string
 	defaultPolicyMode     string
 	defaultPolicyDecision string
@@ -89,6 +91,7 @@ const (
 	analyticsWorkerCount  = 4
 	defaultHumanHeader    = "X-MCP-Human-ID"
 	defaultAgentHeader    = "X-MCP-Agent-ID"
+	defaultTeamHeader     = "X-MCP-Team-ID"
 	defaultSessionHeader  = "X-MCP-Agent-Session"
 	defaultPolicyMode     = "allow-list"
 	defaultPolicyDecision = "deny"

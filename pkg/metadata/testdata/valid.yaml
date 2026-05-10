@@ -9,11 +9,13 @@ servers:
     port: 9090
     replicas: 3
     namespace: custom-namespace
+    teamID: team-custom
     gateway:
       enabled: true
       image: example.com/mcp-proxy:latest
     auth:
       mode: header
+      teamIDHeader: X-Team-ID
     policy:
       mode: allow-list
     session:

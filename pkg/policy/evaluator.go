@@ -10,6 +10,7 @@ import (
 type Identity struct {
 	HumanID   string
 	AgentID   string
+	TeamID    string
 	SessionID string
 }
 
@@ -58,7 +59,7 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 	}
 
 	identity := request.Identity
-	if identity.HumanID == "" && identity.AgentID == "" {
+	if identity.HumanID == "" && identity.AgentID == "" && identity.TeamID == "" {
 		return Deny(http.StatusUnauthorized, "missing_identity", policyVersionOrDefault(policy, ""))
 	}
 	if sessionRequired(policy) && identity.SessionID == "" {
@@ -216,7 +217,7 @@ func decideByDefault(policy *Document, reason string) Decision {
 func matchingGrants(grants []Grant, identity Identity) []Grant {
 	var matched []Grant
 	for _, grant := range grants {
-		if subjectMatches(grant.HumanID, grant.AgentID, identity) {
+		if subjectMatchesTeam(grant.HumanID, grant.AgentID, grant.TeamID, identity) {
 			matched = append(matched, grant)
 		}
 	}
@@ -226,28 +227,31 @@ func matchingGrants(grants []Grant, identity Identity) []Grant {
 func findSession(sessions []Binding, identity Identity) (Binding, bool) {
 	if identity.SessionID != "" {
 		for _, session := range sessions {
-			if session.Name == identity.SessionID && subjectMatches(session.HumanID, session.AgentID, identity) {
+			if session.Name == identity.SessionID && subjectMatchesTeam(session.HumanID, session.AgentID, session.TeamID, identity) {
 				return session, true
 			}
 		}
 		return Binding{}, false
 	}
 	for _, session := range sessions {
-		if subjectMatches(session.HumanID, session.AgentID, identity) {
+		if subjectMatchesTeam(session.HumanID, session.AgentID, session.TeamID, identity) {
 			return session, true
 		}
 	}
 	return Binding{}, false
 }
 
-func subjectMatches(humanID, agentID string, identity Identity) bool {
+func subjectMatchesTeam(humanID, agentID, teamID string, identity Identity) bool {
 	if humanID != "" && humanID != identity.HumanID {
 		return false
 	}
 	if agentID != "" && agentID != identity.AgentID {
 		return false
 	}
-	return humanID != "" || agentID != ""
+	if teamID != "" && teamID != identity.TeamID {
+		return false
+	}
+	return humanID != "" || agentID != "" || teamID != ""
 }
 
 func resolveToolMetadata(tools []Tool, toolName string) (string, string) {

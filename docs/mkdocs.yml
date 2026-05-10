@@ -56,6 +56,7 @@ nav:
   - Publish an MCP Server: publish-mcp-server.md
   - Architecture: architecture.md
   - Runtime: runtime.md
+  - Multi-Team Isolation: multi-team.md
   - CLI: cli.md
   - Sentinel: sentinel.md
   - API: api.md

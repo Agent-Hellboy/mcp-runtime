@@ -117,6 +117,12 @@ Local URLs:
 - API: `http://localhost:18080/api`
 - Demo MCP routes, after applying demo servers: `http://localhost:18080/<server-name>/mcp`
 
+This contributor flow uses the single shared `mcp-servers` namespace. For a
+cluster that hosts multiple teams, keep these examples as the single-team
+baseline and use [Multi-team isolation](multi-team.md) to move each team's
+servers, grants, sessions, and secrets into a dedicated namespace with
+`spec.teamID` / `subject.teamID`.
+
 The MCP Servers tab exposes a copyable connect config. In this local test-mode
 flow, that config should use the same reachable local origin, for example:
 
@@ -554,9 +560,9 @@ namespace. Use `/api/dashboard/summary`, `/api/events`, or
 uses `/api/analytics/usage` for its MCP server, human/agent, tool, and decision
 rollups.
 
-To exercise tenant isolation between two `MCPServer` resources and per-subject
+To exercise policy isolation between two `MCPServer` resources and per-subject
 grant enforcement on the same cluster, see
-[Sentinel → Verifying multi-tenancy](sentinel.md#verifying-multi-tenancy).
+[Sentinel → Verifying per-server policy isolation](sentinel.md#verifying-per-server-policy-isolation).
 
 ## 4. Install the platform stack
 
@@ -564,7 +570,17 @@ grant enforcement on the same cluster, see
 ./bin/mcp-runtime setup
 ```
 
-`setup` installs the platform pieces companies need for MCP operations: CRDs, `mcp-runtime` and `mcp-servers` namespaces, the internal Docker registry, ingress wiring, the operator, and the bundled Sentinel stack for gateway policy, analytics, audit, and observability.
+`setup` installs the platform pieces companies need for MCP operations: CRDs,
+`mcp-runtime` and `mcp-servers` namespaces, the internal Docker registry,
+ingress wiring, the operator, and the bundled Sentinel stack for gateway policy,
+analytics, audit, and observability.
+
+`mcp-servers` remains the default single-team namespace. For multi-team or
+tenant-separated deployments, keep setup as the platform install and provision
+one namespace per team with `mcp-runtime team init <slug>` or the platform API
+`mcp-runtime team create <slug>` flow. Use the platform API to default team IDs,
+or set `spec.teamID` and `subject.teamID` directly in YAML; see
+[Multi-team isolation](multi-team.md).
 
 Common variants:
 
@@ -627,7 +643,10 @@ spec:
 Start with the smallest useful `MCPServer` and add features only when you need them.
 
 - `metadata.name` becomes the server identity inside the platform.
-- `metadata.namespace` is usually `mcp-servers`.
+- `metadata.namespace` is usually `mcp-servers` for a single-team setup. In a
+  multi-team deployment, use the team's namespace, for example
+  `mcp-team-acme`.
+- `spec.teamID` is the stable platform team ID that owns the server.
 - `spec.image` points at the container image the platform should run.
 - `spec.imageTag` sets the tag when you do not include one directly in `spec.image`.
 - `spec.port` is the port your MCP server process listens on inside the container.
@@ -800,6 +819,7 @@ flowchart LR
 ## Next steps
 
 - [Publish an MCP Server](publish-mcp-server.md) — write manifests or `.mcp` metadata, build, push, deploy, and verify.
+- [Multi-team isolation](multi-team.md) — team IDs, namespaces, RBAC, and ingress guidance.
 - [Architecture](architecture.md) — how the pieces fit together.
 - [CLI](cli.md) — full command reference.
 - [API](api.md) — every CRD field and HTTP endpoint.

@@ -129,6 +129,7 @@ func (s *proxyServer) authenticateOAuth(r *http.Request, policy *policypkg.Docum
 		Identity: identityContext{
 			HumanID:   stringClaim(claims, "sub"),
 			AgentID:   policypkg.FirstNonEmpty(stringClaim(claims, "azp"), stringClaim(claims, "client_id")),
+			TeamID:    policypkg.FirstNonEmpty(stringClaim(claims, "team_id"), stringClaim(claims, "tenant_id"), stringClaim(claims, "tid")),
 			SessionID: policypkg.FirstNonEmpty(stringClaim(claims, "sid"), headerIdentity.SessionID),
 		},
 	}
@@ -208,7 +209,7 @@ func (s *proxyServer) fetchAuthServerMetadata(ctx context.Context, issuerURL str
 }
 
 func (s *proxyServer) applyIdentityHeaders(r *http.Request, policy *policypkg.Document, identity identityContext) {
-	humanHeader, agentHeader, sessionHeader := s.identityHeaderNames(policy)
+	humanHeader, agentHeader, teamHeader, sessionHeader := s.identityHeaderNames(policy)
 	if humanHeader != "" {
 		r.Header.Del(humanHeader)
 		if identity.HumanID != "" {
@@ -219,6 +220,12 @@ func (s *proxyServer) applyIdentityHeaders(r *http.Request, policy *policypkg.Do
 		r.Header.Del(agentHeader)
 		if identity.AgentID != "" {
 			r.Header.Set(agentHeader, identity.AgentID)
+		}
+	}
+	if teamHeader != "" {
+		r.Header.Del(teamHeader)
+		if identity.TeamID != "" {
+			r.Header.Set(teamHeader, identity.TeamID)
 		}
 	}
 	if sessionHeader != "" {
@@ -244,9 +251,10 @@ func (s *proxyServer) applyUpstreamToken(r *http.Request, policy *policypkg.Docu
 	r.Header.Set(headerName, serviceutil.FormatTokenHeaderValue(headerName, token))
 }
 
-func (s *proxyServer) identityHeaderNames(policy *policypkg.Document) (string, string, string) {
+func (s *proxyServer) identityHeaderNames(policy *policypkg.Document) (string, string, string, string) {
 	humanHeader := s.defaultHumanHeader
 	agentHeader := s.defaultAgentHeader
+	teamHeader := s.defaultTeamHeader
 	sessionHeader := s.defaultSessionHeader
 	if policy != nil && policy.Auth != nil {
 		if policy.Auth.HumanIDHeader != "" {
@@ -255,11 +263,14 @@ func (s *proxyServer) identityHeaderNames(policy *policypkg.Document) (string, s
 		if policy.Auth.AgentIDHeader != "" {
 			agentHeader = policy.Auth.AgentIDHeader
 		}
+		if policy.Auth.TeamIDHeader != "" {
+			teamHeader = policy.Auth.TeamIDHeader
+		}
 		if policy.Auth.SessionIDHeader != "" {
 			sessionHeader = policy.Auth.SessionIDHeader
 		}
 	}
-	return humanHeader, agentHeader, sessionHeader
+	return humanHeader, agentHeader, teamHeader, sessionHeader
 }
 
 func isOAuthProtectedMetadataPath(value string) bool {

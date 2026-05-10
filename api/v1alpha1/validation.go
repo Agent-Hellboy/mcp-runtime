@@ -35,6 +35,7 @@ const (
 	defaultAuthMode            = AuthModeHeader
 	defaultAuthHumanIDHeader   = "X-MCP-Human-ID"
 	defaultAuthAgentIDHeader   = "X-MCP-Agent-ID"
+	defaultAuthTeamIDHeader    = "X-MCP-Team-ID"
 	defaultAuthSessionIDHeader = "X-MCP-Agent-Session"
 	defaultAuthTokenHeader     = "Authorization"
 
@@ -125,6 +126,9 @@ func (r *MCPServer) Default() {
 		}
 		if strings.TrimSpace(r.Spec.Auth.AgentIDHeader) == "" {
 			r.Spec.Auth.AgentIDHeader = defaultAuthAgentIDHeader
+		}
+		if strings.TrimSpace(r.Spec.Auth.TeamIDHeader) == "" {
+			r.Spec.Auth.TeamIDHeader = defaultAuthTeamIDHeader
 		}
 		if strings.TrimSpace(r.Spec.Auth.SessionIDHeader) == "" {
 			r.Spec.Auth.SessionIDHeader = defaultAuthSessionIDHeader
@@ -251,6 +255,9 @@ func (r *MCPServer) validate() error {
 
 	if strings.TrimSpace(r.Spec.Image) == "" {
 		allErrs = append(allErrs, field.Required(specPath.Child("image"), "image is required"))
+	}
+	if err := validateTeamIDField(specPath.Child("teamID"), r.Spec.TeamID); err != nil {
+		allErrs = append(allErrs, err)
 	}
 	if publicPathPrefix != "" {
 		trimmed := strings.Trim(publicPathPrefix, "/")
@@ -413,8 +420,11 @@ func (r *MCPAccessGrant) validate() error {
 	if strings.TrimSpace(r.Spec.ServerRef.Name) == "" {
 		allErrs = append(allErrs, field.Required(specPath.Child("serverRef", "name"), "serverRef.name is required"))
 	}
-	if strings.TrimSpace(r.Spec.Subject.HumanID) == "" && strings.TrimSpace(r.Spec.Subject.AgentID) == "" {
-		allErrs = append(allErrs, field.Required(specPath.Child("subject"), "either subject.humanID or subject.agentID is required"))
+	if strings.TrimSpace(r.Spec.Subject.HumanID) == "" && strings.TrimSpace(r.Spec.Subject.AgentID) == "" && strings.TrimSpace(r.Spec.Subject.TeamID) == "" {
+		allErrs = append(allErrs, field.Required(specPath.Child("subject"), "one of subject.humanID, subject.agentID, or subject.teamID is required"))
+	}
+	if err := validateTeamIDField(specPath.Child("subject", "teamID"), r.Spec.Subject.TeamID); err != nil {
+		allErrs = append(allErrs, err)
 	}
 
 	sideEffects := make(map[ToolSideEffect]struct{}, len(r.Spec.AllowedSideEffects))
@@ -500,8 +510,11 @@ func (r *MCPAgentSession) validate() error {
 	if strings.TrimSpace(r.Spec.ServerRef.Name) == "" {
 		allErrs = append(allErrs, field.Required(specPath.Child("serverRef", "name"), "serverRef.name is required"))
 	}
-	if strings.TrimSpace(r.Spec.Subject.HumanID) == "" && strings.TrimSpace(r.Spec.Subject.AgentID) == "" {
-		allErrs = append(allErrs, field.Required(specPath.Child("subject"), "either subject.humanID or subject.agentID is required"))
+	if strings.TrimSpace(r.Spec.Subject.HumanID) == "" && strings.TrimSpace(r.Spec.Subject.AgentID) == "" && strings.TrimSpace(r.Spec.Subject.TeamID) == "" {
+		allErrs = append(allErrs, field.Required(specPath.Child("subject"), "one of subject.humanID, subject.agentID, or subject.teamID is required"))
+	}
+	if err := validateTeamIDField(specPath.Child("subject", "teamID"), r.Spec.Subject.TeamID); err != nil {
+		allErrs = append(allErrs, err)
 	}
 	now := nowFunc().UTC()
 	if r.Spec.ExpiresAt != nil && !r.Spec.ExpiresAt.Time.After(now) {
@@ -529,6 +542,20 @@ func validToolSideEffect(sideEffect ToolSideEffect) bool {
 	default:
 		return false
 	}
+}
+
+func validateTeamIDField(path *field.Path, value string) *field.Error {
+	teamID := strings.TrimSpace(value)
+	if teamID == "" {
+		return nil
+	}
+	if teamID != value || strings.ContainsAny(teamID, " \t\r\n") {
+		return field.Invalid(path, value, "teamID must be a stable identifier without whitespace")
+	}
+	if len(teamID) > 128 {
+		return field.TooLong(path, value, 128)
+	}
+	return nil
 }
 
 func (r *MCPServer) String() string {

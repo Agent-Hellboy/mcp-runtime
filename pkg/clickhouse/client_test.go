@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -76,6 +77,27 @@ func TestNormalizeEventLimit(t *testing.T) {
 	}
 }
 
+func TestEventQueriesExtractTeamIDFromPayload(t *testing.T) {
+	t.Parallel()
+
+	if !strings.Contains(eventSelectColumns, "JSONExtractString(payload, 'team_id') AS team_id") {
+		t.Fatalf("eventSelectColumns = %q, want team_id extracted from payload", eventSelectColumns)
+	}
+
+	whereClause, args := buildEventFilterWhereClause(EventFilters{TeamID: "team-acme", Limit: 25})
+	if !strings.Contains(whereClause, "JSONExtractString(payload, 'team_id') = ?") {
+		t.Fatalf("whereClause = %q, want team_id filter extracted from payload", whereClause)
+	}
+	if len(args) != 1 || args[0] != "team-acme" {
+		t.Fatalf("args = %#v, want team-acme", args)
+	}
+
+	query := buildEventFilterQuery("mcp", whereClause, 25)
+	if !strings.Contains(query, "FROM mcp.events WHERE") {
+		t.Fatalf("query = %q, want filtered events query", query)
+	}
+}
+
 func TestScanEventRow(t *testing.T) {
 	t.Parallel()
 
@@ -87,6 +109,7 @@ func TestScanEventRow(t *testing.T) {
 			"tools/call",
 			"demo-one",
 			"mcp-servers",
+			"team-acme",
 			"kind",
 			"user-123",
 			"ops-agent",
@@ -107,6 +130,9 @@ func TestScanEventRow(t *testing.T) {
 	if string(row.Payload) != `{"value":1}` {
 		t.Fatalf("unexpected payload: %s", row.Payload)
 	}
+	if row.TeamID != "team-acme" {
+		t.Fatalf("unexpected team ID: got %q want team-acme", row.TeamID)
+	}
 }
 
 func TestScanEventRowWrapsInvalidJSONPayload(t *testing.T) {
@@ -117,6 +143,7 @@ func TestScanEventRowWrapsInvalidJSONPayload(t *testing.T) {
 			time.Unix(1_700_000_000, 0).UTC(),
 			"gateway",
 			"tools/call",
+			"",
 			"",
 			"",
 			"",

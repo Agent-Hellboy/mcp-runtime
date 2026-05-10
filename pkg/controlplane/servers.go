@@ -175,6 +175,7 @@ func ServerInfoFromMCPServer(mcpServer mcpv1alpha1.MCPServer, deploymentStatus S
 	return ServerInfo{
 		Name:        mcpServer.Name,
 		Namespace:   mcpServer.Namespace,
+		TeamID:      strings.TrimSpace(mcpServer.Spec.TeamID),
 		Description: mcpServer.Spec.Description,
 		Ready:       deploymentStatus.Ready,
 		Status:      deploymentStatus.Status,

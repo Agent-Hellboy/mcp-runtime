@@ -15,6 +15,7 @@ type EventRow struct {
 	EventType string          `json:"event_type"`
 	Server    string          `json:"server,omitempty"`
 	Namespace string          `json:"namespace,omitempty"`
+	TeamID    string          `json:"team_id,omitempty"`
 	Cluster   string          `json:"cluster,omitempty"`
 	HumanID   string          `json:"human_id,omitempty"`
 	AgentID   string          `json:"agent_id,omitempty"`
@@ -47,7 +48,10 @@ type DashboardSummary struct {
 	LastEventTime  string `json:"last_event_time,omitempty"`
 }
 
-const eventSelectColumns = "timestamp, source, event_type, server, namespace, cluster, human_id, agent_id, session_id, decision, tool_name, payload"
+const (
+	eventTeamIDExpression = "JSONExtractString(payload, 'team_id')"
+	eventSelectColumns    = "timestamp, source, event_type, server, namespace, " + eventTeamIDExpression + " AS team_id, cluster, human_id, agent_id, session_id, decision, tool_name, payload"
+)
 
 // RowScanner abstracts row scanning for testability.
 type RowScanner interface {
@@ -148,6 +152,7 @@ type EventFilters struct {
 	EventType string
 	Server    string
 	Namespace string
+	TeamID    string
 	Cluster   string
 	HumanID   string
 	AgentID   string
@@ -161,9 +166,35 @@ type EventFilters struct {
 func (c *Client) QueryEventsFiltered(ctx context.Context, filters EventFilters) ([]EventRow, error) {
 	filters.Limit = normalizeEventLimit(filters.Limit)
 
+	whereClause, args := buildEventFilterWhereClause(filters)
+
+	query := buildEventFilterQuery(c.DBName, whereClause, filters.Limit)
+
+	rows, err := c.Conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query filtered events: %w", err)
+	}
+	defer rows.Close()
+
+	events := make([]EventRow, 0, filters.Limit)
+	for rows.Next() {
+		var row EventRow
+		if err := scanEventRow(rows, &row); err != nil {
+			return nil, fmt.Errorf("failed to scan event row: %w", err)
+		}
+		events = append(events, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating events: %w", err)
+	}
+
+	return events, nil
+}
+
+func buildEventFilterWhereClause(filters EventFilters) (string, []interface{}) {
 	var conditions []string
 	var args []interface{}
-
 	if filters.Source != "" {
 		conditions = append(conditions, "source = ?")
 		args = append(args, filters.Source)
@@ -179,6 +210,10 @@ func (c *Client) QueryEventsFiltered(ctx context.Context, filters EventFilters) 
 	if filters.Namespace != "" {
 		conditions = append(conditions, "namespace = ?")
 		args = append(args, filters.Namespace)
+	}
+	if filters.TeamID != "" {
+		conditions = append(conditions, eventTeamIDExpression+" = ?")
+		args = append(args, filters.TeamID)
 	}
 	if filters.Cluster != "" {
 		conditions = append(conditions, "cluster = ?")
@@ -209,30 +244,12 @@ func (c *Client) QueryEventsFiltered(ctx context.Context, filters EventFilters) 
 	if len(conditions) > 0 {
 		whereClause = "WHERE " + joinConditions(conditions, " AND ")
 	}
+	return whereClause, args
+}
 
-	query := fmt.Sprintf("SELECT %s FROM %s.events %s ORDER BY timestamp DESC LIMIT %d",
-		eventSelectColumns, c.DBName, whereClause, filters.Limit)
-
-	rows, err := c.Conn.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query filtered events: %w", err)
-	}
-	defer rows.Close()
-
-	events := make([]EventRow, 0, filters.Limit)
-	for rows.Next() {
-		var row EventRow
-		if err := scanEventRow(rows, &row); err != nil {
-			return nil, fmt.Errorf("failed to scan event row: %w", err)
-		}
-		events = append(events, row)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating events: %w", err)
-	}
-
-	return events, nil
+func buildEventFilterQuery(dbName, whereClause string, limit int) string {
+	return fmt.Sprintf("SELECT %s FROM %s.events %s ORDER BY timestamp DESC LIMIT %d",
+		eventSelectColumns, dbName, whereClause, limit)
 }
 
 // QueryDashboardSummary returns summary statistics for the dashboard.
@@ -286,6 +303,7 @@ func scanEventRow(scanner RowScanner, row *EventRow) error {
 		&row.EventType,
 		&row.Server,
 		&row.Namespace,
+		&row.TeamID,
 		&row.Cluster,
 		&row.HumanID,
 		&row.AgentID,

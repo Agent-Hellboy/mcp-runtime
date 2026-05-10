@@ -14,6 +14,7 @@ type ServerReference struct {
 type SubjectRef struct {
 	HumanID string `json:"humanID,omitempty"`
 	AgentID string `json:"agentID,omitempty"`
+	TeamID  string `json:"teamID,omitempty"`
 }
 
 // TrustLevel defines trust levels for access control.

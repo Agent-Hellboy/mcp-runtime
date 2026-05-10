@@ -402,6 +402,7 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 		envVars = append(envVars,
 			corev1.EnvVar{Name: "HUMAN_ID_HEADER", Value: mcpServer.Spec.Auth.HumanIDHeader},
 			corev1.EnvVar{Name: "AGENT_ID_HEADER", Value: mcpServer.Spec.Auth.AgentIDHeader},
+			corev1.EnvVar{Name: "TEAM_ID_HEADER", Value: mcpServer.Spec.Auth.TeamIDHeader},
 			corev1.EnvVar{Name: "SESSION_ID_HEADER", Value: mcpServer.Spec.Auth.SessionIDHeader},
 			corev1.EnvVar{Name: "AUTH_MODE", Value: string(mcpServer.Spec.Auth.Mode)},
 		)

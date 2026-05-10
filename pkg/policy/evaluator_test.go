@@ -248,6 +248,65 @@ func TestAuthorizeTrustTooLow(t *testing.T) {
 	}
 }
 
+func TestAuthorizeMatchesTeamScopedGrant(t *testing.T) {
+	t.Parallel()
+
+	policy := testPolicyWithGrant()
+	policy.Grants = []Grant{
+		{
+			Name:               "team-grant",
+			TeamID:             "team-acme",
+			MaxTrust:           "high",
+			AllowedSideEffects: []string{"read"},
+			ToolRules:          []ToolAccess{{Name: "upper", Decision: "allow"}},
+		},
+	}
+
+	allowed := Authorize(policy, Request{
+		Identity:  Identity{TeamID: "team-acme"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, time.Time{})
+	if !allowed.Allowed {
+		t.Fatalf("decision = %#v, want team scoped grant allowed", allowed)
+	}
+
+	denied := Authorize(policy, Request{
+		Identity:  Identity{TeamID: "team-other"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, time.Time{})
+	if denied.Allowed || denied.Reason != "no_matching_grant" {
+		t.Fatalf("decision = %#v, want no_matching_grant", denied)
+	}
+}
+
+func TestAuthorizeRequiresSessionTeamMatch(t *testing.T) {
+	t.Parallel()
+
+	policy := testPolicyWithGrant()
+	policy.Session.Required = true
+	policy.Grants[0].TeamID = "team-acme"
+	policy.Sessions = []Binding{
+		{
+			Name:           "session-1",
+			HumanID:        "human-1",
+			AgentID:        "agent-1",
+			TeamID:         "team-acme",
+			ConsentedTrust: "high",
+		},
+	}
+
+	decision := Authorize(policy, Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1", TeamID: "team-other", SessionID: "session-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, time.Time{})
+	if decision.Allowed || decision.Reason != "session_not_found" {
+		t.Fatalf("decision = %#v, want team-mismatched session_not_found", decision)
+	}
+}
+
 func TestAuthorizeAllowsGrantBySideEffectWithoutToolRules(t *testing.T) {
 	t.Parallel()
 
