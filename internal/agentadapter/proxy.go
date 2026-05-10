@@ -1,11 +1,14 @@
 package agentadapter
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -15,6 +18,8 @@ const (
 	proxyShutdownTimeout   = 10 * time.Second
 )
 
+type rpcRequestMetadataContextKey struct{}
+
 // NewHTTPProxyHandler returns a reverse proxy that forwards MCP HTTP traffic to
 // the configured runtime route and injects issued governance identity headers.
 func NewHTTPProxyHandler(cfg Config) (http.Handler, error) {
@@ -23,14 +28,39 @@ func NewHTTPProxyHandler(cfg Config) (http.Handler, error) {
 	}
 	target := cloneURL(cfg.RuntimeURL)
 	proxy := &httputil.ReverseProxy{
+		FlushInterval: -1,
 		Rewrite: func(req *httputil.ProxyRequest) {
 			rewriteToRuntimeRoute(req.Out.URL, target, req.In.URL.RawQuery)
 			req.Out.Host = target.Host
 			if cfg.HostHeader != "" {
 				req.Out.Host = cfg.HostHeader
 			}
-			req.SetXForwarded()
+			if !cfg.DisableXForwarded {
+				req.SetXForwarded()
+			}
 			applyGovernanceHeaders(req.Out.Header, cfg)
+		},
+		ModifyResponse: func(resp *http.Response) error {
+			if resp.StatusCode < http.StatusBadRequest || resp.StatusCode >= http.StatusInternalServerError {
+				return nil
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return err
+			}
+			_ = resp.Body.Close()
+			resp.Body = io.NopCloser(bytes.NewReader(body))
+			resp.ContentLength = int64(len(body))
+			resp.Header.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
+			meta := rpcRequestMetadataFromContext(resp.Request.Context())
+			logRuntimeDenial(cfg, "mcp-runtime-agent-proxy", resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), meta)
+			return nil
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			meta := rpcRequestMetadataFromContext(r.Context())
+			w.Header().Set("content-type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write(jsonRPCHTTPError(rpcIDOrNull(meta), http.StatusBadGateway, err.Error(), nil))
 		},
 	}
 
@@ -39,6 +69,12 @@ func NewHTTPProxyHandler(cfg Config) (http.Handler, error) {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		meta, err := captureRPCRequestMetadata(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		r = r.WithContext(context.WithValue(r.Context(), rpcRequestMetadataContextKey{}, meta))
 		proxy.ServeHTTP(w, r)
 	}), nil
 }
@@ -103,4 +139,26 @@ func mergeRawQuery(first, second string) string {
 	default:
 		return first + "&" + second
 	}
+}
+
+func captureRPCRequestMetadata(r *http.Request) (rpcRequestMetadata, error) {
+	if r.Body == nil {
+		return rpcRequestMetadata{}, nil
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return rpcRequestMetadata{}, err
+	}
+	_ = r.Body.Close()
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	r.ContentLength = int64(len(body))
+	r.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	return parseRPCRequestMetadata(bytes.TrimSpace(body)), nil
+}
+
+func rpcRequestMetadataFromContext(ctx context.Context) rpcRequestMetadata {
+	meta, _ := ctx.Value(rpcRequestMetadataContextKey{}).(rpcRequestMetadata)
+	return meta
 }

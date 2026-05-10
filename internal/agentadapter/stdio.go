@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 const (
@@ -26,9 +27,18 @@ type StdioOptions struct {
 type stdioShim struct {
 	cfg             Config
 	client          *http.Client
+	mu              sync.Mutex
 	sessionID       string
 	protocolVersion string
 }
+
+type stdioScanResult struct {
+	line []byte
+	err  error
+	done bool
+}
+
+type stdioResponseEmitter func([]byte) error
 
 type rpcRequestEnvelope struct {
 	ID     json.RawMessage `json:"id"`
@@ -66,7 +76,7 @@ func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error {
 		return fmt.Errorf("stdout is required")
 	}
 	if cfg.HTTPClient == nil {
-		cfg.HTTPClient = &http.Client{}
+		cfg.HTTPClient = &http.Client{Timeout: cfg.RequestTimeout}
 	}
 	if strings.TrimSpace(cfg.ProtocolVersion) == "" {
 		cfg.ProtocolVersion = DefaultProtocolVersion
@@ -78,52 +88,119 @@ func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error {
 		protocolVersion: cfg.ProtocolVersion,
 	}
 
-	scanner := bufio.NewScanner(opts.Stdin)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxStdioMessageBytes)
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
-		}
-		responses, err := shim.forward(ctx, append([]byte(nil), line...))
-		if err != nil {
+	scanResults := scanStdioLines(ctx, opts.Stdin)
+	var stdoutMu sync.Mutex
+	emit := func(response []byte) error {
+		stdoutMu.Lock()
+		defer stdoutMu.Unlock()
+		if _, err := opts.Stdout.Write(response); err != nil {
 			return err
 		}
-		for _, response := range responses {
-			if _, err := opts.Stdout.Write(response); err != nil {
-				return err
-			}
-			if _, err := opts.Stdout.Write([]byte("\n")); err != nil {
-				return err
-			}
+		if _, err := opts.Stdout.Write([]byte("\n")); err != nil {
+			return err
+		}
+		return nil
+	}
+	var forwards sync.WaitGroup
+	errCh := make(chan error, 1)
+	sendErr := func(err error) {
+		if err == nil {
+			return
+		}
+		select {
+		case errCh <- err:
+		default:
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return err
+	for {
+		select {
+		case <-ctx.Done():
+			closeIfPossible(opts.Stdin)
+			forwards.Wait()
+			return nil
+		case err := <-errCh:
+			closeIfPossible(opts.Stdin)
+			forwards.Wait()
+			return err
+		case result := <-scanResults:
+			if result.done {
+				if result.err != nil {
+					if ctx.Err() != nil {
+						return nil
+					}
+					return result.err
+				}
+				forwards.Wait()
+				select {
+				case err := <-errCh:
+					return err
+				default:
+				}
+				return nil
+			}
+			line := bytes.TrimSpace(result.line)
+			if len(line) == 0 {
+				continue
+			}
+			payload := append([]byte(nil), line...)
+			if parseRPCRequestMetadata(payload).Method == "initialize" {
+				if err := shim.forward(ctx, payload, emit); err != nil {
+					if ctx.Err() != nil {
+						return nil
+					}
+					return err
+				}
+				continue
+			}
+			forwards.Add(1)
+			go func() {
+				defer forwards.Done()
+				if err := shim.forward(ctx, payload, emit); err != nil && ctx.Err() == nil {
+					sendErr(err)
+				}
+			}()
+		}
 	}
-	return nil
 }
 
-func (s *stdioShim) forward(ctx context.Context, payload []byte) ([][]byte, error) {
+func scanStdioLines(ctx context.Context, stdin io.Reader) <-chan stdioScanResult {
+	results := make(chan stdioScanResult, 1)
+	scanner := bufio.NewScanner(stdin)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxStdioMessageBytes)
+	go func() {
+		for scanner.Scan() {
+			line := append([]byte(nil), scanner.Bytes()...)
+			select {
+			case results <- stdioScanResult{line: line}:
+			case <-ctx.Done():
+				return
+			}
+		}
+		select {
+		case results <- stdioScanResult{err: scanner.Err(), done: true}:
+		case <-ctx.Done():
+		}
+	}()
+	return results
+}
+
+func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioResponseEmitter) error {
+	meta := parseRPCRequestMetadata(payload)
 	envelope, hasResponseID, parseErr := parseRPCEnvelope(payload)
 	if parseErr != nil {
-		return [][]byte{jsonRPCParseError(parseErr.Error())}, nil
+		return emit(jsonRPCParseError(parseErr.Error()))
 	}
-	if envelope.Method == "initialize" {
-		if protocolVersion := protocolVersionFromInitialize(envelope.Params); protocolVersion != "" {
-			s.protocolVersion = protocolVersion
-		}
-	}
+	protocolVersion, sessionID := s.prepareRequestState(envelope)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.RuntimeURL.String(), bytes.NewReader(payload))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("accept", "application/json, text/event-stream")
-	req.Header.Set(MCPProtocolHeader, s.protocolVersion)
-	if s.sessionID != "" {
-		req.Header.Set(MCPSessionHeader, s.sessionID)
+	req.Header.Set(MCPProtocolHeader, protocolVersion)
+	if sessionID != "" {
+		req.Header.Set(MCPSessionHeader, sessionID)
 	}
 	applyGovernanceHeaders(req.Header, s.cfg)
 	if s.cfg.HostHeader != "" {
@@ -133,47 +210,66 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte) ([][]byte, erro
 	resp, err := s.client.Do(req)
 	if err != nil {
 		if hasResponseID {
-			return [][]byte{jsonRPCHTTPError(envelope.ID, http.StatusBadGateway, err.Error(), nil)}, nil
+			return emit(jsonRPCHTTPError(envelope.ID, http.StatusBadGateway, err.Error(), nil))
 		}
-		return nil, nil
+		return nil
 	}
 	defer resp.Body.Close()
 
 	if runtimeSessionID := resp.Header.Get(MCPSessionHeader); runtimeSessionID != "" {
-		s.sessionID = runtimeSessionID
+		s.setRuntimeSessionID(runtimeSessionID)
+	}
+
+	if resp.StatusCode < http.StatusBadRequest && strings.Contains(strings.ToLower(resp.Header.Get("content-type")), "text/event-stream") {
+		return streamStreamableHTTPEventMessages(resp.Body, emit)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPResponseBytes+1))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if len(body) > maxHTTPResponseBytes {
 		if hasResponseID {
-			return [][]byte{jsonRPCHTTPError(envelope.ID, http.StatusBadGateway, "upstream response too large", nil)}, nil
+			return emit(jsonRPCHTTPError(envelope.ID, http.StatusBadGateway, "upstream response too large", nil))
 		}
-		return nil, nil
+		return nil
 	}
 	body = bytes.TrimSpace(body)
 
 	if resp.StatusCode >= http.StatusBadRequest {
+		logRuntimeDenial(s.cfg, "mcp-runtime-mcp-shim", resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), meta)
 		if len(body) > 0 && looksLikeJSONRPC(body) {
-			return [][]byte{body}, nil
+			return emit(body)
 		}
 		if hasResponseID {
-			return [][]byte{jsonRPCHTTPError(envelope.ID, resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), body)}, nil
+			return emit(jsonRPCHTTPError(envelope.ID, resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), body))
 		}
-		return nil, nil
+		return nil
 	}
 	if !hasResponseID {
-		return nil, nil
+		return nil
 	}
 	if len(body) == 0 {
-		return nil, nil
+		return nil
 	}
-	if strings.Contains(strings.ToLower(resp.Header.Get("content-type")), "text/event-stream") {
-		return decodeStreamableHTTPEventMessages(body), nil
+	return emit(body)
+}
+
+func (s *stdioShim) prepareRequestState(envelope rpcRequestEnvelope) (string, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if envelope.Method == "initialize" {
+		if protocolVersion := protocolVersionFromInitialize(envelope.Params); protocolVersion != "" {
+			s.protocolVersion = protocolVersion
+		}
 	}
-	return [][]byte{body}, nil
+	return s.protocolVersion, s.sessionID
+}
+
+func (s *stdioShim) setRuntimeSessionID(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessionID = sessionID
 }
 
 func parseRPCEnvelope(payload []byte) (rpcRequestEnvelope, bool, error) {
@@ -281,33 +377,50 @@ func jsonRPCParseError(detail string) []byte {
 
 func decodeStreamableHTTPEventMessages(payload []byte) [][]byte {
 	var responses [][]byte
+	_ = scanStreamableHTTPEventMessages(bytes.NewReader(payload), func(data []byte) error {
+		responses = append(responses, append([]byte(nil), data...))
+		return nil
+	})
+	return responses
+}
+
+func streamStreamableHTTPEventMessages(payload io.Reader, emit stdioResponseEmitter) error {
+	return scanStreamableHTTPEventMessages(payload, emit)
+}
+
+func scanStreamableHTTPEventMessages(payload io.Reader, emit stdioResponseEmitter) error {
 	var dataLines []string
-	flush := func() {
+	flush := func() error {
 		if len(dataLines) == 0 {
-			return
+			return nil
 		}
 		data := strings.TrimSpace(strings.Join(dataLines, "\n"))
 		dataLines = nil
 		if data == "" || data == "[DONE]" {
-			return
+			return nil
 		}
 		if json.Valid([]byte(data)) {
-			responses = append(responses, []byte(data))
+			return emit([]byte(data))
 		}
+		return nil
 	}
 
-	scanner := bufio.NewScanner(bytes.NewReader(payload))
+	scanner := bufio.NewScanner(payload)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxHTTPResponseBytes)
 	for scanner.Scan() {
 		line := bytes.TrimRight(scanner.Bytes(), "\r")
 		if len(line) == 0 {
-			flush()
+			if err := flush(); err != nil {
+				return err
+			}
 			continue
 		}
 		if bytes.HasPrefix(line, eventStreamDataPrefix) {
 			dataLines = append(dataLines, string(bytes.TrimSpace(bytes.TrimPrefix(line, eventStreamDataPrefix))))
 		}
 	}
-	flush()
-	return responses
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return flush()
 }

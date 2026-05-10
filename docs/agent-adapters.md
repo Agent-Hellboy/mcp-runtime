@@ -45,6 +45,9 @@ Set these values for both adapters:
 | `MCP_RUNTIME_HOST_HEADER` | no | Optional upstream `Host` header for host-based ingress. |
 | `MCP_RUNTIME_LISTEN_ADDR` | proxy only | Local proxy listen address. Defaults to `127.0.0.1:8099`. |
 | `MCP_RUNTIME_PROTOCOL_VERSION` | shim only | MCP protocol header for stdio-to-HTTP calls. Defaults to `2025-06-18`; an `initialize.params.protocolVersion` value overrides it for that shim process. |
+| `MCP_RUNTIME_SET_XFF` | proxy only | Set to `false`, `0`, `no`, or `off` to suppress proxy-generated `X-Forwarded-*` headers. Defaults to enabled. |
+| `MCP_RUNTIME_REQUEST_TIMEOUT` | shim only | Optional Go duration such as `300s` for stdio-to-HTTP requests. Defaults to unbounded so long-running tools are not cut off. |
+| `MCP_RUNTIME_LOG_LEVEL` | no | Set to `info` to log runtime 4xx denials to stderr with status, reason, method, and tool name. Defaults to silent. |
 
 The adapters inject these governance headers on every forwarded request:
 
@@ -59,6 +62,11 @@ headers such as `Mcp-Protocol-Version`, `Mcp-Session-Id`, `content-type`, and
 `accept` are preserved for HTTP proxy traffic. The stdio shim stores the
 runtime `Mcp-Session-Id` returned by `initialize` and sends it on later HTTP
 requests.
+
+The HTTP proxy streams `text/event-stream` responses through as they arrive and
+returns JSON-RPC error envelopes for upstream connection failures. That keeps
+agent clients on the MCP response shape instead of receiving a generic HTML
+`502 Bad Gateway` body.
 
 ## Admin Flow
 
@@ -171,6 +179,9 @@ http://127.0.0.1:8099/mcp
 The proxy forwards to the exact `MCP_RUNTIME_URL` route. The local request path
 is accepted for client compatibility; it is not appended to the upstream route.
 Query strings from the configured URL and client request are merged.
+By default the proxy adds `X-Forwarded-For`, `X-Forwarded-Host`, and
+`X-Forwarded-Proto`; set `MCP_RUNTIME_SET_XFF=false` when the local loopback
+address only adds audit noise.
 
 This shape works for LangChain, LlamaIndex, CrewAI, custom Python/Go/Node
 services, or any other MCP-aware runtime that can connect to a Streamable HTTP
@@ -201,6 +212,17 @@ The shim reads newline-delimited JSON-RPC messages from stdin, posts them to
 the platform, such as `trust_too_low`, are returned to stdio clients as JSON-RPC
 errors so the client sees the governed failure instead of a silent transport
 drop.
+
+For Streamable HTTP event-stream responses, the shim writes each valid JSON-RPC
+`data:` frame to stdout as it arrives and keeps reading stdin while the upstream
+stream remains open. That lets server-to-client requests and progress messages
+flow through without waiting for the runtime to close the HTTP response.
+
+The shim exits on process context cancellation even when stdin is idle.
+`initialize` is forwarded synchronously so the runtime session ID is captured
+before later requests. Leave `MCP_RUNTIME_REQUEST_TIMEOUT` unset for unbounded
+tool calls, or set it to a duration when a demo or local integration should
+fail fast if the runtime stops responding.
 
 ## Expected Outcomes
 

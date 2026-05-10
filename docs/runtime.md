@@ -148,6 +148,13 @@ These adapters expose only the two standard MCP transports: Streamable HTTP and
 stdio. Event-stream handling is an internal Streamable HTTP response parser, not
 a separate legacy HTTP+SSE transport.
 
+For local debugging, set `MCP_RUNTIME_LOG_LEVEL=info` on either adapter to print
+runtime 4xx denials to stderr. The proxy can suppress local `X-Forwarded-*`
+headers with `MCP_RUNTIME_SET_XFF=false`; the shim can opt into request
+deadlines with `MCP_RUNTIME_REQUEST_TIMEOUT=<duration>`. The stdio shim streams
+Streamable HTTP event frames to stdout as they arrive and continues reading
+stdin while an upstream event stream is open.
+
 See [Agent Adapters](agent-adapters.md) for build commands and integration
 examples.
 

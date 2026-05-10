@@ -534,6 +534,8 @@ build the optional adapters with `make build-adapters` and follow
 [Agent Adapters](agent-adapters.md). The same grant/session values from
 `/tmp/go-example-access.yaml` become `MCP_RUNTIME_HUMAN_ID`,
 `MCP_RUNTIME_AGENT_ID`, and `MCP_RUNTIME_SESSION_ID` for the adapter process.
+Set `MCP_RUNTIME_LOG_LEVEL=info` while debugging governed-agent demos when you
+want adapter stderr to show runtime denials such as `trust_too_low`.
 
 ```bash
 ./bin/mcp-runtime sentinel status

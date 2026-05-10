@@ -2,10 +2,12 @@ package agentadapter
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -16,6 +18,9 @@ const (
 	EnvHostHeader      = "MCP_RUNTIME_HOST_HEADER"
 	EnvListenAddr      = "MCP_RUNTIME_LISTEN_ADDR"
 	EnvProtocolVersion = "MCP_RUNTIME_PROTOCOL_VERSION"
+	EnvSetXForwarded   = "MCP_RUNTIME_SET_XFF"
+	EnvRequestTimeout  = "MCP_RUNTIME_REQUEST_TIMEOUT"
+	EnvLogLevel        = "MCP_RUNTIME_LOG_LEVEL"
 
 	DefaultListenAddr      = "127.0.0.1:8099"
 	DefaultProtocolVersion = "2025-06-18"
@@ -31,14 +36,18 @@ type envLookup func(string) string
 
 // Config is the shared configuration for agent-side adapters.
 type Config struct {
-	RuntimeURL      *url.URL
-	HumanID         string
-	AgentID         string
-	SessionID       string
-	HostHeader      string
-	ListenAddr      string
-	ProtocolVersion string
-	HTTPClient      *http.Client
+	RuntimeURL        *url.URL
+	HumanID           string
+	AgentID           string
+	SessionID         string
+	HostHeader        string
+	ListenAddr        string
+	ProtocolVersion   string
+	HTTPClient        *http.Client
+	RequestTimeout    time.Duration
+	LogLevel          string
+	LogWriter         io.Writer
+	DisableXForwarded bool
 }
 
 // LoadProxyConfigFromEnv loads HTTP proxy configuration from environment variables.
@@ -58,6 +67,7 @@ func loadConfig(lookup envLookup, includeListen bool) (Config, error) {
 		SessionID:       strings.TrimSpace(lookup(EnvSessionID)),
 		HostHeader:      strings.TrimSpace(lookup(EnvHostHeader)),
 		ProtocolVersion: strings.TrimSpace(lookup(EnvProtocolVersion)),
+		LogLevel:        strings.TrimSpace(lookup(EnvLogLevel)),
 	}
 	if cfg.ProtocolVersion == "" {
 		cfg.ProtocolVersion = DefaultProtocolVersion
@@ -82,6 +92,23 @@ func loadConfig(lookup envLookup, includeListen bool) (Config, error) {
 			return Config{}, fmt.Errorf("%s must use http or https", EnvRuntimeURL)
 		}
 		cfg.RuntimeURL = parsed
+	}
+	if rawSetXForwarded := strings.TrimSpace(lookup(EnvSetXForwarded)); rawSetXForwarded != "" {
+		setXForwarded, err := parseAdapterBool(rawSetXForwarded)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s is invalid: %w", EnvSetXForwarded, err)
+		}
+		cfg.DisableXForwarded = !setXForwarded
+	}
+	if rawRequestTimeout := strings.TrimSpace(lookup(EnvRequestTimeout)); rawRequestTimeout != "" {
+		requestTimeout, err := time.ParseDuration(rawRequestTimeout)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s is invalid: %w", EnvRequestTimeout, err)
+		}
+		if requestTimeout <= 0 {
+			return Config{}, fmt.Errorf("%s must be greater than zero", EnvRequestTimeout)
+		}
+		cfg.RequestTimeout = requestTimeout
 	}
 
 	if err := ValidateConfig(cfg); err != nil {
@@ -109,6 +136,17 @@ func ValidateConfig(cfg Config) error {
 		return fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
 	}
 	return nil
+}
+
+func parseAdapterBool(value string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "t", "true", "y", "yes", "on":
+		return true, nil
+	case "0", "f", "false", "n", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("expected true or false")
+	}
 }
 
 func cloneURL(in *url.URL) *url.URL {

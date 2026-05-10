@@ -1857,6 +1857,9 @@ const (
 	EnvHostHeader      = "MCP_RUNTIME_HOST_HEADER"
 	EnvListenAddr      = "MCP_RUNTIME_LISTEN_ADDR"
 	EnvProtocolVersion = "MCP_RUNTIME_PROTOCOL_VERSION"
+	EnvSetXForwarded   = "MCP_RUNTIME_SET_XFF"
+	EnvRequestTimeout  = "MCP_RUNTIME_REQUEST_TIMEOUT"
+	EnvLogLevel        = "MCP_RUNTIME_LOG_LEVEL"
 
 	DefaultListenAddr      = "127.0.0.1:8099"
 	DefaultProtocolVersion = "2025-06-18"
@@ -1910,14 +1913,18 @@ func ValidateConfig(cfg Config) error
 <a id="agent-adapters-type-config-struct"></a>
 ```text
 type Config struct {
-	RuntimeURL      *url.URL
-	HumanID         string
-	AgentID         string
-	SessionID       string
-	HostHeader      string
-	ListenAddr      string
-	ProtocolVersion string
-	HTTPClient      *http.Client
+	RuntimeURL        *url.URL
+	HumanID           string
+	AgentID           string
+	SessionID         string
+	HostHeader        string
+	ListenAddr        string
+	ProtocolVersion   string
+	HTTPClient        *http.Client
+	RequestTimeout    time.Duration
+	LogLevel          string
+	LogWriter         io.Writer
+	DisableXForwarded bool
 }
     Config is the shared configuration for agent-side adapters.
 
