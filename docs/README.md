@@ -33,6 +33,7 @@ human workflows.
     <li>Registry-backed image build, push, and deploy flow</li>
     <li>Sentinel gateway policy, grants, consented sessions, audit, and analytics</li>
     <li>Governance controls for tool access, trust levels, session revocation, and policy versioning</li>
+    <li>Optional HTTP and stdio agent adapters for governed framework integrations</li>
     <li>Compliance-oriented event records for who called what, when, against which server, and whether it was allowed or denied</li>
     <li>Ingress routing for path-based MCP endpoints</li>
     <li>CLI for setup, status, registry, access, Sentinel, and servers</li>
@@ -118,6 +119,12 @@ DNS, ingress, TLS, and k3s configuration, start with
   <span class="docs-card-kicker">Ship</span>
   <strong>Publish an MCP server</strong>
   <span>Write a manifest or `.mcp` metadata, push an image, deploy it, and verify what the platform creates.</span>
+</a>
+
+<a class="docs-card" href="agent-adapters/">
+  <span class="docs-card-kicker">Connect</span>
+  <strong>Wire agent frameworks</strong>
+  <span>Use HTTP and stdio adapters to present issued identity/session values without moving enforcement out of the gateway.</span>
 </a>
 </div>
 

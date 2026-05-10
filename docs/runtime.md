@@ -139,6 +139,30 @@ X-MCP-Team-ID:     7d0a0b8f-7c25-4761-a632-3cf0108e31d6
 X-MCP-Agent-Session: sess-8f1b9d
 ```
 
+### Agent adapters
+
+Agent-side adapters are optional helper processes for frameworks and IDEs that
+cannot attach these headers directly. `mcp-runtime-agent-proxy` accepts local
+Streamable HTTP MCP traffic, and `mcp-runtime-mcp-shim` accepts stdio MCP
+traffic, then both forward to the governed MCP Runtime route with the issued
+identity/session headers. They do not create grants or sessions and do not
+evaluate policy; the gateway still enforces `MCPAccessGrant` and
+`MCPAgentSession` on the request path.
+
+These adapters expose only the two standard MCP transports: Streamable HTTP and
+stdio. Event-stream handling is an internal Streamable HTTP response parser, not
+a separate legacy HTTP+SSE transport.
+
+For local debugging, set `MCP_RUNTIME_LOG_LEVEL=info` on either adapter to print
+runtime 4xx denials to stderr. The proxy can suppress local `X-Forwarded-*`
+headers with `MCP_RUNTIME_SET_XFF=false`; the shim can opt into request
+deadlines with `MCP_RUNTIME_REQUEST_TIMEOUT=<duration>`. The stdio shim streams
+Streamable HTTP event frames to stdout as they arrive and continues reading
+stdin while an upstream event stream is open.
+
+See [Agent Adapters](agent-adapters.md) for build commands and integration
+examples.
+
 ## Operator internals (high-level)
 
 The operator is a single-controller `controller-runtime` manager:

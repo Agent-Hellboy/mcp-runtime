@@ -9,6 +9,7 @@ If instructions conflict, prefer **this repo** (`README`, CRDs, `v1alpha1` types
 | Area | Path | Notes |
 |------|------|--------|
 | User-facing CLI | `cmd/mcp-runtime/`, `internal/cli/root/`, `internal/cli/<command>/`, `internal/cli/core/` | Entrypoint, foldered Cobra command routing, command-owned behavior for `setup`, `status`, `registry`, `server`, `access`, …, and shared CLI kernel code |
+| Agent adapters | `cmd/mcp-runtime-agent-proxy/`, `cmd/mcp-runtime-mcp-shim/`, `internal/agentadapter/` | Optional HTTP and stdio adapter binaries that inject issued governance identity/session headers while leaving grant/session creation and enforcement to the platform |
 | Operator (controller) | `cmd/operator/`, `internal/operator/` | `MCPServer` reconciliation, ingress, gateway wiring |
 | API & CRD types | `api/v1alpha1/` | Source of truth for object shapes; CRD YAML in `config/crd/bases/` |
 | Access and policy (shared) | `pkg/access/`, `pkg/policy/` | Grant/session CRUD helpers plus rendered gateway policy contracts and evaluation semantics used by operator and proxy |
@@ -34,6 +35,7 @@ Use **Go** from `go.mod` (see `go version` / toolchain). From the repo root:
 gofmt -s -l .   # if empty, OK; else run: gofmt -s -w .
 
 go build -o bin/mcp-runtime ./cmd/mcp-runtime
+make build-adapters
 
 # Fast feedback (matches most of CI for the main module)
 go test ./... -count=1 -race
@@ -52,6 +54,7 @@ envtest assets and set `KUBEBUILDER_ASSETS`.
 **Targeted tests** (prefer these while iterating; full `./...` can be slow):
 
 - `go test ./internal/operator/... ./internal/cli/... -race -count=1`
+- `go test ./internal/agentadapter -count=1` (agent-side HTTP proxy and stdio shim behavior)
 - `go test ./test/golden/... -count=1` (CLI help snapshots; update `test/golden/cli/testdata/*.golden` when you change Cobra help text on purpose)
 - `go test ./test/integration/...` (needs `KUBEBUILDER_ASSETS`; see `Makefile.operator` and CI for envtest setup)
 - `E2E_CACHE_MODE=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh` for repeated local Kind e2e debugging without recreating the cluster or rebuilding cached images. The e2e traffic path uses deterministic curl-based MCP requests; omit cache mode for CI-equivalent fresh runs.

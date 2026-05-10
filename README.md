@@ -24,6 +24,7 @@ The public platform at `platform.mcpruntime.org` is a live preview of the deploy
 ## What ships
 
 - `mcp-runtime` CLI for `setup`, `status`, `registry`, `server`, `pipeline`, `cluster`, `access`, and `sentinel`
+- Optional `mcp-runtime-agent-proxy` and `mcp-runtime-mcp-shim` adapters for governed HTTP and stdio agent integrations
 - Platform UI for browsing MCP servers, viewing platform state, and operating the stack through a web interface
 - `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession` CRDs
 - Kubernetes operator for `Deployment`, `Service`, `Ingress`, and policy materialization
@@ -101,6 +102,7 @@ Notes:
 ```bash
 gofmt -s -l .
 go build -o bin/mcp-runtime ./cmd/mcp-runtime
+make build-adapters
 go test ./... -count=1 -race
 go vet ./...
 ```
