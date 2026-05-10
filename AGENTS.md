@@ -298,6 +298,7 @@ For production with `MCP_PLATFORM_DOMAIN=example.com`, setup derives hostnames `
 
 - **UI** can create/apply grants and sessions and toggle grant enablement and session state.
 - **CLI:** `mcp-runtime access grant apply --file <file.yaml>` and `mcp-runtime access session apply --file <file.yaml>`. `kubectl apply -f` is still a valid fallback.
+- **Side effects:** each listed `MCPServer.spec.tools[]` entry must declare `sideEffect: read|write|destructive`; grants must set `allowedSideEffects` explicitly. Empty or omitted `allowedSideEffects` allows no side-effect classes.
 - **Example**
 
 ```yaml
@@ -310,6 +311,7 @@ spec:
   subject: {humanID: user-123, agentID: ops-agent}
   serverRef: {name: demo-one, namespace: mcp-servers}
   maxTrust: high
+  allowedSideEffects: [read]
   toolRules:
     - {name: add, decision: allow, requiredTrust: low}
     - {name: upper, decision: allow, requiredTrust: low}

@@ -41,7 +41,7 @@ the cluster supports them.
 
 ```mermaid
 flowchart LR
-    Req[MCP request] --> Proxy[mcp-proxy<br/>policy + identity + trust]
+    Req[MCP request] --> Proxy[mcp-proxy<br/>policy + identity + trust + side effects]
     Proxy -->|forward| MCP[MCP server]
     Proxy -->|audit POST /events| Ingest
     Ingest -->|mcp.events topic| Kafka[(Kafka)]
@@ -52,7 +52,7 @@ flowchart LR
     API --> Graf[Grafana]
 ```
 
-1. **Proxy evaluates the request.** Reads identity headers, loads policy from the operator-rendered ConfigMap, and calls the shared `pkg/policy` evaluator for allow / deny at `tools/call` time.
+1. **Proxy evaluates the request.** Reads identity headers, loads policy from the operator-rendered ConfigMap, and calls the shared `pkg/policy` evaluator for allow / deny at `tools/call` time. The evaluator checks both trust and the tool's declared side-effect class.
 2. **Ingest receives the event** on `/events`, validates the shared `pkg/events` envelope, and writes into Kafka topic `mcp.events`.
 3. **Processor batches to ClickHouse.** Reads Kafka envelopes and uses `pkg/clickhouse` storage helpers to write to the event table.
 4. **API exposes query surfaces.** Recent events, stats, sources, types, and filtered audit views use `pkg/clickhouse` query helpers.
@@ -246,7 +246,7 @@ The UI's **Governance** tab creates and operates the same `MCPAccessGrant` and `
 
 | Action | What it does |
 |---|---|
-| **Create grant** | `Create Grant` button. Required: name, namespace, server, and at least one of human or agent ID. Tool rules use one rule per line: `tool:allow` or `tool:allow:trust`. |
+| **Create grant** | `Create Grant` button. Required: name, namespace, server, at least one of human or agent ID, and the allowed side-effect classes. Tool rules use one rule per line: `tool:allow` or `tool:allow:trust`. |
 | **Create session** | `Create Session`. Pick a consented trust level and optional expiry. The gateway looks it up at `tools/call` time alongside the grant. |
 | **Disable / enable grant** | Single-action row. Disable flips `spec.disabled=true` — grant is preserved for audit, but the gateway treats it as denying. |
 | **Revoke / unrevoke session** | Same row pattern toggles `spec.revoked`. Revoked sessions deny subsequent tool calls immediately. |
@@ -265,7 +265,7 @@ CLI parity: `mcp-runtime access grant` and `mcp-runtime access session` cover th
 
 Each `MCPServer` is its own tenant: the operator renders a per-server policy ConfigMap (`<server>-gateway-policy`) holding only the grants and sessions whose `serverRef` points at that server, and the `mcp-gateway` sidecar evaluates traffic against that policy alone. To verify isolation end-to-end, deploy two gateway-enabled servers in `mcp-servers` and grant disjoint subjects on each.
 
-Apply two `MCPServer` resources (same image is fine, different `metadata.name` and `publicPathPrefix`) with `gateway.enabled: true`, `auth.mode: header`, `policy.mode: allow-list`, and `session.required: true`. Then apply two grant + session pairs:
+Apply two `MCPServer` resources (same image is fine, different `metadata.name` and `publicPathPrefix`) with `gateway.enabled: true`, `auth.mode: header`, `policy.mode: allow-list`, `session.required: true`, and tool inventory entries that declare `sideEffect`. Then apply two grant + session pairs:
 
 ```yaml
 apiVersion: mcpruntime.org/v1alpha1
@@ -275,6 +275,7 @@ spec:
   serverRef: {name: tenant-a-mcp}
   subject:   {humanID: alice, agentID: alice-agent}
   maxTrust: high
+  allowedSideEffects: [read]
   toolRules: [{name: add, decision: allow, requiredTrust: low}]
 ---
 # bob-tenant-b mirrors the above with serverRef tenant-b-mcp and a different toolRule

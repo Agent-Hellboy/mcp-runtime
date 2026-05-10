@@ -38,6 +38,15 @@ const (
 	TrustLevelHigh   TrustLevel = "high"
 )
 
+// +kubebuilder:validation:Enum=read;write;destructive
+type ToolSideEffect string
+
+const (
+	ToolSideEffectRead        ToolSideEffect = "read"
+	ToolSideEffectWrite       ToolSideEffect = "write"
+	ToolSideEffectDestructive ToolSideEffect = "destructive"
+)
+
 // +kubebuilder:validation:Enum=RollingUpdate;Recreate;Canary
 type RolloutStrategy string
 
@@ -168,6 +177,7 @@ type ToolConfig struct {
 	Name          string            `json:"name"`
 	Description   string            `json:"description,omitempty"`
 	RequiredTrust TrustLevel        `json:"requiredTrust,omitempty"`
+	SideEffect    ToolSideEffect    `json:"sideEffect"`
 	Labels        map[string]string `json:"labels,omitempty"`
 }
 

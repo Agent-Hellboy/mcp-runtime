@@ -205,12 +205,14 @@ func TestApplyUpstreamTokenClearsHeaderWhenTokenMissing(t *testing.T) {
 	}
 }
 
-func TestHandleProxyRewritesUpstreamHostHeader(t *testing.T) {
+func TestHandleProxyRewritesUpstreamHostAndForwardedHeaders(t *testing.T) {
 	t.Parallel()
 
 	var upstreamHost string
+	var upstreamHeaders http.Header
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamHost = r.Host
+		upstreamHeaders = r.Header.Clone()
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(upstreamServer.Close)
@@ -243,6 +245,15 @@ func TestHandleProxyRewritesUpstreamHostHeader(t *testing.T) {
 	}
 	if upstreamHost != target.Host {
 		t.Fatalf("upstream host = %q, want %q", upstreamHost, target.Host)
+	}
+	if got := upstreamHeaders.Get("X-Forwarded-Host"); got != "policy.example.local" {
+		t.Fatalf("X-Forwarded-Host = %q, want %q", got, "policy.example.local")
+	}
+	if got := upstreamHeaders.Get("X-Forwarded-Proto"); got != "http" {
+		t.Fatalf("X-Forwarded-Proto = %q, want %q", got, "http")
+	}
+	if got := upstreamHeaders.Get("X-Forwarded-For"); got != "192.0.2.1" {
+		t.Fatalf("X-Forwarded-For = %q, want %q", got, "192.0.2.1")
 	}
 }
 
@@ -499,15 +510,16 @@ func oauthPolicy(issuerURL string) *policypkg.Document {
 			UpstreamTokenHeader: "Authorization",
 		},
 		Tools: []policypkg.Tool{
-			{Name: "echo", RequiredTrust: "low"},
+			{Name: "echo", RequiredTrust: "low", SideEffect: "read"},
 		},
 		Grants: []policypkg.Grant{
 			{
-				Name:      "grant-1",
-				HumanID:   "human-1",
-				AgentID:   "client-1",
-				MaxTrust:  "high",
-				ToolRules: []policypkg.ToolAccess{{Name: "echo", Decision: "allow"}},
+				Name:               "grant-1",
+				HumanID:            "human-1",
+				AgentID:            "client-1",
+				MaxTrust:           "high",
+				AllowedSideEffects: []string{"read"},
+				ToolRules:          []policypkg.ToolAccess{{Name: "echo", Decision: "allow"}},
 			},
 		},
 		Sessions: []policypkg.Binding{

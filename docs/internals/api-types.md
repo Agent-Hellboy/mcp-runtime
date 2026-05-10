@@ -53,6 +53,7 @@ Status fields are operator-owned; user-facing commands should not mutate them.
 `MCPAccessGrantSpec` binds a subject to an `MCPServer` and optionally sets:
 
 - `maxTrust`: administrative trust ceiling
+- `allowedSideEffects`: side-effect classes (`read`, `write`, `destructive`) the grant may use; omitted or empty fails closed
 - `policyVersion`: cache invalidation/version marker
 - `disabled`: soft off switch
 - `toolRules`: per-tool allow/deny decisions and required trust levels

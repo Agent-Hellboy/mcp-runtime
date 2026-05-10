@@ -260,9 +260,11 @@ servers:
       - name: add
         description: Add two numbers.
         requiredTrust: low
+        sideEffect: read
       - name: upper
         description: Uppercase the provided message.
         requiredTrust: medium
+        sideEffect: read
     auth:
       mode: header
       humanIDHeader: X-MCP-Human-ID
@@ -433,6 +435,8 @@ spec:
     humanID: local-user
     agentID: local-agent
   maxTrust: high
+  allowedSideEffects:
+    - read
   policyVersion: v1
   toolRules:
     - name: add
@@ -656,7 +660,7 @@ Common edits:
 - Set `spec.servicePort` if you need a Service port other than `80`.
 - Add `spec.envVars` or `spec.secretEnvVars` when the server needs configuration or credentials.
 - Add `spec.imagePullSecrets` if the image registry requires explicit pull auth.
-- Add `spec.tools`, `spec.auth`, `spec.policy`, `spec.session`, or `spec.rollout` when you are ready to describe stricter governance or delivery behavior.
+- Add `spec.tools`, `spec.auth`, `spec.policy`, `spec.session`, or `spec.rollout` when you are ready to describe stricter governance or delivery behavior. Every listed tool must declare `sideEffect: read`, `write`, or `destructive`.
 
 For the full field surface, use the [API reference](api.md).
 
@@ -720,6 +724,10 @@ If the server does not come up, stay in the CLI first:
 
 ## 7. Grant governed access (for gateway-enabled servers)
 
+The target `MCPServer` should list the tools you want to govern, and every
+listed tool must include `sideEffect: read`, `write`, or `destructive`. Grants
+then declare which side-effect classes they allow.
+
 ```yaml
 # grant.yaml
 apiVersion: mcpruntime.org/v1alpha1
@@ -734,6 +742,9 @@ spec:
     humanID: user-123
     agentID: ops-agent
   maxTrust: high
+  allowedSideEffects:
+    - read
+    - destructive
   toolRules:
     - name: list_invoices
       decision: allow

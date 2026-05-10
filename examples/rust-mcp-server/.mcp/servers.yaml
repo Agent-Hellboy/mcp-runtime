@@ -13,6 +13,8 @@ servers:
       - name: repeat
         description: Repeat the provided message a number of times.
         requiredTrust: low
+        sideEffect: read
       - name: word_count
         description: Count the words in the provided message.
         requiredTrust: low
+        sideEffect: read

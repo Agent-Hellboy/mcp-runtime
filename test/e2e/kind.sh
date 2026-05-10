@@ -2214,10 +2214,19 @@ servers:
     tools:
       - name: aaa-ping
         requiredTrust: low
+        sideEffect: read
       - name: echo
         requiredTrust: low
+        sideEffect: read
+      - name: add
+        requiredTrust: low
+        sideEffect: read
       - name: upper
         requiredTrust: medium
+        sideEffect: read
+      - name: slugify
+        requiredTrust: low
+        sideEffect: read
     auth:
       mode: header
       humanIDHeader: X-MCP-Human-ID
@@ -2415,6 +2424,7 @@ spec:
     humanID: ${HUMAN_ID}
     agentID: ${AGENT_ID}
   maxTrust: high
+  allowedSideEffects: [read]
   policyVersion: v1
   toolRules:
     - name: aaa-ping
@@ -2947,6 +2957,7 @@ spec:
     humanID: ${HUMAN_ID}
     agentID: ${AGENT_ID}
   maxTrust: high
+  allowedSideEffects: [read]
   policyVersion: v1
   toolRules:
     - name: aaa-ping
@@ -2978,6 +2989,7 @@ spec:
     humanID: ${HUMAN_ID}
     agentID: ${AGENT_ID}
   maxTrust: high
+  allowedSideEffects: [read]
   policyVersion: v1
   toolRules:
     - name: aaa-ping
@@ -3160,10 +3172,13 @@ servers:
     tools:
       - name: aaa-ping
         requiredTrust: low
+        sideEffect: read
       - name: add
         requiredTrust: low
+        sideEffect: read
       - name: upper
         requiredTrust: low
+        sideEffect: read
     auth:
       mode: oauth
       humanIDHeader: X-MCP-Human-ID
@@ -3222,6 +3237,7 @@ spec:
     humanID: ${OAUTH_HUMAN_ID}
     agentID: ${OAUTH_AGENT_ID}
   maxTrust: low
+  allowedSideEffects: [read]
   policyVersion: v1
   toolRules:
     - name: aaa-ping
@@ -4455,9 +4471,11 @@ spec:
     - name: add
       description: Add two numbers.
       requiredTrust: low
+      sideEffect: read
     - name: upper
       description: Uppercase the provided message.
       requiredTrust: medium
+      sideEffect: read
   auth:
     mode: header
     humanIDHeader: X-MCP-Human-ID
@@ -4498,6 +4516,7 @@ spec:
   serverRef: {name: ${MT_TENANT_A}}
   subject:   {humanID: ${MT_HUMAN_A}, agentID: ${MT_AGENT_A}}
   maxTrust: high
+  allowedSideEffects: [read]
   policyVersion: v1
   toolRules:
     - {name: add, decision: allow, requiredTrust: low}
@@ -4518,6 +4537,7 @@ spec:
   serverRef: {name: ${MT_TENANT_B}}
   subject:   {humanID: ${MT_HUMAN_B}, agentID: ${MT_AGENT_B}}
   maxTrust: high
+  allowedSideEffects: [read]
   policyVersion: v1
   toolRules:
     - {name: upper, decision: allow, requiredTrust: medium}

@@ -79,6 +79,7 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 				Name:          tool.Name,
 				Description:   tool.Description,
 				RequiredTrust: mcpv1alpha1.TrustLevel(tool.RequiredTrust),
+				SideEffect:    mcpv1alpha1.ToolSideEffect(tool.SideEffect),
 			}
 			if len(tool.Labels) > 0 {
 				mcpTool.Labels = make(map[string]string, len(tool.Labels))

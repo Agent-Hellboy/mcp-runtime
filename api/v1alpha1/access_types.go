@@ -27,12 +27,13 @@ type ToolRule struct {
 // MCPAccessGrantSpec defines who can use which MCP server and with what trust ceiling.
 // +kubebuilder:object:generate=true
 type MCPAccessGrantSpec struct {
-	ServerRef     ServerReference `json:"serverRef"`
-	Subject       SubjectRef      `json:"subject"`
-	MaxTrust      TrustLevel      `json:"maxTrust,omitempty"`
-	PolicyVersion string          `json:"policyVersion,omitempty"`
-	Disabled      bool            `json:"disabled,omitempty"`
-	ToolRules     []ToolRule      `json:"toolRules,omitempty"`
+	ServerRef          ServerReference  `json:"serverRef"`
+	Subject            SubjectRef       `json:"subject"`
+	MaxTrust           TrustLevel       `json:"maxTrust,omitempty"`
+	AllowedSideEffects []ToolSideEffect `json:"allowedSideEffects,omitempty"`
+	PolicyVersion      string           `json:"policyVersion,omitempty"`
+	Disabled           bool             `json:"disabled,omitempty"`
+	ToolRules          []ToolRule       `json:"toolRules,omitempty"`
 }
 
 // MCPAccessGrantStatus captures observed grant state.

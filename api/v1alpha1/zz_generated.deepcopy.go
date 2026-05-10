@@ -187,6 +187,11 @@ func (in *MCPAccessGrantSpec) DeepCopyInto(out *MCPAccessGrantSpec) {
 	*out = *in
 	out.ServerRef = in.ServerRef
 	out.Subject = in.Subject
+	if in.AllowedSideEffects != nil {
+		in, out := &in.AllowedSideEffects, &out.AllowedSideEffects
+		*out = make([]ToolSideEffect, len(*in))
+		copy(*out, *in)
+	}
 	if in.ToolRules != nil {
 		in, out := &in.ToolRules, &out.ToolRules
 		*out = make([]ToolRule, len(*in))

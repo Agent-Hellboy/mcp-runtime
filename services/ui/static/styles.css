@@ -462,6 +462,35 @@ select:disabled {
   width: 100%;
 }
 
+.checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.checkbox-group > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.checkbox-inline {
+  align-items: center;
+  color: var(--text) !important;
+  display: flex !important;
+  flex-direction: row !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  gap: 8px !important;
+  letter-spacing: 0 !important;
+}
+
+.checkbox-inline input {
+  accent-color: var(--accent);
+  width: auto !important;
+}
+
 .governance-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -481,6 +510,12 @@ select:disabled {
 
 .governance-table td {
   vertical-align: top;
+}
+
+.chip-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .audit-table td {

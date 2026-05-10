@@ -13,6 +13,8 @@ servers:
       - name: echo
         description: Echo the provided message.
         requiredTrust: low
+        sideEffect: read
       - name: reverse
         description: Reverse the provided message.
         requiredTrust: low
+        sideEffect: read

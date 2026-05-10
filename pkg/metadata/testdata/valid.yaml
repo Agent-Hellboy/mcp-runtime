@@ -22,9 +22,11 @@ servers:
       - name: list_tools
         description: List tools exposed by the server.
         requiredTrust: low
+        sideEffect: read
       - name: delete_user
         description: Delete a user from the backing system.
         requiredTrust: high
+        sideEffect: destructive
     analytics:
       enabled: true
       ingestURL: http://analytics.custom-namespace.svc/api/events

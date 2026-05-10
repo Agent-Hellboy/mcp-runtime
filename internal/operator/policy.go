@@ -106,6 +106,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 				Name:          tool.Name,
 				Description:   tool.Description,
 				RequiredTrust: string(tool.RequiredTrust),
+				SideEffect:    string(tool.SideEffect),
 			}
 			if len(tool.Labels) > 0 {
 				rendered.Labels = make(map[string]string, len(tool.Labels))
@@ -132,6 +133,9 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 			MaxTrust:      string(defaultTrust(grant.Spec.MaxTrust)),
 			PolicyVersion: grant.Spec.PolicyVersion,
 			Disabled:      grant.Spec.Disabled,
+		}
+		for _, sideEffect := range grant.Spec.AllowedSideEffects {
+			rendered.AllowedSideEffects = append(rendered.AllowedSideEffects, string(sideEffect))
 		}
 		for _, rule := range grant.Spec.ToolRules {
 			rendered.ToolRules = append(rendered.ToolRules, policy.ToolAccess{

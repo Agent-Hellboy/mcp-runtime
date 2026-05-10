@@ -18,14 +18,15 @@ import (
 )
 
 type accessGrantRequest struct {
-	Name          string                         `json:"name"`
-	Namespace     string                         `json:"namespace"`
-	ServerRef     sentinelaccess.ServerReference `json:"serverRef"`
-	Subject       sentinelaccess.SubjectRef      `json:"subject"`
-	MaxTrust      sentinelaccess.TrustLevel      `json:"maxTrust"`
-	PolicyVersion string                         `json:"policyVersion"`
-	Disabled      *bool                          `json:"disabled,omitempty"`
-	ToolRules     []sentinelaccess.ToolRule      `json:"toolRules"`
+	Name               string                          `json:"name"`
+	Namespace          string                          `json:"namespace"`
+	ServerRef          sentinelaccess.ServerReference  `json:"serverRef"`
+	Subject            sentinelaccess.SubjectRef       `json:"subject"`
+	MaxTrust           sentinelaccess.TrustLevel       `json:"maxTrust"`
+	AllowedSideEffects []sentinelaccess.ToolSideEffect `json:"allowedSideEffects"`
+	PolicyVersion      string                          `json:"policyVersion"`
+	Disabled           *bool                           `json:"disabled,omitempty"`
+	ToolRules          []sentinelaccess.ToolRule       `json:"toolRules"`
 }
 
 type accessSessionRequest struct {
@@ -136,12 +137,13 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 			Namespace: defaultAccessNamespace(req.Namespace),
 		},
 		Spec: sentinelaccess.MCPAccessGrantSpec{
-			ServerRef:     req.ServerRef,
-			Subject:       req.Subject,
-			MaxTrust:      req.MaxTrust,
-			PolicyVersion: defaultPolicyVersion(req.PolicyVersion),
-			Disabled:      disabled,
-			ToolRules:     req.ToolRules,
+			ServerRef:          req.ServerRef,
+			Subject:            req.Subject,
+			MaxTrust:           req.MaxTrust,
+			AllowedSideEffects: req.AllowedSideEffects,
+			PolicyVersion:      defaultPolicyVersion(req.PolicyVersion),
+			Disabled:           disabled,
+			ToolRules:          req.ToolRules,
 		},
 	}
 	applied, err := s.accessMgr.ApplyGrant(ctx, grant)
@@ -443,6 +445,20 @@ func validateGrantRequest(req *accessGrantRequest) error {
 	if req.MaxTrust != "" && !validTrust(req.MaxTrust) {
 		return errors.New("maxTrust must be low, medium, or high")
 	}
+	seenSideEffects := map[sentinelaccess.ToolSideEffect]struct{}{}
+	for i := range req.AllowedSideEffects {
+		req.AllowedSideEffects[i] = normalizeSideEffect(req.AllowedSideEffects[i])
+		if req.AllowedSideEffects[i] == "" {
+			return fmt.Errorf("allowedSideEffects[%d] is required", i)
+		}
+		if !validSideEffect(req.AllowedSideEffects[i]) {
+			return fmt.Errorf("allowedSideEffects[%d] must be read, write, or destructive", i)
+		}
+		if _, ok := seenSideEffects[req.AllowedSideEffects[i]]; ok {
+			return fmt.Errorf("allowedSideEffects[%d] is a duplicate", i)
+		}
+		seenSideEffects[req.AllowedSideEffects[i]] = struct{}{}
+	}
 	for i := range req.ToolRules {
 		req.ToolRules[i].Name = strings.TrimSpace(req.ToolRules[i].Name)
 		req.ToolRules[i].Decision = sentinelaccess.PolicyDecision(strings.TrimSpace(string(req.ToolRules[i].Decision)))
@@ -514,9 +530,22 @@ func normalizeTrust(trust sentinelaccess.TrustLevel) sentinelaccess.TrustLevel {
 	return sentinelaccess.TrustLevel(strings.TrimSpace(string(trust)))
 }
 
+func normalizeSideEffect(sideEffect sentinelaccess.ToolSideEffect) sentinelaccess.ToolSideEffect {
+	return sentinelaccess.ToolSideEffect(strings.TrimSpace(string(sideEffect)))
+}
+
 func validTrust(trust sentinelaccess.TrustLevel) bool {
 	switch trust {
 	case "low", "medium", "high":
+		return true
+	default:
+		return false
+	}
+}
+
+func validSideEffect(sideEffect sentinelaccess.ToolSideEffect) bool {
+	switch sideEffect {
+	case "read", "write", "destructive":
 		return true
 	default:
 		return false
