@@ -62,10 +62,12 @@ func (r *MCPServerReconciler) reconcilePolicyConfigMap(ctx context.Context, mcpS
 }
 
 func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (*policy.Document, error) {
+	serverTeamID := strings.TrimSpace(mcpServer.Spec.TeamID)
 	doc := &policy.Document{
 		Server: policy.Server{
 			Name:      mcpServer.Name,
 			Namespace: mcpServer.Namespace,
+			TeamID:    serverTeamID,
 			Cluster:   strings.TrimSpace(r.ClusterName),
 		},
 	}
@@ -75,6 +77,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 			Mode:            string(mcpServer.Spec.Auth.Mode),
 			HumanIDHeader:   mcpServer.Spec.Auth.HumanIDHeader,
 			AgentIDHeader:   mcpServer.Spec.Auth.AgentIDHeader,
+			TeamIDHeader:    mcpServer.Spec.Auth.TeamIDHeader,
 			SessionIDHeader: mcpServer.Spec.Auth.SessionIDHeader,
 			TokenHeader:     mcpServer.Spec.Auth.TokenHeader,
 			IssuerURL:       mcpServer.Spec.Auth.IssuerURL,
@@ -126,10 +129,15 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 		if !serverReferenceMatches(grant.Namespace, grant.Spec.ServerRef, mcpServer) {
 			continue
 		}
+		subjectTeamID, ok := subjectTeamIDForServer(serverTeamID, grant.Spec.Subject.TeamID)
+		if !ok {
+			continue
+		}
 		rendered := policy.Grant{
 			Name:          grant.Name,
 			HumanID:       grant.Spec.Subject.HumanID,
 			AgentID:       grant.Spec.Subject.AgentID,
+			TeamID:        subjectTeamID,
 			MaxTrust:      string(defaultTrust(grant.Spec.MaxTrust)),
 			PolicyVersion: grant.Spec.PolicyVersion,
 			Disabled:      grant.Spec.Disabled,
@@ -155,10 +163,15 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 		if !serverReferenceMatches(session.Namespace, session.Spec.ServerRef, mcpServer) {
 			continue
 		}
+		subjectTeamID, ok := subjectTeamIDForServer(serverTeamID, session.Spec.Subject.TeamID)
+		if !ok {
+			continue
+		}
 		rendered := policy.Binding{
 			Name:           session.Name,
 			HumanID:        session.Spec.Subject.HumanID,
 			AgentID:        session.Spec.Subject.AgentID,
+			TeamID:         subjectTeamID,
 			ConsentedTrust: string(defaultTrust(session.Spec.ConsentedTrust)),
 			Revoked:        session.Spec.Revoked,
 			PolicyVersion:  session.Spec.PolicyVersion,
@@ -173,6 +186,18 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 	}
 
 	return doc, nil
+}
+
+func subjectTeamIDForServer(serverTeamID, subjectTeamID string) (string, bool) {
+	serverTeamID = strings.TrimSpace(serverTeamID)
+	subjectTeamID = strings.TrimSpace(subjectTeamID)
+	if serverTeamID == "" {
+		return subjectTeamID, true
+	}
+	if subjectTeamID == "" {
+		return serverTeamID, true
+	}
+	return subjectTeamID, subjectTeamID == serverTeamID
 }
 
 func serverReferenceMatches(objectNamespace string, ref mcpv1alpha1.ServerReference, server *mcpv1alpha1.MCPServer) bool {

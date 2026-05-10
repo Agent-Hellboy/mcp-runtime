@@ -14,7 +14,7 @@ GET /api/sources
 GET /api/event-types
 
 # Filter events by source/type or audit fields
-GET /api/events/filter?source=mcp-server&event_type=tool.call&server=payments&decision=deny&agent_id=agent-42&limit=50
+GET /api/events/filter?source=mcp-server&event_type=tool.call&server=payments&team_id=team-acme&decision=deny&agent_id=agent-42&limit=50
 
 # Monitor API health
 GET /metrics
@@ -52,6 +52,7 @@ import (
 type analyticsServerUsage struct {
 	Server       string    `json:"server"`
 	Namespace    string    `json:"namespace"`
+	TeamID       string    `json:"team_id,omitempty"`
 	Events       uint64    `json:"events"`
 	Allowed      uint64    `json:"allowed"`
 	Denied       uint64    `json:"denied"`
@@ -121,6 +122,7 @@ type apiServer struct {
 const (
 	analyticsDefaultWindowDays = 30
 	analyticsMaxWindowDays     = 365
+	analyticsTeamIDExpression  = "JSONExtractString(payload, 'team_id')"
 )
 
 // main initializes and starts the MCP Sentinel API server.
@@ -526,7 +528,7 @@ func (s *apiServer) queryAnalyticsTotals(ctx context.Context, since time.Time) (
 }
 
 func (s *apiServer) queryAnalyticsServers(ctx context.Context, since time.Time, limit int) ([]analyticsServerUsage, error) {
-	query := "SELECT server, namespace, count() AS events, countIf(decision = 'allow') AS allowed, countIf(decision = 'deny') AS denied, uniqIf(human_id, human_id != '') AS unique_humans, uniqIf(agent_id, agent_id != '') AS unique_agents, max(timestamp) AS last_seen FROM " + s.dbName + ".events WHERE timestamp >= ? AND server != '' GROUP BY server, namespace ORDER BY events DESC LIMIT ?"
+	query := analyticsServersQuery(s.dbName)
 	rows, err := s.db.Query(ctx, query, since, limit)
 	if err != nil {
 		return nil, err
@@ -536,12 +538,16 @@ func (s *apiServer) queryAnalyticsServers(ctx context.Context, since time.Time, 
 	out := make([]analyticsServerUsage, 0, limit)
 	for rows.Next() {
 		var row analyticsServerUsage
-		if err := rows.Scan(&row.Server, &row.Namespace, &row.Events, &row.Allowed, &row.Denied, &row.UniqueHumans, &row.UniqueAgents, &row.LastSeen); err != nil {
+		if err := rows.Scan(&row.Server, &row.Namespace, &row.TeamID, &row.Events, &row.Allowed, &row.Denied, &row.UniqueHumans, &row.UniqueAgents, &row.LastSeen); err != nil {
 			return nil, err
 		}
 		out = append(out, row)
 	}
 	return out, rows.Err()
+}
+
+func analyticsServersQuery(dbName string) string {
+	return "SELECT server, namespace, " + analyticsTeamIDExpression + " AS team_id, count() AS events, countIf(decision = 'allow') AS allowed, countIf(decision = 'deny') AS denied, uniqIf(human_id, human_id != '') AS unique_humans, uniqIf(agent_id, agent_id != '') AS unique_agents, max(timestamp) AS last_seen FROM " + dbName + ".events WHERE timestamp >= ? AND server != '' GROUP BY server, namespace, team_id ORDER BY events DESC LIMIT ?"
 }
 
 func (s *apiServer) queryAnalyticsActors(ctx context.Context, since time.Time, limit int) ([]analyticsActorUsage, error) {
@@ -603,7 +609,7 @@ func (s *apiServer) queryAnalyticsDecisions(ctx context.Context, since time.Time
 
 // handleEventsFilter handles GET /api/events/filter requests.
 // It queries events filtered by optional source, event_type, and audit payload fields.
-// Supports query parameters: source, event_type, server, namespace, cluster, human_id, agent_id, session_id, decision, tool_name, limit.
+// Supports query parameters: source, event_type, server, namespace, team_id, cluster, human_id, agent_id, session_id, decision, tool_name, limit.
 // Returns filtered events ordered by timestamp descending.
 func (s *apiServer) handleEventsFilter(w http.ResponseWriter, r *http.Request) {
 	filters := clickhousepkg.EventFilters{
@@ -611,6 +617,7 @@ func (s *apiServer) handleEventsFilter(w http.ResponseWriter, r *http.Request) {
 		EventType: r.URL.Query().Get("event_type"),
 		Server:    r.URL.Query().Get("server"),
 		Namespace: r.URL.Query().Get("namespace"),
+		TeamID:    r.URL.Query().Get("team_id"),
 		Cluster:   r.URL.Query().Get("cluster"),
 		HumanID:   r.URL.Query().Get("human_id"),
 		AgentID:   r.URL.Query().Get("agent_id"),

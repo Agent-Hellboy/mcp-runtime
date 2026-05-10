@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+	"mcp-runtime/pkg/policy"
 )
 
 func TestRewriteRegistry(t *testing.T) {
@@ -1207,6 +1208,7 @@ func TestRenderGatewayPolicyIncludesCrossNamespaceReferences(t *testing.T) {
 	mcpServer := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "payments", Namespace: "servers"},
 		Spec: mcpv1alpha1.MCPServerSpec{
+			TeamID: "team-payments",
 			Tools: []mcpv1alpha1.ToolConfig{
 				{Name: "refund_invoice", SideEffect: mcpv1alpha1.ToolSideEffectWrite},
 			},
@@ -1216,7 +1218,7 @@ func TestRenderGatewayPolicyIncludesCrossNamespaceReferences(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "grant-a", Namespace: "team-a"},
 		Spec: mcpv1alpha1.MCPAccessGrantSpec{
 			ServerRef: mcpv1alpha1.ServerReference{Name: "payments", Namespace: "servers"},
-			Subject:   mcpv1alpha1.SubjectRef{HumanID: "user-1"},
+			Subject:   mcpv1alpha1.SubjectRef{HumanID: "user-1", TeamID: "team-payments"},
 			AllowedSideEffects: []mcpv1alpha1.ToolSideEffect{
 				mcpv1alpha1.ToolSideEffectWrite,
 			},
@@ -1225,11 +1227,41 @@ func TestRenderGatewayPolicyIncludesCrossNamespaceReferences(t *testing.T) {
 			},
 		},
 	}
+	defaultedGrant := &mcpv1alpha1.MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant-default", Namespace: "team-a"},
+		Spec: mcpv1alpha1.MCPAccessGrantSpec{
+			ServerRef: mcpv1alpha1.ServerReference{Name: "payments", Namespace: "servers"},
+			Subject:   mcpv1alpha1.SubjectRef{HumanID: "user-3"},
+		},
+	}
+	foreignTeamGrant := &mcpv1alpha1.MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant-foreign", Namespace: "team-a"},
+		Spec: mcpv1alpha1.MCPAccessGrantSpec{
+			ServerRef: mcpv1alpha1.ServerReference{Name: "payments", Namespace: "servers"},
+			Subject:   mcpv1alpha1.SubjectRef{HumanID: "user-4", TeamID: "team-foreign"},
+		},
+	}
 	session := &mcpv1alpha1.MCPAgentSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-a", Namespace: "team-b"},
 		Spec: mcpv1alpha1.MCPAgentSessionSpec{
 			ServerRef:      mcpv1alpha1.ServerReference{Name: "payments", Namespace: "servers"},
-			Subject:        mcpv1alpha1.SubjectRef{AgentID: "agent-1"},
+			Subject:        mcpv1alpha1.SubjectRef{AgentID: "agent-1", TeamID: "team-payments"},
+			ConsentedTrust: mcpv1alpha1.TrustLevelMedium,
+		},
+	}
+	defaultedSession := &mcpv1alpha1.MCPAgentSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-default", Namespace: "team-b"},
+		Spec: mcpv1alpha1.MCPAgentSessionSpec{
+			ServerRef:      mcpv1alpha1.ServerReference{Name: "payments", Namespace: "servers"},
+			Subject:        mcpv1alpha1.SubjectRef{AgentID: "agent-2"},
+			ConsentedTrust: mcpv1alpha1.TrustLevelMedium,
+		},
+	}
+	foreignTeamSession := &mcpv1alpha1.MCPAgentSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-foreign", Namespace: "team-b"},
+		Spec: mcpv1alpha1.MCPAgentSessionSpec{
+			ServerRef:      mcpv1alpha1.ServerReference{Name: "payments", Namespace: "servers"},
+			Subject:        mcpv1alpha1.SubjectRef{AgentID: "agent-3", TeamID: "team-foreign"},
 			ConsentedTrust: mcpv1alpha1.TrustLevelMedium,
 		},
 	}
@@ -1243,7 +1275,7 @@ func TestRenderGatewayPolicyIncludesCrossNamespaceReferences(t *testing.T) {
 
 	client := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(mcpServer, grant, session, unrelatedGrant).
+		WithObjects(mcpServer, grant, defaultedGrant, foreignTeamGrant, session, defaultedSession, foreignTeamSession, unrelatedGrant).
 		Build()
 	r := MCPServerReconciler{Client: client, Scheme: scheme}
 
@@ -1254,20 +1286,47 @@ func TestRenderGatewayPolicyIncludesCrossNamespaceReferences(t *testing.T) {
 	if len(doc.Tools) != 1 || doc.Tools[0].SideEffect != "write" {
 		t.Fatalf("expected tool side effect to be rendered, got %+v", doc.Tools)
 	}
-	if len(doc.Grants) != 1 {
-		t.Fatalf("expected 1 matching grant, got %d", len(doc.Grants))
+	if doc.Server.TeamID != "team-payments" {
+		t.Fatalf("expected server teamID to be rendered, got %q", doc.Server.TeamID)
 	}
-	if doc.Grants[0].Name != "grant-a" {
-		t.Fatalf("expected cross-namespace grant to be rendered, got %+v", doc.Grants[0])
+	if len(doc.Grants) != 2 {
+		t.Fatalf("expected 2 matching grants, got %d: %+v", len(doc.Grants), doc.Grants)
 	}
-	if len(doc.Grants[0].AllowedSideEffects) != 1 || doc.Grants[0].AllowedSideEffects[0] != "write" {
-		t.Fatalf("expected grant side effects to be rendered, got %+v", doc.Grants[0].AllowedSideEffects)
+	grantsByName := make(map[string]policy.Grant, len(doc.Grants))
+	for _, grant := range doc.Grants {
+		grantsByName[grant.Name] = grant
 	}
-	if len(doc.Sessions) != 1 {
-		t.Fatalf("expected 1 matching session, got %d", len(doc.Sessions))
+	if _, ok := grantsByName["grant-foreign"]; ok {
+		t.Fatalf("foreign-team grant should not be rendered: %+v", doc.Grants)
 	}
-	if doc.Sessions[0].Name != "session-a" {
-		t.Fatalf("expected cross-namespace session to be rendered, got %+v", doc.Sessions[0])
+	renderedGrant, ok := grantsByName["grant-a"]
+	if !ok {
+		t.Fatalf("expected cross-namespace grant to be rendered, got %+v", doc.Grants)
+	}
+	if renderedGrant.TeamID != "team-payments" {
+		t.Fatalf("expected grant teamID to be rendered, got %+v", renderedGrant)
+	}
+	if defaulted := grantsByName["grant-default"]; defaulted.TeamID != "team-payments" {
+		t.Fatalf("expected missing grant teamID to default to server teamID, got %+v", defaulted)
+	}
+	if len(renderedGrant.AllowedSideEffects) != 1 || renderedGrant.AllowedSideEffects[0] != "write" {
+		t.Fatalf("expected grant side effects to be rendered, got %+v", renderedGrant.AllowedSideEffects)
+	}
+	if len(doc.Sessions) != 2 {
+		t.Fatalf("expected 2 matching sessions, got %d: %+v", len(doc.Sessions), doc.Sessions)
+	}
+	sessionsByName := make(map[string]policy.Binding, len(doc.Sessions))
+	for _, session := range doc.Sessions {
+		sessionsByName[session.Name] = session
+	}
+	if _, ok := sessionsByName["session-foreign"]; ok {
+		t.Fatalf("foreign-team session should not be rendered: %+v", doc.Sessions)
+	}
+	if renderedSession := sessionsByName["session-a"]; renderedSession.TeamID != "team-payments" {
+		t.Fatalf("expected session teamID to be rendered, got %+v", renderedSession)
+	}
+	if defaulted := sessionsByName["session-default"]; defaulted.TeamID != "team-payments" {
+		t.Fatalf("expected missing session teamID to default to server teamID, got %+v", defaulted)
 	}
 }
 

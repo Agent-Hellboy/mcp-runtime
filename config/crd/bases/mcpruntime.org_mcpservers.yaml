@@ -15,6 +15,9 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .spec.teamID
+      name: Team
+      type: string
     - jsonPath: .status.phase
       name: Phase
       type: string
@@ -107,6 +110,8 @@ spec:
                     - oauth
                     type: string
                   sessionIDHeader:
+                    type: string
+                  teamIDHeader:
                     type: string
                   tokenHeader:
                     type: string
@@ -386,6 +391,11 @@ spec:
                   - name
                   type: object
                 type: array
+              teamID:
+                description: |-
+                  TeamID is the stable platform team identifier that owns this server.
+                  The operator renders it into gateway policy and analytics events.
+                type: string
               tools:
                 description: Tools describes the MCP tool inventory exposed by the
                   server.

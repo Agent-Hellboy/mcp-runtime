@@ -48,7 +48,12 @@ spec:
 - `metadata.name`
   The server name inside the platform. This is also the default public route prefix when you do not override it.
 - `metadata.namespace`
-  Usually `mcp-servers`.
+  Usually `mcp-servers` for a single-team setup. In a multi-team deployment,
+  use the team's namespace, for example `mcp-team-acme`; see
+  [Multi-team isolation](multi-team.md).
+- `spec.teamID`
+  Stable platform team ID for the server owner. The platform API defaults this
+  for team namespaces; hand-written YAML should set it explicitly.
 - `spec.description`
   A short platform-facing summary shown in the server catalog.
 - `spec.image`
@@ -139,6 +144,13 @@ If fields are omitted, the loader applies defaults:
 - port defaults to `8088`
 - replicas default to `1`
 - namespace defaults to `mcp-servers`
+
+For multi-team deployments, set `namespace` in the metadata file or pass
+`pipeline deploy --namespace <team-namespace>` deliberately. The namespace is
+the write boundary for the generated `MCPServer`, grants, sessions, and secrets.
+Set `spec.teamID` / `subject.teamID` or use the platform API so it defaults
+those fields. Initialize that namespace first with `mcp-runtime team init
+<slug>` or the platform-backed `mcp-runtime team create <slug>` flow.
 
 Generate and deploy manifests:
 

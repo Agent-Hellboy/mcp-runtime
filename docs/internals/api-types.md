@@ -50,6 +50,12 @@ Status fields are operator-owned; user-facing commands should not mutate them.
 
 `MCPAccessGrant` and `MCPAgentSession` model gateway authorization state.
 
+`MCPServer.spec.teamID` records the owning platform team. `SubjectRef` carries
+`humanID`, `agentID`, and `teamID`; the gateway matches every non-empty subject
+field exactly, so a team-only subject can grant access to any authenticated
+principal from that team. Namespace/RBAC boundaries still decide who can write
+the resources; see [Multi-team isolation](../multi-team.md).
+
 `MCPAccessGrantSpec` binds a subject to an `MCPServer` and optionally sets:
 
 - `maxTrust`: administrative trust ceiling

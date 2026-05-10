@@ -99,14 +99,15 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	scopedNamespace, err := s.scopedNamespaceForPrincipal(r.Context(), req.Namespace)
+	scopedNamespace, err := s.scopedAccessWriteNamespaceForPrincipal(r.Context(), req.Namespace)
 	if err != nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 		return
 	}
 	req.Namespace = scopedNamespace
-	if strings.TrimSpace(req.ServerRef.Namespace) == "" {
-		req.ServerRef.Namespace = req.Namespace
+	if err := bindAccessServerRefNamespace(req.Namespace, &req.ServerRef); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -114,13 +115,18 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 
 	// serverRef is checked with a live Get, not a transaction with ApplyGrant. Another actor
 	// may delete the MCPServer after this call; the grant can still be written. Clients should retry on policy errors.
-	if err := s.accessMgr.AssertMCPServerRef(ctx, req.ServerRef); err != nil {
+	targetServer, err := s.accessMgr.GetMCPServerRef(ctx, req.ServerRef)
+	if err != nil {
 		if sentinelaccess.IsMCPServerNotFoundForRef(err) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		} else {
 			log.Printf("runtime grant: assert MCPServer ref failed: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to verify server reference"})
 		}
+		return
+	}
+	if err := s.bindAccessSubjectTeamID(r.Context(), req.Namespace, targetServer.Spec.TeamID, &req.Subject); err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -214,27 +220,33 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	scopedNamespace, err := s.scopedNamespaceForPrincipal(r.Context(), req.Namespace)
+	scopedNamespace, err := s.scopedAccessWriteNamespaceForPrincipal(r.Context(), req.Namespace)
 	if err != nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 		return
 	}
 	req.Namespace = scopedNamespace
-	if strings.TrimSpace(req.ServerRef.Namespace) == "" {
-		req.ServerRef.Namespace = req.Namespace
+	if err := bindAccessServerRefNamespace(req.Namespace, &req.ServerRef); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
 	// See handleRuntimeGrantApply: serverRef check is not transactional with the session write.
-	if err := s.accessMgr.AssertMCPServerRef(ctx, req.ServerRef); err != nil {
+	targetServer, err := s.accessMgr.GetMCPServerRef(ctx, req.ServerRef)
+	if err != nil {
 		if sentinelaccess.IsMCPServerNotFoundForRef(err) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		} else {
 			log.Printf("runtime session: assert MCPServer ref failed: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to verify server reference"})
 		}
+		return
+	}
+	if err := s.bindAccessSubjectTeamID(r.Context(), req.Namespace, targetServer.Spec.TeamID, &req.Subject); err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -347,7 +359,7 @@ func (s *RuntimeServer) handleGrantDelete(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
 		return
 	}
-	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), namespace)
+	namespace, err := s.scopedAccessWriteNamespaceForPrincipal(r.Context(), namespace)
 	if err != nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 		return
@@ -389,7 +401,7 @@ func (s *RuntimeServer) handleGrantToggle(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	namespace, nsErr := s.scopedNamespaceForPrincipal(r.Context(), namespace)
+	namespace, nsErr := s.scopedAccessWriteNamespaceForPrincipal(r.Context(), namespace)
 	if nsErr != nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": nsErr.Error()})
 		return
@@ -425,6 +437,7 @@ func validateGrantRequest(req *accessGrantRequest) error {
 	req.ServerRef.Namespace = strings.TrimSpace(req.ServerRef.Namespace)
 	req.Subject.HumanID = strings.TrimSpace(req.Subject.HumanID)
 	req.Subject.AgentID = strings.TrimSpace(req.Subject.AgentID)
+	req.Subject.TeamID = strings.TrimSpace(req.Subject.TeamID)
 	req.PolicyVersion = defaultPolicyVersion(req.PolicyVersion)
 	req.MaxTrust = normalizeTrust(req.MaxTrust)
 	if err := sentinelaccess.ValidateResourceName("name", req.Name); err != nil {
@@ -439,8 +452,11 @@ func validateGrantRequest(req *accessGrantRequest) error {
 	if err := sentinelaccess.ValidateOptionalResourceName("serverRef.namespace", req.ServerRef.Namespace); err != nil {
 		return err
 	}
-	if req.Subject.HumanID == "" && req.Subject.AgentID == "" {
-		return errors.New("either subject.humanID or subject.agentID is required")
+	if req.Subject.HumanID == "" && req.Subject.AgentID == "" && req.Subject.TeamID == "" {
+		return errors.New("one of subject.humanID, subject.agentID, or subject.teamID is required")
+	}
+	if err := validateTeamIDValue("subject.teamID", req.Subject.TeamID); err != nil {
+		return err
 	}
 	if req.MaxTrust != "" && !validTrust(req.MaxTrust) {
 		return errors.New("maxTrust must be low, medium, or high")
@@ -483,6 +499,7 @@ func validateSessionRequest(req *accessSessionRequest) error {
 	req.ServerRef.Namespace = strings.TrimSpace(req.ServerRef.Namespace)
 	req.Subject.HumanID = strings.TrimSpace(req.Subject.HumanID)
 	req.Subject.AgentID = strings.TrimSpace(req.Subject.AgentID)
+	req.Subject.TeamID = strings.TrimSpace(req.Subject.TeamID)
 	req.PolicyVersion = defaultPolicyVersion(req.PolicyVersion)
 	req.ConsentedTrust = normalizeTrust(req.ConsentedTrust)
 	if err := sentinelaccess.ValidateResourceName("name", req.Name); err != nil {
@@ -497,8 +514,11 @@ func validateSessionRequest(req *accessSessionRequest) error {
 	if err := sentinelaccess.ValidateOptionalResourceName("serverRef.namespace", req.ServerRef.Namespace); err != nil {
 		return err
 	}
-	if req.Subject.HumanID == "" && req.Subject.AgentID == "" {
-		return errors.New("either subject.humanID or subject.agentID is required")
+	if req.Subject.HumanID == "" && req.Subject.AgentID == "" && req.Subject.TeamID == "" {
+		return errors.New("one of subject.humanID, subject.agentID, or subject.teamID is required")
+	}
+	if err := validateTeamIDValue("subject.teamID", req.Subject.TeamID); err != nil {
+		return err
 	}
 	if req.ConsentedTrust != "" && !validTrust(req.ConsentedTrust) {
 		return errors.New("consentedTrust must be low, medium, or high")
@@ -636,7 +656,7 @@ func (s *RuntimeServer) handleSessionDelete(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
 		return
 	}
-	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), namespace)
+	namespace, err := s.scopedAccessWriteNamespaceForPrincipal(r.Context(), namespace)
 	if err != nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 		return
@@ -678,7 +698,7 @@ func (s *RuntimeServer) handleSessionToggle(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	namespace, nsErr := s.scopedNamespaceForPrincipal(r.Context(), namespace)
+	namespace, nsErr := s.scopedAccessWriteNamespaceForPrincipal(r.Context(), namespace)
 	if nsErr != nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": nsErr.Error()})
 		return
@@ -726,4 +746,81 @@ func (s *RuntimeServer) scopedNamespaceForPrincipal(ctx context.Context, request
 		return "", errors.New("forbidden namespace")
 	}
 	return requested, nil
+}
+
+func (s *RuntimeServer) scopedAccessWriteNamespaceForPrincipal(ctx context.Context, requested string) (string, error) {
+	namespace, err := s.scopedNamespaceForPrincipal(ctx, requested)
+	if err != nil {
+		return "", err
+	}
+	p, ok := principalFromContext(ctx)
+	if ok && p.Role != roleAdmin && namespace == sharedCatalogNamespace {
+		return "", errors.New("shared catalog namespace is read-only for access resources")
+	}
+	return namespace, nil
+}
+
+func bindAccessServerRefNamespace(resourceNamespace string, serverRef *sentinelaccess.ServerReference) error {
+	resourceNamespace = defaultAccessNamespace(resourceNamespace)
+	serverRef.Namespace = strings.TrimSpace(serverRef.Namespace)
+	if serverRef.Namespace == "" {
+		serverRef.Namespace = resourceNamespace
+		return nil
+	}
+	if serverRef.Namespace != resourceNamespace {
+		return fmt.Errorf("serverRef.namespace %q must match access resource namespace %q", serverRef.Namespace, resourceNamespace)
+	}
+	return nil
+}
+
+func (s *RuntimeServer) bindAccessSubjectTeamID(ctx context.Context, namespace, serverTeamID string, subject *sentinelaccess.SubjectRef) error {
+	subject.TeamID = strings.TrimSpace(subject.TeamID)
+	serverTeamID = strings.TrimSpace(serverTeamID)
+	namespaceTeamID := strings.TrimSpace(s.teamIDForPrincipalNamespace(ctx, namespace))
+	if subject.TeamID == "" {
+		subject.TeamID = firstNonEmpty(serverTeamID, namespaceTeamID)
+	}
+	if err := validateTeamIDValue("subject.teamID", subject.TeamID); err != nil {
+		return err
+	}
+	if serverTeamID != "" && subject.TeamID != serverTeamID {
+		return fmt.Errorf("subject.teamID %q must match MCPServer spec.teamID %q", subject.TeamID, serverTeamID)
+	}
+	p, ok := principalFromContext(ctx)
+	if ok && p.Role != roleAdmin && namespaceTeamID != "" && subject.TeamID != namespaceTeamID {
+		return fmt.Errorf("subject.teamID %q is outside principal team %q", subject.TeamID, namespaceTeamID)
+	}
+	if ok && p.Role != roleAdmin && namespaceTeamID == "" && subject.TeamID != "" {
+		return errors.New("subject.teamID is only allowed in a team namespace")
+	}
+	return nil
+}
+
+func (s *RuntimeServer) teamIDForPrincipalNamespace(ctx context.Context, namespace string) string {
+	namespace = strings.TrimSpace(namespace)
+	if p, ok := principalFromContext(ctx); ok {
+		if team, found := p.TeamForNamespace(namespace); found {
+			return strings.TrimSpace(team.ID)
+		}
+	}
+	if s != nil && s.platform != nil && namespace != "" {
+		if record, found, err := s.platform.GetNamespace(ctx, namespace); err == nil && found {
+			return strings.TrimSpace(fmt.Sprint(record["team_id"]))
+		}
+	}
+	return ""
+}
+
+func validateTeamIDValue(name, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if strings.ContainsAny(value, " \t\r\n") {
+		return fmt.Errorf("%s must not contain whitespace", name)
+	}
+	if len(value) > 128 {
+		return fmt.Errorf("%s must be at most 128 characters", name)
+	}
+	return nil
 }

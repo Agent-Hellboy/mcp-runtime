@@ -25,6 +25,7 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 		},
 		Spec: mcpv1alpha1.MCPServerSpec{
 			Description: server.Description,
+			TeamID:      server.TeamID,
 			Image:       server.Image,
 			ImageTag:    server.ImageTag,
 			Port:        server.Port,
@@ -99,6 +100,7 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 			Mode:            mcpv1alpha1.AuthMode(server.Auth.Mode),
 			HumanIDHeader:   server.Auth.HumanIDHeader,
 			AgentIDHeader:   server.Auth.AgentIDHeader,
+			TeamIDHeader:    server.Auth.TeamIDHeader,
 			SessionIDHeader: server.Auth.SessionIDHeader,
 			TokenHeader:     server.Auth.TokenHeader,
 			IssuerURL:       server.Auth.IssuerURL,

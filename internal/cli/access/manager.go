@@ -169,6 +169,7 @@ func (m *AccessManager) getAccessPlatform(ctx context.Context, plat *platformapi
 
 // ApplyAccessResource applies a grant or session manifest via platform API or kubectl.
 func (m *AccessManager) ApplyAccessResource(file string) error {
+	m.warnAccessManifest(file)
 	plat, kube, err := platformapi.ResolvePlatformOrKube(m.useKube)
 	if err != nil {
 		return err
@@ -189,6 +190,17 @@ func (m *AccessManager) ApplyAccessResource(file string) error {
 		})
 	}
 	return nil
+}
+
+func (m *AccessManager) warnAccessManifest(file string) {
+	warnings, err := accessManifestWarningsFromFile(file)
+	if err != nil {
+		core.Warn(fmt.Sprintf("Could not inspect %s for access identity warnings: %v", file, err))
+		return
+	}
+	for _, warning := range warnings {
+		core.Warn(warning)
+	}
 }
 
 // DeleteAccessResource deletes a grant or session via platform API or kubectl.

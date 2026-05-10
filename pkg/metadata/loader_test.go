@@ -43,6 +43,7 @@ func TestLoadFromFile(t *testing.T) {
 						Port:        9090,
 						Replicas:    int32Ptr(3),
 						Namespace:   "custom-namespace",
+						TeamID:      "team-custom",
 						Gateway: &GatewayConfig{
 							Enabled:     true,
 							Image:       "example.com/mcp-proxy:latest",
@@ -53,6 +54,7 @@ func TestLoadFromFile(t *testing.T) {
 							Mode:            AuthMode("header"),
 							HumanIDHeader:   "X-MCP-Human-ID",
 							AgentIDHeader:   "X-MCP-Agent-ID",
+							TeamIDHeader:    "X-Team-ID",
 							SessionIDHeader: "X-MCP-Agent-Session",
 							TokenHeader:     "Authorization",
 						},
@@ -160,6 +162,9 @@ func TestLoadFromFile(t *testing.T) {
 				}
 				if got.Namespace != want.Namespace {
 					t.Errorf("server[%d].Namespace = %q, want %q", i, got.Namespace, want.Namespace)
+				}
+				if got.TeamID != want.TeamID {
+					t.Errorf("server[%d].TeamID = %q, want %q", i, got.TeamID, want.TeamID)
 				}
 				if !gatewayConfigEqual(got.Gateway, want.Gateway) {
 					t.Errorf("server[%d].Gateway = %#v, want %#v", i, got.Gateway, want.Gateway)
@@ -281,6 +286,7 @@ func TestSetDefaults(t *testing.T) {
 					Mode:            AuthModeHeader,
 					HumanIDHeader:   "X-MCP-Human-ID",
 					AgentIDHeader:   "X-MCP-Agent-ID",
+					TeamIDHeader:    "X-MCP-Team-ID",
 					SessionIDHeader: "X-MCP-Agent-Session",
 					TokenHeader:     "Authorization",
 				},

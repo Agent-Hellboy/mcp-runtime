@@ -7,6 +7,7 @@ import mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 type ServerInfo struct {
 	Name        string                      `json:"name"`
 	Namespace   string                      `json:"namespace"`
+	TeamID      string                      `json:"team_id,omitempty"`
 	Description string                      `json:"description,omitempty"`
 	Ready       string                      `json:"ready"`
 	Status      string                      `json:"status"`

@@ -93,6 +93,9 @@ type ServerMetadata struct {
 	// Namespace is the Kubernetes namespace (defaults to "mcp-servers").
 	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
 
+	// TeamID is the stable platform team identifier that owns the server.
+	TeamID string `yaml:"teamID,omitempty" json:"teamID,omitempty"`
+
 	// Tools describes the MCP tool inventory exposed by the server.
 	Tools []ToolConfig `yaml:"tools,omitempty" json:"tools,omitempty"`
 
@@ -169,6 +172,7 @@ type AuthConfig struct {
 	Mode            AuthMode `yaml:"mode,omitempty" json:"mode,omitempty"`
 	HumanIDHeader   string   `yaml:"humanIDHeader,omitempty" json:"humanIDHeader,omitempty"`
 	AgentIDHeader   string   `yaml:"agentIDHeader,omitempty" json:"agentIDHeader,omitempty"`
+	TeamIDHeader    string   `yaml:"teamIDHeader,omitempty" json:"teamIDHeader,omitempty"`
 	SessionIDHeader string   `yaml:"sessionIDHeader,omitempty" json:"sessionIDHeader,omitempty"`
 	TokenHeader     string   `yaml:"tokenHeader,omitempty" json:"tokenHeader,omitempty"`
 	IssuerURL       string   `yaml:"issuerURL,omitempty" json:"issuerURL,omitempty"`

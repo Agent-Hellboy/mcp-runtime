@@ -19,6 +19,7 @@ The runtime is the Kubernetes-native control plane for MCP servers. It owns the 
 ```mermaid
 classDiagram
     class MCPServer {
+      +teamID
       +image, imageTag
       +port, publicPathPrefix
       +ingressHost, ingressPath
@@ -31,7 +32,7 @@ classDiagram
     }
     class MCPAccessGrant {
       +serverRef
-      +subject (humanID, agentID)
+      +subject (humanID, agentID, teamID)
       +maxTrust
       +allowedSideEffects[]
       +toolRules[]
@@ -78,6 +79,9 @@ For every `MCPServer`, the operator reconciles:
 - Container port defaults to `8088`, service port to `80`.
 - Gateway listens on `8091`.
 - `setup` provisions the `mcp-runtime` and `mcp-servers` namespaces.
+- `mcp-servers` is the default single-team namespace; multi-team deployments
+  should place runtime CRDs in per-team namespaces and rely on Kubernetes RBAC
+  and ingress watch configuration for isolation.
 - Default ingress class is `traefik`; override via `spec.ingressClass`.
 
 ## Topology
@@ -126,11 +130,12 @@ flowchart LR
 
 ### Gateway headers
 
-These header names are defaults; override via `spec.auth.{humanIDHeader,agentIDHeader,sessionIDHeader}`.
+These header names are defaults; override via `spec.auth.{humanIDHeader,agentIDHeader,teamIDHeader,sessionIDHeader}`.
 
 ```text
 X-MCP-Human-ID:    user-123
 X-MCP-Agent-ID:    ops-agent
+X-MCP-Team-ID:     7d0a0b8f-7c25-4761-a632-3cf0108e31d6
 X-MCP-Agent-Session: sess-8f1b9d
 ```
 

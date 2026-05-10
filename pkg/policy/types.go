@@ -18,6 +18,7 @@ type Document struct {
 type Server struct {
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
+	TeamID    string `json:"team_id,omitempty"`
 	Cluster   string `json:"cluster,omitempty"`
 }
 
@@ -26,6 +27,7 @@ type Auth struct {
 	Mode            string `json:"mode,omitempty"`
 	HumanIDHeader   string `json:"human_id_header,omitempty"`
 	AgentIDHeader   string `json:"agent_id_header,omitempty"`
+	TeamIDHeader    string `json:"team_id_header,omitempty"`
 	SessionIDHeader string `json:"session_id_header,omitempty"`
 	TokenHeader     string `json:"token_header,omitempty"`
 	IssuerURL       string `json:"issuer_url,omitempty"`
@@ -64,6 +66,7 @@ type Grant struct {
 	Name               string       `json:"name"`
 	HumanID            string       `json:"human_id,omitempty"`
 	AgentID            string       `json:"agent_id,omitempty"`
+	TeamID             string       `json:"team_id,omitempty"`
 	MaxTrust           string       `json:"max_trust,omitempty"`
 	AllowedSideEffects []string     `json:"allowed_side_effects,omitempty"`
 	PolicyVersion      string       `json:"policy_version,omitempty"`
@@ -76,6 +79,7 @@ type Binding struct {
 	Name             string `json:"name"`
 	HumanID          string `json:"human_id,omitempty"`
 	AgentID          string `json:"agent_id,omitempty"`
+	TeamID           string `json:"team_id,omitempty"`
 	ConsentedTrust   string `json:"consented_trust,omitempty"`
 	Revoked          bool   `json:"revoked,omitempty"`
 	ExpiresAt        string `json:"expires_at,omitempty"`

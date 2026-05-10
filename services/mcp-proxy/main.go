@@ -65,6 +65,7 @@ func main() {
 		clusterName:           strings.TrimSpace(os.Getenv("MCP_CLUSTER_NAME")),
 		defaultHumanHeader:    serviceutil.EnvOr("HUMAN_ID_HEADER", defaultHumanHeader),
 		defaultAgentHeader:    serviceutil.EnvOr("AGENT_ID_HEADER", defaultAgentHeader),
+		defaultTeamHeader:     serviceutil.EnvOr("TEAM_ID_HEADER", defaultTeamHeader),
 		defaultSessionHeader:  serviceutil.EnvOr("SESSION_ID_HEADER", defaultSessionHeader),
 		defaultPolicyMode:     serviceutil.EnvOr("POLICY_MODE", defaultPolicyMode),
 		defaultPolicyDecision: serviceutil.EnvOr("POLICY_DEFAULT_DECISION", defaultPolicyDecision),

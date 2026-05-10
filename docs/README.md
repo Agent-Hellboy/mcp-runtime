@@ -77,8 +77,8 @@ allow/deny rules, side-effect allowances, trust requirements, consented trust,
 expiry, and revocation.
 
 Each decision can emit audit and analytics events with the server, namespace,
-human ID, agent ID, session ID, tool name, policy version, decision, reason, and
-trust and side-effect context. That gives platform and security teams a
+team ID, human ID, agent ID, session ID, tool name, policy version, decision,
+reason, and trust and side-effect context. That gives platform and security teams a
 queryable record for reviewing access, investigating denied calls, and preparing
 compliance evidence for governed agent workflows.
 
@@ -136,6 +136,12 @@ DNS, ingress, TLS, and k3s configuration, start with
   <span>Gateway policy, grant/session evaluation, analytics, audit events, and dashboard services.</span>
 </a>
 
+<a class="docs-card" href="multi-team/">
+  <span class="docs-card-kicker">Tenancy</span>
+  <strong>Multi-team isolation</strong>
+  <span>Use namespaces, RBAC, and naming conventions for team boundaries without adding team fields to runtime CRDs.</span>
+</a>
+
 <a class="docs-card" href="cli/">
   <span class="docs-card-kicker">CLI</span>
   <strong>Command reference</strong>
@@ -161,6 +167,7 @@ DNS, ingress, TLS, and k3s configuration, start with
 |---|---|
 | Evaluate MCP Runtime for a private MCP platform | [Getting started](getting-started.md), then [Architecture](architecture.md) |
 | Run MCP Runtime on a real cluster | [Cluster readiness](cluster-readiness.md), then [Runtime](runtime.md) |
+| Host multiple teams on one cluster | [Multi-team isolation](multi-team.md), then [CLI](cli.md) |
 | Govern tools and sessions | [Sentinel](sentinel.md), then [API reference](api.md) |
 | Integrate from automation | [CLI](cli.md), then [API reference](api.md) |
 | Work on the codebase | [Internals](internals/README.md) |

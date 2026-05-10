@@ -98,6 +98,9 @@ func (s *proxyServer) loadPolicy() (*policypkg.Document, error) {
 	if doc.Auth.AgentIDHeader == "" {
 		doc.Auth.AgentIDHeader = s.defaultAgentHeader
 	}
+	if doc.Auth.TeamIDHeader == "" {
+		doc.Auth.TeamIDHeader = s.defaultTeamHeader
+	}
 	if doc.Auth.SessionIDHeader == "" {
 		doc.Auth.SessionIDHeader = s.defaultSessionHeader
 	}
@@ -117,10 +120,11 @@ func (s *proxyServer) loadPolicy() (*policypkg.Document, error) {
 }
 
 func (s *proxyServer) extractIdentity(r *http.Request, policy *policypkg.Document) identityContext {
-	humanHeader, agentHeader, sessionHeader := s.identityHeaderNames(policy)
+	humanHeader, agentHeader, teamHeader, sessionHeader := s.identityHeaderNames(policy)
 	return identityContext{
 		HumanID:   strings.TrimSpace(r.Header.Get(humanHeader)),
 		AgentID:   strings.TrimSpace(r.Header.Get(agentHeader)),
+		TeamID:    strings.TrimSpace(r.Header.Get(teamHeader)),
 		SessionID: strings.TrimSpace(r.Header.Get(sessionHeader)),
 	}
 }
@@ -129,6 +133,7 @@ func policyIdentity(identity identityContext) policypkg.Identity {
 	return policypkg.Identity{
 		HumanID:   identity.HumanID,
 		AgentID:   identity.AgentID,
+		TeamID:    identity.TeamID,
 		SessionID: identity.SessionID,
 	}
 }
@@ -144,6 +149,7 @@ func (s *proxyServer) defaultPolicyDocument() *policypkg.Document {
 			Mode:            "header",
 			HumanIDHeader:   s.defaultHumanHeader,
 			AgentIDHeader:   s.defaultAgentHeader,
+			TeamIDHeader:    s.defaultTeamHeader,
 			SessionIDHeader: s.defaultSessionHeader,
 			TokenHeader:     defaultTokenHeader,
 		},

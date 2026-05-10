@@ -257,6 +257,7 @@ type AuthConfig struct {
 	Mode            AuthMode `json:"mode,omitempty"`
 	HumanIDHeader   string   `json:"humanIDHeader,omitempty"`
 	AgentIDHeader   string   `json:"agentIDHeader,omitempty"`
+	TeamIDHeader    string   `json:"teamIDHeader,omitempty"`
 	SessionIDHeader string   `json:"sessionIDHeader,omitempty"`
 	TokenHeader     string   `json:"tokenHeader,omitempty"`
 	IssuerURL       string   `json:"issuerURL,omitempty"`
@@ -821,6 +822,10 @@ func (in *MCPServerList) DeepCopyObject() runtime.Object
 <a id="api-types-type-mcpserverspec-struct"></a>
 ```text
 type MCPServerSpec struct {
+	// TeamID is the stable platform team identifier that owns this server.
+	// The operator renders it into gateway policy and analytics events.
+	TeamID string `json:"teamID,omitempty"`
+
 	// Description is a human-readable summary of what the MCP server provides.
 	Description string `json:"description,omitempty"`
 
@@ -1238,6 +1243,9 @@ func (in *SessionConfig) DeepCopyInto(out *SessionConfig)
 type SubjectRef struct {
 	HumanID string `json:"humanID,omitempty"`
 	AgentID string `json:"agentID,omitempty"`
+	// TeamID constrains the subject to a stable platform team identifier.
+	// A subject with only teamID grants or binds any authenticated principal in that team.
+	TeamID string `json:"teamID,omitempty"`
 }
     SubjectRef identifies the human and optional agent a grant or session
     applies to. +kubebuilder:object:generate=true
@@ -1495,6 +1503,7 @@ type AuthConfig struct {
 	Mode            AuthMode `yaml:"mode,omitempty" json:"mode,omitempty"`
 	HumanIDHeader   string   `yaml:"humanIDHeader,omitempty" json:"humanIDHeader,omitempty"`
 	AgentIDHeader   string   `yaml:"agentIDHeader,omitempty" json:"agentIDHeader,omitempty"`
+	TeamIDHeader    string   `yaml:"teamIDHeader,omitempty" json:"teamIDHeader,omitempty"`
 	SessionIDHeader string   `yaml:"sessionIDHeader,omitempty" json:"sessionIDHeader,omitempty"`
 	TokenHeader     string   `yaml:"tokenHeader,omitempty" json:"tokenHeader,omitempty"`
 	IssuerURL       string   `yaml:"issuerURL,omitempty" json:"issuerURL,omitempty"`
@@ -1719,6 +1728,9 @@ type ServerMetadata struct {
 
 	// Namespace is the Kubernetes namespace (defaults to "mcp-servers").
 	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
+
+	// TeamID is the stable platform team identifier that owns the server.
+	TeamID string `yaml:"teamID,omitempty" json:"teamID,omitempty"`
 
 	// Tools describes the MCP tool inventory exposed by the server.
 	Tools []ToolConfig `yaml:"tools,omitempty" json:"tools,omitempty"`
