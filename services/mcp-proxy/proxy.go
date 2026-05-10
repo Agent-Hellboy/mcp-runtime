@@ -21,6 +21,7 @@ func newUpstreamReverseProxy(target *url.URL) *httputil.ReverseProxy {
 		Rewrite: func(req *httputil.ProxyRequest) {
 			req.SetURL(target)
 			req.Out.Host = target.Host
+			req.SetXForwarded()
 		},
 	}
 	return proxy

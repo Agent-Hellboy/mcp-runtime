@@ -205,12 +205,14 @@ func TestApplyUpstreamTokenClearsHeaderWhenTokenMissing(t *testing.T) {
 	}
 }
 
-func TestHandleProxyRewritesUpstreamHostHeader(t *testing.T) {
+func TestHandleProxyRewritesUpstreamHostAndForwardedHeaders(t *testing.T) {
 	t.Parallel()
 
 	var upstreamHost string
+	var upstreamHeaders http.Header
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamHost = r.Host
+		upstreamHeaders = r.Header.Clone()
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(upstreamServer.Close)
@@ -243,6 +245,15 @@ func TestHandleProxyRewritesUpstreamHostHeader(t *testing.T) {
 	}
 	if upstreamHost != target.Host {
 		t.Fatalf("upstream host = %q, want %q", upstreamHost, target.Host)
+	}
+	if got := upstreamHeaders.Get("X-Forwarded-Host"); got != "policy.example.local" {
+		t.Fatalf("X-Forwarded-Host = %q, want %q", got, "policy.example.local")
+	}
+	if got := upstreamHeaders.Get("X-Forwarded-Proto"); got != "http" {
+		t.Fatalf("X-Forwarded-Proto = %q, want %q", got, "http")
+	}
+	if got := upstreamHeaders.Get("X-Forwarded-For"); got != "192.0.2.1" {
+		t.Fatalf("X-Forwarded-For = %q, want %q", got, "192.0.2.1")
 	}
 }
 

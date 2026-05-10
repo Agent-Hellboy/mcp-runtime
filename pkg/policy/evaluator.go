@@ -85,8 +85,7 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 		sessionFound = false
 	}
 
-	requiredTrust := resolveToolTrust(tools, request.ToolName)
-	requiredSideEffect := resolveToolSideEffect(tools, request.ToolName)
+	requiredTrust, requiredSideEffect := resolveToolMetadata(tools, request.ToolName)
 	requiredRank := TrustRank(requiredTrust)
 	matchingGrants := matchingGrants(grants, identity)
 	if len(matchingGrants) == 0 {
@@ -251,22 +250,17 @@ func subjectMatches(humanID, agentID string, identity Identity) bool {
 	return humanID != "" || agentID != ""
 }
 
-func resolveToolTrust(tools []Tool, toolName string) string {
-	for _, tool := range tools {
-		if tool.Name == toolName && tool.RequiredTrust != "" {
-			return NormalizeTrust(tool.RequiredTrust)
-		}
-	}
-	return TrustLevelLow
-}
-
-func resolveToolSideEffect(tools []Tool, toolName string) string {
+func resolveToolMetadata(tools []Tool, toolName string) (string, string) {
+	requiredTrust := TrustLevelLow
 	for _, tool := range tools {
 		if tool.Name == toolName {
-			return NormalizeSideEffect(tool.SideEffect)
+			if tool.RequiredTrust != "" {
+				requiredTrust = NormalizeTrust(tool.RequiredTrust)
+			}
+			return requiredTrust, NormalizeSideEffect(tool.SideEffect)
 		}
 	}
-	return ""
+	return requiredTrust, ""
 }
 
 func policyVersionOrDefault(policy *Document, def string) string {
