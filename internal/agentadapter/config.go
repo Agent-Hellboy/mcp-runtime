@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"time"
 )
 
 const (
@@ -21,12 +20,11 @@ const (
 	DefaultListenAddr      = "127.0.0.1:8099"
 	DefaultProtocolVersion = "2025-06-18"
 
-	HumanIDHeader          = "X-MCP-Human-ID"
-	AgentIDHeader          = "X-MCP-Agent-ID"
-	AgentSessionHeader     = "X-MCP-Agent-Session"
-	MCPProtocolHeader      = "Mcp-Protocol-Version"
-	MCPSessionHeader       = "Mcp-Session-Id"
-	defaultHTTPClientLimit = 60 * time.Second
+	HumanIDHeader      = "X-MCP-Human-ID"
+	AgentIDHeader      = "X-MCP-Agent-ID"
+	AgentSessionHeader = "X-MCP-Agent-Session"
+	MCPProtocolHeader  = "Mcp-Protocol-Version"
+	MCPSessionHeader   = "Mcp-Session-Id"
 )
 
 type envLookup func(string) string
@@ -60,7 +58,6 @@ func loadConfig(lookup envLookup, includeListen bool) (Config, error) {
 		SessionID:       strings.TrimSpace(lookup(EnvSessionID)),
 		HostHeader:      strings.TrimSpace(lookup(EnvHostHeader)),
 		ProtocolVersion: strings.TrimSpace(lookup(EnvProtocolVersion)),
-		HTTPClient:      &http.Client{Timeout: defaultHTTPClientLimit},
 	}
 	if cfg.ProtocolVersion == "" {
 		cfg.ProtocolVersion = DefaultProtocolVersion

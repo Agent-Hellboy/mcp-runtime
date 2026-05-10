@@ -165,10 +165,57 @@ func TestRunStdioShimDoesNotWriteResponseForNotificationAcceptedByHTTP(t *testin
 	}
 }
 
-func TestDecodeSSEDataMessages(t *testing.T) {
+func TestRunStdioShimReturnsParseErrorForMalformedJSON(t *testing.T) {
 	t.Parallel()
 
-	messages := decodeSSEDataMessages([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n"))
+	upstreamCalled := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalled = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(upstream.Close)
+
+	runtimeURL, err := url.Parse(upstream.URL + "/go-example-mcp/mcp")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	var output bytes.Buffer
+	err = RunStdioShim(context.Background(), Config{
+		RuntimeURL: runtimeURL,
+		HumanID:    "human-1",
+		AgentID:    "agent-1",
+		SessionID:  "session-1",
+		HTTPClient: upstream.Client(),
+	}, StdioOptions{
+		Stdin:  strings.NewReader("{not-json\n"),
+		Stdout: &output,
+	})
+	if err != nil {
+		t.Fatalf("RunStdioShim() error = %v", err)
+	}
+	if upstreamCalled {
+		t.Fatal("malformed JSON should not be forwarded upstream")
+	}
+
+	var response rpcErrorResponse
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &response); err != nil {
+		t.Fatalf("Unmarshal() error = %v; output=%s", err, output.String())
+	}
+	if string(response.ID) != "null" {
+		t.Fatalf("id = %s, want null", response.ID)
+	}
+	if response.Error.Code != -32700 {
+		t.Fatalf("error code = %d, want -32700", response.Error.Code)
+	}
+	if response.Error.Message != "parse error" {
+		t.Fatalf("error message = %q, want parse error", response.Error.Message)
+	}
+}
+
+func TestDecodeStreamableHTTPEventMessages(t *testing.T) {
+	t.Parallel()
+
+	messages := decodeStreamableHTTPEventMessages([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n"))
 	if len(messages) != 1 {
 		t.Fatalf("messages = %#v, want one message", messages)
 	}

@@ -7,6 +7,12 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
+)
+
+const (
+	proxyReadHeaderTimeout = 5 * time.Second
+	proxyShutdownTimeout   = 10 * time.Second
 )
 
 // NewHTTPProxyHandler returns a reverse proxy that forwards MCP HTTP traffic to
@@ -47,8 +53,9 @@ func RunHTTPProxy(ctx context.Context, cfg Config) error {
 		return err
 	}
 	server := &http.Server{
-		Addr:    cfg.ListenAddr,
-		Handler: handler,
+		Addr:              cfg.ListenAddr,
+		Handler:           handler,
+		ReadHeaderTimeout: proxyReadHeaderTimeout,
 	}
 
 	errCh := make(chan error, 1)
@@ -58,7 +65,7 @@ func RunHTTPProxy(ctx context.Context, cfg Config) error {
 
 	select {
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultHTTPClientLimit)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), proxyShutdownTimeout)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			return err

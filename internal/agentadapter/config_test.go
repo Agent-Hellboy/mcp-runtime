@@ -57,3 +57,21 @@ func TestLoadProxyConfigAppliesDefaults(t *testing.T) {
 		t.Fatalf("ProtocolVersion = %q, want %q", cfg.ProtocolVersion, DefaultProtocolVersion)
 	}
 }
+
+func TestLoadShimConfigDoesNotSetDefaultHTTPTimeout(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		EnvRuntimeURL: "http://localhost:18080/demo/mcp",
+		EnvHumanID:    "human-1",
+		EnvAgentID:    "agent-1",
+		EnvSessionID:  "session-1",
+	}
+	cfg, err := loadConfig(func(key string) string { return env[key] }, false)
+	if err != nil {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+	if cfg.HTTPClient != nil {
+		t.Fatalf("HTTPClient = %#v, want nil so stdio shim uses an unbounded default client", cfg.HTTPClient)
+	}
+}

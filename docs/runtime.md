@@ -144,6 +144,10 @@ identity/session headers. They do not create grants or sessions and do not
 evaluate policy; the gateway still enforces `MCPAccessGrant` and
 `MCPAgentSession` on the request path.
 
+These adapters expose only the two standard MCP transports: Streamable HTTP and
+stdio. Event-stream handling is an internal Streamable HTTP response parser, not
+a separate legacy HTTP+SSE transport.
+
 See [Agent Adapters](agent-adapters.md) for build commands and integration
 examples.
 

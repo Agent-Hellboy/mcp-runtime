@@ -13,6 +13,12 @@ create sessions, evaluate policy, or bypass the gateway. Platform admins still
 grant access through `MCPAccessGrant` and `MCPAgentSession`; the gateway remains
 the enforcement point.
 
+The adapter surface is intentionally limited to stdio and Streamable HTTP, the
+two standard MCP transports. There is no separate legacy HTTP+SSE adapter. When
+the docs or code mention `text/event-stream`, that is only because Streamable
+HTTP allows a server to return a JSON response or an event-stream response for
+the same request, and clients are expected to handle both response shapes.
+
 ## Build
 
 ```bash

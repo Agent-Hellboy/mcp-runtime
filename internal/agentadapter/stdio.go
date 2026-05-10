@@ -16,6 +16,8 @@ const (
 	maxHTTPResponseBytes = 32 << 20
 )
 
+var eventStreamDataPrefix = []byte("data:")
+
 type StdioOptions struct {
 	Stdin  io.Reader
 	Stdout io.Writer
@@ -64,7 +66,7 @@ func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error {
 		return fmt.Errorf("stdout is required")
 	}
 	if cfg.HTTPClient == nil {
-		cfg.HTTPClient = &http.Client{Timeout: defaultHTTPClientLimit}
+		cfg.HTTPClient = &http.Client{}
 	}
 	if strings.TrimSpace(cfg.ProtocolVersion) == "" {
 		cfg.ProtocolVersion = DefaultProtocolVersion
@@ -103,7 +105,10 @@ func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error {
 }
 
 func (s *stdioShim) forward(ctx context.Context, payload []byte) ([][]byte, error) {
-	envelope, hasResponseID, _ := parseRPCEnvelope(payload)
+	envelope, hasResponseID, parseErr := parseRPCEnvelope(payload)
+	if parseErr != nil {
+		return [][]byte{jsonRPCParseError(parseErr.Error())}, nil
+	}
 	if envelope.Method == "initialize" {
 		if protocolVersion := protocolVersionFromInitialize(envelope.Params); protocolVersion != "" {
 			s.protocolVersion = protocolVersion
@@ -166,7 +171,7 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte) ([][]byte, erro
 		return nil, nil
 	}
 	if strings.Contains(strings.ToLower(resp.Header.Get("content-type")), "text/event-stream") {
-		return decodeSSEDataMessages(body), nil
+		return decodeStreamableHTTPEventMessages(body), nil
 	}
 	return [][]byte{body}, nil
 }
@@ -255,7 +260,26 @@ func jsonRPCHTTPError(id json.RawMessage, status int, message string, payload []
 	return encoded
 }
 
-func decodeSSEDataMessages(payload []byte) [][]byte {
+func jsonRPCParseError(detail string) []byte {
+	response := rpcErrorResponse{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("null"),
+		Error: rpcError{
+			Code:    -32700,
+			Message: "parse error",
+			Data: map[string]any{
+				"detail": detail,
+			},
+		},
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		return []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"parse error"}}`)
+	}
+	return encoded
+}
+
+func decodeStreamableHTTPEventMessages(payload []byte) [][]byte {
 	var responses [][]byte
 	var dataLines []string
 	flush := func() {
@@ -275,13 +299,13 @@ func decodeSSEDataMessages(payload []byte) [][]byte {
 	scanner := bufio.NewScanner(bytes.NewReader(payload))
 	scanner.Buffer(make([]byte, 0, 64*1024), maxHTTPResponseBytes)
 	for scanner.Scan() {
-		line := strings.TrimRight(scanner.Text(), "\r")
-		if line == "" {
+		line := bytes.TrimRight(scanner.Bytes(), "\r")
+		if len(line) == 0 {
 			flush()
 			continue
 		}
-		if strings.HasPrefix(line, "data:") {
-			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		if bytes.HasPrefix(line, eventStreamDataPrefix) {
+			dataLines = append(dataLines, string(bytes.TrimSpace(bytes.TrimPrefix(line, eventStreamDataPrefix))))
 		}
 	}
 	flush()
