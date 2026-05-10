@@ -13,6 +13,7 @@ python3 docs/scripts/generate_go_package_reference.py
 
 - [API types](#api-types) `mcp-runtime/api/v1alpha1`
 - [Metadata helpers](#metadata-helpers) `mcp-runtime/pkg/metadata`
+- [Agent adapters](#agent-adapters) `mcp-runtime/internal/agentadapter`
 - [Operator internals](#operator-internals) `mcp-runtime/internal/operator`
 - [CLI command routing](#cli-command-routing) `mcp-runtime/internal/cli/root`
 - [CLI core](#cli-core) `mcp-runtime/internal/cli/core`
@@ -1803,6 +1804,147 @@ const (
 	TrustLevelMedium TrustLevel = "medium"
 	TrustLevelHigh   TrustLevel = "high"
 )
+```
+
+<a id="agent-adapters"></a>
+## Agent adapters
+
+Package: `agentadapter`
+Import path: `mcp-runtime/internal/agentadapter`
+
+Source command:
+
+```bash
+go doc -all ./internal/agentadapter
+```
+
+<a id="agent-adapters-overview"></a>
+### Overview
+
+Package agentadapter implements optional agent-side HTTP and stdio adapters that
+forward MCP traffic to governed MCP Runtime routes.
+
+### Jump To
+
+- [Overview](#agent-adapters-overview)
+- [Index](#agent-adapters-index)
+- [Constants](#agent-adapters-constants)
+- [Functions](#agent-adapters-functions)
+- [Types](#agent-adapters-types)
+
+<a id="agent-adapters-index"></a>
+### Index
+
+- [`Constants`](#agent-adapters-constants)
+- [`func NewHTTPProxyHandler(cfg Config) (http.Handler, error)`](#agent-adapters-func-newhttpproxyhandler-cfg-config-http-handler-error)
+- [`func RunHTTPProxy(ctx context.Context, cfg Config) error`](#agent-adapters-func-runhttpproxy-ctx-context-context-cfg-config-error)
+- [`func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error`](#agent-adapters-func-runstdioshim-ctx-context-context-cfg-config-opts-stdiooptions-error)
+- [`func ValidateConfig(cfg Config) error`](#agent-adapters-func-validateconfig-cfg-config-error)
+- [`type Config struct`](#agent-adapters-type-config-struct)
+- [`func LoadProxyConfigFromEnv() (Config, error)`](#agent-adapters-func-loadproxyconfigfromenv-config-error)
+- [`func LoadShimConfigFromEnv() (Config, error)`](#agent-adapters-func-loadshimconfigfromenv-config-error)
+- [`type StdioOptions struct`](#agent-adapters-type-stdiooptions-struct)
+
+<a id="agent-adapters-constants"></a>
+### Constants
+
+```text
+const (
+	EnvRuntimeURL      = "MCP_RUNTIME_URL"
+	EnvHumanID         = "MCP_RUNTIME_HUMAN_ID"
+	EnvAgentID         = "MCP_RUNTIME_AGENT_ID"
+	EnvSessionID       = "MCP_RUNTIME_SESSION_ID"
+	EnvHostHeader      = "MCP_RUNTIME_HOST_HEADER"
+	EnvListenAddr      = "MCP_RUNTIME_LISTEN_ADDR"
+	EnvProtocolVersion = "MCP_RUNTIME_PROTOCOL_VERSION"
+
+	DefaultListenAddr      = "127.0.0.1:8099"
+	DefaultProtocolVersion = "2025-06-18"
+
+	HumanIDHeader      = "X-MCP-Human-ID"
+	AgentIDHeader      = "X-MCP-Agent-ID"
+	AgentSessionHeader = "X-MCP-Agent-Session"
+	MCPProtocolHeader  = "Mcp-Protocol-Version"
+	MCPSessionHeader   = "Mcp-Session-Id"
+)
+```
+
+<a id="agent-adapters-functions"></a>
+### Functions
+
+<a id="agent-adapters-func-newhttpproxyhandler-cfg-config-http-handler-error"></a>
+```text
+func NewHTTPProxyHandler(cfg Config) (http.Handler, error)
+    NewHTTPProxyHandler returns a reverse proxy that forwards MCP HTTP traffic
+    to the configured runtime route and injects issued governance identity
+    headers.
+
+```
+
+<a id="agent-adapters-func-runhttpproxy-ctx-context-context-cfg-config-error"></a>
+```text
+func RunHTTPProxy(ctx context.Context, cfg Config) error
+    RunHTTPProxy serves the local HTTP adapter until the context is cancelled.
+
+```
+
+<a id="agent-adapters-func-runstdioshim-ctx-context-context-cfg-config-opts-stdiooptions-error"></a>
+```text
+func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error
+    RunStdioShim reads newline-delimited stdio MCP JSON-RPC messages, forwards
+    them to the configured Streamable HTTP route, and writes JSON-RPC responses
+    back to stdout.
+
+```
+
+<a id="agent-adapters-func-validateconfig-cfg-config-error"></a>
+```text
+func ValidateConfig(cfg Config) error
+    ValidateConfig checks the common adapter invariants without reading process
+    state.
+```
+
+<a id="agent-adapters-types"></a>
+### Types
+
+<a id="agent-adapters-type-config-struct"></a>
+```text
+type Config struct {
+	RuntimeURL      *url.URL
+	HumanID         string
+	AgentID         string
+	SessionID       string
+	HostHeader      string
+	ListenAddr      string
+	ProtocolVersion string
+	HTTPClient      *http.Client
+}
+    Config is the shared configuration for agent-side adapters.
+
+```
+
+<a id="agent-adapters-func-loadproxyconfigfromenv-config-error"></a>
+```text
+func LoadProxyConfigFromEnv() (Config, error)
+    LoadProxyConfigFromEnv loads HTTP proxy configuration from environment
+    variables.
+
+```
+
+<a id="agent-adapters-func-loadshimconfigfromenv-config-error"></a>
+```text
+func LoadShimConfigFromEnv() (Config, error)
+    LoadShimConfigFromEnv loads stdio shim configuration from environment
+    variables.
+
+```
+
+<a id="agent-adapters-type-stdiooptions-struct"></a>
+```text
+type StdioOptions struct {
+	Stdin  io.Reader
+	Stdout io.Writer
+}
 ```
 
 <a id="operator-internals"></a>

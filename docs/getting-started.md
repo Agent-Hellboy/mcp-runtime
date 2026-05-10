@@ -529,6 +529,12 @@ The bundled Go example server also exposes `upper`, `lower`, `echo`, and
 `slugify`, and each of those tools expects a `message` field in `arguments`
 instead of `input` or `text`.
 
+For agent frameworks or IDEs that cannot attach the governance headers directly,
+build the optional adapters with `make build-adapters` and follow
+[Agent Adapters](agent-adapters.md). The same grant/session values from
+`/tmp/go-example-access.yaml` become `MCP_RUNTIME_HUMAN_ID`,
+`MCP_RUNTIME_AGENT_ID`, and `MCP_RUNTIME_SESSION_ID` for the adapter process.
+
 ```bash
 ./bin/mcp-runtime sentinel status
 ./bin/mcp-runtime sentinel events
