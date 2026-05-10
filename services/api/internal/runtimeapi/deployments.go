@@ -12,6 +12,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,9 +32,21 @@ const (
 	createdByLabel        = "created-by"
 	defaultDeployPort     = int32(8088)
 	restrictedRunAsUser   = kubeworkload.RestrictedRunAsUser
+	traefikWatchRoleName  = "traefik-watch"
 )
 
 var errPrincipalIdentityRequired = errors.New("authenticated user identity required")
+
+type managedNamespaceOptions struct {
+	ingressFromNamespaces []string
+}
+
+type teamTraefikWatchConfig struct {
+	mode           string
+	namespace      string
+	deployment     string
+	serviceAccount string
+}
 
 type deployRequest struct {
 	Name      string `json:"name"`
@@ -335,7 +348,7 @@ func (s *RuntimeServer) EnsureUserNamespace(ctx context.Context, p principal) er
 		platformScopeLabel:                   namespaceScopeUser,
 		"pod-security.kubernetes.io/enforce": "restricted",
 	}
-	return s.ensureManagedNamespace(ctx, p.Namespace, labels)
+	return s.ensureManagedNamespace(ctx, p.Namespace, labels, managedNamespaceOptions{})
 }
 
 func (s *RuntimeServer) ensureTeamNamespace(ctx context.Context, team teamRecord) error {
@@ -349,10 +362,21 @@ func (s *RuntimeServer) ensureTeamNamespace(ctx context.Context, team teamRecord
 		platformScopeLabel:                   namespaceScopeTeam,
 		"pod-security.kubernetes.io/enforce": "restricted",
 	}
-	return s.ensureManagedNamespace(ctx, team.Namespace, labels)
+	cfg := platformTeamTraefikWatchConfig()
+	opts := managedNamespaceOptions{}
+	if cfg.mode != "disabled" {
+		opts.ingressFromNamespaces = []string{cfg.namespace}
+	}
+	if err := s.ensureManagedNamespace(ctx, team.Namespace, labels, opts); err != nil {
+		return err
+	}
+	if cfg.mode == "disabled" {
+		return nil
+	}
+	return s.ensureTeamTraefikWatch(ctx, team.Namespace, cfg)
 }
 
-func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace string, labels map[string]string) error {
+func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace string, labels map[string]string, opts managedNamespaceOptions) error {
 	if s.k8sClients == nil || strings.TrimSpace(namespace) == "" {
 		return nil
 	}
@@ -370,7 +394,7 @@ func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace st
 	if err := ensureLimitRange(ctx, base, namespace); err != nil {
 		return err
 	}
-	if err := ensureDefaultDenyNetworkPolicy(ctx, base, namespace); err != nil {
+	if err := ensureDefaultDenyNetworkPolicy(ctx, base, namespace, opts.ingressFromNamespaces...); err != nil {
 		return err
 	}
 	return kubeworkload.EnsureServiceAccount(ctx, base, namespace)
@@ -409,14 +433,55 @@ func ensureLimitRange(ctx context.Context, client kubernetes.Interface, ns strin
 	return nil
 }
 
-func ensureDefaultDenyNetworkPolicy(ctx context.Context, client kubernetes.Interface, ns string) error {
+func ensureDefaultDenyNetworkPolicy(ctx context.Context, client kubernetes.Interface, ns string, ingressFromNamespaces ...string) error {
+	policy := desiredDefaultDenyNetworkPolicy(ns, ingressFromNamespaces...)
+	current, err := client.NetworkingV1().NetworkPolicies(ns).Get(ctx, policy.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = client.NetworkingV1().NetworkPolicies(ns).Create(ctx, policy, metav1.CreateOptions{})
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	policy.ResourceVersion = current.ResourceVersion
+	policy.Labels = current.Labels
+	policy.Annotations = current.Annotations
+	_, err = client.NetworkingV1().NetworkPolicies(ns).Update(ctx, policy, metav1.UpdateOptions{})
+	return err
+}
+
+func desiredDefaultDenyNetworkPolicy(ns string, ingressFromNamespaces ...string) *networkingv1.NetworkPolicy {
 	udpProtocol := corev1.ProtocolUDP
 	tcpProtocol := corev1.ProtocolTCP
+	ingress := make([]networkingv1.NetworkPolicyIngressRule, 0, 2)
+	if len(ingressFromNamespaces) > 0 {
+		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+			From: []networkingv1.NetworkPolicyPeer{
+				{PodSelector: &metav1.LabelSelector{}},
+			},
+		})
+	}
+	for _, namespace := range ingressFromNamespaces {
+		namespace = strings.TrimSpace(namespace)
+		if namespace == "" {
+			continue
+		}
+		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+			From: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"kubernetes.io/metadata.name": namespace},
+					},
+				},
+			},
+		})
+	}
 	policy := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "platform-default-deny", Namespace: ns},
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
+			Ingress:     ingress,
 			Egress: []networkingv1.NetworkPolicyEgressRule{
 				{
 					To: []networkingv1.NetworkPolicyPeer{
@@ -448,10 +513,153 @@ func ensureDefaultDenyNetworkPolicy(ctx context.Context, client kubernetes.Inter
 			},
 		},
 	}
-	if _, err := client.NetworkingV1().NetworkPolicies(ns).Create(ctx, policy, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	return policy
+}
+
+func platformTeamTraefikWatchConfig() teamTraefikWatchConfig {
+	mode := strings.ToLower(strings.TrimSpace(envOr("PLATFORM_TEAM_TRAEFIK_WATCH", "auto")))
+	switch mode {
+	case "", "auto":
+		mode = "auto"
+	case "false", "off", "0", "no", "disabled":
+		mode = "disabled"
+	case "true", "on", "1", "yes", "required":
+		mode = "required"
+	default:
+		mode = "auto"
+	}
+	return teamTraefikWatchConfig{
+		mode:           mode,
+		namespace:      envOr("PLATFORM_TRAEFIK_NAMESPACE", "traefik"),
+		deployment:     envOr("PLATFORM_TRAEFIK_DEPLOYMENT", "traefik"),
+		serviceAccount: envOr("PLATFORM_TRAEFIK_SERVICE_ACCOUNT", "traefik"),
+	}
+}
+
+func (s *RuntimeServer) ensureTeamTraefikWatch(ctx context.Context, namespace string, cfg teamTraefikWatchConfig) error {
+	if s.k8sClients == nil || strings.TrimSpace(namespace) == "" {
+		return nil
+	}
+	if err := ensureTraefikWatchRBAC(ctx, s.k8sClients.Clientset, namespace, cfg); err != nil {
+		return err
+	}
+	if err := ensureTraefikDeploymentWatchesNamespace(ctx, s.k8sClients.Clientset, namespace, cfg); err != nil {
+		if cfg.mode == "auto" && apierrors.IsNotFound(err) {
+			return nil
+		}
 		return err
 	}
 	return nil
+}
+
+func ensureTraefikWatchRBAC(ctx context.Context, client kubernetes.Interface, namespace string, cfg teamTraefikWatchConfig) error {
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: namespace},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"services", "endpoints", "secrets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses"}, Verbs: []string{"get", "list", "watch"}},
+		},
+	}
+	if err := upsertRole(ctx, client, role); err != nil {
+		return err
+	}
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: namespace},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "Role",
+			Name:     traefikWatchRoleName,
+		},
+		Subjects: []rbacv1.Subject{
+			{Kind: "ServiceAccount", Name: cfg.serviceAccount, Namespace: cfg.namespace},
+		},
+	}
+	return upsertRoleBinding(ctx, client, binding)
+}
+
+func upsertRole(ctx context.Context, client kubernetes.Interface, role *rbacv1.Role) error {
+	current, err := client.RbacV1().Roles(role.Namespace).Get(ctx, role.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = client.RbacV1().Roles(role.Namespace).Create(ctx, role, metav1.CreateOptions{})
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	role.ResourceVersion = current.ResourceVersion
+	role.Labels = current.Labels
+	role.Annotations = current.Annotations
+	_, err = client.RbacV1().Roles(role.Namespace).Update(ctx, role, metav1.UpdateOptions{})
+	return err
+}
+
+func upsertRoleBinding(ctx context.Context, client kubernetes.Interface, binding *rbacv1.RoleBinding) error {
+	current, err := client.RbacV1().RoleBindings(binding.Namespace).Get(ctx, binding.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = client.RbacV1().RoleBindings(binding.Namespace).Create(ctx, binding, metav1.CreateOptions{})
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	binding.ResourceVersion = current.ResourceVersion
+	binding.Labels = current.Labels
+	binding.Annotations = current.Annotations
+	_, err = client.RbacV1().RoleBindings(binding.Namespace).Update(ctx, binding, metav1.UpdateOptions{})
+	return err
+}
+
+func ensureTraefikDeploymentWatchesNamespace(ctx context.Context, client kubernetes.Interface, namespace string, cfg teamTraefikWatchConfig) error {
+	deployment, err := client.AppsV1().Deployments(cfg.namespace).Get(ctx, cfg.deployment, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	const prefix = "--providers.kubernetesingress.namespaces="
+	containerIndex := -1
+	argIndex := -1
+	argValue := ""
+	for ci, container := range deployment.Spec.Template.Spec.Containers {
+		for ai, arg := range container.Args {
+			if strings.HasPrefix(arg, prefix) {
+				containerIndex = ci
+				argIndex = ai
+				argValue = arg
+				break
+			}
+		}
+		if containerIndex >= 0 {
+			break
+		}
+	}
+	if containerIndex < 0 {
+		if cfg.mode == "auto" {
+			return nil
+		}
+		return errors.New("traefik deployment does not expose --providers.kubernetesingress.namespaces")
+	}
+	watched := splitCSV(strings.TrimPrefix(argValue, prefix))
+	for _, watchedNamespace := range watched {
+		if watchedNamespace == namespace {
+			return nil
+		}
+	}
+	watched = append(watched, namespace)
+	updated := deployment.DeepCopy()
+	updated.Spec.Template.Spec.Containers[containerIndex].Args[argIndex] = prefix + strings.Join(watched, ",")
+	_, err = client.AppsV1().Deployments(cfg.namespace).Update(ctx, updated, metav1.UpdateOptions{})
+	return err
+}
+
+func splitCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func desiredDeployment(name, namespace, image string, port, replicas int32, labels map[string]string) *appsv1.Deployment {

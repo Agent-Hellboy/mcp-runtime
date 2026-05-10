@@ -1289,15 +1289,15 @@ func TestRenderGatewayPolicyIncludesCrossNamespaceReferences(t *testing.T) {
 	if doc.Server.TeamID != "team-payments" {
 		t.Fatalf("expected server teamID to be rendered, got %q", doc.Server.TeamID)
 	}
-	if len(doc.Grants) != 2 {
-		t.Fatalf("expected 2 matching grants, got %d: %+v", len(doc.Grants), doc.Grants)
+	if len(doc.Grants) != 3 {
+		t.Fatalf("expected 3 matching grants, got %d: %+v", len(doc.Grants), doc.Grants)
 	}
 	grantsByName := make(map[string]policy.Grant, len(doc.Grants))
 	for _, grant := range doc.Grants {
 		grantsByName[grant.Name] = grant
 	}
-	if _, ok := grantsByName["grant-foreign"]; ok {
-		t.Fatalf("foreign-team grant should not be rendered: %+v", doc.Grants)
+	if foreign := grantsByName["grant-foreign"]; foreign.TeamID != "team-foreign" {
+		t.Fatalf("expected foreign-team grant to render explicit subject teamID, got %+v", foreign)
 	}
 	renderedGrant, ok := grantsByName["grant-a"]
 	if !ok {
@@ -1312,15 +1312,15 @@ func TestRenderGatewayPolicyIncludesCrossNamespaceReferences(t *testing.T) {
 	if len(renderedGrant.AllowedSideEffects) != 1 || renderedGrant.AllowedSideEffects[0] != "write" {
 		t.Fatalf("expected grant side effects to be rendered, got %+v", renderedGrant.AllowedSideEffects)
 	}
-	if len(doc.Sessions) != 2 {
-		t.Fatalf("expected 2 matching sessions, got %d: %+v", len(doc.Sessions), doc.Sessions)
+	if len(doc.Sessions) != 3 {
+		t.Fatalf("expected 3 matching sessions, got %d: %+v", len(doc.Sessions), doc.Sessions)
 	}
 	sessionsByName := make(map[string]policy.Binding, len(doc.Sessions))
 	for _, session := range doc.Sessions {
 		sessionsByName[session.Name] = session
 	}
-	if _, ok := sessionsByName["session-foreign"]; ok {
-		t.Fatalf("foreign-team session should not be rendered: %+v", doc.Sessions)
+	if foreign := sessionsByName["session-foreign"]; foreign.TeamID != "team-foreign" {
+		t.Fatalf("expected foreign-team session to render explicit subject teamID, got %+v", foreign)
 	}
 	if renderedSession := sessionsByName["session-a"]; renderedSession.TeamID != "team-payments" {
 		t.Fatalf("expected session teamID to be rendered, got %+v", renderedSession)

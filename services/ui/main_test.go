@@ -125,30 +125,11 @@ func TestAPIProxyAllowsDirectAPIKeyClients(t *testing.T) {
 	}
 }
 
-func TestAPIProxyAllowsPublicRuntimeServers(t *testing.T) {
+func TestAPIProxyRejectsAnonymousRuntimeServers(t *testing.T) {
 	upstreamCalled := false
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		upstreamCalled = true
-		if got := r.Header.Get("x-api-key"); got != "api-secret" {
-			t.Fatalf("x-api-key = %q, want %q", got, "api-secret")
-		}
-		if got := r.URL.Path; got != "/api/runtime/servers" {
-			t.Fatalf("path = %q, want /api/runtime/servers", got)
-		}
-		if got := r.URL.Query().Get("namespace"); got != "mcp-servers" {
-			t.Fatalf("namespace = %q, want %q", got, "mcp-servers")
-		}
-		if got := r.Header.Get("X-Forwarded-Host"); got != "localhost:18080" {
-			t.Fatalf("X-Forwarded-Host = %q, want localhost:18080", got)
-		}
-		if got := r.Header.Get("X-Forwarded-Proto"); got != "http" {
-			t.Fatalf("X-Forwarded-Proto = %q, want http", got)
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"content-type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"servers":[]}`)),
-		}, nil
+		return nil, fmt.Errorf("anonymous request unexpectedly reached upstream: %s", r.URL.String())
 	})
 	target, err := url.Parse("http://api.example")
 	if err != nil {
@@ -158,11 +139,11 @@ func TestAPIProxyAllowsPublicRuntimeServers(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers?namespace=user-private", nil))
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("public runtime servers status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous runtime servers status = %d, want %d; body=%s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
 	}
-	if !upstreamCalled {
-		t.Fatal("public runtime servers request did not reach upstream")
+	if upstreamCalled {
+		t.Fatal("anonymous runtime servers request reached upstream")
 	}
 }
 

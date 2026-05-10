@@ -269,14 +269,6 @@ func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, s
 			proxy.ServeHTTP(w, req)
 			return
 		}
-		if allowsPublicRead(r) {
-			req := r.Clone(r.Context())
-			req.Header.Del("x-api-key")
-			req.Header.Del("authorization")
-			forcePublicRuntimeNamespace(req)
-			proxy.ServeHTTP(w, req)
-			return
-		}
 
 		sess, ok := store.sessionFromRequest(r)
 		if !ok {
@@ -294,24 +286,6 @@ func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, s
 		}
 		proxy.ServeHTTP(w, req)
 	})
-}
-
-func allowsPublicRead(r *http.Request) bool {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		return false
-	}
-	path := strings.TrimSpace(strings.TrimSuffix(r.URL.Path, "/"))
-	return strings.HasSuffix(path, "/runtime/servers")
-}
-
-func forcePublicRuntimeNamespace(r *http.Request) {
-	path := strings.TrimSpace(strings.TrimSuffix(r.URL.Path, "/"))
-	if !strings.HasSuffix(path, "/runtime/servers") {
-		return
-	}
-	query := r.URL.Query()
-	query.Set("namespace", "mcp-servers")
-	r.URL.RawQuery = query.Encode()
 }
 
 func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionStore) http.HandlerFunc {

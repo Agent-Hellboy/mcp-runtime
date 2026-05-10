@@ -31,3 +31,8 @@ tags
 docs/COVERAGE_IMPROVEMENT_PLAN.md
 __pycache__/
 *.pyc
+
+# Local secrets
+.env
+*.env
+!.env.example

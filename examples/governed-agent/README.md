@@ -46,6 +46,7 @@ session headers it was issued:
 ```text
 X-MCP-Human-ID: support-lead
 X-MCP-Agent-ID: ticket-triage-agent
+X-MCP-Team-ID: <optional-team-id>
 X-MCP-Agent-Session: sess-ticket-triage-agent
 ```
 
@@ -135,6 +136,7 @@ The agent sends these headers on MCP requests:
 ```text
 X-MCP-Human-ID: support-lead
 X-MCP-Agent-ID: ticket-triage-agent
+X-MCP-Team-ID: <optional-team-id>
 X-MCP-Agent-Session: sess-ticket-triage-agent
 ```
 
@@ -144,6 +146,7 @@ To test a different route or subject, override:
 MCP_AGENT_MCP_URL=http://localhost:18080/governed-agent-demo-mcp/mcp \
 MCP_AGENT_HUMAN_ID=support-lead \
 MCP_AGENT_ID=ticket-triage-agent \
+MCP_AGENT_TEAM_ID= \
 MCP_AGENT_SESSION=sess-ticket-triage-agent \
 python3 examples/governed-agent/governed_agent.py --mode probe
 ```

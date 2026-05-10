@@ -22,6 +22,7 @@ from typing import Any
 DEFAULT_MCP_URL = "http://localhost:18080/governed-agent-demo-mcp/mcp"
 DEFAULT_HUMAN_ID = "support-lead"
 DEFAULT_AGENT_ID = "ticket-triage-agent"
+DEFAULT_TEAM_ID = ""
 DEFAULT_AGENT_SESSION = "sess-ticket-triage-agent"
 DEFAULT_PROTOCOL_VERSION = "2025-06-18"
 
@@ -31,6 +32,7 @@ class Config:
     mcp_url: str
     human_id: str
     agent_id: str
+    team_id: str
     agent_session: str
     host_header: str
     protocol_version: str
@@ -60,6 +62,8 @@ def governance_headers(config: Config) -> dict[str, str]:
         "X-MCP-Agent-ID": config.agent_id,
         "X-MCP-Agent-Session": config.agent_session,
     }
+    if config.team_id:
+        headers["X-MCP-Team-ID"] = config.team_id
     if config.host_header:
         headers["Host"] = config.host_header
     return headers
@@ -284,6 +288,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mcp-url", default=env_or("MCP_AGENT_MCP_URL", DEFAULT_MCP_URL))
     parser.add_argument("--human-id", default=env_or("MCP_AGENT_HUMAN_ID", DEFAULT_HUMAN_ID))
     parser.add_argument("--agent-id", default=env_or("MCP_AGENT_ID", DEFAULT_AGENT_ID))
+    parser.add_argument("--team-id", default=env_or("MCP_AGENT_TEAM_ID", DEFAULT_TEAM_ID))
     parser.add_argument(
         "--agent-session",
         default=env_or("MCP_AGENT_SESSION", DEFAULT_AGENT_SESSION),
@@ -323,6 +328,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         mcp_url=args.mcp_url,
         human_id=args.human_id,
         agent_id=args.agent_id,
+        team_id=args.team_id,
         agent_session=args.agent_session,
         host_header=args.host_header,
         protocol_version=args.protocol_version,

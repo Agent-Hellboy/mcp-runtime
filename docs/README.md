@@ -20,6 +20,7 @@ human workflows.
 
   <div class="docs-actions">
     <a class="docs-button docs-button-primary" href="getting-started/">Get started</a>
+    <a class="docs-button" href="contributor/README/">Contribute</a>
     <a class="docs-button" href="architecture/">Architecture</a>
     <a class="docs-button" href="api/">API reference</a>
   </div>
@@ -115,6 +116,12 @@ DNS, ingress, TLS, and k3s configuration, start with
   <span>Review prerequisites for k3s, kind, minikube, Docker Desktop Kubernetes, kubeadm, and EKS.</span>
 </a>
 
+<a class="docs-card" href="contributor/README/">
+  <span class="docs-card-kicker">Contribute</span>
+  <strong>Use the contributor guide</strong>
+  <span>Set up local Kind, iterate on services, verify tenant visibility, and debug the platform.</span>
+</a>
+
 <a class="docs-card" href="publish-mcp-server/">
   <span class="docs-card-kicker">Ship</span>
   <strong>Publish an MCP server</strong>
@@ -162,9 +169,9 @@ DNS, ingress, TLS, and k3s configuration, start with
 </a>
 
 <a class="docs-card" href="internals/README/">
-  <span class="docs-card-kicker">Contribute</span>
+  <span class="docs-card-kicker">Codebase</span>
   <strong>Read the internals</strong>
-  <span>If you are here to contribute, start with the internal docs for codebase structure, package tours, and implementation details.</span>
+  <span>Use the internal docs for codebase structure, package tours, and implementation details.</span>
 </a>
 </div>
 
@@ -177,7 +184,7 @@ DNS, ingress, TLS, and k3s configuration, start with
 | Host multiple teams on one cluster | [Multi-team isolation](multi-team.md), then [CLI](cli.md) |
 | Govern tools and sessions | [Sentinel](sentinel.md), then [API reference](api.md) |
 | Integrate from automation | [CLI](cli.md), then [API reference](api.md) |
-| Work on the codebase | [Internals](internals/README.md) |
+| Work on the codebase | [Contributor guide](contributor/README.md), then [Internals](internals/README.md) |
 
 ## Project status
 

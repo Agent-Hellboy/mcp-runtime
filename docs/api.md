@@ -128,8 +128,11 @@ The platform API enforces the namespace boundary for access writes. Grants and
 sessions must live in the same namespace as their `serverRef`; non-admin
 callers cannot write access resources into the shared `mcp-servers` catalog
 namespace and can only operate in namespaces authorized on their principal.
-Team namespace writes default and validate `spec.teamID` / `subject.teamID`
-against the authenticated principal and referenced server.
+Team namespace server writes default and validate `spec.teamID` against the
+authenticated principal namespace. Grant/session writes default missing
+`subject.teamID` from the referenced server team, while preserving an explicit
+foreign `subject.teamID` for delegated cross-team access. The gateway still
+matches every non-empty subject field exactly.
 
 ### MCPAccessGrant
 
@@ -279,12 +282,15 @@ pairs, top tools, and decision counts. Query: `limit` (1-50, default 10).
 
 ## Runtime Governance API
 
-Manage access grants, sessions, and view runtime state. All `/api/runtime/*` routes require an `x-api-key` header; requests without it receive `401`. `POST` requests create or update the Kubernetes CRs that the operator renders into the gateway policy ConfigMap.
+Manage access grants, sessions, and view runtime state. All `/api/runtime/*`
+routes require an authenticated platform bearer token or `x-api-key`; requests
+without authentication receive `401`. `POST` requests create or update the
+Kubernetes CRs that the operator renders into the gateway policy ConfigMap.
 
 For `POST /api/runtime/grants` and `POST /api/runtime/sessions`, the API resolves `serverRef` to an `MCPServer` in the cluster. If that server does not exist, the call returns `400` with a clear `unknown serverRef` message. The server lookup is **not** part of a single distributed transaction with the grant/session write — a concurrent delete can leave a stale reference (same as `kubectl apply`). Kubernetes apply errors are surfaced with the status the API server would use, when available.
 
 ```text
-GET  /api/runtime/servers              # List MCP server deployments (team-scoped for non-admin)
+GET  /api/runtime/servers              # List authenticated MCP catalog entries
 POST /api/runtime/servers              # Create/update MCPServer in an authorized namespace
 GET  /api/runtime/grants               # List MCPAccessGrant resources
 GET  /api/runtime/grants/{namespace}/{name}   # Get one MCPAccessGrant
@@ -299,14 +305,18 @@ POST /api/runtime/teams                # Admin-only team + namespace provisionin
 GET  /api/runtime/teams/{team}         # Team metadata (admin/member)
 POST /api/runtime/teams/{team}/members # Admin/team-owner membership upsert
 DELETE /api/runtime/teams/{team}/members/{userID}
-GET  /api/runtime/namespaces           # Allowed namespaces + shared catalog metadata
+GET  /api/runtime/namespaces           # Allowed namespaces + org catalog metadata
 GET  /api/runtime/namespaces/{namespace}
 GET  /api/runtime/components           # Sentinel component health status
 GET  /api/runtime/policy?namespace=&server=   # Get rendered policy for a server
 ```
 
-For non-admin users, runtime write paths enforce namespace ownership through
-team membership and reject writes to the shared `mcp-servers` catalog namespace.
+For non-admin users, `GET /api/runtime/servers` without a `namespace` query
+returns the internal catalog they can see: org-wide MCPs in `mcp-servers` plus
+their team/user namespaces. Passing `namespace=<name>` narrows the list to that
+authorized namespace. Admin callers can inspect any namespace. Runtime write
+paths enforce namespace ownership through team membership and reject writes to
+the org-wide `mcp-servers` catalog namespace.
 
 ### Grant apply body
 
