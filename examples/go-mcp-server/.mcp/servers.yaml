@@ -13,18 +13,24 @@ servers:
       - name: aaa-ping
         description: Return a simple pong response.
         requiredTrust: low
+        sideEffect: read
       - name: echo
         description: Echo back the provided message.
         requiredTrust: low
+        sideEffect: read
       - name: add
         description: Add two numbers.
         requiredTrust: low
+        sideEffect: read
       - name: upper
         description: Uppercase the provided message.
         requiredTrust: medium
+        sideEffect: read
       - name: lower
         description: Lowercase the provided message.
         requiredTrust: low
+        sideEffect: read
       - name: slugify
         description: Convert the provided message into a URL slug.
         requiredTrust: low
+        sideEffect: read
