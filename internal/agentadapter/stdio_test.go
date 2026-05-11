@@ -21,6 +21,12 @@ type capturedRuntimeRequest struct {
 	Body    string
 }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
 func TestRunStdioShimInjectsHeadersAndMaintainsRuntimeMCPSession(t *testing.T) {
 	t.Parallel()
 
@@ -220,6 +226,41 @@ func TestRunStdioShimAppliesRequestTimeout(t *testing.T) {
 	}
 	if response.Error.Data["http_status"] != float64(http.StatusBadGateway) {
 		t.Fatalf("http_status = %#v, want %d", response.Error.Data["http_status"], http.StatusBadGateway)
+	}
+}
+
+func TestRunStdioShimSuppressesHTTPRequestErrorAfterContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	runtimeURL, err := url.Parse("http://127.0.0.1:1/mcp")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			cancel()
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		}),
+	}
+	var output bytes.Buffer
+	err = RunStdioShim(ctx, Config{
+		RuntimeURL: runtimeURL,
+		HumanID:    "human-1",
+		AgentID:    "agent-1",
+		SessionID:  "session-1",
+		HTTPClient: client,
+	}, StdioOptions{
+		Stdin:  strings.NewReader(`{"jsonrpc":"2.0","id":"call-1","method":"tools/call","params":{"name":"upper"}}` + "\n"),
+		Stdout: &output,
+	})
+	if err != nil {
+		t.Fatalf("RunStdioShim() error = %v", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("output = %q, want no synthetic error during shutdown", output.String())
 	}
 }
 

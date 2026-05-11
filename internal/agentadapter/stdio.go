@@ -209,6 +209,9 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 
 	resp, err := s.client.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
 		if hasResponseID {
 			return emit(jsonRPCHTTPError(envelope.ID, http.StatusBadGateway, err.Error(), nil))
 		}
