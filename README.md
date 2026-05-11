@@ -24,7 +24,9 @@ The public platform at `platform.mcpruntime.org` is a live preview of the deploy
 ## What ships
 
 - `mcp-runtime` CLI for `setup`, `status`, `registry`, `server`, `pipeline`, `cluster`, `access`, and `sentinel`
-- Optional `mcp-runtime-agent-proxy` and `mcp-runtime-mcp-shim` adapters for governed HTTP and stdio agent integrations
+- Optional [`mcp-runtime-agent-proxy`](docs/agent-adapters.md#http-proxy-adapter)
+  and [`mcp-runtime-mcp-shim`](docs/agent-adapters.md#stdio-shim) adapters for
+  governed HTTP and stdio agent integrations
 - Platform UI for authenticated MCP catalog browsing, platform state, and web operations
 - `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession` CRDs
 - Kubernetes operator for `Deployment`, `Service`, `Ingress`, and policy materialization
