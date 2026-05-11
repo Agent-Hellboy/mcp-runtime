@@ -72,6 +72,23 @@ func TestBuildSetupPlan_TLSClusterIssuer(t *testing.T) {
 	}
 }
 
+func TestBuildSetupPlan_PlatformModeCatalogNamespaces(t *testing.T) {
+	if got := setupplan.CatalogNamespaceForPlatformMode(""); got != "" {
+		t.Fatalf("default tenant catalog namespace = %q, want empty", got)
+	}
+	if got := setupplan.CatalogNamespaceForPlatformMode(setupplan.PlatformModeOrg); got != setupplan.DefaultOrgCatalogNamespace {
+		t.Fatalf("org catalog namespace = %q, want %q", got, setupplan.DefaultOrgCatalogNamespace)
+	}
+	if got := setupplan.CatalogNamespaceForPlatformMode(setupplan.PlatformModePublic); got != setupplan.DefaultPublicCatalogNamespace {
+		t.Fatalf("public catalog namespace = %q, want %q", got, setupplan.DefaultPublicCatalogNamespace)
+	}
+
+	plan := setupplan.Build(setupplan.Input{PlatformMode: setupplan.PlatformModePublic})
+	if plan.PlatformMode != setupplan.PlatformModePublic {
+		t.Fatalf("platform mode = %q, want %q", plan.PlatformMode, setupplan.PlatformModePublic)
+	}
+}
+
 func TestBuildSetupPlan_CustomIngressManifest(t *testing.T) {
 	plan := setupplan.Build(setupplan.Input{
 		RegistryType:           "docker",

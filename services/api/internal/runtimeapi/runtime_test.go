@@ -189,7 +189,7 @@ func TestRuntimeServersIncludesMCPServerInventory(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/runtime/servers", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/servers?namespace=mcp-servers", nil)
 	request = request.WithContext(withPrincipal(request.Context(), principal{Role: roleAdmin, Subject: "admin-1"}))
 	server.HandleRuntimeServers(recorder, request)
 	if recorder.Code != http.StatusOK {
@@ -389,7 +389,7 @@ func TestRuntimeServersNonAdminDefaultsToAccessibleCatalog(t *testing.T) {
 	for _, server := range payload.Servers {
 		got = append(got, server.Namespace+"/"+server.Name)
 	}
-	want := []string{"mcp-servers/shared-server", "mcp-team-acme/team-server", "user-1/private-server"}
+	want := []string{"mcp-team-acme/team-server", "user-1/private-server"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("servers = %#v, want %v", got, want)
 	}
@@ -461,6 +461,51 @@ func TestRuntimeServerApplyNonAdminRejectsSharedCatalogNamespace(t *testing.T) {
 	server.HandleRuntimeServers(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestRuntimeServerApplyPublicModeDefaultsPublicNamespace(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"spec": {"image":"registry.example.com/demo"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+		},
+	}))
+	recorder := httptest.NewRecorder()
+	server.HandleRuntimeServers(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	var payload struct {
+		Server serverInfo `json:"server"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Server.Namespace != defaultPublicCatalogNamespace {
+		t.Fatalf("namespace = %q, want %q", payload.Server.Namespace, defaultPublicCatalogNamespace)
+	}
+	if _, err := server.k8sClients.Clientset.CoreV1().Namespaces().Get(request.Context(), defaultPublicCatalogNamespace, metav1.GetOptions{}); err != nil {
+		t.Fatalf("expected public catalog namespace to be created: %v", err)
 	}
 }
 
@@ -768,9 +813,6 @@ func TestRuntimeGrantApplyNonAdminRejectsSharedCatalogNamespace(t *testing.T) {
 	server.handleRuntimeGrantApply(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
-	}
-	if !strings.Contains(recorder.Body.String(), "read-only") {
-		t.Fatalf("body = %s", recorder.Body.String())
 	}
 }
 

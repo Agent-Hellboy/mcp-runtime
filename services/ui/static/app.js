@@ -1,8 +1,10 @@
 const apiBase = window.MCP_API_BASE || "/api";
 const defaults = Object.assign(
-  { namespace: "mcp-servers", policyVersion: "v1" },
+  { namespace: "", policyVersion: "v1" },
   window.MCP_DEFAULTS || {}
 );
+const platformMode = window.MCP_PLATFORM_MODE || "tenant";
+const publicCatalogEnabled = platformMode === "public";
 let authenticated = null;
 let authPrincipal = null;
 let grantsCache = [];
@@ -20,7 +22,7 @@ let serverSearchQuery = "";
 let serverStatusFilter = "all";
 let selectedOperationsServerKey = "";
 let namespaceScopes = [];
-let selectedNamespace = defaults.namespace || "mcp-servers";
+let selectedNamespace = defaults.namespace || "";
 
 // API Helper
 async function fetchJSON(path, options = {}) {
@@ -56,11 +58,11 @@ function isUnauthorizedError(err) {
 }
 
 function activeScopeNamespace() {
-  if (!authenticated) return "";
+  if (!authenticated && !publicCatalogEnabled) return "";
   if (selectedNamespace !== undefined && selectedNamespace !== null) {
     return String(selectedNamespace).trim();
   }
-  return (defaults.namespace || "mcp-servers").trim();
+  return (defaults.namespace || "").trim();
 }
 
 function scopedPath(path) {
@@ -71,8 +73,14 @@ function scopedPath(path) {
 }
 
 function namespaceScopeLabel(item) {
+  if (item?.is_public || item?.scope === "public") {
+    return `public / ${item.namespace}`;
+  }
+  if (item?.scope === "org") {
+    return `org / ${item.namespace}`;
+  }
   if (item?.is_catalog) {
-    return "org + teams";
+    return platformMode === "tenant" ? "tenant namespaces" : "org + teams";
   }
   if (item?.is_shared) {
     return `org / ${item.namespace}`;
@@ -115,10 +123,19 @@ function syncScopeSelector() {
   setFieldValue("session-namespace", activeScopeNamespace());
 }
 
+function publicPreviewScopes() {
+  return [{
+    namespace: defaults.namespace || "mcp-servers-public",
+    scope: "public",
+    scope_name: "Public preview",
+    is_public: true,
+  }];
+}
+
 async function loadNamespaceScopes() {
   if (!authenticated) {
-    namespaceScopes = [];
-    selectedNamespace = "";
+    namespaceScopes = publicCatalogEnabled ? publicPreviewScopes() : [];
+    selectedNamespace = publicCatalogEnabled ? namespaceScopes[0]?.namespace || "" : "";
     syncScopeSelector();
     return;
   }
@@ -690,7 +707,11 @@ async function initAuth() {
   } else {
     await loadNamespaceScopes();
     activateTab("servers");
-    renderSignedOutServerCatalog();
+    if (publicCatalogEnabled) {
+      loadServers();
+    } else {
+      renderSignedOutServerCatalog();
+    }
   }
 }
 
@@ -830,14 +851,18 @@ async function logout() {
   stopAutoRefresh();
   authPrincipal = null;
   setAuthenticated(false);
-  namespaceScopes = [];
-  selectedNamespace = "";
+  namespaceScopes = publicCatalogEnabled ? publicPreviewScopes() : [];
+  selectedNamespace = namespaceScopes[0]?.namespace || "";
   syncScopeSelector();
   resetDashboard();
   resetGovernance();
   resetUserAPIKeys();
   activateTab("servers");
-  renderSignedOutServerCatalog();
+  if (publicCatalogEnabled) {
+    loadServers();
+  } else {
+    renderSignedOutServerCatalog();
+  }
 }
 
 function setAuthenticated(value) {
@@ -933,7 +958,7 @@ function resetGovernance() {
 }
 
 async function loadServers() {
-  if (!authenticated) {
+  if (!authenticated && !publicCatalogEnabled) {
     renderSignedOutServerCatalog();
     return;
   }

@@ -278,7 +278,7 @@ func main() {
 		}
 		// Register all runtime endpoints with auth
 		mux.Handle("/api/dashboard/summary", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.HandleDashboardSummary))))
-		mux.Handle("/api/runtime/servers", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeServers)))
+		mux.Handle("/api/runtime/servers", server.authOrPublicCatalog(http.HandlerFunc(runtimeServer.HandleRuntimeServers)))
 		mux.Handle("/api/runtime/teams", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeTeams)))
 		mux.Handle("/api/runtime/teams/", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeTeamItemPath)))
 		mux.Handle("/api/runtime/namespaces", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeNamespaces)))
@@ -647,6 +647,28 @@ func (s *apiServer) auth(next http.Handler) http.Handler {
 			return
 		} else if ok {
 			ctx := withPrincipal(r.Context(), p)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	})
+}
+
+func (s *apiServer) authOrPublicCatalog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p, ok, err := s.authenticateRequest(r); err != nil {
+			log.Printf("auth error: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "auth_failed"})
+			return
+		} else if ok {
+			ctx := withPrincipal(r.Context(), p)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
+		if runtimeapi.PublicCatalogEnabled() && r.Method == http.MethodGet {
+			ctx := withPrincipal(r.Context(), runtimeapi.PublicCatalogPrincipal())
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}

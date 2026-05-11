@@ -80,11 +80,19 @@ The broad install path: runtime namespace, internal registry, operator, ingress 
 ```bash
 mcp-runtime setup
 mcp-runtime setup --with-tls                   # cert-manager TLS for registry
+mcp-runtime setup --platform-mode public       # anonymous public preview catalog
 mcp-runtime setup --without-sentinel           # skip request-path stack
 mcp-runtime setup --test-mode                  # local Kind/dev build+push path
 ```
 
-Flags: `--registry-type`, `--registry-storage`, `--ingress`, `--ingress-manifest`, `--force-ingress-install`, `--with-tls`, `--test-mode`, `--without-sentinel`, plus operator overrides `--operator-leader-elect`, `--operator-metrics-addr`, `--operator-probe-addr`.
+Flags: `--registry-type`, `--registry-storage`, `--platform-mode`, `--ingress`, `--ingress-manifest`, `--force-ingress-install`, `--with-tls`, `--test-mode`, `--without-sentinel`, plus operator overrides `--operator-leader-elect`, `--operator-metrics-addr`, `--operator-probe-addr`.
+
+`--platform-mode` selects the namespace model. `tenant` is the default and
+scopes signed-in users to their own user/team tenant namespace; `org` uses
+`mcp-servers-org` for signed-in org-wide publishing; `public` uses
+`mcp-servers-public`, exposes anonymous catalog reads, and lets signed-in users
+publish public preview MCP servers. `MCP_PLATFORM_MODE` provides the same value
+when the flag is not set.
 
 `--test-mode` relaxes production guardrails, but it still builds and pushes the
 operator, gateway proxy, and Sentinel images with `latest` tags to the

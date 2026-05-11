@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -93,12 +94,22 @@ func (s *RuntimeServer) HandleRuntimeNamespaces(w http.ResponseWriter, r *http.R
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list namespaces"})
 			return
 		}
+		namespaces = appendCatalogNamespaceEntries(namespaces)
 		writeJSON(w, http.StatusOK, map[string]any{"namespaces": namespaces})
 		return
 	}
 
+	if sharedCatalogWritableForUsers() {
+		entries := make([]map[string]any, 0, len(modeCatalogNamespaces()))
+		for _, namespace := range modeCatalogNamespaces() {
+			entries = append(entries, catalogNamespaceEntry(namespace))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"namespaces": entries})
+		return
+	}
+
 	entries := make([]map[string]any, 0, len(p.AllowedNamespaces))
-	for _, namespace := range p.AllowedNamespaces {
+	for _, namespace := range catalogNamespacesForPrincipal(p) {
 		namespace = strings.TrimSpace(namespace)
 		if namespace == "" {
 			continue
@@ -146,7 +157,7 @@ func (s *RuntimeServer) HandleRuntimeNamespaceItem(w http.ResponseWriter, r *htt
 		return
 	}
 
-	if p.Role != roleAdmin && !p.HasNamespace(namespace) {
+	if p.Role != roleAdmin && !principalCanReadNamespace(p, namespace) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
 	}
@@ -162,15 +173,54 @@ func (s *RuntimeServer) HandleRuntimeNamespaceItem(w http.ResponseWriter, r *htt
 		writeJSON(w, http.StatusOK, map[string]any{"namespace": item})
 		return
 	}
-	if namespace == sharedCatalogNamespace {
-		writeJSON(w, http.StatusOK, map[string]any{"namespace": map[string]any{
-			"namespace": sharedCatalogNamespace,
-			"scope":     "shared",
-			"is_shared": true,
-		}})
+	if namespace == sharedCatalogNamespace || isModeCatalogNamespace(namespace) {
+		entry := catalogNamespaceEntry(namespace)
+		if namespace == sharedCatalogNamespace && !sharedCatalogWritableForUsers() {
+			entry["scope"] = "shared"
+			entry["is_public"] = false
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"namespace": entry})
 		return
 	}
 	writeJSON(w, http.StatusNotFound, map[string]string{"error": "namespace not found"})
+}
+
+func catalogNamespaceEntry(namespace string) map[string]any {
+	scope := "shared"
+	isPublic := false
+	scopeName := "Shared catalog"
+	switch PlatformMode() {
+	case platformModePublic:
+		scope = "public"
+		isPublic = true
+		scopeName = "Public preview"
+	case platformModeOrg:
+		scope = "org"
+		scopeName = "Organization"
+	}
+	return map[string]any{
+		"namespace":  namespace,
+		"is_shared":  namespace == sharedCatalogNamespace,
+		"is_public":  isPublic,
+		"scope":      scope,
+		"scope_name": scopeName,
+	}
+}
+
+func appendCatalogNamespaceEntries(namespaces []map[string]any) []map[string]any {
+	seen := map[string]struct{}{}
+	for _, entry := range namespaces {
+		if namespace := strings.TrimSpace(fmt.Sprint(entry["namespace"])); namespace != "" {
+			seen[namespace] = struct{}{}
+		}
+	}
+	for _, namespace := range modeCatalogNamespaces() {
+		if _, ok := seen[namespace]; ok {
+			continue
+		}
+		namespaces = append(namespaces, catalogNamespaceEntry(namespace))
+	}
+	return namespaces
 }
 
 func (s *RuntimeServer) handleRuntimeTeamList(w http.ResponseWriter, r *http.Request, p principal) {

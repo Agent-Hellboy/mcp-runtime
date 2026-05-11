@@ -166,6 +166,8 @@ LOCAL_REGISTRY_RETRY_DELAY="${LOCAL_REGISTRY_RETRY_DELAY:-5}"
 E2E_ARTIFACT_DIR="${E2E_ARTIFACT_DIR:-}"
 E2E_SCENARIOS="${E2E_SCENARIOS-all}"
 E2E_SCENARIOS="${E2E_SCENARIOS//[[:space:]]/}"
+E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE:-tenant}"
+E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE//[[:space:]]/}"
 E2E_VALIDATE_SCENARIOS_ONLY="${E2E_VALIDATE_SCENARIOS_ONLY:-0}"
 E2E_KEEP_CLUSTER="${E2E_KEEP_CLUSTER:-0}"
 E2E_CACHE_MODE="${E2E_CACHE_MODE:-0}"
@@ -218,6 +220,16 @@ scenario_selected() {
 }
 
 validate_scenarios() {
+  case "${E2E_PLATFORM_MODE}" in
+    tenant|org|public)
+      ;;
+    *)
+      echo "unsupported E2E platform mode: ${E2E_PLATFORM_MODE}" >&2
+      echo "supported values: tenant, org, public" >&2
+      exit 1
+      ;;
+  esac
+
   local scenario
   for scenario in "${E2E_SCENARIO_LIST[@]}"; do
     case "${scenario}" in
@@ -254,6 +266,7 @@ describe_selected_scenarios() {
 
 validate_scenarios
 log_line info "E2E scenarios: $(describe_selected_scenarios)"
+log_line info "E2E platform mode: ${E2E_PLATFORM_MODE}"
 log_line info "Local smoke/governance checks use direct curl-based MCP HTTP; OpenAI/Anthropic real-client agent checks are disabled"
 if [[ "${E2E_VALIDATE_SCENARIOS_ONLY}" == "1" ]]; then
   exit 0
@@ -1987,7 +2000,7 @@ platform_cache_ready() {
   if ! cache_mode_enabled; then
     return 1
   fi
-  kubectl get namespace registry mcp-runtime mcp-sentinel mcp-servers >/dev/null 2>&1 || return 1
+  kubectl get namespace registry mcp-runtime mcp-sentinel mcp-servers mcp-servers-org mcp-servers-public >/dev/null 2>&1 || return 1
   kubectl rollout status deploy/registry -n registry --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status deploy/mcp-runtime-operator-controller-manager -n mcp-runtime --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status deploy/traefik -n traefik --timeout=5s >/dev/null 2>&1 || return 1
@@ -2066,12 +2079,13 @@ export MCP_INGRESS_READINESS_MODE="${MCP_INGRESS_READINESS_MODE:-permissive}"
 if [[ "${PLATFORM_CACHE_READY}" == "1" ]]; then
   echo "[setup] skipping platform setup because E2E_CACHE_MODE=1 found a ready platform"
 else
-  echo "[setup] running platform setup in test mode"
+  echo "[setup] running platform setup in test mode (platform mode: ${E2E_PLATFORM_MODE})"
   MCP_RUNTIME_REGISTRY_IMAGE_OVERRIDE="${TEST_MODE_REGISTRY_IMAGE}" \
-  ./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http
+  ./bin/mcp-runtime setup --test-mode --platform-mode "${E2E_PLATFORM_MODE}" --ingress-manifest config/ingress/overlays/http
 fi
 
 echo "[verify] waiting for core platform components"
+kubectl get namespace mcp-servers mcp-servers-org mcp-servers-public >/dev/null
 rollout_status_with_logs registry deploy registry 180s
 rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
 rollout_status_with_logs traefik deploy traefik 180s
@@ -3446,6 +3460,7 @@ if scenario_selected "observability"; then
   OAUTH_ISSUER_URL="${OAUTH_ISSUER_URL}" \
   OAUTH_VALID_TOKEN="${OAUTH_VALID_TOKEN}" \
   MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION}" \
+  E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE}" \
   python3 <<'PY'
 import json
 import os
@@ -3477,10 +3492,12 @@ oauth_server_host = os.environ["OAUTH_SERVER_HOST"]
 oauth_issuer_url = os.environ["OAUTH_ISSUER_URL"]
 oauth_valid_token = os.environ["OAUTH_VALID_TOKEN"]
 protocol = os.environ["MCP_PROTOCOL_VERSION"]
+platform_mode = os.environ["E2E_PLATFORM_MODE"]
 grant_name = f"{server_name}-grant"
 oauth_public_base = f"http://{oauth_server_host}"
 server_mcp_path = f"/{server_name}/mcp"
 oauth_mcp_path = f"/{oauth_server_name}/mcp"
+catalog_namespace = "mcp-servers"
 
 
 import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
@@ -3597,7 +3614,12 @@ for key in ("total_events", "active_servers", "active_grants", "active_sessions"
     )
 expect_status(f"{gateway_base}/ping", 200, contains="OK")
 expect_status(f"{gateway_base}/", 200, contains="MCP Sentinel Control Plane")
-expect_status(f"{gateway_base}/config.js", 200, contains="window.MCP_API_BASE")
+gateway_config = expect_status(f"{gateway_base}/config.js", 200, contains="window.MCP_API_BASE")
+check(
+    f'window.MCP_PLATFORM_MODE = "{platform_mode}"' in gateway_config,
+    f"gateway config.js exposes platform mode {platform_mode}",
+    f"gateway config.js missing platform mode {platform_mode}: {gateway_config}",
+)
 expect_status(f"{gateway_base}/app.js", 200, contains="const apiBase")
 expect_status(f"{gateway_base}/styles.css", 200, contains=".canvas")
 expect_status(f"{gateway_base}/grafana/api/health", 200, contains="database")
@@ -3606,7 +3628,12 @@ expect_status(f"{gateway_base}/prometheus/-/healthy", 200, contains="Healthy")
 # Direct UI service.
 expect_status(f"{ui_base}/health", 200, contains='"ok":true')
 expect_status(f"{ui_base}/", 200, contains="MCP Sentinel Control Plane")
-expect_status(f"{ui_base}/config.js", 200, contains="window.MCP_API_BASE")
+ui_config = expect_status(f"{ui_base}/config.js", 200, contains="window.MCP_API_BASE")
+check(
+    f'window.MCP_PLATFORM_MODE = "{platform_mode}"' in ui_config,
+    f"ui config.js exposes platform mode {platform_mode}",
+    f"ui config.js missing platform mode {platform_mode}: {ui_config}",
+)
 expect_status(f"{ui_base}/app.js", 200, contains="const apiBase")
 expect_status(f"{ui_base}/styles.css", 200, contains=".canvas")
 
@@ -3704,7 +3731,10 @@ for key in ("total_events", "active_servers", "active_grants", "active_sessions"
         f"api dashboard summary contains {key}",
         f"dashboard summary missing {key}: {summary}",
     )
-servers = expect_json(f"{api_base}/api/runtime/servers", headers=auth_headers)
+servers = expect_json(
+    f"{api_base}/api/runtime/servers?namespace={urllib.parse.quote(catalog_namespace)}",
+    headers=auth_headers,
+)
 server_names = {item.get("name") for item in servers.get("servers", [])}
 check(
     server_name in server_names and oauth_server_name in server_names,

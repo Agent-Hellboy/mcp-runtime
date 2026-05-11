@@ -311,12 +311,14 @@ GET  /api/runtime/components           # Sentinel component health status
 GET  /api/runtime/policy?namespace=&server=   # Get rendered policy for a server
 ```
 
-For non-admin users, `GET /api/runtime/servers` without a `namespace` query
-returns the internal catalog they can see: org-wide MCPs in `mcp-servers` plus
-their team/user namespaces. Passing `namespace=<name>` narrows the list to that
-authorized namespace. Admin callers can inspect any namespace. Runtime write
-paths enforce namespace ownership through team membership and reject writes to
-the org-wide `mcp-servers` catalog namespace.
+For non-admin users, runtime scope depends on `PLATFORM_MODE` / setup
+`--platform-mode`. In `tenant` mode, `GET /api/runtime/servers` without a
+`namespace` query returns MCPs in their own user/team tenant namespaces. In
+`org` mode, signed-in users list and publish in `mcp-servers-org`. In `public`
+mode, anonymous users can list the `mcp-servers-public` catalog and signed-in
+users publish there. Admin callers can inspect any namespace. Passing
+`namespace=<name>` narrows the list to an authorized namespace for the active
+mode.
 
 ### Grant apply body
 

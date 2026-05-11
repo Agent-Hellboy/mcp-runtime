@@ -360,6 +360,32 @@ func (s *RuntimeServer) EnsureUserNamespace(ctx context.Context, p principal) er
 	return s.ensureManagedNamespace(ctx, p.Namespace, labels, managedNamespaceOptions{})
 }
 
+func (s *RuntimeServer) EnsureCatalogNamespace(ctx context.Context, namespace string) error {
+	namespace = strings.TrimSpace(namespace)
+	if s.k8sClients == nil || namespace == "" {
+		return nil
+	}
+	labels := map[string]string{
+		platformManagedLabel:                 "true",
+		platformScopeLabel:                   PlatformMode(),
+		"pod-security.kubernetes.io/enforce": "restricted",
+	}
+	cfg := platformTeamTraefikWatchConfig()
+	opts := managedNamespaceOptions{}
+	if cfg.mode != "disabled" {
+		opts.ingressFromNamespaces = []string{cfg.namespace}
+	}
+	if err := s.ensureManagedNamespace(ctx, namespace, labels, opts); err != nil {
+		return err
+	}
+	if cfg.mode != "disabled" {
+		if err := s.ensureTeamTraefikWatch(ctx, namespace, cfg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *RuntimeServer) ensureTeamNamespace(ctx context.Context, team teamRecord) error {
 	if strings.TrimSpace(team.Namespace) == "" {
 		return errors.New("team namespace required")

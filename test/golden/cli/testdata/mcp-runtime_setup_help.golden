@@ -22,6 +22,7 @@ Flags:
       --operator-leader-elect          Override operator leader election when set
       --operator-metrics-addr string   Operator metrics bind address (default: :8080 from manager.yaml)
       --operator-probe-addr string     Operator health probe bind address (default: :8081 from manager.yaml)
+      --platform-mode string           Platform access model (tenant|org|public). public exposes the catalog without login and lets signed-in users publish to the public preview namespace. (default "tenant")
       --registry-storage string        Registry storage size (default: 20Gi) (default "20Gi")
       --registry-type string           Registry type (docker; harbor coming soon) (default "docker")
       --skip-cert-manager-install      Do not install cert-manager; require CRDs to already exist

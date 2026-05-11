@@ -127,8 +127,10 @@ baseline and use [Multi-team isolation](multi-team.md) to move each team's
 servers, grants, sessions, and secrets into a dedicated namespace with
 `spec.teamID` / `subject.teamID`.
 
-Sign in before browsing MCP servers in the platform UI; the catalog is
-authenticated even in local test mode. The MCP Servers tab exposes a copyable
+Sign in before browsing MCP servers in the platform UI; the default tenant-mode
+catalog is authenticated even in local test mode. Use the admin login to browse
+the single-team `mcp-servers` examples from this guide, or publish servers into
+the signed-in user's own/team namespace. The MCP Servers tab exposes a copyable
 connect config. In this local test-mode flow, that config should use the same
 reachable local origin, for example:
 
@@ -169,10 +171,12 @@ these local-only tenant accounts. They are not production credentials.
 | Tenant A | `tenant-a-20260510232145@mcpruntime.org` | `TenantA-20260510232145!` |
 | Tenant B | `tenant-b-20260510232145@mcpruntime.org` | `TenantB-20260510232145!` |
 
-Tenant users should see the org-scoped MCP catalog entries from `mcp-servers`
-plus only their own team namespace. For example, Tenant A should see
-`mcp-team-tenant-a` entries but receive `403` for `mcp-team-tenant-b`, and
-Tenant B should see the inverse.
+Tenant users should see only their own team namespace. For example, Tenant A
+should see `mcp-team-tenant-a` entries but receive `403` for
+`mcp-team-tenant-b`, and Tenant B should see the inverse. A setup installed with
+`--platform-mode org` or `--platform-mode public` uses `mcp-servers-org` or
+`mcp-servers-public` instead of tenant namespaces for non-admin catalog
+browsing.
 
 ### Iterate on one Sentinel service
 
@@ -598,23 +602,32 @@ grant enforcement on the same cluster, see
 ```
 
 `setup` installs the platform pieces companies need for MCP operations: CRDs,
-`mcp-runtime` and `mcp-servers` namespaces, the internal Docker registry,
-ingress wiring, the operator, and the bundled Sentinel stack for gateway policy,
+`mcp-runtime` and catalog namespaces, the internal Docker registry, ingress
+wiring, the operator, and the bundled Sentinel stack for gateway policy,
 analytics, audit, and observability.
 
-`mcp-servers` remains the default single-team namespace. For multi-team or
-tenant-separated deployments, keep setup as the platform install and provision
-one namespace per team with `mcp-runtime team init <slug>` or the platform API
-`mcp-runtime team create <slug>` flow. Both repo-managed paths wire bundled
-Traefik for the team namespace. Use the platform API to default team IDs, or set
-`spec.teamID` and `subject.teamID` directly in YAML; an explicit foreign
-`subject.teamID` delegates access to another team while the gateway still
-matches every non-empty subject field. See [Multi-team isolation](multi-team.md).
+`--platform-mode` selects the namespace model:
+
+| Mode | Default namespace behavior | Behavior |
+|---|---|---|
+| `tenant` | Principal user/team namespace | Default private mode. Each signed-in user is scoped to their own tenant namespace, including any team namespace from membership. |
+| `org` | `mcp-servers-org` | Signed-in users publish and browse an org-wide catalog without tenant/team namespace selection. |
+| `public` | `mcp-servers-public` | Anonymous users can browse the public preview catalog, and signed-in users publish public preview MCP servers. |
+
+For multi-team or tenant-separated deployments, keep setup as the platform
+install and provision one namespace per team with `mcp-runtime team init <slug>`
+or the platform API `mcp-runtime team create <slug>` flow. Both repo-managed
+paths wire bundled Traefik for the team namespace. Use the platform API to
+default team IDs, or set `spec.teamID` and `subject.teamID` directly in YAML; an
+explicit foreign `subject.teamID` delegates access to another team while the
+gateway still matches every non-empty subject field. See
+[Multi-team isolation](multi-team.md).
 
 Common variants:
 
 ```bash
 ./bin/mcp-runtime setup --with-tls            # cert-manager TLS for the registry
+./bin/mcp-runtime setup --platform-mode public # public preview catalog namespace
 ./bin/mcp-runtime setup --without-sentinel    # skip the request-path stack
 ./bin/mcp-runtime setup --test-mode           # local Kind/dev build+push path
 ```

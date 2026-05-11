@@ -58,7 +58,7 @@ func TestAPIProxyRequiresAuthenticatedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "api-secret", "api-secret", store, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", store, false, transport)
 
 	recorder := httptest.NewRecorder()
 	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/dashboard/summary", nil))
@@ -111,7 +111,7 @@ func TestAPIProxyAllowsDirectAPIKeyClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "api-secret", "api-secret,backup-secret", newUISessionStore(time.Now), transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret,backup-secret", newUISessionStore(time.Now), false, transport)
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
@@ -135,7 +135,7 @@ func TestAPIProxyRejectsAnonymousRuntimeServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "api-secret", "api-secret", newUISessionStore(time.Now), transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", newUISessionStore(time.Now), false, transport)
 
 	recorder := httptest.NewRecorder()
 	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers?namespace=user-private", nil))
@@ -144,6 +144,79 @@ func TestAPIProxyRejectsAnonymousRuntimeServers(t *testing.T) {
 	}
 	if upstreamCalled {
 		t.Fatal("anonymous runtime servers request reached upstream")
+	}
+}
+
+func TestAPIProxyAllowsAnonymousPublicCatalog(t *testing.T) {
+	t.Setenv("PLATFORM_PUBLIC_NAMESPACE", "mcp-servers-public")
+	upstreamCalled := false
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		upstreamCalled = true
+		if got := r.Header.Get("x-api-key"); got != "api-secret" {
+			t.Fatalf("x-api-key = %q, want %q", got, "api-secret")
+		}
+		if got := r.Header.Get("authorization"); got != "" {
+			t.Fatalf("authorization forwarded upstream: %q", got)
+		}
+		if got := r.URL.Path; got != "/api/runtime/servers" {
+			t.Fatalf("path = %q, want /api/runtime/servers", got)
+		}
+		if got := r.URL.Query().Get("namespace"); got != "mcp-servers-public" {
+			t.Fatalf("namespace = %q, want mcp-servers-public", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"content-type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"servers":[]}`)),
+		}, nil
+	})
+	target, err := url.Parse("http://api.example")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", newUISessionStore(time.Now), true, transport)
+
+	recorder := httptest.NewRecorder()
+	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("anonymous public catalog status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !upstreamCalled {
+		t.Fatal("anonymous public catalog request did not reach upstream")
+	}
+
+	forbidden := httptest.NewRecorder()
+	proxy.ServeHTTP(forbidden, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers?namespace=user-private", nil))
+	if forbidden.Code != http.StatusForbidden {
+		t.Fatalf("private namespace status = %d, want %d; body=%s", forbidden.Code, http.StatusForbidden, forbidden.Body.String())
+	}
+}
+
+func TestCatalogNamespacesForModeScopesPublicEnvToPublicMode(t *testing.T) {
+	t.Setenv("PLATFORM_PUBLIC_NAMESPACES", "mcp-servers-public,preview-extra")
+
+	org := catalogNamespacesForMode("org")
+	if strings.Join(org, ",") != "mcp-servers-org" {
+		t.Fatalf("org namespaces = %v, want [mcp-servers-org]", org)
+	}
+
+	public := catalogNamespacesForMode("public")
+	if strings.Join(public, ",") != "mcp-servers-public,preview-extra" {
+		t.Fatalf("public namespaces = %v, want [mcp-servers-public preview-extra]", public)
+	}
+}
+
+func TestCatalogNamespaceOverrideIgnoredInTenantMode(t *testing.T) {
+	t.Setenv("PLATFORM_CATALOG_NAMESPACE", "custom-catalog")
+
+	if got := defaultCatalogNamespaceForMode("tenant"); got != "" {
+		t.Fatalf("tenant default namespace = %q, want empty", got)
+	}
+	if got := catalogNamespacesForMode("tenant"); len(got) != 0 {
+		t.Fatalf("tenant catalog namespaces = %v, want empty", got)
+	}
+	if got := defaultCatalogNamespaceForMode("org"); got != "custom-catalog" {
+		t.Fatalf("org default namespace = %q, want custom-catalog", got)
 	}
 }
 
@@ -198,7 +271,7 @@ func TestHandleLoginWithOIDCToken(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"content-type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
 	})
 	target, _ := url.Parse("http://api.example")
-	proxy := newAPIProxyWithTransport(target, "api-secret", "api-secret", store, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", store, false, transport)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/user/api-keys", nil)
@@ -395,7 +468,7 @@ func TestHandleLoginWithPassword(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"content-type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
 	})
 	target, _ := url.Parse("http://api.example")
-	proxy := newAPIProxyWithTransport(target, "api-secret", "api-secret", store, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", store, false, transport)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/user/api-keys", nil)

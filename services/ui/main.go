@@ -163,7 +163,12 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
-	defaultNamespace := serviceutil.EnvOr("UI_DEFAULT_NAMESPACE", "mcp-servers")
+	platformMode := normalizedPlatformMode()
+	publicCatalog := platformMode == "public"
+	defaultNamespace := strings.TrimSpace(os.Getenv("UI_DEFAULT_NAMESPACE"))
+	if defaultNamespace == "" {
+		defaultNamespace = defaultCatalogNamespaceForMode(platformMode)
+	}
 	defaultPolicyVersion := serviceutil.EnvOr("UI_DEFAULT_POLICY_VERSION", "v1")
 	baseJSON, err := json.Marshal(apiBase)
 	if err != nil {
@@ -180,8 +185,13 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error
 	if err != nil {
 		return nil, err
 	}
+	platformModeJSON, err := json.Marshal(platformMode)
+	if err != nil {
+		return nil, err
+	}
 	configJS := "window.MCP_API_BASE = " + string(baseJSON) + ";\n" +
 		"window.MCP_DEFAULTS = " + string(defaultsJSON) + ";\n" +
+		"window.MCP_PLATFORM_MODE = " + string(platformModeJSON) + ";\n" +
 		"window.MCP_GOOGLE_CLIENT_ID = " + string(googleClientIDJSON) + ";"
 	mux.HandleFunc("/config.js", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "application/javascript")
@@ -191,7 +201,7 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error
 	mux.HandleFunc("/auth/logout", handleLogout(sessions))
 	mux.HandleFunc("/auth/status", handleStatus(sessions))
 
-	apiProxy := newAPIProxy(target, upstreamAPIKey, apiKeys, sessions)
+	apiProxy := newAPIProxy(target, apiBase, upstreamAPIKey, apiKeys, sessions, publicCatalog)
 	mux.Handle(apiBase+"/", apiProxy)
 	mux.Handle(apiBase, apiProxy)
 
@@ -222,11 +232,11 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error
 	return mux, nil
 }
 
-func newAPIProxy(target *url.URL, upstreamAPIKey, apiKeys string, store *uiSessionStore) http.Handler {
-	return newAPIProxyWithTransport(target, upstreamAPIKey, apiKeys, store, nil)
+func newAPIProxy(target *url.URL, apiBase, upstreamAPIKey, apiKeys string, store *uiSessionStore, publicCatalog bool) http.Handler {
+	return newAPIProxyWithTransport(target, apiBase, upstreamAPIKey, apiKeys, store, publicCatalog, nil)
 }
 
-func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, store *uiSessionStore, transport http.RoundTripper) http.Handler {
+func newAPIProxyWithTransport(target *url.URL, apiBase, upstreamAPIKey, apiKeys string, store *uiSessionStore, publicCatalog bool, transport http.RoundTripper) http.Handler {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	if transport != nil {
 		proxy.Transport = transport
@@ -268,6 +278,24 @@ func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, s
 			req := r.Clone(r.Context())
 			req.Header.Del("x-api-key")
 			req.Header.Del("authorization")
+			proxy.ServeHTTP(w, req)
+			return
+		}
+
+		if publicCatalog && isPublicCatalogAPIRequest(r, apiBase) {
+			namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
+			if namespace != "" && !isPublicCatalogNamespace(namespace) {
+				serviceutil.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
+				return
+			}
+			req := r.Clone(r.Context())
+			req.Header.Del("x-api-key")
+			req.Header.Del("authorization")
+			if namespace == "" {
+				q := req.URL.Query()
+				q.Set("namespace", defaultPublicCatalogNamespace())
+				req.URL.RawQuery = q.Encode()
+			}
 			proxy.ServeHTTP(w, req)
 			return
 		}
@@ -886,6 +914,117 @@ func firstAPIKey(apiKeys string) string {
 		}
 	}
 	return ""
+}
+
+func normalizedPlatformMode() string {
+	raw := strings.TrimSpace(os.Getenv("PLATFORM_MODE"))
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("MCP_PLATFORM_MODE"))
+	}
+	switch strings.ToLower(raw) {
+	case "org":
+		return "org"
+	case "public":
+		return "public"
+	case "", "tenant", "tenet", "tenent":
+		return "tenant"
+	default:
+		return "tenant"
+	}
+}
+
+func catalogNamespacesForMode(mode string) []string {
+	if mode == "tenant" {
+		return nil
+	}
+	raw := ""
+	if mode == "public" {
+		raw = strings.TrimSpace(os.Getenv("PLATFORM_PUBLIC_NAMESPACES"))
+		if raw == "" {
+			raw = strings.TrimSpace(os.Getenv("MCP_PLATFORM_PUBLIC_NAMESPACES"))
+		}
+	}
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("PLATFORM_CATALOG_NAMESPACES"))
+	}
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("MCP_PLATFORM_CATALOG_NAMESPACES"))
+	}
+	values := make([]string, 0, 1)
+	if namespace := defaultCatalogNamespaceForMode(mode); namespace != "" {
+		values = append(values, namespace)
+	}
+	for _, namespace := range strings.Split(raw, ",") {
+		namespace = strings.TrimSpace(namespace)
+		if namespace != "" {
+			values = append(values, namespace)
+		}
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func defaultCatalogNamespaceForMode(mode string) string {
+	if mode == "tenant" {
+		return ""
+	}
+	if override := strings.TrimSpace(os.Getenv("PLATFORM_CATALOG_NAMESPACE")); override != "" {
+		return override
+	}
+	if override := strings.TrimSpace(os.Getenv("MCP_PLATFORM_CATALOG_NAMESPACE")); override != "" {
+		return override
+	}
+	switch mode {
+	case "org":
+		if namespace := strings.TrimSpace(os.Getenv("PLATFORM_ORG_NAMESPACE")); namespace != "" {
+			return namespace
+		}
+		return "mcp-servers-org"
+	case "public":
+		if namespace := strings.TrimSpace(os.Getenv("PLATFORM_PUBLIC_NAMESPACE")); namespace != "" {
+			return namespace
+		}
+		return "mcp-servers-public"
+	default:
+		return ""
+	}
+}
+
+func defaultPublicCatalogNamespace() string {
+	namespaces := catalogNamespacesForMode("public")
+	if len(namespaces) == 0 {
+		return defaultCatalogNamespaceForMode("public")
+	}
+	return namespaces[0]
+}
+
+func isPublicCatalogNamespace(namespace string) bool {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return false
+	}
+	for _, candidate := range catalogNamespacesForMode("public") {
+		if candidate == namespace {
+			return true
+		}
+	}
+	return false
+}
+
+func isPublicCatalogAPIRequest(r *http.Request, apiBase string) bool {
+	if r.Method != http.MethodGet {
+		return false
+	}
+	expected := strings.TrimRight(normalizePathPrefix(apiBase), "/") + "/runtime/servers"
+	return strings.TrimRight(r.URL.Path, "/") == expected
 }
 
 func secureCookie(r *http.Request) bool {

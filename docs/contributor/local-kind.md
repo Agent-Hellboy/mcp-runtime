@@ -118,8 +118,10 @@ curl -sS -b /tmp/mcp-test-user-cookie.txt \
   jq '{count: (.servers|length), names: [.servers[] | (.namespace + "/" + .name)]}'
 ```
 
-The test user should see org-scoped MCPs from `mcp-servers`, not tenant-only
-MCPs.
+In default tenant mode, the test user sees MCPs from their own user/team
+namespaces only. A setup installed with `--platform-mode org` instead shows the
+shared org catalog from `mcp-servers-org`, and `--platform-mode public` shows
+the public preview catalog from `mcp-servers-public`.
 
 Check tenant isolation in the shared contributor cluster:
 
@@ -139,8 +141,8 @@ curl -sS -o /tmp/mcp-tenant-a-cross.txt -w '%{http_code}\n' \
   'http://localhost:18080/api/runtime/servers?namespace=mcp-team-tenant-b'
 ```
 
-Tenant A should see `mcp-servers` plus `mcp-team-tenant-a`, and the explicit
-Tenant B namespace read should return `403`.
+Tenant A should see `mcp-team-tenant-a`, and the explicit Tenant B namespace
+read should return `403`.
 
 ## Quick Cluster Inventory
 
@@ -162,4 +164,3 @@ kubectl delete mcpaccessgrant <grant-name> -n <namespace> --ignore-not-found
 kubectl delete mcpserver <server-name> -n <namespace> --ignore-not-found
 kubectl delete secret <server-name>-analytics -n <namespace> --ignore-not-found
 ```
-

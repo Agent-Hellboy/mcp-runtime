@@ -734,15 +734,15 @@ func (s *RuntimeServer) scopedNamespaceForPrincipal(ctx context.Context, request
 		return requested, nil
 	}
 	if requested == "" {
+		if sharedCatalogWritableForUsers() {
+			return defaultCatalogNamespaceForMode(), nil
+		}
 		if preferred := strings.TrimSpace(p.Namespace); preferred != "" {
 			return preferred, nil
 		}
-		if p.HasNamespace(sharedCatalogNamespace) {
-			return sharedCatalogNamespace, nil
-		}
 		return "", errPrincipalIdentityRequired
 	}
-	if !p.HasNamespace(requested) {
+	if !principalCanReadNamespace(p, requested) {
 		return "", errors.New("forbidden namespace")
 	}
 	return requested, nil

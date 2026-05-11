@@ -75,3 +75,30 @@ func TestRequireRole(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
 	}
 }
+
+func TestAuthOrPublicCatalogAllowsAnonymousPublicServerList(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	srv := &apiServer{}
+	handler := srv.authOrPublicCatalog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, ok := principalFromContext(r.Context())
+		if !ok {
+			t.Fatal("expected public principal")
+		}
+		if p.AuthType != "public_catalog" || p.Namespace != "mcp-servers-public" {
+			t.Fatalf("principal = %+v, want public catalog in mcp-servers-public", p)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/runtime/servers", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("GET status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/runtime/servers", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("POST status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}

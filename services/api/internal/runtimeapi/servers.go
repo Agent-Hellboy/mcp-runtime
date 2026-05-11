@@ -55,12 +55,12 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 	if p.Role != roleAdmin {
 		if namespace == "" {
 			namespaces = catalogNamespacesForPrincipal(p)
-		} else if !p.HasNamespace(namespace) {
+		} else if !principalCanReadNamespace(p, namespace) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
 			return
 		}
 	} else if namespace == "" {
-		namespaces = []string{sharedCatalogNamespace}
+		namespaces = []string{defaultCatalogNamespaceForMode()}
 	}
 	namespaces = dedupeNonEmptyStrings(namespaces)
 	if len(namespaces) == 0 {
@@ -70,7 +70,7 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 
 	servers := make([]controlplane.ServerInfo, 0)
 	for _, namespace := range namespaces {
-		if p.Role != roleAdmin && !p.HasNamespace(namespace) {
+		if p.Role != roleAdmin && !principalCanReadNamespace(p, namespace) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
 			return
 		}
@@ -96,10 +96,10 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 }
 
 func catalogNamespacesForPrincipal(p principal) []string {
-	namespaces := make([]string, 0, len(p.AllowedNamespaces)+len(p.Teams)+2)
-	if p.HasNamespace(sharedCatalogNamespace) {
-		namespaces = append(namespaces, sharedCatalogNamespace)
+	if sharedCatalogWritableForUsers() {
+		return modeCatalogNamespaces()
 	}
+	namespaces := make([]string, 0, len(p.AllowedNamespaces)+len(p.Teams)+2)
 	if namespace := strings.TrimSpace(p.Namespace); namespace != "" && namespace != sharedCatalogNamespace {
 		namespaces = append(namespaces, namespace)
 	}
@@ -159,6 +159,9 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and spec.image are required"})
 		return
 	}
+	if req.Namespace == "" && p.Role != roleAdmin && sharedCatalogWritableForUsers() {
+		req.Namespace = defaultCatalogNamespaceForMode()
+	}
 	if req.Namespace == "" {
 		req.Namespace = strings.TrimSpace(p.Namespace)
 	}
@@ -167,7 +170,7 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 		return
 	}
-	if p.Role != roleAdmin && namespace == sharedCatalogNamespace {
+	if p.Role != roleAdmin && namespace == sharedCatalogNamespace && !sharedCatalogWritableForUsers() {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "shared catalog namespace is read-only for team users"})
 		return
 	}
@@ -228,6 +231,13 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
+	if p.Role != roleAdmin && sharedCatalogWritableForUsers() && isModeCatalogNamespace(namespace) {
+		if err := s.EnsureCatalogNamespace(ctx, namespace); err != nil {
+			log.Printf("runtime servers: ensure catalog namespace %q failed: %v", namespace, err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure catalog namespace"})
+			return
+		}
+	}
 	applied, err := control.ApplyServer(ctx, server)
 	if err != nil {
 		code, msg := k8sclient.HTTPStatusFromK8sError(err)

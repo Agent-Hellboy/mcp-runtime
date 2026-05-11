@@ -284,6 +284,7 @@ func TestOperatorEnvOverrides(t *testing.T) {
 }
 
 func TestConfigureProvisionedRegistryEnv(t *testing.T) {
+	t.Setenv("MCP_PLATFORM_MODE", setupplan.PlatformModeTenant)
 	t.Run("returns nil when registry not set", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
@@ -319,7 +320,7 @@ func TestConfigureProvisionedRegistryEnv(t *testing.T) {
 		}
 	})
 
-	t.Run("creates secrets and sets secret env when credentials provided", func(t *testing.T) {
+	t.Run("creates operator secret and sets secret env when credentials provided in tenant mode", func(t *testing.T) {
 		var envData string
 		var applyInputs []string
 		mock := &core.MockExecutor{
@@ -359,8 +360,8 @@ func TestConfigureProvisionedRegistryEnv(t *testing.T) {
 		if err := configureProvisionedRegistryEnvWithKubectl(kubectl, ext, ""); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(mock.Commands) != 4 {
-			t.Fatalf("expected 4 kubectl calls, got %d", len(mock.Commands))
+		if len(mock.Commands) != 3 {
+			t.Fatalf("expected 3 kubectl calls, got %d", len(mock.Commands))
 		}
 		if !strings.Contains(envData, "PROVISIONED_REGISTRY_USERNAME=user") || !strings.Contains(envData, "PROVISIONED_REGISTRY_PASSWORD=pass") {
 			t.Fatalf("unexpected env data: %q", envData)
@@ -372,8 +373,8 @@ func TestConfigureProvisionedRegistryEnv(t *testing.T) {
 				break
 			}
 		}
-		if !foundDockerConfig {
-			t.Fatalf("expected dockerconfigjson secret manifest in apply inputs")
+		if foundDockerConfig {
+			t.Fatalf("did not expect dockerconfigjson secret manifest in tenant mode")
 		}
 
 		setEnv := mock.Commands[len(mock.Commands)-1]
@@ -382,6 +383,57 @@ func TestConfigureProvisionedRegistryEnv(t *testing.T) {
 		}
 		if !contains(setEnv.Args, "--from=secret/"+defaultRegistrySecretName) {
 			t.Fatalf("expected from=secret arg, got %v", setEnv.Args)
+		}
+	})
+
+	t.Run("creates catalog image pull secret when credentials provided in shared mode", func(t *testing.T) {
+		t.Setenv("MCP_PLATFORM_MODE", setupplan.PlatformModePublic)
+		var applyInputs []string
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				cmd := &core.MockCommand{Args: spec.Args}
+				if contains(spec.Args, "create") && contains(spec.Args, "secret") {
+					cmd.RunFunc = func() error {
+						if cmd.StdoutW != nil {
+							_, _ = cmd.StdoutW.Write([]byte("apiVersion: v1\nkind: Secret\n"))
+						}
+						return nil
+					}
+				}
+				if contains(spec.Args, "apply") && contains(spec.Args, "-f") && contains(spec.Args, "-") {
+					cmd.RunFunc = func() error {
+						if cmd.StdinR != nil {
+							data, _ := io.ReadAll(cmd.StdinR)
+							applyInputs = append(applyInputs, string(data))
+						}
+						return nil
+					}
+				}
+				return cmd
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		ext := &config.ExternalRegistryConfig{
+			URL:      "registry.example.com",
+			Username: "user",
+			Password: "pass",
+		}
+
+		if err := configureProvisionedRegistryEnvWithKubectl(kubectl, ext, ""); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(mock.Commands) != 5 {
+			t.Fatalf("expected 5 kubectl calls, got %d", len(mock.Commands))
+		}
+		foundDockerConfig := false
+		for _, input := range applyInputs {
+			if strings.Contains(input, "kubernetes.io/dockerconfigjson") && strings.Contains(input, "namespace: mcp-servers-public") {
+				foundDockerConfig = true
+				break
+			}
+		}
+		if !foundDockerConfig {
+			t.Fatalf("expected dockerconfigjson secret manifest in public catalog apply inputs")
 		}
 	})
 }
@@ -862,7 +914,7 @@ spec:
           image: grafana/promtail:2.9.4
 `
 
-	rendered, err := renderAnalyticsManifest(content, AnalyticsImageSet{Ingest: "registry.example.com/mcp-sentinel-ingest:latest"}, defaultRegistrySecretName)
+	rendered, err := renderAnalyticsManifest(content, AnalyticsImageSet{Ingest: "registry.example.com/mcp-sentinel-ingest:latest"}, defaultRegistrySecretName, setupplan.PlatformModeTenant)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -959,7 +1011,7 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		API:       "example.com/mcp-sentinel-api:latest",
 		Processor: "example.com/mcp-sentinel-processor:latest",
 		UI:        "example.com/mcp-sentinel-ui:latest",
-	}, "")
+	}, "", setupplan.PlatformModeTenant)
 	if err == nil {
 		t.Fatal("expected rollout failure")
 	}
@@ -1026,7 +1078,7 @@ func TestDeployAnalyticsManifestsWithKubectl_HostpathUsesHostpathManifests(t *te
 		API:       "example.com/mcp-sentinel-api:latest",
 		Processor: "example.com/mcp-sentinel-processor:latest",
 		UI:        "example.com/mcp-sentinel-ui:latest",
-	}, setupplan.StorageModeHostpath)
+	}, setupplan.StorageModeHostpath, setupplan.PlatformModeTenant)
 	if err == nil {
 		t.Fatal("expected failure from rollout timeout")
 	}
@@ -1108,7 +1160,7 @@ func TestDeployAnalyticsManifestsWithKubectl_WaitsForPostgresStatefulSet(t *test
 		API:       "example.com/mcp-sentinel-api:latest",
 		Processor: "example.com/mcp-sentinel-processor:latest",
 		UI:        "example.com/mcp-sentinel-ui:latest",
-	}, "")
+	}, "", setupplan.PlatformModeTenant)
 	if err == nil {
 		t.Fatal("expected failure from postgres rollout timeout")
 	}

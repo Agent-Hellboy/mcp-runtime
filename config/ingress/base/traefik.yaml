@@ -23,6 +23,24 @@ metadata:
     pod-security.kubernetes.io/warn: restricted
 ---
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-servers-org
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-servers-public
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: traefik
@@ -132,6 +150,60 @@ subjects:
     name: traefik
     namespace: traefik
 ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: traefik-watch
+  namespace: mcp-servers-org
+rules:
+  - apiGroups: [""]
+    resources: ["services", "endpoints", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: traefik-watch
+  namespace: mcp-servers-org
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: traefik-watch
+subjects:
+  - kind: ServiceAccount
+    name: traefik
+    namespace: traefik
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: traefik-watch
+  namespace: mcp-servers-public
+rules:
+  - apiGroups: [""]
+    resources: ["services", "endpoints", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: traefik-watch
+  namespace: mcp-servers-public
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: traefik-watch
+subjects:
+  - kind: ServiceAccount
+    name: traefik
+    namespace: traefik
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -182,7 +254,7 @@ spec:
               - NET_BIND_SERVICE
         args:
           - --providers.kubernetesingress=true
-          - --providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers
+          - --providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers,mcp-servers-org,mcp-servers-public
           - --entrypoints.web.address=:80
           - --entrypoints.web.http.redirections.entryPoint.to=websecure
           - --entrypoints.web.http.redirections.entryPoint.scheme=https
