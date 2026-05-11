@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -104,9 +107,29 @@ func main() {
 		WriteTimeout:      5 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
-	if err := httpServer.ListenAndServe(); err != nil {
+
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- httpServer.ListenAndServe()
+	}()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	select {
+	case err := <-serverErr:
 		srv.stopAnalyticsDispatcher()
-		log.Fatalf("server failed: %v", err)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("server failed: %v", err)
+		}
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			srv.stopAnalyticsDispatcher()
+			log.Fatalf("server shutdown failed: %v", err)
+		}
+		srv.stopAnalyticsDispatcher()
 	}
 }
 

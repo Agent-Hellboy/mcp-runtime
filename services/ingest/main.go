@@ -59,6 +59,9 @@ func main() {
 	if (oidcIssuer != "" || oidcAudience != "") && jwksURL == "" {
 		log.Fatal("OIDC_JWKS_URL is required when OIDC_ISSUER or OIDC_AUDIENCE is configured")
 	}
+	if jwksURL != "" && oidcIssuer == "" && oidcAudience == "" {
+		log.Fatal("OIDC_ISSUER or OIDC_AUDIENCE is required when OIDC_JWKS_URL is configured")
+	}
 	jwks := (*keyfunc.JWKS)(nil)
 	if jwksURL != "" {
 		var err error
@@ -246,6 +249,10 @@ func (s *ingestServer) auth(next http.Handler) http.Handler {
 			parser := jwt.NewParser(jwt.WithValidMethods([]string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512"}))
 			parsed, err := parser.Parse(token, s.jwks.Keyfunc)
 			if err == nil && parsed.Valid {
+				if s.oidcIssuer == "" && s.oidcAudience == "" {
+					writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_token"})
+					return
+				}
 				if s.oidcIssuer != "" || s.oidcAudience != "" {
 					claims, ok := parsed.Claims.(jwt.MapClaims)
 					if !ok {

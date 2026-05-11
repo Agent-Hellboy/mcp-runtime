@@ -86,6 +86,14 @@ func (m *Middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	hdr := rec.Header()
 	m.redactResponseHeaders(hdr)
+	if rec.overflow {
+		copyHeader(rw.Header(), hdr)
+		rw.Header().Del("Content-Length")
+		rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		rw.WriteHeader(http.StatusBadGateway)
+		_, _ = rw.Write([]byte("response body too large for redaction\n"))
+		return
+	}
 	body := rec.bodyBytes()
 	if shouldRedactResponse(hdr.Get("Content-Type")) {
 		body = m.redactBody(body)
@@ -206,6 +214,7 @@ type responseCapture struct {
 	buf           bytes.Buffer
 	maxBody       int64
 	streaming     bool
+	overflow      bool
 	redactHeaders func(http.Header)
 }
 
@@ -235,7 +244,14 @@ func (r *responseCapture) Write(p []byte) (int, error) {
 	if r.code == 0 {
 		r.code = http.StatusOK
 	}
+	if r.overflow {
+		return len(p), nil
+	}
 	if !shouldRedactResponse(r.header.Get("Content-Type")) || int64(r.buf.Len()+len(p)) > r.maxBody {
+		if shouldRedactResponse(r.header.Get("Content-Type")) {
+			r.overflow = true
+			return len(p), nil
+		}
 		if err := r.startPassthrough(); err != nil {
 			return 0, err
 		}

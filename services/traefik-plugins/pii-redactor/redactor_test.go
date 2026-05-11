@@ -133,6 +133,32 @@ func TestStreamingResponsesBypassBodyRedaction(t *testing.T) {
 	}
 }
 
+func TestOversizedRedactableResponseFailsClosed(t *testing.T) {
+	handler, err := New(context.Background(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Authorization", "Bearer keep-me")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"email":"alice@example.com","token":"fixture-value"}`))
+	}), &Config{MaxBodyBytes: 8}, "pii")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://traefik.local/api", nil))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "alice@example.com") || strings.Contains(body, "fixture-value") {
+		t.Fatalf("oversized response leaked sensitive data: %q", body)
+	}
+	if got := rec.Header().Get("Authorization"); got != "[redacted]" {
+		t.Fatalf("Authorization response header should be redacted, got %q", got)
+	}
+}
+
 func TestBinaryAndCompressedRequestsBypassBodyRedaction(t *testing.T) {
 	tests := []struct {
 		name            string

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -35,7 +36,10 @@ const (
 	traefikWatchRoleName  = "traefik-watch"
 )
 
-var errPrincipalIdentityRequired = errors.New("authenticated user identity required")
+var (
+	errPrincipalIdentityRequired = errors.New("authenticated user identity required")
+	deployImageTagPattern        = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+)
 
 type managedNamespaceOptions struct {
 	ingressFromNamespaces []string
@@ -247,6 +251,11 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	}
 	image := req.Image
 	if req.Version != "" && !strings.Contains(image[strings.LastIndex(image, "/")+1:], ":") {
+		if !deployImageTagPattern.MatchString(req.Version) {
+			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, req.Image, "version must be a valid image tag"))
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "version must be a valid image tag"})
+			return
+		}
 		image += ":" + req.Version
 	}
 	team, teamNamespace := p.TeamForNamespace(namespace)
