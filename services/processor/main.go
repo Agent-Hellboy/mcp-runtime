@@ -42,19 +42,19 @@ func init() {
 // configures batch processing parameters, initializes tracing,
 // and starts consuming events from Kafka to insert into ClickHouse.
 func main() {
-	brokers := strings.Split(envOr("KAFKA_BROKERS", "kafka:9092"), ",")
-	topic := envOr("KAFKA_TOPIC", "mcp.events")
-	groupID := envOr("KAFKA_GROUP", "mcp-sentinel-processor")
-	metricsPort := envOr("METRICS_PORT", "9102")
+	brokers := strings.Split(serviceutil.EnvOr("KAFKA_BROKERS", "kafka:9092"), ",")
+	topic := serviceutil.EnvOr("KAFKA_TOPIC", "mcp.events")
+	groupID := serviceutil.EnvOr("KAFKA_GROUP", "mcp-sentinel-processor")
+	metricsPort := serviceutil.EnvOr("METRICS_PORT", "9102")
 
-	clickhouseAddr := envOr("CLICKHOUSE_ADDR", "clickhouse:9000")
-	dbName := envOr("CLICKHOUSE_DB", "mcp")
+	clickhouseAddr := serviceutil.EnvOr("CLICKHOUSE_ADDR", "clickhouse:9000")
+	dbName := serviceutil.EnvOr("CLICKHOUSE_DB", "mcp")
 	if err := clickhousepkg.ValidateDBName(dbName); err != nil {
 		log.Fatalf("invalid CLICKHOUSE_DB: %v", err)
 	}
 
-	batchSize := envInt("BATCH_SIZE", 500)
-	flushInterval := envDuration("FLUSH_INTERVAL", 2*time.Second)
+	batchSize := serviceutil.EnvInt("BATCH_SIZE", 500)
+	flushInterval := serviceutil.EnvDuration("FLUSH_INTERVAL", 2*time.Second)
 	if batchSize <= 0 {
 		log.Printf("invalid BATCH_SIZE=%d; using default 500", batchSize)
 		batchSize = 500
@@ -103,7 +103,7 @@ func main() {
 		}
 	}()
 
-	shutdown, err := initTracer("mcp-sentinel-processor")
+	shutdown, err := serviceutil.InitTracer("mcp-sentinel-processor")
 	if err != nil {
 		log.Printf("otel init failed: %v", err)
 	} else {
@@ -225,32 +225,4 @@ func messageInputForBatch(batchLen, batchSize int, input <-chan kafka.Message) <
 		return nil
 	}
 	return input
-}
-
-// initTracer initializes OpenTelemetry tracing for the service.
-// It configures OTLP HTTP exporter and sets up the tracer provider.
-// Returns a shutdown function to clean up resources and any initialization error.
-// If no OTEL_EXPORTER_OTLP_ENDPOINT is configured, returns a no-op shutdown function.
-func initTracer(serviceName string) (func(context.Context) error, error) {
-	return serviceutil.InitTracer(serviceName)
-}
-
-// envOr returns the value of an environment variable or a fallback if not set.
-// If the environment variable is set to a non-empty value, it returns that value.
-// Otherwise, it returns the provided fallback value.
-func envOr(key, fallback string) string {
-	return serviceutil.EnvOr(key, fallback)
-}
-
-// envInt parses an integer environment variable.
-// It returns the parsed integer value or the fallback if parsing fails.
-func envInt(key string, fallback int) int {
-	return serviceutil.EnvInt(key, fallback)
-}
-
-// envDuration parses a duration environment variable.
-// It parses values like "30s", "5m", "1h" and returns the parsed duration.
-// Returns the fallback value if parsing fails.
-func envDuration(key string, fallback time.Duration) time.Duration {
-	return serviceutil.EnvDuration(key, fallback)
 }

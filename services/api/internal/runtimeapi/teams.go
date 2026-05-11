@@ -228,7 +228,7 @@ func (s *RuntimeServer) handleRuntimeTeamCreate(w http.ResponseWriter, r *http.R
 		Slug string `json:"slug"`
 		Name string `json:"name"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, teamApplyMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBodyDecodeError(w, err)
 		return
@@ -261,7 +261,7 @@ func (s *RuntimeServer) handleRuntimeTeamMemberUpsert(w http.ResponseWriter, r *
 		UserID string `json:"userID"`
 		Role   string `json:"role"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, teamApplyMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBodyDecodeError(w, err)
 		return

@@ -39,13 +39,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	port := envOr("PORT", "8081")
-	metricsPort := envOr("METRICS_PORT", "9091")
-	brokers := strings.Split(envOr("KAFKA_BROKERS", "kafka:9092"), ",")
-	topic := envOr("KAFKA_TOPIC", "mcp.events")
+	port := serviceutil.EnvOr("PORT", "8081")
+	metricsPort := serviceutil.EnvOr("METRICS_PORT", "9091")
+	brokers := strings.Split(serviceutil.EnvOr("KAFKA_BROKERS", "kafka:9092"), ",")
+	topic := serviceutil.EnvOr("KAFKA_TOPIC", "mcp.events")
 
 	apiKeys := map[string]struct{}{}
-	ingestKeys := envOr("INGEST_API_KEYS", envOr("API_KEYS", ""))
+	ingestKeys := serviceutil.EnvOr("INGEST_API_KEYS", serviceutil.EnvOr("API_KEYS", ""))
 	for _, key := range strings.Split(ingestKeys, ",") {
 		key = strings.TrimSpace(key)
 		if key != "" {
@@ -85,15 +85,15 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/live", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		serviceutil.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("/ready", server.handleReady)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		serviceutil.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 	mux.Handle("/events", server.auth(http.HandlerFunc(server.handleEvents)))
 
-	shutdown, err := initTracer("mcp-sentinel-ingest")
+	shutdown, err := serviceutil.InitTracer("mcp-sentinel-ingest")
 	if err != nil {
 		log.Printf("otel init failed: %v", err)
 	} else {
@@ -121,7 +121,7 @@ func main() {
 	}()
 
 	log.Printf("mcp-sentinel-ingest listening on :%s", port)
-	handler := otelhttp.NewHandler(logRequests(mux), "http.server")
+	handler := otelhttp.NewHandler(serviceutil.LogRequests(mux), "http.server")
 	httpServer := &http.Server{
 		Addr:              ":" + port,
 		Handler:           handler,
@@ -144,21 +144,21 @@ func main() {
 	_ = writer.Close()
 }
 
-const maxBodySize = 1 << 20 // 1MB
+const ingestEventMaxBytes = 1 << 20 // 1MB
 
 func (s *ingestServer) handleReady(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 
 	if err := s.checkKafkaReady(ctx); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+		serviceutil.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{
 			"ok":    false,
 			"error": "kafka_unavailable",
 		})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	serviceutil.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *ingestServer) checkKafkaReady(ctx context.Context) error {
@@ -191,34 +191,34 @@ func (s *ingestServer) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+	r.Body = http.MaxBytesReader(w, r.Body, ingestEventMaxBytes)
 	var payload events.Envelope
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
+		serviceutil.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
 		return
 	}
 
 	payload.Source = strings.TrimSpace(payload.Source)
 	payload.EventType = strings.TrimSpace(payload.EventType)
 	if err := payload.Validate(); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_fields"})
+		serviceutil.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_fields"})
 		return
 	}
 	payload.EnsureTimestamp(time.Now().UTC())
 
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode_failed"})
+		serviceutil.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode_failed"})
 		return
 	}
 
 	err = s.writer.WriteMessages(r.Context(), kafka.Message{Value: raw})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "enqueue_failed"})
+		serviceutil.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "enqueue_failed"})
 		return
 	}
 
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+	serviceutil.WriteJSON(w, http.StatusAccepted, map[string]any{"ok": true})
 }
 
 // auth is middleware that enforces API key authentication.
@@ -249,16 +249,16 @@ func (s *ingestServer) auth(next http.Handler) http.Handler {
 				if s.oidcIssuer != "" || s.oidcAudience != "" {
 					claims, ok := parsed.Claims.(jwt.MapClaims)
 					if !ok {
-						writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_token"})
+						serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_token"})
 						return
 					}
 					if s.oidcIssuer != "" && claims["iss"] != s.oidcIssuer {
-						writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_token"})
+						serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_token"})
 						return
 					}
 					if s.oidcAudience != "" {
 						if !serviceutil.AudienceMatches(claims["aud"], s.oidcAudience) {
-							writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_token"})
+							serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_token"})
 							return
 						}
 					}
@@ -268,33 +268,6 @@ func (s *ingestServer) auth(next http.Handler) http.Handler {
 			}
 		}
 
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	})
-}
-
-// writeJSON writes a JSON response with the specified status code.
-// It sets appropriate Content-Type headers and handles JSON marshaling errors.
-func writeJSON(w http.ResponseWriter, status int, payload any) {
-	serviceutil.WriteJSON(w, status, payload)
-}
-
-// logRequests is middleware that logs HTTP requests.
-// It logs the HTTP method, URL path, response status, and duration.
-func logRequests(next http.Handler) http.Handler {
-	return serviceutil.LogRequests(next)
-}
-
-// initTracer initializes OpenTelemetry tracing for the service.
-// It configures OTLP HTTP exporter and sets up the tracer provider.
-// Returns a shutdown function to clean up resources and any initialization error.
-// If no OTEL_EXPORTER_OTLP_ENDPOINT is configured, returns a no-op shutdown function.
-func initTracer(serviceName string) (func(context.Context) error, error) {
-	return serviceutil.InitTracer(serviceName)
-}
-
-// envOr returns the value of an environment variable or a fallback if not set.
-// If the environment variable is set to a non-empty value, it returns that value.
-// Otherwise, it returns the provided fallback value.
-func envOr(key, fallback string) string {
-	return serviceutil.EnvOr(key, fallback)
 }

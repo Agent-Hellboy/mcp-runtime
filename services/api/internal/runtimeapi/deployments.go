@@ -209,7 +209,7 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var req deployRequest
-	r.Body = http.MaxBytesReader(w, r.Body, 32*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, deploymentApplyMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBodyDecodeError(w, err)
 		return

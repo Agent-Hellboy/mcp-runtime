@@ -51,6 +51,7 @@ jobs:
         uses: github/codeql-action/upload-sarif@ed410739ba306e4ebe5e123421a6bd694e494a2b # v4
         with:
           sarif_file: trivy-fs.sarif
+          category: trivy-fs-vuln
 
       - name: Trivy repository misconfiguration scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
@@ -72,6 +73,7 @@ jobs:
         uses: github/codeql-action/upload-sarif@ed410739ba306e4ebe5e123421a6bd694e494a2b # v4
         with:
           sarif_file: trivy-misconfig.sarif
+          category: trivy-fs-misconfig
 
   trivy-image:
     name: Trivy Operator Image Scan
@@ -119,3 +121,4 @@ jobs:
         uses: github/codeql-action/upload-sarif@ed410739ba306e4ebe5e123421a6bd694e494a2b # v4
         with:
           sarif_file: trivy-image.sarif
+          category: trivy-operator-image
