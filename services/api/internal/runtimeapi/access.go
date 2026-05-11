@@ -125,7 +125,7 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 		}
 		return
 	}
-	if err := s.bindAccessSubjectTeamID(r.Context(), req.Namespace, targetServer.Spec.TeamID, &req.Subject); err != nil {
+	if err := s.bindAccessSubjectTeamID(ctx, req.Namespace, targetServer.Spec.TeamID, &req.Subject); err != nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 		return
 	}
@@ -245,7 +245,7 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 		}
 		return
 	}
-	if err := s.bindAccessSubjectTeamID(r.Context(), req.Namespace, targetServer.Spec.TeamID, &req.Subject); err != nil {
+	if err := s.bindAccessSubjectTeamID(ctx, req.Namespace, targetServer.Spec.TeamID, &req.Subject); err != nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 		return
 	}

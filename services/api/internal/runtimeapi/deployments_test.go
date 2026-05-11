@@ -168,6 +168,36 @@ func TestHandleDeploymentApplyAdminUsesRequestedNamespace(t *testing.T) {
 	}
 }
 
+func TestHandleDeploymentApplyRejectsInvalidVersionTag(t *testing.T) {
+	client := kubernetesfake.NewSimpleClientset()
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{Clientset: client},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/deployments", bytes.NewReader([]byte(`{
+		"name": "demo-workload",
+		"image": "registry.mcpruntime.org/mcp-servers/demo",
+		"version": "latest@sha256:abc",
+		"namespace": "tenant-a",
+		"replicas": 1,
+		"port": 8088
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleAdmin,
+		Subject:   "admin-1",
+		Namespace: "admin-ns",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.handleDeploymentApply(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "version must be a valid image tag") {
+		t.Fatalf("body = %q, want invalid version message", recorder.Body.String())
+	}
+}
+
 func TestHandleDeploymentApplyWritesAuditEvent(t *testing.T) {
 	client := kubernetesfake.NewSimpleClientset()
 	audit := &fakeAuditWriter{}

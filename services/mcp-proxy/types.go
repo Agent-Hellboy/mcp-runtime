@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -71,9 +70,10 @@ type proxyServer struct {
 	defaultPolicyMode     string
 	defaultPolicyDecision string
 	defaultPolicyVersion  string
-	analyticsCancel       context.CancelFunc
 	analyticsMu           sync.Mutex
 	analyticsOnce         sync.Once
+	analyticsWG           sync.WaitGroup
+	analyticsClosed       bool
 	oauthMu               sync.Mutex
 	oauthProviders        map[string]*oauthProvider
 	policyState           atomic.Value
@@ -89,6 +89,7 @@ const (
 	maxRPCBodyBytes       = 1 << 20
 	analyticsQueueSize    = 256
 	analyticsWorkerCount  = 4
+	analyticsEmitTimeout  = 5
 	defaultHumanHeader    = "X-MCP-Human-ID"
 	defaultAgentHeader    = "X-MCP-Agent-ID"
 	defaultTeamHeader     = "X-MCP-Team-ID"

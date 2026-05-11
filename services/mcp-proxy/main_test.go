@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -423,6 +424,33 @@ func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
 		}
 	default:
 		t.Fatal("analytics queue unexpectedly drained")
+	}
+}
+
+func TestStopAnalyticsDispatcherDrainsQueue(t *testing.T) {
+	t.Parallel()
+
+	var received int32
+	ingest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		atomic.AddInt32(&received, 1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(ingest.Close)
+
+	proxy := &proxyServer{
+		analyticsURL: ingest.URL,
+		httpClient:   ingest.Client(),
+	}
+	proxy.startAnalyticsDispatcher()
+	for i := 0; i < 3; i++ {
+		proxy.emitIfEnabled(events.Envelope{Source: "proxy", EventType: "mcp.request"})
+	}
+
+	proxy.stopAnalyticsDispatcher()
+
+	if got := atomic.LoadInt32(&received); got != 3 {
+		t.Fatalf("received analytics events = %d, want 3", got)
 	}
 }
 

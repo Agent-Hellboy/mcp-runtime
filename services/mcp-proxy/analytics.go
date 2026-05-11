@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 
 	"mcp-runtime/pkg/events"
 )
@@ -17,25 +18,23 @@ func (s *proxyServer) startAnalyticsDispatcher() {
 	}
 	s.analyticsOnce.Do(func() {
 		s.analyticsMu.Lock()
+		if s.analyticsClosed {
+			s.analyticsMu.Unlock()
+			return
+		}
 		if s.analyticsQueue == nil {
 			s.analyticsQueue = make(chan events.Envelope, analyticsQueueSize)
 		}
 		queue := s.analyticsQueue
-		ctx, cancel := context.WithCancel(context.Background())
-		s.analyticsCancel = cancel
+		s.analyticsWG.Add(analyticsWorkerCount)
 		s.analyticsMu.Unlock()
 		for i := 0; i < analyticsWorkerCount; i++ {
 			go func() {
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case event, ok := <-queue:
-						if !ok {
-							return
-						}
-						s.emit(ctx, event)
-					}
+				defer s.analyticsWG.Done()
+				for event := range queue {
+					ctx, cancel := context.WithTimeout(context.Background(), time.Duration(analyticsEmitTimeout)*time.Second)
+					s.emit(ctx, event)
+					cancel()
 				}
 			}()
 		}
@@ -44,11 +43,19 @@ func (s *proxyServer) startAnalyticsDispatcher() {
 
 func (s *proxyServer) stopAnalyticsDispatcher() {
 	s.analyticsMu.Lock()
-	cancel := s.analyticsCancel
-	s.analyticsMu.Unlock()
-	if cancel != nil {
-		cancel()
+	if s.analyticsClosed {
+		s.analyticsMu.Unlock()
+		s.analyticsWG.Wait()
+		return
 	}
+	s.analyticsClosed = true
+	queue := s.analyticsQueue
+	s.analyticsQueue = nil
+	if queue != nil {
+		close(queue)
+	}
+	s.analyticsMu.Unlock()
+	s.analyticsWG.Wait()
 }
 
 func (s *proxyServer) emitIfEnabled(event events.Envelope) {
@@ -57,6 +64,11 @@ func (s *proxyServer) emitIfEnabled(event events.Envelope) {
 	}
 	queue := s.analyticsEventQueue()
 	if queue == nil {
+		return
+	}
+	s.analyticsMu.Lock()
+	defer s.analyticsMu.Unlock()
+	if s.analyticsClosed {
 		return
 	}
 	select {
@@ -78,6 +90,9 @@ func (s *proxyServer) analyticsEventQueue() chan events.Envelope {
 	}
 	s.analyticsMu.Lock()
 	defer s.analyticsMu.Unlock()
+	if s.analyticsClosed {
+		return nil
+	}
 	return s.analyticsQueue
 }
 
