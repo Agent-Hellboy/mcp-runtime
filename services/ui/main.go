@@ -49,6 +49,7 @@ var (
 	loginFailureWindow     = durationEnvOr("UI_LOGIN_FAILURE_WINDOW", defaultLoginFailureWindow)
 	loginFailureThreshold  = intEnvOr("UI_LOGIN_FAILURE_THRESHOLD", defaultLoginFailureThreshold)
 	loginLockoutDuration   = durationEnvOr("UI_LOGIN_LOCKOUT", defaultLoginLockoutDuration)
+	forceSecureCookie      = boolEnvOr("UI_FORCE_SECURE_COOKIE", false)
 	passwordLoginHook      func(context.Context, string, string, string) (sessionPrincipal, string, error)
 )
 
@@ -113,7 +114,7 @@ func main() {
 		log.Fatalf("invalid API upstream: %v", err)
 	}
 
-	shutdown, err := initTracer("mcp-sentinel-ui")
+	shutdown, err := serviceutil.InitTracer("mcp-sentinel-ui")
 	if err != nil {
 		log.Printf("otel init failed: %v", err)
 	} else {
@@ -888,7 +889,7 @@ func firstAPIKey(apiKeys string) string {
 }
 
 func secureCookie(r *http.Request) bool {
-	if force, ok := serviceutil.BoolEnv("UI_FORCE_SECURE_COOKIE"); ok && force {
+	if forceSecureCookie {
 		return true
 	}
 	if r.TLS != nil {
@@ -1016,14 +1017,6 @@ func isHTTPSRequest(r *http.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(r.Header.Get("x-forwarded-proto")), "https")
 }
 
-// initTracer initializes OpenTelemetry tracing for the service.
-// It configures OTLP HTTP exporter and sets up the tracer provider.
-// Returns a shutdown function to clean up resources and any initialization error.
-// If no OTEL_EXPORTER_OTLP_ENDPOINT is configured, returns a no-op shutdown function.
-func initTracer(serviceName string) (func(context.Context) error, error) {
-	return serviceutil.InitTracer(serviceName)
-}
-
 func intEnvOr(key string, fallback int) int {
 	parsed := serviceutil.EnvInt(key, fallback)
 	if parsed <= 0 {
@@ -1042,4 +1035,11 @@ func durationEnvOr(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return parsed
+}
+
+func boolEnvOr(key string, fallback bool) bool {
+	if parsed, ok := serviceutil.BoolEnv(key); ok {
+		return parsed
+	}
+	return fallback
 }

@@ -103,7 +103,7 @@ func main() {
 		}
 	}()
 
-	shutdown, err := initTracer("mcp-sentinel-processor")
+	shutdown, err := serviceutil.InitTracer("mcp-sentinel-processor")
 	if err != nil {
 		log.Printf("otel init failed: %v", err)
 	} else {
@@ -225,12 +225,4 @@ func messageInputForBatch(batchLen, batchSize int, input <-chan kafka.Message) <
 		return nil
 	}
 	return input
-}
-
-// initTracer initializes OpenTelemetry tracing for the service.
-// It configures OTLP HTTP exporter and sets up the tracer provider.
-// Returns a shutdown function to clean up resources and any initialization error.
-// If no OTEL_EXPORTER_OTLP_ENDPOINT is configured, returns a no-op shutdown function.
-func initTracer(serviceName string) (func(context.Context) error, error) {
-	return serviceutil.InitTracer(serviceName)
 }

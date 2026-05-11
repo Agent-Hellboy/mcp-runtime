@@ -93,7 +93,7 @@ func main() {
 	})
 	mux.Handle("/events", server.auth(http.HandlerFunc(server.handleEvents)))
 
-	shutdown, err := initTracer("mcp-sentinel-ingest")
+	shutdown, err := serviceutil.InitTracer("mcp-sentinel-ingest")
 	if err != nil {
 		log.Printf("otel init failed: %v", err)
 	} else {
@@ -270,12 +270,4 @@ func (s *ingestServer) auth(next http.Handler) http.Handler {
 
 		serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	})
-}
-
-// initTracer initializes OpenTelemetry tracing for the service.
-// It configures OTLP HTTP exporter and sets up the tracer provider.
-// Returns a shutdown function to clean up resources and any initialization error.
-// If no OTEL_EXPORTER_OTLP_ENDPOINT is configured, returns a no-op shutdown function.
-func initTracer(serviceName string) (func(context.Context) error, error) {
-	return serviceutil.InitTracer(serviceName)
 }

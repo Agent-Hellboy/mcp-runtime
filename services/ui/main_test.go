@@ -652,13 +652,17 @@ func TestHTTPSRedirectMiddlewarePassesThroughHTTPS(t *testing.T) {
 	}
 }
 
-func TestSecureCookieCanBeForcedByEnv(t *testing.T) {
-	t.Setenv("UI_FORCE_SECURE_COOKIE", "true")
+func TestSecureCookieCanBeForcedByConfig(t *testing.T) {
+	previous := forceSecureCookie
+	forceSecureCookie = true
+	t.Cleanup(func() {
+		forceSecureCookie = previous
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "http://platform.example.com/", nil)
 	req.Header.Set("X-Forwarded-Proto", "http")
 
 	if !secureCookie(req) {
-		t.Fatal("secureCookie() = false, want true when UI_FORCE_SECURE_COOKIE=true")
+		t.Fatal("secureCookie() = false, want true when forceSecureCookie=true")
 	}
 }
