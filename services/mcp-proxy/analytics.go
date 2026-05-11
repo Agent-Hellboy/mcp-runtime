@@ -62,13 +62,13 @@ func (s *proxyServer) emitIfEnabled(event events.Envelope) {
 	if s.analyticsURL == "" {
 		return
 	}
-	if s.analyticsEventQueue() == nil {
+	queue := s.analyticsEventQueue()
+	if queue == nil {
 		return
 	}
 	s.analyticsMu.Lock()
 	defer s.analyticsMu.Unlock()
-	queue := s.analyticsQueue
-	if queue == nil || s.analyticsClosed {
+	if s.analyticsClosed {
 		return
 	}
 	select {

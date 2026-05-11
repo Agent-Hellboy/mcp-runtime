@@ -89,6 +89,7 @@ func (m *Middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if rec.overflow {
 		copyHeader(rw.Header(), hdr)
 		rw.Header().Del("Content-Length")
+		rw.Header().Del("Content-Encoding")
 		rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		rw.WriteHeader(http.StatusBadGateway)
 		_, _ = rw.Write([]byte("response body too large for redaction\n"))

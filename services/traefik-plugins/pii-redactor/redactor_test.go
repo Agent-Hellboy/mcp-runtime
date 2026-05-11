@@ -136,6 +136,7 @@ func TestStreamingResponsesBypassBodyRedaction(t *testing.T) {
 func TestOversizedRedactableResponseFailsClosed(t *testing.T) {
 	handler, err := New(context.Background(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Set("Authorization", "Bearer keep-me")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"email":"alice@example.com","token":"fixture-value"}`))
@@ -156,6 +157,9 @@ func TestOversizedRedactableResponseFailsClosed(t *testing.T) {
 	}
 	if got := rec.Header().Get("Authorization"); got != "[redacted]" {
 		t.Fatalf("Authorization response header should be redacted, got %q", got)
+	}
+	if got := rec.Header().Get("Content-Encoding"); got != "" {
+		t.Fatalf("Content-Encoding should be cleared for plain text error body, got %q", got)
 	}
 }
 
