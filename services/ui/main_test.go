@@ -651,3 +651,14 @@ func TestHTTPSRedirectMiddlewarePassesThroughHTTPS(t *testing.T) {
 		t.Fatal("expected HTTPS request to pass through")
 	}
 }
+
+func TestSecureCookieCanBeForcedByEnv(t *testing.T) {
+	t.Setenv("UI_FORCE_SECURE_COOKIE", "true")
+
+	req := httptest.NewRequest(http.MethodGet, "http://platform.example.com/", nil)
+	req.Header.Set("X-Forwarded-Proto", "http")
+
+	if !secureCookie(req) {
+		t.Fatal("secureCookie() = false, want true when UI_FORCE_SECURE_COOKIE=true")
+	}
+}

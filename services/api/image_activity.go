@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const imageActivityRequestMaxBytes = 16 * 1024
+
 func (s *apiServer) handleUserImagePublishActivity(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
@@ -26,7 +28,7 @@ func (s *apiServer) handleUserImagePublishActivity(w http.ResponseWriter, r *htt
 		SourceImage string `json:"source_image,omitempty"`
 		Mode        string `json:"mode,omitempty"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, imageActivityRequestMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBodyDecodeError(w, err)
 		return

@@ -21,6 +21,11 @@ const (
 	apiLoginLockoutMax  = 5 * time.Minute
 )
 const (
+	platformSignupRequestMaxBytes        = 4 * 1024
+	platformPasswordLoginRequestMaxBytes = 4 * 1024
+	platformOIDCLoginRequestMaxBytes     = 8 * 1024
+)
+const (
 	defaultDevUserEmail     = "test@mcpruntime.org"
 	defaultDevUserPassword  = "test@123"
 	defaultDevAdminEmail    = "admin@mcpruntime.org"
@@ -211,7 +216,7 @@ func (s *apiServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 		Role     string `json:"role"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	r.Body = http.MaxBytesReader(w, r.Body, platformSignupRequestMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBodyDecodeError(w, err)
 		return
@@ -293,7 +298,7 @@ func (s *apiServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	r.Body = http.MaxBytesReader(w, r.Body, platformPasswordLoginRequestMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBodyDecodeError(w, err)
 		return
@@ -361,7 +366,7 @@ func (s *apiServer) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IDToken string `json:"id_token"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	r.Body = http.MaxBytesReader(w, r.Body, platformOIDCLoginRequestMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBodyDecodeError(w, err)
 		return

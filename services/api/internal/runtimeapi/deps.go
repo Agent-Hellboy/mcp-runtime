@@ -11,15 +11,17 @@ import (
 )
 
 const (
-	roleAdmin              = apiauth.RoleAdmin
-	roleUser               = apiauth.RoleUser
-	sharedCatalogNamespace = platformstore.SharedCatalogNamespace
-	teamNamespacePrefix    = platformstore.TeamNamespacePrefix
-	teamRoleOwner          = platformstore.TeamRoleOwner
-	teamRoleMember         = platformstore.TeamRoleMember
-	namespaceScopeUser     = platformstore.NamespaceScopeUser
-	namespaceScopeTeam     = platformstore.NamespaceScopeTeam
-	accessApplyMaxBytes    = apihttp.ApplyMaxBytes
+	roleAdmin               = apiauth.RoleAdmin
+	roleUser                = apiauth.RoleUser
+	sharedCatalogNamespace  = platformstore.SharedCatalogNamespace
+	teamNamespacePrefix     = platformstore.TeamNamespacePrefix
+	teamRoleOwner           = platformstore.TeamRoleOwner
+	teamRoleMember          = platformstore.TeamRoleMember
+	namespaceScopeUser      = platformstore.NamespaceScopeUser
+	namespaceScopeTeam      = platformstore.NamespaceScopeTeam
+	accessApplyMaxBytes     = apihttp.ApplyMaxBytes
+	deploymentApplyMaxBytes = 32 * 1024
+	teamApplyMaxBytes       = 8 * 1024
 )
 
 type Principal = apiauth.Principal

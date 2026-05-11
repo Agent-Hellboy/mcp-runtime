@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const registryCredentialRequestMaxBytes = 4 * 1024
+
 func (s *apiServer) handleRegistryCredentials(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
@@ -30,7 +32,7 @@ func (s *apiServer) handleRegistryCredentials(w http.ResponseWriter, r *http.Req
 		var req struct {
 			Name string `json:"name"`
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		r.Body = http.MaxBytesReader(w, r.Body, registryCredentialRequestMaxBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeBodyDecodeError(w, err)
 			return
