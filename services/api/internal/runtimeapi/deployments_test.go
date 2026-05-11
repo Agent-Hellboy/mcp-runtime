@@ -5,10 +5,13 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
@@ -216,6 +219,67 @@ func TestEnsureDefaultDenyNetworkPolicyIdempotent(t *testing.T) {
 	}
 }
 
+func TestEnsureTeamNamespaceConfiguresTraefikIngressWatch(t *testing.T) {
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "required")
+	client := kubernetesfake.NewSimpleClientset(
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: "traefik", Namespace: "traefik"},
+			Spec: appsv1.DeploymentSpec{
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name: "traefik",
+							Args: []string{
+								"--providers.kubernetesingress=true",
+								"--providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers",
+							},
+						}},
+					},
+				},
+			},
+		},
+		&networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "platform-default-deny", Namespace: "mcp-team-acme"},
+		},
+	)
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{Clientset: client},
+	}
+	if err := server.ensureTeamNamespace(context.Background(), teamRecord{
+		ID:        "team-acme-id",
+		Slug:      "acme",
+		Name:      "Acme",
+		Namespace: "mcp-team-acme",
+	}); err != nil {
+		t.Fatalf("ensureTeamNamespace() error = %v", err)
+	}
+	if _, err := client.RbacV1().Roles("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{}); err != nil {
+		t.Fatalf("traefik watch role missing: %v", err)
+	}
+	binding, err := client.RbacV1().RoleBindings("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("traefik watch rolebinding missing: %v", err)
+	}
+	if len(binding.Subjects) != 1 || binding.Subjects[0].Kind != rbacv1.ServiceAccountKind || binding.Subjects[0].Namespace != "traefik" || binding.Subjects[0].Name != "traefik" {
+		t.Fatalf("traefik watch binding subjects = %#v", binding.Subjects)
+	}
+	policy, err := client.NetworkingV1().NetworkPolicies("mcp-team-acme").Get(context.Background(), "platform-default-deny", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("network policy missing: %v", err)
+	}
+	if !networkPolicyAllowsNamespace(policy, "traefik") {
+		t.Fatalf("network policy does not allow ingress from traefik: %#v", policy.Spec.Ingress)
+	}
+	deployment, err := client.AppsV1().Deployments("traefik").Get(context.Background(), "traefik", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("traefik deployment missing: %v", err)
+	}
+	args := strings.Join(deployment.Spec.Template.Spec.Containers[0].Args, "\n")
+	if !strings.Contains(args, "--providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers,mcp-team-acme") {
+		t.Fatalf("traefik namespace args = %q", args)
+	}
+}
+
 func TestEnsureUserNamespaceSetsManagedLabel(t *testing.T) {
 	client := kubernetesfake.NewSimpleClientset()
 	server := &RuntimeServer{
@@ -297,6 +361,20 @@ func hasString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
 			return true
+		}
+	}
+	return false
+}
+
+func networkPolicyAllowsNamespace(policy *networkingv1.NetworkPolicy, namespace string) bool {
+	for _, rule := range policy.Spec.Ingress {
+		for _, peer := range rule.From {
+			if peer.NamespaceSelector == nil {
+				continue
+			}
+			if peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == namespace {
+				return true
+			}
 		}
 	}
 	return false

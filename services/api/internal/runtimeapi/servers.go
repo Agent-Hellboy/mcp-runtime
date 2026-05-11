@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,37 +41,97 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
 		return
 	}
+	p, ok := principalFromContext(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
 	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
-	if p, ok := principalFromContext(r.Context()); ok && p.Role != roleAdmin {
+	namespaces := []string{namespace}
+	if p.Role != roleAdmin {
 		if namespace == "" {
-			namespace = strings.TrimSpace(p.Namespace)
-			if namespace == "" {
-				namespace = sharedCatalogNamespace
-			}
-		}
-		if !p.HasNamespace(namespace) {
+			namespaces = catalogNamespacesForPrincipal(p)
+		} else if !p.HasNamespace(namespace) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
 			return
 		}
+	} else if namespace == "" {
+		namespaces = []string{sharedCatalogNamespace}
 	}
-	if namespace == "" {
-		namespace = sharedCatalogNamespace
-	}
-
-	result, err := control.ListServers(ctx, namespace)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list servers"})
+	namespaces = dedupeNonEmptyStrings(namespaces)
+	if len(namespaces) == 0 {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"servers": []serverInfo{}})
 		return
 	}
-	if result.CRDError != nil && !apierrors.IsNotFound(result.CRDError) {
-		log.Printf("runtime servers: list MCPServers failed: %v", result.CRDError)
-	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"servers": serverInfosWithAccessJSON(result.Servers, r)})
+	servers := make([]controlplane.ServerInfo, 0)
+	for _, namespace := range namespaces {
+		if p.Role != roleAdmin && !p.HasNamespace(namespace) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
+			return
+		}
+
+		result, err := control.ListServers(ctx, namespace)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list servers"})
+			return
+		}
+		if result.CRDError != nil && !apierrors.IsNotFound(result.CRDError) {
+			log.Printf("runtime servers: list MCPServers failed in namespace %q: %v", namespace, result.CRDError)
+		}
+		servers = append(servers, result.Servers...)
+	}
+	sort.SliceStable(servers, func(i, j int) bool {
+		if servers[i].Namespace != servers[j].Namespace {
+			return servers[i].Namespace < servers[j].Namespace
+		}
+		return servers[i].Name < servers[j].Name
+	})
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"servers": serverInfosWithAccessJSON(servers, r)})
+}
+
+func catalogNamespacesForPrincipal(p principal) []string {
+	namespaces := make([]string, 0, len(p.AllowedNamespaces)+len(p.Teams)+2)
+	if p.HasNamespace(sharedCatalogNamespace) {
+		namespaces = append(namespaces, sharedCatalogNamespace)
+	}
+	if namespace := strings.TrimSpace(p.Namespace); namespace != "" && namespace != sharedCatalogNamespace {
+		namespaces = append(namespaces, namespace)
+	}
+	for _, team := range p.Teams {
+		if namespace := strings.TrimSpace(team.Namespace); namespace != "" {
+			namespaces = append(namespaces, namespace)
+		}
+	}
+	for _, namespace := range p.AllowedNamespaces {
+		namespace = strings.TrimSpace(namespace)
+		if namespace != "" && namespace != sharedCatalogNamespace {
+			namespaces = append(namespaces, namespace)
+		}
+	}
+	return dedupeNonEmptyStrings(namespaces)
+}
+
+func dedupeNonEmptyStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.Request) {

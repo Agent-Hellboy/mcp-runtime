@@ -237,7 +237,8 @@ mcp-runtime team init acme --dry-run
 
 `team list` and `team create` use the platform API, so run `auth login` or set
 platform API credentials first. `team create` creates a platform team and
-managed namespace.
+managed namespace, including quota/limits, default-deny NetworkPolicy, service
+account, and repo-managed Traefik watch wiring when bundled Traefik is present.
 
 `team init` uses local `kubectl`. It creates the team namespace, restricted
 workload service account, default quota and limits, default-deny NetworkPolicy,

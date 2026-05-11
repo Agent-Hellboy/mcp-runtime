@@ -61,6 +61,10 @@ the runtime images. It does not skip builds: setup builds and pushes the
 operator, gateway proxy, and Sentinel images with `latest` tags to the
 configured or bundled registry.
 
+For the expanded contributor runbook, including tenant UI smoke tests, service
+rebuild loops, runtime MCP cleanup, and troubleshooting, see the
+[Contributor Guide](contributor/README.md).
+
 Create Kind with the registry mirror MCP Runtime expects for image pulls:
 
 ```bash
@@ -123,8 +127,10 @@ baseline and use [Multi-team isolation](multi-team.md) to move each team's
 servers, grants, sessions, and secrets into a dedicated namespace with
 `spec.teamID` / `subject.teamID`.
 
-The MCP Servers tab exposes a copyable connect config. In this local test-mode
-flow, that config should use the same reachable local origin, for example:
+Sign in before browsing MCP servers in the platform UI; the catalog is
+authenticated even in local test mode. The MCP Servers tab exposes a copyable
+connect config. In this local test-mode flow, that config should use the same
+reachable local origin, for example:
 
 ```json
 {
@@ -154,6 +160,19 @@ These credentials are for local Kind/debugging only. They are enabled by the
 managed `mcp-sentinel-secrets` key `PLATFORM_DEV_LOGIN_ENABLED=true` and can be
 disabled or overridden by editing the `PLATFORM_DEV_*` keys before rolling the
 API deployment.
+
+For tenant-isolation UI smoke testing in the shared contributor cluster, use
+these local-only tenant accounts. They are not production credentials.
+
+| Tenant | Email | Password |
+|---|---|---|
+| Tenant A | `tenant-a-20260510232145@mcpruntime.org` | `TenantA-20260510232145!` |
+| Tenant B | `tenant-b-20260510232145@mcpruntime.org` | `TenantB-20260510232145!` |
+
+Tenant users should see the org-scoped MCP catalog entries from `mcp-servers`
+plus only their own team namespace. For example, Tenant A should see
+`mcp-team-tenant-a` entries but receive `403` for `mcp-team-tenant-b`, and
+Tenant B should see the inverse.
 
 ### Iterate on one Sentinel service
 
@@ -586,9 +605,11 @@ analytics, audit, and observability.
 `mcp-servers` remains the default single-team namespace. For multi-team or
 tenant-separated deployments, keep setup as the platform install and provision
 one namespace per team with `mcp-runtime team init <slug>` or the platform API
-`mcp-runtime team create <slug>` flow. Use the platform API to default team IDs,
-or set `spec.teamID` and `subject.teamID` directly in YAML; see
-[Multi-team isolation](multi-team.md).
+`mcp-runtime team create <slug>` flow. Both repo-managed paths wire bundled
+Traefik for the team namespace. Use the platform API to default team IDs, or set
+`spec.teamID` and `subject.teamID` directly in YAML; an explicit foreign
+`subject.teamID` delegates access to another team while the gateway still
+matches every non-empty subject field. See [Multi-team isolation](multi-team.md).
 
 Common variants:
 

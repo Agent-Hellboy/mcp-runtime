@@ -783,13 +783,7 @@ func (s *RuntimeServer) bindAccessSubjectTeamID(ctx context.Context, namespace, 
 	if err := validateTeamIDValue("subject.teamID", subject.TeamID); err != nil {
 		return err
 	}
-	if serverTeamID != "" && subject.TeamID != serverTeamID {
-		return fmt.Errorf("subject.teamID %q must match MCPServer spec.teamID %q", subject.TeamID, serverTeamID)
-	}
 	p, ok := principalFromContext(ctx)
-	if ok && p.Role != roleAdmin && namespaceTeamID != "" && subject.TeamID != namespaceTeamID {
-		return fmt.Errorf("subject.teamID %q is outside principal team %q", subject.TeamID, namespaceTeamID)
-	}
 	if ok && p.Role != roleAdmin && namespaceTeamID == "" && subject.TeamID != "" {
 		return errors.New("subject.teamID is only allowed in a team namespace")
 	}

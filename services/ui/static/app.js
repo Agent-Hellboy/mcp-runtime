@@ -56,7 +56,11 @@ function isUnauthorizedError(err) {
 }
 
 function activeScopeNamespace() {
-  return (selectedNamespace || defaults.namespace || "mcp-servers").trim();
+  if (!authenticated) return "";
+  if (selectedNamespace !== undefined && selectedNamespace !== null) {
+    return String(selectedNamespace).trim();
+  }
+  return (defaults.namespace || "mcp-servers").trim();
 }
 
 function scopedPath(path) {
@@ -67,8 +71,11 @@ function scopedPath(path) {
 }
 
 function namespaceScopeLabel(item) {
+  if (item?.is_catalog) {
+    return "org + teams";
+  }
   if (item?.is_shared) {
-    return `shared / ${item.namespace}`;
+    return `org / ${item.namespace}`;
   }
   if (item?.team_slug) {
     return `team:${item.team_slug} / ${item.namespace}`;
@@ -80,18 +87,28 @@ function syncScopeSelector() {
   const select = document.getElementById("scope-namespace");
   if (!select) return;
   select.innerHTML = "";
-  const scopes = Array.isArray(namespaceScopes) && namespaceScopes.length
-    ? namespaceScopes
-    : [{ namespace: defaults.namespace || "mcp-servers", is_shared: true }];
+  const scopes = Array.isArray(namespaceScopes) ? namespaceScopes : [];
+  if (scopes.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = authenticated ? "No namespaces" : "Sign in required";
+    select.appendChild(option);
+    select.disabled = true;
+    selectedNamespace = "";
+    setFieldValue("grant-namespace", "");
+    setFieldValue("session-namespace", "");
+    return;
+  }
   scopes.forEach((item) => {
     const option = document.createElement("option");
     option.value = item.namespace || "";
     option.textContent = namespaceScopeLabel(item);
     select.appendChild(option);
   });
+  select.disabled = false;
   const hasSelected = scopes.some((item) => (item.namespace || "") === selectedNamespace);
   if (!hasSelected) {
-    selectedNamespace = scopes[0]?.namespace || defaults.namespace || "mcp-servers";
+    selectedNamespace = scopes[0]?.namespace || "";
   }
   select.value = selectedNamespace;
   setFieldValue("grant-namespace", activeScopeNamespace());
@@ -100,8 +117,8 @@ function syncScopeSelector() {
 
 async function loadNamespaceScopes() {
   if (!authenticated) {
-    namespaceScopes = [{ namespace: "mcp-servers", scope: "shared", is_shared: true }];
-    selectedNamespace = "mcp-servers";
+    namespaceScopes = [];
+    selectedNamespace = "";
     syncScopeSelector();
     return;
   }
@@ -113,9 +130,11 @@ async function loadNamespaceScopes() {
     console.error("Failed to load namespaces:", err);
     namespaceScopes = [];
   }
-  const teamNamespaces = namespaceScopes.filter((item) => item.scope === "team").map((item) => item.namespace);
-  if (teamNamespaces.length && !teamNamespaces.includes(selectedNamespace)) {
-    selectedNamespace = teamNamespaces[0];
+  if (authPrincipal?.role !== "admin" && namespaceScopes.length > 1) {
+    namespaceScopes = [{ namespace: "", scope: "catalog", is_catalog: true }, ...namespaceScopes];
+  }
+  if (namespaceScopes.some((item) => item.is_catalog) && (!selectedNamespace || selectedNamespace === defaults.namespace)) {
+    selectedNamespace = "";
   }
   syncScopeSelector();
 }
@@ -671,7 +690,7 @@ async function initAuth() {
   } else {
     await loadNamespaceScopes();
     activateTab("servers");
-    loadServers();
+    renderSignedOutServerCatalog();
   }
 }
 
@@ -811,14 +830,14 @@ async function logout() {
   stopAutoRefresh();
   authPrincipal = null;
   setAuthenticated(false);
-  namespaceScopes = [{ namespace: "mcp-servers", scope: "shared", is_shared: true }];
-  selectedNamespace = "mcp-servers";
+  namespaceScopes = [];
+  selectedNamespace = "";
   syncScopeSelector();
   resetDashboard();
   resetGovernance();
   resetUserAPIKeys();
   activateTab("servers");
-  loadServers();
+  renderSignedOutServerCatalog();
 }
 
 function setAuthenticated(value) {
@@ -914,6 +933,10 @@ function resetGovernance() {
 }
 
 async function loadServers() {
+  if (!authenticated) {
+    renderSignedOutServerCatalog();
+    return;
+  }
   try {
     const data = await fetchJSON(scopedPath("/runtime/servers"));
     serversCache = Array.isArray(data.servers) ? data.servers : [];
@@ -926,6 +949,15 @@ async function loadServers() {
     if (grid) {
       grid.innerHTML = '<div class="component-card error">Error loading MCP servers.</div>';
     }
+  }
+}
+
+function renderSignedOutServerCatalog() {
+  serversCache = [];
+  renderServerCatalogSummary();
+  const grid = document.getElementById("servers-grid");
+  if (grid) {
+    grid.innerHTML = '<div class="server-empty-state">Sign in to view MCP servers.</div>';
   }
 }
 

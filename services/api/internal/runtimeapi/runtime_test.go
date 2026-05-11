@@ -306,7 +306,7 @@ func accessJSONServerURL(t *testing.T, info serverInfo, name string) string {
 	return url
 }
 
-func TestRuntimeServersNonAdminDefaultsToPrincipalNamespace(t *testing.T) {
+func TestRuntimeServersNonAdminDefaultsToAccessibleCatalog(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
@@ -329,9 +329,29 @@ func TestRuntimeServersNonAdminDefaultsToPrincipalNamespace(t *testing.T) {
 			Image: "demo:latest",
 		},
 	}
+	team := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "team-server",
+			Namespace: "mcp-team-acme",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image:  "demo:latest",
+			TeamID: "team-acme-id",
+		},
+	}
+	otherTeam := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "other-team-server",
+			Namespace: "mcp-team-other",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image:  "demo:latest",
+			TeamID: "team-other-id",
+		},
+	}
 	server := &RuntimeServer{
 		k8sClients: &k8sclient.Clients{
-			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme, shared, private),
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme, shared, private, team, otherTeam),
 			Clientset: kubernetesfake.NewSimpleClientset(),
 		},
 	}
@@ -344,7 +364,14 @@ func TestRuntimeServersNonAdminDefaultsToPrincipalNamespace(t *testing.T) {
 		AllowedNamespaces: []string{
 			"user-1",
 			sharedCatalogNamespace,
+			"mcp-team-acme",
 		},
+		Teams: []principalTeam{{
+			ID:        "team-acme-id",
+			Slug:      "acme",
+			Namespace: "mcp-team-acme",
+			Role:      teamRoleMember,
+		}},
 	}))
 	recorder := httptest.NewRecorder()
 	server.HandleRuntimeServers(recorder, request)
@@ -358,8 +385,30 @@ func TestRuntimeServersNonAdminDefaultsToPrincipalNamespace(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(payload.Servers) != 1 || payload.Servers[0].Name != "private-server" {
-		t.Fatalf("servers = %#v, want only private-server", payload.Servers)
+	got := make([]string, 0, len(payload.Servers))
+	for _, server := range payload.Servers {
+		got = append(got, server.Namespace+"/"+server.Name)
+	}
+	want := []string{"mcp-servers/shared-server", "mcp-team-acme/team-server", "user-1/private-server"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("servers = %#v, want %v", got, want)
+	}
+}
+
+func TestRuntimeServersAnonymousRequestRejected(t *testing.T) {
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/servers", nil)
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -608,7 +657,8 @@ func TestRuntimeGrantApplyDefaultsSubjectTeamID(t *testing.T) {
 	}
 }
 
-func TestRuntimeGrantApplyRejectsMismatchedSubjectTeamID(t *testing.T) {
+func TestRuntimeGrantApplyAllowsForeignSubjectTeamID(t *testing.T) {
+	ctx := context.Background()
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
@@ -646,11 +696,15 @@ func TestRuntimeGrantApplyRejectsMismatchedSubjectTeamID(t *testing.T) {
 		}},
 	}))
 	server.handleRuntimeGrantApply(recorder, request)
-	if recorder.Code != http.StatusForbidden {
+	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "must match MCPServer") {
-		t.Fatalf("body = %s", recorder.Body.String())
+	grant, err := accessMgr.GetGrant(ctx, "grant-team", "mcp-team-acme")
+	if err != nil {
+		t.Fatalf("expected grant in team namespace: %v", err)
+	}
+	if grant.Spec.Subject.TeamID != "team-other" {
+		t.Fatalf("subject.teamID = %q, want team-other", grant.Spec.Subject.TeamID)
 	}
 }
 

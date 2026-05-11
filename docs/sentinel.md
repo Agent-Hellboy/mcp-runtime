@@ -136,7 +136,7 @@ metrics on `METRICS_PORT` (default `9090`).
 | `GET` | `/api/runtime/teams/{team}` | Read team metadata for admins and team members. |
 | `POST` | `/api/runtime/teams/{team}/members` | Add/update team membership (admin or team owner). |
 | `DELETE` | `/api/runtime/teams/{team}/members/{userID}` | Remove team membership (admin or team owner). |
-| `GET` | `/api/runtime/namespaces` | List allowed namespaces and shared catalog metadata for caller scope. |
+| `GET` | `/api/runtime/namespaces` | List allowed namespaces and org catalog metadata for caller scope. |
 | `GET` | `/api/runtime/namespaces/{namespace}` | Read one namespace metadata entry when authorized. |
 | `GET` | `/api/runtime/components` | Operator, Sentinel service, and observability component health from Kubernetes. |
 | `GET` | `/api/runtime/policy?namespace=&server=` | Rendered gateway policy for one server. |
@@ -178,7 +178,7 @@ wraps API auth for browser users.
 | `POST` | `/auth/login` | Create a UI session from `{"api_key": "..."}`, `{"id_token": "..."}`, or `{"email": "...", "password": "..."}`. |
 | `POST` | `/auth/logout` | Clear the UI session cookie. |
 | `GET` | `/auth/status` | Return UI session authentication state and principal. |
-| any | `/api/*` | Reverse proxy to `services/api`. Public `GET`/`HEAD /api/runtime/servers` is allowed for the shared `mcp-servers` catalog; other API calls require a UI session or API key. |
+| any | `/api/*` | Reverse proxy to `services/api`. API calls require a UI session or API key, including MCP catalog reads. |
 | `GET` | `/*` | Static dashboard assets. |
 
 ### Ingest service
@@ -266,8 +266,10 @@ CLI parity: `mcp-runtime access grant` and `mcp-runtime access session` cover th
 For platform API writes, grants and sessions must reference a server in the same
 namespace as the access resource. Non-admin callers cannot write access
 resources into the shared `mcp-servers` catalog namespace. Team namespace writes
-default and validate `spec.teamID` and `subject.teamID` against the
-authenticated principal and referenced server.
+default and validate server `spec.teamID` against the authenticated principal
+namespace. Grant/session writes default missing `subject.teamID` from the
+referenced server team, while preserving an explicit foreign `subject.teamID`
+for delegated cross-team access.
 
 ## Verifying per-server policy isolation
 

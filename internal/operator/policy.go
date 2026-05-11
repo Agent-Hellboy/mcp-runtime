@@ -129,10 +129,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 		if !serverReferenceMatches(grant.Namespace, grant.Spec.ServerRef, mcpServer) {
 			continue
 		}
-		subjectTeamID, ok := subjectTeamIDForServer(serverTeamID, grant.Spec.Subject.TeamID)
-		if !ok {
-			continue
-		}
+		subjectTeamID := subjectTeamIDForServer(serverTeamID, grant.Spec.Subject.TeamID)
 		rendered := policy.Grant{
 			Name:          grant.Name,
 			HumanID:       grant.Spec.Subject.HumanID,
@@ -163,10 +160,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 		if !serverReferenceMatches(session.Namespace, session.Spec.ServerRef, mcpServer) {
 			continue
 		}
-		subjectTeamID, ok := subjectTeamIDForServer(serverTeamID, session.Spec.Subject.TeamID)
-		if !ok {
-			continue
-		}
+		subjectTeamID := subjectTeamIDForServer(serverTeamID, session.Spec.Subject.TeamID)
 		rendered := policy.Binding{
 			Name:           session.Name,
 			HumanID:        session.Spec.Subject.HumanID,
@@ -188,16 +182,13 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 	return doc, nil
 }
 
-func subjectTeamIDForServer(serverTeamID, subjectTeamID string) (string, bool) {
+func subjectTeamIDForServer(serverTeamID, subjectTeamID string) string {
 	serverTeamID = strings.TrimSpace(serverTeamID)
 	subjectTeamID = strings.TrimSpace(subjectTeamID)
-	if serverTeamID == "" {
-		return subjectTeamID, true
-	}
 	if subjectTeamID == "" {
-		return serverTeamID, true
+		return serverTeamID
 	}
-	return subjectTeamID, subjectTeamID == serverTeamID
+	return subjectTeamID
 }
 
 func serverReferenceMatches(objectNamespace string, ref mcpv1alpha1.ServerReference, server *mcpv1alpha1.MCPServer) bool {

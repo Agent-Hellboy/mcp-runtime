@@ -47,9 +47,13 @@ mcp-runtime team list
 ```
 
 `team create` records the team in the platform store and asks the API to ensure
-the managed namespace, quota, limit range, default deny network policy, and
-default service account. Platform API writes into that namespace default
-`spec.teamID` and `subject.teamID` from the authenticated principal's team.
+the managed namespace, quota, limit range, default deny network policy, default
+service account, bundled Traefik watch RBAC, and bundled Traefik namespace
+watch entry. Platform API server writes into that namespace default
+`spec.teamID` from the authenticated principal's team. Grant/session writes
+default missing `subject.teamID` to the owning server team, but an explicit
+foreign `subject.teamID` is allowed so a team can delegate access to another
+team's principal.
 
 For direct Kubernetes administration, use `team init`:
 
@@ -164,25 +168,30 @@ mode, the proxy validates the token and reads team identity from `team_id`,
 
 The platform API fails closed for team-scoped writes:
 
+- Anonymous callers cannot read the MCP server catalog. The `mcp-servers`
+  namespace is an org-wide authenticated catalog, not a public marketplace.
+- Non-admin callers listing MCP servers without a `namespace` query see only
+  org-wide MCPs from `mcp-servers` plus MCPs in their own team/user namespaces.
 - Non-admin callers cannot write servers, grants, or sessions into the shared
   `mcp-servers` catalog namespace.
 - Non-admin callers can only read or write resources in namespaces listed on
   their authenticated principal.
 - Server apply defaults `spec.teamID` from the principal's team namespace and
   rejects mismatches.
-- Grant/session apply defaults `subject.teamID` from the referenced server or
-  namespace team and rejects mismatches with the referenced server's
-  `spec.teamID`.
+- Grant/session apply defaults missing `subject.teamID` from the referenced
+  server or namespace team. An explicit foreign `subject.teamID` is preserved,
+  allowing the server-owning team to grant another team access to that server.
 - A grant or session must reference an `MCPServer` in the same namespace as the
   access resource. Cross-namespace `serverRef.namespace` values are rejected.
 - Admin callers keep cluster-wide visibility, but same-namespace and team-ID
-  consistency checks still apply to access resources.
+  ownership checks still apply to server resources.
 
 Direct `kubectl apply` still depends on Kubernetes RBAC. Bind team admins only
 inside their team namespace. As a defense-in-depth guard, the operator renders
-only grants and sessions that match the target server team; missing
-`subject.teamID` values are scoped to `MCPServer.spec.teamID`, and mismatched
-team subjects are omitted from the gateway policy.
+only grants and sessions whose `serverRef` points at the target server. Missing
+`subject.teamID` values are scoped to `MCPServer.spec.teamID`; explicit foreign
+subject teams are rendered and enforced by the gateway, which matches every
+non-empty `humanID`, `agentID`, and `teamID` exactly.
 
 ## Ingress Controller Watch Scope
 
@@ -190,8 +199,9 @@ The bundled Traefik manifests watch only `registry`, `mcp-sentinel`, and
 `mcp-servers` by default so Traefik does not need broad namespace access. If MCP
 servers live in team namespaces, update the ingress controller watch list, bind
 the Traefik watch role in each team namespace, and allow ingress-controller
-traffic through the namespace NetworkPolicy. `mcp-runtime team init` performs
-those changes for the repo-managed `traefik/traefik` Deployment.
+traffic through the namespace NetworkPolicy. `mcp-runtime team init` and the
+platform API `team create` flow perform those changes for the repo-managed
+`traefik/traefik` Deployment.
 
 For the bundled Traefik overlay, extend the argument:
 
@@ -200,7 +210,11 @@ For the bundled Traefik overlay, extend the argument:
 ```
 
 External ingress controllers need equivalent namespace watch, RBAC, and
-NetworkPolicy configuration.
+NetworkPolicy configuration. For platform API team creation, set
+`PLATFORM_TEAM_TRAEFIK_WATCH=false` when another controller manages that
+wiring, or override `PLATFORM_TRAEFIK_NAMESPACE`,
+`PLATFORM_TRAEFIK_DEPLOYMENT`, and `PLATFORM_TRAEFIK_SERVICE_ACCOUNT` when the
+repo-managed Traefik names differ.
 
 ## Identifier Conventions
 
@@ -246,7 +260,8 @@ server owner's team without joining through namespace names.
    secrets, and image pull secrets in that namespace.
 4. Set `spec.teamID` on every team-owned `MCPServer`.
 5. Set `subject.teamID` on grants and sessions, or use the platform API so it
-   defaults the value.
+   defaults missing values from the owning server team. Use an explicit foreign
+   `subject.teamID` for delegated cross-team access.
 6. Configure trusted header or OAuth team identity extraction.
 7. Add team namespaces to the ingress controller watch list and RBAC.
 
