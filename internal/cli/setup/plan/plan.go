@@ -73,7 +73,7 @@ func NormalizePlatformMode(mode string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "":
 		return PlatformModeTenant, true
-	case PlatformModeTenant, "tenet", "tenent":
+	case PlatformModeTenant:
 		return PlatformModeTenant, true
 	case PlatformModeOrg:
 		return PlatformModeOrg, true

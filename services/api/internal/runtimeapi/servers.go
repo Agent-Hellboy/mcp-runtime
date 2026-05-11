@@ -60,7 +60,11 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 			return
 		}
 	} else if namespace == "" {
-		namespaces = []string{defaultCatalogNamespaceForMode()}
+		if PlatformMode() == platformModeTenant {
+			namespaces = []string{sharedCatalogNamespace}
+		} else {
+			namespaces = []string{defaultCatalogNamespaceForMode()}
+		}
 	}
 	namespaces = dedupeNonEmptyStrings(namespaces)
 	if len(namespaces) == 0 {
@@ -100,7 +104,7 @@ func catalogNamespacesForPrincipal(p principal) []string {
 		return modeCatalogNamespaces()
 	}
 	namespaces := make([]string, 0, len(p.AllowedNamespaces)+len(p.Teams)+2)
-	if namespace := strings.TrimSpace(p.Namespace); namespace != "" && namespace != sharedCatalogNamespace {
+	if namespace := strings.TrimSpace(p.Namespace); namespace != "" {
 		namespaces = append(namespaces, namespace)
 	}
 	for _, team := range p.Teams {
@@ -110,7 +114,7 @@ func catalogNamespacesForPrincipal(p principal) []string {
 	}
 	for _, namespace := range p.AllowedNamespaces {
 		namespace = strings.TrimSpace(namespace)
-		if namespace != "" && namespace != sharedCatalogNamespace {
+		if namespace != "" {
 			namespaces = append(namespaces, namespace)
 		}
 	}
@@ -158,12 +162,6 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	if req.Name == "" || req.Spec.Image == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and spec.image are required"})
 		return
-	}
-	if req.Namespace == "" && p.Role != roleAdmin && sharedCatalogWritableForUsers() {
-		req.Namespace = defaultCatalogNamespaceForMode()
-	}
-	if req.Namespace == "" {
-		req.Namespace = strings.TrimSpace(p.Namespace)
 	}
 	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), req.Namespace)
 	if err != nil {

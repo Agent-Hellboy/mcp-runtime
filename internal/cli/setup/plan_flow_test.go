@@ -73,6 +73,9 @@ func TestBuildSetupPlan_TLSClusterIssuer(t *testing.T) {
 }
 
 func TestBuildSetupPlan_PlatformModeCatalogNamespaces(t *testing.T) {
+	if _, ok := setupplan.NormalizePlatformMode("tenent"); ok {
+		t.Fatal("NormalizePlatformMode accepted misspelled tenant mode")
+	}
 	if got := setupplan.CatalogNamespaceForPlatformMode(""); got != "" {
 		t.Fatalf("default tenant catalog namespace = %q, want empty", got)
 	}

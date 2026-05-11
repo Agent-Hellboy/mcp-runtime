@@ -24,7 +24,7 @@ func PlatformMode() string {
 		return platformModeOrg
 	case platformModePublic:
 		return platformModePublic
-	case "", platformModeTenant, "tenet", "tenent":
+	case "", platformModeTenant:
 		return platformModeTenant
 	default:
 		return platformModeTenant
@@ -138,7 +138,7 @@ func principalOwnsNamespace(p principal, namespace string) bool {
 	}
 	for _, allowed := range p.AllowedNamespaces {
 		allowed = strings.TrimSpace(allowed)
-		if allowed != "" && allowed != sharedCatalogNamespace && allowed == namespace {
+		if allowed != "" && allowed == namespace {
 			return true
 		}
 	}

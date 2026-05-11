@@ -192,6 +192,49 @@ func TestAPIProxyAllowsAnonymousPublicCatalog(t *testing.T) {
 	}
 }
 
+func TestAPIProxyUsesSessionBeforeAnonymousPublicCatalog(t *testing.T) {
+	store := newUISessionStore(time.Now)
+	sess, err := store.createSession(context.Background(), uiSession{
+		Principal:      sessionPrincipal{Role: "admin", Subject: "admin-1"},
+		UpstreamAPIKey: "session-secret",
+	})
+	if err != nil {
+		t.Fatalf("createSession() error = %v", err)
+	}
+
+	upstreamCalled := false
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		upstreamCalled = true
+		if got := r.Header.Get("x-api-key"); got != "session-secret" {
+			t.Fatalf("x-api-key = %q, want session-secret", got)
+		}
+		if got := r.URL.Query().Get("namespace"); got != "admin-private" {
+			t.Fatalf("namespace = %q, want admin-private", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"content-type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"servers":[]}`)),
+		}, nil
+	})
+	target, err := url.Parse("http://api.example")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", store, true, transport)
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers?namespace=admin-private", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sess.ID})
+	proxy.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("authenticated public-mode status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !upstreamCalled {
+		t.Fatal("authenticated public-mode request did not reach upstream")
+	}
+}
+
 func TestCatalogNamespacesForModeScopesPublicEnvToPublicMode(t *testing.T) {
 	t.Setenv("PLATFORM_PUBLIC_NAMESPACES", "mcp-servers-public,preview-extra")
 

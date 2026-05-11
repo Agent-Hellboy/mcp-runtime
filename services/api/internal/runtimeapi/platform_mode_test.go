@@ -19,3 +19,11 @@ func TestDefaultCatalogNamespaceForModeUsesCatalogOverrideInSharedMode(t *testin
 		t.Fatalf("default catalog namespace = %q, want custom-catalog", got)
 	}
 }
+
+func TestPlatformModeUsesStrictValues(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "tenent")
+
+	if got := PlatformMode(); got != platformModeTenant {
+		t.Fatalf("platform mode = %q, want tenant fallback", got)
+	}
+}

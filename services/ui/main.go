@@ -282,6 +282,19 @@ func newAPIProxyWithTransport(target *url.URL, apiBase, upstreamAPIKey, apiKeys 
 			return
 		}
 
+		if sess, ok := store.sessionFromRequest(r); ok {
+			req := r.Clone(r.Context())
+			req.Header.Del("x-api-key")
+			req.Header.Del("authorization")
+			if sess.UpstreamAuthHeader != "" {
+				req.Header.Set("authorization", sess.UpstreamAuthHeader)
+			} else if sess.UpstreamAPIKey != "" {
+				req.Header.Set("x-api-key", sess.UpstreamAPIKey)
+			}
+			proxy.ServeHTTP(w, req)
+			return
+		}
+
 		if publicCatalog && isPublicCatalogAPIRequest(r, apiBase) {
 			namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
 			if namespace != "" && !isPublicCatalogNamespace(namespace) {
@@ -300,21 +313,7 @@ func newAPIProxyWithTransport(target *url.URL, apiBase, upstreamAPIKey, apiKeys 
 			return
 		}
 
-		sess, ok := store.sessionFromRequest(r)
-		if !ok {
-			serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-			return
-		}
-
-		req := r.Clone(r.Context())
-		req.Header.Del("x-api-key")
-		req.Header.Del("authorization")
-		if sess.UpstreamAuthHeader != "" {
-			req.Header.Set("authorization", sess.UpstreamAuthHeader)
-		} else if sess.UpstreamAPIKey != "" {
-			req.Header.Set("x-api-key", sess.UpstreamAPIKey)
-		}
-		proxy.ServeHTTP(w, req)
+		serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	})
 }
 
@@ -926,7 +925,7 @@ func normalizedPlatformMode() string {
 		return "org"
 	case "public":
 		return "public"
-	case "", "tenant", "tenet", "tenent":
+	case "", "tenant":
 		return "tenant"
 	default:
 		return "tenant"
