@@ -868,7 +868,7 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 		},
 	}
 
-	got, err := prepareAnalyticsImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, true, true, deps)
+	got, err := prepareAnalyticsImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, true, true, false, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -887,6 +887,90 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 	}
 	if atomic.LoadInt32(&pushCalls) != int32(len(analyticsComponents)) {
 		t.Fatalf("expected %d pushes in test mode, got %d", len(analyticsComponents), pushCalls)
+	}
+}
+
+func TestPrepareDeploymentImagesParallelBuildsStartsBothBuilds(t *testing.T) {
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	errCh := make(chan error, 1)
+
+	deps := SetupDeps{
+		OperatorImageFor: func(_ *config.ExternalRegistryConfig) string {
+			return "registry.example.com/mcp-runtime-operator:latest"
+		},
+		GatewayProxyImageFor: func(_ *config.ExternalRegistryConfig) string {
+			return "registry.example.com/mcp-sentinel-mcp-proxy:latest"
+		},
+		BuildOperatorImage: func(string) error {
+			started <- "operator"
+			<-release
+			return nil
+		},
+		PushOperatorImage: func(string) error { return nil },
+		BuildGatewayProxyImage: func(string) error {
+			started <- "gateway"
+			<-release
+			return nil
+		},
+		PushGatewayProxyImage: func(string) error { return nil },
+	}
+
+	go func() {
+		_, _, err := prepareDeploymentImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, true, true, true, deps)
+		errCh <- err
+	}()
+
+	seen := map[string]bool{}
+	timeout := time.After(2 * time.Second)
+	for len(seen) < 2 {
+		select {
+		case name := <-started:
+			seen[name] = true
+		case <-timeout:
+			t.Fatalf("timed out waiting for parallel runtime image builds, saw %v", seen)
+		}
+	}
+
+	close(release)
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPrepareAnalyticsImagesParallelBuildsStartsAllBuilds(t *testing.T) {
+	started := make(chan string, len(analyticsComponents))
+	release := make(chan struct{})
+	errCh := make(chan error, 1)
+
+	deps := SetupDeps{
+		BuildAnalyticsImage: func(image, _, _ string) error {
+			started <- image
+			<-release
+			return nil
+		},
+		PushAnalyticsImage: func(string) error { return nil },
+	}
+
+	go func() {
+		_, err := prepareAnalyticsImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, true, true, true, deps)
+		errCh <- err
+	}()
+
+	seen := map[string]bool{}
+	timeout := time.After(2 * time.Second)
+	for len(seen) < len(analyticsComponents) {
+		select {
+		case image := <-started:
+			seen[image] = true
+		case <-timeout:
+			t.Fatalf("timed out waiting for parallel analytics image builds, saw %d of %d", len(seen), len(analyticsComponents))
+		}
+	}
+
+	close(release)
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
