@@ -1597,11 +1597,13 @@ prepare_example_metadata() {
   local ingress_host="$3"
   local route_path="$4"
   local image_repo="$5"
+  local image_tag="$6"
 
   SERVER_NAME_OVERRIDE="${server_name}" \
   SERVER_HOST_OVERRIDE="${ingress_host}" \
   SERVER_ROUTE_OVERRIDE="${route_path}" \
   SERVER_IMAGE_OVERRIDE="${image_repo}" \
+  SERVER_IMAGE_TAG_OVERRIDE="${image_tag}" \
   METADATA_DIR_OVERRIDE="${metadata_dir}" \
   python3 <<'PY'
 from pathlib import Path
@@ -1613,11 +1615,13 @@ lines = path.read_text(encoding="utf-8").splitlines()
 updated = []
 server_name_updated = False
 server_image_updated = False
+server_image_tag_updated = False
 mcp_path_updated = False
 public_path_prefix_updated = False
 in_env_vars = False
 current_env_name = None
 resources_present = any(line.startswith("    resources:") for line in lines)
+image_tag_present = any(line.lstrip().startswith("imageTag: ") for line in lines)
 
 route_override = os.environ["SERVER_ROUTE_OVERRIDE"].strip()
 route_prefix = route_override.strip("/")
@@ -1642,6 +1646,12 @@ for line in lines:
     elif not server_image_updated and indent == "    " and stripped.startswith("image: "):
         updated.append(f"{indent}image: {os.environ['SERVER_IMAGE_OVERRIDE']}")
         server_image_updated = True
+        if not image_tag_present:
+            updated.append(f"{indent}imageTag: {os.environ['SERVER_IMAGE_TAG_OVERRIDE']}")
+            server_image_tag_updated = True
+    elif indent == "    " and stripped.startswith("imageTag: "):
+        updated.append(f"{indent}imageTag: {os.environ['SERVER_IMAGE_TAG_OVERRIDE']}")
+        server_image_tag_updated = True
     elif indent == "    " and stripped == "envVars:":
         in_env_vars = True
         current_env_name = None
@@ -1666,9 +1676,11 @@ if not server_image_updated:
         indent = line[: len(line) - len(stripped)]
         if not inserted and indent == "  " and stripped.startswith("- name: "):
             final.append(f"{indent}  image: {os.environ['SERVER_IMAGE_OVERRIDE']}")
+            final.append(f"{indent}  imageTag: {os.environ['SERVER_IMAGE_TAG_OVERRIDE']}")
             inserted = True
     updated = final
     server_image_updated = inserted
+    server_image_tag_updated = inserted
 if not mcp_path_updated:
     final = []
     inserted = False
@@ -1717,6 +1729,8 @@ if not server_name_updated:
     raise SystemExit(f"prepare_example_metadata: no '- name:' entry found to replace in {path}")
 if not server_image_updated:
     raise SystemExit(f"prepare_example_metadata: image field was not updated in {path}")
+if not server_image_tag_updated:
+    raise SystemExit(f"prepare_example_metadata: imageTag field was not updated in {path}")
 if not mcp_path_updated:
     raise SystemExit(f"prepare_example_metadata: MCP_PATH env var was not updated in {path}")
 if not public_path_prefix_updated:
@@ -1741,7 +1755,7 @@ deploy_example_server_via_pipeline() {
 
   image_repo="registry.registry.svc.cluster.local:5000/${server_name}"
   image_ref="${image_repo}:${E2E_WORKLOAD_TAG}"
-  prepare_example_metadata "${example_workspace_dir}/.mcp" "${server_name}" "${ingress_host}" "${route_path}" "${image_repo}"
+  prepare_example_metadata "${example_workspace_dir}/.mcp" "${server_name}" "${ingress_host}" "${route_path}" "${image_repo}" "${E2E_WORKLOAD_TAG}"
 
   if cache_mode_enabled && docker image inspect "${image_ref}" >/dev/null 2>&1; then
     echo "[cache] skipping example image build for ${image_ref}"
@@ -4178,7 +4192,7 @@ def wait_for_prometheus_up(base_url, *, headers=None, description):
         value = result.get("value", [])
         if len(value) >= 2 and metric.get("job"):
             jobs[metric["job"]] = str(value[1])
-    for job in ("mcp-sentinel-api", "mcp-sentinel-ingest", "mcp-sentinel-processor"):
+    for job in ("mcp-sentinel-api", "mcp-sentinel-ingest", "mcp-sentinel-processor", "clickhouse"):
         check(
             jobs.get(job) == "1",
             f"{description} reports {job}=1",
