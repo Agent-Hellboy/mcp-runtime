@@ -99,9 +99,10 @@ Use `E2E_CACHE_MODE=1` only for repeated local debugging. Omit it when you want
 a CI-equivalent fresh cluster.
 
 Image mirroring and local image builds run concurrently during fresh e2e setup.
-Set `E2E_IMAGE_PREP_PARALLELISM=1` to force sequential prep on constrained
-machines, or raise it above the default `3` only when Docker has enough CPU,
-network, and disk headroom.
+`E2E_IMAGE_PREP_PARALLELISM` still tunes the default prep concurrency, while
+`E2E_IMAGE_MIRROR_PARALLELISM` and `E2E_IMAGE_BUILD_PARALLELISM` can split
+pull/push concurrency from heavier Docker builds. CI defaults to three mirror
+workers and two build workers; set either value to `1` on constrained machines.
 Independent official SDK example deployments also run in parallel; the scenario
 checks themselves stay ordered because they share runtime state.
 Parallel worker logs are buffered in the e2e workdir under `stage-logs/` and

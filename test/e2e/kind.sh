@@ -175,6 +175,8 @@ E2E_VALIDATE_SCENARIOS_ONLY="${E2E_VALIDATE_SCENARIOS_ONLY:-0}"
 E2E_KEEP_CLUSTER="${E2E_KEEP_CLUSTER:-0}"
 E2E_CACHE_MODE="${E2E_CACHE_MODE:-0}"
 E2E_IMAGE_PREP_PARALLELISM="${E2E_IMAGE_PREP_PARALLELISM:-3}"
+E2E_IMAGE_MIRROR_PARALLELISM="${E2E_IMAGE_MIRROR_PARALLELISM:-${E2E_IMAGE_PREP_PARALLELISM}}"
+E2E_IMAGE_BUILD_PARALLELISM="${E2E_IMAGE_BUILD_PARALLELISM:-}"
 E2E_LOG_PREVIEW_LINES="${E2E_LOG_PREVIEW_LINES:-4}"
 E2E_LOG_FAILURE_LINES="${E2E_LOG_FAILURE_LINES:-40}"
 if [[ "${E2E_CACHE_MODE}" == "1" ]]; then
@@ -183,6 +185,21 @@ fi
 
 if ! [[ "${E2E_IMAGE_PREP_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_IMAGE_PREP_PARALLELISM}" -lt 1 ]]; then
   echo "E2E_IMAGE_PREP_PARALLELISM must be a positive integer" >&2
+  exit 1
+fi
+if [[ -z "${E2E_IMAGE_BUILD_PARALLELISM}" ]]; then
+  if [[ "${E2E_IMAGE_PREP_PARALLELISM}" -lt 2 ]]; then
+    E2E_IMAGE_BUILD_PARALLELISM="${E2E_IMAGE_PREP_PARALLELISM}"
+  else
+    E2E_IMAGE_BUILD_PARALLELISM=2
+  fi
+fi
+if ! [[ "${E2E_IMAGE_MIRROR_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_IMAGE_MIRROR_PARALLELISM}" -lt 1 ]]; then
+  echo "E2E_IMAGE_MIRROR_PARALLELISM must be a positive integer" >&2
+  exit 1
+fi
+if ! [[ "${E2E_IMAGE_BUILD_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_IMAGE_BUILD_PARALLELISM}" -lt 1 ]]; then
+  echo "E2E_IMAGE_BUILD_PARALLELISM must be a positive integer" >&2
   exit 1
 fi
 if ! [[ "${E2E_LOG_PREVIEW_LINES}" =~ ^[0-9]+$ ]]; then
@@ -2167,6 +2184,9 @@ parallel_start() {
 
   while [[ ${#PARALLEL_PIDS[@]} -ge ${max_parallel} ]]; do
     parallel_wait_next
+    if [[ "${PARALLEL_FAILED}" -ne 0 ]]; then
+      return 1
+    fi
   done
 
   mkdir -p "${STAGE_LOG_DIR}"
@@ -2253,16 +2273,26 @@ image_build_label() {
 }
 
 build_and_publish_images_parallel() {
-  log_status "PLAN" "Building runtime and Sentinel images with ${E2E_IMAGE_PREP_PARALLELISM} parallel workers"
+  local start_failed=0
+
+  log_status "PLAN" "Building runtime and Sentinel images with ${E2E_IMAGE_BUILD_PARALLELISM} parallel workers"
   parallel_reset
   while [[ $# -gt 0 ]]; do
     local image="$1"
     local dockerfile="$2"
     local context_dir="$3"
     shift 3
-    parallel_start "${E2E_IMAGE_PREP_PARALLELISM}" "$(image_build_label "${image}")" build_and_publish_image "${image}" "${dockerfile}" "${context_dir}"
+    if ! parallel_start "${E2E_IMAGE_BUILD_PARALLELISM}" "$(image_build_label "${image}")" build_and_publish_image "${image}" "${dockerfile}" "${context_dir}"; then
+      start_failed=1
+      break
+    fi
   done
-  parallel_wait_all
+  if ! parallel_wait_all; then
+    return 1
+  fi
+  if [[ "${start_failed}" -ne 0 ]]; then
+    return 1
+  fi
 }
 
 mirror_upstream_image() {
@@ -2287,13 +2317,23 @@ mirror_upstream_image() {
 }
 
 mirror_upstream_images_parallel() {
-  log_status "PLAN" "Mirroring upstream images into the local registry with ${E2E_IMAGE_PREP_PARALLELISM} parallel workers"
+  local start_failed=0
+
+  log_status "PLAN" "Mirroring upstream images into the local registry with ${E2E_IMAGE_MIRROR_PARALLELISM} parallel workers"
   parallel_reset
   local image
   for image in "$@"; do
-    parallel_start "${E2E_IMAGE_PREP_PARALLELISM}" "mirror ${image}" mirror_upstream_image "${image}"
+    if ! parallel_start "${E2E_IMAGE_MIRROR_PARALLELISM}" "mirror ${image}" mirror_upstream_image "${image}"; then
+      start_failed=1
+      break
+    fi
   done
-  parallel_wait_all
+  if ! parallel_wait_all; then
+    return 1
+  fi
+  if [[ "${start_failed}" -ne 0 ]]; then
+    return 1
+  fi
 }
 
 wait_core_platform_rollouts() {

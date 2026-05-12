@@ -63,8 +63,11 @@ present, skips platform setup if the core platform is already ready, and reuses
 image tags already published to the local registry.
 
 Image mirroring and local runtime/Sentinel image builds run with bounded
-parallelism. Set `E2E_IMAGE_PREP_PARALLELISM=<n>` to tune the default of `3`
-when your workstation or CI runner needs less or more Docker concurrency.
+parallelism. `E2E_IMAGE_PREP_PARALLELISM=<n>` tunes the shared prep default,
+`E2E_IMAGE_MIRROR_PARALLELISM=<n>` tunes pull/push mirroring, and
+`E2E_IMAGE_BUILD_PARALLELISM=<n>` tunes local Docker builds. CI keeps mirroring
+at three workers but defaults builds to two workers because those builds are
+heavier on runner CPU, memory, and Docker.
 The script also deploys the independent official SDK example servers
 concurrently; scenario assertions remain ordered because they share policy,
 session, and analytics state.
