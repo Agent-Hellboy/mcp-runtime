@@ -231,6 +231,35 @@ servers:
 		}
 	})
 
+	t.Run("preserves_tool_side_effects", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		metadataFile := filepath.Join(tmpDir, "servers.yaml")
+
+		initialContent := `version: v1
+servers:
+  - name: my-server
+    tools:
+      - name: add
+        requiredTrust: low
+        sideEffect: read
+`
+		if err := os.WriteFile(metadataFile, []byte(initialContent), 0o600); err != nil {
+			t.Fatalf("failed to write initial metadata: %v", err)
+		}
+
+		if err := updateMetadataImage("my-server", "new-image", "v1.0", metadataFile, ""); err != nil {
+			t.Fatalf("updateMetadataImage failed: %v", err)
+		}
+
+		content, err := os.ReadFile(metadataFile)
+		if err != nil {
+			t.Fatalf("failed to read updated metadata: %v", err)
+		}
+		if !strings.Contains(string(content), "sideEffect: read") {
+			t.Fatalf("expected sideEffect to be preserved, got:\n%s", content)
+		}
+	})
+
 	t.Run("finds_metadata_in_directory", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		metadataDir := filepath.Join(tmpDir, ".mcp")

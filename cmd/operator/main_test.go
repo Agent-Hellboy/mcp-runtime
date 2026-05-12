@@ -62,6 +62,25 @@ func TestGatewayProxyImageFromEnv(t *testing.T) {
 	})
 }
 
+func TestGatewayOTLPEndpointFromEnv(t *testing.T) {
+	t.Run("returns empty when unset", func(t *testing.T) {
+		getenv := func(string) string { return "" }
+		if got := gatewayOTLPEndpointFromEnv(getenv); got != "" {
+			t.Fatalf("expected empty gateway otel endpoint, got %q", got)
+		}
+	})
+
+	t.Run("returns configured endpoint", func(t *testing.T) {
+		env := map[string]string{
+			"MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT": "http://otel-collector.mcp-sentinel.svc.cluster.local:4318",
+		}
+		getenv := func(key string) string { return env[key] }
+		if got := gatewayOTLPEndpointFromEnv(getenv); got != "http://otel-collector.mcp-sentinel.svc.cluster.local:4318" {
+			t.Fatalf("unexpected gateway otel endpoint: %q", got)
+		}
+	})
+}
+
 func TestAnalyticsIngestURLFromEnv(t *testing.T) {
 	t.Run("returns empty when unset", func(t *testing.T) {
 		getenv := func(string) string { return "" }

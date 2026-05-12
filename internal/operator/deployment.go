@@ -391,6 +391,12 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 	if externalBaseURL := gatewayExternalBaseURL(mcpServer); externalBaseURL != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "EXTERNAL_BASE_URL", Value: externalBaseURL})
 	}
+	if endpoint := strings.TrimSpace(r.GatewayOTLPEndpoint); endpoint != "" {
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "OTEL_SERVICE_NAME", Value: mcpServer.Name + "-gateway"},
+			corev1.EnvVar{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: endpoint},
+		)
+	}
 	if mcpServer.Spec.Policy != nil {
 		envVars = append(envVars,
 			corev1.EnvVar{Name: "POLICY_MODE", Value: string(mcpServer.Spec.Policy.Mode)},

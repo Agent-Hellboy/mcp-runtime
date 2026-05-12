@@ -39,6 +39,7 @@ const defaultRegistrySecretName = "mcp-runtime-registry-creds" // #nosec G101 --
 const testModeOperatorImage = "docker.io/library/mcp-runtime-operator:latest"
 const defaultGatewayProxyRepository = "mcp-sentinel-mcp-proxy"
 const defaultAnalyticsIngestURL = "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
+const defaultGatewayOTELExporterOTLPEndpoint = "http://otel-collector.mcp-sentinel.svc.cluster.local:4318"
 const gatewayProxyDockerfilePath = "services/mcp-proxy/Dockerfile"
 const gatewayProxyBuildContext = "."
 const (
@@ -1636,6 +1637,9 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	}
 
 	core.Info("Initializing ClickHouse schema")
+	if err := deleteJobIfExistsWithKubectl(kubectl, "clickhouse-init", core.DefaultAnalyticsNamespace); err != nil {
+		return fmt.Errorf("delete existing clickhouse init job: %w", err)
+	}
 	if err := applyRenderedManifest(kubectl, "k8s/04-clickhouse-init.yaml", images, imagePullSecretName, platformMode); err != nil {
 		return err
 	}
@@ -2247,6 +2251,10 @@ func waitForJobCompletionWithKubectl(kubectl core.KubectlRunner, name, namespace
 	return kubectl.RunWithOutput([]string{"wait", "--for=condition=complete", "job/" + name, "-n", namespace, "--timeout=" + timeout}, os.Stdout, os.Stderr)
 }
 
+func deleteJobIfExistsWithKubectl(kubectl core.KubectlRunner, name, namespace string) error {
+	return kubectl.RunWithOutput([]string{"delete", "job/" + name, "-n", namespace, "--ignore-not-found=true", "--wait=true", "--timeout=60s"}, os.Stdout, os.Stderr)
+}
+
 func operatorImagePullPolicy(operatorImage string) string {
 	if strings.TrimSpace(operatorImage) == testModeOperatorImage {
 		return "IfNotPresent"
@@ -2270,6 +2278,7 @@ func operatorEnvOverrides(gatewayProxyImage string) []operatorEnvVar {
 	if image != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_GATEWAY_PROXY_IMAGE", Value: image})
 	}
+	envVars = append(envVars, operatorEnvVar{Name: "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", Value: defaultGatewayOTELExporterOTLPEndpoint})
 	ingestURL := strings.TrimSpace(core.GetAnalyticsIngestURLOverride())
 	if ingestURL == "" {
 		ingestURL = defaultAnalyticsIngestURL

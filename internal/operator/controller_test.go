@@ -495,8 +495,9 @@ func TestReconcileDeploymentLabels(t *testing.T) {
 
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&mcpServer).Build()
 	reconciler := MCPServerReconciler{
-		Client: client,
-		Scheme: scheme,
+		Client:              client,
+		Scheme:              scheme,
+		GatewayOTLPEndpoint: "http://otel-collector.mcp-sentinel.svc.cluster.local:4318",
 	}
 
 	if err := reconciler.reconcileDeployment(context.Background(), &mcpServer); err != nil {
@@ -590,8 +591,9 @@ func TestReconcileDeploymentAddsGatewaySidecar(t *testing.T) {
 
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&mcpServer).Build()
 	reconciler := MCPServerReconciler{
-		Client: client,
-		Scheme: scheme,
+		Client:              client,
+		Scheme:              scheme,
+		GatewayOTLPEndpoint: "http://otel-collector.mcp-sentinel.svc.cluster.local:4318",
 	}
 	reconciler.setDefaults(&mcpServer)
 
@@ -624,6 +626,8 @@ func TestReconcileDeploymentAddsGatewaySidecar(t *testing.T) {
 	}
 	assertEqual(t, "gatewayPortEnv", envByName["PORT"].Value, "8091")
 	assertEqual(t, "gatewayUpstreamEnv", envByName["UPSTREAM_URL"].Value, "http://127.0.0.1:8088")
+	assertEqual(t, "gatewayOTELServiceName", envByName["OTEL_SERVICE_NAME"].Value, "gateway-server-gateway")
+	assertEqual(t, "gatewayOTELEndpoint", envByName["OTEL_EXPORTER_OTLP_ENDPOINT"].Value, "http://otel-collector.mcp-sentinel.svc.cluster.local:4318")
 	if _, ok := envByName["EXTERNAL_BASE_URL"]; ok {
 		t.Fatal("expected EXTERNAL_BASE_URL to be unset for hostless path-based routing")
 	}

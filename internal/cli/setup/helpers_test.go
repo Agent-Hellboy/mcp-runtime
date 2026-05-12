@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -204,25 +205,31 @@ func TestOperatorEnvOverrides(t *testing.T) {
 	t.Run("returns empty when no gateway override is set", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{}
 		got := operatorEnvOverrides("")
-		if len(got) != 1 {
-			t.Fatalf("expected default analytics ingest env only, got %v", got)
+		if len(got) != 2 {
+			t.Fatalf("expected gateway otel and default analytics ingest env only, got %v", got)
 		}
-		if got[0].Name != "MCP_SENTINEL_INGEST_URL" || got[0].Value != defaultAnalyticsIngestURL {
-			t.Fatalf("unexpected default env override: %+v", got[0])
+		if got[0].Name != "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT" || got[0].Value != defaultGatewayOTELExporterOTLPEndpoint {
+			t.Fatalf("unexpected gateway otel env override: %+v", got[0])
+		}
+		if got[1].Name != "MCP_SENTINEL_INGEST_URL" || got[1].Value != defaultAnalyticsIngestURL {
+			t.Fatalf("unexpected default env override: %+v", got[1])
 		}
 	})
 
 	t.Run("returns gateway proxy image override", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{GatewayProxyImage: "example.com/mcp-proxy:latest"}
 		got := operatorEnvOverrides("")
-		if len(got) != 2 {
+		if len(got) != 3 {
 			t.Fatalf("expected gateway and analytics env overrides, got %d (%v)", len(got), got)
 		}
 		if got[0].Name != "MCP_GATEWAY_PROXY_IMAGE" || got[0].Value != "example.com/mcp-proxy:latest" {
 			t.Fatalf("unexpected env override: %+v", got[0])
 		}
-		if got[1].Name != "MCP_SENTINEL_INGEST_URL" || got[1].Value != defaultAnalyticsIngestURL {
-			t.Fatalf("unexpected analytics env override: %+v", got[1])
+		if got[1].Name != "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT" || got[1].Value != defaultGatewayOTELExporterOTLPEndpoint {
+			t.Fatalf("unexpected gateway otel env override: %+v", got[1])
+		}
+		if got[2].Name != "MCP_SENTINEL_INGEST_URL" || got[2].Value != defaultAnalyticsIngestURL {
+			t.Fatalf("unexpected analytics env override: %+v", got[2])
 		}
 	})
 
@@ -232,36 +239,39 @@ func TestOperatorEnvOverrides(t *testing.T) {
 			AnalyticsIngestURL: "http://custom-analytics-ingest",
 		}
 		got := operatorEnvOverrides("example.com/mcp-proxy:setup")
-		if len(got) != 2 {
+		if len(got) != 3 {
 			t.Fatalf("expected gateway and analytics env overrides, got %d (%v)", len(got), got)
 		}
 		if got[0].Value != "example.com/mcp-proxy:setup" {
 			t.Fatalf("expected explicit setup image to win, got %+v", got[0])
 		}
-		if got[1].Name != "MCP_SENTINEL_INGEST_URL" || got[1].Value != "http://custom-analytics-ingest" {
-			t.Fatalf("expected custom analytics env override, got %+v", got[1])
+		if got[1].Name != "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT" || got[1].Value != defaultGatewayOTELExporterOTLPEndpoint {
+			t.Fatalf("unexpected gateway otel env override: %+v", got[1])
+		}
+		if got[2].Name != "MCP_SENTINEL_INGEST_URL" || got[2].Value != "http://custom-analytics-ingest" {
+			t.Fatalf("expected custom analytics env override, got %+v", got[2])
 		}
 	})
 
 	t.Run("uses analytics ingest override when configured", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{AnalyticsIngestURL: "http://custom-analytics-ingest"}
 		got := operatorEnvOverrides("")
-		if len(got) != 1 {
+		if len(got) != 2 {
 			t.Fatalf("expected analytics ingest env only, got %d (%v)", len(got), got)
 		}
-		if got[0].Value != "http://custom-analytics-ingest" {
-			t.Fatalf("expected custom ingest url, got %+v", got[0])
+		if got[1].Value != "http://custom-analytics-ingest" {
+			t.Fatalf("expected custom ingest url, got %+v", got[1])
 		}
 	})
 
 	t.Run("includes ingress readiness mode when configured", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{IngressReadinessMode: "permissive"}
 		got := operatorEnvOverrides("")
-		if len(got) != 2 {
+		if len(got) != 3 {
 			t.Fatalf("expected analytics plus ingress readiness env overrides, got %v", got)
 		}
-		if got[1].Name != "MCP_INGRESS_READINESS_MODE" || got[1].Value != "permissive" {
-			t.Fatalf("unexpected ingress readiness env override: %+v", got[1])
+		if got[2].Name != "MCP_INGRESS_READINESS_MODE" || got[2].Value != "permissive" {
+			t.Fatalf("unexpected ingress readiness env override: %+v", got[2])
 		}
 	})
 
@@ -271,14 +281,14 @@ func TestOperatorEnvOverrides(t *testing.T) {
 			RegistryIngressHost: "registry.local",
 		}
 		got := operatorEnvOverrides("")
-		if len(got) != 3 {
+		if len(got) != 4 {
 			t.Fatalf("expected analytics plus registry env overrides, got %v", got)
 		}
-		if got[1].Name != "MCP_REGISTRY_ENDPOINT" || got[1].Value != "10.43.39.164:5000" {
-			t.Fatalf("unexpected registry endpoint env override: %+v", got[1])
+		if got[2].Name != "MCP_REGISTRY_ENDPOINT" || got[2].Value != "10.43.39.164:5000" {
+			t.Fatalf("unexpected registry endpoint env override: %+v", got[2])
 		}
-		if got[2].Name != "MCP_REGISTRY_INGRESS_HOST" || got[2].Value != "registry.local" {
-			t.Fatalf("unexpected registry ingress env override: %+v", got[2])
+		if got[3].Name != "MCP_REGISTRY_INGRESS_HOST" || got[3].Value != "registry.local" {
+			t.Fatalf("unexpected registry ingress env override: %+v", got[3])
 		}
 	})
 }
@@ -857,9 +867,11 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 
 	var buildCalls int32
 	var pushCalls int32
+	var buildContexts []string
 	deps := SetupDeps{
-		BuildAnalyticsImage: func(string, string, string) error {
+		BuildAnalyticsImage: func(_, _, buildContext string) error {
 			atomic.AddInt32(&buildCalls, 1)
+			buildContexts = append(buildContexts, buildContext)
 			return nil
 		},
 		PushAnalyticsImage: func(string) error {
@@ -884,6 +896,11 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 	}
 	if atomic.LoadInt32(&buildCalls) != int32(len(analyticsComponents)) {
 		t.Fatalf("expected %d builds in test mode, got %d", len(analyticsComponents), buildCalls)
+	}
+	// Sentinel service Dockerfiles need the repo root context for shared packages and service modules.
+	wantBuildContexts := []string{".", ".", ".", "."}
+	if !slices.Equal(buildContexts, wantBuildContexts) {
+		t.Fatalf("build contexts = %v, want %v", buildContexts, wantBuildContexts)
 	}
 	if atomic.LoadInt32(&pushCalls) != int32(len(analyticsComponents)) {
 		t.Fatalf("expected %d pushes in test mode, got %d", len(analyticsComponents), pushCalls)
@@ -923,6 +940,107 @@ spec:
 	}
 	if !strings.Contains(rendered, "imagePullSecrets:") || !strings.Contains(rendered, "name: "+defaultRegistrySecretName) {
 		t.Fatalf("expected injected imagePullSecrets, got %s", rendered)
+	}
+}
+
+func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() {
+		core.DefaultCLIConfig = orig
+	})
+	core.DefaultCLIConfig = &core.CLIConfig{}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	root := t.TempDir()
+	manifestDir := filepath.Join(root, "k8s")
+	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+		t.Fatalf("failed to create manifest dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "services"), 0o755); err != nil {
+		t.Fatalf("failed to create services dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("failed to write go.mod: %v", err)
+	}
+	manifestContent := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: fixture\n  namespace: mcp-sentinel\n"
+	for _, name := range []string{
+		"00-namespace.yaml",
+		"01-config.yaml",
+		"03-clickhouse.yaml",
+		"04-clickhouse-init.yaml",
+		"05-kafka.yaml",
+		"06-ingest.yaml",
+		"07-processor.yaml",
+		"08-api.yaml",
+		"08-api-rbac.yaml",
+		"09-ui.yaml",
+		"10-gateway.yaml",
+		"11-prometheus.yaml",
+		"12-grafana.yaml",
+		"15-otel-collector.yaml",
+		"16-tempo.yaml",
+		"17-loki.yaml",
+		"18-promtail.yaml",
+		"19-grafana-datasources.yaml",
+		"20-postgres.yaml",
+	} {
+		if err := os.WriteFile(filepath.Join(manifestDir, name), []byte(manifestContent), 0o644); err != nil {
+			t.Fatalf("failed to write fixture manifest %s: %v", name, err)
+		}
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("failed to chdir to fixture root: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(cwd)
+	})
+
+	deleteIndex := -1
+	waitIndex := -1
+	var mock *core.MockExecutor
+	mock = &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if contains(spec.Args, "get") && contains(spec.Args, "secret") {
+				cmd.OutputData = []byte("Error from server (NotFound): secrets \"mcp-sentinel-secrets\" not found")
+				cmd.OutputErr = errors.New("not found")
+			}
+			if contains(spec.Args, "delete") && contains(spec.Args, "job/clickhouse-init") {
+				deleteIndex = len(mock.Commands) - 1
+				for _, want := range []string{"--ignore-not-found=true", "--wait=true", "--timeout=60s"} {
+					if !contains(spec.Args, want) {
+						t.Fatalf("delete job args missing %s: %v", want, spec.Args)
+					}
+				}
+			}
+			if contains(spec.Args, "wait") && contains(spec.Args, "job/clickhouse-init") {
+				waitIndex = len(mock.Commands) - 1
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	err = deployAnalyticsManifestsWithKubectl(kubectl, zap.NewNop(), AnalyticsImageSet{
+		Ingest:    "example.com/mcp-sentinel-ingest:latest",
+		API:       "example.com/mcp-sentinel-api:latest",
+		Processor: "example.com/mcp-sentinel-processor:latest",
+		UI:        "example.com/mcp-sentinel-ui:latest",
+	}, "", setupplan.PlatformModeTenant)
+	if err != nil {
+		t.Fatalf("deployAnalyticsManifestsWithKubectl returned error: %v", err)
+	}
+	if deleteIndex == -1 {
+		t.Fatal("expected setup to delete any existing clickhouse-init job before reapplying it")
+	}
+	if waitIndex == -1 {
+		t.Fatal("expected setup to wait for clickhouse-init job completion")
+	}
+	if deleteIndex > waitIndex {
+		t.Fatalf("expected clickhouse-init delete before wait, got delete index %d wait index %d", deleteIndex, waitIndex)
 	}
 }
 

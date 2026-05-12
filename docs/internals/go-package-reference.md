@@ -2131,6 +2131,9 @@ type MCPServerReconciler struct {
 	// GatewayProxyImage is the default image used for the optional MCP gateway sidecar.
 	GatewayProxyImage string
 
+	// GatewayOTLPEndpoint is the OTLP/HTTP endpoint injected into MCP gateway sidecars.
+	GatewayOTLPEndpoint string
+
 	// DefaultAnalyticsIngestURL is the default analytics ingest endpoint used when analytics is enabled.
 	DefaultAnalyticsIngestURL string
 
@@ -2186,6 +2189,9 @@ type OperatorConfig struct {
 
 	// GatewayProxyImage is the default image used for the optional MCP gateway sidecar.
 	GatewayProxyImage string
+
+	// GatewayOTLPEndpoint is the OTLP/HTTP endpoint injected into MCP gateway sidecars.
+	GatewayOTLPEndpoint string
 
 	// AnalyticsIngestURL is the default analytics ingest endpoint for gateway sidecars.
 	AnalyticsIngestURL string
