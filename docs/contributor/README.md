@@ -97,3 +97,8 @@ Kind setup step to exercise a non-default catalog mode.
 
 Use `E2E_CACHE_MODE=1` only for repeated local debugging. Omit it when you want
 a CI-equivalent fresh cluster.
+
+Image mirroring and local image builds run concurrently during fresh e2e setup.
+Set `E2E_IMAGE_PREP_PARALLELISM=1` to force sequential prep on constrained
+machines, or raise it above the default `3` only when Docker has enough CPU,
+network, and disk headroom.

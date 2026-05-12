@@ -62,6 +62,10 @@ E2E_CACHE_MODE=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh
 present, skips platform setup if the core platform is already ready, and reuses
 image tags already published to the local registry.
 
+Image mirroring and local runtime/Sentinel image builds run with bounded
+parallelism. Set `E2E_IMAGE_PREP_PARALLELISM=<n>` to tune the default of `3`
+when your workstation or CI runner needs less or more Docker concurrency.
+
 E2E output uses ANSI color only for an interactive terminal by default. Set
 `E2E_COLOR=always` or `E2E_COLOR=never` to override auto-detection; `NO_COLOR`
 disables color.

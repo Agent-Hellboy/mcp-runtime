@@ -171,8 +171,14 @@ E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE//[[:space:]]/}"
 E2E_VALIDATE_SCENARIOS_ONLY="${E2E_VALIDATE_SCENARIOS_ONLY:-0}"
 E2E_KEEP_CLUSTER="${E2E_KEEP_CLUSTER:-0}"
 E2E_CACHE_MODE="${E2E_CACHE_MODE:-0}"
+E2E_IMAGE_PREP_PARALLELISM="${E2E_IMAGE_PREP_PARALLELISM:-3}"
 if [[ "${E2E_CACHE_MODE}" == "1" ]]; then
   E2E_KEEP_CLUSTER=1
+fi
+
+if ! [[ "${E2E_IMAGE_PREP_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_IMAGE_PREP_PARALLELISM}" -lt 1 ]]; then
+  echo "E2E_IMAGE_PREP_PARALLELISM must be a positive integer" >&2
+  exit 1
 fi
 
 IFS=',' read -r -a E2E_SCENARIO_LIST <<< "${E2E_SCENARIOS}"
@@ -278,6 +284,9 @@ WORKDIR="$(mktemp -d)"
 KIND_CONFIG="$(mktemp)"
 ORIG_CONTEXT="$(kubectl config current-context 2>/dev/null || true)"
 PIDS=()
+PARALLEL_PIDS=()
+PARALLEL_LABELS=()
+PARALLEL_FAILED=0
 
 cleanup() {
   if [[ -n "${E2E_ARTIFACT_DIR}" ]]; then
@@ -1913,6 +1922,56 @@ run_with_retry() {
   return "${exit_code}"
 }
 
+parallel_reset() {
+  PARALLEL_PIDS=()
+  PARALLEL_LABELS=()
+  PARALLEL_FAILED=0
+}
+
+parallel_wait_next() {
+  local pid="${PARALLEL_PIDS[0]}"
+  local label="${PARALLEL_LABELS[0]}"
+  local status=0
+
+  if wait "${pid}"; then
+    echo "[parallel][pass] ${label}"
+  else
+    status=$?
+    echo "[parallel][fail] ${label} exited with status ${status}" >&2
+    PARALLEL_FAILED=1
+  fi
+
+  PARALLEL_PIDS=("${PARALLEL_PIDS[@]:1}")
+  PARALLEL_LABELS=("${PARALLEL_LABELS[@]:1}")
+}
+
+parallel_start() {
+  local max_parallel="$1"
+  local label="$2"
+  shift 2
+
+  while [[ ${#PARALLEL_PIDS[@]} -ge ${max_parallel} ]]; do
+    parallel_wait_next
+  done
+
+  echo "[parallel][start] ${label}"
+  "$@" &
+  local pid="$!"
+  PARALLEL_PIDS+=("${pid}")
+  PARALLEL_LABELS+=("${label}")
+  PIDS+=("${pid}")
+}
+
+parallel_wait_all() {
+  while [[ ${#PARALLEL_PIDS[@]} -gt 0 ]]; do
+    parallel_wait_next
+  done
+
+  if [[ "${PARALLEL_FAILED}" -ne 0 ]]; then
+    return 1
+  fi
+}
+
 publish_image_to_local_registry() {
   local image="$1"
   local target
@@ -1938,6 +1997,19 @@ build_and_publish_image() {
   publish_image_to_local_registry "${image}"
 }
 
+build_and_publish_images_parallel() {
+  echo "[image] preparing local images with parallelism ${E2E_IMAGE_PREP_PARALLELISM}"
+  parallel_reset
+  while [[ $# -gt 0 ]]; do
+    local image="$1"
+    local dockerfile="$2"
+    local context_dir="$3"
+    shift 3
+    parallel_start "${E2E_IMAGE_PREP_PARALLELISM}" "build ${image}" build_and_publish_image "${image}" "${dockerfile}" "${context_dir}"
+  done
+  parallel_wait_all
+}
+
 mirror_upstream_image() {
   local image="$1"
   local target
@@ -1957,6 +2029,16 @@ mirror_upstream_image() {
     run_with_retry "docker pull ${image}" docker pull "${image}"
   fi
   publish_image_to_local_registry "${image}"
+}
+
+mirror_upstream_images_parallel() {
+  echo "[image] mirroring upstream images with parallelism ${E2E_IMAGE_PREP_PARALLELISM}"
+  parallel_reset
+  local image
+  for image in "$@"; do
+    parallel_start "${E2E_IMAGE_PREP_PARALLELISM}" "mirror ${image}" mirror_upstream_image "${image}"
+  done
+  parallel_wait_all
 }
 
 start_local_registry() {
@@ -2050,26 +2132,28 @@ if platform_cache_ready; then
   PLATFORM_CACHE_READY=1
   echo "[cache] reusing ready platform in cluster ${CLUSTER_NAME}"
 else
-  mirror_upstream_image "registry:2.8.3"
-  mirror_upstream_image "traefik:v2.10"
-  mirror_upstream_image "traefik:v3.0"
-  mirror_upstream_image "clickhouse/clickhouse-server:23.8"
-  mirror_upstream_image "confluentinc/cp-zookeeper:7.5.1"
-  mirror_upstream_image "confluentinc/cp-kafka:7.5.1"
-  mirror_upstream_image "prom/prometheus:v2.49.1"
-  mirror_upstream_image "otel/opentelemetry-collector:0.92.0"
-  mirror_upstream_image "grafana/tempo:2.3.1"
-  mirror_upstream_image "grafana/loki:2.9.4"
-  mirror_upstream_image "grafana/promtail:2.9.4"
-  mirror_upstream_image "grafana/grafana:10.2.3"
-  mirror_upstream_image "nginx:1.27-alpine"
-  build_and_publish_image "docker.io/library/mcp-runtime-operator:latest" "Dockerfile.operator" "."
-  build_and_publish_image "${TEST_MODE_REGISTRY_IMAGE}" "test/e2e/registry.Dockerfile" "."
-  build_and_publish_image "docker.io/library/mcp-sentinel-mcp-proxy:latest" "${SENTINEL_ROOT}/services/mcp-proxy/Dockerfile" "${SENTINEL_ROOT}"
-  build_and_publish_image "docker.io/library/mcp-sentinel-ingest:latest" "${SENTINEL_ROOT}/services/ingest/Dockerfile" "${SENTINEL_ROOT}"
-  build_and_publish_image "docker.io/library/mcp-sentinel-api:latest" "${SENTINEL_ROOT}/services/api/Dockerfile" "${SENTINEL_ROOT}"
-  build_and_publish_image "docker.io/library/mcp-sentinel-processor:latest" "${SENTINEL_ROOT}/services/processor/Dockerfile" "${SENTINEL_ROOT}"
-  build_and_publish_image "docker.io/library/mcp-sentinel-ui:latest" "${SENTINEL_ROOT}/services/ui/Dockerfile" "${SENTINEL_ROOT}"
+  mirror_upstream_images_parallel \
+    "registry:2.8.3" \
+    "traefik:v2.10" \
+    "traefik:v3.0" \
+    "clickhouse/clickhouse-server:23.8" \
+    "confluentinc/cp-zookeeper:7.5.1" \
+    "confluentinc/cp-kafka:7.5.1" \
+    "prom/prometheus:v2.49.1" \
+    "otel/opentelemetry-collector:0.92.0" \
+    "grafana/tempo:2.3.1" \
+    "grafana/loki:2.9.4" \
+    "grafana/promtail:2.9.4" \
+    "grafana/grafana:10.2.3" \
+    "nginx:1.27-alpine"
+  build_and_publish_images_parallel \
+    "docker.io/library/mcp-runtime-operator:latest" "Dockerfile.operator" "." \
+    "${TEST_MODE_REGISTRY_IMAGE}" "test/e2e/registry.Dockerfile" "." \
+    "docker.io/library/mcp-sentinel-mcp-proxy:latest" "${SENTINEL_ROOT}/services/mcp-proxy/Dockerfile" "${SENTINEL_ROOT}" \
+    "docker.io/library/mcp-sentinel-ingest:latest" "${SENTINEL_ROOT}/services/ingest/Dockerfile" "${SENTINEL_ROOT}" \
+    "docker.io/library/mcp-sentinel-api:latest" "${SENTINEL_ROOT}/services/api/Dockerfile" "${SENTINEL_ROOT}" \
+    "docker.io/library/mcp-sentinel-processor:latest" "${SENTINEL_ROOT}/services/processor/Dockerfile" "${SENTINEL_ROOT}" \
+    "docker.io/library/mcp-sentinel-ui:latest" "${SENTINEL_ROOT}/services/ui/Dockerfile" "${SENTINEL_ROOT}"
 fi
 
 export MCP_SETUP_WAIT_TIMEOUT="${MCP_SETUP_WAIT_TIMEOUT:-900}"
@@ -2081,7 +2165,7 @@ if [[ "${PLATFORM_CACHE_READY}" == "1" ]]; then
 else
   echo "[setup] running platform setup in test mode (platform mode: ${E2E_PLATFORM_MODE})"
   MCP_RUNTIME_REGISTRY_IMAGE_OVERRIDE="${TEST_MODE_REGISTRY_IMAGE}" \
-  ./bin/mcp-runtime setup --test-mode --platform-mode "${E2E_PLATFORM_MODE}" --ingress-manifest config/ingress/overlays/http
+  ./bin/mcp-runtime setup --test-mode --parallel-builds --platform-mode "${E2E_PLATFORM_MODE}" --ingress-manifest config/ingress/overlays/http
 fi
 
 echo "[verify] waiting for core platform components"
