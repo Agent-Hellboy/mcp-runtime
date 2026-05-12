@@ -2137,13 +2137,13 @@ wait_core_platform_rollouts() {
   kubectl get namespace mcp-servers mcp-servers-org mcp-servers-public >/dev/null
 
   parallel_reset
-  parallel_start 7 "rollout registry/deploy/registry" rollout_status_with_logs registry deploy registry 180s
-  parallel_start 7 "rollout mcp-runtime/deploy/mcp-runtime-operator-controller-manager" rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
-  parallel_start 7 "rollout traefik/deploy/traefik" rollout_status_with_logs traefik deploy traefik 180s
-  parallel_start 7 "rollout mcp-sentinel/deploy/mcp-sentinel-api" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
-  parallel_start 7 "rollout mcp-sentinel/deploy/mcp-sentinel-gateway" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-gateway 180s
-  parallel_start 7 "rollout mcp-sentinel/statefulset/tempo" rollout_status_with_logs mcp-sentinel statefulset tempo 180s
-  parallel_start 7 "rollout mcp-sentinel/statefulset/loki" rollout_status_with_logs mcp-sentinel statefulset loki 300s
+  parallel_start 3 "rollout registry/deploy/registry" rollout_status_with_logs registry deploy registry 180s
+  parallel_start 3 "rollout mcp-runtime/deploy/mcp-runtime-operator-controller-manager" rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
+  parallel_start 3 "rollout traefik/deploy/traefik" rollout_status_with_logs traefik deploy traefik 180s
+  parallel_start 3 "rollout mcp-sentinel/deploy/mcp-sentinel-api" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
+  parallel_start 3 "rollout mcp-sentinel/deploy/mcp-sentinel-gateway" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-gateway 180s
+  parallel_start 3 "rollout mcp-sentinel/statefulset/tempo" rollout_status_with_logs mcp-sentinel statefulset tempo 180s
+  parallel_start 3 "rollout mcp-sentinel/statefulset/loki" rollout_status_with_logs mcp-sentinel statefulset loki 300s
   parallel_wait_all
 }
 
