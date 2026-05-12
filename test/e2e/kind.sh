@@ -4178,7 +4178,7 @@ def wait_for_prometheus_up(base_url, *, headers=None, description):
         value = result.get("value", [])
         if len(value) >= 2 and metric.get("job"):
             jobs[metric["job"]] = str(value[1])
-    for job in ("mcp-sentinel-api", "mcp-sentinel-ingest"):
+    for job in ("mcp-sentinel-api", "mcp-sentinel-ingest", "mcp-sentinel-processor"):
         check(
             jobs.get(job) == "1",
             f"{description} reports {job}=1",

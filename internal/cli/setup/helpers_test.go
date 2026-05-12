@@ -1062,6 +1062,19 @@ func TestGrafanaPrometheusDatasourceUsesRoutePrefix(t *testing.T) {
 	}
 }
 
+func TestPrometheusScrapesProcessorMetricsPort(t *testing.T) {
+	content, err := os.ReadFile("../../../k8s/11-prometheus.yaml")
+	if err != nil {
+		t.Fatalf("failed to read prometheus manifest: %v", err)
+	}
+	if !strings.Contains(string(content), `targets: ["mcp-sentinel-processor:9102"]`) {
+		t.Fatalf("expected Prometheus to scrape processor metrics port 9102, got:\n%s", content)
+	}
+	if strings.Contains(string(content), `targets: ["mcp-sentinel-processor:9092"]`) {
+		t.Fatalf("Prometheus still scrapes stale processor port 9092:\n%s", content)
+	}
+}
+
 func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() {
