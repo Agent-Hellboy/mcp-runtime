@@ -196,6 +196,26 @@ func TestBuildOperatorArgs(t *testing.T) {
 	})
 }
 
+func findOperatorEnvVar(envVars []operatorEnvVar, name string) *operatorEnvVar {
+	for i := range envVars {
+		if envVars[i].Name == name {
+			return &envVars[i]
+		}
+	}
+	return nil
+}
+
+func requireOperatorEnvVar(t *testing.T, envVars []operatorEnvVar, name, want string) {
+	t.Helper()
+	envVar := findOperatorEnvVar(envVars, name)
+	if envVar == nil {
+		t.Fatalf("expected operator env %s in %v", name, envVars)
+	}
+	if envVar.Value != want {
+		t.Fatalf("operator env %s = %q, want %q", name, envVar.Value, want)
+	}
+}
+
 func TestOperatorEnvOverrides(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() {
@@ -204,33 +224,23 @@ func TestOperatorEnvOverrides(t *testing.T) {
 
 	t.Run("returns empty when no gateway override is set", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{}
-		got := operatorEnvOverrides("")
+		got := operatorEnvOverrides("", "")
 		if len(got) != 2 {
 			t.Fatalf("expected gateway otel and default analytics ingest env only, got %v", got)
 		}
-		if got[0].Name != "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT" || got[0].Value != defaultGatewayOTELExporterOTLPEndpoint {
-			t.Fatalf("unexpected gateway otel env override: %+v", got[0])
-		}
-		if got[1].Name != "MCP_SENTINEL_INGEST_URL" || got[1].Value != defaultAnalyticsIngestURL {
-			t.Fatalf("unexpected default env override: %+v", got[1])
-		}
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
+		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
 	})
 
 	t.Run("returns gateway proxy image override", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{GatewayProxyImage: "example.com/mcp-proxy:latest"}
-		got := operatorEnvOverrides("")
+		got := operatorEnvOverrides("", "")
 		if len(got) != 3 {
 			t.Fatalf("expected gateway and analytics env overrides, got %d (%v)", len(got), got)
 		}
-		if got[0].Name != "MCP_GATEWAY_PROXY_IMAGE" || got[0].Value != "example.com/mcp-proxy:latest" {
-			t.Fatalf("unexpected env override: %+v", got[0])
-		}
-		if got[1].Name != "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT" || got[1].Value != defaultGatewayOTELExporterOTLPEndpoint {
-			t.Fatalf("unexpected gateway otel env override: %+v", got[1])
-		}
-		if got[2].Name != "MCP_SENTINEL_INGEST_URL" || got[2].Value != defaultAnalyticsIngestURL {
-			t.Fatalf("unexpected analytics env override: %+v", got[2])
-		}
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_PROXY_IMAGE", "example.com/mcp-proxy:latest")
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
+		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
 	})
 
 	t.Run("prefers explicit setup image over config override", func(t *testing.T) {
@@ -238,41 +248,54 @@ func TestOperatorEnvOverrides(t *testing.T) {
 			GatewayProxyImage:  "example.com/mcp-proxy:config",
 			AnalyticsIngestURL: "http://custom-analytics-ingest",
 		}
-		got := operatorEnvOverrides("example.com/mcp-proxy:setup")
+		got := operatorEnvOverrides("example.com/mcp-proxy:setup", "")
 		if len(got) != 3 {
 			t.Fatalf("expected gateway and analytics env overrides, got %d (%v)", len(got), got)
 		}
-		if got[0].Value != "example.com/mcp-proxy:setup" {
-			t.Fatalf("expected explicit setup image to win, got %+v", got[0])
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_PROXY_IMAGE", "example.com/mcp-proxy:setup")
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
+		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", "http://custom-analytics-ingest")
+	})
+
+	t.Run("preserves existing gateway otel endpoint when configured", func(t *testing.T) {
+		core.DefaultCLIConfig = &core.CLIConfig{}
+		got := operatorEnvOverrides("", "http://custom-collector.mcp-observability.svc.cluster.local:4318")
+		if len(got) != 2 {
+			t.Fatalf("expected gateway otel and default analytics ingest env only, got %v", got)
 		}
-		if got[1].Name != "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT" || got[1].Value != defaultGatewayOTELExporterOTLPEndpoint {
-			t.Fatalf("unexpected gateway otel env override: %+v", got[1])
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", "http://custom-collector.mcp-observability.svc.cluster.local:4318")
+		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
+	})
+
+	t.Run("prefers explicit gateway otel endpoint over existing operator value", func(t *testing.T) {
+		core.DefaultCLIConfig = &core.CLIConfig{GatewayOTLPEndpoint: "https://otel.example.com/v1/traces"}
+		got := operatorEnvOverrides("", "http://custom-collector.mcp-observability.svc.cluster.local:4318")
+		if len(got) != 2 {
+			t.Fatalf("expected gateway otel and default analytics ingest env only, got %v", got)
 		}
-		if got[2].Name != "MCP_SENTINEL_INGEST_URL" || got[2].Value != "http://custom-analytics-ingest" {
-			t.Fatalf("expected custom analytics env override, got %+v", got[2])
-		}
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", "https://otel.example.com/v1/traces")
+		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
 	})
 
 	t.Run("uses analytics ingest override when configured", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{AnalyticsIngestURL: "http://custom-analytics-ingest"}
-		got := operatorEnvOverrides("")
+		got := operatorEnvOverrides("", "")
 		if len(got) != 2 {
-			t.Fatalf("expected analytics ingest env only, got %d (%v)", len(got), got)
+			t.Fatalf("expected gateway otel and analytics ingest env only, got %d (%v)", len(got), got)
 		}
-		if got[1].Value != "http://custom-analytics-ingest" {
-			t.Fatalf("expected custom ingest url, got %+v", got[1])
-		}
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
+		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", "http://custom-analytics-ingest")
 	})
 
 	t.Run("includes ingress readiness mode when configured", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{IngressReadinessMode: "permissive"}
-		got := operatorEnvOverrides("")
+		got := operatorEnvOverrides("", "")
 		if len(got) != 3 {
 			t.Fatalf("expected analytics plus ingress readiness env overrides, got %v", got)
 		}
-		if got[2].Name != "MCP_INGRESS_READINESS_MODE" || got[2].Value != "permissive" {
-			t.Fatalf("unexpected ingress readiness env override: %+v", got[2])
-		}
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
+		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
+		requireOperatorEnvVar(t, got, "MCP_INGRESS_READINESS_MODE", "permissive")
 	})
 
 	t.Run("includes registry endpoint and ingress host when configured", func(t *testing.T) {
@@ -280,16 +303,14 @@ func TestOperatorEnvOverrides(t *testing.T) {
 			RegistryEndpoint:    "10.43.39.164:5000",
 			RegistryIngressHost: "registry.local",
 		}
-		got := operatorEnvOverrides("")
+		got := operatorEnvOverrides("", "")
 		if len(got) != 4 {
 			t.Fatalf("expected analytics plus registry env overrides, got %v", got)
 		}
-		if got[2].Name != "MCP_REGISTRY_ENDPOINT" || got[2].Value != "10.43.39.164:5000" {
-			t.Fatalf("unexpected registry endpoint env override: %+v", got[2])
-		}
-		if got[3].Name != "MCP_REGISTRY_INGRESS_HOST" || got[3].Value != "registry.local" {
-			t.Fatalf("unexpected registry ingress env override: %+v", got[3])
-		}
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
+		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
+		requireOperatorEnvVar(t, got, "MCP_REGISTRY_ENDPOINT", "10.43.39.164:5000")
+		requireOperatorEnvVar(t, got, "MCP_REGISTRY_INGRESS_HOST", "registry.local")
 	})
 }
 
@@ -1540,6 +1561,64 @@ func TestWaitForDeploymentAvailableWithKubectl(t *testing.T) {
 	}
 	if !commandHasArgs(mock.Commands[0], "get", "deployment", "registry", "-n", "registry", "-o", "jsonpath={.status.availableReplicas}") {
 		t.Fatalf("unexpected command args: %v", mock.Commands[0].Args)
+	}
+}
+
+func TestDeployOperatorManifestsWithKubectlPreservesExistingGatewayOTLPEndpoint(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	core.DefaultCLIConfig = &core.CLIConfig{}
+	t.Cleanup(func() {
+		core.DefaultCLIConfig = orig
+	})
+
+	root := repoRootForTest(t)
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working dir: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir to repo root: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(origDir)
+	})
+
+	const customEndpoint = "http://custom-collector.mcp-observability.svc.cluster.local:4318"
+	var managerManifest string
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "deployment/"+core.OperatorDeploymentName, "-n", core.NamespaceMCPRuntime) {
+				cmd.OutputData = []byte(customEndpoint)
+			}
+			if idx := argIndex(spec.Args, "-f"); idx != -1 && idx+1 < len(spec.Args) {
+				path := spec.Args[idx+1]
+				if strings.Contains(path, "manager-") && strings.HasSuffix(path, ".yaml") {
+					cmd.RunFunc = func() error {
+						data, err := os.ReadFile(path)
+						if err != nil {
+							return err
+						}
+						managerManifest = string(data)
+						return nil
+					}
+				}
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+	swapDefaultKubectlClientForTest(t, kubectl)
+
+	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "registry.example.com/mcp-runtime-operator:dev", "", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(managerManifest, "name: MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT") ||
+		!strings.Contains(managerManifest, "value: "+customEndpoint) {
+		t.Fatalf("expected manager manifest to preserve existing gateway OTLP endpoint, got:\n%s", managerManifest)
+	}
+	if strings.Contains(managerManifest, "value: "+defaultGatewayOTELExporterOTLPEndpoint) {
+		t.Fatalf("expected manager manifest not to overwrite custom gateway OTLP endpoint with default, got:\n%s", managerManifest)
 	}
 }
 

@@ -39,6 +39,7 @@ const defaultRegistrySecretName = "mcp-runtime-registry-creds" // #nosec G101 --
 const testModeOperatorImage = "docker.io/library/mcp-runtime-operator:latest"
 const defaultGatewayProxyRepository = "mcp-sentinel-mcp-proxy"
 const defaultAnalyticsIngestURL = "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
+const gatewayOTELExporterOTLPEndpointEnv = "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT"
 const defaultGatewayOTELExporterOTLPEndpoint = "http://otel-collector.mcp-sentinel.svc.cluster.local:4318"
 const gatewayProxyDockerfilePath = "services/mcp-proxy/Dockerfile"
 const gatewayProxyBuildContext = "."
@@ -1452,8 +1453,9 @@ func deployOperatorManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.
 		}
 	}
 
-	// Inject environment variables if provided
-	if envVars := operatorEnvOverrides(gatewayProxyImage); len(envVars) > 0 {
+	// Inject environment variables if provided.
+	existingGatewayOTLPEndpoint := existingOperatorEnvValue(kubectl, gatewayOTELExporterOTLPEndpointEnv)
+	if envVars := operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint); len(envVars) > 0 {
 		envMap := make(map[string]string, len(envVars))
 		for _, ev := range envVars {
 			envMap[ev.Name] = ev.Value
@@ -2269,7 +2271,7 @@ type operatorEnvVar struct {
 }
 
 // operatorEnvOverrides returns the environment variables to set on the operator deployment.
-func operatorEnvOverrides(gatewayProxyImage string) []operatorEnvVar {
+func operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint string) []operatorEnvVar {
 	var envVars []operatorEnvVar
 	image := strings.TrimSpace(gatewayProxyImage)
 	if image == "" {
@@ -2278,7 +2280,14 @@ func operatorEnvOverrides(gatewayProxyImage string) []operatorEnvVar {
 	if image != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_GATEWAY_PROXY_IMAGE", Value: image})
 	}
-	envVars = append(envVars, operatorEnvVar{Name: "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", Value: defaultGatewayOTELExporterOTLPEndpoint})
+	gatewayOTLPEndpoint := strings.TrimSpace(core.GetGatewayOTLPEndpointOverride())
+	if gatewayOTLPEndpoint == "" {
+		gatewayOTLPEndpoint = strings.TrimSpace(existingGatewayOTLPEndpoint)
+	}
+	if gatewayOTLPEndpoint == "" {
+		gatewayOTLPEndpoint = defaultGatewayOTELExporterOTLPEndpoint
+	}
+	envVars = append(envVars, operatorEnvVar{Name: gatewayOTELExporterOTLPEndpointEnv, Value: gatewayOTLPEndpoint})
 	ingestURL := strings.TrimSpace(core.GetAnalyticsIngestURLOverride())
 	if ingestURL == "" {
 		ingestURL = defaultAnalyticsIngestURL
@@ -2305,6 +2314,23 @@ func operatorEnvOverrides(gatewayProxyImage string) []operatorEnvVar {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_CLUSTER_NAME", Value: clusterName})
 	}
 	return envVars
+}
+
+func existingOperatorEnvValue(kubectl core.KubectlRunner, name string) string {
+	jsonPath := fmt.Sprintf(
+		`jsonpath={.spec.template.spec.containers[?(@.name=="%s")].env[?(@.name=="%s")].value}`,
+		core.OperatorManagerContainerName,
+		name,
+	)
+	cmd, err := kubectl.CommandArgs([]string{"get", "deployment/" + core.OperatorDeploymentName, "-n", core.NamespaceMCPRuntime, "-o", jsonPath})
+	if err != nil {
+		return ""
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func applySetupPlanToCLIConfig(plan setupplan.Plan) {
