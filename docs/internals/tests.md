@@ -65,6 +65,9 @@ image tags already published to the local registry.
 Image mirroring and local runtime/Sentinel image builds run with bounded
 parallelism. Set `E2E_IMAGE_PREP_PARALLELISM=<n>` to tune the default of `3`
 when your workstation or CI runner needs less or more Docker concurrency.
+The script also waits on independent core rollouts and deploys the official SDK
+example servers concurrently; scenario assertions remain ordered because they
+share policy, session, and analytics state.
 
 E2E output uses ANSI color only for an interactive terminal by default. Set
 `E2E_COLOR=always` or `E2E_COLOR=never` to override auto-detection; `NO_COLOR`

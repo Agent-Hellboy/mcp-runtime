@@ -2041,6 +2041,30 @@ mirror_upstream_images_parallel() {
   parallel_wait_all
 }
 
+wait_core_platform_rollouts() {
+  echo "[verify] waiting for core platform components"
+  kubectl get namespace mcp-servers mcp-servers-org mcp-servers-public >/dev/null
+
+  parallel_reset
+  parallel_start 7 "rollout registry/deploy/registry" rollout_status_with_logs registry deploy registry 180s
+  parallel_start 7 "rollout mcp-runtime/deploy/mcp-runtime-operator-controller-manager" rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
+  parallel_start 7 "rollout traefik/deploy/traefik" rollout_status_with_logs traefik deploy traefik 180s
+  parallel_start 7 "rollout mcp-sentinel/deploy/mcp-sentinel-api" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
+  parallel_start 7 "rollout mcp-sentinel/deploy/mcp-sentinel-gateway" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-gateway 180s
+  parallel_start 7 "rollout mcp-sentinel/statefulset/tempo" rollout_status_with_logs mcp-sentinel statefulset tempo 180s
+  parallel_start 7 "rollout mcp-sentinel/statefulset/loki" rollout_status_with_logs mcp-sentinel statefulset loki 300s
+  parallel_wait_all
+}
+
+delete_mcp_server_and_wait() {
+  local server_name="$1"
+  local namespace="$2"
+  local timeout="${3:-120s}"
+
+  ./bin/mcp-runtime server --use-kube delete "${server_name}" --namespace "${namespace}"
+  kubectl wait --for=delete "mcpserver/${server_name}" -n "${namespace}" --timeout="${timeout}" || true
+}
+
 start_local_registry() {
   if docker ps -a --format '{{.Names}}' | grep -qx "${LOCAL_REGISTRY_NAME}"; then
     if cache_mode_enabled; then
@@ -2168,15 +2192,7 @@ else
   ./bin/mcp-runtime setup --test-mode --parallel-builds --platform-mode "${E2E_PLATFORM_MODE}" --ingress-manifest config/ingress/overlays/http
 fi
 
-echo "[verify] waiting for core platform components"
-kubectl get namespace mcp-servers mcp-servers-org mcp-servers-public >/dev/null
-rollout_status_with_logs registry deploy registry 180s
-rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
-rollout_status_with_logs traefik deploy traefik 180s
-rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
-rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-gateway 180s
-rollout_status_with_logs mcp-sentinel statefulset tempo 180s
-rollout_status_with_logs mcp-sentinel statefulset loki 300s
+wait_core_platform_rollouts
 
 echo "[cli] checking platform status commands"
 ./bin/mcp-runtime status
@@ -2407,24 +2423,26 @@ TEMP_CLI_SERVER="${SERVER_NAME}-cli-create"
 kubectl wait --for=delete "mcpserver/${TEMP_CLI_SERVER}" -n mcp-servers --timeout=120s || true
 
 echo "[deploy] deploying official SDK example MCP servers"
-deploy_example_server_via_pipeline \
+parallel_reset
+parallel_start 3 "deploy ${PYTHON_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
   "${PYTHON_EXAMPLE_SERVER_NAME}" \
   "${PYTHON_EXAMPLE_SERVER_HOST}" \
   "${PYTHON_EXAMPLE_SERVER_ROUTE}" \
   "${PYTHON_EXAMPLE_SOURCE_DIR}" \
   "${PYTHON_EXAMPLE_WORKDIR}"
-deploy_example_server_via_pipeline \
+parallel_start 3 "deploy ${RUST_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
   "${RUST_EXAMPLE_SERVER_NAME}" \
   "${RUST_EXAMPLE_SERVER_HOST}" \
   "${RUST_EXAMPLE_SERVER_ROUTE}" \
   "${RUST_EXAMPLE_SOURCE_DIR}" \
   "${RUST_EXAMPLE_WORKDIR}"
-deploy_example_server_via_pipeline \
+parallel_start 3 "deploy ${GO_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
   "${GO_EXAMPLE_SERVER_NAME}" \
   "${GO_EXAMPLE_SERVER_HOST}" \
   "${GO_EXAMPLE_SERVER_ROUTE}" \
   "${GO_EXAMPLE_SOURCE_DIR}" \
   "${GO_EXAMPLE_WORKDIR}"
+parallel_wait_all
 
 echo "[cli] checking server commands"
 
@@ -4811,10 +4829,10 @@ PY
   echo "[multitenancy] cleaning up tenant resources"
   kubectl delete mcpaccessgrant "alice-${MT_TENANT_A}" "bob-${MT_TENANT_B}" -n "${MT_NS}" --ignore-not-found --wait=false >/dev/null
   kubectl delete mcpagentsession "${MT_SESSION_A}" "${MT_SESSION_B}" -n "${MT_NS}" --ignore-not-found --wait=false >/dev/null
-  ./bin/mcp-runtime server --use-kube delete "${MT_TENANT_A}" --namespace "${MT_NS}" >/dev/null
-  ./bin/mcp-runtime server --use-kube delete "${MT_TENANT_B}" --namespace "${MT_NS}" >/dev/null
-  kubectl wait --for=delete "mcpserver/${MT_TENANT_A}" -n "${MT_NS}" --timeout=60s || true
-  kubectl wait --for=delete "mcpserver/${MT_TENANT_B}" -n "${MT_NS}" --timeout=60s || true
+  parallel_reset
+  parallel_start 2 "delete ${MT_TENANT_A}" delete_mcp_server_and_wait "${MT_TENANT_A}" "${MT_NS}" 60s
+  parallel_start 2 "delete ${MT_TENANT_B}" delete_mcp_server_and_wait "${MT_TENANT_B}" "${MT_NS}" 60s
+  parallel_wait_all
 fi
 
 echo "[cli] checking sentinel restart command"
@@ -4824,17 +4842,14 @@ kubectl patch deployment mcp-sentinel-api -n mcp-sentinel --type merge -p '{"spe
 rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
 
 echo "[cli] deleting deployed MCP servers"
+parallel_reset
 if scenario_selected "oauth"; then
-  ./bin/mcp-runtime server --use-kube delete "${OAUTH_SERVER_NAME}" --namespace mcp-servers
-  kubectl wait --for=delete "mcpserver/${OAUTH_SERVER_NAME}" -n mcp-servers --timeout=120s || true
+  parallel_start 5 "delete ${OAUTH_SERVER_NAME}" delete_mcp_server_and_wait "${OAUTH_SERVER_NAME}" mcp-servers 120s
 fi
-./bin/mcp-runtime server --use-kube delete "${PYTHON_EXAMPLE_SERVER_NAME}" --namespace mcp-servers
-kubectl wait --for=delete "mcpserver/${PYTHON_EXAMPLE_SERVER_NAME}" -n mcp-servers --timeout=120s || true
-./bin/mcp-runtime server --use-kube delete "${RUST_EXAMPLE_SERVER_NAME}" --namespace mcp-servers
-kubectl wait --for=delete "mcpserver/${RUST_EXAMPLE_SERVER_NAME}" -n mcp-servers --timeout=120s || true
-./bin/mcp-runtime server --use-kube delete "${GO_EXAMPLE_SERVER_NAME}" --namespace mcp-servers
-kubectl wait --for=delete "mcpserver/${GO_EXAMPLE_SERVER_NAME}" -n mcp-servers --timeout=120s || true
-./bin/mcp-runtime server --use-kube delete "${SERVER_NAME}" --namespace mcp-servers
-kubectl wait --for=delete "mcpserver/${SERVER_NAME}" -n mcp-servers --timeout=120s || true
+parallel_start 5 "delete ${PYTHON_EXAMPLE_SERVER_NAME}" delete_mcp_server_and_wait "${PYTHON_EXAMPLE_SERVER_NAME}" mcp-servers 120s
+parallel_start 5 "delete ${RUST_EXAMPLE_SERVER_NAME}" delete_mcp_server_and_wait "${RUST_EXAMPLE_SERVER_NAME}" mcp-servers 120s
+parallel_start 5 "delete ${GO_EXAMPLE_SERVER_NAME}" delete_mcp_server_and_wait "${GO_EXAMPLE_SERVER_NAME}" mcp-servers 120s
+parallel_start 5 "delete ${SERVER_NAME}" delete_mcp_server_and_wait "${SERVER_NAME}" mcp-servers 120s
+parallel_wait_all
 
 echo "[done] E2E completed successfully"

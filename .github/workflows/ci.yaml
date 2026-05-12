@@ -103,11 +103,36 @@ jobs:
 
       - name: Test Sentinel service modules
         run: |
-          (cd services/api && go test -v -race -count=1 ./...)
-          (cd services/ingest && go test -v -race -count=1 ./...)
-          (cd services/processor && go test -v -race -count=1 ./...)
-          (cd services/mcp-proxy && go test -v -race -count=1 ./...)
-          (cd services/ui && go test -v -race -count=1 ./...)
+          set -euo pipefail
+
+          run_service_tests() {
+            local service="$1"
+            echo "::group::services/${service}"
+            local status=0
+            if (cd "services/${service}" && go test -v -race -count=1 ./...); then
+              status=0
+            else
+              status=$?
+            fi
+            echo "::endgroup::"
+            return "${status}"
+          }
+
+          services=(api ingest processor mcp-proxy ui)
+          pids=()
+          for service in "${services[@]}"; do
+            run_service_tests "${service}" &
+            pids+=("$!")
+          done
+
+          failed=0
+          for i in "${!services[@]}"; do
+            if ! wait "${pids[$i]}"; then
+              echo "services/${services[$i]} tests failed" >&2
+              failed=1
+            fi
+          done
+          exit "${failed}"
 
       - name: Run integration tests with coverage
         run: |
