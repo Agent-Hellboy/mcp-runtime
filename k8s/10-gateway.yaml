@@ -545,7 +545,32 @@ metadata:
 spec:
   ingressClassName: traefik
   rules:
-    - http:
+    - host: localhost
+      http:
+        paths:
+          - path: /grafana
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 3000
+          - path: /prometheus
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus
+                port:
+                  number: 9090
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-sentinel-ui
+                port:
+                  number: 8082
+    - host: 127.0.0.1
+      http:
         paths:
           - path: /grafana
             pathType: Prefix
