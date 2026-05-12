@@ -94,6 +94,7 @@ func (s operatorImageStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupCon
 		ctx.ExternalRegistry,
 		ctx.UsingExternalRegistry,
 		ctx.Plan.TestMode,
+		ctx.Plan.ParallelBuilds,
 		deps,
 	)
 	if err != nil {
@@ -129,6 +130,7 @@ func (s analyticsImageStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupCo
 		ctx.ExternalRegistry,
 		ctx.UsingExternalRegistry,
 		ctx.Plan.TestMode,
+		ctx.Plan.ParallelBuilds,
 		deps,
 	)
 	if err != nil {

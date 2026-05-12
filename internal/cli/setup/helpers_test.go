@@ -901,7 +901,7 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 		},
 	}
 
-	got, err := prepareAnalyticsImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, true, true, deps)
+	got, err := prepareAnalyticsImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, true, true, false, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -925,6 +925,175 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 	}
 	if atomic.LoadInt32(&pushCalls) != int32(len(analyticsComponents)) {
 		t.Fatalf("expected %d pushes in test mode, got %d", len(analyticsComponents), pushCalls)
+	}
+}
+
+func TestPrepareDeploymentImagesParallelBuildsStartsBothBuilds(t *testing.T) {
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	errCh := make(chan error, 1)
+
+	deps := SetupDeps{
+		OperatorImageFor: func(_ *config.ExternalRegistryConfig) string {
+			return "registry.example.com/mcp-runtime-operator:latest"
+		},
+		GatewayProxyImageFor: func(_ *config.ExternalRegistryConfig) string {
+			return "registry.example.com/mcp-sentinel-mcp-proxy:latest"
+		},
+		BuildOperatorImage: func(string) error {
+			started <- "operator"
+			<-release
+			return nil
+		},
+		PushOperatorImage: func(string) error { return nil },
+		BuildGatewayProxyImage: func(string) error {
+			started <- "gateway"
+			<-release
+			return nil
+		},
+		PushGatewayProxyImage: func(string) error { return nil },
+	}
+
+	go func() {
+		_, _, err := prepareDeploymentImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, true, true, true, deps)
+		errCh <- err
+	}()
+
+	seen := map[string]bool{}
+	timeout := time.After(2 * time.Second)
+	for len(seen) < 2 {
+		select {
+		case name := <-started:
+			seen[name] = true
+		case <-timeout:
+			t.Fatalf("timed out waiting for parallel runtime image builds, saw %v", seen)
+		}
+	}
+
+	close(release)
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPrepareDeploymentImagesParallelBuildsPreparesInternalRegistryOnce(t *testing.T) {
+	var ensureCalls int32
+	var resolveCalls int32
+
+	deps := SetupDeps{
+		OperatorImageFor: func(_ *config.ExternalRegistryConfig) string {
+			return "registry.example.com/mcp-runtime-operator:latest"
+		},
+		GatewayProxyImageFor: func(_ *config.ExternalRegistryConfig) string {
+			return "registry.example.com/mcp-sentinel-mcp-proxy:latest"
+		},
+		BuildOperatorImage:     func(string) error { return nil },
+		BuildGatewayProxyImage: func(string) error { return nil },
+		EnsureNamespace: func(string) error {
+			atomic.AddInt32(&ensureCalls, 1)
+			return nil
+		},
+		ResolvePlatformRegistryURL: func(*zap.Logger) string {
+			atomic.AddInt32(&resolveCalls, 1)
+			return "registry.local:5000"
+		},
+		PushOperatorImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
+		PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error {
+			return nil
+		},
+	}
+
+	operatorImage, gatewayProxyImage, err := prepareDeploymentImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, false, true, true, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if operatorImage != "registry.local:5000/mcp-runtime-operator:latest" {
+		t.Fatalf("operator image = %q, want internal registry image", operatorImage)
+	}
+	if gatewayProxyImage != "registry.local:5000/mcp-sentinel-mcp-proxy:latest" {
+		t.Fatalf("gateway proxy image = %q, want internal registry image", gatewayProxyImage)
+	}
+	if got := atomic.LoadInt32(&ensureCalls); got != 1 {
+		t.Fatalf("expected one registry namespace ensure, got %d", got)
+	}
+	if got := atomic.LoadInt32(&resolveCalls); got != 1 {
+		t.Fatalf("expected one registry URL resolve, got %d", got)
+	}
+}
+
+func TestPrepareAnalyticsImagesParallelBuildsStartsAllBuilds(t *testing.T) {
+	started := make(chan string, len(analyticsComponents))
+	release := make(chan struct{})
+	errCh := make(chan error, 1)
+
+	deps := SetupDeps{
+		BuildAnalyticsImage: func(image, _, _ string) error {
+			started <- image
+			<-release
+			return nil
+		},
+		PushAnalyticsImage: func(string) error { return nil },
+	}
+
+	go func() {
+		_, err := prepareAnalyticsImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, true, true, true, deps)
+		errCh <- err
+	}()
+
+	seen := map[string]bool{}
+	timeout := time.After(2 * time.Second)
+	for len(seen) < len(analyticsComponents) {
+		select {
+		case image := <-started:
+			seen[image] = true
+		case <-timeout:
+			t.Fatalf("timed out waiting for parallel analytics image builds, saw %d of %d", len(seen), len(analyticsComponents))
+		}
+	}
+
+	close(release)
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPrepareAnalyticsImagesParallelBuildsPreparesInternalRegistryOnce(t *testing.T) {
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "1")
+
+	var ensureCalls int32
+	var resolveCalls int32
+	deps := SetupDeps{
+		BuildAnalyticsImage: func(string, string, string) error { return nil },
+		EnsureNamespace: func(string) error {
+			atomic.AddInt32(&ensureCalls, 1)
+			return nil
+		},
+		ResolvePlatformRegistryURL: func(*zap.Logger) string {
+			atomic.AddInt32(&resolveCalls, 1)
+			return "registry.local:5000"
+		},
+		PushAnalyticsImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
+	}
+
+	got, err := prepareAnalyticsImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, false, true, true, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := AnalyticsImageSet{
+		Ingest:    "registry.local:5000/mcp-sentinel-ingest:latest",
+		API:       "registry.local:5000/mcp-sentinel-api:latest",
+		Processor: "registry.local:5000/mcp-sentinel-processor:latest",
+		UI:        "registry.local:5000/mcp-sentinel-ui:latest",
+	}
+	if got != want {
+		t.Fatalf("prepareAnalyticsImages() = %+v, want %+v", got, want)
+	}
+	if got := atomic.LoadInt32(&ensureCalls); got != 1 {
+		t.Fatalf("expected one registry namespace ensure, got %d", got)
+	}
+	if got := atomic.LoadInt32(&resolveCalls); got != 1 {
+		t.Fatalf("expected one registry URL resolve, got %d", got)
 	}
 }
 

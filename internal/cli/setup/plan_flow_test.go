@@ -124,12 +124,16 @@ func TestBuildSetupPlan_PreservesTestModeAndOperatorArgs(t *testing.T) {
 		ForceIngressInstall:    false,
 		TLSEnabled:             false,
 		TestMode:               true,
+		ParallelBuilds:         true,
 		StrictProd:             true,
 		OperatorArgs:           operatorArgs,
 	})
 
 	if !plan.TestMode {
 		t.Fatal("expected test mode to be preserved")
+	}
+	if !plan.ParallelBuilds {
+		t.Fatal("expected parallel builds to be preserved")
 	}
 	if !plan.StrictProd {
 		t.Fatal("expected strict prod to be preserved")

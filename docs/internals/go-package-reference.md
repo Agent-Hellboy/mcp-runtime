@@ -5253,6 +5253,7 @@ type Input struct {
 	ForceIngressInstall    bool
 	TLSEnabled             bool
 	TestMode               bool
+	ParallelBuilds         bool
 	StrictProd             bool
 	DeployAnalytics        bool
 	OperatorArgs           []string
@@ -5280,6 +5281,7 @@ type Plan struct {
 	RegistryManifest    string
 	TLSEnabled          bool
 	TestMode            bool
+	ParallelBuilds      bool
 	StrictProd          bool
 	DeployAnalytics     bool
 	OperatorArgs        []string

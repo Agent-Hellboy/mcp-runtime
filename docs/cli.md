@@ -83,9 +83,10 @@ mcp-runtime setup --with-tls                   # cert-manager TLS for registry
 mcp-runtime setup --platform-mode public       # anonymous public preview catalog
 mcp-runtime setup --without-sentinel           # skip request-path stack
 mcp-runtime setup --test-mode                  # local Kind/dev build+push path
+mcp-runtime setup --parallel-builds            # build/publish setup images concurrently
 ```
 
-Flags: `--registry-type`, `--registry-storage`, `--platform-mode`, `--ingress`, `--ingress-manifest`, `--force-ingress-install`, `--with-tls`, `--test-mode`, `--without-sentinel`, plus operator overrides `--operator-leader-elect`, `--operator-metrics-addr`, `--operator-probe-addr`.
+Flags: `--registry-type`, `--registry-storage`, `--platform-mode`, `--ingress`, `--ingress-manifest`, `--force-ingress-install`, `--with-tls`, `--test-mode`, `--parallel-builds`, `--without-sentinel`, plus operator overrides `--operator-leader-elect`, `--operator-metrics-addr`, `--operator-probe-addr`.
 
 `--platform-mode` selects the namespace model. `tenant` is the default and
 scopes signed-in users to their own user/team tenant namespace; `org` uses
@@ -99,6 +100,10 @@ operator, gateway proxy, and Sentinel images with `latest` tags to the
 configured or bundled registry. With the bundled plain HTTP registry, cluster
 nodes still need containerd/Docker trust for the exact image host they pull
 from.
+
+`--parallel-builds` keeps cluster, registry, TLS, and rollout sequencing
+unchanged, but builds and publishes the runtime and Sentinel setup images
+concurrently.
 
 Setup is reconcile-oriented and refuses known control-plane conflicts before
 applying more state. Registry TLS is owned by the explicit

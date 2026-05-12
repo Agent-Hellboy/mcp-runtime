@@ -37,7 +37,7 @@ e2e_color_enabled() {
       return 1
       ;;
     auto|"")
-      [[ -t 1 ]]
+      [[ -t 1 || "${GITHUB_ACTIONS:-}" == "true" ]]
       ;;
     *)
       [[ -t 1 ]]
@@ -51,6 +51,7 @@ E2E_COLOR_MCP=""
 E2E_COLOR_POLICY=""
 E2E_COLOR_WARN=""
 E2E_COLOR_DEBUG=""
+E2E_COLOR_SUCCESS=""
 if e2e_color_enabled; then
   E2E_COLOR_RESET=$'\033[0m'
   E2E_COLOR_INFO=$'\033[36m'
@@ -58,6 +59,7 @@ if e2e_color_enabled; then
   E2E_COLOR_POLICY=$'\033[33m'
   E2E_COLOR_WARN=$'\033[31m'
   E2E_COLOR_DEBUG=$'\033[2m'
+  E2E_COLOR_SUCCESS=$'\033[32m'
 fi
 
 log_line() {
@@ -172,8 +174,41 @@ E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE//[[:space:]]/}"
 E2E_VALIDATE_SCENARIOS_ONLY="${E2E_VALIDATE_SCENARIOS_ONLY:-0}"
 E2E_KEEP_CLUSTER="${E2E_KEEP_CLUSTER:-0}"
 E2E_CACHE_MODE="${E2E_CACHE_MODE:-0}"
+E2E_IMAGE_PREP_PARALLELISM="${E2E_IMAGE_PREP_PARALLELISM:-3}"
+E2E_IMAGE_MIRROR_PARALLELISM="${E2E_IMAGE_MIRROR_PARALLELISM:-${E2E_IMAGE_PREP_PARALLELISM}}"
+E2E_IMAGE_BUILD_PARALLELISM="${E2E_IMAGE_BUILD_PARALLELISM:-}"
+E2E_LOG_PREVIEW_LINES="${E2E_LOG_PREVIEW_LINES:-4}"
+E2E_LOG_FAILURE_LINES="${E2E_LOG_FAILURE_LINES:-40}"
 if [[ "${E2E_CACHE_MODE}" == "1" ]]; then
   E2E_KEEP_CLUSTER=1
+fi
+
+if ! [[ "${E2E_IMAGE_PREP_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_IMAGE_PREP_PARALLELISM}" -lt 1 ]]; then
+  echo "E2E_IMAGE_PREP_PARALLELISM must be a positive integer" >&2
+  exit 1
+fi
+if [[ -z "${E2E_IMAGE_BUILD_PARALLELISM}" ]]; then
+  if [[ "${E2E_IMAGE_PREP_PARALLELISM}" -lt 2 ]]; then
+    E2E_IMAGE_BUILD_PARALLELISM="${E2E_IMAGE_PREP_PARALLELISM}"
+  else
+    E2E_IMAGE_BUILD_PARALLELISM=2
+  fi
+fi
+if ! [[ "${E2E_IMAGE_MIRROR_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_IMAGE_MIRROR_PARALLELISM}" -lt 1 ]]; then
+  echo "E2E_IMAGE_MIRROR_PARALLELISM must be a positive integer" >&2
+  exit 1
+fi
+if ! [[ "${E2E_IMAGE_BUILD_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_IMAGE_BUILD_PARALLELISM}" -lt 1 ]]; then
+  echo "E2E_IMAGE_BUILD_PARALLELISM must be a positive integer" >&2
+  exit 1
+fi
+if ! [[ "${E2E_LOG_PREVIEW_LINES}" =~ ^[0-9]+$ ]]; then
+  echo "E2E_LOG_PREVIEW_LINES must be zero or a positive integer" >&2
+  exit 1
+fi
+if ! [[ "${E2E_LOG_FAILURE_LINES}" =~ ^[0-9]+$ ]]; then
+  echo "E2E_LOG_FAILURE_LINES must be zero or a positive integer" >&2
+  exit 1
 fi
 
 IFS=',' read -r -a E2E_SCENARIO_LIST <<< "${E2E_SCENARIOS}"
@@ -276,9 +311,19 @@ fi
 git config --global --add safe.directory "${PROJECT_ROOT}" >/dev/null 2>&1 || true
 
 WORKDIR="$(mktemp -d)"
+STAGE_LOG_DIR="${WORKDIR}/stage-logs"
 KIND_CONFIG="$(mktemp)"
 ORIG_CONTEXT="$(kubectl config current-context 2>/dev/null || true)"
 PIDS=()
+PARALLEL_PIDS=()
+PARALLEL_LABELS=()
+PARALLEL_LOGS=()
+PARALLEL_STDOUT_LOGS=()
+PARALLEL_STDERR_LOGS=()
+PARALLEL_STARTED_AT=()
+PARALLEL_FAILED=0
+PARALLEL_SEQ=0
+STAGE_SEQ=0
 
 cleanup() {
   if [[ -n "${E2E_ARTIFACT_DIR}" ]]; then
@@ -1925,6 +1970,253 @@ run_with_retry() {
   return "${exit_code}"
 }
 
+safe_log_label() {
+  local label="$1"
+  printf '%s' "${label}" | tr -c '[:alnum:]_.-' '_'
+}
+
+relative_log_path() {
+  local path="$1"
+  printf '%s' "${path#"${WORKDIR}/"}"
+}
+
+format_duration() {
+  local seconds="$1"
+  local minutes
+  if [[ "${seconds}" -lt 60 ]]; then
+    printf '%ss' "${seconds}"
+    return
+  fi
+  minutes=$((seconds / 60))
+  seconds=$((seconds % 60))
+  printf '%sm%02ss' "${minutes}" "${seconds}"
+}
+
+log_status() {
+  local state="$1"
+  local message="$2"
+  local color="${E2E_COLOR_INFO}"
+  case "${state}" in
+    DONE)
+      color="${E2E_COLOR_SUCCESS}"
+      ;;
+    FAILED)
+      color="${E2E_COLOR_WARN}"
+      ;;
+    RUNNING|PLAN)
+      color="${E2E_COLOR_POLICY}"
+      ;;
+    STDOUT|STDERR)
+      color="${E2E_COLOR_DEBUG}"
+      ;;
+  esac
+  printf '%b%-7s%b %s\n' "${color}" "${state}" "${E2E_COLOR_RESET}" "${message}"
+}
+
+log_status_err() {
+  local state="$1"
+  local message="$2"
+  log_status "${state}" "${message}" >&2
+}
+
+combine_stream_logs() {
+  local stdout_file="$1"
+  local stderr_file="$2"
+  local log_file="$3"
+  local log_dir="${log_file%/*}"
+
+  mkdir -p "${log_dir}"
+  : >"${log_file}"
+  if [[ -s "${stdout_file}" ]]; then
+    {
+      echo "===== stdout ====="
+      cat "${stdout_file}"
+    } >>"${log_file}"
+  fi
+  if [[ -s "${stderr_file}" ]]; then
+    {
+      echo "===== stderr ====="
+      cat "${stderr_file}"
+    } >>"${log_file}"
+  fi
+  return 0
+}
+
+preview_log_stream() {
+  local state="$1"
+  local label="$2"
+  local log_file="$3"
+  local lines="$4"
+  local stream="${5:-stdout}"
+
+  if [[ "${lines}" -eq 0 || ! -s "${log_file}" ]]; then
+    return 0
+  fi
+
+  if [[ "${stream}" == "stderr" ]]; then
+    log_status_err "${state}" "${label}: last ${lines} stderr lines from $(relative_log_path "${log_file}")"
+    tail -n "${lines}" "${log_file}" | sed 's/^/        /' >&2
+  else
+    log_status "${state}" "${label}: last ${lines} stdout lines from $(relative_log_path "${log_file}")"
+    tail -n "${lines}" "${log_file}" | sed 's/^/        /'
+  fi
+}
+
+run_logged_stage() {
+  local label="$1"
+  local log_file
+  local heartbeat_pid=""
+  local safe_label
+  local started_at
+  local stdout_file
+  local stderr_file
+  local status=0
+  shift
+
+  mkdir -p "${STAGE_LOG_DIR}"
+  STAGE_SEQ=$((STAGE_SEQ + 1))
+  safe_label="$(safe_log_label "${label}")"
+  log_file="${STAGE_LOG_DIR}/stage-$(printf '%03d' "${STAGE_SEQ}")-${safe_label}.log"
+  stdout_file="${log_file%.log}.stdout.log"
+  stderr_file="${log_file%.log}.stderr.log"
+  started_at="$(date +%s)"
+  log_status "START" "${label} (full log: $(relative_log_path "${log_file}"))"
+
+  (
+    while true; do
+      sleep 30
+      log_status "RUNNING" "${label} for $(format_duration "$(( $(date +%s) - started_at ))")"
+    done
+  ) &
+  heartbeat_pid="$!"
+  PIDS+=("${heartbeat_pid}")
+
+  if "$@" >"${stdout_file}" 2>"${stderr_file}"; then
+    kill "${heartbeat_pid}" >/dev/null 2>&1 || true
+    wait "${heartbeat_pid}" 2>/dev/null || true
+    combine_stream_logs "${stdout_file}" "${stderr_file}" "${log_file}"
+    log_status "DONE" "${label} in $(format_duration "$(( $(date +%s) - started_at ))") (full log: $(relative_log_path "${log_file}"))"
+    preview_log_stream "STDOUT" "${label}" "${stdout_file}" "${E2E_LOG_PREVIEW_LINES}" stdout
+    preview_log_stream "STDERR" "${label}" "${stderr_file}" "${E2E_LOG_PREVIEW_LINES}" stderr
+  else
+    status=$?
+    kill "${heartbeat_pid}" >/dev/null 2>&1 || true
+    wait "${heartbeat_pid}" 2>/dev/null || true
+    combine_stream_logs "${stdout_file}" "${stderr_file}" "${log_file}"
+    log_status_err "FAILED" "${label} after $(format_duration "$(( $(date +%s) - started_at ))") with exit ${status} (full log: $(relative_log_path "${log_file}"))"
+    if [[ -s "${stdout_file}" || -s "${stderr_file}" ]]; then
+      preview_log_stream "STDOUT" "${label}" "${stdout_file}" "${E2E_LOG_FAILURE_LINES}" stdout
+      preview_log_stream "STDERR" "${label}" "${stderr_file}" "${E2E_LOG_FAILURE_LINES}" stderr
+    else
+      log_status_err "FAILED" "${label}: command produced no captured stdout or stderr"
+    fi
+    return "${status}"
+  fi
+}
+
+parallel_reset() {
+  PARALLEL_PIDS=()
+  PARALLEL_LABELS=()
+  PARALLEL_LOGS=()
+  PARALLEL_STDOUT_LOGS=()
+  PARALLEL_STDERR_LOGS=()
+  PARALLEL_STARTED_AT=()
+  PARALLEL_FAILED=0
+}
+
+parallel_wait_next() {
+  local pid="${PARALLEL_PIDS[0]}"
+  local label="${PARALLEL_LABELS[0]}"
+  local log_file="${PARALLEL_LOGS[0]}"
+  local stdout_file="${PARALLEL_STDOUT_LOGS[0]}"
+  local stderr_file="${PARALLEL_STDERR_LOGS[0]}"
+  local started_at="${PARALLEL_STARTED_AT[0]}"
+  local heartbeat_pid=""
+  local status=0
+
+  (
+    while true; do
+      sleep 30
+      log_status "RUNNING" "${label} for $(format_duration "$(( $(date +%s) - started_at ))")"
+    done
+  ) &
+  heartbeat_pid="$!"
+  PIDS+=("${heartbeat_pid}")
+
+  if wait "${pid}"; then
+    kill "${heartbeat_pid}" >/dev/null 2>&1 || true
+    wait "${heartbeat_pid}" 2>/dev/null || true
+    combine_stream_logs "${stdout_file}" "${stderr_file}" "${log_file}"
+    log_status "DONE" "${label} in $(format_duration "$(( $(date +%s) - started_at ))") (full log: $(relative_log_path "${log_file}"))"
+    preview_log_stream "STDOUT" "${label}" "${stdout_file}" "${E2E_LOG_PREVIEW_LINES}" stdout
+    preview_log_stream "STDERR" "${label}" "${stderr_file}" "${E2E_LOG_PREVIEW_LINES}" stderr
+  else
+    status=$?
+    kill "${heartbeat_pid}" >/dev/null 2>&1 || true
+    wait "${heartbeat_pid}" 2>/dev/null || true
+    combine_stream_logs "${stdout_file}" "${stderr_file}" "${log_file}"
+    log_status_err "FAILED" "${label} after $(format_duration "$(( $(date +%s) - started_at ))") with exit ${status} (full log: $(relative_log_path "${log_file}"))"
+    if [[ -s "${stdout_file}" || -s "${stderr_file}" ]]; then
+      preview_log_stream "STDOUT" "${label}" "${stdout_file}" "${E2E_LOG_FAILURE_LINES}" stdout
+      preview_log_stream "STDERR" "${label}" "${stderr_file}" "${E2E_LOG_FAILURE_LINES}" stderr
+    else
+      log_status_err "FAILED" "${label}: command produced no captured stdout or stderr"
+    fi
+    PARALLEL_FAILED=1
+  fi
+
+  PARALLEL_PIDS=("${PARALLEL_PIDS[@]:1}")
+  PARALLEL_LABELS=("${PARALLEL_LABELS[@]:1}")
+  PARALLEL_LOGS=("${PARALLEL_LOGS[@]:1}")
+  PARALLEL_STDOUT_LOGS=("${PARALLEL_STDOUT_LOGS[@]:1}")
+  PARALLEL_STDERR_LOGS=("${PARALLEL_STDERR_LOGS[@]:1}")
+  PARALLEL_STARTED_AT=("${PARALLEL_STARTED_AT[@]:1}")
+}
+
+parallel_start() {
+  local max_parallel="$1"
+  local label="$2"
+  local log_file
+  local safe_label
+  local stdout_file
+  local stderr_file
+  shift 2
+
+  while [[ ${#PARALLEL_PIDS[@]} -ge ${max_parallel} ]]; do
+    parallel_wait_next
+    if [[ "${PARALLEL_FAILED}" -ne 0 ]]; then
+      return 1
+    fi
+  done
+
+  mkdir -p "${STAGE_LOG_DIR}"
+  PARALLEL_SEQ=$((PARALLEL_SEQ + 1))
+  safe_label="$(safe_log_label "${label}")"
+  log_file="${STAGE_LOG_DIR}/parallel-$(printf '%03d' "${PARALLEL_SEQ}")-${safe_label}.log"
+  stdout_file="${log_file%.log}.stdout.log"
+  stderr_file="${log_file%.log}.stderr.log"
+  log_status "START" "${label} (parallel worker; full log: $(relative_log_path "${log_file}"))"
+  "$@" >"${stdout_file}" 2>"${stderr_file}" &
+  local pid="$!"
+  PARALLEL_PIDS+=("${pid}")
+  PARALLEL_LABELS+=("${label}")
+  PARALLEL_LOGS+=("${log_file}")
+  PARALLEL_STDOUT_LOGS+=("${stdout_file}")
+  PARALLEL_STDERR_LOGS+=("${stderr_file}")
+  PARALLEL_STARTED_AT+=("$(date +%s)")
+  PIDS+=("${pid}")
+}
+
+parallel_wait_all() {
+  while [[ ${#PARALLEL_PIDS[@]} -gt 0 ]]; do
+    parallel_wait_next
+  done
+
+  if [[ "${PARALLEL_FAILED}" -ne 0 ]]; then
+    return 1
+  fi
+}
+
 publish_image_to_local_registry() {
   local image="$1"
   local target
@@ -1950,6 +2242,59 @@ build_and_publish_image() {
   publish_image_to_local_registry "${image}"
 }
 
+image_build_label() {
+  local image="$1"
+  case "${image}" in
+    docker.io/library/mcp-runtime-operator:*)
+      echo "build operator image (${image})"
+      ;;
+    docker.io/library/mcp-runtime-registry:*)
+      echo "build test registry image (${image})"
+      ;;
+    docker.io/library/mcp-sentinel-mcp-proxy:*)
+      echo "build Sentinel MCP proxy image (${image})"
+      ;;
+    docker.io/library/mcp-sentinel-ingest:*)
+      echo "build Sentinel ingest image (${image})"
+      ;;
+    docker.io/library/mcp-sentinel-api:*)
+      echo "build Sentinel API image (${image})"
+      ;;
+    docker.io/library/mcp-sentinel-processor:*)
+      echo "build Sentinel processor image (${image})"
+      ;;
+    docker.io/library/mcp-sentinel-ui:*)
+      echo "build Sentinel UI image (${image})"
+      ;;
+    *)
+      echo "build image ${image}"
+      ;;
+  esac
+}
+
+build_and_publish_images_parallel() {
+  local start_failed=0
+
+  log_status "PLAN" "Building runtime and Sentinel images with ${E2E_IMAGE_BUILD_PARALLELISM} parallel workers"
+  parallel_reset
+  while [[ $# -gt 0 ]]; do
+    local image="$1"
+    local dockerfile="$2"
+    local context_dir="$3"
+    shift 3
+    if ! parallel_start "${E2E_IMAGE_BUILD_PARALLELISM}" "$(image_build_label "${image}")" build_and_publish_image "${image}" "${dockerfile}" "${context_dir}"; then
+      start_failed=1
+      break
+    fi
+  done
+  if ! parallel_wait_all; then
+    return 1
+  fi
+  if [[ "${start_failed}" -ne 0 ]]; then
+    return 1
+  fi
+}
+
 mirror_upstream_image() {
   local image="$1"
   local target
@@ -1969,6 +2314,60 @@ mirror_upstream_image() {
     run_with_retry "docker pull ${image}" docker pull "${image}"
   fi
   publish_image_to_local_registry "${image}"
+}
+
+mirror_upstream_images_parallel() {
+  local start_failed=0
+
+  log_status "PLAN" "Mirroring upstream images into the local registry with ${E2E_IMAGE_MIRROR_PARALLELISM} parallel workers"
+  parallel_reset
+  local image
+  for image in "$@"; do
+    if ! parallel_start "${E2E_IMAGE_MIRROR_PARALLELISM}" "mirror ${image}" mirror_upstream_image "${image}"; then
+      start_failed=1
+      break
+    fi
+  done
+  if ! parallel_wait_all; then
+    return 1
+  fi
+  if [[ "${start_failed}" -ne 0 ]]; then
+    return 1
+  fi
+}
+
+wait_core_platform_rollouts() {
+  echo "[verify] waiting for core platform components"
+  kubectl get namespace mcp-servers mcp-servers-org mcp-servers-public >/dev/null
+
+  # Setup already waits for these workloads. Keep the post-setup sanity check
+  # sequential so transient kubectl watch cancellation does not fail a healthy run.
+  run_logged_stage "verify registry rollout" rollout_status_with_logs registry deploy registry 180s
+  run_logged_stage "verify operator rollout" rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
+  run_logged_stage "verify traefik rollout" rollout_status_with_logs traefik deploy traefik 180s
+  run_logged_stage "verify sentinel api rollout" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
+  run_logged_stage "verify sentinel gateway rollout" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-gateway 180s
+  run_logged_stage "verify tempo rollout" rollout_status_with_logs mcp-sentinel statefulset tempo 180s
+  run_logged_stage "verify loki rollout" rollout_status_with_logs mcp-sentinel statefulset loki 300s
+}
+
+delete_mcp_server_and_wait() {
+  local server_name="$1"
+  local namespace="$2"
+  local timeout="${3:-120s}"
+
+  ./bin/mcp-runtime server --use-kube delete "${server_name}" --namespace "${namespace}"
+  kubectl wait --for=delete "mcpserver/${server_name}" -n "${namespace}" --timeout="${timeout}" || true
+}
+
+deploy_primary_server_manifests() {
+  ./bin/mcp-runtime pipeline generate --file "${METADATA_FILE}" --output "${MANIFEST_DIR}"
+  ./bin/mcp-runtime pipeline deploy --dir "${MANIFEST_DIR}"
+}
+
+deploy_oauth_server_manifests() {
+  ./bin/mcp-runtime pipeline generate --file "${OAUTH_METADATA_FILE}" --output "${OAUTH_MANIFEST_DIR}"
+  ./bin/mcp-runtime pipeline deploy --dir "${OAUTH_MANIFEST_DIR}"
 }
 
 start_local_registry() {
@@ -2033,13 +2432,13 @@ containerdConfigPatches:
     endpoint = ["http://127.0.0.1:32000"]
 EOF
 
-start_local_registry
+run_logged_stage "start local registry" start_local_registry
 
 if cache_mode_enabled && kind_cluster_exists; then
   echo "[kind] reusing cluster ${CLUSTER_NAME}"
 else
   echo "[kind] creating cluster ${CLUSTER_NAME}"
-  kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}" --wait 120s
+  run_logged_stage "kind create cluster" kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}" --wait 120s
 fi
 connect_local_registry_to_kind_network
 KUBECONFIG_FILE="/tmp/kubeconfig-kind"
@@ -2050,7 +2449,7 @@ mkdir -p "${HOME}/.kube"
 cp "${KUBECONFIG_FILE}" "${HOME}/.kube/config"
 
 echo "[build] rebuilding CLI"
-GOCACHE="${PROJECT_ROOT}/.gocache" go build -o bin/mcp-runtime ./cmd/mcp-runtime
+run_logged_stage "build CLI" env GOCACHE="${PROJECT_ROOT}/.gocache" go build -o bin/mcp-runtime ./cmd/mcp-runtime
 
 echo "[cli] checking static command output"
 ./bin/mcp-runtime --version >/dev/null
@@ -2062,26 +2461,28 @@ if platform_cache_ready; then
   PLATFORM_CACHE_READY=1
   echo "[cache] reusing ready platform in cluster ${CLUSTER_NAME}"
 else
-  mirror_upstream_image "registry:2.8.3"
-  mirror_upstream_image "traefik:v2.10"
-  mirror_upstream_image "traefik:v3.0"
-  mirror_upstream_image "clickhouse/clickhouse-server:23.8"
-  mirror_upstream_image "confluentinc/cp-zookeeper:7.5.1"
-  mirror_upstream_image "confluentinc/cp-kafka:7.5.1"
-  mirror_upstream_image "prom/prometheus:v2.49.1"
-  mirror_upstream_image "otel/opentelemetry-collector:0.92.0"
-  mirror_upstream_image "grafana/tempo:2.3.1"
-  mirror_upstream_image "grafana/loki:2.9.4"
-  mirror_upstream_image "grafana/promtail:2.9.4"
-  mirror_upstream_image "grafana/grafana:10.2.3"
-  mirror_upstream_image "nginx:1.27-alpine"
-  build_and_publish_image "docker.io/library/mcp-runtime-operator:latest" "Dockerfile.operator" "."
-  build_and_publish_image "${TEST_MODE_REGISTRY_IMAGE}" "test/e2e/registry.Dockerfile" "."
-  build_and_publish_image "docker.io/library/mcp-sentinel-mcp-proxy:latest" "${SENTINEL_ROOT}/services/mcp-proxy/Dockerfile" "${SENTINEL_ROOT}"
-  build_and_publish_image "docker.io/library/mcp-sentinel-ingest:latest" "${SENTINEL_ROOT}/services/ingest/Dockerfile" "${SENTINEL_ROOT}"
-  build_and_publish_image "docker.io/library/mcp-sentinel-api:latest" "${SENTINEL_ROOT}/services/api/Dockerfile" "${SENTINEL_ROOT}"
-  build_and_publish_image "docker.io/library/mcp-sentinel-processor:latest" "${SENTINEL_ROOT}/services/processor/Dockerfile" "${SENTINEL_ROOT}"
-  build_and_publish_image "docker.io/library/mcp-sentinel-ui:latest" "${SENTINEL_ROOT}/services/ui/Dockerfile" "${SENTINEL_ROOT}"
+  mirror_upstream_images_parallel \
+    "registry:2.8.3" \
+    "traefik:v2.10" \
+    "traefik:v3.0" \
+    "clickhouse/clickhouse-server:23.8" \
+    "confluentinc/cp-zookeeper:7.5.1" \
+    "confluentinc/cp-kafka:7.5.1" \
+    "prom/prometheus:v2.49.1" \
+    "otel/opentelemetry-collector:0.92.0" \
+    "grafana/tempo:2.3.1" \
+    "grafana/loki:2.9.4" \
+    "grafana/promtail:2.9.4" \
+    "grafana/grafana:10.2.3" \
+    "nginx:1.27-alpine"
+  build_and_publish_images_parallel \
+    "docker.io/library/mcp-runtime-operator:latest" "Dockerfile.operator" "." \
+    "${TEST_MODE_REGISTRY_IMAGE}" "test/e2e/registry.Dockerfile" "." \
+    "docker.io/library/mcp-sentinel-mcp-proxy:latest" "${SENTINEL_ROOT}/services/mcp-proxy/Dockerfile" "${SENTINEL_ROOT}" \
+    "docker.io/library/mcp-sentinel-ingest:latest" "${SENTINEL_ROOT}/services/ingest/Dockerfile" "${SENTINEL_ROOT}" \
+    "docker.io/library/mcp-sentinel-api:latest" "${SENTINEL_ROOT}/services/api/Dockerfile" "${SENTINEL_ROOT}" \
+    "docker.io/library/mcp-sentinel-processor:latest" "${SENTINEL_ROOT}/services/processor/Dockerfile" "${SENTINEL_ROOT}" \
+    "docker.io/library/mcp-sentinel-ui:latest" "${SENTINEL_ROOT}/services/ui/Dockerfile" "${SENTINEL_ROOT}"
 fi
 
 export MCP_SETUP_WAIT_TIMEOUT="${MCP_SETUP_WAIT_TIMEOUT:-900}"
@@ -2093,19 +2494,12 @@ if [[ "${PLATFORM_CACHE_READY}" == "1" ]]; then
   echo "[setup] skipping platform setup because E2E_CACHE_MODE=1 found a ready platform"
 else
   echo "[setup] running platform setup in test mode (platform mode: ${E2E_PLATFORM_MODE})"
-  MCP_RUNTIME_REGISTRY_IMAGE_OVERRIDE="${TEST_MODE_REGISTRY_IMAGE}" \
-  ./bin/mcp-runtime setup --test-mode --platform-mode "${E2E_PLATFORM_MODE}" --ingress-manifest config/ingress/overlays/http
+  run_logged_stage "setup test mode" \
+    env MCP_RUNTIME_REGISTRY_IMAGE_OVERRIDE="${TEST_MODE_REGISTRY_IMAGE}" \
+    ./bin/mcp-runtime setup --test-mode --parallel-builds --platform-mode "${E2E_PLATFORM_MODE}" --ingress-manifest config/ingress/overlays/http
 fi
 
-echo "[verify] waiting for core platform components"
-kubectl get namespace mcp-servers mcp-servers-org mcp-servers-public >/dev/null
-rollout_status_with_logs registry deploy registry 180s
-rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
-rollout_status_with_logs traefik deploy traefik 180s
-rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
-rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-gateway 180s
-rollout_status_with_logs mcp-sentinel statefulset tempo 180s
-rollout_status_with_logs mcp-sentinel statefulset loki 300s
+wait_core_platform_rollouts
 
 echo "[cli] checking platform status commands"
 ./bin/mcp-runtime status
@@ -2164,9 +2558,9 @@ if cache_mode_enabled; then
   rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
 fi
 if cache_mode_enabled; then
-  run_with_retry "cluster doctor" ./bin/mcp-runtime cluster doctor
+  run_logged_stage "cluster doctor" run_with_retry "cluster doctor" ./bin/mcp-runtime cluster doctor
 else
-  ./bin/mcp-runtime cluster doctor
+  run_logged_stage "cluster doctor" ./bin/mcp-runtime cluster doctor
 fi
 run_cli_allowing_cert_prereq_failure cluster-cert-status ./bin/mcp-runtime cluster cert status
 run_cli_allowing_cert_prereq_failure cluster-cert-apply-dry-run ./bin/mcp-runtime cluster cert apply --dry-run
@@ -2297,7 +2691,7 @@ if cache_mode_enabled && docker image inspect "${SERVER_IMAGE}" >/dev/null 2>&1;
   echo "[cache] skipping MCP server image build for ${SERVER_IMAGE}"
 else
   echo "[cli] building MCP server image via CLI"
-  ./bin/mcp-runtime server build image "${SERVER_NAME}" \
+  run_logged_stage "build primary MCP server image" ./bin/mcp-runtime server build image "${SERVER_NAME}" \
     --metadata-file "${METADATA_FILE}" \
     --dockerfile "${GO_EXAMPLE_SOURCE_DIR}/Dockerfile" \
     --registry registry.registry.svc.cluster.local:5000 \
@@ -2307,8 +2701,7 @@ fi
 load_image_into_kind "${SERVER_IMAGE}"
 
 echo "[cli] generating and deploying MCPServer manifests"
-./bin/mcp-runtime pipeline generate --file "${METADATA_FILE}" --output "${MANIFEST_DIR}"
-./bin/mcp-runtime pipeline deploy --dir "${MANIFEST_DIR}"
+run_logged_stage "deploy primary MCP server manifests" deploy_primary_server_manifests
 
 echo "[deploy] waiting for MCP server rollout"
 wait_for_deployment_exists mcp-servers "${SERVER_NAME}"
@@ -2349,24 +2742,26 @@ TEMP_CLI_SERVER="${SERVER_NAME}-cli-create"
 kubectl wait --for=delete "mcpserver/${TEMP_CLI_SERVER}" -n mcp-servers --timeout=120s || true
 
 echo "[deploy] deploying official SDK example MCP servers"
-deploy_example_server_via_pipeline \
+parallel_reset
+parallel_start 3 "deploy ${PYTHON_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
   "${PYTHON_EXAMPLE_SERVER_NAME}" \
   "${PYTHON_EXAMPLE_SERVER_HOST}" \
   "${PYTHON_EXAMPLE_SERVER_ROUTE}" \
   "${PYTHON_EXAMPLE_SOURCE_DIR}" \
   "${PYTHON_EXAMPLE_WORKDIR}"
-deploy_example_server_via_pipeline \
+parallel_start 3 "deploy ${RUST_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
   "${RUST_EXAMPLE_SERVER_NAME}" \
   "${RUST_EXAMPLE_SERVER_HOST}" \
   "${RUST_EXAMPLE_SERVER_ROUTE}" \
   "${RUST_EXAMPLE_SOURCE_DIR}" \
   "${RUST_EXAMPLE_WORKDIR}"
-deploy_example_server_via_pipeline \
+parallel_start 3 "deploy ${GO_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
   "${GO_EXAMPLE_SERVER_NAME}" \
   "${GO_EXAMPLE_SERVER_HOST}" \
   "${GO_EXAMPLE_SERVER_ROUTE}" \
   "${GO_EXAMPLE_SOURCE_DIR}" \
   "${GO_EXAMPLE_WORKDIR}"
+parallel_wait_all
 
 echo "[cli] checking server commands"
 
@@ -3249,8 +3644,7 @@ servers:
 EOF
 
   echo "[oauth] deploying OAuth-protected MCP server"
-  ./bin/mcp-runtime pipeline generate --file "${OAUTH_METADATA_FILE}" --output "${OAUTH_MANIFEST_DIR}"
-  ./bin/mcp-runtime pipeline deploy --dir "${OAUTH_MANIFEST_DIR}"
+  run_logged_stage "deploy OAuth MCP server manifests" deploy_oauth_server_manifests
   wait_for_deployment_exists mcp-servers "${OAUTH_SERVER_NAME}"
   if ! restart_deployment_pods mcp-servers "${OAUTH_SERVER_NAME}" 180s; then
     echo "[debug] OAuth MCP server rollout failed; collecting diagnostics" >&2
@@ -5030,10 +5424,10 @@ PY
   echo "[multitenancy] cleaning up tenant resources"
   kubectl delete mcpaccessgrant "alice-${MT_TENANT_A}" "bob-${MT_TENANT_B}" -n "${MT_NS}" --ignore-not-found --wait=false >/dev/null
   kubectl delete mcpagentsession "${MT_SESSION_A}" "${MT_SESSION_B}" -n "${MT_NS}" --ignore-not-found --wait=false >/dev/null
-  ./bin/mcp-runtime server --use-kube delete "${MT_TENANT_A}" --namespace "${MT_NS}" >/dev/null
-  ./bin/mcp-runtime server --use-kube delete "${MT_TENANT_B}" --namespace "${MT_NS}" >/dev/null
-  kubectl wait --for=delete "mcpserver/${MT_TENANT_A}" -n "${MT_NS}" --timeout=60s || true
-  kubectl wait --for=delete "mcpserver/${MT_TENANT_B}" -n "${MT_NS}" --timeout=60s || true
+  parallel_reset
+  parallel_start 2 "delete ${MT_TENANT_A}" delete_mcp_server_and_wait "${MT_TENANT_A}" "${MT_NS}" 60s
+  parallel_start 2 "delete ${MT_TENANT_B}" delete_mcp_server_and_wait "${MT_TENANT_B}" "${MT_NS}" 60s
+  parallel_wait_all
 fi
 
 echo "[cli] checking sentinel restart command"
@@ -5043,17 +5437,14 @@ kubectl patch deployment mcp-sentinel-api -n mcp-sentinel --type merge -p '{"spe
 rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
 
 echo "[cli] deleting deployed MCP servers"
+parallel_reset
 if scenario_selected "oauth"; then
-  ./bin/mcp-runtime server --use-kube delete "${OAUTH_SERVER_NAME}" --namespace mcp-servers
-  kubectl wait --for=delete "mcpserver/${OAUTH_SERVER_NAME}" -n mcp-servers --timeout=120s || true
+  parallel_start 5 "delete ${OAUTH_SERVER_NAME}" delete_mcp_server_and_wait "${OAUTH_SERVER_NAME}" mcp-servers 120s
 fi
-./bin/mcp-runtime server --use-kube delete "${PYTHON_EXAMPLE_SERVER_NAME}" --namespace mcp-servers
-kubectl wait --for=delete "mcpserver/${PYTHON_EXAMPLE_SERVER_NAME}" -n mcp-servers --timeout=120s || true
-./bin/mcp-runtime server --use-kube delete "${RUST_EXAMPLE_SERVER_NAME}" --namespace mcp-servers
-kubectl wait --for=delete "mcpserver/${RUST_EXAMPLE_SERVER_NAME}" -n mcp-servers --timeout=120s || true
-./bin/mcp-runtime server --use-kube delete "${GO_EXAMPLE_SERVER_NAME}" --namespace mcp-servers
-kubectl wait --for=delete "mcpserver/${GO_EXAMPLE_SERVER_NAME}" -n mcp-servers --timeout=120s || true
-./bin/mcp-runtime server --use-kube delete "${SERVER_NAME}" --namespace mcp-servers
-kubectl wait --for=delete "mcpserver/${SERVER_NAME}" -n mcp-servers --timeout=120s || true
+parallel_start 5 "delete ${PYTHON_EXAMPLE_SERVER_NAME}" delete_mcp_server_and_wait "${PYTHON_EXAMPLE_SERVER_NAME}" mcp-servers 120s
+parallel_start 5 "delete ${RUST_EXAMPLE_SERVER_NAME}" delete_mcp_server_and_wait "${RUST_EXAMPLE_SERVER_NAME}" mcp-servers 120s
+parallel_start 5 "delete ${GO_EXAMPLE_SERVER_NAME}" delete_mcp_server_and_wait "${GO_EXAMPLE_SERVER_NAME}" mcp-servers 120s
+parallel_start 5 "delete ${SERVER_NAME}" delete_mcp_server_and_wait "${SERVER_NAME}" mcp-servers 120s
+parallel_wait_all
 
 echo "[done] E2E completed successfully"
