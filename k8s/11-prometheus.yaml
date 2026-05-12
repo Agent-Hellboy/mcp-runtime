@@ -17,6 +17,9 @@ data:
       - job_name: mcp-sentinel-processor
         static_configs:
           - targets: ["mcp-sentinel-processor:9102"]
+      - job_name: clickhouse
+        static_configs:
+          - targets: ["clickhouse:9363"]
 ---
 apiVersion: v1
 kind: Service

@@ -1,4 +1,21 @@
 apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-prometheus-config
+  namespace: mcp-sentinel
+data:
+  prometheus.xml: |
+    <clickhouse>
+      <prometheus>
+        <endpoint>/metrics</endpoint>
+        <port>9363</port>
+        <metrics>true</metrics>
+        <events>true</events>
+        <asynchronous_metrics>true</asynchronous_metrics>
+      </prometheus>
+    </clickhouse>
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: clickhouse
@@ -13,6 +30,9 @@ spec:
     - name: http
       port: 8123
       targetPort: 8123
+    - name: metrics
+      port: 9363
+      targetPort: 9363
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -37,6 +57,7 @@ spec:
           ports:
             - containerPort: 9000
             - containerPort: 8123
+            - containerPort: 9363
           env:
             - name: CLICKHOUSE_DB
               valueFrom:
@@ -46,6 +67,13 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/clickhouse
+            - name: prometheus-config
+              mountPath: /etc/clickhouse-server/config.d/prometheus.xml
+              subPath: prometheus.xml
+      volumes:
+        - name: prometheus-config
+          configMap:
+            name: clickhouse-prometheus-config
   volumeClaimTemplates:
     - metadata:
         name: data

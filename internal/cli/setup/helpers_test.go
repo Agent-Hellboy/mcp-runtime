@@ -1075,6 +1075,42 @@ func TestPrometheusScrapesProcessorMetricsPort(t *testing.T) {
 	}
 }
 
+func TestPrometheusScrapesClickHouseMetricsPort(t *testing.T) {
+	content, err := os.ReadFile("../../../k8s/11-prometheus.yaml")
+	if err != nil {
+		t.Fatalf("failed to read prometheus manifest: %v", err)
+	}
+	if !strings.Contains(string(content), `job_name: clickhouse`) {
+		t.Fatalf("expected Prometheus to define a ClickHouse scrape job, got:\n%s", content)
+	}
+	if !strings.Contains(string(content), `targets: ["clickhouse:9363"]`) {
+		t.Fatalf("expected Prometheus to scrape ClickHouse metrics port 9363, got:\n%s", content)
+	}
+}
+
+func TestClickHouseExposesPrometheusMetrics(t *testing.T) {
+	for _, path := range []string{"../../../k8s/03-clickhouse.yaml", "../../../k8s/03-clickhouse-hostpath.yaml"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("failed to read clickhouse manifest %s: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"name: clickhouse-prometheus-config",
+			"<endpoint>/metrics</endpoint>",
+			"<port>9363</port>",
+			"name: metrics",
+			"port: 9363",
+			"containerPort: 9363",
+			"mountPath: /etc/clickhouse-server/config.d/prometheus.xml",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("expected %s to contain %q, got:\n%s", path, want, text)
+			}
+		}
+	}
+}
+
 func TestTempoLocalBlocksDoNotShareWALPath(t *testing.T) {
 	content, err := os.ReadFile("../../../k8s/16-tempo.yaml")
 	if err != nil {
