@@ -42,4 +42,10 @@ func TestInitTracerWithoutEndpointInstallsTracePropagator(t *testing.T) {
 	if !extracted.IsRemote() {
 		t.Fatal("extracted span context should be remote")
 	}
+	if got := TraceIDFromContext(ctx); got != traceID.String() {
+		t.Fatalf("TraceIDFromContext() = %q, want %q", got, traceID.String())
+	}
+	if got := TraceIDFromContext(context.Background()); got != "" {
+		t.Fatalf("TraceIDFromContext(background) = %q, want empty", got)
+	}
 }

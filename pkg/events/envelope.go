@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -12,6 +13,7 @@ var ErrMissingFields = errors.New("missing_fields")
 // Envelope is the shared Sentinel event transport contract.
 type Envelope struct {
 	Timestamp string          `json:"timestamp"`
+	TraceID   string          `json:"trace_id,omitempty"`
 	Source    string          `json:"source"`
 	EventType string          `json:"event_type"`
 	Payload   json.RawMessage `json:"payload"`
@@ -41,6 +43,14 @@ func (e *Envelope) EnsureTimestamp(now time.Time) {
 		now = time.Now().UTC()
 	}
 	e.Timestamp = now.UTC().Format(time.RFC3339Nano)
+}
+
+// SetTraceID records the trace ID that can be used to link the stored event row
+// back to the distributed trace.
+func (e *Envelope) SetTraceID(traceID string) {
+	if traceID = strings.TrimSpace(traceID); traceID != "" {
+		e.TraceID = traceID
+	}
 }
 
 // Validate checks the required event envelope fields.

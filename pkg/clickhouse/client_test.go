@@ -83,13 +83,19 @@ func TestEventQueriesExtractTeamIDFromPayload(t *testing.T) {
 	if !strings.Contains(eventSelectColumns, "JSONExtractString(payload, 'team_id') AS team_id") {
 		t.Fatalf("eventSelectColumns = %q, want team_id extracted from payload", eventSelectColumns)
 	}
+	if !strings.Contains(eventSelectColumns, "trace_id") {
+		t.Fatalf("eventSelectColumns = %q, want trace_id selected", eventSelectColumns)
+	}
 
-	whereClause, args := buildEventFilterWhereClause(EventFilters{TeamID: "team-acme", Limit: 25})
+	whereClause, args := buildEventFilterWhereClause(EventFilters{TraceID: "trace-123", TeamID: "team-acme", Limit: 25})
+	if !strings.Contains(whereClause, "trace_id = ?") {
+		t.Fatalf("whereClause = %q, want trace_id filter", whereClause)
+	}
 	if !strings.Contains(whereClause, "JSONExtractString(payload, 'team_id') = ?") {
 		t.Fatalf("whereClause = %q, want team_id filter extracted from payload", whereClause)
 	}
-	if len(args) != 1 || args[0] != "team-acme" {
-		t.Fatalf("args = %#v, want team-acme", args)
+	if len(args) != 2 || args[0] != "trace-123" || args[1] != "team-acme" {
+		t.Fatalf("args = %#v, want trace-123 and team-acme", args)
 	}
 
 	query := buildEventFilterQuery("mcp", whereClause, 25)
@@ -105,6 +111,7 @@ func TestScanEventRow(t *testing.T) {
 	scanner := stubRowScanner{
 		values: []any{
 			now,
+			"trace-123",
 			"gateway",
 			"tools/call",
 			"demo-one",
@@ -127,6 +134,9 @@ func TestScanEventRow(t *testing.T) {
 	if row.Timestamp != now {
 		t.Fatalf("unexpected timestamp: got %v want %v", row.Timestamp, now)
 	}
+	if row.TraceID != "trace-123" {
+		t.Fatalf("unexpected trace ID: got %q want trace-123", row.TraceID)
+	}
 	if string(row.Payload) != `{"value":1}` {
 		t.Fatalf("unexpected payload: %s", row.Payload)
 	}
@@ -141,6 +151,7 @@ func TestScanEventRowWrapsInvalidJSONPayload(t *testing.T) {
 	scanner := stubRowScanner{
 		values: []any{
 			time.Unix(1_700_000_000, 0).UTC(),
+			"",
 			"gateway",
 			"tools/call",
 			"",

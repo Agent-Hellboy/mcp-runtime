@@ -219,17 +219,20 @@ func (s *ingestServer) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	payload.EnsureTimestamp(time.Now().UTC())
 
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		serviceutil.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode_failed"})
-		return
-	}
-
 	spanOpts := []trace.SpanStartOption{trace.WithSpanKind(trace.SpanKindProducer)}
 	if s.topic != "" {
 		spanOpts = append(spanOpts, trace.WithAttributes(attribute.String("kafka.topic", s.topic)))
 	}
 	writeCtx, span := otel.Tracer("mcp-sentinel-ingest").Start(r.Context(), "kafka.produce", spanOpts...)
+	payload.SetTraceID(serviceutil.TraceIDFromContext(writeCtx))
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		span.RecordError(err)
+		span.End()
+		serviceutil.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode_failed"})
+		return
+	}
 	err = s.writer.WriteMessages(writeCtx, kafkaMessageWithTraceContext(writeCtx, raw))
 	if err != nil {
 		span.RecordError(err)

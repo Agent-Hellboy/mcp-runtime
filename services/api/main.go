@@ -14,7 +14,7 @@ GET /api/sources
 GET /api/event-types
 
 # Filter events by source/type or audit fields
-GET /api/events/filter?source=mcp-server&event_type=tool.call&server=payments&team_id=team-acme&decision=deny&agent_id=agent-42&limit=50
+GET /api/events/filter?trace_id=<trace>&source=mcp-server&event_type=tool.call&server=payments&team_id=team-acme&decision=deny&agent_id=agent-42&limit=50
 
 # Monitor API health
 GET /metrics
@@ -656,10 +656,11 @@ func (s *apiServer) queryAnalyticsDecisions(ctx context.Context, since time.Time
 
 // handleEventsFilter handles GET /api/events/filter requests.
 // It queries events filtered by optional source, event_type, and audit payload fields.
-// Supports query parameters: source, event_type, server, namespace, team_id, cluster, human_id, agent_id, session_id, decision, tool_name, limit.
+// Supports query parameters: trace_id, source, event_type, server, namespace, team_id, cluster, human_id, agent_id, session_id, decision, tool_name, limit.
 // Returns filtered events ordered by timestamp descending.
 func (s *apiServer) handleEventsFilter(w http.ResponseWriter, r *http.Request) {
 	filters := clickhousepkg.EventFilters{
+		TraceID:   r.URL.Query().Get("trace_id"),
 		Source:    r.URL.Query().Get("source"),
 		EventType: r.URL.Query().Get("event_type"),
 		Server:    r.URL.Query().Get("server"),

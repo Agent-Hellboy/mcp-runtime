@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -132,8 +135,9 @@ func main() {
 		if len(batch) == 0 {
 			return
 		}
+		batchAttributes := clickhouseBatchTraceAttributes(batchMessages, len(batch))
 		eventSpans := startClickHouseEventSpans(tracer, ctx, batchSpanContexts, len(batch))
-		flushCtx, spanOpts := clickhouseFlushTraceContext(ctx, batchSpanContexts, len(batch))
+		flushCtx, spanOpts := clickhouseFlushTraceContext(ctx, batchSpanContexts, batchAttributes)
 		flushCtx, span := tracer.Start(flushCtx, "clickhouse.insert_batch", spanOpts...)
 		if err := clickhouseClient.InsertEvents(flushCtx, batch); err != nil {
 			log.Printf("insert failed: %v", err)
@@ -218,6 +222,7 @@ func main() {
 			}
 
 			payload.EnsureTimestamp(time.Now().UTC())
+			payload.SetTraceID(serviceutil.TraceIDFromContext(consumeCtx))
 
 			batch = append(batch, payload)
 			batchMessages = append(batchMessages, msg)
@@ -245,10 +250,12 @@ func contextFromKafkaTraceHeaders(parent context.Context, headers []kafka.Header
 	return serviceutil.ContextWithTraceContext(parent, carrier)
 }
 
-func clickhouseFlushTraceContext(parent context.Context, spanContexts []trace.SpanContext, batchSize int) (context.Context, []trace.SpanStartOption) {
+func clickhouseFlushTraceContext(parent context.Context, spanContexts []trace.SpanContext, attrs []attribute.KeyValue) (context.Context, []trace.SpanStartOption) {
 	opts := []trace.SpanStartOption{
 		trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(attribute.Int("batch.size", batchSize)),
+	}
+	if len(attrs) > 0 {
+		opts = append(opts, trace.WithAttributes(attrs...))
 	}
 	validSpanContexts := make([]trace.SpanContext, 0, len(spanContexts))
 	for _, spanContext := range spanContexts {
@@ -268,6 +275,117 @@ func clickhouseFlushTraceContext(parent context.Context, spanContexts []trace.Sp
 		links = append(links, trace.Link{SpanContext: spanContext})
 	}
 	return parent, append(opts, trace.WithLinks(links...))
+}
+
+func clickhouseBatchTraceAttributes(messages []kafka.Message, batchSize int) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{attribute.Int("batch.size", batchSize)}
+	if len(messages) == 0 {
+		return attrs
+	}
+
+	firstOffset := messages[0].Offset
+	lastOffset := messages[0].Offset
+	topics := make(map[string]struct{})
+	partitions := make(map[int]struct{})
+	offsetRanges := make(map[string]kafkaOffsetRange)
+	for _, msg := range messages {
+		if msg.Offset < firstOffset {
+			firstOffset = msg.Offset
+		}
+		if msg.Offset > lastOffset {
+			lastOffset = msg.Offset
+		}
+		topics[msg.Topic] = struct{}{}
+		partitions[msg.Partition] = struct{}{}
+		rangeKey := fmt.Sprintf("%s/%d", msg.Topic, msg.Partition)
+		current, ok := offsetRanges[rangeKey]
+		if !ok {
+			current = kafkaOffsetRange{topic: msg.Topic, partition: msg.Partition, first: msg.Offset, last: msg.Offset}
+		}
+		if msg.Offset < current.first {
+			current.first = msg.Offset
+		}
+		if msg.Offset > current.last {
+			current.last = msg.Offset
+		}
+		offsetRanges[rangeKey] = current
+	}
+
+	attrs = append(attrs,
+		attribute.Int("kafka.batch.message_count", len(messages)),
+		attribute.Int64("kafka.first_offset", firstOffset),
+		attribute.Int64("kafka.last_offset", lastOffset),
+		attribute.Int("kafka.partition_count", len(partitions)),
+	)
+	if len(topics) == 1 {
+		attrs = append(attrs, attribute.String("kafka.topic", onlyTopic(topics)))
+	} else {
+		attrs = append(attrs, attribute.String("kafka.topics", joinTopics(topics)))
+	}
+	if len(partitions) == 1 {
+		attrs = append(attrs, attribute.Int("kafka.partition", onlyPartition(partitions)))
+	} else {
+		attrs = append(attrs, attribute.String("kafka.partitions", joinPartitions(partitions)))
+	}
+	attrs = append(attrs, attribute.String("kafka.offset_ranges", joinOffsetRanges(offsetRanges)))
+	return attrs
+}
+
+type kafkaOffsetRange struct {
+	topic     string
+	partition int
+	first     int64
+	last      int64
+}
+
+func onlyTopic(topics map[string]struct{}) string {
+	for topic := range topics {
+		return topic
+	}
+	return ""
+}
+
+func joinTopics(topics map[string]struct{}) string {
+	keys := make([]string, 0, len(topics))
+	for topic := range topics {
+		keys = append(keys, topic)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ",")
+}
+
+func onlyPartition(partitions map[int]struct{}) int {
+	for partition := range partitions {
+		return partition
+	}
+	return 0
+}
+
+func joinPartitions(partitions map[int]struct{}) string {
+	keys := make([]int, 0, len(partitions))
+	for partition := range partitions {
+		keys = append(keys, partition)
+	}
+	sort.Ints(keys)
+	parts := make([]string, 0, len(keys))
+	for _, partition := range keys {
+		parts = append(parts, strconv.Itoa(partition))
+	}
+	return strings.Join(parts, ",")
+}
+
+func joinOffsetRanges(offsetRanges map[string]kafkaOffsetRange) string {
+	keys := make([]string, 0, len(offsetRanges))
+	for key := range offsetRanges {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		offsetRange := offsetRanges[key]
+		parts = append(parts, fmt.Sprintf("%s/%d:%d-%d", offsetRange.topic, offsetRange.partition, offsetRange.first, offsetRange.last))
+	}
+	return strings.Join(parts, ",")
 }
 
 func startClickHouseEventSpans(tracer trace.Tracer, parent context.Context, spanContexts []trace.SpanContext, batchSize int) []trace.Span {

@@ -5014,7 +5014,7 @@ for service_name in gateway_trace_services:
     tempo_gateway_services.update(names)
 
 required_trace_services = {gateway_trace_services[0], "mcp-sentinel-ingest", "mcp-sentinel-processor"}
-required_trace_spans = {"kafka.produce", "kafka.consume", "clickhouse.insert_event"}
+required_trace_spans = {"kafka.produce", "kafka.consume", "clickhouse.insert_event", "clickhouse.insert_batch"}
 tempo_full_trace_id, tempo_full_trace_services, tempo_full_trace_spans = wait_for_tempo_trace_path(
     tempo_base,
     gateway_trace_services[0],

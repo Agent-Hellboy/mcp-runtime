@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // OTLPTraceOptions configures OTLP HTTP exporter options.
@@ -93,6 +94,16 @@ func ContextWithTraceContext(ctx context.Context, headers map[string]string) con
 		return ctx
 	}
 	return otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier(headers))
+}
+
+// TraceIDFromContext returns the active span trace ID, or an empty string when
+// the context does not carry a valid trace.
+func TraceIDFromContext(ctx context.Context) string {
+	spanContext := trace.SpanContextFromContext(ctx)
+	if !spanContext.IsValid() {
+		return ""
+	}
+	return spanContext.TraceID().String()
 }
 
 // InitTracer initializes OpenTelemetry tracing from OTEL_* environment variables.

@@ -91,7 +91,8 @@ observability paths.
 The `observability` scenario validates the trace backend through both direct
 Tempo and Grafana's Tempo datasource. It must find a single request trace that
 contains the gateway service, `mcp-sentinel-ingest`, `mcp-sentinel-processor`,
-and the `kafka.produce`, `kafka.consume`, and `clickhouse.insert_event` spans.
+and the `kafka.produce`, `kafka.consume`, `clickhouse.insert_event`, and
+`clickhouse.insert_batch` spans.
 
 Normal PRs, `main`, and manual CI runs execute full Kind e2e with
 `E2E_SCENARIOS=all`. Dependabot PRs run `smoke-auth,governance` only, so

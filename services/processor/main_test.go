@@ -6,6 +6,7 @@ import (
 
 	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -49,4 +50,40 @@ func TestContextFromKafkaTraceHeadersExtractsTraceparent(t *testing.T) {
 	if !spanContext.IsRemote() {
 		t.Fatal("span context should be remote")
 	}
+}
+
+func TestClickHouseBatchTraceAttributesIncludeKafkaBoundaries(t *testing.T) {
+	attrs := clickhouseBatchTraceAttributes([]kafka.Message{
+		{Topic: "mcp.events", Partition: 2, Offset: 10},
+		{Topic: "mcp.events", Partition: 2, Offset: 12},
+		{Topic: "mcp.events", Partition: 3, Offset: 4},
+	}, 3)
+	values := attributeMap(attrs)
+
+	if got := values["batch.size"].AsInt64(); got != 3 {
+		t.Fatalf("batch.size = %d, want 3", got)
+	}
+	if got := values["kafka.first_offset"].AsInt64(); got != 4 {
+		t.Fatalf("kafka.first_offset = %d, want 4", got)
+	}
+	if got := values["kafka.last_offset"].AsInt64(); got != 12 {
+		t.Fatalf("kafka.last_offset = %d, want 12", got)
+	}
+	if got := values["kafka.partition_count"].AsInt64(); got != 2 {
+		t.Fatalf("kafka.partition_count = %d, want 2", got)
+	}
+	if got := values["kafka.partitions"].AsString(); got != "2,3" {
+		t.Fatalf("kafka.partitions = %q, want 2,3", got)
+	}
+	if got := values["kafka.offset_ranges"].AsString(); got != "mcp.events/2:10-12,mcp.events/3:4-4" {
+		t.Fatalf("kafka.offset_ranges = %q, want per-partition ranges", got)
+	}
+}
+
+func attributeMap(attrs []attribute.KeyValue) map[string]attribute.Value {
+	out := make(map[string]attribute.Value, len(attrs))
+	for _, attr := range attrs {
+		out[string(attr.Key)] = attr.Value
+	}
+	return out
 }
