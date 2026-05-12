@@ -283,8 +283,12 @@ func TestEnsureTeamNamespaceConfiguresTraefikIngressWatch(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ensureTeamNamespace() error = %v", err)
 	}
-	if _, err := client.RbacV1().Roles("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{}); err != nil {
+	role, err := client.RbacV1().Roles("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{})
+	if err != nil {
 		t.Fatalf("traefik watch role missing: %v", err)
+	}
+	if roleAllows(role, "", "secrets", "get") {
+		t.Fatalf("API-created traefik watch role should not grant secret access: %#v", role.Rules)
 	}
 	binding, err := client.RbacV1().RoleBindings("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{})
 	if err != nil {
@@ -307,6 +311,33 @@ func TestEnsureTeamNamespaceConfiguresTraefikIngressWatch(t *testing.T) {
 	args := strings.Join(deployment.Spec.Template.Spec.Containers[0].Args, "\n")
 	if !strings.Contains(args, "--providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers,mcp-team-acme") {
 		t.Fatalf("traefik namespace args = %q", args)
+	}
+}
+
+func TestEnsureTraefikWatchRBACPreservesExistingSecretRole(t *testing.T) {
+	cfg := teamTraefikWatchConfig{
+		namespace:      "traefik",
+		serviceAccount: "traefik",
+	}
+	existingRole := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: "mcp-servers-public"},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"services", "endpoints", "secrets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses"}, Verbs: []string{"get", "list", "watch"}},
+		},
+	}
+	existingBinding := desiredTraefikWatchRoleBinding("mcp-servers-public", cfg)
+	client := kubernetesfake.NewSimpleClientset(existingRole, existingBinding)
+
+	if err := ensureTraefikWatchRBAC(context.Background(), client, "mcp-servers-public", cfg); err != nil {
+		t.Fatalf("ensureTraefikWatchRBAC() error = %v", err)
+	}
+	role, err := client.RbacV1().Roles("mcp-servers-public").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("traefik watch role missing: %v", err)
+	}
+	if !roleAllows(role, "", "secrets", "get") {
+		t.Fatalf("existing admin-created secret access was not preserved: %#v", role.Rules)
 	}
 }
 

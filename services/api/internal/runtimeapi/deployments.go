@@ -653,17 +653,26 @@ func (s *RuntimeServer) ensureTeamTraefikWatch(ctx context.Context, namespace st
 }
 
 func ensureTraefikWatchRBAC(ctx context.Context, client kubernetes.Interface, namespace string, cfg teamTraefikWatchConfig) error {
-	role := &rbacv1.Role{
+	role := desiredTraefikWatchRole(namespace)
+	if err := ensureTraefikWatchRole(ctx, client, role); err != nil {
+		return err
+	}
+	binding := desiredTraefikWatchRoleBinding(namespace, cfg)
+	return ensureTraefikWatchRoleBinding(ctx, client, binding)
+}
+
+func desiredTraefikWatchRole(namespace string) *rbacv1.Role {
+	return &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: namespace},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"services", "endpoints", "secrets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{""}, Resources: []string{"services", "endpoints"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses"}, Verbs: []string{"get", "list", "watch"}},
 		},
 	}
-	if err := upsertRole(ctx, client, role); err != nil {
-		return err
-	}
-	binding := &rbacv1.RoleBinding{
+}
+
+func desiredTraefikWatchRoleBinding(namespace string, cfg teamTraefikWatchConfig) *rbacv1.RoleBinding {
+	return &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: namespace},
 		RoleRef: rbacv1.RoleRef{
 			APIGroup: "rbac.authorization.k8s.io",
@@ -674,7 +683,49 @@ func ensureTraefikWatchRBAC(ctx context.Context, client kubernetes.Interface, na
 			{Kind: "ServiceAccount", Name: cfg.serviceAccount, Namespace: cfg.namespace},
 		},
 	}
-	return upsertRoleBinding(ctx, client, binding)
+}
+
+func ensureTraefikWatchRole(ctx context.Context, client kubernetes.Interface, role *rbacv1.Role) error {
+	_, err := client.RbacV1().Roles(role.Namespace).Get(ctx, role.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = client.RbacV1().Roles(role.Namespace).Create(ctx, role, metav1.CreateOptions{})
+		return err
+	}
+	return err
+}
+
+func ensureTraefikWatchRoleBinding(ctx context.Context, client kubernetes.Interface, binding *rbacv1.RoleBinding) error {
+	current, err := client.RbacV1().RoleBindings(binding.Namespace).Get(ctx, binding.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = client.RbacV1().RoleBindings(binding.Namespace).Create(ctx, binding, metav1.CreateOptions{})
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	if roleBindingMatches(current, binding) {
+		return nil
+	}
+	binding.ResourceVersion = current.ResourceVersion
+	binding.Labels = current.Labels
+	binding.Annotations = current.Annotations
+	_, err = client.RbacV1().RoleBindings(binding.Namespace).Update(ctx, binding, metav1.UpdateOptions{})
+	return err
+}
+
+func roleBindingMatches(current, desired *rbacv1.RoleBinding) bool {
+	if current == nil || desired == nil {
+		return false
+	}
+	if current.RoleRef != desired.RoleRef || len(current.Subjects) != len(desired.Subjects) {
+		return false
+	}
+	for i := range desired.Subjects {
+		if current.Subjects[i] != desired.Subjects[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func upsertRole(ctx context.Context, client kubernetes.Interface, role *rbacv1.Role) error {
