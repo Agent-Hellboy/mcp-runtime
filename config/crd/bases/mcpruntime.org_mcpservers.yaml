@@ -15,6 +15,9 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .spec.teamID
+      name: Team
+      type: string
     - jsonPath: .status.phase
       name: Phase
       type: string
@@ -108,9 +111,15 @@ spec:
                     type: string
                   sessionIDHeader:
                     type: string
+                  teamIDHeader:
+                    type: string
                   tokenHeader:
                     type: string
                 type: object
+              description:
+                description: Description is a human-readable summary of what the MCP
+                  server provides.
+                type: string
               envVars:
                 description: EnvVars are literal environment variables to pass to
                   the container.
@@ -142,6 +151,27 @@ spec:
                       pod (defaults to 8091).
                     format: int32
                     type: integer
+                  resources:
+                    description: Resources defines resource limits and requests for
+                      the gateway sidecar.
+                    properties:
+                      limits:
+                        description: ResourceList defines CPU and memory resources.
+                        properties:
+                          cpu:
+                            type: string
+                          memory:
+                            type: string
+                        type: object
+                      requests:
+                        description: ResourceList defines CPU and memory resources.
+                        properties:
+                          cpu:
+                            type: string
+                          memory:
+                            type: string
+                        type: object
+                    type: object
                   stripPrefix:
                     description: StripPrefix removes a path prefix before forwarding
                       to the upstream server.
@@ -361,6 +391,11 @@ spec:
                   - name
                   type: object
                 type: array
+              teamID:
+                description: |-
+                  TeamID is the stable platform team identifier that owns this server.
+                  The operator renders it into gateway policy and analytics events.
+                type: string
               tools:
                 description: Tools describes the MCP tool inventory exposed by the
                   server.
@@ -381,8 +416,15 @@ spec:
                       - medium
                       - high
                       type: string
+                    sideEffect:
+                      enum:
+                      - read
+                      - write
+                      - destructive
+                      type: string
                   required:
                   - name
+                  - sideEffect
                   type: object
                 type: array
               useProvisionedRegistry:

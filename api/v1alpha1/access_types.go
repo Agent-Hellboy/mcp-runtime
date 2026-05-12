@@ -14,6 +14,9 @@ type ServerReference struct {
 type SubjectRef struct {
 	HumanID string `json:"humanID,omitempty"`
 	AgentID string `json:"agentID,omitempty"`
+	// TeamID constrains the subject to a stable platform team identifier.
+	// A subject with only teamID grants or binds any authenticated principal in that team.
+	TeamID string `json:"teamID,omitempty"`
 }
 
 // ToolRule controls access to an individual MCP tool.
@@ -27,12 +30,13 @@ type ToolRule struct {
 // MCPAccessGrantSpec defines who can use which MCP server and with what trust ceiling.
 // +kubebuilder:object:generate=true
 type MCPAccessGrantSpec struct {
-	ServerRef     ServerReference `json:"serverRef"`
-	Subject       SubjectRef      `json:"subject"`
-	MaxTrust      TrustLevel      `json:"maxTrust,omitempty"`
-	PolicyVersion string          `json:"policyVersion,omitempty"`
-	Disabled      bool            `json:"disabled,omitempty"`
-	ToolRules     []ToolRule      `json:"toolRules,omitempty"`
+	ServerRef          ServerReference  `json:"serverRef"`
+	Subject            SubjectRef       `json:"subject"`
+	MaxTrust           TrustLevel       `json:"maxTrust,omitempty"`
+	AllowedSideEffects []ToolSideEffect `json:"allowedSideEffects,omitempty"`
+	PolicyVersion      string           `json:"policyVersion,omitempty"`
+	Disabled           bool             `json:"disabled,omitempty"`
+	ToolRules          []ToolRule       `json:"toolRules,omitempty"`
 }
 
 // MCPAccessGrantStatus captures observed grant state.
@@ -48,6 +52,7 @@ type MCPAccessGrantStatus struct {
 // +kubebuilder:printcolumn:name="Server",type="string",JSONPath=".spec.serverRef.name"
 // +kubebuilder:printcolumn:name="Human",type="string",JSONPath=".spec.subject.humanID"
 // +kubebuilder:printcolumn:name="Agent",type="string",JSONPath=".spec.subject.agentID"
+// +kubebuilder:printcolumn:name="Team",type="string",JSONPath=".spec.subject.teamID"
 // +kubebuilder:printcolumn:name="Trust",type="string",JSONPath=".spec.maxTrust"
 // +kubebuilder:printcolumn:name="Disabled",type="boolean",JSONPath=".spec.disabled"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
@@ -95,6 +100,7 @@ type MCPAgentSessionStatus struct {
 // +kubebuilder:printcolumn:name="Server",type="string",JSONPath=".spec.serverRef.name"
 // +kubebuilder:printcolumn:name="Human",type="string",JSONPath=".spec.subject.humanID"
 // +kubebuilder:printcolumn:name="Agent",type="string",JSONPath=".spec.subject.agentID"
+// +kubebuilder:printcolumn:name="Team",type="string",JSONPath=".spec.subject.teamID"
 // +kubebuilder:printcolumn:name="Trust",type="string",JSONPath=".spec.consentedTrust"
 // +kubebuilder:printcolumn:name="Revoked",type="boolean",JSONPath=".spec.revoked"
 // +kubebuilder:printcolumn:name="Expires",type="date",JSONPath=".spec.expiresAt"

@@ -10,7 +10,7 @@
 
 MCP Runtime is a self-hosted Kubernetes control plane for internal [Model Context Protocol](https://modelcontextprotocol.io/) servers. It provides declarative MCP server deployment, registry workflows, operator reconciliation, request-path governance, access/session resources, audit, analytics, dashboards, and a platform control surface for browsing and operating MCP servers.
 
-The public platform at `platform.mcpruntime.org` is a live preview of the deployable platform experience. It is not a public or private marketplace for MCP servers. Companies can deploy the same model in their own Kubernetes clusters, then host, manage, govern, and audit MCP servers through both the CLI and the platform control surface for agents, IDEs, and direct human workflows.
+The public platform at `platform.mcpruntime.org` is a live preview of the deployable platform experience. It runs the public preview catalog mode, where visitors can browse public preview MCP servers and signed-in preview users can publish into the public catalog namespace. It is still not a general-purpose public MCP marketplace. Companies can deploy the same model in their own Kubernetes clusters, then host, manage, govern, and audit MCP servers through both the CLI and the platform control surface for agents, IDEs, and direct human workflows.
 
 - [Website](https://mcpruntime.org/)
 - [Platform preview](https://platform.mcpruntime.org/) for the platform control surface; companies can deploy the same model in their own clusters
@@ -24,7 +24,10 @@ The public platform at `platform.mcpruntime.org` is a live preview of the deploy
 ## What ships
 
 - `mcp-runtime` CLI for `setup`, `status`, `registry`, `server`, `pipeline`, `cluster`, `access`, and `sentinel`
-- Platform UI for browsing MCP servers, viewing platform state, and operating the stack through a web interface
+- Optional [`mcp-runtime-agent-proxy`](docs/agent-adapters.md#http-proxy-adapter)
+  and [`mcp-runtime-mcp-shim`](docs/agent-adapters.md#stdio-shim) adapters for
+  governed HTTP and stdio agent integrations
+- Platform UI for authenticated MCP catalog browsing, platform state, and web operations
 - `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession` CRDs
 - Kubernetes operator for `Deployment`, `Service`, `Ingress`, and policy materialization
 - Internal or provisioned registry workflows
@@ -82,7 +85,10 @@ Notes:
 - `make deps` checks host tools and downloads Go modules. It does not create a Kubernetes cluster.
 - `make build` produces `./bin/mcp-runtime`.
 - Contributors who want a disposable local Kind install should use the
-  test-mode flow in [`docs/getting-started.md`](docs/getting-started.md#3-contributor-test-mode-cluster).
+  test-mode flow in [`docs/getting-started.md`](docs/getting-started.md#3-contributor-test-mode-cluster)
+  and the detailed [`docs/contributor/`](docs/contributor/README.md) guide.
+- To exercise agent-side governance against a real MCP route, use the
+  [`examples/governed-agent`](examples/governed-agent/) demo.
 
 ## Common commands
 
@@ -101,6 +107,7 @@ Notes:
 ```bash
 gofmt -s -l .
 go build -o bin/mcp-runtime ./cmd/mcp-runtime
+make build-adapters
 go test ./... -count=1 -race
 go vet ./...
 ```

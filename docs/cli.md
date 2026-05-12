@@ -53,7 +53,7 @@ mcp-runtime <group> <subcommand> --help
 | `registry` | Inspect the internal registry, configure an external one, push images. | `status`, `info`, `provision`, `push` |
 | `server` | Manage `MCPServer` resources and operator-facing actions. | `list`, `get`, `create`, `apply`, `deploy`, `export`, `patch`, `delete`, `logs`, `status`, `policy inspect`, `build image` |
 | `access` | Manage `MCPAccessGrant` and `MCPAgentSession` resources that feed the gateway policy layer. | `grant list/get/apply/delete/disable/enable`, `session list/get/apply/delete/revoke/unrevoke` |
-| `team` | Manage internal team tenancy through the platform API. | `list`, `create` |
+| `team` | Manage internal platform teams and Kubernetes team namespaces. | `list`, `create`, `init` |
 | `sentinel` | Inspect and operate the bundled analytics, gateway, and observability stack. | `status`, `events`, `logs`, `port-forward`, `restart` |
 | `pipeline` | Generate `MCPServer` manifests from metadata and deploy them. | `generate`, `deploy` |
 | `status` | Aggregated platform health (cluster, registry, operator, servers, sentinel). | `status` |
@@ -80,11 +80,19 @@ The broad install path: runtime namespace, internal registry, operator, ingress 
 ```bash
 mcp-runtime setup
 mcp-runtime setup --with-tls                   # cert-manager TLS for registry
+mcp-runtime setup --platform-mode public       # anonymous public preview catalog
 mcp-runtime setup --without-sentinel           # skip request-path stack
 mcp-runtime setup --test-mode                  # local Kind/dev build+push path
 ```
 
-Flags: `--registry-type`, `--registry-storage`, `--ingress`, `--ingress-manifest`, `--force-ingress-install`, `--with-tls`, `--test-mode`, `--without-sentinel`, plus operator overrides `--operator-leader-elect`, `--operator-metrics-addr`, `--operator-probe-addr`.
+Flags: `--registry-type`, `--registry-storage`, `--platform-mode`, `--ingress`, `--ingress-manifest`, `--force-ingress-install`, `--with-tls`, `--test-mode`, `--without-sentinel`, plus operator overrides `--operator-leader-elect`, `--operator-metrics-addr`, `--operator-probe-addr`.
+
+`--platform-mode` selects the namespace model. `tenant` is the default and
+scopes signed-in users to their own user/team tenant namespace; `org` uses
+`mcp-servers-org` for signed-in org-wide publishing; `public` uses
+`mcp-servers-public`, exposes anonymous catalog reads, and lets signed-in users
+publish public preview MCP servers. `MCP_PLATFORM_MODE` provides the same value
+when the flag is not set.
 
 `--test-mode` relaxes production guardrails, but it still builds and pushes the
 operator, gateway proxy, and Sentinel images with `latest` tags to the
@@ -205,6 +213,7 @@ For the full build, push, deploy, and verify flow, see [Publish an MCP Server](p
 ```bash
 # Grants
 mcp-runtime access grant list
+mcp-runtime access grant list --namespace mcp-team-acme
 mcp-runtime access grant get payments-admin --namespace mcp-servers
 mcp-runtime access grant apply --file grant.yaml
 mcp-runtime access grant disable payments-admin
@@ -219,6 +228,35 @@ mcp-runtime access session unrevoke ops-agent
 ```
 
 `grant list` and `session list` default to `--all-namespaces`; pass `--namespace` to narrow scope.
+
+For multi-team deployments, namespace scoping controls who can write resources
+and `teamID` controls who can use them. Put each team's grants and sessions in
+the same namespace as its servers, set `subject.teamID`, and use `--namespace`
+when inspecting or operating one team's policy resources.
+
+## team
+
+```bash
+mcp-runtime team list
+mcp-runtime team create acme --name "Acme"
+mcp-runtime team init acme --group acme-mcp-admins
+mcp-runtime team init acme --dry-run
+```
+
+`team list` and `team create` use the platform API, so run `auth login` or set
+platform API credentials first. `team create` creates a platform team and
+managed namespace, including quota/limits, default-deny NetworkPolicy, service
+account, and repo-managed Traefik watch wiring when bundled Traefik is present.
+
+`team init` uses local `kubectl`. It creates the team namespace, restricted
+workload service account, default quota and limits, default-deny NetworkPolicy,
+same-namespace and bundled-Traefik ingress allowances, MCP Runtime team-admin
+RBAC, bundled Traefik watch RBAC, and patches the repo-managed
+`traefik/traefik` Deployment watch list unless
+`--skip-traefik-watch` is set. Use `--namespace`, `--group`, `--user`, or
+`--service-account` when the defaults do not match your cluster identity system.
+See
+[Multi-team isolation](multi-team.md).
 
 ## server
 

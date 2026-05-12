@@ -28,7 +28,7 @@ func NewClient(cfg Config) (*Client, error) {
 		cfg.DialTimeout = 5 * time.Second
 	}
 
-	if err := validateDBName(cfg.Database); err != nil {
+	if err := ValidateDBName(cfg.Database); err != nil {
 		return nil, fmt.Errorf("invalid database name: %w", err)
 	}
 
@@ -61,8 +61,8 @@ func (c *Client) Close() error {
 	return c.Conn.Close()
 }
 
-// validateDBName validates ClickHouse database name format.
-func validateDBName(name string) error {
+// ValidateDBName validates ClickHouse database name format.
+func ValidateDBName(name string) error {
 	if name == "" {
 		return fmt.Errorf("empty")
 	}

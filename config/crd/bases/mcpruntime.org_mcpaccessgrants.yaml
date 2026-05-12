@@ -24,6 +24,9 @@ spec:
     - jsonPath: .spec.subject.agentID
       name: Agent
       type: string
+    - jsonPath: .spec.subject.teamID
+      name: Team
+      type: string
     - jsonPath: .spec.maxTrust
       name: Trust
       type: string
@@ -59,6 +62,14 @@ spec:
             description: MCPAccessGrantSpec defines who can use which MCP server and
               with what trust ceiling.
             properties:
+              allowedSideEffects:
+                items:
+                  enum:
+                  - read
+                  - write
+                  - destructive
+                  type: string
+                type: array
               disabled:
                 type: boolean
               maxTrust:
@@ -86,6 +97,11 @@ spec:
                   agentID:
                     type: string
                   humanID:
+                    type: string
+                  teamID:
+                    description: |-
+                      TeamID constrains the subject to a stable platform team identifier.
+                      A subject with only teamID grants or binds any authenticated principal in that team.
                     type: string
                 type: object
               toolRules:

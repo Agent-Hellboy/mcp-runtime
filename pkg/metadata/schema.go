@@ -34,6 +34,15 @@ const (
 	TrustLevelHigh   TrustLevel = "high"
 )
 
+// +kubebuilder:validation:Enum=read;write;destructive
+type ToolSideEffect string
+
+const (
+	ToolSideEffectRead        ToolSideEffect = "read"
+	ToolSideEffectWrite       ToolSideEffect = "write"
+	ToolSideEffectDestructive ToolSideEffect = "destructive"
+)
+
 // +kubebuilder:validation:Enum=RollingUpdate;Recreate;Canary
 type RolloutStrategy string
 
@@ -47,6 +56,9 @@ const (
 type ServerMetadata struct {
 	// Name is the unique name of the MCP server.
 	Name string `yaml:"name" json:"name"`
+
+	// Description is a human-readable summary of what the MCP server provides.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 
 	// Image is the container image for the server.
 	Image string `yaml:"image" json:"image"`
@@ -80,6 +92,9 @@ type ServerMetadata struct {
 
 	// Namespace is the Kubernetes namespace (defaults to "mcp-servers").
 	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
+
+	// TeamID is the stable platform team identifier that owns the server.
+	TeamID string `yaml:"teamID,omitempty" json:"teamID,omitempty"`
 
 	// Tools describes the MCP tool inventory exposed by the server.
 	Tools []ToolConfig `yaml:"tools,omitempty" json:"tools,omitempty"`
@@ -141,6 +156,7 @@ type ToolConfig struct {
 	Name          string            `yaml:"name" json:"name"`
 	Description   string            `yaml:"description,omitempty" json:"description,omitempty"`
 	RequiredTrust TrustLevel        `yaml:"requiredTrust,omitempty" json:"requiredTrust,omitempty"`
+	SideEffect    ToolSideEffect    `yaml:"sideEffect" json:"sideEffect"`
 	Labels        map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
 }
 
@@ -156,6 +172,7 @@ type AuthConfig struct {
 	Mode            AuthMode `yaml:"mode,omitempty" json:"mode,omitempty"`
 	HumanIDHeader   string   `yaml:"humanIDHeader,omitempty" json:"humanIDHeader,omitempty"`
 	AgentIDHeader   string   `yaml:"agentIDHeader,omitempty" json:"agentIDHeader,omitempty"`
+	TeamIDHeader    string   `yaml:"teamIDHeader,omitempty" json:"teamIDHeader,omitempty"`
 	SessionIDHeader string   `yaml:"sessionIDHeader,omitempty" json:"sessionIDHeader,omitempty"`
 	TokenHeader     string   `yaml:"tokenHeader,omitempty" json:"tokenHeader,omitempty"`
 	IssuerURL       string   `yaml:"issuerURL,omitempty" json:"issuerURL,omitempty"`
@@ -182,11 +199,12 @@ type SessionConfig struct {
 
 // GatewayConfig configures an optional MCP proxy sidecar for a server.
 type GatewayConfig struct {
-	Enabled     bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Image       string `yaml:"image,omitempty" json:"image,omitempty"`
-	Port        int32  `yaml:"port,omitempty" json:"port,omitempty"`
-	UpstreamURL string `yaml:"upstreamURL,omitempty" json:"upstreamURL,omitempty"`
-	StripPrefix string `yaml:"stripPrefix,omitempty" json:"stripPrefix,omitempty"`
+	Enabled     bool                  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Image       string                `yaml:"image,omitempty" json:"image,omitempty"`
+	Port        int32                 `yaml:"port,omitempty" json:"port,omitempty"`
+	UpstreamURL string                `yaml:"upstreamURL,omitempty" json:"upstreamURL,omitempty"`
+	StripPrefix string                `yaml:"stripPrefix,omitempty" json:"stripPrefix,omitempty"`
+	Resources   *ResourceRequirements `yaml:"resources,omitempty" json:"resources,omitempty"`
 }
 
 // AnalyticsConfig configures analytics emission from the gateway sidecar.

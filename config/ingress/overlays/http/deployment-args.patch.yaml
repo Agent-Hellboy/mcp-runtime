@@ -2,7 +2,7 @@
   path: /spec/template/spec/containers/0/args
   value:
     - --providers.kubernetesingress=true
-    - --providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers
+    - --providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers,mcp-servers-org,mcp-servers-public
     - --entrypoints.web.address=:8000
     - --entrypoints.websecure.address=:8443
 - op: replace

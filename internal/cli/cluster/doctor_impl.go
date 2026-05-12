@@ -199,6 +199,7 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 		{Name: "MCPServer CRD", Detail: "checking that the MCPServer API type is installed", Run: func() DoctorCheck { return checkMCPServerCRD(kubectl) }},
 		{Name: "operator readiness", Detail: "reading ready and desired replicas for the operator deployment", Run: func() DoctorCheck { return checkOperatorReady(kubectl) }},
 		{Name: "operator reconcile errors (last 10m)", Detail: "scanning recent operator logs for reconcile failure patterns", Run: func() DoctorCheck { return checkOperatorRecentReconcileErrors(kubectl) }},
+		{Name: "operator ClusterRole rules", Detail: "verifying mcp-runtime-operator-role grants get/list/watch on the resources the informer cache needs", Run: func() DoctorCheck { return checkOperatorClusterRoleRules(kubectl) }},
 		{Name: "traefik ingressClass", Detail: "checking that the traefik IngressClass exists", Run: func() DoctorCheck { return checkTraefikIngressClass(kubectl) }},
 		{Name: "traefik deployment readiness", Detail: "reading ready and desired replicas for Traefik", Run: func() DoctorCheck { return checkTraefikDeploymentReady(kubectl, distro) }},
 		{Name: "traefik web entrypoint", Detail: "checking the Traefik Service ports for the web entrypoint", Run: func() DoctorCheck { return checkTraefikWebEntrypoint(kubectl, distro) }},
@@ -579,6 +580,111 @@ func checkOperatorRecentReconcileErrors(kubectl core.KubectlRunner) DoctorCheck 
 	}
 }
 
+type operatorClusterRoleResource struct {
+	Resource string
+	APIGroup string
+}
+
+// operatorClusterRoleResources is the minimum set of resource/API group pairs
+// the deployed operator ClusterRole must allow (verbs at least get;list;watch)
+// for the controller-runtime informer cache to sync. A drift here typically
+// means the cluster was set up against an older config/rbac/role.yaml and never
+// re-ran setup; the symptom is silent: MCPServer creates land in etcd but the
+// operator never reconciles them.
+var operatorClusterRoleResources = []operatorClusterRoleResource{
+	{Resource: "serviceaccounts", APIGroup: ""},
+	{Resource: "configmaps", APIGroup: ""},
+	{Resource: "services", APIGroup: ""},
+	{Resource: "deployments", APIGroup: "apps"},
+	{Resource: "ingresses", APIGroup: "networking.k8s.io"},
+}
+
+func checkOperatorClusterRoleRules(kubectl core.KubectlRunner) DoctorCheck {
+	const name = "operator ClusterRole rules"
+	const remedy = "re-run `./bin/mcp-runtime setup` (or `kubectl apply -k config/rbac/`) to reapply config/rbac/role.yaml; the controller-runtime informer cache will not sync without these"
+
+	cmd, err := kubectl.CommandArgs([]string{"get", "clusterrole", "mcp-runtime-operator-role", "-o", "json"})
+	if err != nil {
+		return DoctorCheck{Name: name, OK: false, Detail: fmt.Sprintf("kubectl error: %v", err), Remedy: remedy}
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return DoctorCheck{Name: name, OK: false, Detail: fmt.Sprintf("ClusterRole mcp-runtime-operator-role not readable: %v", err), Remedy: remedy}
+	}
+
+	var role struct {
+		Rules []struct {
+			APIGroups []string `json:"apiGroups"`
+			Resources []string `json:"resources"`
+			Verbs     []string `json:"verbs"`
+		} `json:"rules"`
+	}
+	if err := json.Unmarshal(out, &role); err != nil {
+		return DoctorCheck{Name: name, OK: false, Detail: fmt.Sprintf("could not parse ClusterRole JSON: %v", err), Remedy: remedy}
+	}
+
+	required := []string{"get", "list", "watch"}
+
+	var missing []string
+	for _, want := range operatorClusterRoleResources {
+		verbs := map[string]bool{}
+		for _, rule := range role.Rules {
+			if !operatorClusterRoleRuleIncludes(rule.APIGroups, want.APIGroup) ||
+				!operatorClusterRoleRuleIncludes(rule.Resources, want.Resource) {
+				continue
+			}
+			for _, verb := range rule.Verbs {
+				verbs[verb] = true
+			}
+		}
+		if !operatorClusterRoleHasRequiredVerbs(verbs, required) {
+			missing = append(missing, operatorClusterRoleResourceLabel(want))
+		}
+	}
+
+	if len(missing) > 0 {
+		return DoctorCheck{
+			Name:   name,
+			OK:     false,
+			Detail: fmt.Sprintf("ClusterRole mcp-runtime-operator-role missing get/list/watch on: %s", strings.Join(missing, ", ")),
+			Remedy: remedy,
+		}
+	}
+	return DoctorCheck{
+		Name:   name,
+		OK:     true,
+		Detail: fmt.Sprintf("get/list/watch present for %d expected resources", len(operatorClusterRoleResources)),
+	}
+}
+
+func operatorClusterRoleRuleIncludes(values []string, want string) bool {
+	for _, got := range values {
+		if got == want || got == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+func operatorClusterRoleHasRequiredVerbs(verbs map[string]bool, required []string) bool {
+	if verbs["*"] {
+		return true
+	}
+	for _, verb := range required {
+		if !verbs[verb] {
+			return false
+		}
+	}
+	return true
+}
+
+func operatorClusterRoleResourceLabel(resource operatorClusterRoleResource) string {
+	if resource.APIGroup == "" {
+		return resource.Resource
+	}
+	return resource.Resource + "." + resource.APIGroup
+}
+
 func checkTraefikIngressClass(kubectl core.KubectlRunner) DoctorCheck {
 	cmd, err := kubectl.CommandArgs([]string{"get", "ingressclass", "traefik", "-o", "jsonpath={.metadata.name}"})
 	if err != nil {
@@ -837,14 +943,15 @@ func checkMCPServersDNSAndNetwork(kubectl core.KubectlRunner) DoctorCheck {
 		"-sSI", "--connect-timeout", "5", "--max-time", "15",
 		"http://registry.registry.svc.cluster.local:5000/v2/",
 	}
+	defer func() {
+		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", doctorMCPServersNamespace, "--ignore-not-found"})
+	}()
 	args := []string{
-		"run", "-n", doctorMCPServersNamespace,
-		"--rm", "--restart=Never", "--attach",
-		"--pod-running-timeout=" + doctorProbePodRunTimeout,
-		"--quiet",
+		"run", podName,
+		"-n", doctorMCPServersNamespace,
+		"--restart=Never",
 		"--image=" + image,
 		"--overrides=" + restrictedRunOverrides(podName, image, "curl", curlArgs...),
-		podName,
 	}
 	cmd, err := kubectl.CommandArgs(args)
 	if err != nil {
@@ -855,20 +962,42 @@ func checkMCPServersDNSAndNetwork(kubectl core.KubectlRunner) DoctorCheck {
 			Remedy: "check kubeconfig and namespace access",
 		}
 	}
-	out, runErr := cmd.CombinedOutput()
+	createOut, runErr := cmd.CombinedOutput()
 	if runErr != nil {
 		return DoctorCheck{
 			Name:   "mcp-servers DNS/network",
 			OK:     false,
-			Detail: strings.TrimSpace(string(out)),
+			Detail: strings.TrimSpace(string(createOut)),
 			Remedy: "check CoreDNS and network policies for namespace mcp-servers",
 		}
 	}
-	if !hasHTTP200Status(string(out)) {
+	if err := waitForDoctorPodSucceeded(kubectl, podName, doctorMCPServersNamespace, 90*time.Second); err != nil {
+		logs, _ := readKubectlOutput(kubectl, []string{"logs", podName, "-n", doctorMCPServersNamespace, "--tail=50"})
+		detail := fmt.Sprintf("helper pod did not succeed: %v", err)
+		if strings.TrimSpace(logs) != "" {
+			detail += ": " + strings.TrimSpace(logs)
+		}
 		return DoctorCheck{
 			Name:   "mcp-servers DNS/network",
 			OK:     false,
-			Detail: fmt.Sprintf("unexpected response: %q", strings.TrimSpace(string(out))),
+			Detail: detail,
+			Remedy: "check CoreDNS and network policies for namespace mcp-servers",
+		}
+	}
+	out, logsErr := readKubectlOutput(kubectl, []string{"logs", podName, "-n", doctorMCPServersNamespace})
+	if logsErr != nil {
+		return DoctorCheck{
+			Name:   "mcp-servers DNS/network",
+			OK:     false,
+			Detail: fmt.Sprintf("failed reading helper pod logs: %v", logsErr),
+			Remedy: "inspect pod events: `kubectl -n mcp-servers describe pod " + podName + "`",
+		}
+	}
+	if !hasHTTP200Status(out) {
+		return DoctorCheck{
+			Name:   "mcp-servers DNS/network",
+			OK:     false,
+			Detail: fmt.Sprintf("unexpected response: %q", strings.TrimSpace(out)),
 			Remedy: "check CoreDNS and service routing from namespace mcp-servers",
 		}
 	}
@@ -1190,6 +1319,47 @@ func waitForDoctorPodImagePulled(kubectl core.KubectlRunner, name, namespace str
 	}
 }
 
+func waitForDoctorPodSucceeded(kubectl core.KubectlRunner, name, namespace string, timeout time.Duration) error {
+	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	var lastStatus string
+	for {
+		phase, phaseErr := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.phase}"})
+		phase = strings.TrimSpace(phase)
+		switch phase {
+		case "Succeeded":
+			return nil
+		case "Failed":
+			return fmt.Errorf("pod phase Failed")
+		}
+
+		reason, _ := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].state.waiting.reason}"})
+		reason = strings.TrimSpace(reason)
+		if isImagePullWaitingReason(reason) {
+			return fmt.Errorf("%s", reason)
+		}
+		lastStatus = phase
+		if reason != "" {
+			lastStatus = reason
+		}
+		if lastStatus == "" && phaseErr != nil {
+			lastStatus = phaseErr.Error()
+		}
+
+		select {
+		case <-timeoutTimer.C:
+			if lastStatus == "" {
+				lastStatus = "timed out"
+			}
+			return fmt.Errorf("%s", lastStatus)
+		case <-ticker.C:
+		}
+	}
+}
+
 func isImagePullWaitingReason(reason string) bool {
 	switch reason {
 	case "ErrImagePull", "ImagePullBackOff", "InvalidImageName":
@@ -1201,8 +1371,9 @@ func isImagePullWaitingReason(reason string) bool {
 
 func restrictedRunOverrides(containerName, image, command string, args ...string) string {
 	container := map[string]any{
-		"name":  strings.TrimSpace(containerName),
-		"image": strings.TrimSpace(image),
+		"name":       strings.TrimSpace(containerName),
+		"image":      strings.TrimSpace(image),
+		"workingDir": "/tmp",
 		"securityContext": map[string]any{
 			"allowPrivilegeEscalation": false,
 			"runAsNonRoot":             true,
@@ -1355,14 +1526,8 @@ func checkSentinelAPIAuthProbe(kubectl core.KubectlRunner) DoctorCheck {
 		}
 	}
 	podName := fmt.Sprintf("doctor-sentinel-probe-%d", time.Now().UnixNano())
-	args := []string{
-		"run", "-n", doctorSentinelNamespace,
-		"--rm", "--restart=Never", "--attach",
-		"--pod-running-timeout=" + doctorProbePodRunTimeout,
-		"--quiet",
-		"--image=curlimages/curl:8.7.1",
-		podName,
-		"--command", "--", "curl",
+	image := "curlimages/curl:8.7.1"
+	curlArgs := []string{
 		"-sS", "-o", "doctor-response",
 		"-w", "%{http_code}",
 		"--connect-timeout", "5",
@@ -1370,7 +1535,16 @@ func checkSentinelAPIAuthProbe(kubectl core.KubectlRunner) DoctorCheck {
 		"-H", "x-api-key: " + apiKey,
 		fmt.Sprintf("http://%s.%s.svc.cluster.local:8080/api/runtime/components", doctorSentinelAPIService, doctorSentinelNamespace),
 	}
-	cmd, cmdErr := kubectl.CommandArgs(args)
+	defer func() {
+		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", doctorSentinelNamespace, "--ignore-not-found"})
+	}()
+	cmd, cmdErr := kubectl.CommandArgs([]string{
+		"run", podName,
+		"-n", doctorSentinelNamespace,
+		"--restart=Never",
+		"--image=" + image,
+		"--overrides=" + restrictedRunOverrides(podName, image, "curl", curlArgs...),
+	})
 	if cmdErr != nil {
 		return DoctorCheck{
 			Name:   "sentinel API auth probe",
@@ -1379,16 +1553,38 @@ func checkSentinelAPIAuthProbe(kubectl core.KubectlRunner) DoctorCheck {
 			Remedy: "check kubectl connectivity and helper image access",
 		}
 	}
-	out, runErr := cmd.CombinedOutput()
-	status := strings.TrimSpace(string(out))
+	createOut, runErr := cmd.CombinedOutput()
 	if runErr != nil {
 		return DoctorCheck{
 			Name:   "sentinel API auth probe",
 			OK:     false,
-			Detail: fmt.Sprintf("probe failed: %s", status),
+			Detail: fmt.Sprintf("failed creating auth probe pod: %v: %s", runErr, strings.TrimSpace(string(createOut))),
 			Remedy: "verify sentinel API deployment/service and API key config",
 		}
 	}
+	if err := waitForDoctorPodSucceeded(kubectl, podName, doctorSentinelNamespace, 90*time.Second); err != nil {
+		logs, _ := readKubectlOutput(kubectl, []string{"logs", podName, "-n", doctorSentinelNamespace, "--tail=50"})
+		detail := fmt.Sprintf("auth probe pod did not complete: %v", err)
+		if strings.TrimSpace(logs) != "" {
+			detail += ": " + strings.TrimSpace(logs)
+		}
+		return DoctorCheck{
+			Name:   "sentinel API auth probe",
+			OK:     false,
+			Detail: detail,
+			Remedy: "verify sentinel API deployment/service and API key config",
+		}
+	}
+	out, logsErr := readKubectlOutput(kubectl, []string{"logs", podName, "-n", doctorSentinelNamespace})
+	if logsErr != nil {
+		return DoctorCheck{
+			Name:   "sentinel API auth probe",
+			OK:     false,
+			Detail: fmt.Sprintf("failed reading auth probe logs: %v", logsErr),
+			Remedy: "inspect auth probe pod logs",
+		}
+	}
+	status := strings.TrimSpace(out)
 	if status == "200" {
 		return DoctorCheck{
 			Name:   "sentinel API auth probe",

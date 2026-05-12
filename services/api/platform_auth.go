@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -20,6 +19,11 @@ const platformAccessTokenTTL = 15 * time.Minute
 const (
 	apiLoginLockoutBase = 15 * time.Second
 	apiLoginLockoutMax  = 5 * time.Minute
+)
+const (
+	platformSignupRequestMaxBytes        = 4 * 1024
+	platformPasswordLoginRequestMaxBytes = 4 * 1024
+	platformOIDCLoginRequestMaxBytes     = 8 * 1024
 )
 const (
 	defaultDevUserEmail     = "test@mcpruntime.org"
@@ -131,7 +135,7 @@ func runPlatformAdminBootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer store.close()
+	defer store.Close()
 	return seedPlatformAdminFromEnv(ctx, store)
 }
 
@@ -212,7 +216,7 @@ func (s *apiServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 		Role     string `json:"role"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	r.Body = http.MaxBytesReader(w, r.Body, platformSignupRequestMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBodyDecodeError(w, err)
 		return
@@ -242,7 +246,7 @@ func (s *apiServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.runtime != nil {
-		if err := s.runtime.ensureUserNamespace(r.Context(), principal{Subject: u.ID, Role: u.Role, Email: u.Email, Namespace: u.Namespace}); err != nil {
+		if err := s.runtime.EnsureUserNamespace(r.Context(), principal{Subject: u.ID, Role: u.Role, Email: u.Email, Namespace: u.Namespace}); err != nil {
 			s.platform.WriteAudit(r.Context(), auditEvent{UserID: u.ID, Action: "namespace_create", Resource: u.Namespace, Namespace: u.Namespace, Status: "error", Message: err.Error(), ActorIP: requestIP(r), Source: requestSource(r), AuthIdentity: "password:" + u.Email})
 			if cleanupErr := s.platform.DeleteUser(r.Context(), u.ID); cleanupErr != nil {
 				log.Printf("signup cleanup failed for user %s: %v", u.ID, cleanupErr)
@@ -294,7 +298,7 @@ func (s *apiServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	r.Body = http.MaxBytesReader(w, r.Body, platformPasswordLoginRequestMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBodyDecodeError(w, err)
 		return
@@ -362,7 +366,7 @@ func (s *apiServer) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IDToken string `json:"id_token"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	r.Body = http.MaxBytesReader(w, r.Body, platformOIDCLoginRequestMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBodyDecodeError(w, err)
 		return
@@ -455,15 +459,4 @@ func oidcAuditResource(idToken string) string {
 		return "unknown"
 	}
 	return email
-}
-
-func requestIP(r *http.Request) string {
-	if xff := strings.TrimSpace(r.Header.Get("x-forwarded-for")); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
-	}
-	remote := strings.TrimSpace(r.RemoteAddr)
-	if host, _, err := net.SplitHostPort(remote); err == nil {
-		return strings.TrimSpace(host)
-	}
-	return remote
 }

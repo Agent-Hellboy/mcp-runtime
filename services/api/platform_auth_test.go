@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 type fakePasswordUserEnsurer struct {
@@ -67,5 +68,34 @@ func TestSeedPlatformDevUsersFromEnvPropagatesEnsureErrors(t *testing.T) {
 	}
 	if len(store.calls) != 1 {
 		t.Fatalf("expected seeding to stop at first failure, got calls %#v", store.calls)
+	}
+}
+
+func TestOpenPlatformStoreWithRetryRetriesUntilSuccess(t *testing.T) {
+	originalInterval := platformStoreConnectRetryInterval
+	originalAttemptTimeout := platformStoreConnectAttemptTimeout
+	platformStoreConnectRetryInterval = time.Millisecond
+	platformStoreConnectAttemptTimeout = time.Second
+	t.Cleanup(func() {
+		platformStoreConnectRetryInterval = originalInterval
+		platformStoreConnectAttemptTimeout = originalAttemptTimeout
+	})
+
+	calls := 0
+	store, err := openPlatformStoreWithRetry(context.Background(), "postgres://example", []byte("secret"), func(context.Context, string, []byte) (*platformStore, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("postgres not ready")
+		}
+		return newTestPlatformStore([]byte("secret")), nil
+	})
+	if err != nil {
+		t.Fatalf("openPlatformStoreWithRetry() error = %v", err)
+	}
+	if store == nil {
+		t.Fatal("expected platform store")
+	}
+	if calls != 2 {
+		t.Fatalf("open attempts = %d, want 2", calls)
 	}
 }

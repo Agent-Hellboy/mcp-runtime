@@ -13,6 +13,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   changed-paths:
@@ -24,11 +25,11 @@ jobs:
       website: ${{ steps.filter.outputs.website }}
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Check changed paths
         id: filter
-        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
         with:
           filters: |
             code:
@@ -48,7 +49,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -81,7 +82,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -100,9 +101,12 @@ jobs:
           go test -v -race -coverprofile=unit.out \
             $(go list ./... | grep -v -x "${module_path}/test/integration")
 
-      - name: Test Sentinel service modules (api, ui)
+      - name: Test Sentinel service modules
         run: |
           (cd services/api && go test -v -race -count=1 ./...)
+          (cd services/ingest && go test -v -race -count=1 ./...)
+          (cd services/processor && go test -v -race -count=1 ./...)
+          (cd services/mcp-proxy && go test -v -race -count=1 ./...)
           (cd services/ui && go test -v -race -count=1 ./...)
 
       - name: Run integration tests with coverage
@@ -137,7 +141,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
 
@@ -164,13 +168,13 @@ jobs:
 
       - name: Install kubectl
         run: |
-          curl -fsSL -o kubectl "https://dl.k8s.io/release/v1.34.1/bin/linux/amd64/kubectl"
+          curl --retry 5 --retry-delay 5 --retry-all-errors -fsSL -o kubectl "https://dl.k8s.io/release/v1.34.1/bin/linux/amd64/kubectl"
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/kubectl
 
       - name: Install kind
         run: |
-          curl -fsSL -o kind "https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64"
+          curl --retry 5 --retry-delay 5 --retry-all-errors -fsSL -o kind "https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64"
           chmod +x kind
           sudo mv kind /usr/local/bin/kind
 
@@ -208,7 +212,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -227,7 +231,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true' || needs.changed-paths.outputs.docs == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -256,7 +260,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Generate repository SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
@@ -282,7 +286,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changed-paths.outputs.docs == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Validate docs deploy secrets
         env:
@@ -403,7 +407,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changed-paths.outputs.website == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Validate website deploy secrets
         env:

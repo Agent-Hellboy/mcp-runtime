@@ -10,7 +10,7 @@ This guide covers the user-facing path for getting an MCP server into MCP Runtim
 
 Use this guide after [Getting started](getting-started.md) once the platform stack is already installed.
 
-## Choose a description format
+## Choose an authoring format
 
 You can describe a server in two ways:
 
@@ -32,6 +32,7 @@ metadata:
   name: payments
   namespace: mcp-servers
 spec:
+  description: Payments MCP server for invoice lookup and refund workflows.
   image: registry.example.com/payments
   imageTag: v1.0.0
   port: 8088
@@ -47,7 +48,14 @@ spec:
 - `metadata.name`
   The server name inside the platform. This is also the default public route prefix when you do not override it.
 - `metadata.namespace`
-  Usually `mcp-servers`.
+  Usually `mcp-servers` for a single-team setup. In a multi-team deployment,
+  use the team's namespace, for example `mcp-team-acme`; see
+  [Multi-team isolation](multi-team.md).
+- `spec.teamID`
+  Stable platform team ID for the server owner. The platform API defaults this
+  for team namespaces; hand-written YAML should set it explicitly.
+- `spec.description`
+  A short platform-facing summary shown in the server catalog.
 - `spec.image`
   The image repository to run.
 - `spec.imageTag`
@@ -67,7 +75,8 @@ spec:
 - Add `spec.servicePort` when you want a Service port other than `80`.
 - Add `spec.envVars` or `spec.secretEnvVars` for runtime configuration.
 - Add `spec.imagePullSecrets` if your registry requires explicit pull credentials.
-- Add `spec.tools`, `spec.auth`, `spec.policy`, `spec.session`, or `spec.rollout` when you want stricter governance or more delivery control.
+- Add `spec.tools` with tool descriptions, trust levels, and side-effect classes so the platform catalog and policy engine mirror the tool summaries clients see from `tools/list`.
+- Add `spec.auth`, `spec.policy`, `spec.session`, or `spec.rollout` when you want stricter governance or more delivery control.
 
 Apply the manifest:
 
@@ -86,18 +95,30 @@ Example:
 version: v1
 servers:
   - name: payments
+    description: Payments MCP server for invoice lookup and refund workflows.
     image: registry.example.com/payments
     imageTag: v1.0.0
     route: /payments
     port: 8088
     replicas: 1
     namespace: mcp-servers
+    tools:
+      - name: list_invoices
+        description: List invoices for a customer account.
+        requiredTrust: low
+        sideEffect: read
+      - name: refund_invoice
+        description: Issue a refund for an invoice.
+        requiredTrust: high
+        sideEffect: destructive
 ```
 
 ### Metadata fields
 
 - `name`
   The server name.
+- `description`
+  A short platform-facing summary shown in the server catalog.
 - `image`
   The image repository.
 - `imageTag`
@@ -110,6 +131,8 @@ servers:
   The desired replica count.
 - `namespace`
   The target namespace.
+- `tools`
+  Tool inventory for the platform catalog and policy authoring. Include each tool's description when the MCP server SDK exposes one through `tools/list`, and set `sideEffect` to `read`, `write`, or `destructive`. Tool side effects are required when a tool is listed.
 
 ### Metadata defaults
 
@@ -121,6 +144,13 @@ If fields are omitted, the loader applies defaults:
 - port defaults to `8088`
 - replicas default to `1`
 - namespace defaults to `mcp-servers`
+
+For multi-team deployments, set `namespace` in the metadata file or pass
+`pipeline deploy --namespace <team-namespace>` deliberately. The namespace is
+the write boundary for the generated `MCPServer`, grants, sessions, and secrets.
+Set `spec.teamID` / `subject.teamID` or use the platform API so it defaults
+those fields. Initialize that namespace first with `mcp-runtime team init
+<slug>` or the platform-backed `mcp-runtime team create <slug>` flow.
 
 Generate and deploy manifests:
 

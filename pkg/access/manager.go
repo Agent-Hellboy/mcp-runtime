@@ -15,14 +15,16 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+
+	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 )
 
 const (
-	APIGroup              = "mcpruntime.org"
-	APIVersion            = "v1alpha1"
-	AccessGrantResource   = "mcpaccessgrants"
-	AccessSessionResource = "mcpagentsessions"
-	MCPServerResource     = "mcpservers"
+	APIGroup              = mcpv1alpha1.Group
+	APIVersion            = mcpv1alpha1.Version
+	AccessGrantResource   = mcpv1alpha1.MCPAccessGrantResource
+	AccessSessionResource = mcpv1alpha1.MCPAgentSessionResource
+	MCPServerResource     = mcpv1alpha1.MCPServerResource
 	// DefaultMCPResourceNamespace is used when a ServerReference or access resource omits a namespace.
 	DefaultMCPResourceNamespace = "mcp-servers"
 )
@@ -77,19 +79,29 @@ func IsMCPServerNotFoundForRef(err error) bool {
 // AssertMCPServerRef returns an error if no MCPServer exists at the given ref.
 // Use this before creating grants or sessions so the API can reject unknown targets early.
 func (m *Manager) AssertMCPServerRef(ctx context.Context, ref ServerReference) error {
+	_, err := m.GetMCPServerRef(ctx, ref)
+	return err
+}
+
+// GetMCPServerRef returns the MCPServer referenced by ref.
+func (m *Manager) GetMCPServerRef(ctx context.Context, ref ServerReference) (*mcpv1alpha1.MCPServer, error) {
 	name := strings.TrimSpace(ref.Name)
 	if name == "" {
-		return fmt.Errorf("serverRef.name is required")
+		return nil, fmt.Errorf("serverRef.name is required")
 	}
 	ns := ResolveServerRefNamespace(ref)
-	_, err := m.dynamic.Resource(serverGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+	obj, err := m.dynamic.Resource(serverGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return &ErrMCPServerNotFound{Name: name, Namespace: ns}
+			return nil, &ErrMCPServerNotFound{Name: name, Namespace: ns}
 		}
-		return fmt.Errorf("lookup serverRef: %w", err)
+		return nil, fmt.Errorf("lookup serverRef: %w", err)
 	}
-	return nil
+	var server mcpv1alpha1.MCPServer
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &server); err != nil {
+		return nil, fmt.Errorf("decode serverRef: %w", err)
+	}
+	return &server, nil
 }
 
 // ListGrants returns all MCPAccessGrant resources, optionally filtered by namespace.

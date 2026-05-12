@@ -61,6 +61,10 @@ the runtime images. It does not skip builds: setup builds and pushes the
 operator, gateway proxy, and Sentinel images with `latest` tags to the
 configured or bundled registry.
 
+For the expanded contributor runbook, including tenant UI smoke tests, service
+rebuild loops, runtime MCP cleanup, and troubleshooting, see the
+[Contributor Guide](contributor/README.md).
+
 Create Kind with the registry mirror MCP Runtime expects for image pulls:
 
 ```bash
@@ -117,8 +121,18 @@ Local URLs:
 - API: `http://localhost:18080/api`
 - Demo MCP routes, after applying demo servers: `http://localhost:18080/<server-name>/mcp`
 
-The MCP Servers tab exposes a copyable connect config. In this local test-mode
-flow, that config should use the same reachable local origin, for example:
+This contributor flow uses the single shared `mcp-servers` namespace. For a
+cluster that hosts multiple teams, keep these examples as the single-team
+baseline and use [Multi-team isolation](multi-team.md) to move each team's
+servers, grants, sessions, and secrets into a dedicated namespace with
+`spec.teamID` / `subject.teamID`.
+
+Sign in before browsing MCP servers in the platform UI; the default tenant-mode
+catalog is authenticated even in local test mode. Use the admin login to browse
+the single-team `mcp-servers` examples from this guide, or publish servers into
+the signed-in user's own/team namespace. The MCP Servers tab exposes a copyable
+connect config. In this local test-mode flow, that config should use the same
+reachable local origin, for example:
 
 ```json
 {
@@ -148,6 +162,21 @@ These credentials are for local Kind/debugging only. They are enabled by the
 managed `mcp-sentinel-secrets` key `PLATFORM_DEV_LOGIN_ENABLED=true` and can be
 disabled or overridden by editing the `PLATFORM_DEV_*` keys before rolling the
 API deployment.
+
+For tenant-isolation UI smoke testing in the shared contributor cluster, use
+these local-only tenant accounts. They are not production credentials.
+
+| Tenant | Email | Password |
+|---|---|---|
+| Tenant A | `tenant-a-20260510232145@mcpruntime.org` | `TenantA-20260510232145!` |
+| Tenant B | `tenant-b-20260510232145@mcpruntime.org` | `TenantB-20260510232145!` |
+
+Tenant users should see only their own team namespace. For example, Tenant A
+should see `mcp-team-tenant-a` entries but receive `403` for
+`mcp-team-tenant-b`, and Tenant B should see the inverse. A setup installed with
+`--platform-mode org` or `--platform-mode public` uses `mcp-servers-org` or
+`mcp-servers-public` instead of tenant namespaces for non-admin catalog
+browsing.
 
 ### Iterate on one Sentinel service
 
@@ -248,6 +277,7 @@ cat > /tmp/go-example-mcp.yaml <<'EOF'
 version: v1
 servers:
   - name: go-example-mcp
+    description: Go MCP example server with smoke and text transformation tools.
     route: /go-example-mcp/mcp
     publicPathPrefix: go-example-mcp
     port: 8088
@@ -257,9 +287,13 @@ servers:
         value: /go-example-mcp/mcp
     tools:
       - name: add
+        description: Add two numbers.
         requiredTrust: low
+        sideEffect: read
       - name: upper
+        description: Uppercase the provided message.
         requiredTrust: medium
+        sideEffect: read
     auth:
       mode: header
       humanIDHeader: X-MCP-Human-ID
@@ -430,6 +464,8 @@ spec:
     humanID: local-user
     agentID: local-agent
   maxTrust: high
+  allowedSideEffects:
+    - read
   policyVersion: v1
   toolRules:
     - name: add
@@ -522,6 +558,14 @@ The bundled Go example server also exposes `upper`, `lower`, `echo`, and
 `slugify`, and each of those tools expects a `message` field in `arguments`
 instead of `input` or `text`.
 
+For agent frameworks or IDEs that cannot attach the governance headers directly,
+build the optional adapters with `make build-adapters` and follow
+[Agent Adapters](agent-adapters.md). The same grant/session values from
+`/tmp/go-example-access.yaml` become `MCP_RUNTIME_HUMAN_ID`,
+`MCP_RUNTIME_AGENT_ID`, and `MCP_RUNTIME_SESSION_ID` for the adapter process.
+Set `MCP_RUNTIME_LOG_LEVEL=info` while debugging governed-agent demos when you
+want adapter stderr to show runtime denials such as `trust_too_low`.
+
 ```bash
 ./bin/mcp-runtime sentinel status
 ./bin/mcp-runtime sentinel events
@@ -547,18 +591,43 @@ namespace. Use `/api/dashboard/summary`, `/api/events`, or
 uses `/api/analytics/usage` for its MCP server, human/agent, tool, and decision
 rollups.
 
+To exercise policy isolation between two `MCPServer` resources and per-subject
+grant enforcement on the same cluster, see
+[Sentinel → Verifying per-server policy isolation](sentinel.md#verifying-per-server-policy-isolation).
+
 ## 4. Install the platform stack
 
 ```bash
 ./bin/mcp-runtime setup
 ```
 
-`setup` installs the platform pieces companies need for MCP operations: CRDs, `mcp-runtime` and `mcp-servers` namespaces, the internal Docker registry, ingress wiring, the operator, and the bundled Sentinel stack for gateway policy, analytics, audit, and observability.
+`setup` installs the platform pieces companies need for MCP operations: CRDs,
+`mcp-runtime` and catalog namespaces, the internal Docker registry, ingress
+wiring, the operator, and the bundled Sentinel stack for gateway policy,
+analytics, audit, and observability.
+
+`--platform-mode` selects the namespace model:
+
+| Mode | Default namespace behavior | Behavior |
+|---|---|---|
+| `tenant` | Principal user/team namespace | Default private mode. Each signed-in user is scoped to their own tenant namespace, including any team namespace from membership. |
+| `org` | `mcp-servers-org` | Signed-in users publish and browse an org-wide catalog without tenant/team namespace selection. |
+| `public` | `mcp-servers-public` | Anonymous users can browse the public preview catalog, and signed-in users publish public preview MCP servers. |
+
+For multi-team or tenant-separated deployments, keep setup as the platform
+install and provision one namespace per team with `mcp-runtime team init <slug>`
+or the platform API `mcp-runtime team create <slug>` flow. Both repo-managed
+paths wire bundled Traefik for the team namespace. Use the platform API to
+default team IDs, or set `spec.teamID` and `subject.teamID` directly in YAML; an
+explicit foreign `subject.teamID` delegates access to another team while the
+gateway still matches every non-empty subject field. See
+[Multi-team isolation](multi-team.md).
 
 Common variants:
 
 ```bash
 ./bin/mcp-runtime setup --with-tls            # cert-manager TLS for the registry
+./bin/mcp-runtime setup --platform-mode public # public preview catalog namespace
 ./bin/mcp-runtime setup --without-sentinel    # skip the request-path stack
 ./bin/mcp-runtime setup --test-mode           # local Kind/dev build+push path
 ```
@@ -616,7 +685,10 @@ spec:
 Start with the smallest useful `MCPServer` and add features only when you need them.
 
 - `metadata.name` becomes the server identity inside the platform.
-- `metadata.namespace` is usually `mcp-servers`.
+- `metadata.namespace` is usually `mcp-servers` for a single-team setup. In a
+  multi-team deployment, use the team's namespace, for example
+  `mcp-team-acme`.
+- `spec.teamID` is the stable platform team ID that owns the server.
 - `spec.image` points at the container image the platform should run.
 - `spec.imageTag` sets the tag when you do not include one directly in `spec.image`.
 - `spec.port` is the port your MCP server process listens on inside the container.
@@ -649,7 +721,7 @@ Common edits:
 - Set `spec.servicePort` if you need a Service port other than `80`.
 - Add `spec.envVars` or `spec.secretEnvVars` when the server needs configuration or credentials.
 - Add `spec.imagePullSecrets` if the image registry requires explicit pull auth.
-- Add `spec.tools`, `spec.auth`, `spec.policy`, `spec.session`, or `spec.rollout` when you are ready to describe stricter governance or delivery behavior.
+- Add `spec.tools`, `spec.auth`, `spec.policy`, `spec.session`, or `spec.rollout` when you are ready to describe stricter governance or delivery behavior. Every listed tool must declare `sideEffect: read`, `write`, or `destructive`.
 
 For the full field surface, use the [API reference](api.md).
 
@@ -713,6 +785,10 @@ If the server does not come up, stay in the CLI first:
 
 ## 7. Grant governed access (for gateway-enabled servers)
 
+The target `MCPServer` should list the tools you want to govern, and every
+listed tool must include `sideEffect: read`, `write`, or `destructive`. Grants
+then declare which side-effect classes they allow.
+
 ```yaml
 # grant.yaml
 apiVersion: mcpruntime.org/v1alpha1
@@ -727,6 +803,9 @@ spec:
     humanID: user-123
     agentID: ops-agent
   maxTrust: high
+  allowedSideEffects:
+    - read
+    - destructive
   toolRules:
     - name: list_invoices
       decision: allow
@@ -782,6 +861,7 @@ flowchart LR
 ## Next steps
 
 - [Publish an MCP Server](publish-mcp-server.md) — write manifests or `.mcp` metadata, build, push, deploy, and verify.
+- [Multi-team isolation](multi-team.md) — team IDs, namespaces, RBAC, and ingress guidance.
 - [Architecture](architecture.md) — how the pieces fit together.
 - [CLI](cli.md) — full command reference.
 - [API](api.md) — every CRD field and HTTP endpoint.

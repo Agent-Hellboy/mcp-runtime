@@ -11,7 +11,7 @@ The runtime is the Kubernetes-native control plane for MCP servers. It owns the 
 | **Bootstrap** | `cluster` and `setup` initialize CRDs and namespaces, configure ingress, provision clusters, optionally wire cert-manager TLS. |
 | **Registry workflow** | Registry commands and setup wiring give teams a controlled place to publish and pull MCP server images. |
 | **Server delivery** | The operator reconciles `MCPServer` into Deployments, Services, and Ingress so each server lands at a stable route. |
-| **Access and consent** | Grants and sessions are separate resources so policy, trust ceilings, consent, expiry, and revocation stay outside deployment-only YAML. |
+| **Access and consent** | Grants and sessions are separate resources so policy, side-effect allowances, trust ceilings, consent, expiry, and revocation stay outside deployment-only YAML. |
 | **Brokered rollout** | Servers can stay direct or run behind the proxy sidecar while rollout settings live on the same server resource. |
 
 ## Core resources
@@ -19,6 +19,7 @@ The runtime is the Kubernetes-native control plane for MCP servers. It owns the 
 ```mermaid
 classDiagram
     class MCPServer {
+      +teamID
       +image, imageTag
       +port, publicPathPrefix
       +ingressHost, ingressPath
@@ -31,8 +32,9 @@ classDiagram
     }
     class MCPAccessGrant {
       +serverRef
-      +subject (humanID, agentID)
+      +subject (humanID, agentID, teamID)
       +maxTrust
+      +allowedSideEffects[]
       +toolRules[]
       +disabled
       +status
@@ -76,7 +78,12 @@ For every `MCPServer`, the operator reconciles:
 - Hostless path-based routing is supported through `spec.publicPathPrefix`; otherwise provide `spec.ingressHost` or configure the operator default host.
 - Container port defaults to `8088`, service port to `80`.
 - Gateway listens on `8091`.
-- `setup` provisions the `mcp-runtime` and `mcp-servers` namespaces.
+- `setup` provisions `mcp-runtime` plus the active shared catalog namespace for
+  shared modes: `mcp-servers-org` for `org` or `mcp-servers-public` for
+  `public`.
+- `tenant` mode uses the authenticated principal's user/team namespace. Place
+  runtime CRDs in per-tenant namespaces and rely on Kubernetes RBAC and ingress
+  watch configuration for isolation.
 - Default ingress class is `traefik`; override via `spec.ingressClass`.
 
 ## Topology
@@ -121,16 +128,42 @@ flowchart LR
 | **Direct** | No `gateway.enabled`. Service points at the MCP server directly. Server is exposed at `/{server-name}/mcp`. |
 | **Gateway** | `spec.gateway.enabled: true`. Traffic flows through the proxy sidecar; identity, policy, audit, and telemetry happen in one place. |
 | **Trust evaluation** | Tool `requiredTrust`, grant `maxTrust`, and session `consentedTrust` combine to determine effective trust at tool-call time. |
+| **Side-effect evaluation** | Each listed tool must declare `sideEffect: read`, `write`, or `destructive`; a grant only authorizes tools whose side effect is present in `allowedSideEffects`. Omitted or empty `allowedSideEffects` allows no side-effect classes. |
 
 ### Gateway headers
 
-These header names are defaults; override via `spec.auth.{humanIDHeader,agentIDHeader,sessionIDHeader}`.
+These header names are defaults; override via `spec.auth.{humanIDHeader,agentIDHeader,teamIDHeader,sessionIDHeader}`.
 
 ```text
 X-MCP-Human-ID:    user-123
 X-MCP-Agent-ID:    ops-agent
+X-MCP-Team-ID:     7d0a0b8f-7c25-4761-a632-3cf0108e31d6
 X-MCP-Agent-Session: sess-8f1b9d
 ```
+
+### Agent adapters
+
+Agent-side adapters are optional helper processes for frameworks and IDEs that
+cannot attach these headers directly. `mcp-runtime-agent-proxy` accepts local
+Streamable HTTP MCP traffic, and `mcp-runtime-mcp-shim` accepts stdio MCP
+traffic, then both forward to the governed MCP Runtime route with the issued
+identity/session headers. They do not create grants or sessions and do not
+evaluate policy; the gateway still enforces `MCPAccessGrant` and
+`MCPAgentSession` on the request path.
+
+These adapters expose only the two standard MCP transports: Streamable HTTP and
+stdio. Event-stream handling is an internal Streamable HTTP response parser, not
+a separate legacy HTTP+SSE transport.
+
+For local debugging, set `MCP_RUNTIME_LOG_LEVEL=info` on either adapter to print
+runtime 4xx denials to stderr. The proxy can suppress local `X-Forwarded-*`
+headers with `MCP_RUNTIME_SET_XFF=false`; the shim can opt into request
+deadlines with `MCP_RUNTIME_REQUEST_TIMEOUT=<duration>`. The stdio shim streams
+Streamable HTTP event frames to stdout as they arrive and continues reading
+stdin while an upstream event stream is open.
+
+See [Agent Adapters](agent-adapters.md) for build commands and integration
+examples.
 
 ## Operator internals (high-level)
 

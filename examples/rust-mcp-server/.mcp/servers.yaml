@@ -1,6 +1,7 @@
 version: v1
 servers:
   - name: rust-example-mcp
+    description: Rust MCP example server with repeat and word-count tools.
     route: /rust-example-mcp/mcp
     publicPathPrefix: rust-example-mcp
     port: 8088
@@ -10,6 +11,10 @@ servers:
         value: /rust-example-mcp/mcp
     tools:
       - name: repeat
+        description: Repeat the provided message a number of times.
         requiredTrust: low
+        sideEffect: read
       - name: word_count
+        description: Count the words in the provided message.
         requiredTrust: low
+        sideEffect: read

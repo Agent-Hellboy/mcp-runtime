@@ -24,9 +24,9 @@ that only use HTTP, Kafka, ClickHouse, Postgres, or local files.
 | Component | Kubernetes awareness | Runtime access | Hardening notes |
 |---|---|---|---|
 | **api** | Kubernetes-aware. `services/api` initializes clients through `pkg/k8sclient`, using in-cluster config first and kubeconfig fallback outside the cluster. | Reads `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession`; applies grants/sessions; reads component health; restarts Sentinel workloads; provisions platform deployment namespaces, quotas, limits, and NetworkPolicies; manages Deployments and Services. RBAC is in `k8s/08-api-rbac.yaml`. | Treat this as the main privileged Sentinel service. Keep admin auth tight, keep `ADMIN_API_KEYS` separate from user keys, prefer in-cluster service account credentials in production, and review the broad deployment-management RBAC before enabling user deployment APIs on shared clusters. |
-| **gateway** | Kubernetes-aware Traefik ingress controller. | Watches Ingress, Service, Endpoint, Secret, and IngressClass resources for the namespaces it serves. The bundled Sentinel-local gateway watches `mcp-sentinel`; the shared ingress overlays watch `registry`, `mcp-sentinel`, and `mcp-servers`. | Keep watched namespaces explicit, avoid cluster-wide ingress watches unless required, do not expose Grafana or Prometheus on an unauthenticated public host, and keep redaction middleware limited to routes that need it. |
+| **gateway** | Kubernetes-aware Traefik ingress controller. | Watches Ingress, Service, Endpoint, Secret, and IngressClass resources for the namespaces it serves. The bundled Sentinel-local gateway watches `mcp-sentinel`; the shared ingress overlays watch `registry`, `mcp-sentinel`, `mcp-servers`, `mcp-servers-org`, and `mcp-servers-public`. | Keep watched namespaces explicit, avoid cluster-wide ingress watches unless required, do not expose Grafana or Prometheus on an unauthenticated public host, and keep redaction middleware limited to routes that need it. |
 | **mcp-proxy** | Kubernetes-integrated but Kubernetes API-agnostic. It is injected into MCP server pods and reads operator-rendered policy from mounted files and env vars. | Does not need a Kubernetes client or service account token. It forwards MCP traffic to the local server container and emits audit events to ingest. | Keep `automountServiceAccountToken: false`, read-only policy mounts, `readOnlyRootFilesystem`, dropped capabilities, and non-root execution. Treat `ANALYTICS_API_KEY` as ingest-scoped, not an admin API key. |
-| **ui** | Kubernetes API-agnostic. | Serves the browser UI and proxies `/api/*` to `api` through `API_UPSTREAM` with UI session credentials or the configured upstream key. | Keep it behind TLS for public hosts, retain the security headers in `services/ui`, set `UI_REQUIRE_HTTPS=false` only for deliberate non-TLS dev ingress, and do not grant it Kubernetes RBAC. |
+| **ui** | Kubernetes API-agnostic. | Serves the browser UI and proxies `/api/*` to `api` through `API_UPSTREAM` with UI session credentials or the configured upstream key. | Keep it behind TLS for public hosts, retain the security headers in `services/ui`, set `UI_REQUIRE_HTTPS=false` only for deliberate non-TLS dev ingress, set `UI_FORCE_SECURE_COOKIE=true` when a TLS-terminating proxy does not send `X-Forwarded-Proto: https`, and do not grant it Kubernetes RBAC. |
 | **ingest** | Kubernetes API-agnostic. | Authenticates `/events`, validates request size and event shape, and writes to Kafka. | Require `INGEST_API_KEYS` or OIDC for real deployments, use ingest-only keys, restrict network access to proxy/gateway callers, and keep the public `/ingest` route off production hosts unless intentionally exposed. |
 | **processor** | Kubernetes API-agnostic. | Consumes Kafka and writes ClickHouse. It only exposes health and metrics. | Do not expose it through ingress. Restrict network access to Kafka, ClickHouse, metrics scraping, and tracing endpoints. |
 | **storage and observability** | Mixed. ClickHouse, Kafka, Zookeeper, Postgres, Grafana, Prometheus, Tempo, Loki, and the OTel collector are Kubernetes API-agnostic in the bundled manifests; Promtail is Kubernetes-aware so it can discover pod logs. | Data stores and dashboards back Sentinel audit, identity, metrics, traces, and logs. Promtail has pod read/watch RBAC. | Review persistence, retention, backups, and dashboard auth before production use. Keep Grafana and Prometheus private or behind your own auth-aware ingress, and review Promtail's cluster log visibility before enabling it on multi-tenant clusters. |
@@ -41,7 +41,7 @@ the cluster supports them.
 
 ```mermaid
 flowchart LR
-    Req[MCP request] --> Proxy[mcp-proxy<br/>policy + identity + trust]
+    Req[MCP request] --> Proxy[mcp-proxy<br/>policy + identity + trust + side effects]
     Proxy -->|forward| MCP[MCP server]
     Proxy -->|audit POST /events| Ingest
     Ingest -->|mcp.events topic| Kafka[(Kafka)]
@@ -52,17 +52,17 @@ flowchart LR
     API --> Graf[Grafana]
 ```
 
-1. **Proxy evaluates the request.** Reads identity headers, loads policy from the operator-rendered ConfigMap, checks trust, decides allow / deny at `tools/call` time.
-2. **Ingest receives the event** on `/events`, writes into Kafka topic `mcp.events`.
-3. **Processor batches to ClickHouse.** Reads Kafka, batches, writes to the event table.
-4. **API exposes query surfaces.** Recent events, stats, sources, types, filtered audit views.
+1. **Proxy evaluates the request.** Reads identity headers, loads policy from the operator-rendered ConfigMap, and calls the shared `pkg/policy` evaluator for allow / deny at `tools/call` time. The evaluator checks both trust and the tool's declared side-effect class.
+2. **Ingest receives the event** on `/events`, validates the shared `pkg/events` envelope, and writes into Kafka topic `mcp.events`.
+3. **Processor batches to ClickHouse.** Reads Kafka envelopes and uses `pkg/clickhouse` storage helpers to write to the event table.
+4. **API exposes query surfaces.** Recent events, stats, sources, types, and filtered audit views use `pkg/clickhouse` query helpers.
 5. **UI + dashboards consume the data.** UI renders the stream; Grafana / Prometheus / Tempo / Loki / Promtail cover the broader observability path.
 
 ## Storage and observability
 
 | Component | Role |
 |---|---|
-| **ClickHouse** | Stores the event stream with materialized fields: server, namespace, cluster, human, agent, session, decision, tool name. |
+| **ClickHouse** | Stores the event stream with materialized fields: server, namespace, team ID, cluster, human, agent, session, decision, tool name. |
 | **Kafka + Zookeeper** | Buffer between ingest and processor. |
 | **Prometheus + Grafana** | Service metrics, scrape config, dashboards. |
 | **OTel Collector + Tempo** | Distributed tracing pipeline. |
@@ -119,11 +119,11 @@ metrics on `METRICS_PORT` (default `9090`).
 | `GET` | `/api/dashboard/summary` | Dashboard cards: event totals, active grants/sessions, latest event metadata. Admin role required. |
 | `GET` | `/api/analytics/usage` | Dashboard usage analytics from ClickHouse: totals, top MCP servers, human/agent pairs, tools, and decision counts. Query: `limit` (1-50, default 10). Admin role required. |
 | `GET` | `/api/events` | Recent ClickHouse-backed audit events, newest first. Query: `limit` (1-1000, default 100). Admin role required. |
-| `GET` | `/api/events/filter` | Filtered audit events. Query: `source`, `event_type`, `server`, `namespace`, `cluster`, `human_id`, `agent_id`, `session_id`, `decision`, `tool_name`, `limit`. Admin role required. |
+| `GET` | `/api/events/filter` | Filtered audit events. Query: `source`, `event_type`, `server`, `namespace`, `team_id`, `cluster`, `human_id`, `agent_id`, `session_id`, `decision`, `tool_name`, `limit`. Admin role required. |
 | `GET` | `/api/stats` | Total event count. Admin role required. |
 | `GET` | `/api/sources` | Event counts grouped by source. Admin role required. |
 | `GET` | `/api/event-types` | Event counts grouped by event type. Admin role required. |
-| `GET`, `POST` | `/api/runtime/servers` | List or apply `MCPServer` resources through runtime authz scope. Non-admin writes to shared `mcp-servers` are rejected; team users write within authorized team namespaces. |
+| `GET`, `POST` | `/api/runtime/servers` | List or apply `MCPServer` resources through runtime authz scope. `tenant` mode defaults signed-in users to their own user/team namespace; `org` mode defaults signed-in users to `mcp-servers-org`; `public` mode allows anonymous reads and signed-in publishes in `mcp-servers-public`. |
 | `GET`, `POST` | `/api/runtime/grants` | List or apply `MCPAccessGrant` resources. |
 | `GET`, `DELETE` | `/api/runtime/grants/{namespace}/{name}` | Read or delete one grant. |
 | `POST` | `/api/runtime/grants/{namespace}/{name}/disable` | Set `spec.disabled=true`. |
@@ -136,7 +136,7 @@ metrics on `METRICS_PORT` (default `9090`).
 | `GET` | `/api/runtime/teams/{team}` | Read team metadata for admins and team members. |
 | `POST` | `/api/runtime/teams/{team}/members` | Add/update team membership (admin or team owner). |
 | `DELETE` | `/api/runtime/teams/{team}/members/{userID}` | Remove team membership (admin or team owner). |
-| `GET` | `/api/runtime/namespaces` | List allowed namespaces and shared catalog metadata for caller scope. |
+| `GET` | `/api/runtime/namespaces` | List allowed namespaces and org catalog metadata for caller scope. |
 | `GET` | `/api/runtime/namespaces/{namespace}` | Read one namespace metadata entry when authorized. |
 | `GET` | `/api/runtime/components` | Operator, Sentinel service, and observability component health from Kubernetes. |
 | `GET` | `/api/runtime/policy?namespace=&server=` | Rendered gateway policy for one server. |
@@ -178,7 +178,7 @@ wraps API auth for browser users.
 | `POST` | `/auth/login` | Create a UI session from `{"api_key": "..."}`, `{"id_token": "..."}`, or `{"email": "...", "password": "..."}`. |
 | `POST` | `/auth/logout` | Clear the UI session cookie. |
 | `GET` | `/auth/status` | Return UI session authentication state and principal. |
-| any | `/api/*` | Reverse proxy to `services/api`. Public `GET`/`HEAD /api/runtime/servers` is allowed for the shared `mcp-servers` catalog; other API calls require a UI session or API key. |
+| any | `/api/*` | Reverse proxy to `services/api`. API calls require a UI session or API key, including MCP catalog reads. |
 | `GET` | `/*` | Static dashboard assets. |
 
 ### Ingest service
@@ -204,6 +204,8 @@ Event intake body:
   "payload": {
     "server": "payments",
     "namespace": "mcp-servers",
+    "team_id": "7d0a0b8f-7c25-4761-a632-3cf0108e31d6",
+    "subject_team_id": "7d0a0b8f-7c25-4761-a632-3cf0108e31d6",
     "decision": "deny",
     "reason": "session_not_found"
   }
@@ -246,7 +248,7 @@ The UI's **Governance** tab creates and operates the same `MCPAccessGrant` and `
 
 | Action | What it does |
 |---|---|
-| **Create grant** | `Create Grant` button. Required: name, namespace, server, and at least one of human or agent ID. Tool rules use one rule per line: `tool:allow` or `tool:allow:trust`. |
+| **Create grant** | `Create Grant` button. Required: name, namespace, server, at least one of human, agent, or team ID, and the allowed side-effect classes. Tool rules use one rule per line: `tool:allow` or `tool:allow:trust`. |
 | **Create session** | `Create Session`. Pick a consented trust level and optional expiry. The gateway looks it up at `tools/call` time alongside the grant. |
 | **Disable / enable grant** | Single-action row. Disable flips `spec.disabled=true` — grant is preserved for audit, but the gateway treats it as denying. |
 | **Revoke / unrevoke session** | Same row pattern toggles `spec.revoked`. Revoked sessions deny subsequent tool calls immediately. |
@@ -260,6 +262,69 @@ refund_invoice:allow:high
 ```
 
 CLI parity: `mcp-runtime access grant` and `mcp-runtime access session` cover the same CRUD flows. CRs are the source of truth — the UI is a convenience layer.
+
+For platform API writes, grants and sessions must reference a server in the same
+namespace as the access resource. Non-admin callers cannot write access
+resources into the shared `mcp-servers` catalog namespace. Team namespace writes
+default and validate server `spec.teamID` against the authenticated principal
+namespace. Grant/session writes default missing `subject.teamID` from the
+referenced server team, while preserving an explicit foreign `subject.teamID`
+for delegated cross-team access.
+
+## Verifying per-server policy isolation
+
+This check verifies that one server's rendered gateway policy does not bleed
+into another server. It is per-server policy isolation, not the team namespace
+model described in [Multi-team isolation](multi-team.md).
+
+The operator renders a per-server policy ConfigMap
+(`<server>-gateway-policy`) holding only the grants and sessions whose
+`serverRef` points at that server, and the `mcp-gateway` sidecar evaluates
+traffic against that policy alone. To verify isolation end-to-end, deploy two
+gateway-enabled servers in `mcp-servers` and grant disjoint subjects on each.
+
+Apply two `MCPServer` resources (same image is fine, different `metadata.name` and `publicPathPrefix`) with `gateway.enabled: true`, `auth.mode: header`, `policy.mode: allow-list`, `session.required: true`, and tool inventory entries that declare `sideEffect`. Then apply two grant + session pairs:
+
+```yaml
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAccessGrant
+metadata: {name: alice-server-a, namespace: mcp-servers}
+spec:
+  serverRef: {name: server-a-mcp}
+  subject:   {humanID: alice, agentID: alice-agent}
+  maxTrust: high
+  allowedSideEffects: [read]
+  toolRules: [{name: add, decision: allow, requiredTrust: low}]
+---
+# bob-server-b mirrors the above with serverRef server-b-mcp and a different toolRule
+```
+
+Confirm each server's policy contains only its own subject:
+
+```bash
+mcp-runtime server policy inspect server-a-mcp --namespace mcp-servers   # alice only
+mcp-runtime server policy inspect server-b-mcp --namespace mcp-servers   # bob only
+```
+
+Drive the cross-server matrix using the configured identity headers
+(`X-MCP-Human-ID`, `X-MCP-Agent-ID`, `X-MCP-Agent-Session`). The expected
+outcomes distinguish the two deny modes:
+
+| Subject | Target server | Tool | Outcome |
+|---|---|---|---|
+| alice | A | grant-listed tool | **200** allow |
+| alice | A | other tool | **403** — known subject, tool not in grant |
+| alice | B | any | **401** — gateway has no session/grant for alice on B |
+| bob | B | grant-listed tool | **200** allow |
+| bob | A | any | **401** |
+| no headers / unknown session | any | any | **401** (`reason: session_not_found`) |
+
+The 401-vs-403 split is the isolation signal: cross-server traffic is rejected
+at session lookup before tool evaluation; same-server unallowed tools are
+rejected by allow-list policy. Audit confirms it:
+`/api/events/filter?server=<name>` returns events scoped to that server only,
+and cross-server attempts appear as denies on the targeted server with the
+source subject preserved, never on the other server.
 
 ## Manifests
 
@@ -299,7 +364,7 @@ See [CLI → sentinel](cli.md#sentinel) for component keys and flag details.
 
 ## Repository structure note
 
-Services live in `services/`, manifests in `k8s/`, shared libraries in `pkg/` (replacing the older nested `mcp-sentinel/` directory). New `pkg/access`, `pkg/sentinel`, `pkg/clickhouse`, and `pkg/k8sclient` packages are used by both CLI and API services. The runtime and example MCP wiring still accept older `MCP_ANALYTICS_*` env names so existing ingest configuration keeps working during the rename.
+Services live in `services/`, manifests in `k8s/`, shared libraries in `pkg/` (replacing the older nested `mcp-sentinel/` directory). `pkg/access`, `pkg/policy`, `pkg/controlplane`, `pkg/events`, `pkg/clickhouse`, `pkg/serviceutil`, `pkg/kubeworkload`, `pkg/sentinel`, and `pkg/k8sclient` are used by the CLI, operator, or Sentinel services according to their ownership boundaries. The runtime and example MCP wiring still accept older `MCP_ANALYTICS_*` env names so existing ingest configuration keeps working during the rename.
 
 ## Next
 

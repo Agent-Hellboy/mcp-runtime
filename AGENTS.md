@@ -9,14 +9,17 @@ If instructions conflict, prefer **this repo** (`README`, CRDs, `v1alpha1` types
 | Area | Path | Notes |
 |------|------|--------|
 | User-facing CLI | `cmd/mcp-runtime/`, `internal/cli/root/`, `internal/cli/<command>/`, `internal/cli/core/` | Entrypoint, foldered Cobra command routing, command-owned behavior for `setup`, `status`, `registry`, `server`, `access`, …, and shared CLI kernel code |
+| Agent adapters | `cmd/mcp-runtime-agent-proxy/`, `cmd/mcp-runtime-mcp-shim/`, `internal/agentadapter/` | Optional HTTP and stdio adapter binaries that inject issued governance identity/session headers while leaving grant/session creation and enforcement to the platform |
 | Operator (controller) | `cmd/operator/`, `internal/operator/` | `MCPServer` reconciliation, ingress, gateway wiring |
 | API & CRD types | `api/v1alpha1/` | Source of truth for object shapes; CRD YAML in `config/crd/bases/` |
-| Access control (shared) | `pkg/access/` | Grants, sessions, policy pieces used by API and gateway |
-| K8s helpers, manifests, metadata | `pkg/k8sclient/`, `pkg/manifest/`, `pkg/metadata/` | Registry image resolution, YAML helpers |
-| Sentinel services | `services/api`, `services/ui`, `services/ingest`, `services/processor`, `services/mcp-proxy`, … | Separate `go.mod` where present; test in subdirs in CI |
+| Access and policy (shared) | `pkg/access/`, `pkg/policy/` | Grant/session CRUD helpers plus rendered gateway policy contracts and evaluation semantics used by operator and proxy |
+| Control-plane and K8s helpers | `pkg/controlplane/`, `pkg/k8sclient/`, `pkg/kubeworkload/`, `pkg/manifest/`, `pkg/metadata/` | MCPServer Kubernetes operations/status, client setup, shared workload security defaults, registry image resolution, YAML helpers |
+| Sentinel shared packages | `pkg/events/`, `pkg/clickhouse/`, `pkg/serviceutil/`, `pkg/sentinel/` | Event envelope contract, analytics storage/query helpers, service HTTP/env/OTel utilities, Sentinel component inventory |
+| Sentinel services | `services/api`, `services/ui`, `services/ingest`, `services/processor`, `services/mcp-proxy`, … | Separate `go.mod` where present; Go services that import root shared packages use Go 1.26. API-owned runtime HTTP/Kubernetes orchestration lives under `services/api/internal/runtimeapi/`; platform identity/team/key persistence lives under `services/api/internal/platformstore/`; principal context helpers live under `services/api/internal/apiauth/` |
 | Example MCP server | `examples/go-mcp-server/` | Reference for tools and routes |
 | Default cluster install YAML | `k8s/`, `config/` | Overlays, CRDs, cert-manager examples |
 | Traefik plugins (dev) | `services/traefik-plugins/` | e.g. PII redactor source for local overlays |
+| Team / tenant isolation docs | `docs/multi-team.md` | Team identity contract, per-team namespaces, RBAC, ingress watch scope, and platform API enforcement |
 | Site / public docs (if editing) | `website/` | Not required for control-plane work |
 | E2E | `test/e2e/`, `test/integration/` | Kind script and envtest-based integration tests |
 | Agent tool config | `.claude/`, `.codex/skills/` | `.claude/skills` should symlink to `../.codex/skills` so Claude Desktop and the Codex CLI use the same local skills |
@@ -32,6 +35,7 @@ Use **Go** from `go.mod` (see `go version` / toolchain). From the repo root:
 gofmt -s -l .   # if empty, OK; else run: gofmt -s -w .
 
 go build -o bin/mcp-runtime ./cmd/mcp-runtime
+make build-adapters
 
 # Fast feedback (matches most of CI for the main module)
 go test ./... -count=1 -race
@@ -50,6 +54,7 @@ envtest assets and set `KUBEBUILDER_ASSETS`.
 **Targeted tests** (prefer these while iterating; full `./...` can be slow):
 
 - `go test ./internal/operator/... ./internal/cli/... -race -count=1`
+- `go test ./internal/agentadapter -count=1` (agent-side HTTP proxy and stdio shim behavior)
 - `go test ./test/golden/... -count=1` (CLI help snapshots; update `test/golden/cli/testdata/*.golden` when you change Cobra help text on purpose)
 - `go test ./test/integration/...` (needs `KUBEBUILDER_ASSETS`; see `Makefile.operator` and CI for envtest setup)
 - `E2E_CACHE_MODE=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh`
@@ -61,7 +66,7 @@ envtest assets and set `KUBEBUILDER_ASSETS`.
   not create duplicate clusters, registries, or image builds. The e2e traffic
   path uses deterministic curl-based MCP requests; omit cache mode for
   CI-equivalent fresh runs.
-- `services/api` and `services/ui`: `go test -race -count=1 ./...` inside each directory (CI runs these explicitly)
+- Sentinel services: run `go test -race -count=1 ./...` inside touched service directories such as `services/api`, `services/mcp-proxy`, `services/ingest`, `services/processor`, and `services/ui` (CI runs service tests explicitly)
 
 **CI** (`.github/workflows/ci.yaml`) runs: `gofmt` check, `go vet`, `staticcheck`, unit tests, golden tests, service tests, `test/integration`, SBOM generation, then Kind e2e on `main`/`PR` branches. Normal PRs, `main`, and manual runs use `E2E_SCENARIOS=all`; Dependabot PRs use `E2E_SCENARIOS=smoke-auth,governance` so dependency bumps still cover MCP ingress/auth and grant/session behavior while keeping runtime low. Security workflows add pinned gosec, Gitleaks, Trivy, and dependency-review checks. Align local changes with that before opening a PR.
 
@@ -120,7 +125,7 @@ cluster only when you need a clean CI-equivalent run or the existing contributor
 cluster is intentionally disposable.
 
 - **Status:** `./bin/mcp-runtime status`
-- **Contributor smoke:** for dashboard access, local image push, MCP JSON-RPC request, and Sentinel event checks, follow `docs/getting-started.md#3-contributor-test-mode-cluster`.
+- **Contributor smoke:** for dashboard access, local image push, MCP JSON-RPC request, Sentinel event checks, service iteration, and tenant visibility probes, start with `docs/contributor/README.md`. The shorter install path remains in `docs/getting-started.md#3-contributor-test-mode-cluster`.
 - **Preflight only (no apply):** `./bin/mcp-runtime bootstrap`. For k3s: add `--apply --provider k3s` to install bundled CoreDNS / local-path manifests (server node only).
 
 ## Endpoints and auth
@@ -193,7 +198,7 @@ kubectl patch secret mcp-sentinel-secrets -n mcp-sentinel --type merge -p '{"str
 - **Dashboard / API 401:** direct admin `x-api-key` curl calls need a key present in both `API_KEYS` and `ADMIN_API_KEYS`; browser login uses `UI_API_KEY`. Keep `UI_API_KEY` present in both lists, then roll the API and UI deployments after secret changes.
 - **Dashboard 308 redirect loop in dev:** the UI service redirects HTTP→HTTPS for non-local hosts when it sees `X-Forwarded-Proto: http`. Override with the `UI_REQUIRE_HTTPS` env on the `mcp-sentinel-ui` deployment: `auto` (default — redirect public hosts only), `true`/`on`/`1`/`yes` (always redirect HTTP for public hosts), `false`/`off`/`0`/`no` (never redirect, use this when the UI is fronted by a non-TLS terminator on a real hostname).
 - **Ingress / routes:** `kubectl get ingress -A` and confirm paths match the gateway and demo servers you expect.
-- **Custom ingress namespaces:** bundled Traefik manifests watch `registry`, `mcp-sentinel`, and `mcp-servers` only so the controller does not need cluster-wide Secret access. If you place public Ingresses in another namespace, add that namespace to the Traefik `--providers.kubernetesingress.namespaces` list and bind the `traefik-watch` Role there.
+- **Custom ingress namespaces:** bundled Traefik manifests watch `registry`, `mcp-sentinel`, `mcp-servers`, `mcp-servers-org`, and `mcp-servers-public` only so the controller does not need cluster-wide Secret access. If you place public Ingresses in another namespace, including per-team namespaces such as `mcp-team-acme`, add that namespace to the Traefik `--providers.kubernetesingress.namespaces` list, bind the `traefik-watch` Role there, and allow ingress-controller traffic through the namespace NetworkPolicy. `mcp-runtime team init <slug>` and platform API `team create` perform that setup for the repo-managed `traefik/traefik` Deployment; use `--skip-traefik-watch` or `PLATFORM_TEAM_TRAEFIK_WATCH=false` for external ingress controllers. See `docs/multi-team.md` for the multi-team namespace/RBAC pattern.
 - **Private / HTTP in-cluster registry / k3s:** Pull and push can fail with `https` vs `http` or `registry.local` DNS on nodes. See **k3s and HTTP registry (config files)** below, set **`MCP_REGISTRY_*`** before `pipeline generate` when you want `ClusterIP:port` in manifests, and raise **`MCP_DEPLOYMENT_TIMEOUT`** if setup rollouts time out on slow first pulls.
 - **Prod DNS / ACME:** with `MCP_PLATFORM_DOMAIN=example.com`, setup derives `registry.example.com`, `mcp.example.com`, and `platform.example.com`. All three public DNS records must point at the ingress IP and port 80 must reach Traefik for HTTP-01. If cert-manager reports NXDOMAIN, verify from outside and inside the cluster: `getent hosts registry.example.com`, `getent hosts mcp.example.com`, `getent hosts platform.example.com`, and `kubectl run dns-check --rm -i --restart=Never --image=busybox:1.36 -- nslookup platform.example.com`.
 - **Platform UI 404 / wrong host:** when `MCP_PLATFORM_DOMAIN` (or `MCP_PLATFORM_INGRESS_HOST`) is set, setup applies a host-based ingress `mcp-sentinel-platform-ui` in `mcp-sentinel` (and, when TLS is enabled, a sibling `mcp-sentinel-platform-ui-http` for HTTP→HTTPS redirect). Verify with `kubectl get ingress mcp-sentinel-platform-ui -n mcp-sentinel -o yaml`; the rule should be host=`platform.<domain>` routing `/` to `mcp-sentinel-ui:8082` (and `/api` to the same service). `/grafana` and `/prometheus` are deliberately not on the public host. If the dashboard returns Traefik default 404, check that DNS resolves `platform.<domain>` to the cluster ingress, then `kubectl logs -n traefik deploy/traefik --tail=120` for routing errors. The dev path-based gateway (`mcp-sentinel-gateway`) keeps working when `MCP_PLATFORM_DOMAIN` is unset.
@@ -310,6 +315,10 @@ For production with `MCP_PLATFORM_DOMAIN=example.com`, setup derives hostnames `
 
 - **UI** can create/apply grants and sessions and toggle grant enablement and session state.
 - **CLI:** `mcp-runtime access grant apply --file <file.yaml>` and `mcp-runtime access session apply --file <file.yaml>`. `kubectl apply -f` is still a valid fallback.
+- **Team isolation:** use one namespace per team plus first-class team identity. `MCPServer.spec.teamID` marks the server owner, `SubjectRef.teamID` constrains grants/sessions to callers from that team, and the gateway matches all non-empty `humanID` / `agentID` / `teamID` fields exactly. Keep single-team examples in `mcp-servers`.
+- **Platform access hardening:** platform API server/grant/session writes reject shared-catalog writes by non-admin callers and reject cross-namespace `serverRef.namespace`. Server writes default/validate `spec.teamID` against the authenticated principal namespace. Grant/session writes default missing `subject.teamID` from the referenced server team, but preserve explicit foreign `subject.teamID` values for delegated cross-team access.
+- **Advisory identity checks:** access apply commands warn, but do not block, when `subject.humanID` looks malformed, case-ambiguous, whitespace-padded, or namespace-encoded.
+- **Side effects:** each listed `MCPServer.spec.tools[]` entry must declare `sideEffect: read|write|destructive`; grants must set `allowedSideEffects` explicitly. Empty or omitted `allowedSideEffects` allows no side-effect classes.
 - **Example**
 
 ```yaml
@@ -322,6 +331,7 @@ spec:
   subject: {humanID: user-123, agentID: ops-agent}
   serverRef: {name: demo-one, namespace: mcp-servers}
   maxTrust: high
+  allowedSideEffects: [read]
   toolRules:
     - {name: add, decision: allow, requiredTrust: low}
     - {name: upper, decision: allow, requiredTrust: low}

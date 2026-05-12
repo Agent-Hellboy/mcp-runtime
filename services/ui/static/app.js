@@ -1,8 +1,10 @@
 const apiBase = window.MCP_API_BASE || "/api";
 const defaults = Object.assign(
-  { namespace: "mcp-servers", policyVersion: "v1" },
+  { namespace: "", policyVersion: "v1" },
   window.MCP_DEFAULTS || {}
 );
+const platformMode = window.MCP_PLATFORM_MODE || "tenant";
+const publicCatalogEnabled = platformMode === "public";
 let authenticated = null;
 let authPrincipal = null;
 let grantsCache = [];
@@ -20,7 +22,7 @@ let serverSearchQuery = "";
 let serverStatusFilter = "all";
 let selectedOperationsServerKey = "";
 let namespaceScopes = [];
-let selectedNamespace = defaults.namespace || "mcp-servers";
+let selectedNamespace = defaults.namespace || "";
 
 // API Helper
 async function fetchJSON(path, options = {}) {
@@ -56,7 +58,11 @@ function isUnauthorizedError(err) {
 }
 
 function activeScopeNamespace() {
-  return (selectedNamespace || defaults.namespace || "mcp-servers").trim();
+  if (!authenticated && !publicCatalogEnabled) return "";
+  if (selectedNamespace !== undefined && selectedNamespace !== null) {
+    return String(selectedNamespace).trim();
+  }
+  return (defaults.namespace || "").trim();
 }
 
 function scopedPath(path) {
@@ -67,8 +73,17 @@ function scopedPath(path) {
 }
 
 function namespaceScopeLabel(item) {
+  if (item?.is_public || item?.scope === "public") {
+    return `public / ${item.namespace}`;
+  }
+  if (item?.scope === "org") {
+    return `org / ${item.namespace}`;
+  }
+  if (item?.is_catalog) {
+    return platformMode === "tenant" ? "tenant namespaces" : "org + teams";
+  }
   if (item?.is_shared) {
-    return `shared / ${item.namespace}`;
+    return `org / ${item.namespace}`;
   }
   if (item?.team_slug) {
     return `team:${item.team_slug} / ${item.namespace}`;
@@ -80,28 +95,47 @@ function syncScopeSelector() {
   const select = document.getElementById("scope-namespace");
   if (!select) return;
   select.innerHTML = "";
-  const scopes = Array.isArray(namespaceScopes) && namespaceScopes.length
-    ? namespaceScopes
-    : [{ namespace: defaults.namespace || "mcp-servers", is_shared: true }];
+  const scopes = Array.isArray(namespaceScopes) ? namespaceScopes : [];
+  if (scopes.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = authenticated ? "No namespaces" : "Sign in required";
+    select.appendChild(option);
+    select.disabled = true;
+    selectedNamespace = "";
+    setFieldValue("grant-namespace", "");
+    setFieldValue("session-namespace", "");
+    return;
+  }
   scopes.forEach((item) => {
     const option = document.createElement("option");
     option.value = item.namespace || "";
     option.textContent = namespaceScopeLabel(item);
     select.appendChild(option);
   });
+  select.disabled = false;
   const hasSelected = scopes.some((item) => (item.namespace || "") === selectedNamespace);
   if (!hasSelected) {
-    selectedNamespace = scopes[0]?.namespace || defaults.namespace || "mcp-servers";
+    selectedNamespace = scopes[0]?.namespace || "";
   }
   select.value = selectedNamespace;
   setFieldValue("grant-namespace", activeScopeNamespace());
   setFieldValue("session-namespace", activeScopeNamespace());
 }
 
+function publicPreviewScopes() {
+  return [{
+    namespace: defaults.namespace || "mcp-servers-public",
+    scope: "public",
+    scope_name: "Public preview",
+    is_public: true,
+  }];
+}
+
 async function loadNamespaceScopes() {
   if (!authenticated) {
-    namespaceScopes = [{ namespace: "mcp-servers", scope: "shared", is_shared: true }];
-    selectedNamespace = "mcp-servers";
+    namespaceScopes = publicCatalogEnabled ? publicPreviewScopes() : [];
+    selectedNamespace = publicCatalogEnabled ? namespaceScopes[0]?.namespace || "" : "";
     syncScopeSelector();
     return;
   }
@@ -113,9 +147,11 @@ async function loadNamespaceScopes() {
     console.error("Failed to load namespaces:", err);
     namespaceScopes = [];
   }
-  const teamNamespaces = namespaceScopes.filter((item) => item.scope === "team").map((item) => item.namespace);
-  if (teamNamespaces.length && !teamNamespaces.includes(selectedNamespace)) {
-    selectedNamespace = teamNamespaces[0];
+  if (authPrincipal?.role !== "admin" && namespaceScopes.length > 1) {
+    namespaceScopes = [{ namespace: "", scope: "catalog", is_catalog: true }, ...namespaceScopes];
+  }
+  if (namespaceScopes.some((item) => item.is_catalog) && (!selectedNamespace || selectedNamespace === defaults.namespace)) {
+    selectedNamespace = "";
   }
   syncScopeSelector();
 }
@@ -615,6 +651,17 @@ function createTrustCell(trust) {
   return createBadgeCell(value, trustBadgeClass(value));
 }
 
+function createGrantRiskCell(trust, sideEffects) {
+  const cell = document.createElement("td");
+  const stack = document.createElement("div");
+  stack.className = "chip-stack";
+  stack.appendChild(createBadge(trust || "-", trustBadgeClass(trust || "-")));
+  const effects = Array.isArray(sideEffects) && sideEffects.length ? sideEffects : ["none"];
+  effects.forEach((effect) => stack.appendChild(createBadge(effect, "badge-muted")));
+  cell.appendChild(stack);
+  return cell;
+}
+
 function trustBadgeClass(trust) {
   if (trust === "high") return "badge-trust-high";
   if (trust === "medium") return "badge-trust-medium";
@@ -660,7 +707,11 @@ async function initAuth() {
   } else {
     await loadNamespaceScopes();
     activateTab("servers");
-    loadServers();
+    if (publicCatalogEnabled) {
+      loadServers();
+    } else {
+      renderSignedOutServerCatalog();
+    }
   }
 }
 
@@ -800,14 +851,18 @@ async function logout() {
   stopAutoRefresh();
   authPrincipal = null;
   setAuthenticated(false);
-  namespaceScopes = [{ namespace: "mcp-servers", scope: "shared", is_shared: true }];
-  selectedNamespace = "mcp-servers";
+  namespaceScopes = publicCatalogEnabled ? publicPreviewScopes() : [];
+  selectedNamespace = namespaceScopes[0]?.namespace || "";
   syncScopeSelector();
   resetDashboard();
   resetGovernance();
   resetUserAPIKeys();
   activateTab("servers");
-  loadServers();
+  if (publicCatalogEnabled) {
+    loadServers();
+  } else {
+    renderSignedOutServerCatalog();
+  }
 }
 
 function setAuthenticated(value) {
@@ -903,6 +958,10 @@ function resetGovernance() {
 }
 
 async function loadServers() {
+  if (!authenticated && !publicCatalogEnabled) {
+    renderSignedOutServerCatalog();
+    return;
+  }
   try {
     const data = await fetchJSON(scopedPath("/runtime/servers"));
     serversCache = Array.isArray(data.servers) ? data.servers : [];
@@ -915,6 +974,15 @@ async function loadServers() {
     if (grid) {
       grid.innerHTML = '<div class="component-card error">Error loading MCP servers.</div>';
     }
+  }
+}
+
+function renderSignedOutServerCatalog() {
+  serversCache = [];
+  renderServerCatalogSummary();
+  const grid = document.getElementById("servers-grid");
+  if (grid) {
+    grid.innerHTML = '<div class="server-empty-state">Sign in to view MCP servers.</div>';
   }
 }
 
@@ -976,6 +1044,7 @@ function serverSearchText(server) {
   const values = [
     server.name,
     server.namespace,
+    server.description,
     server.status,
     server.ready,
     server.endpoint,
@@ -1010,12 +1079,16 @@ function renderServerCatalogSummary() {
 function renderServerHero(server) {
   const hero = document.createElement("div");
   hero.className = "server-card-hero";
+  const description = server.description
+    ? `<p class="server-description">${escapeHtml(server.description)}</p>`
+    : "";
   hero.innerHTML = `
     <div class="server-identity">
       <span class="server-avatar" aria-hidden="true">${escapeHtml(serverInitials(server.name))}</span>
       <div class="server-title-stack">
         <h3>${escapeHtml(server.name || "-")}</h3>
         <p>${escapeHtml(server.namespace || "-")}</p>
+        ${description}
       </div>
     </div>
     <div class="server-status-stack">
@@ -1130,16 +1203,24 @@ function setText(id, value) {
 }
 
 function renderInventoryBlock(label, items, itemRenderer) {
-  const block = document.createElement("div");
+  const block = document.createElement("details");
   block.className = "inventory-block";
-  const heading = document.createElement("h4");
-  heading.textContent = label;
-  block.appendChild(heading);
+  const summary = document.createElement("summary");
+  summary.className = "inventory-section-summary";
+  summary.innerHTML = `
+    <span>${escapeHtml(label)}</span>
+    <small>${formatNumber(items.length)}</small>
+  `;
+  block.appendChild(summary);
+
+  const body = document.createElement("div");
+  body.className = "inventory-section-body";
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "inventory-empty";
     empty.textContent = "None";
-    block.appendChild(empty);
+    body.appendChild(empty);
+    block.appendChild(body);
     return block;
   }
   const list = document.createElement("ul");
@@ -1148,27 +1229,58 @@ function renderInventoryBlock(label, items, itemRenderer) {
     li.innerHTML = itemRenderer(item);
     list.appendChild(li);
   });
-  block.appendChild(list);
+  body.appendChild(list);
+  block.appendChild(body);
   return block;
 }
 
 function renderToolItem(tool) {
-  const trust = tool.requiredTrust ? ` <span class="trust-chip">${escapeHtml(tool.requiredTrust)}</span>` : "";
-  const desc = tool.description ? `<small>${escapeHtml(tool.description)}</small>` : "";
-  return `<strong>${escapeHtml(tool.name || "-")}</strong>${trust}${desc}`;
+  const trust = tool.requiredTrust ? `<span class="trust-chip">${escapeHtml(tool.requiredTrust)}</span>` : "";
+  const sideEffect = tool.sideEffect ? `<span class="trust-chip">${escapeHtml(tool.sideEffect)}</span>` : "";
+  const labels = renderInventoryLabels(tool.labels);
+  return renderExpandableInventoryItem({
+    name: tool.name || "-",
+    summaryMeta: [trust, sideEffect].filter(Boolean).join(" "),
+    description: tool.description,
+    labels,
+  });
 }
 
 function renderInventoryItem(item) {
   if (typeof item === "string") {
-    return `<strong>${escapeHtml(item || "-")}</strong>`;
+    return renderExpandableInventoryItem({ name: item || "-" });
   }
-  const name = item?.name || "-";
-  const desc = item?.description ? `<small>${escapeHtml(item.description)}</small>` : "";
-  const labels = item?.labels && typeof item.labels === "object" ? Object.entries(item.labels) : [];
-  const labelsText = labels.length
-    ? `<small>${escapeHtml(labels.map(([k, v]) => `${k}=${v}`).join(", "))}</small>`
-    : "";
-  return `<strong>${escapeHtml(name)}</strong>${desc}${labelsText}`;
+  return renderExpandableInventoryItem({
+    name: item?.name || "-",
+    description: item?.description,
+    labels: renderInventoryLabels(item?.labels),
+  });
+}
+
+function renderExpandableInventoryItem({ name, summaryMeta = "", description = "", labels = "" }) {
+  const details = description
+    ? `<p>${escapeHtml(description)}</p>`
+    : '<p class="muted-text">No description</p>';
+  const labelRows = labels ? `<div class="inventory-label-list">${labels}</div>` : "";
+  return `
+    <details class="inventory-item">
+      <summary>
+        <strong>${escapeHtml(name || "-")}</strong>
+        ${summaryMeta}
+      </summary>
+      <div class="inventory-item-body">
+        ${details}
+        ${labelRows}
+      </div>
+    </details>
+  `;
+}
+
+function renderInventoryLabels(labels) {
+  if (!labels || typeof labels !== "object") return "";
+  return Object.entries(labels)
+    .map(([key, value]) => `<span>${escapeHtml(key)}=${escapeHtml(value)}</span>`)
+    .join("");
 }
 
 function initDashboard() {
@@ -1337,7 +1449,7 @@ function renderGrants() {
     row.appendChild(createIdentityCell(grant.name || "-", namespace));
     row.appendChild(createIdentityCell(grant.serverRef?.name || "-", serverNamespace));
     row.appendChild(createSubjectCell(grant.subject));
-    row.appendChild(createTrustCell(grant.maxTrust));
+    row.appendChild(createGrantRiskCell(grant.maxTrust, grant.allowedSideEffects));
     row.appendChild(createBadgeCell(status, statusClass));
     row.appendChild(
       createActionCell(grant.disabled ? "Enable" : "Disable", () =>
@@ -1411,6 +1523,7 @@ async function applyGrant(event) {
       },
       subject: { humanID, agentID },
       maxTrust: fieldValue("grant-trust"),
+      allowedSideEffects: selectedGrantSideEffects(),
       policyVersion: fieldValue("grant-policy-version") || defaults.policyVersion,
       toolRules,
     };
@@ -1423,6 +1536,7 @@ async function applyGrant(event) {
     document.getElementById("grant-form")?.reset();
     setFieldValue("grant-namespace", activeScopeNamespace());
     setFieldValue("grant-policy-version", defaults.policyVersion);
+    resetGrantSideEffects();
     document.getElementById("grant-form")?.classList.add("hidden");
     loadGrants();
     loadDashboardSummary();
@@ -1432,6 +1546,18 @@ async function applyGrant(event) {
   } finally {
     if (submit) submit.disabled = false;
   }
+}
+
+function selectedGrantSideEffects() {
+  return Array.from(document.querySelectorAll('input[name="grant-side-effect"]:checked'))
+    .map((input) => input.value)
+    .filter(Boolean);
+}
+
+function resetGrantSideEffects() {
+  document.querySelectorAll('input[name="grant-side-effect"]').forEach((input) => {
+    input.checked = input.value === "read";
+  });
 }
 
 function parseToolRules(text) {
@@ -1753,8 +1879,9 @@ async function createUserAPIKey() {
       body: JSON.stringify({ name }),
     });
     const oneTime = document.getElementById("user-api-key-once");
-    if (oneTime && data.api_key) {
-      oneTime.textContent = `Copy now (shown once): ${data.api_key}`;
+    const cleartextKey = data.one_time_key || data.api_key;
+    if (oneTime && cleartextKey) {
+      oneTime.textContent = `Copy now (shown once): ${cleartextKey}`;
       oneTime.classList.remove("hidden");
       if (userAPIKeyClearTimer) {
         clearTimeout(userAPIKeyClearTimer);
@@ -1843,8 +1970,7 @@ function setOperationLoadingState() {
 
 async function loadOperationServers() {
   try {
-    const data = await fetchJSON(scopedPath("/runtime/servers"));
-    operationsServersCache = Array.isArray(data.servers) ? data.servers : [];
+    operationsServersCache = await loadFleetServers();
     const selectedStillExists = operationsServersCache.some(
       (server) => operationServerKey(server) === selectedOperationsServerKey
     );
@@ -2032,6 +2158,9 @@ function renderSelectedOperationServer() {
   const labels = server.labels && typeof server.labels === "object"
     ? Object.entries(server.labels)
     : [];
+  const description = server.description
+    ? `<p class="server-description">${escapeHtml(server.description)}</p>`
+    : "";
   detail.innerHTML = `
     <div class="server-inspector-head">
       <div class="server-identity">
@@ -2039,6 +2168,7 @@ function renderSelectedOperationServer() {
         <div class="server-title-stack">
           <h3>${escapeHtml(server.name || "-")}</h3>
           <p>${escapeHtml(server.namespace || "-")}</p>
+          ${description}
         </div>
       </div>
       <span class="badge ${serverBadgeClass(server.status)}">${escapeHtml(server.status || "Unknown")}</span>
@@ -2234,8 +2364,7 @@ async function loadPlatformServerHealth() {
     tbody.innerHTML = '<tr><td colspan="4" class="empty">Loading MCP server health...</td></tr>';
   }
   try {
-    const data = await fetchJSON(scopedPath("/runtime/servers"));
-    const servers = Array.isArray(data.servers) ? data.servers : [];
+    const servers = await loadFleetServers();
     renderPlatformServerHealth(servers);
   } catch (err) {
     if (isUnauthorizedError(err)) return;
@@ -2247,6 +2376,53 @@ async function loadPlatformServerHealth() {
       tbody.innerHTML = '<tr><td colspan="4" class="empty">Error loading MCP server health.</td></tr>';
     }
   }
+}
+
+async function loadFleetServers() {
+  if (authPrincipal?.role !== "admin") {
+    const data = await fetchJSON(scopedPath("/runtime/servers"));
+    return Array.isArray(data.servers) ? data.servers : [];
+  }
+  const namespaces = uniqueNonEmpty(
+    (Array.isArray(namespaceScopes) ? namespaceScopes : [])
+      .map((item) => item?.namespace || "")
+  );
+  if (!namespaces.length) {
+    const data = await fetchJSON("/runtime/servers");
+    return Array.isArray(data.servers) ? data.servers : [];
+  }
+  const results = await Promise.all(
+    namespaces.map(async (namespace) => {
+      const data = await fetchJSON(`/runtime/servers?namespace=${encodeURIComponent(namespace)}`);
+      return Array.isArray(data.servers) ? data.servers : [];
+    })
+  );
+  return dedupeServers(results.flat());
+}
+
+function uniqueNonEmpty(values) {
+  const seen = new Set();
+  const out = [];
+  values.forEach((value) => {
+    const normalized = String(value || "").trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push(normalized);
+  });
+  return out;
+}
+
+function dedupeServers(servers) {
+  const seen = new Set();
+  const out = [];
+  servers.forEach((server) => {
+    const key = operationServerKey(server);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(server);
+  });
+  out.sort((a, b) => operationServerKey(a).localeCompare(operationServerKey(b)));
+  return out;
 }
 
 function renderPlatformServerHealth(servers) {

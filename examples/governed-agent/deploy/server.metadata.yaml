@@ -1,0 +1,36 @@
+version: v1
+servers:
+  - name: governed-agent-demo-mcp
+    route: /governed-agent-demo-mcp/mcp
+    publicPathPrefix: governed-agent-demo-mcp
+    port: 8088
+    namespace: mcp-servers
+    envVars:
+      - name: MCP_PATH
+        value: /governed-agent-demo-mcp/mcp
+    tools:
+      - name: aaa-ping
+        requiredTrust: low
+      - name: echo
+        requiredTrust: low
+      - name: add
+        requiredTrust: low
+      - name: upper
+        requiredTrust: medium
+      - name: lower
+        requiredTrust: low
+      - name: slugify
+        requiredTrust: low
+    auth:
+      mode: header
+      humanIDHeader: X-MCP-Human-ID
+      agentIDHeader: X-MCP-Agent-ID
+      sessionIDHeader: X-MCP-Agent-Session
+    policy:
+      mode: allow-list
+      defaultDecision: deny
+      policyVersion: v1
+    session:
+      required: true
+    gateway:
+      enabled: true

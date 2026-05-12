@@ -35,13 +35,15 @@ func TestLoadFromFile(t *testing.T) {
 						Namespace: "mcp-servers",
 					},
 					{
-						Name:      "custom-server",
-						Image:     "custom/image",
-						ImageTag:  "v1",
-						Route:     "/custom-route",
-						Port:      9090,
-						Replicas:  int32Ptr(3),
-						Namespace: "custom-namespace",
+						Name:        "custom-server",
+						Description: "Example server for testing metadata loading.",
+						Image:       "custom/image",
+						ImageTag:    "v1",
+						Route:       "/custom-route",
+						Port:        9090,
+						Replicas:    int32Ptr(3),
+						Namespace:   "custom-namespace",
+						TeamID:      "team-custom",
 						Gateway: &GatewayConfig{
 							Enabled:     true,
 							Image:       "example.com/mcp-proxy:latest",
@@ -52,6 +54,7 @@ func TestLoadFromFile(t *testing.T) {
 							Mode:            AuthMode("header"),
 							HumanIDHeader:   "X-MCP-Human-ID",
 							AgentIDHeader:   "X-MCP-Agent-ID",
+							TeamIDHeader:    "X-Team-ID",
 							SessionIDHeader: "X-MCP-Agent-Session",
 							TokenHeader:     "Authorization",
 						},
@@ -70,8 +73,8 @@ func TestLoadFromFile(t *testing.T) {
 							UpstreamTokenHeader: "Authorization",
 						},
 						Tools: []ToolConfig{
-							{Name: "list_tools", RequiredTrust: TrustLevel("low")},
-							{Name: "delete_user", RequiredTrust: TrustLevel("high")},
+							{Name: "list_tools", Description: "List tools exposed by the server.", RequiredTrust: TrustLevel("low"), SideEffect: ToolSideEffect("read")},
+							{Name: "delete_user", Description: "Delete a user from the backing system.", RequiredTrust: TrustLevel("high"), SideEffect: ToolSideEffect("destructive")},
 						},
 						SecretEnvVars: []SecretEnvVar{
 							{
@@ -139,6 +142,9 @@ func TestLoadFromFile(t *testing.T) {
 				if got.Name != want.Name {
 					t.Errorf("server[%d].Name = %q, want %q", i, got.Name, want.Name)
 				}
+				if got.Description != want.Description {
+					t.Errorf("server[%d].Description = %q, want %q", i, got.Description, want.Description)
+				}
 				if got.Image != want.Image {
 					t.Errorf("server[%d].Image = %q, want %q", i, got.Image, want.Image)
 				}
@@ -156,6 +162,9 @@ func TestLoadFromFile(t *testing.T) {
 				}
 				if got.Namespace != want.Namespace {
 					t.Errorf("server[%d].Namespace = %q, want %q", i, got.Namespace, want.Namespace)
+				}
+				if got.TeamID != want.TeamID {
+					t.Errorf("server[%d].TeamID = %q, want %q", i, got.TeamID, want.TeamID)
 				}
 				if !gatewayConfigEqual(got.Gateway, want.Gateway) {
 					t.Errorf("server[%d].Gateway = %#v, want %#v", i, got.Gateway, want.Gateway)
@@ -244,7 +253,7 @@ func TestSetDefaults(t *testing.T) {
 					Required: true,
 				},
 				Tools: []ToolConfig{
-					{Name: "delete_user", RequiredTrust: TrustLevel("high")},
+					{Name: "delete_user", RequiredTrust: TrustLevel("high"), SideEffect: ToolSideEffect("destructive")},
 				},
 				SecretEnvVars: []SecretEnvVar{
 					{
@@ -277,6 +286,7 @@ func TestSetDefaults(t *testing.T) {
 					Mode:            AuthModeHeader,
 					HumanIDHeader:   "X-MCP-Human-ID",
 					AgentIDHeader:   "X-MCP-Agent-ID",
+					TeamIDHeader:    "X-MCP-Team-ID",
 					SessionIDHeader: "X-MCP-Agent-Session",
 					TokenHeader:     "Authorization",
 				},
@@ -295,7 +305,7 @@ func TestSetDefaults(t *testing.T) {
 					UpstreamTokenHeader: "Authorization",
 				},
 				Tools: []ToolConfig{
-					{Name: "delete_user", RequiredTrust: TrustLevel("high")},
+					{Name: "delete_user", RequiredTrust: TrustLevel("high"), SideEffect: ToolSideEffect("destructive")},
 				},
 				SecretEnvVars: []SecretEnvVar{
 					{

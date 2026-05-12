@@ -98,6 +98,9 @@ func setDefaults(server *ServerMetadata) {
 		if server.Auth.AgentIDHeader == "" {
 			server.Auth.AgentIDHeader = "X-MCP-Agent-ID"
 		}
+		if server.Auth.TeamIDHeader == "" {
+			server.Auth.TeamIDHeader = "X-MCP-Team-ID"
+		}
 		if server.Auth.SessionIDHeader == "" {
 			server.Auth.SessionIDHeader = "X-MCP-Agent-Session"
 		}

@@ -12,11 +12,13 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
 
+	"mcp-runtime/pkg/events"
 	policypkg "mcp-runtime/pkg/policy"
 )
 
@@ -126,13 +128,14 @@ func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 	})
 
 	token := issuer.sign(t, jwt.MapClaims{
-		"iss": issuer.url,
-		"aud": "mcp-runtime",
-		"sub": "human-1",
-		"azp": "client-1",
-		"sid": "session-1",
-		"exp": time.Now().Add(time.Hour).Unix(),
-		"nbf": time.Now().Add(-time.Minute).Unix(),
+		"iss":     issuer.url,
+		"aud":     "mcp-runtime",
+		"sub":     "human-1",
+		"azp":     "client-1",
+		"team_id": "team-acme",
+		"sid":     "session-1",
+		"exp":     time.Now().Add(time.Hour).Unix(),
+		"nbf":     time.Now().Add(-time.Minute).Unix(),
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"echo"}}`))
@@ -154,6 +157,9 @@ func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 	if got := upstreamHeaders.Get(defaultAgentHeader); got != "client-1" {
 		t.Fatalf("%s = %q, want %q", defaultAgentHeader, got, "client-1")
 	}
+	if got := upstreamHeaders.Get(defaultTeamHeader); got != "team-acme" {
+		t.Fatalf("%s = %q, want %q", defaultTeamHeader, got, "team-acme")
+	}
 	if got := upstreamHeaders.Get(defaultSessionHeader); got != "session-1" {
 		t.Fatalf("%s = %q, want %q", defaultSessionHeader, got, "session-1")
 	}
@@ -168,15 +174,18 @@ func TestApplyIdentityHeadersClearsSpoofedValues(t *testing.T) {
 	proxy := &proxyServer{
 		defaultHumanHeader:   defaultHumanHeader,
 		defaultAgentHeader:   defaultAgentHeader,
+		defaultTeamHeader:    defaultTeamHeader,
 		defaultSessionHeader: defaultSessionHeader,
 	}
 	req := httptest.NewRequest(http.MethodGet, "http://proxy.example.com/mcp", nil)
 	req.Header.Set(defaultHumanHeader, "spoofed-human")
 	req.Header.Set(defaultAgentHeader, "spoofed-agent")
+	req.Header.Set(defaultTeamHeader, "spoofed-team")
 	req.Header.Set(defaultSessionHeader, "spoofed-session")
 
 	proxy.applyIdentityHeaders(req, oauthPolicy("https://issuer.example.com"), identityContext{
 		HumanID: "human-1",
+		TeamID:  "team-acme",
 	})
 
 	if got := req.Header.Get(defaultHumanHeader); got != "human-1" {
@@ -184,6 +193,9 @@ func TestApplyIdentityHeadersClearsSpoofedValues(t *testing.T) {
 	}
 	if got := req.Header.Get(defaultAgentHeader); got != "" {
 		t.Fatalf("%s = %q, want empty", defaultAgentHeader, got)
+	}
+	if got := req.Header.Get(defaultTeamHeader); got != "team-acme" {
+		t.Fatalf("%s = %q, want %q", defaultTeamHeader, got, "team-acme")
 	}
 	if got := req.Header.Get(defaultSessionHeader); got != "" {
 		t.Fatalf("%s = %q, want empty", defaultSessionHeader, got)
@@ -204,12 +216,14 @@ func TestApplyUpstreamTokenClearsHeaderWhenTokenMissing(t *testing.T) {
 	}
 }
 
-func TestHandleProxyRewritesUpstreamHostHeader(t *testing.T) {
+func TestHandleProxyRewritesUpstreamHostAndForwardedHeaders(t *testing.T) {
 	t.Parallel()
 
 	var upstreamHost string
+	var upstreamHeaders http.Header
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamHost = r.Host
+		upstreamHeaders = r.Header.Clone()
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(upstreamServer.Close)
@@ -224,6 +238,7 @@ func TestHandleProxyRewritesUpstreamHostHeader(t *testing.T) {
 		httpClient:            &http.Client{Timeout: 2 * time.Second},
 		defaultHumanHeader:    defaultHumanHeader,
 		defaultAgentHeader:    defaultAgentHeader,
+		defaultTeamHeader:     defaultTeamHeader,
 		defaultSessionHeader:  defaultSessionHeader,
 		defaultPolicyMode:     defaultPolicyMode,
 		defaultPolicyDecision: defaultPolicyDecision,
@@ -242,6 +257,15 @@ func TestHandleProxyRewritesUpstreamHostHeader(t *testing.T) {
 	}
 	if upstreamHost != target.Host {
 		t.Fatalf("upstream host = %q, want %q", upstreamHost, target.Host)
+	}
+	if got := upstreamHeaders.Get("X-Forwarded-Host"); got != "policy.example.local" {
+		t.Fatalf("X-Forwarded-Host = %q, want %q", got, "policy.example.local")
+	}
+	if got := upstreamHeaders.Get("X-Forwarded-Proto"); got != "http" {
+		t.Fatalf("X-Forwarded-Proto = %q, want %q", got, "http")
+	}
+	if got := upstreamHeaders.Get("X-Forwarded-For"); got != "192.0.2.1" {
+		t.Fatalf("X-Forwarded-For = %q, want %q", got, "192.0.2.1")
 	}
 }
 
@@ -269,124 +293,6 @@ func TestInspectRPCRequestAcceptsChunkedBody(t *testing.T) {
 	}
 	if string(body) != payload {
 		t.Fatalf("request body = %q, want %q", string(body), payload)
-	}
-}
-
-func TestAuthorizeRequestOptionalSessionDoesNotApplyWithoutSessionHeader(t *testing.T) {
-	t.Parallel()
-
-	policy := &policypkg.Document{
-		Policy: &policypkg.Config{
-			Mode:            "allow-list",
-			DefaultDecision: "deny",
-			PolicyVersion:   "test-policy",
-		},
-		Session: &policypkg.Session{
-			Required: false,
-		},
-		Tools: []policypkg.Tool{
-			{Name: "upper", RequiredTrust: "medium"},
-		},
-		Grants: []policypkg.Grant{
-			{
-				Name:      "grant-1",
-				HumanID:   "human-1",
-				AgentID:   "agent-1",
-				MaxTrust:  "high",
-				ToolRules: []policypkg.ToolAccess{{Name: "upper", Decision: "allow"}},
-			},
-		},
-		Sessions: []policypkg.Binding{
-			{
-				Name:           "session-1",
-				HumanID:        "human-1",
-				AgentID:        "agent-1",
-				ConsentedTrust: "low",
-			},
-		},
-	}
-
-	decision := authorizeRequest(policy, identityContext{
-		HumanID: "human-1",
-		AgentID: "agent-1",
-	}, "tools/call", "upper")
-
-	if !decision.Allowed {
-		t.Fatalf("decision = %#v, want allowed request", decision)
-	}
-	if decision.ConsentedTrust != "high" || decision.EffectiveTrust != "high" {
-		t.Fatalf("decision = %#v, want optional session ignored without header", decision)
-	}
-}
-
-func TestAuthorizeRequestOptionalSessionRequiresLiveSessionHeader(t *testing.T) {
-	t.Parallel()
-
-	basePolicy := &policypkg.Document{
-		Policy: &policypkg.Config{
-			Mode:            "allow-list",
-			DefaultDecision: "deny",
-			PolicyVersion:   "test-policy",
-		},
-		Session: &policypkg.Session{
-			Required: false,
-		},
-		Tools: []policypkg.Tool{
-			{Name: "upper", RequiredTrust: "medium"},
-		},
-		Grants: []policypkg.Grant{
-			{
-				Name:      "grant-1",
-				HumanID:   "human-1",
-				AgentID:   "agent-1",
-				MaxTrust:  "high",
-				ToolRules: []policypkg.ToolAccess{{Name: "upper", Decision: "allow"}},
-			},
-		},
-	}
-
-	liveSessionPolicy := *basePolicy
-	liveSessionPolicy.Sessions = []policypkg.Binding{
-		{
-			Name:           "session-1",
-			HumanID:        "human-1",
-			AgentID:        "agent-1",
-			ConsentedTrust: "low",
-		},
-	}
-
-	denyDecision := authorizeRequest(&liveSessionPolicy, identityContext{
-		HumanID:   "human-1",
-		AgentID:   "agent-1",
-		SessionID: "session-1",
-	}, "tools/call", "upper")
-
-	if denyDecision.Reason != "trust_too_low" {
-		t.Fatalf("deny decision = %#v, want trust_too_low", denyDecision)
-	}
-
-	revokedSessionPolicy := *basePolicy
-	revokedSessionPolicy.Sessions = []policypkg.Binding{
-		{
-			Name:           "session-1",
-			HumanID:        "human-1",
-			AgentID:        "agent-1",
-			ConsentedTrust: "low",
-			Revoked:        true,
-		},
-	}
-
-	allowDecision := authorizeRequest(&revokedSessionPolicy, identityContext{
-		HumanID:   "human-1",
-		AgentID:   "agent-1",
-		SessionID: "session-1",
-	}, "tools/call", "upper")
-
-	if !allowDecision.Allowed {
-		t.Fatalf("allow decision = %#v, want revoked optional session ignored", allowDecision)
-	}
-	if allowDecision.ConsentedTrust != "high" || allowDecision.EffectiveTrust != "high" {
-		t.Fatalf("allow decision = %#v, want admin trust when optional session is revoked", allowDecision)
 	}
 }
 
@@ -460,7 +366,7 @@ func TestAuditPayloadDoesNotPersistRawQueryString(t *testing.T) {
 		"",
 		identityContext{HumanID: "human-1"},
 		nil,
-		authzDecision{Allowed: true, Reason: "allowed", PolicyVersion: "test-policy"},
+		policypkg.Decision{Allowed: true, Reason: "allowed", PolicyVersion: "test-policy"},
 		http.StatusOK,
 		12,
 		34,
@@ -478,6 +384,7 @@ func TestStartPolicyCacheRequiresConfiguredPolicyFile(t *testing.T) {
 		policyFile:            filepath.Join(t.TempDir(), "missing-policy.json"),
 		defaultHumanHeader:    defaultHumanHeader,
 		defaultAgentHeader:    defaultAgentHeader,
+		defaultTeamHeader:     defaultTeamHeader,
 		defaultSessionHeader:  defaultSessionHeader,
 		defaultPolicyMode:     defaultPolicyMode,
 		defaultPolicyDecision: defaultPolicyDecision,
@@ -494,13 +401,13 @@ func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
 
 	proxy := &proxyServer{
 		analyticsURL:   "http://analytics.example.com",
-		analyticsQueue: make(chan analyticsEvent, 1),
+		analyticsQueue: make(chan events.Envelope, 1),
 	}
-	proxy.analyticsQueue <- analyticsEvent{Source: "existing"}
+	proxy.analyticsQueue <- events.Envelope{Source: "existing"}
 
 	done := make(chan struct{})
 	go func() {
-		proxy.emitIfEnabled(analyticsEvent{Source: "dropped"})
+		proxy.emitIfEnabled(events.Envelope{Source: "dropped"})
 		close(done)
 	}()
 
@@ -517,6 +424,33 @@ func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
 		}
 	default:
 		t.Fatal("analytics queue unexpectedly drained")
+	}
+}
+
+func TestStopAnalyticsDispatcherDrainsQueue(t *testing.T) {
+	t.Parallel()
+
+	var received int32
+	ingest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		atomic.AddInt32(&received, 1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(ingest.Close)
+
+	proxy := &proxyServer{
+		analyticsURL: ingest.URL,
+		httpClient:   ingest.Client(),
+	}
+	proxy.startAnalyticsDispatcher()
+	for i := 0; i < 3; i++ {
+		proxy.emitIfEnabled(events.Envelope{Source: "proxy", EventType: "mcp.request"})
+	}
+
+	proxy.stopAnalyticsDispatcher()
+
+	if got := atomic.LoadInt32(&received); got != 3 {
+		t.Fatalf("received analytics events = %d, want 3", got)
 	}
 }
 
@@ -601,6 +535,7 @@ func oauthPolicy(issuerURL string) *policypkg.Document {
 			Mode:            "oauth",
 			HumanIDHeader:   defaultHumanHeader,
 			AgentIDHeader:   defaultAgentHeader,
+			TeamIDHeader:    defaultTeamHeader,
 			SessionIDHeader: defaultSessionHeader,
 			TokenHeader:     "Authorization",
 			IssuerURL:       issuerURL,
@@ -616,15 +551,16 @@ func oauthPolicy(issuerURL string) *policypkg.Document {
 			UpstreamTokenHeader: "Authorization",
 		},
 		Tools: []policypkg.Tool{
-			{Name: "echo", RequiredTrust: "low"},
+			{Name: "echo", RequiredTrust: "low", SideEffect: "read"},
 		},
 		Grants: []policypkg.Grant{
 			{
-				Name:      "grant-1",
-				HumanID:   "human-1",
-				AgentID:   "client-1",
-				MaxTrust:  "high",
-				ToolRules: []policypkg.ToolAccess{{Name: "echo", Decision: "allow"}},
+				Name:               "grant-1",
+				HumanID:            "human-1",
+				AgentID:            "client-1",
+				MaxTrust:           "high",
+				AllowedSideEffects: []string{"read"},
+				ToolRules:          []policypkg.ToolAccess{{Name: "echo", Decision: "allow"}},
 			},
 		},
 		Sessions: []policypkg.Binding{

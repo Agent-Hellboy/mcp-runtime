@@ -577,6 +577,10 @@ func TestRunDoctorAggregates(t *testing.T) {
 				return &core.MockCommand{OutputData: []byte("web:8000:32080\n")}
 			case contains(spec.Args, "jsonpath={.spec.ports[0].nodePort}"):
 				return &core.MockCommand{OutputData: []byte("32000")}
+			case contains(spec.Args, "get") && contains(spec.Args, "pod") && argContains(spec.Args, "imageID"):
+				return &core.MockCommand{OutputData: []byte("docker-pullable://registry.k8s.io/pause@sha256:test")}
+			case contains(spec.Args, "get") && contains(spec.Args, "pods") && argContains(spec.Args, "spec.nodeName"):
+				return &core.MockCommand{OutputData: []byte("node-a")}
 			case contains(spec.Args, "curl"):
 				return &core.MockCommand{OutputData: []byte("HTTP/1.1 503 Service Unavailable\n")}
 			}
@@ -614,6 +618,10 @@ func TestRunDoctorWithProgressReportsEachCheck(t *testing.T) {
 				return &core.MockCommand{OutputData: []byte("web:8000:32080\n")}
 			case contains(spec.Args, "jsonpath={.spec.ports[0].nodePort}"):
 				return &core.MockCommand{OutputData: []byte("32000")}
+			case contains(spec.Args, "get") && contains(spec.Args, "pod") && argContains(spec.Args, "imageID"):
+				return &core.MockCommand{OutputData: []byte("docker-pullable://registry.k8s.io/pause@sha256:test")}
+			case contains(spec.Args, "get") && contains(spec.Args, "pods") && argContains(spec.Args, "spec.nodeName"):
+				return &core.MockCommand{OutputData: []byte("node-a")}
 			case contains(spec.Args, "curl"):
 				return &core.MockCommand{OutputData: []byte("HTTP/1.1 503 Service Unavailable\n")}
 			}
@@ -699,6 +707,7 @@ func TestDoctorCurlProbesPassPathValidator(t *testing.T) {
 	})
 
 	t.Run("sentinel API auth probe", func(t *testing.T) {
+		var probeArgs []string
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				switch {
@@ -706,11 +715,18 @@ func TestDoctorCurlProbesPassPathValidator(t *testing.T) {
 					return &core.MockCommand{OutputData: []byte(doctorSentinelNamespace)}
 				case contains(spec.Args, "jsonpath={.data.UI_API_KEY}"):
 					return &core.MockCommand{OutputData: []byte("dGVzdA==")}
-				case contains(spec.Args, "curl"):
+				case len(spec.Args) > 0 && spec.Args[0] == "run":
+					probeArgs = append([]string(nil), spec.Args...)
 					if contains(spec.Args, "/dev/null") {
 						t.Fatal("doctor curl helper should not pass /dev/null through kubectl validators")
 					}
+					return &core.MockCommand{OutputData: []byte("pod/doctor-sentinel-probe created\n")}
+				case len(spec.Args) > 0 && spec.Args[0] == "get" && contains(spec.Args, "jsonpath={.status.phase}"):
+					return &core.MockCommand{OutputData: []byte("Succeeded")}
+				case len(spec.Args) > 0 && spec.Args[0] == "logs":
 					return &core.MockCommand{OutputData: []byte("200")}
+				case len(spec.Args) > 0 && spec.Args[0] == "delete":
+					return &core.MockCommand{}
 				default:
 					return &core.MockCommand{}
 				}
@@ -720,6 +736,15 @@ func TestDoctorCurlProbesPassPathValidator(t *testing.T) {
 		check := checkSentinelAPIAuthProbe(kubectl)
 		if !check.OK {
 			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+		overrides := argValueWithPrefix(probeArgs, "--overrides=")
+		if overrides == "" {
+			t.Fatalf("sentinel auth probe should use restricted-compliant overrides, got args=%v", probeArgs)
+		}
+		for _, notWant := range []string{"--attach", "--rm"} {
+			if contains(probeArgs, notWant) {
+				t.Fatalf("sentinel auth probe should read completed pod logs instead of using %s, got args=%v", notWant, probeArgs)
+			}
 		}
 	})
 }
@@ -943,6 +968,66 @@ func TestCheckOperatorRecentReconcileErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCheckOperatorClusterRoleRules(t *testing.T) {
+	t.Run("accepts split verbs with matching API groups", func(t *testing.T) {
+		check := checkOperatorClusterRoleRulesFromJSON(t, `{
+			"rules": [
+				{"apiGroups":[""],"resources":["serviceaccounts","configmaps","services"],"verbs":["get"]},
+				{"apiGroups":[""],"resources":["serviceaccounts","configmaps","services"],"verbs":["list"]},
+				{"apiGroups":[""],"resources":["serviceaccounts","configmaps","services"],"verbs":["watch"]},
+				{"apiGroups":["apps"],"resources":["deployments"],"verbs":["get","list"]},
+				{"apiGroups":["apps"],"resources":["deployments"],"verbs":["watch"]},
+				{"apiGroups":["networking.k8s.io"],"resources":["ingresses"],"verbs":["get"]},
+				{"apiGroups":["networking.k8s.io"],"resources":["ingresses"],"verbs":["list","watch"]}
+			]
+		}`)
+		if !check.OK {
+			t.Fatalf("expected OK for additive RBAC rules, got detail=%q", check.Detail)
+		}
+	})
+
+	t.Run("requires the expected API group", func(t *testing.T) {
+		check := checkOperatorClusterRoleRulesFromJSON(t, `{
+			"rules": [
+				{"apiGroups":[""],"resources":["serviceaccounts","configmaps","services"],"verbs":["get","list","watch"]},
+				{"apiGroups":["extensions"],"resources":["deployments","ingresses"],"verbs":["get","list","watch"]}
+			]
+		}`)
+		if check.OK {
+			t.Fatal("expected failure for permissions granted on the wrong API groups")
+		}
+		for _, want := range []string{"deployments.apps", "ingresses.networking.k8s.io"} {
+			if !strings.Contains(check.Detail, want) {
+				t.Fatalf("detail should mention %q, got %q", want, check.Detail)
+			}
+		}
+	})
+
+	t.Run("accepts wildcard grants", func(t *testing.T) {
+		check := checkOperatorClusterRoleRulesFromJSON(t, `{
+			"rules": [
+				{"apiGroups":["*"],"resources":["*"],"verbs":["*"]}
+			]
+		}`)
+		if !check.OK {
+			t.Fatalf("expected OK for wildcard RBAC rule, got detail=%q", check.Detail)
+		}
+	})
+}
+
+func checkOperatorClusterRoleRulesFromJSON(t *testing.T, body string) DoctorCheck {
+	t.Helper()
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if !contains(spec.Args, "mcp-runtime-operator-role") {
+				t.Fatalf("unexpected command args: %v", spec.Args)
+			}
+			return &core.MockCommand{OutputData: []byte(body)}
+		},
+	}
+	return checkOperatorClusterRoleRules(core.NewTestKubectlClient(mock))
 }
 
 func TestCheckMCPServerReconcileSmoke(t *testing.T) {
@@ -1285,13 +1370,20 @@ func TestCheckMCPServersImagePullSmokeUsesRestrictedCompliantPodSpec(t *testing.
 	}
 }
 
-func TestCheckMCPServersDNSAndNetworkAllowsColdCurlImagePull(t *testing.T) {
+func TestCheckMCPServersDNSAndNetworkReadsCompletedPodLogs(t *testing.T) {
 	var runArgs []string
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
-			if len(spec.Args) > 0 && spec.Args[0] == "run" {
+			switch {
+			case len(spec.Args) > 0 && spec.Args[0] == "run":
 				runArgs = append([]string(nil), spec.Args...)
+				return &core.MockCommand{OutputData: []byte("pod/mcp-runtime-doctor-dns created\n")}
+			case len(spec.Args) > 0 && spec.Args[0] == "get" && contains(spec.Args, "jsonpath={.status.phase}"):
+				return &core.MockCommand{OutputData: []byte("Succeeded")}
+			case len(spec.Args) > 0 && spec.Args[0] == "logs":
 				return &core.MockCommand{OutputData: []byte("HTTP/1.1 200 OK\r\n")}
+			case len(spec.Args) > 0 && spec.Args[0] == "delete":
+				return &core.MockCommand{}
 			}
 			return &core.MockCommand{OutputErr: fmt.Errorf("unexpected command: %v", spec.Args)}
 		},
@@ -1304,12 +1396,14 @@ func TestCheckMCPServersDNSAndNetworkAllowsColdCurlImagePull(t *testing.T) {
 	if len(runArgs) == 0 {
 		t.Fatal("expected DNS/network probe to create a curl pod")
 	}
-	wantTimeout := "--pod-running-timeout=" + doctorProbePodRunTimeout
-	if !contains(runArgs, wantTimeout) {
-		t.Fatalf("DNS/network probe should allow cold curl image pulls with %s, got args=%v", wantTimeout, runArgs)
+	overrides := argValueWithPrefix(runArgs, "--overrides=")
+	if overrides == "" {
+		t.Fatalf("DNS/network probe should use restricted-compliant overrides, got args=%v", runArgs)
 	}
-	if contains(runArgs, "--pod-running-timeout=30s") {
-		t.Fatalf("DNS/network probe should not use the old 30s running timeout, got args=%v", runArgs)
+	for _, notWant := range []string{"--attach", "--rm"} {
+		if contains(runArgs, notWant) {
+			t.Fatalf("DNS/network probe should read completed pod logs instead of using %s, got args=%v", notWant, runArgs)
+		}
 	}
 }
 
@@ -1318,6 +1412,7 @@ func TestRestrictedRunOverridesUsesNumericNonRootUser(t *testing.T) {
 	for _, want := range []string{
 		`"runAsNonRoot":true`,
 		`"runAsUser":65532`,
+		`"workingDir":"/tmp"`,
 		`"command":["curl"]`,
 		`"args":["-sSI","http://example.test"]`,
 	} {

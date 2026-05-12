@@ -38,6 +38,15 @@ const (
 	TrustLevelHigh   TrustLevel = "high"
 )
 
+// +kubebuilder:validation:Enum=read;write;destructive
+type ToolSideEffect string
+
+const (
+	ToolSideEffectRead        ToolSideEffect = "read"
+	ToolSideEffectWrite       ToolSideEffect = "write"
+	ToolSideEffectDestructive ToolSideEffect = "destructive"
+)
+
 // +kubebuilder:validation:Enum=RollingUpdate;Recreate;Canary
 type RolloutStrategy string
 
@@ -50,6 +59,13 @@ const (
 // MCPServerSpec defines the desired state of MCPServer.
 // +kubebuilder:object:generate=true
 type MCPServerSpec struct {
+	// TeamID is the stable platform team identifier that owns this server.
+	// The operator renders it into gateway policy and analytics events.
+	TeamID string `json:"teamID,omitempty"`
+
+	// Description is a human-readable summary of what the MCP server provides.
+	Description string `json:"description,omitempty"`
+
 	// Image is the container image for the MCP server.
 	Image string `json:"image"`
 
@@ -165,6 +181,7 @@ type ToolConfig struct {
 	Name          string            `json:"name"`
 	Description   string            `json:"description,omitempty"`
 	RequiredTrust TrustLevel        `json:"requiredTrust,omitempty"`
+	SideEffect    ToolSideEffect    `json:"sideEffect"`
 	Labels        map[string]string `json:"labels,omitempty"`
 }
 
@@ -182,6 +199,7 @@ type AuthConfig struct {
 	Mode            AuthMode `json:"mode,omitempty"`
 	HumanIDHeader   string   `json:"humanIDHeader,omitempty"`
 	AgentIDHeader   string   `json:"agentIDHeader,omitempty"`
+	TeamIDHeader    string   `json:"teamIDHeader,omitempty"`
 	SessionIDHeader string   `json:"sessionIDHeader,omitempty"`
 	TokenHeader     string   `json:"tokenHeader,omitempty"`
 	IssuerURL       string   `json:"issuerURL,omitempty"`
@@ -226,6 +244,9 @@ type GatewayConfig struct {
 
 	// StripPrefix removes a path prefix before forwarding to the upstream server.
 	StripPrefix string `json:"stripPrefix,omitempty"`
+
+	// Resources defines resource limits and requests for the gateway sidecar.
+	Resources *ResourceRequirements `json:"resources,omitempty"`
 }
 
 // AnalyticsConfig configures analytics emission from the gateway sidecar.
@@ -296,6 +317,7 @@ type MCPServerStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Team",type="string",JSONPath=".spec.teamID"
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Policy",type="boolean",JSONPath=".status.policyReady"
 // +kubebuilder:printcolumn:name="Gateway",type="boolean",JSONPath=".status.gatewayReady"

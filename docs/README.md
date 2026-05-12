@@ -20,6 +20,7 @@ human workflows.
 
   <div class="docs-actions">
     <a class="docs-button docs-button-primary" href="getting-started/">Get started</a>
+    <a class="docs-button" href="contributor/README/">Contribute</a>
     <a class="docs-button" href="architecture/">Architecture</a>
     <a class="docs-button" href="api/">API reference</a>
   </div>
@@ -33,6 +34,7 @@ human workflows.
     <li>Registry-backed image build, push, and deploy flow</li>
     <li>Sentinel gateway policy, grants, consented sessions, audit, and analytics</li>
     <li>Governance controls for tool access, trust levels, session revocation, and policy versioning</li>
+    <li>Optional HTTP and stdio agent adapters for governed framework integrations</li>
     <li>Compliance-oriented event records for who called what, when, against which server, and whether it was allowed or denied</li>
     <li>Ingress routing for path-based MCP endpoints</li>
     <li>CLI for setup, status, registry, access, Sentinel, and servers</li>
@@ -73,13 +75,14 @@ one system.
 MCP Runtime keeps governance on the live request path instead of leaving it as
 out-of-band documentation. The gateway evaluates `MCPAccessGrant` and
 `MCPAgentSession` policy before tool calls reach a server, including tool-level
-allow/deny rules, trust requirements, consented trust, expiry, and revocation.
+allow/deny rules, side-effect allowances, trust requirements, consented trust,
+expiry, and revocation.
 
 Each decision can emit audit and analytics events with the server, namespace,
-human ID, agent ID, session ID, tool name, policy version, decision, reason, and
-trust context. That gives platform and security teams a queryable record for
-reviewing access, investigating denied calls, and preparing compliance evidence
-for governed agent workflows.
+team ID, human ID, agent ID, session ID, tool name, policy version, decision,
+reason, and trust and side-effect context. That gives platform and security teams a
+queryable record for reviewing access, investigating denied calls, and preparing
+compliance evidence for governed agent workflows.
 
 ## Before setup
 
@@ -113,10 +116,22 @@ DNS, ingress, TLS, and k3s configuration, start with
   <span>Review prerequisites for k3s, kind, minikube, Docker Desktop Kubernetes, kubeadm, and EKS.</span>
 </a>
 
+<a class="docs-card" href="contributor/README/">
+  <span class="docs-card-kicker">Contribute</span>
+  <strong>Use the contributor guide</strong>
+  <span>Set up local Kind, iterate on services, verify tenant visibility, and debug the platform.</span>
+</a>
+
 <a class="docs-card" href="publish-mcp-server/">
   <span class="docs-card-kicker">Ship</span>
   <strong>Publish an MCP server</strong>
   <span>Write a manifest or `.mcp` metadata, push an image, deploy it, and verify what the platform creates.</span>
+</a>
+
+<a class="docs-card" href="agent-adapters/">
+  <span class="docs-card-kicker">Connect</span>
+  <strong>Wire agent frameworks</strong>
+  <span>Use HTTP and stdio adapters to present issued identity/session values without moving enforcement out of the gateway.</span>
 </a>
 </div>
 
@@ -135,6 +150,12 @@ DNS, ingress, TLS, and k3s configuration, start with
   <span>Gateway policy, grant/session evaluation, analytics, audit events, and dashboard services.</span>
 </a>
 
+<a class="docs-card" href="multi-team/">
+  <span class="docs-card-kicker">Tenancy</span>
+  <strong>Multi-team isolation</strong>
+  <span>Use namespaces, RBAC, and naming conventions for team boundaries without adding team fields to runtime CRDs.</span>
+</a>
+
 <a class="docs-card" href="cli/">
   <span class="docs-card-kicker">CLI</span>
   <strong>Command reference</strong>
@@ -148,9 +169,9 @@ DNS, ingress, TLS, and k3s configuration, start with
 </a>
 
 <a class="docs-card" href="internals/README/">
-  <span class="docs-card-kicker">Contribute</span>
+  <span class="docs-card-kicker">Codebase</span>
   <strong>Read the internals</strong>
-  <span>If you are here to contribute, start with the internal docs for codebase structure, package tours, and implementation details.</span>
+  <span>Use the internal docs for codebase structure, package tours, and implementation details.</span>
 </a>
 </div>
 
@@ -160,9 +181,10 @@ DNS, ingress, TLS, and k3s configuration, start with
 |---|---|
 | Evaluate MCP Runtime for a private MCP platform | [Getting started](getting-started.md), then [Architecture](architecture.md) |
 | Run MCP Runtime on a real cluster | [Cluster readiness](cluster-readiness.md), then [Runtime](runtime.md) |
+| Host multiple teams on one cluster | [Multi-team isolation](multi-team.md), then [CLI](cli.md) |
 | Govern tools and sessions | [Sentinel](sentinel.md), then [API reference](api.md) |
 | Integrate from automation | [CLI](cli.md), then [API reference](api.md) |
-| Work on the codebase | [Internals](internals/README.md) |
+| Work on the codebase | [Contributor guide](contributor/README.md), then [Internals](internals/README.md) |
 
 ## Project status
 

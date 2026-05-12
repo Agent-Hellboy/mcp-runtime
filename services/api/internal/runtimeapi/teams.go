@@ -1,16 +1,17 @@
-package main
+package runtimeapi
 
 import (
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 )
 
-func (s *RuntimeServer) handleRuntimeTeams(w http.ResponseWriter, r *http.Request) {
+func (s *RuntimeServer) HandleRuntimeTeams(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
 		return
@@ -35,7 +36,7 @@ func (s *RuntimeServer) handleRuntimeTeams(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func (s *RuntimeServer) handleRuntimeTeamItemPath(w http.ResponseWriter, r *http.Request) {
+func (s *RuntimeServer) HandleRuntimeTeamItemPath(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
 		return
@@ -51,7 +52,7 @@ func (s *RuntimeServer) handleRuntimeTeamItemPath(w http.ResponseWriter, r *http
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
 		return
 	}
-	teamSlug := normalizeTeamSlug(parts[0])
+	teamSlug := NormalizeTeamSlug(parts[0])
 
 	switch {
 	case len(parts) == 1 && r.Method == http.MethodGet:
@@ -69,7 +70,7 @@ func (s *RuntimeServer) handleRuntimeTeamItemPath(w http.ResponseWriter, r *http
 	}
 }
 
-func (s *RuntimeServer) handleRuntimeNamespaces(w http.ResponseWriter, r *http.Request) {
+func (s *RuntimeServer) HandleRuntimeNamespaces(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
 		return
@@ -93,12 +94,22 @@ func (s *RuntimeServer) handleRuntimeNamespaces(w http.ResponseWriter, r *http.R
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list namespaces"})
 			return
 		}
+		namespaces = appendCatalogNamespaceEntries(namespaces)
 		writeJSON(w, http.StatusOK, map[string]any{"namespaces": namespaces})
 		return
 	}
 
+	if sharedCatalogWritableForUsers() {
+		entries := make([]map[string]any, 0, len(modeCatalogNamespaces()))
+		for _, namespace := range modeCatalogNamespaces() {
+			entries = append(entries, catalogNamespaceEntry(namespace))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"namespaces": entries})
+		return
+	}
+
 	entries := make([]map[string]any, 0, len(p.AllowedNamespaces))
-	for _, namespace := range p.AllowedNamespaces {
+	for _, namespace := range catalogNamespacesForPrincipal(p) {
 		namespace = strings.TrimSpace(namespace)
 		if namespace == "" {
 			continue
@@ -124,7 +135,7 @@ func (s *RuntimeServer) handleRuntimeNamespaces(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, map[string]any{"namespaces": entries})
 }
 
-func (s *RuntimeServer) handleRuntimeNamespaceItem(w http.ResponseWriter, r *http.Request) {
+func (s *RuntimeServer) HandleRuntimeNamespaceItem(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
 		return
@@ -146,7 +157,7 @@ func (s *RuntimeServer) handleRuntimeNamespaceItem(w http.ResponseWriter, r *htt
 		return
 	}
 
-	if p.Role != roleAdmin && !p.hasNamespace(namespace) {
+	if p.Role != roleAdmin && !principalCanReadNamespace(p, namespace) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
 	}
@@ -162,15 +173,54 @@ func (s *RuntimeServer) handleRuntimeNamespaceItem(w http.ResponseWriter, r *htt
 		writeJSON(w, http.StatusOK, map[string]any{"namespace": item})
 		return
 	}
-	if namespace == sharedCatalogNamespace {
-		writeJSON(w, http.StatusOK, map[string]any{"namespace": map[string]any{
-			"namespace": sharedCatalogNamespace,
-			"scope":     "shared",
-			"is_shared": true,
-		}})
+	if namespace == sharedCatalogNamespace || isModeCatalogNamespace(namespace) {
+		entry := catalogNamespaceEntry(namespace)
+		if namespace == sharedCatalogNamespace && !sharedCatalogWritableForUsers() {
+			entry["scope"] = "shared"
+			entry["is_public"] = false
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"namespace": entry})
 		return
 	}
 	writeJSON(w, http.StatusNotFound, map[string]string{"error": "namespace not found"})
+}
+
+func catalogNamespaceEntry(namespace string) map[string]any {
+	scope := "shared"
+	isPublic := false
+	scopeName := "Shared catalog"
+	switch PlatformMode() {
+	case platformModePublic:
+		scope = "public"
+		isPublic = true
+		scopeName = "Public preview"
+	case platformModeOrg:
+		scope = "org"
+		scopeName = "Organization"
+	}
+	return map[string]any{
+		"namespace":  namespace,
+		"is_shared":  namespace == sharedCatalogNamespace,
+		"is_public":  isPublic,
+		"scope":      scope,
+		"scope_name": scopeName,
+	}
+}
+
+func appendCatalogNamespaceEntries(namespaces []map[string]any) []map[string]any {
+	seen := map[string]struct{}{}
+	for _, entry := range namespaces {
+		if namespace := strings.TrimSpace(fmt.Sprint(entry["namespace"])); namespace != "" {
+			seen[namespace] = struct{}{}
+		}
+	}
+	for _, namespace := range modeCatalogNamespaces() {
+		if _, ok := seen[namespace]; ok {
+			continue
+		}
+		namespaces = append(namespaces, catalogNamespaceEntry(namespace))
+	}
+	return namespaces
 }
 
 func (s *RuntimeServer) handleRuntimeTeamList(w http.ResponseWriter, r *http.Request, p principal) {
@@ -186,7 +236,7 @@ func (s *RuntimeServer) handleRuntimeTeamList(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusOK, map[string]any{"teams": teams})
 		return
 	}
-	teams, err := s.platform.ListUserTeams(ctx, p.userID())
+	teams, err := s.platform.ListUserTeams(ctx, p.UserID())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list teams"})
 		return
@@ -216,7 +266,7 @@ func (s *RuntimeServer) handleRuntimeTeamGet(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "team not found"})
 		return
 	}
-	if p.Role != roleAdmin && p.teamRole(teamSlug) == "" {
+	if p.Role != roleAdmin && p.TeamRole(teamSlug) == "" {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
 	}
@@ -228,7 +278,7 @@ func (s *RuntimeServer) handleRuntimeTeamCreate(w http.ResponseWriter, r *http.R
 		Slug string `json:"slug"`
 		Name string `json:"name"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, teamApplyMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBodyDecodeError(w, err)
 		return
@@ -236,7 +286,7 @@ func (s *RuntimeServer) handleRuntimeTeamCreate(w http.ResponseWriter, r *http.R
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 
-	team, err := s.platform.CreateTeam(ctx, req.Slug, req.Name, p.userID())
+	team, err := s.platform.CreateTeam(ctx, req.Slug, req.Name, p.UserID())
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") || strings.Contains(strings.ToLower(err.Error()), "unique") {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "team already exists"})
@@ -253,7 +303,7 @@ func (s *RuntimeServer) handleRuntimeTeamCreate(w http.ResponseWriter, r *http.R
 }
 
 func (s *RuntimeServer) handleRuntimeTeamMemberUpsert(w http.ResponseWriter, r *http.Request, p principal, teamSlug string) {
-	if p.Role != roleAdmin && p.teamRole(teamSlug) != teamRoleOwner {
+	if p.Role != roleAdmin && p.TeamRole(teamSlug) != teamRoleOwner {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
 	}
@@ -261,7 +311,7 @@ func (s *RuntimeServer) handleRuntimeTeamMemberUpsert(w http.ResponseWriter, r *
 		UserID string `json:"userID"`
 		Role   string `json:"role"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, teamApplyMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBodyDecodeError(w, err)
 		return
@@ -281,7 +331,7 @@ func (s *RuntimeServer) handleRuntimeTeamMemberUpsert(w http.ResponseWriter, r *
 }
 
 func (s *RuntimeServer) handleRuntimeTeamMemberDelete(w http.ResponseWriter, r *http.Request, p principal, teamSlug, userID string) {
-	if p.Role != roleAdmin && p.teamRole(teamSlug) != teamRoleOwner {
+	if p.Role != roleAdmin && p.TeamRole(teamSlug) != teamRoleOwner {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
 	}

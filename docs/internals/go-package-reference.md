@@ -13,6 +13,7 @@ python3 docs/scripts/generate_go_package_reference.py
 
 - [API types](#api-types) `mcp-runtime/api/v1alpha1`
 - [Metadata helpers](#metadata-helpers) `mcp-runtime/pkg/metadata`
+- [Agent adapters](#agent-adapters) `mcp-runtime/internal/agentadapter`
 - [Operator internals](#operator-internals) `mcp-runtime/internal/operator`
 - [CLI command routing](#cli-command-routing) `mcp-runtime/internal/cli/root`
 - [CLI core](#cli-core) `mcp-runtime/internal/cli/core`
@@ -54,12 +55,14 @@ Package v1alpha1 contains API Schema definitions for the MCP server resource.
 
 - [Overview](#api-types-overview)
 - [Index](#api-types-index)
+- [Constants](#api-types-constants)
 - [Variables](#api-types-variables)
 - [Types](#api-types-types)
 
 <a id="api-types-index"></a>
 ### Index
 
+- [`Constants`](#api-types-constants)
 - [`Variables`](#api-types-variables)
 - [`type AnalyticsConfig struct`](#api-types-type-analyticsconfig-struct)
 - [`func (in *AnalyticsConfig) DeepCopy() *AnalyticsConfig`](#api-types-func-in-analyticsconfig-deepcopy-analyticsconfig)
@@ -169,7 +172,27 @@ Package v1alpha1 contains API Schema definitions for the MCP server resource.
 - [`type ToolRule struct`](#api-types-type-toolrule-struct)
 - [`func (in *ToolRule) DeepCopy() *ToolRule`](#api-types-func-in-toolrule-deepcopy-toolrule)
 - [`func (in *ToolRule) DeepCopyInto(out *ToolRule)`](#api-types-func-in-toolrule-deepcopyinto-out-toolrule)
+- [`type ToolSideEffect string`](#api-types-type-toolsideeffect-string)
 - [`type TrustLevel string`](#api-types-type-trustlevel-string)
+
+<a id="api-types-constants"></a>
+### Constants
+
+```text
+const (
+	// Group is the Kubernetes API group for MCP Runtime resources.
+	Group = "mcpruntime.org"
+	// Version is the Kubernetes API version for MCP Runtime resources.
+	Version = "v1alpha1"
+
+	// MCPServerResource is the plural resource name for MCPServer objects.
+	MCPServerResource = "mcpservers"
+	// MCPAccessGrantResource is the plural resource name for MCPAccessGrant objects.
+	MCPAccessGrantResource = "mcpaccessgrants"
+	// MCPAgentSessionResource is the plural resource name for MCPAgentSession objects.
+	MCPAgentSessionResource = "mcpagentsessions"
+)
+```
 
 <a id="api-types-variables"></a>
 ### Variables
@@ -177,7 +200,7 @@ Package v1alpha1 contains API Schema definitions for the MCP server resource.
 ```text
 var (
 	// GroupVersion is group version used to register these objects
-	GroupVersion = schema.GroupVersion{Group: "mcpruntime.org", Version: "v1alpha1"}
+	GroupVersion = schema.GroupVersion{Group: Group, Version: Version}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme
 	SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)
@@ -235,6 +258,7 @@ type AuthConfig struct {
 	Mode            AuthMode `json:"mode,omitempty"`
 	HumanIDHeader   string   `json:"humanIDHeader,omitempty"`
 	AgentIDHeader   string   `json:"agentIDHeader,omitempty"`
+	TeamIDHeader    string   `json:"teamIDHeader,omitempty"`
 	SessionIDHeader string   `json:"sessionIDHeader,omitempty"`
 	TokenHeader     string   `json:"tokenHeader,omitempty"`
 	IssuerURL       string   `json:"issuerURL,omitempty"`
@@ -318,6 +342,9 @@ type GatewayConfig struct {
 
 	// StripPrefix removes a path prefix before forwarding to the upstream server.
 	StripPrefix string `json:"stripPrefix,omitempty"`
+
+	// Resources defines resource limits and requests for the gateway sidecar.
+	Resources *ResourceRequirements `json:"resources,omitempty"`
 }
     GatewayConfig configures an optional MCP proxy sidecar for a server.
     +kubebuilder:object:generate=true
@@ -468,12 +495,13 @@ func (in *MCPAccessGrantList) DeepCopyObject() runtime.Object
 <a id="api-types-type-mcpaccessgrantspec-struct"></a>
 ```text
 type MCPAccessGrantSpec struct {
-	ServerRef     ServerReference `json:"serverRef"`
-	Subject       SubjectRef      `json:"subject"`
-	MaxTrust      TrustLevel      `json:"maxTrust,omitempty"`
-	PolicyVersion string          `json:"policyVersion,omitempty"`
-	Disabled      bool            `json:"disabled,omitempty"`
-	ToolRules     []ToolRule      `json:"toolRules,omitempty"`
+	ServerRef          ServerReference  `json:"serverRef"`
+	Subject            SubjectRef       `json:"subject"`
+	MaxTrust           TrustLevel       `json:"maxTrust,omitempty"`
+	AllowedSideEffects []ToolSideEffect `json:"allowedSideEffects,omitempty"`
+	PolicyVersion      string           `json:"policyVersion,omitempty"`
+	Disabled           bool             `json:"disabled,omitempty"`
+	ToolRules          []ToolRule       `json:"toolRules,omitempty"`
 }
     MCPAccessGrantSpec defines who can use which MCP server and with what trust
     ceiling. +kubebuilder:object:generate=true
@@ -795,6 +823,13 @@ func (in *MCPServerList) DeepCopyObject() runtime.Object
 <a id="api-types-type-mcpserverspec-struct"></a>
 ```text
 type MCPServerSpec struct {
+	// TeamID is the stable platform team identifier that owns this server.
+	// The operator renders it into gateway policy and analytics events.
+	TeamID string `json:"teamID,omitempty"`
+
+	// Description is a human-readable summary of what the MCP server provides.
+	Description string `json:"description,omitempty"`
+
 	// Image is the container image for the MCP server.
 	Image string `json:"image"`
 
@@ -1209,6 +1244,9 @@ func (in *SessionConfig) DeepCopyInto(out *SessionConfig)
 type SubjectRef struct {
 	HumanID string `json:"humanID,omitempty"`
 	AgentID string `json:"agentID,omitempty"`
+	// TeamID constrains the subject to a stable platform team identifier.
+	// A subject with only teamID grants or binds any authenticated principal in that team.
+	TeamID string `json:"teamID,omitempty"`
 }
     SubjectRef identifies the human and optional agent a grant or session
     applies to. +kubebuilder:object:generate=true
@@ -1237,6 +1275,7 @@ type ToolConfig struct {
 	Name          string            `json:"name"`
 	Description   string            `json:"description,omitempty"`
 	RequiredTrust TrustLevel        `json:"requiredTrust,omitempty"`
+	SideEffect    ToolSideEffect    `json:"sideEffect"`
 	Labels        map[string]string `json:"labels,omitempty"`
 }
     ToolConfig describes one MCP tool exposed by a server.
@@ -1286,6 +1325,18 @@ func (in *ToolRule) DeepCopyInto(out *ToolRule)
     DeepCopyInto is an autogenerated deepcopy function, copying the receiver,
     writing into out. in must be non-nil.
 
+```
+
+<a id="api-types-type-toolsideeffect-string"></a>
+```text
+type ToolSideEffect string
+    +kubebuilder:validation:Enum=read;write;destructive
+
+const (
+	ToolSideEffectRead        ToolSideEffect = "read"
+	ToolSideEffectWrite       ToolSideEffect = "write"
+	ToolSideEffectDestructive ToolSideEffect = "destructive"
+)
 ```
 
 <a id="api-types-type-trustlevel-string"></a>
@@ -1357,6 +1408,7 @@ _No package overview is documented._
 - [`type ServerMetadata struct`](#metadata-helpers-type-servermetadata-struct)
 - [`type SessionConfig struct`](#metadata-helpers-type-sessionconfig-struct)
 - [`type ToolConfig struct`](#metadata-helpers-type-toolconfig-struct)
+- [`type ToolSideEffect string`](#metadata-helpers-type-toolsideeffect-string)
 - [`type TrustLevel string`](#metadata-helpers-type-trustlevel-string)
 
 <a id="metadata-helpers-constants"></a>
@@ -1452,6 +1504,7 @@ type AuthConfig struct {
 	Mode            AuthMode `yaml:"mode,omitempty" json:"mode,omitempty"`
 	HumanIDHeader   string   `yaml:"humanIDHeader,omitempty" json:"humanIDHeader,omitempty"`
 	AgentIDHeader   string   `yaml:"agentIDHeader,omitempty" json:"agentIDHeader,omitempty"`
+	TeamIDHeader    string   `yaml:"teamIDHeader,omitempty" json:"teamIDHeader,omitempty"`
 	SessionIDHeader string   `yaml:"sessionIDHeader,omitempty" json:"sessionIDHeader,omitempty"`
 	TokenHeader     string   `yaml:"tokenHeader,omitempty" json:"tokenHeader,omitempty"`
 	IssuerURL       string   `yaml:"issuerURL,omitempty" json:"issuerURL,omitempty"`
@@ -1486,11 +1539,12 @@ type EnvVar struct {
 <a id="metadata-helpers-type-gatewayconfig-struct"></a>
 ```text
 type GatewayConfig struct {
-	Enabled     bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Image       string `yaml:"image,omitempty" json:"image,omitempty"`
-	Port        int32  `yaml:"port,omitempty" json:"port,omitempty"`
-	UpstreamURL string `yaml:"upstreamURL,omitempty" json:"upstreamURL,omitempty"`
-	StripPrefix string `yaml:"stripPrefix,omitempty" json:"stripPrefix,omitempty"`
+	Enabled     bool                  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Image       string                `yaml:"image,omitempty" json:"image,omitempty"`
+	Port        int32                 `yaml:"port,omitempty" json:"port,omitempty"`
+	UpstreamURL string                `yaml:"upstreamURL,omitempty" json:"upstreamURL,omitempty"`
+	StripPrefix string                `yaml:"stripPrefix,omitempty" json:"stripPrefix,omitempty"`
+	Resources   *ResourceRequirements `yaml:"resources,omitempty" json:"resources,omitempty"`
 }
     GatewayConfig configures an optional MCP proxy sidecar for a server.
 
@@ -1640,6 +1694,9 @@ type ServerMetadata struct {
 	// Name is the unique name of the MCP server.
 	Name string `yaml:"name" json:"name"`
 
+	// Description is a human-readable summary of what the MCP server provides.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+
 	// Image is the container image for the server.
 	Image string `yaml:"image" json:"image"`
 
@@ -1672,6 +1729,9 @@ type ServerMetadata struct {
 
 	// Namespace is the Kubernetes namespace (defaults to "mcp-servers").
 	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
+
+	// TeamID is the stable platform team identifier that owns the server.
+	TeamID string `yaml:"teamID,omitempty" json:"teamID,omitempty"`
 
 	// Tools describes the MCP tool inventory exposed by the server.
 	Tools []ToolConfig `yaml:"tools,omitempty" json:"tools,omitempty"`
@@ -1727,10 +1787,23 @@ type ToolConfig struct {
 	Name          string            `yaml:"name" json:"name"`
 	Description   string            `yaml:"description,omitempty" json:"description,omitempty"`
 	RequiredTrust TrustLevel        `yaml:"requiredTrust,omitempty" json:"requiredTrust,omitempty"`
+	SideEffect    ToolSideEffect    `yaml:"sideEffect" json:"sideEffect"`
 	Labels        map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
 }
     ToolConfig describes one MCP tool exposed by a server.
 
+```
+
+<a id="metadata-helpers-type-toolsideeffect-string"></a>
+```text
+type ToolSideEffect string
+    +kubebuilder:validation:Enum=read;write;destructive
+
+const (
+	ToolSideEffectRead        ToolSideEffect = "read"
+	ToolSideEffectWrite       ToolSideEffect = "write"
+	ToolSideEffectDestructive ToolSideEffect = "destructive"
+)
 ```
 
 <a id="metadata-helpers-type-trustlevel-string"></a>
@@ -1743,6 +1816,154 @@ const (
 	TrustLevelMedium TrustLevel = "medium"
 	TrustLevelHigh   TrustLevel = "high"
 )
+```
+
+<a id="agent-adapters"></a>
+## Agent adapters
+
+Package: `agentadapter`
+Import path: `mcp-runtime/internal/agentadapter`
+
+Source command:
+
+```bash
+go doc -all ./internal/agentadapter
+```
+
+<a id="agent-adapters-overview"></a>
+### Overview
+
+Package agentadapter implements optional agent-side HTTP and stdio adapters that
+forward MCP traffic to governed MCP Runtime routes.
+
+### Jump To
+
+- [Overview](#agent-adapters-overview)
+- [Index](#agent-adapters-index)
+- [Constants](#agent-adapters-constants)
+- [Functions](#agent-adapters-functions)
+- [Types](#agent-adapters-types)
+
+<a id="agent-adapters-index"></a>
+### Index
+
+- [`Constants`](#agent-adapters-constants)
+- [`func NewHTTPProxyHandler(cfg Config) (http.Handler, error)`](#agent-adapters-func-newhttpproxyhandler-cfg-config-http-handler-error)
+- [`func RunHTTPProxy(ctx context.Context, cfg Config) error`](#agent-adapters-func-runhttpproxy-ctx-context-context-cfg-config-error)
+- [`func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error`](#agent-adapters-func-runstdioshim-ctx-context-context-cfg-config-opts-stdiooptions-error)
+- [`func ValidateConfig(cfg Config) error`](#agent-adapters-func-validateconfig-cfg-config-error)
+- [`type Config struct`](#agent-adapters-type-config-struct)
+- [`func LoadProxyConfigFromEnv() (Config, error)`](#agent-adapters-func-loadproxyconfigfromenv-config-error)
+- [`func LoadShimConfigFromEnv() (Config, error)`](#agent-adapters-func-loadshimconfigfromenv-config-error)
+- [`type StdioOptions struct`](#agent-adapters-type-stdiooptions-struct)
+
+<a id="agent-adapters-constants"></a>
+### Constants
+
+```text
+const (
+	EnvRuntimeURL      = "MCP_RUNTIME_URL"
+	EnvHumanID         = "MCP_RUNTIME_HUMAN_ID"
+	EnvAgentID         = "MCP_RUNTIME_AGENT_ID"
+	EnvSessionID       = "MCP_RUNTIME_SESSION_ID"
+	EnvHostHeader      = "MCP_RUNTIME_HOST_HEADER"
+	EnvListenAddr      = "MCP_RUNTIME_LISTEN_ADDR"
+	EnvProtocolVersion = "MCP_RUNTIME_PROTOCOL_VERSION"
+	EnvSetXForwarded   = "MCP_RUNTIME_SET_XFF"
+	EnvRequestTimeout  = "MCP_RUNTIME_REQUEST_TIMEOUT"
+	EnvLogLevel        = "MCP_RUNTIME_LOG_LEVEL"
+
+	DefaultListenAddr      = "127.0.0.1:8099"
+	DefaultProtocolVersion = "2025-06-18"
+
+	HumanIDHeader      = "X-MCP-Human-ID"
+	AgentIDHeader      = "X-MCP-Agent-ID"
+	AgentSessionHeader = "X-MCP-Agent-Session"
+	MCPProtocolHeader  = "Mcp-Protocol-Version"
+	MCPSessionHeader   = "Mcp-Session-Id"
+)
+```
+
+<a id="agent-adapters-functions"></a>
+### Functions
+
+<a id="agent-adapters-func-newhttpproxyhandler-cfg-config-http-handler-error"></a>
+```text
+func NewHTTPProxyHandler(cfg Config) (http.Handler, error)
+    NewHTTPProxyHandler returns a reverse proxy that forwards MCP HTTP traffic
+    to the configured runtime route and injects issued governance identity
+    headers.
+
+```
+
+<a id="agent-adapters-func-runhttpproxy-ctx-context-context-cfg-config-error"></a>
+```text
+func RunHTTPProxy(ctx context.Context, cfg Config) error
+    RunHTTPProxy serves the local HTTP adapter until the context is cancelled.
+
+```
+
+<a id="agent-adapters-func-runstdioshim-ctx-context-context-cfg-config-opts-stdiooptions-error"></a>
+```text
+func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error
+    RunStdioShim reads newline-delimited stdio MCP JSON-RPC messages, forwards
+    them to the configured Streamable HTTP route, and writes JSON-RPC responses
+    back to stdout.
+
+```
+
+<a id="agent-adapters-func-validateconfig-cfg-config-error"></a>
+```text
+func ValidateConfig(cfg Config) error
+    ValidateConfig checks the common adapter invariants without reading process
+    state.
+```
+
+<a id="agent-adapters-types"></a>
+### Types
+
+<a id="agent-adapters-type-config-struct"></a>
+```text
+type Config struct {
+	RuntimeURL        *url.URL
+	HumanID           string
+	AgentID           string
+	SessionID         string
+	HostHeader        string
+	ListenAddr        string
+	ProtocolVersion   string
+	HTTPClient        *http.Client
+	RequestTimeout    time.Duration
+	LogLevel          string
+	LogWriter         io.Writer
+	DisableXForwarded bool
+}
+    Config is the shared configuration for agent-side adapters.
+
+```
+
+<a id="agent-adapters-func-loadproxyconfigfromenv-config-error"></a>
+```text
+func LoadProxyConfigFromEnv() (Config, error)
+    LoadProxyConfigFromEnv loads HTTP proxy configuration from environment
+    variables.
+
+```
+
+<a id="agent-adapters-func-loadshimconfigfromenv-config-error"></a>
+```text
+func LoadShimConfigFromEnv() (Config, error)
+    LoadShimConfigFromEnv loads stdio shim configuration from environment
+    variables.
+
+```
+
+<a id="agent-adapters-type-stdiooptions-struct"></a>
+```text
+type StdioOptions struct {
+	Stdin  io.Reader
+	Stdout io.Writer
+}
 ```
 
 <a id="operator-internals"></a>
@@ -1930,7 +2151,6 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 <a id="operator-internals-func-r-mcpserverreconciler-setupwithmanager-mgr-ctrl-manager-error"></a>
 ```text
 func (r *MCPServerReconciler) SetupWithManager(mgr ctrl.Manager) error
-    SetupWithManager sets up the controller with the Manager.
 
 ```
 
@@ -2008,7 +2228,6 @@ type RegistryConfig struct {
 	Password   string
 	SecretName string
 }
-    RegistryConfig holds configuration for a provisioned container registry.
 ```
 
 <a id="cli-command-routing"></a>
@@ -4100,12 +4319,13 @@ func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePub
 <a id="cli-platform-api-type-serverlistitem-struct"></a>
 ```text
 type ServerListItem struct {
-	Name      string            `json:"name"`
-	Namespace string            `json:"namespace"`
-	Ready     string            `json:"ready"`
-	Status    string            `json:"status"`
-	Labels    map[string]string `json:"labels"`
-	Age       string            `json:"age"`
+	Name        string            `json:"name"`
+	Namespace   string            `json:"namespace"`
+	Description string            `json:"description,omitempty"`
+	Ready       string            `json:"ready"`
+	Status      string            `json:"status"`
+	Labels      map[string]string `json:"labels"`
+	Age         string            `json:"age"`
 }
     ServerListItem is one row from the platform API runtime servers list.
 
@@ -4954,12 +5174,15 @@ Package plan contains pure setup planning types and default resolution.
 - [Overview](#cli-setup-plan-overview)
 - [Index](#cli-setup-plan-index)
 - [Constants](#cli-setup-plan-constants)
+- [Functions](#cli-setup-plan-functions)
 - [Types](#cli-setup-plan-types)
 
 <a id="cli-setup-plan-index"></a>
 ### Index
 
 - [`Constants`](#cli-setup-plan-constants)
+- [`func CatalogNamespaceForPlatformMode(mode string) string`](#cli-setup-plan-func-catalognamespaceforplatformmode-mode-string-string)
+- [`func NormalizePlatformMode(mode string) (string, bool)`](#cli-setup-plan-func-normalizeplatformmode-mode-string-string-bool)
 - [`type Input struct`](#cli-setup-plan-type-input-struct)
 - [`type Plan struct`](#cli-setup-plan-type-plan-struct)
 - [`func Build(input Input) Plan`](#cli-setup-plan-func-build-input-input-plan)
@@ -4972,6 +5195,28 @@ const (
 	StorageModeDynamic  = "dynamic"
 	StorageModeHostpath = "hostpath"
 )
+const (
+	PlatformModeTenant = "tenant"
+	PlatformModeOrg    = "org"
+	PlatformModePublic = "public"
+)
+const (
+	DefaultOrgCatalogNamespace    = "mcp-servers-org"
+	DefaultPublicCatalogNamespace = "mcp-servers-public"
+)
+```
+
+<a id="cli-setup-plan-functions"></a>
+### Functions
+
+<a id="cli-setup-plan-func-catalognamespaceforplatformmode-mode-string-string"></a>
+```text
+func CatalogNamespaceForPlatformMode(mode string) string
+```
+
+<a id="cli-setup-plan-func-normalizeplatformmode-mode-string-string-bool"></a>
+```text
+func NormalizePlatformMode(mode string) (string, bool)
 ```
 
 <a id="cli-setup-plan-types"></a>
@@ -4985,6 +5230,7 @@ type Input struct {
 	RegistryType           string
 	RegistryStorageSize    string
 	StorageMode            string
+	PlatformMode           string
 	IngressMode            string
 	IngressManifest        string
 	IngressManifestChanged bool
@@ -5013,6 +5259,7 @@ type Plan struct {
 	RegistryType        string
 	RegistryStorageSize string
 	StorageMode         string
+	PlatformMode        string
 	Ingress             cluster.IngressOptions
 	RegistryManifest    string
 	TLSEnabled          bool

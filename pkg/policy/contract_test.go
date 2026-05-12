@@ -16,12 +16,14 @@ func TestPolicyDocumentRoundTrip(t *testing.T) {
 		Server: Server{
 			Name:      "test-server",
 			Namespace: "mcp-servers",
+			TeamID:    "team-acme",
 			Cluster:   "test-cluster",
 		},
 		Auth: &Auth{
 			Mode:            "oauth",
 			HumanIDHeader:   "X-MCP-Human-ID",
 			AgentIDHeader:   "X-MCP-Agent-ID",
+			TeamIDHeader:    "X-MCP-Team-ID",
 			SessionIDHeader: "X-MCP-Session",
 			TokenHeader:     "Authorization",
 			IssuerURL:       "https://auth.example.com",
@@ -46,6 +48,7 @@ func TestPolicyDocumentRoundTrip(t *testing.T) {
 				Name:          "read-file",
 				Description:   "Read a file from the filesystem",
 				RequiredTrust: "low",
+				SideEffect:    "read",
 				Labels: map[string]string{
 					"category": "filesystem",
 				},
@@ -54,6 +57,7 @@ func TestPolicyDocumentRoundTrip(t *testing.T) {
 				Name:          "write-file",
 				Description:   "Write a file to the filesystem",
 				RequiredTrust: "high",
+				SideEffect:    "write",
 				Labels: map[string]string{
 					"category": "filesystem",
 					"risk":     "destructive",
@@ -64,9 +68,14 @@ func TestPolicyDocumentRoundTrip(t *testing.T) {
 			{
 				Name:          "developer-grant",
 				HumanID:       "user@example.com",
+				TeamID:        "team-acme",
 				MaxTrust:      "high",
 				PolicyVersion: "v1",
 				Disabled:      false,
+				AllowedSideEffects: []string{
+					"read",
+					"write",
+				},
 				ToolRules: []ToolAccess{
 					{
 						Name:          "read-file",
@@ -86,7 +95,10 @@ func TestPolicyDocumentRoundTrip(t *testing.T) {
 				MaxTrust:      "medium",
 				PolicyVersion: "v1",
 				Disabled:      false,
-				ToolRules:     []ToolAccess{}, // No tool rules = all allowed
+				AllowedSideEffects: []string{
+					"read",
+				},
+				ToolRules: []ToolAccess{}, // No tool rules = all read tools allowed
 			},
 		},
 		Sessions: []Binding{
@@ -94,6 +106,7 @@ func TestPolicyDocumentRoundTrip(t *testing.T) {
 				Name:             "session-1",
 				HumanID:          "user@example.com",
 				AgentID:          "agent-123",
+				TeamID:           "team-acme",
 				ConsentedTrust:   "high",
 				Revoked:          false,
 				ExpiresAt:        time.Now().Add(24 * time.Hour).Format(time.RFC3339),
@@ -132,6 +145,9 @@ func verifyServer(t *testing.T, expected, actual Server) {
 	if expected.Namespace != actual.Namespace {
 		t.Errorf("Server.Namespace mismatch: expected %q, got %q", expected.Namespace, actual.Namespace)
 	}
+	if expected.TeamID != actual.TeamID {
+		t.Errorf("Server.TeamID mismatch: expected %q, got %q", expected.TeamID, actual.TeamID)
+	}
 	if expected.Cluster != actual.Cluster {
 		t.Errorf("Server.Cluster mismatch: expected %q, got %q", expected.Cluster, actual.Cluster)
 	}
@@ -153,6 +169,9 @@ func verifyAuth(t *testing.T, expected, actual *Auth) {
 	}
 	if expected.AgentIDHeader != actual.AgentIDHeader {
 		t.Errorf("Auth.AgentIDHeader mismatch: expected %q, got %q", expected.AgentIDHeader, actual.AgentIDHeader)
+	}
+	if expected.TeamIDHeader != actual.TeamIDHeader {
+		t.Errorf("Auth.TeamIDHeader mismatch: expected %q, got %q", expected.TeamIDHeader, actual.TeamIDHeader)
 	}
 	if expected.SessionIDHeader != actual.SessionIDHeader {
 		t.Errorf("Auth.SessionIDHeader mismatch: expected %q, got %q", expected.SessionIDHeader, actual.SessionIDHeader)
@@ -234,6 +253,9 @@ func verifyTools(t *testing.T, expected, actual []Tool) {
 		if exp.RequiredTrust != act.RequiredTrust {
 			t.Errorf("Tool[%d].RequiredTrust mismatch: expected %q, got %q", i, exp.RequiredTrust, act.RequiredTrust)
 		}
+		if exp.SideEffect != act.SideEffect {
+			t.Errorf("Tool[%d].SideEffect mismatch: expected %q, got %q", i, exp.SideEffect, act.SideEffect)
+		}
 		if len(exp.Labels) != len(act.Labels) {
 			t.Errorf("Tool[%d].Labels length mismatch: expected %d, got %d", i, len(exp.Labels), len(act.Labels))
 		}
@@ -261,6 +283,9 @@ func verifyGrants(t *testing.T, expected, actual []Grant) {
 		if exp.AgentID != act.AgentID {
 			t.Errorf("Grant[%d].AgentID mismatch: expected %q, got %q", i, exp.AgentID, act.AgentID)
 		}
+		if exp.TeamID != act.TeamID {
+			t.Errorf("Grant[%d].TeamID mismatch: expected %q, got %q", i, exp.TeamID, act.TeamID)
+		}
 		if exp.MaxTrust != act.MaxTrust {
 			t.Errorf("Grant[%d].MaxTrust mismatch: expected %q, got %q", i, exp.MaxTrust, act.MaxTrust)
 		}
@@ -269,6 +294,15 @@ func verifyGrants(t *testing.T, expected, actual []Grant) {
 		}
 		if exp.Disabled != act.Disabled {
 			t.Errorf("Grant[%d].Disabled mismatch: expected %v, got %v", i, exp.Disabled, act.Disabled)
+		}
+		if len(exp.AllowedSideEffects) != len(act.AllowedSideEffects) {
+			t.Fatalf("Grant[%d].AllowedSideEffects length mismatch: expected %d, got %d", i, len(exp.AllowedSideEffects), len(act.AllowedSideEffects))
+			return
+		}
+		for j, sideEffect := range exp.AllowedSideEffects {
+			if act.AllowedSideEffects[j] != sideEffect {
+				t.Errorf("Grant[%d].AllowedSideEffects[%d] mismatch: expected %q, got %q", i, j, sideEffect, act.AllowedSideEffects[j])
+			}
 		}
 		if len(exp.ToolRules) != len(act.ToolRules) {
 			t.Fatalf("Grant[%d].ToolRules length mismatch: expected %d, got %d", i, len(exp.ToolRules), len(act.ToolRules))
@@ -303,6 +337,9 @@ func verifySessions(t *testing.T, expected, actual []Binding) {
 		}
 		if exp.AgentID != act.AgentID {
 			t.Errorf("Binding[%d].AgentID mismatch: expected %q, got %q", i, exp.AgentID, act.AgentID)
+		}
+		if exp.TeamID != act.TeamID {
+			t.Errorf("Binding[%d].TeamID mismatch: expected %q, got %q", i, exp.TeamID, act.TeamID)
 		}
 		if exp.ConsentedTrust != act.ConsentedTrust {
 			t.Errorf("Binding[%d].ConsentedTrust mismatch: expected %q, got %q", i, exp.ConsentedTrust, act.ConsentedTrust)

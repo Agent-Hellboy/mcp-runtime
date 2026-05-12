@@ -2,26 +2,33 @@ version: v1
 servers:
   - name: test-server
   - name: custom-server
+    description: Example server for testing metadata loading.
     image: custom/image
     imageTag: v1
     route: custom-route
     port: 9090
     replicas: 3
     namespace: custom-namespace
+    teamID: team-custom
     gateway:
       enabled: true
       image: example.com/mcp-proxy:latest
     auth:
       mode: header
+      teamIDHeader: X-Team-ID
     policy:
       mode: allow-list
     session:
       required: true
     tools:
       - name: list_tools
+        description: List tools exposed by the server.
         requiredTrust: low
+        sideEffect: read
       - name: delete_user
+        description: Delete a user from the backing system.
         requiredTrust: high
+        sideEffect: destructive
     analytics:
       enabled: true
       ingestURL: http://analytics.custom-namespace.svc/api/events

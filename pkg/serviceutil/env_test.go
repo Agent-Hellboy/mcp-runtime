@@ -4,6 +4,7 @@ package serviceutil
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestEnvOr(t *testing.T) {
@@ -45,6 +46,10 @@ func TestBoolEnv(t *testing.T) {
 		{"FALSE", false, true},
 		{"False", false, true},
 		{"0", false, true},
+		{"yes", true, true},
+		{"on", true, true},
+		{"no", false, true},
+		{"off", false, true},
 		{"", false, false},
 		{"invalid", false, false},
 	}
@@ -66,5 +71,27 @@ func TestBoolEnv(t *testing.T) {
 	val, ok := BoolEnv("TEST_BOOL_UNSET")
 	if val != false || ok != false {
 		t.Errorf("BoolEnv(unset) = (%v, %v), expected (false, false)", val, ok)
+	}
+}
+
+func TestEnvInt(t *testing.T) {
+	t.Setenv("TEST_INT", "42")
+	if got := EnvInt("TEST_INT", 7); got != 42 {
+		t.Fatalf("EnvInt() = %d, want 42", got)
+	}
+	t.Setenv("TEST_INT", "bad")
+	if got := EnvInt("TEST_INT", 7); got != 7 {
+		t.Fatalf("EnvInt() = %d, want fallback", got)
+	}
+}
+
+func TestEnvDuration(t *testing.T) {
+	t.Setenv("TEST_DURATION", "30s")
+	if got := EnvDuration("TEST_DURATION", time.Minute); got != 30*time.Second {
+		t.Fatalf("EnvDuration() = %s, want 30s", got)
+	}
+	t.Setenv("TEST_DURATION", "bad")
+	if got := EnvDuration("TEST_DURATION", time.Minute); got != time.Minute {
+		t.Fatalf("EnvDuration() = %s, want fallback", got)
 	}
 }

@@ -142,7 +142,7 @@ type deployAnalyticsStep struct{}
 
 func (s deployAnalyticsStep) Name() string { return "analytics-deploy" }
 func (s deployAnalyticsStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error {
-	return deployAnalyticsStepCmd(logger, ctx.AnalyticsImages, ctx.Plan.StorageMode, deps)
+	return deployAnalyticsStepCmd(logger, ctx.AnalyticsImages, ctx.Plan.StorageMode, ctx.Plan.PlatformMode, deps)
 }
 
 type verifyStep struct{}

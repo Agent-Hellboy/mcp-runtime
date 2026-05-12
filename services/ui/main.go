@@ -18,17 +18,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
-	"go.opentelemetry.io/otel/sdk/resource"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+
+	"mcp-runtime/pkg/serviceutil"
 )
 
 //go:embed static/*
@@ -44,6 +40,7 @@ const (
 	defaultLoginFailureThreshold  = 5
 	defaultLoginLockoutDuration   = 5 * time.Minute
 	loginFailureLogEvery          = 3
+	loginRequestMaxBytes          = 8 * 1024
 )
 
 var (
@@ -52,6 +49,7 @@ var (
 	loginFailureWindow     = durationEnvOr("UI_LOGIN_FAILURE_WINDOW", defaultLoginFailureWindow)
 	loginFailureThreshold  = intEnvOr("UI_LOGIN_FAILURE_THRESHOLD", defaultLoginFailureThreshold)
 	loginLockoutDuration   = durationEnvOr("UI_LOGIN_LOCKOUT", defaultLoginLockoutDuration)
+	forceSecureCookie      = boolEnvOr("UI_FORCE_SECURE_COOKIE", false)
 	passwordLoginHook      func(context.Context, string, string, string) (sessionPrincipal, string, error)
 )
 
@@ -102,11 +100,11 @@ var (
 // It serves static web assets and provides a dynamic /config.js endpoint
 // with API configuration for the frontend. Includes tracing support.
 func main() {
-	port := envOr("PORT", "8082")
-	apiBase := envOr("API_BASE", "/api")
+	port := serviceutil.EnvOr("PORT", "8082")
+	apiBase := serviceutil.EnvOr("API_BASE", "/api")
 	apiKey := strings.TrimSpace(os.Getenv("API_KEY"))
 	apiKeys := strings.TrimSpace(os.Getenv("API_KEYS"))
-	apiUpstream := envOr("API_UPSTREAM", "http://mcp-sentinel-api:8080")
+	apiUpstream := serviceutil.EnvOr("API_UPSTREAM", "http://mcp-sentinel-api:8080")
 	if apiKey == "" && apiKeys == "" {
 		log.Printf("WARNING: neither API_KEY nor API_KEYS is set; UI API-key login is disabled")
 	}
@@ -116,7 +114,7 @@ func main() {
 		log.Fatalf("invalid API upstream: %v", err)
 	}
 
-	shutdown, err := initTracer("mcp-sentinel-ui")
+	shutdown, err := serviceutil.InitTracer("mcp-sentinel-ui")
 	if err != nil {
 		log.Printf("otel init failed: %v", err)
 	} else {
@@ -128,9 +126,9 @@ func main() {
 	}
 
 	log.Printf("mcp-sentinel-ui listening on :%s", port)
-	httpsMode := envOr("UI_REQUIRE_HTTPS", "auto")
+	httpsMode := serviceutil.EnvOr("UI_REQUIRE_HTTPS", "auto")
 	secured := securityHeadersMiddleware(httpsRedirectMiddleware(mux, httpsMode))
-	handler := otelhttp.NewHandler(logRequests(secured), "http.server")
+	handler := otelhttp.NewHandler(serviceutil.LogRequests(secured), "http.server")
 	httpServer := &http.Server{
 		Addr:              ":" + port,
 		Handler:           handler,
@@ -165,8 +163,13 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
-	defaultNamespace := envOr("UI_DEFAULT_NAMESPACE", "mcp-servers")
-	defaultPolicyVersion := envOr("UI_DEFAULT_POLICY_VERSION", "v1")
+	platformMode := normalizedPlatformMode()
+	publicCatalog := platformMode == "public"
+	defaultNamespace := strings.TrimSpace(os.Getenv("UI_DEFAULT_NAMESPACE"))
+	if defaultNamespace == "" {
+		defaultNamespace = defaultCatalogNamespaceForMode(platformMode)
+	}
+	defaultPolicyVersion := serviceutil.EnvOr("UI_DEFAULT_POLICY_VERSION", "v1")
 	baseJSON, err := json.Marshal(apiBase)
 	if err != nil {
 		return nil, err
@@ -182,8 +185,13 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error
 	if err != nil {
 		return nil, err
 	}
+	platformModeJSON, err := json.Marshal(platformMode)
+	if err != nil {
+		return nil, err
+	}
 	configJS := "window.MCP_API_BASE = " + string(baseJSON) + ";\n" +
 		"window.MCP_DEFAULTS = " + string(defaultsJSON) + ";\n" +
+		"window.MCP_PLATFORM_MODE = " + string(platformModeJSON) + ";\n" +
 		"window.MCP_GOOGLE_CLIENT_ID = " + string(googleClientIDJSON) + ";"
 	mux.HandleFunc("/config.js", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "application/javascript")
@@ -193,7 +201,7 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error
 	mux.HandleFunc("/auth/logout", handleLogout(sessions))
 	mux.HandleFunc("/auth/status", handleStatus(sessions))
 
-	apiProxy := newAPIProxy(target, upstreamAPIKey, apiKeys, sessions)
+	apiProxy := newAPIProxy(target, apiBase, upstreamAPIKey, apiKeys, sessions, publicCatalog)
 	mux.Handle(apiBase+"/", apiProxy)
 	mux.Handle(apiBase, apiProxy)
 
@@ -224,11 +232,11 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error
 	return mux, nil
 }
 
-func newAPIProxy(target *url.URL, upstreamAPIKey, apiKeys string, store *uiSessionStore) http.Handler {
-	return newAPIProxyWithTransport(target, upstreamAPIKey, apiKeys, store, nil)
+func newAPIProxy(target *url.URL, apiBase, upstreamAPIKey, apiKeys string, store *uiSessionStore, publicCatalog bool) http.Handler {
+	return newAPIProxyWithTransport(target, apiBase, upstreamAPIKey, apiKeys, store, publicCatalog, nil)
 }
 
-func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, store *uiSessionStore, transport http.RoundTripper) http.Handler {
+func newAPIProxyWithTransport(target *url.URL, apiBase, upstreamAPIKey, apiKeys string, store *uiSessionStore, publicCatalog bool, transport http.RoundTripper) http.Handler {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	if transport != nil {
 		proxy.Transport = transport
@@ -262,7 +270,7 @@ func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, s
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
 		log.Printf("api proxy error: %v", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "api_unavailable"})
+		serviceutil.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": "api_unavailable"})
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -273,49 +281,45 @@ func newAPIProxyWithTransport(target *url.URL, upstreamAPIKey, apiKeys string, s
 			proxy.ServeHTTP(w, req)
 			return
 		}
-		if allowsPublicRead(r) {
+
+		if hasAPIAuthHeader(r) {
+			proxy.ServeHTTP(w, r.Clone(r.Context()))
+			return
+		}
+
+		if sess, ok := store.sessionFromRequest(r); ok {
 			req := r.Clone(r.Context())
 			req.Header.Del("x-api-key")
 			req.Header.Del("authorization")
-			forcePublicRuntimeNamespace(req)
+			if sess.UpstreamAuthHeader != "" {
+				req.Header.Set("authorization", sess.UpstreamAuthHeader)
+			} else if sess.UpstreamAPIKey != "" {
+				req.Header.Set("x-api-key", sess.UpstreamAPIKey)
+			}
 			proxy.ServeHTTP(w, req)
 			return
 		}
 
-		sess, ok := store.sessionFromRequest(r)
-		if !ok {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		if publicCatalog && isPublicCatalogAPIRequest(r, apiBase) {
+			namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
+			if namespace != "" && !isPublicCatalogNamespace(namespace) {
+				serviceutil.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
+				return
+			}
+			req := r.Clone(r.Context())
+			req.Header.Del("x-api-key")
+			req.Header.Del("authorization")
+			if namespace == "" {
+				q := req.URL.Query()
+				q.Set("namespace", defaultPublicCatalogNamespace())
+				req.URL.RawQuery = q.Encode()
+			}
+			proxy.ServeHTTP(w, req)
 			return
 		}
 
-		req := r.Clone(r.Context())
-		req.Header.Del("x-api-key")
-		req.Header.Del("authorization")
-		if sess.UpstreamAuthHeader != "" {
-			req.Header.Set("authorization", sess.UpstreamAuthHeader)
-		} else if sess.UpstreamAPIKey != "" {
-			req.Header.Set("x-api-key", sess.UpstreamAPIKey)
-		}
-		proxy.ServeHTTP(w, req)
+		serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	})
-}
-
-func allowsPublicRead(r *http.Request) bool {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		return false
-	}
-	path := strings.TrimSpace(strings.TrimSuffix(r.URL.Path, "/"))
-	return strings.HasSuffix(path, "/runtime/servers")
-}
-
-func forcePublicRuntimeNamespace(r *http.Request) {
-	path := strings.TrimSpace(strings.TrimSuffix(r.URL.Path, "/"))
-	if !strings.HasSuffix(path, "/runtime/servers") {
-		return
-	}
-	query := r.URL.Query()
-	query.Set("namespace", "mcp-servers")
-	r.URL.RawQuery = query.Encode()
 }
 
 func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionStore) http.HandlerFunc {
@@ -328,19 +332,19 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("allow", http.MethodPost)
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+			serviceutil.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
 			return
 		}
 		clientID := loginClientID(r)
 		if !loginAttempts.allow(clientID) {
-			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too_many_requests"})
+			serviceutil.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too_many_requests"})
 			return
 		}
 
 		var req loginRequest
-		r.Body = http.MaxBytesReader(w, r.Body, 8192)
+		r.Body = http.MaxBytesReader(w, r.Body, loginRequestMaxBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+			serviceutil.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 			return
 		}
 
@@ -349,7 +353,7 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 		email := strings.TrimSpace(req.Email)
 		password := strings.TrimSpace(req.Password)
 		if presentedAPIKey == "" && idToken == "" && (email == "" || password == "") {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_credentials"})
+			serviceutil.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_credentials"})
 			return
 		}
 
@@ -375,7 +379,7 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 					// #nosec G706 -- authentication telemetry log with bounded fields.
 					log.Printf(`auth_login_failure client=%q timestamp=%q failure_count=%d mode=%q`, clientID, time.Now().UTC().Format(time.RFC3339), failures, "password")
 				}
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+				serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 				return
 			}
 			sess, err = store.createSession(r.Context(), uiSession{
@@ -400,7 +404,7 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 					// #nosec G706 -- authentication telemetry log with bounded fields.
 					log.Printf(`auth_login_failure client=%q timestamp=%q failure_count=%d mode=%q`, clientID, time.Now().UTC().Format(time.RFC3339), failures, "oidc")
 				}
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+				serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 				return
 			}
 			sess, err = store.createSession(r.Context(), uiSession{
@@ -410,7 +414,7 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 			})
 		} else {
 			if apiKey == "" {
-				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "api_key_not_configured"})
+				serviceutil.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "api_key_not_configured"})
 				return
 			}
 			if !hmac.Equal([]byte(presentedAPIKey), []byte(apiKey)) {
@@ -419,7 +423,7 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 					// #nosec G706 -- authentication telemetry log with bounded fields.
 					log.Printf(`auth_login_failure client=%q timestamp=%q failure_count=%d mode=%q`, clientID, time.Now().UTC().Format(time.RFC3339), failures, "api_key")
 				}
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+				serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 				return
 			}
 			sess, err = store.createSession(r.Context(), uiSession{
@@ -431,7 +435,7 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 			})
 		}
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "session_create_failed"})
+			serviceutil.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "session_create_failed"})
 			return
 		}
 
@@ -441,7 +445,7 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 			log.Printf(`auth_login_success_after_failures timestamp=%q prior_failures=%d`, time.Now().UTC().Format(time.RFC3339), priorFailures)
 		}
 		http.SetCookie(w, newSessionCookie(r, sess.ID, sess.ExpiresAt))
-		writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "principal": sess.Principal})
+		serviceutil.WriteJSON(w, http.StatusOK, map[string]any{"authenticated": true, "principal": sess.Principal})
 	}
 }
 
@@ -831,14 +835,14 @@ func handleLogout(store *uiSessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("allow", http.MethodPost)
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+			serviceutil.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
 			return
 		}
 		if cookie, err := r.Cookie(sessionCookieName); err == nil {
 			store.delete(strings.TrimSpace(cookie.Value))
 		}
 		http.SetCookie(w, expiredSessionCookie(r))
-		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": false})
+		serviceutil.WriteJSON(w, http.StatusOK, map[string]bool{"authenticated": false})
 	}
 }
 
@@ -846,10 +850,10 @@ func handleStatus(store *uiSessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sess, ok := store.sessionFromRequest(r)
 		if !ok {
-			writeJSON(w, http.StatusOK, map[string]any{"authenticated": false})
+			serviceutil.WriteJSON(w, http.StatusOK, map[string]any{"authenticated": false})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		serviceutil.WriteJSON(w, http.StatusOK, map[string]any{
 			"authenticated": true,
 			"principal":     sess.Principal,
 		})
@@ -907,6 +911,13 @@ func validAPIKeyHeader(r *http.Request, apiKeys string) bool {
 	return false
 }
 
+func hasAPIAuthHeader(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	return strings.TrimSpace(r.Header.Get("authorization")) != "" || strings.TrimSpace(r.Header.Get("x-api-key")) != ""
+}
+
 func firstAPIKey(apiKeys string) string {
 	for _, key := range strings.Split(apiKeys, ",") {
 		if trimmed := strings.TrimSpace(key); trimmed != "" {
@@ -916,7 +927,121 @@ func firstAPIKey(apiKeys string) string {
 	return ""
 }
 
+func normalizedPlatformMode() string {
+	raw := strings.TrimSpace(os.Getenv("PLATFORM_MODE"))
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("MCP_PLATFORM_MODE"))
+	}
+	switch strings.ToLower(raw) {
+	case "org":
+		return "org"
+	case "public":
+		return "public"
+	case "", "tenant":
+		return "tenant"
+	default:
+		return "tenant"
+	}
+}
+
+func catalogNamespacesForMode(mode string) []string {
+	if mode == "tenant" {
+		return nil
+	}
+	raw := ""
+	if mode == "public" {
+		raw = strings.TrimSpace(os.Getenv("PLATFORM_PUBLIC_NAMESPACES"))
+		if raw == "" {
+			raw = strings.TrimSpace(os.Getenv("MCP_PLATFORM_PUBLIC_NAMESPACES"))
+		}
+	}
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("PLATFORM_CATALOG_NAMESPACES"))
+	}
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("MCP_PLATFORM_CATALOG_NAMESPACES"))
+	}
+	values := make([]string, 0, 1)
+	if namespace := defaultCatalogNamespaceForMode(mode); namespace != "" {
+		values = append(values, namespace)
+	}
+	for _, namespace := range strings.Split(raw, ",") {
+		namespace = strings.TrimSpace(namespace)
+		if namespace != "" {
+			values = append(values, namespace)
+		}
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func defaultCatalogNamespaceForMode(mode string) string {
+	if mode == "tenant" {
+		return ""
+	}
+	if override := strings.TrimSpace(os.Getenv("PLATFORM_CATALOG_NAMESPACE")); override != "" {
+		return override
+	}
+	if override := strings.TrimSpace(os.Getenv("MCP_PLATFORM_CATALOG_NAMESPACE")); override != "" {
+		return override
+	}
+	switch mode {
+	case "org":
+		if namespace := strings.TrimSpace(os.Getenv("PLATFORM_ORG_NAMESPACE")); namespace != "" {
+			return namespace
+		}
+		return "mcp-servers-org"
+	case "public":
+		if namespace := strings.TrimSpace(os.Getenv("PLATFORM_PUBLIC_NAMESPACE")); namespace != "" {
+			return namespace
+		}
+		return "mcp-servers-public"
+	default:
+		return ""
+	}
+}
+
+func defaultPublicCatalogNamespace() string {
+	namespaces := catalogNamespacesForMode("public")
+	if len(namespaces) == 0 {
+		return defaultCatalogNamespaceForMode("public")
+	}
+	return namespaces[0]
+}
+
+func isPublicCatalogNamespace(namespace string) bool {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return false
+	}
+	for _, candidate := range catalogNamespacesForMode("public") {
+		if candidate == namespace {
+			return true
+		}
+	}
+	return false
+}
+
+func isPublicCatalogAPIRequest(r *http.Request, apiBase string) bool {
+	if r.Method != http.MethodGet {
+		return false
+	}
+	expected := strings.TrimRight(normalizePathPrefix(apiBase), "/") + "/runtime/servers"
+	return strings.TrimRight(r.URL.Path, "/") == expected
+}
+
 func secureCookie(r *http.Request) bool {
+	if forceSecureCookie {
+		return true
+	}
 	if r.TLS != nil {
 		return true
 	}
@@ -936,14 +1061,6 @@ func normalizePathPrefix(value string) string {
 		return "/api"
 	}
 	return trimmed
-}
-
-func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("content-type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		log.Printf("writeJSON encode error (status=%d): %v", status, err)
-	}
 }
 
 // httpsRedirectMiddleware redirects HTTP requests to HTTPS based on the
@@ -1050,153 +1167,29 @@ func isHTTPSRequest(r *http.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(r.Header.Get("x-forwarded-proto")), "https")
 }
 
-// logRequests is middleware that logs HTTP requests.
-// It logs the HTTP method, URL path, response status, and duration.
-func logRequests(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(recorder, r)
-		// #nosec G706 -- request path/method logging for operational diagnostics.
-		log.Printf("%s %s %d %s", r.Method, r.URL.Path, recorder.status, time.Since(start))
-	})
-}
-
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (r *statusRecorder) WriteHeader(status int) {
-	r.status = status
-	r.ResponseWriter.WriteHeader(status)
-}
-
-// initTracer initializes OpenTelemetry tracing for the service.
-// It configures OTLP HTTP exporter and sets up the tracer provider.
-// Returns a shutdown function to clean up resources and any initialization error.
-// If no OTEL_EXPORTER_OTLP_ENDPOINT is configured, returns a no-op shutdown function.
-func initTracer(serviceName string) (func(context.Context) error, error) {
-	if envName := strings.TrimSpace(os.Getenv("OTEL_SERVICE_NAME")); envName != "" {
-		serviceName = envName
-	}
-	endpoint := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
-	if endpoint == "" {
-		return func(context.Context) error { return nil }, nil
-	}
-
-	opts := otlpTraceOptions(endpoint)
-	exporter, err := otlptracehttp.New(context.Background(), opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	res, err := resource.New(context.Background(),
-		resource.WithAttributes(semconv.ServiceName(serviceName)),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	provider := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithResource(res),
-	)
-	otel.SetTracerProvider(provider)
-	return provider.Shutdown, nil
-}
-
-// envOr returns the value of an environment variable or a fallback if not set.
-// If the environment variable is set to a non-empty value, it returns that value.
-// Otherwise, it returns the provided fallback value.
-func envOr(key, fallback string) string {
-	if val := strings.TrimSpace(os.Getenv(key)); val != "" {
-		return val
-	}
-	return fallback
-}
-
 func intEnvOr(key string, fallback int) int {
-	val := strings.TrimSpace(os.Getenv(key))
-	if val == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(val)
-	if err != nil || parsed <= 0 {
+	parsed := serviceutil.EnvInt(key, fallback)
+	if parsed <= 0 {
 		// #nosec G706 -- fixed-format env validation log for local operator diagnostics.
-		log.Printf("invalid %s=%q; using default %d", key, val, fallback)
+		log.Printf("invalid %s=%q; using default %d", key, strings.TrimSpace(os.Getenv(key)), fallback)
 		return fallback
 	}
 	return parsed
 }
 
 func durationEnvOr(key string, fallback time.Duration) time.Duration {
-	val := strings.TrimSpace(os.Getenv(key))
-	if val == "" {
-		return fallback
-	}
-	parsed, err := time.ParseDuration(val)
-	if err != nil || parsed <= 0 {
+	parsed := serviceutil.EnvDuration(key, fallback)
+	if parsed <= 0 {
 		// #nosec G706 -- fixed-format env validation log for local operator diagnostics.
-		log.Printf("invalid %s=%q; using default %s", key, val, fallback)
+		log.Printf("invalid %s=%q; using default %s", key, strings.TrimSpace(os.Getenv(key)), fallback)
 		return fallback
 	}
 	return parsed
 }
 
-// otlpTraceOptions configures OTLP HTTP exporter options.
-// It sets up the endpoint URL and configures secure/insecure connections
-// based on whether the endpoint uses HTTPS or HTTP.
-func otlpTraceOptions(endpoint string) []otlptracehttp.Option {
-	insecure, insecureSet := boolEnv("OTEL_EXPORTER_OTLP_INSECURE")
-	if u, err := url.Parse(endpoint); err == nil {
-		// Handle URLs with schemes (http://host:port/path)
-		if u.Scheme != "" && u.Host == "" {
-			// This is a scheme-less endpoint, fall through to treat as host:port
-		} else if u.Scheme != "" && u.Host != "" {
-			opts := []otlptracehttp.Option{otlptracehttp.WithEndpoint(u.Host)}
-			if u.Path != "" {
-				opts = append(opts, otlptracehttp.WithURLPath(u.Path))
-			}
-			if insecureSet {
-				if insecure {
-					opts = append(opts, otlptracehttp.WithInsecure())
-				}
-				return opts
-			}
-			if u.Scheme == "http" {
-				opts = append(opts, otlptracehttp.WithInsecure())
-			}
-			return opts
-		}
+func boolEnvOr(key string, fallback bool) bool {
+	if parsed, ok := serviceutil.BoolEnv(key); ok {
+		return parsed
 	}
-
-	opts := []otlptracehttp.Option{otlptracehttp.WithEndpoint(endpoint)}
-	if insecureSet {
-		if insecure {
-			opts = append(opts, otlptracehttp.WithInsecure())
-		}
-		return opts
-	}
-	if strings.HasPrefix(strings.ToLower(endpoint), "http://") {
-		opts = append(opts, otlptracehttp.WithInsecure())
-	}
-	return opts
-}
-
-func boolEnv(key string) (bool, bool) {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return false, false
-	}
-	switch strings.ToLower(v) {
-	case "1", "true", "yes", "on":
-		return true, true
-	case "0", "false", "no", "off":
-		return false, true
-	default:
-		// #nosec G706 -- fixed-format env validation log for local operator diagnostics.
-		log.Printf("invalid %s=%q; ignoring", key, v)
-		return false, false
-	}
+	return fallback
 }

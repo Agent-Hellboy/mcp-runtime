@@ -29,6 +29,57 @@ func TestMCPAccessGrantValidateRequiresToolDecision(t *testing.T) {
 	}
 }
 
+func TestMCPAccessGrantValidateRejectsInvalidAllowedSideEffect(t *testing.T) {
+	grant := &MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant"},
+		Spec: MCPAccessGrantSpec{
+			ServerRef:          ServerReference{Name: "payments"},
+			Subject:            SubjectRef{HumanID: "user-1"},
+			AllowedSideEffects: []ToolSideEffect{"read", "erase"},
+		},
+	}
+
+	err := grant.validate()
+	if err == nil {
+		t.Fatal("expected validation error for invalid allowed side effect")
+	}
+	if !strings.Contains(err.Error(), "allowedSideEffects[1]") {
+		t.Fatalf("expected allowedSideEffects validation error, got %v", err)
+	}
+}
+
+func TestMCPAccessGrantValidateAllowsTeamOnlySubject(t *testing.T) {
+	grant := &MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant"},
+		Spec: MCPAccessGrantSpec{
+			ServerRef: ServerReference{Name: "payments"},
+			Subject:   SubjectRef{TeamID: "team-acme"},
+		},
+	}
+
+	if err := grant.validate(); err != nil {
+		t.Fatalf("expected team-only subject to validate, got %v", err)
+	}
+}
+
+func TestMCPAccessGrantValidateRejectsWhitespaceTeamID(t *testing.T) {
+	grant := &MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant"},
+		Spec: MCPAccessGrantSpec{
+			ServerRef: ServerReference{Name: "payments"},
+			Subject:   SubjectRef{TeamID: "team acme"},
+		},
+	}
+
+	err := grant.validate()
+	if err == nil {
+		t.Fatal("expected validation error for whitespace teamID")
+	}
+	if !strings.Contains(err.Error(), "subject.teamID") {
+		t.Fatalf("expected subject.teamID validation error, got %v", err)
+	}
+}
+
 func TestMCPAgentSessionValidateUsesInjectedTimeSource(t *testing.T) {
 	fixedNow := time.Date(2026, time.March, 25, 12, 0, 0, 0, time.UTC)
 	originalNowFunc := nowFunc
@@ -53,6 +104,27 @@ func TestMCPAgentSessionValidateUsesInjectedTimeSource(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "expiresAt") {
 		t.Fatalf("expected expiresAt validation error, got %v", err)
+	}
+}
+
+func TestMCPServerValidateRequiresToolSideEffect(t *testing.T) {
+	server := &MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "server"},
+		Spec: MCPServerSpec{
+			Image:            "example.com/server",
+			PublicPathPrefix: "server",
+			Tools: []ToolConfig{
+				{Name: "read_file", RequiredTrust: TrustLevelLow},
+			},
+		},
+	}
+
+	err := server.validate()
+	if err == nil {
+		t.Fatal("expected validation error for missing tool sideEffect")
+	}
+	if !strings.Contains(err.Error(), "tools[0].sideEffect") {
+		t.Fatalf("expected sideEffect validation error, got %v", err)
 	}
 }
 
@@ -104,6 +176,25 @@ func TestMCPServerDefault(t *testing.T) {
 	}
 	if server.Spec.IngressClass != "traefik" {
 		t.Fatalf("expected ingressClass default, got %q", server.Spec.IngressClass)
+	}
+}
+
+func TestMCPServerDefaultGatewayAuthTeamHeader(t *testing.T) {
+	server := &MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-server"},
+		Spec: MCPServerSpec{
+			Image:   "example.com/mcp-server",
+			Gateway: &GatewayConfig{Enabled: true},
+		},
+	}
+
+	server.Default()
+
+	if server.Spec.Auth == nil {
+		t.Fatal("expected auth defaults")
+	}
+	if server.Spec.Auth.TeamIDHeader != defaultAuthTeamIDHeader {
+		t.Fatalf("expected teamIDHeader default, got %q", server.Spec.Auth.TeamIDHeader)
 	}
 }
 

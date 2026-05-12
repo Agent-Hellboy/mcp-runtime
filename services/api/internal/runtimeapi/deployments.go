@@ -1,4 +1,4 @@
-package main
+package runtimeapi
 
 import (
 	"context"
@@ -6,33 +6,52 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+
+	"mcp-runtime/pkg/kubeworkload"
 )
 
 const (
-	platformManagedLabel          = "platform.mcpruntime.org/managed"
-	platformUserIDLabel           = "platform.mcpruntime.org/user-id"
-	platformTeamIDLabel           = "mcpruntime.org/team-id"
-	platformTeamSlugLabel         = "mcpruntime.org/team-slug"
-	platformScopeLabel            = "mcpruntime.org/scope"
-	createdByLabel                = "created-by"
-	defaultDeployPort             = int32(8088)
-	restrictedRunAsUser           = int64(65532)
-	defaultWorkloadServiceAccount = "mcp-workload"
+	platformManagedLabel           = "platform.mcpruntime.org/managed"
+	platformUserIDLabel            = "platform.mcpruntime.org/user-id"
+	platformTeamIDLabel            = "mcpruntime.org/team-id"
+	platformTeamSlugLabel          = "mcpruntime.org/team-slug"
+	platformScopeLabel             = "mcpruntime.org/scope"
+	createdByLabel                 = "created-by"
+	defaultDeployPort              = int32(8088)
+	restrictedRunAsUser            = kubeworkload.RestrictedRunAsUser
+	traefikWatchRoleName           = "traefik-watch"
+	platformNamespaceOwnerRoleName = "platform-namespace-owner"
 )
 
-var errPrincipalIdentityRequired = errors.New("authenticated user identity required")
+var (
+	errPrincipalIdentityRequired = errors.New("authenticated user identity required")
+	deployImageTagPattern        = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+)
+
+type managedNamespaceOptions struct {
+	ingressFromNamespaces []string
+}
+
+type teamTraefikWatchConfig struct {
+	mode           string
+	namespace      string
+	deployment     string
+	serviceAccount string
+}
 
 type deployRequest struct {
 	Name      string `json:"name"`
@@ -43,7 +62,7 @@ type deployRequest struct {
 	Namespace string `json:"namespace,omitempty"`
 }
 
-func (s *RuntimeServer) handleDeployments(w http.ResponseWriter, r *http.Request) {
+func (s *RuntimeServer) HandleDeployments(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		s.handleDeploymentList(w, r)
@@ -55,7 +74,7 @@ func (s *RuntimeServer) handleDeployments(w http.ResponseWriter, r *http.Request
 	}
 }
 
-func (s *RuntimeServer) handleDeploymentItem(w http.ResponseWriter, r *http.Request) {
+func (s *RuntimeServer) HandleDeploymentItem(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		w.Header().Set("allow", "DELETE")
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
@@ -71,7 +90,7 @@ func (s *RuntimeServer) handleDeploymentItem(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if p.Role != roleAdmin && (!p.hasNamespace(ns) || ns == sharedCatalogNamespace) {
+	if p.Role != roleAdmin && (!p.HasNamespace(ns) || ns == sharedCatalogNamespace) {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "denied", name, ns, "", "forbidden"))
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
@@ -121,7 +140,7 @@ func (s *RuntimeServer) handleDeploymentList(w http.ResponseWriter, r *http.Requ
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 			return
 		}
-		if !p.hasNamespace(namespace) || namespace == sharedCatalogNamespace {
+		if !p.HasNamespace(namespace) || namespace == sharedCatalogNamespace {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 			return
 		}
@@ -145,7 +164,7 @@ func (s *RuntimeServer) handleDeploymentList(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]any{"deployments": deploymentSummaries(list.Items)})
 }
 
-func (s *RuntimeServer) handleAdminDeployments(w http.ResponseWriter, r *http.Request) {
+func (s *RuntimeServer) HandleAdminDeployments(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("allow", http.MethodGet)
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
@@ -162,7 +181,7 @@ func (s *RuntimeServer) handleAdminDeployments(w http.ResponseWriter, r *http.Re
 	}
 
 	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
-	summaries, err := s.listAdminDeploymentSummaries(r.Context(), namespace)
+	summaries, err := s.ListAdminDeploymentSummaries(r.Context(), namespace)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deployments"})
 		return
@@ -170,7 +189,7 @@ func (s *RuntimeServer) handleAdminDeployments(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]any{"deployments": summaries})
 }
 
-func (s *RuntimeServer) listAdminDeploymentSummaries(ctx context.Context, namespace string) ([]map[string]any, error) {
+func (s *RuntimeServer) ListAdminDeploymentSummaries(ctx context.Context, namespace string) ([]map[string]any, error) {
 	if s.k8sClients == nil {
 		return nil, errors.New("kubernetes not available")
 	}
@@ -195,7 +214,7 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var req deployRequest
-	r.Body = http.MaxBytesReader(w, r.Body, 32*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, deploymentApplyMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBodyDecodeError(w, err)
 		return
@@ -226,21 +245,26 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace required"})
 		return
 	}
-	if p.Role != roleAdmin && (!p.hasNamespace(namespace) || namespace == sharedCatalogNamespace) {
+	if p.Role != roleAdmin && (!p.HasNamespace(namespace) || namespace == sharedCatalogNamespace) {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, req.Image, "forbidden"))
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
 	}
 	image := req.Image
 	if req.Version != "" && !strings.Contains(image[strings.LastIndex(image, "/")+1:], ":") {
+		if !deployImageTagPattern.MatchString(req.Version) {
+			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, req.Image, "version must be a valid image tag"))
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "version must be a valid image tag"})
+			return
+		}
 		image += ":" + req.Version
 	}
-	team, teamNamespace := p.teamForNamespace(namespace)
+	team, teamNamespace := p.TeamForNamespace(namespace)
 	teamSlug := ""
 	if teamNamespace {
 		teamSlug = strings.TrimSpace(team.Slug)
 	}
-	if err := validateDeployImage(image, namespace, teamSlug, p.Role); err != nil {
+	if err := ValidateDeployImage(image, namespace, teamSlug, p.Role); err != nil {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, image, err.Error()))
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -270,8 +294,13 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure team namespace"})
 			return
 		}
+		if err := s.ensureNamespaceUserWorkloadRBAC(ctx, namespace, p.UserID()); err != nil {
+			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure namespace access"})
+			return
+		}
 	} else {
-		if err := s.ensureUserNamespace(ctx, target); err != nil {
+		if err := s.EnsureUserNamespace(ctx, target); err != nil {
 			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure namespace"})
 			return
@@ -281,8 +310,8 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 		"app.kubernetes.io/name":       req.Name,
 		"app.kubernetes.io/managed-by": "mcp-runtime",
 		platformManagedLabel:           "true",
-		platformUserIDLabel:            p.userID(),
-		createdByLabel:                 p.userID(),
+		platformUserIDLabel:            p.UserID(),
+		createdByLabel:                 p.UserID(),
 	}
 	if teamNamespace {
 		labels[platformTeamIDLabel] = team.ID
@@ -310,7 +339,7 @@ func (s *RuntimeServer) clientForPrincipal(p principal) (kubernetes.Interface, e
 	if s.k8sClients == nil {
 		return nil, fmt.Errorf("kubernetes not available")
 	}
-	if p.userID() == "" {
+	if p.UserID() == "" {
 		return nil, errPrincipalIdentityRequired
 	}
 	if s.k8sClients.Config == nil {
@@ -318,23 +347,52 @@ func (s *RuntimeServer) clientForPrincipal(p principal) (kubernetes.Interface, e
 	}
 	cfg := rest.CopyConfig(s.k8sClients.Config)
 	cfg.Impersonate = rest.ImpersonationConfig{
-		UserName: "platform:user:" + p.userID(),
+		UserName: "platform:user:" + p.UserID(),
 		Groups:   []string{"platform:role:" + p.Role},
 	}
 	return kubernetes.NewForConfig(cfg)
 }
 
-func (s *RuntimeServer) ensureUserNamespace(ctx context.Context, p principal) error {
+func (s *RuntimeServer) EnsureUserNamespace(ctx context.Context, p principal) error {
 	if s.k8sClients == nil || p.Namespace == "" {
 		return nil
 	}
 	labels := map[string]string{
 		platformManagedLabel:                 "true",
-		platformUserIDLabel:                  p.userID(),
+		platformUserIDLabel:                  p.UserID(),
 		platformScopeLabel:                   namespaceScopeUser,
 		"pod-security.kubernetes.io/enforce": "restricted",
 	}
-	return s.ensureManagedNamespace(ctx, p.Namespace, labels)
+	if err := s.ensureManagedNamespace(ctx, p.Namespace, labels, managedNamespaceOptions{}); err != nil {
+		return err
+	}
+	return s.ensureNamespaceUserWorkloadRBAC(ctx, p.Namespace, p.UserID())
+}
+
+func (s *RuntimeServer) EnsureCatalogNamespace(ctx context.Context, namespace string) error {
+	namespace = strings.TrimSpace(namespace)
+	if s.k8sClients == nil || namespace == "" {
+		return nil
+	}
+	labels := map[string]string{
+		platformManagedLabel:                 "true",
+		platformScopeLabel:                   PlatformMode(),
+		"pod-security.kubernetes.io/enforce": "restricted",
+	}
+	cfg := platformTeamTraefikWatchConfig()
+	opts := managedNamespaceOptions{}
+	if cfg.mode != "disabled" {
+		opts.ingressFromNamespaces = []string{cfg.namespace}
+	}
+	if err := s.ensureManagedNamespace(ctx, namespace, labels, opts); err != nil {
+		return err
+	}
+	if cfg.mode != "disabled" {
+		if err := s.ensureTeamTraefikWatch(ctx, namespace, cfg); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *RuntimeServer) ensureTeamNamespace(ctx context.Context, team teamRecord) error {
@@ -348,20 +406,40 @@ func (s *RuntimeServer) ensureTeamNamespace(ctx context.Context, team teamRecord
 		platformScopeLabel:                   namespaceScopeTeam,
 		"pod-security.kubernetes.io/enforce": "restricted",
 	}
-	return s.ensureManagedNamespace(ctx, team.Namespace, labels)
+	cfg := platformTeamTraefikWatchConfig()
+	opts := managedNamespaceOptions{}
+	if cfg.mode != "disabled" {
+		opts.ingressFromNamespaces = []string{cfg.namespace}
+	}
+	if err := s.ensureManagedNamespace(ctx, team.Namespace, labels, opts); err != nil {
+		return err
+	}
+	if cfg.mode == "disabled" {
+		return nil
+	}
+	return s.ensureTeamTraefikWatch(ctx, team.Namespace, cfg)
 }
 
-func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace string, labels map[string]string) error {
+func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace string, labels map[string]string, opts managedNamespaceOptions) error {
 	if s.k8sClients == nil || strings.TrimSpace(namespace) == "" {
 		return nil
 	}
 	base := s.k8sClients.Clientset
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
-		Name:   namespace,
-		Labels: labels,
-	}}
-	if _, err := base.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	current, err := base.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name:   namespace,
+			Labels: labels,
+		}}
+		if _, err := base.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return err
+		}
+	} else if err != nil {
 		return err
+	} else if mergeNamespaceLabels(current, labels) {
+		if _, err := base.CoreV1().Namespaces().Update(ctx, current, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
 	}
 	if err := ensureResourceQuota(ctx, base, namespace); err != nil {
 		return err
@@ -369,31 +447,57 @@ func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace st
 	if err := ensureLimitRange(ctx, base, namespace); err != nil {
 		return err
 	}
-	if err := ensureDefaultDenyNetworkPolicy(ctx, base, namespace); err != nil {
+	if err := ensureDefaultDenyNetworkPolicy(ctx, base, namespace, opts.ingressFromNamespaces...); err != nil {
 		return err
 	}
-	return ensureWorkloadServiceAccount(ctx, base, namespace)
+	return kubeworkload.EnsureServiceAccount(ctx, base, namespace)
 }
 
-func ensureWorkloadServiceAccount(ctx context.Context, client kubernetes.Interface, namespace string) error {
-	desired := &corev1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      defaultWorkloadServiceAccount,
-			Namespace: namespace,
+func mergeNamespaceLabels(ns *corev1.Namespace, labels map[string]string) bool {
+	if ns.Labels == nil {
+		ns.Labels = map[string]string{}
+	}
+	changed := false
+	for key, value := range labels {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		if ns.Labels[key] == value {
+			continue
+		}
+		ns.Labels[key] = value
+		changed = true
+	}
+	return changed
+}
+
+func (s *RuntimeServer) ensureNamespaceUserWorkloadRBAC(ctx context.Context, namespace, userID string) error {
+	if s.k8sClients == nil || strings.TrimSpace(namespace) == "" || strings.TrimSpace(userID) == "" {
+		return nil
+	}
+	client := s.k8sClients.Clientset
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: platformNamespaceOwnerRoleName, Namespace: namespace},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+			{APIGroups: []string{""}, Resources: []string{"services"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 		},
-		AutomountServiceAccountToken: boolPtr(false),
 	}
-	existing, err := client.CoreV1().ServiceAccounts(namespace).Get(ctx, defaultWorkloadServiceAccount, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, createErr := client.CoreV1().ServiceAccounts(namespace).Create(ctx, desired, metav1.CreateOptions{})
-		return createErr
-	}
-	if err != nil {
+	if err := upsertRole(ctx, client, role); err != nil {
 		return err
 	}
-	existing.AutomountServiceAccountToken = boolPtr(false)
-	_, err = client.CoreV1().ServiceAccounts(namespace).Update(ctx, existing, metav1.UpdateOptions{})
-	return err
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: platformNamespaceOwnerRoleName, Namespace: namespace},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "Role",
+			Name:     platformNamespaceOwnerRoleName,
+		},
+		Subjects: []rbacv1.Subject{
+			{Kind: rbacv1.UserKind, Name: "platform:user:" + strings.TrimSpace(userID)},
+		},
+	}
+	return upsertRoleBinding(ctx, client, binding)
 }
 
 func ensureResourceQuota(ctx context.Context, client kubernetes.Interface, ns string) error {
@@ -429,14 +533,55 @@ func ensureLimitRange(ctx context.Context, client kubernetes.Interface, ns strin
 	return nil
 }
 
-func ensureDefaultDenyNetworkPolicy(ctx context.Context, client kubernetes.Interface, ns string) error {
+func ensureDefaultDenyNetworkPolicy(ctx context.Context, client kubernetes.Interface, ns string, ingressFromNamespaces ...string) error {
+	policy := desiredDefaultDenyNetworkPolicy(ns, ingressFromNamespaces...)
+	current, err := client.NetworkingV1().NetworkPolicies(ns).Get(ctx, policy.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = client.NetworkingV1().NetworkPolicies(ns).Create(ctx, policy, metav1.CreateOptions{})
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	policy.ResourceVersion = current.ResourceVersion
+	policy.Labels = current.Labels
+	policy.Annotations = current.Annotations
+	_, err = client.NetworkingV1().NetworkPolicies(ns).Update(ctx, policy, metav1.UpdateOptions{})
+	return err
+}
+
+func desiredDefaultDenyNetworkPolicy(ns string, ingressFromNamespaces ...string) *networkingv1.NetworkPolicy {
 	udpProtocol := corev1.ProtocolUDP
 	tcpProtocol := corev1.ProtocolTCP
+	ingress := make([]networkingv1.NetworkPolicyIngressRule, 0, 2)
+	if len(ingressFromNamespaces) > 0 {
+		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+			From: []networkingv1.NetworkPolicyPeer{
+				{PodSelector: &metav1.LabelSelector{}},
+			},
+		})
+	}
+	for _, namespace := range ingressFromNamespaces {
+		namespace = strings.TrimSpace(namespace)
+		if namespace == "" {
+			continue
+		}
+		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+			From: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"kubernetes.io/metadata.name": namespace},
+					},
+				},
+			},
+		})
+	}
 	policy := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "platform-default-deny", Namespace: ns},
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
+			Ingress:     ingress,
 			Egress: []networkingv1.NetworkPolicyEgressRule{
 				{
 					To: []networkingv1.NetworkPolicyPeer{
@@ -468,43 +613,224 @@ func ensureDefaultDenyNetworkPolicy(ctx context.Context, client kubernetes.Inter
 			},
 		},
 	}
-	if _, err := client.NetworkingV1().NetworkPolicies(ns).Create(ctx, policy, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	return policy
+}
+
+func platformTeamTraefikWatchConfig() teamTraefikWatchConfig {
+	mode := strings.ToLower(strings.TrimSpace(envOr("PLATFORM_TEAM_TRAEFIK_WATCH", "auto")))
+	switch mode {
+	case "", "auto":
+		mode = "auto"
+	case "false", "off", "0", "no", "disabled":
+		mode = "disabled"
+	case "true", "on", "1", "yes", "required":
+		mode = "required"
+	default:
+		mode = "auto"
+	}
+	return teamTraefikWatchConfig{
+		mode:           mode,
+		namespace:      envOr("PLATFORM_TRAEFIK_NAMESPACE", "traefik"),
+		deployment:     envOr("PLATFORM_TRAEFIK_DEPLOYMENT", "traefik"),
+		serviceAccount: envOr("PLATFORM_TRAEFIK_SERVICE_ACCOUNT", "traefik"),
+	}
+}
+
+func (s *RuntimeServer) ensureTeamTraefikWatch(ctx context.Context, namespace string, cfg teamTraefikWatchConfig) error {
+	if s.k8sClients == nil || strings.TrimSpace(namespace) == "" {
+		return nil
+	}
+	if err := ensureTraefikWatchRBAC(ctx, s.k8sClients.Clientset, namespace, cfg); err != nil {
+		return err
+	}
+	if err := ensureTraefikDeploymentWatchesNamespace(ctx, s.k8sClients.Clientset, namespace, cfg); err != nil {
+		if cfg.mode == "auto" && apierrors.IsNotFound(err) {
+			return nil
+		}
 		return err
 	}
 	return nil
 }
 
+func ensureTraefikWatchRBAC(ctx context.Context, client kubernetes.Interface, namespace string, cfg teamTraefikWatchConfig) error {
+	role := desiredTraefikWatchRole(namespace)
+	if err := ensureTraefikWatchRole(ctx, client, role); err != nil {
+		return err
+	}
+	binding := desiredTraefikWatchRoleBinding(namespace, cfg)
+	return ensureTraefikWatchRoleBinding(ctx, client, binding)
+}
+
+func desiredTraefikWatchRole(namespace string) *rbacv1.Role {
+	return &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: namespace},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"services", "endpoints"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses"}, Verbs: []string{"get", "list", "watch"}},
+		},
+	}
+}
+
+func desiredTraefikWatchRoleBinding(namespace string, cfg teamTraefikWatchConfig) *rbacv1.RoleBinding {
+	return &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: namespace},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "Role",
+			Name:     traefikWatchRoleName,
+		},
+		Subjects: []rbacv1.Subject{
+			{Kind: "ServiceAccount", Name: cfg.serviceAccount, Namespace: cfg.namespace},
+		},
+	}
+}
+
+func ensureTraefikWatchRole(ctx context.Context, client kubernetes.Interface, role *rbacv1.Role) error {
+	_, err := client.RbacV1().Roles(role.Namespace).Get(ctx, role.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = client.RbacV1().Roles(role.Namespace).Create(ctx, role, metav1.CreateOptions{})
+		return err
+	}
+	return err
+}
+
+func ensureTraefikWatchRoleBinding(ctx context.Context, client kubernetes.Interface, binding *rbacv1.RoleBinding) error {
+	current, err := client.RbacV1().RoleBindings(binding.Namespace).Get(ctx, binding.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = client.RbacV1().RoleBindings(binding.Namespace).Create(ctx, binding, metav1.CreateOptions{})
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	if roleBindingMatches(current, binding) {
+		return nil
+	}
+	binding.ResourceVersion = current.ResourceVersion
+	binding.Labels = current.Labels
+	binding.Annotations = current.Annotations
+	_, err = client.RbacV1().RoleBindings(binding.Namespace).Update(ctx, binding, metav1.UpdateOptions{})
+	return err
+}
+
+func roleBindingMatches(current, desired *rbacv1.RoleBinding) bool {
+	if current == nil || desired == nil {
+		return false
+	}
+	if current.RoleRef != desired.RoleRef || len(current.Subjects) != len(desired.Subjects) {
+		return false
+	}
+	for i := range desired.Subjects {
+		if current.Subjects[i] != desired.Subjects[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func upsertRole(ctx context.Context, client kubernetes.Interface, role *rbacv1.Role) error {
+	current, err := client.RbacV1().Roles(role.Namespace).Get(ctx, role.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = client.RbacV1().Roles(role.Namespace).Create(ctx, role, metav1.CreateOptions{})
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	role.ResourceVersion = current.ResourceVersion
+	role.Labels = current.Labels
+	role.Annotations = current.Annotations
+	_, err = client.RbacV1().Roles(role.Namespace).Update(ctx, role, metav1.UpdateOptions{})
+	return err
+}
+
+func upsertRoleBinding(ctx context.Context, client kubernetes.Interface, binding *rbacv1.RoleBinding) error {
+	current, err := client.RbacV1().RoleBindings(binding.Namespace).Get(ctx, binding.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = client.RbacV1().RoleBindings(binding.Namespace).Create(ctx, binding, metav1.CreateOptions{})
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	binding.ResourceVersion = current.ResourceVersion
+	binding.Labels = current.Labels
+	binding.Annotations = current.Annotations
+	_, err = client.RbacV1().RoleBindings(binding.Namespace).Update(ctx, binding, metav1.UpdateOptions{})
+	return err
+}
+
+func ensureTraefikDeploymentWatchesNamespace(ctx context.Context, client kubernetes.Interface, namespace string, cfg teamTraefikWatchConfig) error {
+	deployment, err := client.AppsV1().Deployments(cfg.namespace).Get(ctx, cfg.deployment, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	const prefix = "--providers.kubernetesingress.namespaces="
+	containerIndex := -1
+	argIndex := -1
+	argValue := ""
+	for ci, container := range deployment.Spec.Template.Spec.Containers {
+		for ai, arg := range container.Args {
+			if strings.HasPrefix(arg, prefix) {
+				containerIndex = ci
+				argIndex = ai
+				argValue = arg
+				break
+			}
+		}
+		if containerIndex >= 0 {
+			break
+		}
+	}
+	if containerIndex < 0 {
+		if cfg.mode == "auto" {
+			return nil
+		}
+		return errors.New("traefik deployment does not expose --providers.kubernetesingress.namespaces")
+	}
+	watched := splitCSV(strings.TrimPrefix(argValue, prefix))
+	for _, watchedNamespace := range watched {
+		if watchedNamespace == namespace {
+			return nil
+		}
+	}
+	watched = append(watched, namespace)
+	updated := deployment.DeepCopy()
+	updated.Spec.Template.Spec.Containers[containerIndex].Args[argIndex] = prefix + strings.Join(watched, ",")
+	_, err = client.AppsV1().Deployments(cfg.namespace).Update(ctx, updated, metav1.UpdateOptions{})
+	return err
+}
+
+func splitCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
 func desiredDeployment(name, namespace, image string, port, replicas int32, labels map[string]string) *appsv1.Deployment {
-	return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels}, Spec: appsv1.DeploymentSpec{
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels}, Spec: appsv1.DeploymentSpec{
 		Replicas: &replicas,
 		Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": name}},
 		Template: corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{Labels: labels},
 			Spec: corev1.PodSpec{
-				ServiceAccountName:           defaultWorkloadServiceAccount,
-				AutomountServiceAccountToken: boolPtr(false),
-				SecurityContext: &corev1.PodSecurityContext{
-					RunAsNonRoot: boolPtr(true),
-					RunAsUser:    int64Ptr(restrictedRunAsUser),
-					SeccompProfile: &corev1.SeccompProfile{
-						Type: corev1.SeccompProfileTypeRuntimeDefault,
-					},
-				},
 				Containers: []corev1.Container{{
-					Name:  "server",
-					Image: image,
-					Ports: []corev1.ContainerPort{{ContainerPort: port}},
-					SecurityContext: &corev1.SecurityContext{
-						AllowPrivilegeEscalation: boolPtr(false),
-						RunAsNonRoot:             boolPtr(true),
-						Capabilities: &corev1.Capabilities{
-							Drop: []corev1.Capability{"ALL"},
-						},
-					},
+					Name:            "server",
+					Image:           image,
+					Ports:           []corev1.ContainerPort{{ContainerPort: port}},
+					SecurityContext: kubeworkload.RestrictedContainerSecurityContext(),
 				}},
 			},
 		},
 	}}
+	kubeworkload.ApplyRestrictedPodDefaults(&deployment.Spec.Template.Spec)
+	return deployment
 }
 
 func desiredService(name, namespace string, port int32, labels map[string]string) *corev1.Service {
@@ -518,14 +844,6 @@ func desiredService(name, namespace string, port int32, labels map[string]string
 func intstrPtr(port int) *intstr.IntOrString {
 	v := intstr.FromInt(port)
 	return &v
-}
-
-func boolPtr(value bool) *bool {
-	return &value
-}
-
-func int64Ptr(value int64) *int64 {
-	return &value
 }
 
 func upsertDeployment(ctx context.Context, client kubernetes.Interface, dep *appsv1.Deployment) (*appsv1.Deployment, error) {
@@ -555,7 +873,7 @@ func upsertService(ctx context.Context, client kubernetes.Interface, svc *corev1
 	return client.CoreV1().Services(svc.Namespace).Update(ctx, existing, metav1.UpdateOptions{})
 }
 
-func validateDeployImage(image, namespace, teamSlug, role string) error {
+func ValidateDeployImage(image, namespace, teamSlug, role string) error {
 	parts := strings.Split(image, "/")
 	if len(parts) < 2 {
 		return fmt.Errorf("image must include a registry/repository path")
@@ -628,7 +946,7 @@ func firstContainerImage(d appsv1.Deployment) string {
 func deploymentAuditEvent(r *http.Request, p principal, action, status, name, namespace, image, message string) auditEvent {
 	target := strings.Trim(strings.TrimSpace(namespace)+"/"+strings.TrimSpace(name), "/")
 	return auditEvent{
-		UserID:           p.userID(),
+		UserID:           p.UserID(),
 		Action:           action,
 		Resource:         strings.TrimSpace(name),
 		Namespace:        strings.TrimSpace(namespace),

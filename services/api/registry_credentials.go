@@ -8,19 +8,21 @@ import (
 	"strings"
 )
 
+const registryCredentialRequestMaxBytes = 4 * 1024
+
 func (s *apiServer) handleRegistryCredentials(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
 		return
 	}
 	p, ok := principalFromContext(r.Context())
-	if !ok || p.userID() == "" {
+	if !ok || p.UserID() == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
-		keys, err := s.platform.ListRegistryCredentials(r.Context(), p.userID())
+		keys, err := s.platform.ListRegistryCredentials(r.Context(), p.UserID())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list registry credentials"})
 			return
@@ -30,15 +32,15 @@ func (s *apiServer) handleRegistryCredentials(w http.ResponseWriter, r *http.Req
 		var req struct {
 			Name string `json:"name"`
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		r.Body = http.MaxBytesReader(w, r.Body, registryCredentialRequestMaxBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeBodyDecodeError(w, err)
 			return
 		}
-		key, cleartext, err := s.platform.CreateRegistryCredential(r.Context(), p.userID(), req.Name)
+		key, cleartext, err := s.platform.CreateRegistryCredential(r.Context(), p.UserID(), req.Name)
 		if err != nil {
 			s.platform.WriteAudit(r.Context(), auditEvent{
-				UserID:       p.userID(),
+				UserID:       p.UserID(),
 				Action:       "registry_credential_create",
 				Resource:     strings.TrimSpace(req.Name),
 				Status:       "error",
@@ -51,7 +53,7 @@ func (s *apiServer) handleRegistryCredentials(w http.ResponseWriter, r *http.Req
 			return
 		}
 		s.platform.WriteAudit(r.Context(), auditEvent{
-			UserID:       p.userID(),
+			UserID:       p.UserID(),
 			Action:       "registry_credential_create",
 			Resource:     key.ID,
 			Status:       "success",
@@ -72,7 +74,7 @@ func (s *apiServer) handleRegistryCredentialItem(w http.ResponseWriter, r *http.
 		return
 	}
 	p, ok := principalFromContext(r.Context())
-	if !ok || p.userID() == "" {
+	if !ok || p.UserID() == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
@@ -87,10 +89,10 @@ func (s *apiServer) handleRegistryCredentialItem(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid credential path"})
 		return
 	}
-	key, err := s.platform.RevokeRegistryCredential(r.Context(), p.userID(), parts[0])
+	key, err := s.platform.RevokeRegistryCredential(r.Context(), p.UserID(), parts[0])
 	if err != nil {
 		s.platform.WriteAudit(r.Context(), auditEvent{
-			UserID:       p.userID(),
+			UserID:       p.UserID(),
 			Action:       "registry_credential_revoke",
 			Resource:     parts[0],
 			Status:       "error",
@@ -107,7 +109,7 @@ func (s *apiServer) handleRegistryCredentialItem(w http.ResponseWriter, r *http.
 		return
 	}
 	s.platform.WriteAudit(r.Context(), auditEvent{
-		UserID:       p.userID(),
+		UserID:       p.UserID(),
 		Action:       "registry_credential_revoke",
 		Resource:     key.ID,
 		Status:       "success",

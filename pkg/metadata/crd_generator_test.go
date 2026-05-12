@@ -17,6 +17,7 @@ func TestGenerateCRD(t *testing.T) {
 		replicas := int32(2)
 		server := &ServerMetadata{
 			Name:             "test-server",
+			Description:      "Test server for CRD generation.",
 			Image:            "my-image",
 			ImageTag:         "v1.0.0",
 			Route:            "/test/mcp",
@@ -25,6 +26,7 @@ func TestGenerateCRD(t *testing.T) {
 			Port:             9000,
 			Replicas:         &replicas,
 			Namespace:        "custom-ns",
+			TeamID:           "team-custom",
 		}
 
 		err := GenerateCRD(server, outputPath)
@@ -44,6 +46,8 @@ func TestGenerateCRD(t *testing.T) {
 		assertContains(t, content, "kind: MCPServer")
 		assertContains(t, content, "name: test-server")
 		assertContains(t, content, "namespace: custom-ns")
+		assertContains(t, content, "teamID: team-custom")
+		assertContains(t, content, "description: Test server for CRD generation.")
 		assertContains(t, content, "image: my-image")
 		assertContains(t, content, "imageTag: v1.0.0")
 		assertContains(t, content, "port: 9000")
@@ -135,6 +139,9 @@ func TestGenerateCRD(t *testing.T) {
 				Port:        8091,
 				UpstreamURL: "http://127.0.0.1:8088",
 				StripPrefix: "/gateway-server",
+				Resources: &ResourceRequirements{
+					Requests: &ResourceList{CPU: "5m", Memory: "32Mi"},
+				},
 			},
 			Auth: &AuthConfig{
 				Mode: AuthMode("header"),
@@ -148,7 +155,7 @@ func TestGenerateCRD(t *testing.T) {
 				HeaderName: "X-MCP-Agent-Session",
 			},
 			Tools: []ToolConfig{
-				{Name: "delete_user", RequiredTrust: TrustLevel("high")},
+				{Name: "delete_user", Description: "Delete a user from the backing system.", RequiredTrust: TrustLevel("high"), SideEffect: ToolSideEffect("destructive")},
 			},
 			SecretEnvVars: []SecretEnvVar{
 				{
@@ -197,6 +204,10 @@ func TestGenerateCRD(t *testing.T) {
 		assertMapIntValue(t, gateway, "port", 8091)
 		assertMapStringValue(t, gateway, "upstreamURL", "http://127.0.0.1:8088")
 		assertMapStringValue(t, gateway, "stripPrefix", "/gateway-server")
+		gatewayResources := assertMapValue(t, gateway, "resources")
+		gatewayRequests := assertMapValue(t, gatewayResources, "requests")
+		assertMapStringValue(t, gatewayRequests, "cpu", "5m")
+		assertMapStringValue(t, gatewayRequests, "memory", "32Mi")
 
 		auth := assertMapValue(t, spec, "auth")
 		assertMapStringValue(t, auth, "mode", "header")
@@ -214,7 +225,9 @@ func TestGenerateCRD(t *testing.T) {
 		}
 		tool := assertMapItem(t, tools[0], "tools[0]")
 		assertMapStringValue(t, tool, "name", "delete_user")
+		assertMapStringValue(t, tool, "description", "Delete a user from the backing system.")
 		assertMapStringValue(t, tool, "requiredTrust", "high")
+		assertMapStringValue(t, tool, "sideEffect", "destructive")
 
 		secretEnvVars := assertSliceValue(t, spec, "secretEnvVars")
 		if len(secretEnvVars) != 1 {

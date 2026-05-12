@@ -14,6 +14,7 @@ OUT = ROOT / "docs" / "internals" / "go-package-reference.md"
 PACKAGES = [
     ("API types", ["go", "doc", "-all", "./api/v1alpha1"]),
     ("Metadata helpers", ["go", "doc", "-all", "./pkg/metadata"]),
+    ("Agent adapters", ["go", "doc", "-all", "./internal/agentadapter"]),
     ("Operator internals", ["go", "doc", "-all", "./internal/operator"]),
     ("CLI command routing", ["go", "doc", "-all", "./internal/cli/root"]),
     ("CLI core", ["go", "doc", "-all", "./internal/cli/core"]),
