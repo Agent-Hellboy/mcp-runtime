@@ -4114,18 +4114,25 @@ def trace_service_names(trace_doc):
                 names.add(name)
     return names
 
-def datasource_uid(datasources, ds_type):
+def datasource_by_type(datasources, ds_type):
     for datasource in datasources:
         if datasource.get("type") == ds_type:
-            uid = datasource.get("uid")
-            if uid:
-                return uid
+            return datasource
     fail(f"Grafana datasource of type {ds_type!r} not found: {datasources}")
 
+def datasource_uid(datasources, ds_type):
+    datasource = datasource_by_type(datasources, ds_type)
+    uid = datasource.get("uid")
+    if uid:
+        return uid
+    fail(f"Grafana datasource of type {ds_type!r} has no uid: {datasource}")
+
 def wait_for_tempo_service(base_url, service_name, *, headers=None, description):
+    end = int(time.time())
+    start = end - 3600
     tag = urllib.parse.quote(f"service.name={service_name}")
     doc = wait_for_json(
-        f"{base_url}/api/search?limit=20&tags={tag}",
+        f"{base_url}/api/search?limit=20&start={start}&end={end}&tags={tag}",
         lambda payload: bool(payload.get("traces", [])),
         headers=headers,
         retries=90,
@@ -4548,6 +4555,13 @@ grafana_datasources = wait_for_json(
 )
 tempo_uid = datasource_uid(grafana_datasources, "tempo")
 prometheus_uid = datasource_uid(grafana_datasources, "prometheus")
+loki_uid = datasource_uid(grafana_datasources, "loki")
+prometheus_datasource = datasource_by_type(grafana_datasources, "prometheus")
+check(
+    str(prometheus_datasource.get("url", "")).rstrip("/").endswith("/prometheus"),
+    "grafana Prometheus datasource includes route prefix",
+    f"grafana Prometheus datasource URL is missing /prometheus route prefix: {prometheus_datasource}",
+)
 
 grafana_gateway_counts = {}
 grafana_gateway_services = set()
@@ -4567,10 +4581,11 @@ prometheus_jobs = wait_for_prometheus_up(
     description="prometheus up query",
 )
 grafana_prometheus_jobs = wait_for_prometheus_up(
-    f"{grafana_base}/api/datasources/proxy/uid/{prometheus_uid}/prometheus",
+    f"{grafana_base}/api/datasources/proxy/uid/{prometheus_uid}",
     headers=grafana_headers,
     description="grafana prometheus up query",
 )
+grafana_loki_base = f"{grafana_base}/api/datasources/proxy/uid/{loki_uid}"
 
 end_ns = int(time.time() * 1e9)
 start_ns = end_ns - int(10 * 60 * 1e9)
@@ -4590,6 +4605,15 @@ loki = wait_for_json(
     description="loki log streams",
 )
 streams = loki.get("data", {}).get("result", [])
+grafana_loki = wait_for_json(
+    f"{grafana_loki_base}/loki/api/v1/query_range?{params}",
+    lambda doc: bool(doc.get("data", {}).get("result", [])),
+    headers=grafana_headers,
+    retries=60,
+    delay=2,
+    description="grafana loki log streams",
+)
+grafana_streams = grafana_loki.get("data", {}).get("result", [])
 
 rows = [
     ("audit.events_total", str(stats.get("events_total", "n/a"))),
@@ -4617,6 +4641,7 @@ rows = [
     ("prometheus.jobs", ",".join(f"{k}:{v}" for k, v in sorted(prometheus_jobs.items()))),
     ("grafana.prometheus.jobs", ",".join(f"{k}:{v}" for k, v in sorted(grafana_prometheus_jobs.items()))),
     ("logs.loki_streams", str(len(streams))),
+    ("grafana.loki_streams", str(len(grafana_streams))),
 ]
 width = max(len(k) for k, _ in rows)
 print(f"{'check':{width}}  value")

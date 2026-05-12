@@ -1044,6 +1044,24 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testi
 	}
 }
 
+func TestGrafanaPrometheusDatasourceUsesRoutePrefix(t *testing.T) {
+	content, err := os.ReadFile("../../../k8s/19-grafana-datasources.yaml")
+	if err != nil {
+		t.Fatalf("failed to read grafana datasource manifest: %v", err)
+	}
+
+	rendered, err := renderAnalyticsManifest(string(content), AnalyticsImageSet{}, "", setupplan.PlatformModeTenant)
+	if err != nil {
+		t.Fatalf("renderAnalyticsManifest returned error: %v", err)
+	}
+	if !strings.Contains(rendered, "url: http://prometheus:9090/prometheus") {
+		t.Fatalf("expected Prometheus datasource URL to include route prefix, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "url: http://prometheus:9090\n") {
+		t.Fatalf("Prometheus datasource URL is missing route prefix:\n%s", rendered)
+	}
+}
+
 func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() {
