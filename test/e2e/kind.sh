@@ -1983,13 +1983,13 @@ log_status() {
     DONE)
       color="${E2E_COLOR_SUCCESS}"
       ;;
-    FAILED|STDERR)
+    FAILED)
       color="${E2E_COLOR_WARN}"
       ;;
     RUNNING|PLAN)
       color="${E2E_COLOR_POLICY}"
       ;;
-    STDOUT)
+    STDOUT|STDERR)
       color="${E2E_COLOR_DEBUG}"
       ;;
   esac
@@ -2006,7 +2006,9 @@ combine_stream_logs() {
   local stdout_file="$1"
   local stderr_file="$2"
   local log_file="$3"
+  local log_dir="${log_file%/*}"
 
+  mkdir -p "${log_dir}"
   : >"${log_file}"
   if [[ -s "${stdout_file}" ]]; then
     {
