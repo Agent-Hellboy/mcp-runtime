@@ -938,6 +938,51 @@ func TestPrepareDeploymentImagesParallelBuildsStartsBothBuilds(t *testing.T) {
 	}
 }
 
+func TestPrepareDeploymentImagesParallelBuildsPreparesInternalRegistryOnce(t *testing.T) {
+	var ensureCalls int32
+	var resolveCalls int32
+
+	deps := SetupDeps{
+		OperatorImageFor: func(_ *config.ExternalRegistryConfig) string {
+			return "registry.example.com/mcp-runtime-operator:latest"
+		},
+		GatewayProxyImageFor: func(_ *config.ExternalRegistryConfig) string {
+			return "registry.example.com/mcp-sentinel-mcp-proxy:latest"
+		},
+		BuildOperatorImage:     func(string) error { return nil },
+		BuildGatewayProxyImage: func(string) error { return nil },
+		EnsureNamespace: func(string) error {
+			atomic.AddInt32(&ensureCalls, 1)
+			return nil
+		},
+		ResolvePlatformRegistryURL: func(*zap.Logger) string {
+			atomic.AddInt32(&resolveCalls, 1)
+			return "registry.local:5000"
+		},
+		PushOperatorImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
+		PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error {
+			return nil
+		},
+	}
+
+	operatorImage, gatewayProxyImage, err := prepareDeploymentImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, false, true, true, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if operatorImage != "registry.local:5000/mcp-runtime-operator:latest" {
+		t.Fatalf("operator image = %q, want internal registry image", operatorImage)
+	}
+	if gatewayProxyImage != "registry.local:5000/mcp-sentinel-mcp-proxy:latest" {
+		t.Fatalf("gateway proxy image = %q, want internal registry image", gatewayProxyImage)
+	}
+	if got := atomic.LoadInt32(&ensureCalls); got != 1 {
+		t.Fatalf("expected one registry namespace ensure, got %d", got)
+	}
+	if got := atomic.LoadInt32(&resolveCalls); got != 1 {
+		t.Fatalf("expected one registry URL resolve, got %d", got)
+	}
+}
+
 func TestPrepareAnalyticsImagesParallelBuildsStartsAllBuilds(t *testing.T) {
 	started := make(chan string, len(analyticsComponents))
 	release := make(chan struct{})
@@ -971,6 +1016,46 @@ func TestPrepareAnalyticsImagesParallelBuildsStartsAllBuilds(t *testing.T) {
 	close(release)
 	if err := <-errCh; err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPrepareAnalyticsImagesParallelBuildsPreparesInternalRegistryOnce(t *testing.T) {
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "1")
+
+	var ensureCalls int32
+	var resolveCalls int32
+	deps := SetupDeps{
+		BuildAnalyticsImage: func(string, string, string) error { return nil },
+		EnsureNamespace: func(string) error {
+			atomic.AddInt32(&ensureCalls, 1)
+			return nil
+		},
+		ResolvePlatformRegistryURL: func(*zap.Logger) string {
+			atomic.AddInt32(&resolveCalls, 1)
+			return "registry.local:5000"
+		},
+		PushAnalyticsImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
+	}
+
+	got, err := prepareAnalyticsImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, false, true, true, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := AnalyticsImageSet{
+		Ingest:    "registry.local:5000/mcp-sentinel-ingest:latest",
+		API:       "registry.local:5000/mcp-sentinel-api:latest",
+		Processor: "registry.local:5000/mcp-sentinel-processor:latest",
+		UI:        "registry.local:5000/mcp-sentinel-ui:latest",
+	}
+	if got != want {
+		t.Fatalf("prepareAnalyticsImages() = %+v, want %+v", got, want)
+	}
+	if got := atomic.LoadInt32(&ensureCalls); got != 1 {
+		t.Fatalf("expected one registry namespace ensure, got %d", got)
+	}
+	if got := atomic.LoadInt32(&resolveCalls); got != 1 {
+		t.Fatalf("expected one registry URL resolve, got %d", got)
 	}
 }
 
