@@ -2131,6 +2131,9 @@ type MCPServerReconciler struct {
 	// GatewayProxyImage is the default image used for the optional MCP gateway sidecar.
 	GatewayProxyImage string
 
+	// GatewayOTLPEndpoint is the OTLP/HTTP endpoint injected into MCP gateway sidecars.
+	GatewayOTLPEndpoint string
+
 	// DefaultAnalyticsIngestURL is the default analytics ingest endpoint used when analytics is enabled.
 	DefaultAnalyticsIngestURL string
 
@@ -2186,6 +2189,9 @@ type OperatorConfig struct {
 
 	// GatewayProxyImage is the default image used for the optional MCP gateway sidecar.
 	GatewayProxyImage string
+
+	// GatewayOTLPEndpoint is the OTLP/HTTP endpoint injected into MCP gateway sidecars.
+	GatewayOTLPEndpoint string
 
 	// AnalyticsIngestURL is the default analytics ingest endpoint for gateway sidecars.
 	AnalyticsIngestURL string
@@ -2313,6 +2319,7 @@ kubectl clients, terminal output, and test doubles.
 - [`func GetClusterName() string`](#cli-core-func-getclustername-string)
 - [`func GetDefaultServerPort() int`](#cli-core-func-getdefaultserverport-int)
 - [`func GetDeploymentTimeout() time.Duration`](#cli-core-func-getdeploymenttimeout-time-duration)
+- [`func GetGatewayOTLPEndpointOverride() string`](#cli-core-func-getgatewayotlpendpointoverride-string)
 - [`func GetGatewayProxyImageOverride() string`](#cli-core-func-getgatewayproxyimageoverride-string)
 - [`func GetHelperPodTimeout() time.Duration`](#cli-core-func-gethelperpodtimeout-time-duration)
 - [`func GetMcpIngressHost() string`](#cli-core-func-getmcpingresshost-string)
@@ -2700,6 +2707,14 @@ func GetDeploymentTimeout() time.Duration
 
 ```
 
+<a id="cli-core-func-getgatewayotlpendpointoverride-string"></a>
+```text
+func GetGatewayOTLPEndpointOverride() string
+    GetGatewayOTLPEndpointOverride returns the gateway OTLP endpoint override,
+    empty if not set.
+
+```
+
 <a id="cli-core-func-getgatewayproxyimageoverride-string"></a>
 ```text
 func GetGatewayProxyImageOverride() string
@@ -2962,6 +2977,7 @@ type CLIConfig struct {
 	SkopeoImage               string
 	OperatorImage             string // Override for operator image
 	GatewayProxyImage         string // Optional default image for the MCP gateway sidecar
+	GatewayOTLPEndpoint       string // Optional OTLP/HTTP endpoint for MCP gateway sidecar tracing
 	AnalyticsIngestURL        string // Optional analytics ingest URL override for the MCP gateway sidecar
 	IngressReadinessMode      string // Optional operator ingress readiness mode: strict or permissive
 	ClusterName               string // Optional cluster label attached to analytics/audit events

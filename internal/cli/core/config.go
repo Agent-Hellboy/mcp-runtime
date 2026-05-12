@@ -36,6 +36,7 @@ type CLIConfig struct {
 	SkopeoImage               string
 	OperatorImage             string // Override for operator image
 	GatewayProxyImage         string // Optional default image for the MCP gateway sidecar
+	GatewayOTLPEndpoint       string // Optional OTLP/HTTP endpoint for MCP gateway sidecar tracing
 	AnalyticsIngestURL        string // Optional analytics ingest URL override for the MCP gateway sidecar
 	IngressReadinessMode      string // Optional operator ingress readiness mode: strict or permissive
 	ClusterName               string // Optional cluster label attached to analytics/audit events
@@ -86,6 +87,7 @@ func LoadCLIConfig() *CLIConfig {
 		SkopeoImage:                 getEnvOrDefault("MCP_SKOPEO_IMAGE", defaultSkopeoImage),
 		OperatorImage:               os.Getenv("MCP_OPERATOR_IMAGE"), // No default, empty means auto
 		GatewayProxyImage:           os.Getenv("MCP_GATEWAY_PROXY_IMAGE"),
+		GatewayOTLPEndpoint:         os.Getenv("MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT"),
 		AnalyticsIngestURL:          getEnvCompat("MCP_SENTINEL_INGEST_URL", "MCP_ANALYTICS_INGEST_URL"),
 		IngressReadinessMode:        os.Getenv("MCP_INGRESS_READINESS_MODE"),
 		ClusterName:                 getEnvOrDefault("MCP_CLUSTER_NAME", "local"),
@@ -196,6 +198,11 @@ func GetOperatorImageOverride() string {
 // GetGatewayProxyImageOverride returns the gateway proxy image override, empty if not set.
 func GetGatewayProxyImageOverride() string {
 	return DefaultCLIConfig.GatewayProxyImage
+}
+
+// GetGatewayOTLPEndpointOverride returns the gateway OTLP endpoint override, empty if not set.
+func GetGatewayOTLPEndpointOverride() string {
+	return DefaultCLIConfig.GatewayOTLPEndpoint
 }
 
 // GetAnalyticsIngestURLOverride returns the analytics ingest URL override, empty if not set.

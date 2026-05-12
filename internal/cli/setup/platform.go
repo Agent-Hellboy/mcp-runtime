@@ -39,6 +39,8 @@ const defaultRegistrySecretName = "mcp-runtime-registry-creds" // #nosec G101 --
 const testModeOperatorImage = "docker.io/library/mcp-runtime-operator:latest"
 const defaultGatewayProxyRepository = "mcp-sentinel-mcp-proxy"
 const defaultAnalyticsIngestURL = "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
+const gatewayOTELExporterOTLPEndpointEnv = "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT"
+const defaultGatewayOTELExporterOTLPEndpoint = "http://otel-collector.mcp-sentinel.svc.cluster.local:4318"
 const gatewayProxyDockerfilePath = "services/mcp-proxy/Dockerfile"
 const gatewayProxyBuildContext = "."
 const (
@@ -1451,8 +1453,9 @@ func deployOperatorManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.
 		}
 	}
 
-	// Inject environment variables if provided
-	if envVars := operatorEnvOverrides(gatewayProxyImage); len(envVars) > 0 {
+	// Inject environment variables if provided.
+	existingGatewayOTLPEndpoint := existingOperatorEnvValue(kubectl, gatewayOTELExporterOTLPEndpointEnv)
+	if envVars := operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint); len(envVars) > 0 {
 		envMap := make(map[string]string, len(envVars))
 		for _, ev := range envVars {
 			envMap[ev.Name] = ev.Value
@@ -1636,6 +1639,9 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	}
 
 	core.Info("Initializing ClickHouse schema")
+	if err := deleteJobIfExistsWithKubectl(kubectl, "clickhouse-init", core.DefaultAnalyticsNamespace); err != nil {
+		return fmt.Errorf("delete existing clickhouse init job: %w", err)
+	}
 	if err := applyRenderedManifest(kubectl, "k8s/04-clickhouse-init.yaml", images, imagePullSecretName, platformMode); err != nil {
 		return err
 	}
@@ -2247,6 +2253,10 @@ func waitForJobCompletionWithKubectl(kubectl core.KubectlRunner, name, namespace
 	return kubectl.RunWithOutput([]string{"wait", "--for=condition=complete", "job/" + name, "-n", namespace, "--timeout=" + timeout}, os.Stdout, os.Stderr)
 }
 
+func deleteJobIfExistsWithKubectl(kubectl core.KubectlRunner, name, namespace string) error {
+	return kubectl.RunWithOutput([]string{"delete", "job/" + name, "-n", namespace, "--ignore-not-found=true", "--wait=true", "--timeout=60s"}, os.Stdout, os.Stderr)
+}
+
 func operatorImagePullPolicy(operatorImage string) string {
 	if strings.TrimSpace(operatorImage) == testModeOperatorImage {
 		return "IfNotPresent"
@@ -2261,7 +2271,7 @@ type operatorEnvVar struct {
 }
 
 // operatorEnvOverrides returns the environment variables to set on the operator deployment.
-func operatorEnvOverrides(gatewayProxyImage string) []operatorEnvVar {
+func operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint string) []operatorEnvVar {
 	var envVars []operatorEnvVar
 	image := strings.TrimSpace(gatewayProxyImage)
 	if image == "" {
@@ -2270,6 +2280,14 @@ func operatorEnvOverrides(gatewayProxyImage string) []operatorEnvVar {
 	if image != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_GATEWAY_PROXY_IMAGE", Value: image})
 	}
+	gatewayOTLPEndpoint := strings.TrimSpace(core.GetGatewayOTLPEndpointOverride())
+	if gatewayOTLPEndpoint == "" {
+		gatewayOTLPEndpoint = strings.TrimSpace(existingGatewayOTLPEndpoint)
+	}
+	if gatewayOTLPEndpoint == "" {
+		gatewayOTLPEndpoint = defaultGatewayOTELExporterOTLPEndpoint
+	}
+	envVars = append(envVars, operatorEnvVar{Name: gatewayOTELExporterOTLPEndpointEnv, Value: gatewayOTLPEndpoint})
 	ingestURL := strings.TrimSpace(core.GetAnalyticsIngestURLOverride())
 	if ingestURL == "" {
 		ingestURL = defaultAnalyticsIngestURL
@@ -2296,6 +2314,23 @@ func operatorEnvOverrides(gatewayProxyImage string) []operatorEnvVar {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_CLUSTER_NAME", Value: clusterName})
 	}
 	return envVars
+}
+
+func existingOperatorEnvValue(kubectl core.KubectlRunner, name string) string {
+	jsonPath := fmt.Sprintf(
+		`jsonpath={.spec.template.spec.containers[?(@.name=="%s")].env[?(@.name=="%s")].value}`,
+		core.OperatorManagerContainerName,
+		name,
+	)
+	cmd, err := kubectl.CommandArgs([]string{"get", "deployment/" + core.OperatorDeploymentName, "-n", core.NamespaceMCPRuntime, "-o", jsonPath})
+	if err != nil {
+		return ""
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func applySetupPlanToCLIConfig(plan setupplan.Plan) {

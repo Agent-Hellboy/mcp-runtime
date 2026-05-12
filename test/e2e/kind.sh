@@ -163,6 +163,7 @@ LOCAL_REGISTRY_PUSH_HOST="${LOCAL_REGISTRY_PUSH_HOST:-127.0.0.1:${LOCAL_REGISTRY
 LOCAL_REGISTRY_MIRROR_ENDPOINT="${LOCAL_REGISTRY_NAME}:5000"
 LOCAL_REGISTRY_RETRY_TRIES="${LOCAL_REGISTRY_RETRY_TRIES:-5}"
 LOCAL_REGISTRY_RETRY_DELAY="${LOCAL_REGISTRY_RETRY_DELAY:-5}"
+E2E_WORKLOAD_TAG="${E2E_WORKLOAD_TAG:-e2e}"
 E2E_ARTIFACT_DIR="${E2E_ARTIFACT_DIR:-}"
 E2E_SCENARIOS="${E2E_SCENARIOS-all}"
 E2E_SCENARIOS="${E2E_SCENARIOS//[[:space:]]/}"
@@ -1596,11 +1597,13 @@ prepare_example_metadata() {
   local ingress_host="$3"
   local route_path="$4"
   local image_repo="$5"
+  local image_tag="$6"
 
   SERVER_NAME_OVERRIDE="${server_name}" \
   SERVER_HOST_OVERRIDE="${ingress_host}" \
   SERVER_ROUTE_OVERRIDE="${route_path}" \
   SERVER_IMAGE_OVERRIDE="${image_repo}" \
+  SERVER_IMAGE_TAG_OVERRIDE="${image_tag}" \
   METADATA_DIR_OVERRIDE="${metadata_dir}" \
   python3 <<'PY'
 from pathlib import Path
@@ -1612,11 +1615,13 @@ lines = path.read_text(encoding="utf-8").splitlines()
 updated = []
 server_name_updated = False
 server_image_updated = False
+server_image_tag_updated = False
 mcp_path_updated = False
 public_path_prefix_updated = False
 in_env_vars = False
 current_env_name = None
 resources_present = any(line.startswith("    resources:") for line in lines)
+image_tag_present = any(line.lstrip().startswith("imageTag: ") for line in lines)
 
 route_override = os.environ["SERVER_ROUTE_OVERRIDE"].strip()
 route_prefix = route_override.strip("/")
@@ -1641,6 +1646,12 @@ for line in lines:
     elif not server_image_updated and indent == "    " and stripped.startswith("image: "):
         updated.append(f"{indent}image: {os.environ['SERVER_IMAGE_OVERRIDE']}")
         server_image_updated = True
+        if not image_tag_present:
+            updated.append(f"{indent}imageTag: {os.environ['SERVER_IMAGE_TAG_OVERRIDE']}")
+            server_image_tag_updated = True
+    elif indent == "    " and stripped.startswith("imageTag: "):
+        updated.append(f"{indent}imageTag: {os.environ['SERVER_IMAGE_TAG_OVERRIDE']}")
+        server_image_tag_updated = True
     elif indent == "    " and stripped == "envVars:":
         in_env_vars = True
         current_env_name = None
@@ -1665,9 +1676,11 @@ if not server_image_updated:
         indent = line[: len(line) - len(stripped)]
         if not inserted and indent == "  " and stripped.startswith("- name: "):
             final.append(f"{indent}  image: {os.environ['SERVER_IMAGE_OVERRIDE']}")
+            final.append(f"{indent}  imageTag: {os.environ['SERVER_IMAGE_TAG_OVERRIDE']}")
             inserted = True
     updated = final
     server_image_updated = inserted
+    server_image_tag_updated = inserted
 if not mcp_path_updated:
     final = []
     inserted = False
@@ -1716,6 +1729,8 @@ if not server_name_updated:
     raise SystemExit(f"prepare_example_metadata: no '- name:' entry found to replace in {path}")
 if not server_image_updated:
     raise SystemExit(f"prepare_example_metadata: image field was not updated in {path}")
+if not server_image_tag_updated:
+    raise SystemExit(f"prepare_example_metadata: imageTag field was not updated in {path}")
 if not mcp_path_updated:
     raise SystemExit(f"prepare_example_metadata: MCP_PATH env var was not updated in {path}")
 if not public_path_prefix_updated:
@@ -1738,34 +1753,25 @@ deploy_example_server_via_pipeline() {
   mkdir -p "$(dirname "${example_workspace_dir}")"
   cp -R "${example_source_dir}" "${example_workspace_dir}"
 
-  image_repo="docker.io/library/${server_name}"
-  image_ref="${image_repo}:latest"
-  prepare_example_metadata "${example_workspace_dir}/.mcp" "${server_name}" "${ingress_host}" "${route_path}" "${image_repo}"
+  image_repo="registry.registry.svc.cluster.local:5000/${server_name}"
+  image_ref="${image_repo}:${E2E_WORKLOAD_TAG}"
+  prepare_example_metadata "${example_workspace_dir}/.mcp" "${server_name}" "${ingress_host}" "${route_path}" "${image_repo}" "${E2E_WORKLOAD_TAG}"
 
-  if pull_cached_image "${image_ref}"; then
-    echo "[cache] skipping example image build/push for ${server_name}:latest"
+  if cache_mode_enabled && docker image inspect "${image_ref}" >/dev/null 2>&1; then
+    echo "[cache] skipping example image build for ${image_ref}"
   else
-    echo "[deploy] building example image ${server_name}:latest"
+    echo "[deploy] building example image ${image_ref}"
     (
       cd "${example_workspace_dir}"
       "${PROJECT_ROOT}/bin/mcp-runtime" server build image "${server_name}" \
         --metadata-dir .mcp \
         --dockerfile Dockerfile \
-        --registry "docker.io/library" \
-        --tag latest \
+        --registry "registry.registry.svc.cluster.local:5000" \
+        --tag "${E2E_WORKLOAD_TAG}" \
         --context .
     )
-
-    echo "[deploy] pushing ${server_name}:latest via registry CLI"
-    (
-      cd "${example_workspace_dir}"
-      "${PROJECT_ROOT}/bin/mcp-runtime" registry push \
-        --image "${image_ref}" \
-        --mode direct \
-        --registry "${LOCAL_REGISTRY_PUSH_HOST}" \
-        --name "library/${server_name}"
-    )
   fi
+  load_image_into_kind "${image_ref}"
 
   (
     cd "${example_workspace_dir}"
@@ -1856,6 +1862,12 @@ cache_mode_enabled() {
 
 kind_cluster_exists() {
   kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"
+}
+
+load_image_into_kind() {
+  local image="$1"
+  echo "[kind] loading ${image} into kind cluster ${CLUSTER_NAME}"
+  kind load docker-image --name "${CLUSTER_NAME}" "${image}"
 }
 
 registry_target_exists() {
@@ -2076,6 +2088,7 @@ export MCP_SETUP_WAIT_TIMEOUT="${MCP_SETUP_WAIT_TIMEOUT:-900}"
 export MCP_DEPLOYMENT_TIMEOUT="${MCP_DEPLOYMENT_TIMEOUT:-900s}"
 export MCP_REGISTRY_ENDPOINT="${MCP_REGISTRY_ENDPOINT:-registry.registry.svc.cluster.local:5000}"
 export MCP_INGRESS_READINESS_MODE="${MCP_INGRESS_READINESS_MODE:-permissive}"
+export MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT="${MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector.mcp-sentinel.svc.cluster.local:4318}"
 if [[ "${PLATFORM_CACHE_READY}" == "1" ]]; then
   echo "[setup] skipping platform setup because E2E_CACHE_MODE=1 found a ready platform"
 else
@@ -2142,6 +2155,10 @@ if cache_mode_enabled; then
   kubectl delete pod -n mcp-servers -l "app=${MT_TENANT_B}" --ignore-not-found --wait=false >/dev/null
   echo "[cache] deleting stale pending mcp-servers pods before cluster doctor"
   kubectl delete pod -n mcp-servers --field-selector=status.phase=Pending --ignore-not-found --wait=false >/dev/null
+  echo "[cache] refreshing operator e2e environment before cluster doctor"
+  kubectl set env deploy/mcp-runtime-operator-controller-manager -n mcp-runtime \
+    "MCP_INGRESS_READINESS_MODE=${MCP_INGRESS_READINESS_MODE}" \
+    "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT=${MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT}" >/dev/null
   echo "[cache] restarting operator before cluster doctor to avoid stale retained reconcile logs"
   kubectl rollout restart deploy/mcp-runtime-operator-controller-manager -n mcp-runtime >/dev/null
   rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
@@ -2188,10 +2205,20 @@ if [[ -z "${INGEST_API_KEY}" ]]; then
   echo "[error] failed to resolve mcp-sentinel ingest API key from secret" >&2
   exit 1
 fi
+GRAFANA_ADMIN_USER=""
+GRAFANA_ADMIN_PASSWORD=""
+if scenario_selected "observability"; then
+  GRAFANA_ADMIN_USER="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.GRAFANA_ADMIN_USER}' | decode_base64)"
+  GRAFANA_ADMIN_PASSWORD="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.GRAFANA_ADMIN_PASSWORD}' | decode_base64)"
+  if [[ -z "${GRAFANA_ADMIN_USER}" || -z "${GRAFANA_ADMIN_PASSWORD}" ]]; then
+    echo "[error] failed to resolve Grafana admin credentials from mcp-sentinel-secrets" >&2
+    exit 1
+  fi
+fi
 
 METADATA_FILE="${WORKDIR}/metadata.yaml"
 MANIFEST_DIR="${WORKDIR}/manifests"
-SERVER_IMAGE="docker.io/library/${SERVER_NAME}:latest"
+SERVER_IMAGE="registry.registry.svc.cluster.local:5000/${SERVER_NAME}:${E2E_WORKLOAD_TAG}"
 SERVER_SECRET_NAME="${SERVER_NAME}-analytics-creds"
 PYTHON_EXAMPLE_SOURCE_DIR="${PROJECT_ROOT}/examples/python-mcp-server"
 PYTHON_EXAMPLE_WORKDIR="${WORKDIR}/python-mcp-server"
@@ -2266,19 +2293,18 @@ servers:
         key: api-key
 EOF
 
-if pull_cached_image "${SERVER_IMAGE}"; then
-  echo "[cache] skipping MCP server image build/push for ${SERVER_IMAGE}"
+if cache_mode_enabled && docker image inspect "${SERVER_IMAGE}" >/dev/null 2>&1; then
+  echo "[cache] skipping MCP server image build for ${SERVER_IMAGE}"
 else
   echo "[cli] building MCP server image via CLI"
   ./bin/mcp-runtime server build image "${SERVER_NAME}" \
     --metadata-file "${METADATA_FILE}" \
     --dockerfile "${GO_EXAMPLE_SOURCE_DIR}/Dockerfile" \
-    --registry docker.io/library \
-    --tag latest \
+    --registry registry.registry.svc.cluster.local:5000 \
+    --tag "${E2E_WORKLOAD_TAG}" \
     --context "${GO_EXAMPLE_SOURCE_DIR}"
-
-  publish_image_to_local_registry "${SERVER_IMAGE}"
 fi
+load_image_into_kind "${SERVER_IMAGE}"
 
 echo "[cli] generating and deploying MCPServer manifests"
 ./bin/mcp-runtime pipeline generate --file "${METADATA_FILE}" --output "${MANIFEST_DIR}"
@@ -4002,8 +4028,13 @@ PY
   OAUTH_AGENT_ID="${OAUTH_AGENT_ID}" \
   SENTINEL_BASE="http://127.0.0.1:${SENTINEL_PORT}" \
   TEMPO_BASE="http://127.0.0.1:${TEMPO_PORT}" \
+  GRAFANA_BASE="http://127.0.0.1:${SENTINEL_PORT}/grafana" \
+  PROMETHEUS_BASE="http://127.0.0.1:${SENTINEL_PORT}/prometheus" \
+  GRAFANA_ADMIN_USER="${GRAFANA_ADMIN_USER}" \
+  GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD}" \
   LOKI_BASE="http://127.0.0.1:${LOKI_PORT}" \
   python3 <<'PY'
+import base64
 import json
 import os
 import time
@@ -4018,8 +4049,13 @@ oauth_server_name = os.environ["OAUTH_SERVER_NAME"]
 oauth_human_id = os.environ["OAUTH_HUMAN_ID"]
 oauth_agent_id = os.environ["OAUTH_AGENT_ID"]
 tempo_base = os.environ["TEMPO_BASE"]
+grafana_base = os.environ["GRAFANA_BASE"]
+prometheus_base = os.environ["PROMETHEUS_BASE"]
+grafana_user = os.environ["GRAFANA_ADMIN_USER"]
+grafana_password = os.environ["GRAFANA_ADMIN_PASSWORD"]
 loki_base = os.environ["LOKI_BASE"]
 sentinel_base = os.environ["SENTINEL_BASE"]
+gateway_trace_services = (f"{server_name}-gateway", f"{oauth_server_name}-gateway")
 
 
 import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
@@ -4061,9 +4097,171 @@ def post_json(url, body, headers):
     with urllib.request.urlopen(req, timeout=10) as resp:
         return resp.getcode(), resp.read().decode()
 
+def basic_auth_headers(user, password):
+    token = base64.b64encode(f"{user}:{password}".encode()).decode()
+    return {"Authorization": f"Basic {token}"}
+
 def payload_dict(event):
     payload = event.get("payload", {})
     return payload if isinstance(payload, dict) else {}
+
+def otlp_attr_value(attrs, key):
+    for attr in attrs or []:
+        if attr.get("key") != key:
+            continue
+        value = attr.get("value", {})
+        for field in ("stringValue", "intValue", "doubleValue", "boolValue"):
+            if field in value:
+                return str(value[field])
+    return ""
+
+def trace_resource_batches(trace_doc):
+    batches = []
+    batches.extend(trace_doc.get("batches", []) or [])
+    batches.extend(trace_doc.get("resourceSpans", []) or [])
+    return batches
+
+def trace_service_names(trace_doc):
+    names = set()
+    for batch in trace_resource_batches(trace_doc):
+        name = otlp_attr_value(batch.get("resource", {}).get("attributes", []), "service.name")
+        if name:
+            names.add(name)
+    for trace in trace_doc.get("data", []):
+        for process in trace.get("processes", {}).values():
+            name = process.get("serviceName")
+            if name:
+                names.add(name)
+    return names
+
+def trace_span_names(trace_doc):
+    names = set()
+    for batch in trace_resource_batches(trace_doc):
+        scope_spans = []
+        scope_spans.extend(batch.get("scopeSpans", []) or [])
+        scope_spans.extend(batch.get("instrumentationLibrarySpans", []) or [])
+        for scope_span in scope_spans:
+            for span in scope_span.get("spans", []) or []:
+                name = span.get("name")
+                if name:
+                    names.add(name)
+    for trace in trace_doc.get("data", []):
+        for span in trace.get("spans", []) or []:
+            name = span.get("operationName") or span.get("name")
+            if name:
+                names.add(name)
+    return names
+
+def datasource_by_type(datasources, ds_type):
+    for datasource in datasources:
+        if datasource.get("type") == ds_type:
+            return datasource
+    fail(f"Grafana datasource of type {ds_type!r} not found: {datasources}")
+
+def datasource_uid(datasources, ds_type):
+    datasource = datasource_by_type(datasources, ds_type)
+    uid = datasource.get("uid")
+    if uid:
+        return uid
+    fail(f"Grafana datasource of type {ds_type!r} has no uid: {datasource}")
+
+def wait_for_tempo_service(base_url, service_name, *, headers=None, description):
+    end = int(time.time())
+    start = end - 3600
+    tag = urllib.parse.quote(f"service.name={service_name}")
+    doc = wait_for_json(
+        f"{base_url}/api/search?limit=20&start={start}&end={end}&tags={tag}",
+        lambda payload: bool(payload.get("traces", [])),
+        headers=headers,
+        retries=90,
+        delay=2,
+        description=description,
+    )
+    traces_for_service = doc.get("traces", [])
+    trace_id = traces_for_service[0].get("traceID") if traces_for_service else ""
+    check(
+        bool(trace_id),
+        f"{description} returned a trace id",
+        f"{description} missing trace id: {doc}",
+    )
+    trace_doc = wait_for_json(
+        f"{base_url}/api/traces/{urllib.parse.quote(trace_id)}",
+        lambda payload: service_name in trace_service_names(payload),
+        headers=headers,
+        retries=30,
+        delay=2,
+        description=f"{description} payload",
+    )
+    names = trace_service_names(trace_doc)
+    check(
+        service_name in names,
+        f"{description} payload includes service.name={service_name}",
+        f"{description} payload missing {service_name}; services={names}",
+    )
+    return len(traces_for_service), names
+
+def wait_for_tempo_trace_path(base_url, gateway_service, required_services, required_spans, *, headers=None, description):
+    end = int(time.time())
+    start = end - 3600
+    tag = urllib.parse.quote(f"service.name={gateway_service}")
+    search_url = f"{base_url}/api/search?limit=100&start={start}&end={end}&tags={tag}"
+    last_summary = {}
+    last_error = None
+    for _ in range(90):
+        try:
+            search_doc = get_json(search_url, headers=headers, retries=1, delay=2)
+            for item in search_doc.get("traces", []) or []:
+                trace_id = item.get("traceID")
+                if not trace_id:
+                    continue
+                trace_doc = get_json(
+                    f"{base_url}/api/traces/{urllib.parse.quote(trace_id)}",
+                    headers=headers,
+                    retries=1,
+                    delay=2,
+                )
+                services = trace_service_names(trace_doc)
+                spans = trace_span_names(trace_doc)
+                last_summary = {
+                    "trace_id": trace_id,
+                    "services": sorted(services),
+                    "spans": sorted(spans),
+                }
+                if required_services <= services and required_spans <= spans:
+                    ok(f"waited for {description}")
+                    return trace_id, services, spans
+        except Exception as exc:
+            last_error = exc
+        time.sleep(2)
+    if last_summary:
+        fail(f"timed out waiting for {description}: {json.dumps(last_summary, indent=2)}")
+    if last_error is not None:
+        raise last_error
+    fail(f"timed out waiting for {description}")
+
+def wait_for_prometheus_up(base_url, *, headers=None, description):
+    doc = wait_for_json(
+        f"{base_url}/api/v1/query?query={urllib.parse.quote('up')}",
+        lambda payload: payload.get("status") == "success"
+        and bool(payload.get("data", {}).get("result", [])),
+        headers=headers,
+        retries=60,
+        delay=2,
+        description=description,
+    )
+    jobs = {}
+    for result in doc.get("data", {}).get("result", []):
+        metric = result.get("metric", {})
+        value = result.get("value", [])
+        if len(value) >= 2 and metric.get("job"):
+            jobs[metric["job"]] = str(value[1])
+    for job in ("mcp-sentinel-api", "mcp-sentinel-ingest", "mcp-sentinel-processor", "clickhouse"):
+        check(
+            jobs.get(job) == "1",
+            f"{description} reports {job}=1",
+            f"{description} missing healthy {job}: {jobs}",
+        )
+    return jobs
 
 
 expected_gateway_rpc_methods = (
@@ -4410,6 +4608,81 @@ tempo = wait_for_json(
 )
 traces = tempo.get("traces", [])
 
+tempo_gateway_counts = {}
+tempo_gateway_services = set()
+for service_name in gateway_trace_services:
+    count, names = wait_for_tempo_service(
+        tempo_base,
+        service_name,
+        description=f"tempo traces for {service_name}",
+    )
+    tempo_gateway_counts[service_name] = count
+    tempo_gateway_services.update(names)
+
+required_trace_services = {gateway_trace_services[0], "mcp-sentinel-ingest", "mcp-sentinel-processor"}
+required_trace_spans = {"kafka.produce", "kafka.consume", "clickhouse.insert_event"}
+tempo_full_trace_id, tempo_full_trace_services, tempo_full_trace_spans = wait_for_tempo_trace_path(
+    tempo_base,
+    gateway_trace_services[0],
+    required_trace_services,
+    required_trace_spans,
+    description="tempo full gateway analytics trace path",
+)
+
+grafana_headers = basic_auth_headers(grafana_user, grafana_password)
+grafana_datasources = wait_for_json(
+    f"{grafana_base}/api/datasources",
+    lambda doc: isinstance(doc, list)
+    and any(item.get("type") == "tempo" for item in doc)
+    and any(item.get("type") == "prometheus" for item in doc),
+    headers=grafana_headers,
+    retries=60,
+    delay=2,
+    description="grafana datasources",
+)
+tempo_uid = datasource_uid(grafana_datasources, "tempo")
+prometheus_uid = datasource_uid(grafana_datasources, "prometheus")
+loki_uid = datasource_uid(grafana_datasources, "loki")
+prometheus_datasource = datasource_by_type(grafana_datasources, "prometheus")
+check(
+    str(prometheus_datasource.get("url", "")).rstrip("/").endswith("/prometheus"),
+    "grafana Prometheus datasource includes route prefix",
+    f"grafana Prometheus datasource URL is missing /prometheus route prefix: {prometheus_datasource}",
+)
+
+grafana_gateway_counts = {}
+grafana_gateway_services = set()
+grafana_tempo_base = f"{grafana_base}/api/datasources/proxy/uid/{tempo_uid}"
+for service_name in gateway_trace_services:
+    count, names = wait_for_tempo_service(
+        grafana_tempo_base,
+        service_name,
+        headers=grafana_headers,
+        description=f"grafana tempo traces for {service_name}",
+    )
+    grafana_gateway_counts[service_name] = count
+    grafana_gateway_services.update(names)
+
+grafana_full_trace_id, grafana_full_trace_services, grafana_full_trace_spans = wait_for_tempo_trace_path(
+    grafana_tempo_base,
+    gateway_trace_services[0],
+    required_trace_services,
+    required_trace_spans,
+    headers=grafana_headers,
+    description="grafana tempo full gateway analytics trace path",
+)
+
+prometheus_jobs = wait_for_prometheus_up(
+    prometheus_base,
+    description="prometheus up query",
+)
+grafana_prometheus_jobs = wait_for_prometheus_up(
+    f"{grafana_base}/api/datasources/proxy/uid/{prometheus_uid}",
+    headers=grafana_headers,
+    description="grafana prometheus up query",
+)
+grafana_loki_base = f"{grafana_base}/api/datasources/proxy/uid/{loki_uid}"
+
 end_ns = int(time.time() * 1e9)
 start_ns = end_ns - int(10 * 60 * 1e9)
 params = urllib.parse.urlencode(
@@ -4428,6 +4701,15 @@ loki = wait_for_json(
     description="loki log streams",
 )
 streams = loki.get("data", {}).get("result", [])
+grafana_loki = wait_for_json(
+    f"{grafana_loki_base}/loki/api/v1/query_range?{params}",
+    lambda doc: bool(doc.get("data", {}).get("result", [])),
+    headers=grafana_headers,
+    retries=60,
+    delay=2,
+    description="grafana loki log streams",
+)
+grafana_streams = grafana_loki.get("data", {}).get("result", [])
 
 rows = [
     ("audit.events_total", str(stats.get("events_total", "n/a"))),
@@ -4447,7 +4729,21 @@ rows = [
     ("analytics.type.pii.check", str(event_type_counts.get("pii.check", 0))),
     ("analytics.type.service.route.check", str(event_type_counts.get("service.route.check", 0))),
     ("traces.tempo_found", str(len(traces))),
+    ("traces.tempo_gateway", ",".join(f"{k}:{v}" for k, v in sorted(tempo_gateway_counts.items()))),
+    ("traces.tempo_services", ",".join(sorted(tempo_gateway_services))),
+    ("traces.tempo_full_path", tempo_full_trace_id),
+    ("traces.tempo_full_path_services", ",".join(sorted(tempo_full_trace_services))),
+    ("traces.tempo_full_path_spans", ",".join(sorted(tempo_full_trace_spans))),
+    ("traces.grafana_gateway", ",".join(f"{k}:{v}" for k, v in sorted(grafana_gateway_counts.items()))),
+    ("traces.grafana_services", ",".join(sorted(grafana_gateway_services))),
+    ("traces.grafana_full_path", grafana_full_trace_id),
+    ("traces.grafana_full_path_services", ",".join(sorted(grafana_full_trace_services))),
+    ("traces.grafana_full_path_spans", ",".join(sorted(grafana_full_trace_spans))),
+    ("grafana.datasources", str(len(grafana_datasources))),
+    ("prometheus.jobs", ",".join(f"{k}:{v}" for k, v in sorted(prometheus_jobs.items()))),
+    ("grafana.prometheus.jobs", ",".join(f"{k}:{v}" for k, v in sorted(grafana_prometheus_jobs.items()))),
     ("logs.loki_streams", str(len(streams))),
+    ("grafana.loki_streams", str(len(grafana_streams))),
 ]
 width = max(len(k) for k, _ in rows)
 print(f"{'check':{width}}  value")
@@ -4455,6 +4751,13 @@ print("-" * (width + 8))
 for key, value in rows:
     print(f"{key:{width}}  {value}")
 PY
+
+  tempo_log_errors="$(kubectl logs -n mcp-sentinel statefulset/tempo --since=20m 2>/dev/null | grep -E 'failed to poll or create index for tenant.*tenant=wal|invalid UUID length' || true)"
+  if [[ -n "${tempo_log_errors}" ]]; then
+    log_line error "tempo logged WAL blocklist parse errors; local block storage must not share the WAL parent path"
+    printf '%s\n' "${tempo_log_errors}" | tail -n 20 >&2
+    exit 1
+  fi
 fi
 
 if scenario_selected "multitenancy"; then

@@ -9,6 +9,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
@@ -52,8 +53,52 @@ func OTLPTraceOptions(endpoint string) []otlptracehttp.Option {
 	return opts
 }
 
+// ConfigureTracePropagation enables W3C trace context and baggage propagation.
+func ConfigureTracePropagation() {
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+}
+
+// CaptureTraceContext serializes the active trace context for async handoffs.
+func CaptureTraceContext(ctx context.Context) map[string]string {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	carrier := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	if len(carrier) == 0 {
+		return nil
+	}
+	headers := make(map[string]string, len(carrier))
+	for key, value := range carrier {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			continue
+		}
+		headers[key] = value
+	}
+	if len(headers) == 0 {
+		return nil
+	}
+	return headers
+}
+
+// ContextWithTraceContext extracts serialized trace context into ctx.
+func ContextWithTraceContext(ctx context.Context, headers map[string]string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if len(headers) == 0 {
+		return ctx
+	}
+	return otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier(headers))
+}
+
 // InitTracer initializes OpenTelemetry tracing from OTEL_* environment variables.
 func InitTracer(serviceName string) (func(context.Context) error, error) {
+	ConfigureTracePropagation()
+
 	if envName := strings.TrimSpace(os.Getenv("OTEL_SERVICE_NAME")); envName != "" {
 		serviceName = envName
 	}

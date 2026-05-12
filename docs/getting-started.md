@@ -204,7 +204,7 @@ For the UI, for example:
 SERVICE=ui
 IMAGE_REPO=mcp-sentinel-ui
 DOCKERFILE=services/ui/Dockerfile
-BUILD_CONTEXT=services/ui
+BUILD_CONTEXT=.
 DEPLOYMENT=mcp-sentinel-ui
 CONTAINER=ui
 TAG="${SERVICE}-dev-$(date +%s)"
@@ -234,10 +234,10 @@ Use the same commands with the variables below for other Sentinel services:
 
 | Service | Edit path | Image repo | Dockerfile | Build context | Deployment | Container |
 |---|---|---|---|---|---|---|
-| UI | `services/ui` | `mcp-sentinel-ui` | `services/ui/Dockerfile` | `services/ui` | `mcp-sentinel-ui` | `ui` |
+| UI | `services/ui` | `mcp-sentinel-ui` | `services/ui/Dockerfile` | `.` | `mcp-sentinel-ui` | `ui` |
 | API | `services/api` | `mcp-sentinel-api` | `services/api/Dockerfile` | `.` | `mcp-sentinel-api` | `api` |
-| Ingest | `services/ingest` | `mcp-sentinel-ingest` | `services/ingest/Dockerfile` | `services/ingest` | `mcp-sentinel-ingest` | `ingest` |
-| Processor | `services/processor` | `mcp-sentinel-processor` | `services/processor/Dockerfile` | `services/processor` | `mcp-sentinel-processor` | `processor` |
+| Ingest | `services/ingest` | `mcp-sentinel-ingest` | `services/ingest/Dockerfile` | `.` | `mcp-sentinel-ingest` | `ingest` |
+| Processor | `services/processor` | `mcp-sentinel-processor` | `services/processor/Dockerfile` | `.` | `mcp-sentinel-processor` | `processor` |
 
 `services/mcp-proxy` is different: it runs as the `mcp-gateway` sidecar inside
 each MCP server pod. To test proxy changes, build and push
