@@ -52,7 +52,15 @@ envtest assets and set `KUBEBUILDER_ASSETS`.
 - `go test ./internal/operator/... ./internal/cli/... -race -count=1`
 - `go test ./test/golden/... -count=1` (CLI help snapshots; update `test/golden/cli/testdata/*.golden` when you change Cobra help text on purpose)
 - `go test ./test/integration/...` (needs `KUBEBUILDER_ASSETS`; see `Makefile.operator` and CI for envtest setup)
-- `E2E_CACHE_MODE=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh` for repeated local Kind e2e debugging without recreating the cluster or rebuilding cached images. The e2e traffic path uses deterministic curl-based MCP requests; omit cache mode for CI-equivalent fresh runs.
+- `E2E_CACHE_MODE=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh`
+  for repeated local Kind e2e debugging without recreating the cluster or
+  rebuilding cached images. The e2e script defaults to
+  `CLUSTER_NAME=mcp-e2e`; when reusing the contributor cluster from
+  `docs/getting-started.md#3-contributor-test-mode-cluster`, set
+  `CLUSTER_NAME=mcp-runtime E2E_CACHE_MODE=1 E2E_KEEP_CLUSTER=1` so agents do
+  not create duplicate clusters, registries, or image builds. The e2e traffic
+  path uses deterministic curl-based MCP requests; omit cache mode for
+  CI-equivalent fresh runs.
 - `services/api` and `services/ui`: `go test -race -count=1 ./...` inside each directory (CI runs these explicitly)
 
 **CI** (`.github/workflows/ci.yaml`) runs: `gofmt` check, `go vet`, `staticcheck`, unit tests, golden tests, service tests, `test/integration`, SBOM generation, then Kind e2e on `main`/`PR` branches. Normal PRs, `main`, and manual runs use `E2E_SCENARIOS=all`; Dependabot PRs use `E2E_SCENARIOS=smoke-auth,governance` so dependency bumps still cover MCP ingress/auth and grant/session behavior while keeping runtime low. Security workflows add pinned gosec, Gitleaks, Trivy, and dependency-review checks. Align local changes with that before opening a PR.
@@ -94,6 +102,7 @@ containerdConfigPatches:
 EOF
 
 kind create cluster --name mcp-runtime --config /tmp/mcp-runtime-kind.yaml
+kubectl config use-context kind-mcp-runtime
 ./bin/mcp-runtime bootstrap                              # preflight cluster prerequisites
 MCP_SETUP_WAIT_TIMEOUT=900 ./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http
 ./bin/mcp-runtime cluster doctor                         # post-install registry/component diagnostics
@@ -105,6 +114,10 @@ gateway proxy, and Sentinel images with `latest` tags to the configured or
 bundled registry, then deploys pods that pull those images. In Kind test mode,
 implicit internal image refs use `registry.registry.svc.cluster.local:5000/...`
 so the documented containerd mirror matches the image host exactly.
+Before rerunning setup or e2e locally, check `kind get clusters` and prefer the
+existing `kind-mcp-runtime` context when it is healthy. Create a new Kind
+cluster only when you need a clean CI-equivalent run or the existing contributor
+cluster is intentionally disposable.
 
 - **Status:** `./bin/mcp-runtime status`
 - **Contributor smoke:** for dashboard access, local image push, MCP JSON-RPC request, and Sentinel event checks, follow `docs/getting-started.md#3-contributor-test-mode-cluster`.

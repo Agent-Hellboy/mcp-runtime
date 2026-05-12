@@ -1,0 +1,4 @@
+interface:
+  display_name: "QA — E2E UI"
+  short_description: "Real-cluster dashboard/UI regression: load, login, API proxy, connect config"
+  default_prompt: "Use $qa-e2e-ui to validate the Sentinel dashboard end-to-end against the live Kind cluster — dashboard load, dev login, UI→API proxy, MCP Servers tab connect config, static asset integrity, and public-host defenses (qa-cluster-bringup must have run)."
