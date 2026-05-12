@@ -102,11 +102,11 @@ Image mirroring and local image builds run concurrently during fresh e2e setup.
 Set `E2E_IMAGE_PREP_PARALLELISM=1` to force sequential prep on constrained
 machines, or raise it above the default `3` only when Docker has enough CPU,
 network, and disk headroom.
-Core rollout waits and independent official SDK example deployments also run in
-parallel; the scenario checks themselves stay ordered because they share runtime
-state.
+Independent official SDK example deployments also run in parallel; the scenario
+checks themselves stay ordered because they share runtime state.
 Parallel worker logs are buffered in the e2e workdir under `stage-logs/` and
-copied into `E2E_ARTIFACT_DIR` when artifacts are enabled. Successful workers
-print only start/pass lines; failed workers dump their captured log inline.
-Major sequential stages such as setup, cluster doctor, CLI rebuilds, and server
+copied into `E2E_ARTIFACT_DIR` when artifacts are enabled. Live CI output uses
+colored `START`, `RUNNING`, `DONE`, and `FAILED` lifecycle lines plus short
+stdout/stderr previews, while the full logs stay in the artifact. Major
+sequential stages such as setup, cluster doctor, CLI rebuilds, and server
 deploys are mirrored under `stage-logs/` in the same artifact.

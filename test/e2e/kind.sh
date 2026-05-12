@@ -37,7 +37,7 @@ e2e_color_enabled() {
       return 1
       ;;
     auto|"")
-      [[ -t 1 ]]
+      [[ -t 1 || "${GITHUB_ACTIONS:-}" == "true" ]]
       ;;
     *)
       [[ -t 1 ]]
@@ -51,6 +51,7 @@ E2E_COLOR_MCP=""
 E2E_COLOR_POLICY=""
 E2E_COLOR_WARN=""
 E2E_COLOR_DEBUG=""
+E2E_COLOR_SUCCESS=""
 if e2e_color_enabled; then
   E2E_COLOR_RESET=$'\033[0m'
   E2E_COLOR_INFO=$'\033[36m'
@@ -58,6 +59,7 @@ if e2e_color_enabled; then
   E2E_COLOR_POLICY=$'\033[33m'
   E2E_COLOR_WARN=$'\033[31m'
   E2E_COLOR_DEBUG=$'\033[2m'
+  E2E_COLOR_SUCCESS=$'\033[32m'
 fi
 
 log_line() {
@@ -173,12 +175,22 @@ E2E_VALIDATE_SCENARIOS_ONLY="${E2E_VALIDATE_SCENARIOS_ONLY:-0}"
 E2E_KEEP_CLUSTER="${E2E_KEEP_CLUSTER:-0}"
 E2E_CACHE_MODE="${E2E_CACHE_MODE:-0}"
 E2E_IMAGE_PREP_PARALLELISM="${E2E_IMAGE_PREP_PARALLELISM:-3}"
+E2E_LOG_PREVIEW_LINES="${E2E_LOG_PREVIEW_LINES:-4}"
+E2E_LOG_FAILURE_LINES="${E2E_LOG_FAILURE_LINES:-40}"
 if [[ "${E2E_CACHE_MODE}" == "1" ]]; then
   E2E_KEEP_CLUSTER=1
 fi
 
 if ! [[ "${E2E_IMAGE_PREP_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_IMAGE_PREP_PARALLELISM}" -lt 1 ]]; then
   echo "E2E_IMAGE_PREP_PARALLELISM must be a positive integer" >&2
+  exit 1
+fi
+if ! [[ "${E2E_LOG_PREVIEW_LINES}" =~ ^[0-9]+$ ]]; then
+  echo "E2E_LOG_PREVIEW_LINES must be zero or a positive integer" >&2
+  exit 1
+fi
+if ! [[ "${E2E_LOG_FAILURE_LINES}" =~ ^[0-9]+$ ]]; then
+  echo "E2E_LOG_FAILURE_LINES must be zero or a positive integer" >&2
   exit 1
 fi
 
@@ -289,6 +301,9 @@ PIDS=()
 PARALLEL_PIDS=()
 PARALLEL_LABELS=()
 PARALLEL_LOGS=()
+PARALLEL_STDOUT_LOGS=()
+PARALLEL_STDERR_LOGS=()
+PARALLEL_STARTED_AT=()
 PARALLEL_FAILED=0
 PARALLEL_SEQ=0
 STAGE_SEQ=0
@@ -1943,11 +1958,99 @@ safe_log_label() {
   printf '%s' "${label}" | tr -c '[:alnum:]_.-' '_'
 }
 
+relative_log_path() {
+  local path="$1"
+  printf '%s' "${path#"${WORKDIR}/"}"
+}
+
+format_duration() {
+  local seconds="$1"
+  local minutes
+  if [[ "${seconds}" -lt 60 ]]; then
+    printf '%ss' "${seconds}"
+    return
+  fi
+  minutes=$((seconds / 60))
+  seconds=$((seconds % 60))
+  printf '%sm%02ss' "${minutes}" "${seconds}"
+}
+
+log_status() {
+  local state="$1"
+  local message="$2"
+  local color="${E2E_COLOR_INFO}"
+  case "${state}" in
+    DONE)
+      color="${E2E_COLOR_SUCCESS}"
+      ;;
+    FAILED|STDERR)
+      color="${E2E_COLOR_WARN}"
+      ;;
+    RUNNING|PLAN)
+      color="${E2E_COLOR_POLICY}"
+      ;;
+    STDOUT)
+      color="${E2E_COLOR_DEBUG}"
+      ;;
+  esac
+  printf '%b%-7s%b %s\n' "${color}" "${state}" "${E2E_COLOR_RESET}" "${message}"
+}
+
+log_status_err() {
+  local state="$1"
+  local message="$2"
+  log_status "${state}" "${message}" >&2
+}
+
+combine_stream_logs() {
+  local stdout_file="$1"
+  local stderr_file="$2"
+  local log_file="$3"
+
+  : >"${log_file}"
+  if [[ -s "${stdout_file}" ]]; then
+    {
+      echo "===== stdout ====="
+      cat "${stdout_file}"
+    } >>"${log_file}"
+  fi
+  if [[ -s "${stderr_file}" ]]; then
+    {
+      echo "===== stderr ====="
+      cat "${stderr_file}"
+    } >>"${log_file}"
+  fi
+  return 0
+}
+
+preview_log_stream() {
+  local state="$1"
+  local label="$2"
+  local log_file="$3"
+  local lines="$4"
+  local stream="${5:-stdout}"
+
+  if [[ "${lines}" -eq 0 || ! -s "${log_file}" ]]; then
+    return 0
+  fi
+
+  if [[ "${stream}" == "stderr" ]]; then
+    log_status_err "${state}" "${label}: last ${lines} stderr lines from $(relative_log_path "${log_file}")"
+    tail -n "${lines}" "${log_file}" | sed 's/^/        /' >&2
+  else
+    log_status "${state}" "${label}: last ${lines} stdout lines from $(relative_log_path "${log_file}")"
+    tail -n "${lines}" "${log_file}" | sed 's/^/        /'
+  fi
+}
+
 run_logged_stage() {
   local label="$1"
   local log_file
   local heartbeat_pid=""
   local safe_label
+  local started_at
+  local stdout_file
+  local stderr_file
   local status=0
   shift
 
@@ -1955,30 +2058,38 @@ run_logged_stage() {
   STAGE_SEQ=$((STAGE_SEQ + 1))
   safe_label="$(safe_log_label "${label}")"
   log_file="${STAGE_LOG_DIR}/stage-$(printf '%03d' "${STAGE_SEQ}")-${safe_label}.log"
-  echo "[stage][start] ${label} (log: ${log_file#"${WORKDIR}/"})"
+  stdout_file="${log_file%.log}.stdout.log"
+  stderr_file="${log_file%.log}.stderr.log"
+  started_at="$(date +%s)"
+  log_status "START" "${label} (full log: $(relative_log_path "${log_file}"))"
 
   (
     while true; do
       sleep 30
-      echo "[stage][wait] ${label} still running"
+      log_status "RUNNING" "${label} for $(format_duration "$(( $(date +%s) - started_at ))")"
     done
   ) &
   heartbeat_pid="$!"
   PIDS+=("${heartbeat_pid}")
 
-  if "$@" >"${log_file}" 2>&1; then
+  if "$@" >"${stdout_file}" 2>"${stderr_file}"; then
     kill "${heartbeat_pid}" >/dev/null 2>&1 || true
     wait "${heartbeat_pid}" 2>/dev/null || true
-    echo "[stage][pass] ${label} (log: ${log_file#"${WORKDIR}/"})"
+    combine_stream_logs "${stdout_file}" "${stderr_file}" "${log_file}"
+    log_status "DONE" "${label} in $(format_duration "$(( $(date +%s) - started_at ))") (full log: $(relative_log_path "${log_file}"))"
+    preview_log_stream "STDOUT" "${label}" "${stdout_file}" "${E2E_LOG_PREVIEW_LINES}" stdout
+    preview_log_stream "STDERR" "${label}" "${stderr_file}" "${E2E_LOG_PREVIEW_LINES}" stderr
   else
     status=$?
     kill "${heartbeat_pid}" >/dev/null 2>&1 || true
     wait "${heartbeat_pid}" 2>/dev/null || true
-    echo "[stage][fail] ${label} exited with status ${status}; log follows (${log_file#"${WORKDIR}/"})" >&2
-    if [[ -f "${log_file}" ]]; then
-      sed 's/^/[stage][log] /' "${log_file}" >&2
+    combine_stream_logs "${stdout_file}" "${stderr_file}" "${log_file}"
+    log_status_err "FAILED" "${label} after $(format_duration "$(( $(date +%s) - started_at ))") with exit ${status} (full log: $(relative_log_path "${log_file}"))"
+    if [[ -s "${stdout_file}" || -s "${stderr_file}" ]]; then
+      preview_log_stream "STDOUT" "${label}" "${stdout_file}" "${E2E_LOG_FAILURE_LINES}" stdout
+      preview_log_stream "STDERR" "${label}" "${stderr_file}" "${E2E_LOG_FAILURE_LINES}" stderr
     else
-      echo "[stage][log] no log file found for ${label}" >&2
+      log_status_err "FAILED" "${label}: command produced no captured stdout or stderr"
     fi
     return "${status}"
   fi
@@ -1988,6 +2099,9 @@ parallel_reset() {
   PARALLEL_PIDS=()
   PARALLEL_LABELS=()
   PARALLEL_LOGS=()
+  PARALLEL_STDOUT_LOGS=()
+  PARALLEL_STDERR_LOGS=()
+  PARALLEL_STARTED_AT=()
   PARALLEL_FAILED=0
 }
 
@@ -1995,13 +2109,16 @@ parallel_wait_next() {
   local pid="${PARALLEL_PIDS[0]}"
   local label="${PARALLEL_LABELS[0]}"
   local log_file="${PARALLEL_LOGS[0]}"
+  local stdout_file="${PARALLEL_STDOUT_LOGS[0]}"
+  local stderr_file="${PARALLEL_STDERR_LOGS[0]}"
+  local started_at="${PARALLEL_STARTED_AT[0]}"
   local heartbeat_pid=""
   local status=0
 
   (
     while true; do
       sleep 30
-      echo "[parallel][wait] ${label} still running"
+      log_status "RUNNING" "${label} for $(format_duration "$(( $(date +%s) - started_at ))")"
     done
   ) &
   heartbeat_pid="$!"
@@ -2010,16 +2127,21 @@ parallel_wait_next() {
   if wait "${pid}"; then
     kill "${heartbeat_pid}" >/dev/null 2>&1 || true
     wait "${heartbeat_pid}" 2>/dev/null || true
-    echo "[parallel][pass] ${label} (log: ${log_file#"${WORKDIR}/"})"
+    combine_stream_logs "${stdout_file}" "${stderr_file}" "${log_file}"
+    log_status "DONE" "${label} in $(format_duration "$(( $(date +%s) - started_at ))") (full log: $(relative_log_path "${log_file}"))"
+    preview_log_stream "STDOUT" "${label}" "${stdout_file}" "${E2E_LOG_PREVIEW_LINES}" stdout
+    preview_log_stream "STDERR" "${label}" "${stderr_file}" "${E2E_LOG_PREVIEW_LINES}" stderr
   else
     status=$?
     kill "${heartbeat_pid}" >/dev/null 2>&1 || true
     wait "${heartbeat_pid}" 2>/dev/null || true
-    echo "[parallel][fail] ${label} exited with status ${status}; log follows (${log_file#"${WORKDIR}/"})" >&2
-    if [[ -f "${log_file}" ]]; then
-      sed 's/^/[parallel][log] /' "${log_file}" >&2
+    combine_stream_logs "${stdout_file}" "${stderr_file}" "${log_file}"
+    log_status_err "FAILED" "${label} after $(format_duration "$(( $(date +%s) - started_at ))") with exit ${status} (full log: $(relative_log_path "${log_file}"))"
+    if [[ -s "${stdout_file}" || -s "${stderr_file}" ]]; then
+      preview_log_stream "STDOUT" "${label}" "${stdout_file}" "${E2E_LOG_FAILURE_LINES}" stdout
+      preview_log_stream "STDERR" "${label}" "${stderr_file}" "${E2E_LOG_FAILURE_LINES}" stderr
     else
-      echo "[parallel][log] no log file found for ${label}" >&2
+      log_status_err "FAILED" "${label}: command produced no captured stdout or stderr"
     fi
     PARALLEL_FAILED=1
   fi
@@ -2027,6 +2149,9 @@ parallel_wait_next() {
   PARALLEL_PIDS=("${PARALLEL_PIDS[@]:1}")
   PARALLEL_LABELS=("${PARALLEL_LABELS[@]:1}")
   PARALLEL_LOGS=("${PARALLEL_LOGS[@]:1}")
+  PARALLEL_STDOUT_LOGS=("${PARALLEL_STDOUT_LOGS[@]:1}")
+  PARALLEL_STDERR_LOGS=("${PARALLEL_STDERR_LOGS[@]:1}")
+  PARALLEL_STARTED_AT=("${PARALLEL_STARTED_AT[@]:1}")
 }
 
 parallel_start() {
@@ -2034,6 +2159,8 @@ parallel_start() {
   local label="$2"
   local log_file
   local safe_label
+  local stdout_file
+  local stderr_file
   shift 2
 
   while [[ ${#PARALLEL_PIDS[@]} -ge ${max_parallel} ]]; do
@@ -2044,12 +2171,17 @@ parallel_start() {
   PARALLEL_SEQ=$((PARALLEL_SEQ + 1))
   safe_label="$(safe_log_label "${label}")"
   log_file="${STAGE_LOG_DIR}/parallel-$(printf '%03d' "${PARALLEL_SEQ}")-${safe_label}.log"
-  echo "[parallel][start] ${label} (log: ${log_file#"${WORKDIR}/"})"
-  "$@" >"${log_file}" 2>&1 &
+  stdout_file="${log_file%.log}.stdout.log"
+  stderr_file="${log_file%.log}.stderr.log"
+  log_status "START" "${label} (parallel worker; full log: $(relative_log_path "${log_file}"))"
+  "$@" >"${stdout_file}" 2>"${stderr_file}" &
   local pid="$!"
   PARALLEL_PIDS+=("${pid}")
   PARALLEL_LABELS+=("${label}")
   PARALLEL_LOGS+=("${log_file}")
+  PARALLEL_STDOUT_LOGS+=("${stdout_file}")
+  PARALLEL_STDERR_LOGS+=("${stderr_file}")
+  PARALLEL_STARTED_AT+=("$(date +%s)")
   PIDS+=("${pid}")
 }
 
@@ -2088,15 +2220,45 @@ build_and_publish_image() {
   publish_image_to_local_registry "${image}"
 }
 
+image_build_label() {
+  local image="$1"
+  case "${image}" in
+    docker.io/library/mcp-runtime-operator:*)
+      echo "build operator image (${image})"
+      ;;
+    docker.io/library/mcp-runtime-registry:*)
+      echo "build test registry image (${image})"
+      ;;
+    docker.io/library/mcp-sentinel-mcp-proxy:*)
+      echo "build Sentinel MCP proxy image (${image})"
+      ;;
+    docker.io/library/mcp-sentinel-ingest:*)
+      echo "build Sentinel ingest image (${image})"
+      ;;
+    docker.io/library/mcp-sentinel-api:*)
+      echo "build Sentinel API image (${image})"
+      ;;
+    docker.io/library/mcp-sentinel-processor:*)
+      echo "build Sentinel processor image (${image})"
+      ;;
+    docker.io/library/mcp-sentinel-ui:*)
+      echo "build Sentinel UI image (${image})"
+      ;;
+    *)
+      echo "build image ${image}"
+      ;;
+  esac
+}
+
 build_and_publish_images_parallel() {
-  echo "[image] preparing local images with parallelism ${E2E_IMAGE_PREP_PARALLELISM}"
+  log_status "PLAN" "Building runtime and Sentinel images with ${E2E_IMAGE_PREP_PARALLELISM} parallel workers"
   parallel_reset
   while [[ $# -gt 0 ]]; do
     local image="$1"
     local dockerfile="$2"
     local context_dir="$3"
     shift 3
-    parallel_start "${E2E_IMAGE_PREP_PARALLELISM}" "build ${image}" build_and_publish_image "${image}" "${dockerfile}" "${context_dir}"
+    parallel_start "${E2E_IMAGE_PREP_PARALLELISM}" "$(image_build_label "${image}")" build_and_publish_image "${image}" "${dockerfile}" "${context_dir}"
   done
   parallel_wait_all
 }
@@ -2123,7 +2285,7 @@ mirror_upstream_image() {
 }
 
 mirror_upstream_images_parallel() {
-  echo "[image] mirroring upstream images with parallelism ${E2E_IMAGE_PREP_PARALLELISM}"
+  log_status "PLAN" "Mirroring upstream images into the local registry with ${E2E_IMAGE_PREP_PARALLELISM} parallel workers"
   parallel_reset
   local image
   for image in "$@"; do
@@ -2136,15 +2298,15 @@ wait_core_platform_rollouts() {
   echo "[verify] waiting for core platform components"
   kubectl get namespace mcp-servers mcp-servers-org mcp-servers-public >/dev/null
 
-  parallel_reset
-  parallel_start 3 "rollout registry/deploy/registry" rollout_status_with_logs registry deploy registry 180s
-  parallel_start 3 "rollout mcp-runtime/deploy/mcp-runtime-operator-controller-manager" rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
-  parallel_start 3 "rollout traefik/deploy/traefik" rollout_status_with_logs traefik deploy traefik 180s
-  parallel_start 3 "rollout mcp-sentinel/deploy/mcp-sentinel-api" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
-  parallel_start 3 "rollout mcp-sentinel/deploy/mcp-sentinel-gateway" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-gateway 180s
-  parallel_start 3 "rollout mcp-sentinel/statefulset/tempo" rollout_status_with_logs mcp-sentinel statefulset tempo 180s
-  parallel_start 3 "rollout mcp-sentinel/statefulset/loki" rollout_status_with_logs mcp-sentinel statefulset loki 300s
-  parallel_wait_all
+  # Setup already waits for these workloads. Keep the post-setup sanity check
+  # sequential so transient kubectl watch cancellation does not fail a healthy run.
+  run_logged_stage "verify registry rollout" rollout_status_with_logs registry deploy registry 180s
+  run_logged_stage "verify operator rollout" rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
+  run_logged_stage "verify traefik rollout" rollout_status_with_logs traefik deploy traefik 180s
+  run_logged_stage "verify sentinel api rollout" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
+  run_logged_stage "verify sentinel gateway rollout" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-gateway 180s
+  run_logged_stage "verify tempo rollout" rollout_status_with_logs mcp-sentinel statefulset tempo 180s
+  run_logged_stage "verify loki rollout" rollout_status_with_logs mcp-sentinel statefulset loki 300s
 }
 
 delete_mcp_server_and_wait() {

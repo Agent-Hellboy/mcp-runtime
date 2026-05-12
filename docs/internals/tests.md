@@ -65,19 +65,20 @@ image tags already published to the local registry.
 Image mirroring and local runtime/Sentinel image builds run with bounded
 parallelism. Set `E2E_IMAGE_PREP_PARALLELISM=<n>` to tune the default of `3`
 when your workstation or CI runner needs less or more Docker concurrency.
-The script also waits on independent core rollouts and deploys the official SDK
-example servers concurrently; scenario assertions remain ordered because they
-share policy, session, and analytics state.
+The script also deploys the independent official SDK example servers
+concurrently; scenario assertions remain ordered because they share policy,
+session, and analytics state.
 Parallel worker output is buffered under `stage-logs/` in the e2e workdir and
-copied into `E2E_ARTIFACT_DIR` when artifacts are enabled. Green workers print
-start/pass lines only; failed workers dump their captured log inline.
-Major sequential stages such as local registry startup, Kind cluster creation,
-CLI rebuilds, setup, cluster doctor, and MCP server deploys are also mirrored to
-`stage-logs/` in the same artifact.
+copied into `E2E_ARTIFACT_DIR` when artifacts are enabled. Live output prints
+colored `START`, `RUNNING`, `DONE`, and `FAILED` lifecycle lines plus short
+stdout/stderr previews; tune those previews with `E2E_LOG_PREVIEW_LINES` and
+`E2E_LOG_FAILURE_LINES`. Major sequential stages such as local registry startup,
+Kind cluster creation, CLI rebuilds, setup, cluster doctor, and MCP server
+deploys are also mirrored to `stage-logs/` in the same artifact.
 
-E2E output uses ANSI color only for an interactive terminal by default. Set
-`E2E_COLOR=always` or `E2E_COLOR=never` to override auto-detection; `NO_COLOR`
-disables color.
+E2E output uses ANSI color for interactive terminals and GitHub Actions by
+default. Set `E2E_COLOR=always` or `E2E_COLOR=never` to override
+auto-detection; `NO_COLOR` disables color.
 
 Kind e2e traffic uses deterministic curl-based MCP requests. The previous
 real-client agent prompts are disabled so CI and local runs do not consume
