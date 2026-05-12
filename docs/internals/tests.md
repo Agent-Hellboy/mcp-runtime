@@ -71,6 +71,9 @@ share policy, session, and analytics state.
 Parallel worker output is buffered under `parallel-logs/` in the e2e workdir
 and copied into `E2E_ARTIFACT_DIR` when artifacts are enabled. Green workers
 print start/pass lines only; failed workers dump their captured log inline.
+Major sequential stages such as local registry startup, Kind cluster creation,
+CLI rebuilds, setup, cluster doctor, and MCP server deploys are also mirrored to
+`stage-logs/` in the same artifact.
 
 E2E output uses ANSI color only for an interactive terminal by default. Set
 `E2E_COLOR=always` or `E2E_COLOR=never` to override auto-detection; `NO_COLOR`

@@ -108,3 +108,5 @@ state.
 Parallel worker logs are buffered in the e2e workdir under `parallel-logs/` and
 copied into `E2E_ARTIFACT_DIR` when artifacts are enabled. Successful workers
 print only start/pass lines; failed workers dump their captured log inline.
+Major sequential stages such as setup, cluster doctor, CLI rebuilds, and server
+deploys are mirrored under `stage-logs/` in the same artifact.

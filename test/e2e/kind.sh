@@ -281,6 +281,7 @@ fi
 git config --global --add safe.directory "${PROJECT_ROOT}" >/dev/null 2>&1 || true
 
 WORKDIR="$(mktemp -d)"
+STAGE_LOG_DIR="${WORKDIR}/stage-logs"
 KIND_CONFIG="$(mktemp)"
 ORIG_CONTEXT="$(kubectl config current-context 2>/dev/null || true)"
 PIDS=()
@@ -289,6 +290,7 @@ PARALLEL_LABELS=()
 PARALLEL_LOGS=()
 PARALLEL_FAILED=0
 PARALLEL_SEQ=0
+STAGE_SEQ=0
 
 cleanup() {
   if [[ -n "${E2E_ARTIFACT_DIR}" ]]; then
@@ -1924,22 +1926,37 @@ run_with_retry() {
   return "${exit_code}"
 }
 
+safe_log_label() {
+  local label="$1"
+  printf '%s' "${label}" | tr -c '[:alnum:]_.-' '_'
+}
+
+run_logged_stage() {
+  local label="$1"
+  local log_file
+  local safe_label
+  local status=0
+  shift
+
+  mkdir -p "${STAGE_LOG_DIR}"
+  STAGE_SEQ=$((STAGE_SEQ + 1))
+  safe_label="$(safe_log_label "${label}")"
+  log_file="${STAGE_LOG_DIR}/$(printf '%03d' "${STAGE_SEQ}")-${safe_label}.log"
+  echo "[stage][start] ${label} (log: ${log_file#"${WORKDIR}/"})"
+  if "$@" > >(tee "${log_file}") 2> >(tee -a "${log_file}" >&2); then
+    echo "[stage][pass] ${label} (log: ${log_file#"${WORKDIR}/"})"
+  else
+    status=$?
+    echo "[stage][fail] ${label} exited with status ${status}; log: ${log_file#"${WORKDIR}/"}" >&2
+    return "${status}"
+  fi
+}
+
 parallel_reset() {
   PARALLEL_PIDS=()
   PARALLEL_LABELS=()
   PARALLEL_LOGS=()
   PARALLEL_FAILED=0
-}
-
-parallel_log_path() {
-  local label="$1"
-  local safe_label
-  local log_dir="${WORKDIR}/parallel-logs"
-
-  mkdir -p "${log_dir}"
-  PARALLEL_SEQ=$((PARALLEL_SEQ + 1))
-  safe_label="$(printf '%s' "${label}" | tr -c '[:alnum:]_.-' '_')"
-  printf '%s/%03d-%s.log' "${log_dir}" "${PARALLEL_SEQ}" "${safe_label}"
 }
 
 parallel_wait_next() {
@@ -1970,13 +1987,18 @@ parallel_start() {
   local max_parallel="$1"
   local label="$2"
   local log_file
+  local log_dir="${WORKDIR}/parallel-logs"
+  local safe_label
   shift 2
 
   while [[ ${#PARALLEL_PIDS[@]} -ge ${max_parallel} ]]; do
     parallel_wait_next
   done
 
-  log_file="$(parallel_log_path "${label}")"
+  mkdir -p "${log_dir}"
+  PARALLEL_SEQ=$((PARALLEL_SEQ + 1))
+  safe_label="$(safe_log_label "${label}")"
+  log_file="${log_dir}/$(printf '%03d' "${PARALLEL_SEQ}")-${safe_label}.log"
   echo "[parallel][start] ${label} (log: ${log_file#"${WORKDIR}/"})"
   "$@" >"${log_file}" 2>&1 &
   local pid="$!"
@@ -2089,6 +2111,16 @@ delete_mcp_server_and_wait() {
   kubectl wait --for=delete "mcpserver/${server_name}" -n "${namespace}" --timeout="${timeout}" || true
 }
 
+deploy_primary_server_manifests() {
+  ./bin/mcp-runtime pipeline generate --file "${METADATA_FILE}" --output "${MANIFEST_DIR}"
+  ./bin/mcp-runtime pipeline deploy --dir "${MANIFEST_DIR}"
+}
+
+deploy_oauth_server_manifests() {
+  ./bin/mcp-runtime pipeline generate --file "${OAUTH_METADATA_FILE}" --output "${OAUTH_MANIFEST_DIR}"
+  ./bin/mcp-runtime pipeline deploy --dir "${OAUTH_MANIFEST_DIR}"
+}
+
 start_local_registry() {
   if docker ps -a --format '{{.Names}}' | grep -qx "${LOCAL_REGISTRY_NAME}"; then
     if cache_mode_enabled; then
@@ -2151,13 +2183,13 @@ containerdConfigPatches:
     endpoint = ["http://127.0.0.1:32000"]
 EOF
 
-start_local_registry
+run_logged_stage "start local registry" start_local_registry
 
 if cache_mode_enabled && kind_cluster_exists; then
   echo "[kind] reusing cluster ${CLUSTER_NAME}"
 else
   echo "[kind] creating cluster ${CLUSTER_NAME}"
-  kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}" --wait 120s
+  run_logged_stage "kind create cluster" kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}" --wait 120s
 fi
 connect_local_registry_to_kind_network
 KUBECONFIG_FILE="/tmp/kubeconfig-kind"
@@ -2168,7 +2200,7 @@ mkdir -p "${HOME}/.kube"
 cp "${KUBECONFIG_FILE}" "${HOME}/.kube/config"
 
 echo "[build] rebuilding CLI"
-GOCACHE="${PROJECT_ROOT}/.gocache" go build -o bin/mcp-runtime ./cmd/mcp-runtime
+run_logged_stage "build CLI" env GOCACHE="${PROJECT_ROOT}/.gocache" go build -o bin/mcp-runtime ./cmd/mcp-runtime
 
 echo "[cli] checking static command output"
 ./bin/mcp-runtime --version >/dev/null
@@ -2212,8 +2244,9 @@ if [[ "${PLATFORM_CACHE_READY}" == "1" ]]; then
   echo "[setup] skipping platform setup because E2E_CACHE_MODE=1 found a ready platform"
 else
   echo "[setup] running platform setup in test mode (platform mode: ${E2E_PLATFORM_MODE})"
-  MCP_RUNTIME_REGISTRY_IMAGE_OVERRIDE="${TEST_MODE_REGISTRY_IMAGE}" \
-  ./bin/mcp-runtime setup --test-mode --parallel-builds --platform-mode "${E2E_PLATFORM_MODE}" --ingress-manifest config/ingress/overlays/http
+  run_logged_stage "setup test mode" \
+    env MCP_RUNTIME_REGISTRY_IMAGE_OVERRIDE="${TEST_MODE_REGISTRY_IMAGE}" \
+    ./bin/mcp-runtime setup --test-mode --parallel-builds --platform-mode "${E2E_PLATFORM_MODE}" --ingress-manifest config/ingress/overlays/http
 fi
 
 wait_core_platform_rollouts
@@ -2271,9 +2304,9 @@ if cache_mode_enabled; then
   rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
 fi
 if cache_mode_enabled; then
-  run_with_retry "cluster doctor" ./bin/mcp-runtime cluster doctor
+  run_logged_stage "cluster doctor" run_with_retry "cluster doctor" ./bin/mcp-runtime cluster doctor
 else
-  ./bin/mcp-runtime cluster doctor
+  run_logged_stage "cluster doctor" ./bin/mcp-runtime cluster doctor
 fi
 run_cli_allowing_cert_prereq_failure cluster-cert-status ./bin/mcp-runtime cluster cert status
 run_cli_allowing_cert_prereq_failure cluster-cert-apply-dry-run ./bin/mcp-runtime cluster cert apply --dry-run
@@ -2394,19 +2427,18 @@ if pull_cached_image "${SERVER_IMAGE}"; then
   echo "[cache] skipping MCP server image build/push for ${SERVER_IMAGE}"
 else
   echo "[cli] building MCP server image via CLI"
-  ./bin/mcp-runtime server build image "${SERVER_NAME}" \
+  run_logged_stage "build primary MCP server image" ./bin/mcp-runtime server build image "${SERVER_NAME}" \
     --metadata-file "${METADATA_FILE}" \
     --dockerfile "${GO_EXAMPLE_SOURCE_DIR}/Dockerfile" \
     --registry docker.io/library \
     --tag latest \
     --context "${GO_EXAMPLE_SOURCE_DIR}"
 
-  publish_image_to_local_registry "${SERVER_IMAGE}"
+  run_logged_stage "publish primary MCP server image" publish_image_to_local_registry "${SERVER_IMAGE}"
 fi
 
 echo "[cli] generating and deploying MCPServer manifests"
-./bin/mcp-runtime pipeline generate --file "${METADATA_FILE}" --output "${MANIFEST_DIR}"
-./bin/mcp-runtime pipeline deploy --dir "${MANIFEST_DIR}"
+run_logged_stage "deploy primary MCP server manifests" deploy_primary_server_manifests
 
 echo "[deploy] waiting for MCP server rollout"
 wait_for_deployment_exists mcp-servers "${SERVER_NAME}"
@@ -3349,8 +3381,7 @@ servers:
 EOF
 
   echo "[oauth] deploying OAuth-protected MCP server"
-  ./bin/mcp-runtime pipeline generate --file "${OAUTH_METADATA_FILE}" --output "${OAUTH_MANIFEST_DIR}"
-  ./bin/mcp-runtime pipeline deploy --dir "${OAUTH_MANIFEST_DIR}"
+  run_logged_stage "deploy OAuth MCP server manifests" deploy_oauth_server_manifests
   wait_for_deployment_exists mcp-servers "${OAUTH_SERVER_NAME}"
   if ! restart_deployment_pods mcp-servers "${OAUTH_SERVER_NAME}" 180s; then
     echo "[debug] OAuth MCP server rollout failed; collecting diagnostics" >&2
