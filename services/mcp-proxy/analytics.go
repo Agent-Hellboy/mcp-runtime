@@ -9,7 +9,11 @@ import (
 	"net/http"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+
 	"mcp-runtime/pkg/events"
+	"mcp-runtime/pkg/serviceutil"
 )
 
 func (s *proxyServer) startAnalyticsDispatcher() {
@@ -23,7 +27,7 @@ func (s *proxyServer) startAnalyticsDispatcher() {
 			return
 		}
 		if s.analyticsQueue == nil {
-			s.analyticsQueue = make(chan events.Envelope, analyticsQueueSize)
+			s.analyticsQueue = make(chan analyticsEvent, analyticsQueueSize)
 		}
 		queue := s.analyticsQueue
 		s.analyticsWG.Add(analyticsWorkerCount)
@@ -32,8 +36,9 @@ func (s *proxyServer) startAnalyticsDispatcher() {
 			go func() {
 				defer s.analyticsWG.Done()
 				for event := range queue {
-					ctx, cancel := context.WithTimeout(context.Background(), time.Duration(analyticsEmitTimeout)*time.Second)
-					s.emit(ctx, event)
+					parentCtx := serviceutil.ContextWithTraceContext(context.Background(), event.TraceContext)
+					ctx, cancel := context.WithTimeout(parentCtx, time.Duration(analyticsEmitTimeout)*time.Second)
+					s.emit(ctx, event.Envelope)
 					cancel()
 				}
 			}()
@@ -58,7 +63,7 @@ func (s *proxyServer) stopAnalyticsDispatcher() {
 	s.analyticsWG.Wait()
 }
 
-func (s *proxyServer) emitIfEnabled(event events.Envelope) {
+func (s *proxyServer) emitIfEnabled(ctx context.Context, event events.Envelope) {
 	if s.analyticsURL == "" {
 		return
 	}
@@ -71,13 +76,17 @@ func (s *proxyServer) emitIfEnabled(event events.Envelope) {
 	if s.analyticsClosed {
 		return
 	}
+	item := analyticsEvent{
+		Envelope:     event,
+		TraceContext: serviceutil.CaptureTraceContext(ctx),
+	}
 	select {
-	case queue <- event:
+	case queue <- item:
 	default:
 	}
 }
 
-func (s *proxyServer) analyticsEventQueue() chan events.Envelope {
+func (s *proxyServer) analyticsEventQueue() chan analyticsEvent {
 	s.analyticsMu.Lock()
 	queue := s.analyticsQueue
 	s.analyticsMu.Unlock()
@@ -111,6 +120,7 @@ func (s *proxyServer) emit(ctx context.Context, event events.Envelope) {
 	if s.apiKey != "" {
 		req.Header.Set("x-api-key", s.apiKey)
 	}
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {

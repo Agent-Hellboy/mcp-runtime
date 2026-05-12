@@ -68,9 +68,9 @@ when your workstation or CI runner needs less or more Docker concurrency.
 The script also waits on independent core rollouts and deploys the official SDK
 example servers concurrently; scenario assertions remain ordered because they
 share policy, session, and analytics state.
-Parallel worker output is buffered under `parallel-logs/` in the e2e workdir
-and copied into `E2E_ARTIFACT_DIR` when artifacts are enabled. Green workers
-print start/pass lines only; failed workers dump their captured log inline.
+Parallel worker output is buffered under `stage-logs/` in the e2e workdir and
+copied into `E2E_ARTIFACT_DIR` when artifacts are enabled. Green workers print
+start/pass lines only; failed workers dump their captured log inline.
 Major sequential stages such as local registry startup, Kind cluster creation,
 CLI rebuilds, setup, cluster doctor, and MCP server deploys are also mirrored to
 `stage-logs/` in the same artifact.
@@ -83,6 +83,11 @@ Kind e2e traffic uses deterministic curl-based MCP requests. The previous
 real-client agent prompts are disabled so CI and local runs do not consume
 OpenAI or Anthropic tokens while validating gateway policy, auth, audit, and
 observability paths.
+
+The `observability` scenario validates the trace backend through both direct
+Tempo and Grafana's Tempo datasource. It must find a single request trace that
+contains the gateway service, `mcp-sentinel-ingest`, `mcp-sentinel-processor`,
+and the `kafka.produce`, `kafka.consume`, and `clickhouse.insert_event` spans.
 
 Normal PRs, `main`, and manual CI runs execute full Kind e2e with
 `E2E_SCENARIOS=all`. Dependabot PRs run `smoke-auth,governance` only, so
