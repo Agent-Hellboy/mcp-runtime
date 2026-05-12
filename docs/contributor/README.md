@@ -105,3 +105,6 @@ network, and disk headroom.
 Core rollout waits and independent official SDK example deployments also run in
 parallel; the scenario checks themselves stay ordered because they share runtime
 state.
+Parallel worker logs are buffered in the e2e workdir under `parallel-logs/` and
+copied into `E2E_ARTIFACT_DIR` when artifacts are enabled. Successful workers
+print only start/pass lines; failed workers dump their captured log inline.

@@ -286,7 +286,9 @@ ORIG_CONTEXT="$(kubectl config current-context 2>/dev/null || true)"
 PIDS=()
 PARALLEL_PIDS=()
 PARALLEL_LABELS=()
+PARALLEL_LOGS=()
 PARALLEL_FAILED=0
+PARALLEL_SEQ=0
 
 cleanup() {
   if [[ -n "${E2E_ARTIFACT_DIR}" ]]; then
@@ -1925,40 +1927,62 @@ run_with_retry() {
 parallel_reset() {
   PARALLEL_PIDS=()
   PARALLEL_LABELS=()
+  PARALLEL_LOGS=()
   PARALLEL_FAILED=0
+}
+
+parallel_log_path() {
+  local label="$1"
+  local safe_label
+  local log_dir="${WORKDIR}/parallel-logs"
+
+  mkdir -p "${log_dir}"
+  PARALLEL_SEQ=$((PARALLEL_SEQ + 1))
+  safe_label="$(printf '%s' "${label}" | tr -c '[:alnum:]_.-' '_')"
+  printf '%s/%03d-%s.log' "${log_dir}" "${PARALLEL_SEQ}" "${safe_label}"
 }
 
 parallel_wait_next() {
   local pid="${PARALLEL_PIDS[0]}"
   local label="${PARALLEL_LABELS[0]}"
+  local log_file="${PARALLEL_LOGS[0]}"
   local status=0
 
   if wait "${pid}"; then
-    echo "[parallel][pass] ${label}"
+    echo "[parallel][pass] ${label} (log: ${log_file#"${WORKDIR}/"})"
   else
     status=$?
-    echo "[parallel][fail] ${label} exited with status ${status}" >&2
+    echo "[parallel][fail] ${label} exited with status ${status}; log follows (${log_file#"${WORKDIR}/"})" >&2
+    if [[ -f "${log_file}" ]]; then
+      sed 's/^/[parallel][log] /' "${log_file}" >&2
+    else
+      echo "[parallel][log] no log file found for ${label}" >&2
+    fi
     PARALLEL_FAILED=1
   fi
 
   PARALLEL_PIDS=("${PARALLEL_PIDS[@]:1}")
   PARALLEL_LABELS=("${PARALLEL_LABELS[@]:1}")
+  PARALLEL_LOGS=("${PARALLEL_LOGS[@]:1}")
 }
 
 parallel_start() {
   local max_parallel="$1"
   local label="$2"
+  local log_file
   shift 2
 
   while [[ ${#PARALLEL_PIDS[@]} -ge ${max_parallel} ]]; do
     parallel_wait_next
   done
 
-  echo "[parallel][start] ${label}"
-  "$@" &
+  log_file="$(parallel_log_path "${label}")"
+  echo "[parallel][start] ${label} (log: ${log_file#"${WORKDIR}/"})"
+  "$@" >"${log_file}" 2>&1 &
   local pid="$!"
   PARALLEL_PIDS+=("${pid}")
   PARALLEL_LABELS+=("${label}")
+  PARALLEL_LOGS+=("${log_file}")
   PIDS+=("${pid}")
 }
 

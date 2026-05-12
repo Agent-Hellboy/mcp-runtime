@@ -105,31 +105,31 @@ jobs:
         run: |
           set -euo pipefail
 
-          run_service_tests() {
-            local service="$1"
-            echo "::group::services/${service}"
-            local status=0
-            if (cd "services/${service}" && go test -v -race -count=1 ./...); then
-              status=0
-            else
-              status=$?
-            fi
-            echo "::endgroup::"
-            return "${status}"
-          }
-
+          log_dir="${RUNNER_TEMP:-/tmp}/sentinel-service-test-logs"
+          mkdir -p "${log_dir}"
           services=(api ingest processor mcp-proxy ui)
           pids=()
+          log_files=()
           for service in "${services[@]}"; do
-            run_service_tests "${service}" &
+            log_file="${log_dir}/${service}.log"
+            echo "[parallel][start] services/${service} (log: ${log_file})"
+            (cd "services/${service}" && go test -v -race -count=1 ./...) >"${log_file}" 2>&1 &
             pids+=("$!")
+            log_files+=("${log_file}")
           done
 
           failed=0
           for i in "${!services[@]}"; do
+            service="${services[$i]}"
+            log_file="${log_files[$i]}"
             if ! wait "${pids[$i]}"; then
-              echo "services/${services[$i]} tests failed" >&2
+              echo "[parallel][fail] services/${service} tests failed; log follows" >&2
+              echo "::group::services/${service} failure log"
+              cat "${log_file}" || true
+              echo "::endgroup::"
               failed=1
+            else
+              echo "[parallel][pass] services/${service} (log: ${log_file})"
             fi
           done
           exit "${failed}"

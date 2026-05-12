@@ -68,6 +68,9 @@ when your workstation or CI runner needs less or more Docker concurrency.
 The script also waits on independent core rollouts and deploys the official SDK
 example servers concurrently; scenario assertions remain ordered because they
 share policy, session, and analytics state.
+Parallel worker output is buffered under `parallel-logs/` in the e2e workdir
+and copied into `E2E_ARTIFACT_DIR` when artifacts are enabled. Green workers
+print start/pass lines only; failed workers dump their captured log inline.
 
 E2E output uses ANSI color only for an interactive terminal by default. Set
 `E2E_COLOR=always` or `E2E_COLOR=never` to override auto-detection; `NO_COLOR`
