@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
@@ -17,6 +18,9 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 
 	"mcp-runtime/pkg/events"
 	policypkg "mcp-runtime/pkg/policy"
@@ -401,13 +405,13 @@ func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
 
 	proxy := &proxyServer{
 		analyticsURL:   "http://analytics.example.com",
-		analyticsQueue: make(chan events.Envelope, 1),
+		analyticsQueue: make(chan analyticsEvent, 1),
 	}
-	proxy.analyticsQueue <- events.Envelope{Source: "existing"}
+	proxy.analyticsQueue <- analyticsEvent{Envelope: events.Envelope{Source: "existing"}}
 
 	done := make(chan struct{})
 	go func() {
-		proxy.emitIfEnabled(events.Envelope{Source: "dropped"})
+		proxy.emitIfEnabled(context.Background(), events.Envelope{Source: "dropped"})
 		close(done)
 	}()
 
@@ -419,7 +423,7 @@ func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
 
 	select {
 	case event := <-proxy.analyticsQueue:
-		if event.Source != "existing" {
+		if event.Envelope.Source != "existing" {
 			t.Fatalf("analytics queue head = %#v, want existing event to remain", event)
 		}
 	default:
@@ -444,13 +448,52 @@ func TestStopAnalyticsDispatcherDrainsQueue(t *testing.T) {
 	}
 	proxy.startAnalyticsDispatcher()
 	for i := 0; i < 3; i++ {
-		proxy.emitIfEnabled(events.Envelope{Source: "proxy", EventType: "mcp.request"})
+		proxy.emitIfEnabled(context.Background(), events.Envelope{Source: "proxy", EventType: "mcp.request"})
 	}
 
 	proxy.stopAnalyticsDispatcher()
 
 	if got := atomic.LoadInt32(&received); got != 3 {
 		t.Fatalf("received analytics events = %d, want 3", got)
+	}
+}
+
+func TestAnalyticsDispatcherPropagatesTraceContext(t *testing.T) {
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		otel.SetTextMapPropagator(previous)
+	})
+
+	traceparents := make(chan string, 1)
+	ingest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		traceparents <- r.Header.Get("traceparent")
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(ingest.Close)
+
+	traceID := trace.TraceID{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1}
+	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     trace.SpanID{1, 3, 5, 7, 9, 11, 13, 15},
+		TraceFlags: trace.FlagsSampled,
+	}))
+	proxy := &proxyServer{
+		analyticsURL: ingest.URL,
+		httpClient:   ingest.Client(),
+	}
+	proxy.startAnalyticsDispatcher()
+	proxy.emitIfEnabled(ctx, events.Envelope{Source: "proxy", EventType: "mcp.request"})
+	proxy.stopAnalyticsDispatcher()
+
+	select {
+	case traceparent := <-traceparents:
+		if !strings.Contains(traceparent, traceID.String()) {
+			t.Fatalf("traceparent = %q, want trace ID %s", traceparent, traceID)
+		}
+	default:
+		t.Fatal("ingest did not receive analytics request")
 	}
 }
 

@@ -4115,15 +4115,39 @@ def otlp_attr_value(attrs, key):
                 return str(value[field])
     return ""
 
+def trace_resource_batches(trace_doc):
+    batches = []
+    batches.extend(trace_doc.get("batches", []) or [])
+    batches.extend(trace_doc.get("resourceSpans", []) or [])
+    return batches
+
 def trace_service_names(trace_doc):
     names = set()
-    for batch in trace_doc.get("batches", []):
+    for batch in trace_resource_batches(trace_doc):
         name = otlp_attr_value(batch.get("resource", {}).get("attributes", []), "service.name")
         if name:
             names.add(name)
     for trace in trace_doc.get("data", []):
         for process in trace.get("processes", {}).values():
             name = process.get("serviceName")
+            if name:
+                names.add(name)
+    return names
+
+def trace_span_names(trace_doc):
+    names = set()
+    for batch in trace_resource_batches(trace_doc):
+        scope_spans = []
+        scope_spans.extend(batch.get("scopeSpans", []) or [])
+        scope_spans.extend(batch.get("instrumentationLibrarySpans", []) or [])
+        for scope_span in scope_spans:
+            for span in scope_span.get("spans", []) or []:
+                name = span.get("name")
+                if name:
+                    names.add(name)
+    for trace in trace_doc.get("data", []):
+        for span in trace.get("spans", []) or []:
+            name = span.get("operationName") or span.get("name")
             if name:
                 names.add(name)
     return names
@@ -4175,6 +4199,45 @@ def wait_for_tempo_service(base_url, service_name, *, headers=None, description)
         f"{description} payload missing {service_name}; services={names}",
     )
     return len(traces_for_service), names
+
+def wait_for_tempo_trace_path(base_url, gateway_service, required_services, required_spans, *, headers=None, description):
+    end = int(time.time())
+    start = end - 3600
+    tag = urllib.parse.quote(f"service.name={gateway_service}")
+    search_url = f"{base_url}/api/search?limit=100&start={start}&end={end}&tags={tag}"
+    last_summary = {}
+    last_error = None
+    for _ in range(90):
+        try:
+            search_doc = get_json(search_url, headers=headers, retries=1, delay=2)
+            for item in search_doc.get("traces", []) or []:
+                trace_id = item.get("traceID")
+                if not trace_id:
+                    continue
+                trace_doc = get_json(
+                    f"{base_url}/api/traces/{urllib.parse.quote(trace_id)}",
+                    headers=headers,
+                    retries=1,
+                    delay=2,
+                )
+                services = trace_service_names(trace_doc)
+                spans = trace_span_names(trace_doc)
+                last_summary = {
+                    "trace_id": trace_id,
+                    "services": sorted(services),
+                    "spans": sorted(spans),
+                }
+                if required_services <= services and required_spans <= spans:
+                    ok(f"waited for {description}")
+                    return trace_id, services, spans
+        except Exception as exc:
+            last_error = exc
+        time.sleep(2)
+    if last_summary:
+        fail(f"timed out waiting for {description}: {json.dumps(last_summary, indent=2)}")
+    if last_error is not None:
+        raise last_error
+    fail(f"timed out waiting for {description}")
 
 def wait_for_prometheus_up(base_url, *, headers=None, description):
     doc = wait_for_json(
@@ -4556,6 +4619,16 @@ for service_name in gateway_trace_services:
     tempo_gateway_counts[service_name] = count
     tempo_gateway_services.update(names)
 
+required_trace_services = {gateway_trace_services[0], "mcp-sentinel-ingest", "mcp-sentinel-processor"}
+required_trace_spans = {"kafka.produce", "kafka.consume", "clickhouse.insert_event"}
+tempo_full_trace_id, tempo_full_trace_services, tempo_full_trace_spans = wait_for_tempo_trace_path(
+    tempo_base,
+    gateway_trace_services[0],
+    required_trace_services,
+    required_trace_spans,
+    description="tempo full gateway analytics trace path",
+)
+
 grafana_headers = basic_auth_headers(grafana_user, grafana_password)
 grafana_datasources = wait_for_json(
     f"{grafana_base}/api/datasources",
@@ -4589,6 +4662,15 @@ for service_name in gateway_trace_services:
     )
     grafana_gateway_counts[service_name] = count
     grafana_gateway_services.update(names)
+
+grafana_full_trace_id, grafana_full_trace_services, grafana_full_trace_spans = wait_for_tempo_trace_path(
+    grafana_tempo_base,
+    gateway_trace_services[0],
+    required_trace_services,
+    required_trace_spans,
+    headers=grafana_headers,
+    description="grafana tempo full gateway analytics trace path",
+)
 
 prometheus_jobs = wait_for_prometheus_up(
     prometheus_base,
@@ -4649,8 +4731,14 @@ rows = [
     ("traces.tempo_found", str(len(traces))),
     ("traces.tempo_gateway", ",".join(f"{k}:{v}" for k, v in sorted(tempo_gateway_counts.items()))),
     ("traces.tempo_services", ",".join(sorted(tempo_gateway_services))),
+    ("traces.tempo_full_path", tempo_full_trace_id),
+    ("traces.tempo_full_path_services", ",".join(sorted(tempo_full_trace_services))),
+    ("traces.tempo_full_path_spans", ",".join(sorted(tempo_full_trace_spans))),
     ("traces.grafana_gateway", ",".join(f"{k}:{v}" for k, v in sorted(grafana_gateway_counts.items()))),
     ("traces.grafana_services", ",".join(sorted(grafana_gateway_services))),
+    ("traces.grafana_full_path", grafana_full_trace_id),
+    ("traces.grafana_full_path_services", ",".join(sorted(grafana_full_trace_services))),
+    ("traces.grafana_full_path_spans", ",".join(sorted(grafana_full_trace_spans))),
     ("grafana.datasources", str(len(grafana_datasources))),
     ("prometheus.jobs", ",".join(f"{k}:{v}" for k, v in sorted(prometheus_jobs.items()))),
     ("grafana.prometheus.jobs", ",".join(f"{k}:{v}" for k, v in sorted(grafana_prometheus_jobs.items()))),

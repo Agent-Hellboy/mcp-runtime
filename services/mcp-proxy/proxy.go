@@ -158,7 +158,7 @@ func (s *proxyServer) emitAuditEvent(
 	if err != nil {
 		return
 	}
-	s.emitIfEnabled(envelope)
+	s.emitIfEnabled(r.Context(), envelope)
 }
 
 func (s *proxyServer) auditPayload(

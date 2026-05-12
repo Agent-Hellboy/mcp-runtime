@@ -16,6 +16,7 @@ import (
 	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	clickhousepkg "mcp-runtime/pkg/clickhouse"
 	"mcp-runtime/pkg/events"
@@ -124,18 +125,21 @@ func main() {
 
 	batch := make([]events.Envelope, 0, batchSize)
 	batchMessages := make([]kafka.Message, 0, batchSize)
+	batchSpanContexts := make([]trace.SpanContext, 0, batchSize)
 	pausedForFlush := false
 
 	flush := func() {
 		if len(batch) == 0 {
 			return
 		}
-		flushCtx, span := tracer.Start(ctx, "clickhouse.insert_batch")
-		span.SetAttributes(attribute.Int("batch.size", len(batch)))
+		eventSpans := startClickHouseEventSpans(tracer, ctx, batchSpanContexts, len(batch))
+		flushCtx, spanOpts := clickhouseFlushTraceContext(ctx, batchSpanContexts, len(batch))
+		flushCtx, span := tracer.Start(flushCtx, "clickhouse.insert_batch", spanOpts...)
 		if err := clickhouseClient.InsertEvents(flushCtx, batch); err != nil {
 			log.Printf("insert failed: %v", err)
 			span.RecordError(err)
 			span.End()
+			endClickHouseEventSpans(eventSpans, err)
 			return
 		}
 		if err := reader.CommitMessages(ctx, batchMessages...); err != nil {
@@ -143,8 +147,10 @@ func main() {
 			span.RecordError(err)
 		}
 		span.End()
+		endClickHouseEventSpans(eventSpans, nil)
 		batch = batch[:0]
 		batchMessages = batchMessages[:0]
+		batchSpanContexts = batchSpanContexts[:0]
 	}
 
 	msgChan := make(chan kafka.Message, 100)
@@ -190,11 +196,14 @@ func main() {
 			flush()
 			return
 		case msg := <-messageInput:
-			_, span := tracer.Start(ctx, "kafka.consume")
-			span.SetAttributes(
-				attribute.String("kafka.topic", msg.Topic),
-				attribute.Int("kafka.partition", msg.Partition),
-				attribute.Int64("kafka.offset", msg.Offset),
+			consumeCtx := contextFromKafkaTraceHeaders(ctx, msg.Headers)
+			consumeCtx, span := tracer.Start(consumeCtx, "kafka.consume",
+				trace.WithSpanKind(trace.SpanKindConsumer),
+				trace.WithAttributes(
+					attribute.String("kafka.topic", msg.Topic),
+					attribute.Int("kafka.partition", msg.Partition),
+					attribute.Int64("kafka.offset", msg.Offset),
+				),
 			)
 
 			var payload events.Envelope
@@ -212,11 +221,78 @@ func main() {
 
 			batch = append(batch, payload)
 			batchMessages = append(batchMessages, msg)
+			batchSpanContexts = append(batchSpanContexts, trace.SpanContextFromContext(consumeCtx))
 			span.End()
 			if len(batch) >= batchSize {
 				flush()
 			}
 		}
+	}
+}
+
+func contextFromKafkaTraceHeaders(parent context.Context, headers []kafka.Header) context.Context {
+	if len(headers) == 0 {
+		return parent
+	}
+	carrier := make(map[string]string, len(headers))
+	for _, header := range headers {
+		key := strings.ToLower(strings.TrimSpace(header.Key))
+		if key == "" || len(header.Value) == 0 {
+			continue
+		}
+		carrier[key] = string(header.Value)
+	}
+	return serviceutil.ContextWithTraceContext(parent, carrier)
+}
+
+func clickhouseFlushTraceContext(parent context.Context, spanContexts []trace.SpanContext, batchSize int) (context.Context, []trace.SpanStartOption) {
+	opts := []trace.SpanStartOption{
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(attribute.Int("batch.size", batchSize)),
+	}
+	validSpanContexts := make([]trace.SpanContext, 0, len(spanContexts))
+	for _, spanContext := range spanContexts {
+		if spanContext.IsValid() {
+			validSpanContexts = append(validSpanContexts, spanContext)
+		}
+	}
+	if len(validSpanContexts) == 0 {
+		return parent, opts
+	}
+	parent = trace.ContextWithSpanContext(parent, validSpanContexts[0])
+	if len(validSpanContexts) == 1 {
+		return parent, opts
+	}
+	links := make([]trace.Link, 0, len(validSpanContexts)-1)
+	for _, spanContext := range validSpanContexts[1:] {
+		links = append(links, trace.Link{SpanContext: spanContext})
+	}
+	return parent, append(opts, trace.WithLinks(links...))
+}
+
+func startClickHouseEventSpans(tracer trace.Tracer, parent context.Context, spanContexts []trace.SpanContext, batchSize int) []trace.Span {
+	spans := make([]trace.Span, 0, len(spanContexts))
+	for _, spanContext := range spanContexts {
+		if !spanContext.IsValid() {
+			continue
+		}
+		_, span := tracer.Start(
+			trace.ContextWithSpanContext(parent, spanContext),
+			"clickhouse.insert_event",
+			trace.WithSpanKind(trace.SpanKindClient),
+			trace.WithAttributes(attribute.Int("batch.size", batchSize)),
+		)
+		spans = append(spans, span)
+	}
+	return spans
+}
+
+func endClickHouseEventSpans(spans []trace.Span, err error) {
+	for _, span := range spans {
+		if err != nil {
+			span.RecordError(err)
+		}
+		span.End()
 	}
 }
 

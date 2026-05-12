@@ -412,6 +412,12 @@ PY
 - Sentinel: `kubectl logs -n mcp-sentinel deploy/<api|ingest|processor|ui|gateway>`
 - **Cluster summary:** `./bin/mcp-runtime status`
 - Dashboards: Grafana and Prometheus via the ingress base URL in dev.
+- Full request tracing: run
+  `E2E_SCENARIOS=smoke-auth,governance,trust,oauth,observability bash test/e2e/kind.sh`.
+  The observability scenario must find one trace through the gateway,
+  `mcp-sentinel-ingest`, and `mcp-sentinel-processor`, with `kafka.produce`,
+  `kafka.consume`, and `clickhouse.insert_event` spans visible through both
+  direct Tempo and Grafana's Tempo datasource.
 
 ## Clean start (keep the cluster, wipe user workloads)
 

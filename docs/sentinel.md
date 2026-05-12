@@ -56,7 +56,12 @@ flowchart LR
 2. **Ingest receives the event** on `/events`, validates the shared `pkg/events` envelope, and writes into Kafka topic `mcp.events`.
 3. **Processor batches to ClickHouse.** Reads Kafka envelopes and uses `pkg/clickhouse` storage helpers to write to the event table.
 4. **API exposes query surfaces.** Recent events, stats, sources, types, and filtered audit views use `pkg/clickhouse` query helpers.
-5. **UI + dashboards consume the data.** UI renders the stream; Grafana / Prometheus / Tempo / Loki / Promtail cover the broader observability path.
+5. **Trace context follows the event path.** Gateway request spans propagate to
+   ingest over HTTP, continue through Kafka headers, and resume in the
+   processor. Processor traces include Kafka consume spans and per-event
+   ClickHouse persistence spans so a request can be followed across the
+   gateway, ingest, processor, and storage handoff in Tempo.
+6. **UI + dashboards consume the data.** UI renders the stream; Grafana / Prometheus / Tempo / Loki / Promtail cover the broader observability path.
 
 ## Storage and observability
 
@@ -67,6 +72,10 @@ flowchart LR
 | **Prometheus + Grafana** | Service metrics, scrape config, dashboards. |
 | **OTel Collector + Tempo** | Distributed tracing pipeline. |
 | **Loki + Promtail** | Log shipping and storage. |
+
+The bundled tracing path uses W3C trace context and baggage propagation. For
+batch writes, the processor emits `clickhouse.insert_event` spans under each
+event trace and a `clickhouse.insert_batch` span for the batch operation.
 
 ## Service HTTP reference
 

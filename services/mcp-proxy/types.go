@@ -49,13 +49,18 @@ type oauthAuthResult struct {
 	Token    string
 }
 
+type analyticsEvent struct {
+	Envelope     events.Envelope
+	TraceContext map[string]string
+}
+
 type proxyServer struct {
 	proxy                 *httputil.ReverseProxy
 	analyticsURL          string
 	apiKey                string
 	source                string
 	eventType             string
-	analyticsQueue        chan events.Envelope
+	analyticsQueue        chan analyticsEvent
 	stripPrefix           string
 	externalBaseURL       *url.URL
 	httpClient            *http.Client

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -18,14 +19,22 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"mcp-runtime/pkg/events"
 	"mcp-runtime/pkg/serviceutil"
 )
 
+type eventWriter interface {
+	WriteMessages(context.Context, ...kafka.Message) error
+}
+
 type ingestServer struct {
-	writer       *kafka.Writer
+	writer       eventWriter
 	brokers      []string
+	topic        string
 	apiKeys      map[string]struct{}
 	jwks         *keyfunc.JWKS
 	oidcIssuer   string
@@ -80,6 +89,7 @@ func main() {
 	server := &ingestServer{
 		writer:       writer,
 		brokers:      brokers,
+		topic:        topic,
 		apiKeys:      apiKeys,
 		jwks:         jwks,
 		oidcIssuer:   oidcIssuer,
@@ -215,13 +225,38 @@ func (s *ingestServer) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.writer.WriteMessages(r.Context(), kafka.Message{Value: raw})
+	spanOpts := []trace.SpanStartOption{trace.WithSpanKind(trace.SpanKindProducer)}
+	if s.topic != "" {
+		spanOpts = append(spanOpts, trace.WithAttributes(attribute.String("kafka.topic", s.topic)))
+	}
+	writeCtx, span := otel.Tracer("mcp-sentinel-ingest").Start(r.Context(), "kafka.produce", spanOpts...)
+	err = s.writer.WriteMessages(writeCtx, kafkaMessageWithTraceContext(writeCtx, raw))
 	if err != nil {
+		span.RecordError(err)
+		span.End()
 		serviceutil.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "enqueue_failed"})
 		return
 	}
+	span.End()
 
 	serviceutil.WriteJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+}
+
+func kafkaMessageWithTraceContext(ctx context.Context, value []byte) kafka.Message {
+	msg := kafka.Message{Value: value}
+	headers := serviceutil.CaptureTraceContext(ctx)
+	if len(headers) == 0 {
+		return msg
+	}
+	keys := make([]string, 0, len(headers))
+	for key := range headers {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		msg.Headers = append(msg.Headers, kafka.Header{Key: key, Value: []byte(headers[key])})
+	}
+	return msg
 }
 
 // auth is middleware that enforces API key authentication.
