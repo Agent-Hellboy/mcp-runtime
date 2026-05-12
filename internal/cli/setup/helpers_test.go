@@ -1075,6 +1075,22 @@ func TestPrometheusScrapesProcessorMetricsPort(t *testing.T) {
 	}
 }
 
+func TestTempoLocalBlocksDoNotShareWALPath(t *testing.T) {
+	content, err := os.ReadFile("../../../k8s/16-tempo.yaml")
+	if err != nil {
+		t.Fatalf("failed to read tempo manifest: %v", err)
+	}
+	if !strings.Contains(string(content), "path: /var/tempo/blocks") {
+		t.Fatalf("expected Tempo local block storage under /var/tempo/blocks, got:\n%s", content)
+	}
+	if !strings.Contains(string(content), "path: /var/tempo/wal") {
+		t.Fatalf("expected Tempo WAL storage under /var/tempo/wal, got:\n%s", content)
+	}
+	if strings.Contains(string(content), "local:\n          path: /var/tempo\n") {
+		t.Fatalf("Tempo local block storage must not share the WAL parent path:\n%s", content)
+	}
+}
+
 func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() {

@@ -4649,6 +4649,13 @@ print("-" * (width + 8))
 for key, value in rows:
     print(f"{key:{width}}  {value}")
 PY
+
+  tempo_log_errors="$(kubectl logs -n mcp-sentinel statefulset/tempo --since=20m 2>/dev/null | grep -E 'failed to poll or create index for tenant.*tenant=wal|invalid UUID length' || true)"
+  if [[ -n "${tempo_log_errors}" ]]; then
+    log_line error "tempo logged WAL blocklist parse errors; local block storage must not share the WAL parent path"
+    printf '%s\n' "${tempo_log_errors}" | tail -n 20 >&2
+    exit 1
+  fi
 fi
 
 if scenario_selected "multitenancy"; then
