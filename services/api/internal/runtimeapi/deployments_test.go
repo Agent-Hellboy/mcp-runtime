@@ -283,8 +283,12 @@ func TestEnsureTeamNamespaceConfiguresTraefikIngressWatch(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ensureTeamNamespace() error = %v", err)
 	}
-	if _, err := client.RbacV1().Roles("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{}); err != nil {
+	role, err := client.RbacV1().Roles("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{})
+	if err != nil {
 		t.Fatalf("traefik watch role missing: %v", err)
+	}
+	if roleAllows(role, "", "secrets", "get") {
+		t.Fatalf("API-created traefik watch role should not grant secret access: %#v", role.Rules)
 	}
 	binding, err := client.RbacV1().RoleBindings("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{})
 	if err != nil {
@@ -307,6 +311,33 @@ func TestEnsureTeamNamespaceConfiguresTraefikIngressWatch(t *testing.T) {
 	args := strings.Join(deployment.Spec.Template.Spec.Containers[0].Args, "\n")
 	if !strings.Contains(args, "--providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers,mcp-team-acme") {
 		t.Fatalf("traefik namespace args = %q", args)
+	}
+}
+
+func TestEnsureTraefikWatchRBACPreservesExistingSecretRole(t *testing.T) {
+	cfg := teamTraefikWatchConfig{
+		namespace:      "traefik",
+		serviceAccount: "traefik",
+	}
+	existingRole := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: "mcp-servers-public"},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"services", "endpoints", "secrets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses"}, Verbs: []string{"get", "list", "watch"}},
+		},
+	}
+	existingBinding := desiredTraefikWatchRoleBinding("mcp-servers-public", cfg)
+	client := kubernetesfake.NewSimpleClientset(existingRole, existingBinding)
+
+	if err := ensureTraefikWatchRBAC(context.Background(), client, "mcp-servers-public", cfg); err != nil {
+		t.Fatalf("ensureTraefikWatchRBAC() error = %v", err)
+	}
+	role, err := client.RbacV1().Roles("mcp-servers-public").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("traefik watch role missing: %v", err)
+	}
+	if !roleAllows(role, "", "secrets", "get") {
+		t.Fatalf("existing admin-created secret access was not preserved: %#v", role.Rules)
 	}
 }
 
@@ -338,6 +369,51 @@ func TestEnsureUserNamespaceSetsManagedLabel(t *testing.T) {
 	}
 	if _, err := client.CoreV1().LimitRanges("user-77").Get(context.Background(), "platform-default-limits", metav1.GetOptions{}); err != nil {
 		t.Fatalf("limit range missing: %v", err)
+	}
+	role, err := client.RbacV1().Roles("user-77").Get(context.Background(), platformNamespaceOwnerRoleName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("namespace owner role missing: %v", err)
+	}
+	if !roleAllows(role, "apps", "deployments", "create") || !roleAllows(role, "", "services", "create") {
+		t.Fatalf("namespace owner role rules = %#v", role.Rules)
+	}
+	binding, err := client.RbacV1().RoleBindings("user-77").Get(context.Background(), platformNamespaceOwnerRoleName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("namespace owner rolebinding missing: %v", err)
+	}
+	if len(binding.Subjects) != 1 || binding.Subjects[0].Kind != rbacv1.UserKind || binding.Subjects[0].Name != "platform:user:user-77" {
+		t.Fatalf("namespace owner rolebinding subjects = %#v", binding.Subjects)
+	}
+}
+
+func TestEnsureUserNamespaceMergesExistingNamespaceLabels(t *testing.T) {
+	client := kubernetesfake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "user-88",
+			Labels: map[string]string{
+				"existing": "keep",
+			},
+		},
+	})
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{Clientset: client},
+	}
+	if err := server.EnsureUserNamespace(context.Background(), principal{
+		Role:      roleUser,
+		Subject:   "user-88",
+		Namespace: "user-88",
+	}); err != nil {
+		t.Fatalf("EnsureUserNamespace() error = %v", err)
+	}
+	ns, err := client.CoreV1().Namespaces().Get(context.Background(), "user-88", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get namespace: %v", err)
+	}
+	if ns.Labels["existing"] != "keep" {
+		t.Fatalf("existing label was not preserved: %#v", ns.Labels)
+	}
+	if ns.Labels[platformManagedLabel] != "true" || ns.Labels[platformUserIDLabel] != "user-88" {
+		t.Fatalf("managed labels missing: %#v", ns.Labels)
 	}
 }
 
@@ -392,6 +468,16 @@ func hasString(values []string, want string) bool {
 		if value == want {
 			return true
 		}
+	}
+	return false
+}
+
+func roleAllows(role *rbacv1.Role, apiGroup, resource, verb string) bool {
+	for _, rule := range role.Rules {
+		if !hasString(rule.APIGroups, apiGroup) || !hasString(rule.Resources, resource) || !hasString(rule.Verbs, verb) {
+			continue
+		}
+		return true
 	}
 	return false
 }

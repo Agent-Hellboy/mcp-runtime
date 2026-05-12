@@ -50,8 +50,10 @@ kubectl get mcpservers -A \
 
 Rules to verify:
 
-- Org-wide MCPs live in `mcp-servers` with empty `spec.teamID`.
-- Tenant MCPs live in `mcp-team-<slug>` with non-empty `spec.teamID`.
+- Single-team/example MCPs in this guide live in `mcp-servers`.
+- Org-mode and public-mode catalogs live in `mcp-servers-org` and
+  `mcp-servers-public`; tenant MCPs live in `mcp-team-<slug>` or user
+  namespaces with matching ownership.
 - Non-admin users should receive `403` when explicitly requesting another
   tenant namespace.
 - Direct `kubectl get mcpservers -A` is not an authz check; it shows what your
@@ -174,4 +176,3 @@ In local Kind, `MCPServer.status.phase` can stay `PartiallyReady` even when the
 Deployment is ready and traffic works, because strict ingress readiness waits
 for load balancer status. Use the Deployment, Service, Ingress, and actual
 traffic checks to decide whether local routing works.
-

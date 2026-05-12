@@ -25,15 +25,16 @@ import (
 )
 
 const (
-	platformManagedLabel  = "platform.mcpruntime.org/managed"
-	platformUserIDLabel   = "platform.mcpruntime.org/user-id"
-	platformTeamIDLabel   = "mcpruntime.org/team-id"
-	platformTeamSlugLabel = "mcpruntime.org/team-slug"
-	platformScopeLabel    = "mcpruntime.org/scope"
-	createdByLabel        = "created-by"
-	defaultDeployPort     = int32(8088)
-	restrictedRunAsUser   = kubeworkload.RestrictedRunAsUser
-	traefikWatchRoleName  = "traefik-watch"
+	platformManagedLabel           = "platform.mcpruntime.org/managed"
+	platformUserIDLabel            = "platform.mcpruntime.org/user-id"
+	platformTeamIDLabel            = "mcpruntime.org/team-id"
+	platformTeamSlugLabel          = "mcpruntime.org/team-slug"
+	platformScopeLabel             = "mcpruntime.org/scope"
+	createdByLabel                 = "created-by"
+	defaultDeployPort              = int32(8088)
+	restrictedRunAsUser            = kubeworkload.RestrictedRunAsUser
+	traefikWatchRoleName           = "traefik-watch"
+	platformNamespaceOwnerRoleName = "platform-namespace-owner"
 )
 
 var (
@@ -293,6 +294,11 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure team namespace"})
 			return
 		}
+		if err := s.ensureNamespaceUserWorkloadRBAC(ctx, namespace, p.UserID()); err != nil {
+			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure namespace access"})
+			return
+		}
 	} else {
 		if err := s.EnsureUserNamespace(ctx, target); err != nil {
 			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
@@ -357,7 +363,36 @@ func (s *RuntimeServer) EnsureUserNamespace(ctx context.Context, p principal) er
 		platformScopeLabel:                   namespaceScopeUser,
 		"pod-security.kubernetes.io/enforce": "restricted",
 	}
-	return s.ensureManagedNamespace(ctx, p.Namespace, labels, managedNamespaceOptions{})
+	if err := s.ensureManagedNamespace(ctx, p.Namespace, labels, managedNamespaceOptions{}); err != nil {
+		return err
+	}
+	return s.ensureNamespaceUserWorkloadRBAC(ctx, p.Namespace, p.UserID())
+}
+
+func (s *RuntimeServer) EnsureCatalogNamespace(ctx context.Context, namespace string) error {
+	namespace = strings.TrimSpace(namespace)
+	if s.k8sClients == nil || namespace == "" {
+		return nil
+	}
+	labels := map[string]string{
+		platformManagedLabel:                 "true",
+		platformScopeLabel:                   PlatformMode(),
+		"pod-security.kubernetes.io/enforce": "restricted",
+	}
+	cfg := platformTeamTraefikWatchConfig()
+	opts := managedNamespaceOptions{}
+	if cfg.mode != "disabled" {
+		opts.ingressFromNamespaces = []string{cfg.namespace}
+	}
+	if err := s.ensureManagedNamespace(ctx, namespace, labels, opts); err != nil {
+		return err
+	}
+	if cfg.mode != "disabled" {
+		if err := s.ensureTeamTraefikWatch(ctx, namespace, cfg); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *RuntimeServer) ensureTeamNamespace(ctx context.Context, team teamRecord) error {
@@ -390,12 +425,21 @@ func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace st
 		return nil
 	}
 	base := s.k8sClients.Clientset
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
-		Name:   namespace,
-		Labels: labels,
-	}}
-	if _, err := base.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	current, err := base.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name:   namespace,
+			Labels: labels,
+		}}
+		if _, err := base.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return err
+		}
+	} else if err != nil {
 		return err
+	} else if mergeNamespaceLabels(current, labels) {
+		if _, err := base.CoreV1().Namespaces().Update(ctx, current, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
 	}
 	if err := ensureResourceQuota(ctx, base, namespace); err != nil {
 		return err
@@ -407,6 +451,53 @@ func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace st
 		return err
 	}
 	return kubeworkload.EnsureServiceAccount(ctx, base, namespace)
+}
+
+func mergeNamespaceLabels(ns *corev1.Namespace, labels map[string]string) bool {
+	if ns.Labels == nil {
+		ns.Labels = map[string]string{}
+	}
+	changed := false
+	for key, value := range labels {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		if ns.Labels[key] == value {
+			continue
+		}
+		ns.Labels[key] = value
+		changed = true
+	}
+	return changed
+}
+
+func (s *RuntimeServer) ensureNamespaceUserWorkloadRBAC(ctx context.Context, namespace, userID string) error {
+	if s.k8sClients == nil || strings.TrimSpace(namespace) == "" || strings.TrimSpace(userID) == "" {
+		return nil
+	}
+	client := s.k8sClients.Clientset
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: platformNamespaceOwnerRoleName, Namespace: namespace},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+			{APIGroups: []string{""}, Resources: []string{"services"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+		},
+	}
+	if err := upsertRole(ctx, client, role); err != nil {
+		return err
+	}
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: platformNamespaceOwnerRoleName, Namespace: namespace},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "Role",
+			Name:     platformNamespaceOwnerRoleName,
+		},
+		Subjects: []rbacv1.Subject{
+			{Kind: rbacv1.UserKind, Name: "platform:user:" + strings.TrimSpace(userID)},
+		},
+	}
+	return upsertRoleBinding(ctx, client, binding)
 }
 
 func ensureResourceQuota(ctx context.Context, client kubernetes.Interface, ns string) error {
@@ -562,17 +653,26 @@ func (s *RuntimeServer) ensureTeamTraefikWatch(ctx context.Context, namespace st
 }
 
 func ensureTraefikWatchRBAC(ctx context.Context, client kubernetes.Interface, namespace string, cfg teamTraefikWatchConfig) error {
-	role := &rbacv1.Role{
+	role := desiredTraefikWatchRole(namespace)
+	if err := ensureTraefikWatchRole(ctx, client, role); err != nil {
+		return err
+	}
+	binding := desiredTraefikWatchRoleBinding(namespace, cfg)
+	return ensureTraefikWatchRoleBinding(ctx, client, binding)
+}
+
+func desiredTraefikWatchRole(namespace string) *rbacv1.Role {
+	return &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: namespace},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"services", "endpoints", "secrets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{""}, Resources: []string{"services", "endpoints"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses"}, Verbs: []string{"get", "list", "watch"}},
 		},
 	}
-	if err := upsertRole(ctx, client, role); err != nil {
-		return err
-	}
-	binding := &rbacv1.RoleBinding{
+}
+
+func desiredTraefikWatchRoleBinding(namespace string, cfg teamTraefikWatchConfig) *rbacv1.RoleBinding {
+	return &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: namespace},
 		RoleRef: rbacv1.RoleRef{
 			APIGroup: "rbac.authorization.k8s.io",
@@ -583,7 +683,49 @@ func ensureTraefikWatchRBAC(ctx context.Context, client kubernetes.Interface, na
 			{Kind: "ServiceAccount", Name: cfg.serviceAccount, Namespace: cfg.namespace},
 		},
 	}
-	return upsertRoleBinding(ctx, client, binding)
+}
+
+func ensureTraefikWatchRole(ctx context.Context, client kubernetes.Interface, role *rbacv1.Role) error {
+	_, err := client.RbacV1().Roles(role.Namespace).Get(ctx, role.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = client.RbacV1().Roles(role.Namespace).Create(ctx, role, metav1.CreateOptions{})
+		return err
+	}
+	return err
+}
+
+func ensureTraefikWatchRoleBinding(ctx context.Context, client kubernetes.Interface, binding *rbacv1.RoleBinding) error {
+	current, err := client.RbacV1().RoleBindings(binding.Namespace).Get(ctx, binding.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = client.RbacV1().RoleBindings(binding.Namespace).Create(ctx, binding, metav1.CreateOptions{})
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	if roleBindingMatches(current, binding) {
+		return nil
+	}
+	binding.ResourceVersion = current.ResourceVersion
+	binding.Labels = current.Labels
+	binding.Annotations = current.Annotations
+	_, err = client.RbacV1().RoleBindings(binding.Namespace).Update(ctx, binding, metav1.UpdateOptions{})
+	return err
+}
+
+func roleBindingMatches(current, desired *rbacv1.RoleBinding) bool {
+	if current == nil || desired == nil {
+		return false
+	}
+	if current.RoleRef != desired.RoleRef || len(current.Subjects) != len(desired.Subjects) {
+		return false
+	}
+	for i := range desired.Subjects {
+		if current.Subjects[i] != desired.Subjects[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func upsertRole(ctx context.Context, client kubernetes.Interface, role *rbacv1.Role) error {

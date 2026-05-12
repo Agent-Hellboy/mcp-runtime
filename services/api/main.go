@@ -123,6 +123,15 @@ const (
 	analyticsDefaultWindowDays = 30
 	analyticsMaxWindowDays     = 365
 	analyticsTeamIDExpression  = "JSONExtractString(payload, 'team_id')"
+
+	defaultPlatformStoreStartupTimeout = 90 * time.Second
+)
+
+type platformStoreOpener func(context.Context, string, []byte) (*platformStore, error)
+
+var (
+	platformStoreConnectAttemptTimeout = 10 * time.Second
+	platformStoreConnectRetryInterval  = 2 * time.Second
 )
 
 // main initializes and starts the MCP Sentinel API server.
@@ -215,21 +224,24 @@ func main() {
 	}
 	var store *platformStore
 	if dsn := platformDSNFromEnv(); dsn != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		startupTimeout := serviceutil.EnvDuration("PLATFORM_DB_STARTUP_TIMEOUT", defaultPlatformStoreStartupTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), startupTimeout)
 		defer cancel()
 		secretValue := strings.TrimSpace(os.Getenv("PLATFORM_JWT_SECRET"))
 		if secretValue == "" {
 			log.Fatal("PLATFORM_JWT_SECRET is required when POSTGRES_DSN or DATABASE_URL is configured")
 		}
 		var err error
-		store, err = newPlatformStore(ctx, dsn, []byte(secretValue))
+		store, err = openPlatformStoreWithRetry(ctx, dsn, []byte(secretValue), newPlatformStore)
 		if err != nil {
 			log.Fatalf("failed to initialize platform identity database: %v", err)
 		}
-		if err := seedPlatformAdminFromEnv(ctx, store); err != nil {
+		seedCtx, seedCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer seedCancel()
+		if err := seedPlatformAdminFromEnv(seedCtx, store); err != nil {
 			log.Fatalf("failed to seed platform admin: %v", err)
 		}
-		if err := seedPlatformDevUsersFromEnv(ctx, store); err != nil {
+		if err := seedPlatformDevUsersFromEnv(seedCtx, store); err != nil {
 			log.Fatalf("failed to seed platform dev users: %v", err)
 		}
 		server.platform = store
@@ -278,7 +290,7 @@ func main() {
 		}
 		// Register all runtime endpoints with auth
 		mux.Handle("/api/dashboard/summary", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.HandleDashboardSummary))))
-		mux.Handle("/api/runtime/servers", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeServers)))
+		mux.Handle("/api/runtime/servers", server.authOrPublicCatalog(http.HandlerFunc(runtimeServer.HandleRuntimeServers)))
 		mux.Handle("/api/runtime/teams", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeTeams)))
 		mux.Handle("/api/runtime/teams/", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeTeamItemPath)))
 		mux.Handle("/api/runtime/namespaces", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeNamespaces)))
@@ -366,6 +378,41 @@ func main() {
 	}
 	if store != nil {
 		store.Close()
+	}
+}
+
+func openPlatformStoreWithRetry(ctx context.Context, dsn string, jwtSecret []byte, open platformStoreOpener) (*platformStore, error) {
+	if open == nil {
+		open = newPlatformStore
+	}
+	var lastErr error
+	for attempt := 1; ; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(ctx, platformStoreConnectAttemptTimeout)
+		store, err := open(attemptCtx, dsn, jwtSecret)
+		cancel()
+		if err == nil {
+			if attempt > 1 {
+				log.Printf("platform identity database initialized after %d attempt(s)", attempt)
+			}
+			return store, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			return nil, lastErr
+		}
+		log.Printf("platform identity database not ready (attempt %d): %v", attempt, err)
+		timer := time.NewTimer(platformStoreConnectRetryInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return nil, lastErr
+		case <-timer.C:
+		}
 	}
 }
 
@@ -647,6 +694,28 @@ func (s *apiServer) auth(next http.Handler) http.Handler {
 			return
 		} else if ok {
 			ctx := withPrincipal(r.Context(), p)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	})
+}
+
+func (s *apiServer) authOrPublicCatalog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p, ok, err := s.authenticateRequest(r); err != nil {
+			log.Printf("auth error: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "auth_failed"})
+			return
+		} else if ok {
+			ctx := withPrincipal(r.Context(), p)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
+		if runtimeapi.PublicCatalogEnabled() && r.Method == http.MethodGet {
+			ctx := withPrincipal(r.Context(), runtimeapi.PublicCatalogPrincipal())
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}

@@ -63,4 +63,30 @@ run_invalid "unsupported-token" "smoke-auth,bad" "unsupported E2E scenario: bad"
 run_invalid "observability-alone" "observability" "observability requires smoke-auth, governance, trust, and oauth scenarios"
 run_invalid "observability-missing-oauth" "smoke-auth,governance,trust,observability" "observability requires smoke-auth, governance, trust, and oauth scenarios"
 
+for mode in tenant org public; do
+  if ! output="$(E2E_COLOR=never E2E_VALIDATE_SCENARIOS_ONLY=1 E2E_SCENARIOS=smoke-auth E2E_PLATFORM_MODE="${mode}" bash "${KIND_SCRIPT}" 2>&1)"; then
+    echo "[fail] platform-mode-${mode}: expected validation success" >&2
+    printf '%s\n' "${output}" >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "${output}" | grep -F -q -- "[info] E2E platform mode: ${mode}"; then
+    echo "[fail] platform-mode-${mode}: missing platform-mode output" >&2
+    printf '%s\n' "${output}" >&2
+    exit 1
+  fi
+  echo "[pass] platform-mode-${mode}"
+done
+
+if output="$(E2E_COLOR=never E2E_VALIDATE_SCENARIOS_ONLY=1 E2E_SCENARIOS=smoke-auth E2E_PLATFORM_MODE=bad bash "${KIND_SCRIPT}" 2>&1)"; then
+  echo "[fail] platform-mode-invalid: expected validation failure" >&2
+  printf '%s\n' "${output}" >&2
+  exit 1
+fi
+if ! printf '%s\n' "${output}" | grep -F -q -- "unsupported E2E platform mode: bad"; then
+  echo "[fail] platform-mode-invalid: missing expected error" >&2
+  printf '%s\n' "${output}" >&2
+  exit 1
+fi
+echo "[pass] platform-mode-invalid"
+
 echo "[pass] scenario selector validation"

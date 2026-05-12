@@ -250,7 +250,7 @@ func (s *ingestServer) auth(next http.Handler) http.Handler {
 			parsed, err := parser.Parse(token, s.jwks.Keyfunc)
 			if err == nil && parsed.Valid {
 				if s.oidcIssuer == "" && s.oidcAudience == "" {
-					writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_token"})
+					serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_token"})
 					return
 				}
 				if s.oidcIssuer != "" || s.oidcAudience != "" {

@@ -132,7 +132,7 @@ type SetupDeps struct {
 	PushGatewayProxyImageToInternal func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
 	PushAnalyticsImageToInternal    func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
 	DeployOperatorManifests         func(logger *zap.Logger, operatorImage, gatewayProxyImage string, operatorArgs []string) error
-	DeployAnalyticsManifests        func(logger *zap.Logger, images AnalyticsImageSet, storageMode string) error
+	DeployAnalyticsManifests        func(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error
 	ConfigureProvisionedRegistryEnv func(ext *config.ExternalRegistryConfig, secretName string) error
 	RestartDeployment               func(name, namespace string) error
 	CheckCRDInstalled               func(name string) error
@@ -279,6 +279,13 @@ func ValidateStorageMode(mode string) error {
 	}
 }
 
+func ValidatePlatformMode(mode string) error {
+	if _, ok := setupplan.NormalizePlatformMode(mode); ok {
+		return nil
+	}
+	return core.WrapWithSentinel(core.ErrFieldRequired, fmt.Errorf("invalid platform mode %q", mode), "invalid --platform-mode; expected tenant, org, or public")
+}
+
 func SetupPlatform(logger *zap.Logger, plan setupplan.Plan, clusterMgr ClusterManagerAPI) error {
 	return setupPlatformWithDeps(logger, plan, SetupDeps{ClusterManager: clusterMgr}.withDefaults(logger))
 }
@@ -297,6 +304,7 @@ func setupPlatformWithDeps(logger *zap.Logger, plan setupplan.Plan, deps SetupDe
 	} else {
 		_ = os.Unsetenv("MCP_RUNTIME_TEST_MODE")
 	}
+	_ = os.Setenv("MCP_PLATFORM_MODE", plan.PlatformMode)
 
 	extRegistry, usingExternalRegistry, registrySecretName := resolveRegistrySetup(logger, deps)
 	if err := validateNonTestSetup(plan, extRegistry, usingExternalRegistry); err != nil {
@@ -678,9 +686,9 @@ func prepareAnalyticsImages(logger *zap.Logger, extRegistry *config.ExternalRegi
 	return images, nil
 }
 
-func deployAnalyticsStepCmd(logger *zap.Logger, images AnalyticsImageSet, storageMode string, deps SetupDeps) error {
+func deployAnalyticsStepCmd(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string, deps SetupDeps) error {
 	core.Info("Deploying mcp-sentinel manifests")
-	if err := deps.DeployAnalyticsManifests(logger, images, storageMode); err != nil {
+	if err := deps.DeployAnalyticsManifests(logger, images, storageMode, platformMode); err != nil {
 		core.Error("Analytics deployment failed")
 		core.LogStructuredError(logger, err, "Analytics deployment failed")
 		return err
@@ -858,9 +866,15 @@ func configureProvisionedRegistryEnvWithKubectl(kubectl core.KubectlRunner, ext 
 		if err := ensureProvisionedRegistrySecretWithKubectl(kubectl, secretName, ext.Username, ext.Password); err != nil {
 			return err
 		}
-		// Create imagePullSecret in mcp-servers namespace for pod image pulls.
-		if err := ensureImagePullSecretWithKubectl(kubectl, core.NamespaceMCPServers, secretName, ext.URL, ext.Username, ext.Password); err != nil {
-			return err
+		catalogNamespace := setupplan.CatalogNamespaceForPlatformMode(os.Getenv("MCP_PLATFORM_MODE"))
+		if catalogNamespace != "" {
+			if err := kube.EnsureNamespace(kubectl.CommandArgs, catalogNamespace); err != nil {
+				return err
+			}
+			// Create imagePullSecret in the active catalog namespace for pod image pulls.
+			if err := ensureImagePullSecretWithKubectl(kubectl, catalogNamespace, secretName, ext.URL, ext.Username, ext.Password); err != nil {
+				return err
+			}
 		}
 		args = append(args, "PROVISIONED_REGISTRY_SECRET_NAME="+secretName)
 		// Populate env vars from the secret instead of literals to avoid leaking creds in args/history.
@@ -1558,11 +1572,11 @@ func mcpSentinelDependencyJobFailed(kubectl core.KubectlRunner, err error, name,
 		fmt.Sprintf("mcp-sentinel %s: job/%s: %v", phase, name, err), ctx)
 }
 
-func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet, storageMode string) error {
-	return deployAnalyticsManifestsWithKubectl(core.DefaultKubectlClient(), logger, images, storageMode)
+func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error {
+	return deployAnalyticsManifestsWithKubectl(core.DefaultKubectlClient(), logger, images, storageMode, platformMode)
 }
 
-func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.Logger, images AnalyticsImageSet, storageMode string) error {
+func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error {
 	rolloutTimeout := analyticsRolloutTimeoutString()
 	core.Info("Applying mcp-sentinel namespace and config")
 	manifests := []string{
@@ -1570,9 +1584,12 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		"k8s/01-config.yaml",
 	}
 	for _, manifest := range manifests {
-		if err := applyRenderedManifest(kubectl, manifest, images, ""); err != nil {
+		if err := applyRenderedManifest(kubectl, manifest, images, "", platformMode); err != nil {
 			return err
 		}
+	}
+	if err := applyCatalogNamespaceForMode(kubectl, platformMode); err != nil {
+		return err
 	}
 
 	core.Info("Applying mcp-sentinel managed secrets")
@@ -1603,7 +1620,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		clickhouseManifest,
 		kafkaManifest,
 	} {
-		if err := applyRenderedManifest(kubectl, manifest, images, imagePullSecretName); err != nil {
+		if err := applyRenderedManifest(kubectl, manifest, images, imagePullSecretName, platformMode); err != nil {
 			return err
 		}
 	}
@@ -1619,7 +1636,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	}
 
 	core.Info("Initializing ClickHouse schema")
-	if err := applyRenderedManifest(kubectl, "k8s/04-clickhouse-init.yaml", images, imagePullSecretName); err != nil {
+	if err := applyRenderedManifest(kubectl, "k8s/04-clickhouse-init.yaml", images, imagePullSecretName, platformMode); err != nil {
 		return err
 	}
 	if err := waitForJobCompletionWithKubectl(kubectl, "clickhouse-init", core.DefaultAnalyticsNamespace, rolloutTimeout); err != nil {
@@ -1643,7 +1660,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		"k8s/19-grafana-datasources.yaml",
 		"k8s/12-grafana.yaml",
 	} {
-		if err := applyRenderedManifest(kubectl, manifest, images, imagePullSecretName); err != nil {
+		if err := applyRenderedManifest(kubectl, manifest, images, imagePullSecretName, platformMode); err != nil {
 			return err
 		}
 	}
@@ -1693,6 +1710,26 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		}
 	}
 	return core.WrapWithSentinelAndContext(core.ErrOperatorDeploymentFailed, cause, msg, ctx)
+}
+
+func applyCatalogNamespaceForMode(kubectl core.KubectlRunner, platformMode string) error {
+	namespace := setupplan.CatalogNamespaceForPlatformMode(platformMode)
+	if strings.TrimSpace(namespace) == "" {
+		return nil
+	}
+	core.Info(fmt.Sprintf("Applying platform catalog namespace %s", namespace))
+	manifest := fmt.Sprintf(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: %s
+  labels:
+    platform.mcpruntime.org/managed: "true"
+    mcpruntime.org/scope: %s
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+`, namespace, platformMode)
+	return kube.ApplyManifestContent(kubectl.CommandArgs, manifest)
 }
 
 func trimDiagnosticsString(s string) string {
@@ -1769,7 +1806,7 @@ func buildAnalyticsRolloutDebugDetail(kubectl core.KubectlRunner, failed []analy
 	return b.String()
 }
 
-func applyRenderedManifest(kubectl core.KubectlRunner, manifestPath string, images AnalyticsImageSet, imagePullSecretName string) error {
+func applyRenderedManifest(kubectl core.KubectlRunner, manifestPath string, images AnalyticsImageSet, imagePullSecretName, platformMode string) error {
 	resolvedManifestPath, err := assetpath.ResolveRepoAssetPath(manifestPath)
 	if err != nil {
 		return core.WrapWithSentinel(core.ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to resolve manifest %s: %v", manifestPath, err))
@@ -1779,7 +1816,7 @@ func applyRenderedManifest(kubectl core.KubectlRunner, manifestPath string, imag
 	if err != nil {
 		return core.WrapWithSentinel(core.ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to read manifest %s: %v", resolvedManifestPath, err))
 	}
-	rendered, err := renderAnalyticsManifest(string(content), images, imagePullSecretName)
+	rendered, err := renderAnalyticsManifest(string(content), images, imagePullSecretName, platformMode)
 	if err != nil {
 		return fmt.Errorf("render manifest %s: %w", manifestPath, err)
 	}
@@ -1799,8 +1836,11 @@ func applyPlatformIngressIfConfigured(kubectl core.KubectlRunner) error {
 	return nil
 }
 
-func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePullSecretName string) (string, error) {
+func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePullSecretName, platformMode string) (string, error) {
 	replacements := map[string]string{}
+	if mode, ok := setupplan.NormalizePlatformMode(platformMode); ok && mode != "" {
+		replacements[`PLATFORM_MODE: "tenant"`] = fmt.Sprintf(`PLATFORM_MODE: "%s"`, mode)
+	}
 	if strings.TrimSpace(images.Ingest) != "" {
 		replacements["image: mcp-sentinel-ingest:latest"] = "image: " + images.Ingest
 	}

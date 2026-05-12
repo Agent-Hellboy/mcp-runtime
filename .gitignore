@@ -14,6 +14,7 @@ benchmarking.md
 DIFF*.md
 .gomodcache/
 FUTURE_PLAN.md
+/plan.md
 .DS_Store
 *ARCHITECTURE.md
 f.go

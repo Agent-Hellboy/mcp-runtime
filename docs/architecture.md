@@ -205,9 +205,11 @@ flowchart LR
 
 `setup` installs the runtime namespaces, CRDs, registry, operator, ingress wiring, and the Sentinel stack unless explicitly disabled. In development, Kind and path-based localhost ingress are enough. In production, `MCP_PLATFORM_DOMAIN` can derive `registry.<domain>`, `mcp.<domain>`, and `platform.<domain>` so registry pulls, MCP traffic, and the dashboard each have stable hostnames.
 
-The default application namespace is `mcp-servers`. Multi-team deployments use
-per-team namespaces, RBAC, ingress watch scoping, `MCPServer.spec.teamID`, and
-`SubjectRef.teamID`; see [Multi-team isolation](multi-team.md).
+Tenant mode uses the authenticated principal's user/team namespace; `org` mode
+uses `mcp-servers-org`, and `public` mode uses `mcp-servers-public` for the
+public preview catalog. Multi-team deployments use per-team namespaces, RBAC,
+ingress watch scoping, `MCPServer.spec.teamID`, and `SubjectRef.teamID`; see
+[Multi-team isolation](multi-team.md).
 
 The intended workflow is straightforward: platform teams install the stack, application teams publish MCP servers, security teams define grants and sessions, and agents call tools through the governed broker path.
 

@@ -166,16 +166,27 @@ mode, the proxy validates the token and reads team identity from `team_id`,
 
 ## Platform API Enforcement
 
-The platform API fails closed for team-scoped writes:
+The platform API fails closed for team-scoped writes. The setup-time
+`--platform-mode` decides which catalog namespace non-admin users see by
+default:
 
-- Anonymous callers cannot read the MCP server catalog. The `mcp-servers`
-  namespace is an org-wide authenticated catalog, not a public marketplace.
-- Non-admin callers listing MCP servers without a `namespace` query see only
-  org-wide MCPs from `mcp-servers` plus MCPs in their own team/user namespaces.
+| Mode | Default namespace behavior | Non-admin behavior |
+|---|---|---|
+| `tenant` | Principal user/team namespace | Authenticated users read and write only their own tenant namespaces. |
+| `org` | `mcp-servers-org` | Authenticated users publish and browse the org catalog without tenant/team namespace selection. |
+| `public` | `mcp-servers-public` | Anonymous users can read the public preview catalog; signed-in users publish to the public catalog namespace. |
+
+- In `tenant` and `org` modes, anonymous callers cannot read the MCP server
+  catalog.
+- In `tenant` mode, non-admin callers listing MCP servers without a `namespace`
+  query see MCPs in their own team/user tenant namespaces.
+- In `org` and `public` modes, non-admin callers are scoped to the active mode
+  catalog namespace (`mcp-servers-org` or `mcp-servers-public` by default).
 - Non-admin callers cannot write servers, grants, or sessions into the shared
-  `mcp-servers` catalog namespace.
+  `mcp-servers` catalog namespace in `tenant` mode.
 - Non-admin callers can only read or write resources in namespaces listed on
-  their authenticated principal.
+  their authenticated principal, except for the active `org`/`public` mode
+  catalog namespace.
 - Server apply defaults `spec.teamID` from the principal's team namespace and
   rejects mismatches.
 - Grant/session apply defaults missing `subject.teamID` from the referenced
@@ -195,18 +206,18 @@ non-empty `humanID`, `agentID`, and `teamID` exactly.
 
 ## Ingress Controller Watch Scope
 
-The bundled Traefik manifests watch only `registry`, `mcp-sentinel`, and
-`mcp-servers` by default so Traefik does not need broad namespace access. If MCP
-servers live in team namespaces, update the ingress controller watch list, bind
-the Traefik watch role in each team namespace, and allow ingress-controller
-traffic through the namespace NetworkPolicy. `mcp-runtime team init` and the
-platform API `team create` flow perform those changes for the repo-managed
-`traefik/traefik` Deployment.
+The bundled Traefik manifests watch only `registry`, `mcp-sentinel`,
+`mcp-servers`, `mcp-servers-org`, and `mcp-servers-public` by default so Traefik
+does not need broad namespace access. If MCP servers live in team namespaces,
+update the ingress controller watch list, bind the Traefik watch role in each
+team namespace, and allow ingress-controller traffic through the namespace
+NetworkPolicy. `mcp-runtime team init` and the platform API `team create` flow
+perform those changes for the repo-managed `traefik/traefik` Deployment.
 
 For the bundled Traefik overlay, extend the argument:
 
 ```text
---providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers,mcp-team-acme,mcp-team-globex
+--providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers,mcp-servers-org,mcp-servers-public,mcp-team-acme,mcp-team-globex
 ```
 
 External ingress controllers need equivalent namespace watch, RBAC, and
@@ -249,8 +260,9 @@ server owner's team without joining through namespace names.
   the guardrail for direct writers.
 - Cross-team server sharing is a privileged pattern. Prefer a shared namespace
   and explicit admin-owned grants when a server is intentionally shared.
-- The default setup path still creates `mcp-servers`; per-team namespaces are an
-  explicit operational step.
+- The bundled setup manifests create the legacy single-team namespace and the
+  org/public catalog namespaces; per-team tenant namespaces are an explicit
+  operational step.
 
 ## Operational Checklist
 

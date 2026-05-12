@@ -101,9 +101,12 @@ jobs:
           go test -v -race -coverprofile=unit.out \
             $(go list ./... | grep -v -x "${module_path}/test/integration")
 
-      - name: Test Sentinel service modules (api, ui)
+      - name: Test Sentinel service modules
         run: |
           (cd services/api && go test -v -race -count=1 ./...)
+          (cd services/ingest && go test -v -race -count=1 ./...)
+          (cd services/processor && go test -v -race -count=1 ./...)
+          (cd services/mcp-proxy && go test -v -race -count=1 ./...)
           (cd services/ui && go test -v -race -count=1 ./...)
 
       - name: Run integration tests with coverage

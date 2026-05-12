@@ -28,6 +28,7 @@ func New(runtime *core.Runtime, clusterMgr ClusterManagerAPI) *cobra.Command {
 	var registryType string
 	var registryStorageSize string
 	var storageMode string
+	var platformMode string
 	var kubeconfig string
 	var kubeContext string
 	var ingressMode string
@@ -61,6 +62,15 @@ will use to push and pull container images.`,
 			if err := ValidateStorageMode(storageMode); err != nil {
 				return err
 			}
+			platformModeResolved := strings.TrimSpace(platformMode)
+			if !cmd.Flags().Changed("platform-mode") {
+				if envMode := strings.TrimSpace(os.Getenv("MCP_PLATFORM_MODE")); envMode != "" {
+					platformModeResolved = envMode
+				}
+			}
+			if err := ValidatePlatformMode(platformModeResolved); err != nil {
+				return err
+			}
 
 			operatorArgs := BuildOperatorArgs(
 				operatorMetricsAddr,
@@ -91,6 +101,7 @@ will use to push and pull container images.`,
 				RegistryType:           registryType,
 				RegistryStorageSize:    registryStorageSize,
 				StorageMode:            storageMode,
+				PlatformMode:           platformModeResolved,
 				IngressMode:            ingressMode,
 				IngressManifest:        ingressManifest,
 				IngressManifestChanged: cmd.Flags().Changed("ingress-manifest"),
@@ -113,6 +124,7 @@ will use to push and pull container images.`,
 	cmd.Flags().StringVar(&registryType, "registry-type", "docker", "Registry type (docker; harbor coming soon)")
 	cmd.Flags().StringVar(&registryStorageSize, "registry-storage", "20Gi", "Registry storage size (default: 20Gi)")
 	cmd.Flags().StringVar(&storageMode, "storage-mode", "dynamic", "Storage mode for local/dev clusters (dynamic|hostpath). Use hostpath for single-node k3s/minikube/kind without a provisioner.")
+	cmd.Flags().StringVar(&platformMode, "platform-mode", "tenant", "Platform access model (tenant|org|public). public exposes the catalog without login and lets signed-in users publish to the public preview namespace.")
 	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (default: ~/.kube/config)")
 	cmd.Flags().StringVar(&kubeContext, "context", "", "Kubernetes context to use")
 	cmd.Flags().StringVar(&ingressMode, "ingress", "traefik", "Ingress controller to install automatically during setup (traefik|none)")

@@ -61,12 +61,15 @@ The contributor Kind flow installs a full local stack:
 - Sentinel API/UI/ingest/processor/proxy services in `mcp-sentinel`
 - Traefik ingress on the local gateway path
 - A bundled registry for runtime images
-- `mcp-servers` as the org-scoped MCP catalog namespace
+- `mcp-servers` as the legacy single-team/example MCP namespace
+- `mcp-servers-org` or `mcp-servers-public` only when setup uses
+  `--platform-mode org` or `--platform-mode public`
 - Optional `mcp-team-<slug>` namespaces for tenant isolation
 
-The MCP server catalog is authenticated. Anonymous users should not see MCP
-servers. Logged-in users see org-scoped MCPs from `mcp-servers` plus MCPs from
-their own team or user namespaces.
+The default tenant-mode MCP server catalog is authenticated. Anonymous users
+should not see MCP servers, and logged-in users see MCPs from their own user or
+team namespaces. Use `--platform-mode org` for a shared org catalog, or
+`--platform-mode public` for an anonymous public preview catalog.
 
 ## Before Opening a PR
 
@@ -89,6 +92,8 @@ E2E_CACHE_MODE=1 E2E_SCENARIOS=governance bash test/e2e/kind.sh
 E2E_CACHE_MODE=1 E2E_SCENARIOS=multitenancy bash test/e2e/kind.sh
 ```
 
+Set `E2E_PLATFORM_MODE=org` or `E2E_PLATFORM_MODE=public` when you need the
+Kind setup step to exercise a non-default catalog mode.
+
 Use `E2E_CACHE_MODE=1` only for repeated local debugging. Omit it when you want
 a CI-equivalent fresh cluster.
-

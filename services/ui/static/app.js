@@ -1,8 +1,10 @@
 const apiBase = window.MCP_API_BASE || "/api";
 const defaults = Object.assign(
-  { namespace: "mcp-servers", policyVersion: "v1" },
+  { namespace: "", policyVersion: "v1" },
   window.MCP_DEFAULTS || {}
 );
+const platformMode = window.MCP_PLATFORM_MODE || "tenant";
+const publicCatalogEnabled = platformMode === "public";
 let authenticated = null;
 let authPrincipal = null;
 let grantsCache = [];
@@ -20,7 +22,7 @@ let serverSearchQuery = "";
 let serverStatusFilter = "all";
 let selectedOperationsServerKey = "";
 let namespaceScopes = [];
-let selectedNamespace = defaults.namespace || "mcp-servers";
+let selectedNamespace = defaults.namespace || "";
 
 // API Helper
 async function fetchJSON(path, options = {}) {
@@ -56,11 +58,11 @@ function isUnauthorizedError(err) {
 }
 
 function activeScopeNamespace() {
-  if (!authenticated) return "";
+  if (!authenticated && !publicCatalogEnabled) return "";
   if (selectedNamespace !== undefined && selectedNamespace !== null) {
     return String(selectedNamespace).trim();
   }
-  return (defaults.namespace || "mcp-servers").trim();
+  return (defaults.namespace || "").trim();
 }
 
 function scopedPath(path) {
@@ -71,8 +73,14 @@ function scopedPath(path) {
 }
 
 function namespaceScopeLabel(item) {
+  if (item?.is_public || item?.scope === "public") {
+    return `public / ${item.namespace}`;
+  }
+  if (item?.scope === "org") {
+    return `org / ${item.namespace}`;
+  }
   if (item?.is_catalog) {
-    return "org + teams";
+    return platformMode === "tenant" ? "tenant namespaces" : "org + teams";
   }
   if (item?.is_shared) {
     return `org / ${item.namespace}`;
@@ -115,10 +123,19 @@ function syncScopeSelector() {
   setFieldValue("session-namespace", activeScopeNamespace());
 }
 
+function publicPreviewScopes() {
+  return [{
+    namespace: defaults.namespace || "mcp-servers-public",
+    scope: "public",
+    scope_name: "Public preview",
+    is_public: true,
+  }];
+}
+
 async function loadNamespaceScopes() {
   if (!authenticated) {
-    namespaceScopes = [];
-    selectedNamespace = "";
+    namespaceScopes = publicCatalogEnabled ? publicPreviewScopes() : [];
+    selectedNamespace = publicCatalogEnabled ? namespaceScopes[0]?.namespace || "" : "";
     syncScopeSelector();
     return;
   }
@@ -690,7 +707,11 @@ async function initAuth() {
   } else {
     await loadNamespaceScopes();
     activateTab("servers");
-    renderSignedOutServerCatalog();
+    if (publicCatalogEnabled) {
+      loadServers();
+    } else {
+      renderSignedOutServerCatalog();
+    }
   }
 }
 
@@ -830,14 +851,18 @@ async function logout() {
   stopAutoRefresh();
   authPrincipal = null;
   setAuthenticated(false);
-  namespaceScopes = [];
-  selectedNamespace = "";
+  namespaceScopes = publicCatalogEnabled ? publicPreviewScopes() : [];
+  selectedNamespace = namespaceScopes[0]?.namespace || "";
   syncScopeSelector();
   resetDashboard();
   resetGovernance();
   resetUserAPIKeys();
   activateTab("servers");
-  renderSignedOutServerCatalog();
+  if (publicCatalogEnabled) {
+    loadServers();
+  } else {
+    renderSignedOutServerCatalog();
+  }
 }
 
 function setAuthenticated(value) {
@@ -933,7 +958,7 @@ function resetGovernance() {
 }
 
 async function loadServers() {
-  if (!authenticated) {
+  if (!authenticated && !publicCatalogEnabled) {
     renderSignedOutServerCatalog();
     return;
   }
@@ -1854,8 +1879,9 @@ async function createUserAPIKey() {
       body: JSON.stringify({ name }),
     });
     const oneTime = document.getElementById("user-api-key-once");
-    if (oneTime && data.api_key) {
-      oneTime.textContent = `Copy now (shown once): ${data.api_key}`;
+    const cleartextKey = data.one_time_key || data.api_key;
+    if (oneTime && cleartextKey) {
+      oneTime.textContent = `Copy now (shown once): ${cleartextKey}`;
       oneTime.classList.remove("hidden");
       if (userAPIKeyClearTimer) {
         clearTimeout(userAPIKeyClearTimer);
@@ -1944,8 +1970,7 @@ function setOperationLoadingState() {
 
 async function loadOperationServers() {
   try {
-    const data = await fetchJSON(scopedPath("/runtime/servers"));
-    operationsServersCache = Array.isArray(data.servers) ? data.servers : [];
+    operationsServersCache = await loadFleetServers();
     const selectedStillExists = operationsServersCache.some(
       (server) => operationServerKey(server) === selectedOperationsServerKey
     );
@@ -2339,8 +2364,7 @@ async function loadPlatformServerHealth() {
     tbody.innerHTML = '<tr><td colspan="4" class="empty">Loading MCP server health...</td></tr>';
   }
   try {
-    const data = await fetchJSON(scopedPath("/runtime/servers"));
-    const servers = Array.isArray(data.servers) ? data.servers : [];
+    const servers = await loadFleetServers();
     renderPlatformServerHealth(servers);
   } catch (err) {
     if (isUnauthorizedError(err)) return;
@@ -2352,6 +2376,53 @@ async function loadPlatformServerHealth() {
       tbody.innerHTML = '<tr><td colspan="4" class="empty">Error loading MCP server health.</td></tr>';
     }
   }
+}
+
+async function loadFleetServers() {
+  if (authPrincipal?.role !== "admin") {
+    const data = await fetchJSON(scopedPath("/runtime/servers"));
+    return Array.isArray(data.servers) ? data.servers : [];
+  }
+  const namespaces = uniqueNonEmpty(
+    (Array.isArray(namespaceScopes) ? namespaceScopes : [])
+      .map((item) => item?.namespace || "")
+  );
+  if (!namespaces.length) {
+    const data = await fetchJSON("/runtime/servers");
+    return Array.isArray(data.servers) ? data.servers : [];
+  }
+  const results = await Promise.all(
+    namespaces.map(async (namespace) => {
+      const data = await fetchJSON(`/runtime/servers?namespace=${encodeURIComponent(namespace)}`);
+      return Array.isArray(data.servers) ? data.servers : [];
+    })
+  );
+  return dedupeServers(results.flat());
+}
+
+function uniqueNonEmpty(values) {
+  const seen = new Set();
+  const out = [];
+  values.forEach((value) => {
+    const normalized = String(value || "").trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push(normalized);
+  });
+  return out;
+}
+
+function dedupeServers(servers) {
+  const seen = new Set();
+  const out = [];
+  servers.forEach((server) => {
+    const key = operationServerKey(server);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(server);
+  });
+  out.sort((a, b) => operationServerKey(a).localeCompare(operationServerKey(b)));
+  return out;
 }
 
 function renderPlatformServerHealth(servers) {

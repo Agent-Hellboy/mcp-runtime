@@ -5174,12 +5174,15 @@ Package plan contains pure setup planning types and default resolution.
 - [Overview](#cli-setup-plan-overview)
 - [Index](#cli-setup-plan-index)
 - [Constants](#cli-setup-plan-constants)
+- [Functions](#cli-setup-plan-functions)
 - [Types](#cli-setup-plan-types)
 
 <a id="cli-setup-plan-index"></a>
 ### Index
 
 - [`Constants`](#cli-setup-plan-constants)
+- [`func CatalogNamespaceForPlatformMode(mode string) string`](#cli-setup-plan-func-catalognamespaceforplatformmode-mode-string-string)
+- [`func NormalizePlatformMode(mode string) (string, bool)`](#cli-setup-plan-func-normalizeplatformmode-mode-string-string-bool)
 - [`type Input struct`](#cli-setup-plan-type-input-struct)
 - [`type Plan struct`](#cli-setup-plan-type-plan-struct)
 - [`func Build(input Input) Plan`](#cli-setup-plan-func-build-input-input-plan)
@@ -5192,6 +5195,28 @@ const (
 	StorageModeDynamic  = "dynamic"
 	StorageModeHostpath = "hostpath"
 )
+const (
+	PlatformModeTenant = "tenant"
+	PlatformModeOrg    = "org"
+	PlatformModePublic = "public"
+)
+const (
+	DefaultOrgCatalogNamespace    = "mcp-servers-org"
+	DefaultPublicCatalogNamespace = "mcp-servers-public"
+)
+```
+
+<a id="cli-setup-plan-functions"></a>
+### Functions
+
+<a id="cli-setup-plan-func-catalognamespaceforplatformmode-mode-string-string"></a>
+```text
+func CatalogNamespaceForPlatformMode(mode string) string
+```
+
+<a id="cli-setup-plan-func-normalizeplatformmode-mode-string-string-bool"></a>
+```text
+func NormalizePlatformMode(mode string) (string, bool)
 ```
 
 <a id="cli-setup-plan-types"></a>
@@ -5205,6 +5230,7 @@ type Input struct {
 	RegistryType           string
 	RegistryStorageSize    string
 	StorageMode            string
+	PlatformMode           string
 	IngressMode            string
 	IngressManifest        string
 	IngressManifestChanged bool
@@ -5233,6 +5259,7 @@ type Plan struct {
 	RegistryType        string
 	RegistryStorageSize string
 	StorageMode         string
+	PlatformMode        string
 	Ingress             cluster.IngressOptions
 	RegistryManifest    string
 	TLSEnabled          bool
