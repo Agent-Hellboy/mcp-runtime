@@ -339,6 +339,51 @@ func TestEnsureUserNamespaceSetsManagedLabel(t *testing.T) {
 	if _, err := client.CoreV1().LimitRanges("user-77").Get(context.Background(), "platform-default-limits", metav1.GetOptions{}); err != nil {
 		t.Fatalf("limit range missing: %v", err)
 	}
+	role, err := client.RbacV1().Roles("user-77").Get(context.Background(), platformNamespaceOwnerRoleName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("namespace owner role missing: %v", err)
+	}
+	if !roleAllows(role, "apps", "deployments", "create") || !roleAllows(role, "", "services", "create") {
+		t.Fatalf("namespace owner role rules = %#v", role.Rules)
+	}
+	binding, err := client.RbacV1().RoleBindings("user-77").Get(context.Background(), platformNamespaceOwnerRoleName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("namespace owner rolebinding missing: %v", err)
+	}
+	if len(binding.Subjects) != 1 || binding.Subjects[0].Kind != rbacv1.UserKind || binding.Subjects[0].Name != "platform:user:user-77" {
+		t.Fatalf("namespace owner rolebinding subjects = %#v", binding.Subjects)
+	}
+}
+
+func TestEnsureUserNamespaceMergesExistingNamespaceLabels(t *testing.T) {
+	client := kubernetesfake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "user-88",
+			Labels: map[string]string{
+				"existing": "keep",
+			},
+		},
+	})
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{Clientset: client},
+	}
+	if err := server.EnsureUserNamespace(context.Background(), principal{
+		Role:      roleUser,
+		Subject:   "user-88",
+		Namespace: "user-88",
+	}); err != nil {
+		t.Fatalf("EnsureUserNamespace() error = %v", err)
+	}
+	ns, err := client.CoreV1().Namespaces().Get(context.Background(), "user-88", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get namespace: %v", err)
+	}
+	if ns.Labels["existing"] != "keep" {
+		t.Fatalf("existing label was not preserved: %#v", ns.Labels)
+	}
+	if ns.Labels[platformManagedLabel] != "true" || ns.Labels[platformUserIDLabel] != "user-88" {
+		t.Fatalf("managed labels missing: %#v", ns.Labels)
+	}
 }
 
 func TestDesiredDeploymentUsesRestrictedPodDefaults(t *testing.T) {
@@ -392,6 +437,16 @@ func hasString(values []string, want string) bool {
 		if value == want {
 			return true
 		}
+	}
+	return false
+}
+
+func roleAllows(role *rbacv1.Role, apiGroup, resource, verb string) bool {
+	for _, rule := range role.Rules {
+		if !hasString(rule.APIGroups, apiGroup) || !hasString(rule.Resources, resource) || !hasString(rule.Verbs, verb) {
+			continue
+		}
+		return true
 	}
 	return false
 }

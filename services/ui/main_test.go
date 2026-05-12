@@ -125,6 +125,37 @@ func TestAPIProxyAllowsDirectAPIKeyClients(t *testing.T) {
 	}
 }
 
+func TestAPIProxyForwardsUserAPIKeyClients(t *testing.T) {
+	upstreamCalled := false
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		upstreamCalled = true
+		if got := r.Header.Get("x-api-key"); got != "mcpu-user-key" {
+			t.Fatalf("x-api-key forwarded upstream = %q, want user key", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"content-type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"authenticated":true}`)),
+		}, nil
+	})
+	target, err := url.Parse("http://api.example")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", newUISessionStore(time.Now), false, transport)
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	req.Header.Set("x-api-key", "mcpu-user-key")
+	proxy.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("user API-key status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !upstreamCalled {
+		t.Fatal("user API-key request did not reach upstream")
+	}
+}
+
 func TestAPIProxyRejectsAnonymousRuntimeServers(t *testing.T) {
 	upstreamCalled := false
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {

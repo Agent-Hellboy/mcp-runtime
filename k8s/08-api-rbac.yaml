@@ -29,10 +29,21 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
+  # Platform API creates Traefik watch Roles in managed catalog/team namespaces;
+  # Kubernetes RBAC only allows delegating permissions the service account holds.
+  - apiGroups: [""]
+    resources: ["endpoints", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
   # User/team namespace provisioning guardrails
   - apiGroups: [""]
-    resources: ["namespaces", "resourcequotas", "limitranges", "serviceaccounts"]
+    resources: ["namespaces", "resourcequotas", "limitranges"]
     verbs: ["get", "list", "watch", "create"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]

@@ -75,7 +75,11 @@ func (s *apiServer) handleUserAPIKeys(w http.ResponseWriter, r *http.Request) {
 				AuthIdentity: auditIdentityLabel(p),
 			})
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"key": key, "api_key": cleartext})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"key":          key,
+			"api_key":      cleartext,
+			"one_time_key": cleartext,
+		})
 	default:
 		w.Header().Set("allow", "GET, POST")
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})

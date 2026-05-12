@@ -1879,8 +1879,9 @@ async function createUserAPIKey() {
       body: JSON.stringify({ name }),
     });
     const oneTime = document.getElementById("user-api-key-once");
-    if (oneTime && data.api_key) {
-      oneTime.textContent = `Copy now (shown once): ${data.api_key}`;
+    const cleartextKey = data.one_time_key || data.api_key;
+    if (oneTime && cleartextKey) {
+      oneTime.textContent = `Copy now (shown once): ${cleartextKey}`;
       oneTime.classList.remove("hidden");
       if (userAPIKeyClearTimer) {
         clearTimeout(userAPIKeyClearTimer);
@@ -1969,8 +1970,7 @@ function setOperationLoadingState() {
 
 async function loadOperationServers() {
   try {
-    const data = await fetchJSON(scopedPath("/runtime/servers"));
-    operationsServersCache = Array.isArray(data.servers) ? data.servers : [];
+    operationsServersCache = await loadFleetServers();
     const selectedStillExists = operationsServersCache.some(
       (server) => operationServerKey(server) === selectedOperationsServerKey
     );
@@ -2364,8 +2364,7 @@ async function loadPlatformServerHealth() {
     tbody.innerHTML = '<tr><td colspan="4" class="empty">Loading MCP server health...</td></tr>';
   }
   try {
-    const data = await fetchJSON(scopedPath("/runtime/servers"));
-    const servers = Array.isArray(data.servers) ? data.servers : [];
+    const servers = await loadFleetServers();
     renderPlatformServerHealth(servers);
   } catch (err) {
     if (isUnauthorizedError(err)) return;
@@ -2377,6 +2376,53 @@ async function loadPlatformServerHealth() {
       tbody.innerHTML = '<tr><td colspan="4" class="empty">Error loading MCP server health.</td></tr>';
     }
   }
+}
+
+async function loadFleetServers() {
+  if (authPrincipal?.role !== "admin") {
+    const data = await fetchJSON(scopedPath("/runtime/servers"));
+    return Array.isArray(data.servers) ? data.servers : [];
+  }
+  const namespaces = uniqueNonEmpty(
+    (Array.isArray(namespaceScopes) ? namespaceScopes : [])
+      .map((item) => item?.namespace || "")
+  );
+  if (!namespaces.length) {
+    const data = await fetchJSON("/runtime/servers");
+    return Array.isArray(data.servers) ? data.servers : [];
+  }
+  const results = await Promise.all(
+    namespaces.map(async (namespace) => {
+      const data = await fetchJSON(`/runtime/servers?namespace=${encodeURIComponent(namespace)}`);
+      return Array.isArray(data.servers) ? data.servers : [];
+    })
+  );
+  return dedupeServers(results.flat());
+}
+
+function uniqueNonEmpty(values) {
+  const seen = new Set();
+  const out = [];
+  values.forEach((value) => {
+    const normalized = String(value || "").trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push(normalized);
+  });
+  return out;
+}
+
+function dedupeServers(servers) {
+  const seen = new Set();
+  const out = [];
+  servers.forEach((server) => {
+    const key = operationServerKey(server);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(server);
+  });
+  out.sort((a, b) => operationServerKey(a).localeCompare(operationServerKey(b)));
+  return out;
 }
 
 function renderPlatformServerHealth(servers) {

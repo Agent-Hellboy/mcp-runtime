@@ -391,6 +391,9 @@ POST /api/user/registry-credentials/{id}/revoke
 POST /api/user/activity/image-publish  # Record a successful user image publish event
 ```
 
+User API-key creation returns the cleartext key once as both `api_key` and
+`one_time_key`; clients should store it immediately.
+
 Deployment apply body:
 
 ```json

@@ -1723,10 +1723,12 @@ kind: Namespace
 metadata:
   name: %s
   labels:
+    platform.mcpruntime.org/managed: "true"
+    mcpruntime.org/scope: %s
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/warn: restricted
-`, namespace)
+`, namespace, platformMode)
 	return kube.ApplyManifestContent(kubectl.CommandArgs, manifest)
 }
 

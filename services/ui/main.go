@@ -282,6 +282,11 @@ func newAPIProxyWithTransport(target *url.URL, apiBase, upstreamAPIKey, apiKeys 
 			return
 		}
 
+		if hasAPIAuthHeader(r) {
+			proxy.ServeHTTP(w, r.Clone(r.Context()))
+			return
+		}
+
 		if sess, ok := store.sessionFromRequest(r); ok {
 			req := r.Clone(r.Context())
 			req.Header.Del("x-api-key")
@@ -904,6 +909,13 @@ func validAPIKeyHeader(r *http.Request, apiKeys string) bool {
 		}
 	}
 	return false
+}
+
+func hasAPIAuthHeader(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	return strings.TrimSpace(r.Header.Get("authorization")) != "" || strings.TrimSpace(r.Header.Get("x-api-key")) != ""
 }
 
 func firstAPIKey(apiKeys string) string {

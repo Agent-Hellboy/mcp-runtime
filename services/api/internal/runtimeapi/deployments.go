@@ -25,15 +25,16 @@ import (
 )
 
 const (
-	platformManagedLabel  = "platform.mcpruntime.org/managed"
-	platformUserIDLabel   = "platform.mcpruntime.org/user-id"
-	platformTeamIDLabel   = "mcpruntime.org/team-id"
-	platformTeamSlugLabel = "mcpruntime.org/team-slug"
-	platformScopeLabel    = "mcpruntime.org/scope"
-	createdByLabel        = "created-by"
-	defaultDeployPort     = int32(8088)
-	restrictedRunAsUser   = kubeworkload.RestrictedRunAsUser
-	traefikWatchRoleName  = "traefik-watch"
+	platformManagedLabel           = "platform.mcpruntime.org/managed"
+	platformUserIDLabel            = "platform.mcpruntime.org/user-id"
+	platformTeamIDLabel            = "mcpruntime.org/team-id"
+	platformTeamSlugLabel          = "mcpruntime.org/team-slug"
+	platformScopeLabel             = "mcpruntime.org/scope"
+	createdByLabel                 = "created-by"
+	defaultDeployPort              = int32(8088)
+	restrictedRunAsUser            = kubeworkload.RestrictedRunAsUser
+	traefikWatchRoleName           = "traefik-watch"
+	platformNamespaceOwnerRoleName = "platform-namespace-owner"
 )
 
 var (
@@ -293,6 +294,11 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure team namespace"})
 			return
 		}
+		if err := s.ensureNamespaceUserWorkloadRBAC(ctx, namespace, p.UserID()); err != nil {
+			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure namespace access"})
+			return
+		}
 	} else {
 		if err := s.EnsureUserNamespace(ctx, target); err != nil {
 			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
@@ -357,7 +363,10 @@ func (s *RuntimeServer) EnsureUserNamespace(ctx context.Context, p principal) er
 		platformScopeLabel:                   namespaceScopeUser,
 		"pod-security.kubernetes.io/enforce": "restricted",
 	}
-	return s.ensureManagedNamespace(ctx, p.Namespace, labels, managedNamespaceOptions{})
+	if err := s.ensureManagedNamespace(ctx, p.Namespace, labels, managedNamespaceOptions{}); err != nil {
+		return err
+	}
+	return s.ensureNamespaceUserWorkloadRBAC(ctx, p.Namespace, p.UserID())
 }
 
 func (s *RuntimeServer) EnsureCatalogNamespace(ctx context.Context, namespace string) error {
@@ -416,12 +425,21 @@ func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace st
 		return nil
 	}
 	base := s.k8sClients.Clientset
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
-		Name:   namespace,
-		Labels: labels,
-	}}
-	if _, err := base.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	current, err := base.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name:   namespace,
+			Labels: labels,
+		}}
+		if _, err := base.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return err
+		}
+	} else if err != nil {
 		return err
+	} else if mergeNamespaceLabels(current, labels) {
+		if _, err := base.CoreV1().Namespaces().Update(ctx, current, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
 	}
 	if err := ensureResourceQuota(ctx, base, namespace); err != nil {
 		return err
@@ -433,6 +451,53 @@ func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace st
 		return err
 	}
 	return kubeworkload.EnsureServiceAccount(ctx, base, namespace)
+}
+
+func mergeNamespaceLabels(ns *corev1.Namespace, labels map[string]string) bool {
+	if ns.Labels == nil {
+		ns.Labels = map[string]string{}
+	}
+	changed := false
+	for key, value := range labels {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		if ns.Labels[key] == value {
+			continue
+		}
+		ns.Labels[key] = value
+		changed = true
+	}
+	return changed
+}
+
+func (s *RuntimeServer) ensureNamespaceUserWorkloadRBAC(ctx context.Context, namespace, userID string) error {
+	if s.k8sClients == nil || strings.TrimSpace(namespace) == "" || strings.TrimSpace(userID) == "" {
+		return nil
+	}
+	client := s.k8sClients.Clientset
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: platformNamespaceOwnerRoleName, Namespace: namespace},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+			{APIGroups: []string{""}, Resources: []string{"services"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+		},
+	}
+	if err := upsertRole(ctx, client, role); err != nil {
+		return err
+	}
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: platformNamespaceOwnerRoleName, Namespace: namespace},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "Role",
+			Name:     platformNamespaceOwnerRoleName,
+		},
+		Subjects: []rbacv1.Subject{
+			{Kind: rbacv1.UserKind, Name: "platform:user:" + strings.TrimSpace(userID)},
+		},
+	}
+	return upsertRoleBinding(ctx, client, binding)
 }
 
 func ensureResourceQuota(ctx context.Context, client kubernetes.Interface, ns string) error {
