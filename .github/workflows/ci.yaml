@@ -105,7 +105,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          log_dir="${RUNNER_TEMP:-/tmp}/sentinel-service-test-logs"
+          log_dir="${SENTINEL_SERVICE_TEST_LOG_DIR}"
           mkdir -p "${log_dir}"
           services=(api ingest processor mcp-proxy ui)
           pids=()
@@ -133,6 +133,16 @@ jobs:
             fi
           done
           exit "${failed}"
+        env:
+          SENTINEL_SERVICE_TEST_LOG_DIR: ${{ runner.temp }}/sentinel-service-test-logs
+
+      - name: Upload Sentinel service test logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sentinel-service-test-logs
+          path: ${{ runner.temp }}/sentinel-service-test-logs
+          if-no-files-found: ignore
 
       - name: Run integration tests with coverage
         run: |
