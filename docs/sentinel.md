@@ -160,6 +160,7 @@ metrics on `METRICS_PORT` (default `9090`).
 | `POST` | `/api/user/api-keys/{id}/revoke` | Revoke one caller-owned API key. |
 | `GET`, `POST` | `/api/user/registry-credentials` | List or create caller-owned registry credentials. |
 | `POST` | `/api/user/registry-credentials/{id}/revoke` | Revoke one registry credential. |
+| `*` | `/api/registry/authz` | Forward-auth guard used by the bundled registry ingress. Admin role required. |
 | `POST` | `/api/user/activity/image-publish` | Record a successful image publish event for the authenticated user. The CLI calls this after `registry push` when platform credentials are configured. |
 
 Restart request body examples:

@@ -47,6 +47,7 @@ noted otherwise. Authenticated routes accept `Authorization: Bearer <token>` or
 | `POST` | `/api/user/api-keys/{id}/revoke` | Revoke one caller-owned API key. |
 | `GET`, `POST` | `/api/user/registry-credentials` | List or create registry credentials. |
 | `POST` | `/api/user/registry-credentials/{id}/revoke` | Revoke one registry credential. |
+| `*` | `/api/registry/authz` | Traefik forward-auth endpoint for bundled registry ingress. Admin role required. |
 | `GET`, `POST` | `/api/deployments` | List or apply platform-managed deployments. |
 | `DELETE` | `/api/deployments/{namespace}/{name}` | Delete a platform-managed deployment and service. |
 | `GET` | `/api/admin/namespaces` | Admin namespace inventory. |
@@ -185,7 +186,9 @@ curl -sS -X POST http://localhost:8080/api/user/registry-credentials \
 ```
 
 Use the returned `username` and one-time `password` with the configured registry
-host.
+host. The bundled public registry ingress accepts these Basic credentials only
+when they belong to an admin user; non-admin image publishing should use the
+platform deployment and registry workflows instead of direct registry API calls.
 
 List registry credentials:
 

@@ -388,11 +388,17 @@ POST /api/user/api-keys/{id}/revoke    # Revoke caller-owned API key
 GET  /api/user/registry-credentials    # List caller-owned registry credentials
 POST /api/user/registry-credentials    # Create a registry credential
 POST /api/user/registry-credentials/{id}/revoke
+*    /api/registry/authz               # Traefik forward-auth for registry ingress; admin-only
 POST /api/user/activity/image-publish  # Record a successful user image publish event
 ```
 
 User API-key creation returns the cleartext key once as both `api_key` and
 `one_time_key`; clients should store it immediately.
+
+The bundled `registry.<domain>` ingress calls `/api/registry/authz` before
+proxying Docker Registry API traffic. It accepts platform admin credentials
+(`x-api-key` or Bearer token) and admin-owned registry Basic credentials, and it
+rejects anonymous or non-admin callers.
 
 Deployment apply body:
 
