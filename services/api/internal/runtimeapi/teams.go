@@ -99,19 +99,14 @@ func (s *RuntimeServer) HandleRuntimeNamespaces(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if sharedCatalogWritableForUsers() {
-		entries := make([]map[string]any, 0, len(modeCatalogNamespaces()))
-		for _, namespace := range modeCatalogNamespaces() {
-			entries = append(entries, catalogNamespaceEntry(namespace))
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"namespaces": entries})
-		return
-	}
-
 	entries := make([]map[string]any, 0, len(p.AllowedNamespaces))
 	for _, namespace := range catalogNamespacesForPrincipal(p) {
 		namespace = strings.TrimSpace(namespace)
 		if namespace == "" {
+			continue
+		}
+		if isModeCatalogNamespace(namespace) {
+			entries = append(entries, catalogNamespaceEntry(namespace))
 			continue
 		}
 		entry := map[string]any{

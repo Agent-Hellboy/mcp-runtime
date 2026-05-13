@@ -4377,6 +4377,7 @@ _No package overview is documented._
 - [`func (c *PlatformClient) CreateAdapterSession(ctx context.Context, req AdapterSessionRequest) (AdapterSession, error)`](#cli-platform-api-func-c-platformclient-createadaptersession-ctx-context-context-req-adaptersessionrequest-adaptersession-error)
 - [`func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Team, error)`](#cli-platform-api-func-c-platformclient-createteam-ctx-context-context-slug-name-string-team-error)
 - [`func (c *PlatformClient) DeleteGrant(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deletegrant-ctx-context-context-namespace-name-string-error)
+- [`func (c *PlatformClient) DeleteRuntimeServer(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deleteruntimeserver-ctx-context-context-namespace-name-string-error)
 - [`func (c *PlatformClient) DeleteSession(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deletesession-ctx-context-context-namespace-name-string-error)
 - [`func (c *PlatformClient) GetGrant(ctx context.Context, namespace, name string) (sentinelaccess.GrantSummary, error)`](#cli-platform-api-func-c-platformclient-getgrant-ctx-context-context-namespace-name-string-sentinelaccess-grantsummary-error)
 - [`func (c *PlatformClient) GetRuntimePolicy(ctx context.Context, namespace, server string) ([]byte, error)`](#cli-platform-api-func-c-platformclient-getruntimepolicy-ctx-context-context-namespace-server-string-byte-error)
@@ -4512,6 +4513,12 @@ func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Tea
 <a id="cli-platform-api-func-c-platformclient-deletegrant-ctx-context-context-namespace-name-string-error"></a>
 ```text
 func (c *PlatformClient) DeleteGrant(ctx context.Context, namespace, name string) error
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-deleteruntimeserver-ctx-context-context-namespace-name-string-error"></a>
+```text
+func (c *PlatformClient) DeleteRuntimeServer(ctx context.Context, namespace, name string) error
 
 ```
 

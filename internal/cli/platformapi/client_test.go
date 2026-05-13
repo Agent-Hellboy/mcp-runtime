@@ -165,6 +165,11 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"server":{"name":"demo","namespace":"mcp-team-core"}}`)),
 				}, nil
+			case r.Method == http.MethodDelete && r.URL.Path == "/api/runtime/servers/mcp-team-core/demo":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"success":true}`)),
+				}, nil
 			default:
 				t.Fatalf("unexpected route %s %s", r.Method, r.URL.Path)
 				return nil, nil
@@ -191,6 +196,9 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 	}
 	if _, err := client.ApplyRuntimeServer(context.Background(), "demo", "mcp-team-core", mcpv1alpha1.MCPServerSpec{Image: "registry.example/core/demo", ImageTag: "latest"}); err != nil {
 		t.Fatalf("ApplyRuntimeServer() error = %v", err)
+	}
+	if err := client.DeleteRuntimeServer(context.Background(), "mcp-team-core", "demo"); err != nil {
+		t.Fatalf("DeleteRuntimeServer() error = %v", err)
 	}
 }
 

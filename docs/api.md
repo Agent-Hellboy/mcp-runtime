@@ -292,6 +292,8 @@ For `POST /api/runtime/grants` and `POST /api/runtime/sessions`, the API resolve
 ```text
 GET  /api/runtime/servers              # List authenticated MCP catalog entries
 POST /api/runtime/servers              # Create/update MCPServer in an authorized namespace
+DELETE /api/runtime/servers/{namespace}/{name} # Retire one MCPServer
+GET  /api/runtime/server-events?namespace=&server= # Recent analytics events for one server
 GET  /api/runtime/grants               # List MCPAccessGrant resources
 GET  /api/runtime/grants/{namespace}/{name}   # Get one MCPAccessGrant
 POST /api/runtime/grants               # Create or update an MCPAccessGrant (x-api-key)
@@ -315,11 +317,23 @@ GET  /api/runtime/policy?namespace=&server=   # Get rendered policy for a server
 For non-admin users, runtime scope depends on `PLATFORM_MODE` / setup
 `--platform-mode`. In `tenant` mode, `GET /api/runtime/servers` without a
 `namespace` query returns MCPs in their own user/team tenant namespaces. In
-`org` mode, signed-in users list and publish in `mcp-servers-org`. In `public`
-mode, anonymous users can list the `mcp-servers-public` catalog and signed-in
-users publish there. Admin callers can inspect any namespace. Passing
-`namespace=<name>` narrows the list to an authorized namespace for the active
-mode.
+`org` mode, signed-in users can use the org catalog namespace and their
+owned/team namespaces. In `public` mode, anonymous users can list the
+`mcp-servers-public` catalog, while signed-in users can publish to the public
+catalog and their owned/team namespaces. Admin callers can inspect any
+namespace. Passing `namespace=<name>` narrows the list to an authorized
+namespace for the active mode.
+
+`POST /api/runtime/servers` is governed by the platform publish policy. Admins
+configure `PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `5`, set `0` to disable)
+and `PLATFORM_MCP_PUSH_COOLDOWN` (Go duration such as `30m`, default `0s` to
+disable). A quota or cooldown denial returns `429` with a clear error; cooldown
+responses include `next_allowed_at` and `Retry-After`. `GET /api/runtime/servers`
+includes `publish_policy` so UI clients can show the active limit and count.
+`DELETE /api/runtime/servers/{namespace}/{name}` retires a server and frees one
+active-server slot for the owning publisher. The active-server limit is enforced
+by the platform API before Kubernetes apply; strict serialization of concurrent
+publishes would require a shared reservation or admission-control layer.
 
 Adapter session minting requires an authenticated principal with a subject or
 email, such as a platform login bearer token or user API key. Service-only

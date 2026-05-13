@@ -294,6 +294,8 @@ func main() {
 		// Register all runtime endpoints with auth
 		mux.Handle("/api/dashboard/summary", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.HandleDashboardSummary))))
 		mux.Handle("/api/runtime/servers", server.authOrPublicCatalog(http.HandlerFunc(runtimeServer.HandleRuntimeServers)))
+		mux.Handle("/api/runtime/servers/", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeServerItem)))
+		mux.Handle("/api/runtime/server-events", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeServerEvents)))
 		mux.Handle("/api/runtime/teams", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeTeams)))
 		mux.Handle("/api/runtime/teams/", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeTeamItemPath)))
 		mux.Handle("/api/runtime/namespaces", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeNamespaces)))
