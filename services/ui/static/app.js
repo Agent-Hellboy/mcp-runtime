@@ -14,6 +14,8 @@ let serversCache = [];
 let publishPolicyCache = null;
 let selectedServerKey = "";
 let selectedServerEventsCache = [];
+let userDashboardServersCache = [];
+let userDashboardAnalyticsCache = null;
 let operationsServersCache = [];
 let operationsEventsCache = [];
 let operationsAuditCache = [];
@@ -24,6 +26,7 @@ let userAPIKeyClearTimer = null;
 let serverSearchQuery = "";
 let serverStatusFilter = "all";
 let selectedOperationsServerKey = "";
+let selectedUserAnalyticsServerKey = "";
 let namespaceScopes = [];
 let selectedNamespace = defaults.namespace || "";
 
@@ -255,6 +258,8 @@ function initTabs() {
         loadDashboardSummary();
         loadDashboardAnalytics();
         loadEvents();
+      } else if (target === "userdashboard") {
+        loadUserDashboard();
       } else if (target === "governance") {
         loadGrants();
         loadSessions();
@@ -870,6 +875,7 @@ async function logout() {
   selectedNamespace = namespaceScopes[0]?.namespace || "";
   syncScopeSelector();
   resetDashboard();
+  resetUserDashboard();
   resetGovernance();
   resetUserAPIKeys();
   activateTab("servers");
@@ -921,6 +927,8 @@ function loadActiveTab() {
     loadDashboardSummary();
     loadDashboardAnalytics();
     loadEvents();
+  } else if (active === "userdashboard") {
+    loadUserDashboard();
   } else if (active === "servers") {
     loadServers();
   } else if (active === "governance") {
@@ -956,6 +964,257 @@ function resetDashboard() {
     '<tr><td colspan="2" class="empty">No decisions yet.</td></tr>';
   document.getElementById("events-body").innerHTML =
     '<tr><td colspan="6" class="empty">No events yet.</td></tr>';
+}
+
+function resetUserDashboard() {
+  userDashboardServersCache = [];
+  userDashboardAnalyticsCache = null;
+  setText("userdash-server-total", "-");
+  setText("userdash-ready-total", "-");
+  setText("userdash-events", "-");
+  setText("userdash-denied", "-");
+  setText("userdash-error-rate", "-");
+  const serverBody = document.getElementById("user-dashboard-servers-body");
+  const breakdownBody = document.getElementById("user-analytics-breakdown-body");
+  const toolsBody = document.getElementById("user-analytics-tools-body");
+  const recentBody = document.getElementById("user-analytics-recent-body");
+  if (serverBody) serverBody.innerHTML = '<tr><td colspan="5" class="empty">No MCP servers found.</td></tr>';
+  if (breakdownBody) breakdownBody.innerHTML = '<tr><td colspan="6" class="empty">No usage yet.</td></tr>';
+  if (toolsBody) toolsBody.innerHTML = '<tr><td colspan="4" class="empty">No tool calls yet.</td></tr>';
+  if (recentBody) recentBody.innerHTML = '<tr><td colspan="4" class="empty">No recent activity.</td></tr>';
+}
+
+async function loadUserDashboard() {
+  if (!authenticated) {
+    resetUserDashboard();
+    showAuthModal();
+    return;
+  }
+  await Promise.allSettled([loadUserDashboardServers(), loadUserDashboardAnalytics()]);
+  renderUserDashboardSummary();
+}
+
+async function loadUserDashboardServers() {
+  const tbody = document.getElementById("user-dashboard-servers-body");
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">Loading MCP servers...</td></tr>';
+  }
+  try {
+    const data = authPrincipal?.role === "admin"
+      ? { servers: await loadFleetServers() }
+      : await fetchJSON("/runtime/servers");
+    userDashboardServersCache = Array.isArray(data.servers) ? data.servers : [];
+    syncUserAnalyticsServerSelect();
+    renderUserDashboardServers();
+    renderUserDashboardSummary();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load user dashboard servers:", err);
+    userDashboardServersCache = [];
+    syncUserAnalyticsServerSelect();
+    renderUserDashboardSummary();
+    if (tbody) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">Error loading MCP servers.</td></tr>';
+    }
+  }
+}
+
+async function loadUserDashboardAnalytics() {
+  const breakdownBody = document.getElementById("user-analytics-breakdown-body");
+  if (breakdownBody) {
+    breakdownBody.innerHTML = '<tr><td colspan="6" class="empty">Loading usage...</td></tr>';
+  }
+  try {
+    const data = await fetchJSON(`/user/analytics/usage?${userAnalyticsQuery()}`);
+    userDashboardAnalyticsCache = data || null;
+    renderUserDashboardAnalytics(data);
+    renderUserDashboardSummary();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load user analytics:", err);
+    userDashboardAnalyticsCache = null;
+    renderUserDashboardSummary();
+    renderUserAnalyticsError();
+  }
+}
+
+function userAnalyticsQuery() {
+  const params = new URLSearchParams();
+  params.set("limit", "10");
+  params.set("window_days", document.getElementById("user-analytics-window")?.value || "7");
+  const selected = userAnalyticsSelectedServer();
+  if (selected.namespace) params.set("namespace", selected.namespace);
+  if (selected.name) params.set("server", selected.name);
+  return params.toString();
+}
+
+function userAnalyticsSelectedServer() {
+  const key = selectedUserAnalyticsServerKey || "";
+  const idx = key.indexOf("/");
+  if (idx < 0) {
+    return { namespace: "", name: "" };
+  }
+  return {
+    namespace: key.slice(0, idx),
+    name: key.slice(idx + 1),
+  };
+}
+
+function syncUserAnalyticsServerSelect() {
+  const select = document.getElementById("user-analytics-server");
+  if (!select) return;
+  const previous = selectedUserAnalyticsServerKey;
+  select.innerHTML = '<option value="">All servers</option>';
+  userDashboardServersCache.forEach((server) => {
+    const option = document.createElement("option");
+    option.value = operationServerKey(server);
+    option.textContent = `${server.namespace || "-"} / ${server.name || "-"}`;
+    select.appendChild(option);
+  });
+  const exists = userDashboardServersCache.some((server) => operationServerKey(server) === previous);
+  selectedUserAnalyticsServerKey = exists ? previous : "";
+  select.value = selectedUserAnalyticsServerKey;
+}
+
+function renderUserDashboardSummary() {
+  const total = userDashboardServersCache.length;
+  const ready = userDashboardServersCache.filter((server) => server.status === "Ready").length;
+  const totals = userDashboardAnalyticsCache?.totals || {};
+  const events = Number(totals.events || 0);
+  const denied = Number(totals.denied || 0);
+  setText("userdash-server-total", formatNumber(total));
+  setText("userdash-ready-total", formatNumber(ready));
+  setText("userdash-events", formatNumber(events));
+  setText("userdash-denied", formatNumber(denied));
+  setText("userdash-error-rate", events > 0 ? `${Math.round((denied / events) * 100)}%` : "-");
+}
+
+function renderUserDashboardServers() {
+  const tbody = document.getElementById("user-dashboard-servers-body");
+  if (!tbody) return;
+  if (!userDashboardServersCache.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No MCP servers found.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  userDashboardServersCache.forEach((server) => {
+    const row = document.createElement("tr");
+    row.appendChild(createIdentityCell(server.name || "-", server.namespace || "-"));
+    row.appendChild(createBadgeCell(server.status || "Unknown", serverBadgeClass(server.status)));
+    row.appendChild(createTextCell(operationInventoryLabel(server)));
+    row.appendChild(createEndpointCell(server.endpoint));
+    row.appendChild(createUserServerActionsCell(server));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function createUserServerActionsCell(server) {
+  const cell = document.createElement("td");
+  const actions = document.createElement("div");
+  actions.className = "table-action-row";
+
+  const analyticsButton = document.createElement("button");
+  analyticsButton.type = "button";
+  analyticsButton.className = "ghost action-btn";
+  analyticsButton.textContent = "Analytics";
+  analyticsButton.addEventListener("click", () => {
+    selectedUserAnalyticsServerKey = operationServerKey(server);
+    const select = document.getElementById("user-analytics-server");
+    if (select) select.value = selectedUserAnalyticsServerKey;
+    loadUserDashboardAnalytics();
+  });
+  actions.appendChild(analyticsButton);
+
+  if (server.endpoint) {
+    const copyButton = document.createElement("button");
+    copyButton.type = "button";
+    copyButton.className = "ghost action-btn";
+    copyButton.textContent = "Copy URL";
+    copyButton.addEventListener("click", () => copyTextToClipboard(server.endpoint, "Endpoint copied"));
+    actions.appendChild(copyButton);
+  }
+
+  cell.appendChild(actions);
+  return cell;
+}
+
+function renderUserDashboardAnalytics(data) {
+  renderUserAnalyticsBreakdown(data?.servers || []);
+  renderUserAnalyticsTools(data?.tools || []);
+  renderUserAnalyticsRecent(data?.recent || []);
+}
+
+function renderUserAnalyticsBreakdown(rows) {
+  const tbody = document.getElementById("user-analytics-breakdown-body");
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No usage yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  rows.forEach((item) => {
+    const row = document.createElement("tr");
+    row.appendChild(createIdentityCell(item.server || "-", item.namespace || "-"));
+    row.appendChild(createTextCell(formatNumber(item.events || 0)));
+    row.appendChild(createTextCell(formatNumber(item.allowed || 0)));
+    row.appendChild(createTextCell(formatNumber(item.denied || 0)));
+    row.appendChild(createTextCell(formatNumber(item.unique_humans || 0)));
+    row.appendChild(createTextCell(formatNumber(item.unique_agents || 0)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderUserAnalyticsTools(rows) {
+  const tbody = document.getElementById("user-analytics-tools-body");
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No tool calls yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  rows.forEach((item) => {
+    const row = document.createElement("tr");
+    row.appendChild(createIdentityCell(item.server || "-", ""));
+    row.appendChild(createTextCell(item.tool_name || "-"));
+    row.appendChild(createTextCell(formatNumber(item.events || 0)));
+    row.appendChild(createTextCell(formatNumber(item.denied || 0)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderUserAnalyticsRecent(rows) {
+  const tbody = document.getElementById("user-analytics-recent-body");
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No recent activity.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  rows.forEach((item) => {
+    const row = document.createElement("tr");
+    row.appendChild(createTextCell(formatDateTime(item.timestamp)));
+    row.appendChild(createIdentityCell(item.server || "-", item.namespace || ""));
+    row.appendChild(createTextCell(item.tool_name || item.event_type || "-"));
+    row.appendChild(createBadgeCell(item.decision || "unknown", decisionBadgeClass(item.decision)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderUserAnalyticsError() {
+  const breakdownBody = document.getElementById("user-analytics-breakdown-body");
+  const toolsBody = document.getElementById("user-analytics-tools-body");
+  const recentBody = document.getElementById("user-analytics-recent-body");
+  if (breakdownBody) breakdownBody.innerHTML = '<tr><td colspan="6" class="empty">Error loading usage.</td></tr>';
+  if (toolsBody) toolsBody.innerHTML = '<tr><td colspan="4" class="empty">Error loading tools.</td></tr>';
+  if (recentBody) recentBody.innerHTML = '<tr><td colspan="4" class="empty">Error loading recent activity.</td></tr>';
 }
 
 function resetGovernance() {
@@ -1526,6 +1785,16 @@ function initDashboard() {
   document.getElementById("analytics-limit")?.addEventListener("change", () => {
     loadDashboardAnalytics();
   });
+  document.getElementById("refresh-user-dashboard")?.addEventListener("click", () => {
+    loadUserDashboard();
+  });
+  document.getElementById("user-analytics-window")?.addEventListener("change", () => {
+    loadUserDashboardAnalytics();
+  });
+  document.getElementById("user-analytics-server")?.addEventListener("change", (event) => {
+    selectedUserAnalyticsServerKey = event.target.value || "";
+    loadUserDashboardAnalytics();
+  });
   document.getElementById("refresh-servers")?.addEventListener("click", () => {
     loadServers();
   });
@@ -1577,7 +1846,7 @@ function applyRoleVisibility() {
 
 function resolveActiveTab() {
   const active = document.querySelector(".tab.active")?.dataset.tab;
-  if (active && (isAdminUser() || active === "userkeys" || active === "servers")) {
+  if (active && (isAdminUser() || active === "userkeys" || active === "servers" || active === "userdashboard")) {
     return active;
   }
   return "servers";
