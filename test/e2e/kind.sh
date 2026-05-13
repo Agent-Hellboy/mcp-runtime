@@ -144,6 +144,8 @@ CLI_SENTINEL_API_PORT="${CLI_SENTINEL_API_PORT:-18103}"
 API_METRICS_PORT="${API_METRICS_PORT:-19090}"
 INGEST_METRICS_PORT="${INGEST_METRICS_PORT:-19091}"
 PROCESSOR_METRICS_PORT="${PROCESSOR_METRICS_PORT:-19092}"
+PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL:-admin@mcpruntime.org}"
+PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD:-admin@123}"
 MCP_CURL_TIMEOUT="${MCP_CURL_TIMEOUT:-${MCP_SMOKE_TIMEOUT:-20}}"
 # Keep the old MCP_SMOKE_* environment variables as aliases for local scripts
 # that override these proxy ports or timeout.
@@ -2950,8 +2952,10 @@ port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${WORKDIR}/traefik-port-
 port_forward_bg mcp-sentinel mcp-sentinel-gateway "${SENTINEL_PORT}" 8083 "${WORKDIR}/sentinel-port-forward.log"
 port_forward_bg mcp-sentinel tempo "${TEMPO_PORT}" 3200 "${WORKDIR}/tempo-port-forward.log"
 port_forward_bg mcp-sentinel loki "${LOKI_PORT}" 3100 "${WORKDIR}/loki-port-forward.log"
-if scenario_selected "observability"; then
+if scenario_selected "governance" || scenario_selected "observability"; then
   port_forward_bg mcp-sentinel mcp-sentinel-api "${API_SERVICE_PORT}" 8080 "${WORKDIR}/api-port-forward.log"
+fi
+if scenario_selected "observability"; then
   port_forward_bg mcp-sentinel mcp-sentinel-api "${API_METRICS_PORT}" 9090 "${WORKDIR}/api-metrics-port-forward.log"
   port_forward_bg mcp-sentinel mcp-sentinel-ingest "${INGEST_SERVICE_PORT}" 8081 "${WORKDIR}/ingest-port-forward.log"
   port_forward_bg mcp-sentinel mcp-sentinel-ingest "${INGEST_METRICS_PORT}" 9091 "${WORKDIR}/ingest-metrics-port-forward.log"
@@ -2965,8 +2969,10 @@ wait_port "${TRAEFIK_PORT}"
 wait_port "${SENTINEL_PORT}"
 wait_port "${TEMPO_PORT}"
 wait_port "${LOKI_PORT}"
-if scenario_selected "observability"; then
+if scenario_selected "governance" || scenario_selected "observability"; then
   wait_port "${API_SERVICE_PORT}"
+fi
+if scenario_selected "observability"; then
   wait_port "${API_METRICS_PORT}"
   wait_port "${INGEST_SERVICE_PORT}"
   wait_port "${INGEST_METRICS_PORT}"
@@ -3206,10 +3212,9 @@ EOF
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
 
   # Phase 6: exercise the platform-issued adapter-session endpoint. The
-  # existing governance grant pins humanID to ${HUMAN_ID}, but the admin
-  # API_KEY maps to a different principal whose Subject we don't know up
-  # front. So apply a second, subject-wildcard grant just for this test and
-  # call the endpoint as the admin principal. The endpoint must pick the
+  # existing governance grant pins humanID to ${HUMAN_ID}, while this flow
+  # calls the endpoint as the platform admin principal. Apply a second,
+  # subject-wildcard grant just for this test. The endpoint must pick the
   # wildcard grant, write/reuse an MCPAgentSession with the deterministic
   # adapter-<hash> name, and report reused=true on the second call.
   log_line policy "applying subject-wildcard grant for adapter-session test"
@@ -3236,10 +3241,19 @@ EOF
   # reuse semantics (reused=true on the *second* call within this run).
   ADAPTER_AGENT_ID="e2e-adapter-agent-$(date +%s)"
 
+  log_line policy "logging in platform admin for adapter-session test"
+  ADAPTER_PLATFORM_TOKEN="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
+import json, os
+print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.environ["PLATFORM_ADMIN_PASSWORD"]}))
+' | curl -fsS -X POST \
+    -H "content-type: application/json" \
+    --data-binary @- \
+    "http://127.0.0.1:${API_SERVICE_PORT}/api/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+
   log_line policy "adapter-session endpoint should issue a session for the wildcard grant"
   ADAPTER_SESSION_BODY="$(printf '{"serverName":"%s","namespace":"mcp-servers","agentID":"%s"}' "${SERVER_NAME}" "${ADAPTER_AGENT_ID}")"
   ADAPTER_SESSION_RESP="$(curl -fsS -X POST \
-    -H "x-api-key: ${API_KEY}" \
+    -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
     -H "content-type: application/json" \
     --data "${ADAPTER_SESSION_BODY}" \
     "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
@@ -3266,7 +3280,7 @@ print('adapter-session issued:', resp['name'], 'reused=', resp['reused'])
   # whether the first call hit a leftover from a previous e2e run.
   log_line policy "adapter-session endpoint should reuse the existing session on a second call"
   ADAPTER_SESSION_RESP2="$(curl -fsS -X POST \
-    -H "x-api-key: ${API_KEY}" \
+    -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
     -H "content-type: application/json" \
     --data "${ADAPTER_SESSION_BODY}" \
     "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
@@ -3280,7 +3294,7 @@ print('adapter-session reused:', resp['name'])
 
   log_line policy "adapter-session endpoint must reject requests with no matching grant"
   ADAPTER_SESSION_REJECT_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
-    -H "x-api-key: ${API_KEY}" \
+    -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
     -H "content-type: application/json" \
     --data '{"serverName":"definitely-missing","namespace":"mcp-servers","agentID":"ops-agent"}' \
     "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"

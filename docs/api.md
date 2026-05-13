@@ -300,6 +300,7 @@ GET  /api/runtime/sessions             # List MCPAgentSession resources
 GET  /api/runtime/sessions/{namespace}/{name} # Get one MCPAgentSession
 POST /api/runtime/sessions             # Create or update an MCPAgentSession (x-api-key)
 DELETE /api/runtime/sessions/{namespace}/{name} # Delete one MCPAgentSession
+POST /api/runtime/adapter/sessions     # Issue/reuse an adapter MCPAgentSession for a human/user principal
 GET  /api/runtime/teams                # Admin: all teams; user: caller memberships
 POST /api/runtime/teams                # Admin-only team + namespace provisioning
 GET  /api/runtime/teams/{team}         # Team metadata (admin/member)
@@ -319,6 +320,11 @@ mode, anonymous users can list the `mcp-servers-public` catalog and signed-in
 users publish there. Admin callers can inspect any namespace. Passing
 `namespace=<name>` narrows the list to an authorized namespace for the active
 mode.
+
+Adapter session minting requires an authenticated principal with a subject or
+email, such as a platform login bearer token or user API key. Service-only
+setup keys authenticate but cannot mint adapter sessions because they do not
+identify the human principal that should own the `MCPAgentSession`.
 
 ### Grant apply body
 
