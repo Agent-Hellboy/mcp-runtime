@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -206,8 +207,13 @@ func captureRPCRequestMetadata(r *http.Request, maxBytes int64) (rpcRequestMetad
 		return rpcRequestMetadata{}, nil
 	}
 	// Read up to maxBytes+1 so we can distinguish "exactly at cap" from
-	// "over cap" without buffering an arbitrary amount.
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBytes+1))
+	// "over cap" without buffering an arbitrary amount. Guard against
+	// integer overflow when the caller configures math.MaxInt64.
+	limit := maxBytes
+	if limit < math.MaxInt64 {
+		limit++
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, limit))
 	if err != nil {
 		return rpcRequestMetadata{}, err
 	}

@@ -204,20 +204,21 @@ func isToolsListChangedNotification(body []byte) bool {
 
 // rebindResponseID replaces the "id" field of a JSON-RPC response body with the
 // supplied raw ID. Used to serve a cached tools/list response to a caller whose
-// request ID differs from the one captured at cache-store time. Returns body
-// unchanged when parsing fails.
+// request ID differs from the one captured at cache-store time. Returns nil
+// when rebinding fails (callers fall back to an authoritative upstream call;
+// returning the body with its old id would be a JSON-RPC protocol violation).
 func rebindResponseID(body []byte, id json.RawMessage) []byte {
 	if len(id) == 0 {
 		return body
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return body
+		return nil
 	}
 	raw["id"] = id
 	out, err := json.Marshal(raw)
 	if err != nil {
-		return body
+		return nil
 	}
 	return out
 }

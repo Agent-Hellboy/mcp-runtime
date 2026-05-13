@@ -87,3 +87,12 @@ func TestToolsListCacheNilSafe(t *testing.T) {
 		t.Fatalf("nil cache size = %d, want 0", c.size())
 	}
 }
+
+func TestRebindResponseIDReturnsNilOnInvalidJSON(t *testing.T) {
+	t.Parallel()
+
+	out := rebindResponseID([]byte("not json"), []byte(`"new-id"`))
+	if out != nil {
+		t.Fatalf("rebindResponseID() = %q, want nil for invalid JSON (caller must fall back to upstream)", out)
+	}
+}

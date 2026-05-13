@@ -140,7 +140,7 @@ func loadProxyConfig(lookup envLookup) (ProxyConfig, error) {
 		cfg.DisableXForwarded = !setXForwarded
 	}
 	if raw := strings.TrimSpace(lookup(EnvMaxInboundBytes)); raw != "" {
-		n, err := parsePositiveBytes(raw)
+		n, err := parseNonNegativeBytes(raw)
 		if err != nil {
 			return ProxyConfig{}, fmt.Errorf("%s is invalid: %w", EnvMaxInboundBytes, err)
 		}
@@ -188,15 +188,16 @@ func loadShimConfig(lookup envLookup) (ShimConfig, error) {
 	return cfg, nil
 }
 
-// parsePositiveBytes parses an int64 byte size from a string. Negative values
-// or unparseable input return an error.
-func parsePositiveBytes(s string) (int64, error) {
+// parseNonNegativeBytes parses an int64 byte size from a string. Zero is
+// allowed and signals "use the default" to callers; negative values or
+// unparseable input return an error.
+func parseNonNegativeBytes(s string) (int64, error) {
 	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("expected positive integer bytes, got %q", s)
+		return 0, fmt.Errorf("expected non-negative integer bytes, got %q", s)
 	}
-	if n <= 0 {
-		return 0, fmt.Errorf("must be greater than zero")
+	if n < 0 {
+		return 0, fmt.Errorf("must be zero or positive")
 	}
 	return n, nil
 }

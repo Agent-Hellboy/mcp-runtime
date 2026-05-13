@@ -287,3 +287,31 @@ func TestBuildTLSConfigRejectsDirectoryCABundle(t *testing.T) {
 func pemForCertificate(cert *x509.Certificate) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
 }
+
+func TestParseNonNegativeBytes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		in      string
+		want    int64
+		wantErr bool
+	}{
+		{in: "0", want: 0},
+		{in: "1024", want: 1024},
+		{in: "-1", wantErr: true},
+		{in: "abc", wantErr: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.in, func(t *testing.T) {
+			t.Parallel()
+			got, err := parseNonNegativeBytes(tt.in)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseNonNegativeBytes(%q) error = %v, wantErr = %v", tt.in, err, tt.wantErr)
+			}
+			if err == nil && got != tt.want {
+				t.Fatalf("parseNonNegativeBytes(%q) = %d, want %d", tt.in, got, tt.want)
+			}
+		})
+	}
+}

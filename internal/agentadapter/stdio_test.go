@@ -864,6 +864,81 @@ func TestStdioShimSkipsToolsCacheInAnonymousMode(t *testing.T) {
 	}
 }
 
+func TestStdioShimInvalidatesToolsCacheOnSSEListChanged(t *testing.T) {
+	t.Parallel()
+
+	var listCalls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body bytes.Buffer
+		_, _ = body.ReadFrom(r.Body)
+		method := parseRPCRequestMetadata(body.Bytes()).Method
+		w.Header().Set(MCPSessionHeader, "rt-session")
+		switch method {
+		case "initialize":
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`))
+		case "tools/list":
+			atomic.AddInt32(&listCalls, 1)
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"upper"}]}}`))
+		case "tools/call":
+			// Stream a single notification: tools/list_changed. The shim must
+			// observe the SSE message and drop its cached tools/list entry.
+			w.Header().Set("content-type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+			_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}))
+	t.Cleanup(upstream.Close)
+
+	runtimeURL, _ := url.Parse(upstream.URL + "/mcp")
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	defer stdinReader.Close()
+	defer stdoutReader.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- RunStdioShim(context.Background(), ShimConfig{
+			RuntimeURL:    runtimeURL,
+			Identity:      Identity{HumanID: "h", AgentID: "a", SessionID: "s"},
+			Transport:     &RuntimeTransport{Base: upstream.Client().Transport},
+			ToolsCacheTTL: 30 * time.Second,
+		}, StdioOptions{Stdin: stdinReader, Stdout: stdoutWriter})
+		_ = stdoutWriter.Close()
+	}()
+
+	reader := bufio.NewReader(stdoutReader)
+	_, _ = stdinWriter.Write([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n"))
+	_ = readLineWithin(t, reader, 2*time.Second)
+
+	// First tools/list — stores the cache entry.
+	_, _ = stdinWriter.Write([]byte(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}` + "\n"))
+	_ = readLineWithin(t, reader, 2*time.Second)
+
+	// tools/call returns an SSE list_changed notification. The shim emits it
+	// to stdout and invalidates the cache.
+	_, _ = stdinWriter.Write([]byte(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"x"}}` + "\n"))
+	notif := readLineWithin(t, reader, 2*time.Second)
+	if !strings.Contains(notif, `"notifications/tools/list_changed"`) {
+		t.Fatalf("did not receive SSE notification on stdout: %q", notif)
+	}
+
+	// Second tools/list — must re-hit upstream because the cache was dropped.
+	_, _ = stdinWriter.Write([]byte(`{"jsonrpc":"2.0","id":4,"method":"tools/list"}` + "\n"))
+	_ = readLineWithin(t, reader, 2*time.Second)
+	_ = stdinWriter.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("RunStdioShim() error = %v", err)
+	}
+	if got := atomic.LoadInt32(&listCalls); got != 2 {
+		t.Fatalf("upstream tools/list calls = %d, want 2 (cache must be invalidated by SSE notification)", got)
+	}
+}
+
 func TestStdioShimCapturesProtocolVersionFromInitializeResponse(t *testing.T) {
 	t.Parallel()
 

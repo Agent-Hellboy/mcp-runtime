@@ -249,7 +249,11 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	if cacheableTools {
 		cacheKey = toolsCacheKey(s.cfg.Identity, s.cfg.RuntimeURL.String())
 		if cached, ok := s.toolsCache.get(cacheKey); ok {
-			return emit(rebindResponseID(cached, envelope.ID))
+			if rebound := rebindResponseID(cached, envelope.ID); rebound != nil {
+				return emit(rebound)
+			}
+			// Rebinding failed: fall through to refetch authoritatively
+			// rather than emit a response with a stale id.
 		}
 	}
 
@@ -293,7 +297,19 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	}
 
 	if resp.StatusCode < http.StatusBadRequest && strings.Contains(strings.ToLower(resp.Header.Get("content-type")), "text/event-stream") {
-		return streamStreamableHTTPEventMessages(resp.Body, emit)
+		// MCP runtimes typically deliver server-to-client notifications over
+		// SSE, so cache invalidation must inspect each SSE message. Wrapping
+		// emit keeps the buffered-body fallback unchanged.
+		sseEmit := emit
+		if s.toolsCache != nil {
+			sseEmit = func(message []byte) error {
+				if isToolsListChangedNotification(message) {
+					s.toolsCache.invalidate()
+				}
+				return emit(message)
+			}
+		}
+		return streamStreamableHTTPEventMessages(resp.Body, sseEmit)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPResponseBytes+1))
@@ -342,7 +358,7 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 			}
 		}
 	}
-	if cacheableTools && !looksLikeJSONRPCError(body) {
+	if cacheableTools && looksLikeJSONRPC(body) && !looksLikeJSONRPCError(body) {
 		s.toolsCache.put(cacheKey, body)
 	}
 	// tools/list_changed notifications from the runtime invalidate the cache
