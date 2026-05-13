@@ -150,6 +150,64 @@ func TestLoadConfigParsesOptionalRuntimeControls(t *testing.T) {
 	}
 }
 
+func TestLoadShimConfigAnonymousSkipsIdentityValidation(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		EnvRuntimeURL: "http://localhost:18080/demo/mcp",
+		EnvAnonymous:  "true",
+	}
+	cfg, err := loadShimConfig(func(key string) string { return env[key] })
+	if err != nil {
+		t.Fatalf("loadShimConfig() error = %v", err)
+	}
+	if !cfg.Anonymous {
+		t.Fatal("Anonymous = false, want true")
+	}
+	if cfg.Identity.HumanID != "" || cfg.Identity.AgentID != "" || cfg.Identity.SessionID != "" {
+		t.Fatalf("Identity = %+v, want empty for anonymous config", cfg.Identity)
+	}
+}
+
+func TestLoadShimConfigAnonymousMethodsFromEnv(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		EnvRuntimeURL:       "http://localhost:18080/demo/mcp",
+		EnvAnonymous:        "true",
+		EnvAnonymousMethods: "initialize, tools/list, ping",
+	}
+	cfg, err := loadShimConfig(func(key string) string { return env[key] })
+	if err != nil {
+		t.Fatalf("loadShimConfig() error = %v", err)
+	}
+	want := []string{"initialize", "tools/list", "ping"}
+	if len(cfg.AnonymousMethods) != len(want) {
+		t.Fatalf("AnonymousMethods = %v, want %v", cfg.AnonymousMethods, want)
+	}
+	for i, m := range want {
+		if cfg.AnonymousMethods[i] != m {
+			t.Fatalf("AnonymousMethods[%d] = %q, want %q", i, cfg.AnonymousMethods[i], m)
+		}
+	}
+}
+
+func TestLoadShimConfigAnonymousRejectsInvalidBool(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		EnvRuntimeURL: "http://localhost:18080/demo/mcp",
+		EnvAnonymous:  "maybe",
+	}
+	_, err := loadShimConfig(func(key string) string { return env[key] })
+	if err == nil {
+		t.Fatal("loadShimConfig() error = nil, want invalid anonymous error")
+	}
+	if !strings.Contains(err.Error(), EnvAnonymous) {
+		t.Fatalf("loadShimConfig() error = %q, want %s in message", err, EnvAnonymous)
+	}
+}
+
 func TestLoadConfigRejectsInvalidRuntimeControls(t *testing.T) {
 	t.Parallel()
 

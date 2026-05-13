@@ -26,6 +26,9 @@ type identityFlags struct {
 	requestTimeout  string
 	logLevel        string
 	disableXFF      bool
+	// stdio-only
+	anonymous        bool
+	anonymousMethods string
 }
 
 func bindIdentityFlags(cmd *cobra.Command, f *identityFlags) {
@@ -132,20 +135,37 @@ func (f identityFlags) toProxyConfig(listenAddr string) (agentadapter.ProxyConfi
 }
 
 // toShimConfig produces an agentadapter.ShimConfig from the resolved shared
-// fields.
+// fields plus stdio-only anonymous settings.
 func (f identityFlags) toShimConfig() (agentadapter.ShimConfig, error) {
 	r, err := f.resolve()
 	if err != nil {
 		return agentadapter.ShimConfig{}, err
 	}
-	return agentadapter.ShimConfig{
+	cfg := agentadapter.ShimConfig{
 		RuntimeURL:      r.runtimeURL,
 		Identity:        r.identity,
 		Transport:       r.transport,
 		HostHeader:      r.hostHeader,
 		ProtocolVersion: r.protocolVersion,
 		LogLevel:        r.logLevel,
-	}, nil
+		Anonymous:       f.anonymous,
+	}
+	if f.anonymous && strings.TrimSpace(f.anonymousMethods) != "" {
+		cfg.AnonymousMethods = agentadapter.SplitTrimmed(f.anonymousMethods, ",")
+	}
+	return cfg, nil
+}
+
+// bindStdioFlags adds stdio-specific flags on top of the shared identity flags.
+func bindStdioFlags(cmd *cobra.Command, f *identityFlags) {
+	cmd.Flags().BoolVar(&f.anonymous, "anonymous",
+		parseEnvBoolSimple(agentadapter.EnvAnonymous),
+		"Forward to the runtime without a session or issued identity (public/read-only routes); "+
+			"only methods in --anonymous-methods are forwarded (default: $"+agentadapter.EnvAnonymous+")")
+	cmd.Flags().StringVar(&f.anonymousMethods, "anonymous-methods",
+		os.Getenv(agentadapter.EnvAnonymousMethods),
+		"Comma-separated list of MCP methods allowed in anonymous mode "+
+			"(default: $"+agentadapter.EnvAnonymousMethods+" or initialize,notifications/initialized,ping,tools/list,resources/list,prompts/list)")
 }
 
 func parseEnvBool(name string, def bool) bool {
@@ -160,5 +180,14 @@ func parseEnvBool(name string, def bool) bool {
 		return true
 	default:
 		return def
+	}
+}
+
+func parseEnvBoolSimple(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "t", "true", "y", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }

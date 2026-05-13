@@ -1841,6 +1841,7 @@ forward MCP traffic to governed MCP Runtime routes.
 - [Overview](#agent-adapters-overview)
 - [Index](#agent-adapters-index)
 - [Constants](#agent-adapters-constants)
+- [Variables](#agent-adapters-variables)
 - [Functions](#agent-adapters-functions)
 - [Types](#agent-adapters-types)
 
@@ -1848,9 +1849,11 @@ forward MCP traffic to governed MCP Runtime routes.
 ### Index
 
 - [`Constants`](#agent-adapters-constants)
+- [`Variables`](#agent-adapters-variables)
 - [`func NewHTTPProxyHandler(cfg ProxyConfig) (http.Handler, error)`](#agent-adapters-func-newhttpproxyhandler-cfg-proxyconfig-http-handler-error)
 - [`func RunHTTPProxy(ctx context.Context, cfg ProxyConfig) error`](#agent-adapters-func-runhttpproxy-ctx-context-context-cfg-proxyconfig-error)
 - [`func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error`](#agent-adapters-func-runstdioshim-ctx-context-context-cfg-shimconfig-opts-stdiooptions-error)
+- [`func SplitTrimmed(s, sep string) []string`](#agent-adapters-func-splittrimmed-s-sep-string-string)
 - [`type Identity struct`](#agent-adapters-type-identity-struct)
 - [`func (id Identity) Apply(headers http.Header)`](#agent-adapters-func-id-identity-apply-headers-http-header)
 - [`type ProxyConfig struct`](#agent-adapters-type-proxyconfig-struct)
@@ -1870,17 +1873,19 @@ forward MCP traffic to governed MCP Runtime routes.
 
 ```text
 const (
-	EnvRuntimeURL      = "MCP_RUNTIME_URL"
-	EnvHumanID         = "MCP_RUNTIME_HUMAN_ID"
-	EnvAgentID         = "MCP_RUNTIME_AGENT_ID"
-	EnvTeamID          = "MCP_RUNTIME_TEAM_ID"
-	EnvSessionID       = "MCP_RUNTIME_SESSION_ID"
-	EnvHostHeader      = "MCP_RUNTIME_HOST_HEADER"
-	EnvListenAddr      = "MCP_RUNTIME_LISTEN_ADDR"
-	EnvProtocolVersion = "MCP_RUNTIME_PROTOCOL_VERSION"
-	EnvSetXForwarded   = "MCP_RUNTIME_SET_XFF"
-	EnvRequestTimeout  = "MCP_RUNTIME_REQUEST_TIMEOUT"
-	EnvLogLevel        = "MCP_RUNTIME_LOG_LEVEL"
+	EnvRuntimeURL       = "MCP_RUNTIME_URL"
+	EnvHumanID          = "MCP_RUNTIME_HUMAN_ID"
+	EnvAgentID          = "MCP_RUNTIME_AGENT_ID"
+	EnvTeamID           = "MCP_RUNTIME_TEAM_ID"
+	EnvSessionID        = "MCP_RUNTIME_SESSION_ID"
+	EnvHostHeader       = "MCP_RUNTIME_HOST_HEADER"
+	EnvListenAddr       = "MCP_RUNTIME_LISTEN_ADDR"
+	EnvProtocolVersion  = "MCP_RUNTIME_PROTOCOL_VERSION"
+	EnvSetXForwarded    = "MCP_RUNTIME_SET_XFF"
+	EnvRequestTimeout   = "MCP_RUNTIME_REQUEST_TIMEOUT"
+	EnvLogLevel         = "MCP_RUNTIME_LOG_LEVEL"
+	EnvAnonymous        = "MCP_RUNTIME_ANONYMOUS"
+	EnvAnonymousMethods = "MCP_RUNTIME_ANONYMOUS_METHODS"
 
 	DefaultListenAddr      = "127.0.0.1:8099"
 	DefaultProtocolVersion = "2025-06-18"
@@ -1892,6 +1897,23 @@ const (
 	MCPProtocolHeader  = "Mcp-Protocol-Version"
 	MCPSessionHeader   = "Mcp-Session-Id"
 )
+```
+
+<a id="agent-adapters-variables"></a>
+### Variables
+
+```text
+var DefaultAnonymousMethods = []string{
+	"initialize",
+	"notifications/initialized",
+	"ping",
+	"tools/list",
+	"resources/list",
+	"prompts/list",
+}
+    DefaultAnonymousMethods is the set of MCP methods the stdio shim allows
+    in anonymous mode when no explicit AnonymousMethods list is configured.
+    These are read-only discovery methods and the protocol handshake.
 ```
 
 <a id="agent-adapters-functions"></a>
@@ -1919,6 +1941,12 @@ func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error
     RunStdioShim reads newline-delimited stdio MCP JSON-RPC messages, forwards
     them to the configured Streamable HTTP route, and writes JSON-RPC responses
     back to stdout.
+
+```
+
+<a id="agent-adapters-func-splittrimmed-s-sep-string-string"></a>
+```text
+func SplitTrimmed(s, sep string) []string
 ```
 
 <a id="agent-adapters-types"></a>
@@ -1943,10 +1971,10 @@ type Identity struct {
 ```text
 func (id Identity) Apply(headers http.Header)
     Apply writes the governance identity onto an outbound request's headers,
-    replacing any caller-supplied values. TeamID is omitted when empty so the
-    gateway sees a missing header (the documented "any team" semantics) rather
-    than an empty value. SessionID is required by ValidateConfig today and is
-    always set; the anonymous-mode flow that may omit it is a Phase 3b change.
+    replacing any caller-supplied values. Headers are always deleted first to
+    strip spoofed inbound values. A header is only re-set when its value is
+    non-empty, so anonymous-mode adapters with partial identity naturally omit
+    the missing headers rather than forwarding empty strings.
 
 ```
 
@@ -2037,6 +2065,14 @@ type ShimConfig struct {
 	ProtocolVersion string
 	LogLevel        string
 	LogWriter       io.Writer
+	// Anonymous, when true, relaxes identity validation so the shim can forward
+	// to public/read-only runtime routes without a session or human/agent ID.
+	// Only methods in AnonymousMethods are forwarded; all others are rejected
+	// with a JSON-RPC error before reaching the runtime.
+	Anonymous bool
+	// AnonymousMethods is the allowlist used when Anonymous is true. When empty
+	// the DefaultAnonymousMethods list applies.
+	AnonymousMethods []string
 }
     ShimConfig configures the stdio adapter that bridges newline-delimited
     JSON-RPC MCP traffic to the runtime over HTTP.
@@ -2055,6 +2091,7 @@ func LoadShimConfigFromEnv() (ShimConfig, error)
 ```text
 func (cfg ShimConfig) Validate() error
     Validate enforces the runtime identity invariants for the stdio shim.
+    In anonymous mode only the runtime URL is required.
 
 ```
 

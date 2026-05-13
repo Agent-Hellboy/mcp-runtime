@@ -10,17 +10,19 @@ import (
 )
 
 const (
-	EnvRuntimeURL      = "MCP_RUNTIME_URL"
-	EnvHumanID         = "MCP_RUNTIME_HUMAN_ID"
-	EnvAgentID         = "MCP_RUNTIME_AGENT_ID"
-	EnvTeamID          = "MCP_RUNTIME_TEAM_ID"
-	EnvSessionID       = "MCP_RUNTIME_SESSION_ID"
-	EnvHostHeader      = "MCP_RUNTIME_HOST_HEADER"
-	EnvListenAddr      = "MCP_RUNTIME_LISTEN_ADDR"
-	EnvProtocolVersion = "MCP_RUNTIME_PROTOCOL_VERSION"
-	EnvSetXForwarded   = "MCP_RUNTIME_SET_XFF"
-	EnvRequestTimeout  = "MCP_RUNTIME_REQUEST_TIMEOUT"
-	EnvLogLevel        = "MCP_RUNTIME_LOG_LEVEL"
+	EnvRuntimeURL       = "MCP_RUNTIME_URL"
+	EnvHumanID          = "MCP_RUNTIME_HUMAN_ID"
+	EnvAgentID          = "MCP_RUNTIME_AGENT_ID"
+	EnvTeamID           = "MCP_RUNTIME_TEAM_ID"
+	EnvSessionID        = "MCP_RUNTIME_SESSION_ID"
+	EnvHostHeader       = "MCP_RUNTIME_HOST_HEADER"
+	EnvListenAddr       = "MCP_RUNTIME_LISTEN_ADDR"
+	EnvProtocolVersion  = "MCP_RUNTIME_PROTOCOL_VERSION"
+	EnvSetXForwarded    = "MCP_RUNTIME_SET_XFF"
+	EnvRequestTimeout   = "MCP_RUNTIME_REQUEST_TIMEOUT"
+	EnvLogLevel         = "MCP_RUNTIME_LOG_LEVEL"
+	EnvAnonymous        = "MCP_RUNTIME_ANONYMOUS"
+	EnvAnonymousMethods = "MCP_RUNTIME_ANONYMOUS_METHODS"
 
 	DefaultListenAddr      = "127.0.0.1:8099"
 	DefaultProtocolVersion = "2025-06-18"
@@ -59,6 +61,26 @@ type ShimConfig struct {
 	ProtocolVersion string
 	LogLevel        string
 	LogWriter       io.Writer
+	// Anonymous, when true, relaxes identity validation so the shim can forward
+	// to public/read-only runtime routes without a session or human/agent ID.
+	// Only methods in AnonymousMethods are forwarded; all others are rejected
+	// with a JSON-RPC error before reaching the runtime.
+	Anonymous bool
+	// AnonymousMethods is the allowlist used when Anonymous is true. When empty
+	// the DefaultAnonymousMethods list applies.
+	AnonymousMethods []string
+}
+
+// DefaultAnonymousMethods is the set of MCP methods the stdio shim allows in
+// anonymous mode when no explicit AnonymousMethods list is configured. These
+// are read-only discovery methods and the protocol handshake.
+var DefaultAnonymousMethods = []string{
+	"initialize",
+	"notifications/initialized",
+	"ping",
+	"tools/list",
+	"resources/list",
+	"prompts/list",
 }
 
 // LoadProxyConfigFromEnv loads HTTP proxy configuration from environment
@@ -112,6 +134,16 @@ func loadShimConfig(lookup envLookup) (ShimConfig, error) {
 		ProtocolVersion: parsed.protocolVersion,
 		LogLevel:        parsed.logLevel,
 	}
+	if raw := strings.TrimSpace(lookup(EnvAnonymous)); raw != "" {
+		anon, err := parseAdapterBool(raw)
+		if err != nil {
+			return ShimConfig{}, fmt.Errorf("%s is invalid: %w", EnvAnonymous, err)
+		}
+		cfg.Anonymous = anon
+	}
+	if raw := strings.TrimSpace(lookup(EnvAnonymousMethods)); raw != "" {
+		cfg.AnonymousMethods = SplitTrimmed(raw, ",")
+	}
 	if err := cfg.Validate(); err != nil {
 		return ShimConfig{}, err
 	}
@@ -124,7 +156,14 @@ func (cfg ProxyConfig) Validate() error {
 }
 
 // Validate enforces the runtime identity invariants for the stdio shim.
+// In anonymous mode only the runtime URL is required.
 func (cfg ShimConfig) Validate() error {
+	if cfg.Anonymous {
+		if cfg.RuntimeURL == nil {
+			return fmt.Errorf("missing required environment variable: %s", EnvRuntimeURL)
+		}
+		return nil
+	}
 	return validateRequiredIdentity(cfg.RuntimeURL, cfg.Identity)
 }
 
@@ -225,4 +264,15 @@ func cloneURL(in *url.URL) *url.URL {
 	}
 	out := *in
 	return &out
+}
+
+func SplitTrimmed(s, sep string) []string {
+	parts := strings.Split(s, sep)
+	out := parts[:0]
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }

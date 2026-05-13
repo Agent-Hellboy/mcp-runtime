@@ -43,5 +43,6 @@ variables. Flags win when both are set.`,
 	}
 
 	bindIdentityFlags(cmd, &flags)
+	bindStdioFlags(cmd, &flags)
 	return cmd
 }

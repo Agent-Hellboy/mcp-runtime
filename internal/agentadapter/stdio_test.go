@@ -522,6 +522,196 @@ func nonEmptyLines(output string) []string {
 	return lines
 }
 
+func TestStdioShimSessionStateReadyAfterSuccessfulInitialize(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(MCPSessionHeader, "sess-abc")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	runtimeURL, _ := url.Parse(upstream.URL + "/mcp")
+	shim := &stdioShim{
+		cfg: ShimConfig{
+			RuntimeURL: runtimeURL,
+			Identity:   Identity{HumanID: "h", AgentID: "a", SessionID: "s"},
+			Transport:  &RuntimeTransport{Base: upstream.Client().Transport},
+		},
+		client:          upstream.Client(),
+		protocolVersion: DefaultProtocolVersion,
+	}
+
+	var out bytes.Buffer
+	_ = shim.forward(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`), func(b []byte) error {
+		out.Write(b)
+		return nil
+	})
+
+	if got := shim.getSessionState(); got != sessionStateReady {
+		t.Fatalf("sessionState = %v, want sessionStateReady", got)
+	}
+}
+
+func TestStdioShimSessionStateFailedAfterInitializeHTTPError(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"not allowed"}}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	runtimeURL, _ := url.Parse(upstream.URL + "/mcp")
+	shim := &stdioShim{
+		cfg: ShimConfig{
+			RuntimeURL: runtimeURL,
+			Identity:   Identity{HumanID: "h", AgentID: "a", SessionID: "s"},
+			Transport:  &RuntimeTransport{Base: upstream.Client().Transport},
+		},
+		client:          upstream.Client(),
+		protocolVersion: DefaultProtocolVersion,
+	}
+
+	_ = shim.forward(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`), func([]byte) error { return nil })
+
+	if got := shim.getSessionState(); got != sessionStateFailed {
+		t.Fatalf("sessionState = %v, want sessionStateFailed", got)
+	}
+
+	// Subsequent non-initialize request should get a session-failed error.
+	var out bytes.Buffer
+	_ = shim.forward(context.Background(), []byte(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{}}`), func(b []byte) error {
+		out.Write(b)
+		return nil
+	})
+	var resp rpcErrorResponse
+	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &resp); err != nil {
+		t.Fatalf("Unmarshal() error = %v; output=%s", err, out.String())
+	}
+	if resp.Error.Code != -32000 {
+		t.Fatalf("error code = %d, want -32000 (session failed)", resp.Error.Code)
+	}
+	if !strings.Contains(resp.Error.Message, "session not established") {
+		t.Fatalf("error message = %q, want session not established", resp.Error.Message)
+	}
+}
+
+func TestStdioShimAnonymousModeAllowsInitializeWithoutIdentity(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// anonymous: governance headers should be absent
+		if r.Header.Get(AgentSessionHeader) != "" {
+			t.Errorf("X-MCP-Agent-Session should be absent in anonymous mode, got %q", r.Header.Get(AgentSessionHeader))
+		}
+		if r.Header.Get(HumanIDHeader) != "" {
+			t.Errorf("X-MCP-Human-ID should be absent in anonymous mode, got %q", r.Header.Get(HumanIDHeader))
+		}
+		w.Header().Set(MCPSessionHeader, "pub-sess")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	runtimeURL, _ := url.Parse(upstream.URL + "/mcp")
+	var output bytes.Buffer
+	err := RunStdioShim(context.Background(), ShimConfig{
+		RuntimeURL: runtimeURL,
+		Anonymous:  true,
+		Transport:  &RuntimeTransport{Base: upstream.Client().Transport},
+	}, StdioOptions{
+		Stdin:  strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n"),
+		Stdout: &output,
+	})
+	if err != nil {
+		t.Fatalf("RunStdioShim() error = %v", err)
+	}
+	if !strings.Contains(output.String(), `"protocolVersion"`) {
+		t.Fatalf("output = %q, want initialize result", output.String())
+	}
+}
+
+func TestStdioShimAnonymousModeBlocksDisallowedMethod(t *testing.T) {
+	t.Parallel()
+
+	upstreamCalled := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalled = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+
+	runtimeURL, _ := url.Parse(upstream.URL + "/mcp")
+	var output bytes.Buffer
+	err := RunStdioShim(context.Background(), ShimConfig{
+		RuntimeURL:       runtimeURL,
+		Anonymous:        true,
+		AnonymousMethods: []string{"initialize", "notifications/initialized", "tools/list"},
+		Transport:        &RuntimeTransport{Base: upstream.Client().Transport},
+	}, StdioOptions{
+		Stdin:  strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{}}` + "\n"),
+		Stdout: &output,
+	})
+	if err != nil {
+		t.Fatalf("RunStdioShim() error = %v", err)
+	}
+	if upstreamCalled {
+		t.Fatal("upstream should not be called for a disallowed method in anonymous mode")
+	}
+	var resp rpcErrorResponse
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &resp); err != nil {
+		t.Fatalf("Unmarshal() error = %v; output=%s", err, output.String())
+	}
+	if resp.Error.Code != -32601 {
+		t.Fatalf("error code = %d, want -32601 (method not allowed)", resp.Error.Code)
+	}
+	if !strings.Contains(resp.Error.Message, "tools/call") {
+		t.Fatalf("error message = %q, want method name in message", resp.Error.Message)
+	}
+}
+
+func TestStdioShimAnonymousModeUsesDefaultAllowlistWhenNoneConfigured(t *testing.T) {
+	t.Parallel()
+
+	s := &stdioShim{cfg: ShimConfig{Anonymous: true}}
+	for _, allowed := range DefaultAnonymousMethods {
+		if !s.isMethodAllowed(allowed) {
+			t.Fatalf("isMethodAllowed(%q) = false, want true (default allowlist)", allowed)
+		}
+	}
+	if s.isMethodAllowed("tools/call") {
+		t.Fatal("isMethodAllowed(tools/call) = true, want false (not in default allowlist)")
+	}
+}
+
+func TestIdentityApplyOmitsEmptyHeaders(t *testing.T) {
+	t.Parallel()
+
+	headers := http.Header{}
+	headers.Set(HumanIDHeader, "spoofed-human")
+	headers.Set(AgentIDHeader, "spoofed-agent")
+	headers.Set(AgentSessionHeader, "spoofed-session")
+
+	// Empty identity (anonymous mode): all governance headers should be deleted, none set.
+	Identity{}.Apply(headers)
+
+	for _, h := range []string{HumanIDHeader, AgentIDHeader, TeamIDHeader, AgentSessionHeader} {
+		if v := headers.Get(h); v != "" {
+			t.Fatalf("header %s = %q, want empty (should be deleted and not re-set)", h, v)
+		}
+	}
+
+	// Non-empty identity: only non-empty fields should be set.
+	headers2 := http.Header{}
+	Identity{HumanID: "h", AgentID: "a"}.Apply(headers2)
+	if headers2.Get(HumanIDHeader) != "h" {
+		t.Fatalf("HumanIDHeader = %q, want h", headers2.Get(HumanIDHeader))
+	}
+	if headers2.Get(AgentSessionHeader) != "" {
+		t.Fatalf("AgentSessionHeader = %q, want empty when SessionID is empty", headers2.Get(AgentSessionHeader))
+	}
+}
+
 func readLineWithin(t *testing.T, reader *bufio.Reader, timeout time.Duration) string {
 	t.Helper()
 	type result struct {
