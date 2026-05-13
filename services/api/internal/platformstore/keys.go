@@ -148,7 +148,6 @@ RETURNING id, name, prefix, created_at, revoked, revoked_at`, userID, id).
 
 func (s *Store) AuthenticateRegistryCredential(ctx context.Context, username, rawKey string) (Principal, bool, error) {
 	username = strings.TrimSpace(username)
-	rawKey = strings.TrimSpace(rawKey)
 	if username == "" || rawKey == "" {
 		return Principal{}, false, nil
 	}
