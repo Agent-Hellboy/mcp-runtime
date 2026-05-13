@@ -43,6 +43,7 @@ variables. Flags win when both are set.`,
 	}
 
 	bindIdentityFlags(cmd, &flags)
+	bindProxyFlags(cmd, &flags)
 	cmd.Flags().StringVar(&listenAddr, "listen", os.Getenv(agentadapter.EnvListenAddr),
 		"Local listen address (default: $"+agentadapter.EnvListenAddr+" or "+agentadapter.DefaultListenAddr+")")
 	return cmd

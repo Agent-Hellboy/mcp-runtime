@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -749,6 +750,161 @@ func TestRunStdioShimSurfacesSessionExpiredRuntimeStatus(t *testing.T) {
 	}
 	if got, _ := response.Error.Data["runtime_status"].(string); got != "session_expired" {
 		t.Fatalf("runtime_status = %q, want session_expired", got)
+	}
+}
+
+func TestStdioShimCachesToolsListWhenTTLSet(t *testing.T) {
+	t.Parallel()
+
+	var listCalls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body bytes.Buffer
+		_, _ = body.ReadFrom(r.Body)
+		method := parseRPCRequestMetadata(body.Bytes()).Method
+		w.Header().Set("content-type", "application/json")
+		w.Header().Set(MCPSessionHeader, "rt-session")
+		switch method {
+		case "initialize":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`))
+		case "tools/list":
+			atomic.AddInt32(&listCalls, 1)
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"upper"}]}}`))
+		}
+	}))
+	t.Cleanup(upstream.Close)
+
+	runtimeURL, _ := url.Parse(upstream.URL + "/mcp")
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	defer stdinReader.Close()
+	defer stdoutReader.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- RunStdioShim(context.Background(), ShimConfig{
+			RuntimeURL: runtimeURL,
+			Identity: Identity{
+				HumanID:   "human-1",
+				AgentID:   "agent-1",
+				SessionID: "session-1",
+			},
+			Transport:     &RuntimeTransport{Base: upstream.Client().Transport},
+			ToolsCacheTTL: 30 * time.Second,
+		}, StdioOptions{Stdin: stdinReader, Stdout: stdoutWriter})
+		_ = stdoutWriter.Close()
+	}()
+
+	reader := bufio.NewReader(stdoutReader)
+
+	// Initialize and wait for its response before issuing the first tools/list,
+	// so the second tools/list cannot start before the first one stores in the cache.
+	_, _ = stdinWriter.Write([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n"))
+	if _ = readLineWithin(t, reader, 2*time.Second); false {
+	}
+	// First tools/list — should hit upstream.
+	_, _ = stdinWriter.Write([]byte(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}` + "\n"))
+	first := readLineWithin(t, reader, 2*time.Second)
+	if !strings.Contains(first, `"id":2`) {
+		t.Fatalf("first response id mismatch: %q", first)
+	}
+	// Second tools/list — must hit cache.
+	_, _ = stdinWriter.Write([]byte(`{"jsonrpc":"2.0","id":3,"method":"tools/list"}` + "\n"))
+	second := readLineWithin(t, reader, 2*time.Second)
+	if !strings.Contains(second, `"id":3`) {
+		t.Fatalf("second response did not rebind id: %q", second)
+	}
+	_ = stdinWriter.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("RunStdioShim() error = %v", err)
+	}
+	if got := atomic.LoadInt32(&listCalls); got != 1 {
+		t.Fatalf("upstream tools/list calls = %d, want 1 (second should be cached)", got)
+	}
+}
+
+func TestStdioShimSkipsToolsCacheInAnonymousMode(t *testing.T) {
+	t.Parallel()
+
+	var listCalls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body bytes.Buffer
+		_, _ = body.ReadFrom(r.Body)
+		method := parseRPCRequestMetadata(body.Bytes()).Method
+		w.Header().Set("content-type", "application/json")
+		switch method {
+		case "initialize":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`))
+		case "tools/list":
+			listCalls++
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}`))
+		}
+	}))
+	t.Cleanup(upstream.Close)
+
+	runtimeURL, _ := url.Parse(upstream.URL + "/mcp")
+	var output bytes.Buffer
+	err := RunStdioShim(context.Background(), ShimConfig{
+		RuntimeURL:    runtimeURL,
+		Anonymous:     true,
+		Transport:     &RuntimeTransport{Base: upstream.Client().Transport},
+		ToolsCacheTTL: 30 * time.Second,
+	}, StdioOptions{
+		Stdin: strings.NewReader(
+			`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n" +
+				`{"jsonrpc":"2.0","id":2,"method":"tools/list"}` + "\n" +
+				`{"jsonrpc":"2.0","id":3,"method":"tools/list"}` + "\n",
+		),
+		Stdout: &output,
+	})
+	if err != nil {
+		t.Fatalf("RunStdioShim() error = %v", err)
+	}
+	if listCalls != 2 {
+		t.Fatalf("upstream tools/list calls = %d, want 2 (anonymous mode bypasses cache)", listCalls)
+	}
+}
+
+func TestStdioShimCapturesProtocolVersionFromInitializeResponse(t *testing.T) {
+	t.Parallel()
+
+	var seenProtocols []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenProtocols = append(seenProtocols, r.Header.Get(MCPProtocolHeader))
+		var body bytes.Buffer
+		_, _ = body.ReadFrom(r.Body)
+		method := parseRPCRequestMetadata(body.Bytes()).Method
+		w.Header().Set("content-type", "application/json")
+		switch method {
+		case "initialize":
+			// Runtime negotiates a different protocol version than the client requested.
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2099-01-01"}}`))
+		default:
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{}}`))
+		}
+	}))
+	t.Cleanup(upstream.Close)
+
+	runtimeURL, _ := url.Parse(upstream.URL + "/mcp")
+	var output bytes.Buffer
+	err := RunStdioShim(context.Background(), ShimConfig{
+		RuntimeURL: runtimeURL,
+		Identity:   Identity{HumanID: "h", AgentID: "a", SessionID: "s"},
+		Transport:  &RuntimeTransport{Base: upstream.Client().Transport},
+	}, StdioOptions{
+		Stdin: strings.NewReader(
+			`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}` + "\n" +
+				`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"upper"}}` + "\n",
+		),
+		Stdout: &output,
+	})
+	if err != nil {
+		t.Fatalf("RunStdioShim() error = %v", err)
+	}
+	if len(seenProtocols) < 2 {
+		t.Fatalf("expected at least 2 upstream requests, got %d", len(seenProtocols))
+	}
+	if seenProtocols[1] != "2099-01-01" {
+		t.Fatalf("second request protocol header = %q, want 2099-01-01 (runtime-negotiated)", seenProtocols[1])
 	}
 }
 

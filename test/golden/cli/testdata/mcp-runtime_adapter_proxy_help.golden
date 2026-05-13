@@ -16,6 +16,7 @@ Flags:
       --human-id string           Issued human identity (default: $MCP_RUNTIME_HUMAN_ID)
       --listen string             Local listen address (default: $MCP_RUNTIME_LISTEN_ADDR or 127.0.0.1:8099)
       --log-level string          Adapter log level: info logs runtime denials (default: $MCP_RUNTIME_LOG_LEVEL)
+      --max-inbound-bytes int     Maximum inbound JSON-RPC body bytes the proxy buffers before responding with 413 (default: $MCP_RUNTIME_MAX_INBOUND_BYTES or 16777216)
       --no-xforwarded             Do not set X-Forwarded-* headers when forwarding to the runtime
       --protocol-version string   MCP protocol version header to advertise (default: $MCP_RUNTIME_PROTOCOL_VERSION or 2025-06-18)
       --request-timeout string    HTTP request timeout for adapter→runtime calls, e.g. 30s (default: $MCP_RUNTIME_REQUEST_TIMEOUT)

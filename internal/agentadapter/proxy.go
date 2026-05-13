@@ -16,6 +16,10 @@ import (
 const (
 	proxyReadHeaderTimeout = 5 * time.Second
 	proxyShutdownTimeout   = 10 * time.Second
+	// DefaultMaxInboundBytes caps the size of inbound JSON-RPC bodies that
+	// the proxy buffers for metadata capture. Requests over the cap get a
+	// 413 with a JSON-RPC parse-error body so the agent SDK can recover.
+	DefaultMaxInboundBytes int64 = 16 << 20
 )
 
 type rpcRequestMetadataContextKey struct{}
@@ -83,18 +87,41 @@ func newProxyHandlerAndTracker(cfg ProxyConfig) (http.Handler, *requestTracker, 
 		},
 	}
 
+	maxInbound := cfg.MaxInboundBytes
+	if maxInbound <= 0 {
+		maxInbound = DefaultMaxInboundBytes
+	}
+	metricsHandler := cfg.MetricsHandler
+
 	tracker := newRequestTracker()
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" {
+		switch r.URL.Path {
+		case "/healthz", "/livez":
 			w.WriteHeader(http.StatusNoContent)
+			return
+		case "/readyz":
+			w.WriteHeader(http.StatusNoContent)
+			return
+		case "/metrics":
+			if metricsHandler == nil {
+				http.Error(w, "metrics handler not configured", http.StatusNotFound)
+				return
+			}
+			metricsHandler.ServeHTTP(w, r)
 			return
 		}
 		// Track the request so shutdown can cancel it explicitly.
 		reqCtx, id := tracker.track(r.Context())
 		defer tracker.done(id)
 
-		meta, err := captureRPCRequestMetadata(r)
+		meta, err := captureRPCRequestMetadata(r, maxInbound)
 		if err != nil {
+			if errors.Is(err, errInboundBodyTooLarge) {
+				w.Header().Set("content-type", "application/json")
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+				_, _ = w.Write(jsonRPCParseError("request body exceeds adapter limit"))
+				return
+			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -170,15 +197,24 @@ func mergeRawQuery(first, second string) string {
 	}
 }
 
-func captureRPCRequestMetadata(r *http.Request) (rpcRequestMetadata, error) {
+// errInboundBodyTooLarge signals that the inbound JSON-RPC body exceeded the
+// configured cap. Callers translate it to HTTP 413.
+var errInboundBodyTooLarge = errors.New("inbound body exceeds configured limit")
+
+func captureRPCRequestMetadata(r *http.Request, maxBytes int64) (rpcRequestMetadata, error) {
 	if r.Body == nil {
 		return rpcRequestMetadata{}, nil
 	}
-	body, err := io.ReadAll(r.Body)
+	// Read up to maxBytes+1 so we can distinguish "exactly at cap" from
+	// "over cap" without buffering an arbitrary amount.
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBytes+1))
 	if err != nil {
 		return rpcRequestMetadata{}, err
 	}
 	_ = r.Body.Close()
+	if int64(len(body)) > maxBytes {
+		return rpcRequestMetadata{}, errInboundBodyTooLarge
+	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
 	r.GetBody = func() (io.ReadCloser, error) {

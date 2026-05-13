@@ -50,6 +50,7 @@ type stdioShim struct {
 	sessionSt       sessionState
 	sessionID       string
 	protocolVersion string
+	toolsCache      *toolsListCache
 }
 
 type stdioScanResult struct {
@@ -111,6 +112,7 @@ func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error 
 		client:          cfg.Transport.Client(),
 		sessionSt:       initState,
 		protocolVersion: cfg.ProtocolVersion,
+		toolsCache:      newToolsListCache(cfg.ToolsCacheTTL),
 	}
 
 	scanResults := scanStdioLines(ctx, opts.Stdin)
@@ -239,6 +241,18 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 		}
 	}
 
+	// tools/list cache: only when enabled, the call expects a response,
+	// and the caller is not in anonymous mode (anonymous responses cannot
+	// be safely shared between callers).
+	cacheableTools := meta.Method == "tools/list" && hasResponseID && !s.cfg.Anonymous && s.toolsCache != nil
+	var cacheKey string
+	if cacheableTools {
+		cacheKey = toolsCacheKey(s.cfg.Identity, s.cfg.RuntimeURL.String())
+		if cached, ok := s.toolsCache.get(cacheKey); ok {
+			return emit(rebindResponseID(cached, envelope.ID))
+		}
+	}
+
 	protocolVersion, sessionID := s.prepareRequestState(envelope)
 
 	// Tag context with method so RuntimeTransport can key retry and OTel on it.
@@ -321,7 +335,20 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 			s.setSessionState(sessionStateFailed)
 		} else {
 			s.setSessionState(sessionStateReady)
+			// Capture the runtime's negotiated protocol version so subsequent
+			// outbound calls advertise the version the runtime agreed to.
+			if pv := protocolVersionFromInitializeResult(body); pv != "" {
+				s.setProtocolVersion(pv)
+			}
 		}
+	}
+	if cacheableTools && !looksLikeJSONRPCError(body) {
+		s.toolsCache.put(cacheKey, body)
+	}
+	// tools/list_changed notifications from the runtime invalidate the cache
+	// so the next tools/list call refetches the authoritative response.
+	if isToolsListChangedNotification(body) {
+		s.toolsCache.invalidate()
 	}
 	if !hasResponseID {
 		return nil
@@ -347,6 +374,12 @@ func (s *stdioShim) setRuntimeSessionID(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessionID = sessionID
+}
+
+func (s *stdioShim) setProtocolVersion(version string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.protocolVersion = version
 }
 
 func (s *stdioShim) getSessionState() sessionState {
