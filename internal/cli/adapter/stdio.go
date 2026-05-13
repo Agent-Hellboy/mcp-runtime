@@ -13,6 +13,7 @@ import (
 
 func newStdioCmd(_ *core.Runtime) *cobra.Command {
 	var flags identityFlags
+	var sessionFlags platformSessionFlags
 
 	cmd := &cobra.Command{
 		Use:   "stdio",
@@ -23,18 +24,33 @@ responses back to stdout. Designed for IDE-style MCP clients (e.g. Cursor,
 Claude Desktop) that launch an MCP server as a subprocess.
 
 Configure identity via flags or the matching MCP_RUNTIME_* environment
-variables. Flags win when both are set.`,
+variables. Flags win when both are set. With --server, the shim fetches an
+issued session from the platform API before reading stdin; identity flags
+override the result.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := flags.toShimConfig()
 			if err != nil {
 				return err
 			}
+
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			issued, provider, refresher, err := applyPlatformSession(ctx, &sessionFlags, cmd.ErrOrStderr())
+			if err != nil {
+				return err
+			}
+			if refresher != nil {
+				defer refresher.Stop()
+			}
+			if sessionFlags.enabled() {
+				cfg.Identity = mergeIdentityFromIssued(cfg.Identity, issued)
+				cfg.IdentityProvider = provider
+			}
 			if err := cfg.Validate(); err != nil {
 				return err
 			}
 
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
 			return agentadapter.RunStdioShim(ctx, cfg, agentadapter.StdioOptions{
 				Stdin:  os.Stdin,
 				Stdout: os.Stdout,
@@ -44,5 +60,6 @@ variables. Flags win when both are set.`,
 
 	bindIdentityFlags(cmd, &flags)
 	bindStdioFlags(cmd, &flags)
+	bindPlatformSessionFlags(cmd, &sessionFlags)
 	return cmd
 }

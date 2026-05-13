@@ -825,7 +825,7 @@ func TestStdioShimCachesToolsListWhenTTLSet(t *testing.T) {
 func TestStdioShimSkipsToolsCacheInAnonymousMode(t *testing.T) {
 	t.Parallel()
 
-	var listCalls int
+	var listCalls int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body bytes.Buffer
 		_, _ = body.ReadFrom(r.Body)
@@ -835,7 +835,7 @@ func TestStdioShimSkipsToolsCacheInAnonymousMode(t *testing.T) {
 		case "initialize":
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`))
 		case "tools/list":
-			listCalls++
+			atomic.AddInt32(&listCalls, 1)
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}`))
 		}
 	}))
@@ -859,8 +859,8 @@ func TestStdioShimSkipsToolsCacheInAnonymousMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunStdioShim() error = %v", err)
 	}
-	if listCalls != 2 {
-		t.Fatalf("upstream tools/list calls = %d, want 2 (anonymous mode bypasses cache)", listCalls)
+	if got := atomic.LoadInt32(&listCalls); got != 2 {
+		t.Fatalf("upstream tools/list calls = %d, want 2 (anonymous mode bypasses cache)", got)
 	}
 }
 

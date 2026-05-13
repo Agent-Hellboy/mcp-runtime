@@ -303,6 +303,7 @@ func main() {
 		mux.Handle("/api/admin/deployments", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.HandleAdminDeployments))))
 		mux.Handle("/api/runtime/grants", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeGrants)))
 		mux.Handle("/api/runtime/sessions", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeSessions)))
+		mux.Handle("/api/runtime/adapter/sessions", server.auth(http.HandlerFunc(runtimeServer.HandleAdapterSession)))
 		mux.Handle("/api/runtime/components", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeComponents)))
 		mux.Handle("/api/runtime/policy", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimePolicy)))
 		mux.Handle("/api/runtime/actions/restart", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.HandleActionRestart))))

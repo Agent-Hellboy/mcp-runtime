@@ -3,15 +3,21 @@ package agentadapter
 import "net/http"
 
 // Identity is the issued governance identity that adapters attach to every
-// runtime request. The platform issues these values out-of-band (or, in a
-// later phase, through the adapter session endpoint); the adapter only
-// forwards them.
+// runtime request. The platform issues these values out-of-band (or through
+// the platform adapter-session endpoint); the adapter only forwards them.
 type Identity struct {
 	HumanID   string
 	AgentID   string
 	TeamID    string
 	SessionID string
 }
+
+// IdentityProvider returns the current governance identity. Adapters call it
+// before each outbound request so callers that rotate identity at runtime
+// (for example, platform-issued sessions refreshed before expiry) get the
+// new values applied without restarting the adapter process. When non-nil
+// on ProxyConfig / ShimConfig it takes precedence over the static Identity.
+type IdentityProvider func() Identity
 
 // Apply writes the governance identity onto an outbound request's headers,
 // replacing any caller-supplied values. Headers are always deleted first to

@@ -14,6 +14,7 @@ import (
 
 func newProxyCmd(_ *core.Runtime) *cobra.Command {
 	var flags identityFlags
+	var sessionFlags platformSessionFlags
 	var listenAddr string
 
 	cmd := &cobra.Command{
@@ -24,18 +25,33 @@ agent SDK and forwards each request to the configured platform runtime route,
 injecting the issued governance identity headers.
 
 Configure identity via flags or the matching MCP_RUNTIME_* environment
-variables. Flags win when both are set.`,
+variables. Flags win when both are set. With --server, the adapter fetches
+an issued session from the platform API before listening; identity flags
+override the result.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := flags.toProxyConfig(listenAddr)
 			if err != nil {
 				return err
 			}
+
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			issued, provider, refresher, err := applyPlatformSession(ctx, &sessionFlags, cmd.ErrOrStderr())
+			if err != nil {
+				return err
+			}
+			if refresher != nil {
+				defer refresher.Stop()
+			}
+			if sessionFlags.enabled() {
+				cfg.Identity = mergeIdentityFromIssued(cfg.Identity, issued)
+				cfg.IdentityProvider = provider
+			}
 			if err := cfg.Validate(); err != nil {
 				return err
 			}
 
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
 			fmt.Fprintf(cmd.ErrOrStderr(), "mcp-runtime adapter proxy listening on %s -> %s\n",
 				cfg.ListenAddr, cfg.RuntimeURL.String())
 			return agentadapter.RunHTTPProxy(ctx, cfg)
@@ -44,6 +60,7 @@ variables. Flags win when both are set.`,
 
 	bindIdentityFlags(cmd, &flags)
 	bindProxyFlags(cmd, &flags)
+	bindPlatformSessionFlags(cmd, &sessionFlags)
 	cmd.Flags().StringVar(&listenAddr, "listen", os.Getenv(agentadapter.EnvListenAddr),
 		"Local listen address (default: $"+agentadapter.EnvListenAddr+" or "+agentadapter.DefaultListenAddr+")")
 	return cmd

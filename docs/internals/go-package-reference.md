@@ -1858,6 +1858,7 @@ forward MCP traffic to governed MCP Runtime routes.
 - [`func SplitTrimmed(s, sep string) []string`](#agent-adapters-func-splittrimmed-s-sep-string-string)
 - [`type Identity struct`](#agent-adapters-type-identity-struct)
 - [`func (id Identity) Apply(headers http.Header)`](#agent-adapters-func-id-identity-apply-headers-http-header)
+- [`type IdentityProvider func() Identity`](#agent-adapters-type-identityprovider-func-identity)
 - [`type ProxyConfig struct`](#agent-adapters-type-proxyconfig-struct)
 - [`func LoadProxyConfigFromEnv() (ProxyConfig, error)`](#agent-adapters-func-loadproxyconfigfromenv-proxyconfig-error)
 - [`func (cfg ProxyConfig) Validate() error`](#agent-adapters-func-cfg-proxyconfig-validate-error)
@@ -1994,9 +1995,8 @@ type Identity struct {
 	SessionID string
 }
     Identity is the issued governance identity that adapters attach to every
-    runtime request. The platform issues these values out-of-band (or,
-    in a later phase, through the adapter session endpoint); the adapter only
-    forwards them.
+    runtime request. The platform issues these values out-of-band (or through
+    the platform adapter-session endpoint); the adapter only forwards them.
 
 ```
 
@@ -2008,6 +2008,17 @@ func (id Identity) Apply(headers http.Header)
     strip spoofed inbound values. A header is only re-set when its value is
     non-empty, so anonymous-mode adapters with partial identity naturally omit
     the missing headers rather than forwarding empty strings.
+
+```
+
+<a id="agent-adapters-type-identityprovider-func-identity"></a>
+```text
+type IdentityProvider func() Identity
+    IdentityProvider returns the current governance identity. Adapters call it
+    before each outbound request so callers that rotate identity at runtime
+    (for example, platform-issued sessions refreshed before expiry) get the
+    new values applied without restarting the adapter process. When non-nil on
+    ProxyConfig / ShimConfig it takes precedence over the static Identity.
 
 ```
 
@@ -2031,6 +2042,10 @@ type ProxyConfig struct {
 	// Prometheus exporter wired to the OTel MeterProvider that backs
 	// RuntimeTransport.Meter. Nil → /metrics returns 404.
 	MetricsHandler http.Handler
+	// IdentityProvider overrides Identity per-request when set. Used by
+	// callers that rotate identity at runtime (e.g. auto-refreshed
+	// platform-issued adapter sessions). Nil → static Identity is used.
+	IdentityProvider IdentityProvider
 }
     ProxyConfig configures the local HTTP reverse-proxy adapter that exposes
     Streamable HTTP MCP to an agent SDK.
@@ -2132,6 +2147,9 @@ type ShimConfig struct {
 	// Entries are keyed by identity + runtime URL and invalidated on a
 	// tools/list_changed notification or when the TTL expires.
 	ToolsCacheTTL time.Duration
+	// IdentityProvider overrides Identity per-request when set.
+	// See ProxyConfig.IdentityProvider for the contract.
+	IdentityProvider IdentityProvider
 }
     ShimConfig configures the stdio adapter that bridges newline-delimited
     JSON-RPC MCP traffic to the runtime over HTTP.
@@ -4348,12 +4366,15 @@ _No package overview is documented._
 
 - [`func HasPlatformClient() bool`](#cli-platform-api-func-hasplatformclient-bool)
 - [`func NormalizeBaseURL(raw string) string`](#cli-platform-api-func-normalizebaseurl-raw-string-string)
+- [`type AdapterSession struct`](#cli-platform-api-type-adaptersession-struct)
+- [`type AdapterSessionRequest struct`](#cli-platform-api-type-adaptersessionrequest-struct)
 - [`type ImagePublishRecord struct`](#cli-platform-api-type-imagepublishrecord-struct)
 - [`type PlatformClient struct`](#cli-platform-api-type-platformclient-struct)
 - [`func NewPlatformClient() (*PlatformClient, error)`](#cli-platform-api-func-newplatformclient-platformclient-error)
 - [`func ResolvePlatformOrKube(useKube bool) (*PlatformClient, bool, error)`](#cli-platform-api-func-resolveplatformorkube-usekube-bool-platformclient-bool-error)
 - [`func (c *PlatformClient) ApplyAccessFromYAMLFile(ctx context.Context, path string) error`](#cli-platform-api-func-c-platformclient-applyaccessfromyamlfile-ctx-context-context-path-string-error)
 - [`func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error)`](#cli-platform-api-func-c-platformclient-applyruntimeserver-ctx-context-context-name-namespace-string-spec-mcpv1alpha1-mcpserverspec-serverlistitem-error)
+- [`func (c *PlatformClient) CreateAdapterSession(ctx context.Context, req AdapterSessionRequest) (AdapterSession, error)`](#cli-platform-api-func-c-platformclient-createadaptersession-ctx-context-context-req-adaptersessionrequest-adaptersession-error)
 - [`func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Team, error)`](#cli-platform-api-func-c-platformclient-createteam-ctx-context-context-slug-name-string-team-error)
 - [`func (c *PlatformClient) DeleteGrant(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deletegrant-ctx-context-context-namespace-name-string-error)
 - [`func (c *PlatformClient) DeleteSession(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deletesession-ctx-context-context-namespace-name-string-error)
@@ -4389,6 +4410,41 @@ func NormalizeBaseURL(raw string) string
 
 <a id="cli-platform-api-types"></a>
 ### Types
+
+<a id="cli-platform-api-type-adaptersession-struct"></a>
+```text
+type AdapterSession struct {
+	Name           string    `json:"name"`
+	Namespace      string    `json:"namespace"`
+	HumanID        string    `json:"humanID"`
+	AgentID        string    `json:"agentID"`
+	TeamID         string    `json:"teamID,omitempty"`
+	ServerName     string    `json:"serverName"`
+	ConsentedTrust string    `json:"consentedTrust"`
+	PolicyVersion  string    `json:"policyVersion"`
+	ExpiresAt      time.Time `json:"expiresAt"`
+	Reused         bool      `json:"reused"`
+}
+    AdapterSession captures the identity the adapter must inject into runtime
+    requests. ExpiresAt is absolute (server-side time); callers should refresh
+    before it elapses.
+
+```
+
+<a id="cli-platform-api-type-adaptersessionrequest-struct"></a>
+```text
+type AdapterSessionRequest struct {
+	ServerName     string `json:"serverName"`
+	Namespace      string `json:"namespace,omitempty"`
+	AgentID        string `json:"agentID"`
+	RequestedTrust string `json:"requestedTrust,omitempty"`
+	RequestedTTL   string `json:"requestedTTL,omitempty"`
+}
+    AdapterSessionRequest is the input contract for the platform API endpoint
+    POST /api/runtime/adapter/sessions. RequestedTTL/Trust are optional;
+    empty values fall back to platform-side defaults.
+
+```
 
 <a id="cli-platform-api-type-imagepublishrecord-struct"></a>
 ```text
@@ -4435,6 +4491,15 @@ func (c *PlatformClient) ApplyAccessFromYAMLFile(ctx context.Context, path strin
 <a id="cli-platform-api-func-c-platformclient-applyruntimeserver-ctx-context-context-name-namespace-string-spec-mcpv1alpha1-mcpserverspec-serverlistitem-error"></a>
 ```text
 func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-createadaptersession-ctx-context-context-req-adaptersessionrequest-adaptersession-error"></a>
+```text
+func (c *PlatformClient) CreateAdapterSession(ctx context.Context, req AdapterSessionRequest) (AdapterSession, error)
+    CreateAdapterSession asks the platform to issue (or reuse) an
+    MCPAgentSession for the calling principal. The returned session.Name doubles
+    as the SessionID the adapter forwards on every runtime request.
 
 ```
 

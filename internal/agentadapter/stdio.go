@@ -272,7 +272,7 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	if sessionID != "" {
 		req.Header.Set(MCPSessionHeader, sessionID)
 	}
-	s.cfg.Identity.Apply(req.Header)
+	s.currentIdentity().Apply(req.Header)
 	if s.cfg.HostHeader != "" {
 		req.Host = s.cfg.HostHeader
 	}
@@ -396,6 +396,16 @@ func (s *stdioShim) setProtocolVersion(version string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.protocolVersion = version
+}
+
+// currentIdentity returns the live governance identity. If the config
+// supplied an IdentityProvider, that wins so callers that rotate identity at
+// runtime (auto-refreshed platform sessions) are reflected on every request.
+func (s *stdioShim) currentIdentity() Identity {
+	if s.cfg.IdentityProvider != nil {
+		return s.cfg.IdentityProvider()
+	}
+	return s.cfg.Identity
 }
 
 func (s *stdioShim) getSessionState() sessionState {
