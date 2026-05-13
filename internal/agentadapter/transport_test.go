@@ -54,3 +54,16 @@ func TestRuntimeTransportNilBaseUsesDefault(t *testing.T) {
 		t.Fatalf("base() = %#v, want http.DefaultTransport", got)
 	}
 }
+
+func TestRuntimeTransportNilReceiverClientDoesNotPanic(t *testing.T) {
+	t.Parallel()
+
+	var transport *RuntimeTransport
+	client := transport.Client()
+	if client == nil {
+		t.Fatal("Client() returned nil")
+	}
+	if client.Timeout != 0 {
+		t.Fatalf("client.Timeout = %s, want 0 for nil receiver", client.Timeout)
+	}
+}

@@ -28,13 +28,14 @@ func (t *RuntimeTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 }
 
 // Client returns an *http.Client whose Transport is this RuntimeTransport.
-// The stdio shim uses this directly; the reverse proxy uses the underlying
-// round-tripper via Transport field assignment instead.
+// Both the stdio shim and the reverse proxy route outbound requests through
+// this wrapper so auth, OTel, and retry logic lives in one place.
 func (t *RuntimeTransport) Client() *http.Client {
-	return &http.Client{
-		Transport: t,
-		Timeout:   t.Timeout,
+	var timeout time.Duration
+	if t != nil {
+		timeout = t.Timeout
 	}
+	return &http.Client{Transport: t, Timeout: timeout}
 }
 
 // CloseIdleConnections drains idle connections on the base round-tripper if

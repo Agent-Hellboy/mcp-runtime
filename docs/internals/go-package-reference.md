@@ -2006,8 +2006,8 @@ type RuntimeTransport struct {
 ```text
 func (t *RuntimeTransport) Client() *http.Client
     Client returns an *http.Client whose Transport is this RuntimeTransport.
-    The stdio shim uses this directly; the reverse proxy uses the underlying
-    round-tripper via Transport field assignment instead.
+    Both the stdio shim and the reverse proxy route outbound requests through
+    this wrapper so auth, OTel, and retry logic lives in one place.
 
 ```
 
