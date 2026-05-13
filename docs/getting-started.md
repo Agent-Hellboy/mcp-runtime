@@ -559,7 +559,7 @@ The bundled Go example server also exposes `upper`, `lower`, `echo`, and
 instead of `input` or `text`.
 
 For agent frameworks or IDEs that cannot attach the governance headers directly,
-build the optional adapters with `make build-adapters` and follow
+use the built-in `mcp-runtime adapter proxy` or `mcp-runtime adapter stdio` subcommands and follow
 [Agent Adapters](agent-adapters.md). The same grant/session values from
 `/tmp/go-example-access.yaml` become `MCP_RUNTIME_HUMAN_ID`,
 `MCP_RUNTIME_AGENT_ID`, and `MCP_RUNTIME_SESSION_ID` for the adapter process.

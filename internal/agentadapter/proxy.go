@@ -61,7 +61,7 @@ func NewHTTPProxyHandler(cfg ProxyConfig) (http.Handler, error) {
 			resp.ContentLength = int64(len(body))
 			resp.Header.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
 			meta := rpcRequestMetadataFromContext(resp.Request.Context())
-			logRuntimeDenial(logLevel, logWriter, "mcp-runtime-agent-proxy", resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), meta)
+			logRuntimeDenial(logLevel, logWriter, "adapter/proxy", resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), meta)
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {

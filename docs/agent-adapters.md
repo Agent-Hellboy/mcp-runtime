@@ -3,10 +3,10 @@
 MCP Runtime includes two optional agent-side adapters for frameworks and IDEs
 that need help attaching governed identity to MCP traffic:
 
-- `mcp-runtime-agent-proxy` exposes a local Streamable HTTP MCP endpoint and
+- `mcp-runtime adapter proxy` exposes a local Streamable HTTP MCP endpoint and
   forwards requests to an MCP Runtime route.
-- `mcp-runtime-mcp-shim` exposes a stdio MCP server process and forwards each
-  JSON-RPC message to the same MCP Runtime HTTP route.
+- `mcp-runtime adapter stdio` exposes a stdio MCP server process and forwards
+  each JSON-RPC message to the same MCP Runtime HTTP route.
 
 Both adapters only present issued identity values. They do not create grants,
 create sessions, evaluate policy, or bypass the gateway. Platform admins still
@@ -18,19 +18,6 @@ two standard MCP transports. There is no separate legacy HTTP+SSE adapter. When
 the docs or code mention `text/event-stream`, that is only because Streamable
 HTTP allows a server to return a JSON response or an event-stream response for
 the same request, and clients are expected to handle both response shapes.
-
-## Build
-
-```bash
-make build-adapters
-```
-
-The binaries are written to:
-
-```text
-bin/mcp-runtime-agent-proxy
-bin/mcp-runtime-mcp-shim
-```
 
 ## Configuration
 
@@ -167,7 +154,7 @@ export MCP_RUNTIME_HUMAN_ID=support-lead
 export MCP_RUNTIME_AGENT_ID=ticket-triage-agent
 export MCP_RUNTIME_SESSION_ID=sess-ticket-triage-agent
 
-./bin/mcp-runtime-agent-proxy
+./bin/mcp-runtime adapter proxy
 ```
 
 Then point the framework's MCP HTTP URL at the local proxy:
@@ -195,7 +182,8 @@ Use the shim when an IDE or client only launches stdio MCP commands.
 {
   "mcpServers": {
     "go-example-mcp": {
-      "command": "/absolute/path/to/bin/mcp-runtime-mcp-shim",
+      "command": "/absolute/path/to/bin/mcp-runtime",
+      "args": ["adapter", "stdio"],
       "env": {
         "MCP_RUNTIME_URL": "http://localhost:18080/go-example-mcp/mcp",
         "MCP_RUNTIME_HUMAN_ID": "support-lead",

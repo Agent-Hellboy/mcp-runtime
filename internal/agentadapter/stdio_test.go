@@ -183,7 +183,7 @@ func TestRunStdioShimLogsRuntimeDenialWhenInfoEnabled(t *testing.T) {
 		t.Fatalf("RunStdioShim() error = %v", err)
 	}
 	logLine := logs.String()
-	for _, want := range []string{"mcp-runtime-mcp-shim:", "403", "trust_too_low", "method=tools/call", "tool=upper"} {
+	for _, want := range []string{"adapter/stdio:", "403", "trust_too_low", "method=tools/call", "tool=upper"} {
 		if !strings.Contains(logLine, want) {
 			t.Fatalf("log line = %q, want %q", logLine, want)
 		}
