@@ -226,11 +226,8 @@ func parseEnvBoolSimple(name string) bool {
 	}
 }
 
-// newHTTPTransportWithTLS returns a *http.Transport that uses the supplied TLS
-// config. It clones http.DefaultTransport's settings so timeouts and keep-alive
-// behaviour are preserved.
+// newHTTPTransportWithTLS delegates to the shared agentadapter helper so the
+// env and flag paths produce identical transports.
 func newHTTPTransportWithTLS(cfg *tls.Config) *http.Transport {
-	base := http.DefaultTransport.(*http.Transport).Clone()
-	base.TLSClientConfig = cfg
-	return base
+	return agentadapter.NewHTTPTransportWithTLS(cfg)
 }

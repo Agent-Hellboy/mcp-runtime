@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -252,10 +253,19 @@ func parseSharedEnv(lookup envLookup) (sharedEnv, error) {
 		if out.transport == nil {
 			out.transport = &RuntimeTransport{}
 		}
-		out.transport.Base = &http.Transport{TLSClientConfig: tlsCfg}
+		out.transport.Base = NewHTTPTransportWithTLS(tlsCfg)
 	}
 
 	return out, nil
+}
+
+// NewHTTPTransportWithTLS returns an *http.Transport that uses the supplied
+// TLS config while preserving http.DefaultTransport's dial timeouts, keep-alive
+// settings, and ProxyFromEnvironment behaviour.
+func NewHTTPTransportWithTLS(cfg *tls.Config) *http.Transport {
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	base.TLSClientConfig = cfg
+	return base
 }
 
 // BuildTLSConfig builds a *tls.Config for outbound runtime connections.
@@ -274,7 +284,7 @@ func BuildTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
 		cfg.Certificates = []tls.Certificate{cert}
 	}
 	if caFile != "" {
-		pem, err := os.ReadFile(caFile)
+		pem, err := readRegularFile(caFile)
 		if err != nil {
 			return nil, fmt.Errorf("reading CA bundle %q: %w", caFile, err)
 		}
@@ -285,6 +295,34 @@ func BuildTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
 		cfg.RootCAs = pool
 	}
 	return cfg, nil
+}
+
+func readRegularFile(path string) ([]byte, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve file path: %w", err)
+	}
+	root, err := os.OpenRoot(filepath.Dir(absPath))
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+
+	base := filepath.Base(absPath)
+	info, err := root.Stat(base)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a regular file")
+	}
+	file, err := root.Open(base)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	return io.ReadAll(file)
 }
 
 func validateRequiredIdentity(runtimeURL *url.URL, id Identity) error {

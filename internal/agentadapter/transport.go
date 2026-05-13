@@ -116,7 +116,10 @@ func (t *RuntimeTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 			}
 			break
 		}
-		if !shouldRetryStatus(resp.StatusCode) {
+		// Defensive nil check: the RoundTripper contract guarantees a
+		// non-nil resp when err is nil, but a misbehaving Base might
+		// violate it and panic the adapter.
+		if resp == nil || !shouldRetryStatus(resp.StatusCode) {
 			break
 		}
 		// Drain body before retry to allow connection reuse.
@@ -134,7 +137,10 @@ done:
 		elapsed := float64(time.Since(start).Milliseconds())
 		attrs := metric.WithAttributes(attribute.String("rpc.method", method))
 		t.latencyHist.Record(req.Context(), elapsed, attrs)
-		if lastErr == nil && resp != nil && resp.StatusCode >= http.StatusBadRequest {
+		// Only count 4xx as denials: 5xx is an upstream failure and would
+		// inflate the denial metric, misclassifying availability incidents
+		// as authorization/policy denials.
+		if lastErr == nil && resp != nil && resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError {
 			t.denialCount.Add(req.Context(), 1, attrs)
 		}
 	}
@@ -225,9 +231,15 @@ func isRetryableError(err error) bool {
 }
 
 func retryBackoff(attempt int) time.Duration {
-	d := retryBaseDelay << uint(attempt-1)
-	if d > retryMaxDelay {
-		return retryMaxDelay
+	if attempt <= 1 {
+		return retryBaseDelay
+	}
+	d := retryBaseDelay
+	for i := 1; i < attempt; i++ {
+		d *= 2
+		if d >= retryMaxDelay {
+			return retryMaxDelay
+		}
 	}
 	return d
 }

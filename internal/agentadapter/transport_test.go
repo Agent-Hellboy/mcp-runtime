@@ -176,3 +176,48 @@ func TestRuntimeTransportDoesNotRetryNonRetryableMethod(t *testing.T) {
 		t.Fatalf("attempts = %d, want 1 (no retry for tools/call)", attempts)
 	}
 }
+
+func TestRuntimeTransportNilRespDoesNotPanic(t *testing.T) {
+	t.Parallel()
+
+	// Misbehaving base: returns (nil, nil), violating the RoundTripper
+	// contract. The transport must not panic.
+	transport := &RuntimeTransport{
+		Base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return nil, nil
+		}),
+	}
+
+	ctx := withRPCMethod(context.Background(), "tools/list")
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://example/mcp", strings.NewReader(`{}`))
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip() error = %v, want nil", err)
+	}
+	if resp != nil {
+		t.Fatalf("resp = %#v, want nil for nil-returning base", resp)
+	}
+}
+
+func TestRetryBackoffCapsWithoutShiftConversion(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		attempt int
+		want    time.Duration
+	}{
+		{attempt: 0, want: retryBaseDelay},
+		{attempt: 1, want: retryBaseDelay},
+		{attempt: 2, want: 2 * retryBaseDelay},
+		{attempt: 20, want: retryMaxDelay},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.want.String(), func(t *testing.T) {
+			t.Parallel()
+			if got := retryBackoff(tt.attempt); got != tt.want {
+				t.Fatalf("retryBackoff(%d) = %s, want %s", tt.attempt, got, tt.want)
+			}
+		})
+	}
+}

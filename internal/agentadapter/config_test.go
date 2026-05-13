@@ -1,6 +1,12 @@
 package agentadapter
 
 import (
+	"crypto/x509"
+	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -243,4 +249,41 @@ func TestLoadConfigRejectsInvalidRuntimeControls(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildTLSConfigLoadsCABundle(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer upstream.Close()
+
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	caPEM := pemForCertificate(upstream.Certificate())
+	if err := os.WriteFile(caPath, caPEM, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg, err := BuildTLSConfig("", "", caPath)
+	if err != nil {
+		t.Fatalf("BuildTLSConfig() error = %v", err)
+	}
+	if cfg.RootCAs == nil {
+		t.Fatal("RootCAs = nil, want custom CA pool")
+	}
+}
+
+func TestBuildTLSConfigRejectsDirectoryCABundle(t *testing.T) {
+	t.Parallel()
+
+	_, err := BuildTLSConfig("", "", t.TempDir())
+	if err == nil {
+		t.Fatal("BuildTLSConfig() error = nil, want directory rejection")
+	}
+	if !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("BuildTLSConfig() error = %q, want regular file message", err)
+	}
+}
+
+func pemForCertificate(cert *x509.Certificate) []byte {
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
 }

@@ -1852,6 +1852,7 @@ forward MCP traffic to governed MCP Runtime routes.
 - [`Variables`](#agent-adapters-variables)
 - [`func BuildTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error)`](#agent-adapters-func-buildtlsconfig-certfile-keyfile-cafile-string-tls-config-error)
 - [`func NewHTTPProxyHandler(cfg ProxyConfig) (http.Handler, error)`](#agent-adapters-func-newhttpproxyhandler-cfg-proxyconfig-http-handler-error)
+- [`func NewHTTPTransportWithTLS(cfg *tls.Config) *http.Transport`](#agent-adapters-func-newhttptransportwithtls-cfg-tls-config-http-transport)
 - [`func RunHTTPProxy(ctx context.Context, cfg ProxyConfig) error`](#agent-adapters-func-runhttpproxy-ctx-context-context-cfg-proxyconfig-error)
 - [`func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error`](#agent-adapters-func-runstdioshim-ctx-context-context-cfg-shimconfig-opts-stdiooptions-error)
 - [`func SplitTrimmed(s, sep string) []string`](#agent-adapters-func-splittrimmed-s-sep-string-string)
@@ -1939,6 +1940,15 @@ func NewHTTPProxyHandler(cfg ProxyConfig) (http.Handler, error)
     NewHTTPProxyHandler returns a reverse proxy that forwards MCP HTTP traffic
     to the configured runtime route and injects issued governance identity
     headers.
+
+```
+
+<a id="agent-adapters-func-newhttptransportwithtls-cfg-tls-config-http-transport"></a>
+```text
+func NewHTTPTransportWithTLS(cfg *tls.Config) *http.Transport
+    NewHTTPTransportWithTLS returns an *http.Transport that uses the supplied
+    TLS config while preserving http.DefaultTransport's dial timeouts,
+    keep-alive settings, and ProxyFromEnvironment behaviour.
 
 ```
 
