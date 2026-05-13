@@ -9,7 +9,7 @@ If instructions conflict, prefer **this repo** (`README`, CRDs, `v1alpha1` types
 | Area | Path | Notes |
 |------|------|--------|
 | User-facing CLI | `cmd/mcp-runtime/`, `internal/cli/root/`, `internal/cli/<command>/`, `internal/cli/core/` | Entrypoint, foldered Cobra command routing, command-owned behavior for `setup`, `status`, `registry`, `server`, `access`, …, and shared CLI kernel code |
-| Agent adapters | `internal/cli/adapter/`, `internal/agentadapter/` | HTTP and stdio adapters (`mcp-runtime adapter proxy/stdio`) that inject issued governance identity/session headers while leaving grant/session creation and enforcement to the platform |
+| Agent adapters | `internal/cli/adapter/`, `internal/agentadapter/`, `services/api/internal/runtimeapi/adapter.go` | HTTP and stdio adapters (`mcp-runtime adapter proxy/stdio`) that inject governance identity/session headers. Recommended `--server <name> --agent <id> [--auto-refresh]` flow calls `POST /api/runtime/adapter/sessions` on the platform API, which picks a matching `MCPAccessGrant` and writes/reuses the `MCPAgentSession`. Explicit `MCP_RUNTIME_*` env vars and `--anonymous` (stdio) remain supported. Grant/session creation and enforcement stay on the platform side. |
 | Operator (controller) | `cmd/operator/`, `internal/operator/` | `MCPServer` reconciliation, ingress, gateway wiring |
 | API & CRD types | `api/v1alpha1/` | Source of truth for object shapes; CRD YAML in `config/crd/bases/` |
 | Access and policy (shared) | `pkg/access/`, `pkg/policy/` | Grant/session CRUD helpers plus rendered gateway policy contracts and evaluation semantics used by operator and proxy |

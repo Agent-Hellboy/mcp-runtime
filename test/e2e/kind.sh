@@ -3204,6 +3204,90 @@ EOF
   log_line policy "re-enabling access grant via CLI"
   ./bin/mcp-runtime access --use-kube grant enable "${SERVER_NAME}-grant" --namespace mcp-servers
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
+
+  # Phase 6: exercise the platform-issued adapter-session endpoint. The
+  # existing governance grant pins humanID to ${HUMAN_ID}, but the admin
+  # API_KEY maps to a different principal whose Subject we don't know up
+  # front. So apply a second, subject-wildcard grant just for this test and
+  # call the endpoint as the admin principal. The endpoint must pick the
+  # wildcard grant, write/reuse an MCPAgentSession with the deterministic
+  # adapter-<hash> name, and report reused=true on the second call.
+  log_line policy "applying subject-wildcard grant for adapter-session test"
+  cat >"${WORKDIR}/adapter-session-grant.yaml" <<EOF
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAccessGrant
+metadata:
+  name: ${SERVER_NAME}-adapter-grant
+  namespace: mcp-servers
+spec:
+  serverRef:
+    name: ${SERVER_NAME}
+  subject: {}
+  maxTrust: low
+  allowedSideEffects: [read]
+  policyVersion: v1
+EOF
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file adapter-session-grant.yaml)
+
+  # Use a fresh agentID per e2e invocation so deterministic-name reuse
+  # doesn't leak across re-runs in E2E_CACHE_MODE=1 (where the cluster and
+  # prior adapter-<hash> sessions are retained between runs). A timestamp
+  # suffix is sufficient; the assertions below verify the platform's own
+  # reuse semantics (reused=true on the *second* call within this run).
+  ADAPTER_AGENT_ID="e2e-adapter-agent-$(date +%s)"
+
+  log_line policy "adapter-session endpoint should issue a session for the wildcard grant"
+  ADAPTER_SESSION_BODY="$(printf '{"serverName":"%s","namespace":"mcp-servers","agentID":"%s"}' "${SERVER_NAME}" "${ADAPTER_AGENT_ID}")"
+  ADAPTER_SESSION_RESP="$(curl -fsS -X POST \
+    -H "x-api-key: ${API_KEY}" \
+    -H "content-type: application/json" \
+    --data "${ADAPTER_SESSION_BODY}" \
+    "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
+  echo "${ADAPTER_SESSION_RESP}" | ADAPTER_AGENT_ID="${ADAPTER_AGENT_ID}" python3 -c "
+import json, os, sys
+resp = json.load(sys.stdin)
+assert resp['namespace'] == 'mcp-servers', resp
+assert resp['serverName'] == '${SERVER_NAME}', resp
+assert resp['agentID'] == os.environ['ADAPTER_AGENT_ID'], resp
+assert resp['name'].startswith('adapter-'), resp
+assert resp['humanID'], 'humanID derived from principal must be non-empty: %r' % resp
+assert resp['consentedTrust'] in ('none','low','mid','high','full'), resp
+assert resp['expiresAt'], resp
+print('adapter-session issued:', resp['name'], 'reused=', resp['reused'])
+"
+  ADAPTER_SESSION_NAME="$(echo "${ADAPTER_SESSION_RESP}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["name"])')"
+  if ! kubectl get mcpagentsession "${ADAPTER_SESSION_NAME}" -n mcp-servers >/dev/null 2>&1; then
+    echo "expected MCPAgentSession ${ADAPTER_SESSION_NAME} in mcp-servers" >&2
+    exit 1
+  fi
+
+  # The second call must hit the platform's reuse path: same body within the
+  # same run, no Kubernetes round-trip, reused=true. This is independent of
+  # whether the first call hit a leftover from a previous e2e run.
+  log_line policy "adapter-session endpoint should reuse the existing session on a second call"
+  ADAPTER_SESSION_RESP2="$(curl -fsS -X POST \
+    -H "x-api-key: ${API_KEY}" \
+    -H "content-type: application/json" \
+    --data "${ADAPTER_SESSION_BODY}" \
+    "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
+  echo "${ADAPTER_SESSION_RESP2}" | python3 -c "
+import json, sys
+resp = json.load(sys.stdin)
+assert resp['name'] == '${ADAPTER_SESSION_NAME}', resp
+assert resp['reused'] is True, resp
+print('adapter-session reused:', resp['name'])
+"
+
+  log_line policy "adapter-session endpoint must reject requests with no matching grant"
+  ADAPTER_SESSION_REJECT_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+    -H "x-api-key: ${API_KEY}" \
+    -H "content-type: application/json" \
+    --data '{"serverName":"definitely-missing","namespace":"mcp-servers","agentID":"ops-agent"}' \
+    "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
+  if [[ "${ADAPTER_SESSION_REJECT_STATUS}" != "403" ]]; then
+    echo "expected 403 when no grant matches, got ${ADAPTER_SESSION_REJECT_STATUS}" >&2
+    exit 1
+  fi
 fi
 
 if scenario_selected "trust"; then

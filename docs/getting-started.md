@@ -558,13 +558,32 @@ The bundled Go example server also exposes `upper`, `lower`, `echo`, and
 `slugify`, and each of those tools expects a `message` field in `arguments`
 instead of `input` or `text`.
 
-For agent frameworks or IDEs that cannot attach the governance headers directly,
-use the built-in `mcp-runtime adapter proxy` or `mcp-runtime adapter stdio` subcommands and follow
-[Agent Adapters](agent-adapters.md). The same grant/session values from
-`/tmp/go-example-access.yaml` become `MCP_RUNTIME_HUMAN_ID`,
-`MCP_RUNTIME_AGENT_ID`, and `MCP_RUNTIME_SESSION_ID` for the adapter process.
-Set `MCP_RUNTIME_LOG_LEVEL=info` while debugging governed-agent demos when you
-want adapter stderr to show runtime denials such as `trust_too_low`.
+For agent frameworks or IDEs that cannot attach the governance headers
+directly, use the built-in `mcp-runtime adapter proxy` or `mcp-runtime adapter
+stdio` subcommands. The recommended flow is platform-issued sessions —
+the adapter calls the platform API at startup and the session/identity
+headers are derived from your login principal and an existing
+`MCPAccessGrant`:
+
+```bash
+./bin/mcp-runtime auth login --api-url http://localhost:18080
+./bin/mcp-runtime adapter stdio \
+  --runtime-url http://localhost:18080/go-example-mcp/mcp \
+  --server go-example-mcp \
+  --agent ticket-triage-agent \
+  --auto-refresh
+```
+
+The closed-environment path is still supported: copy
+`MCP_RUNTIME_HUMAN_ID`, `MCP_RUNTIME_AGENT_ID`, `MCP_RUNTIME_TEAM_ID`, and
+`MCP_RUNTIME_SESSION_ID` straight from `/tmp/go-example-access.yaml` if you
+do not want the platform to pick the grant. See
+[Agent Adapters](agent-adapters.md) for the full configuration reference,
+including auto-refresh, anonymous mode, mTLS, and the proxy's
+`/livez`/`/readyz`/`/metrics` endpoints.
+
+Set `MCP_RUNTIME_LOG_LEVEL=info` while debugging governed-agent demos when
+you want adapter stderr to show runtime denials such as `trust_too_low`.
 
 ```bash
 ./bin/mcp-runtime sentinel status
