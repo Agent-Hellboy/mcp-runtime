@@ -1,6 +1,7 @@
 package agentadapter
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,19 @@ import (
 )
 
 const maxLogFieldBytes = 120
+
+type rpcMethodContextKey struct{}
+
+// withRPCMethod stores the JSON-RPC method name on ctx so RuntimeTransport can
+// read it for method-keyed retry and OTel attribute labeling.
+func withRPCMethod(ctx context.Context, method string) context.Context {
+	return context.WithValue(ctx, rpcMethodContextKey{}, method)
+}
+
+func rpcMethodFromContext(ctx context.Context) string {
+	m, _ := ctx.Value(rpcMethodContextKey{}).(string)
+	return m
+}
 
 type rpcRequestMetadata struct {
 	ID       json.RawMessage
@@ -91,4 +105,64 @@ func closeIfPossible(reader io.Reader) {
 	if closer, ok := reader.(io.Closer); ok {
 		_ = closer.Close()
 	}
+}
+
+// isSessionExpiredBody returns true when the runtime denial body indicates
+// that the caller's session has expired or was not found — signals that the
+// agent should re-initialize rather than retry the current call.
+func isSessionExpiredBody(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	var obj struct {
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return false
+	}
+	var msg string
+	switch v := obj.Error.(type) {
+	case string:
+		msg = v
+	case map[string]any:
+		if m, ok := v["message"].(string); ok {
+			msg = m
+		}
+		if c, ok := v["code"].(string); ok {
+			msg += " " + c
+		}
+	}
+	lower := strings.ToLower(msg)
+	return strings.Contains(lower, "session_expired") || strings.Contains(lower, "session_not_found")
+}
+
+// injectRuntimeStatus adds runtime_status to the error.data field of a
+// JSON-RPC error body. Returns body unchanged when it is not a JSON-RPC error.
+func injectRuntimeStatus(body []byte, status string) []byte {
+	if !looksLikeJSONRPCError(body) {
+		return body
+	}
+	var response struct {
+		JSONRPC string             `json:"jsonrpc"`
+		ID      json.RawMessage    `json:"id,omitempty"`
+		Error   *rpcErrorForInject `json:"error"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil || response.Error == nil {
+		return body
+	}
+	if response.Error.Data == nil {
+		response.Error.Data = make(map[string]any)
+	}
+	response.Error.Data["runtime_status"] = status
+	out, err := json.Marshal(response)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+type rpcErrorForInject struct {
+	Code    int            `json:"code"`
+	Message string         `json:"message"`
+	Data    map[string]any `json:"data,omitempty"`
 }

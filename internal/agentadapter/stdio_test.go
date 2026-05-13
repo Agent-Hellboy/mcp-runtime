@@ -712,6 +712,46 @@ func TestIdentityApplyOmitsEmptyHeaders(t *testing.T) {
 	}
 }
 
+func TestRunStdioShimSurfacesSessionExpiredRuntimeStatus(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"session_not_found"}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	runtimeURL, _ := url.Parse(upstream.URL + "/mcp")
+	var output bytes.Buffer
+	err := RunStdioShim(context.Background(), ShimConfig{
+		RuntimeURL: runtimeURL,
+		Identity: Identity{
+			HumanID:   "human-1",
+			AgentID:   "agent-1",
+			SessionID: "session-1",
+		},
+		Transport: &RuntimeTransport{Base: upstream.Client().Transport},
+	}, StdioOptions{
+		Stdin:  strings.NewReader(`{"jsonrpc":"2.0","id":"exp-1","method":"tools/call","params":{"name":"upper"}}` + "\n"),
+		Stdout: &output,
+	})
+	if err != nil {
+		t.Fatalf("RunStdioShim() error = %v", err)
+	}
+
+	var response rpcErrorResponse
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &response); err != nil {
+		t.Fatalf("Unmarshal() error = %v; output=%s", err, output.String())
+	}
+	if string(response.ID) != `"exp-1"` {
+		t.Fatalf("id = %s, want exp-1", response.ID)
+	}
+	if got, _ := response.Error.Data["runtime_status"].(string); got != "session_expired" {
+		t.Fatalf("runtime_status = %q, want session_expired", got)
+	}
+}
+
 func readLineWithin(t *testing.T, reader *bufio.Reader, timeout time.Duration) string {
 	t.Helper()
 	type result struct {

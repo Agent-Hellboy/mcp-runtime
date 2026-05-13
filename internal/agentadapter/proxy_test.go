@@ -371,6 +371,42 @@ func TestHTTPProxyRoutesThroughSharedTransport(t *testing.T) {
 	}
 }
 
+func TestHTTPProxyInjectsRuntimeStatusOnSessionExpiredDenial(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":3,"error":{"code":-32000,"message":"session_not_found"}}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	target, err := url.Parse(upstream.URL + "/mcp")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	handler, err := NewHTTPProxyHandler(testConfig(target))
+	if err != nil {
+		t.Fatalf("NewHTTPProxyHandler() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8099/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"upper"}}`))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+	body, _ := io.ReadAll(recorder.Result().Body)
+	var response rpcErrorResponse
+	if err := json.Unmarshal(bytes.TrimSpace(body), &response); err != nil {
+		t.Fatalf("Unmarshal() error = %v; body=%s", err, body)
+	}
+	if got, _ := response.Error.Data["runtime_status"].(string); got != "session_expired" {
+		t.Fatalf("runtime_status = %q, want session_expired", got)
+	}
+}
+
 func testConfig(runtimeURL *url.URL) ProxyConfig {
 	return ProxyConfig{
 		RuntimeURL: runtimeURL,
