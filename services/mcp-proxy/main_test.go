@@ -377,6 +377,66 @@ func TestAuditPayloadDoesNotPersistRawQueryString(t *testing.T) {
 	}
 }
 
+func TestAuditPayloadIncludesLatencyMetadata(t *testing.T) {
+	t.Parallel()
+
+	proxy := &proxyServer{
+		serverName:           "example-server",
+		serverNamespace:      "mcp-servers",
+		clusterName:          "kind",
+		defaultPolicyVersion: "test-policy",
+	}
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"jsonrpc":"2.0"}`))
+	req.ContentLength = int64(len(`{"jsonrpc":"2.0"}`))
+
+	payload := proxy.auditPayload(
+		req,
+		"/mcp",
+		"tools/call",
+		"echo",
+		identityContext{
+			HumanID:   "human-1",
+			AgentID:   "agent-1",
+			TeamID:    "team-acme",
+			SessionID: "session-1",
+		},
+		nil,
+		policypkg.Decision{Allowed: true, Reason: "allowed", PolicyVersion: "test-policy"},
+		http.StatusAccepted,
+		27,
+		91,
+	)
+
+	latencyMs, ok := payload["latency_ms"].(int64)
+	if !ok {
+		t.Fatalf("latency_ms type = %T, want int64", payload["latency_ms"])
+	}
+	if latencyMs < 0 {
+		t.Fatalf("latency_ms = %d, want >= 0", latencyMs)
+	}
+	if got := payload["method"]; got != http.MethodPost {
+		t.Fatalf("method = %#v, want %q", got, http.MethodPost)
+	}
+	if got := payload["path"]; got != "/mcp" {
+		t.Fatalf("path = %#v, want %q", got, "/mcp")
+	}
+	if got := payload["status"]; got != http.StatusAccepted {
+		t.Fatalf("status = %#v, want %d", got, http.StatusAccepted)
+	}
+	if got := payload["rpc_method"]; got != "tools/call" {
+		t.Fatalf("rpc_method = %#v, want %q", got, "tools/call")
+	}
+	if got := payload["tool_name"]; got != "echo" {
+		t.Fatalf("tool_name = %#v, want %q", got, "echo")
+	}
+	if got := payload["bytes_in"]; got != req.ContentLength {
+		t.Fatalf("bytes_in = %#v, want %d", got, req.ContentLength)
+	}
+	if got := payload["bytes_out"]; got != 91 {
+		t.Fatalf("bytes_out = %#v, want %d", got, 91)
+	}
+}
+
 func TestStartPolicyCacheRequiresConfiguredPolicyFile(t *testing.T) {
 	t.Parallel()
 

@@ -4277,6 +4277,11 @@ routing_methods = {
     for payload in (payload_dict(event) for event in all_server_events)
     if payload.get("rpc_method")
 }
+server_latencies = [
+    payload.get("latency_ms")
+    for payload in (payload_dict(event) for event in all_server_events)
+    if payload.get("latency_ms") is not None
+]
 source_counts = {item.get("source"): int(item.get("count", 0)) for item in sources}
 event_type_counts = {item.get("event_type"): int(item.get("count", 0)) for item in event_types}
 deny_aaa_ping_reasons = {
@@ -4396,6 +4401,21 @@ check(
     f"expected at least 8 events after smoke and policy checks, got {stats}",
 )
 check(
+    bool(server_latencies),
+    "server audit events include latency_ms values",
+    f"expected latency_ms values in server audit payloads: {all_server_events[:3]}",
+)
+check(
+    all(isinstance(latency, (int, float)) for latency in server_latencies),
+    "server audit event latencies are numeric",
+    f"unexpected latency payload types: {server_latencies}",
+)
+check(
+    all(latency >= 0 for latency in server_latencies),
+    "server audit event latencies are non-negative",
+    f"unexpected negative latency values: {server_latencies}",
+)
+check(
     oauth_allow_payload.get("human_id") == oauth_human_id and oauth_allow_payload.get("agent_id") == oauth_agent_id,
     "oauth allow payload identity matched",
     f"unexpected oauth allow identity payload: {oauth_allow_payload}",
@@ -4446,6 +4466,8 @@ rows = [
     ("analytics.type.mcp.request", str(event_type_counts.get("mcp.request", 0))),
     ("analytics.type.pii.check", str(event_type_counts.get("pii.check", 0))),
     ("analytics.type.service.route.check", str(event_type_counts.get("service.route.check", 0))),
+    ("analytics.latency_samples", str(len(server_latencies))),
+    ("analytics.latency_max_ms", str(max(server_latencies) if server_latencies else "n/a")),
     ("traces.tempo_found", str(len(traces))),
     ("logs.loki_streams", str(len(streams))),
 ]
