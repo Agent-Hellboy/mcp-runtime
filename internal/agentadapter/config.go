@@ -68,6 +68,10 @@ type ProxyConfig struct {
 	// Prometheus exporter wired to the OTel MeterProvider that backs
 	// RuntimeTransport.Meter. Nil → /metrics returns 404.
 	MetricsHandler http.Handler
+	// IdentityProvider overrides Identity per-request when set. Used by
+	// callers that rotate identity at runtime (e.g. auto-refreshed
+	// platform-issued adapter sessions). Nil → static Identity is used.
+	IdentityProvider IdentityProvider
 }
 
 // ShimConfig configures the stdio adapter that bridges newline-delimited
@@ -93,6 +97,9 @@ type ShimConfig struct {
 	// Entries are keyed by identity + runtime URL and invalidated on a
 	// tools/list_changed notification or when the TTL expires.
 	ToolsCacheTTL time.Duration
+	// IdentityProvider overrides Identity per-request when set.
+	// See ProxyConfig.IdentityProvider for the contract.
+	IdentityProvider IdentityProvider
 }
 
 // DefaultAnonymousMethods is the set of MCP methods the stdio shim allows in

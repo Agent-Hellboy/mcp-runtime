@@ -42,6 +42,7 @@ func newProxyHandlerAndTracker(cfg ProxyConfig) (http.Handler, *requestTracker, 
 	target := cloneURL(cfg.RuntimeURL)
 	transport := cfg.transportOrDefault()
 	identity := cfg.Identity
+	identityProvider := cfg.IdentityProvider
 	logLevel := cfg.LogLevel
 	logWriter := cfg.LogWriter
 	hostHeader := cfg.HostHeader
@@ -59,7 +60,11 @@ func newProxyHandlerAndTracker(cfg ProxyConfig) (http.Handler, *requestTracker, 
 			if !disableXFF {
 				req.SetXForwarded()
 			}
-			identity.Apply(req.Out.Header)
+			current := identity
+			if identityProvider != nil {
+				current = identityProvider()
+			}
+			current.Apply(req.Out.Header)
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			if resp.StatusCode < http.StatusBadRequest || resp.StatusCode >= http.StatusInternalServerError {

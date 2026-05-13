@@ -825,7 +825,7 @@ func TestStdioShimCachesToolsListWhenTTLSet(t *testing.T) {
 func TestStdioShimSkipsToolsCacheInAnonymousMode(t *testing.T) {
 	t.Parallel()
 
-	var listCalls int
+	var listCalls int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body bytes.Buffer
 		_, _ = body.ReadFrom(r.Body)
@@ -835,7 +835,7 @@ func TestStdioShimSkipsToolsCacheInAnonymousMode(t *testing.T) {
 		case "initialize":
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`))
 		case "tools/list":
-			listCalls++
+			atomic.AddInt32(&listCalls, 1)
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}`))
 		}
 	}))
@@ -859,8 +859,80 @@ func TestStdioShimSkipsToolsCacheInAnonymousMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunStdioShim() error = %v", err)
 	}
-	if listCalls != 2 {
-		t.Fatalf("upstream tools/list calls = %d, want 2 (anonymous mode bypasses cache)", listCalls)
+	if got := atomic.LoadInt32(&listCalls); got != 2 {
+		t.Fatalf("upstream tools/list calls = %d, want 2 (anonymous mode bypasses cache)", got)
+	}
+}
+
+func TestStdioShimToolsCacheKeyTracksIdentityProvider(t *testing.T) {
+	t.Parallel()
+
+	// Two callers (different SessionIDs) hit the same upstream through the
+	// same shim: the cache must NOT serve caller B's tools/list out of caller
+	// A's entry. The identity here rotates via IdentityProvider — the same
+	// mechanism --auto-refresh uses.
+	var listCalls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body bytes.Buffer
+		_, _ = body.ReadFrom(r.Body)
+		method := parseRPCRequestMetadata(body.Bytes()).Method
+		w.Header().Set("content-type", "application/json")
+		w.Header().Set(MCPSessionHeader, "rt-session")
+		switch method {
+		case "initialize":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`))
+		case "tools/list":
+			atomic.AddInt32(&listCalls, 1)
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"upper"}]}}`))
+		}
+	}))
+	t.Cleanup(upstream.Close)
+
+	runtimeURL, _ := url.Parse(upstream.URL + "/mcp")
+	identity := atomic.Value{}
+	identity.Store(Identity{HumanID: "human-1", AgentID: "agent-1", SessionID: "session-A"})
+	provider := IdentityProvider(func() Identity {
+		return identity.Load().(Identity)
+	})
+
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	defer stdinReader.Close()
+	defer stdoutReader.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- RunStdioShim(context.Background(), ShimConfig{
+			RuntimeURL:       runtimeURL,
+			Identity:         identity.Load().(Identity),
+			IdentityProvider: provider,
+			Transport:        &RuntimeTransport{Base: upstream.Client().Transport},
+			ToolsCacheTTL:    30 * time.Second,
+		}, StdioOptions{Stdin: stdinReader, Stdout: stdoutWriter})
+		_ = stdoutWriter.Close()
+	}()
+	reader := bufio.NewReader(stdoutReader)
+
+	_, _ = stdinWriter.Write([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n"))
+	_ = readLineWithin(t, reader, 2*time.Second)
+	// Caller A: tools/list — populates cache under session-A.
+	_, _ = stdinWriter.Write([]byte(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}` + "\n"))
+	_ = readLineWithin(t, reader, 2*time.Second)
+
+	// Rotate identity (e.g. auto-refresh issued a new session).
+	identity.Store(Identity{HumanID: "human-1", AgentID: "agent-1", SessionID: "session-B"})
+
+	// Caller B: tools/list — must miss the cache and re-fetch, since the
+	// key includes SessionID. If the cache were keyed off cfg.Identity it
+	// would replay caller A's entry.
+	_, _ = stdinWriter.Write([]byte(`{"jsonrpc":"2.0","id":3,"method":"tools/list"}` + "\n"))
+	_ = readLineWithin(t, reader, 2*time.Second)
+	_ = stdinWriter.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("RunStdioShim() error = %v", err)
+	}
+	if got := atomic.LoadInt32(&listCalls); got != 2 {
+		t.Fatalf("upstream tools/list calls = %d, want 2 (rotated identity must miss cache)", got)
 	}
 }
 
