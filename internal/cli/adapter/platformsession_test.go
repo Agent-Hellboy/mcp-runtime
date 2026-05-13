@@ -61,7 +61,7 @@ func TestApplyPlatformSessionPopulatesIdentity(t *testing.T) {
 		agent:     "ops-agent",
 	}
 	var buf bytes.Buffer
-	id, provider, refresher, err := applyPlatformSession(context.Background(), &flags, &buf)
+	id, provider, refresher, err := applyPlatformSession(context.Background(), &flags, agentadapter.Identity{}, &buf)
 	if err != nil {
 		t.Fatalf("applyPlatformSession: %v", err)
 	}
@@ -79,6 +79,60 @@ func TestApplyPlatformSessionPopulatesIdentity(t *testing.T) {
 	}
 }
 
+func TestApplyPlatformSessionFlagOverridesSurviveSingleFetch(t *testing.T) {
+	var calls int32
+	_, _ = fakePlatformServer(t, time.Now().Add(time.Hour), &calls)
+	flags := platformSessionFlags{server: "demo", agent: "ops-agent"}
+	base := agentadapter.Identity{HumanID: "explicit-user", SessionID: "explicit-session"}
+	id, _, _, err := applyPlatformSession(context.Background(), &flags, base, nil)
+	if err != nil {
+		t.Fatalf("applyPlatformSession: %v", err)
+	}
+	if id.HumanID != "explicit-user" {
+		t.Fatalf("HumanID = %q, want explicit-user (flag override)", id.HumanID)
+	}
+	if id.SessionID != "explicit-session" {
+		t.Fatalf("SessionID = %q, want explicit-session (flag override)", id.SessionID)
+	}
+	if id.AgentID != "ops-agent" {
+		t.Fatalf("AgentID = %q, want issued ops-agent (no flag override)", id.AgentID)
+	}
+	if id.TeamID != "team-acme" {
+		t.Fatalf("TeamID = %q, want issued team-acme", id.TeamID)
+	}
+}
+
+func TestApplyPlatformSessionRefreshProviderPreservesFlagOverrides(t *testing.T) {
+	var calls int32
+	_, _ = fakePlatformServer(t, time.Now().Add(time.Hour), &calls)
+	flags := platformSessionFlags{server: "demo", agent: "ops-agent", autoRefresh: true}
+	base := agentadapter.Identity{HumanID: "explicit-user", SessionID: "explicit-session"}
+	id, provider, refresher, err := applyPlatformSession(context.Background(), &flags, base, nil)
+	if err != nil {
+		t.Fatalf("applyPlatformSession: %v", err)
+	}
+	if refresher != nil {
+		defer refresher.Stop()
+	}
+	if provider == nil {
+		t.Fatal("auto-refresh must return a provider")
+	}
+	// Initial value already merges base over issued.
+	if id.HumanID != "explicit-user" || id.SessionID != "explicit-session" {
+		t.Fatalf("initial id = %#v, want flag overrides applied", id)
+	}
+	// Provider must apply the same merge (this is the bug Gemini caught:
+	// returning the raw issued identity would drop HumanID and SessionID
+	// overrides every time the adapter forwards a request).
+	got := provider()
+	if got.HumanID != "explicit-user" || got.SessionID != "explicit-session" {
+		t.Fatalf("provider() = %#v, want flag overrides preserved across refresh", got)
+	}
+	if got.AgentID != "ops-agent" || got.TeamID != "team-acme" {
+		t.Fatalf("provider() = %#v, want issued AgentID and TeamID as fallbacks", got)
+	}
+}
+
 func TestApplyPlatformSessionAutoRefreshUsesProvider(t *testing.T) {
 	var calls int32
 	// Short expiry forces the refresh loop to fire quickly.
@@ -90,7 +144,7 @@ func TestApplyPlatformSessionAutoRefreshUsesProvider(t *testing.T) {
 		autoRefresh: true,
 	}
 	var buf bytes.Buffer
-	id, provider, refresher, err := applyPlatformSession(context.Background(), &flags, &buf)
+	id, provider, refresher, err := applyPlatformSession(context.Background(), &flags, agentadapter.Identity{}, &buf)
 	if err != nil {
 		t.Fatalf("applyPlatformSession: %v", err)
 	}
@@ -136,21 +190,24 @@ func TestMergeIdentityFromIssuedFlagWins(t *testing.T) {
 
 func TestApplyPlatformSessionDisabledWhenServerUnset(t *testing.T) {
 	flags := platformSessionFlags{}
-	id, provider, refresher, err := applyPlatformSession(context.Background(), &flags, nil)
+	base := agentadapter.Identity{HumanID: "from-flag"}
+	id, provider, refresher, err := applyPlatformSession(context.Background(), &flags, base, nil)
 	if err != nil {
 		t.Fatalf("applyPlatformSession: %v", err)
 	}
 	if provider != nil || refresher != nil {
 		t.Fatal("disabled bootstrap must return nil provider and refresher")
 	}
-	if id != (agentadapter.Identity{}) {
-		t.Fatalf("identity = %#v, want empty zero value", id)
+	// When the bootstrap is disabled the base identity passes through unchanged
+	// so callers that rely on flag/env identity keep working.
+	if id != base {
+		t.Fatalf("identity = %#v, want base identity %#v passed through", id, base)
 	}
 }
 
 func TestApplyPlatformSessionRequiresAgent(t *testing.T) {
 	flags := platformSessionFlags{server: "demo"}
-	_, _, _, err := applyPlatformSession(context.Background(), &flags, nil)
+	_, _, _, err := applyPlatformSession(context.Background(), &flags, agentadapter.Identity{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "--agent") {
 		t.Fatalf("err = %v, want missing --agent error", err)
 	}

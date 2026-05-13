@@ -62,10 +62,14 @@ func bindPlatformSessionFlags(cmd *cobra.Command, f *platformSessionFlags) {
 }
 
 // applyPlatformSession asks the platform for an issued adapter session and
-// returns a snapshot identity plus, when autoRefresh is set, an IdentityProvider
-// that the adapter calls on every outbound request. The caller wires the
-// provider into the adapter config (ProxyConfig/ShimConfig.IdentityProvider)
-// and must Stop the returned refresher before the process exits.
+// returns the effective identity for first use plus, when autoRefresh is set,
+// an IdentityProvider that the adapter calls on every outbound request.
+//
+// baseIdentity carries the user's explicit flag/env overrides (--human-id,
+// --agent-id, etc.). The returned identity and the IdentityProvider closure
+// both apply mergeIdentityFromIssued(base, issued) so user overrides survive
+// every refresh — without this, auto-refresh would silently revert to the
+// platform-issued values on each tick.
 //
 // errMsgSink receives refresh failures; the loop keeps the previous identity
 // in place until the next tick succeeds, so transient platform errors do not
@@ -73,10 +77,11 @@ func bindPlatformSessionFlags(cmd *cobra.Command, f *platformSessionFlags) {
 func applyPlatformSession(
 	ctx context.Context,
 	f *platformSessionFlags,
+	baseIdentity agentadapter.Identity,
 	errMsgSink io.Writer,
 ) (agentadapter.Identity, agentadapter.IdentityProvider, *platformSessionRefresher, error) {
 	if !f.enabled() {
-		return agentadapter.Identity{}, nil, nil, nil
+		return baseIdentity, nil, nil, nil
 	}
 	if strings.TrimSpace(f.agent) == "" {
 		return agentadapter.Identity{}, nil, nil, errors.New("--agent (or $" + EnvAdapterAgent + ") is required when --server is set")
@@ -101,13 +106,14 @@ func applyPlatformSession(
 	if err != nil {
 		return agentadapter.Identity{}, nil, nil, fmt.Errorf("create adapter session: %w", err)
 	}
-	identity := adapterIdentityFromSession(session)
+	issued := adapterIdentityFromSession(session)
+	merged := mergeIdentityFromIssued(baseIdentity, issued)
 
 	if !f.autoRefresh {
-		return identity, nil, nil, nil
+		return merged, nil, nil, nil
 	}
 	holder := &atomic.Value{}
-	holder.Store(identity)
+	holder.Store(issued)
 	r := &platformSessionRefresher{
 		client: client,
 		flags:  *f,
@@ -117,9 +123,10 @@ func applyPlatformSession(
 	}
 	r.start(ctx)
 	provider := agentadapter.IdentityProvider(func() agentadapter.Identity {
-		return holder.Load().(agentadapter.Identity)
+		// Merge on every call so user overrides survive each refresh.
+		return mergeIdentityFromIssued(baseIdentity, holder.Load().(agentadapter.Identity))
 	})
-	return identity, provider, r, nil
+	return merged, provider, r, nil
 }
 
 // adapterIdentityFromSession converts a platform AdapterSession into the

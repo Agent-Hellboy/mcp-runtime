@@ -37,15 +37,15 @@ override the result.`,
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			issued, provider, refresher, err := applyPlatformSession(ctx, &sessionFlags, cmd.ErrOrStderr())
+			effective, provider, refresher, err := applyPlatformSession(ctx, &sessionFlags, cfg.Identity, cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
 			if refresher != nil {
 				defer refresher.Stop()
 			}
-			if sessionFlags.enabled() {
-				cfg.Identity = mergeIdentityFromIssued(cfg.Identity, issued)
+			cfg.Identity = effective
+			if provider != nil {
 				cfg.IdentityProvider = provider
 			}
 			if err := cfg.Validate(); err != nil {
