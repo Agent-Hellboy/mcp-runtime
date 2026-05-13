@@ -41,7 +41,6 @@ import (
 	chdriver "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/MicahParks/keyfunc"
 	"github.com/golang-jwt/jwt/v4"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	clickhousepkg "mcp-runtime/pkg/clickhouse"
@@ -326,16 +325,7 @@ func main() {
 		}()
 	}
 
-	metricsMux := http.NewServeMux()
-	metricsMux.Handle("/metrics", promhttp.Handler())
-	metricsServer := &http.Server{
-		Addr:              ":" + metricsPort,
-		Handler:           metricsMux,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
+	metricsShutdown, metricsErrs := serviceutil.StartMetricsServer(metricsPort)
 	log.Printf("mcp-sentinel-api listening on :%s", port)
 	handler := otelhttp.NewHandler(logRequests(mux), "http.server")
 	httpServer := &http.Server{
@@ -351,7 +341,7 @@ func main() {
 	defer stopSignals()
 	serverErrs := make(chan error, 2)
 	go func() {
-		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err, ok := <-metricsErrs; ok {
 			serverErrs <- fmt.Errorf("metrics server failed: %w", err)
 		}
 	}()
@@ -373,7 +363,7 @@ func main() {
 	if err := httpServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Printf("api shutdown error: %v", err)
 	}
-	if err := metricsServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := metricsShutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Printf("metrics shutdown error: %v", err)
 	}
 	if store != nil {

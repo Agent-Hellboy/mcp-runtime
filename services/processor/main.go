@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"sort"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -87,22 +85,14 @@ func main() {
 	})
 	defer reader.Close()
 
+	metricsShutdown, metricsErrs := serviceutil.StartMetricsServer(metricsPort)
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = metricsShutdown(shutdownCtx)
+	}()
 	go func() {
-		metricsMux := http.NewServeMux()
-		metricsMux.Handle("/metrics", promhttp.Handler())
-		metricsMux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("ok"))
-		})
-		metricsServer := &http.Server{
-			Addr:              ":" + metricsPort,
-			Handler:           metricsMux,
-			ReadHeaderTimeout: 5 * time.Second,
-			ReadTimeout:       15 * time.Second,
-			WriteTimeout:      15 * time.Second,
-			IdleTimeout:       60 * time.Second,
-		}
-		if err := metricsServer.ListenAndServe(); err != nil {
+		if err, ok := <-metricsErrs; ok {
 			log.Printf("metrics server stopped: %v", err)
 		}
 	}()
@@ -202,7 +192,7 @@ func main() {
 			shutdownFlushCancel()
 			return
 		case msg := <-messageInput:
-			consumeCtx := contextFromKafkaTraceHeaders(ctx, msg.Headers)
+			consumeCtx := serviceutil.ExtractKafkaHeaders(ctx, msg.Headers)
 			consumeCtx, span := tracer.Start(consumeCtx, "kafka.consume",
 				trace.WithSpanKind(trace.SpanKindConsumer),
 				trace.WithAttributes(
@@ -235,21 +225,6 @@ func main() {
 			}
 		}
 	}
-}
-
-func contextFromKafkaTraceHeaders(parent context.Context, headers []kafka.Header) context.Context {
-	if len(headers) == 0 {
-		return parent
-	}
-	carrier := make(map[string]string, len(headers))
-	for _, header := range headers {
-		key := strings.ToLower(strings.TrimSpace(header.Key))
-		if key == "" || len(header.Value) == 0 {
-			continue
-		}
-		carrier[key] = string(header.Value)
-	}
-	return serviceutil.ContextWithTraceContext(parent, carrier)
 }
 
 func clickhouseFlushTraceContext(parent context.Context, spanContexts []trace.SpanContext, attrs []attribute.KeyValue) (context.Context, []trace.SpanStartOption) {

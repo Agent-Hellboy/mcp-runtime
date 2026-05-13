@@ -2,10 +2,15 @@
 package serviceutil
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // WriteJSON writes a JSON response with the specified status code.
@@ -22,6 +27,47 @@ func WriteJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("content-type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(data)
+}
+
+// StartMetricsServer starts a Prometheus metrics server with /metrics and /health.
+func StartMetricsServer(port string) (func(context.Context) error, <-chan error) {
+	metricsServer := &http.Server{
+		Addr:              listenAddr(port),
+		Handler:           metricsHandler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	errs := make(chan error, 1)
+	go func() {
+		defer close(errs)
+		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errs <- err
+		}
+	}()
+	return metricsServer.Shutdown, errs
+}
+
+func metricsHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	return mux
+}
+
+func listenAddr(port string) string {
+	port = strings.TrimSpace(port)
+	if port == "" {
+		return ":0"
+	}
+	if strings.HasPrefix(port, ":") || strings.Contains(port, ":") {
+		return port
+	}
+	return ":" + port
 }
 
 type statusRecorder struct {
