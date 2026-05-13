@@ -415,7 +415,7 @@ func TestAuditPayloadIncludesLatencyMetadata(t *testing.T) {
 	if !ok {
 		t.Fatalf("latency_ms type = %T, want int64", payload["latency_ms"])
 	}
-if latencyMs != 27 {
+	if latencyMs != 27 {
 		t.Fatalf("latency_ms = %d, want 27", latencyMs)
 	}
 	if got := payload["method"]; got != http.MethodPost {

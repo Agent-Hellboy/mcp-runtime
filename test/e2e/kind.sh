@@ -2999,6 +2999,20 @@ wait_http "http://127.0.0.1:${SENTINEL_PORT}/api/stats" "x-api-key: ${API_KEY}"
 wait_http "http://127.0.0.1:${TEMPO_PORT}/ready"
 wait_http "http://127.0.0.1:${LOKI_PORT}/ready"
 
+echo "[registry] checking public ingress admin auth"
+REGISTRY_PUBLIC_URL="http://127.0.0.1:${TRAEFIK_PORT}/v2/_catalog"
+REGISTRY_UNAUTH_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: registry.local" "${REGISTRY_PUBLIC_URL}" || true)"
+if [[ "${REGISTRY_UNAUTH_STATUS}" != "401" && "${REGISTRY_UNAUTH_STATUS}" != "403" ]]; then
+  echo "[registry][fail] unauthenticated public registry catalog returned ${REGISTRY_UNAUTH_STATUS}, want 401 or 403" >&2
+  exit 1
+fi
+REGISTRY_ADMIN_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: registry.local" -H "x-api-key: ${API_KEY}" "${REGISTRY_PUBLIC_URL}" || true)"
+if [[ "${REGISTRY_ADMIN_STATUS}" != "200" ]]; then
+  echo "[registry][fail] admin public registry catalog returned ${REGISTRY_ADMIN_STATUS}, want 200" >&2
+  exit 1
+fi
+echo "[registry][pass] public registry catalog requires admin auth"
+
 echo "[proxy] starting local ingress proxies for curl MCP checks"
 start_header_proxy_bg "${MCP_CURL_ANON_PORT}" \
   "http://127.0.0.1:${TRAEFIK_PORT}" \

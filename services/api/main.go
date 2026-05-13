@@ -114,6 +114,7 @@ type apiServer struct {
 	oidcIssuer   string
 	oidcAudience string
 	userKeys     userAPIKeyStore
+	registryAuth registryCredentialAuthenticator
 	platform     *platformStore
 	runtime      *runtimeapi.RuntimeServer
 	runtimeInit  string
@@ -246,6 +247,7 @@ func main() {
 		}
 		server.platform = store
 		server.userKeys = store
+		server.registryAuth = store
 	}
 
 	mux := http.NewServeMux()
@@ -263,6 +265,7 @@ func main() {
 			"runtime_initialized": true,
 		})
 	})
+	mux.HandleFunc("/api/registry/authz", server.handleRegistryAuthz)
 	mux.HandleFunc("/api/auth/login", server.handleLogin)
 	mux.HandleFunc("/api/auth/oidc", server.handleOIDCLogin)
 	mux.HandleFunc("/api/auth/signup", server.handleSignup)
