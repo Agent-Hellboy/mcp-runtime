@@ -109,6 +109,7 @@ Governance-related changes usually span `api/v1alpha1/access_types.go`, `pkg/acc
 ```mermaid
 flowchart TB
     Cmd[cmd/mcp-runtime] --> CLIRoot[internal/cli/root]
+    CLIRoot --> CLIAdapter
     CLIAdapter[internal/cli/adapter] --> AgentAdapter[internal/agentadapter]
     CLIRoot --> CLICommands[internal/cli/<command>]
     CLICommands --> CLICore[internal/cli/core]
