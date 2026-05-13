@@ -14,19 +14,25 @@ type Identity struct {
 }
 
 // Apply writes the governance identity onto an outbound request's headers,
-// replacing any caller-supplied values. TeamID is omitted when empty so the
-// gateway sees a missing header (the documented "any team" semantics) rather
-// than an empty value. SessionID is required by ValidateConfig today and is
-// always set; the anonymous-mode flow that may omit it is a Phase 3b change.
+// replacing any caller-supplied values. Headers are always deleted first to
+// strip spoofed inbound values. A header is only re-set when its value is
+// non-empty, so anonymous-mode adapters with partial identity naturally omit
+// the missing headers rather than forwarding empty strings.
 func (id Identity) Apply(headers http.Header) {
 	headers.Del(HumanIDHeader)
 	headers.Del(AgentIDHeader)
 	headers.Del(TeamIDHeader)
 	headers.Del(AgentSessionHeader)
-	headers.Set(HumanIDHeader, id.HumanID)
-	headers.Set(AgentIDHeader, id.AgentID)
+	if id.HumanID != "" {
+		headers.Set(HumanIDHeader, id.HumanID)
+	}
+	if id.AgentID != "" {
+		headers.Set(AgentIDHeader, id.AgentID)
+	}
 	if id.TeamID != "" {
 		headers.Set(TeamIDHeader, id.TeamID)
 	}
-	headers.Set(AgentSessionHeader, id.SessionID)
+	if id.SessionID != "" {
+		headers.Set(AgentSessionHeader, id.SessionID)
+	}
 }

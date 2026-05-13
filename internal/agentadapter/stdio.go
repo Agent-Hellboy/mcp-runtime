@@ -24,10 +24,30 @@ type StdioOptions struct {
 	Stdout io.Writer
 }
 
+// sessionState tracks the lifecycle of the MCP session within the stdio shim.
+type sessionState uint8
+
+const (
+	// sessionStateRequired is the default: a governed identity and a successful
+	// initialize are required before non-handshake requests are forwarded.
+	sessionStateRequired sessionState = iota
+	// sessionStateOptional is set when Anonymous is true: the shim forwards
+	// requests without an issued identity or session ID.
+	sessionStateOptional
+	// sessionStateReady means initialize succeeded and (if the runtime returned
+	// one) the Mcp-Session-Id header has been captured.
+	sessionStateReady
+	// sessionStateFailed means initialize returned an HTTP error or a transport
+	// error. Subsequent non-initialize requests are rejected with a JSON-RPC
+	// error rather than forwarded.
+	sessionStateFailed
+)
+
 type stdioShim struct {
 	cfg             ShimConfig
 	client          *http.Client
 	mu              sync.Mutex
+	sessionSt       sessionState
 	sessionID       string
 	protocolVersion string
 }
@@ -82,9 +102,14 @@ func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error 
 		cfg.Transport = &RuntimeTransport{}
 	}
 
+	initState := sessionStateRequired
+	if cfg.Anonymous {
+		initState = sessionStateOptional
+	}
 	shim := &stdioShim{
 		cfg:             cfg,
 		client:          cfg.Transport.Client(),
+		sessionSt:       initState,
 		protocolVersion: cfg.ProtocolVersion,
 	}
 
@@ -190,6 +215,23 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	if parseErr != nil {
 		return emit(jsonRPCParseError(parseErr.Error()))
 	}
+
+	// Session state and allowlist checks — exempt protocol handshake messages.
+	if meta.Method != "initialize" && meta.Method != "notifications/initialized" {
+		if s.getSessionState() == sessionStateFailed {
+			if hasResponseID {
+				return emit(jsonRPCSessionFailedError(envelope.ID))
+			}
+			return nil
+		}
+		if !s.isMethodAllowed(meta.Method) {
+			if hasResponseID {
+				return emit(jsonRPCMethodNotAllowedError(envelope.ID, meta.Method))
+			}
+			return nil
+		}
+	}
+
 	protocolVersion, sessionID := s.prepareRequestState(envelope)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.RuntimeURL.String(), bytes.NewReader(payload))
@@ -211,6 +253,9 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil
+		}
+		if meta.Method == "initialize" {
+			s.setSessionState(sessionStateFailed)
 		}
 		if hasResponseID {
 			return emit(jsonRPCHTTPError(envelope.ID, http.StatusBadGateway, err.Error(), nil))
@@ -240,6 +285,9 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	body = bytes.TrimSpace(body)
 
 	if resp.StatusCode >= http.StatusBadRequest {
+		if meta.Method == "initialize" {
+			s.setSessionState(sessionStateFailed)
+		}
 		logRuntimeDenial(s.cfg.LogLevel, s.cfg.LogWriter, "adapter/stdio", resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), meta)
 		if len(body) > 0 && looksLikeJSONRPC(body) {
 			return emit(body)
@@ -248,6 +296,9 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 			return emit(jsonRPCHTTPError(envelope.ID, resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), body))
 		}
 		return nil
+	}
+	if meta.Method == "initialize" {
+		s.setSessionState(sessionStateReady)
 	}
 	if !hasResponseID {
 		return nil
@@ -273,6 +324,36 @@ func (s *stdioShim) setRuntimeSessionID(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessionID = sessionID
+}
+
+func (s *stdioShim) getSessionState() sessionState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sessionSt
+}
+
+func (s *stdioShim) setSessionState(st sessionState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessionSt = st
+}
+
+// isMethodAllowed returns true when method is in the configured (or default)
+// anonymous method allowlist. Always returns true when Anonymous is false.
+func (s *stdioShim) isMethodAllowed(method string) bool {
+	if !s.cfg.Anonymous {
+		return true
+	}
+	list := s.cfg.AnonymousMethods
+	if len(list) == 0 {
+		list = DefaultAnonymousMethods
+	}
+	for _, m := range list {
+		if m == method {
+			return true
+		}
+	}
+	return false
 }
 
 func parseRPCEnvelope(payload []byte) (rpcRequestEnvelope, bool, error) {
@@ -374,6 +455,38 @@ func jsonRPCParseError(detail string) []byte {
 	encoded, err := json.Marshal(response)
 	if err != nil {
 		return []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"parse error"}}`)
+	}
+	return encoded
+}
+
+func jsonRPCSessionFailedError(id json.RawMessage) []byte {
+	response := rpcErrorResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error: rpcError{
+			Code:    -32000,
+			Message: "session not established: initialize failed or was not attempted",
+		},
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		return []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"session not established"}}`)
+	}
+	return encoded
+}
+
+func jsonRPCMethodNotAllowedError(id json.RawMessage, method string) []byte {
+	response := rpcErrorResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error: rpcError{
+			Code:    -32601,
+			Message: "method not allowed in anonymous mode: " + method,
+		},
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		return []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32601,"message":"method not allowed"}}`)
 	}
 	return encoded
 }
