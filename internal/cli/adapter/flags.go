@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,9 +34,12 @@ type identityFlags struct {
 	tlsClientCert string
 	tlsClientKey  string
 	tlsCABundle   string
+	// proxy-only
+	maxInboundBytes int64
 	// stdio-only
 	anonymous        bool
 	anonymousMethods string
+	toolsCacheTTL    string
 }
 
 func bindIdentityFlags(cmd *cobra.Command, f *identityFlags) {
@@ -165,6 +169,7 @@ func (f identityFlags) toProxyConfig(listenAddr string) (agentadapter.ProxyConfi
 		ProtocolVersion:   r.protocolVersion,
 		LogLevel:          r.logLevel,
 		DisableXForwarded: f.disableXFF,
+		MaxInboundBytes:   f.maxInboundBytes,
 	}, nil
 }
 
@@ -187,6 +192,16 @@ func (f identityFlags) toShimConfig() (agentadapter.ShimConfig, error) {
 	if f.anonymous && strings.TrimSpace(f.anonymousMethods) != "" {
 		cfg.AnonymousMethods = agentadapter.SplitTrimmed(f.anonymousMethods, ",")
 	}
+	if raw := strings.TrimSpace(f.toolsCacheTTL); raw != "" {
+		ttl, err := time.ParseDuration(raw)
+		if err != nil {
+			return agentadapter.ShimConfig{}, fmt.Errorf("--tools-cache-ttl (or $%s) is invalid: %w", agentadapter.EnvToolsCacheTTL, err)
+		}
+		if ttl < 0 {
+			return agentadapter.ShimConfig{}, fmt.Errorf("--tools-cache-ttl (or $%s) must be zero or positive", agentadapter.EnvToolsCacheTTL)
+		}
+		cfg.ToolsCacheTTL = ttl
+	}
 	return cfg, nil
 }
 
@@ -200,6 +215,30 @@ func bindStdioFlags(cmd *cobra.Command, f *identityFlags) {
 		os.Getenv(agentadapter.EnvAnonymousMethods),
 		"Comma-separated list of MCP methods allowed in anonymous mode "+
 			"(default: $"+agentadapter.EnvAnonymousMethods+" or initialize,notifications/initialized,ping,tools/list,resources/list,prompts/list)")
+	cmd.Flags().StringVar(&f.toolsCacheTTL, "tools-cache-ttl",
+		os.Getenv(agentadapter.EnvToolsCacheTTL),
+		"Cache tools/list responses for this duration, e.g. 30s. Empty disables the cache. "+
+			"(default: $"+agentadapter.EnvToolsCacheTTL+")")
+}
+
+// bindProxyFlags adds proxy-specific flags on top of the shared identity flags.
+func bindProxyFlags(cmd *cobra.Command, f *identityFlags) {
+	cmd.Flags().Int64Var(&f.maxInboundBytes, "max-inbound-bytes",
+		parseEnvInt64(agentadapter.EnvMaxInboundBytes, 0),
+		"Maximum inbound JSON-RPC body bytes the proxy buffers before responding with 413 "+
+			"(default: $"+agentadapter.EnvMaxInboundBytes+" or 16777216)")
+}
+
+func parseEnvInt64(name string, def int64) int64 {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n < 0 {
+		return def
+	}
+	return n
 }
 
 func parseEnvBool(name string, def bool) bool {

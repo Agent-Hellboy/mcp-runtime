@@ -1892,6 +1892,8 @@ const (
 	EnvTLSClientCert    = "MCP_RUNTIME_TLS_CLIENT_CERT"
 	EnvTLSClientKey     = "MCP_RUNTIME_TLS_CLIENT_KEY"
 	EnvTLSCABundle      = "MCP_RUNTIME_TLS_CA_BUNDLE"
+	EnvMaxInboundBytes  = "MCP_RUNTIME_MAX_INBOUND_BYTES"
+	EnvToolsCacheTTL    = "MCP_RUNTIME_TOOLS_CACHE_TTL"
 
 	DefaultListenAddr      = "127.0.0.1:8099"
 	DefaultProtocolVersion = "2025-06-18"
@@ -1902,6 +1904,13 @@ const (
 	AgentSessionHeader = "X-MCP-Agent-Session"
 	MCPProtocolHeader  = "Mcp-Protocol-Version"
 	MCPSessionHeader   = "Mcp-Session-Id"
+)
+const (
+
+	// DefaultMaxInboundBytes caps the size of inbound JSON-RPC bodies that
+	// the proxy buffers for metadata capture. Requests over the cap get a
+	// 413 with a JSON-RPC parse-error body so the agent SDK can recover.
+	DefaultMaxInboundBytes int64 = 16 << 20
 )
 ```
 
@@ -2014,6 +2023,14 @@ type ProxyConfig struct {
 	LogLevel          string
 	LogWriter         io.Writer
 	DisableXForwarded bool
+	// MaxInboundBytes caps the size of JSON-RPC request bodies the proxy
+	// buffers when capturing metadata. Zero (or negative) means use
+	// DefaultMaxInboundBytes (16 MiB). Over-cap requests respond with 413.
+	MaxInboundBytes int64
+	// MetricsHandler, when set, is served at /metrics. Typical use: a
+	// Prometheus exporter wired to the OTel MeterProvider that backs
+	// RuntimeTransport.Meter. Nil → /metrics returns 404.
+	MetricsHandler http.Handler
 }
     ProxyConfig configures the local HTTP reverse-proxy adapter that exposes
     Streamable HTTP MCP to an agent SDK.
@@ -2110,6 +2127,11 @@ type ShimConfig struct {
 	// AnonymousMethods is the allowlist used when Anonymous is true. When empty
 	// the DefaultAnonymousMethods list applies.
 	AnonymousMethods []string
+	// ToolsCacheTTL enables a process-local tools/list response cache when
+	// set to a positive duration. Zero (or negative) disables the cache.
+	// Entries are keyed by identity + runtime URL and invalidated on a
+	// tools/list_changed notification or when the TTL expires.
+	ToolsCacheTTL time.Duration
 }
     ShimConfig configures the stdio adapter that bridges newline-delimited
     JSON-RPC MCP traffic to the runtime over HTTP.

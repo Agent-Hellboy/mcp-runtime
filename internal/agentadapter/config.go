@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -31,6 +32,8 @@ const (
 	EnvTLSClientCert    = "MCP_RUNTIME_TLS_CLIENT_CERT"
 	EnvTLSClientKey     = "MCP_RUNTIME_TLS_CLIENT_KEY"
 	EnvTLSCABundle      = "MCP_RUNTIME_TLS_CA_BUNDLE"
+	EnvMaxInboundBytes  = "MCP_RUNTIME_MAX_INBOUND_BYTES"
+	EnvToolsCacheTTL    = "MCP_RUNTIME_TOOLS_CACHE_TTL"
 
 	DefaultListenAddr      = "127.0.0.1:8099"
 	DefaultProtocolVersion = "2025-06-18"
@@ -57,6 +60,14 @@ type ProxyConfig struct {
 	LogLevel          string
 	LogWriter         io.Writer
 	DisableXForwarded bool
+	// MaxInboundBytes caps the size of JSON-RPC request bodies the proxy
+	// buffers when capturing metadata. Zero (or negative) means use
+	// DefaultMaxInboundBytes (16 MiB). Over-cap requests respond with 413.
+	MaxInboundBytes int64
+	// MetricsHandler, when set, is served at /metrics. Typical use: a
+	// Prometheus exporter wired to the OTel MeterProvider that backs
+	// RuntimeTransport.Meter. Nil → /metrics returns 404.
+	MetricsHandler http.Handler
 }
 
 // ShimConfig configures the stdio adapter that bridges newline-delimited
@@ -77,6 +88,11 @@ type ShimConfig struct {
 	// AnonymousMethods is the allowlist used when Anonymous is true. When empty
 	// the DefaultAnonymousMethods list applies.
 	AnonymousMethods []string
+	// ToolsCacheTTL enables a process-local tools/list response cache when
+	// set to a positive duration. Zero (or negative) disables the cache.
+	// Entries are keyed by identity + runtime URL and invalidated on a
+	// tools/list_changed notification or when the TTL expires.
+	ToolsCacheTTL time.Duration
 }
 
 // DefaultAnonymousMethods is the set of MCP methods the stdio shim allows in
@@ -123,6 +139,13 @@ func loadProxyConfig(lookup envLookup) (ProxyConfig, error) {
 		}
 		cfg.DisableXForwarded = !setXForwarded
 	}
+	if raw := strings.TrimSpace(lookup(EnvMaxInboundBytes)); raw != "" {
+		n, err := parseNonNegativeBytes(raw)
+		if err != nil {
+			return ProxyConfig{}, fmt.Errorf("%s is invalid: %w", EnvMaxInboundBytes, err)
+		}
+		cfg.MaxInboundBytes = n
+	}
 	if err := cfg.Validate(); err != nil {
 		return ProxyConfig{}, err
 	}
@@ -152,10 +175,31 @@ func loadShimConfig(lookup envLookup) (ShimConfig, error) {
 	if raw := strings.TrimSpace(lookup(EnvAnonymousMethods)); raw != "" {
 		cfg.AnonymousMethods = SplitTrimmed(raw, ",")
 	}
+	if raw := strings.TrimSpace(lookup(EnvToolsCacheTTL)); raw != "" {
+		ttl, err := time.ParseDuration(raw)
+		if err != nil {
+			return ShimConfig{}, fmt.Errorf("%s is invalid: %w", EnvToolsCacheTTL, err)
+		}
+		cfg.ToolsCacheTTL = ttl
+	}
 	if err := cfg.Validate(); err != nil {
 		return ShimConfig{}, err
 	}
 	return cfg, nil
+}
+
+// parseNonNegativeBytes parses an int64 byte size from a string. Zero is
+// allowed and signals "use the default" to callers; negative values or
+// unparseable input return an error.
+func parseNonNegativeBytes(s string) (int64, error) {
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("expected non-negative integer bytes, got %q", s)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("must be zero or positive")
+	}
+	return n, nil
 }
 
 // Validate enforces the runtime identity invariants for the HTTP proxy.
