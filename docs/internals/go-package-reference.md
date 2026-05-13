@@ -1865,6 +1865,7 @@ const (
 	EnvRuntimeURL      = "MCP_RUNTIME_URL"
 	EnvHumanID         = "MCP_RUNTIME_HUMAN_ID"
 	EnvAgentID         = "MCP_RUNTIME_AGENT_ID"
+	EnvTeamID          = "MCP_RUNTIME_TEAM_ID"
 	EnvSessionID       = "MCP_RUNTIME_SESSION_ID"
 	EnvHostHeader      = "MCP_RUNTIME_HOST_HEADER"
 	EnvListenAddr      = "MCP_RUNTIME_LISTEN_ADDR"
@@ -1878,6 +1879,7 @@ const (
 
 	HumanIDHeader      = "X-MCP-Human-ID"
 	AgentIDHeader      = "X-MCP-Agent-ID"
+	TeamIDHeader       = "X-MCP-Team-ID"
 	AgentSessionHeader = "X-MCP-Agent-Session"
 	MCPProtocolHeader  = "Mcp-Protocol-Version"
 	MCPSessionHeader   = "Mcp-Session-Id"
@@ -1928,6 +1930,7 @@ type Config struct {
 	RuntimeURL        *url.URL
 	HumanID           string
 	AgentID           string
+	TeamID            string
 	SessionID         string
 	HostHeader        string
 	ListenAddr        string

@@ -14,6 +14,7 @@ const (
 	EnvRuntimeURL      = "MCP_RUNTIME_URL"
 	EnvHumanID         = "MCP_RUNTIME_HUMAN_ID"
 	EnvAgentID         = "MCP_RUNTIME_AGENT_ID"
+	EnvTeamID          = "MCP_RUNTIME_TEAM_ID"
 	EnvSessionID       = "MCP_RUNTIME_SESSION_ID"
 	EnvHostHeader      = "MCP_RUNTIME_HOST_HEADER"
 	EnvListenAddr      = "MCP_RUNTIME_LISTEN_ADDR"
@@ -27,6 +28,7 @@ const (
 
 	HumanIDHeader      = "X-MCP-Human-ID"
 	AgentIDHeader      = "X-MCP-Agent-ID"
+	TeamIDHeader       = "X-MCP-Team-ID"
 	AgentSessionHeader = "X-MCP-Agent-Session"
 	MCPProtocolHeader  = "Mcp-Protocol-Version"
 	MCPSessionHeader   = "Mcp-Session-Id"
@@ -39,6 +41,7 @@ type Config struct {
 	RuntimeURL        *url.URL
 	HumanID           string
 	AgentID           string
+	TeamID            string
 	SessionID         string
 	HostHeader        string
 	ListenAddr        string
@@ -64,6 +67,7 @@ func loadConfig(lookup envLookup, includeListen bool) (Config, error) {
 	cfg := Config{
 		HumanID:         strings.TrimSpace(lookup(EnvHumanID)),
 		AgentID:         strings.TrimSpace(lookup(EnvAgentID)),
+		TeamID:          strings.TrimSpace(lookup(EnvTeamID)),
 		SessionID:       strings.TrimSpace(lookup(EnvSessionID)),
 		HostHeader:      strings.TrimSpace(lookup(EnvHostHeader)),
 		ProtocolVersion: strings.TrimSpace(lookup(EnvProtocolVersion)),
@@ -160,8 +164,12 @@ func cloneURL(in *url.URL) *url.URL {
 func applyGovernanceHeaders(headers http.Header, cfg Config) {
 	headers.Del(HumanIDHeader)
 	headers.Del(AgentIDHeader)
+	headers.Del(TeamIDHeader)
 	headers.Del(AgentSessionHeader)
 	headers.Set(HumanIDHeader, cfg.HumanID)
 	headers.Set(AgentIDHeader, cfg.AgentID)
+	if cfg.TeamID != "" {
+		headers.Set(TeamIDHeader, cfg.TeamID)
+	}
 	headers.Set(AgentSessionHeader, cfg.SessionID)
 }

@@ -1,0 +1,30 @@
+Adapter commands forward agent MCP traffic to a configured platform-issued
+runtime route while attaching the human, agent, team, and session identity
+headers the gateway enforces.
+
+Two transports are available:
+
+  mcp-runtime adapter proxy   Local Streamable HTTP listener (for SDKs that
+                              speak MCP over HTTP).
+  mcp-runtime adapter stdio   Stdio bridge for IDE-style clients that launch an
+                              MCP server as a subprocess.
+
+The adapter does not create grants or sessions. Issue them first with
+`mcp-runtime access grant apply` / `mcp-runtime access session apply` (or
+through the platform UI/API), then point the adapter at the runtime route with
+the returned identity values.
+
+Usage:
+  mcp-runtime adapter [command]
+
+Available Commands:
+  proxy       Run a local Streamable HTTP MCP proxy that forwards to the runtime
+  stdio       Bridge stdio MCP traffic to the configured runtime route
+
+Flags:
+  -h, --help   help for adapter
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging
+
+Use "mcp-runtime adapter [command] --help" for more information about a command.

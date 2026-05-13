@@ -39,6 +39,7 @@ func TestHTTPProxyInjectsGovernanceHeadersAndPreservesMCPHeaders(t *testing.T) {
 		RuntimeURL: target,
 		HumanID:    "support-lead",
 		AgentID:    "ticket-triage-agent",
+		TeamID:     "team-acme",
 		SessionID:  "sess-ticket-triage-agent",
 		HostHeader: "mcp.example.local",
 	})
@@ -53,6 +54,7 @@ func TestHTTPProxyInjectsGovernanceHeadersAndPreservesMCPHeaders(t *testing.T) {
 	req.Header.Set(MCPSessionHeader, "client-mcp-session")
 	req.Header.Set(HumanIDHeader, "spoofed-human")
 	req.Header.Set(AgentIDHeader, "spoofed-agent")
+	req.Header.Set(TeamIDHeader, "spoofed-team")
 	req.Header.Set(AgentSessionHeader, "spoofed-session")
 	recorder := httptest.NewRecorder()
 
@@ -72,6 +74,7 @@ func TestHTTPProxyInjectsGovernanceHeadersAndPreservesMCPHeaders(t *testing.T) {
 	}
 	assertHeader(t, upstreamHeaders, HumanIDHeader, "support-lead")
 	assertHeader(t, upstreamHeaders, AgentIDHeader, "ticket-triage-agent")
+	assertHeader(t, upstreamHeaders, TeamIDHeader, "team-acme")
 	assertHeader(t, upstreamHeaders, AgentSessionHeader, "sess-ticket-triage-agent")
 	assertHeader(t, upstreamHeaders, MCPProtocolHeader, "2025-06-18")
 	assertHeader(t, upstreamHeaders, MCPSessionHeader, "client-mcp-session")
@@ -79,6 +82,36 @@ func TestHTTPProxyInjectsGovernanceHeadersAndPreservesMCPHeaders(t *testing.T) {
 	assertHeader(t, upstreamHeaders, "accept", "application/json, text/event-stream")
 	if got := recorder.Header().Get(MCPSessionHeader); got != "runtime-mcp-session" {
 		t.Fatalf("response %s = %q, want runtime-mcp-session", MCPSessionHeader, got)
+	}
+}
+
+func TestHTTPProxyStripsSpoofedTeamHeaderWhenUnset(t *testing.T) {
+	t.Parallel()
+
+	var upstreamHeaders http.Header
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHeaders = r.Header.Clone()
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	target, err := url.Parse(upstream.URL + "/go-example-mcp/mcp")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	handler, err := NewHTTPProxyHandler(testConfig(target))
+	if err != nil {
+		t.Fatalf("NewHTTPProxyHandler() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8099/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`))
+	req.Header.Set(TeamIDHeader, "spoofed-team")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if got := upstreamHeaders.Get(TeamIDHeader); got != "" {
+		t.Fatalf("upstream %s = %q, want empty when adapter TeamID is unset", TeamIDHeader, got)
 	}
 }
 
