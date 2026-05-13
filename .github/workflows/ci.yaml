@@ -230,6 +230,8 @@ jobs:
         env:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/.e2e-artifacts/kind
           E2E_SCENARIOS: ${{ github.actor == 'dependabot[bot]' && 'smoke-auth,governance' || 'all' }}
+          E2E_IMAGE_MIRROR_PARALLELISM: "1"
+          E2E_IMAGE_BUILD_PARALLELISM: "2"
         run: bash test/e2e/kind.sh
 
       - name: Upload e2e artifacts

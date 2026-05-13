@@ -101,8 +101,9 @@ a CI-equivalent fresh cluster.
 Image mirroring and local image builds run concurrently during fresh e2e setup.
 `E2E_IMAGE_PREP_PARALLELISM` still tunes the default prep concurrency, while
 `E2E_IMAGE_MIRROR_PARALLELISM` and `E2E_IMAGE_BUILD_PARALLELISM` can split
-pull/push concurrency from heavier Docker builds. CI defaults to three mirror
-workers and two build workers; set either value to `1` on constrained machines.
+pull/push concurrency from heavier Docker builds. CI pins mirror workers to `1`
+to avoid Docker/local-registry push contention on shared runners and uses two
+build workers; set either value to `1` on constrained machines.
 Independent official SDK example deployments also run in parallel; the scenario
 checks themselves stay ordered because they share runtime state.
 Parallel worker logs are buffered in the e2e workdir under `stage-logs/` and
