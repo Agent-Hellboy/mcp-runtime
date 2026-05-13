@@ -126,6 +126,48 @@ func (m *Manager) ApplyServer(ctx context.Context, server *mcpv1alpha1.MCPServer
 	return decodeMCPServer(applied, "updated")
 }
 
+// GetServer retrieves one MCPServer resource.
+func (m *Manager) GetServer(ctx context.Context, namespace, name string) (*mcpv1alpha1.MCPServer, error) {
+	clients, err := m.requireClients()
+	if err != nil {
+		return nil, err
+	}
+	namespace = strings.TrimSpace(namespace)
+	name = strings.TrimSpace(name)
+	if namespace == "" {
+		return nil, errors.New("server namespace is required")
+	}
+	if name == "" {
+		return nil, errors.New("server name is required")
+	}
+	current, err := clients.Dynamic.Resource(MCPServerGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return decodeMCPServer(current, "fetched")
+}
+
+// DeleteServer deletes one MCPServer resource.
+func (m *Manager) DeleteServer(ctx context.Context, namespace, name string) error {
+	clients, err := m.requireClients()
+	if err != nil {
+		return err
+	}
+	namespace = strings.TrimSpace(namespace)
+	name = strings.TrimSpace(name)
+	if namespace == "" {
+		return errors.New("server namespace is required")
+	}
+	if name == "" {
+		return errors.New("server name is required")
+	}
+	err = clients.Dynamic.Resource(MCPServerGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
 func decodeMCPServer(obj *unstructured.Unstructured, action string) (*mcpv1alpha1.MCPServer, error) {
 	var out mcpv1alpha1.MCPServer
 	if err := apiruntime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &out); err != nil {

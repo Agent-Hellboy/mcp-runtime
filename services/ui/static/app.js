@@ -11,6 +11,9 @@ let grantsCache = [];
 let sessionsCache = [];
 let userAPIKeysCache = [];
 let serversCache = [];
+let publishPolicyCache = null;
+let selectedServerKey = "";
+let selectedServerEventsCache = [];
 let operationsServersCache = [];
 let operationsEventsCache = [];
 let operationsAuditCache = [];
@@ -55,6 +58,18 @@ function unauthorizedError() {
 
 function isUnauthorizedError(err) {
   return err?.name === "UnauthorizedError";
+}
+
+function readErrorMessage(err, fallback) {
+  const message = String(err?.message || "").trim();
+  if (!message) return fallback;
+  try {
+    const parsed = JSON.parse(message);
+    if (parsed?.error) return parsed.error;
+  } catch (_) {
+    // Use the plain error text below.
+  }
+  return message || fallback;
 }
 
 function activeScopeNamespace() {
@@ -965,11 +980,13 @@ async function loadServers() {
   try {
     const data = await fetchJSON(scopedPath("/runtime/servers"));
     serversCache = Array.isArray(data.servers) ? data.servers : [];
+    publishPolicyCache = data.publish_policy || null;
     renderServers();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
     console.error("Failed to load servers:", err);
     serversCache = [];
+    publishPolicyCache = null;
     const grid = document.getElementById("servers-grid");
     if (grid) {
       grid.innerHTML = '<div class="component-card error">Error loading MCP servers.</div>';
@@ -979,7 +996,11 @@ async function loadServers() {
 
 function renderSignedOutServerCatalog() {
   serversCache = [];
+  publishPolicyCache = null;
+  selectedServerKey = "";
+  selectedServerEventsCache = [];
   renderServerCatalogSummary();
+  renderServerDetailPanel(null);
   const grid = document.getElementById("servers-grid");
   if (grid) {
     grid.innerHTML = '<div class="server-empty-state">Sign in to view MCP servers.</div>';
@@ -993,12 +1014,14 @@ function renderServers() {
 
   if (serversCache.length === 0) {
     grid.innerHTML = '<div class="server-empty-state">No MCP servers found.</div>';
+    renderServerDetailPanel(null);
     return;
   }
 
   const servers = filteredServers();
   if (servers.length === 0) {
     grid.innerHTML = '<div class="server-empty-state">No servers match this search.</div>';
+    renderServerDetailPanel(null);
     return;
   }
 
@@ -1007,6 +1030,18 @@ function renderServers() {
   servers.forEach((server) => {
     const card = document.createElement("article");
     card.className = "server-card";
+    card.dataset.serverKey = serverKey(server);
+    card.tabIndex = 0;
+    card.classList.toggle("selected", selectedServerKey === serverKey(server));
+    card.addEventListener("click", (event) => {
+      if (event.target.closest("button, a, details, summary, code")) return;
+      selectServer(server);
+    });
+    card.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      selectServer(server);
+    });
 
     card.appendChild(renderServerHero(server));
     card.appendChild(renderServerMeta(server));
@@ -1027,6 +1062,8 @@ function renderServers() {
     fragment.appendChild(card);
   });
   grid.appendChild(fragment);
+  const selected = serversCache.find((server) => serverKey(server) === selectedServerKey);
+  renderServerDetailPanel(selected || null);
 }
 
 function filteredServers() {
@@ -1074,6 +1111,176 @@ function renderServerCatalogSummary() {
   setText("server-count-total", formatNumber(total));
   setText("server-count-ready", formatNumber(ready));
   setText("server-count-tools", formatNumber(tools));
+  setText("server-count-quota", formatPublishQuota());
+}
+
+function formatPublishQuota() {
+  if (!authenticated) {
+    return "-";
+  }
+  if (!publishPolicyCache || publishPolicyCache.active_server_limit_enabled !== true) {
+    return "off";
+  }
+  const count = Number(publishPolicyCache.active_server_count || 0);
+  const limit = Number(publishPolicyCache.active_server_limit || 0);
+  if (!limit) return "off";
+  return `${formatNumber(count)}/${formatNumber(limit)}`;
+}
+
+function serverKey(server) {
+  return `${server?.namespace || ""}/${server?.name || ""}`;
+}
+
+function selectServer(server) {
+  selectedServerKey = serverKey(server);
+  selectedServerEventsCache = [];
+  renderServers();
+  loadSelectedServerEvents(server);
+}
+
+async function loadSelectedServerEvents(server) {
+  if (!authenticated || !server?.namespace || !server?.name) {
+    return;
+  }
+  try {
+    const query = new URLSearchParams({
+      namespace: server.namespace,
+      server: server.name,
+      limit: "20",
+    });
+    const data = await fetchJSON(`/runtime/server-events?${query.toString()}`);
+    if (selectedServerKey !== serverKey(server)) return;
+    selectedServerEventsCache = Array.isArray(data.events) ? data.events : [];
+    renderServerDetailPanel(server);
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load server events:", err);
+    if (selectedServerKey !== serverKey(server)) return;
+    selectedServerEventsCache = [];
+    renderServerDetailPanel(server, "Analytics unavailable.");
+  }
+}
+
+async function retireServer(server) {
+  if (!server?.namespace || !server?.name) return;
+  const ok = window.confirm(`Retire ${server.namespace}/${server.name}?`);
+  if (!ok) return;
+  try {
+    await fetchJSON(
+      `/runtime/servers/${encodePathSegment(server.namespace)}/${encodePathSegment(server.name)}`,
+      { method: "DELETE" }
+    );
+    showToast("Server retired");
+    if (selectedServerKey === serverKey(server)) {
+      selectedServerKey = "";
+      selectedServerEventsCache = [];
+      renderServerDetailPanel(null);
+    }
+    await loadServers();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to retire server:", err);
+    showToast(readErrorMessage(err, "Retire failed"), "error");
+  }
+}
+
+function renderServerDetailPanel(server, errorMessage = "") {
+  const panel = document.getElementById("server-detail-panel");
+  if (!panel) return;
+  if (!server) {
+    panel.classList.add("hidden");
+    panel.innerHTML = "";
+    return;
+  }
+  panel.classList.remove("hidden");
+  const labels = server.labels && typeof server.labels === "object"
+    ? Object.entries(server.labels)
+    : [];
+  const description = server.description
+    ? `<p class="server-description">${escapeHtml(server.description)}</p>`
+    : "";
+  panel.innerHTML = `
+    <div class="server-inspector-head">
+      <div class="server-identity">
+        <span class="server-avatar" aria-hidden="true">${escapeHtml(serverInitials(server.name))}</span>
+        <div class="server-title-stack">
+          <h3>${escapeHtml(server.name || "-")}</h3>
+          <p>${escapeHtml(server.namespace || "-")}</p>
+          ${description}
+        </div>
+      </div>
+      <div class="server-card-actions">
+        ${server.endpoint ? '<button class="ghost server-action" id="selected-server-copy-url" type="button">Copy URL</button>' : ""}
+        ${authenticated ? '<button class="ghost danger server-action" id="selected-server-retire" type="button">Retire</button>' : ""}
+      </div>
+    </div>
+    <div class="server-detail-grid">
+      ${serverDetailStat("Ready Pods", server.ready || "0/0")}
+      ${serverDetailStat("Deployed", formatDateTime(server.age))}
+      ${serverDetailStat("Tools", String((server.tools || []).length))}
+      ${serverDetailStat("Prompts", String((server.prompts || []).length))}
+      ${serverDetailStat("Resources", String((server.resources || []).length))}
+      ${serverDetailStat("Tasks", String((server.tasks || []).length))}
+    </div>
+    <div class="server-detail-block">
+      <span class="server-detail-label">Endpoint</span>
+      <code class="server-endpoint">${escapeHtml(server.endpoint || "No public endpoint")}</code>
+    </div>
+    <div class="server-detail-block">
+      <span class="server-detail-label">Labels</span>
+      <div class="server-label-list">
+        ${
+          labels.length
+            ? labels
+                .map(([key, value]) => `<span>${escapeHtml(key)}=${escapeHtml(value)}</span>`)
+                .join("")
+            : '<span class="muted-text">None</span>'
+        }
+      </div>
+    </div>
+    <div class="server-detail-block">
+      <span class="server-detail-label">Recent Activity</span>
+      ${renderSelectedServerEvents(errorMessage)}
+    </div>
+  `;
+  document.getElementById("selected-server-copy-url")?.addEventListener("click", () => {
+    copyTextToClipboard(server.endpoint, "Endpoint copied");
+  });
+  document.getElementById("selected-server-retire")?.addEventListener("click", () => {
+    retireServer(server);
+  });
+}
+
+function renderSelectedServerEvents(errorMessage = "") {
+  if (errorMessage) {
+    return `<div class="empty">${escapeHtml(errorMessage)}</div>`;
+  }
+  if (!authenticated) {
+    return '<div class="empty">Sign in to view server analytics.</div>';
+  }
+  if (!selectedServerEventsCache.length) {
+    return '<div class="empty">No recent analytics events for this server.</div>';
+  }
+  const rows = selectedServerEventsCache
+    .map((event) => `
+      <tr>
+        <td>${escapeHtml(formatDateTime(event.timestamp))}</td>
+        <td>${escapeHtml(event.event_type || "-")}</td>
+        <td>${escapeHtml(event.tool_name || "-")}</td>
+        <td>${renderDecision(event.decision)}</td>
+      </tr>
+    `)
+    .join("");
+  return `
+    <div class="table-wrap compact">
+      <table>
+        <thead>
+          <tr><th>Time</th><th>Event</th><th>Tool</th><th>Decision</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
 }
 
 function renderServerHero(server) {
@@ -1114,6 +1321,12 @@ function renderServerMeta(server) {
 
   const actions = document.createElement("div");
   actions.className = "server-card-actions";
+  const detailsButton = document.createElement("button");
+  detailsButton.className = "ghost server-action";
+  detailsButton.type = "button";
+  detailsButton.textContent = "Details";
+  detailsButton.addEventListener("click", () => selectServer(server));
+  actions.appendChild(detailsButton);
   if (server.endpoint) {
     const copyURL = document.createElement("button");
     copyURL.className = "ghost server-action";
@@ -1130,6 +1343,14 @@ function renderServerMeta(server) {
     copyJSON.textContent = "Copy JSON";
     copyJSON.addEventListener("click", () => copyTextToClipboard(jsonText, "Connect JSON copied"));
     actions.appendChild(copyJSON);
+  }
+  if (authenticated) {
+    const retireButton = document.createElement("button");
+    retireButton.className = "ghost danger server-action";
+    retireButton.type = "button";
+    retireButton.textContent = "Retire";
+    retireButton.addEventListener("click", () => retireServer(server));
+    actions.appendChild(retireButton);
   }
   if (actions.children.length) {
     wrap.appendChild(actions);

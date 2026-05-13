@@ -569,6 +569,23 @@ func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace
 	return out.Server, nil
 }
 
+func (c *PlatformClient) DeleteRuntimeServer(ctx context.Context, namespace, name string) error {
+	p := fmt.Sprintf("/runtime/servers/%s/%s", url.PathEscape(strings.TrimSpace(namespace)), url.PathEscape(strings.TrimSpace(name)))
+	resp, err := c.do(ctx, http.MethodDelete, p, "", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return httpAPIError(resp.StatusCode, b)
+	}
+	return nil
+}
+
 func (c *PlatformClient) ListTeams(ctx context.Context) ([]Team, error) {
 	resp, err := c.do(ctx, http.MethodGet, "/runtime/teams", "", nil)
 	if err != nil {

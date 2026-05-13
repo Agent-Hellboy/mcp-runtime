@@ -146,6 +146,37 @@ curl -sS -X POST -H "authorization: Bearer $TOKEN" \
   http://localhost:8080/api/user/api-keys/"$KEY_ID"/revoke
 ```
 
+## Runtime MCP Servers
+
+Apply an MCPServer through the platform API:
+
+```bash
+curl -sS -X POST http://localhost:8080/api/runtime/servers \
+  -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"name":"demo","namespace":"user-1","spec":{"image":"registry.example.com/user-1/demo:latest"}}'
+```
+
+The response includes `publish_policy` on list calls. Admins configure the
+active-server limit with `PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `5`, `0`
+disables) and per-server cooldown with `PLATFORM_MCP_PUSH_COOLDOWN` (default
+`0s`, Go duration format). Quota or cooldown denials return `429`; cooldown
+responses include `next_allowed_at` and `Retry-After`.
+
+Retire an MCPServer to free quota:
+
+```bash
+curl -sS -X DELETE -H "authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/runtime/servers/user-1/demo
+```
+
+Fetch recent analytics for a server:
+
+```bash
+curl -sS -H "authorization: Bearer $TOKEN" \
+  'http://localhost:8080/api/runtime/server-events?namespace=user-1&server=demo'
+```
+
 ## Deployments
 
 Normal users deploy only into their owned namespace. Admins may pass

@@ -173,8 +173,8 @@ default:
 | Mode | Default namespace behavior | Non-admin behavior |
 |---|---|---|
 | `tenant` | Principal user/team namespace | Authenticated users read and write only their own tenant namespaces. |
-| `org` | `mcp-servers-org` | Authenticated users publish and browse the org catalog without tenant/team namespace selection. |
-| `public` | `mcp-servers-public` | Anonymous users can read the public preview catalog; signed-in users publish to the public catalog namespace. |
+| `org` | `mcp-servers-org` | Authenticated users publish and browse the org catalog and can still select owned/team namespaces. |
+| `public` | `mcp-servers-public` | Anonymous users can read the public preview catalog; signed-in users publish to the public catalog namespace and can still select owned/team namespaces. |
 
 - In `tenant` and `org` modes, anonymous callers cannot read the MCP server
   catalog.

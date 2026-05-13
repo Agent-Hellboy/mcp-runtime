@@ -68,7 +68,10 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 	}
 	namespaces = dedupeNonEmptyStrings(namespaces)
 	if len(namespaces) == 0 {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"servers": []serverInfo{}})
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"servers":        []serverInfo{},
+			"publish_policy": s.publishPolicyStatusForPrincipal(ctx, p),
+		})
 		return
 	}
 
@@ -96,29 +99,14 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 		return servers[i].Name < servers[j].Name
 	})
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"servers": serverInfosWithAccessJSON(servers, r)})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"servers":        serverInfosWithAccessJSON(servers, r),
+		"publish_policy": s.publishPolicyStatusForPrincipal(ctx, p),
+	})
 }
 
 func catalogNamespacesForPrincipal(p principal) []string {
-	if sharedCatalogWritableForUsers() {
-		return modeCatalogNamespaces()
-	}
-	namespaces := make([]string, 0, len(p.AllowedNamespaces)+len(p.Teams)+2)
-	if namespace := strings.TrimSpace(p.Namespace); namespace != "" {
-		namespaces = append(namespaces, namespace)
-	}
-	for _, team := range p.Teams {
-		if namespace := strings.TrimSpace(team.Namespace); namespace != "" {
-			namespaces = append(namespaces, namespace)
-		}
-	}
-	for _, namespace := range p.AllowedNamespaces {
-		namespace = strings.TrimSpace(namespace)
-		if namespace != "" {
-			namespaces = append(namespaces, namespace)
-		}
-	}
-	return dedupeNonEmptyStrings(namespaces)
+	return publishNamespacesForPrincipal(p)
 }
 
 func dedupeNonEmptyStrings(values []string) []string {
@@ -172,6 +160,10 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "shared catalog namespace is read-only for team users"})
 		return
 	}
+	if p.Role != roleAdmin && !principalCanPublishNamespace(p, namespace) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
+		return
+	}
 	namespaceTeamID := strings.TrimSpace(s.teamIDForPrincipalNamespace(r.Context(), namespace))
 	req.Spec.TeamID = strings.TrimSpace(req.Spec.TeamID)
 	if req.Spec.TeamID == "" {
@@ -207,11 +199,55 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 		req.Spec.IngressPath = "/" + req.Spec.PublicPathPrefix + "/mcp"
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+
+	current, err := control.GetServer(ctx, namespace, req.Name)
+	if err != nil && !apierrors.IsNotFound(err) {
+		log.Printf("runtime servers: fetch MCPServer %s/%s before apply failed: %v", namespace, req.Name, err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to inspect existing server"})
+		return
+	}
+	if p.Role != roleAdmin && current != nil && !serverWritableByPrincipal(*current, p) {
+		msg := "server already exists and is not owned by this user"
+		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "denied", req.Name, namespace, req.Spec.Image, msg))
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": msg})
+		return
+	}
+	rejection, err := s.evaluateServerPublishPolicy(ctx, p, namespace, req.Name, current, time.Now().UTC())
+	if err != nil {
+		log.Printf("runtime servers: evaluate publish policy for %s/%s failed: %v", namespace, req.Name, err)
+		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "error", req.Name, namespace, req.Spec.Image, err.Error()))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to evaluate publish policy"})
+		return
+	}
+	if rejection != nil {
+		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "denied", req.Name, namespace, req.Spec.Image, rejection.message))
+		if retryAfter := rejection.retryAfterHeader(); retryAfter != "" {
+			w.Header().Set("retry-after", retryAfter)
+		}
+		writeJSON(w, rejection.status, rejection.payload())
+		return
+	}
+
 	labels := map[string]string{
 		"app.kubernetes.io/managed-by": "mcp-runtime",
 	}
 	for key, value := range req.Labels {
 		labels[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+	if userID := p.UserID(); userID != "" {
+		labels[platformUserIDLabel] = userID
+		labels[createdByLabel] = userID
+	}
+	if namespaceTeamID != "" {
+		labels[platformTeamIDLabel] = namespaceTeamID
+	}
+	annotations := map[string]string{
+		platformLastPushAtAnnotation: time.Now().UTC().Format(time.RFC3339),
+	}
+	if userID := p.UserID(); userID != "" {
+		annotations[platformLastPushByAnnotation] = userID
 	}
 
 	server := &mcpv1alpha1.MCPServer{
@@ -220,15 +256,14 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 			Kind:       "MCPServer",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      req.Name,
-			Namespace: namespace,
-			Labels:    labels,
+			Name:        req.Name,
+			Namespace:   namespace,
+			Labels:      labels,
+			Annotations: annotations,
 		},
 		Spec: req.Spec,
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-	defer cancel()
 	if p.Role != roleAdmin && sharedCatalogWritableForUsers() && isModeCatalogNamespace(namespace) {
 		if err := s.EnsureCatalogNamespace(ctx, namespace); err != nil {
 			log.Printf("runtime servers: ensure catalog namespace %q failed: %v", namespace, err)
@@ -239,10 +274,67 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	applied, err := control.ApplyServer(ctx, server)
 	if err != nil {
 		code, msg := k8sclient.HTTPStatusFromK8sError(err)
+		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "error", req.Name, namespace, req.Spec.Image, msg))
 		writeJSON(w, code, map[string]string{"error": msg})
 		return
 	}
+	s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "success", req.Name, namespace, req.Spec.Image, ""))
 	writeJSON(w, http.StatusOK, map[string]any{"server": serverInfoFromMCPServer(*applied, serverDeploymentStatus{}, r)})
+}
+
+func (s *RuntimeServer) HandleRuntimeServerItem(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		w.Header().Set("allow", "DELETE")
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		return
+	}
+	control := s.controlPlane()
+	if control == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		return
+	}
+	p, ok := principalFromContext(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	namespace, name, err := extractNamespaceName(r.URL.Path, "/api/runtime/servers/")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if p.Role != roleAdmin && !principalCanPublishNamespace(p, namespace) {
+		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_retire", "denied", name, namespace, "", "forbidden namespace"))
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	current, err := control.GetServer(ctx, namespace, name)
+	if apierrors.IsNotFound(err) {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "namespace": namespace, "name": name})
+		return
+	}
+	if err != nil {
+		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_retire", "error", name, namespace, "", err.Error()))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to inspect server"})
+		return
+	}
+	if p.Role != roleAdmin && !serverWritableByPrincipal(*current, p) {
+		msg := "server is not owned by this user"
+		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_retire", "denied", name, namespace, "", msg))
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": msg})
+		return
+	}
+	if err := control.DeleteServer(ctx, namespace, name); err != nil {
+		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_retire", "error", name, namespace, current.Spec.Image, err.Error()))
+		code, msg := k8sclient.HTTPStatusFromK8sError(err)
+		writeJSON(w, code, map[string]string{"error": msg})
+		return
+	}
+	s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_retire", "success", name, namespace, current.Spec.Image, ""))
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "namespace": namespace, "name": name})
 }
 
 type serverInfo struct {

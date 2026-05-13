@@ -90,10 +90,11 @@ Flags: `--registry-type`, `--registry-storage`, `--platform-mode`, `--ingress`, 
 
 `--platform-mode` selects the namespace model. `tenant` is the default and
 scopes signed-in users to their own user/team tenant namespace; `org` uses
-`mcp-servers-org` for signed-in org-wide publishing; `public` uses
-`mcp-servers-public`, exposes anonymous catalog reads, and lets signed-in users
-publish public preview MCP servers. `MCP_PLATFORM_MODE` provides the same value
-when the flag is not set.
+`mcp-servers-org` for signed-in org-wide publishing while preserving owned/team
+namespace access; `public` uses `mcp-servers-public`, exposes anonymous catalog
+reads, and lets signed-in users publish public preview MCP servers while
+preserving owned/team namespace access. `MCP_PLATFORM_MODE` provides the same
+value when the flag is not set.
 
 `--test-mode` relaxes production guardrails, but it still builds and pushes the
 operator, gateway proxy, and Sentinel images with `latest` tags to the

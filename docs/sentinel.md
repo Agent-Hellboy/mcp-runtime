@@ -132,7 +132,9 @@ metrics on `METRICS_PORT` (default `9090`).
 | `GET` | `/api/stats` | Total event count. Admin role required. |
 | `GET` | `/api/sources` | Event counts grouped by source. Admin role required. |
 | `GET` | `/api/event-types` | Event counts grouped by event type. Admin role required. |
-| `GET`, `POST` | `/api/runtime/servers` | List or apply `MCPServer` resources through runtime authz scope. `tenant` mode defaults signed-in users to their own user/team namespace; `org` mode defaults signed-in users to `mcp-servers-org`; `public` mode allows anonymous reads and signed-in publishes in `mcp-servers-public`. |
+| `GET`, `POST` | `/api/runtime/servers` | List or apply `MCPServer` resources through runtime authz scope. `tenant` mode defaults signed-in users to their own user/team namespace; `org` mode includes the org catalog plus owned/team namespaces; `public` mode allows anonymous catalog reads and signed-in publishes in the public catalog plus owned/team namespaces. Responses include `publish_policy` for active-server quota/cooldown visibility. |
+| `DELETE` | `/api/runtime/servers/{namespace}/{name}` | Retire an owned MCPServer. Retiring deletes the MCPServer from Kubernetes and frees one active-server quota slot. |
+| `GET` | `/api/runtime/server-events?namespace=&server=` | Recent analytics events for one readable MCPServer, used by the user server detail view. |
 | `GET`, `POST` | `/api/runtime/grants` | List or apply `MCPAccessGrant` resources. |
 | `GET`, `DELETE` | `/api/runtime/grants/{namespace}/{name}` | Read or delete one grant. |
 | `POST` | `/api/runtime/grants/{namespace}/{name}/disable` | Set `spec.disabled=true`. |
