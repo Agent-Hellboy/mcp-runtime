@@ -30,7 +30,6 @@ servers:
         requiredTrust: high
         sideEffect: destructive
     analytics:
-      enabled: true
       ingestURL: http://analytics.custom-namespace.svc/api/events
       apiKeySecretRef:
         name: analytics-creds

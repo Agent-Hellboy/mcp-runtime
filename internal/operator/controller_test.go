@@ -418,7 +418,6 @@ func TestSetDefaults(t *testing.T) {
 					Enabled: true,
 				},
 				Analytics: &mcpv1alpha1.AnalyticsConfig{
-					Enabled:   true,
 					IngestURL: "http://analytics.default.svc/api/events",
 				},
 			},
@@ -435,7 +434,7 @@ func TestSetDefaults(t *testing.T) {
 		if mcpServer.Spec.Analytics == nil {
 			t.Fatal("expected analytics defaults to be applied")
 		}
-		assertEqual(t, "analyticsSource", mcpServer.Spec.Analytics.Source, "gateway-server")
+		assertEqual(t, "analyticsSource", mcpServer.Spec.Analytics.Source, "gateway-server-gateway")
 		assertEqual(t, "analyticsEventType", mcpServer.Spec.Analytics.EventType, "mcp.request")
 	})
 
@@ -447,9 +446,7 @@ func TestSetDefaults(t *testing.T) {
 				Gateway: &mcpv1alpha1.GatewayConfig{
 					Enabled: true,
 				},
-				Analytics: &mcpv1alpha1.AnalyticsConfig{
-					Enabled: true,
-				},
+				Analytics: &mcpv1alpha1.AnalyticsConfig{},
 			},
 		}
 
@@ -566,7 +563,6 @@ func TestReconcileDeploymentAddsGatewaySidecar(t *testing.T) {
 				Port:    8091,
 			},
 			Analytics: &mcpv1alpha1.AnalyticsConfig{
-				Enabled:   true,
 				IngestURL: "http://analytics.default.svc/api/events",
 				Source:    "gateway-server",
 				EventType: "mcp.request",

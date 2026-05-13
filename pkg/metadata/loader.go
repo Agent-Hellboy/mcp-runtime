@@ -152,9 +152,9 @@ func setDefaults(server *ServerMetadata) {
 			server.Gateway.UpstreamURL = fmt.Sprintf("http://127.0.0.1:%d", server.Port)
 		}
 	}
-	if server.Analytics != nil && server.Analytics.Enabled {
+	if server.Analytics != nil && !server.Analytics.Disabled {
 		if server.Analytics.Source == "" {
-			server.Analytics.Source = server.Name
+			server.Analytics.Source = server.Name + "-gateway"
 		}
 		if server.Analytics.EventType == "" {
 			server.Analytics.EventType = "mcp.request"

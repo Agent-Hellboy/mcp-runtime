@@ -713,7 +713,7 @@ Start with the smallest useful `MCPServer` and add features only when you need t
 - `spec.port` is the port your MCP server process listens on inside the container.
 - `spec.publicPathPrefix` controls the public route prefix. `payments` becomes `/payments/mcp`.
 - `spec.gateway.enabled` turns on brokered access and policy enforcement.
-- `spec.analytics.enabled` turns on audit and analytics emission for governed traffic.
+- Analytics emission is on by default for governed traffic when the operator has an analytics ingest URL configured. Set `spec.analytics.disabled: true` to opt this server out, or pass an explicit `spec.analytics.ingestURL` to override the operator default.
 
 Use this minimal pattern for most first deployments:
 

@@ -216,8 +216,11 @@ var (
 <a id="api-types-type-analyticsconfig-struct"></a>
 ```text
 type AnalyticsConfig struct {
-	// Enabled turns on analytics emission from the gateway sidecar.
-	Enabled bool `json:"enabled,omitempty"`
+	// Disabled suppresses analytics emission from the gateway sidecar for this
+	// server. Analytics is on by default whenever the operator has an analytics
+	// ingest URL configured (via Spec.Analytics.IngestURL or the operator's
+	// MCP_SENTINEL_INGEST_URL env). Set Disabled to true to opt out per server.
+	Disabled bool `json:"disabled,omitempty"`
 
 	// IngestURL is the analytics ingest endpoint.
 	IngestURL string `json:"ingestURL,omitempty"`
@@ -904,7 +907,9 @@ type MCPServerSpec struct {
 	Gateway *GatewayConfig `json:"gateway,omitempty"`
 
 	// Analytics configures audit/analytics emission for the gateway sidecar.
-	// Analytics is only applied when Gateway is enabled.
+	// Analytics is only applied when Gateway is enabled. Emission is on by
+	// default whenever the operator has an analytics ingest URL configured;
+	// set Analytics.Disabled to true to opt this server out.
 	Analytics *AnalyticsConfig `json:"analytics,omitempty"`
 
 	// Rollout configures deployment rollout behavior for this server.
@@ -1488,13 +1493,15 @@ func ResolveRegistryHost() string
 <a id="metadata-helpers-type-analyticsconfig-struct"></a>
 ```text
 type AnalyticsConfig struct {
-	Enabled         bool          `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Disabled        bool          `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 	IngestURL       string        `yaml:"ingestURL,omitempty" json:"ingestURL,omitempty"`
 	Source          string        `yaml:"source,omitempty" json:"source,omitempty"`
 	EventType       string        `yaml:"eventType,omitempty" json:"eventType,omitempty"`
 	APIKeySecretRef *SecretKeyRef `yaml:"apiKeySecretRef,omitempty" json:"apiKeySecretRef,omitempty"`
 }
     AnalyticsConfig configures analytics emission from the gateway sidecar.
+    Emission is on by default whenever the operator has an analytics ingest URL
+    configured; set Disabled to true to opt out per server.
 
 ```
 

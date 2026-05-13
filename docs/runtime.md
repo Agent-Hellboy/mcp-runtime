@@ -26,7 +26,7 @@ classDiagram
       +tools[]
       +auth, policy, session
       +gateway.enabled
-      +analytics.enabled
+      +analytics.disabled
       +rollout
       +status
     }

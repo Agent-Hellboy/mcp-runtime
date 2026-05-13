@@ -167,7 +167,6 @@ func TestGenerateCRD(t *testing.T) {
 				},
 			},
 			Analytics: &AnalyticsConfig{
-				Enabled:   true,
 				IngestURL: "http://analytics.default.svc/api/events",
 				Source:    "gateway-server",
 				EventType: "mcp.request",
@@ -240,7 +239,8 @@ func TestGenerateCRD(t *testing.T) {
 		assertMapStringValue(t, secretKeyRef, "key", "openai")
 
 		analytics := assertMapValue(t, spec, "analytics")
-		assertMapBoolValue(t, analytics, "enabled", true)
+		// "disabled" is omitted from output when false (omitempty); analytics
+		// is on by default whenever the operator has an ingest URL.
 		assertMapStringValue(t, analytics, "ingestURL", "http://analytics.default.svc/api/events")
 		assertMapStringValue(t, analytics, "source", "gateway-server")
 		assertMapStringValue(t, analytics, "eventType", "mcp.request")

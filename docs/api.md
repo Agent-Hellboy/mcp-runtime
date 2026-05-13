@@ -55,7 +55,7 @@ flowchart LR
 
 ### Validation rules in code
 
-- `analytics.enabled` requires `gateway.enabled`.
+- Analytics emission requires `gateway.enabled`; setting `analytics.disabled: true` (or omitting the analytics block) is the way to opt out per server.
 - `gateway.port` must differ from `spec.port`.
 - Every listed `tools[]` entry must declare `sideEffect`.
 - Canary rollouts require positive `canaryReplicas` strictly less than total replicas.

@@ -2680,7 +2680,6 @@ servers:
           cpu: 1m
           memory: 32Mi
     analytics:
-      enabled: true
       ingestURL: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
       apiKeySecretRef:
         name: ${SERVER_SECRET_NAME}
@@ -3720,7 +3719,6 @@ servers:
           cpu: 1m
           memory: 32Mi
     analytics:
-      enabled: true
       ingestURL: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
       apiKeySecretRef:
         name: ${SERVER_SECRET_NAME}
