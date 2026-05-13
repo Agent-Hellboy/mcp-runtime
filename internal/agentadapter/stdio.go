@@ -247,7 +247,10 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	cacheableTools := meta.Method == "tools/list" && hasResponseID && !s.cfg.Anonymous && s.toolsCache != nil
 	var cacheKey string
 	if cacheableTools {
-		cacheKey = toolsCacheKey(s.cfg.Identity, s.cfg.RuntimeURL.String())
+		// Key on the live identity, not the startup cfg.Identity, so a
+		// rotated SessionID (auto-refresh) starts fresh and never serves
+		// entries that belong to a previous session/policy context.
+		cacheKey = toolsCacheKey(s.currentIdentity(), s.cfg.RuntimeURL.String())
 		if cached, ok := s.toolsCache.get(cacheKey); ok {
 			if rebound := rebindResponseID(cached, envelope.ID); rebound != nil {
 				return emit(rebound)
