@@ -1853,6 +1853,7 @@ forward MCP traffic to governed MCP Runtime routes.
 - [`func NewHTTPProxyHandler(cfg ProxyConfig) (http.Handler, error)`](#agent-adapters-func-newhttpproxyhandler-cfg-proxyconfig-http-handler-error)
 - [`func RunHTTPProxy(ctx context.Context, cfg ProxyConfig) error`](#agent-adapters-func-runhttpproxy-ctx-context-context-cfg-proxyconfig-error)
 - [`func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error`](#agent-adapters-func-runstdioshim-ctx-context-context-cfg-shimconfig-opts-stdiooptions-error)
+- [`func SplitTrimmed(s, sep string) []string`](#agent-adapters-func-splittrimmed-s-sep-string-string)
 - [`type Identity struct`](#agent-adapters-type-identity-struct)
 - [`func (id Identity) Apply(headers http.Header)`](#agent-adapters-func-id-identity-apply-headers-http-header)
 - [`type ProxyConfig struct`](#agent-adapters-type-proxyconfig-struct)
@@ -1940,6 +1941,12 @@ func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error
     RunStdioShim reads newline-delimited stdio MCP JSON-RPC messages, forwards
     them to the configured Streamable HTTP route, and writes JSON-RPC responses
     back to stdout.
+
+```
+
+<a id="agent-adapters-func-splittrimmed-s-sep-string-string"></a>
+```text
+func SplitTrimmed(s, sep string) []string
 ```
 
 <a id="agent-adapters-types"></a>

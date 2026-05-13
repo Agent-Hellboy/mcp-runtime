@@ -151,19 +151,9 @@ func (f identityFlags) toShimConfig() (agentadapter.ShimConfig, error) {
 		Anonymous:       f.anonymous,
 	}
 	if f.anonymous && strings.TrimSpace(f.anonymousMethods) != "" {
-		cfg.AnonymousMethods = splitCSV(f.anonymousMethods)
+		cfg.AnonymousMethods = agentadapter.SplitTrimmed(f.anonymousMethods, ",")
 	}
 	return cfg, nil
-}
-
-func splitCSV(s string) []string {
-	var out []string
-	for _, p := range strings.Split(s, ",") {
-		if t := strings.TrimSpace(p); t != "" {
-			out = append(out, t)
-		}
-	}
-	return out
 }
 
 // bindStdioFlags adds stdio-specific flags on top of the shared identity flags.

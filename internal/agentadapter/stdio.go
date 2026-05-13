@@ -298,7 +298,14 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 		return nil
 	}
 	if meta.Method == "initialize" {
-		s.setSessionState(sessionStateReady)
+		// A 2xx response with a JSON-RPC error body (e.g. protocol mismatch
+		// returned in-band) counts as a failed session so subsequent calls are
+		// not forwarded without a working session.
+		if looksLikeJSONRPCError(body) {
+			s.setSessionState(sessionStateFailed)
+		} else {
+			s.setSessionState(sessionStateReady)
+		}
 	}
 	if !hasResponseID {
 		return nil
@@ -388,6 +395,17 @@ func looksLikeJSONRPC(payload []byte) bool {
 	return response.JSONRPC == "2.0" && (len(response.ID) > 0 || len(response.Result) > 0 || len(response.Error) > 0)
 }
 
+func looksLikeJSONRPCError(payload []byte) bool {
+	var response struct {
+		JSONRPC string          `json:"jsonrpc"`
+		Error   json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(payload, &response); err != nil {
+		return false
+	}
+	return response.JSONRPC == "2.0" && len(response.Error) > 0
+}
+
 func extractHTTPErrorMessage(status int, payload []byte) string {
 	if len(payload) > 0 {
 		var object struct {
@@ -470,7 +488,7 @@ func jsonRPCSessionFailedError(id json.RawMessage) []byte {
 	}
 	encoded, err := json.Marshal(response)
 	if err != nil {
-		return []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"session not established"}}`)
+		return []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"session not established"}}`, string(id)))
 	}
 	return encoded
 }
@@ -486,7 +504,7 @@ func jsonRPCMethodNotAllowedError(id json.RawMessage, method string) []byte {
 	}
 	encoded, err := json.Marshal(response)
 	if err != nil {
-		return []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32601,"message":"method not allowed"}}`)
+		return []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"method not allowed"}}`, string(id)))
 	}
 	return encoded
 }

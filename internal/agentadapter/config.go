@@ -142,7 +142,7 @@ func loadShimConfig(lookup envLookup) (ShimConfig, error) {
 		cfg.Anonymous = anon
 	}
 	if raw := strings.TrimSpace(lookup(EnvAnonymousMethods)); raw != "" {
-		cfg.AnonymousMethods = splitTrimmed(raw, ",")
+		cfg.AnonymousMethods = SplitTrimmed(raw, ",")
 	}
 	if err := cfg.Validate(); err != nil {
 		return ShimConfig{}, err
@@ -266,7 +266,7 @@ func cloneURL(in *url.URL) *url.URL {
 	return &out
 }
 
-func splitTrimmed(s, sep string) []string {
+func SplitTrimmed(s, sep string) []string {
 	parts := strings.Split(s, sep)
 	out := parts[:0]
 	for _, p := range parts {
