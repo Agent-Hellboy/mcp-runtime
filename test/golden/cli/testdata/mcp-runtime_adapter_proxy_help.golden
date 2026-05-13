@@ -1,0 +1,26 @@
+Start a local HTTP listener that accepts Streamable HTTP MCP traffic from an
+agent SDK and forwards each request to the configured platform runtime route,
+injecting the issued governance identity headers.
+
+Configure identity via flags or the matching MCP_RUNTIME_* environment
+variables. Flags win when both are set.
+
+Usage:
+  mcp-runtime adapter proxy [flags]
+
+Flags:
+      --agent-id string           Issued agent identity (default: $MCP_RUNTIME_AGENT_ID)
+  -h, --help                      help for proxy
+      --host-header string        Override the Host header sent to the runtime (default: $MCP_RUNTIME_HOST_HEADER)
+      --human-id string           Issued human identity (default: $MCP_RUNTIME_HUMAN_ID)
+      --listen string             Local listen address (default: $MCP_RUNTIME_LISTEN_ADDR or 127.0.0.1:8099)
+      --log-level string          Adapter log level: info logs runtime denials (default: $MCP_RUNTIME_LOG_LEVEL)
+      --no-xforwarded             Do not set X-Forwarded-* headers when forwarding to the runtime
+      --protocol-version string   MCP protocol version header to advertise (default: $MCP_RUNTIME_PROTOCOL_VERSION or 2025-06-18)
+      --request-timeout string    HTTP request timeout for adapter→runtime calls, e.g. 30s (default: $MCP_RUNTIME_REQUEST_TIMEOUT)
+      --runtime-url string        Platform-issued absolute MCP runtime URL (default: $MCP_RUNTIME_URL)
+      --session-id string         Issued agent session identity (default: $MCP_RUNTIME_SESSION_ID)
+      --team-id string            Issued team identity for team-scoped grants (default: $MCP_RUNTIME_TEAM_ID)
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

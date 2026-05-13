@@ -5,6 +5,7 @@ import (
 	"go.uber.org/zap"
 
 	"mcp-runtime/internal/cli/access"
+	"mcp-runtime/internal/cli/adapter"
 	"mcp-runtime/internal/cli/auth"
 	"mcp-runtime/internal/cli/bootstrap"
 	"mcp-runtime/internal/cli/cluster"
@@ -27,6 +28,7 @@ func AddCommands(root *cobra.Command, logger *zap.Logger) {
 	root.AddCommand(registry.New(runtime))
 	root.AddCommand(server.New(runtime))
 	root.AddCommand(access.New(runtime))
+	root.AddCommand(adapter.New(runtime))
 	root.AddCommand(auth.New(runtime))
 	root.AddCommand(bootstrap.New(runtime))
 	root.AddCommand(setup.New(runtime, clusterMgr))

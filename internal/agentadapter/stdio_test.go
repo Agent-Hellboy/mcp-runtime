@@ -65,6 +65,7 @@ func TestRunStdioShimInjectsHeadersAndMaintainsRuntimeMCPSession(t *testing.T) {
 		RuntimeURL:      runtimeURL,
 		HumanID:         "support-lead",
 		AgentID:         "ticket-triage-agent",
+		TeamID:          "team-acme",
 		SessionID:       "sess-ticket-triage-agent",
 		HostHeader:      "mcp.example.local",
 		ProtocolVersion: "2025-01-01",
@@ -90,6 +91,7 @@ func TestRunStdioShimInjectsHeadersAndMaintainsRuntimeMCPSession(t *testing.T) {
 	}
 	assertHeader(t, first.Headers, HumanIDHeader, "support-lead")
 	assertHeader(t, first.Headers, AgentIDHeader, "ticket-triage-agent")
+	assertHeader(t, first.Headers, TeamIDHeader, "team-acme")
 	assertHeader(t, first.Headers, AgentSessionHeader, "sess-ticket-triage-agent")
 	assertHeader(t, first.Headers, MCPProtocolHeader, "2025-06-18")
 	if got := first.Headers.Get(MCPSessionHeader); got != "" {

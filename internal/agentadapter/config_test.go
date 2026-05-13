@@ -86,6 +86,43 @@ func TestLoadShimConfigDoesNotSetDefaultHTTPTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadConfigParsesOptionalTeamID(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		EnvRuntimeURL: "http://localhost:18080/demo/mcp",
+		EnvHumanID:    "human-1",
+		EnvAgentID:    "agent-1",
+		EnvTeamID:     "team-acme",
+		EnvSessionID:  "session-1",
+	}
+	cfg, err := loadConfig(func(key string) string { return env[key] }, false)
+	if err != nil {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+	if cfg.TeamID != "team-acme" {
+		t.Fatalf("TeamID = %q, want team-acme", cfg.TeamID)
+	}
+}
+
+func TestLoadConfigTeamIDIsOptional(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		EnvRuntimeURL: "http://localhost:18080/demo/mcp",
+		EnvHumanID:    "human-1",
+		EnvAgentID:    "agent-1",
+		EnvSessionID:  "session-1",
+	}
+	cfg, err := loadConfig(func(key string) string { return env[key] }, false)
+	if err != nil {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+	if cfg.TeamID != "" {
+		t.Fatalf("TeamID = %q, want empty default", cfg.TeamID)
+	}
+}
+
 func TestLoadConfigParsesOptionalRuntimeControls(t *testing.T) {
 	t.Parallel()
 
