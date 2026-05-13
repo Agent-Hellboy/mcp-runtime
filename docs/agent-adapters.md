@@ -192,7 +192,9 @@ publicly, and there is no safe shared cache key.
 
 When the agent framework supports Streamable HTTP MCP and custom headers,
 you can call the runtime directly without the adapter. Mint a session with
-the platform API once, then attach the returned identity on every request:
+the platform API once, then attach the returned identity on every request.
+Use a platform login token or user API key for this call; service-only setup
+keys do not carry a human subject and cannot mint adapter sessions.
 
 ```python
 import asyncio
@@ -203,6 +205,7 @@ from agents import Agent, Runner
 from agents.mcp import MCPServerStreamableHttp
 
 async def main() -> None:
+    platform_token = os.environ["MCP_PLATFORM_API_TOKEN"]
     async with httpx.AsyncClient() as http:
         resp = await http.post(
             os.environ["MCP_PLATFORM_API_URL"].rstrip("/")
@@ -211,7 +214,9 @@ async def main() -> None:
                 "serverName": "go-example-mcp",
                 "agentID": "ticket-triage-agent",
             },
-            headers={"x-api-key": os.environ["MCP_PLATFORM_API_TOKEN"]},
+            headers={
+                "Authorization": f"Bearer {platform_token}",
+            },
         )
         resp.raise_for_status()
         session = resp.json()
