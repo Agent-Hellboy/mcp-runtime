@@ -143,27 +143,46 @@ X-MCP-Agent-Session: sess-8f1b9d
 
 ### Agent adapters
 
-Agent-side adapters are optional helper processes for frameworks and IDEs that
-cannot attach these headers directly. `mcp-runtime adapter proxy` accepts local
-Streamable HTTP MCP traffic, and `mcp-runtime adapter stdio` accepts stdio MCP
-traffic, then both forward to the governed MCP Runtime route with the issued
-identity/session headers. They do not create grants or sessions and do not
-evaluate policy; the gateway still enforces `MCPAccessGrant` and
-`MCPAgentSession` on the request path.
+Agent-side adapters are helper processes for frameworks and IDEs that cannot
+attach governance headers directly. `mcp-runtime adapter proxy` accepts local
+Streamable HTTP MCP traffic and `mcp-runtime adapter stdio` accepts stdio MCP
+traffic; both forward to the governed runtime route with the issued
+identity/session headers.
 
-These adapters expose only the two standard MCP transports: Streamable HTTP and
-stdio. Event-stream handling is an internal Streamable HTTP response parser, not
-a separate legacy HTTP+SSE transport.
+The recommended path is **platform-issued sessions**: passing `--server
+<MCPServer name> --agent <id>` makes the adapter call `POST
+/api/runtime/adapter/sessions` at startup. The platform derives `humanID` and
+`teamID` from the logged-in principal, picks a matching enabled
+`MCPAccessGrant` (highest `MaxTrust`, oldest creation as the tiebreak), and
+writes (or reuses) an `MCPAgentSession` with a deterministic name —
+`adapter-<sha256-prefix(humanID,agentID,teamID,serverName)>`. Adding
+`--auto-refresh` rotates the issued identity ~5 min before expiry without
+restarting the process. Explicit `--human-id` / `--agent-id` / `--session-id`
+flags still take precedence over the issued values and survive every refresh.
 
-For local debugging, set `MCP_RUNTIME_LOG_LEVEL=info` on either adapter to print
-runtime 4xx denials to stderr. The proxy can suppress local `X-Forwarded-*`
-headers with `MCP_RUNTIME_SET_XFF=false`; the shim can opt into request
-deadlines with `MCP_RUNTIME_REQUEST_TIMEOUT=<duration>`. The stdio shim streams
-Streamable HTTP event frames to stdout as they arrive and continues reading
-stdin while an upstream event stream is open.
+For closed environments without the platform API, the adapters still accept
+explicit `MCP_RUNTIME_*` env vars. Anonymous mode (`--anonymous` on stdio)
+forwards to public/read-only routes with no identity headers and a method
+allowlist.
 
-See [Agent Adapters](agent-adapters.md) for build commands and integration
-examples.
+Either way, the adapters present headers; the gateway is the policy
+enforcement point. They do not bypass `MCPAccessGrant` or `MCPAgentSession`
+checks.
+
+Operational notes:
+
+- The proxy exposes `/healthz`, `/livez`, `/readyz`, and an optional
+  `/metrics` endpoint when wired with `ProxyConfig.MetricsHandler`.
+- Idempotent reads (`tools/list`, `resources/list`, `prompts/list`, `ping`)
+  retry on `502`/`504`/connection-reset; `tools/call` does not retry.
+- The stdio shim caches `tools/list` for `--tools-cache-ttl`, invalidates on
+  `notifications/tools/list_changed`, and keys the cache off the live
+  governance identity so `--auto-refresh` rotations start fresh.
+- Set `MCP_RUNTIME_LOG_LEVEL=info` on either adapter to print runtime 4xx
+  denials to stderr.
+
+See [Agent Adapters](agent-adapters.md) for build commands and full
+integration examples.
 
 ## Operator internals (high-level)
 
