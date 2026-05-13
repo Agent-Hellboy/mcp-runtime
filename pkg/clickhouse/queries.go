@@ -49,10 +49,7 @@ type DashboardSummary struct {
 	LastEventTime  string `json:"last_event_time,omitempty"`
 }
 
-const (
-	eventTeamIDExpression = "JSONExtractString(payload, 'team_id')"
-	eventSelectColumns    = "timestamp, trace_id, source, event_type, server, namespace, " + eventTeamIDExpression + " AS team_id, cluster, human_id, agent_id, session_id, decision, tool_name, payload"
-)
+const eventSelectColumns = "timestamp, trace_id, source, event_type, server, namespace, team_id, cluster, human_id, agent_id, session_id, decision, tool_name, payload"
 
 // RowScanner abstracts row scanning for testability.
 type RowScanner interface {
@@ -218,7 +215,7 @@ func buildEventFilterWhereClause(filters EventFilters) (string, []interface{}) {
 		args = append(args, filters.Namespace)
 	}
 	if filters.TeamID != "" {
-		conditions = append(conditions, eventTeamIDExpression+" = ?")
+		conditions = append(conditions, "team_id = ?")
 		args = append(args, filters.TeamID)
 	}
 	if filters.Cluster != "" {

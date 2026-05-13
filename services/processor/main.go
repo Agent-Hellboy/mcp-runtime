@@ -131,13 +131,13 @@ func main() {
 	batchSpanContexts := make([]trace.SpanContext, 0, batchSize)
 	pausedForFlush := false
 
-	flush := func() {
+	flush := func(parent context.Context) {
 		if len(batch) == 0 {
 			return
 		}
 		batchAttributes := clickhouseBatchTraceAttributes(batchMessages, len(batch))
-		eventSpans := startClickHouseEventSpans(tracer, ctx, batchSpanContexts, len(batch))
-		flushCtx, spanOpts := clickhouseFlushTraceContext(ctx, batchSpanContexts, batchAttributes)
+		eventSpans := startClickHouseEventSpans(tracer, parent, batchSpanContexts, len(batch))
+		flushCtx, spanOpts := clickhouseFlushTraceContext(parent, batchSpanContexts, batchAttributes)
 		flushCtx, span := tracer.Start(flushCtx, "clickhouse.insert_batch", spanOpts...)
 		if err := clickhouseClient.InsertEvents(flushCtx, batch); err != nil {
 			log.Printf("insert failed: %v", err)
@@ -146,7 +146,7 @@ func main() {
 			endClickHouseEventSpans(eventSpans, err)
 			return
 		}
-		if err := reader.CommitMessages(ctx, batchMessages...); err != nil {
+		if err := reader.CommitMessages(flushCtx, batchMessages...); err != nil {
 			log.Printf("commit failed: %v", err)
 			span.RecordError(err)
 		}
@@ -192,12 +192,14 @@ func main() {
 
 		select {
 		case <-ticker.C:
-			flush()
+			flush(ctx)
 		case err := <-errChan:
 			log.Printf("read failed: %v", err)
 		case <-ctx.Done():
 			log.Printf("shutdown signal received, flushing final batch...")
-			flush()
+			shutdownFlushCtx, shutdownFlushCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			flush(shutdownFlushCtx)
+			shutdownFlushCancel()
 			return
 		case msg := <-messageInput:
 			consumeCtx := contextFromKafkaTraceHeaders(ctx, msg.Headers)
@@ -229,7 +231,7 @@ func main() {
 			batchSpanContexts = append(batchSpanContexts, trace.SpanContextFromContext(consumeCtx))
 			span.End()
 			if len(batch) >= batchSize {
-				flush()
+				flush(ctx)
 			}
 		}
 	}

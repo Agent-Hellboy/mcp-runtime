@@ -77,11 +77,11 @@ func TestNormalizeEventLimit(t *testing.T) {
 	}
 }
 
-func TestEventQueriesExtractTeamIDFromPayload(t *testing.T) {
+func TestEventQueriesUseMaterializedTeamIDColumn(t *testing.T) {
 	t.Parallel()
 
-	if !strings.Contains(eventSelectColumns, "JSONExtractString(payload, 'team_id') AS team_id") {
-		t.Fatalf("eventSelectColumns = %q, want team_id extracted from payload", eventSelectColumns)
+	if !strings.Contains(eventSelectColumns, "namespace, team_id, cluster") {
+		t.Fatalf("eventSelectColumns = %q, want direct team_id column selected", eventSelectColumns)
 	}
 	if !strings.Contains(eventSelectColumns, "trace_id") {
 		t.Fatalf("eventSelectColumns = %q, want trace_id selected", eventSelectColumns)
@@ -91,8 +91,8 @@ func TestEventQueriesExtractTeamIDFromPayload(t *testing.T) {
 	if !strings.Contains(whereClause, "trace_id = ?") {
 		t.Fatalf("whereClause = %q, want trace_id filter", whereClause)
 	}
-	if !strings.Contains(whereClause, "JSONExtractString(payload, 'team_id') = ?") {
-		t.Fatalf("whereClause = %q, want team_id filter extracted from payload", whereClause)
+	if !strings.Contains(whereClause, "team_id = ?") {
+		t.Fatalf("whereClause = %q, want direct team_id filter", whereClause)
 	}
 	if len(args) != 2 || args[0] != "trace-123" || args[1] != "team-acme" {
 		t.Fatalf("args = %#v, want trace-123 and team-acme", args)

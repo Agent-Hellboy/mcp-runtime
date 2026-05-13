@@ -41,7 +41,7 @@ spec:
               clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD INDEX IF NOT EXISTS idx_events_server server TYPE set(1024) GRANULARITY 1";
               clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD INDEX IF NOT EXISTS idx_events_namespace namespace TYPE set(1024) GRANULARITY 1";
               clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD INDEX IF NOT EXISTS idx_events_team_id team_id TYPE set(1024) GRANULARITY 1";
-              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD INDEX IF NOT EXISTS idx_events_trace_id trace_id TYPE set(1024) GRANULARITY 1";
+              clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD INDEX IF NOT EXISTS idx_events_trace_id trace_id TYPE bloom_filter(0.01) GRANULARITY 1";
               clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD INDEX IF NOT EXISTS idx_events_decision decision TYPE set(32) GRANULARITY 1";
               clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events ADD INDEX IF NOT EXISTS idx_events_tool_name tool_name TYPE set(1024) GRANULARITY 1";
               clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events MATERIALIZE INDEX idx_events_server";
