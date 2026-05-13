@@ -2362,6 +2362,20 @@ delete_mcp_server_and_wait() {
   kubectl wait --for=delete "mcpserver/${server_name}" -n "${namespace}" --timeout="${timeout}" || true
 }
 
+cleanup_mcp_server_and_wait() {
+  local server_name="$1"
+  local namespace="$2"
+  local timeout="${3:-120s}"
+
+  if delete_mcp_server_and_wait "${server_name}" "${namespace}" "${timeout}"; then
+    return 0
+  fi
+
+  log_line warn "server delete ${server_name} failed; falling back to kubectl cleanup"
+  kubectl delete "mcpserver/${server_name}" -n "${namespace}" --ignore-not-found --wait=false
+  kubectl wait --for=delete "mcpserver/${server_name}" -n "${namespace}" --timeout="${timeout}" || true
+}
+
 deploy_primary_server_manifests() {
   ./bin/mcp-runtime pipeline generate --file "${METADATA_FILE}" --output "${MANIFEST_DIR}"
   ./bin/mcp-runtime pipeline deploy --dir "${MANIFEST_DIR}"
@@ -5535,14 +5549,12 @@ kubectl patch deployment mcp-sentinel-api -n mcp-sentinel --type merge -p '{"spe
 rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
 
 echo "[cli] deleting deployed MCP servers"
-parallel_reset
 if scenario_selected "oauth"; then
-  parallel_start 5 "delete ${OAUTH_SERVER_NAME}" delete_mcp_server_and_wait "${OAUTH_SERVER_NAME}" mcp-servers 120s
+  cleanup_mcp_server_and_wait "${OAUTH_SERVER_NAME}" mcp-servers 120s
 fi
-parallel_start 5 "delete ${PYTHON_EXAMPLE_SERVER_NAME}" delete_mcp_server_and_wait "${PYTHON_EXAMPLE_SERVER_NAME}" mcp-servers 120s
-parallel_start 5 "delete ${RUST_EXAMPLE_SERVER_NAME}" delete_mcp_server_and_wait "${RUST_EXAMPLE_SERVER_NAME}" mcp-servers 120s
-parallel_start 5 "delete ${GO_EXAMPLE_SERVER_NAME}" delete_mcp_server_and_wait "${GO_EXAMPLE_SERVER_NAME}" mcp-servers 120s
-parallel_start 5 "delete ${SERVER_NAME}" delete_mcp_server_and_wait "${SERVER_NAME}" mcp-servers 120s
-parallel_wait_all
+cleanup_mcp_server_and_wait "${PYTHON_EXAMPLE_SERVER_NAME}" mcp-servers 120s
+cleanup_mcp_server_and_wait "${RUST_EXAMPLE_SERVER_NAME}" mcp-servers 120s
+cleanup_mcp_server_and_wait "${GO_EXAMPLE_SERVER_NAME}" mcp-servers 120s
+cleanup_mcp_server_and_wait "${SERVER_NAME}" mcp-servers 120s
 
 echo "[done] E2E completed successfully"
