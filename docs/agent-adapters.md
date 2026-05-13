@@ -215,7 +215,6 @@ async def main() -> None:
                 "agentID": "ticket-triage-agent",
             },
             headers={
-                "x-api-key": platform_token,
                 "Authorization": f"Bearer {platform_token}",
             },
         )
