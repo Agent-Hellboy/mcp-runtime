@@ -260,14 +260,16 @@ X-MCP-Agent-Session: sess-8f1b9d
 
 ## Dashboard API
 
-Overview statistics and usage analytics for the admin dashboard.
+Overview statistics and usage analytics for the admin and user dashboards.
 
 ```text
 GET /api/dashboard/summary
 GET /api/analytics/usage?limit=10
+GET /api/user/analytics/usage?window_days=7&server=payments
 ```
 
-Requires admin authentication. For direct curl/API clients, send an
+The admin dashboard endpoints require admin authentication. For direct
+curl/API clients, send an
 `x-api-key` value that is present in both `API_KEYS` and `ADMIN_API_KEYS`.
 `setup` keeps `UI_API_KEY` in both lists for browser/API-key admin login.
 `INGEST_API_KEYS` is only for event ingestion and is not accepted here.
@@ -278,7 +280,17 @@ Requires admin authentication. For direct curl/API clients, send an
 
 `/api/analytics/usage` reads the ClickHouse event stream and returns admin
 usage rollups for the dashboard: totals, top MCP servers, top human/agent
-pairs, top tools, and decision counts. Query: `limit` (1-50, default 10).
+pairs, top tools, decision counts, recent activity, and request buckets.
+Query: `limit` (1-50, default 10), `window_days` (1-365, default 30),
+`namespace`, `team_id`, `server`, `decision`, and `tool_name`.
+
+`/api/user/analytics/usage` is available to normal platform users. It returns
+the same analytics shape, but the API enforces scope before querying
+ClickHouse: non-admin callers can see only events from their own user namespace
+and team namespaces, and the shared `mcp-servers` catalog is excluded from user
+analytics. Query: `window_days`, `limit`, `namespace`, `server`, `decision`,
+and `tool_name`. Passing `namespace` narrows the result only when the caller
+owns that namespace or belongs to that team.
 
 ## Runtime Governance API
 
@@ -405,6 +417,7 @@ GET  /api/admin/operations             # Admin-only user, image, deployment, and
 GET  /api/user/api-keys                # List caller-owned API keys
 POST /api/user/api-keys                # Create caller-owned API key
 POST /api/user/api-keys/{id}/revoke    # Revoke caller-owned API key
+GET  /api/user/analytics/usage         # User/team-scoped MCP server analytics
 GET  /api/user/registry-credentials    # List caller-owned registry credentials
 POST /api/user/registry-credentials    # Create a registry credential
 POST /api/user/registry-credentials/{id}/revoke

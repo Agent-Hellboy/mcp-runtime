@@ -933,6 +933,13 @@ tr:hover td {
   font-size: 12px;
 }
 
+.table-action-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 /* Modal */
 .modal {
   position: fixed;

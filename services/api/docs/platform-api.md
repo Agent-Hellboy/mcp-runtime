@@ -45,6 +45,7 @@ noted otherwise. Authenticated routes accept `Authorization: Bearer <token>` or
 | `GET` | `/api/auth/me` | Return the authenticated principal. |
 | `GET`, `POST` | `/api/user/api-keys` | List or create caller-owned API keys. |
 | `POST` | `/api/user/api-keys/{id}/revoke` | Revoke one caller-owned API key. |
+| `GET` | `/api/user/analytics/usage` | Caller-scoped MCP server usage analytics for the user dashboard. |
 | `GET`, `POST` | `/api/user/registry-credentials` | List or create registry credentials. |
 | `POST` | `/api/user/registry-credentials/{id}/revoke` | Revoke one registry credential. |
 | `*` | `/api/registry/authz` | Traefik forward-auth endpoint for bundled registry ingress. Admin role required. |
@@ -56,9 +57,9 @@ noted otherwise. Authenticated routes accept `Authorization: Bearer <token>` or
 | `GET` | `/api/admin/operations` | Admin operations snapshot for user activity, image activity, deployments, and timeline events. |
 | `POST` | `/api/user/activity/image-publish` | Record a successful image publish event for the authenticated user. |
 
-The same API service also hosts analytics and runtime governance routes such as
-`/api/events`, `/api/runtime/grants`, and `/api/runtime/sessions`; keep those
-details in `../../../docs/api.md`.
+The same API service also hosts admin analytics and runtime governance routes
+such as `/api/events`, `/api/analytics/usage`, `/api/runtime/grants`, and
+`/api/runtime/sessions`; keep those details in `../../../docs/api.md`.
 
 ## Signup and Login
 

@@ -84,6 +84,26 @@ type analyticsDecisionUsage struct {
 	Events   uint64 `json:"events"`
 }
 
+type analyticsTimePoint struct {
+	Bucket  time.Time `json:"bucket"`
+	Events  uint64    `json:"events"`
+	Allowed uint64    `json:"allowed"`
+	Denied  uint64    `json:"denied"`
+}
+
+type analyticsRecentActivity struct {
+	Timestamp time.Time `json:"timestamp"`
+	Server    string    `json:"server,omitempty"`
+	Namespace string    `json:"namespace,omitempty"`
+	TeamID    string    `json:"team_id,omitempty"`
+	HumanID   string    `json:"human_id,omitempty"`
+	AgentID   string    `json:"agent_id,omitempty"`
+	SessionID string    `json:"session_id,omitempty"`
+	Decision  string    `json:"decision,omitempty"`
+	ToolName  string    `json:"tool_name,omitempty"`
+	EventType string    `json:"event_type,omitempty"`
+}
+
 type analyticsTotals struct {
 	Events         uint64 `json:"events"`
 	Allowed        uint64 `json:"allowed"`
@@ -95,12 +115,23 @@ type analyticsTotals struct {
 }
 
 type analyticsUsageResponse struct {
-	Totals     analyticsTotals          `json:"totals"`
-	Servers    []analyticsServerUsage   `json:"servers"`
-	Actors     []analyticsActorUsage    `json:"actors"`
-	Tools      []analyticsToolUsage     `json:"tools"`
-	Decisions  []analyticsDecisionUsage `json:"decisions"`
-	WindowDays int                      `json:"window_days"`
+	Totals     analyticsTotals           `json:"totals"`
+	Servers    []analyticsServerUsage    `json:"servers"`
+	Actors     []analyticsActorUsage     `json:"actors"`
+	Tools      []analyticsToolUsage      `json:"tools"`
+	Decisions  []analyticsDecisionUsage  `json:"decisions"`
+	Series     []analyticsTimePoint      `json:"series,omitempty"`
+	Recent     []analyticsRecentActivity `json:"recent,omitempty"`
+	WindowDays int                       `json:"window_days"`
+	Filters    analyticsUsageFilters     `json:"filters,omitempty"`
+}
+
+type analyticsUsageFilters struct {
+	Namespaces []string `json:"namespaces,omitempty"`
+	TeamIDs    []string `json:"team_ids,omitempty"`
+	Server     string   `json:"server,omitempty"`
+	Decision   string   `json:"decision,omitempty"`
+	ToolName   string   `json:"tool_name,omitempty"`
 }
 
 type apiServer struct {
@@ -276,6 +307,7 @@ func main() {
 	mux.Handle("/api/analytics/usage", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleAnalyticsUsage))))
 	mux.Handle("/api/events/filter", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleEventsFilter))))
 	mux.Handle("/api/auth/me", server.auth(http.HandlerFunc(server.handleAuthMe)))
+	mux.Handle("/api/user/analytics/usage", server.auth(http.HandlerFunc(server.handleUserAnalyticsUsage)))
 	mux.Handle("/api/user/registry-credentials", server.auth(http.HandlerFunc(server.handleRegistryCredentials)))
 	mux.Handle("/api/user/registry-credentials/", server.auth(http.HandlerFunc(server.handleRegistryCredentialItem)))
 	mux.Handle("/api/user/activity/image-publish", server.auth(http.HandlerFunc(server.handleUserImagePublishActivity)))
@@ -485,11 +517,199 @@ func (s *apiServer) handleEventTypes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *apiServer) handleAnalyticsUsage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("allow", http.MethodGet)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		return
+	}
 	limit := clampInt(queryInt(r, "limit", 10), 1, 50)
 	windowDays := clampInt(queryInt(r, "window_days", analyticsDefaultWindowDays), 1, analyticsMaxWindowDays)
-	since := time.Now().AddDate(0, 0, -windowDays)
+	scope := analyticsScopeFromRequest(r, windowDays, limit)
+	applyAdminAnalyticsScopeFilters(r, &scope)
 
-	ctx, cancel := context.WithCancel(r.Context())
+	response, err := s.queryAnalyticsUsage(r.Context(), scope)
+	if err != nil {
+		log.Printf("analytics usage query failed window_days=%d limit=%d since=%s filters=%+v err=%v", scope.WindowDays, scope.Limit, scope.Since.Format(time.RFC3339), scope.Filters(), err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query_failed"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *apiServer) handleUserAnalyticsUsage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("allow", http.MethodGet)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		return
+	}
+	p, ok := principalFromContext(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	limit := clampInt(queryInt(r, "limit", 10), 1, 50)
+	windowDays := clampInt(queryInt(r, "window_days", analyticsDefaultWindowDays), 1, analyticsMaxWindowDays)
+	scope := analyticsScopeFromRequest(r, windowDays, limit)
+
+	requestedNamespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
+	if p.Role == roleAdmin {
+		applyAdminAnalyticsScopeFilters(r, &scope)
+	} else {
+		var principalScope analyticsPrincipalScope
+		var allowed bool
+		if requestedNamespace != "" {
+			principalScope, allowed = analyticsPrincipalScopeForNamespace(p, requestedNamespace)
+			if !allowed {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
+				return
+			}
+		} else {
+			principalScope = analyticsPrincipalOwnedScope(p)
+			allowed = len(principalScope.Namespaces) > 0 || len(principalScope.TeamIDs) > 0
+		}
+		if !allowed {
+			writeJSON(w, http.StatusOK, emptyAnalyticsUsageResponse(scope))
+			return
+		}
+		scope.Namespaces = principalScope.Namespaces
+		scope.TeamIDs = principalScope.TeamIDs
+	}
+
+	response, err := s.queryAnalyticsUsage(r.Context(), scope)
+	if err != nil {
+		log.Printf("user analytics usage query failed window_days=%d limit=%d since=%s filters=%+v err=%v", scope.WindowDays, scope.Limit, scope.Since.Format(time.RFC3339), scope.Filters(), err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query_failed"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+type analyticsQueryScope struct {
+	Since      time.Time
+	WindowDays int
+	Limit      int
+	Namespaces []string
+	TeamIDs    []string
+	Server     string
+	Decision   string
+	ToolName   string
+}
+
+type analyticsPrincipalScope struct {
+	Namespaces []string
+	TeamIDs    []string
+}
+
+func analyticsScopeFromRequest(r *http.Request, windowDays, limit int) analyticsQueryScope {
+	decision := strings.TrimSpace(r.URL.Query().Get("decision"))
+	if decision == "" {
+		decision = strings.TrimSpace(r.URL.Query().Get("status"))
+	}
+	if decision == "" {
+		decision = strings.TrimSpace(r.URL.Query().Get("outcome"))
+	}
+	toolName := strings.TrimSpace(r.URL.Query().Get("tool_name"))
+	if toolName == "" {
+		toolName = strings.TrimSpace(r.URL.Query().Get("tool"))
+	}
+	return analyticsQueryScope{
+		Since:      time.Now().AddDate(0, 0, -windowDays),
+		WindowDays: windowDays,
+		Limit:      limit,
+		Server:     strings.TrimSpace(r.URL.Query().Get("server")),
+		Decision:   decision,
+		ToolName:   toolName,
+	}
+}
+
+func applyAdminAnalyticsScopeFilters(r *http.Request, scope *analyticsQueryScope) {
+	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
+	if namespace != "" {
+		scope.Namespaces = []string{namespace}
+	}
+	teamID := strings.TrimSpace(r.URL.Query().Get("team_id"))
+	if teamID != "" {
+		scope.TeamIDs = []string{teamID}
+	}
+}
+
+func analyticsPrincipalOwnedScope(p principal) analyticsPrincipalScope {
+	var scope analyticsPrincipalScope
+	addNamespace := func(namespace string) {
+		namespace = strings.TrimSpace(namespace)
+		if namespace == "" || namespace == sharedCatalogNamespace {
+			return
+		}
+		scope.Namespaces = append(scope.Namespaces, namespace)
+	}
+	addNamespace(p.Namespace)
+	for _, team := range p.Teams {
+		addNamespace(team.Namespace)
+		if teamID := strings.TrimSpace(team.ID); teamID != "" {
+			scope.TeamIDs = append(scope.TeamIDs, teamID)
+		}
+	}
+	for _, namespace := range p.AllowedNamespaces {
+		addNamespace(namespace)
+	}
+	scope.Namespaces = dedupeAnalyticsStrings(scope.Namespaces)
+	scope.TeamIDs = dedupeAnalyticsStrings(scope.TeamIDs)
+	return scope
+}
+
+func analyticsPrincipalScopeForNamespace(p principal, namespace string) (analyticsPrincipalScope, bool) {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" || namespace == sharedCatalogNamespace {
+		return analyticsPrincipalScope{}, false
+	}
+	if strings.TrimSpace(p.Namespace) == namespace {
+		return analyticsPrincipalScope{Namespaces: []string{namespace}}, true
+	}
+	for _, team := range p.Teams {
+		if strings.TrimSpace(team.Namespace) == namespace {
+			scope := analyticsPrincipalScope{Namespaces: []string{namespace}}
+			if teamID := strings.TrimSpace(team.ID); teamID != "" {
+				scope.TeamIDs = []string{teamID}
+			}
+			return scope, true
+		}
+	}
+	for _, allowed := range p.AllowedNamespaces {
+		if strings.TrimSpace(allowed) == namespace {
+			return analyticsPrincipalScope{Namespaces: []string{namespace}}, true
+		}
+	}
+	return analyticsPrincipalScope{}, false
+}
+
+func emptyAnalyticsUsageResponse(scope analyticsQueryScope) analyticsUsageResponse {
+	return analyticsUsageResponse{
+		Servers:    []analyticsServerUsage{},
+		Actors:     []analyticsActorUsage{},
+		Tools:      []analyticsToolUsage{},
+		Decisions:  []analyticsDecisionUsage{},
+		Series:     []analyticsTimePoint{},
+		Recent:     []analyticsRecentActivity{},
+		WindowDays: scope.WindowDays,
+		Filters:    scope.Filters(),
+	}
+}
+
+func (scope analyticsQueryScope) Filters() analyticsUsageFilters {
+	return analyticsUsageFilters{
+		Namespaces: dedupeAnalyticsStrings(scope.Namespaces),
+		TeamIDs:    dedupeAnalyticsStrings(scope.TeamIDs),
+		Server:     scope.Server,
+		Decision:   scope.Decision,
+		ToolName:   scope.ToolName,
+	}
+}
+
+func (s *apiServer) queryAnalyticsUsage(parent context.Context, scope analyticsQueryScope) (analyticsUsageResponse, error) {
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
 	var (
@@ -498,6 +718,8 @@ func (s *apiServer) handleAnalyticsUsage(w http.ResponseWriter, r *http.Request)
 		actors    []analyticsActorUsage
 		tools     []analyticsToolUsage
 		decisions []analyticsDecisionUsage
+		series    []analyticsTimePoint
+		recent    []analyticsRecentActivity
 
 		wg          sync.WaitGroup
 		errOnce     sync.Once
@@ -516,59 +738,73 @@ func (s *apiServer) handleAnalyticsUsage(w http.ResponseWriter, r *http.Request)
 		})
 	}
 
-	wg.Add(5)
+	wg.Add(7)
 	go func() {
 		defer wg.Done()
 		var err error
-		totals, err = s.queryAnalyticsTotals(ctx, since)
+		totals, err = s.queryAnalyticsTotals(ctx, scope)
 		recordErr("totals", err)
 	}()
 	go func() {
 		defer wg.Done()
 		var err error
-		servers, err = s.queryAnalyticsServers(ctx, since, limit)
+		servers, err = s.queryAnalyticsServers(ctx, scope)
 		recordErr("servers", err)
 	}()
 	go func() {
 		defer wg.Done()
 		var err error
-		actors, err = s.queryAnalyticsActors(ctx, since, limit)
+		actors, err = s.queryAnalyticsActors(ctx, scope)
 		recordErr("actors", err)
 	}()
 	go func() {
 		defer wg.Done()
 		var err error
-		tools, err = s.queryAnalyticsTools(ctx, since, limit)
+		tools, err = s.queryAnalyticsTools(ctx, scope)
 		recordErr("tools", err)
 	}()
 	go func() {
 		defer wg.Done()
 		var err error
-		decisions, err = s.queryAnalyticsDecisions(ctx, since)
+		decisions, err = s.queryAnalyticsDecisions(ctx, scope)
 		recordErr("decisions", err)
+	}()
+	go func() {
+		defer wg.Done()
+		var err error
+		series, err = s.queryAnalyticsSeries(ctx, scope)
+		recordErr("series", err)
+	}()
+	go func() {
+		defer wg.Done()
+		var err error
+		recent, err = s.queryAnalyticsRecent(ctx, scope)
+		recordErr("recent", err)
 	}()
 	wg.Wait()
 
 	if firstErr != nil {
-		log.Printf("analytics usage query failed query=%s window_days=%d limit=%d since=%s err=%v", firstErrKey, windowDays, limit, since.Format(time.RFC3339), firstErr)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query_failed"})
-		return
+		return analyticsUsageResponse{}, fmt.Errorf("%s: %w", firstErrKey, firstErr)
 	}
 
-	writeJSON(w, http.StatusOK, analyticsUsageResponse{
+	return analyticsUsageResponse{
 		Totals:     totals,
 		Servers:    servers,
 		Actors:     actors,
 		Tools:      tools,
 		Decisions:  decisions,
-		WindowDays: windowDays,
-	})
+		Series:     series,
+		Recent:     recent,
+		WindowDays: scope.WindowDays,
+		Filters:    scope.Filters(),
+	}, nil
 }
 
-func (s *apiServer) queryAnalyticsTotals(ctx context.Context, since time.Time) (analyticsTotals, error) {
-	query := "SELECT count(), countIf(decision = 'allow'), countIf(decision = 'deny'), uniqIf(server, server != ''), uniqIf(human_id, human_id != ''), uniqIf(agent_id, agent_id != ''), uniqIf(session_id, session_id != '') FROM " + s.dbName + ".events WHERE timestamp >= ?"
+func (s *apiServer) queryAnalyticsTotals(ctx context.Context, scope analyticsQueryScope) (analyticsTotals, error) {
+	where, args := analyticsWhereClause(scope)
+	query := "SELECT count(), countIf(decision = 'allow'), countIf(decision = 'deny'), uniqIf(server, server != ''), uniqIf(human_id, human_id != ''), uniqIf(agent_id, agent_id != ''), uniqIf(session_id, session_id != '') FROM " + s.dbName + ".events " + where
 	var totals analyticsTotals
-	err := s.db.QueryRow(ctx, query, since).Scan(
+	err := s.db.QueryRow(ctx, query, args...).Scan(
 		&totals.Events,
 		&totals.Allowed,
 		&totals.Denied,
@@ -580,15 +816,17 @@ func (s *apiServer) queryAnalyticsTotals(ctx context.Context, since time.Time) (
 	return totals, err
 }
 
-func (s *apiServer) queryAnalyticsServers(ctx context.Context, since time.Time, limit int) ([]analyticsServerUsage, error) {
-	query := analyticsServersQuery(s.dbName)
-	rows, err := s.db.Query(ctx, query, since, limit)
+func (s *apiServer) queryAnalyticsServers(ctx context.Context, scope analyticsQueryScope) ([]analyticsServerUsage, error) {
+	where, args := analyticsWhereClause(scope, "server != ''")
+	query := analyticsServersQuery(s.dbName, where)
+	args = append(args, scope.Limit)
+	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	out := make([]analyticsServerUsage, 0, limit)
+	out := make([]analyticsServerUsage, 0, scope.Limit)
 	for rows.Next() {
 		var row analyticsServerUsage
 		if err := rows.Scan(&row.Server, &row.Namespace, &row.TeamID, &row.Events, &row.Allowed, &row.Denied, &row.UniqueHumans, &row.UniqueAgents, &row.LastSeen); err != nil {
@@ -599,19 +837,21 @@ func (s *apiServer) queryAnalyticsServers(ctx context.Context, since time.Time, 
 	return out, rows.Err()
 }
 
-func analyticsServersQuery(dbName string) string {
-	return "SELECT server, namespace, " + analyticsTeamIDExpression + " AS team_id, count() AS events, countIf(decision = 'allow') AS allowed, countIf(decision = 'deny') AS denied, uniqIf(human_id, human_id != '') AS unique_humans, uniqIf(agent_id, agent_id != '') AS unique_agents, max(timestamp) AS last_seen FROM " + dbName + ".events WHERE timestamp >= ? AND server != '' GROUP BY server, namespace, team_id ORDER BY events DESC LIMIT ?"
+func analyticsServersQuery(dbName, where string) string {
+	return "SELECT server, namespace, " + analyticsTeamIDExpression + " AS team_id, count() AS events, countIf(decision = 'allow') AS allowed, countIf(decision = 'deny') AS denied, uniqIf(human_id, human_id != '') AS unique_humans, uniqIf(agent_id, agent_id != '') AS unique_agents, max(timestamp) AS last_seen FROM " + dbName + ".events " + where + " GROUP BY server, namespace, team_id ORDER BY events DESC LIMIT ?"
 }
 
-func (s *apiServer) queryAnalyticsActors(ctx context.Context, since time.Time, limit int) ([]analyticsActorUsage, error) {
-	query := "SELECT human_id, agent_id, count() AS events, uniqIf(server, server != '') AS unique_servers, uniqIf(tool_name, tool_name != '') AS unique_tools, countIf(decision = 'deny') AS denied, max(timestamp) AS last_seen FROM " + s.dbName + ".events WHERE timestamp >= ? AND (human_id != '' OR agent_id != '') GROUP BY human_id, agent_id ORDER BY events DESC LIMIT ?"
-	rows, err := s.db.Query(ctx, query, since, limit)
+func (s *apiServer) queryAnalyticsActors(ctx context.Context, scope analyticsQueryScope) ([]analyticsActorUsage, error) {
+	where, args := analyticsWhereClause(scope, "(human_id != '' OR agent_id != '')")
+	query := "SELECT human_id, agent_id, count() AS events, uniqIf(server, server != '') AS unique_servers, uniqIf(tool_name, tool_name != '') AS unique_tools, countIf(decision = 'deny') AS denied, max(timestamp) AS last_seen FROM " + s.dbName + ".events " + where + " GROUP BY human_id, agent_id ORDER BY events DESC LIMIT ?"
+	args = append(args, scope.Limit)
+	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	out := make([]analyticsActorUsage, 0, limit)
+	out := make([]analyticsActorUsage, 0, scope.Limit)
 	for rows.Next() {
 		var row analyticsActorUsage
 		if err := rows.Scan(&row.HumanID, &row.AgentID, &row.Events, &row.UniqueServers, &row.UniqueTools, &row.Denied, &row.LastSeen); err != nil {
@@ -622,15 +862,17 @@ func (s *apiServer) queryAnalyticsActors(ctx context.Context, since time.Time, l
 	return out, rows.Err()
 }
 
-func (s *apiServer) queryAnalyticsTools(ctx context.Context, since time.Time, limit int) ([]analyticsToolUsage, error) {
-	query := "SELECT server, tool_name, count() AS events, countIf(decision = 'deny') AS denied, max(timestamp) AS last_seen FROM " + s.dbName + ".events WHERE timestamp >= ? AND tool_name != '' GROUP BY server, tool_name ORDER BY events DESC LIMIT ?"
-	rows, err := s.db.Query(ctx, query, since, limit)
+func (s *apiServer) queryAnalyticsTools(ctx context.Context, scope analyticsQueryScope) ([]analyticsToolUsage, error) {
+	where, args := analyticsWhereClause(scope, "tool_name != ''")
+	query := "SELECT server, tool_name, count() AS events, countIf(decision = 'deny') AS denied, max(timestamp) AS last_seen FROM " + s.dbName + ".events " + where + " GROUP BY server, tool_name ORDER BY events DESC LIMIT ?"
+	args = append(args, scope.Limit)
+	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	out := make([]analyticsToolUsage, 0, limit)
+	out := make([]analyticsToolUsage, 0, scope.Limit)
 	for rows.Next() {
 		var row analyticsToolUsage
 		if err := rows.Scan(&row.Server, &row.ToolName, &row.Events, &row.Denied, &row.LastSeen); err != nil {
@@ -641,9 +883,10 @@ func (s *apiServer) queryAnalyticsTools(ctx context.Context, since time.Time, li
 	return out, rows.Err()
 }
 
-func (s *apiServer) queryAnalyticsDecisions(ctx context.Context, since time.Time) ([]analyticsDecisionUsage, error) {
-	query := "SELECT if(decision = '', 'unknown', decision) AS decision_label, count() AS events FROM " + s.dbName + ".events WHERE timestamp >= ? GROUP BY decision_label ORDER BY events DESC"
-	rows, err := s.db.Query(ctx, query, since)
+func (s *apiServer) queryAnalyticsDecisions(ctx context.Context, scope analyticsQueryScope) ([]analyticsDecisionUsage, error) {
+	where, args := analyticsWhereClause(scope)
+	query := "SELECT if(decision = '', 'unknown', decision) AS decision_label, count() AS events FROM " + s.dbName + ".events " + where + " GROUP BY decision_label ORDER BY events DESC"
+	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -658,6 +901,134 @@ func (s *apiServer) queryAnalyticsDecisions(ctx context.Context, since time.Time
 		out = append(out, row)
 	}
 	return out, rows.Err()
+}
+
+func (s *apiServer) queryAnalyticsSeries(ctx context.Context, scope analyticsQueryScope) ([]analyticsTimePoint, error) {
+	where, args := analyticsWhereClause(scope)
+	query := "SELECT " + analyticsBucketExpression(scope.WindowDays) + " AS bucket, count() AS events, countIf(decision = 'allow') AS allowed, countIf(decision = 'deny') AS denied FROM " + s.dbName + ".events " + where + " GROUP BY bucket ORDER BY bucket ASC"
+	rows, err := s.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]analyticsTimePoint, 0)
+	for rows.Next() {
+		var row analyticsTimePoint
+		if err := rows.Scan(&row.Bucket, &row.Events, &row.Allowed, &row.Denied); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (s *apiServer) queryAnalyticsRecent(ctx context.Context, scope analyticsQueryScope) ([]analyticsRecentActivity, error) {
+	where, args := analyticsWhereClause(scope)
+	query := "SELECT timestamp, server, namespace, " + analyticsTeamIDExpression + " AS team_id, human_id, agent_id, session_id, decision, tool_name, event_type FROM " + s.dbName + ".events " + where + " ORDER BY timestamp DESC LIMIT ?"
+	args = append(args, scope.Limit)
+	rows, err := s.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]analyticsRecentActivity, 0, scope.Limit)
+	for rows.Next() {
+		var row analyticsRecentActivity
+		if err := rows.Scan(&row.Timestamp, &row.Server, &row.Namespace, &row.TeamID, &row.HumanID, &row.AgentID, &row.SessionID, &row.Decision, &row.ToolName, &row.EventType); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func analyticsBucketExpression(windowDays int) string {
+	if windowDays <= 2 {
+		return "toStartOfHour(timestamp)"
+	}
+	return "toStartOfDay(timestamp)"
+}
+
+func analyticsWhereClause(scope analyticsQueryScope, extraConditions ...string) (string, []any) {
+	conditions := []string{"timestamp >= ?"}
+	args := []any{scope.Since}
+
+	scopeFilters, scopeArgs := analyticsScopeConditions(scope)
+	if len(scopeFilters) > 0 {
+		conditions = append(conditions, "("+strings.Join(scopeFilters, " OR ")+")")
+		args = append(args, scopeArgs...)
+	}
+	if scope.Server != "" {
+		conditions = append(conditions, "server = ?")
+		args = append(args, scope.Server)
+	}
+	if scope.Decision != "" {
+		conditions = append(conditions, "decision = ?")
+		args = append(args, scope.Decision)
+	}
+	if scope.ToolName != "" {
+		conditions = append(conditions, "tool_name = ?")
+		args = append(args, scope.ToolName)
+	}
+	for _, condition := range extraConditions {
+		if condition = strings.TrimSpace(condition); condition != "" {
+			conditions = append(conditions, condition)
+		}
+	}
+	return "WHERE " + strings.Join(conditions, " AND "), args
+}
+
+func analyticsScopeConditions(scope analyticsQueryScope) ([]string, []any) {
+	var conditions []string
+	var args []any
+	namespaces := dedupeAnalyticsStrings(scope.Namespaces)
+	if len(namespaces) > 0 {
+		conditions = append(conditions, "namespace IN "+sqlPlaceholders(len(namespaces)))
+		args = appendStringArgs(args, namespaces)
+	}
+	teamIDs := dedupeAnalyticsStrings(scope.TeamIDs)
+	if len(teamIDs) > 0 {
+		conditions = append(conditions, analyticsTeamIDExpression+" IN "+sqlPlaceholders(len(teamIDs)))
+		args = appendStringArgs(args, teamIDs)
+	}
+	return conditions, args
+}
+
+func sqlPlaceholders(count int) string {
+	if count <= 0 {
+		return "()"
+	}
+	parts := make([]string, count)
+	for i := range parts {
+		parts[i] = "?"
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+func appendStringArgs(args []any, values []string) []any {
+	for _, value := range values {
+		args = append(args, value)
+	}
+	return args
+}
+
+func dedupeAnalyticsStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 // handleEventsFilter handles GET /api/events/filter requests.
