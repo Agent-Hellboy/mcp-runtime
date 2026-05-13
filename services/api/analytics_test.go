@@ -50,6 +50,51 @@ func TestAnalyticsWhereClauseScopesByNamespaceAndTeam(t *testing.T) {
 	}
 }
 
+func TestAnalyticsScopeFiltersIncludesTeamIDs(t *testing.T) {
+	t.Parallel()
+
+	filters := analyticsQueryScope{
+		Namespaces: []string{"user-a", "user-a"},
+		TeamIDs:    []string{"team-acme-id", "team-acme-id"},
+		Server:     "payments",
+		Decision:   "deny",
+		ToolName:   "refund",
+	}.Filters()
+
+	if got := strings.Join(filters.Namespaces, ","); got != "user-a" {
+		t.Fatalf("namespaces = %q, want deduped user-a", got)
+	}
+	if got := strings.Join(filters.TeamIDs, ","); got != "team-acme-id" {
+		t.Fatalf("teamIDs = %q, want deduped team-acme-id", got)
+	}
+	if filters.Server != "payments" || filters.Decision != "deny" || filters.ToolName != "refund" {
+		t.Fatalf("filters = %#v, want scalar filters preserved", filters)
+	}
+}
+
+func TestHandleAnalyticsUsageRejectsNonGET(t *testing.T) {
+	t.Parallel()
+
+	server := &apiServer{dbName: "mcp"}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/analytics/usage", nil)
+
+	server.handleAnalyticsUsage(recorder, request)
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("allow"); got != http.MethodGet {
+		t.Fatalf("allow header = %q, want GET", got)
+	}
+	var payload map[string]string
+	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["error"] != "method_not_allowed" {
+		t.Fatalf("payload = %#v, want method_not_allowed", payload)
+	}
+}
+
 func TestAnalyticsPrincipalOwnedScopeExcludesSharedCatalog(t *testing.T) {
 	t.Parallel()
 

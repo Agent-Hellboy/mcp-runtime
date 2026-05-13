@@ -128,6 +128,7 @@ type analyticsUsageResponse struct {
 
 type analyticsUsageFilters struct {
 	Namespaces []string `json:"namespaces,omitempty"`
+	TeamIDs    []string `json:"team_ids,omitempty"`
 	Server     string   `json:"server,omitempty"`
 	Decision   string   `json:"decision,omitempty"`
 	ToolName   string   `json:"tool_name,omitempty"`
@@ -516,6 +517,11 @@ func (s *apiServer) handleEventTypes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *apiServer) handleAnalyticsUsage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("allow", http.MethodGet)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		return
+	}
 	limit := clampInt(queryInt(r, "limit", 10), 1, 50)
 	windowDays := clampInt(queryInt(r, "window_days", analyticsDefaultWindowDays), 1, analyticsMaxWindowDays)
 	scope := analyticsScopeFromRequest(r, windowDays, limit)
@@ -695,6 +701,7 @@ func emptyAnalyticsUsageResponse(scope analyticsQueryScope) analyticsUsageRespon
 func (scope analyticsQueryScope) Filters() analyticsUsageFilters {
 	return analyticsUsageFilters{
 		Namespaces: dedupeAnalyticsStrings(scope.Namespaces),
+		TeamIDs:    dedupeAnalyticsStrings(scope.TeamIDs),
 		Server:     scope.Server,
 		Decision:   scope.Decision,
 		ToolName:   scope.ToolName,

@@ -1003,7 +1003,7 @@ async function loadUserDashboardServers() {
     const data = authPrincipal?.role === "admin"
       ? { servers: await loadFleetServers() }
       : await fetchJSON("/runtime/servers");
-    userDashboardServersCache = Array.isArray(data.servers) ? data.servers : [];
+    userDashboardServersCache = filterUserDashboardServers(Array.isArray(data.servers) ? data.servers : []);
     syncUserAnalyticsServerSelect();
     renderUserDashboardServers();
     renderUserDashboardSummary();
@@ -1074,6 +1074,21 @@ function syncUserAnalyticsServerSelect() {
   const exists = userDashboardServersCache.some((server) => operationServerKey(server) === previous);
   selectedUserAnalyticsServerKey = exists ? previous : "";
   select.value = selectedUserAnalyticsServerKey;
+}
+
+function filterUserDashboardServers(servers) {
+  if (authPrincipal?.role === "admin") {
+    return servers;
+  }
+  return servers.filter((server) => !isSharedCatalogNamespace(server?.namespace));
+}
+
+function isSharedCatalogNamespace(namespace) {
+  const normalized = String(namespace || "").trim();
+  if (!normalized) return false;
+  return normalized === "mcp-servers" || namespaceScopes.some((scope) =>
+    String(scope?.namespace || "").trim() === normalized && scope?.is_shared
+  );
 }
 
 function renderUserDashboardSummary() {
