@@ -1,10 +1,14 @@
 package agentadapter
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -23,6 +27,10 @@ const (
 	EnvLogLevel         = "MCP_RUNTIME_LOG_LEVEL"
 	EnvAnonymous        = "MCP_RUNTIME_ANONYMOUS"
 	EnvAnonymousMethods = "MCP_RUNTIME_ANONYMOUS_METHODS"
+	EnvAuthHeader       = "MCP_RUNTIME_AUTH_HEADER"
+	EnvTLSClientCert    = "MCP_RUNTIME_TLS_CLIENT_CERT"
+	EnvTLSClientKey     = "MCP_RUNTIME_TLS_CLIENT_KEY"
+	EnvTLSCABundle      = "MCP_RUNTIME_TLS_CA_BUNDLE"
 
 	DefaultListenAddr      = "127.0.0.1:8099"
 	DefaultProtocolVersion = "2025-06-18"
@@ -224,7 +232,97 @@ func parseSharedEnv(lookup envLookup) (sharedEnv, error) {
 		}
 		out.transport = &RuntimeTransport{Timeout: timeout}
 	}
+
+	// Auth header.
+	if raw := strings.TrimSpace(lookup(EnvAuthHeader)); raw != "" {
+		if out.transport == nil {
+			out.transport = &RuntimeTransport{}
+		}
+		out.transport.AuthHeader = raw
+	}
+
+	// Optional mTLS: client cert/key and/or custom CA bundle.
+	tlsCert := strings.TrimSpace(lookup(EnvTLSClientCert))
+	tlsKey := strings.TrimSpace(lookup(EnvTLSClientKey))
+	tlsCA := strings.TrimSpace(lookup(EnvTLSCABundle))
+	if tlsCert != "" || tlsKey != "" || tlsCA != "" {
+		tlsCfg, err := BuildTLSConfig(tlsCert, tlsKey, tlsCA)
+		if err != nil {
+			return sharedEnv{}, err
+		}
+		if out.transport == nil {
+			out.transport = &RuntimeTransport{}
+		}
+		out.transport.Base = NewHTTPTransportWithTLS(tlsCfg)
+	}
+
 	return out, nil
+}
+
+// NewHTTPTransportWithTLS returns an *http.Transport that uses the supplied
+// TLS config while preserving http.DefaultTransport's dial timeouts, keep-alive
+// settings, and ProxyFromEnvironment behaviour.
+func NewHTTPTransportWithTLS(cfg *tls.Config) *http.Transport {
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	base.TLSClientConfig = cfg
+	return base
+}
+
+// BuildTLSConfig builds a *tls.Config for outbound runtime connections.
+// certFile and keyFile must both be set (or both empty) for mTLS.
+// caFile, when non-empty, replaces the default system CA pool.
+func BuildTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
+	cfg := &tls.Config{}
+	if certFile != "" || keyFile != "" {
+		if certFile == "" || keyFile == "" {
+			return nil, fmt.Errorf("%s and %s must both be set for mTLS", EnvTLSClientCert, EnvTLSClientKey)
+		}
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("loading TLS client cert/key: %w", err)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	}
+	if caFile != "" {
+		pem, err := readRegularFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("reading CA bundle %q: %w", caFile, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("%s contains no valid PEM certificates", EnvTLSCABundle)
+		}
+		cfg.RootCAs = pool
+	}
+	return cfg, nil
+}
+
+func readRegularFile(path string) ([]byte, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve file path: %w", err)
+	}
+	root, err := os.OpenRoot(filepath.Dir(absPath))
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+
+	base := filepath.Base(absPath)
+	info, err := root.Stat(base)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a regular file")
+	}
+	file, err := root.Open(base)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	return io.ReadAll(file)
 }
 
 func validateRequiredIdentity(runtimeURL *url.URL, id Identity) error {

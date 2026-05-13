@@ -23,8 +23,16 @@ type rpcRequestMetadataContextKey struct{}
 // NewHTTPProxyHandler returns a reverse proxy that forwards MCP HTTP traffic to
 // the configured runtime route and injects issued governance identity headers.
 func NewHTTPProxyHandler(cfg ProxyConfig) (http.Handler, error) {
+	h, _, err := newProxyHandlerAndTracker(cfg)
+	return h, err
+}
+
+// newProxyHandlerAndTracker builds the proxy handler together with the
+// requestTracker that tracks every in-flight request. RunHTTPProxy calls this
+// so it can cancel all tracked requests before draining the server.
+func newProxyHandlerAndTracker(cfg ProxyConfig) (http.Handler, *requestTracker, error) {
 	if err := cfg.Validate(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	target := cloneURL(cfg.RuntimeURL)
 	transport := cfg.transportOrDefault()
@@ -57,6 +65,9 @@ func NewHTTPProxyHandler(cfg ProxyConfig) (http.Handler, error) {
 				return err
 			}
 			_ = resp.Body.Close()
+			if isSessionExpiredBody(body) {
+				body = injectRuntimeStatus(body, "session_expired")
+			}
 			resp.Body = io.NopCloser(bytes.NewReader(body))
 			resp.ContentLength = int64(len(body))
 			resp.Header.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
@@ -72,19 +83,26 @@ func NewHTTPProxyHandler(cfg ProxyConfig) (http.Handler, error) {
 		},
 	}
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	tracker := newRequestTracker()
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		// Track the request so shutdown can cancel it explicitly.
+		reqCtx, id := tracker.track(r.Context())
+		defer tracker.done(id)
+
 		meta, err := captureRPCRequestMetadata(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		r = r.WithContext(context.WithValue(r.Context(), rpcRequestMetadataContextKey{}, meta))
-		proxy.ServeHTTP(w, r)
-	}), nil
+		ctx := context.WithValue(reqCtx, rpcRequestMetadataContextKey{}, meta)
+		ctx = withRPCMethod(ctx, meta.Method)
+		proxy.ServeHTTP(w, r.WithContext(ctx))
+	})
+	return handler, tracker, nil
 }
 
 // RunHTTPProxy serves the local HTTP adapter until the context is cancelled.
@@ -92,7 +110,7 @@ func RunHTTPProxy(ctx context.Context, cfg ProxyConfig) error {
 	if strings.TrimSpace(cfg.ListenAddr) == "" {
 		cfg.ListenAddr = DefaultListenAddr
 	}
-	handler, err := NewHTTPProxyHandler(cfg)
+	handler, tracker, err := newProxyHandlerAndTracker(cfg)
 	if err != nil {
 		return err
 	}
@@ -109,16 +127,19 @@ func RunHTTPProxy(ctx context.Context, cfg ProxyConfig) error {
 
 	select {
 	case <-ctx.Done():
+		// Cancel all in-flight runtime requests so client.Do returns quickly,
+		// then drain the HTTP server. Fall back to Close if Shutdown times out.
+		tracker.cancelAll(errors.New("adapter shutdown"))
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), proxyShutdownTimeout)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			return err
+		if sErr := server.Shutdown(shutdownCtx); sErr != nil {
+			_ = server.Close()
 		}
-		err := <-errCh
-		if errors.Is(err, http.ErrServerClosed) {
+		svrErr := <-errCh
+		if errors.Is(svrErr, http.ErrServerClosed) {
 			return nil
 		}
-		return err
+		return svrErr
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil

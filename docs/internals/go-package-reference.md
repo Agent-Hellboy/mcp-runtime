@@ -1850,7 +1850,9 @@ forward MCP traffic to governed MCP Runtime routes.
 
 - [`Constants`](#agent-adapters-constants)
 - [`Variables`](#agent-adapters-variables)
+- [`func BuildTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error)`](#agent-adapters-func-buildtlsconfig-certfile-keyfile-cafile-string-tls-config-error)
 - [`func NewHTTPProxyHandler(cfg ProxyConfig) (http.Handler, error)`](#agent-adapters-func-newhttpproxyhandler-cfg-proxyconfig-http-handler-error)
+- [`func NewHTTPTransportWithTLS(cfg *tls.Config) *http.Transport`](#agent-adapters-func-newhttptransportwithtls-cfg-tls-config-http-transport)
 - [`func RunHTTPProxy(ctx context.Context, cfg ProxyConfig) error`](#agent-adapters-func-runhttpproxy-ctx-context-context-cfg-proxyconfig-error)
 - [`func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error`](#agent-adapters-func-runstdioshim-ctx-context-context-cfg-shimconfig-opts-stdiooptions-error)
 - [`func SplitTrimmed(s, sep string) []string`](#agent-adapters-func-splittrimmed-s-sep-string-string)
@@ -1886,6 +1888,10 @@ const (
 	EnvLogLevel         = "MCP_RUNTIME_LOG_LEVEL"
 	EnvAnonymous        = "MCP_RUNTIME_ANONYMOUS"
 	EnvAnonymousMethods = "MCP_RUNTIME_ANONYMOUS_METHODS"
+	EnvAuthHeader       = "MCP_RUNTIME_AUTH_HEADER"
+	EnvTLSClientCert    = "MCP_RUNTIME_TLS_CLIENT_CERT"
+	EnvTLSClientKey     = "MCP_RUNTIME_TLS_CLIENT_KEY"
+	EnvTLSCABundle      = "MCP_RUNTIME_TLS_CA_BUNDLE"
 
 	DefaultListenAddr      = "127.0.0.1:8099"
 	DefaultProtocolVersion = "2025-06-18"
@@ -1919,12 +1925,30 @@ var DefaultAnonymousMethods = []string{
 <a id="agent-adapters-functions"></a>
 ### Functions
 
+<a id="agent-adapters-func-buildtlsconfig-certfile-keyfile-cafile-string-tls-config-error"></a>
+```text
+func BuildTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error)
+    BuildTLSConfig builds a *tls.Config for outbound runtime connections.
+    certFile and keyFile must both be set (or both empty) for mTLS. caFile,
+    when non-empty, replaces the default system CA pool.
+
+```
+
 <a id="agent-adapters-func-newhttpproxyhandler-cfg-proxyconfig-http-handler-error"></a>
 ```text
 func NewHTTPProxyHandler(cfg ProxyConfig) (http.Handler, error)
     NewHTTPProxyHandler returns a reverse proxy that forwards MCP HTTP traffic
     to the configured runtime route and injects issued governance identity
     headers.
+
+```
+
+<a id="agent-adapters-func-newhttptransportwithtls-cfg-tls-config-http-transport"></a>
+```text
+func NewHTTPTransportWithTLS(cfg *tls.Config) *http.Transport
+    NewHTTPTransportWithTLS returns an *http.Transport that uses the supplied
+    TLS config while preserving http.DefaultTransport's dial timeouts,
+    keep-alive settings, and ProxyFromEnvironment behaviour.
 
 ```
 
@@ -2014,19 +2038,28 @@ func (cfg ProxyConfig) Validate() error
 <a id="agent-adapters-type-runtimetransport-struct"></a>
 ```text
 type RuntimeTransport struct {
-	// Base is the underlying round-tripper. nil means http.DefaultTransport
-	// (production); tests can swap in a mock by setting this field.
+	// Base is the underlying round-tripper. nil means http.DefaultTransport.
+	// Tests swap in a mock by setting this field.
 	Base http.RoundTripper
 	// Timeout is the per-request timeout applied to the *http.Client wrapper
-	// returned by Client(). Zero means no timeout (matches the previous
-	// "unbounded by default" behavior).
+	// returned by Client(). Zero means no timeout.
 	Timeout time.Duration
+	// AuthHeader is a static Authorization header value injected into every
+	// outbound request (e.g. "Bearer <token>"). Empty means no header is set.
+	AuthHeader string
+	// Tracer is an optional OTel tracer. When non-nil, RoundTrip opens one
+	// client span per RPC labelled with the JSON-RPC method name.
+	Tracer trace.Tracer
+	// Meter is an optional OTel meter. When non-nil, RoundTrip records a
+	// latency histogram and a denial counter keyed by method name.
+	Meter metric.Meter
+
+	// Has unexported fields.
 }
     RuntimeTransport is the shared outbound HTTP transport used by both the
-    reverse proxy and the stdio shim when forwarding to the runtime. It owns the
-    base round-tripper and the per-request timeout so production gates (mTLS,
-    bearer auth, retries, OTel) get implemented in a single place and behave
-    identically for both adapters.
+    reverse proxy and the stdio shim when forwarding to the runtime. It owns
+    every production gate — auth, OTel instrumentation, and method-keyed retry —
+    so both adapters behave identically with a single implementation.
 
 ```
 
@@ -2034,8 +2067,8 @@ type RuntimeTransport struct {
 ```text
 func (t *RuntimeTransport) Client() *http.Client
     Client returns an *http.Client whose Transport is this RuntimeTransport.
-    Both the stdio shim and the reverse proxy route outbound requests through
-    this wrapper so auth, OTel, and retry logic lives in one place.
+    Both adapters route requests through this wrapper so every gate (auth, OTel,
+    retry) applies uniformly.
 
 ```
 
@@ -2050,8 +2083,12 @@ func (t *RuntimeTransport) CloseIdleConnections()
 <a id="agent-adapters-func-t-runtimetransport-roundtrip-req-http-request-http-response-error"></a>
 ```text
 func (t *RuntimeTransport) RoundTrip(req *http.Request) (*http.Response, error)
-    RoundTrip implements http.RoundTripper so the transport can plug directly
-    into httputil.ReverseProxy.Transport.
+    RoundTrip implements http.RoundTripper. Execution order per call:
+     1. Start OTel span (if Tracer is set).
+     2. Inject Authorization header (if AuthHeader is set).
+     3. Execute the request, retrying idempotent methods on gateway errors.
+     4. Record OTel latency histogram and denial counter (if Meter is set).
+     5. Set span outcome and end it.
 
 ```
 

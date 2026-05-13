@@ -10,6 +10,7 @@ Usage:
 
 Flags:
       --agent-id string           Issued agent identity (default: $MCP_RUNTIME_AGENT_ID)
+      --auth-header string        Static Authorization header value for runtime requests, e.g. "Bearer <token>" (default: $MCP_RUNTIME_AUTH_HEADER)
   -h, --help                      help for proxy
       --host-header string        Override the Host header sent to the runtime (default: $MCP_RUNTIME_HOST_HEADER)
       --human-id string           Issued human identity (default: $MCP_RUNTIME_HUMAN_ID)
@@ -21,6 +22,9 @@ Flags:
       --runtime-url string        Platform-issued absolute MCP runtime URL (default: $MCP_RUNTIME_URL)
       --session-id string         Issued agent session identity (default: $MCP_RUNTIME_SESSION_ID)
       --team-id string            Issued team identity for team-scoped grants (default: $MCP_RUNTIME_TEAM_ID)
+      --tls-ca-bundle string      Path to PEM CA bundle to verify the runtime's TLS certificate (default: $MCP_RUNTIME_TLS_CA_BUNDLE)
+      --tls-client-cert string    Path to PEM client certificate for mTLS to the runtime (default: $MCP_RUNTIME_TLS_CLIENT_CERT)
+      --tls-client-key string     Path to PEM client key for mTLS to the runtime (default: $MCP_RUNTIME_TLS_CLIENT_KEY)
 
 Global Flags:
       --debug   Enable debug mode with structured error logging

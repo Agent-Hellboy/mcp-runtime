@@ -1,7 +1,9 @@
 package adapter
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -26,6 +28,11 @@ type identityFlags struct {
 	requestTimeout  string
 	logLevel        string
 	disableXFF      bool
+	// upstream auth / TLS
+	authHeader    string
+	tlsClientCert string
+	tlsClientKey  string
+	tlsCABundle   string
 	// stdio-only
 	anonymous        bool
 	anonymousMethods string
@@ -52,6 +59,14 @@ func bindIdentityFlags(cmd *cobra.Command, f *identityFlags) {
 		"Do not set X-Forwarded-* headers when forwarding to the runtime")
 	cmd.Flags().StringVar(&f.requestTimeout, "request-timeout", os.Getenv(agentadapter.EnvRequestTimeout),
 		"HTTP request timeout for adapter→runtime calls, e.g. 30s (default: $"+agentadapter.EnvRequestTimeout+")")
+	cmd.Flags().StringVar(&f.authHeader, "auth-header", os.Getenv(agentadapter.EnvAuthHeader),
+		"Static Authorization header value for runtime requests, e.g. \"Bearer <token>\" (default: $"+agentadapter.EnvAuthHeader+")")
+	cmd.Flags().StringVar(&f.tlsClientCert, "tls-client-cert", os.Getenv(agentadapter.EnvTLSClientCert),
+		"Path to PEM client certificate for mTLS to the runtime (default: $"+agentadapter.EnvTLSClientCert+")")
+	cmd.Flags().StringVar(&f.tlsClientKey, "tls-client-key", os.Getenv(agentadapter.EnvTLSClientKey),
+		"Path to PEM client key for mTLS to the runtime (default: $"+agentadapter.EnvTLSClientKey+")")
+	cmd.Flags().StringVar(&f.tlsCABundle, "tls-ca-bundle", os.Getenv(agentadapter.EnvTLSCABundle),
+		"Path to PEM CA bundle to verify the runtime's TLS certificate (default: $"+agentadapter.EnvTLSCABundle+")")
 }
 
 // resolved holds the validated cross-cutting pieces of an adapter config —
@@ -93,6 +108,25 @@ func (f identityFlags) resolve() (resolved, error) {
 			return resolved{}, fmt.Errorf("--request-timeout (or $%s) must be greater than zero", agentadapter.EnvRequestTimeout)
 		}
 		out.transport = &agentadapter.RuntimeTransport{Timeout: timeout}
+	}
+	if raw := strings.TrimSpace(f.authHeader); raw != "" {
+		if out.transport == nil {
+			out.transport = &agentadapter.RuntimeTransport{}
+		}
+		out.transport.AuthHeader = raw
+	}
+	tlsCert := strings.TrimSpace(f.tlsClientCert)
+	tlsKey := strings.TrimSpace(f.tlsClientKey)
+	tlsCA := strings.TrimSpace(f.tlsCABundle)
+	if tlsCert != "" || tlsKey != "" || tlsCA != "" {
+		tlsCfg, err := agentadapter.BuildTLSConfig(tlsCert, tlsKey, tlsCA)
+		if err != nil {
+			return resolved{}, fmt.Errorf("TLS config: %w", err)
+		}
+		if out.transport == nil {
+			out.transport = &agentadapter.RuntimeTransport{}
+		}
+		out.transport.Base = newHTTPTransportWithTLS(tlsCfg)
 	}
 
 	if raw := strings.TrimSpace(f.runtimeURL); raw != "" {
@@ -190,4 +224,10 @@ func parseEnvBoolSimple(name string) bool {
 	default:
 		return false
 	}
+}
+
+// newHTTPTransportWithTLS delegates to the shared agentadapter helper so the
+// env and flag paths produce identical transports.
+func newHTTPTransportWithTLS(cfg *tls.Config) *http.Transport {
+	return agentadapter.NewHTTPTransportWithTLS(cfg)
 }

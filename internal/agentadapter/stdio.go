@@ -126,6 +126,9 @@ func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error 
 		}
 		return nil
 	}
+	// tracker lets shutdown cancel every in-flight forward goroutine before
+	// the WaitGroup resolves, so client.Do calls unblock quickly.
+	tracker := newRequestTracker()
 	var forwards sync.WaitGroup
 	errCh := make(chan error, 1)
 	sendErr := func(err error) {
@@ -141,10 +144,12 @@ func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error 
 		select {
 		case <-ctx.Done():
 			closeIfPossible(opts.Stdin)
+			tracker.cancelAll(context.Cause(ctx))
 			forwards.Wait()
 			return nil
 		case err := <-errCh:
 			closeIfPossible(opts.Stdin)
+			tracker.cancelAll(err)
 			forwards.Wait()
 			return err
 		case result := <-scanResults:
@@ -180,7 +185,9 @@ func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error 
 			forwards.Add(1)
 			go func() {
 				defer forwards.Done()
-				if err := shim.forward(ctx, payload, emit); err != nil && ctx.Err() == nil {
+				fwdCtx, id := tracker.track(ctx)
+				defer tracker.done(id)
+				if err := shim.forward(fwdCtx, payload, emit); err != nil && ctx.Err() == nil {
 					sendErr(err)
 				}
 			}()
@@ -233,6 +240,9 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	}
 
 	protocolVersion, sessionID := s.prepareRequestState(envelope)
+
+	// Tag context with method so RuntimeTransport can key retry and OTel on it.
+	ctx = withRPCMethod(ctx, meta.Method)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.RuntimeURL.String(), bytes.NewReader(payload))
 	if err != nil {
@@ -289,6 +299,12 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 			s.setSessionState(sessionStateFailed)
 		}
 		logRuntimeDenial(s.cfg.LogLevel, s.cfg.LogWriter, "adapter/stdio", resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), meta)
+		if isSessionExpiredBody(body) {
+			if hasResponseID {
+				return emit(jsonRPCSessionExpiredError(envelope.ID, extractHTTPErrorMessage(resp.StatusCode, body)))
+			}
+			return nil
+		}
 		if len(body) > 0 && looksLikeJSONRPC(body) {
 			return emit(body)
 		}
@@ -505,6 +521,25 @@ func jsonRPCMethodNotAllowedError(id json.RawMessage, method string) []byte {
 	encoded, err := json.Marshal(response)
 	if err != nil {
 		return []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"method not allowed"}}`, string(id)))
+	}
+	return encoded
+}
+
+func jsonRPCSessionExpiredError(id json.RawMessage, message string) []byte {
+	response := rpcErrorResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error: rpcError{
+			Code:    -32000,
+			Message: message,
+			Data: map[string]any{
+				"runtime_status": "session_expired",
+			},
+		},
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		return []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"session expired","data":{"runtime_status":"session_expired"}}}`, string(id)))
 	}
 	return encoded
 }
