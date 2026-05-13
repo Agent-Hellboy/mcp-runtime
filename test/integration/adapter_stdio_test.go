@@ -53,11 +53,13 @@ type jsonRPCResponse struct {
 // pipes. The reader goroutine pushes each stdout line into a buffered channel
 // so tests can synchronously wait for one response at a time.
 type adapterDriver struct {
-	cmd  *exec.Cmd
-	in   io.WriteCloser
-	out  chan []byte
-	errc chan error
-	stop func()
+	cmd     *exec.Cmd
+	in      io.WriteCloser
+	out     chan []byte
+	errc    chan error
+	stop    func()
+	stderrW *testWriter    // closed before t returns so t.Log can no longer fire
+	readers sync.WaitGroup // tracks the stdout reader + Wait() goroutine
 }
 
 func (d *adapterDriver) send(t *testing.T, req jsonRPCRequest) {
@@ -88,9 +90,18 @@ func (d *adapterDriver) recv(t *testing.T, timeout time.Duration) jsonRPCRespons
 	return jsonRPCResponse{}
 }
 
+// close cancels the context (which terminates the subprocess), waits for
+// every helper goroutine to finish, and then disables the stderr writer.
+// The order matters: t.Log() inside testWriter.Write would panic if it
+// fires after the test function returns, so we must wait for cmd.Wait()
+// before letting Cleanup unblock.
 func (d *adapterDriver) close() {
 	_ = d.in.Close()
 	d.stop()
+	d.readers.Wait()
+	if d.stderrW != nil {
+		d.stderrW.disable()
+	}
 }
 
 // startAdapter compiles the CLI once per test binary (via go test caching)
@@ -127,7 +138,8 @@ func startAdapter(t *testing.T, runtimeURL string, args []string, env map[string
 		cancel()
 		t.Fatalf("stdout pipe: %v", err)
 	}
-	cmd.Stderr = testWriter{t: t, prefix: "[adapter-stderr] "}
+	stderrW := newTestWriter(t, "[adapter-stderr] ")
+	cmd.Stderr = stderrW
 
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -135,14 +147,17 @@ func startAdapter(t *testing.T, runtimeURL string, args []string, env map[string
 	}
 
 	d := &adapterDriver{
-		cmd:  cmd,
-		in:   stdin,
-		out:  make(chan []byte, 16),
-		errc: make(chan error, 1),
-		stop: cancel,
+		cmd:     cmd,
+		in:      stdin,
+		out:     make(chan []byte, 16),
+		errc:    make(chan error, 1),
+		stop:    cancel,
+		stderrW: stderrW,
 	}
 
+	d.readers.Add(1)
 	go func() {
+		defer d.readers.Done()
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 0, 64*1024), 16<<20)
 		for scanner.Scan() {
@@ -151,6 +166,14 @@ func startAdapter(t *testing.T, runtimeURL string, args []string, env map[string
 			case d.out <- line:
 			case <-ctx.Done():
 				return
+			}
+		}
+		// Surface scanner failures (e.g. a line larger than the buffer cap or
+		// pipe I/O errors) so tests fail loudly instead of timing out.
+		if err := scanner.Err(); err != nil {
+			select {
+			case d.errc <- fmt.Errorf("stdout scanner: %w", err):
+			default:
 			}
 		}
 		err := cmd.Wait()
@@ -204,18 +227,39 @@ func buildAdapterBinary(t *testing.T) string {
 }
 
 // testWriter forwards subprocess stderr through t.Log for debug visibility.
+// disable() flips it into a swallow-only mode so any in-flight subprocess
+// stderr that arrives after the test function returns can't panic by calling
+// t.Log on a finished test.
 type testWriter struct {
 	t      *testing.T
 	prefix string
+
+	mu       sync.Mutex
+	disabled bool
 }
 
-func (w testWriter) Write(p []byte) (int, error) {
+func newTestWriter(t *testing.T, prefix string) *testWriter {
+	return &testWriter{t: t, prefix: prefix}
+}
+
+func (w *testWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.disabled {
+		return len(p), nil
+	}
 	for _, line := range strings.Split(strings.TrimRight(string(p), "\n"), "\n") {
 		if line != "" {
 			w.t.Log(w.prefix + line)
 		}
 	}
 	return len(p), nil
+}
+
+func (w *testWriter) disable() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.disabled = true
 }
 
 // fakeRuntime is the in-test stand-in for an mcp-runtime gateway. It captures
