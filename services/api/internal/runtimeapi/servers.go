@@ -214,6 +214,8 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": msg})
 		return
 	}
+	// This is an API-layer guard. Strict global quota enforcement under highly
+	// concurrent publishes would need a shared reservation/locking mechanism.
 	rejection, err := s.evaluateServerPublishPolicy(ctx, p, namespace, req.Name, current, time.Now().UTC())
 	if err != nil {
 		log.Printf("runtime servers: evaluate publish policy for %s/%s failed: %v", namespace, req.Name, err)
@@ -236,7 +238,10 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	for key, value := range req.Labels {
 		labels[strings.TrimSpace(key)] = strings.TrimSpace(value)
 	}
-	if userID := p.UserID(); userID != "" {
+	if current != nil && p.Role == roleAdmin {
+		preserveCurrentLabel(labels, current.Labels, platformUserIDLabel)
+		preserveCurrentLabel(labels, current.Labels, createdByLabel)
+	} else if userID := p.UserID(); userID != "" {
 		labels[platformUserIDLabel] = userID
 		labels[createdByLabel] = userID
 	}
@@ -280,6 +285,12 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	}
 	s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "success", req.Name, namespace, req.Spec.Image, ""))
 	writeJSON(w, http.StatusOK, map[string]any{"server": serverInfoFromMCPServer(*applied, serverDeploymentStatus{}, r)})
+}
+
+func preserveCurrentLabel(labels, current map[string]string, key string) {
+	if value := strings.TrimSpace(current[key]); value != "" {
+		labels[key] = value
+	}
 }
 
 func (s *RuntimeServer) HandleRuntimeServerItem(w http.ResponseWriter, r *http.Request) {

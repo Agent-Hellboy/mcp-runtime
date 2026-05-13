@@ -9,6 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/selection"
+
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	"mcp-runtime/pkg/controlplane"
 )
@@ -165,9 +168,18 @@ func (s *RuntimeServer) countPrincipalActiveServers(ctx context.Context, p princ
 	if control == nil {
 		return 0, fmt.Errorf("kubernetes not available")
 	}
+	userID := strings.TrimSpace(p.UserID())
+	if userID == "" {
+		return 0, nil
+	}
+	ownerSelector, canUseOwnerSelector := serverOwnerLabelSelector(userID)
 	count := 0
 	for _, namespace := range publishNamespacesForPrincipal(p) {
-		result, err := control.ListServers(ctx, namespace)
+		opts := controlplane.ListServersOptions{SkipDeploymentStatus: true}
+		if canUseOwnerSelector && !principalOwnsNamespace(p, namespace) {
+			opts.LabelSelector = ownerSelector
+		}
+		result, err := control.ListServersWithOptions(ctx, namespace, opts)
 		if err != nil {
 			return 0, err
 		}
@@ -181,27 +193,37 @@ func (s *RuntimeServer) countPrincipalActiveServers(ctx context.Context, p princ
 }
 
 func serverInfoOwnedByPrincipal(server controlplane.ServerInfo, p principal) bool {
-	userID := strings.TrimSpace(p.UserID())
-	if userID == "" {
-		return false
-	}
-	owner := strings.TrimSpace(server.Labels[platformUserIDLabel])
-	if owner == userID {
-		return true
-	}
-	return owner == "" && principalOwnsNamespace(p, server.Namespace)
+	return serverLabelsOwnedByPrincipal(server.Namespace, server.Labels, p)
 }
 
 func serverWritableByPrincipal(server mcpv1alpha1.MCPServer, p principal) bool {
+	return serverLabelsOwnedByPrincipal(server.Namespace, server.Labels, p)
+}
+
+func serverLabelsOwnedByPrincipal(namespace string, serverLabels map[string]string, p principal) bool {
 	userID := strings.TrimSpace(p.UserID())
 	if userID == "" {
 		return false
 	}
-	owner := strings.TrimSpace(server.Labels[platformUserIDLabel])
+	owner := strings.TrimSpace(serverLabels[platformUserIDLabel])
 	if owner == userID {
 		return true
 	}
-	return owner == "" && principalOwnsNamespace(p, server.Namespace)
+	if owner != "" {
+		return false
+	}
+	if principalOwnsNamespace(p, namespace) {
+		return true
+	}
+	return sharedCatalogWritableForUsers() && isModeCatalogNamespace(namespace) && principalCanPublishNamespace(p, namespace)
+}
+
+func serverOwnerLabelSelector(userID string) (string, bool) {
+	req, err := labels.NewRequirement(platformUserIDLabel, selection.Equals, []string{strings.TrimSpace(userID)})
+	if err != nil {
+		return "", false
+	}
+	return req.String(), true
 }
 
 func (r *serverPublishPolicyRejection) retryAfterHeader() string {

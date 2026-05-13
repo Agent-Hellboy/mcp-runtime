@@ -21,25 +21,41 @@ const stableDeploymentSelector = "app.kubernetes.io/managed-by=mcp-runtime,mcpru
 // MCPServerGVR is the dynamic-client resource identity for MCPServer objects.
 var MCPServerGVR = mcpv1alpha1.GroupVersion.WithResource(mcpv1alpha1.MCPServerResource)
 
+type ListServersOptions struct {
+	LabelSelector        string
+	SkipDeploymentStatus bool
+}
+
 // ListServers lists MCPServer resources in namespace and joins them with the
 // readiness of their stable backing Deployments. If the MCPServer resource is
 // unavailable, it falls back to legacy managed Deployments.
 func (m *Manager) ListServers(ctx context.Context, namespace string) (ListServersResult, error) {
+	return m.ListServersWithOptions(ctx, namespace, ListServersOptions{})
+}
+
+// ListServersWithOptions lists MCPServer resources in namespace using optional
+// Kubernetes list filters.
+func (m *Manager) ListServersWithOptions(ctx context.Context, namespace string, opts ListServersOptions) (ListServersResult, error) {
 	clients, err := m.requireClients()
 	if err != nil {
 		return ListServersResult{}, err
 	}
 	namespace = strings.TrimSpace(namespace)
+	opts.LabelSelector = strings.TrimSpace(opts.LabelSelector)
 
-	serverObjects, crdErr := clients.Dynamic.Resource(MCPServerGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	serverObjects, crdErr := clients.Dynamic.Resource(MCPServerGVR).Namespace(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: opts.LabelSelector,
+	})
 	if crdErr == nil {
 		deploymentStatus := map[string]ServerDeploymentStatus{}
-		deployments, deployErr := clients.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
-			LabelSelector: stableDeploymentSelector,
-		})
-		if deployErr == nil {
-			for _, d := range deployments.Items {
-				deploymentStatus[d.Name] = StatusForDeployment(d)
+		if !opts.SkipDeploymentStatus {
+			deployments, deployErr := clients.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
+				LabelSelector: combineLabelSelectors(stableDeploymentSelector, opts.LabelSelector),
+			})
+			if deployErr == nil {
+				for _, d := range deployments.Items {
+					deploymentStatus[d.Name] = StatusForDeployment(d)
+				}
 			}
 		}
 
@@ -55,7 +71,7 @@ func (m *Manager) ListServers(ctx context.Context, namespace string) (ListServer
 	}
 
 	deployments, err := clients.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: stableDeploymentSelector,
+		LabelSelector: combineLabelSelectors(stableDeploymentSelector, opts.LabelSelector),
 	})
 	if err != nil {
 		return ListServersResult{CRDError: crdErr, UsedDeploymentFallback: true}, err
@@ -82,6 +98,17 @@ func (m *Manager) ListServers(ctx context.Context, namespace string) (ListServer
 		CRDError:               crdErr,
 		UsedDeploymentFallback: true,
 	}, nil
+}
+
+func combineLabelSelectors(selectors ...string) string {
+	out := make([]string, 0, len(selectors))
+	for _, selector := range selectors {
+		selector = strings.TrimSpace(selector)
+		if selector != "" {
+			out = append(out, selector)
+		}
+	}
+	return strings.Join(out, ",")
 }
 
 // ApplyServer creates or updates an MCPServer resource.

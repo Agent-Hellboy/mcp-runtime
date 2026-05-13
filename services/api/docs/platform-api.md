@@ -161,7 +161,10 @@ The response includes `publish_policy` on list calls. Admins configure the
 active-server limit with `PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `5`, `0`
 disables) and per-server cooldown with `PLATFORM_MCP_PUSH_COOLDOWN` (default
 `0s`, Go duration format). Quota or cooldown denials return `429`; cooldown
-responses include `next_allowed_at` and `Retry-After`.
+responses include `next_allowed_at` and `Retry-After`. The active-server limit
+is enforced by the platform API before Kubernetes apply; strict serialization of
+concurrent publishes would require a shared reservation or admission-control
+layer.
 
 Retire an MCPServer to free quota:
 

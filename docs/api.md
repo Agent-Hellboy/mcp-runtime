@@ -330,7 +330,9 @@ disable). A quota or cooldown denial returns `429` with a clear error; cooldown
 responses include `next_allowed_at` and `Retry-After`. `GET /api/runtime/servers`
 includes `publish_policy` so UI clients can show the active limit and count.
 `DELETE /api/runtime/servers/{namespace}/{name}` retires a server and frees one
-active-server slot for the owning publisher.
+active-server slot for the owning publisher. The active-server limit is enforced
+by the platform API before Kubernetes apply; strict serialization of concurrent
+publishes would require a shared reservation or admission-control layer.
 
 ### Grant apply body
 
