@@ -1,7 +1,6 @@
 package adapter
 
 import (
-	"context"
 	"os"
 	"os/signal"
 	"syscall"
@@ -34,7 +33,7 @@ variables. Flags win when both are set.`,
 				return err
 			}
 
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			return agentadapter.RunStdioShim(ctx, cfg, agentadapter.StdioOptions{
 				Stdin:  os.Stdin,

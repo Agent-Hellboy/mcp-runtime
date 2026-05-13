@@ -23,7 +23,7 @@ type identityFlags struct {
 	sessionID       string
 	hostHeader      string
 	protocolVersion string
-	requestTimeout  time.Duration
+	requestTimeout  string
 	logLevel        string
 	disableXFF      bool
 }
@@ -47,12 +47,13 @@ func bindIdentityFlags(cmd *cobra.Command, f *identityFlags) {
 		"Adapter log level: info logs runtime denials (default: $"+agentadapter.EnvLogLevel+")")
 	cmd.Flags().BoolVar(&f.disableXFF, "no-xforwarded", parseEnvBool(agentadapter.EnvSetXForwarded, false),
 		"Do not set X-Forwarded-* headers when forwarding to the runtime")
-	cmd.Flags().DurationVar(&f.requestTimeout, "request-timeout", parseEnvDuration(agentadapter.EnvRequestTimeout),
-		"HTTP request timeout for adapter→runtime calls (default: $"+agentadapter.EnvRequestTimeout+")")
+	cmd.Flags().StringVar(&f.requestTimeout, "request-timeout", os.Getenv(agentadapter.EnvRequestTimeout),
+		"HTTP request timeout for adapter→runtime calls, e.g. 30s (default: $"+agentadapter.EnvRequestTimeout+")")
 }
 
 // toConfig converts the parsed flags into an agentadapter.Config, validating
-// the runtime URL once on the CLI side so error messages are user-readable.
+// the runtime URL and request timeout on the CLI side so error messages are
+// user-readable and stay consistent with agentadapter.loadConfig.
 func (f identityFlags) toConfig() (agentadapter.Config, error) {
 	cfg := agentadapter.Config{
 		HumanID:           strings.TrimSpace(f.humanID),
@@ -62,11 +63,21 @@ func (f identityFlags) toConfig() (agentadapter.Config, error) {
 		HostHeader:        strings.TrimSpace(f.hostHeader),
 		ProtocolVersion:   strings.TrimSpace(f.protocolVersion),
 		LogLevel:          strings.TrimSpace(f.logLevel),
-		RequestTimeout:    f.requestTimeout,
 		DisableXForwarded: f.disableXFF,
 	}
 	if cfg.ProtocolVersion == "" {
 		cfg.ProtocolVersion = agentadapter.DefaultProtocolVersion
+	}
+
+	if raw := strings.TrimSpace(f.requestTimeout); raw != "" {
+		timeout, err := time.ParseDuration(raw)
+		if err != nil {
+			return agentadapter.Config{}, fmt.Errorf("--request-timeout (or $%s) is invalid: %w", agentadapter.EnvRequestTimeout, err)
+		}
+		if timeout <= 0 {
+			return agentadapter.Config{}, fmt.Errorf("--request-timeout (or $%s) must be greater than zero", agentadapter.EnvRequestTimeout)
+		}
+		cfg.RequestTimeout = timeout
 	}
 
 	rawURL := strings.TrimSpace(f.runtimeURL)
@@ -99,16 +110,4 @@ func parseEnvBool(name string, def bool) bool {
 	default:
 		return def
 	}
-}
-
-func parseEnvDuration(name string) time.Duration {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return 0
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil || d <= 0 {
-		return 0
-	}
-	return d
 }

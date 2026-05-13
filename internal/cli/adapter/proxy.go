@@ -1,7 +1,6 @@
 package adapter
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -40,7 +39,7 @@ variables. Flags win when both are set.`,
 				return err
 			}
 
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			fmt.Fprintf(cmd.ErrOrStderr(), "mcp-runtime adapter proxy listening on %s -> %s\n",
 				cfg.ListenAddr, cfg.RuntimeURL.String())

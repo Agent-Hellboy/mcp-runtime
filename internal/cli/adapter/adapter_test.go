@@ -69,7 +69,7 @@ func TestIdentityFlagsToConfigParsesTeamAndTimeout(t *testing.T) {
 		agentID:        "agent-1",
 		teamID:         "team-acme",
 		sessionID:      "sess-1",
-		requestTimeout: 45 * time.Second,
+		requestTimeout: "45s",
 	}
 	cfg, err := flags.toConfig()
 	if err != nil {
@@ -83,5 +83,40 @@ func TestIdentityFlagsToConfigParsesTeamAndTimeout(t *testing.T) {
 	}
 	if cfg.RuntimeURL == nil || cfg.RuntimeURL.Host != "localhost:18080" {
 		t.Fatalf("RuntimeURL = %v, want parsed localhost:18080", cfg.RuntimeURL)
+	}
+}
+
+func TestIdentityFlagsToConfigRejectsBadTimeout(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "missing unit", value: "30", want: "is invalid"},
+		{name: "zero", value: "0s", want: "greater than zero"},
+		{name: "negative", value: "-5s", want: "greater than zero"},
+		{name: "garbage", value: "soon", want: "is invalid"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			flags := identityFlags{
+				runtimeURL:     "http://localhost:18080/demo/mcp",
+				humanID:        "h",
+				agentID:        "a",
+				sessionID:      "s",
+				requestTimeout: tt.value,
+			}
+			_, err := flags.toConfig()
+			if err == nil {
+				t.Fatalf("toConfig() error = nil, want %s", tt.want)
+			}
+			if !strings.Contains(err.Error(), "request-timeout") || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("toConfig() error = %q, want request-timeout/%s", err, tt.want)
+			}
+		})
 	}
 }
