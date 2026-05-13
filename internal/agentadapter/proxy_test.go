@@ -182,7 +182,7 @@ func TestHTTPProxyLogsRuntimeDenialWhenInfoEnabled(t *testing.T) {
 	handler.ServeHTTP(recorder, req)
 
 	logLine := logs.String()
-	for _, want := range []string{"mcp-runtime-agent-proxy:", "403", "trust_too_low", "method=tools/call", "tool=upper"} {
+	for _, want := range []string{"adapter/proxy:", "403", "trust_too_low", "method=tools/call", "tool=upper"} {
 		if !strings.Contains(logLine, want) {
 			t.Fatalf("log line = %q, want %q", logLine, want)
 		}

@@ -144,8 +144,8 @@ X-MCP-Agent-Session: sess-8f1b9d
 ### Agent adapters
 
 Agent-side adapters are optional helper processes for frameworks and IDEs that
-cannot attach these headers directly. `mcp-runtime-agent-proxy` accepts local
-Streamable HTTP MCP traffic, and `mcp-runtime-mcp-shim` accepts stdio MCP
+cannot attach these headers directly. `mcp-runtime adapter proxy` accepts local
+Streamable HTTP MCP traffic, and `mcp-runtime adapter stdio` accepts stdio MCP
 traffic, then both forward to the governed MCP Runtime route with the issued
 identity/session headers. They do not create grants or sessions and do not
 evaluate policy; the gateway still enforces `MCPAccessGrant` and

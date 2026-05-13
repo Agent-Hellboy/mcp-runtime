@@ -1,4 +1,4 @@
-.PHONY: all build build-adapters test clean deps deps-go deps-check deps-install dev fmt lint coverage build-all build-unix install help \
+.PHONY: all build test clean deps deps-go deps-check deps-install dev fmt lint coverage build-all build-unix install help \
 	operator-build operator-run operator-docker-build operator-docker-push \
 	operator-test operator-deploy operator-undeploy operator-install operator-uninstall \
 	operator-manifests operator-generate operator-coverage \
@@ -27,12 +27,6 @@ build: ## Build CLI binary for current platform.
 	@echo "Building $(BINARY_NAME) CLI..."
 	@mkdir -p $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/mcp-runtime
-
-build-adapters: ## Build optional agent-side MCP adapter binaries.
-	@echo "Building agent adapter binaries..."
-	@mkdir -p $(BUILD_DIR)
-	go build -o $(BUILD_DIR)/mcp-runtime-agent-proxy ./cmd/mcp-runtime-agent-proxy
-	go build -o $(BUILD_DIR)/mcp-runtime-mcp-shim ./cmd/mcp-runtime-mcp-shim
 
 build-all: ## Build CLI for all Unix platforms (macOS and Linux, ARM64 and AMD64).
 	@echo "Building for all Unix platforms..."

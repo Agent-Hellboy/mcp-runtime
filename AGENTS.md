@@ -9,7 +9,7 @@ If instructions conflict, prefer **this repo** (`README`, CRDs, `v1alpha1` types
 | Area | Path | Notes |
 |------|------|--------|
 | User-facing CLI | `cmd/mcp-runtime/`, `internal/cli/root/`, `internal/cli/<command>/`, `internal/cli/core/` | Entrypoint, foldered Cobra command routing, command-owned behavior for `setup`, `status`, `registry`, `server`, `access`, …, and shared CLI kernel code |
-| Agent adapters | `cmd/mcp-runtime-agent-proxy/`, `cmd/mcp-runtime-mcp-shim/`, `internal/agentadapter/` | Optional HTTP and stdio adapter binaries that inject issued governance identity/session headers while leaving grant/session creation and enforcement to the platform |
+| Agent adapters | `internal/cli/adapter/`, `internal/agentadapter/` | HTTP and stdio adapters (`mcp-runtime adapter proxy/stdio`) that inject issued governance identity/session headers while leaving grant/session creation and enforcement to the platform |
 | Operator (controller) | `cmd/operator/`, `internal/operator/` | `MCPServer` reconciliation, ingress, gateway wiring |
 | API & CRD types | `api/v1alpha1/` | Source of truth for object shapes; CRD YAML in `config/crd/bases/` |
 | Access and policy (shared) | `pkg/access/`, `pkg/policy/` | Grant/session CRUD helpers plus rendered gateway policy contracts and evaluation semantics used by operator and proxy |
@@ -35,7 +35,6 @@ Use **Go** from `go.mod` (see `go version` / toolchain). From the repo root:
 gofmt -s -l .   # if empty, OK; else run: gofmt -s -w .
 
 go build -o bin/mcp-runtime ./cmd/mcp-runtime
-make build-adapters
 
 # Fast feedback (matches most of CI for the main module)
 go test ./... -count=1 -race

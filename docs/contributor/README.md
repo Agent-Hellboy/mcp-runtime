@@ -50,7 +50,7 @@ on the day-to-day loop for contributors.
 | Platform API | `services/api` | `(cd services/api && go test ./... -count=1)` |
 | Platform UI | `services/ui` | `(cd services/ui && go test ./... -count=1)`, `node --check services/ui/static/app.js` |
 | MCP proxy/gateway | `services/mcp-proxy`, `pkg/policy`, `pkg/access` | service tests plus `E2E_SCENARIOS=governance` or `smoke-auth` when request behavior changes |
-| Agent adapters | `cmd/mcp-runtime-agent-proxy/`, `cmd/mcp-runtime-mcp-shim/`, `internal/agentadapter/` | `go test ./internal/agentadapter -count=1` |
+| Agent adapters | `internal/agentadapter/`, `internal/cli/adapter/` | `go test ./internal/agentadapter ./internal/cli/adapter -count=1` |
 | Docs only | `docs/`, `README.md`, `AGENTS.md` | docs build if available, `rg` for stale terms, `git diff --check` |
 
 ## Local Cluster Contract

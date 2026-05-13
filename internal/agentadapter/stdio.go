@@ -240,7 +240,7 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	body = bytes.TrimSpace(body)
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		logRuntimeDenial(s.cfg.LogLevel, s.cfg.LogWriter, "mcp-runtime-mcp-shim", resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), meta)
+		logRuntimeDenial(s.cfg.LogLevel, s.cfg.LogWriter, "adapter/stdio", resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), meta)
 		if len(body) > 0 && looksLikeJSONRPC(body) {
 			return emit(body)
 		}

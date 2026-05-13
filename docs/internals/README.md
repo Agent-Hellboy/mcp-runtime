@@ -44,7 +44,7 @@ flowchart LR
 | CLI implementation | [`internal-cli.md`](internal-cli.md) | Covers the `internal/cli/root` routing layer plus setup, bootstrap, registry, server, access, status, sentinel, auth, and pipeline behavior. |
 | Kubernetes API types | [`api-types.md`](api-types.md) | Defines the public CRD shapes consumed by users, tests, and the operator. |
 | Generated Go reference | [`go-package-reference.md`](go-package-reference.md) | Captures `go doc` output for the main contributor-facing packages. |
-| Agent adapters | `internal/agentadapter/`, `cmd/mcp-runtime-agent-proxy/`, `cmd/mcp-runtime-mcp-shim/` | Shared HTTP proxy and stdio shim behavior for forwarding agent MCP traffic with issued governance headers. |
+| Agent adapters | `internal/agentadapter/`, `internal/cli/adapter/` | HTTP proxy and stdio shim behavior for forwarding agent MCP traffic with issued governance headers; exposed via `mcp-runtime adapter proxy/stdio`. |
 | Operator | [`cmd-operator.md`](cmd-operator.md) | Explains manager startup and reconciliation from desired state to Kubernetes resources. |
 | Control-plane helpers | `pkg/controlplane/` | Shared MCPServer Kubernetes operations and status projection used outside HTTP/CLI glue. |
 | Shared policy and events | `pkg/policy/`, `pkg/events/`, `pkg/clickhouse/` | Gateway policy contracts/evaluation plus Sentinel event envelopes and ClickHouse query/insert helpers. |
@@ -109,8 +109,8 @@ Governance-related changes usually span `api/v1alpha1/access_types.go`, `pkg/acc
 ```mermaid
 flowchart TB
     Cmd[cmd/mcp-runtime] --> CLIRoot[internal/cli/root]
-    AgentProxy[cmd/mcp-runtime-agent-proxy] --> AgentAdapter[internal/agentadapter]
-    AgentShim[cmd/mcp-runtime-mcp-shim] --> AgentAdapter
+    CLIRoot --> CLIAdapter
+    CLIAdapter[internal/cli/adapter] --> AgentAdapter[internal/agentadapter]
     CLIRoot --> CLICommands[internal/cli/<command>]
     CLICommands --> CLICore[internal/cli/core]
     CLICommands --> Metadata[pkg/metadata]
@@ -176,7 +176,7 @@ workflows.
 | Change generated manifests | `pkg/metadata`, `pkg/manifest`, `config/`, examples | targeted package tests plus manifest diff review |
 | Change reconciliation behavior | `internal/operator`, API types, k8s helpers | `go test ./internal/operator/... -race -count=1` |
 | Change governance policy | `pkg/access`, `pkg/policy`, `services/api`, `services/mcp-proxy`, access CRDs | targeted package/service tests plus e2e policy scenario |
-| Change agent adapters | `internal/agentadapter`, `cmd/mcp-runtime-agent-proxy`, `cmd/mcp-runtime-mcp-shim`, `docs/agent-adapters.md` | `go test ./internal/agentadapter -count=1` and `make build-adapters` |
+| Change agent adapters | `internal/agentadapter`, `internal/cli/adapter`, `docs/agent-adapters.md` | `go test ./internal/agentadapter ./internal/cli/adapter -count=1` |
 | Change Sentinel event storage | `pkg/events`, `pkg/clickhouse`, `services/ingest`, `services/processor`, `services/api`, `services/mcp-proxy` | package tests plus touched service tests |
 | Change docs site behavior | `docs/mkdocs.yml`, `docs/nginx.conf`, Markdown pages | MkDocs build or docs container build |
 
