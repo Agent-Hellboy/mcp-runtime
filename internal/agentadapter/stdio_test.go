@@ -61,15 +61,17 @@ func TestRunStdioShimInjectsHeadersAndMaintainsRuntimeMCPSession(t *testing.T) {
 	}, "\n") + "\n"
 	var output bytes.Buffer
 
-	err = RunStdioShim(context.Background(), Config{
-		RuntimeURL:      runtimeURL,
-		HumanID:         "support-lead",
-		AgentID:         "ticket-triage-agent",
-		TeamID:          "team-acme",
-		SessionID:       "sess-ticket-triage-agent",
+	err = RunStdioShim(context.Background(), ShimConfig{
+		RuntimeURL: runtimeURL,
+		Identity: Identity{
+			HumanID:   "support-lead",
+			AgentID:   "ticket-triage-agent",
+			TeamID:    "team-acme",
+			SessionID: "sess-ticket-triage-agent",
+		},
 		HostHeader:      "mcp.example.local",
 		ProtocolVersion: "2025-01-01",
-		HTTPClient:      upstream.Client(),
+		Transport:       &RuntimeTransport{Base: upstream.Client().Transport},
 	}, StdioOptions{
 		Stdin:  strings.NewReader(input),
 		Stdout: &output,
@@ -116,12 +118,14 @@ func TestRunStdioShimConvertsHTTPDenialToJSONRPCError(t *testing.T) {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
 	var output bytes.Buffer
-	err = RunStdioShim(context.Background(), Config{
+	err = RunStdioShim(context.Background(), ShimConfig{
 		RuntimeURL: runtimeURL,
-		HumanID:    "human-1",
-		AgentID:    "agent-1",
-		SessionID:  "session-1",
-		HTTPClient: upstream.Client(),
+		Identity: Identity{
+			HumanID:   "human-1",
+			AgentID:   "agent-1",
+			SessionID: "session-1",
+		},
+		Transport: &RuntimeTransport{Base: upstream.Client().Transport},
 	}, StdioOptions{
 		Stdin:  strings.NewReader(`{"jsonrpc":"2.0","id":"call-1","method":"tools/call","params":{"name":"upper"}}` + "\n"),
 		Stdout: &output,
@@ -161,14 +165,16 @@ func TestRunStdioShimLogsRuntimeDenialWhenInfoEnabled(t *testing.T) {
 	}
 	var output bytes.Buffer
 	var logs bytes.Buffer
-	err = RunStdioShim(context.Background(), Config{
+	err = RunStdioShim(context.Background(), ShimConfig{
 		RuntimeURL: runtimeURL,
-		HumanID:    "human-1",
-		AgentID:    "agent-1",
-		SessionID:  "session-1",
-		HTTPClient: upstream.Client(),
-		LogLevel:   "info",
-		LogWriter:  &logs,
+		Identity: Identity{
+			HumanID:   "human-1",
+			AgentID:   "agent-1",
+			SessionID: "session-1",
+		},
+		Transport: &RuntimeTransport{Base: upstream.Client().Transport},
+		LogLevel:  "info",
+		LogWriter: &logs,
 	}, StdioOptions{
 		Stdin:  strings.NewReader(`{"jsonrpc":"2.0","id":"call-1","method":"tools/call","params":{"name":"upper"}}` + "\n"),
 		Stdout: &output,
@@ -202,12 +208,14 @@ func TestRunStdioShimAppliesRequestTimeout(t *testing.T) {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
 	var output bytes.Buffer
-	err = RunStdioShim(context.Background(), Config{
-		RuntimeURL:     runtimeURL,
-		HumanID:        "human-1",
-		AgentID:        "agent-1",
-		SessionID:      "session-1",
-		RequestTimeout: 10 * time.Millisecond,
+	err = RunStdioShim(context.Background(), ShimConfig{
+		RuntimeURL: runtimeURL,
+		Identity: Identity{
+			HumanID:   "human-1",
+			AgentID:   "agent-1",
+			SessionID: "session-1",
+		},
+		Transport: &RuntimeTransport{Timeout: 10 * time.Millisecond},
 	}, StdioOptions{
 		Stdin:  strings.NewReader(`{"jsonrpc":"2.0","id":"call-1","method":"tools/call","params":{"name":"upper"}}` + "\n"),
 		Stdout: &output,
@@ -248,12 +256,14 @@ func TestRunStdioShimSuppressesHTTPRequestErrorAfterContextCancellation(t *testi
 		}),
 	}
 	var output bytes.Buffer
-	err = RunStdioShim(ctx, Config{
+	err = RunStdioShim(ctx, ShimConfig{
 		RuntimeURL: runtimeURL,
-		HumanID:    "human-1",
-		AgentID:    "agent-1",
-		SessionID:  "session-1",
-		HTTPClient: client,
+		Identity: Identity{
+			HumanID:   "human-1",
+			AgentID:   "agent-1",
+			SessionID: "session-1",
+		},
+		Transport: &RuntimeTransport{Base: client.Transport},
 	}, StdioOptions{
 		Stdin:  strings.NewReader(`{"jsonrpc":"2.0","id":"call-1","method":"tools/call","params":{"name":"upper"}}` + "\n"),
 		Stdout: &output,
@@ -320,12 +330,14 @@ func TestRunStdioShimStreamsEventsAndContinuesReadingStdin(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		defer stdout.Close()
-		done <- RunStdioShim(ctx, Config{
+		done <- RunStdioShim(ctx, ShimConfig{
 			RuntimeURL: runtimeURL,
-			HumanID:    "human-1",
-			AgentID:    "agent-1",
-			SessionID:  "session-1",
-			HTTPClient: upstream.Client(),
+			Identity: Identity{
+				HumanID:   "human-1",
+				AgentID:   "agent-1",
+				SessionID: "session-1",
+			},
+			Transport: &RuntimeTransport{Base: upstream.Client().Transport},
 		}, StdioOptions{
 			Stdin:  stdin,
 			Stdout: stdout,
@@ -382,12 +394,14 @@ func TestRunStdioShimDoesNotWriteResponseForNotificationAcceptedByHTTP(t *testin
 		t.Fatalf("url.Parse() error = %v", err)
 	}
 	var output bytes.Buffer
-	err = RunStdioShim(context.Background(), Config{
+	err = RunStdioShim(context.Background(), ShimConfig{
 		RuntimeURL: runtimeURL,
-		HumanID:    "human-1",
-		AgentID:    "agent-1",
-		SessionID:  "session-1",
-		HTTPClient: upstream.Client(),
+		Identity: Identity{
+			HumanID:   "human-1",
+			AgentID:   "agent-1",
+			SessionID: "session-1",
+		},
+		Transport: &RuntimeTransport{Base: upstream.Client().Transport},
 	}, StdioOptions{
 		Stdin:  strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n"),
 		Stdout: &output,
@@ -415,12 +429,14 @@ func TestRunStdioShimReturnsParseErrorForMalformedJSON(t *testing.T) {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
 	var output bytes.Buffer
-	err = RunStdioShim(context.Background(), Config{
+	err = RunStdioShim(context.Background(), ShimConfig{
 		RuntimeURL: runtimeURL,
-		HumanID:    "human-1",
-		AgentID:    "agent-1",
-		SessionID:  "session-1",
-		HTTPClient: upstream.Client(),
+		Identity: Identity{
+			HumanID:   "human-1",
+			AgentID:   "agent-1",
+			SessionID: "session-1",
+		},
+		Transport: &RuntimeTransport{Base: upstream.Client().Transport},
 	}, StdioOptions{
 		Stdin:  strings.NewReader("{not-json\n"),
 		Stdout: &output,
@@ -460,11 +476,13 @@ func TestRunStdioShimReturnsWhenContextCancelledWhileIdle(t *testing.T) {
 	done := make(chan error, 1)
 
 	go func() {
-		done <- RunStdioShim(ctx, Config{
+		done <- RunStdioShim(ctx, ShimConfig{
 			RuntimeURL: runtimeURL,
-			HumanID:    "human-1",
-			AgentID:    "agent-1",
-			SessionID:  "session-1",
+			Identity: Identity{
+				HumanID:   "human-1",
+				AgentID:   "agent-1",
+				SessionID: "session-1",
+			},
 		}, StdioOptions{
 			Stdin:  stdin,
 			Stdout: io.Discard,

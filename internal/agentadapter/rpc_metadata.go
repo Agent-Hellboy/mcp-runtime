@@ -54,14 +54,14 @@ func toolNameFromRPCParams(method string, params json.RawMessage) string {
 	return strings.TrimSpace(toolCall.Name)
 }
 
-func logRuntimeDenial(cfg Config, component string, status int, message string, meta rpcRequestMetadata) {
+func logRuntimeDenial(logLevel string, logWriter io.Writer, component string, status int, message string, meta rpcRequestMetadata) {
 	if status < http.StatusBadRequest || status >= http.StatusInternalServerError {
 		return
 	}
-	if !strings.EqualFold(strings.TrimSpace(cfg.LogLevel), "info") {
+	if !strings.EqualFold(strings.TrimSpace(logLevel), "info") {
 		return
 	}
-	writer := cfg.LogWriter
+	writer := logWriter
 	if writer == nil {
 		writer = os.Stderr
 	}

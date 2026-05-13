@@ -60,7 +60,7 @@ func TestProxyCommandRejectsBadRuntimeURL(t *testing.T) {
 	}
 }
 
-func TestIdentityFlagsToConfigParsesTeamAndTimeout(t *testing.T) {
+func TestIdentityFlagsToProxyConfigParsesTeamAndTimeout(t *testing.T) {
 	t.Parallel()
 
 	flags := identityFlags{
@@ -71,15 +71,15 @@ func TestIdentityFlagsToConfigParsesTeamAndTimeout(t *testing.T) {
 		sessionID:      "sess-1",
 		requestTimeout: "45s",
 	}
-	cfg, err := flags.toConfig()
+	cfg, err := flags.toProxyConfig("")
 	if err != nil {
-		t.Fatalf("toConfig() error = %v", err)
+		t.Fatalf("toProxyConfig() error = %v", err)
 	}
-	if cfg.TeamID != "team-acme" {
-		t.Fatalf("TeamID = %q, want team-acme", cfg.TeamID)
+	if cfg.Identity.TeamID != "team-acme" {
+		t.Fatalf("Identity.TeamID = %q, want team-acme", cfg.Identity.TeamID)
 	}
-	if cfg.RequestTimeout != 45*time.Second {
-		t.Fatalf("RequestTimeout = %s, want 45s", cfg.RequestTimeout)
+	if cfg.Transport == nil || cfg.Transport.Timeout != 45*time.Second {
+		t.Fatalf("Transport = %v, want timeout 45s", cfg.Transport)
 	}
 	if cfg.RuntimeURL == nil || cfg.RuntimeURL.Host != "localhost:18080" {
 		t.Fatalf("RuntimeURL = %v, want parsed localhost:18080", cfg.RuntimeURL)
@@ -110,12 +110,12 @@ func TestIdentityFlagsToConfigRejectsBadTimeout(t *testing.T) {
 				sessionID:      "s",
 				requestTimeout: tt.value,
 			}
-			_, err := flags.toConfig()
+			_, err := flags.toProxyConfig("")
 			if err == nil {
-				t.Fatalf("toConfig() error = nil, want %s", tt.want)
+				t.Fatalf("toProxyConfig() error = nil, want %s", tt.want)
 			}
 			if !strings.Contains(err.Error(), "request-timeout") || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("toConfig() error = %q, want request-timeout/%s", err, tt.want)
+				t.Fatalf("toProxyConfig() error = %q, want request-timeout/%s", err, tt.want)
 			}
 		})
 	}

@@ -51,50 +51,101 @@ func bindIdentityFlags(cmd *cobra.Command, f *identityFlags) {
 		"HTTP request timeout for adapter→runtime calls, e.g. 30s (default: $"+agentadapter.EnvRequestTimeout+")")
 }
 
-// toConfig converts the parsed flags into an agentadapter.Config, validating
-// the runtime URL and request timeout on the CLI side so error messages are
-// user-readable and stay consistent with agentadapter.loadConfig.
-func (f identityFlags) toConfig() (agentadapter.Config, error) {
-	cfg := agentadapter.Config{
-		HumanID:           strings.TrimSpace(f.humanID),
-		AgentID:           strings.TrimSpace(f.agentID),
-		TeamID:            strings.TrimSpace(f.teamID),
-		SessionID:         strings.TrimSpace(f.sessionID),
-		HostHeader:        strings.TrimSpace(f.hostHeader),
-		ProtocolVersion:   strings.TrimSpace(f.protocolVersion),
-		LogLevel:          strings.TrimSpace(f.logLevel),
-		DisableXForwarded: f.disableXFF,
+// resolved holds the validated cross-cutting pieces of an adapter config —
+// identity, runtime URL, transport, and the shared display fields — that
+// every subcommand needs before building its transport-specific config.
+type resolved struct {
+	runtimeURL      *url.URL
+	identity        agentadapter.Identity
+	transport       *agentadapter.RuntimeTransport
+	hostHeader      string
+	protocolVersion string
+	logLevel        string
+}
+
+// resolve parses and validates the shared adapter fields on the CLI side so
+// error messages reference the user-facing flag name instead of the env var.
+func (f identityFlags) resolve() (resolved, error) {
+	out := resolved{
+		identity: agentadapter.Identity{
+			HumanID:   strings.TrimSpace(f.humanID),
+			AgentID:   strings.TrimSpace(f.agentID),
+			TeamID:    strings.TrimSpace(f.teamID),
+			SessionID: strings.TrimSpace(f.sessionID),
+		},
+		hostHeader:      strings.TrimSpace(f.hostHeader),
+		protocolVersion: strings.TrimSpace(f.protocolVersion),
+		logLevel:        strings.TrimSpace(f.logLevel),
 	}
-	if cfg.ProtocolVersion == "" {
-		cfg.ProtocolVersion = agentadapter.DefaultProtocolVersion
+	if out.protocolVersion == "" {
+		out.protocolVersion = agentadapter.DefaultProtocolVersion
 	}
 
 	if raw := strings.TrimSpace(f.requestTimeout); raw != "" {
 		timeout, err := time.ParseDuration(raw)
 		if err != nil {
-			return agentadapter.Config{}, fmt.Errorf("--request-timeout (or $%s) is invalid: %w", agentadapter.EnvRequestTimeout, err)
+			return resolved{}, fmt.Errorf("--request-timeout (or $%s) is invalid: %w", agentadapter.EnvRequestTimeout, err)
 		}
 		if timeout <= 0 {
-			return agentadapter.Config{}, fmt.Errorf("--request-timeout (or $%s) must be greater than zero", agentadapter.EnvRequestTimeout)
+			return resolved{}, fmt.Errorf("--request-timeout (or $%s) must be greater than zero", agentadapter.EnvRequestTimeout)
 		}
-		cfg.RequestTimeout = timeout
+		out.transport = &agentadapter.RuntimeTransport{Timeout: timeout}
 	}
 
-	rawURL := strings.TrimSpace(f.runtimeURL)
-	if rawURL != "" {
-		parsed, err := url.Parse(rawURL)
+	if raw := strings.TrimSpace(f.runtimeURL); raw != "" {
+		parsed, err := url.Parse(raw)
 		if err != nil {
-			return agentadapter.Config{}, fmt.Errorf("--runtime-url is invalid: %w", err)
+			return resolved{}, fmt.Errorf("--runtime-url is invalid: %w", err)
 		}
 		if parsed.Scheme == "" || parsed.Host == "" {
-			return agentadapter.Config{}, fmt.Errorf("--runtime-url must be an absolute HTTP URL")
+			return resolved{}, fmt.Errorf("--runtime-url must be an absolute HTTP URL")
 		}
 		if parsed.Scheme != "http" && parsed.Scheme != "https" {
-			return agentadapter.Config{}, fmt.Errorf("--runtime-url must use http or https")
+			return resolved{}, fmt.Errorf("--runtime-url must use http or https")
 		}
-		cfg.RuntimeURL = parsed
+		out.runtimeURL = parsed
 	}
-	return cfg, nil
+	return out, nil
+}
+
+// toProxyConfig produces an agentadapter.ProxyConfig from the resolved
+// shared fields plus proxy-only listener/XFF settings.
+func (f identityFlags) toProxyConfig(listenAddr string) (agentadapter.ProxyConfig, error) {
+	r, err := f.resolve()
+	if err != nil {
+		return agentadapter.ProxyConfig{}, err
+	}
+	listen := strings.TrimSpace(listenAddr)
+	if listen == "" {
+		listen = agentadapter.DefaultListenAddr
+	}
+	return agentadapter.ProxyConfig{
+		RuntimeURL:        r.runtimeURL,
+		Identity:          r.identity,
+		Transport:         r.transport,
+		HostHeader:        r.hostHeader,
+		ListenAddr:        listen,
+		ProtocolVersion:   r.protocolVersion,
+		LogLevel:          r.logLevel,
+		DisableXForwarded: f.disableXFF,
+	}, nil
+}
+
+// toShimConfig produces an agentadapter.ShimConfig from the resolved shared
+// fields.
+func (f identityFlags) toShimConfig() (agentadapter.ShimConfig, error) {
+	r, err := f.resolve()
+	if err != nil {
+		return agentadapter.ShimConfig{}, err
+	}
+	return agentadapter.ShimConfig{
+		RuntimeURL:      r.runtimeURL,
+		Identity:        r.identity,
+		Transport:       r.transport,
+		HostHeader:      r.hostHeader,
+		ProtocolVersion: r.protocolVersion,
+		LogLevel:        r.logLevel,
+	}, nil
 }
 
 func parseEnvBool(name string, def bool) bool {
