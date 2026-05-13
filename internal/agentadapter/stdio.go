@@ -25,7 +25,7 @@ type StdioOptions struct {
 }
 
 type stdioShim struct {
-	cfg             Config
+	cfg             ShimConfig
 	client          *http.Client
 	mu              sync.Mutex
 	sessionID       string
@@ -65,8 +65,8 @@ type rpcError struct {
 // RunStdioShim reads newline-delimited stdio MCP JSON-RPC messages, forwards
 // them to the configured Streamable HTTP route, and writes JSON-RPC responses
 // back to stdout.
-func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error {
-	if err := ValidateConfig(cfg); err != nil {
+func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error {
+	if err := cfg.Validate(); err != nil {
 		return err
 	}
 	if opts.Stdin == nil {
@@ -75,16 +75,16 @@ func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error {
 	if opts.Stdout == nil {
 		return fmt.Errorf("stdout is required")
 	}
-	if cfg.HTTPClient == nil {
-		cfg.HTTPClient = &http.Client{Timeout: cfg.RequestTimeout}
-	}
 	if strings.TrimSpace(cfg.ProtocolVersion) == "" {
 		cfg.ProtocolVersion = DefaultProtocolVersion
+	}
+	if cfg.Transport == nil {
+		cfg.Transport = &RuntimeTransport{}
 	}
 
 	shim := &stdioShim{
 		cfg:             cfg,
-		client:          cfg.HTTPClient,
+		client:          cfg.Transport.Client(),
 		protocolVersion: cfg.ProtocolVersion,
 	}
 
@@ -202,7 +202,7 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	if sessionID != "" {
 		req.Header.Set(MCPSessionHeader, sessionID)
 	}
-	applyGovernanceHeaders(req.Header, s.cfg)
+	s.cfg.Identity.Apply(req.Header)
 	if s.cfg.HostHeader != "" {
 		req.Host = s.cfg.HostHeader
 	}
@@ -240,7 +240,7 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	body = bytes.TrimSpace(body)
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		logRuntimeDenial(s.cfg, "mcp-runtime-mcp-shim", resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), meta)
+		logRuntimeDenial(s.cfg.LogLevel, s.cfg.LogWriter, "mcp-runtime-mcp-shim", resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), meta)
 		if len(body) > 0 && looksLikeJSONRPC(body) {
 			return emit(body)
 		}

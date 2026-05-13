@@ -22,23 +22,31 @@ type rpcRequestMetadataContextKey struct{}
 
 // NewHTTPProxyHandler returns a reverse proxy that forwards MCP HTTP traffic to
 // the configured runtime route and injects issued governance identity headers.
-func NewHTTPProxyHandler(cfg Config) (http.Handler, error) {
-	if err := ValidateConfig(cfg); err != nil {
+func NewHTTPProxyHandler(cfg ProxyConfig) (http.Handler, error) {
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	target := cloneURL(cfg.RuntimeURL)
+	transport := cfg.transportOrDefault()
+	identity := cfg.Identity
+	logLevel := cfg.LogLevel
+	logWriter := cfg.LogWriter
+	hostHeader := cfg.HostHeader
+	disableXFF := cfg.DisableXForwarded
+
 	proxy := &httputil.ReverseProxy{
 		FlushInterval: -1,
+		Transport:     transport,
 		Rewrite: func(req *httputil.ProxyRequest) {
 			rewriteToRuntimeRoute(req.Out.URL, target, req.In.URL.RawQuery)
 			req.Out.Host = target.Host
-			if cfg.HostHeader != "" {
-				req.Out.Host = cfg.HostHeader
+			if hostHeader != "" {
+				req.Out.Host = hostHeader
 			}
-			if !cfg.DisableXForwarded {
+			if !disableXFF {
 				req.SetXForwarded()
 			}
-			applyGovernanceHeaders(req.Out.Header, cfg)
+			identity.Apply(req.Out.Header)
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			if resp.StatusCode < http.StatusBadRequest || resp.StatusCode >= http.StatusInternalServerError {
@@ -53,7 +61,7 @@ func NewHTTPProxyHandler(cfg Config) (http.Handler, error) {
 			resp.ContentLength = int64(len(body))
 			resp.Header.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
 			meta := rpcRequestMetadataFromContext(resp.Request.Context())
-			logRuntimeDenial(cfg, "mcp-runtime-agent-proxy", resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), meta)
+			logRuntimeDenial(logLevel, logWriter, "mcp-runtime-agent-proxy", resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), meta)
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -80,7 +88,7 @@ func NewHTTPProxyHandler(cfg Config) (http.Handler, error) {
 }
 
 // RunHTTPProxy serves the local HTTP adapter until the context is cancelled.
-func RunHTTPProxy(ctx context.Context, cfg Config) error {
+func RunHTTPProxy(ctx context.Context, cfg ProxyConfig) error {
 	if strings.TrimSpace(cfg.ListenAddr) == "" {
 		cfg.ListenAddr = DefaultListenAddr
 	}

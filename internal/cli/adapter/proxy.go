@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -27,15 +26,11 @@ injecting the issued governance identity headers.
 Configure identity via flags or the matching MCP_RUNTIME_* environment
 variables. Flags win when both are set.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := flags.toConfig()
+			cfg, err := flags.toProxyConfig(listenAddr)
 			if err != nil {
 				return err
 			}
-			cfg.ListenAddr = strings.TrimSpace(listenAddr)
-			if cfg.ListenAddr == "" {
-				cfg.ListenAddr = agentadapter.DefaultListenAddr
-			}
-			if err := agentadapter.ValidateConfig(cfg); err != nil {
+			if err := cfg.Validate(); err != nil {
 				return err
 			}
 

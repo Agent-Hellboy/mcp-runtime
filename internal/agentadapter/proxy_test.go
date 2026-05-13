@@ -35,12 +35,14 @@ func TestHTTPProxyInjectsGovernanceHeadersAndPreservesMCPHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	handler, err := NewHTTPProxyHandler(Config{
+	handler, err := NewHTTPProxyHandler(ProxyConfig{
 		RuntimeURL: target,
-		HumanID:    "support-lead",
-		AgentID:    "ticket-triage-agent",
-		TeamID:     "team-acme",
-		SessionID:  "sess-ticket-triage-agent",
+		Identity: Identity{
+			HumanID:   "support-lead",
+			AgentID:   "ticket-triage-agent",
+			TeamID:    "team-acme",
+			SessionID: "sess-ticket-triage-agent",
+		},
 		HostHeader: "mcp.example.local",
 	})
 	if err != nil {
@@ -335,12 +337,48 @@ func TestHTTPProxyFlushesStreamableHTTPEventFrames(t *testing.T) {
 	}
 }
 
-func testConfig(runtimeURL *url.URL) Config {
-	return Config{
+func TestHTTPProxyRoutesThroughSharedTransport(t *testing.T) {
+	t.Parallel()
+
+	var called bool
+	cfg := testConfig(&url.URL{Scheme: "http", Host: "ignored.example", Path: "/demo/mcp"})
+	cfg.Transport = &RuntimeTransport{
+		Base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			called = true
+			body := io.NopCloser(strings.NewReader(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{},
+				Body:       body,
+				Request:    req,
+			}, nil
+		}),
+	}
+	handler, err := NewHTTPProxyHandler(cfg)
+	if err != nil {
+		t.Fatalf("NewHTTPProxyHandler() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8099/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if !called {
+		t.Fatal("shared transport was not invoked; proxy still uses the default RoundTripper")
+	}
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+}
+
+func testConfig(runtimeURL *url.URL) ProxyConfig {
+	return ProxyConfig{
 		RuntimeURL: runtimeURL,
-		HumanID:    "human-1",
-		AgentID:    "agent-1",
-		SessionID:  "session-1",
+		Identity: Identity{
+			HumanID:   "human-1",
+			AgentID:   "agent-1",
+			SessionID: "session-1",
+		},
 	}
 }
 

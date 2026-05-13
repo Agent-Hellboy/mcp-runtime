@@ -1848,13 +1848,21 @@ forward MCP traffic to governed MCP Runtime routes.
 ### Index
 
 - [`Constants`](#agent-adapters-constants)
-- [`func NewHTTPProxyHandler(cfg Config) (http.Handler, error)`](#agent-adapters-func-newhttpproxyhandler-cfg-config-http-handler-error)
-- [`func RunHTTPProxy(ctx context.Context, cfg Config) error`](#agent-adapters-func-runhttpproxy-ctx-context-context-cfg-config-error)
-- [`func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error`](#agent-adapters-func-runstdioshim-ctx-context-context-cfg-config-opts-stdiooptions-error)
-- [`func ValidateConfig(cfg Config) error`](#agent-adapters-func-validateconfig-cfg-config-error)
-- [`type Config struct`](#agent-adapters-type-config-struct)
-- [`func LoadProxyConfigFromEnv() (Config, error)`](#agent-adapters-func-loadproxyconfigfromenv-config-error)
-- [`func LoadShimConfigFromEnv() (Config, error)`](#agent-adapters-func-loadshimconfigfromenv-config-error)
+- [`func NewHTTPProxyHandler(cfg ProxyConfig) (http.Handler, error)`](#agent-adapters-func-newhttpproxyhandler-cfg-proxyconfig-http-handler-error)
+- [`func RunHTTPProxy(ctx context.Context, cfg ProxyConfig) error`](#agent-adapters-func-runhttpproxy-ctx-context-context-cfg-proxyconfig-error)
+- [`func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error`](#agent-adapters-func-runstdioshim-ctx-context-context-cfg-shimconfig-opts-stdiooptions-error)
+- [`type Identity struct`](#agent-adapters-type-identity-struct)
+- [`func (id Identity) Apply(headers http.Header)`](#agent-adapters-func-id-identity-apply-headers-http-header)
+- [`type ProxyConfig struct`](#agent-adapters-type-proxyconfig-struct)
+- [`func LoadProxyConfigFromEnv() (ProxyConfig, error)`](#agent-adapters-func-loadproxyconfigfromenv-proxyconfig-error)
+- [`func (cfg ProxyConfig) Validate() error`](#agent-adapters-func-cfg-proxyconfig-validate-error)
+- [`type RuntimeTransport struct`](#agent-adapters-type-runtimetransport-struct)
+- [`func (t *RuntimeTransport) Client() *http.Client`](#agent-adapters-func-t-runtimetransport-client-http-client)
+- [`func (t *RuntimeTransport) CloseIdleConnections()`](#agent-adapters-func-t-runtimetransport-closeidleconnections)
+- [`func (t *RuntimeTransport) RoundTrip(req *http.Request) (*http.Response, error)`](#agent-adapters-func-t-runtimetransport-roundtrip-req-http-request-http-response-error)
+- [`type ShimConfig struct`](#agent-adapters-type-shimconfig-struct)
+- [`func LoadShimConfigFromEnv() (ShimConfig, error)`](#agent-adapters-func-loadshimconfigfromenv-shimconfig-error)
+- [`func (cfg ShimConfig) Validate() error`](#agent-adapters-func-cfg-shimconfig-validate-error)
 - [`type StdioOptions struct`](#agent-adapters-type-stdiooptions-struct)
 
 <a id="agent-adapters-constants"></a>
@@ -1889,75 +1897,164 @@ const (
 <a id="agent-adapters-functions"></a>
 ### Functions
 
-<a id="agent-adapters-func-newhttpproxyhandler-cfg-config-http-handler-error"></a>
+<a id="agent-adapters-func-newhttpproxyhandler-cfg-proxyconfig-http-handler-error"></a>
 ```text
-func NewHTTPProxyHandler(cfg Config) (http.Handler, error)
+func NewHTTPProxyHandler(cfg ProxyConfig) (http.Handler, error)
     NewHTTPProxyHandler returns a reverse proxy that forwards MCP HTTP traffic
     to the configured runtime route and injects issued governance identity
     headers.
 
 ```
 
-<a id="agent-adapters-func-runhttpproxy-ctx-context-context-cfg-config-error"></a>
+<a id="agent-adapters-func-runhttpproxy-ctx-context-context-cfg-proxyconfig-error"></a>
 ```text
-func RunHTTPProxy(ctx context.Context, cfg Config) error
+func RunHTTPProxy(ctx context.Context, cfg ProxyConfig) error
     RunHTTPProxy serves the local HTTP adapter until the context is cancelled.
 
 ```
 
-<a id="agent-adapters-func-runstdioshim-ctx-context-context-cfg-config-opts-stdiooptions-error"></a>
+<a id="agent-adapters-func-runstdioshim-ctx-context-context-cfg-shimconfig-opts-stdiooptions-error"></a>
 ```text
-func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error
+func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error
     RunStdioShim reads newline-delimited stdio MCP JSON-RPC messages, forwards
     them to the configured Streamable HTTP route, and writes JSON-RPC responses
     back to stdout.
-
-```
-
-<a id="agent-adapters-func-validateconfig-cfg-config-error"></a>
-```text
-func ValidateConfig(cfg Config) error
-    ValidateConfig checks the common adapter invariants without reading process
-    state.
 ```
 
 <a id="agent-adapters-types"></a>
 ### Types
 
-<a id="agent-adapters-type-config-struct"></a>
+<a id="agent-adapters-type-identity-struct"></a>
 ```text
-type Config struct {
+type Identity struct {
+	HumanID   string
+	AgentID   string
+	TeamID    string
+	SessionID string
+}
+    Identity is the issued governance identity that adapters attach to every
+    runtime request. The platform issues these values out-of-band (or,
+    in a later phase, through the adapter session endpoint); the adapter only
+    forwards them.
+
+```
+
+<a id="agent-adapters-func-id-identity-apply-headers-http-header"></a>
+```text
+func (id Identity) Apply(headers http.Header)
+    Apply writes the governance identity onto an outbound request's headers,
+    replacing any caller-supplied values. TeamID is omitted when empty so the
+    gateway sees a missing header (the documented "any team" semantics) rather
+    than an empty value. SessionID is required by ValidateConfig today and is
+    always set; the anonymous-mode flow that may omit it is a Phase 3b change.
+
+```
+
+<a id="agent-adapters-type-proxyconfig-struct"></a>
+```text
+type ProxyConfig struct {
 	RuntimeURL        *url.URL
-	HumanID           string
-	AgentID           string
-	TeamID            string
-	SessionID         string
+	Identity          Identity
+	Transport         *RuntimeTransport
 	HostHeader        string
 	ListenAddr        string
 	ProtocolVersion   string
-	HTTPClient        *http.Client
-	RequestTimeout    time.Duration
 	LogLevel          string
 	LogWriter         io.Writer
 	DisableXForwarded bool
 }
-    Config is the shared configuration for agent-side adapters.
+    ProxyConfig configures the local HTTP reverse-proxy adapter that exposes
+    Streamable HTTP MCP to an agent SDK.
 
 ```
 
-<a id="agent-adapters-func-loadproxyconfigfromenv-config-error"></a>
+<a id="agent-adapters-func-loadproxyconfigfromenv-proxyconfig-error"></a>
 ```text
-func LoadProxyConfigFromEnv() (Config, error)
+func LoadProxyConfigFromEnv() (ProxyConfig, error)
     LoadProxyConfigFromEnv loads HTTP proxy configuration from environment
     variables.
 
 ```
 
-<a id="agent-adapters-func-loadshimconfigfromenv-config-error"></a>
+<a id="agent-adapters-func-cfg-proxyconfig-validate-error"></a>
 ```text
-func LoadShimConfigFromEnv() (Config, error)
+func (cfg ProxyConfig) Validate() error
+    Validate enforces the runtime identity invariants for the HTTP proxy.
+
+```
+
+<a id="agent-adapters-type-runtimetransport-struct"></a>
+```text
+type RuntimeTransport struct {
+	// Base is the underlying round-tripper. nil means http.DefaultTransport
+	// (production); tests can swap in a mock by setting this field.
+	Base http.RoundTripper
+	// Timeout is the per-request timeout applied to the *http.Client wrapper
+	// returned by Client(). Zero means no timeout (matches the previous
+	// "unbounded by default" behavior).
+	Timeout time.Duration
+}
+    RuntimeTransport is the shared outbound HTTP transport used by both the
+    reverse proxy and the stdio shim when forwarding to the runtime. It owns the
+    base round-tripper and the per-request timeout so production gates (mTLS,
+    bearer auth, retries, OTel) get implemented in a single place and behave
+    identically for both adapters.
+
+```
+
+<a id="agent-adapters-func-t-runtimetransport-client-http-client"></a>
+```text
+func (t *RuntimeTransport) Client() *http.Client
+    Client returns an *http.Client whose Transport is this RuntimeTransport.
+    The stdio shim uses this directly; the reverse proxy uses the underlying
+    round-tripper via Transport field assignment instead.
+
+```
+
+<a id="agent-adapters-func-t-runtimetransport-closeidleconnections"></a>
+```text
+func (t *RuntimeTransport) CloseIdleConnections()
+    CloseIdleConnections drains idle connections on the base round-tripper if it
+    supports the optional interface, matching net/http's contract.
+
+```
+
+<a id="agent-adapters-func-t-runtimetransport-roundtrip-req-http-request-http-response-error"></a>
+```text
+func (t *RuntimeTransport) RoundTrip(req *http.Request) (*http.Response, error)
+    RoundTrip implements http.RoundTripper so the transport can plug directly
+    into httputil.ReverseProxy.Transport.
+
+```
+
+<a id="agent-adapters-type-shimconfig-struct"></a>
+```text
+type ShimConfig struct {
+	RuntimeURL      *url.URL
+	Identity        Identity
+	Transport       *RuntimeTransport
+	HostHeader      string
+	ProtocolVersion string
+	LogLevel        string
+	LogWriter       io.Writer
+}
+    ShimConfig configures the stdio adapter that bridges newline-delimited
+    JSON-RPC MCP traffic to the runtime over HTTP.
+
+```
+
+<a id="agent-adapters-func-loadshimconfigfromenv-shimconfig-error"></a>
+```text
+func LoadShimConfigFromEnv() (ShimConfig, error)
     LoadShimConfigFromEnv loads stdio shim configuration from environment
     variables.
+
+```
+
+<a id="agent-adapters-func-cfg-shimconfig-validate-error"></a>
+```text
+func (cfg ShimConfig) Validate() error
+    Validate enforces the runtime identity invariants for the stdio shim.
 
 ```
 

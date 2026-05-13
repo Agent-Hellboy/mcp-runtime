@@ -3,7 +3,6 @@ package agentadapter
 import (
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -36,104 +35,171 @@ const (
 
 type envLookup func(string) string
 
-// Config is the shared configuration for agent-side adapters.
-type Config struct {
+// ProxyConfig configures the local HTTP reverse-proxy adapter that exposes
+// Streamable HTTP MCP to an agent SDK.
+type ProxyConfig struct {
 	RuntimeURL        *url.URL
-	HumanID           string
-	AgentID           string
-	TeamID            string
-	SessionID         string
+	Identity          Identity
+	Transport         *RuntimeTransport
 	HostHeader        string
 	ListenAddr        string
 	ProtocolVersion   string
-	HTTPClient        *http.Client
-	RequestTimeout    time.Duration
 	LogLevel          string
 	LogWriter         io.Writer
 	DisableXForwarded bool
 }
 
-// LoadProxyConfigFromEnv loads HTTP proxy configuration from environment variables.
-func LoadProxyConfigFromEnv() (Config, error) {
-	return loadConfig(os.Getenv, true)
+// ShimConfig configures the stdio adapter that bridges newline-delimited
+// JSON-RPC MCP traffic to the runtime over HTTP.
+type ShimConfig struct {
+	RuntimeURL      *url.URL
+	Identity        Identity
+	Transport       *RuntimeTransport
+	HostHeader      string
+	ProtocolVersion string
+	LogLevel        string
+	LogWriter       io.Writer
 }
 
-// LoadShimConfigFromEnv loads stdio shim configuration from environment variables.
-func LoadShimConfigFromEnv() (Config, error) {
-	return loadConfig(os.Getenv, false)
-}
+// LoadProxyConfigFromEnv loads HTTP proxy configuration from environment
+// variables.
+func LoadProxyConfigFromEnv() (ProxyConfig, error) { return loadProxyConfig(os.Getenv) }
 
-func loadConfig(lookup envLookup, includeListen bool) (Config, error) {
-	cfg := Config{
-		HumanID:         strings.TrimSpace(lookup(EnvHumanID)),
-		AgentID:         strings.TrimSpace(lookup(EnvAgentID)),
-		TeamID:          strings.TrimSpace(lookup(EnvTeamID)),
-		SessionID:       strings.TrimSpace(lookup(EnvSessionID)),
-		HostHeader:      strings.TrimSpace(lookup(EnvHostHeader)),
-		ProtocolVersion: strings.TrimSpace(lookup(EnvProtocolVersion)),
-		LogLevel:        strings.TrimSpace(lookup(EnvLogLevel)),
-	}
-	if cfg.ProtocolVersion == "" {
-		cfg.ProtocolVersion = DefaultProtocolVersion
-	}
-	if includeListen {
-		cfg.ListenAddr = strings.TrimSpace(lookup(EnvListenAddr))
-		if cfg.ListenAddr == "" {
-			cfg.ListenAddr = DefaultListenAddr
-		}
-	}
+// LoadShimConfigFromEnv loads stdio shim configuration from environment
+// variables.
+func LoadShimConfigFromEnv() (ShimConfig, error) { return loadShimConfig(os.Getenv) }
 
-	rawRuntimeURL := strings.TrimSpace(lookup(EnvRuntimeURL))
-	if rawRuntimeURL != "" {
-		parsed, err := url.Parse(rawRuntimeURL)
-		if err != nil {
-			return Config{}, fmt.Errorf("%s is invalid: %w", EnvRuntimeURL, err)
-		}
-		if parsed.Scheme == "" || parsed.Host == "" {
-			return Config{}, fmt.Errorf("%s must be an absolute HTTP URL", EnvRuntimeURL)
-		}
-		if parsed.Scheme != "http" && parsed.Scheme != "https" {
-			return Config{}, fmt.Errorf("%s must use http or https", EnvRuntimeURL)
-		}
-		cfg.RuntimeURL = parsed
+func loadProxyConfig(lookup envLookup) (ProxyConfig, error) {
+	parsed, err := parseSharedEnv(lookup)
+	if err != nil {
+		return ProxyConfig{}, err
 	}
-	if rawSetXForwarded := strings.TrimSpace(lookup(EnvSetXForwarded)); rawSetXForwarded != "" {
-		setXForwarded, err := parseAdapterBool(rawSetXForwarded)
+	cfg := ProxyConfig{
+		RuntimeURL:      parsed.runtimeURL,
+		Identity:        parsed.identity,
+		Transport:       parsed.transport,
+		HostHeader:      parsed.hostHeader,
+		ProtocolVersion: parsed.protocolVersion,
+		LogLevel:        parsed.logLevel,
+		ListenAddr:      strings.TrimSpace(lookup(EnvListenAddr)),
+	}
+	if cfg.ListenAddr == "" {
+		cfg.ListenAddr = DefaultListenAddr
+	}
+	if raw := strings.TrimSpace(lookup(EnvSetXForwarded)); raw != "" {
+		setXForwarded, err := parseAdapterBool(raw)
 		if err != nil {
-			return Config{}, fmt.Errorf("%s is invalid: %w", EnvSetXForwarded, err)
+			return ProxyConfig{}, fmt.Errorf("%s is invalid: %w", EnvSetXForwarded, err)
 		}
 		cfg.DisableXForwarded = !setXForwarded
 	}
-	if rawRequestTimeout := strings.TrimSpace(lookup(EnvRequestTimeout)); rawRequestTimeout != "" {
-		requestTimeout, err := time.ParseDuration(rawRequestTimeout)
-		if err != nil {
-			return Config{}, fmt.Errorf("%s is invalid: %w", EnvRequestTimeout, err)
-		}
-		if requestTimeout <= 0 {
-			return Config{}, fmt.Errorf("%s must be greater than zero", EnvRequestTimeout)
-		}
-		cfg.RequestTimeout = requestTimeout
-	}
-
-	if err := ValidateConfig(cfg); err != nil {
-		return Config{}, err
+	if err := cfg.Validate(); err != nil {
+		return ProxyConfig{}, err
 	}
 	return cfg, nil
 }
 
-// ValidateConfig checks the common adapter invariants without reading process state.
-func ValidateConfig(cfg Config) error {
+func loadShimConfig(lookup envLookup) (ShimConfig, error) {
+	parsed, err := parseSharedEnv(lookup)
+	if err != nil {
+		return ShimConfig{}, err
+	}
+	cfg := ShimConfig{
+		RuntimeURL:      parsed.runtimeURL,
+		Identity:        parsed.identity,
+		Transport:       parsed.transport,
+		HostHeader:      parsed.hostHeader,
+		ProtocolVersion: parsed.protocolVersion,
+		LogLevel:        parsed.logLevel,
+	}
+	if err := cfg.Validate(); err != nil {
+		return ShimConfig{}, err
+	}
+	return cfg, nil
+}
+
+// Validate enforces the runtime identity invariants for the HTTP proxy.
+func (cfg ProxyConfig) Validate() error {
+	return validateRequiredIdentity(cfg.RuntimeURL, cfg.Identity)
+}
+
+// Validate enforces the runtime identity invariants for the stdio shim.
+func (cfg ShimConfig) Validate() error {
+	return validateRequiredIdentity(cfg.RuntimeURL, cfg.Identity)
+}
+
+// transportOrDefault returns the configured transport, allocating a default
+// (no base, no timeout) when the caller did not provide one.
+func (cfg ProxyConfig) transportOrDefault() *RuntimeTransport {
+	if cfg.Transport != nil {
+		return cfg.Transport
+	}
+	return &RuntimeTransport{}
+}
+
+type sharedEnv struct {
+	runtimeURL      *url.URL
+	identity        Identity
+	transport       *RuntimeTransport
+	hostHeader      string
+	protocolVersion string
+	logLevel        string
+}
+
+func parseSharedEnv(lookup envLookup) (sharedEnv, error) {
+	out := sharedEnv{
+		identity: Identity{
+			HumanID:   strings.TrimSpace(lookup(EnvHumanID)),
+			AgentID:   strings.TrimSpace(lookup(EnvAgentID)),
+			TeamID:    strings.TrimSpace(lookup(EnvTeamID)),
+			SessionID: strings.TrimSpace(lookup(EnvSessionID)),
+		},
+		hostHeader:      strings.TrimSpace(lookup(EnvHostHeader)),
+		protocolVersion: strings.TrimSpace(lookup(EnvProtocolVersion)),
+		logLevel:        strings.TrimSpace(lookup(EnvLogLevel)),
+	}
+	if out.protocolVersion == "" {
+		out.protocolVersion = DefaultProtocolVersion
+	}
+
+	if raw := strings.TrimSpace(lookup(EnvRuntimeURL)); raw != "" {
+		parsed, err := url.Parse(raw)
+		if err != nil {
+			return sharedEnv{}, fmt.Errorf("%s is invalid: %w", EnvRuntimeURL, err)
+		}
+		if parsed.Scheme == "" || parsed.Host == "" {
+			return sharedEnv{}, fmt.Errorf("%s must be an absolute HTTP URL", EnvRuntimeURL)
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return sharedEnv{}, fmt.Errorf("%s must use http or https", EnvRuntimeURL)
+		}
+		out.runtimeURL = parsed
+	}
+	if raw := strings.TrimSpace(lookup(EnvRequestTimeout)); raw != "" {
+		timeout, err := time.ParseDuration(raw)
+		if err != nil {
+			return sharedEnv{}, fmt.Errorf("%s is invalid: %w", EnvRequestTimeout, err)
+		}
+		if timeout <= 0 {
+			return sharedEnv{}, fmt.Errorf("%s must be greater than zero", EnvRequestTimeout)
+		}
+		out.transport = &RuntimeTransport{Timeout: timeout}
+	}
+	return out, nil
+}
+
+func validateRequiredIdentity(runtimeURL *url.URL, id Identity) error {
 	var missing []string
-	if cfg.RuntimeURL == nil {
+	if runtimeURL == nil {
 		missing = append(missing, EnvRuntimeURL)
 	}
-	if strings.TrimSpace(cfg.HumanID) == "" {
+	if strings.TrimSpace(id.HumanID) == "" {
 		missing = append(missing, EnvHumanID)
 	}
-	if strings.TrimSpace(cfg.AgentID) == "" {
+	if strings.TrimSpace(id.AgentID) == "" {
 		missing = append(missing, EnvAgentID)
 	}
-	if strings.TrimSpace(cfg.SessionID) == "" {
+	if strings.TrimSpace(id.SessionID) == "" {
 		missing = append(missing, EnvSessionID)
 	}
 	if len(missing) > 0 {
@@ -159,17 +225,4 @@ func cloneURL(in *url.URL) *url.URL {
 	}
 	out := *in
 	return &out
-}
-
-func applyGovernanceHeaders(headers http.Header, cfg Config) {
-	headers.Del(HumanIDHeader)
-	headers.Del(AgentIDHeader)
-	headers.Del(TeamIDHeader)
-	headers.Del(AgentSessionHeader)
-	headers.Set(HumanIDHeader, cfg.HumanID)
-	headers.Set(AgentIDHeader, cfg.AgentID)
-	if cfg.TeamID != "" {
-		headers.Set(TeamIDHeader, cfg.TeamID)
-	}
-	headers.Set(AgentSessionHeader, cfg.SessionID)
 }
