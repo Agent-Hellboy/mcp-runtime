@@ -4532,6 +4532,8 @@ grafana_password = os.environ["GRAFANA_ADMIN_PASSWORD"]
 loki_base = os.environ["LOKI_BASE"]
 sentinel_base = os.environ["SENTINEL_BASE"]
 gateway_trace_services = (f"{server_name}-gateway", f"{oauth_server_name}-gateway")
+server_gateway_source, oauth_gateway_source = gateway_trace_services
+expected_gateway_sources = {server_gateway_source, oauth_gateway_source}
 
 
 import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
@@ -4928,8 +4930,8 @@ sources = wait_for_json(
     lambda doc: all(
         int(item.get("count", 0)) >= 1
         for item in doc.get("sources", [])
-        if item.get("source") in {server_name, oauth_server_name}
-    ) and {item.get("source") for item in doc.get("sources", [])} >= {server_name, oauth_server_name},
+        if item.get("source") in expected_gateway_sources
+    ) and {item.get("source") for item in doc.get("sources", [])} >= expected_gateway_sources,
     headers=headers,
     description="analytics sources",
 ).get("sources", [])
@@ -5043,14 +5045,14 @@ for rpc_method in expected_gateway_rpc_methods:
         f"missing oauth gateway audit event for {rpc_method}: {oauth_routing_methods}",
     )
 check(
-    source_counts.get(server_name, 0) >= 1,
-    f"gateway source counts include {server_name}",
-    f"missing gateway source counts for {server_name}: {source_counts}",
+    source_counts.get(server_gateway_source, 0) >= 1,
+    f"gateway source counts include {server_gateway_source}",
+    f"missing gateway source counts for {server_gateway_source}: {source_counts}",
 )
 check(
-    source_counts.get(oauth_server_name, 0) >= 1,
-    f"gateway source counts include {oauth_server_name}",
-    f"missing gateway source counts for {oauth_server_name}: {source_counts}",
+    source_counts.get(oauth_gateway_source, 0) >= 1,
+    f"gateway source counts include {oauth_gateway_source}",
+    f"missing gateway source counts for {oauth_gateway_source}: {source_counts}",
 )
 for event_type in ("mcp.request", "pii.check", "service.route.check"):
     check(
@@ -5199,8 +5201,8 @@ rows = [
     ("audit.oauth_allow_aaa_ping", str(len(oauth_allow_aaa_ping))),
     ("audit.oauth_deny_events", str(len(oauth_deny_events))),
     ("audit.rpc_methods", str(len(routing_methods))),
-    ("analytics.source.gateway", str(source_counts.get(server_name, 0))),
-    ("analytics.source.oauth", str(source_counts.get(oauth_server_name, 0))),
+    ("analytics.source.gateway", str(source_counts.get(server_gateway_source, 0))),
+    ("analytics.source.oauth", str(source_counts.get(oauth_gateway_source, 0))),
     ("analytics.type.mcp.request", str(event_type_counts.get("mcp.request", 0))),
     ("analytics.type.pii.check", str(event_type_counts.get("pii.check", 0))),
     ("analytics.type.service.route.check", str(event_type_counts.get("service.route.check", 0))),
