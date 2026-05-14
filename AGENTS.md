@@ -15,7 +15,7 @@ If instructions conflict, prefer **this repo** (`README`, CRDs, `v1alpha1` types
 | Access and policy (shared) | `pkg/access/`, `pkg/policy/` | Grant/session CRUD helpers plus rendered gateway policy contracts and evaluation semantics used by operator and proxy |
 | Control-plane and K8s helpers | `pkg/controlplane/`, `pkg/k8sclient/`, `pkg/kubeworkload/`, `pkg/manifest/`, `pkg/metadata/` | MCPServer Kubernetes operations/status, client setup, shared workload security defaults, registry image resolution, YAML helpers |
 | Sentinel shared packages | `pkg/events/`, `pkg/clickhouse/`, `pkg/serviceutil/`, `pkg/sentinel/` | Event envelope contract, analytics storage/query helpers, service HTTP/env/OTel utilities, Sentinel component inventory |
-| Sentinel services | `services/api`, `services/ui`, `services/ingest`, `services/processor`, `services/mcp-proxy`, … | Separate `go.mod` where present; Go services that import root shared packages use Go 1.26. API-owned runtime HTTP/Kubernetes orchestration lives under `services/api/internal/runtimeapi/`; platform identity/team/key persistence lives under `services/api/internal/platformstore/`; principal context helpers live under `services/api/internal/apiauth/` |
+| Sentinel services | `services/api`, `services/ui`, `services/ingest`, `services/processor`, `services/mcp-gateway`, … | Separate `go.mod` where present; Go services that import root shared packages use Go 1.26. API-owned runtime HTTP/Kubernetes orchestration lives under `services/api/internal/runtimeapi/`; platform identity/team/key persistence lives under `services/api/internal/platformstore/`; principal context helpers live under `services/api/internal/apiauth/` |
 | Example MCP server | `examples/go-mcp-server/` | Reference for tools and routes |
 | Default cluster install YAML | `k8s/`, `config/` | Overlays, CRDs, cert-manager examples |
 | Traefik plugins (dev) | `services/traefik-plugins/` | e.g. PII redactor source for local overlays |
@@ -65,7 +65,7 @@ envtest assets and set `KUBEBUILDER_ASSETS`.
   not create duplicate clusters, registries, or image builds. The e2e traffic
   path uses deterministic curl-based MCP requests; omit cache mode for
   CI-equivalent fresh runs.
-- Sentinel services: run `go test -race -count=1 ./...` inside touched service directories such as `services/api`, `services/mcp-proxy`, `services/ingest`, `services/processor`, and `services/ui` (CI runs service tests explicitly)
+- Sentinel services: run `go test -race -count=1 ./...` inside touched service directories such as `services/api`, `services/mcp-gateway`, `services/ingest`, `services/processor`, and `services/ui` (CI runs service tests explicitly)
 
 **CI** (`.github/workflows/ci.yaml`) runs: `gofmt` check, `go vet`, `staticcheck`, unit tests, golden tests, service tests, `test/integration`, SBOM generation, then Kind e2e on `main`/`PR` branches. Normal PRs, `main`, and manual runs use `E2E_SCENARIOS=all`; Dependabot PRs use `E2E_SCENARIOS=smoke-auth,governance` so dependency bumps still cover MCP ingress/auth and grant/session behavior while keeping runtime low. Security workflows add pinned gosec, Gitleaks, Trivy, and dependency-review checks. Align local changes with that before opening a PR.
 
@@ -85,7 +85,7 @@ Do not hand-wave command behavior from memory when the docs are meant to reflect
 - **Tests:** Add or adjust tests in the same package when behavior changes. For CLI output, expect golden file updates.
 - **Branch names:** Use `component/feature_name` for task branches. Pick the component from the same scope list used for commit messages, and write the feature name in lowercase snake_case, for example `doc/commit_message_guidance`, `cli/registry_status`, or `operator/ingress_defaults`.
 - **Agent branch / PR flow:** Agents must create and push changes on a new branch, and open or update a PR from that branch. Agents must not push directly to `main`.
-- **Commit messages:** Use `fix(<component>): ...` for bug fixes and `feat(<component>): ...` for user-facing behavior. Use `doc: ...` for README / AGENTS / docs-only edits, and `website: ...` for `website/` changes. Prefer components that match repo areas, such as `cli`, `operator`, `api`, `crd`, `access`, `policy`, `k8sclient`, `manifest`, `metadata`, `sentinel`, `registry`, `ingress`, `services-api`, `ui`, `ingest`, `processor`, `mcp-proxy`, `traefik-plugin`, `config`, `examples`, `test`, or `ci`. Keep the subject concise and imperative; add a body only when the reason, risk, or verification needs context.
+- **Commit messages:** Use `fix(<component>): ...` for bug fixes and `feat(<component>): ...` for user-facing behavior. Use `doc: ...` for README / AGENTS / docs-only edits, and `website: ...` for `website/` changes. Prefer components that match repo areas, such as `cli`, `operator`, `api`, `crd`, `access`, `policy`, `k8sclient`, `manifest`, `metadata`, `sentinel`, `registry`, `ingress`, `services-api`, `ui`, `ingest`, `processor`, `mcp-gateway`, `traefik-plugin`, `config`, `examples`, `test`, or `ci`. Keep the subject concise and imperative; add a body only when the reason, risk, or verification needs context.
 - **Docs you were not asked to edit:** Avoid adding new top-level docs unless the task needs them; this file, `README`, and existing doc trees are the defaults for agents.
 - **Secrets and prod:** This repo is **alpha**; do not hardcode real credentials. Use the existing secret and env patterns documented below.
 - **Agent skills:** Keep `.claude/skills` as a symlink to `../.codex/skills`; see `.claude/README.md` before changing local agent-tool configuration.
@@ -227,7 +227,7 @@ kubectl logs -n mcp-servers "$POD" -c mcp-gateway
 kubectl get mcpaccessgrant,mcpagentsession -n mcp-servers -o wide
 ```
 
-The sidecar container is named `mcp-gateway`; it runs the `mcp-proxy`
+The sidecar container is named `mcp-gateway`; it runs the `mcp-gateway`
 image/process. Many runtime images are distroless, so `/bin/sh` and
 `/bin/bash` may not exist. Prefer logs/describe, or attach a debug container:
 

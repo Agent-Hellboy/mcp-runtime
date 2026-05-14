@@ -11,7 +11,7 @@ import (
 	policypkg "mcp-runtime/pkg/policy"
 )
 
-func (s *proxyServer) startPolicyCache() error {
+func (s *gatewayServer) startPolicyCache() error {
 	s.snapshotPolicy(policySnapshot{Policy: s.defaultPolicyDocument()})
 	if err := s.reloadPolicy(); err != nil {
 		return err
@@ -33,7 +33,7 @@ func (s *proxyServer) startPolicyCache() error {
 	return nil
 }
 
-func (s *proxyServer) reloadPolicy() error {
+func (s *gatewayServer) reloadPolicy() error {
 	doc, err := s.loadPolicy()
 	if err != nil {
 		current := s.loadPolicySnapshot()
@@ -48,7 +48,7 @@ func (s *proxyServer) reloadPolicy() error {
 	return nil
 }
 
-func (s *proxyServer) currentPolicy() (*policypkg.Document, error) {
+func (s *gatewayServer) currentPolicy() (*policypkg.Document, error) {
 	snapshot := s.loadPolicySnapshot()
 	if snapshot.Policy == nil {
 		return s.defaultPolicyDocument(), snapshot.Err
@@ -56,18 +56,18 @@ func (s *proxyServer) currentPolicy() (*policypkg.Document, error) {
 	return snapshot.Policy, snapshot.Err
 }
 
-func (s *proxyServer) loadPolicySnapshot() policySnapshot {
+func (s *gatewayServer) loadPolicySnapshot() policySnapshot {
 	if value := s.policyState.Load(); value != nil {
 		return value.(policySnapshot)
 	}
 	return policySnapshot{Policy: s.defaultPolicyDocument()}
 }
 
-func (s *proxyServer) snapshotPolicy(snapshot policySnapshot) {
+func (s *gatewayServer) snapshotPolicy(snapshot policySnapshot) {
 	s.policyState.Store(snapshot)
 }
 
-func (s *proxyServer) loadPolicy() (*policypkg.Document, error) {
+func (s *gatewayServer) loadPolicy() (*policypkg.Document, error) {
 	doc := &policypkg.Document{}
 	if s.policyFile != "" {
 		data, err := os.ReadFile(s.policyFile)
@@ -119,7 +119,7 @@ func (s *proxyServer) loadPolicy() (*policypkg.Document, error) {
 	return doc, nil
 }
 
-func (s *proxyServer) extractIdentity(r *http.Request, policy *policypkg.Document) identityContext {
+func (s *gatewayServer) extractIdentity(r *http.Request, policy *policypkg.Document) identityContext {
 	humanHeader, agentHeader, teamHeader, sessionHeader := s.identityHeaderNames(policy)
 	return identityContext{
 		HumanID:   strings.TrimSpace(r.Header.Get(humanHeader)),
@@ -138,7 +138,7 @@ func policyIdentity(identity identityContext) policypkg.Identity {
 	}
 }
 
-func (s *proxyServer) defaultPolicyDocument() *policypkg.Document {
+func (s *gatewayServer) defaultPolicyDocument() *policypkg.Document {
 	return &policypkg.Document{
 		Server: policypkg.Server{
 			Name:      s.serverName,

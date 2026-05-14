@@ -22,7 +22,7 @@ func main() {
 	upstream := serviceutil.EnvOr("UPSTREAM_URL", "http://127.0.0.1:8090")
 	analyticsURL := strings.TrimSpace(os.Getenv("ANALYTICS_INGEST_URL"))
 	apiKey := strings.TrimSpace(os.Getenv("ANALYTICS_API_KEY"))
-	source := serviceutil.EnvOr("ANALYTICS_SOURCE", "mcp-proxy")
+	source := serviceutil.EnvOr("ANALYTICS_SOURCE", "mcp-gateway")
 	eventType := serviceutil.EnvOr("ANALYTICS_EVENT_TYPE", "mcp.request")
 	stripPrefix := strings.TrimSpace(os.Getenv("STRIP_PREFIX"))
 	externalBaseURL, err := parseExternalBaseURL(strings.TrimSpace(os.Getenv("EXTERNAL_BASE_URL")))
@@ -38,7 +38,7 @@ func main() {
 	proxy := newUpstreamReverseProxy(target)
 	proxy.Transport = otelhttp.NewTransport(http.DefaultTransport)
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		log.Printf("proxy error: %v", err)
+		log.Printf("gateway error: %v", err)
 		http.Error(w, "upstream error", http.StatusBadGateway)
 	}
 
@@ -53,7 +53,7 @@ func main() {
 		Transport: analyticsTransport,
 	}
 
-	srv := &proxyServer{
+	srv := &gatewayServer{
 		proxy:                 proxy,
 		analyticsURL:          analyticsURL,
 		apiKey:                apiKey,
@@ -84,9 +84,9 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.HandleFunc("/", srv.handleProxy)
+	mux.HandleFunc("/", srv.handleGateway)
 
-	shutdown, err := initTracer("mcp-proxy")
+	shutdown, err := initTracer("mcp-gateway")
 	if err != nil {
 		log.Printf("otel init failed: %v", err)
 	} else {
@@ -97,7 +97,7 @@ func main() {
 		}()
 	}
 
-	log.Printf("mcp-proxy listening on :%s -> %s", port, upstream)
+	log.Printf("mcp-gateway listening on :%s -> %s", port, upstream)
 	handler := otelhttp.NewHandler(mux, "http.server")
 	httpServer := &http.Server{
 		Addr:              ":" + port,

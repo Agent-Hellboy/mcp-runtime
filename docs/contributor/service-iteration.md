@@ -141,10 +141,10 @@ new controllers to agree on validation:
 kubectl apply -f config/crd/bases/mcpruntime.org_mcpservers.yaml
 ```
 
-## MCP Proxy Sidecar
+## MCP Gateway Sidecar
 
-`services/mcp-proxy` runs as the `mcp-gateway` sidecar in each MCP server pod.
-To test proxy changes, rebuild and push `mcp-sentinel-mcp-proxy`, update the
+`services/mcp-gateway` runs as the `mcp-gateway` sidecar in each MCP server pod.
+To test gateway changes, rebuild and push `mcp-sentinel-mcp-gateway`, update the
 operator's `MCP_GATEWAY_PROXY_IMAGE`, roll the operator, then restart affected
 MCP server pods so the sidecar is reinjected.
 

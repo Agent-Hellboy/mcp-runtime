@@ -29,7 +29,7 @@ import (
 func TestHandleProxyOAuthProtectedResourceMetadata(t *testing.T) {
 	issuer := newTestJWTIssuer(t)
 	upstreamCalled := false
-	proxy := newTestProxyServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, _ *http.Request) {
+	proxy := newTestGatewayServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, _ *http.Request) {
 		upstreamCalled = true
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -37,7 +37,7 @@ func TestHandleProxyOAuthProtectedResourceMetadata(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://proxy.example.com/.well-known/oauth-protected-resource/mcp", nil)
 	recorder := httptest.NewRecorder()
 
-	proxy.handleProxy(recorder, req)
+	proxy.handleGateway(recorder, req)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
@@ -64,7 +64,7 @@ func TestHandleProxyOAuthProtectedResourceMetadata(t *testing.T) {
 func TestHandleProxyOAuthChallengesWithoutBearer(t *testing.T) {
 	issuer := newTestJWTIssuer(t)
 	upstreamCalled := false
-	proxy := newTestProxyServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, _ *http.Request) {
+	proxy := newTestGatewayServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, _ *http.Request) {
 		upstreamCalled = true
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -73,7 +73,7 @@ func TestHandleProxyOAuthChallengesWithoutBearer(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 
-	proxy.handleProxy(recorder, req)
+	proxy.handleGateway(recorder, req)
 
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
@@ -96,7 +96,7 @@ func TestHandleProxyOAuthChallengesWithoutBearer(t *testing.T) {
 
 func TestHandleProxyOAuthChallengeUsesExternalBaseURL(t *testing.T) {
 	issuer := newTestJWTIssuer(t)
-	proxy := newTestProxyServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, _ *http.Request) {
+	proxy := newTestGatewayServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -112,7 +112,7 @@ func TestHandleProxyOAuthChallengeUsesExternalBaseURL(t *testing.T) {
 	req.Header.Set("X-Forwarded-Proto", "https")
 	recorder := httptest.NewRecorder()
 
-	proxy.handleProxy(recorder, req)
+	proxy.handleGateway(recorder, req)
 
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
@@ -126,7 +126,7 @@ func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 	issuer := newTestJWTIssuer(t)
 
 	var upstreamHeaders http.Header
-	proxy := newTestProxyServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, r *http.Request) {
+	proxy := newTestGatewayServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, r *http.Request) {
 		upstreamHeaders = r.Header.Clone()
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -147,7 +147,7 @@ func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	recorder := httptest.NewRecorder()
 
-	proxy.handleProxy(recorder, req)
+	proxy.handleGateway(recorder, req)
 
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
@@ -175,7 +175,7 @@ func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 func TestApplyIdentityHeadersClearsSpoofedValues(t *testing.T) {
 	t.Parallel()
 
-	proxy := &proxyServer{
+	proxy := &gatewayServer{
 		defaultHumanHeader:   defaultHumanHeader,
 		defaultAgentHeader:   defaultAgentHeader,
 		defaultTeamHeader:    defaultTeamHeader,
@@ -209,7 +209,7 @@ func TestApplyIdentityHeadersClearsSpoofedValues(t *testing.T) {
 func TestApplyUpstreamTokenClearsHeaderWhenTokenMissing(t *testing.T) {
 	t.Parallel()
 
-	proxy := &proxyServer{}
+	proxy := &gatewayServer{}
 	req := httptest.NewRequest(http.MethodGet, "http://proxy.example.com/mcp", nil)
 	req.Header.Set("Authorization", "Bearer spoofed-token")
 
@@ -237,7 +237,7 @@ func TestHandleProxyRewritesUpstreamHostAndForwardedHeaders(t *testing.T) {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
 
-	proxy := &proxyServer{
+	proxy := &gatewayServer{
 		proxy:                 newUpstreamReverseProxy(target),
 		httpClient:            &http.Client{Timeout: 2 * time.Second},
 		defaultHumanHeader:    defaultHumanHeader,
@@ -254,7 +254,7 @@ func TestHandleProxyRewritesUpstreamHostAndForwardedHeaders(t *testing.T) {
 	req.Host = "policy.example.local"
 	recorder := httptest.NewRecorder()
 
-	proxy.handleProxy(recorder, req)
+	proxy.handleGateway(recorder, req)
 
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
@@ -355,7 +355,7 @@ func TestResolveBaseURLPathPreservesBaseSubpath(t *testing.T) {
 func TestAuditPayloadDoesNotPersistRawQueryString(t *testing.T) {
 	t.Parallel()
 
-	proxy := &proxyServer{
+	proxy := &gatewayServer{
 		serverName:           "example-server",
 		serverNamespace:      "mcp-servers",
 		clusterName:          "kind",
@@ -384,7 +384,7 @@ func TestAuditPayloadDoesNotPersistRawQueryString(t *testing.T) {
 func TestAuditPayloadIncludesLatencyMetadata(t *testing.T) {
 	t.Parallel()
 
-	proxy := &proxyServer{
+	proxy := &gatewayServer{
 		serverName:           "example-server",
 		serverNamespace:      "mcp-servers",
 		clusterName:          "kind",
@@ -444,7 +444,7 @@ func TestAuditPayloadIncludesLatencyMetadata(t *testing.T) {
 func TestStartPolicyCacheRequiresConfiguredPolicyFile(t *testing.T) {
 	t.Parallel()
 
-	proxy := &proxyServer{
+	proxy := &gatewayServer{
 		policyFile:            filepath.Join(t.TempDir(), "missing-policy.json"),
 		defaultHumanHeader:    defaultHumanHeader,
 		defaultAgentHeader:    defaultAgentHeader,
@@ -463,7 +463,7 @@ func TestStartPolicyCacheRequiresConfiguredPolicyFile(t *testing.T) {
 func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
 	t.Parallel()
 
-	proxy := &proxyServer{
+	proxy := &gatewayServer{
 		analyticsURL:   "http://analytics.example.com",
 		analyticsQueue: make(chan analyticsEvent, 1),
 	}
@@ -502,7 +502,7 @@ func TestStopAnalyticsDispatcherDrainsQueue(t *testing.T) {
 	}))
 	t.Cleanup(ingest.Close)
 
-	proxy := &proxyServer{
+	proxy := &gatewayServer{
 		analyticsURL: ingest.URL,
 		httpClient:   ingest.Client(),
 	}
@@ -539,7 +539,7 @@ func TestAnalyticsDispatcherPropagatesTraceContext(t *testing.T) {
 		SpanID:     trace.SpanID{1, 3, 5, 7, 9, 11, 13, 15},
 		TraceFlags: trace.FlagsSampled,
 	}))
-	proxy := &proxyServer{
+	proxy := &gatewayServer{
 		analyticsURL: ingest.URL,
 		httpClient:   ingest.Client(),
 	}
@@ -602,7 +602,7 @@ func (i *testJWTIssuer) sign(t *testing.T, claims jwt.MapClaims) string {
 	return signed
 }
 
-func newTestProxyServer(t *testing.T, policy *policypkg.Document, upstream http.HandlerFunc) *proxyServer {
+func newTestGatewayServer(t *testing.T, policy *policypkg.Document, upstream http.HandlerFunc) *gatewayServer {
 	t.Helper()
 
 	upstreamServer := httptest.NewServer(upstream)
@@ -614,10 +614,10 @@ func newTestProxyServer(t *testing.T, policy *policypkg.Document, upstream http.
 	}
 	reverseProxy := newUpstreamReverseProxy(target)
 	reverseProxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
-		t.Fatalf("proxy error: %v", err)
+		t.Fatalf("gateway error: %v", err)
 	}
 
-	server := &proxyServer{
+	server := &gatewayServer{
 		proxy:                 reverseProxy,
 		httpClient:            &http.Client{Timeout: 2 * time.Second},
 		defaultHumanHeader:    defaultHumanHeader,

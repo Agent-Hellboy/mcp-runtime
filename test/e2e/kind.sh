@@ -2253,8 +2253,8 @@ image_build_label() {
     docker.io/library/mcp-runtime-registry:*)
       echo "build test registry image (${image})"
       ;;
-    docker.io/library/mcp-sentinel-mcp-proxy:*)
-      echo "build Sentinel MCP proxy image (${image})"
+    docker.io/library/mcp-sentinel-mcp-gateway:*)
+      echo "build Sentinel MCP gateway image (${image})"
       ;;
     docker.io/library/mcp-sentinel-ingest:*)
       echo "build Sentinel ingest image (${image})"
@@ -2494,7 +2494,7 @@ else
   build_and_publish_images_parallel \
     "docker.io/library/mcp-runtime-operator:latest" "Dockerfile.operator" "." \
     "${TEST_MODE_REGISTRY_IMAGE}" "test/e2e/registry.Dockerfile" "." \
-    "docker.io/library/mcp-sentinel-mcp-proxy:latest" "${SENTINEL_ROOT}/services/mcp-proxy/Dockerfile" "${SENTINEL_ROOT}" \
+    "docker.io/library/mcp-sentinel-mcp-gateway:latest" "${SENTINEL_ROOT}/services/mcp-gateway/Dockerfile" "${SENTINEL_ROOT}" \
     "docker.io/library/mcp-sentinel-ingest:latest" "${SENTINEL_ROOT}/services/ingest/Dockerfile" "${SENTINEL_ROOT}" \
     "docker.io/library/mcp-sentinel-api:latest" "${SENTINEL_ROOT}/services/api/Dockerfile" "${SENTINEL_ROOT}" \
     "docker.io/library/mcp-sentinel-processor:latest" "${SENTINEL_ROOT}/services/processor/Dockerfile" "${SENTINEL_ROOT}" \
@@ -4499,8 +4499,8 @@ for route in (
     "ui:/config.js",
     "ui:/app.js",
     "ui:/styles.css",
-    "mcp-proxy:/health",
-    "mcp-proxy:/",
+    "mcp-gateway:/health",
+    "mcp-gateway:/",
     "mcp-server:/health",
     "mcp-server:/",
     "oauth-proxy:/health",

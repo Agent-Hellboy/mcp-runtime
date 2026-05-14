@@ -47,8 +47,8 @@ spec:
           env:
             - name: PORT
               value: "8090"
-        - name: mcp-proxy
-          image: mcp-sentinel-mcp-proxy:latest
+        - name: mcp-gateway
+          image: mcp-sentinel-mcp-gateway:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -74,7 +74,7 @@ spec:
                   name: mcp-sentinel-secrets
                   key: INGEST_API_KEYS
             - name: ANALYTICS_SOURCE
-              value: "mcp-proxy"
+              value: "mcp-gateway"
             - name: MCP_SERVER_NAME
               value: "mcp-example-sidecar"
             - name: MCP_SERVER_NAMESPACE
@@ -91,7 +91,7 @@ spec:
             - name: POLICY_MODE
               value: "observe"
             - name: OTEL_SERVICE_NAME
-              value: mcp-example-proxy
+              value: mcp-example-gateway
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               valueFrom:
                 configMapKeyRef:

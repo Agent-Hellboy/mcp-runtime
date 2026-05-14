@@ -54,7 +54,7 @@ type analyticsEvent struct {
 	TraceContext map[string]string
 }
 
-type proxyServer struct {
+type gatewayServer struct {
 	proxy                 *httputil.ReverseProxy
 	analyticsURL          string
 	apiKey                string
@@ -106,4 +106,4 @@ const (
 	defaultTokenHeader    = "Authorization"
 )
 
-// main initializes and starts the MCP Proxy service.
+// main initializes and starts the MCP gateway service.

@@ -96,9 +96,9 @@ flowchart TB
     Op --> K8s[Deployments / Services / Ingress]
 
     K8s -->|gateway disabled| Direct["/{server-name}/mcp → MCP server"]
-    K8s -->|gateway enabled| Proxy[mcp-proxy sidecar]
-    Proxy --> MCP[MCP server]
-    Proxy --> Stack[Services Stack<br/>ingest / processor / API / UI / observability]
+    K8s -->|gateway enabled| Gateway[mcp-gateway sidecar]
+    Gateway --> MCP[MCP server]
+    Gateway --> Stack[Services Stack<br/>ingest / processor / API / UI / observability]
 ```
 
 ## Install and delivery flow

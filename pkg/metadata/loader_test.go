@@ -46,7 +46,7 @@ func TestLoadFromFile(t *testing.T) {
 						TeamID:      "team-custom",
 						Gateway: &GatewayConfig{
 							Enabled:     true,
-							Image:       "example.com/mcp-proxy:latest",
+							Image:       "example.com/mcp-gateway:latest",
 							Port:        8091,
 							UpstreamURL: "http://127.0.0.1:9090",
 						},

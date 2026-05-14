@@ -1,4 +1,4 @@
-module mcp-sentinel-mcp-proxy
+module mcp-sentinel-mcp-gateway
 
 go 1.26.0
 

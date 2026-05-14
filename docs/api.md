@@ -20,8 +20,8 @@ flowchart LR
         Ana[/api/events, /api/stats/]
     end
     CRDs -- rendered into --> Policy[Policy ConfigMap]
-    Policy --> Proxy[mcp-proxy]
-    Proxy -->|audit| Ana
+    Policy --> Gateway[mcp-gateway]
+    Gateway -->|audit| Ana
     Run --> CRDs
 ```
 
@@ -231,7 +231,7 @@ GET  /api/auth/me
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Gateway as gateway / mcp-proxy
+    participant Gateway as mcp-gateway
     participant Server as MCP server
     Client->>Gateway: POST /payments/mcp tools/call
     Note right of Gateway: Read X-MCP-Human-ID,<br/>X-MCP-Agent-ID,<br/>X-MCP-Agent-Session

@@ -1,12 +1,12 @@
 # Sentinel
 
-`mcp-sentinel` is the bundled service stack for proxy enforcement, audit, query, governance UI, and observability around MCP servers. It governs **live MCP requests**, not arbitrary cluster traffic. It ships in `services/` and is installed by default with `mcp-runtime setup` (skip with `--without-sentinel`).
+`mcp-sentinel` is the bundled service stack for gateway enforcement, audit, query, governance UI, and observability around MCP servers. It governs **live MCP requests**, not arbitrary cluster traffic. It ships in `services/` and is installed by default with `mcp-runtime setup` (skip with `--without-sentinel`).
 
 ## Services
 
 | Service | Role |
 |---|---|
-| **mcp-proxy** | Transparent sidecar. Extracts identity, evaluates tool-level policy, emits allow/deny audit events, forwards traffic upstream. |
+| **mcp-gateway** | Transparent sidecar. Extracts identity, evaluates tool-level policy, emits allow/deny audit events, forwards traffic upstream. |
 | **ingest** | Receives `POST /events`, validates ingest-scoped API keys or optional JWTs, writes to Kafka. |
 | **processor** | Consumes Kafka, batches, writes into ClickHouse with indexed audit fields. |
 | **api** | Analytics endpoints, dashboard summaries, user/team-scoped analytics, runtime governance APIs (grants/sessions), platform audit, MCP server catalog, component operations. |
@@ -25,7 +25,7 @@ that only use HTTP, Kafka, ClickHouse, Postgres, or local files.
 |---|---|---|---|
 | **api** | Kubernetes-aware. `services/api` initializes clients through `pkg/k8sclient`, using in-cluster config first and kubeconfig fallback outside the cluster. | Reads `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession`; applies grants/sessions; reads component health; restarts Sentinel workloads; provisions platform deployment namespaces, quotas, limits, and NetworkPolicies; manages Deployments and Services. RBAC is in `k8s/08-api-rbac.yaml`. | Treat this as the main privileged Sentinel service. Keep admin auth tight, keep `ADMIN_API_KEYS` separate from user keys, prefer in-cluster service account credentials in production, and review the broad deployment-management RBAC before enabling user deployment APIs on shared clusters. |
 | **gateway** | Kubernetes-aware Traefik ingress controller. | Watches Ingress, Service, Endpoint, Secret, and IngressClass resources for the namespaces it serves. The bundled Sentinel-local gateway watches `mcp-sentinel`; the shared ingress overlays watch `registry`, `mcp-sentinel`, `mcp-servers`, `mcp-servers-org`, and `mcp-servers-public`. | Keep watched namespaces explicit, avoid cluster-wide ingress watches unless required, do not expose Grafana or Prometheus on an unauthenticated public host, and keep redaction middleware limited to routes that need it. |
-| **mcp-proxy** | Kubernetes-integrated but Kubernetes API-agnostic. It is injected into MCP server pods and reads operator-rendered policy from mounted files and env vars. | Does not need a Kubernetes client or service account token. It forwards MCP traffic to the local server container and emits audit events to ingest. | Keep `automountServiceAccountToken: false`, read-only policy mounts, `readOnlyRootFilesystem`, dropped capabilities, and non-root execution. Treat `ANALYTICS_API_KEY` as ingest-scoped, not an admin API key. |
+| **mcp-gateway** | Kubernetes-integrated but Kubernetes API-agnostic. It is injected into MCP server pods and reads operator-rendered policy from mounted files and env vars. | Does not need a Kubernetes client or service account token. It forwards MCP traffic to the local server container and emits audit events to ingest. | Keep `automountServiceAccountToken: false`, read-only policy mounts, `readOnlyRootFilesystem`, dropped capabilities, and non-root execution. Treat `ANALYTICS_API_KEY` as ingest-scoped, not an admin API key. |
 | **ui** | Kubernetes API-agnostic. | Serves the browser UI and proxies `/api/*` to `api` through `API_UPSTREAM` with UI session credentials or the configured upstream key. | Keep it behind TLS for public hosts, retain the security headers in `services/ui`, set `UI_REQUIRE_HTTPS=false` only for deliberate non-TLS dev ingress, set `UI_FORCE_SECURE_COOKIE=true` when a TLS-terminating proxy does not send `X-Forwarded-Proto: https`, and do not grant it Kubernetes RBAC. |
 | **ingest** | Kubernetes API-agnostic. | Authenticates `/events`, validates request size and event shape, and writes to Kafka. | Require `INGEST_API_KEYS` or OIDC for real deployments, use ingest-only keys, restrict network access to proxy/gateway callers, and keep the public `/ingest` route off production hosts unless intentionally exposed. |
 | **processor** | Kubernetes API-agnostic. | Consumes Kafka and writes ClickHouse. It only exposes health and metrics. | Do not expose it through ingress. Restrict network access to Kafka, ClickHouse, metrics scraping, and tracing endpoints. |
@@ -41,9 +41,9 @@ the cluster supports them.
 
 ```mermaid
 flowchart LR
-    Req[MCP request] --> Proxy[mcp-proxy<br/>policy + identity + trust + side effects]
-    Proxy -->|forward| MCP[MCP server]
-    Proxy -->|audit POST /events| Ingest
+    Req[MCP request] --> Gateway[mcp-gateway<br/>policy + identity + trust + side effects]
+    Gateway -->|forward| MCP[MCP server]
+    Gateway -->|audit POST /events| Ingest
     Ingest -->|mcp.events topic| Kafka[(Kafka)]
     Kafka --> Processor
     Processor -->|batch insert| CH[(ClickHouse)]
@@ -52,7 +52,7 @@ flowchart LR
     API --> Graf[Grafana]
 ```
 
-1. **Proxy evaluates the request.** Reads identity headers, loads policy from the operator-rendered ConfigMap, and calls the shared `pkg/policy` evaluator for allow / deny at `tools/call` time. The evaluator checks both trust and the tool's declared side-effect class.
+1. **Gateway evaluates the request.** Reads identity headers, loads policy from the operator-rendered ConfigMap, and calls the shared `pkg/policy` evaluator for allow / deny at `tools/call` time. The evaluator checks both trust and the tool's declared side-effect class.
 2. **Ingest receives the event** on `/events`, validates the shared `pkg/events` envelope, and writes into Kafka topic `mcp.events`.
 3. **Processor batches to ClickHouse.** Reads Kafka envelopes and uses `pkg/clickhouse` storage helpers to write to the event table.
 4. **API exposes query surfaces.** Recent events, stats, sources, types, and filtered audit views use `pkg/clickhouse` query helpers.
@@ -97,10 +97,10 @@ For local `setup --test-mode` clusters, setup seeds two email/password logins:
 |---|---|---|---|
 | **UI** | `/` | `mcp-sentinel-ui:8082` | Browser app, browser login/session routes, and `/api` reverse proxy. |
 | **API** | `/api/*` through UI | `mcp-sentinel-api:8080` | Auth, analytics queries, runtime governance, deployments, admin/user APIs. The UI proxy forwards browser origin headers so local connect configs can point at `http://localhost:18080/<server-name>/mcp`. |
-| **Ingest** | `/ingest/events` | `mcp-sentinel-ingest:8081/events` | Event intake used by `mcp-proxy`; the public ingress strips `/ingest`. |
+| **Ingest** | `/ingest/events` | `mcp-sentinel-ingest:8081/events` | Event intake used by `mcp-gateway`; the public ingress strips `/ingest`. |
 | **Grafana** | `/grafana` | `grafana:3000` | Admin observability UI. Keep private or behind auth-aware ingress; tenant-scoped access is intentionally not exposed by the user dashboard. |
 | **Prometheus** | `/prometheus` | `prometheus:9090` | Admin metrics query UI. Keep private or behind auth-aware ingress; tenant-scoped access is intentionally not exposed by the user dashboard. |
-| **MCP proxy sidecar** | per-server route, for example `/demo-one/mcp` | pod-local sidecar port | Enforces policy and forwards to the MCP server container. |
+| **MCP gateway sidecar** | per-server route, for example `/demo-one/mcp` | pod-local sidecar port | Enforces policy and forwards to the MCP server container. |
 
 ### Auth model
 
@@ -110,7 +110,7 @@ For local `setup --test-mode` clusters, setup seeds two email/password logins:
 | **ui** | `/auth/login` creates an HttpOnly UI session from `api_key`, `id_token`, or `email`/`password`. The UI then proxies `/api/*` with an upstream API key or bearer token. |
 | **ingest** | `/live`, `/ready`, and `/health` are open. `/events` accepts `x-api-key` from `INGEST_API_KEYS`, legacy `API_KEYS`, or a configured OIDC bearer token. If no API keys and no JWKS are configured, intake auth is bypassed. |
 | **processor** | No data API. It exposes metrics and a simple health check on the metrics port. |
-| **mcp-proxy** | No admin API. It authenticates MCP requests according to the rendered server policy: header identity or OAuth bearer tokens, depending on `spec.auth`. |
+| **mcp-gateway** | No admin API. It authenticates MCP requests according to the rendered server policy: header identity or OAuth bearer tokens, depending on `spec.auth`. |
 
 ### API service
 
@@ -213,7 +213,7 @@ Event intake body:
 ```json
 {
   "timestamp": "2026-05-04T18:00:00Z",
-  "source": "mcp-proxy",
+  "source": "mcp-gateway",
   "event_type": "mcp.request",
   "payload": {
     "server": "payments",
@@ -240,9 +240,9 @@ query or mutation API.
 | `GET` | `/health` | Simple health check on `METRICS_PORT` (default `9102`). |
 | `GET` | `/metrics` | Prometheus metrics, including processor intake pause gauges/counters. |
 
-### MCP proxy sidecar
+### MCP gateway sidecar
 
-`services/mcp-proxy` is injected into gateway-enabled `MCPServer` pods as the
+`services/mcp-gateway` is injected into gateway-enabled `MCPServer` pods as the
 `mcp-gateway` container. It listens on `PORT` (operator default: the server's
 gateway port), forwards to `UPSTREAM_URL`, reads policy from `POLICY_FILE`, and
 emits audit events to `ANALYTICS_INGEST_URL` when configured.
@@ -346,7 +346,7 @@ source subject preserved, never on the other server.
 |---|---|
 | **Core app** | `00-namespace`, `01-config`, `02-secrets`, `03-clickhouse`, `04-clickhouse-init`, `05-kafka`, `06-ingest`, `07-processor`, `08-api-rbac`, `08-api`, `09-ui`, `10-gateway`, `20-postgres`, `21-platform-admin-bootstrap-job` |
 | **Observability** | `11-prometheus`, `12-grafana`, `15-otel-collector`, `16-tempo`, `17-loki`, `18-promtail`, `19-grafana-datasources` |
-| **Example wiring** | `13-mcp-example`, `14-mcp-proxy-sidecar` |
+| **Example wiring** | `13-mcp-example`, `14-mcp-gateway-sidecar` |
 
 `mcp-runtime setup` builds the sentinel images and deploys this stack by default. Use `--without-sentinel` to skip.
 
@@ -372,7 +372,7 @@ mcp-runtime sentinel restart --all
 
 `sentinel events` is a Kubernetes event view for the `mcp-sentinel` namespace.
 Use `/api/events` or `/api/events/filter` when you need the request/audit
-events emitted by `mcp-proxy`.
+events emitted by `mcp-gateway`.
 
 See [CLI → sentinel](cli.md#sentinel) for component keys and flag details.
 
