@@ -5580,6 +5580,8 @@ fi
 
 echo "[cli] checking sentinel restart command"
 # The full E2E stack packs single-node Kind tightly, so avoid requiring surge CPU for this restart smoke.
+export KUBECONFIG="${KUBECONFIG_FILE}"
+kubectl config use-context "kind-${CLUSTER_NAME}" >/dev/null
 kubectl patch deployment mcp-sentinel-api -n mcp-sentinel --type merge -p '{"spec":{"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":0,"maxUnavailable":1}}}}' >/dev/null
 ./bin/mcp-runtime sentinel restart api
 rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
