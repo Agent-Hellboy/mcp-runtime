@@ -53,6 +53,25 @@ async function fetchJSON(path, options = {}) {
   return response.json();
 }
 
+async function fetchJSONNoAuthSideEffects(path, options = {}) {
+  const headers = { ...options.headers };
+
+  const response = await fetch(`${apiBase}${path}`, {
+    ...options,
+    credentials: "same-origin",
+    headers,
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    const err = new Error(error || `Request failed: ${response.status}`);
+    err.status = response.status;
+    throw err;
+  }
+
+  return response.json();
+}
+
 function unauthorizedError() {
   const err = new Error("Unauthorized");
   err.name = "UnauthorizedError";
@@ -249,6 +268,14 @@ function showToast(message, type = "success") {
   setTimeout(() => {
     toast.remove();
   }, 5000);
+}
+
+function setInlineError(id, message = "") {
+  const node = document.getElementById(id);
+  if (!node) return;
+  const text = String(message || "").trim();
+  node.textContent = text;
+  node.classList.toggle("hidden", !text);
 }
 
 // Tab Switching
@@ -1262,6 +1289,7 @@ function renderUserAnalyticsError() {
 function resetGovernance() {
   grantsCache = [];
   sessionsCache = [];
+  setInlineError("grant-form-error");
   renderGovernanceSummary();
   const grantsBody = document.getElementById("grants-body");
   const sessionsBody = document.getElementById("sessions-body");
@@ -1386,6 +1414,7 @@ function serverSearchText(server) {
     server.status,
     server.ready,
     server.endpoint,
+    metadataSearchText(server.labels),
     ...(server.tools || []).map((tool) => `${tool.name || ""} ${tool.requiredTrust || ""} ${tool.description || ""}`),
     ...(server.prompts || []).map(inventorySearchText),
     ...(server.resources || []).map(inventorySearchText),
@@ -1394,14 +1423,16 @@ function serverSearchText(server) {
   return values.filter(Boolean).join(" ").toLowerCase();
 }
 
+function metadataSearchText(labels) {
+  if (!labels || typeof labels !== "object") return "";
+  return Object.entries(labels)
+    .map(([key, value]) => `${key} ${value}`)
+    .join(" ");
+}
+
 function inventorySearchText(item) {
   if (typeof item === "string") return item;
-  const labels =
-    item?.labels && typeof item.labels === "object"
-      ? Object.entries(item.labels)
-          .map(([k, v]) => `${k} ${v}`)
-          .join(" ")
-      : "";
+  const labels = metadataSearchText(item?.labels);
   return `${item?.name || ""} ${item?.description || ""} ${labels}`;
 }
 
@@ -1449,15 +1480,18 @@ async function loadSelectedServerEvents(server) {
       server: server.name,
       limit: "20",
     });
-    const data = await fetchJSON(`/runtime/server-events?${query.toString()}`);
+    const data = await fetchJSONNoAuthSideEffects(`/runtime/server-events?${query.toString()}`);
     if (selectedServerKey !== serverKey(server)) return;
     selectedServerEventsCache = Array.isArray(data.events) ? data.events : [];
     renderServerDetailPanel(server);
   } catch (err) {
-    if (isUnauthorizedError(err)) return;
-    console.error("Failed to load server events:", err);
     if (selectedServerKey !== serverKey(server)) return;
     selectedServerEventsCache = [];
+    if (err?.status === 401 || err?.status === 403) {
+      renderServerDetailPanel(server, "Recent activity unavailable.");
+      return;
+    }
+    console.error("Failed to load server events:", err);
     renderServerDetailPanel(server, "Analytics unavailable.");
   }
 }
@@ -1887,13 +1921,17 @@ function isTenantUser() {
 }
 
 function applyRoleVisibility() {
+  const authRequired = document.querySelectorAll('[data-auth-required="true"]');
+  authRequired.forEach((node) => {
+    node.classList.toggle("hidden", authenticated !== true);
+  });
   const adminOnly = document.querySelectorAll('[data-admin-only="true"]');
   adminOnly.forEach((node) => {
     node.classList.toggle("hidden", !isAdminUser());
   });
   const userOnly = document.querySelectorAll('[data-user-only="true"]');
   userOnly.forEach((node) => {
-    node.classList.toggle("hidden", authenticated === true && isAdminUser());
+    node.classList.toggle("hidden", !isTenantUser());
   });
   const active = resolveActiveTab();
   activateTab(active);
@@ -2041,18 +2079,19 @@ async function applyGrant(event) {
   event.preventDefault();
   const submit = event.submitter;
   if (submit?.disabled) return;
+  setInlineError("grant-form-error");
 
   const name = fieldValue("grant-name");
   const server = fieldValue("grant-server");
   if (!name || !server) {
-    showToast("Grant name and server are required.", "error");
+    failGrantForm("Grant name and server are required.");
     return;
   }
   const humanID = fieldValue("grant-human");
   const agentID = fieldValue("grant-agent");
   const teamID = fieldValue("grant-team");
   if (!humanID && !agentID && !teamID) {
-    showToast("Provide at least one of Human ID, Agent ID, or Team ID.", "error");
+    failGrantForm("Provide at least one of Human ID, Agent ID, or Team ID.");
     return;
   }
 
@@ -2060,7 +2099,12 @@ async function applyGrant(event) {
   try {
     toolRules = parseToolRules(fieldValue("grant-tool-rules"));
   } catch (parseErr) {
-    showToast(parseErr.message, "error");
+    failGrantForm(parseErr.message);
+    return;
+  }
+  const sideEffects = selectedGrantSideEffects();
+  if (!sideEffects.length) {
+    failGrantForm("Select at least one allowed side effect.");
     return;
   }
 
@@ -2075,7 +2119,7 @@ async function applyGrant(event) {
       },
       subject: { humanID, agentID, teamID },
       maxTrust: fieldValue("grant-trust"),
-      allowedSideEffects: selectedGrantSideEffects(),
+      allowedSideEffects: sideEffects,
       policyVersion: fieldValue("grant-policy-version") || defaults.policyVersion,
       toolRules,
     };
@@ -2090,15 +2134,21 @@ async function applyGrant(event) {
     setFieldValue("grant-namespace", activeScopeNamespace());
     setFieldValue("grant-policy-version", defaults.policyVersion);
     resetGrantSideEffects();
+    setInlineError("grant-form-error");
     document.getElementById("grant-form")?.classList.add("hidden");
     loadGrants();
     loadDashboardSummary();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
-    showToast(`Failed to apply grant: ${err.message}`, "error");
+    failGrantForm(`Failed to apply grant: ${readErrorMessage(err, "request failed")}`);
   } finally {
     if (submit) submit.disabled = false;
   }
+}
+
+function failGrantForm(message) {
+  setInlineError("grant-form-error", message);
+  showToast(message, "error");
 }
 
 function selectedGrantSideEffects() {
@@ -2356,9 +2406,11 @@ function initGovernance() {
   document.getElementById("refresh-grants")?.addEventListener("click", loadGrants);
   document.getElementById("refresh-sessions")?.addEventListener("click", loadSessions);
   document.getElementById("show-grant-form")?.addEventListener("click", () => {
+    setInlineError("grant-form-error");
     document.getElementById("grant-form")?.classList.toggle("hidden");
   });
   document.getElementById("cancel-grant-form")?.addEventListener("click", () => {
+    setInlineError("grant-form-error");
     document.getElementById("grant-form")?.classList.add("hidden");
   });
   document.getElementById("grant-form")?.addEventListener("submit", applyGrant);
@@ -2425,8 +2477,14 @@ function renderUserAPIKeys() {
 async function createUserAPIKey() {
   const input = document.getElementById("user-api-key-name");
   const name = (input?.value || "").trim();
+  setInlineError("user-api-key-error");
+  input?.removeAttribute("aria-invalid");
   if (!name) {
-    showToast("Enter a name for the API key", "warning");
+    const message = "Enter a name for the API key.";
+    setInlineError("user-api-key-error", message);
+    input?.setAttribute("aria-invalid", "true");
+    input?.focus();
+    showToast(message, "warning");
     return;
   }
   try {
@@ -2448,11 +2506,14 @@ async function createUserAPIKey() {
       }, 60000);
     }
     if (input) input.value = "";
+    setInlineError("user-api-key-error");
     showToast("API key created");
     await loadUserAPIKeys({ preserveOneTime: true });
   } catch (err) {
     if (isUnauthorizedError(err)) return;
-    showToast(`Failed to create API key: ${err.message}`, "error");
+    const message = `Failed to create API key: ${readErrorMessage(err, "request failed")}`;
+    setInlineError("user-api-key-error", message);
+    showToast(message, "error");
   }
 }
 
@@ -2470,6 +2531,8 @@ async function revokeUserAPIKey(id) {
 function resetUserAPIKeys() {
   userAPIKeysCache = [];
   clearOneTimeUserAPIKey();
+  setInlineError("user-api-key-error");
+  document.getElementById("user-api-key-name")?.removeAttribute("aria-invalid");
   const tbody = document.getElementById("user-api-keys-body");
   if (tbody) {
     tbody.innerHTML = '<tr><td colspan="5" class="empty">No API keys found.</td></tr>';
@@ -2490,6 +2553,10 @@ function clearOneTimeUserAPIKey() {
 function initUserAPIKeys() {
   document.getElementById("refresh-user-api-keys")?.addEventListener("click", loadUserAPIKeys);
   document.getElementById("create-user-api-key")?.addEventListener("click", createUserAPIKey);
+  document.getElementById("user-api-key-name")?.addEventListener("input", () => {
+    setInlineError("user-api-key-error");
+    document.getElementById("user-api-key-name")?.removeAttribute("aria-invalid");
+  });
 }
 
 // Operations - admin activity and MCP runtime
@@ -3059,9 +3126,15 @@ async function restartComponent() {
   const select = document.getElementById("restart-component-select");
   if (!select) return;
   const component = select.value;
+  setInlineError("restart-component-error");
+  select.removeAttribute("aria-invalid");
 
   if (!component) {
-    showToast("Please select a component", "warning");
+    const message = "Select a component to restart.";
+    setInlineError("restart-component-error", message);
+    select.setAttribute("aria-invalid", "true");
+    select.focus();
+    showToast(message, "warning");
     return;
   }
 
@@ -3079,16 +3152,23 @@ async function restartComponent() {
     });
     showToast(`Component "${component}" restart initiated`);
     select.value = "";
+    setInlineError("restart-component-error");
     setTimeout(loadComponents, 3000);
   } catch (err) {
     if (isUnauthorizedError(err)) return;
-    showToast(`Failed to restart component: ${err.message}`, "error");
+    const message = `Failed to restart component: ${readErrorMessage(err, "request failed")}`;
+    setInlineError("restart-component-error", message);
+    showToast(message, "error");
   }
 }
 
 function initPlatform() {
   document.getElementById("refresh-components")?.addEventListener("click", loadPlatformManagement);
   document.getElementById("restart-component-btn")?.addEventListener("click", restartComponent);
+  document.getElementById("restart-component-select")?.addEventListener("change", () => {
+    setInlineError("restart-component-error");
+    document.getElementById("restart-component-select")?.removeAttribute("aria-invalid");
+  });
   document.getElementById("open-mcp-operations")?.addEventListener("click", () => {
     activateTab("operations");
     loadMCPOperations();

@@ -112,11 +112,151 @@ func TestStaticAppHidesPersonalActivityForAdmins(t *testing.T) {
 	if !strings.Contains(source, `querySelectorAll('[data-user-only="true"]')`) {
 		t.Fatal("app should apply user-only visibility rules")
 	}
-	if !strings.Contains(source, "authenticated === true && isAdminUser()") {
-		t.Fatal("user-only views should hide for authenticated admins")
+	if !strings.Contains(source, `node.classList.toggle("hidden", !isTenantUser())`) {
+		t.Fatal("user-only views should only show for authenticated tenant users")
 	}
 	if !strings.Contains(source, "isVisibleTab(active)") {
 		t.Fatal("active tab resolution should ignore hidden tabs")
+	}
+}
+
+func TestStaticAppHidesProtectedTabsWhenSignedOut(t *testing.T) {
+	index, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(index)
+	if got := strings.Count(html, `data-auth-required="true"`); got < 4 {
+		t.Fatalf("expected API Keys and Governance tabs/panels to require auth, got %d markers", got)
+	}
+
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`querySelectorAll('[data-auth-required="true"]')`,
+		`node.classList.toggle("hidden", authenticated !== true)`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppSearchesServerMetadataLabels(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`metadataSearchText(server.labels)`,
+		`function metadataSearchText(labels)`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppRequiresGrantSideEffects(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`const sideEffects = selectedGrantSideEffects()`,
+		`Select at least one allowed side effect.`,
+		`allowedSideEffects: sideEffects`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppKeepsServerEventAuthFailuresLocal(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`function fetchJSONNoAuthSideEffects`,
+		"fetchJSONNoAuthSideEffects(`",
+		`/runtime/server-events?`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppShowsInlineValidationFeedback(t *testing.T) {
+	index, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(index)
+	for _, want := range []string{
+		`id="grant-form-error" class="form-error hidden" role="alert"`,
+		`id="user-api-key-error" class="form-error hidden" role="alert"`,
+		`id="restart-component-error" class="form-error hidden" role="alert"`,
+		`Servers Seen`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("index missing %q", want)
+		}
+	}
+
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`function setInlineError(id, message = "")`,
+		`failGrantForm("Provide at least one of Human ID, Agent ID, or Team ID.")`,
+		`setInlineError("user-api-key-error", message)`,
+		`setInlineError("restart-component-error", message)`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestStaticStylesAvoidTextGeneratedChevrons(t *testing.T) {
+	body, err := os.ReadFile("static/styles.css")
+	if err != nil {
+		t.Fatalf("read static styles: %v", err)
+	}
+	source := string(body)
+	if strings.Contains(source, `content: ">"`) {
+		t.Fatal("inventory chevrons should not use generated text that leaks into the accessibility tree")
+	}
+	if !strings.Contains(source, `border-right: 2px solid var(--muted);`) {
+		t.Fatal("inventory chevrons should be drawn with borders")
+	}
+}
+
+func TestStaticMarkupIncludesPlatformRestartAndDialogReviewFixes(t *testing.T) {
+	index, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(index)
+	for _, want := range []string{
+		`<option value="prometheus">Prometheus</option>`,
+		`<option value="grafana">Grafana</option>`,
+		`id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("index missing %q", want)
+		}
 	}
 }
 

@@ -54,6 +54,7 @@
           id="tab-button-userkeys"
           class="tab"
           data-tab="userkeys"
+          data-auth-required="true"
           role="tab"
           type="button"
           aria-controls="tab-userkeys"
@@ -77,6 +78,7 @@
           id="tab-button-governance"
           class="tab"
           data-tab="governance"
+          data-auth-required="true"
           role="tab"
           type="button"
           aria-controls="tab-governance"
@@ -303,6 +305,7 @@
       <section
         id="tab-userkeys"
         class="tab-content"
+        data-auth-required="true"
         role="tabpanel"
         aria-labelledby="tab-button-userkeys"
         hidden
@@ -316,6 +319,7 @@
               <button class="ghost" id="refresh-user-api-keys" type="button">Refresh</button>
             </div>
           </div>
+          <p id="user-api-key-error" class="form-error hidden" role="alert"></p>
           <p id="user-api-key-once" class="auth-error hidden"></p>
           <div class="table-wrap">
             <table>
@@ -353,7 +357,7 @@
             <strong class="metric-value" id="dash-total-events">-</strong>
           </div>
           <div class="metric-card">
-            <span class="metric-label">Active Servers</span>
+            <span class="metric-label">Servers Seen</span>
             <strong class="metric-value" id="dash-active-servers">-</strong>
           </div>
           <div class="metric-card">
@@ -545,6 +549,7 @@
       <section
         id="tab-governance"
         class="tab-content"
+        data-auth-required="true"
         role="tabpanel"
         aria-labelledby="tab-button-governance"
         hidden
@@ -639,6 +644,7 @@
               Tool Rules
               <textarea id="grant-tool-rules" rows="4" placeholder="aaa-ping:allow&#10;upper:allow:medium"></textarea>
             </label>
+            <p id="grant-form-error" class="form-error hidden" role="alert"></p>
             <div class="form-actions">
               <button class="ghost" id="cancel-grant-form" type="button">Cancel</button>
               <button class="primary" type="submit">Apply Grant</button>
@@ -1063,9 +1069,12 @@
                   <option value="processor">Processor</option>
                   <option value="gateway">Gateway</option>
                   <option value="ui">UI</option>
+                  <option value="prometheus">Prometheus</option>
+                  <option value="grafana">Grafana</option>
                 </select>
                 <button class="primary" id="restart-component-btn">Restart</button>
               </div>
+              <p id="restart-component-error" class="form-error hidden" role="alert"></p>
             </div>
             <div class="ops-section">
               <h3>MCP Server Health</h3>
@@ -1109,7 +1118,7 @@
     </div>
 
     <!-- Confirmation Modal -->
-    <div id="modal" class="modal hidden">
+    <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <div class="modal-content">
         <h3 id="modal-title">Confirm Action</h3>
         <p id="modal-message">Are you sure?</p>

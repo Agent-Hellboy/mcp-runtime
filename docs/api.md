@@ -137,7 +137,10 @@ matches every non-empty subject field exactly.
 ### MCPAccessGrant
 
 `allowedSideEffects` is independent from `toolRules`: tool rules select names,
-and side-effect allowances select risk kind. A call must pass both.
+and side-effect allowances select risk kind. A call must pass both. The
+Runtime Governance API and UI require at least one `allowedSideEffects` entry
+when creating or updating a grant; direct CRD objects that omit it still
+evaluate fail-closed.
 
 ```yaml
 apiVersion: mcpruntime.org/v1alpha1

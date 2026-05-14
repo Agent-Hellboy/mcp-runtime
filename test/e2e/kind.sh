@@ -2935,6 +2935,7 @@ spec:
     humanID: ${HUMAN_ID}-cli-temp
     agentID: ${AGENT_ID}-cli-temp
   maxTrust: low
+  allowedSideEffects: [read]
   policyVersion: v1
 ---
 apiVersion: mcpruntime.org/v1alpha1
@@ -4311,6 +4312,7 @@ bad_grant_body = expect_status(
         "serverRef": {"name": not_a_server, "namespace": "mcp-servers"},
         "subject": {"humanID": human_id, "agentID": agent_id},
         "maxTrust": "low",
+        "allowedSideEffects": ["read"],
         "toolRules": [{"name": "add", "decision": "allow", "requiredTrust": "low"}],
     },
 )
@@ -4318,6 +4320,25 @@ check(
     "unknown serverRef" in bad_grant_body,
     "POST /api/runtime/grants rejects unknown serverRef",
     f"body: {bad_grant_body}",
+)
+bad_grant_side_effect_body = expect_status(
+    f"{api_base}/api/runtime/grants",
+    400,
+    method="POST",
+    headers=auth_headers,
+    body={
+        "name": f"{server_name}-e2e-bad-side-effect-grant",
+        "namespace": "mcp-servers",
+        "serverRef": {"name": server_name, "namespace": "mcp-servers"},
+        "subject": {"humanID": human_id, "agentID": agent_id},
+        "maxTrust": "low",
+        "toolRules": [{"name": "add", "decision": "allow", "requiredTrust": "low"}],
+    },
+)
+check(
+    "allowed side effect" in bad_grant_side_effect_body,
+    "POST /api/runtime/grants rejects missing allowed side effects",
+    f"body: {bad_grant_side_effect_body}",
 )
 bad_session_body = expect_status(
     f"{api_base}/api/runtime/sessions",
@@ -4349,6 +4370,7 @@ created_grant = expect_json(
         "serverRef": {"name": server_name, "namespace": "mcp-servers"},
         "subject": {"humanID": human_id, "agentID": agent_id},
         "maxTrust": "low",
+        "allowedSideEffects": ["read"],
         "toolRules": [{"name": "add", "decision": "allow", "requiredTrust": "low"}],
     },
 )
