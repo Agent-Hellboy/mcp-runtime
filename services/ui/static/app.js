@@ -141,6 +141,21 @@ function syncScopeSelector() {
   setFieldValue("session-namespace", activeScopeNamespace());
 }
 
+function ensureNamespaceScope(namespace) {
+  const normalized = String(namespace || "").trim();
+  if (!normalized) return;
+  if (namespaceScopes.some((item) => String(item?.namespace || "").trim() === normalized)) return;
+  namespaceScopes = [...namespaceScopes, { namespace: normalized, scope: "namespace" }];
+}
+
+function focusNamespaceScope(namespace) {
+  const normalized = String(namespace || "").trim();
+  if (!normalized) return;
+  ensureNamespaceScope(normalized);
+  selectedNamespace = normalized;
+  syncScopeSelector();
+}
+
 function publicPreviewScopes() {
   return [{
     namespace: defaults.namespace || "mcp-servers-public",
@@ -1449,7 +1464,7 @@ async function loadSelectedServerEvents(server) {
 
 async function retireServer(server) {
   if (!server?.namespace || !server?.name) return;
-  const ok = window.confirm(`Retire ${server.namespace}/${server.name}?`);
+  const ok = await confirmModal(`Retire ${server.namespace}/${server.name}?`);
   if (!ok) return;
   try {
     await fetchJSON(
@@ -2070,6 +2085,7 @@ async function applyGrant(event) {
       body: JSON.stringify(payload),
     });
     showToast(`Grant "${payload.name}" applied successfully`);
+    focusNamespaceScope(payload.namespace);
     document.getElementById("grant-form")?.reset();
     setFieldValue("grant-namespace", activeScopeNamespace());
     setFieldValue("grant-policy-version", defaults.policyVersion);
@@ -2266,6 +2282,7 @@ async function applySession(event) {
       body: JSON.stringify(payload),
     });
     showToast(`Session "${payload.name}" applied successfully`);
+    focusNamespaceScope(payload.namespace);
     document.getElementById("session-form")?.reset();
     setFieldValue("session-namespace", activeScopeNamespace());
     setFieldValue("session-policy-version", defaults.policyVersion);
@@ -2927,16 +2944,13 @@ async function loadFleetServers() {
     (Array.isArray(namespaceScopes) ? namespaceScopes : [])
       .map((item) => item?.namespace || "")
   );
-  if (!namespaces.length) {
-    const data = await fetchJSON("/runtime/servers");
-    return Array.isArray(data.servers) ? data.servers : [];
-  }
-  const results = await Promise.all(
-    namespaces.map(async (namespace) => {
+  const results = await Promise.all([
+    fetchJSON("/runtime/servers").then((data) => Array.isArray(data.servers) ? data.servers : []),
+    ...namespaces.map(async (namespace) => {
       const data = await fetchJSON(`/runtime/servers?namespace=${encodeURIComponent(namespace)}`);
       return Array.isArray(data.servers) ? data.servers : [];
-    })
-  );
+    }),
+  ]);
   return dedupeServers(results.flat());
 }
 

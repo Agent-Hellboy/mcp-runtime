@@ -140,6 +140,40 @@ func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
 	}
 }
 
+func TestStaticAppUsesInAppConfirmForRetire(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	if strings.Contains(source, "window.confirm") {
+		t.Fatal("retire flow should use the in-app confirmation modal, not native window.confirm")
+	}
+	if !strings.Contains(source, "await confirmModal(`Retire ${server.namespace}/${server.name}?`)") {
+		t.Fatal("retire flow should call confirmModal with the target namespace/name")
+	}
+}
+
+func TestStaticAppKeepsAdminFleetCatalogAndCreatedGovernanceNamespaceVisible(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`fetchJSON("/runtime/servers").then`,
+		`function focusNamespaceScope(namespace)`,
+		`focusNamespaceScope(payload.namespace)`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+	if got := strings.Count(source, "focusNamespaceScope(payload.namespace)"); got < 2 {
+		t.Fatalf("expected grant and session create flows to focus created namespace, got %d", got)
+	}
+}
+
 func TestStaticAppExposesGovernanceToTenantUsers(t *testing.T) {
 	index, err := os.ReadFile("static/index.html")
 	if err != nil {
