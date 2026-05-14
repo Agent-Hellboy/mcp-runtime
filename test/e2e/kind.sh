@@ -315,6 +315,7 @@ git config --global --add safe.directory "${PROJECT_ROOT}" >/dev/null 2>&1 || tr
 WORKDIR="$(mktemp -d)"
 STAGE_LOG_DIR="${WORKDIR}/stage-logs"
 KIND_CONFIG="$(mktemp)"
+KUBECONFIG_FILE="$(mktemp)"
 ORIG_CONTEXT="$(kubectl config current-context 2>/dev/null || true)"
 PIDS=()
 PARALLEL_PIDS=()
@@ -351,6 +352,7 @@ cleanup() {
   docker rm -f "${LOCAL_REGISTRY_NAME}" >/dev/null 2>&1 || true
   rm -rf "${WORKDIR}"
   rm -f "${KIND_CONFIG}"
+  rm -f "${KUBECONFIG_FILE}"
 }
 trap cleanup EXIT
 
@@ -2457,12 +2459,16 @@ else
   run_logged_stage "kind create cluster" kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}" --wait 120s
 fi
 connect_local_registry_to_kind_network
-KUBECONFIG_FILE="/tmp/kubeconfig-kind"
-kind get kubeconfig --name "${CLUSTER_NAME}" > "${KUBECONFIG_FILE}"
-export KUBECONFIG="${KUBECONFIG_FILE}"
-kubectl config use-context "kind-${CLUSTER_NAME}"
-mkdir -p "${HOME}/.kube"
-cp "${KUBECONFIG_FILE}" "${HOME}/.kube/config"
+
+refresh_kind_kubeconfig() {
+  kind get kubeconfig --name "${CLUSTER_NAME}" > "${KUBECONFIG_FILE}"
+  export KUBECONFIG="${KUBECONFIG_FILE}"
+  kubectl config use-context "kind-${CLUSTER_NAME}"
+  mkdir -p "${HOME}/.kube"
+  cp "${KUBECONFIG_FILE}" "${HOME}/.kube/config"
+}
+
+refresh_kind_kubeconfig
 
 echo "[build] rebuilding CLI"
 run_logged_stage "build CLI" env GOCACHE="${PROJECT_ROOT}/.gocache" go build -o bin/mcp-runtime ./cmd/mcp-runtime
@@ -5581,7 +5587,8 @@ fi
 echo "[cli] checking sentinel restart command"
 # The full E2E stack packs single-node Kind tightly, so avoid requiring surge CPU for this restart smoke.
 kubectl patch deployment mcp-sentinel-api -n mcp-sentinel --type merge -p '{"spec":{"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":0,"maxUnavailable":1}}}}' >/dev/null
-./bin/mcp-runtime sentinel restart api
+refresh_kind_kubeconfig
+KUBECONFIG="${KUBECONFIG_FILE}" ./bin/mcp-runtime sentinel restart api
 rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
 
 echo "[cli] deleting deployed MCP servers"
