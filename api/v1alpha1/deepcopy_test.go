@@ -256,7 +256,6 @@ func TestMCPServerSpecDeepCopy(t *testing.T) {
 			StripPrefix: "/test-server",
 		},
 		Analytics: &AnalyticsConfig{
-			Enabled:   true,
 			IngestURL: "http://analytics.default.svc/api/events",
 			Source:    "test-server",
 			EventType: "mcp.request",

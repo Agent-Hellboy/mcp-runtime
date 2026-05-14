@@ -50,6 +50,7 @@ const (
 	defaultSessionUpstream = "Authorization"
 
 	defaultAnalyticsEventType    = "mcp.request"
+	defaultAnalyticsSourceSuffix = "-gateway"
 	defaultRolloutStrategy       = RolloutStrategyRollingUpdate
 	defaultRolloutMaxUnavailable = "25%"
 	defaultRolloutMaxSurge       = "25%"
@@ -186,9 +187,9 @@ func (r *MCPServer) Default() {
 		}
 	}
 
-	if r.Spec.Analytics != nil && r.Spec.Analytics.Enabled {
+	if r.Spec.Analytics != nil && !r.Spec.Analytics.Disabled {
 		if strings.TrimSpace(r.Spec.Analytics.Source) == "" {
-			r.Spec.Analytics.Source = strings.TrimSpace(r.Name)
+			r.Spec.Analytics.Source = strings.TrimSpace(r.Name) + defaultAnalyticsSourceSuffix
 		}
 		if strings.TrimSpace(r.Spec.Analytics.EventType) == "" {
 			r.Spec.Analytics.EventType = defaultAnalyticsEventType
@@ -280,8 +281,12 @@ func (r *MCPServer) validate() error {
 		allErrs = append(allErrs, field.Required(specPath.Child("auth", "issuerURL"), "auth.issuerURL is required when auth.mode is oauth"))
 	}
 	if r.Spec.Gateway == nil || !r.Spec.Gateway.Enabled {
-		if r.Spec.Analytics != nil && r.Spec.Analytics.Enabled {
-			allErrs = append(allErrs, field.Invalid(specPath.Child("analytics", "enabled"), true, "analytics requires gateway.enabled"))
+		if r.Spec.Analytics != nil && !r.Spec.Analytics.Disabled &&
+			(strings.TrimSpace(r.Spec.Analytics.IngestURL) != "" ||
+				strings.TrimSpace(r.Spec.Analytics.Source) != "" ||
+				strings.TrimSpace(r.Spec.Analytics.EventType) != "" ||
+				r.Spec.Analytics.APIKeySecretRef != nil) {
+			allErrs = append(allErrs, field.Forbidden(specPath.Child("analytics"), "analytics emission requires gateway.enabled; set spec.analytics.disabled to true or enable the gateway"))
 		}
 	}
 	if r.Spec.Rollout != nil && r.Spec.Rollout.Strategy == RolloutStrategyCanary {
@@ -304,7 +309,7 @@ func (r *MCPServer) validate() error {
 		}
 	}
 
-	if r.Spec.Analytics != nil && r.Spec.Analytics.Enabled {
+	if r.Spec.Analytics != nil && !r.Spec.Analytics.Disabled {
 		if r.Spec.Analytics.APIKeySecretRef != nil {
 			if strings.TrimSpace(r.Spec.Analytics.APIKeySecretRef.Name) == "" {
 				allErrs = append(allErrs, field.Required(specPath.Child("analytics", "apiKeySecretRef", "name"), "secret name is required"))

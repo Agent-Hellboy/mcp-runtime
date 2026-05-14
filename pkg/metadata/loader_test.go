@@ -86,9 +86,8 @@ func TestLoadFromFile(t *testing.T) {
 							},
 						},
 						Analytics: &AnalyticsConfig{
-							Enabled:   true,
 							IngestURL: "http://analytics.custom-namespace.svc/api/events",
-							Source:    "custom-server",
+							Source:    "custom-server-gateway",
 							EventType: "mcp.request",
 							APIKeySecretRef: &SecretKeyRef{
 								Name: "analytics-creds",
@@ -262,7 +261,6 @@ func TestSetDefaults(t *testing.T) {
 					},
 				},
 				Analytics: &AnalyticsConfig{
-					Enabled:   true,
 					IngestURL: "http://analytics.default.svc/api/events",
 				},
 				Rollout: &RolloutConfig{
@@ -314,9 +312,8 @@ func TestSetDefaults(t *testing.T) {
 					},
 				},
 				Analytics: &AnalyticsConfig{
-					Enabled:   true,
 					IngestURL: "http://analytics.default.svc/api/events",
-					Source:    "gateway-server",
+					Source:    "gateway-server-gateway",
 					EventType: "mcp.request",
 				},
 				Rollout: &RolloutConfig{
@@ -570,7 +567,7 @@ func analyticsConfigEqual(a, b *AnalyticsConfig) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return a.Enabled == b.Enabled &&
+	return a.Disabled == b.Disabled &&
 		a.IngestURL == b.IngestURL &&
 		a.Source == b.Source &&
 		a.EventType == b.EventType &&
