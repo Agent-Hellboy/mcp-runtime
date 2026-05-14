@@ -209,10 +209,17 @@ kubectl get secret mcp-sentinel-platform-tls -n mcp-sentinel \
 If you use an external registry, the registry's own TLS and auth configuration
 are outside the bundled cert-manager flow.
 
+The bundled registry ingress expects the repo-managed Traefik dynamic
+middleware `registry-admin-auth@file`. If you bring your own ingress controller
+or reuse an external Traefik install, configure an equivalent forward-auth guard
+to `/api/registry/authz` before exposing `registry.<domain>` publicly.
+
 Quick public endpoint checks after DNS and TLS are live:
 
-- `curl -k -I https://registry.<domain>/v2/` should return `200` and
-  `docker-distribution-api-version: registry/2.0`.
+- `curl -k -I -H "x-api-key: $ADMIN_API_KEY" https://registry.<domain>/v2/`
+  should return `200` and `docker-distribution-api-version: registry/2.0`.
+  Without admin credentials, the public registry ingress should return `401`
+  or `403`.
 - `curl -k -I https://platform.<domain>/` should return `200`.
 - `curl -k -i https://platform.<domain>/api/health` should normally return
   `401` without platform credentials; that still proves the platform host is
@@ -393,7 +400,7 @@ kubectl run -n registry --rm -it registry-check --restart=Never \
   --image=curlimages/curl --command -- \
   curl -s http://registry.registry.svc.cluster.local:5000/v2/_catalog
 
-# From the node (SSH to a node first):
+# From the node (SSH to a node first; this bypasses public ingress auth):
 curl -s http://127.0.0.1:32000/v2/_catalog
 getent hosts registry.local
 
@@ -409,7 +416,8 @@ getent hosts registry.local
 | `http: server gave HTTP response to HTTPS client` | The registry is HTTP, but Docker/containerd is trying HTTPS | Insecure registry / mirror settings for the exact image host in dev, or switch to HTTPS with trusted certs for production |
 | `ImagePullBackOff` with `401` or `403` | Registry auth is missing or invalid | Image pull secrets, service account references, workload identity, or cloud node registry permissions |
 | `ImagePullBackOff` only on some nodes | Node pool config drift | Registry mirror config, CA trust, DNS, and registry permissions on every eligible node pool |
-| `curl https://registry.<domain>/v2/` returns Traefik `404 page not found` | Ingress/router is not routing to the registry service | Registry `Ingress`, ingress class, Traefik logs, host rules, and TLS secret names |
+| `curl https://registry.<domain>/v2/` returns `401` or `403` | Public registry ingress is routed but no admin credential was accepted | Retry with an admin `x-api-key`, admin Bearer token, or admin-owned registry Basic credential |
+| `curl https://registry.<domain>/v2/` returns Traefik `404 page not found` | Ingress/router is not routing to the registry service | Registry `Ingress`, ingress class, Traefik logs, host rules, TLS secret names, and the `registry-admin-auth@file` middleware |
 | cert-manager reports `NXDOMAIN` | Public DNS is missing or misspelled | `getent hosts registry.<domain>`, `mcp.<domain>`, `platform.<domain>`, and DNS records from outside the cluster |
 | `cluster doctor` reports missing bundled registry while using an external registry | Doctor is checking the local bundled-registry path | Validate your external registry path manually and treat that specific check as advisory |
 

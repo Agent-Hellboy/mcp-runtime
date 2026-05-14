@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
@@ -14,6 +15,10 @@ import (
 
 	"github.com/MicahParks/keyfunc"
 	"github.com/golang-jwt/jwt/v4"
+	"github.com/segmentio/kafka-go"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestHandleEventsRejectsWhitespaceOnlyRequiredFields(t *testing.T) {
@@ -29,7 +34,7 @@ func TestHandleEventsRejectsWhitespaceOnlyRequiredFields(t *testing.T) {
 		},
 		{
 			name: "event type",
-			body: `{"source":"mcp-proxy","event_type":"   ","payload":{"ok":true}}`,
+			body: `{"source":"mcp-gateway","event_type":"   ","payload":{"ok":true}}`,
 		},
 	}
 
@@ -70,6 +75,39 @@ func TestHandleReadyWithoutKafkaReturnsServiceUnavailable(t *testing.T) {
 	}
 }
 
+func TestHandleEventsPropagatesTraceContextToKafka(t *testing.T) {
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		otel.SetTextMapPropagator(previous)
+	})
+
+	traceID := trace.TraceID{32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17}
+	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     trace.SpanID{2, 4, 6, 8, 10, 12, 14, 16},
+		TraceFlags: trace.FlagsSampled,
+	}))
+
+	writer := &recordingEventWriter{}
+	server := &ingestServer{writer: writer, topic: "mcp.events"}
+	req := httptest.NewRequest(http.MethodPost, "/events", strings.NewReader(`{"source":"mcp-gateway","event_type":"mcp.request","payload":{"ok":true}}`)).WithContext(ctx)
+	recorder := httptest.NewRecorder()
+
+	server.handleEvents(recorder, req)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusAccepted, recorder.Body.String())
+	}
+	if len(writer.messages) != 1 {
+		t.Fatalf("written messages = %d, want 1", len(writer.messages))
+	}
+	traceparent := kafkaHeaderValue(writer.messages[0].Headers, "traceparent")
+	if !strings.Contains(traceparent, traceID.String()) {
+		t.Fatalf("traceparent = %q, want trace ID %s", traceparent, traceID)
+	}
+}
+
 func TestAuthRejectsJWKSOnlyBearerToken(t *testing.T) {
 	t.Parallel()
 
@@ -101,6 +139,24 @@ func TestAuthRejectsJWKSOnlyBearerToken(t *testing.T) {
 	if called {
 		t.Fatal("handler should not be called when issuer and audience are both unset")
 	}
+}
+
+type recordingEventWriter struct {
+	messages []kafka.Message
+}
+
+func (w *recordingEventWriter) WriteMessages(_ context.Context, messages ...kafka.Message) error {
+	w.messages = append(w.messages, messages...)
+	return nil
+}
+
+func kafkaHeaderValue(headers []kafka.Header, key string) string {
+	for _, header := range headers {
+		if strings.EqualFold(header.Key, key) {
+			return string(header.Value)
+		}
+	}
+	return ""
 }
 
 type testIngestJWTIssuer struct {

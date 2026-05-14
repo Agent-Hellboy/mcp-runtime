@@ -49,8 +49,8 @@ on the day-to-day loop for contributors.
 | Operator reconciliation | `cmd/operator/`, `internal/operator/`, `api/v1alpha1/` | `go test ./internal/operator/... -count=1`, integration tests for CRD behavior |
 | Platform API | `services/api` | `(cd services/api && go test ./... -count=1)` |
 | Platform UI | `services/ui` | `(cd services/ui && go test ./... -count=1)`, `node --check services/ui/static/app.js` |
-| MCP proxy/gateway | `services/mcp-proxy`, `pkg/policy`, `pkg/access` | service tests plus `E2E_SCENARIOS=governance` or `smoke-auth` when request behavior changes |
-| Agent adapters | `cmd/mcp-runtime-agent-proxy/`, `cmd/mcp-runtime-mcp-shim/`, `internal/agentadapter/` | `go test ./internal/agentadapter -count=1` |
+| MCP gateway | `services/mcp-gateway`, `pkg/policy`, `pkg/access` | service tests plus `E2E_SCENARIOS=governance` or `smoke-auth` when request behavior changes |
+| Agent adapters | `internal/agentadapter/`, `internal/cli/adapter/`, `services/api/internal/runtimeapi/adapter.go` | `go test ./internal/agentadapter ./internal/cli/adapter -count=1` plus `(cd services/api && go test ./internal/runtimeapi -run TestAdapter -count=1)` when touching the platform-issued session endpoint |
 | Docs only | `docs/`, `README.md`, `AGENTS.md` | docs build if available, `rg` for stale terms, `git diff --check` |
 
 ## Local Cluster Contract
@@ -97,3 +97,17 @@ Kind setup step to exercise a non-default catalog mode.
 
 Use `E2E_CACHE_MODE=1` only for repeated local debugging. Omit it when you want
 a CI-equivalent fresh cluster.
+
+Image mirroring and local image builds run concurrently during fresh e2e setup.
+`E2E_IMAGE_PREP_PARALLELISM` still tunes the default prep concurrency, while
+`E2E_IMAGE_MIRROR_PARALLELISM` and `E2E_IMAGE_BUILD_PARALLELISM` can split
+pull/push concurrency from heavier Docker builds. CI defaults to three mirror
+workers and two build workers; set either value to `1` on constrained machines.
+Independent official SDK example deployments also run in parallel; the scenario
+checks themselves stay ordered because they share runtime state.
+Parallel worker logs are buffered in the e2e workdir under `stage-logs/` and
+copied into `E2E_ARTIFACT_DIR` when artifacts are enabled. Live CI output uses
+colored `START`, `RUNNING`, `DONE`, and `FAILED` lifecycle lines plus short
+stdout/stderr previews, while the full logs stay in the artifact. Major
+sequential stages such as setup, cluster doctor, CLI rebuilds, and server
+deploys are mirrored under `stage-logs/` in the same artifact.

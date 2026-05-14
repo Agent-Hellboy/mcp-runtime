@@ -17,6 +17,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -37,9 +38,11 @@ import (
 
 const defaultRegistrySecretName = "mcp-runtime-registry-creds" // #nosec G101 -- default secret name, not a credential.
 const testModeOperatorImage = "docker.io/library/mcp-runtime-operator:latest"
-const defaultGatewayProxyRepository = "mcp-sentinel-mcp-proxy"
+const defaultGatewayProxyRepository = "mcp-sentinel-mcp-gateway"
 const defaultAnalyticsIngestURL = "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
-const gatewayProxyDockerfilePath = "services/mcp-proxy/Dockerfile"
+const gatewayOTELExporterOTLPEndpointEnv = "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT"
+const defaultGatewayOTELExporterOTLPEndpoint = "http://otel-collector.mcp-sentinel.svc.cluster.local:4318"
+const gatewayProxyDockerfilePath = "services/mcp-gateway/Dockerfile"
 const gatewayProxyBuildContext = "."
 const (
 	defaultDevUserEmail     = "test@mcpruntime.org"
@@ -448,8 +451,56 @@ func setupRegistryStep(logger *zap.Logger, extRegistry *config.ExternalRegistryC
 	return nil
 }
 
-func prepareDeploymentImages(logger *zap.Logger, extRegistry *config.ExternalRegistryConfig, usingExternalRegistry, testMode bool, deps SetupDeps) (string, string, error) {
+func prepareDeploymentImages(logger *zap.Logger, extRegistry *config.ExternalRegistryConfig, usingExternalRegistry, testMode, parallelBuilds bool, deps SetupDeps) (string, string, error) {
 	core.Step("Step 5: Publish runtime images")
+
+	if parallelBuilds {
+		core.Info("Parallel image publishing enabled for setup runtime images")
+
+		parallelDeps, err := prepareParallelImagePublishDeps(logger, usingExternalRegistry, deps, "setup")
+		if err != nil {
+			core.Error("Failed to prepare internal registry image publishing")
+			core.LogStructuredError(logger, err, "Failed to prepare internal registry image publishing")
+			return "", "", err
+		}
+
+		type imageResult struct {
+			kind  string
+			image string
+			err   error
+		}
+		results := make(chan imageResult, 2)
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			image, err := prepareOperatorImage(logger, extRegistry, usingExternalRegistry, testMode, parallelDeps)
+			results <- imageResult{kind: "operator", image: image, err: err}
+		}()
+		go func() {
+			defer wg.Done()
+			image, err := prepareGatewayProxyImage(logger, extRegistry, usingExternalRegistry, testMode, parallelDeps)
+			results <- imageResult{kind: "gateway", image: image, err: err}
+		}()
+
+		wg.Wait()
+		close(results)
+
+		var operatorImage, gatewayProxyImage string
+		for result := range results {
+			if result.err != nil {
+				return "", "", result.err
+			}
+			switch result.kind {
+			case "operator":
+				operatorImage = result.image
+			case "gateway":
+				gatewayProxyImage = result.image
+			}
+		}
+		return operatorImage, gatewayProxyImage, nil
+	}
 
 	operatorImage, err := prepareOperatorImage(logger, extRegistry, usingExternalRegistry, testMode, deps)
 	if err != nil {
@@ -502,16 +553,10 @@ func prepareOperatorImage(logger *zap.Logger, extRegistry *config.ExternalRegist
 	}
 	internalOperatorImage := fmt.Sprintf("%s/mcp-runtime-operator:%s", internalRegistryURL, operatorTag)
 
-	if err := deps.EnsureNamespace("registry"); err != nil {
-		wrappedErr := core.WrapWithSentinelAndContext(
-			core.ErrEnsureRegistryNamespaceFailed,
-			err,
-			fmt.Sprintf("failed to ensure registry namespace: %v", err),
-			map[string]any{"namespace": "registry", "component": "setup"},
-		)
+	if err := ensureRegistryNamespaceForImagePush(deps, "setup"); err != nil {
 		core.Error("Failed to ensure registry namespace")
-		core.LogStructuredError(logger, wrappedErr, "Failed to ensure registry namespace")
-		return "", wrappedErr
+		core.LogStructuredError(logger, err, "Failed to ensure registry namespace")
+		return "", err
 	}
 
 	if err := deps.PushOperatorImageToInternal(logger, operatorImage, internalOperatorImage, "registry"); err != nil {
@@ -574,16 +619,10 @@ func prepareGatewayProxyImage(logger *zap.Logger, extRegistry *config.ExternalRe
 	}
 	internalGatewayProxyImage := fmt.Sprintf("%s/%s:%s", internalRegistryURL, defaultGatewayProxyRepository, gatewayTag)
 
-	if err := deps.EnsureNamespace("registry"); err != nil {
-		wrappedErr := core.WrapWithSentinelAndContext(
-			core.ErrEnsureRegistryNamespaceFailed,
-			err,
-			fmt.Sprintf("failed to ensure registry namespace: %v", err),
-			map[string]any{"namespace": "registry", "component": "setup"},
-		)
+	if err := ensureRegistryNamespaceForImagePush(deps, "setup"); err != nil {
 		core.Error("Failed to ensure registry namespace")
-		core.LogStructuredError(logger, wrappedErr, "Failed to ensure registry namespace")
-		return "", wrappedErr
+		core.LogStructuredError(logger, err, "Failed to ensure registry namespace")
+		return "", err
 	}
 
 	if err := deps.PushGatewayProxyImageToInternal(logger, gatewayProxyImage, internalGatewayProxyImage, "registry"); err != nil {
@@ -607,7 +646,7 @@ func prepareGatewayProxyImage(logger *zap.Logger, extRegistry *config.ExternalRe
 	return internalGatewayProxyImage, nil
 }
 
-func prepareAnalyticsImages(logger *zap.Logger, extRegistry *config.ExternalRegistryConfig, usingExternalRegistry, testMode bool, deps SetupDeps) (AnalyticsImageSet, error) {
+func prepareAnalyticsImages(logger *zap.Logger, extRegistry *config.ExternalRegistryConfig, usingExternalRegistry, testMode, parallelBuilds bool, deps SetupDeps) (AnalyticsImageSet, error) {
 	core.Step("Step 5a: Publish analytics images")
 
 	images := AnalyticsImageSet{
@@ -617,73 +656,149 @@ func prepareAnalyticsImages(logger *zap.Logger, extRegistry *config.ExternalRegi
 		UI:        analyticsImageFor(extRegistry, analyticsComponents[3].Repository),
 	}
 
-	for _, component := range analyticsComponents {
-		image := analyticsImageFor(extRegistry, component.Repository)
-		if testMode {
-			core.Info(fmt.Sprintf("Test mode: building analytics %s image: %s", component.Name, image))
-		} else {
-			core.Info(fmt.Sprintf("Building analytics %s image: %s", component.Name, image))
-		}
-		if err := deps.BuildAnalyticsImage(image, component.Dockerfile, component.BuildContext); err != nil {
-			return AnalyticsImageSet{}, core.WrapWithSentinelAndContext(
-				core.ErrBuildImageFailed,
-				err,
-				fmt.Sprintf("failed to build analytics %s image %q: %v", component.Name, image, err),
-				map[string]any{"image": image, "component": component.Name},
-			)
-		}
-		if usingExternalRegistry {
-			if testMode {
-				core.Info(fmt.Sprintf("Test mode: pushing analytics %s image to external registry", component.Name))
-			} else {
-				core.Info(fmt.Sprintf("Pushing analytics %s image to external registry", component.Name))
-			}
-			if err := deps.PushAnalyticsImage(image); err != nil {
-				core.Warn(fmt.Sprintf("Could not push analytics %s image to external registry: %v", component.Name, err))
-			}
-			continue
-		}
+	if parallelBuilds {
+		core.Info("Parallel image publishing enabled for setup analytics images")
+		return prepareAnalyticsImagesParallel(logger, extRegistry, usingExternalRegistry, testMode, deps, images)
+	}
 
-		if testMode {
-			core.Info(fmt.Sprintf("Test mode: pushing analytics %s image to internal registry", component.Name))
-		} else {
-			core.Info(fmt.Sprintf("Pushing analytics %s image to internal registry", component.Name))
+	for _, component := range analyticsComponents {
+		image, err := buildAndPublishAnalyticsComponent(logger, extRegistry, usingExternalRegistry, testMode, deps, component)
+		if err != nil {
+			return AnalyticsImageSet{}, err
 		}
-		internalRegistryURL := deps.ResolvePlatformRegistryURL(logger)
-		_, imageTag := ref.SplitImage(image)
-		if imageTag == "" {
-			imageTag = setupImageTag()
-		}
-		internalImage := fmt.Sprintf("%s/%s:%s", internalRegistryURL, component.Repository, imageTag)
-		if err := deps.EnsureNamespace("registry"); err != nil {
-			return AnalyticsImageSet{}, core.WrapWithSentinelAndContext(
-				core.ErrEnsureRegistryNamespaceFailed,
-				err,
-				fmt.Sprintf("failed to ensure registry namespace: %v", err),
-				map[string]any{"namespace": "registry", "component": component.Name},
-			)
-		}
-		if err := deps.PushAnalyticsImageToInternal(logger, image, internalImage, "registry"); err != nil {
-			return AnalyticsImageSet{}, core.WrapWithSentinelAndContext(
-				core.ErrPushImageInClusterFailed,
-				err,
-				fmt.Sprintf("failed to push analytics %s image %q to internal registry %q: %v", component.Name, image, internalImage, err),
-				map[string]any{"source_image": image, "target_image": internalImage, "component": component.Name},
-			)
-		}
-		switch component.Repository {
-		case "mcp-sentinel-ingest":
-			images.Ingest = internalImage
-		case "mcp-sentinel-api":
-			images.API = internalImage
-		case "mcp-sentinel-processor":
-			images.Processor = internalImage
-		case "mcp-sentinel-ui":
-			images.UI = internalImage
-		}
+		assignAnalyticsImage(&images, component.Repository, image)
 	}
 
 	return images, nil
+}
+
+func prepareAnalyticsImagesParallel(logger *zap.Logger, extRegistry *config.ExternalRegistryConfig, usingExternalRegistry, testMode bool, deps SetupDeps, images AnalyticsImageSet) (AnalyticsImageSet, error) {
+	parallelDeps, err := prepareParallelImagePublishDeps(logger, usingExternalRegistry, deps, "analytics")
+	if err != nil {
+		return AnalyticsImageSet{}, err
+	}
+
+	type analyticsResult struct {
+		repository string
+		image      string
+		err        error
+	}
+
+	results := make(chan analyticsResult, len(analyticsComponents))
+	var wg sync.WaitGroup
+	wg.Add(len(analyticsComponents))
+
+	for _, component := range analyticsComponents {
+		component := component
+		go func() {
+			defer wg.Done()
+			finalImage, err := buildAndPublishAnalyticsComponent(logger, extRegistry, usingExternalRegistry, testMode, parallelDeps, component)
+			results <- analyticsResult{repository: component.Repository, image: finalImage, err: err}
+		}()
+	}
+
+	wg.Wait()
+	close(results)
+
+	for result := range results {
+		if result.err != nil {
+			return AnalyticsImageSet{}, result.err
+		}
+		assignAnalyticsImage(&images, result.repository, result.image)
+	}
+
+	return images, nil
+}
+
+func buildAndPublishAnalyticsComponent(logger *zap.Logger, extRegistry *config.ExternalRegistryConfig, usingExternalRegistry, testMode bool, deps SetupDeps, component analyticsComponent) (string, error) {
+	image := analyticsImageFor(extRegistry, component.Repository)
+	if testMode {
+		core.Info(fmt.Sprintf("Test mode: building analytics %s image: %s", component.Name, image))
+	} else {
+		core.Info(fmt.Sprintf("Building analytics %s image: %s", component.Name, image))
+	}
+	if err := deps.BuildAnalyticsImage(image, component.Dockerfile, component.BuildContext); err != nil {
+		return "", core.WrapWithSentinelAndContext(
+			core.ErrBuildImageFailed,
+			err,
+			fmt.Sprintf("failed to build analytics %s image %q: %v", component.Name, image, err),
+			map[string]any{"image": image, "component": component.Name},
+		)
+	}
+	if usingExternalRegistry {
+		if testMode {
+			core.Info(fmt.Sprintf("Test mode: pushing analytics %s image to external registry", component.Name))
+		} else {
+			core.Info(fmt.Sprintf("Pushing analytics %s image to external registry", component.Name))
+		}
+		if err := deps.PushAnalyticsImage(image); err != nil {
+			core.Warn(fmt.Sprintf("Could not push analytics %s image to external registry: %v", component.Name, err))
+		}
+		return image, nil
+	}
+
+	if testMode {
+		core.Info(fmt.Sprintf("Test mode: pushing analytics %s image to internal registry", component.Name))
+	} else {
+		core.Info(fmt.Sprintf("Pushing analytics %s image to internal registry", component.Name))
+	}
+	if err := ensureRegistryNamespaceForImagePush(deps, component.Name); err != nil {
+		return "", err
+	}
+	internalRegistryURL := deps.ResolvePlatformRegistryURL(logger)
+	_, imageTag := ref.SplitImage(image)
+	if imageTag == "" {
+		imageTag = setupImageTag()
+	}
+	internalImage := fmt.Sprintf("%s/%s:%s", internalRegistryURL, component.Repository, imageTag)
+	if err := deps.PushAnalyticsImageToInternal(logger, image, internalImage, "registry"); err != nil {
+		return "", core.WrapWithSentinelAndContext(
+			core.ErrPushImageInClusterFailed,
+			err,
+			fmt.Sprintf("failed to push analytics %s image %q to internal registry %q: %v", component.Name, image, internalImage, err),
+			map[string]any{"source_image": image, "target_image": internalImage, "component": component.Name},
+		)
+	}
+	return internalImage, nil
+}
+
+func prepareParallelImagePublishDeps(logger *zap.Logger, usingExternalRegistry bool, deps SetupDeps, component string) (SetupDeps, error) {
+	if usingExternalRegistry {
+		return deps, nil
+	}
+	if err := ensureRegistryNamespaceForImagePush(deps, component); err != nil {
+		return SetupDeps{}, err
+	}
+	internalRegistryURL := deps.ResolvePlatformRegistryURL(logger)
+	parallelDeps := deps
+	parallelDeps.EnsureNamespace = func(string) error { return nil }
+	parallelDeps.ResolvePlatformRegistryURL = func(*zap.Logger) string { return internalRegistryURL }
+	return parallelDeps, nil
+}
+
+func ensureRegistryNamespaceForImagePush(deps SetupDeps, component string) error {
+	if err := deps.EnsureNamespace("registry"); err != nil {
+		return core.WrapWithSentinelAndContext(
+			core.ErrEnsureRegistryNamespaceFailed,
+			err,
+			fmt.Sprintf("failed to ensure registry namespace: %v", err),
+			map[string]any{"namespace": "registry", "component": component},
+		)
+	}
+	return nil
+}
+
+func assignAnalyticsImage(images *AnalyticsImageSet, repository, image string) {
+	switch repository {
+	case "mcp-sentinel-ingest":
+		images.Ingest = image
+	case "mcp-sentinel-api":
+		images.API = image
+	case "mcp-sentinel-processor":
+		images.Processor = image
+	case "mcp-sentinel-ui":
+		images.UI = image
+	}
 }
 
 func deployAnalyticsStepCmd(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string, deps SetupDeps) error {
@@ -1451,8 +1566,9 @@ func deployOperatorManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.
 		}
 	}
 
-	// Inject environment variables if provided
-	if envVars := operatorEnvOverrides(gatewayProxyImage); len(envVars) > 0 {
+	// Inject environment variables if provided.
+	existingGatewayOTLPEndpoint := existingOperatorEnvValue(kubectl, gatewayOTELExporterOTLPEndpointEnv)
+	if envVars := operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint); len(envVars) > 0 {
 		envMap := make(map[string]string, len(envVars))
 		for _, ev := range envVars {
 			envMap[ev.Name] = ev.Value
@@ -1636,6 +1752,9 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	}
 
 	core.Info("Initializing ClickHouse schema")
+	if err := deleteJobIfExistsWithKubectl(kubectl, "clickhouse-init", core.DefaultAnalyticsNamespace); err != nil {
+		return fmt.Errorf("delete existing clickhouse init job: %w", err)
+	}
 	if err := applyRenderedManifest(kubectl, "k8s/04-clickhouse-init.yaml", images, imagePullSecretName, platformMode); err != nil {
 		return err
 	}
@@ -2247,6 +2366,10 @@ func waitForJobCompletionWithKubectl(kubectl core.KubectlRunner, name, namespace
 	return kubectl.RunWithOutput([]string{"wait", "--for=condition=complete", "job/" + name, "-n", namespace, "--timeout=" + timeout}, os.Stdout, os.Stderr)
 }
 
+func deleteJobIfExistsWithKubectl(kubectl core.KubectlRunner, name, namespace string) error {
+	return kubectl.RunWithOutput([]string{"delete", "job/" + name, "-n", namespace, "--ignore-not-found=true", "--wait=true", "--timeout=60s"}, os.Stdout, os.Stderr)
+}
+
 func operatorImagePullPolicy(operatorImage string) string {
 	if strings.TrimSpace(operatorImage) == testModeOperatorImage {
 		return "IfNotPresent"
@@ -2261,7 +2384,7 @@ type operatorEnvVar struct {
 }
 
 // operatorEnvOverrides returns the environment variables to set on the operator deployment.
-func operatorEnvOverrides(gatewayProxyImage string) []operatorEnvVar {
+func operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint string) []operatorEnvVar {
 	var envVars []operatorEnvVar
 	image := strings.TrimSpace(gatewayProxyImage)
 	if image == "" {
@@ -2270,6 +2393,14 @@ func operatorEnvOverrides(gatewayProxyImage string) []operatorEnvVar {
 	if image != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_GATEWAY_PROXY_IMAGE", Value: image})
 	}
+	gatewayOTLPEndpoint := strings.TrimSpace(core.GetGatewayOTLPEndpointOverride())
+	if gatewayOTLPEndpoint == "" {
+		gatewayOTLPEndpoint = strings.TrimSpace(existingGatewayOTLPEndpoint)
+	}
+	if gatewayOTLPEndpoint == "" {
+		gatewayOTLPEndpoint = defaultGatewayOTELExporterOTLPEndpoint
+	}
+	envVars = append(envVars, operatorEnvVar{Name: gatewayOTELExporterOTLPEndpointEnv, Value: gatewayOTLPEndpoint})
 	ingestURL := strings.TrimSpace(core.GetAnalyticsIngestURLOverride())
 	if ingestURL == "" {
 		ingestURL = defaultAnalyticsIngestURL
@@ -2296,6 +2427,23 @@ func operatorEnvOverrides(gatewayProxyImage string) []operatorEnvVar {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_CLUSTER_NAME", Value: clusterName})
 	}
 	return envVars
+}
+
+func existingOperatorEnvValue(kubectl core.KubectlRunner, name string) string {
+	jsonPath := fmt.Sprintf(
+		`jsonpath={.spec.template.spec.containers[?(@.name=="%s")].env[?(@.name=="%s")].value}`,
+		core.OperatorManagerContainerName,
+		name,
+	)
+	cmd, err := kubectl.CommandArgs([]string{"get", "deployment/" + core.OperatorDeploymentName, "-n", core.NamespaceMCPRuntime, "-o", jsonPath})
+	if err != nil {
+		return ""
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func applySetupPlanToCLIConfig(plan setupplan.Plan) {

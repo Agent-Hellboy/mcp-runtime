@@ -103,11 +103,46 @@ jobs:
 
       - name: Test Sentinel service modules
         run: |
-          (cd services/api && go test -v -race -count=1 ./...)
-          (cd services/ingest && go test -v -race -count=1 ./...)
-          (cd services/processor && go test -v -race -count=1 ./...)
-          (cd services/mcp-proxy && go test -v -race -count=1 ./...)
-          (cd services/ui && go test -v -race -count=1 ./...)
+          set -euo pipefail
+
+          log_dir="${SENTINEL_SERVICE_TEST_LOG_DIR}"
+          mkdir -p "${log_dir}"
+          services=(api ingest processor mcp-gateway ui)
+          pids=()
+          log_files=()
+          for service in "${services[@]}"; do
+            log_file="${log_dir}/${service}.log"
+            echo "[parallel][start] services/${service} (log: ${log_file})"
+            (cd "services/${service}" && go test -v -race -count=1 ./...) >"${log_file}" 2>&1 &
+            pids+=("$!")
+            log_files+=("${log_file}")
+          done
+
+          failed=0
+          for i in "${!services[@]}"; do
+            service="${services[$i]}"
+            log_file="${log_files[$i]}"
+            if ! wait "${pids[$i]}"; then
+              echo "[parallel][fail] services/${service} tests failed; log follows" >&2
+              echo "::group::services/${service} failure log"
+              cat "${log_file}" || true
+              echo "::endgroup::"
+              failed=1
+            else
+              echo "[parallel][pass] services/${service} (log: ${log_file})"
+            fi
+          done
+          exit "${failed}"
+        env:
+          SENTINEL_SERVICE_TEST_LOG_DIR: ${{ runner.temp }}/sentinel-service-test-logs
+
+      - name: Upload Sentinel service test logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sentinel-service-test-logs
+          path: ${{ runner.temp }}/sentinel-service-test-logs
+          if-no-files-found: ignore
 
       - name: Run integration tests with coverage
         run: |
@@ -195,6 +230,8 @@ jobs:
         env:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/.e2e-artifacts/kind
           E2E_SCENARIOS: ${{ github.actor == 'dependabot[bot]' && 'smoke-auth,governance' || 'all' }}
+          E2E_IMAGE_BUILD_PARALLELISM: "1"
+          E2E_IMAGE_MIRROR_PARALLELISM: "2"
         run: bash test/e2e/kind.sh
 
       - name: Upload e2e artifacts

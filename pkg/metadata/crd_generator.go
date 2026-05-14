@@ -152,7 +152,7 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 
 	if server.Analytics != nil {
 		mcpServer.Spec.Analytics = &mcpv1alpha1.AnalyticsConfig{
-			Enabled:   server.Analytics.Enabled,
+			Disabled:  server.Analytics.Disabled,
 			IngestURL: server.Analytics.IngestURL,
 			Source:    server.Analytics.Source,
 			EventType: server.Analytics.EventType,

@@ -58,6 +58,7 @@ func main() {
 		IngressReadinessMode:      ingressReadinessMode,
 		ProvisionedRegistry:       registryConfig,
 		GatewayProxyImage:         gatewayProxyImageFromEnv(os.Getenv),
+		GatewayOTLPEndpoint:       gatewayOTLPEndpointFromEnv(os.Getenv),
 		DefaultAnalyticsIngestURL: analyticsIngestURLFromEnv(os.Getenv),
 		ClusterName:               clusterNameFromEnv(os.Getenv),
 	}).SetupWithManager(mgr); err != nil {
@@ -148,6 +149,10 @@ func registryConfigFromEnv(getenv func(string) string) *operator.RegistryConfig 
 
 func gatewayProxyImageFromEnv(getenv func(string) string) string {
 	return getenv("MCP_GATEWAY_PROXY_IMAGE")
+}
+
+func gatewayOTLPEndpointFromEnv(getenv func(string) string) string {
+	return getenv("MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT")
 }
 
 func analyticsIngestURLFromEnv(getenv func(string) string) string {

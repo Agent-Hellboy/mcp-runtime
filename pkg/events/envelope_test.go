@@ -11,7 +11,7 @@ func TestNewEnvelope(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
-	envelope, err := NewEnvelope("mcp-proxy", "mcp.request", map[string]any{"ok": true}, now)
+	envelope, err := NewEnvelope("mcp-gateway", "mcp.request", map[string]any{"ok": true}, now)
 	if err != nil {
 		t.Fatalf("NewEnvelope() error = %v", err)
 	}
@@ -31,11 +31,11 @@ func TestEnvelopeValidate(t *testing.T) {
 		event   Envelope
 		wantErr bool
 	}{
-		{name: "valid", event: Envelope{Source: "mcp-proxy", EventType: "mcp.request", Payload: json.RawMessage(`{"ok":true}`)}},
+		{name: "valid", event: Envelope{Source: "mcp-gateway", EventType: "mcp.request", Payload: json.RawMessage(`{"ok":true}`)}},
 		{name: "missing source", event: Envelope{EventType: "mcp.request", Payload: json.RawMessage(`{"ok":true}`)}, wantErr: true},
-		{name: "missing event type", event: Envelope{Source: "mcp-proxy", Payload: json.RawMessage(`{"ok":true}`)}, wantErr: true},
-		{name: "missing payload", event: Envelope{Source: "mcp-proxy", EventType: "mcp.request"}, wantErr: true},
-		{name: "null payload", event: Envelope{Source: "mcp-proxy", EventType: "mcp.request", Payload: json.RawMessage(` null `)}, wantErr: true},
+		{name: "missing event type", event: Envelope{Source: "mcp-gateway", Payload: json.RawMessage(`{"ok":true}`)}, wantErr: true},
+		{name: "missing payload", event: Envelope{Source: "mcp-gateway", EventType: "mcp.request"}, wantErr: true},
+		{name: "null payload", event: Envelope{Source: "mcp-gateway", EventType: "mcp.request", Payload: json.RawMessage(` null `)}, wantErr: true},
 	}
 
 	for _, tc := range tests {

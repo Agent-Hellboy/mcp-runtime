@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -126,9 +127,9 @@ func TestGetGatewayProxyImage(t *testing.T) {
 	setupImageTagResolver = func() string { return "deadbeef" }
 
 	t.Run("uses override when set", func(t *testing.T) {
-		core.DefaultCLIConfig.GatewayProxyImage = "override/mcp-proxy:v1"
+		core.DefaultCLIConfig.GatewayProxyImage = "override/mcp-gateway:v1"
 		got := getGatewayProxyImage(nil)
-		if got != "override/mcp-proxy:v1" {
+		if got != "override/mcp-gateway:v1" {
 			t.Fatalf("expected override image, got %q", got)
 		}
 	})
@@ -137,7 +138,7 @@ func TestGetGatewayProxyImage(t *testing.T) {
 		core.DefaultCLIConfig.GatewayProxyImage = ""
 		ext := &config.ExternalRegistryConfig{URL: "registry.example.com/"}
 		got := getGatewayProxyImage(ext)
-		if got != "registry.example.com/mcp-sentinel-mcp-proxy:latest" {
+		if got != "registry.example.com/mcp-sentinel-mcp-gateway:latest" {
 			t.Fatalf("unexpected external registry image: %q", got)
 		}
 	})
@@ -154,7 +155,7 @@ func TestGetGatewayProxyImage(t *testing.T) {
 		}
 		swapDefaultKubectlClientForTest(t, core.NewTestKubectlClient(mock))
 		got := getGatewayProxyImage(nil)
-		if got != "registry.registry.svc.cluster.local:5000/mcp-sentinel-mcp-proxy:latest" {
+		if got != "registry.registry.svc.cluster.local:5000/mcp-sentinel-mcp-gateway:latest" {
 			t.Fatalf("unexpected platform registry image: %q", got)
 		}
 	})
@@ -164,7 +165,7 @@ func TestGetGatewayProxyImage(t *testing.T) {
 		t.Setenv("MCP_RUNTIME_TEST_MODE", "")
 		ext := &config.ExternalRegistryConfig{URL: "registry.example.com/"}
 		got := getGatewayProxyImage(ext)
-		if got != "registry.example.com/mcp-sentinel-mcp-proxy:deadbeef" {
+		if got != "registry.example.com/mcp-sentinel-mcp-gateway:deadbeef" {
 			t.Fatalf("unexpected versioned image: %q", got)
 		}
 	})
@@ -195,6 +196,26 @@ func TestBuildOperatorArgs(t *testing.T) {
 	})
 }
 
+func findOperatorEnvVar(envVars []operatorEnvVar, name string) *operatorEnvVar {
+	for i := range envVars {
+		if envVars[i].Name == name {
+			return &envVars[i]
+		}
+	}
+	return nil
+}
+
+func requireOperatorEnvVar(t *testing.T, envVars []operatorEnvVar, name, want string) {
+	t.Helper()
+	envVar := findOperatorEnvVar(envVars, name)
+	if envVar == nil {
+		t.Fatalf("expected operator env %s in %v", name, envVars)
+	}
+	if envVar.Value != want {
+		t.Fatalf("operator env %s = %q, want %q", name, envVar.Value, want)
+	}
+}
+
 func TestOperatorEnvOverrides(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() {
@@ -203,66 +224,78 @@ func TestOperatorEnvOverrides(t *testing.T) {
 
 	t.Run("returns empty when no gateway override is set", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{}
-		got := operatorEnvOverrides("")
-		if len(got) != 1 {
-			t.Fatalf("expected default analytics ingest env only, got %v", got)
+		got := operatorEnvOverrides("", "")
+		if len(got) != 2 {
+			t.Fatalf("expected gateway otel and default analytics ingest env only, got %v", got)
 		}
-		if got[0].Name != "MCP_SENTINEL_INGEST_URL" || got[0].Value != defaultAnalyticsIngestURL {
-			t.Fatalf("unexpected default env override: %+v", got[0])
-		}
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
+		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
 	})
 
 	t.Run("returns gateway proxy image override", func(t *testing.T) {
-		core.DefaultCLIConfig = &core.CLIConfig{GatewayProxyImage: "example.com/mcp-proxy:latest"}
-		got := operatorEnvOverrides("")
-		if len(got) != 2 {
+		core.DefaultCLIConfig = &core.CLIConfig{GatewayProxyImage: "example.com/mcp-gateway:latest"}
+		got := operatorEnvOverrides("", "")
+		if len(got) != 3 {
 			t.Fatalf("expected gateway and analytics env overrides, got %d (%v)", len(got), got)
 		}
-		if got[0].Name != "MCP_GATEWAY_PROXY_IMAGE" || got[0].Value != "example.com/mcp-proxy:latest" {
-			t.Fatalf("unexpected env override: %+v", got[0])
-		}
-		if got[1].Name != "MCP_SENTINEL_INGEST_URL" || got[1].Value != defaultAnalyticsIngestURL {
-			t.Fatalf("unexpected analytics env override: %+v", got[1])
-		}
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_PROXY_IMAGE", "example.com/mcp-gateway:latest")
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
+		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
 	})
 
 	t.Run("prefers explicit setup image over config override", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{
-			GatewayProxyImage:  "example.com/mcp-proxy:config",
+			GatewayProxyImage:  "example.com/mcp-gateway:config",
 			AnalyticsIngestURL: "http://custom-analytics-ingest",
 		}
-		got := operatorEnvOverrides("example.com/mcp-proxy:setup")
-		if len(got) != 2 {
+		got := operatorEnvOverrides("example.com/mcp-gateway:setup", "")
+		if len(got) != 3 {
 			t.Fatalf("expected gateway and analytics env overrides, got %d (%v)", len(got), got)
 		}
-		if got[0].Value != "example.com/mcp-proxy:setup" {
-			t.Fatalf("expected explicit setup image to win, got %+v", got[0])
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_PROXY_IMAGE", "example.com/mcp-gateway:setup")
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
+		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", "http://custom-analytics-ingest")
+	})
+
+	t.Run("preserves existing gateway otel endpoint when configured", func(t *testing.T) {
+		core.DefaultCLIConfig = &core.CLIConfig{}
+		got := operatorEnvOverrides("", "http://custom-collector.mcp-observability.svc.cluster.local:4318")
+		if len(got) != 2 {
+			t.Fatalf("expected gateway otel and default analytics ingest env only, got %v", got)
 		}
-		if got[1].Name != "MCP_SENTINEL_INGEST_URL" || got[1].Value != "http://custom-analytics-ingest" {
-			t.Fatalf("expected custom analytics env override, got %+v", got[1])
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", "http://custom-collector.mcp-observability.svc.cluster.local:4318")
+		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
+	})
+
+	t.Run("prefers explicit gateway otel endpoint over existing operator value", func(t *testing.T) {
+		core.DefaultCLIConfig = &core.CLIConfig{GatewayOTLPEndpoint: "https://otel.example.com/v1/traces"}
+		got := operatorEnvOverrides("", "http://custom-collector.mcp-observability.svc.cluster.local:4318")
+		if len(got) != 2 {
+			t.Fatalf("expected gateway otel and default analytics ingest env only, got %v", got)
 		}
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", "https://otel.example.com/v1/traces")
+		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
 	})
 
 	t.Run("uses analytics ingest override when configured", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{AnalyticsIngestURL: "http://custom-analytics-ingest"}
-		got := operatorEnvOverrides("")
-		if len(got) != 1 {
-			t.Fatalf("expected analytics ingest env only, got %d (%v)", len(got), got)
+		got := operatorEnvOverrides("", "")
+		if len(got) != 2 {
+			t.Fatalf("expected gateway otel and analytics ingest env only, got %d (%v)", len(got), got)
 		}
-		if got[0].Value != "http://custom-analytics-ingest" {
-			t.Fatalf("expected custom ingest url, got %+v", got[0])
-		}
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
+		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", "http://custom-analytics-ingest")
 	})
 
 	t.Run("includes ingress readiness mode when configured", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{IngressReadinessMode: "permissive"}
-		got := operatorEnvOverrides("")
-		if len(got) != 2 {
+		got := operatorEnvOverrides("", "")
+		if len(got) != 3 {
 			t.Fatalf("expected analytics plus ingress readiness env overrides, got %v", got)
 		}
-		if got[1].Name != "MCP_INGRESS_READINESS_MODE" || got[1].Value != "permissive" {
-			t.Fatalf("unexpected ingress readiness env override: %+v", got[1])
-		}
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
+		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
+		requireOperatorEnvVar(t, got, "MCP_INGRESS_READINESS_MODE", "permissive")
 	})
 
 	t.Run("includes registry endpoint and ingress host when configured", func(t *testing.T) {
@@ -270,16 +303,14 @@ func TestOperatorEnvOverrides(t *testing.T) {
 			RegistryEndpoint:    "10.43.39.164:5000",
 			RegistryIngressHost: "registry.local",
 		}
-		got := operatorEnvOverrides("")
-		if len(got) != 3 {
+		got := operatorEnvOverrides("", "")
+		if len(got) != 4 {
 			t.Fatalf("expected analytics plus registry env overrides, got %v", got)
 		}
-		if got[1].Name != "MCP_REGISTRY_ENDPOINT" || got[1].Value != "10.43.39.164:5000" {
-			t.Fatalf("unexpected registry endpoint env override: %+v", got[1])
-		}
-		if got[2].Name != "MCP_REGISTRY_INGRESS_HOST" || got[2].Value != "registry.local" {
-			t.Fatalf("unexpected registry ingress env override: %+v", got[2])
-		}
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
+		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
+		requireOperatorEnvVar(t, got, "MCP_REGISTRY_ENDPOINT", "10.43.39.164:5000")
+		requireOperatorEnvVar(t, got, "MCP_REGISTRY_INGRESS_HOST", "registry.local")
 	})
 }
 
@@ -857,9 +888,11 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 
 	var buildCalls int32
 	var pushCalls int32
+	var buildContexts []string
 	deps := SetupDeps{
-		BuildAnalyticsImage: func(string, string, string) error {
+		BuildAnalyticsImage: func(_, _, buildContext string) error {
 			atomic.AddInt32(&buildCalls, 1)
+			buildContexts = append(buildContexts, buildContext)
 			return nil
 		},
 		PushAnalyticsImage: func(string) error {
@@ -868,7 +901,7 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 		},
 	}
 
-	got, err := prepareAnalyticsImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, true, true, deps)
+	got, err := prepareAnalyticsImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, true, true, false, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -885,8 +918,182 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 	if atomic.LoadInt32(&buildCalls) != int32(len(analyticsComponents)) {
 		t.Fatalf("expected %d builds in test mode, got %d", len(analyticsComponents), buildCalls)
 	}
+	// Sentinel service Dockerfiles need the repo root context for shared packages and service modules.
+	wantBuildContexts := []string{".", ".", ".", "."}
+	if !slices.Equal(buildContexts, wantBuildContexts) {
+		t.Fatalf("build contexts = %v, want %v", buildContexts, wantBuildContexts)
+	}
 	if atomic.LoadInt32(&pushCalls) != int32(len(analyticsComponents)) {
 		t.Fatalf("expected %d pushes in test mode, got %d", len(analyticsComponents), pushCalls)
+	}
+}
+
+func TestPrepareDeploymentImagesParallelBuildsStartsBothBuilds(t *testing.T) {
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	errCh := make(chan error, 1)
+
+	deps := SetupDeps{
+		OperatorImageFor: func(_ *config.ExternalRegistryConfig) string {
+			return "registry.example.com/mcp-runtime-operator:latest"
+		},
+		GatewayProxyImageFor: func(_ *config.ExternalRegistryConfig) string {
+			return "registry.example.com/mcp-sentinel-mcp-gateway:latest"
+		},
+		BuildOperatorImage: func(string) error {
+			started <- "operator"
+			<-release
+			return nil
+		},
+		PushOperatorImage: func(string) error { return nil },
+		BuildGatewayProxyImage: func(string) error {
+			started <- "gateway"
+			<-release
+			return nil
+		},
+		PushGatewayProxyImage: func(string) error { return nil },
+	}
+
+	go func() {
+		_, _, err := prepareDeploymentImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, true, true, true, deps)
+		errCh <- err
+	}()
+
+	seen := map[string]bool{}
+	timeout := time.After(2 * time.Second)
+	for len(seen) < 2 {
+		select {
+		case name := <-started:
+			seen[name] = true
+		case <-timeout:
+			t.Fatalf("timed out waiting for parallel runtime image builds, saw %v", seen)
+		}
+	}
+
+	close(release)
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPrepareDeploymentImagesParallelBuildsPreparesInternalRegistryOnce(t *testing.T) {
+	var ensureCalls int32
+	var resolveCalls int32
+
+	deps := SetupDeps{
+		OperatorImageFor: func(_ *config.ExternalRegistryConfig) string {
+			return "registry.example.com/mcp-runtime-operator:latest"
+		},
+		GatewayProxyImageFor: func(_ *config.ExternalRegistryConfig) string {
+			return "registry.example.com/mcp-sentinel-mcp-gateway:latest"
+		},
+		BuildOperatorImage:     func(string) error { return nil },
+		BuildGatewayProxyImage: func(string) error { return nil },
+		EnsureNamespace: func(string) error {
+			atomic.AddInt32(&ensureCalls, 1)
+			return nil
+		},
+		ResolvePlatformRegistryURL: func(*zap.Logger) string {
+			atomic.AddInt32(&resolveCalls, 1)
+			return "registry.local:5000"
+		},
+		PushOperatorImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
+		PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error {
+			return nil
+		},
+	}
+
+	operatorImage, gatewayProxyImage, err := prepareDeploymentImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, false, true, true, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if operatorImage != "registry.local:5000/mcp-runtime-operator:latest" {
+		t.Fatalf("operator image = %q, want internal registry image", operatorImage)
+	}
+	if gatewayProxyImage != "registry.local:5000/mcp-sentinel-mcp-gateway:latest" {
+		t.Fatalf("gateway proxy image = %q, want internal registry image", gatewayProxyImage)
+	}
+	if got := atomic.LoadInt32(&ensureCalls); got != 1 {
+		t.Fatalf("expected one registry namespace ensure, got %d", got)
+	}
+	if got := atomic.LoadInt32(&resolveCalls); got != 1 {
+		t.Fatalf("expected one registry URL resolve, got %d", got)
+	}
+}
+
+func TestPrepareAnalyticsImagesParallelBuildsStartsAllBuilds(t *testing.T) {
+	started := make(chan string, len(analyticsComponents))
+	release := make(chan struct{})
+	errCh := make(chan error, 1)
+
+	deps := SetupDeps{
+		BuildAnalyticsImage: func(image, _, _ string) error {
+			started <- image
+			<-release
+			return nil
+		},
+		PushAnalyticsImage: func(string) error { return nil },
+	}
+
+	go func() {
+		_, err := prepareAnalyticsImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, true, true, true, deps)
+		errCh <- err
+	}()
+
+	seen := map[string]bool{}
+	timeout := time.After(2 * time.Second)
+	for len(seen) < len(analyticsComponents) {
+		select {
+		case image := <-started:
+			seen[image] = true
+		case <-timeout:
+			t.Fatalf("timed out waiting for parallel analytics image builds, saw %d of %d", len(seen), len(analyticsComponents))
+		}
+	}
+
+	close(release)
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPrepareAnalyticsImagesParallelBuildsPreparesInternalRegistryOnce(t *testing.T) {
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "1")
+
+	var ensureCalls int32
+	var resolveCalls int32
+	deps := SetupDeps{
+		BuildAnalyticsImage: func(string, string, string) error { return nil },
+		EnsureNamespace: func(string) error {
+			atomic.AddInt32(&ensureCalls, 1)
+			return nil
+		},
+		ResolvePlatformRegistryURL: func(*zap.Logger) string {
+			atomic.AddInt32(&resolveCalls, 1)
+			return "registry.local:5000"
+		},
+		PushAnalyticsImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
+	}
+
+	got, err := prepareAnalyticsImages(zap.NewNop(), &config.ExternalRegistryConfig{URL: "registry.example.com"}, false, true, true, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := AnalyticsImageSet{
+		Ingest:    "registry.local:5000/mcp-sentinel-ingest:latest",
+		API:       "registry.local:5000/mcp-sentinel-api:latest",
+		Processor: "registry.local:5000/mcp-sentinel-processor:latest",
+		UI:        "registry.local:5000/mcp-sentinel-ui:latest",
+	}
+	if got != want {
+		t.Fatalf("prepareAnalyticsImages() = %+v, want %+v", got, want)
+	}
+	if got := atomic.LoadInt32(&ensureCalls); got != 1 {
+		t.Fatalf("expected one registry namespace ensure, got %d", got)
+	}
+	if got := atomic.LoadInt32(&resolveCalls); got != 1 {
+		t.Fatalf("expected one registry URL resolve, got %d", got)
 	}
 }
 
@@ -923,6 +1130,190 @@ spec:
 	}
 	if !strings.Contains(rendered, "imagePullSecrets:") || !strings.Contains(rendered, "name: "+defaultRegistrySecretName) {
 		t.Fatalf("expected injected imagePullSecrets, got %s", rendered)
+	}
+}
+
+func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() {
+		core.DefaultCLIConfig = orig
+	})
+	core.DefaultCLIConfig = &core.CLIConfig{}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	root := t.TempDir()
+	manifestDir := filepath.Join(root, "k8s")
+	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+		t.Fatalf("failed to create manifest dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "services"), 0o755); err != nil {
+		t.Fatalf("failed to create services dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("failed to write go.mod: %v", err)
+	}
+	manifestContent := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: fixture\n  namespace: mcp-sentinel\n"
+	for _, name := range []string{
+		"00-namespace.yaml",
+		"01-config.yaml",
+		"03-clickhouse.yaml",
+		"04-clickhouse-init.yaml",
+		"05-kafka.yaml",
+		"06-ingest.yaml",
+		"07-processor.yaml",
+		"08-api.yaml",
+		"08-api-rbac.yaml",
+		"09-ui.yaml",
+		"10-gateway.yaml",
+		"11-prometheus.yaml",
+		"12-grafana.yaml",
+		"15-otel-collector.yaml",
+		"16-tempo.yaml",
+		"17-loki.yaml",
+		"18-promtail.yaml",
+		"19-grafana-datasources.yaml",
+		"20-postgres.yaml",
+	} {
+		if err := os.WriteFile(filepath.Join(manifestDir, name), []byte(manifestContent), 0o644); err != nil {
+			t.Fatalf("failed to write fixture manifest %s: %v", name, err)
+		}
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("failed to chdir to fixture root: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(cwd)
+	})
+
+	deleteIndex := -1
+	waitIndex := -1
+	var mock *core.MockExecutor
+	mock = &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if contains(spec.Args, "get") && contains(spec.Args, "secret") {
+				cmd.OutputData = []byte("Error from server (NotFound): secrets \"mcp-sentinel-secrets\" not found")
+				cmd.OutputErr = errors.New("not found")
+			}
+			if contains(spec.Args, "delete") && contains(spec.Args, "job/clickhouse-init") {
+				deleteIndex = len(mock.Commands) - 1
+				for _, want := range []string{"--ignore-not-found=true", "--wait=true", "--timeout=60s"} {
+					if !contains(spec.Args, want) {
+						t.Fatalf("delete job args missing %s: %v", want, spec.Args)
+					}
+				}
+			}
+			if contains(spec.Args, "wait") && contains(spec.Args, "job/clickhouse-init") {
+				waitIndex = len(mock.Commands) - 1
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	err = deployAnalyticsManifestsWithKubectl(kubectl, zap.NewNop(), AnalyticsImageSet{
+		Ingest:    "example.com/mcp-sentinel-ingest:latest",
+		API:       "example.com/mcp-sentinel-api:latest",
+		Processor: "example.com/mcp-sentinel-processor:latest",
+		UI:        "example.com/mcp-sentinel-ui:latest",
+	}, "", setupplan.PlatformModeTenant)
+	if err != nil {
+		t.Fatalf("deployAnalyticsManifestsWithKubectl returned error: %v", err)
+	}
+	if deleteIndex == -1 {
+		t.Fatal("expected setup to delete any existing clickhouse-init job before reapplying it")
+	}
+	if waitIndex == -1 {
+		t.Fatal("expected setup to wait for clickhouse-init job completion")
+	}
+	if deleteIndex > waitIndex {
+		t.Fatalf("expected clickhouse-init delete before wait, got delete index %d wait index %d", deleteIndex, waitIndex)
+	}
+}
+
+func TestGrafanaPrometheusDatasourceUsesRoutePrefix(t *testing.T) {
+	content, err := os.ReadFile("../../../k8s/19-grafana-datasources.yaml")
+	if err != nil {
+		t.Fatalf("failed to read grafana datasource manifest: %v", err)
+	}
+
+	rendered, err := renderAnalyticsManifest(string(content), AnalyticsImageSet{}, "", setupplan.PlatformModeTenant)
+	if err != nil {
+		t.Fatalf("renderAnalyticsManifest returned error: %v", err)
+	}
+	if !strings.Contains(rendered, "url: http://prometheus:9090/prometheus") {
+		t.Fatalf("expected Prometheus datasource URL to include route prefix, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "url: http://prometheus:9090\n") {
+		t.Fatalf("Prometheus datasource URL is missing route prefix:\n%s", rendered)
+	}
+}
+
+func TestPrometheusScrapesProcessorMetricsPort(t *testing.T) {
+	content, err := os.ReadFile("../../../k8s/11-prometheus.yaml")
+	if err != nil {
+		t.Fatalf("failed to read prometheus manifest: %v", err)
+	}
+	if !strings.Contains(string(content), `targets: ["mcp-sentinel-processor:9102"]`) {
+		t.Fatalf("expected Prometheus to scrape processor metrics port 9102, got:\n%s", content)
+	}
+	if strings.Contains(string(content), `targets: ["mcp-sentinel-processor:9092"]`) {
+		t.Fatalf("Prometheus still scrapes stale processor port 9092:\n%s", content)
+	}
+}
+
+func TestPrometheusScrapesClickHouseMetricsPort(t *testing.T) {
+	content, err := os.ReadFile("../../../k8s/11-prometheus.yaml")
+	if err != nil {
+		t.Fatalf("failed to read prometheus manifest: %v", err)
+	}
+	if !strings.Contains(string(content), `job_name: clickhouse`) {
+		t.Fatalf("expected Prometheus to define a ClickHouse scrape job, got:\n%s", content)
+	}
+	if !strings.Contains(string(content), `targets: ["clickhouse:9363"]`) {
+		t.Fatalf("expected Prometheus to scrape ClickHouse metrics port 9363, got:\n%s", content)
+	}
+}
+
+func TestClickHouseExposesPrometheusMetrics(t *testing.T) {
+	for _, path := range []string{"../../../k8s/03-clickhouse.yaml", "../../../k8s/03-clickhouse-hostpath.yaml"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("failed to read clickhouse manifest %s: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"name: clickhouse-prometheus-config",
+			"<endpoint>/metrics</endpoint>",
+			"<port>9363</port>",
+			"name: metrics",
+			"port: 9363",
+			"containerPort: 9363",
+			"mountPath: /etc/clickhouse-server/config.d/prometheus.xml",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("expected %s to contain %q, got:\n%s", path, want, text)
+			}
+		}
+	}
+}
+
+func TestTempoLocalBlocksDoNotShareWALPath(t *testing.T) {
+	content, err := os.ReadFile("../../../k8s/16-tempo.yaml")
+	if err != nil {
+		t.Fatalf("failed to read tempo manifest: %v", err)
+	}
+	if !strings.Contains(string(content), "path: /var/tempo/blocks") {
+		t.Fatalf("expected Tempo local block storage under /var/tempo/blocks, got:\n%s", content)
+	}
+	if !strings.Contains(string(content), "path: /var/tempo/wal") {
+		t.Fatalf("expected Tempo WAL storage under /var/tempo/wal, got:\n%s", content)
+	}
+	if strings.Contains(string(content), "local:\n          path: /var/tempo\n") {
+		t.Fatalf("Tempo local block storage must not share the WAL parent path:\n%s", content)
 	}
 }
 
@@ -1342,6 +1733,64 @@ func TestWaitForDeploymentAvailableWithKubectl(t *testing.T) {
 	}
 }
 
+func TestDeployOperatorManifestsWithKubectlPreservesExistingGatewayOTLPEndpoint(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	core.DefaultCLIConfig = &core.CLIConfig{}
+	t.Cleanup(func() {
+		core.DefaultCLIConfig = orig
+	})
+
+	root := repoRootForTest(t)
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working dir: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir to repo root: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(origDir)
+	})
+
+	const customEndpoint = "http://custom-collector.mcp-observability.svc.cluster.local:4318"
+	var managerManifest string
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "deployment/"+core.OperatorDeploymentName, "-n", core.NamespaceMCPRuntime) {
+				cmd.OutputData = []byte(customEndpoint)
+			}
+			if idx := argIndex(spec.Args, "-f"); idx != -1 && idx+1 < len(spec.Args) {
+				path := spec.Args[idx+1]
+				if strings.Contains(path, "manager-") && strings.HasSuffix(path, ".yaml") {
+					cmd.RunFunc = func() error {
+						data, err := os.ReadFile(path)
+						if err != nil {
+							return err
+						}
+						managerManifest = string(data)
+						return nil
+					}
+				}
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+	swapDefaultKubectlClientForTest(t, kubectl)
+
+	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "registry.example.com/mcp-runtime-operator:dev", "", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(managerManifest, "name: MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT") ||
+		!strings.Contains(managerManifest, "value: "+customEndpoint) {
+		t.Fatalf("expected manager manifest to preserve existing gateway OTLP endpoint, got:\n%s", managerManifest)
+	}
+	if strings.Contains(managerManifest, "value: "+defaultGatewayOTELExporterOTLPEndpoint) {
+		t.Fatalf("expected manager manifest not to overwrite custom gateway OTLP endpoint with default, got:\n%s", managerManifest)
+	}
+}
+
 func TestWaitForDeploymentAvailableWithKubectlTimeout(t *testing.T) {
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
@@ -1393,7 +1842,7 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	swapDefaultKubectlClientForTest(t, kubectl)
 
 	operatorImage := "registry.example.com/mcp-runtime-operator:dev"
-	gatewayProxyImage := "registry.example.com/mcp-sentinel-mcp-proxy:dev"
+	gatewayProxyImage := "registry.example.com/mcp-sentinel-mcp-gateway:dev"
 	operatorArgs := []string{
 		"--metrics-bind-address=:9090",
 		"--health-probe-bind-address=:9091",

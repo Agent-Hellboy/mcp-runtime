@@ -34,6 +34,25 @@ func TestConfigDoesNotExposeAPIKey(t *testing.T) {
 	}
 }
 
+func TestConfigExposesPlatformMode(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "org")
+	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret")
+	if err != nil {
+		t.Fatalf("newMux() error = %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/config.js", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, `window.MCP_PLATFORM_MODE = "org"`) {
+		t.Fatalf("config.js missing platform mode: %q", body)
+	}
+}
+
 func TestAPIProxyRequiresAuthenticatedSession(t *testing.T) {
 	upstreamCalled := false
 	store := newUISessionStore(time.Now)

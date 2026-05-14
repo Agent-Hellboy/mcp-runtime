@@ -145,3 +145,54 @@ RETURNING id, name, prefix, created_at, revoked, revoked_at`, userID, id).
 	}
 	return rec, nil
 }
+
+func (s *Store) AuthenticateRegistryCredential(ctx context.Context, username, rawKey string) (Principal, bool, error) {
+	username = strings.TrimSpace(username)
+	if username == "" || rawKey == "" {
+		return Principal{}, false, nil
+	}
+
+	targetHash := hashAPIKey(rawKey)
+	var keyID, userID string
+	err := s.db.QueryRowContext(ctx, `
+SELECT rc.id, rc.user_id
+FROM registry_credentials rc
+JOIN users u ON u.id = rc.user_id AND u.deleted_at IS NULL
+WHERE rc.key_hash = $1 AND rc.revoked = false`, targetHash).
+		Scan(&keyID, &userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Principal{}, false, nil
+	}
+	if err != nil {
+		return Principal{}, false, err
+	}
+
+	p, err := s.PrincipalForUserID(ctx, userID)
+	if err != nil {
+		return Principal{}, false, err
+	}
+	if !registryCredentialUsernameMatches(p, username) {
+		return Principal{}, false, nil
+	}
+	_, _ = s.db.ExecContext(ctx, `UPDATE registry_credentials SET last_used_at = now() WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '5 minutes')`, keyID)
+	p.AuthType = "registry_basic"
+	p.APIKeyID = keyID
+	return p, true, nil
+}
+
+func registryCredentialUsernameMatches(p Principal, username string) bool {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return false
+	}
+	if p.HasNamespace(username) {
+		return true
+	}
+	if strings.TrimSpace(p.Subject) == username {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(p.Email), username) {
+		return true
+	}
+	return false
+}

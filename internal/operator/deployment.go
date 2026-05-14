@@ -391,6 +391,12 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 	if externalBaseURL := gatewayExternalBaseURL(mcpServer); externalBaseURL != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "EXTERNAL_BASE_URL", Value: externalBaseURL})
 	}
+	if endpoint := strings.TrimSpace(r.GatewayOTLPEndpoint); endpoint != "" {
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "OTEL_SERVICE_NAME", Value: mcpServer.Name + "-gateway"},
+			corev1.EnvVar{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: endpoint},
+		)
+	}
 	if mcpServer.Spec.Policy != nil {
 		envVars = append(envVars,
 			corev1.EnvVar{Name: "POLICY_MODE", Value: string(mcpServer.Spec.Policy.Mode)},
@@ -410,19 +416,39 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 	if mcpServer.Spec.Gateway.StripPrefix != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "STRIP_PREFIX", Value: mcpServer.Spec.Gateway.StripPrefix})
 	}
-	if analyticsEnabled(mcpServer) {
+	if r.analyticsEnabled(mcpServer) {
+		analytics := mcpServer.Spec.Analytics
+		ingestURL := ""
+		source := mcpServer.Name + defaultAnalyticsSourceSuffix
+		eventType := defaultAnalyticsEventType
+		var apiKeyRef *mcpv1alpha1.SecretKeyRef
+		if analytics != nil {
+			if v := strings.TrimSpace(analytics.IngestURL); v != "" {
+				ingestURL = v
+			}
+			if v := strings.TrimSpace(analytics.Source); v != "" {
+				source = v
+			}
+			if v := strings.TrimSpace(analytics.EventType); v != "" {
+				eventType = v
+			}
+			apiKeyRef = analytics.APIKeySecretRef
+		}
+		if ingestURL == "" {
+			ingestURL = strings.TrimSpace(r.DefaultAnalyticsIngestURL)
+		}
 		envVars = append(envVars,
-			corev1.EnvVar{Name: "ANALYTICS_INGEST_URL", Value: mcpServer.Spec.Analytics.IngestURL},
-			corev1.EnvVar{Name: "ANALYTICS_SOURCE", Value: mcpServer.Spec.Analytics.Source},
-			corev1.EnvVar{Name: "ANALYTICS_EVENT_TYPE", Value: mcpServer.Spec.Analytics.EventType},
+			corev1.EnvVar{Name: "ANALYTICS_INGEST_URL", Value: ingestURL},
+			corev1.EnvVar{Name: "ANALYTICS_SOURCE", Value: source},
+			corev1.EnvVar{Name: "ANALYTICS_EVENT_TYPE", Value: eventType},
 		)
-		if ref := mcpServer.Spec.Analytics.APIKeySecretRef; ref != nil {
+		if apiKeyRef != nil {
 			envVars = append(envVars, corev1.EnvVar{
 				Name: "ANALYTICS_API_KEY",
 				ValueFrom: &corev1.EnvVarSource{
 					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: ref.Name},
-						Key:                  ref.Key,
+						LocalObjectReference: corev1.LocalObjectReference{Name: apiKeyRef.Name},
+						Key:                  apiKeyRef.Key,
 					},
 				},
 			})
@@ -608,6 +634,23 @@ func serverUsesOAuth(mcpServer *mcpv1alpha1.MCPServer) bool {
 	return mcpServer != nil && mcpServer.Spec.Auth != nil && mcpServer.Spec.Auth.Mode == mcpv1alpha1.AuthModeOAuth
 }
 
-func analyticsEnabled(mcpServer *mcpv1alpha1.MCPServer) bool {
-	return mcpServer != nil && mcpServer.Spec.Analytics != nil && mcpServer.Spec.Analytics.Enabled
+// analyticsEnabled reports whether the gateway sidecar should emit analytics
+// for this MCPServer. Analytics is on by default whenever an ingest URL is
+// available — either from the server spec or the operator-level fallback —
+// unless the server explicitly opts out via Spec.Analytics.Disabled.
+func (r *MCPServerReconciler) analyticsEnabled(mcpServer *mcpv1alpha1.MCPServer) bool {
+	if mcpServer == nil {
+		return false
+	}
+	if mcpServer.Spec.Analytics != nil && mcpServer.Spec.Analytics.Disabled {
+		return false
+	}
+	url := ""
+	if mcpServer.Spec.Analytics != nil {
+		url = strings.TrimSpace(mcpServer.Spec.Analytics.IngestURL)
+	}
+	if url == "" {
+		url = strings.TrimSpace(r.DefaultAnalyticsIngestURL)
+	}
+	return url != ""
 }

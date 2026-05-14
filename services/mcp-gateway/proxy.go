@@ -27,9 +27,9 @@ func newUpstreamReverseProxy(target *url.URL) *httputil.ReverseProxy {
 	return proxy
 }
 
-// handleProxy handles incoming MCP requests and forwards them to upstream servers.
+// handleGateway handles incoming MCP requests and forwards them to upstream servers.
 // It evaluates simple policy for tool invocations and emits audit events on allow/deny.
-func (s *proxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
+func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	originalPath := r.URL.Path
@@ -121,7 +121,7 @@ func (s *proxyServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	s.emitAuditEvent(r, originalPath, rpcMethod, toolName, authCtx, policy, decision, recorder.status, time.Since(start).Milliseconds(), recorder.bytes)
 }
 
-func (s *proxyServer) writeDeniedResponse(
+func (s *gatewayServer) writeDeniedResponse(
 	recorder *statusRecorder,
 	r *http.Request,
 	originalPath, rpcMethod, toolName string,
@@ -139,7 +139,7 @@ func (s *proxyServer) writeDeniedResponse(
 	s.emitAuditEvent(r, originalPath, rpcMethod, toolName, authCtx, policy, decision, recorder.status, time.Since(start).Milliseconds(), recorder.bytes)
 }
 
-func (s *proxyServer) emitAuditEvent(
+func (s *gatewayServer) emitAuditEvent(
 	r *http.Request,
 	path, rpcMethod, toolName string,
 	authCtx identityContext,
@@ -158,10 +158,10 @@ func (s *proxyServer) emitAuditEvent(
 	if err != nil {
 		return
 	}
-	s.emitIfEnabled(envelope)
+	s.emitIfEnabled(r.Context(), envelope)
 }
 
-func (s *proxyServer) auditPayload(
+func (s *gatewayServer) auditPayload(
 	r *http.Request,
 	path, rpcMethod, toolName string,
 	authCtx identityContext,
@@ -262,7 +262,7 @@ func parseExternalBaseURL(raw string) (*url.URL, error) {
 	return parsed, nil
 }
 
-func (s *proxyServer) publicRequestURL(r *http.Request, requestPath string) string {
+func (s *gatewayServer) publicRequestURL(r *http.Request, requestPath string) string {
 	if s.externalBaseURL != nil {
 		return resolveBaseURLPath(s.externalBaseURL, requestPath)
 	}

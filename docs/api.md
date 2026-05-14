@@ -20,8 +20,8 @@ flowchart LR
         Ana[/api/events, /api/stats/]
     end
     CRDs -- rendered into --> Policy[Policy ConfigMap]
-    Policy --> Proxy[mcp-proxy]
-    Proxy -->|audit| Ana
+    Policy --> Gateway[mcp-gateway]
+    Gateway -->|audit| Ana
     Run --> CRDs
 ```
 
@@ -55,7 +55,7 @@ flowchart LR
 
 ### Validation rules in code
 
-- `analytics.enabled` requires `gateway.enabled`.
+- Analytics emission requires `gateway.enabled`; setting `analytics.disabled: true` (or omitting the analytics block) is the way to opt out per server.
 - `gateway.port` must differ from `spec.port`.
 - Every listed `tools[]` entry must declare `sideEffect`.
 - Canary rollouts require positive `canaryReplicas` strictly less than total replicas.
@@ -231,7 +231,7 @@ GET  /api/auth/me
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Gateway as gateway / mcp-proxy
+    participant Gateway as mcp-gateway
     participant Server as MCP server
     Client->>Gateway: POST /payments/mcp tools/call
     Note right of Gateway: Read X-MCP-Human-ID,<br/>X-MCP-Agent-ID,<br/>X-MCP-Agent-Session
@@ -260,14 +260,16 @@ X-MCP-Agent-Session: sess-8f1b9d
 
 ## Dashboard API
 
-Overview statistics and usage analytics for the admin dashboard.
+Overview statistics and usage analytics for the admin and user dashboards.
 
 ```text
 GET /api/dashboard/summary
 GET /api/analytics/usage?limit=10
+GET /api/user/analytics/usage?window_days=7&server=payments
 ```
 
-Requires admin authentication. For direct curl/API clients, send an
+The admin dashboard endpoints require admin authentication. For direct
+curl/API clients, send an
 `x-api-key` value that is present in both `API_KEYS` and `ADMIN_API_KEYS`.
 `setup` keeps `UI_API_KEY` in both lists for browser/API-key admin login.
 `INGEST_API_KEYS` is only for event ingestion and is not accepted here.
@@ -278,7 +280,17 @@ Requires admin authentication. For direct curl/API clients, send an
 
 `/api/analytics/usage` reads the ClickHouse event stream and returns admin
 usage rollups for the dashboard: totals, top MCP servers, top human/agent
-pairs, top tools, and decision counts. Query: `limit` (1-50, default 10).
+pairs, top tools, decision counts, recent activity, and request buckets.
+Query: `limit` (1-50, default 10), `window_days` (1-365, default 30),
+`namespace`, `team_id`, `server`, `decision`, and `tool_name`.
+
+`/api/user/analytics/usage` is available to normal platform users. It returns
+the same analytics shape, but the API enforces scope before querying
+ClickHouse: non-admin callers can see only events from their own user namespace
+and team namespaces, and the shared `mcp-servers` catalog is excluded from user
+analytics. Query: `window_days`, `limit`, `namespace`, `server`, `decision`,
+and `tool_name`. Passing `namespace` narrows the result only when the caller
+owns that namespace or belongs to that team.
 
 ## Runtime Governance API
 
@@ -292,6 +304,8 @@ For `POST /api/runtime/grants` and `POST /api/runtime/sessions`, the API resolve
 ```text
 GET  /api/runtime/servers              # List authenticated MCP catalog entries
 POST /api/runtime/servers              # Create/update MCPServer in an authorized namespace
+DELETE /api/runtime/servers/{namespace}/{name} # Retire one MCPServer
+GET  /api/runtime/server-events?namespace=&server= # Recent analytics events for one server
 GET  /api/runtime/grants               # List MCPAccessGrant resources
 GET  /api/runtime/grants/{namespace}/{name}   # Get one MCPAccessGrant
 POST /api/runtime/grants               # Create or update an MCPAccessGrant (x-api-key)
@@ -300,6 +314,7 @@ GET  /api/runtime/sessions             # List MCPAgentSession resources
 GET  /api/runtime/sessions/{namespace}/{name} # Get one MCPAgentSession
 POST /api/runtime/sessions             # Create or update an MCPAgentSession (x-api-key)
 DELETE /api/runtime/sessions/{namespace}/{name} # Delete one MCPAgentSession
+POST /api/runtime/adapter/sessions     # Issue/reuse an adapter MCPAgentSession for a human/user principal
 GET  /api/runtime/teams                # Admin: all teams; user: caller memberships
 POST /api/runtime/teams                # Admin-only team + namespace provisioning
 GET  /api/runtime/teams/{team}         # Team metadata (admin/member)
@@ -314,11 +329,28 @@ GET  /api/runtime/policy?namespace=&server=   # Get rendered policy for a server
 For non-admin users, runtime scope depends on `PLATFORM_MODE` / setup
 `--platform-mode`. In `tenant` mode, `GET /api/runtime/servers` without a
 `namespace` query returns MCPs in their own user/team tenant namespaces. In
-`org` mode, signed-in users list and publish in `mcp-servers-org`. In `public`
-mode, anonymous users can list the `mcp-servers-public` catalog and signed-in
-users publish there. Admin callers can inspect any namespace. Passing
-`namespace=<name>` narrows the list to an authorized namespace for the active
-mode.
+`org` mode, signed-in users can use the org catalog namespace and their
+owned/team namespaces. In `public` mode, anonymous users can list the
+`mcp-servers-public` catalog, while signed-in users can publish to the public
+catalog and their owned/team namespaces. Admin callers can inspect any
+namespace. Passing `namespace=<name>` narrows the list to an authorized
+namespace for the active mode.
+
+`POST /api/runtime/servers` is governed by the platform publish policy. Admins
+configure `PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `5`, set `0` to disable)
+and `PLATFORM_MCP_PUSH_COOLDOWN` (Go duration such as `30m`, default `0s` to
+disable). A quota or cooldown denial returns `429` with a clear error; cooldown
+responses include `next_allowed_at` and `Retry-After`. `GET /api/runtime/servers`
+includes `publish_policy` so UI clients can show the active limit and count.
+`DELETE /api/runtime/servers/{namespace}/{name}` retires a server and frees one
+active-server slot for the owning publisher. The active-server limit is enforced
+by the platform API before Kubernetes apply; strict serialization of concurrent
+publishes would require a shared reservation or admission-control layer.
+
+Adapter session minting requires an authenticated principal with a subject or
+email, such as a platform login bearer token or user API key. Service-only
+setup keys authenticate but cannot mint adapter sessions because they do not
+identify the human principal that should own the `MCPAgentSession`.
 
 ### Grant apply body
 
@@ -385,14 +417,21 @@ GET  /api/admin/operations             # Admin-only user, image, deployment, and
 GET  /api/user/api-keys                # List caller-owned API keys
 POST /api/user/api-keys                # Create caller-owned API key
 POST /api/user/api-keys/{id}/revoke    # Revoke caller-owned API key
+GET  /api/user/analytics/usage         # User/team-scoped MCP server analytics
 GET  /api/user/registry-credentials    # List caller-owned registry credentials
 POST /api/user/registry-credentials    # Create a registry credential
 POST /api/user/registry-credentials/{id}/revoke
+*    /api/registry/authz               # Traefik forward-auth for registry ingress; admin-only
 POST /api/user/activity/image-publish  # Record a successful user image publish event
 ```
 
 User API-key creation returns the cleartext key once as both `api_key` and
 `one_time_key`; clients should store it immediately.
+
+The bundled `registry.<domain>` ingress calls `/api/registry/authz` before
+proxying Docker Registry API traffic. It accepts platform admin credentials
+(`x-api-key` or Bearer token) and admin-owned registry Basic credentials, and it
+rejects anonymous or non-admin callers.
 
 Deployment apply body:
 

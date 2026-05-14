@@ -49,13 +49,18 @@ type oauthAuthResult struct {
 	Token    string
 }
 
-type proxyServer struct {
+type analyticsEvent struct {
+	Envelope     events.Envelope
+	TraceContext map[string]string
+}
+
+type gatewayServer struct {
 	proxy                 *httputil.ReverseProxy
 	analyticsURL          string
 	apiKey                string
 	source                string
 	eventType             string
-	analyticsQueue        chan events.Envelope
+	analyticsQueue        chan analyticsEvent
 	stripPrefix           string
 	externalBaseURL       *url.URL
 	httpClient            *http.Client
@@ -101,4 +106,4 @@ const (
 	defaultTokenHeader    = "Authorization"
 )
 
-// main initializes and starts the MCP Proxy service.
+// main initializes and starts the MCP gateway service.

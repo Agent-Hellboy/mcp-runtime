@@ -135,7 +135,7 @@ func TestGenerateCRD(t *testing.T) {
 			Namespace: "default",
 			Gateway: &GatewayConfig{
 				Enabled:     true,
-				Image:       "example.com/mcp-proxy:latest",
+				Image:       "example.com/mcp-gateway:latest",
 				Port:        8091,
 				UpstreamURL: "http://127.0.0.1:8088",
 				StripPrefix: "/gateway-server",
@@ -167,7 +167,6 @@ func TestGenerateCRD(t *testing.T) {
 				},
 			},
 			Analytics: &AnalyticsConfig{
-				Enabled:   true,
 				IngestURL: "http://analytics.default.svc/api/events",
 				Source:    "gateway-server",
 				EventType: "mcp.request",
@@ -200,7 +199,7 @@ func TestGenerateCRD(t *testing.T) {
 		spec := assertMapValue(t, rendered, "spec")
 		gateway := assertMapValue(t, spec, "gateway")
 		assertMapBoolValue(t, gateway, "enabled", true)
-		assertMapStringValue(t, gateway, "image", "example.com/mcp-proxy:latest")
+		assertMapStringValue(t, gateway, "image", "example.com/mcp-gateway:latest")
 		assertMapIntValue(t, gateway, "port", 8091)
 		assertMapStringValue(t, gateway, "upstreamURL", "http://127.0.0.1:8088")
 		assertMapStringValue(t, gateway, "stripPrefix", "/gateway-server")
@@ -240,7 +239,8 @@ func TestGenerateCRD(t *testing.T) {
 		assertMapStringValue(t, secretKeyRef, "key", "openai")
 
 		analytics := assertMapValue(t, spec, "analytics")
-		assertMapBoolValue(t, analytics, "enabled", true)
+		// "disabled" is omitted from output when false (omitempty); analytics
+		// is on by default whenever the operator has an ingest URL.
 		assertMapStringValue(t, analytics, "ingestURL", "http://analytics.default.svc/api/events")
 		assertMapStringValue(t, analytics, "source", "gateway-server")
 		assertMapStringValue(t, analytics, "eventType", "mcp.request")

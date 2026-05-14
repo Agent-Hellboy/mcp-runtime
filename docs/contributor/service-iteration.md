@@ -37,7 +37,7 @@ Build and roll the UI:
 SERVICE=ui
 IMAGE_REPO=mcp-sentinel-ui
 DOCKERFILE=services/ui/Dockerfile
-BUILD_CONTEXT=services/ui
+BUILD_CONTEXT=.
 DEPLOYMENT=mcp-sentinel-ui
 CONTAINER=ui
 TAG="${SERVICE}-dev-$(date +%s)"
@@ -79,8 +79,8 @@ For analytics pipeline changes:
 
 | Service | Image repo | Dockerfile | Build context | Deployment | Container |
 |---|---|---|---|---|---|
-| Ingest | `mcp-sentinel-ingest` | `services/ingest/Dockerfile` | `services/ingest` | `mcp-sentinel-ingest` | `ingest` |
-| Processor | `mcp-sentinel-processor` | `services/processor/Dockerfile` | `services/processor` | `mcp-sentinel-processor` | `processor` |
+| Ingest | `mcp-sentinel-ingest` | `services/ingest/Dockerfile` | `.` | `mcp-sentinel-ingest` | `ingest` |
+| Processor | `mcp-sentinel-processor` | `services/processor/Dockerfile` | `.` | `mcp-sentinel-processor` | `processor` |
 
 After rolling either service, generate one MCP request and check both logs:
 
@@ -141,10 +141,10 @@ new controllers to agree on validation:
 kubectl apply -f config/crd/bases/mcpruntime.org_mcpservers.yaml
 ```
 
-## MCP Proxy Sidecar
+## MCP Gateway Sidecar
 
-`services/mcp-proxy` runs as the `mcp-gateway` sidecar in each MCP server pod.
-To test proxy changes, rebuild and push `mcp-sentinel-mcp-proxy`, update the
+`services/mcp-gateway` runs as the `mcp-gateway` sidecar in each MCP server pod.
+To test gateway changes, rebuild and push `mcp-sentinel-mcp-gateway`, update the
 operator's `MCP_GATEWAY_PROXY_IMAGE`, roll the operator, then restart affected
 MCP server pods so the sidecar is reinjected.
 
@@ -165,4 +165,3 @@ helper, or `kind load docker-image` for single-node Kind debugging.
 
 Raw `docker push registry.registry.svc.cluster.local:5000/...` from the host is
 expected to fail unless you have added host DNS and insecure registry settings.
-

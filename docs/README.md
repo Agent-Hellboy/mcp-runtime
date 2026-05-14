@@ -20,7 +20,7 @@ human workflows.
 
   <div class="docs-actions">
     <a class="docs-button docs-button-primary" href="getting-started/">Get started</a>
-    <a class="docs-button" href="contributor/README/">Contribute</a>
+    <a class="docs-button" href="contributor/">Contribute</a>
     <a class="docs-button" href="architecture/">Architecture</a>
     <a class="docs-button" href="api/">API reference</a>
   </div>
@@ -116,7 +116,7 @@ DNS, ingress, TLS, and k3s configuration, start with
   <span>Review prerequisites for k3s, kind, minikube, Docker Desktop Kubernetes, kubeadm, and EKS.</span>
 </a>
 
-<a class="docs-card" href="contributor/README/">
+<a class="docs-card" href="contributor/">
   <span class="docs-card-kicker">Contribute</span>
   <strong>Use the contributor guide</strong>
   <span>Set up local Kind, iterate on services, verify tenant visibility, and debug the platform.</span>
@@ -168,7 +168,7 @@ DNS, ingress, TLS, and k3s configuration, start with
   <span><code>MCPServer</code>, access grants, sessions, gateway headers, and HTTP APIs.</span>
 </a>
 
-<a class="docs-card" href="internals/README/">
+<a class="docs-card" href="internals/">
   <span class="docs-card-kicker">Codebase</span>
   <strong>Read the internals</strong>
   <span>Use the internal docs for codebase structure, package tours, and implementation details.</span>

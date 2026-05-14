@@ -59,3 +59,13 @@ const (
 	// RequeueDelayNotReady is the delay before requeueing when resources are not ready.
 	RequeueDelayNotReady = 10 // seconds
 )
+
+// Analytics defaults applied when the gateway sidecar emits events.
+const (
+	// defaultAnalyticsEventType is the event type label attached to analytics
+	// events when the user has not overridden Spec.Analytics.EventType.
+	defaultAnalyticsEventType = "mcp.request"
+	// defaultAnalyticsSourceSuffix is appended to the MCPServer name to derive
+	// the analytics Source label when Spec.Analytics.Source is empty.
+	defaultAnalyticsSourceSuffix = "-gateway"
+)

@@ -57,7 +57,8 @@ func TestLoadCLIConfigWithProvisionedRegistry(t *testing.T) {
 	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.prod.mcpruntime.com")
 	t.Setenv("MCP_SKOPEO_IMAGE", "example/skopeo:latest")
 	t.Setenv("MCP_OPERATOR_IMAGE", "example/operator:latest")
-	t.Setenv("MCP_GATEWAY_PROXY_IMAGE", "example/mcp-proxy:latest")
+	t.Setenv("MCP_GATEWAY_PROXY_IMAGE", "example/mcp-gateway:latest")
+	t.Setenv("MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", "http://custom-otel:4318")
 	t.Setenv("MCP_SENTINEL_INGEST_URL", "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events")
 	t.Setenv("MCP_INGRESS_READINESS_MODE", "permissive")
 	t.Setenv("MCP_DEFAULT_SERVER_PORT", "9000")
@@ -90,8 +91,11 @@ func TestLoadCLIConfigWithProvisionedRegistry(t *testing.T) {
 	if cfg.OperatorImage != "example/operator:latest" {
 		t.Fatalf("expected operator image override, got %q", cfg.OperatorImage)
 	}
-	if cfg.GatewayProxyImage != "example/mcp-proxy:latest" {
+	if cfg.GatewayProxyImage != "example/mcp-gateway:latest" {
 		t.Fatalf("expected gateway proxy image override, got %q", cfg.GatewayProxyImage)
+	}
+	if cfg.GatewayOTLPEndpoint != "http://custom-otel:4318" {
+		t.Fatalf("expected gateway OTLP endpoint override, got %q", cfg.GatewayOTLPEndpoint)
 	}
 	if cfg.AnalyticsIngestURL != "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events" {
 		t.Fatalf("expected analytics ingest url override, got %q", cfg.AnalyticsIngestURL)
@@ -154,6 +158,7 @@ func TestConfigAccessors(t *testing.T) {
 		SkopeoImage:         "skopeo:test",
 		OperatorImage:       "operator:test",
 		GatewayProxyImage:   "proxy:test",
+		GatewayOTLPEndpoint: "http://otel:test",
 		AnalyticsIngestURL:  "http://analytics-ingest",
 		DefaultServerPort:   7070,
 	}
@@ -184,6 +189,9 @@ func TestConfigAccessors(t *testing.T) {
 	}
 	if GetGatewayProxyImageOverride() != "proxy:test" {
 		t.Fatalf("GetGatewayProxyImageOverride mismatch")
+	}
+	if GetGatewayOTLPEndpointOverride() != "http://otel:test" {
+		t.Fatalf("GetGatewayOTLPEndpointOverride mismatch")
 	}
 	if GetAnalyticsIngestURLOverride() != "http://analytics-ingest" {
 		t.Fatalf("GetAnalyticsIngestURLOverride mismatch")

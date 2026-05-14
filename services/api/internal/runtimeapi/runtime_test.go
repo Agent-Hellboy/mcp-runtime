@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -634,6 +635,272 @@ func TestRuntimeServerApplyRejectsMismatchedTeamID(t *testing.T) {
 	server.HandleRuntimeServers(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestRuntimeServerApplyAdminPreservesExistingOwnerLabels(t *testing.T) {
+	t.Setenv(envPushCooldown, "0s")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	existing := ownedTestMCPServer("demo", "user-1", "user-1")
+	existing.Labels[createdByLabel] = "user-1"
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme, existing),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"namespace": "user-1",
+		"spec": {"image":"registry.example.com/user-1/demo"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:    roleAdmin,
+		Subject: "admin-1",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	current, err := server.controlPlane().GetServer(context.Background(), "user-1", "demo")
+	if err != nil {
+		t.Fatalf("GetServer: %v", err)
+	}
+	if current.Labels[platformUserIDLabel] != "user-1" {
+		t.Fatalf("owner label = %q, want user-1", current.Labels[platformUserIDLabel])
+	}
+	if current.Labels[createdByLabel] != "user-1" {
+		t.Fatalf("created-by label = %q, want user-1", current.Labels[createdByLabel])
+	}
+}
+
+func TestRuntimeServerApplyAllowsLegacyUnlabeledPublicCatalogServer(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv(envActiveServerLimit, "0")
+	t.Setenv(envPushCooldown, "0s")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	existing := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "demo",
+			Namespace: defaultPublicCatalogNamespace,
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image: "registry.example.com/" + defaultPublicCatalogNamespace + "/demo",
+		},
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme, existing),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"namespace": "mcp-servers-public",
+		"spec": {"image":"registry.example.com/mcp-servers-public/demo"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+		},
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	current, err := server.controlPlane().GetServer(context.Background(), defaultPublicCatalogNamespace, "demo")
+	if err != nil {
+		t.Fatalf("GetServer: %v", err)
+	}
+	if current.Labels[platformUserIDLabel] != "user-1" {
+		t.Fatalf("owner label = %q, want user-1", current.Labels[platformUserIDLabel])
+	}
+}
+
+func TestRuntimeServerApplyRejectsActiveServerLimit(t *testing.T) {
+	t.Setenv(envActiveServerLimit, "2")
+	t.Setenv(envPushCooldown, "0s")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic: dynamicfake.NewSimpleDynamicClient(scheme,
+				ownedTestMCPServer("one", "user-1", "user-1"),
+				ownedTestMCPServer("two", "user-1", "user-1"),
+			),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "three",
+		"namespace": "user-1",
+		"spec": {"image":"registry.example.com/user-1/three"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+		},
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "retire an existing server") {
+		t.Fatalf("body = %q, want retire guidance", recorder.Body.String())
+	}
+}
+
+func TestRuntimeServerApplyAllowsDisabledActiveServerLimit(t *testing.T) {
+	t.Setenv(envActiveServerLimit, "0")
+	t.Setenv(envPushCooldown, "0s")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic: dynamicfake.NewSimpleDynamicClient(scheme,
+				ownedTestMCPServer("one", "user-1", "user-1"),
+				ownedTestMCPServer("two", "user-1", "user-1"),
+			),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "three",
+		"namespace": "user-1",
+		"spec": {"image":"registry.example.com/user-1/three"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+		},
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestRuntimeServerApplyRejectsPushInsideCooldown(t *testing.T) {
+	t.Setenv(envActiveServerLimit, "0")
+	t.Setenv(envPushCooldown, "1h")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	existing := ownedTestMCPServer("demo", "user-1", "user-1")
+	existing.SetAnnotations(map[string]string{
+		platformLastPushAtAnnotation: time.Now().UTC().Format(time.RFC3339),
+	})
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme, existing),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"namespace": "user-1",
+		"spec": {"image":"registry.example.com/user-1/demo"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+		},
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "next allowed push at") {
+		t.Fatalf("body = %q, want next allowed time", recorder.Body.String())
+	}
+	if recorder.Header().Get("retry-after") == "" {
+		t.Fatal("retry-after header missing")
+	}
+}
+
+func TestRuntimeServerRetireDeletesOwnedServer(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme, ownedTestMCPServer("demo", "user-1", "user-1")),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodDelete, "/api/runtime/servers/user-1/demo", nil)
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+		},
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServerItem(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	if _, err := server.controlPlane().GetServer(context.Background(), "user-1", "demo"); err == nil {
+		t.Fatal("server still exists after retire")
+	}
+}
+
+func ownedTestMCPServer(name, namespace, userID string) *mcpv1alpha1.MCPServer {
+	return &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				platformUserIDLabel: userID,
+			},
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image: "registry.example.com/" + namespace + "/" + name,
+		},
 	}
 }
 

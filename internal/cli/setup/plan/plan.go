@@ -37,6 +37,7 @@ type Input struct {
 	ForceIngressInstall    bool
 	TLSEnabled             bool
 	TestMode               bool
+	ParallelBuilds         bool
 	StrictProd             bool
 	DeployAnalytics        bool
 	OperatorArgs           []string
@@ -60,6 +61,7 @@ type Plan struct {
 	RegistryManifest    string
 	TLSEnabled          bool
 	TestMode            bool
+	ParallelBuilds      bool
 	StrictProd          bool
 	DeployAnalytics     bool
 	OperatorArgs        []string
@@ -145,6 +147,7 @@ func Build(input Input) Plan {
 		RegistryManifest:   registryManifest,
 		TLSEnabled:         input.TLSEnabled,
 		TestMode:           input.TestMode,
+		ParallelBuilds:     input.ParallelBuilds,
 		StrictProd:         input.StrictProd,
 		DeployAnalytics:    input.DeployAnalytics,
 		OperatorArgs:       input.OperatorArgs,

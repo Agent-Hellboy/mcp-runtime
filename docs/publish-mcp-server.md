@@ -66,8 +66,11 @@ spec:
   The public route prefix. `payments` becomes `/payments/mcp`.
 - `spec.gateway.enabled`
   Sends requests through the broker path so policy and session checks run before tool calls.
-- `spec.analytics.enabled`
-  Emits governed request data into the Sentinel stack.
+- `spec.analytics`
+  Analytics emission to the Sentinel stack is on by default whenever the
+  operator has an ingest URL configured (via `MCP_SENTINEL_INGEST_URL` or
+  `spec.analytics.ingestURL`). Set `spec.analytics.disabled: true` to opt
+  this server out.
 
 ### Common edits
 

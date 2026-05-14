@@ -38,6 +38,9 @@ type OperatorConfig struct {
 	// GatewayProxyImage is the default image used for the optional MCP gateway sidecar.
 	GatewayProxyImage string
 
+	// GatewayOTLPEndpoint is the OTLP/HTTP endpoint injected into MCP gateway sidecars.
+	GatewayOTLPEndpoint string
+
 	// AnalyticsIngestURL is the default analytics ingest endpoint for gateway sidecars.
 	AnalyticsIngestURL string
 
@@ -59,6 +62,7 @@ func LoadOperatorConfig() *OperatorConfig {
 		InternalRegistryEndpoint:      getEnvOrDefault("MCP_REGISTRY_ENDPOINT", getEnvOrDefault("MCP_REGISTRY_HOST", "registry.local")),
 		RequeueDelaySeconds:           getEnvIntOrDefault("REQUEUE_DELAY_SECONDS", RequeueDelayNotReady),
 		GatewayProxyImage:             os.Getenv("MCP_GATEWAY_PROXY_IMAGE"),
+		GatewayOTLPEndpoint:           os.Getenv("MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT"),
 		AnalyticsIngestURL:            getEnvCompat("MCP_SENTINEL_INGEST_URL", "MCP_ANALYTICS_INGEST_URL"),
 		ClusterName:                   getEnvOrDefault("MCP_CLUSTER_NAME", "local"),
 	}

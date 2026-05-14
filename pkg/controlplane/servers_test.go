@@ -76,6 +76,48 @@ func TestListServersProjectsMCPServerInventoryAndDeploymentStatus(t *testing.T) 
 	}
 }
 
+func TestListServersWithOptionsFiltersMCPServersByLabel(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	owned := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "owned",
+			Namespace: "mcp-servers",
+			Labels: map[string]string{
+				"platform.mcpruntime.org/user-id": "user-1",
+			},
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{Image: "demo:latest"},
+	}
+	other := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "other",
+			Namespace: "mcp-servers",
+			Labels: map[string]string{
+				"platform.mcpruntime.org/user-id": "user-2",
+			},
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{Image: "demo:latest"},
+	}
+	mgr := New(&k8sclient.Clients{
+		Dynamic:   fake.NewSimpleDynamicClient(scheme, owned, other),
+		Clientset: kubernetesfake.NewSimpleClientset(),
+	})
+
+	result, err := mgr.ListServersWithOptions(context.Background(), "mcp-servers", ListServersOptions{
+		LabelSelector:        "platform.mcpruntime.org/user-id=user-1",
+		SkipDeploymentStatus: true,
+	})
+	if err != nil {
+		t.Fatalf("ListServersWithOptions returned error: %v", err)
+	}
+	if len(result.Servers) != 1 || result.Servers[0].Name != "owned" {
+		t.Fatalf("servers = %#v, want only owned", result.Servers)
+	}
+}
+
 func TestListServersFallsBackToDeploymentsWhenMCPServerListFails(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {

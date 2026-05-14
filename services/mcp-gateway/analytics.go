@@ -9,10 +9,14 @@ import (
 	"net/http"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+
 	"mcp-runtime/pkg/events"
+	"mcp-runtime/pkg/serviceutil"
 )
 
-func (s *proxyServer) startAnalyticsDispatcher() {
+func (s *gatewayServer) startAnalyticsDispatcher() {
 	if s.analyticsURL == "" {
 		return
 	}
@@ -23,7 +27,7 @@ func (s *proxyServer) startAnalyticsDispatcher() {
 			return
 		}
 		if s.analyticsQueue == nil {
-			s.analyticsQueue = make(chan events.Envelope, analyticsQueueSize)
+			s.analyticsQueue = make(chan analyticsEvent, analyticsQueueSize)
 		}
 		queue := s.analyticsQueue
 		s.analyticsWG.Add(analyticsWorkerCount)
@@ -32,8 +36,9 @@ func (s *proxyServer) startAnalyticsDispatcher() {
 			go func() {
 				defer s.analyticsWG.Done()
 				for event := range queue {
-					ctx, cancel := context.WithTimeout(context.Background(), time.Duration(analyticsEmitTimeout)*time.Second)
-					s.emit(ctx, event)
+					parentCtx := serviceutil.ContextWithTraceContext(context.Background(), event.TraceContext)
+					ctx, cancel := context.WithTimeout(parentCtx, time.Duration(analyticsEmitTimeout)*time.Second)
+					s.emit(ctx, event.Envelope)
 					cancel()
 				}
 			}()
@@ -41,7 +46,7 @@ func (s *proxyServer) startAnalyticsDispatcher() {
 	})
 }
 
-func (s *proxyServer) stopAnalyticsDispatcher() {
+func (s *gatewayServer) stopAnalyticsDispatcher() {
 	s.analyticsMu.Lock()
 	if s.analyticsClosed {
 		s.analyticsMu.Unlock()
@@ -58,7 +63,7 @@ func (s *proxyServer) stopAnalyticsDispatcher() {
 	s.analyticsWG.Wait()
 }
 
-func (s *proxyServer) emitIfEnabled(event events.Envelope) {
+func (s *gatewayServer) emitIfEnabled(ctx context.Context, event events.Envelope) {
 	if s.analyticsURL == "" {
 		return
 	}
@@ -71,13 +76,17 @@ func (s *proxyServer) emitIfEnabled(event events.Envelope) {
 	if s.analyticsClosed {
 		return
 	}
+	item := analyticsEvent{
+		Envelope:     event,
+		TraceContext: serviceutil.CaptureTraceContext(ctx),
+	}
 	select {
-	case queue <- event:
+	case queue <- item:
 	default:
 	}
 }
 
-func (s *proxyServer) analyticsEventQueue() chan events.Envelope {
+func (s *gatewayServer) analyticsEventQueue() chan analyticsEvent {
 	s.analyticsMu.Lock()
 	queue := s.analyticsQueue
 	s.analyticsMu.Unlock()
@@ -97,7 +106,7 @@ func (s *proxyServer) analyticsEventQueue() chan events.Envelope {
 }
 
 // emit sends analytics events to the ingest service.
-func (s *proxyServer) emit(ctx context.Context, event events.Envelope) {
+func (s *gatewayServer) emit(ctx context.Context, event events.Envelope) {
 	data, err := json.Marshal(event)
 	if err != nil {
 		return
@@ -111,15 +120,16 @@ func (s *proxyServer) emit(ctx context.Context, event events.Envelope) {
 	if s.apiKey != "" {
 		req.Header.Set("x-api-key", s.apiKey)
 	}
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		log.Printf("failed to emit proxy analytics event to %s: %v", s.analyticsURL, err)
+		log.Printf("failed to emit gateway analytics event to %s: %v", s.analyticsURL, err)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		log.Printf("proxy analytics emission failed with status %d to %s", resp.StatusCode, s.analyticsURL)
+		log.Printf("gateway analytics emission failed with status %d to %s", resp.StatusCode, s.analyticsURL)
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return
 	}

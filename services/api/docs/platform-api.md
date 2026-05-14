@@ -45,8 +45,10 @@ noted otherwise. Authenticated routes accept `Authorization: Bearer <token>` or
 | `GET` | `/api/auth/me` | Return the authenticated principal. |
 | `GET`, `POST` | `/api/user/api-keys` | List or create caller-owned API keys. |
 | `POST` | `/api/user/api-keys/{id}/revoke` | Revoke one caller-owned API key. |
+| `GET` | `/api/user/analytics/usage` | Caller-scoped MCP server usage analytics for the user dashboard. |
 | `GET`, `POST` | `/api/user/registry-credentials` | List or create registry credentials. |
 | `POST` | `/api/user/registry-credentials/{id}/revoke` | Revoke one registry credential. |
+| `*` | `/api/registry/authz` | Traefik forward-auth endpoint for bundled registry ingress. Admin role required. |
 | `GET`, `POST` | `/api/deployments` | List or apply platform-managed deployments. |
 | `DELETE` | `/api/deployments/{namespace}/{name}` | Delete a platform-managed deployment and service. |
 | `GET` | `/api/admin/namespaces` | Admin namespace inventory. |
@@ -55,9 +57,9 @@ noted otherwise. Authenticated routes accept `Authorization: Bearer <token>` or
 | `GET` | `/api/admin/operations` | Admin operations snapshot for user activity, image activity, deployments, and timeline events. |
 | `POST` | `/api/user/activity/image-publish` | Record a successful image publish event for the authenticated user. |
 
-The same API service also hosts analytics and runtime governance routes such as
-`/api/events`, `/api/runtime/grants`, and `/api/runtime/sessions`; keep those
-details in `../../../docs/api.md`.
+The same API service also hosts admin analytics and runtime governance routes
+such as `/api/events`, `/api/analytics/usage`, `/api/runtime/grants`, and
+`/api/runtime/sessions`; keep those details in `../../../docs/api.md`.
 
 ## Signup and Login
 
@@ -146,6 +148,40 @@ curl -sS -X POST -H "authorization: Bearer $TOKEN" \
   http://localhost:8080/api/user/api-keys/"$KEY_ID"/revoke
 ```
 
+## Runtime MCP Servers
+
+Apply an MCPServer through the platform API:
+
+```bash
+curl -sS -X POST http://localhost:8080/api/runtime/servers \
+  -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"name":"demo","namespace":"user-1","spec":{"image":"registry.example.com/user-1/demo:latest"}}'
+```
+
+The response includes `publish_policy` on list calls. Admins configure the
+active-server limit with `PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `5`, `0`
+disables) and per-server cooldown with `PLATFORM_MCP_PUSH_COOLDOWN` (default
+`0s`, Go duration format). Quota or cooldown denials return `429`; cooldown
+responses include `next_allowed_at` and `Retry-After`. The active-server limit
+is enforced by the platform API before Kubernetes apply; strict serialization of
+concurrent publishes would require a shared reservation or admission-control
+layer.
+
+Retire an MCPServer to free quota:
+
+```bash
+curl -sS -X DELETE -H "authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/runtime/servers/user-1/demo
+```
+
+Fetch recent analytics for a server:
+
+```bash
+curl -sS -H "authorization: Bearer $TOKEN" \
+  'http://localhost:8080/api/runtime/server-events?namespace=user-1&server=demo'
+```
+
 ## Deployments
 
 Normal users deploy only into their owned namespace. Admins may pass
@@ -185,7 +221,9 @@ curl -sS -X POST http://localhost:8080/api/user/registry-credentials \
 ```
 
 Use the returned `username` and one-time `password` with the configured registry
-host.
+host. The bundled public registry ingress accepts these Basic credentials only
+when they belong to an admin user; non-admin image publishing should use the
+platform deployment and registry workflows instead of direct registry API calls.
 
 List registry credentials:
 

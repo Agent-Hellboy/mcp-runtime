@@ -1,97 +1,103 @@
 # Agent Adapters
 
-MCP Runtime includes two optional agent-side adapters for frameworks and IDEs
-that need help attaching governed identity to MCP traffic:
+MCP Runtime includes two agent-side adapters that attach governed identity to
+MCP traffic without requiring the agent framework to know anything about
+grants, sessions, or policy:
 
-- `mcp-runtime-agent-proxy` exposes a local Streamable HTTP MCP endpoint and
+- `mcp-runtime adapter proxy` exposes a local Streamable HTTP MCP endpoint and
   forwards requests to an MCP Runtime route.
-- `mcp-runtime-mcp-shim` exposes a stdio MCP server process and forwards each
-  JSON-RPC message to the same MCP Runtime HTTP route.
+- `mcp-runtime adapter stdio` exposes a stdio MCP server process and forwards
+  each JSON-RPC message to the same MCP Runtime HTTP route.
 
-Both adapters only present issued identity values. They do not create grants,
-create sessions, evaluate policy, or bypass the gateway. Platform admins still
-grant access through `MCPAccessGrant` and `MCPAgentSession`; the gateway remains
-the enforcement point.
+Both adapters only **present** issued identity values. They do not create
+grants, create sessions, evaluate policy, or bypass the gateway. Platform
+admins still author `MCPAccessGrant` resources; the platform API and the
+adapter session endpoint together resolve which `MCPAgentSession` a caller
+runs under, and the gateway is the enforcement point.
 
 The adapter surface is intentionally limited to stdio and Streamable HTTP, the
-two standard MCP transports. There is no separate legacy HTTP+SSE adapter. When
-the docs or code mention `text/event-stream`, that is only because Streamable
-HTTP allows a server to return a JSON response or an event-stream response for
-the same request, and clients are expected to handle both response shapes.
+two standard MCP transports. There is no separate legacy HTTP+SSE adapter.
 
-## Build
+## How the adapter gets its identity
 
-```bash
-make build-adapters
-```
+There are three supported ways to give an adapter its `humanID`, `agentID`,
+`teamID`, and `sessionID`:
 
-The binaries are written to:
+1. **Platform-issued session (recommended).** The adapter calls
+   `POST /api/runtime/adapter/sessions`. The platform derives the principal
+   from your `mcp-runtime auth login` token, picks a matching enabled
+   `MCPAccessGrant`, writes (or reuses) an `MCPAgentSession`, and returns the
+   identity values. Optional `--auto-refresh` renews the session before
+   expiry without restarting the adapter.
+2. **Explicit flags / environment.** `--human-id`, `--agent-id`,
+   `--session-id`, `--team-id` (or the matching `MCP_RUNTIME_*` env vars).
+   Useful for testing and for inheriting an externally-managed session.
+3. **Anonymous mode** (stdio only): `--anonymous` skips identity entirely so
+   the adapter can target public/read-only runtime routes. Only the methods
+   listed in `--anonymous-methods` are forwarded.
 
-```text
-bin/mcp-runtime-agent-proxy
-bin/mcp-runtime-mcp-shim
-```
+Mixed configurations are supported: identity flags always override values
+returned by the platform-issued session, so a caller can pin a specific field
+(e.g. a long-lived `--session-id` for a test) while letting the platform fill
+in the rest. The override survives every auto-refresh tick.
 
-## Configuration
-
-Set these values for both adapters:
-
-| Environment variable | Required | Purpose |
-|---|---:|---|
-| `MCP_RUNTIME_URL` | yes | Absolute Streamable HTTP MCP route, such as `http://localhost:18080/go-example-mcp/mcp`. |
-| `MCP_RUNTIME_HUMAN_ID` | yes | Human identity issued by the platform/admin flow. |
-| `MCP_RUNTIME_AGENT_ID` | yes | Agent identity issued by the platform/admin flow. |
-| `MCP_RUNTIME_SESSION_ID` | yes | `MCPAgentSession` name/value to present in `X-MCP-Agent-Session`. |
-| `MCP_RUNTIME_HOST_HEADER` | no | Optional upstream `Host` header for host-based ingress. |
-| `MCP_RUNTIME_LISTEN_ADDR` | proxy only | Local proxy listen address. Defaults to `127.0.0.1:8099`. |
-| `MCP_RUNTIME_PROTOCOL_VERSION` | shim only | MCP protocol header for stdio-to-HTTP calls. Defaults to `2025-06-18`; an `initialize.params.protocolVersion` value overrides it for that shim process. |
-| `MCP_RUNTIME_SET_XFF` | proxy only | Set to `false`, `0`, `no`, or `off` to suppress proxy-generated `X-Forwarded-*` headers. Defaults to enabled. |
-| `MCP_RUNTIME_REQUEST_TIMEOUT` | shim only | Optional Go duration such as `300s` for stdio-to-HTTP requests. Defaults to unbounded so long-running tools are not cut off. |
-| `MCP_RUNTIME_LOG_LEVEL` | no | Set to `info` to log runtime 4xx denials to stderr with status, reason, method, and tool name. Defaults to silent. |
-
-The adapters inject these governance headers on every forwarded request:
-
-```text
-X-MCP-Human-ID: <MCP_RUNTIME_HUMAN_ID>
-X-MCP-Agent-ID: <MCP_RUNTIME_AGENT_ID>
-X-MCP-Agent-Session: <MCP_RUNTIME_SESSION_ID>
-```
-
-Incoming spoofed values for those three headers are overwritten. MCP protocol
-headers such as `Mcp-Protocol-Version`, `Mcp-Session-Id`, `content-type`, and
-`accept` are preserved for HTTP proxy traffic. The stdio shim stores the
-runtime `Mcp-Session-Id` returned by `initialize` and sends it on later HTTP
-requests.
-
-The HTTP proxy streams `text/event-stream` responses through as they arrive and
-returns JSON-RPC error envelopes for upstream connection failures. That keeps
-agent clients on the MCP response shape instead of receiving a generic HTML
-`502 Bad Gateway` body.
-
-## Admin Flow
-
-Apply grants and sessions before giving an adapter config to an agent builder:
+## Platform-issued sessions — quickstart
 
 ```bash
-./bin/mcp-runtime access grant apply --file grant.yaml
-./bin/mcp-runtime access session apply --file session.yaml
-./bin/mcp-runtime server policy inspect go-example-mcp --namespace mcp-servers
+mcp-runtime auth login --api-url https://platform.example.com
+
+mcp-runtime adapter stdio \
+  --runtime-url https://mcp.example.com/go-example-mcp/mcp \
+  --server go-example-mcp \
+  --agent ticket-triage-agent \
+  --auto-refresh
 ```
 
-Minimal example:
+What this does on each invocation:
+
+1. The CLI calls `POST /api/runtime/adapter/sessions` with `{serverName,
+   namespace?, agentID}`. `namespace` defaults to the principal's primary
+   namespace.
+2. The platform derives `humanID` from `Principal.Subject` (fallback to
+   `Email`) and `teamID` from the principal's membership in the namespace's
+   team.
+3. The platform lists enabled `MCPAccessGrant` resources in that namespace,
+   filters those whose `serverRef.name` matches and whose subject equals the
+   caller or is empty (wildcard), and picks the grant with the highest
+   `MaxTrust`. Ties are broken by oldest `creationTimestamp`.
+4. The platform looks up an existing `MCPAgentSession` with the deterministic
+   name `adapter-<sha256-prefix(humanID,agentID,teamID,serverName)>` in the
+   namespace. If one exists and is not revoked, has more than 30 s until
+   expiry, and its `policyVersion` matches the selected grant's, it is
+   reused. Otherwise a fresh `MCPAgentSession` is applied with a 1 h TTL
+   (capped at 24 h).
+5. The response carries `name`, `humanID`, `agentID`, `teamID`,
+   `consentedTrust`, `policyVersion`, and absolute `expiresAt`. The adapter
+   uses `name` as `X-MCP-Agent-Session` on every outbound request.
+6. With `--auto-refresh`, a background goroutine renews the session ~5 min
+   before `expiresAt` and atomically rotates the identity. In-flight requests
+   continue with the previous identity; subsequent requests pick up the new
+   one without a restart. Transient platform errors are logged to stderr; the
+   previous identity stays in place until a refresh succeeds.
+
+### Required grant
+
+A grant must exist before the platform will issue a session. Example:
 
 ```yaml
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
 metadata:
-  name: ticket-triage-agent
+  name: triage-grant
   namespace: mcp-servers
 spec:
   serverRef:
     name: go-example-mcp
   subject:
+    # Any of these may be empty to act as a wildcard for that field.
     humanID: support-lead
     agentID: ticket-triage-agent
+    teamID: team-acme
   maxTrust: high
   allowedSideEffects:
     - read
@@ -103,45 +109,127 @@ spec:
     - name: upper
       decision: allow
       requiredTrust: low
----
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPAgentSession
-metadata:
-  name: sess-ticket-triage-agent
-  namespace: mcp-servers
-spec:
-  serverRef:
-    name: go-example-mcp
-  subject:
-    humanID: support-lead
-    agentID: ticket-triage-agent
-  consentedTrust: high
-  policyVersion: v1
 ```
 
-## Direct HTTP Clients
+If the principal does not match any enabled grant for the server, the
+adapter-session endpoint returns 403 and the adapter refuses to start.
 
-Use direct HTTP when the framework supports Streamable HTTP MCP and custom
-request headers. For example, the OpenAI Agents SDK exposes
-`MCPServerStreamableHttp` with `params.url` and `params.headers` for local or
-remote Streamable HTTP MCP servers.
+## Explicit-identity mode
+
+When you already have an `MCPAgentSession` and don't want the platform to pick
+the grant for you (for example in a fixed CI environment), set everything
+explicitly:
+
+```bash
+export MCP_RUNTIME_URL=http://localhost:18080/go-example-mcp/mcp
+export MCP_RUNTIME_HUMAN_ID=support-lead
+export MCP_RUNTIME_AGENT_ID=ticket-triage-agent
+export MCP_RUNTIME_SESSION_ID=sess-ticket-triage-agent
+
+mcp-runtime adapter proxy
+```
+
+| Environment variable | Required | Purpose |
+|---|---:|---|
+| `MCP_RUNTIME_URL` | yes | Absolute Streamable HTTP MCP route. |
+| `MCP_RUNTIME_HUMAN_ID` | yes¹ | Human identity (`X-MCP-Human-ID`). |
+| `MCP_RUNTIME_AGENT_ID` | yes¹ | Agent identity (`X-MCP-Agent-ID`). |
+| `MCP_RUNTIME_TEAM_ID` | no | Team identity (`X-MCP-Team-ID`) for team-scoped grants. |
+| `MCP_RUNTIME_SESSION_ID` | yes¹ | `MCPAgentSession` name (`X-MCP-Agent-Session`). |
+| `MCP_RUNTIME_HOST_HEADER` | no | Override the `Host` header for host-based ingress. |
+| `MCP_RUNTIME_LISTEN_ADDR` | proxy | Local listener; defaults to `127.0.0.1:8099`. |
+| `MCP_RUNTIME_PROTOCOL_VERSION` | no | MCP protocol header. Defaults to `2025-06-18`; the negotiated `result.protocolVersion` from the runtime's `initialize` response overrides it for the rest of the process. |
+| `MCP_RUNTIME_SET_XFF` | proxy | `false`/`0`/`no`/`off` suppresses `X-Forwarded-*` headers. Defaults to enabled. |
+| `MCP_RUNTIME_REQUEST_TIMEOUT` | no | Go duration for adapter→runtime calls. Defaults to unbounded. |
+| `MCP_RUNTIME_MAX_INBOUND_BYTES` | proxy | Caps inbound JSON-RPC bodies; over-cap responds 413. Defaults to 16 MiB. |
+| `MCP_RUNTIME_AUTH_HEADER` | no | Static `Authorization` header injected on every runtime request (e.g. `Bearer …`). |
+| `MCP_RUNTIME_TLS_CLIENT_CERT` / `_KEY` | no | PEM client cert / key for mTLS to the runtime. |
+| `MCP_RUNTIME_TLS_CA_BUNDLE` | no | PEM CA bundle replacing the system trust store. |
+| `MCP_RUNTIME_ANONYMOUS` | stdio | `true` enables anonymous mode. |
+| `MCP_RUNTIME_ANONYMOUS_METHODS` | stdio | CSV allowlist of methods in anonymous mode. |
+| `MCP_RUNTIME_TOOLS_CACHE_TTL` | stdio | Caches `tools/list` responses for this duration (e.g. `30s`). Anonymous mode bypasses the cache. |
+| `MCP_RUNTIME_LOG_LEVEL` | no | `info` logs runtime 4xx denials to stderr. |
+
+¹ Required unless `--server` (platform-issued session) or `--anonymous` is in
+use. With `--server`, missing fields are populated from the issued response.
+
+The adapters inject these headers on every forwarded request:
+
+```text
+X-MCP-Human-ID:      <humanID>
+X-MCP-Agent-ID:      <agentID>
+X-MCP-Team-ID:       <teamID>            (omitted when empty)
+X-MCP-Agent-Session: <sessionID>
+Authorization:       <MCP_RUNTIME_AUTH_HEADER>   (when set)
+```
+
+Incoming spoofed values for the four governance headers are stripped before
+the upstream call. MCP protocol headers (`Mcp-Protocol-Version`,
+`Mcp-Session-Id`, `content-type`, `accept`) are preserved.
+
+## Anonymous mode (stdio)
+
+For public/read-only routes — for example a catalog discovery endpoint —
+identity is unnecessary and the stdio shim can run anonymous:
+
+```bash
+mcp-runtime adapter stdio \
+  --runtime-url https://mcp.example.com/public-catalog/mcp \
+  --anonymous \
+  --anonymous-methods initialize,notifications/initialized,ping,tools/list,resources/list,prompts/list
+```
+
+Anonymous methods default to the protocol handshake plus the three read-only
+discovery calls. Any method outside the allowlist is rejected with a JSON-RPC
+`-32601` error before the request leaves the adapter, so an agent SDK cannot
+accidentally call `tools/call` against a public route.
+
+The `tools/list` cache is **bypassed** in anonymous mode: different anonymous
+callers can see different responses depending on what the runtime exposes
+publicly, and there is no safe shared cache key.
+
+## Direct HTTP clients
+
+When the agent framework supports Streamable HTTP MCP and custom headers,
+you can call the runtime directly without the adapter. Mint a session with
+the platform API once, then attach the returned identity on every request.
+Use a platform login token or user API key for this call; service-only setup
+keys do not carry a human subject and cannot mint adapter sessions.
 
 ```python
 import asyncio
 import os
+import httpx
 
 from agents import Agent, Runner
 from agents.mcp import MCPServerStreamableHttp
 
 async def main() -> None:
+    platform_token = os.environ["MCP_PLATFORM_API_TOKEN"]
+    async with httpx.AsyncClient() as http:
+        resp = await http.post(
+            os.environ["MCP_PLATFORM_API_URL"].rstrip("/")
+            + "/api/runtime/adapter/sessions",
+            json={
+                "serverName": "go-example-mcp",
+                "agentID": "ticket-triage-agent",
+            },
+            headers={
+                "Authorization": f"Bearer {platform_token}",
+            },
+        )
+        resp.raise_for_status()
+        session = resp.json()
+
     async with MCPServerStreamableHttp(
         name="go-example-mcp",
         params={
             "url": os.environ["MCP_RUNTIME_URL"],
             "headers": {
-                "X-MCP-Human-ID": os.environ["MCP_RUNTIME_HUMAN_ID"],
-                "X-MCP-Agent-ID": os.environ["MCP_RUNTIME_AGENT_ID"],
-                "X-MCP-Agent-Session": os.environ["MCP_RUNTIME_SESSION_ID"],
+                "X-MCP-Human-ID": session["humanID"],
+                "X-MCP-Agent-ID": session["agentID"],
+                "X-MCP-Team-ID": session.get("teamID", ""),
+                "X-MCP-Agent-Session": session["name"],
             },
         },
     ) as server:
@@ -150,57 +238,74 @@ async def main() -> None:
             instructions="Use MCP tools when they help.",
             mcp_servers=[server],
         )
-        result = await Runner.run(agent, "Add 2 and 3.")
-        print(result.final_output)
+        print((await Runner.run(agent, "Add 2 and 3.")).final_output)
 
 asyncio.run(main())
 ```
 
-## HTTP Proxy Adapter
+This is the only path that requires the consumer to know about the platform
+API. For framework code that cannot attach headers, prefer the proxy or stdio
+adapter described below.
 
-Use the proxy when a framework can speak Streamable HTTP MCP but cannot attach
-the governance headers itself.
+## HTTP proxy adapter
+
+Use the proxy when a framework can speak Streamable HTTP MCP but cannot
+attach the governance headers itself.
 
 ```bash
-export MCP_RUNTIME_URL=http://localhost:18080/go-example-mcp/mcp
-export MCP_RUNTIME_HUMAN_ID=support-lead
-export MCP_RUNTIME_AGENT_ID=ticket-triage-agent
-export MCP_RUNTIME_SESSION_ID=sess-ticket-triage-agent
-
-./bin/mcp-runtime-agent-proxy
+mcp-runtime adapter proxy \
+  --runtime-url https://mcp.example.com/go-example-mcp/mcp \
+  --server go-example-mcp \
+  --agent ticket-triage-agent \
+  --auto-refresh
 ```
 
-Then point the framework's MCP HTTP URL at the local proxy:
+Then point the framework's MCP URL at the local proxy:
 
 ```text
 http://127.0.0.1:8099/mcp
 ```
 
-The proxy forwards to the exact `MCP_RUNTIME_URL` route. The local request path
-is accepted for client compatibility; it is not appended to the upstream route.
-Query strings from the configured URL and client request are merged.
-By default the proxy adds `X-Forwarded-For`, `X-Forwarded-Host`, and
-`X-Forwarded-Proto`; set `MCP_RUNTIME_SET_XFF=false` when the local loopback
-address only adds audit noise.
+The proxy forwards to the exact `--runtime-url` route. The local request path
+is accepted for client compatibility; it is not appended upstream. Query
+strings from the configured URL and client request are merged. By default the
+proxy adds `X-Forwarded-*` headers; set `--no-xforwarded` to suppress them on
+loopback paths where they only add audit noise.
+
+The proxy also exposes:
+
+- `GET /healthz`, `GET /livez`, `GET /readyz` — 204 No Content when running.
+- `GET /metrics` — delegates to `ProxyConfig.MetricsHandler` when wired up
+  (typically a Prometheus exporter backed by `RuntimeTransport.Meter`).
+  Returns 404 when no metrics handler is configured.
+
+Inbound JSON-RPC bodies over `--max-inbound-bytes` (default 16 MiB) get HTTP
+413 with a JSON-RPC parse-error body so the agent SDK can recover.
 
 This shape works for LangChain, LlamaIndex, CrewAI, custom Python/Go/Node
-services, or any other MCP-aware runtime that can connect to a Streamable HTTP
-MCP URL.
+services, or any other MCP-aware runtime that can talk to a Streamable HTTP
+URL.
 
-## Stdio Shim
+## Stdio shim
 
-Use the shim when an IDE or client only launches stdio MCP commands.
+Use the shim when an IDE or client only launches stdio MCP commands (Cursor,
+Claude Desktop, similar):
 
 ```json
 {
   "mcpServers": {
     "go-example-mcp": {
-      "command": "/absolute/path/to/bin/mcp-runtime-mcp-shim",
+      "command": "/absolute/path/to/bin/mcp-runtime",
+      "args": [
+        "adapter", "stdio",
+        "--runtime-url", "https://mcp.example.com/go-example-mcp/mcp",
+        "--server", "go-example-mcp",
+        "--agent", "ticket-triage-agent",
+        "--auto-refresh"
+      ],
       "env": {
-        "MCP_RUNTIME_URL": "http://localhost:18080/go-example-mcp/mcp",
-        "MCP_RUNTIME_HUMAN_ID": "support-lead",
-        "MCP_RUNTIME_AGENT_ID": "ticket-triage-agent",
-        "MCP_RUNTIME_SESSION_ID": "sess-ticket-triage-agent"
+        "MCP_PLATFORM_API_URL": "https://platform.example.com",
+        "MCP_PLATFORM_API_TOKEN": "..."
       }
     }
   }
@@ -208,27 +313,41 @@ Use the shim when an IDE or client only launches stdio MCP commands.
 ```
 
 The shim reads newline-delimited JSON-RPC messages from stdin, posts them to
-`MCP_RUNTIME_URL`, and writes JSON-RPC responses to stdout. HTTP denials from
-the platform, such as `trust_too_low`, are returned to stdio clients as JSON-RPC
-errors so the client sees the governed failure instead of a silent transport
-drop.
+the runtime, and writes responses back to stdout.
 
-For Streamable HTTP event-stream responses, the shim writes each valid JSON-RPC
-`data:` frame to stdout as it arrives and keeps reading stdin while the upstream
-stream remains open. That lets server-to-client requests and progress messages
-flow through without waiting for the runtime to close the HTTP response.
+Behaviour worth knowing:
 
-The shim exits on process context cancellation even when stdin is idle.
-`initialize` is forwarded synchronously so the runtime session ID is captured
-before later requests. Leave `MCP_RUNTIME_REQUEST_TIMEOUT` unset for unbounded
-tool calls, or set it to a duration when a demo or local integration should
-fail fast if the runtime stops responding.
+- `initialize` is forwarded synchronously so the runtime `Mcp-Session-Id` is
+  captured before later requests. The negotiated `protocolVersion` from the
+  `result` body is also captured and used on subsequent calls.
+- Streamable HTTP `text/event-stream` responses are streamed through frame
+  by frame so server-to-client requests and progress messages flow without
+  waiting for the runtime to close the response. The shim watches each SSE
+  frame for `notifications/tools/list_changed` and invalidates its
+  `tools/list` cache when it sees one.
+- The shim leaves `MCP_RUNTIME_REQUEST_TIMEOUT` unset by default so
+  long-running tool calls are not cut off. Set it when fail-fast behaviour
+  is preferable.
+- Platform 4xx denials (e.g. `trust_too_low`) are returned to stdio clients
+  as JSON-RPC errors. Runtime denials matching `session_expired` /
+  `session_not_found` are repackaged with `error.data.runtime_status =
+  "session_expired"` so the SDK can choose to re-initialize.
+- Idempotent reads (`tools/list`, `resources/list`, `prompts/list`, `ping`)
+  retry on `502`/`504`/connection-reset with exponential backoff (100 ms →
+  200 ms → 1 s cap). `tools/call` never retries automatically.
 
-## Expected Outcomes
+## Expected outcomes
 
-- A low-trust allowed tool call succeeds when the grant, session, and tool rule
-  permit it.
-- If the active session consents to less trust than the tool requires, the
-  runtime returns a denial such as `trust_too_low`.
-- Removing, disabling, or revoking the platform-side grant/session blocks calls
-  without changing adapter configuration.
+- A low-trust allowed tool call succeeds when the grant, session, and tool
+  rule permit it.
+- If the active session consents to less trust than a tool requires, the
+  runtime returns `trust_too_low` and the adapter surfaces it as a JSON-RPC
+  error to the client.
+- Disabling or revoking the platform-side grant/session blocks calls
+  without changing adapter configuration. With `--auto-refresh`, the next
+  refresh tick may detect the new state (no matching grant → 403, surfaced
+  in the adapter's stderr; the previous identity remains in use until
+  expiry).
+- Restarting the adapter against a revoked or expired session yields a
+  fresh `MCPAgentSession` automatically, since the reuse predicate excludes
+  revoked/near-expiry sessions.

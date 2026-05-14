@@ -216,8 +216,11 @@ var (
 <a id="api-types-type-analyticsconfig-struct"></a>
 ```text
 type AnalyticsConfig struct {
-	// Enabled turns on analytics emission from the gateway sidecar.
-	Enabled bool `json:"enabled,omitempty"`
+	// Disabled suppresses analytics emission from the gateway sidecar for this
+	// server. Analytics is on by default whenever the operator has an analytics
+	// ingest URL configured (via Spec.Analytics.IngestURL or the operator's
+	// MCP_SENTINEL_INGEST_URL env). Set Disabled to true to opt out per server.
+	Disabled bool `json:"disabled,omitempty"`
 
 	// IngestURL is the analytics ingest endpoint.
 	IngestURL string `json:"ingestURL,omitempty"`
@@ -904,7 +907,9 @@ type MCPServerSpec struct {
 	Gateway *GatewayConfig `json:"gateway,omitempty"`
 
 	// Analytics configures audit/analytics emission for the gateway sidecar.
-	// Analytics is only applied when Gateway is enabled.
+	// Analytics is only applied when Gateway is enabled. Emission is on by
+	// default whenever the operator has an analytics ingest URL configured;
+	// set Analytics.Disabled to true to opt this server out.
 	Analytics *AnalyticsConfig `json:"analytics,omitempty"`
 
 	// Rollout configures deployment rollout behavior for this server.
@@ -1488,13 +1493,15 @@ func ResolveRegistryHost() string
 <a id="metadata-helpers-type-analyticsconfig-struct"></a>
 ```text
 type AnalyticsConfig struct {
-	Enabled         bool          `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Disabled        bool          `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 	IngestURL       string        `yaml:"ingestURL,omitempty" json:"ingestURL,omitempty"`
 	Source          string        `yaml:"source,omitempty" json:"source,omitempty"`
 	EventType       string        `yaml:"eventType,omitempty" json:"eventType,omitempty"`
 	APIKeySecretRef *SecretKeyRef `yaml:"apiKeySecretRef,omitempty" json:"apiKeySecretRef,omitempty"`
 }
     AnalyticsConfig configures analytics emission from the gateway sidecar.
+    Emission is on by default whenever the operator has an analytics ingest URL
+    configured; set Disabled to true to opt out per server.
 
 ```
 
@@ -1841,6 +1848,7 @@ forward MCP traffic to governed MCP Runtime routes.
 - [Overview](#agent-adapters-overview)
 - [Index](#agent-adapters-index)
 - [Constants](#agent-adapters-constants)
+- [Variables](#agent-adapters-variables)
 - [Functions](#agent-adapters-functions)
 - [Types](#agent-adapters-types)
 
@@ -1848,13 +1856,26 @@ forward MCP traffic to governed MCP Runtime routes.
 ### Index
 
 - [`Constants`](#agent-adapters-constants)
-- [`func NewHTTPProxyHandler(cfg Config) (http.Handler, error)`](#agent-adapters-func-newhttpproxyhandler-cfg-config-http-handler-error)
-- [`func RunHTTPProxy(ctx context.Context, cfg Config) error`](#agent-adapters-func-runhttpproxy-ctx-context-context-cfg-config-error)
-- [`func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error`](#agent-adapters-func-runstdioshim-ctx-context-context-cfg-config-opts-stdiooptions-error)
-- [`func ValidateConfig(cfg Config) error`](#agent-adapters-func-validateconfig-cfg-config-error)
-- [`type Config struct`](#agent-adapters-type-config-struct)
-- [`func LoadProxyConfigFromEnv() (Config, error)`](#agent-adapters-func-loadproxyconfigfromenv-config-error)
-- [`func LoadShimConfigFromEnv() (Config, error)`](#agent-adapters-func-loadshimconfigfromenv-config-error)
+- [`Variables`](#agent-adapters-variables)
+- [`func BuildTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error)`](#agent-adapters-func-buildtlsconfig-certfile-keyfile-cafile-string-tls-config-error)
+- [`func NewHTTPProxyHandler(cfg ProxyConfig) (http.Handler, error)`](#agent-adapters-func-newhttpproxyhandler-cfg-proxyconfig-http-handler-error)
+- [`func NewHTTPTransportWithTLS(cfg *tls.Config) *http.Transport`](#agent-adapters-func-newhttptransportwithtls-cfg-tls-config-http-transport)
+- [`func RunHTTPProxy(ctx context.Context, cfg ProxyConfig) error`](#agent-adapters-func-runhttpproxy-ctx-context-context-cfg-proxyconfig-error)
+- [`func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error`](#agent-adapters-func-runstdioshim-ctx-context-context-cfg-shimconfig-opts-stdiooptions-error)
+- [`func SplitTrimmed(s, sep string) []string`](#agent-adapters-func-splittrimmed-s-sep-string-string)
+- [`type Identity struct`](#agent-adapters-type-identity-struct)
+- [`func (id Identity) Apply(headers http.Header)`](#agent-adapters-func-id-identity-apply-headers-http-header)
+- [`type IdentityProvider func() Identity`](#agent-adapters-type-identityprovider-func-identity)
+- [`type ProxyConfig struct`](#agent-adapters-type-proxyconfig-struct)
+- [`func LoadProxyConfigFromEnv() (ProxyConfig, error)`](#agent-adapters-func-loadproxyconfigfromenv-proxyconfig-error)
+- [`func (cfg ProxyConfig) Validate() error`](#agent-adapters-func-cfg-proxyconfig-validate-error)
+- [`type RuntimeTransport struct`](#agent-adapters-type-runtimetransport-struct)
+- [`func (t *RuntimeTransport) Client() *http.Client`](#agent-adapters-func-t-runtimetransport-client-http-client)
+- [`func (t *RuntimeTransport) CloseIdleConnections()`](#agent-adapters-func-t-runtimetransport-closeidleconnections)
+- [`func (t *RuntimeTransport) RoundTrip(req *http.Request) (*http.Response, error)`](#agent-adapters-func-t-runtimetransport-roundtrip-req-http-request-http-response-error)
+- [`type ShimConfig struct`](#agent-adapters-type-shimconfig-struct)
+- [`func LoadShimConfigFromEnv() (ShimConfig, error)`](#agent-adapters-func-loadshimconfigfromenv-shimconfig-error)
+- [`func (cfg ShimConfig) Validate() error`](#agent-adapters-func-cfg-shimconfig-validate-error)
 - [`type StdioOptions struct`](#agent-adapters-type-stdiooptions-struct)
 
 <a id="agent-adapters-constants"></a>
@@ -1862,99 +1883,299 @@ forward MCP traffic to governed MCP Runtime routes.
 
 ```text
 const (
-	EnvRuntimeURL      = "MCP_RUNTIME_URL"
-	EnvHumanID         = "MCP_RUNTIME_HUMAN_ID"
-	EnvAgentID         = "MCP_RUNTIME_AGENT_ID"
-	EnvSessionID       = "MCP_RUNTIME_SESSION_ID"
-	EnvHostHeader      = "MCP_RUNTIME_HOST_HEADER"
-	EnvListenAddr      = "MCP_RUNTIME_LISTEN_ADDR"
-	EnvProtocolVersion = "MCP_RUNTIME_PROTOCOL_VERSION"
-	EnvSetXForwarded   = "MCP_RUNTIME_SET_XFF"
-	EnvRequestTimeout  = "MCP_RUNTIME_REQUEST_TIMEOUT"
-	EnvLogLevel        = "MCP_RUNTIME_LOG_LEVEL"
+	EnvRuntimeURL       = "MCP_RUNTIME_URL"
+	EnvHumanID          = "MCP_RUNTIME_HUMAN_ID"
+	EnvAgentID          = "MCP_RUNTIME_AGENT_ID"
+	EnvTeamID           = "MCP_RUNTIME_TEAM_ID"
+	EnvSessionID        = "MCP_RUNTIME_SESSION_ID"
+	EnvHostHeader       = "MCP_RUNTIME_HOST_HEADER"
+	EnvListenAddr       = "MCP_RUNTIME_LISTEN_ADDR"
+	EnvProtocolVersion  = "MCP_RUNTIME_PROTOCOL_VERSION"
+	EnvSetXForwarded    = "MCP_RUNTIME_SET_XFF"
+	EnvRequestTimeout   = "MCP_RUNTIME_REQUEST_TIMEOUT"
+	EnvLogLevel         = "MCP_RUNTIME_LOG_LEVEL"
+	EnvAnonymous        = "MCP_RUNTIME_ANONYMOUS"
+	EnvAnonymousMethods = "MCP_RUNTIME_ANONYMOUS_METHODS"
+	EnvAuthHeader       = "MCP_RUNTIME_AUTH_HEADER"
+	EnvTLSClientCert    = "MCP_RUNTIME_TLS_CLIENT_CERT"
+	EnvTLSClientKey     = "MCP_RUNTIME_TLS_CLIENT_KEY"
+	EnvTLSCABundle      = "MCP_RUNTIME_TLS_CA_BUNDLE"
+	EnvMaxInboundBytes  = "MCP_RUNTIME_MAX_INBOUND_BYTES"
+	EnvToolsCacheTTL    = "MCP_RUNTIME_TOOLS_CACHE_TTL"
 
 	DefaultListenAddr      = "127.0.0.1:8099"
 	DefaultProtocolVersion = "2025-06-18"
 
 	HumanIDHeader      = "X-MCP-Human-ID"
 	AgentIDHeader      = "X-MCP-Agent-ID"
+	TeamIDHeader       = "X-MCP-Team-ID"
 	AgentSessionHeader = "X-MCP-Agent-Session"
 	MCPProtocolHeader  = "Mcp-Protocol-Version"
 	MCPSessionHeader   = "Mcp-Session-Id"
 )
+const (
+
+	// DefaultMaxInboundBytes caps the size of inbound JSON-RPC bodies that
+	// the proxy buffers for metadata capture. Requests over the cap get a
+	// 413 with a JSON-RPC parse-error body so the agent SDK can recover.
+	DefaultMaxInboundBytes int64 = 16 << 20
+)
+```
+
+<a id="agent-adapters-variables"></a>
+### Variables
+
+```text
+var DefaultAnonymousMethods = []string{
+	"initialize",
+	"notifications/initialized",
+	"ping",
+	"tools/list",
+	"resources/list",
+	"prompts/list",
+}
+    DefaultAnonymousMethods is the set of MCP methods the stdio shim allows
+    in anonymous mode when no explicit AnonymousMethods list is configured.
+    These are read-only discovery methods and the protocol handshake.
 ```
 
 <a id="agent-adapters-functions"></a>
 ### Functions
 
-<a id="agent-adapters-func-newhttpproxyhandler-cfg-config-http-handler-error"></a>
+<a id="agent-adapters-func-buildtlsconfig-certfile-keyfile-cafile-string-tls-config-error"></a>
 ```text
-func NewHTTPProxyHandler(cfg Config) (http.Handler, error)
+func BuildTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error)
+    BuildTLSConfig builds a *tls.Config for outbound runtime connections.
+    certFile and keyFile must both be set (or both empty) for mTLS. caFile,
+    when non-empty, replaces the default system CA pool.
+
+```
+
+<a id="agent-adapters-func-newhttpproxyhandler-cfg-proxyconfig-http-handler-error"></a>
+```text
+func NewHTTPProxyHandler(cfg ProxyConfig) (http.Handler, error)
     NewHTTPProxyHandler returns a reverse proxy that forwards MCP HTTP traffic
     to the configured runtime route and injects issued governance identity
     headers.
 
 ```
 
-<a id="agent-adapters-func-runhttpproxy-ctx-context-context-cfg-config-error"></a>
+<a id="agent-adapters-func-newhttptransportwithtls-cfg-tls-config-http-transport"></a>
 ```text
-func RunHTTPProxy(ctx context.Context, cfg Config) error
+func NewHTTPTransportWithTLS(cfg *tls.Config) *http.Transport
+    NewHTTPTransportWithTLS returns an *http.Transport that uses the supplied
+    TLS config while preserving http.DefaultTransport's dial timeouts,
+    keep-alive settings, and ProxyFromEnvironment behaviour.
+
+```
+
+<a id="agent-adapters-func-runhttpproxy-ctx-context-context-cfg-proxyconfig-error"></a>
+```text
+func RunHTTPProxy(ctx context.Context, cfg ProxyConfig) error
     RunHTTPProxy serves the local HTTP adapter until the context is cancelled.
 
 ```
 
-<a id="agent-adapters-func-runstdioshim-ctx-context-context-cfg-config-opts-stdiooptions-error"></a>
+<a id="agent-adapters-func-runstdioshim-ctx-context-context-cfg-shimconfig-opts-stdiooptions-error"></a>
 ```text
-func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error
+func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error
     RunStdioShim reads newline-delimited stdio MCP JSON-RPC messages, forwards
     them to the configured Streamable HTTP route, and writes JSON-RPC responses
     back to stdout.
 
 ```
 
-<a id="agent-adapters-func-validateconfig-cfg-config-error"></a>
+<a id="agent-adapters-func-splittrimmed-s-sep-string-string"></a>
 ```text
-func ValidateConfig(cfg Config) error
-    ValidateConfig checks the common adapter invariants without reading process
-    state.
+func SplitTrimmed(s, sep string) []string
 ```
 
 <a id="agent-adapters-types"></a>
 ### Types
 
-<a id="agent-adapters-type-config-struct"></a>
+<a id="agent-adapters-type-identity-struct"></a>
 ```text
-type Config struct {
-	RuntimeURL        *url.URL
-	HumanID           string
-	AgentID           string
-	SessionID         string
-	HostHeader        string
-	ListenAddr        string
-	ProtocolVersion   string
-	HTTPClient        *http.Client
-	RequestTimeout    time.Duration
-	LogLevel          string
-	LogWriter         io.Writer
-	DisableXForwarded bool
+type Identity struct {
+	HumanID   string
+	AgentID   string
+	TeamID    string
+	SessionID string
 }
-    Config is the shared configuration for agent-side adapters.
+    Identity is the issued governance identity that adapters attach to every
+    runtime request. The platform issues these values out-of-band (or through
+    the platform adapter-session endpoint); the adapter only forwards them.
 
 ```
 
-<a id="agent-adapters-func-loadproxyconfigfromenv-config-error"></a>
+<a id="agent-adapters-func-id-identity-apply-headers-http-header"></a>
 ```text
-func LoadProxyConfigFromEnv() (Config, error)
+func (id Identity) Apply(headers http.Header)
+    Apply writes the governance identity onto an outbound request's headers,
+    replacing any caller-supplied values. Headers are always deleted first to
+    strip spoofed inbound values. A header is only re-set when its value is
+    non-empty, so anonymous-mode adapters with partial identity naturally omit
+    the missing headers rather than forwarding empty strings.
+
+```
+
+<a id="agent-adapters-type-identityprovider-func-identity"></a>
+```text
+type IdentityProvider func() Identity
+    IdentityProvider returns the current governance identity. Adapters call it
+    before each outbound request so callers that rotate identity at runtime
+    (for example, platform-issued sessions refreshed before expiry) get the
+    new values applied without restarting the adapter process. When non-nil on
+    ProxyConfig / ShimConfig it takes precedence over the static Identity.
+
+```
+
+<a id="agent-adapters-type-proxyconfig-struct"></a>
+```text
+type ProxyConfig struct {
+	RuntimeURL        *url.URL
+	Identity          Identity
+	Transport         *RuntimeTransport
+	HostHeader        string
+	ListenAddr        string
+	ProtocolVersion   string
+	LogLevel          string
+	LogWriter         io.Writer
+	DisableXForwarded bool
+	// MaxInboundBytes caps the size of JSON-RPC request bodies the proxy
+	// buffers when capturing metadata. Zero (or negative) means use
+	// DefaultMaxInboundBytes (16 MiB). Over-cap requests respond with 413.
+	MaxInboundBytes int64
+	// MetricsHandler, when set, is served at /metrics. Typical use: a
+	// Prometheus exporter wired to the OTel MeterProvider that backs
+	// RuntimeTransport.Meter. Nil → /metrics returns 404.
+	MetricsHandler http.Handler
+	// IdentityProvider overrides Identity per-request when set. Used by
+	// callers that rotate identity at runtime (e.g. auto-refreshed
+	// platform-issued adapter sessions). Nil → static Identity is used.
+	IdentityProvider IdentityProvider
+}
+    ProxyConfig configures the local HTTP reverse-proxy adapter that exposes
+    Streamable HTTP MCP to an agent SDK.
+
+```
+
+<a id="agent-adapters-func-loadproxyconfigfromenv-proxyconfig-error"></a>
+```text
+func LoadProxyConfigFromEnv() (ProxyConfig, error)
     LoadProxyConfigFromEnv loads HTTP proxy configuration from environment
     variables.
 
 ```
 
-<a id="agent-adapters-func-loadshimconfigfromenv-config-error"></a>
+<a id="agent-adapters-func-cfg-proxyconfig-validate-error"></a>
 ```text
-func LoadShimConfigFromEnv() (Config, error)
+func (cfg ProxyConfig) Validate() error
+    Validate enforces the runtime identity invariants for the HTTP proxy.
+
+```
+
+<a id="agent-adapters-type-runtimetransport-struct"></a>
+```text
+type RuntimeTransport struct {
+	// Base is the underlying round-tripper. nil means http.DefaultTransport.
+	// Tests swap in a mock by setting this field.
+	Base http.RoundTripper
+	// Timeout is the per-request timeout applied to the *http.Client wrapper
+	// returned by Client(). Zero means no timeout.
+	Timeout time.Duration
+	// AuthHeader is a static Authorization header value injected into every
+	// outbound request (e.g. "Bearer <token>"). Empty means no header is set.
+	AuthHeader string
+	// Tracer is an optional OTel tracer. When non-nil, RoundTrip opens one
+	// client span per RPC labelled with the JSON-RPC method name.
+	Tracer trace.Tracer
+	// Meter is an optional OTel meter. When non-nil, RoundTrip records a
+	// latency histogram and a denial counter keyed by method name.
+	Meter metric.Meter
+
+	// Has unexported fields.
+}
+    RuntimeTransport is the shared outbound HTTP transport used by both the
+    reverse proxy and the stdio shim when forwarding to the runtime. It owns
+    every production gate — auth, OTel instrumentation, and method-keyed retry —
+    so both adapters behave identically with a single implementation.
+
+```
+
+<a id="agent-adapters-func-t-runtimetransport-client-http-client"></a>
+```text
+func (t *RuntimeTransport) Client() *http.Client
+    Client returns an *http.Client whose Transport is this RuntimeTransport.
+    Both adapters route requests through this wrapper so every gate (auth, OTel,
+    retry) applies uniformly.
+
+```
+
+<a id="agent-adapters-func-t-runtimetransport-closeidleconnections"></a>
+```text
+func (t *RuntimeTransport) CloseIdleConnections()
+    CloseIdleConnections drains idle connections on the base round-tripper if it
+    supports the optional interface, matching net/http's contract.
+
+```
+
+<a id="agent-adapters-func-t-runtimetransport-roundtrip-req-http-request-http-response-error"></a>
+```text
+func (t *RuntimeTransport) RoundTrip(req *http.Request) (*http.Response, error)
+    RoundTrip implements http.RoundTripper. Execution order per call:
+     1. Start OTel span (if Tracer is set).
+     2. Inject Authorization header (if AuthHeader is set).
+     3. Execute the request, retrying idempotent methods on gateway errors.
+     4. Record OTel latency histogram and denial counter (if Meter is set).
+     5. Set span outcome and end it.
+
+```
+
+<a id="agent-adapters-type-shimconfig-struct"></a>
+```text
+type ShimConfig struct {
+	RuntimeURL      *url.URL
+	Identity        Identity
+	Transport       *RuntimeTransport
+	HostHeader      string
+	ProtocolVersion string
+	LogLevel        string
+	LogWriter       io.Writer
+	// Anonymous, when true, relaxes identity validation so the shim can forward
+	// to public/read-only runtime routes without a session or human/agent ID.
+	// Only methods in AnonymousMethods are forwarded; all others are rejected
+	// with a JSON-RPC error before reaching the runtime.
+	Anonymous bool
+	// AnonymousMethods is the allowlist used when Anonymous is true. When empty
+	// the DefaultAnonymousMethods list applies.
+	AnonymousMethods []string
+	// ToolsCacheTTL enables a process-local tools/list response cache when
+	// set to a positive duration. Zero (or negative) disables the cache.
+	// Entries are keyed by identity + runtime URL and invalidated on a
+	// tools/list_changed notification or when the TTL expires.
+	ToolsCacheTTL time.Duration
+	// IdentityProvider overrides Identity per-request when set.
+	// See ProxyConfig.IdentityProvider for the contract.
+	IdentityProvider IdentityProvider
+}
+    ShimConfig configures the stdio adapter that bridges newline-delimited
+    JSON-RPC MCP traffic to the runtime over HTTP.
+
+```
+
+<a id="agent-adapters-func-loadshimconfigfromenv-shimconfig-error"></a>
+```text
+func LoadShimConfigFromEnv() (ShimConfig, error)
     LoadShimConfigFromEnv loads stdio shim configuration from environment
     variables.
+
+```
+
+<a id="agent-adapters-func-cfg-shimconfig-validate-error"></a>
+```text
+func (cfg ShimConfig) Validate() error
+    Validate enforces the runtime identity invariants for the stdio shim.
+    In anonymous mode only the runtime URL is required.
 
 ```
 
@@ -2131,6 +2352,9 @@ type MCPServerReconciler struct {
 	// GatewayProxyImage is the default image used for the optional MCP gateway sidecar.
 	GatewayProxyImage string
 
+	// GatewayOTLPEndpoint is the OTLP/HTTP endpoint injected into MCP gateway sidecars.
+	GatewayOTLPEndpoint string
+
 	// DefaultAnalyticsIngestURL is the default analytics ingest endpoint used when analytics is enabled.
 	DefaultAnalyticsIngestURL string
 
@@ -2186,6 +2410,9 @@ type OperatorConfig struct {
 
 	// GatewayProxyImage is the default image used for the optional MCP gateway sidecar.
 	GatewayProxyImage string
+
+	// GatewayOTLPEndpoint is the OTLP/HTTP endpoint injected into MCP gateway sidecars.
+	GatewayOTLPEndpoint string
 
 	// AnalyticsIngestURL is the default analytics ingest endpoint for gateway sidecars.
 	AnalyticsIngestURL string
@@ -2313,6 +2540,7 @@ kubectl clients, terminal output, and test doubles.
 - [`func GetClusterName() string`](#cli-core-func-getclustername-string)
 - [`func GetDefaultServerPort() int`](#cli-core-func-getdefaultserverport-int)
 - [`func GetDeploymentTimeout() time.Duration`](#cli-core-func-getdeploymenttimeout-time-duration)
+- [`func GetGatewayOTLPEndpointOverride() string`](#cli-core-func-getgatewayotlpendpointoverride-string)
 - [`func GetGatewayProxyImageOverride() string`](#cli-core-func-getgatewayproxyimageoverride-string)
 - [`func GetHelperPodTimeout() time.Duration`](#cli-core-func-gethelperpodtimeout-time-duration)
 - [`func GetMcpIngressHost() string`](#cli-core-func-getmcpingresshost-string)
@@ -2700,6 +2928,14 @@ func GetDeploymentTimeout() time.Duration
 
 ```
 
+<a id="cli-core-func-getgatewayotlpendpointoverride-string"></a>
+```text
+func GetGatewayOTLPEndpointOverride() string
+    GetGatewayOTLPEndpointOverride returns the gateway OTLP endpoint override,
+    empty if not set.
+
+```
+
 <a id="cli-core-func-getgatewayproxyimageoverride-string"></a>
 ```text
 func GetGatewayProxyImageOverride() string
@@ -2962,6 +3198,7 @@ type CLIConfig struct {
 	SkopeoImage               string
 	OperatorImage             string // Override for operator image
 	GatewayProxyImage         string // Optional default image for the MCP gateway sidecar
+	GatewayOTLPEndpoint       string // Optional OTLP/HTTP endpoint for MCP gateway sidecar tracing
 	AnalyticsIngestURL        string // Optional analytics ingest URL override for the MCP gateway sidecar
 	IngressReadinessMode      string // Optional operator ingress readiness mode: strict or permissive
 	ClusterName               string // Optional cluster label attached to analytics/audit events
@@ -4136,14 +4373,18 @@ _No package overview is documented._
 
 - [`func HasPlatformClient() bool`](#cli-platform-api-func-hasplatformclient-bool)
 - [`func NormalizeBaseURL(raw string) string`](#cli-platform-api-func-normalizebaseurl-raw-string-string)
+- [`type AdapterSession struct`](#cli-platform-api-type-adaptersession-struct)
+- [`type AdapterSessionRequest struct`](#cli-platform-api-type-adaptersessionrequest-struct)
 - [`type ImagePublishRecord struct`](#cli-platform-api-type-imagepublishrecord-struct)
 - [`type PlatformClient struct`](#cli-platform-api-type-platformclient-struct)
 - [`func NewPlatformClient() (*PlatformClient, error)`](#cli-platform-api-func-newplatformclient-platformclient-error)
 - [`func ResolvePlatformOrKube(useKube bool) (*PlatformClient, bool, error)`](#cli-platform-api-func-resolveplatformorkube-usekube-bool-platformclient-bool-error)
 - [`func (c *PlatformClient) ApplyAccessFromYAMLFile(ctx context.Context, path string) error`](#cli-platform-api-func-c-platformclient-applyaccessfromyamlfile-ctx-context-context-path-string-error)
 - [`func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error)`](#cli-platform-api-func-c-platformclient-applyruntimeserver-ctx-context-context-name-namespace-string-spec-mcpv1alpha1-mcpserverspec-serverlistitem-error)
+- [`func (c *PlatformClient) CreateAdapterSession(ctx context.Context, req AdapterSessionRequest) (AdapterSession, error)`](#cli-platform-api-func-c-platformclient-createadaptersession-ctx-context-context-req-adaptersessionrequest-adaptersession-error)
 - [`func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Team, error)`](#cli-platform-api-func-c-platformclient-createteam-ctx-context-context-slug-name-string-team-error)
 - [`func (c *PlatformClient) DeleteGrant(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deletegrant-ctx-context-context-namespace-name-string-error)
+- [`func (c *PlatformClient) DeleteRuntimeServer(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deleteruntimeserver-ctx-context-context-namespace-name-string-error)
 - [`func (c *PlatformClient) DeleteSession(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deletesession-ctx-context-context-namespace-name-string-error)
 - [`func (c *PlatformClient) GetGrant(ctx context.Context, namespace, name string) (sentinelaccess.GrantSummary, error)`](#cli-platform-api-func-c-platformclient-getgrant-ctx-context-context-namespace-name-string-sentinelaccess-grantsummary-error)
 - [`func (c *PlatformClient) GetRuntimePolicy(ctx context.Context, namespace, server string) ([]byte, error)`](#cli-platform-api-func-c-platformclient-getruntimepolicy-ctx-context-context-namespace-server-string-byte-error)
@@ -4177,6 +4418,41 @@ func NormalizeBaseURL(raw string) string
 
 <a id="cli-platform-api-types"></a>
 ### Types
+
+<a id="cli-platform-api-type-adaptersession-struct"></a>
+```text
+type AdapterSession struct {
+	Name           string    `json:"name"`
+	Namespace      string    `json:"namespace"`
+	HumanID        string    `json:"humanID"`
+	AgentID        string    `json:"agentID"`
+	TeamID         string    `json:"teamID,omitempty"`
+	ServerName     string    `json:"serverName"`
+	ConsentedTrust string    `json:"consentedTrust"`
+	PolicyVersion  string    `json:"policyVersion"`
+	ExpiresAt      time.Time `json:"expiresAt"`
+	Reused         bool      `json:"reused"`
+}
+    AdapterSession captures the identity the adapter must inject into runtime
+    requests. ExpiresAt is absolute (server-side time); callers should refresh
+    before it elapses.
+
+```
+
+<a id="cli-platform-api-type-adaptersessionrequest-struct"></a>
+```text
+type AdapterSessionRequest struct {
+	ServerName     string `json:"serverName"`
+	Namespace      string `json:"namespace,omitempty"`
+	AgentID        string `json:"agentID"`
+	RequestedTrust string `json:"requestedTrust,omitempty"`
+	RequestedTTL   string `json:"requestedTTL,omitempty"`
+}
+    AdapterSessionRequest is the input contract for the platform API endpoint
+    POST /api/runtime/adapter/sessions. RequestedTTL/Trust are optional;
+    empty values fall back to platform-side defaults.
+
+```
 
 <a id="cli-platform-api-type-imagepublishrecord-struct"></a>
 ```text
@@ -4226,6 +4502,15 @@ func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace
 
 ```
 
+<a id="cli-platform-api-func-c-platformclient-createadaptersession-ctx-context-context-req-adaptersessionrequest-adaptersession-error"></a>
+```text
+func (c *PlatformClient) CreateAdapterSession(ctx context.Context, req AdapterSessionRequest) (AdapterSession, error)
+    CreateAdapterSession asks the platform to issue (or reuse) an
+    MCPAgentSession for the calling principal. The returned session.Name doubles
+    as the SessionID the adapter forwards on every runtime request.
+
+```
+
 <a id="cli-platform-api-func-c-platformclient-createteam-ctx-context-context-slug-name-string-team-error"></a>
 ```text
 func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Team, error)
@@ -4235,6 +4520,12 @@ func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Tea
 <a id="cli-platform-api-func-c-platformclient-deletegrant-ctx-context-context-namespace-name-string-error"></a>
 ```text
 func (c *PlatformClient) DeleteGrant(ctx context.Context, namespace, name string) error
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-deleteruntimeserver-ctx-context-context-namespace-name-string-error"></a>
+```text
+func (c *PlatformClient) DeleteRuntimeServer(ctx context.Context, namespace, name string) error
 
 ```
 
@@ -5237,6 +5528,7 @@ type Input struct {
 	ForceIngressInstall    bool
 	TLSEnabled             bool
 	TestMode               bool
+	ParallelBuilds         bool
 	StrictProd             bool
 	DeployAnalytics        bool
 	OperatorArgs           []string
@@ -5264,6 +5556,7 @@ type Plan struct {
 	RegistryManifest    string
 	TLSEnabled          bool
 	TestMode            bool
+	ParallelBuilds      bool
 	StrictProd          bool
 	DeployAnalytics     bool
 	OperatorArgs        []string

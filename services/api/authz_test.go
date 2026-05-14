@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -100,5 +102,102 @@ func TestAuthOrPublicCatalogAllowsAnonymousPublicServerList(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/runtime/servers", nil))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("POST status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+type fakeRegistryCredentialAuth struct {
+	principal principal
+	ok        bool
+	err       error
+	username  string
+	password  string
+}
+
+func (f *fakeRegistryCredentialAuth) AuthenticateRegistryCredential(_ context.Context, username, password string) (principal, bool, error) {
+	f.username = username
+	f.password = password
+	return f.principal, f.ok, f.err
+}
+
+func TestRegistryAuthzAllowsStaticAdminKey(t *testing.T) {
+	srv := &apiServer{
+		apiKeys:      map[string]struct{}{"admin-key": {}, "user-key": {}},
+		adminAPIKeys: map[string]struct{}{"admin-key": {}},
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/registry/authz", nil)
+	req.Header.Set("x-api-key", "admin-key")
+	srv.handleRegistryAuthz(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("admin status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/registry/authz", nil)
+	req.Header.Set("x-api-key", "user-key")
+	srv.handleRegistryAuthz(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("user status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestRegistryAuthzChallengesAnonymousRequests(t *testing.T) {
+	srv := &apiServer{}
+
+	rec := httptest.NewRecorder()
+	srv.handleRegistryAuthz(rec, httptest.NewRequest(http.MethodGet, "/api/registry/authz", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if got := rec.Header().Get("WWW-Authenticate"); got != registryAuthChallenge {
+		t.Fatalf("WWW-Authenticate = %q, want %q", got, registryAuthChallenge)
+	}
+}
+
+func TestRegistryAuthzAllowsAdminRegistryCredential(t *testing.T) {
+	authn := &fakeRegistryCredentialAuth{
+		principal: principal{Role: roleAdmin, Subject: "admin-user", AuthType: "registry_basic"},
+		ok:        true,
+	}
+	srv := &apiServer{registryAuth: authn}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/registry/authz", nil)
+	req.SetBasicAuth("user-1", "registry-secret")
+	srv.handleRegistryAuthz(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if authn.username != "user-1" || authn.password != "registry-secret" {
+		t.Fatalf("basic credentials = %q/%q, want user-1/registry-secret", authn.username, authn.password)
+	}
+}
+
+func TestRegistryAuthzRejectsNonAdminRegistryCredential(t *testing.T) {
+	authn := &fakeRegistryCredentialAuth{
+		principal: principal{Role: roleUser, Subject: "user"},
+		ok:        true,
+	}
+	srv := &apiServer{registryAuth: authn}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/registry/authz", nil)
+	req.SetBasicAuth("user-1", "registry-secret")
+	srv.handleRegistryAuthz(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestRegistryAuthzReportsAuthErrors(t *testing.T) {
+	srv := &apiServer{registryAuth: &fakeRegistryCredentialAuth{err: errors.New("store unavailable")}}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/registry/authz", nil)
+	req.SetBasicAuth("user-1", "registry-secret")
+	srv.handleRegistryAuthz(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
@@ -17,6 +18,9 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 
 	"mcp-runtime/pkg/events"
 	policypkg "mcp-runtime/pkg/policy"
@@ -25,7 +29,7 @@ import (
 func TestHandleProxyOAuthProtectedResourceMetadata(t *testing.T) {
 	issuer := newTestJWTIssuer(t)
 	upstreamCalled := false
-	proxy := newTestProxyServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, _ *http.Request) {
+	proxy := newTestGatewayServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, _ *http.Request) {
 		upstreamCalled = true
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -33,7 +37,7 @@ func TestHandleProxyOAuthProtectedResourceMetadata(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://proxy.example.com/.well-known/oauth-protected-resource/mcp", nil)
 	recorder := httptest.NewRecorder()
 
-	proxy.handleProxy(recorder, req)
+	proxy.handleGateway(recorder, req)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
@@ -60,7 +64,7 @@ func TestHandleProxyOAuthProtectedResourceMetadata(t *testing.T) {
 func TestHandleProxyOAuthChallengesWithoutBearer(t *testing.T) {
 	issuer := newTestJWTIssuer(t)
 	upstreamCalled := false
-	proxy := newTestProxyServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, _ *http.Request) {
+	proxy := newTestGatewayServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, _ *http.Request) {
 		upstreamCalled = true
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -69,7 +73,7 @@ func TestHandleProxyOAuthChallengesWithoutBearer(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 
-	proxy.handleProxy(recorder, req)
+	proxy.handleGateway(recorder, req)
 
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
@@ -92,7 +96,7 @@ func TestHandleProxyOAuthChallengesWithoutBearer(t *testing.T) {
 
 func TestHandleProxyOAuthChallengeUsesExternalBaseURL(t *testing.T) {
 	issuer := newTestJWTIssuer(t)
-	proxy := newTestProxyServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, _ *http.Request) {
+	proxy := newTestGatewayServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -108,7 +112,7 @@ func TestHandleProxyOAuthChallengeUsesExternalBaseURL(t *testing.T) {
 	req.Header.Set("X-Forwarded-Proto", "https")
 	recorder := httptest.NewRecorder()
 
-	proxy.handleProxy(recorder, req)
+	proxy.handleGateway(recorder, req)
 
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
@@ -122,7 +126,7 @@ func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 	issuer := newTestJWTIssuer(t)
 
 	var upstreamHeaders http.Header
-	proxy := newTestProxyServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, r *http.Request) {
+	proxy := newTestGatewayServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, r *http.Request) {
 		upstreamHeaders = r.Header.Clone()
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -143,7 +147,7 @@ func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	recorder := httptest.NewRecorder()
 
-	proxy.handleProxy(recorder, req)
+	proxy.handleGateway(recorder, req)
 
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
@@ -171,7 +175,7 @@ func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 func TestApplyIdentityHeadersClearsSpoofedValues(t *testing.T) {
 	t.Parallel()
 
-	proxy := &proxyServer{
+	proxy := &gatewayServer{
 		defaultHumanHeader:   defaultHumanHeader,
 		defaultAgentHeader:   defaultAgentHeader,
 		defaultTeamHeader:    defaultTeamHeader,
@@ -205,7 +209,7 @@ func TestApplyIdentityHeadersClearsSpoofedValues(t *testing.T) {
 func TestApplyUpstreamTokenClearsHeaderWhenTokenMissing(t *testing.T) {
 	t.Parallel()
 
-	proxy := &proxyServer{}
+	proxy := &gatewayServer{}
 	req := httptest.NewRequest(http.MethodGet, "http://proxy.example.com/mcp", nil)
 	req.Header.Set("Authorization", "Bearer spoofed-token")
 
@@ -233,7 +237,7 @@ func TestHandleProxyRewritesUpstreamHostAndForwardedHeaders(t *testing.T) {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
 
-	proxy := &proxyServer{
+	proxy := &gatewayServer{
 		proxy:                 newUpstreamReverseProxy(target),
 		httpClient:            &http.Client{Timeout: 2 * time.Second},
 		defaultHumanHeader:    defaultHumanHeader,
@@ -250,7 +254,7 @@ func TestHandleProxyRewritesUpstreamHostAndForwardedHeaders(t *testing.T) {
 	req.Host = "policy.example.local"
 	recorder := httptest.NewRecorder()
 
-	proxy.handleProxy(recorder, req)
+	proxy.handleGateway(recorder, req)
 
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
@@ -351,7 +355,7 @@ func TestResolveBaseURLPathPreservesBaseSubpath(t *testing.T) {
 func TestAuditPayloadDoesNotPersistRawQueryString(t *testing.T) {
 	t.Parallel()
 
-	proxy := &proxyServer{
+	proxy := &gatewayServer{
 		serverName:           "example-server",
 		serverNamespace:      "mcp-servers",
 		clusterName:          "kind",
@@ -377,10 +381,70 @@ func TestAuditPayloadDoesNotPersistRawQueryString(t *testing.T) {
 	}
 }
 
+func TestAuditPayloadIncludesLatencyMetadata(t *testing.T) {
+	t.Parallel()
+
+	proxy := &gatewayServer{
+		serverName:           "example-server",
+		serverNamespace:      "mcp-servers",
+		clusterName:          "kind",
+		defaultPolicyVersion: "test-policy",
+	}
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"jsonrpc":"2.0"}`))
+	req.ContentLength = int64(len(`{"jsonrpc":"2.0"}`))
+
+	payload := proxy.auditPayload(
+		req,
+		"/mcp",
+		"tools/call",
+		"echo",
+		identityContext{
+			HumanID:   "human-1",
+			AgentID:   "agent-1",
+			TeamID:    "team-acme",
+			SessionID: "session-1",
+		},
+		nil,
+		policypkg.Decision{Allowed: true, Reason: "allowed", PolicyVersion: "test-policy"},
+		http.StatusAccepted,
+		27,
+		91,
+	)
+
+	latencyMs, ok := payload["latency_ms"].(int64)
+	if !ok {
+		t.Fatalf("latency_ms type = %T, want int64", payload["latency_ms"])
+	}
+	if latencyMs != 27 {
+		t.Fatalf("latency_ms = %d, want 27", latencyMs)
+	}
+	if got := payload["method"]; got != http.MethodPost {
+		t.Fatalf("method = %#v, want %q", got, http.MethodPost)
+	}
+	if got := payload["path"]; got != "/mcp" {
+		t.Fatalf("path = %#v, want %q", got, "/mcp")
+	}
+	if got := payload["status"]; got != http.StatusAccepted {
+		t.Fatalf("status = %#v, want %d", got, http.StatusAccepted)
+	}
+	if got := payload["rpc_method"]; got != "tools/call" {
+		t.Fatalf("rpc_method = %#v, want %q", got, "tools/call")
+	}
+	if got := payload["tool_name"]; got != "echo" {
+		t.Fatalf("tool_name = %#v, want %q", got, "echo")
+	}
+	if got := payload["bytes_in"]; got != req.ContentLength {
+		t.Fatalf("bytes_in = %#v, want %d", got, req.ContentLength)
+	}
+	if got := payload["bytes_out"]; got != 91 {
+		t.Fatalf("bytes_out = %#v, want %d", got, 91)
+	}
+}
+
 func TestStartPolicyCacheRequiresConfiguredPolicyFile(t *testing.T) {
 	t.Parallel()
 
-	proxy := &proxyServer{
+	proxy := &gatewayServer{
 		policyFile:            filepath.Join(t.TempDir(), "missing-policy.json"),
 		defaultHumanHeader:    defaultHumanHeader,
 		defaultAgentHeader:    defaultAgentHeader,
@@ -399,15 +463,15 @@ func TestStartPolicyCacheRequiresConfiguredPolicyFile(t *testing.T) {
 func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
 	t.Parallel()
 
-	proxy := &proxyServer{
+	proxy := &gatewayServer{
 		analyticsURL:   "http://analytics.example.com",
-		analyticsQueue: make(chan events.Envelope, 1),
+		analyticsQueue: make(chan analyticsEvent, 1),
 	}
-	proxy.analyticsQueue <- events.Envelope{Source: "existing"}
+	proxy.analyticsQueue <- analyticsEvent{Envelope: events.Envelope{Source: "existing"}}
 
 	done := make(chan struct{})
 	go func() {
-		proxy.emitIfEnabled(events.Envelope{Source: "dropped"})
+		proxy.emitIfEnabled(context.Background(), events.Envelope{Source: "dropped"})
 		close(done)
 	}()
 
@@ -419,7 +483,7 @@ func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
 
 	select {
 	case event := <-proxy.analyticsQueue:
-		if event.Source != "existing" {
+		if event.Envelope.Source != "existing" {
 			t.Fatalf("analytics queue head = %#v, want existing event to remain", event)
 		}
 	default:
@@ -438,19 +502,58 @@ func TestStopAnalyticsDispatcherDrainsQueue(t *testing.T) {
 	}))
 	t.Cleanup(ingest.Close)
 
-	proxy := &proxyServer{
+	proxy := &gatewayServer{
 		analyticsURL: ingest.URL,
 		httpClient:   ingest.Client(),
 	}
 	proxy.startAnalyticsDispatcher()
 	for i := 0; i < 3; i++ {
-		proxy.emitIfEnabled(events.Envelope{Source: "proxy", EventType: "mcp.request"})
+		proxy.emitIfEnabled(context.Background(), events.Envelope{Source: "proxy", EventType: "mcp.request"})
 	}
 
 	proxy.stopAnalyticsDispatcher()
 
 	if got := atomic.LoadInt32(&received); got != 3 {
 		t.Fatalf("received analytics events = %d, want 3", got)
+	}
+}
+
+func TestAnalyticsDispatcherPropagatesTraceContext(t *testing.T) {
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		otel.SetTextMapPropagator(previous)
+	})
+
+	traceparents := make(chan string, 1)
+	ingest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		traceparents <- r.Header.Get("traceparent")
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(ingest.Close)
+
+	traceID := trace.TraceID{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1}
+	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     trace.SpanID{1, 3, 5, 7, 9, 11, 13, 15},
+		TraceFlags: trace.FlagsSampled,
+	}))
+	proxy := &gatewayServer{
+		analyticsURL: ingest.URL,
+		httpClient:   ingest.Client(),
+	}
+	proxy.startAnalyticsDispatcher()
+	proxy.emitIfEnabled(ctx, events.Envelope{Source: "proxy", EventType: "mcp.request"})
+	proxy.stopAnalyticsDispatcher()
+
+	select {
+	case traceparent := <-traceparents:
+		if !strings.Contains(traceparent, traceID.String()) {
+			t.Fatalf("traceparent = %q, want trace ID %s", traceparent, traceID)
+		}
+	default:
+		t.Fatal("ingest did not receive analytics request")
 	}
 }
 
@@ -499,7 +602,7 @@ func (i *testJWTIssuer) sign(t *testing.T, claims jwt.MapClaims) string {
 	return signed
 }
 
-func newTestProxyServer(t *testing.T, policy *policypkg.Document, upstream http.HandlerFunc) *proxyServer {
+func newTestGatewayServer(t *testing.T, policy *policypkg.Document, upstream http.HandlerFunc) *gatewayServer {
 	t.Helper()
 
 	upstreamServer := httptest.NewServer(upstream)
@@ -511,10 +614,10 @@ func newTestProxyServer(t *testing.T, policy *policypkg.Document, upstream http.
 	}
 	reverseProxy := newUpstreamReverseProxy(target)
 	reverseProxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
-		t.Fatalf("proxy error: %v", err)
+		t.Fatalf("gateway error: %v", err)
 	}
 
-	server := &proxyServer{
+	server := &gatewayServer{
 		proxy:                 reverseProxy,
 		httpClient:            &http.Client{Timeout: 2 * time.Second},
 		defaultHumanHeader:    defaultHumanHeader,
