@@ -1962,8 +1962,9 @@ run_with_retry() {
   for attempt in $(seq 1 "${LOCAL_REGISTRY_RETRY_TRIES}"); do
     if "$@"; then
       return 0
+    else
+      exit_code=$?
     fi
-    exit_code=$?
     if [[ "${attempt}" -lt "${LOCAL_REGISTRY_RETRY_TRIES}" ]]; then
       echo "[retry] ${description} failed (attempt ${attempt}/${LOCAL_REGISTRY_RETRY_TRIES}, exit ${exit_code}); retrying in ${LOCAL_REGISTRY_RETRY_DELAY}s" >&2
       sleep "${LOCAL_REGISTRY_RETRY_DELAY}"
@@ -2785,10 +2786,11 @@ parallel_start 3 "deploy ${GO_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pi
 parallel_wait_all
 
 echo "[cli] checking server commands"
+refresh_kind_kubeconfig
 
 # --- server list: assert the primary server appears ---
 _cli_list_file="${WORKDIR}/server-list.txt"
-if ! run_with_retry "server list" ./bin/mcp-runtime server --use-kube list --namespace mcp-servers >"${_cli_list_file}" 2>&1; then
+if ! run_with_retry "server list" env KUBECONFIG="${KUBECONFIG_FILE}" ./bin/mcp-runtime server --use-kube list --namespace mcp-servers >"${_cli_list_file}" 2>&1; then
   echo "[cli][fail] 'server list' failed" >&2
   cat "${_cli_list_file}" >&2
   exit 1
@@ -2803,7 +2805,7 @@ echo "[cli][pass] server list contains ${SERVER_NAME}"
 
 # --- server get: capture YAML and assert readiness fields ---
 _cli_get_file="${WORKDIR}/${SERVER_NAME}-get.yaml"
-if ! run_with_retry "server get ${SERVER_NAME}" ./bin/mcp-runtime server --use-kube get "${SERVER_NAME}" --namespace mcp-servers >"${_cli_get_file}" 2>&1; then
+if ! run_with_retry "server get ${SERVER_NAME}" env KUBECONFIG="${KUBECONFIG_FILE}" ./bin/mcp-runtime server --use-kube get "${SERVER_NAME}" --namespace mcp-servers >"${_cli_get_file}" 2>&1; then
   echo "[cli][fail] 'server get ${SERVER_NAME}' failed" >&2
   cat "${_cli_get_file}" >&2
   exit 1
