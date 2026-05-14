@@ -1,60 +1,467 @@
 ---
 name: qa-e2e-ui
-description: Real-cluster UI/dashboard QA — dashboard load, login flow (test + admin creds), API proxy on same origin, MCP Servers tab connect config, static asset integrity, and the defense check that Grafana/Prometheus are not publicly exposed. Use when Codex is asked to QA UI changes, dashboard regressions, login or admin flows, or the connect-config returned to the browser. Complements qa-e2e-security (which covers headers, lockout, secret leaks) with feature-correctness checks. Assumes qa-cluster-bringup has run.
+description: Browser-first real-cluster Sentinel UI/dashboard QA - role-based navigation, auth flows, every tab, forms, filters, destructive actions, rendered data, network/API evidence, console evidence, responsive/accessibility checks, cleanup, static assets, and public-host defenses. Use when Codex is asked to QA UI changes, dashboard regressions, login/admin/tenant flows, browser-visible API behavior, or copyable MCP connect config. Complements qa-e2e-security with feature-correctness and browser interaction checks. Assumes qa-cluster-bringup has run.
 ---
 
-# QA — E2E UI (live cluster)
+# QA - E2E UI (live cluster)
 
 ## Overview
 
-This skill validates that the **dashboard actually works** from a browser-like
-client against the real Sentinel UI + API stack. `services/ui/main_test.go`
-covers handler-level unit tests; this skill covers what those cannot:
-end-to-end browser flows, real Traefik routing, real session cookies, the
-copyable MCP connect config returned by the Servers tab, and the public-host
-defense (Grafana/Prometheus not exposed when `MCP_PLATFORM_DOMAIN` is set).
+This skill validates that the **Sentinel dashboard actually works as a user
+experience** against the real UI + API + Traefik stack. Curl checks are useful
+smoke gates, but they are not a substitute for browser interaction. Use
+Playwright and Chrome DevTools MCP whenever available to collect:
+
+- accessibility snapshots for actionable element names and roles
+- browser console messages
+- network request/response evidence for UI-triggered API calls
+- screenshots for visual regressions and responsive layout failures
+- keyboard interaction evidence for reachable controls
+
+`services/ui/main_test.go` covers handler-level behavior. This skill covers
+browser-visible workflows: role-gated navigation, session transitions, forms,
+filters, tables, modals, copy controls, destructive actions, public-host
+defenses, and whether rendered UI data matches backend truth.
 
 Header / CSP / lockout / secret-leak checks live in `qa-e2e-security`; do not
-duplicate them here.
+duplicate them here unless the symptom is visible in the UI.
 
-## Step 1 — Confirm precondition
+## Step 1 - Confirm preconditions
+
+Do not reinstall the platform or run codegen as part of UI QA. The live
+cluster is the source of truth.
 
 ```bash
 kubectl config current-context | grep -qx kind-mcp-runtime \
   || { echo "Run qa-cluster-bringup first"; exit 1; }
+
 curl -fsS -o /dev/null http://localhost:18080/ \
-  || { echo "Traefik port-forward not running"; exit 1; }
+  || { echo "Traefik port-forward not running; run: kubectl port-forward -n traefik svc/traefik 18080:8000"; exit 1; }
+
+./bin/mcp-runtime status
 ```
 
-## Step 2 — Choose mode
+Use a unique scratch directory for temporary artifacts:
 
-- **head-only**. Full UI matrix.
-- **git-range** (`BASE=<merge-base>`, default `origin/main`). Trim by diff:
+```bash
+QA_TMP="$(mktemp -d)"
+trap 'rm -rf "$QA_TMP"' EXIT
+```
+
+If the live cluster has unrelated user changes, work with them. Do not retire
+or mutate non-temporary objects unless the user explicitly approves.
+
+## Step 2 - Choose audit mode
+
+- **full-ui**: every visible capability and every role. Default for broad UI
+  QA requests.
+- **git-range** (`BASE=<merge-base>`, default `origin/main`): trim by diff,
+  but still run Dashboard Load and at least one login/logout flow.
+- **smoke**: only dashboard load, one successful login, one protected action,
+  and console/network sanity. Use only when the user asks for a quick check.
+
+Diff guidance:
 
 | Diff touches | Required sub-suites |
 |---|---|
-| `services/ui/main.go` (handlers, login, proxy) | A. Dashboard load, B. Login, C. UI→API proxy, D. Servers tab |
-| `services/ui/static/**` (app.js / index.html / css) | A, E. Static-asset integrity |
-| `services/api/main.go` endpoints used by UI (dashboard summary, analytics, events, runtime servers) | C, D, F. API contract |
-| `config/ingress/**`, `k8s/**` UI ingress | G. Public-host defense |
-| `docs/**`, `website/**` only | Skip |
+| `services/ui/main.go` | Dashboard Load, Auth, UI->API Proxy, affected tabs |
+| `services/ui/static/**` | Browser Matrix, Static Assets, Responsive/A11y |
+| `services/api/internal/runtimeapi/**` | Catalog, Governance, Operations, API Contract |
+| `services/api/internal/platformstore/**` or auth code | Auth, API Keys, Role Gating |
+| `config/ingress/**`, `k8s/**` UI ingress | Public-host Defense |
+| `docs/**`, `website/**` only | Dashboard Load smoke, then report docs-only scope |
 
-Always run **A. Dashboard load** as a smoke gate.
+## Step 3 - Browser instrumentation is required
 
-## Step 3 — Sub-suite A: Dashboard load
+Prefer MCP browser tools in Codex sessions:
+
+1. Use Playwright MCP for navigation, snapshots, clicks, form fill, screenshots,
+   viewport resizing, and network request lists.
+2. Use Chrome DevTools MCP for a second console/network pass when available,
+   especially when investigating 401/403, redirects, cookie/session behavior,
+   or copy/clipboard failures.
+3. Treat browser console errors and failed network requests as findings unless
+   they are explained by an intentional negative test.
+
+If no browser automation is available, mark browser checks as **blocked** and
+run only curl/API smoke checks. Do not report a full UI pass without browser
+evidence.
+
+Capture the following evidence per role:
+
+```text
+role=<signed-out|tenant-user|admin>
+selected_tab=<tab>
+console_errors=<count and messages>
+failed_network=<method url status/error>
+visible_assertions=<snapshot text or screenshot path>
+```
+
+## Step 4 - Required UI feature matrix
+
+The final report must include a matrix with this exact shape:
+
+```text
+Page | Feature | Field/control | Action | Expected result | Actual result | Network/API evidence | Console evidence | Status
+```
+
+Use one row per meaningful capability. Do not collapse "Governance works" into
+one row; forms, filters, enable/disable, revoke/unrevoke, empty states, and
+error states are separate capabilities.
+
+Minimum pages:
+
+- Global App Shell
+- Authentication
+- Server Catalog
+- My Activity
+- API Keys
+- Admin Dashboard
+- Governance
+- Operations
+- Platform
+- Responsive / Accessibility
+- Public-host Defense, when applicable
+
+## Step 5 - Role and session flows
+
+Run these browser flows in order. Use the test-mode credentials only in local
+Kind test mode.
+
+Signed out:
+
+- Header shows product title and Sign In.
+- Catalog is visible.
+- Protected tabs/actions open auth modal and do not switch to protected data.
+- Namespace selector behavior matches platform mode.
+- No Google button appears when `MCP_GOOGLE_CLIENT_ID` is empty.
+
+Tenant user (`test@mcpruntime.org` / `test@123`):
+
+- Visible tabs: Server Catalog, My Activity, API Keys, Governance.
+- Hidden tabs: Dashboard, Operations, Platform.
+- Logout resets active tab and clears protected data.
+- A 401 from any UI API call resets auth state or shows a clear unauthorized
+  state without leaving mixed signed-in/signed-out controls.
+
+Admin (`admin@mcpruntime.org` / `admin@123`):
+
+- Visible tabs: Server Catalog, API Keys, Dashboard, Governance, Operations,
+  Platform.
+- Hidden tab fallback works after logout.
+- Auto-refresh starts only for admin dashboard and stops on logout.
+- Grafana and Prometheus header links appear only for admin in dev path mode.
+
+API-key login:
+
+- Retrieve the UI key only when needed and fail fast if it is missing:
 
 ```bash
-curl -sS -o /tmp/index.html -w "%{http_code} %{size_download}\n" \
-  http://localhost:18080/                              # want 200 + non-trivial size
-grep -q '<div id="app"' /tmp/index.html || echo "FAIL: app root missing"
-grep -q 'app.js'        /tmp/index.html || echo "FAIL: bundle script missing"
+UI_KEY="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.UI_API_KEY}' | base64 -d)"
+test -n "$UI_KEY" || { echo "FAIL: UI_API_KEY is empty"; exit 1; }
+```
 
-# Static asset reachable, correct content-type.
+- Valid UI API key logs in as admin and clears the key input after success.
+- Invalid API key returns a visible error and does not clear the field until
+  the user edits it or retries.
+
+Negative auth cases:
+
+- blank form
+- email without password
+- password without email
+- invalid password
+- backend unavailable or network failure, if safely reproducible
+
+## Step 6 - Server Catalog coverage
+
+Drive this from the browser, then cross-check with CLI/Kubernetes.
+
+Namespace selector:
+
+- signed-out tenant mode
+- tenant aggregate catalog
+- user namespace
+- team namespace
+- shared/org namespace
+- admin namespace list
+- public preview namespace in public mode, if configured
+
+Catalog data and filters:
+
+- total servers, ready servers, tool count, publish quota
+- status filters: All, Ready, Issues
+- search by server name, namespace, description, endpoint, status
+- search by tools, prompts, resources, tasks
+- search by inventory labels and server labels
+- no-match state
+
+Server cards:
+
+- title, namespace, description, status, ready pods, endpoint
+- tool/prompt/resource/task counts
+- created date and labels
+- inventory details for string and object forms
+- access JSON / connect config
+- long names/descriptions/labels do not break layout
+
+Actions:
+
+- Details opens the detail panel and loads recent activity.
+- Copy URL and Copy JSON show success or fallback/error feedback.
+- Card Enter/Space selection works where the card is keyboard focusable.
+- Retire is tested only against a temporary `qa-audit-*` MCPServer.
+
+Retire flow:
+
+- Create or use only a `qa-audit-*` server.
+- Cancel leaves the server unchanged.
+- Confirm removes the server.
+- Detail panel resets after removal.
+- Tenant My Activity refreshes after tenant-owned retire, if tested.
+
+Cross-check:
+
+```bash
+./bin/mcp-runtime server list
+kubectl get mcpservers -A
+```
+
+Any UI/CLI count mismatch is a finding unless the UI label clearly describes a
+different metric, such as historical active servers.
+
+## Step 7 - My Activity coverage
+
+Tenant user only:
+
+- Metrics: My Servers, Ready, Requests, Denied, Deny Rate.
+- Deployed Servers table: identity, namespace, status, inventory, endpoint,
+  Analytics action, Copy URL, tenant Retire.
+- Usage controls: All servers, per-server selector, 24h/7d/30d/90d, Refresh.
+- Usage tables: per-server usage, top tools, recent activity.
+- Empty state: no personal servers.
+- Shared catalog servers are excluded from personal count.
+- Analytics empty response and API error render clear states.
+- If a selected server disappears, selector and tables recover cleanly.
+
+## Step 8 - API Keys coverage
+
+Table:
+
+- name, prefix, created timestamp, active/revoked state, revoke action.
+
+Create:
+
+- empty name validation produces visible feedback or native validation.
+- normal name
+- long name
+- special characters
+- duplicate-looking name
+- one-time key display
+- input clearing after success
+- list refresh preserves or intentionally clears the one-time key; record the
+  expected behavior from implementation.
+- automatic one-time key timeout, if implemented.
+
+Revoke:
+
+- modal cancel leaves row active.
+- modal confirm revokes row.
+- error toast or visible error on failed revoke.
+
+Cleanup:
+
+- Revoke all temporary `qa-audit-*` keys before finishing.
+
+## Step 9 - Admin Dashboard coverage
+
+Admin only:
+
+- Summary metrics: Total Events, Active Servers, Active Grants, Active Sessions.
+- Usage metrics: Events, Allowed, Denied, Humans, Agents, Allow Rate, Deny Rate.
+- Decision meter widths match allow/deny rates.
+- Row limit controls: Top 10, Top 25, Top 50.
+- Analytics tables: MCP Servers, Users & Agents, Tools, Decisions.
+- Decision Audit table: time/source/type, human, agent, server/namespace/action,
+  decision badge, policy reason/trust/session.
+- Auto-refresh enabled starts polling; disabled stops polling; logout stops it.
+- Non-admin never starts dashboard polling.
+- Empty/zero, allow-only, deny-only, mixed totals, malformed timestamps, and API
+  errors render usable states when safely reproducible.
+
+Cross-check dashboard current inventory metrics against:
+
+```bash
+./bin/mcp-runtime server list
+./bin/mcp-runtime access grant list --namespace mcp-servers
+./bin/mcp-runtime access session list --namespace mcp-servers
+```
+
+If dashboard metrics are historical rather than current, the UI label must make
+that clear.
+
+## Step 10 - Governance coverage
+
+Summary:
+
+- Active Grants, Disabled Grants, Active Sessions, Revoked Sessions.
+
+Grant list and filters:
+
+- name, namespace, server reference, server namespace fallback
+- human, agent, team, and combined subjects
+- max trust, allowed side effects, active/disabled state
+- filter by grant name, server, human ID, agent ID, team ID, no-match state
+
+Grant form validation:
+
+- missing name
+- missing server
+- no subject
+- no side effects
+- valid `tool:allow`
+- valid `tool:deny`
+- valid `tool:allow:medium`
+- valid tool name containing `:`
+- invalid decision
+- invalid trust
+- malformed line
+
+Grant actions:
+
+- create `qa-audit-*`
+- refresh
+- disable cancel/confirm
+- enable cancel/confirm
+- API error feedback
+- policy render cross-check:
+
+```bash
+./bin/mcp-runtime server policy inspect <server> --namespace <namespace>
+```
+
+Session form validation:
+
+- missing name
+- missing server
+- no subject
+- valid local datetime converted to UTC
+- invalid datetime
+- empty expiry allowed
+
+Session actions:
+
+- create `qa-audit-*`
+- refresh
+- revoke cancel/confirm
+- unrevoke cancel/confirm
+- API error feedback
+- policy/session cross-check:
+
+```bash
+./bin/mcp-runtime access session get <name> --namespace <namespace>
+kubectl get mcpagentsession <name> -n <namespace> -o yaml
+```
+
+## Step 11 - Operations coverage
+
+Admin only:
+
+- Summary metrics: MCP Servers, Ready, Issues, Recent Logins, Users, Images,
+  Deployments, MCP Events.
+- Filters: user/tenant, since datetime, until datetime, Apply, Clear, invalid
+  datetime behavior.
+- Logged-in Users table.
+- MCP Server Health table.
+- Activity Timeline table.
+- MCP Activity table.
+- Images and Deployments table, including long image refs.
+- MCP Server Inspector empty and selected states.
+
+Cross-check Operations server counts with:
+
+```bash
+./bin/mcp-runtime server list
+kubectl get mcpservers -A
+```
+
+Missing namespaces or stale server counts are product findings.
+
+## Step 12 - Platform coverage
+
+Admin only:
+
+- Platform Health component cards: display name, status, ready count, namespace,
+  resource/key, message.
+- Styling for Ready, Degraded, NotReady, unknown.
+- Fleet Health: total servers, ready servers, issues, server table.
+- Fleet empty/error states, if safely reproducible.
+- Component restart selector includes every restartable component documented by
+  the UI. If health shows Grafana/Prometheus but restart omits them, either the
+  UI copy must explain why or it is a finding.
+- Restart no-selection validation must show visible feedback.
+- Restart modal cancel works.
+- Confirm restart only for an explicitly safe temporary target or skip with a
+  documented reason.
+- Open Operations activates Operations and triggers data load.
+
+## Step 13 - Responsive and accessibility coverage
+
+Run at least:
+
+- desktop: 1200x900
+- mobile: 390x844
+
+Check:
+
+- no body-level horizontal overflow unless intentional and documented
+- tab bar scroll behavior on mobile
+- text does not overlap controls or table cells
+- modals fit viewport and remain keyboard usable
+- buttons, inputs, selects, tabs, and dialogs have accessible names/roles
+- Enter/Space work on keyboard-reachable actions
+- focus does not remain trapped in hidden modals after close
+
+Record accessibility snapshot evidence for each major tab.
+
+## Step 14 - Platform mode and extensibility passes
+
+When the task is a broad UI audit, cover:
+
+- tenant mode against current Kind
+- org mode through local UI-server config pass
+- public mode through local UI-server config pass
+
+Extensibility cases:
+
+- duplicate or empty namespace list
+- user, team, shared/org, and public preview namespaces
+- string vs object tools/prompts/resources/tasks
+- server labels and inventory labels
+- unknown status values
+- missing endpoint or missing access JSON
+- new component returned by API appears without code changes
+- platform JWT, UI API-key, OIDC/Google, and direct API-key clients
+
+If a mode or case cannot be exercised, mark it skipped with a reason and the
+command or fixture needed to cover it later.
+
+## Step 15 - Curl smoke and API contract evidence
+
+Use curl to support browser findings, not replace them.
+
+Dashboard load:
+
+```bash
+curl -sS -o "$QA_TMP/index.html" -w "%{http_code} %{size_download}\n" \
+  http://localhost:18080/
+grep -q '<div id="app"' "$QA_TMP/index.html" || echo "FAIL: app root missing"
+grep -q 'app.js' "$QA_TMP/index.html" || echo "FAIL: bundle script missing"
+
 curl -sSI http://localhost:18080/static/app.js | tr -d '\r' \
   | grep -qiE '^Content-Type: (text|application)/javascript' \
   || echo "FAIL: app.js content-type"
 
-# The /config browser bootstrap must exist and must NOT include any API key.
 curl -sS http://localhost:18080/config | jq -e '.' >/dev/null \
   || echo "FAIL: /config not JSON"
 curl -sS http://localhost:18080/config | jq -e \
@@ -62,174 +469,119 @@ curl -sS http://localhost:18080/config | jq -e \
   >/dev/null || echo "FAIL: /config exposes an apiKey-shaped field"
 ```
 
-## Step 4 — Sub-suite B: Login (test + admin)
-
-Use `PLATFORM_DEV_LOGIN` creds from `docs/getting-started.md#3-contributor-test-mode-cluster`.
-Read the actual login route shape from `services/ui/main.go` before asserting
-field names — do not hard-code `/login` body keys without confirming.
+Static assets:
 
 ```bash
-LOGIN_PATH="$(grep -oE 'http\.HandleFunc\("[^"]*login[^"]*"' services/ui/main.go \
-  | head -1 | sed -E 's/.*"([^"]*)".*/\1/')"
-LOGIN_PATH="${LOGIN_PATH:-/login}"
-
-# Test user.
-rm -f /tmp/c_user.txt /tmp/c_admin.txt
-USER_CODE="$(curl -sS -o /tmp/user_body.txt -w "%{http_code}" \
-  -c /tmp/c_user.txt -H "content-type: application/json" \
-  -d '{"email":"test@mcpruntime.org","password":"test@123"}' \
-  "http://localhost:18080${LOGIN_PATH}")"
-echo "test_user_login=$USER_CODE"
-test -s /tmp/c_user.txt || echo "FAIL: no session cookie for test user"
-
-# Admin user.
-ADMIN_CODE="$(curl -sS -o /tmp/admin_body.txt -w "%{http_code}" \
-  -c /tmp/c_admin.txt -H "content-type: application/json" \
-  -d '{"email":"admin@mcpruntime.org","password":"admin@123"}' \
-  "http://localhost:18080${LOGIN_PATH}")"
-echo "admin_login=$ADMIN_CODE"
-
-# Admin-only endpoint with each cookie. Expect the admin cookie to succeed
-# and the plain-user cookie to be 401/403 (unless platform policy intentionally
-# grants the role; if it does, that should be documented in services/api).
-curl -sS -o /dev/null -w "user_to_grants=%{http_code}\n" \
-  -b /tmp/c_user.txt -X POST -H "content-type: application/json" \
-  -d '{}' http://localhost:18080/api/runtime/grants
-curl -sS -o /dev/null -w "admin_to_grants=%{http_code}\n" \
-  -b /tmp/c_admin.txt -X POST -H "content-type: application/json" \
-  -d '{}' http://localhost:18080/api/runtime/grants
+node --check services/ui/static/app.js
+curl -sS -o "$QA_TMP/app.js" http://localhost:18080/static/app.js
+node --check "$QA_TMP/app.js"
 ```
 
-## Step 5 — Sub-suite C: UI→API proxy
+Discover API routes from implementation and browser network traffic. Do not
+invent endpoints. If an endpoint path differs from the skill examples, record
+the live route in the report.
 
-The UI must reach `/api/*` on the same origin from a logged-in browser
-session and must not require the user to know the API key.
+## Step 16 - Automated regression checks
+
+For broad UI audits or UI/API/CLI changes, run the automated checks that match
+the touched surface. Do not run codegen, formatters, setup reinstall, or any
+command that rewrites tracked files during the audit.
 
 ```bash
-for path in \
-  /api/dashboard/summary \
-  "/api/analytics/usage?limit=5" \
-  "/api/events/filter?server=go-example-mcp&limit=5" \
-  /api/runtime/servers ; do
-  code="$(curl -sS -o /tmp/last.json -w "%{http_code}" \
-    -b /tmp/c_user.txt "http://localhost:18080${path}")"
-  printf "%s -> %s\n" "$path" "$code"
-done
+(cd services/ui && go test ./... -race -count=1)
+node --check services/ui/static/app.js
+go test ./internal/cli/... ./cmd/mcp-runtime/... -count=1
+go test ./test/golden/... -count=1
+E2E_CACHE_MODE=1 \
+  E2E_SCENARIOS=smoke-auth,governance \
+  CLUSTER_NAME=mcp-runtime \
+  E2E_KEEP_CLUSTER=1 \
+  bash test/e2e/kind.sh
 ```
 
-A 308 redirect loop here means the UI's `UI_REQUIRE_HTTPS` middleware is
-matching the dev host — check the deployment env per `CLAUDE.md`
-**Dashboard 308 redirect loop in dev**.
+If a check is unsafe or too expensive for the requested scope, skip it with a
+specific reason. For example, skip Kind e2e when the live contributor cluster is
+busy with unrelated user work or when the user requested a read-only audit.
 
-## Step 6 — Sub-suite D: Servers tab + connect config
+## Step 17 - Public-host defense
 
-The Servers tab returns a copyable JSON the user pastes into a client. In
-test mode the URL must use the **same reachable local origin**, not a
-public hostname.
-
-```bash
-CONFIG="$(curl -sS -H "Host: localhost:18080" -b /tmp/c_user.txt \
-  http://localhost:18080/api/runtime/servers/go-example-mcp/connect-config 2>/dev/null \
-  || curl -sS -b /tmp/c_user.txt http://localhost:18080/api/runtime/servers)"
-echo "$CONFIG" | jq -e '.. | strings | select(test("http://localhost:18080/.*/mcp"))' \
-  >/dev/null || echo "FAIL: connect config does not use local origin"
-echo "$CONFIG" | jq -e '.. | strings | select(test("https://mcp\\.|https://platform\\."))' \
-  >/dev/null && echo "FAIL: connect config leaks production hostname in test mode"
-```
-
-If the endpoint path differs from `/api/runtime/servers/<name>/connect-config`,
-grep `services/ui/main.go` and `services/api/main.go` for the actual route
-shape (the route is owned by the API; the UI forwards the browser origin).
-Do not invent endpoints — record a **blocker** and stop the sub-suite if you
-cannot locate it.
-
-## Step 7 — Sub-suite E: Static asset integrity
-
-```bash
-node --check services/ui/static/app.js                    # parse-clean
-curl -sS -o /tmp/app.js http://localhost:18080/static/app.js
-node --check /tmp/app.js                                  # served bundle parses
-diff -q services/ui/static/app.js /tmp/app.js || echo "Note: bundle differs from source (expected if build step exists)"
-```
-
-## Step 8 — Sub-suite F: API contract sanity
-
-```bash
-curl -sS -b /tmp/c_user.txt http://localhost:18080/api/dashboard/summary \
-  | jq -e 'type == "object"' >/dev/null || echo "FAIL: dashboard summary shape"
-
-curl -sS -b /tmp/c_user.txt "http://localhost:18080/api/analytics/usage?limit=5" \
-  | jq -e 'type == "object" or type == "array"' >/dev/null \
-  || echo "FAIL: analytics usage shape"
-
-curl -sS -b /tmp/c_user.txt "http://localhost:18080/api/events/filter?server=go-example-mcp&limit=5" \
-  | jq -e '.events // .items // [] | type == "array"' >/dev/null \
-  || echo "FAIL: events filter shape"
-```
-
-Field-level expectations should come from `services/api/main.go` handler
-responses, not from memory.
-
-## Step 9 — Sub-suite G: Public-host defense (only when ingress changed)
-
-In test mode `MCP_PLATFORM_DOMAIN` is unset and `/grafana` + `/prometheus`
-route through the dev path-based gateway. The invariant under test:
-**when** `MCP_PLATFORM_DOMAIN` is set, the `mcp-sentinel-platform-ui`
-Ingress must not expose `/grafana` or `/prometheus` on the public host.
-Validate by inspecting the live ingress shape:
+In test mode `MCP_PLATFORM_DOMAIN` is usually unset and `/grafana` +
+`/prometheus` route through the dev path-based gateway. The invariant under
+test: **when** `MCP_PLATFORM_DOMAIN` is set, the public platform ingress must
+not expose Grafana or Prometheus.
 
 ```bash
 kubectl get ingress -n mcp-sentinel -o yaml \
   | yq '.items[] | select(.metadata.name=="mcp-sentinel-platform-ui") | .spec.rules' 2>/dev/null \
   || kubectl get ingress -n mcp-sentinel mcp-sentinel-platform-ui -o yaml \
        | grep -E 'path:|grafana|prometheus'
-# Hard fail if any rule path for the platform host points at grafana or
-# prometheus services.
 ```
 
-If `mcp-sentinel-platform-ui` does not exist (test mode without a platform
-domain), record this sub-suite as **N/A in test mode** and recommend running
-it again in a `MCP_PLATFORM_DOMAIN=*` cluster, or with the user explicitly
-setting `MCP_PLATFORM_INGRESS_HOST`.
+If `mcp-sentinel-platform-ui` does not exist, mark this sub-suite **N/A in
+test mode** and recommend a `MCP_PLATFORM_DOMAIN=*` rerun.
 
-## Step 10 — Optional: headless browser sweep
+## Step 18 - Safe mutation and cleanup
 
-When `playwright` or `chromium-headless-shell` is available, capture a
-smoke screenshot per tab. This catches CSS regressions and JS exceptions
-that handler tests miss. Skip silently if neither is installed — do not
-auto-install.
+Only mutate temporary resources:
+
+- `qa-audit-*` MCPServers
+- `qa-audit-*` grants
+- `qa-audit-*` sessions
+- `qa-audit-*` API keys
+
+Required cleanup evidence:
 
 ```bash
-command -v npx >/dev/null && command -v chromium-headless-shell >/dev/null && {
-  npx --yes playwright@1 install chromium >/dev/null 2>&1
-  cat > /tmp/ui-smoke.mjs <<'EOF'
-import { chromium } from 'playwright';
-const b = await chromium.launch();
-const p = await b.newPage();
-const errors = [];
-p.on('pageerror', e => errors.push(String(e)));
-p.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
-await p.goto('http://localhost:18080/', { waitUntil: 'networkidle' });
-await p.screenshot({ path: '/tmp/ui-dashboard.png', fullPage: true });
-console.log(JSON.stringify({ title: await p.title(), errors }));
-await b.close();
-EOF
-  node /tmp/ui-smoke.mjs
-} || echo "headless browser not available — skipping"
+kubectl get mcpservers,mcpaccessgrants,mcpagentsessions -A | grep qa-audit || true
+./bin/mcp-runtime server list
 ```
 
-Any `pageerror` or console-error entry is a finding.
+Also confirm:
 
-## Step 11 — Report
+- no active `qa-audit-*` API keys remain
+- temporary credentials or cookie files were removed
+- temporary port-forwards were stopped
+- temporary e2e/example workloads created during the audit were removed
 
-Use `_shared/FINDINGS-TEMPLATE.md`. UI findings should always include:
+If another command recreates temporary workloads after cleanup, delete them
+again and wait until pods/deployments/services/ingresses disappear before
+finishing.
 
-- The user-visible symptom (blank tab, 308 loop, broken Servers tab JSON).
-- The pinpoint in `services/ui/main.go`, `services/ui/static/app.js`, or
-  `services/api/main.go` likely responsible.
-- A regression-test suggestion targeting `services/ui/main_test.go` or a new
-  handler test in `services/api`.
+## Step 19 - Report
+
+For UI QA, use this finding shape instead of the security template unless the
+finding is actually security-sensitive:
+
+```text
+[SEV-{High|Medium|Low|Info}] <short title>
+UI path: <tab / modal / workflow>
+Affected API/CLI path: <endpoint or command, if any>
+User impact: <what the user cannot do or might misunderstand>
+Repro steps:
+  1. <browser action>
+  2. <browser action>
+Expected:
+Actual:
+Network/API evidence:
+Console evidence:
+Likely implementation area: <services/ui/static/app.js | services/ui/main.go | services/api/...>
+Recommended regression test:
+Status: Open
+```
+
+Final report sections:
+
+1. Summary: scope, commit SHA, cluster context, browser tools used, counts by
+   status/severity.
+2. UI feature matrix.
+3. Severity-ranked findings.
+4. CLI/Kubernetes cross-checks and mismatches.
+5. Checks run and checks skipped.
+6. Cleanup evidence.
+7. Fix plan grouped by data correctness, missing UI coverage, role/auth
+   behavior, form validation, destructive-action safety,
+   responsive/accessibility, and automated regression tests.
 
 Cross-link to `qa-e2e-security` for header/lockout findings, to
-`qa-e2e-operations` for rollout/ingress findings, and to `qa-e2e-perf`
-when a UI complaint is really a latency complaint.
+`qa-e2e-operations` for rollout/ingress findings, and to `qa-e2e-perf` when a
+UI complaint is really a latency complaint.

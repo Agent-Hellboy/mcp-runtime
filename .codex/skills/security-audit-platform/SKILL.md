@@ -68,21 +68,24 @@ expected status diverges from the live response.
 
 Verification harness (run against a test cluster with known keys):
 
-```sh
+```bash
 BASE=http://localhost:18080
-for row in $(jq -c '.[]' docs/security/authz-matrix.json); do
+while IFS= read -r row; do
   path=$(echo "$row"   | jq -r .path)
   method=$(echo "$row" | jq -r .method)
   role=$(echo "$row"   | jq -r .role)
   want=$(echo "$row"   | jq -r .expect)
-  curl -sS -o /dev/null -w "%{http_code}\n" -X "$method" "$BASE$path" \
-    $(case "$role" in
-        anon)   ;;
-        ui)     echo "-H 'x-api-key: $UI_API_KEY'";;
-        admin)  echo "-H 'x-api-key: $ADMIN_API_KEY'";;
-        ingest) echo "-H 'x-api-key: $INGEST_API_KEY'";;
-      esac) | xargs -I{} test {} = "$want" || echo "MISMATCH $method $path role=$role"
-done
+  headers=()
+  case "$role" in
+    anon) ;;
+    ui) headers=(-H "x-api-key: $UI_API_KEY") ;;
+    admin) headers=(-H "x-api-key: $ADMIN_API_KEY") ;;
+    ingest) headers=(-H "x-api-key: $INGEST_API_KEY") ;;
+    *) echo "UNKNOWN ROLE $role"; continue ;;
+  esac
+  got="$(curl -sS -o /dev/null -w "%{http_code}\n" -X "$method" "${headers[@]}" "$BASE$path")"
+  test "$got" = "$want" || echo "MISMATCH $method $path role=$role got=$got want=$want"
+done < <(jq -c '.[]' docs/security/authz-matrix.json)
 ```
 
 If `authz-matrix.json` does not yet exist, generate it from the markdown table

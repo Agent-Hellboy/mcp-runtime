@@ -55,6 +55,8 @@ Record both in the report header. A compliance finding is meaningless without
 Cache locally so the skill can re-run without re-fetching.
 
 ```bash
+MCP_SPEC_TMP="${MCP_SPEC_TMP:-$(mktemp -d)}"
+trap 'rm -rf "$MCP_SPEC_TMP"' EXIT
 SPEC_CACHE="${SPEC_CACHE:-/tmp/mcp-spec/$SPEC_REF}"
 mkdir -p "$SPEC_CACHE"
 fetch() {
@@ -124,16 +126,18 @@ mapfile -t FIXTURES < <(grep -rIl --include='*.go' --include='*.json' \
   -- internal/ services/ examples/ test/ pkg/ 2>/dev/null)
 echo "Found ${#FIXTURES[@]} files containing JSON-RPC envelopes"
 
-# Extract message-shaped JSON bodies into /tmp/mcp-spec-fixtures/*.json
+# Extract message-shaped JSON bodies into a unique temporary directory
 # (one tool that does this safely lives in the spec repo's tests; here we
 # accept that not every embedded string is round-trippable and only validate
 # files where extraction succeeded).
-mkdir -p /tmp/mcp-spec-fixtures
-python3 - "$SPEC_CACHE" "${FIXTURES[@]}" <<'PY'
+MCP_SPEC_TMP="${MCP_SPEC_TMP:-$(mktemp -d)}"
+trap 'rm -rf "$MCP_SPEC_TMP"' EXIT
+FIXTURE_TMP="$MCP_SPEC_TMP/fixtures"
+mkdir -p "$FIXTURE_TMP"
+python3 - "$SPEC_CACHE" "$FIXTURE_TMP" "${FIXTURES[@]}" <<'PY'
 import json, re, sys, os
-cache, files = sys.argv[1], sys.argv[2:]
+cache, out, files = sys.argv[1], sys.argv[2], sys.argv[3:]
 RE = re.compile(r'(\{[^{}]*"jsonrpc"\s*:\s*"2\.0"[^{}]*\})', re.S)
-out = "/tmp/mcp-spec-fixtures"
 n = 0
 for f in files:
     try:
@@ -153,7 +157,8 @@ PY
 
 # Validate every extracted envelope against the pinned schema.
 fail=0
-for f in /tmp/mcp-spec-fixtures/*.json; do
+for f in "$FIXTURE_TMP"/*.json; do
+  test -e "$f" || continue
   "$JV" "$SCHEMA" "$f" >/dev/null 2>&1 || { fail=$((fail+1)); echo "INVALID: $f"; "$JV" "$SCHEMA" "$f" 2>&1 | head -5; }
 done
 echo "Schema validation: $fail invalid envelopes"
@@ -186,14 +191,16 @@ H=(-H "content-type: application/json"
 ### 5a. `initialize` response conformance
 
 ```bash
+MCP_SPEC_TMP="${MCP_SPEC_TMP:-$(mktemp -d)}"
+trap 'rm -rf "$MCP_SPEC_TMP"' EXIT
 INIT="$(curl -sS "${H[@]}" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
         "protocolVersion":"'"$PROTO"'",
         "capabilities":{},
         "clientInfo":{"name":"qa-spec-compliance","version":"0"}}}' "$BASE")"
 echo "$INIT" | jq .
-echo "$INIT" > /tmp/mcp-init.json
-"$JV" "$SCHEMA" /tmp/mcp-init.json 2>&1 | head -10
+echo "$INIT" > "$MCP_SPEC_TMP/mcp-init.json"
+"$JV" "$SCHEMA" "$MCP_SPEC_TMP/mcp-init.json" 2>&1 | head -10
 
 # Required fields per spec lifecycle: protocolVersion, capabilities, serverInfo.
 echo "$INIT" | jq -e '.result.protocolVersion == "'"$PROTO"'"' >/dev/null \
@@ -225,7 +232,7 @@ curl -sSI "${H[@]}" -H "Mcp-Session-Id: $SESSION" \
 # DELETE on the MCP endpoint terminates the session (per Streamable HTTP).
 # A subsequent request with the same session MUST fail.
 curl -sS -X DELETE "${H[@]}" -H "Mcp-Session-Id: $SESSION" \
-  -o /tmp/del.out -w "delete=%{http_code}\n" "$BASE"
+  -o "$MCP_SPEC_TMP/del.out" -w "delete=%{http_code}\n" "$BASE"
 curl -sS "${H[@]}" -H "Mcp-Session-Id: $SESSION" \
   -d '{"jsonrpc":"2.0","id":99,"method":"tools/list"}' "$BASE" \
   | grep -qiE 'error|session|invalid' \
@@ -248,8 +255,8 @@ echo "$TOOLS" | jq -e '.result.tools | type == "array" and length > 0' >/dev/nul
   || echo "FAIL: tools/list missing or empty"
 echo "$TOOLS" | jq -e '.result.tools | all(.name and (.inputSchema | type == "object"))' >/dev/null \
   || echo "FAIL: tool entry missing required name or inputSchema"
-echo "$TOOLS" > /tmp/mcp-tools.json
-"$JV" "$SCHEMA" /tmp/mcp-tools.json 2>&1 | head -10
+echo "$TOOLS" > "$MCP_SPEC_TMP/mcp-tools.json"
+"$JV" "$SCHEMA" "$MCP_SPEC_TMP/mcp-tools.json" 2>&1 | head -10
 ```
 
 ### 5d. `tools/call` result envelope
@@ -262,8 +269,8 @@ echo "$CALL" | jq -e '.result.content | type == "array"' >/dev/null \
   || echo "FAIL: tools/call result.content must be array"
 echo "$CALL" | jq -e '.result.content[0].type and .result.content[0].text != null' >/dev/null \
   || echo "FAIL: content[0] missing required type/text"
-echo "$CALL" > /tmp/mcp-call.json
-"$JV" "$SCHEMA" /tmp/mcp-call.json 2>&1 | head -10
+echo "$CALL" > "$MCP_SPEC_TMP/mcp-call.json"
+"$JV" "$SCHEMA" "$MCP_SPEC_TMP/mcp-call.json" 2>&1 | head -10
 ```
 
 ### 5e. JSON-RPC error mapping
@@ -411,7 +418,11 @@ runtime explicitly claims draft support.
 ```bash
 DRAFT_SCHEMA="$(fetch 'schema/draft/schema.json')"
 fail=0
-for f in /tmp/mcp-spec-fixtures/*.json /tmp/mcp-init.json /tmp/mcp-tools.json /tmp/mcp-call.json; do
+shopt -s nullglob
+draft_inputs=()
+test -n "${FIXTURE_TMP:-}" && draft_inputs+=("$FIXTURE_TMP"/*.json)
+test -n "${MCP_SPEC_TMP:-}" && draft_inputs+=("$MCP_SPEC_TMP"/mcp-init.json "$MCP_SPEC_TMP"/mcp-tools.json "$MCP_SPEC_TMP"/mcp-call.json)
+for f in "${draft_inputs[@]}"; do
   [ -s "$f" ] || continue
   "$JV" "$DRAFT_SCHEMA" "$f" >/dev/null 2>&1 || fail=$((fail+1))
 done

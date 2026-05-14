@@ -54,7 +54,7 @@ Expected codes:
 
 | Path                                                  | Methods       | anon | user-cookie | user-key | admin-key | ingest-key | Notes |
 |-------------------------------------------------------|---------------|------|-------------|----------|-----------|------------|-------|
-| `/api/auth/me`                                        | GET           | 401  | 200         | 200      | 200       | 200        | Returns identity claims. |
+| `/api/auth/me`                                        | GET           | 401  | 200         | 200      | 200       | 401/403    | Returns identity claims; ingest-only keys are not API auth identities. |
 | `/api/user/registry-credentials`                      | GET, POST     | 401  | 200         | 200      | 200       | 401/403    | Ingest-only key must NOT manage user creds. Verify rejection. |
 | `/api/user/registry-credentials/{id}`                 | GET, PUT, DEL | 401  | 200         | 200      | 200       | 401/403    | Same. |
 | `/api/user/activity/image-publish`                    | GET           | 401  | 200         | 200      | 200       | 401/403    | User-scoped read; ingest key should not see other users. |

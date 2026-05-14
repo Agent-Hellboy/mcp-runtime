@@ -58,7 +58,9 @@ Exactly as documented; the containerd mirror is required for image pulls in
 test mode.
 
 ```bash
-cat > /tmp/mcp-runtime-kind.yaml <<'EOF'
+TMP_KIND_CONFIG="$(mktemp)"
+trap 'rm -f "$TMP_KIND_CONFIG"' EXIT
+cat > "$TMP_KIND_CONFIG" <<'EOF'
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 containerdConfigPatches:
@@ -67,7 +69,7 @@ containerdConfigPatches:
       endpoint = ["http://127.0.0.1:32000"]
 EOF
 
-kind create cluster --name mcp-runtime --config /tmp/mcp-runtime-kind.yaml
+kind create cluster --name mcp-runtime --config "$TMP_KIND_CONFIG"
 kubectl config use-context kind-mcp-runtime
 ```
 

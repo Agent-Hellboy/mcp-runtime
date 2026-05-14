@@ -36,8 +36,10 @@ Pull the three key types up front; **never echo them into the report**.
 ```bash
 UI_KEY="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
   -o jsonpath='{.data.UI_API_KEY}' | base64 -d)"
+test -n "$UI_KEY" || { echo "Failed to retrieve UI_KEY"; exit 1; }
 INGEST_KEY="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
   -o jsonpath='{.data.INGEST_API_KEYS}' | base64 -d | cut -d, -f1)"
+test -n "$INGEST_KEY" || { echo "Failed to retrieve INGEST_KEY"; exit 1; }
 ```
 
 ## Step 2 — Choose mode
