@@ -177,10 +177,14 @@ MCP Runtime supports two practical image flows. Keep these flows separate so tag
 After this command, push the exact image reference produced by the build output (or read it from the rewritten metadata):
 
 ```bash
+mcp-runtime auth login --api-url https://platform.example.com
 ./bin/mcp-runtime registry push --image <exact-image-ref-from-build>
 ```
 
-`<exact-image-ref-from-build>` may be a resolved registry endpoint such as `10.43.109.51:5000/payments:v1.0.0`.
+`registry push` requires platform credentials from `mcp-runtime auth login` or
+`MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`; unauthenticated pushes are
+rejected before Docker or the in-cluster helper starts. `<exact-image-ref-from-build>`
+may be a resolved registry endpoint such as `10.43.109.51:5000/payments:v1.0.0`.
 
 Then generate and deploy from metadata:
 
@@ -195,6 +199,7 @@ Use this when you manage image tags directly and apply `MCPServer` manifests you
 
 ```bash
 docker build -t payments:v1.0.0 .
+mcp-runtime auth login --api-url https://platform.example.com
 ./bin/mcp-runtime registry push --image payments:v1.0.0
 ./bin/mcp-runtime server apply --file payments.yaml
 ```

@@ -48,7 +48,7 @@ noted otherwise. Authenticated routes accept `Authorization: Bearer <token>` or
 | `GET` | `/api/user/analytics/usage` | Caller-scoped MCP server usage analytics for the user dashboard. |
 | `GET`, `POST` | `/api/user/registry-credentials` | List or create registry credentials. |
 | `POST` | `/api/user/registry-credentials/{id}/revoke` | Revoke one registry credential. |
-| `*` | `/api/registry/authz` | Traefik forward-auth endpoint for bundled registry ingress. Admin role required. |
+| `*` | `/api/registry/authz` | Traefik forward-auth endpoint for bundled registry ingress. Admin credentials are global; user credentials are scoped to caller-owned repository paths. |
 | `GET`, `POST` | `/api/deployments` | List or apply platform-managed deployments. |
 | `DELETE` | `/api/deployments/{namespace}/{name}` | Delete a platform-managed deployment and service. |
 | `GET` | `/api/admin/namespaces` | Admin namespace inventory. |

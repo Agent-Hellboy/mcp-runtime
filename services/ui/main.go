@@ -274,6 +274,11 @@ func newAPIProxyWithTransport(target *url.URL, apiBase, upstreamAPIKey, apiKeys 
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isUnauthenticatedPlatformAuthRequest(r, apiBase) {
+			proxy.ServeHTTP(w, r.Clone(r.Context()))
+			return
+		}
+
 		if validAPIKeyHeader(r, apiKeys) {
 			req := r.Clone(r.Context())
 			req.Header.Del("x-api-key")
@@ -320,6 +325,19 @@ func newAPIProxyWithTransport(target *url.URL, apiBase, upstreamAPIKey, apiKeys 
 
 		serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	})
+}
+
+func isUnauthenticatedPlatformAuthRequest(r *http.Request, apiBase string) bool {
+	if r == nil || r.URL == nil {
+		return false
+	}
+	path := strings.TrimRight(normalizePathPrefix(apiBase), "/") + "/auth/"
+	switch r.URL.Path {
+	case path + "login", path + "signup", path + "oidc":
+		return true
+	default:
+		return false
+	}
 }
 
 func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionStore) http.HandlerFunc {

@@ -120,6 +120,8 @@ docker push registry.registry.svc.cluster.local:5000/example:dev
 The host usually cannot resolve Kubernetes service DNS. Use the CLI helper:
 
 ```bash
+./bin/mcp-runtime auth login --api-url http://localhost:18080
+
 ./bin/mcp-runtime registry push \
   --image example:dev \
   --name example \

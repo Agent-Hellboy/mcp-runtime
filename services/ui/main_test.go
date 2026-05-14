@@ -83,6 +83,9 @@ func TestStaticAppHidesPersonalActivityForAdmins(t *testing.T) {
 	if strings.Contains(html, "My Dashboard") {
 		t.Fatal("personal user dashboard tab should not use the generic My Dashboard label")
 	}
+	if got := strings.Count(html, "Server Catalog"); got < 2 {
+		t.Fatalf("expected navigation and panel to use Server Catalog, got %d occurrences", got)
+	}
 	if got := strings.Count(html, `data-user-only="true"`); got < 2 {
 		t.Fatalf("expected tab button and panel to be marked user-only, got %d markers", got)
 	}
@@ -100,6 +103,26 @@ func TestStaticAppHidesPersonalActivityForAdmins(t *testing.T) {
 	}
 	if !strings.Contains(source, "isVisibleTab(active)") {
 		t.Fatal("active tab resolution should ignore hidden tabs")
+	}
+}
+
+func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`function isTenantUser()`,
+		`if (isTenantUser() && server.namespace && server.name)`,
+		`retireButton.textContent = "Retire"`,
+		`if (!isTenantUser()) {`,
+		`authenticated && !isTenantUser()`,
+		`await loadUserDashboard()`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
 	}
 }
 
@@ -220,6 +243,36 @@ func TestAPIProxyRequiresAuthenticatedSession(t *testing.T) {
 	}
 	if !upstreamCalled {
 		t.Fatal("authenticated request did not reach upstream")
+	}
+}
+
+func TestAPIProxyAllowsPlatformLoginWithoutSession(t *testing.T) {
+	upstreamCalled := false
+	store := newUISessionStore(time.Now)
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		upstreamCalled = true
+		if got := r.URL.Path; got != "/api/auth/login" {
+			t.Fatalf("path = %q, want /api/auth/login", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"content-type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"access_token":"tok","token_type":"bearer","user":{"role":"user"}}`)),
+		}, nil
+	})
+	target, err := url.Parse("http://api.example")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", store, false, transport)
+
+	recorder := httptest.NewRecorder()
+	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"test@mcpruntime.org","password":"test@123"}`)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !upstreamCalled {
+		t.Fatal("platform login request did not reach upstream")
 	}
 }
 

@@ -421,7 +421,7 @@ GET  /api/user/analytics/usage         # User/team-scoped MCP server analytics
 GET  /api/user/registry-credentials    # List caller-owned registry credentials
 POST /api/user/registry-credentials    # Create a registry credential
 POST /api/user/registry-credentials/{id}/revoke
-*    /api/registry/authz               # Traefik forward-auth for registry ingress; admin-only
+*    /api/registry/authz               # Traefik forward-auth for registry ingress
 POST /api/user/activity/image-publish  # Record a successful user image publish event
 ```
 
@@ -429,9 +429,11 @@ User API-key creation returns the cleartext key once as both `api_key` and
 `one_time_key`; clients should store it immediately.
 
 The bundled `registry.<domain>` ingress calls `/api/registry/authz` before
-proxying Docker Registry API traffic. It accepts platform admin credentials
-(`x-api-key` or Bearer token) and admin-owned registry Basic credentials, and it
-rejects anonymous or non-admin callers.
+proxying Docker Registry API traffic. Platform admin credentials (`x-api-key` or
+Bearer token) keep global registry access. Normal user API keys and platform
+Bearer tokens are accepted only for repository paths scoped to the caller's user
+namespace or team slug, such as `/v2/user-1/demo/...` or `/v2/acme/demo/...`.
+Anonymous requests and non-admin catalog requests are rejected.
 
 Deployment apply body:
 
@@ -454,9 +456,9 @@ identity storage is enabled. `GET /api/admin/operations` returns a filtered
 operations snapshot with `users`, `audit_logs`, `images`, and `deployments`.
 Filters: `user` (email, user ID, namespace, resource, or image match), `since`,
 `until` (RFC3339 or `YYYY-MM-DD`), and `limit` (1-200). Image activity includes
-CLI-reported `registry push` events when the CLI has platform credentials plus
-currently deployed image references from platform-managed Kubernetes
-deployments; the bundled Docker registry does not emit a full raw push ledger.
+CLI-reported `registry push` events and currently deployed image references
+from platform-managed Kubernetes deployments; the bundled Docker registry does
+not emit a full raw push ledger.
 
 ## Analytics API
 

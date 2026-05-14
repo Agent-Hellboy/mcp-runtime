@@ -1154,6 +1154,15 @@ function createUserServerActionsCell(server) {
     actions.appendChild(copyButton);
   }
 
+  if (isTenantUser() && server.namespace && server.name) {
+    const retireButton = document.createElement("button");
+    retireButton.type = "button";
+    retireButton.className = "ghost danger action-btn";
+    retireButton.textContent = "Retire";
+    retireButton.addEventListener("click", () => retireServer(server));
+    actions.appendChild(retireButton);
+  }
+
   cell.appendChild(actions);
   return cell;
 }
@@ -1454,6 +1463,9 @@ async function retireServer(server) {
       renderServerDetailPanel(null);
     }
     await loadServers();
+    if (isTenantUser()) {
+      await loadUserDashboard();
+    }
   } catch (err) {
     if (isUnauthorizedError(err)) return;
     console.error("Failed to retire server:", err);
@@ -1488,7 +1500,7 @@ function renderServerDetailPanel(server, errorMessage = "") {
       </div>
       <div class="server-card-actions">
         ${server.endpoint ? '<button class="ghost server-action" id="selected-server-copy-url" type="button">Copy URL</button>' : ""}
-        ${authenticated ? '<button class="ghost danger server-action" id="selected-server-retire" type="button">Retire</button>' : ""}
+        ${authenticated && !isTenantUser() ? '<button class="ghost danger server-action" id="selected-server-retire" type="button">Retire</button>' : ""}
       </div>
     </div>
     <div class="server-detail-grid">
@@ -1598,12 +1610,14 @@ function renderServerMeta(server) {
 
   const actions = document.createElement("div");
   actions.className = "server-card-actions";
-  const detailsButton = document.createElement("button");
-  detailsButton.className = "ghost server-action";
-  detailsButton.type = "button";
-  detailsButton.textContent = "Details";
-  detailsButton.addEventListener("click", () => selectServer(server));
-  actions.appendChild(detailsButton);
+  if (!isTenantUser()) {
+    const detailsButton = document.createElement("button");
+    detailsButton.className = "ghost server-action";
+    detailsButton.type = "button";
+    detailsButton.textContent = "Details";
+    detailsButton.addEventListener("click", () => selectServer(server));
+    actions.appendChild(detailsButton);
+  }
   if (server.endpoint) {
     const copyURL = document.createElement("button");
     copyURL.className = "ghost server-action";
@@ -1621,7 +1635,7 @@ function renderServerMeta(server) {
     copyJSON.addEventListener("click", () => copyTextToClipboard(jsonText, "Connect JSON copied"));
     actions.appendChild(copyJSON);
   }
-  if (authenticated) {
+  if (authenticated && !isTenantUser()) {
     const retireButton = document.createElement("button");
     retireButton.className = "ghost danger server-action";
     retireButton.type = "button";
@@ -1851,6 +1865,10 @@ function startAutoRefresh() {
 
 function isAdminUser() {
   return authPrincipal?.role === "admin";
+}
+
+function isTenantUser() {
+  return authenticated === true && !isAdminUser();
 }
 
 function applyRoleVisibility() {

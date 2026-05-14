@@ -286,7 +286,7 @@ If you use the hostname `registry.local` in image refs, add a second `mirrors` /
 
 **3. Align with MCP server manifests and CI**  
 - **Before** `mcp-runtime pipeline generate`, set **`MCP_REGISTRY_INGRESS_HOST`**, **`MCP_REGISTRY_HOST`**, or **`MCP_PLATFORM_DOMAIN`** (see `pkg/metadata/host_resolve.go`) so default image names are **pullable** from the node, not only `registry.local/...` unless you intend to manage DNS/hosts.  
-- **`mcp-runtime server build image <name>`** must match the **`name`** in `.mcp/*.yaml`. Use **`mcp-runtime pipeline generate --dir .mcp --output manifests`** then **`mcp-runtime pipeline deploy --dir manifests`**. A single file: `mcp-runtime server apply --file <path>`. There is no `mcp-runtime server deploy --dir`.
+- **`mcp-runtime server build image <name>`** must match the **`name`** in `.mcp/*.yaml`. `mcp-runtime registry push` requires platform credentials from `mcp-runtime auth login` or `MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`; unauthenticated pushes fail before Docker or the in-cluster helper starts. Use **`mcp-runtime pipeline generate --dir .mcp --output manifests`** then **`mcp-runtime pipeline deploy --dir manifests`**. A single file: `mcp-runtime server apply --file <path>`. There is no `mcp-runtime server deploy --dir`.
 
 **4. Quick registry reachability (optional)**  
 From a network that can reach the registry: `curl -sS "http://<host>:<port>/v2/"` should return `{}`. That does not replace Docker/k3s configuration for TLS mode of the **client** runtimes.
