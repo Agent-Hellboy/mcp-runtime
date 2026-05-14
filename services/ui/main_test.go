@@ -71,6 +71,20 @@ func TestStaticAppPreservesOneTimeAPIKeyAfterCreate(t *testing.T) {
 	}
 }
 
+func TestStaticAppKeepsOrgCatalogBehindLogin(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	if !strings.Contains(source, `const publicCatalogEnabled = platformMode === "public";`) {
+		t.Fatal("anonymous catalog browsing should only be enabled for public mode")
+	}
+	if !strings.Contains(source, "No public catalog is available. Sign in to view organization and private servers.") {
+		t.Fatal("signed-out tenant/org catalog should explain that only public catalogs are anonymous")
+	}
+}
+
 func TestStaticAppHidesPersonalActivityForAdmins(t *testing.T) {
 	index, err := os.ReadFile("static/index.html")
 	if err != nil {

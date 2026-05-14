@@ -1289,7 +1289,7 @@ function renderSignedOutServerCatalog() {
   renderServerDetailPanel(null);
   const grid = document.getElementById("servers-grid");
   if (grid) {
-    grid.innerHTML = '<div class="server-empty-state">Sign in to view MCP servers.</div>';
+    grid.innerHTML = '<div class="server-empty-state">No public catalog is available. Sign in to view organization and private servers.</div>';
   }
 }
 
