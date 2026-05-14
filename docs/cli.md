@@ -198,7 +198,11 @@ mcp-runtime registry push --image payments:v1 --mode direct
 mcp-runtime registry push --image payments:v1 --name payments-api
 ```
 
-When you use `server build image`, push the exact image ref it produced. That ref can include a resolved registry host instead of a short local name.
+`registry push` requires platform credentials from `mcp-runtime auth login` or
+`MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`; unauthenticated pushes are
+rejected before the CLI starts Docker or the in-cluster helper. When you use
+`server build image`, push the exact image ref it produced. That ref can include
+a resolved registry host instead of a short local name.
 
 ## pipeline
 
@@ -286,7 +290,7 @@ mcp-runtime registry push --image <exact-image-ref-from-build>
 
 `server patch` accepts inline `--patch` or `--patch-file` with `merge`, `json`, or `strategic` modes.
 
-`server build image` updates matching `.mcp` metadata when you use the metadata-driven pipeline. It can resolve to a concrete host such as `10.43.109.51:5000/payments:v1`. Push that exact ref. The command does not deploy by itself; push and deploy are separate steps.
+`server build image` updates matching `.mcp` metadata when you use the metadata-driven pipeline. It can resolve to a concrete host such as `10.43.109.51:5000/payments:v1`. Push that exact ref after logging in to the platform. The command does not deploy by itself; push and deploy are separate steps.
 
 ## sentinel
 

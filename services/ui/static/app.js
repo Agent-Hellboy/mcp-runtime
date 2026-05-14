@@ -53,6 +53,25 @@ async function fetchJSON(path, options = {}) {
   return response.json();
 }
 
+async function fetchJSONNoAuthSideEffects(path, options = {}) {
+  const headers = { ...options.headers };
+
+  const response = await fetch(`${apiBase}${path}`, {
+    ...options,
+    credentials: "same-origin",
+    headers,
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    const err = new Error(error || `Request failed: ${response.status}`);
+    err.status = response.status;
+    throw err;
+  }
+
+  return response.json();
+}
+
 function unauthorizedError() {
   const err = new Error("Unauthorized");
   err.name = "UnauthorizedError";
@@ -139,6 +158,21 @@ function syncScopeSelector() {
   select.value = selectedNamespace;
   setFieldValue("grant-namespace", activeScopeNamespace());
   setFieldValue("session-namespace", activeScopeNamespace());
+}
+
+function ensureNamespaceScope(namespace) {
+  const normalized = String(namespace || "").trim();
+  if (!normalized) return;
+  if (namespaceScopes.some((item) => String(item?.namespace || "").trim() === normalized)) return;
+  namespaceScopes = [...namespaceScopes, { namespace: normalized, scope: "namespace" }];
+}
+
+function focusNamespaceScope(namespace) {
+  const normalized = String(namespace || "").trim();
+  if (!normalized) return;
+  ensureNamespaceScope(normalized);
+  selectedNamespace = normalized;
+  syncScopeSelector();
 }
 
 function publicPreviewScopes() {
@@ -234,6 +268,14 @@ function showToast(message, type = "success") {
   setTimeout(() => {
     toast.remove();
   }, 5000);
+}
+
+function setInlineError(id, message = "") {
+  const node = document.getElementById(id);
+  if (!node) return;
+  const text = String(message || "").trim();
+  node.textContent = text;
+  node.classList.toggle("hidden", !text);
 }
 
 // Tab Switching
@@ -642,6 +684,9 @@ function createSubjectCell(subject = {}) {
   }
   if (subject.agentID) {
     chips.appendChild(createSubjectChip("Agent", subject.agentID));
+  }
+  if (subject.teamID) {
+    chips.appendChild(createSubjectChip("Team", subject.teamID));
   }
   if (!chips.children.length) {
     chips.textContent = "-";
@@ -1151,6 +1196,15 @@ function createUserServerActionsCell(server) {
     actions.appendChild(copyButton);
   }
 
+  if (isTenantUser() && server.namespace && server.name) {
+    const retireButton = document.createElement("button");
+    retireButton.type = "button";
+    retireButton.className = "ghost danger action-btn";
+    retireButton.textContent = "Retire";
+    retireButton.addEventListener("click", () => retireServer(server));
+    actions.appendChild(retireButton);
+  }
+
   cell.appendChild(actions);
   return cell;
 }
@@ -1235,6 +1289,7 @@ function renderUserAnalyticsError() {
 function resetGovernance() {
   grantsCache = [];
   sessionsCache = [];
+  setInlineError("grant-form-error");
   renderGovernanceSummary();
   const grantsBody = document.getElementById("grants-body");
   const sessionsBody = document.getElementById("sessions-body");
@@ -1277,7 +1332,7 @@ function renderSignedOutServerCatalog() {
   renderServerDetailPanel(null);
   const grid = document.getElementById("servers-grid");
   if (grid) {
-    grid.innerHTML = '<div class="server-empty-state">Sign in to view MCP servers.</div>';
+    grid.innerHTML = '<div class="server-empty-state">No public catalog is available. Sign in to view organization and private servers.</div>';
   }
 }
 
@@ -1359,6 +1414,7 @@ function serverSearchText(server) {
     server.status,
     server.ready,
     server.endpoint,
+    metadataSearchText(server.labels),
     ...(server.tools || []).map((tool) => `${tool.name || ""} ${tool.requiredTrust || ""} ${tool.description || ""}`),
     ...(server.prompts || []).map(inventorySearchText),
     ...(server.resources || []).map(inventorySearchText),
@@ -1367,14 +1423,16 @@ function serverSearchText(server) {
   return values.filter(Boolean).join(" ").toLowerCase();
 }
 
+function metadataSearchText(labels) {
+  if (!labels || typeof labels !== "object") return "";
+  return Object.entries(labels)
+    .map(([key, value]) => `${key} ${value}`)
+    .join(" ");
+}
+
 function inventorySearchText(item) {
   if (typeof item === "string") return item;
-  const labels =
-    item?.labels && typeof item.labels === "object"
-      ? Object.entries(item.labels)
-          .map(([k, v]) => `${k} ${v}`)
-          .join(" ")
-      : "";
+  const labels = metadataSearchText(item?.labels);
   return `${item?.name || ""} ${item?.description || ""} ${labels}`;
 }
 
@@ -1422,22 +1480,25 @@ async function loadSelectedServerEvents(server) {
       server: server.name,
       limit: "20",
     });
-    const data = await fetchJSON(`/runtime/server-events?${query.toString()}`);
+    const data = await fetchJSONNoAuthSideEffects(`/runtime/server-events?${query.toString()}`);
     if (selectedServerKey !== serverKey(server)) return;
     selectedServerEventsCache = Array.isArray(data.events) ? data.events : [];
     renderServerDetailPanel(server);
   } catch (err) {
-    if (isUnauthorizedError(err)) return;
-    console.error("Failed to load server events:", err);
     if (selectedServerKey !== serverKey(server)) return;
     selectedServerEventsCache = [];
+    if (err?.status === 401 || err?.status === 403) {
+      renderServerDetailPanel(server, "Recent activity unavailable.");
+      return;
+    }
+    console.error("Failed to load server events:", err);
     renderServerDetailPanel(server, "Analytics unavailable.");
   }
 }
 
 async function retireServer(server) {
   if (!server?.namespace || !server?.name) return;
-  const ok = window.confirm(`Retire ${server.namespace}/${server.name}?`);
+  const ok = await confirmModal(`Retire ${server.namespace}/${server.name}?`);
   if (!ok) return;
   try {
     await fetchJSON(
@@ -1451,6 +1512,9 @@ async function retireServer(server) {
       renderServerDetailPanel(null);
     }
     await loadServers();
+    if (isTenantUser()) {
+      await loadUserDashboard();
+    }
   } catch (err) {
     if (isUnauthorizedError(err)) return;
     console.error("Failed to retire server:", err);
@@ -1485,7 +1549,7 @@ function renderServerDetailPanel(server, errorMessage = "") {
       </div>
       <div class="server-card-actions">
         ${server.endpoint ? '<button class="ghost server-action" id="selected-server-copy-url" type="button">Copy URL</button>' : ""}
-        ${authenticated ? '<button class="ghost danger server-action" id="selected-server-retire" type="button">Retire</button>' : ""}
+        ${authenticated && !isTenantUser() ? '<button class="ghost danger server-action" id="selected-server-retire" type="button">Retire</button>' : ""}
       </div>
     </div>
     <div class="server-detail-grid">
@@ -1595,12 +1659,14 @@ function renderServerMeta(server) {
 
   const actions = document.createElement("div");
   actions.className = "server-card-actions";
-  const detailsButton = document.createElement("button");
-  detailsButton.className = "ghost server-action";
-  detailsButton.type = "button";
-  detailsButton.textContent = "Details";
-  detailsButton.addEventListener("click", () => selectServer(server));
-  actions.appendChild(detailsButton);
+  if (!isTenantUser()) {
+    const detailsButton = document.createElement("button");
+    detailsButton.className = "ghost server-action";
+    detailsButton.type = "button";
+    detailsButton.textContent = "Details";
+    detailsButton.addEventListener("click", () => selectServer(server));
+    actions.appendChild(detailsButton);
+  }
   if (server.endpoint) {
     const copyURL = document.createElement("button");
     copyURL.className = "ghost server-action";
@@ -1618,7 +1684,7 @@ function renderServerMeta(server) {
     copyJSON.addEventListener("click", () => copyTextToClipboard(jsonText, "Connect JSON copied"));
     actions.appendChild(copyJSON);
   }
-  if (authenticated) {
+  if (authenticated && !isTenantUser()) {
     const retireButton = document.createElement("button");
     retireButton.className = "ghost danger server-action";
     retireButton.type = "button";
@@ -1850,10 +1916,22 @@ function isAdminUser() {
   return authPrincipal?.role === "admin";
 }
 
+function isTenantUser() {
+  return authenticated === true && !isAdminUser();
+}
+
 function applyRoleVisibility() {
+  const authRequired = document.querySelectorAll('[data-auth-required="true"]');
+  authRequired.forEach((node) => {
+    node.classList.toggle("hidden", authenticated !== true);
+  });
   const adminOnly = document.querySelectorAll('[data-admin-only="true"]');
   adminOnly.forEach((node) => {
     node.classList.toggle("hidden", !isAdminUser());
+  });
+  const userOnly = document.querySelectorAll('[data-user-only="true"]');
+  userOnly.forEach((node) => {
+    node.classList.toggle("hidden", !isTenantUser());
   });
   const active = resolveActiveTab();
   activateTab(active);
@@ -1861,10 +1939,16 @@ function applyRoleVisibility() {
 
 function resolveActiveTab() {
   const active = document.querySelector(".tab.active")?.dataset.tab;
-  if (active && (isAdminUser() || active === "userkeys" || active === "servers" || active === "userdashboard")) {
+  if (active && isVisibleTab(active)) {
     return active;
   }
   return "servers";
+}
+
+function isVisibleTab(tabName) {
+  return Array.from(document.querySelectorAll(".tab")).some(
+    (tab) => tab.dataset.tab === tabName && !tab.classList.contains("hidden")
+  );
 }
 
 function activateTab(target) {
@@ -1932,7 +2016,7 @@ function renderGrants() {
     if (!filter) return true;
     const search = `${g.name || ""} ${g.serverRef?.name || ""} ${
       g.subject?.humanID || ""
-    } ${g.subject?.agentID || ""}`.toLowerCase();
+    } ${g.subject?.agentID || ""} ${g.subject?.teamID || ""}`.toLowerCase();
     return search.includes(filter);
   });
 
@@ -1995,17 +2079,19 @@ async function applyGrant(event) {
   event.preventDefault();
   const submit = event.submitter;
   if (submit?.disabled) return;
+  setInlineError("grant-form-error");
 
   const name = fieldValue("grant-name");
   const server = fieldValue("grant-server");
   if (!name || !server) {
-    showToast("Grant name and server are required.", "error");
+    failGrantForm("Grant name and server are required.");
     return;
   }
   const humanID = fieldValue("grant-human");
   const agentID = fieldValue("grant-agent");
-  if (!humanID && !agentID) {
-    showToast("Provide at least one of Human ID or Agent ID.", "error");
+  const teamID = fieldValue("grant-team");
+  if (!humanID && !agentID && !teamID) {
+    failGrantForm("Provide at least one of Human ID, Agent ID, or Team ID.");
     return;
   }
 
@@ -2013,7 +2099,12 @@ async function applyGrant(event) {
   try {
     toolRules = parseToolRules(fieldValue("grant-tool-rules"));
   } catch (parseErr) {
-    showToast(parseErr.message, "error");
+    failGrantForm(parseErr.message);
+    return;
+  }
+  const sideEffects = selectedGrantSideEffects();
+  if (!sideEffects.length) {
+    failGrantForm("Select at least one allowed side effect.");
     return;
   }
 
@@ -2026,9 +2117,9 @@ async function applyGrant(event) {
         name: server,
         namespace: fieldValue("grant-server-namespace"),
       },
-      subject: { humanID, agentID },
+      subject: { humanID, agentID, teamID },
       maxTrust: fieldValue("grant-trust"),
-      allowedSideEffects: selectedGrantSideEffects(),
+      allowedSideEffects: sideEffects,
       policyVersion: fieldValue("grant-policy-version") || defaults.policyVersion,
       toolRules,
     };
@@ -2038,19 +2129,26 @@ async function applyGrant(event) {
       body: JSON.stringify(payload),
     });
     showToast(`Grant "${payload.name}" applied successfully`);
+    focusNamespaceScope(payload.namespace);
     document.getElementById("grant-form")?.reset();
     setFieldValue("grant-namespace", activeScopeNamespace());
     setFieldValue("grant-policy-version", defaults.policyVersion);
     resetGrantSideEffects();
+    setInlineError("grant-form-error");
     document.getElementById("grant-form")?.classList.add("hidden");
     loadGrants();
     loadDashboardSummary();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
-    showToast(`Failed to apply grant: ${err.message}`, "error");
+    failGrantForm(`Failed to apply grant: ${readErrorMessage(err, "request failed")}`);
   } finally {
     if (submit) submit.disabled = false;
   }
+}
+
+function failGrantForm(message) {
+  setInlineError("grant-form-error", message);
+  showToast(message, "error");
 }
 
 function selectedGrantSideEffects() {
@@ -2125,7 +2223,7 @@ function renderSessions() {
     if (!filter) return true;
     const search = `${s.name || ""} ${s.serverRef?.name || ""} ${
       s.subject?.humanID || ""
-    } ${s.subject?.agentID || ""}`.toLowerCase();
+    } ${s.subject?.agentID || ""} ${s.subject?.teamID || ""}`.toLowerCase();
     return search.includes(filter);
   });
 
@@ -2197,8 +2295,9 @@ async function applySession(event) {
   }
   const humanID = fieldValue("session-human");
   const agentID = fieldValue("session-agent");
-  if (!humanID && !agentID) {
-    showToast("Provide at least one of Human ID or Agent ID.", "error");
+  const teamID = fieldValue("session-team");
+  if (!humanID && !agentID && !teamID) {
+    showToast("Provide at least one of Human ID, Agent ID, or Team ID.", "error");
     return;
   }
 
@@ -2219,7 +2318,7 @@ async function applySession(event) {
         name: server,
         namespace: fieldValue("session-server-namespace"),
       },
-      subject: { humanID, agentID },
+      subject: { humanID, agentID, teamID },
       consentedTrust: fieldValue("session-trust"),
       policyVersion: fieldValue("session-policy-version") || defaults.policyVersion,
     };
@@ -2233,6 +2332,7 @@ async function applySession(event) {
       body: JSON.stringify(payload),
     });
     showToast(`Session "${payload.name}" applied successfully`);
+    focusNamespaceScope(payload.namespace);
     document.getElementById("session-form")?.reset();
     setFieldValue("session-namespace", activeScopeNamespace());
     setFieldValue("session-policy-version", defaults.policyVersion);
@@ -2306,9 +2406,11 @@ function initGovernance() {
   document.getElementById("refresh-grants")?.addEventListener("click", loadGrants);
   document.getElementById("refresh-sessions")?.addEventListener("click", loadSessions);
   document.getElementById("show-grant-form")?.addEventListener("click", () => {
+    setInlineError("grant-form-error");
     document.getElementById("grant-form")?.classList.toggle("hidden");
   });
   document.getElementById("cancel-grant-form")?.addEventListener("click", () => {
+    setInlineError("grant-form-error");
     document.getElementById("grant-form")?.classList.add("hidden");
   });
   document.getElementById("grant-form")?.addEventListener("submit", applyGrant);
@@ -2327,8 +2429,10 @@ function initGovernance() {
 }
 
 // User API Keys
-async function loadUserAPIKeys() {
-  clearOneTimeUserAPIKey();
+async function loadUserAPIKeys(options = {}) {
+  if (!options.preserveOneTime) {
+    clearOneTimeUserAPIKey();
+  }
   try {
     const data = await fetchJSON("/user/api-keys");
     userAPIKeysCache = Array.isArray(data.keys) ? data.keys : [];
@@ -2373,8 +2477,14 @@ function renderUserAPIKeys() {
 async function createUserAPIKey() {
   const input = document.getElementById("user-api-key-name");
   const name = (input?.value || "").trim();
+  setInlineError("user-api-key-error");
+  input?.removeAttribute("aria-invalid");
   if (!name) {
-    showToast("Enter a name for the API key", "warning");
+    const message = "Enter a name for the API key.";
+    setInlineError("user-api-key-error", message);
+    input?.setAttribute("aria-invalid", "true");
+    input?.focus();
+    showToast(message, "warning");
     return;
   }
   try {
@@ -2396,11 +2506,14 @@ async function createUserAPIKey() {
       }, 60000);
     }
     if (input) input.value = "";
+    setInlineError("user-api-key-error");
     showToast("API key created");
-    await loadUserAPIKeys();
+    await loadUserAPIKeys({ preserveOneTime: true });
   } catch (err) {
     if (isUnauthorizedError(err)) return;
-    showToast(`Failed to create API key: ${err.message}`, "error");
+    const message = `Failed to create API key: ${readErrorMessage(err, "request failed")}`;
+    setInlineError("user-api-key-error", message);
+    showToast(message, "error");
   }
 }
 
@@ -2418,6 +2531,8 @@ async function revokeUserAPIKey(id) {
 function resetUserAPIKeys() {
   userAPIKeysCache = [];
   clearOneTimeUserAPIKey();
+  setInlineError("user-api-key-error");
+  document.getElementById("user-api-key-name")?.removeAttribute("aria-invalid");
   const tbody = document.getElementById("user-api-keys-body");
   if (tbody) {
     tbody.innerHTML = '<tr><td colspan="5" class="empty">No API keys found.</td></tr>';
@@ -2438,6 +2553,10 @@ function clearOneTimeUserAPIKey() {
 function initUserAPIKeys() {
   document.getElementById("refresh-user-api-keys")?.addEventListener("click", loadUserAPIKeys);
   document.getElementById("create-user-api-key")?.addEventListener("click", createUserAPIKey);
+  document.getElementById("user-api-key-name")?.addEventListener("input", () => {
+    setInlineError("user-api-key-error");
+    document.getElementById("user-api-key-name")?.removeAttribute("aria-invalid");
+  });
 }
 
 // Operations - admin activity and MCP runtime
@@ -2892,16 +3011,13 @@ async function loadFleetServers() {
     (Array.isArray(namespaceScopes) ? namespaceScopes : [])
       .map((item) => item?.namespace || "")
   );
-  if (!namespaces.length) {
-    const data = await fetchJSON("/runtime/servers");
-    return Array.isArray(data.servers) ? data.servers : [];
-  }
-  const results = await Promise.all(
-    namespaces.map(async (namespace) => {
+  const results = await Promise.all([
+    fetchJSON("/runtime/servers").then((data) => Array.isArray(data.servers) ? data.servers : []),
+    ...namespaces.map(async (namespace) => {
       const data = await fetchJSON(`/runtime/servers?namespace=${encodeURIComponent(namespace)}`);
       return Array.isArray(data.servers) ? data.servers : [];
-    })
-  );
+    }),
+  ]);
   return dedupeServers(results.flat());
 }
 
@@ -3010,9 +3126,15 @@ async function restartComponent() {
   const select = document.getElementById("restart-component-select");
   if (!select) return;
   const component = select.value;
+  setInlineError("restart-component-error");
+  select.removeAttribute("aria-invalid");
 
   if (!component) {
-    showToast("Please select a component", "warning");
+    const message = "Select a component to restart.";
+    setInlineError("restart-component-error", message);
+    select.setAttribute("aria-invalid", "true");
+    select.focus();
+    showToast(message, "warning");
     return;
   }
 
@@ -3030,16 +3152,23 @@ async function restartComponent() {
     });
     showToast(`Component "${component}" restart initiated`);
     select.value = "";
+    setInlineError("restart-component-error");
     setTimeout(loadComponents, 3000);
   } catch (err) {
     if (isUnauthorizedError(err)) return;
-    showToast(`Failed to restart component: ${err.message}`, "error");
+    const message = `Failed to restart component: ${readErrorMessage(err, "request failed")}`;
+    setInlineError("restart-component-error", message);
+    showToast(message, "error");
   }
 }
 
 function initPlatform() {
   document.getElementById("refresh-components")?.addEventListener("click", loadPlatformManagement);
   document.getElementById("restart-component-btn")?.addEventListener("click", restartComponent);
+  document.getElementById("restart-component-select")?.addEventListener("change", () => {
+    setInlineError("restart-component-error");
+    document.getElementById("restart-component-select")?.removeAttribute("aria-invalid");
+  });
   document.getElementById("open-mcp-operations")?.addEventListener("click", () => {
     activateTab("operations");
     loadMCPOperations();

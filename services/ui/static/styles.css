@@ -447,6 +447,12 @@ select:disabled {
   margin: 0 0 4px;
 }
 
+.form-error {
+  color: var(--error);
+  font-size: 13px;
+  margin: 0 0 12px;
+}
+
 .governance-form label {
   color: var(--muted);
   display: flex;
@@ -1321,17 +1327,19 @@ tr:hover td {
 
 .inventory-section-summary::before,
 .inventory-item summary::before {
-  color: var(--muted);
-  content: ">";
+  border-bottom: 2px solid var(--muted);
+  border-right: 2px solid var(--muted);
+  content: "";
   flex: 0 0 auto;
-  font-size: 12px;
-  transform: rotate(0deg);
+  height: 7px;
+  transform: rotate(-45deg);
   transition: transform 0.16s ease;
+  width: 7px;
 }
 
 .inventory-block[open] > .inventory-section-summary::before,
 .inventory-item[open] > summary::before {
-  transform: rotate(90deg);
+  transform: rotate(45deg);
 }
 
 .inventory-section-summary span:first-child {

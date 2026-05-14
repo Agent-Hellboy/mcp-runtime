@@ -35,7 +35,7 @@ spec:
       type: boolean
     - jsonPath: .spec.expiresAt
       name: Expires
-      type: date
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date

@@ -184,14 +184,16 @@ func catalogNamespaceEntry(namespace string) map[string]any {
 	scope := "shared"
 	isPublic := false
 	scopeName := "Shared catalog"
-	switch PlatformMode() {
-	case platformModePublic:
-		scope = "public"
-		isPublic = true
-		scopeName = "Public preview"
-	case platformModeOrg:
-		scope = "org"
-		scopeName = "Organization"
+	if namespace != sharedCatalogNamespace {
+		switch PlatformMode() {
+		case platformModePublic:
+			scope = "public"
+			isPublic = true
+			scopeName = "Public preview"
+		case platformModeOrg:
+			scope = "org"
+			scopeName = "Organization"
+		}
 	}
 	return map[string]any{
 		"namespace":  namespace,
@@ -209,7 +211,8 @@ func appendCatalogNamespaceEntries(namespaces []map[string]any) []map[string]any
 			seen[namespace] = struct{}{}
 		}
 	}
-	for _, namespace := range modeCatalogNamespaces() {
+	catalogNamespaces := append([]string{sharedCatalogNamespace}, modeCatalogNamespaces()...)
+	for _, namespace := range dedupeNonEmptyStrings(catalogNamespaces) {
 		if _, ok := seen[namespace]; ok {
 			continue
 		}

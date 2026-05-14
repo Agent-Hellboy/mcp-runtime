@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +51,326 @@ func TestConfigExposesPlatformMode(t *testing.T) {
 	body := recorder.Body.String()
 	if !strings.Contains(body, `window.MCP_PLATFORM_MODE = "org"`) {
 		t.Fatalf("config.js missing platform mode: %q", body)
+	}
+}
+
+func TestStaticAppPreservesOneTimeAPIKeyAfterCreate(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	if !strings.Contains(source, "async function loadUserAPIKeys(options = {})") {
+		t.Fatal("loadUserAPIKeys should accept options so callers can preserve one-time key display")
+	}
+	if !strings.Contains(source, "if (!options.preserveOneTime)") {
+		t.Fatal("loadUserAPIKeys should only clear the one-time API key when preserveOneTime is false")
+	}
+	if !strings.Contains(source, "await loadUserAPIKeys({ preserveOneTime: true })") {
+		t.Fatal("createUserAPIKey should refresh the key list without clearing the newly issued one-time key")
+	}
+}
+
+func TestStaticAppKeepsOrgCatalogBehindLogin(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	if !strings.Contains(source, `const publicCatalogEnabled = platformMode === "public";`) {
+		t.Fatal("anonymous catalog browsing should only be enabled for public mode")
+	}
+	if !strings.Contains(source, "No public catalog is available. Sign in to view organization and private servers.") {
+		t.Fatal("signed-out tenant/org catalog should explain that only public catalogs are anonymous")
+	}
+}
+
+func TestStaticAppHidesPersonalActivityForAdmins(t *testing.T) {
+	index, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(index)
+	if !strings.Contains(html, "My Activity") {
+		t.Fatal("personal user dashboard tab should be named My Activity")
+	}
+	if strings.Contains(html, "My Dashboard") {
+		t.Fatal("personal user dashboard tab should not use the generic My Dashboard label")
+	}
+	if got := strings.Count(html, "Server Catalog"); got < 2 {
+		t.Fatalf("expected navigation and panel to use Server Catalog, got %d occurrences", got)
+	}
+	if got := strings.Count(html, `data-user-only="true"`); got < 2 {
+		t.Fatalf("expected tab button and panel to be marked user-only, got %d markers", got)
+	}
+
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	if !strings.Contains(source, `querySelectorAll('[data-user-only="true"]')`) {
+		t.Fatal("app should apply user-only visibility rules")
+	}
+	if !strings.Contains(source, `node.classList.toggle("hidden", !isTenantUser())`) {
+		t.Fatal("user-only views should only show for authenticated tenant users")
+	}
+	if !strings.Contains(source, "isVisibleTab(active)") {
+		t.Fatal("active tab resolution should ignore hidden tabs")
+	}
+}
+
+func TestStaticAppHidesProtectedTabsWhenSignedOut(t *testing.T) {
+	index, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(index)
+	if got := strings.Count(html, `data-auth-required="true"`); got < 4 {
+		t.Fatalf("expected API Keys and Governance tabs/panels to require auth, got %d markers", got)
+	}
+
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`querySelectorAll('[data-auth-required="true"]')`,
+		`node.classList.toggle("hidden", authenticated !== true)`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppSearchesServerMetadataLabels(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`metadataSearchText(server.labels)`,
+		`function metadataSearchText(labels)`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppRequiresGrantSideEffects(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`const sideEffects = selectedGrantSideEffects()`,
+		`Select at least one allowed side effect.`,
+		`allowedSideEffects: sideEffects`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppKeepsServerEventAuthFailuresLocal(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`function fetchJSONNoAuthSideEffects`,
+		"fetchJSONNoAuthSideEffects(`",
+		`/runtime/server-events?`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppShowsInlineValidationFeedback(t *testing.T) {
+	index, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(index)
+	for _, want := range []string{
+		`id="grant-form-error" class="form-error hidden" role="alert"`,
+		`id="user-api-key-error" class="form-error hidden" role="alert"`,
+		`id="restart-component-error" class="form-error hidden" role="alert"`,
+		`Servers Seen`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("index missing %q", want)
+		}
+	}
+
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`function setInlineError(id, message = "")`,
+		`failGrantForm("Provide at least one of Human ID, Agent ID, or Team ID.")`,
+		`setInlineError("user-api-key-error", message)`,
+		`setInlineError("restart-component-error", message)`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestStaticStylesAvoidTextGeneratedChevrons(t *testing.T) {
+	body, err := os.ReadFile("static/styles.css")
+	if err != nil {
+		t.Fatalf("read static styles: %v", err)
+	}
+	source := string(body)
+	if strings.Contains(source, `content: ">"`) {
+		t.Fatal("inventory chevrons should not use generated text that leaks into the accessibility tree")
+	}
+	if !strings.Contains(source, `border-right: 2px solid var(--muted);`) {
+		t.Fatal("inventory chevrons should be drawn with borders")
+	}
+}
+
+func TestStaticMarkupIncludesPlatformRestartAndDialogReviewFixes(t *testing.T) {
+	index, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(index)
+	for _, want := range []string{
+		`<option value="prometheus">Prometheus</option>`,
+		`<option value="grafana">Grafana</option>`,
+		`id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("index missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`function isTenantUser()`,
+		`if (isTenantUser() && server.namespace && server.name)`,
+		`retireButton.textContent = "Retire"`,
+		`if (!isTenantUser()) {`,
+		`authenticated && !isTenantUser()`,
+		`await loadUserDashboard()`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppUsesInAppConfirmForRetire(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	if strings.Contains(source, "window.confirm") {
+		t.Fatal("retire flow should use the in-app confirmation modal, not native window.confirm")
+	}
+	if !strings.Contains(source, "await confirmModal(`Retire ${server.namespace}/${server.name}?`)") {
+		t.Fatal("retire flow should call confirmModal with the target namespace/name")
+	}
+}
+
+func TestStaticAppKeepsAdminFleetCatalogAndCreatedGovernanceNamespaceVisible(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`fetchJSON("/runtime/servers").then`,
+		`function focusNamespaceScope(namespace)`,
+		`focusNamespaceScope(payload.namespace)`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+	if got := strings.Count(source, "focusNamespaceScope(payload.namespace)"); got < 2 {
+		t.Fatalf("expected grant and session create flows to focus created namespace, got %d", got)
+	}
+}
+
+func TestStaticAppExposesGovernanceToTenantUsers(t *testing.T) {
+	index, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(index)
+	if strings.Contains(html, `id="tab-button-governance"`+`
+          class="tab"
+          data-tab="governance"
+          data-admin-only="true"`) {
+		t.Fatal("governance tab should not be admin-only")
+	}
+	if strings.Contains(html, `id="tab-governance"`+`
+        class="tab-content"
+        data-admin-only="true"`) {
+		t.Fatal("governance panel should not be admin-only")
+	}
+	for _, want := range []string{`id="grant-team"`, `id="session-team"`} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("governance form missing %s", want)
+		}
+	}
+
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`subject.teamID`,
+		`const teamID = fieldValue("grant-team")`,
+		`const teamID = fieldValue("session-team")`,
+		`subject: { humanID, agentID, teamID }`,
+		`Human ID, Agent ID, or Team ID`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestSecurityHeadersAllowConfiguredExternalAssets(t *testing.T) {
+	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret")
+	if err != nil {
+		t.Fatalf("newMux() error = %v", err)
+	}
+	handler := securityHeadersMiddleware(mux)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	csp := recorder.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "https://fonts.googleapis.com") {
+		t.Fatalf("CSP should allow stylesheet font origin, got %q", csp)
+	}
+	if !strings.Contains(csp, "https://fonts.gstatic.com") {
+		t.Fatalf("CSP should allow font file origin, got %q", csp)
 	}
 }
 
@@ -110,6 +431,36 @@ func TestAPIProxyRequiresAuthenticatedSession(t *testing.T) {
 	}
 	if !upstreamCalled {
 		t.Fatal("authenticated request did not reach upstream")
+	}
+}
+
+func TestAPIProxyAllowsPlatformLoginWithoutSession(t *testing.T) {
+	upstreamCalled := false
+	store := newUISessionStore(time.Now)
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		upstreamCalled = true
+		if got := r.URL.Path; got != "/api/auth/login" {
+			t.Fatalf("path = %q, want /api/auth/login", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"content-type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"access_token":"tok","token_type":"bearer","user":{"role":"user"}}`)),
+		}, nil
+	})
+	target, err := url.Parse("http://api.example")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", store, false, transport)
+
+	recorder := httptest.NewRecorder()
+	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"test@mcpruntime.org","password":"test@123"}`)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !upstreamCalled {
+		t.Fatal("platform login request did not reach upstream")
 	}
 }
 

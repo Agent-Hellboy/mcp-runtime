@@ -182,6 +182,22 @@ func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePub
 	return nil
 }
 
+func (c *PlatformClient) ValidateCredentials(ctx context.Context) error {
+	resp, err := c.do(ctx, http.MethodGet, "/auth/me", "", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return httpAPIError(resp.StatusCode, b)
+	}
+	return nil
+}
+
 func (c *PlatformClient) ListSessions(ctx context.Context, namespace string) ([]sentinelaccess.SessionSummary, error) {
 	resp, err := c.do(ctx, http.MethodGet, "/runtime/sessions", listQuery(namespace), nil)
 	if err != nil {

@@ -287,8 +287,8 @@ func TestEnsureTeamNamespaceConfiguresTraefikIngressWatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("traefik watch role missing: %v", err)
 	}
-	if roleAllows(role, "", "secrets", "get") {
-		t.Fatalf("API-created traefik watch role should not grant secret access: %#v", role.Rules)
+	if !roleAllows(role, "", "secrets", "get") {
+		t.Fatalf("API-created traefik watch role should grant secret access: %#v", role.Rules)
 	}
 	binding, err := client.RbacV1().RoleBindings("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{})
 	if err != nil {
@@ -314,7 +314,7 @@ func TestEnsureTeamNamespaceConfiguresTraefikIngressWatch(t *testing.T) {
 	}
 }
 
-func TestEnsureTraefikWatchRBACPreservesExistingSecretRole(t *testing.T) {
+func TestEnsureTraefikWatchRBACUpdatesLegacyRoleWithSecretAccess(t *testing.T) {
 	cfg := teamTraefikWatchConfig{
 		namespace:      "traefik",
 		serviceAccount: "traefik",
@@ -322,7 +322,7 @@ func TestEnsureTraefikWatchRBACPreservesExistingSecretRole(t *testing.T) {
 	existingRole := &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: "mcp-servers-public"},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"services", "endpoints", "secrets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{""}, Resources: []string{"services", "endpoints"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses"}, Verbs: []string{"get", "list", "watch"}},
 		},
 	}
@@ -337,7 +337,7 @@ func TestEnsureTraefikWatchRBACPreservesExistingSecretRole(t *testing.T) {
 		t.Fatalf("traefik watch role missing: %v", err)
 	}
 	if !roleAllows(role, "", "secrets", "get") {
-		t.Fatalf("existing admin-created secret access was not preserved: %#v", role.Rules)
+		t.Fatalf("legacy traefik role was not updated with secret access: %#v", role.Rules)
 	}
 }
 

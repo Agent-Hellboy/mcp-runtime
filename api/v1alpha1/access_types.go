@@ -103,7 +103,7 @@ type MCPAgentSessionStatus struct {
 // +kubebuilder:printcolumn:name="Team",type="string",JSONPath=".spec.subject.teamID"
 // +kubebuilder:printcolumn:name="Trust",type="string",JSONPath=".spec.consentedTrust"
 // +kubebuilder:printcolumn:name="Revoked",type="boolean",JSONPath=".spec.revoked"
-// +kubebuilder:printcolumn:name="Expires",type="date",JSONPath=".spec.expiresAt"
+// +kubebuilder:printcolumn:name="Expires",type="string",JSONPath=".spec.expiresAt"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // MCPAgentSession stores consent and upstream token state for an agent session.

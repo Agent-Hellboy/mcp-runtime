@@ -118,6 +118,26 @@ func TestRecordImagePublish(t *testing.T) {
 	}
 }
 
+func TestValidateCredentials(t *testing.T) {
+	client := &PlatformClient{
+		baseURL:   "https://platform.example.com",
+		token:     "token-1",
+		apiPrefix: "/api",
+		http: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != "/api/auth/me" {
+				t.Fatalf("path = %q, want auth/me endpoint", r.URL.Path)
+			}
+			if r.Header.Get("x-api-key") != "token-1" {
+				t.Fatalf("x-api-key = %q, want token-1", r.Header.Get("x-api-key"))
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"principal":{"role":"user"}}`))}, nil
+		})},
+	}
+	if err := client.ValidateCredentials(context.Background()); err != nil {
+		t.Fatalf("ValidateCredentials() error = %v", err)
+	}
+}
+
 func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 	httpClient := &http.Client{
 		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {

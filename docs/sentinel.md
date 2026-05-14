@@ -110,7 +110,7 @@ For local `setup --test-mode` clusters, setup seeds two email/password logins:
 
 | Service | Auth behavior |
 |---|---|
-| **api** | `/health` is open. Authenticated `/api/*` routes accept `x-api-key` from `API_KEYS`, user-generated API keys, platform JWT bearer tokens, or OIDC JWT bearer tokens when OIDC is configured. If `ADMIN_API_KEYS` is set, only those keys get admin role; other `API_KEYS` values are user role. |
+| **api** | `/health` is open. Authenticated `/api/*` routes accept `x-api-key` from `API_KEYS`, user-generated API keys, platform JWT bearer tokens, or OIDC JWT bearer tokens when OIDC is configured. If `ADMIN_API_KEYS` is set, only those keys get admin role; other `API_KEYS` values are user role. Registry forward-auth keeps admin credentials global and allows normal user credentials only on repository paths scoped to the caller's user namespace or team slug. |
 | **ui** | `/auth/login` creates an HttpOnly UI session from `api_key`, `id_token`, or `email`/`password`. The UI then proxies `/api/*` with an upstream API key or bearer token. |
 | **ingest** | `/live`, `/ready`, and `/health` are open. `/events` accepts `x-api-key` from `INGEST_API_KEYS`, legacy `API_KEYS`, or a configured OIDC bearer token. If no API keys and no JWKS are configured, intake auth is bypassed. |
 | **processor** | No data API. It exposes metrics and a simple health check on the metrics port. |
@@ -168,8 +168,8 @@ metrics on `METRICS_PORT` (default `9090`).
 | `GET` | `/api/user/analytics/usage` | Caller-scoped MCP server analytics used by the user dashboard. |
 | `GET`, `POST` | `/api/user/registry-credentials` | List or create caller-owned registry credentials. |
 | `POST` | `/api/user/registry-credentials/{id}/revoke` | Revoke one registry credential. |
-| `*` | `/api/registry/authz` | Forward-auth guard used by the bundled registry ingress. Admin role required. |
-| `POST` | `/api/user/activity/image-publish` | Record a successful image publish event for the authenticated user. The CLI calls this after `registry push` when platform credentials are configured. |
+| `*` | `/api/registry/authz` | Forward-auth guard used by the bundled registry ingress. Admin credentials have global access; user credentials are limited to caller-scoped repository paths. |
+| `POST` | `/api/user/activity/image-publish` | Record a successful image publish event for the authenticated user. The authenticated CLI calls this after `registry push`. |
 
 Restart request body examples:
 
@@ -270,7 +270,7 @@ The UI's **Governance** tab creates and operates the same `MCPAccessGrant` and `
 | **Create session** | `Create Session`. Pick a consented trust level and optional expiry. The gateway looks it up at `tools/call` time alongside the grant. |
 | **Disable / enable grant** | Single-action row. Disable flips `spec.disabled=true` — grant is preserved for audit, but the gateway treats it as denying. |
 | **Revoke / unrevoke session** | Same row pattern toggles `spec.revoked`. Revoked sessions deny subsequent tool calls immediately. |
-| **Filter** | Search box on each table filters by server, human ID, agent ID. Local to the loaded set — refresh first if cluster state has changed. |
+| **Filter** | Search box on each table filters by server, human ID, agent ID, or team ID. Local to the loaded set — refresh first if cluster state has changed. |
 
 Tool-rule example:
 

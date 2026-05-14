@@ -276,6 +276,11 @@ func newAPIProxyWithTransport(target *url.URL, apiBase, upstreamAPIKey, apiKeys 
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isUnauthenticatedPlatformAuthRequest(r, apiBase) {
+			proxy.ServeHTTP(w, r.Clone(r.Context()))
+			return
+		}
+
 		if validAPIKeyHeader(r, apiKeys) {
 			req := r.Clone(r.Context())
 			req.Header.Del("x-api-key")
@@ -322,6 +327,19 @@ func newAPIProxyWithTransport(target *url.URL, apiBase, upstreamAPIKey, apiKeys 
 
 		serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	})
+}
+
+func isUnauthenticatedPlatformAuthRequest(r *http.Request, apiBase string) bool {
+	if r == nil || r.URL == nil {
+		return false
+	}
+	path := strings.TrimRight(normalizePathPrefix(apiBase), "/") + "/auth/"
+	switch r.URL.Path {
+	case path + "login", path + "signup", path + "oidc":
+		return true
+	default:
+		return false
+	}
 }
 
 func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionStore) http.HandlerFunc {
@@ -1185,9 +1203,9 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; "+
 				"script-src 'self' https://accounts.google.com https://apis.google.com; "+
-				"style-src 'self' 'unsafe-inline'; "+
+				"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
 				"img-src 'self' data: https:; "+
-				"font-src 'self' data:; "+
+				"font-src 'self' data: https://fonts.gstatic.com; "+
 				"connect-src 'self' https://accounts.google.com; "+
 				"frame-src https://accounts.google.com; "+
 				"frame-ancestors 'none'; "+

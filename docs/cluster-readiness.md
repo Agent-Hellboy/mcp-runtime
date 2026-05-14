@@ -75,7 +75,7 @@ Three *different* actors fetch images, and they resolve hostnames differently:
 
 | Actor | What it pulls | DNS source |
 |---|---|---|
-| `./bin/mcp-runtime registry push` (in-cluster mode) | Pushes from a helper pod using the registry Service DNS | Cluster CoreDNS (always works) |
+| `./bin/mcp-runtime registry push` (in-cluster mode) | Pushes from a helper pod after platform credential validation using the registry Service DNS | Cluster CoreDNS (always works) |
 | `kubelet` on the node | Pulls operator / MCPServer images for pod creation | **Host DNS** (not CoreDNS) + containerd registry mirrors |
 | Developer `docker push` / `docker pull` | Ad-hoc pushes or pulls from your laptop | Your local `/etc/hosts` / corporate DNS |
 

@@ -609,8 +609,6 @@ kind: Ingress
 metadata:
   name: mcp-sentinel-gateway-api
   namespace: mcp-sentinel
-  annotations:
-    traefik.ingress.kubernetes.io/router.middlewares: pii-redactor@file
 spec:
   ingressClassName: traefik
   rules:

@@ -46,6 +46,8 @@ REGISTRY=registry.registry.svc.cluster.local:5000
 
 docker build -t "$LOCAL_IMAGE" -f "$DOCKERFILE" "$BUILD_CONTEXT"
 
+./bin/mcp-runtime auth login --api-url http://localhost:18080
+
 ./bin/mcp-runtime registry push \
   --image "$LOCAL_IMAGE" \
   --name "$IMAGE_REPO" \
@@ -161,7 +163,8 @@ kubectl describe pod -n <namespace> "$POD"
 Inside Kubernetes, image references use
 `registry.registry.svc.cluster.local:5000`. Your host usually cannot resolve
 that DNS name. Prefer `mcp-runtime registry push`, which uses an in-cluster
-helper, or `kind load docker-image` for single-node Kind debugging.
+helper after platform login, or `kind load docker-image` for single-node Kind
+debugging.
 
 Raw `docker push registry.registry.svc.cluster.local:5000/...` from the host is
 expected to fail unless you have added host DNS and insecure registry settings.

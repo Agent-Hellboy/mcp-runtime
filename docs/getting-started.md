@@ -213,6 +213,8 @@ REGISTRY=registry.registry.svc.cluster.local:5000
 
 docker build -t "$LOCAL_IMAGE" -f "$DOCKERFILE" "$BUILD_CONTEXT"
 
+./bin/mcp-runtime auth login --api-url http://localhost:18080
+
 ./bin/mcp-runtime registry push \
   --image "$LOCAL_IMAGE" \
   --name "$IMAGE_REPO" \
@@ -333,6 +335,8 @@ kubectl create secret generic go-example-mcp-analytics \
 Build and push the image into the Kind-accessible registry:
 
 ```bash
+./bin/mcp-runtime auth login --api-url http://localhost:18080
+
 ./bin/mcp-runtime server build image go-example-mcp \
   --metadata-file /tmp/go-example-mcp.yaml \
   --dockerfile examples/go-mcp-server/Dockerfile \

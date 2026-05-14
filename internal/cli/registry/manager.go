@@ -133,6 +133,10 @@ func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helpe
 	if targetRegistry == "" {
 		targetRegistry = resolvePlatformRegistryURL(mgr.logger)
 	}
+	platformClient, err := requirePlatformPushCredentials()
+	if err != nil {
+		return err
+	}
 
 	repo, tag := ref.SplitImage(image)
 	if name != "" {
@@ -162,13 +166,25 @@ func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helpe
 	if pushErr != nil {
 		return pushErr
 	}
-	mgr.recordImagePublish(image, target, mode)
+	mgr.recordImagePublish(platformClient, image, target, mode)
 	return nil
 }
 
-func (m *RegistryManager) recordImagePublish(source, target, mode string) {
+func requirePlatformPushCredentials() (*platformapi.PlatformClient, error) {
 	client, err := platformapi.NewPlatformClient()
 	if err != nil {
+		return nil, fmt.Errorf("registry push requires platform credentials; run mcp-runtime auth login or set MCP_PLATFORM_API_TOKEN and MCP_PLATFORM_API_URL: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := client.ValidateCredentials(ctx); err != nil {
+		return nil, fmt.Errorf("registry push credentials were rejected: %w", err)
+	}
+	return client, nil
+}
+
+func (m *RegistryManager) recordImagePublish(client *platformapi.PlatformClient, source, target, mode string) {
+	if client == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
