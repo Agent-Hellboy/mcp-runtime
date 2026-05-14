@@ -201,9 +201,11 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 	mux.HandleFunc("/auth/login", handleLogin(apiKey, upstreamAPIKey, apiUpstream, sessions))
 	mux.HandleFunc("/auth/logout", handleLogout(sessions))
 	mux.HandleFunc("/auth/status", handleStatus(sessions))
-	mux.HandleFunc("/auth/admin-check", handleAdminCheck(sessions, apiKeys, adminAPIKeys))
+	parsedAPIKeys := parseAPIKeyList(apiKeys)
+	parsedAdminAPIKeys := parseAPIKeyList(adminAPIKeys)
+	mux.HandleFunc("/auth/admin-check", handleAdminCheck(sessions, parsedAPIKeys, parsedAdminAPIKeys))
 
-	apiProxy := newAPIProxy(target, apiBase, upstreamAPIKey, apiKeys, sessions, publicCatalog)
+	apiProxy := newAPIProxy(target, apiBase, upstreamAPIKey, parsedAPIKeys, sessions, publicCatalog)
 	mux.Handle(apiBase+"/", apiProxy)
 	mux.Handle(apiBase, apiProxy)
 
@@ -234,11 +236,11 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 	return mux, nil
 }
 
-func newAPIProxy(target *url.URL, apiBase, upstreamAPIKey, apiKeys string, store *uiSessionStore, publicCatalog bool) http.Handler {
+func newAPIProxy(target *url.URL, apiBase, upstreamAPIKey string, apiKeys []string, store *uiSessionStore, publicCatalog bool) http.Handler {
 	return newAPIProxyWithTransport(target, apiBase, upstreamAPIKey, apiKeys, store, publicCatalog, nil)
 }
 
-func newAPIProxyWithTransport(target *url.URL, apiBase, upstreamAPIKey, apiKeys string, store *uiSessionStore, publicCatalog bool, transport http.RoundTripper) http.Handler {
+func newAPIProxyWithTransport(target *url.URL, apiBase, upstreamAPIKey string, apiKeys []string, store *uiSessionStore, publicCatalog bool, transport http.RoundTripper) http.Handler {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	if transport != nil {
 		proxy.Transport = transport
@@ -870,47 +872,50 @@ func handleLogout(store *uiSessionStore) http.HandlerFunc {
 // /prometheus. It returns 204 when the caller is an admin (logged-in UI
 // session or admin API key) and 401 otherwise. The original request body and
 // path do not matter — Traefik forwards only headers and consumes the status.
-func handleAdminCheck(store *uiSessionStore, apiKeys, adminAPIKeys string) http.HandlerFunc {
+// The Cache-Control header is set by securityHeadersMiddleware for /auth/.
+func handleAdminCheck(store *uiSessionStore, apiKeys, adminAPIKeys []string) http.HandlerFunc {
+	// When ADMIN_API_KEYS is unset, any value from API_KEYS authenticates as
+	// admin — matches the API service's backward-compatible default.
+	gateKeys := adminAPIKeys
+	if len(gateKeys) == 0 {
+		gateKeys = apiKeys
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if sess, ok := store.sessionFromRequest(r); ok && strings.EqualFold(sess.Principal.Role, "admin") {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		if hasAdminAPIKey(r, apiKeys, adminAPIKeys) {
+		if validAPIKeyHeader(r, gateKeys) {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		w.Header().Set("Cache-Control", "no-store")
 		serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	}
 }
 
-// hasAdminAPIKey returns true when the request carries an x-api-key header
-// that authenticates as admin. When ADMIN_API_KEYS is unset, any value from
-// API_KEYS is admin (matches the API service's backward-compatible default).
-// When ADMIN_API_KEYS is set, only keys in that list are admin.
-func hasAdminAPIKey(r *http.Request, apiKeys, adminAPIKeys string) bool {
-	presented := strings.TrimSpace(r.Header.Get("x-api-key"))
-	if presented == "" {
-		return false
-	}
-	if strings.TrimSpace(adminAPIKeys) != "" {
-		return matchAPIKey(presented, adminAPIKeys)
-	}
-	return matchAPIKey(presented, apiKeys)
-}
-
-func matchAPIKey(presented, list string) bool {
-	for _, key := range strings.Split(list, ",") {
-		trimmed := strings.TrimSpace(key)
-		if trimmed == "" {
-			continue
-		}
-		if hmac.Equal([]byte(presented), []byte(trimmed)) {
+func matchAPIKey(presented string, keys []string) bool {
+	for _, key := range keys {
+		if hmac.Equal([]byte(presented), []byte(key)) {
 			return true
 		}
 	}
 	return false
+}
+
+// parseAPIKeyList splits a comma-separated API-key list into a slice of
+// trimmed, non-empty entries, suitable for use as a per-process lookup.
+func parseAPIKeyList(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, key := range parts {
+		if trimmed := strings.TrimSpace(key); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func handleStatus(store *uiSessionStore) http.HandlerFunc {
@@ -965,12 +970,15 @@ func randomURLToken(rawBytes int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-func validAPIKeyHeader(r *http.Request, apiKeys string) bool {
+func validAPIKeyHeader(r *http.Request, keys []string) bool {
+	if len(keys) == 0 {
+		return false
+	}
 	presented := strings.TrimSpace(r.Header.Get("x-api-key"))
 	if presented == "" {
 		return false
 	}
-	return matchAPIKey(presented, apiKeys)
+	return matchAPIKey(presented, keys)
 }
 
 func hasAPIAuthHeader(r *http.Request) bool {

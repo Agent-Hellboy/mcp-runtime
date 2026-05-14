@@ -356,7 +356,7 @@ func TestStaticAppExposesGovernanceToTenantUsers(t *testing.T) {
 }
 
 func TestSecurityHeadersAllowConfiguredExternalAssets(t *testing.T) {
-	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret")
+	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret", "")
 	if err != nil {
 		t.Fatalf("newMux() error = %v", err)
 	}
@@ -398,7 +398,7 @@ func TestAPIProxyRequiresAuthenticatedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", store, false, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, false, transport)
 
 	recorder := httptest.NewRecorder()
 	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/dashboard/summary", nil))
@@ -452,7 +452,7 @@ func TestAPIProxyAllowsPlatformLoginWithoutSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", store, false, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, false, transport)
 
 	recorder := httptest.NewRecorder()
 	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"test@mcpruntime.org","password":"test@123"}`)))
@@ -481,7 +481,7 @@ func TestAPIProxyAllowsDirectAPIKeyClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret,backup-secret", newUISessionStore(time.Now), false, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret", "backup-secret"}, newUISessionStore(time.Now), false, transport)
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
@@ -512,7 +512,7 @@ func TestAPIProxyForwardsUserAPIKeyClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", newUISessionStore(time.Now), false, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, newUISessionStore(time.Now), false, transport)
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
@@ -536,7 +536,7 @@ func TestAPIProxyRejectsAnonymousRuntimeServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", newUISessionStore(time.Now), false, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, newUISessionStore(time.Now), false, transport)
 
 	recorder := httptest.NewRecorder()
 	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers?namespace=user-private", nil))
@@ -575,7 +575,7 @@ func TestAPIProxyAllowsAnonymousPublicCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", newUISessionStore(time.Now), true, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, newUISessionStore(time.Now), true, transport)
 
 	recorder := httptest.NewRecorder()
 	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers", nil))
@@ -622,7 +622,7 @@ func TestAPIProxyUsesSessionBeforeAnonymousPublicCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", store, true, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, true, transport)
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers?namespace=admin-private", nil)
@@ -715,7 +715,7 @@ func TestHandleLoginWithOIDCToken(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"content-type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
 	})
 	target, _ := url.Parse("http://api.example")
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", store, false, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, false, transport)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/user/api-keys", nil)
@@ -912,7 +912,7 @@ func TestHandleLoginWithPassword(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"content-type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
 	})
 	target, _ := url.Parse("http://api.example")
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", store, false, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, false, transport)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/user/api-keys", nil)
@@ -1203,7 +1203,7 @@ func TestHandleAdminCheck(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := handleAdminCheck(store, tc.apiKeys, tc.adminKeys)
+			h := handleAdminCheck(store, parseAPIKeyList(tc.apiKeys), parseAPIKeyList(tc.adminKeys))
 			req := httptest.NewRequest(http.MethodGet, "/auth/admin-check", nil)
 			if tc.cookie != nil {
 				req.AddCookie(tc.cookie)
