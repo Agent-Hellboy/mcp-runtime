@@ -65,8 +65,10 @@ mcp-runtime team init acme --group acme-mcp-admins
 a default quota, default container limits, a default-deny NetworkPolicy that
 allows same-namespace ingress, bundled Traefik ingress, DNS, and basic outbound
 HTTP/S egress, a team-admin `Role`, a `RoleBinding`, and the `traefik-watch`
-`Role`/`RoleBinding` for the bundled Traefik service account. It also patches
-the bundled `traefik/traefik` Deployment so
+`Role`/`RoleBinding` for the bundled Traefik service account. The
+`traefik-watch` role grants watch access to Services, Endpoints, Secrets, and
+Ingresses in the team namespace. It also patches the bundled `traefik/traefik`
+Deployment so
 `--providers.kubernetesingress.namespaces` includes the new team namespace. Use
 `--dry-run` to print the generated manifest, and use `--skip-traefik-watch`
 when your ingress controller is external or managed outside this repo.

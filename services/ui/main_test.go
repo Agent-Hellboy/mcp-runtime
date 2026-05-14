@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +51,115 @@ func TestConfigExposesPlatformMode(t *testing.T) {
 	body := recorder.Body.String()
 	if !strings.Contains(body, `window.MCP_PLATFORM_MODE = "org"`) {
 		t.Fatalf("config.js missing platform mode: %q", body)
+	}
+}
+
+func TestStaticAppPreservesOneTimeAPIKeyAfterCreate(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	if !strings.Contains(source, "async function loadUserAPIKeys(options = {})") {
+		t.Fatal("loadUserAPIKeys should accept options so callers can preserve one-time key display")
+	}
+	if !strings.Contains(source, "if (!options.preserveOneTime)") {
+		t.Fatal("loadUserAPIKeys should only clear the one-time API key when preserveOneTime is false")
+	}
+	if !strings.Contains(source, "await loadUserAPIKeys({ preserveOneTime: true })") {
+		t.Fatal("createUserAPIKey should refresh the key list without clearing the newly issued one-time key")
+	}
+}
+
+func TestStaticAppHidesPersonalActivityForAdmins(t *testing.T) {
+	index, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(index)
+	if !strings.Contains(html, "My Activity") {
+		t.Fatal("personal user dashboard tab should be named My Activity")
+	}
+	if strings.Contains(html, "My Dashboard") {
+		t.Fatal("personal user dashboard tab should not use the generic My Dashboard label")
+	}
+	if got := strings.Count(html, `data-user-only="true"`); got < 2 {
+		t.Fatalf("expected tab button and panel to be marked user-only, got %d markers", got)
+	}
+
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	if !strings.Contains(source, `querySelectorAll('[data-user-only="true"]')`) {
+		t.Fatal("app should apply user-only visibility rules")
+	}
+	if !strings.Contains(source, "authenticated === true && isAdminUser()") {
+		t.Fatal("user-only views should hide for authenticated admins")
+	}
+	if !strings.Contains(source, "isVisibleTab(active)") {
+		t.Fatal("active tab resolution should ignore hidden tabs")
+	}
+}
+
+func TestStaticAppExposesGovernanceToTenantUsers(t *testing.T) {
+	index, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(index)
+	if strings.Contains(html, `id="tab-button-governance"`+`
+          class="tab"
+          data-tab="governance"
+          data-admin-only="true"`) {
+		t.Fatal("governance tab should not be admin-only")
+	}
+	if strings.Contains(html, `id="tab-governance"`+`
+        class="tab-content"
+        data-admin-only="true"`) {
+		t.Fatal("governance panel should not be admin-only")
+	}
+	for _, want := range []string{`id="grant-team"`, `id="session-team"`} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("governance form missing %s", want)
+		}
+	}
+
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`subject.teamID`,
+		`const teamID = fieldValue("grant-team")`,
+		`const teamID = fieldValue("session-team")`,
+		`subject: { humanID, agentID, teamID }`,
+		`Human ID, Agent ID, or Team ID`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestSecurityHeadersAllowConfiguredExternalAssets(t *testing.T) {
+	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret")
+	if err != nil {
+		t.Fatalf("newMux() error = %v", err)
+	}
+	handler := securityHeadersMiddleware(mux)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	csp := recorder.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "https://fonts.googleapis.com") {
+		t.Fatalf("CSP should allow stylesheet font origin, got %q", csp)
+	}
+	if !strings.Contains(csp, "https://fonts.gstatic.com") {
+		t.Fatalf("CSP should allow font file origin, got %q", csp)
 	}
 }
 

@@ -266,7 +266,7 @@ The UI's **Governance** tab creates and operates the same `MCPAccessGrant` and `
 | **Create session** | `Create Session`. Pick a consented trust level and optional expiry. The gateway looks it up at `tools/call` time alongside the grant. |
 | **Disable / enable grant** | Single-action row. Disable flips `spec.disabled=true` — grant is preserved for audit, but the gateway treats it as denying. |
 | **Revoke / unrevoke session** | Same row pattern toggles `spec.revoked`. Revoked sessions deny subsequent tool calls immediately. |
-| **Filter** | Search box on each table filters by server, human ID, agent ID. Local to the loaded set — refresh first if cluster state has changed. |
+| **Filter** | Search box on each table filters by server, human ID, agent ID, or team ID. Local to the loaded set — refresh first if cluster state has changed. |
 
 Tool-rule example:
 

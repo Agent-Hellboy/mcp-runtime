@@ -643,6 +643,9 @@ function createSubjectCell(subject = {}) {
   if (subject.agentID) {
     chips.appendChild(createSubjectChip("Agent", subject.agentID));
   }
+  if (subject.teamID) {
+    chips.appendChild(createSubjectChip("Team", subject.teamID));
+  }
   if (!chips.children.length) {
     chips.textContent = "-";
   }
@@ -1855,16 +1858,26 @@ function applyRoleVisibility() {
   adminOnly.forEach((node) => {
     node.classList.toggle("hidden", !isAdminUser());
   });
+  const userOnly = document.querySelectorAll('[data-user-only="true"]');
+  userOnly.forEach((node) => {
+    node.classList.toggle("hidden", authenticated === true && isAdminUser());
+  });
   const active = resolveActiveTab();
   activateTab(active);
 }
 
 function resolveActiveTab() {
   const active = document.querySelector(".tab.active")?.dataset.tab;
-  if (active && (isAdminUser() || active === "userkeys" || active === "servers" || active === "userdashboard")) {
+  if (active && isVisibleTab(active)) {
     return active;
   }
   return "servers";
+}
+
+function isVisibleTab(tabName) {
+  return Array.from(document.querySelectorAll(".tab")).some(
+    (tab) => tab.dataset.tab === tabName && !tab.classList.contains("hidden")
+  );
 }
 
 function activateTab(target) {
@@ -1932,7 +1945,7 @@ function renderGrants() {
     if (!filter) return true;
     const search = `${g.name || ""} ${g.serverRef?.name || ""} ${
       g.subject?.humanID || ""
-    } ${g.subject?.agentID || ""}`.toLowerCase();
+    } ${g.subject?.agentID || ""} ${g.subject?.teamID || ""}`.toLowerCase();
     return search.includes(filter);
   });
 
@@ -2004,8 +2017,9 @@ async function applyGrant(event) {
   }
   const humanID = fieldValue("grant-human");
   const agentID = fieldValue("grant-agent");
-  if (!humanID && !agentID) {
-    showToast("Provide at least one of Human ID or Agent ID.", "error");
+  const teamID = fieldValue("grant-team");
+  if (!humanID && !agentID && !teamID) {
+    showToast("Provide at least one of Human ID, Agent ID, or Team ID.", "error");
     return;
   }
 
@@ -2026,7 +2040,7 @@ async function applyGrant(event) {
         name: server,
         namespace: fieldValue("grant-server-namespace"),
       },
-      subject: { humanID, agentID },
+      subject: { humanID, agentID, teamID },
       maxTrust: fieldValue("grant-trust"),
       allowedSideEffects: selectedGrantSideEffects(),
       policyVersion: fieldValue("grant-policy-version") || defaults.policyVersion,
@@ -2125,7 +2139,7 @@ function renderSessions() {
     if (!filter) return true;
     const search = `${s.name || ""} ${s.serverRef?.name || ""} ${
       s.subject?.humanID || ""
-    } ${s.subject?.agentID || ""}`.toLowerCase();
+    } ${s.subject?.agentID || ""} ${s.subject?.teamID || ""}`.toLowerCase();
     return search.includes(filter);
   });
 
@@ -2197,8 +2211,9 @@ async function applySession(event) {
   }
   const humanID = fieldValue("session-human");
   const agentID = fieldValue("session-agent");
-  if (!humanID && !agentID) {
-    showToast("Provide at least one of Human ID or Agent ID.", "error");
+  const teamID = fieldValue("session-team");
+  if (!humanID && !agentID && !teamID) {
+    showToast("Provide at least one of Human ID, Agent ID, or Team ID.", "error");
     return;
   }
 
@@ -2219,7 +2234,7 @@ async function applySession(event) {
         name: server,
         namespace: fieldValue("session-server-namespace"),
       },
-      subject: { humanID, agentID },
+      subject: { humanID, agentID, teamID },
       consentedTrust: fieldValue("session-trust"),
       policyVersion: fieldValue("session-policy-version") || defaults.policyVersion,
     };
@@ -2327,8 +2342,10 @@ function initGovernance() {
 }
 
 // User API Keys
-async function loadUserAPIKeys() {
-  clearOneTimeUserAPIKey();
+async function loadUserAPIKeys(options = {}) {
+  if (!options.preserveOneTime) {
+    clearOneTimeUserAPIKey();
+  }
   try {
     const data = await fetchJSON("/user/api-keys");
     userAPIKeysCache = Array.isArray(data.keys) ? data.keys : [];
@@ -2397,7 +2414,7 @@ async function createUserAPIKey() {
     }
     if (input) input.value = "";
     showToast("API key created");
-    await loadUserAPIKeys();
+    await loadUserAPIKeys({ preserveOneTime: true });
   } catch (err) {
     if (isUnauthorizedError(err)) return;
     showToast(`Failed to create API key: ${err.message}`, "error");

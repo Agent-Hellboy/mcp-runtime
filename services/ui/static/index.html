@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>MCP Sentinel Control Plane</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
     <script src="/config.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -41,12 +42,13 @@
           id="tab-button-userdashboard"
           class="tab"
           data-tab="userdashboard"
+          data-user-only="true"
           role="tab"
           type="button"
           aria-controls="tab-userdashboard"
           aria-selected="false"
         >
-          My Dashboard
+          My Activity
         </button>
         <button
           id="tab-button-userkeys"
@@ -75,7 +77,6 @@
           id="tab-button-governance"
           class="tab"
           data-tab="governance"
-          data-admin-only="true"
           role="tab"
           type="button"
           aria-controls="tab-governance"
@@ -159,6 +160,7 @@
       <section
         id="tab-userdashboard"
         class="tab-content"
+        data-user-only="true"
         role="tabpanel"
         aria-labelledby="tab-button-userdashboard"
         hidden
@@ -543,7 +545,6 @@
       <section
         id="tab-governance"
         class="tab-content"
-        data-admin-only="true"
         role="tabpanel"
         aria-labelledby="tab-button-governance"
         hidden
@@ -601,6 +602,10 @@
               <label>
                 Agent ID
                 <input type="text" id="grant-agent" />
+              </label>
+              <label>
+                Team ID
+                <input type="text" id="grant-team" />
               </label>
               <label>
                 Max Trust
@@ -694,6 +699,10 @@
               <label>
                 Agent ID
                 <input type="text" id="session-agent" />
+              </label>
+              <label>
+                Team ID
+                <input type="text" id="session-team" />
               </label>
               <label>
                 Consented Trust
