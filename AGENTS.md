@@ -132,7 +132,7 @@ cluster is intentionally disposable.
 - UI: `http://localhost:18080/`
 - Grafana: `/grafana` · Prometheus: `/prometheus` · API base: `http://localhost:18080/api`
 - MCP (test): `http://localhost:18080/demo-one/mcp`, `http://localhost:18080/demo-two/mcp`
-- PII redaction: `config/ingress/overlays/http` with Traefik plugin `pii-redactor@file`. Reapply: `./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http`. The plugin is built from `services/traefik-plugins/pii-redactor` (local `localplugins` mount) so a published image tag is not required for local dev.
+- PII redaction: `config/ingress/overlays/http` with Traefik plugin `pii-redactor@file`. Reapply: `./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http`. The plugin is built from `services/traefik-plugins/pii-redactor` (local `localplugins` mount) so a published image tag is not required for local dev. Keep it off control-plane `/api` routes: API keys, team IDs, server names, namespaces, and grant/session subjects must stay exact for the UI, CLI, and adapter flows.
 - **API keys:**
 
 ```bash

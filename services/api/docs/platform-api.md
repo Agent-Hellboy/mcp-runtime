@@ -130,9 +130,9 @@ curl -sS -X POST http://localhost:8080/api/user/api-keys \
   -d '{"name":"laptop"}'
 ```
 
-The cleartext key is returned once as `api_key` and `one_time_key`; the latter
-lets the browser UI show the value when dev ingress redaction masks `api_key`.
-The database stores only a SHA-256 hash.
+The cleartext key is returned once as `api_key` and `one_time_key` so browser
+and API clients can show the value from an explicit one-time field. The
+database stores only a SHA-256 hash.
 
 List keys:
 

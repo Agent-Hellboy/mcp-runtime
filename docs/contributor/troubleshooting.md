@@ -149,9 +149,12 @@ http://localhost:18080/
 ## Browser Login Fails but Direct API Works
 
 The HTTP ingress overlay can include the `pii-redactor@file` Traefik middleware.
-That middleware is useful for request-path testing, but it can redact email-like
-values in some local API calls. For normal UI login, use the seeded accounts.
-For identity-store debugging, port-forward the API directly:
+That middleware is useful for request-path testing on ingest traffic, but it
+must not be attached to control-plane `/api` routes because API keys, team IDs,
+server names, namespaces, and grant/session subjects must stay exact. If local
+API responses show `[redacted]`, verify that `mcp-sentinel-gateway-api` does not
+reference `pii-redactor@file`. For identity-store debugging, port-forward the
+API directly:
 
 ```bash
 kubectl port-forward -n mcp-sentinel svc/mcp-sentinel-api 18081:8080
