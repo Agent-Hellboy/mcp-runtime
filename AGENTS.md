@@ -89,6 +89,20 @@ Do not hand-wave command behavior from memory when the docs are meant to reflect
 - **Docs you were not asked to edit:** Avoid adding new top-level docs unless the task needs them; this file, `README`, and existing doc trees are the defaults for agents.
 - **Secrets and prod:** This repo is **alpha**; do not hardcode real credentials. Use the existing secret and env patterns documented below.
 - **Agent skills:** Keep `.claude/skills` as a symlink to `../.codex/skills`; see `.claude/README.md` before changing local agent-tool configuration.
+- **AI session hygiene:** Before ending a non-trivial session, propose updates to `ai-assist/` (durable agent-facing learnings, gotchas, cross-cutting tips, upstream tracking) and ask the user to review the diff manually before commit. See **AI session hygiene** below for the full charter.
+
+## AI session hygiene
+
+Agents (Claude Code, Codex CLI, Cursor, Copilot, …) accumulate non-obvious context across a session — silent reloads, polling intervals, distroless containers, "when you touch X also check Y" invariants. That context is wasted if it dies with the session. The `ai-assist/` directory at the repo root is where we keep it so the **next** session does not re-derive it.
+
+- **Where it lives:** `ai-assist/README.md` (charter), `ai-assist/gotchas.md`, `ai-assist/cross-cutting.md`, `ai-assist/tracking.md`, with `ai-assist/TEMPLATE.md` for entry shape. Checked into git on purpose: team-shared, not per-contributor.
+- **What to write:** durable learnings — would a contributor still benefit from this in 3 months, or would they re-derive it? Only the first case belongs here.
+- **What NOT to write:** ephemeral session state (current TODO list, what-I-am-working-on), code patterns or architecture (those are in `AGENTS.md` and `docs/`), build/test commands (already in `AGENTS.md`), or one-off debugging transcripts. Only the *generalized learning* from a debug session belongs here.
+- **Write flow:** before ending a non-trivial session, draft proposed additions in the relevant `ai-assist/*.md` files, summarize the diff in chat, and **ask the user to review manually**. Commit only after the user signs off. Do not auto-commit `ai-assist/` changes; this directory captures human-validated learnings, not stream-of-consciousness notes.
+- **Maintenance:** if an entry becomes wrong, stale, or has been promoted into `AGENTS.md` or `docs/`, remove or update it in the same PR. Stale entries are worse than missing ones.
+- **Commit prefix:** `doc: ...` per the **Commit messages** convention.
+
+This is guidance, not an enforced hook. If you want hard enforcement later, a Claude Code `Stop` hook in `.claude/settings.json` can flag sessions that touched code but did not propose `ai-assist/` updates.
 
 ## Local dev setup (Kind and CLI)
 
