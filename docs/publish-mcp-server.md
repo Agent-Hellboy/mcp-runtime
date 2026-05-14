@@ -193,9 +193,26 @@ Then generate and deploy from metadata:
 ./bin/mcp-runtime pipeline deploy --dir manifests/
 ```
 
-### Flow B — manual Docker build, then push
+### Flow B — manual Docker build, push, and direct platform deploy
 
-Use this when you manage image tags directly and apply `MCPServer` manifests yourself:
+Use this when you manage image tags directly and want the platform API to write
+the `MCPServer` for you:
+
+```bash
+docker build -t payments:v1.0.0 .
+mcp-runtime auth login --api-url https://platform.example.com
+./bin/mcp-runtime registry push --image payments:v1.0.0
+./bin/mcp-runtime server deploy payments --image payments --tag v1.0.0
+```
+
+Short names like `payments:v1.0.0` are valid only when that exact local image tag exists.
+`server deploy` uses the default public route `/<name>/mcp` and passes that
+same value as `MCP_PATH` so the bundled Go, Python, and Rust examples listen on
+the route the ingress exposes.
+
+### Flow C — manual Docker build, push, and manifest apply
+
+Use this when you need full control of `MCPServer` fields:
 
 ```bash
 docker build -t payments:v1.0.0 .
@@ -203,8 +220,6 @@ mcp-runtime auth login --api-url https://platform.example.com
 ./bin/mcp-runtime registry push --image payments:v1.0.0
 ./bin/mcp-runtime server apply --file payments.yaml
 ```
-
-Short names like `payments:v1.0.0` are valid only when that exact local image tag exists.
 
 ## What happens after deploy
 
