@@ -13,7 +13,7 @@ unittesting_strategy.md
 # image build contexts that copy the repository root.
 services/api/api
 services/ingest/ingest
-services/mcp-proxy/mcp-proxy
+services/mcp-gateway/mcp-gateway
 services/processor/processor
 services/ui/mcp-sentinel-ui
 

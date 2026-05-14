@@ -18,7 +18,7 @@ func BenchmarkEmitAnalyticsEvent(b *testing.B) {
 	}))
 	b.Cleanup(ingest.Close)
 
-	proxy := &proxyServer{
+	proxy := &gatewayServer{
 		analyticsURL: ingest.URL,
 		httpClient:   ingest.Client(),
 	}

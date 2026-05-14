@@ -127,9 +127,9 @@ func TestGetGatewayProxyImage(t *testing.T) {
 	setupImageTagResolver = func() string { return "deadbeef" }
 
 	t.Run("uses override when set", func(t *testing.T) {
-		core.DefaultCLIConfig.GatewayProxyImage = "override/mcp-proxy:v1"
+		core.DefaultCLIConfig.GatewayProxyImage = "override/mcp-gateway:v1"
 		got := getGatewayProxyImage(nil)
-		if got != "override/mcp-proxy:v1" {
+		if got != "override/mcp-gateway:v1" {
 			t.Fatalf("expected override image, got %q", got)
 		}
 	})
@@ -138,7 +138,7 @@ func TestGetGatewayProxyImage(t *testing.T) {
 		core.DefaultCLIConfig.GatewayProxyImage = ""
 		ext := &config.ExternalRegistryConfig{URL: "registry.example.com/"}
 		got := getGatewayProxyImage(ext)
-		if got != "registry.example.com/mcp-sentinel-mcp-proxy:latest" {
+		if got != "registry.example.com/mcp-sentinel-mcp-gateway:latest" {
 			t.Fatalf("unexpected external registry image: %q", got)
 		}
 	})
@@ -155,7 +155,7 @@ func TestGetGatewayProxyImage(t *testing.T) {
 		}
 		swapDefaultKubectlClientForTest(t, core.NewTestKubectlClient(mock))
 		got := getGatewayProxyImage(nil)
-		if got != "registry.registry.svc.cluster.local:5000/mcp-sentinel-mcp-proxy:latest" {
+		if got != "registry.registry.svc.cluster.local:5000/mcp-sentinel-mcp-gateway:latest" {
 			t.Fatalf("unexpected platform registry image: %q", got)
 		}
 	})
@@ -165,7 +165,7 @@ func TestGetGatewayProxyImage(t *testing.T) {
 		t.Setenv("MCP_RUNTIME_TEST_MODE", "")
 		ext := &config.ExternalRegistryConfig{URL: "registry.example.com/"}
 		got := getGatewayProxyImage(ext)
-		if got != "registry.example.com/mcp-sentinel-mcp-proxy:deadbeef" {
+		if got != "registry.example.com/mcp-sentinel-mcp-gateway:deadbeef" {
 			t.Fatalf("unexpected versioned image: %q", got)
 		}
 	})
@@ -233,26 +233,26 @@ func TestOperatorEnvOverrides(t *testing.T) {
 	})
 
 	t.Run("returns gateway proxy image override", func(t *testing.T) {
-		core.DefaultCLIConfig = &core.CLIConfig{GatewayProxyImage: "example.com/mcp-proxy:latest"}
+		core.DefaultCLIConfig = &core.CLIConfig{GatewayProxyImage: "example.com/mcp-gateway:latest"}
 		got := operatorEnvOverrides("", "")
 		if len(got) != 3 {
 			t.Fatalf("expected gateway and analytics env overrides, got %d (%v)", len(got), got)
 		}
-		requireOperatorEnvVar(t, got, "MCP_GATEWAY_PROXY_IMAGE", "example.com/mcp-proxy:latest")
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_PROXY_IMAGE", "example.com/mcp-gateway:latest")
 		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
 		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
 	})
 
 	t.Run("prefers explicit setup image over config override", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{
-			GatewayProxyImage:  "example.com/mcp-proxy:config",
+			GatewayProxyImage:  "example.com/mcp-gateway:config",
 			AnalyticsIngestURL: "http://custom-analytics-ingest",
 		}
-		got := operatorEnvOverrides("example.com/mcp-proxy:setup", "")
+		got := operatorEnvOverrides("example.com/mcp-gateway:setup", "")
 		if len(got) != 3 {
 			t.Fatalf("expected gateway and analytics env overrides, got %d (%v)", len(got), got)
 		}
-		requireOperatorEnvVar(t, got, "MCP_GATEWAY_PROXY_IMAGE", "example.com/mcp-proxy:setup")
+		requireOperatorEnvVar(t, got, "MCP_GATEWAY_PROXY_IMAGE", "example.com/mcp-gateway:setup")
 		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
 		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", "http://custom-analytics-ingest")
 	})
@@ -938,7 +938,7 @@ func TestPrepareDeploymentImagesParallelBuildsStartsBothBuilds(t *testing.T) {
 			return "registry.example.com/mcp-runtime-operator:latest"
 		},
 		GatewayProxyImageFor: func(_ *config.ExternalRegistryConfig) string {
-			return "registry.example.com/mcp-sentinel-mcp-proxy:latest"
+			return "registry.example.com/mcp-sentinel-mcp-gateway:latest"
 		},
 		BuildOperatorImage: func(string) error {
 			started <- "operator"
@@ -985,7 +985,7 @@ func TestPrepareDeploymentImagesParallelBuildsPreparesInternalRegistryOnce(t *te
 			return "registry.example.com/mcp-runtime-operator:latest"
 		},
 		GatewayProxyImageFor: func(_ *config.ExternalRegistryConfig) string {
-			return "registry.example.com/mcp-sentinel-mcp-proxy:latest"
+			return "registry.example.com/mcp-sentinel-mcp-gateway:latest"
 		},
 		BuildOperatorImage:     func(string) error { return nil },
 		BuildGatewayProxyImage: func(string) error { return nil },
@@ -1010,7 +1010,7 @@ func TestPrepareDeploymentImagesParallelBuildsPreparesInternalRegistryOnce(t *te
 	if operatorImage != "registry.local:5000/mcp-runtime-operator:latest" {
 		t.Fatalf("operator image = %q, want internal registry image", operatorImage)
 	}
-	if gatewayProxyImage != "registry.local:5000/mcp-sentinel-mcp-proxy:latest" {
+	if gatewayProxyImage != "registry.local:5000/mcp-sentinel-mcp-gateway:latest" {
 		t.Fatalf("gateway proxy image = %q, want internal registry image", gatewayProxyImage)
 	}
 	if got := atomic.LoadInt32(&ensureCalls); got != 1 {
@@ -1842,7 +1842,7 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	swapDefaultKubectlClientForTest(t, kubectl)
 
 	operatorImage := "registry.example.com/mcp-runtime-operator:dev"
-	gatewayProxyImage := "registry.example.com/mcp-sentinel-mcp-proxy:dev"
+	gatewayProxyImage := "registry.example.com/mcp-sentinel-mcp-gateway:dev"
 	operatorArgs := []string{
 		"--metrics-bind-address=:9090",
 		"--health-probe-bind-address=:9091",

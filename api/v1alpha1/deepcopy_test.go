@@ -250,7 +250,7 @@ func TestMCPServerSpecDeepCopy(t *testing.T) {
 		},
 		Gateway: &GatewayConfig{
 			Enabled:     true,
-			Image:       "example.com/mcp-proxy:latest",
+			Image:       "example.com/mcp-gateway:latest",
 			Port:        8091,
 			UpstreamURL: "http://127.0.0.1:8088",
 			StripPrefix: "/test-server",
@@ -403,9 +403,9 @@ func assertGatewayDeepCopy(t *testing.T, copied *MCPServerSpec, original *MCPSer
 	if copied.Gateway.UpstreamURL != original.Gateway.UpstreamURL {
 		t.Errorf("Gateway.UpstreamURL = %q, want %q", copied.Gateway.UpstreamURL, original.Gateway.UpstreamURL)
 	}
-	original.Gateway.Image = "example.com/mcp-proxy:v2"
+	original.Gateway.Image = "example.com/mcp-gateway:v2"
 	original.Gateway.UpstreamURL = "http://127.0.0.1:9090"
-	if copied.Gateway.Image != "example.com/mcp-proxy:latest" {
+	if copied.Gateway.Image != "example.com/mcp-gateway:latest" {
 		t.Errorf("Deep copy failed: copied Gateway.Image was modified to %q", copied.Gateway.Image)
 	}
 	if copied.Gateway.UpstreamURL != "http://127.0.0.1:8088" {

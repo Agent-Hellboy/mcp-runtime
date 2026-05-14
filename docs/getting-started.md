@@ -239,9 +239,9 @@ Use the same commands with the variables below for other Sentinel services:
 | Ingest | `services/ingest` | `mcp-sentinel-ingest` | `services/ingest/Dockerfile` | `.` | `mcp-sentinel-ingest` | `ingest` |
 | Processor | `services/processor` | `mcp-sentinel-processor` | `services/processor/Dockerfile` | `.` | `mcp-sentinel-processor` | `processor` |
 
-`services/mcp-proxy` is different: it runs as the `mcp-gateway` sidecar inside
-each MCP server pod. To test proxy changes, build and push
-`mcp-sentinel-mcp-proxy`, update the operator's `MCP_GATEWAY_PROXY_IMAGE`, then
+`services/mcp-gateway` is different: it runs as the `mcp-gateway` sidecar inside
+each MCP server pod. To test gateway changes, build and push
+`mcp-sentinel-mcp-gateway`, update the operator's `MCP_GATEWAY_PROXY_IMAGE`, then
 restart the operator and recreate or restart the affected MCP server pods so
 the sidecar image is injected again.
 
@@ -395,7 +395,7 @@ kubectl get events -n "$NAMESPACE" --sort-by=.lastTimestamp
 ```
 
 The governed sidecar container is named `mcp-gateway`; it runs the
-`mcp-proxy` image/process and forwards to the app on `127.0.0.1`. The bundled
+`mcp-gateway` image/process and forwards to the app on `127.0.0.1`. The bundled
 Go example image is distroless, so `kubectl exec ... -- /bin/sh` and
 `/bin/bash` are expected to fail. Use logs/describe first, or attach a debug
 container when you need a shell in the pod namespace:

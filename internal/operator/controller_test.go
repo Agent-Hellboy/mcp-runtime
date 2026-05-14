@@ -139,7 +139,7 @@ func TestBuildGatewayContainerAppliesDefaultResources(t *testing.T) {
 		},
 	}
 
-	r := MCPServerReconciler{GatewayProxyImage: "example.com/mcp-proxy:latest"}
+	r := MCPServerReconciler{GatewayProxyImage: "example.com/mcp-gateway:latest"}
 	container, err := r.buildGatewayContainer(mcpServer)
 	if err != nil {
 		t.Fatalf("buildGatewayContainer() error = %v", err)
@@ -178,7 +178,7 @@ func TestBuildGatewayContainerAppliesConfiguredResources(t *testing.T) {
 		},
 	}
 
-	r := MCPServerReconciler{GatewayProxyImage: "example.com/mcp-proxy:latest"}
+	r := MCPServerReconciler{GatewayProxyImage: "example.com/mcp-gateway:latest"}
 	container, err := r.buildGatewayContainer(mcpServer)
 	if err != nil {
 		t.Fatalf("buildGatewayContainer() error = %v", err)
@@ -218,7 +218,7 @@ func TestValidateMCPServerSpecRejectsInvalidRolloutValues(t *testing.T) {
 			Gateway: &mcpv1alpha1.GatewayConfig{
 				Enabled: true,
 				Port:    defaultGatewayPort,
-				Image:   "example.com/mcp-proxy:latest",
+				Image:   "example.com/mcp-gateway:latest",
 			},
 			Rollout: &mcpv1alpha1.RolloutConfig{
 				MaxUnavailable: "invalid%",
@@ -263,7 +263,7 @@ func TestValidateMCPServerSpecRequiresOAuthIssuer(t *testing.T) {
 			Gateway: &mcpv1alpha1.GatewayConfig{
 				Enabled: true,
 				Port:    defaultGatewayPort,
-				Image:   "example.com/mcp-proxy:latest",
+				Image:   "example.com/mcp-gateway:latest",
 			},
 			Auth: &mcpv1alpha1.AuthConfig{
 				Mode: mcpv1alpha1.AuthModeOAuth,
@@ -562,7 +562,7 @@ func TestReconcileDeploymentAddsGatewaySidecar(t *testing.T) {
 			Replicas:    &replicas,
 			Gateway: &mcpv1alpha1.GatewayConfig{
 				Enabled: true,
-				Image:   "example.com/mcp-proxy:latest",
+				Image:   "example.com/mcp-gateway:latest",
 				Port:    8091,
 			},
 			Analytics: &mcpv1alpha1.AnalyticsConfig{
@@ -612,7 +612,7 @@ func TestReconcileDeploymentAddsGatewaySidecar(t *testing.T) {
 
 	gateway := deployment.Spec.Template.Spec.Containers[1]
 	assertEqual(t, "gatewayName", gateway.Name, "mcp-gateway")
-	assertEqual(t, "gatewayImage", gateway.Image, "example.com/mcp-proxy:latest")
+	assertEqual(t, "gatewayImage", gateway.Image, "example.com/mcp-gateway:latest")
 	if gateway.SecurityContext == nil || gateway.SecurityContext.ReadOnlyRootFilesystem == nil || !*gateway.SecurityContext.ReadOnlyRootFilesystem {
 		t.Fatal("expected gateway sidecar to use a read-only root filesystem")
 	}
@@ -656,7 +656,7 @@ func TestReconcileServiceUsesGatewayPortWhenEnabled(t *testing.T) {
 			Replicas:    &replicas,
 			Gateway: &mcpv1alpha1.GatewayConfig{
 				Enabled: true,
-				Image:   "example.com/mcp-proxy:latest",
+				Image:   "example.com/mcp-gateway:latest",
 				Port:    8091,
 			},
 		},

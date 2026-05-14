@@ -16,7 +16,7 @@ import (
 	"mcp-runtime/pkg/serviceutil"
 )
 
-func (s *proxyServer) startAnalyticsDispatcher() {
+func (s *gatewayServer) startAnalyticsDispatcher() {
 	if s.analyticsURL == "" {
 		return
 	}
@@ -46,7 +46,7 @@ func (s *proxyServer) startAnalyticsDispatcher() {
 	})
 }
 
-func (s *proxyServer) stopAnalyticsDispatcher() {
+func (s *gatewayServer) stopAnalyticsDispatcher() {
 	s.analyticsMu.Lock()
 	if s.analyticsClosed {
 		s.analyticsMu.Unlock()
@@ -63,7 +63,7 @@ func (s *proxyServer) stopAnalyticsDispatcher() {
 	s.analyticsWG.Wait()
 }
 
-func (s *proxyServer) emitIfEnabled(ctx context.Context, event events.Envelope) {
+func (s *gatewayServer) emitIfEnabled(ctx context.Context, event events.Envelope) {
 	if s.analyticsURL == "" {
 		return
 	}
@@ -86,7 +86,7 @@ func (s *proxyServer) emitIfEnabled(ctx context.Context, event events.Envelope) 
 	}
 }
 
-func (s *proxyServer) analyticsEventQueue() chan analyticsEvent {
+func (s *gatewayServer) analyticsEventQueue() chan analyticsEvent {
 	s.analyticsMu.Lock()
 	queue := s.analyticsQueue
 	s.analyticsMu.Unlock()
@@ -106,7 +106,7 @@ func (s *proxyServer) analyticsEventQueue() chan analyticsEvent {
 }
 
 // emit sends analytics events to the ingest service.
-func (s *proxyServer) emit(ctx context.Context, event events.Envelope) {
+func (s *gatewayServer) emit(ctx context.Context, event events.Envelope) {
 	data, err := json.Marshal(event)
 	if err != nil {
 		return
@@ -124,12 +124,12 @@ func (s *proxyServer) emit(ctx context.Context, event events.Envelope) {
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		log.Printf("failed to emit proxy analytics event to %s: %v", s.analyticsURL, err)
+		log.Printf("failed to emit gateway analytics event to %s: %v", s.analyticsURL, err)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		log.Printf("proxy analytics emission failed with status %d to %s", resp.StatusCode, s.analyticsURL)
+		log.Printf("gateway analytics emission failed with status %d to %s", resp.StatusCode, s.analyticsURL)
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return
 	}

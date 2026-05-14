@@ -19,7 +19,7 @@ import (
 	"mcp-runtime/pkg/serviceutil"
 )
 
-func (s *proxyServer) handleOAuthProtectedResource(w http.ResponseWriter, r *http.Request, policy *policypkg.Document) bool {
+func (s *gatewayServer) handleOAuthProtectedResource(w http.ResponseWriter, r *http.Request, policy *policypkg.Document) bool {
 	if !isOAuthProtectedMetadataPath(r.URL.Path) {
 		return false
 	}
@@ -48,7 +48,7 @@ func (s *proxyServer) handleOAuthProtectedResource(w http.ResponseWriter, r *htt
 	return true
 }
 
-func (s *proxyServer) authenticateOAuth(r *http.Request, policy *policypkg.Document) oauthAuthResult {
+func (s *gatewayServer) authenticateOAuth(r *http.Request, policy *policypkg.Document) oauthAuthResult {
 	headerIdentity := s.extractIdentity(r, policy)
 	result := oauthAuthResult{
 		Allowed:  true,
@@ -135,7 +135,7 @@ func (s *proxyServer) authenticateOAuth(r *http.Request, policy *policypkg.Docum
 	}
 }
 
-func (s *proxyServer) oauthProviderForIssuer(ctx context.Context, issuerURL string) (*oauthProvider, error) {
+func (s *gatewayServer) oauthProviderForIssuer(ctx context.Context, issuerURL string) (*oauthProvider, error) {
 	issuerURL = strings.TrimSpace(issuerURL)
 	if issuerURL == "" {
 		return nil, errors.New("issuer URL is required")
@@ -168,7 +168,7 @@ func (s *proxyServer) oauthProviderForIssuer(ctx context.Context, issuerURL stri
 	return provider, nil
 }
 
-func (s *proxyServer) fetchAuthServerMetadata(ctx context.Context, issuerURL string) (*authServerMetadata, error) {
+func (s *gatewayServer) fetchAuthServerMetadata(ctx context.Context, issuerURL string) (*authServerMetadata, error) {
 	var lastErr error
 	for _, endpoint := range authServerMetadataCandidates(issuerURL) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -208,7 +208,7 @@ func (s *proxyServer) fetchAuthServerMetadata(ctx context.Context, issuerURL str
 	return nil, lastErr
 }
 
-func (s *proxyServer) applyIdentityHeaders(r *http.Request, policy *policypkg.Document, identity identityContext) {
+func (s *gatewayServer) applyIdentityHeaders(r *http.Request, policy *policypkg.Document, identity identityContext) {
 	humanHeader, agentHeader, teamHeader, sessionHeader := s.identityHeaderNames(policy)
 	if humanHeader != "" {
 		r.Header.Del(humanHeader)
@@ -236,7 +236,7 @@ func (s *proxyServer) applyIdentityHeaders(r *http.Request, policy *policypkg.Do
 	}
 }
 
-func (s *proxyServer) applyUpstreamToken(r *http.Request, policy *policypkg.Document, token string) {
+func (s *gatewayServer) applyUpstreamToken(r *http.Request, policy *policypkg.Document, token string) {
 	if policy == nil || policy.Session == nil {
 		return
 	}
@@ -251,7 +251,7 @@ func (s *proxyServer) applyUpstreamToken(r *http.Request, policy *policypkg.Docu
 	r.Header.Set(headerName, serviceutil.FormatTokenHeaderValue(headerName, token))
 }
 
-func (s *proxyServer) identityHeaderNames(policy *policypkg.Document) (string, string, string, string) {
+func (s *gatewayServer) identityHeaderNames(policy *policypkg.Document) (string, string, string, string) {
 	humanHeader := s.defaultHumanHeader
 	agentHeader := s.defaultAgentHeader
 	teamHeader := s.defaultTeamHeader
@@ -315,7 +315,7 @@ func shouldChallengeOAuth(policy *policypkg.Document, decision policypkg.Decisio
 	}
 }
 
-func (s *proxyServer) oauthAuthenticateHeader(r *http.Request, originalPath, reason string) string {
+func (s *gatewayServer) oauthAuthenticateHeader(r *http.Request, originalPath, reason string) string {
 	values := []string{
 		`realm="mcp-runtime"`,
 		fmt.Sprintf(`resource_metadata="%s"`, s.publicRequestURL(r, oauthMetadataPath(originalPath))),

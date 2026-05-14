@@ -102,7 +102,7 @@ flowchart TD
     Sessions --> Authz
 ```
 
-Governance-related changes usually span `api/v1alpha1/access_types.go`, `pkg/access/`, `pkg/policy/`, `services/api`, `services/mcp-proxy`, `services/ingest`, and the e2e policy scenarios.
+Governance-related changes usually span `api/v1alpha1/access_types.go`, `pkg/access/`, `pkg/policy/`, `services/api`, `services/mcp-gateway`, `services/ingest`, and the e2e policy scenarios.
 
 ## Package dependency guide
 
@@ -130,7 +130,7 @@ flowchart TB
     Services --> Access
     Services --> ClickHouse[pkg/clickhouse]
     Services --> Events[pkg/events]
-    Proxy[services/mcp-proxy] --> Policy
+    Gateway[services/mcp-gateway] --> Policy
     APIService[services/api] --> Workload
     APIService --> RuntimeAPI[services/api/internal/runtimeapi]
     APIService --> PlatformStore[services/api/internal/platformstore]
@@ -175,9 +175,9 @@ workflows.
 | Change a CRD field | `api/v1alpha1`, CRD YAML, operator reconciliation, docs/API reference | `go test ./api/v1alpha1/... ./internal/operator/... -count=1` |
 | Change generated manifests | `pkg/metadata`, `pkg/manifest`, `config/`, examples | targeted package tests plus manifest diff review |
 | Change reconciliation behavior | `internal/operator`, API types, k8s helpers | `go test ./internal/operator/... -race -count=1` |
-| Change governance policy | `pkg/access`, `pkg/policy`, `services/api`, `services/mcp-proxy`, access CRDs | targeted package/service tests plus e2e policy scenario |
+| Change governance policy | `pkg/access`, `pkg/policy`, `services/api`, `services/mcp-gateway`, access CRDs | targeted package/service tests plus e2e policy scenario |
 | Change agent adapters | `internal/agentadapter`, `internal/cli/adapter`, `docs/agent-adapters.md` | `go test ./internal/agentadapter ./internal/cli/adapter -count=1` |
-| Change Sentinel event storage | `pkg/events`, `pkg/clickhouse`, `services/ingest`, `services/processor`, `services/api`, `services/mcp-proxy` | package tests plus touched service tests |
+| Change Sentinel event storage | `pkg/events`, `pkg/clickhouse`, `services/ingest`, `services/processor`, `services/api`, `services/mcp-gateway` | package tests plus touched service tests |
 | Change docs site behavior | `docs/mkdocs.yml`, `docs/nginx.conf`, Markdown pages | MkDocs build or docs container build |
 
 ## Contributor checklist

@@ -38,11 +38,11 @@ import (
 
 const defaultRegistrySecretName = "mcp-runtime-registry-creds" // #nosec G101 -- default secret name, not a credential.
 const testModeOperatorImage = "docker.io/library/mcp-runtime-operator:latest"
-const defaultGatewayProxyRepository = "mcp-sentinel-mcp-proxy"
+const defaultGatewayProxyRepository = "mcp-sentinel-mcp-gateway"
 const defaultAnalyticsIngestURL = "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
 const gatewayOTELExporterOTLPEndpointEnv = "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT"
 const defaultGatewayOTELExporterOTLPEndpoint = "http://otel-collector.mcp-sentinel.svc.cluster.local:4318"
-const gatewayProxyDockerfilePath = "services/mcp-proxy/Dockerfile"
+const gatewayProxyDockerfilePath = "services/mcp-gateway/Dockerfile"
 const gatewayProxyBuildContext = "."
 const (
 	defaultDevUserEmail     = "test@mcpruntime.org"
