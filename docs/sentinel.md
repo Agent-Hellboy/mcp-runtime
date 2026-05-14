@@ -60,14 +60,16 @@ flowchart LR
    ingest over HTTP, continue through Kafka headers, and resume in the
    processor. Processor traces include Kafka consume spans and per-event
    ClickHouse persistence spans so a request can be followed across the
-   gateway, ingest, processor, and storage handoff in Tempo.
+   gateway, ingest, processor, and storage handoff in Tempo. Ingest also stores
+   the active `trace_id` with each event so ClickHouse rows can be linked back
+   to Tempo traces.
 6. **UI + dashboards consume the data.** UI renders the stream; Grafana / Prometheus / Tempo / Loki / Promtail cover the broader observability path.
 
 ## Storage and observability
 
 | Component | Role |
 |---|---|
-| **ClickHouse** | Stores the event stream with materialized fields: server, namespace, team ID, cluster, human, agent, session, decision, tool name. |
+| **ClickHouse** | Stores the event stream with trace IDs plus materialized fields: server, namespace, team ID, cluster, human, agent, session, decision, tool name. |
 | **Kafka + Zookeeper** | Buffer between ingest and processor. |
 | **Prometheus + Grafana** | Service metrics, scrape config, dashboards. |
 | **OTel Collector + Tempo** | Distributed tracing pipeline. |
@@ -75,7 +77,9 @@ flowchart LR
 
 The bundled tracing path uses W3C trace context and baggage propagation. For
 batch writes, the processor emits `clickhouse.insert_event` spans under each
-event trace and a `clickhouse.insert_batch` span for the batch operation.
+event trace and a `clickhouse.insert_batch` span for the batch operation. Batch
+spans include Kafka topic, partition, first/last offset, and per-partition
+offset ranges.
 
 ## Service HTTP reference
 
@@ -129,7 +133,7 @@ metrics on `METRICS_PORT` (default `9090`).
 | `GET` | `/api/analytics/usage` | Dashboard usage analytics from ClickHouse: totals, top MCP servers, human/agent pairs, tools, decision counts, recent activity, and request buckets. Query: `limit` (1-50, default 10), `window_days` (1-365, default 30), `namespace`, `team_id`, `server`, `decision`, and `tool_name`. Admin role required. |
 | `GET` | `/api/user/analytics/usage` | User dashboard analytics from ClickHouse. Normal users are scoped to their own user namespace and team namespaces; the shared catalog is excluded. Query: `limit`, `window_days`, `namespace`, `server`, `decision`, and `tool_name`. |
 | `GET` | `/api/events` | Recent ClickHouse-backed audit events, newest first. Query: `limit` (1-1000, default 100). Admin role required. |
-| `GET` | `/api/events/filter` | Filtered audit events. Query: `source`, `event_type`, `server`, `namespace`, `team_id`, `cluster`, `human_id`, `agent_id`, `session_id`, `decision`, `tool_name`, `limit`. Admin role required. |
+| `GET` | `/api/events/filter` | Filtered audit events. Query: `trace_id`, `source`, `event_type`, `server`, `namespace`, `team_id`, `cluster`, `human_id`, `agent_id`, `session_id`, `decision`, `tool_name`, `limit`. Admin role required. |
 | `GET` | `/api/stats` | Total event count. Admin role required. |
 | `GET` | `/api/sources` | Event counts grouped by source. Admin role required. |
 | `GET` | `/api/event-types` | Event counts grouped by event type. Admin role required. |

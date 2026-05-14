@@ -106,6 +106,15 @@ func TestHandleEventsPropagatesTraceContextToKafka(t *testing.T) {
 	if !strings.Contains(traceparent, traceID.String()) {
 		t.Fatalf("traceparent = %q, want trace ID %s", traceparent, traceID)
 	}
+	var written struct {
+		TraceID string `json:"trace_id"`
+	}
+	if err := json.Unmarshal(writer.messages[0].Value, &written); err != nil {
+		t.Fatalf("unmarshal written event: %v", err)
+	}
+	if written.TraceID != traceID.String() {
+		t.Fatalf("stored trace_id = %q, want %s", written.TraceID, traceID)
+	}
 }
 
 func TestAuthRejectsJWKSOnlyBearerToken(t *testing.T) {

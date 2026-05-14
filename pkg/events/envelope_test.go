@@ -63,3 +63,17 @@ func TestTimestampTimeFallsBackOnMalformedTimestamp(t *testing.T) {
 		t.Fatalf("TimestampTime() = %v, want %v", got, now)
 	}
 }
+
+func TestSetTraceID(t *testing.T) {
+	t.Parallel()
+
+	envelope := Envelope{}
+	envelope.SetTraceID("  30646a2d2c2b2a292827262524232221  ")
+	if envelope.TraceID != "30646a2d2c2b2a292827262524232221" {
+		t.Fatalf("TraceID = %q, want trimmed trace ID", envelope.TraceID)
+	}
+	envelope.SetTraceID("  ")
+	if envelope.TraceID != "30646a2d2c2b2a292827262524232221" {
+		t.Fatalf("TraceID changed on empty input: %q", envelope.TraceID)
+	}
+}

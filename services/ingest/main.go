@@ -9,14 +9,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/MicahParks/keyfunc"
 	"github.com/golang-jwt/jwt/v4"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
@@ -117,18 +115,9 @@ func main() {
 		}()
 	}
 
-	metricsMux := http.NewServeMux()
-	metricsMux.Handle("/metrics", promhttp.Handler())
-	metricsServer := &http.Server{
-		Addr:              ":" + metricsPort,
-		Handler:           metricsMux,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
+	metricsShutdown, metricsErrs := serviceutil.StartMetricsServer(metricsPort)
 	go func() {
-		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err, ok := <-metricsErrs; ok {
 			log.Printf("metrics server stopped: %v", err)
 		}
 	}()
@@ -153,7 +142,7 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(shutdownCtx)
-	_ = metricsServer.Shutdown(shutdownCtx)
+	_ = metricsShutdown(shutdownCtx)
 	_ = writer.Close()
 }
 
@@ -219,18 +208,24 @@ func (s *ingestServer) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	payload.EnsureTimestamp(time.Now().UTC())
 
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		serviceutil.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode_failed"})
-		return
-	}
-
 	spanOpts := []trace.SpanStartOption{trace.WithSpanKind(trace.SpanKindProducer)}
 	if s.topic != "" {
 		spanOpts = append(spanOpts, trace.WithAttributes(attribute.String("kafka.topic", s.topic)))
 	}
 	writeCtx, span := otel.Tracer("mcp-sentinel-ingest").Start(r.Context(), "kafka.produce", spanOpts...)
-	err = s.writer.WriteMessages(writeCtx, kafkaMessageWithTraceContext(writeCtx, raw))
+	payload.SetTraceID(serviceutil.TraceIDFromContext(writeCtx))
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		span.RecordError(err)
+		span.End()
+		serviceutil.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode_failed"})
+		return
+	}
+	err = s.writer.WriteMessages(writeCtx, kafka.Message{
+		Value:   raw,
+		Headers: serviceutil.InjectKafkaHeaders(writeCtx, nil),
+	})
 	if err != nil {
 		span.RecordError(err)
 		span.End()
@@ -240,23 +235,6 @@ func (s *ingestServer) handleEvents(w http.ResponseWriter, r *http.Request) {
 	span.End()
 
 	serviceutil.WriteJSON(w, http.StatusAccepted, map[string]any{"ok": true})
-}
-
-func kafkaMessageWithTraceContext(ctx context.Context, value []byte) kafka.Message {
-	msg := kafka.Message{Value: value}
-	headers := serviceutil.CaptureTraceContext(ctx)
-	if len(headers) == 0 {
-		return msg
-	}
-	keys := make([]string, 0, len(headers))
-	for key := range headers {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		msg.Headers = append(msg.Headers, kafka.Header{Key: key, Value: []byte(headers[key])})
-	}
-	return msg
 }
 
 // auth is middleware that enforces API key authentication.

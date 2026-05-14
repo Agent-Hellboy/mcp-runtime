@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 type flushResponseRecorder struct {
@@ -30,5 +31,33 @@ func TestLogRequestsPreservesFlusher(t *testing.T) {
 
 	if !recorder.flushed {
 		t.Fatal("Flush was not delegated to the underlying response writer")
+	}
+}
+
+func TestMetricsHandlerServesHealth(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	metricsHandler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/health", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if recorder.Body.String() != "ok" {
+		t.Fatalf("body = %q, want ok", recorder.Body.String())
+	}
+}
+
+func TestStartMetricsServerReportsListenError(t *testing.T) {
+	_, errs := StartMetricsServer("127.0.0.1:-1")
+
+	select {
+	case err, ok := <-errs:
+		if !ok {
+			t.Fatal("error channel closed without a listen error")
+		}
+		if err == nil {
+			t.Fatal("listen error is nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for metrics server listen error")
 	}
 }

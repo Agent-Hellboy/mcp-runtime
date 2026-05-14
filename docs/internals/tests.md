@@ -65,9 +65,10 @@ image tags already published to the local registry.
 Image mirroring and local runtime/Sentinel image builds run with bounded
 parallelism. `E2E_IMAGE_PREP_PARALLELISM=<n>` tunes the shared prep default,
 `E2E_IMAGE_MIRROR_PARALLELISM=<n>` tunes pull/push mirroring, and
-`E2E_IMAGE_BUILD_PARALLELISM=<n>` tunes local Docker builds. CI keeps mirroring
-at three workers but defaults builds to two workers because those builds are
-heavier on runner CPU, memory, and Docker.
+`E2E_IMAGE_BUILD_PARALLELISM=<n>` tunes local Docker builds. CI sets mirroring
+to one worker to avoid Docker/local-registry push contention on shared runners
+and builds to two workers because builds are heavier on runner CPU, memory, and
+Docker.
 The script also deploys the independent official SDK example servers
 concurrently; scenario assertions remain ordered because they share policy,
 session, and analytics state.
@@ -91,7 +92,8 @@ observability paths.
 The `observability` scenario validates the trace backend through both direct
 Tempo and Grafana's Tempo datasource. It must find a single request trace that
 contains the gateway service, `mcp-sentinel-ingest`, `mcp-sentinel-processor`,
-and the `kafka.produce`, `kafka.consume`, and `clickhouse.insert_event` spans.
+and the `kafka.produce`, `kafka.consume`, `clickhouse.insert_event`, and
+`clickhouse.insert_batch` spans.
 
 Normal PRs, `main`, and manual CI runs execute full Kind e2e with
 `E2E_SCENARIOS=all`. Dependabot PRs run `smoke-auth,governance` only, so

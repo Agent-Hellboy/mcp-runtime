@@ -14,7 +14,7 @@ GET /api/sources
 GET /api/event-types
 
 # Filter events by source/type or audit fields
-GET /api/events/filter?source=mcp-server&event_type=tool.call&server=payments&team_id=team-acme&decision=deny&agent_id=agent-42&limit=50
+GET /api/events/filter?trace_id=<trace>&source=mcp-server&event_type=tool.call&server=payments&team_id=team-acme&decision=deny&agent_id=agent-42&limit=50
 
 # Monitor API health
 GET /metrics
@@ -41,7 +41,6 @@ import (
 	chdriver "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/MicahParks/keyfunc"
 	"github.com/golang-jwt/jwt/v4"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	clickhousepkg "mcp-runtime/pkg/clickhouse"
@@ -364,16 +363,7 @@ func main() {
 		}()
 	}
 
-	metricsMux := http.NewServeMux()
-	metricsMux.Handle("/metrics", promhttp.Handler())
-	metricsServer := &http.Server{
-		Addr:              ":" + metricsPort,
-		Handler:           metricsMux,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
+	metricsShutdown, metricsErrs := serviceutil.StartMetricsServer(metricsPort)
 	log.Printf("mcp-sentinel-api listening on :%s", port)
 	handler := otelhttp.NewHandler(logRequests(mux), "http.server")
 	httpServer := &http.Server{
@@ -389,7 +379,7 @@ func main() {
 	defer stopSignals()
 	serverErrs := make(chan error, 2)
 	go func() {
-		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err, ok := <-metricsErrs; ok {
 			serverErrs <- fmt.Errorf("metrics server failed: %w", err)
 		}
 	}()
@@ -411,7 +401,7 @@ func main() {
 	if err := httpServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Printf("api shutdown error: %v", err)
 	}
-	if err := metricsServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := metricsShutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Printf("metrics shutdown error: %v", err)
 	}
 	if store != nil {
@@ -1033,10 +1023,11 @@ func dedupeAnalyticsStrings(values []string) []string {
 
 // handleEventsFilter handles GET /api/events/filter requests.
 // It queries events filtered by optional source, event_type, and audit payload fields.
-// Supports query parameters: source, event_type, server, namespace, team_id, cluster, human_id, agent_id, session_id, decision, tool_name, limit.
+// Supports query parameters: trace_id, source, event_type, server, namespace, team_id, cluster, human_id, agent_id, session_id, decision, tool_name, limit.
 // Returns filtered events ordered by timestamp descending.
 func (s *apiServer) handleEventsFilter(w http.ResponseWriter, r *http.Request) {
 	filters := clickhousepkg.EventFilters{
+		TraceID:   r.URL.Query().Get("trace_id"),
 		Source:    r.URL.Query().Get("source"),
 		EventType: r.URL.Query().Get("event_type"),
 		Server:    r.URL.Query().Get("server"),

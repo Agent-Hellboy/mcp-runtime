@@ -11,6 +11,7 @@ import (
 // EventRow represents a single event from ClickHouse.
 type EventRow struct {
 	Timestamp time.Time       `json:"timestamp"`
+	TraceID   string          `json:"trace_id,omitempty"`
 	Source    string          `json:"source"`
 	EventType string          `json:"event_type"`
 	Server    string          `json:"server,omitempty"`
@@ -48,10 +49,7 @@ type DashboardSummary struct {
 	LastEventTime  string `json:"last_event_time,omitempty"`
 }
 
-const (
-	eventTeamIDExpression = "JSONExtractString(payload, 'team_id')"
-	eventSelectColumns    = "timestamp, source, event_type, server, namespace, " + eventTeamIDExpression + " AS team_id, cluster, human_id, agent_id, session_id, decision, tool_name, payload"
-)
+const eventSelectColumns = "timestamp, trace_id, source, event_type, server, namespace, team_id, cluster, human_id, agent_id, session_id, decision, tool_name, payload"
 
 // RowScanner abstracts row scanning for testability.
 type RowScanner interface {
@@ -148,6 +146,7 @@ func (c *Client) QueryEventTypes(ctx context.Context) ([]EventTypeStat, error) {
 
 // EventFilters provides filtering options for events.
 type EventFilters struct {
+	TraceID   string
 	Source    string
 	EventType string
 	Server    string
@@ -195,6 +194,10 @@ func (c *Client) QueryEventsFiltered(ctx context.Context, filters EventFilters) 
 func buildEventFilterWhereClause(filters EventFilters) (string, []interface{}) {
 	var conditions []string
 	var args []interface{}
+	if filters.TraceID != "" {
+		conditions = append(conditions, "trace_id = ?")
+		args = append(args, filters.TraceID)
+	}
 	if filters.Source != "" {
 		conditions = append(conditions, "source = ?")
 		args = append(args, filters.Source)
@@ -212,7 +215,7 @@ func buildEventFilterWhereClause(filters EventFilters) (string, []interface{}) {
 		args = append(args, filters.Namespace)
 	}
 	if filters.TeamID != "" {
-		conditions = append(conditions, eventTeamIDExpression+" = ?")
+		conditions = append(conditions, "team_id = ?")
 		args = append(args, filters.TeamID)
 	}
 	if filters.Cluster != "" {
@@ -299,6 +302,7 @@ func scanEventRow(scanner RowScanner, row *EventRow) error {
 	var payloadStr string
 	if err := scanner.Scan(
 		&row.Timestamp,
+		&row.TraceID,
 		&row.Source,
 		&row.EventType,
 		&row.Server,

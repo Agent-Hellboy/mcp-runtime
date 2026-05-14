@@ -468,12 +468,12 @@ GET /api/stats
 GET /api/sources
 GET /api/event-types
 GET /api/analytics/usage?limit=10
-GET /api/events/filter?server=payments&decision=deny&agent_id=ops-agent&limit=50
+GET /api/events/filter?trace_id=<trace>&server=payments&decision=deny&agent_id=ops-agent&limit=50
 ```
 
 | Group | Fields |
 |---|---|
-| **Filter fields** | `source`, `event_type`, `server`, `namespace`, `cluster`, `human_id`, `agent_id`, `session_id`, `decision`, `tool_name` |
+| **Filter fields** | `trace_id`, `source`, `event_type`, `server`, `namespace`, `cluster`, `human_id`, `agent_id`, `session_id`, `decision`, `tool_name` |
 | **Audit payload fields** | `decision`, `reason`, `policy_version`, `required_trust`, `required_side_effect`, `admin_trust`, `consented_trust`, `effective_trust` |
 | **Transport fields** | `method`, `path`, `status`, `latency_ms`, `bytes_in`, `bytes_out`, `rpc_method` |
 

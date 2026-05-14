@@ -5,14 +5,17 @@ import (
 	"context"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 
+	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // OTLPTraceOptions configures OTLP HTTP exporter options.
@@ -93,6 +96,49 @@ func ContextWithTraceContext(ctx context.Context, headers map[string]string) con
 		return ctx
 	}
 	return otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier(headers))
+}
+
+// InjectKafkaHeaders appends the active trace context to Kafka headers.
+func InjectKafkaHeaders(ctx context.Context, headers []kafka.Header) []kafka.Header {
+	traceHeaders := CaptureTraceContext(ctx)
+	if len(traceHeaders) == 0 {
+		return headers
+	}
+	keys := make([]string, 0, len(traceHeaders))
+	for key := range traceHeaders {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		headers = append(headers, kafka.Header{Key: key, Value: []byte(traceHeaders[key])})
+	}
+	return headers
+}
+
+// ExtractKafkaHeaders extracts trace context from Kafka headers into ctx.
+func ExtractKafkaHeaders(ctx context.Context, headers []kafka.Header) context.Context {
+	if len(headers) == 0 {
+		return ContextWithTraceContext(ctx, nil)
+	}
+	carrier := make(map[string]string, len(headers))
+	for _, header := range headers {
+		key := strings.ToLower(strings.TrimSpace(header.Key))
+		if key == "" || len(header.Value) == 0 {
+			continue
+		}
+		carrier[key] = string(header.Value)
+	}
+	return ContextWithTraceContext(ctx, carrier)
+}
+
+// TraceIDFromContext returns the active span trace ID, or an empty string when
+// the context does not carry a valid trace.
+func TraceIDFromContext(ctx context.Context) string {
+	spanContext := trace.SpanContextFromContext(ctx)
+	if !spanContext.IsValid() {
+		return ""
+	}
+	return spanContext.TraceID().String()
 }
 
 // InitTracer initializes OpenTelemetry tracing from OTEL_* environment variables.
