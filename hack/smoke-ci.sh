@@ -30,7 +30,7 @@ fi
 echo "📁 Testing compiled binaries..."
 binaries_found=0
 binaries_tested=0
-for svc in api ingest processor ui mcp-server mcp-proxy; do
+for svc in api ingest processor ui mcp-server mcp-gateway; do
     binary_path="services/$svc/$svc"
     if [ -f "$binary_path" ] && [ -x "$binary_path" ]; then
         binaries_found=$((binaries_found + 1))
@@ -58,7 +58,7 @@ fi
 # Test 2: Verify Docker images can be built
 echo "🐳 Testing Docker image builds..."
 if command -v docker >/dev/null 2>&1; then
-    for svc in api ingest processor ui mcp-server mcp-proxy; do
+    for svc in api ingest processor ui mcp-server mcp-gateway; do
         dockerfile="services/$svc/Dockerfile"
         if [ ! -f "$dockerfile" ]; then
             echo "❌ Dockerfile not found: $dockerfile"
@@ -128,7 +128,7 @@ required_files=(
     "services/processor/main.go"
     "services/ui/main.go"
     "services/mcp-server/main.go"
-    "services/mcp-proxy/main.go"
+    "services/mcp-gateway/main.go"
     "k8s/00-namespace.yaml"
     "k8s/01-config.yaml"
 )

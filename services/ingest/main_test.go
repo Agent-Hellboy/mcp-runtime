@@ -34,7 +34,7 @@ func TestHandleEventsRejectsWhitespaceOnlyRequiredFields(t *testing.T) {
 		},
 		{
 			name: "event type",
-			body: `{"source":"mcp-proxy","event_type":"   ","payload":{"ok":true}}`,
+			body: `{"source":"mcp-gateway","event_type":"   ","payload":{"ok":true}}`,
 		},
 	}
 
@@ -91,7 +91,7 @@ func TestHandleEventsPropagatesTraceContextToKafka(t *testing.T) {
 
 	writer := &recordingEventWriter{}
 	server := &ingestServer{writer: writer, topic: "mcp.events"}
-	req := httptest.NewRequest(http.MethodPost, "/events", strings.NewReader(`{"source":"mcp-proxy","event_type":"mcp.request","payload":{"ok":true}}`)).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodPost, "/events", strings.NewReader(`{"source":"mcp-gateway","event_type":"mcp.request","payload":{"ok":true}}`)).WithContext(ctx)
 	recorder := httptest.NewRecorder()
 
 	server.handleEvents(recorder, req)

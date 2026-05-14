@@ -239,9 +239,9 @@ Use the same commands with the variables below for other Sentinel services:
 | Ingest | `services/ingest` | `mcp-sentinel-ingest` | `services/ingest/Dockerfile` | `.` | `mcp-sentinel-ingest` | `ingest` |
 | Processor | `services/processor` | `mcp-sentinel-processor` | `services/processor/Dockerfile` | `.` | `mcp-sentinel-processor` | `processor` |
 
-`services/mcp-proxy` is different: it runs as the `mcp-gateway` sidecar inside
-each MCP server pod. To test proxy changes, build and push
-`mcp-sentinel-mcp-proxy`, update the operator's `MCP_GATEWAY_PROXY_IMAGE`, then
+`services/mcp-gateway` is different: it runs as the `mcp-gateway` sidecar inside
+each MCP server pod. To test gateway changes, build and push
+`mcp-sentinel-mcp-gateway`, update the operator's `MCP_GATEWAY_PROXY_IMAGE`, then
 restart the operator and recreate or restart the affected MCP server pods so
 the sidecar image is injected again.
 
@@ -395,7 +395,7 @@ kubectl get events -n "$NAMESPACE" --sort-by=.lastTimestamp
 ```
 
 The governed sidecar container is named `mcp-gateway`; it runs the
-`mcp-proxy` image/process and forwards to the app on `127.0.0.1`. The bundled
+`mcp-gateway` image/process and forwards to the app on `127.0.0.1`. The bundled
 Go example image is distroless, so `kubectl exec ... -- /bin/sh` and
 `/bin/bash` are expected to fail. Use logs/describe first, or attach a debug
 container when you need a shell in the pod namespace:
@@ -558,13 +558,32 @@ The bundled Go example server also exposes `upper`, `lower`, `echo`, and
 `slugify`, and each of those tools expects a `message` field in `arguments`
 instead of `input` or `text`.
 
-For agent frameworks or IDEs that cannot attach the governance headers directly,
-build the optional adapters with `make build-adapters` and follow
-[Agent Adapters](agent-adapters.md). The same grant/session values from
-`/tmp/go-example-access.yaml` become `MCP_RUNTIME_HUMAN_ID`,
-`MCP_RUNTIME_AGENT_ID`, and `MCP_RUNTIME_SESSION_ID` for the adapter process.
-Set `MCP_RUNTIME_LOG_LEVEL=info` while debugging governed-agent demos when you
-want adapter stderr to show runtime denials such as `trust_too_low`.
+For agent frameworks or IDEs that cannot attach the governance headers
+directly, use the built-in `mcp-runtime adapter proxy` or `mcp-runtime adapter
+stdio` subcommands. The recommended flow is platform-issued sessions —
+the adapter calls the platform API at startup and the session/identity
+headers are derived from your login principal and an existing
+`MCPAccessGrant`:
+
+```bash
+./bin/mcp-runtime auth login --api-url http://localhost:18080
+./bin/mcp-runtime adapter stdio \
+  --runtime-url http://localhost:18080/go-example-mcp/mcp \
+  --server go-example-mcp \
+  --agent ticket-triage-agent \
+  --auto-refresh
+```
+
+The closed-environment path is still supported: copy
+`MCP_RUNTIME_HUMAN_ID`, `MCP_RUNTIME_AGENT_ID`, `MCP_RUNTIME_TEAM_ID`, and
+`MCP_RUNTIME_SESSION_ID` straight from `/tmp/go-example-access.yaml` if you
+do not want the platform to pick the grant. See
+[Agent Adapters](agent-adapters.md) for the full configuration reference,
+including auto-refresh, anonymous mode, mTLS, and the proxy's
+`/livez`/`/readyz`/`/metrics` endpoints.
+
+Set `MCP_RUNTIME_LOG_LEVEL=info` while debugging governed-agent demos when
+you want adapter stderr to show runtime denials such as `trust_too_low`.
 
 ```bash
 ./bin/mcp-runtime sentinel status
@@ -611,8 +630,8 @@ analytics, audit, and observability.
 | Mode | Default namespace behavior | Behavior |
 |---|---|---|
 | `tenant` | Principal user/team namespace | Default private mode. Each signed-in user is scoped to their own tenant namespace, including any team namespace from membership. |
-| `org` | `mcp-servers-org` | Signed-in users publish and browse an org-wide catalog without tenant/team namespace selection. |
-| `public` | `mcp-servers-public` | Anonymous users can browse the public preview catalog, and signed-in users publish public preview MCP servers. |
+| `org` | `mcp-servers-org` | Signed-in users publish and browse the org-wide catalog and can still work in their owned/team namespaces. |
+| `public` | `mcp-servers-public` | Anonymous users can browse the public preview catalog; signed-in users publish public preview MCP servers and can still work in their owned/team namespaces. |
 
 For multi-team or tenant-separated deployments, keep setup as the platform
 install and provision one namespace per team with `mcp-runtime team init <slug>`
@@ -694,7 +713,7 @@ Start with the smallest useful `MCPServer` and add features only when you need t
 - `spec.port` is the port your MCP server process listens on inside the container.
 - `spec.publicPathPrefix` controls the public route prefix. `payments` becomes `/payments/mcp`.
 - `spec.gateway.enabled` turns on brokered access and policy enforcement.
-- `spec.analytics.enabled` turns on audit and analytics emission for governed traffic.
+- Analytics emission is on by default for governed traffic when the operator has an analytics ingest URL configured. Set `spec.analytics.disabled: true` to opt this server out, or pass an explicit `spec.analytics.ingestURL` to override the operator default.
 
 Use this minimal pattern for most first deployments:
 

@@ -536,12 +536,21 @@ func (m *ServerManager) InspectServerPolicy(name, namespace string) error {
 
 // DeleteServer deletes an MCP server.
 func (m *ServerManager) DeleteServer(name, namespace string) error {
-	if err := m.requireKubectlForMutation(); err != nil {
-		return err
-	}
 	name, namespace, err := validateServerInput(name, namespace)
 	if err != nil {
 		return err
+	}
+
+	plat, useK, err := platformapi.ResolvePlatformOrKube(m.useKube)
+	if err != nil {
+		return err
+	}
+	if !useK {
+		if err := plat.DeleteRuntimeServer(context.Background(), namespace, name); err != nil {
+			return err
+		}
+		core.Success(fmt.Sprintf("Retired server %s in namespace %s", name, namespace))
+		return nil
 	}
 
 	m.logger.Info("Deleting MCP server", zap.String("name", name))

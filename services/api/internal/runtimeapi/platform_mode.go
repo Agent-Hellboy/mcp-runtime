@@ -117,8 +117,8 @@ func isModeCatalogNamespace(namespace string) bool {
 }
 
 func principalCanReadNamespace(p principal, namespace string) bool {
-	if sharedCatalogWritableForUsers() {
-		return isModeCatalogNamespace(namespace)
+	if sharedCatalogWritableForUsers() && isModeCatalogNamespace(namespace) {
+		return true
 	}
 	return principalOwnsNamespace(p, namespace)
 }
@@ -143,6 +143,39 @@ func principalOwnsNamespace(p principal, namespace string) bool {
 		}
 	}
 	return false
+}
+
+func principalCanPublishNamespace(p principal, namespace string) bool {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return false
+	}
+	if sharedCatalogWritableForUsers() && isModeCatalogNamespace(namespace) {
+		return true
+	}
+	return principalOwnsNamespace(p, namespace)
+}
+
+func publishNamespacesForPrincipal(p principal) []string {
+	namespaces := make([]string, 0, len(p.AllowedNamespaces)+len(p.Teams)+3)
+	if sharedCatalogWritableForUsers() {
+		namespaces = append(namespaces, modeCatalogNamespaces()...)
+	}
+	if namespace := strings.TrimSpace(p.Namespace); namespace != "" {
+		namespaces = append(namespaces, namespace)
+	}
+	for _, team := range p.Teams {
+		if namespace := strings.TrimSpace(team.Namespace); namespace != "" {
+			namespaces = append(namespaces, namespace)
+		}
+	}
+	for _, namespace := range p.AllowedNamespaces {
+		namespace = strings.TrimSpace(namespace)
+		if namespace != "" {
+			namespaces = append(namespaces, namespace)
+		}
+	}
+	return dedupeNonEmptyStrings(namespaces)
 }
 
 func PublicCatalogPrincipal() Principal {

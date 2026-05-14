@@ -206,10 +206,19 @@ func (r *MCPServerReconciler) validateGatewayConfig(ctx context.Context, mcpServ
 		}
 	}
 
-	if analyticsEnabled(mcpServer) {
-		if err := r.requireSpecField(ctx, mcpServer, logger, "analytics ingest URL", mcpServer.Spec.Analytics.IngestURL,
-			"analytics.ingestURL is required when analytics.enabled is true"); err != nil {
-			return err
+	// Only surface a missing-URL error when the user explicitly attached an
+	// AnalyticsConfig (and did not opt out via Disabled) while neither the
+	// server spec nor the operator fallback provides an ingest URL. With the
+	// default-on behavior, a missing URL elsewhere means "no analytics
+	// available" — a non-error state.
+	if mcpServer.Spec.Analytics != nil && !mcpServer.Spec.Analytics.Disabled {
+		specURL := strings.TrimSpace(mcpServer.Spec.Analytics.IngestURL)
+		opURL := strings.TrimSpace(r.DefaultAnalyticsIngestURL)
+		if specURL == "" && opURL == "" {
+			if err := r.requireSpecField(ctx, mcpServer, logger, "analytics ingest URL", "",
+				"analytics.ingestURL is required when spec.analytics is set; set spec.analytics.ingestURL, configure MCP_SENTINEL_INGEST_URL on the operator, or set spec.analytics.disabled to true"); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -342,7 +351,7 @@ func (r *MCPServerReconciler) setDefaults(mcpServer *mcpv1alpha1.MCPServer) {
 		mcpServer.Spec.IngressHost = strings.TrimSpace(r.DefaultIngressHost)
 	}
 
-	if analyticsEnabled(mcpServer) {
+	if mcpServer.Spec.Analytics != nil && !mcpServer.Spec.Analytics.Disabled {
 		if strings.TrimSpace(mcpServer.Spec.Analytics.IngestURL) == "" {
 			mcpServer.Spec.Analytics.IngestURL = strings.TrimSpace(r.DefaultAnalyticsIngestURL)
 		}

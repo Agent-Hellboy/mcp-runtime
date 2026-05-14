@@ -49,8 +49,8 @@ on the day-to-day loop for contributors.
 | Operator reconciliation | `cmd/operator/`, `internal/operator/`, `api/v1alpha1/` | `go test ./internal/operator/... -count=1`, integration tests for CRD behavior |
 | Platform API | `services/api` | `(cd services/api && go test ./... -count=1)` |
 | Platform UI | `services/ui` | `(cd services/ui && go test ./... -count=1)`, `node --check services/ui/static/app.js` |
-| MCP proxy/gateway | `services/mcp-proxy`, `pkg/policy`, `pkg/access` | service tests plus `E2E_SCENARIOS=governance` or `smoke-auth` when request behavior changes |
-| Agent adapters | `cmd/mcp-runtime-agent-proxy/`, `cmd/mcp-runtime-mcp-shim/`, `internal/agentadapter/` | `go test ./internal/agentadapter -count=1` |
+| MCP gateway | `services/mcp-gateway`, `pkg/policy`, `pkg/access` | service tests plus `E2E_SCENARIOS=governance` or `smoke-auth` when request behavior changes |
+| Agent adapters | `internal/agentadapter/`, `internal/cli/adapter/`, `services/api/internal/runtimeapi/adapter.go` | `go test ./internal/agentadapter ./internal/cli/adapter -count=1` plus `(cd services/api && go test ./internal/runtimeapi -run TestAdapter -count=1)` when touching the platform-issued session endpoint |
 | Docs only | `docs/`, `README.md`, `AGENTS.md` | docs build if available, `rg` for stale terms, `git diff --check` |
 
 ## Local Cluster Contract

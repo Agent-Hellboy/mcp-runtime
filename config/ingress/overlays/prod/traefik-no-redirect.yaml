@@ -16,3 +16,5 @@ spec:
             - --entrypoints.web.address=:80
             - --entrypoints.websecure.address=:443
             - --entrypoints.websecure.http.tls=true
+            - --providers.file.filename=/etc/traefik/dynamic/dynamic.yml
+            - --providers.file.watch=true

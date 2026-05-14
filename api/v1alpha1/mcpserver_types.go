@@ -140,7 +140,9 @@ type MCPServerSpec struct {
 	Gateway *GatewayConfig `json:"gateway,omitempty"`
 
 	// Analytics configures audit/analytics emission for the gateway sidecar.
-	// Analytics is only applied when Gateway is enabled.
+	// Analytics is only applied when Gateway is enabled. Emission is on by
+	// default whenever the operator has an analytics ingest URL configured;
+	// set Analytics.Disabled to true to opt this server out.
 	Analytics *AnalyticsConfig `json:"analytics,omitempty"`
 
 	// Rollout configures deployment rollout behavior for this server.
@@ -252,8 +254,11 @@ type GatewayConfig struct {
 // AnalyticsConfig configures analytics emission from the gateway sidecar.
 // +kubebuilder:object:generate=true
 type AnalyticsConfig struct {
-	// Enabled turns on analytics emission from the gateway sidecar.
-	Enabled bool `json:"enabled,omitempty"`
+	// Disabled suppresses analytics emission from the gateway sidecar for this
+	// server. Analytics is on by default whenever the operator has an analytics
+	// ingest URL configured (via Spec.Analytics.IngestURL or the operator's
+	// MCP_SENTINEL_INGEST_URL env). Set Disabled to true to opt out per server.
+	Disabled bool `json:"disabled,omitempty"`
 
 	// IngestURL is the analytics ingest endpoint.
 	IngestURL string `json:"ingestURL,omitempty"`

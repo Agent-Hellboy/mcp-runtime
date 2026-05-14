@@ -11,10 +11,10 @@ flowchart LR
     Operator --> Ingress[Ingress route]
     Operator --> Policy[Policy ConfigMap]
     Client[MCP client] --> Ingress
-    Ingress --> Proxy[mcp-proxy]
-    Policy --> Proxy
-    Proxy --> Server[MCP server]
-    Proxy --> Ingest[Sentinel ingest]
+    Ingress --> Gateway[mcp-gateway]
+    Policy --> Gateway
+    Gateway --> Server[MCP server]
+    Gateway --> Ingest[Sentinel ingest]
     Ingest --> UI[API + dashboard]
 ```
 
@@ -75,7 +75,7 @@ sequenceDiagram
     participant Registry as Registry
     participant K8s as Kubernetes API
     participant Operator as Runtime Operator
-    participant Proxy as mcp-proxy
+    participant Gateway as mcp-gateway
     participant Svc as MCP server workload
 
     Dev->>CLI: Build image and prepare MCPServer spec
@@ -84,7 +84,7 @@ sequenceDiagram
     K8s-->>Operator: Watch CRD changes
     Operator->>K8s: Reconcile Deployment, Service, Ingress
     Operator->>K8s: Render policy ConfigMap
-    K8s-->>Proxy: Mount policy to gateway sidecar
+    K8s-->>Gateway: Mount policy to gateway sidecar
     K8s-->>Svc: Start MCP server pods
 ```
 
@@ -94,7 +94,7 @@ sequenceDiagram
 sequenceDiagram
     participant Client as MCP client / agent
     participant Ingress as Ingress route
-    participant Proxy as mcp-proxy
+    participant Gateway as mcp-gateway
     participant Svc as MCP server
     participant Ingest as Sentinel ingest
     participant Kafka as Kafka
@@ -103,12 +103,12 @@ sequenceDiagram
     participant API as Sentinel API/UI
 
     Client->>Ingress: JSON-RPC tools/call
-    Ingress->>Proxy: Forward request
-    Proxy->>Proxy: Evaluate identity, grant, session, trust, side effect
-    Proxy->>Svc: Forward allowed request
-    Svc-->>Proxy: Tool result
-    Proxy-->>Client: Success response
-    Proxy->>Ingest: Emit audit event
+    Ingress->>Gateway: Forward request
+    Gateway->>Gateway: Evaluate identity, grant, session, trust, side effect
+    Gateway->>Svc: Forward allowed request
+    Svc-->>Gateway: Tool result
+    Gateway-->>Client: Success response
+    Gateway->>Ingest: Emit audit event
     Ingest->>Kafka: Publish mcp.events
     Kafka->>Processor: Deliver event
     Processor->>CH: Batch insert
@@ -121,7 +121,7 @@ sequenceDiagram
 sequenceDiagram
     participant Client as MCP client / agent
     participant Ingress as Ingress route
-    participant Proxy as mcp-proxy
+    participant Gateway as mcp-gateway
     participant Ingest as Sentinel ingest
     participant Kafka as Kafka
     participant Processor as Sentinel processor
@@ -129,10 +129,10 @@ sequenceDiagram
     participant API as Sentinel API/UI
 
     Client->>Ingress: JSON-RPC tools/call
-    Ingress->>Proxy: Forward request
-    Proxy->>Proxy: Evaluate identity, grant, session, trust, side effect
-    Proxy-->>Client: Deny (JSON-RPC error)
-    Proxy->>Ingest: Emit deny event (reason + policy context)
+    Ingress->>Gateway: Forward request
+    Gateway->>Gateway: Evaluate identity, grant, session, trust, side effect
+    Gateway-->>Client: Deny (JSON-RPC error)
+    Gateway->>Ingest: Emit deny event (reason + policy context)
     Ingest->>Kafka: Publish mcp.events
     Kafka->>Processor: Deliver event
     Processor->>CH: Batch insert
@@ -143,7 +143,7 @@ sequenceDiagram
 
 Public traffic enters through the configured ingress controller. The default public shape is path based: `/<server-name>/mcp`, or `/<publicPathPrefix>/mcp` when `spec.publicPathPrefix` is set.
 
-When the gateway is enabled, requests flow through `mcp-proxy` before they reach the MCP server. The proxy acts as the broker: it reads identity and session headers, evaluates grants and sessions from the rendered policy ConfigMap, forwards allowed MCP calls, rejects denied calls, and emits audit events.
+When the gateway is enabled, requests flow through `mcp-gateway` before they reach the MCP server. The gateway acts as the broker: it reads identity and session headers, evaluates grants and sessions from the rendered policy ConfigMap, forwards allowed MCP calls, rejects denied calls, and emits audit events.
 
 Sentinel services receive those events, process them for analytics, and expose the dashboard/API used to inspect servers, grants, sessions, and recent decisions.
 
@@ -158,11 +158,11 @@ Sentinel services receive those events, process them for analytics, and expose t
 ```mermaid
 flowchart LR
     Client[MCP client / agent] --> Ingress[Ingress route]
-    Ingress --> Proxy[mcp-proxy]
-    Policy[Rendered grant+session policy] --> Proxy
-    Proxy -->|allow| Server[MCP server]
-    Proxy -->|deny| Deny[JSON-RPC error response]
-    Proxy -->|audit event| Ingest[Sentinel ingest]
+    Ingress --> Gateway[mcp-gateway]
+    Policy[Rendered grant+session policy] --> Gateway
+    Gateway -->|allow| Server[MCP server]
+    Gateway -->|deny| Deny[JSON-RPC error response]
+    Gateway -->|audit event| Ingest[Sentinel ingest]
     Ingest -->|mcp.events| Kafka[(Kafka)]
     Kafka --> Processor[Sentinel processor]
     Processor -->|batch writes| ClickHouse[(ClickHouse)]
@@ -172,9 +172,9 @@ flowchart LR
 ```
 
 1. The client sends MCP JSON-RPC traffic to the server ingress path.
-2. `mcp-proxy` evaluates identity/session headers against operator-rendered policy.
+2. `mcp-gateway` evaluates identity/session headers against operator-rendered policy.
 3. Allowed calls are forwarded upstream; denied calls are rejected immediately.
-4. `mcp-proxy` emits decision events to `ingest`, which publishes to Kafka.
+4. `mcp-gateway` emits decision events to `ingest`, which publishes to Kafka.
 5. `processor` consumes Kafka and writes normalized event records into ClickHouse.
 6. `api`, `ui`, and dashboards query ClickHouse-backed data for governance and operations.
 
@@ -182,7 +182,7 @@ flowchart LR
 
 | Component | Responsibility in request flow |
 |---|---|
-| `mcp-proxy` | Inline policy enforcement, allow/deny decision, audit event emission. |
+| `mcp-gateway` | Inline policy enforcement, allow/deny decision, audit event emission. |
 | `ingest` | Authenticates and accepts `/events`, then publishes to Kafka. |
 | `kafka` | Buffers request events between ingest and processing. |
 | `processor` | Consumes events, batches, and writes to ClickHouse. |

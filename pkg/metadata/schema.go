@@ -208,8 +208,10 @@ type GatewayConfig struct {
 }
 
 // AnalyticsConfig configures analytics emission from the gateway sidecar.
+// Emission is on by default whenever the operator has an analytics ingest URL
+// configured; set Disabled to true to opt out per server.
 type AnalyticsConfig struct {
-	Enabled         bool          `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Disabled        bool          `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 	IngestURL       string        `yaml:"ingestURL,omitempty" json:"ingestURL,omitempty"`
 	Source          string        `yaml:"source,omitempty" json:"source,omitempty"`
 	EventType       string        `yaml:"eventType,omitempty" json:"eventType,omitempty"`

@@ -37,7 +37,7 @@ cmd_go_modules() {
 		"examples/go-mcp-server"
 		"services/api"
 		"services/ingest"
-		"services/mcp-proxy"
+		"services/mcp-gateway"
 		"services/processor"
 		"services/ui"
 		"services/traefik-plugins/pii-redactor"

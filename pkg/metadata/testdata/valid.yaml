@@ -12,7 +12,7 @@ servers:
     teamID: team-custom
     gateway:
       enabled: true
-      image: example.com/mcp-proxy:latest
+      image: example.com/mcp-gateway:latest
     auth:
       mode: header
       teamIDHeader: X-Team-ID
@@ -30,7 +30,6 @@ servers:
         requiredTrust: high
         sideEffect: destructive
     analytics:
-      enabled: true
       ingestURL: http://analytics.custom-namespace.svc/api/events
       apiKeySecretRef:
         name: analytics-creds

@@ -1,6 +1,7 @@
 package agentadapter
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,19 @@ import (
 )
 
 const maxLogFieldBytes = 120
+
+type rpcMethodContextKey struct{}
+
+// withRPCMethod stores the JSON-RPC method name on ctx so RuntimeTransport can
+// read it for method-keyed retry and OTel attribute labeling.
+func withRPCMethod(ctx context.Context, method string) context.Context {
+	return context.WithValue(ctx, rpcMethodContextKey{}, method)
+}
+
+func rpcMethodFromContext(ctx context.Context) string {
+	m, _ := ctx.Value(rpcMethodContextKey{}).(string)
+	return m
+}
 
 type rpcRequestMetadata struct {
 	ID       json.RawMessage
@@ -54,14 +68,14 @@ func toolNameFromRPCParams(method string, params json.RawMessage) string {
 	return strings.TrimSpace(toolCall.Name)
 }
 
-func logRuntimeDenial(cfg Config, component string, status int, message string, meta rpcRequestMetadata) {
+func logRuntimeDenial(logLevel string, logWriter io.Writer, component string, status int, message string, meta rpcRequestMetadata) {
 	if status < http.StatusBadRequest || status >= http.StatusInternalServerError {
 		return
 	}
-	if !strings.EqualFold(strings.TrimSpace(cfg.LogLevel), "info") {
+	if !strings.EqualFold(strings.TrimSpace(logLevel), "info") {
 		return
 	}
-	writer := cfg.LogWriter
+	writer := logWriter
 	if writer == nil {
 		writer = os.Stderr
 	}
@@ -91,4 +105,120 @@ func closeIfPossible(reader io.Reader) {
 	if closer, ok := reader.(io.Closer); ok {
 		_ = closer.Close()
 	}
+}
+
+// isSessionExpiredBody returns true when the runtime denial body indicates
+// that the caller's session has expired or was not found — signals that the
+// agent should re-initialize rather than retry the current call.
+func isSessionExpiredBody(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	var obj struct {
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return false
+	}
+	var msg string
+	switch v := obj.Error.(type) {
+	case string:
+		msg = v
+	case map[string]any:
+		if m, ok := v["message"].(string); ok {
+			msg = m
+		}
+		if c, ok := v["code"].(string); ok {
+			msg += " " + c
+		}
+	}
+	lower := strings.ToLower(msg)
+	return strings.Contains(lower, "session_expired") || strings.Contains(lower, "session_not_found")
+}
+
+// injectRuntimeStatus adds runtime_status to the error.data field of a
+// JSON-RPC error body. Returns body unchanged when it is not a JSON-RPC error.
+func injectRuntimeStatus(body []byte, status string) []byte {
+	if !looksLikeJSONRPCError(body) {
+		return body
+	}
+	var response struct {
+		JSONRPC string             `json:"jsonrpc"`
+		ID      json.RawMessage    `json:"id,omitempty"`
+		Error   *rpcErrorForInject `json:"error"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil || response.Error == nil {
+		return body
+	}
+	if response.Error.Data == nil {
+		response.Error.Data = make(map[string]any)
+	}
+	response.Error.Data["runtime_status"] = status
+	out, err := json.Marshal(response)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+type rpcErrorForInject struct {
+	Code    int            `json:"code"`
+	Message string         `json:"message"`
+	Data    map[string]any `json:"data,omitempty"`
+}
+
+// protocolVersionFromInitializeResult extracts result.protocolVersion from a
+// runtime initialize response body. Returns "" when the field is absent or the
+// body is not valid JSON-RPC.
+func protocolVersionFromInitializeResult(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var response struct {
+		Result struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(response.Result.ProtocolVersion)
+}
+
+// isToolsListChangedNotification reports whether a runtime response body is a
+// JSON-RPC notification announcing that the tools list changed. Agents that
+// see this should invalidate any cached tools/list response.
+func isToolsListChangedNotification(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	var msg struct {
+		JSONRPC string `json:"jsonrpc"`
+		Method  string `json:"method"`
+	}
+	if err := json.Unmarshal(body, &msg); err != nil {
+		return false
+	}
+	return msg.JSONRPC == "2.0" && msg.Method == "notifications/tools/list_changed"
+}
+
+// rebindResponseID replaces the "id" field of a JSON-RPC response body with the
+// supplied raw ID. Used to serve a cached tools/list response to a caller whose
+// request ID differs from the one captured at cache-store time. Returns nil
+// when rebinding fails (callers fall back to an authoritative upstream call;
+// returning the body with its old id would be a JSON-RPC protocol violation).
+func rebindResponseID(body []byte, id json.RawMessage) []byte {
+	if len(id) == 0 {
+		return body
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil
+	}
+	raw["id"] = id
+	out, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	return out
 }

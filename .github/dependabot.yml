@@ -57,12 +57,12 @@ updates:
           - "*"
 
   - package-ecosystem: gomod
-    directory: /services/mcp-proxy
+    directory: /services/mcp-gateway
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
-      mcp-proxy-go-modules:
+      mcp-gateway-go-modules:
         patterns:
           - "*"
 

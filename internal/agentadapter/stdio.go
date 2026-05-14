@@ -24,12 +24,33 @@ type StdioOptions struct {
 	Stdout io.Writer
 }
 
+// sessionState tracks the lifecycle of the MCP session within the stdio shim.
+type sessionState uint8
+
+const (
+	// sessionStateRequired is the default: a governed identity and a successful
+	// initialize are required before non-handshake requests are forwarded.
+	sessionStateRequired sessionState = iota
+	// sessionStateOptional is set when Anonymous is true: the shim forwards
+	// requests without an issued identity or session ID.
+	sessionStateOptional
+	// sessionStateReady means initialize succeeded and (if the runtime returned
+	// one) the Mcp-Session-Id header has been captured.
+	sessionStateReady
+	// sessionStateFailed means initialize returned an HTTP error or a transport
+	// error. Subsequent non-initialize requests are rejected with a JSON-RPC
+	// error rather than forwarded.
+	sessionStateFailed
+)
+
 type stdioShim struct {
-	cfg             Config
+	cfg             ShimConfig
 	client          *http.Client
 	mu              sync.Mutex
+	sessionSt       sessionState
 	sessionID       string
 	protocolVersion string
+	toolsCache      *toolsListCache
 }
 
 type stdioScanResult struct {
@@ -65,8 +86,8 @@ type rpcError struct {
 // RunStdioShim reads newline-delimited stdio MCP JSON-RPC messages, forwards
 // them to the configured Streamable HTTP route, and writes JSON-RPC responses
 // back to stdout.
-func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error {
-	if err := ValidateConfig(cfg); err != nil {
+func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error {
+	if err := cfg.Validate(); err != nil {
 		return err
 	}
 	if opts.Stdin == nil {
@@ -75,17 +96,23 @@ func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error {
 	if opts.Stdout == nil {
 		return fmt.Errorf("stdout is required")
 	}
-	if cfg.HTTPClient == nil {
-		cfg.HTTPClient = &http.Client{Timeout: cfg.RequestTimeout}
-	}
 	if strings.TrimSpace(cfg.ProtocolVersion) == "" {
 		cfg.ProtocolVersion = DefaultProtocolVersion
 	}
+	if cfg.Transport == nil {
+		cfg.Transport = &RuntimeTransport{}
+	}
 
+	initState := sessionStateRequired
+	if cfg.Anonymous {
+		initState = sessionStateOptional
+	}
 	shim := &stdioShim{
 		cfg:             cfg,
-		client:          cfg.HTTPClient,
+		client:          cfg.Transport.Client(),
+		sessionSt:       initState,
 		protocolVersion: cfg.ProtocolVersion,
+		toolsCache:      newToolsListCache(cfg.ToolsCacheTTL),
 	}
 
 	scanResults := scanStdioLines(ctx, opts.Stdin)
@@ -101,6 +128,9 @@ func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error {
 		}
 		return nil
 	}
+	// tracker lets shutdown cancel every in-flight forward goroutine before
+	// the WaitGroup resolves, so client.Do calls unblock quickly.
+	tracker := newRequestTracker()
 	var forwards sync.WaitGroup
 	errCh := make(chan error, 1)
 	sendErr := func(err error) {
@@ -116,10 +146,12 @@ func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error {
 		select {
 		case <-ctx.Done():
 			closeIfPossible(opts.Stdin)
+			tracker.cancelAll(context.Cause(ctx))
 			forwards.Wait()
 			return nil
 		case err := <-errCh:
 			closeIfPossible(opts.Stdin)
+			tracker.cancelAll(err)
 			forwards.Wait()
 			return err
 		case result := <-scanResults:
@@ -155,7 +187,9 @@ func RunStdioShim(ctx context.Context, cfg Config, opts StdioOptions) error {
 			forwards.Add(1)
 			go func() {
 				defer forwards.Done()
-				if err := shim.forward(ctx, payload, emit); err != nil && ctx.Err() == nil {
+				fwdCtx, id := tracker.track(ctx)
+				defer tracker.done(id)
+				if err := shim.forward(fwdCtx, payload, emit); err != nil && ctx.Err() == nil {
 					sendErr(err)
 				}
 			}()
@@ -190,7 +224,46 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	if parseErr != nil {
 		return emit(jsonRPCParseError(parseErr.Error()))
 	}
+
+	// Session state and allowlist checks — exempt protocol handshake messages.
+	if meta.Method != "initialize" && meta.Method != "notifications/initialized" {
+		if s.getSessionState() == sessionStateFailed {
+			if hasResponseID {
+				return emit(jsonRPCSessionFailedError(envelope.ID))
+			}
+			return nil
+		}
+		if !s.isMethodAllowed(meta.Method) {
+			if hasResponseID {
+				return emit(jsonRPCMethodNotAllowedError(envelope.ID, meta.Method))
+			}
+			return nil
+		}
+	}
+
+	// tools/list cache: only when enabled, the call expects a response,
+	// and the caller is not in anonymous mode (anonymous responses cannot
+	// be safely shared between callers).
+	cacheableTools := meta.Method == "tools/list" && hasResponseID && !s.cfg.Anonymous && s.toolsCache != nil
+	var cacheKey string
+	if cacheableTools {
+		// Key on the live identity, not the startup cfg.Identity, so a
+		// rotated SessionID (auto-refresh) starts fresh and never serves
+		// entries that belong to a previous session/policy context.
+		cacheKey = toolsCacheKey(s.currentIdentity(), s.cfg.RuntimeURL.String())
+		if cached, ok := s.toolsCache.get(cacheKey); ok {
+			if rebound := rebindResponseID(cached, envelope.ID); rebound != nil {
+				return emit(rebound)
+			}
+			// Rebinding failed: fall through to refetch authoritatively
+			// rather than emit a response with a stale id.
+		}
+	}
+
 	protocolVersion, sessionID := s.prepareRequestState(envelope)
+
+	// Tag context with method so RuntimeTransport can key retry and OTel on it.
+	ctx = withRPCMethod(ctx, meta.Method)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.RuntimeURL.String(), bytes.NewReader(payload))
 	if err != nil {
@@ -202,7 +275,7 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	if sessionID != "" {
 		req.Header.Set(MCPSessionHeader, sessionID)
 	}
-	applyGovernanceHeaders(req.Header, s.cfg)
+	s.currentIdentity().Apply(req.Header)
 	if s.cfg.HostHeader != "" {
 		req.Host = s.cfg.HostHeader
 	}
@@ -211,6 +284,9 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil
+		}
+		if meta.Method == "initialize" {
+			s.setSessionState(sessionStateFailed)
 		}
 		if hasResponseID {
 			return emit(jsonRPCHTTPError(envelope.ID, http.StatusBadGateway, err.Error(), nil))
@@ -224,7 +300,19 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	}
 
 	if resp.StatusCode < http.StatusBadRequest && strings.Contains(strings.ToLower(resp.Header.Get("content-type")), "text/event-stream") {
-		return streamStreamableHTTPEventMessages(resp.Body, emit)
+		// MCP runtimes typically deliver server-to-client notifications over
+		// SSE, so cache invalidation must inspect each SSE message. Wrapping
+		// emit keeps the buffered-body fallback unchanged.
+		sseEmit := emit
+		if s.toolsCache != nil {
+			sseEmit = func(message []byte) error {
+				if isToolsListChangedNotification(message) {
+					s.toolsCache.invalidate()
+				}
+				return emit(message)
+			}
+		}
+		return streamStreamableHTTPEventMessages(resp.Body, sseEmit)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPResponseBytes+1))
@@ -240,7 +328,16 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	body = bytes.TrimSpace(body)
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		logRuntimeDenial(s.cfg, "mcp-runtime-mcp-shim", resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), meta)
+		if meta.Method == "initialize" {
+			s.setSessionState(sessionStateFailed)
+		}
+		logRuntimeDenial(s.cfg.LogLevel, s.cfg.LogWriter, "adapter/stdio", resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), meta)
+		if isSessionExpiredBody(body) {
+			if hasResponseID {
+				return emit(jsonRPCSessionExpiredError(envelope.ID, extractHTTPErrorMessage(resp.StatusCode, body)))
+			}
+			return nil
+		}
 		if len(body) > 0 && looksLikeJSONRPC(body) {
 			return emit(body)
 		}
@@ -248,6 +345,29 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 			return emit(jsonRPCHTTPError(envelope.ID, resp.StatusCode, extractHTTPErrorMessage(resp.StatusCode, body), body))
 		}
 		return nil
+	}
+	if meta.Method == "initialize" {
+		// A 2xx response with a JSON-RPC error body (e.g. protocol mismatch
+		// returned in-band) counts as a failed session so subsequent calls are
+		// not forwarded without a working session.
+		if looksLikeJSONRPCError(body) {
+			s.setSessionState(sessionStateFailed)
+		} else {
+			s.setSessionState(sessionStateReady)
+			// Capture the runtime's negotiated protocol version so subsequent
+			// outbound calls advertise the version the runtime agreed to.
+			if pv := protocolVersionFromInitializeResult(body); pv != "" {
+				s.setProtocolVersion(pv)
+			}
+		}
+	}
+	if cacheableTools && looksLikeJSONRPC(body) && !looksLikeJSONRPCError(body) {
+		s.toolsCache.put(cacheKey, body)
+	}
+	// tools/list_changed notifications from the runtime invalidate the cache
+	// so the next tools/list call refetches the authoritative response.
+	if isToolsListChangedNotification(body) {
+		s.toolsCache.invalidate()
 	}
 	if !hasResponseID {
 		return nil
@@ -273,6 +393,52 @@ func (s *stdioShim) setRuntimeSessionID(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessionID = sessionID
+}
+
+func (s *stdioShim) setProtocolVersion(version string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.protocolVersion = version
+}
+
+// currentIdentity returns the live governance identity. If the config
+// supplied an IdentityProvider, that wins so callers that rotate identity at
+// runtime (auto-refreshed platform sessions) are reflected on every request.
+func (s *stdioShim) currentIdentity() Identity {
+	if s.cfg.IdentityProvider != nil {
+		return s.cfg.IdentityProvider()
+	}
+	return s.cfg.Identity
+}
+
+func (s *stdioShim) getSessionState() sessionState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sessionSt
+}
+
+func (s *stdioShim) setSessionState(st sessionState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessionSt = st
+}
+
+// isMethodAllowed returns true when method is in the configured (or default)
+// anonymous method allowlist. Always returns true when Anonymous is false.
+func (s *stdioShim) isMethodAllowed(method string) bool {
+	if !s.cfg.Anonymous {
+		return true
+	}
+	list := s.cfg.AnonymousMethods
+	if len(list) == 0 {
+		list = DefaultAnonymousMethods
+	}
+	for _, m := range list {
+		if m == method {
+			return true
+		}
+	}
+	return false
 }
 
 func parseRPCEnvelope(payload []byte) (rpcRequestEnvelope, bool, error) {
@@ -305,6 +471,17 @@ func looksLikeJSONRPC(payload []byte) bool {
 		return false
 	}
 	return response.JSONRPC == "2.0" && (len(response.ID) > 0 || len(response.Result) > 0 || len(response.Error) > 0)
+}
+
+func looksLikeJSONRPCError(payload []byte) bool {
+	var response struct {
+		JSONRPC string          `json:"jsonrpc"`
+		Error   json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(payload, &response); err != nil {
+		return false
+	}
+	return response.JSONRPC == "2.0" && len(response.Error) > 0
 }
 
 func extractHTTPErrorMessage(status int, payload []byte) string {
@@ -374,6 +551,57 @@ func jsonRPCParseError(detail string) []byte {
 	encoded, err := json.Marshal(response)
 	if err != nil {
 		return []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"parse error"}}`)
+	}
+	return encoded
+}
+
+func jsonRPCSessionFailedError(id json.RawMessage) []byte {
+	response := rpcErrorResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error: rpcError{
+			Code:    -32000,
+			Message: "session not established: initialize failed or was not attempted",
+		},
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		return []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"session not established"}}`, string(id)))
+	}
+	return encoded
+}
+
+func jsonRPCMethodNotAllowedError(id json.RawMessage, method string) []byte {
+	response := rpcErrorResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error: rpcError{
+			Code:    -32601,
+			Message: "method not allowed in anonymous mode: " + method,
+		},
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		return []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"method not allowed"}}`, string(id)))
+	}
+	return encoded
+}
+
+func jsonRPCSessionExpiredError(id json.RawMessage, message string) []byte {
+	response := rpcErrorResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error: rpcError{
+			Code:    -32000,
+			Message: message,
+			Data: map[string]any{
+				"runtime_status": "session_expired",
+			},
+		},
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		return []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"session expired","data":{"runtime_status":"session_expired"}}}`, string(id)))
 	}
 	return encoded
 }

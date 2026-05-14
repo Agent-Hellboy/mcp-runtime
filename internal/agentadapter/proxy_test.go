@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -35,11 +36,14 @@ func TestHTTPProxyInjectsGovernanceHeadersAndPreservesMCPHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	handler, err := NewHTTPProxyHandler(Config{
+	handler, err := NewHTTPProxyHandler(ProxyConfig{
 		RuntimeURL: target,
-		HumanID:    "support-lead",
-		AgentID:    "ticket-triage-agent",
-		SessionID:  "sess-ticket-triage-agent",
+		Identity: Identity{
+			HumanID:   "support-lead",
+			AgentID:   "ticket-triage-agent",
+			TeamID:    "team-acme",
+			SessionID: "sess-ticket-triage-agent",
+		},
 		HostHeader: "mcp.example.local",
 	})
 	if err != nil {
@@ -53,6 +57,7 @@ func TestHTTPProxyInjectsGovernanceHeadersAndPreservesMCPHeaders(t *testing.T) {
 	req.Header.Set(MCPSessionHeader, "client-mcp-session")
 	req.Header.Set(HumanIDHeader, "spoofed-human")
 	req.Header.Set(AgentIDHeader, "spoofed-agent")
+	req.Header.Set(TeamIDHeader, "spoofed-team")
 	req.Header.Set(AgentSessionHeader, "spoofed-session")
 	recorder := httptest.NewRecorder()
 
@@ -72,6 +77,7 @@ func TestHTTPProxyInjectsGovernanceHeadersAndPreservesMCPHeaders(t *testing.T) {
 	}
 	assertHeader(t, upstreamHeaders, HumanIDHeader, "support-lead")
 	assertHeader(t, upstreamHeaders, AgentIDHeader, "ticket-triage-agent")
+	assertHeader(t, upstreamHeaders, TeamIDHeader, "team-acme")
 	assertHeader(t, upstreamHeaders, AgentSessionHeader, "sess-ticket-triage-agent")
 	assertHeader(t, upstreamHeaders, MCPProtocolHeader, "2025-06-18")
 	assertHeader(t, upstreamHeaders, MCPSessionHeader, "client-mcp-session")
@@ -79,6 +85,36 @@ func TestHTTPProxyInjectsGovernanceHeadersAndPreservesMCPHeaders(t *testing.T) {
 	assertHeader(t, upstreamHeaders, "accept", "application/json, text/event-stream")
 	if got := recorder.Header().Get(MCPSessionHeader); got != "runtime-mcp-session" {
 		t.Fatalf("response %s = %q, want runtime-mcp-session", MCPSessionHeader, got)
+	}
+}
+
+func TestHTTPProxyStripsSpoofedTeamHeaderWhenUnset(t *testing.T) {
+	t.Parallel()
+
+	var upstreamHeaders http.Header
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHeaders = r.Header.Clone()
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	target, err := url.Parse(upstream.URL + "/go-example-mcp/mcp")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	handler, err := NewHTTPProxyHandler(testConfig(target))
+	if err != nil {
+		t.Fatalf("NewHTTPProxyHandler() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8099/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`))
+	req.Header.Set(TeamIDHeader, "spoofed-team")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if got := upstreamHeaders.Get(TeamIDHeader); got != "" {
+		t.Fatalf("upstream %s = %q, want empty when adapter TeamID is unset", TeamIDHeader, got)
 	}
 }
 
@@ -147,7 +183,7 @@ func TestHTTPProxyLogsRuntimeDenialWhenInfoEnabled(t *testing.T) {
 	handler.ServeHTTP(recorder, req)
 
 	logLine := logs.String()
-	for _, want := range []string{"mcp-runtime-agent-proxy:", "403", "trust_too_low", "method=tools/call", "tool=upper"} {
+	for _, want := range []string{"adapter/proxy:", "403", "trust_too_low", "method=tools/call", "tool=upper"} {
 		if !strings.Contains(logLine, want) {
 			t.Fatalf("log line = %q, want %q", logLine, want)
 		}
@@ -302,12 +338,208 @@ func TestHTTPProxyFlushesStreamableHTTPEventFrames(t *testing.T) {
 	}
 }
 
-func testConfig(runtimeURL *url.URL) Config {
-	return Config{
+func TestHTTPProxyRoutesThroughSharedTransport(t *testing.T) {
+	t.Parallel()
+
+	var called bool
+	cfg := testConfig(&url.URL{Scheme: "http", Host: "ignored.example", Path: "/demo/mcp"})
+	cfg.Transport = &RuntimeTransport{
+		Base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			called = true
+			body := io.NopCloser(strings.NewReader(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{},
+				Body:       body,
+				Request:    req,
+			}, nil
+		}),
+	}
+	handler, err := NewHTTPProxyHandler(cfg)
+	if err != nil {
+		t.Fatalf("NewHTTPProxyHandler() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8099/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if !called {
+		t.Fatal("shared transport was not invoked; proxy still uses the default RoundTripper")
+	}
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+}
+
+func TestHTTPProxyInjectsRuntimeStatusOnSessionExpiredDenial(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":3,"error":{"code":-32000,"message":"session_not_found"}}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	target, err := url.Parse(upstream.URL + "/mcp")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	handler, err := NewHTTPProxyHandler(testConfig(target))
+	if err != nil {
+		t.Fatalf("NewHTTPProxyHandler() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8099/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"upper"}}`))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+	body, _ := io.ReadAll(recorder.Result().Body)
+	var response rpcErrorResponse
+	if err := json.Unmarshal(bytes.TrimSpace(body), &response); err != nil {
+		t.Fatalf("Unmarshal() error = %v; body=%s", err, body)
+	}
+	if got, _ := response.Error.Data["runtime_status"].(string); got != "session_expired" {
+		t.Fatalf("runtime_status = %q, want session_expired", got)
+	}
+}
+
+func TestHTTPProxyMaxInboundBytesMaxInt64DoesNotOverflow(t *testing.T) {
+	t.Parallel()
+
+	var upstreamCalled bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalled = true
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	target, _ := url.Parse(upstream.URL + "/mcp")
+	cfg := testConfig(target)
+	// Setting maxBytes to MaxInt64 must not overflow when the handler computes
+	// maxBytes+1 internally; reads should succeed and the upstream should see
+	// the full body.
+	cfg.MaxInboundBytes = math.MaxInt64
+	handler, err := NewHTTPProxyHandler(cfg)
+	if err != nil {
+		t.Fatalf("NewHTTPProxyHandler() error = %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8099/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (cap=MaxInt64 must not cause early EOF)", w.Code)
+	}
+	if !upstreamCalled {
+		t.Fatal("upstream was not called; cap=MaxInt64 likely overflowed to a negative LimitReader")
+	}
+}
+
+func TestHTTPProxyReturns413WhenInboundExceedsCap(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("upstream must not be called when inbound body is rejected")
+	}))
+	t.Cleanup(upstream.Close)
+
+	target, _ := url.Parse(upstream.URL + "/mcp")
+	cfg := testConfig(target)
+	cfg.MaxInboundBytes = 64
+	handler, err := NewHTTPProxyHandler(cfg)
+	if err != nil {
+		t.Fatalf("NewHTTPProxyHandler() error = %v", err)
+	}
+
+	// Body larger than the 64-byte cap.
+	big := strings.Repeat("a", 200)
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8099/mcp", strings.NewReader(big))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusRequestEntityTooLarge)
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"code":-32700`)) {
+		t.Fatalf("body = %s, want JSON-RPC parse error", recorder.Body.String())
+	}
+}
+
+func TestHTTPProxyHealthEndpoints(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(upstream.Close)
+	target, _ := url.Parse(upstream.URL + "/mcp")
+	handler, err := NewHTTPProxyHandler(testConfig(target))
+	if err != nil {
+		t.Fatalf("NewHTTPProxyHandler() error = %v", err)
+	}
+	for _, path := range []string{"/healthz", "/livez", "/readyz"} {
+		req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8099"+path, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("%s status = %d, want 204", path, w.Code)
+		}
+	}
+}
+
+func TestHTTPProxyMetricsEndpointDelegatesToConfiguredHandler(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(upstream.Close)
+	target, _ := url.Parse(upstream.URL + "/mcp")
+	cfg := testConfig(target)
+	cfg.MetricsHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("# HELP mcp_adapter_test"))
+	})
+	handler, err := NewHTTPProxyHandler(cfg)
+	if err != nil {
+		t.Fatalf("NewHTTPProxyHandler() error = %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8099/metrics", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "mcp_adapter_test") {
+		t.Fatalf("body = %q, want delegated handler output", w.Body.String())
+	}
+}
+
+func TestHTTPProxyMetricsEndpointReturns404WhenUnconfigured(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(upstream.Close)
+	target, _ := url.Parse(upstream.URL + "/mcp")
+	handler, err := NewHTTPProxyHandler(testConfig(target))
+	if err != nil {
+		t.Fatalf("NewHTTPProxyHandler() error = %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8099/metrics", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (no metrics handler configured)", w.Code)
+	}
+}
+
+func testConfig(runtimeURL *url.URL) ProxyConfig {
+	return ProxyConfig{
 		RuntimeURL: runtimeURL,
-		HumanID:    "human-1",
-		AgentID:    "agent-1",
-		SessionID:  "session-1",
+		Identity: Identity{
+			HumanID:   "human-1",
+			AgentID:   "agent-1",
+			SessionID: "session-1",
+		},
 	}
 }
 

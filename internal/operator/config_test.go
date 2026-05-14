@@ -195,7 +195,7 @@ func TestLoadOperatorConfig(t *testing.T) {
 	t.Setenv("PROVISIONED_REGISTRY_PASSWORD", "pass")
 	t.Setenv("PROVISIONED_REGISTRY_SECRET_NAME", "registry-creds")
 	t.Setenv("REQUEUE_DELAY_SECONDS", "45")
-	t.Setenv("MCP_GATEWAY_PROXY_IMAGE", "example.com/mcp-proxy:latest")
+	t.Setenv("MCP_GATEWAY_PROXY_IMAGE", "example.com/mcp-gateway:latest")
 	t.Setenv("MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector.mcp-sentinel.svc.cluster.local:4318")
 	t.Setenv("MCP_SENTINEL_INGEST_URL", "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events")
 
@@ -224,7 +224,7 @@ func TestLoadOperatorConfig(t *testing.T) {
 	if cfg.RequeueDelaySeconds != 45 {
 		t.Fatalf("expected requeue delay override, got %d", cfg.RequeueDelaySeconds)
 	}
-	if cfg.GatewayProxyImage != "example.com/mcp-proxy:latest" {
+	if cfg.GatewayProxyImage != "example.com/mcp-gateway:latest" {
 		t.Fatalf("expected gateway proxy image override, got %q", cfg.GatewayProxyImage)
 	}
 	if cfg.GatewayOTLPEndpoint != "http://otel-collector.mcp-sentinel.svc.cluster.local:4318" {

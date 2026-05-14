@@ -53,10 +53,10 @@ func TestGatewayProxyImageFromEnv(t *testing.T) {
 
 	t.Run("returns configured image", func(t *testing.T) {
 		env := map[string]string{
-			"MCP_GATEWAY_PROXY_IMAGE": "example.com/mcp-proxy:latest",
+			"MCP_GATEWAY_PROXY_IMAGE": "example.com/mcp-gateway:latest",
 		}
 		getenv := func(key string) string { return env[key] }
-		if got := gatewayProxyImageFromEnv(getenv); got != "example.com/mcp-proxy:latest" {
+		if got := gatewayProxyImageFromEnv(getenv); got != "example.com/mcp-gateway:latest" {
 			t.Fatalf("unexpected gateway proxy image: %q", got)
 		}
 	})
