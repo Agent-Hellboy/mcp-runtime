@@ -60,9 +60,10 @@ func TestValidateGrantRequestDefaultsAndNormalizes(t *testing.T) {
 
 func TestValidateGrantRequestRejectsInvalidToolRule(t *testing.T) {
 	req := &accessGrantRequest{
-		Name:      "grant-a",
-		ServerRef: sentinelaccess.ServerReference{Name: "demo"},
-		Subject:   sentinelaccess.SubjectRef{HumanID: "user-1"},
+		Name:               "grant-a",
+		ServerRef:          sentinelaccess.ServerReference{Name: "demo"},
+		Subject:            sentinelaccess.SubjectRef{HumanID: "user-1"},
+		AllowedSideEffects: []sentinelaccess.ToolSideEffect{"read"},
 		ToolRules: []sentinelaccess.ToolRule{
 			{Name: "aaa-ping", Decision: sentinelaccess.PolicyDecision("audit")},
 		},
@@ -71,6 +72,19 @@ func TestValidateGrantRequestRejectsInvalidToolRule(t *testing.T) {
 	err := validateGrantRequest(req)
 	if err == nil || !strings.Contains(err.Error(), "decision must be allow or deny") {
 		t.Fatalf("validateGrantRequest error = %v, want invalid decision", err)
+	}
+}
+
+func TestValidateGrantRequestRequiresAllowedSideEffect(t *testing.T) {
+	req := &accessGrantRequest{
+		Name:      "grant-a",
+		ServerRef: sentinelaccess.ServerReference{Name: "demo"},
+		Subject:   sentinelaccess.SubjectRef{HumanID: "user-1"},
+	}
+
+	err := validateGrantRequest(req)
+	if err == nil || !strings.Contains(err.Error(), "at least one allowed side effect is required") {
+		t.Fatalf("validateGrantRequest error = %v, want allowed side effect requirement", err)
 	}
 }
 
@@ -125,6 +139,7 @@ func TestRuntimeGrantApplyRejectsUnknownServer(t *testing.T) {
 		"namespace": "mcp-servers",
 		"serverRef": {"name": "definitely-missing", "namespace": "mcp-servers"},
 		"subject": {"humanID": "user-1"},
+		"allowedSideEffects": ["read"],
 		"maxTrust": "low"
 	}`)))
 	server.handleRuntimeGrantApply(recorder, request)
@@ -943,6 +958,7 @@ func TestRuntimeGrantApplyNonAdminDefaultsToPrincipalNamespace(t *testing.T) {
 		"name": "grant-user",
 		"serverRef": {"name": "demo"},
 		"subject": {"humanID": "user-1"},
+		"allowedSideEffects": ["read"],
 		"maxTrust": "low"
 	}`)))
 	request = request.WithContext(withPrincipal(request.Context(), principal{
@@ -985,6 +1001,7 @@ func TestRuntimeGrantApplyDefaultsSubjectTeamID(t *testing.T) {
 		"namespace": "mcp-team-acme",
 		"serverRef": {"name": "demo"},
 		"subject": {"humanID": "user-1"},
+		"allowedSideEffects": ["read"],
 		"maxTrust": "low"
 	}`)))
 	request = request.WithContext(withPrincipal(request.Context(), principal{
@@ -1036,6 +1053,7 @@ func TestRuntimeGrantApplyAllowsForeignSubjectTeamID(t *testing.T) {
 		"namespace": "mcp-team-acme",
 		"serverRef": {"name": "demo"},
 		"subject": {"humanID": "user-1", "teamID": "team-other"},
+		"allowedSideEffects": ["read"],
 		"maxTrust": "low"
 	}`)))
 	request = request.WithContext(withPrincipal(request.Context(), principal{
@@ -1074,6 +1092,7 @@ func TestRuntimeGrantApplyRejectsCrossNamespaceServerRef(t *testing.T) {
 		"namespace": "mcp-team-acme",
 		"serverRef": {"name": "demo", "namespace": "mcp-team-globex"},
 		"subject": {"humanID": "user-1"},
+		"allowedSideEffects": ["read"],
 		"maxTrust": "low"
 	}`)))
 	server.handleRuntimeGrantApply(recorder, request)
@@ -1111,6 +1130,7 @@ func TestRuntimeGrantApplyNonAdminRejectsSharedCatalogNamespace(t *testing.T) {
 		"namespace": "mcp-servers",
 		"serverRef": {"name": "demo"},
 		"subject": {"humanID": "user-1"},
+		"allowedSideEffects": ["read"],
 		"maxTrust": "low"
 	}`)))
 	request = request.WithContext(withPrincipal(request.Context(), principal{
@@ -1159,6 +1179,7 @@ func TestRuntimeGrantApplyPreservesOmittedDisabled(t *testing.T) {
 		"namespace": "mcp-servers",
 		"serverRef": {"name": "demo"},
 		"subject": {"humanID": "user-1"},
+		"allowedSideEffects": ["read"],
 		"maxTrust": "low"
 	}`)))
 	server.handleRuntimeGrantApply(recorder, request)
@@ -1184,6 +1205,7 @@ func TestRuntimeGrantApplyPreservesOmittedDisabled(t *testing.T) {
 		"namespace": "mcp-servers",
 		"serverRef": {"name": "demo"},
 		"subject": {"humanID": "user-1"},
+		"allowedSideEffects": ["read"],
 		"maxTrust": "high"
 	}`)))
 	server.handleRuntimeGrantApply(recorder, request)
@@ -1204,6 +1226,7 @@ func TestRuntimeGrantApplyPreservesOmittedDisabled(t *testing.T) {
 		"namespace": "mcp-servers",
 		"serverRef": {"name": "demo"},
 		"subject": {"humanID": "user-1"},
+		"allowedSideEffects": ["read"],
 		"maxTrust": "high",
 		"disabled": false
 	}`)))

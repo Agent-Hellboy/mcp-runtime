@@ -461,6 +461,9 @@ func validateGrantRequest(req *accessGrantRequest) error {
 	if req.MaxTrust != "" && !validTrust(req.MaxTrust) {
 		return errors.New("maxTrust must be low, medium, or high")
 	}
+	if len(req.AllowedSideEffects) == 0 {
+		return errors.New("at least one allowed side effect is required")
+	}
 	seenSideEffects := map[sentinelaccess.ToolSideEffect]struct{}{}
 	for i := range req.AllowedSideEffects {
 		req.AllowedSideEffects[i] = normalizeSideEffect(req.AllowedSideEffects[i])

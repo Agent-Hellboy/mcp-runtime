@@ -274,6 +274,7 @@ func (m *ServerManager) DeployServer(name, namespace, team, image, imageTag stri
 			return err
 		}
 	}
+	ingressPath := "/" + name + "/mcp"
 	spec := mcpv1alpha1.MCPServerSpec{
 		Image:            image,
 		ImageTag:         imageTag,
@@ -281,7 +282,10 @@ func (m *ServerManager) DeployServer(name, namespace, team, image, imageTag stri
 		Port:             port,
 		ServicePort:      servicePort,
 		PublicPathPrefix: name,
-		IngressPath:      "/" + name + "/mcp",
+		IngressPath:      ingressPath,
+		EnvVars: []mcpv1alpha1.EnvVar{
+			{Name: "MCP_PATH", Value: ingressPath},
+		},
 	}
 	applied, err := plat.ApplyRuntimeServer(context.Background(), name, namespace, spec)
 	if err != nil {

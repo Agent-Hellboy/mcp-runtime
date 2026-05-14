@@ -4398,6 +4398,7 @@ _No package overview is documented._
 - [`func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postgranttoggle-ctx-context-context-namespace-name-action-string-error)
 - [`func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postsessiontoggle-ctx-context-context-namespace-name-action-string-error)
 - [`func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePublishRecord) error`](#cli-platform-api-func-c-platformclient-recordimagepublish-ctx-context-context-record-imagepublishrecord-error)
+- [`func (c *PlatformClient) ValidateCredentials(ctx context.Context) error`](#cli-platform-api-func-c-platformclient-validatecredentials-ctx-context-context-error)
 - [`type ServerListItem struct`](#cli-platform-api-type-serverlistitem-struct)
 - [`type Team struct`](#cli-platform-api-type-team-struct)
 
@@ -4604,6 +4605,12 @@ func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name,
 <a id="cli-platform-api-func-c-platformclient-recordimagepublish-ctx-context-context-record-imagepublishrecord-error"></a>
 ```text
 func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePublishRecord) error
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-validatecredentials-ctx-context-context-error"></a>
+```text
+func (c *PlatformClient) ValidateCredentials(ctx context.Context) error
 
 ```
 

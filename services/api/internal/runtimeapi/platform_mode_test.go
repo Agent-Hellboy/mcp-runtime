@@ -28,6 +28,36 @@ func TestPlatformModeUsesStrictValues(t *testing.T) {
 	}
 }
 
+func TestCatalogNamespaceEntriesIncludeSharedCatalogInTenantMode(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "tenant")
+
+	got := appendCatalogNamespaceEntries(nil)
+	if len(got) != 1 {
+		t.Fatalf("catalog namespaces = %#v, want one shared catalog entry", got)
+	}
+	if got[0]["namespace"] != sharedCatalogNamespace {
+		t.Fatalf("namespace = %#v, want %q", got[0]["namespace"], sharedCatalogNamespace)
+	}
+	if got[0]["scope"] != "shared" {
+		t.Fatalf("scope = %#v, want shared", got[0]["scope"])
+	}
+	if got[0]["is_shared"] != true {
+		t.Fatalf("is_shared = %#v, want true", got[0]["is_shared"])
+	}
+}
+
+func TestSharedCatalogEntryStaysSharedInPublicMode(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+
+	got := catalogNamespaceEntry(sharedCatalogNamespace)
+	if got["scope"] != "shared" {
+		t.Fatalf("scope = %#v, want shared", got["scope"])
+	}
+	if got["is_public"] != false {
+		t.Fatalf("is_public = %#v, want false", got["is_public"])
+	}
+}
+
 func TestPublicModePrincipalCanReadCatalogAndOwnedNamespaces(t *testing.T) {
 	t.Setenv("PLATFORM_MODE", "public")
 	p := principal{

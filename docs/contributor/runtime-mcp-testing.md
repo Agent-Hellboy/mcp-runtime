@@ -98,6 +98,8 @@ Build, push, generate, and deploy:
   --registry registry.registry.svc.cluster.local:5000 \
   --tag dev
 
+./bin/mcp-runtime auth login --api-url http://localhost:18080
+
 ./bin/mcp-runtime registry push \
   --image registry.registry.svc.cluster.local:5000/go-example-mcp:dev
 

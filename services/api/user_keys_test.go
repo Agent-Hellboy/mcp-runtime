@@ -13,10 +13,13 @@ import (
 type fakeUserAPIKeyStore struct {
 	key       userAPIKeySummary
 	cleartext string
+	principal principal
+	ok        bool
+	err       error
 }
 
 func (f *fakeUserAPIKeyStore) AuthenticateUserAPIKey(context.Context, string) (principal, bool, error) {
-	return principal{}, false, nil
+	return f.principal, f.ok, f.err
 }
 
 func (f *fakeUserAPIKeyStore) ListUserAPIKeys(context.Context, string) ([]userAPIKeySummary, error) {

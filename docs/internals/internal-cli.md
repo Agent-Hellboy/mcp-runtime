@@ -77,8 +77,8 @@ Important setup contracts:
 - CRDs and namespaces are applied before runtime components.
 - Ingress is installed or reused before registry routes are needed.
 - Registry info is resolved before runtime images are named.
-- Internal registry pushes use an in-cluster helper when direct host pushes are
-  not appropriate.
+- Internal registry pushes validate platform credentials, then use an
+  in-cluster helper when direct host pushes are not appropriate.
 - Sentinel rollouts use `MCP_DEPLOYMENT_TIMEOUT`.
 - Setup verification should fail with diagnostic context instead of reporting
   success after partial deployment.
@@ -136,7 +136,7 @@ Keep these flows distinct:
 
 - `server apply` applies a manifest.
 - `server build image` builds and updates metadata but does not deploy.
-- `registry push` publishes images.
+- `registry push` publishes images after platform credential validation.
 - `pipeline generate` renders manifests from metadata.
 - `pipeline deploy` applies generated manifests.
 

@@ -48,7 +48,7 @@ noted otherwise. Authenticated routes accept `Authorization: Bearer <token>` or
 | `GET` | `/api/user/analytics/usage` | Caller-scoped MCP server usage analytics for the user dashboard. |
 | `GET`, `POST` | `/api/user/registry-credentials` | List or create registry credentials. |
 | `POST` | `/api/user/registry-credentials/{id}/revoke` | Revoke one registry credential. |
-| `*` | `/api/registry/authz` | Traefik forward-auth endpoint for bundled registry ingress. Admin role required. |
+| `*` | `/api/registry/authz` | Traefik forward-auth endpoint for bundled registry ingress. Admin credentials are global; user credentials are scoped to caller-owned repository paths. |
 | `GET`, `POST` | `/api/deployments` | List or apply platform-managed deployments. |
 | `DELETE` | `/api/deployments/{namespace}/{name}` | Delete a platform-managed deployment and service. |
 | `GET` | `/api/admin/namespaces` | Admin namespace inventory. |
@@ -130,9 +130,9 @@ curl -sS -X POST http://localhost:8080/api/user/api-keys \
   -d '{"name":"laptop"}'
 ```
 
-The cleartext key is returned once as `api_key` and `one_time_key`; the latter
-lets the browser UI show the value when dev ingress redaction masks `api_key`.
-The database stores only a SHA-256 hash.
+The cleartext key is returned once as `api_key` and `one_time_key` so browser
+and API clients can show the value from an explicit one-time field. The
+database stores only a SHA-256 hash.
 
 List keys:
 

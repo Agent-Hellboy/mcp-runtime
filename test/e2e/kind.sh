@@ -2787,8 +2787,14 @@ parallel_wait_all
 echo "[cli] checking server commands"
 
 # --- server list: assert the primary server appears ---
-_cli_list_out="$(./bin/mcp-runtime server --use-kube list --namespace mcp-servers 2>&1)"
-if ! printf '%s\n' "${_cli_list_out}" | grep -qF "${SERVER_NAME}"; then
+_cli_list_file="${WORKDIR}/server-list.txt"
+if ! run_with_retry "server list" ./bin/mcp-runtime server --use-kube list --namespace mcp-servers >"${_cli_list_file}" 2>&1; then
+  echo "[cli][fail] 'server list' failed" >&2
+  cat "${_cli_list_file}" >&2
+  exit 1
+fi
+_cli_list_out="$(cat "${_cli_list_file}")"
+if [[ "${_cli_list_out}" != *"${SERVER_NAME}"* ]]; then
   echo "[cli][fail] 'server list' output does not contain ${SERVER_NAME}" >&2
   printf '%s\n' "${_cli_list_out}" >&2
   exit 1
@@ -2796,9 +2802,12 @@ fi
 echo "[cli][pass] server list contains ${SERVER_NAME}"
 
 # --- server get: capture YAML and assert readiness fields ---
-_cli_get_out="$(./bin/mcp-runtime server --use-kube get "${SERVER_NAME}" --namespace mcp-servers 2>&1)"
 _cli_get_file="${WORKDIR}/${SERVER_NAME}-get.yaml"
-printf '%s\n' "${_cli_get_out}" >"${_cli_get_file}"
+if ! run_with_retry "server get ${SERVER_NAME}" ./bin/mcp-runtime server --use-kube get "${SERVER_NAME}" --namespace mcp-servers >"${_cli_get_file}" 2>&1; then
+  echo "[cli][fail] 'server get ${SERVER_NAME}' failed" >&2
+  cat "${_cli_get_file}" >&2
+  exit 1
+fi
 
 PY_SERVER_NAME="${SERVER_NAME}" \
 PY_SERVER_HOST="${SERVER_HOST}" \
@@ -2941,6 +2950,7 @@ spec:
     humanID: ${HUMAN_ID}-cli-temp
     agentID: ${AGENT_ID}-cli-temp
   maxTrust: low
+  allowedSideEffects: [read]
   policyVersion: v1
 ---
 apiVersion: mcpruntime.org/v1alpha1
@@ -4317,6 +4327,7 @@ bad_grant_body = expect_status(
         "serverRef": {"name": not_a_server, "namespace": "mcp-servers"},
         "subject": {"humanID": human_id, "agentID": agent_id},
         "maxTrust": "low",
+        "allowedSideEffects": ["read"],
         "toolRules": [{"name": "add", "decision": "allow", "requiredTrust": "low"}],
     },
 )
@@ -4324,6 +4335,25 @@ check(
     "unknown serverRef" in bad_grant_body,
     "POST /api/runtime/grants rejects unknown serverRef",
     f"body: {bad_grant_body}",
+)
+bad_grant_side_effect_body = expect_status(
+    f"{api_base}/api/runtime/grants",
+    400,
+    method="POST",
+    headers=auth_headers,
+    body={
+        "name": f"{server_name}-e2e-bad-side-effect-grant",
+        "namespace": "mcp-servers",
+        "serverRef": {"name": server_name, "namespace": "mcp-servers"},
+        "subject": {"humanID": human_id, "agentID": agent_id},
+        "maxTrust": "low",
+        "toolRules": [{"name": "add", "decision": "allow", "requiredTrust": "low"}],
+    },
+)
+check(
+    "allowed side effect" in bad_grant_side_effect_body,
+    "POST /api/runtime/grants rejects missing allowed side effects",
+    f"body: {bad_grant_side_effect_body}",
 )
 bad_session_body = expect_status(
     f"{api_base}/api/runtime/sessions",
@@ -4355,6 +4385,7 @@ created_grant = expect_json(
         "serverRef": {"name": server_name, "namespace": "mcp-servers"},
         "subject": {"humanID": human_id, "agentID": agent_id},
         "maxTrust": "low",
+        "allowedSideEffects": ["read"],
         "toolRules": [{"name": "add", "decision": "allow", "requiredTrust": "low"}],
     },
 )
@@ -5586,6 +5617,8 @@ fi
 
 echo "[cli] checking sentinel restart command"
 # The full E2E stack packs single-node Kind tightly, so avoid requiring surge CPU for this restart smoke.
+export KUBECONFIG="${KUBECONFIG_FILE}"
+kubectl config use-context "kind-${CLUSTER_NAME}" >/dev/null
 kubectl patch deployment mcp-sentinel-api -n mcp-sentinel --type merge -p '{"spec":{"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":0,"maxUnavailable":1}}}}' >/dev/null
 refresh_kind_kubeconfig
 KUBECONFIG="${KUBECONFIG_FILE}" ./bin/mcp-runtime sentinel restart api

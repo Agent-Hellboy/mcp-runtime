@@ -122,6 +122,27 @@ func TestRegistryManager_PushDirect(t *testing.T) {
 	})
 }
 
+func TestRunRegistryPushRequiresPlatformCredentials(t *testing.T) {
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
+	t.Setenv("MCP_PLATFORM_API_TOKEN", "")
+	t.Setenv("MCP_PLATFORM_API_URL", "")
+
+	mock := &core.MockExecutor{}
+	kubectl := core.NewTestKubectlClient(mock)
+	mgr := NewRegistryManager(kubectl, mock, zap.NewNop())
+
+	err := RunRegistryPush(mgr, "source:tag", "registry.example.com", "demo", "direct", "registry")
+	if err == nil {
+		t.Fatal("expected missing platform credentials error")
+	}
+	if !strings.Contains(err.Error(), "registry push requires platform credentials") {
+		t.Fatalf("error = %v", err)
+	}
+	if mock.HasCommand("docker") {
+		t.Fatal("registry push should fail before docker commands when platform credentials are missing")
+	}
+}
+
 func TestEnsureRegistryStorageSize(t *testing.T) {
 
 	t.Run("skips when size empty", func(t *testing.T) {
