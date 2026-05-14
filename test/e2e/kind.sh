@@ -4172,8 +4172,10 @@ check(
 )
 expect_status(f"{gateway_base}/app.js", 200, contains="const apiBase")
 expect_status(f"{gateway_base}/styles.css", 200, contains=".canvas")
-expect_status(f"{gateway_base}/grafana/api/health", 200, contains="database")
-expect_status(f"{gateway_base}/prometheus/-/healthy", 200, contains="Healthy")
+expect_status(f"{gateway_base}/grafana/api/health", 401)
+expect_status(f"{gateway_base}/prometheus/-/healthy", 401)
+expect_status(f"{gateway_base}/grafana/api/health", 200, headers=auth_headers, contains="database")
+expect_status(f"{gateway_base}/prometheus/-/healthy", 200, headers=auth_headers, contains="Healthy")
 
 # Direct UI service.
 expect_status(f"{ui_base}/health", 200, contains='"ok":true')

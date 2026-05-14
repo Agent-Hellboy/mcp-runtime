@@ -104,12 +104,13 @@ func main() {
 	apiBase := serviceutil.EnvOr("API_BASE", "/api")
 	apiKey := strings.TrimSpace(os.Getenv("API_KEY"))
 	apiKeys := strings.TrimSpace(os.Getenv("API_KEYS"))
+	adminAPIKeys := strings.TrimSpace(os.Getenv("ADMIN_API_KEYS"))
 	apiUpstream := serviceutil.EnvOr("API_UPSTREAM", "http://mcp-sentinel-api:8080")
 	if apiKey == "" && apiKeys == "" {
 		log.Printf("WARNING: neither API_KEY nor API_KEYS is set; UI API-key login is disabled")
 	}
 
-	mux, err := newMux(apiBase, apiUpstream, apiKey, apiKeys)
+	mux, err := newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys)
 	if err != nil {
 		log.Fatalf("invalid API upstream: %v", err)
 	}
@@ -142,7 +143,7 @@ func main() {
 	}
 }
 
-func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error) {
+func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.ServeMux, error) {
 	apiBase = normalizePathPrefix(apiBase)
 	upstreamAPIKey := firstAPIKey(apiKeys)
 	if upstreamAPIKey == "" {
@@ -200,6 +201,7 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error
 	mux.HandleFunc("/auth/login", handleLogin(apiKey, upstreamAPIKey, apiUpstream, sessions))
 	mux.HandleFunc("/auth/logout", handleLogout(sessions))
 	mux.HandleFunc("/auth/status", handleStatus(sessions))
+	mux.HandleFunc("/auth/admin-check", handleAdminCheck(sessions, apiKeys, adminAPIKeys))
 
 	apiProxy := newAPIProxy(target, apiBase, upstreamAPIKey, apiKeys, sessions, publicCatalog)
 	mux.Handle(apiBase+"/", apiProxy)
@@ -846,6 +848,53 @@ func handleLogout(store *uiSessionStore) http.HandlerFunc {
 	}
 }
 
+// handleAdminCheck is the Traefik forwardAuth target for /grafana and
+// /prometheus. It returns 204 when the caller is an admin (logged-in UI
+// session or admin API key) and 401 otherwise. The original request body and
+// path do not matter — Traefik forwards only headers and consumes the status.
+func handleAdminCheck(store *uiSessionStore, apiKeys, adminAPIKeys string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if sess, ok := store.sessionFromRequest(r); ok && strings.EqualFold(sess.Principal.Role, "admin") {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if hasAdminAPIKey(r, apiKeys, adminAPIKeys) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+}
+
+// hasAdminAPIKey returns true when the request carries an x-api-key header
+// that authenticates as admin. When ADMIN_API_KEYS is unset, any value from
+// API_KEYS is admin (matches the API service's backward-compatible default).
+// When ADMIN_API_KEYS is set, only keys in that list are admin.
+func hasAdminAPIKey(r *http.Request, apiKeys, adminAPIKeys string) bool {
+	presented := strings.TrimSpace(r.Header.Get("x-api-key"))
+	if presented == "" {
+		return false
+	}
+	if strings.TrimSpace(adminAPIKeys) != "" {
+		return matchAPIKey(presented, adminAPIKeys)
+	}
+	return matchAPIKey(presented, apiKeys)
+}
+
+func matchAPIKey(presented, list string) bool {
+	for _, key := range strings.Split(list, ",") {
+		trimmed := strings.TrimSpace(key)
+		if trimmed == "" {
+			continue
+		}
+		if hmac.Equal([]byte(presented), []byte(trimmed)) {
+			return true
+		}
+	}
+	return false
+}
+
 func handleStatus(store *uiSessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sess, ok := store.sessionFromRequest(r)
@@ -903,12 +952,7 @@ func validAPIKeyHeader(r *http.Request, apiKeys string) bool {
 	if presented == "" {
 		return false
 	}
-	for _, key := range strings.Split(apiKeys, ",") {
-		if hmac.Equal([]byte(presented), []byte(strings.TrimSpace(key))) {
-			return true
-		}
-	}
-	return false
+	return matchAPIKey(presented, apiKeys)
 }
 
 func hasAPIAuthHeader(r *http.Request) bool {

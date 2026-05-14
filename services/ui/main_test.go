@@ -14,7 +14,7 @@ import (
 )
 
 func TestConfigDoesNotExposeAPIKey(t *testing.T) {
-	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret")
+	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret", "")
 	if err != nil {
 		t.Fatalf("newMux() error = %v", err)
 	}
@@ -36,7 +36,7 @@ func TestConfigDoesNotExposeAPIKey(t *testing.T) {
 
 func TestConfigExposesPlatformMode(t *testing.T) {
 	t.Setenv("PLATFORM_MODE", "org")
-	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret")
+	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret", "")
 	if err != nil {
 		t.Fatalf("newMux() error = %v", err)
 	}
@@ -815,6 +815,57 @@ func TestHTTPSRedirectMiddlewarePassesThroughHTTPS(t *testing.T) {
 
 	if !called {
 		t.Fatal("expected HTTPS request to pass through")
+	}
+}
+
+func TestHandleAdminCheck(t *testing.T) {
+	store := newUISessionStore(time.Now)
+	adminSess, err := store.createSession(context.Background(), uiSession{
+		Principal: sessionPrincipal{Role: "admin", Subject: "admin-1"},
+	})
+	if err != nil {
+		t.Fatalf("createSession admin: %v", err)
+	}
+	userSess, err := store.createSession(context.Background(), uiSession{
+		Principal: sessionPrincipal{Role: "user", Subject: "user-1"},
+	})
+	if err != nil {
+		t.Fatalf("createSession user: %v", err)
+	}
+
+	cases := []struct {
+		name         string
+		adminKeys    string
+		apiKeys      string
+		cookie       *http.Cookie
+		apiKeyHeader string
+		want         int
+	}{
+		{name: "no_credential", apiKeys: "ui-key,admin-key", adminKeys: "admin-key", want: http.StatusUnauthorized},
+		{name: "admin_session", apiKeys: "ui-key", cookie: &http.Cookie{Name: sessionCookieName, Value: adminSess.ID}, want: http.StatusNoContent},
+		{name: "user_session_rejected", apiKeys: "ui-key", cookie: &http.Cookie{Name: sessionCookieName, Value: userSess.ID}, want: http.StatusUnauthorized},
+		{name: "admin_api_key", apiKeys: "ui-key,admin-key", adminKeys: "admin-key", apiKeyHeader: "admin-key", want: http.StatusNoContent},
+		{name: "non_admin_api_key_rejected", apiKeys: "ui-key,admin-key", adminKeys: "admin-key", apiKeyHeader: "ui-key", want: http.StatusUnauthorized},
+		{name: "fallback_any_api_key_when_admin_unset", apiKeys: "ui-key", apiKeyHeader: "ui-key", want: http.StatusNoContent},
+		{name: "unknown_api_key", apiKeys: "ui-key", apiKeyHeader: "rando", want: http.StatusUnauthorized},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := handleAdminCheck(store, tc.apiKeys, tc.adminKeys)
+			req := httptest.NewRequest(http.MethodGet, "/auth/admin-check", nil)
+			if tc.cookie != nil {
+				req.AddCookie(tc.cookie)
+			}
+			if tc.apiKeyHeader != "" {
+				req.Header.Set("x-api-key", tc.apiKeyHeader)
+			}
+			rec := httptest.NewRecorder()
+			h(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tc.want, rec.Body.String())
+			}
+		})
 	}
 }
 
