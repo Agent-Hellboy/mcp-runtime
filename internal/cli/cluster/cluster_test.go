@@ -530,6 +530,71 @@ func TestProvisionCluster(t *testing.T) {
 		}
 	})
 
+	t.Run("normalizes provider name", func(t *testing.T) {
+		mock := &core.MockExecutor{}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ProvisionCluster(" KIND ", "us-west-2", 1, "test-cluster", false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.HasCommand("kind") {
+			t.Error("expected kind command")
+		}
+	})
+
+	t.Run("rejects invalid node count before shelling out", func(t *testing.T) {
+		mock := &core.MockExecutor{}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ProvisionCluster("kind", "us-west-2", 0, "test-cluster", false)
+		if err == nil {
+			t.Fatal("expected error for invalid node count")
+		}
+		if !errors.Is(err, core.ErrInvalidNodeCount) {
+			t.Fatalf("expected ErrInvalidNodeCount, got %v", err)
+		}
+		if len(mock.Commands) > 0 {
+			t.Fatalf("expected no commands to run, got %v", mock.Commands)
+		}
+	})
+
+	t.Run("rejects invalid cluster name before shelling out", func(t *testing.T) {
+		mock := &core.MockExecutor{}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ProvisionCluster("kind", "us-west-2", 1, "Bad_Name", false)
+		if err == nil {
+			t.Fatal("expected error for invalid cluster name")
+		}
+		if !errors.Is(err, core.ErrInvalidClusterName) {
+			t.Fatalf("expected ErrInvalidClusterName, got %v", err)
+		}
+		if len(mock.Commands) > 0 {
+			t.Fatalf("expected no commands to run, got %v", mock.Commands)
+		}
+	})
+
+	t.Run("rejects cluster name control characters before shelling out", func(t *testing.T) {
+		mock := &core.MockExecutor{}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.ProvisionCluster("kind", "us-west-2", 1, "test\ncluster", false)
+		if err == nil {
+			t.Fatal("expected error for invalid cluster name")
+		}
+		if !errors.Is(err, core.ErrInvalidClusterName) {
+			t.Fatalf("expected ErrInvalidClusterName, got %v", err)
+		}
+		if len(mock.Commands) > 0 {
+			t.Fatalf("expected no commands to run, got %v", mock.Commands)
+		}
+	})
+
 	t.Run("eks provisioning", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
@@ -582,13 +647,147 @@ func TestProvisionKindCluster(t *testing.T) {
 	})
 
 	t.Run("returns error when kind fails", func(t *testing.T) {
-		mock := &core.MockExecutor{DefaultRunErr: errors.New("kind failed")}
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				cmd := &core.MockCommand{Args: spec.Args}
+				if spec.Name == "kind" && contains(spec.Args, "create") {
+					cmd.RunErr = errors.New("kind failed")
+				}
+				return cmd
+			},
+		}
 		kubectl := core.NewTestKubectlClient(mock)
 		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
 
 		err := mgr.provisionKindCluster(1, "test", false)
 		if err == nil {
 			t.Fatal("expected error when kind fails")
+		}
+	})
+
+	t.Run("dry run skips docker and kind commands", func(t *testing.T) {
+		mock := &core.MockExecutor{}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		if err := mgr.provisionKindCluster(2, "test", true); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(mock.Commands) > 0 {
+			t.Fatalf("expected dry run to skip external commands, got %v", mock.Commands)
+		}
+	})
+
+	t.Run("checks docker before kind create", func(t *testing.T) {
+		mock := &core.MockExecutor{}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		if err := mgr.provisionKindCluster(1, "test", false); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(mock.Commands) < 3 {
+			t.Fatalf("expected docker preflight, kind list, and kind create commands, got %v", mock.Commands)
+		}
+		if got := mock.Commands[0]; got.Name != "docker" || !contains(got.Args, "info") {
+			t.Fatalf("expected first command to be docker info, got %v", got)
+		}
+		if got := mock.Commands[1]; got.Name != "kind" || !contains(got.Args, "get") || !contains(got.Args, "clusters") {
+			t.Fatalf("expected second command to list kind clusters, got %v", got)
+		}
+		if got := mock.Commands[2]; got.Name != "kind" || !contains(got.Args, "create") || !contains(got.Args, "cluster") {
+			t.Fatalf("expected third command to create kind cluster, got %v", got)
+		}
+	})
+
+	t.Run("skips docker check for non-docker kind provider", func(t *testing.T) {
+		t.Setenv("KIND_EXPERIMENTAL_PROVIDER", "podman")
+		mock := &core.MockExecutor{}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		if err := mgr.provisionKindCluster(1, "test", false); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.HasCommand("docker") {
+			t.Fatalf("expected no docker preflight for podman kind provider, got %v", mock.Commands)
+		}
+		if !mock.HasCommand("kind") {
+			t.Fatal("expected kind commands to run")
+		}
+	})
+
+	t.Run("returns docker preflight error before kind commands", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				cmd := &core.MockCommand{Args: spec.Args}
+				if spec.Name == "docker" {
+					cmd.RunErr = errors.New("daemon down")
+				}
+				return cmd
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.provisionKindCluster(1, "test", false)
+		if err == nil {
+			t.Fatal("expected docker preflight error")
+		}
+		if !errors.Is(err, core.ErrDockerDaemonNotReachable) {
+			t.Fatalf("expected ErrDockerDaemonNotReachable, got %v", err)
+		}
+		if mock.HasCommand("kind") {
+			t.Fatalf("expected no kind commands after docker preflight failure, got %v", mock.Commands)
+		}
+	})
+
+	t.Run("returns error when cluster already exists", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				cmd := &core.MockCommand{Args: spec.Args}
+				if spec.Name == "kind" && contains(spec.Args, "get") && contains(spec.Args, "clusters") {
+					cmd.OutputData = []byte("other\ntest\n")
+				}
+				return cmd
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.provisionKindCluster(1, "test", false)
+		if err == nil {
+			t.Fatal("expected existing cluster error")
+		}
+		if !errors.Is(err, core.ErrKindClusterAlreadyExists) {
+			t.Fatalf("expected ErrKindClusterAlreadyExists, got %v", err)
+		}
+		for _, cmd := range mock.Commands {
+			if cmd.Name == "kind" && contains(cmd.Args, "create") {
+				t.Fatalf("should not create kind cluster when it already exists: %v", mock.Commands)
+			}
+		}
+	})
+
+	t.Run("returns error when listing kind clusters fails", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				cmd := &core.MockCommand{Args: spec.Args}
+				if spec.Name == "kind" && contains(spec.Args, "get") && contains(spec.Args, "clusters") {
+					cmd.OutputErr = errors.New("kind missing")
+				}
+				return cmd
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		err := mgr.provisionKindCluster(1, "test", false)
+		if err == nil {
+			t.Fatal("expected kind list error")
+		}
+		if !strings.Contains(err.Error(), "failed to list existing kind clusters") {
+			t.Fatalf("expected kind list guidance, got %v", err)
 		}
 	})
 }

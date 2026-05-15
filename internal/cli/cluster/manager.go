@@ -470,6 +470,21 @@ func (m *ClusterManager) ConfigureClusterWithValues(mode, manifest string, force
 func (m *ClusterManager) ProvisionCluster(provider, region string, nodeCount int, clusterName string, dryRun bool) error {
 	m.logger.Info("Provisioning cluster", zap.String("provider", provider), zap.String("region", region), zap.String("name", clusterName), zap.Bool("dry_run", dryRun))
 
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if nodeCount < 1 {
+		err := core.NewWithSentinel(core.ErrInvalidNodeCount, fmt.Sprintf("invalid node count %d: --nodes must be at least 1", nodeCount))
+		core.Error("Invalid node count")
+		core.LogStructuredError(m.logger, err, "Invalid node count")
+		return err
+	}
+	var err error
+	clusterName, err = normalizeClusterName(clusterName)
+	if err != nil {
+		core.Error("Invalid cluster name")
+		core.LogStructuredError(m.logger, err, "Invalid cluster name")
+		return err
+	}
+
 	switch provider {
 	case "kind":
 		return m.provisionKindCluster(nodeCount, clusterName, dryRun)
@@ -487,12 +502,34 @@ func (m *ClusterManager) ProvisionCluster(provider, region string, nodeCount int
 	}
 }
 
+func normalizeClusterName(name string) (string, error) {
+	if strings.ContainsAny(name, "\r\n\t") {
+		return "", core.NewWithSentinel(core.ErrInvalidClusterName, "invalid cluster name: must not contain control characters")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return defaultClusterName, nil
+	}
+	if !core.ValidK8sName.MatchString(name) {
+		return "", core.NewWithSentinel(core.ErrInvalidClusterName, fmt.Sprintf("invalid cluster name %q: must be lowercase alphanumeric with optional hyphens", name))
+	}
+	return name, nil
+}
+
 func (m *ClusterManager) provisionKindCluster(nodeCount int, name string, dryRun bool) error {
 	m.logger.Info("Provisioning Kind cluster")
 
-	clusterName := name
-	if clusterName == "" {
-		clusterName = defaultClusterName
+	clusterName, err := normalizeClusterName(name)
+	if err != nil {
+		core.Error("Invalid cluster name")
+		core.LogStructuredError(m.logger, err, "Invalid cluster name")
+		return err
+	}
+	if nodeCount < 1 {
+		err := core.NewWithSentinel(core.ErrInvalidNodeCount, fmt.Sprintf("invalid node count %d: --nodes must be at least 1", nodeCount))
+		core.Error("Invalid node count")
+		core.LogStructuredError(m.logger, err, "Invalid node count")
+		return err
 	}
 
 	config := `kind: Cluster
@@ -510,6 +547,25 @@ nodes:
 		core.DefaultPrinter.Println(config)
 		core.Success("Dry-run complete; no cluster created")
 		return nil
+	}
+
+	if kindUsesDockerProvider() {
+		if err := m.ensureDockerDaemonReachable(); err != nil {
+			return err
+		}
+	}
+	exists, err := m.kindClusterExists(clusterName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		err := core.NewWithSentinel(
+			core.ErrKindClusterAlreadyExists,
+			fmt.Sprintf("kind cluster %q already exists; choose a different --name or delete it with `kind delete cluster --name %s`", clusterName, clusterName),
+		)
+		core.Error("Kind cluster already exists")
+		core.LogStructuredError(m.logger, err, "Kind cluster already exists")
+		return err
 	}
 
 	// Write config to temp file
@@ -541,7 +597,7 @@ nodes:
 	}
 
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	cmd, err := m.exec.Command("kind", []string{"create", "cluster", "--config", tmp.Name(), "--name", clusterName})
+	cmd, err := m.exec.Command("kind", []string{"create", "cluster", "--config", tmp.Name(), "--name", clusterName}, core.AllowlistBins("kind"), core.NoShellMeta(), core.NoControlChars())
 	if err != nil {
 		return err
 	}
@@ -562,6 +618,53 @@ nodes:
 
 	m.logger.Info("Kind cluster provisioned successfully")
 	return nil
+}
+
+func kindUsesDockerProvider() bool {
+	provider := strings.ToLower(strings.TrimSpace(os.Getenv("KIND_EXPERIMENTAL_PROVIDER")))
+	return provider == "" || provider == "docker"
+}
+
+func (m *ClusterManager) ensureDockerDaemonReachable() error {
+	cmd, err := m.exec.Command("docker", []string{"info"}, core.AllowlistBins("docker"), core.NoShellMeta(), core.NoControlChars())
+	if err != nil {
+		return core.WrapWithSentinel(core.ErrDockerDaemonNotReachable, err, fmt.Sprintf("failed to prepare docker preflight: %v", err))
+	}
+	if err := cmd.Run(); err != nil {
+		wrappedErr := core.WrapWithSentinel(
+			core.ErrDockerDaemonNotReachable,
+			err,
+			fmt.Sprintf("docker daemon is not reachable: %v. Start Docker Desktop, Colima, dockerd, or another Docker-compatible daemon before provisioning a kind cluster", err),
+		)
+		core.Error("Docker daemon not reachable")
+		core.LogStructuredError(m.logger, wrappedErr, "Docker daemon not reachable")
+		return wrappedErr
+	}
+	return nil
+}
+
+func (m *ClusterManager) kindClusterExists(name string) (bool, error) {
+	cmd, err := m.exec.Command("kind", []string{"get", "clusters"}, core.AllowlistBins("kind"), core.NoShellMeta(), core.NoControlChars())
+	if err != nil {
+		return false, err
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		wrappedErr := core.WrapWithSentinel(
+			core.ErrCreateKindClusterFailed,
+			err,
+			fmt.Sprintf("failed to list existing kind clusters: %v. Ensure kind is installed and retry", err),
+		)
+		core.Error("Failed to list kind clusters")
+		core.LogStructuredError(m.logger, wrappedErr, "Failed to list kind clusters")
+		return false, wrappedErr
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) == name {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func provisionGKECluster(logger *zap.Logger, region string, nodeCount int, clusterName string, dryRun bool) error {
