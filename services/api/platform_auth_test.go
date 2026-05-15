@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -97,5 +98,42 @@ func TestOpenPlatformStoreWithRetryRetriesUntilSuccess(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("open attempts = %d, want 2", calls)
+	}
+}
+
+func TestAPILoginAttemptTrackerPrunesIdleEntries(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := newAPILoginAttemptTracker(func() time.Time {
+		return now
+	})
+
+	tracker.recordFailure("client-old")
+	now = now.Add(apiLoginAttemptIdleTTL + time.Second)
+	tracker.recordFailure("client-new")
+
+	if _, ok := tracker.entries["client-old"]; ok {
+		t.Fatal("idle login attempt entry was not pruned")
+	}
+	if _, ok := tracker.entries["client-new"]; !ok {
+		t.Fatal("new login attempt entry missing")
+	}
+}
+
+func TestAPILoginAttemptTrackerCapsRetainedEntries(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := newAPILoginAttemptTracker(func() time.Time {
+		return now
+	})
+
+	for i := 0; i < apiLoginAttemptMaxEntries+1; i++ {
+		tracker.recordFailure(fmt.Sprintf("client-%d", i))
+		now = now.Add(time.Millisecond)
+	}
+
+	if got := len(tracker.entries); got != apiLoginAttemptMaxEntries {
+		t.Fatalf("login attempt entries = %d, want %d", got, apiLoginAttemptMaxEntries)
+	}
+	if _, ok := tracker.entries["client-0"]; ok {
+		t.Fatal("oldest login attempt entry was not evicted")
 	}
 }

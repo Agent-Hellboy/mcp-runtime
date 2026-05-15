@@ -72,8 +72,8 @@ func (s *gatewayServer) emitIfEnabled(ctx context.Context, event events.Envelope
 		return
 	}
 	s.analyticsMu.Lock()
-	defer s.analyticsMu.Unlock()
 	if s.analyticsClosed {
+		s.analyticsMu.Unlock()
 		return
 	}
 	item := analyticsEvent{
@@ -82,7 +82,11 @@ func (s *gatewayServer) emitIfEnabled(ctx context.Context, event events.Envelope
 	}
 	select {
 	case queue <- item:
+		s.analyticsMu.Unlock()
 	default:
+		dropped := s.analyticsDropped.Add(1)
+		s.analyticsMu.Unlock()
+		log.Printf("gateway analytics queue full; dropped event total=%d source=%q event_type=%q", dropped, event.Source, event.EventType)
 	}
 }
 
