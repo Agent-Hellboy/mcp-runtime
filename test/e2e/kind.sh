@@ -5210,7 +5210,7 @@ tempo_full_trace_id, tempo_full_trace_services, tempo_full_trace_spans = wait_fo
     description="tempo full gateway analytics trace path",
 )
 
-grafana_headers = basic_auth_headers(grafana_user, grafana_password)
+grafana_headers = {**basic_auth_headers(grafana_user, grafana_password), **headers}
 grafana_datasources = wait_for_json(
     f"{grafana_base}/api/datasources",
     lambda doc: isinstance(doc, list)
