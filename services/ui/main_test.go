@@ -15,7 +15,7 @@ import (
 )
 
 func TestConfigDoesNotExposeAPIKey(t *testing.T) {
-	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret")
+	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret", "")
 	if err != nil {
 		t.Fatalf("newMux() error = %v", err)
 	}
@@ -37,7 +37,7 @@ func TestConfigDoesNotExposeAPIKey(t *testing.T) {
 
 func TestConfigExposesPlatformMode(t *testing.T) {
 	t.Setenv("PLATFORM_MODE", "org")
-	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret")
+	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret", "")
 	if err != nil {
 		t.Fatalf("newMux() error = %v", err)
 	}
@@ -356,7 +356,7 @@ func TestStaticAppExposesGovernanceToTenantUsers(t *testing.T) {
 }
 
 func TestSecurityHeadersAllowConfiguredExternalAssets(t *testing.T) {
-	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret")
+	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret", "")
 	if err != nil {
 		t.Fatalf("newMux() error = %v", err)
 	}
@@ -398,7 +398,7 @@ func TestAPIProxyRequiresAuthenticatedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", store, false, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, false, transport)
 
 	recorder := httptest.NewRecorder()
 	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/dashboard/summary", nil))
@@ -452,7 +452,7 @@ func TestAPIProxyAllowsPlatformLoginWithoutSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", store, false, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, false, transport)
 
 	recorder := httptest.NewRecorder()
 	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"test@mcpruntime.org","password":"test@123"}`)))
@@ -481,7 +481,7 @@ func TestAPIProxyAllowsDirectAPIKeyClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret,backup-secret", newUISessionStore(time.Now), false, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret", "backup-secret"}, newUISessionStore(time.Now), false, transport)
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
@@ -512,7 +512,7 @@ func TestAPIProxyForwardsUserAPIKeyClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", newUISessionStore(time.Now), false, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, newUISessionStore(time.Now), false, transport)
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
@@ -536,7 +536,7 @@ func TestAPIProxyRejectsAnonymousRuntimeServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", newUISessionStore(time.Now), false, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, newUISessionStore(time.Now), false, transport)
 
 	recorder := httptest.NewRecorder()
 	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers?namespace=user-private", nil))
@@ -575,7 +575,7 @@ func TestAPIProxyAllowsAnonymousPublicCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", newUISessionStore(time.Now), true, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, newUISessionStore(time.Now), true, transport)
 
 	recorder := httptest.NewRecorder()
 	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers", nil))
@@ -622,7 +622,7 @@ func TestAPIProxyUsesSessionBeforeAnonymousPublicCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", store, true, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, true, transport)
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers?namespace=admin-private", nil)
@@ -715,7 +715,7 @@ func TestHandleLoginWithOIDCToken(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"content-type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
 	})
 	target, _ := url.Parse("http://api.example")
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", store, false, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, false, transport)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/user/api-keys", nil)
@@ -912,7 +912,7 @@ func TestHandleLoginWithPassword(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"content-type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
 	})
 	target, _ := url.Parse("http://api.example")
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", "api-secret", store, false, transport)
+	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, false, transport)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/user/api-keys", nil)
@@ -1113,6 +1113,27 @@ func TestHTTPSRedirectMiddlewareAutoModeSkipsLocalhost(t *testing.T) {
 	}
 }
 
+func TestHTTPSRedirectMiddlewareSkipsAdminCheckForwardAuth(t *testing.T) {
+	called := false
+	handler := httpsRedirectMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusUnauthorized)
+	}), "auto")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/auth/admin-check", nil)
+	req.Host = "mcp-sentinel-ui.mcp-sentinel.svc.cluster.local:8082"
+	req.Header.Set("X-Forwarded-Proto", "http")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized || !called {
+		t.Fatalf("expected forward-auth admin check to bypass HTTPS redirect, got status=%d called=%v", rec.Code, called)
+	}
+	if got := rec.Header().Get("Location"); got != "" {
+		t.Fatalf("Location = %q, want no redirect", got)
+	}
+}
+
 func TestHTTPSRedirectMiddlewareDisabledMode(t *testing.T) {
 	called := false
 	handler := httpsRedirectMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -1166,6 +1187,57 @@ func TestHTTPSRedirectMiddlewarePassesThroughHTTPS(t *testing.T) {
 
 	if !called {
 		t.Fatal("expected HTTPS request to pass through")
+	}
+}
+
+func TestHandleAdminCheck(t *testing.T) {
+	store := newUISessionStore(time.Now)
+	adminSess, err := store.createSession(context.Background(), uiSession{
+		Principal: sessionPrincipal{Role: "admin", Subject: "admin-1"},
+	})
+	if err != nil {
+		t.Fatalf("createSession admin: %v", err)
+	}
+	userSess, err := store.createSession(context.Background(), uiSession{
+		Principal: sessionPrincipal{Role: "user", Subject: "user-1"},
+	})
+	if err != nil {
+		t.Fatalf("createSession user: %v", err)
+	}
+
+	cases := []struct {
+		name         string
+		adminKeys    string
+		apiKeys      string
+		cookie       *http.Cookie
+		apiKeyHeader string
+		want         int
+	}{
+		{name: "no_credential", apiKeys: "ui-key,admin-key", adminKeys: "admin-key", want: http.StatusUnauthorized},
+		{name: "admin_session", apiKeys: "ui-key", cookie: &http.Cookie{Name: sessionCookieName, Value: adminSess.ID}, want: http.StatusNoContent},
+		{name: "user_session_rejected", apiKeys: "ui-key", cookie: &http.Cookie{Name: sessionCookieName, Value: userSess.ID}, want: http.StatusUnauthorized},
+		{name: "admin_api_key", apiKeys: "ui-key,admin-key", adminKeys: "admin-key", apiKeyHeader: "admin-key", want: http.StatusNoContent},
+		{name: "non_admin_api_key_rejected", apiKeys: "ui-key,admin-key", adminKeys: "admin-key", apiKeyHeader: "ui-key", want: http.StatusUnauthorized},
+		{name: "fallback_any_api_key_when_admin_unset", apiKeys: "ui-key", apiKeyHeader: "ui-key", want: http.StatusNoContent},
+		{name: "unknown_api_key", apiKeys: "ui-key", apiKeyHeader: "rando", want: http.StatusUnauthorized},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := handleAdminCheck(store, parseAPIKeyList(tc.apiKeys), parseAPIKeyList(tc.adminKeys))
+			req := httptest.NewRequest(http.MethodGet, "/auth/admin-check", nil)
+			if tc.cookie != nil {
+				req.AddCookie(tc.cookie)
+			}
+			if tc.apiKeyHeader != "" {
+				req.Header.Set("x-api-key", tc.apiKeyHeader)
+			}
+			rec := httptest.NewRecorder()
+			h(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tc.want, rec.Body.String())
+			}
+		})
 	}
 }
 

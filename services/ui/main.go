@@ -104,12 +104,13 @@ func main() {
 	apiBase := serviceutil.EnvOr("API_BASE", "/api")
 	apiKey := strings.TrimSpace(os.Getenv("API_KEY"))
 	apiKeys := strings.TrimSpace(os.Getenv("API_KEYS"))
+	adminAPIKeys := strings.TrimSpace(os.Getenv("ADMIN_API_KEYS"))
 	apiUpstream := serviceutil.EnvOr("API_UPSTREAM", "http://mcp-sentinel-api:8080")
 	if apiKey == "" && apiKeys == "" {
 		log.Printf("WARNING: neither API_KEY nor API_KEYS is set; UI API-key login is disabled")
 	}
 
-	mux, err := newMux(apiBase, apiUpstream, apiKey, apiKeys)
+	mux, err := newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys)
 	if err != nil {
 		log.Fatalf("invalid API upstream: %v", err)
 	}
@@ -142,7 +143,7 @@ func main() {
 	}
 }
 
-func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error) {
+func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.ServeMux, error) {
 	apiBase = normalizePathPrefix(apiBase)
 	upstreamAPIKey := firstAPIKey(apiKeys)
 	if upstreamAPIKey == "" {
@@ -200,8 +201,11 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error
 	mux.HandleFunc("/auth/login", handleLogin(apiKey, upstreamAPIKey, apiUpstream, sessions))
 	mux.HandleFunc("/auth/logout", handleLogout(sessions))
 	mux.HandleFunc("/auth/status", handleStatus(sessions))
+	parsedAPIKeys := parseAPIKeyList(apiKeys)
+	parsedAdminAPIKeys := parseAPIKeyList(adminAPIKeys)
+	mux.HandleFunc("/auth/admin-check", handleAdminCheck(sessions, parsedAPIKeys, parsedAdminAPIKeys))
 
-	apiProxy := newAPIProxy(target, apiBase, upstreamAPIKey, apiKeys, sessions, publicCatalog)
+	apiProxy := newAPIProxy(target, apiBase, upstreamAPIKey, parsedAPIKeys, sessions, publicCatalog)
 	mux.Handle(apiBase+"/", apiProxy)
 	mux.Handle(apiBase, apiProxy)
 
@@ -232,11 +236,11 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys string) (*http.ServeMux, error
 	return mux, nil
 }
 
-func newAPIProxy(target *url.URL, apiBase, upstreamAPIKey, apiKeys string, store *uiSessionStore, publicCatalog bool) http.Handler {
+func newAPIProxy(target *url.URL, apiBase, upstreamAPIKey string, apiKeys []string, store *uiSessionStore, publicCatalog bool) http.Handler {
 	return newAPIProxyWithTransport(target, apiBase, upstreamAPIKey, apiKeys, store, publicCatalog, nil)
 }
 
-func newAPIProxyWithTransport(target *url.URL, apiBase, upstreamAPIKey, apiKeys string, store *uiSessionStore, publicCatalog bool, transport http.RoundTripper) http.Handler {
+func newAPIProxyWithTransport(target *url.URL, apiBase, upstreamAPIKey string, apiKeys []string, store *uiSessionStore, publicCatalog bool, transport http.RoundTripper) http.Handler {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	if transport != nil {
 		proxy.Transport = transport
@@ -864,6 +868,56 @@ func handleLogout(store *uiSessionStore) http.HandlerFunc {
 	}
 }
 
+// handleAdminCheck is the Traefik forwardAuth target for /grafana and
+// /prometheus. It returns 204 when the caller is an admin (logged-in UI
+// session or admin API key) and 401 otherwise. The original request body and
+// path do not matter — Traefik forwards only headers and consumes the status.
+// The Cache-Control header is set by securityHeadersMiddleware for /auth/.
+func handleAdminCheck(store *uiSessionStore, apiKeys, adminAPIKeys []string) http.HandlerFunc {
+	// When ADMIN_API_KEYS is unset, any value from API_KEYS authenticates as
+	// admin — matches the API service's backward-compatible default.
+	gateKeys := adminAPIKeys
+	if len(gateKeys) == 0 {
+		gateKeys = apiKeys
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		if sess, ok := store.sessionFromRequest(r); ok && strings.EqualFold(sess.Principal.Role, "admin") {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if validAPIKeyHeader(r, gateKeys) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+}
+
+func matchAPIKey(presented string, keys []string) bool {
+	for _, key := range keys {
+		if hmac.Equal([]byte(presented), []byte(key)) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseAPIKeyList splits a comma-separated API-key list into a slice of
+// trimmed, non-empty entries, suitable for use as a per-process lookup.
+func parseAPIKeyList(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, key := range parts {
+		if trimmed := strings.TrimSpace(key); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
 func handleStatus(store *uiSessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sess, ok := store.sessionFromRequest(r)
@@ -916,17 +970,15 @@ func randomURLToken(rawBytes int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-func validAPIKeyHeader(r *http.Request, apiKeys string) bool {
+func validAPIKeyHeader(r *http.Request, keys []string) bool {
+	if len(keys) == 0 {
+		return false
+	}
 	presented := strings.TrimSpace(r.Header.Get("x-api-key"))
 	if presented == "" {
 		return false
 	}
-	for _, key := range strings.Split(apiKeys, ",") {
-		if hmac.Equal([]byte(presented), []byte(strings.TrimSpace(key))) {
-			return true
-		}
-	}
-	return false
+	return matchAPIKey(presented, keys)
 }
 
 func hasAPIAuthHeader(r *http.Request) bool {
@@ -1102,6 +1154,9 @@ func httpsRedirectMiddleware(next http.Handler, mode string) http.Handler {
 }
 
 func shouldRedirectToHTTPS(r *http.Request, mode string) bool {
+	if r.URL != nil && r.URL.Path == "/auth/admin-check" {
+		return false
+	}
 	normalizedMode := strings.ToLower(strings.TrimSpace(mode))
 	forcedMode := false
 	switch normalizedMode {

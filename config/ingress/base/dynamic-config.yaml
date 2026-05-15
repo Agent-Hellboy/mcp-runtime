@@ -11,3 +11,7 @@ data:
           forwardAuth:
             address: http://mcp-sentinel-api.mcp-sentinel.svc.cluster.local:8080/api/registry/authz
             trustForwardHeader: true
+        sentinel-admin-auth:
+          forwardAuth:
+            address: http://mcp-sentinel-ui.mcp-sentinel.svc.cluster.local:8082/auth/admin-check
+            trustForwardHeader: true

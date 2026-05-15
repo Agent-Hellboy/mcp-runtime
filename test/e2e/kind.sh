@@ -1962,8 +1962,9 @@ run_with_retry() {
   for attempt in $(seq 1 "${LOCAL_REGISTRY_RETRY_TRIES}"); do
     if "$@"; then
       return 0
+    else
+      exit_code=$?
     fi
-    exit_code=$?
     if [[ "${attempt}" -lt "${LOCAL_REGISTRY_RETRY_TRIES}" ]]; then
       echo "[retry] ${description} failed (attempt ${attempt}/${LOCAL_REGISTRY_RETRY_TRIES}, exit ${exit_code}); retrying in ${LOCAL_REGISTRY_RETRY_DELAY}s" >&2
       sleep "${LOCAL_REGISTRY_RETRY_DELAY}"
@@ -2785,10 +2786,11 @@ parallel_start 3 "deploy ${GO_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pi
 parallel_wait_all
 
 echo "[cli] checking server commands"
+refresh_kind_kubeconfig
 
 # --- server list: assert the primary server appears ---
 _cli_list_file="${WORKDIR}/server-list.txt"
-if ! run_with_retry "server list" ./bin/mcp-runtime server --use-kube list --namespace mcp-servers >"${_cli_list_file}" 2>&1; then
+if ! run_with_retry "server list" env KUBECONFIG="${KUBECONFIG_FILE}" ./bin/mcp-runtime server --use-kube list --namespace mcp-servers >"${_cli_list_file}" 2>&1; then
   echo "[cli][fail] 'server list' failed" >&2
   cat "${_cli_list_file}" >&2
   exit 1
@@ -2803,7 +2805,7 @@ echo "[cli][pass] server list contains ${SERVER_NAME}"
 
 # --- server get: capture YAML and assert readiness fields ---
 _cli_get_file="${WORKDIR}/${SERVER_NAME}-get.yaml"
-if ! run_with_retry "server get ${SERVER_NAME}" ./bin/mcp-runtime server --use-kube get "${SERVER_NAME}" --namespace mcp-servers >"${_cli_get_file}" 2>&1; then
+if ! run_with_retry "server get ${SERVER_NAME}" env KUBECONFIG="${KUBECONFIG_FILE}" ./bin/mcp-runtime server --use-kube get "${SERVER_NAME}" --namespace mcp-servers >"${_cli_get_file}" 2>&1; then
   echo "[cli][fail] 'server get ${SERVER_NAME}' failed" >&2
   cat "${_cli_get_file}" >&2
   exit 1
@@ -4182,8 +4184,10 @@ check(
 )
 expect_status(f"{gateway_base}/app.js", 200, contains="const apiBase")
 expect_status(f"{gateway_base}/styles.css", 200, contains=".canvas")
-expect_status(f"{gateway_base}/grafana/api/health", 200, contains="database")
-expect_status(f"{gateway_base}/prometheus/-/healthy", 200, contains="Healthy")
+expect_status(f"{gateway_base}/grafana/api/health", 401)
+expect_status(f"{gateway_base}/prometheus/-/healthy", 401)
+expect_status(f"{gateway_base}/grafana/api/health", 200, headers=auth_headers, contains="database")
+expect_status(f"{gateway_base}/prometheus/-/healthy", 200, headers=auth_headers, contains="Healthy")
 
 # Direct UI service.
 expect_status(f"{ui_base}/health", 200, contains='"ok":true')
@@ -5206,7 +5210,7 @@ tempo_full_trace_id, tempo_full_trace_services, tempo_full_trace_spans = wait_fo
     description="tempo full gateway analytics trace path",
 )
 
-grafana_headers = basic_auth_headers(grafana_user, grafana_password)
+grafana_headers = {**basic_auth_headers(grafana_user, grafana_password), **headers}
 grafana_datasources = wait_for_json(
     f"{grafana_base}/api/datasources",
     lambda doc: isinstance(doc, list)
@@ -5251,6 +5255,7 @@ grafana_full_trace_id, grafana_full_trace_services, grafana_full_trace_spans = w
 
 prometheus_jobs = wait_for_prometheus_up(
     prometheus_base,
+    headers=headers,
     description="prometheus up query",
 )
 grafana_prometheus_jobs = wait_for_prometheus_up(
