@@ -70,3 +70,21 @@ References:
 - `AGENTS.md` → **MCP server pod / sidecar checks**
 
 Added: 2026-05-12
+
+---
+
+### Admin forward-auth probes need platform auth headers
+
+When `/grafana` or `/prometheus` are protected by Traefik admin
+forward-auth, E2E requests through the Sentinel gateway need the
+platform `x-api-key` header even if the upstream service also has its
+own auth, such as Grafana Basic auth. The UI `/auth/admin-check`
+forward-auth endpoint must also skip HTTP-to-HTTPS redirects because
+Traefik calls it by internal service DNS.
+
+References:
+- `services/ui/main.go:1156`
+- `test/e2e/kind.sh:5213`
+- `test/e2e/kind.sh:5256`
+
+Added: 2026-05-15
