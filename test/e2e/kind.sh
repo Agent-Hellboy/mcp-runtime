@@ -5255,6 +5255,7 @@ grafana_full_trace_id, grafana_full_trace_services, grafana_full_trace_spans = w
 
 prometheus_jobs = wait_for_prometheus_up(
     prometheus_base,
+    headers=headers,
     description="prometheus up query",
 )
 grafana_prometheus_jobs = wait_for_prometheus_up(
