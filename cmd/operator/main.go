@@ -67,10 +67,17 @@ func main() {
 	}
 
 	if webhooksEnabledFromEnv(os.Getenv) {
+		mcpServerWebhookOptions := mcpv1alpha1.MCPServerDefaultOptions{
+			DefaultIngressHost:        os.Getenv("MCP_DEFAULT_INGRESS_HOST"),
+			DefaultAnalyticsIngestURL: analyticsIngestURLFromEnv(os.Getenv),
+		}
+		if err := (&mcpv1alpha1.MCPServer{}).SetupWebhookWithManagerWithOptions(mgr, mcpServerWebhookOptions); err != nil {
+			setupLog.Error(err, "unable to create webhook")
+			os.Exit(1)
+		}
 		for _, resource := range []interface {
 			SetupWebhookWithManager(ctrl.Manager) error
 		}{
-			&mcpv1alpha1.MCPServer{},
 			&mcpv1alpha1.MCPAccessGrant{},
 			&mcpv1alpha1.MCPAgentSession{},
 		} {

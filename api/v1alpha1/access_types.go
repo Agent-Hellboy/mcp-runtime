@@ -56,6 +56,7 @@ type MCPAccessGrantStatus struct {
 // +kubebuilder:printcolumn:name="Trust",type="string",JSONPath=".spec.maxTrust"
 // +kubebuilder:printcolumn:name="Disabled",type="boolean",JSONPath=".spec.disabled"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+// +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpaccessgrant,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpaccessgrants,verbs=create;update,versions=v1alpha1,name=vmcpaccessgrant.kb.io,admissionReviewVersions=v1,serviceName=mcp-runtime-operator-webhook-service,serviceNamespace=mcp-runtime,servicePort=443
 
 // MCPAccessGrant grants a human or agent access to an MCPServer.
 type MCPAccessGrant struct {
@@ -105,6 +106,7 @@ type MCPAgentSessionStatus struct {
 // +kubebuilder:printcolumn:name="Revoked",type="boolean",JSONPath=".spec.revoked"
 // +kubebuilder:printcolumn:name="Expires",type="string",JSONPath=".spec.expiresAt"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+// +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpagentsession,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpagentsessions,verbs=create;update,versions=v1alpha1,name=vmcpagentsession.kb.io,admissionReviewVersions=v1,serviceName=mcp-runtime-operator-webhook-service,serviceNamespace=mcp-runtime,servicePort=443
 
 // MCPAgentSession stores consent and upstream token state for an agent session.
 type MCPAgentSession struct {

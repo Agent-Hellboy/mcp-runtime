@@ -179,6 +179,29 @@ func TestMCPServerDefault(t *testing.T) {
 	}
 }
 
+func TestMCPServerDefaultWithOptions(t *testing.T) {
+	server := &MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-server"},
+		Spec: MCPServerSpec{
+			Image:     "example.com/mcp-server",
+			Gateway:   &GatewayConfig{Enabled: true},
+			Analytics: &AnalyticsConfig{},
+		},
+	}
+
+	server.DefaultWithOptions(MCPServerDefaultOptions{
+		DefaultIngressHost:        "mcp.example.com",
+		DefaultAnalyticsIngestURL: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events",
+	})
+
+	if server.Spec.IngressHost != "mcp.example.com" {
+		t.Fatalf("expected ingressHost default from options, got %q", server.Spec.IngressHost)
+	}
+	if server.Spec.Analytics == nil || server.Spec.Analytics.IngestURL != "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events" {
+		t.Fatalf("expected analytics ingest URL default from options, got %#v", server.Spec.Analytics)
+	}
+}
+
 func TestMCPServerDefaultGatewayAuthTeamHeader(t *testing.T) {
 	server := &MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-server"},

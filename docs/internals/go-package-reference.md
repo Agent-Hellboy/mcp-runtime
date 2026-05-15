@@ -121,11 +121,16 @@ Package v1alpha1 contains API Schema definitions for the MCP server resource.
 - [`func (in *MCPServer) DeepCopyInto(out *MCPServer)`](#api-types-func-in-mcpserver-deepcopyinto-out-mcpserver)
 - [`func (in *MCPServer) DeepCopyObject() runtime.Object`](#api-types-func-in-mcpserver-deepcopyobject-runtime-object)
 - [`func (r *MCPServer) Default()`](#api-types-func-r-mcpserver-default)
+- [`func (r *MCPServer) DefaultWithOptions(options MCPServerDefaultOptions)`](#api-types-func-r-mcpserver-defaultwithoptions-options-mcpserverdefaultoptions)
 - [`func (r *MCPServer) SetupWebhookWithManager(mgr ctrl.Manager) error`](#api-types-func-r-mcpserver-setupwebhookwithmanager-mgr-ctrl-manager-error)
+- [`func (r *MCPServer) SetupWebhookWithManagerWithOptions(mgr ctrl.Manager, options MCPServerDefaultOptions) error`](#api-types-func-r-mcpserver-setupwebhookwithmanagerwithoptions-mgr-ctrl-manager-options-mcpserverdefaultoptions-error)
 - [`func (r *MCPServer) String() string`](#api-types-func-r-mcpserver-string-string)
 - [`func (r *MCPServer) ValidateCreate() (admission.Warnings, error)`](#api-types-func-r-mcpserver-validatecreate-admission-warnings-error)
 - [`func (r *MCPServer) ValidateDelete() (admission.Warnings, error)`](#api-types-func-r-mcpserver-validatedelete-admission-warnings-error)
 - [`func (r *MCPServer) ValidateUpdate(_ runtime.Object) (admission.Warnings, error)`](#api-types-func-r-mcpserver-validateupdate-runtime-object-admission-warnings-error)
+- [`type MCPServerDefaultOptions struct`](#api-types-type-mcpserverdefaultoptions-struct)
+- [`func (in *MCPServerDefaultOptions) DeepCopy() *MCPServerDefaultOptions`](#api-types-func-in-mcpserverdefaultoptions-deepcopy-mcpserverdefaultoptions)
+- [`func (in *MCPServerDefaultOptions) DeepCopyInto(out *MCPServerDefaultOptions)`](#api-types-func-in-mcpserverdefaultoptions-deepcopyinto-out-mcpserverdefaultoptions)
 - [`type MCPServerList struct`](#api-types-type-mcpserverlist-struct)
 - [`func (in *MCPServerList) DeepCopy() *MCPServerList`](#api-types-func-in-mcpserverlist-deepcopy-mcpserverlist)
 - [`func (in *MCPServerList) DeepCopyInto(out *MCPServerList)`](#api-types-func-in-mcpserverlist-deepcopyinto-out-mcpserverlist)
@@ -438,7 +443,6 @@ func (in *MCPAccessGrant) DeepCopyObject() runtime.Object
 <a id="api-types-func-r-mcpaccessgrant-setupwebhookwithmanager-mgr-ctrl-manager-error"></a>
 ```text
 func (r *MCPAccessGrant) SetupWebhookWithManager(mgr ctrl.Manager) error
-    +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpaccessgrant,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpaccessgrants,verbs=create;update,versions=v1alpha1,name=vmcpaccessgrant.kb.io,admissionReviewVersions=v1
 
 ```
 
@@ -596,7 +600,6 @@ func (in *MCPAgentSession) DeepCopyObject() runtime.Object
 <a id="api-types-func-r-mcpagentsession-setupwebhookwithmanager-mgr-ctrl-manager-error"></a>
 ```text
 func (r *MCPAgentSession) SetupWebhookWithManager(mgr ctrl.Manager) error
-    +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpagentsession,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpagentsessions,verbs=create;update,versions=v1alpha1,name=vmcpagentsession.kb.io,admissionReviewVersions=v1
 
 ```
 
@@ -753,14 +756,26 @@ func (in *MCPServer) DeepCopyObject() runtime.Object
 <a id="api-types-func-r-mcpserver-default"></a>
 ```text
 func (r *MCPServer) Default()
-    +kubebuilder:webhook:path=/mutate-mcpruntime-org-v1alpha1-mcpserver,mutating=true,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpservers,verbs=create;update,versions=v1alpha1,name=mmcpserver.kb.io,admissionReviewVersions=v1
+
+```
+
+<a id="api-types-func-r-mcpserver-defaultwithoptions-options-mcpserverdefaultoptions"></a>
+```text
+func (r *MCPServer) DefaultWithOptions(options MCPServerDefaultOptions)
+    DefaultWithOptions applies MCPServer defaults, including operator-configured
+    fallbacks when the webhook is registered by the operator manager.
 
 ```
 
 <a id="api-types-func-r-mcpserver-setupwebhookwithmanager-mgr-ctrl-manager-error"></a>
 ```text
 func (r *MCPServer) SetupWebhookWithManager(mgr ctrl.Manager) error
-    +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpserver,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpservers,verbs=create;update,versions=v1alpha1,name=vmcpserver.kb.io,admissionReviewVersions=v1
+
+```
+
+<a id="api-types-func-r-mcpserver-setupwebhookwithmanagerwithoptions-mgr-ctrl-manager-options-mcpserverdefaultoptions-error"></a>
+```text
+func (r *MCPServer) SetupWebhookWithManagerWithOptions(mgr ctrl.Manager, options MCPServerDefaultOptions) error
 
 ```
 
@@ -785,6 +800,33 @@ func (r *MCPServer) ValidateDelete() (admission.Warnings, error)
 <a id="api-types-func-r-mcpserver-validateupdate-runtime-object-admission-warnings-error"></a>
 ```text
 func (r *MCPServer) ValidateUpdate(_ runtime.Object) (admission.Warnings, error)
+
+```
+
+<a id="api-types-type-mcpserverdefaultoptions-struct"></a>
+```text
+type MCPServerDefaultOptions struct {
+	DefaultIngressHost        string
+	DefaultAnalyticsIngestURL string
+}
+    MCPServerDefaultOptions holds operator-scoped values that the admission
+    webhook can use while defaulting MCPServer objects.
+
+```
+
+<a id="api-types-func-in-mcpserverdefaultoptions-deepcopy-mcpserverdefaultoptions"></a>
+```text
+func (in *MCPServerDefaultOptions) DeepCopy() *MCPServerDefaultOptions
+    DeepCopy is an autogenerated deepcopy function, copying the receiver,
+    creating a new MCPServerDefaultOptions.
+
+```
+
+<a id="api-types-func-in-mcpserverdefaultoptions-deepcopyinto-out-mcpserverdefaultoptions"></a>
+```text
+func (in *MCPServerDefaultOptions) DeepCopyInto(out *MCPServerDefaultOptions)
+    DeepCopyInto is an autogenerated deepcopy function, copying the receiver,
+    writing into out. in must be non-nil.
 
 ```
 

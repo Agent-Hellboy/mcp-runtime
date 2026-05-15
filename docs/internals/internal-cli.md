@@ -79,6 +79,9 @@ Important setup contracts:
 - Registry info is resolved before runtime images are named.
 - Internal registry pushes validate platform credentials, then use an
   in-cluster helper when direct host pushes are not appropriate.
+- Operator setup prepares admission webhook TLS, enables webhook serving on the
+  manager deployment, and applies the generated webhook service/configuration
+  with the matching CA bundle.
 - Sentinel rollouts use `MCP_DEPLOYMENT_TIMEOUT`.
 - Setup verification should fail with diagnostic context instead of reporting
   success after partial deployment.

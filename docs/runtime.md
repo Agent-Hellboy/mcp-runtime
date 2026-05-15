@@ -189,7 +189,7 @@ integration examples.
 The operator is a single-controller `controller-runtime` manager:
 
 1. Watches `MCPServer` (and owns Deployment / Service / Ingress).
-2. On reconcile, fills defaults via `setDefaults`, persists spec changes if defaults were added.
+2. Defaults and validates new API writes through admission webhooks; on reconcile, applies the same defaults to an in-memory copy for legacy objects without patching the stored spec.
 3. Resolves the image string (respecting `imageTag`, `registryOverride`, and `PROVISIONED_REGISTRY_URL`).
 4. Builds image-pull secrets, including auto-creating a docker-config secret from provisioned-registry env vars.
 5. Reconciles Deployment → Service → Ingress in order.

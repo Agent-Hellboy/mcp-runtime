@@ -228,6 +228,103 @@ spec:
 	}
 }
 
+func TestMergeDeploymentVolumesAndVolumeMounts(t *testing.T) {
+	yaml := `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-deployment
+spec:
+  template:
+    spec:
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      containers:
+      - name: test-container
+        image: nginx:latest
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+`
+	m, err := NewMutator([]byte(yaml))
+	if err != nil {
+		t.Fatalf("NewMutator failed: %v", err)
+	}
+
+	if err := m.MergeDeploymentVolumes("test-deployment", []map[string]any{
+		{
+			"name": "webhook-server-cert",
+			"secret": map[string]any{
+				"secretName": "webhook-cert",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("MergeDeploymentVolumes failed: %v", err)
+	}
+	if err := m.MergeDeploymentVolumeMounts("test-deployment", "test-container", []map[string]any{
+		{
+			"name":      "webhook-server-cert",
+			"mountPath": "/tmp/k8s-webhook-server/serving-certs",
+			"readOnly":  true,
+		},
+	}); err != nil {
+		t.Fatalf("MergeDeploymentVolumeMounts failed: %v", err)
+	}
+
+	deployment := m.FindDeployment("test-deployment", "")
+	spec := getMap(deployment, "spec", "template", "spec")
+	volumes := spec["volumes"].([]any)
+	if len(volumes) != 2 {
+		t.Fatalf("volumes len = %d, want 2", len(volumes))
+	}
+	containers := spec["containers"].([]any)
+	container := containers[0].(map[string]any)
+	mounts := container["volumeMounts"].([]any)
+	if len(mounts) != 2 {
+		t.Fatalf("volumeMounts len = %d, want 2", len(mounts))
+	}
+}
+
+func TestMergeDeploymentTemplateAnnotations(t *testing.T) {
+	yaml := `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-deployment
+spec:
+  template:
+    metadata:
+      annotations:
+        existing: value
+    spec:
+      containers:
+      - name: test-container
+        image: nginx:latest
+`
+	m, err := NewMutator([]byte(yaml))
+	if err != nil {
+		t.Fatalf("NewMutator failed: %v", err)
+	}
+
+	if err := m.MergeDeploymentTemplateAnnotations("test-deployment", map[string]string{
+		"existing": "updated",
+		"new":      "value",
+	}); err != nil {
+		t.Fatalf("MergeDeploymentTemplateAnnotations failed: %v", err)
+	}
+
+	deployment := m.FindDeployment("test-deployment", "")
+	metadata := getMap(deployment, "spec", "template", "metadata")
+	annotations := metadata["annotations"].(map[string]any)
+	if annotations["existing"] != "updated" {
+		t.Fatalf("existing annotation = %v, want updated", annotations["existing"])
+	}
+	if annotations["new"] != "value" {
+		t.Fatalf("new annotation = %v, want value", annotations["new"])
+	}
+}
+
 func TestMergeDeploymentArgsHandlesSpaceSeparatedFlags(t *testing.T) {
 	yaml := `
 apiVersion: apps/v1
