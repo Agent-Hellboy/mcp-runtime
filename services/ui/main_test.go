@@ -1113,6 +1113,27 @@ func TestHTTPSRedirectMiddlewareAutoModeSkipsLocalhost(t *testing.T) {
 	}
 }
 
+func TestHTTPSRedirectMiddlewareSkipsAdminCheckForwardAuth(t *testing.T) {
+	called := false
+	handler := httpsRedirectMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusUnauthorized)
+	}), "auto")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/auth/admin-check", nil)
+	req.Host = "mcp-sentinel-ui.mcp-sentinel.svc.cluster.local:8082"
+	req.Header.Set("X-Forwarded-Proto", "http")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized || !called {
+		t.Fatalf("expected forward-auth admin check to bypass HTTPS redirect, got status=%d called=%v", rec.Code, called)
+	}
+	if got := rec.Header().Get("Location"); got != "" {
+		t.Fatalf("Location = %q, want no redirect", got)
+	}
+}
+
 func TestHTTPSRedirectMiddlewareDisabledMode(t *testing.T) {
 	called := false
 	handler := httpsRedirectMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

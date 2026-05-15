@@ -1154,6 +1154,9 @@ func httpsRedirectMiddleware(next http.Handler, mode string) http.Handler {
 }
 
 func shouldRedirectToHTTPS(r *http.Request, mode string) bool {
+	if r.URL != nil && r.URL.Path == "/auth/admin-check" {
+		return false
+	}
 	normalizedMode := strings.ToLower(strings.TrimSpace(mode))
 	forcedMode := false
 	switch normalizedMode {
