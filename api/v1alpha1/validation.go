@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -16,11 +15,10 @@ import (
 )
 
 var (
-	_       admission.Defaulter[*MCPServer]       = mcpServerWebhook{}
-	_       admission.Validator[*MCPServer]       = mcpServerWebhook{}
-	_       admission.Validator[*MCPAccessGrant]  = mcpAccessGrantValidator{}
-	_       admission.Validator[*MCPAgentSession] = mcpAgentSessionValidator{}
-	nowFunc                                       = time.Now
+	_ admission.Defaulter[*MCPServer]       = mcpServerWebhook{}
+	_ admission.Validator[*MCPServer]       = mcpServerWebhook{}
+	_ admission.Validator[*MCPAccessGrant]  = mcpAccessGrantValidator{}
+	_ admission.Validator[*MCPAgentSession] = mcpAgentSessionValidator{}
 )
 
 const (
@@ -544,10 +542,6 @@ func (r *MCPAgentSession) validate() error {
 	}
 	if err := validateTeamIDField(specPath.Child("subject", "teamID"), r.Spec.Subject.TeamID); err != nil {
 		allErrs = append(allErrs, err)
-	}
-	now := nowFunc().UTC()
-	if r.Spec.ExpiresAt != nil && !r.Spec.ExpiresAt.Time.After(now) {
-		allErrs = append(allErrs, field.Invalid(specPath.Child("expiresAt"), r.Spec.ExpiresAt.Time.Format(time.RFC3339), "expiresAt must be in the future"))
 	}
 	if ref := r.Spec.UpstreamTokenSecretRef; ref != nil {
 		if strings.TrimSpace(ref.Name) == "" {
