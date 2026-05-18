@@ -9,7 +9,7 @@
 | **mcp-gateway** | Transparent sidecar. Extracts identity, evaluates tool-level policy, emits allow/deny audit events, forwards traffic upstream. |
 | **ingest** | Receives `POST /events`, validates ingest-scoped API keys or optional JWTs, writes to Kafka. |
 | **processor** | Consumes Kafka, batches, writes into ClickHouse with indexed audit fields. |
-| **api** | Analytics endpoints, dashboard summaries, user/team-scoped analytics, runtime governance APIs (grants/sessions), platform audit, MCP server catalog, component operations. |
+| **api** | Analytics endpoints, dashboard summaries, user/team-scoped analytics, scoped observability links and Prometheus query proxying, runtime governance APIs (grants/sessions), platform audit, MCP server catalog, component operations. |
 | **ui** | Control-plane dashboard: user MCP server dashboard, MCP server catalog and connect config, user API keys, analytics dashboard, governance, MCP operations, and platform management. |
 | **gateway** | Kubernetes deployment fronting the sentinel API, ingest, and UI surfaces. |
 | **reference mcp-server** | Small example server in `examples/go-mcp-server` for end-to-end smoke tests. |
@@ -102,9 +102,38 @@ For local `setup --test-mode` clusters, setup seeds two email/password logins:
 | **UI** | `/` | `mcp-sentinel-ui:8082` | Browser app, browser login/session routes, and `/api` reverse proxy. |
 | **API** | `/api/*` through UI | `mcp-sentinel-api:8080` | Auth, analytics queries, runtime governance, deployments, admin/user APIs. The UI proxy forwards browser origin headers so local connect configs can point at `http://localhost:18080/<server-name>/mcp`. |
 | **Ingest** | `/ingest/events` | `mcp-sentinel-ingest:8081/events` | Event intake used by `mcp-gateway`; the public ingress strips `/ingest`. |
-| **Grafana** | `/grafana` | `grafana:3000` | Admin observability UI. Keep private or behind auth-aware ingress; tenant-scoped access is intentionally not exposed by the user dashboard. |
-| **Prometheus** | `/prometheus` | `prometheus:9090` | Admin metrics query UI. Keep private or behind auth-aware ingress; tenant-scoped access is intentionally not exposed by the user dashboard. |
+| **Grafana** | `/grafana` | `grafana:3000` | Admin observability UI. Keep private or behind auth-aware ingress; normal users do not get direct bundled Grafana access by default. |
+| **Prometheus** | `/prometheus` | `prometheus:9090` | Admin metrics query UI. Keep private or behind auth-aware ingress; normal users use the API's scoped Prometheus proxy instead of the raw UI. |
 | **MCP gateway sidecar** | per-server route, for example `/demo-one/mcp` | pod-local sidecar port | Enforces policy and forwards to the MCP server container. |
+
+### Scoped user observability
+
+Raw `/grafana` and `/prometheus` remain cluster-wide admin surfaces in the
+bundled stack. The user dashboard exposes scoped observability only from server
+rows that the authenticated principal can read: the caller's user namespace,
+team namespaces, or an explicitly caller-owned catalog server. The API checks
+the live `MCPServer` before returning links or querying Prometheus, so changing
+`namespace` or `server` query parameters cannot cross tenant boundaries.
+
+The scoped Prometheus proxy is:
+
+```text
+GET /api/runtime/observability/prometheus/query?namespace=<namespace>&server=<server>&query_id=request_rate
+```
+
+`query_id` is allowlisted (`up`, `request_rate`, `deny_rate`,
+`latency_p95`). The API expands each query with fixed `namespace` and `server`
+label matchers, calls `PROMETHEUS_API_URL` (default
+`http://prometheus:9090/prometheus`), and returns the Prometheus response. It
+does not pass arbitrary PromQL from users to Prometheus.
+
+Grafana server links are generated only after the same authorization check.
+Set `GRAFANA_SERVER_DASHBOARD_URL` to a dashboard URL template such as
+`/grafana/d/<uid>/<slug>?var-namespace={namespace}&var-server={server}`. Normal
+user links stay hidden unless `GRAFANA_SCOPED_USER_ACCESS=true`, which should
+only be used when the Grafana deployment and ingress enforce tenant-aware access
+instead of exposing cluster-wide explore or datasource access. Admin users can
+continue to use the existing `/grafana` and `/prometheus` links.
 
 ### Auth model
 
@@ -140,6 +169,8 @@ metrics on `METRICS_PORT` (default `9090`).
 | `GET`, `POST` | `/api/runtime/servers` | List or apply `MCPServer` resources through runtime authz scope. `tenant` mode defaults signed-in users to their own user/team namespace; `org` mode includes the org catalog plus owned/team namespaces; `public` mode allows anonymous catalog reads and signed-in publishes in the public catalog plus owned/team namespaces. Responses include `publish_policy` for active-server quota/cooldown visibility. |
 | `DELETE` | `/api/runtime/servers/{namespace}/{name}` | Retire an owned MCPServer. Retiring deletes the MCPServer from Kubernetes and frees one active-server quota slot. |
 | `GET` | `/api/runtime/server-events?namespace=&server=` | Recent analytics events for one readable MCPServer, used by the user server detail view. |
+| `GET` | `/api/runtime/observability/links?namespace=&server=` | Scoped observability links for one authorized MCPServer. Normal users are limited to their user/team namespaces or caller-owned catalog servers. |
+| `GET` | `/api/runtime/observability/prometheus/query?namespace=&server=&query_id=` | Allowlisted Prometheus query proxy for one authorized MCPServer. Does not accept arbitrary PromQL. |
 | `GET`, `POST` | `/api/runtime/grants` | List or apply `MCPAccessGrant` resources. |
 | `GET`, `DELETE` | `/api/runtime/grants/{namespace}/{name}` | Read or delete one grant. |
 | `POST` | `/api/runtime/grants/{namespace}/{name}/disable` | Set `spec.disabled=true`. |

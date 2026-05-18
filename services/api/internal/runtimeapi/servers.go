@@ -350,7 +350,8 @@ func (s *RuntimeServer) HandleRuntimeServerItem(w http.ResponseWriter, r *http.R
 
 type serverInfo struct {
 	controlplane.ServerInfo
-	AccessJSON map[string]any `json:"access_json,omitempty"`
+	AccessJSON    map[string]any              `json:"access_json,omitempty"`
+	Observability *observabilityLinksResponse `json:"observability,omitempty"`
 }
 
 type serverDeploymentStatus = controlplane.ServerDeploymentStatus
@@ -379,6 +380,10 @@ func serverInfoWithAccessJSON(info controlplane.ServerInfo, r *http.Request) ser
 				},
 			},
 		}
+	}
+	if p, ok := principalFromContext(r.Context()); ok && serverInfoObservableByPrincipal(info, p) {
+		links := observabilityLinksForServerInfo(info, p, r)
+		out.Observability = &links
 	}
 	return out
 }
