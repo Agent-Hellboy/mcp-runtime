@@ -22,6 +22,25 @@ func contains(slice []string, val string) bool {
 	return false
 }
 
+func unsetEnvForTest(t *testing.T, key string) {
+	t.Helper()
+	previous, existed := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("unset %s: %v", key, err)
+	}
+	t.Cleanup(func() {
+		if existed {
+			if err := os.Setenv(key, previous); err != nil {
+				t.Fatalf("restore %s: %v", key, err)
+			}
+			return
+		}
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("restore unset %s: %v", key, err)
+		}
+	})
+}
+
 func TestClusterManager_CheckClusterStatus(t *testing.T) {
 	t.Run("calls kubectl cluster-info", func(t *testing.T) {
 		mock := &core.MockExecutor{
@@ -474,6 +493,8 @@ func TestConfigureEKSKubeconfig(t *testing.T) {
 }
 
 func TestProvisionCluster(t *testing.T) {
+	t.Setenv("KIND_EXPERIMENTAL_PROVIDER", "")
+
 	t.Run("dispatches to kind", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
@@ -611,12 +632,14 @@ func TestProvisionCluster(t *testing.T) {
 }
 
 func TestProvisionKindCluster(t *testing.T) {
+	t.Setenv("KIND_EXPERIMENTAL_PROVIDER", "")
+
 	t.Run("creates cluster with default name", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
 		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
 
-		err := mgr.provisionKindCluster(3, "", false)
+		err := mgr.ProvisionCluster("kind", "us-west-2", 3, "", false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -679,6 +702,7 @@ func TestProvisionKindCluster(t *testing.T) {
 	})
 
 	t.Run("checks docker before kind create", func(t *testing.T) {
+		t.Setenv("KIND_EXPERIMENTAL_PROVIDER", "docker")
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
 		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
@@ -700,6 +724,29 @@ func TestProvisionKindCluster(t *testing.T) {
 		}
 	})
 
+	t.Run("lets kind auto-detect runtime when provider env is unset", func(t *testing.T) {
+		unsetEnvForTest(t, "KIND_EXPERIMENTAL_PROVIDER")
+		mock := &core.MockExecutor{}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+		if err := mgr.provisionKindCluster(1, "test", false); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.HasCommand("docker") {
+			t.Fatalf("expected kind to auto-detect runtime without docker preflight, got %v", mock.Commands)
+		}
+		if len(mock.Commands) < 2 {
+			t.Fatalf("expected kind list and kind create commands, got %v", mock.Commands)
+		}
+		if got := mock.Commands[0]; got.Name != "kind" || !contains(got.Args, "get") || !contains(got.Args, "clusters") {
+			t.Fatalf("expected first command to list kind clusters, got %v", got)
+		}
+		if got := mock.Commands[1]; got.Name != "kind" || !contains(got.Args, "create") || !contains(got.Args, "cluster") {
+			t.Fatalf("expected second command to create kind cluster, got %v", got)
+		}
+	})
+
 	t.Run("skips docker check for non-docker kind provider", func(t *testing.T) {
 		t.Setenv("KIND_EXPERIMENTAL_PROVIDER", "podman")
 		mock := &core.MockExecutor{}
@@ -718,6 +765,7 @@ func TestProvisionKindCluster(t *testing.T) {
 	})
 
 	t.Run("returns docker preflight error before kind commands", func(t *testing.T) {
+		t.Setenv("KIND_EXPERIMENTAL_PROVIDER", "docker")
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				cmd := &core.MockCommand{Args: spec.Args}

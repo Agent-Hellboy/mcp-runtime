@@ -519,18 +519,7 @@ func normalizeClusterName(name string) (string, error) {
 func (m *ClusterManager) provisionKindCluster(nodeCount int, name string, dryRun bool) error {
 	m.logger.Info("Provisioning Kind cluster")
 
-	clusterName, err := normalizeClusterName(name)
-	if err != nil {
-		core.Error("Invalid cluster name")
-		core.LogStructuredError(m.logger, err, "Invalid cluster name")
-		return err
-	}
-	if nodeCount < 1 {
-		err := core.NewWithSentinel(core.ErrInvalidNodeCount, fmt.Sprintf("invalid node count %d: --nodes must be at least 1", nodeCount))
-		core.Error("Invalid node count")
-		core.LogStructuredError(m.logger, err, "Invalid node count")
-		return err
-	}
+	clusterName := name
 
 	config := `kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -622,7 +611,7 @@ nodes:
 
 func kindUsesDockerProvider() bool {
 	provider := strings.ToLower(strings.TrimSpace(os.Getenv("KIND_EXPERIMENTAL_PROVIDER")))
-	return provider == "" || provider == "docker"
+	return provider == "docker"
 }
 
 func (m *ClusterManager) ensureDockerDaemonReachable() error {
