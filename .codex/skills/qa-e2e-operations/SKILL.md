@@ -15,6 +15,11 @@ not envtest. For code-level unit/golden/envtest checks the contributor should
 run `go test` directly per `CLAUDE.md` — this skill exists to catch the
 regressions those tests miss.
 
+Regression evidence contract: every successful report must include live
+`cluster doctor`, rollout/pod status, and the cached Kind `smoke-auth,governance`
+traffic gate unless the diff is explicitly docs-only. If the live cluster or
+traffic gate cannot run, mark the operations result **blocked**, not passed.
+
 ## Step 1 — Confirm precondition
 
 ```bash

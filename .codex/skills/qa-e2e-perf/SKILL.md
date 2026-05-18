@@ -17,6 +17,12 @@ Numbers measured on a Kind cluster are not production numbers. The point is
 **relative**: did this branch regress vs `main` or vs the last recorded
 baseline.
 
+Regression evidence contract: do not report a perf pass from a single request
+or current-branch-only sample. A pass requires baseline comparison, warmup,
+scenario sample counts, p50/p95/p99, and the configured regression threshold;
+missing baseline or live cluster access is **blocked** unless the user accepts
+baseline creation as the task.
+
 ## Step 1 — Confirm precondition
 
 ```bash

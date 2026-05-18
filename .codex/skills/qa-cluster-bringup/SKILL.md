@@ -15,6 +15,12 @@ and Sentinel stack, deploys the bundled Go MCP server, applies a working
 grant + session, and exits only after a real MCP `tools/call` succeeds through
 Traefik.
 
+Regression evidence contract: this skill is not successful until it records a
+live cluster context, image/build inputs, rollout health, and a real MCP
+`tools/call` result through the public ingress path. If any live gate cannot
+run, report **blocked** with the failing command; do not downgrade to unit tests
+or static checks.
+
 Default policy: **reuse if present, create if missing.** Never tear down an
 existing `kind-mcp-runtime` cluster without explicit user confirmation —
 contributors may have in-flight work on it.

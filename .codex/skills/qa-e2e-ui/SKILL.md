@@ -26,6 +26,12 @@ defenses, and whether rendered UI data matches backend truth.
 Header / CSP / lockout / secret-leak checks live in `qa-e2e-security`; do not
 duplicate them here unless the symptom is visible in the UI.
 
+Regression evidence contract: a UI pass needs browser evidence, not only curl
+or unit tests. For changed auth, role, or API-key behavior, cover both a
+user-identity session and a no-user-identity or denied session so role-gating
+regressions surface before merge. If browser automation is unavailable, report
+the UI result **blocked**.
+
 ## Step 1 - Confirm preconditions
 
 Do not reinstall the platform or run codegen as part of UI QA. The live

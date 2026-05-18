@@ -26,6 +26,12 @@ Goals:
 - Distinguish "spec says X, runtime does X" from "spec says X, runtime does Y"
   from "spec is silent, runtime does Y by choice."
 
+Regression evidence contract: static schema/code checks are only half of this
+skill. For protocol-affecting changes, run live `initialize`, positive
+`tools/call`, and malformed/unsupported-version negative cases against the Kind
+cluster. If upstream fetch or live transport checks cannot run, report the
+result **blocked** for that surface.
+
 Non-goals:
 
 - Auth/grant/session policy enforcement → `qa-e2e-security`.

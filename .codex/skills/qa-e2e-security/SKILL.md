@@ -23,6 +23,11 @@ Threat profiles in scope:
 - **internal pod → secret** (reach API/proxy/operator secrets unprivileged)
   → for cluster RBAC/PSS coverage, defer to `k8s-hardening-audit`.
 
+Regression evidence contract: for each touched security surface, capture at
+least one live allow path and one live deny path, plus audit/log/header evidence
+where that invariant applies. Static code review can explain a finding, but it
+cannot close this skill as passed.
+
 ## Step 1 — Confirm precondition
 
 ```bash

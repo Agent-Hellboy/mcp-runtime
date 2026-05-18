@@ -58,12 +58,12 @@ Current line counts:
 
 ```text
 237  k8s-hardening-audit/SKILL.md
-352  mcp-spec-compliance/SKILL.md
-273  qa-cluster-bringup/SKILL.md
-216  qa-e2e-operations/SKILL.md
-247  qa-e2e-perf/SKILL.md
-324  qa-e2e-security/SKILL.md
-277  qa-e2e-ui/SKILL.md
+358  mcp-spec-compliance/SKILL.md
+279  qa-cluster-bringup/SKILL.md
+221  qa-e2e-operations/SKILL.md
+253  qa-e2e-perf/SKILL.md
+329  qa-e2e-security/SKILL.md
+283  qa-e2e-ui/SKILL.md
  59  repo-guidance-sync/SKILL.md
 265  security-audit-platform/SKILL.md
 100  security-audit/SKILL.md
@@ -120,6 +120,12 @@ checks that match the requested scope:
    AGENTS.md, runbook, or contributor guidance updates.
 6. `.codex/skills/scripts/validate_skill_evals.py` checks that every skill's
    eval and trigger prompt manifests stay structurally usable.
+
+The live QA skills now carry an explicit regression evidence contract: a pass
+requires live cluster/browser/API evidence for the relevant surface, including
+negative or denied cases where the feature has auth, policy, protocol, or
+role-gating behavior. If the live path cannot run, the result is **blocked**,
+not passed by substituting static checks.
 
 For `qa-e2e-ui`, the current smoke coverage includes role-based navigation,
 auth flows, key tabs, network/API evidence, console evidence, static assets,

@@ -17,8 +17,8 @@ def require(condition: bool, errors: list[str], message: str) -> None:
 def load_json(path: Path, errors: list[str]) -> dict[str, Any] | None:
     try:
         data = json.loads(path.read_text())
-    except json.JSONDecodeError as exc:
-        errors.append(f"{path}: invalid JSON: {exc}")
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"{path}: failed to load or parse JSON: {exc}")
         return None
     if not isinstance(data, dict):
         errors.append(f"{path}: top-level value must be an object")
@@ -113,8 +113,16 @@ def main() -> int:
     args = parser.parse_args()
 
     skills_root = args.skills_root.resolve()
+    if not skills_root.is_dir():
+        print(f"{skills_root}: not a directory")
+        return 1
+
     errors: list[str] = []
-    skill_dirs = sorted(path for path in skills_root.iterdir() if (path / "SKILL.md").is_file())
+    try:
+        skill_dirs = sorted(path for path in skills_root.iterdir() if (path / "SKILL.md").is_file())
+    except OSError as exc:
+        print(f"{skills_root}: failed to list skill directories: {exc}")
+        return 1
     require(bool(skill_dirs), errors, f"{skills_root}: no skill directories found")
 
     for skill_dir in skill_dirs:
