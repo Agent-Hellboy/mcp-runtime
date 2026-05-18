@@ -23,7 +23,7 @@ Produce a STRIDE table per component. Components to cover:
 
 - **operator** (`cmd/operator/`, `internal/operator/`): reconciles `MCPServer`,
   `MCPAccessGrant`, `MCPAgentSession`; injects gateway sidecar.
-- **mcp-proxy / gateway** (`services/mcp-proxy/`): in-pod sidecar enforcing
+- **mcp-gateway** (`services/mcp-gateway/`): in-pod sidecar enforcing
   rendered policy, emitting audit events.
 - **sentinel-api** (`services/api/`): admin and runtime HTTP API.
 - **sentinel-ui** (`services/ui/`): browser UI, login, dashboards.
@@ -130,7 +130,7 @@ Fuzz the proxy/gateway request handling. Targets:
 - Race: parallel `notifications/initialized` for the same session;
   parallel `tools/call` against the same session ID from N goroutines.
 
-If a Go fuzz target exists in `services/mcp-proxy/`:
+If a Go fuzz target exists in `services/mcp-gateway/`:
 `go test -run='^$' -fuzz='Fuzz<Name>' -fuzztime=300s ./...`
 
 If no fuzz target exists at this trust boundary, that absence is itself a

@@ -44,7 +44,7 @@ Mode dispatch by changed paths:
 | `internal/operator/**`, `api/v1alpha1/**`, `config/crd/**` | Operator, CRD reconciliation, ingress, generated-file drift |
 | `cmd/operator/**`, `cmd/mcp-runtime/**`, `internal/cli/**` | CLI smoke, generated-file drift |
 | `internal/cli/setup/**`, `pkg/k8sclient/**`, `pkg/manifest/**`, `pkg/metadata/**` | Setup re-run, registry pulls, ingress, rollout |
-| `services/api/**`, `services/ui/**`, `services/ingest/**`, `services/processor/**`, `services/mcp-proxy/**` | Service rollout matrix, gateway sidecar refresh |
+| `services/api/**`, `services/ui/**`, `services/ingest/**`, `services/processor/**`, `services/mcp-gateway/**` | Service rollout matrix, gateway sidecar refresh |
 | `k8s/**`, `config/**` | Manifest re-apply + rollout |
 | `docs/**` only | Skip — not an operations regression surface |
 
@@ -54,7 +54,35 @@ Always include the **Baseline** suite below regardless of diff.
 git diff --name-only "${BASE:-origin/main}"...HEAD
 ```
 
-## Step 3 — Baseline (always run)
+## Step 3 — CI parity gate (pre-merge / release readiness)
+
+When the user asks for "all tests", "can this merge", or release readiness,
+run the CI-equivalent non-cluster checks before the live cluster matrix. Do not
+claim full regression coverage if any required CI parity check is skipped.
+
+```bash
+gofmt -s -l .
+go vet ./...
+staticcheck ./...
+go test -race -count=1 $(go list ./... | grep -v '/test/integration$')
+
+for d in services/api services/ingest services/processor services/mcp-gateway services/ui; do
+  (cd "$d" && go test -race -count=1 ./...)
+done
+
+go test ./test/golden/... -count=1
+go test -run=^$ -bench=. -benchmem -count=1 ./test/benchmark/...
+bash test/e2e/scenarios_test.sh
+
+export KUBEBUILDER_ASSETS="${KUBEBUILDER_ASSETS:-$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.0 use -p path)}"
+go test -race -timeout 30m -count=1 ./test/integration/...
+
+make -f Makefile.operator generate manifests
+python3 docs/scripts/generate_go_package_reference.py
+git diff --exit-code
+```
+
+## Step 4 — Baseline (always run)
 
 ```bash
 ./bin/mcp-runtime status
@@ -73,11 +101,18 @@ E2E_CACHE_MODE=1 E2E_KEEP_CLUSTER=1 CLUSTER_NAME=mcp-runtime \
   E2E_SCENARIOS=smoke-auth,governance bash test/e2e/kind.sh
 ```
 
+For merge readiness after non-doc code changes, also run or verify CI ran the
+full Kind matrix:
+
+```bash
+E2E_SCENARIOS=all bash test/e2e/kind.sh
+```
+
 Reusing the contributor cluster is intentional — `CLAUDE.md` documents that
 `CLUSTER_NAME=mcp-runtime E2E_CACHE_MODE=1 E2E_KEEP_CLUSTER=1` avoids
 creating a duplicate `mcp-e2e` cluster.
 
-## Step 4 — Operator + CRD reconciliation
+## Step 5 — Operator + CRD reconciliation
 
 ```bash
 # Apply an MCPServer change and watch it converge.
@@ -105,7 +140,7 @@ kubectl apply -f /tmp/go-example-access.yaml
   | grep -q local-session || echo "FAIL: policy missing session"
 ```
 
-## Step 5 — CLI smoke + help drift
+## Step 6 — CLI smoke + help drift
 
 Real-cluster CLI behavior (the unit golden suite covers help text — this is
 about behavior).
@@ -128,7 +163,7 @@ Any error that prints a bare Cobra usage dump (no `Error:` framing) is a
 finding; route the report back to `internal/cli/core/errors.go` and
 `pkg/errx/`.
 
-## Step 6 — Setup / registry / ingress regression (only when those areas changed)
+## Step 7 — Setup / registry / ingress regression (only when those areas changed)
 
 ```bash
 # Re-run setup in place (test-mode is idempotent; this catches drift).
@@ -147,7 +182,7 @@ If image pulls fail with `http: server gave HTTP response to HTTPS client`,
 the Kind containerd mirror is missing — that is itself a regression in the
 setup output, not a host issue.
 
-## Step 7 — Service rollout matrix (when services/**/ changed)
+## Step 8 — Service rollout matrix (when services/**/ changed)
 
 For each touched Sentinel service, follow the contributor iterate-on-one
 loop from `docs/getting-started.md#iterate-on-one-sentinel-service`:
@@ -171,21 +206,22 @@ kubectl -n mcp-sentinel set image "deployment/$DEPLOYMENT" \
 kubectl -n mcp-sentinel rollout status "deployment/$DEPLOYMENT" --timeout=120s
 ```
 
-For `services/mcp-proxy/**` changes, also update operator env
+For `services/mcp-gateway/**` changes, also update operator env
 `MCP_GATEWAY_PROXY_IMAGE` and restart the operator (`CLAUDE.md` step under
 **Iterate on one Sentinel service**); then recreate the MCP server pod to
 refresh the sidecar image.
 
-## Step 8 — Generated-file drift
+## Step 9 — Generated-file drift
 
 Drift is a behavioral regression even if unit tests pass.
 
 ```bash
-make generate manifests
-git diff --exit-code api/ config/crd/bases/ || echo "FAIL: regen drift"
+make -f Makefile.operator generate manifests
+python3 docs/scripts/generate_go_package_reference.py
+git diff --exit-code api/ config/crd/bases/ docs/internals/ || echo "FAIL: regen drift"
 ```
 
-## Step 9 — Chaos canary (release-readiness only)
+## Step 10 — Chaos canary (release-readiness only)
 
 Only when explicitly QAing release readiness:
 
@@ -204,7 +240,7 @@ kubectl -n mcp-sentinel rollout status deploy/mcp-sentinel-api --timeout=90s
   | grep -q local-session
 ```
 
-## Step 10 — Report
+## Step 11 — Report
 
 Use the structure in `../_shared/FINDINGS-TEMPLATE.md`. One row per command:
 pass/fail, duration when interesting, the failure line if it failed.

@@ -60,7 +60,7 @@ Current line counts:
 237  k8s-hardening-audit/SKILL.md
 358  mcp-spec-compliance/SKILL.md
 279  qa-cluster-bringup/SKILL.md
-221  qa-e2e-operations/SKILL.md
+257  qa-e2e-operations/SKILL.md
 253  qa-e2e-perf/SKILL.md
 329  qa-e2e-security/SKILL.md
 283  qa-e2e-ui/SKILL.md
@@ -126,6 +126,32 @@ requires live cluster/browser/API evidence for the relevant surface, including
 negative or denied cases where the feature has auth, policy, protocol, or
 role-gating behavior. If the live path cannot run, the result is **blocked**,
 not passed by substituting static checks.
+
+## CI And Test Coverage Audit
+
+The skills are not one giant test runner. Coverage is routed by change surface,
+with CI remaining the source of truth for exact commands. As of this audit, every
+CI/test surface has an owning skill:
+
+| CI/test surface | Owning skill path | Coverage status |
+|---|---|---|
+| `gofmt`, `go vet`, `staticcheck` | `qa-e2e-operations` | CI parity gate for merge/release readiness |
+| Root unit tests and `test/integration` envtest | `qa-e2e-operations` | CI parity gate; envtest asset setup included |
+| Sentinel service module tests (`services/api`, `ingest`, `processor`, `mcp-gateway`, `ui`) | `qa-e2e-operations` plus focused QA skills | CI parity gate plus live rollout checks |
+| CLI golden tests | `repo-guidance-sync`, `qa-e2e-operations`, `qa-e2e-ui` | Docs/help drift and UI-adjacent CLI changes |
+| `test/e2e/scenarios_test.sh` selector validation | `qa-e2e-operations` | CI parity gate covers scenario parsing edge cases |
+| Kind E2E `all` plus cached `smoke-auth,governance` | `qa-cluster-bringup`, `qa-e2e-operations`, `qa-e2e-security`, `mcp-spec-compliance` | Full merge gate and targeted live regression gates |
+| Browser UI workflows and responsive checks | `qa-e2e-ui` | Browser evidence required; curl-only pass is blocked |
+| Benchmarks under `test/benchmark` | `qa-e2e-operations`, `qa-e2e-perf` | CI benchmark plus live baseline comparison |
+| Generated CRD/manifests and Go package docs drift | `qa-e2e-operations`, `repo-guidance-sync` | Exact generator commands and `git diff --exit-code` |
+| Gitleaks, gosec, Trivy, dependency review | `security-audit`, `security-audit-platform`, `supply-chain-audit` | Security scan selection and supply-chain workflow audit |
+| Repository and operator image SBOMs | `supply-chain-audit` | SBOM generation/diff and image scan guidance |
+| Docs and website validation/deploy assumptions | `repo-guidance-sync` | Docs build, generated-doc drift, and stale guidance checks |
+
+Audit result: the skills can route all current CI/test surfaces, but they still
+do not enumerate every individual unit test case. That is intentional; the skill
+contract is to select and run the right suite, then add or update concrete tests
+when a behavior gap is found.
 
 For `qa-e2e-ui`, the current smoke coverage includes role-based navigation,
 auth flows, key tabs, network/API evidence, console evidence, static assets,

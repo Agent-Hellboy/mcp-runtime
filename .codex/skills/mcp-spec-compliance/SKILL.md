@@ -103,8 +103,8 @@ grep -rIn 'DefaultProtocolVersion\|protocolVersion\|Mcp-Protocol-Version\|MCP-Pr
   -- internal/ services/ examples/ docs/ pkg/ cmd/
 
 # Streamable HTTP transport contract in the gateway:
-sed -n '1,$p' services/mcp-proxy/rpc.go services/mcp-proxy/proxy.go \
-  services/mcp-proxy/types.go 2>/dev/null | grep -nE \
+sed -n '1,$p' services/mcp-gateway/rpc.go services/mcp-gateway/proxy.go \
+  services/mcp-gateway/types.go 2>/dev/null | grep -nE \
   'jsonrpc|method|Mcp-Session-Id|content-type|text/event-stream|application/json|notifications/initialized|tools/(list|call)|initialize'
 
 # Agent adapter (stdio <-> HTTP shim) protocol surface.
@@ -170,7 +170,7 @@ done
 echo "Schema validation: $fail invalid envelopes"
 ```
 
-Any **invalid** envelope in `services/mcp-proxy/`, `examples/`, or
+Any **invalid** envelope in `services/mcp-gateway/`, `examples/`, or
 `internal/agentadapter/` is a finding (the runtime is emitting / asserting
 non-spec shapes). Invalid envelopes in `test/golden/`, `test/integration/`,
 or e2e fixtures are findings on the test, not the runtime, but track them
@@ -213,7 +213,7 @@ for cap in $caps; do
 done
 ```
 
-Cross-check: any method the gateway forwards (`services/mcp-proxy/rpc.go`
+Cross-check: any method the gateway forwards (`services/mcp-gateway/rpc.go`
 method allow-list) that is **not** present in `initialize.capabilities`
 should be flagged — the gateway should not encourage clients to call a
 capability the server did not advertise.

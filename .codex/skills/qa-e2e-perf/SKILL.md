@@ -49,7 +49,7 @@ kubectl -n mcp-sentinel get deploy -o jsonpath='{range .items[*]}{.metadata.name
 
 | Diff touches | Scenarios to run |
 |---|---|
-| `services/mcp-proxy/**`, `pkg/access/**` | S1, S2 (gateway hot path) |
+| `services/mcp-gateway/**`, `pkg/access/**` | S1, S2 (gateway hot path) |
 | `internal/operator/**` | S4 (reconcile burst) |
 | `services/api/**`, `services/processor/**`, `services/ingest/**` | S3 (analytics) |
 | `services/ui/**` static only | Skip — UI is not the hot path |
@@ -238,7 +238,7 @@ kubectl logs -n mcp-sentinel deploy/mcp-sentinel-processor --since=2m | tail -40
 ```
 
 Record the suspected hot path with file:line references in
-`services/mcp-proxy/**`, `pkg/access/**`, `services/api/**`, or
+`services/mcp-gateway/**`, `pkg/access/**`, `services/api/**`, or
 `internal/operator/**` based on which scenario regressed.
 
 ## Step 10 — Report

@@ -57,7 +57,7 @@ Sub-suites by changed paths:
 | Diff touches | Required sub-suites |
 |---|---|
 | `services/api/**`, `pkg/access/**` | A. Backend auth, B. Grants/sessions, C. Audit |
-| `services/mcp-proxy/**`, `internal/operator/**` (policy/render) | B. Grants/sessions, D. Trust escalation, C. Audit |
+| `services/mcp-gateway/**`, `internal/operator/**` (policy/render) | B. Grants/sessions, D. Trust escalation, C. Audit |
 | `services/ui/**` (middleware, login, proxy) | E. UI security headers, F. Login + lockout, G. UI→API proxy |
 | `config/ingress/**`, `services/traefik-plugins/**` | H. Ingress + PII redactor, E (re-run) |
 | `k8s/**` Secrets / SA / RBAC | Hand off to `k8s-hardening-audit` |
@@ -322,7 +322,7 @@ finding should include:
 - The **command + response code or body fragment** that demonstrates the
   failure (with secrets redacted).
 - A **regression test** suggestion that lands in `services/api/main_test.go`,
-  `services/ui/main_test.go`, `services/mcp-proxy/...`, or `pkg/access/...`.
+  `services/ui/main_test.go`, `services/mcp-gateway/...`, or `pkg/access/...`.
 
 Cross-link to `security-audit` / `security-audit-platform` for any static
 counterpart, to `k8s-hardening-audit` for cluster-policy gaps, and to
