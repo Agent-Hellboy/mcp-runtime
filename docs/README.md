@@ -153,13 +153,13 @@ DNS, ingress, TLS, and k3s configuration, start with
 <a class="docs-card" href="multi-team/">
   <span class="docs-card-kicker">Tenancy</span>
   <strong>Multi-team isolation</strong>
-  <span>Use namespaces, RBAC, and naming conventions for team boundaries without adding team fields to runtime CRDs.</span>
+  <span>Use namespaces, RBAC, and stable team IDs for team-owned servers, grants, and sessions.</span>
 </a>
 
 <a class="docs-card" href="cli/">
   <span class="docs-card-kicker">CLI</span>
   <strong>Command reference</strong>
-  <span>Setup, status, registry, server, access, pipeline, and Sentinel commands.</span>
+  <span>Setup, auth, registry, server, access, adapter, team, pipeline, Sentinel, and status commands.</span>
 </a>
 
 <a class="docs-card" href="api/">

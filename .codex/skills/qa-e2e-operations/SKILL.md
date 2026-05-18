@@ -201,7 +201,7 @@ kubectl -n mcp-sentinel rollout status deploy/mcp-sentinel-api --timeout=90s
 
 ## Step 10 — Report
 
-Use the structure in `_shared/FINDINGS-TEMPLATE.md`. One row per command:
+Use the structure in `../_shared/FINDINGS-TEMPLATE.md`. One row per command:
 pass/fail, duration when interesting, the failure line if it failed.
 
 - Lead with mode (head-only | git-range BASE=<sha>), cluster context, commit

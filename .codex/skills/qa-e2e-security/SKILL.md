@@ -309,7 +309,7 @@ done
 
 ## Step 12 — Report
 
-Use the rubric and template in `_shared/FINDINGS-TEMPLATE.md` exactly. Each
+Use the rubric and template in `../_shared/FINDINGS-TEMPLATE.md` exactly. Each
 finding should include:
 
 - The **trust boundary** it crosses (anon→user, user→admin, agent A→agent B,

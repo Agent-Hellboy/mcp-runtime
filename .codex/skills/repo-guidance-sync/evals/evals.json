@@ -1,0 +1,25 @@
+{
+  "skill_name": "repo-guidance-sync",
+  "evals": [
+    {
+      "id": "docs-drift-after-cli-change",
+      "prompt": "I changed CLI command behavior. Review whether README, docs, AGENTS.md, or contributor guidance need updates and make the needed docs edits.",
+      "expected_output": "A docs sync pass that maps the change surface to existing guidance, verifies live CLI help when command docs are affected, updates the nearest existing docs, and runs docs validation.",
+      "assertions": [
+        "Searches existing docs before creating new files",
+        "Verifies CLI docs against live help output when relevant",
+        "Reports docs changed and validation commands run"
+      ]
+    },
+    {
+      "id": "no-docs-needed-decision",
+      "prompt": "This internal refactor should not affect user-facing behavior. Check if docs need changes and explain the decision.",
+      "expected_output": "A concise docs impact assessment that inspects the diff, searches for affected guidance, and either updates docs or explains why no docs are needed.",
+      "assertions": [
+        "Identifies the changed surface",
+        "Searches relevant docs and AGENTS.md",
+        "Gives a clear no-docs-needed rationale when appropriate"
+      ]
+    }
+  ]
+}

@@ -12,7 +12,7 @@ MCP Runtime, not a PR review. The output is a structured report with a threat
 model, a per-endpoint authn/authz matrix, tenant-isolation probes, protocol
 fuzz results, audit-log integrity tests, TLS hygiene, and DAST against a live
 cluster. Findings use the shared template at
-`.codex/skills/_shared/FINDINGS-TEMPLATE.md`.
+`../_shared/FINDINGS-TEMPLATE.md`.
 
 This skill is intentionally heavy. Expect hours, not minutes. Skip nothing
 silently — every check that did not run becomes a recorded gap.
@@ -256,7 +256,7 @@ manual findings.
 
 ## Step 13 — Report
 
-Use `.codex/skills/_shared/FINDINGS-TEMPLATE.md`. Required sections in the
+Use `../_shared/FINDINGS-TEMPLATE.md`. Required sections in the
 order specified there: Summary, Threat model assumptions, Findings, Scanner
 output, Checks run, Checks skipped, Remediation plan.
 

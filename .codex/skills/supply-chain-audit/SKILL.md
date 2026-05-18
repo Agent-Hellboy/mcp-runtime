@@ -14,7 +14,7 @@ cluster posture — those live in `security-audit-platform` and
 `k8s-hardening-audit`.
 
 Findings use the shared template at
-`.codex/skills/_shared/FINDINGS-TEMPLATE.md`.
+`../_shared/FINDINGS-TEMPLATE.md`.
 
 ## Step 1 — Inventory the build inputs
 
@@ -187,7 +187,7 @@ For every workflow under `.github/workflows/`:
 
 ## Step 10 — Report
 
-Use `.codex/skills/_shared/FINDINGS-TEMPLATE.md`. For supply-chain audits,
+Use `../_shared/FINDINGS-TEMPLATE.md`. For supply-chain audits,
 include in the Summary section:
 
 - Total Go modules and direct vs transitive count.

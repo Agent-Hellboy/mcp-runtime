@@ -10,7 +10,7 @@ description: Audit MCP Runtime Kubernetes posture — RBAC, ServiceAccounts, Pod
 Use this skill to assess MCP Runtime's cluster posture: RBAC graph, Pod
 Security Standards, NetworkPolicy enforcement, manifest hygiene, and CIS
 benchmark compliance. Findings use the shared template at
-`.codex/skills/_shared/FINDINGS-TEMPLATE.md`.
+`../_shared/FINDINGS-TEMPLATE.md`.
 
 For runtime authn/authz, gateway policy, and protocol fuzzing, use
 `security-audit-platform`. For images and supply chain, use
@@ -224,7 +224,7 @@ alpha project, Medium when targeting production.
 
 ## Step 9 — Report
 
-Use `.codex/skills/_shared/FINDINGS-TEMPLATE.md`. In the Summary include:
+Use `../_shared/FINDINGS-TEMPLATE.md`. In the Summary include:
 
 - Namespaces audited and their PSS levels.
 - ServiceAccount count and how many have `*` or cluster-scoped verbs.
