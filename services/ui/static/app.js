@@ -1920,6 +1920,10 @@ function isTenantUser() {
   return authenticated === true && !isAdminUser();
 }
 
+function hasUserIdentity() {
+  return authenticated === true && String(authPrincipal?.subject || "").trim() !== "";
+}
+
 function applyRoleVisibility() {
   const authRequired = document.querySelectorAll('[data-auth-required="true"]');
   authRequired.forEach((node) => {
@@ -1932,6 +1936,10 @@ function applyRoleVisibility() {
   const userOnly = document.querySelectorAll('[data-user-only="true"]');
   userOnly.forEach((node) => {
     node.classList.toggle("hidden", !isTenantUser());
+  });
+  const userIdentityRequired = document.querySelectorAll('[data-user-identity-required="true"]');
+  userIdentityRequired.forEach((node) => {
+    node.classList.toggle("hidden", !hasUserIdentity());
   });
   const active = resolveActiveTab();
   activateTab(active);
@@ -2433,6 +2441,13 @@ async function loadUserAPIKeys(options = {}) {
   if (!options.preserveOneTime) {
     clearOneTimeUserAPIKey();
   }
+  if (!hasUserIdentity()) {
+    userAPIKeysCache = [];
+    renderUserAPIKeys();
+    setInlineError("user-api-key-error", "Sign in with a platform account to manage user API keys.");
+    return;
+  }
+  setInlineError("user-api-key-error");
   try {
     const data = await fetchJSON("/user/api-keys");
     userAPIKeysCache = Array.isArray(data.keys) ? data.keys : [];
@@ -2479,6 +2494,12 @@ async function createUserAPIKey() {
   const name = (input?.value || "").trim();
   setInlineError("user-api-key-error");
   input?.removeAttribute("aria-invalid");
+  if (!hasUserIdentity()) {
+    const message = "Sign in with a platform account to manage user API keys.";
+    setInlineError("user-api-key-error", message);
+    showToast(message, "warning");
+    return;
+  }
   if (!name) {
     const message = "Enter a name for the API key.";
     setInlineError("user-api-key-error", message);
@@ -2518,6 +2539,12 @@ async function createUserAPIKey() {
 }
 
 async function revokeUserAPIKey(id) {
+  if (!hasUserIdentity()) {
+    const message = "Sign in with a platform account to manage user API keys.";
+    setInlineError("user-api-key-error", message);
+    showToast(message, "warning");
+    return;
+  }
   try {
     await fetchJSON(`/user/api-keys/${encodePathSegment(id)}/revoke`, { method: "POST" });
     showToast("API key revoked");

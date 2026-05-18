@@ -19,11 +19,10 @@ go doc -cmd ./cmd/mcp-runtime
 - Configure a console-oriented zap logger.
 - Print command errors to stderr and return a non-zero process exit.
 
-The entrypoint should not contain business logic for setup, registry, server,
-access, or Sentinel behavior. Route top-level commands through
-`internal/cli/root`. Command folders should own Cobra wiring and, where already
-migrated, package-local managers; shared CLI-only infrastructure lives in
-`internal/cli/core`.
+The entrypoint should not contain business logic for command behavior. Route
+top-level commands through `internal/cli/root`. Command folders should own Cobra
+wiring and, where already migrated, package-local managers; shared CLI-only
+infrastructure lives in `internal/cli/core`.
 
 ## Command Tree
 
@@ -39,8 +38,10 @@ The root command wires these internal command groups:
 | `server` | `internal/cli/server` | `server.go`, `manager.go`, `validation.go`, `build.go`, `build_image.go`, server-owned helpers under `internal/cli/server/` |
 | `pipeline` | `internal/cli/pipeline` | `command.go`, `generate.go`, `deploy.go` |
 | `access` | `internal/cli/access` | `access.go`, `manager.go`, `validation.go` |
+| `adapter` | `internal/cli/adapter` | `adapter.go`, `flags.go`, `platformsession.go`, `proxy.go`, `stdio.go`; transport behavior in `internal/agentadapter` |
 | `auth` | `internal/cli/auth` | `auth.go` |
 | `sentinel` | `internal/cli/sentinel` | `sentinel.go`, `manager.go`, shared workload/probe helpers in `internal/cli/platformstatus` |
+| `team` | `internal/cli/team` | `team.go`, `manager.go` |
 
 When adding a command, wire it here only after the implementation has focused
 package tests and help text is ready for golden snapshots.

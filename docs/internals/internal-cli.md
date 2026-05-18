@@ -170,6 +170,38 @@ reach `kubectl`; that validation lives in `internal/cli/access/validation.go`.
 
 Tests: `access/manager_test.go` and `access/validation_test.go`.
 
+## Adapter
+
+`internal/cli/adapter/` provides the `adapter proxy` and `adapter stdio`
+commands. The CLI layer resolves shared flags, optional platform-issued adapter
+sessions from `POST /api/runtime/adapter/sessions`, and explicit
+`MCP_RUNTIME_*` identity values, then delegates HTTP proxy and stdio transport
+behavior to `internal/agentadapter`.
+
+Keep the boundary clear: command parsing, platform-session bootstrap, and
+auto-refresh scheduling live in `internal/cli/adapter`; request forwarding,
+header injection, TLS transport, stdio bridging, and anonymous stdio method
+filtering live in `internal/agentadapter`.
+
+Tests: `adapter/adapter_test.go`, `adapter/platformsession_test.go`, and
+`internal/agentadapter` tests.
+
+## Team
+
+`internal/cli/team/` owns platform team commands. `team list` and `team create`
+call the platform API through `internal/cli/platformapi`; `team init` renders
+local Kubernetes namespace, RBAC, quota, limits, NetworkPolicy, workload service
+account, and bundled Traefik watch manifests before applying them with
+`kubectl`.
+
+Team behavior spans CLI and API code: platform-backed team creation and
+membership routes live in `services/api/internal/runtimeapi`, durable identity
+state lives in `services/api/internal/platformstore`, and user-facing guidance
+lives in `docs/multi-team.md`.
+
+Tests: `team/manager_test.go`; for platform team API changes, run focused tests
+inside `services/api`.
+
 ## Sentinel and Platform API
 
 `internal/cli/sentinel/`, `internal/cli/auth/`, and `internal/cli/platformapi/`

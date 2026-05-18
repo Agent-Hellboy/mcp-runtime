@@ -87,7 +87,7 @@ Standards, NetworkPolicy, and manifest hygiene, use `k8s-hardening-audit`.
 
 4. Report using the shared finding format.
    - Use the template and severity rubric in
-     `.codex/skills/_shared/FINDINGS-TEMPLATE.md`.
+     `../_shared/FINDINGS-TEMPLATE.md`.
    - Lead with findings ordered by severity. Include file and line,
      exploit path, impact, and a specific fix.
    - Separate scanner failures from manual findings.

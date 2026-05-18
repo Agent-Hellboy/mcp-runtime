@@ -41,7 +41,7 @@ flowchart LR
 | Area | Start here | Why it matters |
 |---|---|---|
 | CLI entrypoint | [`cmd-mcp-runtime.md`](cmd-mcp-runtime.md) | Shows how the binary starts, wires foldered Cobra commands, and reports errors. |
-| CLI implementation | [`internal-cli.md`](internal-cli.md) | Covers the `internal/cli/root` routing layer plus setup, bootstrap, registry, server, access, status, sentinel, auth, and pipeline behavior. |
+| CLI implementation | [`internal-cli.md`](internal-cli.md) | Covers the `internal/cli/root` routing layer plus setup, bootstrap, registry, server, access, adapter, team, status, sentinel, auth, and pipeline behavior. |
 | Kubernetes API types | [`api-types.md`](api-types.md) | Defines the public CRD shapes consumed by users, tests, and the operator. |
 | Generated Go reference | [`go-package-reference.md`](go-package-reference.md) | Captures `go doc` output for the main contributor-facing packages. |
 | Agent adapters | `internal/agentadapter/`, `internal/cli/adapter/` | HTTP proxy and stdio shim behavior for forwarding agent MCP traffic with issued governance headers; exposed via `mcp-runtime adapter proxy/stdio`. |
@@ -177,6 +177,7 @@ workflows.
 | Change reconciliation behavior | `internal/operator`, API types, k8s helpers | `go test ./internal/operator/... -race -count=1` |
 | Change governance policy | `pkg/access`, `pkg/policy`, `services/api`, `services/mcp-gateway`, access CRDs | targeted package/service tests plus e2e policy scenario |
 | Change agent adapters | `internal/agentadapter`, `internal/cli/adapter`, `docs/agent-adapters.md` | `go test ./internal/agentadapter ./internal/cli/adapter -count=1` |
+| Change team provisioning or membership | `internal/cli/team`, `services/api/internal/runtimeapi`, `services/api/internal/platformstore`, `docs/multi-team.md` | `go test ./internal/cli/team -count=1` plus service API tests inside `services/api` |
 | Change Sentinel event storage | `pkg/events`, `pkg/clickhouse`, `services/ingest`, `services/processor`, `services/api`, `services/mcp-gateway` | package tests plus touched service tests |
 | Change docs site behavior | `docs/mkdocs.yml`, `docs/nginx.conf`, Markdown pages | MkDocs build or docs container build |
 

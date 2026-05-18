@@ -145,6 +145,33 @@ func TestStaticAppHidesProtectedTabsWhenSignedOut(t *testing.T) {
 	}
 }
 
+func TestStaticAppHidesUserAPIKeysWithoutUserIdentity(t *testing.T) {
+	index, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(index)
+	if got := strings.Count(html, `data-user-identity-required="true"`); got < 2 {
+		t.Fatalf("expected API key tab and panel to require a user identity, got %d markers", got)
+	}
+
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`function hasUserIdentity()`,
+		`String(authPrincipal?.subject || "").trim() !== ""`,
+		`querySelectorAll('[data-user-identity-required="true"]')`,
+		`Sign in with a platform account to manage user API keys.`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
 func TestStaticAppSearchesServerMetadataLabels(t *testing.T) {
 	body, err := os.ReadFile("static/app.js")
 	if err != nil {
