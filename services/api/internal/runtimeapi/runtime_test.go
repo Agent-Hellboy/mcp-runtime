@@ -570,6 +570,117 @@ func TestRuntimeServerApplyPublicModeDefaultsPublicNamespace(t *testing.T) {
 	}
 }
 
+func TestRuntimeServerApplyPublicScopeResolvesCatalogNamespace(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"scope": "public",
+		"spec": {"image":"registry.example.com/public/demo"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+		},
+	}))
+	recorder := httptest.NewRecorder()
+	server.HandleRuntimeServers(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	current, err := server.controlPlane().GetServer(context.Background(), defaultPublicCatalogNamespace, "demo")
+	if err != nil {
+		t.Fatalf("GetServer: %v", err)
+	}
+	if current.Labels[platformScopeLabel] != "public" {
+		t.Fatalf("scope label = %q, want public", current.Labels[platformScopeLabel])
+	}
+}
+
+func TestRuntimeServerApplyRejectsPublicScopeWhenModeDisabled(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"scope": "public",
+		"spec": {"image":"registry.example.com/public/demo"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+		},
+	}))
+	recorder := httptest.NewRecorder()
+	server.HandleRuntimeServers(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body = %s, want 403", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestRuntimeServerApplyTenantScopeUsesPrincipalNamespaceInOrgMode(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "org")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"scope": "tenant",
+		"spec": {"image":"registry.example.com/user-1/demo"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+		},
+	}))
+	recorder := httptest.NewRecorder()
+	server.HandleRuntimeServers(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	current, err := server.controlPlane().GetServer(context.Background(), "user-1", "demo")
+	if err != nil {
+		t.Fatalf("GetServer: %v", err)
+	}
+	if current.Labels[platformScopeLabel] != "tenant" {
+		t.Fatalf("scope label = %q, want tenant", current.Labels[platformScopeLabel])
+	}
+}
+
 func TestRuntimeServerApplyDefaultsTeamIDFromPrincipalNamespace(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {

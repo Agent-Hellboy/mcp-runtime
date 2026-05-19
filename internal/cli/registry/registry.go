@@ -62,18 +62,20 @@ func NewWithManager(mgr *RegistryManager) *cobra.Command {
 	var image string
 	var registryURL string
 	var name string
+	var scope string
 	var mode string
 	var helperNamespace string
 	pushCmd := &cobra.Command{
 		Use:   "push",
 		Short: "Retag and push an image to the platform or provisioned registry",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return RunRegistryPush(mgr, image, registryURL, name, mode, helperNamespace)
+			return RunRegistryPush(mgr, image, registryURL, name, scope, mode, helperNamespace)
 		},
 	}
 	pushCmd.Flags().StringVar(&image, "image", "", "Local image to push (required)")
 	pushCmd.Flags().StringVar(&registryURL, "registry", "", "Target registry (defaults to provisioned or internal)")
 	pushCmd.Flags().StringVar(&name, "name", "", "Override target repo/name (default: source name without registry)")
+	pushCmd.Flags().StringVar(&scope, "scope", "", "Publish scope: tenant, org, or public")
 	pushCmd.Flags().StringVar(&mode, "mode", "in-cluster", "Push mode: in-cluster (default, uses skopeo helper) or direct (docker push)")
 	pushCmd.Flags().StringVar(&helperNamespace, "namespace", core.NamespaceRegistry, "Namespace to run the in-cluster helper pod")
 

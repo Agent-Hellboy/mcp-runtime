@@ -174,12 +174,20 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"servers":[]}`)),
 				}, nil
+			case r.Method == http.MethodGet && r.URL.Path == "/api/auth/me":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"authenticated":true,"principal":{"role":"user","namespace":"mcp-team-core","teams":[{"slug":"core","namespace":"mcp-team-core"}]}}`)),
+				}, nil
 			case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/servers":
 				body, _ := io.ReadAll(r.Body)
 				var payload map[string]any
 				_ = json.Unmarshal(body, &payload)
 				if payload["name"] != "demo" {
 					t.Fatalf("server name payload = %#v", payload)
+				}
+				if payload["scope"] != "tenant" {
+					t.Fatalf("server scope payload = %#v", payload)
 				}
 				return &http.Response{
 					StatusCode: http.StatusOK,
@@ -214,7 +222,14 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 	if _, err := client.ListRuntimeServers(context.Background(), ""); err != nil {
 		t.Fatalf("ListRuntimeServers() error = %v", err)
 	}
-	if _, err := client.ApplyRuntimeServer(context.Background(), "demo", "mcp-team-core", mcpv1alpha1.MCPServerSpec{Image: "registry.example/core/demo", ImageTag: "latest"}); err != nil {
+	principal, err := client.CurrentPrincipal(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentPrincipal() error = %v", err)
+	}
+	if principal.Namespace != "mcp-team-core" || len(principal.Teams) != 1 || principal.Teams[0].Slug != "core" {
+		t.Fatalf("principal = %#v", principal)
+	}
+	if _, err := client.ApplyRuntimeServerWithScope(context.Background(), "demo", "mcp-team-core", "tenant", mcpv1alpha1.MCPServerSpec{Image: "registry.example/core/demo", ImageTag: "latest"}); err != nil {
 		t.Fatalf("ApplyRuntimeServer() error = %v", err)
 	}
 	if err := client.DeleteRuntimeServer(context.Background(), "mcp-team-core", "demo"); err != nil {

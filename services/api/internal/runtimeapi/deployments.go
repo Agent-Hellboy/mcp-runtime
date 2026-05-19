@@ -22,6 +22,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"mcp-runtime/pkg/kubeworkload"
+	"mcp-runtime/pkg/publishscope"
 )
 
 const (
@@ -880,15 +881,49 @@ func ValidateDeployImage(image, namespace, teamSlug, role string) error {
 		}
 	}
 	if role != roleAdmin && len(parts) >= 3 {
-		expected := namespace
-		if strings.TrimSpace(teamSlug) != "" {
-			expected = teamSlug
-		}
-		if parts[1] != expected {
-			return fmt.Errorf("image repository must be scoped to %q", expected)
+		expected := allowedImageRepositoryScopes(namespace, teamSlug)
+		if !stringInSlice(parts[1], expected) {
+			return fmt.Errorf("image repository must be scoped to %s", strings.Join(quoteStrings(expected), " or "))
 		}
 	}
 	return nil
+}
+
+func allowedImageRepositoryScopes(namespace, teamSlug string) []string {
+	expected := strings.TrimSpace(namespace)
+	if strings.TrimSpace(teamSlug) != "" {
+		expected = strings.TrimSpace(teamSlug)
+	}
+	values := []string{}
+	if expected != "" {
+		values = append(values, expected)
+	}
+	if isModeCatalogNamespace(namespace) {
+		switch PlatformMode() {
+		case platformModePublic:
+			values = append(values, publishscope.PublicRegistryAlias)
+		case platformModeOrg:
+			values = append(values, publishscope.OrgRegistryAlias)
+		}
+	}
+	return dedupeNonEmptyStrings(values)
+}
+
+func stringInSlice(value string, allowed []string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func quoteStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, fmt.Sprintf("%q", value))
+	}
+	return out
 }
 
 func approvedRegistries() map[string]struct{} {

@@ -26,6 +26,7 @@ func TestGenerateCRD(t *testing.T) {
 			Port:             9000,
 			Replicas:         &replicas,
 			Namespace:        "custom-ns",
+			Scope:            PublishScopeOrg,
 			TeamID:           "team-custom",
 		}
 
@@ -46,6 +47,7 @@ func TestGenerateCRD(t *testing.T) {
 		assertContains(t, content, "kind: MCPServer")
 		assertContains(t, content, "name: test-server")
 		assertContains(t, content, "namespace: custom-ns")
+		assertContains(t, content, "mcpruntime.org/scope: org")
 		assertContains(t, content, "teamID: team-custom")
 		assertContains(t, content, "description: Test server for CRD generation.")
 		assertContains(t, content, "image: my-image")

@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
+	"mcp-runtime/pkg/publishscope"
 )
 
 const DefaultRegistryHost = "registry.local"
@@ -26,7 +28,13 @@ func LoadFromFile(filePath string) (*RegistryFile, error) {
 
 	// Set defaults
 	for i := range registry.Servers {
-		setDefaults(&registry.Servers[i])
+		if err := setDefaultsWithValidation(&registry.Servers[i]); err != nil {
+			name := registry.Servers[i].Name
+			if strings.TrimSpace(name) == "" {
+				name = fmt.Sprintf("#%d", i+1)
+			}
+			return nil, fmt.Errorf("server %s: %w", name, err)
+		}
 	}
 
 	return &registry, nil
@@ -62,13 +70,27 @@ func LoadFromDirectory(dirPath string) (*RegistryFile, error) {
 }
 
 func setDefaults(server *ServerMetadata) {
+	_ = setDefaultsWithValidation(server)
+}
+
+func setDefaultsWithValidation(server *ServerMetadata) error {
+	scope, err := publishscope.Normalize(string(server.Scope))
+	if err != nil {
+		return err
+	}
+	server.Scope = PublishScope(scope)
+
 	// Set default image if not provided (will be updated by build command).
 	// Use the ingress host so the generated image ref is pullable by kubelet/containerd
 	// on nodes, which resolve via the host DNS stack (or k3s registries.yaml), not
 	// cluster CoreDNS. MCP_REGISTRY_INGRESS_HOST (or the legacy MCP_REGISTRY_HOST)
 	// overrides the default for users running a different ingress host.
 	if server.Image == "" {
-		server.Image = fmt.Sprintf("%s/%s", ResolveRegistryHost(), server.Name)
+		repository := server.Name
+		if alias, ok := publishscope.RegistryAlias(scope); ok {
+			repository = alias + "/" + repository
+		}
+		server.Image = fmt.Sprintf("%s/%s", ResolveRegistryHost(), repository)
 	}
 	if server.ImageTag == "" {
 		server.ImageTag = "latest"
@@ -86,7 +108,11 @@ func setDefaults(server *ServerMetadata) {
 		server.Replicas = &replicas
 	}
 	if server.Namespace == "" {
-		server.Namespace = "mcp-servers"
+		if namespace, ok := publishscope.CatalogNamespace(scope); ok {
+			server.Namespace = namespace
+		} else {
+			server.Namespace = "mcp-servers"
+		}
 	}
 	if server.Auth != nil {
 		if server.Auth.Mode == "" {
@@ -171,4 +197,5 @@ func setDefaults(server *ServerMetadata) {
 			server.Rollout.MaxSurge = "25%"
 		}
 	}
+	return nil
 }

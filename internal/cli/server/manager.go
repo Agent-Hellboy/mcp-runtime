@@ -21,6 +21,7 @@ import (
 	"mcp-runtime/internal/cli/kube"
 	"mcp-runtime/internal/cli/kubeerr"
 	"mcp-runtime/internal/cli/platformapi"
+	"mcp-runtime/pkg/publishscope"
 )
 
 // ServerManager handles MCP server operations with injected dependencies.
@@ -236,7 +237,7 @@ func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) er
 	return nil
 }
 
-func (m *ServerManager) DeployServer(name, namespace, team, image, imageTag string, replicas, port, servicePort int32) error {
+func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageTag string, replicas, port, servicePort int32) error {
 	if m.useKube {
 		return core.NewWithSentinel(nil, "server deploy uses the platform API; remove --use-kube")
 	}
@@ -254,8 +255,18 @@ func (m *ServerManager) DeployServer(name, namespace, team, image, imageTag stri
 	}
 	namespace = strings.TrimSpace(namespace)
 	team = strings.TrimSpace(team)
+	scope = strings.TrimSpace(scope)
+	if _, err := publishscope.Normalize(scope); err != nil {
+		return err
+	}
 	if namespace != "" && team != "" {
 		return core.NewWithSentinel(nil, "use either --namespace or --team, not both")
+	}
+	if scope != "" && namespace != "" && scope != string(publishscope.Tenant) {
+		return core.NewWithSentinel(nil, "--scope public/org resolves the platform catalog namespace; use --scope tenant when passing --namespace")
+	}
+	if scope != "" && team != "" && scope != string(publishscope.Tenant) {
+		return core.NewWithSentinel(nil, "--scope public/org cannot be combined with --team")
 	}
 	plat, err := platformapi.NewPlatformClient()
 	if err != nil {
@@ -287,7 +298,7 @@ func (m *ServerManager) DeployServer(name, namespace, team, image, imageTag stri
 			{Name: "MCP_PATH", Value: ingressPath},
 		},
 	}
-	applied, err := plat.ApplyRuntimeServer(context.Background(), name, namespace, spec)
+	applied, err := plat.ApplyRuntimeServerWithScope(context.Background(), name, namespace, scope, spec)
 	if err != nil {
 		return err
 	}

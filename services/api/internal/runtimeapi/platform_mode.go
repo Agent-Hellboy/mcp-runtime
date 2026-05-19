@@ -3,6 +3,8 @@ package runtimeapi
 import (
 	"os"
 	"strings"
+
+	"mcp-runtime/pkg/publishscope"
 )
 
 const (
@@ -10,8 +12,8 @@ const (
 	platformModeOrg    = "org"
 	platformModePublic = "public"
 
-	defaultOrgCatalogNamespace    = "mcp-servers-org"
-	defaultPublicCatalogNamespace = "mcp-servers-public"
+	defaultOrgCatalogNamespace    = publishscope.DefaultOrgCatalogNamespace
+	defaultPublicCatalogNamespace = publishscope.DefaultPublicCatalogNamespace
 )
 
 func PlatformMode() string {

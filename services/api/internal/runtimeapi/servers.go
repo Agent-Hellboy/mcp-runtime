@@ -3,6 +3,7 @@ package runtimeapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"sort"
@@ -14,11 +15,13 @@ import (
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	"mcp-runtime/pkg/controlplane"
 	"mcp-runtime/pkg/k8sclient"
+	"mcp-runtime/pkg/publishscope"
 )
 
 type runtimeServerApplyRequest struct {
 	Name      string                    `json:"name"`
 	Namespace string                    `json:"namespace,omitempty"`
+	Scope     string                    `json:"scope,omitempty"`
 	Labels    map[string]string         `json:"labels,omitempty"`
 	Spec      mcpv1alpha1.MCPServerSpec `json:"spec"`
 }
@@ -146,12 +149,18 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	req.Namespace = strings.TrimSpace(req.Namespace)
+	req.Scope = strings.TrimSpace(req.Scope)
 	req.Spec.Image = strings.TrimSpace(req.Spec.Image)
 	if req.Name == "" || req.Spec.Image == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and spec.image are required"})
 		return
 	}
-	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), req.Namespace)
+	scope, err := publishscope.Normalize(req.Scope)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	namespace, err := s.scopedNamespaceForServerApply(r.Context(), req.Namespace, scope)
 	if err != nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 		return
@@ -248,6 +257,9 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	if namespaceTeamID != "" {
 		labels[platformTeamIDLabel] = namespaceTeamID
 	}
+	if resolvedScope := scopeLabelForNamespace(namespace, scope); resolvedScope != "" {
+		labels[platformScopeLabel] = resolvedScope
+	}
 	annotations := map[string]string{
 		platformLastPushAtAnnotation: time.Now().UTC().Format(time.RFC3339),
 	}
@@ -285,6 +297,83 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	}
 	s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "success", req.Name, namespace, req.Spec.Image, ""))
 	writeJSON(w, http.StatusOK, map[string]any{"server": serverInfoFromMCPServer(*applied, serverDeploymentStatus{}, r)})
+}
+
+func (s *RuntimeServer) scopedNamespaceForServerApply(ctx context.Context, requested string, scope publishscope.Scope) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if scope == "" {
+		return s.scopedNamespaceForPrincipal(ctx, requested)
+	}
+
+	p, ok := principalFromContext(ctx)
+	if !ok {
+		return "", errPrincipalIdentityRequired
+	}
+	switch scope {
+	case publishscope.Public:
+		if PlatformMode() != platformModePublic {
+			return "", errors.New("public scope is not enabled on this platform")
+		}
+		return scopedModeCatalogNamespaceForApply(p, requested)
+	case publishscope.Org:
+		if PlatformMode() != platformModeOrg {
+			return "", errors.New("org scope is not enabled on this platform")
+		}
+		return scopedModeCatalogNamespaceForApply(p, requested)
+	case publishscope.Tenant:
+		return scopedTenantNamespaceForApply(p, requested)
+	default:
+		return "", errors.New("invalid publish scope")
+	}
+}
+
+func scopedModeCatalogNamespaceForApply(p principal, requested string) (string, error) {
+	namespace := defaultCatalogNamespaceForMode()
+	if requested != "" {
+		if !isModeCatalogNamespace(requested) {
+			return "", errors.New("scope does not match requested namespace")
+		}
+		namespace = requested
+	}
+	if p.Role != roleAdmin && !principalCanPublishNamespace(p, namespace) {
+		return "", errors.New("forbidden namespace")
+	}
+	return namespace, nil
+}
+
+func scopedTenantNamespaceForApply(p principal, requested string) (string, error) {
+	if p.Role == roleAdmin {
+		if requested == "" {
+			return "", errors.New("namespace is required for tenant scope")
+		}
+		return requested, nil
+	}
+	if requested == "" {
+		requested = strings.TrimSpace(p.Namespace)
+	}
+	if requested == "" {
+		return "", errPrincipalIdentityRequired
+	}
+	if isModeCatalogNamespace(requested) || requested == sharedCatalogNamespace {
+		return "", errors.New("tenant scope requires a tenant or team namespace")
+	}
+	if !principalOwnsNamespace(p, requested) {
+		return "", errors.New("forbidden namespace")
+	}
+	return requested, nil
+}
+
+func scopeLabelForNamespace(namespace string, scope publishscope.Scope) string {
+	if scope != "" {
+		return string(scope)
+	}
+	if isModeCatalogNamespace(namespace) {
+		return PlatformMode()
+	}
+	if namespace != "" {
+		return string(publishscope.Tenant)
+	}
+	return ""
 }
 
 func preserveCurrentLabel(labels, current map[string]string, key string) {

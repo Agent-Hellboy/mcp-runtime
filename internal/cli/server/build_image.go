@@ -16,6 +16,7 @@ import (
 
 	"mcp-runtime/internal/cli/registry/resolve"
 	"mcp-runtime/pkg/metadata"
+	"mcp-runtime/pkg/publishscope"
 
 	"gopkg.in/yaml.v3"
 
@@ -44,7 +45,8 @@ func buildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metada
 	logger.Info("Building image", zap.String("server", serverName))
 
 	// Determine image name
-	imageName := fmt.Sprintf("%s/%s", registryURL, serverName)
+	repository := scopedRepositoryNameForBuild(serverName, metadataFile, metadataDir)
+	imageName := fmt.Sprintf("%s/%s", registryURL, repository)
 	fullImage := fmt.Sprintf("%s:%s", imageName, tag)
 
 	// Build Docker image
@@ -82,6 +84,46 @@ func buildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metada
 	}
 
 	return nil
+}
+
+func scopedRepositoryNameForBuild(serverName, metadataFile, metadataDir string) string {
+	server, ok := findMetadataServer(serverName, metadataFile, metadataDir)
+	if !ok {
+		return serverName
+	}
+	scope, err := publishscope.Normalize(string(server.Scope))
+	if err != nil {
+		return serverName
+	}
+	if alias, ok := publishscope.RegistryAlias(scope); ok {
+		return alias + "/" + serverName
+	}
+	return serverName
+}
+
+func findMetadataServer(serverName, metadataFile, metadataDir string) (metadata.ServerMetadata, bool) {
+	files := []string{}
+	if metadataFile != "" {
+		files = append(files, metadataFile)
+	} else {
+		yamlFiles, _ := filepath.Glob(filepath.Join(metadataDir, "*.yaml"))
+		ymlFiles, _ := filepath.Glob(filepath.Join(metadataDir, "*.yml"))
+		files = append(files, yamlFiles...)
+		files = append(files, ymlFiles...)
+	}
+
+	for _, file := range files {
+		registry, err := metadata.LoadFromFile(file)
+		if err != nil {
+			continue
+		}
+		for _, server := range registry.Servers {
+			if server.Name == serverName {
+				return server, true
+			}
+		}
+	}
+	return metadata.ServerMetadata{}, false
 }
 
 // BuildImage builds a Docker image and updates MCP metadata for the server.

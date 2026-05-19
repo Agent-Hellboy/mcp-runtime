@@ -4,7 +4,7 @@ metadata:
   name: go-example-mcp
   namespace: mcp-servers
 spec:
-  description: Go MCP example server with smoke, text transformation, prompt, and resource examples.
+  description: Go MCP example server with smoke, text transformation, prompt, resource, and task examples.
   image: your-registry.local/go-mcp-server
   imageTag: latest
   port: 8088
@@ -41,3 +41,22 @@ spec:
       description: Convert the provided message into a URL slug.
       requiredTrust: low
       sideEffect: read
+    - name: create_task
+      description: Create a deterministic task summary for IDE and adapter smoke tests.
+      requiredTrust: low
+      sideEffect: write
+  prompts:
+    - name: hello
+      description: Return a simple prompt message.
+    - name: summarize
+      description: Summarize a short text input.
+    - name: task_brief
+      description: Draft a concise task brief from a goal.
+  mcpResources:
+    - name: readme
+      description: Sample resource served by the Go MCP example server.
+    - name: task-guide
+      description: Task workflow guidance for the Go MCP example server.
+  tasks:
+    - name: create_task
+      description: Deterministic task creation workflow for adapter smoke tests.

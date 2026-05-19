@@ -90,6 +90,7 @@ For pushing images, use 'registry push'.`,
 
 	var deployNamespace string
 	var deployTeam string
+	var deployScope string
 	var deployImage string
 	var deployTag string
 	var deployReplicas int32
@@ -101,11 +102,12 @@ For pushing images, use 'registry push'.`,
 		Long:  "Apply an MCPServer resource using the authenticated platform API identity.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return mgr.DeployServer(args[0], deployNamespace, deployTeam, deployImage, deployTag, deployReplicas, deployPort, deployServicePort)
+			return mgr.DeployServer(args[0], deployNamespace, deployTeam, deployScope, deployImage, deployTag, deployReplicas, deployPort, deployServicePort)
 		},
 	}
 	deployCmd.Flags().StringVar(&deployNamespace, "namespace", "", "Target namespace (optional when --team is provided)")
 	deployCmd.Flags().StringVar(&deployTeam, "team", "", "Team slug to resolve target namespace")
+	deployCmd.Flags().StringVar(&deployScope, "scope", "", "Publish scope: tenant, org, or public")
 	deployCmd.Flags().StringVar(&deployImage, "image", "", "Container image repository")
 	deployCmd.Flags().StringVar(&deployTag, "tag", "latest", "Container image tag")
 	deployCmd.Flags().Int32Var(&deployReplicas, "replicas", 1, "Replica count")

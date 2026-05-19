@@ -494,6 +494,7 @@ type serverListResponse struct {
 type runtimeServerApplyRequest struct {
 	Name      string                    `json:"name"`
 	Namespace string                    `json:"namespace,omitempty"`
+	Scope     string                    `json:"scope,omitempty"`
 	Labels    map[string]string         `json:"labels,omitempty"`
 	Spec      mcpv1alpha1.MCPServerSpec `json:"spec"`
 }
@@ -532,6 +533,20 @@ type namespacesResponse struct {
 	Namespaces []namespaceListItem `json:"namespaces"`
 }
 
+type Principal struct {
+	Role              string   `json:"role"`
+	Subject           string   `json:"subject,omitempty"`
+	Email             string   `json:"email,omitempty"`
+	Namespace         string   `json:"namespace,omitempty"`
+	AllowedNamespaces []string `json:"allowedNamespaces,omitempty"`
+	Teams             []Team   `json:"teams,omitempty"`
+}
+
+type authMeResponse struct {
+	Authenticated bool      `json:"authenticated"`
+	Principal     Principal `json:"principal"`
+}
+
 func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace string) ([]ServerListItem, error) {
 	v := url.Values{}
 	if strings.TrimSpace(namespace) != "" {
@@ -557,9 +572,14 @@ func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace strin
 }
 
 func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error) {
+	return c.ApplyRuntimeServerWithScope(ctx, name, namespace, "", spec)
+}
+
+func (c *PlatformClient) ApplyRuntimeServerWithScope(ctx context.Context, name, namespace, scope string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error) {
 	body := runtimeServerApplyRequest{
 		Name:      strings.TrimSpace(name),
 		Namespace: strings.TrimSpace(namespace),
+		Scope:     strings.TrimSpace(scope),
 		Spec:      spec,
 	}
 	js, err := json.Marshal(body)
@@ -583,6 +603,26 @@ func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace
 		return ServerListItem{}, err
 	}
 	return out.Server, nil
+}
+
+func (c *PlatformClient) CurrentPrincipal(ctx context.Context) (Principal, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/auth/me", "", nil)
+	if err != nil {
+		return Principal{}, err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return Principal{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return Principal{}, httpAPIError(resp.StatusCode, b)
+	}
+	var out authMeResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return Principal{}, err
+	}
+	return out.Principal, nil
 }
 
 func (c *PlatformClient) DeleteRuntimeServer(ctx context.Context, namespace, name string) error {

@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"mcp-runtime/pkg/publishscope"
 )
 
 const registryAuthChallenge = `Basic realm="mcp-runtime-registry"`
@@ -140,6 +142,9 @@ func principalCanAccessRegistryScope(p principal, scope string) bool {
 	if scope == "" {
 		return false
 	}
+	if registryCatalogScopeWritable(scope) {
+		return true
+	}
 	if scope == sharedCatalogNamespace && !registrySharedCatalogWritableForUsers() {
 		return false
 	}
@@ -154,15 +159,103 @@ func principalCanAccessRegistryScope(p principal, scope string) bool {
 	return false
 }
 
+func registryCatalogScopeWritable(scope string) bool {
+	scope = strings.TrimSpace(scope)
+	switch registryPlatformMode() {
+	case string(publishscope.Public):
+		return scope == publishscope.PublicRegistryAlias || stringInList(scope, registryModeCatalogNamespaces())
+	case string(publishscope.Org):
+		return scope == publishscope.OrgRegistryAlias || stringInList(scope, registryModeCatalogNamespaces())
+	default:
+		return false
+	}
+}
+
 func registrySharedCatalogWritableForUsers() bool {
+	switch registryPlatformMode() {
+	case string(publishscope.Org), string(publishscope.Public):
+		return true
+	default:
+		return false
+	}
+}
+
+func registryPlatformMode() string {
 	mode := strings.TrimSpace(os.Getenv("PLATFORM_MODE"))
 	if mode == "" {
 		mode = strings.TrimSpace(os.Getenv("MCP_PLATFORM_MODE"))
 	}
 	switch strings.ToLower(mode) {
-	case "org", "public":
-		return true
+	case string(publishscope.Org):
+		return string(publishscope.Org)
+	case string(publishscope.Public):
+		return string(publishscope.Public)
 	default:
-		return false
+		return string(publishscope.Tenant)
 	}
+}
+
+func registryDefaultOrgCatalogNamespace() string {
+	if namespace := strings.TrimSpace(os.Getenv("PLATFORM_CATALOG_NAMESPACE")); namespace != "" {
+		return namespace
+	}
+	if namespace := strings.TrimSpace(os.Getenv("MCP_PLATFORM_CATALOG_NAMESPACE")); namespace != "" {
+		return namespace
+	}
+	if namespace := strings.TrimSpace(os.Getenv("PLATFORM_ORG_NAMESPACE")); namespace != "" {
+		return namespace
+	}
+	return publishscope.DefaultOrgCatalogNamespace
+}
+
+func registryDefaultPublicCatalogNamespace() string {
+	if namespace := strings.TrimSpace(os.Getenv("PLATFORM_CATALOG_NAMESPACE")); namespace != "" {
+		return namespace
+	}
+	if namespace := strings.TrimSpace(os.Getenv("MCP_PLATFORM_CATALOG_NAMESPACE")); namespace != "" {
+		return namespace
+	}
+	if namespace := strings.TrimSpace(os.Getenv("PLATFORM_PUBLIC_NAMESPACE")); namespace != "" {
+		return namespace
+	}
+	return publishscope.DefaultPublicCatalogNamespace
+}
+
+func registryModeCatalogNamespaces() []string {
+	mode := registryPlatformMode()
+	if mode == string(publishscope.Tenant) {
+		return nil
+	}
+	namespaces := []string{}
+	switch mode {
+	case string(publishscope.Org):
+		namespaces = append(namespaces, registryDefaultOrgCatalogNamespace())
+	case string(publishscope.Public):
+		namespaces = append(namespaces, registryDefaultPublicCatalogNamespace())
+	}
+	raw := strings.TrimSpace(os.Getenv("PLATFORM_CATALOG_NAMESPACES"))
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("MCP_PLATFORM_CATALOG_NAMESPACES"))
+	}
+	if raw == "" && mode == string(publishscope.Public) {
+		raw = strings.TrimSpace(os.Getenv("PLATFORM_PUBLIC_NAMESPACES"))
+		if raw == "" {
+			raw = strings.TrimSpace(os.Getenv("MCP_PLATFORM_PUBLIC_NAMESPACES"))
+		}
+	}
+	for _, namespace := range strings.Split(raw, ",") {
+		if namespace = strings.TrimSpace(namespace); namespace != "" {
+			namespaces = append(namespaces, namespace)
+		}
+	}
+	return namespaces
+}
+
+func stringInList(value string, candidates []string) bool {
+	for _, candidate := range candidates {
+		if value == strings.TrimSpace(candidate) {
+			return true
+		}
+	}
+	return false
 }

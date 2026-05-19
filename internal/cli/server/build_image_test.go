@@ -115,6 +115,36 @@ servers:
 		}
 	})
 
+	t.Run("uses_metadata_scope_in_image_repository", func(t *testing.T) {
+		mock := &core.MockExecutor{}
+		defer core.SwapExecExecutor(mock)()
+
+		tmp := t.TempDir()
+		metadataFile := filepath.Join(tmp, "servers.yaml")
+		if err := os.WriteFile(metadataFile, []byte(`version: v1
+servers:
+  - name: public-server
+    scope: public
+`), 0o600); err != nil {
+			t.Fatalf("write metadata: %v", err)
+		}
+
+		err := buildImage(logger, "public-server", "Dockerfile", metadataFile, ".", "registry.example.com", "v1", ".")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		for _, cmd := range mock.Commands {
+			if cmd.Name == "docker" {
+				if !contains(cmd.Args, "registry.example.com/public/public-server:v1") {
+					t.Fatalf("docker args = %v, want public-scoped tag", cmd.Args)
+				}
+				return
+			}
+		}
+		t.Fatal("expected docker command")
+	})
+
 	t.Run("uses_platform_registry_when_registry_empty", func(t *testing.T) {
 		origConfig := core.DefaultCLIConfig
 		defer func() { core.DefaultCLIConfig = origConfig }()

@@ -20,6 +20,7 @@ import (
 	"mcp-runtime/internal/cli/platformapi"
 	"mcp-runtime/internal/cli/registry/config"
 	"mcp-runtime/internal/cli/registry/ref"
+	"mcp-runtime/pkg/publishscope"
 )
 
 const defaultRegistryImage = "registry:2.8.3"
@@ -117,11 +118,15 @@ func RunRegistryProvision(mgr *RegistryManager, url, username, password, operato
 }
 
 // RunRegistryPush contains the registry push command flow for folder packages.
-func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helperNamespace string) error {
+func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error {
 	if image == "" {
 		err := core.NewWithSentinel(core.ErrImageRequired, "image is required (use --image)")
 		core.Error("Image required")
 		core.LogStructuredError(mgr.logger, err, "Image required")
+		return err
+	}
+	normalizedScope, err := publishscope.Normalize(scope)
+	if err != nil {
 		return err
 	}
 	targetRegistry := registryURL
@@ -143,6 +148,10 @@ func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helpe
 		repo = name
 	} else {
 		repo = ref.DropRegistryPrefix(repo)
+	}
+	repo, err = scopedRegistryRepository(context.Background(), platformClient, repo, normalizedScope)
+	if err != nil {
+		return err
 	}
 	target := targetRegistry + "/" + repo
 	if tag != "" {
@@ -168,6 +177,51 @@ func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helpe
 	}
 	mgr.recordImagePublish(platformClient, image, target, mode)
 	return nil
+}
+
+func scopedRegistryRepository(ctx context.Context, client *platformapi.PlatformClient, repo string, scope publishscope.Scope) (string, error) {
+	repo = strings.Trim(repo, "/")
+	if scope == "" || repo == "" {
+		return repo, nil
+	}
+	if alias, ok := publishscope.RegistryAlias(scope); ok {
+		return prefixRepositoryScope(repo, alias), nil
+	}
+	if scope != publishscope.Tenant {
+		return repo, nil
+	}
+	if strings.Contains(repo, "/") {
+		return repo, nil
+	}
+	principal, err := client.CurrentPrincipal(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolve tenant registry scope: %w", err)
+	}
+	prefix := tenantRegistryScope(principal)
+	if prefix == "" {
+		return "", fmt.Errorf("resolve tenant registry scope: authenticated principal has no tenant namespace")
+	}
+	return prefix + "/" + repo, nil
+}
+
+func prefixRepositoryScope(repo, scope string) string {
+	if repo == scope || strings.HasPrefix(repo, scope+"/") {
+		return repo
+	}
+	return scope + "/" + repo
+}
+
+func tenantRegistryScope(principal platformapi.Principal) string {
+	namespace := strings.TrimSpace(principal.Namespace)
+	for _, team := range principal.Teams {
+		if strings.TrimSpace(team.Namespace) == namespace && strings.TrimSpace(team.Slug) != "" {
+			return strings.TrimSpace(team.Slug)
+		}
+	}
+	if namespace != "" {
+		return namespace
+	}
+	return strings.TrimSpace(principal.Subject)
 }
 
 func requirePlatformPushCredentials() (*platformapi.PlatformClient, error) {
