@@ -1,10 +1,12 @@
 package cluster
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"mcp-runtime/internal/cli/core"
 )
@@ -301,6 +303,22 @@ func TestCheckPublicIngressHostConfig(t *testing.T) {
 			t.Fatalf("expected missing MCP host detail, got %q", check.Detail)
 		}
 	})
+
+	t.Run("skips default registry host when no public host env is configured", func(t *testing.T) {
+		t.Setenv("MCP_PLATFORM_DOMAIN", "")
+		t.Setenv("MCP_PLATFORM_INGRESS_HOST", "")
+		t.Setenv("MCP_REGISTRY_INGRESS_HOST", "")
+		t.Setenv("MCP_MCP_INGRESS_HOST", "")
+		t.Setenv("MCP_REGISTRY_HOST", "")
+		t.Setenv("MCP_REGISTRY_ENDPOINT", "")
+		check := checkPublicIngressHostConfig()
+		if !check.OK {
+			t.Fatalf("expected skip/OK, got detail=%q", check.Detail)
+		}
+		if !strings.Contains(check.Detail, "skipping host-specific preflight") {
+			t.Fatalf("expected skip detail, got %q", check.Detail)
+		}
+	})
 }
 
 func TestCheckPublicIngressDNS(t *testing.T) {
@@ -312,7 +330,7 @@ func TestCheckPublicIngressDNS(t *testing.T) {
 		t.Setenv("MCP_PLATFORM_INGRESS_HOST", "platform.mcpruntime.org")
 		t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
 		t.Setenv("MCP_MCP_INGRESS_HOST", "mcp.mcpruntime.org")
-		doctorLookupHost = func(host string) ([]string, error) {
+		doctorLookupHost = func(_ context.Context, host string) ([]string, error) {
 			return []string{"1.2.3.4"}, nil
 		}
 		check := checkPublicIngressDNS()
@@ -329,7 +347,7 @@ func TestCheckPublicIngressDNS(t *testing.T) {
 		t.Setenv("MCP_PLATFORM_INGRESS_HOST", "platform.mcpruntime.org")
 		t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
 		t.Setenv("MCP_MCP_INGRESS_HOST", "mcp.mcpruntime.org")
-		doctorLookupHost = func(host string) ([]string, error) {
+		doctorLookupHost = func(_ context.Context, host string) ([]string, error) {
 			if host == "registry.mcpruntime.org" {
 				return nil, errors.New("no such host")
 			}
@@ -341,6 +359,27 @@ func TestCheckPublicIngressDNS(t *testing.T) {
 		}
 		if !strings.Contains(check.Detail, "registry.mcpruntime.org") {
 			t.Fatalf("expected failing host in detail, got %q", check.Detail)
+		}
+	})
+
+	t.Run("uses bounded lookup context", func(t *testing.T) {
+		t.Setenv("MCP_PLATFORM_DOMAIN", "")
+		t.Setenv("MCP_PLATFORM_INGRESS_HOST", "platform.mcpruntime.org")
+		t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
+		t.Setenv("MCP_MCP_INGRESS_HOST", "mcp.mcpruntime.org")
+		doctorLookupHost = func(ctx context.Context, host string) ([]string, error) {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatalf("expected lookup context deadline for %s", host)
+			}
+			if time.Until(deadline) <= 0 {
+				t.Fatalf("expected future deadline for %s", host)
+			}
+			return []string{"1.2.3.4"}, nil
+		}
+		check := checkPublicIngressDNS()
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q", check.Detail)
 		}
 	})
 }

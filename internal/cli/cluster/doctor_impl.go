@@ -5,6 +5,7 @@ package cluster
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -89,9 +90,12 @@ const (
 
 	doctorEnvACMEEmail        = "MCP_ACME_EMAIL"
 	doctorEnvTLSClusterIssuer = "MCP_TLS_CLUSTER_ISSUER"
+	doctorDNSLookupTimeout    = 10 * time.Second
 )
 
-var doctorLookupHost = net.LookupHost
+var doctorLookupHost = func(ctx context.Context, host string) ([]string, error) {
+	return net.DefaultResolver.LookupHost(ctx, host)
+}
 
 type doctorTraefikEndpoint struct {
 	Namespace string
@@ -524,56 +528,27 @@ func checkMCPServerCRD(kubectl core.KubectlRunner) DoctorCheck {
 func checkOperatorReady(kubectl core.KubectlRunner) DoctorCheck {
 	deployName := "mcp-runtime-operator-controller-manager"
 	ns := "mcp-runtime"
-	cmd, err := kubectl.CommandArgs([]string{"get", "deploy", "-n", ns, deployName, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"})
+	pair, ready, err := doctorDeploymentReplicaStatus(kubectl, ns, deployName)
 	if err != nil {
 		return DoctorCheck{
 			Name:   "operator readiness",
 			OK:     false,
-			Detail: fmt.Sprintf("kubectl error: %v", err),
+			Detail: err.Error(),
 			Remedy: "run `./bin/mcp-runtime setup` to install the operator",
 		}
 	}
-	out, err := cmd.Output()
-	pair := strings.TrimSpace(string(out))
-	if err != nil || pair == "" {
+	if !ready {
 		return DoctorCheck{
 			Name:   "operator readiness",
 			OK:     false,
-			Detail: fmt.Sprintf("deployment %s/%s not found", ns, deployName),
-			Remedy: "run `./bin/mcp-runtime setup` to install the operator",
-		}
-	}
-	parts := strings.SplitN(pair, "/", 2)
-	if len(parts) != 2 {
-		return DoctorCheck{
-			Name:   "operator readiness",
-			OK:     false,
-			Detail: fmt.Sprintf("unexpected replica status %q", pair),
-			Remedy: "inspect `kubectl -n mcp-runtime get deploy mcp-runtime-operator-controller-manager -o wide`",
-		}
-	}
-	ready, readyErr := strconv.Atoi(strings.TrimSpace(parts[0]))
-	desired, desiredErr := strconv.Atoi(strings.TrimSpace(parts[1]))
-	if readyErr != nil || desiredErr != nil {
-		return DoctorCheck{
-			Name:   "operator readiness",
-			OK:     false,
-			Detail: fmt.Sprintf("unexpected replica status %q", pair),
-			Remedy: "inspect `kubectl -n mcp-runtime get deploy mcp-runtime-operator-controller-manager -o wide`",
-		}
-	}
-	if desired == 0 || ready < desired {
-		return DoctorCheck{
-			Name:   "operator readiness",
-			OK:     false,
-			Detail: fmt.Sprintf("%d/%d replicas ready", ready, desired),
+			Detail: fmt.Sprintf("%s replicas ready", pair),
 			Remedy: "check operator pods: `kubectl -n mcp-runtime get pods -l control-plane=controller-manager`",
 		}
 	}
 	return DoctorCheck{
 		Name:   "operator readiness",
 		OK:     true,
-		Detail: fmt.Sprintf("%d/%d replicas ready", ready, desired),
+		Detail: fmt.Sprintf("%s replicas ready", pair),
 	}
 }
 
@@ -819,34 +794,15 @@ func checkTraefikDeploymentReady(kubectl core.KubectlRunner, distro Distribution
 }
 
 func checkTraefikDeploymentReadyAt(kubectl core.KubectlRunner, endpoint doctorTraefikEndpoint) DoctorCheck {
-	cmd, err := kubectl.CommandArgs([]string{"get", "deploy", "-n", endpoint.Namespace, endpoint.Name, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"})
+	pair, ready, err := doctorDeploymentReplicaStatus(kubectl, endpoint.Namespace, endpoint.Name)
 	if err != nil {
 		return DoctorCheck{
 			Name:   "traefik deployment readiness",
 			OK:     false,
-			Detail: fmt.Sprintf("kubectl error: %v", err),
+			Detail: err.Error(),
 		}
 	}
-	out, execErr := cmd.Output()
-	pair := strings.TrimSpace(string(out))
-	if execErr != nil || pair == "" {
-		return DoctorCheck{
-			Name:   "traefik deployment readiness",
-			OK:     false,
-			Detail: fmt.Sprintf("deployment %s/%s not found", endpoint.Namespace, endpoint.Name),
-		}
-	}
-	parts := strings.SplitN(pair, "/", 2)
-	if len(parts) != 2 {
-		return DoctorCheck{
-			Name:   "traefik deployment readiness",
-			OK:     false,
-			Detail: fmt.Sprintf("unexpected replica status %q", pair),
-		}
-	}
-	ready, readyErr := strconv.Atoi(strings.TrimSpace(parts[0]))
-	desired, desiredErr := strconv.Atoi(strings.TrimSpace(parts[1]))
-	if readyErr != nil || desiredErr != nil || desired == 0 || ready < desired {
+	if !ready {
 		return DoctorCheck{
 			Name:   "traefik deployment readiness",
 			OK:     false,
@@ -991,8 +947,25 @@ func doctorConfiguredIngressHosts() (platform, registry, mcp string, configured 
 	platform = strings.TrimSpace(metadata.ResolvePlatformIngressHost())
 	registry = strings.TrimSpace(metadata.ResolveRegistryHost())
 	mcp = strings.TrimSpace(metadata.ResolveMcpIngressHost())
-	configured = platform != "" || registry != "" || mcp != ""
+	configured = doctorPublicIngressHostConfigExplicitlySet()
+	if !configured && registry == metadata.DefaultRegistryHost {
+		registry = ""
+	}
 	return platform, registry, mcp, configured
+}
+
+func doctorPublicIngressHostConfigExplicitlySet() bool {
+	for _, key := range []string{
+		"MCP_PLATFORM_DOMAIN",
+		"MCP_PLATFORM_INGRESS_HOST",
+		"MCP_REGISTRY_INGRESS_HOST",
+		"MCP_MCP_INGRESS_HOST",
+	} {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func doctorTLSPreflightRequested() bool {
@@ -1034,12 +1007,15 @@ func checkPublicIngressHostConfig() DoctorCheck {
 		}
 	}
 
-	for field, host := range map[string]string{
-		"platform": platform,
-		"registry": registry,
-		"mcp":      mcp,
+	for _, item := range []struct {
+		field string
+		host  string
+	}{
+		{field: "platform", host: platform},
+		{field: "registry", host: registry},
+		{field: "mcp", host: mcp},
 	} {
-		if err := access.ValidateResourceName(field, host); err != nil {
+		if err := access.ValidateResourceName(item.field, item.host); err != nil {
 			return DoctorCheck{
 				Name:   "public ingress host config",
 				OK:     false,
@@ -1085,7 +1061,9 @@ func checkPublicIngressDNS() DoctorCheck {
 			continue
 		}
 		seen[host] = struct{}{}
-		addrs, err := doctorLookupHost(host)
+		ctx, cancel := context.WithTimeout(context.Background(), doctorDNSLookupTimeout)
+		addrs, err := doctorLookupHost(ctx, host)
+		cancel()
 		if err != nil || len(addrs) == 0 {
 			failures = append(failures, fmt.Sprintf("%s: %v", host, err))
 			continue
@@ -1120,25 +1098,12 @@ func checkCertManagerReadiness(kubectl core.KubectlRunner) DoctorCheck {
 	ready := make([]string, 0, len(components))
 	failures := make([]string, 0)
 	for _, name := range components {
-		cmd, err := kubectl.CommandArgs([]string{"get", "deploy", "-n", "cert-manager", name, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"})
+		pair, readyNow, err := doctorDeploymentReplicaStatus(kubectl, "cert-manager", name)
 		if err != nil {
-			failures = append(failures, fmt.Sprintf("%s: kubectl error: %v", name, err))
+			failures = append(failures, fmt.Sprintf("%s: %v", name, err))
 			continue
 		}
-		out, execErr := cmd.Output()
-		pair := strings.TrimSpace(string(out))
-		if execErr != nil || pair == "" {
-			failures = append(failures, fmt.Sprintf("%s: deployment not found", name))
-			continue
-		}
-		parts := strings.SplitN(pair, "/", 2)
-		if len(parts) != 2 {
-			failures = append(failures, fmt.Sprintf("%s: unexpected replica status %q", name, pair))
-			continue
-		}
-		readyReplicas, readyErr := strconv.Atoi(strings.TrimSpace(parts[0]))
-		desiredReplicas, desiredErr := strconv.Atoi(strings.TrimSpace(parts[1]))
-		if readyErr != nil || desiredErr != nil || desiredReplicas == 0 || readyReplicas < desiredReplicas {
+		if !readyNow {
 			failures = append(failures, fmt.Sprintf("%s: %s ready", name, pair))
 			continue
 		}
@@ -1157,6 +1122,31 @@ func checkCertManagerReadiness(kubectl core.KubectlRunner) DoctorCheck {
 		OK:     true,
 		Detail: strings.Join(ready, "; "),
 	}
+}
+
+func doctorDeploymentReplicaStatus(kubectl core.KubectlRunner, namespace, name string) (string, bool, error) {
+	cmd, err := kubectl.CommandArgs([]string{"get", "deploy", "-n", namespace, name, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"})
+	if err != nil {
+		return "", false, fmt.Errorf("kubectl error: %w", err)
+	}
+	out, execErr := cmd.Output()
+	pair := strings.TrimSpace(string(out))
+	if execErr != nil || pair == "" {
+		return "", false, fmt.Errorf("deployment not found")
+	}
+	parts := strings.SplitN(pair, "/", 2)
+	if len(parts) != 2 {
+		return pair, false, fmt.Errorf("unexpected replica status %q", pair)
+	}
+	readyReplicas, readyErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+	desiredReplicas, desiredErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if readyErr != nil || desiredErr != nil {
+		return pair, false, fmt.Errorf("unexpected replica status %q", pair)
+	}
+	if desiredReplicas == 0 || readyReplicas < desiredReplicas {
+		return pair, false, nil
+	}
+	return pair, true, nil
 }
 
 func checkDoctorTLSClusterIssuer(kubectl core.KubectlRunner) DoctorCheck {
