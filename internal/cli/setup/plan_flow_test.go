@@ -853,3 +853,84 @@ func TestSetupPlatformWithDeps_InternalRegistryPushFailure(t *testing.T) {
 		t.Fatalf("expected internal push attempt")
 	}
 }
+
+// TestSetupPlatformWithDeps_RegistryAuthReenabledOnFailure verifies the
+// deferred cleanup re-enables the registry ingress auth middleware when a
+// pipeline step after the disable step fails. Without the defer, a failure
+// here would leave the public registry without `registry-admin-auth@file`.
+func TestSetupPlatformWithDeps_RegistryAuthReenabledOnFailure(t *testing.T) {
+	origCfg := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = origCfg })
+	// Non-dev host triggers shouldStageRegistryIngressAuth, so the disable
+	// step runs and ctx.RegistryAuthStaged is set to true.
+	core.DefaultCLIConfig = &core.CLIConfig{RegistryIngressHost: "registry.prod.example.com"}
+
+	rec := &callRecorder{}
+	deps := SetupDeps{
+		ResolveExternalRegistryConfig: func(*config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error) {
+			return nil, nil
+		},
+		ClusterManager:             &fakeClusterManager{rec: rec},
+		RegistryManager:            &fakeRegistryManager{rec: rec},
+		LoginRegistry:              func(*zap.Logger, string, string, string) error { return nil },
+		DeployRegistry:             func(*zap.Logger, string, int, string, string, string) error { return nil },
+		WaitForDeploymentAvailable: func(_ *zap.Logger, name, _, _ string, _ time.Duration) error { rec.addWait(name); return nil },
+		PrintDeploymentDiagnostics: func(string, string, string) { rec.add("diagnostics") },
+		SetupTLS:                   func(*zap.Logger, setupplan.Plan) error { return nil },
+		BuildOperatorImage:         func(string) error { return nil },
+		PushOperatorImage:          func(string) error { return nil },
+		BuildGatewayProxyImage:     func(string) error { return nil },
+		PushGatewayProxyImage:      func(string) error { return nil },
+		EnsureNamespace:            func(string) error { return nil },
+		ResolvePlatformRegistryURL: func(*zap.Logger) string { return "registry.prod.example.com" },
+		PushOperatorImageToInternal: func(*zap.Logger, string, string, string) error {
+			// Fail after disable runs to exercise the defer cleanup path.
+			rec.add("push-internal")
+			return fmt.Errorf("push failed")
+		},
+		PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
+		DeployOperatorManifests:         func(*zap.Logger, string, string, []string) error { return nil },
+		ConfigureProvisionedRegistryEnv: func(*config.ExternalRegistryConfig, string) error { return nil },
+		DisableRegistryIngressAuth: func() error {
+			rec.add("auth-disable")
+			return nil
+		},
+		EnableRegistryIngressAuth: func() error {
+			rec.add("auth-enable")
+			return nil
+		},
+		RestartDeployment:    func(string, string) error { return nil },
+		CheckCRDInstalled:    func(string) error { return nil },
+		GetDeploymentTimeout: func() time.Duration { return time.Second },
+		GetRegistryPort:      func() int { return 5000 },
+		OperatorImageFor: func(*config.ExternalRegistryConfig) string {
+			return "registry.prod.example.com/mcp-runtime-operator:latest"
+		},
+		GatewayProxyImageFor: func(*config.ExternalRegistryConfig) string {
+			return "registry.prod.example.com/mcp-sentinel-mcp-gateway:latest"
+		},
+	}
+
+	plan := setupplan.Plan{
+		RegistryType:        "docker",
+		RegistryStorageSize: "20Gi",
+		Ingress: cluster.IngressOptions{
+			Mode:     "traefik",
+			Manifest: "config/ingress/overlays/http",
+			Force:    false,
+		},
+		RegistryManifest: "config/registry",
+		TLSEnabled:       false,
+		TestMode:         true,
+	}
+
+	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err == nil {
+		t.Fatalf("expected error from internal registry push failure")
+	}
+	if !rec.has("auth-disable") {
+		t.Fatalf("expected registry auth disable to run, got calls: %v", rec.calls)
+	}
+	if !rec.has("auth-enable") {
+		t.Fatalf("expected registry auth re-enable on failure (defer), got calls: %v", rec.calls)
+	}
+}

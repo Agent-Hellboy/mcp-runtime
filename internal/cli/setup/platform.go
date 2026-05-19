@@ -38,6 +38,7 @@ import (
 )
 
 const defaultRegistrySecretName = "mcp-runtime-registry-creds" // #nosec G101 -- default secret name, not a credential.
+const registryAdminAuthMiddleware = "registry-admin-auth@file"
 const testModeOperatorImage = "docker.io/library/mcp-runtime-operator:latest"
 const defaultGatewayProxyRepository = "mcp-sentinel-mcp-gateway"
 const defaultAnalyticsIngestURL = "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
@@ -137,6 +138,8 @@ type SetupDeps struct {
 	PushAnalyticsImageToInternal    func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
 	DeployOperatorManifests         func(logger *zap.Logger, operatorImage, gatewayProxyImage string, operatorArgs []string) error
 	DeployAnalyticsManifests        func(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error
+	DisableRegistryIngressAuth      func() error
+	EnableRegistryIngressAuth       func() error
 	ConfigureProvisionedRegistryEnv func(ext *config.ExternalRegistryConfig, secretName string) error
 	RestartDeployment               func(name, namespace string) error
 	CheckCRDInstalled               func(name string) error
@@ -215,6 +218,12 @@ func (d SetupDeps) withDefaults(logger *zap.Logger) SetupDeps {
 	}
 	if d.DeployAnalyticsManifests == nil {
 		d.DeployAnalyticsManifests = deployAnalyticsManifests
+	}
+	if d.DisableRegistryIngressAuth == nil {
+		d.DisableRegistryIngressAuth = disableRegistryIngressAuth
+	}
+	if d.EnableRegistryIngressAuth == nil {
+		d.EnableRegistryIngressAuth = enableRegistryIngressAuth
 	}
 	if d.ConfigureProvisionedRegistryEnv == nil {
 		d.ConfigureProvisionedRegistryEnv = configureProvisionedRegistryEnv
@@ -325,6 +334,23 @@ func setupPlatformWithDeps(logger *zap.Logger, plan setupplan.Plan, deps SetupDe
 		UsingExternalRegistry: usingExternalRegistry,
 		RegistrySecretName:    registrySecretName,
 	}
+	// Re-enable registry ingress auth on every exit path. The setup pipeline
+	// temporarily strips the `registry-admin-auth@file` middleware so the
+	// internal in-cluster image push helper can talk to the registry while
+	// the auth-resolver is still being wired. If we put the re-enable as a
+	// pipeline step it would be skipped whenever an earlier step fails,
+	// leaving the public registry without auth.
+	defer func() {
+		if !ctx.RegistryAuthStaged {
+			return
+		}
+		if err := deps.EnableRegistryIngressAuth(); err != nil {
+			core.Error("Failed to re-enable registry ingress auth after setup")
+			core.LogStructuredError(logger, err, "Re-enable registry ingress auth")
+			return
+		}
+		ctx.RegistryAuthStaged = false
+	}()
 	if err := runSetupSteps(logger, deps, ctx, buildSetupSteps(ctx)); err != nil {
 		return err
 	}
@@ -959,6 +985,64 @@ func analyticsImageFor(ext *config.ExternalRegistryConfig, repository string) st
 		return strings.TrimSuffix(ext.URL, "/") + "/" + repository + ":" + tag
 	}
 	return fmt.Sprintf("%s/%s:%s", registry.ResolvePlatformRegistryURL(nil), repository, tag)
+}
+
+func shouldStageRegistryIngressAuth(usingExternalRegistry bool) bool {
+	if usingExternalRegistry {
+		return false
+	}
+	host := strings.TrimSpace(core.GetRegistryIngressHost())
+	if host == "" {
+		return false
+	}
+	return !isDevRegistryURL(host)
+}
+
+func disableRegistryIngressAuth() error {
+	return disableRegistryIngressAuthWithKubectl(core.DefaultKubectlClient())
+}
+
+func enableRegistryIngressAuth() error {
+	return enableRegistryIngressAuthWithKubectl(core.DefaultKubectlClient())
+}
+
+func disableRegistryIngressAuthWithKubectl(kubectl core.KubectlRunner) error {
+	// Capture kubectl output so the success path stays quiet (the annotation
+	// may already be absent, which kubectl reports loudly) but surface the
+	// captured stderr when an unexpected failure happens.
+	var stdout, stderr bytes.Buffer
+	err := kubectl.RunWithOutput([]string{
+		"annotate", "ingress", "registry",
+		"-n", "registry",
+		"traefik.ingress.kubernetes.io/router.middlewares-",
+	}, &stdout, &stderr)
+	if err == nil {
+		return nil
+	}
+	combined := strings.ToLower(err.Error() + " " + stderr.String())
+	// "not found" covers a missing ingress; "at least one annotation update is required"
+	// covers a missing annotation key — both mean there is nothing to disable.
+	if strings.Contains(combined, "not found") || strings.Contains(combined, "at least one annotation update is required") {
+		return nil
+	}
+	if stderr.Len() > 0 {
+		_, _ = os.Stderr.Write(stderr.Bytes())
+	}
+	return err
+}
+
+func enableRegistryIngressAuthWithKubectl(kubectl core.KubectlRunner) error {
+	var stdout, stderr bytes.Buffer
+	err := kubectl.RunWithOutput([]string{
+		"annotate", "ingress", "registry",
+		"-n", "registry",
+		"traefik.ingress.kubernetes.io/router.middlewares=" + registryAdminAuthMiddleware,
+		"--overwrite",
+	}, &stdout, &stderr)
+	if err != nil && stderr.Len() > 0 {
+		_, _ = os.Stderr.Write(stderr.Bytes())
+	}
+	return err
 }
 
 func configureProvisionedRegistryEnv(ext *config.ExternalRegistryConfig, secretName string) error {
