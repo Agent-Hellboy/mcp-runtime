@@ -172,6 +172,23 @@ func TestStaticAppHidesUserAPIKeysWithoutUserIdentity(t *testing.T) {
 	}
 }
 
+func TestStaticAppShowsInlineUserAPIKeyLoadFailures(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		"const message = `Failed to load API keys: ${readErrorMessage(err, \"request failed\")}`",
+		`setInlineError("user-api-key-error", message)`,
+		`showToast(message, "error")`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
 func TestStaticAppSearchesServerMetadataLabels(t *testing.T) {
 	body, err := os.ReadFile("static/app.js")
 	if err != nil {
