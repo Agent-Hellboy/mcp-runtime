@@ -4945,6 +4945,7 @@ Package registry owns routing for the registry top-level command.
 - [`func New(runtime *core.Runtime) *cobra.Command`](#cli-registry-func-new-runtime-core-runtime-cobra-command)
 - [`func NewWithManager(mgr *RegistryManager) *cobra.Command`](#cli-registry-func-newwithmanager-mgr-registrymanager-cobra-command)
 - [`func ResolveExternalRegistryConfig(flagCfg *config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error)`](#cli-registry-func-resolveexternalregistryconfig-flagcfg-config-externalregistryconfig-config-externalregistryconfig-error)
+- [`func ResolveInternalPlatformRegistryURL(logger *zap.Logger) string`](#cli-registry-func-resolveinternalplatformregistryurl-logger-zap-logger-string)
 - [`func ResolvePlatformRegistryURL(logger *zap.Logger) string`](#cli-registry-func-resolveplatformregistryurl-logger-zap-logger-string)
 - [`func RunRegistryProvision(mgr *RegistryManager, url, username, password, operatorImage string, dryRun bool) error`](#cli-registry-func-runregistryprovision-mgr-registrymanager-url-username-password-operatorimage-string-dryrun-bool-error)
 - [`func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error`](#cli-registry-func-runregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-mode-helpernamespace-string-error)
@@ -4988,6 +4989,11 @@ func NewWithManager(mgr *RegistryManager) *cobra.Command
 <a id="cli-registry-func-resolveexternalregistryconfig-flagcfg-config-externalregistryconfig-config-externalregistryconfig-error"></a>
 ```text
 func ResolveExternalRegistryConfig(flagCfg *config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error)
+```
+
+<a id="cli-registry-func-resolveinternalplatformregistryurl-logger-zap-logger-string"></a>
+```text
+func ResolveInternalPlatformRegistryURL(logger *zap.Logger) string
 ```
 
 <a id="cli-registry-func-resolveplatformregistryurl-logger-zap-logger-string"></a>
@@ -5253,6 +5259,7 @@ _No package overview is documented._
 ### Index
 
 - [`func GitTag(command CommandFactory) string`](#cli-registry-resolution-func-gittag-command-commandfactory-string)
+- [`func InternalPlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string`](#cli-registry-resolution-func-internalplatformurl-logger-zap-logger-kubectl-kubectlcommand-cfg-config-string)
 - [`func PlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string`](#cli-registry-resolution-func-platformurl-logger-zap-logger-kubectl-kubectlcommand-cfg-config-string)
 - [`type CommandFactory func(name string, args []string) (OutputCommand, error)`](#cli-registry-resolution-type-commandfactory-func-name-string-args-string-outputcommand-error)
 - [`type Config struct`](#cli-registry-resolution-type-config-struct)
@@ -5269,10 +5276,22 @@ func GitTag(command CommandFactory) string
 
 ```
 
+<a id="cli-registry-resolution-func-internalplatformurl-logger-zap-logger-kubectl-kubectlcommand-cfg-config-string"></a>
+```text
+func InternalPlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string
+    InternalPlatformURL resolves the bundled registry host:port for platform
+    pods rendered by setup. It intentionally ignores public ingress hosts
+    derived from MCP_PLATFORM_DOMAIN/MCP_REGISTRY_INGRESS_HOST so operator and
+    Sentinel pods do not need anonymous or pull-secret access to the public
+    registry route.
+
+```
+
 <a id="cli-registry-resolution-func-platformurl-logger-zap-logger-kubectl-kubectlcommand-cfg-config-string"></a>
 ```text
 func PlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string
-    PlatformURL resolves the registry host:port used for image names.
+    PlatformURL resolves the registry host:port used for public/user-facing
+    image names.
 ```
 
 <a id="cli-registry-resolution-types"></a>

@@ -1030,6 +1030,15 @@ func TestSetupPlatformWithDeps_CatalogNamespace(t *testing.T) {
 				if gotLabels["pod-security.kubernetes.io/enforce"] != "restricted" {
 					t.Fatalf("PSS enforce label missing or wrong: %q", gotLabels["pod-security.kubernetes.io/enforce"])
 				}
+				if gotLabels["pod-security.kubernetes.io/audit"] != "restricted" {
+					t.Fatalf("PSS audit label missing or wrong: %q", gotLabels["pod-security.kubernetes.io/audit"])
+				}
+				if gotLabels["pod-security.kubernetes.io/warn"] != "restricted" {
+					t.Fatalf("PSS warn label missing or wrong: %q", gotLabels["pod-security.kubernetes.io/warn"])
+				}
+				if gotLabels[core.LabelManagedBy] != core.LabelManagedByValue {
+					t.Fatalf("managed-by label missing or wrong: %q", gotLabels[core.LabelManagedBy])
+				}
 			} else {
 				if calls != 0 {
 					t.Fatalf("expected EnsureCatalogNamespace not to be called for %s mode, got %d calls", tc.mode, calls)

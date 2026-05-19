@@ -49,6 +49,24 @@ func secretStringDataFromManifest(t *testing.T, manifest string) map[string]stri
 	return payload.StringData
 }
 
+func namespaceLabelsFromManifest(t *testing.T, manifest, name string) (map[string]string, bool) {
+	t.Helper()
+	var payload struct {
+		Kind     string `yaml:"kind"`
+		Metadata struct {
+			Name   string            `yaml:"name"`
+			Labels map[string]string `yaml:"labels"`
+		} `yaml:"metadata"`
+	}
+	if err := yaml.Unmarshal([]byte(manifest), &payload); err != nil {
+		t.Fatalf("unmarshal namespace manifest: %v", err)
+	}
+	if payload.Kind != "Namespace" || payload.Metadata.Name != name {
+		return nil, false
+	}
+	return payload.Metadata.Labels, true
+}
+
 func csvHasValue(csv, value string) bool {
 	value = strings.TrimSpace(value)
 	for _, part := range strings.Split(csv, ",") {
@@ -169,6 +187,50 @@ func TestGetGatewayProxyImage(t *testing.T) {
 			t.Fatalf("unexpected versioned image: %q", got)
 		}
 	})
+}
+
+func TestPlatformImageDefaultsUseInternalRegistryWithPlatformDomain(t *testing.T) {
+	origConfig := core.DefaultCLIConfig
+	origTagResolver := setupImageTagResolver
+	t.Cleanup(func() {
+		core.DefaultCLIConfig = origConfig
+		setupImageTagResolver = origTagResolver
+	})
+
+	for _, key := range []string{
+		"MCP_REGISTRY_ENDPOINT",
+		"MCP_REGISTRY_HOST",
+		"MCP_REGISTRY_INGRESS_HOST",
+		"MCP_PLATFORM_DOMAIN",
+	} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "1")
+	t.Setenv("MCP_PLATFORM_DOMAIN", "mcpruntime.org")
+	setupImageTagResolver = func() string { return "deadbeef" }
+	core.DefaultCLIConfig = core.LoadCLIConfig()
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if contains(spec.Args, "jsonpath={.spec.ports[0].port}") {
+				return &core.MockCommand{OutputData: []byte("5000")}
+			}
+			return &core.MockCommand{}
+		},
+	}
+	swapDefaultKubectlClientForTest(t, core.NewTestKubectlClient(mock))
+
+	gotOperator := getOperatorImage(nil)
+	if gotOperator != "registry.registry.svc.cluster.local:5000/mcp-runtime-operator:latest" {
+		t.Fatalf("operator image = %q, want internal registry service DNS", gotOperator)
+	}
+	gotGateway := getGatewayProxyImage(nil)
+	if gotGateway != "registry.registry.svc.cluster.local:5000/mcp-sentinel-mcp-gateway:latest" {
+		t.Fatalf("gateway image = %q, want internal registry service DNS", gotGateway)
+	}
+	gotAPI := analyticsImageFor(nil, "mcp-sentinel-api")
+	if gotAPI != "registry.registry.svc.cluster.local:5000/mcp-sentinel-api:latest" {
+		t.Fatalf("analytics image = %q, want internal registry service DNS", gotAPI)
+	}
 }
 
 func TestBuildOperatorArgs(t *testing.T) {
@@ -457,10 +519,29 @@ func TestConfigureProvisionedRegistryEnv(t *testing.T) {
 			t.Fatalf("expected 5 kubectl calls, got %d", len(mock.Commands))
 		}
 		foundDockerConfig := false
+		var namespaceLabels map[string]string
 		for _, input := range applyInputs {
+			if labels, ok := namespaceLabelsFromManifest(t, input, setupplan.DefaultPublicCatalogNamespace); ok {
+				namespaceLabels = labels
+			}
 			if strings.Contains(input, "kubernetes.io/dockerconfigjson") && strings.Contains(input, "namespace: mcp-servers-public") {
 				foundDockerConfig = true
-				break
+			}
+		}
+		if namespaceLabels == nil {
+			t.Fatalf("expected catalog namespace manifest in apply inputs")
+		}
+		wantLabels := map[string]string{
+			"platform.mcpruntime.org/managed":    "true",
+			"mcpruntime.org/scope":               setupplan.PlatformModePublic,
+			"pod-security.kubernetes.io/enforce": "restricted",
+			"pod-security.kubernetes.io/audit":   "restricted",
+			"pod-security.kubernetes.io/warn":    "restricted",
+			core.LabelManagedBy:                  core.LabelManagedByValue,
+		}
+		for key, want := range wantLabels {
+			if got := namespaceLabels[key]; got != want {
+				t.Fatalf("catalog namespace label %s = %q, want %q", key, got, want)
 			}
 		}
 		if !foundDockerConfig {
@@ -1776,6 +1857,9 @@ func TestSetupDepsWithDefaultsSetsNil(t *testing.T) {
 	}
 	if deps.EnsureNamespace == nil {
 		t.Fatal("expected EnsureNamespace default")
+	}
+	if deps.EnsureCatalogNamespace == nil {
+		t.Fatal("expected EnsureCatalogNamespace default")
 	}
 	if deps.ResolvePlatformRegistryURL == nil {
 		t.Fatal("expected ResolvePlatformRegistryURL default")

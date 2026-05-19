@@ -17,6 +17,16 @@ func ResolvePlatformRegistryURL(logger *zap.Logger) string {
 	return resolvePlatformRegistryURL(logger)
 }
 
+func resolveInternalPlatformRegistryURL(logger *zap.Logger) string {
+	return resolve.InternalPlatformURL(logger, func(args []string) (resolve.OutputCommand, error) {
+		return core.DefaultKubectlClient().CommandArgs(args)
+	}, registryResolveConfig())
+}
+
+func ResolveInternalPlatformRegistryURL(logger *zap.Logger) string {
+	return resolveInternalPlatformRegistryURL(logger)
+}
+
 func registryResolveConfig() resolve.Config {
 	return resolve.Config{
 		RegistryEndpoint:        core.DefaultCLIConfig.RegistryEndpoint,

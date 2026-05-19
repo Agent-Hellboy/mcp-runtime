@@ -87,6 +87,14 @@ it builds and pushes the operator, gateway proxy, and Sentinel images with
 through kubelet/containerd, so an HTTP bundled registry requires node trust for
 the exact image host and port used in the rendered image references.
 
+When setup uses the bundled registry, platform-owned image refs for the
+operator, gateway proxy, and Sentinel services are rendered with the internal
+registry endpoint, ClusterIP, or service-DNS host rather than a public registry
+ingress hostname derived from `MCP_PLATFORM_DOMAIN`. The public registry host is
+still used for ingress routing and user-facing registry flows; set
+`MCP_REGISTRY_ENDPOINT` or `MCP_REGISTRY_HOST` only when cluster nodes should
+pull platform images through a specific internal registry endpoint.
+
 ---
 
 ## External registry path

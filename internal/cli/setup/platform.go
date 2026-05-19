@@ -208,7 +208,7 @@ func (d SetupDeps) withDefaults(logger *zap.Logger) SetupDeps {
 		}
 	}
 	if d.ResolvePlatformRegistryURL == nil {
-		d.ResolvePlatformRegistryURL = registry.ResolvePlatformRegistryURL
+		d.ResolvePlatformRegistryURL = registry.ResolveInternalPlatformRegistryURL
 	}
 	if d.PushOperatorImageToInternal == nil {
 		d.PushOperatorImageToInternal = pushOperatorImageToInternalRegistry
@@ -419,7 +419,7 @@ func setupTLSStep(logger *zap.Logger, plan setupplan.Plan, deps SetupDeps) error
 // catalogNamespaceLabels returns the labels the platform API expects to find on
 // a shared catalog namespace. Keeping these aligned with EnsureCatalogNamespace
 // in services/api/internal/runtimeapi/deployments.go lets the runtime-side
-// ensure call degrade to an idempotent patch instead of a create — which is
+// ensure call degrade to an idempotent patch instead of a create, which is
 // what allows non-admin users to publish into the catalog without giving the
 // API ServiceAccount cluster-wide namespace-create RBAC.
 func catalogNamespaceLabels(platformMode string) map[string]string {
@@ -427,7 +427,9 @@ func catalogNamespaceLabels(platformMode string) map[string]string {
 		"platform.mcpruntime.org/managed":    "true",
 		"mcpruntime.org/scope":               platformMode,
 		"pod-security.kubernetes.io/enforce": "restricted",
-		"app.kubernetes.io/managed-by":       "mcp-runtime",
+		"pod-security.kubernetes.io/audit":   "restricted",
+		"pod-security.kubernetes.io/warn":    "restricted",
+		core.LabelManagedBy:                  core.LabelManagedByValue,
 	}
 }
 
@@ -1005,7 +1007,7 @@ func getOperatorImage(ext *config.ExternalRegistryConfig) string {
 	if ext != nil && ext.URL != "" {
 		return strings.TrimSuffix(ext.URL, "/") + "/mcp-runtime-operator:" + tag
 	}
-	return fmt.Sprintf("%s/mcp-runtime-operator:%s", registry.ResolvePlatformRegistryURL(nil), tag)
+	return fmt.Sprintf("%s/mcp-runtime-operator:%s", registry.ResolveInternalPlatformRegistryURL(nil), tag)
 }
 
 func getGatewayProxyImage(ext *config.ExternalRegistryConfig) string {
@@ -1018,7 +1020,7 @@ func getGatewayProxyImage(ext *config.ExternalRegistryConfig) string {
 	if ext != nil && ext.URL != "" {
 		return strings.TrimSuffix(ext.URL, "/") + "/" + defaultGatewayProxyRepository + ":" + tag
 	}
-	return fmt.Sprintf("%s/%s:%s", registry.ResolvePlatformRegistryURL(nil), defaultGatewayProxyRepository, tag)
+	return fmt.Sprintf("%s/%s:%s", registry.ResolveInternalPlatformRegistryURL(nil), defaultGatewayProxyRepository, tag)
 }
 
 func analyticsImageFor(ext *config.ExternalRegistryConfig, repository string) string {
@@ -1027,7 +1029,7 @@ func analyticsImageFor(ext *config.ExternalRegistryConfig, repository string) st
 	if ext != nil && ext.URL != "" {
 		return strings.TrimSuffix(ext.URL, "/") + "/" + repository + ":" + tag
 	}
-	return fmt.Sprintf("%s/%s:%s", registry.ResolvePlatformRegistryURL(nil), repository, tag)
+	return fmt.Sprintf("%s/%s:%s", registry.ResolveInternalPlatformRegistryURL(nil), repository, tag)
 }
 
 func shouldStageRegistryIngressAuth(usingExternalRegistry bool) bool {
@@ -1109,9 +1111,10 @@ func configureProvisionedRegistryEnvWithKubectl(kubectl core.KubectlRunner, ext 
 		if err := ensureProvisionedRegistrySecretWithKubectl(kubectl, secretName, ext.Username, ext.Password); err != nil {
 			return err
 		}
-		catalogNamespace := setupplan.CatalogNamespaceForPlatformMode(os.Getenv("MCP_PLATFORM_MODE"))
+		platformMode := os.Getenv("MCP_PLATFORM_MODE")
+		catalogNamespace := setupplan.CatalogNamespaceForPlatformMode(platformMode)
 		if catalogNamespace != "" {
-			if err := kube.EnsureNamespace(kubectl.CommandArgs, catalogNamespace); err != nil {
+			if err := kube.EnsureNamespaceWithLabels(kubectl.CommandArgs, catalogNamespace, catalogNamespaceLabels(platformMode)); err != nil {
 				return err
 			}
 			// Create imagePullSecret in the active catalog namespace for pod image pulls.
@@ -2235,18 +2238,7 @@ func applyCatalogNamespaceForMode(kubectl core.KubectlRunner, platformMode strin
 		return nil
 	}
 	core.Info(fmt.Sprintf("Applying platform catalog namespace %s", namespace))
-	manifest := fmt.Sprintf(`apiVersion: v1
-kind: Namespace
-metadata:
-  name: %s
-  labels:
-    platform.mcpruntime.org/managed: "true"
-    mcpruntime.org/scope: %s
-    pod-security.kubernetes.io/enforce: restricted
-    pod-security.kubernetes.io/audit: restricted
-    pod-security.kubernetes.io/warn: restricted
-`, namespace, platformMode)
-	return kube.ApplyManifestContent(kubectl.CommandArgs, manifest)
+	return kube.EnsureNamespaceWithLabels(kubectl.CommandArgs, namespace, catalogNamespaceLabels(platformMode))
 }
 
 func trimDiagnosticsString(s string) string {

@@ -25,7 +25,8 @@ type OutputCommand interface {
 type KubectlCommand func(args []string) (OutputCommand, error)
 type CommandFactory func(name string, args []string) (OutputCommand, error)
 
-// PlatformURL resolves the registry host:port used for image names.
+// PlatformURL resolves the registry host:port used for public/user-facing image
+// names.
 func PlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string {
 	if host := strings.TrimSpace(cfg.RegistryIngressHost); host != "" &&
 		(host != cfg.DefaultRegistryHost || registryHostExplicitlyConfigured()) {
@@ -59,6 +60,43 @@ func PlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string 
 
 	if logger != nil {
 		logger.Warn("Could not detect registry ingress host or service port, using default service DNS:port")
+	}
+	return fmt.Sprintf("%s:%d", registryServiceDNS, cfg.RegistryPort)
+}
+
+// InternalPlatformURL resolves the bundled registry host:port for platform pods
+// rendered by setup. It intentionally ignores public ingress hosts derived from
+// MCP_PLATFORM_DOMAIN/MCP_REGISTRY_INGRESS_HOST so operator and Sentinel pods do
+// not need anonymous or pull-secret access to the public registry route.
+func InternalPlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string {
+	if endpoint := strings.TrimSpace(cfg.RegistryEndpoint); endpoint != "" &&
+		(registryEndpointExplicitlyConfigured() ||
+			(endpoint != cfg.DefaultRegistryEndpoint && endpoint != strings.TrimSpace(cfg.RegistryIngressHost))) {
+		return endpoint
+	}
+
+	if os.Getenv("MCP_RUNTIME_TEST_MODE") == "1" {
+		portValue, portErr := servicePort(kubectl)
+		if portErr == nil && portValue != "" {
+			return fmt.Sprintf("%s:%s", registryServiceDNS, portValue)
+		}
+		if logger != nil {
+			logger.Warn("Could not detect registry service port in test mode, using default service DNS:port")
+		}
+		return fmt.Sprintf("%s:%d", registryServiceDNS, cfg.RegistryPort)
+	}
+
+	ip, ipErr := serviceClusterIP(kubectl)
+	portValue, portErr := servicePort(kubectl)
+	if ipErr == nil && ip != "" && portErr == nil && portValue != "" {
+		return fmt.Sprintf("%s:%s", ip, portValue)
+	}
+	if portErr == nil && portValue != "" {
+		return fmt.Sprintf("%s:%s", registryServiceDNS, portValue)
+	}
+
+	if logger != nil {
+		logger.Warn("Could not detect internal registry service port, using default service DNS:port")
 	}
 	return fmt.Sprintf("%s:%d", registryServiceDNS, cfg.RegistryPort)
 }

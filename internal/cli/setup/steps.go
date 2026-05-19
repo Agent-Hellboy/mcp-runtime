@@ -186,7 +186,7 @@ func (s verifyStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) e
 // ctx.RegistryAuthStaged for details.
 
 func buildSetupSteps(ctx *SetupContext) []SetupStep {
-	catalogMode := ctx.Plan.PlatformMode == setupplan.PlatformModeOrg || ctx.Plan.PlatformMode == setupplan.PlatformModePublic
+	catalogMode := setupplan.CatalogNamespaceForPlatformMode(ctx.Plan.PlatformMode) != ""
 	return NewSetupPipeline().
 		With(clusterStep{}).
 		WithIf(catalogMode, catalogNamespaceStep{}).
