@@ -648,6 +648,9 @@ func TestRuntimeServerApplyPublicScopeExpandsShortImage(t *testing.T) {
 	if got, want := current.Spec.Image, "10.96.223.152:5000/public/go-example"; got != want {
 		t.Fatalf("image = %q, want %q", got, want)
 	}
+	if got := envValue(current.Spec.EnvVars, "MCP_PATH"); got != "/go-example/mcp" {
+		t.Fatalf("MCP_PATH = %q, want /go-example/mcp", got)
+	}
 }
 
 func TestRuntimeServerApplyTenantScopeExpandsShortImageToTeamSlug(t *testing.T) {
@@ -692,6 +695,9 @@ func TestRuntimeServerApplyTenantScopeExpandsShortImageToTeamSlug(t *testing.T) 
 	}
 	if got := current.Spec.TeamID; got != "team-acme" {
 		t.Fatalf("teamID = %q, want team-acme", got)
+	}
+	if got := envValue(current.Spec.EnvVars, "MCP_PATH"); got != "/go-example/mcp" {
+		t.Fatalf("MCP_PATH = %q, want /go-example/mcp", got)
 	}
 }
 
@@ -1161,6 +1167,15 @@ func ownedTestMCPServer(name, namespace, userID string) *mcpv1alpha1.MCPServer {
 			Image: "registry.example.com/" + namespace + "/" + name,
 		},
 	}
+}
+
+func envValue(envVars []mcpv1alpha1.EnvVar, name string) string {
+	for _, envVar := range envVars {
+		if envVar.Name == name {
+			return envVar.Value
+		}
+	}
+	return ""
 }
 
 func TestScopedNamespaceForPrincipal(t *testing.T) {

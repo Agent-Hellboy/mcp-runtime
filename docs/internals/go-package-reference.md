@@ -865,7 +865,7 @@ type MCPServerSpec struct {
 	IngressHost string `json:"ingressHost,omitempty"`
 
 	// PublicPathPrefix enables path-based public routing and is used to compute /<publicPathPrefix>/mcp.
-	// When set, the operator prefers path-based ingress rules without a host match.
+	// When ingressHost is also set, the route is path-based under that host; otherwise it is hostless.
 	PublicPathPrefix string `json:"publicPathPrefix,omitempty"`
 
 	// IngressClass is the ingress class to use (e.g., "traefik", "nginx", "istio"). Defaults to "traefik".
@@ -2437,6 +2437,12 @@ type MCPServerReconciler struct {
 	// DefaultIngressHost is the default ingress host if not specified in the CR.
 	DefaultIngressHost string
 
+	// DefaultIngressEntryPoints is the default Traefik entrypoint annotation for MCP server ingresses.
+	DefaultIngressEntryPoints string
+
+	// DefaultIngressTLS enables Traefik TLS routing for MCP server ingresses by default.
+	DefaultIngressTLS bool
+
 	// IngressReadinessMode controls how ingress readiness is evaluated.
 	IngressReadinessMode string
 
@@ -2481,6 +2487,12 @@ type OperatorConfig struct {
 
 	// DefaultIngressClass is the ingress class to use.
 	DefaultIngressClass string
+
+	// DefaultIngressEntryPoints is the default Traefik entrypoint annotation for MCP server ingresses.
+	DefaultIngressEntryPoints string
+
+	// DefaultIngressTLS enables Traefik TLS routing for MCP server ingresses by default.
+	DefaultIngressTLS bool
 
 	// IngressReadinessMode controls how ingress readiness is evaluated.
 	IngressReadinessMode string

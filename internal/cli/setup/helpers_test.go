@@ -374,6 +374,17 @@ func TestOperatorEnvOverrides(t *testing.T) {
 		requireOperatorEnvVar(t, got, "MCP_REGISTRY_ENDPOINT", "10.43.39.164:5000")
 		requireOperatorEnvVar(t, got, "MCP_REGISTRY_INGRESS_HOST", "registry.local")
 	})
+
+	t.Run("uses websecure ingress defaults when mcp host has tls issuer", func(t *testing.T) {
+		core.DefaultCLIConfig = &core.CLIConfig{
+			McpIngressHost:            "mcp.mcpruntime.org",
+			RegistryClusterIssuerName: "letsencrypt-prod",
+		}
+		got := operatorEnvOverrides("", "")
+		requireOperatorEnvVar(t, got, "MCP_DEFAULT_INGRESS_HOST", "mcp.mcpruntime.org")
+		requireOperatorEnvVar(t, got, "MCP_DEFAULT_INGRESS_ENTRYPOINTS", "websecure")
+		requireOperatorEnvVar(t, got, "MCP_DEFAULT_INGRESS_TLS", "true")
+	})
 }
 
 func TestConfigureProvisionedRegistryEnv(t *testing.T) {
@@ -1029,6 +1040,43 @@ data:
 	}
 	if got := payload.Data["OIDC_JWKS_URL"]; got != "https://www.googleapis.com/oauth2/v3/certs" {
 		t.Fatalf("expected Google JWKS default, got %q", got)
+	}
+}
+
+func TestRenderAnalyticsConfigManifestDetectsK3sTraefikNamespace(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if commandHasArgs(spec, "get", "deployment", "-A", "--no-headers") {
+				return &core.MockCommand{
+					Args:       spec.Args,
+					OutputData: []byte("kube-system traefik\n"),
+				}
+			}
+			return &core.MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	rendered, err := renderAnalyticsConfigManifest(kubectl, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-sentinel-config
+  namespace: mcp-sentinel
+data:
+  PLATFORM_TRAEFIK_NAMESPACE: ""
+`, setupplan.PlatformModePublic, AnalyticsImageSet{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var payload struct {
+		Data map[string]string `yaml:"data"`
+	}
+	if err := yaml.Unmarshal([]byte(rendered), &payload); err != nil {
+		t.Fatalf("unmarshal rendered config: %v", err)
+	}
+	if got := payload.Data["PLATFORM_TRAEFIK_NAMESPACE"]; got != "kube-system" {
+		t.Fatalf("PLATFORM_TRAEFIK_NAMESPACE = %q, want kube-system", got)
 	}
 }
 

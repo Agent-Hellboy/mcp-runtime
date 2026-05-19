@@ -39,6 +39,12 @@ type MCPServerReconciler struct {
 	// DefaultIngressHost is the default ingress host if not specified in the CR.
 	DefaultIngressHost string
 
+	// DefaultIngressEntryPoints is the default Traefik entrypoint annotation for MCP server ingresses.
+	DefaultIngressEntryPoints string
+
+	// DefaultIngressTLS enables Traefik TLS routing for MCP server ingresses by default.
+	DefaultIngressTLS bool
+
 	// IngressReadinessMode controls how ingress readiness is evaluated.
 	IngressReadinessMode string
 
@@ -343,11 +349,10 @@ func determinePhase(readiness resourceReadiness, mcpServer *mcpv1alpha1.MCPServe
 
 func (r *MCPServerReconciler) setDefaults(mcpServer *mcpv1alpha1.MCPServer) {
 	ingressHostUnset := strings.TrimSpace(mcpServer.Spec.IngressHost) == ""
-	publicPathPrefixUnset := strings.TrimSpace(mcpServer.Spec.PublicPathPrefix) == ""
 
 	mcpServer.Default()
 
-	if ingressHostUnset && publicPathPrefixUnset {
+	if ingressHostUnset {
 		mcpServer.Spec.IngressHost = strings.TrimSpace(r.DefaultIngressHost)
 	}
 

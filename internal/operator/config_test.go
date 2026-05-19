@@ -188,6 +188,8 @@ func TestLoadOperatorConfig(t *testing.T) {
 	t.Setenv("MCP_CLUSTER_NAME", "prod-cluster")
 	t.Setenv("DEFAULT_INGRESS_HOST", "mcp.example.com")
 	t.Setenv("DEFAULT_INGRESS_CLASS", "nginx")
+	t.Setenv("MCP_DEFAULT_INGRESS_ENTRYPOINTS", "websecure")
+	t.Setenv("MCP_DEFAULT_INGRESS_TLS", "true")
 	t.Setenv("MCP_INGRESS_READINESS_MODE", "permissive")
 	t.Setenv("PROVISIONED_REGISTRY_URL", "registry.example.com:5000")
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.43.39.164:5000")
@@ -206,6 +208,12 @@ func TestLoadOperatorConfig(t *testing.T) {
 	}
 	if cfg.DefaultIngressClass != "nginx" {
 		t.Fatalf("expected ingress class override, got %q", cfg.DefaultIngressClass)
+	}
+	if cfg.DefaultIngressEntryPoints != "websecure" {
+		t.Fatalf("expected ingress entrypoints override, got %q", cfg.DefaultIngressEntryPoints)
+	}
+	if !cfg.DefaultIngressTLS {
+		t.Fatal("expected ingress TLS override")
 	}
 	if cfg.IngressReadinessMode != IngressReadinessModePermissive {
 		t.Fatalf("expected ingress readiness mode override, got %q", cfg.IngressReadinessMode)
