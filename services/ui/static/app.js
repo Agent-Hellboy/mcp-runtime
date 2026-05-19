@@ -2454,8 +2454,12 @@ async function loadUserAPIKeys(options = {}) {
     renderUserAPIKeys();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
+    const message = `Failed to load API keys: ${readErrorMessage(err, "request failed")}`;
+    userAPIKeysCache = [];
+    renderUserAPIKeys();
+    setInlineError("user-api-key-error", message);
     console.error("Failed to load user api keys:", err);
-    showToast("Failed to load API keys", "error");
+    showToast(message, "error");
   }
 }
 
