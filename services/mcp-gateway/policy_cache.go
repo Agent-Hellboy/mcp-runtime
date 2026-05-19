@@ -42,9 +42,11 @@ func (s *gatewayServer) reloadPolicy() error {
 			fallback = s.defaultPolicyDocument()
 		}
 		s.snapshotPolicy(policySnapshot{Policy: fallback, Err: err})
+		s.metrics.recordPolicyReload(s.metricScope(fallback), err)
 		return err
 	}
 	s.snapshotPolicy(policySnapshot{Policy: doc})
+	s.metrics.recordPolicyReload(s.metricScope(doc), nil)
 	return nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"net/http"
@@ -145,6 +146,57 @@ func (s *RuntimeServer) HandleRuntimeObservabilityPrometheusQuery(w http.Respons
 	})
 }
 
+func (s *RuntimeServer) HandleRuntimeObservabilityGrafanaDashboard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("allow", http.MethodGet)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		return
+	}
+	_, target, err := s.authorizedObservabilityTarget(r)
+	if err != nil {
+		writeObservabilityError(w, err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	queryResults := make([]grafanaDashboardQueryResult, 0, len(scopedPrometheusQueries(target.Namespace, target.Name)))
+	for _, query := range scopedPrometheusQueries(target.Namespace, target.Name) {
+		result := grafanaDashboardQueryResult{
+			ID:          query.ID,
+			Name:        query.Name,
+			Description: query.Description,
+			Query:       query.Query,
+		}
+		payload, err := queryPrometheus(ctx, query.Query)
+		if err != nil {
+			result.Error = err.Error()
+		} else if body, err := json.MarshalIndent(payload, "", "  "); err != nil {
+			result.Error = "prometheus response could not be rendered"
+		} else {
+			result.Body = string(body)
+		}
+		queryResults = append(queryResults, result)
+	}
+
+	w.Header().Set("content-type", "text/html; charset=utf-8")
+	w.Header().Set("cache-control", "no-store")
+	w.Header().Set("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'")
+	w.Header().Set("referrer-policy", "no-referrer")
+	w.Header().Set("x-content-type-options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(renderScopedGrafanaDashboard(target.Namespace, target.Name, queryResults)))
+}
+
+type grafanaDashboardQueryResult struct {
+	ID          string
+	Name        string
+	Description string
+	Query       string
+	Body        string
+	Error       string
+}
+
 func (s *RuntimeServer) authorizedObservabilityTarget(r *http.Request) (principal, *mcpv1alpha1.MCPServer, error) {
 	if s == nil {
 		return principal{}, nil, observabilityRequestError{status: http.StatusServiceUnavailable, message: "runtime not available"}
@@ -214,7 +266,7 @@ func observabilityLinksForServerInfo(info controlplane.ServerInfo, p principal, 
 			Queries:         queryLinks,
 			DirectAdminOnly: true,
 		},
-		Grafana: grafanaLinkForServer(info, p),
+		Grafana: grafanaLinkForServer(info, p, r),
 	}
 }
 
@@ -224,6 +276,13 @@ func observabilityPrometheusAPIPath(namespace, serverName, queryID string) strin
 	values.Set("server", serverName)
 	values.Set("query_id", queryID)
 	return "/api/runtime/observability/prometheus/query?" + values.Encode()
+}
+
+func observabilityGrafanaDashboardAPIPath(namespace, serverName string) string {
+	values := url.Values{}
+	values.Set("namespace", namespace)
+	values.Set("server", serverName)
+	return "/api/runtime/observability/grafana/dashboard?" + values.Encode()
 }
 
 func publicAPIURL(r *http.Request, apiPath string) string {
@@ -237,13 +296,13 @@ func publicAPIURL(r *http.Request, apiPath string) string {
 	return forwardedScheme(r) + "://" + strings.TrimRight(host, "/") + apiPath
 }
 
-func grafanaLinkForServer(info controlplane.ServerInfo, p principal) observabilityGrafanaLink {
+func grafanaLinkForServer(info controlplane.ServerInfo, p principal, r *http.Request) observabilityGrafanaLink {
 	template := strings.TrimSpace(envOr(envGrafanaServerDashboardURL, ""))
 	if template == "" {
 		return observabilityGrafanaLink{
-			Available:       false,
-			DirectAdminOnly: true,
-			Reason:          "server dashboard URL is not configured",
+			Available:       true,
+			URL:             publicAPIURL(r, observabilityGrafanaDashboardAPIPath(info.Namespace, info.Name)),
+			DirectAdminOnly: false,
 		}
 	}
 	link := expandObservabilityURLTemplate(template, info.Namespace, info.Name)
@@ -259,6 +318,55 @@ func grafanaLinkForServer(info controlplane.ServerInfo, p principal) observabili
 		DirectAdminOnly: true,
 		Reason:          "grafana requires tenant-aware access before user links are exposed",
 	}
+}
+
+func queryPrometheus(ctx context.Context, query string) (any, error) {
+	promURL, err := prometheusQueryURL(prometheusAPIBaseURL(), query)
+	if err != nil {
+		return nil, fmt.Errorf("prometheus not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, promURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("query build failed")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("prometheus unavailable")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("prometheus query failed")
+	}
+	var payload any
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("prometheus response invalid")
+	}
+	return payload, nil
+}
+
+func renderScopedGrafanaDashboard(namespace, serverName string, results []grafanaDashboardQueryResult) string {
+	var b strings.Builder
+	b.WriteString(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">`)
+	b.WriteString(`<title>Scoped Grafana - ` + html.EscapeString(namespace) + `/` + html.EscapeString(serverName) + `</title>`)
+	b.WriteString(`<style>body{margin:0;background:#0b1020;color:#e5e7eb;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1120px;margin:0 auto;padding:28px}h1{font-size:24px;margin:0 0 8px}p{color:#aab3c5}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.panel{border:1px solid #26324f;background:#11182b;border-radius:8px;padding:16px}pre{white-space:pre-wrap;overflow:auto;background:#070b15;border:1px solid #25304a;border-radius:6px;padding:12px;color:#d1d5db}.meta{font-size:12px;color:#93a4c7}.error{color:#fca5a5}</style></head><body><main>`)
+	b.WriteString(`<h1>Scoped Grafana</h1>`)
+	b.WriteString(`<p>Namespace <strong>` + html.EscapeString(namespace) + `</strong> / server <strong>` + html.EscapeString(serverName) + `</strong>. Queries are generated by the platform API and pinned to this scope.</p>`)
+	b.WriteString(`<div class="grid">`)
+	for _, result := range results {
+		b.WriteString(`<section class="panel">`)
+		b.WriteString(`<h2>` + html.EscapeString(result.Name) + `</h2>`)
+		b.WriteString(`<p>` + html.EscapeString(result.Description) + `</p>`)
+		b.WriteString(`<div class="meta">` + html.EscapeString(result.Query) + `</div>`)
+		if result.Error != "" {
+			b.WriteString(`<pre class="error">` + html.EscapeString(result.Error) + `</pre>`)
+		} else {
+			b.WriteString(`<pre>` + html.EscapeString(result.Body) + `</pre>`)
+		}
+		b.WriteString(`</section>`)
+	}
+	b.WriteString(`</div></main></body></html>`)
+	return b.String()
 }
 
 func expandObservabilityURLTemplate(template, namespace, serverName string) string {

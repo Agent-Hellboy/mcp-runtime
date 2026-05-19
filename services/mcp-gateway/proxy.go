@@ -37,17 +37,28 @@ func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 	rpcMethod, toolName := inspection.Method, inspection.ToolName
 
 	policy, policyErr := s.currentPolicy()
-	if s.handleOAuthProtectedResource(recorder, r, policy) {
-		return
-	}
-
-	authCtx := s.extractIdentity(r, policy)
 	decision := policypkg.Decision{
 		Allowed:       true,
 		Status:        http.StatusOK,
 		Reason:        "allowed",
 		PolicyVersion: s.defaultPolicyVersion,
 	}
+	scope := s.metricScope(policy)
+	stopInflight := s.metrics.trackInflight(scope)
+	defer stopInflight()
+	policyDecisionObserved := false
+	defer func() {
+		s.metrics.recordRequest(scope, r, rpcMethod, decision, recorder.status, time.Since(start), r.ContentLength, recorder.bytes)
+		if policyDecisionObserved {
+			s.metrics.recordPolicyDecision(scope, rpcMethod, decision)
+		}
+	}()
+
+	if s.handleOAuthProtectedResource(recorder, r, policy) {
+		return
+	}
+
+	authCtx := s.extractIdentity(r, policy)
 	oauthResult := oauthAuthResult{
 		Allowed:  true,
 		Status:   http.StatusOK,
@@ -63,6 +74,7 @@ func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 				oauthResult.Reason,
 				policypkg.ChoosePolicyVersion(policypkg.PolicyVersion(policy), s.defaultPolicyVersion),
 			)
+			policyDecisionObserved = true
 			s.writeDeniedResponse(recorder, r, originalPath, rpcMethod, toolName, authCtx, policy, decision, start)
 			return
 		}
@@ -89,6 +101,7 @@ func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 				ToolName:  toolName,
 			}, time.Now())
 		}
+		policyDecisionObserved = true
 	}
 
 	if !decision.Allowed {

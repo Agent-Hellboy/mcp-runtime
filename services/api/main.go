@@ -328,6 +328,7 @@ func main() {
 		mux.Handle("/api/runtime/servers/", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeServerItem)))
 		mux.Handle("/api/runtime/server-events", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeServerEvents)))
 		mux.Handle("/api/runtime/observability/links", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeObservabilityLinks)))
+		mux.Handle("/api/runtime/observability/grafana/dashboard", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeObservabilityGrafanaDashboard)))
 		mux.Handle("/api/runtime/observability/prometheus/query", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeObservabilityPrometheusQuery)))
 		mux.Handle("/api/runtime/teams", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeTeams)))
 		mux.Handle("/api/runtime/teams/", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeTeamItemPath)))

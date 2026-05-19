@@ -24,6 +24,7 @@ r.go
 tags
 
 # Local/generated artifacts
+/.playwright-mcp/
 /mcp-sentinel/
 /services/mcp-server/mcp-sentinel-mcp-server
 /services/ui/mcp-sentinel-ui

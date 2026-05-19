@@ -113,6 +113,27 @@ If `cluster doctor` reports admin/UI/ingest key mismatches, roll the API,
 UI, ingest, and gateway deployments after patching `mcp-sentinel-secrets`
 (see `CLAUDE.md` → API keys). Do not paper over a `Degraded` reading.
 
+### Kind image architecture gotcha
+
+Before manually refreshing API/UI/operator/gateway images in Kind, match the
+image platform to the Kind node:
+
+```bash
+NODE_ARCH="$(docker version --format '{{.Server.Arch}}')"
+IMAGE="registry.registry.svc.cluster.local:5000/<repo>:qa-$(date +%s)"
+docker build --platform="linux/${NODE_ARCH}" -t "$IMAGE" -f "$DOCKERFILE" .
+docker image inspect "$IMAGE" --format '{{.Os}}/{{.Architecture}}'
+kind load docker-image "$IMAGE" --name mcp-runtime
+kubectl set image -n "$NAMESPACE" deploy/"$DEPLOYMENT" "$CONTAINER=$IMAGE"
+kubectl rollout status -n "$NAMESPACE" deploy/"$DEPLOYMENT" --timeout=180s
+```
+
+Do not trust a successful `kind load docker-image` by itself. Containerd can
+load a `linux/amd64` image into a `linux/arm64` Kind node, but the pod will not
+run correctly. If a service image was built for the wrong architecture, rebuild
+API and UI with the node architecture, load those exact image references, set
+the deployment image to the same ref, and wait for rollout.
+
 ## Step 6 — Expose the gateway
 
 ```bash
