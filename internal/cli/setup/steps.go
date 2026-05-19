@@ -70,6 +70,13 @@ func (s tlsStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) erro
 	return setupTLSStep(logger, ctx.Plan, deps)
 }
 
+type catalogNamespaceStep struct{}
+
+func (s catalogNamespaceStep) Name() string { return "catalog-namespace" }
+func (s catalogNamespaceStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error {
+	return setupCatalogNamespaceStep(logger, ctx.Plan, deps)
+}
+
 type registryStep struct{}
 
 func (s registryStep) Name() string { return "registry" }
@@ -179,8 +186,10 @@ func (s verifyStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) e
 // ctx.RegistryAuthStaged for details.
 
 func buildSetupSteps(ctx *SetupContext) []SetupStep {
+	catalogMode := ctx.Plan.PlatformMode == setupplan.PlatformModeOrg || ctx.Plan.PlatformMode == setupplan.PlatformModePublic
 	return NewSetupPipeline().
 		With(clusterStep{}).
+		WithIf(catalogMode, catalogNamespaceStep{}).
 		WithIf(ctx.Plan.TLSEnabled, tlsStep{}).
 		With(registryStep{}).
 		With(registryAuthDisableStep{}).

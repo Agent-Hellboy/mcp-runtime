@@ -132,6 +132,7 @@ type SetupDeps struct {
 	BuildAnalyticsImage             func(image, dockerfilePath, buildContext string) error
 	PushAnalyticsImage              func(image string) error
 	EnsureNamespace                 func(namespace string) error
+	EnsureCatalogNamespace          func(namespace string, labels map[string]string) error
 	ResolvePlatformRegistryURL      func(logger *zap.Logger) string
 	PushOperatorImageToInternal     func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
 	PushGatewayProxyImageToInternal func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
@@ -199,6 +200,11 @@ func (d SetupDeps) withDefaults(logger *zap.Logger) SetupDeps {
 	if d.EnsureNamespace == nil {
 		d.EnsureNamespace = func(namespace string) error {
 			return kube.EnsureNamespace(core.DefaultKubectlClient().CommandArgs, namespace)
+		}
+	}
+	if d.EnsureCatalogNamespace == nil {
+		d.EnsureCatalogNamespace = func(namespace string, labels map[string]string) error {
+			return kube.EnsureNamespaceWithLabels(core.DefaultKubectlClient().CommandArgs, namespace, labels)
 		}
 	}
 	if d.ResolvePlatformRegistryURL == nil {
@@ -407,6 +413,43 @@ func setupTLSStep(logger *zap.Logger, plan setupplan.Plan, deps SetupDeps) error
 		return wrappedErr
 	}
 	core.Success("TLS configured successfully")
+	return nil
+}
+
+// catalogNamespaceLabels returns the labels the platform API expects to find on
+// a shared catalog namespace. Keeping these aligned with EnsureCatalogNamespace
+// in services/api/internal/runtimeapi/deployments.go lets the runtime-side
+// ensure call degrade to an idempotent patch instead of a create — which is
+// what allows non-admin users to publish into the catalog without giving the
+// API ServiceAccount cluster-wide namespace-create RBAC.
+func catalogNamespaceLabels(platformMode string) map[string]string {
+	return map[string]string{
+		"platform.mcpruntime.org/managed":    "true",
+		"mcpruntime.org/scope":               platformMode,
+		"pod-security.kubernetes.io/enforce": "restricted",
+		"app.kubernetes.io/managed-by":       "mcp-runtime",
+	}
+}
+
+func setupCatalogNamespaceStep(logger *zap.Logger, plan setupplan.Plan, deps SetupDeps) error {
+	namespace := setupplan.CatalogNamespaceForPlatformMode(plan.PlatformMode)
+	if namespace == "" {
+		// tenant mode has no shared catalog namespace.
+		return nil
+	}
+	core.Step(fmt.Sprintf("Provisioning %s catalog namespace %q", plan.PlatformMode, namespace))
+	if err := deps.EnsureCatalogNamespace(namespace, catalogNamespaceLabels(plan.PlatformMode)); err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrSetupStepFailed,
+			err,
+			fmt.Sprintf("ensure catalog namespace %q failed: %v", namespace, err),
+			map[string]any{"namespace": namespace, "platform_mode": plan.PlatformMode, "component": "setup"},
+		)
+		core.Error("Catalog namespace provisioning failed")
+		core.LogStructuredError(logger, wrappedErr, "Catalog namespace provisioning failed")
+		return wrappedErr
+	}
+	core.Success(fmt.Sprintf("Catalog namespace %q ready", namespace))
 	return nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -112,11 +113,33 @@ func ApplyManifestContentWithNamespace[T Command](commandArgs func([]string) (T,
 
 // EnsureNamespace applies/creates a namespace idempotently.
 func EnsureNamespace[T Command](commandArgs func([]string) (T, error), name string) error {
+	return EnsureNamespaceWithLabels(commandArgs, name, nil)
+}
+
+// EnsureNamespaceWithLabels applies/creates a namespace idempotently and sets
+// labels via kubectl apply. Labels already present on an existing namespace are
+// preserved unless the same key is also supplied here (kubectl apply will set
+// them to the new value). Pass nil/empty labels for a label-less namespace.
+func EnsureNamespaceWithLabels[T Command](commandArgs func([]string) (T, error), name string, labels map[string]string) error {
+	var labelLines string
+	if len(labels) > 0 {
+		keys := make([]string, 0, len(labels))
+		for k := range labels {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var b strings.Builder
+		b.WriteString("  labels:\n")
+		for _, k := range keys {
+			fmt.Fprintf(&b, "    %q: %q\n", k, labels[k])
+		}
+		labelLines = b.String()
+	}
 	nsYAML := fmt.Sprintf(`apiVersion: v1
 kind: Namespace
 metadata:
   name: %s
-`, name)
+%s`, name, labelLines)
 	cmd, err := commandArgs([]string{"apply", "--validate=false", "-f", "-"})
 	if err != nil {
 		return err
