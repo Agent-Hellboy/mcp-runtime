@@ -1467,6 +1467,10 @@ func deployOperatorManifests(logger *zap.Logger, operatorImage, gatewayProxyImag
 // deployOperatorManifestsWithKubectl deploys operator manifests without requiring kustomize or controller-gen.
 // It applies CRD, RBAC, and manager manifests directly, replacing the image name and injecting operator args/env.
 func deployOperatorManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.Logger, operatorImage, gatewayProxyImage string, operatorArgs []string) error {
+	if err := ensureRepoManagedTraefikMiddlewareResources(kubectl, logger); err != nil {
+		return err
+	}
+
 	// Step 1: Apply CRD
 	core.Info("Applying CRD manifests")
 	// #nosec G204 -- fixed directory path from repository.
@@ -1694,6 +1698,11 @@ func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet, stor
 
 func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error {
 	rolloutTimeout := analyticsRolloutTimeoutString()
+
+	if err := ensureRepoManagedTraefikMiddlewareResources(kubectl, logger); err != nil {
+		return err
+	}
+
 	core.Info("Applying mcp-sentinel namespace and config")
 	manifests := []string{
 		"k8s/00-namespace.yaml",
@@ -1829,6 +1838,57 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		}
 	}
 	return core.WrapWithSentinelAndContext(core.ErrOperatorDeploymentFailed, cause, msg, ctx)
+}
+
+func ensureRepoManagedTraefikMiddlewareResources(kubectl core.KubectlRunner, logger *zap.Logger) error {
+	exists, err := deploymentExistsWithKubectl(kubectl, "traefik", "traefik")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+
+	if logger != nil {
+		logger.Info("Reconciling repo-managed Traefik file-provider resources", zap.String("namespace", "traefik"))
+	}
+
+	manifests := []string{
+		"config/ingress/base/dynamic-config.yaml",
+		"config/ingress/base/traefik.yaml",
+	}
+	for _, relPath := range manifests {
+		resolvedPath, err := assetpath.ResolveRepoAssetPath(relPath)
+		if err != nil {
+			return core.WrapWithSentinel(core.ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to resolve Traefik manifest %s: %v", relPath, err))
+		}
+		if err := kubectl.RunWithOutput([]string{"apply", "-f", resolvedPath}, os.Stdout, os.Stderr); err != nil {
+			return core.WrapWithSentinel(
+				core.ErrInstallIngressControllerFailed,
+				err,
+				fmt.Sprintf("failed to reconcile repo-managed Traefik manifest %s: %v", relPath, err),
+			)
+		}
+	}
+	return nil
+}
+
+func deploymentExistsWithKubectl(kubectl core.KubectlRunner, namespace, name string) (bool, error) {
+	cmd, err := kubectl.CommandArgs([]string{"get", "deployment", name, "-n", namespace, "-o", "jsonpath={.metadata.name}"})
+	if err != nil {
+		return false, err
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.SetStdout(&stdout)
+	cmd.SetStderr(&stderr)
+	if err := cmd.Run(); err == nil {
+		return strings.TrimSpace(stdout.String()) == name, nil
+	}
+	detail := strings.ToLower(strings.TrimSpace(stdout.String() + "\n" + stderr.String()))
+	if strings.Contains(detail, "not found") || strings.Contains(detail, "notfound") {
+		return false, nil
+	}
+	return false, fmt.Errorf("look up deployment %s/%s: %w", namespace, name, err)
 }
 
 func applyCatalogNamespaceForMode(kubectl core.KubectlRunner, platformMode string) error {

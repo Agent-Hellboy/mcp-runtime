@@ -1907,6 +1907,97 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	}
 }
 
+func TestEnsureRepoManagedTraefikMiddlewareResourcesAppliesBaseResources(t *testing.T) {
+	root := repoRootForTest(t)
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working dir: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir to repo root: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(origDir)
+	})
+
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "deployment", "traefik", "-n", "traefik", "-o", "jsonpath={.metadata.name}") {
+				cmd.RunFunc = func() error {
+					if cmd.StdoutW != nil {
+						_, _ = cmd.StdoutW.Write([]byte("traefik"))
+					}
+					return nil
+				}
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	if err := ensureRepoManagedTraefikMiddlewareResources(kubectl, zap.NewNop()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var (
+		hasLookup        bool
+		hasDynamicConfig bool
+		hasBaseTraefik   bool
+	)
+	for _, cmd := range mock.Commands {
+		if commandHasArgs(cmd, "get", "deployment", "traefik", "-n", "traefik", "-o", "jsonpath={.metadata.name}") {
+			hasLookup = true
+		}
+		if idx := argIndex(cmd.Args, "-f"); idx != -1 && idx+1 < len(cmd.Args) {
+			path := cmd.Args[idx+1]
+			if strings.Contains(path, "config/ingress/base/dynamic-config.yaml") {
+				hasDynamicConfig = true
+			}
+			if strings.Contains(path, "config/ingress/base/traefik.yaml") {
+				hasBaseTraefik = true
+			}
+		}
+	}
+	if !hasLookup {
+		t.Fatal("expected traefik deployment lookup")
+	}
+	if !hasDynamicConfig {
+		t.Fatal("expected repo-managed traefik dynamic-config apply")
+	}
+	if !hasBaseTraefik {
+		t.Fatal("expected repo-managed traefik base manifest apply")
+	}
+}
+
+func TestEnsureRepoManagedTraefikMiddlewareResourcesSkipsWhenMissing(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "deployment", "traefik", "-n", "traefik", "-o", "jsonpath={.metadata.name}") {
+				cmd.RunFunc = func() error {
+					if cmd.StderrW != nil {
+						_, _ = cmd.StderrW.Write([]byte("Error from server (NotFound): deployments.apps \"traefik\" not found"))
+					}
+					return errors.New("not found")
+				}
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	if err := ensureRepoManagedTraefikMiddlewareResources(kubectl, zap.NewNop()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, cmd := range mock.Commands {
+		if idx := argIndex(cmd.Args, "-f"); idx != -1 && idx+1 < len(cmd.Args) {
+			t.Fatalf("did not expect manifest apply when repo-managed traefik is absent, got %v", cmd.Args)
+		}
+	}
+}
+
 func TestDeployOperatorManifestsWithKubectlUsesIfNotPresentForTestModeImage(t *testing.T) {
 
 	root := repoRootForTest(t)
