@@ -2769,6 +2769,7 @@ var (
 	ErrEnsureOperatorNamespaceFailed       = newSentinelError("failed to ensure operator namespace", errx.CodeSetup, errx.DescSetup)
 	ErrApplyRBACFailed                     = newSentinelError("failed to apply RBAC", errx.CodeSetup, errx.DescSetup)
 	ErrReadManagerYAMLFailed               = newSentinelError("failed to read manager.yaml", errx.CodeSetup, errx.DescSetup)
+	ErrReadIngressManifestFailed           = newSentinelError("failed to read ingress manifest", errx.CodeSetup, errx.DescSetup)
 	ErrParseManagerYAMLFailed              = newSentinelError("failed to parse manager.yaml", errx.CodeSetup, errx.DescSetup)
 	ErrSetOperatorImageFailed              = newSentinelError("failed to set operator image", errx.CodeSetup, errx.DescSetup)
 	ErrMutateManagerYAMLFailed             = newSentinelError("failed to mutate manager.yaml", errx.CodeSetup, errx.DescSetup)
