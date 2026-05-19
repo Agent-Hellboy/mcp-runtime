@@ -152,7 +152,7 @@ func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryU
 	} else {
 		repo = ref.DropRegistryPrefix(repo)
 	}
-	repo, err = scopedRegistryRepository(ctx, platformClient, repo, normalizedScope)
+	repo, err = ScopedRegistryRepository(ctx, platformClient, repo, normalizedScope)
 	if err != nil {
 		return err
 	}
@@ -182,7 +182,8 @@ func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryU
 	return nil
 }
 
-func scopedRegistryRepository(ctx context.Context, client *platformapi.PlatformClient, repo string, scope publishscope.Scope) (string, error) {
+// ScopedRegistryRepository applies the repository prefix implied by a publish scope.
+func ScopedRegistryRepository(ctx context.Context, client *platformapi.PlatformClient, repo string, scope publishscope.Scope) (string, error) {
 	repo = strings.Trim(repo, "/")
 	if scope == "" || repo == "" {
 		return repo, nil
@@ -195,6 +196,9 @@ func scopedRegistryRepository(ctx context.Context, client *platformapi.PlatformC
 	}
 	if strings.Contains(repo, "/") {
 		return repo, nil
+	}
+	if client == nil {
+		return "", fmt.Errorf("resolve tenant registry scope: platform client is required")
 	}
 	principal, err := client.CurrentPrincipal(ctx)
 	if err != nil {

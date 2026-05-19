@@ -4907,6 +4907,7 @@ Package registry owns routing for the registry top-level command.
 - [`func ResolvePlatformRegistryURL(logger *zap.Logger) string`](#cli-registry-func-resolveplatformregistryurl-logger-zap-logger-string)
 - [`func RunRegistryProvision(mgr *RegistryManager, url, username, password, operatorImage string, dryRun bool) error`](#cli-registry-func-runregistryprovision-mgr-registrymanager-url-username-password-operatorimage-string-dryrun-bool-error)
 - [`func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error`](#cli-registry-func-runregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-mode-helpernamespace-string-error)
+- [`func ScopedRegistryRepository(ctx context.Context, client *platformapi.PlatformClient, repo string, scope publishscope.Scope) (string, error)`](#cli-registry-func-scopedregistryrepository-ctx-context-context-client-platformapi-platformclient-repo-string-scope-publishscope-scope-string-error)
 - [`type RegistryManager struct`](#cli-registry-type-registrymanager-struct)
 - [`func DefaultRegistryManager(logger *zap.Logger) *RegistryManager`](#cli-registry-func-defaultregistrymanager-logger-zap-logger-registrymanager)
 - [`func NewRegistryManager(kubectl *core.KubectlClient, exec core.Executor, logger *zap.Logger) *RegistryManager`](#cli-registry-func-newregistrymanager-kubectl-core-kubectlclient-exec-core-executor-logger-zap-logger-registrymanager)
@@ -4965,6 +4966,14 @@ func RunRegistryProvision(mgr *RegistryManager, url, username, password, operato
 ```text
 func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error
     RunRegistryPush contains the registry push command flow for folder packages.
+
+```
+
+<a id="cli-registry-func-scopedregistryrepository-ctx-context-context-client-platformapi-platformclient-repo-string-scope-publishscope-scope-string-error"></a>
+```text
+func ScopedRegistryRepository(ctx context.Context, client *platformapi.PlatformClient, repo string, scope publishscope.Scope) (string, error)
+    ScopedRegistryRepository applies the repository prefix implied by a publish
+    scope.
 ```
 
 <a id="cli-registry-types"></a>
@@ -5284,7 +5293,7 @@ Package server owns routing for the server top-level command.
 <a id="cli-server-index"></a>
 ### Index
 
-- [`func BuildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, context string) error`](#cli-server-func-buildimage-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-context-string-error)
+- [`func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, contextDir string) error`](#cli-server-func-buildimage-ctx-context-context-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-contextdir-string-error)
 - [`func New(runtime *core.Runtime) *cobra.Command`](#cli-server-func-new-runtime-core-runtime-cobra-command)
 - [`func NewWithManager(mgr *ServerManager) *cobra.Command`](#cli-server-func-newwithmanager-mgr-servermanager-cobra-command)
 - [`type ServerManager struct`](#cli-server-type-servermanager-struct)
@@ -5308,9 +5317,9 @@ Package server owns routing for the server top-level command.
 <a id="cli-server-functions"></a>
 ### Functions
 
-<a id="cli-server-func-buildimage-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-context-string-error"></a>
+<a id="cli-server-func-buildimage-ctx-context-context-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-contextdir-string-error"></a>
 ```text
-func BuildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, context string) error
+func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, contextDir string) error
     BuildImage builds a Docker image and updates MCP metadata for the server.
 
 ```

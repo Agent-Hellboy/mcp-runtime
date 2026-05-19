@@ -19,7 +19,7 @@ func newBuildImageCmd(logger *zap.Logger) *cobra.Command {
 		Long:  "Build a Docker image from Dockerfile and update metadata file.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return BuildImage(logger, args[0], dockerfile, metadataFile, metadataDir, registryURL, tag, contextDir)
+			return BuildImage(cmd.Context(), logger, args[0], dockerfile, metadataFile, metadataDir, registryURL, tag, contextDir)
 		},
 	}
 
