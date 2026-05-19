@@ -1009,6 +1009,45 @@ func TestHandleLoginSuccessResetsFailureCounter(t *testing.T) {
 	}
 }
 
+func TestLoginAttemptTrackerPrunesIdleClients(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := newLoginAttemptTracker(func() time.Time {
+		return now
+	})
+
+	tracker.recordFailure("client-old")
+	now = now.Add(loginAttemptIdleTTL + time.Second)
+	tracker.recordFailure("client-new")
+
+	if _, ok := tracker.clients["client-old"]; ok {
+		t.Fatal("idle login attempt client was not pruned")
+	}
+	if _, ok := tracker.clients["client-new"]; !ok {
+		t.Fatal("new login attempt client missing")
+	}
+}
+
+func TestLoginAttemptTrackerCapsRetainedClients(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := newLoginAttemptTracker(func() time.Time {
+		return now
+	})
+
+	for i := 0; i < loginAttemptMaxClients+1; i++ {
+		if !tracker.allow(fmt.Sprintf("client-%d", i)) {
+			t.Fatalf("client-%d should be allowed on first attempt", i)
+		}
+		now = now.Add(time.Millisecond)
+	}
+
+	if got := len(tracker.clients); got != loginAttemptMaxClients {
+		t.Fatalf("login attempt clients = %d, want %d", got, loginAttemptMaxClients)
+	}
+	if _, ok := tracker.clients["client-0"]; ok {
+		t.Fatal("oldest login attempt client was not evicted")
+	}
+}
+
 func useLoginAttemptTrackerForTest(t *testing.T) func() {
 	t.Helper()
 	previous := loginAttempts

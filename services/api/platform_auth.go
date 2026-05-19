@@ -21,6 +21,10 @@ const (
 	apiLoginLockoutMax  = 5 * time.Minute
 )
 const (
+	apiLoginAttemptIdleTTL    = 30 * time.Minute
+	apiLoginAttemptMaxEntries = 4096
+)
+const (
 	platformSignupRequestMaxBytes        = 4 * 1024
 	platformPasswordLoginRequestMaxBytes = 4 * 1024
 	platformOIDCLoginRequestMaxBytes     = 8 * 1024
@@ -43,6 +47,7 @@ type passwordUserEnsurer interface {
 type apiLoginAttempt struct {
 	failures    int
 	lockedUntil time.Time
+	lastSeen    time.Time
 }
 
 type apiLoginAttemptTracker struct {
@@ -61,8 +66,14 @@ func newAPILoginAttemptTracker(nowFn func() time.Time) *apiLoginAttemptTracker {
 func (t *apiLoginAttemptTracker) allow(key string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	state := t.entries[key]
 	now := t.nowFunc()
+	t.pruneLocked(now)
+	state, ok := t.entries[key]
+	if !ok {
+		return true
+	}
+	state.lastSeen = now
+	t.entries[key] = state
 	if state.lockedUntil.IsZero() || !state.lockedUntil.After(now) {
 		return true
 	}
@@ -73,20 +84,53 @@ func (t *apiLoginAttemptTracker) recordFailure(key string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.nowFunc()
+	t.pruneLocked(now)
 	state := t.entries[key]
 	state.failures++
 	state.lockedUntil = now.Add(lockoutDurationForFailures(state.failures))
+	state.lastSeen = now
 	t.entries[key] = state
+	t.enforceMaxLocked()
 	return state.failures
 }
 
 func (t *apiLoginAttemptTracker) recordSuccess(key string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	now := t.nowFunc()
+	t.pruneLocked(now)
 	state := t.entries[key]
 	failures := state.failures
 	delete(t.entries, key)
 	return failures
+}
+
+func (t *apiLoginAttemptTracker) pruneLocked(now time.Time) {
+	if apiLoginAttemptIdleTTL <= 0 {
+		return
+	}
+	for key, state := range t.entries {
+		if state.lastSeen.IsZero() || (now.Sub(state.lastSeen) > apiLoginAttemptIdleTTL && !state.lockedUntil.After(now)) {
+			delete(t.entries, key)
+		}
+	}
+}
+
+func (t *apiLoginAttemptTracker) enforceMaxLocked() {
+	for len(t.entries) > apiLoginAttemptMaxEntries {
+		var oldestKey string
+		var oldestSeen time.Time
+		for key, state := range t.entries {
+			if oldestKey == "" || state.lastSeen.Before(oldestSeen) {
+				oldestKey = key
+				oldestSeen = state.lastSeen
+			}
+		}
+		if oldestKey == "" {
+			return
+		}
+		delete(t.entries, oldestKey)
+	}
 }
 
 func lockoutDurationForFailures(failures int) time.Duration {

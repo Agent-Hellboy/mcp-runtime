@@ -39,6 +39,8 @@ const (
 	defaultLoginFailureWindow     = 15 * time.Minute
 	defaultLoginFailureThreshold  = 5
 	defaultLoginLockoutDuration   = 5 * time.Minute
+	loginAttemptIdleTTL           = 30 * time.Minute
+	loginAttemptMaxClients        = 4096
 	loginFailureLogEvery          = 3
 	loginRequestMaxBytes          = 8 * 1024
 )
@@ -84,6 +86,7 @@ type loginAttemptTracker struct {
 type loginClientState struct {
 	tokens         int
 	lastRefill     time.Time
+	lastSeen       time.Time
 	failures       int
 	failuresExpire time.Time
 	lockedUntil    time.Time
@@ -721,8 +724,10 @@ func (t *loginAttemptTracker) allow(clientID string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	state := t.stateForLocked(clientID)
 	now := t.now()
+	t.pruneLocked(now)
+	state := t.stateForLocked(clientID, now)
+	state.lastSeen = now
 	refillLoginTokens(state, now)
 	if now.Before(state.lockedUntil) {
 		return false
@@ -731,6 +736,7 @@ func (t *loginAttemptTracker) allow(clientID string) bool {
 		return false
 	}
 	state.tokens--
+	t.enforceMaxLocked()
 	return true
 }
 
@@ -738,8 +744,10 @@ func (t *loginAttemptTracker) recordFailure(clientID string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	state := t.stateForLocked(clientID)
 	now := t.now()
+	t.pruneLocked(now)
+	state := t.stateForLocked(clientID, now)
+	state.lastSeen = now
 	if now.After(state.failuresExpire) {
 		state.failures = 0
 	}
@@ -748,6 +756,7 @@ func (t *loginAttemptTracker) recordFailure(clientID string) int {
 	if state.failures >= loginFailureThreshold {
 		state.lockedUntil = now.Add(loginLockoutDuration)
 	}
+	t.enforceMaxLocked()
 	return state.failures
 }
 
@@ -755,7 +764,13 @@ func (t *loginAttemptTracker) recordSuccess(clientID string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	state := t.stateForLocked(clientID)
+	now := t.now()
+	t.pruneLocked(now)
+	state := t.clients[clientID]
+	if state == nil {
+		return 0
+	}
+	state.lastSeen = now
 	prior := state.failures
 	state.failures = 0
 	state.failuresExpire = time.Time{}
@@ -763,14 +778,41 @@ func (t *loginAttemptTracker) recordSuccess(clientID string) int {
 	return prior
 }
 
-func (t *loginAttemptTracker) stateForLocked(clientID string) *loginClientState {
+func (t *loginAttemptTracker) stateForLocked(clientID string, now time.Time) *loginClientState {
 	state := t.clients[clientID]
 	if state == nil {
-		now := t.now()
-		state = &loginClientState{tokens: loginRateLimitCapacity, lastRefill: now}
+		state = &loginClientState{tokens: loginRateLimitCapacity, lastRefill: now, lastSeen: now}
 		t.clients[clientID] = state
 	}
 	return state
+}
+
+func (t *loginAttemptTracker) pruneLocked(now time.Time) {
+	if loginAttemptIdleTTL <= 0 {
+		return
+	}
+	for clientID, state := range t.clients {
+		if state.lastSeen.IsZero() || (now.Sub(state.lastSeen) > loginAttemptIdleTTL && !now.Before(state.lockedUntil)) {
+			delete(t.clients, clientID)
+		}
+	}
+}
+
+func (t *loginAttemptTracker) enforceMaxLocked() {
+	for len(t.clients) > loginAttemptMaxClients {
+		var oldestClientID string
+		var oldestSeen time.Time
+		for clientID, state := range t.clients {
+			if oldestClientID == "" || state.lastSeen.Before(oldestSeen) {
+				oldestClientID = clientID
+				oldestSeen = state.lastSeen
+			}
+		}
+		if oldestClientID == "" {
+			return
+		}
+		delete(t.clients, oldestClientID)
+	}
 }
 
 func refillLoginTokens(state *loginClientState, now time.Time) {
