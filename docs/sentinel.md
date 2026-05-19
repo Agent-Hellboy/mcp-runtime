@@ -125,6 +125,13 @@ to a template containing `{namespace}` and `{server}` only when that Grafana
 deployment enforces tenant-aware access. Normal-user external links also
 require `GRAFANA_SCOPED_USER_ACCESS=true`.
 
+The bundled Prometheus uses read-only Kubernetes discovery for annotated
+MCPServer Services and scrapes the gateway sidecar `/metrics` endpoint.
+Gateway metrics include request totals, policy decisions, latency, request and
+response bytes, in-flight requests, and policy reload state. HTTP and MCP method
+labels are normalized to bounded sets to prevent attacker-controlled label
+cardinality.
+
 ### Auth model
 
 | Service | Auth behavior |
@@ -133,7 +140,7 @@ require `GRAFANA_SCOPED_USER_ACCESS=true`.
 | **ui** | `/auth/login` creates an HttpOnly UI session from `api_key`, `id_token`, or `email`/`password`. The UI then proxies `/api/*` with an upstream API key or bearer token. `/auth/admin-check` accepts admin UI sessions or keys from `ADMIN_API_KEYS`; it falls back to `API_KEYS` only when the explicit legacy dev/test fallback is enabled. |
 | **ingest** | `/live`, `/ready`, and `/health` are open. `/events` accepts `x-api-key` from `INGEST_API_KEYS`, legacy `API_KEYS`, or a configured OIDC bearer token. If no API keys and no JWKS are configured, intake auth is bypassed. |
 | **processor** | No data API. It exposes metrics and a simple health check on the metrics port. |
-| **mcp-gateway** | No admin API. It authenticates MCP requests according to the rendered server policy: header identity or OAuth bearer tokens, depending on `spec.auth`. |
+| **mcp-gateway** | No admin API. It authenticates MCP requests according to the rendered server policy and exposes Prometheus metrics at `/metrics`. |
 
 ### API service
 

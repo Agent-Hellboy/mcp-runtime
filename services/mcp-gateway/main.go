@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	_ "go.uber.org/automaxprocs" // align GOMAXPROCS with container CPU quota
 
@@ -56,6 +58,7 @@ func main() {
 
 	srv := &gatewayServer{
 		proxy:                 proxy,
+		metrics:               newGatewayMetrics(prometheus.DefaultRegisterer),
 		analyticsURL:          analyticsURL,
 		apiKey:                apiKey,
 		source:                source,
@@ -85,6 +88,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/", srv.handleGateway)
 
 	shutdown, err := initTracer("mcp-gateway")

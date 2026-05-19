@@ -411,6 +411,7 @@ func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
 		`if (isTenantUser() && server.namespace && server.name)`,
 		`retireButton.textContent = "Retire"`,
 		`metricsButton.textContent = "Prometheus"`,
+		`grafanaButton.textContent = "Grafana"`,
 		`async function openScopedObservability(server, target)`,
 		`server.observability?.prometheus?.queries?.length`,
 		`authenticated && !isTenantUser()`,

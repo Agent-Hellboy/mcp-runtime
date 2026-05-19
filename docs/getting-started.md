@@ -185,6 +185,8 @@ example `MCP_IMAGE_PLATFORM=linux/amd64` for standard VPS/k3s nodes.
 Tenant users open server-scoped Prometheus and Grafana views from Activity
 server rows. The platform API verifies access to the exact `MCPServer` and
 expands only allowlisted Prometheus queries; raw Prometheus remains internal.
+The bundled Prometheus discovers operator-managed MCPServer Services and
+scrapes metrics from their gateway sidecars.
 
 You can also skip the saved provision step and pass
 `--external-registry-url registry.example.com` directly to `setup`.

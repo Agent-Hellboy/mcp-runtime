@@ -683,6 +683,10 @@ func TestReconcileServiceUsesGatewayPortWhenEnabled(t *testing.T) {
 		t.Fatalf("expected 1 service port, got %d", len(service.Spec.Ports))
 	}
 	assertEqual(t, "serviceTargetPort", service.Spec.Ports[0].TargetPort.IntVal, int32(8091))
+	assertEqual(t, "serviceManagedByLabel", service.Labels["app.kubernetes.io/managed-by"], "mcp-runtime")
+	assertEqual(t, "servicePrometheusScrape", service.Annotations["prometheus.io/scrape"], "true")
+	assertEqual(t, "servicePrometheusPath", service.Annotations["prometheus.io/path"], "/metrics")
+	assertEqual(t, "servicePrometheusPort", service.Annotations["prometheus.io/port"], "8091")
 }
 
 func TestResolveGatewayImage(t *testing.T) {

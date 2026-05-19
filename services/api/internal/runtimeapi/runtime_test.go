@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -613,8 +614,14 @@ func TestRuntimeObservabilityLinksAllowOwnedNamespace(t *testing.T) {
 	if got := payload.Prometheus.Queries[0].URL; !strings.HasPrefix(got, "https://platform.example.test/api/runtime/observability/prometheus/query?") {
 		t.Fatalf("prometheus URL = %q", got)
 	}
-	if payload.Grafana.Available {
-		t.Fatalf("grafana should be unavailable without configured tenant-aware dashboard: %#v", payload.Grafana)
+	if !payload.Grafana.Available {
+		t.Fatalf("grafana should be available through the default scoped dashboard: %#v", payload.Grafana)
+	}
+	if payload.Grafana.DirectAdminOnly {
+		t.Fatalf("default scoped grafana dashboard should not be admin-only: %#v", payload.Grafana)
+	}
+	if got := payload.Grafana.URL; !strings.HasPrefix(got, "https://platform.example.test/api/runtime/observability/grafana/dashboard?") {
+		t.Fatalf("grafana URL = %q", got)
 	}
 }
 
@@ -753,6 +760,98 @@ func TestRuntimeObservabilityPrometheusProxyScopesQuery(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), "tenant-b") {
 		t.Fatalf("response leaked foreign tenant marker: %s", recorder.Body.String())
+	}
+}
+
+func TestRuntimeObservabilityPrometheusProxyLogsBoundedFailureBody(t *testing.T) {
+	failureBody := strings.Repeat("x", prometheusErrorBodyLimit+200) + "\nsecret-after-limit"
+	prometheus := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, failureBody, http.StatusUnprocessableEntity)
+	}))
+	defer prometheus.Close()
+	t.Setenv(envMCPPrometheusAPIURL, prometheus.URL)
+
+	var logs bytes.Buffer
+	originalWriter := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(originalWriter)
+		log.SetFlags(originalFlags)
+	})
+
+	server := newRuntimeServerWithMCPServers(t, ownedTestMCPServer("demo", "user-1", "user-1"))
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/observability/prometheus/query?namespace=user-1&server=demo&query_id=up", nil)
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:              roleUser,
+		Subject:           "user-1",
+		Namespace:         "user-1",
+		AllowedNamespaces: []string{"user-1"},
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeObservabilityPrometheusQuery(recorder, request)
+
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadGateway)
+	}
+	got := logs.String()
+	if !strings.Contains(got, `status=422 body="`) {
+		t.Fatalf("log missing upstream status/body: %q", got)
+	}
+	if strings.Contains(got, "secret-after-limit") {
+		t.Fatalf("log included content beyond %d-byte limit: %q", prometheusErrorBodyLimit, got)
+	}
+}
+
+func TestRuntimeObservabilityGrafanaDashboardScopesQueries(t *testing.T) {
+	var gotQueries []string
+	prometheus := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQueries = append(gotQueries, r.URL.Query().Get("query"))
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+	}))
+	defer prometheus.Close()
+	t.Setenv(envMCPPrometheusAPIURL, prometheus.URL+"/prometheus")
+
+	server := newRuntimeServerWithMCPServers(t, ownedTestMCPServer("demo", "user-1", "user-1"))
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/observability/grafana/dashboard?namespace=user-1&server=demo", nil)
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+			sharedCatalogNamespace,
+		},
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeObservabilityGrafanaDashboard(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("content-type"); !strings.Contains(got, "text/html") {
+		t.Fatalf("content-type = %q, want text/html", got)
+	}
+	body := recorder.Body.String()
+	for _, want := range []string{"Scoped Grafana", "user-1", "demo", "mcp_gateway_requests_total"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard body missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "tenant-b") {
+		t.Fatalf("dashboard leaked foreign tenant marker: %s", body)
+	}
+	if len(gotQueries) == 0 {
+		t.Fatal("expected scoped prometheus queries")
+	}
+	for _, query := range gotQueries {
+		if !strings.Contains(query, `namespace="user-1",server="demo"`) {
+			t.Fatalf("query = %q, want user/server scoped selector", query)
+		}
 	}
 }
 

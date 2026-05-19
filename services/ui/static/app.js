@@ -1291,7 +1291,7 @@ function createUserServerActionsCell(server) {
     const metricsButton = document.createElement("button");
     metricsButton.type = "button";
     metricsButton.className = "ghost action-btn";
-    metricsButton.textContent = "Metrics";
+    metricsButton.textContent = "Prometheus";
     metricsButton.addEventListener("click", () => openScopedObservability(server, "prometheus"));
     actions.appendChild(metricsButton);
   }

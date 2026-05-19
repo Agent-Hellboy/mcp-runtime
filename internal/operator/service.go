@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,7 +30,17 @@ func (r *MCPServerReconciler) reconcileService(ctx context.Context, mcpServer *m
 
 	op, err := ctrl.CreateOrUpdate(ctx, r.Client, service, func() error {
 		labels := map[string]string{
-			"app": mcpServer.Name,
+			LabelApp:       mcpServer.Name,
+			LabelManagedBy: LabelManagedByValue,
+		}
+		service.Labels = labels
+		service.Annotations = nil
+		if gatewayEnabled(mcpServer) {
+			service.Annotations = map[string]string{
+				"prometheus.io/path":   "/metrics",
+				"prometheus.io/port":   strconv.Itoa(int(mcpServer.Spec.Gateway.Port)),
+				"prometheus.io/scrape": "true",
+			}
 		}
 
 		service.Spec = corev1.ServiceSpec{

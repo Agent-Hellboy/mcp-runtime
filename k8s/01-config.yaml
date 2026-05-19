@@ -31,6 +31,4 @@ data:
   # Dashboard observability links
   GRAFANA_URL: "/grafana"
   PROMETHEUS_API_URL: "http://prometheus:9090/prometheus"
-  GRAFANA_SERVER_DASHBOARD_URL: ""
-  GRAFANA_SCOPED_USER_ACCESS: "false"
   DASHBOARD_REFRESH_INTERVAL: "30"

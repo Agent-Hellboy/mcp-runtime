@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -18,6 +19,9 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
@@ -522,6 +526,130 @@ func TestAuditPayloadIncludesLatencyMetadata(t *testing.T) {
 	}
 }
 
+func TestGatewayMetricsRecordRequestsPolicyDecisionsAndBytes(t *testing.T) {
+	t.Parallel()
+
+	registry := prometheus.NewRegistry()
+	policy := &policypkg.Document{
+		Server: policypkg.Server{
+			Name:      "demo",
+			Namespace: "mcp-servers",
+			TeamID:    "team-acme",
+			Cluster:   "kind",
+		},
+		Auth: &policypkg.Auth{
+			Mode:            "header",
+			HumanIDHeader:   defaultHumanHeader,
+			AgentIDHeader:   defaultAgentHeader,
+			TeamIDHeader:    defaultTeamHeader,
+			SessionIDHeader: defaultSessionHeader,
+		},
+		Policy: &policypkg.Config{
+			Mode:            "allow-list",
+			DefaultDecision: "deny",
+			PolicyVersion:   "test-policy",
+		},
+	}
+	proxy := newTestGatewayServer(t, policy, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	proxy.metrics = newGatewayMetrics(registry)
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo"}}`
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(defaultHumanHeader, "human-1")
+	recorder := httptest.NewRecorder()
+
+	proxy.handleGateway(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+
+	requestLabels := []string{"mcp-servers", "demo", "kind", "team-acme", http.MethodPost, "tools/call", "deny", "403"}
+	if got := testutil.ToFloat64(proxy.metrics.requestsTotal.WithLabelValues(requestLabels...)); got != 1 {
+		t.Fatalf("requests total = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(proxy.metrics.policyDecisionsTotal.WithLabelValues("mcp-servers", "demo", "kind", "team-acme", "deny", "no_matching_grant", "tools/call")); got != 1 {
+		t.Fatalf("policy decisions total = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(proxy.metrics.requestBytesTotal.WithLabelValues(requestLabels...)); got != float64(len(body)) {
+		t.Fatalf("request bytes total = %v, want %d", got, len(body))
+	}
+	if got := testutil.ToFloat64(proxy.metrics.responseBytesTotal.WithLabelValues(requestLabels...)); got == 0 {
+		t.Fatal("response bytes total = 0, want denied response bytes")
+	}
+	if got := testutil.ToFloat64(proxy.metrics.inflightRequests.WithLabelValues("mcp-servers", "demo", "kind", "team-acme")); got != 0 {
+		t.Fatalf("inflight requests = %v, want 0 after request completion", got)
+	}
+	if metrics := gatherMetricsText(t, registry); !strings.Contains(metrics, "mcp_gateway_request_duration_seconds_bucket") {
+		t.Fatalf("duration histogram was not exposed:\n%s", metrics)
+	}
+}
+
+func TestGatewayMetricsRecordPolicyReloadResults(t *testing.T) {
+	t.Parallel()
+
+	registry := prometheus.NewRegistry()
+	policyFile := filepath.Join(t.TempDir(), "policy.json")
+	if err := os.WriteFile(policyFile, []byte(`{
+		"server":{"name":"demo","namespace":"mcp-servers","team_id":"team-acme","cluster":"kind"},
+		"auth":{"mode":"header"},
+		"policy":{"mode":"observe","default_decision":"deny","policy_version":"test-policy"}
+	}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	proxy := &gatewayServer{
+		metrics:               newGatewayMetrics(registry),
+		policyFile:            policyFile,
+		serverName:            "demo",
+		serverNamespace:       "mcp-servers",
+		clusterName:           "kind",
+		defaultHumanHeader:    defaultHumanHeader,
+		defaultAgentHeader:    defaultAgentHeader,
+		defaultTeamHeader:     defaultTeamHeader,
+		defaultSessionHeader:  defaultSessionHeader,
+		defaultPolicyMode:     defaultPolicyMode,
+		defaultPolicyDecision: defaultPolicyDecision,
+		defaultPolicyVersion:  "test-policy",
+	}
+
+	if err := proxy.reloadPolicy(); err != nil {
+		t.Fatalf("reloadPolicy() error = %v", err)
+	}
+	if got := testutil.ToFloat64(proxy.metrics.policyReloadsTotal.WithLabelValues("mcp-servers", "demo", "kind", "team-acme", "success")); got != 1 {
+		t.Fatalf("successful policy reloads = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(proxy.metrics.policyLastReload.WithLabelValues("mcp-servers", "demo", "kind", "team-acme")); got == 0 {
+		t.Fatal("policy last reload timestamp = 0, want non-zero")
+	}
+
+	if err := os.WriteFile(policyFile, []byte(`{`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := proxy.reloadPolicy(); err == nil {
+		t.Fatal("reloadPolicy() error = nil, want malformed policy error")
+	}
+	if got := testutil.ToFloat64(proxy.metrics.policyReloadsTotal.WithLabelValues("mcp-servers", "demo", "kind", "team-acme", "error")); got != 1 {
+		t.Fatalf("failed policy reloads = %v, want 1", got)
+	}
+}
+
+func TestGatewayMetricMethodsUseBoundedLabels(t *testing.T) {
+	t.Parallel()
+
+	if got := metricHTTPMethod("CUSTOM-" + strings.Repeat("x", 80)); got != "OTHER" {
+		t.Fatalf("metricHTTPMethod() = %q, want OTHER", got)
+	}
+	if got := metricRPCMethod("attacker/" + strings.Repeat("x", 80)); got != "other" {
+		t.Fatalf("metricRPCMethod() = %q, want other", got)
+	}
+	if got := metricRPCMethod("tools/call"); got != "tools/call" {
+		t.Fatalf("metricRPCMethod(tools/call) = %q", got)
+	}
+}
+
 func TestStartPolicyCacheRequiresConfiguredPolicyFile(t *testing.T) {
 	t.Parallel()
 
@@ -962,6 +1090,15 @@ func newTestGatewayServer(t *testing.T, policy *policypkg.Document, upstream htt
 	}
 	server.snapshotPolicy(policySnapshot{Policy: policy})
 	return server
+}
+
+func gatherMetricsText(t *testing.T, registry *prometheus.Registry) string {
+	t.Helper()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	promhttp.HandlerFor(registry, promhttp.HandlerOpts{}).ServeHTTP(recorder, request)
+	return recorder.Body.String()
 }
 
 func oauthPolicy(issuerURL string) *policypkg.Document {
