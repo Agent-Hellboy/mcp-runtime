@@ -137,6 +137,8 @@ type SetupDeps struct {
 	PushAnalyticsImageToInternal    func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
 	DeployOperatorManifests         func(logger *zap.Logger, operatorImage, gatewayProxyImage string, operatorArgs []string) error
 	DeployAnalyticsManifests        func(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error
+	DisableRegistryIngressAuth      func() error
+	EnableRegistryIngressAuth       func() error
 	ConfigureProvisionedRegistryEnv func(ext *config.ExternalRegistryConfig, secretName string) error
 	RestartDeployment               func(name, namespace string) error
 	CheckCRDInstalled               func(name string) error
@@ -215,6 +217,12 @@ func (d SetupDeps) withDefaults(logger *zap.Logger) SetupDeps {
 	}
 	if d.DeployAnalyticsManifests == nil {
 		d.DeployAnalyticsManifests = deployAnalyticsManifests
+	}
+	if d.DisableRegistryIngressAuth == nil {
+		d.DisableRegistryIngressAuth = disableRegistryIngressAuth
+	}
+	if d.EnableRegistryIngressAuth == nil {
+		d.EnableRegistryIngressAuth = enableRegistryIngressAuth
 	}
 	if d.ConfigureProvisionedRegistryEnv == nil {
 		d.ConfigureProvisionedRegistryEnv = configureProvisionedRegistryEnv
@@ -959,6 +967,46 @@ func analyticsImageFor(ext *config.ExternalRegistryConfig, repository string) st
 		return strings.TrimSuffix(ext.URL, "/") + "/" + repository + ":" + tag
 	}
 	return fmt.Sprintf("%s/%s:%s", registry.ResolvePlatformRegistryURL(nil), repository, tag)
+}
+
+func shouldStageRegistryIngressAuth(usingExternalRegistry bool) bool {
+	if usingExternalRegistry {
+		return false
+	}
+	host := strings.TrimSpace(core.GetRegistryIngressHost())
+	if host == "" {
+		return false
+	}
+	return !isDevRegistryURL(host)
+}
+
+func disableRegistryIngressAuth() error {
+	return disableRegistryIngressAuthWithKubectl(core.DefaultKubectlClient())
+}
+
+func enableRegistryIngressAuth() error {
+	return enableRegistryIngressAuthWithKubectl(core.DefaultKubectlClient())
+}
+
+func disableRegistryIngressAuthWithKubectl(kubectl core.KubectlRunner) error {
+	err := kubectl.RunWithOutput([]string{
+		"annotate", "ingress", "registry",
+		"-n", "registry",
+		"traefik.ingress.kubernetes.io/router.middlewares-",
+	}, io.Discard, io.Discard)
+	if err != nil && !strings.Contains(err.Error(), "not found") {
+		return err
+	}
+	return nil
+}
+
+func enableRegistryIngressAuthWithKubectl(kubectl core.KubectlRunner) error {
+	return kubectl.RunWithOutput([]string{
+		"annotate", "ingress", "registry",
+		"-n", "registry",
+		"traefik.ingress.kubernetes.io/router.middlewares=registry-admin-auth@file",
+		"--overwrite",
+	}, io.Discard, io.Discard)
 }
 
 func configureProvisionedRegistryEnv(ext *config.ExternalRegistryConfig, secretName string) error {

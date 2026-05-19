@@ -18,6 +18,7 @@ type SetupContext struct {
 	Plan                  setupplan.Plan
 	ExternalRegistry      *config.ExternalRegistryConfig
 	UsingExternalRegistry bool
+	RegistryAuthStaged    bool
 	RegistrySecretName    string
 	OperatorImage         string
 	GatewayProxyImage     string
@@ -105,6 +106,20 @@ func (s operatorImageStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupCon
 	return nil
 }
 
+type registryAuthDisableStep struct{}
+
+func (s registryAuthDisableStep) Name() string { return "registry-auth-disable" }
+func (s registryAuthDisableStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error {
+	if !shouldStageRegistryIngressAuth(ctx.UsingExternalRegistry) {
+		return nil
+	}
+	if err := deps.DisableRegistryIngressAuth(); err != nil {
+		return err
+	}
+	ctx.RegistryAuthStaged = true
+	return nil
+}
+
 type deployOperatorStepCmd struct{}
 
 func (s deployOperatorStepCmd) Name() string { return "operator-deploy" }
@@ -158,16 +173,28 @@ func (s verifyStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) e
 	return nil
 }
 
+type registryAuthEnableStep struct{}
+
+func (s registryAuthEnableStep) Name() string { return "registry-auth-enable" }
+func (s registryAuthEnableStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error {
+	if !ctx.RegistryAuthStaged {
+		return nil
+	}
+	return deps.EnableRegistryIngressAuth()
+}
+
 func buildSetupSteps(ctx *SetupContext) []SetupStep {
 	return NewSetupPipeline().
 		With(clusterStep{}).
 		WithIf(ctx.Plan.TLSEnabled, tlsStep{}).
 		With(registryStep{}).
+		With(registryAuthDisableStep{}).
 		With(operatorImageStep{}).
 		WithIf(ctx.Plan.DeployAnalytics, analyticsImageStep{}).
 		With(deployOperatorStepCmd{}).
 		WithIf(ctx.Plan.DeployAnalytics, deployAnalyticsStep{}).
 		With(verifyStep{}).
+		With(registryAuthEnableStep{}).
 		Build()
 }
 
