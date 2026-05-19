@@ -337,7 +337,12 @@ owned/team namespaces. In `public` mode, anonymous users can list the
 `mcp-servers-public` catalog, while signed-in users can publish to the public
 catalog and their owned/team namespaces. Admin callers can inspect any
 namespace. Passing `namespace=<name>` narrows the list to an authorized
-namespace for the active mode.
+namespace for the active mode. `POST /api/runtime/servers` also accepts
+`scope: "tenant" | "org" | "public"` in the JSON body. `scope: "public"`
+requires public platform mode and resolves the active public catalog namespace;
+`scope: "org"` requires org mode and resolves the active org catalog namespace;
+`scope: "tenant"` uses the caller's tenant/team namespace unless the request
+passes an authorized `namespace`.
 
 `POST /api/runtime/servers` is governed by the platform publish policy. Admins
 configure `PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `5`, set `0` to disable)
@@ -436,7 +441,10 @@ proxying Docker Registry API traffic. Platform admin credentials (`x-api-key` or
 Bearer token) keep global registry access. Normal user API keys and platform
 Bearer tokens are accepted only for repository paths scoped to the caller's user
 namespace or team slug, such as `/v2/user-1/demo/...` or `/v2/acme/demo/...`.
-Anonymous requests and non-admin catalog requests are rejected.
+In `public` mode, signed-in users may also write `/v2/public/...` (or the
+configured public catalog namespace). In `org` mode, signed-in users may write
+`/v2/org/...` (or the configured org catalog namespace). Anonymous requests and
+catalog requests for inactive modes are rejected.
 
 Deployment apply body:
 

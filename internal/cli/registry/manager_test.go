@@ -2,6 +2,7 @@ package registry
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/internal/cli/platformapi"
 )
 
 func TestRegistryManager_CheckRegistryStatus(t *testing.T) {
@@ -131,7 +133,7 @@ func TestRunRegistryPushRequiresPlatformCredentials(t *testing.T) {
 	kubectl := core.NewTestKubectlClient(mock)
 	mgr := NewRegistryManager(kubectl, mock, zap.NewNop())
 
-	err := RunRegistryPush(mgr, "source:tag", "registry.example.com", "demo", "direct", "registry")
+	err := RunRegistryPush(context.Background(), mgr, "source:tag", "registry.example.com", "demo", "", "direct", "registry")
 	if err == nil {
 		t.Fatal("expected missing platform credentials error")
 	}
@@ -140,6 +142,27 @@ func TestRunRegistryPushRequiresPlatformCredentials(t *testing.T) {
 	}
 	if mock.HasCommand("docker") {
 		t.Fatal("registry push should fail before docker commands when platform credentials are missing")
+	}
+}
+
+func TestScopedRegistryRepositoryHelpers(t *testing.T) {
+	if got := prefixRepositoryScope("demo", "public"); got != "public/demo" {
+		t.Fatalf("prefixRepositoryScope = %q, want public/demo", got)
+	}
+	if got := prefixRepositoryScope("public/demo", "public"); got != "public/demo" {
+		t.Fatalf("prefixRepositoryScope double-prefixed: %q", got)
+	}
+	if got := tenantRegistryScope(platformapi.Principal{
+		Namespace: "mcp-team-acme",
+		Teams: []platformapi.Team{{
+			Slug:      "acme",
+			Namespace: "mcp-team-acme",
+		}},
+	}); got != "acme" {
+		t.Fatalf("tenantRegistryScope team = %q, want acme", got)
+	}
+	if got := tenantRegistryScope(platformapi.Principal{Namespace: "user-1", Subject: "user-1"}); got != "user-1" {
+		t.Fatalf("tenantRegistryScope user = %q, want user-1", got)
 	}
 }
 

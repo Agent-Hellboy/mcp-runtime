@@ -20,6 +20,7 @@ import (
 	"mcp-runtime/internal/cli/platformapi"
 	"mcp-runtime/internal/cli/registry/config"
 	"mcp-runtime/internal/cli/registry/ref"
+	"mcp-runtime/pkg/publishscope"
 )
 
 const defaultRegistryImage = "registry:2.8.3"
@@ -117,11 +118,18 @@ func RunRegistryProvision(mgr *RegistryManager, url, username, password, operato
 }
 
 // RunRegistryPush contains the registry push command flow for folder packages.
-func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helperNamespace string) error {
+func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if image == "" {
 		err := core.NewWithSentinel(core.ErrImageRequired, "image is required (use --image)")
 		core.Error("Image required")
 		core.LogStructuredError(mgr.logger, err, "Image required")
+		return err
+	}
+	normalizedScope, err := publishscope.Normalize(scope)
+	if err != nil {
 		return err
 	}
 	targetRegistry := registryURL
@@ -133,7 +141,7 @@ func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helpe
 	if targetRegistry == "" {
 		targetRegistry = resolvePlatformRegistryURL(mgr.logger)
 	}
-	platformClient, err := requirePlatformPushCredentials()
+	platformClient, err := requirePlatformPushCredentials(ctx)
 	if err != nil {
 		return err
 	}
@@ -143,6 +151,10 @@ func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helpe
 		repo = name
 	} else {
 		repo = ref.DropRegistryPrefix(repo)
+	}
+	repo, err = ScopedRegistryRepository(ctx, platformClient, repo, normalizedScope)
+	if err != nil {
+		return err
 	}
 	target := targetRegistry + "/" + repo
 	if tag != "" {
@@ -166,16 +178,68 @@ func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helpe
 	if pushErr != nil {
 		return pushErr
 	}
-	mgr.recordImagePublish(platformClient, image, target, mode)
+	mgr.recordImagePublish(ctx, platformClient, image, target, mode)
 	return nil
 }
 
-func requirePlatformPushCredentials() (*platformapi.PlatformClient, error) {
+// ScopedRegistryRepository applies the repository prefix implied by a publish scope.
+func ScopedRegistryRepository(ctx context.Context, client *platformapi.PlatformClient, repo string, scope publishscope.Scope) (string, error) {
+	repo = strings.Trim(repo, "/")
+	if scope == "" || repo == "" {
+		return repo, nil
+	}
+	if alias, ok := publishscope.RegistryAlias(scope); ok {
+		return prefixRepositoryScope(repo, alias), nil
+	}
+	if scope != publishscope.Tenant {
+		return repo, nil
+	}
+	if strings.Contains(repo, "/") {
+		return repo, nil
+	}
+	if client == nil {
+		return "", fmt.Errorf("resolve tenant registry scope: platform client is required")
+	}
+	principal, err := client.CurrentPrincipal(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolve tenant registry scope: %w", err)
+	}
+	prefix := tenantRegistryScope(principal)
+	if prefix == "" {
+		return "", fmt.Errorf("resolve tenant registry scope: authenticated principal has no tenant namespace")
+	}
+	return prefix + "/" + repo, nil
+}
+
+func prefixRepositoryScope(repo, scope string) string {
+	if repo == scope || strings.HasPrefix(repo, scope+"/") {
+		return repo
+	}
+	return scope + "/" + repo
+}
+
+func tenantRegistryScope(principal platformapi.Principal) string {
+	namespace := strings.TrimSpace(principal.Namespace)
+	for _, team := range principal.Teams {
+		if strings.TrimSpace(team.Namespace) == namespace && strings.TrimSpace(team.Slug) != "" {
+			return strings.TrimSpace(team.Slug)
+		}
+	}
+	if namespace != "" {
+		return namespace
+	}
+	return strings.TrimSpace(principal.Subject)
+}
+
+func requirePlatformPushCredentials(ctx context.Context) (*platformapi.PlatformClient, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	client, err := platformapi.NewPlatformClient()
 	if err != nil {
 		return nil, fmt.Errorf("registry push requires platform credentials; run mcp-runtime auth login or set MCP_PLATFORM_API_TOKEN and MCP_PLATFORM_API_URL: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := client.ValidateCredentials(ctx); err != nil {
 		return nil, fmt.Errorf("registry push credentials were rejected: %w", err)
@@ -183,11 +247,14 @@ func requirePlatformPushCredentials() (*platformapi.PlatformClient, error) {
 	return client, nil
 }
 
-func (m *RegistryManager) recordImagePublish(client *platformapi.PlatformClient, source, target, mode string) {
+func (m *RegistryManager) recordImagePublish(ctx context.Context, client *platformapi.PlatformClient, source, target, mode string) {
 	if client == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if err := client.RecordImagePublish(ctx, platformapi.ImagePublishRecord{
 		ImageRef:    target,

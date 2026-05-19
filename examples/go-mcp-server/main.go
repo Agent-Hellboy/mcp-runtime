@@ -34,6 +34,12 @@ type slugifyArgs struct {
 	Message string `json:"message" jsonschema:"message to slugify"`
 }
 
+type taskArgs struct {
+	Title    string `json:"title" jsonschema:"task title"`
+	Priority string `json:"priority,omitempty" jsonschema:"optional priority: low, medium, or high"`
+	Owner    string `json:"owner,omitempty" jsonschema:"optional task owner"`
+}
+
 type server struct{}
 
 var nonSlugChars = regexp.MustCompile(`[^a-z0-9]+`)
@@ -105,11 +111,23 @@ func newMCPServer() *mcp.Server {
 		Description: "Convert the provided message into a URL slug",
 	}, srv.slugifyTool)
 
+	mcp.AddTool(mcpServer, &mcp.Tool{
+		Name:        "create_task",
+		Description: "Create a deterministic task summary for IDE and adapter smoke tests",
+	}, srv.createTaskTool)
+
 	mcpServer.AddResource(&mcp.Resource{
 		Name:        "readme",
 		Description: "Sample resource served by the Go MCP example server",
 		MIMEType:    "text/plain",
 		URI:         "embedded:readme",
+	}, srv.readResource)
+
+	mcpServer.AddResource(&mcp.Resource{
+		Name:        "task-guide",
+		Description: "Task workflow guidance for the Go MCP example server",
+		MIMEType:    "text/plain",
+		URI:         "embedded:task-guide",
 	}, srv.readResource)
 
 	mcpServer.AddPrompt(&mcp.Prompt{
@@ -128,6 +146,18 @@ func newMCPServer() *mcp.Server {
 			},
 		},
 	}, srv.getSummarizePrompt)
+
+	mcpServer.AddPrompt(&mcp.Prompt{
+		Name:        "task_brief",
+		Description: "Draft a concise task brief from a goal",
+		Arguments: []*mcp.PromptArgument{
+			{
+				Name:        "goal",
+				Description: "Goal to turn into a task brief",
+				Required:    true,
+			},
+		},
+	}, srv.getTaskBriefPrompt)
 
 	return mcpServer
 }
@@ -174,11 +204,28 @@ func (s *server) slugifyTool(_ context.Context, _ *mcp.CallToolRequest, args *sl
 	return textResult(slug), nil, nil
 }
 
+func (s *server) createTaskTool(_ context.Context, _ *mcp.CallToolRequest, args *taskArgs) (*mcp.CallToolResult, any, error) {
+	if args == nil {
+		args = &taskArgs{}
+	}
+	title := strings.TrimSpace(args.Title)
+	if title == "" {
+		title = "Untitled task"
+	}
+	priority := normalizePriority(args.Priority)
+	owner := strings.TrimSpace(args.Owner)
+	if owner == "" {
+		owner = "unassigned"
+	}
+	return textResult(fmt.Sprintf("task: %s\npriority: %s\nowner: %s\nstatus: open", title, priority, owner)), nil, nil
+}
+
 func (s *server) readResource(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 	if req == nil || req.Params == nil || strings.TrimSpace(req.Params.URI) == "" {
 		return nil, fmt.Errorf("invalid request")
 	}
-	if req.Params.URI != "embedded:readme" {
+	text, ok := resourcePayloads()[req.Params.URI]
+	if !ok {
 		return nil, fmt.Errorf("resource not found: %s", req.Params.URI)
 	}
 	return &mcp.ReadResourceResult{
@@ -186,7 +233,7 @@ func (s *server) readResource(_ context.Context, req *mcp.ReadResourceRequest) (
 			{
 				URI:      req.Params.URI,
 				MIMEType: "text/plain",
-				Text:     "This is a sample resource payload from the Go MCP example server.",
+				Text:     text,
 			},
 		},
 	}, nil
@@ -223,6 +270,26 @@ func (s *server) getSummarizePrompt(_ context.Context, req *mcp.GetPromptRequest
 	}, nil
 }
 
+func (s *server) getTaskBriefPrompt(_ context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+	goal := ""
+	if req != nil && req.Params != nil {
+		goal = req.Params.Arguments["goal"]
+	}
+	goal = strings.TrimSpace(goal)
+	if goal == "" {
+		goal = "No goal provided."
+	}
+	return &mcp.GetPromptResult{
+		Description: "Task brief prompt",
+		Messages: []*mcp.PromptMessage{
+			{
+				Role:    "assistant",
+				Content: &mcp.TextContent{Text: fmt.Sprintf("Turn this goal into a concise task brief with acceptance criteria: %s", goal)},
+			},
+		},
+	}, nil
+}
+
 func textResult(text string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
@@ -247,4 +314,20 @@ func normalizeMCPPath(path string) string {
 		path = "/" + path
 	}
 	return path
+}
+
+func normalizePriority(priority string) string {
+	switch strings.ToLower(strings.TrimSpace(priority)) {
+	case "low", "medium", "high":
+		return strings.ToLower(strings.TrimSpace(priority))
+	default:
+		return "medium"
+	}
+}
+
+func resourcePayloads() map[string]string {
+	return map[string]string{
+		"embedded:readme":     "This is a sample resource payload from the Go MCP example server.",
+		"embedded:task-guide": "Use create_task with title, priority, and owner to produce a deterministic task record for adapter smoke tests.",
+	}
 }

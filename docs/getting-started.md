@@ -447,12 +447,16 @@ Author lightweight metadata YAML, generate CRDs, and deploy:
 
 ```bash
 ./bin/mcp-runtime server build image my-server --tag v1.0.0
-./bin/mcp-runtime registry push --image <exact-image-ref-from-build>
+./bin/mcp-runtime registry push --scope tenant --image <exact-image-ref-from-build>
 ./bin/mcp-runtime pipeline generate --dir .mcp --output manifests/
 ./bin/mcp-runtime pipeline deploy --dir manifests/
 ```
 
-`<exact-image-ref-from-build>` may be a resolved registry endpoint such as `10.43.109.51:5000/my-server:v1.0.0`.
+`<exact-image-ref-from-build>` may be a resolved registry endpoint such as
+`10.43.109.51:5000/my-server:v1.0.0` or, for `scope: tenant` metadata after
+platform login, `10.43.109.51:5000/<tenant-or-team>/my-server:v1.0.0`. Use
+`--scope public` or `--scope org` when the metadata targets those platform
+catalog scopes.
 
 The server lands at `/{server-name}/mcp` on the configured ingress host, behind the same platform surface you use for future MCP servers.
 

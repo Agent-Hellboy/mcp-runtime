@@ -196,13 +196,18 @@ mcp-runtime registry provision \
 mcp-runtime registry push --image <resolved-registry-host>/payments:v1
 mcp-runtime registry push --image payments:v1 --mode direct
 mcp-runtime registry push --image payments:v1 --name payments-api
+mcp-runtime registry push --scope public --image payments:v1
+mcp-runtime registry push --scope tenant --image payments:v1
 ```
 
 `registry push` requires platform credentials from `mcp-runtime auth login` or
 `MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`; unauthenticated pushes are
 rejected before the CLI starts Docker or the in-cluster helper. When you use
 `server build image`, push the exact image ref it produced. That ref can include
-a resolved registry host instead of a short local name.
+a resolved registry host instead of a short local name. `--scope public` and
+`--scope org` prefix the target repository with `public/` or `org/`; `--scope
+tenant` prefixes unscoped repositories with the authenticated user's tenant
+namespace or active team slug.
 
 ## pipeline
 
@@ -285,12 +290,13 @@ mcp-runtime server logs payments --follow
 
 # Build (push lives under registry)
 mcp-runtime server build image payments --tag v1
-mcp-runtime registry push --image <exact-image-ref-from-build>
+mcp-runtime registry push --scope public --image <exact-image-ref-from-build>
+mcp-runtime server deploy payments --scope public --image registry.example.com/public/payments --tag v1
 ```
 
 `server patch` accepts inline `--patch` or `--patch-file` with `merge`, `json`, or `strategic` modes.
 
-`server build image` updates matching `.mcp` metadata when you use the metadata-driven pipeline. It can resolve to a concrete host such as `10.43.109.51:5000/payments:v1`. Push that exact ref after logging in to the platform. The command does not deploy by itself; push and deploy are separate steps.
+`server build image` updates matching `.mcp` metadata when you use the metadata-driven pipeline. It can resolve to a concrete host such as `10.43.109.51:5000/public/payments:v1` when metadata sets `scope: public`, or to the authenticated tenant/team repository prefix when metadata sets `scope: tenant` and platform credentials are configured. Push that exact ref after logging in to the platform. The command does not deploy by itself; push and deploy are separate steps. `server deploy --scope public` and `--scope org` let the platform resolve the active catalog namespace; `--scope tenant` uses the authenticated user's tenant namespace unless `--team` or `--namespace` selects one explicitly.
 
 ## sentinel
 
@@ -351,7 +357,7 @@ mcp-runtime setup
 
 # Push a server image
 mcp-runtime server build image payments
-mcp-runtime registry push --image <exact-image-ref-from-build>
+mcp-runtime registry push --scope tenant --image <exact-image-ref-from-build>
 
 # Deploy from metadata
 mcp-runtime pipeline generate --dir .mcp --output manifests

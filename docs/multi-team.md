@@ -184,6 +184,11 @@ default:
   query see MCPs in their own team/user tenant namespaces.
 - In `org` and `public` modes, non-admin callers are scoped to the active mode
   catalog namespace (`mcp-servers-org` or `mcp-servers-public` by default).
+- Server publish requests may pass `scope: tenant`, `scope: org`, or
+  `scope: public` instead of spelling the catalog namespace directly. The API
+  resolves `org` and `public` only when the matching platform mode is enabled;
+  `tenant` resolves to the caller's tenant/team namespace unless an authorized
+  namespace is provided.
 - Non-admin callers cannot write servers, grants, or sessions into the shared
   `mcp-servers` catalog namespace in `tenant` mode.
 - Non-admin callers can only read or write resources in namespaces listed on

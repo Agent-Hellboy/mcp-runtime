@@ -30,7 +30,7 @@ func TestNewMCPServerExposesSmokeSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	for _, want := range []string{"aaa-ping", "echo", "add", "upper", "lower", "slugify"} {
+	for _, want := range []string{"aaa-ping", "echo", "add", "upper", "lower", "slugify", "create_task"} {
 		if !hasTool(tools.Tools, want) {
 			t.Fatalf("tools/list missing %s: %#v", want, tools.Tools)
 		}
@@ -40,7 +40,7 @@ func TestNewMCPServerExposesSmokeSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list prompts: %v", err)
 	}
-	for _, want := range []string{"hello", "summarize"} {
+	for _, want := range []string{"hello", "summarize", "task_brief"} {
 		if !hasPrompt(prompts.Prompts, want) {
 			t.Fatalf("prompts/list missing %s: %#v", want, prompts.Prompts)
 		}
@@ -50,8 +50,10 @@ func TestNewMCPServerExposesSmokeSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list resources: %v", err)
 	}
-	if len(resources.Resources) != 1 || resources.Resources[0].URI != "embedded:readme" {
-		t.Fatalf("resources/list unexpected result: %#v", resources.Resources)
+	for _, want := range []string{"embedded:readme", "embedded:task-guide"} {
+		if !hasResource(resources.Resources, want) {
+			t.Fatalf("resources/list missing %s: %#v", want, resources.Resources)
+		}
 	}
 }
 
@@ -96,6 +98,17 @@ func TestSmokeSurfaceHandlers(t *testing.T) {
 		t.Fatalf("upper returned %q, want GOVERNANCE", got)
 	}
 
+	callRes, err = clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "create_task",
+		Arguments: map[string]any{"title": "Test adapter flow", "priority": "high", "owner": "ide"},
+	})
+	if err != nil {
+		t.Fatalf("call tool create_task: %v", err)
+	}
+	if got := firstText(callRes.Content); got != "task: Test adapter flow\npriority: high\nowner: ide\nstatus: open" {
+		t.Fatalf("create_task returned %q", got)
+	}
+
 	readRes, err := clientSession.ReadResource(ctx, &mcp.ReadResourceParams{URI: "embedded:readme"})
 	if err != nil {
 		t.Fatalf("read resource: %v", err)
@@ -114,6 +127,20 @@ func TestSmokeSurfaceHandlers(t *testing.T) {
 	if got := firstText([]mcp.Content{promptRes.Messages[0].Content}); got != "Hello from the Go MCP example server." {
 		t.Fatalf("hello prompt returned %q", got)
 	}
+
+	promptRes, err = clientSession.GetPrompt(ctx, &mcp.GetPromptParams{
+		Name:      "task_brief",
+		Arguments: map[string]string{"goal": "verify the IDE adapter path"},
+	})
+	if err != nil {
+		t.Fatalf("get prompt task_brief: %v", err)
+	}
+	if len(promptRes.Messages) != 1 {
+		t.Fatalf("task_brief prompt messages = %d, want 1", len(promptRes.Messages))
+	}
+	if got := firstText([]mcp.Content{promptRes.Messages[0].Content}); got != "Turn this goal into a concise task brief with acceptance criteria: verify the IDE adapter path" {
+		t.Fatalf("task_brief prompt returned %q", got)
+	}
 }
 
 func hasTool(tools []*mcp.Tool, want string) bool {
@@ -128,6 +155,15 @@ func hasTool(tools []*mcp.Tool, want string) bool {
 func hasPrompt(prompts []*mcp.Prompt, want string) bool {
 	for _, prompt := range prompts {
 		if prompt != nil && prompt.Name == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasResource(resources []*mcp.Resource, want string) bool {
+	for _, resource := range resources {
+		if resource != nil && resource.URI == want {
 			return true
 		}
 	}

@@ -99,12 +99,12 @@ version: v1
 servers:
   - name: payments
     description: Payments MCP server for invoice lookup and refund workflows.
-    image: registry.example.com/payments
+    scope: org
+    image: registry.example.com/org/payments
     imageTag: v1.0.0
     route: /payments
     port: 8088
     replicas: 1
-    namespace: mcp-servers
     tools:
       - name: list_invoices
         description: List invoices for a customer account.
@@ -126,6 +126,12 @@ servers:
   The image repository.
 - `imageTag`
   The image tag.
+- `scope`
+  Optional publish destination: `tenant`, `org`, or `public`. `org` resolves to
+  the org catalog namespace, and `public` resolves to the public catalog
+  namespace. `tenant` selects the authenticated user's tenant/team namespace
+  when you publish through the platform API; when generating Kubernetes YAML
+  directly, set `namespace` explicitly for tenant/team deployments.
 - `route`
   The public path prefix that will become the server ingress path.
 - `port`
@@ -142,13 +148,16 @@ servers:
 If fields are omitted, the loader applies defaults:
 
 - image defaults toward the platform registry path
+- `scope: org` / `scope: public` prefix default image repositories with
+  `org/` or `public/` and default the generated namespace to
+  `mcp-servers-org` or `mcp-servers-public`
 - tag defaults to `latest`
 - route is normalized with a leading `/`
 - port defaults to `8088`
 - replicas default to `1`
 - namespace defaults to `mcp-servers`
 
-For multi-team deployments, set `namespace` in the metadata file or pass
+For multi-team deployments, set `scope: tenant` plus `namespace` in the metadata file or pass
 `pipeline deploy --namespace <team-namespace>` deliberately. The namespace is
 the write boundary for the generated `MCPServer`, grants, sessions, and secrets.
 Set `spec.teamID` / `subject.teamID` or use the platform API so it defaults
@@ -172,19 +181,22 @@ MCP Runtime supports two practical image flows. Keep these flows separate so tag
 ./bin/mcp-runtime server build image payments --tag v1.0.0
 ```
 
-`server build image` builds the image, resolves the target registry host, tags the local image with that resolved reference, and rewrites matching `.mcp` metadata (`image` and `imageTag`).
+`server build image` builds the image, resolves the target registry host, tags the local image with that resolved reference, and rewrites matching `.mcp` metadata (`image` and `imageTag`). When metadata sets `scope: tenant`, the build command uses platform credentials to resolve the same tenant namespace or active team slug repository prefix that `registry push --scope tenant` uses, so log in first or set `MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`.
 
 After this command, push the exact image reference produced by the build output (or read it from the rewritten metadata):
 
 ```bash
 mcp-runtime auth login --api-url https://platform.example.com
-./bin/mcp-runtime registry push --image <exact-image-ref-from-build>
+./bin/mcp-runtime registry push --scope org --image <exact-image-ref-from-build>
 ```
 
 `registry push` requires platform credentials from `mcp-runtime auth login` or
 `MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`; unauthenticated pushes are
 rejected before Docker or the in-cluster helper starts. `<exact-image-ref-from-build>`
-may be a resolved registry endpoint such as `10.43.109.51:5000/payments:v1.0.0`.
+may be a resolved registry endpoint such as `10.43.109.51:5000/org/payments:v1.0.0`.
+Use `--scope public` for public catalog images. Use `--scope tenant` for
+tenant/team images; if the image name has no repository prefix, the CLI prefixes
+it with the authenticated user's tenant namespace or active team slug.
 
 Then generate and deploy from metadata:
 
@@ -201,14 +213,17 @@ the `MCPServer` for you:
 ```bash
 docker build -t payments:v1.0.0 .
 mcp-runtime auth login --api-url https://platform.example.com
-./bin/mcp-runtime registry push --image payments:v1.0.0
-./bin/mcp-runtime server deploy payments --image payments --tag v1.0.0
+./bin/mcp-runtime registry push --scope public --image payments:v1.0.0
+./bin/mcp-runtime server deploy payments --scope public --image registry.example.com/public/payments --tag v1.0.0
 ```
 
 Short names like `payments:v1.0.0` are valid only when that exact local image tag exists.
-`server deploy` uses the default public route `/<name>/mcp` and passes that
-same value as `MCP_PATH` so the bundled Go, Python, and Rust examples listen on
-the route the ingress exposes.
+`server deploy --scope public` resolves the platform public catalog namespace;
+`--scope org` resolves the org catalog namespace; `--scope tenant` uses the
+authenticated user's tenant namespace unless `--team` or `--namespace` selects
+one explicitly. `server deploy` uses the default public route `/<name>/mcp` and
+passes that same value as `MCP_PATH` so the bundled Go, Python, and Rust
+examples listen on the route the ingress exposes.
 
 ### Flow C — manual Docker build, push, and manifest apply
 
@@ -217,7 +232,7 @@ Use this when you need full control of `MCPServer` fields:
 ```bash
 docker build -t payments:v1.0.0 .
 mcp-runtime auth login --api-url https://platform.example.com
-./bin/mcp-runtime registry push --image payments:v1.0.0
+./bin/mcp-runtime registry push --scope tenant --image payments:v1.0.0
 ./bin/mcp-runtime server apply --file payments.yaml
 ```
 

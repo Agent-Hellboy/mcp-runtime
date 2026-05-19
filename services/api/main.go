@@ -134,20 +134,22 @@ type analyticsUsageFilters struct {
 }
 
 type apiServer struct {
-	db           chdriver.Conn
-	dbName       string
-	events       *clickhousepkg.Client
-	apiKeys      map[string]struct{}
-	adminAPIKeys map[string]struct{}
-	adminUsers   map[string]struct{}
-	jwks         *keyfunc.JWKS
-	oidcIssuer   string
-	oidcAudience string
-	userKeys     userAPIKeyStore
-	registryAuth registryCredentialAuthenticator
-	platform     *platformStore
-	runtime      *runtimeapi.RuntimeServer
-	runtimeInit  string
+	db                chdriver.Conn
+	dbName            string
+	events            *clickhousepkg.Client
+	apiKeys           map[string]struct{}
+	adminAPIKeys      map[string]struct{}
+	adminUsers        map[string]struct{}
+	jwks              *keyfunc.JWKS
+	oidcIssuer        string
+	oidcAudience      string
+	userKeys          userAPIKeyStore
+	registryAuth      registryCredentialAuthenticator
+	registryAuthz     *registryAuthzConfig
+	registryAuthzOnce sync.Once
+	platform          *platformStore
+	runtime           *runtimeapi.RuntimeServer
+	runtimeInit       string
 }
 
 const (
@@ -243,15 +245,16 @@ func main() {
 	}
 
 	server := &apiServer{
-		db:           conn,
-		dbName:       dbName,
-		events:       &clickhousepkg.Client{Conn: conn, DBName: dbName},
-		apiKeys:      apiKeys,
-		adminAPIKeys: adminAPIKeys,
-		adminUsers:   adminUsers,
-		jwks:         jwks,
-		oidcIssuer:   oidcIssuer,
-		oidcAudience: oidcAudience,
+		db:            conn,
+		dbName:        dbName,
+		events:        &clickhousepkg.Client{Conn: conn, DBName: dbName},
+		apiKeys:       apiKeys,
+		adminAPIKeys:  adminAPIKeys,
+		adminUsers:    adminUsers,
+		jwks:          jwks,
+		oidcIssuer:    oidcIssuer,
+		oidcAudience:  oidcAudience,
+		registryAuthz: newRegistryAuthzConfigFromEnv(),
 	}
 	var store *platformStore
 	if dsn := platformDSNFromEnv(); dsn != "" {

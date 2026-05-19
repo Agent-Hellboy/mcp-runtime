@@ -13,6 +13,7 @@ python3 docs/scripts/generate_go_package_reference.py
 
 - [API types](#api-types) `mcp-runtime/api/v1alpha1`
 - [Metadata helpers](#metadata-helpers) `mcp-runtime/pkg/metadata`
+- [Publish scope helpers](#publish-scope-helpers) `mcp-runtime/pkg/publishscope`
 - [Agent adapters](#agent-adapters) `mcp-runtime/internal/agentadapter`
 - [Operator internals](#operator-internals) `mcp-runtime/internal/operator`
 - [CLI command routing](#cli-command-routing) `mcp-runtime/internal/cli/root`
@@ -1401,6 +1402,7 @@ _No package overview is documented._
 - [`type PolicyConfig struct`](#metadata-helpers-type-policyconfig-struct)
 - [`type PolicyDecision string`](#metadata-helpers-type-policydecision-string)
 - [`type PolicyMode string`](#metadata-helpers-type-policymode-string)
+- [`type PublishScope string`](#metadata-helpers-type-publishscope-string)
 - [`type RegistryFile struct`](#metadata-helpers-type-registryfile-struct)
 - [`func LoadFromDirectory(dirPath string) (*RegistryFile, error)`](#metadata-helpers-func-loadfromdirectory-dirpath-string-registryfile-error)
 - [`func LoadFromFile(filePath string) (*RegistryFile, error)`](#metadata-helpers-func-loadfromfile-filepath-string-registryfile-error)
@@ -1602,6 +1604,18 @@ const (
 )
 ```
 
+<a id="metadata-helpers-type-publishscope-string"></a>
+```text
+type PublishScope string
+    PublishScope selects the platform catalog or tenant boundary for publishing.
+
+const (
+	PublishScopeTenant PublishScope = "tenant"
+	PublishScopeOrg    PublishScope = "org"
+	PublishScopePublic PublishScope = "public"
+)
+```
+
 <a id="metadata-helpers-type-registryfile-struct"></a>
 ```text
 type RegistryFile struct {
@@ -1737,6 +1751,9 @@ type ServerMetadata struct {
 	// Namespace is the Kubernetes namespace (defaults to "mcp-servers").
 	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
 
+	// Scope selects a publish destination: tenant, org, or public.
+	Scope PublishScope `yaml:"scope,omitempty" json:"scope,omitempty"`
+
 	// TeamID is the stable platform team identifier that owns the server.
 	TeamID string `yaml:"teamID,omitempty" json:"teamID,omitempty"`
 
@@ -1823,6 +1840,84 @@ const (
 	TrustLevelMedium TrustLevel = "medium"
 	TrustLevelHigh   TrustLevel = "high"
 )
+```
+
+<a id="publish-scope-helpers"></a>
+## Publish scope helpers
+
+Package: `publishscope`
+Import path: `mcp-runtime/pkg/publishscope`
+
+Source command:
+
+```bash
+go doc -all ./pkg/publishscope
+```
+
+<a id="publish-scope-helpers-overview"></a>
+### Overview
+
+_No package overview is documented._
+
+### Jump To
+
+- [Overview](#publish-scope-helpers-overview)
+- [Index](#publish-scope-helpers-index)
+- [Constants](#publish-scope-helpers-constants)
+- [Functions](#publish-scope-helpers-functions)
+- [Types](#publish-scope-helpers-types)
+
+<a id="publish-scope-helpers-index"></a>
+### Index
+
+- [`Constants`](#publish-scope-helpers-constants)
+- [`func CatalogNamespace(scope Scope) (string, bool)`](#publish-scope-helpers-func-catalognamespace-scope-scope-string-bool)
+- [`func RegistryAlias(scope Scope) (string, bool)`](#publish-scope-helpers-func-registryalias-scope-scope-string-bool)
+- [`type Scope string`](#publish-scope-helpers-type-scope-string)
+- [`func Normalize(raw string) (Scope, error)`](#publish-scope-helpers-func-normalize-raw-string-scope-error)
+
+<a id="publish-scope-helpers-constants"></a>
+### Constants
+
+```text
+const (
+	Tenant Scope = "tenant"
+	Org    Scope = "org"
+	Public Scope = "public"
+
+	DefaultOrgCatalogNamespace    = "mcp-servers-org"
+	DefaultPublicCatalogNamespace = "mcp-servers-public"
+
+	OrgRegistryAlias    = "org"
+	PublicRegistryAlias = "public"
+)
+```
+
+<a id="publish-scope-helpers-functions"></a>
+### Functions
+
+<a id="publish-scope-helpers-func-catalognamespace-scope-scope-string-bool"></a>
+```text
+func CatalogNamespace(scope Scope) (string, bool)
+```
+
+<a id="publish-scope-helpers-func-registryalias-scope-scope-string-bool"></a>
+```text
+func RegistryAlias(scope Scope) (string, bool)
+```
+
+<a id="publish-scope-helpers-types"></a>
+### Types
+
+<a id="publish-scope-helpers-type-scope-string"></a>
+```text
+type Scope string
+
+```
+
+<a id="publish-scope-helpers-func-normalize-raw-string-scope-error"></a>
+```text
+func Normalize(raw string) (Scope, error)
 ```
 
 <a id="agent-adapters"></a>
@@ -4386,8 +4481,10 @@ _No package overview is documented._
 - [`func ResolvePlatformOrKube(useKube bool) (*PlatformClient, bool, error)`](#cli-platform-api-func-resolveplatformorkube-usekube-bool-platformclient-bool-error)
 - [`func (c *PlatformClient) ApplyAccessFromYAMLFile(ctx context.Context, path string) error`](#cli-platform-api-func-c-platformclient-applyaccessfromyamlfile-ctx-context-context-path-string-error)
 - [`func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error)`](#cli-platform-api-func-c-platformclient-applyruntimeserver-ctx-context-context-name-namespace-string-spec-mcpv1alpha1-mcpserverspec-serverlistitem-error)
+- [`func (c *PlatformClient) ApplyRuntimeServerWithScope(ctx context.Context, name, namespace, scope string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error)`](#cli-platform-api-func-c-platformclient-applyruntimeserverwithscope-ctx-context-context-name-namespace-scope-string-spec-mcpv1alpha1-mcpserverspec-serverlistitem-error)
 - [`func (c *PlatformClient) CreateAdapterSession(ctx context.Context, req AdapterSessionRequest) (AdapterSession, error)`](#cli-platform-api-func-c-platformclient-createadaptersession-ctx-context-context-req-adaptersessionrequest-adaptersession-error)
 - [`func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Team, error)`](#cli-platform-api-func-c-platformclient-createteam-ctx-context-context-slug-name-string-team-error)
+- [`func (c *PlatformClient) CurrentPrincipal(ctx context.Context) (Principal, error)`](#cli-platform-api-func-c-platformclient-currentprincipal-ctx-context-context-principal-error)
 - [`func (c *PlatformClient) DeleteGrant(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deletegrant-ctx-context-context-namespace-name-string-error)
 - [`func (c *PlatformClient) DeleteRuntimeServer(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deleteruntimeserver-ctx-context-context-namespace-name-string-error)
 - [`func (c *PlatformClient) DeleteSession(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deletesession-ctx-context-context-namespace-name-string-error)
@@ -4404,6 +4501,7 @@ _No package overview is documented._
 - [`func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postsessiontoggle-ctx-context-context-namespace-name-action-string-error)
 - [`func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePublishRecord) error`](#cli-platform-api-func-c-platformclient-recordimagepublish-ctx-context-context-record-imagepublishrecord-error)
 - [`func (c *PlatformClient) ValidateCredentials(ctx context.Context) error`](#cli-platform-api-func-c-platformclient-validatecredentials-ctx-context-context-error)
+- [`type Principal struct`](#cli-platform-api-type-principal-struct)
 - [`type ServerListItem struct`](#cli-platform-api-type-serverlistitem-struct)
 - [`type Team struct`](#cli-platform-api-type-team-struct)
 
@@ -4508,6 +4606,12 @@ func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace
 
 ```
 
+<a id="cli-platform-api-func-c-platformclient-applyruntimeserverwithscope-ctx-context-context-name-namespace-scope-string-spec-mcpv1alpha1-mcpserverspec-serverlistitem-error"></a>
+```text
+func (c *PlatformClient) ApplyRuntimeServerWithScope(ctx context.Context, name, namespace, scope string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error)
+
+```
+
 <a id="cli-platform-api-func-c-platformclient-createadaptersession-ctx-context-context-req-adaptersessionrequest-adaptersession-error"></a>
 ```text
 func (c *PlatformClient) CreateAdapterSession(ctx context.Context, req AdapterSessionRequest) (AdapterSession, error)
@@ -4520,6 +4624,12 @@ func (c *PlatformClient) CreateAdapterSession(ctx context.Context, req AdapterSe
 <a id="cli-platform-api-func-c-platformclient-createteam-ctx-context-context-slug-name-string-team-error"></a>
 ```text
 func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Team, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-currentprincipal-ctx-context-context-principal-error"></a>
+```text
+func (c *PlatformClient) CurrentPrincipal(ctx context.Context) (Principal, error)
 
 ```
 
@@ -4616,6 +4726,19 @@ func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePub
 <a id="cli-platform-api-func-c-platformclient-validatecredentials-ctx-context-context-error"></a>
 ```text
 func (c *PlatformClient) ValidateCredentials(ctx context.Context) error
+
+```
+
+<a id="cli-platform-api-type-principal-struct"></a>
+```text
+type Principal struct {
+	Role              string   `json:"role"`
+	Subject           string   `json:"subject,omitempty"`
+	Email             string   `json:"email,omitempty"`
+	Namespace         string   `json:"namespace,omitempty"`
+	AllowedNamespaces []string `json:"allowedNamespaces,omitempty"`
+	Teams             []Team   `json:"teams,omitempty"`
+}
 
 ```
 
@@ -4783,7 +4906,8 @@ Package registry owns routing for the registry top-level command.
 - [`func ResolveExternalRegistryConfig(flagCfg *config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error)`](#cli-registry-func-resolveexternalregistryconfig-flagcfg-config-externalregistryconfig-config-externalregistryconfig-error)
 - [`func ResolvePlatformRegistryURL(logger *zap.Logger) string`](#cli-registry-func-resolveplatformregistryurl-logger-zap-logger-string)
 - [`func RunRegistryProvision(mgr *RegistryManager, url, username, password, operatorImage string, dryRun bool) error`](#cli-registry-func-runregistryprovision-mgr-registrymanager-url-username-password-operatorimage-string-dryrun-bool-error)
-- [`func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helperNamespace string) error`](#cli-registry-func-runregistrypush-mgr-registrymanager-image-registryurl-name-mode-helpernamespace-string-error)
+- [`func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error`](#cli-registry-func-runregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-mode-helpernamespace-string-error)
+- [`func ScopedRegistryRepository(ctx context.Context, client *platformapi.PlatformClient, repo string, scope publishscope.Scope) (string, error)`](#cli-registry-func-scopedregistryrepository-ctx-context-context-client-platformapi-platformclient-repo-string-scope-publishscope-scope-string-error)
 - [`type RegistryManager struct`](#cli-registry-type-registrymanager-struct)
 - [`func DefaultRegistryManager(logger *zap.Logger) *RegistryManager`](#cli-registry-func-defaultregistrymanager-logger-zap-logger-registrymanager)
 - [`func NewRegistryManager(kubectl *core.KubectlClient, exec core.Executor, logger *zap.Logger) *RegistryManager`](#cli-registry-func-newregistrymanager-kubectl-core-kubectlclient-exec-core-executor-logger-zap-logger-registrymanager)
@@ -4838,10 +4962,18 @@ func RunRegistryProvision(mgr *RegistryManager, url, username, password, operato
 
 ```
 
-<a id="cli-registry-func-runregistrypush-mgr-registrymanager-image-registryurl-name-mode-helpernamespace-string-error"></a>
+<a id="cli-registry-func-runregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-mode-helpernamespace-string-error"></a>
 ```text
-func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helperNamespace string) error
+func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error
     RunRegistryPush contains the registry push command flow for folder packages.
+
+```
+
+<a id="cli-registry-func-scopedregistryrepository-ctx-context-context-client-platformapi-platformclient-repo-string-scope-publishscope-scope-string-error"></a>
+```text
+func ScopedRegistryRepository(ctx context.Context, client *platformapi.PlatformClient, repo string, scope publishscope.Scope) (string, error)
+    ScopedRegistryRepository applies the repository prefix implied by a publish
+    scope.
 ```
 
 <a id="cli-registry-types"></a>
@@ -5161,7 +5293,7 @@ Package server owns routing for the server top-level command.
 <a id="cli-server-index"></a>
 ### Index
 
-- [`func BuildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, context string) error`](#cli-server-func-buildimage-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-context-string-error)
+- [`func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, contextDir string) error`](#cli-server-func-buildimage-ctx-context-context-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-contextdir-string-error)
 - [`func New(runtime *core.Runtime) *cobra.Command`](#cli-server-func-new-runtime-core-runtime-cobra-command)
 - [`func NewWithManager(mgr *ServerManager) *cobra.Command`](#cli-server-func-newwithmanager-mgr-servermanager-cobra-command)
 - [`type ServerManager struct`](#cli-server-type-servermanager-struct)
@@ -5172,7 +5304,7 @@ Package server owns routing for the server top-level command.
 - [`func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) error`](#cli-server-func-m-servermanager-createserver-name-namespace-image-imagetag-string-error)
 - [`func (m *ServerManager) CreateServerFromFile(file string) error`](#cli-server-func-m-servermanager-createserverfromfile-file-string-error)
 - [`func (m *ServerManager) DeleteServer(name, namespace string) error`](#cli-server-func-m-servermanager-deleteserver-name-namespace-string-error)
-- [`func (m *ServerManager) DeployServer(name, namespace, team, image, imageTag string, replicas, port, servicePort int32) error`](#cli-server-func-m-servermanager-deployserver-name-namespace-team-image-imagetag-string-replicas-port-serviceport-int32-error)
+- [`func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageTag string, replicas, port, servicePort int32) error`](#cli-server-func-m-servermanager-deployserver-name-namespace-team-scope-image-imagetag-string-replicas-port-serviceport-int32-error)
 - [`func (m *ServerManager) ExportServer(name, namespace, file string) error`](#cli-server-func-m-servermanager-exportserver-name-namespace-file-string-error)
 - [`func (m *ServerManager) GetServer(name, namespace string) error`](#cli-server-func-m-servermanager-getserver-name-namespace-string-error)
 - [`func (m *ServerManager) InspectServerPolicy(name, namespace string) error`](#cli-server-func-m-servermanager-inspectserverpolicy-name-namespace-string-error)
@@ -5185,9 +5317,9 @@ Package server owns routing for the server top-level command.
 <a id="cli-server-functions"></a>
 ### Functions
 
-<a id="cli-server-func-buildimage-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-context-string-error"></a>
+<a id="cli-server-func-buildimage-ctx-context-context-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-contextdir-string-error"></a>
 ```text
-func BuildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, context string) error
+func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, contextDir string) error
     BuildImage builds a Docker image and updates MCP metadata for the server.
 
 ```
@@ -5267,9 +5399,9 @@ func (m *ServerManager) DeleteServer(name, namespace string) error
 
 ```
 
-<a id="cli-server-func-m-servermanager-deployserver-name-namespace-team-image-imagetag-string-replicas-port-serviceport-int32-error"></a>
+<a id="cli-server-func-m-servermanager-deployserver-name-namespace-team-scope-image-imagetag-string-replicas-port-serviceport-int32-error"></a>
 ```text
-func (m *ServerManager) DeployServer(name, namespace, team, image, imageTag string, replicas, port, servicePort int32) error
+func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageTag string, replicas, port, servicePort int32) error
 
 ```
 
