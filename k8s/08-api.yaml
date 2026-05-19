@@ -96,6 +96,12 @@ spec:
                   name: mcp-sentinel-secrets
                   key: PLATFORM_ADMIN_EMAIL
                   optional: true
+            - name: PLATFORM_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: PLATFORM_ADMIN_PASSWORD
+                  optional: true
             - name: PLATFORM_DEV_LOGIN_ENABLED
               valueFrom:
                 secretKeyRef:

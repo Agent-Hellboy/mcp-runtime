@@ -1472,6 +1472,22 @@ func TestTempoLocalBlocksDoNotShareWALPath(t *testing.T) {
 	}
 }
 
+func TestAPIManifestIncludesPlatformAdminBootstrapEnv(t *testing.T) {
+	content, err := os.ReadFile("../../../k8s/08-api.yaml")
+	if err != nil {
+		t.Fatalf("failed to read api manifest: %v", err)
+	}
+	text := string(content)
+	for _, want := range []string{
+		"key: PLATFORM_ADMIN_EMAIL",
+		"key: PLATFORM_ADMIN_PASSWORD",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected api manifest to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
 func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() {
