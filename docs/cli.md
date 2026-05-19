@@ -99,11 +99,11 @@ HTTPS and requires `--with-tls` plus node trust for the issuing CA.
 `PROVISIONED_REGISTRY_URL`, or `mcp-runtime registry provision`.
 
 `--platform-mode` selects the namespace model. `tenant` is the default and
-scopes signed-in users to their own user/team tenant namespace; `org` uses
-`mcp-servers-org` for signed-in org-wide publishing while preserving owned/team
+scopes signed-in users to team namespaces for teams they belong to; `org` uses
+`mcp-servers-org` for signed-in org-wide publishing while preserving team
 namespace access; `public` uses `mcp-servers-public`, exposes anonymous catalog
 reads, and lets signed-in users publish public preview MCP servers while
-preserving owned/team namespace access. `MCP_PLATFORM_MODE` provides the same
+preserving team namespace access. `MCP_PLATFORM_MODE` provides the same
 value when the flag is not set.
 
 `--test-mode` relaxes production guardrails, but it still builds and pushes the
@@ -216,8 +216,9 @@ rejected before the CLI starts Docker or the in-cluster helper. When you use
 `server build image`, push the exact image ref it produced. That ref can include
 a resolved registry host instead of a short local name. `--scope public` and
 `--scope org` prefix the target repository with `public/` or `org/`; `--scope
-tenant` prefixes unscoped repositories with the authenticated user's tenant
-namespace or active team slug.
+tenant` prefixes unscoped repositories with the authenticated user's active
+team slug. Explicit tenant repository prefixes must match one of the user's
+teams.
 
 ## pipeline
 
@@ -306,7 +307,7 @@ mcp-runtime server deploy payments --scope public --image registry.example.com/p
 
 `server patch` accepts inline `--patch` or `--patch-file` with `merge`, `json`, or `strategic` modes.
 
-`server build image` updates matching `.mcp` metadata when you use the metadata-driven pipeline. It can resolve to a concrete host such as `10.43.109.51:5000/public/payments:v1` when metadata sets `scope: public`, or to the authenticated tenant/team repository prefix when metadata sets `scope: tenant` and platform credentials are configured. Push that exact ref after logging in to the platform. The command does not deploy by itself; push and deploy are separate steps. `server deploy --scope public` and `--scope org` let the platform resolve the active catalog namespace; `--scope tenant` uses the authenticated user's tenant namespace unless `--team` or `--namespace` selects one explicitly.
+`server build image` updates matching `.mcp` metadata when you use the metadata-driven pipeline. It can resolve to a concrete host such as `10.43.109.51:5000/public/payments:v1` when metadata sets `scope: public`, or to the authenticated team repository prefix when metadata sets `scope: tenant` and platform credentials are configured. Push that exact ref after logging in to the platform. The command does not deploy by itself; push and deploy are separate steps. `server deploy --scope public` and `--scope org` let the platform resolve the active catalog namespace; `--scope tenant` uses the authenticated user's team namespace unless `--team` or `--namespace` selects one explicitly.
 
 ## sentinel
 

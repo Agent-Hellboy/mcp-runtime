@@ -265,6 +265,11 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	if teamNamespace {
 		teamSlug = strings.TrimSpace(team.Slug)
 	}
+	if p.Role != roleAdmin && !teamNamespace {
+		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, image, "tenant deployments require a team namespace"))
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant deployments require a team namespace"})
+		return
+	}
 	if err := ValidateDeployImage(image, namespace, teamSlug, p.Role); err != nil {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, image, err.Error()))
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -282,8 +287,6 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	target := p
-	target.Namespace = namespace
 	if teamNamespace {
 		if err := s.ensureTeamNamespace(ctx, teamRecord{
 			ID:        team.ID,
@@ -300,8 +303,12 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure namespace access"})
 			return
 		}
-	} else {
-		if err := s.EnsureUserNamespace(ctx, target); err != nil {
+	} else if p.Role == roleAdmin {
+		labels := map[string]string{
+			platformManagedLabel:                 "true",
+			"pod-security.kubernetes.io/enforce": "restricted",
+		}
+		if err := s.ensureManagedNamespace(ctx, namespace, labels, managedNamespaceOptions{}); err != nil {
 			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure namespace"})
 			return
@@ -352,22 +359,6 @@ func (s *RuntimeServer) clientForPrincipal(p principal) (kubernetes.Interface, e
 		Groups:   []string{"platform:role:" + p.Role},
 	}
 	return kubernetes.NewForConfig(cfg)
-}
-
-func (s *RuntimeServer) EnsureUserNamespace(ctx context.Context, p principal) error {
-	if s.k8sClients == nil || p.Namespace == "" {
-		return nil
-	}
-	labels := map[string]string{
-		platformManagedLabel:                 "true",
-		platformUserIDLabel:                  p.UserID(),
-		platformScopeLabel:                   namespaceScopeUser,
-		"pod-security.kubernetes.io/enforce": "restricted",
-	}
-	if err := s.ensureManagedNamespace(ctx, p.Namespace, labels, managedNamespaceOptions{}); err != nil {
-		return err
-	}
-	return s.ensureNamespaceUserWorkloadRBAC(ctx, p.Namespace, p.UserID())
 }
 
 func (s *RuntimeServer) EnsureCatalogNamespace(ctx context.Context, namespace string) error {
@@ -641,6 +632,15 @@ func (s *RuntimeServer) ensureTeamTraefikWatch(ctx context.Context, namespace st
 	if s.k8sClients == nil || strings.TrimSpace(namespace) == "" {
 		return nil
 	}
+	if cfg.mode == "auto" {
+		managed, err := traefikDeploymentHasNamespaceWatchArg(ctx, s.k8sClients.Clientset, cfg)
+		if err != nil {
+			return err
+		}
+		if !managed {
+			return nil
+		}
+	}
 	if err := ensureTraefikWatchRBAC(ctx, s.k8sClients.Clientset, namespace, cfg); err != nil {
 		return err
 	}
@@ -756,18 +756,55 @@ func upsertRoleBinding(ctx context.Context, client kubernetes.Interface, binding
 	return err
 }
 
+func traefikDeploymentHasNamespaceWatchArg(ctx context.Context, client kubernetes.Interface, cfg teamTraefikWatchConfig) (bool, error) {
+	deployment, err := client.AppsV1().Deployments(cfg.namespace).Get(ctx, cfg.deployment, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	_, _, _, ok := traefikNamespaceWatchArg(deployment)
+	return ok, nil
+}
+
 func ensureTraefikDeploymentWatchesNamespace(ctx context.Context, client kubernetes.Interface, namespace string, cfg teamTraefikWatchConfig) error {
 	deployment, err := client.AppsV1().Deployments(cfg.namespace).Get(ctx, cfg.deployment, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
-	const prefix = "--providers.kubernetesingress.namespaces="
+	containerIndex, argIndex, argValue, ok := traefikNamespaceWatchArg(deployment)
+	if !ok {
+		if cfg.mode == "auto" {
+			return nil
+		}
+		return errors.New("traefik deployment does not expose --providers.kubernetesingress.namespaces")
+	}
+	watched := splitCSV(strings.TrimPrefix(argValue, traefikNamespaceWatchArgPrefix))
+	for _, watchedNamespace := range watched {
+		if watchedNamespace == namespace {
+			return nil
+		}
+	}
+	watched = append(watched, namespace)
+	updated := deployment.DeepCopy()
+	updated.Spec.Template.Spec.Containers[containerIndex].Args[argIndex] = traefikNamespaceWatchArgPrefix + strings.Join(watched, ",")
+	_, err = client.AppsV1().Deployments(cfg.namespace).Update(ctx, updated, metav1.UpdateOptions{})
+	return err
+}
+
+const traefikNamespaceWatchArgPrefix = "--providers.kubernetesingress.namespaces="
+
+func traefikNamespaceWatchArg(deployment *appsv1.Deployment) (int, int, string, bool) {
+	if deployment == nil {
+		return -1, -1, "", false
+	}
 	containerIndex := -1
 	argIndex := -1
 	argValue := ""
 	for ci, container := range deployment.Spec.Template.Spec.Containers {
 		for ai, arg := range container.Args {
-			if strings.HasPrefix(arg, prefix) {
+			if strings.HasPrefix(arg, traefikNamespaceWatchArgPrefix) {
 				containerIndex = ci
 				argIndex = ai
 				argValue = arg
@@ -779,22 +816,9 @@ func ensureTraefikDeploymentWatchesNamespace(ctx context.Context, client kuberne
 		}
 	}
 	if containerIndex < 0 {
-		if cfg.mode == "auto" {
-			return nil
-		}
-		return errors.New("traefik deployment does not expose --providers.kubernetesingress.namespaces")
+		return -1, -1, "", false
 	}
-	watched := splitCSV(strings.TrimPrefix(argValue, prefix))
-	for _, watchedNamespace := range watched {
-		if watchedNamespace == namespace {
-			return nil
-		}
-	}
-	watched = append(watched, namespace)
-	updated := deployment.DeepCopy()
-	updated.Spec.Template.Spec.Containers[containerIndex].Args[argIndex] = prefix + strings.Join(watched, ",")
-	_, err = client.AppsV1().Deployments(cfg.namespace).Update(ctx, updated, metav1.UpdateOptions{})
-	return err
+	return containerIndex, argIndex, argValue, true
 }
 
 func splitCSV(raw string) []string {

@@ -129,9 +129,9 @@ servers:
 - `scope`
   Optional publish destination: `tenant`, `org`, or `public`. `org` resolves to
   the org catalog namespace, and `public` resolves to the public catalog
-  namespace. `tenant` selects the authenticated user's tenant/team namespace
+  namespace. `tenant` selects one of the authenticated user's team namespaces
   when you publish through the platform API; when generating Kubernetes YAML
-  directly, set `namespace` explicitly for tenant/team deployments.
+  directly, set `namespace` explicitly for team deployments.
 - `route`
   The public path prefix that will become the server ingress path.
 - `port`
@@ -157,12 +157,13 @@ If fields are omitted, the loader applies defaults:
 - replicas default to `1`
 - namespace defaults to `mcp-servers`
 
-For multi-team deployments, set `scope: tenant` plus `namespace` in the metadata file or pass
-`pipeline deploy --namespace <team-namespace>` deliberately. The namespace is
-the write boundary for the generated `MCPServer`, grants, sessions, and secrets.
-Set `spec.teamID` / `subject.teamID` or use the platform API so it defaults
-those fields. Initialize that namespace first with `mcp-runtime team init
-<slug>` or the platform-backed `mcp-runtime team create <slug>` flow.
+For multi-team deployments, set `scope: tenant` plus a team `namespace` in the
+metadata file or pass `pipeline deploy --namespace <team-namespace>`
+deliberately. The namespace is the write boundary for the generated
+`MCPServer`, grants, sessions, and secrets. Set `spec.teamID` /
+`subject.teamID` or use the platform API so it defaults those fields.
+Initialize that namespace first with `mcp-runtime team init <slug>` or the
+platform-backed `mcp-runtime team create <slug>` flow.
 
 Generate and deploy manifests:
 
@@ -181,7 +182,7 @@ MCP Runtime supports two practical image flows. Keep these flows separate so tag
 ./bin/mcp-runtime server build image payments --tag v1.0.0
 ```
 
-`server build image` builds the image, resolves the target registry host, tags the local image with that resolved reference, and rewrites matching `.mcp` metadata (`image` and `imageTag`). When metadata sets `scope: tenant`, the build command uses platform credentials to resolve the same tenant namespace or active team slug repository prefix that `registry push --scope tenant` uses, so log in first or set `MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`.
+`server build image` builds the image, resolves the target registry host, tags the local image with that resolved reference, and rewrites matching `.mcp` metadata (`image` and `imageTag`). When metadata sets `scope: tenant`, the build command uses platform credentials to resolve the same team repository prefix that `registry push --scope tenant` uses, so log in first or set `MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`.
 
 After this command, push the exact image reference produced by the build output (or read it from the rewritten metadata):
 
@@ -194,9 +195,10 @@ mcp-runtime auth login --api-url https://platform.example.com
 `MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`; unauthenticated pushes are
 rejected before Docker or the in-cluster helper starts. `<exact-image-ref-from-build>`
 may be a resolved registry endpoint such as `10.43.109.51:5000/org/payments:v1.0.0`.
-Use `--scope public` for public catalog images. Use `--scope tenant` for
-tenant/team images; if the image name has no repository prefix, the CLI prefixes
-it with the authenticated user's tenant namespace or active team slug.
+Use `--scope public` for public catalog images. Use `--scope tenant` for team
+images; if the image name has no repository prefix, the CLI prefixes it with
+the authenticated user's active team slug. Explicit repository prefixes for
+tenant images must match one of the user's teams.
 
 Then generate and deploy from metadata:
 
@@ -220,8 +222,8 @@ mcp-runtime auth login --api-url https://platform.example.com
 Short names like `payments:v1.0.0` are valid only when that exact local image tag exists.
 `server deploy --scope public` resolves the platform public catalog namespace;
 `--scope org` resolves the org catalog namespace; `--scope tenant` uses the
-authenticated user's tenant namespace unless `--team` or `--namespace` selects
-one explicitly. `server deploy` uses the default public route `/<name>/mcp` and
+authenticated user's team namespace unless `--team` or `--namespace` selects one
+explicitly. `server deploy` uses the default public route `/<name>/mcp` and
 passes that same value as `MCP_PATH` so the bundled Go, Python, and Rust
 examples listen on the route the ingress exposes.
 

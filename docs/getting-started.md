@@ -423,9 +423,9 @@ analytics, audit, and observability.
 
 | Mode | Default namespace behavior | Behavior |
 |---|---|---|
-| `tenant` | Principal user/team namespace | Default private mode. Each signed-in user is scoped to their own tenant namespace, including any team namespace from membership. |
-| `org` | `mcp-servers-org` | Signed-in users publish and browse the org-wide catalog and can still work in their owned/team namespaces. |
-| `public` | `mcp-servers-public` | Anonymous users can browse the public preview catalog; signed-in users publish public preview MCP servers and can still work in their owned/team namespaces. |
+| `tenant` | Principal team namespace | Default private mode. Signed-in users publish through team namespaces for teams they belong to. |
+| `org` | `mcp-servers-org` | Signed-in users publish and browse the org-wide catalog and can still work in team namespaces. |
+| `public` | `mcp-servers-public` | Anonymous users can browse the public preview catalog; signed-in users publish public preview MCP servers and can still work in team namespaces. |
 
 For multi-team or tenant-separated deployments, keep setup as the platform
 install and provision one namespace per team with `mcp-runtime team init <slug>`

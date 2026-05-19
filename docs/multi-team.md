@@ -174,20 +174,20 @@ default:
 
 | Mode | Default namespace behavior | Non-admin behavior |
 |---|---|---|
-| `tenant` | Principal user/team namespace | Authenticated users read and write only their own tenant namespaces. |
-| `org` | `mcp-servers-org` | Authenticated users publish and browse the org catalog and can still select owned/team namespaces. |
-| `public` | `mcp-servers-public` | Anonymous users can read the public preview catalog; signed-in users publish to the public catalog namespace and can still select owned/team namespaces. |
+| `tenant` | Principal team namespace | Authenticated users read and write only team namespaces for teams they belong to. |
+| `org` | `mcp-servers-org` | Authenticated users publish and browse the org catalog and can still select team namespaces. |
+| `public` | `mcp-servers-public` | Anonymous users can read the public preview catalog; signed-in users publish to the public catalog namespace and can still select team namespaces. |
 
 - In `tenant` and `org` modes, anonymous callers cannot read the MCP server
   catalog.
 - In `tenant` mode, non-admin callers listing MCP servers without a `namespace`
-  query see MCPs in their own team/user tenant namespaces.
+  query see MCPs in their team namespaces.
 - In `org` and `public` modes, non-admin callers are scoped to the active mode
   catalog namespace (`mcp-servers-org` or `mcp-servers-public` by default).
 - Server publish requests may pass `scope: tenant`, `scope: org`, or
   `scope: public` instead of spelling the catalog namespace directly. The API
   resolves `org` and `public` only when the matching platform mode is enabled;
-  `tenant` resolves to the caller's tenant/team namespace unless an authorized
+  `tenant` resolves to the caller's team namespace unless an authorized team
   namespace is provided.
 - Non-admin callers cannot write servers, grants, or sessions into the shared
   `mcp-servers` catalog namespace in `tenant` mode.
@@ -269,7 +269,8 @@ server owner's team without joining through namespace names.
   and explicit admin-owned grants when a server is intentionally shared.
 - The bundled setup manifests create the legacy single-team namespace and the
   org/public catalog namespaces; per-team tenant namespaces are an explicit
-  operational step.
+  operational step. Personal user namespaces are not created for tenant
+  publishing.
 
 ## Operational Checklist
 

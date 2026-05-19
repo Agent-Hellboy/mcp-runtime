@@ -71,18 +71,10 @@ func (s *Store) CreatePasswordUser(ctx context.Context, email, password string, 
 	if _, err = tx.ExecContext(ctx, `INSERT INTO auth_identities (user_id,provider,subject,password_hash) VALUES ($1,$2,$3,$4)`, userID, passwordProvider, email, string(hash)); err != nil {
 		return User{}, err
 	}
-	var seq int64
-	if err = tx.QueryRowContext(ctx, `SELECT nextval('platform_namespace_seq')`).Scan(&seq); err != nil {
-		return User{}, err
-	}
-	namespace := fmt.Sprintf("user-%d", seq)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO namespaces (id,user_id,namespace) VALUES ($1,$2,$3)`, uuid.NewString(), userID, namespace); err != nil {
-		return User{}, err
-	}
 	if err = tx.Commit(); err != nil {
 		return User{}, err
 	}
-	return User{ID: userID, Email: email, Role: role, Namespace: namespace}, nil
+	return User{ID: userID, Email: email, Role: role}, nil
 }
 
 func (s *Store) EnsurePasswordUser(ctx context.Context, email, password string, role string) (User, error) {
@@ -107,9 +99,8 @@ func (s *Store) EnsurePasswordUser(ctx context.Context, email, password string, 
 
 	var u User
 	err = s.db.QueryRowContext(ctx, `
-SELECT u.id, u.email, u.role, COALESCE(n.namespace, '')
+SELECT u.id, u.email, u.role, ''
 FROM users u
-LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
 WHERE u.email = $1 AND u.deleted_at IS NULL`, email).
 		Scan(&u.ID, &u.Email, &u.Role, &u.Namespace)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -139,16 +130,6 @@ ON CONFLICT (provider, subject)
 DO UPDATE SET user_id = EXCLUDED.user_id, password_hash = EXCLUDED.password_hash`, u.ID, passwordProvider, email, string(hash)); err != nil {
 		return User{}, err
 	}
-	if u.Namespace == "" {
-		var seq int64
-		if err = tx.QueryRowContext(ctx, `SELECT nextval('platform_namespace_seq')`).Scan(&seq); err != nil {
-			return User{}, err
-		}
-		u.Namespace = fmt.Sprintf("user-%d", seq)
-		if _, err = tx.ExecContext(ctx, `INSERT INTO namespaces (id,user_id,namespace) VALUES ($1,$2,$3)`, uuid.NewString(), u.ID, u.Namespace); err != nil {
-			return User{}, err
-		}
-	}
 	if err = tx.Commit(); err != nil {
 		return User{}, err
 	}
@@ -161,10 +142,9 @@ func (s *Store) AuthenticatePassword(ctx context.Context, email, password string
 	var u User
 	var hash string
 	err := s.db.QueryRowContext(ctx, `
-SELECT u.id, u.email, u.role, COALESCE(n.namespace, ''), ai.password_hash
+SELECT u.id, u.email, u.role, '', ai.password_hash
 FROM auth_identities ai
 JOIN users u ON u.id = ai.user_id AND u.deleted_at IS NULL
-LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
 WHERE ai.provider = $1 AND ai.subject = $2`, passwordProvider, email).
 		Scan(&u.ID, &u.Email, &u.Role, &u.Namespace, &hash)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -199,14 +179,13 @@ func (s *Store) EnsureOIDCUser(ctx context.Context, provider, subject, email, ro
 
 	var u User
 	err := s.db.QueryRowContext(ctx, `
-SELECT u.id, u.email, u.role, COALESCE(n.namespace, '')
+SELECT u.id, u.email, u.role, ''
 FROM auth_identities ai
 JOIN users u ON u.id = ai.user_id AND u.deleted_at IS NULL
-LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
 WHERE ai.provider = $1 AND ai.subject = $2`, provider, subject).
 		Scan(&u.ID, &u.Email, &u.Role, &u.Namespace)
 	if err == nil {
-		return s.ensureOIDCUserRoleAndNamespace(ctx, u, role)
+		return s.ensureOIDCUserRole(ctx, u, role)
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return User{}, err
@@ -217,9 +196,8 @@ WHERE ai.provider = $1 AND ai.subject = $2`, provider, subject).
 
 	userExists := true
 	err = s.db.QueryRowContext(ctx, `
-SELECT u.id, u.email, u.role, COALESCE(n.namespace, '')
+SELECT u.id, u.email, u.role, ''
 FROM users u
-LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
 WHERE u.email = $1 AND u.deleted_at IS NULL`, email).
 		Scan(&u.ID, &u.Email, &u.Role, &u.Namespace)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -256,24 +234,14 @@ ON CONFLICT (provider, subject)
 DO UPDATE SET user_id = EXCLUDED.user_id`, u.ID, provider, subject); err != nil {
 		return User{}, err
 	}
-	if u.Namespace == "" {
-		var seq int64
-		if err = tx.QueryRowContext(ctx, `SELECT nextval('platform_namespace_seq')`).Scan(&seq); err != nil {
-			return User{}, err
-		}
-		u.Namespace = fmt.Sprintf("user-%d", seq)
-		if _, err = tx.ExecContext(ctx, `INSERT INTO namespaces (id,user_id,namespace) VALUES ($1,$2,$3)`, uuid.NewString(), u.ID, u.Namespace); err != nil {
-			return User{}, err
-		}
-	}
 	if err = tx.Commit(); err != nil {
 		return User{}, err
 	}
 	return u, nil
 }
 
-func (s *Store) ensureOIDCUserRoleAndNamespace(ctx context.Context, u User, role string) (User, error) {
-	if role != RoleAdmin && u.Namespace != "" {
+func (s *Store) ensureOIDCUserRole(ctx context.Context, u User, role string) (User, error) {
+	if role != RoleAdmin {
 		return u, nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -291,16 +259,6 @@ func (s *Store) ensureOIDCUserRoleAndNamespace(ctx context.Context, u User, role
 		}
 		u.Role = RoleAdmin
 	}
-	if u.Namespace == "" {
-		var seq int64
-		if err = tx.QueryRowContext(ctx, `SELECT nextval('platform_namespace_seq')`).Scan(&seq); err != nil {
-			return User{}, err
-		}
-		u.Namespace = fmt.Sprintf("user-%d", seq)
-		if _, err = tx.ExecContext(ctx, `INSERT INTO namespaces (id,user_id,namespace) VALUES ($1,$2,$3)`, uuid.NewString(), u.ID, u.Namespace); err != nil {
-			return User{}, err
-		}
-	}
 	if err = tx.Commit(); err != nil {
 		return User{}, err
 	}
@@ -310,9 +268,8 @@ func (s *Store) ensureOIDCUserRoleAndNamespace(ctx context.Context, u User, role
 func (s *Store) GetUser(ctx context.Context, userID string) (User, bool, error) {
 	var u User
 	err := s.db.QueryRowContext(ctx, `
-SELECT u.id, u.email, u.role, COALESCE(n.namespace, '')
+SELECT u.id, u.email, u.role, ''
 FROM users u
-LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
 WHERE u.id = $1 AND u.deleted_at IS NULL`, userID).
 		Scan(&u.ID, &u.Email, &u.Role, &u.Namespace)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -414,19 +371,10 @@ WHERE ak.key_hash = $1 AND ak.revoked = false`, targetHash).
 func (s *Store) PrincipalForUserID(ctx context.Context, userID string) (Principal, error) {
 	var p Principal
 	err := s.db.QueryRowContext(ctx, `
-SELECT u.id, u.email, u.role, COALESCE(legacy.namespace, '')
+SELECT u.id, u.email, u.role
 FROM users u
-LEFT JOIN LATERAL (
-  SELECT n.namespace
-  FROM namespaces n
-  WHERE n.user_id = u.id
-    AND n.deleted_at IS NULL
-    AND COALESCE(n.scope, 'user') = 'user'
-  ORDER BY n.created_at ASC
-  LIMIT 1
-) legacy ON true
 WHERE u.id = $1 AND u.deleted_at IS NULL`, userID).
-		Scan(&p.Subject, &p.Email, &p.Role, &p.Namespace)
+		Scan(&p.Subject, &p.Email, &p.Role)
 	if err != nil {
 		return Principal{}, err
 	}
@@ -434,7 +382,6 @@ WHERE u.id = $1 AND u.deleted_at IS NULL`, userID).
 	if err != nil {
 		return Principal{}, err
 	}
-	legacyNamespace := p.Namespace
 	p.Teams = teams
 	for _, team := range teams {
 		if ns := strings.TrimSpace(team.Namespace); ns != "" {
@@ -442,18 +389,12 @@ WHERE u.id = $1 AND u.deleted_at IS NULL`, userID).
 			break
 		}
 	}
-	p.AllowedNamespaces = dedupeNamespaces(append(collectAllowedNamespaces(legacyNamespace, teams), SharedCatalogNamespace))
-	if strings.TrimSpace(p.Namespace) == "" {
-		p.Namespace = strings.TrimSpace(legacyNamespace)
-	}
+	p.AllowedNamespaces = dedupeNamespaces(append(collectAllowedNamespaces(teams), SharedCatalogNamespace))
 	return p, nil
 }
 
-func collectAllowedNamespaces(legacyNamespace string, teams []PrincipalTeam) []string {
-	namespaces := make([]string, 0, len(teams)+1)
-	if ns := strings.TrimSpace(legacyNamespace); ns != "" {
-		namespaces = append(namespaces, ns)
-	}
+func collectAllowedNamespaces(teams []PrincipalTeam) []string {
+	namespaces := make([]string, 0, len(teams))
 	for _, team := range teams {
 		if ns := strings.TrimSpace(team.Namespace); ns != "" {
 			namespaces = append(namespaces, ns)

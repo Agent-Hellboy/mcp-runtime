@@ -81,9 +81,9 @@ For every `MCPServer`, the operator reconciles:
 - `setup` provisions `mcp-runtime` plus the active shared catalog namespace for
   shared modes: `mcp-servers-org` for `org` or `mcp-servers-public` for
   `public`.
-- `tenant` mode uses the authenticated principal's user/team namespace. Place
-  runtime CRDs in per-tenant namespaces and rely on Kubernetes RBAC and ingress
-  watch configuration for isolation.
+- `tenant` mode uses team namespaces for the authenticated principal's team
+  memberships. Place runtime CRDs in per-team namespaces and rely on Kubernetes
+  RBAC and ingress watch configuration for isolation.
 - Default ingress class is `traefik`; override via `spec.ingressClass`.
 
 ## Topology

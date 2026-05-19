@@ -149,11 +149,8 @@ func (s *apiServer) principalCanAccessRegistryScope(p principal, scope string) b
 	if scope == sharedCatalogNamespace && !cfg.sharedCatalogWritableForUsers() {
 		return false
 	}
-	if p.HasNamespace(scope) || strings.TrimSpace(p.Subject) == scope {
-		return true
-	}
 	for _, team := range p.Teams {
-		if strings.TrimSpace(team.Slug) == scope {
+		if strings.TrimSpace(team.Slug) == scope || strings.TrimSpace(team.Namespace) == scope {
 			return true
 		}
 	}

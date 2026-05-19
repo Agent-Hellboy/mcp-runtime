@@ -152,7 +152,7 @@ func seedPlatformAdminFromEnv(ctx context.Context, store passwordUserEnsurer) er
 	if err != nil {
 		return err
 	}
-	log.Printf("platform admin user ensured email=%q namespace=%q", u.Email, u.Namespace)
+	log.Printf("platform admin user ensured email=%q", u.Email)
 	return nil
 }
 
@@ -196,7 +196,7 @@ func seedPlatformDevUsersFromEnv(ctx context.Context, store passwordUserEnsurer)
 		if err != nil {
 			return fmt.Errorf("ensure %s dev login: %w", seed.label, err)
 		}
-		log.Printf("platform dev %s login ensured email=%q namespace=%q", seed.label, u.Email, u.Namespace)
+		log.Printf("platform dev %s login ensured email=%q", seed.label, u.Email)
 	}
 	return nil
 }
@@ -244,36 +244,6 @@ func (s *apiServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
-	}
-	if s.runtime != nil {
-		if err := s.runtime.EnsureUserNamespace(r.Context(), principal{Subject: u.ID, Role: u.Role, Email: u.Email, Namespace: u.Namespace}); err != nil {
-			s.platform.WriteAudit(r.Context(), auditEvent{UserID: u.ID, Action: "namespace_create", Resource: u.Namespace, Namespace: u.Namespace, Status: "error", Message: err.Error(), ActorIP: requestIP(r), Source: requestSource(r), AuthIdentity: "password:" + u.Email})
-			if cleanupErr := s.platform.DeleteUser(r.Context(), u.ID); cleanupErr != nil {
-				log.Printf("signup cleanup failed for user %s: %v", u.ID, cleanupErr)
-				s.platform.WriteAudit(r.Context(), auditEvent{
-					UserID:    u.ID,
-					Action:    "signup_cleanup",
-					Resource:  "user",
-					Namespace: u.Namespace,
-					Status:    "error",
-					Message:   cleanupErr.Error(),
-					ActorIP:   requestIP(r),
-					Source:    requestSource(r),
-				})
-			} else {
-				s.platform.WriteAudit(r.Context(), auditEvent{
-					UserID:    u.ID,
-					Action:    "signup_cleanup",
-					Resource:  "user",
-					Namespace: u.Namespace,
-					Status:    "success",
-					ActorIP:   requestIP(r),
-					Source:    requestSource(r),
-				})
-			}
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to provision namespace"})
-			return
-		}
 	}
 	token, err := s.platform.CreateAccessToken(u, platformAccessTokenTTL)
 	if err != nil {
