@@ -1863,24 +1863,6 @@ func ensureRepoManagedTraefikMiddlewareResources(kubectl core.KubectlRunner, log
 	return nil
 }
 
-func deploymentExistsWithKubectl(kubectl core.KubectlRunner, namespace, name string) (bool, error) {
-	cmd, err := kubectl.CommandArgs([]string{"get", "deployment", name, "-n", namespace, "-o", "jsonpath={.metadata.name}"})
-	if err != nil {
-		return false, err
-	}
-	var stdout, stderr bytes.Buffer
-	cmd.SetStdout(&stdout)
-	cmd.SetStderr(&stderr)
-	if err := cmd.Run(); err == nil {
-		return strings.TrimSpace(stdout.String()) == name, nil
-	}
-	detail := strings.ToLower(strings.TrimSpace(stdout.String() + "\n" + stderr.String()))
-	if strings.Contains(detail, "not found") || strings.Contains(detail, "notfound") {
-		return false, nil
-	}
-	return false, fmt.Errorf("look up deployment %s/%s: %w", namespace, name, err)
-}
-
 func activeNamedTraefikDeploymentNamespacesWithKubectl(kubectl core.KubectlRunner) ([]string, error) {
 	cmd, err := kubectl.CommandArgs([]string{
 		"get", "deployment", "-A", "--no-headers",
@@ -1917,11 +1899,11 @@ func activeNamedTraefikDeploymentNamespacesWithKubectl(kubectl core.KubectlRunne
 func applyTraefikSupportManifest(kubectl core.KubectlRunner, relPath, namespace string) error {
 	resolvedPath, err := assetpath.ResolveRepoAssetPath(relPath)
 	if err != nil {
-		return core.WrapWithSentinel(core.ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to resolve Traefik manifest %s: %v", relPath, err))
+		return core.WrapWithSentinel(core.ErrReadIngressManifestFailed, err, fmt.Sprintf("failed to resolve Traefik manifest %s: %v", relPath, err))
 	}
 	manifestBytes, err := kube.ReadFileAtPath(resolvedPath)
 	if err != nil {
-		return core.WrapWithSentinel(core.ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to read Traefik manifest %s: %v", relPath, err))
+		return core.WrapWithSentinel(core.ErrReadIngressManifestFailed, err, fmt.Sprintf("failed to read Traefik manifest %s: %v", relPath, err))
 	}
 	manifestContent := strings.ReplaceAll(string(manifestBytes), "namespace: traefik", "namespace: "+namespace)
 	if err := kube.ApplyManifestContent(kubectl.CommandArgs, manifestContent); err != nil {
