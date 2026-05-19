@@ -67,8 +67,8 @@ The contributor Kind flow installs a full local stack:
 - Optional `mcp-team-<slug>` namespaces for tenant isolation
 
 The default tenant-mode MCP server catalog is authenticated. Anonymous users
-should not see MCP servers, and logged-in users see MCPs from their own user or
-team namespaces. Use `--platform-mode org` for a shared org catalog, or
+should not see MCP servers, and logged-in users see MCPs from team namespaces
+they belong to. Use `--platform-mode org` for a shared org catalog, or
 `--platform-mode public` for an anonymous public preview catalog.
 
 ## Before Opening a PR

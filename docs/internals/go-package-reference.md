@@ -3814,6 +3814,7 @@ Package kube contains shared kubectl-oriented helpers for CLI commands.
 - [`func ApplyManifestContentWithNamespace[T Command](commandArgs func([]string) (T, error), manifest, namespace string) error`](#cli-kubernetes-helpers-func-applymanifestcontentwithnamespace-t-command-commandargs-func-string-t-error-manifest-namespace-string-error)
 - [`func ApplyManifestFromFile[T Command](commandArgs func([]string) (T, error), file string, stdout, stderr io.Writer) error`](#cli-kubernetes-helpers-func-applymanifestfromfile-t-command-commandargs-func-string-t-error-file-string-stdout-stderr-io-writer-error)
 - [`func EnsureNamespace[T Command](commandArgs func([]string) (T, error), name string) error`](#cli-kubernetes-helpers-func-ensurenamespace-t-command-commandargs-func-string-t-error-name-string-error)
+- [`func EnsureNamespaceWithLabels[T Command](commandArgs func([]string) (T, error), name string, labels map[string]string) error`](#cli-kubernetes-helpers-func-ensurenamespacewithlabels-t-command-commandargs-func-string-t-error-name-string-labels-map-string-string-error)
 - [`func NormalizePatchDocument(raw string) (string, error)`](#cli-kubernetes-helpers-func-normalizepatchdocument-raw-string-string-error)
 - [`func NormalizePatchFile(file string) (string, error)`](#cli-kubernetes-helpers-func-normalizepatchfile-file-string-string-error)
 - [`func ReadFileAtPath(path string) ([]byte, error)`](#cli-kubernetes-helpers-func-readfileatpath-path-string-byte-error)
@@ -3850,6 +3851,17 @@ func ApplyManifestFromFile[T Command](commandArgs func([]string) (T, error), fil
 ```text
 func EnsureNamespace[T Command](commandArgs func([]string) (T, error), name string) error
     EnsureNamespace applies/creates a namespace idempotently.
+
+```
+
+<a id="cli-kubernetes-helpers-func-ensurenamespacewithlabels-t-command-commandargs-func-string-t-error-name-string-labels-map-string-string-error"></a>
+```text
+func EnsureNamespaceWithLabels[T Command](commandArgs func([]string) (T, error), name string, labels map[string]string) error
+    EnsureNamespaceWithLabels applies/creates a namespace idempotently and sets
+    labels via kubectl apply. Labels already present on an existing namespace
+    are preserved unless the same key is also supplied here (kubectl apply
+    will set them to the new value). Pass nil/empty labels for a label-less
+    namespace.
 
 ```
 
@@ -4298,8 +4310,10 @@ _No package overview is documented._
 - [`func ACMETLSDNSNames() []string`](#cli-cert-manager-func-acmetlsdnsnames-string)
 - [`func ApplyClusterIssuerWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-applyclusterissuerwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func ApplyLetsEncryptClusterIssuer(kubectl core.KubectlRunner, email string, staging bool, logger *zap.Logger) error`](#cli-cert-manager-func-applyletsencryptclusterissuer-kubectl-core-kubectlrunner-email-string-staging-bool-logger-zap-logger-error)
+- [`func ApplyRegistryCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error`](#cli-cert-manager-func-applyregistrycertificate-kubectl-core-kubectlrunner-dnsnames-ipaddresses-string-issuername-string-error)
 - [`func ApplyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []string, issuerName string) error`](#cli-cert-manager-func-applyregistrycertificateforacme-kubectl-core-kubectlrunner-dnsnames-string-issuername-string-error)
 - [`func ApplyRegistryCertificateWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-applyregistrycertificatewithkubectl-kubectl-core-kubectlrunner-error)
+- [`func ApplyRegistryInternalCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error`](#cli-cert-manager-func-applyregistryinternalcertificate-kubectl-core-kubectlrunner-dnsnames-ipaddresses-string-issuername-string-error)
 - [`func CheckCASecretWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkcasecretwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func CheckCertManagerInstalledWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkcertmanagerinstalledwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func CheckCertificateWithKubectl(kubectl core.KubectlRunner, name, namespace string) error`](#cli-cert-manager-func-checkcertificatewithkubectl-kubectl-core-kubectlrunner-name-namespace-string-error)
@@ -4325,9 +4339,11 @@ _No package overview is documented._
 
 ```text
 const (
-	CertClusterIssuerName   = certClusterIssuerName
-	RegistryCertificateName = registryCertificateName
-	RegistryTLSSecretName   = registryTLSSecretName
+	CertClusterIssuerName           = certClusterIssuerName
+	RegistryCertificateName         = registryCertificateName
+	RegistryTLSSecretName           = registryTLSSecretName
+	RegistryInternalCertificateName = registryInternalCertificateName
+	RegistryInternalTLSSecretName   = registryInternalTLSSecretName
 )
 ```
 
@@ -4349,6 +4365,11 @@ func ApplyClusterIssuerWithKubectl(kubectl core.KubectlRunner) error
 func ApplyLetsEncryptClusterIssuer(kubectl core.KubectlRunner, email string, staging bool, logger *zap.Logger) error
 ```
 
+<a id="cli-cert-manager-func-applyregistrycertificate-kubectl-core-kubectlrunner-dnsnames-ipaddresses-string-issuername-string-error"></a>
+```text
+func ApplyRegistryCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error
+```
+
 <a id="cli-cert-manager-func-applyregistrycertificateforacme-kubectl-core-kubectlrunner-dnsnames-string-issuername-string-error"></a>
 ```text
 func ApplyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []string, issuerName string) error
@@ -4357,6 +4378,11 @@ func ApplyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []stri
 <a id="cli-cert-manager-func-applyregistrycertificatewithkubectl-kubectl-core-kubectlrunner-error"></a>
 ```text
 func ApplyRegistryCertificateWithKubectl(kubectl core.KubectlRunner) error
+```
+
+<a id="cli-cert-manager-func-applyregistryinternalcertificate-kubectl-core-kubectlrunner-dnsnames-ipaddresses-string-issuername-string-error"></a>
+```text
+func ApplyRegistryInternalCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error
 ```
 
 <a id="cli-cert-manager-func-checkcasecretwithkubectl-kubectl-core-kubectlrunner-error"></a>
@@ -4933,6 +4959,7 @@ Package registry owns routing for the registry top-level command.
 - [`func New(runtime *core.Runtime) *cobra.Command`](#cli-registry-func-new-runtime-core-runtime-cobra-command)
 - [`func NewWithManager(mgr *RegistryManager) *cobra.Command`](#cli-registry-func-newwithmanager-mgr-registrymanager-cobra-command)
 - [`func ResolveExternalRegistryConfig(flagCfg *config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error)`](#cli-registry-func-resolveexternalregistryconfig-flagcfg-config-externalregistryconfig-config-externalregistryconfig-error)
+- [`func ResolveInternalPlatformRegistryURL(logger *zap.Logger) string`](#cli-registry-func-resolveinternalplatformregistryurl-logger-zap-logger-string)
 - [`func ResolvePlatformRegistryURL(logger *zap.Logger) string`](#cli-registry-func-resolveplatformregistryurl-logger-zap-logger-string)
 - [`func RunRegistryProvision(mgr *RegistryManager, url, username, password, operatorImage string, dryRun bool) error`](#cli-registry-func-runregistryprovision-mgr-registrymanager-url-username-password-operatorimage-string-dryrun-bool-error)
 - [`func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error`](#cli-registry-func-runregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-mode-helpernamespace-string-error)
@@ -4976,6 +5003,11 @@ func NewWithManager(mgr *RegistryManager) *cobra.Command
 <a id="cli-registry-func-resolveexternalregistryconfig-flagcfg-config-externalregistryconfig-config-externalregistryconfig-error"></a>
 ```text
 func ResolveExternalRegistryConfig(flagCfg *config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error)
+```
+
+<a id="cli-registry-func-resolveinternalplatformregistryurl-logger-zap-logger-string"></a>
+```text
+func ResolveInternalPlatformRegistryURL(logger *zap.Logger) string
 ```
 
 <a id="cli-registry-func-resolveplatformregistryurl-logger-zap-logger-string"></a>
@@ -5241,6 +5273,7 @@ _No package overview is documented._
 ### Index
 
 - [`func GitTag(command CommandFactory) string`](#cli-registry-resolution-func-gittag-command-commandfactory-string)
+- [`func InternalPlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string`](#cli-registry-resolution-func-internalplatformurl-logger-zap-logger-kubectl-kubectlcommand-cfg-config-string)
 - [`func PlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string`](#cli-registry-resolution-func-platformurl-logger-zap-logger-kubectl-kubectlcommand-cfg-config-string)
 - [`type CommandFactory func(name string, args []string) (OutputCommand, error)`](#cli-registry-resolution-type-commandfactory-func-name-string-args-string-outputcommand-error)
 - [`type Config struct`](#cli-registry-resolution-type-config-struct)
@@ -5257,10 +5290,22 @@ func GitTag(command CommandFactory) string
 
 ```
 
+<a id="cli-registry-resolution-func-internalplatformurl-logger-zap-logger-kubectl-kubectlcommand-cfg-config-string"></a>
+```text
+func InternalPlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string
+    InternalPlatformURL resolves the bundled registry host:port for platform
+    pods rendered by setup. It intentionally ignores public ingress hosts
+    derived from MCP_PLATFORM_DOMAIN/MCP_REGISTRY_INGRESS_HOST so operator and
+    Sentinel pods do not need anonymous or pull-secret access to the public
+    registry route.
+
+```
+
 <a id="cli-registry-resolution-func-platformurl-logger-zap-logger-kubectl-kubectlcommand-cfg-config-string"></a>
 ```text
 func PlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string
-    PlatformURL resolves the registry host:port used for image names.
+    PlatformURL resolves the registry host:port used for public/user-facing
+    image names.
 ```
 
 <a id="cli-registry-resolution-types"></a>
@@ -5649,6 +5694,7 @@ Package plan contains pure setup planning types and default resolution.
 - [`Constants`](#cli-setup-plan-constants)
 - [`func CatalogNamespaceForPlatformMode(mode string) string`](#cli-setup-plan-func-catalognamespaceforplatformmode-mode-string-string)
 - [`func NormalizePlatformMode(mode string) (string, bool)`](#cli-setup-plan-func-normalizeplatformmode-mode-string-string-bool)
+- [`func NormalizeRegistryMode(mode string) (string, bool)`](#cli-setup-plan-func-normalizeregistrymode-mode-string-string-bool)
 - [`type Input struct`](#cli-setup-plan-type-input-struct)
 - [`type Plan struct`](#cli-setup-plan-type-plan-struct)
 - [`func Build(input Input) Plan`](#cli-setup-plan-func-build-input-input-plan)
@@ -5665,6 +5711,12 @@ const (
 	PlatformModeTenant = "tenant"
 	PlatformModeOrg    = "org"
 	PlatformModePublic = "public"
+)
+const (
+	RegistryModeAuto         = "auto"
+	RegistryModeBundledHTTP  = "bundled-http"
+	RegistryModeBundledHTTPS = "bundled-https"
+	RegistryModeExternal     = "external"
 )
 const (
 	DefaultOrgCatalogNamespace    = "mcp-servers-org"
@@ -5685,6 +5737,11 @@ func CatalogNamespaceForPlatformMode(mode string) string
 func NormalizePlatformMode(mode string) (string, bool)
 ```
 
+<a id="cli-setup-plan-func-normalizeregistrymode-mode-string-string-bool"></a>
+```text
+func NormalizeRegistryMode(mode string) (string, bool)
+```
+
 <a id="cli-setup-plan-types"></a>
 ### Types
 
@@ -5695,6 +5752,10 @@ type Input struct {
 	Context                string
 	RegistryType           string
 	RegistryStorageSize    string
+	RegistryMode           string
+	ExternalRegistryURL    string
+	ExternalRegistryUser   string
+	ExternalRegistryPass   string
 	StorageMode            string
 	PlatformMode           string
 	IngressMode            string
@@ -5721,24 +5782,28 @@ type Input struct {
 <a id="cli-setup-plan-type-plan-struct"></a>
 ```text
 type Plan struct {
-	Kubeconfig          string
-	Context             string
-	RegistryType        string
-	RegistryStorageSize string
-	StorageMode         string
-	PlatformMode        string
-	Ingress             cluster.IngressOptions
-	RegistryManifest    string
-	TLSEnabled          bool
-	TestMode            bool
-	ParallelBuilds      bool
-	StrictProd          bool
-	DeployAnalytics     bool
-	OperatorArgs        []string
-	ACMEmail            string
-	ACMEStaging         bool
-	TLSClusterIssuer    string
-	InstallCertManager  bool
+	Kubeconfig           string
+	Context              string
+	RegistryType         string
+	RegistryStorageSize  string
+	RegistryMode         string
+	ExternalRegistryURL  string
+	ExternalRegistryUser string
+	ExternalRegistryPass string
+	StorageMode          string
+	PlatformMode         string
+	Ingress              cluster.IngressOptions
+	RegistryManifest     string
+	TLSEnabled           bool
+	TestMode             bool
+	ParallelBuilds       bool
+	StrictProd           bool
+	DeployAnalytics      bool
+	OperatorArgs         []string
+	ACMEmail             string
+	ACMEStaging          bool
+	TLSClusterIssuer     string
+	InstallCertManager   bool
 }
     Plan captures the resolved setup decisions.
 

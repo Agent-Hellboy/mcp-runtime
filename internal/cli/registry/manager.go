@@ -194,9 +194,6 @@ func ScopedRegistryRepository(ctx context.Context, client *platformapi.PlatformC
 	if scope != publishscope.Tenant {
 		return repo, nil
 	}
-	if strings.Contains(repo, "/") {
-		return repo, nil
-	}
 	if client == nil {
 		return "", fmt.Errorf("resolve tenant registry scope: platform client is required")
 	}
@@ -204,11 +201,7 @@ func ScopedRegistryRepository(ctx context.Context, client *platformapi.PlatformC
 	if err != nil {
 		return "", fmt.Errorf("resolve tenant registry scope: %w", err)
 	}
-	prefix := tenantRegistryScope(principal)
-	if prefix == "" {
-		return "", fmt.Errorf("resolve tenant registry scope: authenticated principal has no tenant namespace")
-	}
-	return prefix + "/" + repo, nil
+	return scopedTenantRegistryRepository(repo, principal)
 }
 
 func prefixRepositoryScope(repo, scope string) string {
@@ -218,17 +211,66 @@ func prefixRepositoryScope(repo, scope string) string {
 	return scope + "/" + repo
 }
 
-func tenantRegistryScope(principal platformapi.Principal) string {
-	namespace := strings.TrimSpace(principal.Namespace)
+func scopedTenantRegistryRepository(repo string, principal platformapi.Principal) (string, error) {
+	scopes := tenantRegistryScopes(principal)
+	if len(scopes) == 0 {
+		return "", fmt.Errorf("resolve tenant registry scope: authenticated principal has no team membership")
+	}
+	if strings.Contains(repo, "/") {
+		prefix := strings.TrimSpace(strings.SplitN(repo, "/", 2)[0])
+		if stringInSlice(prefix, scopes) {
+			return repo, nil
+		}
+		return "", fmt.Errorf("resolve tenant registry scope: repository must be scoped to one of your teams (%s)", strings.Join(quoteStrings(scopes), " or "))
+	}
+	return scopes[0] + "/" + repo, nil
+}
+
+func tenantRegistryScopes(principal platformapi.Principal) []string {
+	scopes := make([]string, 0, len(principal.Teams)*2)
 	for _, team := range principal.Teams {
-		if strings.TrimSpace(team.Namespace) == namespace && strings.TrimSpace(team.Slug) != "" {
-			return strings.TrimSpace(team.Slug)
+		if slug := strings.TrimSpace(team.Slug); slug != "" {
+			scopes = append(scopes, slug)
+		}
+		if namespace := strings.TrimSpace(team.Namespace); namespace != "" {
+			scopes = append(scopes, namespace)
 		}
 	}
-	if namespace != "" {
-		return namespace
+	return dedupeStrings(scopes)
+}
+
+func stringInSlice(value string, allowed []string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
 	}
-	return strings.TrimSpace(principal.Subject)
+	return false
+}
+
+func quoteStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, fmt.Sprintf("%q", value))
+	}
+	return out
+}
+
+func dedupeStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func requirePlatformPushCredentials(ctx context.Context) (*platformapi.PlatformClient, error) {

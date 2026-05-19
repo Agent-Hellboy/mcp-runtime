@@ -48,7 +48,7 @@ noted otherwise. Authenticated routes accept `Authorization: Bearer <token>` or
 | `GET` | `/api/user/analytics/usage` | Caller-scoped MCP server usage analytics for the user dashboard. |
 | `GET`, `POST` | `/api/user/registry-credentials` | List or create registry credentials. |
 | `POST` | `/api/user/registry-credentials/{id}/revoke` | Revoke one registry credential. |
-| `*` | `/api/registry/authz` | Traefik forward-auth endpoint for bundled registry ingress. Admin credentials are global; user credentials are scoped to caller-owned repository paths plus active org/public aliases. |
+| `*` | `/api/registry/authz` | Traefik forward-auth endpoint for bundled registry ingress. Admin credentials are global; user credentials are scoped to team repository paths plus active org/public aliases. |
 | `GET`, `POST` | `/api/deployments` | List or apply platform-managed deployments. |
 | `DELETE` | `/api/deployments/{namespace}/{name}` | Delete a platform-managed deployment and service. |
 | `GET` | `/api/admin/namespaces` | Admin namespace inventory. |
@@ -156,7 +156,7 @@ Apply an MCPServer through the platform API:
 curl -sS -X POST http://localhost:8080/api/runtime/servers \
   -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
-  -d '{"name":"demo","namespace":"user-1","spec":{"image":"registry.example.com/user-1/demo:latest"}}'
+  -d '{"name":"demo","namespace":"mcp-team-acme","spec":{"image":"registry.example.com/acme/demo:latest"}}'
 ```
 
 The response includes `publish_policy` on list calls. Admins configure the
@@ -172,26 +172,26 @@ Retire an MCPServer to free quota:
 
 ```bash
 curl -sS -X DELETE -H "authorization: Bearer $TOKEN" \
-  http://localhost:8080/api/runtime/servers/user-1/demo
+  http://localhost:8080/api/runtime/servers/mcp-team-acme/demo
 ```
 
 Fetch recent analytics for a server:
 
 ```bash
 curl -sS -H "authorization: Bearer $TOKEN" \
-  'http://localhost:8080/api/runtime/server-events?namespace=user-1&server=demo'
+  'http://localhost:8080/api/runtime/server-events?namespace=mcp-team-acme&server=demo'
 ```
 
 ## Deployments
 
-Normal users deploy only into their owned namespace. Admins may pass
-`namespace`.
+Normal users deploy only into team namespaces they belong to. Admins may pass
+any `namespace`.
 
 ```bash
 curl -sS -X POST http://localhost:8080/api/deployments \
   -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
-  -d '{"name":"demo","image":"registry.example.com/user-1/demo","version":"v1","port":8088,"replicas":1}'
+  -d '{"name":"demo","namespace":"mcp-team-acme","image":"registry.example.com/acme/demo","version":"v1","port":8088,"replicas":1}'
 ```
 
 The API applies a Kubernetes `Deployment` and `Service` labelled as
@@ -205,7 +205,7 @@ curl -sS -H "authorization: Bearer $TOKEN" \
 
 ```bash
 curl -sS -X DELETE -H "authorization: Bearer $TOKEN" \
-  http://localhost:8080/api/deployments/user-1/demo
+  http://localhost:8080/api/deployments/mcp-team-acme/demo
 ```
 
 ## Registry Credentials
@@ -250,5 +250,5 @@ curl -sS -H "authorization: Bearer $ADMIN_TOKEN" \
 
 ```bash
 curl -sS -H "authorization: Bearer $ADMIN_TOKEN" \
-  'http://localhost:8080/api/admin/deployments?namespace=user-1'
+  'http://localhost:8080/api/admin/deployments?namespace=mcp-team-acme'
 ```

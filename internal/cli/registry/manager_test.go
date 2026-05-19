@@ -152,17 +152,23 @@ func TestScopedRegistryRepositoryHelpers(t *testing.T) {
 	if got := prefixRepositoryScope("public/demo", "public"); got != "public/demo" {
 		t.Fatalf("prefixRepositoryScope double-prefixed: %q", got)
 	}
-	if got := tenantRegistryScope(platformapi.Principal{
-		Namespace: "mcp-team-acme",
+	principal := platformapi.Principal{
 		Teams: []platformapi.Team{{
 			Slug:      "acme",
 			Namespace: "mcp-team-acme",
 		}},
-	}); got != "acme" {
-		t.Fatalf("tenantRegistryScope team = %q, want acme", got)
 	}
-	if got := tenantRegistryScope(platformapi.Principal{Namespace: "user-1", Subject: "user-1"}); got != "user-1" {
-		t.Fatalf("tenantRegistryScope user = %q, want user-1", got)
+	if got, err := scopedTenantRegistryRepository("demo", principal); err != nil || got != "acme/demo" {
+		t.Fatalf("scopedTenantRegistryRepository team = %q, %v; want acme/demo", got, err)
+	}
+	if got, err := scopedTenantRegistryRepository("mcp-team-acme/demo", principal); err != nil || got != "mcp-team-acme/demo" {
+		t.Fatalf("scopedTenantRegistryRepository namespace prefix = %q, %v; want mcp-team-acme/demo", got, err)
+	}
+	if _, err := scopedTenantRegistryRepository("user-1/demo", principal); err == nil || !strings.Contains(err.Error(), "one of your teams") {
+		t.Fatalf("expected non-team prefix to be rejected, got %v", err)
+	}
+	if _, err := scopedTenantRegistryRepository("demo", platformapi.Principal{Namespace: "user-1", Subject: "user-1"}); err == nil || !strings.Contains(err.Error(), "no team membership") {
+		t.Fatalf("expected user namespace principal to be rejected, got %v", err)
 	}
 }
 

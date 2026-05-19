@@ -40,6 +40,9 @@ func TestBuildSetupPlan_DefaultHTTP(t *testing.T) {
 	if plan.RegistryManifest != "config/registry" {
 		t.Fatalf("expected default registry manifest, got %q", plan.RegistryManifest)
 	}
+	if plan.RegistryMode != setupplan.RegistryModeAuto {
+		t.Fatalf("expected default registry mode auto, got %q", plan.RegistryMode)
+	}
 }
 
 func TestBuildSetupPlan_DefaultTLS(t *testing.T) {
@@ -59,6 +62,32 @@ func TestBuildSetupPlan_DefaultTLS(t *testing.T) {
 	}
 	if plan.RegistryManifest != "config/registry/overlays/tls" {
 		t.Fatalf("expected tls registry manifest, got %q", plan.RegistryManifest)
+	}
+}
+
+func TestBuildSetupPlan_BundledHTTPSRegistryManifest(t *testing.T) {
+	plan := setupplan.Build(setupplan.Input{
+		RegistryMode: setupplan.RegistryModeBundledHTTPS,
+		TLSEnabled:   true,
+	})
+
+	if plan.RegistryMode != setupplan.RegistryModeBundledHTTPS {
+		t.Fatalf("expected bundled HTTPS registry mode, got %q", plan.RegistryMode)
+	}
+	if plan.RegistryManifest != "config/registry/overlays/internal-tls" {
+		t.Fatalf("expected internal tls registry manifest, got %q", plan.RegistryManifest)
+	}
+}
+
+func TestBuildSetupPlan_HostpathBundledHTTPSRegistryManifest(t *testing.T) {
+	plan := setupplan.Build(setupplan.Input{
+		RegistryMode: setupplan.RegistryModeBundledHTTPS,
+		StorageMode:  setupplan.StorageModeHostpath,
+		TLSEnabled:   true,
+	})
+
+	if plan.RegistryManifest != "config/registry/overlays/hostpath-internal-tls" {
+		t.Fatalf("expected hostpath internal tls registry manifest, got %q", plan.RegistryManifest)
 	}
 }
 
@@ -193,18 +222,18 @@ func TestValidateNonTestSetupAllowsLenientDefaultMode(t *testing.T) {
 	}
 }
 
-func TestValidateNonTestSetupAllowsStableInternalRegistry(t *testing.T) {
+func TestValidateNonTestSetupAllowsBundledHTTPSStableInternalRegistry(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() { core.DefaultCLIConfig = orig })
 	core.DefaultCLIConfig = &core.CLIConfig{RegistryEndpoint: "registry.prod.example.com", RegistryIngressHost: "registry.prod.example.com"}
 
 	err := validateNonTestSetup(
-		setupplan.Plan{TLSEnabled: true, TestMode: false},
+		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true, RegistryMode: setupplan.RegistryModeBundledHTTPS},
 		nil,
 		false,
 	)
 	if err != nil {
-		t.Fatalf("expected stable internal registry to be allowed, got %v", err)
+		t.Fatalf("expected stable bundled HTTPS internal registry to be allowed, got %v", err)
 	}
 }
 
@@ -245,6 +274,169 @@ func TestValidateNonTestSetupRejectsMissingTLSInStrictProd(t *testing.T) {
 	}
 }
 
+func TestValidateRegistryTLSModeRejectsBundledHTTPSWithoutTLS(t *testing.T) {
+	err := ValidateRegistryTLSMode(setupplan.RegistryModeBundledHTTPS, false, "")
+	if err == nil || !strings.Contains(err.Error(), "--with-tls") {
+		t.Fatalf("expected bundled HTTPS TLS validation error, got %v", err)
+	}
+}
+
+func TestValidateRegistryTLSModeAllowsBundledHTTPSWithACME(t *testing.T) {
+	err := ValidateRegistryTLSMode(setupplan.RegistryModeBundledHTTPS, true, "admin@example.com")
+	if err != nil {
+		t.Fatalf("expected bundled HTTPS with ACME to be allowed after internal TLS split, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupRejectsBundledHTTPInStrictProd(t *testing.T) {
+	err := validateNonTestSetup(
+		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true, RegistryMode: setupplan.RegistryModeBundledHTTP},
+		nil,
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "bundled-http") {
+		t.Fatalf("expected strict-prod bundled-http validation error, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupAllowsBundledHTTPSInStrictProd(t *testing.T) {
+	err := validateNonTestSetup(
+		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true, RegistryMode: setupplan.RegistryModeBundledHTTPS},
+		nil,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("expected strict-prod bundled-https to be allowed, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupRejectsAutoBundledRegistryInStrictProd(t *testing.T) {
+	err := validateNonTestSetup(
+		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true, RegistryMode: setupplan.RegistryModeAuto},
+		nil,
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "bundled registry requires --registry-mode bundled-https") {
+		t.Fatalf("expected strict-prod auto bundled registry validation error, got %v", err)
+	}
+}
+
+func TestResolveRegistrySetupUsesExternalRegistryFlagsInAutoMode(t *testing.T) {
+	var got *config.ExternalRegistryConfig
+	deps := SetupDeps{
+		ResolveExternalRegistryConfig: func(flagCfg *config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error) {
+			got = flagCfg
+			return flagCfg, nil
+		},
+	}
+
+	ext, usingExternal, _, err := resolveRegistrySetup(zap.NewNop(), setupplan.Plan{
+		RegistryMode:         setupplan.RegistryModeAuto,
+		ExternalRegistryURL:  "registry.example.com",
+		ExternalRegistryUser: "user",
+		ExternalRegistryPass: "pass",
+	}, deps)
+	if err != nil {
+		t.Fatalf("resolveRegistrySetup returned error: %v", err)
+	}
+	if !usingExternal || ext == nil || ext.URL != "registry.example.com" {
+		t.Fatalf("expected external registry from setup flags, got ext=%+v using=%t", ext, usingExternal)
+	}
+	if got == nil || got.Username != "user" || got.Password != "pass" {
+		t.Fatalf("expected flag config to be passed through, got %+v", got)
+	}
+}
+
+func TestResolveRegistrySetupRequiresExternalURLInExternalMode(t *testing.T) {
+	deps := SetupDeps{
+		ResolveExternalRegistryConfig: func(*config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error) {
+			return nil, nil
+		},
+	}
+
+	_, _, _, err := resolveRegistrySetup(zap.NewNop(), setupplan.Plan{RegistryMode: setupplan.RegistryModeExternal}, deps)
+	if err == nil || !strings.Contains(err.Error(), "external registry url is required") {
+		t.Fatalf("expected external registry URL error, got %v", err)
+	}
+}
+
+func TestResolveRegistrySetupRejectsExternalFlagsInBundledMode(t *testing.T) {
+	deps := SetupDeps{
+		ResolveExternalRegistryConfig: func(*config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error) {
+			t.Fatal("did not expect external registry resolver in bundled mode")
+			return nil, nil
+		},
+	}
+
+	_, _, _, err := resolveRegistrySetup(zap.NewNop(), setupplan.Plan{
+		RegistryMode:        setupplan.RegistryModeBundledHTTP,
+		ExternalRegistryURL: "registry.example.com",
+	}, deps)
+	if err == nil || !strings.Contains(err.Error(), "--external-registry-*") {
+		t.Fatalf("expected bundled mode external flag error, got %v", err)
+	}
+}
+
+func TestRegistryInternalCertificateSANsIncludesInternalNamesForBundledHTTPS(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	core.DefaultCLIConfig = &core.CLIConfig{
+		RegistryEndpoint:    "registry.registry.svc.cluster.local:5000",
+		RegistryIngressHost: "registry.example.com",
+		McpIngressHost:      "mcp.example.com",
+	}
+
+	dnsNames, ipAddresses := registryInternalCertificateSANs(setupplan.Plan{RegistryMode: setupplan.RegistryModeBundledHTTPS})
+	for _, want := range []string{
+		"registry.local",
+		"registry.registry.svc",
+		"registry.registry.svc.cluster.local",
+	} {
+		if !contains(dnsNames, want) {
+			t.Fatalf("expected DNS SAN %q in %v", want, dnsNames)
+		}
+	}
+	if len(ipAddresses) != 0 {
+		t.Fatalf("did not expect IP SANs, got %v", ipAddresses)
+	}
+}
+
+func TestRegistryInternalCertificateSANsIncludesIPRegistryEndpoint(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	core.DefaultCLIConfig = &core.CLIConfig{
+		RegistryEndpoint:    "10.43.24.102:5000",
+		RegistryIngressHost: "registry.local",
+	}
+
+	_, ipAddresses := registryInternalCertificateSANs(setupplan.Plan{RegistryMode: setupplan.RegistryModeBundledHTTPS})
+	if !contains(ipAddresses, "10.43.24.102") {
+		t.Fatalf("expected IP SAN for registry endpoint, got %v", ipAddresses)
+	}
+}
+
+func TestRegistryCertificateSANsStayPublicForBundledHTTPS(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	core.DefaultCLIConfig = &core.CLIConfig{
+		RegistryEndpoint:    "10.43.24.102:5000",
+		RegistryIngressHost: "registry.example.com",
+		McpIngressHost:      "mcp.example.com",
+	}
+
+	dnsNames, ipAddresses := registryCertificateSANs(setupplan.Plan{RegistryMode: setupplan.RegistryModeBundledHTTPS})
+	for _, want := range []string{"registry.example.com", "mcp.example.com"} {
+		if !contains(dnsNames, want) {
+			t.Fatalf("expected public DNS SAN %q in %v", want, dnsNames)
+		}
+	}
+	for _, internal := range []string{"registry.registry.svc.cluster.local", "10.43.24.102"} {
+		if contains(dnsNames, internal) || contains(ipAddresses, internal) {
+			t.Fatalf("public registry cert unexpectedly contains internal SAN %q (dns=%v ips=%v)", internal, dnsNames, ipAddresses)
+		}
+	}
+}
+
 func TestValidateNonTestSetupRejectsDevRegistryURLInStrictProd(t *testing.T) {
 	err := validateNonTestSetup(
 		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true},
@@ -253,21 +445,6 @@ func TestValidateNonTestSetupRejectsDevRegistryURLInStrictProd(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "dev-only registry URL") {
 		t.Fatalf("expected strict-prod dev registry validation error, got %v", err)
-	}
-}
-
-func TestValidateNonTestSetupRejectsDevInternalRegistryEndpointInStrictProd(t *testing.T) {
-	orig := core.DefaultCLIConfig
-	t.Cleanup(func() { core.DefaultCLIConfig = orig })
-	core.DefaultCLIConfig = &core.CLIConfig{RegistryEndpoint: "10.43.39.164:5000", RegistryIngressHost: "registry.local"}
-
-	err := validateNonTestSetup(
-		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true},
-		nil,
-		false,
-	)
-	if err == nil || !strings.Contains(err.Error(), "stable internal registry endpoint") {
-		t.Fatalf("expected strict-prod dev internal registry validation error, got %v", err)
 	}
 }
 
@@ -932,5 +1109,118 @@ func TestSetupPlatformWithDeps_RegistryAuthReenabledOnFailure(t *testing.T) {
 	}
 	if !rec.has("auth-enable") {
 		t.Fatalf("expected registry auth re-enable on failure (defer), got calls: %v", rec.calls)
+	}
+}
+
+// TestSetupPlatformWithDeps_CatalogNamespace verifies setup pre-creates the
+// shared catalog namespace (mcp-servers-public / mcp-servers-org) with the
+// labels the platform API expects so non-admin users can publish without the
+// API SA needing cluster-wide namespace-create RBAC. Tenant mode has no
+// shared catalog and must not call ensure.
+func TestSetupPlatformWithDeps_CatalogNamespace(t *testing.T) {
+	cases := []struct {
+		mode       string
+		wantNS     string
+		wantScope  string
+		wantCalled bool
+	}{
+		{mode: setupplan.PlatformModePublic, wantNS: setupplan.DefaultPublicCatalogNamespace, wantScope: "public", wantCalled: true},
+		{mode: setupplan.PlatformModeOrg, wantNS: setupplan.DefaultOrgCatalogNamespace, wantScope: "org", wantCalled: true},
+		{mode: setupplan.PlatformModeTenant, wantCalled: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.mode, func(t *testing.T) {
+			var (
+				gotNS     string
+				gotLabels map[string]string
+				calls     int
+			)
+			deps := SetupDeps{
+				ResolveExternalRegistryConfig: func(*config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error) {
+					return nil, nil
+				},
+				ClusterManager:                  &fakeClusterManager{rec: &callRecorder{}},
+				RegistryManager:                 &fakeRegistryManager{rec: &callRecorder{}},
+				LoginRegistry:                   func(*zap.Logger, string, string, string) error { return nil },
+				DeployRegistry:                  func(*zap.Logger, string, int, string, string, string) error { return nil },
+				WaitForDeploymentAvailable:      func(*zap.Logger, string, string, string, time.Duration) error { return nil },
+				PrintDeploymentDiagnostics:      func(string, string, string) {},
+				SetupTLS:                        func(*zap.Logger, setupplan.Plan) error { return nil },
+				BuildOperatorImage:              func(string) error { return nil },
+				PushOperatorImage:               func(string) error { return nil },
+				BuildGatewayProxyImage:          func(string) error { return nil },
+				PushGatewayProxyImage:           func(string) error { return nil },
+				EnsureNamespace:                 func(string) error { return nil },
+				ResolvePlatformRegistryURL:      func(*zap.Logger) string { return "registry.local" },
+				PushOperatorImageToInternal:     func(*zap.Logger, string, string, string) error { return nil },
+				PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
+				DeployOperatorManifests:         func(*zap.Logger, string, string, []string) error { return nil },
+				ConfigureProvisionedRegistryEnv: func(*config.ExternalRegistryConfig, string) error { return nil },
+				RestartDeployment:               func(string, string) error { return nil },
+				CheckCRDInstalled:               func(string) error { return nil },
+				GetDeploymentTimeout:            func() time.Duration { return time.Second },
+				GetRegistryPort:                 func() int { return 5000 },
+				OperatorImageFor: func(*config.ExternalRegistryConfig) string {
+					return "registry.local/mcp-runtime-operator:latest"
+				},
+				GatewayProxyImageFor: func(*config.ExternalRegistryConfig) string {
+					return "registry.local/mcp-sentinel-mcp-gateway:latest"
+				},
+				EnsureCatalogNamespace: func(ns string, labels map[string]string) error {
+					calls++
+					gotNS = ns
+					gotLabels = labels
+					return nil
+				},
+			}
+
+			plan := setupplan.Plan{
+				RegistryType:        "docker",
+				RegistryStorageSize: "20Gi",
+				PlatformMode:        tc.mode,
+				Ingress: cluster.IngressOptions{
+					Mode:     "traefik",
+					Manifest: "config/ingress/overlays/http",
+					Force:    false,
+				},
+				RegistryManifest: "config/registry",
+				TestMode:         true,
+			}
+
+			if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err != nil {
+				t.Fatalf("setupPlatformWithDeps returned error: %v", err)
+			}
+
+			if tc.wantCalled {
+				if calls != 1 {
+					t.Fatalf("expected EnsureCatalogNamespace to be called exactly once, got %d", calls)
+				}
+				if gotNS != tc.wantNS {
+					t.Fatalf("namespace = %q, want %q", gotNS, tc.wantNS)
+				}
+				if gotLabels["mcpruntime.org/scope"] != tc.wantScope {
+					t.Fatalf("scope label = %q, want %q", gotLabels["mcpruntime.org/scope"], tc.wantScope)
+				}
+				if gotLabels["platform.mcpruntime.org/managed"] != "true" {
+					t.Fatalf("managed label missing or wrong: %q", gotLabels["platform.mcpruntime.org/managed"])
+				}
+				if gotLabels["pod-security.kubernetes.io/enforce"] != "restricted" {
+					t.Fatalf("PSS enforce label missing or wrong: %q", gotLabels["pod-security.kubernetes.io/enforce"])
+				}
+				if gotLabels["pod-security.kubernetes.io/audit"] != "restricted" {
+					t.Fatalf("PSS audit label missing or wrong: %q", gotLabels["pod-security.kubernetes.io/audit"])
+				}
+				if gotLabels["pod-security.kubernetes.io/warn"] != "restricted" {
+					t.Fatalf("PSS warn label missing or wrong: %q", gotLabels["pod-security.kubernetes.io/warn"])
+				}
+				if gotLabels[core.LabelManagedBy] != core.LabelManagedByValue {
+					t.Fatalf("managed-by label missing or wrong: %q", gotLabels[core.LabelManagedBy])
+				}
+			} else {
+				if calls != 0 {
+					t.Fatalf("expected EnsureCatalogNamespace not to be called for %s mode, got %d calls", tc.mode, calls)
+				}
+			}
+		})
 	}
 }

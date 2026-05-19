@@ -177,6 +177,87 @@ func TestPlatformURL(t *testing.T) {
 	})
 }
 
+func TestInternalPlatformURL(t *testing.T) {
+	logger := zap.NewNop()
+	clearRegistryEnv := func(t *testing.T) {
+		t.Helper()
+		for _, key := range []string{
+			"MCP_RUNTIME_TEST_MODE",
+			"MCP_PLATFORM_DOMAIN",
+			"MCP_REGISTRY_ENDPOINT",
+			"MCP_REGISTRY_HOST",
+			"MCP_REGISTRY_INGRESS_HOST",
+		} {
+			t.Setenv(key, "")
+		}
+	}
+
+	t.Run("test_mode_ignores_public_host_from_platform_domain", func(t *testing.T) {
+		clearRegistryEnv(t)
+		t.Setenv("MCP_RUNTIME_TEST_MODE", "1")
+		t.Setenv("MCP_PLATFORM_DOMAIN", "mcpruntime.org")
+		kubectl := &fakeKubectl{clusterIP: "10.96.201.51", port: "5000"}
+		url := InternalPlatformURL(logger, kubectl.commandArgs, Config{
+			RegistryEndpoint:        "registry.mcpruntime.org",
+			DefaultRegistryEndpoint: "registry.local",
+			RegistryIngressHost:     "registry.mcpruntime.org",
+			DefaultRegistryHost:     "registry.local",
+			RegistryPort:            5000,
+		})
+		if url != "registry.registry.svc.cluster.local:5000" {
+			t.Errorf("expected service DNS registry URL, got %q", url)
+		}
+		if kubectl.clusterIPQueried {
+			t.Error("expected test mode to avoid ClusterIP lookup")
+		}
+	})
+
+	t.Run("non_test_ignores_public_host_from_platform_domain", func(t *testing.T) {
+		clearRegistryEnv(t)
+		t.Setenv("MCP_RUNTIME_TEST_MODE", "")
+		t.Setenv("MCP_PLATFORM_DOMAIN", "mcpruntime.org")
+		url := InternalPlatformURL(logger, (&fakeKubectl{clusterIP: "10.96.201.51", port: "5000"}).commandArgs, Config{
+			RegistryEndpoint:        "registry.mcpruntime.org",
+			DefaultRegistryEndpoint: "registry.local",
+			RegistryIngressHost:     "registry.mcpruntime.org",
+			DefaultRegistryHost:     "registry.local",
+			RegistryPort:            5000,
+		})
+		if url != "10.96.201.51:5000" {
+			t.Errorf("expected ClusterIP registry URL, got %q", url)
+		}
+	})
+
+	t.Run("respects_explicit_registry_endpoint", func(t *testing.T) {
+		clearRegistryEnv(t)
+		t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.internal:5000")
+		url := InternalPlatformURL(logger, (&fakeKubectl{clusterIP: "10.96.201.51", port: "5000"}).commandArgs, Config{
+			RegistryEndpoint:        "registry.internal:5000",
+			DefaultRegistryEndpoint: "registry.local",
+			RegistryIngressHost:     "registry.mcpruntime.org",
+			DefaultRegistryHost:     "registry.local",
+			RegistryPort:            5000,
+		})
+		if url != "registry.internal:5000" {
+			t.Errorf("expected explicit registry endpoint, got %q", url)
+		}
+	})
+
+	t.Run("uses_non_default_endpoint_when_it_differs_from_public_host", func(t *testing.T) {
+		clearRegistryEnv(t)
+		url := InternalPlatformURL(logger, (&fakeKubectl{clusterIP: "10.96.201.51", port: "5000"}).commandArgs, Config{
+			RegistryEndpoint:        "10.43.39.164:5000",
+			DefaultRegistryEndpoint: "registry.local",
+			RegistryIngressHost:     "registry.mcpruntime.org",
+			DefaultRegistryHost:     "registry.local",
+			RegistryPort:            5000,
+		})
+		if url != "10.43.39.164:5000" {
+			t.Errorf("expected non-default internal endpoint, got %q", url)
+		}
+	})
+}
+
 type fakeCommand struct {
 	output    []byte
 	outputErr error

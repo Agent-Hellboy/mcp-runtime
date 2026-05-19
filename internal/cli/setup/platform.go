@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"slices"
@@ -132,6 +133,7 @@ type SetupDeps struct {
 	BuildAnalyticsImage             func(image, dockerfilePath, buildContext string) error
 	PushAnalyticsImage              func(image string) error
 	EnsureNamespace                 func(namespace string) error
+	EnsureCatalogNamespace          func(namespace string, labels map[string]string) error
 	ResolvePlatformRegistryURL      func(logger *zap.Logger) string
 	PushOperatorImageToInternal     func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
 	PushGatewayProxyImageToInternal func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
@@ -201,8 +203,13 @@ func (d SetupDeps) withDefaults(logger *zap.Logger) SetupDeps {
 			return kube.EnsureNamespace(core.DefaultKubectlClient().CommandArgs, namespace)
 		}
 	}
+	if d.EnsureCatalogNamespace == nil {
+		d.EnsureCatalogNamespace = func(namespace string, labels map[string]string) error {
+			return kube.EnsureNamespaceWithLabels(core.DefaultKubectlClient().CommandArgs, namespace, labels)
+		}
+	}
 	if d.ResolvePlatformRegistryURL == nil {
-		d.ResolvePlatformRegistryURL = registry.ResolvePlatformRegistryURL
+		d.ResolvePlatformRegistryURL = registry.ResolveInternalPlatformRegistryURL
 	}
 	if d.PushOperatorImageToInternal == nil {
 		d.PushOperatorImageToInternal = pushOperatorImageToInternalRegistry
@@ -292,6 +299,31 @@ func ValidateStorageMode(mode string) error {
 	}
 }
 
+func ValidateRegistryMode(mode string) error {
+	if _, ok := setupplan.NormalizeRegistryMode(mode); ok {
+		return nil
+	}
+	return core.WrapWithSentinel(
+		core.ErrFieldRequired,
+		fmt.Errorf("invalid registry mode %q", mode),
+		"invalid --registry-mode; expected auto, bundled-http, bundled-https, or external",
+	)
+}
+
+func ValidateRegistryTLSMode(mode string, tlsEnabled bool, acmeEmail string) error {
+	normalized, ok := setupplan.NormalizeRegistryMode(mode)
+	if !ok {
+		return nil
+	}
+	if normalized == setupplan.RegistryModeBundledHTTPS && !tlsEnabled {
+		return core.NewWithSentinel(
+			core.ErrFieldRequired,
+			"--registry-mode bundled-https requires --with-tls so setup can provision registry-tls for the registry pod",
+		)
+	}
+	return nil
+}
+
 func ValidatePlatformMode(mode string) error {
 	if _, ok := setupplan.NormalizePlatformMode(mode); ok {
 		return nil
@@ -319,7 +351,11 @@ func setupPlatformWithDeps(logger *zap.Logger, plan setupplan.Plan, deps SetupDe
 	}
 	_ = os.Setenv("MCP_PLATFORM_MODE", plan.PlatformMode)
 
-	extRegistry, usingExternalRegistry, registrySecretName := resolveRegistrySetup(logger, deps)
+	extRegistry, usingExternalRegistry, registrySecretName, err := resolveRegistrySetup(logger, plan, deps)
+	if err != nil {
+		core.LogStructuredError(logger, err, "Invalid registry setup configuration")
+		return err
+	}
 	if err := validateNonTestSetup(plan, extRegistry, usingExternalRegistry); err != nil {
 		core.LogStructuredError(logger, err, "Invalid non-test setup configuration")
 		return err
@@ -410,7 +446,46 @@ func setupTLSStep(logger *zap.Logger, plan setupplan.Plan, deps SetupDeps) error
 	return nil
 }
 
-func setupRegistryStep(logger *zap.Logger, extRegistry *config.ExternalRegistryConfig, usingExternalRegistry bool, registryType, registryStorageSize, registryManifest string, tlsEnabled bool, deps SetupDeps) error {
+// catalogNamespaceLabels returns the labels the platform API expects to find on
+// a shared catalog namespace. Keeping these aligned with EnsureCatalogNamespace
+// in services/api/internal/runtimeapi/deployments.go lets the runtime-side
+// ensure call degrade to an idempotent patch instead of a create, which is
+// what allows non-admin users to publish into the catalog without giving the
+// API ServiceAccount cluster-wide namespace-create RBAC.
+func catalogNamespaceLabels(platformMode string) map[string]string {
+	return map[string]string{
+		"platform.mcpruntime.org/managed":    "true",
+		"mcpruntime.org/scope":               platformMode,
+		"pod-security.kubernetes.io/enforce": "restricted",
+		"pod-security.kubernetes.io/audit":   "restricted",
+		"pod-security.kubernetes.io/warn":    "restricted",
+		core.LabelManagedBy:                  core.LabelManagedByValue,
+	}
+}
+
+func setupCatalogNamespaceStep(logger *zap.Logger, plan setupplan.Plan, deps SetupDeps) error {
+	namespace := setupplan.CatalogNamespaceForPlatformMode(plan.PlatformMode)
+	if namespace == "" {
+		// tenant mode has no shared catalog namespace.
+		return nil
+	}
+	core.Step(fmt.Sprintf("Provisioning %s catalog namespace %q", plan.PlatformMode, namespace))
+	if err := deps.EnsureCatalogNamespace(namespace, catalogNamespaceLabels(plan.PlatformMode)); err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrSetupStepFailed,
+			err,
+			fmt.Sprintf("ensure catalog namespace %q failed: %v", namespace, err),
+			map[string]any{"namespace": namespace, "platform_mode": plan.PlatformMode, "component": "setup"},
+		)
+		core.Error("Catalog namespace provisioning failed")
+		core.LogStructuredError(logger, wrappedErr, "Catalog namespace provisioning failed")
+		return wrappedErr
+	}
+	core.Success(fmt.Sprintf("Catalog namespace %q ready", namespace))
+	return nil
+}
+
+func setupRegistryStep(logger *zap.Logger, extRegistry *config.ExternalRegistryConfig, usingExternalRegistry bool, registryType, registryStorageSize, registryManifest, registryMode string, tlsEnabled bool, deps SetupDeps) error {
 	// Step 4: Deploy internal container registry
 	core.Step("Step 4: Configure registry")
 	if usingExternalRegistry {
@@ -428,8 +503,10 @@ func setupRegistryStep(logger *zap.Logger, extRegistry *config.ExternalRegistryC
 	}
 
 	core.Info(fmt.Sprintf("Type: %s", registryType))
-	if tlsEnabled {
-		core.Info("TLS: enabled (registry overlay)")
+	if registryMode == setupplan.RegistryModeBundledHTTPS {
+		core.Info("TLS: enabled for registry pod and ingress (bundled HTTPS mode)")
+	} else if tlsEnabled {
+		core.Info("TLS: enabled for registry ingress; registry pod remains HTTP for internal pulls")
 	} else {
 		core.Info("TLS: disabled (dev HTTP mode)")
 	}
@@ -962,7 +1039,7 @@ func getOperatorImage(ext *config.ExternalRegistryConfig) string {
 	if ext != nil && ext.URL != "" {
 		return strings.TrimSuffix(ext.URL, "/") + "/mcp-runtime-operator:" + tag
 	}
-	return fmt.Sprintf("%s/mcp-runtime-operator:%s", registry.ResolvePlatformRegistryURL(nil), tag)
+	return fmt.Sprintf("%s/mcp-runtime-operator:%s", registry.ResolveInternalPlatformRegistryURL(nil), tag)
 }
 
 func getGatewayProxyImage(ext *config.ExternalRegistryConfig) string {
@@ -975,7 +1052,7 @@ func getGatewayProxyImage(ext *config.ExternalRegistryConfig) string {
 	if ext != nil && ext.URL != "" {
 		return strings.TrimSuffix(ext.URL, "/") + "/" + defaultGatewayProxyRepository + ":" + tag
 	}
-	return fmt.Sprintf("%s/%s:%s", registry.ResolvePlatformRegistryURL(nil), defaultGatewayProxyRepository, tag)
+	return fmt.Sprintf("%s/%s:%s", registry.ResolveInternalPlatformRegistryURL(nil), defaultGatewayProxyRepository, tag)
 }
 
 func analyticsImageFor(ext *config.ExternalRegistryConfig, repository string) string {
@@ -984,7 +1061,7 @@ func analyticsImageFor(ext *config.ExternalRegistryConfig, repository string) st
 	if ext != nil && ext.URL != "" {
 		return strings.TrimSuffix(ext.URL, "/") + "/" + repository + ":" + tag
 	}
-	return fmt.Sprintf("%s/%s:%s", registry.ResolvePlatformRegistryURL(nil), repository, tag)
+	return fmt.Sprintf("%s/%s:%s", registry.ResolveInternalPlatformRegistryURL(nil), repository, tag)
 }
 
 func shouldStageRegistryIngressAuth(usingExternalRegistry bool) bool {
@@ -1066,9 +1143,10 @@ func configureProvisionedRegistryEnvWithKubectl(kubectl core.KubectlRunner, ext 
 		if err := ensureProvisionedRegistrySecretWithKubectl(kubectl, secretName, ext.Username, ext.Password); err != nil {
 			return err
 		}
-		catalogNamespace := setupplan.CatalogNamespaceForPlatformMode(os.Getenv("MCP_PLATFORM_MODE"))
+		platformMode := os.Getenv("MCP_PLATFORM_MODE")
+		catalogNamespace := setupplan.CatalogNamespaceForPlatformMode(platformMode)
 		if catalogNamespace != "" {
-			if err := kube.EnsureNamespace(kubectl.CommandArgs, catalogNamespace); err != nil {
+			if err := kube.EnsureNamespaceWithLabels(kubectl.CommandArgs, catalogNamespace, catalogNamespaceLabels(platformMode)); err != nil {
 				return err
 			}
 			// Create imagePullSecret in the active catalog namespace for pod image pulls.
@@ -2192,18 +2270,7 @@ func applyCatalogNamespaceForMode(kubectl core.KubectlRunner, platformMode strin
 		return nil
 	}
 	core.Info(fmt.Sprintf("Applying platform catalog namespace %s", namespace))
-	manifest := fmt.Sprintf(`apiVersion: v1
-kind: Namespace
-metadata:
-  name: %s
-  labels:
-    platform.mcpruntime.org/managed: "true"
-    mcpruntime.org/scope: %s
-    pod-security.kubernetes.io/enforce: restricted
-    pod-security.kubernetes.io/audit: restricted
-    pod-security.kubernetes.io/warn: restricted
-`, namespace, platformMode)
-	return kube.ApplyManifestContent(kubectl.CommandArgs, manifest)
+	return kube.EnsureNamespaceWithLabels(kubectl.CommandArgs, namespace, catalogNamespaceLabels(platformMode))
 }
 
 func trimDiagnosticsString(s string) string {
@@ -2292,7 +2359,7 @@ func applyRenderedManifest(kubectl core.KubectlRunner, manifestPath string, imag
 	}
 	rendered := ""
 	if manifestPath == "k8s/01-config.yaml" {
-		rendered, err = renderAnalyticsConfigManifest(kubectl, string(content), platformMode)
+		rendered, err = renderAnalyticsConfigManifest(kubectl, string(content), platformMode, images)
 	} else {
 		rendered, err = renderAnalyticsManifest(string(content), images, imagePullSecretName, platformMode)
 	}
@@ -2377,7 +2444,7 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 	return rendered, nil
 }
 
-func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platformMode string) (string, error) {
+func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platformMode string, images AnalyticsImageSet) (string, error) {
 	type configMapManifest struct {
 		APIVersion string            `yaml:"apiVersion"`
 		Kind       string            `yaml:"kind"`
@@ -2404,10 +2471,27 @@ func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platform
 		"OIDC_JWKS_URL",
 		"MCP_PLATFORM_DOMAIN",
 		"MCP_MCP_INGRESS_HOST",
+		"MCP_REGISTRY_ENDPOINT",
+		"MCP_REGISTRY_INGRESS_HOST",
+		"PLATFORM_REGISTRY_URL",
 	} {
+		if envValue := setupAnalyticsConfigEnvValue(key); envValue != "" {
+			manifest.Data[key] = envValue
+			continue
+		}
 		if strings.TrimSpace(manifest.Data[key]) == "" && strings.TrimSpace(existingData[key]) != "" {
 			manifest.Data[key] = existingData[key]
 		}
+	}
+	applyGoogleOIDCDefaults(manifest.Data)
+	if registryEndpoint := strings.TrimSpace(core.GetRegistryEndpoint()); registryEndpoint != "" {
+		manifest.Data["MCP_REGISTRY_ENDPOINT"] = registryEndpoint
+	}
+	if registryIngressHost := strings.TrimSpace(core.GetRegistryIngressHost()); registryIngressHost != "" {
+		manifest.Data["MCP_REGISTRY_INGRESS_HOST"] = registryIngressHost
+	}
+	if registryHost := registryHostFromImage(images.API); registryHost != "" {
+		manifest.Data["PLATFORM_REGISTRY_URL"] = registryHost
 	}
 	if existingMode, ok := setupplan.NormalizePlatformMode(existingData["PLATFORM_MODE"]); ok {
 		requestedMode, requestedOK := setupplan.NormalizePlatformMode(platformMode)
@@ -2428,6 +2512,53 @@ func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platform
 		return "", fmt.Errorf("encode analytics config manifest: %w", err)
 	}
 	return string(rendered), nil
+}
+
+func setupAnalyticsConfigEnvValue(key string) string {
+	candidates := []string{key}
+	if key == "GOOGLE_CLIENT_ID" {
+		candidates = append(candidates, "MCP_GOOGLE_CLIENT_ID")
+	} else if strings.HasPrefix(key, "OIDC_") {
+		candidates = append(candidates, "MCP_"+key)
+	}
+	for _, candidate := range candidates {
+		if value := strings.TrimSpace(os.Getenv(candidate)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func applyGoogleOIDCDefaults(data map[string]string) {
+	clientID := strings.TrimSpace(data["GOOGLE_CLIENT_ID"])
+	if clientID == "" {
+		return
+	}
+	if strings.TrimSpace(data["OIDC_ISSUER"]) == "" {
+		data["OIDC_ISSUER"] = "https://accounts.google.com"
+	}
+	if strings.TrimSpace(data["OIDC_AUDIENCE"]) == "" {
+		data["OIDC_AUDIENCE"] = clientID
+	}
+	if strings.TrimSpace(data["OIDC_JWKS_URL"]) == "" {
+		data["OIDC_JWKS_URL"] = "https://www.googleapis.com/oauth2/v3/certs"
+	}
+}
+
+func registryHostFromImage(image string) string {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return ""
+	}
+	repo, _ := ref.SplitImage(image)
+	first, _, found := strings.Cut(repo, "/")
+	if !found {
+		return ""
+	}
+	if strings.Contains(first, ".") || strings.Contains(first, ":") || first == "localhost" {
+		return first
+	}
+	return ""
 }
 
 func existingConfigMapData(kubectl core.KubectlRunner, namespace, name string) (map[string]string, error) {
@@ -2891,6 +3022,9 @@ func applySetupPlanToCLIConfig(plan setupplan.Plan) {
 	if core.DefaultCLIConfig == nil {
 		return
 	}
+	if plan.RegistryMode == setupplan.RegistryModeBundledHTTPS && !registryEndpointEnvExplicitlyConfigured() {
+		core.DefaultCLIConfig.RegistryEndpoint = fmt.Sprintf("%s.%s.svc.cluster.local:%d", core.RegistryServiceName, core.NamespaceRegistry, core.GetRegistryPort())
+	}
 	if !plan.TLSEnabled {
 		core.DefaultCLIConfig.RegistryClusterIssuerName = ""
 		return
@@ -2906,6 +3040,15 @@ func applySetupPlanToCLIConfig(plan setupplan.Plan) {
 	core.DefaultCLIConfig.RegistryClusterIssuerName = certmanager.CertClusterIssuerName
 }
 
+func registryEndpointEnvExplicitlyConfigured() bool {
+	for _, key := range []string{"MCP_REGISTRY_ENDPOINT", "MCP_REGISTRY_HOST"} {
+		if value, ok := os.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // setupTLSWithKubectlAndPlan provisions TLS: Let's Encrypt when plan.ACMEmail is set, an existing
 // ClusterIssuer when plan.TLSClusterIssuer is set, otherwise the bundled private CA (mcp-runtime-ca).
 func setupTLSWithKubectlAndPlan(kubectl core.KubectlRunner, logger *zap.Logger, plan setupplan.Plan) error {
@@ -2915,7 +3058,84 @@ func setupTLSWithKubectlAndPlan(kubectl core.KubectlRunner, logger *zap.Logger, 
 	if strings.TrimSpace(plan.TLSClusterIssuer) != "" {
 		return setupTLSWithExistingClusterIssuer(kubectl, logger, plan)
 	}
-	return setupTLSPrivateCA(kubectl, logger)
+	return setupTLSPrivateCA(kubectl, logger, plan)
+}
+
+func registryCertificateSANs(plan setupplan.Plan) ([]string, []string) {
+	dnsNames := append([]string{}, certmanager.ACMETLSDNSNames()...)
+	return dedupeStrings(dnsNames), nil
+}
+
+func registryInternalCertificateSANs(plan setupplan.Plan) ([]string, []string) {
+	var dnsNames []string
+	var ipAddresses []string
+	if plan.RegistryMode == setupplan.RegistryModeBundledHTTPS {
+		dnsNames = append(dnsNames,
+			core.DefaultRegistryIngressHost,
+			"registry.registry.svc",
+			"registry.registry.svc.cluster.local",
+		)
+		addRegistrySAN(strings.TrimSpace(core.GetRegistryEndpoint()), &dnsNames, &ipAddresses)
+	}
+	return dedupeStrings(dnsNames), dedupeStrings(ipAddresses)
+}
+
+func bundledRegistryInternalIssuerName(plan setupplan.Plan) string {
+	if strings.TrimSpace(plan.TLSClusterIssuer) != "" {
+		return strings.TrimSpace(plan.TLSClusterIssuer)
+	}
+	return certmanager.CertClusterIssuerName
+}
+
+func addRegistrySAN(raw string, dnsNames, ipAddresses *[]string) {
+	host := registryEndpointHost(raw)
+	if host == "" {
+		return
+	}
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		*ipAddresses = append(*ipAddresses, ip.String())
+		return
+	}
+	*dnsNames = append(*dnsNames, host)
+}
+
+func registryEndpointHost(raw string) string {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(raw, "/"))
+	if trimmed == "" {
+		return ""
+	}
+	if strings.Contains(trimmed, "://") {
+		if parsed, err := url.Parse(trimmed); err == nil && parsed.Host != "" {
+			trimmed = parsed.Host
+		}
+	}
+	if slash := strings.Index(trimmed, "/"); slash >= 0 {
+		trimmed = trimmed[:slash]
+	}
+	if host, _, err := net.SplitHostPort(trimmed); err == nil {
+		return strings.Trim(host, "[]")
+	}
+	if idx := strings.LastIndex(trimmed, ":"); idx >= 0 && strings.Count(trimmed, ":") == 1 {
+		return strings.Trim(trimmed[:idx], "[]")
+	}
+	return strings.Trim(trimmed, "[]")
+}
+
+func dedupeStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func setupTLSLetsEncrypt(kubectl core.KubectlRunner, logger *zap.Logger, plan setupplan.Plan) error {
@@ -3016,6 +3236,9 @@ func setupTLSLetsEncrypt(kubectl core.KubectlRunner, logger *zap.Logger, plan se
 		return err
 	}
 	core.Success("Certificate issued successfully")
+	if err := setupBundledRegistryInternalTLSStep(kubectl, logger, plan); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -3066,9 +3289,9 @@ func setupTLSWithExistingClusterIssuer(kubectl core.KubectlRunner, logger *zap.L
 		return err
 	}
 
-	dnsNames := certmanager.ACMETLSDNSNames()
-	if len(dnsNames) == 0 {
-		err := fmt.Errorf("no DNS names resolved for the Certificate; set MCP_PLATFORM_DOMAIN, MCP_REGISTRY_HOST, or MCP_REGISTRY_INGRESS_HOST (and optional MCP_MCP_INGRESS_HOST)")
+	dnsNames, ipAddresses := registryCertificateSANs(plan)
+	if len(dnsNames) == 0 && len(ipAddresses) == 0 {
+		err := fmt.Errorf("no DNS names or IP addresses resolved for the Certificate; set MCP_PLATFORM_DOMAIN, MCP_REGISTRY_HOST, or MCP_REGISTRY_INGRESS_HOST (and optional MCP_MCP_INGRESS_HOST)")
 		wrappedErr := core.WrapWithSentinel(core.ErrTLSSetupFailed, err, err.Error())
 		core.Error("Invalid TLS host configuration")
 		if logger != nil {
@@ -3078,7 +3301,7 @@ func setupTLSWithExistingClusterIssuer(kubectl core.KubectlRunner, logger *zap.L
 	}
 
 	core.Info("Applying Certificate for registry (custom ClusterIssuer)")
-	if err := certmanager.ApplyRegistryCertificateForACME(kubectl, dnsNames, issuerName); err != nil {
+	if err := certmanager.ApplyRegistryCertificate(kubectl, dnsNames, ipAddresses, issuerName); err != nil {
 		wrappedErr := core.WrapWithSentinelAndContext(
 			core.ErrApplyCertificateFailed,
 			err,
@@ -3106,11 +3329,14 @@ func setupTLSWithExistingClusterIssuer(kubectl core.KubectlRunner, logger *zap.L
 		return err
 	}
 	core.Success("Certificate issued successfully")
+	if err := setupBundledRegistryInternalTLSStep(kubectl, logger, plan); err != nil {
+		return err
+	}
 	return nil
 }
 
 // setupTLSPrivateCA uses a pre-created TLS secret mcp-runtime-ca in cert-manager (see config/cert-manager/cluster-issuer.yaml).
-func setupTLSPrivateCA(kubectl core.KubectlRunner, logger *zap.Logger) error {
+func setupTLSPrivateCA(kubectl core.KubectlRunner, logger *zap.Logger, plan setupplan.Plan) error {
 	core.Info("Checking cert-manager installation")
 	if err := certmanager.CheckCertManagerInstalledWithKubectl(kubectl); err != nil {
 		err := core.WrapWithSentinel(core.ErrCertManagerNotInstalled, err, "cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true\n  or run setup with --with-tls --acme-email <addr> to install cert-manager automatically")
@@ -3161,11 +3387,18 @@ func setupTLSPrivateCA(kubectl core.KubectlRunner, logger *zap.Logger) error {
 	}
 
 	core.Info("Applying Certificate for registry")
-	if err := certmanager.ApplyRegistryCertificateWithKubectl(kubectl); err != nil {
+	var certErr error
+	if plan.RegistryMode == setupplan.RegistryModeBundledHTTPS {
+		dnsNames, ipAddresses := registryCertificateSANs(plan)
+		certErr = certmanager.ApplyRegistryCertificate(kubectl, dnsNames, ipAddresses, certmanager.CertClusterIssuerName)
+	} else {
+		certErr = certmanager.ApplyRegistryCertificateWithKubectl(kubectl)
+	}
+	if certErr != nil {
 		wrappedErr := core.WrapWithSentinelAndContext(
 			core.ErrApplyCertificateFailed,
-			err,
-			fmt.Sprintf("failed to apply Certificate: %v", err),
+			certErr,
+			fmt.Sprintf("failed to apply Certificate: %v", certErr),
 			map[string]any{"certificate": certmanager.RegistryCertificateName, "namespace": core.NamespaceRegistry, "component": "setup"},
 		)
 		core.Error("Failed to apply Certificate")
@@ -3186,6 +3419,72 @@ func setupTLSPrivateCA(kubectl core.KubectlRunner, logger *zap.Logger) error {
 		return err
 	}
 	core.Success("Certificate issued successfully")
+	if err := setupBundledRegistryInternalTLSStep(kubectl, logger, plan); err != nil {
+		return err
+	}
+	return nil
+}
+
+func setupBundledRegistryInternalTLSStep(kubectl core.KubectlRunner, logger *zap.Logger, plan setupplan.Plan) error {
+	if plan.RegistryMode != setupplan.RegistryModeBundledHTTPS {
+		return nil
+	}
+	issuerName := bundledRegistryInternalIssuerName(plan)
+	if issuerName == certmanager.CertClusterIssuerName {
+		core.Info("Checking internal registry CA secret")
+		if err := certmanager.CheckCASecretWithKubectl(kubectl); err != nil {
+			err := core.WrapWithSentinel(
+				core.ErrCASecretNotFound,
+				err,
+				"bundled HTTPS registry pulls need an internal CA for registry-internal-tls. Create cert-manager/mcp-runtime-ca and configure every node to trust its CA certificate, or pass --tls-cluster-issuer for an existing internal issuer",
+			)
+			core.Error("Internal registry CA secret not found")
+			if logger != nil {
+				core.LogStructuredError(logger, err, "Internal registry CA secret not found")
+			}
+			return err
+		}
+		core.Info("Applying internal registry ClusterIssuer")
+		if err := certmanager.ApplyClusterIssuerWithKubectl(kubectl); err != nil {
+			wrappedErr := core.WrapWithSentinel(core.ErrClusterIssuerApplyFailed, err, fmt.Sprintf("failed to apply internal registry ClusterIssuer: %v", err))
+			core.Error("Failed to apply internal registry ClusterIssuer")
+			if logger != nil {
+				core.LogStructuredError(logger, wrappedErr, "Failed to apply internal registry ClusterIssuer")
+			}
+			return wrappedErr
+		}
+	}
+
+	dnsNames, ipAddresses := registryInternalCertificateSANs(plan)
+	core.Info("Applying Certificate for internal registry pod TLS")
+	if err := certmanager.ApplyRegistryInternalCertificate(kubectl, dnsNames, ipAddresses, issuerName); err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrApplyCertificateFailed,
+			err,
+			fmt.Sprintf("failed to apply internal registry Certificate: %v", err),
+			map[string]any{"certificate": certmanager.RegistryInternalCertificateName, "namespace": core.NamespaceRegistry, "component": "setup"},
+		)
+		core.Error("Failed to apply internal registry Certificate")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to apply internal registry Certificate")
+		}
+		return wrappedErr
+	}
+
+	certTimeout := core.GetCertTimeout()
+	if certTimeout < 2*time.Minute {
+		certTimeout = 2 * time.Minute
+	}
+	core.Info(fmt.Sprintf("Waiting for internal registry certificate to be issued (timeout: %s)", certTimeout))
+	if err := certmanager.WaitForCertificateReadyWithKubectl(kubectl, certmanager.RegistryInternalCertificateName, core.NamespaceRegistry, certTimeout); err != nil {
+		err := core.NewWithSentinel(core.ErrCertificateNotReady, fmt.Sprintf("internal registry certificate not ready after %s. Check cert-manager and your internal issuer configuration", certTimeout))
+		core.Error("Internal registry certificate not ready")
+		if logger != nil {
+			core.LogStructuredError(logger, err, "Internal registry certificate not ready")
+		}
+		return err
+	}
+	core.Success("Internal registry certificate issued successfully")
 	return nil
 }
 

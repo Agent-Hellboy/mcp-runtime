@@ -1616,6 +1616,34 @@ func TestCheckMCPServersDNSAndNetworkReadsCompletedPodLogs(t *testing.T) {
 	}
 }
 
+func TestRegistryReachabilityUsesHTTPSForInternalTLSRegistry(t *testing.T) {
+	var runArgs []string
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			switch {
+			case len(spec.Args) > 0 && spec.Args[0] == "get" && contains(spec.Args, "registry-internal-tls"):
+				return &core.MockCommand{OutputData: []byte("registry-internal-tls")}
+			case len(spec.Args) > 0 && spec.Args[0] == "run":
+				runArgs = append([]string(nil), spec.Args...)
+				return &core.MockCommand{OutputData: []byte("HTTP/2 200\r\n")}
+			}
+			return &core.MockCommand{OutputErr: fmt.Errorf("unexpected command: %v", spec.Args)}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	check := checkRegistryReachableFromCluster(kubectl)
+	if !check.OK {
+		t.Fatalf("expected registry probe to pass, got detail=%q", check.Detail)
+	}
+	if !contains(runArgs, "https://registry.registry.svc.cluster.local:5000/v2/") {
+		t.Fatalf("registry probe should use HTTPS when registry-internal-tls exists, got args=%v", runArgs)
+	}
+	if !contains(runArgs, "-skI") {
+		t.Fatalf("registry probe should allow the internal CA probe with -k, got args=%v", runArgs)
+	}
+}
+
 func TestRestrictedRunOverridesUsesNumericNonRootUser(t *testing.T) {
 	overrides := restrictedRunOverrides("probe", "curlimages/curl:8.7.1", "curl", "-sSI", "http://example.test")
 	for _, want := range []string{

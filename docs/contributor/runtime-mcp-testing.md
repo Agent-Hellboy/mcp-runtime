@@ -7,7 +7,7 @@ gateway policy, and clean up stale runtime objects in a contributor cluster.
 
 `mcp-servers` is the legacy single-team/example namespace used by the local
 testing manifests below. In default `tenant` platform mode, signed-in users see
-only their own user/team namespaces. `--platform-mode org` uses
+only team namespaces they belong to. `--platform-mode org` uses
 `mcp-servers-org` as the shared authenticated catalog, and
 `--platform-mode public` uses `mcp-servers-public` as the anonymous preview
 catalog. Team-specific MCPs belong in namespaces such as `mcp-team-tenant-a`.
@@ -17,7 +17,7 @@ Expected UI/API behavior:
 | Principal | Expected catalog |
 |---|---|
 | Anonymous | `401` for `/api/runtime/servers`, except public mode can read `mcp-servers-public` |
-| Normal user in tenant mode | MCPs from their own user namespace |
+| Normal user in tenant mode | MCPs from team namespaces they belong to |
 | Tenant user in tenant mode | MCPs from their own team namespace |
 | User in org mode | MCPs from `mcp-servers-org` |
 | User in public mode | MCPs from `mcp-servers-public` |

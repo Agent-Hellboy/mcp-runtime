@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: registry
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: registry
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+        env:
+        - name: REGISTRY_HTTP_TLS_CERTIFICATE
+          value: /certs/tls.crt
+        - name: REGISTRY_HTTP_TLS_KEY
+          value: /certs/tls.key
+        volumeMounts:
+        - name: registry-tls
+          mountPath: /certs
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            scheme: HTTPS
+            path: /
+            port: 5000
+        readinessProbe:
+          httpGet:
+            scheme: HTTPS
+            path: /
+            port: 5000
+      volumes:
+      - name: registry-tls
+        secret:
+          secretName: registry-internal-tls

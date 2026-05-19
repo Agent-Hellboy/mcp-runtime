@@ -110,7 +110,7 @@ For local `setup --test-mode` clusters, setup seeds two email/password logins:
 
 | Service | Auth behavior |
 |---|---|
-| **api** | `/health` is open. Authenticated `/api/*` routes accept `x-api-key` from `API_KEYS`, user-generated API keys, platform JWT bearer tokens, or OIDC JWT bearer tokens when OIDC is configured. If `ADMIN_API_KEYS` is set, only those keys get admin role; other `API_KEYS` values are user role. Registry forward-auth keeps admin credentials global and allows normal user credentials only on repository paths scoped to the caller's user namespace or team slug. |
+| **api** | `/health` is open. Authenticated `/api/*` routes accept `x-api-key` from `API_KEYS`, user-generated API keys, platform JWT bearer tokens, or OIDC JWT bearer tokens when OIDC is configured. If `ADMIN_API_KEYS` is set, only those keys get admin role; other `API_KEYS` values are user role. Registry forward-auth keeps admin credentials global and allows normal user credentials only on repository paths scoped to the caller's team slug or team namespace. |
 | **ui** | `/auth/login` creates an HttpOnly UI session from `api_key`, `id_token`, or `email`/`password`. The UI then proxies `/api/*` with an upstream API key or bearer token. |
 | **ingest** | `/live`, `/ready`, and `/health` are open. `/events` accepts `x-api-key` from `INGEST_API_KEYS`, legacy `API_KEYS`, or a configured OIDC bearer token. If no API keys and no JWKS are configured, intake auth is bypassed. |
 | **processor** | No data API. It exposes metrics and a simple health check on the metrics port. |
@@ -131,13 +131,13 @@ metrics on `METRICS_PORT` (default `9090`).
 | `GET` | `/api/auth/me` | Return the authenticated principal. |
 | `GET` | `/api/dashboard/summary` | Dashboard cards: event totals, active grants/sessions, latest event metadata. Admin role required. |
 | `GET` | `/api/analytics/usage` | Dashboard usage analytics from ClickHouse: totals, top MCP servers, human/agent pairs, tools, decision counts, recent activity, and request buckets. Query: `limit` (1-50, default 10), `window_days` (1-365, default 30), `namespace`, `team_id`, `server`, `decision`, and `tool_name`. Admin role required. |
-| `GET` | `/api/user/analytics/usage` | User dashboard analytics from ClickHouse. Normal users are scoped to their own user namespace and team namespaces; the shared catalog is excluded. Query: `limit`, `window_days`, `namespace`, `server`, `decision`, and `tool_name`. |
+| `GET` | `/api/user/analytics/usage` | User dashboard analytics from ClickHouse. Normal users are scoped to team namespaces they belong to; the shared catalog is excluded. Query: `limit`, `window_days`, `namespace`, `server`, `decision`, and `tool_name`. |
 | `GET` | `/api/events` | Recent ClickHouse-backed audit events, newest first. Query: `limit` (1-1000, default 100). Admin role required. |
 | `GET` | `/api/events/filter` | Filtered audit events. Query: `trace_id`, `source`, `event_type`, `server`, `namespace`, `team_id`, `cluster`, `human_id`, `agent_id`, `session_id`, `decision`, `tool_name`, `limit`. Admin role required. |
 | `GET` | `/api/stats` | Total event count. Admin role required. |
 | `GET` | `/api/sources` | Event counts grouped by source. Admin role required. |
 | `GET` | `/api/event-types` | Event counts grouped by event type. Admin role required. |
-| `GET`, `POST` | `/api/runtime/servers` | List or apply `MCPServer` resources through runtime authz scope. `tenant` mode defaults signed-in users to their own user/team namespace; `org` mode includes the org catalog plus owned/team namespaces; `public` mode allows anonymous catalog reads and signed-in publishes in the public catalog plus owned/team namespaces. Responses include `publish_policy` for active-server quota/cooldown visibility. |
+| `GET`, `POST` | `/api/runtime/servers` | List or apply `MCPServer` resources through runtime authz scope. `tenant` mode defaults signed-in users to team namespaces they belong to; `org` mode includes the org catalog plus team namespaces; `public` mode allows anonymous catalog reads and signed-in publishes in the public catalog plus team namespaces. Responses include `publish_policy` for active-server quota/cooldown visibility. |
 | `DELETE` | `/api/runtime/servers/{namespace}/{name}` | Retire an owned MCPServer. Retiring deletes the MCPServer from Kubernetes and frees one active-server quota slot. |
 | `GET` | `/api/runtime/server-events?namespace=&server=` | Recent analytics events for one readable MCPServer, used by the user server detail view. |
 | `GET`, `POST` | `/api/runtime/grants` | List or apply `MCPAccessGrant` resources. |

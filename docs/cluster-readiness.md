@@ -39,11 +39,13 @@ workarounds for kubelet image pulls. In production, prefer a registry name that
 resolves through normal DNS and is trusted by every node without bypassing TLS
 verification.
 
-`./bin/mcp-runtime cluster doctor` is useful in both modes, but some checks are
-dev-registry oriented today: it expects the bundled `registry/registry` Service
-and a NodePort. If you run with a provisioned external registry, interpret those
-registry-specific failures against your registry architecture instead of copying
-the local workaround literally.
+`./bin/mcp-runtime cluster doctor` is useful in both modes. For the bundled
+registry it probes the in-cluster `registry/registry` Service and selects HTTP
+or HTTPS from the installed registry state: if `registry/registry-internal-tls`
+exists, doctor probes `https://registry.registry.svc.cluster.local:5000/v2/`;
+otherwise it probes the plain HTTP service. If you run with a provisioned
+external registry, interpret bundled-registry-specific failures against your
+registry architecture instead of copying the local workaround literally.
 
 Production readiness checklist:
 
@@ -87,6 +89,38 @@ it builds and pushes the operator, gateway proxy, and Sentinel images with
 through kubelet/containerd, so an HTTP bundled registry requires node trust for
 the exact image host and port used in the rendered image references.
 
+When setup uses the bundled registry, platform-owned image refs for the
+operator, gateway proxy, and Sentinel services are rendered with the internal
+registry endpoint, ClusterIP, or service-DNS host rather than a public registry
+ingress hostname derived from `MCP_PLATFORM_DOMAIN`. The public registry host is
+still used for ingress routing and user-facing registry flows; set
+`MCP_REGISTRY_ENDPOINT` or `MCP_REGISTRY_HOST` only when cluster nodes should
+pull platform images through a specific internal registry endpoint.
+
+### Registry setup modes
+
+`setup --registry-mode` makes the registry path explicit:
+
+| Mode | What setup does | Node requirement |
+|------|-----------------|------------------|
+| `auto` | Keeps existing behavior: use a provisioned registry config when present, otherwise install the bundled registry. | Depends on the resolved path. |
+| `bundled-http` | Installs the bundled registry and keeps the registry pod on plain HTTP for internal platform pulls. Public ingress can still use TLS with `--with-tls`. | Configure every node/containerd runtime to allow the exact image host as an insecure registry. |
+| `bundled-https` | Installs the bundled registry with TLS served by the registry pod itself. Public ingress TLS can still use ACME; the registry pod uses a separate internal certificate from `mcp-runtime-ca` or `--tls-cluster-issuer`. | Configure every node to resolve or mirror the rendered registry host and trust the internal issuing CA. |
+| `external` | Skips the bundled registry and pushes setup images to a provisioned registry. | Registry DNS, TLS, auth, pull secrets, and node trust are owned by the external registry platform. |
+
+For bundled HTTPS without an explicit `MCP_REGISTRY_ENDPOINT`, setup renders
+platform image refs with `registry.registry.svc.cluster.local:5000` so the
+internal registry certificate can include a stable service DNS SAN. Kubernetes
+nodes do not automatically use cluster DNS or trust the MCP Runtime CA for image
+pulls; configure containerd/k3s/your node runtime to resolve or mirror that host
+and trust the CA before relying on this mode. On k3s, using the registry
+ClusterIP as `MCP_REGISTRY_ENDPOINT=<cluster-ip>:5000` is often simpler because
+the generated internal certificate includes that IP SAN. After setup, `cluster
+doctor` uses the `registry-internal-tls` Secret as the signal to probe the
+registry Service over HTTPS; a successful doctor registry probe confirms
+in-cluster push-helper reachability, while kubelet image pulls still depend on
+node/containerd trust for the exact rendered image host.
+
 ---
 
 ## External registry path
@@ -102,6 +136,15 @@ Configure it either with the CLI:
 ./bin/mcp-runtime registry provision --url registry.example.com
 ```
 
+or directly on setup:
+
+```bash
+./bin/mcp-runtime setup --registry-mode external --with-tls --strict-prod \
+  --external-registry-url registry.example.com \
+  --external-registry-username <user> \
+  --external-registry-password <password>
+```
+
 or with environment variables before `setup`:
 
 ```bash
@@ -110,10 +153,11 @@ export PROVISIONED_REGISTRY_USERNAME=<user>      # optional
 export PROVISIONED_REGISTRY_PASSWORD=<password>  # optional
 ```
 
-Then run setup with production validation:
+If you configured the registry with `registry provision` or environment
+variables first, run setup with production validation:
 
 ```bash
-./bin/mcp-runtime setup --with-tls --strict-prod
+./bin/mcp-runtime setup --registry-mode external --with-tls --strict-prod
 ```
 
 Before generating MCP server manifests, set the image host that cluster nodes
@@ -146,10 +190,9 @@ External registry readiness checks:
 installs. It is ignored in `--test-mode`; otherwise it requires:
 
 - `--with-tls`.
-- An external registry URL that is not dev-only, or a stable
-  `MCP_REGISTRY_ENDPOINT` for the bundled registry.
-- No default local registry endpoint such as `registry.local` for production
-  registry validation.
+- `--registry-mode external` with an external registry URL that is not dev-only,
+  or `--registry-mode bundled-https` for a bundled registry served over HTTPS.
+- No implicit bundled HTTP registry path.
 
 Normal setup still allows local HTTP and internal registry flows so kind, k3s,
 Docker Desktop, and CI remain easy to use. Use `--strict-prod` when the cluster
@@ -172,11 +215,12 @@ controller from the public internet. For enterprise PKI, install the
 ./bin/mcp-runtime setup --with-tls --tls-cluster-issuer <issuer-name>
 ```
 
-If you retain the bundled registry with TLS, make sure the registry certificate
-covers the registry and MCP hostnames nodes, build machines, and MCP clients
-use. The `registry/registry-cert` Certificate writes the `registry/registry-tls`
-Secret and covers `registry.<domain>` plus `mcp.<domain>` when those names are
-derived from `MCP_PLATFORM_DOMAIN` or explicit ingress host environment
+If you retain the bundled registry with TLS ingress only, make sure the registry
+certificate covers the registry and MCP hostnames nodes, build machines, and
+MCP clients use. The `registry/registry-cert` Certificate writes the
+`registry/registry-tls` Secret and covers `registry.<domain>` plus
+`mcp.<domain>` when those names are derived from `MCP_PLATFORM_DOMAIN` or
+explicit ingress host environment
 variables.
 
 The registry Ingress intentionally does not carry a
@@ -551,7 +595,7 @@ Missing pieces are warnings, not errors — the command surfaces them so you can
 - Checks the installed MCP Runtime namespaces, CRDs, operator, Traefik ingress, registry, Sentinel, and MCPServer reconciliation path. The MCPServer smoke uses an existing ready app image when available; otherwise it falls back to `registry.k8s.io/pause:3.9` and validates deployment/service/ingress reconciliation plus pod scheduling without a TCP readiness wait.
 - Prefers k3s' bundled Traefik in `kube-system/traefik` when the active cluster is k3s, then falls back to the repo-managed `traefik/traefik` install.
 - `setup` follows the same ownership model: it reuses active external Traefik and refuses to force-install the repo-managed Traefik when that would create a second active stack.
-- Verifies registry reachability, registry image-pull smoke behavior, and common pod image-pull failures.
+- Verifies registry reachability, registry image-pull smoke behavior, and common pod image-pull failures. The bundled registry reachability probe uses HTTPS when `registry/registry-internal-tls` is installed, and HTTP otherwise.
 - Reports `http: server gave HTTP response to HTTPS client` when kubelet/containerd tried HTTPS against the HTTP dev registry, including the affected pod and image where possible.
 - Streams the current check before running it, including helper pod probes and waits, so a slow run shows what it is doing.
 - Prints the distribution-specific registry remediation hint only when registry or image-pull checks fail; Traefik and Sentinel failures use their own check-specific remedies.

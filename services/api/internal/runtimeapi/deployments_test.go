@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
@@ -168,6 +169,53 @@ func TestHandleDeploymentApplyAdminUsesRequestedNamespace(t *testing.T) {
 	}
 }
 
+func TestResolveDeployImageReference(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
+	t.Setenv("PLATFORM_MODE", "public")
+
+	tests := []struct {
+		name      string
+		image     string
+		namespace string
+		teamSlug  string
+		want      string
+	}{
+		{
+			name:      "public short image",
+			image:     "go-example",
+			namespace: defaultPublicCatalogNamespace,
+			want:      "10.96.223.152:5000/public/go-example",
+		},
+		{
+			name:      "public scoped repository",
+			image:     "public/go-example",
+			namespace: defaultPublicCatalogNamespace,
+			want:      "10.96.223.152:5000/public/go-example",
+		},
+		{
+			name:      "team short image",
+			image:     "go-example:v0.1.0",
+			namespace: "mcp-team-acme",
+			teamSlug:  "acme",
+			want:      "10.96.223.152:5000/acme/go-example:v0.1.0",
+		},
+		{
+			name:      "explicit registry",
+			image:     "registry.example.com/public/go-example:v0.1.0",
+			namespace: defaultPublicCatalogNamespace,
+			want:      "registry.example.com/public/go-example:v0.1.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ResolveDeployImageReference(tt.image, tt.namespace, tt.teamSlug); got != tt.want {
+				t.Fatalf("ResolveDeployImageReference() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestHandleDeploymentApplyRejectsInvalidVersionTag(t *testing.T) {
 	client := kubernetesfake.NewSimpleClientset()
 	server := &RuntimeServer{
@@ -314,6 +362,28 @@ func TestEnsureTeamNamespaceConfiguresTraefikIngressWatch(t *testing.T) {
 	}
 }
 
+func TestEnsureCatalogNamespaceAutoTraefikWatchSkipsExternalIngress(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "auto")
+	client := kubernetesfake.NewSimpleClientset()
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{Clientset: client},
+	}
+	if err := server.EnsureCatalogNamespace(context.Background(), defaultPublicCatalogNamespace); err != nil {
+		t.Fatalf("EnsureCatalogNamespace() error = %v", err)
+	}
+	ns, err := client.CoreV1().Namespaces().Get(context.Background(), defaultPublicCatalogNamespace, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("catalog namespace missing: %v", err)
+	}
+	if ns.Labels[platformManagedLabel] != "true" || ns.Labels[platformScopeLabel] != "public" {
+		t.Fatalf("catalog namespace labels = %#v", ns.Labels)
+	}
+	if _, err := client.RbacV1().Roles(defaultPublicCatalogNamespace).Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("traefik watch role error = %v, want not found", err)
+	}
+}
+
 func TestEnsureTraefikWatchRBACUpdatesLegacyRoleWithSecretAccess(t *testing.T) {
 	cfg := teamTraefikWatchConfig{
 		namespace:      "traefik",
@@ -338,82 +408,6 @@ func TestEnsureTraefikWatchRBACUpdatesLegacyRoleWithSecretAccess(t *testing.T) {
 	}
 	if !roleAllows(role, "", "secrets", "get") {
 		t.Fatalf("legacy traefik role was not updated with secret access: %#v", role.Rules)
-	}
-}
-
-func TestEnsureUserNamespaceSetsManagedLabel(t *testing.T) {
-	client := kubernetesfake.NewSimpleClientset()
-	server := &RuntimeServer{
-		k8sClients: &k8sclient.Clients{Clientset: client},
-	}
-	if err := server.EnsureUserNamespace(context.Background(), principal{
-		Role:      roleUser,
-		Subject:   "user-77",
-		Namespace: "user-77",
-	}); err != nil {
-		t.Fatalf("EnsureUserNamespace() error = %v", err)
-	}
-	ns, err := client.CoreV1().Namespaces().Get(context.Background(), "user-77", metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("get namespace: %v", err)
-	}
-	if ns.Labels[platformUserIDLabel] != "user-77" {
-		t.Fatalf("platform user label = %q, want user-77", ns.Labels[platformUserIDLabel])
-	}
-	if ns.Labels["pod-security.kubernetes.io/enforce"] != "restricted" {
-		t.Fatalf("pod-security label = %q, want restricted", ns.Labels["pod-security.kubernetes.io/enforce"])
-	}
-	// Quota and limit range should exist for the namespace.
-	if _, err := client.CoreV1().ResourceQuotas("user-77").Get(context.Background(), "platform-default-quota", metav1.GetOptions{}); err != nil {
-		t.Fatalf("quota missing: %v", err)
-	}
-	if _, err := client.CoreV1().LimitRanges("user-77").Get(context.Background(), "platform-default-limits", metav1.GetOptions{}); err != nil {
-		t.Fatalf("limit range missing: %v", err)
-	}
-	role, err := client.RbacV1().Roles("user-77").Get(context.Background(), platformNamespaceOwnerRoleName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("namespace owner role missing: %v", err)
-	}
-	if !roleAllows(role, "apps", "deployments", "create") || !roleAllows(role, "", "services", "create") {
-		t.Fatalf("namespace owner role rules = %#v", role.Rules)
-	}
-	binding, err := client.RbacV1().RoleBindings("user-77").Get(context.Background(), platformNamespaceOwnerRoleName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("namespace owner rolebinding missing: %v", err)
-	}
-	if len(binding.Subjects) != 1 || binding.Subjects[0].Kind != rbacv1.UserKind || binding.Subjects[0].Name != "platform:user:user-77" {
-		t.Fatalf("namespace owner rolebinding subjects = %#v", binding.Subjects)
-	}
-}
-
-func TestEnsureUserNamespaceMergesExistingNamespaceLabels(t *testing.T) {
-	client := kubernetesfake.NewSimpleClientset(&corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "user-88",
-			Labels: map[string]string{
-				"existing": "keep",
-			},
-		},
-	})
-	server := &RuntimeServer{
-		k8sClients: &k8sclient.Clients{Clientset: client},
-	}
-	if err := server.EnsureUserNamespace(context.Background(), principal{
-		Role:      roleUser,
-		Subject:   "user-88",
-		Namespace: "user-88",
-	}); err != nil {
-		t.Fatalf("EnsureUserNamespace() error = %v", err)
-	}
-	ns, err := client.CoreV1().Namespaces().Get(context.Background(), "user-88", metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("get namespace: %v", err)
-	}
-	if ns.Labels["existing"] != "keep" {
-		t.Fatalf("existing label was not preserved: %#v", ns.Labels)
-	}
-	if ns.Labels[platformManagedLabel] != "true" || ns.Labels[platformUserIDLabel] != "user-88" {
-		t.Fatalf("managed labels missing: %#v", ns.Labels)
 	}
 }
 

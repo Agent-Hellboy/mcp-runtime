@@ -49,6 +49,24 @@ func secretStringDataFromManifest(t *testing.T, manifest string) map[string]stri
 	return payload.StringData
 }
 
+func namespaceLabelsFromManifest(t *testing.T, manifest, name string) (map[string]string, bool) {
+	t.Helper()
+	var payload struct {
+		Kind     string `yaml:"kind"`
+		Metadata struct {
+			Name   string            `yaml:"name"`
+			Labels map[string]string `yaml:"labels"`
+		} `yaml:"metadata"`
+	}
+	if err := yaml.Unmarshal([]byte(manifest), &payload); err != nil {
+		t.Fatalf("unmarshal namespace manifest: %v", err)
+	}
+	if payload.Kind != "Namespace" || payload.Metadata.Name != name {
+		return nil, false
+	}
+	return payload.Metadata.Labels, true
+}
+
 func csvHasValue(csv, value string) bool {
 	value = strings.TrimSpace(value)
 	for _, part := range strings.Split(csv, ",") {
@@ -169,6 +187,50 @@ func TestGetGatewayProxyImage(t *testing.T) {
 			t.Fatalf("unexpected versioned image: %q", got)
 		}
 	})
+}
+
+func TestPlatformImageDefaultsUseInternalRegistryWithPlatformDomain(t *testing.T) {
+	origConfig := core.DefaultCLIConfig
+	origTagResolver := setupImageTagResolver
+	t.Cleanup(func() {
+		core.DefaultCLIConfig = origConfig
+		setupImageTagResolver = origTagResolver
+	})
+
+	for _, key := range []string{
+		"MCP_REGISTRY_ENDPOINT",
+		"MCP_REGISTRY_HOST",
+		"MCP_REGISTRY_INGRESS_HOST",
+		"MCP_PLATFORM_DOMAIN",
+	} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "1")
+	t.Setenv("MCP_PLATFORM_DOMAIN", "mcpruntime.org")
+	setupImageTagResolver = func() string { return "deadbeef" }
+	core.DefaultCLIConfig = core.LoadCLIConfig()
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if contains(spec.Args, "jsonpath={.spec.ports[0].port}") {
+				return &core.MockCommand{OutputData: []byte("5000")}
+			}
+			return &core.MockCommand{}
+		},
+	}
+	swapDefaultKubectlClientForTest(t, core.NewTestKubectlClient(mock))
+
+	gotOperator := getOperatorImage(nil)
+	if gotOperator != "registry.registry.svc.cluster.local:5000/mcp-runtime-operator:latest" {
+		t.Fatalf("operator image = %q, want internal registry service DNS", gotOperator)
+	}
+	gotGateway := getGatewayProxyImage(nil)
+	if gotGateway != "registry.registry.svc.cluster.local:5000/mcp-sentinel-mcp-gateway:latest" {
+		t.Fatalf("gateway image = %q, want internal registry service DNS", gotGateway)
+	}
+	gotAPI := analyticsImageFor(nil, "mcp-sentinel-api")
+	if gotAPI != "registry.registry.svc.cluster.local:5000/mcp-sentinel-api:latest" {
+		t.Fatalf("analytics image = %q, want internal registry service DNS", gotAPI)
+	}
 }
 
 func TestBuildOperatorArgs(t *testing.T) {
@@ -457,10 +519,29 @@ func TestConfigureProvisionedRegistryEnv(t *testing.T) {
 			t.Fatalf("expected 5 kubectl calls, got %d", len(mock.Commands))
 		}
 		foundDockerConfig := false
+		var namespaceLabels map[string]string
 		for _, input := range applyInputs {
+			if labels, ok := namespaceLabelsFromManifest(t, input, setupplan.DefaultPublicCatalogNamespace); ok {
+				namespaceLabels = labels
+			}
 			if strings.Contains(input, "kubernetes.io/dockerconfigjson") && strings.Contains(input, "namespace: mcp-servers-public") {
 				foundDockerConfig = true
-				break
+			}
+		}
+		if namespaceLabels == nil {
+			t.Fatalf("expected catalog namespace manifest in apply inputs")
+		}
+		wantLabels := map[string]string{
+			"platform.mcpruntime.org/managed":    "true",
+			"mcpruntime.org/scope":               setupplan.PlatformModePublic,
+			"pod-security.kubernetes.io/enforce": "restricted",
+			"pod-security.kubernetes.io/audit":   "restricted",
+			"pod-security.kubernetes.io/warn":    "restricted",
+			core.LabelManagedBy:                  core.LabelManagedByValue,
+		}
+		for key, want := range wantLabels {
+			if got := namespaceLabels[key]; got != want {
+				t.Fatalf("catalog namespace label %s = %q, want %q", key, got, want)
 			}
 		}
 		if !foundDockerConfig {
@@ -883,7 +964,7 @@ data:
   OIDC_AUDIENCE: ""
   OIDC_JWKS_URL: ""
   PLATFORM_MODE: "tenant"
-`, setupplan.PlatformModeTenant)
+`, setupplan.PlatformModeTenant, AnalyticsImageSet{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -911,6 +992,46 @@ data:
 	}
 }
 
+func TestRenderAnalyticsConfigManifestUsesGoogleEnvOnCleanInstall(t *testing.T) {
+	t.Setenv("GOOGLE_CLIENT_ID", "env-client.apps.googleusercontent.com")
+	kubectl := core.NewTestKubectlClient(&core.MockExecutor{})
+
+	rendered, err := renderAnalyticsConfigManifest(kubectl, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-sentinel-config
+  namespace: mcp-sentinel
+data:
+  GOOGLE_CLIENT_ID: ""
+  OIDC_ISSUER: ""
+  OIDC_AUDIENCE: ""
+  OIDC_JWKS_URL: ""
+  PLATFORM_MODE: "public"
+`, setupplan.PlatformModePublic, AnalyticsImageSet{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var payload struct {
+		Data map[string]string `yaml:"data"`
+	}
+	if err := yaml.Unmarshal([]byte(rendered), &payload); err != nil {
+		t.Fatalf("unmarshal rendered config: %v", err)
+	}
+	if got := payload.Data["GOOGLE_CLIENT_ID"]; got != "env-client.apps.googleusercontent.com" {
+		t.Fatalf("expected GOOGLE_CLIENT_ID from env, got %q", got)
+	}
+	if got := payload.Data["OIDC_ISSUER"]; got != "https://accounts.google.com" {
+		t.Fatalf("expected Google issuer default, got %q", got)
+	}
+	if got := payload.Data["OIDC_AUDIENCE"]; got != "env-client.apps.googleusercontent.com" {
+		t.Fatalf("expected OIDC_AUDIENCE to default to Google client ID, got %q", got)
+	}
+	if got := payload.Data["OIDC_JWKS_URL"]; got != "https://www.googleapis.com/oauth2/v3/certs" {
+		t.Fatalf("expected Google JWKS default, got %q", got)
+	}
+}
+
 func TestRenderAnalyticsConfigManifestAppliesExplicitPlatformMode(t *testing.T) {
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
@@ -932,7 +1053,7 @@ metadata:
   namespace: mcp-sentinel
 data:
   PLATFORM_MODE: "tenant"
-`, setupplan.PlatformModeOrg)
+`, setupplan.PlatformModeOrg, AnalyticsImageSet{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -945,6 +1066,55 @@ data:
 	}
 	if got := payload.Data["PLATFORM_MODE"]; got != setupplan.PlatformModeOrg {
 		t.Fatalf("expected explicit platform mode to win, got %q", got)
+	}
+}
+
+func TestRenderAnalyticsConfigManifestSetsRegistryResolutionEnv(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	core.DefaultCLIConfig = &core.CLIConfig{
+		RegistryEndpoint:    "10.96.223.152:5000",
+		RegistryIngressHost: "registry.mcpruntime.org",
+	}
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if commandHasArgs(spec, "get", "configmap", "mcp-sentinel-config", "-n", "mcp-sentinel", "-o", "json") {
+				return &core.MockCommand{Args: spec.Args, OutputData: []byte(`{"data":{}}`)}
+			}
+			return &core.MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	rendered, err := renderAnalyticsConfigManifest(kubectl, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-sentinel-config
+  namespace: mcp-sentinel
+data:
+  PLATFORM_MODE: "tenant"
+  PLATFORM_REGISTRY_URL: ""
+  MCP_REGISTRY_ENDPOINT: ""
+  MCP_REGISTRY_INGRESS_HOST: ""
+`, setupplan.PlatformModePublic, AnalyticsImageSet{API: "10.96.223.152:5000/mcp-sentinel-api:a1f967c"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var payload struct {
+		Data map[string]string `yaml:"data"`
+	}
+	if err := yaml.Unmarshal([]byte(rendered), &payload); err != nil {
+		t.Fatalf("unmarshal rendered config: %v", err)
+	}
+	if got := payload.Data["MCP_REGISTRY_ENDPOINT"]; got != "10.96.223.152:5000" {
+		t.Fatalf("MCP_REGISTRY_ENDPOINT = %q, want cluster endpoint", got)
+	}
+	if got := payload.Data["MCP_REGISTRY_INGRESS_HOST"]; got != "registry.mcpruntime.org" {
+		t.Fatalf("MCP_REGISTRY_INGRESS_HOST = %q, want public host", got)
+	}
+	if got := payload.Data["PLATFORM_REGISTRY_URL"]; got != "10.96.223.152:5000" {
+		t.Fatalf("PLATFORM_REGISTRY_URL = %q, want API image registry", got)
 	}
 }
 
@@ -970,7 +1140,7 @@ metadata:
   namespace: mcp-sentinel
 data:
   PLATFORM_MODE: "tenant"
-`, setupplan.PlatformModeTenant)
+`, setupplan.PlatformModeTenant, AnalyticsImageSet{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1004,7 +1174,7 @@ metadata:
   name: mcp-sentinel-config
 data:
   PLATFORM_MODE: "tenant"
-`, setupplan.PlatformModeTenant)
+`, setupplan.PlatformModeTenant, AnalyticsImageSet{})
 	if err != nil {
 		t.Fatalf("renderAnalyticsConfigManifest returned error: %v", err)
 	}
@@ -1777,6 +1947,9 @@ func TestSetupDepsWithDefaultsSetsNil(t *testing.T) {
 	if deps.EnsureNamespace == nil {
 		t.Fatal("expected EnsureNamespace default")
 	}
+	if deps.EnsureCatalogNamespace == nil {
+		t.Fatal("expected EnsureCatalogNamespace default")
+	}
 	if deps.ResolvePlatformRegistryURL == nil {
 		t.Fatal("expected ResolvePlatformRegistryURL default")
 	}
@@ -2403,7 +2576,7 @@ func TestSetupTLSWithKubectl(t *testing.T) {
 	kubectl := core.NewTestKubectlClient(mock)
 	swapDefaultKubectlClientForTest(t, kubectl)
 
-	if err := setupTLSPrivateCA(kubectl, zap.NewNop()); err != nil {
+	if err := setupTLSPrivateCA(kubectl, zap.NewNop(), setupplan.Plan{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -2455,7 +2628,7 @@ func TestSetupTLSWithKubectlMissingCRD(t *testing.T) {
 	}
 	kubectl := core.NewTestKubectlClient(mock)
 
-	if err := setupTLSPrivateCA(kubectl, zap.NewNop()); err == nil {
+	if err := setupTLSPrivateCA(kubectl, zap.NewNop(), setupplan.Plan{}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -2472,7 +2645,7 @@ func TestSetupTLSWithKubectlMissingSecret(t *testing.T) {
 	}
 	kubectl := core.NewTestKubectlClient(mock)
 
-	if err := setupTLSPrivateCA(kubectl, zap.NewNop()); err == nil {
+	if err := setupTLSPrivateCA(kubectl, zap.NewNop(), setupplan.Plan{}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -2499,7 +2672,7 @@ func TestSetupTLSWithKubectlWaitError(t *testing.T) {
 	kubectl := core.NewTestKubectlClient(mock)
 	swapDefaultKubectlClientForTest(t, kubectl)
 
-	if err := setupTLSPrivateCA(kubectl, zap.NewNop()); err == nil {
+	if err := setupTLSPrivateCA(kubectl, zap.NewNop(), setupplan.Plan{}); err == nil {
 		t.Fatal("expected error")
 	}
 }

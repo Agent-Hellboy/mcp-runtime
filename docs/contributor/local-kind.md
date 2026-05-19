@@ -118,8 +118,8 @@ curl -sS -b /tmp/mcp-test-user-cookie.txt \
   jq '{count: (.servers|length), names: [.servers[] | (.namespace + "/" + .name)]}'
 ```
 
-In default tenant mode, the test user sees MCPs from their own user/team
-namespaces only. A setup installed with `--platform-mode org` instead shows the
+In default tenant mode, signed-in users see MCPs from team namespaces they
+belong to only. A setup installed with `--platform-mode org` instead shows the
 shared org catalog from `mcp-servers-org`, and `--platform-mode public` shows
 the public preview catalog from `mcp-servers-public`.
 

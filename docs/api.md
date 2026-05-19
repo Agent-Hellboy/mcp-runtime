@@ -229,6 +229,12 @@ GET  /api/auth/me
 | `POST /api/auth/oidc` | Body: `id_token`. Requires configured issuer, audience, and JWKS. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
 | `GET /api/auth/me` | Requires auth. Returns `authenticated=true` and the current principal. |
 
+`setup` writes OIDC settings through `mcp-sentinel-config`. For Google sign-in,
+set `GOOGLE_CLIENT_ID` before setup; when the issuer, audience, and JWKS URL are
+empty, setup derives the standard Google OIDC values from that client ID. For
+other OIDC providers, set `OIDC_ISSUER`, `OIDC_AUDIENCE`, and `OIDC_JWKS_URL`
+explicitly.
+
 ## Gateway flow and headers
 
 ```mermaid
@@ -289,8 +295,8 @@ Query: `limit` (1-50, default 10), `window_days` (1-365, default 30),
 
 `/api/user/analytics/usage` is available to normal platform users. It returns
 the same analytics shape, but the API enforces scope before querying
-ClickHouse: non-admin callers can see only events from their own user namespace
-and team namespaces, and the shared `mcp-servers` catalog is excluded from user
+ClickHouse: non-admin callers can see only events from team namespaces they
+belong to, and the shared `mcp-servers` catalog is excluded from user
 analytics. Query: `window_days`, `limit`, `namespace`, `server`, `decision`,
 and `tool_name`. Passing `namespace` narrows the result only when the caller
 owns that namespace or belongs to that team.
@@ -331,18 +337,18 @@ GET  /api/runtime/policy?namespace=&server=   # Get rendered policy for a server
 
 For non-admin users, runtime scope depends on `PLATFORM_MODE` / setup
 `--platform-mode`. In `tenant` mode, `GET /api/runtime/servers` without a
-`namespace` query returns MCPs in their own user/team tenant namespaces. In
-`org` mode, signed-in users can use the org catalog namespace and their
-owned/team namespaces. In `public` mode, anonymous users can list the
-`mcp-servers-public` catalog, while signed-in users can publish to the public
-catalog and their owned/team namespaces. Admin callers can inspect any
+`namespace` query returns MCPs in the caller's team namespaces. In `org` mode,
+signed-in users can use the org catalog namespace and their team namespaces.
+In `public` mode, anonymous users can list the `mcp-servers-public` catalog,
+while signed-in users can publish to the public catalog and their team
+namespaces. Admin callers can inspect any
 namespace. Passing `namespace=<name>` narrows the list to an authorized
 namespace for the active mode. `POST /api/runtime/servers` also accepts
 `scope: "tenant" | "org" | "public"` in the JSON body. `scope: "public"`
 requires public platform mode and resolves the active public catalog namespace;
 `scope: "org"` requires org mode and resolves the active org catalog namespace;
-`scope: "tenant"` uses the caller's tenant/team namespace unless the request
-passes an authorized `namespace`.
+`scope: "tenant"` uses the caller's team namespace unless the request passes an
+authorized team `namespace`.
 
 `POST /api/runtime/servers` is governed by the platform publish policy. Admins
 configure `PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `5`, set `0` to disable)
@@ -439,8 +445,9 @@ User API-key creation returns the cleartext key once as both `api_key` and
 The bundled `registry.<domain>` ingress calls `/api/registry/authz` before
 proxying Docker Registry API traffic. Platform admin credentials (`x-api-key` or
 Bearer token) keep global registry access. Normal user API keys and platform
-Bearer tokens are accepted only for repository paths scoped to the caller's user
-namespace or team slug, such as `/v2/user-1/demo/...` or `/v2/acme/demo/...`.
+Bearer tokens are accepted only for repository paths scoped to the caller's
+team slug or team namespace, such as `/v2/acme/demo/...` or
+`/v2/mcp-team-acme/demo/...`.
 In `public` mode, signed-in users may also write `/v2/public/...` (or the
 configured public catalog namespace). In `org` mode, signed-in users may write
 `/v2/org/...` (or the configured org catalog namespace). Anonymous requests and

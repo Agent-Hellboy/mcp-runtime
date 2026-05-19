@@ -350,18 +350,28 @@ Read these first:
 - [Sentinel Kubernetes awareness and hardening](sentinel.md#kubernetes-awareness-and-hardening)
 - [Multi-team isolation](multi-team.md) if multiple teams will publish or govern servers on one cluster
 
-The default production-oriented install shape is:
+For production-oriented setup, choose the registry path explicitly. With a
+provisioned registry:
 
 ```bash
 ./bin/mcp-runtime bootstrap
-./bin/mcp-runtime setup --with-tls --strict-prod
+./bin/mcp-runtime setup --registry-mode external --external-registry-url registry.example.com --with-tls --strict-prod
+```
+
+With the bundled registry serving internal HTTPS, use a private CA or existing
+ClusterIssuer for the registry pod certificate and configure every node to
+trust that CA for image pulls. Public ingress TLS can still use ACME:
+
+```bash
+./bin/mcp-runtime bootstrap
+./bin/mcp-runtime setup --registry-mode bundled-https --with-tls --acme-email ops@example.com --strict-prod
 ```
 
 If you want hostnames derived from one domain, set:
 
 ```bash
 export MCP_PLATFORM_DOMAIN=example.com
-./bin/mcp-runtime setup --with-tls --strict-prod
+./bin/mcp-runtime setup --registry-mode external --external-registry-url registry.example.com --with-tls --strict-prod
 ```
 
 That derives:
@@ -375,8 +385,11 @@ cluster pulls from the same hardened image host you intend to keep:
 
 ```bash
 ./bin/mcp-runtime registry provision --url registry.example.com
-./bin/mcp-runtime setup --with-tls --strict-prod
+./bin/mcp-runtime setup --registry-mode external --with-tls --strict-prod
 ```
+
+You can also skip the saved provision step and pass
+`--external-registry-url registry.example.com` directly to `setup`.
 
 If you use an internal CA instead of ACME, install the issuer first and point
 setup at it:
@@ -410,9 +423,22 @@ analytics, audit, and observability.
 
 | Mode | Default namespace behavior | Behavior |
 |---|---|---|
-| `tenant` | Principal user/team namespace | Default private mode. Each signed-in user is scoped to their own tenant namespace, including any team namespace from membership. |
-| `org` | `mcp-servers-org` | Signed-in users publish and browse the org-wide catalog and can still work in their owned/team namespaces. |
-| `public` | `mcp-servers-public` | Anonymous users can browse the public preview catalog; signed-in users publish public preview MCP servers and can still work in their owned/team namespaces. |
+| `tenant` | Principal team namespace | Default private mode. Signed-in users publish through team namespaces for teams they belong to. |
+| `org` | `mcp-servers-org` | Signed-in users publish and browse the org-wide catalog and can still work in team namespaces. |
+| `public` | `mcp-servers-public` | Anonymous users can browse the public preview catalog; signed-in users publish public preview MCP servers and can still work in team namespaces. |
+
+For browser Google sign-in, provide the OAuth client ID before setup. For
+Google, setup uses the client ID as the OIDC audience and fills the standard
+Google issuer and JWKS URL when those values are not set explicitly:
+
+```bash
+export GOOGLE_CLIENT_ID=<client>.apps.googleusercontent.com
+./bin/mcp-runtime setup --with-tls --platform-mode public
+```
+
+For a non-Google OIDC provider, set `OIDC_ISSUER`, `OIDC_AUDIENCE`, and
+`OIDC_JWKS_URL` before setup. Reruns preserve existing values in
+`mcp-sentinel/mcp-sentinel-config`.
 
 For multi-team or tenant-separated deployments, keep setup as the platform
 install and provision one namespace per team with `mcp-runtime team init <slug>`
@@ -538,7 +564,7 @@ Author lightweight metadata YAML, generate CRDs, and deploy:
 
 `<exact-image-ref-from-build>` may be a resolved registry endpoint such as
 `10.43.109.51:5000/my-server:v1.0.0` or, for `scope: tenant` metadata after
-platform login, `10.43.109.51:5000/<tenant-or-team>/my-server:v1.0.0`. Use
+platform login, `10.43.109.51:5000/<team-slug>/my-server:v1.0.0`. Use
 `--scope public` or `--scope org` when the metadata targets those platform
 catalog scopes.
 

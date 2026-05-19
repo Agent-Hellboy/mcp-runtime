@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"sort"
@@ -195,6 +196,7 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	if isTeamNamespace {
 		teamSlug = strings.TrimSpace(team.Slug)
 	}
+	req.Spec.Image = ResolveDeployImageReference(req.Spec.Image, namespace, teamSlug)
 	if err := ValidateDeployImage(req.Spec.Image, namespace, teamSlug, p.Role); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -210,6 +212,12 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
+
+	if err := s.ensureServerApplyNamespace(ctx, p, namespace, team, isTeamNamespace); err != nil {
+		log.Printf("runtime servers: ensure namespace %q before apply failed: %v", namespace, err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": serverApplyNamespaceEnsureError(p, namespace, isTeamNamespace)})
+		return
+	}
 
 	current, err := control.GetServer(ctx, namespace, req.Name)
 	if err != nil && !apierrors.IsNotFound(err) {
@@ -281,13 +289,6 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 		Spec: req.Spec,
 	}
 
-	if p.Role != roleAdmin && sharedCatalogWritableForUsers() && isModeCatalogNamespace(namespace) {
-		if err := s.EnsureCatalogNamespace(ctx, namespace); err != nil {
-			log.Printf("runtime servers: ensure catalog namespace %q failed: %v", namespace, err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure catalog namespace"})
-			return
-		}
-	}
 	applied, err := control.ApplyServer(ctx, server)
 	if err != nil {
 		code, msg := k8sclient.HTTPStatusFromK8sError(err)
@@ -297,6 +298,42 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	}
 	s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "success", req.Name, namespace, req.Spec.Image, ""))
 	writeJSON(w, http.StatusOK, map[string]any{"server": serverInfoFromMCPServer(*applied, serverDeploymentStatus{}, r)})
+}
+
+func (s *RuntimeServer) ensureServerApplyNamespace(ctx context.Context, p principal, namespace string, team principalTeam, isTeamNamespace bool) error {
+	if p.Role == roleAdmin {
+		return nil
+	}
+	if sharedCatalogWritableForUsers() && isModeCatalogNamespace(namespace) {
+		if err := s.EnsureCatalogNamespace(ctx, namespace); err != nil {
+			return fmt.Errorf("catalog namespace %q: %w", namespace, err)
+		}
+		return nil
+	}
+	if isTeamNamespace {
+		if err := s.ensureTeamNamespace(ctx, teamRecord{
+			ID:        team.ID,
+			Slug:      team.Slug,
+			Name:      team.Name,
+			Namespace: team.Namespace,
+		}); err != nil {
+			return fmt.Errorf("team namespace %q: %w", namespace, err)
+		}
+		if err := s.ensureNamespaceUserWorkloadRBAC(ctx, namespace, p.UserID()); err != nil {
+			return fmt.Errorf("team namespace access %q: %w", namespace, err)
+		}
+	}
+	return nil
+}
+
+func serverApplyNamespaceEnsureError(p principal, namespace string, isTeamNamespace bool) string {
+	if p.Role != roleAdmin && sharedCatalogWritableForUsers() && isModeCatalogNamespace(namespace) {
+		return "failed to ensure catalog namespace"
+	}
+	if p.Role != roleAdmin && isTeamNamespace {
+		return "failed to ensure team namespace"
+	}
+	return "failed to ensure server namespace"
 }
 
 func (s *RuntimeServer) scopedNamespaceForServerApply(ctx context.Context, requested string, scope publishscope.Scope) (string, error) {
@@ -349,18 +386,27 @@ func scopedTenantNamespaceForApply(p principal, requested string) (string, error
 		return requested, nil
 	}
 	if requested == "" {
-		requested = strings.TrimSpace(p.Namespace)
+		requested = principalDefaultTeamNamespace(p)
 	}
 	if requested == "" {
-		return "", errPrincipalIdentityRequired
+		return "", errors.New("tenant scope requires team membership")
 	}
 	if isModeCatalogNamespace(requested) || requested == sharedCatalogNamespace {
-		return "", errors.New("tenant scope requires a tenant or team namespace")
+		return "", errors.New("tenant scope requires a team namespace")
 	}
-	if !principalOwnsNamespace(p, requested) {
-		return "", errors.New("forbidden namespace")
+	if _, ok := p.TeamForNamespace(requested); !ok {
+		return "", errors.New("tenant scope requires a team namespace")
 	}
 	return requested, nil
+}
+
+func principalDefaultTeamNamespace(p principal) string {
+	for _, team := range p.Teams {
+		if namespace := strings.TrimSpace(team.Namespace); namespace != "" {
+			return namespace
+		}
+	}
+	return ""
 }
 
 func scopeLabelForNamespace(namespace string, scope publishscope.Scope) string {

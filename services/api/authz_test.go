@@ -142,7 +142,7 @@ func TestRegistryAuthzAllowsStaticAdminKey(t *testing.T) {
 	}
 }
 
-func TestRegistryAuthzAllowsUserAPIKeyForOwnedRepositoryScope(t *testing.T) {
+func TestRegistryAuthzRejectsUserAPIKeyForPersonalRepositoryScope(t *testing.T) {
 	srv := &apiServer{
 		userKeys: &fakeUserAPIKeyStore{
 			ok: true,
@@ -161,8 +161,8 @@ func TestRegistryAuthzAllowsUserAPIKeyForOwnedRepositoryScope(t *testing.T) {
 	req.Header.Set("x-api-key", "mcpu_user")
 	req.Header.Set("X-Forwarded-Uri", "/v2/user-1/demo/blobs/uploads/")
 	srv.handleRegistryAuthz(rec, req)
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("status = %d body = %s, want 204", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body = %s, want 403", rec.Code, rec.Body.String())
 	}
 }
 
@@ -191,6 +191,15 @@ func TestRegistryAuthzAllowsUserAPIKeyForTeamRepositoryScope(t *testing.T) {
 	srv.handleRegistryAuthz(rec, req)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d body = %s, want 204", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/registry/authz", nil)
+	req.Header.Set("x-api-key", "mcpu_user")
+	req.Header.Set("X-Forwarded-Uri", "/v2/mcp-team-acme/demo/manifests/latest")
+	srv.handleRegistryAuthz(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("namespace status = %d body = %s, want 204", rec.Code, rec.Body.String())
 	}
 }
 
