@@ -214,6 +214,18 @@ middleware `registry-admin-auth@file`. If you bring your own ingress controller
 or reuse an external Traefik install, configure an equivalent forward-auth guard
 to `/api/registry/authz` before exposing `registry.<domain>` publicly.
 
+If the cluster already has a live external Traefik install, `setup` reuses it
+and refuses to install a second repo-managed Traefik stack. In that shape, use:
+
+```bash
+./bin/mcp-runtime setup --ingress none ...
+```
+
+Do that only when the external ingress controller already owns the ingress
+class, public entrypoints, and any required registry auth middleware. Running
+two Traefik installations against the same ingress surface leads to ambiguous
+ownership and hard-to-debug routing failures.
+
 Quick public endpoint checks after DNS and TLS are live:
 
 - `curl -k -I -H "x-api-key: $ADMIN_API_KEY" https://registry.<domain>/v2/`
@@ -228,6 +240,68 @@ Quick public endpoint checks after DNS and TLS are live:
   application-level `400` or `401` when called without the expected MCP
   protocol headers or session context. That is often enough to confirm the
   public route is live before you move on to MCP client debugging.
+
+## Public-mode bootstrap
+
+Fresh `--platform-mode public` or `--platform-mode org` installs that expect an
+admin user bootstrap must keep both of these secret-backed values aligned:
+
+- `PLATFORM_ADMIN_EMAIL`
+- `PLATFORM_ADMIN_PASSWORD`
+
+If only one of the two is present in the API deployment environment, the API
+can crash-loop on a clean database with an error similar to:
+
+```text
+failed to seed platform admin: PLATFORM_ADMIN_EMAIL and PLATFORM_ADMIN_PASSWORD must both be set
+```
+
+Before assuming a database or auth bug, inspect the deployment and the managed
+secret:
+
+```bash
+kubectl get deploy mcp-sentinel-api -n mcp-sentinel -o yaml
+kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o yaml
+```
+
+Bootstrap-only credentials should still be removed or rotated after the first
+successful platform bring-up, but both values must be present for the initial
+seed path to succeed.
+
+## Clean platform reset
+
+Deleting pods is not a full platform reset. Sentinel state primarily lives in
+PVC-backed StatefulSets. If you want a truly fresh platform state, scale the
+StatefulSets down and delete the PVCs you intend to wipe.
+
+Typical destructive reset flow:
+
+```bash
+kubectl scale statefulset clickhouse kafka loki tempo mcp-sentinel-postgres \
+  -n mcp-sentinel --replicas=0
+
+kubectl delete pvc \
+  data-clickhouse-0 \
+  kafka-data-kafka-0 \
+  data-loki-0 \
+  data-tempo-0 \
+  data-mcp-sentinel-postgres-0 \
+  -n mcp-sentinel
+```
+
+Important distinctions:
+
+- Preserve `mcp-sentinel-secrets` unless you intentionally want new API keys,
+  JWT secrets, and platform bootstrap values.
+- Preserve `mcp-sentinel-platform-tls` unless you want to reissue the platform
+  certificate.
+- Preserve `registry/registry-storage` unless you intentionally want to wipe the
+  image registry too.
+- A PVC stuck in `Terminating` is often still referenced by stale pods from an
+  old ReplicaSet. Remove the stale pods first, then recreate the workload.
+
+This reset is destructive. Treat it as an operator workflow, not a normal
+upgrade path.
 
 ## Node pool consistency
 
@@ -285,6 +359,40 @@ configure a stable external registry or set `MCP_REGISTRY_ENDPOINT` to a
 3. **Reload.** `systemctl restart k3s`. k3s regenerates containerd's config from `registries.yaml` at startup.
 
 Multi-node k3s: apply the same `/etc/rancher/k3s/registries.yaml` and `/etc/hosts` to every node — `127.0.0.1:32000` reaches the local kube-proxy which forwards to the registry pod regardless of where the pod is scheduled.
+
+## Node disk-pressure recovery
+
+Image-heavy setup runs on small clusters can trip kubelet `DiskPressure` during
+the operator/Sentinel build-and-push phase. Typical symptoms:
+
+- helper pods such as `registry-pusher-*` stay `Pending`
+- new Sentinel pods fail scheduling with `untolerated taint(s)`
+- `kubectl describe node` shows `node.kubernetes.io/disk-pressure:NoSchedule`
+
+Check the node first:
+
+```bash
+kubectl describe node <node-name>
+df -h /
+```
+
+Then clear disposable build/cache data before rerunning setup:
+
+- stale Go build/module caches under `/tmp` and `/root/.cache/go-build`
+- unused Docker images from local build stages
+
+If free space returns but the node still reports `DiskPressure`, restart the
+node's Kubernetes runtime service so kubelet/containerd accounting catches up.
+The exact service name depends on the distribution, for example:
+
+```bash
+systemctl restart k3s
+```
+
+After the restart, verify `DiskPressure=False` before continuing the rollout.
+If the registry pod was unavailable during the pressure window, expect a brief
+wave of `ErrImagePull` or `ImagePullBackOff` until the registry becomes ready
+again.
 
 ## kind
 

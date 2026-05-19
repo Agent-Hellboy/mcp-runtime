@@ -54,20 +54,24 @@ Sentinel, and operator readiness.
 
 ## 3. Contributor test-mode cluster
 
-For local contributor work, use a disposable Kind cluster and `setup
---test-mode`. This path is for development and CI-style validation: it uses the
-HTTP ingress overlay, avoids public DNS/TLS, and assumes local Docker can build
-the runtime images. It does not skip builds: setup builds and pushes the
-operator, gateway proxy, and Sentinel images with `latest` tags to the
-configured or bundled registry.
+For local contributor work, use the dedicated contributor docs instead of the
+generic install flow in this page. The contributor path owns the Kind cluster
+shape, local registry mirror, test-mode install, seeded logins, service rebuild
+loops, tenant smoke checks, and troubleshooting.
 
-For the expanded contributor runbook, including tenant UI smoke tests, service
-rebuild loops, runtime MCP cleanup, and troubleshooting, see the
-[Contributor Guide](contributor/README.md).
+Start here:
 
-Create Kind with the registry mirror MCP Runtime expects for image pulls:
+- [Contributor Guide](contributor/README.md)
+- [Local Kind and Test Mode](contributor/local-kind.md)
+- [Service Iteration](contributor/service-iteration.md)
+- [Runtime MCP Testing](contributor/runtime-mcp-testing.md)
+
+The shortest contributor bring-up path is:
 
 ```bash
+make deps
+make build
+
 cat > /tmp/mcp-runtime-kind.yaml <<'EOF'
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -79,345 +83,34 @@ EOF
 
 kind create cluster --name mcp-runtime --config /tmp/mcp-runtime-kind.yaml
 kubectl config use-context kind-mcp-runtime
-```
-
-In test mode, setup intentionally emits pod image references under
-`registry.registry.svc.cluster.local:5000/...` so the image host matches this
-Kind containerd mirror exactly instead of using a mutable registry Service
-`ClusterIP:port`.
-
-Build the CLI, run bootstrap, and install the stack in test mode:
-
-```bash
-make deps
-make build
 
 ./bin/mcp-runtime bootstrap
 
 MCP_SETUP_WAIT_TIMEOUT=900 \
   ./bin/mcp-runtime setup --test-mode \
   --ingress-manifest config/ingress/overlays/http
-```
-
-Confirm the install and expose the local dashboard/gateway:
-
-```bash
-./bin/mcp-runtime status
-./bin/mcp-runtime cluster status
-./bin/mcp-runtime registry status
-./bin/mcp-runtime sentinel status
-./bin/mcp-runtime cluster doctor
 
 kubectl port-forward -n traefik svc/traefik 18080:8000
 ```
 
-`cluster doctor` is most useful after setup because it validates the installed
-MCP Runtime components, registry pulls, ingress, Sentinel, and operator
-readiness. On a fresh cluster before setup, those resources do not exist yet.
-
-Local URLs:
-
-- Dashboard UI: `http://localhost:18080/`
-- API: `http://localhost:18080/api`
-- Demo MCP routes, after applying demo servers: `http://localhost:18080/<server-name>/mcp`
-
-This contributor flow uses the single shared `mcp-servers` namespace. For a
-cluster that hosts multiple teams, keep these examples as the single-team
-baseline and use [Multi-team isolation](multi-team.md) to move each team's
-servers, grants, sessions, and secrets into a dedicated namespace with
-`spec.teamID` / `subject.teamID`.
-
-Sign in before browsing MCP servers in the platform UI; the default tenant-mode
-catalog is authenticated even in local test mode. Use the admin login to browse
-the single-team `mcp-servers` examples from this guide, or publish servers into
-the signed-in user's own/team namespace. The MCP Servers tab exposes a copyable
-connect config. In this local test-mode flow, that config should use the same
-reachable local origin, for example:
-
-```json
-{
-  "mcpServers": {
-    "go-example-mcp": {
-      "type": "http",
-      "url": "http://localhost:18080/go-example-mcp/mcp"
-    }
-  }
-}
-```
-
-When the platform is installed with `MCP_PLATFORM_DOMAIN=mcpruntime.org` or an
-explicit `MCP_MCP_INGRESS_HOST`, production connect configs should use the
-public MCP host instead, for example
-`https://mcp.mcpruntime.org/go-example-mcp/mcp`.
-
-`setup --test-mode` also seeds development-only email/password logins in the
-platform identity store:
-
-| Role | Email | Password |
-|---|---|---|
-| User | `test@mcpruntime.org` | `test@123` |
-| Admin | `admin@mcpruntime.org` | `admin@123` |
-
-These credentials are for local Kind/debugging only. They are enabled by the
-managed `mcp-sentinel-secrets` key `PLATFORM_DEV_LOGIN_ENABLED=true` and can be
-disabled or overridden by editing the `PLATFORM_DEV_*` keys before rolling the
-API deployment.
-
-For tenant-isolation UI smoke testing in the shared contributor cluster, use
-these local-only tenant accounts. They are not production credentials.
-
-| Tenant | Email | Password |
-|---|---|---|
-| Tenant A | `tenant-a-20260510232145@mcpruntime.org` | `TenantA-20260510232145!` |
-| Tenant B | `tenant-b-20260510232145@mcpruntime.org` | `TenantB-20260510232145!` |
-
-Tenant users should see only their own team namespace. For example, Tenant A
-should see `mcp-team-tenant-a` entries but receive `403` for
-`mcp-team-tenant-b`, and Tenant B should see the inverse. A setup installed with
-`--platform-mode org` or `--platform-mode public` uses `mcp-servers-org` or
-`mcp-servers-public` instead of tenant namespaces for non-admin catalog
-browsing.
-
-### Iterate on one Sentinel service
-
-After `setup --test-mode` is complete, you do not need to rerun setup for every
-service change. Edit the service under `services/`, build only that image, push
-it to the bundled registry, and update only that Kubernetes Deployment.
-
-Run the targeted service tests before rebuilding the image:
+Then verify the stack:
 
 ```bash
-(cd services/api && go test ./... -count=1)
-(cd services/ui && go test ./... -count=1)
-node --check services/ui/static/app.js
+./bin/mcp-runtime status
+./bin/mcp-runtime cluster doctor
 ```
 
-For API/UI changes that cross the browser-to-API proxy boundary, rebuild and
-roll both services. A common example is the MCP connect config URL: the UI
-forwards the browser origin to the API, and the API uses that origin to return a
-local URL such as `http://localhost:18080/<server-name>/mcp`; production hosts
-map `platform.<domain>` to `mcp.<domain>`.
+Local surfaces:
 
-For the UI, for example:
+- Platform UI: `http://localhost:18080/`
+- Platform API: `http://localhost:18080/api`
+- MCP route shape: `http://localhost:18080/<server-name>/mcp`
 
-```bash
-SERVICE=ui
-IMAGE_REPO=mcp-sentinel-ui
-DOCKERFILE=services/ui/Dockerfile
-BUILD_CONTEXT=.
-DEPLOYMENT=mcp-sentinel-ui
-CONTAINER=ui
-TAG="${SERVICE}-dev-$(date +%s)"
-LOCAL_IMAGE="${IMAGE_REPO}:${TAG}"
-REGISTRY=registry.registry.svc.cluster.local:5000
+Important contributor notes:
 
-docker build -t "$LOCAL_IMAGE" -f "$DOCKERFILE" "$BUILD_CONTEXT"
-
-./bin/mcp-runtime auth login --api-url http://localhost:18080
-
-./bin/mcp-runtime registry push \
-  --image "$LOCAL_IMAGE" \
-  --name "$IMAGE_REPO" \
-  --registry "$REGISTRY" \
-  --namespace registry
-
-kubectl -n mcp-sentinel set image \
-  "deployment/$DEPLOYMENT" \
-  "$CONTAINER=$REGISTRY/$IMAGE_REPO:$TAG"
-
-kubectl -n mcp-sentinel rollout status "deployment/$DEPLOYMENT" --timeout=90s
-```
-
-Keep the Traefik port-forward running and refresh the local URL:
-`http://localhost:18080/`. Use a new tag for each build so Kubernetes does not
-reuse an older `IfNotPresent` image from the node cache.
-
-Use the same commands with the variables below for other Sentinel services:
-
-| Service | Edit path | Image repo | Dockerfile | Build context | Deployment | Container |
-|---|---|---|---|---|---|---|
-| UI | `services/ui` | `mcp-sentinel-ui` | `services/ui/Dockerfile` | `.` | `mcp-sentinel-ui` | `ui` |
-| API | `services/api` | `mcp-sentinel-api` | `services/api/Dockerfile` | `.` | `mcp-sentinel-api` | `api` |
-| Ingest | `services/ingest` | `mcp-sentinel-ingest` | `services/ingest/Dockerfile` | `.` | `mcp-sentinel-ingest` | `ingest` |
-| Processor | `services/processor` | `mcp-sentinel-processor` | `services/processor/Dockerfile` | `.` | `mcp-sentinel-processor` | `processor` |
-
-`services/mcp-gateway` is different: it runs as the `mcp-gateway` sidecar inside
-each MCP server pod. To test gateway changes, build and push
-`mcp-sentinel-mcp-gateway`, update the operator's `MCP_GATEWAY_PROXY_IMAGE`, then
-restart the operator and recreate or restart the affected MCP server pods so
-the sidecar image is injected again.
-
-If pods report `ImagePullBackOff`, run `./bin/mcp-runtime cluster doctor`.
-For Kind test mode, the usual cause is a cluster created without the
-`registry.registry.svc.cluster.local:5000` mirror to `127.0.0.1:32000`. If pod
-events include `http: server gave HTTP response to HTTPS client`, the node's
-containerd tried HTTPS against the HTTP dev registry. Configure the insecure
-registry mirror for the exact image host string in the pod image reference
-(`registry.registry.svc.cluster.local:5000` in the documented Kind flow), or use TLS.
-On k3s with the bundled plain HTTP registry, that exact host may be the registry
-Service `ClusterIP:port` such as `10.43.x.x:5000`; add a matching
-`/etc/rancher/k3s/registries.yaml` mirror and restart k3s. On hosts where
-`~/.kube/config` is empty or minimal, run setup with
-`--kubeconfig /etc/rancher/k3s/k3s.yaml`.
-
-If setup reached image deployment before the k3s mirror was configured, copy
-the registry `Internal URL` from setup output into `registries.yaml`, restart
-k3s/containerd, then rerun setup. The rerun republishes the `latest` images;
-clear partial runtime namespaces first if StatefulSet storage was interrupted
-during the failed run.
-
-### Test the dashboard, image push, MCP request, and Sentinel
-
-With the port-forward still running, open `http://localhost:18080/` to confirm
-the platform dashboard loads. Then deploy the bundled Go MCP example through the
-same build, push, generate, and deploy path contributors use for server work.
-
-Create a local metadata file that enables gateway policy and Sentinel analytics:
-
-```bash
-cat > /tmp/go-example-mcp.yaml <<'EOF'
-version: v1
-servers:
-  - name: go-example-mcp
-    description: Go MCP example server with smoke and text transformation tools.
-    route: /go-example-mcp/mcp
-    publicPathPrefix: go-example-mcp
-    port: 8088
-    namespace: mcp-servers
-    envVars:
-      - name: MCP_PATH
-        value: /go-example-mcp/mcp
-    tools:
-      - name: add
-        description: Add two numbers.
-        requiredTrust: low
-        sideEffect: read
-      - name: upper
-        description: Uppercase the provided message.
-        requiredTrust: medium
-        sideEffect: read
-    auth:
-      mode: header
-      humanIDHeader: X-MCP-Human-ID
-      agentIDHeader: X-MCP-Agent-ID
-      sessionIDHeader: X-MCP-Agent-Session
-    policy:
-      mode: allow-list
-      defaultDecision: deny
-      policyVersion: v1
-    session:
-      required: true
-    gateway:
-      enabled: true
-    analytics:
-      enabled: true
-      ingestURL: http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events
-      apiKeySecretRef:
-        name: go-example-mcp-analytics
-        key: api-key
-EOF
-```
-
-Create the analytics secret in the server namespace:
-
-```bash
-API_KEY="$(
-  kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
-    -o jsonpath='{.data.INGEST_API_KEYS}' | base64 -d | cut -d, -f1
-)"
-
-kubectl create secret generic go-example-mcp-analytics \
-  -n mcp-servers \
-  --from-literal=api-key="$API_KEY" \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-Build and push the image into the Kind-accessible registry:
-
-```bash
-./bin/mcp-runtime auth login --api-url http://localhost:18080
-
-./bin/mcp-runtime server build image go-example-mcp \
-  --metadata-file /tmp/go-example-mcp.yaml \
-  --dockerfile examples/go-mcp-server/Dockerfile \
-  --context examples/go-mcp-server \
-  --registry registry.registry.svc.cluster.local:5000 \
-  --tag dev
-
-./bin/mcp-runtime registry push \
-  --image registry.registry.svc.cluster.local:5000/go-example-mcp:dev
-```
-
-Generate and deploy the Kubernetes manifests:
-
-```bash
-rm -rf /tmp/go-example-mcp-manifests
-./bin/mcp-runtime pipeline generate \
-  --file /tmp/go-example-mcp.yaml \
-  --output /tmp/go-example-mcp-manifests
-
-./bin/mcp-runtime pipeline deploy --dir /tmp/go-example-mcp-manifests
-kubectl rollout status deploy/go-example-mcp -n mcp-servers --timeout=180s
-./bin/mcp-runtime server status --namespace mcp-servers
-```
-
-In Kind, `server status` may show `PartiallyReady` while the Deployment is
-ready and traffic works. That usually means Traefik is routing through the local
-port-forward but has not written `Ingress.status.loadBalancer.ingress[]`; see
-[Local development notes](#local-development-notes) when you want permissive
-ingress readiness for this setup.
-
-Useful server and policy checks while iterating:
-
-```bash
-SERVER=go-example-mcp
-NAMESPACE=mcp-servers
-CONTAINER=go-example-mcp
-
-kubectl get mcpservers -n "$NAMESPACE"
-kubectl get deploy/"$SERVER" svc/"$SERVER" ingress/"$SERVER" -n "$NAMESPACE" -o wide
-kubectl get cm -n "$NAMESPACE" "${SERVER}-gateway-policy" -o yaml
-kubectl get mcpaccessgrant,mcpagentsession -n "$NAMESPACE" -o wide
-kubectl get pods -n "$NAMESPACE" -o wide
-kubectl get pods -n "$NAMESPACE" \
-  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.name}{","}{end}{"\n"}{end}'
-
-POD="$(
-  kubectl get pods -n "$NAMESPACE" -l app="$SERVER" \
-    -o jsonpath='{.items[0].metadata.name}'
-)"
-
-kubectl describe mcpserver -n "$NAMESPACE" "$SERVER"
-kubectl describe pod -n "$NAMESPACE" "$POD"
-kubectl logs -n "$NAMESPACE" "$POD" -c "$CONTAINER"
-kubectl logs -n "$NAMESPACE" "$POD" -c mcp-gateway
-./bin/mcp-runtime server logs "$SERVER" --namespace "$NAMESPACE"
-./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE"
-kubectl get cm -n "$NAMESPACE" "${SERVER}-gateway-policy" \
-  -o 'go-template={{index .data "policy.json"}}'
-kubectl get events -n "$NAMESPACE" --sort-by=.lastTimestamp
-```
-
-The governed sidecar container is named `mcp-gateway`; it runs the
-`mcp-gateway` image/process and forwards to the app on `127.0.0.1`. The bundled
-Go example image is distroless, so `kubectl exec ... -- /bin/sh` and
-`/bin/bash` are expected to fail. Use logs/describe first, or attach a debug
-container when you need a shell in the pod namespace:
-
-```bash
-kubectl debug -it -n "$NAMESPACE" "pod/$POD" \
-  --target="$CONTAINER" \
-  --image=busybox:1.36 -- sh
-```
-
-`server policy inspect` prints the rendered `policy.json` from the
-`${SERVER}-gateway-policy` ConfigMap. If a grant or session exists in
-Kubernetes but is missing from that output, check the operator logs in the
-platform block below. If it appears in the rendered policy but calls still fail,
-check the `mcp-gateway` sidecar logs and allow a few seconds for the sidecar to
-reload the mounted file.
-
-Start from the symptom instead of running every command every time:
+- `setup --test-mode` still builds and pushes the operator, gateway proxy, and Sentinel images. It is not a no-build path.
+- The documented Kind cluster must include the `registry.registry.svc.cluster.local:5000` mirror before setup runs, or image pulls will fail.
+- The maintained source of truth for contributor commands is `docs/contributor/`; keep this section short and update the contributor pages when that workflow changes.
 
 | Symptom | First checks |
 |---------|--------------|
