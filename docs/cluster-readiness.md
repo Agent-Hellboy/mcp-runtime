@@ -545,7 +545,7 @@ Missing pieces are warnings, not errors — the command surfaces them so you can
 
 ## `cluster doctor`
 
-`./bin/mcp-runtime cluster doctor` runs post-install diagnostics:
+`./bin/mcp-runtime cluster doctor` runs post-install diagnostics by default:
 
 - Detects your distribution (k3s / kind / minikube / docker-desktop / generic).
 - Checks the installed MCP Runtime namespaces, CRDs, operator, Traefik ingress, registry, Sentinel, and MCPServer reconciliation path. The MCPServer smoke uses an existing ready app image when available; otherwise it falls back to `registry.k8s.io/pause:3.9` and validates deployment/service/ingress reconciliation plus pod scheduling without a TCP readiness wait.
@@ -556,5 +556,14 @@ Missing pieces are warnings, not errors — the command surfaces them so you can
 - Streams the current check before running it, including helper pod probes and waits, so a slow run shows what it is doing.
 - Prints the distribution-specific registry remediation hint only when registry or image-pull checks fail; Traefik and Sentinel failures use their own check-specific remedies.
 
+For setup preflight, run `./bin/mcp-runtime cluster doctor --for-setup`. That mode focuses on:
+
+- Traefik ingress readiness and exposure.
+- Public host resolution from `MCP_PLATFORM_DOMAIN` or the explicit `MCP_PLATFORM_INGRESS_HOST`, `MCP_REGISTRY_INGRESS_HOST`, and `MCP_MCP_INGRESS_HOST` env vars.
+- Local DNS resolution for those configured public hosts.
+- cert-manager deployment readiness when TLS preflight is requested.
+- `MCP_TLS_CLUSTER_ISSUER` existence when configured.
+- `MCP_ACME_EMAIL` HTTP-01 readiness, including whether the active Traefik web entrypoint is on service port `80`.
+
 Run `bootstrap` before `setup` on a fresh cluster. Run `cluster doctor` after
-setup, or when debugging `ImagePullBackOff` on an installed MCP Runtime stack.
+setup, or use `cluster doctor --for-setup` before a host-based TLS install.

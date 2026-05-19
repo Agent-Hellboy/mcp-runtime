@@ -5,14 +5,19 @@ package cluster
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/pkg/access"
+	"mcp-runtime/pkg/metadata"
 )
 
 // Distribution identifies a Kubernetes flavor for remediation messaging.
@@ -82,7 +87,15 @@ const (
 	// failure surface it via the waiting message first pass; the describe
 	// pass is just a fallback for stale events.
 	imagePullDescribeLimit = 8
+
+	doctorEnvACMEEmail        = "MCP_ACME_EMAIL"
+	doctorEnvTLSClusterIssuer = "MCP_TLS_CLUSTER_ISSUER"
+	doctorDNSLookupTimeout    = 10 * time.Second
 )
+
+var doctorLookupHost = func(ctx context.Context, host string) ([]string, error) {
+	return net.DefaultResolver.LookupHost(ctx, host)
+}
 
 type doctorTraefikEndpoint struct {
 	Namespace string
@@ -133,6 +146,19 @@ func RunDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgr
 	return runDoctorChecks(kubectl, distro, progress)
 }
 
+// RunSetupDoctor executes pre-setup readiness checks and returns a report.
+func RunSetupDoctor(kubectl core.KubectlRunner) DoctorReport {
+	distro := DetectDistribution(kubectl)
+	return runDoctorChecksWithSpecs(kubectl, distro, nil, doctorSetupCheckSpecs(kubectl, distro))
+}
+
+// RunSetupDoctorWithProgress executes pre-setup readiness checks and calls
+// progress hooks before and after each check.
+func RunSetupDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport {
+	distro := DetectDistribution(kubectl)
+	return runDoctorChecksWithSpecs(kubectl, distro, progress, doctorSetupCheckSpecs(kubectl, distro))
+}
+
 // RunDoctorAndPrint streams doctor progress and results as checks execute.
 func RunDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport {
 	core.Section("Cluster Doctor")
@@ -145,8 +171,23 @@ func RunDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport {
 	return report
 }
 
+// RunSetupDoctorAndPrint streams setup-preflight progress and results.
+func RunSetupDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport {
+	core.Section("Cluster Doctor")
+	core.Info("Detecting Kubernetes distribution — reading node kubelet versions, node names, and current context")
+	distro := DetectDistribution(kubectl)
+	core.Info(fmt.Sprintf("Distribution: %s", distro))
+
+	report := runDoctorChecksWithSpecs(kubectl, distro, printDoctorCheckProgress, doctorSetupCheckSpecs(kubectl, distro))
+	printDoctorReportFooter(report)
+	return report
+}
+
 func runDoctorChecks(kubectl core.KubectlRunner, distro Distribution, progress DoctorCheckProgress) DoctorReport {
-	specs := doctorCheckSpecs(kubectl, distro)
+	return runDoctorChecksWithSpecs(kubectl, distro, progress, doctorCheckSpecs(kubectl, distro))
+}
+
+func runDoctorChecksWithSpecs(kubectl core.KubectlRunner, distro Distribution, progress DoctorCheckProgress, specs []doctorCheckSpec) DoctorReport {
 	checks := make([]DoctorCheck, 0, len(specs))
 	for i, spec := range specs {
 		finish := func(DoctorCheck) {}
@@ -232,6 +273,20 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 			Detail: "applying a temporary MCPServer and waiting up to 150s for deployment/service/ingress resources",
 			Run:    func() DoctorCheck { return checkMCPServerReconcileSmoke(kubectl, doctorMCPServersNamespace) },
 		},
+	}
+}
+
+func doctorSetupCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorCheckSpec {
+	return []doctorCheckSpec{
+		{Name: "traefik ingressClass", Detail: "checking that the traefik IngressClass exists", Run: func() DoctorCheck { return checkTraefikIngressClass(kubectl) }},
+		{Name: "traefik deployment readiness", Detail: "reading ready and desired replicas for Traefik", Run: func() DoctorCheck { return checkTraefikDeploymentReady(kubectl, distro) }},
+		{Name: "traefik web entrypoint", Detail: "checking the Traefik Service ports for the web entrypoint", Run: func() DoctorCheck { return checkTraefikWebEntrypoint(kubectl, distro) }},
+		{Name: "traefik service exposure", Detail: "checking LoadBalancer or NodePort exposure for the web entrypoint", Run: func() DoctorCheck { return checkTraefikServiceExposure(kubectl, distro) }},
+		{Name: "public ingress host config", Detail: "resolving platform, registry, and MCP public hosts from the environment", Run: checkPublicIngressHostConfig},
+		{Name: "public ingress DNS", Detail: "resolving configured public hosts through the local DNS resolver", Run: checkPublicIngressDNS},
+		{Name: "cert-manager readiness", Detail: "checking cert-manager deployments when TLS preflight is requested", Run: func() DoctorCheck { return checkCertManagerReadiness(kubectl) }},
+		{Name: "TLS ClusterIssuer", Detail: "checking the configured cert-manager ClusterIssuer when MCP_TLS_CLUSTER_ISSUER is set", Run: func() DoctorCheck { return checkDoctorTLSClusterIssuer(kubectl) }},
+		{Name: "ACME HTTP-01 exposure", Detail: "verifying the active Traefik web entrypoint exposes public port 80 when MCP_ACME_EMAIL is set", Run: func() DoctorCheck { return checkDoctorACMEHTTP01Exposure(kubectl, distro) }},
 	}
 }
 
@@ -473,56 +528,27 @@ func checkMCPServerCRD(kubectl core.KubectlRunner) DoctorCheck {
 func checkOperatorReady(kubectl core.KubectlRunner) DoctorCheck {
 	deployName := "mcp-runtime-operator-controller-manager"
 	ns := "mcp-runtime"
-	cmd, err := kubectl.CommandArgs([]string{"get", "deploy", "-n", ns, deployName, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"})
+	pair, ready, err := doctorDeploymentReplicaStatus(kubectl, ns, deployName)
 	if err != nil {
 		return DoctorCheck{
 			Name:   "operator readiness",
 			OK:     false,
-			Detail: fmt.Sprintf("kubectl error: %v", err),
+			Detail: err.Error(),
 			Remedy: "run `./bin/mcp-runtime setup` to install the operator",
 		}
 	}
-	out, err := cmd.Output()
-	pair := strings.TrimSpace(string(out))
-	if err != nil || pair == "" {
+	if !ready {
 		return DoctorCheck{
 			Name:   "operator readiness",
 			OK:     false,
-			Detail: fmt.Sprintf("deployment %s/%s not found", ns, deployName),
-			Remedy: "run `./bin/mcp-runtime setup` to install the operator",
-		}
-	}
-	parts := strings.SplitN(pair, "/", 2)
-	if len(parts) != 2 {
-		return DoctorCheck{
-			Name:   "operator readiness",
-			OK:     false,
-			Detail: fmt.Sprintf("unexpected replica status %q", pair),
-			Remedy: "inspect `kubectl -n mcp-runtime get deploy mcp-runtime-operator-controller-manager -o wide`",
-		}
-	}
-	ready, readyErr := strconv.Atoi(strings.TrimSpace(parts[0]))
-	desired, desiredErr := strconv.Atoi(strings.TrimSpace(parts[1]))
-	if readyErr != nil || desiredErr != nil {
-		return DoctorCheck{
-			Name:   "operator readiness",
-			OK:     false,
-			Detail: fmt.Sprintf("unexpected replica status %q", pair),
-			Remedy: "inspect `kubectl -n mcp-runtime get deploy mcp-runtime-operator-controller-manager -o wide`",
-		}
-	}
-	if desired == 0 || ready < desired {
-		return DoctorCheck{
-			Name:   "operator readiness",
-			OK:     false,
-			Detail: fmt.Sprintf("%d/%d replicas ready", ready, desired),
+			Detail: fmt.Sprintf("%s replicas ready", pair),
 			Remedy: "check operator pods: `kubectl -n mcp-runtime get pods -l control-plane=controller-manager`",
 		}
 	}
 	return DoctorCheck{
 		Name:   "operator readiness",
 		OK:     true,
-		Detail: fmt.Sprintf("%d/%d replicas ready", ready, desired),
+		Detail: fmt.Sprintf("%s replicas ready", pair),
 	}
 }
 
@@ -768,34 +794,15 @@ func checkTraefikDeploymentReady(kubectl core.KubectlRunner, distro Distribution
 }
 
 func checkTraefikDeploymentReadyAt(kubectl core.KubectlRunner, endpoint doctorTraefikEndpoint) DoctorCheck {
-	cmd, err := kubectl.CommandArgs([]string{"get", "deploy", "-n", endpoint.Namespace, endpoint.Name, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"})
+	pair, ready, err := doctorDeploymentReplicaStatus(kubectl, endpoint.Namespace, endpoint.Name)
 	if err != nil {
 		return DoctorCheck{
 			Name:   "traefik deployment readiness",
 			OK:     false,
-			Detail: fmt.Sprintf("kubectl error: %v", err),
+			Detail: err.Error(),
 		}
 	}
-	out, execErr := cmd.Output()
-	pair := strings.TrimSpace(string(out))
-	if execErr != nil || pair == "" {
-		return DoctorCheck{
-			Name:   "traefik deployment readiness",
-			OK:     false,
-			Detail: fmt.Sprintf("deployment %s/%s not found", endpoint.Namespace, endpoint.Name),
-		}
-	}
-	parts := strings.SplitN(pair, "/", 2)
-	if len(parts) != 2 {
-		return DoctorCheck{
-			Name:   "traefik deployment readiness",
-			OK:     false,
-			Detail: fmt.Sprintf("unexpected replica status %q", pair),
-		}
-	}
-	ready, readyErr := strconv.Atoi(strings.TrimSpace(parts[0]))
-	desired, desiredErr := strconv.Atoi(strings.TrimSpace(parts[1]))
-	if readyErr != nil || desiredErr != nil || desired == 0 || ready < desired {
+	if !ready {
 		return DoctorCheck{
 			Name:   "traefik deployment readiness",
 			OK:     false,
@@ -933,6 +940,288 @@ func checkTraefikServiceExposureAt(kubectl core.KubectlRunner, endpoint doctorTr
 		Name:   "traefik service exposure",
 		OK:     false,
 		Detail: fmt.Sprintf("service type=%s exposure not ready (lbIP=%q lbHost=%q ports=%q)", svcType, lbIP, lbHost, ports),
+	}
+}
+
+func doctorConfiguredIngressHosts() (platform, registry, mcp string, configured bool) {
+	platform = strings.TrimSpace(metadata.ResolvePlatformIngressHost())
+	registry = strings.TrimSpace(metadata.ResolveRegistryHost())
+	mcp = strings.TrimSpace(metadata.ResolveMcpIngressHost())
+	configured = doctorPublicIngressHostConfigExplicitlySet()
+	if !configured && registry == metadata.DefaultRegistryHost {
+		registry = ""
+	}
+	return platform, registry, mcp, configured
+}
+
+func doctorPublicIngressHostConfigExplicitlySet() bool {
+	for _, key := range []string{
+		"MCP_PLATFORM_DOMAIN",
+		"MCP_PLATFORM_INGRESS_HOST",
+		"MCP_REGISTRY_INGRESS_HOST",
+		"MCP_MCP_INGRESS_HOST",
+	} {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func doctorTLSPreflightRequested() bool {
+	if strings.TrimSpace(os.Getenv(doctorEnvACMEEmail)) != "" {
+		return true
+	}
+	if strings.TrimSpace(os.Getenv(doctorEnvTLSClusterIssuer)) != "" {
+		return true
+	}
+	return false
+}
+
+func checkPublicIngressHostConfig() DoctorCheck {
+	platform, registry, mcp, configured := doctorConfiguredIngressHosts()
+	if !configured {
+		return DoctorCheck{
+			Name:   "public ingress host config",
+			OK:     true,
+			Detail: "no public ingress host env configured; skipping host-specific preflight",
+		}
+	}
+
+	missing := make([]string, 0, 3)
+	if platform == "" {
+		missing = append(missing, "platform")
+	}
+	if registry == "" {
+		missing = append(missing, "registry")
+	}
+	if mcp == "" {
+		missing = append(missing, "mcp")
+	}
+	if len(missing) > 0 {
+		return DoctorCheck{
+			Name:   "public ingress host config",
+			OK:     false,
+			Detail: fmt.Sprintf("missing %s public host value(s)", strings.Join(missing, ", ")),
+			Remedy: "set MCP_PLATFORM_DOMAIN or set MCP_PLATFORM_INGRESS_HOST, MCP_REGISTRY_INGRESS_HOST, and MCP_MCP_INGRESS_HOST together",
+		}
+	}
+
+	for _, item := range []struct {
+		field string
+		host  string
+	}{
+		{field: "platform", host: platform},
+		{field: "registry", host: registry},
+		{field: "mcp", host: mcp},
+	} {
+		if err := access.ValidateResourceName(item.field, item.host); err != nil {
+			return DoctorCheck{
+				Name:   "public ingress host config",
+				OK:     false,
+				Detail: err.Error(),
+				Remedy: "use lowercase DNS hostnames such as platform.example.com",
+			}
+		}
+	}
+	if platform == registry || platform == mcp || registry == mcp {
+		return DoctorCheck{
+			Name:   "public ingress host config",
+			OK:     false,
+			Detail: fmt.Sprintf("platform=%q registry=%q mcp=%q must be distinct hostnames", platform, registry, mcp),
+			Remedy: "configure separate public hostnames for platform, registry, and MCP ingress",
+		}
+	}
+	return DoctorCheck{
+		Name:   "public ingress host config",
+		OK:     true,
+		Detail: fmt.Sprintf("platform=%s registry=%s mcp=%s", platform, registry, mcp),
+	}
+}
+
+func checkPublicIngressDNS() DoctorCheck {
+	platform, registry, mcp, configured := doctorConfiguredIngressHosts()
+	if !configured {
+		return DoctorCheck{
+			Name:   "public ingress DNS",
+			OK:     true,
+			Detail: "no public ingress host env configured; skipping DNS resolution",
+		}
+	}
+
+	hosts := []string{platform, registry, mcp}
+	seen := map[string]struct{}{}
+	results := make([]string, 0, len(hosts))
+	failures := make([]string, 0)
+	for _, host := range hosts {
+		if host == "" {
+			continue
+		}
+		if _, ok := seen[host]; ok {
+			continue
+		}
+		seen[host] = struct{}{}
+		ctx, cancel := context.WithTimeout(context.Background(), doctorDNSLookupTimeout)
+		addrs, err := doctorLookupHost(ctx, host)
+		cancel()
+		if err != nil || len(addrs) == 0 {
+			failures = append(failures, fmt.Sprintf("%s: %v", host, err))
+			continue
+		}
+		results = append(results, fmt.Sprintf("%s -> %s", host, strings.Join(addrs, ",")))
+	}
+	if len(failures) > 0 {
+		return DoctorCheck{
+			Name:   "public ingress DNS",
+			OK:     false,
+			Detail: strings.Join(failures, "; "),
+			Remedy: "create public A, AAAA, or CNAME records for platform, registry, and mcp before running TLS setup",
+		}
+	}
+	return DoctorCheck{
+		Name:   "public ingress DNS",
+		OK:     true,
+		Detail: strings.Join(results, "; "),
+	}
+}
+
+func checkCertManagerReadiness(kubectl core.KubectlRunner) DoctorCheck {
+	if !doctorTLSPreflightRequested() {
+		return DoctorCheck{
+			Name:   "cert-manager readiness",
+			OK:     true,
+			Detail: "TLS preflight not requested; skipping cert-manager readiness",
+		}
+	}
+
+	components := []string{"cert-manager", "cert-manager-cainjector", "cert-manager-webhook"}
+	ready := make([]string, 0, len(components))
+	failures := make([]string, 0)
+	for _, name := range components {
+		pair, readyNow, err := doctorDeploymentReplicaStatus(kubectl, "cert-manager", name)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", name, err))
+			continue
+		}
+		if !readyNow {
+			failures = append(failures, fmt.Sprintf("%s: %s ready", name, pair))
+			continue
+		}
+		ready = append(ready, fmt.Sprintf("%s=%s", name, pair))
+	}
+	if len(failures) > 0 {
+		return DoctorCheck{
+			Name:   "cert-manager readiness",
+			OK:     false,
+			Detail: strings.Join(failures, "; "),
+			Remedy: "install cert-manager first or let setup install it by not using --skip-cert-manager-install",
+		}
+	}
+	return DoctorCheck{
+		Name:   "cert-manager readiness",
+		OK:     true,
+		Detail: strings.Join(ready, "; "),
+	}
+}
+
+func doctorDeploymentReplicaStatus(kubectl core.KubectlRunner, namespace, name string) (string, bool, error) {
+	cmd, err := kubectl.CommandArgs([]string{"get", "deploy", "-n", namespace, name, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"})
+	if err != nil {
+		return "", false, fmt.Errorf("kubectl error: %w", err)
+	}
+	out, execErr := cmd.Output()
+	pair := strings.TrimSpace(string(out))
+	if execErr != nil || pair == "" {
+		return "", false, fmt.Errorf("deployment not found")
+	}
+	parts := strings.SplitN(pair, "/", 2)
+	if len(parts) != 2 {
+		return pair, false, fmt.Errorf("unexpected replica status %q", pair)
+	}
+	readyReplicas, readyErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+	desiredReplicas, desiredErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if readyErr != nil || desiredErr != nil {
+		return pair, false, fmt.Errorf("unexpected replica status %q", pair)
+	}
+	if desiredReplicas == 0 || readyReplicas < desiredReplicas {
+		return pair, false, nil
+	}
+	return pair, true, nil
+}
+
+func checkDoctorTLSClusterIssuer(kubectl core.KubectlRunner) DoctorCheck {
+	name := strings.TrimSpace(os.Getenv(doctorEnvTLSClusterIssuer))
+	if name == "" {
+		return DoctorCheck{
+			Name:   "TLS ClusterIssuer",
+			OK:     true,
+			Detail: "MCP_TLS_CLUSTER_ISSUER not set; skipping issuer lookup",
+		}
+	}
+	cmd, err := kubectl.CommandArgs([]string{"get", "clusterissuer", name, "-o", "jsonpath={.metadata.name}"})
+	if err != nil {
+		return DoctorCheck{
+			Name:   "TLS ClusterIssuer",
+			OK:     false,
+			Detail: fmt.Sprintf("kubectl error: %v", err),
+			Remedy: "install the ClusterIssuer first or fix MCP_TLS_CLUSTER_ISSUER",
+		}
+	}
+	out, execErr := cmd.Output()
+	if execErr != nil || strings.TrimSpace(string(out)) != name {
+		return DoctorCheck{
+			Name:   "TLS ClusterIssuer",
+			OK:     false,
+			Detail: fmt.Sprintf("ClusterIssuer %q not found", name),
+			Remedy: "install the ClusterIssuer first or fix MCP_TLS_CLUSTER_ISSUER",
+		}
+	}
+	return DoctorCheck{
+		Name:   "TLS ClusterIssuer",
+		OK:     true,
+		Detail: fmt.Sprintf("ClusterIssuer %s found", name),
+	}
+}
+
+func checkDoctorACMEHTTP01Exposure(kubectl core.KubectlRunner, distro Distribution) DoctorCheck {
+	email := strings.TrimSpace(os.Getenv(doctorEnvACMEEmail))
+	if email == "" {
+		return DoctorCheck{
+			Name:   "ACME HTTP-01 exposure",
+			OK:     true,
+			Detail: "MCP_ACME_EMAIL not set; skipping ACME HTTP-01 preflight",
+		}
+	}
+	endpoint, _, ok := resolveDoctorTraefikWebEndpoint(kubectl, distro)
+	if !ok {
+		return DoctorCheck{
+			Name:   "ACME HTTP-01 exposure",
+			OK:     false,
+			Detail: "active Traefik web entrypoint not found",
+			Remedy: "expose Traefik on public port 80 before requesting Let's Encrypt certificates",
+		}
+	}
+	if endpoint.WebPort != 80 {
+		return DoctorCheck{
+			Name:   "ACME HTTP-01 exposure",
+			OK:     false,
+			Detail: fmt.Sprintf("%s web entrypoint listens on service port %d", endpoint.label(), endpoint.WebPort),
+			Remedy: "Let's Encrypt HTTP-01 must reach Traefik on public port 80",
+		}
+	}
+	exposure := checkTraefikServiceExposureAt(kubectl, endpoint)
+	if !exposure.OK {
+		return DoctorCheck{
+			Name:   "ACME HTTP-01 exposure",
+			OK:     false,
+			Detail: exposure.Detail,
+			Remedy: "ensure Traefik port 80 is reachable through a LoadBalancer or NodePort before requesting ACME certificates",
+		}
+	}
+	return DoctorCheck{
+		Name:   "ACME HTTP-01 exposure",
+		OK:     true,
+		Detail: fmt.Sprintf("%s with MCP_ACME_EMAIL=%s", exposure.Detail, email),
 	}
 }
 

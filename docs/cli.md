@@ -340,8 +340,9 @@ mcp-runtime cluster cert status
 mcp-runtime cluster cert apply
 mcp-runtime cluster cert wait --timeout 10m
 
-# Doctor — registry / DNS / containerd preflight per-distro
+# Doctor — post-install diagnostics or setup preflight
 mcp-runtime cluster doctor
+mcp-runtime cluster doctor --for-setup
 ```
 
 **Provider status today:** `kind` and `eks` are active. `gke` and `aks` flags exist but their kubeconfig and provisioning helpers return planned/not-implemented paths in the current code.

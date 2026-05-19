@@ -2500,6 +2500,10 @@ type OperatorConfig struct {
 	// InternalRegistryEndpoint is the internal registry endpoint to use for image refs when not using a provisioned registry.
 	InternalRegistryEndpoint string
 
+	// RegistryPullHost is the pullable registry host used in image refs when the operator
+	// needs to rewrite images to the platform-managed registry.
+	RegistryPullHost string
+
 	// RequeueDelaySeconds is the delay in seconds before requeueing when resources aren't ready.
 	RequeueDelaySeconds int
 
@@ -4005,6 +4009,9 @@ Package cluster implements cluster operations for the cluster CLI command.
 - [`func RunDoctor(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-func-rundoctor-kubectl-core-kubectlrunner-doctorreport)
 - [`func RunDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-func-rundoctorandprint-kubectl-core-kubectlrunner-doctorreport)
 - [`func RunDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport`](#cli-cluster-func-rundoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport)
+- [`func RunSetupDoctor(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-func-runsetupdoctor-kubectl-core-kubectlrunner-doctorreport)
+- [`func RunSetupDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-func-runsetupdoctorandprint-kubectl-core-kubectlrunner-doctorreport)
+- [`func RunSetupDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport`](#cli-cluster-func-runsetupdoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport)
 - [`func (r DoctorReport) AllOK() bool`](#cli-cluster-func-r-doctorreport-allok-bool)
 - [`type IngressOptions struct`](#cli-cluster-type-ingressoptions-struct)
 
@@ -4216,6 +4223,28 @@ func RunDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport
 func RunDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport
     RunDoctorWithProgress executes cluster diagnostics and calls progress hooks
     before and after each check. It is useful for UIs that need live feedback.
+
+```
+
+<a id="cli-cluster-func-runsetupdoctor-kubectl-core-kubectlrunner-doctorreport"></a>
+```text
+func RunSetupDoctor(kubectl core.KubectlRunner) DoctorReport
+    RunSetupDoctor executes pre-setup readiness checks and returns a report.
+
+```
+
+<a id="cli-cluster-func-runsetupdoctorandprint-kubectl-core-kubectlrunner-doctorreport"></a>
+```text
+func RunSetupDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport
+    RunSetupDoctorAndPrint streams setup-preflight progress and results.
+
+```
+
+<a id="cli-cluster-func-runsetupdoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport"></a>
+```text
+func RunSetupDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport
+    RunSetupDoctorWithProgress executes pre-setup readiness checks and calls
+    progress hooks before and after each check.
 
 ```
 
@@ -5248,6 +5277,8 @@ type CommandFactory func(name string, args []string) (OutputCommand, error)
 type Config struct {
 	RegistryEndpoint        string
 	DefaultRegistryEndpoint string
+	RegistryIngressHost     string
+	DefaultRegistryHost     string
 	RegistryPort            int
 }
 

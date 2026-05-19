@@ -1662,6 +1662,30 @@ func TestResolveImage(t *testing.T) {
 		}
 		assertEqual(t, "image", image, "test-registry/test-image:v1.0.0")
 	})
+	t.Run("useProvisionedRegistry falls back to registry pull host", func(t *testing.T) {
+		original := DefaultOperatorConfig
+		DefaultOperatorConfig = &OperatorConfig{
+			InternalRegistryEndpoint: "10.43.75.207:5000",
+			RegistryPullHost:         "registry.mcpruntime.org",
+		}
+		t.Cleanup(func() {
+			DefaultOperatorConfig = original
+		})
+
+		mcpServer := &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				Image:                  "test-image",
+				UseProvisionedRegistry: true,
+			},
+		}
+		r := MCPServerReconciler{}
+		image, err := r.resolveImage(context.Background(), mcpServer)
+		if err != nil {
+			t.Fatalf("failed to resolve image: %v", err)
+		}
+		assertEqual(t, "image", image, "registry.mcpruntime.org/test-image")
+	})
 }
 
 func TestReconcile(t *testing.T) {
