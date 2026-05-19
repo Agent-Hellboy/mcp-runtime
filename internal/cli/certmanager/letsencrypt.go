@@ -297,13 +297,22 @@ func renderLetsEncryptClusterIssuerManifest(name, email, serverURL string) strin
 	return b.String()
 }
 
-func applyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []string, issuerName string) error {
+func applyRegistryCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error {
 	uniq := dedupeHostnames(dnsNames)
-	if len(uniq) == 0 {
-		return fmt.Errorf("registry TLS has no DNS names to request")
+	uniqIPs := dedupeHostnames(ipAddresses)
+	if len(uniq) == 0 && len(uniqIPs) == 0 {
+		return fmt.Errorf("registry TLS has no DNS names or IP addresses to request")
 	}
-	manifest := renderRegistryCertificateForACME(registryCertificateName, uniq, issuerName)
+	manifest := renderRegistryCertificate(registryCertificateName, uniq, uniqIPs, issuerName)
 	return kube.ApplyManifestContent(kubectl.CommandArgs, manifest)
+}
+
+func ApplyRegistryCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error {
+	return applyRegistryCertificate(kubectl, dnsNames, ipAddresses, issuerName)
+}
+
+func applyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []string, issuerName string) error {
+	return applyRegistryCertificate(kubectl, dnsNames, nil, issuerName)
 }
 
 func ApplyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []string, issuerName string) error {
@@ -327,8 +336,9 @@ func dedupeHostnames(hs []string) []string {
 	return out
 }
 
-func renderRegistryCertificateForACME(certName string, dnsNames []string, issuerName string) string {
+func renderRegistryCertificate(certName string, dnsNames, ipAddresses []string, issuerName string) string {
 	uniq := dedupeHostnames(dnsNames)
+	uniqIPs := dedupeHostnames(ipAddresses)
 	var b strings.Builder
 	b.WriteString("apiVersion: cert-manager.io/v1\n")
 	b.WriteString("kind: Certificate\n")
@@ -346,11 +356,21 @@ func renderRegistryCertificateForACME(certName string, dnsNames []string, issuer
 	b.WriteString(issuerName)
 	b.WriteString("\n")
 	b.WriteString("    kind: ClusterIssuer\n")
-	b.WriteString("  dnsNames:\n")
-	for _, name := range uniq {
-		b.WriteString("    - ")
-		b.WriteString(strconv.Quote(name))
-		b.WriteString("\n")
+	if len(uniq) > 0 {
+		b.WriteString("  dnsNames:\n")
+		for _, name := range uniq {
+			b.WriteString("    - ")
+			b.WriteString(strconv.Quote(name))
+			b.WriteString("\n")
+		}
+	}
+	if len(uniqIPs) > 0 {
+		b.WriteString("  ipAddresses:\n")
+		for _, ip := range uniqIPs {
+			b.WriteString("    - ")
+			b.WriteString(strconv.Quote(ip))
+			b.WriteString("\n")
+		}
 	}
 	return b.String()
 }

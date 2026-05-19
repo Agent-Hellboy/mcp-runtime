@@ -19,6 +19,13 @@ const (
 )
 
 const (
+	RegistryModeAuto         = "auto"
+	RegistryModeBundledHTTP  = "bundled-http"
+	RegistryModeBundledHTTPS = "bundled-https"
+	RegistryModeExternal     = "external"
+)
+
+const (
 	DefaultOrgCatalogNamespace    = "mcp-servers-org"
 	DefaultPublicCatalogNamespace = "mcp-servers-public"
 )
@@ -29,6 +36,10 @@ type Input struct {
 	Context                string
 	RegistryType           string
 	RegistryStorageSize    string
+	RegistryMode           string
+	ExternalRegistryURL    string
+	ExternalRegistryUser   string
+	ExternalRegistryPass   string
 	StorageMode            string
 	PlatformMode           string
 	IngressMode            string
@@ -51,24 +62,28 @@ type Input struct {
 
 // Plan captures the resolved setup decisions.
 type Plan struct {
-	Kubeconfig          string
-	Context             string
-	RegistryType        string
-	RegistryStorageSize string
-	StorageMode         string
-	PlatformMode        string
-	Ingress             cluster.IngressOptions
-	RegistryManifest    string
-	TLSEnabled          bool
-	TestMode            bool
-	ParallelBuilds      bool
-	StrictProd          bool
-	DeployAnalytics     bool
-	OperatorArgs        []string
-	ACMEmail            string
-	ACMEStaging         bool
-	TLSClusterIssuer    string
-	InstallCertManager  bool
+	Kubeconfig           string
+	Context              string
+	RegistryType         string
+	RegistryStorageSize  string
+	RegistryMode         string
+	ExternalRegistryURL  string
+	ExternalRegistryUser string
+	ExternalRegistryPass string
+	StorageMode          string
+	PlatformMode         string
+	Ingress              cluster.IngressOptions
+	RegistryManifest     string
+	TLSEnabled           bool
+	TestMode             bool
+	ParallelBuilds       bool
+	StrictProd           bool
+	DeployAnalytics      bool
+	OperatorArgs         []string
+	ACMEmail             string
+	ACMEStaging          bool
+	TLSClusterIssuer     string
+	InstallCertManager   bool
 }
 
 func NormalizePlatformMode(mode string) (string, bool) {
@@ -81,6 +96,23 @@ func NormalizePlatformMode(mode string) (string, bool) {
 		return PlatformModeOrg, true
 	case PlatformModePublic:
 		return PlatformModePublic, true
+	default:
+		return "", false
+	}
+}
+
+func NormalizeRegistryMode(mode string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "":
+		return RegistryModeAuto, true
+	case RegistryModeAuto:
+		return RegistryModeAuto, true
+	case RegistryModeBundledHTTP:
+		return RegistryModeBundledHTTP, true
+	case RegistryModeBundledHTTPS:
+		return RegistryModeBundledHTTPS, true
+	case RegistryModeExternal:
+		return RegistryModeExternal, true
 	default:
 		return "", false
 	}
@@ -106,6 +138,11 @@ func Build(input Input) Plan {
 	if input.StorageMode == "" {
 		input.StorageMode = StorageModeDynamic
 	}
+	if mode, ok := NormalizeRegistryMode(input.RegistryMode); ok {
+		input.RegistryMode = mode
+	} else {
+		input.RegistryMode = RegistryModeAuto
+	}
 	if mode, ok := NormalizePlatformMode(input.PlatformMode); ok {
 		input.PlatformMode = mode
 	} else {
@@ -122,7 +159,13 @@ func Build(input Input) Plan {
 	}
 
 	registryManifest := "config/registry"
-	if input.StorageMode == StorageModeHostpath {
+	if input.RegistryMode == RegistryModeBundledHTTPS {
+		if input.StorageMode == StorageModeHostpath {
+			registryManifest = "config/registry/overlays/hostpath-internal-tls"
+		} else {
+			registryManifest = "config/registry/overlays/internal-tls"
+		}
+	} else if input.StorageMode == StorageModeHostpath {
 		if input.TLSEnabled {
 			registryManifest = "config/registry/overlays/hostpath-tls"
 		} else {
@@ -133,12 +176,16 @@ func Build(input Input) Plan {
 	}
 
 	return Plan{
-		Kubeconfig:          input.Kubeconfig,
-		Context:             input.Context,
-		RegistryType:        input.RegistryType,
-		RegistryStorageSize: input.RegistryStorageSize,
-		StorageMode:         input.StorageMode,
-		PlatformMode:        input.PlatformMode,
+		Kubeconfig:           input.Kubeconfig,
+		Context:              input.Context,
+		RegistryType:         input.RegistryType,
+		RegistryStorageSize:  input.RegistryStorageSize,
+		RegistryMode:         input.RegistryMode,
+		ExternalRegistryURL:  strings.TrimSpace(input.ExternalRegistryURL),
+		ExternalRegistryUser: input.ExternalRegistryUser,
+		ExternalRegistryPass: input.ExternalRegistryPass,
+		StorageMode:          input.StorageMode,
+		PlatformMode:         input.PlatformMode,
 		Ingress: cluster.IngressOptions{
 			Mode:     input.IngressMode,
 			Manifest: manifestPath,

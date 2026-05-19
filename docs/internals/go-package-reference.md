@@ -4310,6 +4310,7 @@ _No package overview is documented._
 - [`func ACMETLSDNSNames() []string`](#cli-cert-manager-func-acmetlsdnsnames-string)
 - [`func ApplyClusterIssuerWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-applyclusterissuerwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func ApplyLetsEncryptClusterIssuer(kubectl core.KubectlRunner, email string, staging bool, logger *zap.Logger) error`](#cli-cert-manager-func-applyletsencryptclusterissuer-kubectl-core-kubectlrunner-email-string-staging-bool-logger-zap-logger-error)
+- [`func ApplyRegistryCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error`](#cli-cert-manager-func-applyregistrycertificate-kubectl-core-kubectlrunner-dnsnames-ipaddresses-string-issuername-string-error)
 - [`func ApplyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []string, issuerName string) error`](#cli-cert-manager-func-applyregistrycertificateforacme-kubectl-core-kubectlrunner-dnsnames-string-issuername-string-error)
 - [`func ApplyRegistryCertificateWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-applyregistrycertificatewithkubectl-kubectl-core-kubectlrunner-error)
 - [`func CheckCASecretWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkcasecretwithkubectl-kubectl-core-kubectlrunner-error)
@@ -4359,6 +4360,11 @@ func ApplyClusterIssuerWithKubectl(kubectl core.KubectlRunner) error
 <a id="cli-cert-manager-func-applyletsencryptclusterissuer-kubectl-core-kubectlrunner-email-string-staging-bool-logger-zap-logger-error"></a>
 ```text
 func ApplyLetsEncryptClusterIssuer(kubectl core.KubectlRunner, email string, staging bool, logger *zap.Logger) error
+```
+
+<a id="cli-cert-manager-func-applyregistrycertificate-kubectl-core-kubectlrunner-dnsnames-ipaddresses-string-issuername-string-error"></a>
+```text
+func ApplyRegistryCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error
 ```
 
 <a id="cli-cert-manager-func-applyregistrycertificateforacme-kubectl-core-kubectlrunner-dnsnames-string-issuername-string-error"></a>
@@ -5680,6 +5686,7 @@ Package plan contains pure setup planning types and default resolution.
 - [`Constants`](#cli-setup-plan-constants)
 - [`func CatalogNamespaceForPlatformMode(mode string) string`](#cli-setup-plan-func-catalognamespaceforplatformmode-mode-string-string)
 - [`func NormalizePlatformMode(mode string) (string, bool)`](#cli-setup-plan-func-normalizeplatformmode-mode-string-string-bool)
+- [`func NormalizeRegistryMode(mode string) (string, bool)`](#cli-setup-plan-func-normalizeregistrymode-mode-string-string-bool)
 - [`type Input struct`](#cli-setup-plan-type-input-struct)
 - [`type Plan struct`](#cli-setup-plan-type-plan-struct)
 - [`func Build(input Input) Plan`](#cli-setup-plan-func-build-input-input-plan)
@@ -5696,6 +5703,12 @@ const (
 	PlatformModeTenant = "tenant"
 	PlatformModeOrg    = "org"
 	PlatformModePublic = "public"
+)
+const (
+	RegistryModeAuto         = "auto"
+	RegistryModeBundledHTTP  = "bundled-http"
+	RegistryModeBundledHTTPS = "bundled-https"
+	RegistryModeExternal     = "external"
 )
 const (
 	DefaultOrgCatalogNamespace    = "mcp-servers-org"
@@ -5716,6 +5729,11 @@ func CatalogNamespaceForPlatformMode(mode string) string
 func NormalizePlatformMode(mode string) (string, bool)
 ```
 
+<a id="cli-setup-plan-func-normalizeregistrymode-mode-string-string-bool"></a>
+```text
+func NormalizeRegistryMode(mode string) (string, bool)
+```
+
 <a id="cli-setup-plan-types"></a>
 ### Types
 
@@ -5726,6 +5744,10 @@ type Input struct {
 	Context                string
 	RegistryType           string
 	RegistryStorageSize    string
+	RegistryMode           string
+	ExternalRegistryURL    string
+	ExternalRegistryUser   string
+	ExternalRegistryPass   string
 	StorageMode            string
 	PlatformMode           string
 	IngressMode            string
@@ -5752,24 +5774,28 @@ type Input struct {
 <a id="cli-setup-plan-type-plan-struct"></a>
 ```text
 type Plan struct {
-	Kubeconfig          string
-	Context             string
-	RegistryType        string
-	RegistryStorageSize string
-	StorageMode         string
-	PlatformMode        string
-	Ingress             cluster.IngressOptions
-	RegistryManifest    string
-	TLSEnabled          bool
-	TestMode            bool
-	ParallelBuilds      bool
-	StrictProd          bool
-	DeployAnalytics     bool
-	OperatorArgs        []string
-	ACMEmail            string
-	ACMEStaging         bool
-	TLSClusterIssuer    string
-	InstallCertManager  bool
+	Kubeconfig           string
+	Context              string
+	RegistryType         string
+	RegistryStorageSize  string
+	RegistryMode         string
+	ExternalRegistryURL  string
+	ExternalRegistryUser string
+	ExternalRegistryPass string
+	StorageMode          string
+	PlatformMode         string
+	Ingress              cluster.IngressOptions
+	RegistryManifest     string
+	TLSEnabled           bool
+	TestMode             bool
+	ParallelBuilds       bool
+	StrictProd           bool
+	DeployAnalytics      bool
+	OperatorArgs         []string
+	ACMEmail             string
+	ACMEStaging          bool
+	TLSClusterIssuer     string
+	InstallCertManager   bool
 }
     Plan captures the resolved setup decisions.
 

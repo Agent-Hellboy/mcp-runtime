@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"slices"
@@ -298,6 +299,37 @@ func ValidateStorageMode(mode string) error {
 	}
 }
 
+func ValidateRegistryMode(mode string) error {
+	if _, ok := setupplan.NormalizeRegistryMode(mode); ok {
+		return nil
+	}
+	return core.WrapWithSentinel(
+		core.ErrFieldRequired,
+		fmt.Errorf("invalid registry mode %q", mode),
+		"invalid --registry-mode; expected auto, bundled-http, bundled-https, or external",
+	)
+}
+
+func ValidateRegistryTLSMode(mode string, tlsEnabled bool, acmeEmail string) error {
+	normalized, ok := setupplan.NormalizeRegistryMode(mode)
+	if !ok {
+		return nil
+	}
+	if normalized == setupplan.RegistryModeBundledHTTPS && !tlsEnabled {
+		return core.NewWithSentinel(
+			core.ErrFieldRequired,
+			"--registry-mode bundled-https requires --with-tls so setup can provision registry-tls for the registry pod",
+		)
+	}
+	if normalized == setupplan.RegistryModeBundledHTTPS && strings.TrimSpace(acmeEmail) != "" {
+		return core.NewWithSentinel(
+			core.ErrFieldRequired,
+			"--registry-mode bundled-https requires a private CA or existing ClusterIssuer; public ACME certificates cannot include internal registry service names",
+		)
+	}
+	return nil
+}
+
 func ValidatePlatformMode(mode string) error {
 	if _, ok := setupplan.NormalizePlatformMode(mode); ok {
 		return nil
@@ -325,7 +357,11 @@ func setupPlatformWithDeps(logger *zap.Logger, plan setupplan.Plan, deps SetupDe
 	}
 	_ = os.Setenv("MCP_PLATFORM_MODE", plan.PlatformMode)
 
-	extRegistry, usingExternalRegistry, registrySecretName := resolveRegistrySetup(logger, deps)
+	extRegistry, usingExternalRegistry, registrySecretName, err := resolveRegistrySetup(logger, plan, deps)
+	if err != nil {
+		core.LogStructuredError(logger, err, "Invalid registry setup configuration")
+		return err
+	}
 	if err := validateNonTestSetup(plan, extRegistry, usingExternalRegistry); err != nil {
 		core.LogStructuredError(logger, err, "Invalid non-test setup configuration")
 		return err
@@ -455,7 +491,7 @@ func setupCatalogNamespaceStep(logger *zap.Logger, plan setupplan.Plan, deps Set
 	return nil
 }
 
-func setupRegistryStep(logger *zap.Logger, extRegistry *config.ExternalRegistryConfig, usingExternalRegistry bool, registryType, registryStorageSize, registryManifest string, tlsEnabled bool, deps SetupDeps) error {
+func setupRegistryStep(logger *zap.Logger, extRegistry *config.ExternalRegistryConfig, usingExternalRegistry bool, registryType, registryStorageSize, registryManifest, registryMode string, tlsEnabled bool, deps SetupDeps) error {
 	// Step 4: Deploy internal container registry
 	core.Step("Step 4: Configure registry")
 	if usingExternalRegistry {
@@ -473,8 +509,10 @@ func setupRegistryStep(logger *zap.Logger, extRegistry *config.ExternalRegistryC
 	}
 
 	core.Info(fmt.Sprintf("Type: %s", registryType))
-	if tlsEnabled {
-		core.Info("TLS: enabled (registry overlay)")
+	if registryMode == setupplan.RegistryModeBundledHTTPS {
+		core.Info("TLS: enabled for registry pod and ingress (bundled HTTPS mode)")
+	} else if tlsEnabled {
+		core.Info("TLS: enabled for registry ingress; registry pod remains HTTP for internal pulls")
 	} else {
 		core.Info("TLS: disabled (dev HTTP mode)")
 	}
@@ -2926,6 +2964,9 @@ func applySetupPlanToCLIConfig(plan setupplan.Plan) {
 	if core.DefaultCLIConfig == nil {
 		return
 	}
+	if plan.RegistryMode == setupplan.RegistryModeBundledHTTPS && !registryEndpointEnvExplicitlyConfigured() {
+		core.DefaultCLIConfig.RegistryEndpoint = fmt.Sprintf("%s.%s.svc.cluster.local:%d", core.RegistryServiceName, core.NamespaceRegistry, core.GetRegistryPort())
+	}
 	if !plan.TLSEnabled {
 		core.DefaultCLIConfig.RegistryClusterIssuerName = ""
 		return
@@ -2941,6 +2982,15 @@ func applySetupPlanToCLIConfig(plan setupplan.Plan) {
 	core.DefaultCLIConfig.RegistryClusterIssuerName = certmanager.CertClusterIssuerName
 }
 
+func registryEndpointEnvExplicitlyConfigured() bool {
+	for _, key := range []string{"MCP_REGISTRY_ENDPOINT", "MCP_REGISTRY_HOST"} {
+		if value, ok := os.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // setupTLSWithKubectlAndPlan provisions TLS: Let's Encrypt when plan.ACMEmail is set, an existing
 // ClusterIssuer when plan.TLSClusterIssuer is set, otherwise the bundled private CA (mcp-runtime-ca).
 func setupTLSWithKubectlAndPlan(kubectl core.KubectlRunner, logger *zap.Logger, plan setupplan.Plan) error {
@@ -2950,7 +3000,72 @@ func setupTLSWithKubectlAndPlan(kubectl core.KubectlRunner, logger *zap.Logger, 
 	if strings.TrimSpace(plan.TLSClusterIssuer) != "" {
 		return setupTLSWithExistingClusterIssuer(kubectl, logger, plan)
 	}
-	return setupTLSPrivateCA(kubectl, logger)
+	return setupTLSPrivateCA(kubectl, logger, plan)
+}
+
+func registryCertificateSANs(plan setupplan.Plan) ([]string, []string) {
+	dnsNames := append([]string{}, certmanager.ACMETLSDNSNames()...)
+	var ipAddresses []string
+	if plan.RegistryMode == setupplan.RegistryModeBundledHTTPS {
+		dnsNames = append(dnsNames,
+			core.DefaultRegistryIngressHost,
+			"registry.registry.svc",
+			"registry.registry.svc.cluster.local",
+		)
+		addRegistrySAN(strings.TrimSpace(core.GetRegistryEndpoint()), &dnsNames, &ipAddresses)
+	}
+	return dedupeStrings(dnsNames), dedupeStrings(ipAddresses)
+}
+
+func addRegistrySAN(raw string, dnsNames, ipAddresses *[]string) {
+	host := registryEndpointHost(raw)
+	if host == "" {
+		return
+	}
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		*ipAddresses = append(*ipAddresses, ip.String())
+		return
+	}
+	*dnsNames = append(*dnsNames, host)
+}
+
+func registryEndpointHost(raw string) string {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(raw, "/"))
+	if trimmed == "" {
+		return ""
+	}
+	if strings.Contains(trimmed, "://") {
+		if parsed, err := url.Parse(trimmed); err == nil && parsed.Host != "" {
+			trimmed = parsed.Host
+		}
+	}
+	if slash := strings.Index(trimmed, "/"); slash >= 0 {
+		trimmed = trimmed[:slash]
+	}
+	if host, _, err := net.SplitHostPort(trimmed); err == nil {
+		return strings.Trim(host, "[]")
+	}
+	if idx := strings.LastIndex(trimmed, ":"); idx >= 0 && strings.Count(trimmed, ":") == 1 {
+		return strings.Trim(trimmed[:idx], "[]")
+	}
+	return strings.Trim(trimmed, "[]")
+}
+
+func dedupeStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func setupTLSLetsEncrypt(kubectl core.KubectlRunner, logger *zap.Logger, plan setupplan.Plan) error {
@@ -3101,9 +3216,9 @@ func setupTLSWithExistingClusterIssuer(kubectl core.KubectlRunner, logger *zap.L
 		return err
 	}
 
-	dnsNames := certmanager.ACMETLSDNSNames()
-	if len(dnsNames) == 0 {
-		err := fmt.Errorf("no DNS names resolved for the Certificate; set MCP_PLATFORM_DOMAIN, MCP_REGISTRY_HOST, or MCP_REGISTRY_INGRESS_HOST (and optional MCP_MCP_INGRESS_HOST)")
+	dnsNames, ipAddresses := registryCertificateSANs(plan)
+	if len(dnsNames) == 0 && len(ipAddresses) == 0 {
+		err := fmt.Errorf("no DNS names or IP addresses resolved for the Certificate; set MCP_PLATFORM_DOMAIN, MCP_REGISTRY_HOST, or MCP_REGISTRY_INGRESS_HOST (and optional MCP_MCP_INGRESS_HOST)")
 		wrappedErr := core.WrapWithSentinel(core.ErrTLSSetupFailed, err, err.Error())
 		core.Error("Invalid TLS host configuration")
 		if logger != nil {
@@ -3113,7 +3228,7 @@ func setupTLSWithExistingClusterIssuer(kubectl core.KubectlRunner, logger *zap.L
 	}
 
 	core.Info("Applying Certificate for registry (custom ClusterIssuer)")
-	if err := certmanager.ApplyRegistryCertificateForACME(kubectl, dnsNames, issuerName); err != nil {
+	if err := certmanager.ApplyRegistryCertificate(kubectl, dnsNames, ipAddresses, issuerName); err != nil {
 		wrappedErr := core.WrapWithSentinelAndContext(
 			core.ErrApplyCertificateFailed,
 			err,
@@ -3145,7 +3260,7 @@ func setupTLSWithExistingClusterIssuer(kubectl core.KubectlRunner, logger *zap.L
 }
 
 // setupTLSPrivateCA uses a pre-created TLS secret mcp-runtime-ca in cert-manager (see config/cert-manager/cluster-issuer.yaml).
-func setupTLSPrivateCA(kubectl core.KubectlRunner, logger *zap.Logger) error {
+func setupTLSPrivateCA(kubectl core.KubectlRunner, logger *zap.Logger, plan setupplan.Plan) error {
 	core.Info("Checking cert-manager installation")
 	if err := certmanager.CheckCertManagerInstalledWithKubectl(kubectl); err != nil {
 		err := core.WrapWithSentinel(core.ErrCertManagerNotInstalled, err, "cert-manager not installed. Install it first:\n  helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --set crds.enabled=true\n  or run setup with --with-tls --acme-email <addr> to install cert-manager automatically")
@@ -3196,11 +3311,18 @@ func setupTLSPrivateCA(kubectl core.KubectlRunner, logger *zap.Logger) error {
 	}
 
 	core.Info("Applying Certificate for registry")
-	if err := certmanager.ApplyRegistryCertificateWithKubectl(kubectl); err != nil {
+	var certErr error
+	if plan.RegistryMode == setupplan.RegistryModeBundledHTTPS {
+		dnsNames, ipAddresses := registryCertificateSANs(plan)
+		certErr = certmanager.ApplyRegistryCertificate(kubectl, dnsNames, ipAddresses, certmanager.CertClusterIssuerName)
+	} else {
+		certErr = certmanager.ApplyRegistryCertificateWithKubectl(kubectl)
+	}
+	if certErr != nil {
 		wrappedErr := core.WrapWithSentinelAndContext(
 			core.ErrApplyCertificateFailed,
-			err,
-			fmt.Sprintf("failed to apply Certificate: %v", err),
+			certErr,
+			fmt.Sprintf("failed to apply Certificate: %v", certErr),
 			map[string]any{"certificate": certmanager.RegistryCertificateName, "namespace": core.NamespaceRegistry, "component": "setup"},
 		)
 		core.Error("Failed to apply Certificate")

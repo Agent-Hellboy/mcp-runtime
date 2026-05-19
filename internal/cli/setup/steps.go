@@ -88,6 +88,7 @@ func (s registryStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext)
 		ctx.Plan.RegistryType,
 		ctx.Plan.RegistryStorageSize,
 		ctx.Plan.RegistryManifest,
+		ctx.Plan.RegistryMode,
 		ctx.Plan.TLSEnabled,
 		deps,
 	)

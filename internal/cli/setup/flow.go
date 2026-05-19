@@ -43,13 +43,45 @@ func printPlatformEntrypoints(tlsEnabled bool) {
 	}
 }
 
-func resolveRegistrySetup(logger *zap.Logger, deps SetupDeps) (*config.ExternalRegistryConfig, bool, string) {
-	extRegistry, err := deps.ResolveExternalRegistryConfig(nil)
+func resolveRegistrySetup(logger *zap.Logger, plan setupplan.Plan, deps SetupDeps) (*config.ExternalRegistryConfig, bool, string, error) {
+	mode, _ := setupplan.NormalizeRegistryMode(plan.RegistryMode)
+	flagCfg := externalRegistryFlagConfig(plan)
+	if (mode == setupplan.RegistryModeBundledHTTP || mode == setupplan.RegistryModeBundledHTTPS) && flagCfg != nil {
+		return nil, false, defaultRegistrySecretName, core.NewWithSentinel(
+			core.ErrRegistryURLRequired,
+			"--external-registry-* flags require --registry-mode external or --registry-mode auto",
+		)
+	}
+	if mode == setupplan.RegistryModeBundledHTTP || mode == setupplan.RegistryModeBundledHTTPS {
+		return nil, false, defaultRegistrySecretName, nil
+	}
+
+	extRegistry, err := deps.ResolveExternalRegistryConfig(flagCfg)
 	if err != nil {
+		if mode == setupplan.RegistryModeExternal || flagCfg != nil {
+			return nil, false, defaultRegistrySecretName, err
+		}
 		core.Warn(fmt.Sprintf("Could not load external registry config: %v", err))
 	}
-	usingExternalRegistry := extRegistry != nil
-	return extRegistry, usingExternalRegistry, defaultRegistrySecretName
+	if (mode == setupplan.RegistryModeExternal || flagCfg != nil) && (extRegistry == nil || strings.TrimSpace(extRegistry.URL) == "") {
+		return nil, false, defaultRegistrySecretName, core.NewWithSentinel(
+			core.ErrRegistryURLRequired,
+			"external registry url is required (use --external-registry-url, PROVISIONED_REGISTRY_URL, or mcp-runtime registry provision)",
+		)
+	}
+	usingExternalRegistry := extRegistry != nil && strings.TrimSpace(extRegistry.URL) != ""
+	return extRegistry, usingExternalRegistry, defaultRegistrySecretName, nil
+}
+
+func externalRegistryFlagConfig(plan setupplan.Plan) *config.ExternalRegistryConfig {
+	if strings.TrimSpace(plan.ExternalRegistryURL) == "" && plan.ExternalRegistryUser == "" && plan.ExternalRegistryPass == "" {
+		return nil
+	}
+	return &config.ExternalRegistryConfig{
+		URL:      strings.TrimSpace(plan.ExternalRegistryURL),
+		Username: plan.ExternalRegistryUser,
+		Password: plan.ExternalRegistryPass,
+	}
 }
 
 func validateNonTestSetup(plan setupplan.Plan, extRegistry *config.ExternalRegistryConfig, usingExternalRegistry bool) error {
@@ -65,6 +97,15 @@ func validateNonTestSetup(plan setupplan.Plan, extRegistry *config.ExternalRegis
 			"strict production setup requires --with-tls; use normal setup for local HTTP/internal registry flows",
 		)
 	}
+	if plan.RegistryMode == setupplan.RegistryModeBundledHTTP {
+		return core.NewWithSentinel(
+			core.ErrSetupStepFailed,
+			"strict production setup requires --registry-mode bundled-https or --registry-mode external; bundled-http is for local/dev clusters",
+		)
+	}
+	if plan.RegistryMode == setupplan.RegistryModeBundledHTTPS {
+		return nil
+	}
 	if usingExternalRegistry && extRegistry != nil && strings.TrimSpace(extRegistry.URL) != "" {
 		if isDevRegistryURL(extRegistry.URL) {
 			return core.NewWithSentinel(
@@ -73,6 +114,12 @@ func validateNonTestSetup(plan setupplan.Plan, extRegistry *config.ExternalRegis
 			)
 		}
 		return nil
+	}
+	if plan.RegistryMode == setupplan.RegistryModeAuto {
+		return core.NewWithSentinel(
+			core.ErrSetupStepFailed,
+			"strict production setup with the bundled registry requires --registry-mode bundled-https; use --registry-mode external for a provisioned registry",
+		)
 	}
 	if isDevRegistryURL(core.GetRegistryEndpoint()) {
 		return core.NewWithSentinel(
@@ -92,6 +139,12 @@ func setupWarnings(plan setupplan.Plan, extRegistry *config.ExternalRegistryConf
 	if !plan.TLSEnabled {
 		warnings = append(warnings, "Non-test setup is running without TLS. This is fine for local/internal registries but not recommended for production.")
 	}
+	switch plan.RegistryMode {
+	case setupplan.RegistryModeBundledHTTP:
+		warnings = append(warnings, "Registry mode bundled-http uses the bundled registry over plain HTTP for in-cluster platform image pulls. Each Kubernetes node must trust that exact image host as an insecure registry.")
+	case setupplan.RegistryModeBundledHTTPS:
+		warnings = append(warnings, "Registry mode bundled-https serves the bundled registry over HTTPS. Each Kubernetes node must trust the issuing CA and be able to resolve or mirror the rendered registry image host.")
+	}
 
 	if usingExternalRegistry && extRegistry != nil && strings.TrimSpace(extRegistry.URL) != "" {
 		registryURL := strings.TrimSpace(extRegistry.URL)
@@ -101,6 +154,9 @@ func setupWarnings(plan setupplan.Plan, extRegistry *config.ExternalRegistryConf
 		if isDevRegistryURL(registryURL) {
 			warnings = append(warnings, fmt.Sprintf("External registry %q looks local/internal. Normal setup allows this, but use --strict-prod to enforce production-style validation.", registryURL))
 		}
+		return warnings
+	}
+	if plan.RegistryMode == setupplan.RegistryModeBundledHTTPS {
 		return warnings
 	}
 

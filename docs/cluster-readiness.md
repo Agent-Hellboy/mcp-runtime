@@ -95,6 +95,24 @@ still used for ingress routing and user-facing registry flows; set
 `MCP_REGISTRY_ENDPOINT` or `MCP_REGISTRY_HOST` only when cluster nodes should
 pull platform images through a specific internal registry endpoint.
 
+### Registry setup modes
+
+`setup --registry-mode` makes the registry path explicit:
+
+| Mode | What setup does | Node requirement |
+|------|-----------------|------------------|
+| `auto` | Keeps existing behavior: use a provisioned registry config when present, otherwise install the bundled registry. | Depends on the resolved path. |
+| `bundled-http` | Installs the bundled registry and keeps the registry pod on plain HTTP for internal platform pulls. Public ingress can still use TLS with `--with-tls`. | Configure every node/containerd runtime to allow the exact image host as an insecure registry. |
+| `bundled-https` | Installs the bundled registry with TLS served by the registry pod itself. Requires `--with-tls` and a private CA or existing ClusterIssuer, not public ACME. | Configure every node to resolve or mirror the rendered registry host and trust the issuing CA. |
+| `external` | Skips the bundled registry and pushes setup images to a provisioned registry. | Registry DNS, TLS, auth, pull secrets, and node trust are owned by the external registry platform. |
+
+For bundled HTTPS without an explicit `MCP_REGISTRY_ENDPOINT`, setup renders
+platform image refs with `registry.registry.svc.cluster.local:5000` so the
+registry certificate can include a stable service DNS SAN. Kubernetes nodes do
+not automatically use cluster DNS or trust the MCP Runtime CA for image pulls;
+configure containerd/k3s/your node runtime to resolve or mirror that host and
+trust the CA before relying on this mode.
+
 ---
 
 ## External registry path
@@ -110,6 +128,15 @@ Configure it either with the CLI:
 ./bin/mcp-runtime registry provision --url registry.example.com
 ```
 
+or directly on setup:
+
+```bash
+./bin/mcp-runtime setup --registry-mode external --with-tls --strict-prod \
+  --external-registry-url registry.example.com \
+  --external-registry-username <user> \
+  --external-registry-password <password>
+```
+
 or with environment variables before `setup`:
 
 ```bash
@@ -118,10 +145,11 @@ export PROVISIONED_REGISTRY_USERNAME=<user>      # optional
 export PROVISIONED_REGISTRY_PASSWORD=<password>  # optional
 ```
 
-Then run setup with production validation:
+If you configured the registry with `registry provision` or environment
+variables first, run setup with production validation:
 
 ```bash
-./bin/mcp-runtime setup --with-tls --strict-prod
+./bin/mcp-runtime setup --registry-mode external --with-tls --strict-prod
 ```
 
 Before generating MCP server manifests, set the image host that cluster nodes
@@ -154,10 +182,9 @@ External registry readiness checks:
 installs. It is ignored in `--test-mode`; otherwise it requires:
 
 - `--with-tls`.
-- An external registry URL that is not dev-only, or a stable
-  `MCP_REGISTRY_ENDPOINT` for the bundled registry.
-- No default local registry endpoint such as `registry.local` for production
-  registry validation.
+- `--registry-mode external` with an external registry URL that is not dev-only,
+  or `--registry-mode bundled-https` for a bundled registry served over HTTPS.
+- No implicit bundled HTTP registry path.
 
 Normal setup still allows local HTTP and internal registry flows so kind, k3s,
 Docker Desktop, and CI remain easy to use. Use `--strict-prod` when the cluster
@@ -180,11 +207,12 @@ controller from the public internet. For enterprise PKI, install the
 ./bin/mcp-runtime setup --with-tls --tls-cluster-issuer <issuer-name>
 ```
 
-If you retain the bundled registry with TLS, make sure the registry certificate
-covers the registry and MCP hostnames nodes, build machines, and MCP clients
-use. The `registry/registry-cert` Certificate writes the `registry/registry-tls`
-Secret and covers `registry.<domain>` plus `mcp.<domain>` when those names are
-derived from `MCP_PLATFORM_DOMAIN` or explicit ingress host environment
+If you retain the bundled registry with TLS ingress only, make sure the registry
+certificate covers the registry and MCP hostnames nodes, build machines, and
+MCP clients use. The `registry/registry-cert` Certificate writes the
+`registry/registry-tls` Secret and covers `registry.<domain>` plus
+`mcp.<domain>` when those names are derived from `MCP_PLATFORM_DOMAIN` or
+explicit ingress host environment
 variables.
 
 The registry Ingress intentionally does not carry a

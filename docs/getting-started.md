@@ -350,18 +350,27 @@ Read these first:
 - [Sentinel Kubernetes awareness and hardening](sentinel.md#kubernetes-awareness-and-hardening)
 - [Multi-team isolation](multi-team.md) if multiple teams will publish or govern servers on one cluster
 
-The default production-oriented install shape is:
+For production-oriented setup, choose the registry path explicitly. With a
+provisioned registry:
 
 ```bash
 ./bin/mcp-runtime bootstrap
-./bin/mcp-runtime setup --with-tls --strict-prod
+./bin/mcp-runtime setup --registry-mode external --external-registry-url registry.example.com --with-tls --strict-prod
+```
+
+With the bundled registry serving internal HTTPS, use a private CA or existing
+ClusterIssuer and configure every node to trust that CA for image pulls:
+
+```bash
+./bin/mcp-runtime bootstrap
+./bin/mcp-runtime setup --registry-mode bundled-https --with-tls --tls-cluster-issuer <issuer-name> --strict-prod
 ```
 
 If you want hostnames derived from one domain, set:
 
 ```bash
 export MCP_PLATFORM_DOMAIN=example.com
-./bin/mcp-runtime setup --with-tls --strict-prod
+./bin/mcp-runtime setup --registry-mode external --external-registry-url registry.example.com --with-tls --strict-prod
 ```
 
 That derives:
@@ -375,8 +384,11 @@ cluster pulls from the same hardened image host you intend to keep:
 
 ```bash
 ./bin/mcp-runtime registry provision --url registry.example.com
-./bin/mcp-runtime setup --with-tls --strict-prod
+./bin/mcp-runtime setup --registry-mode external --with-tls --strict-prod
 ```
+
+You can also skip the saved provision step and pass
+`--external-registry-url registry.example.com` directly to `setup`.
 
 If you use an internal CA instead of ACME, install the issuer first and point
 setup at it:

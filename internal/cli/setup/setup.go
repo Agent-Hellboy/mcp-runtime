@@ -27,6 +27,10 @@ func newManager(runtime *core.Runtime, clusterMgr ClusterManagerAPI) *manager {
 func New(runtime *core.Runtime, clusterMgr ClusterManagerAPI) *cobra.Command {
 	var registryType string
 	var registryStorageSize string
+	var registryMode string
+	var externalRegistryURL string
+	var externalRegistryUsername string
+	var externalRegistryPassword string
 	var storageMode string
 	var platformMode string
 	var kubeconfig string
@@ -63,6 +67,15 @@ will use to push and pull container images.`,
 			if err := ValidateStorageMode(storageMode); err != nil {
 				return err
 			}
+			registryModeResolved := strings.TrimSpace(registryMode)
+			if !cmd.Flags().Changed("registry-mode") {
+				if envMode := strings.TrimSpace(os.Getenv("MCP_REGISTRY_MODE")); envMode != "" {
+					registryModeResolved = envMode
+				}
+			}
+			if err := ValidateRegistryMode(registryModeResolved); err != nil {
+				return err
+			}
 			platformModeResolved := strings.TrimSpace(platformMode)
 			if !cmd.Flags().Changed("platform-mode") {
 				if envMode := strings.TrimSpace(os.Getenv("MCP_PLATFORM_MODE")); envMode != "" {
@@ -95,12 +108,19 @@ will use to push and pull container images.`,
 			if err := ValidateTLSSetupCLIFlags(tlsEnabled, acmeEmailResolved, tlsCIResolved, acmeStagingResolved, skipCertManagerInstall); err != nil {
 				return err
 			}
+			if err := ValidateRegistryTLSMode(registryModeResolved, tlsEnabled, acmeEmailResolved); err != nil {
+				return err
+			}
 
 			plan := setupplan.Build(setupplan.Input{
 				Kubeconfig:             kubeconfig,
 				Context:                kubeContext,
 				RegistryType:           registryType,
 				RegistryStorageSize:    registryStorageSize,
+				RegistryMode:           registryModeResolved,
+				ExternalRegistryURL:    externalRegistryURL,
+				ExternalRegistryUser:   externalRegistryUsername,
+				ExternalRegistryPass:   externalRegistryPassword,
 				StorageMode:            storageMode,
 				PlatformMode:           platformModeResolved,
 				IngressMode:            ingressMode,
@@ -125,6 +145,10 @@ will use to push and pull container images.`,
 
 	cmd.Flags().StringVar(&registryType, "registry-type", "docker", "Registry type (docker; harbor coming soon)")
 	cmd.Flags().StringVar(&registryStorageSize, "registry-storage", "20Gi", "Registry storage size (default: 20Gi)")
+	cmd.Flags().StringVar(&registryMode, "registry-mode", "auto", "Registry setup mode (auto|bundled-http|bundled-https|external). auto uses a provisioned registry config when present, otherwise the bundled registry")
+	cmd.Flags().StringVar(&externalRegistryURL, "external-registry-url", "", "External/provisioned registry URL for --registry-mode external (overrides PROVISIONED_REGISTRY_URL and registry provision config)")
+	cmd.Flags().StringVar(&externalRegistryUsername, "external-registry-username", "", "External/provisioned registry username for --registry-mode external")
+	cmd.Flags().StringVar(&externalRegistryPassword, "external-registry-password", "", "External/provisioned registry password for --registry-mode external (prefer PROVISIONED_REGISTRY_PASSWORD for shells)")
 	cmd.Flags().StringVar(&storageMode, "storage-mode", "dynamic", "Storage mode for local/dev clusters (dynamic|hostpath). Use hostpath for single-node k3s/minikube/kind without a provisioner.")
 	cmd.Flags().StringVar(&platformMode, "platform-mode", "tenant", "Platform access model (tenant|org|public). public exposes the catalog without login and lets signed-in users publish to the public preview namespace.")
 	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (default: ~/.kube/config)")

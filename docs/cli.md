@@ -84,9 +84,19 @@ mcp-runtime setup --platform-mode public       # anonymous public preview catalo
 mcp-runtime setup --without-sentinel           # skip request-path stack
 mcp-runtime setup --test-mode                  # local Kind/dev build+push path
 mcp-runtime setup --parallel-builds            # build/publish setup images concurrently
+mcp-runtime setup --registry-mode external --external-registry-url registry.example.com
 ```
 
-Flags: `--registry-type`, `--registry-storage`, `--platform-mode`, `--ingress`, `--ingress-manifest`, `--force-ingress-install`, `--with-tls`, `--test-mode`, `--parallel-builds`, `--without-sentinel`, plus operator overrides `--operator-leader-elect`, `--operator-metrics-addr`, `--operator-probe-addr`.
+Flags: `--registry-type`, `--registry-storage`, `--registry-mode`, `--external-registry-url`, `--external-registry-username`, `--external-registry-password`, `--platform-mode`, `--ingress`, `--ingress-manifest`, `--force-ingress-install`, `--with-tls`, `--test-mode`, `--parallel-builds`, `--without-sentinel`, plus operator overrides `--operator-leader-elect`, `--operator-metrics-addr`, `--operator-probe-addr`.
+
+`--registry-mode` accepts `auto`, `bundled-http`, `bundled-https`, or
+`external`. `auto` preserves the legacy behavior: use a provisioned registry
+config when one exists, otherwise install the bundled registry. `bundled-http`
+uses the bundled registry over HTTP for platform image pulls and requires node
+insecure-registry config. `bundled-https` makes the bundled registry pod serve
+HTTPS and requires `--with-tls` plus node trust for the issuing CA.
+`external` skips the bundled registry and uses `--external-registry-url`,
+`PROVISIONED_REGISTRY_URL`, or `mcp-runtime registry provision`.
 
 `--platform-mode` selects the namespace model. `tenant` is the default and
 scopes signed-in users to their own user/team tenant namespace; `org` uses

@@ -40,6 +40,9 @@ func TestBuildSetupPlan_DefaultHTTP(t *testing.T) {
 	if plan.RegistryManifest != "config/registry" {
 		t.Fatalf("expected default registry manifest, got %q", plan.RegistryManifest)
 	}
+	if plan.RegistryMode != setupplan.RegistryModeAuto {
+		t.Fatalf("expected default registry mode auto, got %q", plan.RegistryMode)
+	}
 }
 
 func TestBuildSetupPlan_DefaultTLS(t *testing.T) {
@@ -59,6 +62,32 @@ func TestBuildSetupPlan_DefaultTLS(t *testing.T) {
 	}
 	if plan.RegistryManifest != "config/registry/overlays/tls" {
 		t.Fatalf("expected tls registry manifest, got %q", plan.RegistryManifest)
+	}
+}
+
+func TestBuildSetupPlan_BundledHTTPSRegistryManifest(t *testing.T) {
+	plan := setupplan.Build(setupplan.Input{
+		RegistryMode: setupplan.RegistryModeBundledHTTPS,
+		TLSEnabled:   true,
+	})
+
+	if plan.RegistryMode != setupplan.RegistryModeBundledHTTPS {
+		t.Fatalf("expected bundled HTTPS registry mode, got %q", plan.RegistryMode)
+	}
+	if plan.RegistryManifest != "config/registry/overlays/internal-tls" {
+		t.Fatalf("expected internal tls registry manifest, got %q", plan.RegistryManifest)
+	}
+}
+
+func TestBuildSetupPlan_HostpathBundledHTTPSRegistryManifest(t *testing.T) {
+	plan := setupplan.Build(setupplan.Input{
+		RegistryMode: setupplan.RegistryModeBundledHTTPS,
+		StorageMode:  setupplan.StorageModeHostpath,
+		TLSEnabled:   true,
+	})
+
+	if plan.RegistryManifest != "config/registry/overlays/hostpath-internal-tls" {
+		t.Fatalf("expected hostpath internal tls registry manifest, got %q", plan.RegistryManifest)
 	}
 }
 
@@ -193,18 +222,18 @@ func TestValidateNonTestSetupAllowsLenientDefaultMode(t *testing.T) {
 	}
 }
 
-func TestValidateNonTestSetupAllowsStableInternalRegistry(t *testing.T) {
+func TestValidateNonTestSetupAllowsBundledHTTPSStableInternalRegistry(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() { core.DefaultCLIConfig = orig })
 	core.DefaultCLIConfig = &core.CLIConfig{RegistryEndpoint: "registry.prod.example.com", RegistryIngressHost: "registry.prod.example.com"}
 
 	err := validateNonTestSetup(
-		setupplan.Plan{TLSEnabled: true, TestMode: false},
+		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true, RegistryMode: setupplan.RegistryModeBundledHTTPS},
 		nil,
 		false,
 	)
 	if err != nil {
-		t.Fatalf("expected stable internal registry to be allowed, got %v", err)
+		t.Fatalf("expected stable bundled HTTPS internal registry to be allowed, got %v", err)
 	}
 }
 
@@ -245,6 +274,149 @@ func TestValidateNonTestSetupRejectsMissingTLSInStrictProd(t *testing.T) {
 	}
 }
 
+func TestValidateRegistryTLSModeRejectsBundledHTTPSWithoutTLS(t *testing.T) {
+	err := ValidateRegistryTLSMode(setupplan.RegistryModeBundledHTTPS, false, "")
+	if err == nil || !strings.Contains(err.Error(), "--with-tls") {
+		t.Fatalf("expected bundled HTTPS TLS validation error, got %v", err)
+	}
+}
+
+func TestValidateRegistryTLSModeRejectsBundledHTTPSWithACME(t *testing.T) {
+	err := ValidateRegistryTLSMode(setupplan.RegistryModeBundledHTTPS, true, "admin@example.com")
+	if err == nil || !strings.Contains(err.Error(), "public ACME") {
+		t.Fatalf("expected bundled HTTPS ACME validation error, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupRejectsBundledHTTPInStrictProd(t *testing.T) {
+	err := validateNonTestSetup(
+		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true, RegistryMode: setupplan.RegistryModeBundledHTTP},
+		nil,
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "bundled-http") {
+		t.Fatalf("expected strict-prod bundled-http validation error, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupAllowsBundledHTTPSInStrictProd(t *testing.T) {
+	err := validateNonTestSetup(
+		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true, RegistryMode: setupplan.RegistryModeBundledHTTPS},
+		nil,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("expected strict-prod bundled-https to be allowed, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupRejectsAutoBundledRegistryInStrictProd(t *testing.T) {
+	err := validateNonTestSetup(
+		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true, RegistryMode: setupplan.RegistryModeAuto},
+		nil,
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "bundled registry requires --registry-mode bundled-https") {
+		t.Fatalf("expected strict-prod auto bundled registry validation error, got %v", err)
+	}
+}
+
+func TestResolveRegistrySetupUsesExternalRegistryFlagsInAutoMode(t *testing.T) {
+	var got *config.ExternalRegistryConfig
+	deps := SetupDeps{
+		ResolveExternalRegistryConfig: func(flagCfg *config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error) {
+			got = flagCfg
+			return flagCfg, nil
+		},
+	}
+
+	ext, usingExternal, _, err := resolveRegistrySetup(zap.NewNop(), setupplan.Plan{
+		RegistryMode:         setupplan.RegistryModeAuto,
+		ExternalRegistryURL:  "registry.example.com",
+		ExternalRegistryUser: "user",
+		ExternalRegistryPass: "pass",
+	}, deps)
+	if err != nil {
+		t.Fatalf("resolveRegistrySetup returned error: %v", err)
+	}
+	if !usingExternal || ext == nil || ext.URL != "registry.example.com" {
+		t.Fatalf("expected external registry from setup flags, got ext=%+v using=%t", ext, usingExternal)
+	}
+	if got == nil || got.Username != "user" || got.Password != "pass" {
+		t.Fatalf("expected flag config to be passed through, got %+v", got)
+	}
+}
+
+func TestResolveRegistrySetupRequiresExternalURLInExternalMode(t *testing.T) {
+	deps := SetupDeps{
+		ResolveExternalRegistryConfig: func(*config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error) {
+			return nil, nil
+		},
+	}
+
+	_, _, _, err := resolveRegistrySetup(zap.NewNop(), setupplan.Plan{RegistryMode: setupplan.RegistryModeExternal}, deps)
+	if err == nil || !strings.Contains(err.Error(), "external registry url is required") {
+		t.Fatalf("expected external registry URL error, got %v", err)
+	}
+}
+
+func TestResolveRegistrySetupRejectsExternalFlagsInBundledMode(t *testing.T) {
+	deps := SetupDeps{
+		ResolveExternalRegistryConfig: func(*config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error) {
+			t.Fatal("did not expect external registry resolver in bundled mode")
+			return nil, nil
+		},
+	}
+
+	_, _, _, err := resolveRegistrySetup(zap.NewNop(), setupplan.Plan{
+		RegistryMode:        setupplan.RegistryModeBundledHTTP,
+		ExternalRegistryURL: "registry.example.com",
+	}, deps)
+	if err == nil || !strings.Contains(err.Error(), "--external-registry-*") {
+		t.Fatalf("expected bundled mode external flag error, got %v", err)
+	}
+}
+
+func TestRegistryCertificateSANsIncludesInternalNamesForBundledHTTPS(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	core.DefaultCLIConfig = &core.CLIConfig{
+		RegistryEndpoint:    "registry.registry.svc.cluster.local:5000",
+		RegistryIngressHost: "registry.example.com",
+		McpIngressHost:      "mcp.example.com",
+	}
+
+	dnsNames, ipAddresses := registryCertificateSANs(setupplan.Plan{RegistryMode: setupplan.RegistryModeBundledHTTPS})
+	for _, want := range []string{
+		"registry.example.com",
+		"mcp.example.com",
+		"registry.local",
+		"registry.registry.svc",
+		"registry.registry.svc.cluster.local",
+	} {
+		if !contains(dnsNames, want) {
+			t.Fatalf("expected DNS SAN %q in %v", want, dnsNames)
+		}
+	}
+	if len(ipAddresses) != 0 {
+		t.Fatalf("did not expect IP SANs, got %v", ipAddresses)
+	}
+}
+
+func TestRegistryCertificateSANsIncludesIPRegistryEndpoint(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	core.DefaultCLIConfig = &core.CLIConfig{
+		RegistryEndpoint:    "10.43.24.102:5000",
+		RegistryIngressHost: "registry.local",
+	}
+
+	_, ipAddresses := registryCertificateSANs(setupplan.Plan{RegistryMode: setupplan.RegistryModeBundledHTTPS})
+	if !contains(ipAddresses, "10.43.24.102") {
+		t.Fatalf("expected IP SAN for registry endpoint, got %v", ipAddresses)
+	}
+}
+
 func TestValidateNonTestSetupRejectsDevRegistryURLInStrictProd(t *testing.T) {
 	err := validateNonTestSetup(
 		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true},
@@ -253,21 +425,6 @@ func TestValidateNonTestSetupRejectsDevRegistryURLInStrictProd(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "dev-only registry URL") {
 		t.Fatalf("expected strict-prod dev registry validation error, got %v", err)
-	}
-}
-
-func TestValidateNonTestSetupRejectsDevInternalRegistryEndpointInStrictProd(t *testing.T) {
-	orig := core.DefaultCLIConfig
-	t.Cleanup(func() { core.DefaultCLIConfig = orig })
-	core.DefaultCLIConfig = &core.CLIConfig{RegistryEndpoint: "10.43.39.164:5000", RegistryIngressHost: "registry.local"}
-
-	err := validateNonTestSetup(
-		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true},
-		nil,
-		false,
-	)
-	if err == nil || !strings.Contains(err.Error(), "stable internal registry endpoint") {
-		t.Fatalf("expected strict-prod dev internal registry validation error, got %v", err)
 	}
 }
 

@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: registry
+spec:
+  template:
+    spec:
+      containers:
+      - name: registry
+        env:
+        - name: REGISTRY_HTTP_TLS_CERTIFICATE
+          value: /certs/tls.crt
+        - name: REGISTRY_HTTP_TLS_KEY
+          value: /certs/tls.key
+        volumeMounts:
+        - name: registry-tls
+          mountPath: /certs
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            scheme: HTTPS
+            path: /
+            port: 5000
+        readinessProbe:
+          httpGet:
+            scheme: HTTPS
+            path: /
+            port: 5000
+      volumes:
+      - name: registry-tls
+        secret:
+          secretName: registry-tls
