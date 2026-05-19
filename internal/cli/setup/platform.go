@@ -2356,6 +2356,9 @@ func existingConfigMapData(kubectl core.KubectlRunner, namespace, name string) (
 		}
 		return nil, fmt.Errorf("read configmap %s/%s: %w", namespace, name, err)
 	}
+	if strings.TrimSpace(string(out)) == "" {
+		return map[string]string{}, nil
+	}
 	var payload struct {
 		Data map[string]string `json:"data"`
 	}
