@@ -191,6 +191,7 @@ func TestLoadOperatorConfig(t *testing.T) {
 	t.Setenv("MCP_INGRESS_READINESS_MODE", "permissive")
 	t.Setenv("PROVISIONED_REGISTRY_URL", "registry.example.com:5000")
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.43.39.164:5000")
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
 	t.Setenv("PROVISIONED_REGISTRY_USERNAME", "user")
 	t.Setenv("PROVISIONED_REGISTRY_PASSWORD", "pass")
 	t.Setenv("PROVISIONED_REGISTRY_SECRET_NAME", "registry-creds")
@@ -214,6 +215,9 @@ func TestLoadOperatorConfig(t *testing.T) {
 	}
 	if cfg.InternalRegistryEndpoint != "10.43.39.164:5000" {
 		t.Fatalf("expected internal registry endpoint override, got %q", cfg.InternalRegistryEndpoint)
+	}
+	if cfg.RegistryPullHost != "registry.mcpruntime.org" {
+		t.Fatalf("expected registry pull host override, got %q", cfg.RegistryPullHost)
 	}
 	if cfg.ProvisionedRegistryUsername != "user" || cfg.ProvisionedRegistryPassword != "pass" {
 		t.Fatalf("expected registry credentials, got %q/%q", cfg.ProvisionedRegistryUsername, cfg.ProvisionedRegistryPassword)

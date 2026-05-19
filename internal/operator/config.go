@@ -32,6 +32,10 @@ type OperatorConfig struct {
 	// InternalRegistryEndpoint is the internal registry endpoint to use for image refs when not using a provisioned registry.
 	InternalRegistryEndpoint string
 
+	// RegistryPullHost is the pullable registry host used in image refs when the operator
+	// needs to rewrite images to the platform-managed registry.
+	RegistryPullHost string
+
 	// RequeueDelaySeconds is the delay in seconds before requeueing when resources aren't ready.
 	RequeueDelaySeconds int
 
@@ -60,6 +64,7 @@ func LoadOperatorConfig() *OperatorConfig {
 		ProvisionedRegistryPassword:   os.Getenv("PROVISIONED_REGISTRY_PASSWORD"),
 		ProvisionedRegistrySecretName: getEnvOrDefault("PROVISIONED_REGISTRY_SECRET_NAME", DefaultRegistrySecretName),
 		InternalRegistryEndpoint:      getEnvOrDefault("MCP_REGISTRY_ENDPOINT", getEnvOrDefault("MCP_REGISTRY_HOST", "registry.local")),
+		RegistryPullHost:              getEnvOrDefault("MCP_REGISTRY_INGRESS_HOST", getEnvOrDefault("MCP_REGISTRY_HOST", "registry.local")),
 		RequeueDelaySeconds:           getEnvIntOrDefault("REQUEUE_DELAY_SECONDS", RequeueDelayNotReady),
 		GatewayProxyImage:             os.Getenv("MCP_GATEWAY_PROXY_IMAGE"),
 		GatewayOTLPEndpoint:           os.Getenv("MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT"),

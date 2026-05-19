@@ -39,12 +39,33 @@ func TestGitTag(t *testing.T) {
 
 func TestPlatformURL(t *testing.T) {
 	logger := zap.NewNop()
-	cfg := Config{RegistryEndpoint: "", DefaultRegistryEndpoint: "registry.local", RegistryPort: 5000}
+	cfg := Config{
+		RegistryEndpoint:        "",
+		DefaultRegistryEndpoint: "registry.local",
+		RegistryIngressHost:     "registry.local",
+		DefaultRegistryHost:     "registry.local",
+		RegistryPort:            5000,
+	}
+
+	t.Run("prefers_configured_registry_ingress_host_for_image_names", func(t *testing.T) {
+		url := PlatformURL(logger, (&fakeKubectl{}).commandArgs, Config{
+			RegistryEndpoint:        "10.43.39.164:5000",
+			DefaultRegistryEndpoint: "registry.local",
+			RegistryIngressHost:     "registry.mcpruntime.org",
+			DefaultRegistryHost:     "registry.local",
+			RegistryPort:            5000,
+		})
+		if url != "registry.mcpruntime.org" {
+			t.Errorf("expected configured registry ingress host, got %q", url)
+		}
+	})
 
 	t.Run("returns_configured_registry_endpoint_when_available", func(t *testing.T) {
 		url := PlatformURL(logger, (&fakeKubectl{}).commandArgs, Config{
 			RegistryEndpoint:        "10.43.39.164:5000",
 			DefaultRegistryEndpoint: "registry.local",
+			RegistryIngressHost:     "registry.local",
+			DefaultRegistryHost:     "registry.local",
 			RegistryPort:            5000,
 		})
 		if url != "10.43.39.164:5000" {
@@ -57,6 +78,8 @@ func TestPlatformURL(t *testing.T) {
 		url := PlatformURL(logger, (&fakeKubectl{clusterIP: "10.96.201.51", port: "5000"}).commandArgs, Config{
 			RegistryEndpoint:        "registry.local",
 			DefaultRegistryEndpoint: "registry.local",
+			RegistryIngressHost:     "registry.local",
+			DefaultRegistryHost:     "registry.local",
 			RegistryPort:            5000,
 		})
 		if url != "10.96.201.51:5000" {
@@ -70,6 +93,8 @@ func TestPlatformURL(t *testing.T) {
 		url := PlatformURL(logger, kubectl.commandArgs, Config{
 			RegistryEndpoint:        "registry.local",
 			DefaultRegistryEndpoint: "registry.local",
+			RegistryIngressHost:     "registry.local",
+			DefaultRegistryHost:     "registry.local",
 			RegistryPort:            5000,
 		})
 		if url != "registry.registry.svc.cluster.local:5000" {
@@ -85,6 +110,8 @@ func TestPlatformURL(t *testing.T) {
 		url := PlatformURL(logger, (&fakeKubectl{}).commandArgs, Config{
 			RegistryEndpoint:        "registry.local",
 			DefaultRegistryEndpoint: "registry.local",
+			RegistryIngressHost:     "registry.local",
+			DefaultRegistryHost:     "registry.local",
 			RegistryPort:            5000,
 		})
 		if url != "registry.local" {
@@ -98,6 +125,8 @@ func TestPlatformURL(t *testing.T) {
 		url := PlatformURL(logger, (&fakeKubectl{}).commandArgs, Config{
 			RegistryEndpoint:        "registry.example.com:5000",
 			DefaultRegistryEndpoint: "registry.local",
+			RegistryIngressHost:     "registry.local",
+			DefaultRegistryHost:     "registry.local",
 			RegistryPort:            5000,
 		})
 		if url != "registry.example.com:5000" {
@@ -124,6 +153,8 @@ func TestPlatformURL(t *testing.T) {
 		url := PlatformURL(logger, (&fakeKubectl{portErr: errors.New("kubectl error")}).commandArgs, Config{
 			RegistryEndpoint:        "",
 			DefaultRegistryEndpoint: "registry.local",
+			RegistryIngressHost:     "registry.local",
+			DefaultRegistryHost:     "registry.local",
 			RegistryPort:            5001,
 		})
 		if url != "registry.registry.svc.cluster.local:5001" {

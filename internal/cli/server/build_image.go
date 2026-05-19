@@ -159,6 +159,8 @@ func registryResolveConfig() resolve.Config {
 	return resolve.Config{
 		RegistryEndpoint:        core.DefaultCLIConfig.RegistryEndpoint,
 		DefaultRegistryEndpoint: core.DefaultRegistryEndpoint,
+		RegistryIngressHost:     core.DefaultCLIConfig.RegistryIngressHost,
+		DefaultRegistryHost:     core.DefaultRegistryIngressHost,
 		RegistryPort:            core.DefaultCLIConfig.RegistryPort,
 	}
 }

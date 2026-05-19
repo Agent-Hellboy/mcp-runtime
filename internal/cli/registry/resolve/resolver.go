@@ -13,6 +13,8 @@ const registryServiceDNS = "registry.registry.svc.cluster.local"
 type Config struct {
 	RegistryEndpoint        string
 	DefaultRegistryEndpoint string
+	RegistryIngressHost     string
+	DefaultRegistryHost     string
 	RegistryPort            int
 }
 
@@ -25,6 +27,11 @@ type CommandFactory func(name string, args []string) (OutputCommand, error)
 
 // PlatformURL resolves the registry host:port used for image names.
 func PlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string {
+	if host := strings.TrimSpace(cfg.RegistryIngressHost); host != "" &&
+		(host != cfg.DefaultRegistryHost || registryHostExplicitlyConfigured()) {
+		return host
+	}
+
 	if endpoint := strings.TrimSpace(cfg.RegistryEndpoint); endpoint != "" &&
 		(endpoint != cfg.DefaultRegistryEndpoint || registryEndpointExplicitlyConfigured()) {
 		return endpoint
@@ -76,6 +83,16 @@ func registryEndpointExplicitlyConfigured() bool {
 		return true
 	}
 	if value, ok := os.LookupEnv("MCP_REGISTRY_HOST"); ok && strings.TrimSpace(value) != "" {
+		return true
+	}
+	return false
+}
+
+func registryHostExplicitlyConfigured() bool {
+	if value, ok := os.LookupEnv("MCP_REGISTRY_INGRESS_HOST"); ok && strings.TrimSpace(value) != "" {
+		return true
+	}
+	if value, ok := os.LookupEnv("MCP_PLATFORM_DOMAIN"); ok && strings.TrimSpace(value) != "" {
 		return true
 	}
 	return false
