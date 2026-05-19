@@ -939,6 +939,44 @@ data:
 	}
 }
 
+func TestRenderAnalyticsConfigManifestHandlesMissingConfigMap(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if commandHasArgs(spec, "get", "configmap", "mcp-sentinel-config", "-n", "mcp-sentinel", "-o", "json") {
+				return &core.MockCommand{
+					Args:       spec.Args,
+					OutputData: []byte("Error from server (NotFound): configmaps \"mcp-sentinel-config\" not found"),
+					OutputErr:  errors.New("exit status 1"),
+				}
+			}
+			return &core.MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	rendered, err := renderAnalyticsConfigManifest(kubectl, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-sentinel-config
+  namespace: mcp-sentinel
+data:
+  PLATFORM_MODE: "tenant"
+`, setupplan.PlatformModeTenant)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var payload struct {
+		Data map[string]string `yaml:"data"`
+	}
+	if err := yaml.Unmarshal([]byte(rendered), &payload); err != nil {
+		t.Fatalf("unmarshal rendered config: %v", err)
+	}
+	if got := payload.Data["PLATFORM_MODE"]; got != setupplan.PlatformModeTenant {
+		t.Fatalf("expected tenant mode on fresh install, got %q", got)
+	}
+}
+
 func TestEnsureCSVIncludes(t *testing.T) {
 	tests := []struct {
 		name  string
