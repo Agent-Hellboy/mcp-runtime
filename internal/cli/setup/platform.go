@@ -1899,11 +1899,11 @@ func activeNamedTraefikDeploymentNamespacesWithKubectl(kubectl core.KubectlRunne
 func applyTraefikSupportManifest(kubectl core.KubectlRunner, relPath, namespace string) error {
 	resolvedPath, err := assetpath.ResolveRepoAssetPath(relPath)
 	if err != nil {
-		return core.WrapWithSentinel(core.ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to resolve Traefik manifest %s: %v", relPath, err))
+		return core.WrapWithSentinel(core.ErrReadIngressManifestFailed, err, fmt.Sprintf("failed to resolve Traefik manifest %s: %v", relPath, err))
 	}
 	manifestBytes, err := kube.ReadFileAtPath(resolvedPath)
 	if err != nil {
-		return core.WrapWithSentinel(core.ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to read Traefik manifest %s: %v", relPath, err))
+		return core.WrapWithSentinel(core.ErrReadIngressManifestFailed, err, fmt.Sprintf("failed to read Traefik manifest %s: %v", relPath, err))
 	}
 	manifestContent := strings.ReplaceAll(string(manifestBytes), "namespace: traefik", "namespace: "+namespace)
 	if err := kube.ApplyManifestContent(kubectl.CommandArgs, manifestContent); err != nil {
