@@ -273,6 +273,176 @@ func TestCheckTraefikWebEntrypoint(t *testing.T) {
 	})
 }
 
+func TestCheckPublicIngressHostConfig(t *testing.T) {
+	t.Run("ok when all three hosts resolve from platform domain", func(t *testing.T) {
+		t.Setenv("MCP_PLATFORM_DOMAIN", "mcpruntime.org")
+		t.Setenv("MCP_PLATFORM_INGRESS_HOST", "")
+		t.Setenv("MCP_REGISTRY_INGRESS_HOST", "")
+		t.Setenv("MCP_MCP_INGRESS_HOST", "")
+		check := checkPublicIngressHostConfig()
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+		if !strings.Contains(check.Detail, "platform=platform.mcpruntime.org") {
+			t.Fatalf("expected derived platform host in detail, got %q", check.Detail)
+		}
+	})
+
+	t.Run("fails when only some hosts are configured", func(t *testing.T) {
+		t.Setenv("MCP_PLATFORM_DOMAIN", "")
+		t.Setenv("MCP_PLATFORM_INGRESS_HOST", "platform.mcpruntime.org")
+		t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
+		t.Setenv("MCP_MCP_INGRESS_HOST", "")
+		check := checkPublicIngressHostConfig()
+		if check.OK {
+			t.Fatal("expected failure when MCP host is missing")
+		}
+		if !strings.Contains(check.Detail, "missing mcp") {
+			t.Fatalf("expected missing MCP host detail, got %q", check.Detail)
+		}
+	})
+}
+
+func TestCheckPublicIngressDNS(t *testing.T) {
+	origLookup := doctorLookupHost
+	t.Cleanup(func() { doctorLookupHost = origLookup })
+
+	t.Run("ok when hosts resolve", func(t *testing.T) {
+		t.Setenv("MCP_PLATFORM_DOMAIN", "")
+		t.Setenv("MCP_PLATFORM_INGRESS_HOST", "platform.mcpruntime.org")
+		t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
+		t.Setenv("MCP_MCP_INGRESS_HOST", "mcp.mcpruntime.org")
+		doctorLookupHost = func(host string) ([]string, error) {
+			return []string{"1.2.3.4"}, nil
+		}
+		check := checkPublicIngressDNS()
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+		if !strings.Contains(check.Detail, "platform.mcpruntime.org -> 1.2.3.4") {
+			t.Fatalf("expected resolved host in detail, got %q", check.Detail)
+		}
+	})
+
+	t.Run("fails when host does not resolve", func(t *testing.T) {
+		t.Setenv("MCP_PLATFORM_DOMAIN", "")
+		t.Setenv("MCP_PLATFORM_INGRESS_HOST", "platform.mcpruntime.org")
+		t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
+		t.Setenv("MCP_MCP_INGRESS_HOST", "mcp.mcpruntime.org")
+		doctorLookupHost = func(host string) ([]string, error) {
+			if host == "registry.mcpruntime.org" {
+				return nil, errors.New("no such host")
+			}
+			return []string{"1.2.3.4"}, nil
+		}
+		check := checkPublicIngressDNS()
+		if check.OK {
+			t.Fatal("expected failure when a host does not resolve")
+		}
+		if !strings.Contains(check.Detail, "registry.mcpruntime.org") {
+			t.Fatalf("expected failing host in detail, got %q", check.Detail)
+		}
+	})
+}
+
+func TestCheckCertManagerReadiness(t *testing.T) {
+	t.Run("skips when TLS preflight is not requested", func(t *testing.T) {
+		t.Setenv("MCP_PLATFORM_DOMAIN", "")
+		t.Setenv("MCP_PLATFORM_INGRESS_HOST", "")
+		t.Setenv("MCP_REGISTRY_INGRESS_HOST", "")
+		t.Setenv("MCP_MCP_INGRESS_HOST", "")
+		t.Setenv("MCP_ACME_EMAIL", "")
+		t.Setenv("MCP_TLS_CLUSTER_ISSUER", "")
+		kubectl := core.NewTestKubectlClient(&core.MockExecutor{})
+		check := checkCertManagerReadiness(kubectl)
+		if !check.OK {
+			t.Fatalf("expected skip/OK, got detail=%q", check.Detail)
+		}
+	})
+
+	t.Run("ok when deployments are ready", func(t *testing.T) {
+		t.Setenv("MCP_ACME_EMAIL", "test@example.com")
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				return &core.MockCommand{OutputData: []byte("1/1")}
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		check := checkCertManagerReadiness(kubectl)
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+	})
+
+	t.Run("fails when a deployment is not ready", func(t *testing.T) {
+		t.Setenv("MCP_ACME_EMAIL", "test@example.com")
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				if contains(spec.Args, "cert-manager-webhook") {
+					return &core.MockCommand{OutputData: []byte("0/1")}
+				}
+				return &core.MockCommand{OutputData: []byte("1/1")}
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		check := checkCertManagerReadiness(kubectl)
+		if check.OK {
+			t.Fatal("expected failure when webhook is not ready")
+		}
+		if !strings.Contains(check.Detail, "cert-manager-webhook") {
+			t.Fatalf("expected failing deployment in detail, got %q", check.Detail)
+		}
+	})
+}
+
+func TestCheckDoctorACMEHTTP01Exposure(t *testing.T) {
+	t.Run("skips when ACME email is not set", func(t *testing.T) {
+		t.Setenv("MCP_ACME_EMAIL", "")
+		kubectl := core.NewTestKubectlClient(&core.MockExecutor{})
+		check := checkDoctorACMEHTTP01Exposure(kubectl, DistroGeneric)
+		if !check.OK {
+			t.Fatalf("expected skip/OK, got detail=%q", check.Detail)
+		}
+	})
+
+	t.Run("ok when k3s traefik exposes port 80", func(t *testing.T) {
+		t.Setenv("MCP_ACME_EMAIL", "test@example.com")
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "jsonpath={range .spec.ports[*]}{.name}:{.port}:{.nodePort}{\"\\n\"}{end}") && contains(spec.Args, "kube-system"):
+					return &core.MockCommand{OutputData: []byte("web:80:0\nwebsecure:443:0\n")}
+				case contains(spec.Args, "jsonpath={.spec.type}|{.status.loadBalancer.ingress[0].ip}|{.status.loadBalancer.ingress[0].hostname}|{range .spec.ports[*]}{.name}:{.port}:{.nodePort}{\",\"}{end}") && contains(spec.Args, "kube-system"):
+					return &core.MockCommand{OutputData: []byte("LoadBalancer|1.2.3.4||web:80:0,websecure:443:0,")}
+				}
+				return &core.MockCommand{OutputErr: fmt.Errorf("unexpected command: %v", spec.Args)}
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		check := checkDoctorACMEHTTP01Exposure(kubectl, DistroK3s)
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+	})
+
+	t.Run("fails when service web port is not 80", func(t *testing.T) {
+		t.Setenv("MCP_ACME_EMAIL", "test@example.com")
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				return &core.MockCommand{OutputData: []byte("web:8000:32080\nwebsecure:8443:32443\n")}
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		check := checkDoctorACMEHTTP01Exposure(kubectl, DistroGeneric)
+		if check.OK {
+			t.Fatal("expected failure when web service port is not 80")
+		}
+		if !strings.Contains(check.Detail, "service port 8000") {
+			t.Fatalf("expected port detail, got %q", check.Detail)
+		}
+	})
+}
+
 func TestCheckRegistryReachableFromCluster(t *testing.T) {
 	t.Run("ok on HTTP 200", func(t *testing.T) {
 		mock := &core.MockExecutor{

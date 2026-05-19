@@ -52,7 +52,24 @@ install bundled CoreDNS / local-path on k3s. After setup, run `cluster doctor`
 to validate the installed MCP Runtime resources, registry pulls, ingress,
 Sentinel, and operator readiness.
 
-## 3. Contributor test-mode cluster
+## 3. Choose your install path
+
+This page now branches on purpose:
+
+- Use the contributor path for local development, Kind, `--test-mode`, seeded logins, and fast service iteration.
+- Use the production-style path for a real cluster, real DNS/TLS decisions, registry planning, and stricter setup validation.
+
+| Path | Use it when | Start here |
+|---|---|---|
+| Local development | You are working on the repo, using Kind, or validating changes with disposable infra | [Contributor test-mode cluster](#4-contributor-test-mode-cluster) |
+| Production-style install | You are evaluating or deploying MCP Runtime on a shared, persistent, or externally reachable cluster | [Production-style install](#5-production-style-install) |
+
+The rest of this page keeps both flows in one place, but the detailed
+contributor runbooks still live under [docs/contributor/](contributor/README.md)
+and the distribution-specific production prerequisites still live in
+[cluster-readiness.md](cluster-readiness.md).
+
+## 4. Contributor test-mode cluster
 
 For local contributor work, use the dedicated contributor docs instead of the
 generic install flow in this page. The contributor path owns the Kind cluster
@@ -311,7 +328,74 @@ To exercise policy isolation between two `MCPServer` resources and per-subject
 grant enforcement on the same cluster, see
 [Sentinel → Verifying per-server policy isolation](sentinel.md#verifying-per-server-policy-isolation).
 
-## 4. Install the platform stack
+## 5. Production-style install
+
+Use this path when the cluster is not just a disposable contributor environment.
+That includes staging, internal shared clusters, externally reachable installs,
+or anything that needs stable registry, DNS, TLS, storage, and ingress
+ownership.
+
+Before `setup`, make these decisions explicitly:
+
+- Registry: bundled registry with TLS, or a provisioned external registry
+- DNS: stable hostnames for `registry`, `mcp`, and `platform`
+- TLS: Let's Encrypt, enterprise `ClusterIssuer`, or preinstalled cert flow
+- Ingress: repo-managed Traefik or an existing platform ingress controller
+- Storage and retention: registry and Sentinel persistence choices
+- Image pull auth: pull secrets, workload identity, or node-native registry auth
+
+Read these first:
+
+- [Cluster readiness](cluster-readiness.md)
+- [Sentinel Kubernetes awareness and hardening](sentinel.md#kubernetes-awareness-and-hardening)
+- [Multi-team isolation](multi-team.md) if multiple teams will publish or govern servers on one cluster
+
+The default production-oriented install shape is:
+
+```bash
+./bin/mcp-runtime bootstrap
+./bin/mcp-runtime setup --with-tls --strict-prod
+```
+
+If you want hostnames derived from one domain, set:
+
+```bash
+export MCP_PLATFORM_DOMAIN=example.com
+./bin/mcp-runtime setup --with-tls --strict-prod
+```
+
+That derives:
+
+- `registry.example.com`
+- `mcp.example.com`
+- `platform.example.com`
+
+If you already have an external registry, provision it before setup so the
+cluster pulls from the same hardened image host you intend to keep:
+
+```bash
+./bin/mcp-runtime registry provision --url registry.example.com
+./bin/mcp-runtime setup --with-tls --strict-prod
+```
+
+If you use an internal CA instead of ACME, install the issuer first and point
+setup at it:
+
+```bash
+./bin/mcp-runtime setup --with-tls --tls-cluster-issuer <issuer-name> --strict-prod
+```
+
+What `--strict-prod` is for:
+
+- requires TLS
+- rejects dev-only registry assumptions such as `registry.local`
+- forces you onto a stable production-style registry endpoint
+
+Do not use the contributor `--test-mode` flow as a production install guide.
+`--test-mode` is for local development and CI-like validation; it still builds
+and pushes local images and assumes the contributor registry and ingress shape.
+
+## 6. Install the platform stack
 
 ```bash
 ./bin/mcp-runtime setup
@@ -360,7 +444,7 @@ kubectl port-forward -n traefik svc/traefik 18080:8000
 
 Then use `http://127.0.0.1:18080/<publicPathPrefix>/mcp` for local MCP traffic. Keep the default strict readiness mode for production clusters that rely on published load-balancer status.
 
-## 5. Confirm health
+## 7. Confirm health
 
 ```bash
 ./bin/mcp-runtime status
@@ -369,7 +453,7 @@ Then use `http://127.0.0.1:18080/<publicPathPrefix>/mcp` for local MCP traffic. 
 ./bin/mcp-runtime sentinel status
 ```
 
-## 6. Connect your first MCP server
+## 8. Connect your first MCP server
 
 ### Option A — direct manifest
 
@@ -503,7 +587,7 @@ If the server does not come up, stay in the CLI first:
 ./bin/mcp-runtime status
 ```
 
-## 7. Grant governed access (for gateway-enabled servers)
+## 9. Grant governed access (for gateway-enabled servers)
 
 The target `MCPServer` should list the tools you want to govern, and every
 listed tool must include `sideEffect: read`, `write`, or `destructive`. Grants
@@ -558,7 +642,7 @@ spec:
 ./bin/mcp-runtime server policy inspect payments
 ```
 
-## 8. Observe live traffic and policy
+## 10. Observe live traffic and policy
 
 ```bash
 ./bin/mcp-runtime sentinel port-forward ui          # Governance + dashboard
