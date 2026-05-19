@@ -986,6 +986,33 @@ data:
 	}
 }
 
+func TestRenderAnalyticsConfigManifestHandlesEmptyConfigMapOutput(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "configmap", "mcp-sentinel-config", "-n", core.DefaultAnalyticsNamespace, "-o", "json") {
+				cmd.OutputData = []byte("")
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	rendered, err := renderAnalyticsConfigManifest(kubectl, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-sentinel-config
+data:
+  PLATFORM_MODE: "tenant"
+`, setupplan.PlatformModeTenant)
+	if err != nil {
+		t.Fatalf("renderAnalyticsConfigManifest returned error: %v", err)
+	}
+	if !strings.Contains(rendered, `PLATFORM_MODE: tenant`) {
+		t.Fatalf("expected rendered config to preserve platform mode, got %q", rendered)
+	}
+}
+
 func TestEnsureCSVIncludes(t *testing.T) {
 	tests := []struct {
 		name  string
