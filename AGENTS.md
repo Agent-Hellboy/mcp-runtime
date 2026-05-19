@@ -138,7 +138,7 @@ cluster only when you need a clean CI-equivalent run or the existing contributor
 cluster is intentionally disposable.
 
 - **Status:** `./bin/mcp-runtime status`
-- **Contributor smoke:** for dashboard access, local image push, MCP JSON-RPC request, Sentinel event checks, service iteration, and tenant visibility probes, start with `docs/contributor/README.md`. The shorter install path remains in `docs/getting-started.md#3-contributor-test-mode-cluster`.
+- **Contributor smoke:** for dashboard access, local image push, MCP JSON-RPC request, Sentinel event checks, service iteration, and tenant visibility probes, start with `docs/contributor/README.md`. Treat `docs/contributor/` as the maintained runbook; `docs/getting-started.md#3-contributor-test-mode-cluster` is only the short entry path.
 - **Preflight only (no apply):** `./bin/mcp-runtime bootstrap`. For k3s: add `--apply --provider k3s` to install bundled CoreDNS / local-path manifests (server node only).
 
 ## Endpoints and auth

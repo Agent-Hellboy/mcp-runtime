@@ -86,9 +86,10 @@ Notes:
 - `make deps-install` is best-effort. It cannot start Docker Desktop, create cloud credentials, or configure kubeconfig for you.
 - `make deps` checks host tools and downloads Go modules. It does not create a Kubernetes cluster.
 - `make build` produces `./bin/mcp-runtime`.
-- Contributors who want a disposable local Kind install should use the
-  test-mode flow in [`docs/getting-started.md`](docs/getting-started.md#3-contributor-test-mode-cluster)
-  and the detailed [`docs/contributor/`](docs/contributor/README.md) guide.
+- Contributors who want a disposable local Kind install should start with the
+  maintained [`docs/contributor/`](docs/contributor/README.md) guide. The
+  shorter entry summary remains in
+  [`docs/getting-started.md`](docs/getting-started.md#3-contributor-test-mode-cluster).
 - To exercise agent-side governance against a real MCP route, use the
   [`examples/governed-agent`](examples/governed-agent/) demo.
 
