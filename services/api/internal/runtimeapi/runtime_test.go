@@ -614,6 +614,7 @@ func TestRuntimeServerApplyPublicScopeExpandsShortImage(t *testing.T) {
 	t.Setenv("PLATFORM_MODE", "public")
 	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
+	t.Setenv("MCP_MCP_INGRESS_HOST", "mcp.mcpruntime.org")
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
@@ -650,6 +651,9 @@ func TestRuntimeServerApplyPublicScopeExpandsShortImage(t *testing.T) {
 	}
 	if got := envValue(current.Spec.EnvVars, "MCP_PATH"); got != "/go-example/mcp" {
 		t.Fatalf("MCP_PATH = %q, want /go-example/mcp", got)
+	}
+	if got := current.Spec.IngressHost; got != "mcp.mcpruntime.org" {
+		t.Fatalf("ingressHost = %q, want mcp.mcpruntime.org", got)
 	}
 }
 

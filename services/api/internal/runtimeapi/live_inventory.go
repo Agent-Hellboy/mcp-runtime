@@ -22,7 +22,8 @@ const (
 	liveInventoryTTL             = 30 * time.Second
 	liveInventoryProbeTimeout    = 5 * time.Second
 	liveInventoryProtocolVersion = "2025-06-18"
-	liveInventoryMaxBodyBytes    = 16 << 20
+	liveInventoryMaxBodyBytes    = 2 << 20
+	liveInventoryMaxCacheEntries = 512
 
 	mcpProtocolHeader = "Mcp-Protocol-Version"
 	mcpSessionHeader  = "Mcp-Session-Id"
@@ -68,6 +69,7 @@ type liveInventoryProber interface {
 type liveInventoryKey struct {
 	namespace  string
 	name       string
+	uid        string
 	generation int64
 }
 
@@ -82,9 +84,10 @@ type liveInventoryCache struct {
 	prober liveInventoryProber
 	now    func() time.Time
 
-	mu       sync.Mutex
-	entries  map[liveInventoryKey]liveInventoryEntry
-	inFlight map[liveInventoryKey]struct{}
+	maxEntries int
+	mu         sync.Mutex
+	entries    map[liveInventoryKey]liveInventoryEntry
+	inFlight   map[liveInventoryKey]struct{}
 }
 
 func (s *RuntimeServer) liveInventory() *liveInventoryCache {
@@ -108,11 +111,12 @@ func newLiveInventoryCache(ttl time.Duration, prober liveInventoryProber) *liveI
 		ttl = liveInventoryTTL
 	}
 	return &liveInventoryCache{
-		ttl:      ttl,
-		prober:   prober,
-		now:      time.Now,
-		entries:  map[liveInventoryKey]liveInventoryEntry{},
-		inFlight: map[liveInventoryKey]struct{}{},
+		ttl:        ttl,
+		prober:     prober,
+		now:        time.Now,
+		maxEntries: liveInventoryMaxCacheEntries,
+		entries:    map[liveInventoryKey]liveInventoryEntry{},
+		inFlight:   map[liveInventoryKey]struct{}{},
 	}
 }
 
@@ -123,6 +127,7 @@ func (c *liveInventoryCache) getOrStart(ctx context.Context, server controlplane
 	key := liveInventoryKey{
 		namespace:  strings.TrimSpace(server.Namespace),
 		name:       strings.TrimSpace(server.Name),
+		uid:        strings.TrimSpace(server.UID),
 		generation: server.Generation,
 	}
 	if key.namespace == "" || key.name == "" {
@@ -191,6 +196,29 @@ func (c *liveInventoryCache) pruneLocked(now time.Time, keep liveInventoryKey) {
 			delete(c.entries, key)
 		}
 	}
+	maxEntries := c.maxEntries
+	if maxEntries <= 0 {
+		maxEntries = liveInventoryMaxCacheEntries
+	}
+	for len(c.entries) > maxEntries {
+		var oldestKey liveInventoryKey
+		var oldestAt time.Time
+		found := false
+		for key, entry := range c.entries {
+			if key == keep {
+				continue
+			}
+			if !found || entry.storedAt.Before(oldestAt) {
+				oldestKey = key
+				oldestAt = entry.storedAt
+				found = true
+			}
+		}
+		if !found {
+			break
+		}
+		delete(c.entries, oldestKey)
+	}
 }
 
 func shortLiveInventoryReason(err error) string {
@@ -202,10 +230,17 @@ func shortLiveInventoryReason(err error) string {
 		return "live inventory probe failed"
 	}
 	msg = strings.Join(strings.Fields(msg), " ")
-	if len(msg) > 180 {
-		return msg[:180]
+	runes := []rune(msg)
+	if len(runes) > 180 {
+		return string(runes[:180])
 	}
 	return msg
+}
+
+type liveInventoryCapabilities struct {
+	tools     bool
+	prompts   bool
+	resources bool
 }
 
 type mcpLiveInventoryProber struct {
@@ -240,26 +275,37 @@ func (p *mcpLiveInventoryProber) probe(ctx context.Context, server controlplane.
 	if negotiated := protocolVersionFromInitializeResult(initResult); negotiated != "" {
 		protocol = negotiated
 	}
+	capabilities := capabilitiesFromInitializeResult(initResult)
 	session = initSession
 
 	if _, nextSession, err := p.notify(ctx, client, endpoint, protocol, session, "notifications/initialized", map[string]any{}); err == nil && nextSession != "" {
 		session = nextSession
 	}
 
-	toolsRaw, nextSession, err := p.call(ctx, client, endpoint, protocol, session, 2, "tools/list", nil)
-	if err != nil {
-		return nil, fmt.Errorf("tools/list: %w", err)
+	var toolsRaw json.RawMessage
+	var promptsRaw json.RawMessage
+	var resourcesRaw json.RawMessage
+	var nextSession string
+	if capabilities.tools {
+		toolsRaw, nextSession, err = p.call(ctx, client, endpoint, protocol, session, 2, "tools/list", nil)
+		if err != nil {
+			return nil, fmt.Errorf("tools/list: %w", err)
+		}
+		if nextSession != "" {
+			session = nextSession
+		}
 	}
-	if nextSession != "" {
-		session = nextSession
+	if capabilities.prompts {
+		promptsRaw, nextSession, err = p.call(ctx, client, endpoint, protocol, session, 3, "prompts/list", nil)
+		if err == nil && nextSession != "" {
+			session = nextSession
+		}
 	}
-	promptsRaw, nextSession, err := p.call(ctx, client, endpoint, protocol, session, 3, "prompts/list", nil)
-	if err == nil && nextSession != "" {
-		session = nextSession
-	}
-	resourcesRaw, _, err := p.call(ctx, client, endpoint, protocol, session, 4, "resources/list", nil)
-	if err != nil {
-		resourcesRaw = nil
+	if capabilities.resources {
+		resourcesRaw, _, err = p.call(ctx, client, endpoint, protocol, session, 4, "resources/list", nil)
+		if err != nil {
+			resourcesRaw = nil
+		}
 	}
 
 	return &liveInventory{
@@ -453,6 +499,29 @@ func protocolVersionFromInitializeResult(raw json.RawMessage) string {
 		return ""
 	}
 	return strings.TrimSpace(result.ProtocolVersion)
+}
+
+func capabilitiesFromInitializeResult(raw json.RawMessage) liveInventoryCapabilities {
+	var result struct {
+		Capabilities map[string]json.RawMessage `json:"capabilities"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return liveInventoryCapabilities{}
+	}
+	return liveInventoryCapabilities{
+		tools:     capabilityPresent(result.Capabilities, "tools"),
+		prompts:   capabilityPresent(result.Capabilities, "prompts"),
+		resources: capabilityPresent(result.Capabilities, "resources"),
+	}
+}
+
+func capabilityPresent(capabilities map[string]json.RawMessage, name string) bool {
+	raw, ok := capabilities[name]
+	if !ok {
+		return false
+	}
+	raw = bytes.TrimSpace(raw)
+	return len(raw) > 0 && !bytes.Equal(raw, []byte("null"))
 }
 
 func decodeLiveTools(raw json.RawMessage) []liveInventoryTool {

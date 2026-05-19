@@ -336,7 +336,7 @@ func TestSetDefaults(t *testing.T) {
 		}
 		r.setDefaults(&mcpServer)
 		assertEqual(t, "publicPathPrefix", mcpServer.Spec.PublicPathPrefix, "custom-prefix")
-		assertEqual(t, "ingressHost", mcpServer.Spec.IngressHost, "example.com")
+		assertEqual(t, "ingressHost", mcpServer.Spec.IngressHost, "")
 	})
 
 	t.Run("preserves existing values", func(t *testing.T) {

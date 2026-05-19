@@ -349,10 +349,11 @@ func determinePhase(readiness resourceReadiness, mcpServer *mcpv1alpha1.MCPServe
 
 func (r *MCPServerReconciler) setDefaults(mcpServer *mcpv1alpha1.MCPServer) {
 	ingressHostUnset := strings.TrimSpace(mcpServer.Spec.IngressHost) == ""
+	publicPathPrefixUnset := strings.TrimSpace(mcpServer.Spec.PublicPathPrefix) == ""
 
 	mcpServer.Default()
 
-	if ingressHostUnset {
+	if ingressHostUnset && publicPathPrefixUnset {
 		mcpServer.Spec.IngressHost = strings.TrimSpace(r.DefaultIngressHost)
 	}
 

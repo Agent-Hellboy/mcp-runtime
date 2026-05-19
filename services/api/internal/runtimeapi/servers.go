@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -209,6 +210,10 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	if req.Spec.IngressPath == "" {
 		req.Spec.IngressPath = "/" + req.Spec.PublicPathPrefix + "/mcp"
 	}
+	req.Spec.IngressHost = strings.TrimSpace(req.Spec.IngressHost)
+	if req.Spec.IngressHost == "" {
+		req.Spec.IngressHost = defaultRuntimeServerIngressHost()
+	}
 	req.Spec.EnvVars = upsertMCPServerEnvVar(req.Spec.EnvVars, "MCP_PATH", req.Spec.IngressPath)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
@@ -351,6 +356,32 @@ func upsertMCPServerEnvVar(envVars []mcpv1alpha1.EnvVar, name, value string) []m
 	return append(envVars, mcpv1alpha1.EnvVar{Name: name, Value: value})
 }
 
+func defaultRuntimeServerIngressHost() string {
+	for _, key := range []string{"MCP_MCP_INGRESS_HOST", "MCP_DEFAULT_INGRESS_HOST"} {
+		if host := normalizeRuntimeServerHost(os.Getenv(key)); host != "" {
+			return host
+		}
+	}
+	if domain := normalizeRuntimeServerHost(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
+		if strings.HasPrefix(strings.ToLower(domain), "mcp.") {
+			return domain
+		}
+		return "mcp." + domain
+	}
+	return ""
+}
+
+func normalizeRuntimeServerHost(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "https://")
+	value = strings.TrimPrefix(value, "http://")
+	value = strings.Trim(value, "/")
+	if idx := strings.IndexByte(value, '/'); idx >= 0 {
+		value = value[:idx]
+	}
+	return strings.TrimSpace(value)
+}
+
 func (s *RuntimeServer) scopedNamespaceForServerApply(ctx context.Context, requested string, scope publishscope.Scope) (string, error) {
 	requested = strings.TrimSpace(requested)
 	if scope == "" {
@@ -478,7 +509,7 @@ func (s *RuntimeServer) handleRuntimeServerGet(w http.ResponseWriter, r *http.Re
 
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	current, err := control.GetServer(ctx, namespace, name)
+	info, err := control.GetServerInfo(ctx, namespace, name)
 	if apierrors.IsNotFound(err) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "server not found"})
 		return
@@ -487,7 +518,6 @@ func (s *RuntimeServer) handleRuntimeServerGet(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to inspect server"})
 		return
 	}
-	info := controlplane.ServerInfoFromMCPServer(*current, serverDeploymentStatus{})
 	writeJSON(w, http.StatusOK, map[string]any{"server": s.serverInfoWithRuntimeData(ctx, info, r)})
 }
 

@@ -83,6 +83,7 @@ func (m *Manager) ListServersWithOptions(ctx context.Context, namespace string, 
 		servers = append(servers, ServerInfo{
 			Name:      d.Name,
 			Namespace: d.Namespace,
+			UID:       string(d.UID),
 			Ready:     deploymentStatus.Ready,
 			Status:    deploymentStatus.Status,
 			Labels:    d.Labels,
@@ -174,6 +175,25 @@ func (m *Manager) GetServer(ctx context.Context, namespace, name string) (*mcpv1
 	return decodeMCPServer(current, "fetched")
 }
 
+// GetServerInfo retrieves one MCPServer and joins it with its backing
+// Deployment readiness when the Deployment is available.
+func (m *Manager) GetServerInfo(ctx context.Context, namespace, name string) (ServerInfo, error) {
+	current, err := m.GetServer(ctx, namespace, name)
+	if err != nil {
+		return ServerInfo{}, err
+	}
+	clients, err := m.requireClients()
+	if err != nil {
+		return ServerInfo{}, err
+	}
+	deploymentStatus := ServerDeploymentStatus{}
+	deployment, err := clients.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err == nil {
+		deploymentStatus = StatusForDeployment(*deployment)
+	}
+	return ServerInfoFromMCPServer(*current, deploymentStatus), nil
+}
+
 // DeleteServer deletes one MCPServer resource.
 func (m *Manager) DeleteServer(ctx context.Context, namespace, name string) error {
 	clients, err := m.requireClients()
@@ -244,6 +264,7 @@ func ServerInfoFromMCPServer(mcpServer mcpv1alpha1.MCPServer, deploymentStatus S
 	return ServerInfo{
 		Name:        mcpServer.Name,
 		Namespace:   mcpServer.Namespace,
+		UID:         string(mcpServer.UID),
 		TeamID:      strings.TrimSpace(mcpServer.Spec.TeamID),
 		Description: mcpServer.Spec.Description,
 		Ready:       deploymentStatus.Ready,
