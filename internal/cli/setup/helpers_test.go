@@ -2203,6 +2203,26 @@ func TestEnsureRepoManagedTraefikMiddlewareResourcesAppliesMiddlewareSupportToEx
 	}
 }
 
+func TestPatchTraefikDeploymentForFileMiddlewareSupportTreatsMountPathAsIdempotent(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			switch {
+			case commandHasArgs(spec, "get", "deployment", "traefik", "-n", "traefik", "-o", "json"):
+				cmd.OutputData = []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"traefik","args":["--providers.file.filename=/etc/traefik/dynamic/dynamic.yml","--providers.file.watch=true","--experimental.localplugins.pii-redactor.modulename=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor"],"volumeMounts":[{"name":"traefik-dynamic","mountPath":"/etc/traefik/dynamic"},{"name":"traefik-plugin-source","mountPath":"/plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor"},{"name":"traefik-plugin-storage","mountPath":"/plugins-storage"}]}],"volumes":[{"name":"traefik-dynamic"},{"name":"traefik-plugin-source"},{"name":"traefik-plugin-storage"}]}}}}`)
+			case commandHasArgs(spec, "patch", "deployment", "traefik", "-n", "traefik", "--type=json"):
+				t.Fatalf("did not expect duplicate patch when middleware mount paths already exist: %v", spec.Args)
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	if err := patchTraefikDeploymentForFileMiddlewareSupport(kubectl, "traefik"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestEnsureRepoManagedTraefikMiddlewareResourcesSkipsWhenMissing(t *testing.T) {
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {

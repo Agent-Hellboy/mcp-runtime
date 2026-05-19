@@ -1984,28 +1984,31 @@ func patchTraefikDeploymentForFileMiddlewareSupport(kubectl core.KubectlRunner, 
 			Value: "--experimental.localplugins.pii-redactor.modulename=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor",
 		})
 	}
-	if !hasVolumeMount(container.VolumeMounts, "traefik-dynamic", "/etc/traefik/dynamic") {
+	addDynamicMount := !hasVolumeMountPath(container.VolumeMounts, "/etc/traefik/dynamic")
+	if addDynamicMount {
 		ops = append(ops, jsonPatchOperation{
 			Op:    "add",
 			Path:  fmt.Sprintf("/spec/template/spec/containers/%d/volumeMounts/-", containerIndex),
 			Value: map[string]any{"name": "traefik-dynamic", "mountPath": "/etc/traefik/dynamic", "readOnly": true},
 		})
 	}
-	if !hasVolumeMount(container.VolumeMounts, "traefik-plugin-source", "/plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor") {
+	addPluginSourceMount := !hasVolumeMountPath(container.VolumeMounts, "/plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor")
+	if addPluginSourceMount {
 		ops = append(ops, jsonPatchOperation{
 			Op:    "add",
 			Path:  fmt.Sprintf("/spec/template/spec/containers/%d/volumeMounts/-", containerIndex),
 			Value: map[string]any{"name": "traefik-plugin-source", "mountPath": "/plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor", "readOnly": true},
 		})
 	}
-	if !hasVolumeMount(container.VolumeMounts, "traefik-plugins", "/plugins-storage") {
+	addPluginStorageMount := !hasVolumeMountPath(container.VolumeMounts, "/plugins-storage")
+	if addPluginStorageMount {
 		ops = append(ops, jsonPatchOperation{
 			Op:    "add",
 			Path:  fmt.Sprintf("/spec/template/spec/containers/%d/volumeMounts/-", containerIndex),
 			Value: map[string]any{"name": "traefik-plugins", "mountPath": "/plugins-storage"},
 		})
 	}
-	if !hasVolume(spec.Spec.Template.Spec.Volumes, "traefik-dynamic") {
+	if addDynamicMount && !hasVolume(spec.Spec.Template.Spec.Volumes, "traefik-dynamic") {
 		ops = append(ops, jsonPatchOperation{
 			Op:   "add",
 			Path: "/spec/template/spec/volumes/-",
@@ -2018,14 +2021,14 @@ func patchTraefikDeploymentForFileMiddlewareSupport(kubectl core.KubectlRunner, 
 			},
 		})
 	}
-	if !hasVolume(spec.Spec.Template.Spec.Volumes, "traefik-plugin-source") {
+	if addPluginSourceMount && !hasVolume(spec.Spec.Template.Spec.Volumes, "traefik-plugin-source") {
 		ops = append(ops, jsonPatchOperation{
 			Op:    "add",
 			Path:  "/spec/template/spec/volumes/-",
 			Value: map[string]any{"name": "traefik-plugin-source", "configMap": map[string]any{"name": "traefik-plugin-pii-redactor"}},
 		})
 	}
-	if !hasVolume(spec.Spec.Template.Spec.Volumes, "traefik-plugins") {
+	if addPluginStorageMount && !hasVolume(spec.Spec.Template.Spec.Volumes, "traefik-plugins") {
 		ops = append(ops, jsonPatchOperation{
 			Op:    "add",
 			Path:  "/spec/template/spec/volumes/-",
@@ -2076,12 +2079,12 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-func hasVolumeMount(mounts []struct {
+func hasVolumeMountPath(mounts []struct {
 	Name      string `json:"name"`
 	MountPath string `json:"mountPath"`
-}, name, mountPath string) bool {
+}, mountPath string) bool {
 	for _, mount := range mounts {
-		if mount.Name == name && mount.MountPath == mountPath {
+		if mount.MountPath == mountPath {
 			return true
 		}
 	}
