@@ -1950,48 +1950,58 @@ func patchTraefikDeploymentForFileMiddlewareSupport(kubectl core.KubectlRunner, 
 	if len(spec.Spec.Template.Spec.Containers) == 0 {
 		return core.NewWithSentinel(core.ErrInstallIngressControllerFailed, fmt.Sprintf("traefik deployment in namespace %s has no containers", namespace))
 	}
-	container := spec.Spec.Template.Spec.Containers[0]
+	containerIndex := -1
+	for i, candidate := range spec.Spec.Template.Spec.Containers {
+		if candidate.Name == "traefik" {
+			containerIndex = i
+			break
+		}
+	}
+	if containerIndex == -1 {
+		return core.NewWithSentinel(core.ErrInstallIngressControllerFailed, fmt.Sprintf("traefik deployment in namespace %s has no container named traefik", namespace))
+	}
+	container := spec.Spec.Template.Spec.Containers[containerIndex]
 
 	var ops []jsonPatchOperation
 	if !containsString(container.Args, "--providers.file.filename=/etc/traefik/dynamic/dynamic.yml") {
 		ops = append(ops, jsonPatchOperation{
 			Op:    "add",
-			Path:  "/spec/template/spec/containers/0/args/-",
+			Path:  fmt.Sprintf("/spec/template/spec/containers/%d/args/-", containerIndex),
 			Value: "--providers.file.filename=/etc/traefik/dynamic/dynamic.yml",
 		})
 	}
 	if !containsString(container.Args, "--providers.file.watch=true") {
 		ops = append(ops, jsonPatchOperation{
 			Op:    "add",
-			Path:  "/spec/template/spec/containers/0/args/-",
+			Path:  fmt.Sprintf("/spec/template/spec/containers/%d/args/-", containerIndex),
 			Value: "--providers.file.watch=true",
 		})
 	}
 	if !containsString(container.Args, "--experimental.localplugins.pii-redactor.modulename=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor") {
 		ops = append(ops, jsonPatchOperation{
 			Op:    "add",
-			Path:  "/spec/template/spec/containers/0/args/-",
+			Path:  fmt.Sprintf("/spec/template/spec/containers/%d/args/-", containerIndex),
 			Value: "--experimental.localplugins.pii-redactor.modulename=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor",
 		})
 	}
 	if !hasVolumeMount(container.VolumeMounts, "traefik-dynamic", "/etc/traefik/dynamic") {
 		ops = append(ops, jsonPatchOperation{
 			Op:    "add",
-			Path:  "/spec/template/spec/containers/0/volumeMounts/-",
+			Path:  fmt.Sprintf("/spec/template/spec/containers/%d/volumeMounts/-", containerIndex),
 			Value: map[string]any{"name": "traefik-dynamic", "mountPath": "/etc/traefik/dynamic", "readOnly": true},
 		})
 	}
 	if !hasVolumeMount(container.VolumeMounts, "traefik-plugin-source", "/plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor") {
 		ops = append(ops, jsonPatchOperation{
 			Op:    "add",
-			Path:  "/spec/template/spec/containers/0/volumeMounts/-",
+			Path:  fmt.Sprintf("/spec/template/spec/containers/%d/volumeMounts/-", containerIndex),
 			Value: map[string]any{"name": "traefik-plugin-source", "mountPath": "/plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor", "readOnly": true},
 		})
 	}
 	if !hasVolumeMount(container.VolumeMounts, "traefik-plugins", "/plugins-storage") {
 		ops = append(ops, jsonPatchOperation{
 			Op:    "add",
-			Path:  "/spec/template/spec/containers/0/volumeMounts/-",
+			Path:  fmt.Sprintf("/spec/template/spec/containers/%d/volumeMounts/-", containerIndex),
 			Value: map[string]any{"name": "traefik-plugins", "mountPath": "/plugins-storage"},
 		})
 	}
@@ -2282,7 +2292,10 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 
 func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platformMode string) (string, error) {
 	type configMapManifest struct {
-		Data map[string]string `yaml:"data"`
+		APIVersion string            `yaml:"apiVersion"`
+		Kind       string            `yaml:"kind"`
+		Metadata   map[string]any    `yaml:"metadata"`
+		Data       map[string]string `yaml:"data"`
 	}
 
 	var manifest configMapManifest
@@ -2335,7 +2348,7 @@ func existingConfigMapData(kubectl core.KubectlRunner, namespace, name string) (
 	if err != nil {
 		return nil, err
 	}
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		detail := strings.ToLower(strings.TrimSpace(string(out)))
 		if strings.Contains(detail, "not found") || strings.Contains(detail, "notfound") {

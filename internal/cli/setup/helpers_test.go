@@ -889,10 +889,19 @@ data:
 	}
 
 	var payload struct {
-		Data map[string]string `yaml:"data"`
+		APIVersion string            `yaml:"apiVersion"`
+		Kind       string            `yaml:"kind"`
+		Metadata   map[string]any    `yaml:"metadata"`
+		Data       map[string]string `yaml:"data"`
 	}
 	if err := yaml.Unmarshal([]byte(rendered), &payload); err != nil {
 		t.Fatalf("unmarshal rendered config: %v", err)
+	}
+	if payload.APIVersion != "v1" || payload.Kind != "ConfigMap" {
+		t.Fatalf("expected manifest envelope to be preserved, got apiVersion=%q kind=%q", payload.APIVersion, payload.Kind)
+	}
+	if got := payload.Metadata["name"]; got != "mcp-sentinel-config" {
+		t.Fatalf("expected metadata.name to be preserved, got %#v", got)
 	}
 	if got := payload.Data["GOOGLE_CLIENT_ID"]; got != "client.apps.googleusercontent.com" {
 		t.Fatalf("expected GOOGLE_CLIENT_ID to be preserved, got %q", got)
@@ -2113,7 +2122,7 @@ func TestEnsureRepoManagedTraefikMiddlewareResourcesAppliesMiddlewareSupportToEx
 			case commandHasArgs(spec, "get", "deployment", "-A", "--no-headers", "-o", "custom-columns=NS:.metadata.namespace,NAME:.metadata.name"):
 				cmd.OutputData = []byte("kube-system traefik\n")
 			case commandHasArgs(spec, "get", "deployment", "traefik", "-n", "kube-system", "-o", "json"):
-				cmd.OutputData = []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"traefik","args":["--providers.kubernetesingress"],"volumeMounts":[{"name":"data","mountPath":"/data"}]}],"volumes":[{"name":"data"}]}}}}`)
+				cmd.OutputData = []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"sidecar","args":[],"volumeMounts":[]},{"name":"traefik","args":["--providers.kubernetesingress"],"volumeMounts":[{"name":"data","mountPath":"/data"}]}],"volumes":[{"name":"data"}]}}}}`)
 			}
 			return cmd
 		},
@@ -2132,6 +2141,12 @@ func TestEnsureRepoManagedTraefikMiddlewareResourcesAppliesMiddlewareSupportToEx
 	for _, cmd := range mock.Commands {
 		if commandHasArgs(cmd, "patch", "deployment", "traefik", "-n", "kube-system", "--type=json") {
 			hasPatch = true
+			if idx := argIndex(cmd.Args, "-p"); idx != -1 && idx+1 < len(cmd.Args) {
+				patchBody := cmd.Args[idx+1]
+				if !strings.Contains(patchBody, "/spec/template/spec/containers/1/") {
+					t.Fatalf("expected patch to target traefik container index, got %s", patchBody)
+				}
+			}
 		}
 	}
 	for _, cmd := range created {
