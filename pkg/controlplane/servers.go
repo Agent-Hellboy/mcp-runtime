@@ -251,6 +251,8 @@ func ServerInfoFromMCPServer(mcpServer mcpv1alpha1.MCPServer, deploymentStatus S
 		Labels:      mcpServer.Labels,
 		Age:         mcpServer.CreationTimestamp.Format("2006-01-02T15:04:05Z"),
 		Endpoint:    PublicMCPEndpoint(mcpServer),
+		ServicePort: mcpServer.Spec.ServicePort,
+		Generation:  mcpServer.Generation,
 		Tools:       mcpServer.Spec.Tools,
 		Prompts:     inventoryItemsOrEmpty(mcpServer.Spec.Prompts),
 		Resources:   inventoryItemsOrEmpty(mcpServer.Spec.MCPResources),

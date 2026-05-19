@@ -1444,6 +1444,43 @@ tr:hover td {
   padding: 3px 8px;
 }
 
+.drift-chip {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  gap: 6px;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+
+.drift-chip::before {
+  border-radius: 999px;
+  content: "";
+  display: block;
+  height: 7px;
+  width: 7px;
+}
+
+.drift-ungoverned {
+  background: rgba(255, 111, 97, 0.14);
+  border: 1px solid rgba(255, 111, 97, 0.3);
+  color: #ffc1ba !important;
+}
+
+.drift-ungoverned::before {
+  background: #ff6f61;
+}
+
+.drift-missing {
+  background: rgba(242, 184, 75, 0.14);
+  border: 1px solid rgba(242, 184, 75, 0.34);
+  color: #ffd990 !important;
+}
+
+.drift-missing::before {
+  background: #f2b84b;
+}
+
 .server-connect {
   border-top: 1px solid rgba(247, 245, 239, 0.1);
   padding-top: 4px;

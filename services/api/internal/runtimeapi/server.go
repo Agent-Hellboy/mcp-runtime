@@ -2,6 +2,7 @@ package runtimeapi
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	sentinelaccess "mcp-runtime/pkg/access"
@@ -22,6 +23,10 @@ type RuntimeServer struct {
 	accessMgr   *sentinelaccess.Manager
 	sentinelMgr *sentinel.Manager
 	audit       auditWriter
+
+	liveInventoryOnce  sync.Once
+	liveInventoryCache *liveInventoryCache
+	liveInventoryProbe liveInventoryProber
 }
 
 // NewRuntimeServer creates a runtime server with Kubernetes access.
