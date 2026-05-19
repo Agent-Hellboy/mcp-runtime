@@ -892,7 +892,7 @@ data:
 		APIVersion string            `yaml:"apiVersion"`
 		Kind       string            `yaml:"kind"`
 		Metadata   map[string]any    `yaml:"metadata"`
-		Data map[string]string `yaml:"data"`
+		Data       map[string]string `yaml:"data"`
 	}
 	if err := yaml.Unmarshal([]byte(rendered), &payload); err != nil {
 		t.Fatalf("unmarshal rendered config: %v", err)
@@ -953,9 +953,9 @@ func TestRenderAnalyticsConfigManifestHandlesMissingConfigMap(t *testing.T) {
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 			if commandHasArgs(spec, "get", "configmap", "mcp-sentinel-config", "-n", "mcp-sentinel", "-o", "json") {
 				return &core.MockCommand{
-					Args:      spec.Args,
+					Args:       spec.Args,
 					OutputData: []byte("Error from server (NotFound): configmaps \"mcp-sentinel-config\" not found"),
-					OutputErr: errors.New("exit status 1"),
+					OutputErr:  errors.New("exit status 1"),
 				}
 			}
 			return &core.MockCommand{Args: spec.Args}
