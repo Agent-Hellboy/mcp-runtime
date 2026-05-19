@@ -858,6 +858,87 @@ func TestRenderAnalyticsSecretManifestDisablesExistingDevLoginsOutsideTestMode(t
 	}
 }
 
+func TestRenderAnalyticsConfigManifestPreservesExistingPublicOAuthConfig(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if commandHasArgs(spec, "get", "configmap", "mcp-sentinel-config", "-n", "mcp-sentinel", "-o", "json") {
+				return &core.MockCommand{
+					Args:       spec.Args,
+					OutputData: []byte(`{"data":{"GOOGLE_CLIENT_ID":"client.apps.googleusercontent.com","OIDC_ISSUER":"https://accounts.google.com","OIDC_AUDIENCE":"client.apps.googleusercontent.com","OIDC_JWKS_URL":"https://www.googleapis.com/oauth2/v3/certs","PLATFORM_MODE":"public"}}`),
+				}
+			}
+			return &core.MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	rendered, err := renderAnalyticsConfigManifest(kubectl, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-sentinel-config
+  namespace: mcp-sentinel
+data:
+  GOOGLE_CLIENT_ID: ""
+  OIDC_ISSUER: ""
+  OIDC_AUDIENCE: ""
+  OIDC_JWKS_URL: ""
+  PLATFORM_MODE: "tenant"
+`, setupplan.PlatformModeTenant)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var payload struct {
+		Data map[string]string `yaml:"data"`
+	}
+	if err := yaml.Unmarshal([]byte(rendered), &payload); err != nil {
+		t.Fatalf("unmarshal rendered config: %v", err)
+	}
+	if got := payload.Data["GOOGLE_CLIENT_ID"]; got != "client.apps.googleusercontent.com" {
+		t.Fatalf("expected GOOGLE_CLIENT_ID to be preserved, got %q", got)
+	}
+	if got := payload.Data["PLATFORM_MODE"]; got != setupplan.PlatformModePublic {
+		t.Fatalf("expected PLATFORM_MODE to stay public, got %q", got)
+	}
+}
+
+func TestRenderAnalyticsConfigManifestAppliesExplicitPlatformMode(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if commandHasArgs(spec, "get", "configmap", "mcp-sentinel-config", "-n", "mcp-sentinel", "-o", "json") {
+				return &core.MockCommand{
+					Args:       spec.Args,
+					OutputData: []byte(`{"data":{"PLATFORM_MODE":"public"}}`),
+				}
+			}
+			return &core.MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	rendered, err := renderAnalyticsConfigManifest(kubectl, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-sentinel-config
+  namespace: mcp-sentinel
+data:
+  PLATFORM_MODE: "tenant"
+`, setupplan.PlatformModeOrg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var payload struct {
+		Data map[string]string `yaml:"data"`
+	}
+	if err := yaml.Unmarshal([]byte(rendered), &payload); err != nil {
+		t.Fatalf("unmarshal rendered config: %v", err)
+	}
+	if got := payload.Data["PLATFORM_MODE"]; got != setupplan.PlatformModeOrg {
+		t.Fatalf("expected explicit platform mode to win, got %q", got)
+	}
+}
+
 func TestEnsureCSVIncludes(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -1907,7 +1988,7 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	}
 }
 
-func TestEnsureRepoManagedTraefikMiddlewareResourcesAppliesBaseResources(t *testing.T) {
+func TestEnsureRepoManagedTraefikMiddlewareResourcesAppliesMiddlewareSupportToRepoManagedController(t *testing.T) {
 	root := repoRootForTest(t)
 	origDir, err := os.Getwd()
 	if err != nil {
@@ -1920,16 +2001,16 @@ func TestEnsureRepoManagedTraefikMiddlewareResourcesAppliesBaseResources(t *test
 		_ = os.Chdir(origDir)
 	})
 
+	var created []*core.MockCommand
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 			cmd := &core.MockCommand{Args: spec.Args}
-			if commandHasArgs(spec, "get", "deployment", "traefik", "-n", "traefik", "-o", "jsonpath={.metadata.name}") {
-				cmd.RunFunc = func() error {
-					if cmd.StdoutW != nil {
-						_, _ = cmd.StdoutW.Write([]byte("traefik"))
-					}
-					return nil
-				}
+			created = append(created, cmd)
+			switch {
+			case commandHasArgs(spec, "get", "deployment", "-A", "--no-headers", "-o", "custom-columns=NS:.metadata.namespace,NAME:.metadata.name"):
+				cmd.OutputData = []byte("traefik traefik\n")
+			case commandHasArgs(spec, "get", "deployment", "traefik", "-n", "traefik", "-o", "json"):
+				cmd.OutputData = []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"traefik","args":["--providers.kubernetesingress=true"],"volumeMounts":[]}],"volumes":[]}}}}`)
 			}
 			return cmd
 		},
@@ -1941,32 +2022,104 @@ func TestEnsureRepoManagedTraefikMiddlewareResourcesAppliesBaseResources(t *test
 	}
 
 	var (
-		hasLookup        bool
-		hasDynamicConfig bool
-		hasBaseTraefik   bool
+		hasLookup       bool
+		hasDynamicApply bool
+		hasPluginApply  bool
+		hasPatch        bool
 	)
 	for _, cmd := range mock.Commands {
-		if commandHasArgs(cmd, "get", "deployment", "traefik", "-n", "traefik", "-o", "jsonpath={.metadata.name}") {
+		if commandHasArgs(cmd, "get", "deployment", "-A", "--no-headers", "-o", "custom-columns=NS:.metadata.namespace,NAME:.metadata.name") {
 			hasLookup = true
 		}
-		if idx := argIndex(cmd.Args, "-f"); idx != -1 && idx+1 < len(cmd.Args) {
-			path := cmd.Args[idx+1]
-			if strings.Contains(path, "config/ingress/base/dynamic-config.yaml") {
-				hasDynamicConfig = true
-			}
-			if strings.Contains(path, "config/ingress/base/traefik.yaml") {
-				hasBaseTraefik = true
-			}
+		if commandHasArgs(cmd, "patch", "deployment", "traefik", "-n", "traefik", "--type=json") {
+			hasPatch = true
+		}
+	}
+	for _, cmd := range created {
+		if cmd.StdinR == nil {
+			continue
+		}
+		data, err := io.ReadAll(cmd.StdinR)
+		if err != nil {
+			t.Fatalf("read stdin: %v", err)
+		}
+		body := string(data)
+		if strings.Contains(body, "name: traefik-dynamic") && strings.Contains(body, "namespace: traefik") {
+			hasDynamicApply = true
+		}
+		if strings.Contains(body, "name: traefik-plugin-pii-redactor") && strings.Contains(body, "namespace: traefik") {
+			hasPluginApply = true
 		}
 	}
 	if !hasLookup {
-		t.Fatal("expected traefik deployment lookup")
+		t.Fatal("expected active traefik deployment lookup")
 	}
-	if !hasDynamicConfig {
-		t.Fatal("expected repo-managed traefik dynamic-config apply")
+	if !hasDynamicApply {
+		t.Fatal("expected traefik dynamic-config apply")
 	}
-	if !hasBaseTraefik {
-		t.Fatal("expected repo-managed traefik base manifest apply")
+	if !hasPluginApply {
+		t.Fatal("expected traefik plugin-source apply")
+	}
+	if !hasPatch {
+		t.Fatal("expected traefik deployment patch")
+	}
+}
+
+func TestEnsureRepoManagedTraefikMiddlewareResourcesAppliesMiddlewareSupportToExternalController(t *testing.T) {
+	var created []*core.MockCommand
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			created = append(created, cmd)
+			switch {
+			case commandHasArgs(spec, "get", "deployment", "-A", "--no-headers", "-o", "custom-columns=NS:.metadata.namespace,NAME:.metadata.name"):
+				cmd.OutputData = []byte("kube-system traefik\n")
+			case commandHasArgs(spec, "get", "deployment", "traefik", "-n", "kube-system", "-o", "json"):
+				cmd.OutputData = []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"traefik","args":["--providers.kubernetesingress"],"volumeMounts":[{"name":"data","mountPath":"/data"}]}],"volumes":[{"name":"data"}]}}}}`)
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	if err := ensureRepoManagedTraefikMiddlewareResources(kubectl, zap.NewNop()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var (
+		hasDynamicApply bool
+		hasPluginApply  bool
+		hasPatch        bool
+	)
+	for _, cmd := range mock.Commands {
+		if commandHasArgs(cmd, "patch", "deployment", "traefik", "-n", "kube-system", "--type=json") {
+			hasPatch = true
+		}
+	}
+	for _, cmd := range created {
+		if cmd.StdinR == nil {
+			continue
+		}
+		data, err := io.ReadAll(cmd.StdinR)
+		if err != nil {
+			t.Fatalf("read stdin: %v", err)
+		}
+		body := string(data)
+		if strings.Contains(body, "name: traefik-dynamic") && strings.Contains(body, "namespace: kube-system") {
+			hasDynamicApply = true
+		}
+		if strings.Contains(body, "name: traefik-plugin-pii-redactor") && strings.Contains(body, "namespace: kube-system") {
+			hasPluginApply = true
+		}
+	}
+	if !hasDynamicApply {
+		t.Fatal("expected external traefik dynamic-config apply")
+	}
+	if !hasPluginApply {
+		t.Fatal("expected external traefik plugin-source apply")
+	}
+	if !hasPatch {
+		t.Fatal("expected external traefik deployment patch")
 	}
 }
 
@@ -1974,13 +2127,8 @@ func TestEnsureRepoManagedTraefikMiddlewareResourcesSkipsWhenMissing(t *testing.
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 			cmd := &core.MockCommand{Args: spec.Args}
-			if commandHasArgs(spec, "get", "deployment", "traefik", "-n", "traefik", "-o", "jsonpath={.metadata.name}") {
-				cmd.RunFunc = func() error {
-					if cmd.StderrW != nil {
-						_, _ = cmd.StderrW.Write([]byte("Error from server (NotFound): deployments.apps \"traefik\" not found"))
-					}
-					return errors.New("not found")
-				}
+			if commandHasArgs(spec, "get", "deployment", "-A", "--no-headers", "-o", "custom-columns=NS:.metadata.namespace,NAME:.metadata.name") {
+				cmd.OutputData = []byte("")
 			}
 			return cmd
 		},

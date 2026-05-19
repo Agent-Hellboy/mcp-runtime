@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1841,33 +1842,22 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 }
 
 func ensureRepoManagedTraefikMiddlewareResources(kubectl core.KubectlRunner, logger *zap.Logger) error {
-	exists, err := deploymentExistsWithKubectl(kubectl, "traefik", "traefik")
+	namespaces, err := activeNamedTraefikDeploymentNamespacesWithKubectl(kubectl)
 	if err != nil {
 		return err
 	}
-	if !exists {
-		return nil
-	}
-
-	if logger != nil {
-		logger.Info("Reconciling repo-managed Traefik file-provider resources", zap.String("namespace", "traefik"))
-	}
-
-	manifests := []string{
-		"config/ingress/base/dynamic-config.yaml",
-		"config/ingress/base/traefik.yaml",
-	}
-	for _, relPath := range manifests {
-		resolvedPath, err := assetpath.ResolveRepoAssetPath(relPath)
-		if err != nil {
-			return core.WrapWithSentinel(core.ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to resolve Traefik manifest %s: %v", relPath, err))
+	for _, namespace := range namespaces {
+		if logger != nil {
+			logger.Info("Reconciling Traefik file-provider resources", zap.String("namespace", namespace))
 		}
-		if err := kubectl.RunWithOutput([]string{"apply", "-f", resolvedPath}, os.Stdout, os.Stderr); err != nil {
-			return core.WrapWithSentinel(
-				core.ErrInstallIngressControllerFailed,
-				err,
-				fmt.Sprintf("failed to reconcile repo-managed Traefik manifest %s: %v", relPath, err),
-			)
+		if err := applyTraefikSupportManifest(kubectl, "config/ingress/overlays/http/dynamic-config.yaml", namespace); err != nil {
+			return err
+		}
+		if err := applyTraefikSupportManifest(kubectl, "config/ingress/overlays/http/plugin-source.yaml", namespace); err != nil {
+			return err
+		}
+		if err := patchTraefikDeploymentForFileMiddlewareSupport(kubectl, namespace); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -1889,6 +1879,232 @@ func deploymentExistsWithKubectl(kubectl core.KubectlRunner, namespace, name str
 		return false, nil
 	}
 	return false, fmt.Errorf("look up deployment %s/%s: %w", namespace, name, err)
+}
+
+func activeNamedTraefikDeploymentNamespacesWithKubectl(kubectl core.KubectlRunner) ([]string, error) {
+	cmd, err := kubectl.CommandArgs([]string{
+		"get", "deployment", "-A", "--no-headers",
+		"-o", "custom-columns=NS:.metadata.namespace,NAME:.metadata.name",
+	})
+	if err != nil {
+		return nil, err
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("list traefik deployments: %w", err)
+	}
+	seen := map[string]struct{}{}
+	var namespaces []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[1] != "traefik" {
+			continue
+		}
+		ns := strings.TrimSpace(fields[0])
+		if ns == "" {
+			continue
+		}
+		if _, ok := seen[ns]; ok {
+			continue
+		}
+		seen[ns] = struct{}{}
+		namespaces = append(namespaces, ns)
+	}
+	slices.Sort(namespaces)
+	return namespaces, nil
+}
+
+func applyTraefikSupportManifest(kubectl core.KubectlRunner, relPath, namespace string) error {
+	resolvedPath, err := assetpath.ResolveRepoAssetPath(relPath)
+	if err != nil {
+		return core.WrapWithSentinel(core.ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to resolve Traefik manifest %s: %v", relPath, err))
+	}
+	manifestBytes, err := kube.ReadFileAtPath(resolvedPath)
+	if err != nil {
+		return core.WrapWithSentinel(core.ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to read Traefik manifest %s: %v", relPath, err))
+	}
+	manifestContent := strings.ReplaceAll(string(manifestBytes), "namespace: traefik", "namespace: "+namespace)
+	if err := kube.ApplyManifestContent(kubectl.CommandArgs, manifestContent); err != nil {
+		return core.WrapWithSentinel(
+			core.ErrInstallIngressControllerFailed,
+			err,
+			fmt.Sprintf("failed to reconcile Traefik manifest %s in namespace %s: %v", relPath, namespace, err),
+		)
+	}
+	return nil
+}
+
+type traefikDeploymentSpec struct {
+	Spec struct {
+		Template struct {
+			Spec struct {
+				Containers []struct {
+					Name         string   `json:"name"`
+					Args         []string `json:"args"`
+					VolumeMounts []struct {
+						Name      string `json:"name"`
+						MountPath string `json:"mountPath"`
+					} `json:"volumeMounts"`
+				} `json:"containers"`
+				Volumes []struct {
+					Name string `json:"name"`
+				} `json:"volumes"`
+			} `json:"spec"`
+		} `json:"template"`
+	} `json:"spec"`
+}
+
+type jsonPatchOperation struct {
+	Op    string `json:"op"`
+	Path  string `json:"path"`
+	Value any    `json:"value,omitempty"`
+}
+
+func patchTraefikDeploymentForFileMiddlewareSupport(kubectl core.KubectlRunner, namespace string) error {
+	spec, err := readTraefikDeploymentSpec(kubectl, namespace)
+	if err != nil {
+		return err
+	}
+	if len(spec.Spec.Template.Spec.Containers) == 0 {
+		return core.NewWithSentinel(core.ErrInstallIngressControllerFailed, fmt.Sprintf("traefik deployment in namespace %s has no containers", namespace))
+	}
+	container := spec.Spec.Template.Spec.Containers[0]
+
+	var ops []jsonPatchOperation
+	if !containsString(container.Args, "--providers.file.filename=/etc/traefik/dynamic/dynamic.yml") {
+		ops = append(ops, jsonPatchOperation{
+			Op:    "add",
+			Path:  "/spec/template/spec/containers/0/args/-",
+			Value: "--providers.file.filename=/etc/traefik/dynamic/dynamic.yml",
+		})
+	}
+	if !containsString(container.Args, "--providers.file.watch=true") {
+		ops = append(ops, jsonPatchOperation{
+			Op:    "add",
+			Path:  "/spec/template/spec/containers/0/args/-",
+			Value: "--providers.file.watch=true",
+		})
+	}
+	if !containsString(container.Args, "--experimental.localplugins.pii-redactor.modulename=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor") {
+		ops = append(ops, jsonPatchOperation{
+			Op:    "add",
+			Path:  "/spec/template/spec/containers/0/args/-",
+			Value: "--experimental.localplugins.pii-redactor.modulename=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor",
+		})
+	}
+	if !hasVolumeMount(container.VolumeMounts, "traefik-dynamic", "/etc/traefik/dynamic") {
+		ops = append(ops, jsonPatchOperation{
+			Op:    "add",
+			Path:  "/spec/template/spec/containers/0/volumeMounts/-",
+			Value: map[string]any{"name": "traefik-dynamic", "mountPath": "/etc/traefik/dynamic", "readOnly": true},
+		})
+	}
+	if !hasVolumeMount(container.VolumeMounts, "traefik-plugin-source", "/plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor") {
+		ops = append(ops, jsonPatchOperation{
+			Op:    "add",
+			Path:  "/spec/template/spec/containers/0/volumeMounts/-",
+			Value: map[string]any{"name": "traefik-plugin-source", "mountPath": "/plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor", "readOnly": true},
+		})
+	}
+	if !hasVolumeMount(container.VolumeMounts, "traefik-plugins", "/plugins-storage") {
+		ops = append(ops, jsonPatchOperation{
+			Op:    "add",
+			Path:  "/spec/template/spec/containers/0/volumeMounts/-",
+			Value: map[string]any{"name": "traefik-plugins", "mountPath": "/plugins-storage"},
+		})
+	}
+	if !hasVolume(spec.Spec.Template.Spec.Volumes, "traefik-dynamic") {
+		ops = append(ops, jsonPatchOperation{
+			Op:   "add",
+			Path: "/spec/template/spec/volumes/-",
+			Value: map[string]any{
+				"name": "traefik-dynamic",
+				"configMap": map[string]any{
+					"name":  "traefik-dynamic",
+					"items": []map[string]any{{"key": "dynamic.yml", "path": "dynamic.yml"}},
+				},
+			},
+		})
+	}
+	if !hasVolume(spec.Spec.Template.Spec.Volumes, "traefik-plugin-source") {
+		ops = append(ops, jsonPatchOperation{
+			Op:    "add",
+			Path:  "/spec/template/spec/volumes/-",
+			Value: map[string]any{"name": "traefik-plugin-source", "configMap": map[string]any{"name": "traefik-plugin-pii-redactor"}},
+		})
+	}
+	if !hasVolume(spec.Spec.Template.Spec.Volumes, "traefik-plugins") {
+		ops = append(ops, jsonPatchOperation{
+			Op:    "add",
+			Path:  "/spec/template/spec/volumes/-",
+			Value: map[string]any{"name": "traefik-plugins", "emptyDir": map[string]any{}},
+		})
+	}
+	if len(ops) == 0 {
+		return nil
+	}
+	patchBytes, err := json.Marshal(ops)
+	if err != nil {
+		return fmt.Errorf("marshal traefik deployment patch: %w", err)
+	}
+	if err := kubectl.RunWithOutput([]string{
+		"patch", "deployment", "traefik", "-n", namespace, "--type=json", "-p", string(patchBytes),
+	}, os.Stdout, os.Stderr); err != nil {
+		return core.WrapWithSentinel(
+			core.ErrInstallIngressControllerFailed,
+			err,
+			fmt.Sprintf("failed to patch traefik deployment in namespace %s for file-provider middleware support: %v", namespace, err),
+		)
+	}
+	return nil
+}
+
+func readTraefikDeploymentSpec(kubectl core.KubectlRunner, namespace string) (traefikDeploymentSpec, error) {
+	var spec traefikDeploymentSpec
+	cmd, err := kubectl.CommandArgs([]string{"get", "deployment", "traefik", "-n", namespace, "-o", "json"})
+	if err != nil {
+		return spec, err
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return spec, fmt.Errorf("read traefik deployment %s/traefik: %w", namespace, err)
+	}
+	if err := json.Unmarshal(out, &spec); err != nil {
+		return spec, fmt.Errorf("decode traefik deployment %s/traefik: %w", namespace, err)
+	}
+	return spec, nil
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func hasVolumeMount(mounts []struct {
+	Name      string `json:"name"`
+	MountPath string `json:"mountPath"`
+}, name, mountPath string) bool {
+	for _, mount := range mounts {
+		if mount.Name == name && mount.MountPath == mountPath {
+			return true
+		}
+	}
+	return false
+}
+
+func hasVolume(volumes []struct {
+	Name string `json:"name"`
+}, name string) bool {
+	for _, volume := range volumes {
+		if volume.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func applyCatalogNamespaceForMode(kubectl core.KubectlRunner, platformMode string) error {
@@ -1995,7 +2211,12 @@ func applyRenderedManifest(kubectl core.KubectlRunner, manifestPath string, imag
 	if err != nil {
 		return core.WrapWithSentinel(core.ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to read manifest %s: %v", resolvedManifestPath, err))
 	}
-	rendered, err := renderAnalyticsManifest(string(content), images, imagePullSecretName, platformMode)
+	rendered := ""
+	if manifestPath == "k8s/01-config.yaml" {
+		rendered, err = renderAnalyticsConfigManifest(kubectl, string(content), platformMode)
+	} else {
+		rendered, err = renderAnalyticsManifest(string(content), images, imagePullSecretName, platformMode)
+	}
 	if err != nil {
 		return fmt.Errorf("render manifest %s: %w", manifestPath, err)
 	}
@@ -2075,6 +2296,81 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 		return "", err
 	}
 	return rendered, nil
+}
+
+func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platformMode string) (string, error) {
+	type configMapManifest struct {
+		Data map[string]string `yaml:"data"`
+	}
+
+	var manifest configMapManifest
+	if err := yaml.Unmarshal([]byte(content), &manifest); err != nil {
+		return "", fmt.Errorf("decode analytics config manifest: %w", err)
+	}
+	if manifest.Data == nil {
+		manifest.Data = map[string]string{}
+	}
+
+	existingData, err := existingConfigMapData(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-config")
+	if err != nil {
+		return "", err
+	}
+	for _, key := range []string{
+		"GOOGLE_CLIENT_ID",
+		"OIDC_ISSUER",
+		"OIDC_AUDIENCE",
+		"OIDC_JWKS_URL",
+		"MCP_PLATFORM_DOMAIN",
+		"MCP_MCP_INGRESS_HOST",
+	} {
+		if strings.TrimSpace(manifest.Data[key]) == "" && strings.TrimSpace(existingData[key]) != "" {
+			manifest.Data[key] = existingData[key]
+		}
+	}
+	if existingMode, ok := setupplan.NormalizePlatformMode(existingData["PLATFORM_MODE"]); ok {
+		requestedMode, requestedOK := setupplan.NormalizePlatformMode(platformMode)
+		switch {
+		case !requestedOK:
+			manifest.Data["PLATFORM_MODE"] = existingMode
+		case requestedMode == setupplan.PlatformModeTenant && existingMode != setupplan.PlatformModeTenant:
+			manifest.Data["PLATFORM_MODE"] = existingMode
+		default:
+			manifest.Data["PLATFORM_MODE"] = requestedMode
+		}
+	} else if mode, ok := setupplan.NormalizePlatformMode(platformMode); ok {
+		manifest.Data["PLATFORM_MODE"] = mode
+	}
+
+	rendered, err := yaml.Marshal(manifest)
+	if err != nil {
+		return "", fmt.Errorf("encode analytics config manifest: %w", err)
+	}
+	return string(rendered), nil
+}
+
+func existingConfigMapData(kubectl core.KubectlRunner, namespace, name string) (map[string]string, error) {
+	cmd, err := kubectl.CommandArgs([]string{"get", "configmap", name, "-n", namespace, "-o", "json"})
+	if err != nil {
+		return nil, err
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		detail := strings.ToLower(strings.TrimSpace(string(out)))
+		if strings.Contains(detail, "not found") || strings.Contains(detail, "notfound") {
+			return map[string]string{}, nil
+		}
+		return nil, fmt.Errorf("read configmap %s/%s: %w", namespace, name, err)
+	}
+	var payload struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(out, &payload); err != nil {
+		return nil, fmt.Errorf("decode configmap %s/%s: %w", namespace, name, err)
+	}
+	if payload.Data == nil {
+		return map[string]string{}, nil
+	}
+	return payload.Data, nil
 }
 
 func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
