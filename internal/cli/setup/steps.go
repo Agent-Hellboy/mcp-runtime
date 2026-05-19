@@ -173,15 +173,10 @@ func (s verifyStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) e
 	return nil
 }
 
-type registryAuthEnableStep struct{}
-
-func (s registryAuthEnableStep) Name() string { return "registry-auth-enable" }
-func (s registryAuthEnableStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error {
-	if !ctx.RegistryAuthStaged {
-		return nil
-	}
-	return deps.EnableRegistryIngressAuth()
-}
+// Registry auth is re-enabled by a defer in setupPlatformWithDeps so it runs
+// on every exit path (success or any earlier-step failure), instead of as a
+// pipeline step that would be skipped on errors. See the defer block on
+// ctx.RegistryAuthStaged for details.
 
 func buildSetupSteps(ctx *SetupContext) []SetupStep {
 	return NewSetupPipeline().
@@ -194,7 +189,6 @@ func buildSetupSteps(ctx *SetupContext) []SetupStep {
 		With(deployOperatorStepCmd{}).
 		WithIf(ctx.Plan.DeployAnalytics, deployAnalyticsStep{}).
 		With(verifyStep{}).
-		With(registryAuthEnableStep{}).
 		Build()
 }
 
