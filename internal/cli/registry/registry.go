@@ -69,7 +69,7 @@ func NewWithManager(mgr *RegistryManager) *cobra.Command {
 		Use:   "push",
 		Short: "Retag and push an image to the platform or provisioned registry",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return RunRegistryPush(mgr, image, registryURL, name, scope, mode, helperNamespace)
+			return RunRegistryPush(cmd.Context(), mgr, image, registryURL, name, scope, mode, helperNamespace)
 		},
 	}
 	pushCmd.Flags().StringVar(&image, "image", "", "Local image to push (required)")

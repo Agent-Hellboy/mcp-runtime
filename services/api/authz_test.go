@@ -218,6 +218,40 @@ func TestRegistryAuthzAllowsPublicAliasInPublicMode(t *testing.T) {
 	}
 }
 
+func TestRegistryAuthzCachesPlatformModePerServer(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	srv := &apiServer{
+		userKeys: &fakeUserAPIKeyStore{
+			ok: true,
+			principal: principal{
+				Role:      roleUser,
+				Subject:   "user-1",
+				Namespace: "user-1",
+				AuthType:  "user_api_key",
+			},
+		},
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/registry/authz", nil)
+	req.Header.Set("x-api-key", "mcpu_user")
+	req.Header.Set("X-Forwarded-Uri", "/v2/public/demo/manifests/latest")
+	srv.handleRegistryAuthz(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("initial status = %d body = %s, want 204", rec.Code, rec.Body.String())
+	}
+
+	t.Setenv("PLATFORM_MODE", "tenant")
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/registry/authz", nil)
+	req.Header.Set("x-api-key", "mcpu_user")
+	req.Header.Set("X-Forwarded-Uri", "/v2/public/demo/manifests/latest")
+	srv.handleRegistryAuthz(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("cached status = %d body = %s, want 204", rec.Code, rec.Body.String())
+	}
+}
+
 func TestRegistryAuthzRejectsPublicAliasInTenantMode(t *testing.T) {
 	srv := &apiServer{
 		userKeys: &fakeUserAPIKeyStore{

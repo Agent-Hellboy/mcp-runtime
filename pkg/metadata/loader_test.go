@@ -351,7 +351,9 @@ func TestSetDefaults(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		setDefaults(test.server)
+		if err := setDefaults(test.server); err != nil {
+			t.Fatalf("setDefaults(%q) unexpected error: %v", test.name, err)
+		}
 		if test.server.Name != test.want.Name {
 			t.Errorf("setDefaults(%q) = %q, want %q", test.server.Name, test.server.Name, test.want.Name)
 		}
@@ -450,7 +452,9 @@ func TestSetDefaultsImageResolution(t *testing.T) {
 			for k, v := range tc.env {
 				t.Setenv(k, v)
 			}
-			setDefaults(tc.input)
+			if err := setDefaults(tc.input); err != nil {
+				t.Fatalf("setDefaults() unexpected error: %v", err)
+			}
 			if tc.input.Image != tc.wantImage {
 				t.Fatalf("Image = %q, want %q", tc.input.Image, tc.wantImage)
 			}
@@ -575,6 +579,16 @@ servers:
 	if _, err := LoadFromFile(metadataFile); err == nil {
 		t.Fatal("expected invalid scope error")
 	} else if !strings.Contains(err.Error(), "scope") {
+		t.Fatalf("error = %v, want scope validation", err)
+	}
+}
+
+func TestSetDefaultsRejectsInvalidScope(t *testing.T) {
+	err := setDefaults(&ServerMetadata{Name: "bad-scope", Scope: PublishScope("internet")})
+	if err == nil {
+		t.Fatal("expected invalid scope error")
+	}
+	if !strings.Contains(err.Error(), "scope") {
 		t.Fatalf("error = %v, want scope validation", err)
 	}
 }

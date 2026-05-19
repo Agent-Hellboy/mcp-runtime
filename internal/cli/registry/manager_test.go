@@ -2,6 +2,7 @@ package registry
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -132,7 +133,7 @@ func TestRunRegistryPushRequiresPlatformCredentials(t *testing.T) {
 	kubectl := core.NewTestKubectlClient(mock)
 	mgr := NewRegistryManager(kubectl, mock, zap.NewNop())
 
-	err := RunRegistryPush(mgr, "source:tag", "registry.example.com", "demo", "", "direct", "registry")
+	err := RunRegistryPush(context.Background(), mgr, "source:tag", "registry.example.com", "demo", "", "direct", "registry")
 	if err == nil {
 		t.Fatal("expected missing platform credentials error")
 	}

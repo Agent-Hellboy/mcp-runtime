@@ -45,7 +45,13 @@ func buildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metada
 	logger.Info("Building image", zap.String("server", serverName))
 
 	// Determine image name
-	repository := scopedRepositoryNameForBuild(serverName, metadataFile, metadataDir)
+	repository, err := scopedRepositoryNameForBuild(serverName, metadataFile, metadataDir)
+	if err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrLoadMetadataFailed, err, fmt.Sprintf("failed to load metadata: %v", err))
+		core.Error("Failed to load metadata")
+		core.LogStructuredError(logger, wrappedErr, "Failed to load metadata")
+		return wrappedErr
+	}
 	imageName := fmt.Sprintf("%s/%s", registryURL, repository)
 	fullImage := fmt.Sprintf("%s:%s", imageName, tag)
 
@@ -86,22 +92,25 @@ func buildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metada
 	return nil
 }
 
-func scopedRepositoryNameForBuild(serverName, metadataFile, metadataDir string) string {
-	server, ok := findMetadataServer(serverName, metadataFile, metadataDir)
+func scopedRepositoryNameForBuild(serverName, metadataFile, metadataDir string) (string, error) {
+	server, ok, err := findMetadataServer(serverName, metadataFile, metadataDir)
+	if err != nil {
+		return "", err
+	}
 	if !ok {
-		return serverName
+		return serverName, nil
 	}
 	scope, err := publishscope.Normalize(string(server.Scope))
 	if err != nil {
-		return serverName
+		return serverName, nil
 	}
 	if alias, ok := publishscope.RegistryAlias(scope); ok {
-		return alias + "/" + serverName
+		return alias + "/" + serverName, nil
 	}
-	return serverName
+	return serverName, nil
 }
 
-func findMetadataServer(serverName, metadataFile, metadataDir string) (metadata.ServerMetadata, bool) {
+func findMetadataServer(serverName, metadataFile, metadataDir string) (metadata.ServerMetadata, bool, error) {
 	files := []string{}
 	if metadataFile != "" {
 		files = append(files, metadataFile)
@@ -115,15 +124,18 @@ func findMetadataServer(serverName, metadataFile, metadataDir string) (metadata.
 	for _, file := range files {
 		registry, err := metadata.LoadFromFile(file)
 		if err != nil {
+			if metadataFile != "" {
+				return metadata.ServerMetadata{}, false, err
+			}
 			continue
 		}
 		for _, server := range registry.Servers {
 			if server.Name == serverName {
-				return server, true
+				return server, true, nil
 			}
 		}
 	}
-	return metadata.ServerMetadata{}, false
+	return metadata.ServerMetadata{}, false, nil
 }
 
 // BuildImage builds a Docker image and updates MCP metadata for the server.

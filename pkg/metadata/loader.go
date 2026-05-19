@@ -28,7 +28,7 @@ func LoadFromFile(filePath string) (*RegistryFile, error) {
 
 	// Set defaults
 	for i := range registry.Servers {
-		if err := setDefaultsWithValidation(&registry.Servers[i]); err != nil {
+		if err := setDefaults(&registry.Servers[i]); err != nil {
 			name := registry.Servers[i].Name
 			if strings.TrimSpace(name) == "" {
 				name = fmt.Sprintf("#%d", i+1)
@@ -69,11 +69,7 @@ func LoadFromDirectory(dirPath string) (*RegistryFile, error) {
 	}, nil
 }
 
-func setDefaults(server *ServerMetadata) {
-	_ = setDefaultsWithValidation(server)
-}
-
-func setDefaultsWithValidation(server *ServerMetadata) error {
+func setDefaults(server *ServerMetadata) error {
 	scope, err := publishscope.Normalize(string(server.Scope))
 	if err != nil {
 		return err

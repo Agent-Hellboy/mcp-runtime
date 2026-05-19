@@ -29,7 +29,7 @@ func (s *apiServer) handleRegistryAuthz(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if p.Role != roleAdmin {
-		if !principalCanAccessRegistryPath(p, r) {
+		if !s.principalCanAccessRegistryPath(p, r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 			return
 		}
@@ -69,7 +69,7 @@ func writeRegistryAuthChallenge(w http.ResponseWriter) {
 	writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 }
 
-func principalCanAccessRegistryPath(p principal, r *http.Request) bool {
+func (s *apiServer) principalCanAccessRegistryPath(p principal, r *http.Request) bool {
 	scope, ok := registryPathScope(r)
 	if !ok {
 		return false
@@ -77,7 +77,7 @@ func principalCanAccessRegistryPath(p principal, r *http.Request) bool {
 	if scope == "" {
 		return true
 	}
-	return principalCanAccessRegistryScope(p, scope)
+	return s.principalCanAccessRegistryScope(p, scope)
 }
 
 func registryPathScope(r *http.Request) (string, bool) {
@@ -137,15 +137,16 @@ func registryRepoFromPath(rest string) string {
 	return strings.Trim(rest[:end], "/")
 }
 
-func principalCanAccessRegistryScope(p principal, scope string) bool {
+func (s *apiServer) principalCanAccessRegistryScope(p principal, scope string) bool {
 	scope = strings.TrimSpace(scope)
 	if scope == "" {
 		return false
 	}
-	if registryCatalogScopeWritable(scope) {
+	cfg := s.registryAuthzSettings()
+	if cfg.catalogScopeWritable(scope) {
 		return true
 	}
-	if scope == sharedCatalogNamespace && !registrySharedCatalogWritableForUsers() {
+	if scope == sharedCatalogNamespace && !cfg.sharedCatalogWritableForUsers() {
 		return false
 	}
 	if p.HasNamespace(scope) || strings.TrimSpace(p.Subject) == scope {
@@ -159,20 +160,60 @@ func principalCanAccessRegistryScope(p principal, scope string) bool {
 	return false
 }
 
-func registryCatalogScopeWritable(scope string) bool {
-	scope = strings.TrimSpace(scope)
-	switch registryPlatformMode() {
-	case string(publishscope.Public):
-		return scope == publishscope.PublicRegistryAlias || stringInList(scope, registryModeCatalogNamespaces())
-	case string(publishscope.Org):
-		return scope == publishscope.OrgRegistryAlias || stringInList(scope, registryModeCatalogNamespaces())
-	default:
-		return false
+type registryAuthzConfig struct {
+	mode              string
+	catalogNamespaces map[string]struct{}
+}
+
+func (s *apiServer) registryAuthzSettings() *registryAuthzConfig {
+	s.registryAuthzOnce.Do(func() {
+		if s.registryAuthz == nil {
+			s.registryAuthz = newRegistryAuthzConfigFromEnv()
+		}
+	})
+	return s.registryAuthz
+}
+
+func newRegistryAuthzConfigFromEnv() *registryAuthzConfig {
+	mode := registryPlatformModeFromEnv()
+	catalogNamespaces := make(map[string]struct{})
+	for _, namespace := range registryModeCatalogNamespacesFromEnv(mode) {
+		if namespace = strings.TrimSpace(namespace); namespace != "" {
+			catalogNamespaces[namespace] = struct{}{}
+		}
+	}
+	return &registryAuthzConfig{
+		mode:              mode,
+		catalogNamespaces: catalogNamespaces,
 	}
 }
 
-func registrySharedCatalogWritableForUsers() bool {
-	switch registryPlatformMode() {
+func (cfg *registryAuthzConfig) catalogScopeWritable(scope string) bool {
+	if cfg == nil {
+		return false
+	}
+	scope = strings.TrimSpace(scope)
+	switch cfg.mode {
+	case string(publishscope.Public):
+		if scope == publishscope.PublicRegistryAlias {
+			return true
+		}
+	case string(publishscope.Org):
+		if scope == publishscope.OrgRegistryAlias {
+			return true
+		}
+	default:
+		return false
+	}
+	_, ok := cfg.catalogNamespaces[scope]
+	return ok
+}
+
+func (cfg *registryAuthzConfig) sharedCatalogWritableForUsers() bool {
+	if cfg == nil {
+		return false
+	}
+	switch cfg.mode {
 	case string(publishscope.Org), string(publishscope.Public):
 		return true
 	default:
@@ -180,7 +221,7 @@ func registrySharedCatalogWritableForUsers() bool {
 	}
 }
 
-func registryPlatformMode() string {
+func registryPlatformModeFromEnv() string {
 	mode := strings.TrimSpace(os.Getenv("PLATFORM_MODE"))
 	if mode == "" {
 		mode = strings.TrimSpace(os.Getenv("MCP_PLATFORM_MODE"))
@@ -195,7 +236,7 @@ func registryPlatformMode() string {
 	}
 }
 
-func registryDefaultOrgCatalogNamespace() string {
+func registryDefaultOrgCatalogNamespaceFromEnv() string {
 	if namespace := strings.TrimSpace(os.Getenv("PLATFORM_CATALOG_NAMESPACE")); namespace != "" {
 		return namespace
 	}
@@ -208,7 +249,7 @@ func registryDefaultOrgCatalogNamespace() string {
 	return publishscope.DefaultOrgCatalogNamespace
 }
 
-func registryDefaultPublicCatalogNamespace() string {
+func registryDefaultPublicCatalogNamespaceFromEnv() string {
 	if namespace := strings.TrimSpace(os.Getenv("PLATFORM_CATALOG_NAMESPACE")); namespace != "" {
 		return namespace
 	}
@@ -221,17 +262,16 @@ func registryDefaultPublicCatalogNamespace() string {
 	return publishscope.DefaultPublicCatalogNamespace
 }
 
-func registryModeCatalogNamespaces() []string {
-	mode := registryPlatformMode()
+func registryModeCatalogNamespacesFromEnv(mode string) []string {
 	if mode == string(publishscope.Tenant) {
 		return nil
 	}
 	namespaces := []string{}
 	switch mode {
 	case string(publishscope.Org):
-		namespaces = append(namespaces, registryDefaultOrgCatalogNamespace())
+		namespaces = append(namespaces, registryDefaultOrgCatalogNamespaceFromEnv())
 	case string(publishscope.Public):
-		namespaces = append(namespaces, registryDefaultPublicCatalogNamespace())
+		namespaces = append(namespaces, registryDefaultPublicCatalogNamespaceFromEnv())
 	}
 	raw := strings.TrimSpace(os.Getenv("PLATFORM_CATALOG_NAMESPACES"))
 	if raw == "" {
@@ -249,13 +289,4 @@ func registryModeCatalogNamespaces() []string {
 		}
 	}
 	return namespaces
-}
-
-func stringInList(value string, candidates []string) bool {
-	for _, candidate := range candidates {
-		if value == strings.TrimSpace(candidate) {
-			return true
-		}
-	}
-	return false
 }

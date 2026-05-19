@@ -4906,7 +4906,7 @@ Package registry owns routing for the registry top-level command.
 - [`func ResolveExternalRegistryConfig(flagCfg *config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error)`](#cli-registry-func-resolveexternalregistryconfig-flagcfg-config-externalregistryconfig-config-externalregistryconfig-error)
 - [`func ResolvePlatformRegistryURL(logger *zap.Logger) string`](#cli-registry-func-resolveplatformregistryurl-logger-zap-logger-string)
 - [`func RunRegistryProvision(mgr *RegistryManager, url, username, password, operatorImage string, dryRun bool) error`](#cli-registry-func-runregistryprovision-mgr-registrymanager-url-username-password-operatorimage-string-dryrun-bool-error)
-- [`func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error`](#cli-registry-func-runregistrypush-mgr-registrymanager-image-registryurl-name-scope-mode-helpernamespace-string-error)
+- [`func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error`](#cli-registry-func-runregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-mode-helpernamespace-string-error)
 - [`type RegistryManager struct`](#cli-registry-type-registrymanager-struct)
 - [`func DefaultRegistryManager(logger *zap.Logger) *RegistryManager`](#cli-registry-func-defaultregistrymanager-logger-zap-logger-registrymanager)
 - [`func NewRegistryManager(kubectl *core.KubectlClient, exec core.Executor, logger *zap.Logger) *RegistryManager`](#cli-registry-func-newregistrymanager-kubectl-core-kubectlclient-exec-core-executor-logger-zap-logger-registrymanager)
@@ -4961,9 +4961,9 @@ func RunRegistryProvision(mgr *RegistryManager, url, username, password, operato
 
 ```
 
-<a id="cli-registry-func-runregistrypush-mgr-registrymanager-image-registryurl-name-scope-mode-helpernamespace-string-error"></a>
+<a id="cli-registry-func-runregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-mode-helpernamespace-string-error"></a>
 ```text
-func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error
+func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error
     RunRegistryPush contains the registry push command flow for folder packages.
 ```
 

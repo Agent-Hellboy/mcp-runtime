@@ -145,6 +145,32 @@ servers:
 		t.Fatal("expected docker command")
 	})
 
+	t.Run("returns_error_before_build_when_explicit_metadata_invalid", func(t *testing.T) {
+		mock := &core.MockExecutor{}
+		defer core.SwapExecExecutor(mock)()
+
+		tmp := t.TempDir()
+		metadataFile := filepath.Join(tmp, "servers.yaml")
+		if err := os.WriteFile(metadataFile, []byte(`version: v1
+servers:
+  - name: public-server
+    scope: unsupported
+`), 0o600); err != nil {
+			t.Fatalf("write metadata: %v", err)
+		}
+
+		err := buildImage(logger, "public-server", "Dockerfile", metadataFile, ".", "registry.example.com", "v1", ".")
+		if err == nil {
+			t.Fatal("expected metadata load error")
+		}
+		if !errors.Is(err, core.ErrLoadMetadataFailed) {
+			t.Fatalf("expected ErrLoadMetadataFailed, got %v", err)
+		}
+		if mock.HasCommand("docker") {
+			t.Fatal("docker should not run when explicit metadata file is invalid")
+		}
+	})
+
 	t.Run("uses_platform_registry_when_registry_empty", func(t *testing.T) {
 		origConfig := core.DefaultCLIConfig
 		defer func() { core.DefaultCLIConfig = origConfig }()
