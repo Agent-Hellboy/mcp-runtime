@@ -427,6 +427,19 @@ analytics, audit, and observability.
 | `org` | `mcp-servers-org` | Signed-in users publish and browse the org-wide catalog and can still work in team namespaces. |
 | `public` | `mcp-servers-public` | Anonymous users can browse the public preview catalog; signed-in users publish public preview MCP servers and can still work in team namespaces. |
 
+For browser Google sign-in, provide the OAuth client ID before setup. For
+Google, setup uses the client ID as the OIDC audience and fills the standard
+Google issuer and JWKS URL when those values are not set explicitly:
+
+```bash
+export GOOGLE_CLIENT_ID=<client>.apps.googleusercontent.com
+./bin/mcp-runtime setup --with-tls --platform-mode public
+```
+
+For a non-Google OIDC provider, set `OIDC_ISSUER`, `OIDC_AUDIENCE`, and
+`OIDC_JWKS_URL` before setup. Reruns preserve existing values in
+`mcp-sentinel/mcp-sentinel-config`.
+
 For multi-team or tenant-separated deployments, keep setup as the platform
 install and provision one namespace per team with `mcp-runtime team init <slug>`
 or the platform API `mcp-runtime team create <slug>` flow. Both repo-managed

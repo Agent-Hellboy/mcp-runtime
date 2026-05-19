@@ -229,6 +229,12 @@ GET  /api/auth/me
 | `POST /api/auth/oidc` | Body: `id_token`. Requires configured issuer, audience, and JWKS. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
 | `GET /api/auth/me` | Requires auth. Returns `authenticated=true` and the current principal. |
 
+`setup` writes OIDC settings through `mcp-sentinel-config`. For Google sign-in,
+set `GOOGLE_CLIENT_ID` before setup; when the issuer, audience, and JWKS URL are
+empty, setup derives the standard Google OIDC values from that client ID. For
+other OIDC providers, set `OIDC_ISSUER`, `OIDC_AUDIENCE`, and `OIDC_JWKS_URL`
+explicitly.
+
 ## Gateway flow and headers
 
 ```mermaid

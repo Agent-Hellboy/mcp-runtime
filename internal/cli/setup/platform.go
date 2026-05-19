@@ -2475,10 +2475,15 @@ func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platform
 		"MCP_REGISTRY_INGRESS_HOST",
 		"PLATFORM_REGISTRY_URL",
 	} {
+		if envValue := setupAnalyticsConfigEnvValue(key); envValue != "" {
+			manifest.Data[key] = envValue
+			continue
+		}
 		if strings.TrimSpace(manifest.Data[key]) == "" && strings.TrimSpace(existingData[key]) != "" {
 			manifest.Data[key] = existingData[key]
 		}
 	}
+	applyGoogleOIDCDefaults(manifest.Data)
 	if registryEndpoint := strings.TrimSpace(core.GetRegistryEndpoint()); registryEndpoint != "" {
 		manifest.Data["MCP_REGISTRY_ENDPOINT"] = registryEndpoint
 	}
@@ -2507,6 +2512,37 @@ func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platform
 		return "", fmt.Errorf("encode analytics config manifest: %w", err)
 	}
 	return string(rendered), nil
+}
+
+func setupAnalyticsConfigEnvValue(key string) string {
+	candidates := []string{key}
+	if key == "GOOGLE_CLIENT_ID" {
+		candidates = append(candidates, "MCP_GOOGLE_CLIENT_ID")
+	} else if strings.HasPrefix(key, "OIDC_") {
+		candidates = append(candidates, "MCP_"+key)
+	}
+	for _, candidate := range candidates {
+		if value := strings.TrimSpace(os.Getenv(candidate)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func applyGoogleOIDCDefaults(data map[string]string) {
+	clientID := strings.TrimSpace(data["GOOGLE_CLIENT_ID"])
+	if clientID == "" {
+		return
+	}
+	if strings.TrimSpace(data["OIDC_ISSUER"]) == "" {
+		data["OIDC_ISSUER"] = "https://accounts.google.com"
+	}
+	if strings.TrimSpace(data["OIDC_AUDIENCE"]) == "" {
+		data["OIDC_AUDIENCE"] = clientID
+	}
+	if strings.TrimSpace(data["OIDC_JWKS_URL"]) == "" {
+		data["OIDC_JWKS_URL"] = "https://www.googleapis.com/oauth2/v3/certs"
+	}
 }
 
 func registryHostFromImage(image string) string {

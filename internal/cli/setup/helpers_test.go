@@ -992,6 +992,46 @@ data:
 	}
 }
 
+func TestRenderAnalyticsConfigManifestUsesGoogleEnvOnCleanInstall(t *testing.T) {
+	t.Setenv("GOOGLE_CLIENT_ID", "env-client.apps.googleusercontent.com")
+	kubectl := core.NewTestKubectlClient(&core.MockExecutor{})
+
+	rendered, err := renderAnalyticsConfigManifest(kubectl, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-sentinel-config
+  namespace: mcp-sentinel
+data:
+  GOOGLE_CLIENT_ID: ""
+  OIDC_ISSUER: ""
+  OIDC_AUDIENCE: ""
+  OIDC_JWKS_URL: ""
+  PLATFORM_MODE: "public"
+`, setupplan.PlatformModePublic, AnalyticsImageSet{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var payload struct {
+		Data map[string]string `yaml:"data"`
+	}
+	if err := yaml.Unmarshal([]byte(rendered), &payload); err != nil {
+		t.Fatalf("unmarshal rendered config: %v", err)
+	}
+	if got := payload.Data["GOOGLE_CLIENT_ID"]; got != "env-client.apps.googleusercontent.com" {
+		t.Fatalf("expected GOOGLE_CLIENT_ID from env, got %q", got)
+	}
+	if got := payload.Data["OIDC_ISSUER"]; got != "https://accounts.google.com" {
+		t.Fatalf("expected Google issuer default, got %q", got)
+	}
+	if got := payload.Data["OIDC_AUDIENCE"]; got != "env-client.apps.googleusercontent.com" {
+		t.Fatalf("expected OIDC_AUDIENCE to default to Google client ID, got %q", got)
+	}
+	if got := payload.Data["OIDC_JWKS_URL"]; got != "https://www.googleapis.com/oauth2/v3/certs" {
+		t.Fatalf("expected Google JWKS default, got %q", got)
+	}
+}
+
 func TestRenderAnalyticsConfigManifestAppliesExplicitPlatformMode(t *testing.T) {
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
