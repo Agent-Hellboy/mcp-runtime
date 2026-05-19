@@ -340,6 +340,8 @@ mcp-runtime cluster doctor
 
 **Provider status today:** `kind` and `eks` are active. `gke` and `aks` flags exist but their kubeconfig and provisioning helpers return planned/not-implemented paths in the current code.
 
+For `kind` provisioning, the CLI validates `--nodes`, checks that the Docker daemon is reachable when `KIND_EXPERIMENTAL_PROVIDER=docker` is set, lets kind auto-detect the container runtime when that env var is unset, and refuses to overwrite an existing kind cluster with the same `--name`.
+
 ## Common flows
 
 ```bash
