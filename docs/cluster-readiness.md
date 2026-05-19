@@ -39,11 +39,13 @@ workarounds for kubelet image pulls. In production, prefer a registry name that
 resolves through normal DNS and is trusted by every node without bypassing TLS
 verification.
 
-`./bin/mcp-runtime cluster doctor` is useful in both modes, but some checks are
-dev-registry oriented today: it expects the bundled `registry/registry` Service
-and a NodePort. If you run with a provisioned external registry, interpret those
-registry-specific failures against your registry architecture instead of copying
-the local workaround literally.
+`./bin/mcp-runtime cluster doctor` is useful in both modes. For the bundled
+registry it probes the in-cluster `registry/registry` Service and selects HTTP
+or HTTPS from the installed registry state: if `registry/registry-internal-tls`
+exists, doctor probes `https://registry.registry.svc.cluster.local:5000/v2/`;
+otherwise it probes the plain HTTP service. If you run with a provisioned
+external registry, interpret bundled-registry-specific failures against your
+registry architecture instead of copying the local workaround literally.
 
 Production readiness checklist:
 
@@ -113,7 +115,11 @@ nodes do not automatically use cluster DNS or trust the MCP Runtime CA for image
 pulls; configure containerd/k3s/your node runtime to resolve or mirror that host
 and trust the CA before relying on this mode. On k3s, using the registry
 ClusterIP as `MCP_REGISTRY_ENDPOINT=<cluster-ip>:5000` is often simpler because
-the generated internal certificate includes that IP SAN.
+the generated internal certificate includes that IP SAN. After setup, `cluster
+doctor` uses the `registry-internal-tls` Secret as the signal to probe the
+registry Service over HTTPS; a successful doctor registry probe confirms
+in-cluster push-helper reachability, while kubelet image pulls still depend on
+node/containerd trust for the exact rendered image host.
 
 ---
 
@@ -589,7 +595,7 @@ Missing pieces are warnings, not errors — the command surfaces them so you can
 - Checks the installed MCP Runtime namespaces, CRDs, operator, Traefik ingress, registry, Sentinel, and MCPServer reconciliation path. The MCPServer smoke uses an existing ready app image when available; otherwise it falls back to `registry.k8s.io/pause:3.9` and validates deployment/service/ingress reconciliation plus pod scheduling without a TCP readiness wait.
 - Prefers k3s' bundled Traefik in `kube-system/traefik` when the active cluster is k3s, then falls back to the repo-managed `traefik/traefik` install.
 - `setup` follows the same ownership model: it reuses active external Traefik and refuses to force-install the repo-managed Traefik when that would create a second active stack.
-- Verifies registry reachability, registry image-pull smoke behavior, and common pod image-pull failures.
+- Verifies registry reachability, registry image-pull smoke behavior, and common pod image-pull failures. The bundled registry reachability probe uses HTTPS when `registry/registry-internal-tls` is installed, and HTTP otherwise.
 - Reports `http: server gave HTTP response to HTTPS client` when kubelet/containerd tried HTTPS against the HTTP dev registry, including the affected pod and image where possible.
 - Streams the current check before running it, including helper pod probes and waits, so a slow run shows what it is doing.
 - Prints the distribution-specific registry remediation hint only when registry or image-pull checks fail; Traefik and Sentinel failures use their own check-specific remedies.

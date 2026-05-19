@@ -1228,9 +1228,10 @@ func checkDoctorACMEHTTP01Exposure(kubectl core.KubectlRunner, distro Distributi
 func checkMCPServersDNSAndNetwork(kubectl core.KubectlRunner) DoctorCheck {
 	podName := fmt.Sprintf("mcp-runtime-doctor-dns-%d", time.Now().UnixNano())
 	image := "curlimages/curl:8.7.1"
+	registryURL := doctorRegistryServiceURL(kubectl)
 	curlArgs := []string{
-		"-sSI", "--connect-timeout", "5", "--max-time", "15",
-		"http://registry.registry.svc.cluster.local:5000/v2/",
+		"-skI", "--connect-timeout", "5", "--max-time", "15",
+		registryURL,
 	}
 	defer func() {
 		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", doctorMCPServersNamespace, "--ignore-not-found"})
@@ -1293,7 +1294,7 @@ func checkMCPServersDNSAndNetwork(kubectl core.KubectlRunner) DoctorCheck {
 	return DoctorCheck{
 		Name:   "mcp-servers DNS/network",
 		OK:     true,
-		Detail: "can resolve and reach registry service from mcp-servers namespace",
+		Detail: fmt.Sprintf("can resolve and reach registry service from mcp-servers namespace via %s", doctorRegistryServiceScheme(registryURL)),
 	}
 }
 
@@ -1431,6 +1432,7 @@ func resolveIngressRouteProbeTarget(kubectl core.KubectlRunner, namespace string
 // non-destructively.
 func checkRegistryReachableFromCluster(kubectl core.KubectlRunner) DoctorCheck {
 	podName := fmt.Sprintf("mcp-runtime-doctor-curl-%d", time.Now().UnixNano())
+	registryURL := doctorRegistryServiceURL(kubectl)
 	args := []string{
 		"run", "-n", "registry",
 		"--rm", "--restart=Never", "--attach",
@@ -1438,8 +1440,8 @@ func checkRegistryReachableFromCluster(kubectl core.KubectlRunner) DoctorCheck {
 		"--quiet",
 		"--image=curlimages/curl:8.7.1",
 		podName,
-		"--command", "--", "curl", "-sSI", "--connect-timeout", "5", "--max-time", "15",
-		"http://registry.registry.svc.cluster.local:5000/v2/",
+		"--command", "--", "curl", "-skI", "--connect-timeout", "5", "--max-time", "15",
+		registryURL,
 	}
 	cmd, err := kubectl.CommandArgs(args)
 	if err != nil {
@@ -1471,8 +1473,33 @@ func checkRegistryReachableFromCluster(kubectl core.KubectlRunner) DoctorCheck {
 	return DoctorCheck{
 		Name:   "registry reachability (in-cluster)",
 		OK:     true,
-		Detail: "HTTP 200 from registry.registry.svc.cluster.local:5000/v2/",
+		Detail: fmt.Sprintf("HTTP 200 from %s", registryURL),
 	}
+}
+
+func doctorRegistryServiceURL(kubectl core.KubectlRunner) string {
+	scheme := "http"
+	if doctorRegistryInternalTLSConfigured(kubectl) {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://registry.registry.svc.cluster.local:5000/v2/", scheme)
+}
+
+func doctorRegistryServiceScheme(registryURL string) string {
+	scheme, _, found := strings.Cut(registryURL, "://")
+	if !found || strings.TrimSpace(scheme) == "" {
+		return "registry service"
+	}
+	return strings.ToUpper(scheme)
+}
+
+func doctorRegistryInternalTLSConfigured(kubectl core.KubectlRunner) bool {
+	out, err := readKubectlOutput(kubectl, []string{
+		"get", "secret", "registry-internal-tls",
+		"-n", "registry",
+		"-o", "jsonpath={.metadata.name}",
+	})
+	return err == nil && strings.TrimSpace(out) == "registry-internal-tls"
 }
 
 func checkMCPServersImagePullSecrets(kubectl core.KubectlRunner, namespace string) DoctorCheck {
