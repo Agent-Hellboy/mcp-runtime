@@ -4,6 +4,8 @@
 IMG ?= mcp-runtime-operator:latest
 ARCH ?= $(shell go env GOARCH)
 DOCKER_PLATFORM ?= linux/$(ARCH)
+DOCKER_TARGETOS ?= $(word 1,$(subst /, ,$(DOCKER_PLATFORM)))
+DOCKER_TARGETARCH ?= $(word 2,$(subst /, ,$(DOCKER_PLATFORM)))
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
 CRD_OPTIONS ?= "crd:trivialVersions=true,preserveUnknownFields=false"
 
@@ -69,12 +71,12 @@ run: manifests generate fmt vet ## Run operator against the configured Kubernete
 
 docker-build: test ## Build Docker image with the operator.
 	@echo "Building Docker image: ${IMG}"
-	DOCKER_BUILDKIT=0 docker build --platform=${DOCKER_PLATFORM} -t ${IMG} -f Dockerfile.operator .
+	DOCKER_BUILDKIT=0 docker build --platform=${DOCKER_PLATFORM} --build-arg TARGETOS=${DOCKER_TARGETOS} --build-arg TARGETARCH=${DOCKER_TARGETARCH} -t ${IMG} -f Dockerfile.operator .
 	@echo "Docker image built: ${IMG}"
 
 docker-build-operator-no-test: manifests generate fmt vet ## Build Docker image without running tests (used for test mode / airgapped CI).
 	@echo "Building Docker image (tests skipped): ${IMG}"
-	DOCKER_BUILDKIT=0 docker build --platform=${DOCKER_PLATFORM} -t ${IMG} -f Dockerfile.operator .
+	DOCKER_BUILDKIT=0 docker build --platform=${DOCKER_PLATFORM} --build-arg TARGETOS=${DOCKER_TARGETOS} --build-arg TARGETARCH=${DOCKER_TARGETARCH} -t ${IMG} -f Dockerfile.operator .
 	@echo "Docker image built: ${IMG}"
 
 docker-push: ## Push Docker image to registry.

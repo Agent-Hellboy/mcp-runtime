@@ -614,6 +614,16 @@ namespace. Use `/api/dashboard/summary`, `/api/events`, or
 uses `/api/analytics/usage` for its MCP server, human/agent, tool, and decision
 rollups.
 
+Normal tenant users should use the My Activity tab for scoped observability.
+Server rows with a readable, scoped `MCPServer` expose Prometheus and Grafana
+actions by default. Prometheus is backed by
+`/api/runtime/observability/prometheus/query`; Grafana opens the platform API's
+scoped server dashboard. Both paths verify the caller against the exact
+namespace/server and expand only allowlisted Prometheus queries. In the bundled
+stack, those queries read `mcp_gateway_*` series scraped from each gateway
+sidecar's `/metrics` endpoint. The raw `/grafana` and `/prometheus` routes
+remain admin-only cluster-wide views in the bundled stack.
+
 To exercise policy isolation between two `MCPServer` resources and per-subject
 grant enforcement on the same cluster, see
 [Sentinel → Verifying per-server policy isolation](sentinel.md#verifying-per-server-policy-isolation).

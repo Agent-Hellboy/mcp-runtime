@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"mcp-runtime/pkg/serviceutil"
@@ -55,6 +57,7 @@ func main() {
 
 	srv := &gatewayServer{
 		proxy:                 proxy,
+		metrics:               newGatewayMetrics(prometheus.DefaultRegisterer),
 		analyticsURL:          analyticsURL,
 		apiKey:                apiKey,
 		source:                source,
@@ -84,6 +87,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/", srv.handleGateway)
 
 	shutdown, err := initTracer("mcp-gateway")

@@ -1,4 +1,6 @@
 FROM golang:1.26.0 AS build
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 
 # Copy root module first (for replace directive)
@@ -16,7 +18,7 @@ COPY services/api/internal/ ./services/api/internal/
 
 # Build from service directory
 RUN cd services/api && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/api .
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /out/api .
 
 FROM gcr.io/distroless/base-debian12
 WORKDIR /app

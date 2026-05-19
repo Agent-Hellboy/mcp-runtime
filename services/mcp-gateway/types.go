@@ -56,6 +56,7 @@ type analyticsEvent struct {
 
 type gatewayServer struct {
 	proxy                 *httputil.ReverseProxy
+	metrics               *gatewayMetrics
 	analyticsURL          string
 	apiKey                string
 	source                string

@@ -1187,6 +1187,24 @@ function createUserServerActionsCell(server) {
   });
   actions.appendChild(analyticsButton);
 
+  if (server.observability?.prometheus?.queries?.length) {
+    const metricsButton = document.createElement("button");
+    metricsButton.type = "button";
+    metricsButton.className = "ghost action-btn";
+    metricsButton.textContent = "Prometheus";
+    metricsButton.addEventListener("click", () => openScopedObservability(server, "prometheus"));
+    actions.appendChild(metricsButton);
+  }
+
+  if (server.observability?.grafana?.available && server.observability?.grafana?.url) {
+    const grafanaButton = document.createElement("button");
+    grafanaButton.type = "button";
+    grafanaButton.className = "ghost action-btn";
+    grafanaButton.textContent = "Grafana";
+    grafanaButton.addEventListener("click", () => openScopedObservability(server, "grafana"));
+    actions.appendChild(grafanaButton);
+  }
+
   if (server.endpoint) {
     const copyButton = document.createElement("button");
     copyButton.type = "button";
@@ -1207,6 +1225,35 @@ function createUserServerActionsCell(server) {
 
   cell.appendChild(actions);
   return cell;
+}
+
+async function openScopedObservability(server, target) {
+  if (!server?.namespace || !server?.name) return;
+  try {
+    const links = server.observability || await fetchJSON(
+      `/runtime/observability/links?namespace=${encodeURIComponent(server.namespace)}&server=${encodeURIComponent(server.name)}`
+    );
+    if (target === "grafana") {
+      if (links?.grafana?.available && links.grafana.url) {
+        window.open(links.grafana.url, "_blank", "noopener");
+        return;
+      }
+      showToast(links?.grafana?.reason || "Grafana is not available for this server", "error");
+      return;
+    }
+    const queries = links?.prometheus?.queries || [];
+    const requestRate = queries.find((query) => query.id === "request_rate");
+    const query = requestRate || queries[0];
+    if (!query?.url) {
+      showToast("Prometheus metrics are not available for this server", "error");
+      return;
+    }
+    window.open(query.url, "_blank", "noopener");
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to open observability link:", err);
+    showToast(readErrorMessage(err, "Observability is unavailable"), "error");
+  }
 }
 
 function renderUserDashboardAnalytics(data) {
