@@ -169,6 +169,53 @@ func TestHandleDeploymentApplyAdminUsesRequestedNamespace(t *testing.T) {
 	}
 }
 
+func TestResolveDeployImageReference(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
+	t.Setenv("PLATFORM_MODE", "public")
+
+	tests := []struct {
+		name      string
+		image     string
+		namespace string
+		teamSlug  string
+		want      string
+	}{
+		{
+			name:      "public short image",
+			image:     "go-example",
+			namespace: defaultPublicCatalogNamespace,
+			want:      "10.96.223.152:5000/public/go-example",
+		},
+		{
+			name:      "public scoped repository",
+			image:     "public/go-example",
+			namespace: defaultPublicCatalogNamespace,
+			want:      "10.96.223.152:5000/public/go-example",
+		},
+		{
+			name:      "team short image",
+			image:     "go-example:v0.1.0",
+			namespace: "mcp-team-acme",
+			teamSlug:  "acme",
+			want:      "10.96.223.152:5000/acme/go-example:v0.1.0",
+		},
+		{
+			name:      "explicit registry",
+			image:     "registry.example.com/public/go-example:v0.1.0",
+			namespace: defaultPublicCatalogNamespace,
+			want:      "registry.example.com/public/go-example:v0.1.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ResolveDeployImageReference(tt.image, tt.namespace, tt.teamSlug); got != tt.want {
+				t.Fatalf("ResolveDeployImageReference() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestHandleDeploymentApplyRejectsInvalidVersionTag(t *testing.T) {
 	client := kubernetesfake.NewSimpleClientset()
 	server := &RuntimeServer{

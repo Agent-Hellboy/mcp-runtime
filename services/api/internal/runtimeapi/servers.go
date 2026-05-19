@@ -196,6 +196,7 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	if isTeamNamespace {
 		teamSlug = strings.TrimSpace(team.Slug)
 	}
+	req.Spec.Image = ResolveDeployImageReference(req.Spec.Image, namespace, teamSlug)
 	if err := ValidateDeployImage(req.Spec.Image, namespace, teamSlug, p.Role); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return

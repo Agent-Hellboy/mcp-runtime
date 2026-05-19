@@ -551,7 +551,7 @@ Author lightweight metadata YAML, generate CRDs, and deploy:
 
 `<exact-image-ref-from-build>` may be a resolved registry endpoint such as
 `10.43.109.51:5000/my-server:v1.0.0` or, for `scope: tenant` metadata after
-platform login, `10.43.109.51:5000/<tenant-or-team>/my-server:v1.0.0`. Use
+platform login, `10.43.109.51:5000/<team-slug>/my-server:v1.0.0`. Use
 `--scope public` or `--scope org` when the metadata targets those platform
 catalog scopes.
 

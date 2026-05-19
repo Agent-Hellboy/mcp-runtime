@@ -302,12 +302,12 @@ mcp-runtime server logs payments --follow
 # Build (push lives under registry)
 mcp-runtime server build image payments --tag v1
 mcp-runtime registry push --scope public --image <exact-image-ref-from-build>
-mcp-runtime server deploy payments --scope public --image registry.example.com/public/payments --tag v1
+mcp-runtime server deploy payments --scope public --image payments --tag v1
 ```
 
 `server patch` accepts inline `--patch` or `--patch-file` with `merge`, `json`, or `strategic` modes.
 
-`server build image` updates matching `.mcp` metadata when you use the metadata-driven pipeline. It can resolve to a concrete host such as `10.43.109.51:5000/public/payments:v1` when metadata sets `scope: public`, or to the authenticated team repository prefix when metadata sets `scope: tenant` and platform credentials are configured. Push that exact ref after logging in to the platform. The command does not deploy by itself; push and deploy are separate steps. `server deploy --scope public` and `--scope org` let the platform resolve the active catalog namespace; `--scope tenant` uses the authenticated user's team namespace unless `--team` or `--namespace` selects one explicitly.
+`server build image` updates matching `.mcp` metadata when you use the metadata-driven pipeline. It can resolve to a concrete host such as `10.43.109.51:5000/public/payments:v1` when metadata sets `scope: public`, or to the authenticated team repository prefix when metadata sets `scope: tenant` and platform credentials are configured. Push that exact ref after logging in to the platform. The command does not deploy by itself; push and deploy are separate steps. `server deploy --scope public` and `--scope org` let the platform resolve the active catalog namespace; `--scope tenant` uses the authenticated user's team namespace unless `--team` or `--namespace` selects one explicitly. Deploy accepts a short image name and expands it through the platform API to the configured registry plus the active scope prefix.
 
 ## sentinel
 

@@ -216,10 +216,14 @@ the `MCPServer` for you:
 docker build -t payments:v1.0.0 .
 mcp-runtime auth login --api-url https://platform.example.com
 ./bin/mcp-runtime registry push --scope public --image payments:v1.0.0
-./bin/mcp-runtime server deploy payments --scope public --image registry.example.com/public/payments --tag v1.0.0
+./bin/mcp-runtime server deploy payments --scope public --image payments --tag v1.0.0
 ```
 
-Short names like `payments:v1.0.0` are valid only when that exact local image tag exists.
+Short names like `payments:v1.0.0` are valid for `registry push` when that
+exact local image tag exists. For `server deploy`, the platform API accepts
+short names such as `payments` and resolves them to the configured registry and
+scope prefix, for example `<registry>/public/payments` in public mode or
+`<registry>/<team-slug>/payments` in tenant mode.
 `server deploy --scope public` resolves the platform public catalog namespace;
 `--scope org` resolves the org catalog namespace; `--scope tenant` uses the
 authenticated user's team namespace unless `--team` or `--namespace` selects one

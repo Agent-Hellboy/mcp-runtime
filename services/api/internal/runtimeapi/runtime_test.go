@@ -540,7 +540,7 @@ func TestRuntimeServerApplyPublicModeDefaultsPublicNamespace(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
 		"name": "demo",
-		"spec": {"image":"registry.example.com/demo"}
+		"spec": {"image":"registry.example.com/public/demo"}
 	}`)))
 	request = request.WithContext(withPrincipal(request.Context(), principal{
 		Role:      roleUser,
@@ -607,6 +607,91 @@ func TestRuntimeServerApplyPublicScopeResolvesCatalogNamespace(t *testing.T) {
 	}
 	if current.Labels[platformScopeLabel] != "public" {
 		t.Fatalf("scope label = %q, want public", current.Labels[platformScopeLabel])
+	}
+}
+
+func TestRuntimeServerApplyPublicScopeExpandsShortImage(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "go-example",
+		"scope": "public",
+		"spec": {"image":"go-example"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "mcp-team-acme",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	current, err := server.controlPlane().GetServer(context.Background(), defaultPublicCatalogNamespace, "go-example")
+	if err != nil {
+		t.Fatalf("GetServer: %v", err)
+	}
+	if got, want := current.Spec.Image, "10.96.223.152:5000/public/go-example"; got != want {
+		t.Fatalf("image = %q, want %q", got, want)
+	}
+}
+
+func TestRuntimeServerApplyTenantScopeExpandsShortImageToTeamSlug(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "tenant")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "go-example",
+		"scope": "tenant",
+		"spec": {"image":"go-example"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:    roleUser,
+		Subject: "user-1",
+		Teams: []principalTeam{
+			{ID: "team-acme", Slug: "acme", Name: "Acme", Namespace: "mcp-team-acme", Role: "owner"},
+		},
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	current, err := server.controlPlane().GetServer(context.Background(), "mcp-team-acme", "go-example")
+	if err != nil {
+		t.Fatalf("GetServer: %v", err)
+	}
+	if got, want := current.Spec.Image, "10.96.223.152:5000/acme/go-example"; got != want {
+		t.Fatalf("image = %q, want %q", got, want)
+	}
+	if got := current.Spec.TeamID; got != "team-acme" {
+		t.Fatalf("teamID = %q, want team-acme", got)
 	}
 }
 

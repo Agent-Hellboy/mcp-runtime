@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -270,6 +271,7 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant deployments require a team namespace"})
 		return
 	}
+	image = ResolveDeployImageReference(image, namespace, teamSlug)
 	if err := ValidateDeployImage(image, namespace, teamSlug, p.Role); err != nil {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, image, err.Error()))
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -904,13 +906,95 @@ func ValidateDeployImage(image, namespace, teamSlug, role string) error {
 			return fmt.Errorf("registry %q is not approved", host)
 		}
 	}
-	if role != roleAdmin && len(parts) >= 3 {
+	if role != roleAdmin {
 		expected := allowedImageRepositoryScopes(namespace, teamSlug)
-		if !stringInSlice(parts[1], expected) {
+		if len(parts) < 3 || !stringInSlice(parts[1], expected) {
 			return fmt.Errorf("image repository must be scoped to %s", strings.Join(quoteStrings(expected), " or "))
 		}
 	}
 	return nil
+}
+
+func ResolveDeployImageReference(image, namespace, teamSlug string) string {
+	image = strings.TrimSpace(image)
+	if image == "" || imageReferenceHasRegistry(image) {
+		return image
+	}
+	registry := defaultPlatformRegistryHost()
+	if registry == "" {
+		return image
+	}
+	parts := strings.Split(image, "/")
+	allowedScopes := allowedImageRepositoryScopes(namespace, teamSlug)
+	if len(parts) > 1 && stringInSlice(parts[0], allowedScopes) {
+		return registry + "/" + image
+	}
+	scope := defaultImageRepositoryScope(namespace, teamSlug)
+	if scope == "" {
+		return registry + "/" + image
+	}
+	return registry + "/" + scope + "/" + image
+}
+
+func imageReferenceHasRegistry(image string) bool {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return false
+	}
+	first, _, found := strings.Cut(image, "/")
+	if !found {
+		return false
+	}
+	return strings.Contains(first, ".") || strings.Contains(first, ":") || first == "localhost"
+}
+
+func defaultPlatformRegistryHost() string {
+	for _, key := range []string{
+		"MCP_REGISTRY_ENDPOINT",
+		"PLATFORM_REGISTRY_URL",
+		"PROVISIONED_REGISTRY_URL",
+		"MCP_REGISTRY_INGRESS_HOST",
+		"MCP_REGISTRY_HOST",
+	} {
+		if host := normalizeImageRegistryHost(os.Getenv(key)); host != "" {
+			return host
+		}
+	}
+	if domain := normalizeImageRegistryHost(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
+		return "registry." + strings.TrimPrefix(domain, "registry.")
+	}
+	return "registry.registry.svc.cluster.local:5000"
+}
+
+func normalizeImageRegistryHost(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimSuffix(value, "/")
+	if value == "" {
+		return ""
+	}
+	if scheme := strings.Index(value, "://"); scheme >= 0 {
+		value = value[scheme+3:]
+	}
+	if before, _, found := strings.Cut(value, "/"); found {
+		value = before
+	}
+	return strings.TrimSpace(value)
+}
+
+func defaultImageRepositoryScope(namespace, teamSlug string) string {
+	teamSlug = strings.TrimSpace(teamSlug)
+	if teamSlug != "" {
+		return teamSlug
+	}
+	if isModeCatalogNamespace(namespace) {
+		switch PlatformMode() {
+		case platformModePublic:
+			return publishscope.PublicRegistryAlias
+		case platformModeOrg:
+			return publishscope.OrgRegistryAlias
+		}
+	}
+	return strings.TrimSpace(namespace)
 }
 
 func allowedImageRepositoryScopes(namespace, teamSlug string) []string {

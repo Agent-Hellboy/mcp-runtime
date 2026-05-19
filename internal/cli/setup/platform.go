@@ -2359,7 +2359,7 @@ func applyRenderedManifest(kubectl core.KubectlRunner, manifestPath string, imag
 	}
 	rendered := ""
 	if manifestPath == "k8s/01-config.yaml" {
-		rendered, err = renderAnalyticsConfigManifest(kubectl, string(content), platformMode)
+		rendered, err = renderAnalyticsConfigManifest(kubectl, string(content), platformMode, images)
 	} else {
 		rendered, err = renderAnalyticsManifest(string(content), images, imagePullSecretName, platformMode)
 	}
@@ -2444,7 +2444,7 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 	return rendered, nil
 }
 
-func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platformMode string) (string, error) {
+func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platformMode string, images AnalyticsImageSet) (string, error) {
 	type configMapManifest struct {
 		APIVersion string            `yaml:"apiVersion"`
 		Kind       string            `yaml:"kind"`
@@ -2471,10 +2471,22 @@ func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platform
 		"OIDC_JWKS_URL",
 		"MCP_PLATFORM_DOMAIN",
 		"MCP_MCP_INGRESS_HOST",
+		"MCP_REGISTRY_ENDPOINT",
+		"MCP_REGISTRY_INGRESS_HOST",
+		"PLATFORM_REGISTRY_URL",
 	} {
 		if strings.TrimSpace(manifest.Data[key]) == "" && strings.TrimSpace(existingData[key]) != "" {
 			manifest.Data[key] = existingData[key]
 		}
+	}
+	if registryEndpoint := strings.TrimSpace(core.GetRegistryEndpoint()); registryEndpoint != "" {
+		manifest.Data["MCP_REGISTRY_ENDPOINT"] = registryEndpoint
+	}
+	if registryIngressHost := strings.TrimSpace(core.GetRegistryIngressHost()); registryIngressHost != "" {
+		manifest.Data["MCP_REGISTRY_INGRESS_HOST"] = registryIngressHost
+	}
+	if registryHost := registryHostFromImage(images.API); registryHost != "" {
+		manifest.Data["PLATFORM_REGISTRY_URL"] = registryHost
 	}
 	if existingMode, ok := setupplan.NormalizePlatformMode(existingData["PLATFORM_MODE"]); ok {
 		requestedMode, requestedOK := setupplan.NormalizePlatformMode(platformMode)
@@ -2495,6 +2507,22 @@ func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platform
 		return "", fmt.Errorf("encode analytics config manifest: %w", err)
 	}
 	return string(rendered), nil
+}
+
+func registryHostFromImage(image string) string {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return ""
+	}
+	repo, _ := ref.SplitImage(image)
+	first, _, found := strings.Cut(repo, "/")
+	if !found {
+		return ""
+	}
+	if strings.Contains(first, ".") || strings.Contains(first, ":") || first == "localhost" {
+		return first
+	}
+	return ""
 }
 
 func existingConfigMapData(kubectl core.KubectlRunner, namespace, name string) (map[string]string, error) {

@@ -55,4 +55,7 @@ func TestValidateDeployImageScope(t *testing.T) {
 	if err := ValidateDeployImage("registry.example.com/other/demo:latest", "mcp-team-core", "core", roleUser); err == nil {
 		t.Fatal("expected image scope validation error for non-admin")
 	}
+	if err := ValidateDeployImage("registry.example.com/demo:latest", "mcp-team-core", "core", roleUser); err == nil {
+		t.Fatal("expected unscoped image validation error for non-admin")
+	}
 }

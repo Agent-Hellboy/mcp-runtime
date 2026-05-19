@@ -964,7 +964,7 @@ data:
   OIDC_AUDIENCE: ""
   OIDC_JWKS_URL: ""
   PLATFORM_MODE: "tenant"
-`, setupplan.PlatformModeTenant)
+`, setupplan.PlatformModeTenant, AnalyticsImageSet{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1013,7 +1013,7 @@ metadata:
   namespace: mcp-sentinel
 data:
   PLATFORM_MODE: "tenant"
-`, setupplan.PlatformModeOrg)
+`, setupplan.PlatformModeOrg, AnalyticsImageSet{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1026,6 +1026,55 @@ data:
 	}
 	if got := payload.Data["PLATFORM_MODE"]; got != setupplan.PlatformModeOrg {
 		t.Fatalf("expected explicit platform mode to win, got %q", got)
+	}
+}
+
+func TestRenderAnalyticsConfigManifestSetsRegistryResolutionEnv(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	core.DefaultCLIConfig = &core.CLIConfig{
+		RegistryEndpoint:    "10.96.223.152:5000",
+		RegistryIngressHost: "registry.mcpruntime.org",
+	}
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if commandHasArgs(spec, "get", "configmap", "mcp-sentinel-config", "-n", "mcp-sentinel", "-o", "json") {
+				return &core.MockCommand{Args: spec.Args, OutputData: []byte(`{"data":{}}`)}
+			}
+			return &core.MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	rendered, err := renderAnalyticsConfigManifest(kubectl, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-sentinel-config
+  namespace: mcp-sentinel
+data:
+  PLATFORM_MODE: "tenant"
+  PLATFORM_REGISTRY_URL: ""
+  MCP_REGISTRY_ENDPOINT: ""
+  MCP_REGISTRY_INGRESS_HOST: ""
+`, setupplan.PlatformModePublic, AnalyticsImageSet{API: "10.96.223.152:5000/mcp-sentinel-api:a1f967c"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var payload struct {
+		Data map[string]string `yaml:"data"`
+	}
+	if err := yaml.Unmarshal([]byte(rendered), &payload); err != nil {
+		t.Fatalf("unmarshal rendered config: %v", err)
+	}
+	if got := payload.Data["MCP_REGISTRY_ENDPOINT"]; got != "10.96.223.152:5000" {
+		t.Fatalf("MCP_REGISTRY_ENDPOINT = %q, want cluster endpoint", got)
+	}
+	if got := payload.Data["MCP_REGISTRY_INGRESS_HOST"]; got != "registry.mcpruntime.org" {
+		t.Fatalf("MCP_REGISTRY_INGRESS_HOST = %q, want public host", got)
+	}
+	if got := payload.Data["PLATFORM_REGISTRY_URL"]; got != "10.96.223.152:5000" {
+		t.Fatalf("PLATFORM_REGISTRY_URL = %q, want API image registry", got)
 	}
 }
 
@@ -1051,7 +1100,7 @@ metadata:
   namespace: mcp-sentinel
 data:
   PLATFORM_MODE: "tenant"
-`, setupplan.PlatformModeTenant)
+`, setupplan.PlatformModeTenant, AnalyticsImageSet{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1085,7 +1134,7 @@ metadata:
   name: mcp-sentinel-config
 data:
   PLATFORM_MODE: "tenant"
-`, setupplan.PlatformModeTenant)
+`, setupplan.PlatformModeTenant, AnalyticsImageSet{})
 	if err != nil {
 		t.Fatalf("renderAnalyticsConfigManifest returned error: %v", err)
 	}
