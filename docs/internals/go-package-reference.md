@@ -3814,6 +3814,7 @@ Package kube contains shared kubectl-oriented helpers for CLI commands.
 - [`func ApplyManifestContentWithNamespace[T Command](commandArgs func([]string) (T, error), manifest, namespace string) error`](#cli-kubernetes-helpers-func-applymanifestcontentwithnamespace-t-command-commandargs-func-string-t-error-manifest-namespace-string-error)
 - [`func ApplyManifestFromFile[T Command](commandArgs func([]string) (T, error), file string, stdout, stderr io.Writer) error`](#cli-kubernetes-helpers-func-applymanifestfromfile-t-command-commandargs-func-string-t-error-file-string-stdout-stderr-io-writer-error)
 - [`func EnsureNamespace[T Command](commandArgs func([]string) (T, error), name string) error`](#cli-kubernetes-helpers-func-ensurenamespace-t-command-commandargs-func-string-t-error-name-string-error)
+- [`func EnsureNamespaceWithLabels[T Command](commandArgs func([]string) (T, error), name string, labels map[string]string) error`](#cli-kubernetes-helpers-func-ensurenamespacewithlabels-t-command-commandargs-func-string-t-error-name-string-labels-map-string-string-error)
 - [`func NormalizePatchDocument(raw string) (string, error)`](#cli-kubernetes-helpers-func-normalizepatchdocument-raw-string-string-error)
 - [`func NormalizePatchFile(file string) (string, error)`](#cli-kubernetes-helpers-func-normalizepatchfile-file-string-string-error)
 - [`func ReadFileAtPath(path string) ([]byte, error)`](#cli-kubernetes-helpers-func-readfileatpath-path-string-byte-error)
@@ -3850,6 +3851,17 @@ func ApplyManifestFromFile[T Command](commandArgs func([]string) (T, error), fil
 ```text
 func EnsureNamespace[T Command](commandArgs func([]string) (T, error), name string) error
     EnsureNamespace applies/creates a namespace idempotently.
+
+```
+
+<a id="cli-kubernetes-helpers-func-ensurenamespacewithlabels-t-command-commandargs-func-string-t-error-name-string-labels-map-string-string-error"></a>
+```text
+func EnsureNamespaceWithLabels[T Command](commandArgs func([]string) (T, error), name string, labels map[string]string) error
+    EnsureNamespaceWithLabels applies/creates a namespace idempotently and sets
+    labels via kubectl apply. Labels already present on an existing namespace
+    are preserved unless the same key is also supplied here (kubectl apply
+    will set them to the new value). Pass nil/empty labels for a label-less
+    namespace.
 
 ```
 

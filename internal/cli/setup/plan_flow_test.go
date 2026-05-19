@@ -934,3 +934,107 @@ func TestSetupPlatformWithDeps_RegistryAuthReenabledOnFailure(t *testing.T) {
 		t.Fatalf("expected registry auth re-enable on failure (defer), got calls: %v", rec.calls)
 	}
 }
+
+// TestSetupPlatformWithDeps_CatalogNamespace verifies setup pre-creates the
+// shared catalog namespace (mcp-servers-public / mcp-servers-org) with the
+// labels the platform API expects so non-admin users can publish without the
+// API SA needing cluster-wide namespace-create RBAC. Tenant mode has no
+// shared catalog and must not call ensure.
+func TestSetupPlatformWithDeps_CatalogNamespace(t *testing.T) {
+	cases := []struct {
+		mode       string
+		wantNS     string
+		wantScope  string
+		wantCalled bool
+	}{
+		{mode: setupplan.PlatformModePublic, wantNS: setupplan.DefaultPublicCatalogNamespace, wantScope: "public", wantCalled: true},
+		{mode: setupplan.PlatformModeOrg, wantNS: setupplan.DefaultOrgCatalogNamespace, wantScope: "org", wantCalled: true},
+		{mode: setupplan.PlatformModeTenant, wantCalled: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.mode, func(t *testing.T) {
+			var (
+				gotNS     string
+				gotLabels map[string]string
+				calls     int
+			)
+			deps := SetupDeps{
+				ResolveExternalRegistryConfig: func(*config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error) {
+					return nil, nil
+				},
+				ClusterManager:                  &fakeClusterManager{rec: &callRecorder{}},
+				RegistryManager:                 &fakeRegistryManager{rec: &callRecorder{}},
+				LoginRegistry:                   func(*zap.Logger, string, string, string) error { return nil },
+				DeployRegistry:                  func(*zap.Logger, string, int, string, string, string) error { return nil },
+				WaitForDeploymentAvailable:      func(*zap.Logger, string, string, string, time.Duration) error { return nil },
+				PrintDeploymentDiagnostics:      func(string, string, string) {},
+				SetupTLS:                        func(*zap.Logger, setupplan.Plan) error { return nil },
+				BuildOperatorImage:              func(string) error { return nil },
+				PushOperatorImage:               func(string) error { return nil },
+				BuildGatewayProxyImage:          func(string) error { return nil },
+				PushGatewayProxyImage:           func(string) error { return nil },
+				EnsureNamespace:                 func(string) error { return nil },
+				ResolvePlatformRegistryURL:      func(*zap.Logger) string { return "registry.local" },
+				PushOperatorImageToInternal:     func(*zap.Logger, string, string, string) error { return nil },
+				PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
+				DeployOperatorManifests:         func(*zap.Logger, string, string, []string) error { return nil },
+				ConfigureProvisionedRegistryEnv: func(*config.ExternalRegistryConfig, string) error { return nil },
+				RestartDeployment:               func(string, string) error { return nil },
+				CheckCRDInstalled:               func(string) error { return nil },
+				GetDeploymentTimeout:            func() time.Duration { return time.Second },
+				GetRegistryPort:                 func() int { return 5000 },
+				OperatorImageFor: func(*config.ExternalRegistryConfig) string {
+					return "registry.local/mcp-runtime-operator:latest"
+				},
+				GatewayProxyImageFor: func(*config.ExternalRegistryConfig) string {
+					return "registry.local/mcp-sentinel-mcp-gateway:latest"
+				},
+				EnsureCatalogNamespace: func(ns string, labels map[string]string) error {
+					calls++
+					gotNS = ns
+					gotLabels = labels
+					return nil
+				},
+			}
+
+			plan := setupplan.Plan{
+				RegistryType:        "docker",
+				RegistryStorageSize: "20Gi",
+				PlatformMode:        tc.mode,
+				Ingress: cluster.IngressOptions{
+					Mode:     "traefik",
+					Manifest: "config/ingress/overlays/http",
+					Force:    false,
+				},
+				RegistryManifest: "config/registry",
+				TestMode:         true,
+			}
+
+			if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err != nil {
+				t.Fatalf("setupPlatformWithDeps returned error: %v", err)
+			}
+
+			if tc.wantCalled {
+				if calls != 1 {
+					t.Fatalf("expected EnsureCatalogNamespace to be called exactly once, got %d", calls)
+				}
+				if gotNS != tc.wantNS {
+					t.Fatalf("namespace = %q, want %q", gotNS, tc.wantNS)
+				}
+				if gotLabels["mcpruntime.org/scope"] != tc.wantScope {
+					t.Fatalf("scope label = %q, want %q", gotLabels["mcpruntime.org/scope"], tc.wantScope)
+				}
+				if gotLabels["platform.mcpruntime.org/managed"] != "true" {
+					t.Fatalf("managed label missing or wrong: %q", gotLabels["platform.mcpruntime.org/managed"])
+				}
+				if gotLabels["pod-security.kubernetes.io/enforce"] != "restricted" {
+					t.Fatalf("PSS enforce label missing or wrong: %q", gotLabels["pod-security.kubernetes.io/enforce"])
+				}
+			} else {
+				if calls != 0 {
+					t.Fatalf("expected EnsureCatalogNamespace not to be called for %s mode, got %d calls", tc.mode, calls)
+				}
+			}
+		})
+	}
+}
