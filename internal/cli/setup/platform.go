@@ -7,12 +7,18 @@ package setup
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/url"
 	"os"
 	"strconv"
@@ -44,6 +50,11 @@ const gatewayOTELExporterOTLPEndpointEnv = "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPO
 const defaultGatewayOTELExporterOTLPEndpoint = "http://otel-collector.mcp-sentinel.svc.cluster.local:4318"
 const gatewayProxyDockerfilePath = "services/mcp-gateway/Dockerfile"
 const gatewayProxyBuildContext = "."
+const operatorWebhookServiceName = "mcp-runtime-operator-webhook-service"
+const operatorWebhookSecretName = "mcp-runtime-operator-webhook-server-cert" // #nosec G101 -- secret resource name, not a credential.
+const operatorWebhookVolumeName = "webhook-server-cert"
+const operatorWebhookCertDir = "/tmp/k8s-webhook-server/serving-certs"
+const operatorWebhookCertHashAnnotation = "mcp-runtime.io/webhook-cert-sha256"
 const (
 	defaultDevUserEmail     = "test@mcpruntime.org"
 	defaultDevUserPassword  = "test@123"
@@ -1506,6 +1517,17 @@ func deployOperatorManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.
 	}
 	core.Info("Reapplied operator ClusterRole mcp-runtime-operator-role from config/rbac/role.yaml; run `mcp-runtime cluster doctor` if MCPServer creates ever appear unreconciled")
 
+	core.Info("Preparing operator admission webhook TLS")
+	webhookCA, err := ensureOperatorWebhookTLSSecret(kubectl)
+	if err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrApplySecretManifestFailed, err, fmt.Sprintf("failed to prepare operator webhook TLS secret: %v", err))
+		core.Error("Failed to prepare operator webhook TLS")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to prepare operator webhook TLS")
+		}
+		return wrappedErr
+	}
+
 	// Step 3: Apply manager deployment with structured image replacement
 	core.Info("Applying operator deployment")
 
@@ -1583,6 +1605,55 @@ func deployOperatorManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.
 		}
 	}
 
+	if err := mutator.MergeDeploymentEnv(core.OperatorDeploymentName, core.OperatorManagerContainerName, map[string]string{"MCP_ENABLE_WEBHOOKS": "true"}); err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrMutateManagerYAMLFailed, err, fmt.Sprintf("failed to enable operator webhooks: %v", err))
+		core.Error("Failed to enable operator webhooks")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to enable operator webhooks")
+		}
+		return wrappedErr
+	}
+	webhookCAHash := sha256.Sum256(webhookCA)
+	if err := mutator.MergeDeploymentTemplateAnnotations(core.OperatorDeploymentName, map[string]string{
+		operatorWebhookCertHashAnnotation: hex.EncodeToString(webhookCAHash[:]),
+	}); err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrMutateManagerYAMLFailed, err, fmt.Sprintf("failed to annotate operator webhook cert hash: %v", err))
+		core.Error("Failed to annotate operator webhook cert hash")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to annotate operator webhook cert hash")
+		}
+		return wrappedErr
+	}
+	if err := mutator.MergeDeploymentVolumes(core.OperatorDeploymentName, []map[string]any{
+		{
+			"name": operatorWebhookVolumeName,
+			"secret": map[string]any{
+				"secretName": operatorWebhookSecretName,
+			},
+		},
+	}); err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrMutateManagerYAMLFailed, err, fmt.Sprintf("failed to add operator webhook cert volume: %v", err))
+		core.Error("Failed to add operator webhook cert volume")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to add operator webhook cert volume")
+		}
+		return wrappedErr
+	}
+	if err := mutator.MergeDeploymentVolumeMounts(core.OperatorDeploymentName, core.OperatorManagerContainerName, []map[string]any{
+		{
+			"name":      operatorWebhookVolumeName,
+			"mountPath": operatorWebhookCertDir,
+			"readOnly":  true,
+		},
+	}); err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrMutateManagerYAMLFailed, err, fmt.Sprintf("failed to add operator webhook cert mount: %v", err))
+		core.Error("Failed to add operator webhook cert mount")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to add operator webhook cert mount")
+		}
+		return wrappedErr
+	}
+
 	// Render the mutated manifest
 	mutatedYAML, err := mutator.ToYAML()
 	if err != nil {
@@ -1650,8 +1721,188 @@ func deployOperatorManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.
 		return wrappedErr
 	}
 
+	if err := applyOperatorWebhookManifests(kubectl, webhookCA); err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrApplyManifestFailed, err, fmt.Sprintf("failed to apply operator webhook manifests: %v", err))
+		core.Error("Failed to apply operator webhook manifests")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to apply operator webhook manifests")
+		}
+		return wrappedErr
+	}
+
 	core.Success("Operator manifests deployed successfully")
 	return nil
+}
+
+func ensureOperatorWebhookTLSSecret(kubectl core.KubectlRunner) ([]byte, error) {
+	caCertPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+
+	secretManifest := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: kubernetes.io/tls
+data:
+  tls.crt: %s
+  tls.key: %s
+`, operatorWebhookSecretName, core.NamespaceMCPRuntime, base64.StdEncoding.EncodeToString(certPEM), base64.StdEncoding.EncodeToString(keyPEM))
+
+	if err := kube.ApplyManifestContent(kubectl.CommandArgs, secretManifest); err != nil {
+		return nil, err
+	}
+	return caCertPEM, nil
+}
+
+func generateOperatorWebhookCertificate(now time.Time) ([]byte, []byte, []byte, error) {
+	caPrivateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("generate webhook CA private key: %w", err)
+	}
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("generate webhook private key: %w", err)
+	}
+
+	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	caSerialNumber, err := rand.Int(rand.Reader, serialLimit)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("generate webhook CA certificate serial: %w", err)
+	}
+	serialNumber, err := rand.Int(rand.Reader, serialLimit)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("generate webhook certificate serial: %w", err)
+	}
+
+	serviceDNS := operatorWebhookServiceName + "." + core.NamespaceMCPRuntime + ".svc"
+	caTemplate := x509.Certificate{
+		SerialNumber: caSerialNumber,
+		Subject: pkix.Name{
+			CommonName: operatorWebhookServiceName + "-ca",
+		},
+		NotBefore:             now.Add(-1 * time.Hour),
+		NotAfter:              now.AddDate(1, 0, 0),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	certTemplate := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			CommonName: serviceDNS,
+		},
+		NotBefore:             now.Add(-1 * time.Hour),
+		NotAfter:              now.AddDate(1, 0, 0),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames: []string{
+			operatorWebhookServiceName,
+			operatorWebhookServiceName + "." + core.NamespaceMCPRuntime,
+			serviceDNS,
+			serviceDNS + ".cluster.local",
+		},
+	}
+
+	caCertDER, err := x509.CreateCertificate(rand.Reader, &caTemplate, &caTemplate, &caPrivateKey.PublicKey, caPrivateKey)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("create webhook CA certificate: %w", err)
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, &certTemplate, &caTemplate, &privateKey.PublicKey, caPrivateKey)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("create webhook certificate: %w", err)
+	}
+
+	caCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCertDER})
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
+	return caCertPEM, certPEM, keyPEM, nil
+}
+
+func applyOperatorWebhookManifests(kubectl core.KubectlRunner, caBundlePEM []byte) error {
+	serviceYAML, err := os.ReadFile("config/webhook/service.yaml")
+	if err != nil {
+		return fmt.Errorf("read operator webhook service manifest: %w", err)
+	}
+	if err := kube.ApplyManifestContent(kubectl.CommandArgs, string(serviceYAML)); err != nil {
+		return err
+	}
+
+	webhookYAML, err := os.ReadFile("config/webhook/manifests.yaml")
+	if err != nil {
+		return fmt.Errorf("read operator webhook manifests: %w", err)
+	}
+	rendered, err := injectOperatorWebhookCABundle(webhookYAML, caBundlePEM)
+	if err != nil {
+		return err
+	}
+	return kube.ApplyManifestContent(kubectl.CommandArgs, string(rendered))
+}
+
+func injectOperatorWebhookCABundle(webhookYAML, caBundlePEM []byte) ([]byte, error) {
+	caBundle := base64.StdEncoding.EncodeToString(caBundlePEM)
+	decoder := yaml.NewDecoder(bytes.NewReader(webhookYAML))
+	var docs []map[string]any
+	injected := 0
+
+	for {
+		var doc map[string]any
+		err := decoder.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("decode webhook manifest: %w", err)
+		}
+		if len(doc) == 0 {
+			continue
+		}
+
+		webhooks, ok := doc["webhooks"].([]any)
+		if !ok {
+			docs = append(docs, doc)
+			continue
+		}
+		for _, item := range webhooks {
+			webhook, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			clientConfig, ok := webhook["clientConfig"].(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("webhook %q has no clientConfig", getStringValue(webhook, "name"))
+			}
+			clientConfig["caBundle"] = caBundle
+			injected++
+		}
+		docs = append(docs, doc)
+	}
+
+	if injected == 0 {
+		return nil, fmt.Errorf("no webhook clientConfig blocks found")
+	}
+
+	var out bytes.Buffer
+	encoder := yaml.NewEncoder(&out)
+	for i, doc := range docs {
+		if err := encoder.Encode(doc); err != nil {
+			return nil, fmt.Errorf("encode webhook manifest %d: %w", i, err)
+		}
+	}
+	if err := encoder.Close(); err != nil {
+		return nil, fmt.Errorf("close webhook manifest encoder: %w", err)
+	}
+	return out.Bytes(), nil
+}
+
+func getStringValue(values map[string]any, key string) string {
+	if value, ok := values[key].(string); ok {
+		return value
+	}
+	return ""
 }
 
 // mcpSentinelDependencyRolloutFailed wraps early mcp-sentinel storage/messaging rollouts; diagnostics are attached only in --debug.
