@@ -359,11 +359,12 @@ provisioned registry:
 ```
 
 With the bundled registry serving internal HTTPS, use a private CA or existing
-ClusterIssuer and configure every node to trust that CA for image pulls:
+ClusterIssuer for the registry pod certificate and configure every node to
+trust that CA for image pulls. Public ingress TLS can still use ACME:
 
 ```bash
 ./bin/mcp-runtime bootstrap
-./bin/mcp-runtime setup --registry-mode bundled-https --with-tls --tls-cluster-issuer <issuer-name> --strict-prod
+./bin/mcp-runtime setup --registry-mode bundled-https --with-tls --acme-email ops@example.com --strict-prod
 ```
 
 If you want hostnames derived from one domain, set:

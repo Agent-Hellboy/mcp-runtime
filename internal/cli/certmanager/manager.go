@@ -27,14 +27,18 @@ const (
 	certClusterIssuerName           = "mcp-runtime-ca"
 	registryCertificateName         = "registry-cert"
 	registryTLSSecretName           = "registry-tls"
+	registryInternalCertificateName = "registry-internal-cert"
+	registryInternalTLSSecretName   = "registry-internal-tls"
 	clusterIssuerManifestPath       = "config/cert-manager/cluster-issuer.yaml"
 	registryCertificateManifestPath = "config/cert-manager/example-registry-certificate.yaml"
 )
 
 const (
-	CertClusterIssuerName   = certClusterIssuerName
-	RegistryCertificateName = registryCertificateName
-	RegistryTLSSecretName   = registryTLSSecretName
+	CertClusterIssuerName           = certClusterIssuerName
+	RegistryCertificateName         = registryCertificateName
+	RegistryTLSSecretName           = registryTLSSecretName
+	RegistryInternalCertificateName = registryInternalCertificateName
+	RegistryInternalTLSSecretName   = registryInternalTLSSecretName
 )
 
 // CertManager manages cert-manager resources for the platform.

@@ -281,10 +281,10 @@ func TestValidateRegistryTLSModeRejectsBundledHTTPSWithoutTLS(t *testing.T) {
 	}
 }
 
-func TestValidateRegistryTLSModeRejectsBundledHTTPSWithACME(t *testing.T) {
+func TestValidateRegistryTLSModeAllowsBundledHTTPSWithACME(t *testing.T) {
 	err := ValidateRegistryTLSMode(setupplan.RegistryModeBundledHTTPS, true, "admin@example.com")
-	if err == nil || !strings.Contains(err.Error(), "public ACME") {
-		t.Fatalf("expected bundled HTTPS ACME validation error, got %v", err)
+	if err != nil {
+		t.Fatalf("expected bundled HTTPS with ACME to be allowed after internal TLS split, got %v", err)
 	}
 }
 
@@ -377,7 +377,7 @@ func TestResolveRegistrySetupRejectsExternalFlagsInBundledMode(t *testing.T) {
 	}
 }
 
-func TestRegistryCertificateSANsIncludesInternalNamesForBundledHTTPS(t *testing.T) {
+func TestRegistryInternalCertificateSANsIncludesInternalNamesForBundledHTTPS(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() { core.DefaultCLIConfig = orig })
 	core.DefaultCLIConfig = &core.CLIConfig{
@@ -386,10 +386,8 @@ func TestRegistryCertificateSANsIncludesInternalNamesForBundledHTTPS(t *testing.
 		McpIngressHost:      "mcp.example.com",
 	}
 
-	dnsNames, ipAddresses := registryCertificateSANs(setupplan.Plan{RegistryMode: setupplan.RegistryModeBundledHTTPS})
+	dnsNames, ipAddresses := registryInternalCertificateSANs(setupplan.Plan{RegistryMode: setupplan.RegistryModeBundledHTTPS})
 	for _, want := range []string{
-		"registry.example.com",
-		"mcp.example.com",
 		"registry.local",
 		"registry.registry.svc",
 		"registry.registry.svc.cluster.local",
@@ -403,7 +401,7 @@ func TestRegistryCertificateSANsIncludesInternalNamesForBundledHTTPS(t *testing.
 	}
 }
 
-func TestRegistryCertificateSANsIncludesIPRegistryEndpoint(t *testing.T) {
+func TestRegistryInternalCertificateSANsIncludesIPRegistryEndpoint(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() { core.DefaultCLIConfig = orig })
 	core.DefaultCLIConfig = &core.CLIConfig{
@@ -411,9 +409,31 @@ func TestRegistryCertificateSANsIncludesIPRegistryEndpoint(t *testing.T) {
 		RegistryIngressHost: "registry.local",
 	}
 
-	_, ipAddresses := registryCertificateSANs(setupplan.Plan{RegistryMode: setupplan.RegistryModeBundledHTTPS})
+	_, ipAddresses := registryInternalCertificateSANs(setupplan.Plan{RegistryMode: setupplan.RegistryModeBundledHTTPS})
 	if !contains(ipAddresses, "10.43.24.102") {
 		t.Fatalf("expected IP SAN for registry endpoint, got %v", ipAddresses)
+	}
+}
+
+func TestRegistryCertificateSANsStayPublicForBundledHTTPS(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	core.DefaultCLIConfig = &core.CLIConfig{
+		RegistryEndpoint:    "10.43.24.102:5000",
+		RegistryIngressHost: "registry.example.com",
+		McpIngressHost:      "mcp.example.com",
+	}
+
+	dnsNames, ipAddresses := registryCertificateSANs(setupplan.Plan{RegistryMode: setupplan.RegistryModeBundledHTTPS})
+	for _, want := range []string{"registry.example.com", "mcp.example.com"} {
+		if !contains(dnsNames, want) {
+			t.Fatalf("expected public DNS SAN %q in %v", want, dnsNames)
+		}
+	}
+	for _, internal := range []string{"registry.registry.svc.cluster.local", "10.43.24.102"} {
+		if contains(dnsNames, internal) || contains(ipAddresses, internal) {
+			t.Fatalf("public registry cert unexpectedly contains internal SAN %q (dns=%v ips=%v)", internal, dnsNames, ipAddresses)
+		}
 	}
 }
 

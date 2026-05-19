@@ -298,12 +298,24 @@ func renderLetsEncryptClusterIssuerManifest(name, email, serverURL string) strin
 }
 
 func applyRegistryCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error {
+	return applyCertificate(kubectl, registryCertificateName, registryTLSSecretName, dnsNames, ipAddresses, issuerName)
+}
+
+func applyRegistryInternalCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error {
+	return applyCertificate(kubectl, registryInternalCertificateName, registryInternalTLSSecretName, dnsNames, ipAddresses, issuerName)
+}
+
+func ApplyRegistryInternalCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error {
+	return applyRegistryInternalCertificate(kubectl, dnsNames, ipAddresses, issuerName)
+}
+
+func applyCertificate(kubectl core.KubectlRunner, certName, secretName string, dnsNames, ipAddresses []string, issuerName string) error {
 	uniq := dedupeHostnames(dnsNames)
 	uniqIPs := dedupeHostnames(ipAddresses)
 	if len(uniq) == 0 && len(uniqIPs) == 0 {
-		return fmt.Errorf("registry TLS has no DNS names or IP addresses to request")
+		return fmt.Errorf("%s TLS has no DNS names or IP addresses to request", certName)
 	}
-	manifest := renderRegistryCertificate(registryCertificateName, uniq, uniqIPs, issuerName)
+	manifest := renderRegistryCertificate(certName, secretName, uniq, uniqIPs, issuerName)
 	return kube.ApplyManifestContent(kubectl.CommandArgs, manifest)
 }
 
@@ -336,7 +348,7 @@ func dedupeHostnames(hs []string) []string {
 	return out
 }
 
-func renderRegistryCertificate(certName string, dnsNames, ipAddresses []string, issuerName string) string {
+func renderRegistryCertificate(certName, secretName string, dnsNames, ipAddresses []string, issuerName string) string {
 	uniq := dedupeHostnames(dnsNames)
 	uniqIPs := dedupeHostnames(ipAddresses)
 	var b strings.Builder
@@ -350,7 +362,9 @@ func renderRegistryCertificate(certName string, dnsNames, ipAddresses []string, 
 	b.WriteString(core.NamespaceRegistry)
 	b.WriteString("\n")
 	b.WriteString("spec:\n")
-	b.WriteString("  secretName: registry-tls\n")
+	b.WriteString("  secretName: ")
+	b.WriteString(secretName)
+	b.WriteString("\n")
 	b.WriteString("  issuerRef:\n")
 	b.WriteString("    name: ")
 	b.WriteString(issuerName)

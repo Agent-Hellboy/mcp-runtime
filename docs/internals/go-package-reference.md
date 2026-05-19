@@ -4313,6 +4313,7 @@ _No package overview is documented._
 - [`func ApplyRegistryCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error`](#cli-cert-manager-func-applyregistrycertificate-kubectl-core-kubectlrunner-dnsnames-ipaddresses-string-issuername-string-error)
 - [`func ApplyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []string, issuerName string) error`](#cli-cert-manager-func-applyregistrycertificateforacme-kubectl-core-kubectlrunner-dnsnames-string-issuername-string-error)
 - [`func ApplyRegistryCertificateWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-applyregistrycertificatewithkubectl-kubectl-core-kubectlrunner-error)
+- [`func ApplyRegistryInternalCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error`](#cli-cert-manager-func-applyregistryinternalcertificate-kubectl-core-kubectlrunner-dnsnames-ipaddresses-string-issuername-string-error)
 - [`func CheckCASecretWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkcasecretwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func CheckCertManagerInstalledWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkcertmanagerinstalledwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func CheckCertificateWithKubectl(kubectl core.KubectlRunner, name, namespace string) error`](#cli-cert-manager-func-checkcertificatewithkubectl-kubectl-core-kubectlrunner-name-namespace-string-error)
@@ -4338,9 +4339,11 @@ _No package overview is documented._
 
 ```text
 const (
-	CertClusterIssuerName   = certClusterIssuerName
-	RegistryCertificateName = registryCertificateName
-	RegistryTLSSecretName   = registryTLSSecretName
+	CertClusterIssuerName           = certClusterIssuerName
+	RegistryCertificateName         = registryCertificateName
+	RegistryTLSSecretName           = registryTLSSecretName
+	RegistryInternalCertificateName = registryInternalCertificateName
+	RegistryInternalTLSSecretName   = registryInternalTLSSecretName
 )
 ```
 
@@ -4375,6 +4378,11 @@ func ApplyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []stri
 <a id="cli-cert-manager-func-applyregistrycertificatewithkubectl-kubectl-core-kubectlrunner-error"></a>
 ```text
 func ApplyRegistryCertificateWithKubectl(kubectl core.KubectlRunner) error
+```
+
+<a id="cli-cert-manager-func-applyregistryinternalcertificate-kubectl-core-kubectlrunner-dnsnames-ipaddresses-string-issuername-string-error"></a>
+```text
+func ApplyRegistryInternalCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error
 ```
 
 <a id="cli-cert-manager-func-checkcasecretwithkubectl-kubectl-core-kubectlrunner-error"></a>

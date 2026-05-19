@@ -30,4 +30,4 @@ spec:
       volumes:
       - name: registry-tls
         secret:
-          secretName: registry-tls
+          secretName: registry-internal-tls

@@ -321,12 +321,6 @@ func ValidateRegistryTLSMode(mode string, tlsEnabled bool, acmeEmail string) err
 			"--registry-mode bundled-https requires --with-tls so setup can provision registry-tls for the registry pod",
 		)
 	}
-	if normalized == setupplan.RegistryModeBundledHTTPS && strings.TrimSpace(acmeEmail) != "" {
-		return core.NewWithSentinel(
-			core.ErrFieldRequired,
-			"--registry-mode bundled-https requires a private CA or existing ClusterIssuer; public ACME certificates cannot include internal registry service names",
-		)
-	}
 	return nil
 }
 
@@ -3005,6 +2999,11 @@ func setupTLSWithKubectlAndPlan(kubectl core.KubectlRunner, logger *zap.Logger, 
 
 func registryCertificateSANs(plan setupplan.Plan) ([]string, []string) {
 	dnsNames := append([]string{}, certmanager.ACMETLSDNSNames()...)
+	return dedupeStrings(dnsNames), nil
+}
+
+func registryInternalCertificateSANs(plan setupplan.Plan) ([]string, []string) {
+	var dnsNames []string
 	var ipAddresses []string
 	if plan.RegistryMode == setupplan.RegistryModeBundledHTTPS {
 		dnsNames = append(dnsNames,
@@ -3015,6 +3014,13 @@ func registryCertificateSANs(plan setupplan.Plan) ([]string, []string) {
 		addRegistrySAN(strings.TrimSpace(core.GetRegistryEndpoint()), &dnsNames, &ipAddresses)
 	}
 	return dedupeStrings(dnsNames), dedupeStrings(ipAddresses)
+}
+
+func bundledRegistryInternalIssuerName(plan setupplan.Plan) string {
+	if strings.TrimSpace(plan.TLSClusterIssuer) != "" {
+		return strings.TrimSpace(plan.TLSClusterIssuer)
+	}
+	return certmanager.CertClusterIssuerName
 }
 
 func addRegistrySAN(raw string, dnsNames, ipAddresses *[]string) {
@@ -3166,6 +3172,9 @@ func setupTLSLetsEncrypt(kubectl core.KubectlRunner, logger *zap.Logger, plan se
 		return err
 	}
 	core.Success("Certificate issued successfully")
+	if err := setupBundledRegistryInternalTLSStep(kubectl, logger, plan); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -3256,6 +3265,9 @@ func setupTLSWithExistingClusterIssuer(kubectl core.KubectlRunner, logger *zap.L
 		return err
 	}
 	core.Success("Certificate issued successfully")
+	if err := setupBundledRegistryInternalTLSStep(kubectl, logger, plan); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -3343,6 +3355,72 @@ func setupTLSPrivateCA(kubectl core.KubectlRunner, logger *zap.Logger, plan setu
 		return err
 	}
 	core.Success("Certificate issued successfully")
+	if err := setupBundledRegistryInternalTLSStep(kubectl, logger, plan); err != nil {
+		return err
+	}
+	return nil
+}
+
+func setupBundledRegistryInternalTLSStep(kubectl core.KubectlRunner, logger *zap.Logger, plan setupplan.Plan) error {
+	if plan.RegistryMode != setupplan.RegistryModeBundledHTTPS {
+		return nil
+	}
+	issuerName := bundledRegistryInternalIssuerName(plan)
+	if issuerName == certmanager.CertClusterIssuerName {
+		core.Info("Checking internal registry CA secret")
+		if err := certmanager.CheckCASecretWithKubectl(kubectl); err != nil {
+			err := core.WrapWithSentinel(
+				core.ErrCASecretNotFound,
+				err,
+				"bundled HTTPS registry pulls need an internal CA for registry-internal-tls. Create cert-manager/mcp-runtime-ca and configure every node to trust its CA certificate, or pass --tls-cluster-issuer for an existing internal issuer",
+			)
+			core.Error("Internal registry CA secret not found")
+			if logger != nil {
+				core.LogStructuredError(logger, err, "Internal registry CA secret not found")
+			}
+			return err
+		}
+		core.Info("Applying internal registry ClusterIssuer")
+		if err := certmanager.ApplyClusterIssuerWithKubectl(kubectl); err != nil {
+			wrappedErr := core.WrapWithSentinel(core.ErrClusterIssuerApplyFailed, err, fmt.Sprintf("failed to apply internal registry ClusterIssuer: %v", err))
+			core.Error("Failed to apply internal registry ClusterIssuer")
+			if logger != nil {
+				core.LogStructuredError(logger, wrappedErr, "Failed to apply internal registry ClusterIssuer")
+			}
+			return wrappedErr
+		}
+	}
+
+	dnsNames, ipAddresses := registryInternalCertificateSANs(plan)
+	core.Info("Applying Certificate for internal registry pod TLS")
+	if err := certmanager.ApplyRegistryInternalCertificate(kubectl, dnsNames, ipAddresses, issuerName); err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrApplyCertificateFailed,
+			err,
+			fmt.Sprintf("failed to apply internal registry Certificate: %v", err),
+			map[string]any{"certificate": certmanager.RegistryInternalCertificateName, "namespace": core.NamespaceRegistry, "component": "setup"},
+		)
+		core.Error("Failed to apply internal registry Certificate")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to apply internal registry Certificate")
+		}
+		return wrappedErr
+	}
+
+	certTimeout := core.GetCertTimeout()
+	if certTimeout < 2*time.Minute {
+		certTimeout = 2 * time.Minute
+	}
+	core.Info(fmt.Sprintf("Waiting for internal registry certificate to be issued (timeout: %s)", certTimeout))
+	if err := certmanager.WaitForCertificateReadyWithKubectl(kubectl, certmanager.RegistryInternalCertificateName, core.NamespaceRegistry, certTimeout); err != nil {
+		err := core.NewWithSentinel(core.ErrCertificateNotReady, fmt.Sprintf("internal registry certificate not ready after %s. Check cert-manager and your internal issuer configuration", certTimeout))
+		core.Error("Internal registry certificate not ready")
+		if logger != nil {
+			core.LogStructuredError(logger, err, "Internal registry certificate not ready")
+		}
+		return err
+	}
+	core.Success("Internal registry certificate issued successfully")
 	return nil
 }
 
