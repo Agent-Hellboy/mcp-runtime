@@ -1376,12 +1376,13 @@ function renderServers() {
     card.appendChild(renderServerMeta(server));
     card.appendChild(renderServerEndpoint(server));
 
+    const displayInventory = serverDisplayInventory(server);
     const inventory = document.createElement("div");
     inventory.className = "server-inventory-grid";
-    inventory.appendChild(renderInventoryBlock("Tools", server.tools || [], renderToolItem));
-    inventory.appendChild(renderInventoryBlock("Prompts", server.prompts || [], renderInventoryItem));
-    inventory.appendChild(renderInventoryBlock("Resources", server.resources || [], renderInventoryItem));
-    inventory.appendChild(renderInventoryBlock("Tasks", server.tasks || [], renderInventoryItem));
+    inventory.appendChild(renderInventoryBlock("Tools", displayInventory.tools, renderToolItem));
+    inventory.appendChild(renderInventoryBlock("Prompts", displayInventory.prompts, renderInventoryItem));
+    inventory.appendChild(renderInventoryBlock("Resources", displayInventory.resources, renderInventoryItem));
+    inventory.appendChild(renderInventoryBlock("Tasks", displayInventory.tasks, renderInventoryItem));
     card.appendChild(inventory);
 
     if (server.access_json && Object.keys(server.access_json).length) {
@@ -1407,6 +1408,7 @@ function filteredServers() {
 }
 
 function serverSearchText(server) {
+  const inventory = serverDisplayInventory(server);
   const values = [
     server.name,
     server.namespace,
@@ -1415,12 +1417,105 @@ function serverSearchText(server) {
     server.ready,
     server.endpoint,
     metadataSearchText(server.labels),
-    ...(server.tools || []).map((tool) => `${tool.name || ""} ${tool.requiredTrust || ""} ${tool.description || ""}`),
-    ...(server.prompts || []).map(inventorySearchText),
-    ...(server.resources || []).map(inventorySearchText),
-    ...(server.tasks || []).map(inventorySearchText),
+    ...(inventory.tools || []).map((tool) => `${tool.name || ""} ${tool.requiredTrust || ""} ${tool.sideEffect || ""} ${tool.description || ""} ${tool.drift || ""}`),
+    ...(inventory.prompts || []).map(inventorySearchText),
+    ...(inventory.resources || []).map(inventorySearchText),
+    ...(inventory.tasks || []).map(inventorySearchText),
   ];
   return values.filter(Boolean).join(" ").toLowerCase();
+}
+
+function serverDisplayInventory(server) {
+  const declaredTools = Array.isArray(server?.tools) ? server.tools : [];
+  const declaredPrompts = Array.isArray(server?.prompts) ? server.prompts : [];
+  const declaredResources = Array.isArray(server?.resources) ? server.resources : [];
+  const declaredTasks = Array.isArray(server?.tasks) ? server.tasks : [];
+  const live = server?.liveInventory;
+  if (!live || typeof live !== "object") {
+    return {
+      tools: declaredTools,
+      prompts: declaredPrompts,
+      resources: declaredResources,
+      tasks: declaredTasks,
+    };
+  }
+  return {
+    tools: mergeToolInventory(live.tools || [], declaredTools),
+    prompts: mergeNamedInventory(live.prompts || [], declaredPrompts, inventoryNameKey),
+    resources: mergeNamedInventory(live.resources || [], declaredResources, resourceInventoryKey),
+    tasks: declaredTasks,
+  };
+}
+
+function mergeToolInventory(liveItems, declaredItems) {
+  const declared = mapInventoryByKey(declaredItems, inventoryNameKey);
+  const seen = new Set();
+  const out = [];
+  liveItems.forEach((item) => {
+    const key = inventoryNameKey(item);
+    if (!key) return;
+    const governance = declared.get(key);
+    seen.add(key);
+    out.push({
+      ...item,
+      name: item.name || key,
+      description: item.description || governance?.description || "",
+      requiredTrust: governance?.requiredTrust || "",
+      sideEffect: governance?.sideEffect || "",
+      labels: governance?.labels || item.labels || {},
+      drift: governance ? "" : "ungoverned",
+    });
+  });
+  declaredItems.forEach((item) => {
+    const key = inventoryNameKey(item);
+    if (!key || seen.has(key)) return;
+    out.push({ ...item, drift: "missing" });
+  });
+  return out;
+}
+
+function mergeNamedInventory(liveItems, declaredItems, keyFn) {
+  const declared = mapInventoryByKey(declaredItems, keyFn);
+  const seen = new Set();
+  const out = [];
+  liveItems.forEach((item) => {
+    const key = keyFn(item);
+    if (!key) return;
+    const declaredItem = declared.get(key);
+    seen.add(key);
+    out.push({
+      ...item,
+      name: item.name || item.uri || key,
+      description: item.description || declaredItem?.description || "",
+      labels: declaredItem?.labels || item.labels || {},
+      drift: declaredItem ? "" : "ungoverned",
+    });
+  });
+  declaredItems.forEach((item) => {
+    const key = keyFn(item);
+    if (!key || seen.has(key)) return;
+    out.push({ ...item, drift: "missing" });
+  });
+  return out;
+}
+
+function mapInventoryByKey(items, keyFn) {
+  const out = new Map();
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    const key = keyFn(item);
+    if (key && !out.has(key)) out.set(key, item);
+  });
+  return out;
+}
+
+function inventoryNameKey(item) {
+  if (typeof item === "string") return item.trim();
+  return String(item?.name || "").trim();
+}
+
+function resourceInventoryKey(item) {
+  if (typeof item === "string") return item.trim();
+  return String(item?.uri || item?.name || "").trim();
 }
 
 function metadataSearchText(labels) {
@@ -1433,13 +1528,13 @@ function metadataSearchText(labels) {
 function inventorySearchText(item) {
   if (typeof item === "string") return item;
   const labels = metadataSearchText(item?.labels);
-  return `${item?.name || ""} ${item?.description || ""} ${labels}`;
+  return `${item?.name || ""} ${item?.uri || ""} ${item?.description || ""} ${item?.drift || ""} ${labels}`;
 }
 
 function renderServerCatalogSummary() {
   const total = serversCache.length;
   const ready = serversCache.filter((server) => server.status === "Ready").length;
-  const tools = serversCache.reduce((sum, server) => sum + (server.tools || []).length, 0);
+  const tools = serversCache.reduce((sum, server) => sum + serverDisplayInventory(server).tools.length, 0);
   setText("server-count-total", formatNumber(total));
   setText("server-count-ready", formatNumber(ready));
   setText("server-count-tools", formatNumber(tools));
@@ -1534,6 +1629,7 @@ function renderServerDetailPanel(server, errorMessage = "") {
   const labels = server.labels && typeof server.labels === "object"
     ? Object.entries(server.labels)
     : [];
+  const inventory = serverDisplayInventory(server);
   const description = server.description
     ? `<p class="server-description">${escapeHtml(server.description)}</p>`
     : "";
@@ -1555,10 +1651,10 @@ function renderServerDetailPanel(server, errorMessage = "") {
     <div class="server-detail-grid">
       ${serverDetailStat("Ready Pods", server.ready || "0/0")}
       ${serverDetailStat("Deployed", formatDateTime(server.age))}
-      ${serverDetailStat("Tools", String((server.tools || []).length))}
-      ${serverDetailStat("Prompts", String((server.prompts || []).length))}
-      ${serverDetailStat("Resources", String((server.resources || []).length))}
-      ${serverDetailStat("Tasks", String((server.tasks || []).length))}
+      ${serverDetailStat("Tools", String(inventory.tools.length))}
+      ${serverDetailStat("Prompts", String(inventory.prompts.length))}
+      ${serverDetailStat("Resources", String(inventory.resources.length))}
+      ${serverDetailStat("Tasks", String(inventory.tasks.length))}
     </div>
     <div class="server-detail-block">
       <span class="server-detail-label">Endpoint</span>
@@ -1647,13 +1743,14 @@ function renderServerHero(server) {
 function renderServerMeta(server) {
   const wrap = document.createElement("div");
   wrap.className = "server-meta-wrap";
+  const inventory = serverDisplayInventory(server);
 
   const meta = document.createElement("div");
   meta.className = "server-meta-row";
   meta.appendChild(serverMetaPill("HTTP MCP"));
-  meta.appendChild(serverMetaPill(`${(server.tools || []).length} tools`));
-  meta.appendChild(serverMetaPill(`${(server.prompts || []).length} prompts`));
-  meta.appendChild(serverMetaPill(`${(server.resources || []).length} resources`));
+  meta.appendChild(serverMetaPill(`${inventory.tools.length} tools`));
+  meta.appendChild(serverMetaPill(`${inventory.prompts.length} prompts`));
+  meta.appendChild(serverMetaPill(`${inventory.resources.length} resources`));
   meta.appendChild(serverMetaPill(`Created ${formatServerAge(server.age)}`));
   wrap.appendChild(meta);
 
@@ -1798,10 +1895,11 @@ function renderInventoryBlock(label, items, itemRenderer) {
 function renderToolItem(tool) {
   const trust = tool.requiredTrust ? `<span class="trust-chip">${escapeHtml(tool.requiredTrust)}</span>` : "";
   const sideEffect = tool.sideEffect ? `<span class="trust-chip">${escapeHtml(tool.sideEffect)}</span>` : "";
+  const drift = renderDriftBadge(tool);
   const labels = renderInventoryLabels(tool.labels);
   return renderExpandableInventoryItem({
     name: tool.name || "-",
-    summaryMeta: [trust, sideEffect].filter(Boolean).join(" "),
+    summaryMeta: [trust, sideEffect, drift].filter(Boolean).join(" "),
     description: tool.description,
     labels,
   });
@@ -1811,11 +1909,23 @@ function renderInventoryItem(item) {
   if (typeof item === "string") {
     return renderExpandableInventoryItem({ name: item || "-" });
   }
+  const drift = renderDriftBadge(item);
   return renderExpandableInventoryItem({
-    name: item?.name || "-",
+    name: item?.name || item?.uri || "-",
+    summaryMeta: drift,
     description: item?.description,
     labels: renderInventoryLabels(item?.labels),
   });
+}
+
+function renderDriftBadge(item) {
+  if (item?.drift === "ungoverned") {
+    return '<span class="drift-chip drift-ungoverned">ungoverned</span>';
+  }
+  if (item?.drift === "missing") {
+    return '<span class="drift-chip drift-missing">missing on server</span>';
+  }
+  return "";
 }
 
 function renderExpandableInventoryItem({ name, summaryMeta = "", description = "", labels = "" }) {
@@ -1909,6 +2019,7 @@ function startAutoRefresh() {
     loadDashboardSummary();
     loadDashboardAnalytics();
     loadEvents();
+    loadServers();
   }, 5000);
 }
 
@@ -2813,6 +2924,7 @@ function renderSelectedOperationServer() {
   const labels = server.labels && typeof server.labels === "object"
     ? Object.entries(server.labels)
     : [];
+  const inventory = serverDisplayInventory(server);
   const description = server.description
     ? `<p class="server-description">${escapeHtml(server.description)}</p>`
     : "";
@@ -2831,10 +2943,10 @@ function renderSelectedOperationServer() {
     <div class="server-detail-grid">
       ${serverDetailStat("Ready Pods", server.ready || "0/0")}
       ${serverDetailStat("Deployed", formatDateTime(server.age))}
-      ${serverDetailStat("Tools", String((server.tools || []).length))}
-      ${serverDetailStat("Prompts", String((server.prompts || []).length))}
-      ${serverDetailStat("Resources", String((server.resources || []).length))}
-      ${serverDetailStat("Tasks", String((server.tasks || []).length))}
+      ${serverDetailStat("Tools", String(inventory.tools.length))}
+      ${serverDetailStat("Prompts", String(inventory.prompts.length))}
+      ${serverDetailStat("Resources", String(inventory.resources.length))}
+      ${serverDetailStat("Tasks", String(inventory.tasks.length))}
     </div>
     <div class="server-detail-block">
       <span class="server-detail-label">Endpoint</span>
@@ -2943,11 +3055,12 @@ function operationServerKey(server) {
 }
 
 function operationInventoryLabel(server) {
+  const inventory = serverDisplayInventory(server);
   const pieces = [
-    `${(server.tools || []).length} tools`,
-    `${(server.prompts || []).length} prompts`,
-    `${(server.resources || []).length} resources`,
-    `${(server.tasks || []).length} tasks`,
+    `${inventory.tools.length} tools`,
+    `${inventory.prompts.length} prompts`,
+    `${inventory.resources.length} resources`,
+    `${inventory.tasks.length} tasks`,
   ];
   return pieces.join(" / ");
 }

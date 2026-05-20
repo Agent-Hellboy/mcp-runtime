@@ -2474,6 +2474,7 @@ func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platform
 		"MCP_REGISTRY_ENDPOINT",
 		"MCP_REGISTRY_INGRESS_HOST",
 		"PLATFORM_REGISTRY_URL",
+		"PLATFORM_TRAEFIK_NAMESPACE",
 	} {
 		if envValue := setupAnalyticsConfigEnvValue(key); envValue != "" {
 			manifest.Data[key] = envValue
@@ -2492,6 +2493,11 @@ func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platform
 	}
 	if registryHost := registryHostFromImage(images.API); registryHost != "" {
 		manifest.Data["PLATFORM_REGISTRY_URL"] = registryHost
+	}
+	if strings.TrimSpace(manifest.Data["PLATFORM_TRAEFIK_NAMESPACE"]) == "" {
+		if namespace := activeTraefikNamespaceForPlatform(kubectl); namespace != "" {
+			manifest.Data["PLATFORM_TRAEFIK_NAMESPACE"] = namespace
+		}
 	}
 	if existingMode, ok := setupplan.NormalizePlatformMode(existingData["PLATFORM_MODE"]); ok {
 		requestedMode, requestedOK := setupplan.NormalizePlatformMode(platformMode)
@@ -2543,6 +2549,19 @@ func applyGoogleOIDCDefaults(data map[string]string) {
 	if strings.TrimSpace(data["OIDC_JWKS_URL"]) == "" {
 		data["OIDC_JWKS_URL"] = "https://www.googleapis.com/oauth2/v3/certs"
 	}
+}
+
+func activeTraefikNamespaceForPlatform(kubectl core.KubectlRunner) string {
+	namespaces, err := activeNamedTraefikDeploymentNamespacesWithKubectl(kubectl)
+	if err != nil || len(namespaces) == 0 {
+		return ""
+	}
+	for _, preferred := range []string{"traefik", "kube-system"} {
+		if slices.Contains(namespaces, preferred) {
+			return preferred
+		}
+	}
+	return namespaces[0]
 }
 
 func registryHostFromImage(image string) string {
@@ -2993,6 +3012,12 @@ func operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint string)
 	}
 	if mcpHost := strings.TrimSpace(core.GetMcpIngressHost()); mcpHost != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_DEFAULT_INGRESS_HOST", Value: mcpHost})
+		if strings.TrimSpace(core.GetRegistryClusterIssuerName()) != "" {
+			envVars = append(envVars,
+				operatorEnvVar{Name: "MCP_DEFAULT_INGRESS_ENTRYPOINTS", Value: "websecure"},
+				operatorEnvVar{Name: "MCP_DEFAULT_INGRESS_TLS", Value: "true"},
+			)
+		}
 	}
 	clusterName := strings.TrimSpace(core.GetClusterName())
 	if clusterName != "" {

@@ -312,6 +312,7 @@ For `POST /api/runtime/grants` and `POST /api/runtime/sessions`, the API resolve
 
 ```text
 GET  /api/runtime/servers              # List authenticated MCP catalog entries
+GET  /api/runtime/servers/{namespace}/{name} # Get one MCPServer catalog entry
 POST /api/runtime/servers              # Create/update MCPServer in an authorized namespace
 DELETE /api/runtime/servers/{namespace}/{name} # Retire one MCPServer
 GET  /api/runtime/server-events?namespace=&server= # Recent analytics events for one server
@@ -356,10 +357,16 @@ and `PLATFORM_MCP_PUSH_COOLDOWN` (Go duration such as `30m`, default `0s` to
 disable). A quota or cooldown denial returns `429` with a clear error; cooldown
 responses include `next_allowed_at` and `Retry-After`. `GET /api/runtime/servers`
 includes `publish_policy` so UI clients can show the active limit and count.
-`DELETE /api/runtime/servers/{namespace}/{name}` retires a server and frees one
-active-server slot for the owning publisher. The active-server limit is enforced
-by the platform API before Kubernetes apply; strict serialization of concurrent
-publishes would require a shared reservation or admission-control layer.
+Server list/get responses keep CRD `tools`, `prompts`, `resources`, and
+`tasks` as governance metadata and add `liveInventory` from the running MCP
+server when the API service's short-TTL gateway probe has completed. On a cold
+cache miss or probe failure, `liveInventory` is `null` and
+`liveInventoryError` contains a short reason. `DELETE
+/api/runtime/servers/{namespace}/{name}` retires a server and frees one
+active-server slot for the owning publisher. The active-server limit is
+enforced by the platform API before Kubernetes apply; strict serialization of
+concurrent publishes would require a shared reservation or admission-control
+layer.
 
 Adapter session minting requires an authenticated principal with a subject or
 email, such as a platform login bearer token or user API key. Service-only

@@ -159,14 +159,53 @@ curl -sS -X POST http://localhost:8080/api/runtime/servers \
   -d '{"name":"demo","namespace":"mcp-team-acme","spec":{"image":"registry.example.com/acme/demo:latest"}}'
 ```
 
-The response includes `publish_policy` on list calls. Admins configure the
-active-server limit with `PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `5`, `0`
-disables) and per-server cooldown with `PLATFORM_MCP_PUSH_COOLDOWN` (default
-`0s`, Go duration format). Quota or cooldown denials return `429`; cooldown
-responses include `next_allowed_at` and `Retry-After`. The active-server limit
-is enforced by the platform API before Kubernetes apply; strict serialization of
-concurrent publishes would require a shared reservation or admission-control
-layer.
+List MCPServers:
+
+```bash
+curl -sS -H "authorization: Bearer $TOKEN" \
+  'http://localhost:8080/api/runtime/servers?namespace=mcp-team-acme'
+```
+
+Fetch one MCPServer:
+
+```bash
+curl -sS -H "authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/runtime/servers/mcp-team-acme/demo
+```
+
+The list response includes `publish_policy`. Server responses include the CRD
+inventory fields (`tools`, `prompts`, `resources`, `tasks`) plus
+`liveInventory`, which is populated asynchronously by the API service through
+the server's in-cluster MCP gateway endpoint. On a cold cache miss or probe
+failure, `liveInventory` is `null` and `liveInventoryError` contains a short
+reason; the CRD inventory remains present as the governance source of truth.
+Live inventory entries include MCP `tools/list`, `prompts/list`, and
+`resources/list` data:
+
+```json
+{
+  "server": {
+    "name": "demo",
+    "namespace": "mcp-team-acme",
+    "tools": [{"name": "declared-tool", "requiredTrust": "low", "sideEffect": "read"}],
+    "liveInventory": {
+      "fetchedAt": "2026-05-20T01:02:03Z",
+      "protocolVersion": "2025-06-18",
+      "tools": [{"name": "live-tool", "description": "Runtime tool", "inputSchema": {"type": "object"}}],
+      "prompts": [{"name": "summarize", "description": "Summarize text"}],
+      "resources": [{"uri": "repo://README.md", "name": "README", "mimeType": "text/markdown"}]
+    }
+  }
+}
+```
+
+Admins configure the active-server limit with
+`PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `5`, `0` disables) and per-server
+cooldown with `PLATFORM_MCP_PUSH_COOLDOWN` (default `0s`, Go duration format).
+Quota or cooldown denials return `429`; cooldown responses include
+`next_allowed_at` and `Retry-After`. The active-server limit is enforced by the
+platform API before Kubernetes apply; strict serialization of concurrent
+publishes would require a shared reservation or admission-control layer.
 
 Retire an MCPServer to free quota:
 

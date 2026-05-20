@@ -97,7 +97,7 @@ type MCPServerSpec struct {
 	IngressHost string `json:"ingressHost,omitempty"`
 
 	// PublicPathPrefix enables path-based public routing and is used to compute /<publicPathPrefix>/mcp.
-	// When set, the operator prefers path-based ingress rules without a host match.
+	// When ingressHost is also set, the route is path-based under that host; otherwise it is hostless.
 	PublicPathPrefix string `json:"publicPathPrefix,omitempty"`
 
 	// IngressClass is the ingress class to use (e.g., "traefik", "nginx", "istio"). Defaults to "traefik".

@@ -624,9 +624,7 @@ func TestReconcileDeploymentAddsGatewaySidecar(t *testing.T) {
 	assertEqual(t, "gatewayUpstreamEnv", envByName["UPSTREAM_URL"].Value, "http://127.0.0.1:8088")
 	assertEqual(t, "gatewayOTELServiceName", envByName["OTEL_SERVICE_NAME"].Value, "gateway-server-gateway")
 	assertEqual(t, "gatewayOTELEndpoint", envByName["OTEL_EXPORTER_OTLP_ENDPOINT"].Value, "http://otel-collector.mcp-sentinel.svc.cluster.local:4318")
-	if _, ok := envByName["EXTERNAL_BASE_URL"]; ok {
-		t.Fatal("expected EXTERNAL_BASE_URL to be unset for hostless path-based routing")
-	}
+	assertEqual(t, "gatewayExternalBaseURL", envByName["EXTERNAL_BASE_URL"].Value, "http://gateway.example.com")
 	assertEqual(t, "analyticsIngestEnv", envByName["ANALYTICS_INGEST_URL"].Value, "http://analytics.default.svc/api/events")
 	assertEqual(t, "analyticsSourceEnv", envByName["ANALYTICS_SOURCE"].Value, "gateway-server")
 	assertEqual(t, "analyticsEventTypeEnv", envByName["ANALYTICS_EVENT_TYPE"].Value, "mcp.request")
@@ -1491,6 +1489,36 @@ func TestReconcileIngress(t *testing.T) {
 			assertEqual(t, "ingressPath", got[0].Path, "/go-mcp/mcp")
 		}
 		assertEqual(t, "ingressHost", ingress.Spec.Rules[0].Host, "")
+	})
+
+	t.Run("uses ingress host and websecure defaults with publicPathPrefix", func(t *testing.T) {
+		mcpServer := &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "go-example-mcp", Namespace: "default"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				Image:            "test-image",
+				IngressHost:      "mcp.example.com",
+				PublicPathPrefix: "go-mcp",
+			},
+		}
+		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer).Build()
+		r := MCPServerReconciler{
+			Client:                    client,
+			Scheme:                    scheme,
+			DefaultIngressEntryPoints: "websecure",
+			DefaultIngressTLS:         true,
+		}
+		if err := r.reconcileIngress(context.Background(), mcpServer); err != nil {
+			t.Fatalf("failed to reconcile ingress: %v", err)
+		}
+
+		var ingress networkingv1.Ingress
+		if err := client.Get(context.Background(), types.NamespacedName{Name: mcpServer.Name, Namespace: mcpServer.Namespace}, &ingress); err != nil {
+			t.Fatalf("failed to fetch ingress: %v", err)
+		}
+		assertEqual(t, "ingressHost", ingress.Spec.Rules[0].Host, "mcp.example.com")
+		assertEqual(t, "ingressPath", ingress.Spec.Rules[0].HTTP.Paths[0].Path, "/go-mcp/mcp")
+		assertEqual(t, "entrypoints", ingress.Annotations["traefik.ingress.kubernetes.io/router.entrypoints"], "websecure")
+		assertEqual(t, "tls", ingress.Annotations["traefik.ingress.kubernetes.io/router.tls"], "true")
 	})
 
 	t.Run("adds oauth protected resource path for oauth servers", func(t *testing.T) {

@@ -142,6 +142,20 @@ func TestEnsureDefaultDenyNetworkPolicyIncludesDNSEgress(t *testing.T) {
 	}
 }
 
+func TestEnsureDefaultDenyNetworkPolicyAllowsConfiguredIngressNamespace(t *testing.T) {
+	client := kubernetesfake.NewSimpleClientset()
+	if err := ensureDefaultDenyNetworkPolicy(context.Background(), client, "mcp-servers-public", "kube-system"); err != nil {
+		t.Fatalf("ensureDefaultDenyNetworkPolicy() error = %v", err)
+	}
+	policy, err := client.NetworkingV1().NetworkPolicies("mcp-servers-public").Get(context.Background(), "platform-default-deny", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get networkpolicy: %v", err)
+	}
+	if !networkPolicyAllowsNamespace(policy, "kube-system") {
+		t.Fatalf("network policy does not allow ingress from kube-system: %#v", policy.Spec.Ingress)
+	}
+}
+
 func TestHandleDeploymentApplyAdminUsesRequestedNamespace(t *testing.T) {
 	client := kubernetesfake.NewSimpleClientset()
 	server := &RuntimeServer{

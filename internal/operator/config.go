@@ -14,6 +14,12 @@ type OperatorConfig struct {
 	// DefaultIngressClass is the ingress class to use.
 	DefaultIngressClass string
 
+	// DefaultIngressEntryPoints is the default Traefik entrypoint annotation for MCP server ingresses.
+	DefaultIngressEntryPoints string
+
+	// DefaultIngressTLS enables Traefik TLS routing for MCP server ingresses by default.
+	DefaultIngressTLS bool
+
 	// IngressReadinessMode controls how ingress readiness is evaluated.
 	IngressReadinessMode string
 
@@ -58,6 +64,8 @@ func LoadOperatorConfig() *OperatorConfig {
 	cfg := &OperatorConfig{
 		DefaultIngressHost:            getEnvCompat("MCP_DEFAULT_INGRESS_HOST", "DEFAULT_INGRESS_HOST"),
 		DefaultIngressClass:           getEnvOrDefault("DEFAULT_INGRESS_CLASS", DefaultIngressClass),
+		DefaultIngressEntryPoints:     strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_ENTRYPOINTS")),
+		DefaultIngressTLS:             getEnvBool("MCP_DEFAULT_INGRESS_TLS"),
 		IngressReadinessMode:          ingressReadinessMode,
 		ProvisionedRegistryURL:        os.Getenv("PROVISIONED_REGISTRY_URL"),
 		ProvisionedRegistryUsername:   os.Getenv("PROVISIONED_REGISTRY_USERNAME"),
@@ -106,6 +114,11 @@ func getEnvIntOrDefault(key string, defaultValue int) int {
 		}
 	}
 	return defaultValue
+}
+
+func getEnvBool(key string) bool {
+	v, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(key)))
+	return err == nil && v
 }
 
 func getEnvCompat(keys ...string) string {

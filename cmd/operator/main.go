@@ -3,6 +3,8 @@ package main
 import (
 	"flag"
 	"os"
+	"strconv"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -55,6 +57,8 @@ func main() {
 		Client:                    mgr.GetClient(),
 		Scheme:                    mgr.GetScheme(),
 		DefaultIngressHost:        os.Getenv("MCP_DEFAULT_INGRESS_HOST"),
+		DefaultIngressEntryPoints: strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_ENTRYPOINTS")),
+		DefaultIngressTLS:         boolFromEnv(os.Getenv("MCP_DEFAULT_INGRESS_TLS")),
 		IngressReadinessMode:      ingressReadinessMode,
 		ProvisionedRegistry:       registryConfig,
 		GatewayProxyImage:         gatewayProxyImageFromEnv(os.Getenv),
@@ -176,4 +180,9 @@ func ingressReadinessModeFromEnv(getenv func(string) string) (string, bool) {
 func webhooksEnabledFromEnv(getenv func(string) string) bool {
 	value := getenv("MCP_ENABLE_WEBHOOKS")
 	return value == "true" || value == "1"
+}
+
+func boolFromEnv(value string) bool {
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+	return err == nil && parsed
 }

@@ -7,6 +7,7 @@ import mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 type ServerInfo struct {
 	Name        string                      `json:"name"`
 	Namespace   string                      `json:"namespace"`
+	UID         string                      `json:"uid,omitempty"`
 	TeamID      string                      `json:"team_id,omitempty"`
 	Description string                      `json:"description,omitempty"`
 	Ready       string                      `json:"ready"`
@@ -14,6 +15,8 @@ type ServerInfo struct {
 	Labels      map[string]string           `json:"labels,omitempty"`
 	Age         string                      `json:"age"`
 	Endpoint    string                      `json:"endpoint,omitempty"`
+	ServicePort int32                       `json:"servicePort,omitempty"`
+	Generation  int64                       `json:"generation,omitempty"`
 	Tools       []mcpv1alpha1.ToolConfig    `json:"tools,omitempty"`
 	Prompts     []mcpv1alpha1.InventoryItem `json:"prompts"`
 	Resources   []mcpv1alpha1.InventoryItem `json:"resources"`

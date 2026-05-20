@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -104,7 +105,7 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 	})
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"servers":        serverInfosWithAccessJSON(servers, r),
+		"servers":        s.serverInfosWithRuntimeData(ctx, servers, r),
 		"publish_policy": s.publishPolicyStatusForPrincipal(ctx, p),
 	})
 }
@@ -209,6 +210,11 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	if req.Spec.IngressPath == "" {
 		req.Spec.IngressPath = "/" + req.Spec.PublicPathPrefix + "/mcp"
 	}
+	req.Spec.IngressHost = strings.TrimSpace(req.Spec.IngressHost)
+	if req.Spec.IngressHost == "" {
+		req.Spec.IngressHost = defaultRuntimeServerIngressHost()
+	}
+	req.Spec.EnvVars = upsertMCPServerEnvVar(req.Spec.EnvVars, "MCP_PATH", req.Spec.IngressPath)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
@@ -336,6 +342,46 @@ func serverApplyNamespaceEnsureError(p principal, namespace string, isTeamNamesp
 	return "failed to ensure server namespace"
 }
 
+func upsertMCPServerEnvVar(envVars []mcpv1alpha1.EnvVar, name, value string) []mcpv1alpha1.EnvVar {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return envVars
+	}
+	for i := range envVars {
+		if envVars[i].Name == name {
+			envVars[i].Value = value
+			return envVars
+		}
+	}
+	return append(envVars, mcpv1alpha1.EnvVar{Name: name, Value: value})
+}
+
+func defaultRuntimeServerIngressHost() string {
+	for _, key := range []string{"MCP_MCP_INGRESS_HOST", "MCP_DEFAULT_INGRESS_HOST"} {
+		if host := normalizeRuntimeServerHost(os.Getenv(key)); host != "" {
+			return host
+		}
+	}
+	if domain := normalizeRuntimeServerHost(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
+		if strings.HasPrefix(strings.ToLower(domain), "mcp.") {
+			return domain
+		}
+		return "mcp." + domain
+	}
+	return ""
+}
+
+func normalizeRuntimeServerHost(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "https://")
+	value = strings.TrimPrefix(value, "http://")
+	value = strings.Trim(value, "/")
+	if idx := strings.IndexByte(value, '/'); idx >= 0 {
+		value = value[:idx]
+	}
+	return strings.TrimSpace(value)
+}
+
 func (s *RuntimeServer) scopedNamespaceForServerApply(ctx context.Context, requested string, scope publishscope.Scope) (string, error) {
 	requested = strings.TrimSpace(requested)
 	if scope == "" {
@@ -429,11 +475,53 @@ func preserveCurrentLabel(labels, current map[string]string, key string) {
 }
 
 func (s *RuntimeServer) HandleRuntimeServerItem(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		w.Header().Set("allow", "DELETE")
+	switch r.Method {
+	case http.MethodGet:
+		s.handleRuntimeServerGet(w, r)
+	case http.MethodDelete:
+		s.handleRuntimeServerDelete(w, r)
+	default:
+		w.Header().Set("allow", "GET, DELETE")
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+	}
+}
+
+func (s *RuntimeServer) handleRuntimeServerGet(w http.ResponseWriter, r *http.Request) {
+	control := s.controlPlane()
+	if control == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
 		return
 	}
+	p, ok := principalFromContext(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	namespace, name, err := extractNamespaceName(r.URL.Path, "/api/runtime/servers/")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if p.Role != roleAdmin && !principalCanReadNamespace(p, namespace) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	info, err := control.GetServerInfo(ctx, namespace, name)
+	if apierrors.IsNotFound(err) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "server not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to inspect server"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"server": s.serverInfoWithRuntimeData(ctx, info, r)})
+}
+
+func (s *RuntimeServer) handleRuntimeServerDelete(w http.ResponseWriter, r *http.Request) {
 	control := s.controlPlane()
 	if control == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
@@ -485,7 +573,9 @@ func (s *RuntimeServer) HandleRuntimeServerItem(w http.ResponseWriter, r *http.R
 
 type serverInfo struct {
 	controlplane.ServerInfo
-	AccessJSON map[string]any `json:"access_json,omitempty"`
+	LiveInventory      *liveInventory `json:"liveInventory"`
+	LiveInventoryError string         `json:"liveInventoryError,omitempty"`
+	AccessJSON         map[string]any `json:"access_json,omitempty"`
 }
 
 type serverDeploymentStatus = controlplane.ServerDeploymentStatus
@@ -515,6 +605,27 @@ func serverInfoWithAccessJSON(info controlplane.ServerInfo, r *http.Request) ser
 			},
 		}
 	}
+	return out
+}
+
+func (s *RuntimeServer) serverInfosWithRuntimeData(ctx context.Context, items []controlplane.ServerInfo, r *http.Request) []serverInfo {
+	out := make([]serverInfo, 0, len(items))
+	for _, item := range items {
+		out = append(out, s.serverInfoWithRuntimeData(ctx, item, r))
+	}
+	return out
+}
+
+func (s *RuntimeServer) serverInfoWithRuntimeData(ctx context.Context, info controlplane.ServerInfo, r *http.Request) serverInfo {
+	out := serverInfoWithAccessJSON(info, r)
+	cache := s.liveInventory()
+	if cache == nil {
+		out.LiveInventoryError = "live inventory unavailable"
+		return out
+	}
+	inventory, reason := cache.getOrStart(ctx, info)
+	out.LiveInventory = inventory
+	out.LiveInventoryError = reason
 	return out
 }
 
