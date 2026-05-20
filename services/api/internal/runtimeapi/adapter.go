@@ -204,8 +204,11 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 }
 
 func adapterPrincipalTeamIDs(p principal) []string {
-	seen := map[string]struct{}{}
-	out := []string{}
+	if len(p.Teams) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(p.Teams))
+	out := make([]string, 0, len(p.Teams))
 	for _, team := range p.Teams {
 		id := strings.TrimSpace(team.ID)
 		if id == "" {
@@ -286,7 +289,7 @@ func matchingAdapterGrantTeamID(subj sentinelaccess.SubjectRef, humanID, agentID
 		return defaultTeamID, true
 	}
 	for _, teamID := range teamIDs {
-		if strings.TrimSpace(teamID) == grantTeamID {
+		if teamID == grantTeamID {
 			return grantTeamID, true
 		}
 	}
