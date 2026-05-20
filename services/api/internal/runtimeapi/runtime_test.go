@@ -870,9 +870,7 @@ func TestRuntimeServerApplyPreservesExplicitAnalyticsDisable(t *testing.T) {
 func TestRuntimeServerApplyPublicScopeExpandsShortImage(t *testing.T) {
 	t.Setenv("PLATFORM_MODE", "public")
 	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
-	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.local:32000")
-	t.Setenv("PLATFORM_REGISTRY_URL", "registry.local:32000")
-	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
 	t.Setenv("MCP_MCP_INGRESS_HOST", "mcp.mcpruntime.org")
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
@@ -905,7 +903,7 @@ func TestRuntimeServerApplyPublicScopeExpandsShortImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetServer: %v", err)
 	}
-	if got, want := current.Spec.Image, "registry.mcpruntime.org/public/go-example"; got != want {
+	if got, want := current.Spec.Image, "10.96.223.152:5000/public/go-example"; got != want {
 		t.Fatalf("image = %q, want %q", got, want)
 	}
 	if got := envValue(current.Spec.EnvVars, "MCP_PATH"); got != "/go-example/mcp" {
@@ -919,9 +917,7 @@ func TestRuntimeServerApplyPublicScopeExpandsShortImage(t *testing.T) {
 func TestRuntimeServerApplyTenantScopeExpandsShortImageToTeamSlug(t *testing.T) {
 	t.Setenv("PLATFORM_MODE", "tenant")
 	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
-	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.local:32000")
-	t.Setenv("PLATFORM_REGISTRY_URL", "registry.local:32000")
-	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
@@ -955,7 +951,7 @@ func TestRuntimeServerApplyTenantScopeExpandsShortImageToTeamSlug(t *testing.T) 
 	if err != nil {
 		t.Fatalf("GetServer: %v", err)
 	}
-	if got, want := current.Spec.Image, "registry.mcpruntime.org/acme/go-example"; got != want {
+	if got, want := current.Spec.Image, "10.96.223.152:5000/acme/go-example"; got != want {
 		t.Fatalf("image = %q, want %q", got, want)
 	}
 	if got := current.Spec.TeamID; got != "team-acme" {

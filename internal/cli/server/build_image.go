@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -26,11 +27,12 @@ import (
 )
 
 const buildTenantScopeTimeout = 30 * time.Second
+const defaultDockerBuildPlatform = "linux/amd64"
 
 // yamlMarshal is a test seam for yaml.Marshal.
 var yamlMarshal = yaml.Marshal
 
-func buildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, contextDir string) error {
+func buildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, platform, contextDir string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -60,15 +62,16 @@ func buildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile,
 	}
 	imageName := fmt.Sprintf("%s/%s", registryURL, repository)
 	fullImage := fmt.Sprintf("%s:%s", imageName, tag)
+	platform = normalizeDockerBuildPlatform(platform)
 
 	// Build Docker image
+	buildArgs := []string{"build"}
+	if platform != "" {
+		buildArgs = append(buildArgs, "--platform", platform)
+	}
+	buildArgs = append(buildArgs, "-f", dockerfile, "-t", fullImage, contextDir)
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	buildCmd, err := core.ExecCommandWithValidators("docker", []string{
-		"build",
-		"-f", dockerfile,
-		"-t", fullImage,
-		contextDir,
-	})
+	buildCmd, err := core.ExecCommandWithValidators("docker", buildArgs)
 	if err != nil {
 		return err
 	}
@@ -151,8 +154,18 @@ func findMetadataServer(serverName, metadataFile, metadataDir string) (metadata.
 }
 
 // BuildImage builds a Docker image and updates MCP metadata for the server.
-func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, contextDir string) error {
-	return buildImage(ctx, logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, contextDir)
+func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, platform, contextDir string) error {
+	return buildImage(ctx, logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, platform, contextDir)
+}
+
+func normalizeDockerBuildPlatform(platform string) string {
+	if platform = strings.TrimSpace(platform); platform != "" {
+		return platform
+	}
+	if platform = strings.TrimSpace(os.Getenv("MCP_DOCKER_PLATFORM")); platform != "" {
+		return platform
+	}
+	return defaultDockerBuildPlatform
 }
 
 func registryResolveConfig() resolve.Config {

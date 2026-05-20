@@ -388,6 +388,13 @@ cluster pulls from the same hardened image host you intend to keep:
 ./bin/mcp-runtime setup --registry-mode external --with-tls --strict-prod
 ```
 
+For public/TLS setup, setup validates the host env even without
+`--strict-prod`. Use `MCP_PLATFORM_DOMAIN` or set
+`MCP_PLATFORM_INGRESS_HOST`, `MCP_REGISTRY_INGRESS_HOST`, and
+`MCP_MCP_INGRESS_HOST` explicitly. If you use the bundled registry, also set
+`MCP_REGISTRY_ENDPOINT` or `MCP_REGISTRY_HOST` to the exact registry host:port
+that Kubernetes nodes can pull.
+
 You can also skip the saved provision step and pass
 `--external-registry-url registry.example.com` directly to `setup`.
 
@@ -552,7 +559,7 @@ For the full field surface, use the [API reference](api.md).
 Author lightweight metadata YAML, generate CRDs, and deploy:
 
 ```bash
-./bin/mcp-runtime server build image my-server --tag v1.0.0
+./bin/mcp-runtime server build image my-server --tag v1.0.0 --platform linux/amd64
 ./bin/mcp-runtime registry push --scope tenant --image <exact-image-ref-from-build>
 ./bin/mcp-runtime pipeline generate --dir .mcp --output manifests/
 ./bin/mcp-runtime pipeline deploy --dir manifests/

@@ -9,6 +9,7 @@ Flags:
   -h, --help                   help for image
       --metadata-dir string    Directory containing metadata files (default ".mcp")
       --metadata-file string   Path to metadata file
+      --platform string        Docker build platform (overrides MCP_DOCKER_PLATFORM) (default "linux/amd64")
       --registry string        Registry URL (defaults to platform registry)
       --tag string             Image tag (defaults to git SHA or 'latest')
 

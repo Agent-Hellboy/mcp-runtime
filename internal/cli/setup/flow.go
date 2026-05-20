@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"strings"
 
 	"go.uber.org/zap"
@@ -88,6 +89,9 @@ func validateNonTestSetup(plan setupplan.Plan, extRegistry *config.ExternalRegis
 	if plan.TestMode {
 		return nil
 	}
+	if err := validateRequiredPlatformEnv(plan, usingExternalRegistry); err != nil {
+		return err
+	}
 	if !plan.StrictProd {
 		return nil
 	}
@@ -128,6 +132,63 @@ func validateNonTestSetup(plan setupplan.Plan, extRegistry *config.ExternalRegis
 		)
 	}
 	return nil
+}
+
+func validateRequiredPlatformEnv(plan setupplan.Plan, usingExternalRegistry bool) error {
+	if !platformEnvValidationRequired(plan) {
+		return nil
+	}
+	if missing := missingPublicHostEnv(); len(missing) > 0 {
+		return core.NewWithSentinel(
+			core.ErrSetupStepFailed,
+			fmt.Sprintf(
+				"platform host configuration is incomplete; set MCP_PLATFORM_DOMAIN or set %s before running setup",
+				strings.Join(missing, ", "),
+			),
+		)
+	}
+	if !usingExternalRegistry && !registryEndpointEnvExplicitlyConfigured() {
+		return core.NewWithSentinel(
+			core.ErrSetupStepFailed,
+			"bundled registry platform setup requires MCP_REGISTRY_ENDPOINT (or MCP_REGISTRY_HOST) set to the exact registry host:port Kubernetes nodes can pull from; use --registry-mode external for a provisioned registry",
+		)
+	}
+	return nil
+}
+
+func platformEnvValidationRequired(plan setupplan.Plan) bool {
+	return plan.TLSEnabled || publicHostEnvConfigured()
+}
+
+func publicHostEnvConfigured() bool {
+	for _, key := range []string{
+		"MCP_PLATFORM_DOMAIN",
+		"MCP_PLATFORM_INGRESS_HOST",
+		"MCP_REGISTRY_INGRESS_HOST",
+		"MCP_MCP_INGRESS_HOST",
+	} {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func missingPublicHostEnv() []string {
+	if strings.TrimSpace(os.Getenv("MCP_PLATFORM_DOMAIN")) != "" {
+		return nil
+	}
+	var missing []string
+	for _, key := range []string{
+		"MCP_PLATFORM_INGRESS_HOST",
+		"MCP_REGISTRY_INGRESS_HOST",
+		"MCP_MCP_INGRESS_HOST",
+	} {
+		if strings.TrimSpace(os.Getenv(key)) == "" {
+			missing = append(missing, key)
+		}
+	}
+	return missing
 }
 
 func setupWarnings(plan setupplan.Plan, extRegistry *config.ExternalRegistryConfig, usingExternalRegistry bool) []string {
