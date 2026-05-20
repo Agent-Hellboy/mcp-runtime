@@ -226,14 +226,22 @@ jobs:
           python3 --version
           rg --version
 
+      - name: Configure E2E resource names
+        run: |
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          port=$((20000 + ((GITHUB_RUN_ID + GITHUB_RUN_ATTEMPT) % 20000)))
+          {
+            echo "CLUSTER_NAME=mcp-e2e-${suffix}"
+            echo "LOCAL_REGISTRY_NAME=mcp-e2e-registry-${suffix}"
+            echo "LOCAL_REGISTRY_PORT=${port}"
+          } >> "${GITHUB_ENV}"
+
       - name: Run kind e2e
         env:
-          CLUSTER_NAME: mcp-e2e-${{ github.run_id }}-${{ github.run_attempt }}
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/.e2e-artifacts/kind
           E2E_SCENARIOS: ${{ github.actor == 'dependabot[bot]' && 'smoke-auth,governance' || 'all' }}
           E2E_IMAGE_BUILD_PARALLELISM: "1"
           E2E_IMAGE_MIRROR_PARALLELISM: "1"
-          LOCAL_REGISTRY_NAME: mcp-e2e-registry-${{ github.run_id }}-${{ github.run_attempt }}
         run: bash test/e2e/kind.sh
 
       - name: Upload e2e artifacts
