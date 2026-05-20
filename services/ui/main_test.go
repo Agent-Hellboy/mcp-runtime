@@ -205,6 +205,41 @@ func TestStaticAppSearchesServerMetadataLabels(t *testing.T) {
 	}
 }
 
+func TestStaticAppUsesLiveInventoryWithDriftBadges(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`function serverDisplayInventory(server)`,
+		`mergeToolInventory(live.tools || [], declaredTools)`,
+		`drift: governance ? "" : "ungoverned"`,
+		`drift: "missing"`,
+		`missing on server`,
+		`loadServers();`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+
+	styles, err := os.ReadFile("static/styles.css")
+	if err != nil {
+		t.Fatalf("read static styles: %v", err)
+	}
+	css := string(styles)
+	for _, want := range []string{
+		`.drift-ungoverned`,
+		`.drift-missing`,
+		`.drift-chip::before`,
+	} {
+		if !strings.Contains(css, want) {
+			t.Fatalf("styles missing %q", want)
+		}
+	}
+}
+
 func TestStaticAppRequiresGrantSideEffects(t *testing.T) {
 	body, err := os.ReadFile("static/app.js")
 	if err != nil {

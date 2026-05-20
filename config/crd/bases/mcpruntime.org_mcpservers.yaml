@@ -282,7 +282,7 @@ spec:
               publicPathPrefix:
                 description: |-
                   PublicPathPrefix enables path-based public routing and is used to compute /<publicPathPrefix>/mcp.
-                  When set, the operator prefers path-based ingress rules without a host match.
+                  When ingressHost is also set, the route is path-based under that host; otherwise it is hostless.
                 type: string
               registryOverride:
                 description: RegistryOverride, if set, overrides the registry portion

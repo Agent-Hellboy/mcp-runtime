@@ -57,6 +57,23 @@ Added: 2026-05-12
 
 ---
 
+### Bundled registry TLS does not configure node trust
+
+`setup --registry-mode bundled-https` makes the registry pod serve HTTPS
+and renders platform image refs with a stable internal registry host, but
+kubelet still pulls through the node's container runtime. Nodes must be
+able to resolve or mirror that image host and trust the issuing CA; the
+cluster-side Certificate and Service changes alone do not update
+containerd, k3s, Docker, or host DNS.
+
+References:
+- `docs/cluster-readiness.md` → **Registry setup modes**
+- `config/registry/overlays/internal-tls/`
+
+Added: 2026-05-20
+
+---
+
 ### Bundled Go example image is distroless — no shell
 
 `kubectl exec -it <pod> -c go-example-mcp -- /bin/sh` fails on the

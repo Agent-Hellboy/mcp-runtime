@@ -669,6 +669,99 @@ func TestRuntimeServerApplyDefaultsGatewayAndAnalyticsSecret(t *testing.T) {
 	}
 }
 
+func TestRuntimeServerApplyDefaultsAnalyticsSecretNameFitsDNSLabelLimit(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv("MCP_SENTINEL_INGEST_URL", "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic: dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(&corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: defaultAnalyticsCredentialSourceSecretName, Namespace: "mcp-sentinel"},
+				Data: map[string][]byte{
+					defaultAnalyticsCredentialSourceKey: []byte("ingest-key-1"),
+				},
+			}),
+		},
+	}
+	longName := strings.Repeat("demo", 16)
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "`+longName+`",
+		"scope": "public",
+		"spec": {"image":"registry.example.com/public/demo"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "mcp-team-acme",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	current, err := server.controlPlane().GetServer(context.Background(), defaultPublicCatalogNamespace, longName)
+	if err != nil {
+		t.Fatalf("GetServer: %v", err)
+	}
+	if current.Spec.Analytics == nil || current.Spec.Analytics.APIKeySecretRef == nil {
+		t.Fatalf("analytics = %#v, want api key secret ref", current.Spec.Analytics)
+	}
+	got := current.Spec.Analytics.APIKeySecretRef.Name
+	if len(got) > 63 {
+		t.Fatalf("analytics secret name len = %d, want <= 63 (%q)", len(got), got)
+	}
+}
+
+func TestRuntimeServerApplyAllowsMissingDefaultAnalyticsSecret(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv("MCP_SENTINEL_INGEST_URL", "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"scope": "public",
+		"spec": {"image":"registry.example.com/public/demo"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "mcp-team-acme",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	current, err := server.controlPlane().GetServer(context.Background(), defaultPublicCatalogNamespace, "demo")
+	if err != nil {
+		t.Fatalf("GetServer: %v", err)
+	}
+	if current.Spec.Gateway == nil || !current.Spec.Gateway.Enabled {
+		t.Fatalf("gateway = %#v, want enabled", current.Spec.Gateway)
+	}
+	if current.Spec.Analytics != nil && current.Spec.Analytics.APIKeySecretRef != nil {
+		t.Fatalf("analytics api key ref = %#v, want nil when source secret is missing", current.Spec.Analytics.APIKeySecretRef)
+	}
+}
+
 func TestRuntimeServerApplyPreservesExplicitGatewaySettings(t *testing.T) {
 	t.Setenv("PLATFORM_MODE", "public")
 	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
@@ -778,6 +871,7 @@ func TestRuntimeServerApplyPublicScopeExpandsShortImage(t *testing.T) {
 	t.Setenv("PLATFORM_MODE", "public")
 	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
+	t.Setenv("MCP_MCP_INGRESS_HOST", "mcp.mcpruntime.org")
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
@@ -811,6 +905,12 @@ func TestRuntimeServerApplyPublicScopeExpandsShortImage(t *testing.T) {
 	}
 	if got, want := current.Spec.Image, "10.96.223.152:5000/public/go-example"; got != want {
 		t.Fatalf("image = %q, want %q", got, want)
+	}
+	if got := envValue(current.Spec.EnvVars, "MCP_PATH"); got != "/go-example/mcp" {
+		t.Fatalf("MCP_PATH = %q, want /go-example/mcp", got)
+	}
+	if got := current.Spec.IngressHost; got != "mcp.mcpruntime.org" {
+		t.Fatalf("ingressHost = %q, want mcp.mcpruntime.org", got)
 	}
 }
 
@@ -856,6 +956,9 @@ func TestRuntimeServerApplyTenantScopeExpandsShortImageToTeamSlug(t *testing.T) 
 	}
 	if got := current.Spec.TeamID; got != "team-acme" {
 		t.Fatalf("teamID = %q, want team-acme", got)
+	}
+	if got := envValue(current.Spec.EnvVars, "MCP_PATH"); got != "/go-example/mcp" {
+		t.Fatalf("MCP_PATH = %q, want /go-example/mcp", got)
 	}
 }
 
@@ -1325,6 +1428,15 @@ func ownedTestMCPServer(name, namespace, userID string) *mcpv1alpha1.MCPServer {
 			Image: "registry.example.com/" + namespace + "/" + name,
 		},
 	}
+}
+
+func envValue(envVars []mcpv1alpha1.EnvVar, name string) string {
+	for _, envVar := range envVars {
+		if envVar.Name == name {
+			return envVar.Value
+		}
+	}
+	return ""
 }
 
 func TestScopedNamespaceForPrincipal(t *testing.T) {

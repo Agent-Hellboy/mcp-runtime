@@ -39,6 +39,12 @@ type MCPServerReconciler struct {
 	// DefaultIngressHost is the default ingress host if not specified in the CR.
 	DefaultIngressHost string
 
+	// DefaultIngressEntryPoints is the default Traefik entrypoint annotation for MCP server ingresses.
+	DefaultIngressEntryPoints string
+
+	// DefaultIngressTLS enables Traefik TLS routing for MCP server ingresses by default.
+	DefaultIngressTLS bool
+
 	// IngressReadinessMode controls how ingress readiness is evaluated.
 	IngressReadinessMode string
 
