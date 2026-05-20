@@ -23,34 +23,42 @@ Expected UI/API behavior:
 | User in public mode | MCPs from `mcp-servers-public` |
 | Admin | Cluster-wide management visibility, with namespace/team checks on writes |
 
-## Deploy the Bundled Example
+## Deploy the Bundled Workspace Assistant
 
-The bundled Go example is useful for disposable local testing. Keep it separate
-from long-lived shared-cluster MCPs.
+The bundled workspace assistant sample is useful for disposable local testing.
+Keep it separate from long-lived shared-cluster MCPs.
 
 Create metadata:
 
 ```bash
-cat > /tmp/go-example-mcp.yaml <<'EOF'
+cat > /tmp/workspace-assistant-mcp.yaml <<'EOF'
 version: v1
 servers:
-  - name: go-example-mcp
-    description: Go MCP example server with smoke and text transformation tools.
-    route: /go-example-mcp/mcp
-    publicPathPrefix: go-example-mcp
+  - name: workspace-assistant-mcp
+    description: Workspace assistant MCP server for task cards, release notes, and text cleanup.
+    route: /workspace-assistant-mcp/mcp
+    publicPathPrefix: workspace-assistant-mcp
     port: 8088
     namespace: mcp-servers
     envVars:
       - name: MCP_PATH
-        value: /go-example-mcp/mcp
+        value: /workspace-assistant-mcp/mcp
     tools:
       - name: add
-        description: Add two numbers.
+        description: Add two numeric values.
         requiredTrust: low
         sideEffect: read
       - name: upper
-        description: Uppercase the provided message.
+        description: Convert text to uppercase for normalization checks.
         requiredTrust: medium
+        sideEffect: read
+      - name: create_task
+        description: Create a deterministic task card summary.
+        requiredTrust: low
+        sideEffect: write
+      - name: draft_release_note
+        description: Draft a compact release note from a change summary and impact.
+        requiredTrust: low
         sideEffect: read
     auth:
       mode: header
@@ -68,7 +76,7 @@ servers:
     analytics:
       ingestURL: http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events
       apiKeySecretRef:
-        name: go-example-mcp-analytics
+        name: workspace-assistant-mcp-analytics
         key: api-key
 EOF
 ```
@@ -81,7 +89,7 @@ API_KEY="$(
     -o jsonpath='{.data.INGEST_API_KEYS}' | base64 -d | cut -d, -f1
 )"
 
-kubectl create secret generic go-example-mcp-analytics \
+kubectl create secret generic workspace-assistant-mcp-analytics \
   -n mcp-servers \
   --from-literal=api-key="$API_KEY" \
   --dry-run=client -o yaml | kubectl apply -f -
@@ -90,8 +98,8 @@ kubectl create secret generic go-example-mcp-analytics \
 Build, push, generate, and deploy:
 
 ```bash
-./bin/mcp-runtime server build image go-example-mcp \
-  --metadata-file /tmp/go-example-mcp.yaml \
+./bin/mcp-runtime server build image workspace-assistant-mcp \
+  --metadata-file /tmp/workspace-assistant-mcp.yaml \
   --dockerfile examples/go-mcp-server/Dockerfile \
   --context examples/go-mcp-server \
   --registry registry.registry.svc.cluster.local:5000 \
@@ -100,21 +108,21 @@ Build, push, generate, and deploy:
 ./bin/mcp-runtime auth login --api-url http://localhost:18080
 
 ./bin/mcp-runtime registry push \
-  --image registry.registry.svc.cluster.local:5000/go-example-mcp:dev
+  --image registry.registry.svc.cluster.local:5000/workspace-assistant-mcp:dev
 
-rm -rf /tmp/go-example-mcp-manifests
+rm -rf /tmp/workspace-assistant-mcp-manifests
 ./bin/mcp-runtime pipeline generate \
-  --file /tmp/go-example-mcp.yaml \
-  --output /tmp/go-example-mcp-manifests
+  --file /tmp/workspace-assistant-mcp.yaml \
+  --output /tmp/workspace-assistant-mcp-manifests
 
-./bin/mcp-runtime pipeline deploy --dir /tmp/go-example-mcp-manifests
-kubectl rollout status deploy/go-example-mcp -n mcp-servers --timeout=180s
+./bin/mcp-runtime pipeline deploy --dir /tmp/workspace-assistant-mcp-manifests
+kubectl rollout status deploy/workspace-assistant-mcp -n mcp-servers --timeout=180s
 ```
 
 ## Inspect Runtime Outputs
 
 ```bash
-SERVER=go-example-mcp
+SERVER=workspace-assistant-mcp
 NAMESPACE=mcp-servers
 
 kubectl get mcpserver "$SERVER" -n "$NAMESPACE" -o yaml

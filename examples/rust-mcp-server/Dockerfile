@@ -10,8 +10,8 @@ RUN cargo build --release
 FROM alpine:3.20
 
 WORKDIR /app
-COPY --from=build /src/target/release/rust-example-mcp /app/rust-example-mcp
+COPY --from=build /src/target/release/text-analysis-mcp /app/text-analysis-mcp
 
 EXPOSE 8088
 
-ENTRYPOINT ["/app/rust-example-mcp"]
+ENTRYPOINT ["/app/text-analysis-mcp"]

@@ -32,7 +32,7 @@ func TestHTTPProxyInjectsGovernanceHeadersAndPreservesMCPHeaders(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	target, err := url.Parse(upstream.URL + "/go-example-mcp/mcp?source=runtime")
+	target, err := url.Parse(upstream.URL + "/workspace-assistant-mcp/mcp?source=runtime")
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
@@ -69,7 +69,7 @@ func TestHTTPProxyInjectsGovernanceHeadersAndPreservesMCPHeaders(t *testing.T) {
 	if upstreamHost != "mcp.example.local" {
 		t.Fatalf("upstream host = %q, want host header override", upstreamHost)
 	}
-	if upstreamPath != "/go-example-mcp/mcp" {
+	if upstreamPath != "/workspace-assistant-mcp/mcp" {
 		t.Fatalf("upstream path = %q, want exact runtime route", upstreamPath)
 	}
 	if upstreamQuery != "source=runtime&client=true" {
@@ -98,7 +98,7 @@ func TestHTTPProxyStripsSpoofedTeamHeaderWhenUnset(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	target, err := url.Parse(upstream.URL + "/go-example-mcp/mcp")
+	target, err := url.Parse(upstream.URL + "/workspace-assistant-mcp/mcp")
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
@@ -128,7 +128,7 @@ func TestHTTPProxyPropagatesRuntimeDenial(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	target, err := url.Parse(upstream.URL + "/go-example-mcp/mcp")
+	target, err := url.Parse(upstream.URL + "/workspace-assistant-mcp/mcp")
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
@@ -164,7 +164,7 @@ func TestHTTPProxyLogsRuntimeDenialWhenInfoEnabled(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	target, err := url.Parse(upstream.URL + "/go-example-mcp/mcp")
+	target, err := url.Parse(upstream.URL + "/workspace-assistant-mcp/mcp")
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
@@ -194,7 +194,7 @@ func TestHTTPProxyConvertsUpstreamConnectionFailureToJSONRPCError(t *testing.T) 
 	t.Parallel()
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	target, err := url.Parse(upstream.URL + "/go-example-mcp/mcp")
+	target, err := url.Parse(upstream.URL + "/workspace-assistant-mcp/mcp")
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
@@ -240,7 +240,7 @@ func TestHTTPProxyCanSuppressXForwardedHeaders(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	target, err := url.Parse(upstream.URL + "/go-example-mcp/mcp")
+	target, err := url.Parse(upstream.URL + "/workspace-assistant-mcp/mcp")
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}
@@ -288,7 +288,7 @@ func TestHTTPProxyFlushesStreamableHTTPEventFrames(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	target, err := url.Parse(upstream.URL + "/go-example-mcp/mcp")
+	target, err := url.Parse(upstream.URL + "/workspace-assistant-mcp/mcp")
 	if err != nil {
 		t.Fatalf("url.Parse() error = %v", err)
 	}

@@ -624,8 +624,8 @@ func TestApplyDeployMetadataDefaultsUsesSingleLocalMetadataServer(t *testing.T) 
 	}
 	if err := os.WriteFile(".mcp/servers.yaml", []byte(`version: v1
 servers:
-  - name: go-example-mcp
-    description: Go example metadata
+  - name: workspace-assistant-mcp
+    description: Workspace assistant metadata
     tools:
       - name: add
         description: Add two numbers.
@@ -642,7 +642,7 @@ servers:
 	if err := applyDeployMetadataDefaults(&spec, "acme-tools"); err != nil {
 		t.Fatalf("applyDeployMetadataDefaults() error = %v", err)
 	}
-	if spec.Description != "Go example metadata" {
+	if spec.Description != "Workspace assistant metadata" {
 		t.Fatalf("description = %q", spec.Description)
 	}
 	if len(spec.Tools) != 2 || spec.Tools[0].Name != "add" || spec.Tools[0].SideEffect != "read" {

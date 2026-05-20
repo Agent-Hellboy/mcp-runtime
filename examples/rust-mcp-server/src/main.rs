@@ -2,14 +2,14 @@ use std::{net::SocketAddr, sync::Arc};
 
 use axum::Router;
 use rmcp::{
-    ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{ServerCapabilities, ServerInfo},
     schemars, tool, tool_handler, tool_router,
     transport::{
-        streamable_http_server::session::local::LocalSessionManager,
-        StreamableHttpServerConfig, StreamableHttpService,
+        streamable_http_server::session::local::LocalSessionManager, StreamableHttpServerConfig,
+        StreamableHttpService,
     },
+    ServerHandler,
 };
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -23,12 +23,18 @@ struct RepeatRequest {
     times: usize,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct KeywordRequest {
+    message: String,
+    limit: Option<usize>,
+}
+
 #[derive(Clone)]
-struct ExampleServer {
+struct TextAnalysisServer {
     tool_router: ToolRouter<Self>,
 }
 
-impl ExampleServer {
+impl TextAnalysisServer {
     fn new() -> Self {
         Self {
             tool_router: Self::tool_router(),
@@ -36,30 +42,56 @@ impl ExampleServer {
     }
 }
 
-impl Default for ExampleServer {
+impl Default for TextAnalysisServer {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[tool_router(router = tool_router)]
-impl ExampleServer {
+impl TextAnalysisServer {
     #[tool(description = "Repeat the provided message a number of times")]
-    fn repeat(&self, Parameters(RepeatRequest { message, times }): Parameters<RepeatRequest>) -> String {
+    fn repeat(
+        &self,
+        Parameters(RepeatRequest { message, times }): Parameters<RepeatRequest>,
+    ) -> String {
         message.repeat(times)
     }
 
     #[tool(description = "Count the words in the provided message")]
-    fn word_count(&self, Parameters(MessageRequest { message }): Parameters<MessageRequest>) -> String {
+    fn word_count(
+        &self,
+        Parameters(MessageRequest { message }): Parameters<MessageRequest>,
+    ) -> String {
         message.split_whitespace().count().to_string()
+    }
+
+    #[tool(description = "Extract stable lowercase keywords from a short text sample")]
+    fn extract_keywords(
+        &self,
+        Parameters(KeywordRequest { message, limit }): Parameters<KeywordRequest>,
+    ) -> String {
+        let limit = limit.unwrap_or(5).clamp(1, 20);
+        let mut keywords: Vec<String> = Vec::new();
+        for raw in message.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_') {
+            let word = raw.trim().to_ascii_lowercase();
+            if word.len() < 3 || keywords.iter().any(|existing| existing == &word) {
+                continue;
+            }
+            keywords.push(word);
+            if keywords.len() >= limit {
+                break;
+            }
+        }
+        keywords.join(", ")
     }
 }
 
 #[tool_handler(router = self.tool_router)]
-impl ServerHandler for ExampleServer {
+impl ServerHandler for TextAnalysisServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_instructions("A Rust MCP example server built with the official rmcp SDK")
+            .with_instructions("Text analysis MCP server for repeatable text transforms, word counts, and keyword extraction.")
     }
 }
 
@@ -72,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mcp_path = std::env::var("MCP_PATH").unwrap_or_else(|_| "/mcp".to_string());
 
     let mcp_service = StreamableHttpService::new(
-        || Ok(ExampleServer::new()),
+        || Ok(TextAnalysisServer::new()),
         Arc::new(LocalSessionManager::default()),
         // disable_allowed_hosts clears the default allowlist (localhost/127.0.0.1/::1)
         // so requests forwarded by Traefik with an arbitrary Host header are accepted.

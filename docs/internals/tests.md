@@ -69,9 +69,9 @@ parallelism. `E2E_IMAGE_PREP_PARALLELISM=<n>` tunes the shared prep default,
 to one worker to avoid Docker/local-registry push contention on shared runners
 and builds to two workers because builds are heavier on runner CPU, memory, and
 Docker.
-The script also deploys the independent official SDK example servers
-concurrently; scenario assertions remain ordered because they share policy,
-session, and analytics state.
+The script also deploys the independent workspace assistant, data utility, and
+text analysis sample servers concurrently; scenario assertions remain ordered
+because they share policy, session, and analytics state.
 Parallel worker output is buffered under `stage-logs/` in the e2e workdir and
 copied into `E2E_ARTIFACT_DIR` when artifacts are enabled. Live output prints
 colored `START`, `RUNNING`, `DONE`, and `FAILED` lifecycle lines plus short

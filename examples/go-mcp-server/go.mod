@@ -1,4 +1,4 @@
-module go-example-mcp
+module workspace-assistant-mcp
 
 go 1.25.0
 

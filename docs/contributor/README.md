@@ -104,8 +104,9 @@ Image mirroring and local image builds run concurrently during fresh e2e setup.
 pull/push concurrency from heavier Docker builds. CI pins mirror workers to `1`
 to avoid Docker/local-registry push contention on shared runners and uses two
 build workers; set either value to `1` on constrained machines.
-Independent official SDK example deployments also run in parallel; the scenario
-checks themselves stay ordered because they share runtime state.
+Independent workspace assistant, data utility, and text analysis deployments
+also run in parallel; the scenario checks themselves stay ordered because they
+share runtime state.
 Parallel worker logs are buffered in the e2e workdir under `stage-logs/` and
 copied into `E2E_ARTIFACT_DIR` when artifacts are enabled. Live CI output uses
 colored `START`, `RUNNING`, `DONE`, and `FAILED` lifecycle lines plus short

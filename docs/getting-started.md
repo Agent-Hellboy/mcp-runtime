@@ -165,15 +165,15 @@ kubectl get ingress -n mcp-sentinel -o yaml
 Apply an access grant and session for the local request:
 
 ```bash
-cat > /tmp/go-example-access.yaml <<'EOF'
+cat > /tmp/workspace-assistant-access.yaml <<'EOF'
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
 metadata:
-  name: go-example-local
+  name: workspace-assistant-local
   namespace: mcp-servers
 spec:
   serverRef:
-    name: go-example-mcp
+    name: workspace-assistant-mcp
   subject:
     humanID: local-user
     agentID: local-agent
@@ -194,7 +194,7 @@ metadata:
   namespace: mcp-servers
 spec:
   serverRef:
-    name: go-example-mcp
+    name: workspace-assistant-mcp
   subject:
     humanID: local-user
     agentID: local-agent
@@ -202,9 +202,9 @@ spec:
   policyVersion: v1
 EOF
 
-kubectl apply -f /tmp/go-example-access.yaml
+kubectl apply -f /tmp/workspace-assistant-access.yaml
 
-until ./bin/mcp-runtime server policy inspect go-example-mcp --namespace mcp-servers | grep -q local-session; do
+until ./bin/mcp-runtime server policy inspect workspace-assistant-mcp --namespace mcp-servers | grep -q local-session; do
   sleep 2
 done
 
@@ -216,7 +216,7 @@ sleep 6
 Make a local MCP JSON-RPC request through Traefik and the Sentinel gateway:
 
 ```bash
-BASE=http://localhost:18080/go-example-mcp/mcp
+BASE=http://localhost:18080/workspace-assistant-mcp/mcp
 PROTO=2025-06-18
 
 SESSION="$(
@@ -268,9 +268,9 @@ curl -sS \
 You should see successful `tools/call` responses containing `5` and
 `HELLO WORLD`. Then verify Sentinel health and query the analytics API:
 
-The bundled Go example server also exposes `upper`, `lower`, `echo`, and
-`slugify`, and each of those tools expects a `message` field in `arguments`
-instead of `input` or `text`.
+The bundled workspace assistant server also exposes `upper`, `lower`, `echo`,
+`slugify`, `create_task`, and `draft_release_note`. The text cleanup tools
+expect a `message` field in `arguments` instead of `input` or `text`.
 
 For agent frameworks or IDEs that cannot attach the governance headers
 directly, use the built-in `mcp-runtime adapter proxy` or `mcp-runtime adapter
@@ -282,15 +282,15 @@ headers are derived from your login principal and an existing
 ```bash
 ./bin/mcp-runtime auth login --api-url http://localhost:18080
 ./bin/mcp-runtime adapter stdio \
-  --runtime-url http://localhost:18080/go-example-mcp/mcp \
-  --server go-example-mcp \
+  --runtime-url http://localhost:18080/workspace-assistant-mcp/mcp \
+  --server workspace-assistant-mcp \
   --agent ticket-triage-agent \
   --auto-refresh
 ```
 
 The closed-environment path is still supported: copy
 `MCP_RUNTIME_HUMAN_ID`, `MCP_RUNTIME_AGENT_ID`, `MCP_RUNTIME_TEAM_ID`, and
-`MCP_RUNTIME_SESSION_ID` straight from `/tmp/go-example-access.yaml` if you
+`MCP_RUNTIME_SESSION_ID` straight from `/tmp/workspace-assistant-access.yaml` if you
 do not want the platform to pick the grant. See
 [Agent Adapters](agent-adapters.md) for the full configuration reference,
 including auto-refresh, anonymous mode, mTLS, and the proxy's
@@ -315,7 +315,7 @@ curl -sS -H "x-api-key: $ADMIN_KEY" \
   "http://localhost:18080/api/analytics/usage?limit=10" | jq .
 
 curl -sS -H "x-api-key: $ADMIN_KEY" \
-  "http://localhost:18080/api/events/filter?server=go-example-mcp&tool_name=add&limit=5" | jq .
+  "http://localhost:18080/api/events/filter?server=workspace-assistant-mcp&tool_name=add&limit=5" | jq .
 ```
 
 `mcp-runtime sentinel events` shows Kubernetes events for the Sentinel

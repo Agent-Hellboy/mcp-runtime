@@ -12,7 +12,7 @@
 | **api** | Analytics endpoints, dashboard summaries, user/team-scoped analytics, runtime governance APIs (grants/sessions), platform audit, MCP server catalog, component operations. |
 | **ui** | Control-plane dashboard: user MCP server dashboard, MCP server catalog and connect config, user API keys, analytics dashboard, governance, MCP operations, and platform management. |
 | **gateway** | Kubernetes deployment fronting the sentinel API, ingest, and UI surfaces. |
-| **reference mcp-server** | Small example server in `examples/go-mcp-server` for end-to-end smoke tests. |
+| **workspace assistant sample** | Sample MCP server in `examples/go-mcp-server` for end-to-end smoke tests. |
 
 ## Kubernetes awareness and hardening
 
@@ -104,7 +104,7 @@ For local `setup --test-mode` clusters, setup seeds two email/password logins:
 | **Ingest** | `/ingest/events` | `mcp-sentinel-ingest:8081/events` | Event intake used by `mcp-gateway`; the public ingress strips `/ingest`. |
 | **Grafana** | `/grafana` | `grafana:3000` | Admin observability UI. Keep private or behind auth-aware ingress; tenant-scoped access is intentionally not exposed by the user dashboard. |
 | **Prometheus** | `/prometheus` | `prometheus:9090` | Admin metrics query UI. Keep private or behind auth-aware ingress; tenant-scoped access is intentionally not exposed by the user dashboard. |
-| **MCP gateway sidecar** | per-server route, for example `/demo-one/mcp` | pod-local sidecar port | Enforces policy and forwards to the MCP server container. |
+| **MCP gateway sidecar** | per-server route, for example `/workspace-assistant-mcp/mcp` | pod-local sidecar port | Enforces policy and forwards to the MCP server container. |
 
 ### Auth model
 

@@ -206,12 +206,12 @@ func TestMCPServerDefaultImageTagForHostPortImages(t *testing.T) {
 	}{
 		{
 			name:  "sets latest when hostport image has no tag",
-			image: "10.43.109.51:5000/python-example-mcp",
+			image: "10.43.109.51:5000/data-utility-mcp",
 			want:  "latest",
 		},
 		{
 			name:  "does not set imageTag when hostport image already has tag",
-			image: "10.43.109.51:5000/python-example-mcp:52c916f",
+			image: "10.43.109.51:5000/data-utility-mcp:52c916f",
 			want:  "",
 		},
 	}

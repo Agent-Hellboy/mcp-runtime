@@ -7,16 +7,18 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 
 mcp = FastMCP(
-    "python-example-mcp",
+    "data-utility-mcp",
     instructions=(
-        "Python MCP example server with smoke, text, math, prompt, "
-        "resource, and task examples."
+        "Data utility MCP server for text cleanup, lightweight math, "
+        "timestamping, task summaries, prompts, and reference resources."
     ),
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
 
 _NON_SLUG = re.compile(r"[^a-z0-9]+")
+_WORDS = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+_NUMBERS = re.compile(r"[-+]?(?:\d*\.\d+|\d+)")
 
 
 def _normalize_priority(priority: str) -> str:
@@ -40,20 +42,20 @@ def echo(message: str) -> str:
 
 @mcp.tool()
 def reverse(message: str) -> str:
-    """Reverse the provided message."""
+    """Reverse the provided text."""
     return message[::-1]
 
 
 @mcp.tool()
 def add(a: float, b: float) -> str:
-    """Add two numbers."""
+    """Add two numeric values."""
     result = a + b
     return f"{result:g}"
 
 
 @mcp.tool()
 def multiply(a: float, b: float) -> str:
-    """Multiply two numbers."""
+    """Multiply two numeric values."""
     result = a * b
     return f"{result:g}"
 
@@ -84,6 +86,37 @@ def word_count(message: str) -> str:
 
 
 @mcp.tool()
+def extract_keywords(message: str, limit: int = 5) -> str:
+    """Extract stable lowercase keywords from a short text sample."""
+    seen: list[str] = []
+    for match in _WORDS.findall(message or ""):
+        word = match.lower()
+        if len(word) < 3 or word in seen:
+            continue
+        seen.append(word)
+        if len(seen) >= max(1, limit):
+            break
+    return ", ".join(seen)
+
+
+@mcp.tool()
+def summarize_numbers(values: str) -> str:
+    """Summarize numbers found in comma, space, or prose separated text."""
+    numbers = [float(value) for value in _NUMBERS.findall(values or "")]
+    if not numbers:
+        return "count: 0"
+    total = sum(numbers)
+    average = total / len(numbers)
+    return (
+        f"count: {len(numbers)}\n"
+        f"min: {min(numbers):g}\n"
+        f"max: {max(numbers):g}\n"
+        f"sum: {total:g}\n"
+        f"average: {average:g}"
+    )
+
+
+@mcp.tool()
 def now() -> str:
     """Return the current UTC timestamp in RFC 3339 form."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -104,23 +137,35 @@ def create_task(title: str, priority: str = "medium", owner: str = "") -> str:
 
 @mcp.resource("embedded:readme")
 def readme_resource() -> str:
-    """Sample resource served by the Python MCP example server."""
-    return "This is a sample resource payload from the Python MCP example server."
+    """Data utility overview and supported workflow notes."""
+    return (
+        "Data utility MCP exposes text cleanup, keyword extraction, simple "
+        "numeric summaries, timestamps, task records, and prompt templates."
+    )
 
 
 @mcp.resource("embedded:task-guide")
 def task_guide_resource() -> str:
-    """Task workflow guidance for the Python MCP example server."""
+    """Task workflow guidance for data utility smoke tests."""
     return (
         "Use create_task with title, priority (low|medium|high), and owner to "
         "produce a deterministic task record for adapter smoke tests."
     )
 
 
+@mcp.resource("embedded:data-cleaning-checklist")
+def data_cleaning_checklist_resource() -> str:
+    """Checklist for lightweight data-cleaning demos."""
+    return (
+        "Checklist: trim whitespace, normalize case, extract keywords, "
+        "summarize numeric ranges, record assumptions, and note follow-up checks."
+    )
+
+
 @mcp.prompt()
 def hello() -> str:
     """Return a simple greeting prompt."""
-    return "Hello from the Python MCP example server."
+    return "Hello from the Data utility MCP server."
 
 
 @mcp.prompt()
@@ -135,6 +180,17 @@ def task_brief(goal: str) -> str:
     """Draft a concise task brief from a goal."""
     goal = (goal or "").strip() or "No goal provided."
     return f"Turn this goal into a concise task brief with acceptance criteria: {goal}"
+
+
+@mcp.prompt()
+def data_quality_review(dataset: str, concern: str = "") -> str:
+    """Draft a concise data quality review prompt."""
+    dataset = (dataset or "").strip() or "the dataset"
+    concern = (concern or "").strip() or "freshness, completeness, and outliers"
+    return (
+        f"Review {dataset} for {concern}. Call out assumptions, likely failure "
+        "modes, and the next validation query to run."
+    )
 
 
 if __name__ == "__main__":

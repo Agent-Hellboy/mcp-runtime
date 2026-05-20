@@ -100,13 +100,13 @@ SERVER_NAME="${SERVER_NAME:-policy-mcp-server}"
 SERVER_HOST="${SERVER_HOST:-${PLATFORM_HOST}}"
 OAUTH_SERVER_NAME="${OAUTH_SERVER_NAME:-oauth-mcp-server}"
 OAUTH_SERVER_HOST="${OAUTH_SERVER_HOST:-${PLATFORM_HOST}}"
-PYTHON_EXAMPLE_SERVER_NAME="${PYTHON_EXAMPLE_SERVER_NAME:-python-example-mcp}"
+PYTHON_EXAMPLE_SERVER_NAME="${PYTHON_EXAMPLE_SERVER_NAME:-data-utility-mcp}"
 PYTHON_EXAMPLE_SERVER_HOST="${PYTHON_EXAMPLE_SERVER_HOST:-${PLATFORM_HOST}}"
 PYTHON_EXAMPLE_SERVER_ROUTE="${PYTHON_EXAMPLE_SERVER_ROUTE:-/${PYTHON_EXAMPLE_SERVER_NAME}/mcp}"
-RUST_EXAMPLE_SERVER_NAME="${RUST_EXAMPLE_SERVER_NAME:-rust-example-mcp}"
+RUST_EXAMPLE_SERVER_NAME="${RUST_EXAMPLE_SERVER_NAME:-text-analysis-mcp}"
 RUST_EXAMPLE_SERVER_HOST="${RUST_EXAMPLE_SERVER_HOST:-${PLATFORM_HOST}}"
 RUST_EXAMPLE_SERVER_ROUTE="${RUST_EXAMPLE_SERVER_ROUTE:-/${RUST_EXAMPLE_SERVER_NAME}/mcp}"
-GO_EXAMPLE_SERVER_NAME="${GO_EXAMPLE_SERVER_NAME:-go-example-mcp}"
+GO_EXAMPLE_SERVER_NAME="${GO_EXAMPLE_SERVER_NAME:-workspace-assistant-mcp}"
 GO_EXAMPLE_SERVER_HOST="${GO_EXAMPLE_SERVER_HOST:-${PLATFORM_HOST}}"
 GO_EXAMPLE_SERVER_ROUTE="${GO_EXAMPLE_SERVER_ROUTE:-/${GO_EXAMPLE_SERVER_NAME}/mcp}"
 MT_TENANT_A="${MT_TENANT_A:-mt-tenant-a}"
@@ -2763,7 +2763,7 @@ TEMP_CLI_SERVER="${SERVER_NAME}-cli-create"
 ./bin/mcp-runtime server --use-kube delete "${TEMP_CLI_SERVER}" --namespace mcp-servers
 kubectl wait --for=delete "mcpserver/${TEMP_CLI_SERVER}" -n mcp-servers --timeout=120s || true
 
-echo "[deploy] deploying official SDK example MCP servers"
+echo "[deploy] deploying capability-focused sample MCP servers"
 parallel_reset
 parallel_start 3 "deploy ${PYTHON_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
   "${PYTHON_EXAMPLE_SERVER_NAME}" \
@@ -3061,17 +3061,17 @@ start_header_proxy_bg "${MCP_CURL_BAD_SESSION_PORT}" \
   --header "X-MCP-Agent-Session=${UNKNOWN_SESSION_ID}"
 start_header_proxy_bg "${PYTHON_EXAMPLE_PROXY_PORT}" \
   "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/python-example-proxy.log" \
+  "${WORKDIR}/data-utility-proxy.log" \
   --host-header "${PYTHON_EXAMPLE_SERVER_HOST}" \
   --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
 start_header_proxy_bg "${RUST_EXAMPLE_PROXY_PORT}" \
   "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/rust-example-proxy.log" \
+  "${WORKDIR}/text-analysis-proxy.log" \
   --host-header "${RUST_EXAMPLE_SERVER_HOST}" \
   --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
 start_header_proxy_bg "${GO_EXAMPLE_PROXY_PORT}" \
   "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/go-example-proxy.log" \
+  "${WORKDIR}/workspace-assistant-proxy.log" \
   --host-header "${GO_EXAMPLE_SERVER_HOST}" \
   --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
 wait_port "${MCP_CURL_ANON_PORT}"
@@ -3094,9 +3094,9 @@ GO_EXAMPLE_URL="http://127.0.0.1:${GO_EXAMPLE_PROXY_PORT}${GO_EXAMPLE_SERVER_ROU
 
 log_line ingress "validating distinct MCP server behaviors across routes"
 wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200 "pong"
-wait_for_mcp_tool_result "${PYTHON_EXAMPLE_URL}" "echo" '{"message":"python example ready"}' 200 "python example ready"
-wait_for_mcp_tool_result "${RUST_EXAMPLE_URL}" "repeat" '{"message":"rust","times":3}' 200 "rustrustrust"
-wait_for_mcp_tool_result "${GO_EXAMPLE_URL}" "lower" '{"message":"GO Example Ready"}' 200 "go example ready"
+wait_for_mcp_tool_result "${PYTHON_EXAMPLE_URL}" "echo" '{"message":"data utility ready"}' 200 "data utility ready"
+wait_for_mcp_tool_result "${RUST_EXAMPLE_URL}" "repeat" '{"message":"text","times":3}' 200 "texttexttext"
+wait_for_mcp_tool_result "${GO_EXAMPLE_URL}" "lower" '{"message":"Workspace Assistant Ready"}' 200 "workspace assistant ready"
 
 if scenario_selected "smoke-auth"; then
   log_line mcp "validating raw MCP request edge cases"

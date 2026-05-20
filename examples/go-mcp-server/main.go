@@ -40,6 +40,12 @@ type taskArgs struct {
 	Owner    string `json:"owner,omitempty" jsonschema:"optional task owner"`
 }
 
+type releaseNoteArgs struct {
+	Title  string `json:"title" jsonschema:"release note title"`
+	Change string `json:"change" jsonschema:"what changed"`
+	Impact string `json:"impact,omitempty" jsonschema:"optional user or operator impact"`
+}
+
 type server struct{}
 
 var nonSlugChars = regexp.MustCompile(`[^a-z0-9]+`)
@@ -68,76 +74,88 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	log.Printf("go-example-mcp listening on :%s", port)
+	log.Printf("workspace-assistant-mcp listening on :%s", port)
 	log.Fatal(httpServer.ListenAndServe())
 }
 
 func newMCPServer() *mcp.Server {
 	srv := &server{}
 	mcpServer := mcp.NewServer(&mcp.Implementation{
-		Name:    "go-example-mcp",
+		Name:    "workspace-assistant-mcp",
 		Version: "1.0.0",
 	}, &mcp.ServerOptions{
-		Instructions: "Go MCP example server with smoke, text, prompt, and resource examples.",
+		Instructions: "Workspace assistant MCP server for task planning, release notes, text cleanup, prompts, and reference resources.",
 	})
 
 	mcp.AddTool(mcpServer, &mcp.Tool{
 		Name:        "aaa-ping",
-		Description: "Return a simple pong response",
+		Description: "Check that the workspace assistant is reachable",
 	}, srv.smokePingTool)
 
 	mcp.AddTool(mcpServer, &mcp.Tool{
 		Name:        "echo",
-		Description: "Echo back the provided message",
+		Description: "Echo a message for adapter and transport debugging",
 	}, srv.echoTool)
 
 	mcp.AddTool(mcpServer, &mcp.Tool{
 		Name:        "add",
-		Description: "Add two numbers",
+		Description: "Add two numeric values",
 	}, srv.addTool)
 
 	mcp.AddTool(mcpServer, &mcp.Tool{
 		Name:        "upper",
-		Description: "Uppercase the provided message",
+		Description: "Convert text to uppercase for normalization checks",
 	}, srv.upperTool)
 
 	mcp.AddTool(mcpServer, &mcp.Tool{
 		Name:        "lower",
-		Description: "Lowercase the provided message",
+		Description: "Convert text to lowercase for normalization checks",
 	}, srv.lowerTool)
 
 	mcp.AddTool(mcpServer, &mcp.Tool{
 		Name:        "slugify",
-		Description: "Convert the provided message into a URL slug",
+		Description: "Convert a title or label into a URL-safe slug",
 	}, srv.slugifyTool)
 
 	mcp.AddTool(mcpServer, &mcp.Tool{
 		Name:        "create_task",
-		Description: "Create a deterministic task summary for IDE and adapter smoke tests",
+		Description: "Create a deterministic task card summary",
 	}, srv.createTaskTool)
+
+	mcp.AddTool(mcpServer, &mcp.Tool{
+		Name:        "draft_release_note",
+		Description: "Draft a compact release note from a change summary and impact",
+	}, srv.draftReleaseNoteTool)
 
 	mcpServer.AddResource(&mcp.Resource{
 		Name:        "readme",
-		Description: "Sample resource served by the Go MCP example server",
+		Description: "Workspace assistant overview and supported workflows",
 		MIMEType:    "text/plain",
 		URI:         "embedded:readme",
 	}, srv.readResource)
 
 	mcpServer.AddResource(&mcp.Resource{
 		Name:        "task-guide",
-		Description: "Task workflow guidance for the Go MCP example server",
+		Description: "Task card conventions for workspace handoffs",
 		MIMEType:    "text/plain",
 		URI:         "embedded:task-guide",
 	}, srv.readResource)
 
+	mcpServer.AddResource(&mcp.Resource{
+		Name:        "workspace-playbook",
+		Description: "Short playbook for task, release note, and handoff flows",
+		MIMEType:    "text/plain",
+		URI:         "embedded:workspace-playbook",
+	}, srv.readResource)
+
 	mcpServer.AddPrompt(&mcp.Prompt{
 		Name:        "hello",
-		Description: "Return a simple prompt message",
+		Description: "Return a simple workspace assistant greeting",
 	}, srv.getHelloPrompt)
 
 	mcpServer.AddPrompt(&mcp.Prompt{
 		Name:        "summarize",
-		Description: "Summarize a short text input",
+		Description: "Ask for a brief summary of a provided note",
 		Arguments: []*mcp.PromptArgument{
 			{
 				Name:        "text",
@@ -158,6 +176,28 @@ func newMCPServer() *mcp.Server {
 			},
 		},
 	}, srv.getTaskBriefPrompt)
+
+	mcpServer.AddPrompt(&mcp.Prompt{
+		Name:        "handoff_note",
+		Description: "Draft a concise handoff note for another teammate",
+		Arguments: []*mcp.PromptArgument{
+			{
+				Name:        "project",
+				Description: "Project or workstream name",
+				Required:    true,
+			},
+			{
+				Name:        "status",
+				Description: "Current status or latest progress",
+				Required:    false,
+			},
+			{
+				Name:        "next_step",
+				Description: "Recommended next step",
+				Required:    false,
+			},
+		},
+	}, srv.getHandoffNotePrompt)
 
 	return mcpServer
 }
@@ -220,6 +260,25 @@ func (s *server) createTaskTool(_ context.Context, _ *mcp.CallToolRequest, args 
 	return textResult(fmt.Sprintf("task: %s\npriority: %s\nowner: %s\nstatus: open", title, priority, owner)), nil, nil
 }
 
+func (s *server) draftReleaseNoteTool(_ context.Context, _ *mcp.CallToolRequest, args *releaseNoteArgs) (*mcp.CallToolResult, any, error) {
+	if args == nil {
+		args = &releaseNoteArgs{}
+	}
+	title := strings.TrimSpace(args.Title)
+	if title == "" {
+		title = "Untitled change"
+	}
+	change := strings.TrimSpace(args.Change)
+	if change == "" {
+		change = "No change summary provided."
+	}
+	impact := strings.TrimSpace(args.Impact)
+	if impact == "" {
+		impact = "No user impact provided."
+	}
+	return textResult(fmt.Sprintf("release: %s\nchange: %s\nimpact: %s\nstatus: draft", title, change, impact)), nil, nil
+}
+
 func (s *server) readResource(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 	if req == nil || req.Params == nil || strings.TrimSpace(req.Params.URI) == "" {
 		return nil, fmt.Errorf("invalid request")
@@ -244,7 +303,7 @@ func (s *server) getHelloPrompt(_ context.Context, _ *mcp.GetPromptRequest) (*mc
 		Messages: []*mcp.PromptMessage{
 			{
 				Role:    "assistant",
-				Content: &mcp.TextContent{Text: "Hello from the Go MCP example server."},
+				Content: &mcp.TextContent{Text: "Hello from the Workspace assistant MCP server."},
 			},
 		},
 	}, nil
@@ -290,12 +349,43 @@ func (s *server) getTaskBriefPrompt(_ context.Context, req *mcp.GetPromptRequest
 	}, nil
 }
 
+func (s *server) getHandoffNotePrompt(_ context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+	project := promptArg(req, "project", "the current project")
+	status := promptArg(req, "status", "No status provided.")
+	nextStep := promptArg(req, "next_step", "No next step provided.")
+	return &mcp.GetPromptResult{
+		Description: "Handoff note prompt",
+		Messages: []*mcp.PromptMessage{
+			{
+				Role: "assistant",
+				Content: &mcp.TextContent{Text: fmt.Sprintf(
+					"Draft a concise handoff note for %s. Current status: %s Next step: %s Include blockers, owner, and verification evidence.",
+					project,
+					status,
+					nextStep,
+				)},
+			},
+		},
+	}, nil
+}
+
 func textResult(text string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: text},
 		},
 	}
+}
+
+func promptArg(req *mcp.GetPromptRequest, name, fallback string) string {
+	if req == nil || req.Params == nil {
+		return fallback
+	}
+	value := strings.TrimSpace(req.Params.Arguments[name])
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func envOr(key, fallback string) string {
@@ -327,7 +417,8 @@ func normalizePriority(priority string) string {
 
 func resourcePayloads() map[string]string {
 	return map[string]string{
-		"embedded:readme":     "This is a sample resource payload from the Go MCP example server.",
-		"embedded:task-guide": "Use create_task with title, priority, and owner to produce a deterministic task record for adapter smoke tests.",
+		"embedded:readme":             "Workspace assistant MCP exposes task cards, release notes, text cleanup, summaries, and handoff prompts for local runtime smoke tests.",
+		"embedded:task-guide":         "Task card format: title, priority (low|medium|high), owner, and status. Use create_task for deterministic adapter assertions.",
+		"embedded:workspace-playbook": "Playbook: use slugify for route labels, create_task for work tracking, draft_release_note for release summaries, and handoff_note before switching owners.",
 	}
 }
