@@ -60,9 +60,9 @@ Added: 2026-05-12
 ### Bundled registry TLS does not configure node trust
 
 `setup --registry-mode bundled-https` makes the registry pod serve HTTPS
-and creates `cert-manager/mcp-runtime-ca` when the built-in issuer is used,
+and creates the `cert-manager/mcp-runtime-ca` Secret when the built-in issuer is used,
 but kubelet still pulls through the node's container runtime. Nodes must
-be able to resolve or mirror that image host and trust the issuing CA; the
+be able to resolve or mirror the registry host and trust the issuing CA; the
 cluster-side Secret, Certificate, and Service changes alone do not update
 containerd, k3s, Docker, or host DNS.
 
