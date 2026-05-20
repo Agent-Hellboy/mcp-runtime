@@ -356,6 +356,14 @@ func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
 			t.Fatalf("app missing %q", want)
 		}
 	}
+}
+
+func TestStaticAppRemovesCatalogDetailsAction(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
 	for _, unwanted := range []string{
 		`detailsButton`,
 		`detailsButton.textContent = "Details"`,
