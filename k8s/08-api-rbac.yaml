@@ -73,11 +73,6 @@ rules:
   - apiGroups: ["mcpruntime.org"]
     resources: ["mcpservers"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Platform-published servers provision ingest-scoped analytics credentials
-  # in their workload namespaces when gateway analytics uses operator defaults.
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -105,6 +100,10 @@ rules:
     resources: ["secrets"]
     resourceNames: ["mcp-sentinel-user-api-keys"]
     verbs: ["get", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["mcp-sentinel-secrets"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
