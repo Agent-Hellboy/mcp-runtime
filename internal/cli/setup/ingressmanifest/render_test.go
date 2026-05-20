@@ -11,13 +11,21 @@ func TestRenderPlatformUIIngressNoTLS(t *testing.T) {
 	got := RenderPlatformUIIngress("platform.example.com", "", testAnalyticsNS)
 	mustContain := []string{
 		"name: " + PlatformIngressName,
+		"name: " + PlatformObservabilityIngressName,
 		"namespace: " + testAnalyticsNS,
 		"traefik.ingress.kubernetes.io/router.entrypoints: web",
+		"traefik.ingress.kubernetes.io/router.middlewares: sentinel-admin-auth@file",
 		`- host: "platform.example.com"`,
 		"- path: /api\n",
+		"- path: /grafana\n",
+		"- path: /prometheus\n",
 		"- path: /\n",
 		"name: mcp-sentinel-ui",
+		"name: grafana",
+		"name: prometheus",
 		"number: 8082",
+		"number: 3000",
+		"number: 9090",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(got, want) {
@@ -25,15 +33,11 @@ func TestRenderPlatformUIIngressNoTLS(t *testing.T) {
 		}
 	}
 	mustNotContain := []string{
-		"- path: /grafana",
-		"- path: /prometheus",
-		"name: grafana",
-		"name: prometheus",
 		"name: " + PlatformHTTPRedirectIngressName,
 	}
 	for _, unwanted := range mustNotContain {
 		if strings.Contains(got, unwanted) {
-			t.Fatalf("manifest must not contain %q (Grafana/Prometheus must not be exposed publicly, redirect ingress only emitted with TLS):\n%s", unwanted, got)
+			t.Fatalf("manifest must not contain %q (redirect ingress only emitted with TLS):\n%s", unwanted, got)
 		}
 	}
 	if strings.Contains(got, "tls:") {
@@ -67,6 +71,7 @@ func TestRenderPlatformUIIngressWithTLS(t *testing.T) {
 		`- "platform.mcpruntime.org"`,
 		"secretName: " + PlatformTLSSecretName,
 		`- host: "platform.mcpruntime.org"`,
+		"name: " + PlatformObservabilityIngressName,
 		"name: " + PlatformHTTPRedirectIngressName,
 	}
 	for _, want := range mustContain {
@@ -74,8 +79,73 @@ func TestRenderPlatformUIIngressWithTLS(t *testing.T) {
 			t.Fatalf("missing %q in manifest:\n%s", want, got)
 		}
 	}
+	if count := strings.Count(got, "cert-manager.io/cluster-issuer:"); count != 1 {
+		t.Fatalf("expected exactly one cert-manager annotation, got %d:\n%s", count, got)
+	}
 	if strings.Contains(got, "\n    traefik.ingress.kubernetes.io/router.entrypoints: web\n  ingressClassName") {
 		t.Fatalf("primary ingress should be on websecure when TLS issuer is set:\n%s", got)
+	}
+}
+
+func TestRenderPlatformObservabilityIngressShape(t *testing.T) {
+	got := RenderPlatformUIIngress("platform.example.com", "", testAnalyticsNS)
+	idx := strings.Index(got, "name: "+PlatformObservabilityIngressName)
+	if idx < 0 {
+		t.Fatalf("expected platform observability ingress:\n%s", got)
+	}
+	tail := got[idx:]
+	mustContain := []string{
+		"namespace: " + testAnalyticsNS,
+		"traefik.ingress.kubernetes.io/router.entrypoints: web",
+		"traefik.ingress.kubernetes.io/router.middlewares: sentinel-admin-auth@file",
+		`- host: "platform.example.com"`,
+		"- path: /grafana\n",
+		"name: grafana",
+		"number: 3000",
+		"- path: /prometheus\n",
+		"name: prometheus",
+		"number: 9090",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(tail, want) {
+			t.Fatalf("observability ingress missing %q:\n%s", want, tail)
+		}
+	}
+	if strings.Contains(tail, "cert-manager.io/cluster-issuer") {
+		t.Fatalf("observability ingress must not request a certificate:\n%s", tail)
+	}
+}
+
+func TestRenderPlatformObservabilityIngressWithTLS(t *testing.T) {
+	got := RenderPlatformUIIngress("platform.mcpruntime.org", "letsencrypt-prod", testAnalyticsNS)
+	idx := strings.Index(got, "name: "+PlatformObservabilityIngressName)
+	if idx < 0 {
+		t.Fatalf("expected platform observability ingress:\n%s", got)
+	}
+	tail := got[idx:]
+	if redirectIdx := strings.Index(tail, "name: "+PlatformHTTPRedirectIngressName); redirectIdx >= 0 {
+		tail = tail[:redirectIdx]
+	}
+	mustContain := []string{
+		"namespace: " + testAnalyticsNS,
+		"traefik.ingress.kubernetes.io/router.entrypoints: websecure",
+		"traefik.ingress.kubernetes.io/router.middlewares: sentinel-admin-auth@file",
+		"tls:",
+		`- "platform.mcpruntime.org"`,
+		"secretName: " + PlatformTLSSecretName,
+		`- host: "platform.mcpruntime.org"`,
+		"- path: /grafana\n",
+		"name: grafana",
+		"- path: /prometheus\n",
+		"name: prometheus",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(tail, want) {
+			t.Fatalf("TLS observability ingress missing %q:\n%s", want, tail)
+		}
+	}
+	if strings.Contains(tail, "cert-manager.io/cluster-issuer") {
+		t.Fatalf("observability ingress must not request a certificate:\n%s", tail)
 	}
 }
 
