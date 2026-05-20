@@ -226,6 +226,16 @@ jobs:
           python3 --version
           rg --version
 
+      - name: Configure E2E resource names
+        run: |
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          port=$((20000 + ((GITHUB_RUN_ID + GITHUB_RUN_ATTEMPT) % 20000)))
+          {
+            echo "CLUSTER_NAME=mcp-e2e-${suffix}"
+            echo "LOCAL_REGISTRY_NAME=mcp-e2e-registry-${suffix}"
+            echo "LOCAL_REGISTRY_PORT=${port}"
+          } >> "${GITHUB_ENV}"
+
       - name: Run kind e2e
         env:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/.e2e-artifacts/kind

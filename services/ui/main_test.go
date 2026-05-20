@@ -145,6 +145,25 @@ func TestStaticAppHidesProtectedTabsWhenSignedOut(t *testing.T) {
 	}
 }
 
+func TestStaticAppDefaultsAdminsToAllNamespaceGovernance(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`function adminAllNamespaceScope()`,
+		`is_admin_fleet: true`,
+		`return "all namespaces";`,
+		`authPrincipal?.role === "admin" && namespaceScopes.length > 1`,
+		`namespaceScopes = [adminAllNamespaceScope(), ...namespaceScopes]`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("admin governance scope missing %q", want)
+		}
+	}
+}
+
 func TestStaticAppHidesUserAPIKeysWithoutUserIdentity(t *testing.T) {
 	index, err := os.ReadFile("static/index.html")
 	if err != nil {

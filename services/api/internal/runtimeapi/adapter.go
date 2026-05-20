@@ -104,7 +104,11 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 	if req.Namespace == "" {
 		// Default to the principal's primary namespace so single-team callers
 		// don't have to pass it on every request.
-		req.Namespace = principal.Namespace
+		req.Namespace = strings.TrimSpace(principal.Namespace)
+	}
+	if req.Namespace == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace is required"})
+		return
 	}
 
 	humanID := strings.TrimSpace(principal.Subject)
@@ -116,11 +120,8 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	teamID, err := principalTeamForNamespace(principal, req.Namespace)
-	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
-		return
-	}
+	teamIDs := adapterPrincipalTeamIDs(principal)
+	defaultTeamID := defaultAdapterSessionTeamID(principal, req.Namespace, teamIDs)
 
 	requestedTrust, err := parseAdapterTrust(req.RequestedTrust)
 	if err != nil {
@@ -136,7 +137,7 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	grant, err := s.selectAdapterGrant(ctx, req.Namespace, req.ServerName, humanID, req.AgentID, teamID)
+	grant, teamID, err := s.selectAdapterGrant(ctx, req.Namespace, req.ServerName, humanID, req.AgentID, teamIDs, defaultTeamID, principal.Role == roleAdmin)
 	if err != nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 		return
@@ -206,22 +207,34 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// principalTeamForNamespace resolves the team identity the principal must hold
-// for the supplied namespace. Admin principals (no team binding) are allowed
-// to operate without a team; everyone else must be a member of the team that
-// owns the namespace.
-func principalTeamForNamespace(p principal, namespace string) (string, error) {
-	namespace = strings.TrimSpace(namespace)
-	if namespace == "" {
-		return "", errors.New("namespace is required")
+func adapterPrincipalTeamIDs(p principal) []string {
+	if len(p.Teams) == 0 {
+		return nil
 	}
+	seen := make(map[string]struct{}, len(p.Teams))
+	out := make([]string, 0, len(p.Teams))
+	for _, team := range p.Teams {
+		id := strings.TrimSpace(team.ID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func defaultAdapterSessionTeamID(p principal, namespace string, teamIDs []string) string {
 	if team, ok := p.TeamForNamespace(namespace); ok {
-		return strings.TrimSpace(team.ID), nil
+		return strings.TrimSpace(team.ID)
 	}
-	if p.Role == roleAdmin {
-		return "", nil
+	if len(teamIDs) == 1 {
+		return teamIDs[0]
 	}
-	return "", fmt.Errorf("principal is not a member of namespace %q", namespace)
+	return ""
 }
 
 // selectAdapterGrant lists enabled MCPAccessGrants in namespace whose serverRef
@@ -229,12 +242,16 @@ func principalTeamForNamespace(p principal, namespace string) (string, error) {
 // field empty (wildcard). When multiple grants match, the one with the highest
 // MaxTrust wins; ties are broken by oldest creationTimestamp so the result is
 // deterministic across replicas.
-func (s *RuntimeServer) selectAdapterGrant(ctx context.Context, namespace, serverName, humanID, agentID, teamID string) (*sentinelaccess.MCPAccessGrant, error) {
+func (s *RuntimeServer) selectAdapterGrant(ctx context.Context, namespace, serverName, humanID, agentID string, teamIDs []string, defaultTeamID string, allowAnyTeam bool) (*sentinelaccess.MCPAccessGrant, string, error) {
 	grants, err := s.accessMgr.ListGrants(ctx, namespace)
 	if err != nil {
-		return nil, fmt.Errorf("list grants in %s: %w", namespace, err)
+		return nil, "", fmt.Errorf("list grants in %s: %w", namespace, err)
 	}
-	var matches []sentinelaccess.MCPAccessGrant
+	type grantMatch struct {
+		grant  sentinelaccess.MCPAccessGrant
+		teamID string
+	}
+	var matches []grantMatch
 	for _, g := range grants.Items {
 		if g.Spec.Disabled {
 			continue
@@ -242,41 +259,48 @@ func (s *RuntimeServer) selectAdapterGrant(ctx context.Context, namespace, serve
 		if g.Spec.ServerRef.Name != serverName {
 			continue
 		}
-		if !subjectMatches(g.Spec.Subject, humanID, agentID, teamID) {
+		teamID, ok := matchingAdapterGrantTeamID(g.Spec.Subject, humanID, agentID, teamIDs, defaultTeamID, allowAnyTeam)
+		if !ok {
 			continue
 		}
-		matches = append(matches, g)
+		matches = append(matches, grantMatch{grant: g, teamID: teamID})
 	}
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("no enabled MCPAccessGrant in %s matches server=%q humanID=%q agentID=%q",
+		return nil, "", fmt.Errorf("no enabled MCPAccessGrant in %s matches server=%q humanID=%q agentID=%q",
 			namespace, serverName, humanID, agentID)
 	}
 	sort.SliceStable(matches, func(i, j int) bool {
-		ti := trustRank(matches[i].Spec.MaxTrust)
-		tj := trustRank(matches[j].Spec.MaxTrust)
+		ti := trustRank(matches[i].grant.Spec.MaxTrust)
+		tj := trustRank(matches[j].grant.Spec.MaxTrust)
 		if ti != tj {
 			return ti > tj
 		}
-		return matches[i].CreationTimestamp.Time.Before(matches[j].CreationTimestamp.Time)
+		return matches[i].grant.CreationTimestamp.Time.Before(matches[j].grant.CreationTimestamp.Time)
 	})
 	g := matches[0]
-	return &g, nil
+	return &g.grant, g.teamID, nil
 }
 
-// subjectMatches treats empty fields on the grant's subject as wildcards,
-// preserving the SubjectRef semantics already used by the gateway when
-// evaluating policy at runtime.
-func subjectMatches(subj sentinelaccess.SubjectRef, humanID, agentID, teamID string) bool {
+func matchingAdapterGrantTeamID(subj sentinelaccess.SubjectRef, humanID, agentID string, teamIDs []string, defaultTeamID string, allowAnyTeam bool) (string, bool) {
 	if subj.HumanID != "" && subj.HumanID != humanID {
-		return false
+		return "", false
 	}
 	if subj.AgentID != "" && subj.AgentID != agentID {
-		return false
+		return "", false
 	}
-	if subj.TeamID != "" && subj.TeamID != teamID {
-		return false
+	grantTeamID := strings.TrimSpace(subj.TeamID)
+	if grantTeamID == "" {
+		return defaultTeamID, true
 	}
-	return true
+	for _, teamID := range teamIDs {
+		if teamID == grantTeamID {
+			return grantTeamID, true
+		}
+	}
+	if allowAnyTeam {
+		return grantTeamID, true
+	}
+	return "", false
 }
 
 // adapterSessionName derives a deterministic resource name from the caller's
