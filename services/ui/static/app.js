@@ -1402,13 +1402,15 @@ function renderServers() {
     card.appendChild(renderServerEndpoint(server));
 
     const displayInventory = serverDisplayInventory(server);
-    const inventory = document.createElement("div");
-    inventory.className = "server-inventory-grid";
-    inventory.appendChild(renderInventoryBlock("Tools", displayInventory.tools, renderToolItem));
-    inventory.appendChild(renderInventoryBlock("Prompts", displayInventory.prompts, renderInventoryItem));
-    inventory.appendChild(renderInventoryBlock("Resources", displayInventory.resources, renderInventoryItem));
-    inventory.appendChild(renderInventoryBlock("Tasks", displayInventory.tasks, renderInventoryItem));
-    card.appendChild(inventory);
+    const visibleInventory = serverVisibleInventorySections(displayInventory);
+    if (visibleInventory.length) {
+      const inventory = document.createElement("div");
+      inventory.className = "server-inventory-grid";
+      visibleInventory.forEach((section) => {
+        inventory.appendChild(renderInventoryBlock(section.label, section.items, section.renderer));
+      });
+      card.appendChild(inventory);
+    }
 
     if (server.access_json && Object.keys(server.access_json).length) {
       card.appendChild(renderServerConnectConfig(server));
@@ -1470,6 +1472,15 @@ function serverDisplayInventory(server) {
     resources: mergeNamedInventory(live.resources || [], declaredResources, resourceInventoryKey),
     tasks: declaredTasks,
   };
+}
+
+function serverVisibleInventorySections(inventory) {
+  return [
+    { label: "Tools", items: inventory.tools || [], renderer: renderToolItem },
+    { label: "Prompts", items: inventory.prompts || [], renderer: renderInventoryItem },
+    { label: "Resources", items: inventory.resources || [], renderer: renderInventoryItem },
+    { label: "Tasks", items: inventory.tasks || [], renderer: renderInventoryItem },
+  ].filter((section) => section.items.length > 0);
 }
 
 function mergeToolInventory(liveItems, declaredItems) {
@@ -1774,8 +1785,15 @@ function renderServerMeta(server) {
   meta.className = "server-meta-row";
   meta.appendChild(serverMetaPill("HTTP MCP"));
   meta.appendChild(serverMetaPill(`${inventory.tools.length} tools`));
-  meta.appendChild(serverMetaPill(`${inventory.prompts.length} prompts`));
-  meta.appendChild(serverMetaPill(`${inventory.resources.length} resources`));
+  if (inventory.prompts.length) {
+    meta.appendChild(serverMetaPill(`${inventory.prompts.length} prompts`));
+  }
+  if (inventory.resources.length) {
+    meta.appendChild(serverMetaPill(`${inventory.resources.length} resources`));
+  }
+  if (inventory.tasks.length) {
+    meta.appendChild(serverMetaPill(`${inventory.tasks.length} tasks`));
+  }
   meta.appendChild(serverMetaPill(`Created ${formatServerAge(server.age)}`));
   wrap.appendChild(meta);
 
