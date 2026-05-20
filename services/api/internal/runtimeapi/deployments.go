@@ -24,6 +24,7 @@ import (
 
 	"mcp-runtime/pkg/kubeworkload"
 	"mcp-runtime/pkg/publishscope"
+	"mcp-runtime/pkg/sentinel"
 )
 
 const (
@@ -37,6 +38,8 @@ const (
 	restrictedRunAsUser            = kubeworkload.RestrictedRunAsUser
 	traefikWatchRoleName           = "traefik-watch"
 	platformNamespaceOwnerRoleName = "platform-namespace-owner"
+	sentinelIngestPort             = 8081
+	sentinelOTLPPort               = 4318
 )
 
 var (
@@ -602,6 +605,19 @@ func desiredDefaultDenyNetworkPolicy(ns string, ingressFromNamespaces ...string)
 					Ports: []networkingv1.NetworkPolicyPort{
 						{Protocol: &tcpProtocol, Port: intstrPtr(80)},
 						{Protocol: &tcpProtocol, Port: intstrPtr(443)},
+					},
+				},
+				{
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"kubernetes.io/metadata.name": sentinel.DefaultNamespace},
+							},
+						},
+					},
+					Ports: []networkingv1.NetworkPolicyPort{
+						{Protocol: &tcpProtocol, Port: intstrPtr(sentinelIngestPort)},
+						{Protocol: &tcpProtocol, Port: intstrPtr(sentinelOTLPPort)},
 					},
 				},
 			},

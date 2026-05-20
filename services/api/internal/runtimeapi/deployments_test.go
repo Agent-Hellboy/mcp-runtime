@@ -142,6 +142,37 @@ func TestEnsureDefaultDenyNetworkPolicyIncludesDNSEgress(t *testing.T) {
 	}
 }
 
+func TestEnsureDefaultDenyNetworkPolicyAllowsSentinelEgress(t *testing.T) {
+	client := kubernetesfake.NewSimpleClientset()
+	if err := ensureDefaultDenyNetworkPolicy(context.Background(), client, "user-1"); err != nil {
+		t.Fatalf("ensureDefaultDenyNetworkPolicy() error = %v", err)
+	}
+	policy, err := client.NetworkingV1().NetworkPolicies("user-1").Get(context.Background(), "platform-default-deny", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get networkpolicy: %v", err)
+	}
+	foundSentinel := false
+	for _, rule := range policy.Spec.Egress {
+		for _, peer := range rule.To {
+			if peer.NamespaceSelector == nil || peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != "mcp-sentinel" {
+				continue
+			}
+			seen := map[int32]bool{}
+			for _, port := range rule.Ports {
+				if port.Port != nil && port.Port.Type == intstr.Int {
+					seen[port.Port.IntVal] = true
+				}
+			}
+			if seen[sentinelIngestPort] && seen[sentinelOTLPPort] {
+				foundSentinel = true
+			}
+		}
+	}
+	if !foundSentinel {
+		t.Fatalf("expected sentinel egress rule, got %#v", policy.Spec.Egress)
+	}
+}
+
 func TestHandleDeploymentApplyAdminUsesRequestedNamespace(t *testing.T) {
 	client := kubernetesfake.NewSimpleClientset()
 	server := &RuntimeServer{

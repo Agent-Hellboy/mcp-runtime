@@ -11,12 +11,20 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	"mcp-runtime/pkg/controlplane"
 	"mcp-runtime/pkg/k8sclient"
 	"mcp-runtime/pkg/publishscope"
+	"mcp-runtime/pkg/sentinel"
+)
+
+const (
+	defaultAnalyticsCredentialSourceSecretName = "mcp-sentinel-secrets"
+	defaultAnalyticsCredentialSourceKey        = "INGEST_API_KEYS"
+	defaultAnalyticsCredentialKey              = "api-key"
 )
 
 type runtimeServerApplyRequest struct {
@@ -248,6 +256,11 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 		writeJSON(w, rejection.status, rejection.payload())
 		return
 	}
+	if err := s.applyPublishedServerDefaults(ctx, namespace, req.Name, &req.Spec); err != nil {
+		log.Printf("runtime servers: apply defaults for %s/%s failed: %v", namespace, req.Name, err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to configure gateway analytics"})
+		return
+	}
 
 	labels := map[string]string{
 		"app.kubernetes.io/managed-by": "mcp-runtime",
@@ -334,6 +347,127 @@ func serverApplyNamespaceEnsureError(p principal, namespace string, isTeamNamesp
 		return "failed to ensure team namespace"
 	}
 	return "failed to ensure server namespace"
+}
+
+func (s *RuntimeServer) applyPublishedServerDefaults(ctx context.Context, namespace, name string, spec *mcpv1alpha1.MCPServerSpec) error {
+	if spec == nil {
+		return nil
+	}
+	if spec.Gateway == nil {
+		spec.Gateway = &mcpv1alpha1.GatewayConfig{Enabled: true}
+	}
+	if !spec.Gateway.Enabled || analyticsDisabled(spec.Analytics) || !analyticsConfigured(spec) {
+		return nil
+	}
+	if spec.Analytics != nil && spec.Analytics.APIKeySecretRef != nil {
+		return nil
+	}
+
+	ref, err := s.ensurePublishedServerAnalyticsSecret(ctx, namespace, name)
+	if err != nil {
+		return err
+	}
+	if ref == nil {
+		return nil
+	}
+	if spec.Analytics == nil {
+		spec.Analytics = &mcpv1alpha1.AnalyticsConfig{}
+	}
+	spec.Analytics.APIKeySecretRef = ref
+	return nil
+}
+
+func analyticsDisabled(cfg *mcpv1alpha1.AnalyticsConfig) bool {
+	return cfg != nil && cfg.Disabled
+}
+
+func analyticsConfigured(spec *mcpv1alpha1.MCPServerSpec) bool {
+	if spec == nil || analyticsDisabled(spec.Analytics) {
+		return false
+	}
+	if spec.Analytics != nil && strings.TrimSpace(spec.Analytics.IngestURL) != "" {
+		return true
+	}
+	for _, key := range []string{"MCP_SENTINEL_INGEST_URL", "MCP_ANALYTICS_INGEST_URL"} {
+		if value := strings.TrimSpace(envOr(key, "")); value != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func publishedServerAnalyticsSecretName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "analytics-creds"
+	}
+	return name + "-analytics-creds"
+}
+
+func (s *RuntimeServer) ensurePublishedServerAnalyticsSecret(ctx context.Context, namespace, serverName string) (*mcpv1alpha1.SecretKeyRef, error) {
+	if s.k8sClients == nil {
+		return nil, errors.New("kubernetes not available")
+	}
+	ingestKey, err := s.defaultAnalyticsAPIKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if ingestKey == "" {
+		return nil, nil
+	}
+
+	secretName := publishedServerAnalyticsSecretName(serverName)
+	secrets := s.k8sClients.Clientset.CoreV1().Secrets(namespace)
+	current, err := secrets.Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return nil, err
+	}
+	if apierrors.IsNotFound(err) {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secretName,
+				Namespace: namespace,
+				Labels: map[string]string{
+					"app.kubernetes.io/managed-by": "mcp-runtime",
+				},
+			},
+			Type: corev1.SecretTypeOpaque,
+			Data: map[string][]byte{
+				defaultAnalyticsCredentialKey: []byte(ingestKey),
+			},
+		}
+		if _, err := secrets.Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+			return nil, err
+		}
+		return &mcpv1alpha1.SecretKeyRef{Name: secretName, Key: defaultAnalyticsCredentialKey}, nil
+	}
+
+	if current.Data == nil {
+		current.Data = map[string][]byte{}
+	}
+	if string(current.Data[defaultAnalyticsCredentialKey]) != ingestKey {
+		current.Data[defaultAnalyticsCredentialKey] = []byte(ingestKey)
+		if _, err := secrets.Update(ctx, current, metav1.UpdateOptions{}); err != nil {
+			return nil, err
+		}
+	}
+	return &mcpv1alpha1.SecretKeyRef{Name: secretName, Key: defaultAnalyticsCredentialKey}, nil
+}
+
+func (s *RuntimeServer) defaultAnalyticsAPIKey(ctx context.Context) (string, error) {
+	if s.k8sClients == nil {
+		return "", errors.New("kubernetes not available")
+	}
+	secret, err := s.k8sClients.Clientset.CoreV1().Secrets(sentinel.DefaultNamespace).Get(ctx, defaultAnalyticsCredentialSourceSecretName, metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	for _, raw := range strings.Split(string(secret.Data[defaultAnalyticsCredentialSourceKey]), ",") {
+		if value := strings.TrimSpace(raw); value != "" {
+			return value, nil
+		}
+	}
+	return "", nil
 }
 
 func (s *RuntimeServer) scopedNamespaceForServerApply(ctx context.Context, requested string, scope publishscope.Scope) (string, error) {

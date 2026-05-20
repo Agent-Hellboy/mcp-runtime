@@ -73,6 +73,11 @@ rules:
   - apiGroups: ["mcpruntime.org"]
     resources: ["mcpservers"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Platform-published servers provision ingest-scoped analytics credentials
+  # in their workload namespaces when gateway analytics uses operator defaults.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
