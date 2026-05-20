@@ -65,6 +65,7 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 
 	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
 	namespaces := []string{namespace}
+	adminAllNamespaces := false
 	if p.Role != roleAdmin {
 		if namespace == "" {
 			namespaces = catalogNamespacesForPrincipal(p)
@@ -73,14 +74,13 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 			return
 		}
 	} else if namespace == "" {
-		if PlatformMode() == platformModeTenant {
-			namespaces = []string{sharedCatalogNamespace}
-		} else {
-			namespaces = []string{defaultCatalogNamespaceForMode()}
-		}
+		adminAllNamespaces = true
+		namespaces = []string{metav1.NamespaceAll}
 	}
-	namespaces = dedupeNonEmptyStrings(namespaces)
-	if len(namespaces) == 0 {
+	if !adminAllNamespaces {
+		namespaces = dedupeNonEmptyStrings(namespaces)
+	}
+	if len(namespaces) == 0 && !adminAllNamespaces {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"servers":        []serverInfo{},
 			"publish_policy": s.publishPolicyStatusForPrincipal(ctx, p),
@@ -411,6 +411,10 @@ func (s *RuntimeServer) applyPublishedServerDefaults(ctx context.Context, namesp
 
 	ref, err := s.ensurePublishedServerAnalyticsSecret(ctx, namespace, name)
 	if err != nil {
+		if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
+			log.Printf("runtime servers: analytics secret injection skipped for %s/%s: %v", namespace, name, err)
+			return nil
+		}
 		return err
 	}
 	if ref == nil {

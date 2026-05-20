@@ -8,6 +8,7 @@ data:
   CLICKHOUSE_DB: "mcp"
   KAFKA_BROKERS: "kafka:9092"
   KAFKA_TOPIC: "mcp.events"
+  MCP_SENTINEL_INGEST_URL: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
   OIDC_ISSUER: ""
   OIDC_AUDIENCE: ""
   OIDC_JWKS_URL: ""

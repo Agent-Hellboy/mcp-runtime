@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,10 +12,13 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	sentinelaccess "mcp-runtime/pkg/access"
 	"mcp-runtime/pkg/k8sclient"
@@ -323,7 +327,7 @@ func accessJSONServerURL(t *testing.T, info serverInfo, name string) string {
 	return url
 }
 
-func TestRuntimeServersAdminDefaultsToSharedCatalogInTenantMode(t *testing.T) {
+func TestRuntimeServersAdminDefaultsToAllNamespaces(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
@@ -363,8 +367,14 @@ func TestRuntimeServersAdminDefaultsToSharedCatalogInTenantMode(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(payload.Servers) != 1 || payload.Servers[0].Namespace != sharedCatalogNamespace || payload.Servers[0].Name != "shared-server" {
-		t.Fatalf("servers = %#v, want only %s/shared-server", payload.Servers, sharedCatalogNamespace)
+	if len(payload.Servers) != 2 {
+		t.Fatalf("servers = %#v, want both namespaces", payload.Servers)
+	}
+	if payload.Servers[0].Namespace != sharedCatalogNamespace || payload.Servers[0].Name != "shared-server" {
+		t.Fatalf("first server = %#v, want shared-server sorted by namespace", payload.Servers[0])
+	}
+	if payload.Servers[1].Namespace != defaultOrgCatalogNamespace || payload.Servers[1].Name != "org-server" {
+		t.Fatalf("second server = %#v, want org-server", payload.Servers[1])
 	}
 }
 
@@ -759,6 +769,34 @@ func TestRuntimeServerApplyAllowsMissingDefaultAnalyticsSecret(t *testing.T) {
 	}
 	if current.Spec.Analytics != nil && current.Spec.Analytics.APIKeySecretRef != nil {
 		t.Fatalf("analytics api key ref = %#v, want nil when source secret is missing", current.Spec.Analytics.APIKeySecretRef)
+	}
+}
+
+func TestApplyPublishedServerDefaultsSkipsAnalyticsSecretWhenRBACRestricted(t *testing.T) {
+	t.Setenv("MCP_SENTINEL_INGEST_URL", "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events")
+	client := kubernetesfake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: defaultAnalyticsCredentialSourceSecretName, Namespace: "mcp-sentinel"},
+		Data: map[string][]byte{
+			defaultAnalyticsCredentialSourceKey: []byte("ingest-key-1"),
+		},
+	})
+	client.Fake.PrependReactor("create", "secrets", func(action ktesting.Action) (bool, runtime.Object, error) {
+		create := action.(ktesting.CreateAction)
+		if create.GetNamespace() == defaultPublicCatalogNamespace {
+			return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "demo-analytics-creds", errors.New("blocked"))
+		}
+		return false, nil, nil
+	})
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{Clientset: client},
+	}
+	spec := &mcpv1alpha1.MCPServerSpec{Gateway: &mcpv1alpha1.GatewayConfig{Enabled: true}}
+
+	if err := server.applyPublishedServerDefaults(context.Background(), defaultPublicCatalogNamespace, "demo", spec); err != nil {
+		t.Fatalf("applyPublishedServerDefaults() error = %v", err)
+	}
+	if spec.Analytics != nil && spec.Analytics.APIKeySecretRef != nil {
+		t.Fatalf("analytics api key ref = %#v, want nil when namespace secret writes are forbidden", spec.Analytics.APIKeySecretRef)
 	}
 }
 

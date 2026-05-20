@@ -4342,6 +4342,7 @@ _No package overview is documented._
 - [`func CheckNamedClusterIssuerWithKubectl(kubectl core.KubectlRunner, name string) error`](#cli-cert-manager-func-checknamedclusterissuerwithkubectl-kubectl-core-kubectlrunner-name-string-error)
 - [`func CheckRegistryCertificateOwnershipWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkregistrycertificateownershipwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func ClusterIssuerNameForACME(staging bool) string`](#cli-cert-manager-func-clusterissuernameforacme-staging-bool-string)
+- [`func EnsureCASecretWithKubectl(kubectl core.KubectlRunner) (bool, error)`](#cli-cert-manager-func-ensurecasecretwithkubectl-kubectl-core-kubectlrunner-bool-error)
 - [`func EnsureCertManagerInstalled(kubectl core.KubectlRunner, logger *zap.Logger) error`](#cli-cert-manager-func-ensurecertmanagerinstalled-kubectl-core-kubectlrunner-logger-zap-logger-error)
 - [`func PreflightACMEHostnamesPort80(dnsNames []string)`](#cli-cert-manager-func-preflightacmehostnamesport80-dnsnames-string)
 - [`func RemoveRegistryIngressShimAnnotationWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-removeregistryingressshimannotationwithkubectl-kubectl-core-kubectlrunner-error)
@@ -4442,6 +4443,11 @@ func ClusterIssuerNameForACME(staging bool) string
     ClusterIssuerNameForACME returns the ClusterIssuer resource name for Let's
     Encrypt.
 
+```
+
+<a id="cli-cert-manager-func-ensurecasecretwithkubectl-kubectl-core-kubectlrunner-bool-error"></a>
+```text
+func EnsureCASecretWithKubectl(kubectl core.KubectlRunner) (bool, error)
 ```
 
 <a id="cli-cert-manager-func-ensurecertmanagerinstalled-kubectl-core-kubectlrunner-logger-zap-logger-error"></a>
@@ -5411,7 +5417,7 @@ Package server owns routing for the server top-level command.
 <a id="cli-server-index"></a>
 ### Index
 
-- [`func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, contextDir string) error`](#cli-server-func-buildimage-ctx-context-context-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-contextdir-string-error)
+- [`func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, platform, contextDir string) error`](#cli-server-func-buildimage-ctx-context-context-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-platform-contextdir-string-error)
 - [`func New(runtime *core.Runtime) *cobra.Command`](#cli-server-func-new-runtime-core-runtime-cobra-command)
 - [`func NewWithManager(mgr *ServerManager) *cobra.Command`](#cli-server-func-newwithmanager-mgr-servermanager-cobra-command)
 - [`type ServerManager struct`](#cli-server-type-servermanager-struct)
@@ -5435,9 +5441,9 @@ Package server owns routing for the server top-level command.
 <a id="cli-server-functions"></a>
 ### Functions
 
-<a id="cli-server-func-buildimage-ctx-context-context-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-contextdir-string-error"></a>
+<a id="cli-server-func-buildimage-ctx-context-context-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-platform-contextdir-string-error"></a>
 ```text
-func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, contextDir string) error
+func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, platform, contextDir string) error
     BuildImage builds a Docker image and updates MCP metadata for the server.
 
 ```

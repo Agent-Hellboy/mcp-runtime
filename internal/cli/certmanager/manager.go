@@ -5,9 +5,16 @@ package certmanager
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"sort"
 	"strings"
@@ -206,6 +213,94 @@ func checkCASecretWithKubectl(kubectl core.KubectlRunner) error {
 
 func CheckCASecretWithKubectl(kubectl core.KubectlRunner) error {
 	return checkCASecretWithKubectl(kubectl)
+}
+
+func ensureCASecretWithKubectl(kubectl core.KubectlRunner) (bool, error) {
+	if err := checkCASecretWithKubectl(kubectl); err == nil {
+		return false, nil
+	}
+	manifest, err := renderGeneratedCASecretManifest(time.Now())
+	if err != nil {
+		return false, err
+	}
+	if err := kube.ApplyManifestContent(kubectl.CommandArgs, manifest); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func EnsureCASecretWithKubectl(kubectl core.KubectlRunner) (bool, error) {
+	return ensureCASecretWithKubectl(kubectl)
+}
+
+func renderGeneratedCASecretManifest(now time.Time) (string, error) {
+	certPEM, keyPEM, err := generateInternalCAPEM(now)
+	if err != nil {
+		return "", err
+	}
+	secret := struct {
+		APIVersion string            `json:"apiVersion"`
+		Kind       string            `json:"kind"`
+		Type       string            `json:"type"`
+		Metadata   map[string]string `json:"metadata"`
+		StringData map[string]string `json:"stringData"`
+	}{
+		APIVersion: "v1",
+		Kind:       "Secret",
+		Type:       "kubernetes.io/tls",
+		Metadata: map[string]string{
+			"name":      certCASecretName,
+			"namespace": certManagerNamespace,
+		},
+		StringData: map[string]string{
+			"tls.crt": string(certPEM),
+			"tls.key": string(keyPEM),
+		},
+	}
+	data, err := json.Marshal(secret)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func generateInternalCAPEM(now time.Time) ([]byte, []byte, error) {
+	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serial, err := rand.Int(rand.Reader, serialLimit)
+	if err != nil {
+		return nil, nil, err
+	}
+	serial.Add(serial, big.NewInt(1))
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName: "mcp-runtime registry internal CA",
+		},
+		NotBefore:             now.Add(-1 * time.Minute),
+		NotAfter:              now.AddDate(10, 0, 0),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLen:            1,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	if len(certPEM) == 0 || len(keyPEM) == 0 {
+		return nil, nil, fmt.Errorf("failed to encode generated internal CA")
+	}
+	return certPEM, keyPEM, nil
 }
 
 func checkClusterIssuerWithKubectl(kubectl core.KubectlRunner) error {

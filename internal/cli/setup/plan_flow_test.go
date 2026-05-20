@@ -222,9 +222,17 @@ func TestValidateNonTestSetupAllowsLenientDefaultMode(t *testing.T) {
 	}
 }
 
+func setPublicDomainEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("MCP_PLATFORM_DOMAIN", "mcpruntime.org")
+	t.Setenv("MCP_PLATFORM_ADMIN_EMAIL", "admin@mcpruntime.org")
+}
+
 func TestValidateNonTestSetupAllowsBundledHTTPSStableInternalRegistry(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	setPublicDomainEnv(t)
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.prod.example.com")
 	core.DefaultCLIConfig = &core.CLIConfig{RegistryEndpoint: "registry.prod.example.com", RegistryIngressHost: "registry.prod.example.com"}
 
 	err := validateNonTestSetup(
@@ -239,7 +247,7 @@ func TestValidateNonTestSetupAllowsBundledHTTPSStableInternalRegistry(t *testing
 
 func TestValidateNonTestSetupAllowsDevRegistryURLByDefault(t *testing.T) {
 	err := validateNonTestSetup(
-		setupplan.Plan{TLSEnabled: true, TestMode: false},
+		setupplan.Plan{TLSEnabled: false, TestMode: false},
 		&config.ExternalRegistryConfig{URL: "registry.local"},
 		true,
 	)
@@ -254,7 +262,7 @@ func TestValidateNonTestSetupAllowsDevInternalRegistryEndpointByDefault(t *testi
 	core.DefaultCLIConfig = &core.CLIConfig{RegistryEndpoint: "10.43.39.164:5000", RegistryIngressHost: "registry.local"}
 
 	err := validateNonTestSetup(
-		setupplan.Plan{TLSEnabled: true, TestMode: false},
+		setupplan.Plan{TLSEnabled: false, TestMode: false},
 		nil,
 		false,
 	)
@@ -288,7 +296,75 @@ func TestValidateRegistryTLSModeAllowsBundledHTTPSWithACME(t *testing.T) {
 	}
 }
 
+func TestValidateNonTestSetupRejectsMissingPublicHostsWithoutStrictProd(t *testing.T) {
+	err := validateNonTestSetup(
+		setupplan.Plan{TLSEnabled: true, TestMode: false},
+		&config.ExternalRegistryConfig{URL: "registry.example.com"},
+		true,
+	)
+	if err == nil || !strings.Contains(err.Error(), "platform host configuration is incomplete") {
+		t.Fatalf("expected platform host validation error, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupRejectsPartialPublicHostConfigWithoutStrictProd(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
+
+	err := validateNonTestSetup(
+		setupplan.Plan{TLSEnabled: false, TestMode: false},
+		&config.ExternalRegistryConfig{URL: "registry.example.com"},
+		true,
+	)
+	if err == nil || !strings.Contains(err.Error(), "MCP_PLATFORM_INGRESS_HOST") || !strings.Contains(err.Error(), "MCP_MCP_INGRESS_HOST") {
+		t.Fatalf("expected missing public host env validation error, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupRejectsMissingPlatformAdminEnv(t *testing.T) {
+	t.Setenv("MCP_PLATFORM_DOMAIN", "mcpruntime.org")
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.prod.example.com")
+
+	err := validateNonTestSetup(
+		setupplan.Plan{TLSEnabled: true, TestMode: false, RegistryMode: setupplan.RegistryModeBundledHTTPS},
+		nil,
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "platform admin configuration is incomplete") {
+		t.Fatalf("expected missing platform admin env validation error, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupRejectsBundledPublicSetupWithoutRegistryEndpoint(t *testing.T) {
+	setPublicDomainEnv(t)
+
+	err := validateNonTestSetup(
+		setupplan.Plan{TLSEnabled: false, TestMode: false, RegistryMode: setupplan.RegistryModeBundledHTTP},
+		nil,
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "MCP_REGISTRY_ENDPOINT") {
+		t.Fatalf("expected registry endpoint validation error, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupAllowsPublicDomainAndRegistryEndpointWithoutStrictProd(t *testing.T) {
+	setPublicDomainEnv(t)
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.local:32000")
+
+	err := validateNonTestSetup(
+		setupplan.Plan{TLSEnabled: false, TestMode: false, RegistryMode: setupplan.RegistryModeBundledHTTP},
+		nil,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("expected platform env validation to pass, got %v", err)
+	}
+}
+
 func TestValidateNonTestSetupRejectsBundledHTTPInStrictProd(t *testing.T) {
+	setPublicDomainEnv(t)
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.local:32000")
+
 	err := validateNonTestSetup(
 		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true, RegistryMode: setupplan.RegistryModeBundledHTTP},
 		nil,
@@ -300,6 +376,9 @@ func TestValidateNonTestSetupRejectsBundledHTTPInStrictProd(t *testing.T) {
 }
 
 func TestValidateNonTestSetupAllowsBundledHTTPSInStrictProd(t *testing.T) {
+	setPublicDomainEnv(t)
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.prod.example.com")
+
 	err := validateNonTestSetup(
 		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true, RegistryMode: setupplan.RegistryModeBundledHTTPS},
 		nil,
@@ -311,6 +390,9 @@ func TestValidateNonTestSetupAllowsBundledHTTPSInStrictProd(t *testing.T) {
 }
 
 func TestValidateNonTestSetupRejectsAutoBundledRegistryInStrictProd(t *testing.T) {
+	setPublicDomainEnv(t)
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.prod.example.com")
+
 	err := validateNonTestSetup(
 		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true, RegistryMode: setupplan.RegistryModeAuto},
 		nil,
@@ -438,6 +520,8 @@ func TestRegistryCertificateSANsStayPublicForBundledHTTPS(t *testing.T) {
 }
 
 func TestValidateNonTestSetupRejectsDevRegistryURLInStrictProd(t *testing.T) {
+	setPublicDomainEnv(t)
+
 	err := validateNonTestSetup(
 		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true},
 		&config.ExternalRegistryConfig{URL: "registry.local"},
@@ -508,6 +592,8 @@ func (f *fakeRegistryManager) PushInCluster(_, _, _ string) error {
 }
 
 func TestSetupPlatformWithDeps_ExternalRegistry(t *testing.T) {
+	setPublicDomainEnv(t)
+
 	rec := &callRecorder{}
 	deps := SetupDeps{
 		ResolveExternalRegistryConfig: func(*config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error) {
@@ -677,6 +763,8 @@ func TestSetupPlatformWithDeps_InternalRegistryTLS(t *testing.T) {
 }
 
 func TestSetupPlatformWithDeps_ExternalRegistryTLS(t *testing.T) {
+	setPublicDomainEnv(t)
+
 	rec := &callRecorder{}
 	deps := SetupDeps{
 		ResolveExternalRegistryConfig: func(*config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error) {
@@ -833,6 +921,8 @@ func TestSetupPlatformWithDeps_DiagnosticsOnRegistryWaitFailure(t *testing.T) {
 }
 
 func TestSetupPlatformWithDeps_DiagnosticsOnOperatorWaitFailure(t *testing.T) {
+	setPublicDomainEnv(t)
+
 	rec := &callRecorder{}
 	deps := SetupDeps{
 		ResolveExternalRegistryConfig: func(*config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error) {
@@ -899,6 +989,8 @@ func TestSetupPlatformWithDeps_DiagnosticsOnOperatorWaitFailure(t *testing.T) {
 }
 
 func TestSetupPlatformWithDeps_CRDCheckFailure(t *testing.T) {
+	setPublicDomainEnv(t)
+
 	rec := &callRecorder{}
 	deps := SetupDeps{
 		ResolveExternalRegistryConfig: func(*config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error) {

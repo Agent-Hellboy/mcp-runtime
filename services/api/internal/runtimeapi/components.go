@@ -16,6 +16,11 @@ func (s *RuntimeServer) HandleDashboardSummary(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to query dashboard summary"})
 		return
 	}
+	if control := s.controlPlane(); control != nil {
+		if result, err := control.ListServers(ctx, ""); err == nil {
+			summary.ActiveServers = len(result.Servers)
+		}
+	}
 
 	// Get grants and sessions counts from Kubernetes if available
 	if s.accessMgr != nil {

@@ -28,9 +28,10 @@ rules:
   # User deployment API creates Services in owned namespaces
   - apiGroups: [""]
     resources: ["services"]
-    verbs: ["get", "list", "watch", "create", "update", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Platform API creates limited Traefik watch Roles in managed namespaces;
-  # Kubernetes RBAC only allows delegating permissions the service account holds.
+  # those Roles intentionally avoid Secret access so the API service account
+  # does not need cluster-scoped Secret permissions.
   - apiGroups: [""]
     resources: ["endpoints"]
     verbs: ["get", "list", "watch"]

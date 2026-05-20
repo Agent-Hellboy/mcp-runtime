@@ -608,3 +608,47 @@ func TestBuildDeployServerSpecEnablesGateway(t *testing.T) {
 		t.Fatalf("envVars = %#v", spec.EnvVars)
 	}
 }
+
+func TestApplyDeployMetadataDefaultsUsesSingleLocalMetadataServer(t *testing.T) {
+	tmp := t.TempDir()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	if err := os.Mkdir(".mcp", 0o750); err != nil {
+		t.Fatalf("mkdir metadata: %v", err)
+	}
+	if err := os.WriteFile(".mcp/servers.yaml", []byte(`version: v1
+servers:
+  - name: go-example-mcp
+    description: Go example metadata
+    tools:
+      - name: add
+        description: Add two numbers.
+        requiredTrust: low
+        sideEffect: read
+      - name: echo
+        requiredTrust: low
+        sideEffect: read
+`), 0o600); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	spec := buildDeployServerSpec("acme-tools", "registry.example.com/acme/go-example", "v0.1.0", 1, 8088, 80)
+	if err := applyDeployMetadataDefaults(&spec, "acme-tools"); err != nil {
+		t.Fatalf("applyDeployMetadataDefaults() error = %v", err)
+	}
+	if spec.Description != "Go example metadata" {
+		t.Fatalf("description = %q", spec.Description)
+	}
+	if len(spec.Tools) != 2 || spec.Tools[0].Name != "add" || spec.Tools[0].SideEffect != "read" {
+		t.Fatalf("tools = %#v", spec.Tools)
+	}
+	if spec.IngressPath != "/acme-tools/mcp" {
+		t.Fatalf("deploy route should stay based on requested name, got %q", spec.IngressPath)
+	}
+}

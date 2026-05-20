@@ -261,6 +261,27 @@ func TestResolveDeployImageReference(t *testing.T) {
 	}
 }
 
+func TestResolveDeployImageReferenceUsesPlatformRegistryURLWhenEndpointUnset(t *testing.T) {
+	t.Setenv("PLATFORM_REGISTRY_URL", "registry.custom.example")
+	t.Setenv("PLATFORM_MODE", "tenant")
+
+	got := ResolveDeployImageReference("go-example:v0.1.0", "mcp-team-acme", "acme")
+	if want := "registry.custom.example/acme/go-example:v0.1.0"; got != want {
+		t.Fatalf("ResolveDeployImageReference() = %q, want %q", got, want)
+	}
+}
+
+func TestResolveDeployImageReferencePrefersEndpointOverPlatformRegistryURL(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
+	t.Setenv("PLATFORM_REGISTRY_URL", "registry.custom.example")
+	t.Setenv("PLATFORM_MODE", "tenant")
+
+	got := ResolveDeployImageReference("go-example:v0.1.0", "mcp-team-acme", "acme")
+	if want := "10.96.223.152:5000/acme/go-example:v0.1.0"; got != want {
+		t.Fatalf("ResolveDeployImageReference() = %q, want %q", got, want)
+	}
+}
+
 func TestHandleDeploymentApplyRejectsInvalidVersionTag(t *testing.T) {
 	client := kubernetesfake.NewSimpleClientset()
 	server := &RuntimeServer{
@@ -380,8 +401,8 @@ func TestEnsureTeamNamespaceConfiguresTraefikIngressWatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("traefik watch role missing: %v", err)
 	}
-	if !roleAllows(role, "", "secrets", "get") {
-		t.Fatalf("API-created traefik watch role should grant secret access: %#v", role.Rules)
+	if roleAllows(role, "", "secrets", "get") {
+		t.Fatalf("API-created traefik watch role should not grant secret access: %#v", role.Rules)
 	}
 	binding, err := client.RbacV1().RoleBindings("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{})
 	if err != nil {
@@ -424,26 +445,12 @@ func TestEnsureCatalogNamespaceAutoTraefikWatchSkipsExternalIngress(t *testing.T
 	if ns.Labels[platformManagedLabel] != "true" || ns.Labels[platformScopeLabel] != "public" {
 		t.Fatalf("catalog namespace labels = %#v", ns.Labels)
 	}
-	role, err := client.RbacV1().Roles(defaultPublicCatalogNamespace).Get(context.Background(), platformAnalyticsSecretRoleName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("analytics secret role missing: %v", err)
-	}
-	if !roleAllows(role, "", "secrets", "create") || !roleAllows(role, "", "secrets", "patch") {
-		t.Fatalf("analytics secret role rules = %#v", role.Rules)
-	}
-	binding, err := client.RbacV1().RoleBindings(defaultPublicCatalogNamespace).Get(context.Background(), platformAnalyticsSecretRoleName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("analytics secret rolebinding missing: %v", err)
-	}
-	if len(binding.Subjects) != 1 || binding.Subjects[0].Kind != rbacv1.ServiceAccountKind || binding.Subjects[0].Namespace != platformAPIServiceAccountNS || binding.Subjects[0].Name != platformAPIServiceAccountName {
-		t.Fatalf("analytics secret binding subjects = %#v", binding.Subjects)
-	}
 	if _, err := client.RbacV1().Roles(defaultPublicCatalogNamespace).Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("traefik watch role error = %v, want not found", err)
 	}
 }
 
-func TestEnsureTraefikWatchRBACUpdatesLegacyRoleWithSecretAccess(t *testing.T) {
+func TestEnsureTraefikWatchRBACRemovesLegacySecretAccess(t *testing.T) {
 	cfg := teamTraefikWatchConfig{
 		namespace:      "traefik",
 		serviceAccount: "traefik",
@@ -465,8 +472,8 @@ func TestEnsureTraefikWatchRBACUpdatesLegacyRoleWithSecretAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("traefik watch role missing: %v", err)
 	}
-	if !roleAllows(role, "", "secrets", "get") {
-		t.Fatalf("legacy traefik role was not updated with secret access: %#v", role.Rules)
+	if roleAllows(role, "", "secrets", "get") {
+		t.Fatalf("traefik watch role should not grant secret access: %#v", role.Rules)
 	}
 }
 

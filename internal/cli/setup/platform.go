@@ -47,6 +47,19 @@ const gatewayOTELExporterOTLPEndpointEnv = "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPO
 const defaultGatewayOTELExporterOTLPEndpoint = "http://otel-collector.mcp-sentinel.svc.cluster.local:4318"
 const gatewayProxyDockerfilePath = "services/mcp-gateway/Dockerfile"
 const gatewayProxyBuildContext = "."
+
+// pathBasedSentinelIngressNames lists the dev path-based ingresses for the
+// mcp-sentinel stack. Public-host installs remove these after applying the
+// dedicated platform ingress so platform UI/API routes are not exposed on
+// unrelated public hosts such as the MCP gateway host.
+var pathBasedSentinelIngressNames = []string{
+	"mcp-sentinel-gateway",
+	"mcp-sentinel-gateway-observability",
+	"mcp-sentinel-gateway-adapter-session",
+	"mcp-sentinel-gateway-api",
+	"mcp-sentinel-gateway-ingest",
+}
+
 const (
 	defaultDevUserEmail     = "test@mcpruntime.org"
 	defaultDevUserPassword  = "test@123"
@@ -2379,6 +2392,18 @@ func applyPlatformIngressIfConfigured(kubectl core.KubectlRunner) error {
 	if err := kube.ApplyManifestContent(kubectl.CommandArgs, manifest); err != nil {
 		return fmt.Errorf("apply platform UI ingress: %w", err)
 	}
+	if err := removePathBasedSentinelIngresses(kubectl); err != nil {
+		return err
+	}
+	return nil
+}
+
+func removePathBasedSentinelIngresses(kubectl core.KubectlRunner) error {
+	args := append([]string{"delete", "ingress"}, pathBasedSentinelIngressNames...)
+	args = append(args, "-n", core.DefaultAnalyticsNamespace, "--ignore-not-found=true")
+	if err := kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
+		return fmt.Errorf("remove path-based sentinel ingresses for public platform host: %w", err)
+	}
 	return nil
 }
 
@@ -2466,6 +2491,7 @@ func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platform
 	}
 	for _, key := range []string{
 		"GOOGLE_CLIENT_ID",
+		"MCP_SENTINEL_INGEST_URL",
 		"OIDC_ISSUER",
 		"OIDC_AUDIENCE",
 		"OIDC_JWKS_URL",
@@ -2491,7 +2517,7 @@ func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platform
 	if registryIngressHost := strings.TrimSpace(core.GetRegistryIngressHost()); registryIngressHost != "" {
 		manifest.Data["MCP_REGISTRY_INGRESS_HOST"] = registryIngressHost
 	}
-	if registryHost := registryHostFromImage(images.API); registryHost != "" {
+	if registryHost := platformRegistryHostForConfig(images); registryHost != "" {
 		manifest.Data["PLATFORM_REGISTRY_URL"] = registryHost
 	}
 	if strings.TrimSpace(manifest.Data["PLATFORM_TRAEFIK_NAMESPACE"]) == "" {
@@ -2533,6 +2559,26 @@ func setupAnalyticsConfigEnvValue(key string) string {
 		}
 	}
 	return ""
+}
+
+func platformRegistryHostForConfig(images AnalyticsImageSet) string {
+	if explicit := setupAnalyticsConfigEnvValue("PLATFORM_REGISTRY_URL"); explicit != "" {
+		return explicit
+	}
+	if host := strings.TrimSpace(core.GetRegistryIngressHost()); host != "" &&
+		(host != core.DefaultRegistryIngressHost || registryIngressHostExplicitlyConfigured()) {
+		return host
+	}
+	return registryHostFromImage(images.API)
+}
+
+func registryIngressHostExplicitlyConfigured() bool {
+	for _, key := range []string{"MCP_REGISTRY_INGRESS_HOST", "MCP_PLATFORM_DOMAIN"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func applyGoogleOIDCDefaults(data map[string]string) {
@@ -2663,17 +2709,21 @@ func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
+	if envValue := setupSecretEnvValue("MCP_PLATFORM_ADMIN_EMAIL", "PLATFORM_ADMIN_EMAIL"); envValue != "" {
+		platformAdminEmail = envValue
+	}
 	platformAdminPassword, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_ADMIN_PASSWORD")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	if envValue := setupSecretEnvValue("MCP_PLATFORM_ADMIN_PASSWORD", "PLATFORM_ADMIN_PASSWORD"); envValue != "" {
+		platformAdminPassword = envValue
 	}
 	adminUsers, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "ADMIN_USERS")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	if adminUsers == "" && platformAdminEmail != "" {
-		adminUsers = platformAdminEmail
-	}
+	adminUsers = ensureCSVIncludesValues(adminUsers, setupSecretEnvValue("MCP_ADMIN_USERS", "ADMIN_USERS"), platformAdminEmail)
 	platformDevLoginEnabled := ""
 	platformDevUserEmail, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_USER_EMAIL")
 	if err != nil {
@@ -2777,6 +2827,24 @@ func ensureCSVIncludes(csv, value string) string {
 		parts = append(parts, value)
 	}
 	return strings.Join(parts, ",")
+}
+
+func ensureCSVIncludesValues(csv string, values ...string) string {
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			csv = ensureCSVIncludes(csv, part)
+		}
+	}
+	return csv
+}
+
+func setupSecretEnvValue(candidates ...string) string {
+	for _, candidate := range candidates {
+		if value := strings.TrimSpace(os.Getenv(candidate)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func ensureAnalyticsImagePullSecret(kubectl core.KubectlRunner) (string, error) {
@@ -3360,7 +3428,8 @@ func setupTLSWithExistingClusterIssuer(kubectl core.KubectlRunner, logger *zap.L
 	return nil
 }
 
-// setupTLSPrivateCA uses a pre-created TLS secret mcp-runtime-ca in cert-manager (see config/cert-manager/cluster-issuer.yaml).
+// setupTLSPrivateCA uses mcp-runtime-ca in cert-manager; bundled HTTPS setup
+// generates it when missing, while other private-CA paths require it up front.
 func setupTLSPrivateCA(kubectl core.KubectlRunner, logger *zap.Logger, plan setupplan.Plan) error {
 	core.Info("Checking cert-manager installation")
 	if err := certmanager.CheckCertManagerInstalledWithKubectl(kubectl); err != nil {
@@ -3374,7 +3443,20 @@ func setupTLSPrivateCA(kubectl core.KubectlRunner, logger *zap.Logger, plan setu
 	core.Info("cert-manager CRDs found")
 
 	core.Info("Checking CA secret")
-	if err := certmanager.CheckCASecretWithKubectl(kubectl); err != nil {
+	if plan.RegistryMode == setupplan.RegistryModeBundledHTTPS {
+		created, err := certmanager.EnsureCASecretWithKubectl(kubectl)
+		if err != nil {
+			err := core.WrapWithSentinel(core.ErrCASecretNotFound, err, "CA secret 'mcp-runtime-ca' could not be generated in cert-manager namespace. Create a private CA manually:\n  kubectl create secret tls mcp-runtime-ca --cert=ca.crt --key=ca.key -n cert-manager")
+			core.Error("CA secret unavailable")
+			if logger != nil {
+				core.LogStructuredError(logger, err, "CA secret unavailable")
+			}
+			return err
+		}
+		if created {
+			core.Info("Generated cert-manager/mcp-runtime-ca for bundled HTTPS registry TLS; configure every Kubernetes node to trust its tls.crt before pulling from the bundled HTTPS registry")
+		}
+	} else if err := certmanager.CheckCASecretWithKubectl(kubectl); err != nil {
 		err := core.WrapWithSentinel(core.ErrCASecretNotFound, err, "CA secret 'mcp-runtime-ca' not found in cert-manager namespace. For Let's Encrypt use --acme-email, or create a private CA:\n  kubectl create secret tls mcp-runtime-ca --cert=ca.crt --key=ca.key -n cert-manager")
 		core.Error("CA secret not found")
 		if logger != nil {
@@ -3456,18 +3538,22 @@ func setupBundledRegistryInternalTLSStep(kubectl core.KubectlRunner, logger *zap
 	}
 	issuerName := bundledRegistryInternalIssuerName(plan)
 	if issuerName == certmanager.CertClusterIssuerName {
-		core.Info("Checking internal registry CA secret")
-		if err := certmanager.CheckCASecretWithKubectl(kubectl); err != nil {
+		core.Info("Ensuring internal registry CA secret")
+		created, err := certmanager.EnsureCASecretWithKubectl(kubectl)
+		if err != nil {
 			err := core.WrapWithSentinel(
 				core.ErrCASecretNotFound,
 				err,
-				"bundled HTTPS registry pulls need an internal CA for registry-internal-tls. Create cert-manager/mcp-runtime-ca and configure every node to trust its CA certificate, or pass --tls-cluster-issuer for an existing internal issuer",
+				"bundled HTTPS registry pulls need an internal CA for registry-internal-tls. Setup could not create cert-manager/mcp-runtime-ca; pass --tls-cluster-issuer for an existing internal issuer or create the CA secret manually",
 			)
-			core.Error("Internal registry CA secret not found")
+			core.Error("Internal registry CA secret unavailable")
 			if logger != nil {
-				core.LogStructuredError(logger, err, "Internal registry CA secret not found")
+				core.LogStructuredError(logger, err, "Internal registry CA secret unavailable")
 			}
 			return err
+		}
+		if created {
+			core.Info("Generated cert-manager/mcp-runtime-ca for internal registry TLS; configure every Kubernetes node to trust its tls.crt before pulling from the bundled HTTPS registry")
 		}
 		core.Info("Applying internal registry ClusterIssuer")
 		if err := certmanager.ApplyClusterIssuerWithKubectl(kubectl); err != nil {

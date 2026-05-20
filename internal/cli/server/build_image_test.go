@@ -31,7 +31,7 @@ servers:
 			t.Fatalf("write metadata: %v", err)
 		}
 
-		err := buildImage(context.Background(), logger, "test-server", "Dockerfile", metadataFile, ".", "test-registry", "test-tag", ".")
+		err := buildImage(context.Background(), logger, "test-server", "Dockerfile", metadataFile, ".", "test-registry", "test-tag", "", ".")
 		if err != nil {
 			t.Fatalf("failed to build image: %v", err)
 		}
@@ -45,7 +45,7 @@ servers:
 			t.Errorf("expected docker command, got %q", last.Name)
 		}
 
-		expectedArgs := []string{"build", "-f", "Dockerfile", "-t", "test-registry/test-server:test-tag", "."}
+		expectedArgs := []string{"build", "--platform", defaultDockerBuildPlatform, "-f", "Dockerfile", "-t", "test-registry/test-server:test-tag", "."}
 		if !equalStringSlices(last.Args, expectedArgs) {
 			t.Errorf("docker args = %v, want %v", last.Args, expectedArgs)
 		}
@@ -56,7 +56,7 @@ servers:
 		defer core.SwapExecExecutor(mock)()
 
 		tmp := t.TempDir()
-		err := buildImage(context.Background(), logger, "missing-server", "Dockerfile", "", tmp, "test-registry", "test-tag", ".")
+		err := buildImage(context.Background(), logger, "missing-server", "Dockerfile", "", tmp, "test-registry", "test-tag", "", ".")
 		if err == nil {
 			t.Fatal("expected error when metadata file not found for server name")
 		}
@@ -71,7 +71,7 @@ servers:
 		}
 		defer core.SwapExecExecutor(mock)()
 
-		err := buildImage(context.Background(), logger, "test-server", "Dockerfile", "", ".", "test-registry", "test-tag", ".")
+		err := buildImage(context.Background(), logger, "test-server", "Dockerfile", "", ".", "test-registry", "test-tag", "", ".")
 		if err == nil {
 			t.Error("expected error when docker build fails")
 		}
@@ -97,7 +97,7 @@ servers:
 			t.Fatalf("write metadata: %v", err)
 		}
 
-		err := buildImage(context.Background(), logger, "my-server", "Dockerfile", metadataFile, ".", "registry.io", "", ".")
+		err := buildImage(context.Background(), logger, "my-server", "Dockerfile", metadataFile, ".", "registry.io", "", "", ".")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -132,7 +132,7 @@ servers:
 			t.Fatalf("write metadata: %v", err)
 		}
 
-		err := buildImage(context.Background(), logger, "public-server", "Dockerfile", metadataFile, ".", "registry.example.com", "v1", ".")
+		err := buildImage(context.Background(), logger, "public-server", "Dockerfile", metadataFile, ".", "registry.example.com", "v1", "", ".")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -141,6 +141,35 @@ servers:
 			if cmd.Name == "docker" {
 				if !contains(cmd.Args, "registry.example.com/public/public-server:v1") {
 					t.Fatalf("docker args = %v, want public-scoped tag", cmd.Args)
+				}
+				return
+			}
+		}
+		t.Fatal("expected docker command")
+	})
+
+	t.Run("uses_explicit_docker_platform", func(t *testing.T) {
+		mock := &core.MockExecutor{}
+		defer core.SwapExecExecutor(mock)()
+
+		tmp := t.TempDir()
+		metadataFile := filepath.Join(tmp, "servers.yaml")
+		if err := os.WriteFile(metadataFile, []byte(`version: v1
+servers:
+  - name: arm-server
+`), 0o600); err != nil {
+			t.Fatalf("write metadata: %v", err)
+		}
+
+		err := buildImage(context.Background(), logger, "arm-server", "Dockerfile", metadataFile, ".", "registry.example.com", "v1", "linux/arm64", ".")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		for _, cmd := range mock.Commands {
+			if cmd.Name == "docker" {
+				if !contains(cmd.Args, "--platform") || !contains(cmd.Args, "linux/arm64") {
+					t.Fatalf("docker args = %v, want explicit platform", cmd.Args)
 				}
 				return
 			}
@@ -177,7 +206,7 @@ servers:
 			t.Fatalf("write metadata: %v", err)
 		}
 
-		err := buildImage(context.Background(), logger, "tenant-server", "Dockerfile", metadataFile, ".", "registry.example.com", "v1", ".")
+		err := buildImage(context.Background(), logger, "tenant-server", "Dockerfile", metadataFile, ".", "registry.example.com", "v1", "", ".")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -207,7 +236,7 @@ servers:
 			t.Fatalf("write metadata: %v", err)
 		}
 
-		err := buildImage(context.Background(), logger, "public-server", "Dockerfile", metadataFile, ".", "registry.example.com", "v1", ".")
+		err := buildImage(context.Background(), logger, "public-server", "Dockerfile", metadataFile, ".", "registry.example.com", "v1", "", ".")
 		if err == nil {
 			t.Fatal("expected metadata load error")
 		}
@@ -247,7 +276,7 @@ servers:
 			t.Fatalf("write metadata: %v", err)
 		}
 
-		err := buildImage(context.Background(), logger, "my-server", "Dockerfile", metadataFile, ".", "", "v1.0", ".")
+		err := buildImage(context.Background(), logger, "my-server", "Dockerfile", metadataFile, ".", "", "v1.0", "", ".")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -272,7 +301,7 @@ servers:
 		failingExecutor := &validatorFailingExecutor{err: errors.New("validator failed")}
 		defer core.SwapExecExecutor(failingExecutor)()
 
-		err := buildImage(context.Background(), logger, "test-server", "Dockerfile", "", ".", "registry", "tag", ".")
+		err := buildImage(context.Background(), logger, "test-server", "Dockerfile", "", ".", "registry", "tag", "", ".")
 		if err == nil {
 			t.Error("expected error when command validator fails")
 		}

@@ -5,3 +5,4 @@ metadata:
   namespace: registry
   annotations:
     traefik.ingress.kubernetes.io/service.serversscheme: https
+    traefik.ingress.kubernetes.io/service.serverstransport: registry-registry-internal-tls@kubernetescrd

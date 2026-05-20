@@ -233,6 +233,73 @@ func TestPlatformImageDefaultsUseInternalRegistryWithPlatformDomain(t *testing.T
 	}
 }
 
+func TestApplyPlatformIngressPrunesPathBasedSentinelIngresses(t *testing.T) {
+	origConfig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = origConfig })
+	core.DefaultCLIConfig = &core.CLIConfig{PlatformIngressHost: "platform.example.com"}
+
+	var created []*core.MockCommand
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			created = append(created, cmd)
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	if err := applyPlatformIngressIfConfigured(kubectl); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var (
+		appliedPlatformIngress bool
+		deletedPathIngresses   bool
+	)
+	for _, cmd := range created {
+		spec := core.ExecSpec{Args: cmd.Args}
+		if commandHasArgs(spec, "apply", "-f", "-") && cmd.StdinR != nil {
+			data, err := io.ReadAll(cmd.StdinR)
+			if err != nil {
+				t.Fatalf("read stdin: %v", err)
+			}
+			body := string(data)
+			appliedPlatformIngress = strings.Contains(body, "name: mcp-sentinel-platform-ui") &&
+				strings.Contains(body, `- host: "platform.example.com"`)
+		}
+		if commandHasArgs(spec, "delete", "ingress", "-n", core.DefaultAnalyticsNamespace, "--ignore-not-found=true") {
+			deletedPathIngresses = true
+			for _, name := range pathBasedSentinelIngressNames {
+				if !contains(cmd.Args, name) {
+					t.Fatalf("delete command missing %s: %v", name, cmd.Args)
+				}
+			}
+		}
+	}
+	if !appliedPlatformIngress {
+		t.Fatal("expected platform UI ingress apply")
+	}
+	if !deletedPathIngresses {
+		t.Fatal("expected path-based sentinel ingress delete")
+	}
+}
+
+func TestApplyPlatformIngressSkipsWhenHostUnset(t *testing.T) {
+	origConfig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = origConfig })
+	core.DefaultCLIConfig = &core.CLIConfig{}
+
+	mock := &core.MockExecutor{}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	if err := applyPlatformIngressIfConfigured(kubectl); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mock.Commands) != 0 {
+		t.Fatalf("expected no kubectl commands when platform host is unset, got %v", mock.Commands)
+	}
+}
+
 func TestBuildOperatorArgs(t *testing.T) {
 	t.Run("omits defaults", func(t *testing.T) {
 		if got := buildOperatorArgs("", "", false, false); len(got) != 0 {
@@ -792,6 +859,30 @@ func TestRenderAnalyticsSecretManifestReusesExistingAPIKeys(t *testing.T) {
 	}
 }
 
+func TestRenderAnalyticsSecretManifestUsesAdminEnv(t *testing.T) {
+	t.Setenv("MCP_PLATFORM_ADMIN_EMAIL", "PrinceKrRoshan01@gmail.com")
+	t.Setenv("MCP_PLATFORM_ADMIN_PASSWORD", "bootstrap-password")
+	t.Setenv("MCP_ADMIN_USERS", "ops@example.com, google-sub-123")
+	kubectl := core.NewTestKubectlClient(&core.MockExecutor{})
+
+	manifest, err := renderAnalyticsSecretManifest(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data := secretStringDataFromManifest(t, manifest)
+	if data["PLATFORM_ADMIN_EMAIL"] != "PrinceKrRoshan01@gmail.com" {
+		t.Fatalf("expected platform admin email from env, got %q", data["PLATFORM_ADMIN_EMAIL"])
+	}
+	if data["PLATFORM_ADMIN_PASSWORD"] != "bootstrap-password" {
+		t.Fatalf("expected platform admin password from env, got %q", data["PLATFORM_ADMIN_PASSWORD"])
+	}
+	for _, want := range []string{"ops@example.com", "google-sub-123", "PrinceKrRoshan01@gmail.com"} {
+		if !csvHasValue(data["ADMIN_USERS"], want) {
+			t.Fatalf("expected ADMIN_USERS to include %q, got %q", want, data["ADMIN_USERS"])
+		}
+	}
+}
+
 func TestRenderAnalyticsSecretManifestEscapesPostgresCredentialsInDSN(t *testing.T) {
 	postgresUserEncoded := base64.StdEncoding.EncodeToString([]byte("user@runtime"))
 	postgresPasswordEncoded := base64.StdEncoding.EncodeToString([]byte(`pa:ss?/#[%]`))
@@ -1161,8 +1252,8 @@ data:
 	if got := payload.Data["MCP_REGISTRY_INGRESS_HOST"]; got != "registry.mcpruntime.org" {
 		t.Fatalf("MCP_REGISTRY_INGRESS_HOST = %q, want public host", got)
 	}
-	if got := payload.Data["PLATFORM_REGISTRY_URL"]; got != "10.96.223.152:5000" {
-		t.Fatalf("PLATFORM_REGISTRY_URL = %q, want API image registry", got)
+	if got := payload.Data["PLATFORM_REGISTRY_URL"]; got != "registry.mcpruntime.org" {
+		t.Fatalf("PLATFORM_REGISTRY_URL = %q, want public registry host", got)
 	}
 }
 
@@ -2661,6 +2752,63 @@ func TestSetupTLSWithKubectl(t *testing.T) {
 	}
 	if !hasCRD || !hasSecret || !hasIssuer || !hasNamespace || !hasCert || !hasWait {
 		t.Fatalf("missing expected kubectl commands: crd=%t secret=%t issuer=%t namespace=%t cert=%t wait=%t", hasCRD, hasSecret, hasIssuer, hasNamespace, hasCert, hasWait)
+	}
+}
+
+func TestSetupBundledRegistryInternalTLSCreatesMissingCASecret(t *testing.T) {
+	chdirRepoRootForTest(t)
+
+	var created []*core.MockCommand
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			created = append(created, cmd)
+			if commandHasArgs(spec, "get", "secret", "mcp-runtime-ca", "-n", "cert-manager") {
+				cmd.RunErr = errors.New("missing secret")
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	err := setupBundledRegistryInternalTLSStep(kubectl, zap.NewNop(), setupplan.Plan{
+		RegistryMode: setupplan.RegistryModeBundledHTTPS,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var (
+		hasSecretApply bool
+		hasIssuerApply bool
+		hasCertApply   bool
+		hasWait        bool
+	)
+	for _, cmd := range created {
+		spec := core.ExecSpec{Args: cmd.Args}
+		if commandHasArgs(spec, "apply", "-f", "config/cert-manager/cluster-issuer.yaml") {
+			hasIssuerApply = true
+		}
+		if commandHasArgs(spec, "wait", "--for=condition=Ready", "certificate/registry-internal-cert", "-n", core.NamespaceRegistry, "--timeout=2m0s") {
+			hasWait = true
+		}
+		if !commandHasArgs(spec, "apply", "-f", "-") || cmd.StdinR == nil {
+			continue
+		}
+		data, err := io.ReadAll(cmd.StdinR)
+		if err != nil {
+			t.Fatalf("read apply stdin: %v", err)
+		}
+		body := string(data)
+		if strings.Contains(body, `"kind":"Secret"`) && strings.Contains(body, `"name":"mcp-runtime-ca"`) {
+			hasSecretApply = true
+		}
+		if strings.Contains(body, "name: registry-internal-cert") && strings.Contains(body, "secretName: registry-internal-tls") {
+			hasCertApply = true
+		}
+	}
+	if !hasSecretApply || !hasIssuerApply || !hasCertApply || !hasWait {
+		t.Fatalf("missing expected commands: secret=%t issuer=%t cert=%t wait=%t", hasSecretApply, hasIssuerApply, hasCertApply, hasWait)
 	}
 }
 

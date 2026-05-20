@@ -358,9 +358,10 @@ provisioned registry:
 ./bin/mcp-runtime setup --registry-mode external --external-registry-url registry.example.com --with-tls --strict-prod
 ```
 
-With the bundled registry serving internal HTTPS, use a private CA or existing
-ClusterIssuer for the registry pod certificate and configure every node to
-trust that CA for image pulls. Public ingress TLS can still use ACME:
+With the bundled registry serving internal HTTPS, setup generates an internal
+CA secret for the registry pod certificate unless you provide an existing
+ClusterIssuer. Configure every node to trust that CA for image pulls. Public
+ingress TLS can still use ACME:
 
 ```bash
 ./bin/mcp-runtime bootstrap
@@ -371,6 +372,7 @@ If you want hostnames derived from one domain, set:
 
 ```bash
 export MCP_PLATFORM_DOMAIN=example.com
+export MCP_PLATFORM_ADMIN_EMAIL=admin@example.com
 ./bin/mcp-runtime setup --registry-mode external --external-registry-url registry.example.com --with-tls --strict-prod
 ```
 
@@ -387,6 +389,15 @@ cluster pulls from the same hardened image host you intend to keep:
 ./bin/mcp-runtime registry provision --url registry.example.com
 ./bin/mcp-runtime setup --registry-mode external --with-tls --strict-prod
 ```
+
+For public/TLS setup, setup validates the host env even without
+`--strict-prod`. Use `MCP_PLATFORM_DOMAIN` or set
+`MCP_PLATFORM_INGRESS_HOST`, `MCP_REGISTRY_INGRESS_HOST`, and
+`MCP_MCP_INGRESS_HOST` explicitly. If you use the bundled registry, also set
+`MCP_REGISTRY_ENDPOINT` or `MCP_REGISTRY_HOST` to the exact registry host:port
+that Kubernetes nodes can pull. Set `MCP_PLATFORM_ADMIN_EMAIL` or
+`ADMIN_USERS` so the first OIDC login for that email is promoted to platform
+admin; `--acme-email` is only the certificate contact email.
 
 You can also skip the saved provision step and pass
 `--external-registry-url registry.example.com` directly to `setup`.
@@ -433,6 +444,7 @@ Google issuer and JWKS URL when those values are not set explicitly:
 
 ```bash
 export GOOGLE_CLIENT_ID=<client>.apps.googleusercontent.com
+export MCP_PLATFORM_ADMIN_EMAIL=admin@example.com
 ./bin/mcp-runtime setup --with-tls --platform-mode public
 ```
 
@@ -552,7 +564,7 @@ For the full field surface, use the [API reference](api.md).
 Author lightweight metadata YAML, generate CRDs, and deploy:
 
 ```bash
-./bin/mcp-runtime server build image my-server --tag v1.0.0
+./bin/mcp-runtime server build image my-server --tag v1.0.0 --platform linux/amd64
 ./bin/mcp-runtime registry push --scope tenant --image <exact-image-ref-from-build>
 ./bin/mcp-runtime pipeline generate --dir .mcp --output manifests/
 ./bin/mcp-runtime pipeline deploy --dir manifests/

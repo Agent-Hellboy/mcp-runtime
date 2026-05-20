@@ -1,0 +1,9 @@
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: registry-internal-tls
+  namespace: registry
+spec:
+  serverName: registry.registry.svc.cluster.local
+  rootCAs:
+    - secret: registry-internal-tls
