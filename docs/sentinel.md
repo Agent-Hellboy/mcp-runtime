@@ -150,7 +150,9 @@ metrics on `METRICS_PORT` (default `9090`).
 | `POST` | `/api/runtime/sessions/{namespace}/{name}/unrevoke` | Set `spec.revoked=false`. |
 | `GET`, `POST` | `/api/runtime/teams` | List teams (admin: all, user: memberships) or create a team+namespace (admin-only). |
 | `GET` | `/api/runtime/teams/{team}` | Read team metadata for admins and team members. |
+| `GET` | `/api/runtime/teams/{team}/members` | List team memberships for admins and team members. |
 | `POST` | `/api/runtime/teams/{team}/members` | Add/update team membership (admin or team owner). |
+| `POST` | `/api/runtime/teams/{team}/users` | Create/update a password-login user and add the user to a team. Admin role required. |
 | `DELETE` | `/api/runtime/teams/{team}/members/{userID}` | Remove team membership (admin or team owner). |
 | `GET` | `/api/runtime/namespaces` | List allowed namespaces and org catalog metadata for caller scope. |
 | `GET` | `/api/runtime/namespaces/{namespace}` | Read one namespace metadata entry when authorized. |

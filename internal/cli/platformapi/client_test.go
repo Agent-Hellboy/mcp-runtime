@@ -27,8 +27,24 @@ func TestApplyAccessFromYAMLFile_MultiDocument(t *testing.T) {
 			switch r.URL.Path {
 			case "/api/runtime/grants":
 				grantCalls++
+				body, _ := io.ReadAll(r.Body)
+				var payload grantAPIBody
+				if err := json.Unmarshal(body, &payload); err != nil {
+					t.Fatalf("decode grant body: %v", err)
+				}
+				if payload.Subject.TeamID != "team-acme" {
+					t.Fatalf("grant subject teamID = %q, want team-acme", payload.Subject.TeamID)
+				}
 			case "/api/runtime/sessions":
 				sessionCalls++
+				body, _ := io.ReadAll(r.Body)
+				var payload sessionAPIBody
+				if err := json.Unmarshal(body, &payload); err != nil {
+					t.Fatalf("decode session body: %v", err)
+				}
+				if payload.Subject.TeamID != "team-acme" {
+					t.Fatalf("session subject teamID = %q, want team-acme", payload.Subject.TeamID)
+				}
 			default:
 				t.Fatalf("unexpected path %q", r.URL.Path)
 			}
@@ -51,6 +67,7 @@ spec:
     name: demo
   subject:
     humanID: user-1
+    teamID: team-acme
   maxTrust: low
   allowedSideEffects:
     - read
@@ -68,6 +85,7 @@ spec:
     name: demo
   subject:
     humanID: user-1
+    teamID: team-acme
   consentedTrust: low
 `), 0o600); err != nil {
 		t.Fatal(err)
@@ -155,6 +173,11 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"team":{"slug":"core","name":"Core","namespace":"mcp-team-core"}}`)),
 				}, nil
+			case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/teams/core/members":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"members":[{"team_slug":"core","team_namespace":"mcp-team-core","user_id":"user-1","email":"member@example.com","role":"member"}]}`)),
+				}, nil
 			case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/teams":
 				body, _ := io.ReadAll(r.Body)
 				var payload map[string]string
@@ -165,6 +188,17 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"team":{"slug":"core","name":"Core Team","namespace":"mcp-team-core"}}`)),
+				}, nil
+			case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/teams/core/users":
+				body, _ := io.ReadAll(r.Body)
+				var payload map[string]string
+				_ = json.Unmarshal(body, &payload)
+				if payload["email"] != "member@example.com" || payload["password"] != "password123" || payload["role"] != "member" {
+					t.Fatalf("create team user payload = %#v", payload)
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"user":{"id":"user-1","email":"member@example.com","role":"user"},"membership":{"team_slug":"core","team_namespace":"mcp-team-core","user_id":"user-1","role":"member"}}`)),
 				}, nil
 			case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/servers":
 				if got := r.URL.Query().Get("namespace"); got != "" {
@@ -218,6 +252,20 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 	}
 	if _, err := client.CreateTeam(context.Background(), "core", "Core Team"); err != nil {
 		t.Fatalf("CreateTeam() error = %v", err)
+	}
+	members, err := client.ListTeamMembers(context.Background(), "core")
+	if err != nil {
+		t.Fatalf("ListTeamMembers() error = %v", err)
+	}
+	if len(members) != 1 || members[0].Email != "member@example.com" {
+		t.Fatalf("members = %#v", members)
+	}
+	created, err := client.CreateTeamUser(context.Background(), "core", "member@example.com", "password123", "member")
+	if err != nil {
+		t.Fatalf("CreateTeamUser() error = %v", err)
+	}
+	if created.Email != "member@example.com" || created.TeamSlug != "core" {
+		t.Fatalf("created membership = %#v", created)
 	}
 	if _, err := client.ListRuntimeServers(context.Background(), ""); err != nil {
 		t.Fatalf("ListRuntimeServers() error = %v", err)

@@ -126,3 +126,19 @@ func TestAuthLoginNormalizesTrailingAPIPath(t *testing.T) {
 		t.Fatalf("token = %q, want good", creds.Token)
 	}
 }
+
+func TestResolveLoginEmailAcceptsUsernameAlias(t *testing.T) {
+	got, err := resolveLoginEmail("", "user@example.com")
+	if err != nil {
+		t.Fatalf("resolveLoginEmail() error = %v", err)
+	}
+	if got != "user@example.com" {
+		t.Fatalf("email = %q, want username alias", got)
+	}
+}
+
+func TestResolveLoginEmailRejectsMismatchedAlias(t *testing.T) {
+	if _, err := resolveLoginEmail("user@example.com", "other@example.com"); err == nil {
+		t.Fatal("expected mismatch error")
+	}
+}

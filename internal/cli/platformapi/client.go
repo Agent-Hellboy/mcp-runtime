@@ -429,7 +429,7 @@ func grantFromV1(g *mcpv1alpha1.MCPAccessGrant) grantAPIBody {
 		Name:               g.Name,
 		Namespace:          ns,
 		ServerRef:          sentinelaccess.ServerReference{Name: g.Spec.ServerRef.Name, Namespace: g.Spec.ServerRef.Namespace},
-		Subject:            sentinelaccess.SubjectRef{HumanID: g.Spec.Subject.HumanID, AgentID: g.Spec.Subject.AgentID},
+		Subject:            sentinelaccess.SubjectRef{HumanID: g.Spec.Subject.HumanID, AgentID: g.Spec.Subject.AgentID, TeamID: g.Spec.Subject.TeamID},
 		MaxTrust:           trust,
 		AllowedSideEffects: allowedSideEffects,
 		PolicyVersion:      g.Spec.PolicyVersion,
@@ -448,7 +448,7 @@ func sessionFromV1(s *mcpv1alpha1.MCPAgentSession) sessionAPIBody {
 		Name:           s.Name,
 		Namespace:      ns,
 		ServerRef:      sentinelaccess.ServerReference{Name: s.Spec.ServerRef.Name, Namespace: s.Spec.ServerRef.Namespace},
-		Subject:        sentinelaccess.SubjectRef{HumanID: s.Spec.Subject.HumanID, AgentID: s.Spec.Subject.AgentID},
+		Subject:        sentinelaccess.SubjectRef{HumanID: s.Spec.Subject.HumanID, AgentID: s.Spec.Subject.AgentID, TeamID: s.Spec.Subject.TeamID},
 		ConsentedTrust: sentinelaccess.TrustLevel(s.Spec.ConsentedTrust),
 		PolicyVersion:  s.Spec.PolicyVersion,
 		Revoked:        &rev,
@@ -511,12 +511,37 @@ type Team struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type TeamMembership struct {
+	TeamID        string    `json:"team_id"`
+	TeamSlug      string    `json:"team_slug"`
+	TeamName      string    `json:"team_name"`
+	TeamNamespace string    `json:"team_namespace"`
+	UserID        string    `json:"user_id"`
+	Email         string    `json:"email,omitempty"`
+	Role          string    `json:"role"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type teamsResponse struct {
 	Teams []Team `json:"teams"`
 }
 
 type teamResponse struct {
 	Team Team `json:"team"`
+}
+
+type teamMembersResponse struct {
+	Members []TeamMembership `json:"members"`
+}
+
+type teamUserResponse struct {
+	User struct {
+		ID        string `json:"id"`
+		Email     string `json:"email"`
+		Role      string `json:"role"`
+		Namespace string `json:"namespace"`
+	} `json:"user"`
+	Membership TeamMembership `json:"membership"`
 }
 
 type namespaceListItem struct {
@@ -709,6 +734,60 @@ func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Tea
 		return Team{}, err
 	}
 	return out.Team, nil
+}
+
+func (c *PlatformClient) ListTeamMembers(ctx context.Context, slug string) ([]TeamMembership, error) {
+	rel := "/runtime/teams/" + url.PathEscape(strings.TrimSpace(slug)) + "/members"
+	resp, err := c.do(ctx, http.MethodGet, rel, "", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, httpAPIError(resp.StatusCode, b)
+	}
+	var out teamMembersResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	return out.Members, nil
+}
+
+func (c *PlatformClient) CreateTeamUser(ctx context.Context, slug, email, password, role string) (TeamMembership, error) {
+	payload := map[string]string{
+		"email":    strings.TrimSpace(email),
+		"password": password,
+		"role":     strings.TrimSpace(role),
+	}
+	js, err := json.Marshal(payload)
+	if err != nil {
+		return TeamMembership{}, err
+	}
+	rel := "/runtime/teams/" + url.PathEscape(strings.TrimSpace(slug)) + "/users"
+	resp, err := c.do(ctx, http.MethodPost, rel, "", bytes.NewReader(js))
+	if err != nil {
+		return TeamMembership{}, err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return TeamMembership{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return TeamMembership{}, httpAPIError(resp.StatusCode, b)
+	}
+	var out teamUserResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return TeamMembership{}, err
+	}
+	if out.Membership.Email == "" {
+		out.Membership.Email = out.User.Email
+	}
+	return out.Membership, nil
 }
 
 func (c *PlatformClient) ListNamespaces(ctx context.Context) ([]namespaceListItem, error) {

@@ -109,3 +109,23 @@ func TestInitTeamRejectsReservedNamespace(t *testing.T) {
 		t.Fatalf("expected reserved namespace error, got %v", err)
 	}
 }
+
+func TestResolveTeamUserEmailAcceptsUsernameAlias(t *testing.T) {
+	got, err := resolveTeamUserEmail("", "globex@example.com")
+	if err != nil {
+		t.Fatalf("resolveTeamUserEmail() error = %v", err)
+	}
+	if got != "globex@example.com" {
+		t.Fatalf("resolveTeamUserEmail() = %q, want username alias", got)
+	}
+}
+
+func TestResolveTeamUserEmailRejectsMismatchedAlias(t *testing.T) {
+	_, err := resolveTeamUserEmail("globex@example.com", "other@example.com")
+	if err == nil {
+		t.Fatal("expected mismatch error")
+	}
+	if !strings.Contains(err.Error(), "must match") {
+		t.Fatalf("expected mismatch error, got %v", err)
+	}
+}

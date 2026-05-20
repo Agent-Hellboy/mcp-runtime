@@ -4551,6 +4551,7 @@ _No package overview is documented._
 - [`func (c *PlatformClient) ApplyRuntimeServerWithScope(ctx context.Context, name, namespace, scope string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error)`](#cli-platform-api-func-c-platformclient-applyruntimeserverwithscope-ctx-context-context-name-namespace-scope-string-spec-mcpv1alpha1-mcpserverspec-serverlistitem-error)
 - [`func (c *PlatformClient) CreateAdapterSession(ctx context.Context, req AdapterSessionRequest) (AdapterSession, error)`](#cli-platform-api-func-c-platformclient-createadaptersession-ctx-context-context-req-adaptersessionrequest-adaptersession-error)
 - [`func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Team, error)`](#cli-platform-api-func-c-platformclient-createteam-ctx-context-context-slug-name-string-team-error)
+- [`func (c *PlatformClient) CreateTeamUser(ctx context.Context, slug, email, password, role string) (TeamMembership, error)`](#cli-platform-api-func-c-platformclient-createteamuser-ctx-context-context-slug-email-password-role-string-teammembership-error)
 - [`func (c *PlatformClient) CurrentPrincipal(ctx context.Context) (Principal, error)`](#cli-platform-api-func-c-platformclient-currentprincipal-ctx-context-context-principal-error)
 - [`func (c *PlatformClient) DeleteGrant(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deletegrant-ctx-context-context-namespace-name-string-error)
 - [`func (c *PlatformClient) DeleteRuntimeServer(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deleteruntimeserver-ctx-context-context-namespace-name-string-error)
@@ -4563,6 +4564,7 @@ _No package overview is documented._
 - [`func (c *PlatformClient) ListNamespaces(ctx context.Context) ([]namespaceListItem, error)`](#cli-platform-api-func-c-platformclient-listnamespaces-ctx-context-context-namespacelistitem-error)
 - [`func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace string) ([]ServerListItem, error)`](#cli-platform-api-func-c-platformclient-listruntimeservers-ctx-context-context-namespace-string-serverlistitem-error)
 - [`func (c *PlatformClient) ListSessions(ctx context.Context, namespace string) ([]sentinelaccess.SessionSummary, error)`](#cli-platform-api-func-c-platformclient-listsessions-ctx-context-context-namespace-string-sentinelaccess-sessionsummary-error)
+- [`func (c *PlatformClient) ListTeamMembers(ctx context.Context, slug string) ([]TeamMembership, error)`](#cli-platform-api-func-c-platformclient-listteammembers-ctx-context-context-slug-string-teammembership-error)
 - [`func (c *PlatformClient) ListTeams(ctx context.Context) ([]Team, error)`](#cli-platform-api-func-c-platformclient-listteams-ctx-context-context-team-error)
 - [`func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postgranttoggle-ctx-context-context-namespace-name-action-string-error)
 - [`func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postsessiontoggle-ctx-context-context-namespace-name-action-string-error)
@@ -4571,6 +4573,7 @@ _No package overview is documented._
 - [`type Principal struct`](#cli-platform-api-type-principal-struct)
 - [`type ServerListItem struct`](#cli-platform-api-type-serverlistitem-struct)
 - [`type Team struct`](#cli-platform-api-type-team-struct)
+- [`type TeamMembership struct`](#cli-platform-api-type-teammembership-struct)
 
 <a id="cli-platform-api-functions"></a>
 ### Functions
@@ -4694,6 +4697,12 @@ func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Tea
 
 ```
 
+<a id="cli-platform-api-func-c-platformclient-createteamuser-ctx-context-context-slug-email-password-role-string-teammembership-error"></a>
+```text
+func (c *PlatformClient) CreateTeamUser(ctx context.Context, slug, email, password, role string) (TeamMembership, error)
+
+```
+
 <a id="cli-platform-api-func-c-platformclient-currentprincipal-ctx-context-context-principal-error"></a>
 ```text
 func (c *PlatformClient) CurrentPrincipal(ctx context.Context) (Principal, error)
@@ -4766,6 +4775,12 @@ func (c *PlatformClient) ListSessions(ctx context.Context, namespace string) ([]
 
 ```
 
+<a id="cli-platform-api-func-c-platformclient-listteammembers-ctx-context-context-slug-string-teammembership-error"></a>
+```text
+func (c *PlatformClient) ListTeamMembers(ctx context.Context, slug string) ([]TeamMembership, error)
+
+```
+
 <a id="cli-platform-api-func-c-platformclient-listteams-ctx-context-context-team-error"></a>
 ```text
 func (c *PlatformClient) ListTeams(ctx context.Context) ([]Team, error)
@@ -4832,6 +4847,21 @@ type Team struct {
 	Name      string    `json:"name"`
 	Namespace string    `json:"namespace"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+```
+
+<a id="cli-platform-api-type-teammembership-struct"></a>
+```text
+type TeamMembership struct {
+	TeamID        string    `json:"team_id"`
+	TeamSlug      string    `json:"team_slug"`
+	TeamName      string    `json:"team_name"`
+	TeamNamespace string    `json:"team_namespace"`
+	UserID        string    `json:"user_id"`
+	Email         string    `json:"email,omitempty"`
+	Role          string    `json:"role"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 ```
 

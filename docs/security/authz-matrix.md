@@ -61,8 +61,11 @@ Expected codes:
 | `/api/user/api-keys`                                  | GET, POST     | 401  | 200         | 200      | 200       | 401/403    | Lifecycle for user-owned keys. |
 | `/api/user/api-keys/{id}`                             | GET, DEL      | 401  | 200         | 200      | 200       | 401/403    | |
 | `/api/runtime/servers`                                | GET, POST     | 401  | 200         | 200      | 200       | 401/403    | List/create MCP servers. |
-| `/api/runtime/teams`                                  | GET, POST     | 401  | 200         | 200      | 200       | 401/403    | |
-| `/api/runtime/teams/{id}`                             | GET, PUT, DEL | 401  | 200         | 200      | 200       | 401/403    | |
+| `/api/runtime/teams`                                  | GET           | 401  | 200         | 200      | 200       | 401/403    | |
+| `/api/runtime/teams`                                  | POST          | 401  | 403         | 403      | 200       | 401/403    | Admin-only team + namespace provisioning. |
+| `/api/runtime/teams/{id}`                             | GET           | 401  | 200         | 200      | 200       | 401/403    | Team members can read only their teams; admins can read all teams. |
+| `/api/runtime/teams/{id}/members`                     | GET, POST     | 401  | 200         | 200      | 200       | 401/403    | POST requires admin or team owner. |
+| `/api/runtime/teams/{id}/users`                       | POST          | 401  | 403         | 403      | 200       | 401/403    | Admin-only password user create/update plus membership. |
 | `/api/runtime/namespaces`                             | GET           | 401  | 200         | 200      | 200       | 401/403    | |
 | `/api/runtime/namespaces/{name}`                      | GET           | 401  | 200         | 200      | 200       | 401/403    | |
 | `/api/deployments`                                    | GET           | 401  | 200         | 200      | 200       | 401/403    | |

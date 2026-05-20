@@ -116,6 +116,7 @@ type TeamMembership struct {
 	TeamName      string    `json:"team_name"`
 	TeamNamespace string    `json:"team_namespace"`
 	UserID        string    `json:"user_id"`
+	Email         string    `json:"email,omitempty"`
 	Role          string    `json:"role"`
 	CreatedAt     time.Time `json:"created_at"`
 }

@@ -36,6 +36,7 @@ type manager struct {
 type loginFlags struct {
 	apiURL         string
 	email          string
+	username       string
 	password       string
 	token          string
 	tokenFromStdin bool
@@ -84,6 +85,7 @@ func (m *manager) NewLoginCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&f.apiURL, "api-url", os.Getenv(authfile.EnvAPIURL), "Sentinel API base URL (scheme and host, no /api path)")
 	cmd.Flags().StringVar(&f.email, "email", "", "Platform account email for password login")
+	cmd.Flags().StringVar(&f.username, "username", "", "Alias for --email")
 	cmd.Flags().StringVar(&f.password, "password", "", "Platform account password (prefer interactive prompt or token auth in shared shells)")
 	cmd.Flags().StringVar(&f.token, "token", "", "API token (or use --token-stdin, or the interactive prompt)")
 	cmd.Flags().BoolVar(&f.tokenFromStdin, "token-stdin", false, "Read the token from stdin (non-interactive)")
@@ -110,12 +112,17 @@ func (m *manager) runLogin(cmd *cobra.Command, f loginFlags) error {
 		return errors.New("api URL must include scheme and host")
 	}
 
+	loginEmail, err := resolveLoginEmail(f.email, f.username)
+	if err != nil {
+		return err
+	}
+
 	var token, loginRole string
-	if strings.TrimSpace(f.email) != "" || strings.TrimSpace(f.password) != "" {
-		if strings.TrimSpace(f.email) == "" || strings.TrimSpace(f.password) == "" {
+	if loginEmail != "" || strings.TrimSpace(f.password) != "" {
+		if loginEmail == "" || strings.TrimSpace(f.password) == "" {
 			return errors.New("email and password are both required for password login")
 		}
-		tok, role, err := loginPlatformPassword(context.Background(), apiURL, f.email, f.password)
+		tok, role, err := loginPlatformPassword(context.Background(), apiURL, loginEmail, f.password)
 		if err != nil {
 			return fmt.Errorf("platform login failed: %w", err)
 		}
@@ -182,6 +189,18 @@ func (m *manager) runLogin(cmd *cobra.Command, f loginFlags) error {
 		fmt.Fprintf(stdout, "Registry host recorded: %s\n", c.RegistryHost)
 	}
 	return nil
+}
+
+func resolveLoginEmail(email, username string) (string, error) {
+	email = strings.TrimSpace(email)
+	username = strings.TrimSpace(username)
+	if email != "" && username != "" && !strings.EqualFold(email, username) {
+		return "", errors.New("--email and --username must match when both are set")
+	}
+	if email != "" {
+		return email, nil
+	}
+	return username, nil
 }
 
 func (m *manager) NewLogoutCmd() *cobra.Command {

@@ -12,6 +12,7 @@ Flags:
       --skip-verify            Store credentials without calling the API to validate the token
       --token string           API token (or use --token-stdin, or the interactive prompt)
       --token-stdin            Read the token from stdin (non-interactive)
+      --username string        Alias for --email
 
 Global Flags:
       --debug   Enable debug mode with structured error logging
