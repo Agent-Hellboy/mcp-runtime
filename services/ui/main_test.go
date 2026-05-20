@@ -520,8 +520,72 @@ func TestSecurityHeadersAllowConfiguredExternalAssets(t *testing.T) {
 	if !strings.Contains(csp, "https://fonts.googleapis.com") {
 		t.Fatalf("CSP should allow stylesheet font origin, got %q", csp)
 	}
+	if !strings.Contains(csp, "https://accounts.google.com") {
+		t.Fatalf("CSP should allow Google sign-in stylesheet origin, got %q", csp)
+	}
 	if !strings.Contains(csp, "https://fonts.gstatic.com") {
 		t.Fatalf("CSP should allow font file origin, got %q", csp)
+	}
+}
+
+func TestStaticAppUsesCompactCatalogInventorySections(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`function serverVisibleInventorySections(inventory)`,
+		`].filter((section) => section.items.length > 0);`,
+		`const visibleInventory = serverVisibleInventorySections(displayInventory)`,
+		`if (inventory.prompts.length)`,
+		`if (inventory.resources.length)`,
+		`if (inventory.tasks.length)`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing compact catalog behavior %q", want)
+		}
+	}
+}
+
+func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
+	index, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(index)
+	if got := strings.Count(html, `class="table-wrap scroll-table"`); got < 4 {
+		t.Fatalf("expected long dashboard tables to use scroll-table, got %d", got)
+	}
+	for _, want := range []string{
+		`class="section-nav" aria-label="Dashboard sections"`,
+		`class="section-nav" aria-label="Operations sections"`,
+		`href="#ops-inspector-panel"`,
+		`placeholder="Search servers"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("index missing navigation affordance %q", want)
+		}
+	}
+
+	styles, err := os.ReadFile("static/styles.css")
+	if err != nil {
+		t.Fatalf("read static styles: %v", err)
+	}
+	css := string(styles)
+	for _, want := range []string{
+		`.table-wrap.scroll-table`,
+		`max-height: min(62vh, 680px);`,
+		`.scroll-table thead th`,
+		`position: sticky;`,
+		`.section-nav`,
+		`.tabs`,
+		`position: sticky;`,
+		`.server-card:hover`,
+	} {
+		if !strings.Contains(css, want) {
+			t.Fatalf("styles missing UX affordance %q", want)
+		}
 	}
 }
 

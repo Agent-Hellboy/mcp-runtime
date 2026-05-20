@@ -159,7 +159,7 @@
               <input
                 type="search"
                 id="server-search"
-                placeholder="Search servers, namespaces, routes, tools"
+                placeholder="Search servers"
                 aria-label="Search MCP servers"
               />
             </div>
@@ -508,7 +508,12 @@
           </div>
         </div>
 
-        <div class="panel">
+        <nav class="section-nav" aria-label="Dashboard sections">
+          <a href="#dashboard-analytics">Usage analytics</a>
+          <a href="#dashboard-audit">Decision audit</a>
+        </nav>
+
+        <div class="panel" id="dashboard-analytics">
           <div class="panel-head">
             <h2>Usage Analytics</h2>
             <div class="panel-actions">
@@ -650,7 +655,7 @@
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel" id="dashboard-audit">
           <div class="panel-head">
             <h2>Decision Audit</h2>
             <div class="panel-actions">
@@ -661,7 +666,7 @@
               </label>
             </div>
           </div>
-          <div class="table-wrap">
+          <div class="table-wrap scroll-table">
             <table class="audit-table">
               <thead>
                 <tr>
@@ -964,9 +969,16 @@
               <button type="submit">Apply</button>
             </div>
           </form>
+          <nav class="section-nav" aria-label="Operations sections">
+            <a href="#ops-users-panel">Users</a>
+            <a href="#ops-server-health-panel">Server health</a>
+            <a href="#ops-activity-panels">Activity</a>
+            <a href="#ops-images-panel">Images</a>
+            <a href="#ops-inspector-panel">Inspector</a>
+          </nav>
         </div>
 
-        <div class="panel">
+        <div class="panel" id="ops-users-panel">
           <div class="panel-head">
             <div>
               <h2>Logged-in Users</h2>
@@ -994,7 +1006,7 @@
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel" id="ops-server-health-panel">
           <div class="panel-head">
             <div>
               <h2>MCP Server Health</h2>
@@ -1022,7 +1034,7 @@
           </div>
         </div>
 
-        <div class="ops-two-column">
+        <div class="ops-two-column" id="ops-activity-panels">
           <div class="panel">
             <div class="panel-head">
               <div>
@@ -1030,7 +1042,7 @@
                 <p class="panel-kicker">Recent login, deploy, image, credential, and denied platform actions.</p>
               </div>
             </div>
-            <div class="table-wrap">
+            <div class="table-wrap scroll-table">
               <table>
                 <thead>
                   <tr>
@@ -1057,7 +1069,7 @@
                 <p class="panel-kicker">Recent allow and deny decisions from the MCP gateway path.</p>
               </div>
             </div>
-            <div class="table-wrap">
+            <div class="table-wrap scroll-table">
               <table class="audit-table compact-audit-table">
                 <thead>
                   <tr>
@@ -1077,14 +1089,14 @@
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel" id="ops-images-panel">
           <div class="panel-head">
             <div>
               <h2>Images and Deployments</h2>
               <p class="panel-kicker">Image publish records and currently deployed image references by user or namespace.</p>
             </div>
           </div>
-          <div class="table-wrap">
+          <div class="table-wrap scroll-table">
             <table>
               <thead>
                 <tr>
@@ -1105,7 +1117,7 @@
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel" id="ops-inspector-panel">
           <div class="panel-head">
             <div>
               <h2>MCP Server Inspector</h2>
