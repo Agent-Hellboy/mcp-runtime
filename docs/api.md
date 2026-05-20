@@ -106,9 +106,6 @@ spec:
       description: Issue a refund for an invoice.
       requiredTrust: high
       sideEffect: destructive
-  analytics:
-    enabled: true
-    ingestURL: http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events
   rollout:
     strategy: Canary
     canaryReplicas: 1

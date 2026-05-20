@@ -1756,14 +1756,6 @@ function renderServerMeta(server) {
 
   const actions = document.createElement("div");
   actions.className = "server-card-actions";
-  if (!isTenantUser()) {
-    const detailsButton = document.createElement("button");
-    detailsButton.className = "ghost server-action";
-    detailsButton.type = "button";
-    detailsButton.textContent = "Details";
-    detailsButton.addEventListener("click", () => selectServer(server));
-    actions.appendChild(detailsButton);
-  }
   if (server.endpoint) {
     const copyURL = document.createElement("button");
     copyURL.className = "ghost server-action";

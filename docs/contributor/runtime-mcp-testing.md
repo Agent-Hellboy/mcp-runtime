@@ -66,7 +66,6 @@ servers:
     gateway:
       enabled: true
     analytics:
-      enabled: true
       ingestURL: http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events
       apiKeySecretRef:
         name: go-example-mcp-analytics

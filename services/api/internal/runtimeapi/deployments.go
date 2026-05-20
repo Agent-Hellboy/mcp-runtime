@@ -24,19 +24,25 @@ import (
 
 	"mcp-runtime/pkg/kubeworkload"
 	"mcp-runtime/pkg/publishscope"
+	"mcp-runtime/pkg/sentinel"
 )
 
 const (
-	platformManagedLabel           = "platform.mcpruntime.org/managed"
-	platformUserIDLabel            = "platform.mcpruntime.org/user-id"
-	platformTeamIDLabel            = "mcpruntime.org/team-id"
-	platformTeamSlugLabel          = "mcpruntime.org/team-slug"
-	platformScopeLabel             = "mcpruntime.org/scope"
-	createdByLabel                 = "created-by"
-	defaultDeployPort              = int32(8088)
-	restrictedRunAsUser            = kubeworkload.RestrictedRunAsUser
-	traefikWatchRoleName           = "traefik-watch"
-	platformNamespaceOwnerRoleName = "platform-namespace-owner"
+	platformManagedLabel            = "platform.mcpruntime.org/managed"
+	platformUserIDLabel             = "platform.mcpruntime.org/user-id"
+	platformTeamIDLabel             = "mcpruntime.org/team-id"
+	platformTeamSlugLabel           = "mcpruntime.org/team-slug"
+	platformScopeLabel              = "mcpruntime.org/scope"
+	createdByLabel                  = "created-by"
+	defaultDeployPort               = int32(8088)
+	restrictedRunAsUser             = kubeworkload.RestrictedRunAsUser
+	traefikWatchRoleName            = "traefik-watch"
+	platformNamespaceOwnerRoleName  = "platform-namespace-owner"
+	platformAnalyticsSecretRoleName = "platform-analytics-secret-manager"
+	platformAPIServiceAccountName   = "mcp-sentinel-api"
+	platformAPIServiceAccountNS     = sentinel.DefaultNamespace
+	sentinelIngestPort              = 8081
+	sentinelOTLPPort                = 4318
 )
 
 var (
@@ -444,7 +450,39 @@ func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace st
 	if err := ensureDefaultDenyNetworkPolicy(ctx, base, namespace, opts.ingressFromNamespaces...); err != nil {
 		return err
 	}
+	if err := ensureNamespaceAPISecretAccess(ctx, base, namespace); err != nil {
+		return err
+	}
 	return kubeworkload.EnsureServiceAccount(ctx, base, namespace)
+}
+
+func ensureNamespaceAPISecretAccess(ctx context.Context, client kubernetes.Interface, namespace string) error {
+	if strings.TrimSpace(namespace) == "" {
+		return nil
+	}
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: platformAnalyticsSecretRoleName, Namespace: namespace},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get", "create", "update", "patch"}},
+		},
+	}
+	if err := upsertRole(ctx, client, role); err != nil {
+		return err
+	}
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: platformAnalyticsSecretRoleName, Namespace: namespace},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "Role",
+			Name:     platformAnalyticsSecretRoleName,
+		},
+		Subjects: []rbacv1.Subject{{
+			Kind:      rbacv1.ServiceAccountKind,
+			Name:      platformAPIServiceAccountName,
+			Namespace: platformAPIServiceAccountNS,
+		}},
+	}
+	return upsertRoleBinding(ctx, client, binding)
 }
 
 func mergeNamespaceLabels(ns *corev1.Namespace, labels map[string]string) bool {
@@ -602,6 +640,19 @@ func desiredDefaultDenyNetworkPolicy(ns string, ingressFromNamespaces ...string)
 					Ports: []networkingv1.NetworkPolicyPort{
 						{Protocol: &tcpProtocol, Port: intstrPtr(80)},
 						{Protocol: &tcpProtocol, Port: intstrPtr(443)},
+					},
+				},
+				{
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"kubernetes.io/metadata.name": sentinel.DefaultNamespace},
+							},
+						},
+					},
+					Ports: []networkingv1.NetworkPolicyPort{
+						{Protocol: &tcpProtocol, Port: intstrPtr(sentinelIngestPort)},
+						{Protocol: &tcpProtocol, Port: intstrPtr(sentinelOTLPPort)},
 					},
 				},
 			},

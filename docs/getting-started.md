@@ -497,8 +497,6 @@ spec:
   publicPathPrefix: payments
   gateway:
     enabled: true
-  analytics:
-    enabled: true
 ```
 
 ```bash
@@ -536,8 +534,6 @@ spec:
   port: 8088
   publicPathPrefix: my-server
   gateway:
-    enabled: true
-  analytics:
     enabled: true
 ```
 

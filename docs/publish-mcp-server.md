@@ -39,8 +39,6 @@ spec:
   publicPathPrefix: payments
   gateway:
     enabled: true
-  analytics:
-    enabled: true
 ```
 
 ### What each field does
@@ -65,12 +63,18 @@ spec:
 - `spec.publicPathPrefix`
   The public route prefix. `payments` becomes `/payments/mcp`.
 - `spec.gateway.enabled`
-  Sends requests through the broker path so policy and session checks run before tool calls.
+  Sends requests through `mcp-gateway` so policy, session checks, and request analytics run before tool calls.
 - `spec.analytics`
   Analytics emission to the Sentinel stack is on by default whenever the
   operator has an ingest URL configured (via `MCP_SENTINEL_INGEST_URL` or
   `spec.analytics.ingestURL`). Set `spec.analytics.disabled: true` to opt
   this server out.
+
+`mcp-runtime server deploy` and the platform API (`POST /api/runtime/servers`)
+publish governed servers by default: when the request does not provide
+`spec.gateway`, the platform writes `spec.gateway.enabled: true`. Hand-written
+YAML must set that field explicitly if you want request analytics and governed
+tool calls.
 
 ### Common edits
 
@@ -229,7 +233,9 @@ scope prefix, for example `<registry>/public/payments` in public mode or
 authenticated user's team namespace unless `--team` or `--namespace` selects one
 explicitly. `server deploy` uses the default public route `/<name>/mcp` and
 passes that same value as `MCP_PATH` so the bundled Go, Python, and Rust
-examples listen on the route the ingress exposes.
+examples listen on the route the ingress exposes. The platform API and CLI
+deploy flow also default `spec.gateway.enabled: true`, so published servers use
+the governed gateway path unless you explicitly provide `spec.gateway`.
 
 ### Flow C — manual Docker build, push, and manifest apply
 
@@ -318,13 +324,29 @@ Check:
 - your grant and session objects
 - `./bin/mcp-runtime sentinel logs gateway --follow`
 
-### Analytics enabled, but no request history appears
+### Event count is 0
 
 Check:
 
+- `kubectl get mcpserver <name> -n <namespace> -o yaml`
+- `GatewayReady=True` and `PolicyReady=True` on the MCPServer status
+- the server pod is `2/2` and includes the `mcp-gateway` sidecar
+- `kubectl logs -n <namespace> <pod> -c mcp-gateway`
 - `./bin/mcp-runtime sentinel status`
 - `./bin/mcp-runtime sentinel logs ingest --follow`
 - `./bin/mcp-runtime sentinel logs processor --follow`
+
+Request analytics only exist for traffic that flows through `mcp-gateway`.
+The adapter is not required for analytics; it only helps clients that cannot
+attach identity or session headers directly, or that want platform-issued
+sessions. Hand-written YAML must include `spec.gateway.enabled: true` for
+request analytics. Analytics is on by default for gateway traffic when the
+operator has `MCP_SENTINEL_INGEST_URL`; opt out with:
+
+```yaml
+analytics:
+  disabled: true
+```
 
 ## Related docs
 

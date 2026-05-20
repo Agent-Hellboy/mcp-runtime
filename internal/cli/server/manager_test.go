@@ -595,3 +595,16 @@ func contains(slice []string, val string) bool {
 	}
 	return false
 }
+
+func TestBuildDeployServerSpecEnablesGateway(t *testing.T) {
+	spec := buildDeployServerSpec("demo", "registry.example.com/team/demo", "v1.0.0", 2, 8088, 80)
+	if spec.Gateway == nil || !spec.Gateway.Enabled {
+		t.Fatalf("gateway = %#v, want enabled", spec.Gateway)
+	}
+	if spec.IngressPath != "/demo/mcp" {
+		t.Fatalf("ingressPath = %q, want /demo/mcp", spec.IngressPath)
+	}
+	if len(spec.EnvVars) != 1 || spec.EnvVars[0].Name != "MCP_PATH" || spec.EnvVars[0].Value != "/demo/mcp" {
+		t.Fatalf("envVars = %#v", spec.EnvVars)
+	}
+}

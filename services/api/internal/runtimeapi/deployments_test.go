@@ -142,6 +142,37 @@ func TestEnsureDefaultDenyNetworkPolicyIncludesDNSEgress(t *testing.T) {
 	}
 }
 
+func TestEnsureDefaultDenyNetworkPolicyAllowsSentinelEgress(t *testing.T) {
+	client := kubernetesfake.NewSimpleClientset()
+	if err := ensureDefaultDenyNetworkPolicy(context.Background(), client, "user-1"); err != nil {
+		t.Fatalf("ensureDefaultDenyNetworkPolicy() error = %v", err)
+	}
+	policy, err := client.NetworkingV1().NetworkPolicies("user-1").Get(context.Background(), "platform-default-deny", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get networkpolicy: %v", err)
+	}
+	foundSentinel := false
+	for _, rule := range policy.Spec.Egress {
+		for _, peer := range rule.To {
+			if peer.NamespaceSelector == nil || peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != "mcp-sentinel" {
+				continue
+			}
+			seen := map[int32]bool{}
+			for _, port := range rule.Ports {
+				if port.Port != nil && port.Port.Type == intstr.Int {
+					seen[port.Port.IntVal] = true
+				}
+			}
+			if seen[sentinelIngestPort] && seen[sentinelOTLPPort] {
+				foundSentinel = true
+			}
+		}
+	}
+	if !foundSentinel {
+		t.Fatalf("expected sentinel egress rule, got %#v", policy.Spec.Egress)
+	}
+}
+
 func TestEnsureDefaultDenyNetworkPolicyAllowsConfiguredIngressNamespace(t *testing.T) {
 	client := kubernetesfake.NewSimpleClientset()
 	if err := ensureDefaultDenyNetworkPolicy(context.Background(), client, "mcp-servers-public", "kube-system"); err != nil {
@@ -392,6 +423,20 @@ func TestEnsureCatalogNamespaceAutoTraefikWatchSkipsExternalIngress(t *testing.T
 	}
 	if ns.Labels[platformManagedLabel] != "true" || ns.Labels[platformScopeLabel] != "public" {
 		t.Fatalf("catalog namespace labels = %#v", ns.Labels)
+	}
+	role, err := client.RbacV1().Roles(defaultPublicCatalogNamespace).Get(context.Background(), platformAnalyticsSecretRoleName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("analytics secret role missing: %v", err)
+	}
+	if !roleAllows(role, "", "secrets", "create") || !roleAllows(role, "", "secrets", "patch") {
+		t.Fatalf("analytics secret role rules = %#v", role.Rules)
+	}
+	binding, err := client.RbacV1().RoleBindings(defaultPublicCatalogNamespace).Get(context.Background(), platformAnalyticsSecretRoleName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("analytics secret rolebinding missing: %v", err)
+	}
+	if len(binding.Subjects) != 1 || binding.Subjects[0].Kind != rbacv1.ServiceAccountKind || binding.Subjects[0].Namespace != platformAPIServiceAccountNS || binding.Subjects[0].Name != platformAPIServiceAccountName {
+		t.Fatalf("analytics secret binding subjects = %#v", binding.Subjects)
 	}
 	if _, err := client.RbacV1().Roles(defaultPublicCatalogNamespace).Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("traefik watch role error = %v, want not found", err)

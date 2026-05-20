@@ -285,8 +285,18 @@ func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageT
 			return err
 		}
 	}
+	spec := buildDeployServerSpec(name, image, imageTag, replicas, port, servicePort)
+	applied, err := plat.ApplyRuntimeServerWithScope(context.Background(), name, namespace, scope, spec)
+	if err != nil {
+		return err
+	}
+	core.Success(fmt.Sprintf("Deployed server %s in namespace %s", applied.Name, applied.Namespace))
+	return nil
+}
+
+func buildDeployServerSpec(name, image, imageTag string, replicas, port, servicePort int32) mcpv1alpha1.MCPServerSpec {
 	ingressPath := "/" + name + "/mcp"
-	spec := mcpv1alpha1.MCPServerSpec{
+	return mcpv1alpha1.MCPServerSpec{
 		Image:            image,
 		ImageTag:         imageTag,
 		Replicas:         &replicas,
@@ -294,16 +304,11 @@ func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageT
 		ServicePort:      servicePort,
 		PublicPathPrefix: name,
 		IngressPath:      ingressPath,
+		Gateway:          &mcpv1alpha1.GatewayConfig{Enabled: true},
 		EnvVars: []mcpv1alpha1.EnvVar{
 			{Name: "MCP_PATH", Value: ingressPath},
 		},
 	}
-	applied, err := plat.ApplyRuntimeServerWithScope(context.Background(), name, namespace, scope, spec)
-	if err != nil {
-		return err
-	}
-	core.Success(fmt.Sprintf("Deployed server %s in namespace %s", applied.Name, applied.Namespace))
-	return nil
 }
 
 // ApplyServerFromFile applies an MCPServer manifest from disk.

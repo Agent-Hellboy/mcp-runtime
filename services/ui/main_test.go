@@ -349,12 +349,27 @@ func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
 		`function isTenantUser()`,
 		`if (isTenantUser() && server.namespace && server.name)`,
 		`retireButton.textContent = "Retire"`,
-		`if (!isTenantUser()) {`,
 		`authenticated && !isTenantUser()`,
 		`await loadUserDashboard()`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppRemovesCatalogDetailsAction(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, unwanted := range []string{
+		`detailsButton.textContent = "Details"`,
+		`detailsButton.addEventListener("click", () => selectServer(server))`,
+	} {
+		if strings.Contains(source, unwanted) {
+			t.Fatalf("app should not keep catalog details action %q", unwanted)
 		}
 	}
 }

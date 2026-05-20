@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
@@ -607,6 +608,262 @@ func TestRuntimeServerApplyPublicScopeResolvesCatalogNamespace(t *testing.T) {
 	}
 	if current.Labels[platformScopeLabel] != "public" {
 		t.Fatalf("scope label = %q, want public", current.Labels[platformScopeLabel])
+	}
+}
+
+func TestRuntimeServerApplyDefaultsGatewayAndAnalyticsSecret(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv("MCP_SENTINEL_INGEST_URL", "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic: dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(&corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: defaultAnalyticsCredentialSourceSecretName, Namespace: "mcp-sentinel"},
+				Data: map[string][]byte{
+					defaultAnalyticsCredentialSourceKey: []byte("ingest-key-1,ingest-key-2"),
+				},
+			}),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"scope": "public",
+		"spec": {"image":"registry.example.com/public/demo"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "mcp-team-acme",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	current, err := server.controlPlane().GetServer(context.Background(), defaultPublicCatalogNamespace, "demo")
+	if err != nil {
+		t.Fatalf("GetServer: %v", err)
+	}
+	if current.Spec.Gateway == nil || !current.Spec.Gateway.Enabled {
+		t.Fatalf("gateway = %#v, want enabled", current.Spec.Gateway)
+	}
+	if current.Spec.Analytics == nil || current.Spec.Analytics.APIKeySecretRef == nil {
+		t.Fatalf("analytics = %#v, want api key secret ref", current.Spec.Analytics)
+	}
+	if current.Spec.Analytics.APIKeySecretRef.Name != "demo-analytics-creds" || current.Spec.Analytics.APIKeySecretRef.Key != "api-key" {
+		t.Fatalf("analytics secret ref = %#v", current.Spec.Analytics.APIKeySecretRef)
+	}
+	secret, err := server.k8sClients.Clientset.CoreV1().Secrets(defaultPublicCatalogNamespace).Get(context.Background(), "demo-analytics-creds", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("analytics secret missing: %v", err)
+	}
+	if got := string(secret.Data["api-key"]); got != "ingest-key-1" {
+		t.Fatalf("analytics secret api-key = %q, want ingest-key-1", got)
+	}
+}
+
+func TestRuntimeServerApplyDefaultsAnalyticsSecretNameFitsDNSLabelLimit(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv("MCP_SENTINEL_INGEST_URL", "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic: dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(&corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: defaultAnalyticsCredentialSourceSecretName, Namespace: "mcp-sentinel"},
+				Data: map[string][]byte{
+					defaultAnalyticsCredentialSourceKey: []byte("ingest-key-1"),
+				},
+			}),
+		},
+	}
+	longName := strings.Repeat("demo", 16)
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "`+longName+`",
+		"scope": "public",
+		"spec": {"image":"registry.example.com/public/demo"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "mcp-team-acme",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	current, err := server.controlPlane().GetServer(context.Background(), defaultPublicCatalogNamespace, longName)
+	if err != nil {
+		t.Fatalf("GetServer: %v", err)
+	}
+	if current.Spec.Analytics == nil || current.Spec.Analytics.APIKeySecretRef == nil {
+		t.Fatalf("analytics = %#v, want api key secret ref", current.Spec.Analytics)
+	}
+	got := current.Spec.Analytics.APIKeySecretRef.Name
+	if len(got) > 63 {
+		t.Fatalf("analytics secret name len = %d, want <= 63 (%q)", len(got), got)
+	}
+}
+
+func TestRuntimeServerApplyAllowsMissingDefaultAnalyticsSecret(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv("MCP_SENTINEL_INGEST_URL", "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"scope": "public",
+		"spec": {"image":"registry.example.com/public/demo"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "mcp-team-acme",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	current, err := server.controlPlane().GetServer(context.Background(), defaultPublicCatalogNamespace, "demo")
+	if err != nil {
+		t.Fatalf("GetServer: %v", err)
+	}
+	if current.Spec.Gateway == nil || !current.Spec.Gateway.Enabled {
+		t.Fatalf("gateway = %#v, want enabled", current.Spec.Gateway)
+	}
+	if current.Spec.Analytics != nil && current.Spec.Analytics.APIKeySecretRef != nil {
+		t.Fatalf("analytics api key ref = %#v, want nil when source secret is missing", current.Spec.Analytics.APIKeySecretRef)
+	}
+}
+
+func TestRuntimeServerApplyPreservesExplicitGatewaySettings(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv("MCP_SENTINEL_INGEST_URL", "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic: dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(&corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: defaultAnalyticsCredentialSourceSecretName, Namespace: "mcp-sentinel"},
+				Data: map[string][]byte{
+					defaultAnalyticsCredentialSourceKey: []byte("ingest-key-1"),
+				},
+			}),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"scope": "public",
+		"spec": {
+			"image":"registry.example.com/public/demo",
+			"gateway":{"enabled":false}
+		}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "mcp-team-acme",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	current, err := server.controlPlane().GetServer(context.Background(), defaultPublicCatalogNamespace, "demo")
+	if err != nil {
+		t.Fatalf("GetServer: %v", err)
+	}
+	if current.Spec.Gateway == nil || current.Spec.Gateway.Enabled {
+		t.Fatalf("gateway = %#v, want explicitly disabled", current.Spec.Gateway)
+	}
+	if current.Spec.Analytics != nil && current.Spec.Analytics.APIKeySecretRef != nil {
+		t.Fatalf("analytics api key ref = %#v, want nil when gateway disabled", current.Spec.Analytics.APIKeySecretRef)
+	}
+}
+
+func TestRuntimeServerApplyPreservesExplicitAnalyticsDisable(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv("MCP_SENTINEL_INGEST_URL", "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic: dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(&corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: defaultAnalyticsCredentialSourceSecretName, Namespace: "mcp-sentinel"},
+				Data: map[string][]byte{
+					defaultAnalyticsCredentialSourceKey: []byte("ingest-key-1"),
+				},
+			}),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"scope": "public",
+		"spec": {
+			"image":"registry.example.com/public/demo",
+			"analytics":{"disabled":true}
+		}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "mcp-team-acme",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	current, err := server.controlPlane().GetServer(context.Background(), defaultPublicCatalogNamespace, "demo")
+	if err != nil {
+		t.Fatalf("GetServer: %v", err)
+	}
+	if current.Spec.Gateway == nil || !current.Spec.Gateway.Enabled {
+		t.Fatalf("gateway = %#v, want enabled", current.Spec.Gateway)
+	}
+	if current.Spec.Analytics == nil || !current.Spec.Analytics.Disabled {
+		t.Fatalf("analytics = %#v, want disabled", current.Spec.Analytics)
+	}
+	if current.Spec.Analytics.APIKeySecretRef != nil {
+		t.Fatalf("analytics api key ref = %#v, want nil when analytics disabled", current.Spec.Analytics.APIKeySecretRef)
 	}
 }
 
