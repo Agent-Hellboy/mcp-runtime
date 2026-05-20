@@ -1,9 +1,6 @@
 package team
 
 import (
-	"errors"
-	"strings"
-
 	"github.com/spf13/cobra"
 
 	"mcp-runtime/internal/cli/core"
@@ -52,7 +49,7 @@ func NewWithManager(mgr *Manager) *cobra.Command {
 		Short: "Create or update a password-login user and add them to a team",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			email, err := resolveTeamUserEmail(userEmail, userUsername)
+			email, err := core.ResolveEmailAlias(userEmail, userUsername)
 			if err != nil {
 				return err
 			}
@@ -99,16 +96,4 @@ func NewWithManager(mgr *Manager) *cobra.Command {
 
 	cmd.AddCommand(listCmd, createCmd, userCmd, initCmd)
 	return cmd
-}
-
-func resolveTeamUserEmail(email, username string) (string, error) {
-	email = strings.TrimSpace(email)
-	username = strings.TrimSpace(username)
-	if email != "" && username != "" && !strings.EqualFold(email, username) {
-		return "", errors.New("--email and --username must match when both are set")
-	}
-	if email != "" {
-		return email, nil
-	}
-	return username, nil
 }

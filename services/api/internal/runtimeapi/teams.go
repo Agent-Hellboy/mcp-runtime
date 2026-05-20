@@ -374,6 +374,13 @@ func (s *RuntimeServer) handleRuntimeTeamUserCreate(w http.ResponseWriter, r *ht
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+	if _, ok, err := s.platform.GetTeamBySlug(ctx, teamSlug); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch team"})
+		return
+	} else if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "team not found"})
+		return
+	}
 	u, err := s.platform.EnsureTeamPasswordUser(ctx, req.Email, req.Password)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})

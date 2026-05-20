@@ -22,6 +22,7 @@ import (
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	sentinelaccess "mcp-runtime/pkg/access"
 	"mcp-runtime/pkg/authfile"
+	"mcp-runtime/pkg/platform"
 )
 
 const maxAPIBodyRead = 4 << 20
@@ -511,16 +512,7 @@ type Team struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-type TeamMembership struct {
-	TeamID        string    `json:"team_id"`
-	TeamSlug      string    `json:"team_slug"`
-	TeamName      string    `json:"team_name"`
-	TeamNamespace string    `json:"team_namespace"`
-	UserID        string    `json:"user_id"`
-	Email         string    `json:"email,omitempty"`
-	Role          string    `json:"role"`
-	CreatedAt     time.Time `json:"created_at"`
-}
+type TeamMembership = platform.TeamMembership
 
 type teamsResponse struct {
 	Teams []Team `json:"teams"`
@@ -783,9 +775,6 @@ func (c *PlatformClient) CreateTeamUser(ctx context.Context, slug, email, passwo
 	var out teamUserResponse
 	if err := json.Unmarshal(b, &out); err != nil {
 		return TeamMembership{}, err
-	}
-	if out.Membership.Email == "" {
-		out.Membership.Email = out.User.Email
 	}
 	return out.Membership, nil
 }

@@ -112,7 +112,7 @@ func (m *manager) runLogin(cmd *cobra.Command, f loginFlags) error {
 		return errors.New("api URL must include scheme and host")
 	}
 
-	loginEmail, err := resolveLoginEmail(f.email, f.username)
+	loginEmail, err := core.ResolveEmailAlias(f.email, f.username)
 	if err != nil {
 		return err
 	}
@@ -189,18 +189,6 @@ func (m *manager) runLogin(cmd *cobra.Command, f loginFlags) error {
 		fmt.Fprintf(stdout, "Registry host recorded: %s\n", c.RegistryHost)
 	}
 	return nil
-}
-
-func resolveLoginEmail(email, username string) (string, error) {
-	email = strings.TrimSpace(email)
-	username = strings.TrimSpace(username)
-	if email != "" && username != "" && !strings.EqualFold(email, username) {
-		return "", errors.New("--email and --username must match when both are set")
-	}
-	if email != "" {
-		return email, nil
-	}
-	return username, nil
 }
 
 func (m *manager) NewLogoutCmd() *cobra.Command {

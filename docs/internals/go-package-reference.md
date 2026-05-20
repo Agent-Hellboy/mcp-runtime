@@ -2670,6 +2670,7 @@ kubectl clients, terminal output, and test doubles.
 - [`func NewSetupStepFailedError() error`](#cli-core-func-newsetupstepfailederror-error)
 - [`func NewWithSentinel(base error, msg string) error`](#cli-core-func-newwithsentinel-base-error-msg-string-error)
 - [`func Red(msg string) string`](#cli-core-func-red-msg-string-string)
+- [`func ResolveEmailAlias(email, username string) (string, error)`](#cli-core-func-resolveemailalias-email-username-string-string-error)
 - [`func Section(title string)`](#cli-core-func-section-title-string)
 - [`func SetDebugMode(enabled bool)`](#cli-core-func-setdebugmode-enabled-bool)
 - [`func SpinnerStart(msg string) func(success bool, finalMsg string)`](#cli-core-func-spinnerstart-msg-string-func-success-bool-finalmsg-string)
@@ -3178,6 +3179,14 @@ func NewWithSentinel(base error, msg string) error
 ```text
 func Red(msg string) string
     Red returns red text.
+
+```
+
+<a id="cli-core-func-resolveemailalias-email-username-string-string-error"></a>
+```text
+func ResolveEmailAlias(email, username string) (string, error)
+    ResolveEmailAlias returns the single account email represented by --email
+    and the deprecated/alias --username flag.
 
 ```
 
@@ -4573,7 +4582,7 @@ _No package overview is documented._
 - [`type Principal struct`](#cli-platform-api-type-principal-struct)
 - [`type ServerListItem struct`](#cli-platform-api-type-serverlistitem-struct)
 - [`type Team struct`](#cli-platform-api-type-team-struct)
-- [`type TeamMembership struct`](#cli-platform-api-type-teammembership-struct)
+- [`type TeamMembership = platform.TeamMembership`](#cli-platform-api-type-teammembership-platform-teammembership)
 
 <a id="cli-platform-api-functions"></a>
 ### Functions
@@ -4851,18 +4860,9 @@ type Team struct {
 
 ```
 
-<a id="cli-platform-api-type-teammembership-struct"></a>
+<a id="cli-platform-api-type-teammembership-platform-teammembership"></a>
 ```text
-type TeamMembership struct {
-	TeamID        string    `json:"team_id"`
-	TeamSlug      string    `json:"team_slug"`
-	TeamName      string    `json:"team_name"`
-	TeamNamespace string    `json:"team_namespace"`
-	UserID        string    `json:"user_id"`
-	Email         string    `json:"email,omitempty"`
-	Role          string    `json:"role"`
-	CreatedAt     time.Time `json:"created_at"`
-}
+type TeamMembership = platform.TeamMembership
 ```
 
 <a id="cli-platform-status"></a>

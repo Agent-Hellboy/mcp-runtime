@@ -198,7 +198,7 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 				}
 				return &http.Response{
 					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`{"user":{"id":"user-1","email":"member@example.com","role":"user"},"membership":{"team_slug":"core","team_namespace":"mcp-team-core","user_id":"user-1","role":"member"}}`)),
+					Body:       io.NopCloser(strings.NewReader(`{"user":{"id":"user-1","email":"member@example.com","role":"user"},"membership":{"team_slug":"core","team_namespace":"mcp-team-core","user_id":"user-1","email":"member@example.com","role":"member"}}`)),
 				}, nil
 			case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/servers":
 				if got := r.URL.Query().Get("namespace"); got != "" {

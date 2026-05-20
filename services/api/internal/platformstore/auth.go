@@ -142,11 +142,12 @@ DO UPDATE SET user_id = EXCLUDED.user_id, password_hash = EXCLUDED.password_hash
 // not accidentally demoted when they are added to a team.
 func (s *Store) EnsureTeamPasswordUser(ctx context.Context, email, password string) (User, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
+	password = strings.TrimSpace(password)
 	if !validEmail(email) {
 		return User{}, errors.New("valid email required")
 	}
-	if len(password) < 8 {
-		return User{}, errors.New("password must be at least 8 characters")
+	if len(password) < 12 {
+		return User{}, errors.New("password must be at least 12 characters")
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {
