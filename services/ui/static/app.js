@@ -110,6 +110,9 @@ function scopedPath(path) {
 }
 
 function namespaceScopeLabel(item) {
+  if (item?.is_admin_fleet || item?.scope === "all") {
+    return "all namespaces";
+  }
   if (item?.is_public || item?.scope === "public") {
     return `public / ${item.namespace}`;
   }
@@ -184,6 +187,15 @@ function publicPreviewScopes() {
   }];
 }
 
+function adminAllNamespaceScope() {
+  return {
+    namespace: "",
+    scope: "all",
+    scope_name: "All namespaces",
+    is_admin_fleet: true,
+  };
+}
+
 async function loadNamespaceScopes() {
   if (!authenticated) {
     namespaceScopes = publicCatalogEnabled ? publicPreviewScopes() : [];
@@ -199,8 +211,13 @@ async function loadNamespaceScopes() {
     console.error("Failed to load namespaces:", err);
     namespaceScopes = [];
   }
-  if (authPrincipal?.role !== "admin" && namespaceScopes.length > 1) {
+  if (authPrincipal?.role === "admin" && namespaceScopes.length > 1) {
+    namespaceScopes = [adminAllNamespaceScope(), ...namespaceScopes];
+  } else if (authPrincipal?.role !== "admin" && namespaceScopes.length > 1) {
     namespaceScopes = [{ namespace: "", scope: "catalog", is_catalog: true }, ...namespaceScopes];
+  }
+  if (namespaceScopes.some((item) => item.is_admin_fleet) && (!selectedNamespace || selectedNamespace === defaults.namespace)) {
+    selectedNamespace = "";
   }
   if (namespaceScopes.some((item) => item.is_catalog) && (!selectedNamespace || selectedNamespace === defaults.namespace)) {
     selectedNamespace = "";
