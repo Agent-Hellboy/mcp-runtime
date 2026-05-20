@@ -215,7 +215,9 @@ func TestHandleDeploymentApplyAdminUsesRequestedNamespace(t *testing.T) {
 }
 
 func TestResolveDeployImageReference(t *testing.T) {
-	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.local:32000")
+	t.Setenv("PLATFORM_REGISTRY_URL", "registry.local:32000")
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
 	t.Setenv("PLATFORM_MODE", "public")
 
 	tests := []struct {
@@ -229,20 +231,20 @@ func TestResolveDeployImageReference(t *testing.T) {
 			name:      "public short image",
 			image:     "go-example",
 			namespace: defaultPublicCatalogNamespace,
-			want:      "10.96.223.152:5000/public/go-example",
+			want:      "registry.mcpruntime.org/public/go-example",
 		},
 		{
 			name:      "public scoped repository",
 			image:     "public/go-example",
 			namespace: defaultPublicCatalogNamespace,
-			want:      "10.96.223.152:5000/public/go-example",
+			want:      "registry.mcpruntime.org/public/go-example",
 		},
 		{
 			name:      "team short image",
 			image:     "go-example:v0.1.0",
 			namespace: "mcp-team-acme",
 			teamSlug:  "acme",
-			want:      "10.96.223.152:5000/acme/go-example:v0.1.0",
+			want:      "registry.mcpruntime.org/acme/go-example:v0.1.0",
 		},
 		{
 			name:      "explicit registry",
@@ -258,6 +260,27 @@ func TestResolveDeployImageReference(t *testing.T) {
 				t.Fatalf("ResolveDeployImageReference() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestResolveDeployImageReferenceFallsBackToRegistryEndpoint(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
+	t.Setenv("PLATFORM_MODE", "public")
+
+	got := ResolveDeployImageReference("go-example", defaultPublicCatalogNamespace, "")
+	if want := "10.96.223.152:5000/public/go-example"; got != want {
+		t.Fatalf("ResolveDeployImageReference() = %q, want %q", got, want)
+	}
+}
+
+func TestResolveDeployImageReferencePrefersPlatformRegistryURL(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
+	t.Setenv("PLATFORM_REGISTRY_URL", "registry.custom.example")
+	t.Setenv("PLATFORM_MODE", "tenant")
+
+	got := ResolveDeployImageReference("go-example:v0.1.0", "mcp-team-acme", "acme")
+	if want := "registry.custom.example/acme/go-example:v0.1.0"; got != want {
+		t.Fatalf("ResolveDeployImageReference() = %q, want %q", got, want)
 	}
 }
 

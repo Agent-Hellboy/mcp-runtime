@@ -1228,8 +1228,8 @@ data:
 	if got := payload.Data["MCP_REGISTRY_INGRESS_HOST"]; got != "registry.mcpruntime.org" {
 		t.Fatalf("MCP_REGISTRY_INGRESS_HOST = %q, want public host", got)
 	}
-	if got := payload.Data["PLATFORM_REGISTRY_URL"]; got != "10.96.223.152:5000" {
-		t.Fatalf("PLATFORM_REGISTRY_URL = %q, want API image registry", got)
+	if got := payload.Data["PLATFORM_REGISTRY_URL"]; got != "registry.mcpruntime.org" {
+		t.Fatalf("PLATFORM_REGISTRY_URL = %q, want public registry host", got)
 	}
 }
 

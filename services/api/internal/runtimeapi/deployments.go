@@ -1000,11 +1000,25 @@ func imageReferenceHasRegistry(image string) bool {
 }
 
 func defaultPlatformRegistryHost() string {
+	endpoint := normalizeImageRegistryHost(os.Getenv("MCP_REGISTRY_ENDPOINT"))
+	platformRegistry := normalizeImageRegistryHost(os.Getenv("PLATFORM_REGISTRY_URL"))
+	ingressHost := normalizeImageRegistryHost(os.Getenv("MCP_REGISTRY_INGRESS_HOST"))
+
+	// Short deploy image names must expand to the same user-facing registry host
+	// used by registry push/build flows. MCP_REGISTRY_ENDPOINT is only the
+	// internal registry endpoint and is a fallback for clusters without a public
+	// registry host.
+	if platformRegistry != "" && platformRegistry != endpoint {
+		return platformRegistry
+	}
+	if ingressHost != "" {
+		return ingressHost
+	}
+	if platformRegistry != "" {
+		return platformRegistry
+	}
 	for _, key := range []string{
-		"MCP_REGISTRY_ENDPOINT",
-		"PLATFORM_REGISTRY_URL",
 		"PROVISIONED_REGISTRY_URL",
-		"MCP_REGISTRY_INGRESS_HOST",
 		"MCP_REGISTRY_HOST",
 	} {
 		if host := normalizeImageRegistryHost(os.Getenv(key)); host != "" {
@@ -1013,6 +1027,9 @@ func defaultPlatformRegistryHost() string {
 	}
 	if domain := normalizeImageRegistryHost(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
 		return "registry." + strings.TrimPrefix(domain, "registry.")
+	}
+	if endpoint != "" {
+		return endpoint
 	}
 	return "registry.registry.svc.cluster.local:5000"
 }

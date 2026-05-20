@@ -2516,7 +2516,7 @@ func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platform
 	if registryIngressHost := strings.TrimSpace(core.GetRegistryIngressHost()); registryIngressHost != "" {
 		manifest.Data["MCP_REGISTRY_INGRESS_HOST"] = registryIngressHost
 	}
-	if registryHost := registryHostFromImage(images.API); registryHost != "" {
+	if registryHost := platformRegistryHostForConfig(images); registryHost != "" {
 		manifest.Data["PLATFORM_REGISTRY_URL"] = registryHost
 	}
 	if strings.TrimSpace(manifest.Data["PLATFORM_TRAEFIK_NAMESPACE"]) == "" {
@@ -2558,6 +2558,26 @@ func setupAnalyticsConfigEnvValue(key string) string {
 		}
 	}
 	return ""
+}
+
+func platformRegistryHostForConfig(images AnalyticsImageSet) string {
+	if explicit := setupAnalyticsConfigEnvValue("PLATFORM_REGISTRY_URL"); explicit != "" {
+		return explicit
+	}
+	if host := strings.TrimSpace(core.GetRegistryIngressHost()); host != "" &&
+		(host != core.DefaultRegistryIngressHost || registryIngressHostExplicitlyConfigured()) {
+		return host
+	}
+	return registryHostFromImage(images.API)
+}
+
+func registryIngressHostExplicitlyConfigured() bool {
+	for _, key := range []string{"MCP_REGISTRY_INGRESS_HOST", "MCP_PLATFORM_DOMAIN"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func applyGoogleOIDCDefaults(data map[string]string) {
