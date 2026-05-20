@@ -74,10 +74,10 @@ Added: 2026-05-20
 
 ---
 
-### Bundled Go example image is distroless — no shell
+### Workspace assistant sample image is distroless — no shell
 
-`kubectl exec -it <pod> -c go-example-mcp -- /bin/sh` fails on the
-bundled Go MCP example because the image is distroless. Same caveat
+`kubectl exec -it <pod> -c workspace-assistant-mcp -- /bin/sh` fails on the
+workspace assistant sample because the image is distroless. Same caveat
 applies to several other runtime images. Use `kubectl logs`, `kubectl
 describe`, or `kubectl debug --image=busybox:1.36 --target=<container>`
 to inspect the pod namespace instead of expecting an interactive shell.

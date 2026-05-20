@@ -253,7 +253,7 @@ async def run_agents_sdk(config: Config) -> int:
         agent_args["model"] = config.model
 
     async with MCPServerStreamableHttp(
-        name="MCP Runtime governed Go example",
+        name="MCP Runtime governed workspace assistant",
         params=server_params,
         cache_tools_list=False,
         max_retry_attempts=1,

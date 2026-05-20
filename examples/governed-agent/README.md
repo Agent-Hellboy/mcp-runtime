@@ -66,7 +66,7 @@ That means `slugify` is allowed and `upper` is blocked with `trust_too_low`.
 Start from a local Kind/test-mode cluster with Traefik forwarded to
 `localhost:18080`, as described in the root `AGENTS.md`.
 
-Build and publish the existing Go example server under a governed demo name:
+Build and publish the workspace assistant sample under a governed demo name:
 
 ```bash
 go build -o bin/mcp-runtime ./cmd/mcp-runtime

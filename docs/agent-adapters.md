@@ -47,8 +47,8 @@ in the rest. The override survives every auto-refresh tick.
 mcp-runtime auth login --api-url https://platform.example.com
 
 mcp-runtime adapter stdio \
-  --runtime-url https://mcp.example.com/go-example-mcp/mcp \
-  --server go-example-mcp \
+  --runtime-url https://mcp.example.com/workspace-assistant-mcp/mcp \
+  --server workspace-assistant-mcp \
   --agent ticket-triage-agent \
   --auto-refresh
 ```
@@ -92,7 +92,7 @@ metadata:
   namespace: mcp-servers
 spec:
   serverRef:
-    name: go-example-mcp
+    name: workspace-assistant-mcp
   subject:
     # Any of these may be empty to act as a wildcard for that field.
     humanID: support-lead
@@ -121,7 +121,7 @@ the grant for you (for example in a fixed CI environment), set everything
 explicitly:
 
 ```bash
-export MCP_RUNTIME_URL=http://localhost:18080/go-example-mcp/mcp
+export MCP_RUNTIME_URL=http://localhost:18080/workspace-assistant-mcp/mcp
 export MCP_RUNTIME_HUMAN_ID=support-lead
 export MCP_RUNTIME_AGENT_ID=ticket-triage-agent
 export MCP_RUNTIME_SESSION_ID=sess-ticket-triage-agent
@@ -211,7 +211,7 @@ async def main() -> None:
             os.environ["MCP_PLATFORM_API_URL"].rstrip("/")
             + "/api/runtime/adapter/sessions",
             json={
-                "serverName": "go-example-mcp",
+                "serverName": "workspace-assistant-mcp",
                 "agentID": "ticket-triage-agent",
             },
             headers={
@@ -222,7 +222,7 @@ async def main() -> None:
         session = resp.json()
 
     async with MCPServerStreamableHttp(
-        name="go-example-mcp",
+        name="workspace-assistant-mcp",
         params={
             "url": os.environ["MCP_RUNTIME_URL"],
             "headers": {
@@ -254,8 +254,8 @@ attach the governance headers itself.
 
 ```bash
 mcp-runtime adapter proxy \
-  --runtime-url https://mcp.example.com/go-example-mcp/mcp \
-  --server go-example-mcp \
+  --runtime-url https://mcp.example.com/workspace-assistant-mcp/mcp \
+  --server workspace-assistant-mcp \
   --agent ticket-triage-agent \
   --auto-refresh
 ```
@@ -294,12 +294,12 @@ Claude Desktop, similar):
 ```json
 {
   "mcpServers": {
-    "go-example-mcp": {
+    "workspace-assistant-mcp": {
       "command": "/absolute/path/to/bin/mcp-runtime",
       "args": [
         "adapter", "stdio",
-        "--runtime-url", "https://mcp.example.com/go-example-mcp/mcp",
-        "--server", "go-example-mcp",
+        "--runtime-url", "https://mcp.example.com/workspace-assistant-mcp/mcp",
+        "--server", "workspace-assistant-mcp",
         "--agent", "ticket-triage-agent",
         "--auto-refresh"
       ],

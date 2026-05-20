@@ -16,7 +16,7 @@ If instructions conflict, prefer **this repo** (`README`, CRDs, `v1alpha1` types
 | Control-plane and K8s helpers | `pkg/controlplane/`, `pkg/k8sclient/`, `pkg/kubeworkload/`, `pkg/manifest/`, `pkg/metadata/` | MCPServer Kubernetes operations/status, client setup, shared workload security defaults, registry image resolution, YAML helpers |
 | Sentinel shared packages | `pkg/events/`, `pkg/clickhouse/`, `pkg/serviceutil/`, `pkg/sentinel/` | Event envelope contract, analytics storage/query helpers, service HTTP/env/OTel utilities, Sentinel component inventory |
 | Sentinel services | `services/api`, `services/ui`, `services/ingest`, `services/processor`, `services/mcp-gateway`, … | Separate `go.mod` where present; Go services that import root shared packages use Go 1.26. API-owned runtime HTTP/Kubernetes orchestration lives under `services/api/internal/runtimeapi/`; platform identity/team/key persistence lives under `services/api/internal/platformstore/`; principal context helpers live under `services/api/internal/apiauth/` |
-| Example MCP server | `examples/go-mcp-server/` | Reference for tools and routes |
+| Workspace assistant sample | `examples/go-mcp-server/` | Reference for tools and routes |
 | Default cluster install YAML | `k8s/`, `config/` | Overlays, CRDs, cert-manager examples |
 | Traefik plugins (dev) | `services/traefik-plugins/` | e.g. PII redactor source for local overlays |
 | Team / tenant isolation docs | `docs/multi-team.md` | Team identity contract, per-team namespaces, RBAC, ingress watch scope, and platform API enforcement |
@@ -145,7 +145,7 @@ cluster is intentionally disposable.
 
 - UI: `http://localhost:18080/`
 - Grafana: `/grafana` · Prometheus: `/prometheus` · API base: `http://localhost:18080/api`
-- MCP (test): `http://localhost:18080/demo-one/mcp`, `http://localhost:18080/demo-two/mcp`
+- MCP (test): `http://localhost:18080/workspace-assistant-mcp/mcp`, `http://localhost:18080/data-utility-mcp/mcp`, `http://localhost:18080/text-analysis-mcp/mcp`
 - PII redaction: `config/ingress/overlays/http` with Traefik plugin `pii-redactor@file`. Reapply: `./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http`. The plugin is built from `services/traefik-plugins/pii-redactor` (local `localplugins` mount) so a published image tag is not required for local dev. Keep it off control-plane `/api` routes: API keys, team IDs, server names, namespaces, and grant/session subjects must stay exact for the UI, CLI, and adapter flows.
 - **API keys:**
 
@@ -201,7 +201,7 @@ kubectl patch secret mcp-sentinel-secrets -n mcp-sentinel --type merge -p '{"str
 - **Expected public URLs (after DNS and TLS):**
   - Dashboard UI: `https://platform.mcpruntime.org/` (also serves `/api`, `/grafana`, and `/prometheus` under the same host). `/grafana` and `/prometheus` are served by the host-based `mcp-sentinel-platform-observability` Ingress and guarded by the `sentinel-admin-auth@file` Traefik forwardAuth middleware, which calls the UI's `/auth/admin-check` endpoint and accepts either an admin `mcp_ui_session` cookie or an admin `x-api-key` (matched against `ADMIN_API_KEYS`, falling back to `API_KEYS` when unset). The path-based dev gateway uses the same guard on `mcp-sentinel-gateway-observability`. Grafana keeps its own login on top — see `k8s/12-grafana.yaml` to wire `GF_AUTH_PROXY_*` if you want single-sign-on from the platform session. You can still reach the raw services with `kubectl port-forward -n mcp-sentinel svc/grafana 3000:3000` / `svc/prometheus 9090:9090`.
   - Registry: `https://registry.mcpruntime.org` (or HTTP before TLS, depending on overlay)
-  - Each MCP server (default `IngressPath` is `/{metadata.name}/mcp`): e.g. `https://mcp.mcpruntime.org/demo-one/mcp` for a server named `demo-one` in the default shape
+  - Each MCP server (default `IngressPath` is `/{metadata.name}/mcp`): e.g. `https://mcp.mcpruntime.org/workspace-assistant-mcp/mcp` for a server named `workspace-assistant-mcp` in the default shape
 - **Let’s Encrypt and DNS:** the setup TLS flow requests `registry/registry-cert` for `registry.<domain>` and `mcp.<domain>` when those names are in env-derived config. `platform.<domain>` is separate: the `mcp-sentinel-platform-ui` Ingress in `mcp-sentinel` asks cert-manager to write `mcp-sentinel-platform-tls`. **All three** public DNS A/AAAA (or CNAME) records must exist and point to the **same** public ingress IP (or stable LB). A typo in DNS (e.g. `regsitry` instead of **registry**, or `platfrom` instead of **platform**) will break the matching hostname. Port **80** must hit Traefik for **HTTP-01** before certs are issued.
 - **Run:** `./bin/mcp-runtime setup --with-tls --acme-email <addr>`. You can set `MCP_PLATFORM_DOMAIN` as above, or set `MCP_REGISTRY_INGRESS_HOST` / `MCP_MCP_INGRESS_HOST` / `MCP_PLATFORM_INGRESS_HOST` if you do not use the platform domain (or want to override an individual hostname). Staging: `--acme-staging` / `MCP_ACME_STAGING=1`. The `registry-tls` `Secret` lives in the `registry` namespace; the platform UI cert is provisioned as `mcp-sentinel-platform-tls` in the `mcp-sentinel` namespace. In bundled HTTPS mode, setup creates `cert-manager/mcp-runtime-ca` if it is missing, but every node runtime still must trust its `tls.crt` for image pulls. Private CA without ACME: omit `--acme-email` and use the `mcp-runtime-ca` path per `config/cert-manager/`.
 - **Registry TLS ownership:** `registry/registry-cert` is the only supported Certificate owner for the `registry/registry-tls` Secret. The registry Ingress must not carry `cert-manager.io/cluster-issuer`; if setup reports another Certificate such as `registry/registry-tls` already references the Secret, delete or rename that stale Certificate before rerunning setup. The public registry Ingress uses Traefik forward-auth middleware `registry-admin-auth@file`, backed by `/api/registry/authz`, so unauthenticated public `/v2/` requests should fail with 401/403 rather than exposing catalog data.
@@ -212,7 +212,7 @@ kubectl patch secret mcp-sentinel-secrets -n mcp-sentinel --type merge -p '{"str
 
 - **“ingressHost is required” (operator):** set `spec.ingressHost` on the `MCPServer`, or operator env `MCP_DEFAULT_INGRESS_HOST`, or `MCP_PLATFORM_DOMAIN` for `mcp.<domain>` defaults.
 - **MCPServer stuck `PartiallyReady` with working ingress traffic:** default ingress readiness is strict and waits for `Ingress.status.loadBalancer.ingress[]`. For dev / NodePort-style ingress controllers that route without publishing LB status, set operator env `MCP_INGRESS_READINESS_MODE=permissive`; this treats an Ingress with rules as ready. Keep the default `strict` mode for production setups that rely on published LB status.
-- **Port mismatch:** the bundled Go example listens on `8088` by default; align `MCPServer` `port` / `servicePort` and container `PORT` if you overrode them.
+- **Port mismatch:** the bundled workspace assistant sample listens on `8088` by default; align `MCPServer` `port` / `servicePort` and container `PORT` if you overrode them.
 - **Analytics 401:** use gateway/ingest URL and key, not the app’s random env. Example: `ANALYTICS_INGEST_URL=http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events` and `ANALYTICS_API_KEY` from `mcp-sentinel-secrets` (`INGEST_API_KEYS` key).
 - **Secret not found in workload namespace:** copy `mcp-sentinel-secrets` or use a shared secret reference.
 - **Dashboard / API 401:** direct admin `x-api-key` curl calls need a key present in both `API_KEYS` and `ADMIN_API_KEYS`; browser login uses `UI_API_KEY`. Keep `UI_API_KEY` present in both lists, then roll the API and UI deployments after secret changes.
@@ -232,8 +232,8 @@ Use these when a server is deployed but gateway behavior, grants, or analytics
 look wrong:
 
 ```bash
-SERVER=go-example-mcp
-CONTAINER=go-example-mcp
+SERVER=workspace-assistant-mcp
+CONTAINER=workspace-assistant-mcp
 
 kubectl get mcpservers -n mcp-servers
 kubectl get pods -n mcp-servers -o wide
@@ -345,11 +345,11 @@ For production with `MCP_PLATFORM_DOMAIN=example.com`, setup derives hostnames `
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
 metadata:
-  name: demo-one-grant
+  name: workspace-assistant-grant
   namespace: mcp-servers
 spec:
   subject: {humanID: user-123, agentID: ops-agent}
-  serverRef: {name: demo-one, namespace: mcp-servers}
+  serverRef: {name: workspace-assistant-mcp, namespace: mcp-servers}
   maxTrust: high
   allowedSideEffects: [read]
   toolRules:
@@ -363,7 +363,7 @@ metadata:
   namespace: mcp-servers
 spec:
   subject: {humanID: user-123, agentID: ops-agent}
-  serverRef: {name: demo-one, namespace: mcp-servers}
+  serverRef: {name: workspace-assistant-mcp, namespace: mcp-servers}
   consentedTrust: high
   policyVersion: v1
 ```
@@ -377,7 +377,7 @@ spec:
 
 ```bash
 PROTO=2025-06-18
-BASE=http://localhost:18080/demo-one/mcp
+BASE=http://localhost:18080/workspace-assistant-mcp/mcp
 curl -i -H "content-type: application/json" \
      -H "accept: application/json, text/event-stream" \
      -H "Mcp-Protocol-Version: $PROTO" \
@@ -407,7 +407,7 @@ seconds before concluding a fresh session-backed request failed with
 ```bash
 python3 - <<'PY'
 import json, urllib.request, random, time
-bases = ["http://localhost:18080/demo-one/mcp","http://localhost:18080/demo-two/mcp"]
+bases = ["http://localhost:18080/workspace-assistant-mcp/mcp","http://localhost:18080/data-utility-mcp/mcp","http://localhost:18080/text-analysis-mcp/mcp"]
 proto = "2025-06-18"; calls = 200
 def post(base, payload, sess=None):
     h={"content-type":"application/json","accept":"application/json, text/event-stream","Mcp-Protocol-Version":proto,"Host":"localhost"}
@@ -470,7 +470,7 @@ kubectl delete all,cm,secret,ing,svc,sa,role,rolebinding,deploy,ds,sts,job,cronj
 - **K8s YAML** — `k8s/`
 - **CRDs** — `config/crd/bases/`
 - **API docs (published)** — https://mcpruntime.org/docs/ and https://mcpruntime.org/docs/api
-- **Sample server** — `examples/go-mcp-server/`
+- **Workspace assistant sample** — `examples/go-mcp-server/`
 - **Website source** — `website/` (documentation site, separate from the Go control plane)
 
 ---

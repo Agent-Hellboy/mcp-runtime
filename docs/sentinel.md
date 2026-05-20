@@ -12,7 +12,7 @@
 | **api** | Analytics endpoints, dashboard summaries, user/team-scoped analytics, runtime governance APIs (grants/sessions), platform audit, MCP server catalog, component operations. |
 | **ui** | Control-plane dashboard: user MCP server dashboard, MCP server catalog and connect config, user API keys, analytics dashboard, governance, MCP operations, and platform management. |
 | **gateway** | Kubernetes deployment fronting the sentinel API, ingest, and UI surfaces. |
-| **reference mcp-server** | Small example server in `examples/go-mcp-server` for end-to-end smoke tests. |
+| **workspace assistant sample** | Sample MCP server in `examples/go-mcp-server` for end-to-end smoke tests. |
 
 ## Kubernetes awareness and hardening
 
@@ -102,9 +102,9 @@ For local `setup --test-mode` clusters, setup seeds two email/password logins:
 | **UI** | `/` | `mcp-sentinel-ui:8082` | Browser app, browser login/session routes, and `/api` reverse proxy. |
 | **API** | `/api/*` through UI | `mcp-sentinel-api:8080` | Auth, analytics queries, runtime governance, deployments, admin/user APIs. The UI proxy forwards browser origin headers so local connect configs can point at `http://localhost:18080/<server-name>/mcp`. |
 | **Ingest** | `/ingest/events` | `mcp-sentinel-ingest:8081/events` | Event intake used by `mcp-gateway`; the public ingress strips `/ingest`. |
-| **Grafana** | `/grafana` | `grafana:3000` | Admin observability UI. The generated platform-host route is guarded by `sentinel-admin-auth@file`; Grafana still keeps its own login unless you wire auth proxy settings. |
+| **Grafana** | `/grafana` | `grafana:3000` | Admin observability UI. The generated platform-host route is guarded by `sentinel-admin-auth@file`; Grafana still keeps its own login unless you wire auth proxy settings. Tenant-scoped access is intentionally not exposed by the user dashboard. |
 | **Prometheus** | `/prometheus` | `prometheus:9090` | Admin metrics query UI. The generated platform-host route is guarded by `sentinel-admin-auth@file`; tenant-scoped access is intentionally not exposed by the user dashboard. |
-| **MCP gateway sidecar** | per-server route, for example `/demo-one/mcp` | pod-local sidecar port | Enforces policy and forwards to the MCP server container. |
+| **MCP gateway sidecar** | per-server route, for example `/workspace-assistant-mcp/mcp` | pod-local sidecar port | Enforces policy and forwards to the MCP server container. |
 
 ### Auth model
 

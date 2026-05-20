@@ -1,6 +1,7 @@
 version: v1
 servers:
   - name: governed-agent-demo-mcp
+    description: Governed workspace assistant demo for trust-based tool access.
     route: /governed-agent-demo-mcp/mcp
     publicPathPrefix: governed-agent-demo-mcp
     port: 8088
@@ -10,17 +11,45 @@ servers:
         value: /governed-agent-demo-mcp/mcp
     tools:
       - name: aaa-ping
+        description: Check that the governed workspace assistant is reachable.
         requiredTrust: low
+        sideEffect: read
       - name: echo
+        description: Echo a message for adapter and transport debugging.
         requiredTrust: low
+        sideEffect: read
       - name: add
+        description: Add two numeric values.
         requiredTrust: low
+        sideEffect: read
       - name: upper
+        description: Convert text to uppercase for normalization checks.
         requiredTrust: medium
+        sideEffect: read
       - name: lower
+        description: Convert text to lowercase for normalization checks.
         requiredTrust: low
+        sideEffect: read
       - name: slugify
+        description: Convert a title or label into a URL-safe slug.
         requiredTrust: low
+        sideEffect: read
+      - name: create_task
+        description: Create a deterministic task card summary.
+        requiredTrust: low
+        sideEffect: write
+      - name: draft_release_note
+        description: Draft a compact release note from a change summary and impact.
+        requiredTrust: low
+        sideEffect: read
+    prompts:
+      - name: task_brief
+        description: Draft a concise task brief from a goal.
+      - name: handoff_note
+        description: Draft a concise handoff note for another teammate.
+    mcpResources:
+      - name: workspace-playbook
+        description: Short playbook for task, release note, and handoff flows.
     auth:
       mode: header
       humanIDHeader: X-MCP-Human-ID

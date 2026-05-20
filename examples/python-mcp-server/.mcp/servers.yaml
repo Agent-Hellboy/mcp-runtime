@@ -1,20 +1,83 @@
 version: v1
 servers:
-  - name: python-example-mcp
-    description: Python MCP example server with simple echo and string reversal tools.
-    route: /python-example-mcp/mcp
-    publicPathPrefix: python-example-mcp
+  - name: data-utility-mcp
+    description: Data utility MCP server for text cleanup, lightweight math, timestamps, task summaries, prompts, and resources.
+    route: /data-utility-mcp/mcp
+    publicPathPrefix: data-utility-mcp
     port: 8088
     namespace: mcp-servers
     envVars:
       - name: MCP_PATH
-        value: /python-example-mcp/mcp
+        value: /data-utility-mcp/mcp
     tools:
+      - name: ping
+        description: Check that the data utility server is reachable.
+        requiredTrust: low
+        sideEffect: read
       - name: echo
         description: Echo the provided message.
         requiredTrust: low
         sideEffect: read
       - name: reverse
-        description: Reverse the provided message.
+        description: Reverse the provided text.
         requiredTrust: low
         sideEffect: read
+      - name: add
+        description: Add two numeric values.
+        requiredTrust: low
+        sideEffect: read
+      - name: multiply
+        description: Multiply two numeric values.
+        requiredTrust: low
+        sideEffect: read
+      - name: upper
+        description: Convert text to uppercase.
+        requiredTrust: medium
+        sideEffect: read
+      - name: lower
+        description: Convert text to lowercase.
+        requiredTrust: low
+        sideEffect: read
+      - name: slugify
+        description: Convert text into a URL-safe slug.
+        requiredTrust: low
+        sideEffect: read
+      - name: word_count
+        description: Count words in the provided message.
+        requiredTrust: low
+        sideEffect: read
+      - name: extract_keywords
+        description: Extract stable lowercase keywords from a short text sample.
+        requiredTrust: low
+        sideEffect: read
+      - name: summarize_numbers
+        description: Summarize numbers found in comma, space, or prose separated text.
+        requiredTrust: low
+        sideEffect: read
+      - name: now
+        description: Return the current UTC timestamp in RFC 3339 form.
+        requiredTrust: low
+        sideEffect: read
+      - name: create_task
+        description: Create a deterministic task summary for IDE and adapter smoke tests.
+        requiredTrust: low
+        sideEffect: write
+    prompts:
+      - name: hello
+        description: Return a simple greeting prompt.
+      - name: summarize
+        description: Summarize a short text input.
+      - name: task_brief
+        description: Draft a concise task brief from a goal.
+      - name: data_quality_review
+        description: Draft a concise data quality review prompt.
+    mcpResources:
+      - name: readme
+        description: Data utility overview and supported workflow notes.
+      - name: task-guide
+        description: Task workflow guidance for data utility smoke tests.
+      - name: data-cleaning-checklist
+        description: Checklist for lightweight data-cleaning demos.
+    tasks:
+      - name: create_task
+        description: Deterministic task creation workflow for adapter smoke tests.
