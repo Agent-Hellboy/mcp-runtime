@@ -48,6 +48,10 @@ const defaultGatewayOTELExporterOTLPEndpoint = "http://otel-collector.mcp-sentin
 const gatewayProxyDockerfilePath = "services/mcp-gateway/Dockerfile"
 const gatewayProxyBuildContext = "."
 
+// pathBasedSentinelIngressNames lists the dev path-based ingresses for the
+// mcp-sentinel stack. Public-host installs remove these after applying the
+// dedicated platform ingress so platform UI/API routes are not exposed on
+// unrelated public hosts such as the MCP gateway host.
 var pathBasedSentinelIngressNames = []string{
 	"mcp-sentinel-gateway",
 	"mcp-sentinel-gateway-observability",
