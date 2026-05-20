@@ -367,25 +367,10 @@ func TestStaticAppRemovesCatalogDetailsAction(t *testing.T) {
 	for _, unwanted := range []string{
 		`detailsButton`,
 		`detailsButton.textContent = "Details"`,
-	} {
-		if strings.Contains(source, unwanted) {
-			t.Fatalf("app should not render catalog details action %q", unwanted)
-		}
-	}
-}
-
-func TestStaticAppRemovesCatalogDetailsAction(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
-	source := string(body)
-	for _, unwanted := range []string{
-		`detailsButton.textContent = "Details"`,
 		`detailsButton.addEventListener("click", () => selectServer(server))`,
 	} {
 		if strings.Contains(source, unwanted) {
-			t.Fatalf("app should not keep catalog details action %q", unwanted)
+			t.Fatalf("app should not render catalog details action %q", unwanted)
 		}
 	}
 }
