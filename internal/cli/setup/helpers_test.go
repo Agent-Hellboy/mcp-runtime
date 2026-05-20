@@ -233,6 +233,73 @@ func TestPlatformImageDefaultsUseInternalRegistryWithPlatformDomain(t *testing.T
 	}
 }
 
+func TestApplyPlatformIngressPrunesPathBasedSentinelIngresses(t *testing.T) {
+	origConfig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = origConfig })
+	core.DefaultCLIConfig = &core.CLIConfig{PlatformIngressHost: "platform.example.com"}
+
+	var created []*core.MockCommand
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			created = append(created, cmd)
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	if err := applyPlatformIngressIfConfigured(kubectl); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var (
+		appliedPlatformIngress bool
+		deletedPathIngresses   bool
+	)
+	for _, cmd := range created {
+		spec := core.ExecSpec{Args: cmd.Args}
+		if commandHasArgs(spec, "apply", "-f", "-") && cmd.StdinR != nil {
+			data, err := io.ReadAll(cmd.StdinR)
+			if err != nil {
+				t.Fatalf("read stdin: %v", err)
+			}
+			body := string(data)
+			appliedPlatformIngress = strings.Contains(body, "name: mcp-sentinel-platform-ui") &&
+				strings.Contains(body, `- host: "platform.example.com"`)
+		}
+		if commandHasArgs(spec, "delete", "ingress", "-n", core.DefaultAnalyticsNamespace, "--ignore-not-found=true") {
+			deletedPathIngresses = true
+			for _, name := range pathBasedSentinelIngressNames {
+				if !contains(cmd.Args, name) {
+					t.Fatalf("delete command missing %s: %v", name, cmd.Args)
+				}
+			}
+		}
+	}
+	if !appliedPlatformIngress {
+		t.Fatal("expected platform UI ingress apply")
+	}
+	if !deletedPathIngresses {
+		t.Fatal("expected path-based sentinel ingress delete")
+	}
+}
+
+func TestApplyPlatformIngressSkipsWhenHostUnset(t *testing.T) {
+	origConfig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = origConfig })
+	core.DefaultCLIConfig = &core.CLIConfig{}
+
+	mock := &core.MockExecutor{}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	if err := applyPlatformIngressIfConfigured(kubectl); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mock.Commands) != 0 {
+		t.Fatalf("expected no kubectl commands when platform host is unset, got %v", mock.Commands)
+	}
+}
+
 func TestBuildOperatorArgs(t *testing.T) {
 	t.Run("omits defaults", func(t *testing.T) {
 		if got := buildOperatorArgs("", "", false, false); len(got) != 0 {

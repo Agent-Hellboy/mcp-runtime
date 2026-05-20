@@ -47,6 +47,15 @@ const gatewayOTELExporterOTLPEndpointEnv = "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPO
 const defaultGatewayOTELExporterOTLPEndpoint = "http://otel-collector.mcp-sentinel.svc.cluster.local:4318"
 const gatewayProxyDockerfilePath = "services/mcp-gateway/Dockerfile"
 const gatewayProxyBuildContext = "."
+
+var pathBasedSentinelIngressNames = []string{
+	"mcp-sentinel-gateway",
+	"mcp-sentinel-gateway-observability",
+	"mcp-sentinel-gateway-adapter-session",
+	"mcp-sentinel-gateway-api",
+	"mcp-sentinel-gateway-ingest",
+}
+
 const (
 	defaultDevUserEmail     = "test@mcpruntime.org"
 	defaultDevUserPassword  = "test@123"
@@ -2378,6 +2387,18 @@ func applyPlatformIngressIfConfigured(kubectl core.KubectlRunner) error {
 	core.Info(fmt.Sprintf("Applying platform UI ingress for %s", host))
 	if err := kube.ApplyManifestContent(kubectl.CommandArgs, manifest); err != nil {
 		return fmt.Errorf("apply platform UI ingress: %w", err)
+	}
+	if err := removePathBasedSentinelIngresses(kubectl); err != nil {
+		return err
+	}
+	return nil
+}
+
+func removePathBasedSentinelIngresses(kubectl core.KubectlRunner) error {
+	args := append([]string{"delete", "ingress"}, pathBasedSentinelIngressNames...)
+	args = append(args, "-n", core.DefaultAnalyticsNamespace, "--ignore-not-found=true")
+	if err := kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
+		return fmt.Errorf("remove path-based sentinel ingresses for public platform host: %w", err)
 	}
 	return nil
 }
