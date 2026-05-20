@@ -5675,6 +5675,8 @@ Ingress.
 const (
 	// PlatformIngressName is the Kubernetes Ingress resource name for the dashboard.
 	PlatformIngressName = "mcp-sentinel-platform-ui"
+	// PlatformObservabilityIngressName is the admin-gated platform Ingress for observability tools.
+	PlatformObservabilityIngressName = "mcp-sentinel-platform-observability"
 	// PlatformHTTPRedirectIngressName is the HTTP-only redirect Ingress resource name.
 	PlatformHTTPRedirectIngressName = "mcp-sentinel-platform-ui-http"
 	// PlatformTLSSecretName is the TLS secret name used when TLS is enabled.
@@ -5690,19 +5692,21 @@ const (
 func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string
     RenderPlatformUIIngress emits an Ingress that maps platform.<domain> to
     the dashboard UI and /api on the same UI service (which reverse-proxies to
-    mcp-sentinel-api via API_UPSTREAM). Grafana and Prometheus are intentionally
-    NOT exposed on the public platform host: those tools have no built-in auth
-    in this stack, so operators must reach them via port-forward or a private
-    ingress instead.
+    mcp-sentinel-api via API_UPSTREAM). It also emits a separate admin-gated
+    Ingress on the same host for /grafana and /prometheus. The observability
+    Ingress uses the repo-managed sentinel-admin-auth@file Traefik middleware so
+    those tools are reachable from admin UI links without exposing them raw on
+    the public platform host.
 
     When issuerName is set, a TLS section and cert-manager annotation
     are added so cert-manager's ingress-shim provisions a Certificate for
     platform.<domain> into the mcp-sentinel-platform-tls Secret in the same
-    namespace as the Ingress. A second Ingress on the `web` entrypoint is
-    also emitted so HTTP requests to the same host hit the UI service, which
-    redirects to HTTPS. (We can't rely on Traefik's entrypoint-level redirect
-    because the prod overlay disables it to keep HTTP-01 ACME challenges working
-    on first issue.)
+    namespace as the UI Ingress. The observability Ingress references the same
+    TLS Secret without a cert-manager annotation to avoid a second Certificate
+    owner. A third Ingress on the `web` entrypoint is also emitted so HTTP
+    requests to the same host hit the UI service, which redirects to HTTPS.
+    (We can't rely on Traefik's entrypoint-level redirect because the prod
+    overlay disables it to keep HTTP-01 ACME challenges working on first issue.)
 ```
 
 <a id="cli-setup-plan"></a>

@@ -280,6 +280,10 @@ Quick public endpoint checks after DNS and TLS are live:
 - `curl -k -i https://platform.<domain>/api/health` should normally return
   `401` without platform credentials; that still proves the platform host is
   routing API traffic correctly.
+- `curl -k -i -H "x-api-key: $ADMIN_API_KEY" https://platform.<domain>/grafana/api/health`
+  and `curl -k -i -H "x-api-key: $ADMIN_API_KEY" https://platform.<domain>/prometheus/-/ready`
+  should reach the admin-gated observability routes. Without admin credentials,
+  the `sentinel-admin-auth@file` guard should return `401`.
 - `curl -k -i https://mcp.<domain>/<server-name>/mcp` may return an
   application-level `400` or `401` when called without the expected MCP
   protocol headers or session context. That is often enough to confirm the
