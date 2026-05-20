@@ -2462,7 +2462,17 @@ fi
 connect_local_registry_to_kind_network
 
 refresh_kind_kubeconfig() {
-  kind get kubeconfig --name "${CLUSTER_NAME}" > "${KUBECONFIG_FILE}"
+  local refreshed_kubeconfig
+  refreshed_kubeconfig="$(mktemp)"
+  if kind get kubeconfig --name "${CLUSTER_NAME}" > "${refreshed_kubeconfig}"; then
+    mv "${refreshed_kubeconfig}" "${KUBECONFIG_FILE}"
+  elif [[ -s "${KUBECONFIG_FILE}" ]]; then
+    rm -f "${refreshed_kubeconfig}"
+    echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; reusing existing ${KUBECONFIG_FILE}" >&2
+  else
+    rm -f "${refreshed_kubeconfig}"
+    return 1
+  fi
   export KUBECONFIG="${KUBECONFIG_FILE}"
   kubectl config use-context "kind-${CLUSTER_NAME}"
   mkdir -p "${HOME}/.kube"
