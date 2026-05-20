@@ -356,6 +356,14 @@ func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
 			t.Fatalf("app missing %q", want)
 		}
 	}
+	for _, unwanted := range []string{
+		`detailsButton`,
+		`detailsButton.textContent = "Details"`,
+	} {
+		if strings.Contains(source, unwanted) {
+			t.Fatalf("app should not render catalog details action %q", unwanted)
+		}
+	}
 }
 
 func TestStaticAppRemovesCatalogDetailsAction(t *testing.T) {
