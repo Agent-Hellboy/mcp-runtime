@@ -88,13 +88,14 @@ def word_count(message: str) -> str:
 @mcp.tool()
 def extract_keywords(message: str, limit: int = 5) -> str:
     """Extract stable lowercase keywords from a short text sample."""
+    limit = max(1, min(limit, 20))
     seen: list[str] = []
     for match in _WORDS.findall(message or ""):
         word = match.lower()
         if len(word) < 3 or word in seen:
             continue
         seen.append(word)
-        if len(seen) >= max(1, limit):
+        if len(seen) >= limit:
             break
     return ", ".join(seen)
 
@@ -102,15 +103,27 @@ def extract_keywords(message: str, limit: int = 5) -> str:
 @mcp.tool()
 def summarize_numbers(values: str) -> str:
     """Summarize numbers found in comma, space, or prose separated text."""
-    numbers = [float(value) for value in _NUMBERS.findall(values or "")]
-    if not numbers:
+    count = 0
+    total = 0.0
+    minimum = 0.0
+    maximum = 0.0
+    for match in _NUMBERS.findall(values or ""):
+        number = float(match)
+        if count == 0:
+            minimum = number
+            maximum = number
+        else:
+            minimum = min(minimum, number)
+            maximum = max(maximum, number)
+        total += number
+        count += 1
+    if count == 0:
         return "count: 0"
-    total = sum(numbers)
-    average = total / len(numbers)
+    average = total / count
     return (
-        f"count: {len(numbers)}\n"
-        f"min: {min(numbers):g}\n"
-        f"max: {max(numbers):g}\n"
+        f"count: {count}\n"
+        f"min: {minimum:g}\n"
+        f"max: {maximum:g}\n"
         f"sum: {total:g}\n"
         f"average: {average:g}"
     )
