@@ -22,10 +22,12 @@ the SQL schema at startup; the same schema is available in
 Optional bootstrap variables:
 
 ```bash
+export ADMIN_USERS='admin@example.com'
 export PLATFORM_ADMIN_EMAIL='admin@example.com'
 export PLATFORM_ADMIN_PASSWORD='change-me-now'
 ```
 
+`ADMIN_USERS` is the Google/OIDC admin allowlist used during login.
 `PLATFORM_ADMIN_BOOTSTRAP_ONLY=1` runs only the admin bootstrap path and exits.
 `PLATFORM_ADMIN_PASSWORD` should be cleared after bootstrap.
 

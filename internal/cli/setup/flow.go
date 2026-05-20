@@ -147,6 +147,12 @@ func validateRequiredPlatformEnv(plan setupplan.Plan, usingExternalRegistry bool
 			),
 		)
 	}
+	if !platformAdminEnvConfigured() {
+		return core.NewWithSentinel(
+			core.ErrSetupStepFailed,
+			"platform admin configuration is incomplete; set MCP_PLATFORM_ADMIN_EMAIL (or ADMIN_USERS) before running production setup",
+		)
+	}
 	if !usingExternalRegistry && !registryEndpointEnvExplicitlyConfigured() {
 		return core.NewWithSentinel(
 			core.ErrSetupStepFailed,
@@ -154,6 +160,10 @@ func validateRequiredPlatformEnv(plan setupplan.Plan, usingExternalRegistry bool
 		)
 	}
 	return nil
+}
+
+func platformAdminEnvConfigured() bool {
+	return setupSecretEnvValue("MCP_PLATFORM_ADMIN_EMAIL", "PLATFORM_ADMIN_EMAIL", "MCP_ADMIN_USERS", "ADMIN_USERS") != ""
 }
 
 func platformEnvValidationRequired(plan setupplan.Plan) bool {

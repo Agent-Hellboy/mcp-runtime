@@ -2491,6 +2491,7 @@ func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platform
 	}
 	for _, key := range []string{
 		"GOOGLE_CLIENT_ID",
+		"MCP_SENTINEL_INGEST_URL",
 		"OIDC_ISSUER",
 		"OIDC_AUDIENCE",
 		"OIDC_JWKS_URL",
@@ -2708,17 +2709,21 @@ func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
+	if envValue := setupSecretEnvValue("MCP_PLATFORM_ADMIN_EMAIL", "PLATFORM_ADMIN_EMAIL"); envValue != "" {
+		platformAdminEmail = envValue
+	}
 	platformAdminPassword, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_ADMIN_PASSWORD")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	if envValue := setupSecretEnvValue("MCP_PLATFORM_ADMIN_PASSWORD", "PLATFORM_ADMIN_PASSWORD"); envValue != "" {
+		platformAdminPassword = envValue
 	}
 	adminUsers, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "ADMIN_USERS")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	if adminUsers == "" && platformAdminEmail != "" {
-		adminUsers = platformAdminEmail
-	}
+	adminUsers = ensureCSVIncludesValues(adminUsers, setupSecretEnvValue("MCP_ADMIN_USERS", "ADMIN_USERS"), platformAdminEmail)
 	platformDevLoginEnabled := ""
 	platformDevUserEmail, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_USER_EMAIL")
 	if err != nil {
@@ -2822,6 +2827,24 @@ func ensureCSVIncludes(csv, value string) string {
 		parts = append(parts, value)
 	}
 	return strings.Join(parts, ",")
+}
+
+func ensureCSVIncludesValues(csv string, values ...string) string {
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			csv = ensureCSVIncludes(csv, part)
+		}
+	}
+	return csv
+}
+
+func setupSecretEnvValue(candidates ...string) string {
+	for _, candidate := range candidates {
+		if value := strings.TrimSpace(os.Getenv(candidate)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func ensureAnalyticsImagePullSecret(kubectl core.KubectlRunner) (string, error) {

@@ -235,7 +235,12 @@ explicitly. `server deploy` uses the default public route `/<name>/mcp` and
 passes that same value as `MCP_PATH` so the bundled Go, Python, and Rust
 examples listen on the route the ingress exposes. The platform API and CLI
 deploy flow also default `spec.gateway.enabled: true`, so published servers use
-the governed gateway path unless you explicitly provide `spec.gateway`.
+the governed gateway path unless you explicitly provide `spec.gateway`. When
+you run `server deploy` from a directory with `.mcp/*.yaml`, the CLI copies the
+matching server metadata into the request. If the metadata directory contains
+exactly one server, it uses that server's inventory even when the deployed
+runtime name is different; this keeps `spec.tools` side-effect metadata in sync
+with governance policy.
 
 ### Flow C — manual Docker build, push, and manifest apply
 

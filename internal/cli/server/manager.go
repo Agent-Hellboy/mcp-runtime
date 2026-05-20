@@ -21,6 +21,7 @@ import (
 	"mcp-runtime/internal/cli/kube"
 	"mcp-runtime/internal/cli/kubeerr"
 	"mcp-runtime/internal/cli/platformapi"
+	"mcp-runtime/pkg/metadata"
 	"mcp-runtime/pkg/publishscope"
 )
 
@@ -286,6 +287,9 @@ func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageT
 		}
 	}
 	spec := buildDeployServerSpec(name, image, imageTag, replicas, port, servicePort)
+	if err := applyDeployMetadataDefaults(&spec, name); err != nil {
+		return err
+	}
 	applied, err := plat.ApplyRuntimeServerWithScope(context.Background(), name, namespace, scope, spec)
 	if err != nil {
 		return err
@@ -309,6 +313,94 @@ func buildDeployServerSpec(name, image, imageTag string, replicas, port, service
 			{Name: "MCP_PATH", Value: ingressPath},
 		},
 	}
+}
+
+func applyDeployMetadataDefaults(spec *mcpv1alpha1.MCPServerSpec, name string) error {
+	if spec == nil {
+		return nil
+	}
+	if _, err := os.Stat(".mcp"); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return core.WrapWithSentinel(core.ErrLoadMetadataFailed, err, fmt.Sprintf("failed to inspect metadata directory: %v", err))
+	}
+	registry, err := metadata.LoadFromDirectory(".mcp")
+	if err != nil {
+		return core.WrapWithSentinel(core.ErrLoadMetadataFailed, err, fmt.Sprintf("failed to load metadata: %v", err))
+	}
+	if registry == nil || len(registry.Servers) == 0 {
+		return nil
+	}
+
+	var selected *metadata.ServerMetadata
+	for i := range registry.Servers {
+		if strings.TrimSpace(registry.Servers[i].Name) == name {
+			selected = &registry.Servers[i]
+			break
+		}
+	}
+	if selected == nil && len(registry.Servers) == 1 {
+		selected = &registry.Servers[0]
+	}
+	if selected == nil {
+		return nil
+	}
+	mergeDeployMetadata(spec, selected)
+	return nil
+}
+
+func mergeDeployMetadata(spec *mcpv1alpha1.MCPServerSpec, src *metadata.ServerMetadata) {
+	if strings.TrimSpace(spec.Description) == "" {
+		spec.Description = src.Description
+	}
+	if len(spec.Tools) == 0 {
+		spec.Tools = make([]mcpv1alpha1.ToolConfig, 0, len(src.Tools))
+		for _, tool := range src.Tools {
+			spec.Tools = append(spec.Tools, mcpv1alpha1.ToolConfig{
+				Name:          tool.Name,
+				Description:   tool.Description,
+				RequiredTrust: mcpv1alpha1.TrustLevel(tool.RequiredTrust),
+				SideEffect:    mcpv1alpha1.ToolSideEffect(tool.SideEffect),
+				Labels:        copyStringMap(tool.Labels),
+			})
+		}
+	}
+	if len(spec.Prompts) == 0 {
+		spec.Prompts = convertDeployInventory(src.Prompts)
+	}
+	if len(spec.MCPResources) == 0 {
+		spec.MCPResources = convertDeployInventory(src.MCPResources)
+	}
+	if len(spec.Tasks) == 0 {
+		spec.Tasks = convertDeployInventory(src.Tasks)
+	}
+}
+
+func convertDeployInventory(items []metadata.InventoryItem) []mcpv1alpha1.InventoryItem {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]mcpv1alpha1.InventoryItem, 0, len(items))
+	for _, item := range items {
+		out = append(out, mcpv1alpha1.InventoryItem{
+			Name:        item.Name,
+			Description: item.Description,
+			Labels:      copyStringMap(item.Labels),
+		})
+	}
+	return out
+}
+
+func copyStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // ApplyServerFromFile applies an MCPServer manifest from disk.

@@ -859,6 +859,30 @@ func TestRenderAnalyticsSecretManifestReusesExistingAPIKeys(t *testing.T) {
 	}
 }
 
+func TestRenderAnalyticsSecretManifestUsesAdminEnv(t *testing.T) {
+	t.Setenv("MCP_PLATFORM_ADMIN_EMAIL", "PrinceKrRoshan01@gmail.com")
+	t.Setenv("MCP_PLATFORM_ADMIN_PASSWORD", "bootstrap-password")
+	t.Setenv("MCP_ADMIN_USERS", "ops@example.com, google-sub-123")
+	kubectl := core.NewTestKubectlClient(&core.MockExecutor{})
+
+	manifest, err := renderAnalyticsSecretManifest(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data := secretStringDataFromManifest(t, manifest)
+	if data["PLATFORM_ADMIN_EMAIL"] != "PrinceKrRoshan01@gmail.com" {
+		t.Fatalf("expected platform admin email from env, got %q", data["PLATFORM_ADMIN_EMAIL"])
+	}
+	if data["PLATFORM_ADMIN_PASSWORD"] != "bootstrap-password" {
+		t.Fatalf("expected platform admin password from env, got %q", data["PLATFORM_ADMIN_PASSWORD"])
+	}
+	for _, want := range []string{"ops@example.com", "google-sub-123", "PrinceKrRoshan01@gmail.com"} {
+		if !csvHasValue(data["ADMIN_USERS"], want) {
+			t.Fatalf("expected ADMIN_USERS to include %q, got %q", want, data["ADMIN_USERS"])
+		}
+	}
+}
+
 func TestRenderAnalyticsSecretManifestEscapesPostgresCredentialsInDSN(t *testing.T) {
 	postgresUserEncoded := base64.StdEncoding.EncodeToString([]byte("user@runtime"))
 	postgresPasswordEncoded := base64.StdEncoding.EncodeToString([]byte(`pa:ss?/#[%]`))

@@ -372,6 +372,7 @@ If you want hostnames derived from one domain, set:
 
 ```bash
 export MCP_PLATFORM_DOMAIN=example.com
+export MCP_PLATFORM_ADMIN_EMAIL=admin@example.com
 ./bin/mcp-runtime setup --registry-mode external --external-registry-url registry.example.com --with-tls --strict-prod
 ```
 
@@ -394,7 +395,9 @@ For public/TLS setup, setup validates the host env even without
 `MCP_PLATFORM_INGRESS_HOST`, `MCP_REGISTRY_INGRESS_HOST`, and
 `MCP_MCP_INGRESS_HOST` explicitly. If you use the bundled registry, also set
 `MCP_REGISTRY_ENDPOINT` or `MCP_REGISTRY_HOST` to the exact registry host:port
-that Kubernetes nodes can pull.
+that Kubernetes nodes can pull. Set `MCP_PLATFORM_ADMIN_EMAIL` or
+`ADMIN_USERS` so the first OIDC login for that email is promoted to platform
+admin; `--acme-email` is only the certificate contact email.
 
 You can also skip the saved provision step and pass
 `--external-registry-url registry.example.com` directly to `setup`.
@@ -441,6 +444,7 @@ Google issuer and JWKS URL when those values are not set explicitly:
 
 ```bash
 export GOOGLE_CLIENT_ID=<client>.apps.googleusercontent.com
+export MCP_PLATFORM_ADMIN_EMAIL=admin@example.com
 ./bin/mcp-runtime setup --with-tls --platform-mode public
 ```
 

@@ -288,10 +288,20 @@ Quick public endpoint checks after DNS and TLS are live:
   protocol headers or session context. That is often enough to confirm the
   public route is live before you move on to MCP client debugging.
 
-## Public-mode bootstrap
+## Public-mode admin bootstrap
 
-Fresh `--platform-mode public` or `--platform-mode org` installs that expect an
-admin user bootstrap must keep both of these secret-backed values aligned:
+Fresh public/TLS installs must set an OIDC admin allowlist before setup:
+
+- `MCP_PLATFORM_ADMIN_EMAIL`, for the first platform admin email
+- or `ADMIN_USERS`, for a comma-separated list of admin emails or OIDC subjects
+
+Setup writes those values into the `ADMIN_USERS` secret key. The API checks that
+allowlist on Google/OIDC login and promotes matching users to platform admin.
+`--acme-email` is only the certificate contact email and does not grant
+platform admin.
+
+Password bootstrap is separate. Installs that expect a password-created admin
+must keep both of these secret-backed values aligned:
 
 - `PLATFORM_ADMIN_EMAIL`
 - `PLATFORM_ADMIN_PASSWORD`

@@ -104,7 +104,9 @@ setup: set `MCP_PLATFORM_DOMAIN` to derive `platform.<domain>`,
 `MCP_PLATFORM_INGRESS_HOST`, `MCP_REGISTRY_INGRESS_HOST`, and
 `MCP_MCP_INGRESS_HOST` explicitly. Bundled registry setups also require
 `MCP_REGISTRY_ENDPOINT` (or `MCP_REGISTRY_HOST`) to be the exact registry
-host:port Kubernetes nodes can pull from.
+host:port Kubernetes nodes can pull from. Production setup also requires an
+admin allowlist through `MCP_PLATFORM_ADMIN_EMAIL` or `ADMIN_USERS`; that
+allowlist is what promotes Google/OIDC logins to platform admin.
 
 `--platform-mode` selects the namespace model. `tenant` is the default and
 scopes signed-in users to team namespaces for teams they belong to; `org` uses
@@ -329,7 +331,7 @@ mcp-runtime server deploy payments --scope public --image payments --tag v1
 
 `server patch` accepts inline `--patch` or `--patch-file` with `merge`, `json`, or `strategic` modes.
 
-`server build image` updates matching `.mcp` metadata when you use the metadata-driven pipeline. It defaults Docker builds to `linux/amd64` so images can run on typical amd64 Kubernetes nodes; override with `--platform` or `MCP_DOCKER_PLATFORM` for another node architecture. It can resolve to a concrete host such as `10.43.109.51:5000/public/payments:v1` when metadata sets `scope: public`, or to the authenticated team repository prefix when metadata sets `scope: tenant` and platform credentials are configured. Push that exact ref after logging in to the platform. The command does not deploy by itself; push and deploy are separate steps. `server deploy --scope public` and `--scope org` let the platform resolve the active catalog namespace; `--scope tenant` uses the authenticated user's team namespace unless `--team` or `--namespace` selects one explicitly. Deploy accepts a short image name and expands it through the platform API to the configured node-pullable registry endpoint plus the active scope prefix.
+`server build image` updates matching `.mcp` metadata when you use the metadata-driven pipeline. It defaults Docker builds to `linux/amd64` so images can run on typical amd64 Kubernetes nodes; override with `--platform` or `MCP_DOCKER_PLATFORM` for another node architecture. It can resolve to a concrete host such as `10.43.109.51:5000/public/payments:v1` when metadata sets `scope: public`, or to the authenticated team repository prefix when metadata sets `scope: tenant` and platform credentials are configured. Push that exact ref after logging in to the platform. The command does not deploy by itself; push and deploy are separate steps. `server deploy --scope public` and `--scope org` let the platform resolve the active catalog namespace; `--scope tenant` uses the authenticated user's team namespace unless `--team` or `--namespace` selects one explicitly. Deploy accepts a short image name and expands it through the platform API to the configured node-pullable registry endpoint plus the active scope prefix. When run beside `.mcp/*.yaml`, deploy includes the matching server inventory, including tool side-effect metadata used by governed tool calls.
 
 ## sentinel
 
