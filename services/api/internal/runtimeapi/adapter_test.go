@@ -287,6 +287,21 @@ func TestAdapterSessionRequiresServerName(t *testing.T) {
 	}
 }
 
+func TestAdapterSessionRequiresResolvedNamespace(t *testing.T) {
+	fx := newAdapterTestFixture(t)
+	fx.principal.Namespace = ""
+	req := adapterRequest(t, adapterSessionRequest{ServerName: "demo", AgentID: "ops-agent"})
+	req = req.WithContext(withPrincipal(req.Context(), fx.principal))
+	w := httptest.NewRecorder()
+	fx.server.HandleAdapterSession(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s, want 400", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "namespace is required") {
+		t.Fatalf("body = %q, want namespace validation error", w.Body.String())
+	}
+}
+
 func TestAdapterSessionRejectsTTLBeyondHardCap(t *testing.T) {
 	d, err := parseAdapterTTL("48h")
 	if err != nil {

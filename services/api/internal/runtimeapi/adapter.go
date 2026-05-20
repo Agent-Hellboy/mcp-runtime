@@ -104,7 +104,11 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 	if req.Namespace == "" {
 		// Default to the principal's primary namespace so single-team callers
 		// don't have to pass it on every request.
-		req.Namespace = principal.Namespace
+		req.Namespace = strings.TrimSpace(principal.Namespace)
+	}
+	if req.Namespace == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace is required"})
+		return
 	}
 
 	humanID := strings.TrimSpace(principal.Subject)
