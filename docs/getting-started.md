@@ -358,9 +358,10 @@ provisioned registry:
 ./bin/mcp-runtime setup --registry-mode external --external-registry-url registry.example.com --with-tls --strict-prod
 ```
 
-With the bundled registry serving internal HTTPS, use a private CA or existing
-ClusterIssuer for the registry pod certificate and configure every node to
-trust that CA for image pulls. Public ingress TLS can still use ACME:
+With the bundled registry serving internal HTTPS, setup generates an internal
+CA secret for the registry pod certificate unless you provide an existing
+ClusterIssuer. Configure every node to trust that CA for image pulls. Public
+ingress TLS can still use ACME:
 
 ```bash
 ./bin/mcp-runtime bootstrap

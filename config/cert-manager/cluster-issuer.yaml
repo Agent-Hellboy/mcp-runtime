@@ -4,6 +4,7 @@ metadata:
   name: mcp-runtime-ca
 spec:
   ca:
-    # Create this Secret with your internal CA keypair:
+    # setup --registry-mode bundled-https creates this Secret when missing.
+    # For manual/private CA use, create it with your internal CA keypair:
     # kubectl create secret tls mcp-runtime-ca --cert=ca.crt --key=ca.key -n cert-manager
     secretName: mcp-runtime-ca

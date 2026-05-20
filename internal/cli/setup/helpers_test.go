@@ -2731,6 +2731,63 @@ func TestSetupTLSWithKubectl(t *testing.T) {
 	}
 }
 
+func TestSetupBundledRegistryInternalTLSCreatesMissingCASecret(t *testing.T) {
+	chdirRepoRootForTest(t)
+
+	var created []*core.MockCommand
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			created = append(created, cmd)
+			if commandHasArgs(spec, "get", "secret", "mcp-runtime-ca", "-n", "cert-manager") {
+				cmd.RunErr = errors.New("missing secret")
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	err := setupBundledRegistryInternalTLSStep(kubectl, zap.NewNop(), setupplan.Plan{
+		RegistryMode: setupplan.RegistryModeBundledHTTPS,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var (
+		hasSecretApply bool
+		hasIssuerApply bool
+		hasCertApply   bool
+		hasWait        bool
+	)
+	for _, cmd := range created {
+		spec := core.ExecSpec{Args: cmd.Args}
+		if commandHasArgs(spec, "apply", "-f", "config/cert-manager/cluster-issuer.yaml") {
+			hasIssuerApply = true
+		}
+		if commandHasArgs(spec, "wait", "--for=condition=Ready", "certificate/registry-internal-cert", "-n", core.NamespaceRegistry, "--timeout=2m0s") {
+			hasWait = true
+		}
+		if !commandHasArgs(spec, "apply", "-f", "-") || cmd.StdinR == nil {
+			continue
+		}
+		data, err := io.ReadAll(cmd.StdinR)
+		if err != nil {
+			t.Fatalf("read apply stdin: %v", err)
+		}
+		body := string(data)
+		if strings.Contains(body, `"kind":"Secret"`) && strings.Contains(body, `"name":"mcp-runtime-ca"`) {
+			hasSecretApply = true
+		}
+		if strings.Contains(body, "name: registry-internal-cert") && strings.Contains(body, "secretName: registry-internal-tls") {
+			hasCertApply = true
+		}
+	}
+	if !hasSecretApply || !hasIssuerApply || !hasCertApply || !hasWait {
+		t.Fatalf("missing expected commands: secret=%t issuer=%t cert=%t wait=%t", hasSecretApply, hasIssuerApply, hasCertApply, hasWait)
+	}
+}
+
 func TestSetupTLSWithKubectlMissingCRD(t *testing.T) {
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {

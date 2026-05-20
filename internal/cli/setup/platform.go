@@ -3405,7 +3405,8 @@ func setupTLSWithExistingClusterIssuer(kubectl core.KubectlRunner, logger *zap.L
 	return nil
 }
 
-// setupTLSPrivateCA uses a pre-created TLS secret mcp-runtime-ca in cert-manager (see config/cert-manager/cluster-issuer.yaml).
+// setupTLSPrivateCA uses mcp-runtime-ca in cert-manager; bundled HTTPS setup
+// generates it when missing, while other private-CA paths require it up front.
 func setupTLSPrivateCA(kubectl core.KubectlRunner, logger *zap.Logger, plan setupplan.Plan) error {
 	core.Info("Checking cert-manager installation")
 	if err := certmanager.CheckCertManagerInstalledWithKubectl(kubectl); err != nil {
@@ -3419,7 +3420,20 @@ func setupTLSPrivateCA(kubectl core.KubectlRunner, logger *zap.Logger, plan setu
 	core.Info("cert-manager CRDs found")
 
 	core.Info("Checking CA secret")
-	if err := certmanager.CheckCASecretWithKubectl(kubectl); err != nil {
+	if plan.RegistryMode == setupplan.RegistryModeBundledHTTPS {
+		created, err := certmanager.EnsureCASecretWithKubectl(kubectl)
+		if err != nil {
+			err := core.WrapWithSentinel(core.ErrCASecretNotFound, err, "CA secret 'mcp-runtime-ca' could not be generated in cert-manager namespace. Create a private CA manually:\n  kubectl create secret tls mcp-runtime-ca --cert=ca.crt --key=ca.key -n cert-manager")
+			core.Error("CA secret unavailable")
+			if logger != nil {
+				core.LogStructuredError(logger, err, "CA secret unavailable")
+			}
+			return err
+		}
+		if created {
+			core.Info("Generated cert-manager/mcp-runtime-ca for bundled HTTPS registry TLS; configure every Kubernetes node to trust its tls.crt before pulling from the bundled HTTPS registry")
+		}
+	} else if err := certmanager.CheckCASecretWithKubectl(kubectl); err != nil {
 		err := core.WrapWithSentinel(core.ErrCASecretNotFound, err, "CA secret 'mcp-runtime-ca' not found in cert-manager namespace. For Let's Encrypt use --acme-email, or create a private CA:\n  kubectl create secret tls mcp-runtime-ca --cert=ca.crt --key=ca.key -n cert-manager")
 		core.Error("CA secret not found")
 		if logger != nil {
@@ -3501,18 +3515,22 @@ func setupBundledRegistryInternalTLSStep(kubectl core.KubectlRunner, logger *zap
 	}
 	issuerName := bundledRegistryInternalIssuerName(plan)
 	if issuerName == certmanager.CertClusterIssuerName {
-		core.Info("Checking internal registry CA secret")
-		if err := certmanager.CheckCASecretWithKubectl(kubectl); err != nil {
+		core.Info("Ensuring internal registry CA secret")
+		created, err := certmanager.EnsureCASecretWithKubectl(kubectl)
+		if err != nil {
 			err := core.WrapWithSentinel(
 				core.ErrCASecretNotFound,
 				err,
-				"bundled HTTPS registry pulls need an internal CA for registry-internal-tls. Create cert-manager/mcp-runtime-ca and configure every node to trust its CA certificate, or pass --tls-cluster-issuer for an existing internal issuer",
+				"bundled HTTPS registry pulls need an internal CA for registry-internal-tls. Setup could not create cert-manager/mcp-runtime-ca; pass --tls-cluster-issuer for an existing internal issuer or create the CA secret manually",
 			)
-			core.Error("Internal registry CA secret not found")
+			core.Error("Internal registry CA secret unavailable")
 			if logger != nil {
-				core.LogStructuredError(logger, err, "Internal registry CA secret not found")
+				core.LogStructuredError(logger, err, "Internal registry CA secret unavailable")
 			}
 			return err
+		}
+		if created {
+			core.Info("Generated cert-manager/mcp-runtime-ca for internal registry TLS; configure every Kubernetes node to trust its tls.crt before pulling from the bundled HTTPS registry")
 		}
 		core.Info("Applying internal registry ClusterIssuer")
 		if err := certmanager.ApplyClusterIssuerWithKubectl(kubectl); err != nil {

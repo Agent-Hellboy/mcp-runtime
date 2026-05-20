@@ -4342,6 +4342,7 @@ _No package overview is documented._
 - [`func CheckNamedClusterIssuerWithKubectl(kubectl core.KubectlRunner, name string) error`](#cli-cert-manager-func-checknamedclusterissuerwithkubectl-kubectl-core-kubectlrunner-name-string-error)
 - [`func CheckRegistryCertificateOwnershipWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkregistrycertificateownershipwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func ClusterIssuerNameForACME(staging bool) string`](#cli-cert-manager-func-clusterissuernameforacme-staging-bool-string)
+- [`func EnsureCASecretWithKubectl(kubectl core.KubectlRunner) (bool, error)`](#cli-cert-manager-func-ensurecasecretwithkubectl-kubectl-core-kubectlrunner-bool-error)
 - [`func EnsureCertManagerInstalled(kubectl core.KubectlRunner, logger *zap.Logger) error`](#cli-cert-manager-func-ensurecertmanagerinstalled-kubectl-core-kubectlrunner-logger-zap-logger-error)
 - [`func PreflightACMEHostnamesPort80(dnsNames []string)`](#cli-cert-manager-func-preflightacmehostnamesport80-dnsnames-string)
 - [`func RemoveRegistryIngressShimAnnotationWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-removeregistryingressshimannotationwithkubectl-kubectl-core-kubectlrunner-error)
@@ -4442,6 +4443,11 @@ func ClusterIssuerNameForACME(staging bool) string
     ClusterIssuerNameForACME returns the ClusterIssuer resource name for Let's
     Encrypt.
 
+```
+
+<a id="cli-cert-manager-func-ensurecasecretwithkubectl-kubectl-core-kubectlrunner-bool-error"></a>
+```text
+func EnsureCASecretWithKubectl(kubectl core.KubectlRunner) (bool, error)
 ```
 
 <a id="cli-cert-manager-func-ensurecertmanagerinstalled-kubectl-core-kubectlrunner-logger-zap-logger-error"></a>
