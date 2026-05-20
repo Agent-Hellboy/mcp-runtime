@@ -2670,6 +2670,7 @@ kubectl clients, terminal output, and test doubles.
 - [`func NewSetupStepFailedError() error`](#cli-core-func-newsetupstepfailederror-error)
 - [`func NewWithSentinel(base error, msg string) error`](#cli-core-func-newwithsentinel-base-error-msg-string-error)
 - [`func Red(msg string) string`](#cli-core-func-red-msg-string-string)
+- [`func ResolveEmailAlias(email, username string) (string, error)`](#cli-core-func-resolveemailalias-email-username-string-string-error)
 - [`func Section(title string)`](#cli-core-func-section-title-string)
 - [`func SetDebugMode(enabled bool)`](#cli-core-func-setdebugmode-enabled-bool)
 - [`func SpinnerStart(msg string) func(success bool, finalMsg string)`](#cli-core-func-spinnerstart-msg-string-func-success-bool-finalmsg-string)
@@ -3178,6 +3179,14 @@ func NewWithSentinel(base error, msg string) error
 ```text
 func Red(msg string) string
     Red returns red text.
+
+```
+
+<a id="cli-core-func-resolveemailalias-email-username-string-string-error"></a>
+```text
+func ResolveEmailAlias(email, username string) (string, error)
+    ResolveEmailAlias returns the single account email represented by --email
+    and the deprecated/alias --username flag.
 
 ```
 
@@ -4551,6 +4560,7 @@ _No package overview is documented._
 - [`func (c *PlatformClient) ApplyRuntimeServerWithScope(ctx context.Context, name, namespace, scope string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error)`](#cli-platform-api-func-c-platformclient-applyruntimeserverwithscope-ctx-context-context-name-namespace-scope-string-spec-mcpv1alpha1-mcpserverspec-serverlistitem-error)
 - [`func (c *PlatformClient) CreateAdapterSession(ctx context.Context, req AdapterSessionRequest) (AdapterSession, error)`](#cli-platform-api-func-c-platformclient-createadaptersession-ctx-context-context-req-adaptersessionrequest-adaptersession-error)
 - [`func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Team, error)`](#cli-platform-api-func-c-platformclient-createteam-ctx-context-context-slug-name-string-team-error)
+- [`func (c *PlatformClient) CreateTeamUser(ctx context.Context, slug, email, password, role string) (TeamMembership, error)`](#cli-platform-api-func-c-platformclient-createteamuser-ctx-context-context-slug-email-password-role-string-teammembership-error)
 - [`func (c *PlatformClient) CurrentPrincipal(ctx context.Context) (Principal, error)`](#cli-platform-api-func-c-platformclient-currentprincipal-ctx-context-context-principal-error)
 - [`func (c *PlatformClient) DeleteGrant(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deletegrant-ctx-context-context-namespace-name-string-error)
 - [`func (c *PlatformClient) DeleteRuntimeServer(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deleteruntimeserver-ctx-context-context-namespace-name-string-error)
@@ -4563,6 +4573,7 @@ _No package overview is documented._
 - [`func (c *PlatformClient) ListNamespaces(ctx context.Context) ([]namespaceListItem, error)`](#cli-platform-api-func-c-platformclient-listnamespaces-ctx-context-context-namespacelistitem-error)
 - [`func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace string) ([]ServerListItem, error)`](#cli-platform-api-func-c-platformclient-listruntimeservers-ctx-context-context-namespace-string-serverlistitem-error)
 - [`func (c *PlatformClient) ListSessions(ctx context.Context, namespace string) ([]sentinelaccess.SessionSummary, error)`](#cli-platform-api-func-c-platformclient-listsessions-ctx-context-context-namespace-string-sentinelaccess-sessionsummary-error)
+- [`func (c *PlatformClient) ListTeamMembers(ctx context.Context, slug string) ([]TeamMembership, error)`](#cli-platform-api-func-c-platformclient-listteammembers-ctx-context-context-slug-string-teammembership-error)
 - [`func (c *PlatformClient) ListTeams(ctx context.Context) ([]Team, error)`](#cli-platform-api-func-c-platformclient-listteams-ctx-context-context-team-error)
 - [`func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postgranttoggle-ctx-context-context-namespace-name-action-string-error)
 - [`func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postsessiontoggle-ctx-context-context-namespace-name-action-string-error)
@@ -4571,6 +4582,7 @@ _No package overview is documented._
 - [`type Principal struct`](#cli-platform-api-type-principal-struct)
 - [`type ServerListItem struct`](#cli-platform-api-type-serverlistitem-struct)
 - [`type Team struct`](#cli-platform-api-type-team-struct)
+- [`type TeamMembership = platform.TeamMembership`](#cli-platform-api-type-teammembership-platform-teammembership)
 
 <a id="cli-platform-api-functions"></a>
 ### Functions
@@ -4694,6 +4706,12 @@ func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Tea
 
 ```
 
+<a id="cli-platform-api-func-c-platformclient-createteamuser-ctx-context-context-slug-email-password-role-string-teammembership-error"></a>
+```text
+func (c *PlatformClient) CreateTeamUser(ctx context.Context, slug, email, password, role string) (TeamMembership, error)
+
+```
+
 <a id="cli-platform-api-func-c-platformclient-currentprincipal-ctx-context-context-principal-error"></a>
 ```text
 func (c *PlatformClient) CurrentPrincipal(ctx context.Context) (Principal, error)
@@ -4766,6 +4784,12 @@ func (c *PlatformClient) ListSessions(ctx context.Context, namespace string) ([]
 
 ```
 
+<a id="cli-platform-api-func-c-platformclient-listteammembers-ctx-context-context-slug-string-teammembership-error"></a>
+```text
+func (c *PlatformClient) ListTeamMembers(ctx context.Context, slug string) ([]TeamMembership, error)
+
+```
+
 <a id="cli-platform-api-func-c-platformclient-listteams-ctx-context-context-team-error"></a>
 ```text
 func (c *PlatformClient) ListTeams(ctx context.Context) ([]Team, error)
@@ -4833,6 +4857,12 @@ type Team struct {
 	Namespace string    `json:"namespace"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+```
+
+<a id="cli-platform-api-type-teammembership-platform-teammembership"></a>
+```text
+type TeamMembership = platform.TeamMembership
 ```
 
 <a id="cli-platform-status"></a>

@@ -188,6 +188,32 @@ ORDER BY t.slug ASC`, userID)
 	return out, rows.Err()
 }
 
+func (s *Store) ListTeamMemberships(ctx context.Context, teamSlug string) ([]TeamMembership, error) {
+	teamSlug = NormalizeTeamSlug(teamSlug)
+	rows, err := s.db.QueryContext(ctx, `
+SELECT t.id, t.slug, t.display_name, COALESCE(n.namespace, ''), tm.user_id::text, u.email, tm.role, tm.created_at
+FROM team_memberships tm
+JOIN teams t ON t.id = tm.team_id AND t.deleted_at IS NULL
+JOIN users u ON u.id = tm.user_id AND u.deleted_at IS NULL
+LEFT JOIN namespaces n ON n.team_id = t.id AND n.deleted_at IS NULL AND COALESCE(n.scope, 'team') = 'team'
+WHERE t.slug = $1 AND tm.deleted_at IS NULL
+ORDER BY u.email ASC`, teamSlug)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]TeamMembership, 0)
+	for rows.Next() {
+		var membership TeamMembership
+		if err := rows.Scan(&membership.TeamID, &membership.TeamSlug, &membership.TeamName, &membership.TeamNamespace, &membership.UserID, &membership.Email, &membership.Role, &membership.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, membership)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) GetTeamBySlug(ctx context.Context, slug string) (Team, bool, error) {
 	slug = NormalizeTeamSlug(slug)
 	var team Team

@@ -36,6 +36,41 @@ func NewWithManager(mgr *Manager) *cobra.Command {
 	}
 	createCmd.Flags().StringVar(&name, "name", "", "Display name for the team (defaults to slug)")
 
+	var userEmail string
+	var userUsername string
+	var userPassword string
+	var userRole string
+	userCmd := &cobra.Command{
+		Use:   "user",
+		Short: "Manage password-login users for a team",
+	}
+	userCreateCmd := &cobra.Command{
+		Use:   "create [team-slug]",
+		Short: "Create or update a password-login user and add them to a team",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			email, err := core.ResolveEmailAlias(userEmail, userUsername)
+			if err != nil {
+				return err
+			}
+			return mgr.CreateTeamUser(args[0], email, userPassword, userRole)
+		},
+	}
+	userCreateCmd.Flags().StringVar(&userEmail, "email", "", "Platform account email")
+	userCreateCmd.Flags().StringVar(&userUsername, "username", "", "Alias for --email")
+	userCreateCmd.Flags().StringVar(&userPassword, "password", "", "Platform account password (prefer a private shell or environment-managed invocation)")
+	userCreateCmd.Flags().StringVar(&userRole, "role", "member", "Team role for the user: member or owner")
+
+	userListCmd := &cobra.Command{
+		Use:   "list [team-slug]",
+		Short: "List users in a team",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return mgr.ListTeamUsers(args[0])
+		},
+	}
+	userCmd.AddCommand(userCreateCmd, userListCmd)
+
 	initOpts := InitOptions{}
 	initCmd := &cobra.Command{
 		Use:   "init [slug]",
@@ -59,6 +94,6 @@ func NewWithManager(mgr *Manager) *cobra.Command {
 	initCmd.Flags().StringVar(&initOpts.TraefikServiceAccount, "traefik-service-account", "traefik", "Bundled Traefik ServiceAccount to bind in the team namespace")
 	initCmd.Flags().BoolVar(&initOpts.DryRun, "dry-run", false, "Print the generated namespace/RBAC manifest without applying or patching Traefik")
 
-	cmd.AddCommand(listCmd, createCmd, initCmd)
+	cmd.AddCommand(listCmd, createCmd, userCmd, initCmd)
 	return cmd
 }

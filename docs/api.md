@@ -325,7 +325,9 @@ POST /api/runtime/adapter/sessions     # Issue/reuse an adapter MCPAgentSession 
 GET  /api/runtime/teams                # Admin: all teams; user: caller memberships
 POST /api/runtime/teams                # Admin-only team + namespace provisioning
 GET  /api/runtime/teams/{team}         # Team metadata (admin/member)
+GET  /api/runtime/teams/{team}/members # List team memberships (admin/member)
 POST /api/runtime/teams/{team}/members # Admin/team-owner membership upsert
+POST /api/runtime/teams/{team}/users   # Admin-only password user create/update + team membership
 DELETE /api/runtime/teams/{team}/members/{userID}
 GET  /api/runtime/namespaces           # Allowed namespaces + org catalog metadata
 GET  /api/runtime/namespaces/{namespace}

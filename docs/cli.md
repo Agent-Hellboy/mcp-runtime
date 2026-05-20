@@ -53,7 +53,7 @@ mcp-runtime <group> <subcommand> --help
 | `registry` | Inspect the internal registry, configure an external one, push images. | `status`, `info`, `provision`, `push` |
 | `server` | Manage `MCPServer` resources and operator-facing actions. | `list`, `get`, `create`, `apply`, `deploy`, `export`, `patch`, `delete`, `logs`, `status`, `policy inspect`, `build image` |
 | `access` | Manage `MCPAccessGrant` and `MCPAgentSession` resources that feed the gateway policy layer. | `grant list/get/apply/delete/disable/enable`, `session list/get/apply/delete/revoke/unrevoke` |
-| `team` | Manage internal platform teams and Kubernetes team namespaces. | `list`, `create`, `init` |
+| `team` | Manage internal platform teams, team password users, and Kubernetes team namespaces. | `list`, `create`, `user list`, `user create`, `init` |
 | `sentinel` | Inspect and operate the bundled analytics, gateway, and observability stack. | `status`, `events`, `logs`, `port-forward`, `restart` |
 | `pipeline` | Generate `MCPServer` manifests from metadata and deploy them. | `generate`, `deploy` |
 | `status` | Aggregated platform health (cluster, registry, operator, servers, sentinel). | `status` |
@@ -162,6 +162,12 @@ mcp-runtime auth login \
   --email admin@example.com \
   --password '...'
 
+# `--username` is accepted as an alias for `--email`
+mcp-runtime auth login \
+  --api-url https://platform.example.com \
+  --username globex@example.com \
+  --password '...'
+
 # Record the platform registry host too
 mcp-runtime auth login \
   --api-url https://platform.example.com \
@@ -265,14 +271,22 @@ when inspecting or operating one team's policy resources.
 ```bash
 mcp-runtime team list
 mcp-runtime team create acme --name "Acme"
+mcp-runtime team user create globex \
+  --username globex@example.com \
+  --password '...' \
+  --role member
+mcp-runtime team user list globex
 mcp-runtime team init acme --group acme-mcp-admins
 mcp-runtime team init acme --dry-run
 ```
 
-`team list` and `team create` use the platform API, so run `auth login` or set
-platform API credentials first. `team create` creates a platform team and
-managed namespace, including quota/limits, default-deny NetworkPolicy, service
-account, and repo-managed Traefik watch wiring when bundled Traefik is present.
+`team list`, `team create`, and `team user` use the platform API, so run
+`auth login` or set platform API credentials first. `team create` creates a
+platform team and managed namespace, including quota/limits, default-deny
+NetworkPolicy, service account, and repo-managed Traefik watch wiring when
+bundled Traefik is present. `team user create` is admin-only. It creates or
+updates a password-login user and adds that user to the team as `member` or
+`owner`; use `auth login --username/--email --password` for the user login.
 
 `team init` uses local `kubectl`. It creates the team namespace, restricted
 workload service account, default quota and limits, default-deny NetworkPolicy,

@@ -10,6 +10,8 @@ let authPrincipal = null;
 let grantsCache = [];
 let sessionsCache = [];
 let userAPIKeysCache = [];
+let teamsCache = [];
+let teamMembersCache = [];
 let serversCache = [];
 let publishPolicyCache = null;
 let selectedServerKey = "";
@@ -27,6 +29,7 @@ let serverSearchQuery = "";
 let serverStatusFilter = "all";
 let selectedOperationsServerKey = "";
 let selectedUserAnalyticsServerKey = "";
+let selectedTeamSlug = "";
 let namespaceScopes = [];
 let selectedNamespace = defaults.namespace || "";
 
@@ -322,6 +325,8 @@ function initTabs() {
       } else if (target === "governance") {
         loadGrants();
         loadSessions();
+      } else if (target === "teams") {
+        loadTeams();
       } else if (target === "operations") {
         loadMCPOperations();
       } else if (target === "platform") {
@@ -939,6 +944,7 @@ async function logout() {
   resetDashboard();
   resetUserDashboard();
   resetGovernance();
+  resetTeams();
   resetUserAPIKeys();
   activateTab("servers");
   if (publicCatalogEnabled) {
@@ -996,6 +1002,8 @@ function loadActiveTab() {
   } else if (active === "governance") {
     loadGrants();
     loadSessions();
+  } else if (active === "teams") {
+    loadTeams();
   } else if (active === "operations") {
     loadMCPOperations();
   } else if (active === "platform") {
@@ -2556,6 +2564,232 @@ function initGovernance() {
   document.getElementById("session-filter")?.addEventListener("input", debouncedRenderSessions);
 }
 
+// Teams
+async function loadTeams() {
+  setInlineError("team-create-error");
+  setInlineError("team-user-error");
+  try {
+    const data = await fetchJSON("/runtime/teams");
+    teamsCache = Array.isArray(data.teams) ? data.teams : [];
+    if (!teamsCache.some((team) => team.slug === selectedTeamSlug)) {
+      selectedTeamSlug = teamsCache[0]?.slug || "";
+    }
+    renderTeams();
+    renderTeamSelect();
+    await loadTeamMembers();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    const message = `Failed to load teams: ${readErrorMessage(err, "request failed")}`;
+    teamsCache = [];
+    teamMembersCache = [];
+    renderTeams();
+    renderTeamSelect();
+    renderTeamMembers();
+    setInlineError("team-create-error", message);
+    showToast(message, "error");
+  }
+}
+
+async function loadTeamMembers() {
+  if (!selectedTeamSlug) {
+    teamMembersCache = [];
+    renderTeamMembers();
+    return;
+  }
+  try {
+    const data = await fetchJSON(`/runtime/teams/${encodePathSegment(selectedTeamSlug)}/members`);
+    teamMembersCache = Array.isArray(data.members) ? data.members : [];
+    renderTeamMembers();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    const message = `Failed to load team users: ${readErrorMessage(err, "request failed")}`;
+    teamMembersCache = [];
+    renderTeamMembers();
+    setInlineError("team-user-error", message);
+    showToast(message, "error");
+  }
+}
+
+function renderTeams() {
+  setText("teams-total", formatNumber(teamsCache.length));
+  setText("team-members-total", formatNumber(teamMembersCache.length));
+  setText("team-selected-count", selectedTeamSlug || "-");
+
+  const tbody = document.getElementById("teams-body");
+  if (!tbody) return;
+  if (!teamsCache.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No teams found.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  teamsCache.forEach((team) => {
+    const row = document.createElement("tr");
+    row.appendChild(createIdentityCell(team.name || team.slug || "-", team.slug || ""));
+    row.appendChild(createTextCell(team.namespace || "-"));
+    row.appendChild(createCodeCell(team.id || "-"));
+    row.appendChild(createTextCell(formatDateTime(team.created_at)));
+    row.addEventListener("click", () => {
+      selectedTeamSlug = team.slug || "";
+      renderTeamSelect();
+      loadTeamMembers();
+    });
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderTeamSelect() {
+  const select = document.getElementById("team-user-team");
+  if (!select) return;
+  select.innerHTML = "";
+  if (!teamsCache.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No teams";
+    select.appendChild(option);
+    select.disabled = true;
+    return;
+  }
+  teamsCache.forEach((team) => {
+    const option = document.createElement("option");
+    option.value = team.slug || "";
+    option.textContent = `${team.slug || "-"} / ${team.namespace || "-"}`;
+    select.appendChild(option);
+  });
+  select.disabled = false;
+  select.value = selectedTeamSlug;
+}
+
+function renderTeamMembers() {
+  setText("team-members-total", formatNumber(teamMembersCache.length));
+  setText("team-selected-count", selectedTeamSlug || "-");
+
+  const tbody = document.getElementById("team-members-body");
+  if (!tbody) return;
+  if (!selectedTeamSlug) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">Select a team.</td></tr>';
+    return;
+  }
+  if (!teamMembersCache.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No users in this team.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  teamMembersCache.forEach((member) => {
+    const row = document.createElement("tr");
+    row.appendChild(createIdentityCell(member.email || member.user_id || "-", member.team_slug || selectedTeamSlug));
+    row.appendChild(createBadgeCell(member.role || "member", member.role === "owner" ? "badge-warning" : "badge-muted"));
+    row.appendChild(createCodeCell(member.user_id || "-"));
+    row.appendChild(createTextCell(formatDateTime(member.created_at)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+async function createTeam(event) {
+  event.preventDefault();
+  const submit = event.submitter;
+  if (submit?.disabled) return;
+  const slug = fieldValue("team-create-slug");
+  const name = fieldValue("team-create-name");
+  setInlineError("team-create-error");
+  if (!slug) {
+    const message = "Team slug is required.";
+    setInlineError("team-create-error", message);
+    showToast(message, "warning");
+    return;
+  }
+  if (submit) submit.disabled = true;
+  try {
+    await fetchJSON("/runtime/teams", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, name }),
+    });
+    showToast(`Team "${slug}" created`);
+    selectedTeamSlug = slug;
+    document.getElementById("team-create-form")?.reset();
+    await loadNamespaceScopes();
+    await loadTeams();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    const message = `Failed to create team: ${readErrorMessage(err, "request failed")}`;
+    setInlineError("team-create-error", message);
+    showToast(message, "error");
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+}
+
+async function createTeamUser(event) {
+  event.preventDefault();
+  const submit = event.submitter;
+  if (submit?.disabled) return;
+  const team = fieldValue("team-user-team") || selectedTeamSlug;
+  const email = fieldValue("team-user-email");
+  const password = document.getElementById("team-user-password")?.value || "";
+  const role = fieldValue("team-user-role") || "member";
+  setInlineError("team-user-error");
+  if (!team || !email || !password.trim()) {
+    const message = "Team, email, and password are required.";
+    setInlineError("team-user-error", message);
+    showToast(message, "warning");
+    return;
+  }
+  if (submit) submit.disabled = true;
+  try {
+    await fetchJSON(`/runtime/teams/${encodePathSegment(team)}/users`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, role }),
+    });
+    showToast(`User "${email}" added to ${team}`);
+    selectedTeamSlug = team;
+    const passwordInput = document.getElementById("team-user-password");
+    if (passwordInput) passwordInput.value = "";
+    await loadTeamMembers();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    const message = `Failed to create team user: ${readErrorMessage(err, "request failed")}`;
+    setInlineError("team-user-error", message);
+    showToast(message, "error");
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+}
+
+function resetTeams() {
+  teamsCache = [];
+  teamMembersCache = [];
+  selectedTeamSlug = "";
+  setText("teams-total", "-");
+  setText("team-members-total", "-");
+  setText("team-selected-count", "-");
+  setInlineError("team-create-error");
+  setInlineError("team-user-error");
+  const teamsBody = document.getElementById("teams-body");
+  if (teamsBody) {
+    teamsBody.innerHTML = '<tr><td colspan="4" class="empty">No teams found.</td></tr>';
+  }
+  const membersBody = document.getElementById("team-members-body");
+  if (membersBody) {
+    membersBody.innerHTML = '<tr><td colspan="4" class="empty">Select a team.</td></tr>';
+  }
+  renderTeamSelect();
+}
+
+function initTeams() {
+  document.getElementById("refresh-teams")?.addEventListener("click", loadTeams);
+  document.getElementById("team-create-form")?.addEventListener("submit", createTeam);
+  document.getElementById("team-user-form")?.addEventListener("submit", createTeamUser);
+  document.getElementById("team-user-team")?.addEventListener("change", (event) => {
+    selectedTeamSlug = event.target.value || "";
+    loadTeamMembers();
+  });
+}
+
 // User API Keys
 async function loadUserAPIKeys(options = {}) {
   if (!options.preserveOneTime) {
@@ -3362,6 +3596,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initTabs();
   initDashboard();
   initGovernance();
+  initTeams();
   initUserAPIKeys();
   initOperations();
   initPlatform();

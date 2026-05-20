@@ -164,6 +164,43 @@ func TestStaticAppDefaultsAdminsToAllNamespaceGovernance(t *testing.T) {
 	}
 }
 
+func TestStaticAppIncludesAdminTeamsView(t *testing.T) {
+	index, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(index)
+	for _, want := range []string{
+		`id="tab-button-teams"`,
+		`id="tab-teams"`,
+		`id="team-create-form"`,
+		`id="team-user-form"`,
+		`id="team-user-password"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("teams view missing %q", want)
+		}
+	}
+
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`loadTeams()`,
+		`fetchJSON("/runtime/teams")`,
+		"`/runtime/teams/${encodePathSegment(selectedTeamSlug)}/members`",
+		"`/runtime/teams/${encodePathSegment(team)}/users`",
+		`document.getElementById("team-user-password")?.value || ""`,
+		`function initTeams()`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("teams app missing %q", want)
+		}
+	}
+}
+
 func TestStaticAppHidesUserAPIKeysWithoutUserIdentity(t *testing.T) {
 	index, err := os.ReadFile("static/index.html")
 	if err != nil {

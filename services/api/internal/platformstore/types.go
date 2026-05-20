@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"strings"
 	"time"
+
+	"mcp-runtime/pkg/platform"
 )
 
 const (
@@ -110,15 +112,7 @@ type Team struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-type TeamMembership struct {
-	TeamID        string    `json:"team_id"`
-	TeamSlug      string    `json:"team_slug"`
-	TeamName      string    `json:"team_name"`
-	TeamNamespace string    `json:"team_namespace"`
-	UserID        string    `json:"user_id"`
-	Role          string    `json:"role"`
-	CreatedAt     time.Time `json:"created_at"`
-}
+type TeamMembership = platform.TeamMembership
 
 type APIKeySummary struct {
 	ID        string     `json:"id"`

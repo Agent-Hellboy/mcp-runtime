@@ -137,6 +137,61 @@ DO UPDATE SET user_id = EXCLUDED.user_id, password_hash = EXCLUDED.password_hash
 	return u, nil
 }
 
+// EnsureTeamPasswordUser ensures a regular password-login account exists for
+// team membership flows. Existing platform roles are preserved so an admin is
+// not accidentally demoted when they are added to a team.
+func (s *Store) EnsureTeamPasswordUser(ctx context.Context, email, password string) (User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	password = strings.TrimSpace(password)
+	if !validEmail(email) {
+		return User{}, errors.New("valid email required")
+	}
+	if len(password) < 12 {
+		return User{}, errors.New("password must be at least 12 characters")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	if err != nil {
+		return User{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var u User
+	err = tx.QueryRowContext(ctx, `
+SELECT u.id, u.email, u.role, ''
+FROM users u
+WHERE u.email = $1 AND u.deleted_at IS NULL`, email).
+		Scan(&u.ID, &u.Email, &u.Role, &u.Namespace)
+	if errors.Is(err, sql.ErrNoRows) {
+		u = User{ID: uuid.NewString(), Email: email, Role: RoleUser}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO users (id,email,role) VALUES ($1,$2,$3)`, u.ID, u.Email, u.Role); err != nil {
+			return User{}, err
+		}
+	} else if err != nil {
+		return User{}, err
+	}
+
+	if _, err = tx.ExecContext(ctx, `
+INSERT INTO auth_identities (user_id, provider, subject, password_hash)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (provider, subject)
+DO UPDATE SET user_id = EXCLUDED.user_id, password_hash = EXCLUDED.password_hash`, u.ID, passwordProvider, email, string(hash)); err != nil {
+		return User{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return User{}, err
+	}
+	return u, nil
+}
+
 func (s *Store) AuthenticatePassword(ctx context.Context, email, password string) (User, bool, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	var u User

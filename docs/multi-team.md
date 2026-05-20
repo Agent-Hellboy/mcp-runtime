@@ -43,6 +43,10 @@ through the platform-backed team command:
 ```bash
 mcp-runtime auth login --api-url https://platform.example.com
 mcp-runtime team create acme --name "Acme"
+mcp-runtime team user create acme \
+  --username acme-user@example.com \
+  --password '...' \
+  --role member
 mcp-runtime team list
 ```
 
@@ -54,6 +58,17 @@ watch entry. Platform API server writes into that namespace default
 default missing `subject.teamID` to the owning server team, but an explicit
 foreign `subject.teamID` is allowed so a team can delegate access to another
 team's principal.
+
+Use `team user create` as a platform admin when you need a local password-login
+user for a team. The command creates or updates the password identity, adds the
+user to the team as `member` or `owner`, and then the user can sign in with:
+
+```bash
+mcp-runtime auth login \
+  --api-url https://platform.example.com \
+  --username acme-user@example.com \
+  --password '...'
+```
 
 For direct Kubernetes administration, use `team init`:
 

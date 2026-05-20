@@ -58,11 +58,17 @@ func (s *RuntimeServer) HandleRuntimeTeamItemPath(w http.ResponseWriter, r *http
 	case len(parts) == 1 && r.Method == http.MethodGet:
 		s.handleRuntimeTeamGet(w, r, p, teamSlug)
 		return
+	case len(parts) == 2 && parts[1] == "members" && r.Method == http.MethodGet:
+		s.handleRuntimeTeamMemberList(w, r, p, teamSlug)
+		return
 	case len(parts) == 2 && parts[1] == "members" && r.Method == http.MethodPost:
 		s.handleRuntimeTeamMemberUpsert(w, r, p, teamSlug)
 		return
 	case len(parts) == 3 && parts[1] == "members" && r.Method == http.MethodDelete:
 		s.handleRuntimeTeamMemberDelete(w, r, p, teamSlug, strings.TrimSpace(parts[2]))
+		return
+	case len(parts) == 2 && parts[1] == "users" && r.Method == http.MethodPost:
+		s.handleRuntimeTeamUserCreate(w, r, p, teamSlug)
 		return
 	default:
 		w.Header().Set("allow", "GET, POST, DELETE")
@@ -300,6 +306,21 @@ func (s *RuntimeServer) handleRuntimeTeamCreate(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, map[string]any{"team": team})
 }
 
+func (s *RuntimeServer) handleRuntimeTeamMemberList(w http.ResponseWriter, r *http.Request, p principal, teamSlug string) {
+	if p.Role != roleAdmin && p.TeamRole(teamSlug) == "" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	memberships, err := s.platform.ListTeamMemberships(ctx, teamSlug)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list team members"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"members": memberships})
+}
+
 func (s *RuntimeServer) handleRuntimeTeamMemberUpsert(w http.ResponseWriter, r *http.Request, p principal, teamSlug string) {
 	if p.Role != roleAdmin && p.TeamRole(teamSlug) != teamRoleOwner {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
@@ -326,6 +347,67 @@ func (s *RuntimeServer) handleRuntimeTeamMemberUpsert(w http.ResponseWriter, r *
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"membership": membership})
+}
+
+func (s *RuntimeServer) handleRuntimeTeamUserCreate(w http.ResponseWriter, r *http.Request, p principal, teamSlug string) {
+	if p.Role != roleAdmin {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required"})
+		return
+	}
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		Role     string `json:"role"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, teamApplyMaxBytes)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeBodyDecodeError(w, err)
+		return
+	}
+	membershipRole := strings.ToLower(strings.TrimSpace(req.Role))
+	if membershipRole == "" {
+		membershipRole = teamRoleMember
+	}
+	if membershipRole != teamRoleMember && membershipRole != teamRoleOwner {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "role must be member or owner"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if _, ok, err := s.platform.GetTeamBySlug(ctx, teamSlug); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch team"})
+		return
+	} else if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "team not found"})
+		return
+	}
+	u, err := s.platform.EnsureTeamPasswordUser(ctx, req.Email, req.Password)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	membership, err := s.platform.UpsertTeamMembership(ctx, teamSlug, u.ID, membershipRole)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "team or user not found"})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	membership.Email = u.Email
+	s.writeAudit(r.Context(), auditEvent{
+		UserID:       p.UserID(),
+		Action:       "team_user_create",
+		Resource:     u.Email,
+		Namespace:    membership.TeamNamespace,
+		Status:       "success",
+		Message:      "team=" + membership.TeamSlug + " role=" + membership.Role,
+		ActorIP:      requestIP(r),
+		Source:       auditSource(r, p),
+		AuthIdentity: auditIdentityLabel(p),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"user": u, "membership": membership})
 }
 
 func (s *RuntimeServer) handleRuntimeTeamMemberDelete(w http.ResponseWriter, r *http.Request, p principal, teamSlug, userID string) {

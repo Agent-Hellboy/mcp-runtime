@@ -76,6 +76,18 @@
           Dashboard
         </button>
         <button
+          id="tab-button-teams"
+          class="tab"
+          data-tab="teams"
+          data-admin-only="true"
+          role="tab"
+          type="button"
+          aria-controls="tab-teams"
+          aria-selected="false"
+        >
+          Teams
+        </button>
+        <button
           id="tab-button-governance"
           class="tab"
           data-tab="governance"
@@ -340,6 +352,130 @@
                 </tr>
               </tbody>
             </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Teams Tab -->
+      <section
+        id="tab-teams"
+        class="tab-content"
+        data-admin-only="true"
+        role="tabpanel"
+        aria-labelledby="tab-button-teams"
+        hidden
+      >
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <span class="metric-label">Teams</span>
+            <strong class="metric-value" id="teams-total">-</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Members</span>
+            <strong class="metric-value" id="team-members-total">-</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Selected</span>
+            <strong class="metric-value" id="team-selected-count">-</strong>
+          </div>
+        </div>
+
+        <div class="ops-two-column">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Teams</h2>
+                <p class="panel-kicker">Tenant namespaces and team identities.</p>
+              </div>
+              <div class="panel-actions">
+                <button class="ghost" id="refresh-teams" type="button">Refresh</button>
+              </div>
+            </div>
+            <form class="governance-form" id="team-create-form">
+              <div class="form-grid">
+                <label>
+                  Slug
+                  <input type="text" id="team-create-slug" autocomplete="off" required />
+                </label>
+                <label>
+                  Name
+                  <input type="text" id="team-create-name" autocomplete="off" />
+                </label>
+              </div>
+              <p id="team-create-error" class="form-error hidden" role="alert"></p>
+              <div class="form-actions">
+                <button class="primary" type="submit">Create Team</button>
+              </div>
+            </form>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Team</th>
+                    <th>Namespace</th>
+                    <th>ID</th>
+                    <th>Created</th>
+                  </tr>
+                </thead>
+                <tbody id="teams-body">
+                  <tr>
+                    <td colspan="4" class="empty">Loading teams...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Team Users</h2>
+                <p class="panel-kicker">Password-login users and team membership.</p>
+              </div>
+              <div class="panel-actions">
+                <select id="team-user-team" aria-label="Select team"></select>
+              </div>
+            </div>
+            <form class="governance-form" id="team-user-form">
+              <div class="form-grid">
+                <label>
+                  Email
+                  <input type="email" id="team-user-email" autocomplete="username" required />
+                </label>
+                <label>
+                  Password
+                  <input type="password" id="team-user-password" autocomplete="new-password" required />
+                </label>
+                <label>
+                  Team Role
+                  <select id="team-user-role">
+                    <option value="member" selected>member</option>
+                    <option value="owner">owner</option>
+                  </select>
+                </label>
+              </div>
+              <p id="team-user-error" class="form-error hidden" role="alert"></p>
+              <div class="form-actions">
+                <button class="primary" type="submit">Create User</button>
+              </div>
+            </form>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Role</th>
+                    <th>User ID</th>
+                    <th>Added</th>
+                  </tr>
+                </thead>
+                <tbody id="team-members-body">
+                  <tr>
+                    <td colspan="4" class="empty">Select a team.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>

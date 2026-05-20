@@ -87,6 +87,50 @@ func (m *Manager) CreateTeam(slug, name string) error {
 	return nil
 }
 
+func (m *Manager) ListTeamUsers(slug string) error {
+	client, err := platformapi.NewPlatformClient()
+	if err != nil {
+		return err
+	}
+	members, err := client.ListTeamMembers(context.Background(), strings.TrimSpace(slug))
+	if err != nil {
+		return err
+	}
+
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "EMAIL\tUSER ID\tROLE\tTEAM\tNAMESPACE")
+	for _, member := range members {
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", member.Email, member.UserID, member.Role, member.TeamSlug, member.TeamNamespace)
+	}
+	_ = tw.Flush()
+	return nil
+}
+
+func (m *Manager) CreateTeamUser(slug, email, password, role string) error {
+	client, err := platformapi.NewPlatformClient()
+	if err != nil {
+		return err
+	}
+	slug = strings.TrimSpace(slug)
+	email = strings.TrimSpace(email)
+	role = strings.TrimSpace(role)
+	if email == "" {
+		return errors.New("email is required (use --email or --username)")
+	}
+	if strings.TrimSpace(password) == "" {
+		return errors.New("password is required")
+	}
+	if role == "" {
+		role = "member"
+	}
+	member, err := client.CreateTeamUser(context.Background(), slug, email, password, role)
+	if err != nil {
+		return err
+	}
+	core.Success(fmt.Sprintf("Ensured user %s in team %s as %s", member.Email, member.TeamSlug, member.Role))
+	return nil
+}
+
 func (m *Manager) InitTeam(opts InitOptions) error {
 	normalized, err := normalizeInitOptions(opts)
 	if err != nil {
