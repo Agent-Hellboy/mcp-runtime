@@ -60,10 +60,10 @@ Added: 2026-05-12
 ### Bundled registry TLS does not configure node trust
 
 `setup --registry-mode bundled-https` makes the registry pod serve HTTPS
-and creates the `cert-manager/mcp-runtime-ca` Secret when the built-in issuer is used,
-but kubelet still pulls through the node's container runtime. Nodes must
-be able to resolve or mirror the registry host and trust the issuing CA; the
-cluster-side Secret, Certificate, and Service changes alone do not update
+and renders platform image refs with a stable internal registry host, but
+kubelet still pulls through the node's container runtime. Nodes must be
+able to resolve or mirror that image host and trust the issuing CA; the
+cluster-side Certificate and Service changes alone do not update
 containerd, k3s, Docker, or host DNS.
 
 References:
@@ -74,10 +74,27 @@ Added: 2026-05-20
 
 ---
 
-### Workspace assistant sample image is distroless — no shell
+### Preserve `subject.teamID` on platform access applies
 
-`kubectl exec -it <pod> -c workspace-assistant-mcp -- /bin/sh` fails on the
-workspace assistant sample because the image is distroless. Same caveat
+When `mcp-runtime access grant apply --file ...` or `session apply` goes
+through the platform API, the CLI must copy `spec.subject.teamID` into the
+API body. Cross-team adapter tests rely on an explicit foreign team subject;
+dropping it makes the platform default back to the server-owning team and the
+grant no longer proves delegated access.
+
+References:
+- `internal/cli/platformapi/client.go:432`
+- `internal/cli/platformapi/client.go:451`
+- `docs/multi-team.md:57`
+
+Added: 2026-05-20
+
+---
+
+### Bundled Go example image is distroless — no shell
+
+`kubectl exec -it <pod> -c go-example-mcp -- /bin/sh` fails on the
+bundled Go MCP example because the image is distroless. Same caveat
 applies to several other runtime images. Use `kubectl logs`, `kubectl
 describe`, or `kubectl debug --image=busybox:1.36 --target=<container>`
 to inspect the pod namespace instead of expecting an interactive shell.
