@@ -9,7 +9,7 @@ The shortest path from an empty Kubernetes cluster to a governed MCP endpoint: i
 - Docker or a Docker-compatible client, with the daemon running and reachable
 - `kubectl` on `PATH`, configured for the target cluster
 - `curl`, `jq`, and `python3` for documented dev and traffic-generation flows
-- A Kubernetes cluster (k3s, kind, minikube, Docker Desktop Kubernetes, EKS — see [cluster-readiness.md](cluster-readiness.md) for distribution-specific prep)
+- A Kubernetes cluster (k3s, kind, minikube, Docker Desktop Kubernetes, EKS, GKE, AKS, or equivalent). If you are choosing a target, start with [Deployment Targets](deployment-targets.md), then use [Cluster Readiness](cluster-readiness.md) for distribution-specific prep.
 
 Host bootstrap:
 
@@ -37,6 +37,8 @@ This produces `./bin/mcp-runtime`.
 
 Before setup, confirm the target Kubernetes cluster is ready for registry
 pushes, image pulls, ingress, storage, and TLS. See
+[Deployment Targets](deployment-targets.md) to choose the right install shape
+for self-managed or managed Kubernetes, then
 [cluster-readiness.md](cluster-readiness.md) for distribution-specific
 preparation.
 
@@ -62,12 +64,14 @@ This page now branches on purpose:
 | Path | Use it when | Start here |
 |---|---|---|
 | Local development | You are working on the repo, using Kind, or validating changes with disposable infra | [Contributor test-mode cluster](#4-contributor-test-mode-cluster) |
+| Target selection | You are deciding between k3s, kubeadm, EKS, GKE, AKS, or another distribution | [Deployment Targets](deployment-targets.md) |
 | Production-style install | You are evaluating or deploying MCP Runtime on a shared, persistent, or externally reachable cluster | [Production-style install](#5-production-style-install) |
 
 The rest of this page keeps both flows in one place, but the detailed
 contributor runbooks still live under [docs/contributor/](contributor/README.md)
-and the distribution-specific production prerequisites still live in
-[cluster-readiness.md](cluster-readiness.md).
+the deployment target guide lives in
+[deployment-targets.md](deployment-targets.md), and the distribution-specific
+production prerequisites still live in [cluster-readiness.md](cluster-readiness.md).
 
 ## 4. Contributor test-mode cluster
 
@@ -346,6 +350,7 @@ Before `setup`, make these decisions explicitly:
 
 Read these first:
 
+- [Deployment Targets](deployment-targets.md)
 - [Cluster readiness](cluster-readiness.md)
 - [Sentinel Kubernetes awareness and hardening](sentinel.md#kubernetes-awareness-and-hardening)
 - [Multi-team isolation](multi-team.md) if multiple teams will publish or govern servers on one cluster

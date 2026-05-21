@@ -8,7 +8,10 @@ If you skip this, you'll typically see:
 - The operator pod goes to `ImagePullBackOff` with `10.43.x.x:5000: connection refused` or `no such host`.
 - MCPServer pods get stuck in `ImagePullBackOff` pulling `registry.local/<server-name>`.
 
-This document lists what each distribution needs before you run `setup`.
+This document lists what each distribution needs before you run `setup`. If you
+are still choosing where to deploy the platform, start with
+[Deployment Targets](deployment-targets.md), then return here for the exact
+registry, DNS, TLS, and node-runtime preparation.
 
 ---
 
