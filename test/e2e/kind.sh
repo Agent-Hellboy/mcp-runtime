@@ -282,6 +282,10 @@ server_proxy_paths_selected() {
   scenario_selected "trust" || scenario_selected "observability"
 }
 
+oauth_proxy_paths_selected() {
+  scenario_selected "oauth" || scenario_selected "observability"
+}
+
 deep_request_flows_enabled() {
   case "${E2E_DEEP_REQUEST_FLOWS}" in
     1|true|TRUE|yes|YES|on|ON)
@@ -3923,40 +3927,51 @@ spec:
       decision: allow
 EOF
   
-  echo "[oauth] starting local ingress proxies"
+  OAUTH_PROXY_UPSTREAM_ORIGIN="http://127.0.0.1:${TRAEFIK_PORT}"
+  OAUTH_HEADER_PROXY_ARGS=(--host-header "${OAUTH_SERVER_HOST}")
+  if oauth_proxy_paths_selected; then
+    port_forward_bg mcp-servers "${OAUTH_SERVER_NAME}" "${OAUTH_PROXY_PORT}" 80 "${WORKDIR}/oauth-proxy-port-forward.log"
+    wait_port "${OAUTH_PROXY_PORT}"
+    OAUTH_PROXY_UPSTREAM_ORIGIN="http://127.0.0.1:${OAUTH_PROXY_PORT}"
+    OAUTH_HEADER_PROXY_ARGS=()
+  fi
+  if scenario_selected "observability"; then
+    port_forward_resource_bg mcp-servers "deployment/${OAUTH_SERVER_NAME}" "${OAUTH_UPSTREAM_PORT}" 8090 "${WORKDIR}/oauth-upstream-port-forward.log"
+    wait_port "${OAUTH_UPSTREAM_PORT}"
+  fi
+
+  echo "[oauth] starting local OAuth proxies"
   # mcp_header_proxy.py uses NAME=VALUE syntax: the part after the first '='
   # becomes the HTTP header value, so "Authorization=Bearer <token>" sets the
   # Authorization header to "Bearer <token>" (not "=Bearer <token>").
   start_header_proxy_bg "${MCP_CURL_OAUTH_ANON_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
+  "${OAUTH_PROXY_UPSTREAM_ORIGIN}" \
   "${WORKDIR}/mcp-curl-oauth-anon-proxy.log" \
-  --host-header "${OAUTH_SERVER_HOST}" \
+  "${OAUTH_HEADER_PROXY_ARGS[@]}" \
   --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
   start_header_proxy_bg "${MCP_CURL_OAUTH_INVALID_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
+  "${OAUTH_PROXY_UPSTREAM_ORIGIN}" \
   "${WORKDIR}/mcp-curl-oauth-invalid-proxy.log" \
-  --host-header "${OAUTH_SERVER_HOST}" \
+  "${OAUTH_HEADER_PROXY_ARGS[@]}" \
   --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
   --header "Authorization=Bearer ${OAUTH_INVALID_TOKEN}"
   start_header_proxy_bg "${MCP_CURL_OAUTH_VALID_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
+  "${OAUTH_PROXY_UPSTREAM_ORIGIN}" \
   "${WORKDIR}/mcp-curl-oauth-valid-proxy.log" \
-  --host-header "${OAUTH_SERVER_HOST}" \
+  "${OAUTH_HEADER_PROXY_ARGS[@]}" \
   --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
   --header "Authorization=Bearer ${OAUTH_VALID_TOKEN}"
   
   wait_port "${MCP_CURL_OAUTH_ANON_PORT}"
   wait_port "${MCP_CURL_OAUTH_INVALID_PORT}"
   wait_port "${MCP_CURL_OAUTH_VALID_PORT}"
-  if scenario_selected "observability"; then
-    port_forward_bg mcp-servers "${OAUTH_SERVER_NAME}" "${OAUTH_PROXY_PORT}" 80 "${WORKDIR}/oauth-proxy-port-forward.log"
-    port_forward_resource_bg mcp-servers "deployment/${OAUTH_SERVER_NAME}" "${OAUTH_UPSTREAM_PORT}" 8090 "${WORKDIR}/oauth-upstream-port-forward.log"
-    wait_port "${OAUTH_PROXY_PORT}"
-    wait_port "${OAUTH_UPSTREAM_PORT}"
-  fi
 
   OAUTH_INGRESS_PATH="/${OAUTH_SERVER_NAME}/mcp"
-  MCP_OAUTH_DIRECT_URL="http://127.0.0.1:${TRAEFIK_PORT}${OAUTH_INGRESS_PATH}"
+  MCP_OAUTH_DIRECT_ORIGIN="http://127.0.0.1:${TRAEFIK_PORT}"
+  if oauth_proxy_paths_selected; then
+    MCP_OAUTH_DIRECT_ORIGIN="http://127.0.0.1:${OAUTH_PROXY_PORT}"
+  fi
+  MCP_OAUTH_DIRECT_URL="${MCP_OAUTH_DIRECT_ORIGIN}${OAUTH_INGRESS_PATH}"
   MCP_OAUTH_ANON_URL="http://127.0.0.1:${MCP_CURL_OAUTH_ANON_PORT}${OAUTH_INGRESS_PATH}"
   MCP_OAUTH_INVALID_URL="http://127.0.0.1:${MCP_CURL_OAUTH_INVALID_PORT}${OAUTH_INGRESS_PATH}"
   MCP_OAUTH_VALID_URL="http://127.0.0.1:${MCP_CURL_OAUTH_VALID_PORT}${OAUTH_INGRESS_PATH}"
