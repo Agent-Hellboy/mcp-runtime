@@ -3530,8 +3530,12 @@ print('adapter-session reused:', resp['name'])
     ADAPTER_PROXY_PID="$!"
     PIDS+=("${ADAPTER_PROXY_PID}")
     wait_managed_port "${ADAPTER_PROXY_PORT}" "${ADAPTER_PROXY_PID}" "${ADAPTER_PROXY_LOG}" "adapter proxy"
-    wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "aaa-ping" '{}' 200 "pong" 30
-    wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "add" '{"a":1,"b":2}' 403 "tool_not_granted" 15
+    # The adapter session is rendered through the policy ConfigMap, then the
+    # gateway observes the mounted file on its next kubelet/poll interval.
+    # Reuse the normal policy wait budget here; CI can take longer than a
+    # short smoke retry after the ConfigMap has already been updated.
+    wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "aaa-ping" '{}' 200 "pong"
+    wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "add" '{"a":1,"b":2}' 403 "tool_not_granted"
   fi
 fi
 
