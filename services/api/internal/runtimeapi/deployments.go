@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
 
 	"mcp-runtime/pkg/kubeworkload"
 	"mcp-runtime/pkg/publishscope"
@@ -770,28 +771,36 @@ func traefikDeploymentHasNamespaceWatchArg(ctx context.Context, client kubernete
 }
 
 func ensureTraefikDeploymentWatchesNamespace(ctx context.Context, client kubernetes.Interface, namespace string, cfg teamTraefikWatchConfig) error {
-	deployment, err := client.AppsV1().Deployments(cfg.namespace).Get(ctx, cfg.deployment, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-	containerIndex, argIndex, argValue, ok := traefikNamespaceWatchArg(deployment)
-	if !ok {
-		if cfg.mode == "auto" {
-			return nil
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		deployment, err := client.AppsV1().Deployments(cfg.namespace).Get(ctx, cfg.deployment, metav1.GetOptions{})
+		if err != nil {
+			return err
 		}
-		return errors.New("traefik deployment does not expose --providers.kubernetesingress.namespaces")
-	}
-	watched := splitCSV(strings.TrimPrefix(argValue, traefikNamespaceWatchArgPrefix))
-	for _, watchedNamespace := range watched {
-		if watchedNamespace == namespace {
-			return nil
+		containerIndex, argIndex, argValue, ok := traefikNamespaceWatchArg(deployment)
+		if !ok {
+			if cfg.mode == "auto" {
+				return nil
+			}
+			return errors.New("traefik deployment does not expose --providers.kubernetesingress.namespaces")
 		}
-	}
-	watched = append(watched, namespace)
-	updated := deployment.DeepCopy()
-	updated.Spec.Template.Spec.Containers[containerIndex].Args[argIndex] = traefikNamespaceWatchArgPrefix + strings.Join(watched, ",")
-	_, err = client.AppsV1().Deployments(cfg.namespace).Update(ctx, updated, metav1.UpdateOptions{})
-	return err
+		watched := splitCSV(strings.TrimPrefix(argValue, traefikNamespaceWatchArgPrefix))
+		for _, watchedNamespace := range watched {
+			if watchedNamespace == namespace {
+				return nil
+			}
+		}
+		watched = append(watched, namespace)
+		updated := deployment.DeepCopy()
+		updated.Spec.Template.Spec.Containers[containerIndex].Args[argIndex] = traefikNamespaceWatchArgPrefix + strings.Join(watched, ",")
+		_, err = client.AppsV1().Deployments(cfg.namespace).Update(ctx, updated, metav1.UpdateOptions{})
+		if apierrors.IsConflict(err) {
+			return err
+		}
+		if err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 const traefikNamespaceWatchArgPrefix = "--providers.kubernetesingress.namespaces="

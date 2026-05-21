@@ -164,9 +164,9 @@ check(
 expect_status(f"{gateway_base}/app.js", 200, contains="const apiBase")
 expect_status(f"{gateway_base}/styles.css", 200, contains=".canvas")
 expect_status(f"{gateway_base}/grafana/api/health", 401)
-expect_status(f"{gateway_base}/prometheus/-/healthy", 401)
+expect_status(f"{gateway_base}/prometheus/-/healthy", 404)
 expect_status(f"{gateway_base}/grafana/api/health", 200, headers=auth_headers, contains="database")
-expect_status(f"{gateway_base}/prometheus/-/healthy", 200, headers=auth_headers, contains="Healthy")
+expect_status(f"{gateway_base}/prometheus/-/healthy", 404, headers=auth_headers)
 
 # Direct UI service.
 expect_status(f"{ui_base}/health", 200, contains='"ok":true')
@@ -870,7 +870,7 @@ if deep_request_flows:
         f"gateway admin-check failed: {gateway_admin_status} {gateway_admin_body}",
     )
     expect_status(f"{gateway_base}/grafana/api/health", 200, headers=gateway_cookie_headers, contains="database")
-    expect_status(f"{gateway_base}/prometheus/-/healthy", 200, headers=gateway_cookie_headers, contains="Healthy")
+    expect_status(f"{gateway_base}/prometheus/-/healthy", 404, headers=gateway_cookie_headers)
     gateway_logout = expect_json(f"{gateway_base}/auth/logout", method="POST", headers=gateway_cookie_headers)
     check(
         gateway_logout.get("authenticated") is False,
@@ -885,7 +885,7 @@ if deep_request_flows:
         "gateway:/auth/admin-check",
         "gateway:/auth/logout",
         "gateway:/grafana/api/health (UI cookie)",
-        "gateway:/prometheus/-/healthy (UI cookie)",
+        "gateway:/prometheus/-/healthy (hidden)",
         "api:/api/auth/login",
         "api:/api/auth/oidc",
         "api:/api/auth/signup",
@@ -955,7 +955,7 @@ for route in (
     "gateway:/app.js",
     "gateway:/styles.css",
     "gateway:/grafana/api/health",
-    "gateway:/prometheus/-/healthy",
+    "gateway:/prometheus/-/healthy (hidden)",
     "ingress:{server-host}:/{server}/mcp",
     "ingress:{oauth-host}:/{oauth-server}/mcp",
     "ingress:{oauth-host}:/.well-known/oauth-protected-resource/{oauth-server}/mcp",

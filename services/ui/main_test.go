@@ -393,6 +393,9 @@ func TestStaticMarkupIncludesPlatformRestartAndDialogReviewFixes(t *testing.T) {
 			t.Fatalf("index missing %q", want)
 		}
 	}
+	if strings.Contains(html, `href="/prometheus"`) {
+		t.Fatal("index should not link directly to the Prometheus UI")
+	}
 }
 
 func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {

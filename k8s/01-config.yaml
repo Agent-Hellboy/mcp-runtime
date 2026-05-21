@@ -29,5 +29,4 @@ data:
   MCP_CLUSTER_NAME: "local"
   # Dashboard observability links
   GRAFANA_URL: "/grafana"
-  PROMETHEUS_URL: "/prometheus"
   DASHBOARD_REFRESH_INTERVAL: "30"

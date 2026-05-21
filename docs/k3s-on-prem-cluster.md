@@ -64,7 +64,7 @@ secrets instead of `--acme-email`.
 Pick the public or internal traffic path before installing MCP Runtime. The
 platform expects the same three hostnames either way:
 
-- `platform.example.com` for the dashboard, API, Grafana, and Prometheus.
+- `platform.example.com` for the dashboard, API, and Grafana.
 - `registry.example.com` for OCI registry push and pull flows.
 - `mcp.example.com` for MCP server routes such as `/<server-name>/mcp`.
 

@@ -7,6 +7,19 @@ import (
 
 const testAnalyticsNS = "mcp-sentinel"
 
+func assertNoPrometheusRoute(t *testing.T, manifest, context string) {
+	t.Helper()
+	for _, unwanted := range []string{
+		"- path: /prometheus\n",
+		"name: prometheus",
+		"number: 9090",
+	} {
+		if strings.Contains(manifest, unwanted) {
+			t.Fatalf("%s must not contain %q:\n%s", context, unwanted, manifest)
+		}
+	}
+}
+
 func TestRenderPlatformUIIngressNoTLS(t *testing.T) {
 	got := RenderPlatformUIIngress("platform.example.com", "", testAnalyticsNS)
 	mustContain := []string{
@@ -18,14 +31,11 @@ func TestRenderPlatformUIIngressNoTLS(t *testing.T) {
 		`- host: "platform.example.com"`,
 		"- path: /api\n",
 		"- path: /grafana\n",
-		"- path: /prometheus\n",
 		"- path: /\n",
 		"name: mcp-sentinel-ui",
 		"name: grafana",
-		"name: prometheus",
 		"number: 8082",
 		"number: 3000",
-		"number: 9090",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(got, want) {
@@ -40,6 +50,7 @@ func TestRenderPlatformUIIngressNoTLS(t *testing.T) {
 			t.Fatalf("manifest must not contain %q (redirect ingress only emitted with TLS):\n%s", unwanted, got)
 		}
 	}
+	assertNoPrometheusRoute(t, got, "manifest")
 	if strings.Contains(got, "tls:") {
 		t.Fatalf("did not expect a TLS block when issuer is empty:\n%s", got)
 	}
@@ -102,9 +113,6 @@ func TestRenderPlatformObservabilityIngressShape(t *testing.T) {
 		"- path: /grafana\n",
 		"name: grafana",
 		"number: 3000",
-		"- path: /prometheus\n",
-		"name: prometheus",
-		"number: 9090",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(tail, want) {
@@ -114,6 +122,7 @@ func TestRenderPlatformObservabilityIngressShape(t *testing.T) {
 	if strings.Contains(tail, "cert-manager.io/cluster-issuer") {
 		t.Fatalf("observability ingress must not request a certificate:\n%s", tail)
 	}
+	assertNoPrometheusRoute(t, tail, "observability ingress")
 }
 
 func TestRenderPlatformObservabilityIngressWithTLS(t *testing.T) {
@@ -136,8 +145,6 @@ func TestRenderPlatformObservabilityIngressWithTLS(t *testing.T) {
 		`- host: "platform.mcpruntime.org"`,
 		"- path: /grafana\n",
 		"name: grafana",
-		"- path: /prometheus\n",
-		"name: prometheus",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(tail, want) {
@@ -147,6 +154,7 @@ func TestRenderPlatformObservabilityIngressWithTLS(t *testing.T) {
 	if strings.Contains(tail, "cert-manager.io/cluster-issuer") {
 		t.Fatalf("observability ingress must not request a certificate:\n%s", tail)
 	}
+	assertNoPrometheusRoute(t, tail, "TLS observability ingress")
 }
 
 func TestRenderPlatformUIIngressHTTPRedirectShape(t *testing.T) {
