@@ -3,10 +3,6 @@ name: Security - Dependency Review
 on:
   pull_request:
     branches: [ "*" ]
-    paths-ignore:
-      - 'docs/**'
-      - 'website/**'
-      - 'README.md'
 
 permissions:
   contents: read

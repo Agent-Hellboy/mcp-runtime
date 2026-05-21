@@ -45,8 +45,6 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-24.04
-    needs: [changed-paths]
-    if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -78,8 +76,6 @@ jobs:
   test:
     name: Unit + Integration Tests
     runs-on: ubuntu-24.04
-    needs: [changed-paths]
-    if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -169,8 +165,7 @@ jobs:
   e2e-kind:
     name: Kind E2E
     runs-on: ubuntu-24.04
-    needs: [changed-paths, lint, test]
-    if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
+    needs: [lint, test]
     timeout-minutes: 90
     permissions:
       contents: read
@@ -239,7 +234,7 @@ jobs:
       - name: Run kind e2e
         env:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/.e2e-artifacts/kind
-          E2E_SCENARIOS: ${{ github.actor == 'dependabot[bot]' && 'smoke-auth,governance' || 'all' }}
+          E2E_SCENARIOS: smoke-auth,governance
           E2E_IMAGE_BUILD_PARALLELISM: "1"
           E2E_IMAGE_MIRROR_PARALLELISM: "1"
         run: bash test/e2e/kind.sh
@@ -255,8 +250,6 @@ jobs:
   benchmark:
     name: Benchmarks
     runs-on: ubuntu-24.04
-    needs: [changed-paths]
-    if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -274,8 +267,6 @@ jobs:
   generated-drift:
     name: Generated File Drift
     runs-on: ubuntu-24.04
-    needs: [changed-paths]
-    if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true' || needs.changed-paths.outputs.docs == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -303,8 +294,6 @@ jobs:
   sbom:
     name: SBOM
     runs-on: ubuntu-24.04
-    needs: [changed-paths]
-    if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

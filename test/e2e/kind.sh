@@ -12,6 +12,10 @@ set -euo pipefail
 # Supported values: all, smoke-auth, governance, trust, oauth, observability, multitenancy.
 # observability requires the full traffic suite: smoke-auth, governance, trust, oauth.
 #
+# Set E2E_DEEP_REQUEST_FLOWS=1 for pre-release runs that should exercise
+# broader CLI help, platform API, UI auth, registry authz, team, deployment,
+# and item-level runtime request flows. This mode requires every scenario.
+#
 # For repeated local debugging, set E2E_CACHE_MODE=1. Cache mode implies
 # E2E_KEEP_CLUSTER=1, reuses an existing kind cluster and local registry, skips
 # platform setup when the core platform is already ready, and reuses cached
@@ -141,6 +145,7 @@ PYTHON_EXAMPLE_PROXY_PORT="${PYTHON_EXAMPLE_PROXY_PORT:-18098}"
 RUST_EXAMPLE_PROXY_PORT="${RUST_EXAMPLE_PROXY_PORT:-18099}"
 GO_EXAMPLE_PROXY_PORT="${GO_EXAMPLE_PROXY_PORT:-18102}"
 CLI_SENTINEL_API_PORT="${CLI_SENTINEL_API_PORT:-18103}"
+ADAPTER_PROXY_PORT="${ADAPTER_PROXY_PORT:-18104}"
 API_METRICS_PORT="${API_METRICS_PORT:-19090}"
 INGEST_METRICS_PORT="${INGEST_METRICS_PORT:-19091}"
 PROCESSOR_METRICS_PORT="${PROCESSOR_METRICS_PORT:-19092}"
@@ -173,6 +178,7 @@ E2E_SCENARIOS="${E2E_SCENARIOS-all}"
 E2E_SCENARIOS="${E2E_SCENARIOS//[[:space:]]/}"
 E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE:-tenant}"
 E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE//[[:space:]]/}"
+E2E_DEEP_REQUEST_FLOWS="${E2E_DEEP_REQUEST_FLOWS:-0}"
 E2E_VALIDATE_SCENARIOS_ONLY="${E2E_VALIDATE_SCENARIOS_ONLY:-0}"
 E2E_KEEP_CLUSTER="${E2E_KEEP_CLUSTER:-0}"
 E2E_CACHE_MODE="${E2E_CACHE_MODE:-0}"
@@ -257,6 +263,17 @@ scenario_selected() {
   scenario_requested "${wanted}"
 }
 
+deep_request_flows_enabled() {
+  case "${E2E_DEEP_REQUEST_FLOWS}" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 validate_scenarios() {
   case "${E2E_PLATFORM_MODE}" in
     tenant|org|public)
@@ -290,6 +307,17 @@ validate_scenarios() {
       fi
     done
   fi
+
+  if deep_request_flows_enabled; then
+    local required
+    for required in smoke-auth governance trust oauth observability multitenancy; do
+      if ! scenario_selected "${required}"; then
+        echo "E2E_DEEP_REQUEST_FLOWS=1 requires all E2E scenarios" >&2
+        echo "set E2E_SCENARIOS=all or include smoke-auth,governance,trust,oauth,observability,multitenancy" >&2
+        exit 1
+      fi
+    done
+  fi
 }
 
 describe_selected_scenarios() {
@@ -305,6 +333,9 @@ describe_selected_scenarios() {
 validate_scenarios
 log_line info "E2E scenarios: $(describe_selected_scenarios)"
 log_line info "E2E platform mode: ${E2E_PLATFORM_MODE}"
+if deep_request_flows_enabled; then
+  log_line info "Pre-release deep request-flow checks: enabled"
+fi
 log_line info "Local smoke/governance checks use direct curl-based MCP HTTP; OpenAI/Anthropic real-client agent checks are disabled"
 if [[ "${E2E_VALIDATE_SCENARIOS_ONLY}" == "1" ]]; then
   exit 0
@@ -470,6 +501,100 @@ assert_file_contains() {
   fi
 
   grep -F -q -- "${needle}" "${file}"
+}
+
+run_cli_help_sweep() {
+  local command_line
+  local -a args
+  local -a commands=(
+    ""
+    "adapter"
+    "adapter proxy"
+    "adapter stdio"
+    "auth"
+    "auth login"
+    "auth logout"
+    "auth status"
+    "bootstrap"
+    "cluster"
+    "cluster init"
+    "cluster status"
+    "cluster config"
+    "cluster provision"
+    "cluster doctor"
+    "cluster cert"
+    "cluster cert status"
+    "cluster cert apply"
+    "cluster cert wait"
+    "registry"
+    "registry status"
+    "registry info"
+    "registry provision"
+    "registry push"
+    "server"
+    "server list"
+    "server get"
+    "server create"
+    "server apply"
+    "server deploy"
+    "server export"
+    "server patch"
+    "server delete"
+    "server logs"
+    "server status"
+    "server policy"
+    "server policy inspect"
+    "server build"
+    "server build image"
+    "access"
+    "access grant"
+    "access grant list"
+    "access grant get"
+    "access grant apply"
+    "access grant delete"
+    "access grant disable"
+    "access grant enable"
+    "access session"
+    "access session list"
+    "access session get"
+    "access session apply"
+    "access session delete"
+    "access session revoke"
+    "access session unrevoke"
+    "sentinel"
+    "sentinel status"
+    "sentinel logs"
+    "sentinel events"
+    "sentinel port-forward"
+    "sentinel restart"
+    "pipeline"
+    "pipeline generate"
+    "pipeline deploy"
+    "setup"
+    "status"
+    "team"
+    "team list"
+    "team create"
+    "team init"
+    "team user"
+    "team user create"
+    "team user list"
+  )
+
+  echo "[cli] running pre-release help sweep"
+  for command_line in "${commands[@]}"; do
+    if [[ -z "${command_line}" ]]; then
+      ./bin/mcp-runtime --help >/dev/null
+      continue
+    fi
+    read -r -a args <<< "${command_line}"
+    ./bin/mcp-runtime "${args[@]}" --help >/dev/null
+  done
+
+  ./bin/mcp-runtime completion bash >/dev/null
+  ./bin/mcp-runtime completion zsh >/dev/null
+  ./bin/mcp-runtime completion fish >/dev/null
+  ./bin/mcp-runtime completion powershell >/dev/null
 }
 
 run_cli_allowing_cert_prereq_failure() {
@@ -2488,6 +2613,9 @@ echo "[cli] checking static command output"
 ./bin/mcp-runtime --version >/dev/null
 ./bin/mcp-runtime help >/dev/null
 ./bin/mcp-runtime completion bash >/dev/null
+if deep_request_flows_enabled; then
+  run_cli_help_sweep
+fi
 
 PLATFORM_CACHE_READY=0
 if platform_cache_ready; then
@@ -3286,6 +3414,9 @@ spec:
   maxTrust: low
   allowedSideEffects: [read]
   policyVersion: v1
+  toolRules:
+    - name: aaa-ping
+      decision: allow
 EOF
   (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file adapter-session-grant.yaml)
 
@@ -3357,6 +3488,53 @@ print('adapter-session reused:', resp['name'])
     echo "expected 403 when no grant matches, got ${ADAPTER_SESSION_REJECT_STATUS}" >&2
     exit 1
   fi
+
+  if deep_request_flows_enabled; then
+    log_line policy "running local adapter proxy with platform-issued session"
+    ADAPTER_PROXY_LOG="${WORKDIR}/adapter-proxy.log"
+    require_port_available "${ADAPTER_PROXY_PORT}" "adapter proxy"
+    MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}" \
+      MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
+      ./bin/mcp-runtime adapter proxy \
+        --listen "127.0.0.1:${ADAPTER_PROXY_PORT}" \
+        --runtime-url "${MCP_DIRECT_URL}" \
+        --host-header "${SERVER_HOST}" \
+        --server "${SERVER_NAME}" \
+        --namespace mcp-servers \
+        --agent "${ADAPTER_AGENT_ID}" \
+        --request-timeout 20s \
+        --log-level info >"${ADAPTER_PROXY_LOG}" 2>&1 &
+    ADAPTER_PROXY_PID="$!"
+    PIDS+=("${ADAPTER_PROXY_PID}")
+    wait_managed_port "${ADAPTER_PROXY_PORT}" "${ADAPTER_PROXY_PID}" "${ADAPTER_PROXY_LOG}" "adapter proxy"
+    wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "aaa-ping" '{}' 200 "pong" 30
+    wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "add" '{"a":1,"b":2}' 403 "tool_not_granted" 15
+  fi
+fi
+
+if deep_request_flows_enabled; then
+  log_line policy "running pre-release platform CLI request-flow sweep"
+  DEEP_CLI_TEAM_SLUG="e2e-cli-$(date +%s)"
+  DEEP_CLI_USER_EMAIL="${DEEP_CLI_TEAM_SLUG}@mcpruntime.org"
+  DEEP_PLATFORM_ENV=(
+    MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}"
+    MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}"
+  )
+
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime auth status >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team list >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team create "${DEEP_CLI_TEAM_SLUG}" --name "E2E CLI ${DEEP_CLI_TEAM_SLUG}" >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team user create "${DEEP_CLI_TEAM_SLUG}" \
+    --email "${DEEP_CLI_USER_EMAIL}" \
+    --password "test@12345" \
+    --role member >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team user list "${DEEP_CLI_TEAM_SLUG}" >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime server list --namespace mcp-servers >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime server get "${SERVER_NAME}" --namespace mcp-servers >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access grant list --namespace mcp-servers >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access grant get "${SERVER_NAME}-grant" --namespace mcp-servers >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access session list --namespace mcp-servers >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access session get "${SESSION_ID}" --namespace mcp-servers >/dev/null
 fi
 
 if scenario_selected "trust"; then
@@ -4033,7 +4211,11 @@ if scenario_selected "observability"; then
   OAUTH_VALID_TOKEN="${OAUTH_VALID_TOKEN}" \
   MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION}" \
   E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE}" \
+  E2E_DEEP_REQUEST_FLOWS="${E2E_DEEP_REQUEST_FLOWS}" \
+  PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" \
+  PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" \
   python3 <<'PY'
+import base64
 import json
 import os
 import time
@@ -4065,6 +4247,9 @@ oauth_issuer_url = os.environ["OAUTH_ISSUER_URL"]
 oauth_valid_token = os.environ["OAUTH_VALID_TOKEN"]
 protocol = os.environ["MCP_PROTOCOL_VERSION"]
 platform_mode = os.environ["E2E_PLATFORM_MODE"]
+deep_request_flows = os.environ.get("E2E_DEEP_REQUEST_FLOWS", "").lower() in {"1", "true", "yes", "on"}
+platform_admin_email = os.environ["PLATFORM_ADMIN_EMAIL"]
+platform_admin_password = os.environ["PLATFORM_ADMIN_PASSWORD"]
 grant_name = f"{server_name}-grant"
 oauth_public_base = f"http://{oauth_server_host}"
 server_mcp_path = f"/{server_name}/mcp"
@@ -4504,6 +4689,453 @@ expect_json(
     headers=auth_headers,
     body={"component": "definitely-not-a-real-component"},
 )
+
+if deep_request_flows:
+    def bearer_headers(token):
+        return {"Authorization": f"Bearer {token}"}
+
+    def merged_headers(*items):
+        out = {}
+        for item in items:
+            out.update(item)
+        return out
+
+    def basic_headers(username, password):
+        token = base64.b64encode(f"{username}:{password}".encode()).decode()
+        return {"Authorization": f"Basic {token}"}
+
+    def quote_segment(value):
+        return urllib.parse.quote(str(value), safe="")
+
+    suffix = str(int(time.time()))
+    expect_status(
+        f"{api_base}/api/auth/login",
+        401,
+        method="POST",
+        body={"email": f"missing-{suffix}@mcpruntime.org", "password": "wrong-password"},
+    )
+    oidc_status, _, oidc_body = request(
+        f"{api_base}/api/auth/oidc",
+        method="POST",
+        body={},
+    )
+    check(
+        oidc_status in (400, 503),
+        "POST /api/auth/oidc reached missing-token or not-configured edge path",
+        f"unexpected /api/auth/oidc status {oidc_status}: {oidc_body}",
+    )
+    expect_status(
+        f"{api_base}/api/auth/signup",
+        400,
+        method="POST",
+        body={"email": f"bad-role-{suffix}@mcpruntime.org", "password": "test@12345", "role": "root"},
+    )
+    expect_status(
+        f"{api_base}/api/auth/signup",
+        403,
+        method="POST",
+        body={"email": f"admin-denied-{suffix}@mcpruntime.org", "password": "test@12345", "role": "admin"},
+    )
+
+    admin_login = expect_json(
+        f"{api_base}/api/auth/login",
+        method="POST",
+        body={"email": platform_admin_email, "password": platform_admin_password},
+    )
+    admin_token = admin_login.get("access_token", "")
+    check(bool(admin_token), "platform admin login returned access_token", f"admin login missing token: {admin_login}")
+    admin_headers = bearer_headers(admin_token)
+    admin_me = expect_json(f"{api_base}/api/auth/me", headers=admin_headers)
+    check(
+        admin_me.get("principal", {}).get("role") == "admin",
+        "GET /api/auth/me returned admin principal",
+        f"unexpected admin /api/auth/me response: {admin_me}",
+    )
+
+    signup_email = f"e2e-user-{suffix}@mcpruntime.org"
+    signup = expect_json(
+        f"{api_base}/api/auth/signup",
+        status=201,
+        method="POST",
+        body={"email": signup_email, "password": "test@12345"},
+    )
+    user_token = signup.get("access_token", "")
+    user = signup.get("user", {})
+    user_id = user.get("id", "")
+    user_namespace = user.get("namespace", "")
+    check(bool(user_token and user_id), "POST /api/auth/signup created user token and id", f"signup response: {signup}")
+    user_headers = bearer_headers(user_token)
+    user_me = expect_json(f"{api_base}/api/auth/me", headers=user_headers)
+    check(
+        user_me.get("principal", {}).get("email") == signup_email,
+        "GET /api/auth/me returned signup user principal",
+        f"unexpected signup /api/auth/me response: {user_me}",
+    )
+
+    expect_json(f"{api_base}/api/user/api-keys", headers=user_headers)
+    created_user_key = expect_json(
+        f"{api_base}/api/user/api-keys",
+        method="POST",
+        headers=user_headers,
+        body={"name": f"e2e-key-{suffix}"},
+    )
+    user_key_id = created_user_key.get("key", {}).get("id", "")
+    user_api_key = created_user_key.get("api_key", "")
+    check(bool(user_key_id and user_api_key), "POST /api/user/api-keys created one-time key", f"user key response: {created_user_key}")
+    user_key_headers = {"x-api-key": user_api_key}
+    user_key_me = expect_json(f"{api_base}/api/auth/me", headers=user_key_headers)
+    check(
+        user_key_me.get("principal", {}).get("email") == signup_email,
+        "user API key authenticated /api/auth/me",
+        f"unexpected user API key principal: {user_key_me}",
+    )
+
+    expect_json(f"{api_base}/api/user/registry-credentials", headers=user_headers)
+    created_credential = expect_json(
+        f"{api_base}/api/user/registry-credentials",
+        status=201,
+        method="POST",
+        headers=user_headers,
+        body={"name": f"e2e-registry-{suffix}"},
+    )
+    credential_id = created_credential.get("credential", {}).get("id", "")
+    registry_username = created_credential.get("username", "")
+    registry_password = created_credential.get("password", "")
+    check(
+        bool(credential_id and registry_username and registry_password),
+        "POST /api/user/registry-credentials returned registry credential",
+        f"registry credential response: {created_credential}",
+    )
+
+    team_slug = f"e2e-deep-{suffix}"
+    team_created = expect_json(
+        f"{api_base}/api/runtime/teams",
+        method="POST",
+        headers=admin_headers,
+        body={"slug": team_slug, "name": f"E2E Deep {suffix}"},
+    )
+    team = team_created.get("team", {})
+    team_namespace = team.get("namespace", "")
+    check(
+        team.get("slug") == team_slug and bool(team_namespace),
+        "POST /api/runtime/teams created managed team",
+        f"team create response: {team_created}",
+    )
+    teams = expect_json(f"{api_base}/api/runtime/teams", headers=admin_headers)
+    check(
+        team_slug in {item.get("slug") for item in teams.get("teams", [])},
+        "GET /api/runtime/teams listed created team",
+        f"created team missing from team list: {teams}",
+    )
+    expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}", headers=admin_headers)
+    expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members", headers=admin_headers)
+    membership = expect_json(
+        f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members",
+        method="POST",
+        headers=admin_headers,
+        body={"userID": user_id, "role": "member"},
+    )
+    check(
+        membership.get("membership", {}).get("user_id") == user_id,
+        "POST /api/runtime/teams/{slug}/members added signup user",
+        f"membership response: {membership}",
+    )
+    team_user_email = f"e2e-team-user-{suffix}@mcpruntime.org"
+    team_user = expect_json(
+        f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/users",
+        method="POST",
+        headers=admin_headers,
+        body={"email": team_user_email, "password": "test@12345", "role": "owner"},
+    )
+    team_user_id = team_user.get("user", {}).get("id", "")
+    check(bool(team_user_id), "POST /api/runtime/teams/{slug}/users created team user", f"team user response: {team_user}")
+    members_after = expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members", headers=admin_headers)
+    member_ids = {item.get("user_id") for item in members_after.get("members", [])}
+    check(
+        user_id in member_ids and team_user_id in member_ids,
+        "GET /api/runtime/teams/{slug}/members listed created memberships",
+        f"expected team members missing: {members_after}",
+    )
+    expect_json(
+        f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members/{quote_segment(team_user_id)}",
+        method="DELETE",
+        headers=admin_headers,
+    )
+
+    namespaces = expect_json(f"{api_base}/api/runtime/namespaces", headers=admin_headers)
+    namespace_names = {item.get("namespace") for item in namespaces.get("namespaces", [])}
+    check(
+        team_namespace in namespace_names,
+        "GET /api/runtime/namespaces listed created team namespace",
+        f"team namespace missing from namespace list: {namespaces}",
+    )
+    namespace_item = expect_json(
+        f"{api_base}/api/runtime/namespaces/{quote_segment(team_namespace)}",
+        headers=admin_headers,
+    )
+    check(
+        namespace_item.get("namespace", {}).get("namespace") == team_namespace,
+        "GET /api/runtime/namespaces/{namespace} returned created team namespace",
+        f"namespace item response: {namespace_item}",
+    )
+
+    expect_status(
+        f"{api_base}/api/registry/authz",
+        401,
+        headers={"X-Forwarded-Uri": "/v2/_catalog"},
+    )
+    expect_status(
+        f"{api_base}/api/registry/authz",
+        204,
+        headers=merged_headers(auth_headers, {"X-Forwarded-Uri": f"/v2/{team_slug}/demo/manifests/latest"}),
+    )
+    personal_scope = user_namespace or registry_username
+    if personal_scope:
+        expect_status(
+            f"{api_base}/api/registry/authz",
+            403,
+            headers=merged_headers(user_key_headers, {"X-Forwarded-Uri": f"/v2/{personal_scope}/demo/manifests/latest"}),
+        )
+    registry_basic_headers = basic_headers(registry_username, registry_password)
+    expect_status(
+        f"{api_base}/api/registry/authz",
+        204,
+        headers=merged_headers(registry_basic_headers, {"X-Forwarded-Uri": f"/v2/{team_slug}/demo/manifests/latest"}),
+    )
+    expect_status(
+        f"{api_base}/api/registry/authz",
+        204,
+        headers=merged_headers(registry_basic_headers, {"X-Forwarded-Uri": f"/v2/{team_namespace}/demo/manifests/latest"}),
+    )
+
+    expect_json(f"{api_base}/api/analytics/usage?limit=3", headers=auth_headers)
+    expect_json(f"{api_base}/api/user/analytics/usage?limit=3", headers=user_headers)
+    expect_json(f"{api_base}/api/user/activity/image-publish", status=202, method="POST", headers=user_headers, body={
+        "image_ref": f"registry.registry.svc.cluster.local:5000/{team_slug}/demo:{suffix}",
+        "source_image": "docker.io/library/nginx:1.27-alpine",
+        "mode": "pre-release",
+    })
+
+    server_item = expect_json(
+        f"{api_base}/api/runtime/servers/mcp-servers/{quote_segment(server_name)}",
+        headers=auth_headers,
+    )
+    check(
+        server_item.get("server", {}).get("name") == server_name,
+        "GET /api/runtime/servers/{namespace}/{name} returned policy server",
+        f"server item response: {server_item}",
+    )
+    server_events = expect_json(
+        f"{api_base}/api/runtime/server-events?namespace=mcp-servers&server={urllib.parse.quote(server_name)}&limit=5",
+        headers=auth_headers,
+    )
+    check("events" in server_events, "GET /api/runtime/server-events returned events key", f"server events response: {server_events}")
+
+    temp_server_name = f"e2e-deep-server-{suffix}"
+    temp_server = expect_json(
+        f"{api_base}/api/runtime/servers",
+        method="POST",
+        headers=admin_headers,
+        body={
+            "name": temp_server_name,
+            "namespace": "mcp-servers",
+            "spec": {
+                "image": "docker.io/library/nginx:1.27-alpine",
+                "port": 8080,
+                "servicePort": 80,
+                "publicPathPrefix": temp_server_name,
+                "ingressPath": f"/{temp_server_name}/mcp",
+                "gateway": {"enabled": False},
+                "analytics": {"disabled": True},
+            },
+        },
+    )
+    check(
+        temp_server.get("server", {}).get("name") == temp_server_name,
+        "POST /api/runtime/servers created temporary server",
+        f"temporary server response: {temp_server}",
+    )
+    expect_json(
+        f"{api_base}/api/runtime/servers/mcp-servers/{quote_segment(temp_server_name)}",
+        headers=admin_headers,
+    )
+    expect_json(
+        f"{api_base}/api/runtime/servers/mcp-servers/{quote_segment(temp_server_name)}",
+        method="DELETE",
+        headers=admin_headers,
+    )
+
+    expect_json(
+        f"{api_base}/api/runtime/grants/mcp-servers/{quote_segment(api_runtime_grant)}",
+        headers=auth_headers,
+    )
+    expect_json(
+        f"{api_base}/api/runtime/sessions/mcp-servers/{quote_segment(api_runtime_session)}",
+        headers=auth_headers,
+    )
+    expect_json(
+        f"{api_base}/api/runtime/sessions/mcp-servers/{quote_segment(api_runtime_session)}",
+        method="DELETE",
+        headers=auth_headers,
+    )
+    expect_json(
+        f"{api_base}/api/runtime/grants/mcp-servers/{quote_segment(api_runtime_grant)}",
+        method="DELETE",
+        headers=auth_headers,
+    )
+
+    deployment_name = f"e2e-deep-deploy-{suffix}"
+    expect_json(f"{api_base}/api/deployments?namespace=mcp-servers", headers=admin_headers)
+    deployment = expect_json(
+        f"{api_base}/api/deployments",
+        method="POST",
+        headers=admin_headers,
+        body={
+            "name": deployment_name,
+            "namespace": "mcp-servers",
+            "image": "docker.io/library/nginx:1.27-alpine",
+            "port": 8080,
+            "replicas": 1,
+        },
+    )
+    check(
+        deployment.get("deployment", {}).get("name") == deployment_name,
+        "POST /api/deployments created temporary deployment",
+        f"deployment response: {deployment}",
+    )
+    expect_json(f"{api_base}/api/admin/deployments?namespace=mcp-servers", headers=admin_headers)
+    expect_json(
+        f"{api_base}/api/deployments/mcp-servers/{quote_segment(deployment_name)}",
+        method="DELETE",
+        headers=admin_headers,
+    )
+
+    admin_namespaces = expect_json(f"{api_base}/api/admin/namespaces", headers=admin_headers)
+    check("namespaces" in admin_namespaces, "GET /api/admin/namespaces returned namespaces", f"admin namespaces response: {admin_namespaces}")
+    admin_audit = expect_json(f"{api_base}/api/admin/audit?limit=5", headers=admin_headers)
+    check("audit_logs" in admin_audit, "GET /api/admin/audit returned audit_logs", f"admin audit response: {admin_audit}")
+    admin_operations = expect_json(f"{api_base}/api/admin/operations?limit=5", headers=admin_headers)
+    check("audit_logs" in admin_operations and "users" in admin_operations, "GET /api/admin/operations returned operations payload", f"admin operations response: {admin_operations}")
+
+    expect_json(
+        f"{api_base}/api/user/registry-credentials/{quote_segment(credential_id)}/revoke",
+        method="POST",
+        headers=user_headers,
+    )
+    expect_status(
+        f"{api_base}/api/registry/authz",
+        401,
+        headers=merged_headers(registry_basic_headers, {"X-Forwarded-Uri": f"/v2/{team_slug}/demo/manifests/latest"}),
+    )
+    expect_json(
+        f"{api_base}/api/user/api-keys/{quote_segment(user_key_id)}/revoke",
+        method="POST",
+        headers=user_headers,
+    )
+    expect_status(f"{api_base}/api/auth/me", 401, headers=user_key_headers)
+
+    expect_status(f"{ui_base}/auth/status", 200, contains='"authenticated":false')
+    expect_status(f"{ui_base}/auth/login", 401, method="POST", body={"api_key": "wrong-api-key"})
+    ui_login_status, ui_login_headers, ui_login_body = request(
+        f"{ui_base}/auth/login",
+        method="POST",
+        body={"api_key": api_key},
+    )
+    check(ui_login_status == 200, "POST /auth/login accepted UI API key", f"UI login failed: {ui_login_status} {ui_login_body}")
+    set_cookie = ui_login_headers.get("Set-Cookie") or ui_login_headers.get("set-cookie") or ""
+    ui_cookie = set_cookie.split(";", 1)[0]
+    check(ui_cookie.startswith("mcp_ui_session="), "POST /auth/login returned session cookie", f"missing UI session cookie: {ui_login_headers}")
+    ui_cookie_headers = {"Cookie": ui_cookie}
+    ui_status = expect_json(f"{ui_base}/auth/status", headers=ui_cookie_headers)
+    check(ui_status.get("authenticated") is True, "GET /auth/status returned authenticated UI session", f"UI status response: {ui_status}")
+    ui_admin_status, _, ui_admin_body = request(f"{ui_base}/auth/admin-check", headers=ui_cookie_headers)
+    check(ui_admin_status == 204, "GET /auth/admin-check allowed admin UI session", f"admin-check failed: {ui_admin_status} {ui_admin_body}")
+    ui_logout = expect_json(f"{ui_base}/auth/logout", method="POST", headers=ui_cookie_headers)
+    check(ui_logout.get("authenticated") is False, "POST /auth/logout cleared UI session", f"UI logout response: {ui_logout}")
+    expect_status(f"{ui_base}/auth/status", 200, headers=ui_cookie_headers, contains='"authenticated":false')
+
+    expect_status(f"{gateway_base}/auth/status", 200, contains='"authenticated":false')
+    gateway_login_status, gateway_login_headers, gateway_login_body = request(
+        f"{gateway_base}/auth/login",
+        method="POST",
+        body={"api_key": api_key},
+    )
+    check(
+        gateway_login_status == 200,
+        "gateway POST /auth/login accepted UI API key",
+        f"gateway UI login failed: {gateway_login_status} {gateway_login_body}",
+    )
+    gateway_set_cookie = gateway_login_headers.get("Set-Cookie") or gateway_login_headers.get("set-cookie") or ""
+    gateway_cookie = gateway_set_cookie.split(";", 1)[0]
+    check(
+        gateway_cookie.startswith("mcp_ui_session="),
+        "gateway POST /auth/login returned session cookie",
+        f"missing gateway UI session cookie: {gateway_login_headers}",
+    )
+    gateway_cookie_headers = {"Cookie": gateway_cookie}
+    gateway_status = expect_json(f"{gateway_base}/auth/status", headers=gateway_cookie_headers)
+    check(
+        gateway_status.get("authenticated") is True,
+        "gateway GET /auth/status returned authenticated UI session",
+        f"gateway UI status response: {gateway_status}",
+    )
+    gateway_admin_status, _, gateway_admin_body = request(f"{gateway_base}/auth/admin-check", headers=gateway_cookie_headers)
+    check(
+        gateway_admin_status == 204,
+        "gateway GET /auth/admin-check allowed admin UI session",
+        f"gateway admin-check failed: {gateway_admin_status} {gateway_admin_body}",
+    )
+    expect_status(f"{gateway_base}/grafana/api/health", 200, headers=gateway_cookie_headers, contains="database")
+    expect_status(f"{gateway_base}/prometheus/-/healthy", 200, headers=gateway_cookie_headers, contains="Healthy")
+    gateway_logout = expect_json(f"{gateway_base}/auth/logout", method="POST", headers=gateway_cookie_headers)
+    check(
+        gateway_logout.get("authenticated") is False,
+        "gateway POST /auth/logout cleared UI session",
+        f"gateway UI logout response: {gateway_logout}",
+    )
+
+    print("deep request routes:")
+    for route in (
+        "gateway:/auth/login",
+        "gateway:/auth/status",
+        "gateway:/auth/admin-check",
+        "gateway:/auth/logout",
+        "gateway:/grafana/api/health (UI cookie)",
+        "gateway:/prometheus/-/healthy (UI cookie)",
+        "api:/api/auth/login",
+        "api:/api/auth/oidc",
+        "api:/api/auth/signup",
+        "api:/api/auth/me",
+        "api:/api/registry/authz",
+        "api:/api/analytics/usage",
+        "api:/api/user/analytics/usage",
+        "api:/api/user/api-keys",
+        "api:/api/user/api-keys/{id}/revoke",
+        "api:/api/user/registry-credentials",
+        "api:/api/user/registry-credentials/{id}/revoke",
+        "api:/api/user/activity/image-publish",
+        "api:/api/runtime/servers/{namespace}/{name}",
+        "api:/api/runtime/server-events",
+        "api:/api/runtime/teams",
+        "api:/api/runtime/teams/{slug}",
+        "api:/api/runtime/teams/{slug}/members",
+        "api:/api/runtime/teams/{slug}/users",
+        "api:/api/runtime/namespaces",
+        "api:/api/runtime/namespaces/{namespace}",
+        "api:/api/runtime/grants/{namespace}/{name}",
+        "api:/api/runtime/sessions/{namespace}/{name}",
+        "api:/api/deployments",
+        "api:/api/deployments/{namespace}/{name}",
+        "api:/api/admin/namespaces",
+        "api:/api/admin/audit",
+        "api:/api/admin/operations",
+        "api:/api/admin/deployments",
+        "ui:/auth/login",
+        "ui:/auth/status",
+        "ui:/auth/admin-check",
+        "ui:/auth/logout",
+    ):
+        print(f"  {route}")
 
 # Ingest and processor service surfaces.
 expect_status(f"{ingest_base}/health", 200, contains='"ok":true')

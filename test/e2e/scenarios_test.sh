@@ -63,6 +63,30 @@ run_invalid "unsupported-token" "smoke-auth,bad" "unsupported E2E scenario: bad"
 run_invalid "observability-alone" "observability" "observability requires smoke-auth, governance, trust, and oauth scenarios"
 run_invalid "observability-missing-oauth" "smoke-auth,governance,trust,observability" "observability requires smoke-auth, governance, trust, and oauth scenarios"
 
+if ! output="$(E2E_COLOR=never E2E_VALIDATE_SCENARIOS_ONLY=1 E2E_DEEP_REQUEST_FLOWS=1 E2E_SCENARIOS=all bash "${KIND_SCRIPT}" 2>&1)"; then
+  echo "[fail] deep-request-flows-all: expected validation success" >&2
+  printf '%s\n' "${output}" >&2
+  exit 1
+fi
+if ! printf '%s\n' "${output}" | grep -F -q -- "Pre-release deep request-flow checks: enabled"; then
+  echo "[fail] deep-request-flows-all: missing deep-mode output" >&2
+  printf '%s\n' "${output}" >&2
+  exit 1
+fi
+echo "[pass] deep-request-flows-all"
+
+if output="$(E2E_COLOR=never E2E_VALIDATE_SCENARIOS_ONLY=1 E2E_DEEP_REQUEST_FLOWS=1 E2E_SCENARIOS=smoke-auth,governance bash "${KIND_SCRIPT}" 2>&1)"; then
+  echo "[fail] deep-request-flows-subset: expected validation failure" >&2
+  printf '%s\n' "${output}" >&2
+  exit 1
+fi
+if ! printf '%s\n' "${output}" | grep -F -q -- "E2E_DEEP_REQUEST_FLOWS=1 requires all E2E scenarios"; then
+  echo "[fail] deep-request-flows-subset: missing expected error" >&2
+  printf '%s\n' "${output}" >&2
+  exit 1
+fi
+echo "[pass] deep-request-flows-subset"
+
 for mode in tenant org public; do
   if ! output="$(E2E_COLOR=never E2E_VALIDATE_SCENARIOS_ONLY=1 E2E_SCENARIOS=smoke-auth E2E_PLATFORM_MODE="${mode}" bash "${KIND_SCRIPT}" 2>&1)"; then
     echo "[fail] platform-mode-${mode}: expected validation success" >&2
