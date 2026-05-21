@@ -53,6 +53,7 @@ extra_css:
 nav:
   - Home: README.md
   - Getting Started: getting-started.md
+  - Deployment Targets: deployment-targets.md
   - Contributor Guide:
       - Overview: contributor/README.md
       - Local Kind and Test Mode: contributor/local-kind.md

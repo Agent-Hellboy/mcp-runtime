@@ -62,9 +62,9 @@ Host tools:
 
 Cluster prerequisites:
 
-- A running Kubernetes cluster: kind, k3s, minikube, Docker Desktop Kubernetes, EKS, or equivalent
+- A running Kubernetes cluster: kind, k3s, minikube, Docker Desktop Kubernetes, EKS, GKE, AKS, or equivalent
 - Working DNS, default storage class, ingress, and load-balancing path for your distribution
-- See [`docs/cluster-readiness.md`](docs/cluster-readiness.md) before running production-like installs
+- See [`docs/deployment-targets.md`](docs/deployment-targets.md) to choose the install shape, then [`docs/cluster-readiness.md`](docs/cluster-readiness.md) before running production-like installs
 
 `mcp-runtime setup` installs the platform stack, including Sentinel services such as ClickHouse and Kafka. You do not install those separately for the default flow.
 

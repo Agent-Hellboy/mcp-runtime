@@ -114,7 +114,9 @@ scopes signed-in users to team namespaces for teams they belong to; `org` uses
 namespace access; `public` uses `mcp-servers-public`, exposes anonymous catalog
 reads, and lets signed-in users publish public preview MCP servers while
 preserving team namespace access. `MCP_PLATFORM_MODE` provides the same
-value when the flag is not set.
+value when the flag is not set. Non-test public TLS setup also requires
+`GOOGLE_CLIENT_ID` / `MCP_GOOGLE_CLIENT_ID` or the complete custom OIDC trio:
+`OIDC_ISSUER`, `OIDC_AUDIENCE`, and `OIDC_JWKS_URL`.
 
 `--test-mode` relaxes production guardrails, but it still builds and pushes the
 operator, gateway proxy, and Sentinel images with `latest` tags to the

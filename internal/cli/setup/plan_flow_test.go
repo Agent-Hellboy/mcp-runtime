@@ -334,8 +334,38 @@ func TestValidateNonTestSetupRejectsMissingPlatformAdminEnv(t *testing.T) {
 	}
 }
 
+func TestValidateNonTestSetupRejectsPublicTLSWithoutBrowserLoginEnv(t *testing.T) {
+	setPublicDomainEnv(t)
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.prod.example.com")
+
+	err := validateNonTestSetup(
+		setupplan.Plan{PlatformMode: setupplan.PlatformModePublic, TLSEnabled: true, TestMode: false, RegistryMode: setupplan.RegistryModeBundledHTTPS},
+		nil,
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "GOOGLE_CLIENT_ID") {
+		t.Fatalf("expected public browser login env validation error, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupAllowsExistingPublicBrowserLoginConfig(t *testing.T) {
+	setPublicDomainEnv(t)
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.prod.example.com")
+
+	err := validateNonTestSetupWithAuthConfig(
+		setupplan.Plan{PlatformMode: setupplan.PlatformModePublic, TLSEnabled: true, TestMode: false, RegistryMode: setupplan.RegistryModeBundledHTTPS},
+		nil,
+		false,
+		map[string]string{"GOOGLE_CLIENT_ID": "client.apps.googleusercontent.com"},
+	)
+	if err != nil {
+		t.Fatalf("expected existing browser login config to be allowed, got %v", err)
+	}
+}
+
 func TestValidateNonTestSetupRejectsBundledPublicSetupWithoutRegistryEndpoint(t *testing.T) {
 	setPublicDomainEnv(t)
+	t.Setenv("GOOGLE_CLIENT_ID", "client.apps.googleusercontent.com")
 
 	err := validateNonTestSetup(
 		setupplan.Plan{TLSEnabled: false, TestMode: false, RegistryMode: setupplan.RegistryModeBundledHTTP},
@@ -350,6 +380,7 @@ func TestValidateNonTestSetupRejectsBundledPublicSetupWithoutRegistryEndpoint(t 
 func TestValidateNonTestSetupAllowsPublicDomainAndRegistryEndpointWithoutStrictProd(t *testing.T) {
 	setPublicDomainEnv(t)
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.local:32000")
+	t.Setenv("GOOGLE_CLIENT_ID", "client.apps.googleusercontent.com")
 
 	err := validateNonTestSetup(
 		setupplan.Plan{TLSEnabled: false, TestMode: false, RegistryMode: setupplan.RegistryModeBundledHTTP},
@@ -364,6 +395,7 @@ func TestValidateNonTestSetupAllowsPublicDomainAndRegistryEndpointWithoutStrictP
 func TestValidateNonTestSetupRejectsBundledHTTPInStrictProd(t *testing.T) {
 	setPublicDomainEnv(t)
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.local:32000")
+	t.Setenv("GOOGLE_CLIENT_ID", "client.apps.googleusercontent.com")
 
 	err := validateNonTestSetup(
 		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true, RegistryMode: setupplan.RegistryModeBundledHTTP},
@@ -378,6 +410,7 @@ func TestValidateNonTestSetupRejectsBundledHTTPInStrictProd(t *testing.T) {
 func TestValidateNonTestSetupAllowsBundledHTTPSInStrictProd(t *testing.T) {
 	setPublicDomainEnv(t)
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.prod.example.com")
+	t.Setenv("GOOGLE_CLIENT_ID", "client.apps.googleusercontent.com")
 
 	err := validateNonTestSetup(
 		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true, RegistryMode: setupplan.RegistryModeBundledHTTPS},
@@ -392,6 +425,7 @@ func TestValidateNonTestSetupAllowsBundledHTTPSInStrictProd(t *testing.T) {
 func TestValidateNonTestSetupRejectsAutoBundledRegistryInStrictProd(t *testing.T) {
 	setPublicDomainEnv(t)
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.prod.example.com")
+	t.Setenv("GOOGLE_CLIENT_ID", "client.apps.googleusercontent.com")
 
 	err := validateNonTestSetup(
 		setupplan.Plan{TLSEnabled: true, TestMode: false, StrictProd: true, RegistryMode: setupplan.RegistryModeAuto},

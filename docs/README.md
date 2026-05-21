@@ -20,6 +20,7 @@ human workflows.
 
   <div class="docs-actions">
     <a class="docs-button docs-button-primary" href="getting-started/">Get started</a>
+    <a class="docs-button" href="deployment-targets/">Deploy</a>
     <a class="docs-button" href="contributor/">Contribute</a>
     <a class="docs-button" href="architecture/">Architecture</a>
     <a class="docs-button" href="api/">API reference</a>
@@ -93,7 +94,9 @@ resources for the selected environment.
 
 For provider-specific prerequisites such as container runtime registry trust,
 DNS, ingress, TLS, and k3s configuration, start with
-[Cluster readiness](cluster-readiness.md).
+[Deployment Targets](deployment-targets.md) to choose the right install shape,
+then [Cluster readiness](cluster-readiness.md) for distribution-specific
+preparation.
 
 ## Choose a path
 
@@ -113,7 +116,13 @@ DNS, ingress, TLS, and k3s configuration, start with
 <a class="docs-card" href="cluster-readiness/">
   <span class="docs-card-kicker">Prepare</span>
   <strong>Check your cluster</strong>
-  <span>Review prerequisites for k3s, kind, minikube, Docker Desktop Kubernetes, kubeadm, and EKS.</span>
+  <span>Review registry, DNS, ingress, storage, TLS, and node-runtime prerequisites before setup.</span>
+</a>
+
+<a class="docs-card" href="deployment-targets/">
+  <span class="docs-card-kicker">Deploy</span>
+  <strong>Choose a Kubernetes target</strong>
+  <span>Pick the right install shape for k3s, self-managed clusters, EKS, GKE, AKS, and other Kubernetes distributions.</span>
 </a>
 
 <a class="docs-card" href="contributor/">
@@ -180,7 +189,7 @@ DNS, ingress, TLS, and k3s configuration, start with
 | Workflow | Start here |
 |---|---|
 | Evaluate MCP Runtime for a private MCP platform | [Getting started](getting-started.md), then [Architecture](architecture.md) |
-| Run MCP Runtime on a real cluster | [Cluster readiness](cluster-readiness.md), then [Runtime](runtime.md) |
+| Run MCP Runtime on a real cluster | [Deployment Targets](deployment-targets.md), then [Cluster readiness](cluster-readiness.md) |
 | Host multiple teams on one cluster | [Multi-team isolation](multi-team.md), then [CLI](cli.md) |
 | Govern tools and sessions | [Sentinel](sentinel.md), then [API reference](api.md) |
 | Integrate from automation | [CLI](cli.md), then [API reference](api.md) |

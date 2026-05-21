@@ -319,12 +319,15 @@ function initTabs() {
       if (target === "dashboard") {
         loadDashboardSummary();
         loadDashboardAnalytics();
-        loadEvents();
       } else if (target === "userdashboard") {
         loadUserDashboard();
       } else if (target === "governance") {
         loadGrants();
         loadSessions();
+        if (isAdminUser()) {
+          loadGovernanceDecisionAnalytics();
+          loadEvents();
+        }
       } else if (target === "teams") {
         loadTeams();
       } else if (target === "operations") {
@@ -374,6 +377,18 @@ async function loadDashboardAnalytics() {
   }
 }
 
+async function loadGovernanceDecisionAnalytics() {
+  try {
+    const limit = document.getElementById("analytics-limit")?.value || "10";
+    const data = await fetchJSON(`/analytics/usage?limit=${encodeURIComponent(limit)}`);
+    renderGovernanceDecisionAnalytics(data);
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load governance decision analytics:", err);
+    renderGovernanceDecisionAnalyticsError();
+  }
+}
+
 function renderDashboardAnalytics(data) {
   const totals = data?.totals || {};
   const events = Number(totals.events || 0);
@@ -384,11 +399,18 @@ function renderDashboardAnalytics(data) {
   setText("analytics-denied", formatNumber(denied));
   setText("analytics-humans", formatNumber(totals.unique_humans || 0));
   setText("analytics-agents", formatNumber(totals.unique_agents || 0));
-  renderDecisionMeter(events, allowed, denied);
 
   renderAnalyticsServers(data?.servers || []);
   renderAnalyticsActors(data?.actors || []);
   renderAnalyticsTools(data?.tools || []);
+}
+
+function renderGovernanceDecisionAnalytics(data) {
+  const totals = data?.totals || {};
+  const events = Number(totals.events || 0);
+  const allowed = Number(totals.allowed || 0);
+  const denied = Number(totals.denied || 0);
+  renderDecisionMeter(events, allowed, denied);
   renderAnalyticsDecisions(data?.decisions || []);
 }
 
@@ -499,13 +521,16 @@ function renderAnalyticsError() {
   setText("analytics-denied", "-");
   setText("analytics-humans", "-");
   setText("analytics-agents", "-");
-  renderDecisionMeter(0, 0, 0);
   document.getElementById("analytics-servers-body").innerHTML =
     '<tr><td colspan="7" class="empty">Error loading usage.</td></tr>';
   document.getElementById("analytics-actors-body").innerHTML =
     '<tr><td colspan="6" class="empty">Error loading actors.</td></tr>';
   document.getElementById("analytics-tools-body").innerHTML =
     '<tr><td colspan="4" class="empty">Error loading tools.</td></tr>';
+}
+
+function renderGovernanceDecisionAnalyticsError() {
+  renderDecisionMeter(0, 0, 0);
   document.getElementById("analytics-decisions-body").innerHTML =
     '<tr><td colspan="2" class="empty">Error loading decisions.</td></tr>';
 }
@@ -994,7 +1019,6 @@ function loadActiveTab() {
   if (active === "dashboard") {
     loadDashboardSummary();
     loadDashboardAnalytics();
-    loadEvents();
   } else if (active === "userdashboard") {
     loadUserDashboard();
   } else if (active === "servers") {
@@ -1002,6 +1026,10 @@ function loadActiveTab() {
   } else if (active === "governance") {
     loadGrants();
     loadSessions();
+    if (isAdminUser()) {
+      loadGovernanceDecisionAnalytics();
+      loadEvents();
+    }
   } else if (active === "teams") {
     loadTeams();
   } else if (active === "operations") {
@@ -1208,6 +1236,8 @@ function createUserServerActionsCell(server) {
     selectedUserAnalyticsServerKey = operationServerKey(server);
     const select = document.getElementById("user-analytics-server");
     if (select) select.value = selectedUserAnalyticsServerKey;
+    const usageTab = document.getElementById("user-analytics-tab-usage");
+    if (usageTab) activateAnalyticsTab(usageTab);
     loadUserDashboardAnalytics();
   });
   actions.appendChild(analyticsButton);
@@ -1989,7 +2019,31 @@ function renderInventoryLabels(labels) {
     .join("");
 }
 
+function activateAnalyticsTab(button) {
+  const tabset = button.closest("[data-analytics-tabset]");
+  if (!tabset) return;
+  const targetID = button.dataset.analyticsTabTarget;
+  tabset.querySelectorAll("[data-analytics-tab-target]").forEach((tab) => {
+    const selected = tab === button;
+    tab.classList.toggle("active", selected);
+    tab.setAttribute("aria-selected", selected ? "true" : "false");
+  });
+  tabset.querySelectorAll(".analytics-tab-panel").forEach((panel) => {
+    const selected = panel.id === targetID;
+    panel.classList.toggle("active", selected);
+    panel.hidden = !selected;
+  });
+}
+
+function initAnalyticsTabsets() {
+  document.querySelectorAll("[data-analytics-tab-target]").forEach((button) => {
+    button.addEventListener("click", () => activateAnalyticsTab(button));
+  });
+}
+
 function initDashboard() {
+  initAnalyticsTabsets();
+
   // Auto refresh
   const autoRefreshCheckbox = document.getElementById("auto-refresh");
   if (autoRefreshCheckbox) {
@@ -2003,6 +2057,8 @@ function initDashboard() {
   }
 
   document.getElementById("refresh-events")?.addEventListener("click", () => {
+    if (!isAdminUser()) return;
+    loadGovernanceDecisionAnalytics();
     loadEvents();
   });
   document.getElementById("refresh-analytics")?.addEventListener("click", () => {
@@ -2053,6 +2109,7 @@ function startAutoRefresh() {
   autoRefreshInterval = setInterval(() => {
     loadDashboardSummary();
     loadDashboardAnalytics();
+    loadGovernanceDecisionAnalytics();
     loadEvents();
     loadServers();
   }, 5000);

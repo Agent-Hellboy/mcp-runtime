@@ -344,6 +344,45 @@ func ValidatePlatformMode(mode string) error {
 	return core.WrapWithSentinel(core.ErrFieldRequired, fmt.Errorf("invalid platform mode %q", mode), "invalid --platform-mode; expected tenant, org, or public")
 }
 
+func ValidatePublicPlatformAuthEnv(platformMode string, tlsEnabled, testMode bool) error {
+	return ValidatePublicPlatformAuthConfig(platformMode, tlsEnabled, testMode, nil)
+}
+
+func ValidatePublicPlatformAuthConfig(platformMode string, tlsEnabled, testMode bool, existingData map[string]string) error {
+	if !publicPlatformAuthConfigRequired(platformMode, tlsEnabled, testMode) {
+		return nil
+	}
+	if publicBrowserLoginConfigConfigured(existingData) {
+		return nil
+	}
+	return core.NewWithSentinel(
+		core.ErrFieldRequired,
+		"--platform-mode public with --with-tls requires browser login configuration: set GOOGLE_CLIENT_ID or MCP_GOOGLE_CLIENT_ID for Google sign-in, set OIDC_ISSUER, OIDC_AUDIENCE, and OIDC_JWKS_URL for another provider, or rerun against a cluster whose mcp-sentinel-config already contains those values",
+	)
+}
+
+func publicPlatformAuthConfigRequired(platformMode string, tlsEnabled, testMode bool) bool {
+	mode, ok := setupplan.NormalizePlatformMode(platformMode)
+	return ok && mode == setupplan.PlatformModePublic && tlsEnabled && !testMode
+}
+
+func publicBrowserLoginConfigConfigured(existingData map[string]string) bool {
+	if publicAuthConfigValue(existingData, "GOOGLE_CLIENT_ID") != "" {
+		return true
+	}
+	oidcIssuer := publicAuthConfigValue(existingData, "OIDC_ISSUER")
+	oidcAudience := publicAuthConfigValue(existingData, "OIDC_AUDIENCE")
+	oidcJWKSURL := publicAuthConfigValue(existingData, "OIDC_JWKS_URL")
+	return oidcIssuer != "" && oidcAudience != "" && oidcJWKSURL != ""
+}
+
+func publicAuthConfigValue(existingData map[string]string, key string) string {
+	if envValue := setupAnalyticsConfigEnvValue(key); envValue != "" {
+		return envValue
+	}
+	return strings.TrimSpace(existingData[key])
+}
+
 func SetupPlatform(logger *zap.Logger, plan setupplan.Plan, clusterMgr ClusterManagerAPI) error {
 	return setupPlatformWithDeps(logger, plan, SetupDeps{ClusterManager: clusterMgr}.withDefaults(logger))
 }
@@ -369,7 +408,12 @@ func setupPlatformWithDeps(logger *zap.Logger, plan setupplan.Plan, deps SetupDe
 		core.LogStructuredError(logger, err, "Invalid registry setup configuration")
 		return err
 	}
-	if err := validateNonTestSetup(plan, extRegistry, usingExternalRegistry); err != nil {
+	existingPublicAuthConfig, err := existingPublicAuthConfigForSetup(plan)
+	if err != nil {
+		core.LogStructuredError(logger, err, "Invalid public platform auth configuration")
+		return err
+	}
+	if err := validateNonTestSetupWithAuthConfig(plan, extRegistry, usingExternalRegistry, existingPublicAuthConfig); err != nil {
 		core.LogStructuredError(logger, err, "Invalid non-test setup configuration")
 		return err
 	}
