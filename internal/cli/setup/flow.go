@@ -153,6 +153,9 @@ func validateRequiredPlatformEnv(plan setupplan.Plan, usingExternalRegistry bool
 			"platform admin configuration is incomplete; set MCP_PLATFORM_ADMIN_EMAIL (or ADMIN_USERS) before running production setup",
 		)
 	}
+	if err := ValidatePublicPlatformAuthEnv(plan.PlatformMode, plan.TLSEnabled, plan.TestMode); err != nil {
+		return err
+	}
 	if !usingExternalRegistry && !registryEndpointEnvExplicitlyConfigured() {
 		return core.NewWithSentinel(
 			core.ErrSetupStepFailed,

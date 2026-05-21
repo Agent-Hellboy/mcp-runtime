@@ -230,7 +230,8 @@ GET  /api/auth/me
 set `GOOGLE_CLIENT_ID` before setup; when the issuer, audience, and JWKS URL are
 empty, setup derives the standard Google OIDC values from that client ID. For
 other OIDC providers, set `OIDC_ISSUER`, `OIDC_AUDIENCE`, and `OIDC_JWKS_URL`
-explicitly.
+explicitly. Non-test public TLS setup fails fast unless one of those browser
+login configurations is present.
 
 ## Gateway flow and headers
 

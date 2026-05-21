@@ -344,6 +344,26 @@ func ValidatePlatformMode(mode string) error {
 	return core.WrapWithSentinel(core.ErrFieldRequired, fmt.Errorf("invalid platform mode %q", mode), "invalid --platform-mode; expected tenant, org, or public")
 }
 
+func ValidatePublicPlatformAuthEnv(platformMode string, tlsEnabled, testMode bool) error {
+	mode, ok := setupplan.NormalizePlatformMode(platformMode)
+	if !ok || mode != setupplan.PlatformModePublic || !tlsEnabled || testMode {
+		return nil
+	}
+	if setupAnalyticsConfigEnvValue("GOOGLE_CLIENT_ID") != "" {
+		return nil
+	}
+	oidcIssuer := setupAnalyticsConfigEnvValue("OIDC_ISSUER")
+	oidcAudience := setupAnalyticsConfigEnvValue("OIDC_AUDIENCE")
+	oidcJWKSURL := setupAnalyticsConfigEnvValue("OIDC_JWKS_URL")
+	if oidcIssuer != "" && oidcAudience != "" && oidcJWKSURL != "" {
+		return nil
+	}
+	return core.NewWithSentinel(
+		core.ErrFieldRequired,
+		"--platform-mode public with --with-tls requires browser login configuration: set GOOGLE_CLIENT_ID or MCP_GOOGLE_CLIENT_ID for Google sign-in, or set OIDC_ISSUER, OIDC_AUDIENCE, and OIDC_JWKS_URL for another provider before running setup",
+	)
+}
+
 func SetupPlatform(logger *zap.Logger, plan setupplan.Plan, clusterMgr ClusterManagerAPI) error {
 	return setupPlatformWithDeps(logger, plan, SetupDeps{ClusterManager: clusterMgr}.withDefaults(logger))
 }

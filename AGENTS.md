@@ -175,7 +175,10 @@ kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
   `admin@mcpruntime.org` / `admin@123`. Disable or override them through the
   `PLATFORM_DEV_*` keys in `mcp-sentinel-secrets`, then roll the API deployment.
 - **Google / OIDC sign-in:** set `GOOGLE_CLIENT_ID` before `setup` when the
-  dashboard should render Google sign-in. For Google, setup defaults
+  dashboard should render Google sign-in. Non-test public TLS installs
+  (`--platform-mode public --with-tls`) fail fast unless `GOOGLE_CLIENT_ID`
+  / `MCP_GOOGLE_CLIENT_ID` is set, or `OIDC_ISSUER`, `OIDC_AUDIENCE`, and
+  `OIDC_JWKS_URL` are all set for another provider. For Google, setup defaults
   `OIDC_AUDIENCE` to that client ID and fills `OIDC_ISSUER=https://accounts.google.com`
   plus `OIDC_JWKS_URL=https://www.googleapis.com/oauth2/v3/certs` when they are
   otherwise empty. For other OIDC providers, set `OIDC_ISSUER`,

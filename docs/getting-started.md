@@ -438,7 +438,10 @@ analytics, audit, and observability.
 | `org` | `mcp-servers-org` | Signed-in users publish and browse the org-wide catalog and can still work in team namespaces. |
 | `public` | `mcp-servers-public` | Anonymous users can browse the public preview catalog; signed-in users publish public preview MCP servers and can still work in team namespaces. |
 
-For browser Google sign-in, provide the OAuth client ID before setup. For
+For browser Google sign-in, provide the OAuth client ID before setup. Non-test
+public TLS installs (`--platform-mode public --with-tls`) fail fast unless
+`GOOGLE_CLIENT_ID` / `MCP_GOOGLE_CLIENT_ID` is set, or `OIDC_ISSUER`,
+`OIDC_AUDIENCE`, and `OIDC_JWKS_URL` are all set for another provider. For
 Google, setup uses the client ID as the OIDC audience and fills the standard
 Google issuer and JWKS URL when those values are not set explicitly:
 
