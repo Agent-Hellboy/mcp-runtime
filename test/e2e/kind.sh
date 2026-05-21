@@ -3417,10 +3417,17 @@ if scenario_selected "governance" || scenario_selected "adapter-proxy"; then
   # Phase 6: exercise the platform-issued adapter-session endpoint. The
   # existing governance grant pins humanID to ${HUMAN_ID}, while this flow
   # calls the endpoint as the platform admin principal. Apply a second,
-  # subject-wildcard grant just for this test. The endpoint must pick the
-  # wildcard grant, write/reuse an MCPAgentSession with the deterministic
-  # adapter-<hash> name, and report reused=true on the second call.
-  log_line policy "applying subject-wildcard grant for adapter-session test"
+  # per-run agent-scoped grant just for this test. The endpoint must pick the
+  # grant, write/reuse an MCPAgentSession with the deterministic adapter-<hash>
+  # name, and report reused=true on the second call.
+  # Use a fresh agentID per e2e invocation so deterministic-name reuse
+  # doesn't leak across re-runs in E2E_CACHE_MODE=1 (where the cluster and
+  # prior adapter-<hash> sessions are retained between runs). A timestamp
+  # suffix is sufficient; the assertions below verify the platform's own
+  # reuse semantics (reused=true on the *second* call within this run).
+  ADAPTER_AGENT_ID="e2e-adapter-agent-$(date +%s)"
+
+  log_line policy "applying agent-scoped grant for adapter-session test"
   cat >"${WORKDIR}/adapter-session-grant.yaml" <<EOF
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
@@ -3430,7 +3437,8 @@ metadata:
 spec:
   serverRef:
     name: ${SERVER_NAME}
-  subject: {}
+  subject:
+    agentID: ${ADAPTER_AGENT_ID}
   maxTrust: low
   allowedSideEffects: [read]
   policyVersion: v1
@@ -3439,13 +3447,7 @@ spec:
       decision: allow
 EOF
   (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file adapter-session-grant.yaml)
-
-  # Use a fresh agentID per e2e invocation so deterministic-name reuse
-  # doesn't leak across re-runs in E2E_CACHE_MODE=1 (where the cluster and
-  # prior adapter-<hash> sessions are retained between runs). A timestamp
-  # suffix is sufficient; the assertions below verify the platform's own
-  # reuse semantics (reused=true on the *second* call within this run).
-  ADAPTER_AGENT_ID="e2e-adapter-agent-$(date +%s)"
+  wait_for_policy_text "\"agent_id\": \"${ADAPTER_AGENT_ID}\""
 
   log_line policy "logging in platform admin for adapter-session test"
   ADAPTER_PLATFORM_TOKEN="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
@@ -3480,6 +3482,7 @@ print('adapter-session issued:', resp['name'], 'reused=', resp['reused'])
     echo "expected MCPAgentSession ${ADAPTER_SESSION_NAME} in mcp-servers" >&2
     exit 1
   fi
+  wait_for_policy_text "\"name\": \"${ADAPTER_SESSION_NAME}\""
 
   # The second call must hit the platform's reuse path: same body within the
   # same run, no Kubernetes round-trip, reused=true. This is independent of
