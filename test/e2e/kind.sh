@@ -148,6 +148,7 @@ RUST_EXAMPLE_PROXY_PORT="${RUST_EXAMPLE_PROXY_PORT:-18099}"
 GO_EXAMPLE_PROXY_PORT="${GO_EXAMPLE_PROXY_PORT:-18102}"
 CLI_SENTINEL_API_PORT="${CLI_SENTINEL_API_PORT:-18103}"
 ADAPTER_PROXY_PORT="${ADAPTER_PROXY_PORT:-18104}"
+MCP_SERVICE_SESSION_PORT="${MCP_SERVICE_SESSION_PORT:-18105}"
 API_METRICS_PORT="${API_METRICS_PORT:-19090}"
 INGEST_METRICS_PORT="${INGEST_METRICS_PORT:-19091}"
 PROCESSOR_METRICS_PORT="${PROCESSOR_METRICS_PORT:-19092}"
@@ -275,6 +276,10 @@ api_service_paths_selected() {
 
 ui_service_paths_selected() {
   scenario_selected "observability" || scenario_selected "ui-auth"
+}
+
+server_proxy_paths_selected() {
+  scenario_selected "trust" || scenario_selected "observability"
 }
 
 deep_request_flows_enabled() {
@@ -3174,8 +3179,10 @@ if scenario_selected "observability"; then
   port_forward_bg mcp-sentinel mcp-sentinel-ingest "${INGEST_SERVICE_PORT}" 8081 "${WORKDIR}/ingest-port-forward.log"
   port_forward_bg mcp-sentinel mcp-sentinel-ingest "${INGEST_METRICS_PORT}" 9091 "${WORKDIR}/ingest-metrics-port-forward.log"
   port_forward_bg mcp-sentinel mcp-sentinel-processor "${PROCESSOR_METRICS_PORT}" 9102 "${WORKDIR}/processor-metrics-port-forward.log"
-  port_forward_bg mcp-servers "${SERVER_NAME}" "${SERVER_PROXY_PORT}" 80 "${WORKDIR}/server-proxy-port-forward.log"
   port_forward_resource_bg mcp-servers "deployment/${SERVER_NAME}" "${SERVER_UPSTREAM_PORT}" 8090 "${WORKDIR}/server-upstream-port-forward.log"
+fi
+if server_proxy_paths_selected; then
+  port_forward_bg mcp-servers "${SERVER_NAME}" "${SERVER_PROXY_PORT}" 80 "${WORKDIR}/server-proxy-port-forward.log"
 fi
 if ui_service_paths_selected; then
   port_forward_bg mcp-sentinel mcp-sentinel-ui "${UI_SERVICE_PORT}" 8082 "${WORKDIR}/ui-port-forward.log"
@@ -3193,8 +3200,10 @@ if scenario_selected "observability"; then
   wait_port "${INGEST_SERVICE_PORT}"
   wait_port "${INGEST_METRICS_PORT}"
   wait_port "${PROCESSOR_METRICS_PORT}"
-  wait_port "${SERVER_PROXY_PORT}"
   wait_port "${SERVER_UPSTREAM_PORT}"
+fi
+if server_proxy_paths_selected; then
+  wait_port "${SERVER_PROXY_PORT}"
 fi
 if ui_service_paths_selected; then
   wait_port "${UI_SERVICE_PORT}"
@@ -3261,6 +3270,15 @@ start_header_proxy_bg "${GO_EXAMPLE_PROXY_PORT}" \
   "${WORKDIR}/workspace-assistant-proxy.log" \
   --host-header "${GO_EXAMPLE_SERVER_HOST}" \
   --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
+if scenario_selected "trust"; then
+  start_header_proxy_bg "${MCP_SERVICE_SESSION_PORT}" \
+    "http://127.0.0.1:${SERVER_PROXY_PORT}" \
+    "${WORKDIR}/mcp-service-session-proxy.log" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
+    --header "X-MCP-Human-ID=${HUMAN_ID}" \
+    --header "X-MCP-Agent-ID=${AGENT_ID}" \
+    --header "X-MCP-Agent-Session=${SESSION_ID}"
+fi
 wait_port "${MCP_CURL_ANON_PORT}"
 wait_port "${MCP_CURL_IDENTITY_PORT}"
 wait_port "${MCP_CURL_SESSION_PORT}"
@@ -3268,6 +3286,9 @@ wait_port "${MCP_CURL_BAD_SESSION_PORT}"
 wait_port "${PYTHON_EXAMPLE_PROXY_PORT}"
 wait_port "${RUST_EXAMPLE_PROXY_PORT}"
 wait_port "${GO_EXAMPLE_PROXY_PORT}"
+if scenario_selected "trust"; then
+  wait_port "${MCP_SERVICE_SESSION_PORT}"
+fi
 
 MCP_INGRESS_PATH="/${SERVER_NAME}/mcp"
 MCP_DIRECT_URL="http://127.0.0.1:${TRAEFIK_PORT}${MCP_INGRESS_PATH}"
@@ -3275,6 +3296,7 @@ MCP_ANON_URL="http://127.0.0.1:${MCP_CURL_ANON_PORT}${MCP_INGRESS_PATH}"
 MCP_IDENTITY_URL="http://127.0.0.1:${MCP_CURL_IDENTITY_PORT}${MCP_INGRESS_PATH}"
 MCP_SESSION_URL="http://127.0.0.1:${MCP_CURL_SESSION_PORT}${MCP_INGRESS_PATH}"
 MCP_BAD_SESSION_URL="http://127.0.0.1:${MCP_CURL_BAD_SESSION_PORT}${MCP_INGRESS_PATH}"
+MCP_TRUST_SESSION_URL="http://127.0.0.1:${MCP_SERVICE_SESSION_PORT}${MCP_INGRESS_PATH}"
 PYTHON_EXAMPLE_URL="http://127.0.0.1:${PYTHON_EXAMPLE_PROXY_PORT}${PYTHON_EXAMPLE_SERVER_ROUTE}"
 RUST_EXAMPLE_URL="http://127.0.0.1:${RUST_EXAMPLE_PROXY_PORT}${RUST_EXAMPLE_SERVER_ROUTE}"
 GO_EXAMPLE_URL="http://127.0.0.1:${GO_EXAMPLE_PROXY_PORT}${GO_EXAMPLE_SERVER_ROUTE}"
@@ -3629,8 +3651,8 @@ fi
 
 if scenario_selected "trust"; then
   log_line mcp "validating targeted echo and upper tool behavior"
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "echo" '{"message":"hello"}' 200 "hello"
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "upper" '{"message":"governance"}' 403 "trust_too_low"
+  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "echo" '{"message":"hello"}' 200 "hello"
+  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "upper" '{"message":"governance"}' 403 "trust_too_low"
 
   log_line policy "raising consented trust to medium; upper should become allowed while add stays ungranted"
   cat <<EOF | kubectl apply -f -
@@ -3652,8 +3674,8 @@ EOF
   wait_for_policy_text "\"consented_trust\": \"medium\""
   print_gateway_policy_debug
   log_line mcp "waiting for updated consented trust to reach the gateway"
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "upper" '{"message":"governance"}' 200 "GOVERNANCE"
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "add" '{"a":2,"b":3}' 403 "tool_not_granted"
+  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "upper" '{"message":"governance"}' 200 "GOVERNANCE"
+  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "add" '{"a":2,"b":3}' 403 "tool_not_granted"
 
   log_line policy "temporarily expanding grant for deterministic multi-tool MCP checks"
   cat <<EOF | kubectl apply -f -
@@ -3684,8 +3706,8 @@ spec:
       decision: allow
 EOF
   wait_for_policy_text "\"slugify\""
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "add" '{"a":41,"b":1}' 200 "42"
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "slugify" '{"message":"Hello World"}' 200 "hello-world"
+  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "add" '{"a":41,"b":1}' 200 "42"
+  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "slugify" '{"message":"Hello World"}' 200 "hello-world"
 
   log_line policy "updating access grant to deny aaa-ping and echo"
   cat >"${WORKDIR}/access-grant-deny.yaml" <<EOF
@@ -3718,9 +3740,9 @@ EOF
   print_gateway_policy_debug
 
   log_line mcp "validating updated access grant denies aaa-ping and echo"
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 403 "tool_denied"
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "echo" '{"message":"analytics"}' 403 "tool_denied"
-  run_mcp_curl_expect "mcp-curl-aaa-ping-deny" "${MCP_SESSION_URL}" false "tool_denied"
+  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "aaa-ping" '{}' 403 "tool_denied"
+  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "echo" '{"message":"analytics"}' 403 "tool_denied"
+  run_mcp_curl_expect "mcp-curl-aaa-ping-deny" "${MCP_TRUST_SESSION_URL}" false "tool_denied"
 fi
 
 if scenario_selected "oauth"; then
