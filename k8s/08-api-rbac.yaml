@@ -42,6 +42,11 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces", "resourcequotas", "limitranges"]
     verbs: ["get", "list", "watch", "create"]
+  # Existing namespaces may need platform/PSS labels reconciled when an admin
+  # deploys into a pre-created namespace.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["update", "patch"]
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
