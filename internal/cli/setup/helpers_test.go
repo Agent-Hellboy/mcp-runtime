@@ -80,6 +80,7 @@ func csvHasValue(csv, value string) bool {
 func TestResolveSetupImagePlatformUsesNodeArchitecture(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	t.Cleanup(resetSetupImagePlatformCacheForTest)
 	core.DefaultCLIConfig = &core.CLIConfig{}
 	kubectl := core.NewTestKubectlClient(&core.MockExecutor{DefaultOutput: []byte("amd64\namd64\n")})
 
@@ -92,9 +93,32 @@ func TestResolveSetupImagePlatformUsesNodeArchitecture(t *testing.T) {
 	}
 }
 
+func TestResolveSetupImagePlatformCachesNodeArchitecture(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	t.Cleanup(resetSetupImagePlatformCacheForTest)
+	core.DefaultCLIConfig = &core.CLIConfig{}
+	mock := &core.MockExecutor{DefaultOutput: []byte("arm64\n")}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	for i := 0; i < 3; i++ {
+		got, err := resolveSetupImagePlatform(kubectl)
+		if err != nil {
+			t.Fatalf("resolveSetupImagePlatform call %d returned error: %v", i+1, err)
+		}
+		if got != "linux/arm64" {
+			t.Fatalf("resolveSetupImagePlatform call %d = %q, want linux/arm64", i+1, got)
+		}
+	}
+	if len(mock.Commands) != 1 {
+		t.Fatalf("expected one kubectl architecture lookup, got %d", len(mock.Commands))
+	}
+}
+
 func TestResolveSetupImagePlatformRejectsMixedNodeArchitectures(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	t.Cleanup(resetSetupImagePlatformCacheForTest)
 	core.DefaultCLIConfig = &core.CLIConfig{}
 	kubectl := core.NewTestKubectlClient(&core.MockExecutor{DefaultOutput: []byte("amd64\narm64\n")})
 
@@ -107,6 +131,7 @@ func TestResolveSetupImagePlatformRejectsMixedNodeArchitectures(t *testing.T) {
 func TestResolveSetupImagePlatformRejectsExplicitMismatch(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	t.Cleanup(resetSetupImagePlatformCacheForTest)
 	core.DefaultCLIConfig = &core.CLIConfig{ImagePlatform: "linux/arm64"}
 	kubectl := core.NewTestKubectlClient(&core.MockExecutor{DefaultOutput: []byte("amd64\n")})
 
@@ -119,6 +144,7 @@ func TestResolveSetupImagePlatformRejectsExplicitMismatch(t *testing.T) {
 func TestResolveSetupImagePlatformIncludesKubectlStderr(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	t.Cleanup(resetSetupImagePlatformCacheForTest)
 	core.DefaultCLIConfig = &core.CLIConfig{}
 	kubectl := core.NewTestKubectlClient(&core.MockExecutor{
 		DefaultOutput: []byte("Error from server (Forbidden): nodes is forbidden"),
@@ -973,6 +999,11 @@ func TestRenderAnalyticsSecretManifestDoesNotSeedPartialAdminPasswordUser(t *tes
 	}
 	if !csvHasValue(data["ADMIN_USERS"], "PrinceKrRoshan01@gmail.com") {
 		t.Fatalf("expected admin email to remain in ADMIN_USERS, got %q", data["ADMIN_USERS"])
+	}
+	for _, part := range strings.Split(data["ADMIN_USERS"], ",") {
+		if strings.TrimSpace(part) == "" {
+			t.Fatalf("expected ADMIN_USERS to avoid empty entries, got %q", data["ADMIN_USERS"])
+		}
 	}
 }
 

@@ -69,6 +69,19 @@ const (
 
 var setupImageTagResolver = registry.DefaultGitTag
 
+type setupImagePlatformCacheEntry struct {
+	once     sync.Once
+	platform string
+	err      error
+}
+
+var setupImagePlatformCache = struct {
+	sync.Mutex
+	entries map[string]*setupImagePlatformCacheEntry
+}{
+	entries: map[string]*setupImagePlatformCacheEntry{},
+}
+
 type analyticsComponent struct {
 	Name         string
 	Repository   string
@@ -473,6 +486,28 @@ func resolveSetupImagePlatform(kubectl core.KubectlRunner) (string, error) {
 		}
 	}
 
+	cacheKey := fmt.Sprintf("%T:%p:%s", kubectl, kubectl, explicitPlatform)
+	setupImagePlatformCache.Lock()
+	entry := setupImagePlatformCache.entries[cacheKey]
+	if entry == nil {
+		entry = &setupImagePlatformCacheEntry{}
+		setupImagePlatformCache.entries[cacheKey] = entry
+	}
+	setupImagePlatformCache.Unlock()
+
+	entry.once.Do(func() {
+		entry.platform, entry.err = resolveSetupImagePlatformUncached(kubectl, explicitPlatform)
+	})
+	return entry.platform, entry.err
+}
+
+func resetSetupImagePlatformCacheForTest() {
+	setupImagePlatformCache.Lock()
+	setupImagePlatformCache.entries = map[string]*setupImagePlatformCacheEntry{}
+	setupImagePlatformCache.Unlock()
+}
+
+func resolveSetupImagePlatformUncached(kubectl core.KubectlRunner, explicitPlatform string) (string, error) {
 	archs, err := clusterNodeArchitectures(kubectl)
 	if err != nil {
 		if explicitPlatform != "" {
@@ -2866,7 +2901,14 @@ func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
 		platformAdminEmail = ""
 		platformAdminPassword = ""
 	}
-	adminUsers = ensureCSVIncludesValues(adminUsers, setupSecretEnvValue("MCP_ADMIN_USERS", "ADMIN_USERS"), envPlatformAdminEmail, platformAdminEmail)
+	adminUserCandidates := []string{setupSecretEnvValue("MCP_ADMIN_USERS", "ADMIN_USERS")}
+	if envPlatformAdminEmail != "" {
+		adminUserCandidates = append(adminUserCandidates, envPlatformAdminEmail)
+	}
+	if platformAdminEmail != "" {
+		adminUserCandidates = append(adminUserCandidates, platformAdminEmail)
+	}
+	adminUsers = ensureCSVIncludesValues(adminUsers, adminUserCandidates...)
 	platformDevLoginEnabled := ""
 	platformDevUserEmail, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_USER_EMAIL")
 	if err != nil {
