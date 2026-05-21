@@ -59,6 +59,83 @@ Let's Encrypt HTTP-01 requires public DNS and public port 80. For private-only
 on-prem DNS, use an enterprise cert-manager `ClusterIssuer` or pre-created TLS
 secrets instead of `--acme-email`.
 
+## Choose the Front Door
+
+Pick the public or internal traffic path before installing MCP Runtime. The
+platform expects the same three hostnames either way:
+
+- `platform.example.com` for the dashboard, API, Grafana, and Prometheus.
+- `registry.example.com` for OCI registry push and pull flows.
+- `mcp.example.com` for MCP server routes such as `/<server-name>/mcp`.
+
+### Direct DNS to k3s Ingress
+
+This is the simplest public demo shape:
+
+```text
+client -> DNS A record -> mcp-ingress-1 public IP -> k3s ServiceLB -> Traefik
+```
+
+Use this when you can expose ports 80 and 443 directly on the ingress node or
+on a small external load balancer. `--acme-email` works in this shape because
+Let's Encrypt HTTP-01 can reach Traefik on port 80.
+
+### Cloudflare, WAF, or Public Reverse Proxy
+
+For internet-facing demos, it is usually better to put Cloudflare, an
+enterprise WAF, or another reverse proxy in front of the ingress node:
+
+```text
+client -> Cloudflare/WAF/proxy -> origin ingress IP -> k3s ServiceLB -> Traefik
+```
+
+In this shape:
+
+- Point the public DNS records at the proxy, not directly at the node, if the
+  proxy is meant to hide or shield the origin.
+- Configure the proxy origin to forward all three hosts to the ingress node or
+  external load balancer.
+- Preserve the original `Host` header and `X-Forwarded-Proto`.
+- Do not cache or rewrite `/api`, `/v2`, `/<server-name>/mcp`, or
+  `/.well-known/acme-challenge/*`.
+- Allow long-lived and streaming HTTP responses for MCP traffic.
+- Allow registry blob upload/download behavior, including large request bodies,
+  range requests, and Docker/OCI auth headers.
+- Restrict origin firewall access to the proxy source ranges when possible, and
+  keep those ranges updated from the proxy provider.
+
+`--acme-email` still uses HTTP-01. If the proxy is in front during issuance,
+`/.well-known/acme-challenge/*` must pass through to Traefik without auth,
+cache, forced HTTPS loops, or WAF blocks. A practical rollout is to start with
+DNS-only/direct records until cert-manager issues certificates, then enable the
+proxy after validation. For private or always-proxied environments, prefer an
+enterprise cert-manager `ClusterIssuer`, proxy-managed origin certificates, or
+pre-created TLS secrets instead of public HTTP-01.
+
+Test the registry path through the proxy before calling the install done:
+
+```bash
+curl -i https://registry.example.com/v2/
+```
+
+Unauthenticated `401` or `403` is healthy. A proxy-generated HTML error,
+timeout, body-size error, or cached response means Docker/OCI clients may fail
+even if the dashboard works.
+
+### Internal Enterprise Proxy or Load Balancer
+
+For private on-prem installs, put an internal reverse proxy, F5/HAProxy/NGINX,
+or a private load balancer in front of `mcp-ingress-1`:
+
+```text
+internal client -> internal DNS/proxy/LB -> k3s ServiceLB -> Traefik
+```
+
+Keep the same hostnames, but resolve them in internal DNS. Use
+`--tls-cluster-issuer <issuer-name>` or pre-created TLS secrets so certificates
+chain to your enterprise trust store. Public Let's Encrypt ACME is not the
+right fit unless the names and HTTP-01 challenge path are publicly reachable.
+
 ## Install k3s
 
 Install the first node as the single k3s server. Disable the packaged k3s

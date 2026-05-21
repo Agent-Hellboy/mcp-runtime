@@ -167,8 +167,8 @@ Use `--tls-cluster-issuer <issuer-name>` instead of `--acme-email` when your
 cluster already has an enterprise `ClusterIssuer`.
 
 For a complete four-node reference topology, worker join commands, ServiceLB
-pinning, public DNS, TLS, registry, validation, and a five-node extension, use
-[k3s On-Prem Cluster](k3s-on-prem-cluster.md).
+pinning, public DNS, Cloudflare or enterprise proxy front doors, TLS, registry,
+validation, and a five-node extension, use [k3s On-Prem Cluster](k3s-on-prem-cluster.md).
 
 ### kubeadm, RKE2, and Other Self-Managed Clusters
 
