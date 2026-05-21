@@ -3562,7 +3562,7 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team create "${DEEP_CLI_TEAM_SLUG}" --name "E2E CLI ${DEEP_CLI_TEAM_SLUG}" >/dev/null
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team user create "${DEEP_CLI_TEAM_SLUG}" \
     --email "${DEEP_CLI_USER_EMAIL}" \
-    --password "test@12345" \
+    --password "test-password-123" \
     --role member >/dev/null
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team user list "${DEEP_CLI_TEAM_SLUG}" >/dev/null
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime server list --namespace mcp-servers >/dev/null

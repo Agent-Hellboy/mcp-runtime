@@ -16,6 +16,7 @@ agent_id = os.environ["AGENT_ID"]
 platform_admin_email = os.environ["PLATFORM_ADMIN_EMAIL"]
 platform_admin_password = os.environ["PLATFORM_ADMIN_PASSWORD"]
 grant_name = f"{server_name}-grant"
+test_user_password = "test-password-123"
 
 
 import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
@@ -73,8 +74,8 @@ admin_key_headers = {"x-api-key": api_key}
 expect_status(f"{api_base}/api/auth/login", 401, method="POST", body={"email": f"missing-{suffix}@mcpruntime.org", "password": "wrong-password"})
 oidc_status, _, oidc_body = request(f"{api_base}/api/auth/oidc", method="POST", body={})
 check(oidc_status in (400, 503), "POST /api/auth/oidc reached edge path", f"unexpected /api/auth/oidc status {oidc_status}: {oidc_body}")
-expect_status(f"{api_base}/api/auth/signup", 400, method="POST", body={"email": f"bad-role-{suffix}@mcpruntime.org", "password": "test@12345", "role": "root"})
-expect_status(f"{api_base}/api/auth/signup", 403, method="POST", body={"email": f"admin-denied-{suffix}@mcpruntime.org", "password": "test@12345", "role": "admin"})
+expect_status(f"{api_base}/api/auth/signup", 400, method="POST", body={"email": f"bad-role-{suffix}@mcpruntime.org", "password": test_user_password, "role": "root"})
+expect_status(f"{api_base}/api/auth/signup", 403, method="POST", body={"email": f"admin-denied-{suffix}@mcpruntime.org", "password": test_user_password, "role": "admin"})
 
 admin_login = expect_json(f"{api_base}/api/auth/login", method="POST", body={"email": platform_admin_email, "password": platform_admin_password})
 admin_token = admin_login.get("access_token", "")
@@ -84,7 +85,7 @@ admin_me = expect_json(f"{api_base}/api/auth/me", headers=admin_headers)
 check(admin_me.get("principal", {}).get("role") == "admin", "GET /api/auth/me returned admin principal", f"admin me response: {admin_me}")
 
 signup_email = f"e2e-api-user-{suffix}@mcpruntime.org"
-signup = expect_json(f"{api_base}/api/auth/signup", status=201, method="POST", body={"email": signup_email, "password": "test@12345"})
+signup = expect_json(f"{api_base}/api/auth/signup", status=201, method="POST", body={"email": signup_email, "password": test_user_password})
 user_token = signup.get("access_token", "")
 user = signup.get("user", {})
 user_id = user.get("id", "")
@@ -122,7 +123,7 @@ expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members", 
 membership = expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members", method="POST", headers=admin_headers, body={"userID": user_id, "role": "member"})
 check(membership.get("membership", {}).get("user_id") == user_id, "POST /api/runtime/teams/{slug}/members added user", f"membership response: {membership}")
 team_user_email = f"e2e-api-team-user-{suffix}@mcpruntime.org"
-team_user = expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/users", method="POST", headers=admin_headers, body={"email": team_user_email, "password": "test@12345", "role": "owner"})
+team_user = expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/users", method="POST", headers=admin_headers, body={"email": team_user_email, "password": test_user_password, "role": "owner"})
 team_user_id = team_user.get("user", {}).get("id", "")
 check(bool(team_user_id), "POST /api/runtime/teams/{slug}/users created user", f"team user response: {team_user}")
 expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members/{quote_segment(team_user_id)}", method="DELETE", headers=admin_headers)

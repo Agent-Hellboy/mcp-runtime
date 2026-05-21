@@ -38,6 +38,7 @@ oauth_public_base = f"http://{oauth_server_host}"
 server_mcp_path = f"/{server_name}/mcp"
 oauth_mcp_path = f"/{oauth_server_name}/mcp"
 catalog_namespace = "mcp-servers"
+test_user_password = "test-password-123"
 
 
 import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
@@ -511,13 +512,13 @@ if deep_request_flows:
         f"{api_base}/api/auth/signup",
         400,
         method="POST",
-        body={"email": f"bad-role-{suffix}@mcpruntime.org", "password": "test@12345", "role": "root"},
+        body={"email": f"bad-role-{suffix}@mcpruntime.org", "password": test_user_password, "role": "root"},
     )
     expect_status(
         f"{api_base}/api/auth/signup",
         403,
         method="POST",
-        body={"email": f"admin-denied-{suffix}@mcpruntime.org", "password": "test@12345", "role": "admin"},
+        body={"email": f"admin-denied-{suffix}@mcpruntime.org", "password": test_user_password, "role": "admin"},
     )
 
     admin_login = expect_json(
@@ -540,7 +541,7 @@ if deep_request_flows:
         f"{api_base}/api/auth/signup",
         status=201,
         method="POST",
-        body={"email": signup_email, "password": "test@12345"},
+        body={"email": signup_email, "password": test_user_password},
     )
     user_token = signup.get("access_token", "")
     user = signup.get("user", {})
@@ -628,7 +629,7 @@ if deep_request_flows:
         f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/users",
         method="POST",
         headers=admin_headers,
-        body={"email": team_user_email, "password": "test@12345", "role": "owner"},
+        body={"email": team_user_email, "password": test_user_password, "role": "owner"},
     )
     team_user_id = team_user.get("user", {}).get("id", "")
     check(bool(team_user_id), "POST /api/runtime/teams/{slug}/users created team user", f"team user response: {team_user}")
