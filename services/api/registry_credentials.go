@@ -61,11 +61,21 @@ func (s *apiServer) handleRegistryCredentials(w http.ResponseWriter, r *http.Req
 			Source:       auditSource(r, p),
 			AuthIdentity: auditIdentityLabel(p),
 		})
-		writeJSON(w, http.StatusCreated, map[string]any{"credential": key, "username": p.Namespace, "password": cleartext})
+		writeJSON(w, http.StatusCreated, map[string]any{"credential": key, "username": registryCredentialUsername(p), "password": cleartext})
 	default:
 		w.Header().Set("allow", "GET, POST")
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
 	}
+}
+
+func registryCredentialUsername(p principal) string {
+	if namespace := strings.TrimSpace(p.Namespace); namespace != "" {
+		return namespace
+	}
+	if subject := strings.TrimSpace(p.Subject); subject != "" {
+		return subject
+	}
+	return strings.TrimSpace(p.Email)
 }
 
 func (s *apiServer) handleRegistryCredentialItem(w http.ResponseWriter, r *http.Request) {
