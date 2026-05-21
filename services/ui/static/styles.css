@@ -709,7 +709,7 @@ select:disabled {
 }
 
 .scroll-table thead th {
-  background: var(--panel);
+  background: rgba(23, 53, 47, 0.98);
   position: sticky;
   top: 0;
   z-index: 1;
