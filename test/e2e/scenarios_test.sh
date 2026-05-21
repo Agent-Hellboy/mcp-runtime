@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 KIND_SCRIPT="${PROJECT_ROOT}/test/e2e/kind.sh"
+SELECT_SCRIPT="${PROJECT_ROOT}/test/e2e/select_pr_scenarios.sh"
 
 run_valid() {
   local name="$1"
@@ -52,6 +53,10 @@ run_valid "smoke-auth" "smoke-auth" "smoke-auth"
 run_valid "governance" "governance" "governance"
 run_valid "trust" "trust" "trust"
 run_valid "oauth" "oauth" "oauth"
+run_valid "api-platform" "api-platform" "api-platform"
+run_valid "ui-auth" "ui-auth" "ui-auth"
+run_valid "adapter-proxy" "adapter-proxy" "adapter-proxy"
+run_valid "cli-platform" "cli-platform" "cli-platform"
 run_valid "observability-with-deps" "smoke-auth,governance,trust,oauth,observability" "smoke-auth,governance,trust,oauth,observability"
 run_valid "whitespace-trimmed" " smoke-auth , governance " "smoke-auth,governance"
 run_valid "duplicates-deduped" "smoke-auth,smoke-auth" "smoke-auth"
@@ -112,5 +117,29 @@ if ! printf '%s\n' "${output}" | grep -F -q -- "unsupported E2E platform mode: b
   exit 1
 fi
 echo "[pass] platform-mode-invalid"
+
+selector_expect() {
+  local name="$1"
+  local expected="$2"
+  shift 2
+  local output
+
+  output="$(printf '%s\n' "$@" | bash "${SELECT_SCRIPT}")"
+  if [[ "${output}" != "${expected}" ]]; then
+    echo "[fail] selector-${name}: expected ${expected}, got ${output}" >&2
+    printf 'paths:\n' >&2
+    printf '  %s\n' "$@" >&2
+    exit 1
+  fi
+  echo "[pass] selector-${name}"
+}
+
+selector_expect "docs-only" "smoke-auth" "docs/internals/tests.md"
+selector_expect "ui" "smoke-auth,ui-auth" "services/ui/main.go"
+selector_expect "api" "smoke-auth,api-platform" "services/api/internal/runtimeapi/auth.go"
+selector_expect "adapter" "smoke-auth,adapter-proxy,governance" "internal/cli/adapter/proxy.go"
+selector_expect "gateway" "smoke-auth,governance,trust,oauth,adapter-proxy" "services/mcp-gateway/main.go"
+selector_expect "observability" "smoke-auth,governance,trust,oauth,observability" "services/ingest/main.go"
+selector_expect "broad" "all" "api/v1alpha1/mcpserver_types.go"
 
 echo "[pass] scenario selector validation"
