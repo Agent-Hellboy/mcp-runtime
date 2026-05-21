@@ -89,6 +89,23 @@ subjects:
     namespace: mcp-sentinel
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mcp-sentinel-platform-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mcp-sentinel-api
+subjects:
+  # The platform API uses Kubernetes impersonation for deployment operations.
+  # Bind the admin platform group to the same runtime-management permissions so
+  # admin requests keep Kubernetes audit identity without falling back to the
+  # API service account identity.
+  - kind: Group
+    name: platform:role:admin
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: mcp-sentinel-api-user-key-secret
