@@ -131,7 +131,7 @@ OAUTH_AGENT_ID="${OAUTH_AGENT_ID:-oauth-client}"
 OAUTH_SESSION_ID="${OAUTH_SESSION_ID:-oauth-session-1}"
 OAUTH_AUDIENCE="${OAUTH_AUDIENCE:-mcp-runtime-e2e}"
 OAUTH_ISSUER_NAME="${OAUTH_ISSUER_NAME:-oauth-issuer}"
-OAUTH_ISSUER_URL="http://${OAUTH_ISSUER_NAME}.mcp-servers.svc.cluster.local:8080"
+OAUTH_ISSUER_URL="${OAUTH_ISSUER_URL:-}"
 TRAEFIK_PORT="${TRAEFIK_PORT:-18080}"
 SENTINEL_PORT="${SENTINEL_PORT:-18083}"
 TEMPO_PORT="${TEMPO_PORT:-13200}"
@@ -3751,6 +3751,31 @@ fi
 
 if scenario_selected "oauth"; then
   OAUTH_FIXTURE_DIR="${WORKDIR}/oauth-fixtures"
+
+  echo "[oauth] provisioning mock OAuth issuer service"
+  cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${OAUTH_ISSUER_NAME}
+  namespace: mcp-servers
+spec:
+  selector:
+    app: ${OAUTH_ISSUER_NAME}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+EOF
+  if [[ -z "${OAUTH_ISSUER_URL}" ]]; then
+    OAUTH_ISSUER_CLUSTER_IP="$(kubectl get svc "${OAUTH_ISSUER_NAME}" -n mcp-servers -o jsonpath='{.spec.clusterIP}')"
+    if [[ -z "${OAUTH_ISSUER_CLUSTER_IP}" || "${OAUTH_ISSUER_CLUSTER_IP}" == "None" ]]; then
+      echo "failed to resolve ClusterIP for OAuth issuer service ${OAUTH_ISSUER_NAME}" >&2
+      exit 1
+    fi
+    OAUTH_ISSUER_URL="http://${OAUTH_ISSUER_CLUSTER_IP}:8080"
+  fi
+
   generate_oauth_fixtures "${OAUTH_FIXTURE_DIR}"
   OAUTH_VALID_TOKEN="$(tr -d '\n' <"${OAUTH_FIXTURE_DIR}/valid-token.txt")"
   OAUTH_INVALID_TOKEN="$(tr -d '\n' <"${OAUTH_FIXTURE_DIR}/invalid-token.txt")"
@@ -3807,19 +3832,6 @@ spec:
         - name: files
           configMap:
             name: ${OAUTH_ISSUER_NAME}-files
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: ${OAUTH_ISSUER_NAME}
-  namespace: mcp-servers
-spec:
-  selector:
-    app: ${OAUTH_ISSUER_NAME}
-  ports:
-    - name: http
-      port: 8080
-      targetPort: 8080
 EOF
   # The issuer mounts fixture files through subPath, so restart to pick up new
   # JWKS/token fixtures when E2E cache mode reuses an existing Deployment.
