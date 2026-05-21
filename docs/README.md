@@ -190,6 +190,7 @@ preparation.
 |---|---|
 | Evaluate MCP Runtime for a private MCP platform | [Getting started](getting-started.md), then [Architecture](architecture.md) |
 | Run MCP Runtime on a real cluster | [Deployment Targets](deployment-targets.md), then [Cluster readiness](cluster-readiness.md) |
+| Build a four or five node k3s demo | [k3s On-Prem Cluster](k3s-on-prem-cluster.md), then [Publish an MCP Server](publish-mcp-server.md) |
 | Host multiple teams on one cluster | [Multi-team isolation](multi-team.md), then [CLI](cli.md) |
 | Govern tools and sessions | [Sentinel](sentinel.md), then [API reference](api.md) |
 | Integrate from automation | [CLI](cli.md), then [API reference](api.md) |

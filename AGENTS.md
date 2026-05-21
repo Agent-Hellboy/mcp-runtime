@@ -20,7 +20,7 @@ If instructions conflict, prefer **this repo** (`README`, CRDs, `v1alpha1` types
 | Default cluster install YAML | `k8s/`, `config/` | Overlays, CRDs, cert-manager examples |
 | Traefik plugins (dev) | `services/traefik-plugins/` | e.g. PII redactor source for local overlays |
 | Team / tenant isolation docs | `docs/multi-team.md` | Team identity contract, per-team namespaces, RBAC, ingress watch scope, and platform API enforcement |
-| Deployment target guide | `docs/deployment-targets.md` | High-level install shape guidance for k3s, self-managed clusters, and managed Kubernetes before using the distribution-specific readiness guide |
+| Deployment target guide | `docs/deployment-targets.md`, `docs/k3s-on-prem-cluster.md` | High-level install shape guidance for k3s, self-managed clusters, and managed Kubernetes before using the distribution-specific readiness guide; the k3s runbook covers a four/five-node public or on-prem topology |
 | Site / public docs (if editing) | `website/` | Not required for control-plane work |
 | E2E | `test/e2e/`, `test/integration/` | Kind script and envtest-based integration tests |
 | Agent tool config | `.claude/`, `.codex/skills/` | `.claude/skills` should symlink to `../.codex/skills` so Claude Desktop and the Codex CLI use the same local skills |

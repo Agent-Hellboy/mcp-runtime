@@ -59,7 +59,7 @@ Then make registry mode explicit:
 | kind | Contributor development, CI-like smoke tests, disposable clusters | Bundled HTTP registry with the documented kind mirror | Use [Contributor Local Kind](contributor/local-kind.md) and `setup --test-mode`. |
 | Docker Desktop Kubernetes | Laptop demos and local evaluation | Bundled HTTP registry or Docker Desktop image loading | Good for local UI/API exploration, not production. |
 | minikube | Laptop or VM evaluation | Insecure registry flag at cluster start, or `minikube image load` | Recreate minikube when changing insecure registry settings. |
-| k3s | Single-node lab, edge, small self-managed clusters | Bundled registry for labs; external or bundled HTTPS for production | See the k3s example below and [Cluster Readiness - k3s](cluster-readiness.md#k3s). |
+| k3s | Single-node lab, edge, small self-managed clusters | Bundled registry for labs; external or bundled HTTPS for production | See the k3s examples below, the [k3s On-Prem Cluster](k3s-on-prem-cluster.md) runbook, and [Cluster Readiness - k3s](cluster-readiness.md#k3s). |
 | kubeadm / vanilla Kubernetes | Self-managed production or staging | External registry, or bundled HTTPS with node CA trust | Configure containerd, DNS, ingress, storage, and TLS on every node. |
 | RKE2 | Self-managed production or staging | External registry, or bundled HTTPS with node CA trust | Treat it like a hardened self-managed cluster; use provider tooling for runtime config. |
 | EKS | AWS managed Kubernetes | ECR | Use AWS-managed node registry auth, a real ingress/load balancer, Route 53 or equivalent DNS, and cert-manager or enterprise TLS. |
@@ -165,6 +165,10 @@ export GOOGLE_CLIENT_ID=<google-oauth-client-id>
 
 Use `--tls-cluster-issuer <issuer-name>` instead of `--acme-email` when your
 cluster already has an enterprise `ClusterIssuer`.
+
+For a complete four-node reference topology, worker join commands, ServiceLB
+pinning, public DNS, TLS, registry, validation, and a five-node extension, use
+[k3s On-Prem Cluster](k3s-on-prem-cluster.md).
 
 ### kubeadm, RKE2, and Other Self-Managed Clusters
 
