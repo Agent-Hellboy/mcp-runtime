@@ -3598,84 +3598,8 @@ fi
 
 if scenario_selected "trust"; then
   log_line mcp "validating targeted echo and upper tool behavior"
-  MCP_BASE="${MCP_SESSION_URL}" \
-  MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION}" \
-  python3 <<'PY'
-import json
-import os
-import urllib.error
-import urllib.request
-
-base = os.environ["MCP_BASE"]
-protocol = os.environ["MCP_PROTOCOL_VERSION"]
-initialize_payload = {
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "initialize",
-    "params": {
-        "protocolVersion": protocol,
-        "capabilities": {},
-        "clientInfo": {"name": "mcp-runtime-e2e", "version": "1.0.0"},
-    },
-}
-
-
-import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
-
-
-def post(msg, mcp_session_id=None):
-    headers = {
-        "content-type": "application/json",
-        "accept": "application/json, text/event-stream",
-        "Mcp-Protocol-Version": protocol,
-    }
-    if mcp_session_id:
-        headers["Mcp-Session-Id"] = mcp_session_id
-    req = urllib.request.Request(base, data=json.dumps(msg).encode(), headers=headers)
-    try:
-        resp = urllib.request.urlopen(req, timeout=10)
-        return resp.status, resp.headers.get("Mcp-Session-Id") or mcp_session_id, resp.read().decode()
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.headers.get("Mcp-Session-Id") or mcp_session_id, exc.read().decode()
-
-
-status, mcp_session_id, body = post(initialize_payload)
-check(
-    status == 200 and bool(mcp_session_id),
-    "trust pre-update initialize succeeded",
-    f"initialize failed before trust update: {status} {body}",
-)
-
-status, _, body = post({"jsonrpc": "2.0", "method": "notifications/initialized"}, mcp_session_id=mcp_session_id)
-check(
-    status in (200, 202),
-    "trust pre-update notifications/initialized succeeded",
-    f"notifications/initialized failed: {status} {body}",
-)
-
-status, _, body = post(
-    {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "echo", "arguments": {"message": "hello"}}},
-    mcp_session_id=mcp_session_id,
-)
-check(
-    status == 200 and "hello" in body,
-    "trust pre-update echo allowed",
-    f"expected echo to succeed before trust update, got {status}: {body}",
-)
-print("echo allow:", body)
-
-status, _, body = post(
-    {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "upper", "arguments": {"message": "governance"}}},
-    mcp_session_id=mcp_session_id,
-)
-payload = json.loads(body)
-check(
-    status == 403 and payload.get("error") == "trust_too_low",
-    "trust pre-update upper denied with trust_too_low",
-    f"expected upper to be denied before trust update, got {status}: {body}",
-)
-print("upper deny:", body)
-PY
+  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "echo" '{"message":"hello"}' 200 "hello"
+  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "upper" '{"message":"governance"}' 403 "trust_too_low"
 
   log_line policy "raising consented trust to medium; upper should become allowed while add stays ungranted"
   cat <<EOF | kubectl apply -f -
@@ -3699,74 +3623,6 @@ EOF
   log_line mcp "waiting for updated consented trust to reach the gateway"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "upper" '{"message":"governance"}' 200 "GOVERNANCE"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "add" '{"a":2,"b":3}' 403 "tool_not_granted"
-
-  log_line mcp "validating updated policy allows the higher-trust tool"
-  MCP_BASE="${MCP_SESSION_URL}" \
-  MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION}" \
-  python3 <<'PY'
-import json
-import os
-import urllib.error
-import urllib.request
-
-base = os.environ["MCP_BASE"]
-protocol = os.environ["MCP_PROTOCOL_VERSION"]
-
-
-import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
-
-initialize_payload = make_initialize_payload(protocol)
-
-
-def post(msg, mcp_session_id=None):
-    headers = {
-        "content-type": "application/json",
-        "accept": "application/json, text/event-stream",
-        "Mcp-Protocol-Version": protocol,
-    }
-    if mcp_session_id:
-        headers["Mcp-Session-Id"] = mcp_session_id
-    req = urllib.request.Request(base, data=json.dumps(msg).encode(), headers=headers)
-    try:
-        resp = urllib.request.urlopen(req, timeout=10)
-        return resp.status, resp.headers.get("Mcp-Session-Id") or mcp_session_id, resp.read().decode()
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.headers.get("Mcp-Session-Id") or mcp_session_id, exc.read().decode()
-
-
-status, mcp_session_id, body = post({
-    **initialize_payload,
-    "id": 6,
-})
-check(
-    status == 200 and bool(mcp_session_id),
-    "trust post-update initialize succeeded",
-    f"initialize failed after trust update: {status} {body}",
-)
-
-status, _, body = post({"jsonrpc": "2.0", "method": "notifications/initialized"}, mcp_session_id=mcp_session_id)
-check(
-    status in (200, 202),
-    "trust post-update notifications/initialized succeeded",
-    f"notifications/initialized failed: {status} {body}",
-)
-
-status, _, body = post(
-    {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "upper", "arguments": {"message": "governance"}}},
-    mcp_session_id=mcp_session_id,
-)
-check(
-    status == 200,
-    "trust post-update upper returned 200",
-    f"expected upper to succeed after trust update, got {status}: {body}",
-)
-check(
-    "GOVERNANCE" in body,
-    "trust post-update upper returned GOVERNANCE",
-    f"expected uppercase result, got {body}",
-)
-print("upper allow:", body)
-PY
 
   log_line policy "temporarily expanding grant for deterministic multi-tool MCP checks"
   cat <<EOF | kubectl apply -f -
@@ -3834,63 +3690,6 @@ EOF
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 403 "tool_denied"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "echo" '{"message":"analytics"}' 403 "tool_denied"
   run_mcp_curl_expect "mcp-curl-aaa-ping-deny" "${MCP_SESSION_URL}" false "tool_denied"
-  MCP_BASE="${MCP_SESSION_URL}" \
-  MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION}" \
-  python3 <<'PY'
-import json
-import os
-import urllib.error
-import urllib.request
-
-base = os.environ["MCP_BASE"]
-protocol = os.environ["MCP_PROTOCOL_VERSION"]
-
-
-import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
-
-
-def post(msg, mcp_session_id=None):
-    headers = {
-        "content-type": "application/json",
-        "accept": "application/json, text/event-stream",
-        "Mcp-Protocol-Version": protocol,
-    }
-    if mcp_session_id:
-        headers["Mcp-Session-Id"] = mcp_session_id
-    req = urllib.request.Request(base, data=json.dumps(msg).encode(), headers=headers)
-    try:
-        resp = urllib.request.urlopen(req, timeout=10)
-        return resp.status, resp.headers.get("Mcp-Session-Id") or mcp_session_id, resp.read().decode()
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.headers.get("Mcp-Session-Id") or mcp_session_id, exc.read().decode()
-
-
-status, mcp_session_id, body = post({"jsonrpc": "2.0", "id": 8, "method": "initialize", "params": {}})
-check(
-    status == 200 and bool(mcp_session_id),
-    "grant update initialize succeeded",
-    f"initialize failed after grant update: {status} {body}",
-)
-
-status, _, body = post({"jsonrpc": "2.0", "method": "notifications/initialized"}, mcp_session_id=mcp_session_id)
-check(
-    status in (200, 202),
-    "grant update notifications/initialized succeeded",
-    f"notifications/initialized failed: {status} {body}",
-)
-
-status, _, body = post(
-    {"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": "echo", "arguments": {"message": "analytics"}}},
-    mcp_session_id=mcp_session_id,
-)
-payload = json.loads(body)
-check(
-    status == 403 and payload.get("error") == "tool_denied",
-    "grant update echo denied with tool_denied",
-    f"expected echo to be denied after grant update, got {status}: {body}",
-)
-print("echo deny:", body)
-PY
 fi
 
 if scenario_selected "oauth"; then
