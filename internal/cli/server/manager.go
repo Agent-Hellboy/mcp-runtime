@@ -29,7 +29,7 @@ import (
 type ServerManager struct {
 	kubectl *core.KubectlClient
 	logger  *zap.Logger
-	// useKube forces kubectl; when false, platform API is used for supported read-only commands when logged in.
+	// useKube forces direct Kubernetes mode; when false, supported commands require platform API auth.
 	useKube bool
 }
 
@@ -48,16 +48,12 @@ func DefaultServerManager(logger *zap.Logger) *ServerManager {
 
 // BindUseKubeFlag wires the shared --use-kube flag onto the command.
 func (m *ServerManager) BindUseKubeFlag(cmd *cobra.Command) {
-	cmd.PersistentFlags().BoolVar(&m.useKube, "use-kube", false, "Use kubectl and local kubeconfig instead of the platform API for supported commands")
+	cmd.PersistentFlags().BoolVar(&m.useKube, "use-kube", false, "Use direct Kubernetes mode with kubectl; requires admin/operator cluster access (admin/dev/test only)")
 }
 
 func (m *ServerManager) requireKubectlForMutation() error {
-	_, useK, err := platformapi.ResolvePlatformOrKube(m.useKube)
-	if err != nil {
-		return err
-	}
-	if !useK {
-		return core.NewWithSentinel(nil, "this command requires kubectl and a cluster kubeconfig, or set --use-kube when you use kubectl alongside platform auth. Use mcp-runtime auth for API-backed list, status, and policy when kubeconfig is not used.")
+	if !m.useKube {
+		return core.NewWithSentinel(nil, "this command requires `--use-kube` for direct Kubernetes mode. "+kubeerr.DirectModeGuidance)
 	}
 	return nil
 }
@@ -120,7 +116,7 @@ func (m *ServerManager) ListServers(namespace, team string) error {
 		wrappedErr := core.WrapWithSentinelAndContext(
 			core.ErrListServersFailed,
 			err,
-			fmt.Sprintf("failed to list servers in namespace %q: %v", namespace, err),
+			kubeerr.DirectModeFailureMessage(fmt.Sprintf("failed to list servers in namespace %q", namespace), err.Error()),
 			map[string]any{"namespace": namespace, "component": "server"},
 		)
 		core.Error("Failed to list servers")
@@ -162,7 +158,7 @@ func (m *ServerManager) GetServer(name, namespace string) error {
 		wrappedErr := core.WrapWithSentinelAndContext(
 			core.ErrGetMCPServerFailed,
 			err,
-			fmt.Sprintf("failed to get server %q in namespace %q: %v", name, namespace, err),
+			kubeerr.DirectModeFailureMessage(fmt.Sprintf("failed to get server %q in namespace %q", name, namespace), err.Error()),
 			map[string]any{"server": name, "namespace": namespace, "component": "server"},
 		)
 		core.Error("Failed to get server")
@@ -228,7 +224,7 @@ func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) er
 		wrappedErr := core.WrapWithSentinelAndContext(
 			core.ErrCreateServerFailed,
 			err,
-			fmt.Sprintf("failed to create server %q: %v", name, err),
+			kubeerr.DirectModeFailureMessage(fmt.Sprintf("failed to create server %q", name), err.Error()),
 			map[string]any{"server": name, "namespace": namespace, "image": image, "component": "server"},
 		)
 		core.Error("Failed to create server")
@@ -271,7 +267,7 @@ func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageT
 	}
 	plat, err := platformapi.NewPlatformClient()
 	if err != nil {
-		return err
+		return platformapi.AuthRequiredError(err)
 	}
 	if team != "" {
 		t, err := plat.GetTeam(context.Background(), team)
@@ -412,7 +408,7 @@ func (m *ServerManager) ApplyServerFromFile(file string) error {
 		wrappedErr := core.WrapWithSentinelAndContext(
 			nil,
 			err,
-			fmt.Sprintf("failed to apply server manifest from file %q: %v", file, err),
+			kubeerr.DirectModeFailureMessage(fmt.Sprintf("failed to apply server manifest from file %q", file), err.Error()),
 			map[string]any{"file": file, "component": "server"},
 		)
 		core.Error("Failed to apply server manifest")
@@ -446,7 +442,7 @@ func (m *ServerManager) CreateServerFromFile(file string) error {
 		wrappedErr := core.WrapWithSentinelAndContext(
 			core.ErrCreateServerFailed,
 			err,
-			fmt.Sprintf("failed to create server from file %q: %v", file, err),
+			kubeerr.DirectModeFailureMessage(fmt.Sprintf("failed to create server from file %q", file), err.Error()),
 			map[string]any{"file": file, "component": "server"},
 		)
 		core.Error("Failed to create server from file")
@@ -472,10 +468,11 @@ func (m *ServerManager) ExportServer(name, namespace, file string) error {
 	}
 	output, execErr := cmd.CombinedOutput()
 	if execErr != nil {
+		detail := kubeerr.CommandDetail(string(output), execErr)
 		wrappedErr := core.WrapWithSentinelAndContext(
 			nil,
 			execErr,
-			fmt.Sprintf("failed to export server %q in namespace %q: %s", name, namespace, kubeerr.CommandDetail(string(output), execErr)),
+			kubeerr.DirectModeFailureMessage(fmt.Sprintf("failed to export server %q in namespace %q", name, namespace), detail),
 			map[string]any{"server": name, "namespace": namespace, "component": "server"},
 		)
 		core.Error("Failed to export server")
@@ -561,7 +558,7 @@ func (m *ServerManager) PatchServer(name, namespace, patchType, patch, patchFile
 		wrappedErr := core.WrapWithSentinelAndContext(
 			nil,
 			err,
-			fmt.Sprintf("failed to patch server %q in namespace %q: %v", name, namespace, err),
+			kubeerr.DirectModeFailureMessage(fmt.Sprintf("failed to patch server %q in namespace %q", name, namespace), err.Error()),
 			map[string]any{"server": name, "namespace": namespace, "patch_type": patchType, "component": "server"},
 		)
 		core.Error("Failed to patch server")
@@ -615,10 +612,11 @@ func (m *ServerManager) InspectServerPolicy(name, namespace string) error {
 	}
 	output, execErr := cmd.CombinedOutput()
 	if execErr != nil {
+		detail := kubeerr.CommandDetail(string(output), execErr)
 		wrappedErr := core.WrapWithSentinelAndContext(
 			nil,
 			execErr,
-			fmt.Sprintf("failed to inspect rendered policy for server %q in namespace %q: %s", name, namespace, kubeerr.CommandDetail(string(output), execErr)),
+			kubeerr.DirectModeFailureMessage(fmt.Sprintf("failed to inspect rendered policy for server %q in namespace %q", name, namespace), detail),
 			map[string]any{"server": name, "namespace": namespace, "component": "server"},
 		)
 		core.Error("Failed to inspect server policy")
@@ -672,7 +670,7 @@ func (m *ServerManager) DeleteServer(name, namespace string) error {
 		wrappedErr := core.WrapWithSentinelAndContext(
 			core.ErrDeleteServerFailed,
 			err,
-			fmt.Sprintf("failed to delete server %q in namespace %q: %v", name, namespace, err),
+			kubeerr.DirectModeFailureMessage(fmt.Sprintf("failed to delete server %q in namespace %q", name, namespace), err.Error()),
 			map[string]any{"server": name, "namespace": namespace, "component": "server"},
 		)
 		core.Error("Failed to delete server")
@@ -714,7 +712,7 @@ func (m *ServerManager) ViewServerLogs(name, namespace string, follow, previous 
 		wrappedErr := core.WrapWithSentinelAndContext(
 			core.ErrViewServerLogsFailed,
 			err,
-			fmt.Sprintf("failed to view logs for server %q in namespace %q: %v", name, namespace, err),
+			kubeerr.DirectModeFailureMessage(fmt.Sprintf("failed to view logs for server %q in namespace %q", name, namespace), err.Error()),
 			map[string]any{"server": name, "namespace": namespace, "component": "server"},
 		)
 		core.Error("Failed to view server logs")
@@ -764,11 +762,11 @@ func (m *ServerManager) ServerStatus(namespace string) error {
 		if errDetails == "" {
 			errDetails = err.Error()
 		}
-		core.DefaultPrinter.Println("ERROR: Failed to list MCP servers: " + errDetails)
+		core.DefaultPrinter.Println("ERROR: Failed to list MCP servers: " + kubeerr.WithDirectModeHint(errDetails))
 		wrappedErr := core.WrapWithSentinelAndContext(
 			core.ErrGetMCPServerFailed,
 			err,
-			fmt.Sprintf("kubectl get mcpserver failed: %v", err),
+			kubeerr.DirectModeFailureMessage("kubectl get mcpserver failed", errDetails),
 			map[string]any{"namespace": namespace, "component": "server"},
 		)
 		core.LogStructuredError(m.logger, wrappedErr, "Failed to get MCP servers")

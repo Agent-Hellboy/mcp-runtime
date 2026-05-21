@@ -39,7 +39,7 @@ type PlatformClient struct {
 }
 
 // NewPlatformClient returns a client when platform credentials and API base URL are configured.
-// If the user is not logged in, returns [authfile.ErrNotFound] so the caller can fall back to kubectl.
+// If the user is not logged in, returns [authfile.ErrNotFound].
 func NewPlatformClient() (*PlatformClient, error) {
 	tok, base, _, err := authfile.ResolveToken()
 	if err != nil {
@@ -848,7 +848,19 @@ func (c *PlatformClient) GetRuntimePolicy(ctx context.Context, namespace, server
 	return b, nil
 }
 
-// ResolvePlatformOrKube returns a platform API client when useKube is false and auth resolves; otherwise useKubectl is true.
+// PlatformAuthRequiredMessage tells users how to use the platform-backed CLI path.
+const PlatformAuthRequiredMessage = "platform API credentials are required; run `mcp-runtime auth login --api-url <platform-url>` for normal platform access. `--use-kube` is direct Kubernetes mode for admin/dev/test environments with admin/operator Kubernetes access only"
+
+// AuthRequiredError wraps platform credential errors with user-facing mode guidance.
+func AuthRequiredError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", PlatformAuthRequiredMessage, err)
+}
+
+// ResolvePlatformOrKube returns direct Kubernetes mode only when useKube is explicit.
+// Otherwise it requires platform API credentials and does not fall back to kubeconfig.
 func ResolvePlatformOrKube(useKube bool) (*PlatformClient, bool, error) {
 	if useKube {
 		return nil, true, nil
@@ -857,8 +869,5 @@ func ResolvePlatformOrKube(useKube bool) (*PlatformClient, bool, error) {
 	if e == nil {
 		return cl, false, nil
 	}
-	if errors.Is(e, authfile.ErrNotFound) {
-		return nil, true, nil
-	}
-	return nil, false, e
+	return nil, false, AuthRequiredError(e)
 }

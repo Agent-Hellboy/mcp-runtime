@@ -5,7 +5,7 @@ metadata:
   namespace: mcp-servers
 spec:
   description: Workspace assistant MCP server for task cards, release notes, text cleanup, prompts, and reference resources.
-  image: your-registry.local/go-mcp-server
+  image: your-registry.local/workspace-assistant-mcp
   imageTag: latest
   port: 8088
   servicePort: 80

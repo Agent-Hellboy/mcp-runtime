@@ -85,11 +85,14 @@ tool calls.
 - Add `spec.tools` with tool descriptions, trust levels, and side-effect classes so the platform catalog and policy engine mirror the tool summaries clients see from `tools/list`.
 - Add `spec.auth`, `spec.policy`, `spec.session`, or `spec.rollout` when you want stricter governance or more delivery control.
 
-Apply the manifest:
+Apply the manifest only from an admin/operator workstation. `server apply` uses
+direct Kubernetes mode, so it requires `--use-kube`, kubectl, and kubeconfig/RBAC
+access to the target namespace. For normal platform workflows, use the
+platform-backed `server deploy` flow in Option B instead.
 
 ```bash
-./bin/mcp-runtime server apply --file payments.yaml
-./bin/mcp-runtime server status
+./bin/mcp-runtime server apply --file payments.yaml --use-kube
+./bin/mcp-runtime server status --use-kube
 ```
 
 ## Option B: write `.mcp` metadata
@@ -244,13 +247,14 @@ with governance policy.
 
 ### Flow C — manual Docker build, push, and manifest apply
 
-Use this when you need full control of `MCPServer` fields:
+Use this when you need full control of `MCPServer` fields and you have
+admin/operator Kubernetes access:
 
 ```bash
 docker build -t payments:v1.0.0 .
 mcp-runtime auth login --api-url https://platform.example.com
 ./bin/mcp-runtime registry push --scope tenant --image payments:v1.0.0
-./bin/mcp-runtime server apply --file payments.yaml
+./bin/mcp-runtime server apply --file payments.yaml --use-kube
 ```
 
 ## What happens after deploy
@@ -282,6 +286,7 @@ For the example above, that is:
 Check server state:
 
 ```bash
+mcp-runtime auth login --api-url https://platform.example.com
 ./bin/mcp-runtime server status
 ./bin/mcp-runtime server get payments
 ./bin/mcp-runtime status
@@ -297,7 +302,7 @@ If the server uses governed access:
 If traffic is failing:
 
 ```bash
-./bin/mcp-runtime server logs payments --follow
+./bin/mcp-runtime server logs payments --follow --use-kube
 ./bin/mcp-runtime sentinel logs gateway --follow
 ```
 

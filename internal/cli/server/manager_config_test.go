@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"go.uber.org/zap"
-
 	"mcp-runtime/internal/cli/core"
 )
 
@@ -17,7 +15,7 @@ func TestServerManager_ExportServer(t *testing.T) {
 		DefaultOutput: []byte("apiVersion: mcpruntime.org/v1alpha1\nkind: MCPServer\n"),
 	}
 	kubectl := core.NewTestKubectlClient(mock)
-	mgr := NewServerManager(kubectl, zap.NewNop())
+	mgr := newKubeTestServerManager(kubectl)
 
 	outputFile := filepath.Join(t.TempDir(), "exported", "server.yaml")
 	if err := mgr.ExportServer("my-server", "team-a", outputFile); err != nil {
@@ -43,7 +41,7 @@ func TestServerManager_ExportServer(t *testing.T) {
 func TestServerManager_PatchServerFromFile(t *testing.T) {
 	mock := &core.MockExecutor{}
 	kubectl := core.NewTestKubectlClient(mock)
-	mgr := NewServerManager(kubectl, zap.NewNop())
+	mgr := newKubeTestServerManager(kubectl)
 
 	patchFile := filepath.Join(t.TempDir(), "patch.yaml")
 	if err := os.WriteFile(patchFile, []byte("spec:\n  policy:\n    mode: allow-list\n    defaultDecision: deny\n"), 0o600); err != nil {
@@ -94,7 +92,7 @@ func TestServerManager_InspectServerPolicy(t *testing.T) {
 		DefaultOutput: []byte("{\"policy\":{\"mode\":\"allow-list\"}}"),
 	}
 	kubectl := core.NewTestKubectlClient(mock)
-	mgr := NewServerManager(kubectl, zap.NewNop())
+	mgr := newKubeTestServerManager(kubectl)
 
 	origStdout := os.Stdout
 	reader, writer, err := os.Pipe()

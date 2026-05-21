@@ -2,6 +2,9 @@ package kubeerr
 
 import "strings"
 
+// DirectModeGuidance explains the boundary for explicit --use-kube operations.
+const DirectModeGuidance = "Direct Kubernetes mode requires admin/operator cluster access. Use the platform API for normal CLI operations: `mcp-runtime auth login --api-url <platform-url>`."
+
 // CommandDetail extracts a single-line error detail from kubectl output or the exec error.
 func CommandDetail(output string, fallback error) string {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
@@ -36,4 +39,44 @@ func SetupHint(detail string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// DirectModeHint returns guidance for explicit --use-kube failures.
+func DirectModeHint(detail string) string {
+	lower := strings.ToLower(detail)
+
+	switch {
+	case strings.Contains(lower, "forbidden"),
+		strings.Contains(lower, "unauthorized"),
+		strings.Contains(lower, "user cannot"),
+		strings.Contains(lower, "cannot list resource"),
+		strings.Contains(lower, "cannot get resource"),
+		strings.Contains(lower, "cannot create resource"),
+		strings.Contains(lower, "cannot patch resource"),
+		strings.Contains(lower, "cannot delete resource"):
+		return "Direct Kubernetes mode requires admin/operator cluster access; the current kubeconfig is not authorized for this operation. Use the platform API for normal CLI operations: `mcp-runtime auth login --api-url <platform-url>`."
+	case strings.Contains(lower, "kubeconfig"),
+		strings.Contains(lower, "no configuration has been provided"):
+		return "Direct Kubernetes mode requires admin/operator cluster access and a readable kubeconfig. Use the platform API for normal CLI operations: `mcp-runtime auth login --api-url <platform-url>`."
+	default:
+		return DirectModeGuidance
+	}
+}
+
+// WithDirectModeHint appends explicit --use-kube guidance to a command failure detail.
+func WithDirectModeHint(detail string) string {
+	detail = strings.TrimSpace(strings.TrimRight(strings.TrimSpace(detail), "."))
+	if detail == "" {
+		return DirectModeHint(detail)
+	}
+	return detail + ". " + DirectModeHint(detail)
+}
+
+// DirectModeFailureMessage appends shared direct Kubernetes mode guidance to a command failure.
+func DirectModeFailureMessage(prefix, detail string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return WithDirectModeHint(detail)
+	}
+	return prefix + ": " + WithDirectModeHint(detail)
 }

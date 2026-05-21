@@ -16,7 +16,7 @@ If instructions conflict, prefer **this repo** (`README`, CRDs, `v1alpha1` types
 | Control-plane and K8s helpers | `pkg/controlplane/`, `pkg/k8sclient/`, `pkg/kubeworkload/`, `pkg/manifest/`, `pkg/metadata/` | MCPServer Kubernetes operations/status, client setup, shared workload security defaults, registry image resolution, YAML helpers |
 | Sentinel shared packages | `pkg/events/`, `pkg/clickhouse/`, `pkg/serviceutil/`, `pkg/sentinel/` | Event envelope contract, analytics storage/query helpers, service HTTP/env/OTel utilities, Sentinel component inventory |
 | Sentinel services | `services/api`, `services/ui`, `services/ingest`, `services/processor`, `services/mcp-gateway`, … | Separate `go.mod` where present; Go services that import root shared packages use Go 1.26. API-owned runtime HTTP/Kubernetes orchestration lives under `services/api/internal/runtimeapi/`; platform identity/team/key persistence lives under `services/api/internal/platformstore/`; principal context helpers live under `services/api/internal/apiauth/` |
-| Workspace assistant sample | `examples/go-mcp-server/` | Reference for tools and routes |
+| Workspace assistant sample | `examples/workspace-assistant-mcp/` | Reference for tools and routes |
 | Default cluster install YAML | `k8s/`, `config/` | Overlays, CRDs, cert-manager examples |
 | Traefik plugins (dev) | `services/traefik-plugins/` | e.g. PII redactor source for local overlays |
 | Team / tenant isolation docs | `docs/multi-team.md` | Team identity contract, per-team namespaces, RBAC, ingress watch scope, and platform API enforcement |
@@ -480,7 +480,7 @@ kubectl delete all,cm,secret,ing,svc,sa,role,rolebinding,deploy,ds,sts,job,cronj
 - **K8s YAML** — `k8s/`
 - **CRDs** — `config/crd/bases/`
 - **API docs (published)** — https://mcpruntime.org/docs/ and https://mcpruntime.org/docs/api
-- **Workspace assistant sample** — `examples/go-mcp-server/`
+- **Workspace assistant sample** — `examples/workspace-assistant-mcp/`
 - **Website source** — `website/` (documentation site, separate from the Go control plane)
 
 ---
