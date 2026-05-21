@@ -246,7 +246,7 @@ summary:focus-visible,
 
 .analytics-overview {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   margin-bottom: 20px;
 }
@@ -332,6 +332,46 @@ summary:focus-visible,
   gap: 24px;
 }
 
+.analytics-tabset {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.analytics-tabs {
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  padding-bottom: 8px;
+}
+
+.analytics-tab {
+  background: rgba(247, 245, 239, 0.05);
+  border: 1px solid rgba(247, 245, 239, 0.08);
+  color: var(--muted);
+  font-size: 13px;
+  min-height: 34px;
+  min-width: 0;
+  padding: 7px 12px;
+}
+
+.analytics-tab.active,
+.analytics-tab[aria-selected="true"] {
+  background: rgba(242, 184, 75, 0.18);
+  border-color: rgba(242, 184, 75, 0.38);
+  color: var(--text);
+}
+
+.analytics-tab-panel {
+  min-width: 0;
+}
+
+.analytics-tab-panel[hidden] {
+  display: none;
+}
+
 .analytics-section {
   min-width: 0;
 }
@@ -342,6 +382,12 @@ summary:focus-visible,
   letter-spacing: 0.12em;
   margin: 0 0 10px;
   text-transform: uppercase;
+}
+
+.governance-decision-overview {
+  display: grid;
+  grid-template-columns: minmax(260px, 380px);
+  margin-bottom: 16px;
 }
 
 /* Panels */
@@ -1720,6 +1766,19 @@ tr:hover td {
 
   .analytics-grid {
     grid-template-columns: 1fr;
+  }
+
+  .analytics-tabs {
+    flex-wrap: nowrap;
+    margin-left: -2px;
+    overflow-x: auto;
+    padding-bottom: 10px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .analytics-tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
 
   .analytics-overview,

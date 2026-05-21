@@ -223,10 +223,62 @@
             </div>
           </div>
 
-          <div class="analytics-grid">
-            <section class="analytics-section">
+          <div class="analytics-tabset" data-analytics-tabset>
+            <div class="analytics-tabs" role="tablist" aria-label="My activity views">
+              <button
+                class="analytics-tab active"
+                type="button"
+                id="user-analytics-tab-servers"
+                role="tab"
+                aria-controls="user-analytics-servers-panel"
+                aria-selected="true"
+                data-analytics-tab-target="user-analytics-servers-panel"
+              >
+                Deployed Servers
+              </button>
+              <button
+                class="analytics-tab"
+                type="button"
+                id="user-analytics-tab-usage"
+                role="tab"
+                aria-controls="user-analytics-usage-panel"
+                aria-selected="false"
+                data-analytics-tab-target="user-analytics-usage-panel"
+              >
+                Usage
+              </button>
+              <button
+                class="analytics-tab"
+                type="button"
+                id="user-analytics-tab-tools"
+                role="tab"
+                aria-controls="user-analytics-tools-panel"
+                aria-selected="false"
+                data-analytics-tab-target="user-analytics-tools-panel"
+              >
+                Tools
+              </button>
+              <button
+                class="analytics-tab"
+                type="button"
+                id="user-analytics-tab-recent"
+                role="tab"
+                aria-controls="user-analytics-recent-panel"
+                aria-selected="false"
+                data-analytics-tab-target="user-analytics-recent-panel"
+              >
+                Recent
+              </button>
+            </div>
+
+            <section
+              class="analytics-section analytics-tab-panel active"
+              id="user-analytics-servers-panel"
+              role="tabpanel"
+              aria-labelledby="user-analytics-tab-servers"
+            >
               <h3>Deployed Servers</h3>
-              <div class="table-wrap">
+              <div class="table-wrap scroll-table">
                 <table>
                   <thead>
                     <tr>
@@ -246,9 +298,15 @@
               </div>
             </section>
 
-            <section class="analytics-section">
+            <section
+              class="analytics-section analytics-tab-panel"
+              id="user-analytics-usage-panel"
+              role="tabpanel"
+              aria-labelledby="user-analytics-tab-usage"
+              hidden
+            >
               <h3>Per-server Usage</h3>
-              <div class="table-wrap">
+              <div class="table-wrap scroll-table">
                 <table>
                   <thead>
                     <tr>
@@ -269,9 +327,15 @@
               </div>
             </section>
 
-            <section class="analytics-section">
+            <section
+              class="analytics-section analytics-tab-panel"
+              id="user-analytics-tools-panel"
+              role="tabpanel"
+              aria-labelledby="user-analytics-tab-tools"
+              hidden
+            >
               <h3>Top Tools</h3>
-              <div class="table-wrap">
+              <div class="table-wrap scroll-table">
                 <table>
                   <thead>
                     <tr>
@@ -290,9 +354,15 @@
               </div>
             </section>
 
-            <section class="analytics-section">
+            <section
+              class="analytics-section analytics-tab-panel"
+              id="user-analytics-recent-panel"
+              role="tabpanel"
+              aria-labelledby="user-analytics-tab-recent"
+              hidden
+            >
               <h3>Recent Activity</h3>
-              <div class="table-wrap">
+              <div class="table-wrap scroll-table">
                 <table>
                   <thead>
                     <tr>
@@ -508,11 +578,6 @@
           </div>
         </div>
 
-        <nav class="section-nav" aria-label="Dashboard sections">
-          <a href="#dashboard-analytics">Usage analytics</a>
-          <a href="#dashboard-audit">Decision audit</a>
-        </nav>
-
         <div class="panel" id="dashboard-analytics">
           <div class="panel-head">
             <h2>Usage Analytics</h2>
@@ -549,26 +614,53 @@
                 <strong class="metric-value" id="analytics-agents">-</strong>
               </div>
             </div>
-            <div class="decision-health-card">
-              <div class="decision-health-head">
-                <span class="metric-label">Decision Health</span>
-                <strong id="analytics-allow-rate">-</strong>
-              </div>
-              <div class="decision-meter" aria-label="Allowed and denied event share">
-                <span class="decision-meter-allow" id="decision-meter-allow"></span>
-                <span class="decision-meter-deny" id="decision-meter-deny"></span>
-              </div>
-              <div class="decision-health-foot">
-                <span><i class="legend-dot allow"></i>Allow</span>
-                <span><i class="legend-dot deny"></i>Deny <strong id="analytics-deny-rate">-</strong></span>
-              </div>
-            </div>
           </div>
 
-          <div class="analytics-grid">
-            <section class="analytics-section">
+          <div class="analytics-tabset" data-analytics-tabset>
+            <div class="analytics-tabs" role="tablist" aria-label="Usage analytics views">
+              <button
+                class="analytics-tab active"
+                type="button"
+                id="analytics-tab-servers"
+                role="tab"
+                aria-controls="analytics-servers-panel"
+                aria-selected="true"
+                data-analytics-tab-target="analytics-servers-panel"
+              >
+                Servers
+              </button>
+              <button
+                class="analytics-tab"
+                type="button"
+                id="analytics-tab-actors"
+                role="tab"
+                aria-controls="analytics-actors-panel"
+                aria-selected="false"
+                data-analytics-tab-target="analytics-actors-panel"
+              >
+                Users & Agents
+              </button>
+              <button
+                class="analytics-tab"
+                type="button"
+                id="analytics-tab-tools"
+                role="tab"
+                aria-controls="analytics-tools-panel"
+                aria-selected="false"
+                data-analytics-tab-target="analytics-tools-panel"
+              >
+                Tools
+              </button>
+            </div>
+
+            <section
+              class="analytics-section analytics-tab-panel active"
+              id="analytics-servers-panel"
+              role="tabpanel"
+              aria-labelledby="analytics-tab-servers"
+            >
               <h3>MCP Servers</h3>
-              <div class="table-wrap">
+              <div class="table-wrap scroll-table">
                 <table>
                   <thead>
                     <tr>
@@ -590,9 +682,15 @@
               </div>
             </section>
 
-            <section class="analytics-section">
+            <section
+              class="analytics-section analytics-tab-panel"
+              id="analytics-actors-panel"
+              role="tabpanel"
+              aria-labelledby="analytics-tab-actors"
+              hidden
+            >
               <h3>Users & Agents</h3>
-              <div class="table-wrap">
+              <div class="table-wrap scroll-table">
                 <table>
                   <thead>
                     <tr>
@@ -613,9 +711,15 @@
               </div>
             </section>
 
-            <section class="analytics-section">
+            <section
+              class="analytics-section analytics-tab-panel"
+              id="analytics-tools-panel"
+              role="tabpanel"
+              aria-labelledby="analytics-tab-tools"
+              hidden
+            >
               <h3>Tools</h3>
-              <div class="table-wrap">
+              <div class="table-wrap scroll-table">
                 <table>
                   <thead>
                     <tr>
@@ -633,57 +737,6 @@
                 </table>
               </div>
             </section>
-
-            <section class="analytics-section">
-              <h3>Decisions</h3>
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Decision</th>
-                      <th>Events</th>
-                    </tr>
-                  </thead>
-                  <tbody id="analytics-decisions-body">
-                    <tr>
-                      <td colspan="2" class="empty">No decisions yet.</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </div>
-        </div>
-
-        <div class="panel" id="dashboard-audit">
-          <div class="panel-head">
-            <h2>Decision Audit</h2>
-            <div class="panel-actions">
-              <button class="ghost" id="refresh-events">Refresh</button>
-              <label class="toggle">
-                <input type="checkbox" id="auto-refresh" checked />
-                Auto
-              </label>
-            </div>
-          </div>
-          <div class="table-wrap scroll-table">
-            <table class="audit-table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Human</th>
-                  <th>Agent</th>
-                  <th>MCP Action</th>
-                  <th>Decision</th>
-                  <th>Policy</th>
-                </tr>
-              </thead>
-              <tbody id="events-body">
-                <tr>
-                  <td colspan="6" class="empty">No events yet.</td>
-                </tr>
-              </tbody>
-            </table>
           </div>
         </div>
       </section>
@@ -713,6 +766,119 @@
           <div class="governance-summary-card">
             <span class="metric-label">Revoked Sessions</span>
             <strong class="metric-value" id="gov-revoked-sessions">-</strong>
+          </div>
+        </div>
+
+        <div class="panel" id="governance-decisions" data-admin-only="true">
+          <div class="panel-head">
+            <div>
+              <h2>Policy Decisions</h2>
+              <p class="panel-kicker">Allow and deny outcomes from MCP gateway policy enforcement.</p>
+            </div>
+            <div class="panel-actions">
+              <button class="ghost" id="refresh-events" type="button">Refresh</button>
+              <label class="toggle">
+                <input type="checkbox" id="auto-refresh" checked />
+                Auto
+              </label>
+            </div>
+          </div>
+
+          <div class="governance-decision-overview">
+            <div class="decision-health-card">
+              <div class="decision-health-head">
+                <span class="metric-label">Decision Health</span>
+                <strong id="analytics-allow-rate">-</strong>
+              </div>
+              <div class="decision-meter" aria-label="Allowed and denied event share">
+                <span class="decision-meter-allow" id="decision-meter-allow"></span>
+                <span class="decision-meter-deny" id="decision-meter-deny"></span>
+              </div>
+              <div class="decision-health-foot">
+                <span><i class="legend-dot allow"></i>Allow</span>
+                <span><i class="legend-dot deny"></i>Deny <strong id="analytics-deny-rate">-</strong></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="analytics-tabset" data-analytics-tabset>
+            <div class="analytics-tabs" role="tablist" aria-label="Governance decision views">
+              <button
+                class="analytics-tab active"
+                type="button"
+                id="governance-decisions-tab-summary"
+                role="tab"
+                aria-controls="governance-decisions-summary"
+                aria-selected="true"
+                data-analytics-tab-target="governance-decisions-summary"
+              >
+                Decisions
+              </button>
+              <button
+                class="analytics-tab"
+                type="button"
+                id="governance-decisions-tab-audit"
+                role="tab"
+                aria-controls="governance-decision-audit"
+                aria-selected="false"
+                data-analytics-tab-target="governance-decision-audit"
+              >
+                Audit
+              </button>
+            </div>
+
+            <section
+              class="analytics-section analytics-tab-panel active"
+              id="governance-decisions-summary"
+              role="tabpanel"
+              aria-labelledby="governance-decisions-tab-summary"
+            >
+              <h3>Decisions</h3>
+              <div class="table-wrap scroll-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Decision</th>
+                      <th>Events</th>
+                    </tr>
+                  </thead>
+                  <tbody id="analytics-decisions-body">
+                    <tr>
+                      <td colspan="2" class="empty">No decisions yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section
+              class="analytics-section analytics-tab-panel"
+              id="governance-decision-audit"
+              role="tabpanel"
+              aria-labelledby="governance-decisions-tab-audit"
+              hidden
+            >
+              <h3>Decision Audit</h3>
+              <div class="table-wrap scroll-table">
+                <table class="audit-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Human</th>
+                      <th>Agent</th>
+                      <th>MCP Action</th>
+                      <th>Decision</th>
+                      <th>Policy</th>
+                    </tr>
+                  </thead>
+                  <tbody id="events-body">
+                    <tr>
+                      <td colspan="6" class="empty">No events yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
           </div>
         </div>
 

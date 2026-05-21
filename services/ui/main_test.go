@@ -558,13 +558,23 @@ func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
 		t.Fatalf("expected long dashboard tables to use scroll-table, got %d", got)
 	}
 	for _, want := range []string{
-		`class="section-nav" aria-label="Dashboard sections"`,
 		`class="section-nav" aria-label="Operations sections"`,
 		`href="#ops-inspector-panel"`,
 		`placeholder="Search servers"`,
+		`class="analytics-tabset" data-analytics-tabset`,
+		`id="governance-decisions" data-admin-only="true"`,
+		`data-analytics-tab-target="governance-decision-audit"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("index missing navigation affordance %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		`href="#dashboard-audit"`,
+		`id="dashboard-audit"`,
+	} {
+		if strings.Contains(html, unwanted) {
+			t.Fatalf("dashboard should not own decision audit markup %q", unwanted)
 		}
 	}
 
@@ -579,6 +589,8 @@ func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
 		`.scroll-table thead th`,
 		`position: sticky;`,
 		`.section-nav`,
+		`.analytics-tabs`,
+		`.analytics-tab-panel[hidden]`,
 		`.tabs`,
 		`position: sticky;`,
 		`.server-card:hover`,
@@ -586,6 +598,27 @@ func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
 		if !strings.Contains(css, want) {
 			t.Fatalf("styles missing UX affordance %q", want)
 		}
+	}
+}
+
+func TestStaticAppRoutesDecisionAuditThroughGovernance(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`function initAnalyticsTabsets()`,
+		`function loadGovernanceDecisionAnalytics()`,
+		`if (isAdminUser()) {` + "\n" + `          loadGovernanceDecisionAnalytics();` + "\n" + `          loadEvents();`,
+		`if (usageTab) activateAnalyticsTab(usageTab);`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing governance decision behavior %q", want)
+		}
+	}
+	if strings.Contains(source, `loadDashboardAnalytics();`+"\n"+`        loadEvents();`) {
+		t.Fatal("dashboard tab should not load decision audit events")
 	}
 }
 
