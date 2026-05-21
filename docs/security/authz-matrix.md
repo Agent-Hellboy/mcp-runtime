@@ -28,6 +28,8 @@ include both the prefix and the meaningful sub-paths in the table.
 `admin-role` is enforced by the `requireRole(roleAdmin, …)` wrap in
 `services/api/main.go`. `user-cookie` and `user-key` distinguish which
 calls require browser identity vs accept a bearer-style key.
+When `ADMIN_API_KEYS` is unset, static `API_KEYS` authenticate as `user`
+unless the explicit legacy dev/test fallback is enabled.
 
 Expected codes:
 
@@ -70,24 +72,20 @@ Expected codes:
 | `/api/runtime/namespaces/{name}`                      | GET           | 401  | 200         | 200      | 200       | 401/403    | |
 | `/api/deployments`                                    | GET           | 401  | 200         | 200      | 200       | 401/403    | |
 | `/api/deployments/{id}`                               | GET           | 401  | 200         | 200      | 200       | 401/403    | |
-| `/api/runtime/grants`                                 | GET, POST     | 401  | 200         | 200      | 200       | 401/403    | Mutating; serverRef cross-ns checks are best-effort (CLAUDE.md). |
-| `/api/runtime/grants/{ns}/{name}`                     | DELETE        | 401  | 200         | 200      | 200       | 401/403    | |
-| `/api/runtime/grants/{ns}/{name}/enable`              | POST          | 401  | 200         | 200      | 200       | 401/403    | |
-| `/api/runtime/grants/{ns}/{name}/disable`             | POST          | 401  | 200         | 200      | 200       | 401/403    | |
-| `/api/runtime/sessions`                               | GET, POST     | 401  | 200         | 200      | 200       | 401/403    | |
-| `/api/runtime/sessions/{ns}/{name}`                   | DELETE        | 401  | 200         | 200      | 200       | 401/403    | |
-| `/api/runtime/sessions/{ns}/{name}/revoke`            | POST          | 401  | 200         | 200      | 200       | 401/403    | |
-| `/api/runtime/sessions/{ns}/{name}/unrevoke`          | POST          | 401  | 200         | 200      | 200       | 401/403    | |
-| `/api/runtime/components`                             | GET           | 401  | 200         | 200      | 200       | 401/403    | |
-| `/api/runtime/policy`                                 | GET           | 401  | 200         | 200      | 200       | 401/403    | |
-
-> **Open question** for the next audit pass: which of the
-> `/api/runtime/*` mutating routes (grants/sessions create, enable,
-> disable, revoke, unrevoke) should be admin-only? `services/api/main.go`
-> wraps them with `server.auth(...)` only, not `requireRole(roleAdmin, …)`,
-> meaning any authenticated user can mutate governance state. If that is
-> by design, document the per-tenant scoping invariant; if not, this is
-> a **Critical** governance finding.
+| `/api/runtime/server-events`                          | GET           | 401  | 200/403     | 200/403  | 200       | 401/403    | Full event details only for admin, server owner, or team owner; regular namespace readers are forbidden. |
+| `/api/runtime/grants`                                 | GET           | 401  | 200         | 200      | 200       | 401/403    | Lists only grants for servers the caller can administer; regular team/catalog readers receive an empty scoped set. |
+| `/api/runtime/grants`                                 | POST          | 401  | 200/403     | 200/403  | 200       | 401/403    | Create/update requires admin, server owner, or team owner. |
+| `/api/runtime/grants/{ns}/{name}`                     | GET           | 401  | 200/403     | 200/403  | 200       | 401/403    | Full grant summary only for admin, server owner, or team owner. |
+| `/api/runtime/grants/{ns}/{name}`                     | DELETE        | 401  | 200/403     | 200/403  | 200       | 401/403    | Mutating; same owner/team-owner gate as apply. |
+| `/api/runtime/grants/{ns}/{name}/enable`              | POST          | 401  | 200/403     | 200/403  | 200       | 401/403    | Mutating; same owner/team-owner gate as apply. |
+| `/api/runtime/grants/{ns}/{name}/disable`             | POST          | 401  | 200/403     | 200/403  | 200       | 401/403    | Mutating; same owner/team-owner gate as apply. |
+| `/api/runtime/sessions`                               | GET           | 401  | 200         | 200      | 200       | 401/403    | Lists only sessions for servers the caller can administer. |
+| `/api/runtime/sessions`                               | POST          | 401  | 403         | 403      | 200       | 401/403    | Direct session apply is admin/internal-only; users should use `/api/runtime/adapter/sessions`. |
+| `/api/runtime/sessions/{ns}/{name}`                   | GET           | 401  | 200/403     | 200/403  | 200       | 401/403    | Full session summary only for admin, server owner, or team owner. |
+| `/api/runtime/sessions/{ns}/{name}`                   | DELETE        | 401  | 200/403     | 200/403  | 200       | 401/403    | Mutating; requires admin, server owner, or team owner. |
+| `/api/runtime/sessions/{ns}/{name}/revoke`            | POST          | 401  | 200/403     | 200/403  | 200       | 401/403    | Mutating; requires admin, server owner, or team owner. |
+| `/api/runtime/sessions/{ns}/{name}/unrevoke`          | POST          | 401  | 200/403     | 200/403  | 200       | 401/403    | Mutating; requires admin, server owner, or team owner. |
+| `/api/runtime/policy`                                 | GET           | 401  | 200/403     | 200/403  | 200       | 401/403    | Rendered policy is visible only to admin, server owner, or team owner. |
 
 ## Admin-only endpoints (`requireRole(roleAdmin, …)`)
 
@@ -104,6 +102,7 @@ Expected codes:
 | `/api/admin/audit`                | GET           | 401  | 403                     | 403      | 200       | 403        | |
 | `/api/admin/operations`           | GET           | 401  | 403                     | 403      | 200       | 403        | |
 | `/api/admin/deployments`          | GET           | 401  | 403                     | 403      | 200       | 403        | |
+| `/api/runtime/components`         | GET           | 401  | 403                     | 403      | 200       | 403        | Cluster component/workload health and errors. |
 | `/api/runtime/actions/restart`    | POST          | 401  | 403                     | 403      | 200       | 403        | Cluster-affecting. |
 
 ## Method gating

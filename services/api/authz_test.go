@@ -18,7 +18,7 @@ func TestSplitCSVSet(t *testing.T) {
 	}
 }
 
-func TestAuthenticateRequestStaticKey_DefaultAdmin(t *testing.T) {
+func TestAuthenticateRequestStaticKey_DefaultUserWhenAdminKeysUnset(t *testing.T) {
 	srv := &apiServer{
 		apiKeys: map[string]struct{}{"key-1": {}},
 	}
@@ -31,8 +31,47 @@ func TestAuthenticateRequestStaticKey_DefaultAdmin(t *testing.T) {
 	if !ok {
 		t.Fatal("expected authenticated")
 	}
+	if p.Role != roleUser {
+		t.Fatalf("role = %q, want %q", p.Role, roleUser)
+	}
+}
+
+func TestAuthenticateRequestStaticKey_LegacyAdminFallback(t *testing.T) {
+	srv := &apiServer{
+		apiKeys:         map[string]struct{}{"key-1": {}},
+		legacyAdminKeys: true,
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	req.Header.Set("x-api-key", "key-1")
+	p, ok, err := srv.authenticateRequest(req)
+	if err != nil {
+		t.Fatalf("authenticateRequest error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected authenticated")
+	}
 	if p.Role != roleAdmin {
 		t.Fatalf("role = %q, want %q", p.Role, roleAdmin)
+	}
+}
+
+func TestLegacyAdminAPIKeyFallbackEnabledOnlyForExplicitDevTest(t *testing.T) {
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "")
+	t.Setenv("MCP_LEGACY_ADMIN_API_KEY_FALLBACK", "")
+	t.Setenv("LEGACY_ADMIN_API_KEY_FALLBACK", "")
+	if legacyAdminAPIKeyFallbackEnabled() {
+		t.Fatal("legacy fallback should be disabled by default")
+	}
+
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "1")
+	if !legacyAdminAPIKeyFallbackEnabled() {
+		t.Fatal("legacy fallback should be enabled in runtime test mode")
+	}
+
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "")
+	t.Setenv("MCP_LEGACY_ADMIN_API_KEY_FALLBACK", "true")
+	if !legacyAdminAPIKeyFallbackEnabled() {
+		t.Fatal("legacy fallback should honor explicit override")
 	}
 }
 

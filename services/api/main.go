@@ -139,6 +139,7 @@ type apiServer struct {
 	events            *clickhousepkg.Client
 	apiKeys           map[string]struct{}
 	adminAPIKeys      map[string]struct{}
+	legacyAdminKeys   bool
 	adminUsers        map[string]struct{}
 	jwks              *keyfunc.JWKS
 	oidcIssuer        string
@@ -196,11 +197,19 @@ func main() {
 		}
 	}
 	adminAPIKeys := splitCSVSet(envOr("ADMIN_API_KEYS", ""))
+	legacyAdminKeys := legacyAdminAPIKeyFallbackEnabled()
 	adminUsers := splitCSVSet(envOr("ADMIN_USERS", ""))
 	for entry := range adminUsers {
 		normalized := strings.ToLower(strings.TrimSpace(entry))
 		if normalized != "" {
 			adminUsers[normalized] = struct{}{}
+		}
+	}
+	if len(adminAPIKeys) == 0 && len(apiKeys) > 0 {
+		if legacyAdminKeys {
+			log.Printf("warning: ADMIN_API_KEYS is unset; API_KEYS entries authenticate as role=admin because legacy dev/test fallback is enabled")
+		} else {
+			log.Printf("warning: ADMIN_API_KEYS is unset; API_KEYS entries authenticate as role=user")
 		}
 	}
 	if len(adminAPIKeys) > 0 {
@@ -245,16 +254,17 @@ func main() {
 	}
 
 	server := &apiServer{
-		db:            conn,
-		dbName:        dbName,
-		events:        &clickhousepkg.Client{Conn: conn, DBName: dbName},
-		apiKeys:       apiKeys,
-		adminAPIKeys:  adminAPIKeys,
-		adminUsers:    adminUsers,
-		jwks:          jwks,
-		oidcIssuer:    oidcIssuer,
-		oidcAudience:  oidcAudience,
-		registryAuthz: newRegistryAuthzConfigFromEnv(),
+		db:              conn,
+		dbName:          dbName,
+		events:          &clickhousepkg.Client{Conn: conn, DBName: dbName},
+		apiKeys:         apiKeys,
+		adminAPIKeys:    adminAPIKeys,
+		legacyAdminKeys: legacyAdminKeys,
+		adminUsers:      adminUsers,
+		jwks:            jwks,
+		oidcIssuer:      oidcIssuer,
+		oidcAudience:    oidcAudience,
+		registryAuthz:   newRegistryAuthzConfigFromEnv(),
 	}
 	var store *platformStore
 	if dsn := platformDSNFromEnv(); dsn != "" {
@@ -343,7 +353,7 @@ func main() {
 		mux.Handle("/api/runtime/grants", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeGrants)))
 		mux.Handle("/api/runtime/sessions", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeSessions)))
 		mux.Handle("/api/runtime/adapter/sessions", server.auth(http.HandlerFunc(runtimeServer.HandleAdapterSession)))
-		mux.Handle("/api/runtime/components", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeComponents)))
+		mux.Handle("/api/runtime/components", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.HandleRuntimeComponents))))
 		mux.Handle("/api/runtime/policy", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimePolicy)))
 		mux.Handle("/api/runtime/actions/restart", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.HandleActionRestart))))
 		// Grant item (POST /api/runtime/grants/{namespace}/{name}/disable|enable, DELETE /api/runtime/grants/{namespace}/{name})
@@ -1099,14 +1109,17 @@ func (s *apiServer) authenticateRequest(r *http.Request) (principal, bool, error
 	apiKey := strings.TrimSpace(r.Header.Get("x-api-key"))
 	if apiKey != "" {
 		if _, ok := s.apiKeys[apiKey]; ok {
-			role := roleAdmin // backward-compatible default when ADMIN_API_KEYS is unset.
+			role := roleUser
 			if len(s.adminAPIKeys) > 0 {
 				// When ADMIN_API_KEYS is configured, API_KEYS values not present in
 				// ADMIN_API_KEYS are intentionally demoted to role=user.
-				role = roleUser
 				if _, admin := s.adminAPIKeys[apiKey]; admin {
 					role = roleAdmin
 				}
+			} else if s.legacyAdminKeys {
+				// Explicit dev/test compatibility path for legacy local setups that
+				// predate ADMIN_API_KEYS.
+				role = roleAdmin
 			}
 			return principal{Role: role, AuthType: "service_api_key", IsService: true}, true, nil
 		}
@@ -1288,6 +1301,15 @@ func splitCSVSet(raw string) map[string]struct{} {
 		out[part] = struct{}{}
 	}
 	return out
+}
+
+func legacyAdminAPIKeyFallbackEnabled() bool {
+	for _, key := range []string{"MCP_LEGACY_ADMIN_API_KEY_FALLBACK", "LEGACY_ADMIN_API_KEY_FALLBACK"} {
+		if enabled, ok := boolEnv(key); ok {
+			return enabled
+		}
+	}
+	return strings.TrimSpace(os.Getenv("MCP_RUNTIME_TEST_MODE")) == "1"
 }
 
 func maskCredentialForLog(value string) string {

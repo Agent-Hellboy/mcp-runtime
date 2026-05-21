@@ -104,6 +104,25 @@ func (m *Manager) GetMCPServerRef(ctx context.Context, ref ServerReference) (*mc
 	return &server, nil
 }
 
+// ListMCPServers returns all MCPServer resources, optionally filtered by namespace.
+func (m *Manager) ListMCPServers(ctx context.Context, namespace string) (*mcpv1alpha1.MCPServerList, error) {
+	var obj *unstructured.UnstructuredList
+	var err error
+	if namespace != "" {
+		obj, err = m.dynamic.Resource(serverGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	} else {
+		obj, err = m.dynamic.Resource(serverGVR).List(ctx, metav1.ListOptions{})
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to list MCPServers: %w", err)
+	}
+	var servers mcpv1alpha1.MCPServerList
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.UnstructuredContent(), &servers); err != nil {
+		return nil, fmt.Errorf("decode MCPServers: %w", err)
+	}
+	return &servers, nil
+}
+
 // ListGrants returns all MCPAccessGrant resources, optionally filtered by namespace.
 func (m *Manager) ListGrants(ctx context.Context, namespace string) (*MCPAccessGrantList, error) {
 	var result *MCPAccessGrantList

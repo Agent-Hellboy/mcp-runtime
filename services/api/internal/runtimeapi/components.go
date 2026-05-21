@@ -51,6 +51,10 @@ func (s *RuntimeServer) HandleDashboardSummary(w http.ResponseWriter, r *http.Re
 }
 
 func (s *RuntimeServer) HandleRuntimeComponents(w http.ResponseWriter, r *http.Request) {
+	if p, ok := principalFromContext(r.Context()); !ok || p.Role != roleAdmin {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
 	if s.sentinelMgr == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
 		return

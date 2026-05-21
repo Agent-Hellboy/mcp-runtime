@@ -203,7 +203,7 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 	mux.HandleFunc("/auth/status", handleStatus(sessions))
 	parsedAPIKeys := parseAPIKeyList(apiKeys)
 	parsedAdminAPIKeys := parseAPIKeyList(adminAPIKeys)
-	mux.HandleFunc("/auth/admin-check", handleAdminCheck(sessions, parsedAPIKeys, parsedAdminAPIKeys))
+	mux.HandleFunc("/auth/admin-check", handleAdminCheck(sessions, parsedAPIKeys, parsedAdminAPIKeys, legacyAdminAPIKeyFallbackEnabled()))
 
 	apiProxy := newAPIProxy(target, apiBase, upstreamAPIKey, parsedAPIKeys, sessions, publicCatalog)
 	mux.Handle(apiBase+"/", apiProxy)
@@ -873,11 +873,9 @@ func handleLogout(store *uiSessionStore) http.HandlerFunc {
 // session or admin API key) and 401 otherwise. The original request body and
 // path do not matter — Traefik forwards only headers and consumes the status.
 // The Cache-Control header is set by securityHeadersMiddleware for /auth/.
-func handleAdminCheck(store *uiSessionStore, apiKeys, adminAPIKeys []string) http.HandlerFunc {
-	// When ADMIN_API_KEYS is unset, any value from API_KEYS authenticates as
-	// admin — matches the API service's backward-compatible default.
+func handleAdminCheck(store *uiSessionStore, apiKeys, adminAPIKeys []string, legacyAdminKeys bool) http.HandlerFunc {
 	gateKeys := adminAPIKeys
-	if len(gateKeys) == 0 {
+	if len(gateKeys) == 0 && legacyAdminKeys {
 		gateKeys = apiKeys
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1265,4 +1263,13 @@ func boolEnvOr(key string, fallback bool) bool {
 		return parsed
 	}
 	return fallback
+}
+
+func legacyAdminAPIKeyFallbackEnabled() bool {
+	for _, key := range []string{"MCP_LEGACY_ADMIN_API_KEY_FALLBACK", "LEGACY_ADMIN_API_KEY_FALLBACK"} {
+		if parsed, ok := serviceutil.BoolEnv(key); ok {
+			return parsed
+		}
+	}
+	return strings.TrimSpace(os.Getenv("MCP_RUNTIME_TEST_MODE")) == "1"
 }

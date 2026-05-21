@@ -110,8 +110,8 @@ For local `setup --test-mode` clusters, setup seeds two email/password logins:
 
 | Service | Auth behavior |
 |---|---|
-| **api** | `/health` is open. Authenticated `/api/*` routes accept `x-api-key` from `API_KEYS`, user-generated API keys, platform JWT bearer tokens, or OIDC JWT bearer tokens when OIDC is configured. If `ADMIN_API_KEYS` is set, only those keys get admin role; other `API_KEYS` values are user role. Registry forward-auth keeps admin credentials global and allows normal user credentials only on repository paths scoped to the caller's team slug or team namespace. |
-| **ui** | `/auth/login` creates an HttpOnly UI session from `api_key`, `id_token`, or `email`/`password`. The UI then proxies `/api/*` with an upstream API key or bearer token. |
+| **api** | `/health` is open. Authenticated `/api/*` routes accept `x-api-key` from `API_KEYS`, user-generated API keys, platform JWT bearer tokens, or OIDC JWT bearer tokens when OIDC is configured. Only keys listed in `ADMIN_API_KEYS` get admin role; other `API_KEYS` values are user role unless the explicit legacy dev/test fallback is enabled. Registry forward-auth keeps admin credentials global and allows normal user credentials only on repository paths scoped to the caller's team slug or team namespace. |
+| **ui** | `/auth/login` creates an HttpOnly UI session from `api_key`, `id_token`, or `email`/`password`. The UI then proxies `/api/*` with an upstream API key or bearer token. `/auth/admin-check` accepts admin UI sessions or keys from `ADMIN_API_KEYS`; it falls back to `API_KEYS` only when the explicit legacy dev/test fallback is enabled. |
 | **ingest** | `/live`, `/ready`, and `/health` are open. `/events` accepts `x-api-key` from `INGEST_API_KEYS`, legacy `API_KEYS`, or a configured OIDC bearer token. If no API keys and no JWKS are configured, intake auth is bypassed. |
 | **processor** | No data API. It exposes metrics and a simple health check on the metrics port. |
 | **mcp-gateway** | No admin API. It authenticates MCP requests according to the rendered server policy: header identity or OAuth bearer tokens, depending on `spec.auth`. |
@@ -139,15 +139,15 @@ metrics on `METRICS_PORT` (default `9090`).
 | `GET` | `/api/event-types` | Event counts grouped by event type. Admin role required. |
 | `GET`, `POST` | `/api/runtime/servers` | List or apply `MCPServer` resources through runtime authz scope. `tenant` mode defaults signed-in users to team namespaces they belong to; `org` mode includes the org catalog plus team namespaces; `public` mode allows anonymous catalog reads and signed-in publishes in the public catalog plus team namespaces. Responses include `publish_policy` for active-server quota/cooldown visibility. |
 | `DELETE` | `/api/runtime/servers/{namespace}/{name}` | Retire an owned MCPServer. Retiring deletes the MCPServer from Kubernetes and frees one active-server quota slot. |
-| `GET` | `/api/runtime/server-events?namespace=&server=` | Recent analytics events for one readable MCPServer, used by the user server detail view. |
-| `GET`, `POST` | `/api/runtime/grants` | List or apply `MCPAccessGrant` resources. |
-| `GET`, `DELETE` | `/api/runtime/grants/{namespace}/{name}` | Read or delete one grant. |
-| `POST` | `/api/runtime/grants/{namespace}/{name}/disable` | Set `spec.disabled=true`. |
-| `POST` | `/api/runtime/grants/{namespace}/{name}/enable` | Set `spec.disabled=false`. |
-| `GET`, `POST` | `/api/runtime/sessions` | List or apply `MCPAgentSession` resources. |
-| `GET`, `DELETE` | `/api/runtime/sessions/{namespace}/{name}` | Read or delete one session. |
-| `POST` | `/api/runtime/sessions/{namespace}/{name}/revoke` | Set `spec.revoked=true`. |
-| `POST` | `/api/runtime/sessions/{namespace}/{name}/unrevoke` | Set `spec.revoked=false`. |
+| `GET` | `/api/runtime/server-events?namespace=&server=` | Recent analytics events for one administered MCPServer; full identity/session/payload details are not exposed to regular namespace readers. |
+| `GET`, `POST` | `/api/runtime/grants` | List or apply `MCPAccessGrant` resources. Lists are scoped to administered servers; apply requires admin, server owner, or team owner. |
+| `GET`, `DELETE` | `/api/runtime/grants/{namespace}/{name}` | Read or delete one grant for an administered server. |
+| `POST` | `/api/runtime/grants/{namespace}/{name}/disable` | Set `spec.disabled=true`; requires admin, server owner, or team owner. |
+| `POST` | `/api/runtime/grants/{namespace}/{name}/enable` | Set `spec.disabled=false`; requires admin, server owner, or team owner. |
+| `GET`, `POST` | `/api/runtime/sessions` | List scoped `MCPAgentSession` resources; direct session apply is admin/internal-only. User adapter flows use `/api/runtime/adapter/sessions`. |
+| `GET`, `DELETE` | `/api/runtime/sessions/{namespace}/{name}` | Read or delete one session for an administered server. |
+| `POST` | `/api/runtime/sessions/{namespace}/{name}/revoke` | Set `spec.revoked=true`; requires admin, server owner, or team owner. |
+| `POST` | `/api/runtime/sessions/{namespace}/{name}/unrevoke` | Set `spec.revoked=false`; requires admin, server owner, or team owner. |
 | `GET`, `POST` | `/api/runtime/teams` | List teams (admin: all, user: memberships) or create a team+namespace (admin-only). |
 | `GET` | `/api/runtime/teams/{team}` | Read team metadata for admins and team members. |
 | `GET` | `/api/runtime/teams/{team}/members` | List team memberships for admins and team members. |
@@ -156,8 +156,8 @@ metrics on `METRICS_PORT` (default `9090`).
 | `DELETE` | `/api/runtime/teams/{team}/members/{userID}` | Remove team membership (admin or team owner). |
 | `GET` | `/api/runtime/namespaces` | List allowed namespaces and org catalog metadata for caller scope. |
 | `GET` | `/api/runtime/namespaces/{namespace}` | Read one namespace metadata entry when authorized. |
-| `GET` | `/api/runtime/components` | Operator, Sentinel service, and observability component health from Kubernetes. |
-| `GET` | `/api/runtime/policy?namespace=&server=` | Rendered gateway policy for one server. |
+| `GET` | `/api/runtime/components` | Admin-only operator, Sentinel service, and observability component health from Kubernetes. |
+| `GET` | `/api/runtime/policy?namespace=&server=` | Rendered gateway policy for one administered server. |
 | `POST` | `/api/runtime/actions/restart` | Restart one Sentinel component or all components. Admin role required. |
 | `GET`, `POST` | `/api/deployments` | User-scoped platform deployment list/apply. |
 | `DELETE` | `/api/deployments/{namespace}/{name}` | Delete a platform-managed deployment and service. |

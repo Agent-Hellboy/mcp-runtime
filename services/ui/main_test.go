@@ -1463,6 +1463,7 @@ func TestHandleAdminCheck(t *testing.T) {
 		apiKeys      string
 		cookie       *http.Cookie
 		apiKeyHeader string
+		legacyAdmin  bool
 		want         int
 	}{
 		{name: "no_credential", apiKeys: "ui-key,admin-key", adminKeys: "admin-key", want: http.StatusUnauthorized},
@@ -1470,13 +1471,14 @@ func TestHandleAdminCheck(t *testing.T) {
 		{name: "user_session_rejected", apiKeys: "ui-key", cookie: &http.Cookie{Name: sessionCookieName, Value: userSess.ID}, want: http.StatusUnauthorized},
 		{name: "admin_api_key", apiKeys: "ui-key,admin-key", adminKeys: "admin-key", apiKeyHeader: "admin-key", want: http.StatusNoContent},
 		{name: "non_admin_api_key_rejected", apiKeys: "ui-key,admin-key", adminKeys: "admin-key", apiKeyHeader: "ui-key", want: http.StatusUnauthorized},
-		{name: "fallback_any_api_key_when_admin_unset", apiKeys: "ui-key", apiKeyHeader: "ui-key", want: http.StatusNoContent},
+		{name: "admin_unset_rejects_api_key_by_default", apiKeys: "ui-key", apiKeyHeader: "ui-key", want: http.StatusUnauthorized},
+		{name: "legacy_fallback_allows_api_key_when_admin_unset", apiKeys: "ui-key", apiKeyHeader: "ui-key", legacyAdmin: true, want: http.StatusNoContent},
 		{name: "unknown_api_key", apiKeys: "ui-key", apiKeyHeader: "rando", want: http.StatusUnauthorized},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := handleAdminCheck(store, parseAPIKeyList(tc.apiKeys), parseAPIKeyList(tc.adminKeys))
+			h := handleAdminCheck(store, parseAPIKeyList(tc.apiKeys), parseAPIKeyList(tc.adminKeys), tc.legacyAdmin)
 			req := httptest.NewRequest(http.MethodGet, "/auth/admin-check", nil)
 			if tc.cookie != nil {
 				req.AddCookie(tc.cookie)
@@ -1490,6 +1492,26 @@ func TestHandleAdminCheck(t *testing.T) {
 				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tc.want, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestLegacyAdminAPIKeyFallbackEnabledForUIAdminCheck(t *testing.T) {
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "")
+	t.Setenv("MCP_LEGACY_ADMIN_API_KEY_FALLBACK", "")
+	t.Setenv("LEGACY_ADMIN_API_KEY_FALLBACK", "")
+	if legacyAdminAPIKeyFallbackEnabled() {
+		t.Fatal("legacy fallback should be disabled by default")
+	}
+
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "1")
+	if !legacyAdminAPIKeyFallbackEnabled() {
+		t.Fatal("legacy fallback should be enabled in runtime test mode")
+	}
+
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "")
+	t.Setenv("MCP_LEGACY_ADMIN_API_KEY_FALLBACK", "true")
+	if !legacyAdminAPIKeyFallbackEnabled() {
+		t.Fatal("legacy fallback should honor explicit override")
 	}
 }
 
