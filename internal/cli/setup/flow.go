@@ -86,10 +86,14 @@ func externalRegistryFlagConfig(plan setupplan.Plan) *config.ExternalRegistryCon
 }
 
 func validateNonTestSetup(plan setupplan.Plan, extRegistry *config.ExternalRegistryConfig, usingExternalRegistry bool) error {
+	return validateNonTestSetupWithAuthConfig(plan, extRegistry, usingExternalRegistry, nil)
+}
+
+func validateNonTestSetupWithAuthConfig(plan setupplan.Plan, extRegistry *config.ExternalRegistryConfig, usingExternalRegistry bool, existingAuthConfig map[string]string) error {
 	if plan.TestMode {
 		return nil
 	}
-	if err := validateRequiredPlatformEnv(plan, usingExternalRegistry); err != nil {
+	if err := validateRequiredPlatformEnv(plan, usingExternalRegistry, existingAuthConfig); err != nil {
 		return err
 	}
 	if !plan.StrictProd {
@@ -134,7 +138,7 @@ func validateNonTestSetup(plan setupplan.Plan, extRegistry *config.ExternalRegis
 	return nil
 }
 
-func validateRequiredPlatformEnv(plan setupplan.Plan, usingExternalRegistry bool) error {
+func validateRequiredPlatformEnv(plan setupplan.Plan, usingExternalRegistry bool, existingAuthConfig map[string]string) error {
 	if !platformEnvValidationRequired(plan) {
 		return nil
 	}
@@ -153,7 +157,7 @@ func validateRequiredPlatformEnv(plan setupplan.Plan, usingExternalRegistry bool
 			"platform admin configuration is incomplete; set MCP_PLATFORM_ADMIN_EMAIL (or ADMIN_USERS) before running production setup",
 		)
 	}
-	if err := ValidatePublicPlatformAuthEnv(plan.PlatformMode, plan.TLSEnabled, plan.TestMode); err != nil {
+	if err := ValidatePublicPlatformAuthConfig(plan.PlatformMode, plan.TLSEnabled, plan.TestMode, existingAuthConfig); err != nil {
 		return err
 	}
 	if !usingExternalRegistry && !registryEndpointEnvExplicitlyConfigured() {
@@ -163,6 +167,16 @@ func validateRequiredPlatformEnv(plan setupplan.Plan, usingExternalRegistry bool
 		)
 	}
 	return nil
+}
+
+func existingPublicAuthConfigForSetup(plan setupplan.Plan) (map[string]string, error) {
+	if !publicPlatformAuthConfigRequired(plan.PlatformMode, plan.TLSEnabled, plan.TestMode) {
+		return nil, nil
+	}
+	if publicBrowserLoginConfigConfigured(nil) {
+		return nil, nil
+	}
+	return existingConfigMapData(core.DefaultKubectlClient(), core.DefaultAnalyticsNamespace, "mcp-sentinel-config")
 }
 
 func platformAdminEnvConfigured() bool {

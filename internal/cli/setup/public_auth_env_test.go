@@ -44,6 +44,17 @@ func TestValidatePublicPlatformAuthEnvAllowsGoogleClientID(t *testing.T) {
 	}
 }
 
+func TestValidatePublicPlatformAuthConfigAllowsExistingGoogleClientID(t *testing.T) {
+	clearPublicAuthEnv(t)
+
+	err := ValidatePublicPlatformAuthConfig(setupplan.PlatformModePublic, true, false, map[string]string{
+		"GOOGLE_CLIENT_ID": "client.apps.googleusercontent.com",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestValidatePublicPlatformAuthEnvAllowsCompleteOIDCConfig(t *testing.T) {
 	clearPublicAuthEnv(t)
 	t.Setenv("OIDC_ISSUER", "https://issuer.example.com")
@@ -51,6 +62,19 @@ func TestValidatePublicPlatformAuthEnvAllowsCompleteOIDCConfig(t *testing.T) {
 	t.Setenv("OIDC_JWKS_URL", "https://issuer.example.com/.well-known/jwks.json")
 
 	if err := ValidatePublicPlatformAuthEnv(setupplan.PlatformModePublic, true, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidatePublicPlatformAuthConfigAllowsMergedOIDCConfig(t *testing.T) {
+	clearPublicAuthEnv(t)
+	t.Setenv("OIDC_AUDIENCE", "mcp-runtime")
+
+	err := ValidatePublicPlatformAuthConfig(setupplan.PlatformModePublic, true, false, map[string]string{
+		"OIDC_ISSUER":   "https://issuer.example.com",
+		"OIDC_JWKS_URL": "https://issuer.example.com/.well-known/jwks.json",
+	})
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

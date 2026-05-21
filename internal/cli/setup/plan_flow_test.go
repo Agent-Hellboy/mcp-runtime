@@ -348,6 +348,21 @@ func TestValidateNonTestSetupRejectsPublicTLSWithoutBrowserLoginEnv(t *testing.T
 	}
 }
 
+func TestValidateNonTestSetupAllowsExistingPublicBrowserLoginConfig(t *testing.T) {
+	setPublicDomainEnv(t)
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.prod.example.com")
+
+	err := validateNonTestSetupWithAuthConfig(
+		setupplan.Plan{PlatformMode: setupplan.PlatformModePublic, TLSEnabled: true, TestMode: false, RegistryMode: setupplan.RegistryModeBundledHTTPS},
+		nil,
+		false,
+		map[string]string{"GOOGLE_CLIENT_ID": "client.apps.googleusercontent.com"},
+	)
+	if err != nil {
+		t.Fatalf("expected existing browser login config to be allowed, got %v", err)
+	}
+}
+
 func TestValidateNonTestSetupRejectsBundledPublicSetupWithoutRegistryEndpoint(t *testing.T) {
 	setPublicDomainEnv(t)
 	t.Setenv("GOOGLE_CLIENT_ID", "client.apps.googleusercontent.com")
