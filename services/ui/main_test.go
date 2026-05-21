@@ -558,23 +558,26 @@ func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
 		t.Fatalf("expected long dashboard tables to use scroll-table, got %d", got)
 	}
 	for _, want := range []string{
-		`class="section-nav" aria-label="Operations sections"`,
-		`href="#ops-inspector-panel"`,
 		`placeholder="Search servers"`,
 		`class="analytics-tabset" data-analytics-tabset`,
 		`id="governance-decisions" data-admin-only="true"`,
 		`data-analytics-tab-target="governance-decision-audit"`,
+		`id="ops-workspace-panel"`,
+		`data-analytics-tab-target="ops-inspector-panel"`,
+		`id="ops-tab-platform-activity"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("index missing navigation affordance %q", want)
 		}
 	}
 	for _, unwanted := range []string{
+		`class="section-nav" aria-label="Operations sections"`,
+		`href="#ops-inspector-panel"`,
 		`href="#dashboard-audit"`,
 		`id="dashboard-audit"`,
 	} {
 		if strings.Contains(html, unwanted) {
-			t.Fatalf("dashboard should not own decision audit markup %q", unwanted)
+			t.Fatalf("stacked section navigation should not own dense workspace markup %q", unwanted)
 		}
 	}
 
@@ -591,6 +594,7 @@ func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
 		`.section-nav`,
 		`.analytics-tabs`,
 		`.analytics-tab-panel[hidden]`,
+		`.ops-tab-head`,
 		`.tabs`,
 		`position: sticky;`,
 		`.server-card:hover`,
