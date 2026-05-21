@@ -517,8 +517,11 @@ func clusterNodeArchitectures(kubectl core.KubectlRunner) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not inspect Kubernetes node architectures: %w", err)
 	}
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if detail := strings.TrimSpace(string(out)); detail != "" {
+			return nil, fmt.Errorf("could not inspect Kubernetes node architectures: %w: %s", err, detail)
+		}
 		return nil, fmt.Errorf("could not inspect Kubernetes node architectures: %w", err)
 	}
 	seen := map[string]struct{}{}
@@ -2853,8 +2856,10 @@ func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
 	}
 	envPlatformAdminEmail := setupSecretEnvValue("MCP_PLATFORM_ADMIN_EMAIL", "PLATFORM_ADMIN_EMAIL")
 	envPlatformAdminPassword := setupSecretEnvValue("MCP_PLATFORM_ADMIN_PASSWORD", "PLATFORM_ADMIN_PASSWORD")
-	if envPlatformAdminEmail != "" && envPlatformAdminPassword != "" {
+	if envPlatformAdminEmail != "" {
 		platformAdminEmail = envPlatformAdminEmail
+	}
+	if envPlatformAdminPassword != "" {
 		platformAdminPassword = envPlatformAdminPassword
 	}
 	if platformAdminEmail == "" || platformAdminPassword == "" {
@@ -3335,8 +3340,11 @@ func clusterIssuerUsesACME(kubectl core.KubectlRunner, name string) (bool, error
 	if err != nil {
 		return false, err
 	}
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if detail := strings.TrimSpace(string(out)); detail != "" {
+			return false, fmt.Errorf("inspect ClusterIssuer %q: %w: %s", name, err, detail)
+		}
 		return false, err
 	}
 	return strings.TrimSpace(string(out)) != "", nil

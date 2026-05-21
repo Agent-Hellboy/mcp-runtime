@@ -116,6 +116,21 @@ func TestResolveSetupImagePlatformRejectsExplicitMismatch(t *testing.T) {
 	}
 }
 
+func TestResolveSetupImagePlatformIncludesKubectlStderr(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	core.DefaultCLIConfig = &core.CLIConfig{}
+	kubectl := core.NewTestKubectlClient(&core.MockExecutor{
+		DefaultOutput: []byte("Error from server (Forbidden): nodes is forbidden"),
+		DefaultErr:    errors.New("exit status 1"),
+	})
+
+	_, err := resolveSetupImagePlatform(kubectl)
+	if err == nil || !strings.Contains(err.Error(), "nodes is forbidden") {
+		t.Fatalf("expected kubectl stderr in error, got %v", err)
+	}
+}
+
 func TestBuildOperatorImagePassesDockerPlatform(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() { core.DefaultCLIConfig = orig })
@@ -958,6 +973,35 @@ func TestRenderAnalyticsSecretManifestDoesNotSeedPartialAdminPasswordUser(t *tes
 	}
 	if !csvHasValue(data["ADMIN_USERS"], "PrinceKrRoshan01@gmail.com") {
 		t.Fatalf("expected admin email to remain in ADMIN_USERS, got %q", data["ADMIN_USERS"])
+	}
+}
+
+func TestRenderAnalyticsSecretManifestAllowsPartialAdminOverrideWithExistingPair(t *testing.T) {
+	t.Setenv("MCP_PLATFORM_ADMIN_EMAIL", "new-admin@mcpruntime.org")
+	existingPassword := base64.StdEncoding.EncodeToString([]byte("existing-password"))
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if contains(spec.Args, "jsonpath={.data.PLATFORM_ADMIN_PASSWORD}") {
+				return &core.MockCommand{Args: spec.Args, OutputData: []byte(existingPassword)}
+			}
+			return &core.MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	manifest, err := renderAnalyticsSecretManifest(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data := secretStringDataFromManifest(t, manifest)
+	if data["PLATFORM_ADMIN_EMAIL"] != "new-admin@mcpruntime.org" {
+		t.Fatalf("expected admin email override, got %q", data["PLATFORM_ADMIN_EMAIL"])
+	}
+	if data["PLATFORM_ADMIN_PASSWORD"] != "existing-password" {
+		t.Fatalf("expected existing password to be retained, got %q", data["PLATFORM_ADMIN_PASSWORD"])
+	}
+	if !csvHasValue(data["ADMIN_USERS"], "new-admin@mcpruntime.org") {
+		t.Fatalf("expected ADMIN_USERS to include override email, got %q", data["ADMIN_USERS"])
 	}
 }
 

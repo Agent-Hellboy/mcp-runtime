@@ -584,6 +584,21 @@ func TestBundledRegistryInternalIssuerKeepsNonACMEIssuer(t *testing.T) {
 	}
 }
 
+func TestBundledRegistryInternalIssuerIncludesKubectlStderr(t *testing.T) {
+	kubectl := core.NewTestKubectlClient(&core.MockExecutor{
+		DefaultOutput: []byte("Error from server (Forbidden): clusterissuers is forbidden"),
+		DefaultErr:    fmt.Errorf("exit status 1"),
+	})
+
+	_, err := bundledRegistryInternalIssuerName(kubectl, setupplan.Plan{
+		RegistryMode:     setupplan.RegistryModeBundledHTTPS,
+		TLSClusterIssuer: "letsencrypt-prod",
+	})
+	if err == nil || !strings.Contains(err.Error(), "clusterissuers is forbidden") {
+		t.Fatalf("expected kubectl stderr in error, got %v", err)
+	}
+}
+
 func TestValidateNonTestSetupRejectsDevRegistryURLInStrictProd(t *testing.T) {
 	setPublicDomainEnv(t)
 
