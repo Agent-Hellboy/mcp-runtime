@@ -133,6 +133,12 @@ gateway proxy, and Sentinel images with `latest` tags to the configured or
 bundled registry, then deploys pods that pull those images. In Kind test mode,
 implicit internal image refs use `registry.registry.svc.cluster.local:5000/...`
 so the documented containerd mirror matches the image host exactly.
+For remote Linux clusters, setup-built images must match the node CPU
+architecture, not the workstation CPU. Setup detects homogeneous node
+architectures and builds `linux/amd64` or `linux/arm64`; override with
+`MCP_IMAGE_PLATFORM=linux/amd64` or `MCP_IMAGE_PLATFORM=linux/arm64` when
+needed. Mixed-architecture clusters require prebuilt multi-arch images until
+setup publishes manifest lists.
 Before rerunning setup or e2e locally, check `kind get clusters` and prefer the
 existing `kind-mcp-runtime` context when it is healthy. Create a new Kind
 cluster only when you need a clean CI-equivalent run or the existing contributor

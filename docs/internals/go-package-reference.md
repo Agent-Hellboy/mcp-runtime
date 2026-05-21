@@ -3323,6 +3323,7 @@ type CLIConfig struct {
 	SkopeoImage               string
 	OperatorImage             string // Override for operator image
 	GatewayProxyImage         string // Optional default image for the MCP gateway sidecar
+	ImagePlatform             string // Optional Docker image platform for setup-built images, e.g. linux/amd64
 	GatewayOTLPEndpoint       string // Optional OTLP/HTTP endpoint for MCP gateway sidecar tracing
 	AnalyticsIngestURL        string // Optional analytics ingest URL override for the MCP gateway sidecar
 	IngressReadinessMode      string // Optional operator ingress readiness mode: strict or permissive

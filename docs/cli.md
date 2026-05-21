@@ -98,6 +98,11 @@ HTTPS and requires `--with-tls` plus node trust for the issuing CA.
 `external` skips the bundled registry and uses `--external-registry-url`,
 `PROVISIONED_REGISTRY_URL`, or `mcp-runtime registry provision`.
 
+Setup-built images default to the Linux architecture reported by the cluster
+nodes. Override with `MCP_IMAGE_PLATFORM=linux/amd64` or
+`MCP_IMAGE_PLATFORM=linux/arm64` when the build host differs from the target
+cluster.
+
 For non-test public/TLS setup, configure the platform hostnames before running
 setup: set `MCP_PLATFORM_DOMAIN` to derive `platform.<domain>`,
 `registry.<domain>`, and `mcp.<domain>`, or set
