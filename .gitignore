@@ -15,7 +15,7 @@ DIFF*.md
 .gomodcache/
 FUTURE_PLAN.md
 /plan.md
-/gateway_paln.md
+/gateway_plan.md
 .DS_Store
 *ARCHITECTURE.md
 f.go

@@ -74,7 +74,7 @@ Added: 2026-05-20
 
 ---
 
-### Preserve `subject.teamID` on platform access applies
+### Preserve subject.teamID on platform access apply
 
 When `mcp-runtime access grant apply --file ...` or `session apply` goes
 through the platform API, the CLI must copy `spec.subject.teamID` into the
@@ -83,9 +83,8 @@ dropping it makes the platform default back to the server-owning team and the
 grant no longer proves delegated access.
 
 References:
-- `internal/cli/platformapi/client.go:432`
-- `internal/cli/platformapi/client.go:451`
-- `docs/multi-team.md:57`
+- `internal/cli/platformapi/client.go` (`CreateAccessGrant`, `CreateAgentSession`)
+- `docs/multi-team.md` → **Public and cross-team access**
 
 Added: 2026-05-20
 
