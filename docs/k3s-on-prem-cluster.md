@@ -1,0 +1,407 @@
+# k3s On-Prem Cluster
+
+This guide creates a small public or on-prem k3s cluster that can run MCP
+Runtime with real DNS, TLS, ingress, registry pulls, and multi-node scheduling.
+It is the production-style version of the lab path in
+[Deployment Targets](deployment-targets.md): still small enough for a demo or
+pilot, but close enough to a real customer environment to test the platform
+honestly.
+
+The reference layout is four nodes because that is the smallest shape that
+separates the control plane, public ingress, and general workloads. A fifth
+node is an easy extension and is covered below.
+
+This is a demo or pilot topology, not a high-availability control plane. For a
+production control plane, use the k3s HA topology with three server nodes and
+plan datastore backups separately.
+
+## Reference Topology
+
+| Node | k3s role | Recommended size | Purpose |
+|---|---|---|---|
+| `mcp-cp-1` | server | 4-8 vCPU, 8-16 GiB RAM | Kubernetes API, scheduler, controller manager, embedded datastore, light platform workloads |
+| `mcp-ingress-1` | agent | 2-4 vCPU, 4-8 GiB RAM | Public Traefik ServiceLB node for ports 80 and 443 |
+| `mcp-worker-1` | agent | 2-4 vCPU, 4-8 GiB RAM | Sentinel, operator, registry, and MCP server workloads |
+| `mcp-worker-2` | agent | 2-4 vCPU, 4-8 GiB RAM | Extra capacity and scheduling headroom |
+
+For a five-node demo, add `mcp-worker-3` as another general worker. If you need
+control-plane high availability, use the k3s HA server topology instead of just
+adding one more server node; that is a different operational shape.
+
+This guide assumes all nodes use the same CPU architecture. Standard VPS and
+most on-prem x86 servers are `amd64`, so setup builds `linux/amd64` images. Do
+not mix `amd64` and `arm64` nodes until MCP Runtime publishes multi-arch setup
+images.
+
+## Prerequisites
+
+- Ubuntu 24.04 or another k3s-supported Linux distribution on every node.
+- Root or passwordless sudo access on every node.
+- Node-to-node network connectivity for k3s and the pod network.
+- Public ports 80 and 443 open on the ingress node.
+- Kubernetes API port 6443 reachable from worker nodes and your admin
+  workstation. Restrict it to trusted IPs when the node has a public address.
+- A default storage path. k3s installs `local-path` by default; use a real CSI,
+  NFS, Longhorn, or another durable storage class for serious production.
+- DNS records for the platform hosts:
+
+  ```text
+  platform.example.com -> <ingress-public-ip>
+  registry.example.com -> <ingress-public-ip>
+  mcp.example.com      -> <ingress-public-ip>
+  ```
+
+Use your own apex domain in place of `example.com`. `MCP_PLATFORM_DOMAIN` takes
+the apex only, so `MCP_PLATFORM_DOMAIN=example.com` derives the three names
+above.
+
+Let's Encrypt HTTP-01 requires public DNS and public port 80. For private-only
+on-prem DNS, use an enterprise cert-manager `ClusterIssuer` or pre-created TLS
+secrets instead of `--acme-email`.
+
+## Choose the Front Door
+
+Pick the public or internal traffic path before installing MCP Runtime. The
+platform expects the same three hostnames either way:
+
+- `platform.example.com` for the dashboard, API, Grafana, and Prometheus.
+- `registry.example.com` for OCI registry push and pull flows.
+- `mcp.example.com` for MCP server routes such as `/<server-name>/mcp`.
+
+### Direct DNS to k3s Ingress
+
+This is the simplest public demo shape:
+
+```text
+client -> DNS A record -> mcp-ingress-1 public IP -> k3s ServiceLB -> Traefik
+```
+
+Use this when you can expose ports 80 and 443 directly on the ingress node or
+on a small external load balancer. `--acme-email` works in this shape because
+Let's Encrypt HTTP-01 can reach Traefik on port 80.
+
+### Cloudflare, WAF, or Public Reverse Proxy
+
+For internet-facing demos, it is usually better to put Cloudflare, an
+enterprise WAF, or another reverse proxy in front of the ingress node:
+
+```text
+client -> Cloudflare/WAF/proxy -> origin ingress IP -> k3s ServiceLB -> Traefik
+```
+
+In this shape:
+
+- Point the public DNS records at the proxy, not directly at the node, if the
+  proxy is meant to hide or shield the origin.
+- Configure the proxy origin to forward all three hosts to the ingress node or
+  external load balancer.
+- Preserve the original `Host` header and `X-Forwarded-Proto`.
+- Do not cache or rewrite `/api`, `/v2`, `/<server-name>/mcp`, or
+  `/.well-known/acme-challenge/*`.
+- Allow long-lived and streaming HTTP responses for MCP traffic.
+- Allow registry blob upload/download behavior, including large request bodies,
+  range requests, and Docker/OCI auth headers.
+- Restrict origin firewall access to the proxy source ranges when possible, and
+  keep those ranges updated from the proxy provider.
+
+`--acme-email` still uses HTTP-01. If the proxy is in front during issuance,
+`/.well-known/acme-challenge/*` must pass through to Traefik without auth,
+cache, forced HTTPS loops, or WAF blocks. A practical rollout is to start with
+DNS-only/direct records until cert-manager issues certificates, then enable the
+proxy after validation. For private or always-proxied environments, prefer an
+enterprise cert-manager `ClusterIssuer`, proxy-managed origin certificates, or
+pre-created TLS secrets instead of public HTTP-01.
+
+Test the registry path through the proxy before calling the install done:
+
+```bash
+curl -i https://registry.example.com/v2/
+```
+
+Unauthenticated `401` or `403` is healthy. A proxy-generated HTML error,
+timeout, body-size error, or cached response means Docker/OCI clients may fail
+even if the dashboard works.
+
+### Internal Enterprise Proxy or Load Balancer
+
+For private on-prem installs, put an internal reverse proxy, F5/HAProxy/NGINX,
+or a private load balancer in front of `mcp-ingress-1`:
+
+```text
+internal client -> internal DNS/proxy/LB -> k3s ServiceLB -> Traefik
+```
+
+Keep the same hostnames, but resolve them in internal DNS. Use
+`--tls-cluster-issuer <issuer-name>` or pre-created TLS secrets so certificates
+chain to your enterprise trust store. Public Let's Encrypt ACME is not the
+right fit unless the names and HTTP-01 challenge path are publicly reachable.
+
+## Install k3s
+
+Install the first node as the single k3s server. Disable the packaged k3s
+Traefik so MCP Runtime can install and own the repo-managed Traefik manifests.
+
+Run on `mcp-cp-1`:
+
+```bash
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
+  --node-name mcp-cp-1 \
+  --disable traefik \
+  --write-kubeconfig-mode 0644 \
+  --node-ip <cp-node-ip> \
+  --node-external-ip <cp-node-public-ip> \
+  --tls-san <cp-node-public-ip> \
+  --tls-san platform.example.com \
+  --tls-san registry.example.com \
+  --tls-san mcp.example.com" sh -
+```
+
+If nodes have more than one network interface, add `--flannel-iface <iface>` to
+the server and every agent install command so pod networking uses the intended
+interface.
+
+Get the node token:
+
+```bash
+sudo cat /var/lib/rancher/k3s/server/node-token
+```
+
+Treat the node token as a secret; it lets other machines join the cluster.
+
+Join each worker. Run this once per agent node, changing the node name and IPs:
+
+```bash
+curl -sfL https://get.k3s.io | K3S_URL=https://<cp-node-ip>:6443 \
+  K3S_TOKEN=<node-token> \
+  sh -s - agent \
+  --node-name mcp-ingress-1 \
+  --node-ip <worker-node-ip> \
+  --node-external-ip <worker-node-public-ip>
+```
+
+Repeat for `mcp-worker-1`, `mcp-worker-2`, and optionally `mcp-worker-3`.
+
+## Configure kubectl
+
+From your workstation, copy the kubeconfig from the server node, replace
+`127.0.0.1` with the reachable control-plane address, and keep the file
+private:
+
+```bash
+scp root@<cp-node-ip>:/etc/rancher/k3s/k3s.yaml ./mcp-k3s.yaml
+sed -i.bak 's/127.0.0.1/<cp-node-ip>/g' ./mcp-k3s.yaml
+chmod 0600 ./mcp-k3s.yaml
+export KUBECONFIG=$PWD/mcp-k3s.yaml
+kubectl get nodes -o wide
+```
+
+For macOS, the `sed -i.bak` form works with the default BSD `sed`.
+Treat the kubeconfig as a cluster-admin credential and do not commit it.
+
+## Pin ServiceLB to the Ingress Node
+
+k3s ServiceLB will schedule load-balancer pods on eligible nodes. For a public
+demo, keep ports 80 and 443 on one known public ingress node.
+
+Label the ingress node:
+
+```bash
+kubectl label node mcp-ingress-1 \
+  svccontroller.k3s.cattle.io/enablelb=true \
+  ingress.mcpruntime.org/public=true \
+  node-role.mcpruntime.org/public-ingress=true
+```
+
+If another node was labeled for ServiceLB during earlier testing, remove the
+ServiceLB label from it:
+
+```bash
+kubectl label node <node-name> svccontroller.k3s.cattle.io/enablelb- --overwrite
+```
+
+After setup installs Traefik, verify the `svclb-traefik` pods land only on the
+ingress node:
+
+```bash
+kubectl -n traefik get pods -o wide
+```
+
+If one node also serves non-Kubernetes docs or a website with Docker/nginx, keep
+that node out of Kubernetes scheduling:
+
+```bash
+kubectl cordon <docs-node-name>
+```
+
+Cordoning a node does not remove it from the cluster; it just prevents new pods
+from being scheduled there.
+
+## Preflight Checks
+
+Before installing MCP Runtime, verify the cluster shape:
+
+```bash
+kubectl get nodes -o wide
+kubectl get storageclass
+kubectl -n kube-system get pods
+kubectl get ingressclass
+```
+
+Check DNS from your workstation and from inside the cluster:
+
+```bash
+dig +short platform.example.com
+dig +short registry.example.com
+dig +short mcp.example.com
+
+kubectl run dns-check --rm -i --restart=Never --image=busybox:1.36 -- \
+  nslookup platform.example.com
+```
+
+All three public names must resolve to the ingress node before using
+Let's Encrypt HTTP-01. Port 80 must reach Traefik for certificate issuance.
+
+## Install MCP Runtime
+
+Build the CLI from the repo root:
+
+```bash
+make deps
+make build
+```
+
+For a public demo using the bundled HTTPS registry, set the public platform
+domain and make platform image pulls use the public registry host. The registry
+host must resolve from every node.
+
+```bash
+export MCP_PLATFORM_DOMAIN=example.com
+export MCP_REGISTRY_ENDPOINT=registry.example.com
+export MCP_PLATFORM_ADMIN_EMAIL=admin@example.com
+export GOOGLE_CLIENT_ID=<google-client-id>.apps.googleusercontent.com
+export MCP_IMAGE_PLATFORM=linux/amd64
+```
+
+`MCP_IMAGE_PLATFORM` is optional when all Kubernetes nodes report the same
+architecture, but setting it explicitly is useful when building from an ARM
+laptop for amd64 servers. Use `linux/arm64` only for a homogeneous ARM cluster.
+
+Run setup:
+
+```bash
+./bin/mcp-runtime bootstrap --provider k3s
+
+MCP_SETUP_WAIT_TIMEOUT=1200 ./bin/mcp-runtime setup \
+  --platform-mode public \
+  --registry-mode bundled-https \
+  --storage-mode dynamic \
+  --with-tls \
+  --acme-email ops@example.com \
+  --strict-prod \
+  --parallel-builds
+```
+
+Use `--platform-mode tenant` for private team-isolated installs, or
+`--platform-mode org` for a shared internal catalog. `public` exposes the
+catalog anonymously and requires browser login configuration for publishing.
+
+If your organization already owns cert-manager and a `ClusterIssuer`, replace
+`--acme-email` with:
+
+```bash
+MCP_SETUP_WAIT_TIMEOUT=1200 ./bin/mcp-runtime setup \
+  --platform-mode public \
+  --registry-mode bundled-https \
+  --storage-mode dynamic \
+  --with-tls \
+  --tls-cluster-issuer <issuer-name> \
+  --skip-cert-manager-install \
+  --strict-prod \
+  --parallel-builds
+```
+
+If your organization already owns a registry, prefer the external registry path:
+
+```bash
+MCP_SETUP_WAIT_TIMEOUT=1200 ./bin/mcp-runtime setup \
+  --platform-mode public \
+  --registry-mode external \
+  --external-registry-url registry.example.com/mcp-runtime \
+  --with-tls \
+  --acme-email ops@example.com \
+  --strict-prod \
+  --parallel-builds
+```
+
+Pass `--external-registry-username` and `PROVISIONED_REGISTRY_PASSWORD` when the
+registry needs credentials.
+
+## Validate
+
+Run the platform checks:
+
+```bash
+./bin/mcp-runtime status
+./bin/mcp-runtime cluster doctor
+kubectl get pods -A
+kubectl get ingress -A
+kubectl get certificate -A
+```
+
+Check the public routes:
+
+```bash
+curl -I https://platform.example.com/
+curl -i https://registry.example.com/v2/
+```
+
+The platform route should return `200`. The registry route should return
+`401` or `403` without credentials; that means the public registry route is up
+and guarded.
+
+Before deploying MCP servers, `https://mcp.example.com/<server>/mcp` can return
+404 because no server route exists yet. Follow
+[Publish an MCP Server](publish-mcp-server.md) to build, push, deploy, and
+verify a real server.
+
+## Five-Node Variant
+
+For a five-node demo, keep the same control-plane and ingress roles and add one
+more general worker:
+
+| Node | Role |
+|---|---|
+| `mcp-cp-1` | k3s server |
+| `mcp-ingress-1` | ServiceLB / Traefik public ingress |
+| `mcp-worker-1` | general workloads |
+| `mcp-worker-2` | general workloads |
+| `mcp-worker-3` | general workloads, observability, or larger MCP servers |
+
+Do not label the extra worker with
+`svccontroller.k3s.cattle.io/enablelb=true` unless you intentionally want ports
+80 and 443 spread across more than one public node. Keep DNS pointed at the
+node or load balancer that actually receives HTTP and HTTPS traffic.
+
+## Migration Notes
+
+Fresh installs do not need certificate backup or restore. Use fresh ACME,
+your enterprise issuer, or pre-created TLS secrets.
+
+Back up cert-manager `Certificate`, `Issuer` or `ClusterIssuer`, and TLS
+`Secret` objects only when migrating an existing public install that already
+owns valid certificates or issuer state. That is a migration concern, mainly to
+avoid losing working cert material or burning Let's Encrypt rate limits during a
+move. Keep those backups encrypted and out of git because TLS secrets contain
+private keys.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| `exec format error` in a setup-built pod | The image architecture does not match the node. Use a homogeneous cluster and set `MCP_IMAGE_PLATFORM=linux/amd64` or `linux/arm64`. |
+| cert-manager reports NXDOMAIN or HTTP-01 failure | `platform`, `registry`, and `mcp` DNS records must point to the ingress IP, and port 80 must reach Traefik. |
+| Setup rejects public mode because login is missing | Set `GOOGLE_CLIENT_ID` / `MCP_GOOGLE_CLIENT_ID`, or set `OIDC_ISSUER`, `OIDC_AUDIENCE`, and `OIDC_JWKS_URL`. |
+| Setup rejects production admin config | Set `MCP_PLATFORM_ADMIN_EMAIL` or `MCP_ADMIN_USERS`. Do not confuse this with `--acme-email`, which is only the certificate contact. |
+| Registry image pulls fail | Confirm `MCP_REGISTRY_ENDPOINT` is the exact host nodes pull, DNS resolves from every node, and the certificate chain is trusted by the node runtime. |
+| Traefik 404 for the dashboard | Confirm `MCP_PLATFORM_DOMAIN=example.com`, `kubectl get ingress -A`, and DNS for `platform.example.com` points to the ingress node. |
+| ServiceLB lands on the wrong node | Check `kubectl get pods -A -o wide | grep svclb` and fix `svccontroller.k3s.cattle.io/enablelb` labels. |

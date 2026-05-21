@@ -58,6 +58,7 @@ func TestLoadCLIConfigWithProvisionedRegistry(t *testing.T) {
 	t.Setenv("MCP_SKOPEO_IMAGE", "example/skopeo:latest")
 	t.Setenv("MCP_OPERATOR_IMAGE", "example/operator:latest")
 	t.Setenv("MCP_GATEWAY_PROXY_IMAGE", "example/mcp-gateway:latest")
+	t.Setenv("MCP_IMAGE_PLATFORM", "linux/amd64")
 	t.Setenv("MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", "http://custom-otel:4318")
 	t.Setenv("MCP_SENTINEL_INGEST_URL", "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events")
 	t.Setenv("MCP_INGRESS_READINESS_MODE", "permissive")
@@ -93,6 +94,9 @@ func TestLoadCLIConfigWithProvisionedRegistry(t *testing.T) {
 	}
 	if cfg.GatewayProxyImage != "example/mcp-gateway:latest" {
 		t.Fatalf("expected gateway proxy image override, got %q", cfg.GatewayProxyImage)
+	}
+	if cfg.ImagePlatform != "linux/amd64" {
+		t.Fatalf("expected image platform override, got %q", cfg.ImagePlatform)
 	}
 	if cfg.GatewayOTLPEndpoint != "http://custom-otel:4318" {
 		t.Fatalf("expected gateway OTLP endpoint override, got %q", cfg.GatewayOTLPEndpoint)

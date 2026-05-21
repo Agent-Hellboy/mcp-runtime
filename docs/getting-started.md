@@ -404,6 +404,10 @@ that Kubernetes nodes can pull. Set `MCP_PLATFORM_ADMIN_EMAIL` or
 `ADMIN_USERS` so the first OIDC login for that email is promoted to platform
 admin; `--acme-email` is only the certificate contact email.
 
+When building setup images from a machine with a different CPU architecture
+than the cluster, set `MCP_IMAGE_PLATFORM` to the target node platform, for
+example `MCP_IMAGE_PLATFORM=linux/amd64` for standard VPS/k3s nodes.
+
 You can also skip the saved provision step and pass
 `--external-registry-url registry.example.com` directly to `setup`.
 

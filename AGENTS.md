@@ -20,7 +20,7 @@ If instructions conflict, prefer **this repo** (`README`, CRDs, `v1alpha1` types
 | Default cluster install YAML | `k8s/`, `config/` | Overlays, CRDs, cert-manager examples |
 | Traefik plugins (dev) | `services/traefik-plugins/` | e.g. PII redactor source for local overlays |
 | Team / tenant isolation docs | `docs/multi-team.md` | Team identity contract, per-team namespaces, RBAC, ingress watch scope, and platform API enforcement |
-| Deployment target guide | `docs/deployment-targets.md` | High-level install shape guidance for k3s, self-managed clusters, and managed Kubernetes before using the distribution-specific readiness guide |
+| Deployment target guide | `docs/deployment-targets.md`, `docs/k3s-on-prem-cluster.md` | High-level install shape guidance for k3s, self-managed clusters, and managed Kubernetes before using the distribution-specific readiness guide; the k3s runbook covers a four/five-node public or on-prem topology |
 | Site / public docs (if editing) | `website/` | Not required for control-plane work |
 | E2E | `test/e2e/`, `test/integration/` | Kind script and envtest-based integration tests |
 | Agent tool config | `.claude/`, `.codex/skills/` | `.claude/skills` should symlink to `../.codex/skills` so Claude Desktop and the Codex CLI use the same local skills |
@@ -133,6 +133,12 @@ gateway proxy, and Sentinel images with `latest` tags to the configured or
 bundled registry, then deploys pods that pull those images. In Kind test mode,
 implicit internal image refs use `registry.registry.svc.cluster.local:5000/...`
 so the documented containerd mirror matches the image host exactly.
+For remote Linux clusters, setup-built images must match the node CPU
+architecture, not the workstation CPU. Setup detects homogeneous node
+architectures and builds `linux/amd64` or `linux/arm64`; override with
+`MCP_IMAGE_PLATFORM=linux/amd64` or `MCP_IMAGE_PLATFORM=linux/arm64` when
+needed. Mixed-architecture clusters require prebuilt multi-arch images until
+setup publishes manifest lists.
 Before rerunning setup or e2e locally, check `kind get clusters` and prefer the
 existing `kind-mcp-runtime` context when it is healthy. Create a new Kind
 cluster only when you need a clean CI-equivalent run or the existing contributor

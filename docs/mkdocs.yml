@@ -54,6 +54,7 @@ nav:
   - Home: README.md
   - Getting Started: getting-started.md
   - Deployment Targets: deployment-targets.md
+  - k3s On-Prem Cluster: k3s-on-prem-cluster.md
   - Contributor Guide:
       - Overview: contributor/README.md
       - Local Kind and Test Mode: contributor/local-kind.md

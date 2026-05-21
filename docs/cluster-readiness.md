@@ -108,7 +108,7 @@ pull platform images through a specific internal registry endpoint.
 |------|-----------------|------------------|
 | `auto` | Keeps existing behavior: use a provisioned registry config when present, otherwise install the bundled registry. | Depends on the resolved path. |
 | `bundled-http` | Installs the bundled registry and keeps the registry pod on plain HTTP for internal platform pulls. Public ingress can still use TLS with `--with-tls`. | Configure every node/containerd runtime to allow the exact image host as an insecure registry. |
-| `bundled-https` | Installs the bundled registry with TLS served by the registry pod itself. Public ingress TLS can still use ACME; the registry pod uses a separate internal certificate from setup-generated `mcp-runtime-ca`, or from `--tls-cluster-issuer` when you provide one. | Configure every node to resolve or mirror the rendered registry host and trust the internal issuing CA. |
+| `bundled-https` | Installs the bundled registry with TLS served by the registry pod itself. Public ingress TLS can still use ACME; the registry pod uses a separate internal certificate from setup-generated `mcp-runtime-ca`, or from a non-ACME `--tls-cluster-issuer` when you provide one. | Configure every node to resolve or mirror the rendered registry host and trust the internal issuing CA. |
 | `external` | Skips the bundled registry and pushes setup images to a provisioned registry. | Registry DNS, TLS, auth, pull secrets, and node trust are owned by the external registry platform. |
 
 For bundled HTTPS without an explicit `MCP_REGISTRY_ENDPOINT`, setup renders
@@ -126,6 +126,19 @@ the `registry-internal-tls` Secret as the signal to probe the registry Service
 over HTTPS; a successful doctor registry probe confirms in-cluster push-helper
 reachability, while kubelet image pulls still depend on node/containerd trust
 for the exact rendered image host.
+
+### Setup image platform
+
+`setup` builds the operator, gateway proxy, and Sentinel images as Linux
+container images. By default it inspects `kubernetes.io/arch` on cluster nodes
+and builds a single-platform image for a homogeneous cluster, for example
+`linux/amd64` on standard VPS nodes or `linux/arm64` on ARM nodes. Mixed-arch
+clusters are rejected until multi-arch manifest publishing is supported, because
+the platform deployments do not pin pods to architecture-specific node pools.
+
+Set `MCP_IMAGE_PLATFORM=linux/amd64` or `MCP_IMAGE_PLATFORM=linux/arm64` when
+you need to override detection, such as building from an Apple Silicon laptop
+for an amd64 k3s VPS cluster.
 
 ---
 

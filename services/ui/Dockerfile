@@ -9,8 +9,10 @@ RUN cd services/ui && go mod download
 
 COPY services/ui/*.go ./services/ui/
 COPY services/ui/static/ ./services/ui/static/
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 RUN cd services/ui && \
-    mkdir -p /out && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/ui .
+    mkdir -p /out && CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /out/ui .
 
 FROM gcr.io/distroless/base-debian12
 WORKDIR /app

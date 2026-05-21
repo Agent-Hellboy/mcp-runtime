@@ -77,6 +77,82 @@ func csvHasValue(csv, value string) bool {
 	return false
 }
 
+func TestResolveSetupImagePlatformUsesNodeArchitecture(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	core.DefaultCLIConfig = &core.CLIConfig{}
+	kubectl := core.NewTestKubectlClient(&core.MockExecutor{DefaultOutput: []byte("amd64\namd64\n")})
+
+	got, err := resolveSetupImagePlatform(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "linux/amd64" {
+		t.Fatalf("expected linux/amd64, got %q", got)
+	}
+}
+
+func TestResolveSetupImagePlatformRejectsMixedNodeArchitectures(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	core.DefaultCLIConfig = &core.CLIConfig{}
+	kubectl := core.NewTestKubectlClient(&core.MockExecutor{DefaultOutput: []byte("amd64\narm64\n")})
+
+	_, err := resolveSetupImagePlatform(kubectl)
+	if err == nil || !strings.Contains(err.Error(), "mixed Kubernetes node architectures") {
+		t.Fatalf("expected mixed architecture error, got %v", err)
+	}
+}
+
+func TestResolveSetupImagePlatformRejectsExplicitMismatch(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	core.DefaultCLIConfig = &core.CLIConfig{ImagePlatform: "linux/arm64"}
+	kubectl := core.NewTestKubectlClient(&core.MockExecutor{DefaultOutput: []byte("amd64\n")})
+
+	_, err := resolveSetupImagePlatform(kubectl)
+	if err == nil || !strings.Contains(err.Error(), "does not match Kubernetes node architecture") {
+		t.Fatalf("expected explicit mismatch error, got %v", err)
+	}
+}
+
+func TestResolveSetupImagePlatformIncludesKubectlStderr(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	core.DefaultCLIConfig = &core.CLIConfig{}
+	kubectl := core.NewTestKubectlClient(&core.MockExecutor{
+		DefaultOutput: []byte("Error from server (Forbidden): nodes is forbidden"),
+		DefaultErr:    errors.New("exit status 1"),
+	})
+
+	_, err := resolveSetupImagePlatform(kubectl)
+	if err == nil || !strings.Contains(err.Error(), "nodes is forbidden") {
+		t.Fatalf("expected kubectl stderr in error, got %v", err)
+	}
+}
+
+func TestBuildOperatorImagePassesDockerPlatform(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	core.DefaultCLIConfig = &core.CLIConfig{ImagePlatform: "linux/amd64"}
+	restoreKubectl := core.SwapDefaultKubectlClient(core.NewTestKubectlClient(&core.MockExecutor{DefaultOutput: []byte("amd64\n")}))
+	t.Cleanup(restoreKubectl)
+	mockExec := &core.MockExecutor{}
+	restoreExec := core.SwapExecExecutor(mockExec)
+	t.Cleanup(restoreExec)
+
+	if err := buildOperatorImage("registry.example.com/mcp-runtime-operator:test"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mockExec.Commands) != 1 {
+		t.Fatalf("expected one command, got %#v", mockExec.Commands)
+	}
+	cmd := mockExec.Commands[0]
+	if cmd.Name != "make" || !contains(cmd.Args, "DOCKER_PLATFORM=linux/amd64") {
+		t.Fatalf("expected make command with DOCKER_PLATFORM, got %s %#v", cmd.Name, cmd.Args)
+	}
+}
+
 func TestGetOperatorImage(t *testing.T) {
 	origOverride := core.DefaultCLIConfig.OperatorImage
 	origTagResolver := setupImageTagResolver
@@ -880,6 +956,52 @@ func TestRenderAnalyticsSecretManifestUsesAdminEnv(t *testing.T) {
 		if !csvHasValue(data["ADMIN_USERS"], want) {
 			t.Fatalf("expected ADMIN_USERS to include %q, got %q", want, data["ADMIN_USERS"])
 		}
+	}
+}
+
+func TestRenderAnalyticsSecretManifestDoesNotSeedPartialAdminPasswordUser(t *testing.T) {
+	t.Setenv("MCP_PLATFORM_ADMIN_EMAIL", "PrinceKrRoshan01@gmail.com")
+	kubectl := core.NewTestKubectlClient(&core.MockExecutor{})
+
+	manifest, err := renderAnalyticsSecretManifest(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data := secretStringDataFromManifest(t, manifest)
+	if data["PLATFORM_ADMIN_EMAIL"] != "" || data["PLATFORM_ADMIN_PASSWORD"] != "" {
+		t.Fatalf("expected partial admin bootstrap fields to be omitted, got email=%q password=%q", data["PLATFORM_ADMIN_EMAIL"], data["PLATFORM_ADMIN_PASSWORD"])
+	}
+	if !csvHasValue(data["ADMIN_USERS"], "PrinceKrRoshan01@gmail.com") {
+		t.Fatalf("expected admin email to remain in ADMIN_USERS, got %q", data["ADMIN_USERS"])
+	}
+}
+
+func TestRenderAnalyticsSecretManifestAllowsPartialAdminOverrideWithExistingPair(t *testing.T) {
+	t.Setenv("MCP_PLATFORM_ADMIN_EMAIL", "new-admin@mcpruntime.org")
+	existingPassword := base64.StdEncoding.EncodeToString([]byte("existing-password"))
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if contains(spec.Args, "jsonpath={.data.PLATFORM_ADMIN_PASSWORD}") {
+				return &core.MockCommand{Args: spec.Args, OutputData: []byte(existingPassword)}
+			}
+			return &core.MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	manifest, err := renderAnalyticsSecretManifest(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data := secretStringDataFromManifest(t, manifest)
+	if data["PLATFORM_ADMIN_EMAIL"] != "new-admin@mcpruntime.org" {
+		t.Fatalf("expected admin email override, got %q", data["PLATFORM_ADMIN_EMAIL"])
+	}
+	if data["PLATFORM_ADMIN_PASSWORD"] != "existing-password" {
+		t.Fatalf("expected existing password to be retained, got %q", data["PLATFORM_ADMIN_PASSWORD"])
+	}
+	if !csvHasValue(data["ADMIN_USERS"], "new-admin@mcpruntime.org") {
+		t.Fatalf("expected ADMIN_USERS to include override email, got %q", data["ADMIN_USERS"])
 	}
 }
 

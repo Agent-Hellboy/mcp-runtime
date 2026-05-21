@@ -461,6 +461,85 @@ func setupImageTag() string {
 	return setupImageTagResolver()
 }
 
+func resolveSetupImagePlatform(kubectl core.KubectlRunner) (string, error) {
+	var explicitPlatform string
+	if core.DefaultCLIConfig != nil {
+		if platform := strings.TrimSpace(core.DefaultCLIConfig.ImagePlatform); platform != "" {
+			validated, err := validateSetupImagePlatform(platform)
+			if err != nil {
+				return "", err
+			}
+			explicitPlatform = validated
+		}
+	}
+
+	archs, err := clusterNodeArchitectures(kubectl)
+	if err != nil {
+		if explicitPlatform != "" {
+			return explicitPlatform, nil
+		}
+		return "", err
+	}
+	if len(archs) == 0 {
+		return "", fmt.Errorf("could not resolve setup image platform: no Kubernetes node architectures were reported; set MCP_IMAGE_PLATFORM=linux/amd64 or linux/arm64")
+	}
+	if len(archs) > 1 {
+		return "", fmt.Errorf("mixed Kubernetes node architectures detected (%s); setup-built images are single-platform today, so set up homogeneous nodes or prebuild multi-arch images before running setup", strings.Join(archs, ", "))
+	}
+	if explicitPlatform != "" {
+		if arch := strings.TrimPrefix(explicitPlatform, "linux/"); arch != archs[0] {
+			return "", fmt.Errorf("MCP_IMAGE_PLATFORM %q does not match Kubernetes node architecture %q", explicitPlatform, archs[0])
+		}
+		return explicitPlatform, nil
+	}
+	return validateSetupImagePlatform("linux/" + archs[0])
+}
+
+func validateSetupImagePlatform(platform string) (string, error) {
+	platform = strings.TrimSpace(platform)
+	parts := strings.Split(platform, "/")
+	if len(parts) != 2 || parts[0] != "linux" {
+		return "", fmt.Errorf("invalid MCP_IMAGE_PLATFORM %q; expected linux/amd64 or linux/arm64", platform)
+	}
+	switch parts[1] {
+	case "amd64", "arm64":
+		return platform, nil
+	default:
+		return "", fmt.Errorf("unsupported MCP_IMAGE_PLATFORM %q; expected linux/amd64 or linux/arm64", platform)
+	}
+}
+
+func clusterNodeArchitectures(kubectl core.KubectlRunner) ([]string, error) {
+	if kubectl == nil {
+		return nil, fmt.Errorf("could not resolve setup image platform: kubectl runner is nil")
+	}
+	cmd, err := kubectl.CommandArgs([]string{"get", "nodes", "-o", "jsonpath={range .items[*]}{.status.nodeInfo.architecture}{\"\\n\"}{end}"})
+	if err != nil {
+		return nil, fmt.Errorf("could not inspect Kubernetes node architectures: %w", err)
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if detail := strings.TrimSpace(string(out)); detail != "" {
+			return nil, fmt.Errorf("could not inspect Kubernetes node architectures: %w: %s", err, detail)
+		}
+		return nil, fmt.Errorf("could not inspect Kubernetes node architectures: %w", err)
+	}
+	seen := map[string]struct{}{}
+	for _, line := range strings.Split(string(out), "\n") {
+		arch := strings.TrimSpace(line)
+		if arch == "" {
+			continue
+		}
+		seen[arch] = struct{}{}
+	}
+	archs := make([]string, 0, len(seen))
+	for arch := range seen {
+		archs = append(archs, arch)
+	}
+	slices.Sort(archs)
+	return archs, nil
+}
+
 func setupClusterSteps(logger *zap.Logger, kubeconfig, context string, ingressOpts cluster.IngressOptions, deps SetupDeps) error {
 	// Step 1: Initialize cluster
 	core.Step("Step 1: Initialize cluster")
@@ -1347,9 +1426,13 @@ data:
 }
 
 func buildOperatorImage(image string) error {
+	platform, err := resolveSetupImagePlatform(core.DefaultKubectlClient())
+	if err != nil {
+		return err
+	}
 	target := "docker-build-operator-no-test"
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	cmd, err := core.ExecCommandWithValidators("make", []string{"-f", "Makefile.operator", target, "IMG=" + image})
+	cmd, err := core.ExecCommandWithValidators("make", []string{"-f", "Makefile.operator", target, "IMG=" + image, "DOCKER_PLATFORM=" + platform})
 	if err != nil {
 		return err
 	}
@@ -1362,6 +1445,10 @@ func buildOperatorImage(image string) error {
 }
 
 func buildGatewayProxyImage(image string) error {
+	platform, err := resolveSetupImagePlatform(core.DefaultKubectlClient())
+	if err != nil {
+		return err
+	}
 	dockerfilePath, err := assetpath.ResolveRepoAssetPath(gatewayProxyDockerfilePath)
 	if err != nil {
 		return err
@@ -1374,6 +1461,7 @@ func buildGatewayProxyImage(image string) error {
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	cmd, err := core.ExecCommandWithValidators("docker", []string{
 		"build",
+		"--platform", platform,
 		"-f", dockerfilePath,
 		"-t", image,
 		buildContext,
@@ -1387,6 +1475,10 @@ func buildGatewayProxyImage(image string) error {
 }
 
 func buildAnalyticsImage(image, dockerfilePath, buildContext string) error {
+	platform, err := resolveSetupImagePlatform(core.DefaultKubectlClient())
+	if err != nil {
+		return err
+	}
 	resolvedDockerfilePath, err := assetpath.ResolveRepoAssetPath(dockerfilePath)
 	if err != nil {
 		return err
@@ -1399,6 +1491,7 @@ func buildAnalyticsImage(image, dockerfilePath, buildContext string) error {
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	cmd, err := core.ExecCommandWithValidators("docker", []string{
 		"build",
+		"--platform", platform,
 		"-f", resolvedDockerfilePath,
 		"-t", image,
 		resolvedBuildContext,
@@ -2753,21 +2846,27 @@ func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	if envValue := setupSecretEnvValue("MCP_PLATFORM_ADMIN_EMAIL", "PLATFORM_ADMIN_EMAIL"); envValue != "" {
-		platformAdminEmail = envValue
-	}
 	platformAdminPassword, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_ADMIN_PASSWORD")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
-	}
-	if envValue := setupSecretEnvValue("MCP_PLATFORM_ADMIN_PASSWORD", "PLATFORM_ADMIN_PASSWORD"); envValue != "" {
-		platformAdminPassword = envValue
 	}
 	adminUsers, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "ADMIN_USERS")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	adminUsers = ensureCSVIncludesValues(adminUsers, setupSecretEnvValue("MCP_ADMIN_USERS", "ADMIN_USERS"), platformAdminEmail)
+	envPlatformAdminEmail := setupSecretEnvValue("MCP_PLATFORM_ADMIN_EMAIL", "PLATFORM_ADMIN_EMAIL")
+	envPlatformAdminPassword := setupSecretEnvValue("MCP_PLATFORM_ADMIN_PASSWORD", "PLATFORM_ADMIN_PASSWORD")
+	if envPlatformAdminEmail != "" {
+		platformAdminEmail = envPlatformAdminEmail
+	}
+	if envPlatformAdminPassword != "" {
+		platformAdminPassword = envPlatformAdminPassword
+	}
+	if platformAdminEmail == "" || platformAdminPassword == "" {
+		platformAdminEmail = ""
+		platformAdminPassword = ""
+	}
+	adminUsers = ensureCSVIncludesValues(adminUsers, setupSecretEnvValue("MCP_ADMIN_USERS", "ADMIN_USERS"), envPlatformAdminEmail, platformAdminEmail)
 	platformDevLoginEnabled := ""
 	platformDevUserEmail, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_USER_EMAIL")
 	if err != nil {
@@ -3217,11 +3316,38 @@ func registryInternalCertificateSANs(plan setupplan.Plan) ([]string, []string) {
 	return dedupeStrings(dnsNames), dedupeStrings(ipAddresses)
 }
 
-func bundledRegistryInternalIssuerName(plan setupplan.Plan) string {
-	if strings.TrimSpace(plan.TLSClusterIssuer) != "" {
-		return strings.TrimSpace(plan.TLSClusterIssuer)
+func bundledRegistryInternalIssuerName(kubectl core.KubectlRunner, plan setupplan.Plan) (string, error) {
+	issuerName := strings.TrimSpace(plan.TLSClusterIssuer)
+	if issuerName == "" {
+		return certmanager.CertClusterIssuerName, nil
 	}
-	return certmanager.CertClusterIssuerName
+	usesACME, err := clusterIssuerUsesACME(kubectl, issuerName)
+	if err != nil {
+		return "", err
+	}
+	if usesACME {
+		core.Warn(fmt.Sprintf("ClusterIssuer %q uses ACME and cannot issue internal registry DNS names; using %s for registry-internal-tls", issuerName, certmanager.CertClusterIssuerName))
+		return certmanager.CertClusterIssuerName, nil
+	}
+	return issuerName, nil
+}
+
+func clusterIssuerUsesACME(kubectl core.KubectlRunner, name string) (bool, error) {
+	if kubectl == nil {
+		return false, fmt.Errorf("kubectl runner is nil")
+	}
+	cmd, err := kubectl.CommandArgs([]string{"get", "clusterissuer", name, "-o", "jsonpath={.spec.acme.server}"})
+	if err != nil {
+		return false, err
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if detail := strings.TrimSpace(string(out)); detail != "" {
+			return false, fmt.Errorf("inspect ClusterIssuer %q: %w: %s", name, err, detail)
+		}
+		return false, err
+	}
+	return strings.TrimSpace(string(out)) != "", nil
 }
 
 func addRegistrySAN(raw string, dnsNames, ipAddresses *[]string) {
@@ -3580,7 +3706,15 @@ func setupBundledRegistryInternalTLSStep(kubectl core.KubectlRunner, logger *zap
 	if plan.RegistryMode != setupplan.RegistryModeBundledHTTPS {
 		return nil
 	}
-	issuerName := bundledRegistryInternalIssuerName(plan)
+	issuerName, err := bundledRegistryInternalIssuerName(kubectl, plan)
+	if err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrClusterIssuerNotFound, err, fmt.Sprintf("failed to inspect internal registry ClusterIssuer: %v", err))
+		core.Error("Internal registry issuer unavailable")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Internal registry issuer unavailable")
+		}
+		return wrappedErr
+	}
 	if issuerName == certmanager.CertClusterIssuerName {
 		core.Info("Ensuring internal registry CA secret")
 		created, err := certmanager.EnsureCASecretWithKubectl(kubectl)

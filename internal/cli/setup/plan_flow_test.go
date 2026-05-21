@@ -8,6 +8,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"mcp-runtime/internal/cli/certmanager"
 	"mcp-runtime/internal/cli/cluster"
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/registry/config"
@@ -550,6 +551,51 @@ func TestRegistryCertificateSANsStayPublicForBundledHTTPS(t *testing.T) {
 		if contains(dnsNames, internal) || contains(ipAddresses, internal) {
 			t.Fatalf("public registry cert unexpectedly contains internal SAN %q (dns=%v ips=%v)", internal, dnsNames, ipAddresses)
 		}
+	}
+}
+
+func TestBundledRegistryInternalIssuerUsesPrivateCAForACMEIssuer(t *testing.T) {
+	kubectl := core.NewTestKubectlClient(&core.MockExecutor{DefaultOutput: []byte("https://acme-v02.api.letsencrypt.org/directory")})
+
+	got, err := bundledRegistryInternalIssuerName(kubectl, setupplan.Plan{
+		RegistryMode:     setupplan.RegistryModeBundledHTTPS,
+		TLSClusterIssuer: "letsencrypt-prod",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != certmanager.CertClusterIssuerName {
+		t.Fatalf("expected internal registry issuer %q, got %q", certmanager.CertClusterIssuerName, got)
+	}
+}
+
+func TestBundledRegistryInternalIssuerKeepsNonACMEIssuer(t *testing.T) {
+	kubectl := core.NewTestKubectlClient(&core.MockExecutor{DefaultOutput: []byte("")})
+
+	got, err := bundledRegistryInternalIssuerName(kubectl, setupplan.Plan{
+		RegistryMode:     setupplan.RegistryModeBundledHTTPS,
+		TLSClusterIssuer: "company-ca",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "company-ca" {
+		t.Fatalf("expected company-ca issuer, got %q", got)
+	}
+}
+
+func TestBundledRegistryInternalIssuerIncludesKubectlStderr(t *testing.T) {
+	kubectl := core.NewTestKubectlClient(&core.MockExecutor{
+		DefaultOutput: []byte("Error from server (Forbidden): clusterissuers is forbidden"),
+		DefaultErr:    fmt.Errorf("exit status 1"),
+	})
+
+	_, err := bundledRegistryInternalIssuerName(kubectl, setupplan.Plan{
+		RegistryMode:     setupplan.RegistryModeBundledHTTPS,
+		TLSClusterIssuer: "letsencrypt-prod",
+	})
+	if err == nil || !strings.Contains(err.Error(), "clusterissuers is forbidden") {
+		t.Fatalf("expected kubectl stderr in error, got %v", err)
 	}
 }
 
