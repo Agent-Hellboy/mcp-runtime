@@ -646,11 +646,14 @@ port_forward_bg() {
   local remote_port="$4"
   local log_file="$5"
   local label="port-forward ${namespace}/svc/${service}"
+  local pid
 
   require_port_available "${local_port}" "${label}"
   kubectl port-forward -n "${namespace}" "svc/${service}" "${local_port}:${remote_port}" >"${log_file}" 2>&1 &
-  PIDS+=("$!")
-  wait_managed_port "${local_port}" "$!" "${log_file}" "${label}"
+  pid="$!"
+  PIDS+=("${pid}")
+  LAST_MANAGED_PID="${pid}"
+  wait_managed_port "${local_port}" "${pid}" "${log_file}" "${label}"
 }
 
 port_forward_resource_bg() {
@@ -660,11 +663,34 @@ port_forward_resource_bg() {
   local remote_port="$4"
   local log_file="$5"
   local label="port-forward ${namespace}/${resource}"
+  local pid
 
   require_port_available "${local_port}" "${label}"
   kubectl port-forward -n "${namespace}" "${resource}" "${local_port}:${remote_port}" >"${log_file}" 2>&1 &
-  PIDS+=("$!")
-  wait_managed_port "${local_port}" "$!" "${log_file}" "${label}"
+  pid="$!"
+  PIDS+=("${pid}")
+  LAST_MANAGED_PID="${pid}"
+  wait_managed_port "${local_port}" "${pid}" "${log_file}" "${label}"
+}
+
+recover_traefik_port_forward_if_needed() {
+  if [[ -z "${TRAEFIK_PORT_FORWARD_PID:-}" ]]; then
+    return 0
+  fi
+  if port_is_listening "${TRAEFIK_PORT}"; then
+    return 0
+  fi
+
+  if kill -0 "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1; then
+    kill "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
+    wait "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
+  fi
+
+  TRAEFIK_PORT_FORWARD_RESTARTS=$((TRAEFIK_PORT_FORWARD_RESTARTS + 1))
+  local log_file="${WORKDIR}/traefik-port-forward-restart-${TRAEFIK_PORT_FORWARD_RESTARTS}.log"
+  echo "[port-forward] restarting Traefik port-forward on localhost:${TRAEFIK_PORT}" >&2
+  port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${log_file}"
+  TRAEFIK_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
 }
 
 start_header_proxy_bg() {
@@ -1417,6 +1443,7 @@ PY
       echo "[mcp] observed initialize returning ${expected_status}"
       return 0
     fi
+    recover_traefik_port_forward_if_needed || true
     sleep 2
   done
 
@@ -1549,6 +1576,7 @@ PY
       echo "[mcp] observed ${method} ${url} returning ${expected_status}"
       return 0
     fi
+    recover_traefik_port_forward_if_needed || true
     sleep 2
   done
 
@@ -1672,6 +1700,7 @@ PY
       echo "[mcp] observed ${tool_name} returning ${expected_status}"
       return 0
     fi
+    recover_traefik_port_forward_if_needed || true
     sleep 2
   done
 
@@ -3132,6 +3161,8 @@ fi
 
 echo "[port-forward] exposing ingress and observability services"
 port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${WORKDIR}/traefik-port-forward.log"
+TRAEFIK_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+TRAEFIK_PORT_FORWARD_RESTARTS=0
 port_forward_bg mcp-sentinel mcp-sentinel-gateway "${SENTINEL_PORT}" 8083 "${WORKDIR}/sentinel-port-forward.log"
 port_forward_bg mcp-sentinel tempo "${TEMPO_PORT}" 3200 "${WORKDIR}/tempo-port-forward.log"
 port_forward_bg mcp-sentinel loki "${LOKI_PORT}" 3100 "${WORKDIR}/loki-port-forward.log"
