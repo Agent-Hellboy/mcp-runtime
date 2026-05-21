@@ -15,10 +15,12 @@ DIFF*.md
 .gomodcache/
 FUTURE_PLAN.md
 /plan.md
+/gateway_plan.md
 .DS_Store
 *ARCHITECTURE.md
 f.go
 inspirations/
+
 c.go
 r.go 
 tags
@@ -37,3 +39,6 @@ __pycache__/
 .env
 *.env
 !.env.example
+
+# Local-only helper scripts and scratch files
+/.local/
