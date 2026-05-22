@@ -95,7 +95,12 @@ func (t *RuntimeTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 			timer := time.NewTimer(retryBackoff(i))
 			select {
 			case <-req.Context().Done():
-				timer.Stop()
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
 				lastErr = req.Context().Err()
 				goto done
 			case <-timer.C:
