@@ -5057,6 +5057,20 @@ EOF
   kubectl rollout status "deploy/${MT_TENANT_B}" -n "${MT_NS}" --timeout=180s
   wait_for_named_server_ready "${MT_TENANT_A}" "${MT_NS}" 60
   wait_for_named_server_ready "${MT_TENANT_B}" "${MT_NS}" 60
+  mt_wait_for_endpoint() {
+    local name="$1" tries=60 i
+    for i in $(seq 1 "${tries}"); do
+      if [[ -n "$(kubectl get endpoints "${name}" -n "${MT_NS}" -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)" ]]; then
+        return 0
+      fi
+      sleep 2
+    done
+    echo "[multitenancy] timed out waiting for service endpoint ${name}" >&2
+    kubectl get svc,endpoints,pods -n "${MT_NS}" -o wide >&2 || true
+    return 1
+  }
+  mt_wait_for_endpoint "${MT_TENANT_A}"
+  mt_wait_for_endpoint "${MT_TENANT_B}"
 
   echo "[multitenancy] applying alice (tenant-a / add) and bob (tenant-b / upper) grants and sessions"
   cat <<EOF | kubectl apply -f -
@@ -5138,6 +5152,7 @@ EOF
   MT_REPORT="${MT_REPORT}" \
   python3 <<'PY'
 import json, os, subprocess, sys, tempfile, time
+import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
 
 PROTO = os.environ["MT_PROTO"]
 A = os.environ["MT_BASE_A"]
@@ -5145,12 +5160,19 @@ B = os.environ["MT_BASE_B"]
 HOST = os.environ.get("MT_HOST", "")
 report = []
 
+def read_file(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except FileNotFoundError:
+        return ""
+
 def post(base, body, human, agent, sess, mcp_session=""):
     with tempfile.TemporaryDirectory() as td:
         payload = os.path.join(td, "p.json"); headers = os.path.join(td, "h.txt"); bodyf = os.path.join(td, "b.txt")
         with open(payload, "w") as fh: json.dump(body, fh)
         cmd = [
-            "curl", "-sS", "--max-time", "20", "-D", headers, "-o", bodyf, "-w", "%{http_code}",
+            "curl", "-sS", "--connect-timeout", "3", "--max-time", "8", "-D", headers, "-o", bodyf, "-w", "%{http_code}",
             "-X", "POST",
             "-H", "content-type: application/json",
             "-H", "accept: application/json, text/event-stream",
@@ -5165,17 +5187,17 @@ def post(base, body, human, agent, sess, mcp_session=""):
         proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
         try: status = int(proc.stdout.strip().splitlines()[-1])
         except Exception: status = 0
-        with open(headers) as fh: h = fh.read()
+        h = read_file(headers)
         next_sess = ""
         for line in h.splitlines():
             k, sep, v = line.partition(":")
             if sep and k.lower() == "mcp-session-id":
                 next_sess = v.strip()
-        with open(bodyf) as fh: response_body = fh.read()
+        response_body = read_file(bodyf)
         return status, next_sess, response_body, proc.stderr
 
 def run_call(label, base, human, agent, sess, tool, expect_status):
-    init_status, mcp_sess, init_body, init_stderr = post(base, {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}, human, agent, sess)
+    init_status, mcp_sess, init_body, init_stderr = post(base, make_initialize_payload(PROTO), human, agent, sess)
     if init_status != 200:
         # Cross-tenant or unknown-session requests are rejected at initialize;
         # that is the gateway behavior we want to assert.
