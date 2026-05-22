@@ -12,6 +12,7 @@ import (
 	sentinelaccess "mcp-runtime/pkg/access"
 )
 
+// ListNamespaces returns platform-managed namespace records for admin views.
 func (s *Store) ListNamespaces(ctx context.Context) ([]map[string]any, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT
@@ -44,6 +45,7 @@ ORDER BY n.created_at DESC`)
 	return out, rows.Err()
 }
 
+// GetNamespace returns one platform-managed namespace record by Kubernetes namespace.
 func (s *Store) GetNamespace(ctx context.Context, namespace string) (map[string]any, bool, error) {
 	namespace = strings.TrimSpace(namespace)
 	var id, userID, email, teamID, teamSlug, teamName, scope string
@@ -84,6 +86,7 @@ LIMIT 1`, namespace).Scan(&id, &userID, &email, &teamID, &teamSlug, &teamName, &
 	}, true, nil
 }
 
+// CreateTeam creates a team, its namespace record, and an owner membership.
 func (s *Store) CreateTeam(ctx context.Context, slug, name, createdByUserID string) (Team, error) {
 	slug = NormalizeTeamSlug(slug)
 	if err := ValidateTeamSlug(slug); err != nil {
@@ -141,6 +144,7 @@ DO UPDATE SET role = EXCLUDED.role, deleted_at = NULL`, uuid.NewString(), teamID
 	}, nil
 }
 
+// ListTeams returns all non-deleted platform teams.
 func (s *Store) ListTeams(ctx context.Context) ([]Team, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT t.id, t.slug, t.display_name, COALESCE(n.namespace, ''), t.created_at
@@ -164,6 +168,7 @@ ORDER BY t.slug ASC`)
 	return out, rows.Err()
 }
 
+// ListUserTeams returns active team memberships for a user.
 func (s *Store) ListUserTeams(ctx context.Context, userID string) ([]TeamMembership, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT t.id, t.slug, t.display_name, COALESCE(n.namespace, ''), tm.user_id::text, tm.role, tm.created_at
@@ -188,6 +193,7 @@ ORDER BY t.slug ASC`, userID)
 	return out, rows.Err()
 }
 
+// ListTeamMemberships returns active memberships for a team slug.
 func (s *Store) ListTeamMemberships(ctx context.Context, teamSlug string) ([]TeamMembership, error) {
 	teamSlug = NormalizeTeamSlug(teamSlug)
 	rows, err := s.db.QueryContext(ctx, `
@@ -214,6 +220,7 @@ ORDER BY u.email ASC`, teamSlug)
 	return out, rows.Err()
 }
 
+// GetTeamBySlug returns one non-deleted team by normalized slug.
 func (s *Store) GetTeamBySlug(ctx context.Context, slug string) (Team, bool, error) {
 	slug = NormalizeTeamSlug(slug)
 	var team Team
@@ -232,6 +239,7 @@ WHERE t.slug = $1 AND t.deleted_at IS NULL`, slug).
 	return team, true, nil
 }
 
+// UpsertTeamMembership creates or updates a user's role in a team.
 func (s *Store) UpsertTeamMembership(ctx context.Context, teamSlug, userID, role string) (TeamMembership, error) {
 	teamSlug = NormalizeTeamSlug(teamSlug)
 	userID = strings.TrimSpace(userID)
@@ -272,6 +280,7 @@ DO UPDATE SET role = EXCLUDED.role, deleted_at = NULL`, uuid.NewString(), team.I
 	}, nil
 }
 
+// DeleteTeamMembership soft-deletes a user's active team membership.
 func (s *Store) DeleteTeamMembership(ctx context.Context, teamSlug, userID string) error {
 	team, ok, err := s.GetTeamBySlug(ctx, teamSlug)
 	if err != nil {
@@ -293,6 +302,8 @@ func (s *Store) DeleteTeamMembership(ctx context.Context, teamSlug, userID strin
 	}
 	return nil
 }
+
+// NormalizeTeamSlug trims and lowercases a team slug.
 func NormalizeTeamSlug(raw string) string {
 	return strings.ToLower(strings.TrimSpace(raw))
 }
@@ -328,6 +339,7 @@ func normalizeTeamMembershipRole(raw string) string {
 	}
 }
 
+// ValidateTeamSlug validates the normalized slug used for team URLs and names.
 func ValidateTeamSlug(slug string) error {
 	if slug == "" {
 		return errors.New("team slug is required")
@@ -338,6 +350,7 @@ func ValidateTeamSlug(slug string) error {
 	return nil
 }
 
+// ValidateTeamNamespace validates a managed team namespace name.
 func ValidateTeamNamespace(namespace string) error {
 	if namespace == "" {
 		return errors.New("namespace required")

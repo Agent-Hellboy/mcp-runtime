@@ -67,7 +67,7 @@ func Load(path string) (*Credentials, error) {
 	}
 	var c Credentials
 	if err := json.Unmarshal(b, &c); err != nil {
-		return nil, fmt.Errorf("%w: parse credentials: %v", ErrInvalid, err)
+		return nil, fmt.Errorf("%w: parse credentials: %w", ErrInvalid, err)
 	}
 	if c.Token == "" || c.APIBaseURL == "" {
 		return nil, fmt.Errorf("%w: api_url and token are required", ErrInvalid)

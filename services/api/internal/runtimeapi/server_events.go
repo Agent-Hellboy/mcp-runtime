@@ -9,6 +9,7 @@ import (
 	chpkg "mcp-runtime/pkg/clickhouse"
 )
 
+// HandleRuntimeServerEvents returns recent analytics events for a server the caller can administer.
 func (s *RuntimeServer) HandleRuntimeServerEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("allow", http.MethodGet)

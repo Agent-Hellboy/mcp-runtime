@@ -41,6 +41,8 @@ func randomURLToken(rawBytes int) (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
+
+// ListUserAPIKeys returns non-secret API key metadata for a user.
 func (s *Store) ListUserAPIKeys(ctx context.Context, userID string) ([]APIKeySummary, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, prefix, created_at, revoked, revoked_at FROM api_keys WHERE user_id = $1 ORDER BY created_at DESC`, userID)
 	if err != nil {
@@ -58,6 +60,7 @@ func (s *Store) ListUserAPIKeys(ctx context.Context, userID string) ([]APIKeySum
 	return out, rows.Err()
 }
 
+// CreateUserAPIKey creates a user API key and returns its one-time raw value.
 func (s *Store) CreateUserAPIKey(ctx context.Context, userID, name string) (APIKeySummary, string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -76,6 +79,7 @@ func (s *Store) CreateUserAPIKey(ctx context.Context, userID, name string) (APIK
 	return rec, rawKey, nil
 }
 
+// RevokeUserAPIKey marks a user API key as revoked.
 func (s *Store) RevokeUserAPIKey(ctx context.Context, userID, id string) (APIKeySummary, error) {
 	var rec APIKeySummary
 	err := s.db.QueryRowContext(ctx, `
@@ -93,6 +97,7 @@ RETURNING id, name, prefix, created_at, revoked, revoked_at`, userID, id).
 	return rec, nil
 }
 
+// ListRegistryCredentials returns non-secret registry credential metadata for a user.
 func (s *Store) ListRegistryCredentials(ctx context.Context, userID string) ([]APIKeySummary, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, prefix, created_at, revoked, revoked_at FROM registry_credentials WHERE user_id = $1 ORDER BY created_at DESC`, userID)
 	if err != nil {
@@ -110,6 +115,7 @@ func (s *Store) ListRegistryCredentials(ctx context.Context, userID string) ([]A
 	return out, rows.Err()
 }
 
+// CreateRegistryCredential creates a registry credential and returns its one-time raw value.
 func (s *Store) CreateRegistryCredential(ctx context.Context, userID, name string) (APIKeySummary, string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -129,6 +135,7 @@ func (s *Store) CreateRegistryCredential(ctx context.Context, userID, name strin
 	return rec, rawKey, nil
 }
 
+// RevokeRegistryCredential marks a registry credential as revoked.
 func (s *Store) RevokeRegistryCredential(ctx context.Context, userID, id string) (APIKeySummary, error) {
 	var rec APIKeySummary
 	err := s.db.QueryRowContext(ctx, `
@@ -146,6 +153,7 @@ RETURNING id, name, prefix, created_at, revoked, revoked_at`, userID, id).
 	return rec, nil
 }
 
+// AuthenticateRegistryCredential validates Docker registry basic-auth credentials.
 func (s *Store) AuthenticateRegistryCredential(ctx context.Context, username, rawKey string) (Principal, bool, error) {
 	username = strings.TrimSpace(username)
 	if username == "" || rawKey == "" {

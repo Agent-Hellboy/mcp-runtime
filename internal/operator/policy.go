@@ -65,9 +65,9 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 	serverTeamID := strings.TrimSpace(mcpServer.Spec.TeamID)
 	doc := &policy.Document{
 		Server: policy.Server{
-			Name:      mcpServer.Name,
-			Namespace: mcpServer.Namespace,
-			TeamID:    serverTeamID,
+			Name:      policy.ServerName(mcpServer.Name),
+			Namespace: policy.Namespace(mcpServer.Namespace),
+			TeamID:    policy.TeamID(serverTeamID),
 			Cluster:   strings.TrimSpace(r.ClusterName),
 		},
 	}
@@ -106,7 +106,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 		doc.Tools = make([]policy.Tool, 0, len(mcpServer.Spec.Tools))
 		for _, tool := range mcpServer.Spec.Tools {
 			rendered := policy.Tool{
-				Name:          tool.Name,
+				Name:          policy.ToolName(tool.Name),
 				Description:   tool.Description,
 				RequiredTrust: string(tool.RequiredTrust),
 				SideEffect:    string(tool.SideEffect),
@@ -132,9 +132,9 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 		subjectTeamID := subjectTeamIDForServer(serverTeamID, grant.Spec.Subject.TeamID)
 		rendered := policy.Grant{
 			Name:          grant.Name,
-			HumanID:       grant.Spec.Subject.HumanID,
-			AgentID:       grant.Spec.Subject.AgentID,
-			TeamID:        subjectTeamID,
+			HumanID:       policy.HumanID(grant.Spec.Subject.HumanID),
+			AgentID:       policy.AgentID(grant.Spec.Subject.AgentID),
+			TeamID:        policy.TeamID(subjectTeamID),
 			MaxTrust:      string(defaultTrust(grant.Spec.MaxTrust)),
 			PolicyVersion: grant.Spec.PolicyVersion,
 			Disabled:      grant.Spec.Disabled,
@@ -144,7 +144,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 		}
 		for _, rule := range grant.Spec.ToolRules {
 			rendered.ToolRules = append(rendered.ToolRules, policy.ToolAccess{
-				Name:          rule.Name,
+				Name:          policy.ToolName(rule.Name),
 				Decision:      string(defaultDecision(rule.Decision)),
 				RequiredTrust: string(defaultTrust(rule.RequiredTrust)),
 			})
@@ -162,10 +162,10 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 		}
 		subjectTeamID := subjectTeamIDForServer(serverTeamID, session.Spec.Subject.TeamID)
 		rendered := policy.Binding{
-			Name:           session.Name,
-			HumanID:        session.Spec.Subject.HumanID,
-			AgentID:        session.Spec.Subject.AgentID,
-			TeamID:         subjectTeamID,
+			Name:           policy.SessionID(session.Name),
+			HumanID:        policy.HumanID(session.Spec.Subject.HumanID),
+			AgentID:        policy.AgentID(session.Spec.Subject.AgentID),
+			TeamID:         policy.TeamID(subjectTeamID),
 			ConsentedTrust: string(defaultTrust(session.Spec.ConsentedTrust)),
 			Revoked:        session.Spec.Revoked,
 			PolicyVersion:  session.Spec.PolicyVersion,

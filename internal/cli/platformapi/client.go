@@ -429,8 +429,8 @@ func grantFromV1(g *mcpv1alpha1.MCPAccessGrant) grantAPIBody {
 	return grantAPIBody{
 		Name:               g.Name,
 		Namespace:          ns,
-		ServerRef:          sentinelaccess.ServerReference{Name: g.Spec.ServerRef.Name, Namespace: g.Spec.ServerRef.Namespace},
-		Subject:            sentinelaccess.SubjectRef{HumanID: g.Spec.Subject.HumanID, AgentID: g.Spec.Subject.AgentID, TeamID: g.Spec.Subject.TeamID},
+		ServerRef:          sentinelaccess.ServerReference{Name: sentinelaccess.ServerName(g.Spec.ServerRef.Name), Namespace: sentinelaccess.Namespace(g.Spec.ServerRef.Namespace)},
+		Subject:            sentinelaccess.SubjectRef{HumanID: sentinelaccess.HumanID(g.Spec.Subject.HumanID), AgentID: sentinelaccess.AgentID(g.Spec.Subject.AgentID), TeamID: sentinelaccess.TeamID(g.Spec.Subject.TeamID)},
 		MaxTrust:           trust,
 		AllowedSideEffects: allowedSideEffects,
 		PolicyVersion:      g.Spec.PolicyVersion,
@@ -448,8 +448,8 @@ func sessionFromV1(s *mcpv1alpha1.MCPAgentSession) sessionAPIBody {
 	return sessionAPIBody{
 		Name:           s.Name,
 		Namespace:      ns,
-		ServerRef:      sentinelaccess.ServerReference{Name: s.Spec.ServerRef.Name, Namespace: s.Spec.ServerRef.Namespace},
-		Subject:        sentinelaccess.SubjectRef{HumanID: s.Spec.Subject.HumanID, AgentID: s.Spec.Subject.AgentID, TeamID: s.Spec.Subject.TeamID},
+		ServerRef:      sentinelaccess.ServerReference{Name: sentinelaccess.ServerName(s.Spec.ServerRef.Name), Namespace: sentinelaccess.Namespace(s.Spec.ServerRef.Namespace)},
+		Subject:        sentinelaccess.SubjectRef{HumanID: sentinelaccess.HumanID(s.Spec.Subject.HumanID), AgentID: sentinelaccess.AgentID(s.Spec.Subject.AgentID), TeamID: sentinelaccess.TeamID(s.Spec.Subject.TeamID)},
 		ConsentedTrust: sentinelaccess.TrustLevel(s.Spec.ConsentedTrust),
 		PolicyVersion:  s.Spec.PolicyVersion,
 		Revoked:        &rev,

@@ -1,4 +1,4 @@
-package setup
+package platform
 
 // This file defines the setup step execution framework.
 // It provides a pipeline-based approach for running setup steps with dependency injection and testability.

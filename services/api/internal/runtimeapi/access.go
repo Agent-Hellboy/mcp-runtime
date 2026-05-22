@@ -41,6 +41,7 @@ type accessSessionRequest struct {
 	PolicyVersion  string                         `json:"policyVersion"`
 }
 
+// HandleRuntimeGrants lists and applies MCPAccessGrant resources within the caller's allowed namespace scope.
 func (s *RuntimeServer) HandleRuntimeGrants(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -180,7 +181,7 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, map[string]interface{}{"grant": sentinelaccess.ToGrantSummary(*applied)})
 }
 
-// HandleRuntimeSessions returns MCPAgentSession resources.
+// HandleRuntimeSessions lists and applies MCPAgentSession resources within the caller's allowed namespace scope.
 func (s *RuntimeServer) HandleRuntimeSessions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -387,7 +388,7 @@ func (s *RuntimeServer) accessServerCacheForSessionRefs(ctx context.Context, nam
 func (s *RuntimeServer) accessServerCacheForRefs(ctx context.Context, namespace string, refs []sentinelaccess.ServerReference) (accessServerCache, error) {
 	namespaces := map[string]struct{}{}
 	for _, ref := range refs {
-		if strings.TrimSpace(ref.Name) == "" {
+		if strings.TrimSpace(string(ref.Name)) == "" {
 			continue
 		}
 		namespaces[accessServerRefNamespace(namespace, ref)] = struct{}{}
@@ -408,14 +409,14 @@ func (s *RuntimeServer) accessServerCacheForRefs(ctx context.Context, namespace 
 
 func accessRefVisibleWithServerCache(p principal, resourceNamespace string, ref sentinelaccess.ServerReference, cache accessServerCache) bool {
 	serverNamespace := accessServerRefNamespace(resourceNamespace, ref)
-	if server, ok := cache[accessServerCacheKey(serverNamespace, ref.Name)]; ok {
+	if server, ok := cache[accessServerCacheKey(serverNamespace, string(ref.Name))]; ok {
 		return principalCanAdministerMCPServer(p, server)
 	}
 	return principalCanAdministerServerLabels(p, defaultAccessNamespace(resourceNamespace), nil)
 }
 
 func accessServerRefNamespace(resourceNamespace string, ref sentinelaccess.ServerReference) string {
-	if ns := strings.TrimSpace(ref.Namespace); ns != "" {
+	if ns := strings.TrimSpace(string(ref.Namespace)); ns != "" {
 		return ns
 	}
 	return defaultAccessNamespace(resourceNamespace)
@@ -425,6 +426,7 @@ func accessServerCacheKey(namespace, name string) string {
 	return strings.TrimSpace(namespace) + "\x00" + strings.TrimSpace(name)
 }
 
+// HandleGrantItemPath handles GET, DELETE, and enable or disable actions for one MCPAccessGrant.
 func (s *RuntimeServer) HandleGrantItemPath(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -589,11 +591,11 @@ func (s *RuntimeServer) handleGrantToggle(w http.ResponseWriter, r *http.Request
 func validateGrantRequest(req *accessGrantRequest) error {
 	req.Name = strings.TrimSpace(req.Name)
 	req.Namespace = defaultAccessNamespace(req.Namespace)
-	req.ServerRef.Name = strings.TrimSpace(req.ServerRef.Name)
-	req.ServerRef.Namespace = strings.TrimSpace(req.ServerRef.Namespace)
-	req.Subject.HumanID = strings.TrimSpace(req.Subject.HumanID)
-	req.Subject.AgentID = strings.TrimSpace(req.Subject.AgentID)
-	req.Subject.TeamID = strings.TrimSpace(req.Subject.TeamID)
+	req.ServerRef.Name = sentinelaccess.ServerName(strings.TrimSpace(string(req.ServerRef.Name)))
+	req.ServerRef.Namespace = sentinelaccess.Namespace(strings.TrimSpace(string(req.ServerRef.Namespace)))
+	req.Subject.HumanID = sentinelaccess.HumanID(strings.TrimSpace(string(req.Subject.HumanID)))
+	req.Subject.AgentID = sentinelaccess.AgentID(strings.TrimSpace(string(req.Subject.AgentID)))
+	req.Subject.TeamID = sentinelaccess.TeamID(strings.TrimSpace(string(req.Subject.TeamID)))
 	req.PolicyVersion = defaultPolicyVersion(req.PolicyVersion)
 	req.MaxTrust = normalizeTrust(req.MaxTrust)
 	if err := sentinelaccess.ValidateResourceName("name", req.Name); err != nil {
@@ -602,16 +604,16 @@ func validateGrantRequest(req *accessGrantRequest) error {
 	if err := sentinelaccess.ValidateResourceName("namespace", req.Namespace); err != nil {
 		return err
 	}
-	if err := sentinelaccess.ValidateResourceName("serverRef.name", req.ServerRef.Name); err != nil {
+	if err := sentinelaccess.ValidateResourceName("serverRef.name", string(req.ServerRef.Name)); err != nil {
 		return err
 	}
-	if err := sentinelaccess.ValidateOptionalResourceName("serverRef.namespace", req.ServerRef.Namespace); err != nil {
+	if err := sentinelaccess.ValidateOptionalResourceName("serverRef.namespace", string(req.ServerRef.Namespace)); err != nil {
 		return err
 	}
 	if req.Subject.HumanID == "" && req.Subject.AgentID == "" && req.Subject.TeamID == "" {
 		return errors.New("one of subject.humanID, subject.agentID, or subject.teamID is required")
 	}
-	if err := validateTeamIDValue("subject.teamID", req.Subject.TeamID); err != nil {
+	if err := validateTeamIDValue("subject.teamID", string(req.Subject.TeamID)); err != nil {
 		return err
 	}
 	if req.MaxTrust != "" && !validTrust(req.MaxTrust) {
@@ -654,11 +656,11 @@ func validateGrantRequest(req *accessGrantRequest) error {
 func validateSessionRequest(req *accessSessionRequest) error {
 	req.Name = strings.TrimSpace(req.Name)
 	req.Namespace = defaultAccessNamespace(req.Namespace)
-	req.ServerRef.Name = strings.TrimSpace(req.ServerRef.Name)
-	req.ServerRef.Namespace = strings.TrimSpace(req.ServerRef.Namespace)
-	req.Subject.HumanID = strings.TrimSpace(req.Subject.HumanID)
-	req.Subject.AgentID = strings.TrimSpace(req.Subject.AgentID)
-	req.Subject.TeamID = strings.TrimSpace(req.Subject.TeamID)
+	req.ServerRef.Name = sentinelaccess.ServerName(strings.TrimSpace(string(req.ServerRef.Name)))
+	req.ServerRef.Namespace = sentinelaccess.Namespace(strings.TrimSpace(string(req.ServerRef.Namespace)))
+	req.Subject.HumanID = sentinelaccess.HumanID(strings.TrimSpace(string(req.Subject.HumanID)))
+	req.Subject.AgentID = sentinelaccess.AgentID(strings.TrimSpace(string(req.Subject.AgentID)))
+	req.Subject.TeamID = sentinelaccess.TeamID(strings.TrimSpace(string(req.Subject.TeamID)))
 	req.PolicyVersion = defaultPolicyVersion(req.PolicyVersion)
 	req.ConsentedTrust = normalizeTrust(req.ConsentedTrust)
 	if err := sentinelaccess.ValidateResourceName("name", req.Name); err != nil {
@@ -667,16 +669,16 @@ func validateSessionRequest(req *accessSessionRequest) error {
 	if err := sentinelaccess.ValidateResourceName("namespace", req.Namespace); err != nil {
 		return err
 	}
-	if err := sentinelaccess.ValidateResourceName("serverRef.name", req.ServerRef.Name); err != nil {
+	if err := sentinelaccess.ValidateResourceName("serverRef.name", string(req.ServerRef.Name)); err != nil {
 		return err
 	}
-	if err := sentinelaccess.ValidateOptionalResourceName("serverRef.namespace", req.ServerRef.Namespace); err != nil {
+	if err := sentinelaccess.ValidateOptionalResourceName("serverRef.namespace", string(req.ServerRef.Namespace)); err != nil {
 		return err
 	}
 	if req.Subject.HumanID == "" && req.Subject.AgentID == "" && req.Subject.TeamID == "" {
 		return errors.New("one of subject.humanID, subject.agentID, or subject.teamID is required")
 	}
-	if err := validateTeamIDValue("subject.teamID", req.Subject.TeamID); err != nil {
+	if err := validateTeamIDValue("subject.teamID", string(req.Subject.TeamID)); err != nil {
 		return err
 	}
 	if req.ConsentedTrust != "" && !validTrust(req.ConsentedTrust) {
@@ -740,8 +742,7 @@ func validDecision(decision sentinelaccess.PolicyDecision) bool {
 	}
 }
 
-// HandleSessionItemPath handles POST /api/runtime/sessions/{namespace}/{name}/revoke|unrevoke
-// and DELETE /api/runtime/sessions/{namespace}/{name}.
+// HandleSessionItemPath handles GET, DELETE, and revoke or unrevoke actions for one MCPAgentSession.
 func (s *RuntimeServer) HandleSessionItemPath(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -958,25 +959,25 @@ func (s *RuntimeServer) scopedAccessWriteNamespaceForPrincipal(ctx context.Conte
 
 func bindAccessServerRefNamespace(resourceNamespace string, serverRef *sentinelaccess.ServerReference) error {
 	resourceNamespace = defaultAccessNamespace(resourceNamespace)
-	serverRef.Namespace = strings.TrimSpace(serverRef.Namespace)
+	serverRef.Namespace = sentinelaccess.Namespace(strings.TrimSpace(string(serverRef.Namespace)))
 	if serverRef.Namespace == "" {
-		serverRef.Namespace = resourceNamespace
+		serverRef.Namespace = sentinelaccess.Namespace(resourceNamespace)
 		return nil
 	}
-	if serverRef.Namespace != resourceNamespace {
+	if string(serverRef.Namespace) != resourceNamespace {
 		return fmt.Errorf("serverRef.namespace %q must match access resource namespace %q", serverRef.Namespace, resourceNamespace)
 	}
 	return nil
 }
 
 func (s *RuntimeServer) bindAccessSubjectTeamID(ctx context.Context, namespace, serverTeamID string, subject *sentinelaccess.SubjectRef) error {
-	subject.TeamID = strings.TrimSpace(subject.TeamID)
+	subject.TeamID = sentinelaccess.TeamID(strings.TrimSpace(string(subject.TeamID)))
 	serverTeamID = strings.TrimSpace(serverTeamID)
 	namespaceTeamID := strings.TrimSpace(s.teamIDForPrincipalNamespace(ctx, namespace))
 	if subject.TeamID == "" {
-		subject.TeamID = firstNonEmpty(serverTeamID, namespaceTeamID)
+		subject.TeamID = sentinelaccess.TeamID(firstNonEmpty(serverTeamID, namespaceTeamID))
 	}
-	if err := validateTeamIDValue("subject.teamID", subject.TeamID); err != nil {
+	if err := validateTeamIDValue("subject.teamID", string(subject.TeamID)); err != nil {
 		return err
 	}
 	p, ok := principalFromContext(ctx)

@@ -36,6 +36,7 @@ type runtimeServerApplyRequest struct {
 	Spec      mcpv1alpha1.MCPServerSpec `json:"spec"`
 }
 
+// HandleRuntimeServers lists and applies MCPServer resources within the caller's readable or publishable namespaces.
 func (s *RuntimeServer) HandleRuntimeServers(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -628,6 +629,7 @@ func preserveCurrentLabel(labels, current map[string]string, key string) {
 	}
 }
 
+// HandleRuntimeServerItem returns or retires one MCPServer after namespace authorization.
 func (s *RuntimeServer) HandleRuntimeServerItem(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:

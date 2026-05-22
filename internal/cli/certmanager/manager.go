@@ -418,11 +418,11 @@ func registryTLSCertificateOwners(kubectl core.KubectlRunner) ([]string, error) 
 	cmd.SetStdout(&stdout)
 	cmd.SetStderr(&stderr)
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("failed to list cert-manager Certificates in namespace %q: %v (%s)", core.NamespaceRegistry, err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("failed to list cert-manager Certificates in namespace %q: %w (%s)", core.NamespaceRegistry, err, strings.TrimSpace(stderr.String()))
 	}
 	var list certificateList
 	if err := json.Unmarshal(stdout.Bytes(), &list); err != nil {
-		return nil, fmt.Errorf("failed to parse cert-manager Certificates in namespace %q: %v", core.NamespaceRegistry, err)
+		return nil, fmt.Errorf("failed to parse cert-manager Certificates in namespace %q: %w", core.NamespaceRegistry, err)
 	}
 	var owners []string
 	for _, item := range list.Items {

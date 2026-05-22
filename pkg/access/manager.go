@@ -51,11 +51,11 @@ func NewManager(dynamic dynamic.Interface, clientset kubernetes.Interface) *Mana
 
 // ResolveServerRefNamespace returns the namespace to resolve serverRef against.
 // Empty or whitespace ref.Namespace defaults to DefaultMCPResourceNamespace.
-func ResolveServerRefNamespace(ref ServerReference) string {
-	if ns := strings.TrimSpace(ref.Namespace); ns != "" {
-		return ns
+func ResolveServerRefNamespace(ref ServerReference) Namespace {
+	if ns := strings.TrimSpace(string(ref.Namespace)); ns != "" {
+		return Namespace(ns)
 	}
-	return DefaultMCPResourceNamespace
+	return Namespace(DefaultMCPResourceNamespace)
 }
 
 // ErrMCPServerNotFound is returned by AssertMCPServerRef when the target MCPServer is missing.
@@ -85,15 +85,15 @@ func (m *Manager) AssertMCPServerRef(ctx context.Context, ref ServerReference) e
 
 // GetMCPServerRef returns the MCPServer referenced by ref.
 func (m *Manager) GetMCPServerRef(ctx context.Context, ref ServerReference) (*mcpv1alpha1.MCPServer, error) {
-	name := strings.TrimSpace(ref.Name)
+	name := strings.TrimSpace(string(ref.Name))
 	if name == "" {
 		return nil, fmt.Errorf("serverRef.name is required")
 	}
 	ns := ResolveServerRefNamespace(ref)
-	obj, err := m.dynamic.Resource(serverGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+	obj, err := m.dynamic.Resource(serverGVR).Namespace(string(ns)).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, &ErrMCPServerNotFound{Name: name, Namespace: ns}
+			return nil, &ErrMCPServerNotFound{Name: name, Namespace: string(ns)}
 		}
 		return nil, fmt.Errorf("lookup serverRef: %w", err)
 	}

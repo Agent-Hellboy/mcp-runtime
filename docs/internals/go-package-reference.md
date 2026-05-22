@@ -21,6 +21,7 @@ python3 docs/scripts/generate_go_package_reference.py
 - [CLI Kubernetes helpers](#cli-kubernetes-helpers) `mcp-runtime/internal/cli/kube`
 - [CLI Kubernetes errors](#cli-kubernetes-errors) `mcp-runtime/internal/cli/kubeerr`
 - [CLI cluster](#cli-cluster) `mcp-runtime/internal/cli/cluster`
+- [CLI cluster doctor](#cli-cluster-doctor) `mcp-runtime/internal/cli/cluster/doctor`
 - [CLI cert-manager](#cli-cert-manager) `mcp-runtime/internal/cli/certmanager`
 - [CLI platform API](#cli-platform-api) `mcp-runtime/internal/cli/platformapi`
 - [CLI platform status](#cli-platform-status) `mcp-runtime/internal/cli/platformstatus`
@@ -32,6 +33,7 @@ python3 docs/scripts/generate_go_package_reference.py
 - [CLI setup asset paths](#cli-setup-asset-paths) `mcp-runtime/internal/cli/setup/assetpath`
 - [CLI setup ingress manifests](#cli-setup-ingress-manifests) `mcp-runtime/internal/cli/setup/ingressmanifest`
 - [CLI setup plan](#cli-setup-plan) `mcp-runtime/internal/cli/setup/plan`
+- [CLI setup platform](#cli-setup-platform) `mcp-runtime/internal/cli/setup/platform`
 - [CLI binary](#cli-binary) `mcp-runtime/cmd/mcp-runtime`
 - [Operator binary](#operator-binary) `mcp-runtime/cmd/operator`
 
@@ -4039,9 +4041,6 @@ go doc -all ./internal/cli/cluster
 
 Package cluster owns routing for the cluster top-level command.
 
-Cluster doctor diagnostics: distribution detection, registry and Traefik checks,
-Sentinel probes, and remediation hints. See docs/cluster-readiness.md.
-
 Package cluster implements cluster operations for the cluster CLI command.
 
 ### Jump To
@@ -4056,7 +4055,6 @@ Package cluster implements cluster operations for the cluster CLI command.
 
 - [`func New(runtime *core.Runtime) *cobra.Command`](#cli-cluster-func-new-runtime-core-runtime-cobra-command)
 - [`func NewWithManager(mgr *ClusterManager) *cobra.Command`](#cli-cluster-func-newwithmanager-mgr-clustermanager-cobra-command)
-- [`func PrintDoctorReport(r DoctorReport)`](#cli-cluster-func-printdoctorreport-r-doctorreport)
 - [`type ClusterManager struct`](#cli-cluster-type-clustermanager-struct)
 - [`func DefaultClusterManager(logger *zap.Logger) *ClusterManager`](#cli-cluster-func-defaultclustermanager-logger-zap-logger-clustermanager)
 - [`func NewClusterManager(kubectl *core.KubectlClient, exec core.Executor, logger *zap.Logger) *ClusterManager`](#cli-cluster-func-newclustermanager-kubectl-core-kubectlclient-exec-core-executor-logger-zap-logger-clustermanager)
@@ -4070,19 +4068,6 @@ Package cluster implements cluster operations for the cluster CLI command.
 - [`func (m *ClusterManager) KubectlRunner() core.KubectlRunner`](#cli-cluster-func-m-clustermanager-kubectlrunner-core-kubectlrunner)
 - [`func (m *ClusterManager) Logger() *zap.Logger`](#cli-cluster-func-m-clustermanager-logger-zap-logger)
 - [`func (m *ClusterManager) ProvisionCluster(provider, region string, nodeCount int, clusterName string, dryRun bool) error`](#cli-cluster-func-m-clustermanager-provisioncluster-provider-region-string-nodecount-int-clustername-string-dryrun-bool-error)
-- [`type Distribution string`](#cli-cluster-type-distribution-string)
-- [`func DetectDistribution(kubectl core.KubectlRunner) Distribution`](#cli-cluster-func-detectdistribution-kubectl-core-kubectlrunner-distribution)
-- [`type DoctorCheck struct`](#cli-cluster-type-doctorcheck-struct)
-- [`type DoctorCheckProgress func(DoctorCheckProgressEvent) func(DoctorCheck)`](#cli-cluster-type-doctorcheckprogress-func-doctorcheckprogressevent-func-doctorcheck)
-- [`type DoctorCheckProgressEvent struct`](#cli-cluster-type-doctorcheckprogressevent-struct)
-- [`type DoctorReport struct`](#cli-cluster-type-doctorreport-struct)
-- [`func RunDoctor(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-func-rundoctor-kubectl-core-kubectlrunner-doctorreport)
-- [`func RunDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-func-rundoctorandprint-kubectl-core-kubectlrunner-doctorreport)
-- [`func RunDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport`](#cli-cluster-func-rundoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport)
-- [`func RunSetupDoctor(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-func-runsetupdoctor-kubectl-core-kubectlrunner-doctorreport)
-- [`func RunSetupDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-func-runsetupdoctorandprint-kubectl-core-kubectlrunner-doctorreport)
-- [`func RunSetupDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport`](#cli-cluster-func-runsetupdoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport)
-- [`func (r DoctorReport) AllOK() bool`](#cli-cluster-func-r-doctorreport-allok-bool)
 - [`type IngressOptions struct`](#cli-cluster-type-ingressoptions-struct)
 
 <a id="cli-cluster-functions"></a>
@@ -4099,13 +4084,6 @@ func New(runtime *core.Runtime) *cobra.Command
 ```text
 func NewWithManager(mgr *ClusterManager) *cobra.Command
     NewWithManager returns the cluster command using the provided manager.
-
-```
-
-<a id="cli-cluster-func-printdoctorreport-r-doctorreport"></a>
-```text
-func PrintDoctorReport(r DoctorReport)
-    PrintDoctorReport emits a human-readable report using the standard printer.
 ```
 
 <a id="cli-cluster-types"></a>
@@ -4209,7 +4187,72 @@ func (m *ClusterManager) ProvisionCluster(provider, region string, nodeCount int
 
 ```
 
-<a id="cli-cluster-type-distribution-string"></a>
+<a id="cli-cluster-type-ingressoptions-struct"></a>
+```text
+type IngressOptions struct {
+	Mode     string
+	Manifest string
+	Force    bool
+}
+    IngressOptions captures ingress install settings used by both cluster
+    configuration and the setup command.
+```
+
+<a id="cli-cluster-doctor"></a>
+## CLI cluster doctor
+
+Package: `doctor`
+Import path: `mcp-runtime/internal/cli/cluster/doctor`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/cluster/doctor
+```
+
+<a id="cli-cluster-doctor-overview"></a>
+### Overview
+
+Package doctor implements cluster readiness diagnostics for the cluster CLI.
+
+### Jump To
+
+- [Overview](#cli-cluster-doctor-overview)
+- [Index](#cli-cluster-doctor-index)
+- [Functions](#cli-cluster-doctor-functions)
+- [Types](#cli-cluster-doctor-types)
+
+<a id="cli-cluster-doctor-index"></a>
+### Index
+
+- [`func PrintDoctorReport(r DoctorReport)`](#cli-cluster-doctor-func-printdoctorreport-r-doctorreport)
+- [`type Distribution string`](#cli-cluster-doctor-type-distribution-string)
+- [`func DetectDistribution(kubectl core.KubectlRunner) Distribution`](#cli-cluster-doctor-func-detectdistribution-kubectl-core-kubectlrunner-distribution)
+- [`type DoctorCheck struct`](#cli-cluster-doctor-type-doctorcheck-struct)
+- [`type DoctorCheckProgress func(DoctorCheckProgressEvent) func(DoctorCheck)`](#cli-cluster-doctor-type-doctorcheckprogress-func-doctorcheckprogressevent-func-doctorcheck)
+- [`type DoctorCheckProgressEvent struct`](#cli-cluster-doctor-type-doctorcheckprogressevent-struct)
+- [`type DoctorReport struct`](#cli-cluster-doctor-type-doctorreport-struct)
+- [`func RunDoctor(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-doctor-func-rundoctor-kubectl-core-kubectlrunner-doctorreport)
+- [`func RunDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-doctor-func-rundoctorandprint-kubectl-core-kubectlrunner-doctorreport)
+- [`func RunDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport`](#cli-cluster-doctor-func-rundoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport)
+- [`func RunSetupDoctor(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-doctor-func-runsetupdoctor-kubectl-core-kubectlrunner-doctorreport)
+- [`func RunSetupDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-doctor-func-runsetupdoctorandprint-kubectl-core-kubectlrunner-doctorreport)
+- [`func RunSetupDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport`](#cli-cluster-doctor-func-runsetupdoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport)
+- [`func (r DoctorReport) AllOK() bool`](#cli-cluster-doctor-func-r-doctorreport-allok-bool)
+
+<a id="cli-cluster-doctor-functions"></a>
+### Functions
+
+<a id="cli-cluster-doctor-func-printdoctorreport-r-doctorreport"></a>
+```text
+func PrintDoctorReport(r DoctorReport)
+    PrintDoctorReport emits a human-readable report using the standard printer.
+```
+
+<a id="cli-cluster-doctor-types"></a>
+### Types
+
+<a id="cli-cluster-doctor-type-distribution-string"></a>
 ```text
 type Distribution string
     Distribution identifies a Kubernetes flavor for remediation messaging.
@@ -4223,7 +4266,7 @@ const (
 )
 ```
 
-<a id="cli-cluster-func-detectdistribution-kubectl-core-kubectlrunner-distribution"></a>
+<a id="cli-cluster-doctor-func-detectdistribution-kubectl-core-kubectlrunner-distribution"></a>
 ```text
 func DetectDistribution(kubectl core.KubectlRunner) Distribution
     DetectDistribution inspects node info to guess which distribution is
@@ -4232,7 +4275,7 @@ func DetectDistribution(kubectl core.KubectlRunner) Distribution
 
 ```
 
-<a id="cli-cluster-type-doctorcheck-struct"></a>
+<a id="cli-cluster-doctor-type-doctorcheck-struct"></a>
 ```text
 type DoctorCheck struct {
 	Name   string
@@ -4244,7 +4287,7 @@ type DoctorCheck struct {
 
 ```
 
-<a id="cli-cluster-type-doctorcheckprogress-func-doctorcheckprogressevent-func-doctorcheck"></a>
+<a id="cli-cluster-doctor-type-doctorcheckprogress-func-doctorcheckprogressevent-func-doctorcheck"></a>
 ```text
 type DoctorCheckProgress func(DoctorCheckProgressEvent) func(DoctorCheck)
     DoctorCheckProgress is called before each doctor check starts. It returns an
@@ -4252,7 +4295,7 @@ type DoctorCheckProgress func(DoctorCheckProgressEvent) func(DoctorCheck)
 
 ```
 
-<a id="cli-cluster-type-doctorcheckprogressevent-struct"></a>
+<a id="cli-cluster-doctor-type-doctorcheckprogressevent-struct"></a>
 ```text
 type DoctorCheckProgressEvent struct {
 	Name   string
@@ -4264,7 +4307,7 @@ type DoctorCheckProgressEvent struct {
 
 ```
 
-<a id="cli-cluster-type-doctorreport-struct"></a>
+<a id="cli-cluster-doctor-type-doctorreport-struct"></a>
 ```text
 type DoctorReport struct {
 	Distribution Distribution
@@ -4274,21 +4317,21 @@ type DoctorReport struct {
 
 ```
 
-<a id="cli-cluster-func-rundoctor-kubectl-core-kubectlrunner-doctorreport"></a>
+<a id="cli-cluster-doctor-func-rundoctor-kubectl-core-kubectlrunner-doctorreport"></a>
 ```text
 func RunDoctor(kubectl core.KubectlRunner) DoctorReport
     RunDoctor executes cluster diagnostics and returns a report.
 
 ```
 
-<a id="cli-cluster-func-rundoctorandprint-kubectl-core-kubectlrunner-doctorreport"></a>
+<a id="cli-cluster-doctor-func-rundoctorandprint-kubectl-core-kubectlrunner-doctorreport"></a>
 ```text
 func RunDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport
     RunDoctorAndPrint streams doctor progress and results as checks execute.
 
 ```
 
-<a id="cli-cluster-func-rundoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport"></a>
+<a id="cli-cluster-doctor-func-rundoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport"></a>
 ```text
 func RunDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport
     RunDoctorWithProgress executes cluster diagnostics and calls progress hooks
@@ -4296,21 +4339,21 @@ func RunDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgr
 
 ```
 
-<a id="cli-cluster-func-runsetupdoctor-kubectl-core-kubectlrunner-doctorreport"></a>
+<a id="cli-cluster-doctor-func-runsetupdoctor-kubectl-core-kubectlrunner-doctorreport"></a>
 ```text
 func RunSetupDoctor(kubectl core.KubectlRunner) DoctorReport
     RunSetupDoctor executes pre-setup readiness checks and returns a report.
 
 ```
 
-<a id="cli-cluster-func-runsetupdoctorandprint-kubectl-core-kubectlrunner-doctorreport"></a>
+<a id="cli-cluster-doctor-func-runsetupdoctorandprint-kubectl-core-kubectlrunner-doctorreport"></a>
 ```text
 func RunSetupDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport
     RunSetupDoctorAndPrint streams setup-preflight progress and results.
 
 ```
 
-<a id="cli-cluster-func-runsetupdoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport"></a>
+<a id="cli-cluster-doctor-func-runsetupdoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport"></a>
 ```text
 func RunSetupDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport
     RunSetupDoctorWithProgress executes pre-setup readiness checks and calls
@@ -4318,22 +4361,10 @@ func RunSetupDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheck
 
 ```
 
-<a id="cli-cluster-func-r-doctorreport-allok-bool"></a>
+<a id="cli-cluster-doctor-func-r-doctorreport-allok-bool"></a>
 ```text
 func (r DoctorReport) AllOK() bool
     AllOK reports whether every check passed.
-
-```
-
-<a id="cli-cluster-type-ingressoptions-struct"></a>
-```text
-type IngressOptions struct {
-	Mode     string
-	Manifest string
-	Force    bool
-}
-    IngressOptions captures ingress install settings used by both cluster
-    configuration and the setup command.
 ```
 
 <a id="cli-cert-manager"></a>
@@ -5924,6 +5955,251 @@ type Plan struct {
 ```text
 func Build(input Input) Plan
     Build resolves CLI inputs into a concrete setup plan.
+```
+
+<a id="cli-setup-platform"></a>
+## CLI setup platform
+
+Package: `platform`
+Import path: `mcp-runtime/internal/cli/setup/platform`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/setup/platform
+```
+
+<a id="cli-setup-platform-overview"></a>
+### Overview
+
+Package platform implements the setup workflow for MCP Runtime platform
+components.
+
+### Jump To
+
+- [Overview](#cli-setup-platform-overview)
+- [Index](#cli-setup-platform-index)
+- [Functions](#cli-setup-platform-functions)
+- [Types](#cli-setup-platform-types)
+
+<a id="cli-setup-platform-index"></a>
+### Index
+
+- [`func BuildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectChanged bool) []string`](#cli-setup-platform-func-buildoperatorargs-metricsaddr-probeaddr-string-leaderelect-leaderelectchanged-bool-string)
+- [`func SetupPlatform(logger *zap.Logger, plan setupplan.Plan, clusterMgr ClusterManagerAPI) error`](#cli-setup-platform-func-setupplatform-logger-zap-logger-plan-setupplan-plan-clustermgr-clustermanagerapi-error)
+- [`func ValidatePlatformMode(mode string) error`](#cli-setup-platform-func-validateplatformmode-mode-string-error)
+- [`func ValidatePublicPlatformAuthConfig(platformMode string, tlsEnabled, testMode bool, existingData map[string]string) error`](#cli-setup-platform-func-validatepublicplatformauthconfig-platformmode-string-tlsenabled-testmode-bool-existingdata-map-string-string-error)
+- [`func ValidatePublicPlatformAuthEnv(platformMode string, tlsEnabled, testMode bool) error`](#cli-setup-platform-func-validatepublicplatformauthenv-platformmode-string-tlsenabled-testmode-bool-error)
+- [`func ValidateRegistryMode(mode string) error`](#cli-setup-platform-func-validateregistrymode-mode-string-error)
+- [`func ValidateRegistryTLSMode(mode string, tlsEnabled bool, acmeEmail string) error`](#cli-setup-platform-func-validateregistrytlsmode-mode-string-tlsenabled-bool-acmeemail-string-error)
+- [`func ValidateStorageMode(mode string) error`](#cli-setup-platform-func-validatestoragemode-mode-string-error)
+- [`func ValidateTLSSetupCLIFlags(`](#cli-setup-platform-func-validatetlssetupcliflags)
+- [`type AnalyticsImageSet struct`](#cli-setup-platform-type-analyticsimageset-struct)
+- [`type ClusterManagerAPI interface`](#cli-setup-platform-type-clustermanagerapi-interface)
+- [`type RegistryManagerAPI interface`](#cli-setup-platform-type-registrymanagerapi-interface)
+- [`type SetupContext struct`](#cli-setup-platform-type-setupcontext-struct)
+- [`type SetupDeps struct`](#cli-setup-platform-type-setupdeps-struct)
+- [`type SetupPipeline struct`](#cli-setup-platform-type-setuppipeline-struct)
+- [`func NewSetupPipeline() *SetupPipeline`](#cli-setup-platform-func-newsetuppipeline-setuppipeline)
+- [`func (p *SetupPipeline) Build() []SetupStep`](#cli-setup-platform-func-p-setuppipeline-build-setupstep)
+- [`func (p *SetupPipeline) With(step SetupStep) *SetupPipeline`](#cli-setup-platform-func-p-setuppipeline-with-step-setupstep-setuppipeline)
+- [`func (p *SetupPipeline) WithIf(condition bool, step SetupStep) *SetupPipeline`](#cli-setup-platform-func-p-setuppipeline-withif-condition-bool-step-setupstep-setuppipeline)
+- [`type SetupStep interface`](#cli-setup-platform-type-setupstep-interface)
+
+<a id="cli-setup-platform-functions"></a>
+### Functions
+
+<a id="cli-setup-platform-func-buildoperatorargs-metricsaddr-probeaddr-string-leaderelect-leaderelectchanged-bool-string"></a>
+```text
+func BuildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectChanged bool) []string
+    buildOperatorArgs constructs operator command-line arguments from flags.
+    Only includes flags that were explicitly set.
+
+```
+
+<a id="cli-setup-platform-func-setupplatform-logger-zap-logger-plan-setupplan-plan-clustermgr-clustermanagerapi-error"></a>
+```text
+func SetupPlatform(logger *zap.Logger, plan setupplan.Plan, clusterMgr ClusterManagerAPI) error
+```
+
+<a id="cli-setup-platform-func-validateplatformmode-mode-string-error"></a>
+```text
+func ValidatePlatformMode(mode string) error
+```
+
+<a id="cli-setup-platform-func-validatepublicplatformauthconfig-platformmode-string-tlsenabled-testmode-bool-existingdata-map-string-string-error"></a>
+```text
+func ValidatePublicPlatformAuthConfig(platformMode string, tlsEnabled, testMode bool, existingData map[string]string) error
+```
+
+<a id="cli-setup-platform-func-validatepublicplatformauthenv-platformmode-string-tlsenabled-testmode-bool-error"></a>
+```text
+func ValidatePublicPlatformAuthEnv(platformMode string, tlsEnabled, testMode bool) error
+```
+
+<a id="cli-setup-platform-func-validateregistrymode-mode-string-error"></a>
+```text
+func ValidateRegistryMode(mode string) error
+```
+
+<a id="cli-setup-platform-func-validateregistrytlsmode-mode-string-tlsenabled-bool-acmeemail-string-error"></a>
+```text
+func ValidateRegistryTLSMode(mode string, tlsEnabled bool, acmeEmail string) error
+```
+
+<a id="cli-setup-platform-func-validatestoragemode-mode-string-error"></a>
+```text
+func ValidateStorageMode(mode string) error
+```
+
+<a id="cli-setup-platform-func-validatetlssetupcliflags"></a>
+```text
+func ValidateTLSSetupCLIFlags(
+	tlsEnabled bool,
+	acmeEmailResolved, tlsCIResolved string,
+	acmeStagingResolved, skipCertManagerInstall bool,
+) error
+    validateTLSSetupCLIFlags enforces ACME / internal-issuer mutual exclusion
+    and requires --with-tls when any TLS or cert-manager-related options are
+    set.
+```
+
+<a id="cli-setup-platform-types"></a>
+### Types
+
+<a id="cli-setup-platform-type-analyticsimageset-struct"></a>
+```text
+type AnalyticsImageSet struct {
+	Ingest        string
+	API           string
+	Processor     string
+	UI            string
+	Traefik       string
+	ClickHouse    string
+	Zookeeper     string
+	Kafka         string
+	Prometheus    string
+	OTelCollector string
+	Tempo         string
+	Loki          string
+	Promtail      string
+	Grafana       string
+}
+
+```
+
+<a id="cli-setup-platform-type-clustermanagerapi-interface"></a>
+```text
+type ClusterManagerAPI interface {
+	InitCluster(kubeconfig, context string) error
+	ConfigureCluster(opts cluster.IngressOptions) error
+}
+
+```
+
+<a id="cli-setup-platform-type-registrymanagerapi-interface"></a>
+```text
+type RegistryManagerAPI interface {
+	ShowRegistryInfo() error
+	PushInCluster(source, target, helperNS string) error
+}
+
+```
+
+<a id="cli-setup-platform-type-setupcontext-struct"></a>
+```text
+type SetupContext struct {
+	Plan                  setupplan.Plan
+	ExternalRegistry      *config.ExternalRegistryConfig
+	UsingExternalRegistry bool
+	RegistryAuthStaged    bool
+	RegistrySecretName    string
+	OperatorImage         string
+	GatewayProxyImage     string
+	AnalyticsImages       AnalyticsImageSet
+}
+    SetupContext carries state shared across setup steps.
+
+```
+
+<a id="cli-setup-platform-type-setupdeps-struct"></a>
+```text
+type SetupDeps struct {
+	ResolveExternalRegistryConfig   func(*config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error)
+	ClusterManager                  ClusterManagerAPI
+	RegistryManager                 RegistryManagerAPI
+	LoginRegistry                   func(logger *zap.Logger, registryURL, username, password string) error
+	DeployRegistry                  func(logger *zap.Logger, namespace string, port int, registryType, registryStorageSize, manifestPath string) error
+	WaitForDeploymentAvailable      func(logger *zap.Logger, name, namespace, selector string, timeout time.Duration) error
+	PrintDeploymentDiagnostics      func(deploy, namespace, selector string)
+	SetupTLS                        func(logger *zap.Logger, plan setupplan.Plan) error
+	BuildOperatorImage              func(image string) error
+	PushOperatorImage               func(image string) error
+	BuildGatewayProxyImage          func(image string) error
+	PushGatewayProxyImage           func(image string) error
+	BuildAnalyticsImage             func(image, dockerfilePath, buildContext string) error
+	PushAnalyticsImage              func(image string) error
+	EnsureNamespace                 func(namespace string) error
+	EnsureCatalogNamespace          func(namespace string, labels map[string]string) error
+	ResolvePlatformRegistryURL      func(logger *zap.Logger) string
+	PushOperatorImageToInternal     func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
+	PushGatewayProxyImageToInternal func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
+	PushAnalyticsImageToInternal    func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
+	DeployOperatorManifests         func(logger *zap.Logger, operatorImage, gatewayProxyImage string, operatorArgs []string) error
+	DeployAnalyticsManifests        func(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error
+	DisableRegistryIngressAuth      func() error
+	EnableRegistryIngressAuth       func() error
+	ConfigureProvisionedRegistryEnv func(ext *config.ExternalRegistryConfig, secretName string) error
+	RestartDeployment               func(name, namespace string) error
+	CheckCRDInstalled               func(name string) error
+	GetDeploymentTimeout            func() time.Duration
+	GetRegistryPort                 func() int
+	OperatorImageFor                func(ext *config.ExternalRegistryConfig) string
+	GatewayProxyImageFor            func(ext *config.ExternalRegistryConfig) string
+}
+
+```
+
+<a id="cli-setup-platform-type-setuppipeline-struct"></a>
+```text
+type SetupPipeline struct {
+	// Has unexported fields.
+}
+    SetupPipeline provides a fluent API for building step sequences.
+
+```
+
+<a id="cli-setup-platform-func-newsetuppipeline-setuppipeline"></a>
+```text
+func NewSetupPipeline() *SetupPipeline
+
+```
+
+<a id="cli-setup-platform-func-p-setuppipeline-build-setupstep"></a>
+```text
+func (p *SetupPipeline) Build() []SetupStep
+
+```
+
+<a id="cli-setup-platform-func-p-setuppipeline-with-step-setupstep-setuppipeline"></a>
+```text
+func (p *SetupPipeline) With(step SetupStep) *SetupPipeline
+
+```
+
+<a id="cli-setup-platform-func-p-setuppipeline-withif-condition-bool-step-setupstep-setuppipeline"></a>
+```text
+func (p *SetupPipeline) WithIf(condition bool, step SetupStep) *SetupPipeline
+
+```
+
+<a id="cli-setup-platform-type-setupstep-interface"></a>
+```text
+type SetupStep interface {
+	Name() string
+	Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error
+}
+    SetupStep models a single setup phase.
 ```
 
 <a id="cli-binary"></a>

@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// HandleRuntimePolicy returns the rendered gateway policy for a server the caller can administer.
 func (s *RuntimeServer) HandleRuntimePolicy(w http.ResponseWriter, r *http.Request) {
 	if s.accessMgr == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})

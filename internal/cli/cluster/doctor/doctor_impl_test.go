@@ -1,4 +1,4 @@
-package cluster
+package doctor
 
 import (
 	"context"
@@ -10,6 +10,15 @@ import (
 
 	"mcp-runtime/internal/cli/core"
 )
+
+func contains(slice []string, val string) bool {
+	for _, s := range slice {
+		if s == val {
+			return true
+		}
+	}
+	return false
+}
 
 func TestDetectDistribution(t *testing.T) {
 	cases := []struct {
@@ -956,6 +965,34 @@ func TestDoctorCurlProbesPassPathValidator(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestCheckSentinelSecretsReportsInvalidBase64(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			switch {
+			case contains(spec.Args, "namespace"):
+				return &core.MockCommand{OutputData: []byte(doctorSentinelNamespace)}
+			case contains(spec.Args, "jsonpath={.data.API_KEYS}"):
+				return &core.MockCommand{OutputData: []byte("not-base64")}
+			case contains(spec.Args, "jsonpath={.data.ADMIN_API_KEYS}"):
+				return &core.MockCommand{OutputData: []byte("dGVzdA==")}
+			case contains(spec.Args, "jsonpath={.data.INGEST_API_KEYS}"):
+				return &core.MockCommand{OutputData: []byte("dGVzdA==")}
+			case contains(spec.Args, "jsonpath={.data.UI_API_KEY}"):
+				return &core.MockCommand{OutputData: []byte("dGVzdA==")}
+			default:
+				return &core.MockCommand{}
+			}
+		},
+	}
+	check := checkSentinelSecrets(core.NewTestKubectlClient(mock))
+	if check.OK {
+		t.Fatalf("expected invalid base64 to fail, got detail=%q", check.Detail)
+	}
+	if !strings.Contains(check.Detail, "API_KEYS") || !strings.Contains(check.Detail, "not valid base64") {
+		t.Fatalf("expected invalid base64 detail to name the key, got %q", check.Detail)
+	}
 }
 
 func TestRemediationHintPerDistro(t *testing.T) {

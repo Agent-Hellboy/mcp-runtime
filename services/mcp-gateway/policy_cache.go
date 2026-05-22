@@ -81,10 +81,10 @@ func (s *gatewayServer) loadPolicy() (*policypkg.Document, error) {
 	}
 
 	if doc.Server.Name == "" {
-		doc.Server.Name = s.serverName
+		doc.Server.Name = policypkg.ServerName(s.serverName)
 	}
 	if doc.Server.Namespace == "" {
-		doc.Server.Namespace = s.serverNamespace
+		doc.Server.Namespace = policypkg.Namespace(s.serverNamespace)
 	}
 	if doc.Server.Cluster == "" {
 		doc.Server.Cluster = s.clusterName
@@ -131,18 +131,18 @@ func (s *gatewayServer) extractIdentity(r *http.Request, policy *policypkg.Docum
 
 func policyIdentity(identity identityContext) policypkg.Identity {
 	return policypkg.Identity{
-		HumanID:   identity.HumanID,
-		AgentID:   identity.AgentID,
-		TeamID:    identity.TeamID,
-		SessionID: identity.SessionID,
+		HumanID:   policypkg.HumanID(identity.HumanID),
+		AgentID:   policypkg.AgentID(identity.AgentID),
+		TeamID:    policypkg.TeamID(identity.TeamID),
+		SessionID: policypkg.SessionID(identity.SessionID),
 	}
 }
 
 func (s *gatewayServer) defaultPolicyDocument() *policypkg.Document {
 	return &policypkg.Document{
 		Server: policypkg.Server{
-			Name:      s.serverName,
-			Namespace: s.serverNamespace,
+			Name:      policypkg.ServerName(s.serverName),
+			Namespace: policypkg.Namespace(s.serverNamespace),
 			Cluster:   s.clusterName,
 		},
 		Auth: &policypkg.Auth{

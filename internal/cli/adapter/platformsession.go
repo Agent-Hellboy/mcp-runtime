@@ -90,7 +90,9 @@ func applyPlatformSession(
 	// Override the resolved URL so callers can target a non-default platform
 	// without re-running mcp-runtime auth login.
 	if u := strings.TrimSpace(f.platformURL); u != "" {
-		_ = os.Setenv("MCP_PLATFORM_API_URL", u)
+		if err := os.Setenv("MCP_PLATFORM_API_URL", u); err != nil {
+			return agentadapter.Identity{}, nil, nil, fmt.Errorf("set MCP_PLATFORM_API_URL: %w", err)
+		}
 	}
 
 	client, err := platformapi.NewPlatformClient()

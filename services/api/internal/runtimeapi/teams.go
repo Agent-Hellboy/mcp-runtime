@@ -11,6 +11,7 @@ import (
 	"time"
 )
 
+// HandleRuntimeTeams lists visible teams and lets admins create team identity records.
 func (s *RuntimeServer) HandleRuntimeTeams(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
@@ -36,6 +37,7 @@ func (s *RuntimeServer) HandleRuntimeTeams(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// HandleRuntimeTeamItemPath routes team detail, membership, and team-user operations after role checks.
 func (s *RuntimeServer) HandleRuntimeTeamItemPath(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
@@ -76,6 +78,7 @@ func (s *RuntimeServer) HandleRuntimeTeamItemPath(w http.ResponseWriter, r *http
 	}
 }
 
+// HandleRuntimeNamespaces lists namespaces visible to the caller, including catalog namespace entries for the current platform mode.
 func (s *RuntimeServer) HandleRuntimeNamespaces(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
@@ -136,6 +139,7 @@ func (s *RuntimeServer) HandleRuntimeNamespaces(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, map[string]any{"namespaces": entries})
 }
 
+// HandleRuntimeNamespaceItem returns one visible namespace record or synthetic catalog namespace entry.
 func (s *RuntimeServer) HandleRuntimeNamespaceItem(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
