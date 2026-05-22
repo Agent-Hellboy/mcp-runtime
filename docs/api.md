@@ -306,21 +306,21 @@ routes require an authenticated platform bearer token or `x-api-key`; requests
 without authentication receive `401`. `POST` requests create or update the
 Kubernetes CRs that the operator renders into the gateway policy ConfigMap.
 
-For `POST /api/runtime/grants` and `POST /api/runtime/sessions`, the API resolves `serverRef` to an `MCPServer` in the cluster. If that server does not exist, the call returns `400` with a clear `unknown serverRef` message. The server lookup is **not** part of a single distributed transaction with the grant/session write — a concurrent delete can leave a stale reference (same as `kubectl apply`). Kubernetes apply errors are surfaced with the status the API server would use, when available.
+For `POST /api/runtime/grants` and admin-only direct `POST /api/runtime/sessions`, the API resolves `serverRef` to an `MCPServer` in the cluster. If that server does not exist, the call returns `400` with a clear `unknown serverRef` message. The server lookup is **not** part of a single distributed transaction with the grant/session write — a concurrent delete can leave a stale reference (same as `kubectl apply`). Kubernetes apply errors are surfaced with the status the API server would use, when available. Non-admin grant mutations and session item mutations require the caller to be the server owner or a team owner for the server namespace; normal adapter flows should use `POST /api/runtime/adapter/sessions` instead of direct session apply.
 
 ```text
 GET  /api/runtime/servers              # List authenticated MCP catalog entries
 GET  /api/runtime/servers/{namespace}/{name} # Get one MCPServer catalog entry
 POST /api/runtime/servers              # Create/update MCPServer in an authorized namespace
 DELETE /api/runtime/servers/{namespace}/{name} # Retire one MCPServer
-GET  /api/runtime/server-events?namespace=&server= # Recent analytics events for one server
+GET  /api/runtime/server-events?namespace=&server= # Recent analytics events for one administered server
 GET  /api/runtime/grants               # List MCPAccessGrant resources
 GET  /api/runtime/grants/{namespace}/{name}   # Get one MCPAccessGrant
 POST /api/runtime/grants               # Create or update an MCPAccessGrant (x-api-key)
 DELETE /api/runtime/grants/{namespace}/{name} # Delete one MCPAccessGrant
 GET  /api/runtime/sessions             # List MCPAgentSession resources
 GET  /api/runtime/sessions/{namespace}/{name} # Get one MCPAgentSession
-POST /api/runtime/sessions             # Create or update an MCPAgentSession (x-api-key)
+POST /api/runtime/sessions             # Admin/internal direct MCPAgentSession apply
 DELETE /api/runtime/sessions/{namespace}/{name} # Delete one MCPAgentSession
 POST /api/runtime/adapter/sessions     # Issue/reuse an adapter MCPAgentSession for a human/user principal
 GET  /api/runtime/teams                # Admin: all teams; user: caller memberships
@@ -332,8 +332,8 @@ POST /api/runtime/teams/{team}/users   # Admin-only password user create/update 
 DELETE /api/runtime/teams/{team}/members/{userID}
 GET  /api/runtime/namespaces           # Allowed namespaces + org catalog metadata
 GET  /api/runtime/namespaces/{namespace}
-GET  /api/runtime/components           # Sentinel component health status
-GET  /api/runtime/policy?namespace=&server=   # Get rendered policy for a server
+GET  /api/runtime/components           # Admin-only Sentinel component health status
+GET  /api/runtime/policy?namespace=&server=   # Get rendered policy for an administered server
 ```
 
 For non-admin users, runtime scope depends on `PLATFORM_MODE` / setup
