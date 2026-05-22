@@ -29,9 +29,9 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Platform API creates limited Traefik watch Roles in managed namespaces;
-  # those Roles intentionally avoid Secret access so the API service account
-  # does not need cluster-scoped Secret permissions.
+  # Platform API creates namespace-scoped Traefik watch Roles in managed
+  # namespaces. The generated Roles may include Secret watch access for the
+  # bundled ingress provider; this API service account only needs Role CRUD.
   - apiGroups: [""]
     resources: ["endpoints"]
     verbs: ["get", "list", "watch"]

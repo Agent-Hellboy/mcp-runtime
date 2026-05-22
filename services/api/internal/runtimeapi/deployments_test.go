@@ -401,8 +401,10 @@ func TestEnsureTeamNamespaceConfiguresTraefikIngressWatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("traefik watch role missing: %v", err)
 	}
-	if roleAllows(role, "", "secrets", "get") {
-		t.Fatalf("API-created traefik watch role should not grant secret access: %#v", role.Rules)
+	for _, verb := range []string{"get", "list", "watch"} {
+		if !roleAllows(role, "", "secrets", verb) {
+			t.Fatalf("API-created traefik watch role should grant %s access to secrets: %#v", verb, role.Rules)
+		}
 	}
 	binding, err := client.RbacV1().RoleBindings("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{})
 	if err != nil {
@@ -450,7 +452,7 @@ func TestEnsureCatalogNamespaceAutoTraefikWatchSkipsExternalIngress(t *testing.T
 	}
 }
 
-func TestEnsureTraefikWatchRBACRemovesLegacySecretAccess(t *testing.T) {
+func TestEnsureTraefikWatchRBACRestoresSecretAccess(t *testing.T) {
 	cfg := teamTraefikWatchConfig{
 		namespace:      "traefik",
 		serviceAccount: "traefik",
@@ -472,8 +474,10 @@ func TestEnsureTraefikWatchRBACRemovesLegacySecretAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("traefik watch role missing: %v", err)
 	}
-	if roleAllows(role, "", "secrets", "get") {
-		t.Fatalf("traefik watch role should not grant secret access: %#v", role.Rules)
+	for _, verb := range []string{"get", "list", "watch"} {
+		if !roleAllows(role, "", "secrets", verb) {
+			t.Fatalf("traefik watch role should restore %s access to secrets: %#v", verb, role.Rules)
+		}
 	}
 }
 
