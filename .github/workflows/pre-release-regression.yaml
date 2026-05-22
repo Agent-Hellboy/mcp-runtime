@@ -249,6 +249,7 @@ jobs:
           output: trivy-misconfig.sarif
           exit-code: "0"
           skip-dirs: inspirations/mcp-gateway-registry
+          trivyignores: .trivyignore.yaml
           severity: CRITICAL,HIGH
           limit-severities-for-sarif: true
           hide-progress: true
