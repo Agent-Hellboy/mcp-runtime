@@ -2648,12 +2648,17 @@ refresh_kind_kubeconfig() {
   elif [[ -s "${KUBECONFIG_FILE}" ]]; then
     rm -f "${refreshed_kubeconfig}"
     echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; reusing existing ${KUBECONFIG_FILE}" >&2
+  elif kubectl config view --raw --minify > "${refreshed_kubeconfig}" 2>/dev/null && [[ -s "${refreshed_kubeconfig}" ]]; then
+    mv "${refreshed_kubeconfig}" "${KUBECONFIG_FILE}"
+    echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; captured current kubectl context" >&2
   else
     rm -f "${refreshed_kubeconfig}"
     return 1
   fi
   export KUBECONFIG="${KUBECONFIG_FILE}"
-  kubectl config use-context "kind-${CLUSTER_NAME}"
+  if kubectl config get-contexts "kind-${CLUSTER_NAME}" >/dev/null 2>&1; then
+    kubectl config use-context "kind-${CLUSTER_NAME}"
+  fi
   mkdir -p "${HOME}/.kube"
   cp "${KUBECONFIG_FILE}" "${HOME}/.kube/config"
 }
