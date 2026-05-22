@@ -43,6 +43,7 @@ flowchart LR
 | CLI entrypoint | [`cmd-mcp-runtime.md`](cmd-mcp-runtime.md) | Shows how the binary starts, wires foldered Cobra commands, and reports errors. |
 | CLI implementation | [`internal-cli.md`](internal-cli.md) | Covers the `internal/cli/root` routing layer plus setup, bootstrap, registry, server, access, adapter, team, status, sentinel, auth, and pipeline behavior. |
 | Kubernetes API types | [`api-types.md`](api-types.md) | Defines the public CRD shapes consumed by users, tests, and the operator. |
+| Request flows | [`request-flows.md`](request-flows.md) | Maps CLI, UI/API, registry, adapter, MCP runtime, policy, analytics, tenancy, and pre-release paths to components and E2E scenarios. |
 | Generated Go reference | [`go-package-reference.md`](go-package-reference.md) | Captures `go doc` output for the main contributor-facing packages. |
 | Agent adapters | `internal/agentadapter/`, `internal/cli/adapter/` | HTTP proxy and stdio shim behavior for forwarding agent MCP traffic with issued governance headers; exposed via `mcp-runtime adapter proxy/stdio`. |
 | Operator | [`cmd-operator.md`](cmd-operator.md) | Explains manager startup and reconciliation from desired state to Kubernetes resources. |
@@ -149,8 +150,9 @@ Keep shared behavior in `pkg/` only when multiple binaries or services need it. 
 2. Read [CLI internals](internal-cli.md) and [cmd/mcp-runtime](cmd-mcp-runtime.md) to see how users create, inspect, and deploy resources.
 3. Read [operator internals](cmd-operator.md) to understand how `MCPServer` state becomes Kubernetes workloads and ingress.
 4. Read [config and examples](config-and-examples.md), then run or inspect the example server manifests.
-5. Read [tests](tests.md) before making changes; it shows the fastest feedback loop and the broader CI safety net.
-6. Use the change playbooks below to choose the narrowest useful tests before
+5. Read [request flows](request-flows.md) when a change crosses CLI, UI, API, registry, gateway, policy, analytics, or tenant boundaries.
+6. Read [tests](tests.md) before making changes; it shows the fastest feedback loop and the broader CI safety net.
+7. Use the change playbooks below to choose the narrowest useful tests before
    broadening to full CI coverage.
 
 ## Refreshing Package Reference

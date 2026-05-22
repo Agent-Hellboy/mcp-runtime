@@ -48,6 +48,8 @@ workflow.
 builds and publishes runtime images, runs `setup --test-mode`, deploys example
 servers, exercises MCP requests, and verifies governance/observability paths.
 
+For the component-level request paths behind each scenario, see [Request Flows](request-flows.md).
+
 Useful local runs:
 
 ```bash
@@ -145,6 +147,8 @@ and public platform modes, cache replay, benchmarks, repository/operator-image
 SBOMs, gosec, Gitleaks, and Trivy scans. Security workflows add pinned gosec,
 Trivy repository/image scans with SARIF upload, pinned Gitleaks secret
 scanning, operator-image SBOM artifacts, and pull-request dependency review.
+
+Use the [request-flow matrix](request-flows.md#use-case-matrix) to confirm a pre-release run exercises every user-facing control-plane, runtime, registry, policy, analytics, and tenant flow.
 
 ## Pre-commit Hooks
 
