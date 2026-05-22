@@ -41,6 +41,7 @@ type accessSessionRequest struct {
 	PolicyVersion  string                         `json:"policyVersion"`
 }
 
+// HandleRuntimeGrants lists and applies MCPAccessGrant resources within the caller's allowed namespace scope.
 func (s *RuntimeServer) HandleRuntimeGrants(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -180,7 +181,7 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, map[string]interface{}{"grant": sentinelaccess.ToGrantSummary(*applied)})
 }
 
-// HandleRuntimeSessions returns MCPAgentSession resources.
+// HandleRuntimeSessions lists and applies MCPAgentSession resources within the caller's allowed namespace scope.
 func (s *RuntimeServer) HandleRuntimeSessions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -425,6 +426,7 @@ func accessServerCacheKey(namespace, name string) string {
 	return strings.TrimSpace(namespace) + "\x00" + strings.TrimSpace(name)
 }
 
+// HandleGrantItemPath handles GET, DELETE, and enable or disable actions for one MCPAccessGrant.
 func (s *RuntimeServer) HandleGrantItemPath(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -740,8 +742,7 @@ func validDecision(decision sentinelaccess.PolicyDecision) bool {
 	}
 }
 
-// HandleSessionItemPath handles POST /api/runtime/sessions/{namespace}/{name}/revoke|unrevoke
-// and DELETE /api/runtime/sessions/{namespace}/{name}.
+// HandleSessionItemPath handles GET, DELETE, and revoke or unrevoke actions for one MCPAgentSession.
 func (s *RuntimeServer) HandleSessionItemPath(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:

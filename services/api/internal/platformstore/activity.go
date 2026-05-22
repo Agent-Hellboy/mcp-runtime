@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// ListUserActivity returns user accounts with login, failure, key, and credential counters.
 func (s *Store) ListUserActivity(ctx context.Context, filter OperationsFilter) ([]UserActivity, error) {
 	limit := filter.Limit
 	if limit <= 0 {
@@ -84,6 +85,7 @@ LIMIT $` + strconv.Itoa(limitArg)
 	return out, rows.Err()
 }
 
+// ListAuditLogs returns platform audit records matching an operations filter.
 func (s *Store) ListAuditLogs(ctx context.Context, filter OperationsFilter) ([]AuditLog, error) {
 	limit := filter.Limit
 	if limit <= 0 {
@@ -138,6 +140,7 @@ LIMIT $` + strconv.Itoa(limitArg)
 	return out, rows.Err()
 }
 
+// ListImageActivity returns audit-derived image publish and deploy activity.
 func (s *Store) ListImageActivity(ctx context.Context, filter OperationsFilter) ([]ImageActivity, error) {
 	limit := filter.Limit
 	if limit <= 0 {
@@ -190,6 +193,7 @@ LIMIT $` + strconv.Itoa(limitArg)
 	return out, rows.Err()
 }
 
+// WriteAudit records a platform audit event and logs failures without interrupting callers.
 func (s *Store) WriteAudit(ctx context.Context, ev AuditEvent) {
 	if s == nil || s.db == nil {
 		return
@@ -200,6 +204,7 @@ func (s *Store) WriteAudit(ctx context.Context, ev AuditEvent) {
 	}
 }
 
+// UserActivityWhere builds the SQL WHERE clause and arguments for user activity queries.
 func UserActivityWhere(filter OperationsFilter) (string, []any) {
 	conditions := []string{"u.deleted_at IS NULL"}
 	args := make([]any, 0)
@@ -233,6 +238,7 @@ func platformAuditWhere(filter OperationsFilter) (string, []any) {
 	return "WHERE " + strings.Join(conditions, " AND "), args
 }
 
+// AuditTimeWhere adds audit timestamp predicates to an existing argument list.
 func AuditTimeWhere(alias string, filter OperationsFilter, args *[]any) string {
 	conditions := make([]string, 0, 2)
 	if !filter.Since.IsZero() {
@@ -249,6 +255,7 @@ func AuditTimeWhere(alias string, filter OperationsFilter, args *[]any) string {
 	return " AND " + strings.Join(conditions, " AND ")
 }
 
+// AdminOperationsUserSearch returns a normalized user search string for operations filters.
 func AdminOperationsUserSearch(filter OperationsFilter) string {
 	if filter.UserSearch != "" {
 		return filter.UserSearch

@@ -55,6 +55,7 @@ func (s *RuntimeServer) userKeySecretName() string {
 	return defaultUserKeySecretName
 }
 
+// AuthenticateUserAPIKey validates a raw user API key against the Kubernetes-backed key store.
 func (s *RuntimeServer) AuthenticateUserAPIKey(ctx context.Context, rawKey string) (principal, bool, error) {
 	if s.k8sClients == nil {
 		return principal{}, false, nil
@@ -82,6 +83,7 @@ func (s *RuntimeServer) AuthenticateUserAPIKey(ctx context.Context, rawKey strin
 	return principal{}, false, nil
 }
 
+// ListUserAPIKeys returns metadata for API keys owned by one platform user.
 func (s *RuntimeServer) ListUserAPIKeys(ctx context.Context, userID string) ([]userAPIKeySummary, error) {
 	if s.k8sClients == nil {
 		return nil, errors.New("kubernetes not available")
@@ -101,6 +103,7 @@ func (s *RuntimeServer) ListUserAPIKeys(ctx context.Context, userID string) ([]u
 	return out, nil
 }
 
+// CreateUserAPIKey stores a new hashed user API key and returns the one-time raw key value.
 func (s *RuntimeServer) CreateUserAPIKey(ctx context.Context, userID, name string) (userAPIKeySummary, string, error) {
 	if s.k8sClients == nil {
 		return userAPIKeySummary{}, "", errors.New("kubernetes not available")
@@ -139,6 +142,7 @@ func (s *RuntimeServer) CreateUserAPIKey(ctx context.Context, userID, name strin
 	return keySummary(rec), rawKey, nil
 }
 
+// RevokeUserAPIKey marks a user's API key revoked and returns its final metadata.
 func (s *RuntimeServer) RevokeUserAPIKey(ctx context.Context, userID, id string) (userAPIKeySummary, error) {
 	if s.k8sClients == nil {
 		return userAPIKeySummary{}, errors.New("kubernetes not available")

@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// HandleDashboardSummary returns analytics and live control-plane counters for the Sentinel dashboard.
 func (s *RuntimeServer) HandleDashboardSummary(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -50,6 +51,7 @@ func (s *RuntimeServer) HandleDashboardSummary(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, summary)
 }
 
+// HandleRuntimeComponents returns admin-only health details for Sentinel platform components.
 func (s *RuntimeServer) HandleRuntimeComponents(w http.ResponseWriter, r *http.Request) {
 	if p, ok := principalFromContext(r.Context()); !ok || p.Role != roleAdmin {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})

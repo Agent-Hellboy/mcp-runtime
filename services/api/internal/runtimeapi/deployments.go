@@ -69,6 +69,7 @@ type deployRequest struct {
 	Namespace string `json:"namespace,omitempty"`
 }
 
+// HandleDeployments lists and applies user-managed Kubernetes deployments for the caller's namespace scope.
 func (s *RuntimeServer) HandleDeployments(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -81,6 +82,7 @@ func (s *RuntimeServer) HandleDeployments(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// HandleDeploymentItem deletes a user-managed Kubernetes deployment and service after namespace authorization.
 func (s *RuntimeServer) HandleDeploymentItem(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		w.Header().Set("allow", "DELETE")
@@ -171,6 +173,7 @@ func (s *RuntimeServer) handleDeploymentList(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]any{"deployments": deploymentSummaries(list.Items)})
 }
 
+// HandleAdminDeployments lists platform-visible deployments across namespaces for admins.
 func (s *RuntimeServer) HandleAdminDeployments(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("allow", http.MethodGet)
@@ -196,6 +199,7 @@ func (s *RuntimeServer) HandleAdminDeployments(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]any{"deployments": summaries})
 }
 
+// ListAdminDeploymentSummaries returns deployment summaries from all namespaces or one requested namespace.
 func (s *RuntimeServer) ListAdminDeploymentSummaries(ctx context.Context, namespace string) ([]map[string]any, error) {
 	if s.k8sClients == nil {
 		return nil, errors.New("kubernetes not available")
@@ -368,6 +372,7 @@ func (s *RuntimeServer) clientForPrincipal(p principal) (kubernetes.Interface, e
 	return kubernetes.NewForConfig(cfg)
 }
 
+// EnsureCatalogNamespace creates or updates a catalog namespace with platform labels, security defaults, and ingress watch access.
 func (s *RuntimeServer) EnsureCatalogNamespace(ctx context.Context, namespace string) error {
 	namespace = strings.TrimSpace(namespace)
 	if s.k8sClients == nil || namespace == "" {
@@ -903,6 +908,7 @@ func upsertService(ctx context.Context, client kubernetes.Interface, svc *corev1
 	return client.CoreV1().Services(svc.Namespace).Update(ctx, existing, metav1.UpdateOptions{})
 }
 
+// ValidateDeployImage enforces registry allow-list and namespace-scoped repository rules for deployment images.
 func ValidateDeployImage(image, namespace, teamSlug, role string) error {
 	parts := strings.Split(image, "/")
 	if len(parts) < 2 {
@@ -923,6 +929,7 @@ func ValidateDeployImage(image, namespace, teamSlug, role string) error {
 	return nil
 }
 
+// ResolveDeployImageReference expands short image names into the platform registry and namespace repository scope.
 func ResolveDeployImageReference(image, namespace, teamSlug string) string {
 	image = strings.TrimSpace(image)
 	if image == "" || imageReferenceHasRegistry(image) {

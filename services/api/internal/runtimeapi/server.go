@@ -12,6 +12,7 @@ import (
 	"mcp-runtime/pkg/sentinel"
 )
 
+// RuntimeServer owns runtime API dependencies for analytics, Kubernetes control-plane access, and platform identity.
 type RuntimeServer struct {
 	db          *chpkg.Client
 	clickhouse  clickhouse.Conn
@@ -78,6 +79,7 @@ func (s *RuntimeServer) controlPlane() *controlplane.Manager {
 	return controlplane.New(s.k8sClients)
 }
 
+// KubernetesAvailable reports whether Kubernetes-backed runtime endpoints can serve requests.
 func (s *RuntimeServer) KubernetesAvailable() bool {
 	return s != nil && s.k8sClients != nil
 }

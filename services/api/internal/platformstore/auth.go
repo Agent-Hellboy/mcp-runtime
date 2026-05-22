@@ -34,6 +34,7 @@ func audienceMatches(audClaim any, expected string) bool {
 	return false
 }
 
+// CreatePasswordUser creates a password-login platform account with the requested role.
 func (s *Store) CreatePasswordUser(ctx context.Context, email, password string, role string) (User, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	role = strings.TrimSpace(role)
@@ -77,6 +78,7 @@ func (s *Store) CreatePasswordUser(ctx context.Context, email, password string, 
 	return User{ID: userID, Email: email, Role: role}, nil
 }
 
+// EnsurePasswordUser creates or updates a password-login account for a fixed role.
 func (s *Store) EnsurePasswordUser(ctx context.Context, email, password string, role string) (User, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	role = strings.TrimSpace(role)
@@ -192,6 +194,7 @@ DO UPDATE SET user_id = EXCLUDED.user_id, password_hash = EXCLUDED.password_hash
 	return u, nil
 }
 
+// AuthenticatePassword validates password-login credentials and returns the matching user.
 func (s *Store) AuthenticatePassword(ctx context.Context, email, password string) (User, bool, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	var u User
@@ -214,6 +217,7 @@ WHERE ai.provider = $1 AND ai.subject = $2`, passwordProvider, email).
 	return u, true, nil
 }
 
+// EnsureOIDCUser binds an OIDC subject to a platform account, creating it when needed.
 func (s *Store) EnsureOIDCUser(ctx context.Context, provider, subject, email, role string) (User, error) {
 	provider = strings.TrimSpace(provider)
 	subject = strings.TrimSpace(subject)
@@ -320,6 +324,7 @@ func (s *Store) ensureOIDCUserRole(ctx context.Context, u User, role string) (Us
 	return u, nil
 }
 
+// GetUser returns a non-deleted user by id.
 func (s *Store) GetUser(ctx context.Context, userID string) (User, bool, error) {
 	var u User
 	err := s.db.QueryRowContext(ctx, `
@@ -336,6 +341,7 @@ WHERE u.id = $1 AND u.deleted_at IS NULL`, userID).
 	return u, true, nil
 }
 
+// DeleteUser deletes a platform user by id.
 func (s *Store) DeleteUser(ctx context.Context, userID string) error {
 	result, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, strings.TrimSpace(userID))
 	if err != nil {
@@ -351,6 +357,7 @@ func (s *Store) DeleteUser(ctx context.Context, userID string) error {
 	return nil
 }
 
+// CreateAccessToken signs a short-lived platform JWT for a user.
 func (s *Store) CreateAccessToken(u User, ttl time.Duration) (string, error) {
 	now := time.Now().UTC()
 	claims := jwt.MapClaims{
@@ -366,6 +373,7 @@ func (s *Store) CreateAccessToken(u User, ttl time.Duration) (string, error) {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.jwtSecret)
 }
 
+// AuthenticateJWT validates a platform JWT and resolves it to the current principal.
 func (s *Store) AuthenticateJWT(token string) (Principal, bool) {
 	if s == nil || len(s.jwtSecret) == 0 {
 		return Principal{}, false
@@ -398,6 +406,7 @@ func (s *Store) AuthenticateJWT(token string) (Principal, bool) {
 	return p, true
 }
 
+// AuthenticateUserAPIKey validates a user API key and resolves its principal.
 func (s *Store) AuthenticateUserAPIKey(ctx context.Context, rawKey string) (Principal, bool, error) {
 	targetHash := hashAPIKey(rawKey)
 	var keyID, userID string
@@ -423,6 +432,7 @@ WHERE ak.key_hash = $1 AND ak.revoked = false`, targetHash).
 	return p, true, nil
 }
 
+// PrincipalForUserID returns the platform principal for a non-deleted user.
 func (s *Store) PrincipalForUserID(ctx context.Context, userID string) (Principal, error) {
 	var p Principal
 	err := s.db.QueryRowContext(ctx, `

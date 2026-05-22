@@ -16,27 +16,38 @@ const (
 	defaultDBMaxIdle    = 5
 )
 
+// OIDCProviderPrefix prefixes provider names stored for OIDC identities.
 const OIDCProviderPrefix = "oidc:"
 
 const (
+	// RoleAdmin is the platform-wide administrator role.
 	RoleAdmin = "admin"
-	RoleUser  = "user"
+	// RoleUser is the regular signed-in platform user role.
+	RoleUser = "user"
 )
 
 const (
+	// SharedCatalogNamespace is the legacy shared MCP server catalog namespace.
 	SharedCatalogNamespace = "mcp-servers"
-	TeamNamespacePrefix    = "mcp-team-"
-	TeamRoleOwner          = "owner"
-	TeamRoleMember         = "member"
-	NamespaceScopeUser     = "user"
-	NamespaceScopeTeam     = "team"
+	// TeamNamespacePrefix is prepended to normalized team slugs for managed namespaces.
+	TeamNamespacePrefix = "mcp-team-"
+	// TeamRoleOwner grants team administration privileges.
+	TeamRoleOwner = "owner"
+	// TeamRoleMember grants regular team membership privileges.
+	TeamRoleMember = "member"
+	// NamespaceScopeUser marks a namespace owned by a single platform user.
+	NamespaceScopeUser = "user"
+	// NamespaceScopeTeam marks a namespace owned by a platform team.
+	NamespaceScopeTeam = "team"
 )
 
+// Store owns platform identity, API key, team, namespace, and audit persistence.
 type Store struct {
 	db        *sql.DB
 	jwtSecret []byte
 }
 
+// User is the persisted platform account shape returned by identity operations.
 type User struct {
 	ID        string `json:"id"`
 	Email     string `json:"email"`
@@ -44,6 +55,7 @@ type User struct {
 	Namespace string `json:"namespace"`
 }
 
+// Principal is the authenticated platform identity attached to API requests.
 type Principal struct {
 	Role              string          `json:"role"`
 	Subject           string          `json:"subject,omitempty"`
@@ -56,6 +68,7 @@ type Principal struct {
 	IsService         bool            `json:"is_service,omitempty"`
 }
 
+// PrincipalTeam describes a team membership embedded in an authenticated principal.
 type PrincipalTeam struct {
 	ID        string `json:"id"`
 	Slug      string `json:"slug"`
@@ -64,10 +77,12 @@ type PrincipalTeam struct {
 	Role      string `json:"role"`
 }
 
+// UserID returns the platform user identifier carried by the principal subject.
 func (p Principal) UserID() string {
 	return strings.TrimSpace(p.Subject)
 }
 
+// HasNamespace reports whether the principal can see or use namespace.
 func (p Principal) HasNamespace(namespace string) bool {
 	namespace = strings.TrimSpace(namespace)
 	if namespace == "" {
@@ -84,6 +99,7 @@ func (p Principal) HasNamespace(namespace string) bool {
 	return false
 }
 
+// TeamRole returns the principal's role for a team slug, or empty when absent.
 func (p Principal) TeamRole(slug string) string {
 	slug = strings.TrimSpace(slug)
 	for _, team := range p.Teams {
@@ -94,6 +110,7 @@ func (p Principal) TeamRole(slug string) string {
 	return ""
 }
 
+// TeamForNamespace returns the principal's team membership for a namespace.
 func (p Principal) TeamForNamespace(namespace string) (PrincipalTeam, bool) {
 	namespace = strings.TrimSpace(namespace)
 	for _, team := range p.Teams {
@@ -104,6 +121,7 @@ func (p Principal) TeamForNamespace(namespace string) (PrincipalTeam, bool) {
 	return PrincipalTeam{}, false
 }
 
+// Team is a managed platform team and its Kubernetes namespace.
 type Team struct {
 	ID        string    `json:"id"`
 	Slug      string    `json:"slug"`
@@ -112,8 +130,10 @@ type Team struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// TeamMembership is the platform team membership API contract.
 type TeamMembership = platform.TeamMembership
 
+// APIKeySummary is the non-secret metadata for a user API key or registry credential.
 type APIKeySummary struct {
 	ID        string     `json:"id"`
 	Name      string     `json:"name"`
@@ -123,6 +143,7 @@ type APIKeySummary struct {
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 }
 
+// AuditEvent is the write-side platform audit envelope.
 type AuditEvent struct {
 	UserID           string
 	Action           string
@@ -139,6 +160,7 @@ type AuditEvent struct {
 	DeploymentTarget string
 }
 
+// AuditLog is the read-side platform audit record returned to administrators.
 type AuditLog struct {
 	ID               int64     `json:"id"`
 	UserID           string    `json:"user_id,omitempty"`
@@ -158,6 +180,7 @@ type AuditLog struct {
 	CreatedAt        time.Time `json:"created_at"`
 }
 
+// OperationsFilter constrains platform operations and activity queries.
 type OperationsFilter struct {
 	User       string
 	UserSearch string
@@ -166,6 +189,7 @@ type OperationsFilter struct {
 	Limit      int
 }
 
+// OperationsFilterResponse is the API echo of an operations filter.
 type OperationsFilterResponse struct {
 	User  string `json:"user,omitempty"`
 	Since string `json:"since,omitempty"`
@@ -173,6 +197,7 @@ type OperationsFilterResponse struct {
 	Limit int    `json:"limit"`
 }
 
+// UserActivity summarizes recent platform activity for a user account.
 type UserActivity struct {
 	ID                  string     `json:"id"`
 	Email               string     `json:"email"`
@@ -187,6 +212,7 @@ type UserActivity struct {
 	APIKeys             int64      `json:"api_keys"`
 }
 
+// ImageActivity describes an image publish or deploy-related audit entry.
 type ImageActivity struct {
 	UserID           string    `json:"user_id,omitempty"`
 	Email            string    `json:"email,omitempty"`

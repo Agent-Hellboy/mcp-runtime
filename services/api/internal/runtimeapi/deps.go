@@ -24,6 +24,7 @@ const (
 	teamApplyMaxBytes       = 8 * 1024
 )
 
+// Principal is the authenticated platform identity contract shared by runtime handlers.
 type Principal = apiauth.Principal
 type principal = apiauth.Principal
 type principalTeam = apiauth.PrincipalTeam
@@ -69,6 +70,7 @@ func envOr(key, fallback string) string {
 	return serviceutil.EnvOr(key, fallback)
 }
 
+// NormalizeTeamSlug canonicalizes a team slug using the platform store rules shared with identity APIs.
 func NormalizeTeamSlug(raw string) string {
 	return platformstore.NormalizeTeamSlug(raw)
 }

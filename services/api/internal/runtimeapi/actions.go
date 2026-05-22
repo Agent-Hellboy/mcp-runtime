@@ -9,6 +9,7 @@ import (
 	"mcp-runtime/pkg/sentinel"
 )
 
+// HandleActionRestart restarts one or all Sentinel runtime components.
 func (s *RuntimeServer) HandleActionRestart(w http.ResponseWriter, r *http.Request) {
 	if s.sentinelMgr == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})

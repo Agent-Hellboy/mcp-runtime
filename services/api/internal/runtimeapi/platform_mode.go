@@ -16,6 +16,7 @@ const (
 	defaultPublicCatalogNamespace = publishscope.DefaultPublicCatalogNamespace
 )
 
+// PlatformMode returns the configured platform tenancy mode, defaulting invalid or empty values to tenant mode.
 func PlatformMode() string {
 	raw := strings.TrimSpace(os.Getenv("PLATFORM_MODE"))
 	if raw == "" {
@@ -33,6 +34,7 @@ func PlatformMode() string {
 	}
 }
 
+// PublicCatalogEnabled reports whether the runtime should expose public catalog behavior.
 func PublicCatalogEnabled() bool {
 	return PlatformMode() == platformModePublic
 }
@@ -180,6 +182,7 @@ func publishNamespacesForPrincipal(p principal) []string {
 	return dedupeNonEmptyStrings(namespaces)
 }
 
+// PublicCatalogPrincipal returns the synthetic principal used for unauthenticated public catalog reads.
 func PublicCatalogPrincipal() Principal {
 	namespaces := modeCatalogNamespaces()
 	return Principal{
