@@ -5006,6 +5006,7 @@ spec:
   port: 8088
   servicePort: 80
   publicPathPrefix: ${prefix}
+  ingressHost: ${SERVER_HOST}
   ingressPath: /${prefix}/mcp
   resources:
     requests:
@@ -5123,12 +5124,14 @@ EOF
   # the sidecar observes the updated policy.
 
   echo "[multitenancy] running cross-tenant deny matrix"
-  MT_BASE_A="http://localhost:${TRAEFIK_PORT}/${MT_TENANT_A}/mcp"
-  MT_BASE_B="http://localhost:${TRAEFIK_PORT}/${MT_TENANT_B}/mcp"
+  MT_BASE_A="http://127.0.0.1:${TRAEFIK_PORT}/${MT_TENANT_A}/mcp"
+  MT_BASE_B="http://127.0.0.1:${TRAEFIK_PORT}/${MT_TENANT_B}/mcp"
   MT_REPORT="${WORKDIR}/multitenancy-matrix.json"
 
+  if ! env \
   MT_BASE_A="${MT_BASE_A}" \
   MT_BASE_B="${MT_BASE_B}" \
+  MT_HOST="${SERVER_HOST}" \
   MT_PROTO="${MCP_PROTOCOL_VERSION}" \
   MT_HUMAN_A="${MT_HUMAN_A}" MT_AGENT_A="${MT_AGENT_A}" MT_SESSION_A="${MT_SESSION_A}" \
   MT_HUMAN_B="${MT_HUMAN_B}" MT_AGENT_B="${MT_AGENT_B}" MT_SESSION_B="${MT_SESSION_B}" \
@@ -5139,6 +5142,7 @@ import json, os, subprocess, sys, tempfile, time
 PROTO = os.environ["MT_PROTO"]
 A = os.environ["MT_BASE_A"]
 B = os.environ["MT_BASE_B"]
+HOST = os.environ.get("MT_HOST", "")
 report = []
 
 def post(base, body, human, agent, sess, mcp_session=""):
@@ -5152,6 +5156,7 @@ def post(base, body, human, agent, sess, mcp_session=""):
             "-H", "accept: application/json, text/event-stream",
             "-H", f"Mcp-Protocol-Version: {PROTO}",
         ]
+        if HOST:    cmd += ["-H", f"Host: {HOST}"]
         if human:   cmd += ["-H", f"X-MCP-Human-ID: {human}"]
         if agent:   cmd += ["-H", f"X-MCP-Agent-ID: {agent}"]
         if sess:    cmd += ["-H", f"X-MCP-Agent-Session: {sess}"]
@@ -5243,6 +5248,14 @@ for r in report:
     print(f"  [{mark}] {r['case']:<42}  expect={r['expect']}  got={r['got']} ({r['got_at']}, attempts={r.get('attempts', 1)}){detail}")
 sys.exit(1 if failed else 0)
 PY
+  then
+    echo "[debug] multitenancy matrix failed; collecting route diagnostics" >&2
+    [[ -f "${MT_REPORT}" ]] && cat "${MT_REPORT}" >&2 || true
+    kubectl get mcpserver,deploy,svc,ingress,networkpolicy -n "${MT_NS}" -o wide >&2 || true
+    kubectl get ingress -n "${MT_NS}" -o yaml >&2 || true
+    kubectl logs -n traefik deploy/traefik --tail=200 >&2 || true
+    exit 1
+  fi
 
   echo "[multitenancy] cleaning up tenant resources"
   kubectl delete mcpaccessgrant "alice-${MT_TENANT_A}" "bob-${MT_TENANT_B}" -n "${MT_NS}" --ignore-not-found --wait=false >/dev/null
