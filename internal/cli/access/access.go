@@ -19,8 +19,11 @@ func NewWithManager(mgr *AccessManager) *cobra.Command {
 		Short: "Manage grants and agent sessions",
 		Long: `Commands for managing MCPAccessGrant and MCPAgentSession resources that feed the gateway policy layer.
 
-With mcp-runtime auth login, commands use the platform API by default. Use --use-kube
-to target the cluster with kubectl and a kubeconfig (cluster admin path).`,
+With mcp-runtime auth login, commands use the platform API by default for normal
+user and admin workflows. Use --use-kube only for admin/dev/test direct
+Kubernetes operations; it requires kubectl plus admin/operator kubeconfig and
+RBAC access. For platform workflows, run mcp-runtime auth login --api-url
+<platform-url> and stay on the platform API path.`,
 	}
 
 	mgr.BindUseKubeFlag(cmd)

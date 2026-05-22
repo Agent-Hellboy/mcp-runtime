@@ -12,6 +12,7 @@ import (
 
 	"mcp-runtime/internal/cli/core"
 	kubeapply "mcp-runtime/internal/cli/kube"
+	"mcp-runtime/internal/cli/kubeerr"
 	"mcp-runtime/internal/cli/platformapi"
 )
 
@@ -26,7 +27,7 @@ const (
 type AccessManager struct {
 	kubectl *core.KubectlClient
 	logger  *zap.Logger
-	// useKube forces kubectl; when false, the platform API is used when logged in via mcp-runtime auth.
+	// useKube forces direct Kubernetes mode; when false, commands require platform API auth.
 	useKube bool
 }
 
@@ -42,7 +43,7 @@ func DefaultAccessManager(runtime *core.Runtime) *AccessManager {
 
 // BindUseKubeFlag wires the shared --use-kube flag onto the command.
 func (m *AccessManager) BindUseKubeFlag(cmd *cobra.Command) {
-	cmd.PersistentFlags().BoolVar(&m.useKube, "use-kube", false, "Use kubectl and local kubeconfig instead of the platform API for supported commands")
+	cmd.PersistentFlags().BoolVar(&m.useKube, "use-kube", false, "Use direct Kubernetes mode with kubectl; requires admin/operator cluster access (admin/dev/test only)")
 }
 
 func (m *AccessManager) accessListQueryNamespace(namespace string, allNamespaces bool) string {
@@ -56,7 +57,7 @@ func (m *AccessManager) accessListQueryNamespace(namespace string, allNamespaces
 	}
 }
 
-// ListAccessResources lists grants or sessions via the platform API when configured, else kubectl.
+// ListAccessResources lists grants or sessions via the platform API unless --use-kube is set.
 func (m *AccessManager) ListAccessResources(resource, namespace string, allNamespaces bool) error {
 	plat, kube, err := platformapi.ResolvePlatformOrKube(m.useKube)
 	if err != nil {
@@ -77,7 +78,7 @@ func (m *AccessManager) ListAccessResources(resource, namespace string, allNames
 	}
 
 	if err := m.kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
-		return core.WrapWithSentinelAndContext(nil, err, fmt.Sprintf("failed to list %s resources: %v", resource, err), map[string]any{
+		return core.WrapWithSentinelAndContext(nil, err, kubeerr.DirectModeFailureMessage(fmt.Sprintf("failed to list %s resources", resource), err.Error()), map[string]any{
 			"resource":  resource,
 			"namespace": namespace,
 			"component": "access",
@@ -117,7 +118,7 @@ func (m *AccessManager) listAccessPlatform(ctx context.Context, plat *platformap
 	}
 }
 
-// GetAccessResource prints one grant or session via platform API or kubectl.
+// GetAccessResource prints one grant or session via platform API or explicit direct Kubernetes mode.
 func (m *AccessManager) GetAccessResource(resource, name, namespace string) error {
 	name, namespace, err := validateAccessResourceInput(name, namespace)
 	if err != nil {
@@ -134,7 +135,7 @@ func (m *AccessManager) GetAccessResource(resource, name, namespace string) erro
 
 	args := []string{"get", resource, name, "-n", namespace, "-o", "yaml"}
 	if err := m.kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
-		return core.WrapWithSentinelAndContext(nil, err, fmt.Sprintf("failed to get %s %q in namespace %q: %v", resource, name, namespace, err), map[string]any{
+		return core.WrapWithSentinelAndContext(nil, err, kubeerr.DirectModeFailureMessage(fmt.Sprintf("failed to get %s %q in namespace %q", resource, name, namespace), err.Error()), map[string]any{
 			"resource":  resource,
 			"name":      name,
 			"namespace": namespace,
@@ -167,7 +168,7 @@ func (m *AccessManager) getAccessPlatform(ctx context.Context, plat *platformapi
 	}
 }
 
-// ApplyAccessResource applies a grant or session manifest via platform API or kubectl.
+// ApplyAccessResource applies a grant or session manifest via platform API or explicit direct Kubernetes mode.
 func (m *AccessManager) ApplyAccessResource(file string) error {
 	m.warnAccessManifest(file)
 	plat, kube, err := platformapi.ResolvePlatformOrKube(m.useKube)
@@ -184,7 +185,7 @@ func (m *AccessManager) ApplyAccessResource(file string) error {
 		return nil
 	}
 	if err := kubeapply.ApplyManifestFromFile(m.kubectl.CommandArgs, file, os.Stdout, os.Stderr); err != nil {
-		return core.WrapWithSentinelAndContext(nil, err, fmt.Sprintf("failed to apply access resource from file %q: %v", file, err), map[string]any{
+		return core.WrapWithSentinelAndContext(nil, err, kubeerr.DirectModeFailureMessage(fmt.Sprintf("failed to apply access resource from file %q", file), err.Error()), map[string]any{
 			"file":      file,
 			"component": "access",
 		})
@@ -203,7 +204,7 @@ func (m *AccessManager) warnAccessManifest(file string) {
 	}
 }
 
-// DeleteAccessResource deletes a grant or session via platform API or kubectl.
+// DeleteAccessResource deletes a grant or session via platform API or explicit direct Kubernetes mode.
 func (m *AccessManager) DeleteAccessResource(resource, name, namespace string) error {
 	name, namespace, err := validateAccessResourceInput(name, namespace)
 	if err != nil {
@@ -238,7 +239,7 @@ func (m *AccessManager) DeleteAccessResource(resource, name, namespace string) e
 
 	args := []string{"delete", resource, name, "-n", namespace}
 	if err := m.kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
-		return core.WrapWithSentinelAndContext(nil, err, fmt.Sprintf("failed to delete %s %q in namespace %q: %v", resource, name, namespace, err), map[string]any{
+		return core.WrapWithSentinelAndContext(nil, err, kubeerr.DirectModeFailureMessage(fmt.Sprintf("failed to delete %s %q in namespace %q", resource, name, namespace), err.Error()), map[string]any{
 			"resource":  resource,
 			"name":      name,
 			"namespace": namespace,
@@ -311,7 +312,7 @@ func (m *AccessManager) ToggleAccessResource(resource, name, namespace string, v
 
 	args := []string{"patch", resource, name, "-n", namespace, "--type", "merge", "--patch", string(data)}
 	if err := m.kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
-		return core.WrapWithSentinelAndContext(nil, err, fmt.Sprintf("failed to patch %s %q in namespace %q: %v", resource, name, namespace, err), map[string]any{
+		return core.WrapWithSentinelAndContext(nil, err, kubeerr.DirectModeFailureMessage(fmt.Sprintf("failed to patch %s %q in namespace %q", resource, name, namespace), err.Error()), map[string]any{
 			"resource":  resource,
 			"name":      name,
 			"namespace": namespace,

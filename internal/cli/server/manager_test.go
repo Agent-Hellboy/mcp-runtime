@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -12,7 +14,14 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/pkg/authfile"
 )
+
+func newKubeTestServerManager(kubectl *core.KubectlClient) *ServerManager {
+	mgr := NewServerManager(kubectl, zap.NewNop())
+	mgr.useKube = true
+	return mgr
+}
 
 func TestServerManager_ListServers(t *testing.T) {
 	t.Run("calls kubectl with correct args", func(t *testing.T) {
@@ -20,7 +29,7 @@ func TestServerManager_ListServers(t *testing.T) {
 			DefaultOutput: []byte("server1\nserver2\n"),
 		}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		err := mgr.ListServers("test-ns", "")
 		if err != nil {
@@ -52,7 +61,7 @@ func TestServerManager_ListServers(t *testing.T) {
 	t.Run("trims namespace and passes to kubectl", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		err := mgr.ListServers(" test-ns ", "")
 		if err != nil {
@@ -75,7 +84,7 @@ func TestServerManager_ListServers(t *testing.T) {
 	t.Run("rejects empty namespace", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		err := mgr.ListServers("   ", "")
 		if err != nil {
@@ -97,7 +106,7 @@ func TestServerManager_ListServers(t *testing.T) {
 	t.Run("rejects --team when using kubectl mode", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		err := mgr.ListServers("", "team-a")
 		if err == nil {
@@ -112,11 +121,113 @@ func TestServerManager_ListServers(t *testing.T) {
 	})
 }
 
+func TestServerManager_ListServersModeSelection(t *testing.T) {
+	t.Run("uses platform API by default when logged in", func(t *testing.T) {
+		apiCalls := 0
+		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			apiCalls++
+			if r.URL.Path != "/api/runtime/servers" {
+				t.Fatalf("unexpected platform path %q", r.URL.Path)
+			}
+			if r.Header.Get("x-api-key") != "token-1" {
+				t.Fatalf("x-api-key = %q, want token-1", r.Header.Get("x-api-key"))
+			}
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"servers":[{"name":"workspace-assistant-mcp","namespace":"mcp-team-acme","ready":"True","status":"Ready","age":"1m"}]}`))
+		}))
+		defer api.Close()
+		t.Setenv(authfile.EnvAPIToken, "token-1")
+		t.Setenv(authfile.EnvAPIURL, api.URL)
+		t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
+
+		mock := &core.MockExecutor{}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		out := captureStdout(t, func() error {
+			return mgr.ListServers("", "")
+		})
+		if !strings.Contains(out, "workspace-assistant-mcp") {
+			t.Fatalf("platform list output = %q, want server name", out)
+		}
+		if apiCalls != 1 {
+			t.Fatalf("platform API calls = %d, want 1", apiCalls)
+		}
+		if len(mock.Commands) != 0 {
+			t.Fatalf("default platform mode should not call kubectl, got %d commands", len(mock.Commands))
+		}
+	})
+
+	t.Run("missing platform auth does not fall back to kube", func(t *testing.T) {
+		t.Setenv(authfile.EnvAPIToken, "")
+		t.Setenv(authfile.EnvAPIURL, "")
+		t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
+
+		mock := &core.MockExecutor{}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewServerManager(kubectl, zap.NewNop())
+
+		err := mgr.ListServers("", "")
+		if err == nil {
+			t.Fatal("expected missing platform auth error")
+		}
+		if !strings.Contains(err.Error(), "mcp-runtime auth login --api-url <platform-url>") {
+			t.Fatalf("error missing platform login guidance: %v", err)
+		}
+		if len(mock.Commands) != 0 {
+			t.Fatalf("missing platform auth should not fall back to kubectl, got %d commands", len(mock.Commands))
+		}
+	})
+
+	t.Run("explicit kube does not call platform API", func(t *testing.T) {
+		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Fatalf("platform API should not be called in explicit kube mode: %s", r.URL.Path)
+		}))
+		defer api.Close()
+		t.Setenv(authfile.EnvAPIToken, "token-1")
+		t.Setenv(authfile.EnvAPIURL, api.URL)
+		t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
+
+		mock := &core.MockExecutor{}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := newKubeTestServerManager(kubectl)
+
+		if err := mgr.ListServers("mcp-servers", ""); err != nil {
+			t.Fatalf("unexpected kube list error: %v", err)
+		}
+		if len(mock.Commands) != 1 {
+			t.Fatalf("explicit kube mode commands = %d, want 1", len(mock.Commands))
+		}
+		if !contains(mock.LastCommand().Args, "mcpserver") {
+			t.Fatalf("kubectl args = %v, want mcpserver", mock.LastCommand().Args)
+		}
+	})
+
+	t.Run("explicit kube forbidden error explains admin boundary", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			DefaultRunErr: errors.New(`Error from server (Forbidden): mcpservers.mcpruntime.org is forbidden: User "alice" cannot list resource "mcpservers"`),
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := newKubeTestServerManager(kubectl)
+
+		err := mgr.ListServers("mcp-servers", "")
+		if err == nil {
+			t.Fatal("expected forbidden kube error")
+		}
+		if !strings.Contains(err.Error(), "Direct Kubernetes mode requires admin/operator cluster access") {
+			t.Fatalf("error missing admin boundary guidance: %v", err)
+		}
+		if !strings.Contains(err.Error(), "mcp-runtime auth login --api-url <platform-url>") {
+			t.Fatalf("error missing normal platform guidance: %v", err)
+		}
+	})
+}
+
 func TestServerManager_DeleteServer(t *testing.T) {
 	t.Run("validates server name", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		// Invalid name with special chars
 		err := mgr.DeleteServer("bad;name", "test-ns")
@@ -133,7 +244,7 @@ func TestServerManager_DeleteServer(t *testing.T) {
 	t.Run("calls kubectl delete with correct args", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		err := mgr.DeleteServer("my-server", "test-ns")
 		if err != nil {
@@ -166,7 +277,7 @@ func TestServerManager_GetServer(t *testing.T) {
 	t.Run("validates inputs", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		err := mgr.GetServer("invalid|name", "ns")
 		if err == nil {
@@ -182,7 +293,7 @@ func TestServerManager_CreateServer(t *testing.T) {
 	t.Run("requires image", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		err := mgr.CreateServer("my-server", "test-ns", "", "latest")
 		if err != core.ErrImageRequired {
@@ -196,7 +307,7 @@ func TestServerManager_CreateServer(t *testing.T) {
 	t.Run("validates inputs", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		err := mgr.CreateServer("bad;name", "test-ns", "img", "latest")
 		if err == nil {
@@ -210,7 +321,7 @@ func TestServerManager_CreateServer(t *testing.T) {
 	t.Run("rejects tag with control characters", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		err := mgr.CreateServer("my-server", "test-ns", "repo/image", "bad\n")
 		if err == nil {
@@ -233,7 +344,7 @@ func TestServerManager_CreateServer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create kubectl client: %v", err)
 		}
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		err = mgr.CreateServer("my-server", "test-ns", "repo/image", "v1")
 		if err != nil {
@@ -277,7 +388,7 @@ func TestServerManager_CreateServerFromFile(t *testing.T) {
 	t.Run("rejects missing file", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		err := mgr.CreateServerFromFile("does-not-exist.yaml")
 		if err == nil {
@@ -291,7 +402,7 @@ func TestServerManager_CreateServerFromFile(t *testing.T) {
 	t.Run("rejects directory path", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		dir := t.TempDir()
 		err := mgr.CreateServerFromFile(dir)
@@ -315,7 +426,7 @@ func TestServerManager_CreateServerFromFile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create kubectl client: %v", err)
 		}
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		tmpFile, err := os.CreateTemp("", "mcpserver-test-*.yaml")
 		if err != nil {
@@ -355,7 +466,7 @@ func TestServerManager_ViewServerLogs(t *testing.T) {
 	t.Run("builds logs command without follow", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		err := mgr.ViewServerLogs("my-server", "test-ns", false, false, 200, "")
 		if err != nil {
@@ -374,7 +485,7 @@ func TestServerManager_ViewServerLogs(t *testing.T) {
 	t.Run("adds follow flag when requested", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		err := mgr.ViewServerLogs("my-server", "test-ns", true, false, 200, "")
 		if err != nil {
@@ -393,7 +504,7 @@ func TestServerManager_GetServerSuccess(t *testing.T) {
 		DefaultOutput: []byte("apiVersion: v1\nkind: MCPServer"),
 	}
 	kubectl := core.NewTestKubectlClient(mock)
-	mgr := NewServerManager(kubectl, zap.NewNop())
+	mgr := newKubeTestServerManager(kubectl)
 
 	err := mgr.GetServer("my-server", "test-ns")
 	if err != nil {
@@ -408,7 +519,7 @@ func TestServerManager_CreateServerErrors(t *testing.T) {
 	t.Run("rejects invalid image with control chars", func(t *testing.T) {
 		mock := &core.MockExecutor{}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		err := mgr.CreateServer("my-server", "test-ns", "bad\nimage", "latest")
 		if err == nil {
@@ -419,7 +530,7 @@ func TestServerManager_CreateServerErrors(t *testing.T) {
 	t.Run("handles kubectl apply error", func(t *testing.T) {
 		mock := &core.MockExecutor{DefaultRunErr: errors.New("apply failed")}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		err := mgr.CreateServer("my-server", "test-ns", "repo/image", "latest")
 		if err == nil {
@@ -431,7 +542,7 @@ func TestServerManager_CreateServerErrors(t *testing.T) {
 func TestServerManager_ViewServerLogsError(t *testing.T) {
 	mock := &core.MockExecutor{}
 	kubectl := core.NewTestKubectlClient(mock)
-	mgr := NewServerManager(kubectl, zap.NewNop())
+	mgr := newKubeTestServerManager(kubectl)
 
 	err := mgr.ViewServerLogs("bad;name", "test-ns", false, false, 200, "")
 	if err == nil {
@@ -448,7 +559,7 @@ func TestServerManager_ServerStatus(t *testing.T) {
 			DefaultOutput: []byte(""),
 		}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		var buf bytes.Buffer
 		setDefaultPrinterWriter(t, &buf)
@@ -475,7 +586,7 @@ func TestServerManager_ServerStatus(t *testing.T) {
 			},
 		}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		var buf bytes.Buffer
 		setDefaultPrinterWriter(t, &buf)
@@ -494,7 +605,7 @@ func TestServerManager_ServerStatus(t *testing.T) {
 			DefaultErr: errors.New("not found"),
 		}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		var buf bytes.Buffer
 		setDefaultPrinterWriter(t, &buf)
@@ -520,7 +631,7 @@ func TestServerManager_ServerStatus(t *testing.T) {
 			},
 		}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		var buf bytes.Buffer
 		setDefaultPrinterWriter(t, &buf)
@@ -542,7 +653,7 @@ func TestServerManager_ServerStatus(t *testing.T) {
 			},
 		}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		var buf bytes.Buffer
 		setDefaultPrinterWriter(t, &buf)
@@ -566,7 +677,7 @@ func TestServerManager_ServerStatus(t *testing.T) {
 			},
 		}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, zap.NewNop())
+		mgr := newKubeTestServerManager(kubectl)
 
 		var buf bytes.Buffer
 		setDefaultPrinterWriter(t, &buf)
@@ -585,6 +696,36 @@ func setDefaultPrinterWriter(t *testing.T, w *bytes.Buffer) {
 	t.Cleanup(func() {
 		core.DefaultPrinter.Writer = orig
 	})
+}
+
+func captureStdout(t *testing.T, fn func() error) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stdout: %v", err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() {
+		os.Stdout = orig
+	})
+
+	runErr := fn()
+	if closeErr := w.Close(); closeErr != nil {
+		t.Fatalf("close stdout pipe: %v", closeErr)
+	}
+	os.Stdout = orig
+	out, readErr := io.ReadAll(r)
+	if readErr != nil {
+		t.Fatalf("read stdout: %v", readErr)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("close stdout reader: %v", err)
+	}
+	if runErr != nil {
+		t.Fatalf("captured function returned error: %v", runErr)
+	}
+	return string(out)
 }
 
 func contains(slice []string, val string) bool {

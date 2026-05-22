@@ -204,6 +204,9 @@ Notes:
 - `MCP_PLATFORM_API_TOKEN` overrides any saved token when set
 - `MCP_PLATFORM_API_URL` can provide the default API base URL
 - kubeconfig-based cluster commands are separate from platform auth
+- `--use-kube` is an admin/dev/test escape hatch for supported server and
+  access commands; it requires kubectl plus admin/operator Kubernetes RBAC and
+  is not the normal platform API path
 
 ## status
 
@@ -318,23 +321,36 @@ See
 ## server
 
 ```bash
-# Create / apply / export
-mcp-runtime server create payments --image repo/payments --tag latest
-mcp-runtime server create payments --file server.yaml
-mcp-runtime server apply --file server.yaml
-mcp-runtime server export payments --file payments.yaml
+# Normal platform path
+mcp-runtime auth login --api-url https://platform.example.com
+mcp-runtime server list
+mcp-runtime server deploy payments --scope public --image payments --tag v1
+mcp-runtime server get payments
+mcp-runtime server policy inspect payments
+
+# Admin/operator direct Kubernetes path
+mcp-runtime server create payments --image repo/payments --tag latest --use-kube
+mcp-runtime server create payments --file server.yaml --use-kube
+mcp-runtime server apply --file server.yaml --use-kube
+mcp-runtime server export payments --file payments.yaml --use-kube
 
 # Patch / inspect
-mcp-runtime server patch payments --patch '{"spec":{"imageTag":"v2"}}'
+mcp-runtime server patch payments --patch '{"spec":{"imageTag":"v2"}}' --use-kube
 mcp-runtime server status --namespace mcp-servers
 mcp-runtime server policy inspect payments
-mcp-runtime server logs payments --follow
+mcp-runtime server logs payments --follow --use-kube
 
 # Build (push lives under registry)
 mcp-runtime server build image payments --tag v1 --platform linux/amd64
 mcp-runtime registry push --scope public --image <exact-image-ref-from-build>
-mcp-runtime server deploy payments --scope public --image payments --tag v1
 ```
+
+When `--use-kube` is absent, supported `server` commands use the platform API
+and require `mcp-runtime auth login --api-url <platform-url>` or
+`MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`. `--team` is a platform API
+resolver; it is rejected in direct Kubernetes mode. In `--use-kube` mode, use
+`--namespace` and expect kubeconfig/RBAC failures unless the current principal
+has admin/operator cluster access.
 
 `server patch` accepts inline `--patch` or `--patch-file` with `merge`, `json`, or `strategic` modes.
 
@@ -397,6 +413,7 @@ For `kind` provisioning, the CLI validates `--nodes`, checks that the Docker dae
 # Local kind cluster
 mcp-runtime cluster provision --provider kind --nodes 3
 mcp-runtime setup
+mcp-runtime auth login --api-url http://localhost:18080
 
 # Push a server image
 mcp-runtime server build image payments
@@ -416,7 +433,7 @@ mcp-runtime sentinel port-forward ui
 mcp-runtime sentinel logs api --since 10m
 
 # Patch a running server
-mcp-runtime server patch payments --patch '{"spec":{"imageTag":"v2"}}'
+mcp-runtime server patch payments --patch '{"spec":{"imageTag":"v2"}}' --use-kube
 mcp-runtime server status
 mcp-runtime status
 ```

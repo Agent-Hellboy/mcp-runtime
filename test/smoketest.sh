@@ -32,7 +32,7 @@ docker build -t mcp-sentinel-api:latest -f services/api/Dockerfile .
 docker build -t mcp-sentinel-ingest:latest -f services/ingest/Dockerfile .
 docker build -t mcp-sentinel-processor:latest -f services/processor/Dockerfile .
 docker build -t mcp-sentinel-ui:latest -f services/ui/Dockerfile .
-docker build -t workspace-assistant-mcp:latest examples/go-mcp-server
+docker build -t workspace-assistant-mcp:latest examples/workspace-assistant-mcp
 docker build -t mcp-sentinel-mcp-gateway:latest -f services/mcp-gateway/Dockerfile .
 
 kind load docker-image mcp-sentinel-api:latest --name "$KIND_CLUSTER_NAME"

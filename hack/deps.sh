@@ -34,7 +34,7 @@ cmd_go_modules() {
 	go mod tidy
 
 	local mods=(
-		"examples/go-mcp-server"
+		"examples/workspace-assistant-mcp"
 		"services/api"
 		"services/ingest"
 		"services/mcp-gateway"

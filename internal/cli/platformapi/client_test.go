@@ -3,6 +3,7 @@ package platformapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+	"mcp-runtime/pkg/authfile"
 )
 
 func TestApplyAccessFromYAMLFile_MultiDocument(t *testing.T) {
@@ -154,6 +156,71 @@ func TestValidateCredentials(t *testing.T) {
 	if err := client.ValidateCredentials(context.Background()); err != nil {
 		t.Fatalf("ValidateCredentials() error = %v", err)
 	}
+}
+
+func TestResolvePlatformOrKubeModeSelection(t *testing.T) {
+	t.Run("uses platform by default when auth is configured", func(t *testing.T) {
+		t.Setenv(authfile.EnvAPIToken, "token-1")
+		t.Setenv(authfile.EnvAPIURL, "https://platform.example.com")
+		t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
+
+		client, useKube, err := ResolvePlatformOrKube(false)
+		if err != nil {
+			t.Fatalf("ResolvePlatformOrKube(false) error = %v", err)
+		}
+		if useKube {
+			t.Fatal("ResolvePlatformOrKube(false) selected kube mode despite platform auth")
+		}
+		if client == nil {
+			t.Fatal("ResolvePlatformOrKube(false) returned nil platform client")
+		}
+	})
+
+	t.Run("explicit kube never requires platform auth", func(t *testing.T) {
+		t.Setenv(authfile.EnvAPIToken, "")
+		t.Setenv(authfile.EnvAPIURL, "")
+		t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
+
+		client, useKube, err := ResolvePlatformOrKube(true)
+		if err != nil {
+			t.Fatalf("ResolvePlatformOrKube(true) error = %v", err)
+		}
+		if !useKube {
+			t.Fatal("ResolvePlatformOrKube(true) did not select kube mode")
+		}
+		if client != nil {
+			t.Fatal("ResolvePlatformOrKube(true) returned a platform client")
+		}
+	})
+
+	t.Run("missing platform auth does not fall back to kube", func(t *testing.T) {
+		t.Setenv(authfile.EnvAPIToken, "")
+		t.Setenv(authfile.EnvAPIURL, "")
+		t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
+
+		client, useKube, err := ResolvePlatformOrKube(false)
+		if err == nil {
+			t.Fatal("expected missing platform auth error")
+		}
+		if client != nil {
+			t.Fatal("expected nil platform client")
+		}
+		if useKube {
+			t.Fatal("missing platform auth fell back to kube mode")
+		}
+		if !errors.Is(err, authfile.ErrNotFound) {
+			t.Fatalf("error should wrap authfile.ErrNotFound, got %v", err)
+		}
+		if !strings.Contains(err.Error(), "mcp-runtime auth login --api-url <platform-url>") {
+			t.Fatalf("error missing login guidance: %v", err)
+		}
+		if !strings.Contains(err.Error(), "normal platform access") {
+			t.Fatalf("error missing normal platform guidance: %v", err)
+		}
+		if !strings.Contains(err.Error(), "--use-kube") || !strings.Contains(err.Error(), "admin/operator Kubernetes access only") {
+			t.Fatalf("error missing kube-mode boundary guidance: %v", err)
+		}
+	})
 }
 
 func TestPlatformClientTeamAndServerRoutes(t *testing.T) {

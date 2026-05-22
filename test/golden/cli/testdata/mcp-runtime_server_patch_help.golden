@@ -12,4 +12,4 @@ Flags:
 
 Global Flags:
       --debug      Enable debug mode with structured error logging
-      --use-kube   Use kubectl and local kubeconfig instead of the platform API for supported commands
+      --use-kube   Use direct Kubernetes mode with kubectl; requires admin/operator cluster access (admin/dev/test only)

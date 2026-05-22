@@ -136,7 +136,7 @@ Important contributor notes:
 | Symptom | First checks |
 |---------|--------------|
 | Pod is not ready or image pulls fail | `kubectl describe pod`, namespace events, `cluster doctor` |
-| Grant or session does not affect traffic | `kubectl get mcpaccessgrant,mcpagentsession`, `server policy inspect`, raw policy ConfigMap |
+| Grant or session does not affect traffic | `kubectl get mcpaccessgrant,mcpagentsession`, `server policy inspect --use-kube`, raw policy ConfigMap |
 | Policy renders but tool calls are denied | `kubectl logs ... -c mcp-gateway`, request headers, `Mcp-Session-Id` / `X-MCP-Agent-Session` values |
 | Requests work but analytics are missing | `sentinel logs ingest`, `sentinel logs processor`, analytics secret and ingest URL |
 | Dashboard, API, or MCP route returns 404 | `kubectl get ingress -A`, Sentinel ingress YAML, Traefik logs |
@@ -208,7 +208,7 @@ EOF
 
 kubectl apply -f /tmp/workspace-assistant-access.yaml
 
-until ./bin/mcp-runtime server policy inspect workspace-assistant-mcp --namespace mcp-servers | grep -q local-session; do
+until ./bin/mcp-runtime server policy inspect workspace-assistant-mcp --namespace mcp-servers --use-kube | grep -q local-session; do
   sleep 2
 done
 
@@ -507,6 +507,11 @@ Then use `http://127.0.0.1:18080/<publicPathPrefix>/mcp` for local MCP traffic. 
 
 ### Option A — direct manifest
 
+Direct manifest apply is an admin/operator flow. It writes Kubernetes resources
+directly, so use `--use-kube` only from a workstation with kubectl plus
+admin/operator kubeconfig and RBAC access. For normal platform workflows,
+authenticate with the platform API and use Option B.
+
 ```yaml
 # payments.yaml
 apiVersion: mcpruntime.org/v1alpha1
@@ -524,8 +529,8 @@ spec:
 ```
 
 ```bash
-./bin/mcp-runtime server apply --file payments.yaml
-./bin/mcp-runtime server status
+./bin/mcp-runtime server apply --file payments.yaml --use-kube
+./bin/mcp-runtime server status --use-kube
 ```
 
 #### How to write the manifest
@@ -618,6 +623,7 @@ After the manifest is applied, the platform does the following:
 Useful checks after publish:
 
 ```bash
+./bin/mcp-runtime auth login --api-url <platform-url>
 ./bin/mcp-runtime server status
 ./bin/mcp-runtime server get payments
 ./bin/mcp-runtime server policy inspect payments
@@ -628,7 +634,7 @@ If the server does not come up, stay in the CLI first:
 
 ```bash
 ./bin/mcp-runtime server get payments
-./bin/mcp-runtime server logs payments --follow
+./bin/mcp-runtime server logs payments --follow --use-kube
 ./bin/mcp-runtime sentinel logs gateway --follow
 ./bin/mcp-runtime status
 ```
@@ -683,6 +689,7 @@ spec:
 ```
 
 ```bash
+./bin/mcp-runtime auth login --api-url <platform-url>
 ./bin/mcp-runtime access grant apply --file grant.yaml
 ./bin/mcp-runtime access session apply --file session.yaml
 ./bin/mcp-runtime server policy inspect payments

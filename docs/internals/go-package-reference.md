@@ -3960,13 +3960,26 @@ _No package overview is documented._
 
 - [Overview](#cli-kubernetes-errors-overview)
 - [Index](#cli-kubernetes-errors-index)
+- [Constants](#cli-kubernetes-errors-constants)
 - [Functions](#cli-kubernetes-errors-functions)
 
 <a id="cli-kubernetes-errors-index"></a>
 ### Index
 
+- [`Constants`](#cli-kubernetes-errors-constants)
 - [`func CommandDetail(output string, fallback error) string`](#cli-kubernetes-errors-func-commanddetail-output-string-fallback-error-string)
+- [`func DirectModeFailureMessage(prefix, detail string) string`](#cli-kubernetes-errors-func-directmodefailuremessage-prefix-detail-string-string)
+- [`func DirectModeHint(detail string) string`](#cli-kubernetes-errors-func-directmodehint-detail-string-string)
 - [`func SetupHint(detail string) (string, bool)`](#cli-kubernetes-errors-func-setuphint-detail-string-string-bool)
+- [`func WithDirectModeHint(detail string) string`](#cli-kubernetes-errors-func-withdirectmodehint-detail-string-string)
+
+<a id="cli-kubernetes-errors-constants"></a>
+### Constants
+
+```text
+const DirectModeGuidance = "Direct Kubernetes mode requires admin/operator cluster access. Use the platform API for normal CLI operations: `mcp-runtime auth login --api-url <platform-url>`."
+    DirectModeGuidance explains the boundary for explicit --use-kube operations.
+```
 
 <a id="cli-kubernetes-errors-functions"></a>
 ### Functions
@@ -3979,11 +3992,34 @@ func CommandDetail(output string, fallback error) string
 
 ```
 
+<a id="cli-kubernetes-errors-func-directmodefailuremessage-prefix-detail-string-string"></a>
+```text
+func DirectModeFailureMessage(prefix, detail string) string
+    DirectModeFailureMessage appends shared direct Kubernetes mode guidance to a
+    command failure.
+
+```
+
+<a id="cli-kubernetes-errors-func-directmodehint-detail-string-string"></a>
+```text
+func DirectModeHint(detail string) string
+    DirectModeHint returns guidance for explicit --use-kube failures.
+
+```
+
 <a id="cli-kubernetes-errors-func-setuphint-detail-string-string-bool"></a>
 ```text
 func SetupHint(detail string) (string, bool)
     SetupHint returns a friendlier message when the cluster has not been
     provisioned yet.
+
+```
+
+<a id="cli-kubernetes-errors-func-withdirectmodehint-detail-string-string"></a>
+```text
+func WithDirectModeHint(detail string) string
+    WithDirectModeHint appends explicit --use-kube guidance to a command failure
+    detail.
 ```
 
 <a id="cli-cluster"></a>
@@ -4548,12 +4584,15 @@ _No package overview is documented._
 
 - [Overview](#cli-platform-api-overview)
 - [Index](#cli-platform-api-index)
+- [Constants](#cli-platform-api-constants)
 - [Functions](#cli-platform-api-functions)
 - [Types](#cli-platform-api-types)
 
 <a id="cli-platform-api-index"></a>
 ### Index
 
+- [`Constants`](#cli-platform-api-constants)
+- [`func AuthRequiredError(err error) error`](#cli-platform-api-func-authrequirederror-err-error-error)
 - [`func HasPlatformClient() bool`](#cli-platform-api-func-hasplatformclient-bool)
 - [`func NormalizeBaseURL(raw string) string`](#cli-platform-api-func-normalizebaseurl-raw-string-string)
 - [`type AdapterSession struct`](#cli-platform-api-type-adaptersession-struct)
@@ -4591,8 +4630,25 @@ _No package overview is documented._
 - [`type Team struct`](#cli-platform-api-type-team-struct)
 - [`type TeamMembership = platform.TeamMembership`](#cli-platform-api-type-teammembership-platform-teammembership)
 
+<a id="cli-platform-api-constants"></a>
+### Constants
+
+```text
+const PlatformAuthRequiredMessage = "platform API credentials are required; run `mcp-runtime auth login --api-url <platform-url>` for normal platform access. `--use-kube` is direct Kubernetes mode for admin/dev/test environments with admin/operator Kubernetes access only"
+    PlatformAuthRequiredMessage tells users how to use the platform-backed CLI
+    path.
+```
+
 <a id="cli-platform-api-functions"></a>
 ### Functions
+
+<a id="cli-platform-api-func-authrequirederror-err-error-error"></a>
+```text
+func AuthRequiredError(err error) error
+    AuthRequiredError wraps platform credential errors with user-facing mode
+    guidance.
+
+```
 
 <a id="cli-platform-api-func-hasplatformclient-bool"></a>
 ```text
@@ -4668,15 +4724,16 @@ type PlatformClient struct {
 func NewPlatformClient() (*PlatformClient, error)
     NewPlatformClient returns a client when platform credentials and
     API base URL are configured. If the user is not logged in, returns
-    authfile.ErrNotFound so the caller can fall back to kubectl.
+    authfile.ErrNotFound.
 
 ```
 
 <a id="cli-platform-api-func-resolveplatformorkube-usekube-bool-platformclient-bool-error"></a>
 ```text
 func ResolvePlatformOrKube(useKube bool) (*PlatformClient, bool, error)
-    ResolvePlatformOrKube returns a platform API client when useKube is false
-    and auth resolves; otherwise useKubectl is true.
+    ResolvePlatformOrKube returns direct Kubernetes mode only when useKube is
+    explicit. Otherwise it requires platform API credentials and does not fall
+    back to kubeconfig.
 
 ```
 

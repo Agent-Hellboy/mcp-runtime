@@ -100,8 +100,8 @@ Build, push, generate, and deploy:
 ```bash
 ./bin/mcp-runtime server build image workspace-assistant-mcp \
   --metadata-file /tmp/workspace-assistant-mcp.yaml \
-  --dockerfile examples/go-mcp-server/Dockerfile \
-  --context examples/go-mcp-server \
+  --dockerfile examples/workspace-assistant-mcp/Dockerfile \
+  --context examples/workspace-assistant-mcp \
   --registry registry.registry.svc.cluster.local:5000 \
   --tag dev
 
@@ -128,7 +128,7 @@ NAMESPACE=mcp-servers
 kubectl get mcpserver "$SERVER" -n "$NAMESPACE" -o yaml
 kubectl get deploy/"$SERVER" svc/"$SERVER" ingress/"$SERVER" -n "$NAMESPACE" -o wide
 kubectl get cm -n "$NAMESPACE" "${SERVER}-gateway-policy" -o yaml
-./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE"
+./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE" --use-kube
 ```
 
 The MCP app container is usually distroless. Use logs and `kubectl describe`
@@ -157,7 +157,7 @@ Then verify materialization:
 
 ```bash
 kubectl get mcpaccessgrant,mcpagentsession -n "$NAMESPACE" -o wide
-./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE"
+./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE" --use-kube
 ```
 
 If the CRDs exist but the policy file does not include them, check:

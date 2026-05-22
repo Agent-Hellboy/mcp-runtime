@@ -21,9 +21,15 @@ func NewWithManager(mgr *ServerManager) *cobra.Command {
 		Short: "Manage MCP servers",
 		Long: `Commands for managing MCP server deployments.
 
-With mcp-runtime auth login, list, status, policy, deploy, and delete use the
-platform API when --use-kube is not set. Create, apply, patch, and logs require
-kubectl and a cluster kubeconfig (or --use-kube for those operations).
+With mcp-runtime auth login, supported commands use the platform API by default
+for normal user and admin workflows. Use --use-kube only for admin/dev/test
+direct Kubernetes operations; it requires kubectl plus admin/operator kubeconfig
+and RBAC access.
+
+Create, apply, export, patch, and logs are direct Kubernetes operations and
+require --use-kube. For platform workflows, use mcp-runtime auth login
+--api-url <platform-url> and platform-backed commands such as list, deploy,
+delete, status, and policy.
 
 For building images from source, use 'server build'.
 For pushing images, use 'registry push'.`,

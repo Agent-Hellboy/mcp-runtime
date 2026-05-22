@@ -1,7 +1,10 @@
 Commands for managing MCPAccessGrant and MCPAgentSession resources that feed the gateway policy layer.
 
-With mcp-runtime auth login, commands use the platform API by default. Use --use-kube
-to target the cluster with kubectl and a kubeconfig (cluster admin path).
+With mcp-runtime auth login, commands use the platform API by default for normal
+user and admin workflows. Use --use-kube only for admin/dev/test direct
+Kubernetes operations; it requires kubectl plus admin/operator kubeconfig and
+RBAC access. For platform workflows, run mcp-runtime auth login --api-url
+<platform-url> and stay on the platform API path.
 
 Usage:
   mcp-runtime access [command]
@@ -12,7 +15,7 @@ Available Commands:
 
 Flags:
   -h, --help       help for access
-      --use-kube   Use kubectl and local kubeconfig instead of the platform API for supported commands
+      --use-kube   Use direct Kubernetes mode with kubectl; requires admin/operator cluster access (admin/dev/test only)
 
 Global Flags:
       --debug   Enable debug mode with structured error logging

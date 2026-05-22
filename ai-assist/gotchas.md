@@ -99,7 +99,7 @@ describe`, or `kubectl debug --image=busybox:1.36 --target=<container>`
 to inspect the pod namespace instead of expecting an interactive shell.
 
 References:
-- `examples/go-mcp-server/Dockerfile`
+- `examples/workspace-assistant-mcp/Dockerfile`
 - `AGENTS.md` → **MCP server pod / sidecar checks**
 
 Added: 2026-05-12

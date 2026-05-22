@@ -73,8 +73,8 @@ go build -o bin/mcp-runtime ./cmd/mcp-runtime
 
 ./bin/mcp-runtime server build image governed-agent-demo-mcp \
   --metadata-file examples/governed-agent/deploy/server.metadata.yaml \
-  --dockerfile examples/go-mcp-server/Dockerfile \
-  --context examples/go-mcp-server \
+  --dockerfile examples/workspace-assistant-mcp/Dockerfile \
+  --context examples/workspace-assistant-mcp \
   --tag latest
 
 IMAGE_REF="$(awk '
