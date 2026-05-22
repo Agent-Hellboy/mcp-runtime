@@ -827,6 +827,30 @@ spec:
 	})
 }
 
+func TestRenderKustomizeManifestWrapsRunError(t *testing.T) {
+	cause := errors.New("kustomize failed")
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if contains(spec.Args, "kustomize") {
+				cmd.RunFunc = func() error {
+					if cmd.StderrW != nil {
+						_, _ = cmd.StderrW.Write([]byte("bad overlay"))
+					}
+					return cause
+				}
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	_, err := renderKustomizeManifest(kubectl, "config/registry")
+	if !errors.Is(err, cause) {
+		t.Fatalf("renderKustomizeManifest() error = %v, want errors.Is(..., cause)", err)
+	}
+}
+
 func TestCheckRegistryStatusStarting(t *testing.T) {
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
