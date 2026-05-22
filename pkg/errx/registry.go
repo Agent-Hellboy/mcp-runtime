@@ -19,6 +19,7 @@ const (
 	CodeCert     = "77000"
 	CodeSetup    = "78000"
 	CodeConfig   = "79000"
+	CodeAuth     = "80000"
 )
 
 const (
@@ -32,6 +33,7 @@ const (
 	DescCert     = "Certificate/TLS error"
 	DescSetup    = "Setup/installation error"
 	DescConfig   = "Configuration error"
+	DescAuth     = "Authentication / credential error"
 )
 
 var registryEntries = []RegistryEntry{
@@ -45,6 +47,7 @@ var registryEntries = []RegistryEntry{
 	{Code: CodeCert, Description: DescCert},
 	{Code: CodeSetup, Description: DescSetup},
 	{Code: CodeConfig, Description: DescConfig},
+	{Code: CodeAuth, Description: DescAuth},
 }
 
 var registryMap = map[string]string{
@@ -58,6 +61,7 @@ var registryMap = map[string]string{
 	CodeCert:     DescCert,
 	CodeSetup:    DescSetup,
 	CodeConfig:   DescConfig,
+	CodeAuth:     DescAuth,
 }
 
 // ErrorRegistry returns the error registry in deterministic order.

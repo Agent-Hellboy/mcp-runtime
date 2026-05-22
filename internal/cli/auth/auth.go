@@ -105,11 +105,12 @@ func (m *manager) runLogin(cmd *cobra.Command, f loginFlags) error {
 
 	apiURL := strings.TrimSpace(f.apiURL)
 	if apiURL == "" {
-		return fmt.Errorf("api URL is required (set --api-url or %s)", authfile.EnvAPIURL)
+		msg := fmt.Sprintf("api URL is required (set --api-url or %s)", authfile.EnvAPIURL)
+		return core.NewWithSentinel(core.ErrAuthAPIURLRequired, msg)
 	}
 	apiURL = platformapi.NormalizeBaseURL(apiURL)
 	if apiURL == "" {
-		return errors.New("api URL must include scheme and host")
+		return core.NewWithSentinel(core.ErrAuthAPIURLInvalid, "api URL must include scheme and host")
 	}
 
 	loginEmail, err := core.ResolveEmailAlias(f.email, f.username)
@@ -120,11 +121,11 @@ func (m *manager) runLogin(cmd *cobra.Command, f loginFlags) error {
 	var token, loginRole string
 	if loginEmail != "" || strings.TrimSpace(f.password) != "" {
 		if loginEmail == "" || strings.TrimSpace(f.password) == "" {
-			return errors.New("email and password are both required for password login")
+			return core.NewWithSentinel(core.ErrAuthEmailPasswordRequired, "email and password are both required for password login")
 		}
 		tok, role, err := loginPlatformPassword(context.Background(), apiURL, loginEmail, f.password)
 		if err != nil {
-			return fmt.Errorf("platform login failed: %w", err)
+			return core.WrapWithSentinel(core.ErrAuthPlatformLoginFailed, err, fmt.Sprintf("platform login failed: %v", err))
 		}
 		token = tok
 		loginRole = role
@@ -132,7 +133,7 @@ func (m *manager) runLogin(cmd *cobra.Command, f loginFlags) error {
 	} else if f.tokenFromStdin {
 		b, err := io.ReadAll(os.Stdin)
 		if err != nil {
-			return fmt.Errorf("read stdin: %w", err)
+			return core.WrapWithSentinel(core.ErrAuthReadStdinFailed, err, fmt.Sprintf("read stdin: %v", err))
 		}
 		token = strings.TrimSpace(string(b))
 	} else if strings.TrimSpace(f.token) != "" {
@@ -140,18 +141,18 @@ func (m *manager) runLogin(cmd *cobra.Command, f loginFlags) error {
 	} else {
 		stdinFD, err := terminalFD(os.Stdin.Fd())
 		if err != nil || !term.IsTerminal(stdinFD) {
-			return errors.New("not a TTY: pass --token, --token-stdin, or run in an interactive terminal")
+			return core.NewWithSentinel(core.ErrAuthTTYRequired, "not a TTY: pass --token, --token-stdin, or run in an interactive terminal")
 		}
 		fmt.Fprint(stderr, "Enter platform API token: ")
 		tok, err := term.ReadPassword(stdinFD)
 		fmt.Fprintln(stderr)
 		if err != nil {
-			return fmt.Errorf("read token: %w", err)
+			return core.WrapWithSentinel(core.ErrAuthReadTokenFailed, err, fmt.Sprintf("read token: %v", err))
 		}
 		token = strings.TrimSpace(string(tok))
 	}
 	if token == "" {
-		return errors.New("token is required")
+		return core.NewWithSentinel(core.ErrAuthTokenRequired, "token is required")
 	}
 
 	if !f.skipVerify {
@@ -164,7 +165,7 @@ func (m *manager) runLogin(cmd *cobra.Command, f loginFlags) error {
 			err = verifyPlatformAPIToken(ctx, apiURL, token)
 		}
 		if err != nil {
-			return fmt.Errorf("API token could not be verified: %w", err)
+			return core.WrapWithSentinel(core.ErrAuthTokenVerificationFailed, err, fmt.Sprintf("API token could not be verified: %v", err))
 		}
 	}
 
@@ -291,13 +292,13 @@ func loginPlatformPassword(ctx context.Context, apiBaseURL, email, password stri
 		} `json:"user"`
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", "", fmt.Errorf("HTTP %d", resp.StatusCode)
+		return "", "", core.NewWithSentinel(core.ErrAuthLoginHTTPStatus, fmt.Sprintf("HTTP %d", resp.StatusCode))
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return "", "", err
 	}
 	if strings.TrimSpace(out.AccessToken) == "" {
-		return "", "", errors.New("login response did not include access_token")
+		return "", "", core.NewWithSentinel(core.ErrAuthLoginResponseMissingAccessToken, "login response did not include access_token")
 	}
 	return strings.TrimSpace(out.AccessToken), strings.TrimSpace(out.User.Role), nil
 }
@@ -334,19 +335,19 @@ func verifyPlatformAPIToken(ctx context.Context, apiBaseURL, token string) error
 	defer drainAndCloseBody(resp.Body)
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("server rejected the token (HTTP %d)", resp.StatusCode)
+		return core.NewWithSentinel(core.ErrAuthServerRejectedToken, fmt.Sprintf("server rejected the token (HTTP %d)", resp.StatusCode))
 	case http.StatusNotFound:
-		return fmt.Errorf("API URL may be wrong (path returned HTTP 404, expected %q)", u)
+		return core.NewWithSentinel(core.ErrAuthAPIURLMayBeWrong, fmt.Sprintf("API URL may be wrong (path returned HTTP 404, expected %q)", u))
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
-	return fmt.Errorf("verify request failed: HTTP %d", resp.StatusCode)
+	return core.NewWithSentinel(core.ErrAuthVerifyRequestFailed, fmt.Sprintf("verify request failed: HTTP %d", resp.StatusCode))
 }
 
 func terminalFD(fd uintptr) (int, error) {
 	if fd > uintptr(math.MaxInt) {
-		return 0, errors.New("file descriptor out of range")
+		return 0, core.NewWithSentinel(core.ErrAuthFileDescriptorOutOfRange, "file descriptor out of range")
 	}
 	return int(fd), nil
 }

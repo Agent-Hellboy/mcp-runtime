@@ -27,4 +27,7 @@ func TestRegistry_IsValidCode(t *testing.T) {
 	if !IsValidCode(CodeCLI) {
 		t.Errorf("IsValidCode(%q) = %v, want %v", CodeCLI, IsValidCode(CodeCLI), true)
 	}
+	if !IsValidCode(CodeAuth) {
+		t.Errorf("IsValidCode(%q) = %v, want %v", CodeAuth, IsValidCode(CodeAuth), true)
+	}
 }

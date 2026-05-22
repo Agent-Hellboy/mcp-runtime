@@ -93,7 +93,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 
 	core.Info("Initializing ClickHouse schema")
 	if err := deleteJobIfExistsWithKubectl(kubectl, "clickhouse-init", core.DefaultAnalyticsNamespace); err != nil {
-		return fmt.Errorf("delete existing clickhouse init job: %w", err)
+		return core.WrapWithSentinel(core.ErrSetupDeleteClickHouseInitJobFailed, err, fmt.Sprintf("delete existing clickhouse init job: %v", err))
 	}
 	if err := applyRenderedManifest(kubectl, "k8s/04-clickhouse-init.yaml", images, imagePullSecretName, platformMode); err != nil {
 		return err
@@ -160,7 +160,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 
 	printAnalyticsRolloutDiagnostics(kubectl)
 	summary := strings.Join(rolloutFailures, "; ")
-	cause := errors.New(summary)
+	cause := core.NewWithSentinel(core.ErrSetupAnalyticsRolloutFailed, summary)
 	msg := fmt.Sprintf("analytics components failed to roll out: %s", summary)
 	ctx := map[string]any{"component": "mcp-sentinel", "rollout_failures": summary}
 	if core.IsDebugMode() {
@@ -240,7 +240,7 @@ func applyRenderedManifest(kubectl core.KubectlRunner, manifestPath string, imag
 		rendered, err = renderAnalyticsManifest(string(content), images, imagePullSecretName, platformMode)
 	}
 	if err != nil {
-		return fmt.Errorf("render manifest %s: %w", manifestPath, err)
+		return core.WrapWithSentinel(core.ErrSetupRenderManifestFailed, err, fmt.Sprintf("render manifest %s: %v", manifestPath, err))
 	}
 	return kube.ApplyManifestContent(kubectl.CommandArgs, rendered)
 }
@@ -253,7 +253,7 @@ func applyPlatformIngressIfConfigured(kubectl core.KubectlRunner) error {
 	manifest := ingressmanifest.RenderPlatformUIIngress(host, core.GetRegistryClusterIssuerName(), core.DefaultAnalyticsNamespace)
 	core.Info(fmt.Sprintf("Applying platform UI ingress for %s", host))
 	if err := kube.ApplyManifestContent(kubectl.CommandArgs, manifest); err != nil {
-		return fmt.Errorf("apply platform UI ingress: %w", err)
+		return core.WrapWithSentinel(core.ErrSetupApplyPlatformUIIngressFailed, err, fmt.Sprintf("apply platform UI ingress: %v", err))
 	}
 	if err := removePathBasedSentinelIngresses(kubectl); err != nil {
 		return err
@@ -265,7 +265,7 @@ func removePathBasedSentinelIngresses(kubectl core.KubectlRunner) error {
 	args := append([]string{"delete", "ingress"}, pathBasedSentinelIngressNames...)
 	args = append(args, "-n", core.DefaultAnalyticsNamespace, "--ignore-not-found=true")
 	if err := kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
-		return fmt.Errorf("remove path-based sentinel ingresses for public platform host: %w", err)
+		return core.WrapWithSentinel(core.ErrSetupRemovePathBasedSentinelIngressesFailed, err, fmt.Sprintf("remove path-based sentinel ingresses for public platform host: %v", err))
 	}
 	return nil
 }
@@ -342,7 +342,7 @@ func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platform
 
 	var manifest configMapManifest
 	if err := yaml.Unmarshal([]byte(content), &manifest); err != nil {
-		return "", fmt.Errorf("decode analytics config manifest: %w", err)
+		return "", core.WrapWithSentinel(core.ErrSetupDecodeAnalyticsConfigManifestFailed, err, fmt.Sprintf("decode analytics config manifest: %v", err))
 	}
 	if manifest.Data == nil {
 		manifest.Data = map[string]string{}
@@ -404,7 +404,7 @@ func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platform
 
 	rendered, err := yaml.Marshal(manifest)
 	if err != nil {
-		return "", fmt.Errorf("encode analytics config manifest: %w", err)
+		return "", core.WrapWithSentinel(core.ErrSetupEncodeAnalyticsConfigManifestFailed, err, fmt.Sprintf("encode analytics config manifest: %v", err))
 	}
 	return string(rendered), nil
 }
@@ -451,7 +451,7 @@ func existingConfigMapData(kubectl core.KubectlRunner, namespace, name string) (
 		if strings.Contains(detail, "not found") || strings.Contains(detail, "notfound") {
 			return map[string]string{}, nil
 		}
-		return nil, fmt.Errorf("read configmap %s/%s: %w", namespace, name, err)
+		return nil, core.WrapWithSentinel(core.ErrSetupReadConfigMapFailed, err, fmt.Sprintf("read configmap %s/%s: %v", namespace, name, err))
 	}
 	if strings.TrimSpace(string(out)) == "" {
 		return map[string]string{}, nil
@@ -460,7 +460,7 @@ func existingConfigMapData(kubectl core.KubectlRunner, namespace, name string) (
 		Data map[string]string `json:"data"`
 	}
 	if err := json.Unmarshal(out, &payload); err != nil {
-		return nil, fmt.Errorf("decode configmap %s/%s: %w", namespace, name, err)
+		return nil, core.WrapWithSentinel(core.ErrSetupDecodeConfigMapFailed, err, fmt.Sprintf("decode configmap %s/%s: %v", namespace, name, err))
 	}
 	if payload.Data == nil {
 		return map[string]string{}, nil
@@ -701,7 +701,7 @@ func existingSecretDataValue(kubectl core.KubectlRunner, namespace, name, key st
 		if strings.Contains(lower, "not found") || strings.Contains(lower, "notfound") {
 			return "", nil
 		}
-		return "", fmt.Errorf("read secret %s/%s key %s: %w", namespace, name, key, err)
+		return "", core.WrapWithSentinel(core.ErrSetupReadSecretKeyFailed, err, fmt.Sprintf("read secret %s/%s key %s: %v", namespace, name, key, err))
 	}
 	if trimmed == "" {
 		return "", nil
@@ -709,7 +709,7 @@ func existingSecretDataValue(kubectl core.KubectlRunner, namespace, name, key st
 
 	decoded, err := base64.StdEncoding.DecodeString(trimmed)
 	if err != nil {
-		return "", fmt.Errorf("decode secret %s/%s key %s: %w", namespace, name, key, err)
+		return "", core.WrapWithSentinel(core.ErrSetupDecodeSecretKeyFailed, err, fmt.Sprintf("decode secret %s/%s key %s: %v", namespace, name, key, err))
 	}
 	return string(decoded), nil
 }
