@@ -81,8 +81,8 @@ sequenceDiagram
     Client->>Ingress: POST /{server}/mcp initialize
     Ingress->>Gateway: route to MCPServer Service
     Gateway->>Server: forward initialize
-    Server-->>Gateway: MCP result and Mcp-Session-Id
-    Gateway-->>Client: initialize response
+    Server-->>Gateway: MCP result
+    Gateway-->>Client: initialize response with Mcp-Session-Id
     Client->>Ingress: POST /{server}/mcp tools/call
     Gateway->>Policy: match identity, session, grant, trust, side effect, tool rule
     alt allowed
