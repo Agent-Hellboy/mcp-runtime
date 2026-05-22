@@ -1715,13 +1715,15 @@ func TestPrepareAnalyticsImagesParallelBuildsPreparesInternalRegistryOnce(t *tes
 }
 
 func TestRenderAnalyticsManifestInjectsImagePullSecrets(t *testing.T) {
-	content := `apiVersion: apps/v1
+	content := `# keep deployment comment
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mcp-sentinel-ingest
 spec:
   template:
     spec:
+      # keep containers comment
       containers:
         - name: ingest
           image: mcp-sentinel-ingest:latest
@@ -1747,6 +1749,9 @@ spec:
 	}
 	if !strings.Contains(rendered, "imagePullSecrets:") || !strings.Contains(rendered, "name: "+defaultRegistrySecretName) {
 		t.Fatalf("expected injected imagePullSecrets, got %s", rendered)
+	}
+	if !strings.Contains(rendered, "# keep deployment comment") || !strings.Contains(rendered, "# keep containers comment") {
+		t.Fatalf("expected imagePullSecrets injection to preserve manifest comments, got %s", rendered)
 	}
 }
 
@@ -2396,17 +2401,14 @@ func TestDeployOperatorManifestsWithKubectlPreservesExistingGatewayOTLPEndpoint(
 			if commandHasArgs(spec, "get", "deployment/"+core.OperatorDeploymentName, "-n", core.NamespaceMCPRuntime) {
 				cmd.OutputData = []byte(customEndpoint)
 			}
-			if idx := argIndex(spec.Args, "-f"); idx != -1 && idx+1 < len(spec.Args) {
-				path := spec.Args[idx+1]
-				if strings.Contains(path, "manager-") && strings.HasSuffix(path, ".yaml") {
-					cmd.RunFunc = func() error {
-						data, err := os.ReadFile(path)
-						if err != nil {
-							return err
-						}
-						managerManifest = string(data)
-						return nil
+			if isOperatorManagerApplyArgs(spec.Args) {
+				cmd.RunFunc = func() error {
+					data, err := io.ReadAll(cmd.StdinR)
+					if err != nil {
+						return err
 					}
+					managerManifest = string(data)
+					return nil
 				}
 			}
 			return cmd
@@ -2458,17 +2460,14 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 			cmd := &core.MockCommand{Args: spec.Args}
-			if idx := argIndex(spec.Args, "-f"); idx != -1 && idx+1 < len(spec.Args) {
-				path := spec.Args[idx+1]
-				if strings.Contains(path, "manager-") && strings.HasSuffix(path, ".yaml") {
-					cmd.RunFunc = func() error {
-						data, err := os.ReadFile(path)
-						if err != nil {
-							return err
-						}
-						managerManifest = string(data)
-						return nil
+			if isOperatorManagerApplyArgs(spec.Args) {
+				cmd.RunFunc = func() error {
+					data, err := io.ReadAll(cmd.StdinR)
+					if err != nil {
+						return err
 					}
+					managerManifest = string(data)
+					return nil
 				}
 			}
 			return cmd
@@ -2514,7 +2513,6 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	var (
 		hasCRD          bool
 		hasRBAC         bool
-		hasDelete       bool
 		hasManagerApply bool
 		hasNamespace    bool
 	)
@@ -2526,20 +2524,20 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 			hasRBAC = true
 		}
 		if commandHasArgs(cmd, "delete", "deployment/"+core.OperatorDeploymentName, "-n", core.NamespaceMCPRuntime, "--ignore-not-found") {
-			hasDelete = true
+			t.Fatalf("operator setup must not delete the existing deployment before apply: %v", cmd.Args)
+		}
+		if isOperatorManagerApplyArgs(cmd.Args) {
+			hasManagerApply = true
 		}
 		if idx := argIndex(cmd.Args, "-f"); idx != -1 && idx+1 < len(cmd.Args) {
 			path := cmd.Args[idx+1]
-			if strings.Contains(path, "manager-") && strings.HasSuffix(path, ".yaml") {
-				hasManagerApply = true
-			}
 			if path == "-" {
 				hasNamespace = true
 			}
 		}
 	}
-	if !hasCRD || !hasRBAC || !hasDelete || !hasManagerApply || !hasNamespace {
-		t.Fatalf("missing expected kubectl commands: crd=%t rbac=%t delete=%t manager=%t namespace=%t", hasCRD, hasRBAC, hasDelete, hasManagerApply, hasNamespace)
+	if !hasCRD || !hasRBAC || !hasManagerApply || !hasNamespace {
+		t.Fatalf("missing expected kubectl commands: crd=%t rbac=%t manager=%t namespace=%t", hasCRD, hasRBAC, hasManagerApply, hasNamespace)
 	}
 }
 
@@ -2745,17 +2743,14 @@ func TestDeployOperatorManifestsWithKubectlUsesIfNotPresentForTestModeImage(t *t
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 			cmd := &core.MockCommand{Args: spec.Args}
-			if idx := argIndex(spec.Args, "-f"); idx != -1 && idx+1 < len(spec.Args) {
-				path := spec.Args[idx+1]
-				if strings.Contains(path, "manager-") && strings.HasSuffix(path, ".yaml") {
-					cmd.RunFunc = func() error {
-						data, err := os.ReadFile(path)
-						if err != nil {
-							return err
-						}
-						managerManifest = string(data)
-						return nil
+			if isOperatorManagerApplyArgs(spec.Args) {
+				cmd.RunFunc = func() error {
+					data, err := io.ReadAll(cmd.StdinR)
+					if err != nil {
+						return err
 					}
+					managerManifest = string(data)
+					return nil
 				}
 			}
 			return cmd
@@ -2831,11 +2826,8 @@ func TestDeployOperatorManifestsWithKubectlManagerApplyError(t *testing.T) {
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 			cmd := &core.MockCommand{Args: spec.Args}
-			if idx := argIndex(spec.Args, "-f"); idx != -1 && idx+1 < len(spec.Args) {
-				path := spec.Args[idx+1]
-				if strings.Contains(path, "manager-") && strings.HasSuffix(path, ".yaml") {
-					cmd.RunErr = mockErr
-				}
+			if isOperatorManagerApplyArgs(spec.Args) {
+				cmd.RunErr = mockErr
 			}
 			return cmd
 		},
@@ -3042,6 +3034,15 @@ func contains(slice []string, val string) bool {
 		}
 	}
 	return false
+}
+
+func isOperatorManagerApplyArgs(args []string) bool {
+	return contains(args, "apply") &&
+		contains(args, "--server-side") &&
+		contains(args, "--force-conflicts") &&
+		contains(args, "--field-manager=mcp-runtime-setup") &&
+		contains(args, "-f") &&
+		contains(args, "-")
 }
 
 func swapDefaultKubectlClientForTest(t *testing.T, kubectl *core.KubectlClient) {

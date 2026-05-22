@@ -93,16 +93,16 @@ func readKubectlOutput(kubectl core.KubectlRunner, args []string) (string, error
 	return string(out), nil
 }
 
-func decodeBase64(value string) string {
+func decodeBase64(value string) (string, error) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
-		return ""
+		return "", nil
 	}
 	decoded, err := base64.StdEncoding.DecodeString(trimmed)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("decode base64 value: %w", err)
 	}
-	return string(decoded)
+	return string(decoded), nil
 }
 
 func splitCommaTrim(value string) []string {

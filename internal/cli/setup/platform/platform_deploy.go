@@ -469,49 +469,7 @@ func deployOperatorManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.
 		return wrappedErr
 	}
 
-	// Write to temp file under the working directory so kubectl path validation passes.
-	tmpFile, err := os.CreateTemp(".", "manager-*.yaml")
-	if err != nil {
-		wrappedErr := core.WrapWithSentinel(core.ErrCreateTempFileFailed, err, fmt.Sprintf("failed to create temp file: %v", err))
-		core.Error("Failed to create temp file")
-		if logger != nil {
-			core.LogStructuredError(logger, wrappedErr, "Failed to create temp file")
-		}
-		return wrappedErr
-	}
-	defer os.Remove(tmpFile.Name())
-
-	if _, err := tmpFile.Write(mutatedYAML); err != nil {
-		if closeErr := tmpFile.Close(); closeErr != nil {
-			wrappedErr := core.WrapWithSentinel(core.ErrCloseTempFileFailed, errors.Join(err, closeErr), fmt.Sprintf("failed to close temp file after write error: %v", closeErr))
-			core.Error("Failed to close temp file")
-			if logger != nil {
-				core.LogStructuredError(logger, wrappedErr, "Failed to close temp file")
-			}
-			return wrappedErr
-		}
-		wrappedErr := core.WrapWithSentinel(core.ErrWriteTempFileFailed, err, fmt.Sprintf("failed to write temp file: %v", err))
-		core.Error("Failed to write temp file")
-		if logger != nil {
-			core.LogStructuredError(logger, wrappedErr, "Failed to write temp file")
-		}
-		return wrappedErr
-	}
-	if err := tmpFile.Close(); err != nil {
-		wrappedErr := core.WrapWithSentinel(core.ErrCloseTempFileFailed, err, fmt.Sprintf("failed to close temp file: %v", err))
-		core.Error("Failed to close temp file")
-		if logger != nil {
-			core.LogStructuredError(logger, wrappedErr, "Failed to close temp file")
-		}
-		return wrappedErr
-	}
-
-	// Delete existing deployment to avoid immutable selector conflicts on reapply.
-	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	_ = kubectl.Run([]string{"delete", "deployment/" + core.OperatorDeploymentName, "-n", core.NamespaceMCPRuntime, "--ignore-not-found"})
-
-	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	if err := kubectl.RunWithOutput([]string{"apply", "-f", tmpFile.Name()}, os.Stdout, os.Stderr); err != nil {
+	if err := applyOperatorManagerManifest(kubectl, mutatedYAML); err != nil {
 		wrappedErr := core.WrapWithSentinelAndContext(
 			core.ErrApplyManagerDeploymentFailed,
 			err,
@@ -527,6 +485,24 @@ func deployOperatorManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.
 
 	core.Success("Operator manifests deployed successfully")
 	return nil
+}
+
+func applyOperatorManagerManifest(kubectl core.KubectlRunner, managerYAML []byte) error {
+	cmd, err := kubectl.CommandArgs([]string{
+		"apply",
+		"--server-side",
+		"--force-conflicts",
+		"--field-manager=mcp-runtime-setup",
+		"-f",
+		"-",
+	})
+	if err != nil {
+		return err
+	}
+	cmd.SetStdin(bytes.NewReader(managerYAML))
+	cmd.SetStdout(os.Stdout)
+	cmd.SetStderr(os.Stderr)
+	return cmd.Run()
 }
 
 // mcpSentinelDependencyRolloutFailed wraps early mcp-sentinel storage/messaging rollouts; diagnostics are attached only in --debug.

@@ -53,10 +53,22 @@ func checkSentinelSecrets(kubectl core.KubectlRunner) DoctorCheck {
 			Remedy: "create/update mcp-sentinel-secrets with UI_API_KEY",
 		}
 	}
-	apiKeys := strings.TrimSpace(decodeBase64(strings.TrimSpace(apiKeysB64)))
-	adminAPIKeys := strings.TrimSpace(decodeBase64(strings.TrimSpace(adminAPIKeysB64)))
-	ingestAPIKeys := strings.TrimSpace(decodeBase64(strings.TrimSpace(ingestAPIKeysB64)))
-	uiKey := strings.TrimSpace(decodeBase64(strings.TrimSpace(uiKeyB64)))
+	apiKeys, decodeCheck := decodeSentinelSecretValue("API_KEYS", apiKeysB64)
+	if decodeCheck != nil {
+		return *decodeCheck
+	}
+	adminAPIKeys, decodeCheck := decodeSentinelSecretValue("ADMIN_API_KEYS", adminAPIKeysB64)
+	if decodeCheck != nil {
+		return *decodeCheck
+	}
+	ingestAPIKeys, decodeCheck := decodeSentinelSecretValue("INGEST_API_KEYS", ingestAPIKeysB64)
+	if decodeCheck != nil {
+		return *decodeCheck
+	}
+	uiKey, decodeCheck := decodeSentinelSecretValue("UI_API_KEY", uiKeyB64)
+	if decodeCheck != nil {
+		return *decodeCheck
+	}
 	if apiKeys == "" || adminAPIKeys == "" || ingestAPIKeys == "" || uiKey == "" {
 		return DoctorCheck{
 			Name:   "sentinel secrets",
@@ -116,7 +128,16 @@ func checkSentinelAPIAuthProbe(kubectl core.KubectlRunner) DoctorCheck {
 			Remedy: "configure UI_API_KEY before probing API auth",
 		}
 	}
-	apiKey := strings.TrimSpace(decodeBase64(strings.TrimSpace(apiKeyB64)))
+	apiKey, err := decodeBase64(apiKeyB64)
+	if err != nil {
+		return DoctorCheck{
+			Name:   "sentinel API auth probe",
+			OK:     false,
+			Detail: fmt.Sprintf("UI_API_KEY in mcp-sentinel-secrets is not valid base64: %v", err),
+			Remedy: "patch mcp-sentinel-secrets with valid Kubernetes secret data for UI_API_KEY",
+		}
+	}
+	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
 		return DoctorCheck{
 			Name:   "sentinel API auth probe",
@@ -198,6 +219,19 @@ func checkSentinelAPIAuthProbe(kubectl core.KubectlRunner) DoctorCheck {
 		Detail: fmt.Sprintf("authenticated probe returned HTTP %s", status),
 		Remedy: "verify API key and sentinel API route availability",
 	}
+}
+
+func decodeSentinelSecretValue(key, encoded string) (string, *DoctorCheck) {
+	decoded, err := decodeBase64(encoded)
+	if err != nil {
+		return "", &DoctorCheck{
+			Name:   "sentinel secrets",
+			OK:     false,
+			Detail: fmt.Sprintf("%s in mcp-sentinel-secrets is not valid base64: %v", key, err),
+			Remedy: "patch mcp-sentinel-secrets with valid Kubernetes secret data for API, admin, ingest, and UI keys",
+		}
+	}
+	return strings.TrimSpace(decoded), nil
 }
 
 func checkNodeCapacity(kubectl core.KubectlRunner) DoctorCheck {

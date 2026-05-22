@@ -741,7 +741,7 @@ func injectImagePullSecretsIntoManifest(manifest, secretName string) (string, er
 	var renderedDocs []string
 
 	for {
-		var doc map[string]any
+		var doc yaml.Node
 		err := decoder.Decode(&doc)
 		if errors.Is(err, io.EOF) {
 			break
@@ -749,16 +749,22 @@ func injectImagePullSecretsIntoManifest(manifest, secretName string) (string, er
 		if err != nil {
 			return "", err
 		}
-		if len(doc) == 0 {
+		if isEmptyYAMLDocument(&doc) {
 			continue
 		}
 
-		injectImagePullSecretIntoDocument(doc, secretName)
-		data, err := yaml.Marshal(doc)
-		if err != nil {
+		injectImagePullSecretIntoDocument(&doc, secretName)
+		var rendered strings.Builder
+		encoder := yaml.NewEncoder(&rendered)
+		encoder.SetIndent(2)
+		if err := encoder.Encode(&doc); err != nil {
+			_ = encoder.Close()
 			return "", err
 		}
-		renderedDocs = append(renderedDocs, strings.TrimRight(string(data), "\n"))
+		if err := encoder.Close(); err != nil {
+			return "", err
+		}
+		renderedDocs = append(renderedDocs, strings.TrimRight(rendered.String(), "\n"))
 	}
 
 	if len(renderedDocs) == 0 {
@@ -767,54 +773,135 @@ func injectImagePullSecretsIntoManifest(manifest, secretName string) (string, er
 	return strings.Join(renderedDocs, "\n---\n") + "\n", nil
 }
 
-func injectImagePullSecretIntoDocument(doc map[string]any, secretName string) {
+func isEmptyYAMLDocument(doc *yaml.Node) bool {
+	root := yamlDocumentRoot(doc)
+	return root == nil || (root.Kind == yaml.ScalarNode && root.Tag == "!!null" && strings.TrimSpace(root.Value) == "")
+}
+
+func injectImagePullSecretIntoDocument(doc *yaml.Node, secretName string) {
 	podSpec := manifestPodSpec(doc)
 	if podSpec == nil {
 		return
 	}
 
-	if existing, ok := podSpec["imagePullSecrets"].([]any); ok {
-		for _, item := range existing {
-			entry, ok := item.(map[string]any)
-			if ok && strings.TrimSpace(fmt.Sprint(entry["name"])) == secretName {
-				return
-			}
+	existing := mappingValueNode(podSpec, "imagePullSecrets")
+	if existing != nil && existing.Kind == yaml.SequenceNode {
+		if imagePullSecretSequenceContains(existing, secretName) {
+			return
 		}
-		podSpec["imagePullSecrets"] = append(existing, map[string]any{"name": secretName})
+		existing.Content = append(existing.Content, imagePullSecretNode(secretName))
 		return
 	}
 
-	podSpec["imagePullSecrets"] = []map[string]any{{"name": secretName}}
+	setMappingValueNode(podSpec, "imagePullSecrets", &yaml.Node{
+		Kind:    yaml.SequenceNode,
+		Tag:     "!!seq",
+		Content: []*yaml.Node{imagePullSecretNode(secretName)},
+	})
 }
 
-func manifestPodSpec(doc map[string]any) map[string]any {
-	kind := strings.ToLower(strings.TrimSpace(fmt.Sprint(doc["kind"])))
-	spec, _ := doc["spec"].(map[string]any)
-	if spec == nil {
+func manifestPodSpec(doc *yaml.Node) *yaml.Node {
+	root := yamlDocumentRoot(doc)
+	if root == nil || root.Kind != yaml.MappingNode {
+		return nil
+	}
+	kind := strings.ToLower(strings.TrimSpace(mappingScalarValue(root, "kind")))
+	spec := mappingValueNode(root, "spec")
+	if spec == nil || spec.Kind != yaml.MappingNode {
 		return nil
 	}
 
 	switch kind {
 	case "deployment", "statefulset", "daemonset", "job":
-		template := ensureMap(spec, "template")
-		return ensureMap(template, "spec")
+		template := ensureMappingChildNode(spec, "template")
+		return ensureMappingChildNode(template, "spec")
 	case "cronjob":
-		jobTemplate := ensureMap(spec, "jobTemplate")
-		jobSpec := ensureMap(jobTemplate, "spec")
-		template := ensureMap(jobSpec, "template")
-		return ensureMap(template, "spec")
+		jobTemplate := ensureMappingChildNode(spec, "jobTemplate")
+		jobSpec := ensureMappingChildNode(jobTemplate, "spec")
+		template := ensureMappingChildNode(jobSpec, "template")
+		return ensureMappingChildNode(template, "spec")
 	default:
 		return nil
 	}
 }
 
-func ensureMap(root map[string]any, key string) map[string]any {
-	if existing, ok := root[key].(map[string]any); ok && existing != nil {
+func yamlDocumentRoot(doc *yaml.Node) *yaml.Node {
+	if doc == nil {
+		return nil
+	}
+	if doc.Kind == yaml.DocumentNode {
+		if len(doc.Content) == 0 {
+			return nil
+		}
+		return doc.Content[0]
+	}
+	return doc
+}
+
+func mappingValueNode(root *yaml.Node, key string) *yaml.Node {
+	if root == nil || root.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == key {
+			return root.Content[i+1]
+		}
+	}
+	return nil
+}
+
+func mappingScalarValue(root *yaml.Node, key string) string {
+	value := mappingValueNode(root, key)
+	if value == nil || value.Kind != yaml.ScalarNode {
+		return ""
+	}
+	return value.Value
+}
+
+func setMappingValueNode(root *yaml.Node, key string, value *yaml.Node) {
+	if root == nil || root.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == key {
+			root.Content[i+1] = value
+			return
+		}
+	}
+	root.Content = append(root.Content, stringNode(key), value)
+}
+
+func ensureMappingChildNode(root *yaml.Node, key string) *yaml.Node {
+	if existing := mappingValueNode(root, key); existing != nil && existing.Kind == yaml.MappingNode {
 		return existing
 	}
-	created := map[string]any{}
-	root[key] = created
+	created := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	setMappingValueNode(root, key, created)
 	return created
+}
+
+func imagePullSecretSequenceContains(seq *yaml.Node, secretName string) bool {
+	for _, item := range seq.Content {
+		if item.Kind == yaml.MappingNode && strings.TrimSpace(mappingScalarValue(item, "name")) == secretName {
+			return true
+		}
+	}
+	return false
+}
+
+func imagePullSecretNode(secretName string) *yaml.Node {
+	return &yaml.Node{
+		Kind: yaml.MappingNode,
+		Tag:  "!!map",
+		Content: []*yaml.Node{
+			stringNode("name"),
+			stringNode(secretName),
+		},
+	}
+}
+
+func stringNode(value string) *yaml.Node {
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
 }
 
 func randomHex(size int) (string, error) {

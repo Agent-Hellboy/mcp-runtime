@@ -17,7 +17,7 @@ import (
 	setupplan "mcp-runtime/internal/cli/setup/plan"
 )
 
-const defaultRegistrySecretName = "mcp-runtime-registry-creds"
+const defaultRegistrySecretName = "mcp-runtime-registry-creds" // #nosec G101 -- Kubernetes Secret object name, not credential material.
 
 const registryAdminAuthMiddleware = "registry-admin-auth@file"
 
