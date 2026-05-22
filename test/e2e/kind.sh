@@ -149,6 +149,8 @@ GO_EXAMPLE_PROXY_PORT="${GO_EXAMPLE_PROXY_PORT:-18102}"
 CLI_SENTINEL_API_PORT="${CLI_SENTINEL_API_PORT:-18103}"
 ADAPTER_PROXY_PORT="${ADAPTER_PROXY_PORT:-18104}"
 MCP_SERVICE_SESSION_PORT="${MCP_SERVICE_SESSION_PORT:-18105}"
+MT_TENANT_A_PORT="${MT_TENANT_A_PORT:-18106}"
+MT_TENANT_B_PORT="${MT_TENANT_B_PORT:-18107}"
 API_METRICS_PORT="${API_METRICS_PORT:-19090}"
 INGEST_METRICS_PORT="${INGEST_METRICS_PORT:-19091}"
 PROCESSOR_METRICS_PORT="${PROCESSOR_METRICS_PORT:-19092}"
@@ -5071,6 +5073,8 @@ EOF
   }
   mt_wait_for_endpoint "${MT_TENANT_A}"
   mt_wait_for_endpoint "${MT_TENANT_B}"
+  port_forward_bg "${MT_NS}" "${MT_TENANT_A}" "${MT_TENANT_A_PORT}" 80 "${WORKDIR}/${MT_TENANT_A}-proxy.log"
+  port_forward_bg "${MT_NS}" "${MT_TENANT_B}" "${MT_TENANT_B_PORT}" 80 "${WORKDIR}/${MT_TENANT_B}-proxy.log"
 
   echo "[multitenancy] applying alice (tenant-a / add) and bob (tenant-b / upper) grants and sessions"
   cat <<EOF | kubectl apply -f -
@@ -5138,8 +5142,8 @@ EOF
   # the sidecar observes the updated policy.
 
   echo "[multitenancy] running cross-tenant deny matrix"
-  MT_BASE_A="http://127.0.0.1:${TRAEFIK_PORT}/${MT_TENANT_A}/mcp"
-  MT_BASE_B="http://127.0.0.1:${TRAEFIK_PORT}/${MT_TENANT_B}/mcp"
+  MT_BASE_A="http://127.0.0.1:${MT_TENANT_A_PORT}/${MT_TENANT_A}/mcp"
+  MT_BASE_B="http://127.0.0.1:${MT_TENANT_B_PORT}/${MT_TENANT_B}/mcp"
   MT_REPORT="${WORKDIR}/multitenancy-matrix.json"
 
   if ! env \
@@ -5172,7 +5176,7 @@ def post(base, body, human, agent, sess, mcp_session=""):
         payload = os.path.join(td, "p.json"); headers = os.path.join(td, "h.txt"); bodyf = os.path.join(td, "b.txt")
         with open(payload, "w") as fh: json.dump(body, fh)
         cmd = [
-            "curl", "-sS", "--connect-timeout", "3", "--max-time", "8", "-D", headers, "-o", bodyf, "-w", "%{http_code}",
+            "curl", "-sS", "--connect-timeout", "2", "--max-time", "5", "-D", headers, "-o", bodyf, "-w", "%{http_code}",
             "-X", "POST",
             "-H", "content-type: application/json",
             "-H", "accept: application/json, text/event-stream",
@@ -5241,6 +5245,9 @@ def call(label, base, human, agent, sess, tool, expect_status, retries=90, delay
         if last["ok"]:
             report.append(last)
             return
+        if last.get("got") == 0 and attempt >= 10:
+            last["short_circuit"] = "transport_unreachable"
+            break
         time.sleep(delay)
     report.append(last)
 
@@ -5275,6 +5282,8 @@ PY
     [[ -f "${MT_REPORT}" ]] && cat "${MT_REPORT}" >&2 || true
     kubectl get mcpserver,deploy,svc,ingress,networkpolicy -n "${MT_NS}" -o wide >&2 || true
     kubectl get ingress -n "${MT_NS}" -o yaml >&2 || true
+    kubectl logs -n "${MT_NS}" -l "app=${MT_TENANT_A}" --all-containers=true --tail=200 >&2 || true
+    kubectl logs -n "${MT_NS}" -l "app=${MT_TENANT_B}" --all-containers=true --tail=200 >&2 || true
     kubectl logs -n traefik deploy/traefik --tail=200 >&2 || true
     exit 1
   fi
