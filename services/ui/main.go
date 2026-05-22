@@ -868,11 +868,11 @@ func handleLogout(store *uiSessionStore) http.HandlerFunc {
 	}
 }
 
-// handleAdminCheck is the Traefik forwardAuth target for /grafana and
-// /prometheus. It returns 204 when the caller is an admin (logged-in UI
-// session or admin API key) and 401 otherwise. The original request body and
-// path do not matter — Traefik forwards only headers and consumes the status.
-// The Cache-Control header is set by securityHeadersMiddleware for /auth/.
+// handleAdminCheck is the Traefik forwardAuth target for /grafana. It returns
+// 204 when the caller is an admin (logged-in UI session or admin API key) and
+// 401 otherwise. The original request body and path do not matter — Traefik
+// forwards only headers and consumes the status. The Cache-Control header is
+// set by securityHeadersMiddleware for /auth/.
 func handleAdminCheck(store *uiSessionStore, apiKeys, adminAPIKeys []string, legacyAdminKeys bool) http.HandlerFunc {
 	gateKeys := adminAPIKeys
 	if len(gateKeys) == 0 && legacyAdminKeys {

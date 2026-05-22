@@ -154,6 +154,7 @@ MT_TENANT_B_PORT="${MT_TENANT_B_PORT:-18107}"
 API_METRICS_PORT="${API_METRICS_PORT:-19090}"
 INGEST_METRICS_PORT="${INGEST_METRICS_PORT:-19091}"
 PROCESSOR_METRICS_PORT="${PROCESSOR_METRICS_PORT:-19092}"
+PROMETHEUS_PORT="${PROMETHEUS_PORT:-19093}"
 PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL:-admin@mcpruntime.org}"
 PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD:-admin@123}"
 MCP_CURL_TIMEOUT="${MCP_CURL_TIMEOUT:-${MCP_SMOKE_TIMEOUT:-20}}"
@@ -3190,6 +3191,7 @@ if scenario_selected "observability"; then
   port_forward_bg mcp-sentinel mcp-sentinel-ingest "${INGEST_SERVICE_PORT}" 8081 "${WORKDIR}/ingest-port-forward.log"
   port_forward_bg mcp-sentinel mcp-sentinel-ingest "${INGEST_METRICS_PORT}" 9091 "${WORKDIR}/ingest-metrics-port-forward.log"
   port_forward_bg mcp-sentinel mcp-sentinel-processor "${PROCESSOR_METRICS_PORT}" 9102 "${WORKDIR}/processor-metrics-port-forward.log"
+  port_forward_bg mcp-sentinel prometheus "${PROMETHEUS_PORT}" 9090 "${WORKDIR}/prometheus-port-forward.log"
   port_forward_resource_bg mcp-servers "deployment/${SERVER_NAME}" "${SERVER_UPSTREAM_PORT}" 8090 "${WORKDIR}/server-upstream-port-forward.log"
 fi
 if server_proxy_paths_selected; then
@@ -3211,6 +3213,7 @@ if scenario_selected "observability"; then
   wait_port "${INGEST_SERVICE_PORT}"
   wait_port "${INGEST_METRICS_PORT}"
   wait_port "${PROCESSOR_METRICS_PORT}"
+  wait_port "${PROMETHEUS_PORT}"
   wait_port "${SERVER_UPSTREAM_PORT}"
 fi
 if server_proxy_paths_selected; then
@@ -3222,6 +3225,9 @@ fi
 wait_http "http://127.0.0.1:${SENTINEL_PORT}/api/stats" "x-api-key: ${API_KEY}"
 wait_http "http://127.0.0.1:${TEMPO_PORT}/ready"
 wait_http "http://127.0.0.1:${LOKI_PORT}/ready"
+if scenario_selected "observability"; then
+  wait_http "http://127.0.0.1:${PROMETHEUS_PORT}/prometheus/-/ready"
+fi
 
 echo "[registry] checking public ingress admin auth"
 REGISTRY_PUBLIC_URL="http://127.0.0.1:${TRAEFIK_PORT}/v2/_catalog"
@@ -4228,7 +4234,7 @@ if scenario_selected "observability"; then
   SENTINEL_BASE="http://127.0.0.1:${SENTINEL_PORT}" \
   TEMPO_BASE="http://127.0.0.1:${TEMPO_PORT}" \
   GRAFANA_BASE="http://127.0.0.1:${SENTINEL_PORT}/grafana" \
-  PROMETHEUS_BASE="http://127.0.0.1:${SENTINEL_PORT}/prometheus" \
+  PROMETHEUS_BASE="http://127.0.0.1:${PROMETHEUS_PORT}/prometheus" \
   GRAFANA_ADMIN_USER="${GRAFANA_ADMIN_USER}" \
   GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD}" \
   LOKI_BASE="http://127.0.0.1:${LOKI_PORT}" \

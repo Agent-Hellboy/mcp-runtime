@@ -53,7 +53,7 @@ def check_ui_auth(base, label, *, include_observability=False):
     check(admin_status == 204, f"{label} GET /auth/admin-check allowed admin session", f"{label} admin-check failed: {admin_status} {admin_body}")
     if include_observability:
         expect_status(f"{base}/grafana/api/health", 200, headers=cookie_headers, contains="database")
-        expect_status(f"{base}/prometheus/-/healthy", 200, headers=cookie_headers, contains="Healthy")
+        expect_status(f"{base}/prometheus/-/healthy", 404, headers=cookie_headers)
     logout = expect_json(f"{base}/auth/logout", method="POST", headers=cookie_headers)
     check(logout.get("authenticated") is False, f"{label} POST /auth/logout cleared session", f"{label} logout response: {logout}")
     expect_status(f"{base}/auth/status", 200, headers=cookie_headers, contains='"authenticated":false')
@@ -70,7 +70,7 @@ expect_status(f"{gateway_base}/config.js", 200, contains="window.MCP_API_BASE")
 expect_status(f"{gateway_base}/app.js", 200, contains="const apiBase")
 expect_status(f"{gateway_base}/styles.css", 200, contains=".canvas")
 expect_status(f"{gateway_base}/grafana/api/health", 401)
-expect_status(f"{gateway_base}/prometheus/-/healthy", 401)
+expect_status(f"{gateway_base}/prometheus/-/healthy", 404)
 
 check_ui_auth(ui_base, "ui")
 check_ui_auth(gateway_base, "gateway", include_observability=True)
@@ -95,6 +95,6 @@ for route in (
     "gateway:/auth/admin-check",
     "gateway:/auth/logout",
     "gateway:/grafana/api/health",
-    "gateway:/prometheus/-/healthy",
+    "gateway:/prometheus/-/healthy (hidden)",
 ):
     print(f"  {route}")

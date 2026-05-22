@@ -5757,10 +5757,11 @@ func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string
     RenderPlatformUIIngress emits an Ingress that maps platform.<domain> to
     the dashboard UI and /api on the same UI service (which reverse-proxies to
     mcp-sentinel-api via API_UPSTREAM). It also emits a separate admin-gated
-    Ingress on the same host for /grafana and /prometheus. The observability
-    Ingress uses the repo-managed sentinel-admin-auth@file Traefik middleware so
-    those tools are reachable from admin UI links without exposing them raw on
-    the public platform host.
+    Ingress on the same host for /grafana. The observability Ingress uses the
+    repo-managed sentinel-admin-auth@file Traefik middleware so Grafana is
+    reachable from admin UI links without exposing it raw on the public platform
+    host. Prometheus stays internal as Grafana's metrics datasource and is not
+    exposed as a direct public route.
 
     When issuerName is set, a TLS section and cert-manager annotation
     are added so cert-manager's ingress-shim provisions a Certificate for

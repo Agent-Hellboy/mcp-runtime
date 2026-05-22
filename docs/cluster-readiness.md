@@ -223,7 +223,7 @@ When `MCP_PLATFORM_DOMAIN=example.com` is set, setup derives these public names:
 
 - `registry.example.com` for registry ingress.
 - `mcp.example.com` for MCP server traffic.
-- `platform.example.com` for the dashboard, API, Grafana, and Prometheus paths.
+- `platform.example.com` for the dashboard, API, and Grafana paths. Prometheus remains an internal metrics backend.
 
 All configured public names must resolve to the cluster ingress address before
 certificate issuance. For Let's Encrypt HTTP-01, port 80 must reach the ingress
@@ -300,9 +300,10 @@ Quick public endpoint checks after DNS and TLS are live:
   `401` without platform credentials; that still proves the platform host is
   routing API traffic correctly.
 - `curl -k -i -H "x-api-key: $ADMIN_API_KEY" https://platform.<domain>/grafana/api/health`
-  and `curl -k -i -H "x-api-key: $ADMIN_API_KEY" https://platform.<domain>/prometheus/-/ready`
-  should reach the admin-gated observability routes. Without admin credentials,
-  the `sentinel-admin-auth@file` guard should return `401`.
+  should reach the admin-gated observability route. Without admin credentials,
+  the `sentinel-admin-auth@file` guard should return `401`. Prometheus is not
+  exposed directly on the platform host; validate it through Grafana's
+  datasource or a temporary `kubectl port-forward`.
 - `curl -k -i https://mcp.<domain>/<server-name>/mcp` may return an
   application-level `400` or `401` when called without the expected MCP
   protocol headers or session context. That is often enough to confirm the

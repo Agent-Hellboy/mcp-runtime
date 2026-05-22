@@ -3,6 +3,7 @@ package runtimeapi
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,9 +15,13 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
+	k8stesting "k8s.io/client-go/testing"
+
 	"mcp-runtime/pkg/k8sclient"
 )
 
@@ -486,6 +491,57 @@ func TestEnsureTraefikWatchRBACBindsClusterRole(t *testing.T) {
 	}
 	if binding.RoleRef.Kind != "ClusterRole" || binding.RoleRef.Name != traefikWatchClusterRoleName {
 		t.Fatalf("traefik watch binding role ref = %#v, want ClusterRole/%s", binding.RoleRef, traefikWatchClusterRoleName)
+	}
+}
+
+func TestEnsureTraefikDeploymentWatchesNamespaceRetriesConflict(t *testing.T) {
+	client := kubernetesfake.NewSimpleClientset(&appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "traefik", Namespace: "traefik"},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name: "traefik",
+						Args: []string{
+							"--providers.kubernetesingress=true",
+							"--providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers",
+						},
+					}},
+				},
+			},
+		},
+	})
+	updateAttempts := 0
+	client.Fake.PrependReactor("update", "deployments", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		updateAttempts++
+		if updateAttempts == 1 {
+			return true, nil, apierrors.NewConflict(
+				schema.GroupResource{Group: "apps", Resource: "deployments"},
+				"traefik",
+				errors.New("stale deployment resource version"),
+			)
+		}
+		return false, nil, nil
+	})
+
+	err := ensureTraefikDeploymentWatchesNamespace(context.Background(), client, "mcp-team-beta", teamTraefikWatchConfig{
+		mode:       "required",
+		namespace:  "traefik",
+		deployment: "traefik",
+	})
+	if err != nil {
+		t.Fatalf("ensureTraefikDeploymentWatchesNamespace() error = %v", err)
+	}
+	if updateAttempts < 2 {
+		t.Fatalf("expected update retry after conflict, got %d attempt(s)", updateAttempts)
+	}
+	deployment, err := client.AppsV1().Deployments("traefik").Get(context.Background(), "traefik", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("traefik deployment missing: %v", err)
+	}
+	args := strings.Join(deployment.Spec.Template.Spec.Containers[0].Args, "\n")
+	if !strings.Contains(args, "--providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers,mcp-team-beta") {
+		t.Fatalf("traefik namespace args = %q", args)
 	}
 }
 
