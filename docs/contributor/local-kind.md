@@ -162,5 +162,5 @@ single-purpose analytics Secret too:
 kubectl delete mcpagentsession <session-name> -n <namespace> --ignore-not-found
 kubectl delete mcpaccessgrant <grant-name> -n <namespace> --ignore-not-found
 kubectl delete mcpserver <server-name> -n <namespace> --ignore-not-found
-kubectl delete secret <server-name>-analytics -n <namespace> --ignore-not-found
+kubectl delete secret <server-name>-analytics-creds -n <namespace> --ignore-not-found
 ```

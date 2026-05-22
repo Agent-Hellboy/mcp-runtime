@@ -305,6 +305,38 @@ func TestRuntimeServerGetReturnsSingleServerShape(t *testing.T) {
 	}
 }
 
+func TestMCPLiveInventoryProberEndpointPrefersPublicEndpoint(t *testing.T) {
+	prober := &mcpLiveInventoryProber{}
+	got, err := prober.endpoint(controlplane.ServerInfo{
+		Name:        "acme-tools",
+		Namespace:   "mcp-team-acme",
+		Endpoint:    "https://mcp.mcpruntime.org/acme-tools/mcp",
+		ServicePort: 80,
+	})
+	if err != nil {
+		t.Fatalf("endpoint: %v", err)
+	}
+	if got != "https://mcp.mcpruntime.org/acme-tools/mcp" {
+		t.Fatalf("endpoint = %q, want public endpoint", got)
+	}
+}
+
+func TestMCPLiveInventoryProberEndpointFallsBackForLocalhostEndpoint(t *testing.T) {
+	prober := &mcpLiveInventoryProber{}
+	got, err := prober.endpoint(controlplane.ServerInfo{
+		Name:        "demo",
+		Namespace:   "mcp-servers",
+		Endpoint:    "http://localhost:18080/demo/mcp",
+		ServicePort: 8080,
+	})
+	if err != nil {
+		t.Fatalf("endpoint: %v", err)
+	}
+	if got != "http://demo.mcp-servers.svc.cluster.local:8080/demo/mcp" {
+		t.Fatalf("endpoint = %q, want service fallback", got)
+	}
+}
+
 func TestLiveInventoryCacheInvalidatesOnGenerationBump(t *testing.T) {
 	prober := &countingLiveInventoryProber{}
 	cache := newLiveInventoryCache(time.Minute, prober)

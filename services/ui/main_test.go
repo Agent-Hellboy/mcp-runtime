@@ -273,7 +273,9 @@ func TestStaticAppUsesLiveInventoryWithDriftBadges(t *testing.T) {
 		`drift: governance ? "" : "ungoverned"`,
 		`drift: "missing"`,
 		`missing on server`,
-		`loadServers();`,
+		`function scheduleServerLiveInventoryRefresh()`,
+		`serverLiveInventoryPending`,
+		`reason === "live inventory pending"`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("app missing %q", want)

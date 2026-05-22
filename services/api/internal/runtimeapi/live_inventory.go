@@ -328,6 +328,9 @@ func (p *mcpLiveInventoryProber) endpoint(server controlplane.ServerInfo) (strin
 	if name == "" || namespace == "" {
 		return "", errors.New("server namespace/name is required")
 	}
+	if endpoint := liveInventoryPublicEndpoint(server.Endpoint); endpoint != "" {
+		return endpoint, nil
+	}
 	endpointPath := endpointPath(server.Endpoint)
 	if endpointPath == "" {
 		endpointPath = "/"
@@ -341,6 +344,27 @@ func (p *mcpLiveInventoryProber) endpoint(server controlplane.ServerInfo) (strin
 		Host:   name + "." + namespace + ".svc.cluster.local:" + strconv.Itoa(int(port)),
 		Path:   endpointPath,
 	}).String(), nil
+}
+
+func liveInventoryPublicEndpoint(endpoint string) string {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return ""
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+	default:
+		return ""
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	if host == "" || host == "localhost" || strings.HasPrefix(host, "127.") || host == "::1" {
+		return ""
+	}
+	return parsed.String()
 }
 
 func endpointPath(endpoint string) string {

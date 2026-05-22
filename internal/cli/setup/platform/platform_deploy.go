@@ -31,7 +31,22 @@ func deployAnalyticsStepCmd(logger *zap.Logger, images AnalyticsImageSet, storag
 
 func deployOperatorStep(logger *zap.Logger, operatorImage, gatewayProxyImage string, extRegistry *config.ExternalRegistryConfig, registrySecretName string, usingExternalRegistry bool, operatorArgs []string, deps SetupDeps) error {
 	core.Info("Deploying operator manifests")
-	if err := deps.DeployOperatorManifests(logger, operatorImage, gatewayProxyImage, operatorArgs); err != nil {
+	imagePullSecretName, err := ensureOperatorImagePullSecret(extRegistry, registrySecretName, deps)
+	if err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrApplyImagePullSecretFailed,
+			err,
+			fmt.Sprintf("failed to prepare operator imagePullSecret: %v", err),
+			map[string]any{
+				"namespace": core.NamespaceMCPRuntime,
+				"component": "operator",
+			},
+		)
+		core.Error("Failed to prepare operator imagePullSecret")
+		core.LogStructuredError(logger, wrappedErr, "Failed to prepare operator imagePullSecret")
+		return wrappedErr
+	}
+	if err := deps.DeployOperatorManifests(logger, operatorImage, gatewayProxyImage, operatorArgs, imagePullSecretName); err != nil {
 		wrappedErr := core.WrapWithSentinelAndContext(
 			core.ErrOperatorDeploymentFailed,
 			err,
@@ -76,6 +91,26 @@ func deployOperatorStep(logger *zap.Logger, operatorImage, gatewayProxyImage str
 		core.Warn(fmt.Sprintf("Could not restart operator deployment: %v", err))
 	}
 	return nil
+}
+
+func ensureOperatorImagePullSecret(extRegistry *config.ExternalRegistryConfig, registrySecretName string, deps SetupDeps) (string, error) {
+	if explicit := platformImagePullSecretOverride(); explicit != "" {
+		return explicit, nil
+	}
+	if extRegistry == nil || strings.TrimSpace(extRegistry.URL) == "" || (extRegistry.Username == "" && extRegistry.Password == "") {
+		return "", nil
+	}
+	secretName := defaultPlatformRegistryPullSecretName
+	// Keep the operator Deployment pull secret separate from the provisioned
+	// registry env Secret in mcp-runtime. The same Kubernetes Secret cannot be
+	// both a generic env source and a dockerconfigjson pull secret.
+	if custom := strings.TrimSpace(registrySecretName); custom != "" && custom != defaultRegistrySecretName {
+		secretName = custom + "-pull"
+	}
+	if err := deps.EnsureImagePullSecret(core.NamespaceMCPRuntime, secretName, extRegistry.URL, extRegistry.Username, extRegistry.Password); err != nil {
+		return "", err
+	}
+	return secretName, nil
 }
 
 func verifySetup(logger *zap.Logger, usingExternalRegistry bool, deps SetupDeps) error {
@@ -330,13 +365,13 @@ func mergeCRDCheckDebugDiagnosticsIfNeeded(kubectl core.KubectlRunner, m map[str
 
 // deployOperatorManifests deploys operator manifests without requiring kustomize or controller-gen.
 // It applies CRD, RBAC, and manager manifests directly, replacing the image name in the process.
-func deployOperatorManifests(logger *zap.Logger, operatorImage, gatewayProxyImage string, operatorArgs []string) error {
-	return deployOperatorManifestsWithKubectl(core.DefaultKubectlClient(), logger, operatorImage, gatewayProxyImage, operatorArgs)
+func deployOperatorManifests(logger *zap.Logger, operatorImage, gatewayProxyImage string, operatorArgs []string, imagePullSecretName string) error {
+	return deployOperatorManifestsWithKubectl(core.DefaultKubectlClient(), logger, operatorImage, gatewayProxyImage, operatorArgs, imagePullSecretName)
 }
 
 // deployOperatorManifestsWithKubectl deploys operator manifests without requiring kustomize or controller-gen.
 // It applies CRD, RBAC, and manager manifests directly, replacing the image name and injecting operator args/env.
-func deployOperatorManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.Logger, operatorImage, gatewayProxyImage string, operatorArgs []string) error {
+func deployOperatorManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.Logger, operatorImage, gatewayProxyImage string, operatorArgs []string, imagePullSecretName string) error {
 	if err := ensureRepoManagedTraefikMiddlewareResources(kubectl, logger); err != nil {
 		return err
 	}
@@ -466,6 +501,18 @@ func deployOperatorManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.
 			core.LogStructuredError(logger, wrappedErr, "Failed to render mutated manifest")
 		}
 		return wrappedErr
+	}
+	if strings.TrimSpace(imagePullSecretName) != "" {
+		rendered, err := injectImagePullSecretsIntoManifest(string(mutatedYAML), imagePullSecretName)
+		if err != nil {
+			wrappedErr := core.WrapWithSentinel(core.ErrRenderManagerYAMLFailed, err, fmt.Sprintf("failed to inject operator imagePullSecret: %v", err))
+			core.Error("Failed to inject operator imagePullSecret")
+			if logger != nil {
+				core.LogStructuredError(logger, wrappedErr, "Failed to inject operator imagePullSecret")
+			}
+			return wrappedErr
+		}
+		mutatedYAML = []byte(rendered)
 	}
 
 	if err := applyOperatorManagerManifest(kubectl, mutatedYAML); err != nil {

@@ -73,7 +73,25 @@ func TestPlatformURL(t *testing.T) {
 		}
 	})
 
-	t.Run("non_test_uses_service_ip_for_implicit_default_endpoint", func(t *testing.T) {
+	t.Run("non_test_prefers_discovered_registry_ingress_for_implicit_default_endpoint", func(t *testing.T) {
+		t.Setenv("MCP_RUNTIME_TEST_MODE", "")
+		kubectl := &fakeKubectl{clusterIP: "10.96.201.51", port: "5000", ingressHost: "registry.mcpruntime.org"}
+		url := PlatformURL(logger, kubectl.commandArgs, Config{
+			RegistryEndpoint:        "registry.local",
+			DefaultRegistryEndpoint: "registry.local",
+			RegistryIngressHost:     "registry.local",
+			DefaultRegistryHost:     "registry.local",
+			RegistryPort:            5000,
+		})
+		if url != "registry.mcpruntime.org" {
+			t.Errorf("expected discovered registry ingress host, got %q", url)
+		}
+		if kubectl.clusterIPQueried {
+			t.Error("expected ingress host discovery to avoid ClusterIP lookup")
+		}
+	})
+
+	t.Run("non_test_uses_service_ip_when_registry_ingress_is_missing", func(t *testing.T) {
 		t.Setenv("MCP_RUNTIME_TEST_MODE", "")
 		url := PlatformURL(logger, (&fakeKubectl{clusterIP: "10.96.201.51", port: "5000"}).commandArgs, Config{
 			RegistryEndpoint:        "registry.local",
@@ -270,6 +288,8 @@ func (c fakeCommand) Output() ([]byte, error) {
 type fakeKubectl struct {
 	clusterIP        string
 	clusterIPErr     error
+	ingressHost      string
+	ingressErr       error
 	port             string
 	portErr          error
 	clusterIPQueried bool
@@ -281,6 +301,8 @@ func (k *fakeKubectl) commandArgs(args []string) (OutputCommand, error) {
 		case "jsonpath={.spec.clusterIP}":
 			k.clusterIPQueried = true
 			return fakeCommand{output: []byte(k.clusterIP), outputErr: k.clusterIPErr}, nil
+		case "jsonpath={.spec.rules[0].host}":
+			return fakeCommand{output: []byte(k.ingressHost), outputErr: k.ingressErr}, nil
 		case "jsonpath={.spec.ports[0].port}":
 			return fakeCommand{output: []byte(k.port), outputErr: k.portErr}, nil
 		}

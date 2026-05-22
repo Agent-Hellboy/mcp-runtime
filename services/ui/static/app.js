@@ -32,6 +32,8 @@ let selectedUserAnalyticsServerKey = "";
 let selectedTeamSlug = "";
 let namespaceScopes = [];
 let selectedNamespace = defaults.namespace || "";
+let serverLiveInventoryRefreshTimer = null;
+const serverLiveInventoryRefreshDelayMs = 1200;
 
 // API Helper
 async function fetchJSON(path, options = {}) {
@@ -1367,6 +1369,7 @@ async function loadServers() {
     serversCache = Array.isArray(data.servers) ? data.servers : [];
     publishPolicyCache = data.publish_policy || null;
     renderServers();
+    scheduleServerLiveInventoryRefresh();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
     console.error("Failed to load servers:", err);
@@ -1377,6 +1380,20 @@ async function loadServers() {
       grid.innerHTML = '<div class="component-card error">Error loading MCP servers.</div>';
     }
   }
+}
+
+function scheduleServerLiveInventoryRefresh() {
+  if (serverLiveInventoryRefreshTimer) return;
+  if (!serversCache.some(serverLiveInventoryPending)) return;
+  serverLiveInventoryRefreshTimer = setTimeout(() => {
+    serverLiveInventoryRefreshTimer = null;
+    loadServers();
+  }, serverLiveInventoryRefreshDelayMs);
+}
+
+function serverLiveInventoryPending(server) {
+  const reason = String(server?.liveInventoryError || "").trim().toLowerCase();
+  return reason === "live inventory pending" || reason === "refresh_in_progress";
 }
 
 function renderSignedOutServerCatalog() {

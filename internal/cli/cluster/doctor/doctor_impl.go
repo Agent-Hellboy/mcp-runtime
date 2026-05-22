@@ -235,6 +235,8 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 		{Name: "traefik deployment readiness", Detail: "reading ready and desired replicas for Traefik", Run: func() DoctorCheck { return checkTraefikDeploymentReady(kubectl, distro) }},
 		{Name: "traefik web entrypoint", Detail: "checking the Traefik Service ports for the web entrypoint", Run: func() DoctorCheck { return checkTraefikWebEntrypoint(kubectl, distro) }},
 		{Name: "traefik service exposure", Detail: "checking LoadBalancer or NodePort exposure for the web entrypoint", Run: func() DoctorCheck { return checkTraefikServiceExposure(kubectl, distro) }},
+		{Name: "ingress LoadBalancer status", Detail: "checking host-based MCP Runtime ingresses for published LoadBalancer status", Run: func() DoctorCheck { return checkIngressLoadBalancerStatus(kubectl) }},
+		{Name: "platform API live inventory ingress", Detail: "checking team namespace NetworkPolicies allow platform API probes to MCPServer Services", Run: func() DoctorCheck { return checkPlatformAPILiveInventoryNetworkPolicy(kubectl) }},
 		{Name: "mcp-servers DNS/network", Detail: "launching a temporary curl pod in mcp-servers to reach the registry service", Run: func() DoctorCheck { return checkMCPServersDNSAndNetwork(kubectl) }},
 		{
 			Name:   "ingress route probe",
@@ -243,6 +245,8 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 		},
 		{Name: "registry Service", Detail: "checking the bundled registry Service and NodePort", Run: func() DoctorCheck { return checkRegistryService(kubectl) }},
 		{Name: "registry reachability (in-cluster)", Detail: "launching a temporary curl pod in registry to call /v2/ over cluster DNS", Run: func() DoctorCheck { return checkRegistryReachableFromCluster(kubectl) }},
+		{Name: "MCPServer registry image refs", Detail: "checking MCPServer specs for registry Service IP image references that kubelet cannot TLS-verify", Run: func() DoctorCheck { return checkRegistryServiceIPImageRefs(kubectl) }},
+		{Name: "MCPServer imagePullSecrets", Detail: "checking MCPServer imagePullSecrets reference existing Secrets in each server namespace", Run: func() DoctorCheck { return checkMCPServerImagePullSecrets(kubectl) }},
 		{
 			Name:   "mcp-servers imagePullSecrets",
 			Detail: "reading default service account pull secrets and verifying referenced Secret objects",
@@ -254,7 +258,9 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 			Run:    func() DoctorCheck { return checkMCPServersImagePullSmoke(kubectl, doctorMCPServersNamespace) },
 		},
 		{Name: "registry HTTP pull mismatch", Detail: "listing pods and inspecting image-pull failures for HTTP-vs-HTTPS registry errors", Run: func() DoctorCheck { return checkRegistryHTTPPullMismatch(kubectl) }},
+		{Name: "registry image pull diagnostics", Detail: "inspecting image-pull failures for registry TLS, auth, DNS, or corrupt-manifest errors", Run: func() DoctorCheck { return checkRegistryImagePullDiagnostics(kubectl) }},
 		{Name: "sentinel secrets", Detail: "reading Sentinel API, admin, UI, and ingest keys from mcp-sentinel-secrets", Run: func() DoctorCheck { return checkSentinelSecrets(kubectl) }},
+		{Name: "gateway analytics credentials", Detail: "checking gateway sidecars have ingest credentials when analytics is enabled", Run: func() DoctorCheck { return checkGatewayAnalyticsCredentials(kubectl) }},
 		{Name: "sentinel API auth probe", Detail: "launching a temporary curl pod with UI_API_KEY against the Sentinel API", Run: func() DoctorCheck { return checkSentinelAPIAuthProbe(kubectl) }},
 		{Name: "node capacity", Detail: "checking node metrics, then falling back to allocatable resources if metrics-server is absent", Run: func() DoctorCheck { return checkNodeCapacity(kubectl) }},
 		{Name: "pending pods", Detail: "listing Pending pods across all namespaces", Run: func() DoctorCheck { return checkPendingPodsByNamespace(kubectl) }},
@@ -351,4 +357,24 @@ type imagePullPodCandidate struct {
 	Images    []string
 	Reasons   []string
 	Messages  []string
+}
+
+type mcpServerImageRef struct {
+	Namespace string
+	Name      string
+	Image     string
+}
+
+type mcpServerPullSecretRef struct {
+	Namespace string
+	Server    string
+	Secret    string
+}
+
+type doctorIngressStatus struct {
+	Namespace string
+	Name      string
+	Hosts     []string
+	LBIP      string
+	LBHost    string
 }

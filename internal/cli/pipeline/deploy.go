@@ -101,6 +101,19 @@ func (m *manager) DeployCRDs(manifestsDir, namespace string) error {
 			return wrappedErr
 		}
 
+		manifestBytes, err = m.prepareManifestForDeploy(manifestBytes, namespace)
+		if err != nil {
+			wrappedErr := core.WrapWithSentinelAndContext(
+				core.ErrApplyManifestFailed,
+				err,
+				fmt.Sprintf("failed to prepare %s: %v", absPath, err),
+				map[string]any{"file": file, "namespace": namespace, "component": "pipeline"},
+			)
+			core.Error("Failed to prepare manifest")
+			core.LogStructuredError(m.logger, wrappedErr, "Failed to prepare manifest")
+			return wrappedErr
+		}
+
 		if err := kube.ApplyManifestContentWithNamespace(m.kubectl.CommandArgs, string(manifestBytes), namespace); err != nil {
 			wrappedErr := core.WrapWithSentinelAndContext(
 				core.ErrApplyManifestFailed,

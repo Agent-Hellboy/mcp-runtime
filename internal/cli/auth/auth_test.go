@@ -89,6 +89,9 @@ func TestAuthLoginSavesAndVerifies(t *testing.T) {
 	if creds.APIBaseURL != "https://platform.example.com" {
 		t.Fatalf("api_url = %q, want https://platform.example.com", creds.APIBaseURL)
 	}
+	if creds.Current != "default" {
+		t.Fatalf("current = %q, want default", creds.Current)
+	}
 }
 
 func TestAuthLoginNormalizesTrailingAPIPath(t *testing.T) {
@@ -124,5 +127,50 @@ func TestAuthLoginNormalizesTrailingAPIPath(t *testing.T) {
 	}
 	if creds.Token != "good" {
 		t.Fatalf("token = %q, want good", creds.Token)
+	}
+}
+
+func TestAuthLoginStoresMultipleProfilesAndUseSwitchesCurrent(t *testing.T) {
+	d := t.TempDir()
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", d)
+
+	previousHook := apiTestHook
+	apiTestHook = func(_ context.Context, _ string, _ string) error { return nil }
+	defer func() { apiTestHook = previousHook }()
+
+	cmd := New(core.NewRuntime(zap.NewNop()))
+	cmd.SetArgs([]string{"login", "--api-url", "https://platform.example.com", "--token", "admin-token", "--profile", "admin"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("admin login: %v", err)
+	}
+
+	cmd = New(core.NewRuntime(zap.NewNop()))
+	cmd.SetArgs([]string{"login", "--api-url", "https://platform.example.com", "--token", "acme-token", "--profile", "acme"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("acme login: %v", err)
+	}
+
+	creds, err := authfile.Load(filepath.Join(d, "credentials.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names := creds.ProfileNames(); len(names) != 2 || names[0] != "acme" || names[1] != "admin" {
+		t.Fatalf("profiles = %#v", names)
+	}
+	if creds.Current != "acme" || creds.Token != "acme-token" {
+		t.Fatalf("current=%q token=%q, want acme/acme-token", creds.Current, creds.Token)
+	}
+
+	cmd = New(core.NewRuntime(zap.NewNop()))
+	cmd.SetArgs([]string{"use", "admin"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("use admin: %v", err)
+	}
+	creds, err = authfile.Load(filepath.Join(d, "credentials.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creds.Current != "admin" || creds.Token != "admin-token" {
+		t.Fatalf("current=%q token=%q, want admin/admin-token", creds.Current, creds.Token)
 	}
 }

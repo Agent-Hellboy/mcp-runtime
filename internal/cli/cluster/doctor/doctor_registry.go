@@ -407,6 +407,146 @@ func checkRegistryHTTPPullMismatch(kubectl core.KubectlRunner) DoctorCheck {
 	}
 }
 
+func checkRegistryServiceIPImageRefs(kubectl core.KubectlRunner) DoctorCheck {
+	serviceIP, err := readKubectlOutput(kubectl, []string{"get", "svc", "registry", "-n", "registry", "-o", "jsonpath={.spec.clusterIP}"})
+	serviceIP = strings.TrimSpace(serviceIP)
+	if err != nil || serviceIP == "" || strings.EqualFold(serviceIP, "none") {
+		return DoctorCheck{
+			Name:   "MCPServer registry image refs",
+			OK:     true,
+			Detail: "registry Service IP unavailable; skipped MCPServer image reference check",
+		}
+	}
+
+	out, err := readKubectlOutput(kubectl, []string{"get", "mcpservers", "-A", "-o", buildMCPServerImageJSONPath()})
+	if err != nil {
+		return DoctorCheck{
+			Name:   "MCPServer registry image refs",
+			OK:     false,
+			Detail: fmt.Sprintf("failed listing MCPServers: %v", err),
+			Remedy: "check MCPServer CRD availability and RBAC for listing MCPServers across namespaces",
+		}
+	}
+	refs := parseMCPServerImageRefs(out)
+	for _, ref := range refs {
+		host := registryHostFromImageRef(ref.Image)
+		if registryHostMatchesServiceIP(host, serviceIP) {
+			return DoctorCheck{
+				Name:   "MCPServer registry image refs",
+				OK:     false,
+				Detail: fmt.Sprintf("MCPServer %s/%s uses registry Service IP image %s; kubelet verifies registry TLS against the image host and bundled registry certs do not cover ClusterIP addresses", ref.Namespace, ref.Name, ref.Image),
+				Remedy: "reapply or patch the MCPServer to use the pullable registry host, for example registry.<domain>/<scope>/<image>, then restart the workload pod",
+			}
+		}
+	}
+	return DoctorCheck{
+		Name:   "MCPServer registry image refs",
+		OK:     true,
+		Detail: fmt.Sprintf("%d MCPServer image reference(s) checked; none use registry Service IP %s", len(refs), serviceIP),
+	}
+}
+
+func checkMCPServerImagePullSecrets(kubectl core.KubectlRunner) DoctorCheck {
+	out, err := readKubectlOutput(kubectl, []string{"get", "mcpservers", "-A", "-o", buildMCPServerPullSecretJSONPath()})
+	if err != nil {
+		return DoctorCheck{
+			Name:   "MCPServer imagePullSecrets",
+			OK:     false,
+			Detail: fmt.Sprintf("failed listing MCPServers: %v", err),
+			Remedy: "check MCPServer CRD availability and RBAC for listing MCPServers across namespaces",
+		}
+	}
+	refs := parseMCPServerPullSecretRefs(out)
+	if len(refs) == 0 {
+		return DoctorCheck{
+			Name:   "MCPServer imagePullSecrets",
+			OK:     true,
+			Detail: "no MCPServer spec.imagePullSecrets configured",
+		}
+	}
+	for _, ref := range refs {
+		if _, err := readKubectlOutput(kubectl, []string{"get", "secret", ref.Secret, "-n", ref.Namespace, "-o", "jsonpath={.metadata.name}"}); err != nil {
+			return DoctorCheck{
+				Name:   "MCPServer imagePullSecrets",
+				OK:     false,
+				Detail: fmt.Sprintf("MCPServer %s/%s references missing imagePullSecret %s", ref.Namespace, ref.Server, ref.Secret),
+				Remedy: "create the docker-registry Secret in the MCPServer namespace or patch spec.imagePullSecrets to an existing registry credential",
+			}
+		}
+	}
+	return DoctorCheck{
+		Name:   "MCPServer imagePullSecrets",
+		OK:     true,
+		Detail: fmt.Sprintf("%d MCPServer imagePullSecret reference(s) exist", len(refs)),
+	}
+}
+
+func checkRegistryImagePullDiagnostics(kubectl core.KubectlRunner) DoctorCheck {
+	out, err := readKubectlOutput(kubectl, []string{"get", "pods", "-A", "-o", buildImagePullJSONPath()})
+	if err != nil {
+		return DoctorCheck{
+			Name:   "registry image pull diagnostics",
+			OK:     false,
+			Detail: fmt.Sprintf("kubectl error: %v", err),
+			Remedy: "check API connectivity and RBAC for listing pods",
+		}
+	}
+	candidates := parseImagePullCandidates(out)
+	if len(candidates) == 0 {
+		return DoctorCheck{
+			Name:   "registry image pull diagnostics",
+			OK:     true,
+			Detail: "no ErrImagePull/ImagePullBackOff pods detected",
+		}
+	}
+	for _, candidate := range candidates {
+		if diagnosis, ok := classifyImagePullDiagnostic(candidate.Messages); ok {
+			return imagePullDiagnosticResult(candidate, diagnosis)
+		}
+	}
+	describeFailures := 0
+	var firstDescribeFailure string
+	inspected := 0
+	for _, candidate := range candidates {
+		if inspected >= imagePullDescribeLimit {
+			break
+		}
+		inspected++
+		describe, err := readKubectlOutput(kubectl, []string{"describe", "pod", candidate.Name, "-n", candidate.Namespace})
+		if err != nil {
+			describeFailures++
+			if firstDescribeFailure == "" {
+				firstDescribeFailure = fmt.Sprintf("%s/%s: %v", candidate.Namespace, candidate.Name, err)
+			}
+			continue
+		}
+		if diagnosis, ok := classifyImagePullDiagnostic([]string{describe}); ok {
+			return imagePullDiagnosticResult(candidate, diagnosis)
+		}
+	}
+	if describeFailures > 0 {
+		detail := fmt.Sprintf("pod inspection failed for %d/%d ErrImagePull/ImagePullBackOff candidate(s); first error: %s", describeFailures, inspected, firstDescribeFailure)
+		if inspected < len(candidates) {
+			detail += fmt.Sprintf(" (inspected first %d of %d)", inspected, len(candidates))
+		}
+		return DoctorCheck{
+			Name:   "registry image pull diagnostics",
+			OK:     false,
+			Detail: detail,
+			Remedy: "inspect pull-failing pods manually with `kubectl describe pod <name> -n <namespace>` and check kubectl RBAC/connectivity",
+		}
+	}
+	detail := fmt.Sprintf("%d ErrImagePull/ImagePullBackOff pod(s) found, none matched known registry TLS/auth/DNS/corrupt-manifest patterns", len(candidates))
+	if inspected < len(candidates) {
+		detail = fmt.Sprintf("%d ErrImagePull/ImagePullBackOff pod(s) found; inspected first %d, none matched known registry TLS/auth/DNS/corrupt-manifest patterns", len(candidates), inspected)
+	}
+	return DoctorCheck{
+		Name:   "registry image pull diagnostics",
+		OK:     true,
+		Detail: detail,
+	}
+}
+
 // buildImagePullJSONPath returns the kubectl jsonpath used by the HTTP
 // mismatch check. Inner list items are joined with imagePullListSep (0x1f)
 // so commas in kubelet messages don't fragment the parse.
@@ -415,6 +555,14 @@ func buildImagePullJSONPath() string {
 		`jsonpath={range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"|"}{range .spec.initContainers[*]}{.image}{"%[1]s"}{end}{range .spec.containers[*]}{.image}{"%[1]s"}{end}{"|"}{range .status.initContainerStatuses[*]}{.state.waiting.reason}{"%[1]s"}{end}{range .status.containerStatuses[*]}{.state.waiting.reason}{"%[1]s"}{end}{"|"}{range .status.initContainerStatuses[*]}{.state.waiting.message}{"%[1]s"}{end}{range .status.containerStatuses[*]}{.state.waiting.message}{"%[1]s"}{end}{"\n"}{end}`,
 		imagePullListSep,
 	)
+}
+
+func buildMCPServerImageJSONPath() string {
+	return `jsonpath={range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"|"}{.spec.image}{"\n"}{end}`
+}
+
+func buildMCPServerPullSecretJSONPath() string {
+	return fmt.Sprintf(`jsonpath={range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"|"}{range .spec.imagePullSecrets[*]}{@}{"%s"}{end}{"\n"}{end}`, imagePullListSep)
 }
 
 func mismatchResult(c imagePullPodCandidate) DoctorCheck {
@@ -432,6 +580,95 @@ func mismatchResult(c imagePullPodCandidate) DoctorCheck {
 		Detail: detail,
 		Remedy: "Registry HTTP pull mismatch: kubelet tried HTTPS against the HTTP registry. Configure the node container runtime's insecure registry mirror for the exact image host, or use TLS.",
 	}
+}
+
+type imagePullDiagnosis struct {
+	Category string
+	Message  string
+	Remedy   string
+}
+
+func imagePullDiagnosticResult(c imagePullPodCandidate, d imagePullDiagnosis) DoctorCheck {
+	image := firstNonEmpty(c.Images, "unknown")
+	reason := pickImagePullReason(c.Reasons)
+	var detail string
+	if reason != "" {
+		detail = fmt.Sprintf("pod %s/%s image %s (%s) has registry %s issue: %s", c.Namespace, c.Name, image, reason, d.Category, d.Message)
+	} else {
+		detail = fmt.Sprintf("pod %s/%s image %s has registry %s issue: %s", c.Namespace, c.Name, image, d.Category, d.Message)
+	}
+	return DoctorCheck{
+		Name:   "registry image pull diagnostics",
+		OK:     false,
+		Detail: detail,
+		Remedy: d.Remedy,
+	}
+}
+
+func classifyImagePullDiagnostic(messages []string) (imagePullDiagnosis, bool) {
+	for _, message := range messages {
+		lower := strings.ToLower(message)
+		switch {
+		case strings.Contains(lower, "x509:") ||
+			strings.Contains(lower, "certificate signed by unknown authority") ||
+			strings.Contains(lower, "doesn't contain any ip sans") ||
+			strings.Contains(lower, "cannot validate certificate") ||
+			strings.Contains(lower, "tls: failed to verify certificate"):
+			return imagePullDiagnosis{
+				Category: "TLS",
+				Message:  firstMatchingSnippet(message, "x509:", "certificate signed by unknown authority", "cannot validate certificate", "IP SANs", "tls: failed to verify certificate"),
+				Remedy:   "use the public registry hostname covered by the registry certificate, add the registry CA to every node runtime, or configure the exact registry mirror host in the node runtime",
+			}, true
+		case strings.Contains(lower, "no basic auth credentials") ||
+			strings.Contains(lower, "pull access denied") ||
+			strings.Contains(lower, "authorization failed") ||
+			strings.Contains(lower, "401 unauthorized") ||
+			strings.Contains(lower, "403 forbidden") ||
+			strings.Contains(lower, "insufficient_scope"):
+			return imagePullDiagnosis{
+				Category: "auth",
+				Message:  firstMatchingSnippet(message, "no basic auth credentials", "pull access denied", "authorization failed", "401 Unauthorized", "403 Forbidden", "insufficient_scope"),
+				Remedy:   "create a registry credential and reference it from spec.imagePullSecrets or the namespace service account; verify the credential is allowed to pull the image repository",
+			}, true
+		case strings.Contains(lower, "no such host") ||
+			strings.Contains(lower, "server misbehaving") ||
+			strings.Contains(lower, "lookup ") && strings.Contains(lower, "/v2/"):
+			return imagePullDiagnosis{
+				Category: "DNS",
+				Message:  firstMatchingSnippet(message, "lookup", "no such host", "server misbehaving"),
+				Remedy:   "fix node DNS for the registry host or configure the node container runtime mirror for the exact image host",
+			}, true
+		case strings.Contains(lower, "manifest unknown") ||
+			strings.Contains(lower, "not found") ||
+			strings.Contains(lower, "invalid tar header") ||
+			strings.Contains(lower, "unexpected eof"):
+			return imagePullDiagnosis{
+				Category: "image",
+				Message:  firstMatchingSnippet(message, "manifest unknown", "not found", "invalid tar header", "unexpected EOF"),
+				Remedy:   "verify the image tag exists in the registry and that the pushed manifest/layer media types are valid for kubelet pulls",
+			}, true
+		}
+	}
+	return imagePullDiagnosis{}, false
+}
+
+func firstMatchingSnippet(message string, needles ...string) string {
+	for _, needle := range needles {
+		idx := strings.Index(strings.ToLower(message), strings.ToLower(needle))
+		if idx < 0 {
+			continue
+		}
+		end := idx + 180
+		if end > len(message) {
+			end = len(message)
+		}
+		return strings.TrimSpace(message[idx:end])
+	}
+	message = strings.TrimSpace(message)
+	if len(message) > 180 {
+		return message[:180]
+	}
+	return message
 }
 
 func pickImagePullReason(reasons []string) string {
@@ -468,6 +705,72 @@ func parseImagePullCandidates(value string) []imagePullPodCandidate {
 		})
 	}
 	return candidates
+}
+
+func parseMCPServerImageRefs(value string) []mcpServerImageRef {
+	var refs []mcpServerImageRef
+	for _, line := range filterNonEmptyLines(value) {
+		parts := strings.SplitN(line, "|", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		ref := mcpServerImageRef{
+			Namespace: strings.TrimSpace(parts[0]),
+			Name:      strings.TrimSpace(parts[1]),
+			Image:     strings.TrimSpace(parts[2]),
+		}
+		if ref.Namespace == "" || ref.Name == "" || ref.Image == "" {
+			continue
+		}
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
+func parseMCPServerPullSecretRefs(value string) []mcpServerPullSecretRef {
+	var refs []mcpServerPullSecretRef
+	for _, line := range filterNonEmptyLines(value) {
+		parts := strings.SplitN(line, "|", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		namespace := strings.TrimSpace(parts[0])
+		server := strings.TrimSpace(parts[1])
+		if namespace == "" || server == "" {
+			continue
+		}
+		for _, secret := range splitSepTrim(parts[2], imagePullListSep) {
+			if secret == "" {
+				continue
+			}
+			refs = append(refs, mcpServerPullSecretRef{
+				Namespace: namespace,
+				Server:    server,
+				Secret:    secret,
+			})
+		}
+	}
+	return refs
+}
+
+func registryHostFromImageRef(image string) string {
+	first, _, found := strings.Cut(strings.TrimSpace(image), "/")
+	if !found {
+		return ""
+	}
+	if strings.Contains(first, ".") || strings.Contains(first, ":") || first == "localhost" {
+		return first
+	}
+	return ""
+}
+
+func registryHostMatchesServiceIP(host, serviceIP string) bool {
+	host = strings.TrimSpace(host)
+	serviceIP = strings.TrimSpace(serviceIP)
+	if host == "" || serviceIP == "" {
+		return false
+	}
+	return host == serviceIP || strings.HasPrefix(host, serviceIP+":")
 }
 
 func hasImagePullReason(reasons []string) bool {

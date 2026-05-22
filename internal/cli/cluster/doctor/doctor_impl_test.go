@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -202,6 +203,59 @@ func TestCheckOperatorReady(t *testing.T) {
 		check := checkOperatorReady(kubectl)
 		if check.OK {
 			t.Fatal("expected failure for 0/1 ready replicas")
+		}
+	})
+}
+
+func TestCheckGatewayAnalyticsCredentials(t *testing.T) {
+	t.Run("fails when gateway has ingest URL without api key", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				return &core.MockCommand{OutputData: []byte(`{
+  "items": [{
+    "metadata": {"namespace": "mcp-team-acme", "name": "acme-tools"},
+    "spec": {"template": {"spec": {"containers": [{
+      "name": "mcp-gateway",
+      "env": [{"name": "ANALYTICS_INGEST_URL", "value": "http://ingest/events"}]
+    }]}}}
+  }]
+}`)}
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		check := checkGatewayAnalyticsCredentials(kubectl)
+		if check.OK {
+			t.Fatal("expected missing analytics key to fail")
+		}
+		if !strings.Contains(check.Detail, "missing ANALYTICS_API_KEY") {
+			t.Fatalf("detail = %q, want missing key message", check.Detail)
+		}
+	})
+
+	t.Run("passes when secret key exists", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				if contains(spec.Args, "secret") {
+					return &core.MockCommand{OutputData: []byte(fmt.Sprintf(`{"data":{"api-key":%q}}`, base64.StdEncoding.EncodeToString([]byte("ingest-key"))))}
+				}
+				return &core.MockCommand{OutputData: []byte(`{
+  "items": [{
+    "metadata": {"namespace": "mcp-team-acme", "name": "acme-tools"},
+    "spec": {"template": {"spec": {"containers": [{
+      "name": "mcp-gateway",
+      "env": [
+        {"name": "ANALYTICS_INGEST_URL", "value": "http://ingest/events"},
+        {"name": "ANALYTICS_API_KEY", "valueFrom": {"secretKeyRef": {"name": "acme-tools-analytics-creds", "key": "api-key"}}}
+      ]
+    }]}}}
+  }]
+}`)}
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		check := checkGatewayAnalyticsCredentials(kubectl)
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q remedy=%q", check.Detail, check.Remedy)
 		}
 	})
 }
@@ -607,6 +661,107 @@ func TestParseImagePullCandidatesPreservesCommasInMessages(t *testing.T) {
 	}
 }
 
+func TestCheckRegistryServiceIPImageRefs(t *testing.T) {
+	t.Run("fails when MCPServer image uses registry Service IP", func(t *testing.T) {
+		servers := strings.Join([]string{
+			"mcp-team-acme|acme-tools|10.43.174.51:5000/acme/acme-tools",
+			"mcp-servers|ok|registry.mcpruntime.org/public/ok",
+		}, "\n")
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "svc") && contains(spec.Args, "registry"):
+					return &core.MockCommand{OutputData: []byte("10.43.174.51")}
+				case contains(spec.Args, "mcpservers"):
+					return &core.MockCommand{OutputData: []byte(servers)}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		check := checkRegistryServiceIPImageRefs(kubectl)
+		if check.OK {
+			t.Fatal("expected Service IP image reference to fail")
+		}
+		for _, want := range []string{"mcp-team-acme/acme-tools", "10.43.174.51:5000/acme/acme-tools", "ClusterIP"} {
+			if !strings.Contains(check.Detail, want) {
+				t.Fatalf("detail should contain %q, got %q", want, check.Detail)
+			}
+		}
+		if !strings.Contains(check.Remedy, "registry.<domain>") {
+			t.Fatalf("remedy should mention pullable registry host, got %q", check.Remedy)
+		}
+	})
+
+	t.Run("passes when image refs use pullable hosts", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "svc") && contains(spec.Args, "registry"):
+					return &core.MockCommand{OutputData: []byte("10.43.174.51")}
+				case contains(spec.Args, "mcpservers"):
+					return &core.MockCommand{OutputData: []byte("mcp-servers|ok|registry.mcpruntime.org/public/ok\n")}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		check := checkRegistryServiceIPImageRefs(kubectl)
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q remedy=%q", check.Detail, check.Remedy)
+		}
+	})
+}
+
+func TestCheckMCPServerImagePullSecrets(t *testing.T) {
+	t.Run("fails when referenced secret is missing", func(t *testing.T) {
+		servers := "mcp-team-acme|acme-tools|registry-pull-admin" + imagePullListSep + "\n"
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "mcpservers"):
+					return &core.MockCommand{OutputData: []byte(servers)}
+				case contains(spec.Args, "secret") && contains(spec.Args, "registry-pull-admin"):
+					return &core.MockCommand{OutputErr: errors.New("not found")}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		check := checkMCPServerImagePullSecrets(core.NewTestKubectlClient(mock))
+		if check.OK {
+			t.Fatal("expected missing imagePullSecret to fail")
+		}
+		for _, want := range []string{"mcp-team-acme/acme-tools", "registry-pull-admin"} {
+			if !strings.Contains(check.Detail, want) {
+				t.Fatalf("detail should contain %q, got %q", want, check.Detail)
+			}
+		}
+	})
+
+	t.Run("passes when referenced secrets exist", func(t *testing.T) {
+		servers := "mcp-team-acme|acme-tools|registry-pull-admin" + imagePullListSep + "\n"
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "mcpservers"):
+					return &core.MockCommand{OutputData: []byte(servers)}
+				case contains(spec.Args, "secret") && contains(spec.Args, "registry-pull-admin"):
+					return &core.MockCommand{OutputData: []byte("registry-pull-admin")}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		check := checkMCPServerImagePullSecrets(core.NewTestKubectlClient(mock))
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q remedy=%q", check.Detail, check.Remedy)
+		}
+	})
+}
+
 func TestCheckRegistryHTTPPullMismatch(t *testing.T) {
 	sep := imagePullListSep
 
@@ -790,6 +945,78 @@ Events:
 		}
 		if !strings.Contains(check.Detail, fmt.Sprintf("inspected first %d", imagePullDescribeLimit)) {
 			t.Fatalf("detail should mention capped inspection, got %q", check.Detail)
+		}
+	})
+}
+
+func TestCheckRegistryImagePullDiagnostics(t *testing.T) {
+	sep := imagePullListSep
+
+	t.Run("reports TLS SAN pull failures from waiting message", func(t *testing.T) {
+		msg := `failed to pull image "10.43.174.51:5000/acme/acme-tools:v0.1.0": Head "https://10.43.174.51:5000/v2/acme/acme-tools/manifests/v0.1.0": x509: cannot validate certificate for 10.43.174.51 because it doesn't contain any IP SANs`
+		pods := "mcp-team-acme|acme-tools-abc|10.43.174.51:5000/acme/acme-tools:v0.1.0" + sep + "|ImagePullBackOff" + sep + "|" + msg + sep
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				if contains(spec.Args, "describe") {
+					t.Fatal("did not expect describe when waiting message has diagnostic")
+				}
+				return &core.MockCommand{OutputData: []byte(pods)}
+			},
+		}
+		check := checkRegistryImagePullDiagnostics(core.NewTestKubectlClient(mock))
+		if check.OK {
+			t.Fatal("expected TLS diagnostic to fail")
+		}
+		for _, want := range []string{"TLS", "10.43.174.51:5000/acme/acme-tools:v0.1.0", "IP SANs"} {
+			if !strings.Contains(check.Detail, want) {
+				t.Fatalf("detail should contain %q, got %q", want, check.Detail)
+			}
+		}
+		if !strings.Contains(check.Remedy, "public registry hostname") {
+			t.Fatalf("remedy should mention public registry hostname, got %q", check.Remedy)
+		}
+	})
+
+	t.Run("reports auth pull failures from describe events", func(t *testing.T) {
+		pods := "mcp-team-acme|acme-tools-abc|registry.mcpruntime.org/acme/acme-tools:v0.1.0" + sep + "|ErrImagePull" + sep + "|\n"
+		describe := `Events:
+  Warning  Failed  kubelet  Failed to pull image "registry.mcpruntime.org/acme/acme-tools:v0.1.0": no basic auth credentials
+`
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				if contains(spec.Args, "describe") {
+					return &core.MockCommand{OutputData: []byte(describe)}
+				}
+				return &core.MockCommand{OutputData: []byte(pods)}
+			},
+		}
+		check := checkRegistryImagePullDiagnostics(core.NewTestKubectlClient(mock))
+		if check.OK {
+			t.Fatal("expected auth diagnostic to fail")
+		}
+		for _, want := range []string{"auth", "no basic auth credentials", "imagePullSecrets"} {
+			if !strings.Contains(check.Detail+check.Remedy, want) {
+				t.Fatalf("result should contain %q, detail=%q remedy=%q", want, check.Detail, check.Remedy)
+			}
+		}
+	})
+
+	t.Run("passes when no known diagnostic matches", func(t *testing.T) {
+		pods := "mcp-team-acme|acme-tools-abc|registry.mcpruntime.org/acme/acme-tools:v0.1.0" + sep + "|ErrImagePull" + sep + "|\n"
+		describe := `Events:
+  Warning  Failed  kubelet  Failed to pull image "registry.mcpruntime.org/acme/acme-tools:v0.1.0": context deadline exceeded
+`
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				if contains(spec.Args, "describe") {
+					return &core.MockCommand{OutputData: []byte(describe)}
+				}
+				return &core.MockCommand{OutputData: []byte(pods)}
+			},
+		}
+		check := checkRegistryImagePullDiagnostics(core.NewTestKubectlClient(mock))
+		if !check.OK {
+			t.Fatalf("expected OK when no known diagnostic matches, got detail=%q", check.Detail)
 		}
 	})
 }
@@ -1197,6 +1424,102 @@ func TestCheckTraefikServiceExposure(t *testing.T) {
 		}
 		if !strings.Contains(check.Detail, "k3s bundled Traefik") {
 			t.Fatalf("detail should mention k3s bundled Traefik, got %q", check.Detail)
+		}
+	})
+}
+
+func TestCheckIngressLoadBalancerStatus(t *testing.T) {
+	t.Run("fails when host based runtime ingress has no load balancer status", func(t *testing.T) {
+		out := strings.Join([]string{
+			"registry|registry|registry.mcpruntime.org,||",
+			"mcp-sentinel|mcp-sentinel-platform-ui|platform.mcpruntime.org,|1.2.3.4|",
+			"default|unrelated|example.com,||",
+		}, "\n")
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				return &core.MockCommand{OutputData: []byte(out)}
+			},
+		}
+		check := checkIngressLoadBalancerStatus(core.NewTestKubectlClient(mock))
+		if check.OK {
+			t.Fatal("expected missing registry ingress status to fail")
+		}
+		for _, want := range []string{"registry/registry", "registry.mcpruntime.org", "empty status.loadBalancer"} {
+			if !strings.Contains(check.Detail, want) {
+				t.Fatalf("detail should contain %q, got %q", want, check.Detail)
+			}
+		}
+	})
+
+	t.Run("passes when host based runtime ingress status is published", func(t *testing.T) {
+		out := "registry|registry|registry.mcpruntime.org,|1.2.3.4|\n"
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				return &core.MockCommand{OutputData: []byte(out)}
+			},
+		}
+		check := checkIngressLoadBalancerStatus(core.NewTestKubectlClient(mock))
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+	})
+}
+
+func TestCheckPlatformAPILiveInventoryNetworkPolicy(t *testing.T) {
+	t.Run("fails when team policy blocks platform API ingress", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "mcpservers"):
+					return &core.MockCommand{OutputData: []byte("mcp-team-acme\n")}
+				case contains(spec.Args, "networkpolicy"):
+					return &core.MockCommand{OutputData: []byte(`{
+						"spec": {
+							"ingress": [
+								{"from": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}}}]}
+							]
+						}
+					}`)}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		check := checkPlatformAPILiveInventoryNetworkPolicy(core.NewTestKubectlClient(mock))
+		if check.OK {
+			t.Fatal("expected blocked platform API ingress to fail")
+		}
+		for _, want := range []string{"mcp-team-acme/platform-default-deny", "mcp-sentinel"} {
+			if !strings.Contains(check.Detail, want) {
+				t.Fatalf("detail should contain %q, got %q", want, check.Detail)
+			}
+		}
+	})
+
+	t.Run("passes when team policy allows platform API ingress", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "mcpservers"):
+					return &core.MockCommand{OutputData: []byte("mcp-team-acme\nmcp-team-acme\nmcp-servers\n")}
+				case contains(spec.Args, "networkpolicy"):
+					return &core.MockCommand{OutputData: []byte(`{
+						"spec": {
+							"ingress": [
+								{"from": [{
+									"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "mcp-sentinel"}}
+								}]}
+							]
+						}
+					}`)}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		check := checkPlatformAPILiveInventoryNetworkPolicy(core.NewTestKubectlClient(mock))
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q", check.Detail)
 		}
 	})
 }

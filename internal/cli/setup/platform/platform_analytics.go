@@ -675,6 +675,9 @@ func setupSecretEnvValue(candidates ...string) string {
 }
 
 func ensureAnalyticsImagePullSecret(kubectl core.KubectlRunner) (string, error) {
+	if explicit := platformImagePullSecretOverride(); explicit != "" {
+		return explicit, nil
+	}
 	extRegistry, err := registry.ResolveExternalRegistryConfig(nil)
 	if err != nil {
 		return "", err
@@ -686,6 +689,10 @@ func ensureAnalyticsImagePullSecret(kubectl core.KubectlRunner) (string, error) 
 		return "", err
 	}
 	return defaultRegistrySecretName, nil
+}
+
+func platformImagePullSecretOverride() string {
+	return setupSecretEnvValue("MCP_PLATFORM_IMAGE_PULL_SECRET", "MCP_REGISTRY_PULL_SECRET_NAME")
 }
 
 func existingSecretDataValue(kubectl core.KubectlRunner, namespace, name, key string) (string, error) {

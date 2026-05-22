@@ -76,12 +76,13 @@ servers:
     analytics:
       ingestURL: http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events
       apiKeySecretRef:
-        name: workspace-assistant-mcp-analytics
+        name: workspace-assistant-mcp-analytics-creds
         key: api-key
 EOF
 ```
 
-Create the analytics Secret:
+Create the analytics Secret when you apply raw YAML with `kubectl`. The
+`mcp-runtime pipeline deploy` path creates this per-server Secret automatically.
 
 ```bash
 API_KEY="$(
@@ -89,7 +90,7 @@ API_KEY="$(
     -o jsonpath='{.data.INGEST_API_KEYS}' | base64 -d | cut -d, -f1
 )"
 
-kubectl create secret generic workspace-assistant-mcp-analytics \
+kubectl create secret generic workspace-assistant-mcp-analytics-creds \
   -n mcp-servers \
   --from-literal=api-key="$API_KEY" \
   --dry-run=client -o yaml | kubectl apply -f -
@@ -201,7 +202,7 @@ Remove access resources first, then the server and single-purpose Secret:
 kubectl delete mcpagentsession <session-name> -n <namespace> --ignore-not-found
 kubectl delete mcpaccessgrant <grant-name> -n <namespace> --ignore-not-found
 kubectl delete mcpserver <server-name> -n <namespace> --ignore-not-found
-kubectl delete secret <server-name>-analytics -n <namespace> --ignore-not-found
+kubectl delete secret <server-name>-analytics-creds -n <namespace> --ignore-not-found
 ```
 
 Confirm the catalog through the UI/API after cleanup:
