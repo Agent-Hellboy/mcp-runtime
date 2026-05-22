@@ -21,9 +21,10 @@ func ValidateRegistryMode(mode string) error {
 	if _, ok := setupplan.NormalizeRegistryMode(mode); ok {
 		return nil
 	}
+	cause := core.NewWithSentinel(core.ErrSetupInvalidRegistryMode, fmt.Sprintf("invalid registry mode %q", mode))
 	return core.WrapWithSentinel(
 		core.ErrFieldRequired,
-		fmt.Errorf("invalid registry mode %q", mode),
+		cause,
 		"invalid --registry-mode; expected auto, bundled-http, bundled-https, or external",
 	)
 }

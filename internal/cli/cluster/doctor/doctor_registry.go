@@ -220,7 +220,7 @@ func waitForDoctorPodImagePulled(kubectl core.KubectlRunner, name, namespace str
 		reason, _ := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].state.waiting.reason}"})
 		reason = strings.TrimSpace(reason)
 		if isImagePullWaitingReason(reason) {
-			return fmt.Errorf("%s", reason)
+			return core.NewWithSentinel(core.ErrDoctorImagePullStatusFailed, reason)
 		}
 
 		phase, _ := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.phase}"})
@@ -237,7 +237,7 @@ func waitForDoctorPodImagePulled(kubectl core.KubectlRunner, name, namespace str
 			if lastStatus == "" {
 				lastStatus = "timed out"
 			}
-			return fmt.Errorf("%s", lastStatus)
+			return core.NewWithSentinel(core.ErrDoctorImagePullStatusFailed, lastStatus)
 		case <-ticker.C:
 		}
 	}
@@ -257,13 +257,13 @@ func waitForDoctorPodSucceeded(kubectl core.KubectlRunner, name, namespace strin
 		case "Succeeded":
 			return nil
 		case "Failed":
-			return fmt.Errorf("pod phase Failed")
+			return core.NewWithSentinel(core.ErrDoctorPodPhaseFailed, "pod phase Failed")
 		}
 
 		reason, _ := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].state.waiting.reason}"})
 		reason = strings.TrimSpace(reason)
 		if isImagePullWaitingReason(reason) {
-			return fmt.Errorf("%s", reason)
+			return core.NewWithSentinel(core.ErrDoctorImagePullStatusFailed, reason)
 		}
 		lastStatus = phase
 		if reason != "" {
@@ -278,7 +278,7 @@ func waitForDoctorPodSucceeded(kubectl core.KubectlRunner, name, namespace strin
 			if lastStatus == "" {
 				lastStatus = "timed out"
 			}
-			return fmt.Errorf("%s", lastStatus)
+			return core.NewWithSentinel(core.ErrDoctorImagePullStatusFailed, lastStatus)
 		case <-ticker.C:
 		}
 	}

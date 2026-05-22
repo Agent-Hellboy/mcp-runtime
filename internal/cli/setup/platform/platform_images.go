@@ -65,14 +65,14 @@ func resolveSetupImagePlatformUncached(kubectl core.KubectlRunner, explicitPlatf
 		return "", err
 	}
 	if len(archs) == 0 {
-		return "", fmt.Errorf("could not resolve setup image platform: no Kubernetes node architectures were reported; set MCP_IMAGE_PLATFORM=linux/amd64 or linux/arm64")
+		return "", core.NewWithSentinel(core.ErrSetupImagePlatformNoNodeArchitectures, "could not resolve setup image platform: no Kubernetes node architectures were reported; set MCP_IMAGE_PLATFORM=linux/amd64 or linux/arm64")
 	}
 	if len(archs) > 1 {
-		return "", fmt.Errorf("mixed Kubernetes node architectures detected (%s); setup-built images are single-platform today, so set up homogeneous nodes or prebuild multi-arch images before running setup", strings.Join(archs, ", "))
+		return "", core.NewWithSentinel(core.ErrSetupImagePlatformMixedNodeArchitectures, fmt.Sprintf("mixed Kubernetes node architectures detected (%s); setup-built images are single-platform today, so set up homogeneous nodes or prebuild multi-arch images before running setup", strings.Join(archs, ", ")))
 	}
 	if explicitPlatform != "" {
 		if arch := strings.TrimPrefix(explicitPlatform, "linux/"); arch != archs[0] {
-			return "", fmt.Errorf("MCP_IMAGE_PLATFORM %q does not match Kubernetes node architecture %q", explicitPlatform, archs[0])
+			return "", core.NewWithSentinel(core.ErrSetupImagePlatformMismatch, fmt.Sprintf("MCP_IMAGE_PLATFORM %q does not match Kubernetes node architecture %q", explicitPlatform, archs[0]))
 		}
 		return explicitPlatform, nil
 	}
@@ -83,30 +83,30 @@ func validateSetupImagePlatform(platform string) (string, error) {
 	platform = strings.TrimSpace(platform)
 	parts := strings.Split(platform, "/")
 	if len(parts) != 2 || parts[0] != "linux" {
-		return "", fmt.Errorf("invalid MCP_IMAGE_PLATFORM %q; expected linux/amd64 or linux/arm64", platform)
+		return "", core.NewWithSentinel(core.ErrSetupImagePlatformInvalid, fmt.Sprintf("invalid MCP_IMAGE_PLATFORM %q; expected linux/amd64 or linux/arm64", platform))
 	}
 	switch parts[1] {
 	case "amd64", "arm64":
 		return platform, nil
 	default:
-		return "", fmt.Errorf("unsupported MCP_IMAGE_PLATFORM %q; expected linux/amd64 or linux/arm64", platform)
+		return "", core.NewWithSentinel(core.ErrSetupImagePlatformUnsupported, fmt.Sprintf("unsupported MCP_IMAGE_PLATFORM %q; expected linux/amd64 or linux/arm64", platform))
 	}
 }
 
 func clusterNodeArchitectures(kubectl core.KubectlRunner) ([]string, error) {
 	if kubectl == nil {
-		return nil, fmt.Errorf("could not resolve setup image platform: kubectl runner is nil")
+		return nil, core.NewWithSentinel(core.ErrSetupImagePlatformKubectlNil, "could not resolve setup image platform: kubectl runner is nil")
 	}
 	cmd, err := kubectl.CommandArgs([]string{"get", "nodes", "-o", "jsonpath={range .items[*]}{.status.nodeInfo.architecture}{\"\\n\"}{end}"})
 	if err != nil {
-		return nil, fmt.Errorf("could not inspect Kubernetes node architectures: %w", err)
+		return nil, core.WrapWithSentinel(core.ErrSetupInspectNodeArchitecturesFailed, err, fmt.Sprintf("could not inspect Kubernetes node architectures: %v", err))
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if detail := strings.TrimSpace(string(out)); detail != "" {
-			return nil, fmt.Errorf("could not inspect Kubernetes node architectures: %w: %s", err, detail)
+			return nil, core.WrapWithSentinel(core.ErrSetupInspectNodeArchitecturesFailed, err, fmt.Sprintf("could not inspect Kubernetes node architectures: %v: %s", err, detail))
 		}
-		return nil, fmt.Errorf("could not inspect Kubernetes node architectures: %w", err)
+		return nil, core.WrapWithSentinel(core.ErrSetupInspectNodeArchitecturesFailed, err, fmt.Sprintf("could not inspect Kubernetes node architectures: %v", err))
 	}
 	seen := map[string]struct{}{}
 	for _, line := range strings.Split(string(out), "\n") {

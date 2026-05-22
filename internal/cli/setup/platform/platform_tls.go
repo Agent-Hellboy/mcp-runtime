@@ -97,7 +97,7 @@ func bundledRegistryInternalIssuerName(kubectl core.KubectlRunner, plan setuppla
 
 func clusterIssuerUsesACME(kubectl core.KubectlRunner, name string) (bool, error) {
 	if kubectl == nil {
-		return false, fmt.Errorf("kubectl runner is nil")
+		return false, core.NewWithSentinel(core.ErrSetupTLSKubectlRunnerNil, "kubectl runner is nil")
 	}
 	cmd, err := kubectl.CommandArgs([]string{"get", "clusterissuer", name, "-o", "jsonpath={.spec.acme.server}"})
 	if err != nil {
@@ -106,7 +106,7 @@ func clusterIssuerUsesACME(kubectl core.KubectlRunner, name string) (bool, error
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if detail := strings.TrimSpace(string(out)); detail != "" {
-			return false, fmt.Errorf("inspect ClusterIssuer %q: %w: %s", name, err, detail)
+			return false, core.WrapWithSentinel(core.ErrSetupInspectClusterIssuerFailed, err, fmt.Sprintf("inspect ClusterIssuer %q: %v: %s", name, err, detail))
 		}
 		return false, err
 	}
@@ -317,7 +317,7 @@ func setupTLSWithExistingClusterIssuer(kubectl core.KubectlRunner, logger *zap.L
 
 	dnsNames, ipAddresses := registryCertificateSANs(plan)
 	if len(dnsNames) == 0 && len(ipAddresses) == 0 {
-		err := fmt.Errorf("no DNS names or IP addresses resolved for the Certificate; set MCP_PLATFORM_DOMAIN, MCP_REGISTRY_HOST, or MCP_REGISTRY_INGRESS_HOST (and optional MCP_MCP_INGRESS_HOST)")
+		err := core.NewWithSentinel(core.ErrSetupTLSCertificateSANsEmpty, "no DNS names or IP addresses resolved for the Certificate; set MCP_PLATFORM_DOMAIN, MCP_REGISTRY_HOST, or MCP_REGISTRY_INGRESS_HOST (and optional MCP_MCP_INGRESS_HOST)")
 		wrappedErr := core.WrapWithSentinel(core.ErrTLSSetupFailed, err, err.Error())
 		core.Error("Invalid TLS host configuration")
 		if logger != nil {

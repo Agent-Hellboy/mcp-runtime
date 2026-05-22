@@ -2,7 +2,6 @@ package platform
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -193,7 +192,7 @@ func waitForDeploymentAvailableWithKubectl(kubectl core.KubectlRunner, logger *z
 		}
 		if time.Now().After(deadline) {
 			msg := fmt.Sprintf("timed out waiting for deployment %s in namespace %s", name, namespace)
-			cause := errors.New("deployment readiness deadline exceeded")
+			cause := core.NewWithSentinel(core.ErrSetupDeploymentReadinessDeadlineExceeded, "deployment readiness deadline exceeded")
 			ctx := map[string]any{
 				"deployment": name,
 				"namespace":  namespace,

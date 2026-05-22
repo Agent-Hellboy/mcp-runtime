@@ -46,7 +46,7 @@ func activeNamedTraefikDeploymentNamespacesWithKubectl(kubectl core.KubectlRunne
 	}
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("list traefik deployments: %w", err)
+		return nil, core.WrapWithSentinel(core.ErrSetupListTraefikDeploymentsFailed, err, fmt.Sprintf("list traefik deployments: %v", err))
 	}
 	seen := map[string]struct{}{}
 	var namespaces []string
@@ -187,7 +187,7 @@ func patchTraefikDeploymentForFileMiddlewareSupport(kubectl core.KubectlRunner, 
 	}
 	patchBytes, err := json.Marshal(ops)
 	if err != nil {
-		return fmt.Errorf("marshal traefik deployment patch: %w", err)
+		return core.WrapWithSentinel(core.ErrSetupMarshalTraefikDeploymentPatchFailed, err, fmt.Sprintf("marshal traefik deployment patch: %v", err))
 	}
 	if err := kubectl.RunWithOutput([]string{
 		"patch", "deployment", "traefik", "-n", namespace, "--type=json", "-p", string(patchBytes),
@@ -209,10 +209,10 @@ func readTraefikDeploymentSpec(kubectl core.KubectlRunner, namespace string) (tr
 	}
 	out, err := cmd.Output()
 	if err != nil {
-		return spec, fmt.Errorf("read traefik deployment %s/traefik: %w", namespace, err)
+		return spec, core.WrapWithSentinel(core.ErrSetupReadTraefikDeploymentFailed, err, fmt.Sprintf("read traefik deployment %s/traefik: %v", namespace, err))
 	}
 	if err := json.Unmarshal(out, &spec); err != nil {
-		return spec, fmt.Errorf("decode traefik deployment %s/traefik: %w", namespace, err)
+		return spec, core.WrapWithSentinel(core.ErrSetupDecodeTraefikDeploymentFailed, err, fmt.Sprintf("decode traefik deployment %s/traefik: %v", namespace, err))
 	}
 	return spec, nil
 }

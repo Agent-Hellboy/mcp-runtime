@@ -292,7 +292,8 @@ func ValidateStorageMode(mode string) error {
 	case setupplan.StorageModeDynamic, setupplan.StorageModeHostpath:
 		return nil
 	default:
-		return core.WrapWithSentinel(core.ErrFieldRequired, fmt.Errorf("invalid storage mode %q", mode), "invalid --storage-mode; expected dynamic or hostpath")
+		cause := core.NewWithSentinel(core.ErrSetupInvalidStorageMode, fmt.Sprintf("invalid storage mode %q", mode))
+		return core.WrapWithSentinel(core.ErrFieldRequired, cause, "invalid --storage-mode; expected dynamic or hostpath")
 	}
 }
 
@@ -300,7 +301,8 @@ func ValidatePlatformMode(mode string) error {
 	if _, ok := setupplan.NormalizePlatformMode(mode); ok {
 		return nil
 	}
-	return core.WrapWithSentinel(core.ErrFieldRequired, fmt.Errorf("invalid platform mode %q", mode), "invalid --platform-mode; expected tenant, org, or public")
+	cause := core.NewWithSentinel(core.ErrSetupInvalidPlatformMode, fmt.Sprintf("invalid platform mode %q", mode))
+	return core.WrapWithSentinel(core.ErrFieldRequired, cause, "invalid --platform-mode; expected tenant, org, or public")
 }
 
 func ValidatePublicPlatformAuthEnv(platformMode string, tlsEnabled, testMode bool) error {
@@ -357,15 +359,15 @@ func setupPlatformWithDeps(logger *zap.Logger, plan setupplan.Plan, deps SetupDe
 	// Propagate test mode to build helpers so they can choose faster/safer build paths.
 	if plan.TestMode {
 		if err := os.Setenv("MCP_RUNTIME_TEST_MODE", "1"); err != nil {
-			return fmt.Errorf("set MCP_RUNTIME_TEST_MODE: %w", err)
+			return core.WrapWithSentinel(core.ErrSetupSetRuntimeTestModeFailed, err, fmt.Sprintf("set MCP_RUNTIME_TEST_MODE: %v", err))
 		}
 	} else {
 		if err := os.Unsetenv("MCP_RUNTIME_TEST_MODE"); err != nil {
-			return fmt.Errorf("unset MCP_RUNTIME_TEST_MODE: %w", err)
+			return core.WrapWithSentinel(core.ErrSetupUnsetRuntimeTestModeFailed, err, fmt.Sprintf("unset MCP_RUNTIME_TEST_MODE: %v", err))
 		}
 	}
 	if err := os.Setenv("MCP_PLATFORM_MODE", plan.PlatformMode); err != nil {
-		return fmt.Errorf("set MCP_PLATFORM_MODE: %w", err)
+		return core.WrapWithSentinel(core.ErrSetupSetPlatformModeFailed, err, fmt.Sprintf("set MCP_PLATFORM_MODE: %v", err))
 	}
 
 	extRegistry, usingExternalRegistry, registrySecretName, err := resolveRegistrySetup(logger, plan, deps)

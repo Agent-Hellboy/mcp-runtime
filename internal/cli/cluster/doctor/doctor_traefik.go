@@ -157,11 +157,11 @@ func resolveDoctorTraefikWebEndpoint(kubectl core.KubectlRunner, distro Distribu
 func readTraefikServicePorts(kubectl core.KubectlRunner, endpoint doctorTraefikEndpoint) (string, error) {
 	cmd, err := kubectl.CommandArgs([]string{"get", "svc", "-n", endpoint.Namespace, endpoint.Name, "-o", "jsonpath={range .spec.ports[*]}{.name}:{.port}:{.nodePort}{\"\\n\"}{end}"})
 	if err != nil {
-		return "", fmt.Errorf("kubectl error: %w", err)
+		return "", core.WrapWithSentinel(core.ErrDoctorKubectlError, err, fmt.Sprintf("kubectl error: %v", err))
 	}
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("service %s/%s not found", endpoint.Namespace, endpoint.Name)
+		return "", core.NewWithSentinel(core.ErrDoctorTraefikServiceNotFound, fmt.Sprintf("service %s/%s not found", endpoint.Namespace, endpoint.Name))
 	}
 	return strings.TrimSpace(string(out)), nil
 }
@@ -429,21 +429,21 @@ func checkCertManagerReadiness(kubectl core.KubectlRunner) DoctorCheck {
 func doctorDeploymentReplicaStatus(kubectl core.KubectlRunner, namespace, name string) (string, bool, error) {
 	cmd, err := kubectl.CommandArgs([]string{"get", "deploy", "-n", namespace, name, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"})
 	if err != nil {
-		return "", false, fmt.Errorf("kubectl error: %w", err)
+		return "", false, core.WrapWithSentinel(core.ErrDoctorKubectlError, err, fmt.Sprintf("kubectl error: %v", err))
 	}
 	out, execErr := cmd.Output()
 	pair := strings.TrimSpace(string(out))
 	if execErr != nil || pair == "" {
-		return "", false, fmt.Errorf("deployment not found")
+		return "", false, core.NewWithSentinel(core.ErrDoctorDeploymentNotFound, "deployment not found")
 	}
 	parts := strings.SplitN(pair, "/", 2)
 	if len(parts) != 2 {
-		return pair, false, fmt.Errorf("unexpected replica status %q", pair)
+		return pair, false, core.NewWithSentinel(core.ErrDoctorUnexpectedReplicaStatus, fmt.Sprintf("unexpected replica status %q", pair))
 	}
 	readyReplicas, readyErr := strconv.Atoi(strings.TrimSpace(parts[0]))
 	desiredReplicas, desiredErr := strconv.Atoi(strings.TrimSpace(parts[1]))
 	if readyErr != nil || desiredErr != nil {
-		return pair, false, fmt.Errorf("unexpected replica status %q", pair)
+		return pair, false, core.NewWithSentinel(core.ErrDoctorUnexpectedReplicaStatus, fmt.Sprintf("unexpected replica status %q", pair))
 	}
 	if desiredReplicas == 0 || readyReplicas < desiredReplicas {
 		return pair, false, nil
