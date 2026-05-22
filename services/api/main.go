@@ -42,6 +42,7 @@ import (
 	"github.com/MicahParks/keyfunc"
 	"github.com/golang-jwt/jwt/v4"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	_ "go.uber.org/automaxprocs" // align GOMAXPROCS with container CPU quota
 
 	clickhousepkg "mcp-runtime/pkg/clickhouse"
 	"mcp-runtime/pkg/serviceutil"

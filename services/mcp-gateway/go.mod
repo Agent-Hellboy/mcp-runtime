@@ -8,6 +8,7 @@ require (
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/trace v1.43.0
+	go.uber.org/automaxprocs v1.6.0
 	mcp-runtime v0.0.0
 )
 

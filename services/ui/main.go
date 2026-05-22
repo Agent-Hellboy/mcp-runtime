@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	_ "go.uber.org/automaxprocs" // align GOMAXPROCS with container CPU quota
 
 	"mcp-runtime/pkg/serviceutil"
 )

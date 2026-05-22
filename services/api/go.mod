@@ -9,6 +9,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.12.3
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0
+	go.uber.org/automaxprocs v1.6.0
 	golang.org/x/crypto v0.51.0
 	k8s.io/api v0.36.1
 	k8s.io/apimachinery v0.36.1
