@@ -78,7 +78,7 @@ func (s *RuntimeServer) HandleDeployments(w http.ResponseWriter, r *http.Request
 		s.handleDeploymentApply(w, r)
 	default:
 		w.Header().Set("allow", "GET, POST")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 }
 
@@ -86,44 +86,44 @@ func (s *RuntimeServer) HandleDeployments(w http.ResponseWriter, r *http.Request
 func (s *RuntimeServer) HandleDeploymentItem(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		w.Header().Set("allow", "DELETE")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 	p, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	ns, name, err := extractNamespaceName(r.URL.Path, "/api/deployments/")
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if p.Role != roleAdmin && (!p.HasNamespace(ns) || ns == sharedCatalogNamespace) {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "denied", name, ns, "", "forbidden"))
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		writeAPIError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	client, err := s.clientForPrincipal(p)
 	if err != nil {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "error", name, ns, "", err.Error()))
 		if errors.Is(err, errPrincipalIdentityRequired) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "authenticated user identity required"})
+			writeAPIError(w, http.StatusForbidden, "authenticated user identity required")
 			return
 		}
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	if err := client.AppsV1().Deployments(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "error", name, ns, "", err.Error()))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete deployment"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to delete deployment")
 		return
 	}
 	if err := client.CoreV1().Services(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "error", name, ns, "", err.Error()))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete service"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to delete service")
 		return
 	}
 	s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "success", name, ns, "", ""))
@@ -133,11 +133,11 @@ func (s *RuntimeServer) HandleDeploymentItem(w http.ResponseWriter, r *http.Requ
 func (s *RuntimeServer) handleDeploymentList(w http.ResponseWriter, r *http.Request) {
 	p, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	if s.k8sClients == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
@@ -146,28 +146,28 @@ func (s *RuntimeServer) handleDeploymentList(w http.ResponseWriter, r *http.Requ
 			namespace = strings.TrimSpace(p.Namespace)
 		}
 		if namespace == "" {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			writeAPIError(w, http.StatusForbidden, "forbidden")
 			return
 		}
 		if !p.HasNamespace(namespace) || namespace == sharedCatalogNamespace {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			writeAPIError(w, http.StatusForbidden, "forbidden")
 			return
 		}
 	}
 	client, err := s.clientForPrincipal(p)
 	if err != nil {
 		if errors.Is(err, errPrincipalIdentityRequired) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "authenticated user identity required"})
+			writeAPIError(w, http.StatusForbidden, "authenticated user identity required")
 			return
 		}
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	list, err := client.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{LabelSelector: platformManagedLabel + "=true"})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deployments"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to list deployments")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deployments": deploymentSummaries(list.Items)})
@@ -177,23 +177,23 @@ func (s *RuntimeServer) handleDeploymentList(w http.ResponseWriter, r *http.Requ
 func (s *RuntimeServer) HandleAdminDeployments(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("allow", http.MethodGet)
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 	p, ok := principalFromContext(r.Context())
 	if !ok || p.Role != roleAdmin {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		writeAPIError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	if s.k8sClients == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 
 	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
 	summaries, err := s.ListAdminDeploymentSummaries(r.Context(), namespace)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deployments"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to list deployments")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deployments": summaries})
@@ -221,7 +221,7 @@ func (s *RuntimeServer) ListAdminDeploymentSummaries(ctx context.Context, namesp
 func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Request) {
 	p, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	var req deployRequest
@@ -241,7 +241,7 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	}
 	if req.Name == "" || req.Image == "" {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, firstNonEmpty(strings.TrimSpace(req.Namespace), p.Namespace), req.Image, "name and image are required"))
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and image are required"})
+		writeAPIError(w, http.StatusBadRequest, "name and image are required")
 		return
 	}
 	namespace := p.Namespace
@@ -253,19 +253,19 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	}
 	if namespace == "" {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, req.Image, "namespace required"))
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace required"})
+		writeAPIError(w, http.StatusBadRequest, "namespace required")
 		return
 	}
 	if p.Role != roleAdmin && (!p.HasNamespace(namespace) || namespace == sharedCatalogNamespace) {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, req.Image, "forbidden"))
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		writeAPIError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	image := req.Image
 	if req.Version != "" && !strings.Contains(image[strings.LastIndex(image, "/")+1:], ":") {
 		if !deployImageTagPattern.MatchString(req.Version) {
 			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, req.Image, "version must be a valid image tag"))
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "version must be a valid image tag"})
+			writeAPIError(w, http.StatusBadRequest, "version must be a valid image tag")
 			return
 		}
 		image += ":" + req.Version
@@ -277,23 +277,23 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	}
 	if p.Role != roleAdmin && !teamNamespace {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, image, "tenant deployments require a team namespace"))
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant deployments require a team namespace"})
+		writeAPIError(w, http.StatusForbidden, "tenant deployments require a team namespace")
 		return
 	}
 	image = ResolveDeployImageReference(image, namespace, teamSlug)
 	if err := ValidateDeployImage(image, namespace, teamSlug, p.Role); err != nil {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, image, err.Error()))
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	client, err := s.clientForPrincipal(p)
 	if err != nil {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
 		if errors.Is(err, errPrincipalIdentityRequired) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "authenticated user identity required"})
+			writeAPIError(w, http.StatusForbidden, "authenticated user identity required")
 			return
 		}
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -306,12 +306,12 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 			Namespace: team.Namespace,
 		}); err != nil {
 			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure team namespace"})
+			writeAPIError(w, http.StatusInternalServerError, "failed to ensure team namespace")
 			return
 		}
 		if err := s.ensureNamespaceUserWorkloadRBAC(ctx, namespace, p.UserID()); err != nil {
 			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure namespace access"})
+			writeAPIError(w, http.StatusInternalServerError, "failed to ensure namespace access")
 			return
 		}
 	} else if p.Role == roleAdmin {
@@ -321,7 +321,7 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 		}
 		if err := s.ensureManagedNamespace(ctx, namespace, labels, managedNamespaceOptions{}); err != nil {
 			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure namespace"})
+			writeAPIError(w, http.StatusInternalServerError, "failed to ensure namespace")
 			return
 		}
 	}
@@ -341,13 +341,13 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	applied, err := upsertDeployment(ctx, client, dep)
 	if err != nil {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to apply deployment"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to apply deployment")
 		return
 	}
 	svc := desiredService(req.Name, namespace, req.Port, labels)
 	if _, err := upsertService(ctx, client, svc); err != nil {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to apply service"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to apply service")
 		return
 	}
 	s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "success", req.Name, namespace, image, ""))

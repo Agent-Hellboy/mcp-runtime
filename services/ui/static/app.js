@@ -90,6 +90,7 @@ function readErrorMessage(err, fallback) {
   if (!message) return fallback;
   try {
     const parsed = JSON.parse(message);
+    if (parsed?.message) return parsed.message;
     if (parsed?.error) return parsed.error;
   } catch (_) {
     // Use the plain error text below.

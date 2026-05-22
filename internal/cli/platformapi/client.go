@@ -464,6 +464,9 @@ func readBody(r io.Reader) ([]byte, error) {
 func httpAPIError(status int, body []byte) error {
 	var m map[string]string
 	if err := json.Unmarshal(body, &m); err == nil {
+		if message := m["message"]; message != "" {
+			return fmt.Errorf("API %d: %s", status, message)
+		}
 		if e := m["error"]; e != "" {
 			return fmt.Errorf("API %d: %s", status, e)
 		}

@@ -2,10 +2,17 @@ package runtimeapi
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
+	"strings"
+	"unicode"
+
+	"go.uber.org/zap"
 
 	"mcp-runtime/pkg/serviceutil"
 	"mcp-sentinel-api/internal/apiauth"
+	"mcp-sentinel-api/internal/apierr"
 	"mcp-sentinel-api/internal/apihttp"
 	"mcp-sentinel-api/internal/platformstore"
 )
@@ -51,7 +58,61 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 func writeBodyDecodeError(w http.ResponseWriter, err error) {
-	apihttp.WriteBodyDecodeError(w, err)
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		writeAPIError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("request body exceeds %d bytes", maxBytesErr.Limit), err)
+		return
+	}
+	writeAPIError(w, http.StatusBadRequest, "invalid request body", err)
+}
+
+func writeAPIError(w http.ResponseWriter, status int, message string, cause ...error) {
+	apierr.Write(w, zap.L(), newAPIError(status, errorCode(message, status), message, cause...))
+}
+
+func newAPIError(status int, code, message string, cause ...error) error {
+	switch status {
+	case http.StatusBadRequest:
+		return apierr.BadRequest(code, message, cause...)
+	case http.StatusUnauthorized:
+		return apierr.Unauthorized(code, message, cause...)
+	case http.StatusForbidden:
+		return apierr.Forbidden(code, message, cause...)
+	case http.StatusNotFound:
+		return apierr.NotFound(code, message, cause...)
+	case http.StatusConflict:
+		return apierr.Conflict(code, message, cause...)
+	case http.StatusInternalServerError:
+		return apierr.Internal(code, message, cause...)
+	case http.StatusServiceUnavailable:
+		return apierr.ServiceUnavailable(code, message, cause...)
+	default:
+		return &apierr.Error{Status: status, Code: code, Message: message, Cause: errors.Join(cause...)}
+	}
+}
+
+func errorCode(message string, status int) string {
+	if message = strings.TrimSpace(message); message == "" {
+		message = http.StatusText(status)
+	}
+	var b strings.Builder
+	previousUnderscore := false
+	for _, r := range strings.ToLower(message) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			previousUnderscore = false
+			continue
+		}
+		if !previousUnderscore && b.Len() > 0 {
+			b.WriteByte('_')
+			previousUnderscore = true
+		}
+	}
+	code := strings.Trim(b.String(), "_")
+	if code == "" {
+		return "error"
+	}
+	return code
 }
 
 func requestIP(r *http.Request) string {

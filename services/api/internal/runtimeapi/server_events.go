@@ -13,26 +13,26 @@ import (
 func (s *RuntimeServer) HandleRuntimeServerEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("allow", http.MethodGet)
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 	p, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
 	server := strings.TrimSpace(r.URL.Query().Get("server"))
 	if namespace == "" || server == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace and server are required"})
+		writeAPIError(w, http.StatusBadRequest, "namespace and server are required")
 		return
 	}
 	if s == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "analytics not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "analytics not available")
 		return
 	}
 	if p.Role != roleAdmin && !principalCanReadNamespace(p, namespace) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
+		writeAPIError(w, http.StatusForbidden, "forbidden namespace")
 		return
 	}
 	if allowed, err := s.canAdministerNamedServer(r.Context(), namespace, server); err != nil {
@@ -40,14 +40,14 @@ func (s *RuntimeServer) HandleRuntimeServerEvents(w http.ResponseWriter, r *http
 		if code == http.StatusInternalServerError {
 			log.Printf("runtime server events: inspect server %s/%s failed: %v", namespace, server, err)
 		}
-		writeJSON(w, code, map[string]string{"error": msg})
+		writeAPIError(w, code, msg)
 		return
 	} else if !allowed {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden server"})
+		writeAPIError(w, http.StatusForbidden, "forbidden server")
 		return
 	}
 	if s.db == nil || s.db.Conn == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "analytics not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "analytics not available")
 		return
 	}
 	events, err := s.db.QueryEventsFiltered(r.Context(), chpkg.EventFilters{
@@ -56,7 +56,7 @@ func (s *RuntimeServer) HandleRuntimeServerEvents(w http.ResponseWriter, r *http
 		Limit:     clampServerEventsLimit(r.URL.Query().Get("limit")),
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query_failed"})
+		writeAPIError(w, http.StatusInternalServerError, "query_failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": events})

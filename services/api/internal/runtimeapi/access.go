@@ -50,13 +50,13 @@ func (s *RuntimeServer) HandleRuntimeGrants(w http.ResponseWriter, r *http.Reque
 		s.handleRuntimeGrantApply(w, r)
 	default:
 		w.Header().Set("allow", "GET, POST")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 }
 
 func (s *RuntimeServer) handleRuntimeGrantList(w http.ResponseWriter, r *http.Request) {
 	if s.accessMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 
@@ -65,12 +65,12 @@ func (s *RuntimeServer) handleRuntimeGrantList(w http.ResponseWriter, r *http.Re
 
 	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), r.URL.Query().Get("namespace"))
 	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	grants, err := s.accessMgr.ListGrants(ctx, namespace)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list grants"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to list grants")
 		return
 	}
 
@@ -81,7 +81,7 @@ func (s *RuntimeServer) handleRuntimeGrantList(w http.ResponseWriter, r *http.Re
 		serverCache, err = s.accessServerCacheForGrantRefs(ctx, namespace, grants.Items)
 		if err != nil {
 			log.Printf("runtime grant list: list MCPServers for visibility failed: %v", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to inspect server references"})
+			writeAPIError(w, http.StatusInternalServerError, "failed to inspect server references")
 			return
 		}
 	}
@@ -99,7 +99,7 @@ func (s *RuntimeServer) handleRuntimeGrantList(w http.ResponseWriter, r *http.Re
 
 func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.Request) {
 	if s.accessMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 
@@ -113,17 +113,17 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 		req.Namespace = strings.TrimSpace(p.Namespace)
 	}
 	if err := validateGrantRequest(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	scopedNamespace, err := s.scopedAccessWriteNamespaceForPrincipal(r.Context(), req.Namespace)
 	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	req.Namespace = scopedNamespace
 	if err := bindAccessServerRefNamespace(req.Namespace, &req.ServerRef); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -135,26 +135,26 @@ func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 	targetServer, err := s.accessMgr.GetMCPServerRef(ctx, req.ServerRef)
 	if err != nil {
 		if sentinelaccess.IsMCPServerNotFoundForRef(err) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 		} else {
 			log.Printf("runtime grant: assert MCPServer ref failed: %v", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to verify server reference"})
+			writeAPIError(w, http.StatusInternalServerError, "failed to verify server reference")
 		}
 		return
 	}
 	if err := s.bindAccessSubjectTeamID(ctx, req.Namespace, targetServer.Spec.TeamID, &req.Subject); err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	if !s.principalCanAdministerAccessServer(r.Context(), *targetServer) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden server"})
+		writeAPIError(w, http.StatusForbidden, "forbidden server")
 		return
 	}
 
 	disabled, err := s.grantDisabledForApply(ctx, req)
 	if err != nil {
 		log.Printf("read grant state %s/%s failed: %v", req.Namespace, req.Name, err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read grant state"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to read grant state")
 		return
 	}
 
@@ -190,13 +190,13 @@ func (s *RuntimeServer) HandleRuntimeSessions(w http.ResponseWriter, r *http.Req
 		s.handleRuntimeSessionApply(w, r)
 	default:
 		w.Header().Set("allow", "GET, POST")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 }
 
 func (s *RuntimeServer) handleRuntimeSessionList(w http.ResponseWriter, r *http.Request) {
 	if s.accessMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 
@@ -205,12 +205,12 @@ func (s *RuntimeServer) handleRuntimeSessionList(w http.ResponseWriter, r *http.
 
 	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), r.URL.Query().Get("namespace"))
 	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	sessions, err := s.accessMgr.ListSessions(ctx, namespace)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list sessions"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to list sessions")
 		return
 	}
 
@@ -221,7 +221,7 @@ func (s *RuntimeServer) handleRuntimeSessionList(w http.ResponseWriter, r *http.
 		serverCache, err = s.accessServerCacheForSessionRefs(ctx, namespace, sessions.Items)
 		if err != nil {
 			log.Printf("runtime session list: list MCPServers for visibility failed: %v", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to inspect server references"})
+			writeAPIError(w, http.StatusInternalServerError, "failed to inspect server references")
 			return
 		}
 	}
@@ -239,11 +239,11 @@ func (s *RuntimeServer) handleRuntimeSessionList(w http.ResponseWriter, r *http.
 
 func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http.Request) {
 	if s.accessMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	if p, ok := principalFromContext(r.Context()); ok && p.Role != roleAdmin {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required"})
+		writeAPIError(w, http.StatusForbidden, "admin role required")
 		return
 	}
 
@@ -257,17 +257,17 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 		req.Namespace = strings.TrimSpace(p.Namespace)
 	}
 	if err := validateSessionRequest(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	scopedNamespace, err := s.scopedAccessWriteNamespaceForPrincipal(r.Context(), req.Namespace)
 	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	req.Namespace = scopedNamespace
 	if err := bindAccessServerRefNamespace(req.Namespace, &req.ServerRef); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -278,26 +278,26 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 	targetServer, err := s.accessMgr.GetMCPServerRef(ctx, req.ServerRef)
 	if err != nil {
 		if sentinelaccess.IsMCPServerNotFoundForRef(err) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 		} else {
 			log.Printf("runtime session: assert MCPServer ref failed: %v", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to verify server reference"})
+			writeAPIError(w, http.StatusInternalServerError, "failed to verify server reference")
 		}
 		return
 	}
 	if err := s.bindAccessSubjectTeamID(ctx, req.Namespace, targetServer.Spec.TeamID, &req.Subject); err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	if !s.principalCanAdministerAccessServer(r.Context(), *targetServer) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden server"})
+		writeAPIError(w, http.StatusForbidden, "forbidden server")
 		return
 	}
 
 	revoked, err := s.sessionRevokedForApply(ctx, req)
 	if err != nil {
 		log.Printf("read session state %s/%s failed: %v", req.Namespace, req.Name, err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read session state"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to read session state")
 		return
 	}
 
@@ -432,7 +432,7 @@ func (s *RuntimeServer) HandleGrantItemPath(w http.ResponseWriter, r *http.Reque
 	case http.MethodGet:
 		ns, name, err := extractNamespacedPath(r.URL.Path, "/api/runtime/grants/", 2)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		s.handleGrantGet(w, r, ns, name)
@@ -440,7 +440,7 @@ func (s *RuntimeServer) HandleGrantItemPath(w http.ResponseWriter, r *http.Reque
 	case http.MethodDelete:
 		ns, name, err := serviceutil.ExtractNamespacedResourceDelete(r, "/api/runtime/grants/")
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		s.handleGrantDelete(w, r, ns, name)
@@ -450,18 +450,18 @@ func (s *RuntimeServer) HandleGrantItemPath(w http.ResponseWriter, r *http.Reque
 		return
 	default:
 		w.Header().Set("allow", "GET, POST, DELETE")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 }
 
 func (s *RuntimeServer) handleGrantGet(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	if s.accessMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), namespace)
 	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -469,11 +469,11 @@ func (s *RuntimeServer) handleGrantGet(w http.ResponseWriter, r *http.Request, n
 	grant, err := s.accessMgr.GetGrant(ctx, name, namespace)
 	if err != nil {
 		code, msg := k8sclient.HTTPStatusFromK8sError(err)
-		writeJSON(w, code, map[string]string{"error": msg})
+		writeAPIError(w, code, msg)
 		return
 	}
 	if !s.grantVisibleToPrincipal(ctx, *grant) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden server"})
+		writeAPIError(w, http.StatusForbidden, "forbidden server")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"grant": sentinelaccess.ToGrantSummary(*grant)})
@@ -481,12 +481,12 @@ func (s *RuntimeServer) handleGrantGet(w http.ResponseWriter, r *http.Request, n
 
 func (s *RuntimeServer) handleGrantDelete(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	if s.accessMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	namespace, err := s.scopedAccessWriteNamespaceForPrincipal(r.Context(), namespace)
 	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -495,23 +495,23 @@ func (s *RuntimeServer) handleGrantDelete(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		code, msg := k8sclient.HTTPStatusFromK8sError(err)
 		log.Printf("delete grant %s/%s failed before authz (status=%d): %v", namespace, name, code, err)
-		writeJSON(w, code, map[string]string{"error": fmt.Sprintf("failed to delete grant: %s", msg)})
+		writeAPIError(w, code, fmt.Sprintf("failed to delete grant: %s", msg))
 		return
 	}
 	allowed, err := s.canAdministerAccessServerRef(ctx, namespace, grant.Spec.ServerRef)
 	if err != nil {
 		log.Printf("delete grant %s/%s authz lookup failed: %v", namespace, name, err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to verify server reference"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to verify server reference")
 		return
 	}
 	if !allowed {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden server"})
+		writeAPIError(w, http.StatusForbidden, "forbidden server")
 		return
 	}
 	if err := s.accessMgr.DeleteGrant(ctx, name, namespace); err != nil {
 		code, msg := k8sclient.HTTPStatusFromK8sError(err)
 		log.Printf("delete grant %s/%s failed (status=%d): %v", namespace, name, code, err)
-		writeJSON(w, code, map[string]string{"error": fmt.Sprintf("failed to delete grant: %s", msg)})
+		writeAPIError(w, code, fmt.Sprintf("failed to delete grant: %s", msg))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -526,9 +526,9 @@ func (s *RuntimeServer) handleGrantPostTogglePath(w http.ResponseWriter, r *http
 	params, err := serviceutil.ExtractGrantActionParams(r, "/api/runtime/grants/")
 	if err != nil {
 		if errors.Is(err, serviceutil.ErrMethodNotAllowed) {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusMethodNotAllowed, err.Error())
 		} else {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 		}
 		return
 	}
@@ -539,13 +539,13 @@ func (s *RuntimeServer) handleGrantPostTogglePath(w http.ResponseWriter, r *http
 
 func (s *RuntimeServer) handleGrantToggle(w http.ResponseWriter, r *http.Request, namespace, name string, disable bool) {
 	if s.accessMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 
 	namespace, nsErr := s.scopedAccessWriteNamespaceForPrincipal(r.Context(), namespace)
 	if nsErr != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": nsErr.Error()})
+		writeAPIError(w, http.StatusForbidden, nsErr.Error())
 		return
 	}
 
@@ -554,17 +554,17 @@ func (s *RuntimeServer) handleGrantToggle(w http.ResponseWriter, r *http.Request
 	grant, err := s.accessMgr.GetGrant(ctx, name, namespace)
 	if err != nil {
 		code, msg := k8sclient.HTTPStatusFromK8sError(err)
-		writeJSON(w, code, map[string]string{"error": msg})
+		writeAPIError(w, code, msg)
 		return
 	}
 	allowed, err := s.canAdministerAccessServerRef(ctx, namespace, grant.Spec.ServerRef)
 	if err != nil {
 		log.Printf("toggle grant %s/%s authz lookup failed: %v", namespace, name, err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to verify server reference"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to verify server reference")
 		return
 	}
 	if !allowed {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden server"})
+		writeAPIError(w, http.StatusForbidden, "forbidden server")
 		return
 	}
 
@@ -576,7 +576,7 @@ func (s *RuntimeServer) handleGrantToggle(w http.ResponseWriter, r *http.Request
 	}
 
 	if updateErr != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update grant"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to update grant")
 		return
 	}
 
@@ -704,7 +704,7 @@ func defaultPolicyVersion(policyVersion string) string {
 func writeK8sApplyError(w http.ResponseWriter, kind, namespace, name string, err error) {
 	code, msg := k8sclient.HTTPStatusFromK8sError(err)
 	log.Printf("apply %s %s/%s failed (status=%d): %v", kind, namespace, name, code, err)
-	writeJSON(w, code, map[string]string{"error": fmt.Sprintf("failed to apply %s: %s", kind, msg)})
+	writeAPIError(w, code, fmt.Sprintf("failed to apply %s: %s", kind, msg))
 }
 
 func normalizeTrust(trust sentinelaccess.TrustLevel) sentinelaccess.TrustLevel {
@@ -748,7 +748,7 @@ func (s *RuntimeServer) HandleSessionItemPath(w http.ResponseWriter, r *http.Req
 	case http.MethodGet:
 		ns, name, err := extractNamespacedPath(r.URL.Path, "/api/runtime/sessions/", 2)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		s.handleSessionGet(w, r, ns, name)
@@ -756,7 +756,7 @@ func (s *RuntimeServer) HandleSessionItemPath(w http.ResponseWriter, r *http.Req
 	case http.MethodDelete:
 		ns, name, err := serviceutil.ExtractNamespacedResourceDelete(r, "/api/runtime/sessions/")
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		s.handleSessionDelete(w, r, ns, name)
@@ -766,18 +766,18 @@ func (s *RuntimeServer) HandleSessionItemPath(w http.ResponseWriter, r *http.Req
 		return
 	default:
 		w.Header().Set("allow", "GET, POST, DELETE")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 }
 
 func (s *RuntimeServer) handleSessionGet(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	if s.accessMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), namespace)
 	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -785,11 +785,11 @@ func (s *RuntimeServer) handleSessionGet(w http.ResponseWriter, r *http.Request,
 	session, err := s.accessMgr.GetSession(ctx, name, namespace)
 	if err != nil {
 		code, msg := k8sclient.HTTPStatusFromK8sError(err)
-		writeJSON(w, code, map[string]string{"error": msg})
+		writeAPIError(w, code, msg)
 		return
 	}
 	if !s.sessionVisibleToPrincipal(ctx, *session) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden server"})
+		writeAPIError(w, http.StatusForbidden, "forbidden server")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"session": sentinelaccess.ToSessionSummary(*session)})
@@ -817,12 +817,12 @@ func extractNamespacedPath(path, prefix string, expectedParts int) (string, stri
 
 func (s *RuntimeServer) handleSessionDelete(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	if s.accessMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	namespace, err := s.scopedAccessWriteNamespaceForPrincipal(r.Context(), namespace)
 	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -831,23 +831,23 @@ func (s *RuntimeServer) handleSessionDelete(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		code, msg := k8sclient.HTTPStatusFromK8sError(err)
 		log.Printf("delete session %s/%s failed before authz (status=%d): %v", namespace, name, code, err)
-		writeJSON(w, code, map[string]string{"error": fmt.Sprintf("failed to delete session: %s", msg)})
+		writeAPIError(w, code, fmt.Sprintf("failed to delete session: %s", msg))
 		return
 	}
 	allowed, err := s.canAdministerAccessServerRef(ctx, namespace, session.Spec.ServerRef)
 	if err != nil {
 		log.Printf("delete session %s/%s authz lookup failed: %v", namespace, name, err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to verify server reference"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to verify server reference")
 		return
 	}
 	if !allowed {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden server"})
+		writeAPIError(w, http.StatusForbidden, "forbidden server")
 		return
 	}
 	if err := s.accessMgr.DeleteSession(ctx, name, namespace); err != nil {
 		code, msg := k8sclient.HTTPStatusFromK8sError(err)
 		log.Printf("delete session %s/%s failed (status=%d): %v", namespace, name, code, err)
-		writeJSON(w, code, map[string]string{"error": fmt.Sprintf("failed to delete session: %s", msg)})
+		writeAPIError(w, code, fmt.Sprintf("failed to delete session: %s", msg))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -862,9 +862,9 @@ func (s *RuntimeServer) handleSessionPostTogglePath(w http.ResponseWriter, r *ht
 	params, err := serviceutil.ExtractSessionActionParams(r, "/api/runtime/sessions/")
 	if err != nil {
 		if errors.Is(err, serviceutil.ErrMethodNotAllowed) {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusMethodNotAllowed, err.Error())
 		} else {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 		}
 		return
 	}
@@ -875,13 +875,13 @@ func (s *RuntimeServer) handleSessionPostTogglePath(w http.ResponseWriter, r *ht
 
 func (s *RuntimeServer) handleSessionToggle(w http.ResponseWriter, r *http.Request, namespace, name string, revoke bool) {
 	if s.accessMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 
 	namespace, nsErr := s.scopedAccessWriteNamespaceForPrincipal(r.Context(), namespace)
 	if nsErr != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": nsErr.Error()})
+		writeAPIError(w, http.StatusForbidden, nsErr.Error())
 		return
 	}
 
@@ -890,17 +890,17 @@ func (s *RuntimeServer) handleSessionToggle(w http.ResponseWriter, r *http.Reque
 	session, err := s.accessMgr.GetSession(ctx, name, namespace)
 	if err != nil {
 		code, msg := k8sclient.HTTPStatusFromK8sError(err)
-		writeJSON(w, code, map[string]string{"error": msg})
+		writeAPIError(w, code, msg)
 		return
 	}
 	allowed, err := s.canAdministerAccessServerRef(ctx, namespace, session.Spec.ServerRef)
 	if err != nil {
 		log.Printf("toggle session %s/%s authz lookup failed: %v", namespace, name, err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to verify server reference"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to verify server reference")
 		return
 	}
 	if !allowed {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden server"})
+		writeAPIError(w, http.StatusForbidden, "forbidden server")
 		return
 	}
 
@@ -912,7 +912,7 @@ func (s *RuntimeServer) handleSessionToggle(w http.ResponseWriter, r *http.Reque
 	}
 
 	if updateErr != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update session"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to update session")
 		return
 	}
 

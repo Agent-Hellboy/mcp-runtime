@@ -45,19 +45,19 @@ func (s *RuntimeServer) HandleRuntimeServers(w http.ResponseWriter, r *http.Requ
 		s.handleRuntimeServerApply(w, r)
 	default:
 		w.Header().Set("allow", "GET, POST")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 }
 
 func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.Request) {
 	control := s.controlPlane()
 	if control == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	p, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -71,7 +71,7 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 		if namespace == "" {
 			namespaces = catalogNamespacesForPrincipal(p)
 		} else if !principalCanReadNamespace(p, namespace) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
+			writeAPIError(w, http.StatusForbidden, "forbidden namespace")
 			return
 		}
 	} else if namespace == "" {
@@ -92,13 +92,13 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 	servers := make([]controlplane.ServerInfo, 0)
 	for _, namespace := range namespaces {
 		if p.Role != roleAdmin && !principalCanReadNamespace(p, namespace) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
+			writeAPIError(w, http.StatusForbidden, "forbidden namespace")
 			return
 		}
 
 		result, err := control.ListServers(ctx, namespace)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list servers"})
+			writeAPIError(w, http.StatusInternalServerError, "failed to list servers")
 			return
 		}
 		if result.CRDError != nil && !apierrors.IsNotFound(result.CRDError) {
@@ -143,12 +143,12 @@ func dedupeNonEmptyStrings(values []string) []string {
 func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.Request) {
 	control := s.controlPlane()
 	if control == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	p, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -163,25 +163,25 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	req.Scope = strings.TrimSpace(req.Scope)
 	req.Spec.Image = strings.TrimSpace(req.Spec.Image)
 	if req.Name == "" || req.Spec.Image == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and spec.image are required"})
+		writeAPIError(w, http.StatusBadRequest, "name and spec.image are required")
 		return
 	}
 	scope, err := publishscope.Normalize(req.Scope)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	namespace, err := s.scopedNamespaceForServerApply(r.Context(), req.Namespace, scope)
 	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	if p.Role != roleAdmin && namespace == sharedCatalogNamespace && !sharedCatalogWritableForUsers() {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "shared catalog namespace is read-only for team users"})
+		writeAPIError(w, http.StatusForbidden, "shared catalog namespace is read-only for team users")
 		return
 	}
 	if p.Role != roleAdmin && !principalCanPublishNamespace(p, namespace) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
+		writeAPIError(w, http.StatusForbidden, "forbidden namespace")
 		return
 	}
 	namespaceTeamID := strings.TrimSpace(s.teamIDForPrincipalNamespace(r.Context(), namespace))
@@ -190,15 +190,15 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 		req.Spec.TeamID = namespaceTeamID
 	}
 	if err := validateTeamIDValue("spec.teamID", req.Spec.TeamID); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if namespaceTeamID != "" && req.Spec.TeamID != namespaceTeamID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "spec.teamID must match namespace team"})
+		writeAPIError(w, http.StatusForbidden, "spec.teamID must match namespace team")
 		return
 	}
 	if p.Role != roleAdmin && namespaceTeamID == "" && req.Spec.TeamID != "" {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "spec.teamID is only allowed in a team namespace"})
+		writeAPIError(w, http.StatusForbidden, "spec.teamID is only allowed in a team namespace")
 		return
 	}
 	team, isTeamNamespace := p.TeamForNamespace(namespace)
@@ -208,7 +208,7 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	}
 	req.Spec.Image = ResolveDeployImageReference(req.Spec.Image, namespace, teamSlug)
 	if err := ValidateDeployImage(req.Spec.Image, namespace, teamSlug, p.Role); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -230,20 +230,20 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 
 	if err := s.ensureServerApplyNamespace(ctx, p, namespace, team, isTeamNamespace); err != nil {
 		log.Printf("runtime servers: ensure namespace %q before apply failed: %v", namespace, err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": serverApplyNamespaceEnsureError(p, namespace, isTeamNamespace)})
+		writeAPIError(w, http.StatusInternalServerError, serverApplyNamespaceEnsureError(p, namespace, isTeamNamespace))
 		return
 	}
 
 	current, err := control.GetServer(ctx, namespace, req.Name)
 	if err != nil && !apierrors.IsNotFound(err) {
 		log.Printf("runtime servers: fetch MCPServer %s/%s before apply failed: %v", namespace, req.Name, err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to inspect existing server"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to inspect existing server")
 		return
 	}
 	if p.Role != roleAdmin && current != nil && !serverWritableByPrincipal(*current, p) {
 		msg := "server already exists and is not owned by this user"
 		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "denied", req.Name, namespace, req.Spec.Image, msg))
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": msg})
+		writeAPIError(w, http.StatusForbidden, msg)
 		return
 	}
 	// This is an API-layer guard. Strict global quota enforcement under highly
@@ -252,7 +252,7 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	if err != nil {
 		log.Printf("runtime servers: evaluate publish policy for %s/%s failed: %v", namespace, req.Name, err)
 		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "error", req.Name, namespace, req.Spec.Image, err.Error()))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to evaluate publish policy"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to evaluate publish policy")
 		return
 	}
 	if rejection != nil {
@@ -265,7 +265,7 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	}
 	if err := s.applyPublishedServerDefaults(ctx, namespace, req.Name, &req.Spec); err != nil {
 		log.Printf("runtime servers: apply defaults for %s/%s failed: %v", namespace, req.Name, err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to configure gateway analytics"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to configure gateway analytics")
 		return
 	}
 
@@ -313,7 +313,7 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	if err != nil {
 		code, msg := k8sclient.HTTPStatusFromK8sError(err)
 		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "error", req.Name, namespace, req.Spec.Image, msg))
-		writeJSON(w, code, map[string]string{"error": msg})
+		writeAPIError(w, code, msg)
 		return
 	}
 	s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "success", req.Name, namespace, req.Spec.Image, ""))
@@ -638,28 +638,28 @@ func (s *RuntimeServer) HandleRuntimeServerItem(w http.ResponseWriter, r *http.R
 		s.handleRuntimeServerDelete(w, r)
 	default:
 		w.Header().Set("allow", "GET, DELETE")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 }
 
 func (s *RuntimeServer) handleRuntimeServerGet(w http.ResponseWriter, r *http.Request) {
 	control := s.controlPlane()
 	if control == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	p, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	namespace, name, err := extractNamespaceName(r.URL.Path, "/api/runtime/servers/")
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if p.Role != roleAdmin && !principalCanReadNamespace(p, namespace) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
+		writeAPIError(w, http.StatusForbidden, "forbidden namespace")
 		return
 	}
 
@@ -667,11 +667,11 @@ func (s *RuntimeServer) handleRuntimeServerGet(w http.ResponseWriter, r *http.Re
 	defer cancel()
 	info, err := control.GetServerInfo(ctx, namespace, name)
 	if apierrors.IsNotFound(err) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "server not found"})
+		writeAPIError(w, http.StatusNotFound, "server not found")
 		return
 	}
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to inspect server"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to inspect server")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"server": s.serverInfoWithRuntimeData(ctx, info, r)})
@@ -680,22 +680,22 @@ func (s *RuntimeServer) handleRuntimeServerGet(w http.ResponseWriter, r *http.Re
 func (s *RuntimeServer) handleRuntimeServerDelete(w http.ResponseWriter, r *http.Request) {
 	control := s.controlPlane()
 	if control == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	p, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	namespace, name, err := extractNamespaceName(r.URL.Path, "/api/runtime/servers/")
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if p.Role != roleAdmin && !principalCanPublishNamespace(p, namespace) {
 		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_retire", "denied", name, namespace, "", "forbidden namespace"))
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
+		writeAPIError(w, http.StatusForbidden, "forbidden namespace")
 		return
 	}
 
@@ -708,19 +708,19 @@ func (s *RuntimeServer) handleRuntimeServerDelete(w http.ResponseWriter, r *http
 	}
 	if err != nil {
 		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_retire", "error", name, namespace, "", err.Error()))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to inspect server"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to inspect server")
 		return
 	}
 	if p.Role != roleAdmin && !serverWritableByPrincipal(*current, p) {
 		msg := "server is not owned by this user"
 		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_retire", "denied", name, namespace, "", msg))
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": msg})
+		writeAPIError(w, http.StatusForbidden, msg)
 		return
 	}
 	if err := control.DeleteServer(ctx, namespace, name); err != nil {
 		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_retire", "error", name, namespace, current.Spec.Image, err.Error()))
 		code, msg := k8sclient.HTTPStatusFromK8sError(err)
-		writeJSON(w, code, map[string]string{"error": msg})
+		writeAPIError(w, code, msg)
 		return
 	}
 	s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_retire", "success", name, namespace, current.Spec.Image, ""))

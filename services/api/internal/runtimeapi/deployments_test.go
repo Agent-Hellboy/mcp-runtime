@@ -312,8 +312,9 @@ func TestHandleDeploymentApplyRejectsInvalidVersionTag(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "version must be a valid image tag") {
-		t.Fatalf("body = %q, want invalid version message", recorder.Body.String())
+	wantBody := `{"error":"version_must_be_a_valid_image_tag","message":"version must be a valid image tag"}`
+	if strings.TrimSpace(recorder.Body.String()) != wantBody {
+		t.Fatalf("body = %q, want %s", recorder.Body.String(), wantBody)
 	}
 }
 

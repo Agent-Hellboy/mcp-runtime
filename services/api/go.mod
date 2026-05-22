@@ -10,6 +10,7 @@ require (
 	github.com/lib/pq v1.12.3
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0
 	go.uber.org/automaxprocs v1.6.0
+	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.51.0
 	k8s.io/api v0.36.1
 	k8s.io/apimachinery v0.36.1
@@ -74,6 +75,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
+	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/net v0.53.0 // indirect
