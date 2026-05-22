@@ -3781,6 +3781,10 @@ EOF
   OAUTH_INVALID_TOKEN="$(tr -d '\n' <"${OAUTH_FIXTURE_DIR}/invalid-token.txt")"
 
   echo "[oauth] deploying mock OAuth issuer"
+  OAUTH_ISSUER_DEPLOYMENT_EXISTED=0
+  if kubectl get deployment "${OAUTH_ISSUER_NAME}" -n mcp-servers >/dev/null 2>&1; then
+    OAUTH_ISSUER_DEPLOYMENT_EXISTED=1
+  fi
   kubectl create configmap "${OAUTH_ISSUER_NAME}-files" \
   -n mcp-servers \
   --from-file=oauth-authorization-server="${OAUTH_FIXTURE_DIR}/oauth-authorization-server" \
@@ -3821,6 +3825,13 @@ spec:
             runAsUser: 65532
           ports:
             - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /keys
+              port: 8080
+            initialDelaySeconds: 1
+            periodSeconds: 2
+            failureThreshold: 30
           volumeMounts:
             - name: files
               mountPath: /usr/share/nginx/html/.well-known/oauth-authorization-server
@@ -3835,8 +3846,25 @@ spec:
 EOF
   # The issuer mounts fixture files through subPath, so restart to pick up new
   # JWKS/token fixtures when E2E cache mode reuses an existing Deployment.
-  kubectl rollout restart "deploy/${OAUTH_ISSUER_NAME}" -n mcp-servers >/dev/null
+  if [[ "${OAUTH_ISSUER_DEPLOYMENT_EXISTED}" == "1" ]]; then
+    kubectl rollout restart "deploy/${OAUTH_ISSUER_NAME}" -n mcp-servers >/dev/null
+  fi
   kubectl rollout status "deploy/${OAUTH_ISSUER_NAME}" -n mcp-servers --timeout=180s
+  OAUTH_ISSUER_ENDPOINT_READY=0
+  for _oauth_endpoint_try in $(seq 1 60); do
+    if [[ -n "$(kubectl get endpoints "${OAUTH_ISSUER_NAME}" -n mcp-servers -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)" ]]; then
+      OAUTH_ISSUER_ENDPOINT_READY=1
+      break
+    fi
+    sleep 2
+  done
+  if [[ "${OAUTH_ISSUER_ENDPOINT_READY}" != "1" ]]; then
+    echo "timed out waiting for OAuth issuer service endpoint" >&2
+    kubectl get svc,endpoints,pods -n mcp-servers -o wide >&2 || true
+    kubectl describe deployment "${OAUTH_ISSUER_NAME}" -n mcp-servers >&2 || true
+    kubectl logs -n mcp-servers -l "app=${OAUTH_ISSUER_NAME}" --tail=100 >&2 || true
+    exit 1
+  fi
 
   OAUTH_METADATA_FILE="${WORKDIR}/oauth-metadata.yaml"
   OAUTH_MANIFEST_DIR="${WORKDIR}/oauth-manifests"
@@ -4031,7 +4059,14 @@ PY
 
   echo "[oauth] validating missing and invalid bearer token challenges"
   wait_for_mcp_initialize_result "${MCP_OAUTH_ANON_URL}" 401 "missing_bearer_token" "www-authenticate" "resource_metadata="
-  wait_for_mcp_initialize_result "${MCP_OAUTH_INVALID_URL}" 401 "invalid_token" "www-authenticate" 'error="invalid_token"'
+  if ! wait_for_mcp_initialize_result "${MCP_OAUTH_INVALID_URL}" 401 "invalid_token" "www-authenticate" 'error="invalid_token"'; then
+    echo "[debug] OAuth provider diagnostics after invalid-token failure" >&2
+    kubectl get svc,endpoints,pods -n mcp-servers -o wide >&2 || true
+    kubectl describe deployment "${OAUTH_ISSUER_NAME}" -n mcp-servers >&2 || true
+    kubectl logs -n mcp-servers -l "app=${OAUTH_ISSUER_NAME}" --tail=100 >&2 || true
+    kubectl logs -n mcp-servers -l "app=${OAUTH_SERVER_NAME}" -c mcp-gateway --tail=200 >&2 || true
+    exit 1
+  fi
   wait_for_http_result \
     "${MCP_OAUTH_DIRECT_URL}" \
     POST \
