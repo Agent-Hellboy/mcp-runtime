@@ -594,6 +594,41 @@ func TestCheckRegistryCertificateOwnershipWithKubectl(t *testing.T) {
 	})
 }
 
+func TestRegistryTLSCertificateOwnersWrapsListError(t *testing.T) {
+	cause := errors.New("kubectl get certificates failed")
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "certificates", "-n", core.NamespaceRegistry, "-o", "json") {
+				cmd.RunFunc = func() error {
+					if cmd.StderrW != nil {
+						_, _ = cmd.StderrW.Write([]byte("forbidden"))
+					}
+					return cause
+				}
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	_, err := registryTLSCertificateOwners(kubectl)
+	if !errors.Is(err, cause) {
+		t.Fatalf("registryTLSCertificateOwners() error = %v, want errors.Is(..., cause)", err)
+	}
+}
+
+func TestRegistryTLSCertificateOwnersWrapsParseError(t *testing.T) {
+	mock := certificateListMock(`{"items":[`)
+	kubectl := core.NewTestKubectlClient(mock)
+
+	_, err := registryTLSCertificateOwners(kubectl)
+	var cause *json.SyntaxError
+	if !errors.As(err, &cause) {
+		t.Fatalf("registryTLSCertificateOwners() error = %v, want json syntax error in chain", err)
+	}
+}
+
 func TestApplyClusterIssuerWithKubectlError(t *testing.T) {
 	mock := &core.MockExecutor{DefaultRunErr: errors.New("apply failed")}
 	kubectl := core.NewTestKubectlClient(mock)

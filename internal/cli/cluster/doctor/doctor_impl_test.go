@@ -284,6 +284,23 @@ func TestCheckTraefikWebEntrypoint(t *testing.T) {
 	})
 }
 
+func TestReadTraefikServicePortsWrapsCommandArgsError(t *testing.T) {
+	cause := errors.New("validator rejected command")
+	kubectl := core.NewTestKubectlClientWithValidators(
+		&core.MockExecutor{},
+		[]core.ExecValidator{
+			func(core.ExecSpec) error {
+				return cause
+			},
+		},
+	)
+
+	_, err := readTraefikServicePorts(kubectl, doctorTraefikEndpoint{Namespace: "traefik", Name: "traefik"})
+	if !errors.Is(err, cause) {
+		t.Fatalf("readTraefikServicePorts() error = %v, want errors.Is(..., cause)", err)
+	}
+}
+
 func TestCheckPublicIngressHostConfig(t *testing.T) {
 	t.Run("ok when all three hosts resolve from platform domain", func(t *testing.T) {
 		t.Setenv("MCP_PLATFORM_DOMAIN", "mcpruntime.org")

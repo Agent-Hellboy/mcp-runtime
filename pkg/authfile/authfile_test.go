@@ -1,6 +1,7 @@
 package authfile
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -95,6 +96,10 @@ func TestLoad_InvalidJSON(t *testing.T) {
 	_, err := Load(p)
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("Load() = %v, want ErrInvalid", err)
+	}
+	var cause *json.SyntaxError
+	if !errors.As(err, &cause) {
+		t.Fatalf("Load() = %v, want json syntax error in chain", err)
 	}
 }
 
