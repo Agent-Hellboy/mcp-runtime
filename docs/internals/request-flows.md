@@ -143,7 +143,7 @@ Primary request paths:
 - `mcp-runtime adapter proxy --server <name> --agent <id>`
 - `mcp-runtime adapter stdio --server <name> --agent <id>`
 - `POST /api/runtime/adapter/sessions`
-- Local adapter routes: `/mcp`, `/healthz`, `/livez`, `/readyz`, `/metrics`
+- Local adapter routes: /mcp, /health, /live, /ready, /metrics
 
 ## UI And Platform API
 
