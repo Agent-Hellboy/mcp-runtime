@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	_ "go.uber.org/automaxprocs" // align GOMAXPROCS with container CPU quota
 )
 
 type smokePingArgs struct {

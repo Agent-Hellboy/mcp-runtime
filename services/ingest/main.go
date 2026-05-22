@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	_ "go.uber.org/automaxprocs" // align GOMAXPROCS with container CPU quota
 
 	"mcp-runtime/pkg/events"
 	"mcp-runtime/pkg/serviceutil"

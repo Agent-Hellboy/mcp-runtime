@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0
+	go.uber.org/automaxprocs v1.6.0
 	mcp-runtime v0.0.0
 )
 

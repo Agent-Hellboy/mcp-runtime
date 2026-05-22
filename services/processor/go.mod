@@ -7,6 +7,7 @@ require (
 	github.com/segmentio/kafka-go v0.4.51
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/trace v1.43.0
+	go.uber.org/automaxprocs v1.6.0
 	mcp-runtime v0.0.0
 )
 
