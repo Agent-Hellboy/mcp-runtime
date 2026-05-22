@@ -8,17 +8,17 @@ import (
 
 // Identity is the subject context used to evaluate a rendered policy document.
 type Identity struct {
-	HumanID   string
-	AgentID   string
-	TeamID    string
-	SessionID string
+	HumanID   HumanID
+	AgentID   AgentID
+	TeamID    TeamID
+	SessionID SessionID
 }
 
 // Request describes the MCP RPC request being evaluated.
 type Request struct {
 	Identity  Identity
 	RPCMethod string
-	ToolName  string
+	ToolName  ToolName
 }
 
 // Decision is the result of evaluating a rendered policy document.
@@ -163,7 +163,7 @@ type grantSelection struct {
 	deny              *Decision
 }
 
-func bestGrantFor(grants []Grant, toolName, requiredTrust, requiredSideEffect, policyVersion string) grantSelection {
+func bestGrantFor(grants []Grant, toolName ToolName, requiredTrust, requiredSideEffect, policyVersion string) grantSelection {
 	selection := grantSelection{
 		requiredTrustRank: TrustRank(requiredTrust),
 		requiredTrust:     requiredTrust,
@@ -256,7 +256,7 @@ func findSession(sessions []Binding, identity Identity) (Binding, bool) {
 	return Binding{}, false
 }
 
-func subjectMatchesTeam(humanID, agentID, teamID string, identity Identity) bool {
+func subjectMatchesTeam(humanID HumanID, agentID AgentID, teamID TeamID, identity Identity) bool {
 	if humanID != "" && humanID != identity.HumanID {
 		return false
 	}
@@ -269,7 +269,7 @@ func subjectMatchesTeam(humanID, agentID, teamID string, identity Identity) bool
 	return humanID != "" || agentID != "" || teamID != ""
 }
 
-func resolveToolMetadata(tools []Tool, toolName string) (string, string) {
+func resolveToolMetadata(tools []Tool, toolName ToolName) (string, string) {
 	requiredTrust := TrustLevelLow
 	for _, tool := range tools {
 		if tool.Name == toolName {

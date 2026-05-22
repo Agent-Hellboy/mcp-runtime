@@ -1,0 +1,592 @@
+package cluster
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	"mcp-runtime/internal/cli/core"
+)
+
+func checkRegistryService(kubectl core.KubectlRunner) DoctorCheck {
+	cmd, err := kubectl.CommandArgs([]string{"get", "svc", "-n", "registry", "registry", "-o", "jsonpath={.spec.ports[0].nodePort}"})
+	if err != nil {
+		return DoctorCheck{Name: "registry Service", OK: false, Detail: fmt.Sprintf("kubectl error: %v", err), Remedy: "run `./bin/mcp-runtime setup` to install the registry, or check cluster connectivity"}
+	}
+	out, err := cmd.Output()
+	port := strings.TrimSpace(string(out))
+	if err != nil || port == "" {
+		return DoctorCheck{
+			Name:   "registry Service",
+			OK:     false,
+			Detail: "Service registry/registry not found or has no NodePort",
+			Remedy: "run `./bin/mcp-runtime setup` to install the registry",
+		}
+	}
+	return DoctorCheck{
+		Name:   "registry Service",
+		OK:     true,
+		Detail: fmt.Sprintf("NodePort %s", port),
+	}
+}
+
+// checkRegistryReachableFromCluster verifies that an in-cluster pod can talk to
+// the registry over the cluster-internal service DNS. This exercises the same
+// path the in-cluster push helper uses, so a failure here means `registry push
+// --mode=in-cluster` will also fail. Kubelet's pull path (node-side containerd
+// with registries.yaml mirrors) is distribution-specific and surfaced via the
+// remediation hint, not as a pass/fail check — we can't reach into kubelet
+// non-destructively.
+func checkRegistryReachableFromCluster(kubectl core.KubectlRunner) DoctorCheck {
+	podName := fmt.Sprintf("mcp-runtime-doctor-curl-%d", time.Now().UnixNano())
+	registryURL := doctorRegistryServiceURL(kubectl)
+	args := []string{
+		"run", "-n", "registry",
+		"--rm", "--restart=Never", "--attach",
+		"--pod-running-timeout=" + doctorProbePodRunTimeout,
+		"--quiet",
+		"--image=curlimages/curl:8.7.1",
+		podName,
+		"--command", "--", "curl", "-skI", "--connect-timeout", "5", "--max-time", "15",
+		registryURL,
+	}
+	cmd, err := kubectl.CommandArgs(args)
+	if err != nil {
+		return DoctorCheck{
+			Name:   "registry reachability (in-cluster)",
+			OK:     false,
+			Detail: fmt.Sprintf("kubectl error: %v", err),
+			Remedy: "check cluster connectivity and kubeconfig",
+		}
+	}
+	out, runErr := cmd.CombinedOutput()
+	body := string(out)
+	if runErr != nil {
+		return DoctorCheck{
+			Name:   "registry reachability (in-cluster)",
+			OK:     false,
+			Detail: fmt.Sprintf("helper pod failed: %v", runErr),
+			Remedy: "run `./bin/mcp-runtime setup` if the registry is missing; check `kubectl -n registry get pods`",
+		}
+	}
+	if !hasHTTP200Status(body) {
+		return DoctorCheck{
+			Name:   "registry reachability (in-cluster)",
+			OK:     false,
+			Detail: fmt.Sprintf("unexpected response: %q", strings.TrimSpace(body)),
+			Remedy: "inspect the registry deployment: `kubectl -n registry get pods -o wide`",
+		}
+	}
+	return DoctorCheck{
+		Name:   "registry reachability (in-cluster)",
+		OK:     true,
+		Detail: fmt.Sprintf("HTTP 200 from %s", registryURL),
+	}
+}
+
+func doctorRegistryServiceURL(kubectl core.KubectlRunner) string {
+	scheme := "http"
+	if doctorRegistryInternalTLSConfigured(kubectl) {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://registry.registry.svc.cluster.local:5000/v2/", scheme)
+}
+
+func doctorRegistryServiceScheme(registryURL string) string {
+	scheme, _, found := strings.Cut(registryURL, "://")
+	if !found || strings.TrimSpace(scheme) == "" {
+		return "registry service"
+	}
+	return strings.ToUpper(scheme)
+}
+
+func doctorRegistryInternalTLSConfigured(kubectl core.KubectlRunner) bool {
+	out, err := readKubectlOutput(kubectl, []string{
+		"get", "secret", "registry-internal-tls",
+		"-n", "registry",
+		"-o", "jsonpath={.metadata.name}",
+	})
+	return err == nil && strings.TrimSpace(out) == "registry-internal-tls"
+}
+
+func checkMCPServersImagePullSecrets(kubectl core.KubectlRunner, namespace string) DoctorCheck {
+	cmd, err := kubectl.CommandArgs([]string{"get", "serviceaccount", "default", "-n", namespace, "-o", "jsonpath={range .imagePullSecrets[*]}{.name}{\"\\n\"}{end}"})
+	if err != nil {
+		return DoctorCheck{
+			Name:   "mcp-servers imagePullSecrets",
+			OK:     false,
+			Detail: fmt.Sprintf("kubectl error: %v", err),
+			Remedy: "check default serviceaccount in mcp-servers",
+		}
+	}
+	out, execErr := cmd.Output()
+	if execErr != nil {
+		return DoctorCheck{
+			Name:   "mcp-servers imagePullSecrets",
+			OK:     false,
+			Detail: "failed reading default serviceaccount imagePullSecrets",
+			Remedy: "inspect `kubectl -n mcp-servers get sa default -o yaml`",
+		}
+	}
+	raw := strings.TrimSpace(string(out))
+	if raw == "" {
+		return DoctorCheck{
+			Name:   "mcp-servers imagePullSecrets",
+			OK:     true,
+			Detail: "no imagePullSecrets configured on default serviceaccount",
+		}
+	}
+	names := strings.Split(raw, "\n")
+	for _, name := range names {
+		n := strings.TrimSpace(name)
+		if n == "" {
+			continue
+		}
+		if _, getErr := readKubectlOutput(kubectl, []string{"get", "secret", n, "-n", namespace, "-o", "jsonpath={.metadata.name}"}); getErr != nil {
+			return DoctorCheck{
+				Name:   "mcp-servers imagePullSecrets",
+				OK:     false,
+				Detail: fmt.Sprintf("referenced imagePullSecret %s is missing", n),
+				Remedy: fmt.Sprintf("create secret %s in namespace %s or update serviceaccount", n, namespace),
+			}
+		}
+	}
+	return DoctorCheck{
+		Name:   "mcp-servers imagePullSecrets",
+		OK:     true,
+		Detail: fmt.Sprintf("%d imagePullSecrets present", len(names)),
+	}
+}
+
+func checkMCPServersImagePullSmoke(kubectl core.KubectlRunner, namespace string) DoctorCheck {
+	image, imageSource := resolveDoctorSmokeImage(kubectl, namespace)
+	podName := fmt.Sprintf("doctor-pull-%d", time.Now().UnixNano())
+	defer func() {
+		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", namespace, "--ignore-not-found"})
+	}()
+	createCmd, cmdErr := kubectl.CommandArgs([]string{
+		"run", podName,
+		"-n", namespace,
+		"--restart=Never",
+		"--image=" + image,
+		"--overrides=" + restrictedRunOverrides(podName, image, ""),
+	})
+	if cmdErr != nil {
+		return DoctorCheck{
+			Name:   "mcp-servers image pull smoke",
+			OK:     false,
+			Detail: fmt.Sprintf("kubectl error: %v", cmdErr),
+			Remedy: "check kubectl setup",
+		}
+	}
+	createOut, err := createCmd.CombinedOutput()
+	if err != nil {
+		return DoctorCheck{
+			Name:   "mcp-servers image pull smoke",
+			OK:     false,
+			Detail: fmt.Sprintf("failed creating smoke pod: %v: %s", err, strings.TrimSpace(string(createOut))),
+			Remedy: "check pull credentials, registry reachability, and image existence",
+		}
+	}
+	if err := waitForDoctorPodImagePulled(kubectl, podName, namespace, 90*time.Second); err != nil {
+		return DoctorCheck{
+			Name:   "mcp-servers image pull smoke",
+			OK:     false,
+			Detail: fmt.Sprintf("pod image was not pulled: %v", err),
+			Remedy: "inspect pod events: `kubectl -n mcp-servers describe pod " + podName + "`",
+		}
+	}
+	return DoctorCheck{
+		Name:   "mcp-servers image pull smoke",
+		OK:     true,
+		Detail: fmt.Sprintf("pull/ready succeeded using image %s (%s)", image, imageSource),
+	}
+}
+
+func waitForDoctorPodImagePulled(kubectl core.KubectlRunner, name, namespace string, timeout time.Duration) error {
+	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	var lastStatus string
+	for {
+		imageID, imageErr := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].imageID}"})
+		if imageErr == nil && strings.TrimSpace(imageID) != "" {
+			return nil
+		}
+
+		reason, _ := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].state.waiting.reason}"})
+		reason = strings.TrimSpace(reason)
+		if isImagePullWaitingReason(reason) {
+			return fmt.Errorf("%s", reason)
+		}
+
+		phase, _ := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.phase}"})
+		lastStatus = strings.TrimSpace(phase)
+		if reason != "" {
+			lastStatus = reason
+		}
+		if lastStatus == "" && imageErr != nil {
+			lastStatus = imageErr.Error()
+		}
+
+		select {
+		case <-timeoutTimer.C:
+			if lastStatus == "" {
+				lastStatus = "timed out"
+			}
+			return fmt.Errorf("%s", lastStatus)
+		case <-ticker.C:
+		}
+	}
+}
+
+func waitForDoctorPodSucceeded(kubectl core.KubectlRunner, name, namespace string, timeout time.Duration) error {
+	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	var lastStatus string
+	for {
+		phase, phaseErr := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.phase}"})
+		phase = strings.TrimSpace(phase)
+		switch phase {
+		case "Succeeded":
+			return nil
+		case "Failed":
+			return fmt.Errorf("pod phase Failed")
+		}
+
+		reason, _ := readKubectlOutput(kubectl, []string{"get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].state.waiting.reason}"})
+		reason = strings.TrimSpace(reason)
+		if isImagePullWaitingReason(reason) {
+			return fmt.Errorf("%s", reason)
+		}
+		lastStatus = phase
+		if reason != "" {
+			lastStatus = reason
+		}
+		if lastStatus == "" && phaseErr != nil {
+			lastStatus = phaseErr.Error()
+		}
+
+		select {
+		case <-timeoutTimer.C:
+			if lastStatus == "" {
+				lastStatus = "timed out"
+			}
+			return fmt.Errorf("%s", lastStatus)
+		case <-ticker.C:
+		}
+	}
+}
+
+func isImagePullWaitingReason(reason string) bool {
+	switch reason {
+	case "ErrImagePull", "ImagePullBackOff", "InvalidImageName":
+		return true
+	default:
+		return false
+	}
+}
+
+func restrictedRunOverrides(containerName, image, command string, args ...string) string {
+	container := map[string]any{
+		"name":       strings.TrimSpace(containerName),
+		"image":      strings.TrimSpace(image),
+		"workingDir": "/tmp",
+		"securityContext": map[string]any{
+			"allowPrivilegeEscalation": false,
+			"runAsNonRoot":             true,
+			"runAsUser":                doctorRestrictedRunAsUser,
+			"capabilities": map[string]any{
+				"drop": []string{"ALL"},
+			},
+		},
+	}
+	if strings.TrimSpace(command) != "" {
+		container["command"] = []string{strings.TrimSpace(command)}
+	}
+	if len(args) > 0 {
+		container["args"] = args
+	}
+	overrides := map[string]any{
+		"spec": map[string]any{
+			"automountServiceAccountToken": false,
+			"securityContext": map[string]any{
+				"runAsNonRoot": true,
+				"runAsUser":    doctorRestrictedRunAsUser,
+				"seccompProfile": map[string]any{
+					"type": "RuntimeDefault",
+				},
+			},
+			"containers": []map[string]any{container},
+		},
+	}
+	data, err := json.Marshal(overrides)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
+}
+
+func checkRegistryHTTPPullMismatch(kubectl core.KubectlRunner) DoctorCheck {
+	out, err := readKubectlOutput(kubectl, []string{"get", "pods", "-A", "-o", buildImagePullJSONPath()})
+	if err != nil {
+		return DoctorCheck{
+			Name:   "registry HTTP pull mismatch",
+			OK:     false,
+			Detail: fmt.Sprintf("kubectl error: %v", err),
+			Remedy: "check API connectivity and RBAC for listing pods",
+		}
+	}
+
+	candidates := parseImagePullCandidates(out)
+	if len(candidates) == 0 {
+		return DoctorCheck{
+			Name:   "registry HTTP pull mismatch",
+			OK:     true,
+			Detail: "no ErrImagePull/ImagePullBackOff pods detected",
+		}
+	}
+
+	// First pass: check waiting messages already returned by `kubectl get`.
+	// Cheap and avoids any describe calls when the kubelet event is fresh.
+	for _, candidate := range candidates {
+		if hasRegistryHTTPPullMismatchMessage(candidate.Messages) {
+			return mismatchResult(candidate)
+		}
+	}
+
+	// Second pass: fall back to `kubectl describe`, capped so a cluster
+	// with many ImagePullBackOff pods doesn't shell out indefinitely.
+	describeFailures := 0
+	var firstDescribeFailure string
+	inspected := 0
+	for _, candidate := range candidates {
+		if inspected >= imagePullDescribeLimit {
+			break
+		}
+		inspected++
+		describe, err := readKubectlOutput(kubectl, []string{"describe", "pod", candidate.Name, "-n", candidate.Namespace})
+		if err != nil {
+			describeFailures++
+			if firstDescribeFailure == "" {
+				firstDescribeFailure = fmt.Sprintf("%s/%s: %v", candidate.Namespace, candidate.Name, err)
+			}
+			continue
+		}
+		if strings.Contains(describe, registryHTTPPullMismatch) {
+			return mismatchResult(candidate)
+		}
+	}
+	if describeFailures > 0 {
+		detail := fmt.Sprintf("pod inspection failed for %d/%d ErrImagePull/ImagePullBackOff candidate(s); first error: %s", describeFailures, inspected, firstDescribeFailure)
+		if inspected < len(candidates) {
+			detail += fmt.Sprintf(" (inspected first %d of %d)", inspected, len(candidates))
+		}
+		return DoctorCheck{
+			Name:   "registry HTTP pull mismatch",
+			OK:     false,
+			Detail: detail,
+			Remedy: "inspect pull-failing pods manually with `kubectl describe pod <name> -n <namespace>` and check kubectl RBAC/connectivity",
+		}
+	}
+
+	detail := fmt.Sprintf("%d ErrImagePull/ImagePullBackOff pod(s) found, none with HTTP-vs-HTTPS registry mismatch events", len(candidates))
+	if inspected < len(candidates) {
+		detail = fmt.Sprintf("%d ErrImagePull/ImagePullBackOff pod(s) found; inspected first %d, none with HTTP-vs-HTTPS registry mismatch events", len(candidates), inspected)
+	}
+	return DoctorCheck{
+		Name:   "registry HTTP pull mismatch",
+		OK:     true,
+		Detail: detail,
+	}
+}
+
+// buildImagePullJSONPath returns the kubectl jsonpath used by the HTTP
+// mismatch check. Inner list items are joined with imagePullListSep (0x1f)
+// so commas in kubelet messages don't fragment the parse.
+func buildImagePullJSONPath() string {
+	return fmt.Sprintf(
+		`jsonpath={range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"|"}{range .spec.initContainers[*]}{.image}{"%[1]s"}{end}{range .spec.containers[*]}{.image}{"%[1]s"}{end}{"|"}{range .status.initContainerStatuses[*]}{.state.waiting.reason}{"%[1]s"}{end}{range .status.containerStatuses[*]}{.state.waiting.reason}{"%[1]s"}{end}{"|"}{range .status.initContainerStatuses[*]}{.state.waiting.message}{"%[1]s"}{end}{range .status.containerStatuses[*]}{.state.waiting.message}{"%[1]s"}{end}{"\n"}{end}`,
+		imagePullListSep,
+	)
+}
+
+func mismatchResult(c imagePullPodCandidate) DoctorCheck {
+	image := firstNonEmpty(c.Images, "unknown")
+	reason := pickImagePullReason(c.Reasons)
+	var detail string
+	if reason != "" {
+		detail = fmt.Sprintf("pod %s/%s image %s (%s) failed pull: %s", c.Namespace, c.Name, image, reason, registryHTTPPullMismatch)
+	} else {
+		detail = fmt.Sprintf("pod %s/%s image %s failed pull: %s", c.Namespace, c.Name, image, registryHTTPPullMismatch)
+	}
+	return DoctorCheck{
+		Name:   "registry HTTP pull mismatch",
+		OK:     false,
+		Detail: detail,
+		Remedy: "Registry HTTP pull mismatch: kubelet tried HTTPS against the HTTP registry. Configure the node container runtime's insecure registry mirror for the exact image host, or use TLS.",
+	}
+}
+
+func pickImagePullReason(reasons []string) string {
+	for _, r := range reasons {
+		switch trimmed := strings.TrimSpace(r); trimmed {
+		case "Init:ErrImagePull", "Init:ImagePullBackOff", "ErrImagePull", "ImagePullBackOff":
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func parseImagePullCandidates(value string) []imagePullPodCandidate {
+	var candidates []imagePullPodCandidate
+	for _, line := range filterNonEmptyLines(value) {
+		parts := strings.SplitN(line, "|", 5)
+		if len(parts) < 4 {
+			continue
+		}
+		reasons := splitSepTrim(parts[3], imagePullListSep)
+		messages := []string{}
+		if len(parts) == 5 {
+			messages = splitSepTrim(parts[4], imagePullListSep)
+		}
+		if !hasImagePullReason(reasons) && !hasRegistryHTTPPullMismatchMessage(messages) {
+			continue
+		}
+		candidates = append(candidates, imagePullPodCandidate{
+			Namespace: strings.TrimSpace(parts[0]),
+			Name:      strings.TrimSpace(parts[1]),
+			Images:    splitSepTrim(parts[2], imagePullListSep),
+			Reasons:   reasons,
+			Messages:  messages,
+		})
+	}
+	return candidates
+}
+
+func hasImagePullReason(reasons []string) bool {
+	for _, reason := range reasons {
+		switch strings.TrimSpace(reason) {
+		case "ErrImagePull", "ImagePullBackOff", "Init:ErrImagePull", "Init:ImagePullBackOff":
+			return true
+		}
+	}
+	return false
+}
+
+func hasRegistryHTTPPullMismatchMessage(messages []string) bool {
+	for _, message := range messages {
+		if strings.Contains(message, registryHTTPPullMismatch) {
+			return true
+		}
+	}
+	return false
+}
+
+func checkMCPServerReconcileSmoke(kubectl core.KubectlRunner, namespace string) DoctorCheck {
+	target := resolveDoctorSmokeTarget(kubectl, namespace)
+	name := fmt.Sprintf("doctor-smoke-%d", time.Now().UnixNano()%1_000_000)
+	manifest := fmt.Sprintf(`apiVersion: mcpruntime.org/v1alpha1
+kind: MCPServer
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  image: %s
+  port: %d
+  servicePort: 80
+  publicPathPrefix: %s
+  ingressClass: traefik
+  ingressAnnotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+`, name, namespace, strings.TrimSpace(target.Image), target.Port, name)
+	cleanup := func() {
+		_ = kubectl.Run([]string{"delete", "mcpserver", name, "-n", namespace, "--ignore-not-found"})
+		_ = kubectl.Run([]string{"delete", "deploy", name, "-n", namespace, "--ignore-not-found"})
+		_ = kubectl.Run([]string{"delete", "svc", name, "-n", namespace, "--ignore-not-found"})
+		_ = kubectl.Run([]string{"delete", "ingress", name, "-n", namespace, "--ignore-not-found"})
+	}
+	defer cleanup()
+
+	applyCmd, cmdErr := kubectl.CommandArgs([]string{"apply", "-f", "-"})
+	if cmdErr != nil {
+		return DoctorCheck{
+			Name:   "MCPServer reconcile smoke",
+			OK:     false,
+			Detail: fmt.Sprintf("kubectl error: %v", cmdErr),
+			Remedy: "check kubeconfig access",
+		}
+	}
+	applyCmd.SetStdin(strings.NewReader(manifest))
+	if out, runErr := applyCmd.CombinedOutput(); runErr != nil {
+		return DoctorCheck{
+			Name:   "MCPServer reconcile smoke",
+			OK:     false,
+			Detail: fmt.Sprintf("failed to apply smoke MCPServer: %s", strings.TrimSpace(string(out))),
+			Remedy: "check MCPServer webhook/CRD/operator availability",
+		}
+	}
+
+	if err := waitForDoctorResource(kubectl, "deployment", name, namespace, 150*time.Second); err != nil {
+		return DoctorCheck{
+			Name:   "MCPServer reconcile smoke",
+			OK:     false,
+			Detail: fmt.Sprintf("deployment was not created: %v", err),
+			Remedy: "inspect operator reconcile errors and MCPServer status",
+		}
+	}
+	if target.WaitForReady {
+		if err := waitForDoctorDeploymentReady(kubectl, name, namespace, 150*time.Second); err != nil {
+			return DoctorCheck{
+				Name:   "MCPServer reconcile smoke",
+				OK:     false,
+				Detail: fmt.Sprintf("deployment did not become ready: %v", err),
+				Remedy: "inspect operator reconcile and smoke deployment events",
+			}
+		}
+	}
+	if !target.WaitForReady {
+		if err := waitForDoctorPodsScheduled(kubectl, name, namespace, 30*time.Second); err != nil {
+			return DoctorCheck{
+				Name:   "MCPServer reconcile smoke",
+				OK:     false,
+				Detail: fmt.Sprintf("deployment pod was not scheduled: %v", err),
+				Remedy: "inspect operator reconcile and smoke deployment events",
+			}
+		}
+	}
+	if err := waitForDoctorResource(kubectl, "svc", name, namespace, 150*time.Second); err != nil {
+		return DoctorCheck{
+			Name:   "MCPServer reconcile smoke",
+			OK:     false,
+			Detail: fmt.Sprintf("service not created for smoke MCPServer: %v", err),
+			Remedy: "inspect operator service reconciliation",
+		}
+	}
+	if err := waitForDoctorResource(kubectl, "ingress", name, namespace, 150*time.Second); err != nil {
+		return DoctorCheck{
+			Name:   "MCPServer reconcile smoke",
+			OK:     false,
+			Detail: fmt.Sprintf("ingress not created for smoke MCPServer: %v", err),
+			Remedy: "inspect operator ingress reconciliation",
+		}
+	}
+	if target.WaitForReady {
+		return DoctorCheck{
+			Name:   "MCPServer reconcile smoke",
+			OK:     true,
+			Detail: fmt.Sprintf("temporary MCPServer %s reconciled ready deployment/service/ingress using %s", name, target.Source),
+		}
+	}
+	return DoctorCheck{
+		Name:   "MCPServer reconcile smoke",
+		OK:     true,
+		Detail: fmt.Sprintf("temporary MCPServer %s reconciled deployment/service/ingress using %s; skipped readiness because the fallback image does not expose the MCP port", name, target.Source),
+	}
+}

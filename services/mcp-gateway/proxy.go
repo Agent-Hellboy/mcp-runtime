@@ -86,7 +86,7 @@ func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 			decision = policypkg.Authorize(policy, policypkg.Request{
 				Identity:  policyIdentity(authCtx),
 				RPCMethod: rpcMethod,
-				ToolName:  toolName,
+				ToolName:  policypkg.ToolName(toolName),
 			}, time.Now())
 		}
 	}

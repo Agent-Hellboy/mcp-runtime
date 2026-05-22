@@ -1315,7 +1315,7 @@ func TestRenderGatewayPolicyIncludesCrossNamespaceReferences(t *testing.T) {
 	}
 	sessionsByName := make(map[string]policy.Binding, len(doc.Sessions))
 	for _, session := range doc.Sessions {
-		sessionsByName[session.Name] = session
+		sessionsByName[string(session.Name)] = session
 	}
 	if foreign := sessionsByName["session-foreign"]; foreign.TeamID != "team-foreign" {
 		t.Fatalf("expected foreign-team session to render explicit subject teamID, got %+v", foreign)

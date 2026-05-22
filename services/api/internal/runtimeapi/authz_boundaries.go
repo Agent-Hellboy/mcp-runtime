@@ -54,9 +54,9 @@ func (s *RuntimeServer) principalCanAdministerAccessServer(ctx context.Context, 
 }
 
 func (s *RuntimeServer) canAdministerAccessServerRef(ctx context.Context, namespace string, ref sentinelaccess.ServerReference) (bool, error) {
-	ref.Namespace = strings.TrimSpace(ref.Namespace)
+	ref.Namespace = sentinelaccess.Namespace(strings.TrimSpace(string(ref.Namespace)))
 	if ref.Namespace == "" {
-		ref.Namespace = defaultAccessNamespace(namespace)
+		ref.Namespace = sentinelaccess.Namespace(defaultAccessNamespace(namespace))
 	}
 	targetServer, err := s.accessMgr.GetMCPServerRef(ctx, ref)
 	if err != nil {

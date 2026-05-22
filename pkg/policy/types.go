@@ -3,6 +3,27 @@
 // policy and the proxy-consumed policy.
 package policy
 
+// ServerName identifies an MCP server in a rendered gateway policy.
+type ServerName string
+
+// Namespace identifies the Kubernetes namespace that owns policy resources.
+type Namespace string
+
+// HumanID identifies an authenticated human principal.
+type HumanID string
+
+// AgentID identifies an authenticated agent or OAuth client principal.
+type AgentID string
+
+// TeamID identifies a stable platform team principal.
+type TeamID string
+
+// SessionID identifies an MCP agent session binding.
+type SessionID string
+
+// ToolName identifies an MCP tool in a rendered gateway policy.
+type ToolName string
+
 // Document is the root gateway policy document that contains all policy configuration.
 type Document struct {
 	Server   Server    `json:"server"`
@@ -16,10 +37,10 @@ type Document struct {
 
 // Server identifies the MCP server this policy applies to.
 type Server struct {
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
-	TeamID    string `json:"team_id,omitempty"`
-	Cluster   string `json:"cluster,omitempty"`
+	Name      ServerName `json:"name"`
+	Namespace Namespace  `json:"namespace"`
+	TeamID    TeamID     `json:"team_id,omitempty"`
+	Cluster   string     `json:"cluster,omitempty"`
 }
 
 // Auth configures authentication settings for the gateway.
@@ -54,7 +75,7 @@ type Session struct {
 
 // Tool describes an MCP tool and its trust requirements.
 type Tool struct {
-	Name          string            `json:"name"`
+	Name          ToolName          `json:"name"`
 	Description   string            `json:"description,omitempty"`
 	RequiredTrust string            `json:"required_trust,omitempty"`
 	SideEffect    string            `json:"side_effect,omitempty"`
@@ -64,9 +85,9 @@ type Tool struct {
 // Grant defines access grants for subjects (humans/agents).
 type Grant struct {
 	Name               string       `json:"name"`
-	HumanID            string       `json:"human_id,omitempty"`
-	AgentID            string       `json:"agent_id,omitempty"`
-	TeamID             string       `json:"team_id,omitempty"`
+	HumanID            HumanID      `json:"human_id,omitempty"`
+	AgentID            AgentID      `json:"agent_id,omitempty"`
+	TeamID             TeamID       `json:"team_id,omitempty"`
 	MaxTrust           string       `json:"max_trust,omitempty"`
 	AllowedSideEffects []string     `json:"allowed_side_effects,omitempty"`
 	PolicyVersion      string       `json:"policy_version,omitempty"`
@@ -76,20 +97,20 @@ type Grant struct {
 
 // Binding represents an agent session binding.
 type Binding struct {
-	Name             string `json:"name"`
-	HumanID          string `json:"human_id,omitempty"`
-	AgentID          string `json:"agent_id,omitempty"`
-	TeamID           string `json:"team_id,omitempty"`
-	ConsentedTrust   string `json:"consented_trust,omitempty"`
-	Revoked          bool   `json:"revoked,omitempty"`
-	ExpiresAt        string `json:"expires_at,omitempty"`
-	PolicyVersion    string `json:"policy_version,omitempty"`
-	UpstreamTokenRef string `json:"upstream_token_ref,omitempty"`
+	Name             SessionID `json:"name"`
+	HumanID          HumanID   `json:"human_id,omitempty"`
+	AgentID          AgentID   `json:"agent_id,omitempty"`
+	TeamID           TeamID    `json:"team_id,omitempty"`
+	ConsentedTrust   string    `json:"consented_trust,omitempty"`
+	Revoked          bool      `json:"revoked,omitempty"`
+	ExpiresAt        string    `json:"expires_at,omitempty"`
+	PolicyVersion    string    `json:"policy_version,omitempty"`
+	UpstreamTokenRef string    `json:"upstream_token_ref,omitempty"`
 }
 
 // ToolAccess defines access rules for a specific tool.
 type ToolAccess struct {
-	Name          string `json:"name"`
-	Decision      string `json:"decision,omitempty"`
-	RequiredTrust string `json:"required_trust,omitempty"`
+	Name          ToolName `json:"name"`
+	Decision      string   `json:"decision,omitempty"`
+	RequiredTrust string   `json:"required_trust,omitempty"`
 }

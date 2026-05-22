@@ -155,10 +155,10 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusOK, adapterSessionResponse{
 			Name:           existing.Name,
 			Namespace:      existing.Namespace,
-			HumanID:        existing.Spec.Subject.HumanID,
-			AgentID:        existing.Spec.Subject.AgentID,
-			TeamID:         existing.Spec.Subject.TeamID,
-			ServerName:     existing.Spec.ServerRef.Name,
+			HumanID:        string(existing.Spec.Subject.HumanID),
+			AgentID:        string(existing.Spec.Subject.AgentID),
+			TeamID:         string(existing.Spec.Subject.TeamID),
+			ServerName:     string(existing.Spec.ServerRef.Name),
 			ConsentedTrust: string(existing.Spec.ConsentedTrust),
 			PolicyVersion:  existing.Spec.PolicyVersion,
 			ExpiresAt:      existing.Spec.ExpiresAt.Time,
@@ -174,13 +174,13 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 		},
 		Spec: sentinelaccess.MCPAgentSessionSpec{
 			ServerRef: sentinelaccess.ServerReference{
-				Name:      req.ServerName,
-				Namespace: defaultAccessNamespace(req.Namespace),
+				Name:      sentinelaccess.ServerName(req.ServerName),
+				Namespace: sentinelaccess.Namespace(defaultAccessNamespace(req.Namespace)),
 			},
 			Subject: sentinelaccess.SubjectRef{
-				HumanID: humanID,
-				AgentID: req.AgentID,
-				TeamID:  teamID,
+				HumanID: sentinelaccess.HumanID(humanID),
+				AgentID: sentinelaccess.AgentID(req.AgentID),
+				TeamID:  sentinelaccess.TeamID(teamID),
 			},
 			ConsentedTrust: consentedTrust,
 			ExpiresAt:      &metav1.Time{Time: expiresAt},
@@ -196,10 +196,10 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, adapterSessionResponse{
 		Name:           applied.Name,
 		Namespace:      applied.Namespace,
-		HumanID:        applied.Spec.Subject.HumanID,
-		AgentID:        applied.Spec.Subject.AgentID,
-		TeamID:         applied.Spec.Subject.TeamID,
-		ServerName:     applied.Spec.ServerRef.Name,
+		HumanID:        string(applied.Spec.Subject.HumanID),
+		AgentID:        string(applied.Spec.Subject.AgentID),
+		TeamID:         string(applied.Spec.Subject.TeamID),
+		ServerName:     string(applied.Spec.ServerRef.Name),
 		ConsentedTrust: string(applied.Spec.ConsentedTrust),
 		PolicyVersion:  applied.Spec.PolicyVersion,
 		ExpiresAt:      applied.Spec.ExpiresAt.Time,
@@ -256,7 +256,7 @@ func (s *RuntimeServer) selectAdapterGrant(ctx context.Context, namespace, serve
 		if g.Spec.Disabled {
 			continue
 		}
-		if g.Spec.ServerRef.Name != serverName {
+		if string(g.Spec.ServerRef.Name) != serverName {
 			continue
 		}
 		teamID, ok := matchingAdapterGrantTeamID(g.Spec.Subject, humanID, agentID, teamIDs, defaultTeamID, allowAnyTeam)
@@ -282,13 +282,13 @@ func (s *RuntimeServer) selectAdapterGrant(ctx context.Context, namespace, serve
 }
 
 func matchingAdapterGrantTeamID(subj sentinelaccess.SubjectRef, humanID, agentID string, teamIDs []string, defaultTeamID string, allowAnyTeam bool) (string, bool) {
-	if subj.HumanID != "" && subj.HumanID != humanID {
+	if subj.HumanID != "" && string(subj.HumanID) != humanID {
 		return "", false
 	}
-	if subj.AgentID != "" && subj.AgentID != agentID {
+	if subj.AgentID != "" && string(subj.AgentID) != agentID {
 		return "", false
 	}
-	grantTeamID := strings.TrimSpace(subj.TeamID)
+	grantTeamID := strings.TrimSpace(string(subj.TeamID))
 	if grantTeamID == "" {
 		return defaultTeamID, true
 	}

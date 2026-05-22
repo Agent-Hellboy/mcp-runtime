@@ -515,7 +515,7 @@ func renderKustomizeManifest(kubectl core.KubectlRunner, manifestPath string) (s
 	renderCmd.SetStdout(&stdout)
 	renderCmd.SetStderr(&stderr)
 	if err := renderCmd.Run(); err != nil {
-		return "", fmt.Errorf("kubectl kustomize %s failed: %v (%s)", manifestPath, err, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("kubectl kustomize %s failed: %w (%s)", manifestPath, err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
 }

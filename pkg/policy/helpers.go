@@ -30,7 +30,7 @@ func PolicyServerName(policy *Document) string {
 	if policy == nil {
 		return ""
 	}
-	return policy.Server.Name
+	return string(policy.Server.Name)
 }
 
 // PolicyServerNamespace returns the server namespace from a policy document.
@@ -38,7 +38,7 @@ func PolicyServerNamespace(policy *Document) string {
 	if policy == nil {
 		return ""
 	}
-	return policy.Server.Namespace
+	return string(policy.Server.Namespace)
 }
 
 // PolicyServerTeamID returns the owning team ID from a policy document.
@@ -46,7 +46,7 @@ func PolicyServerTeamID(policy *Document) string {
 	if policy == nil {
 		return ""
 	}
-	return policy.Server.TeamID
+	return string(policy.Server.TeamID)
 }
 
 // PolicyServerCluster returns the cluster name from a policy document.

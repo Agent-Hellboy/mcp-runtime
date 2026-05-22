@@ -4039,9 +4039,6 @@ go doc -all ./internal/cli/cluster
 
 Package cluster owns routing for the cluster top-level command.
 
-Cluster doctor diagnostics: distribution detection, registry and Traefik checks,
-Sentinel probes, and remediation hints. See docs/cluster-readiness.md.
-
 Package cluster implements cluster operations for the cluster CLI command.
 
 ### Jump To
