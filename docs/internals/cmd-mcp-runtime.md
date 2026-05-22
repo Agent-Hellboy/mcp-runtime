@@ -31,8 +31,8 @@ The root command wires these internal command groups:
 | Command | Routing package | Behavior files |
 |---|---|---|
 | `bootstrap` | `internal/cli/bootstrap` | `bootstrap.go` |
-| `cluster` | `internal/cli/cluster` | `cluster.go`, `manager.go`, `doctor.go`, `doctor_impl.go`, `register.go`, … |
-| `setup` | `internal/cli/setup` | `setup.go`, `platform.go`, `flow.go`, `steps.go`, `providers.go`, setup-owned helpers under `internal/cli/setup/` |
+| `cluster` | `internal/cli/cluster` | `cluster.go`, `manager.go`, `doctor.go`, `register.go`, doctor implementation under `internal/cli/cluster/doctor/`, … |
+| `setup` | `internal/cli/setup` | `setup.go`, `providers.go`, setup workflow under `internal/cli/setup/platform/`, setup-owned helpers under `internal/cli/setup/` |
 | `status` | `internal/cli/status` | `status.go`, shared workload/probe helpers in `internal/cli/platformstatus` |
 | `registry` | `internal/cli/registry` | `registry.go`, `manager.go`, `defaults.go`, registry-owned helpers under `internal/cli/registry/` |
 | `server` | `internal/cli/server` | `server.go`, `manager.go`, `validation.go`, `build.go`, `build_image.go`, server-owned helpers under `internal/cli/server/` |

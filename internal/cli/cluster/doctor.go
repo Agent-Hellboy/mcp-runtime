@@ -3,6 +3,7 @@ package cluster
 import (
 	"github.com/spf13/cobra"
 
+	clusterdoctor "mcp-runtime/internal/cli/cluster/doctor"
 	"mcp-runtime/internal/cli/core"
 )
 
@@ -16,13 +17,13 @@ func newClusterDoctorCmd(mgr *ClusterManager) *cobra.Command {
 			"when something is missing. Use --for-setup to run pre-setup ingress, public DNS, and TLS prerequisite checks. See docs/cluster-readiness.md for the full per-distribution checklist.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if forSetup {
-				report := RunSetupDoctorAndPrint(mgr.KubectlRunner())
+				report := clusterdoctor.RunSetupDoctorAndPrint(mgr.KubectlRunner())
 				if !report.AllOK() {
 					return core.NewSetupStepFailedError()
 				}
 				return nil
 			}
-			report := RunDoctorAndPrint(mgr.KubectlRunner())
+			report := clusterdoctor.RunDoctorAndPrint(mgr.KubectlRunner())
 			if !report.AllOK() {
 				return core.NewSetupStepFailedError()
 			}

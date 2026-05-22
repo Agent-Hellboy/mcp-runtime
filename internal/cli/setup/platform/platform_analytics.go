@@ -1,4 +1,4 @@
-package setup
+package platform
 
 import (
 	"crypto/rand"

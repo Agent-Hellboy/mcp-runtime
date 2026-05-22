@@ -57,14 +57,14 @@ commands genuinely share it.
 Setup is split across `internal/cli/setup/`:
 
 - `setup.go`: Cobra command and flag wiring.
-- `platform.go`: setup orchestration, image publishing, manifest application,
+- `platform/platform.go`: setup orchestration, image publishing, manifest application,
   verification, and deployment diagnostics.
-- `flow.go`: setup flow validation and user-facing warnings.
-- `steps.go`: step-level helpers used by setup orchestration.
+- `platform/flow.go`: setup flow validation and user-facing warnings.
+- `platform/steps.go`: step-level helpers used by setup orchestration.
 - `plan/`: planning and dependency injection seams used by tests.
-- `setup/assetpath/`: repo-root and asset path resolution used by setup builds
+- `assetpath/`: repo-root and asset path resolution used by setup builds
   and manifest rendering.
-- `setup/ingressmanifest/`: platform UI ingress manifest rendering.
+- `ingressmanifest/`: platform UI ingress manifest rendering.
 
 `setup --test-mode` relaxes production guardrails but still builds and pushes
 the operator, gateway proxy, and Sentinel images with `latest` tags. Pull hosts
@@ -83,9 +83,10 @@ Important setup contracts:
 - Setup verification should fail with diagnostic context instead of reporting
   success after partial deployment.
 
-Tests live with the setup package, including `helpers_test.go`,
-`plan_flow_test.go`, `steps_test.go`, `config_plan_test.go`, and
-`tls_flags_test.go`.
+Setup command wiring lives in `internal/cli/setup/`; the platform install flow
+lives in `internal/cli/setup/platform/` with tests beside the workflow files,
+including `helpers_test.go`, `plan_flow_test.go`, `steps_test.go`,
+`config_plan_test.go`, and `tls_flags_test.go`.
 
 ## Cluster and Doctor
 
@@ -93,13 +94,14 @@ Tests live with the setup package, including `helpers_test.go`,
 provider-oriented provisioning helpers. `bootstrap.go` performs preflight checks
 and has the only automated apply path for k3s CoreDNS/local-path prerequisites.
 
-`internal/cli/cluster/doctor_impl.go` is post-install diagnostics. It checks CRDs, workloads,
-registry reachability, image pull failures, ingress, and platform components.
-Registry protocol mismatch detection must inspect regular containers and init
-containers, and it must surface failed pod inspections instead of returning a
-false pass.
+`internal/cli/cluster/doctor/` owns post-install diagnostics. It checks CRDs,
+workloads, registry reachability, image pull failures, ingress, and platform
+components. Registry protocol mismatch detection must inspect regular
+containers and init containers, and it must surface failed pod inspections
+instead of returning a false pass.
 
-Tests: `cluster_test.go`, `doctor_impl_test.go`, and bootstrap-related tests.
+Tests: `cluster_test.go`, `doctor/doctor_impl_test.go`, and bootstrap-related
+tests.
 
 ## Registry
 

@@ -1,4 +1,4 @@
-package cluster
+package doctor
 
 import (
 	"bufio"

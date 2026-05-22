@@ -1,4 +1,4 @@
-package setup
+package platform
 
 import (
 	"encoding/base64"
@@ -1852,7 +1852,7 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testi
 }
 
 func TestGrafanaPrometheusDatasourceUsesRoutePrefix(t *testing.T) {
-	content, err := os.ReadFile("../../../k8s/19-grafana-datasources.yaml")
+	content, err := os.ReadFile("../../../../k8s/19-grafana-datasources.yaml")
 	if err != nil {
 		t.Fatalf("failed to read grafana datasource manifest: %v", err)
 	}
@@ -1870,7 +1870,7 @@ func TestGrafanaPrometheusDatasourceUsesRoutePrefix(t *testing.T) {
 }
 
 func TestPrometheusScrapesProcessorMetricsPort(t *testing.T) {
-	content, err := os.ReadFile("../../../k8s/11-prometheus.yaml")
+	content, err := os.ReadFile("../../../../k8s/11-prometheus.yaml")
 	if err != nil {
 		t.Fatalf("failed to read prometheus manifest: %v", err)
 	}
@@ -1883,7 +1883,7 @@ func TestPrometheusScrapesProcessorMetricsPort(t *testing.T) {
 }
 
 func TestPrometheusScrapesClickHouseMetricsPort(t *testing.T) {
-	content, err := os.ReadFile("../../../k8s/11-prometheus.yaml")
+	content, err := os.ReadFile("../../../../k8s/11-prometheus.yaml")
 	if err != nil {
 		t.Fatalf("failed to read prometheus manifest: %v", err)
 	}
@@ -1896,7 +1896,7 @@ func TestPrometheusScrapesClickHouseMetricsPort(t *testing.T) {
 }
 
 func TestClickHouseExposesPrometheusMetrics(t *testing.T) {
-	for _, path := range []string{"../../../k8s/03-clickhouse.yaml", "../../../k8s/03-clickhouse-hostpath.yaml"} {
+	for _, path := range []string{"../../../../k8s/03-clickhouse.yaml", "../../../../k8s/03-clickhouse-hostpath.yaml"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("failed to read clickhouse manifest %s: %v", path, err)
@@ -1919,7 +1919,7 @@ func TestClickHouseExposesPrometheusMetrics(t *testing.T) {
 }
 
 func TestTempoLocalBlocksDoNotShareWALPath(t *testing.T) {
-	content, err := os.ReadFile("../../../k8s/16-tempo.yaml")
+	content, err := os.ReadFile("../../../../k8s/16-tempo.yaml")
 	if err != nil {
 		t.Fatalf("failed to read tempo manifest: %v", err)
 	}
@@ -1935,7 +1935,7 @@ func TestTempoLocalBlocksDoNotShareWALPath(t *testing.T) {
 }
 
 func TestAPIManifestIncludesPlatformAdminBootstrapEnv(t *testing.T) {
-	content, err := os.ReadFile("../../../k8s/08-api.yaml")
+	content, err := os.ReadFile("../../../../k8s/08-api.yaml")
 	if err != nil {
 		t.Fatalf("failed to read api manifest: %v", err)
 	}

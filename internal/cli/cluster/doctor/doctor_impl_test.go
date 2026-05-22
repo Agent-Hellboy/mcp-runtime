@@ -1,4 +1,4 @@
-package cluster
+package doctor
 
 import (
 	"context"
@@ -10,6 +10,15 @@ import (
 
 	"mcp-runtime/internal/cli/core"
 )
+
+func contains(slice []string, val string) bool {
+	for _, s := range slice {
+		if s == val {
+			return true
+		}
+	}
+	return false
+}
 
 func TestDetectDistribution(t *testing.T) {
 	cases := []struct {
