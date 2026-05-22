@@ -3,16 +3,8 @@ name: Security - Trivy
 on:
   pull_request:
     branches: [ "*" ]
-    paths-ignore:
-      - 'docs/**'
-      - 'website/**'
-      - 'README.md'
   push:
     branches: [ "main" ]
-    paths-ignore:
-      - 'docs/**'
-      - 'website/**'
-      - 'README.md'
   workflow_dispatch: {}
 
 permissions:
@@ -63,6 +55,7 @@ jobs:
           output: trivy-misconfig.sarif
           exit-code: "0"
           skip-dirs: inspirations/mcp-gateway-registry
+          trivyignores: .trivyignore.yaml
           severity: CRITICAL,HIGH
           limit-severities-for-sarif: true
           hide-progress: true

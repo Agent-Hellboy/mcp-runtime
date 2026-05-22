@@ -82,8 +82,11 @@ allows same-namespace ingress, bundled Traefik ingress, DNS, and basic outbound
 HTTP/S egress, a team-admin `Role`, a `RoleBinding`, and the `traefik-watch`
 `Role`/`RoleBinding` for the bundled Traefik service account. The
 `traefik-watch` role grants watch access to Services, Endpoints, Secrets, and
-Ingresses in the team namespace. It also patches the bundled `traefik/traefik`
-Deployment so
+Ingresses in the team namespace. Platform-created team namespaces use a
+RoleBinding to the repo-installed `mcp-runtime-traefik-watch` `ClusterRole`
+instead, so the API service account can bind the exact Traefik watch role
+without broad Secret read access. Both paths patch the bundled
+`traefik/traefik` Deployment so
 `--providers.kubernetesingress.namespaces` includes the new team namespace. Use
 `--dry-run` to print the generated manifest, and use `--skip-traefik-watch`
 when your ingress controller is external or managed outside this repo.

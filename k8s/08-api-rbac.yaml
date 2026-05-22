@@ -1,6 +1,18 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
+  name: mcp-runtime-traefik-watch
+rules:
+  - apiGroups: [""]
+    resources: ["services", "endpoints", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
   name: mcp-sentinel-api
 rules:
   # Read access to MCP custom resources
@@ -29,9 +41,9 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Platform API creates limited Traefik watch Roles in managed namespaces;
-  # those Roles intentionally avoid Secret access so the API service account
-  # does not need cluster-scoped Secret permissions.
+  # The platform API reads Service/Endpoint/Ingress state but does not get
+  # broad Secret read; Traefik Secret watch is bound through the dedicated
+  # mcp-runtime-traefik-watch ClusterRole.
   - apiGroups: [""]
     resources: ["endpoints"]
     verbs: ["get", "list", "watch"]
@@ -42,17 +54,26 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces", "resourcequotas", "limitranges"]
     verbs: ["get", "list", "watch", "create"]
+  # Existing namespaces may need platform/PSS labels reconciled when an admin
+  # deploys into a pre-created namespace.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["update", "patch"]
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
-  # Team namespaces created through the platform API must be routable through
-  # the repo-managed Traefik ingress controller.
+  # Team namespaces created through the platform API need local owner Roles and
+  # namespace-scoped RoleBindings for the repo-managed Traefik ingress controller.
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles", "rolebindings"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["mcp-runtime-traefik-watch"]
+    verbs: ["bind"]
   # User-scoped deployment requests use Kubernetes impersonation so namespace
   # RBAC is enforced as the platform user instead of the API service account.
   - apiGroups: [""]
@@ -87,6 +108,23 @@ subjects:
   - kind: ServiceAccount
     name: mcp-sentinel-api
     namespace: mcp-sentinel
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mcp-sentinel-platform-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mcp-sentinel-api
+subjects:
+  # The platform API uses Kubernetes impersonation for deployment operations.
+  # Bind the admin platform group to the same runtime-management permissions so
+  # admin requests keep Kubernetes audit identity without falling back to the
+  # API service account identity.
+  - kind: Group
+    name: platform:role:admin
+    apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

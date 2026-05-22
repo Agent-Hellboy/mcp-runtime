@@ -52,15 +52,34 @@ Useful local runs:
 
 ```bash
 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh
+E2E_SCENARIOS=api-platform bash test/e2e/kind.sh
+E2E_SCENARIOS=ui-auth bash test/e2e/kind.sh
+E2E_SCENARIOS=adapter-proxy bash test/e2e/kind.sh
+E2E_SCENARIOS=cli-platform bash test/e2e/kind.sh
 E2E_SCENARIOS=all MCP_DEPLOYMENT_TIMEOUT=900s bash test/e2e/kind.sh
+E2E_DEEP_REQUEST_FLOWS=1 E2E_SCENARIOS=all bash test/e2e/kind.sh
 E2E_KEEP_CLUSTER=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh
 E2E_CACHE_MODE=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh
 ```
+
+Supported scenario selectors are `all`, `smoke-auth`, `governance`, `trust`,
+`oauth`, `observability`, `multitenancy`, `api-platform`, `ui-auth`,
+`adapter-proxy`, and `cli-platform`. The targeted PR-only selectors map to
+request-path surfaces: `api-platform` covers platform API auth, user, registry,
+team, runtime, deployment, and admin routes; `ui-auth` covers direct UI and
+gateway cookie auth/static routes; `adapter-proxy` covers platform-issued
+adapter sessions plus the local adapter proxy MCP path; `cli-platform` covers
+the platform-backed CLI request flow.
 
 `E2E_CACHE_MODE=1` is for repeated local debugging. It implies
 `E2E_KEEP_CLUSTER=1`, reuses the existing Kind cluster and local registry when
 present, skips platform setup if the core platform is already ready, and reuses
 image tags already published to the local registry.
+
+`E2E_DEEP_REQUEST_FLOWS=1` is for pre-release sweeps, not normal PR feedback.
+It requires `E2E_SCENARIOS=all` and adds broader CLI help, adapter proxy,
+platform API, UI auth, registry authz, team, deployment, and item-level runtime
+request flows.
 
 Image mirroring and local runtime/Sentinel image builds run with bounded
 parallelism. `E2E_IMAGE_PREP_PARALLELISM=<n>` tunes the shared prep default,
@@ -95,10 +114,14 @@ contains the gateway service, `mcp-sentinel-ingest`, `mcp-sentinel-processor`,
 and the `kafka.produce`, `kafka.consume`, `clickhouse.insert_event`, and
 `clickhouse.insert_batch` spans.
 
-Normal PRs, `main`, and manual CI runs execute full Kind e2e with
-`E2E_SCENARIOS=all`. Dependabot PRs run `smoke-auth,governance` only, so
-dependency bumps still exercise MCP ingress/auth and grant/session behavior
-while keeping runtime low.
+Normal PRs and `main` run short Kind e2e with `smoke-auth` as the baseline, then
+`.github/workflows/ci.yaml` calls `test/e2e/select_pr_scenarios.sh` to add
+targeted scenarios based on the changed files. API, UI, adapter, CLI, OAuth,
+observability, and multi-tenancy changes get the matching request-path mode;
+shared or unknown code paths fall back to `all` so CI stays conservative. The
+manual Pre-release Regression workflow runs full Kind e2e with
+`E2E_SCENARIOS=all` and `E2E_DEEP_REQUEST_FLOWS=1` across tenant, org, and
+public platform modes, plus a tenant cache-mode replay when requested.
 
 The script writes artifacts when `E2E_ARTIFACT_DIR` is set. In CI, those
 artifacts are uploaded from `.e2e-artifacts/kind`.
@@ -115,11 +138,13 @@ The main CI workflow runs:
 - service module tests
 - generated file drift
 - repository SBOM generation
-- Kind e2e for code changes
+- path-selected short Kind e2e on PRs and `main`
 
-Security workflows add pinned gosec, Trivy repository/image scans with SARIF
-upload, pinned Gitleaks secret scanning, operator-image SBOM artifacts, and
-pull-request dependency review.
+The manual Pre-release Regression workflow adds full Kind e2e in tenant, org,
+and public platform modes, cache replay, benchmarks, repository/operator-image
+SBOMs, gosec, Gitleaks, and Trivy scans. Security workflows add pinned gosec,
+Trivy repository/image scans with SARIF upload, pinned Gitleaks secret
+scanning, operator-image SBOM artifacts, and pull-request dependency review.
 
 ## Pre-commit Hooks
 

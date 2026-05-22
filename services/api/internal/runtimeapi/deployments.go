@@ -37,6 +37,7 @@ const (
 	defaultDeployPort              = int32(8088)
 	restrictedRunAsUser            = kubeworkload.RestrictedRunAsUser
 	traefikWatchRoleName           = "traefik-watch"
+	traefikWatchClusterRoleName    = "mcp-runtime-traefik-watch"
 	platformNamespaceOwnerRoleName = "platform-namespace-owner"
 	sentinelIngestPort             = 8081
 	sentinelOTLPPort               = 4318
@@ -672,22 +673,8 @@ func (s *RuntimeServer) ensureTeamTraefikWatch(ctx context.Context, namespace st
 }
 
 func ensureTraefikWatchRBAC(ctx context.Context, client kubernetes.Interface, namespace string, cfg teamTraefikWatchConfig) error {
-	role := desiredTraefikWatchRole(namespace)
-	if err := ensureTraefikWatchRole(ctx, client, role); err != nil {
-		return err
-	}
 	binding := desiredTraefikWatchRoleBinding(namespace, cfg)
 	return ensureTraefikWatchRoleBinding(ctx, client, binding)
-}
-
-func desiredTraefikWatchRole(namespace string) *rbacv1.Role {
-	return &rbacv1.Role{
-		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: namespace},
-		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"services", "endpoints"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses"}, Verbs: []string{"get", "list", "watch"}},
-		},
-	}
 }
 
 func desiredTraefikWatchRoleBinding(namespace string, cfg teamTraefikWatchConfig) *rbacv1.RoleBinding {
@@ -695,17 +682,13 @@ func desiredTraefikWatchRoleBinding(namespace string, cfg teamTraefikWatchConfig
 		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: namespace},
 		RoleRef: rbacv1.RoleRef{
 			APIGroup: "rbac.authorization.k8s.io",
-			Kind:     "Role",
-			Name:     traefikWatchRoleName,
+			Kind:     "ClusterRole",
+			Name:     traefikWatchClusterRoleName,
 		},
 		Subjects: []rbacv1.Subject{
 			{Kind: "ServiceAccount", Name: cfg.serviceAccount, Namespace: cfg.namespace},
 		},
 	}
-}
-
-func ensureTraefikWatchRole(ctx context.Context, client kubernetes.Interface, role *rbacv1.Role) error {
-	return upsertRole(ctx, client, role)
 }
 
 func ensureTraefikWatchRoleBinding(ctx context.Context, client kubernetes.Interface, binding *rbacv1.RoleBinding) error {
