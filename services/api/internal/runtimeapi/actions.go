@@ -3,6 +3,7 @@ package runtimeapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 // HandleActionRestart restarts one or all Sentinel runtime components.
 func (s *RuntimeServer) HandleActionRestart(w http.ResponseWriter, r *http.Request) {
 	if s.sentinelMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 
@@ -22,7 +23,7 @@ func (s *RuntimeServer) HandleActionRestart(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		writeAPIError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -32,14 +33,7 @@ func (s *RuntimeServer) HandleActionRestart(w http.ResponseWriter, r *http.Reque
 	if req.All {
 		errs := s.sentinelMgr.RestartAllComponents(ctx)
 		if len(errs) > 0 {
-			errMsgs := make([]string, 0, len(errs))
-			for _, e := range errs {
-				errMsgs = append(errMsgs, e.Error())
-			}
-			writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
-				"error":  "some components failed to restart",
-				"errors": errMsgs,
-			})
+			writeAPIError(w, http.StatusInternalServerError, "some components failed to restart", errors.Join(errs...))
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -50,18 +44,18 @@ func (s *RuntimeServer) HandleActionRestart(w http.ResponseWriter, r *http.Reque
 	}
 
 	if req.Component == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "component required"})
+		writeAPIError(w, http.StatusBadRequest, "component required")
 		return
 	}
 
 	// Validate component exists
 	if _, err := sentinel.FindComponent(req.Component); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown component"})
+		writeAPIError(w, http.StatusBadRequest, "unknown component")
 		return
 	}
 
 	if err := s.sentinelMgr.RestartComponent(ctx, req.Component); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to restart component"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to restart component")
 		return
 	}
 

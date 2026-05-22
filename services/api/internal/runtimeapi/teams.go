@@ -14,12 +14,12 @@ import (
 // HandleRuntimeTeams lists visible teams and lets admins create team identity records.
 func (s *RuntimeServer) HandleRuntimeTeams(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		writeAPIError(w, http.StatusServiceUnavailable, "platform identity database not configured")
 		return
 	}
 	p, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	switch r.Method {
@@ -27,31 +27,31 @@ func (s *RuntimeServer) HandleRuntimeTeams(w http.ResponseWriter, r *http.Reques
 		s.handleRuntimeTeamList(w, r, p)
 	case http.MethodPost:
 		if p.Role != roleAdmin {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			writeAPIError(w, http.StatusForbidden, "forbidden")
 			return
 		}
 		s.handleRuntimeTeamCreate(w, r, p)
 	default:
 		w.Header().Set("allow", "GET, POST")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 }
 
 // HandleRuntimeTeamItemPath routes team detail, membership, and team-user operations after role checks.
 func (s *RuntimeServer) HandleRuntimeTeamItemPath(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		writeAPIError(w, http.StatusServiceUnavailable, "platform identity database not configured")
 		return
 	}
 	p, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/runtime/teams/"), "/")
 	parts := strings.Split(path, "/")
 	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
+		writeAPIError(w, http.StatusBadRequest, "invalid path")
 		return
 	}
 	teamSlug := NormalizeTeamSlug(parts[0])
@@ -74,24 +74,24 @@ func (s *RuntimeServer) HandleRuntimeTeamItemPath(w http.ResponseWriter, r *http
 		return
 	default:
 		w.Header().Set("allow", "GET, POST, DELETE")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 }
 
 // HandleRuntimeNamespaces lists namespaces visible to the caller, including catalog namespace entries for the current platform mode.
 func (s *RuntimeServer) HandleRuntimeNamespaces(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		writeAPIError(w, http.StatusServiceUnavailable, "platform identity database not configured")
 		return
 	}
 	if r.Method != http.MethodGet {
 		w.Header().Set("allow", http.MethodGet)
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 	p, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -100,7 +100,7 @@ func (s *RuntimeServer) HandleRuntimeNamespaces(w http.ResponseWriter, r *http.R
 	if p.Role == roleAdmin {
 		namespaces, err := s.platform.ListNamespaces(ctx)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list namespaces"})
+			writeAPIError(w, http.StatusInternalServerError, "failed to list namespaces")
 			return
 		}
 		namespaces = appendCatalogNamespaceEntries(namespaces)
@@ -142,28 +142,28 @@ func (s *RuntimeServer) HandleRuntimeNamespaces(w http.ResponseWriter, r *http.R
 // HandleRuntimeNamespaceItem returns one visible namespace record or synthetic catalog namespace entry.
 func (s *RuntimeServer) HandleRuntimeNamespaceItem(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		writeAPIError(w, http.StatusServiceUnavailable, "platform identity database not configured")
 		return
 	}
 	if r.Method != http.MethodGet {
 		w.Header().Set("allow", http.MethodGet)
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 	p, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	namespace := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/runtime/namespaces/"))
 	namespace = strings.Trim(namespace, "/")
 	if namespace == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace required"})
+		writeAPIError(w, http.StatusBadRequest, "namespace required")
 		return
 	}
 
 	if p.Role != roleAdmin && !principalCanReadNamespace(p, namespace) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		writeAPIError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
@@ -171,7 +171,7 @@ func (s *RuntimeServer) HandleRuntimeNamespaceItem(w http.ResponseWriter, r *htt
 	defer cancel()
 	item, ok, err := s.platform.GetNamespace(ctx, namespace)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch namespace"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to fetch namespace")
 		return
 	}
 	if ok {
@@ -187,7 +187,7 @@ func (s *RuntimeServer) HandleRuntimeNamespaceItem(w http.ResponseWriter, r *htt
 		writeJSON(w, http.StatusOK, map[string]any{"namespace": entry})
 		return
 	}
-	writeJSON(w, http.StatusNotFound, map[string]string{"error": "namespace not found"})
+	writeAPIError(w, http.StatusNotFound, "namespace not found")
 }
 
 func catalogNamespaceEntry(namespace string) map[string]any {
@@ -238,7 +238,7 @@ func (s *RuntimeServer) handleRuntimeTeamList(w http.ResponseWriter, r *http.Req
 	if p.Role == roleAdmin {
 		teams, err := s.platform.ListTeams(ctx)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list teams"})
+			writeAPIError(w, http.StatusInternalServerError, "failed to list teams")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"teams": teams})
@@ -246,7 +246,7 @@ func (s *RuntimeServer) handleRuntimeTeamList(w http.ResponseWriter, r *http.Req
 	}
 	teams, err := s.platform.ListUserTeams(ctx, p.UserID())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list teams"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to list teams")
 		return
 	}
 	out := make([]teamRecord, 0, len(teams))
@@ -267,15 +267,15 @@ func (s *RuntimeServer) handleRuntimeTeamGet(w http.ResponseWriter, r *http.Requ
 	defer cancel()
 	team, ok, err := s.platform.GetTeamBySlug(ctx, teamSlug)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch team"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to fetch team")
 		return
 	}
 	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "team not found"})
+		writeAPIError(w, http.StatusNotFound, "team not found")
 		return
 	}
 	if p.Role != roleAdmin && p.TeamRole(teamSlug) == "" {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		writeAPIError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"team": team})
@@ -297,14 +297,14 @@ func (s *RuntimeServer) handleRuntimeTeamCreate(w http.ResponseWriter, r *http.R
 	team, err := s.platform.CreateTeam(ctx, req.Slug, req.Name, p.UserID())
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") || strings.Contains(strings.ToLower(err.Error()), "unique") {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "team already exists"})
+			writeAPIError(w, http.StatusConflict, "team already exists")
 			return
 		}
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := s.ensureTeamNamespace(ctx, team); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to provision team namespace"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to provision team namespace")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"team": team})
@@ -312,14 +312,14 @@ func (s *RuntimeServer) handleRuntimeTeamCreate(w http.ResponseWriter, r *http.R
 
 func (s *RuntimeServer) handleRuntimeTeamMemberList(w http.ResponseWriter, r *http.Request, p principal, teamSlug string) {
 	if p.Role != roleAdmin && p.TeamRole(teamSlug) == "" {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		writeAPIError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	memberships, err := s.platform.ListTeamMemberships(ctx, teamSlug)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list team members"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to list team members")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"members": memberships})
@@ -327,7 +327,7 @@ func (s *RuntimeServer) handleRuntimeTeamMemberList(w http.ResponseWriter, r *ht
 
 func (s *RuntimeServer) handleRuntimeTeamMemberUpsert(w http.ResponseWriter, r *http.Request, p principal, teamSlug string) {
 	if p.Role != roleAdmin && p.TeamRole(teamSlug) != teamRoleOwner {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		writeAPIError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	var req struct {
@@ -344,10 +344,10 @@ func (s *RuntimeServer) handleRuntimeTeamMemberUpsert(w http.ResponseWriter, r *
 	membership, err := s.platform.UpsertTeamMembership(ctx, teamSlug, req.UserID, req.Role)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "team or user not found"})
+			writeAPIError(w, http.StatusNotFound, "team or user not found")
 			return
 		}
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"membership": membership})
@@ -355,7 +355,7 @@ func (s *RuntimeServer) handleRuntimeTeamMemberUpsert(w http.ResponseWriter, r *
 
 func (s *RuntimeServer) handleRuntimeTeamUserCreate(w http.ResponseWriter, r *http.Request, p principal, teamSlug string) {
 	if p.Role != roleAdmin {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required"})
+		writeAPIError(w, http.StatusForbidden, "admin role required")
 		return
 	}
 	var req struct {
@@ -373,30 +373,30 @@ func (s *RuntimeServer) handleRuntimeTeamUserCreate(w http.ResponseWriter, r *ht
 		membershipRole = teamRoleMember
 	}
 	if membershipRole != teamRoleMember && membershipRole != teamRoleOwner {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "role must be member or owner"})
+		writeAPIError(w, http.StatusBadRequest, "role must be member or owner")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if _, ok, err := s.platform.GetTeamBySlug(ctx, teamSlug); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch team"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to fetch team")
 		return
 	} else if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "team not found"})
+		writeAPIError(w, http.StatusNotFound, "team not found")
 		return
 	}
 	u, err := s.platform.EnsureTeamPasswordUser(ctx, req.Email, req.Password)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	membership, err := s.platform.UpsertTeamMembership(ctx, teamSlug, u.ID, membershipRole)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "team or user not found"})
+			writeAPIError(w, http.StatusNotFound, "team or user not found")
 			return
 		}
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	membership.Email = u.Email
@@ -416,17 +416,17 @@ func (s *RuntimeServer) handleRuntimeTeamUserCreate(w http.ResponseWriter, r *ht
 
 func (s *RuntimeServer) handleRuntimeTeamMemberDelete(w http.ResponseWriter, r *http.Request, p principal, teamSlug, userID string) {
 	if p.Role != roleAdmin && p.TeamRole(teamSlug) != teamRoleOwner {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		writeAPIError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if err := s.platform.DeleteTeamMembership(ctx, teamSlug, userID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "membership not found"})
+			writeAPIError(w, http.StatusNotFound, "membership not found")
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete membership"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to delete membership")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

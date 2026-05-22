@@ -14,7 +14,7 @@ func (s *RuntimeServer) HandleDashboardSummary(w http.ResponseWriter, r *http.Re
 	// Get analytics data from ClickHouse
 	summary, err := s.db.QueryDashboardSummary(ctx)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to query dashboard summary"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to query dashboard summary")
 		return
 	}
 	if control := s.controlPlane(); control != nil {
@@ -54,11 +54,11 @@ func (s *RuntimeServer) HandleDashboardSummary(w http.ResponseWriter, r *http.Re
 // HandleRuntimeComponents returns admin-only health details for Sentinel platform components.
 func (s *RuntimeServer) HandleRuntimeComponents(w http.ResponseWriter, r *http.Request) {
 	if p, ok := principalFromContext(r.Context()); !ok || p.Role != roleAdmin {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		writeAPIError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	if s.sentinelMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 
@@ -67,7 +67,7 @@ func (s *RuntimeServer) HandleRuntimeComponents(w http.ResponseWriter, r *http.R
 
 	statuses, err := s.sentinelMgr.GetAllComponentStatuses(ctx)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get component statuses"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to get component statuses")
 		return
 	}
 

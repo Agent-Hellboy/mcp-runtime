@@ -69,11 +69,11 @@ type adapterSessionResponse struct {
 func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if s.accessMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 
@@ -89,16 +89,16 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 
 	principal, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "no principal on request"})
+		writeAPIError(w, http.StatusUnauthorized, "no principal on request")
 		return
 	}
 
 	if req.ServerName == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "serverName is required"})
+		writeAPIError(w, http.StatusBadRequest, "serverName is required")
 		return
 	}
 	if req.AgentID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agentID is required"})
+		writeAPIError(w, http.StatusBadRequest, "agentID is required")
 		return
 	}
 	if req.Namespace == "" {
@@ -107,7 +107,7 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 		req.Namespace = strings.TrimSpace(principal.Namespace)
 	}
 	if req.Namespace == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace is required"})
+		writeAPIError(w, http.StatusBadRequest, "namespace is required")
 		return
 	}
 
@@ -116,7 +116,7 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 		humanID = strings.TrimSpace(principal.Email)
 	}
 	if humanID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "principal has no subject or email"})
+		writeAPIError(w, http.StatusUnauthorized, "principal has no subject or email")
 		return
 	}
 
@@ -125,12 +125,12 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 
 	requestedTrust, err := parseAdapterTrust(req.RequestedTrust)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	requestedTTL, err := parseAdapterTTL(req.RequestedTTL)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -139,7 +139,7 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 
 	grant, teamID, err := s.selectAdapterGrant(ctx, req.Namespace, req.ServerName, humanID, req.AgentID, teamIDs, defaultTeamID, principal.Role == roleAdmin)
 	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
 

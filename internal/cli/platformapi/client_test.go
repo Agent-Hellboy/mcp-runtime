@@ -158,6 +158,13 @@ func TestValidateCredentials(t *testing.T) {
 	}
 }
 
+func TestHTTPAPIErrorPrefersMessageField(t *testing.T) {
+	err := httpAPIError(http.StatusForbidden, []byte(`{"error":"forbidden_namespace","message":"forbidden namespace"}`))
+	if got, want := err.Error(), "API 403: forbidden namespace"; got != want {
+		t.Fatalf("httpAPIError() = %q, want %q", got, want)
+	}
+}
+
 func TestResolvePlatformOrKubeModeSelection(t *testing.T) {
 	t.Run("uses platform by default when auth is configured", func(t *testing.T) {
 		t.Setenv(authfile.EnvAPIToken, "token-1")
