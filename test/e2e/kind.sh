@@ -3767,6 +3767,27 @@ spec:
       port: 8080
       targetPort: 8080
 EOF
+  cat <<EOF | kubectl apply -f -
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ${OAUTH_ISSUER_NAME}-allow-${OAUTH_SERVER_NAME}
+  namespace: mcp-servers
+spec:
+  podSelector:
+    matchLabels:
+      app: ${OAUTH_ISSUER_NAME}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ${OAUTH_SERVER_NAME}
+      ports:
+        - protocol: TCP
+          port: 8080
+EOF
   if [[ -z "${OAUTH_ISSUER_URL}" ]]; then
     OAUTH_ISSUER_CLUSTER_IP="$(kubectl get svc "${OAUTH_ISSUER_NAME}" -n mcp-servers -o jsonpath='{.spec.clusterIP}')"
     if [[ -z "${OAUTH_ISSUER_CLUSTER_IP}" || "${OAUTH_ISSUER_CLUSTER_IP}" == "None" ]]; then
@@ -4061,7 +4082,8 @@ PY
   wait_for_mcp_initialize_result "${MCP_OAUTH_ANON_URL}" 401 "missing_bearer_token" "www-authenticate" "resource_metadata="
   if ! wait_for_mcp_initialize_result "${MCP_OAUTH_INVALID_URL}" 401 "invalid_token" "www-authenticate" 'error="invalid_token"'; then
     echo "[debug] OAuth provider diagnostics after invalid-token failure" >&2
-    kubectl get svc,endpoints,pods -n mcp-servers -o wide >&2 || true
+    kubectl get svc,endpoints,pods,networkpolicy -n mcp-servers -o wide >&2 || true
+    kubectl get networkpolicy -n mcp-servers -o yaml >&2 || true
     kubectl describe deployment "${OAUTH_ISSUER_NAME}" -n mcp-servers >&2 || true
     kubectl logs -n mcp-servers -l "app=${OAUTH_ISSUER_NAME}" --tail=100 >&2 || true
     kubectl logs -n mcp-servers -l "app=${OAUTH_SERVER_NAME}" -c mcp-gateway --tail=200 >&2 || true
