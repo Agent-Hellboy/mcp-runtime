@@ -397,18 +397,15 @@ func TestEnsureTeamNamespaceConfiguresTraefikIngressWatch(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ensureTeamNamespace() error = %v", err)
 	}
-	role, err := client.RbacV1().Roles("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("traefik watch role missing: %v", err)
-	}
-	for _, verb := range []string{"get", "list", "watch"} {
-		if !roleAllows(role, "", "secrets", verb) {
-			t.Fatalf("API-created traefik watch role should grant %s access to secrets: %#v", verb, role.Rules)
-		}
+	if _, err := client.RbacV1().Roles("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("API-created traefik watch role error = %v, want not found", err)
 	}
 	binding, err := client.RbacV1().RoleBindings("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("traefik watch rolebinding missing: %v", err)
+	}
+	if binding.RoleRef.Kind != "ClusterRole" || binding.RoleRef.Name != traefikWatchClusterRoleName {
+		t.Fatalf("traefik watch binding role ref = %#v", binding.RoleRef)
 	}
 	if len(binding.Subjects) != 1 || binding.Subjects[0].Kind != rbacv1.ServiceAccountKind || binding.Subjects[0].Namespace != "traefik" || binding.Subjects[0].Name != "traefik" {
 		t.Fatalf("traefik watch binding subjects = %#v", binding.Subjects)
@@ -450,9 +447,12 @@ func TestEnsureCatalogNamespaceAutoTraefikWatchSkipsExternalIngress(t *testing.T
 	if _, err := client.RbacV1().Roles(defaultPublicCatalogNamespace).Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("traefik watch role error = %v, want not found", err)
 	}
+	if _, err := client.RbacV1().RoleBindings(defaultPublicCatalogNamespace).Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("traefik watch rolebinding error = %v, want not found", err)
+	}
 }
 
-func TestEnsureTraefikWatchRBACRestoresSecretAccess(t *testing.T) {
+func TestEnsureTraefikWatchRBACBindsClusterRole(t *testing.T) {
 	cfg := teamTraefikWatchConfig{
 		namespace:      "traefik",
 		serviceAccount: "traefik",
@@ -464,20 +464,28 @@ func TestEnsureTraefikWatchRBACRestoresSecretAccess(t *testing.T) {
 			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses"}, Verbs: []string{"get", "list", "watch"}},
 		},
 	}
-	existingBinding := desiredTraefikWatchRoleBinding("mcp-servers-public", cfg)
+	existingBinding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: "mcp-servers-public"},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "Role",
+			Name:     traefikWatchRoleName,
+		},
+		Subjects: []rbacv1.Subject{
+			{Kind: "ServiceAccount", Name: cfg.serviceAccount, Namespace: cfg.namespace},
+		},
+	}
 	client := kubernetesfake.NewSimpleClientset(existingRole, existingBinding)
 
 	if err := ensureTraefikWatchRBAC(context.Background(), client, "mcp-servers-public", cfg); err != nil {
 		t.Fatalf("ensureTraefikWatchRBAC() error = %v", err)
 	}
-	role, err := client.RbacV1().Roles("mcp-servers-public").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{})
+	binding, err := client.RbacV1().RoleBindings("mcp-servers-public").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{})
 	if err != nil {
-		t.Fatalf("traefik watch role missing: %v", err)
+		t.Fatalf("traefik watch rolebinding missing: %v", err)
 	}
-	for _, verb := range []string{"get", "list", "watch"} {
-		if !roleAllows(role, "", "secrets", verb) {
-			t.Fatalf("traefik watch role should restore %s access to secrets: %#v", verb, role.Rules)
-		}
+	if binding.RoleRef.Kind != "ClusterRole" || binding.RoleRef.Name != traefikWatchClusterRoleName {
+		t.Fatalf("traefik watch binding role ref = %#v, want ClusterRole/%s", binding.RoleRef, traefikWatchClusterRoleName)
 	}
 }
 
@@ -532,16 +540,6 @@ func hasString(values []string, want string) bool {
 		if value == want {
 			return true
 		}
-	}
-	return false
-}
-
-func roleAllows(role *rbacv1.Role, apiGroup, resource, verb string) bool {
-	for _, rule := range role.Rules {
-		if !hasString(rule.APIGroups, apiGroup) || !hasString(rule.Resources, resource) || !hasString(rule.Verbs, verb) {
-			continue
-		}
-		return true
 	}
 	return false
 }
