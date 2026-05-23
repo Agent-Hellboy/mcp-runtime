@@ -716,6 +716,16 @@ func TestCheckRegistryServiceIPImageRefs(t *testing.T) {
 }
 
 func TestCheckMCPServerImagePullSecrets(t *testing.T) {
+	t.Run("jsonpath emits secret names", func(t *testing.T) {
+		path := buildMCPServerPullSecretJSONPath()
+		if !strings.Contains(path, "{.name}") {
+			t.Fatalf("expected imagePullSecrets jsonpath to emit names, got %q", path)
+		}
+		if strings.Contains(path, "{@}") {
+			t.Fatalf("imagePullSecrets jsonpath should not emit full object values: %q", path)
+		}
+	})
+
 	t.Run("fails when referenced secret is missing", func(t *testing.T) {
 		servers := "mcp-team-acme|acme-tools|registry-pull-admin" + imagePullListSep + "\n"
 		mock := &core.MockExecutor{
@@ -1520,6 +1530,55 @@ func TestCheckPlatformAPILiveInventoryNetworkPolicy(t *testing.T) {
 		check := checkPlatformAPILiveInventoryNetworkPolicy(core.NewTestKubectlClient(mock))
 		if !check.OK {
 			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+	})
+
+	t.Run("passes when team policy is not present", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "mcpservers"):
+					return &core.MockCommand{OutputData: []byte("mcp-team-acme\n")}
+				case contains(spec.Args, "networkpolicy"):
+					return &core.MockCommand{
+						OutputData: []byte(`Error from server (NotFound): networkpolicies.networking.k8s.io "platform-default-deny" not found`),
+						OutputErr:  errors.New("exit status 1"),
+					}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		check := checkPlatformAPILiveInventoryNetworkPolicy(core.NewTestKubectlClient(mock))
+		if !check.OK {
+			t.Fatalf("expected missing optional NetworkPolicy to pass, got detail=%q", check.Detail)
+		}
+	})
+
+	t.Run("fails when team policy cannot be read", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "mcpservers"):
+					return &core.MockCommand{OutputData: []byte("mcp-team-acme\n")}
+				case contains(spec.Args, "networkpolicy"):
+					return &core.MockCommand{
+						OutputData: []byte(`Error from server (Forbidden): networkpolicies.networking.k8s.io "platform-default-deny" is forbidden`),
+						OutputErr:  errors.New("exit status 1"),
+					}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		check := checkPlatformAPILiveInventoryNetworkPolicy(core.NewTestKubectlClient(mock))
+		if check.OK {
+			t.Fatal("expected unreadable NetworkPolicy to fail")
+		}
+		for _, want := range []string{"mcp-team-acme/platform-default-deny", "Forbidden"} {
+			if !strings.Contains(check.Detail, want) {
+				t.Fatalf("detail should contain %q, got %q", want, check.Detail)
+			}
 		}
 	})
 }

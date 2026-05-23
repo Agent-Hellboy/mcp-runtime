@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -155,11 +156,11 @@ func checkSecretKeyPopulated(kubectl core.KubectlRunner, namespace, name, key st
 	if !ok {
 		return fmt.Errorf("key missing")
 	}
-	decoded, err := decodeBase64(encoded)
+	decodedBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
 	if err != nil {
-		return err
+		return fmt.Errorf("decode secret key %q: %w", key, err)
 	}
-	if strings.TrimSpace(decoded) == "" {
+	if strings.TrimSpace(string(decodedBytes)) == "" {
 		return fmt.Errorf("key empty")
 	}
 	return nil

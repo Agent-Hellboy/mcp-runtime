@@ -30,9 +30,17 @@ func checkPlatformAPILiveInventoryNetworkPolicy(kubectl core.KubectlRunner) Doct
 
 	checked := 0
 	for _, namespace := range namespaces {
-		policyJSON, err := readKubectlOutput(kubectl, []string{"get", "networkpolicy", "platform-default-deny", "-n", namespace, "-o", "json"})
-		if err != nil {
+		policyJSON, err := readNetworkPolicyJSON(kubectl, namespace, "platform-default-deny")
+		if isKubectlNotFound(err) {
 			continue
+		}
+		if err != nil {
+			return DoctorCheck{
+				Name:   "platform API live inventory ingress",
+				OK:     false,
+				Detail: fmt.Sprintf("failed reading networkpolicy %s/platform-default-deny: %v", namespace, err),
+				Remedy: "check Kubernetes API access and RBAC for reading NetworkPolicies in team namespaces",
+			}
 		}
 		checked++
 		if !networkPolicyAllowsPlatformAPI(policyJSON) {
@@ -56,6 +64,30 @@ func checkPlatformAPILiveInventoryNetworkPolicy(kubectl core.KubectlRunner) Doct
 		OK:     true,
 		Detail: fmt.Sprintf("%d team NetworkPolicy object(s) allow platform API live inventory probes", checked),
 	}
+}
+
+func readNetworkPolicyJSON(kubectl core.KubectlRunner, namespace, name string) (string, error) {
+	cmd, err := kubectl.CommandArgs([]string{"get", "networkpolicy", name, "-n", namespace, "-o", "json"})
+	if err != nil {
+		return "", err
+	}
+	out, runErr := cmd.CombinedOutput()
+	if runErr == nil {
+		return string(out), nil
+	}
+	detail := strings.TrimSpace(string(out))
+	if detail == "" {
+		return "", runErr
+	}
+	return "", fmt.Errorf("%w: %s", runErr, detail)
+}
+
+func isKubectlNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "notfound") || strings.Contains(lower, "not found")
 }
 
 func buildMCPServerNamespaceJSONPath() string {

@@ -562,7 +562,7 @@ func buildMCPServerImageJSONPath() string {
 }
 
 func buildMCPServerPullSecretJSONPath() string {
-	return fmt.Sprintf(`jsonpath={range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"|"}{range .spec.imagePullSecrets[*]}{@}{"%s"}{end}{"\n"}{end}`, imagePullListSep)
+	return fmt.Sprintf(`jsonpath={range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"|"}{range .spec.imagePullSecrets[*]}{.name}{"%s"}{end}{"\n"}{end}`, imagePullListSep)
 }
 
 func mismatchResult(c imagePullPodCandidate) DoctorCheck {

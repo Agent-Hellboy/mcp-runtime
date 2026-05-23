@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	pipelineAnalyticsSourceSecretName = "mcp-sentinel-secrets"
-	pipelineAnalyticsSourceSecretKey  = "INGEST_API_KEYS"
+	pipelineAnalyticsSourceSecretName = "mcp-sentinel-secrets" // #nosec G101 -- Kubernetes Secret object name, not a secret value.
+	pipelineAnalyticsSourceSecretKey  = "INGEST_API_KEYS"      // #nosec G101 -- Kubernetes Secret data key name, not a secret value.
 	pipelineAnalyticsSecretKey        = "api-key"
-	pipelineAnalyticsSecretSuffix     = "-analytics-creds"
+	pipelineAnalyticsSecretSuffix     = "-analytics-creds" // #nosec G101 -- generated Kubernetes Secret name suffix, not a secret value.
 )
 
 type analyticsSecretRequest struct {
