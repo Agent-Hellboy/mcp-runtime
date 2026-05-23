@@ -1473,6 +1473,23 @@ func TestCheckIngressLoadBalancerStatus(t *testing.T) {
 			t.Fatalf("expected OK, got detail=%q", check.Detail)
 		}
 	})
+
+	t.Run("passes in permissive readiness mode for dev NodePort clusters", func(t *testing.T) {
+		t.Setenv(doctorEnvIngressReadinessMode, doctorIngressReadinessPermissive)
+		out := "registry|registry|registry.local,||\n"
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				return &core.MockCommand{OutputData: []byte(out)}
+			},
+		}
+		check := checkIngressLoadBalancerStatus(core.NewTestKubectlClient(mock))
+		if !check.OK {
+			t.Fatalf("expected permissive mode to pass, got detail=%q", check.Detail)
+		}
+		if !strings.Contains(check.Detail, "permissive ingress readiness mode") {
+			t.Fatalf("detail should mention permissive mode, got %q", check.Detail)
+		}
+	})
 }
 
 func TestCheckPlatformAPILiveInventoryNetworkPolicy(t *testing.T) {

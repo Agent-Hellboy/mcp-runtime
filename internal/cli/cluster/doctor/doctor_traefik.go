@@ -278,6 +278,13 @@ func checkIngressLoadBalancerStatus(kubectl core.KubectlRunner) DoctorCheck {
 		ready = append(ready, label+" -> "+addr)
 	}
 	if len(missing) > 0 {
+		if doctorIngressReadinessPermissiveMode() {
+			return DoctorCheck{
+				Name:   "ingress LoadBalancer status",
+				OK:     true,
+				Detail: fmt.Sprintf("permissive ingress readiness mode allows %d/%d host-based ingress(es) with empty status.loadBalancer in dev/NodePort clusters: %s", len(missing), len(statuses), strings.Join(missing, "; ")),
+			}
+		}
 		return DoctorCheck{
 			Name:   "ingress LoadBalancer status",
 			OK:     false,
@@ -290,6 +297,10 @@ func checkIngressLoadBalancerStatus(kubectl core.KubectlRunner) DoctorCheck {
 		OK:     true,
 		Detail: strings.Join(ready, "; "),
 	}
+}
+
+func doctorIngressReadinessPermissiveMode() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(doctorEnvIngressReadinessMode)), doctorIngressReadinessPermissive)
 }
 
 func buildIngressLoadBalancerJSONPath() string {

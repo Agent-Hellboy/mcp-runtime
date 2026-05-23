@@ -78,9 +78,11 @@ const (
 	// pass is just a fallback for stale events.
 	imagePullDescribeLimit = 8
 
-	doctorEnvACMEEmail        = "MCP_ACME_EMAIL"
-	doctorEnvTLSClusterIssuer = "MCP_TLS_CLUSTER_ISSUER"
-	doctorDNSLookupTimeout    = 10 * time.Second
+	doctorEnvACMEEmail               = "MCP_ACME_EMAIL"
+	doctorEnvTLSClusterIssuer        = "MCP_TLS_CLUSTER_ISSUER"
+	doctorEnvIngressReadinessMode    = "MCP_INGRESS_READINESS_MODE"
+	doctorIngressReadinessPermissive = "permissive"
+	doctorDNSLookupTimeout           = 10 * time.Second
 )
 
 var doctorLookupHost = func(ctx context.Context, host string) ([]string, error) {
