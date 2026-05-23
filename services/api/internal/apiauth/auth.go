@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"os"
 	"strings"
+	"sync"
 
 	"mcp-sentinel-api/internal/platformstore"
 )
@@ -20,6 +21,13 @@ type Principal = platformstore.Principal
 type PrincipalTeam = platformstore.PrincipalTeam
 
 type contextKey struct{}
+
+var trustedProxyCIDRCache struct {
+	sync.RWMutex
+	raw      string
+	loaded   bool
+	prefixes []netip.Prefix
+}
 
 func WithPrincipal(ctx context.Context, p Principal) context.Context {
 	return context.WithValue(ctx, contextKey{}, p)
@@ -38,11 +46,10 @@ func RequestIP(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	remoteHost := requestRemoteHost(r.RemoteAddr)
-	remoteAddr, remoteOK := parseIPLiteral(remoteHost)
+	remoteAddr, remoteOK := parseIPLiteral(r.RemoteAddr)
 	forwarded := forwardedForAddrs(r.Header.Get("x-forwarded-for"))
 	if len(forwarded) == 0 || !remoteOK || !trustedProxyAddr(remoteAddr) {
-		return remoteHost
+		return requestRemoteHost(r.RemoteAddr)
 	}
 	for i := len(forwarded) - 1; i >= 0; i-- {
 		if !trustedProxyAddr(forwarded[i]) {
@@ -91,20 +98,58 @@ func trustedProxyAddr(addr netip.Addr) bool {
 	if !addr.IsValid() {
 		return false
 	}
-	cidrs := strings.TrimSpace(os.Getenv("PLATFORM_TRUSTED_PROXY_CIDRS"))
-	if cidrs == "" {
-		cidrs = strings.TrimSpace(os.Getenv("MCP_TRUSTED_PROXY_CIDRS"))
+	if addr.IsLoopback() {
+		return true
 	}
-	if cidrs != "" {
-		for _, raw := range strings.Split(cidrs, ",") {
-			prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
-			if err == nil && prefix.Contains(addr) {
-				return true
-			}
+	for _, prefix := range trustedProxyCIDRPrefixes() {
+		if prefix.Contains(addr) {
+			return true
 		}
-		return false
 	}
-	return addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast()
+	return false
+}
+
+func trustedProxyCIDRPrefixes() []netip.Prefix {
+	raw := trustedProxyCIDRSource()
+	trustedProxyCIDRCache.RLock()
+	if trustedProxyCIDRCache.loaded && trustedProxyCIDRCache.raw == raw {
+		prefixes := trustedProxyCIDRCache.prefixes
+		trustedProxyCIDRCache.RUnlock()
+		return prefixes
+	}
+	trustedProxyCIDRCache.RUnlock()
+
+	trustedProxyCIDRCache.Lock()
+	defer trustedProxyCIDRCache.Unlock()
+	if trustedProxyCIDRCache.loaded && trustedProxyCIDRCache.raw == raw {
+		return trustedProxyCIDRCache.prefixes
+	}
+	prefixes := parseTrustedProxyCIDRs(raw)
+	trustedProxyCIDRCache.raw = raw
+	trustedProxyCIDRCache.loaded = true
+	trustedProxyCIDRCache.prefixes = prefixes
+	return prefixes
+}
+
+func trustedProxyCIDRSource() string {
+	if cidrs := strings.TrimSpace(os.Getenv("PLATFORM_TRUSTED_PROXY_CIDRS")); cidrs != "" {
+		return cidrs
+	}
+	return strings.TrimSpace(os.Getenv("MCP_TRUSTED_PROXY_CIDRS"))
+}
+
+func parseTrustedProxyCIDRs(raw string) []netip.Prefix {
+	if raw == "" {
+		return nil
+	}
+	prefixes := make([]netip.Prefix, 0, strings.Count(raw, ",")+1)
+	for _, value := range strings.Split(raw, ",") {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err == nil {
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	return prefixes
 }
 
 func RequestSource(r *http.Request) string {

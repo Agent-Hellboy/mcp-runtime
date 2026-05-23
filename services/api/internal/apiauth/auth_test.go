@@ -26,12 +26,23 @@ func TestRequestIPIgnoresSpoofedForwardedForFromUntrustedPeer(t *testing.T) {
 }
 
 func TestRequestIPReturnsLastUntrustedForwardedHop(t *testing.T) {
+	t.Setenv("PLATFORM_TRUSTED_PROXY_CIDRS", "10.0.0.0/8")
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "10.0.0.10:4321"
 	req.Header.Set("X-Forwarded-For", "198.51.100.99, 198.51.100.25, 10.0.0.11")
 
 	if got := RequestIP(req); got != "198.51.100.25" {
 		t.Fatalf("RequestIP() = %q, want last untrusted forwarded address", got)
+	}
+}
+
+func TestRequestIPDoesNotTrustPrivateProxyByDefault(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.10:4321"
+	req.Header.Set("X-Forwarded-For", "198.51.100.25")
+
+	if got := RequestIP(req); got != "10.0.0.10" {
+		t.Fatalf("RequestIP() = %q, want private remote address", got)
 	}
 }
 

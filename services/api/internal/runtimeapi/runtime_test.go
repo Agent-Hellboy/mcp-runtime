@@ -1369,7 +1369,7 @@ func TestRuntimeServerApplyRejectsActiveServerLimitByPublisherIP(t *testing.T) {
 		"scope": "public",
 		"spec": {"image":"registry.example.com/mcp-servers-public/two"}
 	}`)))
-	request.RemoteAddr = "10.0.0.10:4321"
+	request.RemoteAddr = "127.0.0.1:4321"
 	request.Header.Set("X-Forwarded-For", "198.51.100.25")
 	request = request.WithContext(withPrincipal(request.Context(), principal{
 		Role:      roleUser,
@@ -1385,6 +1385,50 @@ func TestRuntimeServerApplyRejectsActiveServerLimitByPublisherIP(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "active_server_limit_reached") {
 		t.Fatalf("body = %q, want active server limit error", recorder.Body.String())
+	}
+}
+
+func TestRuntimeServerApplyIgnoresUnlabeledPublicCatalogServersForActiveLimit(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv(envActiveServerLimit, "1")
+	t.Setenv(envPushCooldown, "0s")
+	t.Setenv(envPublishRateLimitWindow, "0s")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	legacy := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "legacy",
+			Namespace: defaultPublicCatalogNamespace,
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image: "registry.example.com/mcp-servers-public/legacy",
+		},
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme, legacy),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "two",
+		"scope": "public",
+		"spec": {"image":"registry.example.com/mcp-servers-public/two"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-2",
+		Namespace: "mcp-team-acme",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s, want 200", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -1409,7 +1453,7 @@ func TestRuntimeServerApplyLabelsPublisherSignals(t *testing.T) {
 		"scope": "public",
 		"spec": {"image":"registry.example.com/mcp-servers-public/demo"}
 	}`)))
-	request.RemoteAddr = "10.0.0.10:4321"
+	request.RemoteAddr = "127.0.0.1:4321"
 	request.Header.Set("X-Forwarded-For", "198.51.100.25")
 	request.Header.Set(clientFingerprintHeader, "device-1")
 	request = request.WithContext(withPrincipal(request.Context(), principal{
@@ -1616,6 +1660,17 @@ func TestRuntimeServerApplyRejectsPublishRateLimit(t *testing.T) {
 				t.Fatalf("body = %q, want publish rate limit error", recorder.Body.String())
 			}
 		}
+	}
+}
+
+func TestServerPublishAttemptLimiterEnforcesMaxEntries(t *testing.T) {
+	limiter := newServerPublishAttemptLimiter()
+	now := time.Unix(1000, 0)
+	for i := 0; i < maxPublishAttemptLimiterEntries+5; i++ {
+		limiter.checkAndRecord([]string{fmt.Sprintf("key-%d", i)}, now, time.Hour)
+	}
+	if got := len(limiter.nextAllowed); got > maxPublishAttemptLimiterEntries {
+		t.Fatalf("entry count = %d, want at most %d", got, maxPublishAttemptLimiterEntries)
 	}
 }
 

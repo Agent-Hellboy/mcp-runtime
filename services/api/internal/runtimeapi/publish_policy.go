@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +33,7 @@ const (
 	platformLastPushByAnnotation          = "platform.mcpruntime.org/last-push-by"
 	platformPublisherIPHashLabel          = "platform.mcpruntime.org/publisher-ip-hash"
 	platformPublisherFingerprintHashLabel = "platform.mcpruntime.org/publisher-fingerprint-hash"
+	maxPublishAttemptLimiterEntries       = 10000
 )
 
 type serverPublishPolicy struct {
@@ -71,6 +73,11 @@ type publishIdentity struct {
 type serverPublishAttemptLimiter struct {
 	mu          sync.Mutex
 	nextAllowed map[string]time.Time
+}
+
+var publishIdentitySaltCache struct {
+	sync.Once
+	value string
 }
 
 func newServerPublishAttemptLimiter() *serverPublishAttemptLimiter {
@@ -217,29 +224,46 @@ func (s *RuntimeServer) countPublishIdentityActiveServers(ctx context.Context, p
 	if userID == "" {
 		return 0, nil
 	}
-	ownerSelector, canUseOwnerSelector := serverOwnerLabelSelector(userID)
-	canUseOwnerSelector = canUseOwnerSelector && identity.IPHash == "" && identity.FingerprintHash == ""
+	selectors := publishIdentityLabelSelectors(userID, identity)
+	if len(selectors) == 0 {
+		return 0, nil
+	}
 	count := 0
+	seen := map[string]struct{}{}
 	for _, namespace := range publishNamespacesForPrincipal(p) {
-		opts := controlplane.ListServersOptions{SkipDeploymentStatus: true}
-		if canUseOwnerSelector && !principalOwnsNamespace(p, namespace) {
-			opts.LabelSelector = ownerSelector
+		namespaceOwned := principalOwnsNamespace(p, namespace)
+		namespaceSelectors := selectors
+		if namespaceOwned {
+			namespaceSelectors = []string{""}
 		}
-		result, err := control.ListServersWithOptions(ctx, namespace, opts)
-		if err != nil {
-			return 0, err
-		}
-		for _, server := range result.Servers {
-			if serverInfoMatchesPublishIdentity(server, p, identity) {
-				count++
+		for _, selector := range namespaceSelectors {
+			result, err := control.ListServersWithOptions(ctx, namespace, controlplane.ListServersOptions{
+				LabelSelector:        selector,
+				SkipDeploymentStatus: true,
+			})
+			if err != nil {
+				return 0, err
+			}
+			for _, server := range result.Servers {
+				key := serverInfoKey(server)
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				if serverInfoMatchesPublishIdentity(server, p, identity) {
+					seen[key] = struct{}{}
+					count++
+				}
 			}
 		}
 	}
 	return count, nil
 }
 
-func serverInfoOwnedByPrincipal(server controlplane.ServerInfo, p principal) bool {
-	return serverLabelsOwnedByPrincipal(server.Namespace, server.Labels, p)
+func serverInfoKey(server controlplane.ServerInfo) string {
+	if server.UID != "" {
+		return server.Namespace + "/" + server.UID
+	}
+	return server.Namespace + "/" + server.Name
 }
 
 func serverInfoMatchesPublishIdentity(server controlplane.ServerInfo, p principal, identity publishIdentity) bool {
@@ -251,7 +275,7 @@ func serverWritableByPrincipal(server mcpv1alpha1.MCPServer, p principal) bool {
 }
 
 func serverLabelsMatchPublishIdentity(namespace string, serverLabels map[string]string, p principal, identity publishIdentity) bool {
-	if serverLabelsOwnedByPrincipal(namespace, serverLabels, p) {
+	if serverLabelsCountAgainstPrincipal(namespace, serverLabels, p) {
 		return true
 	}
 	if identity.IPHash != "" && strings.TrimSpace(serverLabels[platformPublisherIPHashLabel]) == identity.IPHash {
@@ -261,6 +285,21 @@ func serverLabelsMatchPublishIdentity(namespace string, serverLabels map[string]
 		return true
 	}
 	return false
+}
+
+func serverLabelsCountAgainstPrincipal(namespace string, serverLabels map[string]string, p principal) bool {
+	userID := strings.TrimSpace(p.UserID())
+	if userID == "" {
+		return false
+	}
+	owner := strings.TrimSpace(serverLabels[platformUserIDLabel])
+	if owner == userID {
+		return true
+	}
+	if owner != "" {
+		return false
+	}
+	return principalOwnsNamespace(p, namespace)
 }
 
 func serverLabelsOwnedByPrincipal(namespace string, serverLabels map[string]string, p principal) bool {
@@ -281,8 +320,26 @@ func serverLabelsOwnedByPrincipal(namespace string, serverLabels map[string]stri
 	return sharedCatalogWritableForUsers() && isModeCatalogNamespace(namespace) && principalCanPublishNamespace(p, namespace)
 }
 
-func serverOwnerLabelSelector(userID string) (string, bool) {
-	req, err := labels.NewRequirement(platformUserIDLabel, selection.Equals, []string{strings.TrimSpace(userID)})
+func publishIdentityLabelSelectors(userID string, identity publishIdentity) []string {
+	selectors := make([]string, 0, 3)
+	if selector, ok := labelEqualsSelector(platformUserIDLabel, userID); ok {
+		selectors = append(selectors, selector)
+	}
+	if selector, ok := labelEqualsSelector(platformPublisherIPHashLabel, identity.IPHash); ok {
+		selectors = append(selectors, selector)
+	}
+	if selector, ok := labelEqualsSelector(platformPublisherFingerprintHashLabel, identity.FingerprintHash); ok {
+		selectors = append(selectors, selector)
+	}
+	return selectors
+}
+
+func labelEqualsSelector(key, value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", false
+	}
+	req, err := labels.NewRequirement(key, selection.Equals, []string{value})
 	if err != nil {
 		return "", false
 	}
@@ -328,9 +385,15 @@ func publishSignalHash(kind, value string) string {
 	if value == "" {
 		return ""
 	}
-	salt := strings.TrimSpace(os.Getenv(envPublishIdentitySalt))
-	sum := sha256.Sum256([]byte(kind + "\x00" + salt + "\x00" + value))
+	sum := sha256.Sum256([]byte(kind + "\x00" + publishIdentitySalt() + "\x00" + value))
 	return hex.EncodeToString(sum[:16])
+}
+
+func publishIdentitySalt() string {
+	publishIdentitySaltCache.Do(func() {
+		publishIdentitySaltCache.value = strings.TrimSpace(os.Getenv(envPublishIdentitySalt))
+	})
+	return publishIdentitySaltCache.value
 }
 
 func applyPublishIdentityLabels(labels map[string]string, current *mcpv1alpha1.MCPServer, identity publishIdentity) {
@@ -370,6 +433,7 @@ func (l *serverPublishAttemptLimiter) checkAndRecord(keys []string, now time.Tim
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.prune(now)
 	for _, key := range keys {
 		if nextAllowed := l.nextAllowed[key]; nextAllowed.After(now) {
 			return nextAllowed, true
@@ -379,14 +443,37 @@ func (l *serverPublishAttemptLimiter) checkAndRecord(keys []string, now time.Tim
 	for _, key := range keys {
 		l.nextAllowed[key] = nextAllowed
 	}
-	if len(l.nextAllowed) > 10000 {
-		for key, nextAllowed := range l.nextAllowed {
-			if !nextAllowed.After(now) {
-				delete(l.nextAllowed, key)
-			}
+	l.prune(now)
+	return time.Time{}, false
+}
+
+func (l *serverPublishAttemptLimiter) prune(now time.Time) {
+	for key, nextAllowed := range l.nextAllowed {
+		if !nextAllowed.After(now) {
+			delete(l.nextAllowed, key)
 		}
 	}
-	return time.Time{}, false
+	if len(l.nextAllowed) <= maxPublishAttemptLimiterEntries {
+		return
+	}
+	entries := make([]serverPublishAttemptLimiterEntry, 0, len(l.nextAllowed))
+	for key, nextAllowed := range l.nextAllowed {
+		entries = append(entries, serverPublishAttemptLimiterEntry{key: key, nextAllowed: nextAllowed})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].nextAllowed.Before(entries[j].nextAllowed)
+	})
+	for _, entry := range entries {
+		if len(l.nextAllowed) <= maxPublishAttemptLimiterEntries {
+			return
+		}
+		delete(l.nextAllowed, entry.key)
+	}
+}
+
+type serverPublishAttemptLimiterEntry struct {
+	key         string
+	nextAllowed time.Time
 }
 
 func (r *serverPublishPolicyRejection) retryAfterHeader() string {
