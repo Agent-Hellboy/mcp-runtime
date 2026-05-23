@@ -112,8 +112,8 @@ func TestHandleProxyHeaderModeMissingIdentityExplainsAdapter(t *testing.T) {
 
 	proxy.handleGateway(recorder, req)
 
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
 	}
 	if upstreamCalled {
 		t.Fatal("missing identity request should not reach upstream")

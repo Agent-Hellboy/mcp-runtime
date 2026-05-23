@@ -142,12 +142,6 @@ func (s *gatewayServer) writeDeniedResponse(
 }
 
 func gatewayDeniedStatus(policy *policypkg.Document, decision policypkg.Decision) int {
-	if !policypkg.PolicyUsesOAuth(policy) {
-		switch decision.Reason {
-		case "missing_identity", "missing_session":
-			return http.StatusForbidden
-		}
-	}
 	if decision.Status > 0 {
 		return decision.Status
 	}
