@@ -202,12 +202,15 @@ Live inventory entries include MCP `tools/list`, `prompts/list`, and
 ```
 
 Admins configure the active-server limit with
-`PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `5`, `0` disables) and per-server
-cooldown with `PLATFORM_MCP_PUSH_COOLDOWN` (default `0s`, Go duration format).
-Quota or cooldown denials return `429`; cooldown responses include
-`next_allowed_at` and `Retry-After`. The active-server limit is enforced by the
-platform API before Kubernetes apply; strict serialization of concurrent
-publishes would require a shared reservation or admission-control layer.
+`PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `1`, `0` disables), per-server
+cooldown with `PLATFORM_MCP_PUSH_COOLDOWN` (default `6h`, Go duration format),
+and publish-attempt throttling with `PLATFORM_MCP_PUBLISH_RATE_LIMIT_WINDOW`
+(default `6h`). Quota, cooldown, or publish-rate denials return `429`;
+cooldown/rate responses include `next_allowed_at` and `Retry-After`. The
+active-server limit is enforced by the platform API before Kubernetes apply
+against the authenticated user and salted trusted-IP / client-fingerprint abuse
+signals. Non-admin publishes are also capped at one replica and small test
+container resources before the MCPServer is accepted.
 
 Retire an MCPServer to free quota:
 

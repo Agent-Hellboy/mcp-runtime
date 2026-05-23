@@ -2,11 +2,15 @@ package runtimeapi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/labels"
@@ -17,16 +21,25 @@ import (
 )
 
 const (
-	defaultActiveServerLimit     = 5
-	envActiveServerLimit         = "PLATFORM_MCP_ACTIVE_SERVER_LIMIT"
-	envPushCooldown              = "PLATFORM_MCP_PUSH_COOLDOWN"
-	platformLastPushAtAnnotation = "platform.mcpruntime.org/last-push-at"
-	platformLastPushByAnnotation = "platform.mcpruntime.org/last-push-by"
+	defaultActiveServerLimit              = 1
+	defaultPushCooldown                   = 6 * time.Hour
+	defaultPublishRateLimitWindow         = 6 * time.Hour
+	envActiveServerLimit                  = "PLATFORM_MCP_ACTIVE_SERVER_LIMIT"
+	envPushCooldown                       = "PLATFORM_MCP_PUSH_COOLDOWN"
+	envPublishRateLimitWindow             = "PLATFORM_MCP_PUBLISH_RATE_LIMIT_WINDOW"
+	envPublishIdentitySalt                = "PLATFORM_MCP_PUBLISH_IDENTITY_SALT"
+	clientFingerprintHeader               = "X-MCP-Client-Fingerprint"
+	platformLastPushAtAnnotation          = "platform.mcpruntime.org/last-push-at"
+	platformLastPushByAnnotation          = "platform.mcpruntime.org/last-push-by"
+	platformPublisherIPHashLabel          = "platform.mcpruntime.org/publisher-ip-hash"
+	platformPublisherFingerprintHashLabel = "platform.mcpruntime.org/publisher-fingerprint-hash"
+	maxPublishAttemptLimiterEntries       = 10000
 )
 
 type serverPublishPolicy struct {
-	activeServerLimit int
-	pushCooldown      time.Duration
+	activeServerLimit      int
+	pushCooldown           time.Duration
+	publishRateLimitWindow time.Duration
 }
 
 type serverPublishPolicyStatus struct {
@@ -37,6 +50,9 @@ type serverPublishPolicyStatus struct {
 	PushCooldown             string `json:"push_cooldown"`
 	PushCooldownSeconds      int64  `json:"push_cooldown_seconds"`
 	PushCooldownEnabled      bool   `json:"push_cooldown_enabled"`
+	PublishRateLimit         string `json:"publish_rate_limit"`
+	PublishRateLimitSeconds  int64  `json:"publish_rate_limit_seconds"`
+	PublishRateLimitEnabled  bool   `json:"publish_rate_limit_enabled"`
 }
 
 type serverPublishPolicyRejection struct {
@@ -48,10 +64,31 @@ type serverPublishPolicyRejection struct {
 	count         int
 }
 
+type publishIdentity struct {
+	UserID          string
+	IPHash          string
+	FingerprintHash string
+}
+
+type serverPublishAttemptLimiter struct {
+	mu          sync.Mutex
+	nextAllowed map[string]time.Time
+}
+
+var publishIdentitySaltCache struct {
+	sync.Once
+	value string
+}
+
+func newServerPublishAttemptLimiter() *serverPublishAttemptLimiter {
+	return &serverPublishAttemptLimiter{nextAllowed: map[string]time.Time{}}
+}
+
 func currentServerPublishPolicy() serverPublishPolicy {
 	return serverPublishPolicy{
-		activeServerLimit: activeServerLimitFromEnv(),
-		pushCooldown:      durationFromEnv(envPushCooldown, 0),
+		activeServerLimit:      activeServerLimitFromEnv(),
+		pushCooldown:           durationFromEnv(envPushCooldown, defaultPushCooldown),
+		publishRateLimitWindow: durationFromEnv(envPublishRateLimitWindow, defaultPublishRateLimitWindow),
 	}
 }
 
@@ -90,7 +127,7 @@ func durationFromEnv(key string, fallback time.Duration) time.Duration {
 	return value
 }
 
-func (s *RuntimeServer) publishPolicyStatusForPrincipal(ctx context.Context, p principal) serverPublishPolicyStatus {
+func (s *RuntimeServer) publishPolicyStatusForPrincipal(ctx context.Context, p principal, identity publishIdentity) serverPublishPolicyStatus {
 	policy := currentServerPublishPolicy()
 	status := serverPublishPolicyStatus{
 		ActiveServerLimit:        policy.activeServerLimit,
@@ -99,11 +136,14 @@ func (s *RuntimeServer) publishPolicyStatusForPrincipal(ctx context.Context, p p
 		PushCooldown:             policy.pushCooldown.String(),
 		PushCooldownSeconds:      int64(policy.pushCooldown.Seconds()),
 		PushCooldownEnabled:      policy.pushCooldown > 0,
+		PublishRateLimit:         policy.publishRateLimitWindow.String(),
+		PublishRateLimitSeconds:  int64(policy.publishRateLimitWindow.Seconds()),
+		PublishRateLimitEnabled:  policy.publishRateLimitWindow > 0,
 	}
 	if p.Role == roleAdmin || strings.TrimSpace(p.UserID()) == "" || policy.activeServerLimit <= 0 {
 		return status
 	}
-	count, err := s.countPrincipalActiveServers(ctx, p)
+	count, err := s.countPublishIdentityActiveServers(ctx, p, identity)
 	if err != nil {
 		status.CanPublish = false
 		return status
@@ -113,8 +153,20 @@ func (s *RuntimeServer) publishPolicyStatusForPrincipal(ctx context.Context, p p
 	return status
 }
 
-func (s *RuntimeServer) evaluateServerPublishPolicy(ctx context.Context, p principal, namespace, name string, current *mcpv1alpha1.MCPServer, now time.Time) (*serverPublishPolicyRejection, error) {
+func (s *RuntimeServer) evaluateServerPublishPolicy(ctx context.Context, p principal, namespace, name string, current *mcpv1alpha1.MCPServer, identity publishIdentity, now time.Time) (*serverPublishPolicyRejection, error) {
 	policy := currentServerPublishPolicy()
+	if p.Role != roleAdmin && policy.publishRateLimitWindow > 0 {
+		nextAllowed, limited := s.publishAttemptLimiter().checkAndRecord(publishRateLimitKeys(identity), now, policy.publishRateLimitWindow)
+		if limited {
+			return &serverPublishPolicyRejection{
+				status:        http.StatusTooManyRequests,
+				code:          "publish_rate_limited",
+				message:       fmt.Sprintf("publishing is rate limited; next allowed publish at %s", nextAllowed.UTC().Format(time.RFC3339)),
+				nextAllowedAt: nextAllowed,
+			}, nil
+		}
+	}
+
 	if policy.pushCooldown > 0 && current != nil {
 		if lastPushedAt, ok := lastServerPushAt(current); ok {
 			nextAllowed := lastPushedAt.Add(policy.pushCooldown)
@@ -132,7 +184,7 @@ func (s *RuntimeServer) evaluateServerPublishPolicy(ctx context.Context, p princ
 	if p.Role == roleAdmin || current != nil || policy.activeServerLimit <= 0 {
 		return nil, nil
 	}
-	count, err := s.countPrincipalActiveServers(ctx, p)
+	count, err := s.countPublishIdentityActiveServers(ctx, p, identity)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +215,7 @@ func lastServerPushAt(server *mcpv1alpha1.MCPServer) (time.Time, bool) {
 	return parsed, true
 }
 
-func (s *RuntimeServer) countPrincipalActiveServers(ctx context.Context, p principal) (int, error) {
+func (s *RuntimeServer) countPublishIdentityActiveServers(ctx context.Context, p principal, identity publishIdentity) (int, error) {
 	control := s.controlPlane()
 	if control == nil {
 		return 0, fmt.Errorf("kubernetes not available")
@@ -172,32 +224,82 @@ func (s *RuntimeServer) countPrincipalActiveServers(ctx context.Context, p princ
 	if userID == "" {
 		return 0, nil
 	}
-	ownerSelector, canUseOwnerSelector := serverOwnerLabelSelector(userID)
+	selectors := publishIdentityLabelSelectors(userID, identity)
+	if len(selectors) == 0 {
+		return 0, nil
+	}
 	count := 0
+	seen := map[string]struct{}{}
 	for _, namespace := range publishNamespacesForPrincipal(p) {
-		opts := controlplane.ListServersOptions{SkipDeploymentStatus: true}
-		if canUseOwnerSelector && !principalOwnsNamespace(p, namespace) {
-			opts.LabelSelector = ownerSelector
+		namespaceOwned := principalOwnsNamespace(p, namespace)
+		namespaceSelectors := selectors
+		if namespaceOwned {
+			namespaceSelectors = []string{""}
 		}
-		result, err := control.ListServersWithOptions(ctx, namespace, opts)
-		if err != nil {
-			return 0, err
-		}
-		for _, server := range result.Servers {
-			if serverInfoOwnedByPrincipal(server, p) {
-				count++
+		for _, selector := range namespaceSelectors {
+			result, err := control.ListServersWithOptions(ctx, namespace, controlplane.ListServersOptions{
+				LabelSelector:        selector,
+				SkipDeploymentStatus: true,
+			})
+			if err != nil {
+				return 0, err
+			}
+			for _, server := range result.Servers {
+				key := serverInfoKey(server)
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				if serverInfoMatchesPublishIdentity(server, p, identity) {
+					seen[key] = struct{}{}
+					count++
+				}
 			}
 		}
 	}
 	return count, nil
 }
 
-func serverInfoOwnedByPrincipal(server controlplane.ServerInfo, p principal) bool {
-	return serverLabelsOwnedByPrincipal(server.Namespace, server.Labels, p)
+func serverInfoKey(server controlplane.ServerInfo) string {
+	if server.UID != "" {
+		return server.Namespace + "/" + server.UID
+	}
+	return server.Namespace + "/" + server.Name
+}
+
+func serverInfoMatchesPublishIdentity(server controlplane.ServerInfo, p principal, identity publishIdentity) bool {
+	return serverLabelsMatchPublishIdentity(server.Namespace, server.Labels, p, identity)
 }
 
 func serverWritableByPrincipal(server mcpv1alpha1.MCPServer, p principal) bool {
 	return serverLabelsOwnedByPrincipal(server.Namespace, server.Labels, p)
+}
+
+func serverLabelsMatchPublishIdentity(namespace string, serverLabels map[string]string, p principal, identity publishIdentity) bool {
+	if serverLabelsCountAgainstPrincipal(namespace, serverLabels, p) {
+		return true
+	}
+	if identity.IPHash != "" && strings.TrimSpace(serverLabels[platformPublisherIPHashLabel]) == identity.IPHash {
+		return true
+	}
+	if identity.FingerprintHash != "" && strings.TrimSpace(serverLabels[platformPublisherFingerprintHashLabel]) == identity.FingerprintHash {
+		return true
+	}
+	return false
+}
+
+func serverLabelsCountAgainstPrincipal(namespace string, serverLabels map[string]string, p principal) bool {
+	userID := strings.TrimSpace(p.UserID())
+	if userID == "" {
+		return false
+	}
+	owner := strings.TrimSpace(serverLabels[platformUserIDLabel])
+	if owner == userID {
+		return true
+	}
+	if owner != "" {
+		return false
+	}
+	return principalOwnsNamespace(p, namespace)
 }
 
 func serverLabelsOwnedByPrincipal(namespace string, serverLabels map[string]string, p principal) bool {
@@ -218,12 +320,160 @@ func serverLabelsOwnedByPrincipal(namespace string, serverLabels map[string]stri
 	return sharedCatalogWritableForUsers() && isModeCatalogNamespace(namespace) && principalCanPublishNamespace(p, namespace)
 }
 
-func serverOwnerLabelSelector(userID string) (string, bool) {
-	req, err := labels.NewRequirement(platformUserIDLabel, selection.Equals, []string{strings.TrimSpace(userID)})
+func publishIdentityLabelSelectors(userID string, identity publishIdentity) []string {
+	selectors := make([]string, 0, 3)
+	if selector, ok := labelEqualsSelector(platformUserIDLabel, userID); ok {
+		selectors = append(selectors, selector)
+	}
+	if selector, ok := labelEqualsSelector(platformPublisherIPHashLabel, identity.IPHash); ok {
+		selectors = append(selectors, selector)
+	}
+	if selector, ok := labelEqualsSelector(platformPublisherFingerprintHashLabel, identity.FingerprintHash); ok {
+		selectors = append(selectors, selector)
+	}
+	return selectors
+}
+
+func labelEqualsSelector(key, value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", false
+	}
+	req, err := labels.NewRequirement(key, selection.Equals, []string{value})
 	if err != nil {
 		return "", false
 	}
 	return req.String(), true
+}
+
+func (s *RuntimeServer) publishAttemptLimiter() *serverPublishAttemptLimiter {
+	s.publishAttemptsMu.Lock()
+	defer s.publishAttemptsMu.Unlock()
+	if s.publishAttempts == nil {
+		s.publishAttempts = newServerPublishAttemptLimiter()
+	}
+	return s.publishAttempts
+}
+
+func publishIdentityFromRequest(r *http.Request, p principal) publishIdentity {
+	identity := publishIdentity{UserID: strings.TrimSpace(p.UserID())}
+	if ip := requestIP(r); ip != "" {
+		identity.IPHash = publishSignalHash("ip", ip)
+	}
+	if fingerprint := requestClientFingerprint(r); fingerprint != "" {
+		identity.FingerprintHash = publishSignalHash("fingerprint", fingerprint)
+	}
+	return identity
+}
+
+func requestClientFingerprint(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	value := strings.TrimSpace(r.Header.Get(clientFingerprintHeader))
+	if value == "" {
+		return ""
+	}
+	if len(value) > 512 {
+		value = value[:512]
+	}
+	return value
+}
+
+func publishSignalHash(kind, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(kind + "\x00" + publishIdentitySalt() + "\x00" + value))
+	return hex.EncodeToString(sum[:16])
+}
+
+func publishIdentitySalt() string {
+	publishIdentitySaltCache.Do(func() {
+		publishIdentitySaltCache.value = strings.TrimSpace(os.Getenv(envPublishIdentitySalt))
+	})
+	return publishIdentitySaltCache.value
+}
+
+func applyPublishIdentityLabels(labels map[string]string, current *mcpv1alpha1.MCPServer, identity publishIdentity) {
+	if labels == nil {
+		return
+	}
+	if identity.IPHash != "" {
+		labels[platformPublisherIPHashLabel] = identity.IPHash
+	}
+	if identity.FingerprintHash != "" {
+		labels[platformPublisherFingerprintHashLabel] = identity.FingerprintHash
+	}
+	if current == nil {
+		return
+	}
+	preserveCurrentLabel(labels, current.Labels, platformPublisherIPHashLabel)
+	preserveCurrentLabel(labels, current.Labels, platformPublisherFingerprintHashLabel)
+}
+
+func publishRateLimitKeys(identity publishIdentity) []string {
+	keys := make([]string, 0, 3)
+	if identity.UserID != "" {
+		keys = append(keys, "user:"+identity.UserID)
+	}
+	if identity.IPHash != "" {
+		keys = append(keys, "ip:"+identity.IPHash)
+	}
+	if identity.FingerprintHash != "" {
+		keys = append(keys, "fingerprint:"+identity.FingerprintHash)
+	}
+	return keys
+}
+
+func (l *serverPublishAttemptLimiter) checkAndRecord(keys []string, now time.Time, window time.Duration) (time.Time, bool) {
+	if l == nil || len(keys) == 0 || window <= 0 {
+		return time.Time{}, false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.prune(now)
+	for _, key := range keys {
+		if nextAllowed := l.nextAllowed[key]; nextAllowed.After(now) {
+			return nextAllowed, true
+		}
+	}
+	nextAllowed := now.Add(window)
+	for _, key := range keys {
+		l.nextAllowed[key] = nextAllowed
+	}
+	l.prune(now)
+	return time.Time{}, false
+}
+
+func (l *serverPublishAttemptLimiter) prune(now time.Time) {
+	for key, nextAllowed := range l.nextAllowed {
+		if !nextAllowed.After(now) {
+			delete(l.nextAllowed, key)
+		}
+	}
+	if len(l.nextAllowed) <= maxPublishAttemptLimiterEntries {
+		return
+	}
+	entries := make([]serverPublishAttemptLimiterEntry, 0, len(l.nextAllowed))
+	for key, nextAllowed := range l.nextAllowed {
+		entries = append(entries, serverPublishAttemptLimiterEntry{key: key, nextAllowed: nextAllowed})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].nextAllowed.Before(entries[j].nextAllowed)
+	})
+	for _, entry := range entries {
+		if len(l.nextAllowed) <= maxPublishAttemptLimiterEntries {
+			return
+		}
+		delete(l.nextAllowed, entry.key)
+	}
+}
+
+type serverPublishAttemptLimiterEntry struct {
+	key         string
+	nextAllowed time.Time
 }
 
 func (r *serverPublishPolicyRejection) retryAfterHeader() string {

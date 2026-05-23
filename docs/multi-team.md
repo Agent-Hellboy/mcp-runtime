@@ -53,7 +53,9 @@ mcp-runtime team list
 `team create` records the team in the platform store and asks the API to ensure
 the managed namespace, quota, limit range, default deny network policy, default
 service account, bundled Traefik watch RBAC, and bundled Traefik namespace
-watch entry. Platform API server writes into that namespace default
+watch entry. The quota and limit range include ephemeral-storage caps so test
+workloads cannot exhaust node disks through container writable layers or temp
+files. Platform API server writes into that namespace default
 `spec.teamID` from the authenticated principal's team. Grant/session writes
 default missing `subject.teamID` to the owning server team, but an explicit
 foreign `subject.teamID` is allowed so a team can delegate access to another
@@ -77,10 +79,11 @@ mcp-runtime team init acme --group acme-mcp-admins
 ```
 
 `team init` applies the namespace, a restricted `mcp-workload` service account,
-a default quota, default container limits, a default-deny NetworkPolicy that
-allows same-namespace ingress, bundled Traefik ingress, DNS, and basic outbound
-HTTP/S egress, a team-admin `Role`, a `RoleBinding`, and the `traefik-watch`
-`Role`/`RoleBinding` for the bundled Traefik service account. The
+a default quota, default container limits with ephemeral-storage caps, a
+default-deny NetworkPolicy that allows same-namespace ingress, bundled Traefik
+ingress, DNS, and basic outbound HTTP/S egress, a team-admin `Role`, a
+`RoleBinding`, and the `traefik-watch` `Role`/`RoleBinding` for the bundled
+Traefik service account. The
 `traefik-watch` role grants watch access to Services, Endpoints, Secrets, and
 Ingresses in the team namespace. Platform-created team namespaces use a
 RoleBinding to the repo-installed `mcp-runtime-traefik-watch` `ClusterRole`

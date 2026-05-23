@@ -14,16 +14,18 @@ import (
 
 // RuntimeServer owns runtime API dependencies for analytics, Kubernetes control-plane access, and platform identity.
 type RuntimeServer struct {
-	db          *chpkg.Client
-	clickhouse  clickhouse.Conn
-	dbName      string
-	apiKeys     map[string]struct{}
-	platform    *platformStore
-	k8sClients  *k8sclient.Clients
-	control     *controlplane.Manager
-	accessMgr   *sentinelaccess.Manager
-	sentinelMgr *sentinel.Manager
-	audit       auditWriter
+	db                *chpkg.Client
+	clickhouse        clickhouse.Conn
+	dbName            string
+	apiKeys           map[string]struct{}
+	platform          *platformStore
+	k8sClients        *k8sclient.Clients
+	control           *controlplane.Manager
+	accessMgr         *sentinelaccess.Manager
+	sentinelMgr       *sentinel.Manager
+	audit             auditWriter
+	publishAttemptsMu sync.Mutex
+	publishAttempts   *serverPublishAttemptLimiter
 
 	liveInventoryOnce  sync.Once
 	liveInventoryCache *liveInventoryCache

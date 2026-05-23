@@ -84,7 +84,7 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 	if len(namespaces) == 0 && !adminAllNamespaces {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"servers":        []serverInfo{},
-			"publish_policy": s.publishPolicyStatusForPrincipal(ctx, p),
+			"publish_policy": s.publishPolicyStatusForPrincipal(ctx, p, publishIdentityFromRequest(r, p)),
 		})
 		return
 	}
@@ -115,7 +115,7 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"servers":        s.serverInfosWithRuntimeData(ctx, servers, r),
-		"publish_policy": s.publishPolicyStatusForPrincipal(ctx, p),
+		"publish_policy": s.publishPolicyStatusForPrincipal(ctx, p, publishIdentityFromRequest(r, p)),
 	})
 }
 
@@ -246,9 +246,10 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 		writeAPIError(w, http.StatusForbidden, msg)
 		return
 	}
+	identity := publishIdentityFromRequest(r, p)
 	// This is an API-layer guard. Strict global quota enforcement under highly
 	// concurrent publishes would need a shared reservation/locking mechanism.
-	rejection, err := s.evaluateServerPublishPolicy(ctx, p, namespace, req.Name, current, time.Now().UTC())
+	rejection, err := s.evaluateServerPublishPolicy(ctx, p, namespace, req.Name, current, identity, time.Now().UTC())
 	if err != nil {
 		log.Printf("runtime servers: evaluate publish policy for %s/%s failed: %v", namespace, req.Name, err)
 		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "error", req.Name, namespace, req.Spec.Image, err.Error()))
@@ -268,6 +269,11 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 		writeAPIError(w, http.StatusInternalServerError, "failed to configure gateway analytics")
 		return
 	}
+	if err := enforcePublishedServerSizePolicy(&req.Spec, p.Role); err != nil {
+		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "denied", req.Name, namespace, req.Spec.Image, err.Error()))
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	labels := map[string]string{
 		"app.kubernetes.io/managed-by": "mcp-runtime",
@@ -281,6 +287,9 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	} else if userID := p.UserID(); userID != "" {
 		labels[platformUserIDLabel] = userID
 		labels[createdByLabel] = userID
+	}
+	if p.Role != roleAdmin {
+		applyPublishIdentityLabels(labels, current, identity)
 	}
 	if namespaceTeamID != "" {
 		labels[platformTeamIDLabel] = namespaceTeamID

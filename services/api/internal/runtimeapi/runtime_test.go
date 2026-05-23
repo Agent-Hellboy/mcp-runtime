@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1342,6 +1343,334 @@ func TestRuntimeServerApplyRejectsActiveServerLimit(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "retire an existing server") {
 		t.Fatalf("body = %q, want retire guidance", recorder.Body.String())
+	}
+}
+
+func TestRuntimeServerApplyRejectsActiveServerLimitByPublisherIP(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv(envActiveServerLimit, "1")
+	t.Setenv(envPushCooldown, "0s")
+	t.Setenv(envPublishRateLimitWindow, "0s")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	existing := ownedTestMCPServer("one", defaultPublicCatalogNamespace, "user-1")
+	existing.Labels[platformPublisherIPHashLabel] = publishSignalHash("ip", "198.51.100.25")
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme, existing),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "two",
+		"scope": "public",
+		"spec": {"image":"registry.example.com/mcp-servers-public/two"}
+	}`)))
+	request.RemoteAddr = "127.0.0.1:4321"
+	request.Header.Set("X-Forwarded-For", "198.51.100.25")
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-2",
+		Namespace: "mcp-team-acme",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "active_server_limit_reached") {
+		t.Fatalf("body = %q, want active server limit error", recorder.Body.String())
+	}
+}
+
+func TestRuntimeServerApplyIgnoresUnlabeledPublicCatalogServersForActiveLimit(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv(envActiveServerLimit, "1")
+	t.Setenv(envPushCooldown, "0s")
+	t.Setenv(envPublishRateLimitWindow, "0s")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	legacy := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "legacy",
+			Namespace: defaultPublicCatalogNamespace,
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image: "registry.example.com/mcp-servers-public/legacy",
+		},
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme, legacy),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "two",
+		"scope": "public",
+		"spec": {"image":"registry.example.com/mcp-servers-public/two"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-2",
+		Namespace: "mcp-team-acme",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s, want 200", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestRuntimeServerApplyLabelsPublisherSignals(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv(envActiveServerLimit, "0")
+	t.Setenv(envPushCooldown, "0s")
+	t.Setenv(envPublishRateLimitWindow, "0s")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"scope": "public",
+		"spec": {"image":"registry.example.com/mcp-servers-public/demo"}
+	}`)))
+	request.RemoteAddr = "127.0.0.1:4321"
+	request.Header.Set("X-Forwarded-For", "198.51.100.25")
+	request.Header.Set(clientFingerprintHeader, "device-1")
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "mcp-team-acme",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	current, err := server.controlPlane().GetServer(context.Background(), defaultPublicCatalogNamespace, "demo")
+	if err != nil {
+		t.Fatalf("GetServer: %v", err)
+	}
+	if got, want := current.Labels[platformPublisherIPHashLabel], publishSignalHash("ip", "198.51.100.25"); got != want {
+		t.Fatalf("publisher IP hash label = %q, want %q", got, want)
+	}
+	if got, want := current.Labels[platformPublisherFingerprintHashLabel], publishSignalHash("fingerprint", "device-1"); got != want {
+		t.Fatalf("publisher fingerprint hash label = %q, want %q", got, want)
+	}
+}
+
+func TestRuntimeServerApplyDefaultsPublicBetaSmallResources(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv(envActiveServerLimit, "0")
+	t.Setenv(envPushCooldown, "0s")
+	t.Setenv(envPublishRateLimitWindow, "0s")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"scope": "public",
+		"spec": {"image":"registry.example.com/mcp-servers-public/demo"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "mcp-team-acme",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	current, err := server.controlPlane().GetServer(context.Background(), defaultPublicCatalogNamespace, "demo")
+	if err != nil {
+		t.Fatalf("GetServer: %v", err)
+	}
+	if current.Spec.Replicas == nil || *current.Spec.Replicas != 1 {
+		t.Fatalf("replicas = %v, want 1", current.Spec.Replicas)
+	}
+	if current.Spec.Resources.Requests == nil || current.Spec.Resources.Limits == nil {
+		t.Fatalf("server resources = %#v, want defaulted requests and limits", current.Spec.Resources)
+	}
+	if got := current.Spec.Resources.Requests.CPU; got != "50m" {
+		t.Fatalf("server request cpu = %q, want 50m", got)
+	}
+	if got := current.Spec.Resources.Limits.CPU; got != "250m" {
+		t.Fatalf("server limit cpu = %q, want 250m", got)
+	}
+	if current.Spec.Gateway == nil || current.Spec.Gateway.Resources == nil {
+		t.Fatalf("gateway resources = %#v, want defaulted resources", current.Spec.Gateway)
+	}
+	if got := current.Spec.Gateway.Resources.Limits.CPU; got != "100m" {
+		t.Fatalf("gateway limit cpu = %q, want 100m", got)
+	}
+}
+
+func TestRuntimeServerApplyRejectsPublicBetaReplicaScaleOut(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv(envActiveServerLimit, "0")
+	t.Setenv(envPushCooldown, "0s")
+	t.Setenv(envPublishRateLimitWindow, "0s")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"scope": "public",
+		"spec": {"image":"registry.example.com/mcp-servers-public/demo", "replicas":2}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "mcp-team-acme",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body = %s, want 400", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "limited to 1 replica") {
+		t.Fatalf("body = %q, want replica limit error", recorder.Body.String())
+	}
+}
+
+func TestRuntimeServerApplyRejectsPublicBetaOversizedResources(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv(envActiveServerLimit, "0")
+	t.Setenv(envPushCooldown, "0s")
+	t.Setenv(envPublishRateLimitWindow, "0s")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"scope": "public",
+		"spec": {
+			"image":"registry.example.com/mcp-servers-public/demo",
+			"resources":{"limits":{"cpu":"500m","memory":"256Mi"}}
+		}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "mcp-team-acme",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body = %s, want 400", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "spec.resources.limits.cpu") {
+		t.Fatalf("body = %q, want CPU limit error", recorder.Body.String())
+	}
+}
+
+func TestRuntimeServerApplyRejectsPublishRateLimit(t *testing.T) {
+	t.Setenv(envActiveServerLimit, "0")
+	t.Setenv(envPushCooldown, "0s")
+	t.Setenv(envPublishRateLimitWindow, "1h")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	for i, name := range []string{"one", "two"} {
+		request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(fmt.Sprintf(`{
+			"name": %q,
+			"namespace": "user-1",
+			"spec": {"image":"registry.example.com/user-1/%s"}
+		}`, name, name))))
+		request = request.WithContext(withPrincipal(request.Context(), principal{
+			Role:      roleUser,
+			Subject:   "user-1",
+			Namespace: "user-1",
+			AllowedNamespaces: []string{
+				"user-1",
+			},
+		}))
+		recorder := httptest.NewRecorder()
+		server.HandleRuntimeServers(recorder, request)
+		if i == 0 && recorder.Code != http.StatusOK {
+			t.Fatalf("first publish status = %d body = %s", recorder.Code, recorder.Body.String())
+		}
+		if i == 1 {
+			if recorder.Code != http.StatusTooManyRequests {
+				t.Fatalf("second publish status = %d body = %s", recorder.Code, recorder.Body.String())
+			}
+			if recorder.Header().Get("retry-after") == "" {
+				t.Fatal("retry-after header missing")
+			}
+			if !strings.Contains(recorder.Body.String(), "publish_rate_limited") {
+				t.Fatalf("body = %q, want publish rate limit error", recorder.Body.String())
+			}
+		}
+	}
+}
+
+func TestServerPublishAttemptLimiterEnforcesMaxEntries(t *testing.T) {
+	limiter := newServerPublishAttemptLimiter()
+	now := time.Unix(1000, 0)
+	for i := 0; i < maxPublishAttemptLimiterEntries+5; i++ {
+		limiter.checkAndRecord([]string{fmt.Sprintf("key-%d", i)}, now, time.Hour)
+	}
+	if got := len(limiter.nextAllowed); got > maxPublishAttemptLimiterEntries {
+		t.Fatalf("entry count = %d, want at most %d", got, maxPublishAttemptLimiterEntries)
 	}
 }
 

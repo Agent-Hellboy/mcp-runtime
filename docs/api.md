@@ -352,11 +352,20 @@ requires public platform mode and resolves the active public catalog namespace;
 authorized team `namespace`.
 
 `POST /api/runtime/servers` is governed by the platform publish policy. Admins
-configure `PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `5`, set `0` to disable)
-and `PLATFORM_MCP_PUSH_COOLDOWN` (Go duration such as `30m`, default `0s` to
-disable). A quota or cooldown denial returns `429` with a clear error; cooldown
-responses include `next_allowed_at` and `Retry-After`. `GET /api/runtime/servers`
-includes `publish_policy` so UI clients can show the active limit and count.
+configure `PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `1`, set `0` to disable),
+`PLATFORM_MCP_PUSH_COOLDOWN` (Go duration such as `6h`, default `6h`), and
+`PLATFORM_MCP_PUBLISH_RATE_LIMIT_WINDOW` (default `6h`). The active-server
+limit is evaluated against the authenticated user and salted hashes of the
+trusted client IP / optional `X-MCP-Client-Fingerprint` abuse signals; set
+`PLATFORM_TRUSTED_PROXY_CIDRS` so forwarded IPs are accepted only from your
+ingress proxies, and keep `PLATFORM_MCP_PUBLISH_IDENTITY_SALT` in the Sentinel
+Secret. Non-admin publishes are restricted to one replica and small test
+resource settings: server container max `100m` CPU / `128Mi` memory requests
+and `250m` CPU / `256Mi` memory limits; gateway sidecar max `50m` CPU / `64Mi`
+memory requests and `100m` CPU / `128Mi` memory limits. A quota, cooldown, or
+publish-rate denial returns `429` with a clear error; cooldown/rate responses
+include `next_allowed_at` and `Retry-After`. `GET /api/runtime/servers` includes
+`publish_policy` so UI clients can show the active limit and count.
 Server list/get responses keep CRD `tools`, `prompts`, `resources`, and
 `tasks` as governance metadata and add `liveInventory` from the running MCP
 server when the API service's short-TTL gateway probe has completed. On a cold

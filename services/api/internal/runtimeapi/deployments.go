@@ -506,35 +506,58 @@ func (s *RuntimeServer) ensureNamespaceUserWorkloadRBAC(ctx context.Context, nam
 
 func ensureResourceQuota(ctx context.Context, client kubernetes.Interface, ns string) error {
 	quota := &corev1.ResourceQuota{ObjectMeta: metav1.ObjectMeta{Name: "platform-default-quota", Namespace: ns}, Spec: corev1.ResourceQuotaSpec{Hard: corev1.ResourceList{
-		corev1.ResourcePods:                   resource.MustParse("20"),
-		corev1.ResourceRequestsCPU:            resource.MustParse("4"),
-		corev1.ResourceRequestsMemory:         resource.MustParse("8Gi"),
-		corev1.ResourceLimitsCPU:              resource.MustParse("8"),
-		corev1.ResourceLimitsMemory:           resource.MustParse("16Gi"),
-		corev1.ResourcePersistentVolumeClaims: resource.MustParse("4"),
+		corev1.ResourcePods:                     resource.MustParse("20"),
+		corev1.ResourceRequestsCPU:              resource.MustParse("4"),
+		corev1.ResourceRequestsMemory:           resource.MustParse("8Gi"),
+		corev1.ResourceRequestsEphemeralStorage: resource.MustParse("20Gi"),
+		corev1.ResourceRequestsStorage:          resource.MustParse("20Gi"),
+		corev1.ResourceLimitsCPU:                resource.MustParse("8"),
+		corev1.ResourceLimitsMemory:             resource.MustParse("16Gi"),
+		corev1.ResourceLimitsEphemeralStorage:   resource.MustParse("40Gi"),
+		corev1.ResourcePersistentVolumeClaims:   resource.MustParse("4"),
 	}}}
-	if _, err := client.CoreV1().ResourceQuotas(ns).Create(ctx, quota, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	current, err := client.CoreV1().ResourceQuotas(ns).Get(ctx, quota.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = client.CoreV1().ResourceQuotas(ns).Create(ctx, quota, metav1.CreateOptions{})
 		return err
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	quota.ResourceVersion = current.ResourceVersion
+	quota.Labels = current.Labels
+	quota.Annotations = current.Annotations
+	_, err = client.CoreV1().ResourceQuotas(ns).Update(ctx, quota, metav1.UpdateOptions{})
+	return err
 }
 
 func ensureLimitRange(ctx context.Context, client kubernetes.Interface, ns string) error {
 	limit := &corev1.LimitRange{ObjectMeta: metav1.ObjectMeta{Name: "platform-default-limits", Namespace: ns}, Spec: corev1.LimitRangeSpec{Limits: []corev1.LimitRangeItem{{
 		Type: corev1.LimitTypeContainer,
 		DefaultRequest: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("100m"),
-			corev1.ResourceMemory: resource.MustParse("128Mi"),
+			corev1.ResourceCPU:              resource.MustParse("100m"),
+			corev1.ResourceMemory:           resource.MustParse("128Mi"),
+			corev1.ResourceEphemeralStorage: resource.MustParse("512Mi"),
 		},
 		Default: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("500m"),
-			corev1.ResourceMemory: resource.MustParse("512Mi"),
+			corev1.ResourceCPU:              resource.MustParse("500m"),
+			corev1.ResourceMemory:           resource.MustParse("512Mi"),
+			corev1.ResourceEphemeralStorage: resource.MustParse("2Gi"),
 		},
 	}}}}
-	if _, err := client.CoreV1().LimitRanges(ns).Create(ctx, limit, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	current, err := client.CoreV1().LimitRanges(ns).Get(ctx, limit.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = client.CoreV1().LimitRanges(ns).Create(ctx, limit, metav1.CreateOptions{})
 		return err
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	limit.ResourceVersion = current.ResourceVersion
+	limit.Labels = current.Labels
+	limit.Annotations = current.Annotations
+	_, err = client.CoreV1().LimitRanges(ns).Update(ctx, limit, metav1.UpdateOptions{})
+	return err
 }
 
 func ensureDefaultDenyNetworkPolicy(ctx context.Context, client kubernetes.Interface, ns string, ingressFromNamespaces ...string) error {
