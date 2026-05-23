@@ -9,7 +9,7 @@ Optional environment:
   MCP_PLATFORM_API_URL      default API base for login, e.g. https://platform.example.com
   MCP_PLATFORM_API_TOKEN    use this token for API calls; overrides a saved file
   MCP_PLATFORM_API_PROFILE  select a saved credentials profile
-  MCP_RUNTIME_CONFIG_DIR    override the config directory (mainly for tests)
+  MCP_RUNTIME_CONFIG_DIR    override the config directory (default ~/.mcpruntime)
 
 Usage:
   mcp-runtime auth [command]

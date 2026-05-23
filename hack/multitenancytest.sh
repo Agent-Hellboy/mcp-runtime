@@ -22,9 +22,12 @@ MCP_URL="${MCP_URL%/}"
 MCP_HOST="${MCP_URL#https://}"
 MCP_HOST="${MCP_HOST#http://}"
 MCP_HOST="${MCP_HOST%%/*}"
-KUBECONFIG="${KUBECONFIG:-/private/tmp/mcpruntime-k3s.yaml}"
-CREDS="${CREDS:-$HOME/Library/Application Support/mcp-runtime/credentials.json}"
-WORK_DIR="${WORK_DIR:-/private/tmp/mcp-runtime-multitenancy}"
+MCP_RUNTIME_CONFIG_DIR="${MCP_RUNTIME_CONFIG_DIR:-$HOME/.mcpruntime}"
+KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
+CREDS="${MCP_RUNTIME_CONFIG_DIR}/config.json"
+TMP_ROOT="${TMPDIR:-/tmp}"
+TMP_ROOT="${TMP_ROOT%/}"
+WORK_DIR="${WORK_DIR:-$TMP_ROOT/mcp-runtime-multitenancy}"
 TAG="${TAG:-v0.1.0}"
 ADAPTER_LISTEN="${ADAPTER_LISTEN:-127.0.0.1:8299}"
 
@@ -51,6 +54,7 @@ GLOBEX_SERVER="${GLOBEX_SERVER:-globex-tools}"
 AGENT_ID="${AGENT_ID:-cursor}"
 
 export KUBECONFIG
+export MCP_RUNTIME_CONFIG_DIR
 
 need() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -396,7 +400,7 @@ if [[ ! -x "$BIN" ]]; then
   exit 1
 fi
 
-mkdir -p "$WORK_DIR"
+mkdir -p "$MCP_RUNTIME_CONFIG_DIR" "$WORK_DIR"
 
 if [[ "${SKIP_SETUP:-0}" != "1" ]]; then
   setup_demo
