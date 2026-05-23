@@ -2,6 +2,10 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: mcp-runtime
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -19,6 +23,7 @@ spec:
         control-plane: controller-manager
     spec:
       serviceAccountName: mcp-runtime-operator-controller-manager
+      automountServiceAccountToken: true
       securityContext:
         runAsNonRoot: true
         seccompProfile:

@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - traefik.yaml
   - dynamic-config.yaml
+  - networkpolicy.yaml
