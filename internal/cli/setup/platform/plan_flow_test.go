@@ -709,6 +709,10 @@ func TestSetupPlatformWithDeps_ExternalRegistry(t *testing.T) {
 			rec.add("configure-env")
 			return nil
 		},
+		EnsureImagePullSecret: func(string, string, string, string, string) error {
+			rec.add("pull-secret")
+			return nil
+		},
 		RestartDeployment:    func(string, string) error { rec.add("restart"); return nil },
 		CheckCRDInstalled:    func(string) error { rec.add("check-crd"); return nil },
 		GetDeploymentTimeout: func() time.Duration { return time.Second },
@@ -881,6 +885,10 @@ func TestSetupPlatformWithDeps_ExternalRegistryTLS(t *testing.T) {
 		DeployOperatorManifests: func(*zap.Logger, string, string, []string, string) error { rec.add("deploy-operator"); return nil },
 		ConfigureProvisionedRegistryEnv: func(*config.ExternalRegistryConfig, string) error {
 			rec.add("configure-env")
+			return nil
+		},
+		EnsureImagePullSecret: func(string, string, string, string, string) error {
+			rec.add("pull-secret")
 			return nil
 		},
 		RestartDeployment:    func(string, string) error { rec.add("restart"); return nil },
