@@ -2,6 +2,7 @@ package platform
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"mcp-runtime/internal/cli/registry/config"
 	"mcp-runtime/internal/cli/registry/ref"
 	setupplan "mcp-runtime/internal/cli/setup/plan"
+	"mcp-runtime/pkg/k8sclient"
 )
 
 func ValidateRegistryMode(mode string) error {
@@ -125,13 +127,22 @@ func shouldStageRegistryIngressAuth(usingExternalRegistry bool) bool {
 }
 
 func disableRegistryIngressAuth() error {
-	return disableRegistryIngressAuthWithKubectl(core.DefaultKubectlClient())
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	return k8sclient.RemoveIngressAnnotation(context.Background(), clients, core.NamespaceRegistry, core.RegistryServiceName, "traefik.ingress.kubernetes.io/router.middlewares")
 }
 
 func enableRegistryIngressAuth() error {
-	return enableRegistryIngressAuthWithKubectl(core.DefaultKubectlClient())
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	return k8sclient.SetIngressAnnotation(context.Background(), clients, core.NamespaceRegistry, core.RegistryServiceName, "traefik.ingress.kubernetes.io/router.middlewares", registryAdminAuthMiddleware)
 }
 
+//lint:ignore U1000 retained as the legacy kubectl implementation for focused tests and fallback patches.
 func disableRegistryIngressAuthWithKubectl(kubectl core.KubectlRunner) error {
 	// Capture kubectl output so the success path stays quiet (the annotation
 	// may already be absent, which kubectl reports loudly) but surface the
@@ -157,6 +168,7 @@ func disableRegistryIngressAuthWithKubectl(kubectl core.KubectlRunner) error {
 	return err
 }
 
+//lint:ignore U1000 retained as the legacy kubectl implementation for focused tests and fallback patches.
 func enableRegistryIngressAuthWithKubectl(kubectl core.KubectlRunner) error {
 	var stdout, stderr bytes.Buffer
 	err := kubectl.RunWithOutput([]string{
@@ -172,7 +184,49 @@ func enableRegistryIngressAuthWithKubectl(kubectl core.KubectlRunner) error {
 }
 
 func configureProvisionedRegistryEnv(ext *config.ExternalRegistryConfig, secretName string) error {
-	return configureProvisionedRegistryEnvWithKubectl(core.DefaultKubectlClient(), ext, secretName)
+	return configureProvisionedRegistryEnvWithClientGo(ext, secretName)
+}
+
+func configureProvisionedRegistryEnvWithClientGo(ext *config.ExternalRegistryConfig, secretName string) error {
+	if ext == nil || ext.URL == "" {
+		return nil
+	}
+	hasCreds := ext.Username != "" || ext.Password != ""
+	if hasCreds && secretName == "" {
+		secretName = defaultRegistrySecretName
+	}
+	literals := map[string]string{"PROVISIONED_REGISTRY_URL": ext.URL}
+	secretKeys := []string(nil)
+	if hasCreds {
+		if err := ensureProvisionedRegistrySecretWithClientGo(secretName, ext.Username, ext.Password); err != nil {
+			return err
+		}
+		platformMode := os.Getenv("MCP_PLATFORM_MODE")
+		catalogNamespace := setupplan.CatalogNamespaceForPlatformMode(platformMode)
+		if catalogNamespace != "" {
+			if err := ensureNamespaceWithLabels(catalogNamespace, catalogNamespaceLabels(platformMode)); err != nil {
+				return err
+			}
+			if err := ensureImagePullSecretWithClientGo(catalogNamespace, secretName, ext.URL, ext.Username, ext.Password); err != nil {
+				return err
+			}
+		}
+		literals["PROVISIONED_REGISTRY_SECRET_NAME"] = secretName
+		secretKeys = []string{"PROVISIONED_REGISTRY_USERNAME", "PROVISIONED_REGISTRY_PASSWORD"}
+	}
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	return k8sclient.SetDeploymentEnv(
+		context.Background(),
+		clients,
+		core.NamespaceMCPRuntime,
+		core.OperatorDeploymentName,
+		literals,
+		secretName,
+		secretKeys,
+	)
 }
 
 func configureProvisionedRegistryEnvWithKubectl(kubectl core.KubectlRunner, ext *config.ExternalRegistryConfig, secretName string) error {
@@ -277,6 +331,34 @@ func ensureProvisionedRegistrySecretWithKubectl(kubectl core.KubectlRunner, name
 	return nil
 }
 
+func ensureProvisionedRegistrySecretWithClientGo(name, username, password string) error {
+	data := map[string]string{}
+	if username != "" {
+		data["PROVISIONED_REGISTRY_USERNAME"] = username
+	}
+	if password != "" {
+		data["PROVISIONED_REGISTRY_PASSWORD"] = password
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	if err := k8sclient.UpsertOpaqueSecretStringData(context.Background(), clients, core.NamespaceMCPRuntime, name, data); err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrApplySecretManifestFailed,
+			err,
+			fmt.Sprintf("apply secret manifest: %v", err),
+			map[string]any{"secret_name": name, "namespace": core.NamespaceMCPRuntime, "component": "setup"},
+		)
+		core.Error("Failed to apply secret manifest")
+		return wrappedErr
+	}
+	return nil
+}
+
 func ensureImagePullSecretWithKubectl(kubectl core.KubectlRunner, namespace, name, registry, username, password string) error {
 	if username == "" && password == "" {
 		return nil
@@ -335,6 +417,27 @@ data:
 		return wrappedErr
 	}
 
+	return nil
+}
+
+func ensureImagePullSecretWithClientGo(namespace, name, registry, username, password string) error {
+	if username == "" && password == "" {
+		return nil
+	}
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	if err := k8sclient.UpsertDockerConfigSecret(context.Background(), clients, namespace, name, registry, username, password); err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrApplyImagePullSecretFailed,
+			err,
+			fmt.Sprintf("apply imagePullSecret: %v", err),
+			map[string]any{"secret_name": name, "namespace": namespace, "registry": registry, "component": "setup"},
+		)
+		core.Error("Failed to apply image pull secret")
+		return wrappedErr
+	}
 	return nil
 }
 

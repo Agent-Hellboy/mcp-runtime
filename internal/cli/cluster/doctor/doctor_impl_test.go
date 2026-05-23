@@ -566,7 +566,13 @@ func TestCheckRegistryReachableFromCluster(t *testing.T) {
 	t.Run("ok on HTTP 200", func(t *testing.T) {
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
-				return &core.MockCommand{OutputData: []byte("HTTP/1.1 200 OK\nDocker-Distribution-Api-Version: registry/2.0\n")}
+				switch {
+				case len(spec.Args) > 0 && spec.Args[0] == "get" && contains(spec.Args, "pod"):
+					return &core.MockCommand{OutputData: []byte("Succeeded")}
+				case len(spec.Args) > 0 && spec.Args[0] == "logs":
+					return &core.MockCommand{OutputData: []byte("HTTP/1.1 200 OK\nDocker-Distribution-Api-Version: registry/2.0\n")}
+				}
+				return &core.MockCommand{}
 			},
 		}
 		kubectl := core.NewTestKubectlClient(mock)
@@ -576,10 +582,51 @@ func TestCheckRegistryReachableFromCluster(t *testing.T) {
 		}
 	})
 
+	t.Run("reads completed pod logs instead of attach output", func(t *testing.T) {
+		var runArgs []string
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case len(spec.Args) > 0 && spec.Args[0] == "run":
+					runArgs = append([]string(nil), spec.Args...)
+					return &core.MockCommand{}
+				case len(spec.Args) > 0 && spec.Args[0] == "get" && contains(spec.Args, "pod"):
+					return &core.MockCommand{OutputData: []byte("Succeeded")}
+				case len(spec.Args) > 0 && spec.Args[0] == "logs":
+					return &core.MockCommand{OutputData: []byte("HTTP/1.1 200 OK\n")}
+				}
+				return &core.MockCommand{OutputData: []byte("HTTP/1.1 200 OK\nDocker-Distribution-Api-Version: registry/2.0\n")}
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		check := checkRegistryReachableFromCluster(kubectl)
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q", check.Detail)
+		}
+		for _, notWant := range []string{"--attach", "--rm"} {
+			if contains(runArgs, notWant) {
+				t.Fatalf("registry reachability probe should read completed pod logs instead of using %s, got args=%v", notWant, runArgs)
+			}
+		}
+		overrides := argValueWithPrefix(runArgs, "--overrides=")
+		if overrides == "" {
+			t.Fatalf("registry reachability probe should use restricted-compliant overrides, got args=%v", runArgs)
+		}
+		if !strings.Contains(overrides, "registry.registry.svc.cluster.local:5000/v2/") {
+			t.Fatalf("registry reachability override missing registry URL: %s", overrides)
+		}
+	})
+
 	t.Run("fails on non-200", func(t *testing.T) {
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
-				return &core.MockCommand{OutputData: []byte("HTTP/1.1 503 Service Unavailable\n")}
+				switch {
+				case len(spec.Args) > 0 && spec.Args[0] == "get" && contains(spec.Args, "pod"):
+					return &core.MockCommand{OutputData: []byte("Succeeded")}
+				case len(spec.Args) > 0 && spec.Args[0] == "logs":
+					return &core.MockCommand{OutputData: []byte("HTTP/1.1 503 Service Unavailable\n")}
+				}
+				return &core.MockCommand{}
 			},
 		}
 		kubectl := core.NewTestKubectlClient(mock)
@@ -592,7 +639,13 @@ func TestCheckRegistryReachableFromCluster(t *testing.T) {
 	t.Run("does not false-pass when body includes non-status 200", func(t *testing.T) {
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
-				return &core.MockCommand{OutputData: []byte("diagnostic: 200 retries\nHTTP/1.1 503 Service Unavailable\n")}
+				switch {
+				case len(spec.Args) > 0 && spec.Args[0] == "get" && contains(spec.Args, "pod"):
+					return &core.MockCommand{OutputData: []byte("Succeeded")}
+				case len(spec.Args) > 0 && spec.Args[0] == "logs":
+					return &core.MockCommand{OutputData: []byte("diagnostic: 200 retries\nHTTP/1.1 503 Service Unavailable\n")}
+				}
+				return &core.MockCommand{}
 			},
 		}
 		kubectl := core.NewTestKubectlClient(mock)
@@ -1053,6 +1106,10 @@ func TestRunDoctorAggregates(t *testing.T) {
 				return &core.MockCommand{OutputData: []byte("docker-pullable://registry.k8s.io/pause@sha256:test")}
 			case contains(spec.Args, "get") && contains(spec.Args, "pods") && argContains(spec.Args, "spec.nodeName"):
 				return &core.MockCommand{OutputData: []byte("node-a")}
+			case len(spec.Args) > 0 && spec.Args[0] == "get" && contains(spec.Args, "jsonpath={.status.phase}"):
+				return &core.MockCommand{OutputData: []byte("Succeeded")}
+			case len(spec.Args) > 0 && spec.Args[0] == "logs":
+				return &core.MockCommand{OutputData: []byte("HTTP/1.1 503 Service Unavailable\n")}
 			case contains(spec.Args, "curl"):
 				return &core.MockCommand{OutputData: []byte("HTTP/1.1 503 Service Unavailable\n")}
 			}
@@ -1094,6 +1151,10 @@ func TestRunDoctorWithProgressReportsEachCheck(t *testing.T) {
 				return &core.MockCommand{OutputData: []byte("docker-pullable://registry.k8s.io/pause@sha256:test")}
 			case contains(spec.Args, "get") && contains(spec.Args, "pods") && argContains(spec.Args, "spec.nodeName"):
 				return &core.MockCommand{OutputData: []byte("node-a")}
+			case len(spec.Args) > 0 && spec.Args[0] == "get" && contains(spec.Args, "jsonpath={.status.phase}"):
+				return &core.MockCommand{OutputData: []byte("Succeeded")}
+			case len(spec.Args) > 0 && spec.Args[0] == "logs":
+				return &core.MockCommand{OutputData: []byte("HTTP/1.1 503 Service Unavailable\n")}
 			case contains(spec.Args, "curl"):
 				return &core.MockCommand{OutputData: []byte("HTTP/1.1 503 Service Unavailable\n")}
 			}
@@ -2078,6 +2139,10 @@ func TestRegistryReachabilityUsesHTTPSForInternalTLSRegistry(t *testing.T) {
 				return &core.MockCommand{OutputData: []byte("registry-internal-tls")}
 			case len(spec.Args) > 0 && spec.Args[0] == "run":
 				runArgs = append([]string(nil), spec.Args...)
+				return &core.MockCommand{}
+			case len(spec.Args) > 0 && spec.Args[0] == "get" && contains(spec.Args, "pod"):
+				return &core.MockCommand{OutputData: []byte("Succeeded")}
+			case len(spec.Args) > 0 && spec.Args[0] == "logs":
 				return &core.MockCommand{OutputData: []byte("HTTP/2 200\r\n")}
 			}
 			return &core.MockCommand{OutputErr: fmt.Errorf("unexpected command: %v", spec.Args)}
@@ -2089,10 +2154,10 @@ func TestRegistryReachabilityUsesHTTPSForInternalTLSRegistry(t *testing.T) {
 	if !check.OK {
 		t.Fatalf("expected registry probe to pass, got detail=%q", check.Detail)
 	}
-	if !contains(runArgs, "https://registry.registry.svc.cluster.local:5000/v2/") {
+	if !argContains(runArgs, "https://registry.registry.svc.cluster.local:5000/v2/") {
 		t.Fatalf("registry probe should use HTTPS when registry-internal-tls exists, got args=%v", runArgs)
 	}
-	if !contains(runArgs, "-skI") {
+	if !argContains(runArgs, "-skI") {
 		t.Fatalf("registry probe should allow the internal CA probe with -k, got args=%v", runArgs)
 	}
 }

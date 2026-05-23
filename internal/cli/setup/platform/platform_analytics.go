@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -21,10 +22,159 @@ import (
 	"mcp-runtime/internal/cli/setup/assetpath"
 	"mcp-runtime/internal/cli/setup/ingressmanifest"
 	setupplan "mcp-runtime/internal/cli/setup/plan"
+	"mcp-runtime/pkg/k8sclient"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error {
-	return deployAnalyticsManifestsWithKubectl(core.DefaultKubectlClient(), logger, images, storageMode, platformMode)
+	return deployAnalyticsManifestsClientGo(logger, images, storageMode, platformMode)
+}
+
+func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error {
+	rolloutTimeoutDuration := analyticsRolloutTimeoutDuration()
+	rolloutTimeout := rolloutTimeoutDuration.String()
+
+	if err := ensureRepoManagedTraefikMiddlewareResourcesClientGo(logger); err != nil {
+		return err
+	}
+
+	core.Info("Applying mcp-sentinel namespace and config")
+	manifests := []string{
+		"k8s/00-namespace.yaml",
+		"k8s/01-config.yaml",
+	}
+	for _, manifest := range manifests {
+		if err := applyRenderedManifestClientGo(manifest, images, "", platformMode); err != nil {
+			return err
+		}
+	}
+	if err := applyCatalogNamespaceForMode(platformMode); err != nil {
+		return err
+	}
+
+	core.Info("Applying mcp-sentinel managed secrets")
+	secretManifest, err := renderAnalyticsSecretManifestClientGo()
+	if err != nil {
+		return err
+	}
+	if err := applyManifestYAML(secretManifest, "", os.Stdout); err != nil {
+		return err
+	}
+
+	imagePullSecretName, err := ensureAnalyticsImagePullSecretClientGo()
+	if err != nil {
+		return err
+	}
+
+	clickhouseManifest := "k8s/03-clickhouse.yaml"
+	kafkaManifest := "k8s/05-kafka.yaml"
+	postgresManifest := "k8s/20-postgres.yaml"
+	if storageMode == setupplan.StorageModeHostpath {
+		clickhouseManifest = "k8s/03-clickhouse-hostpath.yaml"
+		kafkaManifest = "k8s/05-kafka-hostpath.yaml"
+		postgresManifest = "k8s/20-postgres-hostpath.yaml"
+	}
+
+	core.Info("Applying analytics storage and messaging components")
+	for _, manifest := range []string{
+		clickhouseManifest,
+		kafkaManifest,
+	} {
+		if err := applyRenderedManifestClientGo(manifest, images, imagePullSecretName, platformMode); err != nil {
+			return err
+		}
+	}
+
+	if err := waitForRolloutStatusWithClientGo("statefulset", "clickhouse", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
+		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, "statefulset", "clickhouse", core.DefaultAnalyticsNamespace, "storage (clickhouse)")
+	}
+	if err := waitForRolloutStatusWithClientGo("deployment", "zookeeper", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
+		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, "deployment", "zookeeper", core.DefaultAnalyticsNamespace, "messaging (zookeeper)")
+	}
+	if err := waitForRolloutStatusWithClientGo("statefulset", "kafka", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
+		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, "statefulset", "kafka", core.DefaultAnalyticsNamespace, "messaging (kafka)")
+	}
+
+	core.Info("Initializing ClickHouse schema")
+	if err := deleteJobIfExistsClientGo("clickhouse-init", core.DefaultAnalyticsNamespace); err != nil {
+		return core.WrapWithSentinel(core.ErrSetupDeleteClickHouseInitJobFailed, err, fmt.Sprintf("delete existing clickhouse init job: %v", err))
+	}
+	if err := applyRenderedManifestClientGo("k8s/04-clickhouse-init.yaml", images, imagePullSecretName, platformMode); err != nil {
+		return err
+	}
+	if err := waitForJobCompletionClientGo("clickhouse-init", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
+		return mcpSentinelDependencyJobFailed(core.DefaultKubectlClient(), err, "clickhouse-init", core.DefaultAnalyticsNamespace, "clickhouse init schema")
+	}
+
+	core.Info("Applying analytics services")
+	for _, manifest := range []string{
+		postgresManifest,
+		"k8s/06-ingest.yaml",
+		"k8s/07-processor.yaml",
+		"k8s/08-api.yaml",
+		"k8s/08-api-rbac.yaml",
+		"k8s/09-ui.yaml",
+		"k8s/10-gateway.yaml",
+		"k8s/11-prometheus.yaml",
+		"k8s/15-otel-collector.yaml",
+		"k8s/16-tempo.yaml",
+		"k8s/17-loki.yaml",
+		"k8s/18-promtail.yaml",
+		"k8s/19-grafana-datasources.yaml",
+		"k8s/12-grafana.yaml",
+	} {
+		if err := applyRenderedManifestClientGo(manifest, images, imagePullSecretName, platformMode); err != nil {
+			return err
+		}
+	}
+
+	if err := applyPlatformIngressIfConfigured(); err != nil {
+		return err
+	}
+
+	core.Info(fmt.Sprintf("Waiting for mcp-sentinel workload rollouts (per-resource timeout %s; override with MCP_DEPLOYMENT_TIMEOUT)", rolloutTimeout))
+	targets := []struct{ kind, name string }{
+		{kind: "statefulset", name: "mcp-sentinel-postgres"},
+		{kind: "deployment", name: "mcp-sentinel-ingest"},
+		{kind: "deployment", name: "mcp-sentinel-processor"},
+		{kind: "deployment", name: "mcp-sentinel-api"},
+		{kind: "deployment", name: "mcp-sentinel-ui"},
+		{kind: "deployment", name: "mcp-sentinel-gateway"},
+		{kind: "deployment", name: "prometheus"},
+		{kind: "deployment", name: "grafana"},
+		{kind: "deployment", name: "otel-collector"},
+		{kind: "statefulset", name: "tempo"},
+		{kind: "statefulset", name: "loki"},
+	}
+	var rolloutFailures []string
+	var failedForDebug []analyticsFailedRollout
+	for _, target := range targets {
+		rolloutLog, err := runRolloutWithOptionalDebugCaptureClientGo(target.kind, target.name, core.DefaultAnalyticsNamespace, rolloutTimeoutDuration)
+		if err != nil {
+			rolloutFailures = append(rolloutFailures, fmt.Sprintf("%s/%s: %v", target.kind, target.name, err))
+			failedForDebug = append(failedForDebug, analyticsFailedRollout{
+				kind: target.kind, name: target.name, rolloutLog: rolloutLog,
+			})
+		}
+	}
+	if len(rolloutFailures) == 0 {
+		core.Success("mcp-sentinel manifests deployed successfully")
+		return nil
+	}
+
+	printAnalyticsRolloutDiagnostics(core.DefaultKubectlClient())
+	summary := strings.Join(rolloutFailures, "; ")
+	cause := core.NewWithSentinel(core.ErrSetupAnalyticsRolloutFailed, summary)
+	msg := fmt.Sprintf("analytics components failed to roll out: %s", summary)
+	ctx := map[string]any{"component": "mcp-sentinel", "rollout_failures": summary}
+	if core.IsDebugMode() {
+		if diag := buildAnalyticsRolloutDebugDetail(core.DefaultKubectlClient(), failedForDebug); diag != "" {
+			ctx["diagnostics"] = trimDiagnosticsString(diag)
+		}
+	}
+	return core.WrapWithSentinelAndContext(core.ErrOperatorDeploymentFailed, cause, msg, ctx)
 }
 
 func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error {
@@ -44,7 +194,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 			return err
 		}
 	}
-	if err := applyCatalogNamespaceForMode(kubectl, platformMode); err != nil {
+	if err := applyCatalogNamespaceForMode(platformMode); err != nil {
 		return err
 	}
 
@@ -53,7 +203,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	if err != nil {
 		return err
 	}
-	if err := kube.ApplyManifestContent(kubectl.CommandArgs, secretManifest); err != nil {
+	if err := applyManifestYAML(secretManifest, "", os.Stdout); err != nil {
 		return err
 	}
 
@@ -124,7 +274,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		}
 	}
 
-	if err := applyPlatformIngressIfConfigured(kubectl); err != nil {
+	if err := applyPlatformIngressIfConfigured(); err != nil {
 		return err
 	}
 
@@ -171,13 +321,13 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	return core.WrapWithSentinelAndContext(core.ErrOperatorDeploymentFailed, cause, msg, ctx)
 }
 
-func applyCatalogNamespaceForMode(kubectl core.KubectlRunner, platformMode string) error {
+func applyCatalogNamespaceForMode(platformMode string) error {
 	namespace := setupplan.CatalogNamespaceForPlatformMode(platformMode)
 	if strings.TrimSpace(namespace) == "" {
 		return nil
 	}
 	core.Info(fmt.Sprintf("Applying platform catalog namespace %s", namespace))
-	return kube.EnsureNamespaceWithLabels(kubectl.CommandArgs, namespace, catalogNamespaceLabels(platformMode))
+	return ensureNamespaceWithLabels(namespace, catalogNamespaceLabels(platformMode))
 }
 
 func trimDiagnosticsString(s string) string {
@@ -242,30 +392,57 @@ func applyRenderedManifest(kubectl core.KubectlRunner, manifestPath string, imag
 	if err != nil {
 		return core.WrapWithSentinel(core.ErrSetupRenderManifestFailed, err, fmt.Sprintf("render manifest %s: %v", manifestPath, err))
 	}
-	return kube.ApplyManifestContent(kubectl.CommandArgs, rendered)
+	return applyManifestYAML(rendered, "", os.Stdout)
 }
 
-func applyPlatformIngressIfConfigured(kubectl core.KubectlRunner) error {
+func applyRenderedManifestClientGo(manifestPath string, images AnalyticsImageSet, imagePullSecretName, platformMode string) error {
+	resolvedManifestPath, err := assetpath.ResolveRepoAssetPath(manifestPath)
+	if err != nil {
+		return core.WrapWithSentinel(core.ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to resolve manifest %s: %v", manifestPath, err))
+	}
+
+	content, err := kube.ReadFileAtPath(resolvedManifestPath)
+	if err != nil {
+		return core.WrapWithSentinel(core.ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to read manifest %s: %v", resolvedManifestPath, err))
+	}
+	rendered := ""
+	if manifestPath == "k8s/01-config.yaml" {
+		rendered, err = renderAnalyticsConfigManifestClientGo(string(content), platformMode, images)
+	} else {
+		rendered, err = renderAnalyticsManifest(string(content), images, imagePullSecretName, platformMode)
+	}
+	if err != nil {
+		return core.WrapWithSentinel(core.ErrSetupRenderManifestFailed, err, fmt.Sprintf("render manifest %s: %v", manifestPath, err))
+	}
+	return applyManifestYAML(rendered, "", os.Stdout)
+}
+
+func applyPlatformIngressIfConfigured() error {
 	host := strings.TrimSpace(core.GetPlatformIngressHost())
 	if host == "" {
 		return nil
 	}
 	manifest := ingressmanifest.RenderPlatformUIIngress(host, core.GetRegistryClusterIssuerName(), core.DefaultAnalyticsNamespace)
 	core.Info(fmt.Sprintf("Applying platform UI ingress for %s", host))
-	if err := kube.ApplyManifestContent(kubectl.CommandArgs, manifest); err != nil {
+	if err := applyManifestYAML(manifest, "", os.Stdout); err != nil {
 		return core.WrapWithSentinel(core.ErrSetupApplyPlatformUIIngressFailed, err, fmt.Sprintf("apply platform UI ingress: %v", err))
 	}
-	if err := removePathBasedSentinelIngresses(kubectl); err != nil {
+	if err := removePathBasedSentinelIngresses(); err != nil {
 		return err
 	}
 	return nil
 }
 
-func removePathBasedSentinelIngresses(kubectl core.KubectlRunner) error {
-	args := append([]string{"delete", "ingress"}, pathBasedSentinelIngressNames...)
-	args = append(args, "-n", core.DefaultAnalyticsNamespace, "--ignore-not-found=true")
-	if err := kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
-		return core.WrapWithSentinel(core.ErrSetupRemovePathBasedSentinelIngressesFailed, err, fmt.Sprintf("remove path-based sentinel ingresses for public platform host: %v", err))
+func removePathBasedSentinelIngresses() error {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	for _, name := range pathBasedSentinelIngressNames {
+		err := clients.Clientset.NetworkingV1().Ingresses(core.DefaultAnalyticsNamespace).Delete(context.Background(), name, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return core.WrapWithSentinel(core.ErrSetupRemovePathBasedSentinelIngressesFailed, err, fmt.Sprintf("remove path-based sentinel ingress %s/%s for public platform host: %v", core.DefaultAnalyticsNamespace, name, err))
+		}
 	}
 	return nil
 }
@@ -332,7 +509,34 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 	return rendered, nil
 }
 
+type analyticsConfigMapReader func(namespace, name string) (map[string]string, error)
+type analyticsTraefikNamespaceResolver func() string
+
 func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platformMode string, images AnalyticsImageSet) (string, error) {
+	return renderAnalyticsConfigManifestWithReaders(
+		content,
+		platformMode,
+		images,
+		func(namespace, name string) (map[string]string, error) {
+			return existingConfigMapData(kubectl, namespace, name)
+		},
+		func() string {
+			return activeTraefikNamespaceForPlatform(kubectl)
+		},
+	)
+}
+
+func renderAnalyticsConfigManifestClientGo(content, platformMode string, images AnalyticsImageSet) (string, error) {
+	return renderAnalyticsConfigManifestWithReaders(
+		content,
+		platformMode,
+		images,
+		existingConfigMapDataClientGo,
+		activeTraefikNamespaceForPlatformClientGo,
+	)
+}
+
+func renderAnalyticsConfigManifestWithReaders(content, platformMode string, images AnalyticsImageSet, readConfigMap analyticsConfigMapReader, resolveTraefikNamespace analyticsTraefikNamespaceResolver) (string, error) {
 	type configMapManifest struct {
 		APIVersion string            `yaml:"apiVersion"`
 		Kind       string            `yaml:"kind"`
@@ -348,7 +552,7 @@ func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platform
 		manifest.Data = map[string]string{}
 	}
 
-	existingData, err := existingConfigMapData(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-config")
+	existingData, err := readConfigMap(core.DefaultAnalyticsNamespace, "mcp-sentinel-config")
 	if err != nil {
 		return "", err
 	}
@@ -384,7 +588,7 @@ func renderAnalyticsConfigManifest(kubectl core.KubectlRunner, content, platform
 		manifest.Data["PLATFORM_REGISTRY_URL"] = registryHost
 	}
 	if strings.TrimSpace(manifest.Data["PLATFORM_TRAEFIK_NAMESPACE"]) == "" {
-		if namespace := activeTraefikNamespaceForPlatform(kubectl); namespace != "" {
+		if namespace := resolveTraefikNamespace(); namespace != "" {
 			manifest.Data["PLATFORM_TRAEFIK_NAMESPACE"] = namespace
 		}
 	}
@@ -468,42 +672,66 @@ func existingConfigMapData(kubectl core.KubectlRunner, namespace, name string) (
 	return payload.Data, nil
 }
 
+func existingConfigMapDataClientGo(namespace, name string) (map[string]string, error) {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return nil, err
+	}
+	data, err := k8sclient.ConfigMapData(context.Background(), clients, namespace, name)
+	if err != nil {
+		return nil, core.WrapWithSentinel(core.ErrSetupReadConfigMapFailed, err, fmt.Sprintf("read configmap %s/%s: %v", namespace, name, err))
+	}
+	return data, nil
+}
+
 func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
-	apiKeys, err := existingSecretDataValueOrRandom(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "API_KEYS", 16)
+	return renderAnalyticsSecretManifestWithReader(func(namespace, name, key string) (string, error) {
+		return existingSecretDataValue(kubectl, namespace, name, key)
+	})
+}
+
+func renderAnalyticsSecretManifestClientGo() (string, error) {
+	return renderAnalyticsSecretManifestWithReader(existingSecretDataValueClientGo)
+}
+
+type analyticsSecretValueReader func(namespace, name, key string) (string, error)
+
+func renderAnalyticsSecretManifestWithReader(readSecret analyticsSecretValueReader) (string, error) {
+	apiKeys, err := existingSecretDataValueOrRandomWithReader(readSecret, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "API_KEYS", 16)
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	ingestAPIKeys, err := existingSecretDataValueOrRandom(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "INGEST_API_KEYS", 16)
+	ingestAPIKeys, err := existingSecretDataValueOrRandomWithReader(readSecret, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "INGEST_API_KEYS", 16)
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	uiAPIKey, err := existingSecretDataValueOrRandom(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "UI_API_KEY", 16)
+	uiAPIKey, err := existingSecretDataValueOrRandomWithReader(readSecret, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "UI_API_KEY", 16)
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
 	apiKeys = ensureCSVIncludes(apiKeys, uiAPIKey)
-	adminAPIKeys, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "ADMIN_API_KEYS")
+	adminAPIKeys, err := readSecret(core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "ADMIN_API_KEYS")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
 	adminAPIKeys = ensureCSVIncludes(adminAPIKeys, uiAPIKey)
-	grafanaPassword, err := existingSecretDataValueOrRandom(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "GRAFANA_ADMIN_PASSWORD", 16)
+	grafanaPassword, err := existingSecretDataValueOrRandomWithReader(readSecret, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "GRAFANA_ADMIN_PASSWORD", 16)
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	postgresUser, err := existingSecretDataValueOrDefault(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "POSTGRES_USER", "mcp_runtime")
+	postgresUser, err := existingSecretDataValueOrDefaultWithReader(readSecret, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "POSTGRES_USER", "mcp_runtime")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	postgresPassword, err := existingSecretDataValueOrRandom(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "POSTGRES_PASSWORD", 16)
+	postgresPassword, err := existingSecretDataValueOrRandomWithReader(readSecret, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "POSTGRES_PASSWORD", 16)
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	postgresDB, err := existingSecretDataValueOrDefault(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "POSTGRES_DB", "mcp_runtime")
+	postgresDB, err := existingSecretDataValueOrDefaultWithReader(readSecret, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "POSTGRES_DB", "mcp_runtime")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	postgresDSN, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "POSTGRES_DSN")
+	postgresDSN, err := readSecret(core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "POSTGRES_DSN")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
@@ -515,19 +743,19 @@ func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
 			postgresDB,
 		)
 	}
-	platformJWTSecret, err := existingSecretDataValueOrRandom(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_JWT_SECRET", 32)
+	platformJWTSecret, err := existingSecretDataValueOrRandomWithReader(readSecret, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_JWT_SECRET", 32)
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	platformAdminEmail, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_ADMIN_EMAIL")
+	platformAdminEmail, err := readSecret(core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_ADMIN_EMAIL")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	platformAdminPassword, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_ADMIN_PASSWORD")
+	platformAdminPassword, err := readSecret(core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_ADMIN_PASSWORD")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	adminUsers, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "ADMIN_USERS")
+	adminUsers, err := readSecret(core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "ADMIN_USERS")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
@@ -552,19 +780,19 @@ func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
 	}
 	adminUsers = ensureCSVIncludesValues(adminUsers, adminUserCandidates...)
 	platformDevLoginEnabled := ""
-	platformDevUserEmail, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_USER_EMAIL")
+	platformDevUserEmail, err := readSecret(core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_USER_EMAIL")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	platformDevUserPassword, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_USER_PASSWORD")
+	platformDevUserPassword, err := readSecret(core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_USER_PASSWORD")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	platformDevAdminEmail, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_ADMIN_EMAIL")
+	platformDevAdminEmail, err := readSecret(core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_ADMIN_EMAIL")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
-	platformDevAdminPassword, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_ADMIN_PASSWORD")
+	platformDevAdminPassword, err := readSecret(core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_DEV_ADMIN_PASSWORD")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
@@ -695,6 +923,27 @@ func platformImagePullSecretOverride() string {
 	return setupSecretEnvValue("MCP_PLATFORM_IMAGE_PULL_SECRET", "MCP_REGISTRY_PULL_SECRET_NAME")
 }
 
+func ensureAnalyticsImagePullSecretClientGo() (string, error) {
+	if explicit := platformImagePullSecretOverride(); explicit != "" {
+		return explicit, nil
+	}
+	extRegistry, err := registry.ResolveExternalRegistryConfig(nil)
+	if err != nil {
+		return "", err
+	}
+	if extRegistry == nil || extRegistry.URL == "" || (extRegistry.Username == "" && extRegistry.Password == "") {
+		return "", nil
+	}
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return "", err
+	}
+	if err := k8sclient.UpsertDockerConfigSecret(context.Background(), clients, core.DefaultAnalyticsNamespace, defaultRegistrySecretName, extRegistry.URL, extRegistry.Username, extRegistry.Password); err != nil {
+		return "", err
+	}
+	return defaultRegistrySecretName, nil
+}
+
 func existingSecretDataValue(kubectl core.KubectlRunner, namespace, name, key string) (string, error) {
 	cmd, err := kubectl.CommandArgs([]string{"get", "secret", name, "-n", namespace, "-o", "jsonpath={.data." + key + "}"})
 	if err != nil {
@@ -721,8 +970,20 @@ func existingSecretDataValue(kubectl core.KubectlRunner, namespace, name, key st
 	return string(decoded), nil
 }
 
-func existingSecretDataValueOrRandom(kubectl core.KubectlRunner, namespace, name, key string, size int) (string, error) {
-	value, err := existingSecretDataValue(kubectl, namespace, name, key)
+func existingSecretDataValueClientGo(namespace, name, key string) (string, error) {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return "", err
+	}
+	value, err := k8sclient.SecretStringDataValue(context.Background(), clients, namespace, name, key)
+	if err != nil {
+		return "", core.WrapWithSentinel(core.ErrSetupReadSecretKeyFailed, err, fmt.Sprintf("read secret %s/%s key %s: %v", namespace, name, key, err))
+	}
+	return value, nil
+}
+
+func existingSecretDataValueOrRandomWithReader(readSecret analyticsSecretValueReader, namespace, name, key string, size int) (string, error) {
+	value, err := readSecret(namespace, name, key)
 	if err != nil {
 		return "", err
 	}
@@ -732,8 +993,8 @@ func existingSecretDataValueOrRandom(kubectl core.KubectlRunner, namespace, name
 	return randomHex(size)
 }
 
-func existingSecretDataValueOrDefault(kubectl core.KubectlRunner, namespace, name, key, fallback string) (string, error) {
-	value, err := existingSecretDataValue(kubectl, namespace, name, key)
+func existingSecretDataValueOrDefaultWithReader(readSecret analyticsSecretValueReader, namespace, name, key, fallback string) (string, error) {
+	value, err := readSecret(namespace, name, key)
 	if err != nil {
 		return "", err
 	}

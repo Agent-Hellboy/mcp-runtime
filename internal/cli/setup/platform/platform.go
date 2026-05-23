@@ -11,7 +11,6 @@ import (
 
 	"mcp-runtime/internal/cli/cluster"
 	"mcp-runtime/internal/cli/core"
-	"mcp-runtime/internal/cli/kube"
 	"mcp-runtime/internal/cli/registry"
 	"mcp-runtime/internal/cli/registry/config"
 	setupplan "mcp-runtime/internal/cli/setup/plan"
@@ -183,7 +182,7 @@ func (d SetupDeps) withDefaults(logger *zap.Logger) SetupDeps {
 		}
 	}
 	if d.DeployRegistry == nil {
-		d.DeployRegistry = registry.DeployRegistry
+		d.DeployRegistry = deployRegistryClientGo
 	}
 	if d.WaitForDeploymentAvailable == nil {
 		d.WaitForDeploymentAvailable = waitForDeploymentAvailable
@@ -193,7 +192,7 @@ func (d SetupDeps) withDefaults(logger *zap.Logger) SetupDeps {
 	}
 	if d.SetupTLS == nil {
 		d.SetupTLS = func(l *zap.Logger, p setupplan.Plan) error {
-			return setupTLSWithKubectlAndPlan(core.DefaultKubectlClient(), l, p)
+			return setupTLSWithClientGoAndPlan(l, p)
 		}
 	}
 	if d.BuildOperatorImage == nil {
@@ -216,16 +215,16 @@ func (d SetupDeps) withDefaults(logger *zap.Logger) SetupDeps {
 	}
 	if d.EnsureNamespace == nil {
 		d.EnsureNamespace = func(namespace string) error {
-			return kube.EnsureNamespace(core.DefaultKubectlClient().CommandArgs, namespace)
+			return ensureNamespaceWithLabels(namespace, nil)
 		}
 	}
 	if d.EnsureCatalogNamespace == nil {
 		d.EnsureCatalogNamespace = func(namespace string, labels map[string]string) error {
-			return kube.EnsureNamespaceWithLabels(core.DefaultKubectlClient().CommandArgs, namespace, labels)
+			return ensureNamespaceWithLabels(namespace, labels)
 		}
 	}
 	if d.ResolvePlatformRegistryURL == nil {
-		d.ResolvePlatformRegistryURL = registry.ResolveInternalPlatformRegistryURL
+		d.ResolvePlatformRegistryURL = resolveInternalPlatformRegistryURLClientGo
 	}
 	if d.PushOperatorImageToInternal == nil {
 		d.PushOperatorImageToInternal = pushOperatorImageToInternalRegistry

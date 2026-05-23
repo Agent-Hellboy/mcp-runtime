@@ -161,8 +161,7 @@ func TestBuildOperatorImagePassesDockerPlatform(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() { core.DefaultCLIConfig = orig })
 	core.DefaultCLIConfig = &core.CLIConfig{ImagePlatform: "linux/amd64"}
-	restoreKubectl := core.SwapDefaultKubectlClient(core.NewTestKubectlClient(&core.MockExecutor{DefaultOutput: []byte("amd64\n")}))
-	t.Cleanup(restoreKubectl)
+	swapKubernetesClientsForTest(t, platformTestClientsWithNodeArchitectures("amd64"))
 	mockExec := &core.MockExecutor{}
 	restoreExec := core.SwapExecExecutor(mockExec)
 	t.Cleanup(restoreExec)
@@ -209,15 +208,7 @@ func TestGetOperatorImage(t *testing.T) {
 
 	t.Run("uses platform registry URL when external not set", func(t *testing.T) {
 		core.DefaultCLIConfig.OperatorImage = ""
-		mock := &core.MockExecutor{
-			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
-				if contains(spec.Args, "jsonpath={.spec.ports[0].port}") {
-					return &core.MockCommand{OutputData: []byte("5000")}
-				}
-				return &core.MockCommand{}
-			},
-		}
-		swapDefaultKubectlClientForTest(t, core.NewTestKubectlClient(mock))
+		swapKubernetesClientsForTest(t, platformTestClientsWithRegistryService(5000))
 		got := getOperatorImage(nil)
 		if got != "registry.registry.svc.cluster.local:5000/mcp-runtime-operator:latest" {
 			t.Fatalf("unexpected platform registry image: %q", got)
@@ -265,15 +256,7 @@ func TestGetGatewayProxyImage(t *testing.T) {
 
 	t.Run("uses platform registry URL when external not set", func(t *testing.T) {
 		core.DefaultCLIConfig.GatewayProxyImage = ""
-		mock := &core.MockExecutor{
-			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
-				if contains(spec.Args, "jsonpath={.spec.ports[0].port}") {
-					return &core.MockCommand{OutputData: []byte("5000")}
-				}
-				return &core.MockCommand{}
-			},
-		}
-		swapDefaultKubectlClientForTest(t, core.NewTestKubectlClient(mock))
+		swapKubernetesClientsForTest(t, platformTestClientsWithRegistryService(5000))
 		got := getGatewayProxyImage(nil)
 		if got != "registry.registry.svc.cluster.local:5000/mcp-sentinel-mcp-gateway:latest" {
 			t.Fatalf("unexpected platform registry image: %q", got)
@@ -311,15 +294,7 @@ func TestPlatformImageDefaultsUseInternalRegistryWithPlatformDomain(t *testing.T
 	t.Setenv("MCP_PLATFORM_DOMAIN", "mcpruntime.org")
 	setupImageTagResolver = func() string { return "deadbeef" }
 	core.DefaultCLIConfig = core.LoadCLIConfig()
-	mock := &core.MockExecutor{
-		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
-			if contains(spec.Args, "jsonpath={.spec.ports[0].port}") {
-				return &core.MockCommand{OutputData: []byte("5000")}
-			}
-			return &core.MockCommand{}
-		},
-	}
-	swapDefaultKubectlClientForTest(t, core.NewTestKubectlClient(mock))
+	swapKubernetesClientsForTest(t, platformTestClientsWithRegistryService(5000))
 
 	gotOperator := getOperatorImage(nil)
 	if gotOperator != "registry.registry.svc.cluster.local:5000/mcp-runtime-operator:latest" {
@@ -340,49 +315,16 @@ func TestApplyPlatformIngressPrunesPathBasedSentinelIngresses(t *testing.T) {
 	t.Cleanup(func() { core.DefaultCLIConfig = origConfig })
 	core.DefaultCLIConfig = &core.CLIConfig{PlatformIngressHost: "platform.example.com"}
 
-	var created []*core.MockCommand
-	mock := &core.MockExecutor{
-		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
-			cmd := &core.MockCommand{Args: spec.Args}
-			created = append(created, cmd)
-			return cmd
-		},
-	}
-	kubectl := core.NewTestKubectlClient(mock)
+	clients := platformTestClientsWithIngresses(pathBasedSentinelIngressNames...)
+	swapKubernetesClientsForTest(t, clients)
 
-	if err := applyPlatformIngressIfConfigured(kubectl); err != nil {
+	if err := applyPlatformIngressIfConfigured(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var (
-		appliedPlatformIngress bool
-		deletedPathIngresses   bool
-	)
-	for _, cmd := range created {
-		spec := core.ExecSpec{Args: cmd.Args}
-		if commandHasArgs(spec, "apply", "-f", "-") && cmd.StdinR != nil {
-			data, err := io.ReadAll(cmd.StdinR)
-			if err != nil {
-				t.Fatalf("read stdin: %v", err)
-			}
-			body := string(data)
-			appliedPlatformIngress = strings.Contains(body, "name: mcp-sentinel-platform-ui") &&
-				strings.Contains(body, `- host: "platform.example.com"`)
-		}
-		if commandHasArgs(spec, "delete", "ingress", "-n", core.DefaultAnalyticsNamespace, "--ignore-not-found=true") {
-			deletedPathIngresses = true
-			for _, name := range pathBasedSentinelIngressNames {
-				if !contains(cmd.Args, name) {
-					t.Fatalf("delete command missing %s: %v", name, cmd.Args)
-				}
-			}
-		}
-	}
-	if !appliedPlatformIngress {
-		t.Fatal("expected platform UI ingress apply")
-	}
-	if !deletedPathIngresses {
-		t.Fatal("expected path-based sentinel ingress delete")
+	assertPlatformIngressAppliedForTest(t, clients, "platform.example.com")
+	for _, name := range pathBasedSentinelIngressNames {
+		assertIngressDeletedForTest(t, clients, core.DefaultAnalyticsNamespace, name)
 	}
 }
 
@@ -391,14 +333,8 @@ func TestApplyPlatformIngressSkipsWhenHostUnset(t *testing.T) {
 	t.Cleanup(func() { core.DefaultCLIConfig = origConfig })
 	core.DefaultCLIConfig = &core.CLIConfig{}
 
-	mock := &core.MockExecutor{}
-	kubectl := core.NewTestKubectlClient(mock)
-
-	if err := applyPlatformIngressIfConfigured(kubectl); err != nil {
+	if err := applyPlatformIngressIfConfigured(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(mock.Commands) != 0 {
-		t.Fatalf("expected no kubectl commands when platform host is unset, got %v", mock.Commands)
 	}
 }
 
@@ -1288,6 +1224,7 @@ data:
 }
 
 func TestRenderAnalyticsConfigManifestDetectsK3sTraefikNamespace(t *testing.T) {
+	swapKubernetesClientsForTest(t, platformTestClientsWithTraefikDeployment("kube-system"))
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 			if commandHasArgs(spec, "get", "deployment", "-A", "--no-headers") {
@@ -1761,6 +1698,7 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testi
 		core.DefaultCLIConfig = orig
 	})
 	core.DefaultCLIConfig = &core.CLIConfig{}
+	swapKubernetesClientsForTest(t, newPlatformKubernetesTestClients(nil, nil))
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -1961,6 +1899,7 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		core.DefaultCLIConfig = orig
 	})
 	core.DefaultCLIConfig = &core.CLIConfig{}
+	swapKubernetesClientsForTest(t, newPlatformKubernetesTestClients(nil, nil))
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -2053,6 +1992,7 @@ func TestDeployAnalyticsManifestsWithKubectl_HostpathUsesHostpathManifests(t *te
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() { core.DefaultCLIConfig = orig })
 	core.DefaultCLIConfig = &core.CLIConfig{}
+	swapKubernetesClientsForTest(t, newPlatformKubernetesTestClients(nil, nil))
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -2120,6 +2060,7 @@ func TestDeployAnalyticsManifestsWithKubectl_WaitsForPostgresStatefulSet(t *test
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() { core.DefaultCLIConfig = orig })
 	core.DefaultCLIConfig = &core.CLIConfig{}
+	swapKubernetesClientsForTest(t, newPlatformKubernetesTestClients(nil, nil))
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -2333,19 +2274,16 @@ func TestCheckCRDInstalledWithKubectl(t *testing.T) {
 	}
 }
 
-func TestCheckCRDInstalledUsesDefaultKubectl(t *testing.T) {
-
+func TestCheckCRDInstalledUsesDefaultKubernetesClient(t *testing.T) {
+	swapKubernetesClientsForTest(t, platformTestClientsWithCRD("example.crd.io"))
 	mock := &core.MockExecutor{}
 	swapDefaultKubectlClientForTest(t, core.NewTestKubectlClient(mock))
 
 	if err := checkCRDInstalled("example.crd.io"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(mock.Commands) != 1 {
-		t.Fatalf("expected 1 kubectl command, got %d", len(mock.Commands))
-	}
-	if !commandHasArgs(mock.Commands[0], "get", "crd", "example.crd.io") {
-		t.Fatalf("unexpected command args: %v", mock.Commands[0].Args)
+	if len(mock.Commands) != 0 {
+		t.Fatalf("expected client-go CRD check to avoid kubectl commands, got %v", mock.Commands)
 	}
 }
 

@@ -2,6 +2,7 @@ package platform
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"mcp-runtime/internal/cli/kube"
 	"mcp-runtime/internal/cli/registry/config"
 	setupplan "mcp-runtime/internal/cli/setup/plan"
+	"mcp-runtime/pkg/k8sclient"
 	"mcp-runtime/pkg/manifest"
 )
 
@@ -178,18 +180,25 @@ func verifySetup(logger *zap.Logger, usingExternalRegistry bool, deps SetupDeps)
 }
 
 func restartDeployment(name, namespace string) error {
-	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	return restartDeploymentWithKubectl(core.DefaultKubectlClient(), name, namespace)
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	return k8sclient.RestartDeployment(context.Background(), clients, namespace, name, time.Now())
 }
 
+//lint:ignore U1000 retained as the legacy kubectl implementation for focused tests and fallback patches.
 func restartDeploymentWithKubectl(kubectl core.KubectlRunner, name, namespace string) error {
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
 	return kubectl.RunWithOutput([]string{"rollout", "restart", "deployment/" + name, "-n", namespace}, os.Stdout, os.Stderr)
 }
 
 func checkCRDInstalled(name string) error {
-	// #nosec G204 -- name is hardcoded CRD identifier from internal code.
-	return checkCRDInstalledWithKubectl(core.DefaultKubectlClient(), name)
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	return k8sclient.CheckCRDExists(context.Background(), clients, name)
 }
 
 func checkCRDInstalledWithKubectl(kubectl core.KubectlRunner, name string) error {
@@ -199,7 +208,28 @@ func checkCRDInstalledWithKubectl(kubectl core.KubectlRunner, name string) error
 
 // waitForDeploymentAvailable polls a deployment until it has at least one available replica or times out.
 func waitForDeploymentAvailable(logger *zap.Logger, name, namespace, selector string, timeout time.Duration) error {
-	return waitForDeploymentAvailableWithKubectl(core.DefaultKubectlClient(), logger, name, namespace, selector, timeout)
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	if err := k8sclient.WaitForDeploymentAvailable(context.Background(), clients, namespace, name, timeout); err != nil {
+		msg := fmt.Sprintf("timed out waiting for deployment %s in namespace %s", name, namespace)
+		cause := core.NewWithSentinel(core.ErrSetupDeploymentReadinessDeadlineExceeded, "deployment readiness deadline exceeded")
+		ctx := map[string]any{
+			"deployment": name,
+			"namespace":  namespace,
+			"selector":   selector,
+			"component":  "deployment-wait",
+		}
+		mergeDeploymentDebugDiagnosticsIfNeeded(core.DefaultKubectlClient(), ctx, name, namespace, selector)
+		wrappedErr := core.WrapWithSentinelAndContext(core.ErrDeploymentTimeout, cause, msg, ctx)
+		core.Error("Deployment timeout")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Deployment timeout")
+		}
+		return wrappedErr
+	}
+	return nil
 }
 
 // waitForDeploymentAvailableWithKubectl polls a deployment until it has at least one available replica or times out.
@@ -366,7 +396,153 @@ func mergeCRDCheckDebugDiagnosticsIfNeeded(kubectl core.KubectlRunner, m map[str
 // deployOperatorManifests deploys operator manifests without requiring kustomize or controller-gen.
 // It applies CRD, RBAC, and manager manifests directly, replacing the image name in the process.
 func deployOperatorManifests(logger *zap.Logger, operatorImage, gatewayProxyImage string, operatorArgs []string, imagePullSecretName string) error {
-	return deployOperatorManifestsWithKubectl(core.DefaultKubectlClient(), logger, operatorImage, gatewayProxyImage, operatorArgs, imagePullSecretName)
+	return deployOperatorManifestsWithClientGo(logger, operatorImage, gatewayProxyImage, operatorArgs, imagePullSecretName)
+}
+
+func deployOperatorManifestsWithClientGo(logger *zap.Logger, operatorImage, gatewayProxyImage string, operatorArgs []string, imagePullSecretName string) error {
+	if err := ensureRepoManagedTraefikMiddlewareResourcesClientGo(logger); err != nil {
+		return err
+	}
+
+	core.Info("Applying CRD manifests")
+	if err := applyManifestDir("config/crd/bases", "", os.Stdout); err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrApplyCRDFailed, err, fmt.Sprintf("failed to apply CRD: %v", err))
+		core.Error("Failed to apply CRD")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to apply CRD")
+		}
+		return wrappedErr
+	}
+
+	core.Info("Applying RBAC manifests")
+	if err := ensureNamespaceWithLabels(core.NamespaceMCPRuntime, nil); err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrEnsureOperatorNamespaceFailed,
+			err,
+			fmt.Sprintf("failed to ensure operator namespace: %v", err),
+			map[string]any{"namespace": core.NamespaceMCPRuntime, "component": "setup"},
+		)
+		core.Error("Failed to ensure operator namespace")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to ensure operator namespace")
+		}
+		return wrappedErr
+	}
+	for _, path := range []string{
+		"config/rbac/service_account.yaml",
+		"config/rbac/role.yaml",
+		"config/rbac/role_binding.yaml",
+	} {
+		if err := applyManifestFile(path, "", os.Stdout); err != nil {
+			wrappedErr := core.WrapWithSentinel(core.ErrApplyRBACFailed, err, fmt.Sprintf("failed to apply RBAC: %v", err))
+			core.Error("Failed to apply RBAC")
+			if logger != nil {
+				core.LogStructuredError(logger, wrappedErr, "Failed to apply RBAC")
+			}
+			return wrappedErr
+		}
+	}
+	core.Info("Reapplied operator ClusterRole mcp-runtime-operator-role from config/rbac/role.yaml; run `mcp-runtime cluster doctor` if MCPServer creates ever appear unreconciled")
+
+	core.Info("Applying operator deployment")
+	managerYAML, err := renderOperatorManagerManifest(operatorImage, gatewayProxyImage, operatorArgs, existingOperatorEnvValueClientGo)
+	if err != nil {
+		if logger != nil {
+			core.LogStructuredError(logger, err, "Failed to render manager manifest")
+		}
+		return err
+	}
+	if strings.TrimSpace(imagePullSecretName) != "" {
+		rendered, err := injectImagePullSecretsIntoManifest(string(managerYAML), imagePullSecretName)
+		if err != nil {
+			wrappedErr := core.WrapWithSentinel(core.ErrRenderManagerYAMLFailed, err, fmt.Sprintf("failed to inject operator imagePullSecret: %v", err))
+			core.Error("Failed to inject operator imagePullSecret")
+			if logger != nil {
+				core.LogStructuredError(logger, wrappedErr, "Failed to inject operator imagePullSecret")
+			}
+			return wrappedErr
+		}
+		managerYAML = []byte(rendered)
+	}
+	if err := applyManifestYAML(string(managerYAML), core.NamespaceMCPRuntime, os.Stdout); err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrApplyManagerDeploymentFailed,
+			err,
+			fmt.Sprintf("failed to apply manager deployment: %v", err),
+			map[string]any{"operator_image": operatorImage, "namespace": core.NamespaceMCPRuntime, "component": "setup"},
+		)
+		core.Error("Failed to apply manager deployment")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to apply manager deployment")
+		}
+		return wrappedErr
+	}
+
+	core.Success("Operator manifests deployed successfully")
+	return nil
+}
+
+func renderOperatorManagerManifest(operatorImage, gatewayProxyImage string, operatorArgs []string, existingEnvValue func(string) string) ([]byte, error) {
+	managerYAML, err := os.ReadFile("config/manager/manager.yaml")
+	if err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to read manager.yaml: %v", err))
+		core.Error("Failed to read manager.yaml")
+		return nil, wrappedErr
+	}
+
+	mutator, err := manifest.NewMutator(managerYAML)
+	if err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrParseManagerYAMLFailed, err, fmt.Sprintf("failed to parse manager.yaml: %v", err))
+		core.Error("Failed to parse manager.yaml")
+		return nil, wrappedErr
+	}
+
+	if err := mutator.SetDeploymentImage(core.OperatorDeploymentName, core.OperatorManagerContainerName, operatorImage); err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrSetOperatorImageFailed, err, fmt.Sprintf("failed to set operator image: %v", err))
+		core.Error("Failed to set operator image")
+		return nil, wrappedErr
+	}
+
+	pullPolicy := operatorImagePullPolicy(operatorImage)
+	if pullPolicy != "" {
+		if err := mutator.SetDeploymentImagePullPolicy(core.OperatorDeploymentName, core.OperatorManagerContainerName, pullPolicy); err != nil {
+			wrappedErr := core.WrapWithSentinel(core.ErrMutateManagerYAMLFailed, err, fmt.Sprintf("failed to set operator image pull policy: %v", err))
+			core.Error("Failed to set operator image pull policy")
+			return nil, wrappedErr
+		}
+	}
+
+	if len(operatorArgs) > 0 {
+		if err := mutator.MergeDeploymentArgs(core.OperatorDeploymentName, core.OperatorManagerContainerName, operatorArgs); err != nil {
+			wrappedErr := core.WrapWithSentinel(core.ErrMutateManagerYAMLFailed, err, fmt.Sprintf("failed to merge operator args: %v", err))
+			core.Error("Failed to merge operator args")
+			return nil, wrappedErr
+		}
+	}
+
+	existingGatewayOTLPEndpoint := ""
+	if existingEnvValue != nil {
+		existingGatewayOTLPEndpoint = existingEnvValue(gatewayOTELExporterOTLPEndpointEnv)
+	}
+	if envVars := operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint); len(envVars) > 0 {
+		envMap := make(map[string]string, len(envVars))
+		for _, ev := range envVars {
+			envMap[ev.Name] = ev.Value
+		}
+		if err := mutator.MergeDeploymentEnv(core.OperatorDeploymentName, core.OperatorManagerContainerName, envMap); err != nil {
+			wrappedErr := core.WrapWithSentinel(core.ErrMutateManagerYAMLFailed, err, fmt.Sprintf("failed to merge operator env vars: %v", err))
+			core.Error("Failed to merge operator env vars")
+			return nil, wrappedErr
+		}
+	}
+
+	mutatedYAML, err := mutator.ToYAML()
+	if err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrRenderManagerYAMLFailed, err, fmt.Sprintf("failed to render mutated manifest: %v", err))
+		core.Error("Failed to render mutated manifest")
+		return nil, wrappedErr
+	}
+	return mutatedYAML, nil
 }
 
 // deployOperatorManifestsWithKubectl deploys operator manifests without requiring kustomize or controller-gen.
@@ -602,6 +778,10 @@ func runRolloutWithOptionalDebugCapture(kubectl core.KubectlRunner, kind, name, 
 	return buf.String(), err
 }
 
+func runRolloutWithOptionalDebugCaptureClientGo(kind, name, namespace string, timeout time.Duration) (capture string, err error) {
+	return "", waitForRolloutStatusWithClientGo(kind, name, namespace, timeout)
+}
+
 func kubectlText(kubectl core.KubectlRunner, args []string) (string, error) {
 	cmd, err := kubectl.CommandArgs(args)
 	if err != nil {
@@ -615,14 +795,26 @@ func waitForRolloutStatusWithKubectl(kubectl core.KubectlRunner, kind, name, nam
 	return kubectl.RunWithOutput([]string{"rollout", "status", fmt.Sprintf("%s/%s", kind, name), "-n", namespace, "--timeout=" + timeout}, os.Stdout, os.Stderr)
 }
 
+func waitForRolloutStatusWithClientGo(kind, name, namespace string, timeout time.Duration) error {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	return k8sclient.WaitForWorkloadRollout(context.Background(), clients, namespace, kind, name, timeout)
+}
+
 // analyticsRolloutTimeoutString returns the kubectl --timeout value for mcp-sentinel rollouts.
 // Uses MCP_DEPLOYMENT_TIMEOUT (see core.GetDeploymentTimeout); if unset or non-positive, uses the default 5m.
 func analyticsRolloutTimeoutString() string {
+	return analyticsRolloutTimeoutDuration().String()
+}
+
+func analyticsRolloutTimeoutDuration() time.Duration {
 	d := core.GetDeploymentTimeout()
 	if d <= 0 {
 		d = 5 * time.Minute
 	}
-	return d.String()
+	return d
 }
 
 // printAnalyticsRolloutDiagnostics prints pods and events to help triage stuck mcp-sentinel rollouts.
@@ -638,8 +830,24 @@ func waitForJobCompletionWithKubectl(kubectl core.KubectlRunner, name, namespace
 	return kubectl.RunWithOutput([]string{"wait", "--for=condition=complete", "job/" + name, "-n", namespace, "--timeout=" + timeout}, os.Stdout, os.Stderr)
 }
 
+func waitForJobCompletionClientGo(name, namespace string, timeout time.Duration) error {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	return k8sclient.WaitForJobComplete(context.Background(), clients, namespace, name, timeout)
+}
+
 func deleteJobIfExistsWithKubectl(kubectl core.KubectlRunner, name, namespace string) error {
 	return kubectl.RunWithOutput([]string{"delete", "job/" + name, "-n", namespace, "--ignore-not-found=true", "--wait=true", "--timeout=60s"}, os.Stdout, os.Stderr)
+}
+
+func deleteJobIfExistsClientGo(name, namespace string) error {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	return k8sclient.DeleteJob(context.Background(), clients, namespace, name, 60*time.Second)
 }
 
 func operatorImagePullPolicy(operatorImage string) string {
@@ -716,6 +924,28 @@ func existingOperatorEnvValue(kubectl core.KubectlRunner, name string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func existingOperatorEnvValueClientGo(name string) string {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return ""
+	}
+	deploy, err := k8sclient.GetDeployment(context.Background(), clients, core.NamespaceMCPRuntime, core.OperatorDeploymentName)
+	if err != nil {
+		return ""
+	}
+	for _, container := range deploy.Spec.Template.Spec.Containers {
+		if container.Name != core.OperatorManagerContainerName {
+			continue
+		}
+		for _, env := range container.Env {
+			if env.Name == name {
+				return strings.TrimSpace(env.Value)
+			}
+		}
+	}
+	return ""
 }
 
 func applySetupPlanToCLIConfig(plan setupplan.Plan) {

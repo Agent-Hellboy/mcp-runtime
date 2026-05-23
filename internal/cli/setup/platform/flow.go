@@ -176,7 +176,7 @@ func existingPublicAuthConfigForSetup(plan setupplan.Plan) (map[string]string, e
 	if publicBrowserLoginConfigConfigured(nil) {
 		return nil, nil
 	}
-	return existingConfigMapData(core.DefaultKubectlClient(), core.DefaultAnalyticsNamespace, "mcp-sentinel-config")
+	return existingConfigMapDataClientGo(core.DefaultAnalyticsNamespace, "mcp-sentinel-config")
 }
 
 func platformAdminEnvConfigured() bool {

@@ -40,16 +40,21 @@ func checkRegistryService(kubectl core.KubectlRunner) DoctorCheck {
 // non-destructively.
 func checkRegistryReachableFromCluster(kubectl core.KubectlRunner) DoctorCheck {
 	podName := fmt.Sprintf("mcp-runtime-doctor-curl-%d", time.Now().UnixNano())
+	image := "curlimages/curl:8.7.1"
 	registryURL := doctorRegistryServiceURL(kubectl)
-	args := []string{
-		"run", "-n", "registry",
-		"--rm", "--restart=Never", "--attach",
-		"--pod-running-timeout=" + doctorProbePodRunTimeout,
-		"--quiet",
-		"--image=curlimages/curl:8.7.1",
-		podName,
-		"--command", "--", "curl", "-skI", "--connect-timeout", "5", "--max-time", "15",
+	curlArgs := []string{
+		"-skI", "--connect-timeout", "5", "--max-time", "15",
 		registryURL,
+	}
+	defer func() {
+		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", "registry", "--ignore-not-found"})
+	}()
+	args := []string{
+		"run", podName,
+		"-n", "registry",
+		"--restart=Never",
+		"--image=" + image,
+		"--overrides=" + restrictedRunOverrides(podName, image, "curl", curlArgs...),
 	}
 	cmd, err := kubectl.CommandArgs(args)
 	if err != nil {
@@ -60,14 +65,39 @@ func checkRegistryReachableFromCluster(kubectl core.KubectlRunner) DoctorCheck {
 			Remedy: "check cluster connectivity and kubeconfig",
 		}
 	}
-	out, runErr := cmd.CombinedOutput()
-	body := string(out)
+	createOut, runErr := cmd.CombinedOutput()
 	if runErr != nil {
+		detail := fmt.Sprintf("helper pod failed: %v", runErr)
+		if strings.TrimSpace(string(createOut)) != "" {
+			detail += ": " + strings.TrimSpace(string(createOut))
+		}
 		return DoctorCheck{
 			Name:   "registry reachability (in-cluster)",
 			OK:     false,
-			Detail: fmt.Sprintf("helper pod failed: %v", runErr),
+			Detail: detail,
 			Remedy: "run `./bin/mcp-runtime setup` if the registry is missing; check `kubectl -n registry get pods`",
+		}
+	}
+	if err := waitForDoctorPodSucceeded(kubectl, podName, "registry", 90*time.Second); err != nil {
+		logs, _ := readKubectlOutput(kubectl, []string{"logs", podName, "-n", "registry", "--tail=50"})
+		detail := fmt.Sprintf("helper pod did not succeed: %v", err)
+		if strings.TrimSpace(logs) != "" {
+			detail += ": " + strings.TrimSpace(logs)
+		}
+		return DoctorCheck{
+			Name:   "registry reachability (in-cluster)",
+			OK:     false,
+			Detail: detail,
+			Remedy: "run `./bin/mcp-runtime setup` if the registry is missing; check `kubectl -n registry get pods`",
+		}
+	}
+	body, logsErr := readKubectlOutput(kubectl, []string{"logs", podName, "-n", "registry"})
+	if logsErr != nil {
+		return DoctorCheck{
+			Name:   "registry reachability (in-cluster)",
+			OK:     false,
+			Detail: fmt.Sprintf("failed reading helper pod logs: %v", logsErr),
+			Remedy: "inspect pod events: `kubectl -n registry describe pod " + podName + "`",
 		}
 	}
 	if !hasHTTP200Status(body) {
