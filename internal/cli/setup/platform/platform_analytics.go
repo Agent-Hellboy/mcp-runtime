@@ -519,6 +519,10 @@ func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
+	platformPublishIdentitySalt, err := existingSecretDataValueOrRandom(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_MCP_PUBLISH_IDENTITY_SALT", 32)
+	if err != nil {
+		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
 	platformAdminEmail, err := existingSecretDataValue(kubectl, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_ADMIN_EMAIL")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
@@ -590,20 +594,21 @@ func renderAnalyticsSecretManifest(kubectl core.KubectlRunner) (string, error) {
 		platformDevAdminPassword = ""
 	}
 	stringData := map[string]string{
-		"API_KEYS":                apiKeys,
-		"INGEST_API_KEYS":         ingestAPIKeys,
-		"ADMIN_API_KEYS":          adminAPIKeys,
-		"UI_API_KEY":              uiAPIKey,
-		"ADMIN_USERS":             adminUsers,
-		"PLATFORM_ADMIN_EMAIL":    platformAdminEmail,
-		"PLATFORM_ADMIN_PASSWORD": platformAdminPassword,
-		"POSTGRES_USER":           postgresUser,
-		"POSTGRES_PASSWORD":       postgresPassword,
-		"POSTGRES_DB":             postgresDB,
-		"POSTGRES_DSN":            postgresDSN,
-		"PLATFORM_JWT_SECRET":     platformJWTSecret,
-		"GRAFANA_ADMIN_USER":      "admin",
-		"GRAFANA_ADMIN_PASSWORD":  grafanaPassword,
+		"API_KEYS":                           apiKeys,
+		"INGEST_API_KEYS":                    ingestAPIKeys,
+		"ADMIN_API_KEYS":                     adminAPIKeys,
+		"UI_API_KEY":                         uiAPIKey,
+		"ADMIN_USERS":                        adminUsers,
+		"PLATFORM_ADMIN_EMAIL":               platformAdminEmail,
+		"PLATFORM_ADMIN_PASSWORD":            platformAdminPassword,
+		"POSTGRES_USER":                      postgresUser,
+		"POSTGRES_PASSWORD":                  postgresPassword,
+		"POSTGRES_DB":                        postgresDB,
+		"POSTGRES_DSN":                       postgresDSN,
+		"PLATFORM_JWT_SECRET":                platformJWTSecret,
+		"PLATFORM_MCP_PUBLISH_IDENTITY_SALT": platformPublishIdentitySalt,
+		"GRAFANA_ADMIN_USER":                 "admin",
+		"GRAFANA_ADMIN_PASSWORD":             grafanaPassword,
 	}
 	if platformDevLoginEnabled != "" ||
 		platformDevUserEmail != "" ||

@@ -34,10 +34,11 @@ let namespaceScopes = [];
 let selectedNamespace = defaults.namespace || "";
 let serverLiveInventoryRefreshTimer = null;
 const serverLiveInventoryRefreshDelayMs = 1200;
+const clientFingerprintStorageKey = "mcp-runtime.client-fingerprint";
 
 // API Helper
 async function fetchJSON(path, options = {}) {
-  const headers = { ...options.headers };
+  const headers = requestHeaders(options.headers);
 
   const response = await fetch(`${apiBase}${path}`, {
     ...options,
@@ -59,7 +60,7 @@ async function fetchJSON(path, options = {}) {
 }
 
 async function fetchJSONNoAuthSideEffects(path, options = {}) {
-  const headers = { ...options.headers };
+  const headers = requestHeaders(options.headers);
 
   const response = await fetch(`${apiBase}${path}`, {
     ...options,
@@ -75,6 +76,26 @@ async function fetchJSONNoAuthSideEffects(path, options = {}) {
   }
 
   return response.json();
+}
+
+function requestHeaders(headers = {}) {
+  const next = { ...headers };
+  const fingerprint = clientFingerprint();
+  if (fingerprint) next["X-MCP-Client-Fingerprint"] = fingerprint;
+  return next;
+}
+
+function clientFingerprint() {
+  try {
+    let value = window.localStorage?.getItem(clientFingerprintStorageKey) || "";
+    if (!value) {
+      value = window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+      window.localStorage?.setItem(clientFingerprintStorageKey, value);
+    }
+    return value;
+  } catch (_) {
+    return "";
+  }
 }
 
 function unauthorizedError() {

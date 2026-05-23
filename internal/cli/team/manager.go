@@ -285,8 +285,11 @@ spec:
     pods: "20"
     requests.cpu: "4"
     requests.memory: 8Gi
+    requests.ephemeral-storage: 20Gi
+    requests.storage: 20Gi
     limits.cpu: "8"
     limits.memory: 16Gi
+    limits.ephemeral-storage: 40Gi
     persistentvolumeclaims: "4"
 ---
 apiVersion: v1
@@ -300,9 +303,11 @@ spec:
       defaultRequest:
         cpu: 100m
         memory: 128Mi
+        ephemeral-storage: 512Mi
       default:
         cpu: 500m
         memory: 512Mi
+        ephemeral-storage: 2Gi
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

@@ -313,14 +313,17 @@ mcp-runtime team init acme --dry-run
 `auth login` or set platform API credentials first. `team create` creates a
 platform team and managed namespace, including quota/limits, default-deny
 NetworkPolicy, service account, and repo-managed Traefik watch wiring when
-bundled Traefik is present. `team user create` is admin-only. It creates or
+bundled Traefik is present. The managed quota and limits include ephemeral
+storage caps so test workloads cannot fill node disks through writable layers
+or temporary files. `team user create` is admin-only. It creates or
 updates a password-login user and adds that user to the team as `member` or
 `owner`; use `auth login --username/--email --password` for the user login.
 
 `team init` uses local `kubectl`. It creates the team namespace, restricted
-workload service account, default quota and limits, default-deny NetworkPolicy,
-same-namespace and bundled-Traefik ingress allowances, MCP Runtime team-admin
-RBAC, bundled Traefik watch RBAC, and patches the repo-managed
+workload service account, default quota and limits including ephemeral storage,
+default-deny NetworkPolicy, same-namespace and bundled-Traefik ingress
+allowances, MCP Runtime team-admin RBAC, bundled Traefik watch RBAC, and
+patches the repo-managed
 `traefik/traefik` Deployment watch list unless
 `--skip-traefik-watch` is set. Use `--namespace`, `--group`, `--user`, or
 `--service-account` when the defaults do not match your cluster identity system.
