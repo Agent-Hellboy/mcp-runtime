@@ -35,7 +35,6 @@ func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet, stor
 func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error {
 	rolloutTimeoutDuration := analyticsRolloutTimeoutDuration()
 	rolloutTimeout := rolloutTimeoutDuration.String()
-	kubectl := core.DefaultKubectlClient()
 
 	if err := ensureRepoManagedTraefikMiddlewareResourcesClientGo(logger); err != nil {
 		return err
@@ -51,7 +50,7 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 			return err
 		}
 	}
-	if err := applyCatalogNamespaceForMode(kubectl, platformMode); err != nil {
+	if err := applyCatalogNamespaceForMode(platformMode); err != nil {
 		return err
 	}
 
@@ -89,13 +88,13 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 	}
 
 	if err := waitForRolloutStatusWithClientGo("statefulset", "clickhouse", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
-		return mcpSentinelDependencyRolloutFailed(kubectl, err, "statefulset", "clickhouse", core.DefaultAnalyticsNamespace, "storage (clickhouse)")
+		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, "statefulset", "clickhouse", core.DefaultAnalyticsNamespace, "storage (clickhouse)")
 	}
 	if err := waitForRolloutStatusWithClientGo("deployment", "zookeeper", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
-		return mcpSentinelDependencyRolloutFailed(kubectl, err, "deployment", "zookeeper", core.DefaultAnalyticsNamespace, "messaging (zookeeper)")
+		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, "deployment", "zookeeper", core.DefaultAnalyticsNamespace, "messaging (zookeeper)")
 	}
 	if err := waitForRolloutStatusWithClientGo("statefulset", "kafka", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
-		return mcpSentinelDependencyRolloutFailed(kubectl, err, "statefulset", "kafka", core.DefaultAnalyticsNamespace, "messaging (kafka)")
+		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, "statefulset", "kafka", core.DefaultAnalyticsNamespace, "messaging (kafka)")
 	}
 
 	core.Info("Initializing ClickHouse schema")
@@ -106,7 +105,7 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		return err
 	}
 	if err := waitForJobCompletionClientGo("clickhouse-init", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
-		return mcpSentinelDependencyJobFailed(kubectl, err, "clickhouse-init", core.DefaultAnalyticsNamespace, "clickhouse init schema")
+		return mcpSentinelDependencyJobFailed(core.DefaultKubectlClient(), err, "clickhouse-init", core.DefaultAnalyticsNamespace, "clickhouse init schema")
 	}
 
 	core.Info("Applying analytics services")
@@ -131,7 +130,7 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		}
 	}
 
-	if err := applyPlatformIngressIfConfigured(kubectl); err != nil {
+	if err := applyPlatformIngressIfConfigured(); err != nil {
 		return err
 	}
 
@@ -165,13 +164,13 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		return nil
 	}
 
-	printAnalyticsRolloutDiagnostics(kubectl)
+	printAnalyticsRolloutDiagnostics(core.DefaultKubectlClient())
 	summary := strings.Join(rolloutFailures, "; ")
 	cause := core.NewWithSentinel(core.ErrSetupAnalyticsRolloutFailed, summary)
 	msg := fmt.Sprintf("analytics components failed to roll out: %s", summary)
 	ctx := map[string]any{"component": "mcp-sentinel", "rollout_failures": summary}
 	if core.IsDebugMode() {
-		if diag := buildAnalyticsRolloutDebugDetail(kubectl, failedForDebug); diag != "" {
+		if diag := buildAnalyticsRolloutDebugDetail(core.DefaultKubectlClient(), failedForDebug); diag != "" {
 			ctx["diagnostics"] = trimDiagnosticsString(diag)
 		}
 	}
@@ -195,7 +194,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 			return err
 		}
 	}
-	if err := applyCatalogNamespaceForMode(kubectl, platformMode); err != nil {
+	if err := applyCatalogNamespaceForMode(platformMode); err != nil {
 		return err
 	}
 
@@ -275,7 +274,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		}
 	}
 
-	if err := applyPlatformIngressIfConfigured(kubectl); err != nil {
+	if err := applyPlatformIngressIfConfigured(); err != nil {
 		return err
 	}
 
@@ -322,7 +321,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	return core.WrapWithSentinelAndContext(core.ErrOperatorDeploymentFailed, cause, msg, ctx)
 }
 
-func applyCatalogNamespaceForMode(kubectl core.KubectlRunner, platformMode string) error {
+func applyCatalogNamespaceForMode(platformMode string) error {
 	namespace := setupplan.CatalogNamespaceForPlatformMode(platformMode)
 	if strings.TrimSpace(namespace) == "" {
 		return nil
@@ -418,7 +417,7 @@ func applyRenderedManifestClientGo(manifestPath string, images AnalyticsImageSet
 	return applyManifestYAML(rendered, "", os.Stdout)
 }
 
-func applyPlatformIngressIfConfigured(kubectl core.KubectlRunner) error {
+func applyPlatformIngressIfConfigured() error {
 	host := strings.TrimSpace(core.GetPlatformIngressHost())
 	if host == "" {
 		return nil
@@ -428,13 +427,13 @@ func applyPlatformIngressIfConfigured(kubectl core.KubectlRunner) error {
 	if err := applyManifestYAML(manifest, "", os.Stdout); err != nil {
 		return core.WrapWithSentinel(core.ErrSetupApplyPlatformUIIngressFailed, err, fmt.Sprintf("apply platform UI ingress: %v", err))
 	}
-	if err := removePathBasedSentinelIngresses(kubectl); err != nil {
+	if err := removePathBasedSentinelIngresses(); err != nil {
 		return err
 	}
 	return nil
 }
 
-func removePathBasedSentinelIngresses(kubectl core.KubectlRunner) error {
+func removePathBasedSentinelIngresses() error {
 	clients, err := platformKubernetesClients()
 	if err != nil {
 		return err

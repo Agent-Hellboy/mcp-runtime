@@ -317,19 +317,14 @@ func TestApplyPlatformIngressPrunesPathBasedSentinelIngresses(t *testing.T) {
 
 	clients := platformTestClientsWithIngresses(pathBasedSentinelIngressNames...)
 	swapKubernetesClientsForTest(t, clients)
-	mock := &core.MockExecutor{}
-	kubectl := core.NewTestKubectlClient(mock)
 
-	if err := applyPlatformIngressIfConfigured(kubectl); err != nil {
+	if err := applyPlatformIngressIfConfigured(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	assertPlatformIngressAppliedForTest(t, clients, "platform.example.com")
 	for _, name := range pathBasedSentinelIngressNames {
 		assertIngressDeletedForTest(t, clients, core.DefaultAnalyticsNamespace, name)
-	}
-	if len(mock.Commands) != 0 {
-		t.Fatalf("expected client-go path to avoid kubectl commands, got %v", mock.Commands)
 	}
 }
 
@@ -338,14 +333,8 @@ func TestApplyPlatformIngressSkipsWhenHostUnset(t *testing.T) {
 	t.Cleanup(func() { core.DefaultCLIConfig = origConfig })
 	core.DefaultCLIConfig = &core.CLIConfig{}
 
-	mock := &core.MockExecutor{}
-	kubectl := core.NewTestKubectlClient(mock)
-
-	if err := applyPlatformIngressIfConfigured(kubectl); err != nil {
+	if err := applyPlatformIngressIfConfigured(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(mock.Commands) != 0 {
-		t.Fatalf("expected no kubectl commands when platform host is unset, got %v", mock.Commands)
 	}
 }
 
