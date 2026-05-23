@@ -1698,6 +1698,7 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testi
 		core.DefaultCLIConfig = orig
 	})
 	core.DefaultCLIConfig = &core.CLIConfig{}
+	swapKubernetesClientsForTest(t, newPlatformKubernetesTestClients(nil, nil))
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -1898,6 +1899,7 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		core.DefaultCLIConfig = orig
 	})
 	core.DefaultCLIConfig = &core.CLIConfig{}
+	swapKubernetesClientsForTest(t, newPlatformKubernetesTestClients(nil, nil))
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -1990,6 +1992,7 @@ func TestDeployAnalyticsManifestsWithKubectl_HostpathUsesHostpathManifests(t *te
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() { core.DefaultCLIConfig = orig })
 	core.DefaultCLIConfig = &core.CLIConfig{}
+	swapKubernetesClientsForTest(t, newPlatformKubernetesTestClients(nil, nil))
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -2057,6 +2060,7 @@ func TestDeployAnalyticsManifestsWithKubectl_WaitsForPostgresStatefulSet(t *test
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() { core.DefaultCLIConfig = orig })
 	core.DefaultCLIConfig = &core.CLIConfig{}
+	swapKubernetesClientsForTest(t, newPlatformKubernetesTestClients(nil, nil))
 
 	cwd, err := os.Getwd()
 	if err != nil {
