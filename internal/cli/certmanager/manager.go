@@ -264,6 +264,10 @@ func renderGeneratedCASecretManifest(now time.Time) (string, error) {
 	return string(data), nil
 }
 
+func RenderGeneratedCASecretManifest(now time.Time) (string, error) {
+	return renderGeneratedCASecretManifest(now)
+}
+
 func generateInternalCAPEM(now time.Time) ([]byte, []byte, error) {
 	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
 	serial, err := rand.Int(rand.Reader, serialLimit)

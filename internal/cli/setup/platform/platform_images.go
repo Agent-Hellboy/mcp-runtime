@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"slices"
@@ -14,6 +15,7 @@ import (
 	"mcp-runtime/internal/cli/registry/config"
 	"mcp-runtime/internal/cli/registry/ref"
 	"mcp-runtime/internal/cli/setup/assetpath"
+	"mcp-runtime/pkg/k8sclient"
 )
 
 func setupImageTag() string {
@@ -24,15 +26,9 @@ func setupImageTag() string {
 }
 
 func resolveSetupImagePlatform(kubectl core.KubectlRunner) (string, error) {
-	var explicitPlatform string
-	if core.DefaultCLIConfig != nil {
-		if platform := strings.TrimSpace(core.DefaultCLIConfig.ImagePlatform); platform != "" {
-			validated, err := validateSetupImagePlatform(platform)
-			if err != nil {
-				return "", err
-			}
-			explicitPlatform = validated
-		}
+	explicitPlatform, err := explicitSetupImagePlatform()
+	if err != nil {
+		return "", err
 	}
 
 	cacheKey := fmt.Sprintf("%T:%p:%s", kubectl, kubectl, explicitPlatform)
@@ -50,6 +46,26 @@ func resolveSetupImagePlatform(kubectl core.KubectlRunner) (string, error) {
 	return entry.platform, entry.err
 }
 
+func resolveSetupImagePlatformClientGo() (string, error) {
+	explicitPlatform, err := explicitSetupImagePlatform()
+	if err != nil {
+		return "", err
+	}
+	archs, err := clusterNodeArchitecturesClientGo()
+	return resolveSetupImagePlatformFromArchitectures(archs, explicitPlatform, err)
+}
+
+func explicitSetupImagePlatform() (string, error) {
+	if core.DefaultCLIConfig == nil {
+		return "", nil
+	}
+	platform := strings.TrimSpace(core.DefaultCLIConfig.ImagePlatform)
+	if platform == "" {
+		return "", nil
+	}
+	return validateSetupImagePlatform(platform)
+}
+
 func resetSetupImagePlatformCacheForTest() {
 	setupImagePlatformCache.Lock()
 	setupImagePlatformCache.entries = map[string]*setupImagePlatformCacheEntry{}
@@ -58,6 +74,10 @@ func resetSetupImagePlatformCacheForTest() {
 
 func resolveSetupImagePlatformUncached(kubectl core.KubectlRunner, explicitPlatform string) (string, error) {
 	archs, err := clusterNodeArchitectures(kubectl)
+	return resolveSetupImagePlatformFromArchitectures(archs, explicitPlatform, err)
+}
+
+func resolveSetupImagePlatformFromArchitectures(archs []string, explicitPlatform string, err error) (string, error) {
 	if err != nil {
 		if explicitPlatform != "" {
 			return explicitPlatform, nil
@@ -121,6 +141,18 @@ func clusterNodeArchitectures(kubectl core.KubectlRunner) ([]string, error) {
 		archs = append(archs, arch)
 	}
 	slices.Sort(archs)
+	return archs, nil
+}
+
+func clusterNodeArchitecturesClientGo() ([]string, error) {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return nil, core.WrapWithSentinel(core.ErrSetupInspectNodeArchitecturesFailed, err, fmt.Sprintf("could not create Kubernetes client to inspect node architectures: %v", err))
+	}
+	archs, err := k8sclient.NodeArchitectures(context.Background(), clients)
+	if err != nil {
+		return nil, core.WrapWithSentinel(core.ErrSetupInspectNodeArchitecturesFailed, err, fmt.Sprintf("could not inspect Kubernetes node architectures: %v", err))
+	}
 	return archs, nil
 }
 
@@ -485,7 +517,7 @@ func getOperatorImage(ext *config.ExternalRegistryConfig) string {
 	if ext != nil && ext.URL != "" {
 		return strings.TrimSuffix(ext.URL, "/") + "/mcp-runtime-operator:" + tag
 	}
-	return fmt.Sprintf("%s/mcp-runtime-operator:%s", registry.ResolveInternalPlatformRegistryURL(nil), tag)
+	return fmt.Sprintf("%s/mcp-runtime-operator:%s", resolveInternalPlatformRegistryURLClientGo(nil), tag)
 }
 
 func getGatewayProxyImage(ext *config.ExternalRegistryConfig) string {
@@ -498,7 +530,7 @@ func getGatewayProxyImage(ext *config.ExternalRegistryConfig) string {
 	if ext != nil && ext.URL != "" {
 		return strings.TrimSuffix(ext.URL, "/") + "/" + defaultGatewayProxyRepository + ":" + tag
 	}
-	return fmt.Sprintf("%s/%s:%s", registry.ResolveInternalPlatformRegistryURL(nil), defaultGatewayProxyRepository, tag)
+	return fmt.Sprintf("%s/%s:%s", resolveInternalPlatformRegistryURLClientGo(nil), defaultGatewayProxyRepository, tag)
 }
 
 func analyticsImageFor(ext *config.ExternalRegistryConfig, repository string) string {
@@ -507,11 +539,11 @@ func analyticsImageFor(ext *config.ExternalRegistryConfig, repository string) st
 	if ext != nil && ext.URL != "" {
 		return strings.TrimSuffix(ext.URL, "/") + "/" + repository + ":" + tag
 	}
-	return fmt.Sprintf("%s/%s:%s", registry.ResolveInternalPlatformRegistryURL(nil), repository, tag)
+	return fmt.Sprintf("%s/%s:%s", resolveInternalPlatformRegistryURLClientGo(nil), repository, tag)
 }
 
 func buildOperatorImage(image string) error {
-	platform, err := resolveSetupImagePlatform(core.DefaultKubectlClient())
+	platform, err := resolveSetupImagePlatformClientGo()
 	if err != nil {
 		return err
 	}
@@ -530,7 +562,7 @@ func buildOperatorImage(image string) error {
 }
 
 func buildGatewayProxyImage(image string) error {
-	platform, err := resolveSetupImagePlatform(core.DefaultKubectlClient())
+	platform, err := resolveSetupImagePlatformClientGo()
 	if err != nil {
 		return err
 	}
@@ -560,7 +592,7 @@ func buildGatewayProxyImage(image string) error {
 }
 
 func buildAnalyticsImage(image, dockerfilePath, buildContext string) error {
-	platform, err := resolveSetupImagePlatform(core.DefaultKubectlClient())
+	platform, err := resolveSetupImagePlatformClientGo()
 	if err != nil {
 		return err
 	}

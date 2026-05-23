@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -21,7 +22,9 @@ type Config struct {
 type Clients struct {
 	Clientset kubernetes.Interface
 	Dynamic   dynamic.Interface
+	Discovery discovery.DiscoveryInterface
 	Config    *rest.Config
+	Namespace string
 }
 
 // New creates Kubernetes clients with in-cluster config or kubeconfig fallback.
@@ -33,15 +36,18 @@ func New() (*Clients, error) {
 func NewWithConfig(cfg Config) (*Clients, error) {
 	var restConfig *rest.Config
 	var err error
+	namespace := "default"
 
 	// Try in-cluster config first
 	restConfig, err = rest.InClusterConfig()
 	if err != nil {
 		// Fall back to kubeconfig
-		restConfig, err = buildKubeconfig(cfg.KubeconfigPath)
+		restConfig, namespace, err = buildKubeconfig(cfg.KubeconfigPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Kubernetes config: %w", err)
 		}
+	} else {
+		namespace = GetNamespace()
 	}
 
 	// Create clientset
@@ -59,7 +65,9 @@ func NewWithConfig(cfg Config) (*Clients, error) {
 	return &Clients{
 		Clientset: clientset,
 		Dynamic:   dynamicClient,
+		Discovery: clientset.Discovery(),
 		Config:    restConfig,
+		Namespace: namespace,
 	}, nil
 }
 
@@ -82,11 +90,13 @@ func NewFromConfig(restConfig *rest.Config) (*Clients, error) {
 	return &Clients{
 		Clientset: clientset,
 		Dynamic:   dynamicClient,
+		Discovery: clientset.Discovery(),
 		Config:    restConfig,
+		Namespace: "default",
 	}, nil
 }
 
-func buildKubeconfig(kubeconfigPath string) (*rest.Config, error) {
+func buildKubeconfig(kubeconfigPath string) (*rest.Config, string, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if paths := splitKubeconfigPaths(kubeconfigPath); len(paths) == 1 {
 		loadingRules.ExplicitPath = paths[0]
@@ -95,15 +105,20 @@ func buildKubeconfig(kubeconfigPath string) (*rest.Config, error) {
 	}
 
 	// Build from kubeconfig
-	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		loadingRules,
 		&clientcmd.ConfigOverrides{},
-	).ClientConfig()
+	)
+	config, err := clientConfig.ClientConfig()
 	if err != nil {
-		return nil, fmt.Errorf("failed to load kubeconfig (searched: %v): %w", loadingRules.GetLoadingPrecedence(), err)
+		return nil, "", fmt.Errorf("failed to load kubeconfig (searched: %v): %w", loadingRules.GetLoadingPrecedence(), err)
+	}
+	namespace, _, err := clientConfig.Namespace()
+	if err != nil || strings.TrimSpace(namespace) == "" {
+		namespace = "default"
 	}
 
-	return config, nil
+	return config, namespace, nil
 }
 
 func splitKubeconfigPaths(raw string) []string {

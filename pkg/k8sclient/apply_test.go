@@ -1,0 +1,120 @@
+package k8sclient
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	discoveryfake "k8s.io/client-go/discovery/fake"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	clienttesting "k8s.io/client-go/testing"
+)
+
+func TestApplyManifestYAMLCreatesNamespacedObject(t *testing.T) {
+	clients := newApplyTestClients()
+
+	results, err := ApplyManifestYAML(context.Background(), clients, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+data:
+  key: value
+`), "mcp-servers")
+	if err != nil {
+		t.Fatalf("ApplyManifestYAML() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	if got, want := results[0].String(), "configmap/demo created"; got != want {
+		t.Fatalf("result = %q, want %q", got, want)
+	}
+
+	got, err := clients.Dynamic.Resource(schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}).
+		Namespace("mcp-servers").
+		Get(context.Background(), "demo", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get(ConfigMap) error = %v", err)
+	}
+	if got.GetNamespace() != "mcp-servers" {
+		t.Fatalf("namespace = %q, want mcp-servers", got.GetNamespace())
+	}
+	if value, _, _ := unstructured.NestedString(got.Object, "data", "key"); value != "value" {
+		t.Fatalf("data.key = %q, want value", value)
+	}
+}
+
+func TestApplyManifestYAMLUpdatesAndPreservesExistingLabels(t *testing.T) {
+	existing := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Namespace",
+		"metadata": map[string]any{
+			"name":            "mcp-servers",
+			"resourceVersion": "1",
+			"labels": map[string]any{
+				"keep":      "true",
+				"overwrite": "old",
+			},
+		},
+	}}
+	clients := newApplyTestClients(existing)
+
+	results, err := ApplyManifestYAML(context.Background(), clients, []byte(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-servers
+  labels:
+    overwrite: new
+`), "")
+	if err != nil {
+		t.Fatalf("ApplyManifestYAML() error = %v", err)
+	}
+	if len(results) != 1 || results[0].Action != "configured" {
+		t.Fatalf("results = %#v, want one configured result", results)
+	}
+
+	got, err := clients.Dynamic.Resource(schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}).
+		Get(context.Background(), "mcp-servers", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get(Namespace) error = %v", err)
+	}
+	labels := got.GetLabels()
+	if labels["keep"] != "true" {
+		t.Fatalf("keep label = %q, want true", labels["keep"])
+	}
+	if labels["overwrite"] != "new" {
+		t.Fatalf("overwrite label = %q, want new", labels["overwrite"])
+	}
+}
+
+func TestApplyManifestYAMLRejectsInvalidManifest(t *testing.T) {
+	clients := newApplyTestClients()
+
+	_, err := ApplyManifestYAML(context.Background(), clients, []byte("apiVersion: [\n"), "")
+	if err == nil {
+		t.Fatal("ApplyManifestYAML() error = nil, want decode error")
+	}
+	if !strings.Contains(err.Error(), "decode Kubernetes manifest") {
+		t.Fatalf("ApplyManifestYAML() error = %v, want decode context", err)
+	}
+}
+
+func newApplyTestClients(objects ...runtime.Object) *Clients {
+	resources := []*metav1.APIResourceList{{
+		GroupVersion: "v1",
+		APIResources: []metav1.APIResource{
+			{Name: "configmaps", Namespaced: true, Kind: "ConfigMap", Verbs: []string{"get", "create", "update"}},
+			{Name: "namespaces", Namespaced: false, Kind: "Namespace", Verbs: []string{"get", "create", "update"}},
+		},
+	}}
+
+	return &Clients{
+		Dynamic:   dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), objects...),
+		Discovery: &discoveryfake.FakeDiscovery{Fake: &clienttesting.Fake{Resources: resources}},
+		Namespace: metav1.NamespaceDefault,
+	}
+}

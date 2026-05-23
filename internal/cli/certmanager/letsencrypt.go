@@ -34,6 +34,10 @@ func certManagerInstallManifestURL() string {
 	return fmt.Sprintf("https://github.com/cert-manager/cert-manager/releases/download/%s/cert-manager.yaml", certManagerRelease)
 }
 
+func CertManagerInstallManifestURL() string {
+	return certManagerInstallManifestURL()
+}
+
 // ClusterIssuerNameForACME returns the ClusterIssuer resource name for Let's Encrypt.
 func ClusterIssuerNameForACME(staging bool) string {
 	if staging {
@@ -298,6 +302,10 @@ func renderLetsEncryptClusterIssuerManifest(name, email, serverURL string) strin
 	return b.String()
 }
 
+func RenderLetsEncryptClusterIssuerManifest(name, email, serverURL string) string {
+	return renderLetsEncryptClusterIssuerManifest(name, email, serverURL)
+}
+
 func applyRegistryCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error {
 	return applyCertificate(kubectl, registryCertificateName, registryTLSSecretName, dnsNames, ipAddresses, issuerName)
 }
@@ -388,4 +396,8 @@ func renderRegistryCertificate(certName, secretName string, dnsNames, ipAddresse
 		}
 	}
 	return b.String()
+}
+
+func RenderRegistryCertificate(certName, secretName string, dnsNames, ipAddresses []string, issuerName string) string {
+	return renderRegistryCertificate(certName, secretName, dnsNames, ipAddresses, issuerName)
 }

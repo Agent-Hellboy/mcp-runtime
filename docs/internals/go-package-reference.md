@@ -4480,6 +4480,7 @@ _No package overview is documented._
 - [`func ApplyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []string, issuerName string) error`](#cli-cert-manager-func-applyregistrycertificateforacme-kubectl-core-kubectlrunner-dnsnames-string-issuername-string-error)
 - [`func ApplyRegistryCertificateWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-applyregistrycertificatewithkubectl-kubectl-core-kubectlrunner-error)
 - [`func ApplyRegistryInternalCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error`](#cli-cert-manager-func-applyregistryinternalcertificate-kubectl-core-kubectlrunner-dnsnames-ipaddresses-string-issuername-string-error)
+- [`func CertManagerInstallManifestURL() string`](#cli-cert-manager-func-certmanagerinstallmanifesturl-string)
 - [`func CheckCASecretWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkcasecretwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func CheckCertManagerInstalledWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkcertmanagerinstalledwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func CheckCertificateWithKubectl(kubectl core.KubectlRunner, name, namespace string) error`](#cli-cert-manager-func-checkcertificatewithkubectl-kubectl-core-kubectlrunner-name-namespace-string-error)
@@ -4491,6 +4492,9 @@ _No package overview is documented._
 - [`func EnsureCertManagerInstalled(kubectl core.KubectlRunner, logger *zap.Logger) error`](#cli-cert-manager-func-ensurecertmanagerinstalled-kubectl-core-kubectlrunner-logger-zap-logger-error)
 - [`func PreflightACMEHostnamesPort80(dnsNames []string)`](#cli-cert-manager-func-preflightacmehostnamesport80-dnsnames-string)
 - [`func RemoveRegistryIngressShimAnnotationWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-removeregistryingressshimannotationwithkubectl-kubectl-core-kubectlrunner-error)
+- [`func RenderGeneratedCASecretManifest(now time.Time) (string, error)`](#cli-cert-manager-func-rendergeneratedcasecretmanifest-now-time-time-string-error)
+- [`func RenderLetsEncryptClusterIssuerManifest(name, email, serverURL string) string`](#cli-cert-manager-func-renderletsencryptclusterissuermanifest-name-email-serverurl-string-string)
+- [`func RenderRegistryCertificate(certName, secretName string, dnsNames, ipAddresses []string, issuerName string) string`](#cli-cert-manager-func-renderregistrycertificate-certname-secretname-string-dnsnames-ipaddresses-string-issuername-string-string)
 - [`func ValidateACMEHostnameForPublicCA() error`](#cli-cert-manager-func-validateacmehostnameforpublicca-error)
 - [`func ValidateIngressManifestForACME(ingressManifest string) error`](#cli-cert-manager-func-validateingressmanifestforacme-ingressmanifest-string-error)
 - [`func WaitForCertificateReadyWithKubectl(kubectl core.KubectlRunner, name, namespace string, timeout time.Duration) error`](#cli-cert-manager-func-waitforcertificatereadywithkubectl-kubectl-core-kubectlrunner-name-namespace-string-timeout-time-duration-error)
@@ -4552,6 +4556,11 @@ func ApplyRegistryCertificateWithKubectl(kubectl core.KubectlRunner) error
 func ApplyRegistryInternalCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error
 ```
 
+<a id="cli-cert-manager-func-certmanagerinstallmanifesturl-string"></a>
+```text
+func CertManagerInstallManifestURL() string
+```
+
 <a id="cli-cert-manager-func-checkcasecretwithkubectl-kubectl-core-kubectlrunner-error"></a>
 ```text
 func CheckCASecretWithKubectl(kubectl core.KubectlRunner) error
@@ -4608,6 +4617,21 @@ func PreflightACMEHostnamesPort80(dnsNames []string)
 <a id="cli-cert-manager-func-removeregistryingressshimannotationwithkubectl-kubectl-core-kubectlrunner-error"></a>
 ```text
 func RemoveRegistryIngressShimAnnotationWithKubectl(kubectl core.KubectlRunner) error
+```
+
+<a id="cli-cert-manager-func-rendergeneratedcasecretmanifest-now-time-time-string-error"></a>
+```text
+func RenderGeneratedCASecretManifest(now time.Time) (string, error)
+```
+
+<a id="cli-cert-manager-func-renderletsencryptclusterissuermanifest-name-email-serverurl-string-string"></a>
+```text
+func RenderLetsEncryptClusterIssuerManifest(name, email, serverURL string) string
+```
+
+<a id="cli-cert-manager-func-renderregistrycertificate-certname-secretname-string-dnsnames-ipaddresses-string-issuername-string-string"></a>
+```text
+func RenderRegistryCertificate(certName, secretName string, dnsNames, ipAddresses []string, issuerName string) string
 ```
 
 <a id="cli-cert-manager-func-validateacmehostnameforpublicca-error"></a>
