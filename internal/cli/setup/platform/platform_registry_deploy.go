@@ -4,14 +4,19 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
 
 	"go.uber.org/zap"
+	"sigs.k8s.io/yaml"
 
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/pkg/k8sclient"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 )
 
 const (
@@ -20,6 +25,9 @@ const (
 )
 
 func deployRegistryClientGo(logger *zap.Logger, namespace string, port int, registryType, registryStorageSize, manifestPath string) error {
+	if err := validateRegistryType(registryType); err != nil {
+		return err
+	}
 	clients, err := platformKubernetesClients()
 	if err != nil {
 		return err
@@ -51,26 +59,21 @@ func deployRegistryClientGo(logger *zap.Logger, namespace string, port int, regi
 		core.LogStructuredError(logger, wrappedErr, "Failed to render registry manifest")
 		return wrappedErr
 	}
-	manifest = rewriteRegistryManifestHost(manifest, core.GetRegistryIngressHost())
-	manifest = stripRegistryManifestClusterIssuerAnnotation(manifest)
-	if overrideImage := strings.TrimSpace(os.Getenv(registryImageOverrideEnvForPlan)); overrideImage != "" {
-		if logger != nil {
-			logger.Info("Applying registry image override", zap.String("image", overrideImage))
-		}
-		updated := strings.Replace(manifest, "image: "+defaultRegistryDeploymentImage, "image: "+overrideImage, 1)
-		if updated == manifest {
-			err := fmt.Errorf("registry image reference %q not found in manifest", defaultRegistryDeploymentImage)
-			wrappedErr := core.WrapWithSentinelAndContext(
-				core.ErrDeployRegistryFailed,
-				err,
-				err.Error(),
-				map[string]any{"namespace": namespace, "manifest_path": manifestPath, "registry_type": registryType, "component": "registry"},
-			)
-			core.Error("Failed to rewrite registry image")
-			core.LogStructuredError(logger, wrappedErr, "Failed to rewrite registry image")
-			return wrappedErr
-		}
-		manifest = updated
+	overrideImage := strings.TrimSpace(os.Getenv(registryImageOverrideEnvForPlan))
+	if overrideImage != "" && logger != nil {
+		logger.Info("Applying registry image override", zap.String("image", overrideImage))
+	}
+	manifest, err = mutateRegistryManifest(manifest, core.GetRegistryIngressHost(), overrideImage)
+	if err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrDeployRegistryFailed,
+			err,
+			err.Error(),
+			map[string]any{"namespace": namespace, "manifest_path": manifestPath, "registry_type": registryType, "component": "registry"},
+		)
+		core.Error("Failed to rewrite registry manifest")
+		core.LogStructuredError(logger, wrappedErr, "Failed to rewrite registry manifest")
+		return wrappedErr
 	}
 	results, err := k8sclient.ApplyManifestYAML(context.Background(), clients, []byte(manifest), namespace)
 	if err != nil {
@@ -120,25 +123,112 @@ func renderRegistryKustomizeManifest(manifestPath string) (string, error) {
 	return stdout.String(), nil
 }
 
-func rewriteRegistryManifestHost(manifest, host string) string {
-	host = strings.TrimSpace(host)
-	if host == "" || host == "registry.local" {
-		return manifest
+func validateRegistryType(registryType string) error {
+	switch strings.ToLower(strings.TrimSpace(registryType)) {
+	case "", "docker":
+		return nil
+	default:
+		return core.NewWithSentinel(core.ErrUnsupportedRegistryType, fmt.Sprintf("unsupported registry type %q; only docker is supported today", registryType))
 	}
-	return strings.ReplaceAll(manifest, "registry.local", host)
 }
 
-func stripRegistryManifestClusterIssuerAnnotation(manifest string) string {
-	lines := strings.SplitAfter(manifest, "\n")
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "cert-manager.io/cluster-issuer:") || strings.HasPrefix(trimmed, `"cert-manager.io/cluster-issuer":`) {
+func mutateRegistryManifest(manifest, host, overrideImage string) (string, error) {
+	host = strings.TrimSpace(host)
+	overrideImage = strings.TrimSpace(overrideImage)
+	replaceHost := host != "" && host != "registry.local"
+	decoder := k8syaml.NewYAMLOrJSONDecoder(strings.NewReader(manifest), 4096)
+	var out strings.Builder
+	imageReplaced := false
+	wroteObject := false
+	for {
+		obj := &unstructured.Unstructured{}
+		if err := decoder.Decode(obj); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return "", fmt.Errorf("decode registry manifest: %w", err)
+		}
+		if len(obj.Object) == 0 {
 			continue
 		}
-		out = append(out, line)
+		if replaceHost {
+			obj.Object = replaceStringValues(obj.Object, "registry.local", host).(map[string]any)
+		}
+		removeRegistryClusterIssuerAnnotation(obj)
+		if overrideImage != "" && setRegistryDeploymentImage(obj, overrideImage) {
+			imageReplaced = true
+		}
+		rendered, err := yaml.Marshal(obj.Object)
+		if err != nil {
+			return "", fmt.Errorf("encode registry manifest: %w", err)
+		}
+		if wroteObject {
+			out.WriteString("---\n")
+		}
+		out.Write(rendered)
+		if !strings.HasSuffix(string(rendered), "\n") {
+			out.WriteByte('\n')
+		}
+		wroteObject = true
 	}
-	return strings.Join(out, "")
+	if overrideImage != "" && !imageReplaced {
+		return "", fmt.Errorf("registry image reference %q not found in manifest", defaultRegistryDeploymentImage)
+	}
+	return out.String(), nil
+}
+
+func replaceStringValues(value any, oldValue, newValue string) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			typed[key] = replaceStringValues(nested, oldValue, newValue)
+		}
+		return typed
+	case []any:
+		for i, nested := range typed {
+			typed[i] = replaceStringValues(nested, oldValue, newValue)
+		}
+		return typed
+	case string:
+		return strings.ReplaceAll(typed, oldValue, newValue)
+	default:
+		return typed
+	}
+}
+
+func removeRegistryClusterIssuerAnnotation(obj *unstructured.Unstructured) {
+	annotations := obj.GetAnnotations()
+	if len(annotations) == 0 {
+		return
+	}
+	delete(annotations, "cert-manager.io/cluster-issuer")
+	obj.SetAnnotations(annotations)
+}
+
+func setRegistryDeploymentImage(obj *unstructured.Unstructured, image string) bool {
+	if obj.GetKind() != "Deployment" || obj.GetName() != "registry" {
+		return false
+	}
+	containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+	if err != nil || !found {
+		return false
+	}
+	replaced := false
+	for i, raw := range containers {
+		container, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if currentImage, _ := container["image"].(string); currentImage == defaultRegistryDeploymentImage {
+			container["image"] = image
+			containers[i] = container
+			replaced = true
+		}
+	}
+	if replaced {
+		_ = unstructured.SetNestedSlice(obj.Object, containers, "spec", "template", "spec", "containers")
+	}
+	return replaced
 }
 
 func ensureRegistryStorageSizeClientGo(logger *zap.Logger, clients *k8sclient.Clients, namespace, registryStorageSize string) error {

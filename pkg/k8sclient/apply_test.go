@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -88,6 +89,44 @@ metadata:
 	}
 	if labels["overwrite"] != "new" {
 		t.Fatalf("overwrite label = %q, want new", labels["overwrite"])
+	}
+}
+
+func TestApplyManifestYAMLRetriesUpdateConflict(t *testing.T) {
+	existing := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Namespace",
+		"metadata": map[string]any{
+			"name":            "mcp-servers",
+			"resourceVersion": "1",
+		},
+	}}
+	clients := newApplyTestClients(existing)
+	dynamicClient := clients.Dynamic.(*dynamicfake.FakeDynamicClient)
+	conflicts := 0
+	dynamicClient.PrependReactor("update", "namespaces", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		if conflicts == 0 {
+			conflicts++
+			return true, nil, apierrors.NewConflict(schema.GroupResource{Resource: "namespaces"}, "mcp-servers", nil)
+		}
+		return false, nil, nil
+	})
+
+	results, err := ApplyManifestYAML(context.Background(), clients, []byte(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-servers
+  labels:
+    retry: ok
+`), "")
+	if err != nil {
+		t.Fatalf("ApplyManifestYAML() error = %v", err)
+	}
+	if conflicts != 1 {
+		t.Fatalf("conflicts = %d, want 1", conflicts)
+	}
+	if len(results) != 1 || results[0].Action != "configured" {
+		t.Fatalf("results = %#v, want one configured result", results)
 	}
 }
 

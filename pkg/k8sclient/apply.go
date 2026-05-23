@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/restmapper"
+	"k8s.io/client-go/util/retry"
 )
 
 const defaultFieldManager = "mcp-runtime"
@@ -96,25 +97,33 @@ func applyObject(ctx context.Context, clients *Clients, mapper meta.RESTMapper, 
 		objectClient = resourceClient.Namespace(objectNamespace)
 	}
 
-	current, err := objectClient.Get(ctx, name, metav1.GetOptions{})
-	if errors.IsNotFound(err) {
-		if _, createErr := objectClient.Create(ctx, obj, metav1.CreateOptions{FieldManager: defaultFieldManager}); createErr != nil {
-			return ApplyResult{}, fmt.Errorf("create %s %s/%s: %w", gvk.String(), objectNamespace, name, createErr)
+	result := ApplyResult{GroupVersionKind: gvk, Namespace: objectNamespace, Name: name}
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current, err := objectClient.Get(ctx, name, metav1.GetOptions{})
+		if errors.IsNotFound(err) {
+			if _, createErr := objectClient.Create(ctx, obj.DeepCopy(), metav1.CreateOptions{FieldManager: defaultFieldManager}); createErr != nil {
+				return fmt.Errorf("create %s %s/%s: %w", gvk.String(), objectNamespace, name, createErr)
+			}
+			result.Action = "created"
+			return nil
 		}
-		return ApplyResult{GroupVersionKind: gvk, Namespace: objectNamespace, Name: name, Action: "created"}, nil
-	}
-	if err != nil {
-		return ApplyResult{}, fmt.Errorf("get %s %s/%s: %w", gvk.String(), objectNamespace, name, err)
-	}
+		if err != nil {
+			return fmt.Errorf("get %s %s/%s: %w", gvk.String(), objectNamespace, name, err)
+		}
 
-	merged := current.DeepCopy()
-	mergeObject(merged.Object, obj.Object)
-	unstructured.RemoveNestedField(merged.Object, "metadata", "managedFields")
-	unstructured.RemoveNestedField(merged.Object, "status")
-	if _, updateErr := objectClient.Update(ctx, merged, metav1.UpdateOptions{FieldManager: defaultFieldManager}); updateErr != nil {
-		return ApplyResult{}, fmt.Errorf("update %s %s/%s: %w", gvk.String(), objectNamespace, name, updateErr)
+		merged := current.DeepCopy()
+		mergeObject(merged.Object, obj.Object)
+		unstructured.RemoveNestedField(merged.Object, "metadata", "managedFields")
+		unstructured.RemoveNestedField(merged.Object, "status")
+		if _, updateErr := objectClient.Update(ctx, merged, metav1.UpdateOptions{FieldManager: defaultFieldManager}); updateErr != nil {
+			return updateErr
+		}
+		result.Action = "configured"
+		return nil
+	}); err != nil {
+		return ApplyResult{}, fmt.Errorf("apply %s %s/%s: %w", gvk.String(), objectNamespace, name, err)
 	}
-	return ApplyResult{GroupVersionKind: gvk, Namespace: objectNamespace, Name: name, Action: "configured"}, nil
+	return result, nil
 }
 
 func isEmptyObject(obj *unstructured.Unstructured) bool {

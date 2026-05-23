@@ -342,6 +342,44 @@ func WaitForDeploymentAvailable(ctx context.Context, clients *Clients, namespace
 	})
 }
 
+// WaitForDeploymentRolledOut waits until the Deployment's current generation
+// has fully rolled out.
+func WaitForDeploymentRolledOut(ctx context.Context, clients *Clients, namespace, name string, timeout time.Duration) error {
+	return wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		deploy, err := clients.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		for _, condition := range deploy.Status.Conditions {
+			if condition.Type == appsv1.DeploymentProgressing &&
+				condition.Status == corev1.ConditionFalse &&
+				condition.Reason == "ProgressDeadlineExceeded" {
+				return false, fmt.Errorf("deployment %s/%s rollout exceeded progress deadline", namespace, name)
+			}
+		}
+		desired := int32(1)
+		if deploy.Spec.Replicas != nil {
+			desired = *deploy.Spec.Replicas
+		}
+		if deploy.Status.ObservedGeneration < deploy.Generation {
+			return false, nil
+		}
+		if deploy.Status.UpdatedReplicas < desired {
+			return false, nil
+		}
+		if deploy.Status.Replicas > deploy.Status.UpdatedReplicas {
+			return false, nil
+		}
+		if deploy.Status.AvailableReplicas < desired {
+			return false, nil
+		}
+		return true, nil
+	})
+}
+
 // WaitForStatefulSetReady waits until a StatefulSet reports all desired replicas ready.
 func WaitForStatefulSetReady(ctx context.Context, clients *Clients, namespace, name string, timeout time.Duration) error {
 	return wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
@@ -366,7 +404,7 @@ func WaitForStatefulSetReady(ctx context.Context, clients *Clients, namespace, n
 func WaitForWorkloadRollout(ctx context.Context, clients *Clients, namespace, kind, name string, timeout time.Duration) error {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "deployment", "deploy", "deployments":
-		return WaitForDeploymentAvailable(ctx, clients, namespace, name, timeout)
+		return WaitForDeploymentRolledOut(ctx, clients, namespace, name, timeout)
 	case "statefulset", "statefulsets", "sts":
 		return WaitForStatefulSetReady(ctx, clients, namespace, name, timeout)
 	default:
@@ -377,7 +415,8 @@ func WaitForWorkloadRollout(ctx context.Context, clients *Clients, namespace, ki
 // DeleteJob deletes a Job and waits briefly for it to disappear.
 func DeleteJob(ctx context.Context, clients *Clients, namespace, name string, timeout time.Duration) error {
 	jobs := clients.Clientset.BatchV1().Jobs(namespace)
-	err := jobs.Delete(ctx, name, metav1.DeleteOptions{})
+	deletePolicy := metav1.DeletePropagationBackground
+	err := jobs.Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &deletePolicy})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
@@ -510,8 +549,11 @@ func CertificateOwnersForSecret(ctx context.Context, clients *Clients, namespace
 func WaitForCertificateReady(ctx context.Context, clients *Clients, namespace, name string, timeout time.Duration) error {
 	return wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		cert, err := clients.Dynamic.Resource(certificateGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
+		if apierrors.IsNotFound(err) {
 			return false, nil
+		}
+		if err != nil {
+			return false, err
 		}
 		conditions, _, _ := unstructured.NestedSlice(cert.Object, "status", "conditions")
 		for _, raw := range conditions {

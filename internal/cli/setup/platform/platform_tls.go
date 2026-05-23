@@ -289,7 +289,8 @@ func ensureCertManagerInstalledClientGo(logger *zap.Logger) error {
 	core.Info("Installing cert-manager v1.16.2")
 	warnMsg := "If this fails (no network), install cert-manager manually, then re-run setup with --skip-cert-manager-install"
 	core.Warn(warnMsg)
-	resp, err := http.Get(certmanager.CertManagerInstallManifestURL()) // #nosec G107 -- fixed cert-manager release URL.
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Get(certmanager.CertManagerInstallManifestURL()) // #nosec G107 -- fixed cert-manager release URL.
 	if err != nil {
 		wrapped := core.WrapWithSentinel(core.ErrCertManagerInstallFailed, err, fmt.Sprintf("cert-manager install failed: %v. %s", err, warnMsg))
 		core.Error("cert-manager install failed")
