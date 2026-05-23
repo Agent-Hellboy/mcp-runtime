@@ -4,7 +4,12 @@
     - --providers.kubernetesingress=true
     - --providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers,mcp-servers-org,mcp-servers-public
     - --entrypoints.web.address=:8000
+    - --entrypoints.web.forwardedHeaders.insecure=false
     - --entrypoints.websecure.address=:8443
+    - --entrypoints.websecure.forwardedHeaders.insecure=false
+    - --entrypoints.traefik.address=:8080
+    - --ping=true
+    - --ping.entryPoint=traefik
     - --providers.file.filename=/etc/traefik/dynamic/dynamic.yml
     - --providers.file.watch=true
 - op: replace

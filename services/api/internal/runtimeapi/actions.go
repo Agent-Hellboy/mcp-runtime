@@ -10,6 +10,8 @@ import (
 	"mcp-runtime/pkg/sentinel"
 )
 
+const actionRestartMaxBytes = 4 * 1024
+
 // HandleActionRestart restarts one or all Sentinel runtime components.
 func (s *RuntimeServer) HandleActionRestart(w http.ResponseWriter, r *http.Request) {
 	if s.sentinelMgr == nil {
@@ -22,8 +24,9 @@ func (s *RuntimeServer) HandleActionRestart(w http.ResponseWriter, r *http.Reque
 		All       bool   `json:"all"`
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, actionRestartMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid request body")
+		writeBodyDecodeError(w, err)
 		return
 	}
 

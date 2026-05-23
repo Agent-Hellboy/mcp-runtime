@@ -178,6 +178,59 @@ func TestEnsureDefaultDenyNetworkPolicyAllowsSentinelEgress(t *testing.T) {
 	}
 }
 
+func TestEnsureDefaultDenyNetworkPolicyAllowsRegistryEgress(t *testing.T) {
+	client := kubernetesfake.NewSimpleClientset()
+	if err := ensureDefaultDenyNetworkPolicy(context.Background(), client, "mcp-servers"); err != nil {
+		t.Fatalf("ensureDefaultDenyNetworkPolicy() error = %v", err)
+	}
+	policy, err := client.NetworkingV1().NetworkPolicies("mcp-servers").Get(context.Background(), "platform-default-deny", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get networkpolicy: %v", err)
+	}
+	if !networkPolicyAllowsEgressToNamespacePort(policy, registryNamespace, registryPort) {
+		t.Fatalf("expected registry egress rule, got %#v", policy.Spec.Egress)
+	}
+}
+
+func TestEnsureDefaultDenyNetworkPolicyAllowsSameNamespaceIngress(t *testing.T) {
+	client := kubernetesfake.NewSimpleClientset()
+	if err := ensureDefaultDenyNetworkPolicy(context.Background(), client, "user-1"); err != nil {
+		t.Fatalf("ensureDefaultDenyNetworkPolicy() error = %v", err)
+	}
+	policy, err := client.NetworkingV1().NetworkPolicies("user-1").Get(context.Background(), "platform-default-deny", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get networkpolicy: %v", err)
+	}
+	if !networkPolicyAllowsSameNamespace(policy) {
+		t.Fatalf("network policy does not allow same-namespace ingress: %#v", policy.Spec.Ingress)
+	}
+}
+
+func TestEnsureDefaultDenyNetworkPolicyDoesNotAllowBroadHTTPEgress(t *testing.T) {
+	client := kubernetesfake.NewSimpleClientset()
+	if err := ensureDefaultDenyNetworkPolicy(context.Background(), client, "user-1"); err != nil {
+		t.Fatalf("ensureDefaultDenyNetworkPolicy() error = %v", err)
+	}
+	policy, err := client.NetworkingV1().NetworkPolicies("user-1").Get(context.Background(), "platform-default-deny", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get networkpolicy: %v", err)
+	}
+	for _, rule := range policy.Spec.Egress {
+		if len(rule.To) != 0 {
+			continue
+		}
+		seen := map[int32]bool{}
+		for _, port := range rule.Ports {
+			if port.Port != nil && port.Port.Type == intstr.Int {
+				seen[port.Port.IntVal] = true
+			}
+		}
+		if seen[80] || seen[443] {
+			t.Fatalf("found broad HTTP egress rule: %#v", rule)
+		}
+	}
+}
+
 func TestEnsureDefaultDenyNetworkPolicyAllowsConfiguredIngressNamespace(t *testing.T) {
 	client := kubernetesfake.NewSimpleClientset()
 	if err := ensureDefaultDenyNetworkPolicy(context.Background(), client, "mcp-servers-public", "kube-system"); err != nil {
@@ -228,8 +281,18 @@ func TestHandleDeploymentApplyAdminUsesRequestedNamespace(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	if _, err := client.CoreV1().Namespaces().Get(context.Background(), "tenant-a", metav1.GetOptions{}); err != nil {
+	ns, err := client.CoreV1().Namespaces().Get(context.Background(), "tenant-a", metav1.GetOptions{})
+	if err != nil {
 		t.Fatalf("target namespace not ensured: %v", err)
+	}
+	for _, key := range []string{
+		"pod-security.kubernetes.io/enforce",
+		"pod-security.kubernetes.io/audit",
+		"pod-security.kubernetes.io/warn",
+	} {
+		if ns.Labels[key] != "restricted" {
+			t.Fatalf("namespace label %s = %q, want restricted", key, ns.Labels[key])
+		}
 	}
 }
 
@@ -595,6 +658,18 @@ func TestDesiredDeploymentUsesRestrictedPodDefaults(t *testing.T) {
 	if container.SecurityContext.Capabilities == nil || len(container.SecurityContext.Capabilities.Drop) != 1 || container.SecurityContext.Capabilities.Drop[0] != corev1.Capability("ALL") {
 		t.Fatalf("expected user workload container to drop all capabilities, got %#v", container.SecurityContext.Capabilities)
 	}
+	if container.Resources.Requests.Cpu().IsZero() || container.Resources.Requests.Memory().IsZero() {
+		t.Fatalf("expected user workload resource requests, got %#v", container.Resources)
+	}
+	if container.Resources.Limits.Cpu().IsZero() || container.Resources.Limits.Memory().IsZero() {
+		t.Fatalf("expected user workload resource limits, got %#v", container.Resources)
+	}
+	if container.ReadinessProbe == nil || container.ReadinessProbe.TCPSocket == nil {
+		t.Fatalf("expected TCP readiness probe, got %#v", container.ReadinessProbe)
+	}
+	if container.LivenessProbe == nil || container.LivenessProbe.TCPSocket == nil {
+		t.Fatalf("expected TCP liveness probe, got %#v", container.LivenessProbe)
+	}
 }
 
 func TestHandleDeploymentItemRejectsServiceUserWithoutIdentity(t *testing.T) {
@@ -621,6 +696,37 @@ func hasString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
 			return true
+		}
+	}
+	return false
+}
+
+func networkPolicyAllowsSameNamespace(policy *networkingv1.NetworkPolicy) bool {
+	for _, rule := range policy.Spec.Ingress {
+		for _, peer := range rule.From {
+			if peer.PodSelector != nil && peer.NamespaceSelector == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func networkPolicyAllowsEgressToNamespacePort(policy *networkingv1.NetworkPolicy, namespace string, port int) bool {
+	for _, rule := range policy.Spec.Egress {
+		portAllowed := false
+		for _, candidate := range rule.Ports {
+			if candidate.Port != nil && candidate.Port.Type == intstr.Int && candidate.Port.IntVal == int32(port) {
+				portAllowed = true
+			}
+		}
+		if !portAllowed {
+			continue
+		}
+		for _, peer := range rule.To {
+			if peer.NamespaceSelector != nil && peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == namespace {
+				return true
+			}
 		}
 	}
 	return false

@@ -20,6 +20,8 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: registry
         image: registry:2.8.3
@@ -30,7 +32,10 @@ spec:
         securityContext:
           allowPrivilegeEscalation: false
           runAsNonRoot: true
-          readOnlyRootFilesystem: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
         env:
         - name: REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY
           value: /var/lib/registry
@@ -39,6 +44,8 @@ spec:
         volumeMounts:
         - name: registry-storage
           mountPath: /var/lib/registry
+        - name: tmp
+          mountPath: /tmp
         resources:
           requests:
             cpu: 100m
@@ -62,3 +69,5 @@ spec:
       - name: registry-storage
         persistentVolumeClaim:
           claimName: registry-storage
+      - name: tmp
+        emptyDir: {}

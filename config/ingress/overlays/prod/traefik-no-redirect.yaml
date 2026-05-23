@@ -1,5 +1,5 @@
-# Traefik base enables HTTP to HTTPS on :80, which breaks HTTP-01 ACME challenges
-# (Let's Encrypt). Use plain HTTP on :80; HTTPS on :443 remains.
+# Traefik base enables HTTP to HTTPS, which breaks HTTP-01 ACME challenges
+# (Let's Encrypt). Use plain HTTP; HTTPS remains on the secure entrypoint.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,8 +13,9 @@ spec:
           args:
             - --providers.kubernetesingress=true
             - --providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers,mcp-servers-org,mcp-servers-public
-            - --entrypoints.web.address=:80
-            - --entrypoints.websecure.address=:443
+            - --entrypoints.web.address=:8000
+            - --entrypoints.websecure.address=:8443
             - --entrypoints.websecure.http.tls=true
+            - --ping=true
             - --providers.file.filename=/etc/traefik/dynamic/dynamic.yml
             - --providers.file.watch=true

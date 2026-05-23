@@ -42,6 +42,11 @@ const (
 	platformNamespaceOwnerRoleName = "platform-namespace-owner"
 	sentinelIngestPort             = 8081
 	sentinelOTLPPort               = 4318
+	registryNamespace              = "registry"
+	registryPort                   = 5000
+	podSecurityEnforceLabel        = "pod-security.kubernetes.io/enforce"
+	podSecurityAuditLabel          = "pod-security.kubernetes.io/audit"
+	podSecurityWarnLabel           = "pod-security.kubernetes.io/warn"
 )
 
 var (
@@ -316,8 +321,10 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 		}
 	} else if p.Role == roleAdmin {
 		labels := map[string]string{
-			platformManagedLabel:                 "true",
-			"pod-security.kubernetes.io/enforce": "restricted",
+			platformManagedLabel:    "true",
+			podSecurityEnforceLabel: "restricted",
+			podSecurityAuditLabel:   "restricted",
+			podSecurityWarnLabel:    "restricted",
 		}
 		if err := s.ensureManagedNamespace(ctx, namespace, labels, managedNamespaceOptions{}); err != nil {
 			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
@@ -379,9 +386,11 @@ func (s *RuntimeServer) EnsureCatalogNamespace(ctx context.Context, namespace st
 		return nil
 	}
 	labels := map[string]string{
-		platformManagedLabel:                 "true",
-		platformScopeLabel:                   PlatformMode(),
-		"pod-security.kubernetes.io/enforce": "restricted",
+		platformManagedLabel:    "true",
+		platformScopeLabel:      PlatformMode(),
+		podSecurityEnforceLabel: "restricted",
+		podSecurityAuditLabel:   "restricted",
+		podSecurityWarnLabel:    "restricted",
 	}
 	cfg := platformTeamTraefikWatchConfig()
 	opts := managedNamespaceOptions{}
@@ -404,11 +413,13 @@ func (s *RuntimeServer) ensureTeamNamespace(ctx context.Context, team teamRecord
 		return errors.New("team namespace required")
 	}
 	labels := map[string]string{
-		platformManagedLabel:                 "true",
-		platformTeamIDLabel:                  strings.TrimSpace(team.ID),
-		platformTeamSlugLabel:                strings.TrimSpace(team.Slug),
-		platformScopeLabel:                   namespaceScopeTeam,
-		"pod-security.kubernetes.io/enforce": "restricted",
+		platformManagedLabel:    "true",
+		platformTeamIDLabel:     strings.TrimSpace(team.ID),
+		platformTeamSlugLabel:   strings.TrimSpace(team.Slug),
+		platformScopeLabel:      namespaceScopeTeam,
+		podSecurityEnforceLabel: "restricted",
+		podSecurityAuditLabel:   "restricted",
+		podSecurityWarnLabel:    "restricted",
 	}
 	cfg := platformTeamTraefikWatchConfig()
 	opts := managedNamespaceOptions{}
@@ -558,13 +569,11 @@ func desiredDefaultDenyNetworkPolicy(ns string, ingressFromNamespaces ...string)
 	udpProtocol := corev1.ProtocolUDP
 	tcpProtocol := corev1.ProtocolTCP
 	ingress := make([]networkingv1.NetworkPolicyIngressRule, 0, 2)
-	if len(ingressFromNamespaces) > 0 {
-		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
-			From: []networkingv1.NetworkPolicyPeer{
-				{PodSelector: &metav1.LabelSelector{}},
-			},
-		})
-	}
+	ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+		From: []networkingv1.NetworkPolicyPeer{
+			{PodSelector: &metav1.LabelSelector{}},
+		},
+	})
 	for _, namespace := range ingressFromNamespaces {
 		namespace = strings.TrimSpace(namespace)
 		if namespace == "" {
@@ -614,17 +623,6 @@ func desiredDefaultDenyNetworkPolicy(ns string, ingressFromNamespaces ...string)
 				},
 				{
 					To: []networkingv1.NetworkPolicyPeer{
-						{PodSelector: &metav1.LabelSelector{}},
-					},
-				},
-				{
-					Ports: []networkingv1.NetworkPolicyPort{
-						{Protocol: &tcpProtocol, Port: intstrPtr(80)},
-						{Protocol: &tcpProtocol, Port: intstrPtr(443)},
-					},
-				},
-				{
-					To: []networkingv1.NetworkPolicyPeer{
 						{
 							NamespaceSelector: &metav1.LabelSelector{
 								MatchLabels: map[string]string{"kubernetes.io/metadata.name": sentinel.DefaultNamespace},
@@ -634,6 +632,18 @@ func desiredDefaultDenyNetworkPolicy(ns string, ingressFromNamespaces ...string)
 					Ports: []networkingv1.NetworkPolicyPort{
 						{Protocol: &tcpProtocol, Port: intstrPtr(sentinelIngestPort)},
 						{Protocol: &tcpProtocol, Port: intstrPtr(sentinelOTLPPort)},
+					},
+				},
+				{
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"kubernetes.io/metadata.name": registryNamespace},
+							},
+						},
+					},
+					Ports: []networkingv1.NetworkPolicyPort{
+						{Protocol: &tcpProtocol, Port: intstrPtr(registryPort)},
 					},
 				},
 			},
@@ -869,6 +879,30 @@ func desiredDeployment(name, namespace, image string, port, replicas int32, labe
 					Image:           image,
 					Ports:           []corev1.ContainerPort{{ContainerPort: port}},
 					SecurityContext: kubeworkload.RestrictedContainerSecurityContext(),
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("100m"),
+							corev1.ResourceMemory: resource.MustParse("128Mi"),
+						},
+						Limits: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("500m"),
+							corev1.ResourceMemory: resource.MustParse("512Mi"),
+						},
+					},
+					ReadinessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							TCPSocket: &corev1.TCPSocketAction{Port: intstrFromInt32(port)},
+						},
+						InitialDelaySeconds: 5,
+						PeriodSeconds:       10,
+					},
+					LivenessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							TCPSocket: &corev1.TCPSocketAction{Port: intstrFromInt32(port)},
+						},
+						InitialDelaySeconds: 30,
+						PeriodSeconds:       20,
+					},
 				}},
 			},
 		},
