@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -43,13 +44,25 @@ func FilePath() (string, error) {
 	return filepath.Join(dir, "credentials.json"), nil
 }
 
-// Credentials holds platform API identity saved after `mcp-runtime auth login`.
+// Credentials holds platform API identities saved after `mcp-runtime auth login`.
 type Credentials struct {
+	Current      string                       `json:"current,omitempty"`
+	Accounts     map[string]CredentialAccount `json:"accounts,omitempty"`
+	APIBaseURL   string                       `json:"api_url,omitempty"`
+	Token        string                       `json:"token,omitempty"`
+	Role         string                       `json:"role,omitempty"`
+	RegistryHost string                       `json:"registry_host,omitempty"`
+	UpdatedAt    time.Time                    `json:"updated_at"`
+}
+
+// CredentialAccount is one saved platform identity.
+type CredentialAccount struct {
 	APIBaseURL   string    `json:"api_url"`
 	Token        string    `json:"token"`
 	Role         string    `json:"role,omitempty"`
 	RegistryHost string    `json:"registry_host,omitempty"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	Username     string    `json:"username,omitempty"`
+	UpdatedAt    time.Time `json:"updated_at,omitempty"`
 }
 
 // Load reads credentials from path. If the file is missing, returns [ErrNotFound].
@@ -69,7 +82,7 @@ func Load(path string) (*Credentials, error) {
 	if err := json.Unmarshal(b, &c); err != nil {
 		return nil, fmt.Errorf("%w: parse credentials: %w", ErrInvalid, err)
 	}
-	if c.Token == "" || c.APIBaseURL == "" {
+	if _, _, err := c.SelectedAccount(""); err != nil {
 		return nil, fmt.Errorf("%w: api_url and token are required", ErrInvalid)
 	}
 	return &c, nil
@@ -80,10 +93,33 @@ func Save(path string, c *Credentials) error {
 	if c == nil {
 		return errors.New("nil credentials")
 	}
-	if c.Token == "" || c.APIBaseURL == "" {
-		return errors.New("api_url and token are required")
-	}
 	c.UpdatedAt = time.Now().UTC()
+	if c.Accounts == nil {
+		c.Accounts = map[string]CredentialAccount{}
+	}
+	if len(c.Accounts) == 0 {
+		profile := NormalizeProfileName(c.Current)
+		if profile == "" {
+			profile = "default"
+		}
+		c.Current = profile
+		c.Accounts[profile] = CredentialAccount{
+			APIBaseURL:   strings.TrimSpace(c.APIBaseURL),
+			Token:        strings.TrimSpace(c.Token),
+			Role:         strings.TrimSpace(c.Role),
+			RegistryHost: strings.TrimSpace(c.RegistryHost),
+			UpdatedAt:    c.UpdatedAt,
+		}
+	}
+	account, profile, err := c.SelectedAccount(c.Current)
+	if err != nil {
+		return err
+	}
+	c.Current = profile
+	c.APIBaseURL = account.APIBaseURL
+	c.Token = account.Token
+	c.Role = account.Role
+	c.RegistryHost = account.RegistryHost
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -121,6 +157,142 @@ func Save(path string, c *Credentials) error {
 	return os.Chmod(path, 0o600)
 }
 
+// SaveProfile saves one named identity and marks it as current.
+func SaveProfile(path, profile string, account CredentialAccount) error {
+	profile = NormalizeProfileName(profile)
+	if profile == "" {
+		profile = "default"
+	}
+	account.APIBaseURL = strings.TrimSpace(account.APIBaseURL)
+	account.Token = strings.TrimSpace(account.Token)
+	account.Role = strings.TrimSpace(account.Role)
+	account.RegistryHost = strings.TrimSpace(account.RegistryHost)
+	account.Username = strings.TrimSpace(account.Username)
+	if account.APIBaseURL == "" || account.Token == "" {
+		return errors.New("api_url and token are required")
+	}
+	c := &Credentials{}
+	if existing, err := Load(path); err == nil && existing != nil {
+		c = existing
+	}
+	if c.Accounts == nil {
+		c.Accounts = map[string]CredentialAccount{}
+	}
+	if len(c.Accounts) == 0 && strings.TrimSpace(c.APIBaseURL) != "" && strings.TrimSpace(c.Token) != "" {
+		existingProfile := NormalizeProfileName(c.Current)
+		if existingProfile == "" {
+			existingProfile = "default"
+		}
+		c.Accounts[existingProfile] = CredentialAccount{
+			APIBaseURL:   strings.TrimSpace(c.APIBaseURL),
+			Token:        strings.TrimSpace(c.Token),
+			Role:         strings.TrimSpace(c.Role),
+			RegistryHost: strings.TrimSpace(c.RegistryHost),
+			UpdatedAt:    c.UpdatedAt,
+		}
+	}
+	now := time.Now().UTC()
+	account.UpdatedAt = now
+	c.Accounts[profile] = account
+	c.Current = profile
+	c.UpdatedAt = now
+	return Save(path, c)
+}
+
+// SelectProfile marks a saved identity as current.
+func SelectProfile(path, profile string) error {
+	c, err := Load(path)
+	if err != nil {
+		return err
+	}
+	profile = NormalizeProfileName(profile)
+	if _, resolved, err := c.SelectedAccount(profile); err != nil {
+		return err
+	} else {
+		c.Current = resolved
+	}
+	return Save(path, c)
+}
+
+// SelectedAccount returns the requested saved identity, or the current identity
+// when profile is empty.
+func (c *Credentials) SelectedAccount(profile string) (CredentialAccount, string, error) {
+	if c == nil {
+		return CredentialAccount{}, "", errors.New("nil credentials")
+	}
+	profile = NormalizeProfileName(profile)
+	if profile == "" {
+		profile = NormalizeProfileName(c.Current)
+	}
+	if profile != "" && len(c.Accounts) > 0 {
+		if account, ok := c.Accounts[profile]; ok {
+			if account.APIBaseURL == "" || account.Token == "" {
+				return CredentialAccount{}, "", errors.New("api_url and token are required")
+			}
+			return account, profile, nil
+		}
+		return CredentialAccount{}, "", fmt.Errorf("profile %q not found", profile)
+	}
+	if profile == "" && len(c.Accounts) > 0 {
+		names := c.ProfileNames()
+		if len(names) == 1 {
+			account := c.Accounts[names[0]]
+			if account.APIBaseURL == "" || account.Token == "" {
+				return CredentialAccount{}, "", errors.New("api_url and token are required")
+			}
+			return account, names[0], nil
+		}
+		return CredentialAccount{}, "", errors.New("current profile is not set")
+	}
+	account := CredentialAccount{
+		APIBaseURL:   strings.TrimSpace(c.APIBaseURL),
+		Token:        strings.TrimSpace(c.Token),
+		Role:         strings.TrimSpace(c.Role),
+		RegistryHost: strings.TrimSpace(c.RegistryHost),
+		UpdatedAt:    c.UpdatedAt,
+	}
+	if account.APIBaseURL == "" || account.Token == "" {
+		return CredentialAccount{}, "", errors.New("api_url and token are required")
+	}
+	if profile == "" {
+		profile = "default"
+	}
+	return account, profile, nil
+}
+
+// ProfileNames returns saved profile names in stable order.
+func (c *Credentials) ProfileNames() []string {
+	if c == nil || len(c.Accounts) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(c.Accounts))
+	for name := range c.Accounts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// NormalizeProfileName converts a user-facing profile label to a stable key.
+func NormalizeProfileName(raw string) string {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '@' || r == '.' || r == '_' || r == '-'
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-._@")
+}
+
 // Remove deletes the credentials file at path if it exists.
 func Remove(path string) error {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -149,6 +321,9 @@ const EnvAPIToken = "MCP_PLATFORM_API_TOKEN"
 // EnvAPIURL is the default platform API base URL (e.g. https://platform.example.com).
 const EnvAPIURL = "MCP_PLATFORM_API_URL"
 
+// EnvAPIProfile selects a saved platform API profile from credentials.json.
+const EnvAPIProfile = "MCP_PLATFORM_API_PROFILE"
+
 // ResolveToken returns a token and API base URL: first from the environment, then the default credentials file.
 // If apiBase is empty, callers may still have a token from [EnvAPIToken] only.
 func ResolveToken() (token, apiBase, source string, err error) {
@@ -163,5 +338,13 @@ func ResolveToken() (token, apiBase, source string, err error) {
 	if err != nil {
 		return "", "", "", err
 	}
-	return c.Token, c.APIBaseURL, "credentials file", nil
+	account, profile, err := c.SelectedAccount(os.Getenv(EnvAPIProfile))
+	if err != nil {
+		return "", "", "", err
+	}
+	source = "credentials file"
+	if profile != "" {
+		source += " profile " + profile
+	}
+	return account.Token, account.APIBaseURL, source, nil
 }

@@ -701,12 +701,16 @@ func TestSetupPlatformWithDeps_ExternalRegistry(t *testing.T) {
 			rec.add("push-gateway-internal")
 			return nil
 		},
-		DeployOperatorManifests: func(*zap.Logger, string, string, []string) error {
+		DeployOperatorManifests: func(*zap.Logger, string, string, []string, string) error {
 			rec.add("deploy-operator")
 			return nil
 		},
 		ConfigureProvisionedRegistryEnv: func(*config.ExternalRegistryConfig, string) error {
 			rec.add("configure-env")
+			return nil
+		},
+		EnsureImagePullSecret: func(string, string, string, string, string) error {
+			rec.add("pull-secret")
 			return nil
 		},
 		RestartDeployment:    func(string, string) error { rec.add("restart"); return nil },
@@ -786,7 +790,7 @@ func TestSetupPlatformWithDeps_InternalRegistryTLS(t *testing.T) {
 			rec.add("push-gateway-internal")
 			return nil
 		},
-		DeployOperatorManifests: func(*zap.Logger, string, string, []string) error { rec.add("deploy-operator"); return nil },
+		DeployOperatorManifests: func(*zap.Logger, string, string, []string, string) error { rec.add("deploy-operator"); return nil },
 		ConfigureProvisionedRegistryEnv: func(*config.ExternalRegistryConfig, string) error {
 			rec.add("configure-env")
 			return nil
@@ -878,9 +882,13 @@ func TestSetupPlatformWithDeps_ExternalRegistryTLS(t *testing.T) {
 			rec.add("push-gateway-internal")
 			return nil
 		},
-		DeployOperatorManifests: func(*zap.Logger, string, string, []string) error { rec.add("deploy-operator"); return nil },
+		DeployOperatorManifests: func(*zap.Logger, string, string, []string, string) error { rec.add("deploy-operator"); return nil },
 		ConfigureProvisionedRegistryEnv: func(*config.ExternalRegistryConfig, string) error {
 			rec.add("configure-env")
+			return nil
+		},
+		EnsureImagePullSecret: func(string, string, string, string, string) error {
+			rec.add("pull-secret")
 			return nil
 		},
 		RestartDeployment:    func(string, string) error { rec.add("restart"); return nil },
@@ -965,7 +973,7 @@ func TestSetupPlatformWithDeps_DiagnosticsOnRegistryWaitFailure(t *testing.T) {
 			return nil
 		},
 		PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
-		DeployOperatorManifests:         func(*zap.Logger, string, string, []string) error { return nil },
+		DeployOperatorManifests:         func(*zap.Logger, string, string, []string, string) error { return nil },
 		ConfigureProvisionedRegistryEnv: func(*config.ExternalRegistryConfig, string) error { return nil },
 		RestartDeployment:               func(string, string) error { return nil },
 		CheckCRDInstalled:               func(string) error { return nil },
@@ -1031,7 +1039,7 @@ func TestSetupPlatformWithDeps_DiagnosticsOnOperatorWaitFailure(t *testing.T) {
 			return nil
 		},
 		PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
-		DeployOperatorManifests:         func(*zap.Logger, string, string, []string) error { return nil },
+		DeployOperatorManifests:         func(*zap.Logger, string, string, []string, string) error { return nil },
 		ConfigureProvisionedRegistryEnv: func(*config.ExternalRegistryConfig, string) error { return nil },
 		RestartDeployment:               func(string, string) error { return nil },
 		CheckCRDInstalled:               func(string) error { return nil },
@@ -1096,7 +1104,7 @@ func TestSetupPlatformWithDeps_CRDCheckFailure(t *testing.T) {
 			return nil
 		},
 		PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
-		DeployOperatorManifests:         func(*zap.Logger, string, string, []string) error { return nil },
+		DeployOperatorManifests:         func(*zap.Logger, string, string, []string, string) error { return nil },
 		ConfigureProvisionedRegistryEnv: func(*config.ExternalRegistryConfig, string) error { return nil },
 		RestartDeployment:               func(string, string) error { return nil },
 		CheckCRDInstalled: func(string) error {
@@ -1165,7 +1173,7 @@ func TestSetupPlatformWithDeps_InternalRegistryPushFailure(t *testing.T) {
 			rec.add("push-gateway-internal")
 			return nil
 		},
-		DeployOperatorManifests:         func(*zap.Logger, string, string, []string) error { rec.add("deploy-operator"); return nil },
+		DeployOperatorManifests:         func(*zap.Logger, string, string, []string, string) error { rec.add("deploy-operator"); return nil },
 		ConfigureProvisionedRegistryEnv: func(*config.ExternalRegistryConfig, string) error { return nil },
 		RestartDeployment:               func(string, string) error { return nil },
 		CheckCRDInstalled:               func(string) error { return nil },
@@ -1238,7 +1246,7 @@ func TestSetupPlatformWithDeps_RegistryAuthReenabledOnFailure(t *testing.T) {
 			return fmt.Errorf("push failed")
 		},
 		PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
-		DeployOperatorManifests:         func(*zap.Logger, string, string, []string) error { return nil },
+		DeployOperatorManifests:         func(*zap.Logger, string, string, []string, string) error { return nil },
 		ConfigureProvisionedRegistryEnv: func(*config.ExternalRegistryConfig, string) error { return nil },
 		DisableRegistryIngressAuth: func() error {
 			rec.add("auth-disable")
@@ -1326,7 +1334,7 @@ func TestSetupPlatformWithDeps_CatalogNamespace(t *testing.T) {
 				ResolvePlatformRegistryURL:      func(*zap.Logger) string { return "registry.local" },
 				PushOperatorImageToInternal:     func(*zap.Logger, string, string, string) error { return nil },
 				PushGatewayProxyImageToInternal: func(*zap.Logger, string, string, string) error { return nil },
-				DeployOperatorManifests:         func(*zap.Logger, string, string, []string) error { return nil },
+				DeployOperatorManifests:         func(*zap.Logger, string, string, []string, string) error { return nil },
 				ConfigureProvisionedRegistryEnv: func(*config.ExternalRegistryConfig, string) error { return nil },
 				RestartDeployment:               func(string, string) error { return nil },
 				CheckCRDInstalled:               func(string) error { return nil },

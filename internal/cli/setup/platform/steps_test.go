@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"mcp-runtime/internal/cli/cluster"
+	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/registry/config"
 	setupplan "mcp-runtime/internal/cli/setup/plan"
 )
@@ -219,7 +220,7 @@ func TestDeployOperatorStepCmdPassesOperatorArgs(t *testing.T) {
 	var gotArgs []string
 	var gotGatewayImage string
 	deps := SetupDeps{
-		DeployOperatorManifests: func(_ *zap.Logger, image, gatewayImage string, args []string) error {
+		DeployOperatorManifests: func(_ *zap.Logger, image, gatewayImage string, args []string, imagePullSecretName string) error {
 			if image != ctx.OperatorImage {
 				t.Fatalf("expected operator image %q, got %q", ctx.OperatorImage, image)
 			}
@@ -244,6 +245,50 @@ func TestDeployOperatorStepCmdPassesOperatorArgs(t *testing.T) {
 	}
 	if gotGatewayImage != ctx.GatewayProxyImage {
 		t.Fatalf("expected gateway image %q, got %q", ctx.GatewayProxyImage, gotGatewayImage)
+	}
+}
+
+func TestDeployOperatorStepCmdCreatesOperatorPullSecretForExternalRegistry(t *testing.T) {
+	ctx := &SetupContext{
+		ExternalRegistry: &config.ExternalRegistryConfig{
+			URL:      "registry.example.com",
+			Username: "user",
+			Password: "pass",
+		},
+		UsingExternalRegistry: true,
+		RegistrySecretName:    defaultRegistrySecretName,
+		OperatorImage:         "registry.example.com/mcp-runtime-operator:latest",
+	}
+	var ensuredNamespace string
+	var ensuredName string
+	var gotPullSecret string
+	deps := SetupDeps{
+		EnsureImagePullSecret: func(namespace, name, registryURL, username, password string) error {
+			ensuredNamespace = namespace
+			ensuredName = name
+			if registryURL != ctx.ExternalRegistry.URL || username != "user" || password != "pass" {
+				t.Fatalf("unexpected pull secret inputs: %q %q/%q", registryURL, username, password)
+			}
+			return nil
+		},
+		DeployOperatorManifests: func(_ *zap.Logger, image, gatewayImage string, args []string, imagePullSecretName string) error {
+			gotPullSecret = imagePullSecretName
+			return nil
+		},
+		ConfigureProvisionedRegistryEnv: func(*config.ExternalRegistryConfig, string) error { return nil },
+		RestartDeployment:               func(string, string) error { return nil },
+	}
+
+	step := deployOperatorStepCmd{}
+	if err := step.Run(zap.NewNop(), deps, ctx); err != nil {
+		t.Fatalf("deploy operator step failed: %v", err)
+	}
+	wantName := defaultPlatformRegistryPullSecretName
+	if ensuredNamespace != core.NamespaceMCPRuntime || ensuredName != wantName {
+		t.Fatalf("expected operator pull secret %s/%s, got %s/%s", core.NamespaceMCPRuntime, wantName, ensuredNamespace, ensuredName)
+	}
+	if gotPullSecret != ensuredName {
+		t.Fatalf("expected deployed operator pull secret %q, got %q", ensuredName, gotPullSecret)
 	}
 }
 

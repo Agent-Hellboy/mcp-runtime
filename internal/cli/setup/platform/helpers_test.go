@@ -2259,6 +2259,9 @@ func TestSetupDepsWithDefaultsSetsNil(t *testing.T) {
 	if deps.DeployOperatorManifests == nil {
 		t.Fatal("expected DeployOperatorManifests default")
 	}
+	if deps.EnsureImagePullSecret == nil {
+		t.Fatal("expected EnsureImagePullSecret default")
+	}
 	if deps.ConfigureProvisionedRegistryEnv == nil {
 		t.Fatal("expected ConfigureProvisionedRegistryEnv default")
 	}
@@ -2417,7 +2420,7 @@ func TestDeployOperatorManifestsWithKubectlPreservesExistingGatewayOTLPEndpoint(
 	kubectl := core.NewTestKubectlClient(mock)
 	swapDefaultKubectlClientForTest(t, kubectl)
 
-	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "registry.example.com/mcp-runtime-operator:dev", "", nil); err != nil {
+	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "registry.example.com/mcp-runtime-operator:dev", "", nil, ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(managerManifest, "name: MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT") ||
@@ -2482,7 +2485,7 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 		"--metrics-bind-address=:9090",
 		"--health-probe-bind-address=:9091",
 	}
-	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), operatorImage, gatewayProxyImage, operatorArgs); err != nil {
+	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), operatorImage, gatewayProxyImage, operatorArgs, ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if managerManifest == "" {
@@ -2538,6 +2541,47 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	}
 	if !hasCRD || !hasRBAC || !hasManagerApply || !hasNamespace {
 		t.Fatalf("missing expected kubectl commands: crd=%t rbac=%t manager=%t namespace=%t", hasCRD, hasRBAC, hasManagerApply, hasNamespace)
+	}
+}
+
+func TestDeployOperatorManifestsWithKubectlInjectsImagePullSecret(t *testing.T) {
+	root := repoRootForTest(t)
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working dir: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir to repo root: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(origDir)
+	})
+
+	var managerManifest string
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if isOperatorManagerApplyArgs(spec.Args) {
+				cmd.RunFunc = func() error {
+					data, err := io.ReadAll(cmd.StdinR)
+					if err != nil {
+						return err
+					}
+					managerManifest = string(data)
+					return nil
+				}
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+	swapDefaultKubectlClientForTest(t, kubectl)
+
+	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "registry.example.com/mcp-runtime-operator:dev", "", nil, "platform-pull-secret"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(managerManifest, "imagePullSecrets:") || !strings.Contains(managerManifest, "name: platform-pull-secret") {
+		t.Fatalf("expected manager manifest to include imagePullSecrets, got:\n%s", managerManifest)
 	}
 }
 
@@ -2759,7 +2803,7 @@ func TestDeployOperatorManifestsWithKubectlUsesIfNotPresentForTestModeImage(t *t
 	kubectl := core.NewTestKubectlClient(mock)
 	swapDefaultKubectlClientForTest(t, kubectl)
 
-	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), testModeOperatorImage, "", nil); err != nil {
+	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), testModeOperatorImage, "", nil, ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if managerManifest == "" {
@@ -2783,7 +2827,7 @@ func TestDeployOperatorManifestsWithKubectlCRDError(t *testing.T) {
 	}
 	kubectl := core.NewTestKubectlClient(mock)
 
-	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "example", "", nil); err == nil {
+	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "example", "", nil, ""); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -2803,7 +2847,7 @@ func TestDeployOperatorManifestsWithKubectlRBACError(t *testing.T) {
 	kubectl := core.NewTestKubectlClient(mock)
 	swapDefaultKubectlClientForTest(t, kubectl)
 
-	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "example", "", nil); err == nil {
+	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "example", "", nil, ""); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -2835,7 +2879,7 @@ func TestDeployOperatorManifestsWithKubectlManagerApplyError(t *testing.T) {
 	kubectl := core.NewTestKubectlClient(mock)
 	swapDefaultKubectlClientForTest(t, kubectl)
 
-	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "example", "", nil); err == nil {
+	if err := deployOperatorManifestsWithKubectl(kubectl, zap.NewNop(), "example", "", nil, ""); err == nil {
 		t.Fatal("expected error")
 	}
 }

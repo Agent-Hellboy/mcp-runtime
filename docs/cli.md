@@ -152,6 +152,7 @@ Use `auth` for platform API credentials, not for Kubernetes cluster access.
 Use cases:
 
 - saving a platform API token locally for day-to-day platform flows
+- saving multiple platform identities, such as an admin profile plus team user profiles
 - recording a registry host alongside that token
 - checking whether local platform credentials are already configured
 
@@ -177,19 +178,25 @@ cat token.txt | mcp-runtime auth login \
 mcp-runtime auth login \
   --api-url https://platform.example.com \
   --email admin@example.com \
-  --password '...'
+  --password '...' \
+  --profile admin
 
 # `--username` is accepted as an alias for `--email`
 mcp-runtime auth login \
   --api-url https://platform.example.com \
   --username globex@example.com \
-  --password '...'
+  --password '...' \
+  --profile globex
 
 # Record the platform registry host too
 mcp-runtime auth login \
   --api-url https://platform.example.com \
   --token-stdin \
   --registry-host registry.example.com < token.txt
+
+# Switch between saved profiles
+mcp-runtime auth use admin
+mcp-runtime auth use globex
 
 # Check current auth state
 mcp-runtime auth status
@@ -201,6 +208,8 @@ mcp-runtime auth logout
 Notes:
 
 - saved credentials are local to the workstation
+- each login is saved as a named profile; `auth login` makes that profile current
+- `MCP_PLATFORM_API_PROFILE` selects a saved profile without changing the current profile
 - `MCP_PLATFORM_API_TOKEN` overrides any saved token when set
 - `MCP_PLATFORM_API_URL` can provide the default API base URL
 - kubeconfig-based cluster commands are separate from platform auth
@@ -354,7 +363,7 @@ has admin/operator cluster access.
 
 `server patch` accepts inline `--patch` or `--patch-file` with `merge`, `json`, or `strategic` modes.
 
-`server build image` updates matching `.mcp` metadata when you use the metadata-driven pipeline. It defaults Docker builds to `linux/amd64` so images can run on typical amd64 Kubernetes nodes; override with `--platform` or `MCP_DOCKER_PLATFORM` for another node architecture. It can resolve to a concrete host such as `10.43.109.51:5000/public/payments:v1` when metadata sets `scope: public`, or to the authenticated team repository prefix when metadata sets `scope: tenant` and platform credentials are configured. Push that exact ref after logging in to the platform. The command does not deploy by itself; push and deploy are separate steps. `server deploy --scope public` and `--scope org` let the platform resolve the active catalog namespace; `--scope tenant` uses the authenticated user's team namespace unless `--team` or `--namespace` selects one explicitly. Deploy accepts a short image name and expands it through the platform API to the configured node-pullable registry endpoint plus the active scope prefix. When run beside `.mcp/*.yaml`, deploy includes the matching server inventory, including tool side-effect metadata used by governed tool calls.
+`server build image` updates matching `.mcp` metadata when you use the metadata-driven pipeline. It defaults Docker builds to `linux/amd64` so images can run on typical amd64 Kubernetes nodes; override with `--platform` or `MCP_DOCKER_PLATFORM` for another node architecture. It prefers an explicit registry host, then the cluster's `registry/registry` Ingress host, before falling back to the registry Service address. That keeps metadata images on a node-pullable public host such as `registry.example.com/public/payments:v1` when the cluster exposes one. Tenant metadata still uses the authenticated team repository prefix when platform credentials are configured. Push that exact ref after logging in to the platform. The command does not deploy by itself; push and deploy are separate steps. `server deploy --scope public` and `--scope org` let the platform resolve the active catalog namespace; `--scope tenant` uses the authenticated user's team namespace unless `--team` or `--namespace` selects one explicitly. Deploy accepts a short image name and expands it through the platform API to the configured node-pullable registry endpoint plus the active scope prefix. When run beside `.mcp/*.yaml`, deploy includes the matching server inventory, including tool side-effect metadata used by governed tool calls.
 
 ## sentinel
 

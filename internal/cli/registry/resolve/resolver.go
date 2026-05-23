@@ -49,6 +49,11 @@ func PlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string 
 		return fmt.Sprintf("%s:%d", registryServiceDNS, cfg.RegistryPort)
 	}
 
+	if ingressHost, ingressErr := registryIngressHost(kubectl); ingressErr == nil && ingressHost != "" &&
+		ingressHost != cfg.DefaultRegistryHost {
+		return ingressHost
+	}
+
 	ip, ipErr := serviceClusterIP(kubectl)
 	portValue, portErr := servicePort(kubectl)
 	if ipErr == nil && ip != "" && portErr == nil && portValue != "" {
@@ -141,6 +146,21 @@ func serviceClusterIP(kubectl KubectlCommand) (string, error) {
 		return "", fmt.Errorf("kubectl is nil")
 	}
 	cmd, err := kubectl([]string{"get", "service", "registry", "-n", "registry", "-o", "jsonpath={.spec.clusterIP}"})
+	if err != nil {
+		return "", err
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func registryIngressHost(kubectl KubectlCommand) (string, error) {
+	if kubectl == nil {
+		return "", fmt.Errorf("kubectl is nil")
+	}
+	cmd, err := kubectl([]string{"get", "ingress", "registry", "-n", "registry", "-o", "jsonpath={.spec.rules[0].host}"})
 	if err != nil {
 		return "", err
 	}

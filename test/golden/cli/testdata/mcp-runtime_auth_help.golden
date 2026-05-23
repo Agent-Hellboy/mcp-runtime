@@ -8,6 +8,7 @@ The token is stored in a local file (mode 0600) under the user config directory,
 Optional environment:
   MCP_PLATFORM_API_URL      default API base for login, e.g. https://platform.example.com
   MCP_PLATFORM_API_TOKEN    use this token for API calls; overrides a saved file
+  MCP_PLATFORM_API_PROFILE  select a saved credentials profile
   MCP_RUNTIME_CONFIG_DIR    override the config directory (mainly for tests)
 
 Usage:
@@ -17,6 +18,7 @@ Available Commands:
   login       Save a platform API token and optional registry host
   logout      Delete saved platform credentials on this machine
   status      Show whether platform API credentials are configured
+  use         Switch the current saved platform credential profile
 
 Flags:
   -h, --help   help for auth

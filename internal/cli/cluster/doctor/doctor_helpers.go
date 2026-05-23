@@ -328,9 +328,12 @@ func reportHasRegistryOrPullFailure(r DoctorReport) bool {
 		switch check.Name {
 		case "registry Service",
 			"registry reachability (in-cluster)",
+			"MCPServer registry image refs",
+			"MCPServer imagePullSecrets",
 			"mcp-servers imagePullSecrets",
 			"mcp-servers image pull smoke",
-			"registry HTTP pull mismatch":
+			"registry HTTP pull mismatch",
+			"registry image pull diagnostics":
 			return true
 		}
 	}

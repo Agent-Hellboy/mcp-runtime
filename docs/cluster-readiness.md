@@ -172,6 +172,14 @@ export PROVISIONED_REGISTRY_USERNAME=<user>      # optional
 export PROVISIONED_REGISTRY_PASSWORD=<password>  # optional
 ```
 
+When external registry credentials are configured, setup creates pull secrets
+for Sentinel workloads and a separate `mcp-runtime/mcp-runtime-registry-pull-creds`
+Secret for the operator Deployment. If you intentionally roll platform
+workloads from an already-authenticated public registry, set
+`MCP_PLATFORM_IMAGE_PULL_SECRET=<secret-name>` before setup; the Secret must
+exist in `mcp-runtime` for the operator and in `mcp-sentinel` for Sentinel
+workloads.
+
 If you configured the registry with `registry provision` or environment
 variables first, run setup with production validation:
 
@@ -186,6 +194,12 @@ should pull from:
 export MCP_REGISTRY_INGRESS_HOST=registry.example.com
 ./bin/mcp-runtime pipeline generate --dir .mcp --output manifests
 ```
+
+The platform API follows the same split for short image deploys: it expands
+short image names with `PLATFORM_REGISTRY_URL`, `MCP_REGISTRY_INGRESS_HOST`, or
+`MCP_PLATFORM_DOMAIN` before falling back to `MCP_REGISTRY_ENDPOINT`. This keeps
+tenant `MCPServer.spec.image` values on the pullable public registry host when
+an internal endpoint also exists for push helpers or registry mirrors.
 
 Use `MCP_REGISTRY_ENDPOINT` only when the operator needs a different internal
 push/pull endpoint than the public image host. For example, a private registry

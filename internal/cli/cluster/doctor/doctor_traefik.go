@@ -245,6 +245,109 @@ func checkTraefikServiceExposureAt(kubectl core.KubectlRunner, endpoint doctorTr
 	}
 }
 
+func checkIngressLoadBalancerStatus(kubectl core.KubectlRunner) DoctorCheck {
+	out, err := readKubectlOutput(kubectl, []string{"get", "ingress", "-A", "-o", buildIngressLoadBalancerJSONPath()})
+	if err != nil {
+		return DoctorCheck{
+			Name:   "ingress LoadBalancer status",
+			OK:     false,
+			Detail: fmt.Sprintf("kubectl error: %v", err),
+			Remedy: "check API connectivity and RBAC for listing Ingress resources",
+		}
+	}
+	statuses := parseIngressLoadBalancerStatuses(out)
+	if len(statuses) == 0 {
+		return DoctorCheck{
+			Name:   "ingress LoadBalancer status",
+			OK:     true,
+			Detail: "no host-based MCP Runtime ingresses found; skipping LoadBalancer status check",
+		}
+	}
+	missing := make([]string, 0)
+	ready := make([]string, 0)
+	for _, status := range statuses {
+		label := fmt.Sprintf("%s/%s host=%s", status.Namespace, status.Name, strings.Join(status.Hosts, ","))
+		if status.LBIP == "" && status.LBHost == "" {
+			missing = append(missing, label)
+			continue
+		}
+		addr := status.LBIP
+		if addr == "" {
+			addr = status.LBHost
+		}
+		ready = append(ready, label+" -> "+addr)
+	}
+	if len(missing) > 0 {
+		if doctorIngressReadinessPermissiveMode() {
+			return DoctorCheck{
+				Name:   "ingress LoadBalancer status",
+				OK:     true,
+				Detail: fmt.Sprintf("permissive ingress readiness mode allows %d/%d host-based ingress(es) with empty status.loadBalancer in dev/NodePort clusters: %s", len(missing), len(statuses), strings.Join(missing, "; ")),
+			}
+		}
+		return DoctorCheck{
+			Name:   "ingress LoadBalancer status",
+			OK:     false,
+			Detail: fmt.Sprintf("%d/%d host-based ingress(es) have empty status.loadBalancer: %s", len(missing), len(statuses), strings.Join(missing, "; ")),
+			Remedy: "check the active ingress controller service exposure and set MCP_INGRESS_READINESS_MODE=permissive only for dev/NodePort clusters that intentionally do not publish Ingress LoadBalancer status",
+		}
+	}
+	return DoctorCheck{
+		Name:   "ingress LoadBalancer status",
+		OK:     true,
+		Detail: strings.Join(ready, "; "),
+	}
+}
+
+func doctorIngressReadinessPermissiveMode() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(doctorEnvIngressReadinessMode)), doctorIngressReadinessPermissive)
+}
+
+func buildIngressLoadBalancerJSONPath() string {
+	return `jsonpath={range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"|"}{range .spec.rules[*]}{.host}{","}{end}{"|"}{.status.loadBalancer.ingress[0].ip}{"|"}{.status.loadBalancer.ingress[0].hostname}{"\n"}{end}`
+}
+
+func parseIngressLoadBalancerStatuses(value string) []doctorIngressStatus {
+	var statuses []doctorIngressStatus
+	for _, line := range filterNonEmptyLines(value) {
+		parts := strings.SplitN(line, "|", 5)
+		if len(parts) != 5 {
+			continue
+		}
+		status := doctorIngressStatus{
+			Namespace: strings.TrimSpace(parts[0]),
+			Name:      strings.TrimSpace(parts[1]),
+			Hosts:     splitCommaTrim(parts[2]),
+			LBIP:      strings.TrimSpace(parts[3]),
+			LBHost:    strings.TrimSpace(parts[4]),
+		}
+		if status.Namespace == "" || status.Name == "" || len(status.Hosts) == 0 {
+			continue
+		}
+		if !isMCPRuntimeIngress(status) {
+			continue
+		}
+		statuses = append(statuses, status)
+	}
+	return statuses
+}
+
+func isMCPRuntimeIngress(status doctorIngressStatus) bool {
+	if status.Namespace == "registry" || status.Namespace == doctorSentinelNamespace || status.Namespace == doctorMCPServersNamespace {
+		return true
+	}
+	if strings.HasPrefix(status.Namespace, "mcp-team-") || strings.HasPrefix(status.Namespace, "mcp-servers-") {
+		return true
+	}
+	for _, host := range status.Hosts {
+		switch {
+		case strings.HasPrefix(host, "registry."), strings.HasPrefix(host, "platform."), strings.HasPrefix(host, "mcp."):
+			return true
+		}
+	}
+	return false
+}
+
 func doctorConfiguredIngressHosts() (platform, registry, mcp string, configured bool) {
 	platform = strings.TrimSpace(metadata.ResolvePlatformIngressHost())
 	registry = strings.TrimSpace(metadata.ResolveRegistryHost())

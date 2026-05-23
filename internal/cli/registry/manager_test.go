@@ -613,6 +613,12 @@ func TestRewriteTargetHostForInClusterPush(t *testing.T) {
 			target:   "internal-registry.example.com/foo:tag",
 			wantHost: "registry.registry.svc.cluster.local:5000",
 		},
+		{
+			name:     "rewrites discovered ingress host",
+			endpoint: "registry.local",
+			target:   "registry.mcpruntime.org/foo:tag",
+			wantHost: "registry.registry.svc.cluster.local:5000",
+		},
 	}
 
 	for _, tc := range cases {
@@ -622,7 +628,23 @@ func TestRewriteTargetHostForInClusterPush(t *testing.T) {
 				RegistryIngressHost: tc.ingress,
 				RegistryPort:        5000,
 			}
-			got := rewriteTargetHostForInClusterPush(tc.target, nil)
+			var kubectl *core.KubectlClient
+			if tc.name == "rewrites discovered ingress host" {
+				mock := &core.MockExecutor{
+					CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+						switch {
+						case contains(spec.Args, "ingress"):
+							return &core.MockCommand{OutputData: []byte("registry.mcpruntime.org")}
+						case contains(spec.Args, "service"):
+							return &core.MockCommand{OutputData: []byte("5000")}
+						default:
+							return &core.MockCommand{}
+						}
+					},
+				}
+				kubectl = core.NewTestKubectlClient(mock)
+			}
+			got := rewriteTargetHostForInClusterPush(tc.target, kubectl)
 			slash := strings.Index(got, "/")
 			if slash < 0 {
 				t.Fatalf("unexpected result without path: %q", got)

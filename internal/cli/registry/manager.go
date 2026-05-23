@@ -903,14 +903,27 @@ func rewriteTargetHostForInClusterPush(target string, kubectl *core.KubectlClien
 	}
 
 	internal := map[string]struct{}{}
-	if ep := strings.ToLower(strings.TrimSpace(core.GetRegistryEndpoint())); ep != "" {
-		if idx := strings.LastIndex(ep, ":"); idx >= 0 {
-			ep = ep[:idx]
+	addInternalHost := func(value string) {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			return
 		}
-		internal[ep] = struct{}{}
+		if idx := strings.LastIndex(value, ":"); idx >= 0 {
+			value = value[:idx]
+		}
+		if value != "" {
+			internal[value] = struct{}{}
+		}
 	}
-	if ih := strings.ToLower(strings.TrimSpace(core.GetRegistryIngressHost())); ih != "" {
-		internal[ih] = struct{}{}
+	addInternalHost(core.GetRegistryEndpoint())
+	addInternalHost(core.GetRegistryIngressHost())
+	if kubectl != nil {
+		// #nosec G204 -- fixed arguments, no user input.
+		if ingressCmd, err := kubectl.CommandArgs([]string{"get", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry, "-o", "jsonpath={.spec.rules[0].host}"}); err == nil {
+			if out, err := ingressCmd.Output(); err == nil {
+				addInternalHost(string(out))
+			}
+		}
 	}
 
 	if _, ok := internal[hostNoPort]; !ok {

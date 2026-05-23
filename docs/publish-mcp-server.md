@@ -68,7 +68,10 @@ spec:
   Analytics emission to the Sentinel stack is on by default whenever the
   operator has an ingest URL configured (via `MCP_SENTINEL_INGEST_URL` or
   `spec.analytics.ingestURL`). Set `spec.analytics.disabled: true` to opt
-  this server out.
+  this server out. Platform API deploys and `mcp-runtime pipeline deploy`
+  create a namespace-local ingest-key Secret and set
+  `spec.analytics.apiKeySecretRef` automatically when gateway analytics are
+  enabled.
 
 `mcp-runtime server deploy` and the platform API (`POST /api/runtime/servers`)
 publish governed servers by default: when the request does not provide
@@ -189,7 +192,7 @@ MCP Runtime supports two practical image flows. Keep these flows separate so tag
 ./bin/mcp-runtime server build image payments --tag v1.0.0 --platform linux/amd64
 ```
 
-`server build image` builds the image, resolves the target registry host, tags the local image with that resolved reference, and rewrites matching `.mcp` metadata (`image` and `imageTag`). The command defaults Docker builds to `linux/amd64`, matching common amd64 Kubernetes nodes; set `--platform` or `MCP_DOCKER_PLATFORM` when your target nodes use another architecture. When metadata sets `scope: tenant`, the build command uses platform credentials to resolve the same team repository prefix that `registry push --scope tenant` uses, so log in first or set `MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`.
+`server build image` builds the image, resolves the target registry host, tags the local image with that resolved reference, and rewrites matching `.mcp` metadata (`image` and `imageTag`). The command defaults Docker builds to `linux/amd64`, matching common amd64 Kubernetes nodes; set `--platform` or `MCP_DOCKER_PLATFORM` when your target nodes use another architecture. Registry resolution prefers explicit registry env, then the cluster's `registry/registry` Ingress host, before falling back to the registry Service address. When metadata sets `scope: tenant`, the build command uses platform credentials to resolve the same team repository prefix that `registry push --scope tenant` uses, so log in first or set `MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`.
 
 After this command, push the exact image reference produced by the build output (or read it from the rewritten metadata):
 
@@ -201,7 +204,8 @@ mcp-runtime auth login --api-url https://platform.example.com
 `registry push` requires platform credentials from `mcp-runtime auth login` or
 `MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`; unauthenticated pushes are
 rejected before Docker or the in-cluster helper starts. `<exact-image-ref-from-build>`
-may be a resolved registry endpoint such as `10.43.109.51:5000/org/payments:v1.0.0`.
+may be a resolved public registry host such as `registry.example.com/org/payments:v1.0.0`,
+or a registry Service address when no public registry Ingress is configured.
 Use `--scope public` for public catalog images. Use `--scope tenant` for team
 images; if the image name has no repository prefix, the CLI prefixes it with
 the authenticated user's active team slug. Explicit repository prefixes for
@@ -350,8 +354,11 @@ Request analytics only exist for traffic that flows through `mcp-gateway`.
 The adapter is not required for analytics; it only helps clients that cannot
 attach identity or session headers directly, or that want platform-issued
 sessions. Hand-written YAML must include `spec.gateway.enabled: true` for
-request analytics. Analytics is on by default for gateway traffic when the
-operator has `MCP_SENTINEL_INGEST_URL`; opt out with:
+request analytics. If you apply raw YAML with `kubectl` instead of
+`mcp-runtime pipeline deploy`, also create a namespace-local ingest-key Secret
+and set `spec.analytics.apiKeySecretRef`; otherwise the gateway can reach
+ingest but events will be rejected with 401. Analytics is on by default for
+gateway traffic when the operator has `MCP_SENTINEL_INGEST_URL`; opt out with:
 
 ```yaml
 analytics:

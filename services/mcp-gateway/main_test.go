@@ -61,6 +61,87 @@ func TestHandleProxyOAuthProtectedResourceMetadata(t *testing.T) {
 	}
 }
 
+func TestHandleProxyNonOAuthMetadataExplainsAdapter(t *testing.T) {
+	upstreamCalled := false
+	proxy := newTestGatewayServer(t, headerPolicy(), func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalled = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://proxy.example.com/.well-known/oauth-protected-resource/mcp", nil)
+	recorder := httptest.NewRecorder()
+
+	proxy.handleGateway(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+	if upstreamCalled {
+		t.Fatal("metadata request should not reach upstream")
+	}
+	if got := recorder.Header().Get("Www-Authenticate"); got != "" {
+		t.Fatalf("WWW-Authenticate = %q, want empty for header-mode policy", got)
+	}
+
+	var payload struct {
+		Error           string `json:"error"`
+		Message         string `json:"message"`
+		AdapterRequired bool   `json:"adapter_required"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if payload.Error != "oauth_not_enabled" {
+		t.Fatalf("error = %q, want oauth_not_enabled", payload.Error)
+	}
+	if !payload.AdapterRequired || !strings.Contains(payload.Message, "mcp-runtime adapter") {
+		t.Fatalf("payload = %#v, want adapter guidance", payload)
+	}
+}
+
+func TestHandleProxyHeaderModeMissingIdentityExplainsAdapter(t *testing.T) {
+	upstreamCalled := false
+	proxy := newTestGatewayServer(t, headerPolicy(), func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalled = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"echo"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.handleGateway(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+	if upstreamCalled {
+		t.Fatal("missing identity request should not reach upstream")
+	}
+	if got := recorder.Header().Get("Www-Authenticate"); got != "" {
+		t.Fatalf("WWW-Authenticate = %q, want empty for header-mode policy", got)
+	}
+
+	var payload struct {
+		Error           string   `json:"error"`
+		Message         string   `json:"message"`
+		AdapterRequired bool     `json:"adapter_required"`
+		RequiredHeaders []string `json:"required_headers"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if payload.Error != "missing_identity" {
+		t.Fatalf("error = %q, want missing_identity", payload.Error)
+	}
+	if !payload.AdapterRequired || !strings.Contains(payload.Message, "mcp-runtime adapter") {
+		t.Fatalf("payload = %#v, want adapter guidance", payload)
+	}
+	if len(payload.RequiredHeaders) != 4 {
+		t.Fatalf("required_headers = %#v, want four governance headers", payload.RequiredHeaders)
+	}
+}
+
 func TestHandleProxyOAuthChallengesWithoutBearer(t *testing.T) {
 	issuer := newTestJWTIssuer(t)
 	upstreamCalled := false
@@ -671,6 +752,47 @@ func oauthPolicy(issuerURL string) *policypkg.Document {
 				Name:           "session-1",
 				HumanID:        "human-1",
 				AgentID:        "client-1",
+				ConsentedTrust: "high",
+			},
+		},
+	}
+}
+
+func headerPolicy() *policypkg.Document {
+	return &policypkg.Document{
+		Auth: &policypkg.Auth{
+			Mode:            "header",
+			HumanIDHeader:   defaultHumanHeader,
+			AgentIDHeader:   defaultAgentHeader,
+			TeamIDHeader:    defaultTeamHeader,
+			SessionIDHeader: defaultSessionHeader,
+		},
+		Policy: &policypkg.Config{
+			Mode:            "allow-list",
+			DefaultDecision: "deny",
+			PolicyVersion:   "test-policy",
+		},
+		Session: &policypkg.Session{Required: true},
+		Tools: []policypkg.Tool{
+			{Name: "echo", RequiredTrust: "low", SideEffect: "read"},
+		},
+		Grants: []policypkg.Grant{
+			{
+				Name:               "grant-1",
+				HumanID:            "human-1",
+				AgentID:            "client-1",
+				TeamID:             "team-acme",
+				MaxTrust:           "high",
+				AllowedSideEffects: []string{"read"},
+				ToolRules:          []policypkg.ToolAccess{{Name: "echo", Decision: "allow"}},
+			},
+		},
+		Sessions: []policypkg.Binding{
+			{
+				Name:           "session-1",
+				HumanID:        "human-1",
+				AgentID:        "client-1",
+				TeamID:         "team-acme",
 				ConsentedTrust: "high",
 			},
 		},

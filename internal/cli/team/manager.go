@@ -334,6 +334,15 @@ spec:
           port: 80
         - protocol: TCP
           port: 443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: mcp-sentinel
+      ports:
+        - protocol: TCP
+          port: 8081
+        - protocol: TCP
+          port: 4318
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -414,6 +423,11 @@ func renderTeamNetworkPolicyIngress(opts InitOptions) string {
               kubernetes.io/metadata.name: %s
 `, opts.TraefikNamespace)
 	}
+	b.WriteString(`    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: mcp-sentinel
+`)
 	return b.String()
 }
 

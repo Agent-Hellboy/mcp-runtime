@@ -41,6 +41,7 @@ type loginFlags struct {
 	token          string
 	tokenFromStdin bool
 	registryHost   string
+	profile        string
 	skipVerify     bool
 }
 
@@ -64,11 +65,13 @@ The token is stored in a local file (mode 0600) under the user config directory,
 Optional environment:
   ` + authfile.EnvAPIURL + `      default API base for login, e.g. https://platform.example.com
   ` + authfile.EnvAPIToken + `    use this token for API calls; overrides a saved file
+  ` + authfile.EnvAPIProfile + `  select a saved credentials profile
   MCP_RUNTIME_CONFIG_DIR    override the config directory (mainly for tests)`,
 	}
 
 	cmd.AddCommand(m.NewLoginCmd())
 	cmd.AddCommand(m.NewLogoutCmd())
+	cmd.AddCommand(m.NewUseCmd())
 	cmd.AddCommand(m.NewStatusCmd())
 	return cmd
 }
@@ -90,6 +93,7 @@ func (m *manager) NewLoginCmd() *cobra.Command {
 	cmd.Flags().StringVar(&f.token, "token", "", "API token (or use --token-stdin, or the interactive prompt)")
 	cmd.Flags().BoolVar(&f.tokenFromStdin, "token-stdin", false, "Read the token from stdin (non-interactive)")
 	cmd.Flags().StringVar(&f.registryHost, "registry-host", "", "Optional host:port for the platform image registry for later use with docker")
+	cmd.Flags().StringVar(&f.profile, "profile", "", "Saved credential profile name (defaults to admin, the email local part, or default)")
 	cmd.Flags().BoolVar(&f.skipVerify, "skip-verify", false, "Store credentials without calling the API to validate the token")
 
 	return cmd
@@ -173,23 +177,45 @@ func (m *manager) runLogin(cmd *cobra.Command, f loginFlags) error {
 	if err != nil {
 		return err
 	}
-	c := &authfile.Credentials{
+	profile := loginProfileName(f.profile, loginEmail, loginRole)
+	c := authfile.CredentialAccount{
 		APIBaseURL:   apiURL,
 		Token:        token,
 		Role:         loginRole,
 		RegistryHost: strings.TrimSpace(f.registryHost),
+		Username:     loginEmail,
 	}
-	if err := authfile.Save(path, c); err != nil {
+	if err := authfile.SaveProfile(path, profile, c); err != nil {
 		return err
 	}
 	if m.logger != nil {
-		m.logger.Info("saved platform credentials", zap.String("api", apiURL), zap.String("path", path))
+		m.logger.Info("saved platform credentials", zap.String("api", apiURL), zap.String("path", path), zap.String("profile", profile))
 	}
 	fmt.Fprintf(stdout, "Platform credentials saved to %s\n", path)
+	fmt.Fprintf(stdout, "Current profile: %s\n", profile)
 	if c.RegistryHost != "" {
 		fmt.Fprintf(stdout, "Registry host recorded: %s\n", c.RegistryHost)
 	}
 	return nil
+}
+
+func loginProfileName(explicit, email, role string) string {
+	if profile := authfile.NormalizeProfileName(explicit); profile != "" {
+		return profile
+	}
+	if strings.EqualFold(strings.TrimSpace(role), "admin") {
+		return "admin"
+	}
+	email = strings.TrimSpace(email)
+	if local, _, ok := strings.Cut(email, "@"); ok {
+		if profile := authfile.NormalizeProfileName(local); profile != "" {
+			return profile
+		}
+	}
+	if profile := authfile.NormalizeProfileName(email); profile != "" {
+		return profile
+	}
+	return "default"
 }
 
 func (m *manager) NewLogoutCmd() *cobra.Command {
@@ -205,6 +231,29 @@ func (m *manager) NewLogoutCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Logged out from the platform (local credentials removed).")
+			return nil
+		},
+	}
+}
+
+func (m *manager) NewUseCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "use PROFILE",
+		Short: "Switch the current saved platform credential profile",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path, err := authfile.FilePath()
+			if err != nil {
+				return err
+			}
+			profile := authfile.NormalizeProfileName(args[0])
+			if profile == "" {
+				return errors.New("profile is required")
+			}
+			if err := authfile.SelectProfile(path, profile); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Current platform profile: %s\n", profile)
 			return nil
 		},
 	}
@@ -248,11 +297,20 @@ func (m *manager) NewStatusCmd() *cobra.Command {
 				fmt.Fprintln(stdout, "  API base URL: (set --api-url on login or "+authfile.EnvAPIURL+" if using "+authfile.EnvAPIToken+" only)")
 			}
 			if c, cErr := fileCredentialsIfRelevant(); cErr == nil && c != nil {
-				if c.RegistryHost != "" {
-					fmt.Fprintln(stdout, "  saved registry host:", c.RegistryHost)
+				account, profile, aErr := c.SelectedAccount(os.Getenv(authfile.EnvAPIProfile))
+				if aErr == nil {
+					if profile != "" {
+						fmt.Fprintln(stdout, "  profile:", profile)
+					}
+					if account.RegistryHost != "" {
+						fmt.Fprintln(stdout, "  saved registry host:", account.RegistryHost)
+					}
+					if account.Role != "" {
+						fmt.Fprintln(stdout, "  role (from saved file):", account.Role)
+					}
 				}
-				if c.Role != "" {
-					fmt.Fprintln(stdout, "  role (from saved file):", c.Role)
+				if names := c.ProfileNames(); len(names) > 0 {
+					fmt.Fprintln(stdout, "  saved profiles:", strings.Join(names, ", "))
 				}
 			}
 			fmt.Fprintln(stdout, "  token (masked):", authfile.MaskToken(tok))

@@ -580,6 +580,15 @@ func desiredDefaultDenyNetworkPolicy(ns string, ingressFromNamespaces ...string)
 			},
 		})
 	}
+	ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+		From: []networkingv1.NetworkPolicyPeer{
+			{
+				NamespaceSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"kubernetes.io/metadata.name": sentinel.DefaultNamespace},
+				},
+			},
+		},
+	})
 	policy := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "platform-default-deny", Namespace: ns},
 		Spec: networkingv1.NetworkPolicySpec{
@@ -965,7 +974,7 @@ func imageReferenceHasRegistry(image string) bool {
 
 func defaultPlatformRegistryHost() string {
 	for _, key := range []string{
-		"MCP_REGISTRY_ENDPOINT",
+		"MCP_REGISTRY_PULL_HOST",
 		"PLATFORM_REGISTRY_URL",
 		"PROVISIONED_REGISTRY_URL",
 		"MCP_REGISTRY_INGRESS_HOST",
@@ -977,6 +986,9 @@ func defaultPlatformRegistryHost() string {
 	}
 	if domain := normalizeImageRegistryHost(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
 		return "registry." + strings.TrimPrefix(domain, "registry.")
+	}
+	if host := normalizeImageRegistryHost(os.Getenv("MCP_REGISTRY_ENDPOINT")); host != "" {
+		return host
 	}
 	return "registry.registry.svc.cluster.local:5000"
 }

@@ -192,6 +192,20 @@ func TestEnsureDefaultDenyNetworkPolicyAllowsConfiguredIngressNamespace(t *testi
 	}
 }
 
+func TestEnsureDefaultDenyNetworkPolicyAllowsSentinelAPILiveInventoryIngress(t *testing.T) {
+	client := kubernetesfake.NewSimpleClientset()
+	if err := ensureDefaultDenyNetworkPolicy(context.Background(), client, "mcp-team-acme", "kube-system"); err != nil {
+		t.Fatalf("ensureDefaultDenyNetworkPolicy() error = %v", err)
+	}
+	policy, err := client.NetworkingV1().NetworkPolicies("mcp-team-acme").Get(context.Background(), "platform-default-deny", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get networkpolicy: %v", err)
+	}
+	if !networkPolicyAllowsNamespace(policy, "mcp-sentinel") {
+		t.Fatalf("network policy does not allow ingress from mcp-sentinel: %#v", policy.Spec.Ingress)
+	}
+}
+
 func TestHandleDeploymentApplyAdminUsesRequestedNamespace(t *testing.T) {
 	client := kubernetesfake.NewSimpleClientset()
 	server := &RuntimeServer{
@@ -276,13 +290,24 @@ func TestResolveDeployImageReferenceUsesPlatformRegistryURLWhenEndpointUnset(t *
 	}
 }
 
-func TestResolveDeployImageReferencePrefersEndpointOverPlatformRegistryURL(t *testing.T) {
+func TestResolveDeployImageReferencePrefersPlatformRegistryURLOverEndpoint(t *testing.T) {
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
 	t.Setenv("PLATFORM_REGISTRY_URL", "registry.custom.example")
 	t.Setenv("PLATFORM_MODE", "tenant")
 
 	got := ResolveDeployImageReference("go-example:v0.1.0", "mcp-team-acme", "acme")
-	if want := "10.96.223.152:5000/acme/go-example:v0.1.0"; got != want {
+	if want := "registry.custom.example/acme/go-example:v0.1.0"; got != want {
+		t.Fatalf("ResolveDeployImageReference() = %q, want %q", got, want)
+	}
+}
+
+func TestResolveDeployImageReferencePrefersPullHostOverInternalEndpoint(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
+	t.Setenv("PLATFORM_MODE", "tenant")
+
+	got := ResolveDeployImageReference("go-example:v0.1.0", "mcp-team-acme", "acme")
+	if want := "registry.mcpruntime.org/acme/go-example:v0.1.0"; got != want {
 		t.Fatalf("ResolveDeployImageReference() = %q, want %q", got, want)
 	}
 }

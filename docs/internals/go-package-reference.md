@@ -6222,8 +6222,9 @@ type SetupDeps struct {
 	PushOperatorImageToInternal     func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
 	PushGatewayProxyImageToInternal func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
 	PushAnalyticsImageToInternal    func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
-	DeployOperatorManifests         func(logger *zap.Logger, operatorImage, gatewayProxyImage string, operatorArgs []string) error
+	DeployOperatorManifests         func(logger *zap.Logger, operatorImage, gatewayProxyImage string, operatorArgs []string, imagePullSecretName string) error
 	DeployAnalyticsManifests        func(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error
+	EnsureImagePullSecret           func(namespace, name, registry, username, password string) error
 	DisableRegistryIngressAuth      func() error
 	EnableRegistryIngressAuth       func() error
 	ConfigureProvisionedRegistryEnv func(ext *config.ExternalRegistryConfig, secretName string) error
