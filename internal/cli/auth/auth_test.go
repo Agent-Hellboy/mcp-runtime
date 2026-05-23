@@ -75,7 +75,7 @@ func TestAuthLoginSavesAndVerifies(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v stderr=%s", err, errb.String())
 	}
-	b, rerr := os.ReadFile(filepath.Join(d, "credentials.json"))
+	b, rerr := os.ReadFile(filepath.Join(d, "config.json"))
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
@@ -114,7 +114,7 @@ func TestAuthLoginNormalizesTrailingAPIPath(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	b, err := os.ReadFile(filepath.Join(d, "credentials.json"))
+	b, err := os.ReadFile(filepath.Join(d, "config.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestAuthLoginStoresMultipleProfilesAndUseSwitchesCurrent(t *testing.T) {
 		t.Fatalf("acme login: %v", err)
 	}
 
-	creds, err := authfile.Load(filepath.Join(d, "credentials.json"))
+	creds, err := authfile.Load(filepath.Join(d, "config.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestAuthLoginStoresMultipleProfilesAndUseSwitchesCurrent(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("use admin: %v", err)
 	}
-	creds, err = authfile.Load(filepath.Join(d, "credentials.json"))
+	creds, err = authfile.Load(filepath.Join(d, "config.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,7 +11,7 @@ import (
 
 func TestResolveToken_PrefersEnv(t *testing.T) {
 	d := t.TempDir()
-	p := filepath.Join(d, "credentials.json")
+	p := filepath.Join(d, "config.json")
 	_ = os.MkdirAll(d, 0o700)
 	_ = os.WriteFile(p, []byte(`{"api_url":"https://file.example","token":"filetok"}`), 0o600)
 	t.Setenv("MCP_RUNTIME_CONFIG_DIR", d)
@@ -42,7 +42,7 @@ func TestConfigDir_RespectsEnv(t *testing.T) {
 func TestSaveLoadRoundTrip(t *testing.T) {
 	t.Parallel()
 	d := t.TempDir()
-	p := filepath.Join(d, "credentials.json")
+	p := filepath.Join(d, "config.json")
 	orig := &Credentials{
 		APIBaseURL:   "https://platform.example.com",
 		Token:        "secret-token-value",
@@ -89,7 +89,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 
 func TestSaveProfilePreservesMultipleAccounts(t *testing.T) {
 	d := t.TempDir()
-	p := filepath.Join(d, "credentials.json")
+	p := filepath.Join(d, "config.json")
 	if err := SaveProfile(p, "admin", CredentialAccount{APIBaseURL: "https://platform.example.com", Token: "admin-token", Role: "admin"}); err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestResolveToken_UsesSelectedProfile(t *testing.T) {
 	d := t.TempDir()
 	t.Setenv("MCP_RUNTIME_CONFIG_DIR", d)
 	t.Setenv(EnvAPIProfile, "admin")
-	p := filepath.Join(d, "credentials.json")
+	p := filepath.Join(d, "config.json")
 	if err := SaveProfile(p, "admin", CredentialAccount{APIBaseURL: "https://platform.example.com", Token: "admin-token"}); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestLoad_Missing(t *testing.T) {
 func TestLoad_InvalidJSON(t *testing.T) {
 	t.Parallel()
 	d := t.TempDir()
-	p := filepath.Join(d, "credentials.json")
+	p := filepath.Join(d, "config.json")
 	if err := os.WriteFile(p, []byte(`{"api_url"`), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestLoad_InvalidJSON(t *testing.T) {
 func TestLoad_IncompleteCredentials(t *testing.T) {
 	t.Parallel()
 	d := t.TempDir()
-	p := filepath.Join(d, "credentials.json")
+	p := filepath.Join(d, "config.json")
 	if err := os.WriteFile(p, []byte(`{"api_url":"https://platform.example.com"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -66,7 +66,7 @@ Optional environment:
   ` + authfile.EnvAPIURL + `      default API base for login, e.g. https://platform.example.com
   ` + authfile.EnvAPIToken + `    use this token for API calls; overrides a saved file
   ` + authfile.EnvAPIProfile + `  select a saved credentials profile
-  MCP_RUNTIME_CONFIG_DIR    override the config directory (mainly for tests)`,
+  MCP_RUNTIME_CONFIG_DIR    override the config directory (default ~/.mcpruntime)`,
 	}
 
 	cmd.AddCommand(m.NewLoginCmd())

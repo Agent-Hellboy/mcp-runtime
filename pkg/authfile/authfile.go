@@ -12,9 +12,9 @@ import (
 	"sort"
 	"strings"
 	"time"
-)
 
-const subDir = "mcp-runtime"
+	"mcp-runtime/pkg/runtimeconfig"
+)
 
 // ErrNotFound is returned when no credentials file exists or it is empty.
 var ErrNotFound = errors.New("not logged in: no saved credentials")
@@ -22,26 +22,14 @@ var ErrNotFound = errors.New("not logged in: no saved credentials")
 // ErrInvalid is returned when a credentials file exists but is malformed.
 var ErrInvalid = errors.New("saved credentials are invalid")
 
-// ConfigDir is the per-user mcp-runtime configuration directory. If the environment
-// variable MCP_RUNTIME_CONFIG_DIR is set, that path is used (useful in tests).
+// ConfigDir is the per-user MCP Runtime configuration directory.
 func ConfigDir() (string, error) {
-	if d := os.Getenv("MCP_RUNTIME_CONFIG_DIR"); d != "" {
-		return d, nil
-	}
-	base, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(base, subDir), nil
+	return runtimeconfig.Dir()
 }
 
-// FilePath returns the default path to credentials.json.
+// FilePath returns the default path to the MCP Runtime config file.
 func FilePath() (string, error) {
-	dir, err := ConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "credentials.json"), nil
+	return runtimeconfig.DefaultFile()
 }
 
 // Credentials holds platform API identities saved after `mcp-runtime auth login`.
@@ -321,7 +309,7 @@ const EnvAPIToken = "MCP_PLATFORM_API_TOKEN"
 // EnvAPIURL is the default platform API base URL (e.g. https://platform.example.com).
 const EnvAPIURL = "MCP_PLATFORM_API_URL"
 
-// EnvAPIProfile selects a saved platform API profile from credentials.json.
+// EnvAPIProfile selects a saved platform API profile from the MCP Runtime config file.
 const EnvAPIProfile = "MCP_PLATFORM_API_PROFILE"
 
 // ResolveToken returns a token and API base URL: first from the environment, then the default credentials file.
