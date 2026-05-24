@@ -472,7 +472,7 @@ func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace st
 	return s.ensureNamespaceRegistryPullSecret(ctx, base, namespace)
 }
 
-const registryPullSecretName = "mcp-runtime-registry-pull"
+const registryPullSecretName = "mcp-runtime-registry-creds" // #nosec G101 -- Kubernetes Secret object name, not credential material.
 
 func (s *RuntimeServer) ensureNamespaceRegistryPullSecret(ctx context.Context, client kubernetes.Interface, namespace string) error {
 	registryHost := ""

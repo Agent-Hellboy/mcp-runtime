@@ -23,6 +23,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 
 	"mcp-runtime/pkg/k8sclient"
+	"mcp-runtime/pkg/kubeworkload"
 )
 
 type fakeAuditWriter struct {
@@ -445,6 +446,33 @@ func TestHandleDeploymentApplyWritesAuditEvent(t *testing.T) {
 	}
 	if got.Source != "ui:platform_jwt" || got.AuthIdentity != "platform_jwt:admin@example.com" {
 		t.Fatalf("audit identity = %#v", got)
+	}
+}
+
+func TestEnsureNamespaceRegistryPullSecret(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.local")
+	t.Setenv("ADMIN_API_KEYS", "test-admin-key")
+	client := kubernetesfake.NewSimpleClientset()
+	if err := kubeworkload.EnsureServiceAccount(context.Background(), client, "mcp-team-acme"); err != nil {
+		t.Fatalf("EnsureServiceAccount() error = %v", err)
+	}
+	server := &RuntimeServer{k8sClients: &k8sclient.Clients{Clientset: client}}
+	if err := server.ensureNamespaceRegistryPullSecret(context.Background(), client, "mcp-team-acme"); err != nil {
+		t.Fatalf("ensureNamespaceRegistryPullSecret() error = %v", err)
+	}
+	secret, err := client.CoreV1().Secrets("mcp-team-acme").Get(context.Background(), registryPullSecretName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("registry pull secret missing: %v", err)
+	}
+	if secret.Type != corev1.SecretTypeDockerConfigJson {
+		t.Fatalf("secret type = %q, want %q", secret.Type, corev1.SecretTypeDockerConfigJson)
+	}
+	sa, err := client.CoreV1().ServiceAccounts("mcp-team-acme").Get(context.Background(), kubeworkload.DefaultServiceAccountName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("workload service account missing: %v", err)
+	}
+	if len(sa.ImagePullSecrets) != 1 || sa.ImagePullSecrets[0].Name != registryPullSecretName {
+		t.Fatalf("service account pull secrets = %#v", sa.ImagePullSecrets)
 	}
 }
 
