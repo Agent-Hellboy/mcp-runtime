@@ -5,18 +5,31 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
 	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/pkg/authfile"
 )
+
+func useKubectlDeployAuth(t *testing.T) {
+	t.Helper()
+	cfgDir := t.TempDir()
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", cfgDir)
+	t.Setenv("MCP_PLATFORM_API_TOKEN", "")
+	t.Setenv("MCP_PLATFORM_API_URL", "")
+}
 
 func TestManagerDeployCRDs(t *testing.T) {
 	t.Run("returns error when no manifests found", func(t *testing.T) {
+		useKubectlDeployAuth(t)
 		mock := &core.MockExecutor{}
 		kubectl, err := core.NewKubectlClient(mock)
 		if err != nil {
@@ -31,6 +44,7 @@ func TestManagerDeployCRDs(t *testing.T) {
 	})
 
 	t.Run("applies each manifest file", func(t *testing.T) {
+		useKubectlDeployAuth(t)
 		var appliedManifests []string
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
@@ -83,6 +97,7 @@ func TestManagerDeployCRDs(t *testing.T) {
 }
 
 func TestManagerDeployCRDsInjectsAnalyticsSecretForGatewayServer(t *testing.T) {
+	useKubectlDeployAuth(t)
 	var appliedManifests []string
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
@@ -206,6 +221,7 @@ servers:
 
 func TestManagerDeployCRDsErrors(t *testing.T) {
 	t.Run("apply error", func(t *testing.T) {
+		useKubectlDeployAuth(t)
 		mock := &core.MockExecutor{DefaultRunErr: errors.New("apply failed")}
 		kubectl, err := core.NewKubectlClient(mock)
 		if err != nil {
@@ -224,6 +240,7 @@ func TestManagerDeployCRDsErrors(t *testing.T) {
 	})
 
 	t.Run("glob yaml error", func(t *testing.T) {
+		useKubectlDeployAuth(t)
 		originalGlob := filepathGlob
 		t.Cleanup(func() { filepathGlob = originalGlob })
 		filepathGlob = func(pattern string) ([]string, error) {
@@ -250,4 +267,69 @@ func contains(slice []string, val string) bool {
 		}
 	}
 	return false
+}
+
+func TestDeployCRDsPrefersPlatformAPIWhenAuthenticated(t *testing.T) {
+	var applyCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/runtime/servers") {
+			applyCalls++
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"server":{"name":"demo"}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cfgDir := t.TempDir()
+	cfgPath := filepath.Join(cfgDir, "config.json")
+	if err := authfile.Save(cfgPath, &authfile.Credentials{
+		Current: "default",
+		Accounts: map[string]authfile.CredentialAccount{
+			"default": {
+				APIBaseURL: srv.URL,
+				Token:      "test-token",
+				UpdatedAt:  time.Now().UTC(),
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", cfgDir)
+
+	tmpDir := t.TempDir()
+	manifest := `apiVersion: mcpruntime.org/v1alpha1
+kind: MCPServer
+metadata:
+  name: demo
+  namespace: mcp-team-acme
+  labels:
+    mcpruntime.org/scope: tenant
+spec:
+  image: registry.example.com/acme/demo
+  imageTag: v1
+  port: 8088
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "demo.yaml"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			return &core.MockCommand{
+				Args: spec.Args,
+				RunFunc: func() error {
+					t.Fatal("kubectl should not run when platform API credentials are configured")
+					return nil
+				},
+			}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+	mgr := &manager{kubectl: kubectl, logger: zap.NewNop()}
+	if err := mgr.DeployCRDs(tmpDir, ""); err != nil {
+		t.Fatalf("DeployCRDs() error = %v", err)
+	}
+	if applyCalls != 1 {
+		t.Fatalf("platform apply calls = %d, want 1", applyCalls)
+	}
 }

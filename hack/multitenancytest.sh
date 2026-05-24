@@ -1,29 +1,54 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# End-to-end multi-tenant demo setup and verification.
+# End-to-end multi-tenant demo setup and verification (platform API only).
+#
+# This script intentionally does not use kubectl or KUBECONFIG. Admin credentials
+# (ADMIN_TOKEN_INPUT or admin email/password) are only used to create teams and
+# team users. Each team owner/member logs in with email/password — the same flow
+# a normal user follows after signing in through the UI (API keys from the
+# dashboard are optional; password login is enough for the CLI).
 #
 # Default flow:
-#   1. create/update Acme and Globex teams/users
-#   2. build, push, generate, and deploy acme-tools and globex-tools
-#   3. apply the Acme -> Globex cursor grant
-#   4. verify direct public MCP denial, adapter success, dashboard events, and cluster doctor
+#   1. admin: create/update Acme, Globex, and TechCorp teams + users
+#   2. team users: build, push, and deploy tenant MCP servers via platform API
+#   3. acme owner: apply cross-team grants for the cursor agent
+#   4. globex/techcorp: adapter MCP calls, event checks, no-kubeconfig smoke
+#
+# Required environment (no production defaults — set explicitly for your cluster):
+#   PLATFORM_URL   platform API base (test-mode port-forward: http://localhost:18080)
+#   MCP_URL        public MCP ingress base (test-mode port-forward: http://localhost:18080)
+#   REGISTRY_HOST  registry hostname:port for docker login and image push
+#
+# Optional test-mode admin bootstrap (matches setup --test-mode seed accounts):
+#   ADMIN_EMAIL=admin@mcpruntime.org ADMIN_PASSWORD=admin@123
 #
 # Useful options:
-#   RESET=1 hack/multitenancytest.sh       # delete demo MCP resources before setup
-#   SKIP_SETUP=1 hack/multitenancytest.sh  # only run verification against existing resources
+#   RESET=1 hack/multitenancytest.sh       # delete demo resources via platform API
+#   SKIP_SETUP=1 hack/multitenancytest.sh  # only run verification
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${BIN:-$ROOT_DIR/bin/mcp-runtime}"
-PLATFORM_URL="${PLATFORM_URL:-https://platform.mcpruntime.org}"
-MCP_URL="${MCP_URL:-https://mcp.mcpruntime.org}"
+
+require_env() {
+  local name="$1"
+  local hint="$2"
+  if [[ -z "${!name:-}" ]]; then
+    echo "${name} is required (${hint})" >&2
+    exit 1
+  fi
+}
+
+require_env PLATFORM_URL "e.g. http://localhost:18080 for test-mode port-forward"
+require_env MCP_URL "e.g. http://localhost:18080 for test-mode port-forward"
+require_env REGISTRY_HOST "registry hostname:port for docker login and image push"
+
 PLATFORM_URL="${PLATFORM_URL%/}"
 MCP_URL="${MCP_URL%/}"
 MCP_HOST="${MCP_URL#https://}"
 MCP_HOST="${MCP_HOST#http://}"
 MCP_HOST="${MCP_HOST%%/*}"
 MCP_RUNTIME_CONFIG_DIR="${MCP_RUNTIME_CONFIG_DIR:-$HOME/.mcpruntime}"
-KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 CREDS="${MCP_RUNTIME_CONFIG_DIR}/config.json"
 TMP_ROOT="${TMPDIR:-/tmp}"
 TMP_ROOT="${TMP_ROOT%/}"
@@ -34,7 +59,7 @@ ADAPTER_LISTEN="${ADAPTER_LISTEN:-127.0.0.1:8299}"
 SERVER_CONTEXT="${SERVER_CONTEXT:-$ROOT_DIR/examples/workspace-assistant-mcp}"
 SERVER_DOCKERFILE="${SERVER_DOCKERFILE:-$SERVER_CONTEXT/Dockerfile}"
 
-ADMIN_EMAIL="${ADMIN_EMAIL:-princekrroshan01@gmail.com}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@mcpruntime.org}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin@123}"
 ADMIN_TOKEN_INPUT="${ADMIN_TOKEN_INPUT:-}"
 ACME_EMAIL="${ACME_EMAIL:-acme-owner@example.com}"
@@ -60,7 +85,8 @@ GLOBEX_SERVER="${GLOBEX_SERVER:-globex-tools}"
 TECHCORP_SERVER="${TECHCORP_SERVER:-techcorp-tools}"
 AGENT_ID="${AGENT_ID:-cursor}"
 
-export KUBECONFIG
+# Force platform-API paths; never touch the local kubeconfig.
+unset KUBECONFIG
 export MCP_RUNTIME_CONFIG_DIR
 
 need() {
@@ -70,10 +96,41 @@ need() {
   }
 }
 
+stop_listen_port() {
+  local listen="$1"
+  local port="${listen##*:}"
+  if [[ -z "$port" || "$port" == "$listen" ]]; then
+    return 0
+  fi
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+  local pids
+  pids="$(lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null || true)"
+  if [[ -n "$pids" ]]; then
+    kill $pids >/dev/null 2>&1 || true
+    sleep 0.5
+  fi
+}
+
+wait_for_adapter_proxy() {
+  local listen="$1"
+  local log_file="$2"
+  for _ in {1..60}; do
+    if [[ -f "$log_file" ]] && grep -q "listening on ${listen}" "$log_file"; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "adapter proxy did not start on ${listen}" >&2
+  [[ -f "$log_file" ]] && cat "$log_file" >&2
+  return 1
+}
+
 run_as() {
   local profile="$1"
   shift
-  MCP_PLATFORM_API_PROFILE="$profile" "$BIN" "$@"
+  KUBECONFIG="" MCP_PLATFORM_API_PROFILE="$profile" "$BIN" "$@"
 }
 
 json_escape() {
@@ -85,11 +142,25 @@ profile_token() {
   jq -er --arg profile "$profile" '.accounts[$profile].token // (select(.current == $profile) | .token) // empty' "$CREDS"
 }
 
+admin_login() {
+  if [[ -n "${ADMIN_TOKEN_INPUT}" ]]; then
+    KUBECONFIG="" "$BIN" auth login --api-url "$PLATFORM_URL" --token "$ADMIN_TOKEN_INPUT" --profile "$ADMIN_PROFILE"
+  else
+    KUBECONFIG="" "$BIN" auth login --api-url "$PLATFORM_URL" --username "$ADMIN_EMAIL" --password "$ADMIN_PASSWORD" --profile "$ADMIN_PROFILE"
+  fi
+}
+
+team_user_login() {
+  local profile="$1"
+  local email="$2"
+  local password="$3"
+  KUBECONFIG="" "$BIN" auth login --api-url "$PLATFORM_URL" --username "$email" --password "$password" --profile "$profile"
+}
+
 team_id() {
   local slug="$1"
   local token="$2"
   curl -fsS \
-    -H "x-api-key: ${token}" \
     -H "authorization: Bearer ${token}" \
     "${PLATFORM_URL}/api/runtime/teams/${slug}" | jq -er '.team.id'
 }
@@ -156,43 +227,28 @@ publish_server() {
   local email="$5"
   local password="$6"
 
-  # Public registry host — used for docker build/push from the workstation.
-  local registry_host="registry.mcpruntime.org"
-
   rm -rf "$manifest_dir"
 
-  # Build image tagged for the public registry host so docker push can reach it.
-  MCP_REGISTRY_INGRESS_HOST="$registry_host" run_as "$profile" server build image "$server" \
+  MCP_REGISTRY_INGRESS_HOST="$REGISTRY_HOST" run_as "$profile" server build image "$server" \
     --metadata-file "$metadata_file" \
     --dockerfile "$SERVER_DOCKERFILE" \
     --context "$SERVER_CONTEXT" \
     --tag "$TAG"
 
-  # Login to the public registry as the team user (platform password fallback).
-  echo "Logging into registry $registry_host as $email..."
-  echo "$password" | docker login "$registry_host" -u "$email" --password-stdin
+  echo "Logging into registry ${REGISTRY_HOST} as ${email}..."
+  echo "$password" | docker login "$REGISTRY_HOST" -u "$email" --password-stdin
 
   local image_ref
   image_ref="$(image_ref_from_metadata "$metadata_file")"
 
-  # Push to the public registry using docker push.  MCP_REGISTRY_INGRESS_HOST
-  # (not MCP_REGISTRY_ENDPOINT) controls the push target so the push goes to
-  # the publicly reachable registry.mcpruntime.org, not to the in-cluster ClusterIP.
-  echo "Pushing image $image_ref as $profile..."
-  KUBECONFIG="" MCP_REGISTRY_INGRESS_HOST="$registry_host" \
+  echo "Pushing image ${image_ref} as ${profile}..."
+  KUBECONFIG="" MCP_REGISTRY_INGRESS_HOST="$REGISTRY_HOST" \
     run_as "$profile" registry push --scope tenant --image "$image_ref" --mode direct
 
-  # Generate manifests using the public registry host so the image ref is
-  # registry.mcpruntime.org/<scope>/<name>:<tag> — a TLS URL cluster doctor
-  # accepts and that kubelet can pull with the namespace pull secret.
-  # MCP_REGISTRY_PULL_HOST forces the in-cluster pull host to the same public
-  # TLS URL, preventing imageRefForClusterPull from rewriting it to the
-  # in-cluster service DNS (registry.registry.svc.cluster.local:5000).
-  MCP_REGISTRY_INGRESS_HOST="$registry_host" MCP_REGISTRY_PULL_HOST="$registry_host" \
-    "$BIN" pipeline generate --file "$metadata_file" --output "$manifest_dir"
+  MCP_REGISTRY_INGRESS_HOST="$REGISTRY_HOST" MCP_REGISTRY_PULL_HOST="$REGISTRY_HOST" \
+    KUBECONFIG="" "$BIN" pipeline generate --file "$metadata_file" --output "$manifest_dir"
 
-  # Deploy via platform API (no KUBECONFIG needed; falls back to kubectl when platform auth unavailable).
-  "$BIN" pipeline deploy --dir "$manifest_dir"
+  run_as "$profile" pipeline deploy --dir "$manifest_dir"
 }
 
 write_grant() {
@@ -224,11 +280,12 @@ YAML
 }
 
 wait_for_rollout() {
-  local namespace="$1"
-  local server="$2"
+  local profile="$1"
+  local namespace="$2"
+  local server="$3"
   local token
-  token="$(profile_token "$ADMIN_PROFILE")"
-  echo "=== waiting for rollout: ${server} in ${namespace} ==="
+  token="$(profile_token "$profile")"
+  echo "=== waiting for rollout: ${server} in ${namespace} (profile ${profile}) ==="
   local deadline=$(( $(date +%s) + 180 ))
   while true; do
     local body
@@ -254,9 +311,10 @@ wait_for_rollout() {
 }
 
 delete_all_sessions() {
-  local ns="$1"
+  local profile="$1"
+  local ns="$2"
   local token
-  token="$(profile_token "$ADMIN_PROFILE")"
+  token="$(profile_token "$profile")"
   local sessions_body
   sessions_body="$(curl -fsS \
     -H "authorization: Bearer ${token}" \
@@ -272,10 +330,11 @@ delete_all_sessions() {
 }
 
 verify_grant_exists() {
-  local name="$1"
-  local ns="$2"
+  local profile="$1"
+  local name="$2"
+  local ns="$3"
   local token
-  token="$(profile_token "$ADMIN_PROFILE")"
+  token="$(profile_token "$profile")"
   curl -fsS \
     -H "authorization: Bearer ${token}" \
     "${PLATFORM_URL}/api/runtime/grants/${ns}/${name}" >/dev/null
@@ -287,15 +346,12 @@ setup_demo() {
     exit 1
   fi
 
+  admin_login
+
   if [[ "${RESET:-0}" == "1" ]]; then
-    if [[ -n "${ADMIN_TOKEN_INPUT}" ]]; then
-      "$BIN" auth login --api-url "$PLATFORM_URL" --token "$ADMIN_TOKEN_INPUT" --profile "$ADMIN_PROFILE" 2>/dev/null || true
-    else
-      "$BIN" auth login --api-url "$PLATFORM_URL" --username "$ADMIN_EMAIL" --password "$ADMIN_PASSWORD" --profile "$ADMIN_PROFILE" 2>/dev/null || true
-    fi
     local _token
     _token="$(profile_token "$ADMIN_PROFILE")"
-    delete_all_sessions "$ACME_NS"
+    delete_all_sessions "$ADMIN_PROFILE" "$ACME_NS"
     for _ns_name in "${ACME_NS}/${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}" "${ACME_NS}/${ACME_SERVER}-${TECHCORP_SLUG}-${AGENT_ID}"; do
       local _ns="${_ns_name%%/*}" _name="${_ns_name##*/}"
       curl -fsS -X DELETE -H "authorization: Bearer ${_token}" "${PLATFORM_URL}/api/runtime/grants/${_ns}/${_name}" >/dev/null 2>&1 || true
@@ -306,11 +362,6 @@ setup_demo() {
     done
   fi
 
-  if [[ -n "${ADMIN_TOKEN_INPUT}" ]]; then
-    "$BIN" auth login --api-url "$PLATFORM_URL" --token "$ADMIN_TOKEN_INPUT" --profile "$ADMIN_PROFILE"
-  else
-    "$BIN" auth login --api-url "$PLATFORM_URL" --username "$ADMIN_EMAIL" --password "$ADMIN_PASSWORD" --profile "$ADMIN_PROFILE"
-  fi
   create_or_update_team "$ACME_SLUG" "Acme"
   create_or_update_team "$GLOBEX_SLUG" "Globex"
   create_or_update_team "$TECHCORP_SLUG" "TechCorp"
@@ -324,9 +375,9 @@ setup_demo() {
   TECHCORP_TEAM_ID="$(team_id "$TECHCORP_SLUG" "$ADMIN_TOKEN")"
   printf "acme=%s\nglobex=%s\ntechcorp=%s\n" "$ACME_TEAM_ID" "$GLOBEX_TEAM_ID" "$TECHCORP_TEAM_ID"
 
-  "$BIN" auth login --api-url "$PLATFORM_URL" --username "$ACME_EMAIL" --password "$ACME_PASSWORD" --profile "$ACME_PROFILE"
-  "$BIN" auth login --api-url "$PLATFORM_URL" --username "$GLOBEX_EMAIL" --password "$GLOBEX_PASSWORD" --profile "$GLOBEX_PROFILE"
-  "$BIN" auth login --api-url "$PLATFORM_URL" --username "$TECHCORP_EMAIL" --password "$TECHCORP_PASSWORD" --profile "$TECHCORP_PROFILE"
+  team_user_login "$ACME_PROFILE" "$ACME_EMAIL" "$ACME_PASSWORD"
+  team_user_login "$GLOBEX_PROFILE" "$GLOBEX_EMAIL" "$GLOBEX_PASSWORD"
+  team_user_login "$TECHCORP_PROFILE" "$TECHCORP_EMAIL" "$TECHCORP_PASSWORD"
 
   local acme_metadata="$WORK_DIR/${ACME_SERVER}.metadata.yaml"
   local globex_metadata="$WORK_DIR/${GLOBEX_SERVER}.metadata.yaml"
@@ -345,9 +396,9 @@ setup_demo() {
   publish_server "$GLOBEX_PROFILE" "$GLOBEX_SERVER" "$globex_metadata" "$globex_manifests" "$GLOBEX_EMAIL" "$GLOBEX_PASSWORD"
   publish_server "$TECHCORP_PROFILE" "$TECHCORP_SERVER" "$techcorp_metadata" "$techcorp_manifests" "$TECHCORP_EMAIL" "$TECHCORP_PASSWORD"
 
-  wait_for_rollout "$ACME_NS" "$ACME_SERVER"
-  wait_for_rollout "$GLOBEX_NS" "$GLOBEX_SERVER"
-  wait_for_rollout "$TECHCORP_NS" "$TECHCORP_SERVER"
+  wait_for_rollout "$ACME_PROFILE" "$ACME_NS" "$ACME_SERVER"
+  wait_for_rollout "$GLOBEX_PROFILE" "$GLOBEX_NS" "$GLOBEX_SERVER"
+  wait_for_rollout "$TECHCORP_PROFILE" "$TECHCORP_NS" "$TECHCORP_SERVER"
 
   write_grant "$acme_globex_grant" "${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}" "$ACME_SERVER" "$ACME_NS" "$GLOBEX_TEAM_ID"
   write_grant "$acme_techcorp_grant" "${ACME_SERVER}-${TECHCORP_SLUG}-${AGENT_ID}" "$ACME_SERVER" "$ACME_NS" "$TECHCORP_TEAM_ID"
@@ -355,28 +406,12 @@ setup_demo() {
   run_as "$ACME_PROFILE" access grant apply --file "$acme_techcorp_grant"
 }
 
-ensure_login() {
-  local profile="$1"
-  local email="$2"
-  local password="$3"
-  # Always refresh; cached tokens can expire between test runs.
-  if [[ "$profile" == "$ADMIN_PROFILE" && -n "${ADMIN_TOKEN_INPUT}" ]]; then
-    "$BIN" auth login --api-url "$PLATFORM_URL" --token "$ADMIN_TOKEN_INPUT" --profile "$profile"
-  else
-    "$BIN" auth login --api-url "$PLATFORM_URL" --username "$email" --password "$password" --profile "$profile"
-  fi
-}
-
-# Verify that operations that don't need cluster access work without KUBECONFIG.
-# Any command that gates on cluster connectivity before doing auth/local work
-# breaks the experience for users who don't have a cluster configured.
 verify_no_kubeconfig_ops() {
   echo "=== verify: binary works without KUBECONFIG for non-cluster operations ==="
   local tmp_dir
   tmp_dir="$(mktemp -d)"
   local tmp_creds="$tmp_dir/config.json"
 
-  # --help must work unconditionally
   KUBECONFIG="" MCP_RUNTIME_CONFIG_DIR="$tmp_dir" "$BIN" --help >/dev/null
   KUBECONFIG="" MCP_RUNTIME_CONFIG_DIR="$tmp_dir" "$BIN" auth --help >/dev/null
   KUBECONFIG="" MCP_RUNTIME_CONFIG_DIR="$tmp_dir" "$BIN" auth login --help >/dev/null
@@ -384,7 +419,6 @@ verify_no_kubeconfig_ops() {
   KUBECONFIG="" MCP_RUNTIME_CONFIG_DIR="$tmp_dir" "$BIN" registry --help >/dev/null
   KUBECONFIG="" MCP_RUNTIME_CONFIG_DIR="$tmp_dir" "$BIN" adapter --help >/dev/null
 
-  # Platform auth login (token-based) must work without KUBECONFIG
   local login_ok=0
   if [[ -n "${ADMIN_TOKEN_INPUT}" ]]; then
     KUBECONFIG="" MCP_RUNTIME_CONFIG_DIR="$tmp_dir" \
@@ -399,14 +433,23 @@ verify_no_kubeconfig_ops() {
     exit 1
   fi
 
-  # auth status must work without KUBECONFIG
   KUBECONFIG="" MCP_RUNTIME_CONFIG_DIR="$tmp_dir" "$BIN" auth status >/dev/null
-
-  # auth logout must work without KUBECONFIG
   KUBECONFIG="" MCP_RUNTIME_CONFIG_DIR="$tmp_dir" "$BIN" auth logout >/dev/null
 
   rm -rf "$tmp_dir"
   echo "=== no-kubeconfig ops: OK ==="
+}
+
+precreate_adapter_session() {
+  local profile="$1"
+  local token body
+  token="$(profile_token "$profile")"
+  body="$(curl -fsS \
+    -H "authorization: Bearer ${token}" \
+    -H "content-type: application/json" \
+    --data "{\"serverName\":\"${ACME_SERVER}\",\"namespace\":\"${ACME_NS}\",\"agentID\":\"${AGENT_ID}\"}" \
+    "${PLATFORM_URL}/api/runtime/adapter/sessions")"
+  jq -er '.name' <<<"$body" >/dev/null
 }
 
 verify_direct_public_denied() {
@@ -418,8 +461,6 @@ verify_direct_public_denied() {
       --data '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"aaa-ping","arguments":{"note":"direct-public-deny-check"}}}' \
       "${MCP_URL}/${ACME_SERVER}/mcp"
   )"
-  # Gateway returns 401 (missing identity) or 403 (forbidden) for unauthenticated direct calls;
-  # both are correct — the important invariant is adapter_required=true in the body.
   if [[ "$status" != "401" && "$status" != "403" ]] || ! jq -e '.adapter_required == true' "$body" >/dev/null; then
     echo "expected direct public call to fail with adapter_required (401 or 403), got HTTP ${status}" >&2
     cat "$body" >&2
@@ -427,83 +468,142 @@ verify_direct_public_denied() {
   fi
 }
 
-adapter_call_add() {
-  local headers="$WORK_DIR/adapter.headers"
-  local result_body="$WORK_DIR/adapter-add.body"
-  local adapter_url="http://${ADAPTER_LISTEN}"
+adapter_call_add_for() {
+  local profile="$1"
+  local listen="$2"
+  local log_file="$3"
+  local headers_file="$4"
+  local init_body="$5"
+  local notify_body="$6"
+  local result_body="$7"
+  local arg_a="${8}"
+  local arg_b="${9}"
+  local expected="${10}"
+  local adapter_url="http://${listen}"
 
-  MCP_PLATFORM_API_PROFILE="$GLOBEX_PROFILE" "$BIN" adapter proxy \
+  stop_listen_port "$listen"
+  : >"$log_file"
+  MCP_PLATFORM_API_PROFILE="$profile" KUBECONFIG="" "$BIN" adapter proxy \
     --platform-url "$PLATFORM_URL" \
     --runtime-url "${MCP_URL}/${ACME_SERVER}/mcp" \
     --server "$ACME_SERVER" \
     --namespace "$ACME_NS" \
     --agent "$AGENT_ID" \
-    --listen "$ADAPTER_LISTEN" \
-    --auto-refresh >"$WORK_DIR/adapter.log" 2>&1 &
+    --listen "$listen" \
+    --auto-refresh >>"$log_file" 2>&1 &
   local proxy_pid=$!
-  trap 'kill "$proxy_pid" >/dev/null 2>&1 || true' RETURN
 
-  for _ in {1..60}; do
-    if curl -sS --max-time 1 -o /dev/null "$adapter_url" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 0.25
-  done
+  wait_for_adapter_proxy "$listen" "$log_file"
 
-  curl -fsS -D "$headers" -o "$WORK_DIR/adapter-init.body" \
+  curl -fsS -D "$headers_file" -o "$init_body" \
     -H "content-type: application/json" \
     --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"multitenancytest","version":"0.1"}}}' \
-    "$adapter_url" >/dev/null
+    "$adapter_url"
 
   local mcp_session_id
-  mcp_session_id="$(awk 'BEGIN{IGNORECASE=1} /^Mcp-Session-Id:/ {gsub(/\r/,"",$2); print $2}' "$headers")"
-  test -n "$mcp_session_id"
+  mcp_session_id="$(awk 'BEGIN{IGNORECASE=1} /^Mcp-Session-Id:/ {gsub(/\r/,"",$2); print $2}' "$headers_file")"
+  if [[ -z "$mcp_session_id" ]]; then
+    echo "initialize did not return Mcp-Session-Id for profile ${profile}" >&2
+    cat "$init_body" >&2
+    kill "$proxy_pid" >/dev/null 2>&1 || true
+    stop_listen_port "$listen"
+    return 1
+  fi
 
-  # Give the gateway sidecar time to load the newly created MCPAgentSession.
-  # Full latency chain: session created → operator reconciles ConfigMap (~2s) →
-  # kubelet projects ConfigMap change to pod volume (~5s) → gateway reads at
-  # next 5-second poll tick. 12s covers 2 gateway poll cycles with margin.
-  sleep 12
+  sleep 10
 
-  curl -fsS -o "$WORK_DIR/adapter-notify.body" \
-    -H "content-type: application/json" \
-    -H "Mcp-Session-Id: ${mcp_session_id}" \
-    --data '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
-    "$adapter_url" >/dev/null
+  local status deadline
+  status="$(
+    curl -sS -o "$notify_body" -w '%{http_code}' \
+      -H "content-type: application/json" \
+      -H "Mcp-Session-Id: ${mcp_session_id}" \
+      --data '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
+      "$adapter_url"
+  )"
+  if [[ "$status" != "200" && "$status" != "202" && "$status" != "204" ]]; then
+    echo "notifications/initialized returned HTTP ${status} for profile ${profile}" >&2
+    cat "$notify_body" >&2
+    kill "$proxy_pid" >/dev/null 2>&1 || true
+    stop_listen_port "$listen"
+    return 1
+  fi
 
-  curl -fsS -o "$result_body" \
-    -H "content-type: application/json" \
-    -H "Mcp-Session-Id: ${mcp_session_id}" \
-    --data '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"add","arguments":{"a":7,"b":9}}}' \
-    "$adapter_url" >/dev/null
+  deadline=$(( $(date +%s) + 90 ))
+  while true; do
+    status="$(
+      curl -sS -o "$result_body" -w '%{http_code}' \
+        -H "content-type: application/json" \
+        -H "Mcp-Session-Id: ${mcp_session_id}" \
+        --data "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"add\",\"arguments\":{\"a\":${arg_a},\"b\":${arg_b}}}}" \
+        "$adapter_url"
+    )"
+    if [[ "$status" == "200" ]]; then
+      break
+    fi
+    if grep -qE 'session_not_found|session_expired' "$result_body" 2>/dev/null; then
+      if [[ $(date +%s) -gt $deadline ]]; then
+        echo "tools/call timed out waiting for gateway session policy for profile ${profile}" >&2
+        cat "$result_body" >&2
+        kill "$proxy_pid" >/dev/null 2>&1 || true
+        stop_listen_port "$listen"
+        return 1
+      fi
+      sleep 3
+      continue
+    fi
+    echo "tools/call returned HTTP ${status} for profile ${profile}" >&2
+    cat "$result_body" >&2
+    kill "$proxy_pid" >/dev/null 2>&1 || true
+    stop_listen_port "$listen"
+    return 1
+  done
 
   local result
   result="$(jq -er '.result.content[0].text' "$result_body")"
-  if [[ "$result" != "16" ]]; then
-    echo "adapter add result was ${result}, expected 16" >&2
+  if [[ "$result" != "$expected" ]]; then
+    echo "adapter add result was ${result}, expected ${expected} for profile ${profile}" >&2
     cat "$result_body" >&2
-    exit 1
+    kill "$proxy_pid" >/dev/null 2>&1 || true
+    stop_listen_port "$listen"
+    return 1
   fi
 
   kill "$proxy_pid" >/dev/null 2>&1 || true
-  trap - RETURN
+  stop_listen_port "$listen"
+}
+
+adapter_call_add() {
+  adapter_call_add_for "$GLOBEX_PROFILE" "$ADAPTER_LISTEN" \
+    "$WORK_DIR/adapter.log" "$WORK_DIR/adapter.headers" \
+    "$WORK_DIR/adapter-init.body" "$WORK_DIR/adapter-notify.body" "$WORK_DIR/adapter-add.body" \
+    7 9 16
 }
 
 verify_events() {
   local token
-  token="$(profile_token "$ADMIN_PROFILE")"
+  token="$(profile_token "$ACME_PROFILE")"
   local body="$WORK_DIR/events.body"
-  curl -fsS -o "$body" \
-    -H "authorization: Bearer ${token}" \
-    "${PLATFORM_URL}/api/runtime/server-events?namespace=${ACME_NS}&server=${ACME_SERVER}&limit=10"
-  jq -e --arg globex "$GLOBEX_TEAM_ID" '
-    (.events // .) as $events
-    | ($events | length) > 0
-    and any($events[]; (.tool_name // .ToolName // "") == "add" and
-        ((.payload.subject_team_id // .subject_team_id // .team_id // "") == $globex or
-         $globex == "")
-        and (.decision // .Decision // "allow") == "allow")
-  ' "$body" >/dev/null
+  local deadline=$(( $(date +%s) + 60 ))
+  while true; do
+    curl -fsS -o "$body" \
+      -H "authorization: Bearer ${token}" \
+      "${PLATFORM_URL}/api/runtime/server-events?namespace=${ACME_NS}&server=${ACME_SERVER}&limit=10"
+    if jq -e --arg globex "$GLOBEX_TEAM_ID" '
+      (.events // .) as $events
+      | ($events | length) > 0
+      and any($events[]; (.tool_name // .ToolName // "") == "add" and
+          ((.payload.subject_team_id // .subject_team_id // .team_id // "") == $globex)
+          and (.decision // .Decision // "allow") == "allow")
+    ' "$body" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ $(date +%s) -gt $deadline ]]; then
+      echo "expected allow add event for globex team in server events" >&2
+      cat "$body" >&2
+      return 1
+    fi
+    sleep 3
+  done
 }
 
 print_cursor_config() {
@@ -572,109 +672,52 @@ if [[ ! -x "$BIN" ]]; then
 fi
 
 mkdir -p "$MCP_RUNTIME_CONFIG_DIR" "$WORK_DIR"
+stop_listen_port "$ADAPTER_LISTEN"
+stop_listen_port "${TECHCORP_ADAPTER_LISTEN:-127.0.0.1:8300}"
 
 if [[ "${SKIP_SETUP:-0}" != "1" ]]; then
   setup_demo
 else
-  ensure_login "$ADMIN_PROFILE" "$ADMIN_EMAIL" "$ADMIN_PASSWORD"
-  ensure_login "$GLOBEX_PROFILE" "$GLOBEX_EMAIL" "$GLOBEX_PASSWORD"
-  ensure_login "$TECHCORP_PROFILE" "$TECHCORP_EMAIL" "$TECHCORP_PASSWORD"
+  admin_login
+  team_user_login "$ACME_PROFILE" "$ACME_EMAIL" "$ACME_PASSWORD"
+  team_user_login "$GLOBEX_PROFILE" "$GLOBEX_EMAIL" "$GLOBEX_PASSWORD"
+  team_user_login "$TECHCORP_PROFILE" "$TECHCORP_EMAIL" "$TECHCORP_PASSWORD"
   ADMIN_TOKEN="$(profile_token "$ADMIN_PROFILE")"
   ACME_TEAM_ID="$(team_id "$ACME_SLUG" "$ADMIN_TOKEN")"
   GLOBEX_TEAM_ID="$(team_id "$GLOBEX_SLUG" "$ADMIN_TOKEN")"
   TECHCORP_TEAM_ID="$(team_id "$TECHCORP_SLUG" "$ADMIN_TOKEN")"
 fi
 
-wait_for_rollout "$ACME_NS" "$ACME_SERVER"
-wait_for_rollout "$GLOBEX_NS" "$GLOBEX_SERVER"
-wait_for_rollout "$TECHCORP_NS" "$TECHCORP_SERVER"
-verify_grant_exists "${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}" "$ACME_NS"
-verify_grant_exists "${ACME_SERVER}-${TECHCORP_SLUG}-${AGENT_ID}" "$ACME_NS"
+wait_for_rollout "$ACME_PROFILE" "$ACME_NS" "$ACME_SERVER"
+wait_for_rollout "$GLOBEX_PROFILE" "$GLOBEX_NS" "$GLOBEX_SERVER"
+wait_for_rollout "$TECHCORP_PROFILE" "$TECHCORP_NS" "$TECHCORP_SERVER"
+verify_grant_exists "$ACME_PROFILE" "${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}" "$ACME_NS"
+verify_grant_exists "$ACME_PROFILE" "${ACME_SERVER}-${TECHCORP_SLUG}-${AGENT_ID}" "$ACME_NS"
 
 verify_no_kubeconfig_ops
 
-# Delete any lingering MCPAgentSessions before adapter verification so that
-# the adapter proxy always creates fresh sessions during initialize. This
-# prevents the auto-refresh race: if a stale session is reused and the gateway
-# hasn't reloaded its policy yet (5-second poll), the tools/call after the
-# 7-second sleep would fail with session_not_found / session_expired.
-delete_all_sessions "$ACME_NS"
+delete_all_sessions "$ACME_PROFILE" "$ACME_NS"
 
 verify_direct_public_denied
 
-# Verify globex adapter -> acme server
 echo "=== verify: ${GLOBEX_SLUG} adapter call to ${ACME_SLUG}/${ACME_SERVER} ==="
+precreate_adapter_session "$GLOBEX_PROFILE"
 adapter_call_add
-verify_events "$ADMIN_TOKEN"
+verify_events
 
-# Verify techcorp adapter -> acme server (same port, second invocation in sequence)
 echo "=== verify: ${TECHCORP_SLUG} adapter call to ${ACME_SLUG}/${ACME_SERVER} ==="
+precreate_adapter_session "$TECHCORP_PROFILE"
+sleep 10
 TECHCORP_ADAPTER_LISTEN="${TECHCORP_ADAPTER_LISTEN:-127.0.0.1:8300}"
-(
-  MCP_PLATFORM_API_PROFILE="$TECHCORP_PROFILE" "$BIN" adapter proxy \
-    --platform-url "$PLATFORM_URL" \
-    --runtime-url "${MCP_URL}/${ACME_SERVER}/mcp" \
-    --server "$ACME_SERVER" \
-    --namespace "$ACME_NS" \
-    --agent "$AGENT_ID" \
-    --listen "$TECHCORP_ADAPTER_LISTEN" \
-    --auto-refresh >"$WORK_DIR/techcorp-adapter.log" 2>&1
-) &
-techcorp_proxy_pid=$!
-trap 'kill "$techcorp_proxy_pid" >/dev/null 2>&1 || true' EXIT
-
-for _ in {1..60}; do
-  if curl -sS --max-time 1 -o /dev/null "http://${TECHCORP_ADAPTER_LISTEN}" >/dev/null 2>&1; then
-    break
-  fi
-  sleep 0.25
-done
-
-tc_headers="$WORK_DIR/techcorp-adapter.headers"
-curl -fsS -D "$tc_headers" -o "$WORK_DIR/techcorp-init.body" \
-  -H "content-type: application/json" \
-  --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"multitenancytest-techcorp","version":"0.1"}}}' \
-  "http://${TECHCORP_ADAPTER_LISTEN}" >/dev/null
-
-tc_session="$(awk 'BEGIN{IGNORECASE=1} /^Mcp-Session-Id:/ {gsub(/\r/,"",$2); print $2}' "$tc_headers")"
-test -n "$tc_session"
-
-# Give the gateway sidecar time to load the newly created MCPAgentSession.
-# Full latency chain: session created → operator reconciles ConfigMap (~2s) →
-# kubelet projects ConfigMap change to pod volume (~5s) → gateway reads at
-# next 5-second poll tick. 12s covers 2 gateway poll cycles with margin.
-sleep 12
-
-curl -fsS -o "$WORK_DIR/techcorp-notify.body" \
-  -H "content-type: application/json" \
-  -H "Mcp-Session-Id: ${tc_session}" \
-  --data '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
-  "http://${TECHCORP_ADAPTER_LISTEN}" >/dev/null
-
-tc_result_body="$WORK_DIR/techcorp-add.body"
-curl -fsS -o "$tc_result_body" \
-  -H "content-type: application/json" \
-  -H "Mcp-Session-Id: ${tc_session}" \
-  --data '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"add","arguments":{"a":11,"b":22}}}' \
-  "http://${TECHCORP_ADAPTER_LISTEN}" >/dev/null
-
-tc_result="$(jq -er '.result.content[0].text' "$tc_result_body")"
-if [[ "$tc_result" != "33" ]]; then
-  echo "techcorp adapter add result was ${tc_result}, expected 33" >&2
-  cat "$tc_result_body" >&2
-  exit 1
-fi
-kill "$techcorp_proxy_pid" >/dev/null 2>&1 || true
-trap - EXIT
+adapter_call_add_for "$TECHCORP_PROFILE" "$TECHCORP_ADAPTER_LISTEN" \
+  "$WORK_DIR/techcorp-adapter.log" "$WORK_DIR/techcorp-adapter.headers" \
+  "$WORK_DIR/techcorp-init.body" "$WORK_DIR/techcorp-notify.body" "$WORK_DIR/techcorp-add.body" \
+  11 22 33
 echo "=== techcorp adapter call: OK (11+22=33) ==="
-
-if command -v kubectl >/dev/null 2>&1; then
-  "$BIN" cluster doctor
-fi
 
 print_cursor_config
 echo
-echo "multi-tenant flow passed:"
+echo "multi-tenant flow passed (platform API only, no kubectl/kubeconfig):"
 echo "  - ${GLOBEX_SLUG}/${AGENT_ID} called ${ACME_SLUG}/${ACME_SERVER} add(7,9)=16 via adapter"
 echo "  - ${TECHCORP_SLUG}/${AGENT_ID} called ${ACME_SLUG}/${ACME_SERVER} add(11,22)=33 via adapter"
-echo "  - no-kubeconfig ops verified for auth/login/list/use commands"
+echo "  - admin credentials used only for team bootstrap; tenant flows used email/password login"

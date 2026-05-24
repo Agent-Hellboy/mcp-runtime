@@ -527,18 +527,23 @@ func (s *RuntimeServer) ensureNamespaceRegistryPullSecret(ctx context.Context, c
 			return err
 		}
 	}
-	sa, err := client.CoreV1().ServiceAccounts(namespace).Get(ctx, kubeworkload.DefaultServiceAccountName, metav1.GetOptions{})
-	if err != nil {
-		return nil
-	}
-	for _, ref := range sa.ImagePullSecrets {
-		if ref.Name == registryPullSecretName {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		sa, err := client.CoreV1().ServiceAccounts(namespace).Get(ctx, kubeworkload.DefaultServiceAccountName, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
 			return nil
 		}
-	}
-	sa.ImagePullSecrets = append(sa.ImagePullSecrets, corev1.LocalObjectReference{Name: registryPullSecretName})
-	_, err = client.CoreV1().ServiceAccounts(namespace).Update(ctx, sa, metav1.UpdateOptions{})
-	return err
+		if err != nil {
+			return err
+		}
+		for _, ref := range sa.ImagePullSecrets {
+			if ref.Name == registryPullSecretName {
+				return nil
+			}
+		}
+		sa.ImagePullSecrets = append(sa.ImagePullSecrets, corev1.LocalObjectReference{Name: registryPullSecretName})
+		_, err = client.CoreV1().ServiceAccounts(namespace).Update(ctx, sa, metav1.UpdateOptions{})
+		return err
+	})
 }
 
 func mergeNamespaceLabels(ns *corev1.Namespace, labels map[string]string) bool {

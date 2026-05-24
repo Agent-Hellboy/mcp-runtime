@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strconv"
 	"strings"
@@ -321,13 +322,17 @@ func (r *MCPServerReconciler) ensureRegistryPullSecret(ctx context.Context, name
 	}
 	secretName := r.ProvisionedRegistry.SecretName
 	if secretName == "" {
-		secretName = "mcp-runtime-registry-creds"
+		secretName = DefaultRegistrySecretName
 	}
+	auth := base64.StdEncoding.EncodeToString(
+		[]byte(r.ProvisionedRegistry.Username + ":" + r.ProvisionedRegistry.Password),
+	)
 	dockerconfig := fmt.Sprintf(
-		`{"auths":{%q:{"username":%q,"password":%q}}}`,
+		`{"auths":{%q:{"username":%q,"password":%q,"auth":%q}}}`,
 		r.ProvisionedRegistry.URL,
 		r.ProvisionedRegistry.Username,
 		r.ProvisionedRegistry.Password,
+		auth,
 	)
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -639,7 +644,7 @@ func (r *MCPServerReconciler) buildImagePullSecrets(mcpServer *mcpv1alpha1.MCPSe
 
 	secretName := r.ProvisionedRegistry.SecretName
 	if secretName == "" {
-		secretName = "mcp-runtime-registry-creds" // #nosec G101 -- default secret name, not a credential.
+		secretName = DefaultRegistrySecretName
 	}
 
 	return []corev1.LocalObjectReference{{Name: secretName}}
