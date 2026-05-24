@@ -1,6 +1,7 @@
 Deploy generated CRD files to the Kubernetes cluster.
-This applies all CRD manifests to the cluster, which triggers
-the operator to create the necessary Kubernetes resources.
+When platform API credentials are configured (mcp-runtime auth login), manifests
+are applied through POST /api/runtime/servers without kubectl. Otherwise kubectl
+apply is used and requires a working kubeconfig.
 
 Usage:
   mcp-runtime pipeline deploy [flags]
