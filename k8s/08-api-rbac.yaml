@@ -62,6 +62,12 @@ rules:
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Setup grants this through ClusterRoleBinding; the API must not self-bind secret
+  # permissions in team namespaces because Kubernetes blocks RBAC escalation.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["mcp-runtime-registry-creds"]
+    verbs: ["get", "create", "update", "patch"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]

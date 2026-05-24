@@ -461,20 +461,6 @@ func TestEnsureNamespaceRegistryPullSecret(t *testing.T) {
 	if err := server.ensureNamespaceRegistryPullSecret(context.Background(), client, "mcp-team-acme"); err != nil {
 		t.Fatalf("ensureNamespaceRegistryPullSecret() error = %v", err)
 	}
-	role, err := client.RbacV1().Roles("mcp-team-acme").Get(context.Background(), registryPullSecretRoleName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("registry pull secret role missing: %v", err)
-	}
-	if len(role.Rules) != 1 || len(role.Rules[0].ResourceNames) != 1 || role.Rules[0].ResourceNames[0] != registryPullSecretName {
-		t.Fatalf("registry pull secret role rules = %#v", role.Rules)
-	}
-	binding, err := client.RbacV1().RoleBindings("mcp-team-acme").Get(context.Background(), registryPullSecretRoleName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("registry pull secret rolebinding missing: %v", err)
-	}
-	if binding.RoleRef.Kind != "Role" || binding.RoleRef.Name != registryPullSecretRoleName {
-		t.Fatalf("registry pull secret role ref = %#v", binding.RoleRef)
-	}
 	secret, err := client.CoreV1().Secrets("mcp-team-acme").Get(context.Background(), registryPullSecretName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("registry pull secret missing: %v", err)

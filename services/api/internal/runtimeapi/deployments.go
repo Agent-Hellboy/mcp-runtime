@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"regexp"
@@ -41,9 +42,6 @@ const (
 	traefikWatchRoleName           = "traefik-watch"
 	traefikWatchClusterRoleName    = "mcp-runtime-traefik-watch"
 	platformNamespaceOwnerRoleName = "platform-namespace-owner"
-	registryPullSecretRoleName     = "mcp-runtime-registry-pull-secret"
-	platformAPIServiceAccountName  = "mcp-sentinel-api"
-	platformAPIServiceAccountNS    = "mcp-sentinel"
 	sentinelIngestPort             = 8081
 	sentinelOTLPPort               = 4318
 	registryNamespace              = "registry"
@@ -472,7 +470,12 @@ func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace st
 	if err := kubeworkload.EnsureServiceAccount(ctx, base, namespace); err != nil {
 		return err
 	}
-	return s.ensureNamespaceRegistryPullSecret(ctx, base, namespace)
+	if err := s.ensureNamespaceRegistryPullSecret(ctx, base, namespace); err != nil {
+		// Best-effort: operator reconcile also copies registry pull creds when an
+		// MCPServer lands in the namespace. Do not fail team/user namespace create.
+		log.Printf("runtime teams: registry pull secret for namespace %q failed: %v", namespace, err)
+	}
+	return nil
 }
 
 const registryPullSecretName = "mcp-runtime-registry-creds" // #nosec G101 -- Kubernetes Secret object name, not credential material.
@@ -485,9 +488,6 @@ func (s *RuntimeServer) ensureNamespaceRegistryPullSecret(ctx context.Context, c
 	apiKey := registryPullSecretAPIKey()
 	if apiKey == "" {
 		return nil
-	}
-	if err := ensureNamespaceRegistryPullSecretAccess(ctx, client, namespace); err != nil {
-		return err
 	}
 	auth := base64.StdEncoding.EncodeToString([]byte("platform-service:" + apiKey))
 	dockerconfig := fmt.Sprintf(`{"auths":{%q:{"username":"platform-service","password":%q,"auth":%q}}}`,
@@ -554,35 +554,6 @@ func registryPullSecretAPIKey() string {
 		}
 	}
 	return strings.TrimSpace(os.Getenv("UI_API_KEY"))
-}
-
-func ensureNamespaceRegistryPullSecretAccess(ctx context.Context, client kubernetes.Interface, namespace string) error {
-	role := &rbacv1.Role{
-		ObjectMeta: metav1.ObjectMeta{Name: registryPullSecretRoleName, Namespace: namespace},
-		Rules: []rbacv1.PolicyRule{{
-			APIGroups:     []string{""},
-			Resources:     []string{"secrets"},
-			ResourceNames: []string{registryPullSecretName},
-			Verbs:         []string{"get", "create", "update", "patch"},
-		}},
-	}
-	if err := upsertRole(ctx, client, role); err != nil {
-		return err
-	}
-	binding := &rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: registryPullSecretRoleName, Namespace: namespace},
-		RoleRef: rbacv1.RoleRef{
-			APIGroup: "rbac.authorization.k8s.io",
-			Kind:     "Role",
-			Name:     registryPullSecretRoleName,
-		},
-		Subjects: []rbacv1.Subject{{
-			Kind:      rbacv1.ServiceAccountKind,
-			Name:      platformAPIServiceAccountName,
-			Namespace: platformAPIServiceAccountNS,
-		}},
-	}
-	return upsertRoleBinding(ctx, client, binding)
 }
 
 func mergeNamespaceLabels(ns *corev1.Namespace, labels map[string]string) bool {
