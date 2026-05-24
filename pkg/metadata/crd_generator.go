@@ -27,7 +27,7 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 		Spec: mcpv1alpha1.MCPServerSpec{
 			Description: server.Description,
 			TeamID:      server.TeamID,
-			Image:       server.Image,
+			Image:       imageRefForClusterPull(server.Image),
 			ImageTag:    server.ImageTag,
 			Port:        server.Port,
 			Replicas:    server.Replicas,
@@ -231,6 +231,18 @@ func convertResourceRequirements(resources *ResourceRequirements) *mcpv1alpha1.R
 		}
 	}
 	return converted
+}
+
+func imageRefForClusterPull(image string) string {
+	pullHost := ResolveRegistryPullHost()
+	pushHost := ResolveRegistryHost()
+	if pullHost == "" || pullHost == pushHost {
+		return image
+	}
+	if rewritten, ok := RewriteImageRegistryHost(image, pullHost); ok {
+		return rewritten
+	}
+	return image
 }
 
 // GenerateCRDsFromRegistry renders CRD YAML files for every server in a registry into outputDir.

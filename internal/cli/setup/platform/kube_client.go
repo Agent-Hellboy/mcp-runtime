@@ -12,7 +12,20 @@ import (
 
 var newKubernetesClients = k8sclient.New
 
+// platformSetupKubeconfig holds the explicit kubeconfig path for the active
+// setup run. Initialised by initPlatformKubeconfig so every k8s operation in
+// the setup pipeline targets the correct cluster even when multiple kubeconfig
+// files exist on the workstation.
+var platformSetupKubeconfig string
+
+func initPlatformKubeconfig(path string) {
+	platformSetupKubeconfig = path
+}
+
 func platformKubernetesClients() (*k8sclient.Clients, error) {
+	if platformSetupKubeconfig != "" {
+		return k8sclient.NewWithConfig(k8sclient.Config{KubeconfigPath: platformSetupKubeconfig})
+	}
 	clients, err := newKubernetesClients()
 	if err != nil {
 		return nil, err

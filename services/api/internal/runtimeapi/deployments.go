@@ -2,9 +2,11 @@ package runtimeapi
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"regexp"
@@ -465,7 +467,93 @@ func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace st
 	if err := ensureDefaultDenyNetworkPolicy(ctx, base, namespace, opts.ingressFromNamespaces...); err != nil {
 		return err
 	}
-	return kubeworkload.EnsureServiceAccount(ctx, base, namespace)
+	if err := kubeworkload.EnsureServiceAccount(ctx, base, namespace); err != nil {
+		return err
+	}
+	if err := s.ensureNamespaceRegistryPullSecret(ctx, base, namespace); err != nil {
+		// Best-effort: operator reconcile also copies registry pull creds when an
+		// MCPServer lands in the namespace. Do not fail team/user namespace create.
+		log.Printf("runtime teams: registry pull secret for namespace %q failed: %v", namespace, err)
+	}
+	return nil
+}
+
+const registryPullSecretName = "mcp-runtime-registry-creds" // #nosec G101 -- Kubernetes Secret object name, not credential material.
+
+func (s *RuntimeServer) ensureNamespaceRegistryPullSecret(ctx context.Context, client kubernetes.Interface, namespace string) error {
+	registryHost := registryPullSecretHost()
+	if registryHost == "" {
+		return nil
+	}
+	apiKey := registryPullSecretAPIKey()
+	if apiKey == "" {
+		return nil
+	}
+	auth := base64.StdEncoding.EncodeToString([]byte("platform-service:" + apiKey))
+	dockerconfig := fmt.Sprintf(`{"auths":{%q:{"username":"platform-service","password":%q,"auth":%q}}}`,
+		registryHost, apiKey, auth)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: registryPullSecretName, Namespace: namespace},
+		Type:       corev1.SecretTypeDockerConfigJson,
+		Data: map[string][]byte{
+			corev1.DockerConfigJsonKey: []byte(dockerconfig),
+		},
+	}
+	existing, err := client.CoreV1().Secrets(namespace).Get(ctx, registryPullSecretName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		if _, err := client.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return err
+		}
+	} else if err != nil {
+		return err
+	} else {
+		existing.Data = secret.Data
+		existing.Type = secret.Type
+		if _, err := client.CoreV1().Secrets(namespace).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+	}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		sa, err := client.CoreV1().ServiceAccounts(namespace).Get(ctx, kubeworkload.DefaultServiceAccountName, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		for _, ref := range sa.ImagePullSecrets {
+			if ref.Name == registryPullSecretName {
+				return nil
+			}
+		}
+		sa.ImagePullSecrets = append(sa.ImagePullSecrets, corev1.LocalObjectReference{Name: registryPullSecretName})
+		_, err = client.CoreV1().ServiceAccounts(namespace).Update(ctx, sa, metav1.UpdateOptions{})
+		return err
+	})
+}
+
+func registryPullSecretHost() string {
+	for _, key := range []string{"MCP_REGISTRY_INGRESS_HOST", "MCP_REGISTRY_HOST"} {
+		if h := normalizeImageRegistryHost(os.Getenv(key)); h != "" && h != "registry.local" && h != "localhost" {
+			return h
+		}
+	}
+	if h := normalizeImageRegistryHost(os.Getenv("MCP_REGISTRY_ENDPOINT")); h != "" {
+		return h
+	}
+	if domain := normalizeImageRegistryHost(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
+		return "registry." + strings.TrimPrefix(domain, "registry.")
+	}
+	return ""
+}
+
+func registryPullSecretAPIKey() string {
+	for _, raw := range strings.Split(strings.TrimSpace(os.Getenv("ADMIN_API_KEYS")), ",") {
+		if k := strings.TrimSpace(raw); k != "" {
+			return k
+		}
+	}
+	return strings.TrimSpace(os.Getenv("UI_API_KEY"))
 }
 
 func mergeNamespaceLabels(ns *corev1.Namespace, labels map[string]string) bool {
@@ -644,6 +732,11 @@ func desiredDefaultDenyNetworkPolicy(ns string, ingressFromNamespaces ...string)
 					},
 					Ports: []networkingv1.NetworkPolicyPort{
 						{Protocol: &tcpProtocol, Port: intstrPtr(registryPort)},
+					},
+				},
+				{
+					To: []networkingv1.NetworkPolicyPeer{
+						{PodSelector: &metav1.LabelSelector{}},
 					},
 				},
 			},

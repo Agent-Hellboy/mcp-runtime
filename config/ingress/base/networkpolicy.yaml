@@ -83,6 +83,12 @@ spec:
           port: 8081
         - protocol: TCP
           port: 8082
+        - protocol: TCP
+          port: 8083
+        - protocol: TCP
+          port: 8088
+        - protocol: TCP
+          port: 8091
     # Traefik watches Ingress and TLS Secret objects through the Kubernetes API.
     - ports:
         - protocol: TCP

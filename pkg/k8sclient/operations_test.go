@@ -55,6 +55,39 @@ func TestWaitForWorkloadRolloutAcceptsRolledOutDeployment(t *testing.T) {
 	}
 }
 
+func TestWaitForWorkloadRolloutWaitsForDaemonSetReadyReplicas(t *testing.T) {
+	clients := &Clients{Clientset: kubernetesfake.NewSimpleClientset(&appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "promtail", Namespace: "mcp-sentinel", Generation: 2},
+		Status: appsv1.DaemonSetStatus{
+			ObservedGeneration:     1,
+			DesiredNumberScheduled: 1,
+			NumberReady:            0,
+			UpdatedNumberScheduled: 0,
+		},
+	})}
+
+	err := WaitForWorkloadRollout(context.Background(), clients, "mcp-sentinel", "daemonset", "promtail", time.Millisecond)
+	if err == nil {
+		t.Fatal("expected rollout wait to fail while daemonset replicas are not ready")
+	}
+}
+
+func TestWaitForWorkloadRolloutAcceptsReadyDaemonSet(t *testing.T) {
+	clients := &Clients{Clientset: kubernetesfake.NewSimpleClientset(&appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "promtail", Namespace: "mcp-sentinel", Generation: 2},
+		Status: appsv1.DaemonSetStatus{
+			ObservedGeneration:     2,
+			DesiredNumberScheduled: 1,
+			NumberReady:            1,
+			UpdatedNumberScheduled: 1,
+		},
+	})}
+
+	if err := WaitForWorkloadRollout(context.Background(), clients, "mcp-sentinel", "daemonset", "promtail", time.Second); err != nil {
+		t.Fatalf("WaitForWorkloadRollout() error = %v", err)
+	}
+}
+
 func TestDeleteJobUsesBackgroundPropagation(t *testing.T) {
 	clientset := kubernetesfake.NewSimpleClientset(&batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: "clickhouse-init", Namespace: "mcp-sentinel"},

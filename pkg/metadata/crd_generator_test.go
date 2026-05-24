@@ -11,6 +11,8 @@ import (
 
 func TestGenerateCRD(t *testing.T) {
 	t.Run("generates valid CRD YAML", func(t *testing.T) {
+		// Prevent registry host rewriting so we can test CRD field mapping in isolation.
+		t.Setenv(envMCPRegistryPullHost, DefaultRegistryHost)
 		tmpDir := t.TempDir()
 		outputPath := filepath.Join(tmpDir, "test-server.yaml")
 
@@ -278,6 +280,8 @@ func TestGenerateCRD(t *testing.T) {
 
 func TestGenerateCRDsFromRegistry(t *testing.T) {
 	t.Run("generates CRDs for all servers", func(t *testing.T) {
+		// Prevent registry host rewriting so we can test CRD field mapping in isolation.
+		t.Setenv(envMCPRegistryPullHost, DefaultRegistryHost)
 		tmpDir := t.TempDir()
 
 		replicas := int32(1)

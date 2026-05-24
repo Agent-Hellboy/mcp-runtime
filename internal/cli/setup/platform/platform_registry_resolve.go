@@ -83,10 +83,12 @@ func registryServicePortClientGo() (string, error) {
 }
 
 func registryEndpointExplicitlyConfiguredForPlatform() bool {
-	for _, key := range []string{"MCP_REGISTRY_ENDPOINT", "MCP_REGISTRY_HOST"} {
-		if value, ok := os.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
-			return true
-		}
-	}
-	return false
+	// Only MCP_REGISTRY_ENDPOINT explicitly names an external/override registry
+	// that platform pods should use for image pulls. MCP_REGISTRY_HOST is the
+	// public ingress hostname for external access; using it here would route
+	// internal pod image pulls through the auth-protected public ingress, causing
+	// a bootstrap deadlock where pods can't pull images until the auth service is
+	// running, which can't start until it pulls its own image.
+	value, ok := os.LookupEnv("MCP_REGISTRY_ENDPOINT")
+	return ok && strings.TrimSpace(value) != ""
 }

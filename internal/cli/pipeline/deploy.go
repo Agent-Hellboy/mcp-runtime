@@ -1,12 +1,15 @@
 package pipeline
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+	sigsyaml "sigs.k8s.io/yaml"
 
+	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/kube"
 	"mcp-runtime/internal/cli/platformapi"
@@ -19,8 +22,9 @@ func newDeployCmd(mgr *manager) *cobra.Command {
 		Use:   "deploy",
 		Short: "Deploy CRD files to cluster",
 		Long: `Deploy generated CRD files to the Kubernetes cluster.
-This applies all CRD manifests to the cluster, which triggers
-the operator to create the necessary Kubernetes resources.`,
+When platform API credentials are configured (mcp-runtime auth login), manifests
+are applied through POST /api/runtime/servers without kubectl. Otherwise kubectl
+apply is used and requires a working kubeconfig.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return mgr.DeployCRDs(manifestsDir, namespace)
 		},
@@ -31,10 +35,14 @@ the operator to create the necessary Kubernetes resources.`,
 }
 
 func (m *manager) DeployCRDs(manifestsDir, namespace string) error {
-	if _, kerr := m.kubectl.CombinedOutput([]string{"version", "--request-timeout=5s"}); kerr != nil {
-		if platformapi.HasPlatformClient() {
-			return core.NewWithSentinel(core.ErrApplyManifestFailed, "pipeline deploy applies YAML with kubectl and needs a working kubeconfig. mcp-runtime auth is for the platform API only, not for applying manifests. Run deploy from a host with cluster access, or fix KUBECONFIG, then retry.")
-		}
+	if platformapi.HasPlatformClient() {
+		m.logger.Info("Deploying CRD files via platform API", zap.String("dir", manifestsDir))
+		return m.deployCRDsViaPlatformAPI(manifestsDir, namespace)
+	}
+
+	_, kerr := m.kubectl.CombinedOutput([]string{"version", "--request-timeout=5s"})
+	if kerr != nil {
+		return core.NewWithSentinel(core.ErrApplyManifestFailed, "pipeline deploy applies YAML with kubectl and needs a working kubeconfig. mcp-runtime auth is for the platform API only, not for applying manifests. Run deploy from a host with cluster access, or fix KUBECONFIG, then retry.")
 	}
 	m.logger.Info("Deploying CRD files", zap.String("dir", manifestsDir))
 
@@ -129,4 +137,56 @@ func (m *manager) DeployCRDs(manifestsDir, namespace string) error {
 
 	m.logger.Info("All CRD files deployed successfully")
 	return nil
+}
+
+func (m *manager) deployCRDsViaPlatformAPI(manifestsDir, namespace string) error {
+	files, err := filepathGlob(filepath.Join(manifestsDir, "*.yaml"))
+	if err != nil {
+		return fmt.Errorf("glob yaml: %w", err)
+	}
+	yml, err := filepathGlob(filepath.Join(manifestsDir, "*.yml"))
+	if err != nil {
+		return fmt.Errorf("glob yml: %w", err)
+	}
+	files = append(files, yml...)
+	if len(files) == 0 {
+		return core.NewWithSentinel(core.ErrNoManifestFilesFound, fmt.Sprintf("no manifest files found in %s", manifestsDir))
+	}
+	plat, err := platformapi.NewPlatformClient()
+	if err != nil {
+		return platformapi.AuthRequiredError(err)
+	}
+	for _, file := range files {
+		absPath, err := kube.ResolveRegularFilePath(file)
+		if err != nil {
+			return fmt.Errorf("resolve %s: %w", file, err)
+		}
+		b, err := kube.ReadFileAtPath(absPath)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", absPath, err)
+		}
+		var server mcpv1alpha1.MCPServer
+		if err := sigsyaml.Unmarshal(b, &server); err != nil {
+			return fmt.Errorf("parse %s: %w", file, err)
+		}
+		if server.Kind != "MCPServer" || server.Name == "" {
+			continue
+		}
+		ns := firstNonEmpty(namespace, server.Namespace)
+		scope := server.Labels["mcpruntime.org/scope"]
+		if _, err := plat.ApplyRuntimeServerWithScope(context.Background(), server.Name, ns, scope, server.Spec); err != nil {
+			return fmt.Errorf("apply %s: %w", server.Name, err)
+		}
+		m.logger.Info("Applied server via platform API", zap.String("name", server.Name), zap.String("namespace", ns))
+	}
+	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

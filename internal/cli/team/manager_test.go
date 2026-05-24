@@ -68,6 +68,8 @@ func TestInitTeamAppliesNamespaceRBACAndPatchesTraefik(t *testing.T) {
 		"kubernetes.io/metadata.name: mcp-sentinel",
 		"port: 8081",
 		"port: 4318",
+		"kubernetes.io/metadata.name: registry",
+		"port: 5000",
 		"name: mcp-runtime-team-admin",
 		"name: acme-mcp-runtime-admins",
 		`name: "acme-mcp-admins"`,

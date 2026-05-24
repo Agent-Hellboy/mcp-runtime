@@ -90,6 +90,89 @@ Added: 2026-05-20
 
 ---
 
+### `applySetupPlanToCLIConfig` must not overwrite an already-resolved registry endpoint
+
+`applySetupPlanToCLIConfig` (in `internal/cli/setup/platform/deploy.go`) sets
+`core.DefaultCLIConfig.RegistryEndpoint` as part of applying the setup plan.
+On k3s / TLS installs where `MCP_PLATFORM_DOMAIN` is set, `RegistryEndpoint`
+is already resolved to `registry.<domain>` before this function runs. If the
+function unconditionally overwrites it with `registry.registry.svc.cluster.local:5000`,
+platform pods end up with an unresolvable DNS name and the setup fails.
+
+**Fix:** Only overwrite `RegistryEndpoint` when it is still the default placeholder
+(`"registry.local"` or empty). The `core.DefaultRegistryEndpoint` sentinel
+exists precisely to detect "not yet configured" vs. "resolved by domain config."
+
+References:
+- `internal/cli/setup/platform/deploy.go` (`applySetupPlanToCLIConfig`)
+- `internal/cli/setup/platform/platform_registry_resolve.go` (`resolveInternalPlatformRegistryURLClientGo`)
+- `AGENTS.md` → **Debugging checklist** → Sentinel pods ImagePullBackOff
+
+Added: 2026-05-24
+
+---
+
+### MCPServer pods use `mcp-workload` SA, not `default`
+
+The operator's `ensureWorkloadServiceAccount` creates a `mcp-workload`
+ServiceAccount in every MCPServer namespace. `ApplyRestrictedPodDefaults`
+then sets `spec.serviceAccountName = mcp-workload` on every generated
+Deployment. Any imagePullSecrets or RBAC that needs to reach operator-
+managed pods must be on `mcp-workload`, not `default`.
+
+**Gotcha:** patching pull secrets onto the `default` SA is silently ineffective
+for MCPServer pods — they don't share the SA.
+
+References:
+- `pkg/kubeworkload/defaults.go` (`DefaultServiceAccountName`, `EnsureServiceAccount`)
+- `internal/operator/deployment.go` (`ensureWorkloadServiceAccount`, `buildImagePullSecrets`)
+
+Added: 2026-05-24
+
+---
+
+### Events API (`/api/events/filter`) requires Sentinel static key; server-events uses platform JWT
+
+Two analytics query paths exist with different auth requirements:
+
+- `GET /api/events/filter` — legacy Sentinel ingest endpoint; requires the
+  static `UI_API_KEY` from `mcp-sentinel-secrets`, NOT a platform JWT.
+- `GET /api/runtime/server-events` — platform-layer events proxy; accepts
+  the platform JWT (`Authorization: Bearer <token>`).
+
+For scripts and tests that need to verify tool-call events, prefer
+`/api/runtime/server-events` so the caller only needs a platform login,
+not direct access to cluster secrets.
+
+References:
+- `services/api/internal/runtimeapi/server_events.go` (`HandleRuntimeServerEvents`)
+- `services/api/main.go` route `/api/runtime/server-events`
+
+Added: 2026-05-24
+
+---
+
+### Bootstrap deadlock: platform pods must pull via ClusterIP, not public registry ingress
+
+Using `registry.mcpruntime.org` (the auth-gated public ingress) as the
+platform pod image pull URL causes a circular bootstrap deadlock on fresh
+installs: kubelet can't pull the Sentinel API pod image because the
+`registry-admin-auth@file` Traefik middleware calls `/api/registry/authz`
+on Sentinel API — which isn't running yet.
+
+**Fix:** `resolveInternalPlatformRegistryURLClientGo` returns the ClusterIP
+(`10.x.x.x:5000`) for platform pod pulls when `endpoint == ingressHost`.
+Tenant MCPServer pods can use `registry.mcpruntime.org` because by the time
+they are deployed, Sentinel is already running.
+
+References:
+- `internal/cli/setup/platform/platform_registry_resolve.go`
+- `AGENTS.md` → **Debugging checklist** → Sentinel pods ImagePullBackOff
+
+Added: 2026-05-24
+
+---
+
 ### Bundled Go example image is distroless — no shell
 
 `kubectl exec -it <pod> -c go-example-mcp -- /bin/sh` fails on the

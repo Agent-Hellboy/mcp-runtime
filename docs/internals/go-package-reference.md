@@ -1395,6 +1395,8 @@ _No package overview is documented._
 - [`func ResolvePlatformIngressHost() string`](#metadata-helpers-func-resolveplatformingresshost-string)
 - [`func ResolveRegistryEndpoint() string`](#metadata-helpers-func-resolveregistryendpoint-string)
 - [`func ResolveRegistryHost() string`](#metadata-helpers-func-resolveregistryhost-string)
+- [`func ResolveRegistryPullHost() string`](#metadata-helpers-func-resolveregistrypullhost-string)
+- [`func RewriteImageRegistryHost(image, registry string) (string, bool)`](#metadata-helpers-func-rewriteimageregistryhost-image-registry-string-string-bool)
 - [`type AnalyticsConfig struct`](#metadata-helpers-type-analyticsconfig-struct)
 - [`type AuthConfig struct`](#metadata-helpers-type-authconfig-struct)
 - [`type AuthMode string`](#metadata-helpers-type-authmode-string)
@@ -1489,6 +1491,31 @@ func ResolveRegistryHost() string
     ResolveRegistryHost resolves the host used for default image names.
     Precedence: MCP_REGISTRY_INGRESS_HOST, legacy MCP_REGISTRY_HOST, then
     registry.<MCP_PLATFORM_DOMAIN>, else fallback default.
+
+```
+
+<a id="metadata-helpers-func-resolveregistrypullhost-string"></a>
+```text
+func ResolveRegistryPullHost() string
+    ResolveRegistryPullHost returns the registry host kubelet should
+    use for in-cluster image pulls. Precedence: MCP_REGISTRY_PULL_HOST,
+    MCP_REGISTRY_ENDPOINT, MCP_REGISTRY_INGRESS_HOST,
+    registry.<MCP_PLATFORM_DOMAIN>, then bundled cluster DNS.
+
+    When a public TLS registry is configured via MCP_REGISTRY_INGRESS_HOST or
+    MCP_PLATFORM_DOMAIN without an explicit pull host, that public hostname
+    is used for kubelet pulls too — nodes can reach the TLS ingress directly,
+    so no in-cluster service DNS rewrite is needed. imageRefForClusterPull
+    skips the rewrite whenever pullHost equals the push host resolved by
+    ResolveRegistryHost.
+
+```
+
+<a id="metadata-helpers-func-rewriteimageregistryhost-image-registry-string-string-bool"></a>
+```text
+func RewriteImageRegistryHost(image, registry string) (string, bool)
+    RewriteImageRegistryHost replaces the registry portion of an image
+    reference.
 ```
 
 <a id="metadata-helpers-types"></a>

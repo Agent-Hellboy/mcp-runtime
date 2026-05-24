@@ -952,8 +952,16 @@ func applySetupPlanToCLIConfig(plan setupplan.Plan) {
 	if core.DefaultCLIConfig == nil {
 		return
 	}
-	if plan.RegistryMode == setupplan.RegistryModeBundledHTTPS && !registryEndpointEnvExplicitlyConfigured() {
-		core.DefaultCLIConfig.RegistryEndpoint = fmt.Sprintf("%s.%s.svc.cluster.local:%d", core.RegistryServiceName, core.NamespaceRegistry, core.GetRegistryPort())
+	if plan.RegistryMode != setupplan.RegistryModeExternal && !registryEndpointEnvExplicitlyConfigured() {
+		// Only overwrite when the endpoint is still the default placeholder.
+		// If MCP_PLATFORM_DOMAIN or a prior config step already resolved a real
+		// hostname (e.g. "registry.mcpruntime.org"), preserve it so that
+		// resolveInternalPlatformRegistryURLClientGo can fall through to ClusterIP
+		// discovery and avoid the bootstrap deadlock.
+		current := strings.TrimSpace(core.DefaultCLIConfig.RegistryEndpoint)
+		if current == "" || current == core.DefaultRegistryEndpoint {
+			core.DefaultCLIConfig.RegistryEndpoint = fmt.Sprintf("%s.%s.svc.cluster.local:%d", core.RegistryServiceName, core.NamespaceRegistry, core.GetRegistryPort())
+		}
 	}
 	if !plan.TLSEnabled {
 		core.DefaultCLIConfig.RegistryClusterIssuerName = ""

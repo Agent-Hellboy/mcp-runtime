@@ -361,6 +361,7 @@ func buildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectCh
 
 func setupPlatformWithDeps(logger *zap.Logger, plan setupplan.Plan, deps SetupDeps) error {
 	deps = deps.withDefaults(logger)
+	initPlatformKubeconfig(plan.Kubeconfig)
 	core.Section("MCP Runtime Setup")
 
 	// Propagate test mode to build helpers so they can choose faster/safer build paths.

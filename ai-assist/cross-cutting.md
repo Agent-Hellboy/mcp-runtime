@@ -69,6 +69,48 @@ Added: 2026-05-12
 
 ---
 
+### Gateway session reload requires ~12s after MCPAgentSession creation
+
+Full propagation chain: session written to K8s → operator reconciles
+ConfigMap (~2s) → kubelet projects volume change to pod (~5s) → gateway
+sidecar reads at next 5-second poll tick. Minimum safe sleep is **12s**
+(covers two gateway poll cycles with margin). Sleep of 7s is insufficient
+and causes intermittent `session_not_found` / `session_expired` errors in
+the tools/call after the session is created.
+
+Also: delete stale `MCPAgentSession` resources before running adapter
+verification if the test might reuse an existing session name — the gateway
+can have an evicted session in cache while the K8s object still exists.
+
+References:
+- `services/mcp-gateway/policy_cache.go` (`startPolicyCache`, 5s tick)
+- `hack/multitenancytest.sh` (12s sleep with chain explanation)
+- `AGENTS.md` → **Governance (grants and sessions)** → "allow a few seconds"
+
+Added: 2026-05-24
+
+---
+
+### `pipeline deploy` uses platform API when KUBECONFIG is unavailable
+
+`pipeline deploy` now falls back to `POST /api/runtime/servers` (platform
+API) when `kubectl version` fails but platform auth is available. The
+fallback parses each generated YAML file as an `MCPServer` and applies it
+through `plat.ApplyRuntimeServerWithScope`. This means:
+
+- No KUBECONFIG required for tenant CI/CD pipelines authenticated to the platform.
+- kubectl is still used when present (admin/operator workflows).
+- The platform API path skips the YAML → kubectl → K8s chain for MCPServer objects only;
+  `MCPAccessGrant` and `MCPAgentSession` resources still go through `mcp-runtime access` CLI.
+
+References:
+- `internal/cli/pipeline/deploy.go` (`deployCRDsViaPlatformAPI`)
+- `internal/cli/platformapi/client.go` (`ApplyRuntimeServerWithScope`)
+
+Added: 2026-05-24
+
+---
+
 ### `MCP_PLATFORM_DOMAIN` change → three DNS names + three TLS secrets
 
 Setting `MCP_PLATFORM_DOMAIN=example.com` derives `registry.example.com`,

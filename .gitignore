@@ -4,6 +4,7 @@ man/
 cover.out
 coverage.out
 *.test
+mcp-img-*.tar
 !website/docs/
 !website/docs/index.html
 unittesting_strategy.md

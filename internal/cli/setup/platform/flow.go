@@ -160,10 +160,10 @@ func validateRequiredPlatformEnv(plan setupplan.Plan, usingExternalRegistry bool
 	if err := ValidatePublicPlatformAuthConfig(plan.PlatformMode, plan.TLSEnabled, plan.TestMode, existingAuthConfig); err != nil {
 		return err
 	}
-	if !usingExternalRegistry && !registryEndpointEnvExplicitlyConfigured() {
+	if !usingExternalRegistry && plan.RegistryMode == setupplan.RegistryModeAuto && !registryEndpointEnvExplicitlyConfigured() {
 		return core.NewWithSentinel(
 			core.ErrSetupStepFailed,
-			"bundled registry platform setup requires MCP_REGISTRY_ENDPOINT (or MCP_REGISTRY_HOST) set to the exact registry host:port Kubernetes nodes can pull from; use --registry-mode external for a provisioned registry",
+			"bundled registry setup with --registry-mode auto requires MCP_REGISTRY_ENDPOINT set to the exact registry host:port Kubernetes nodes can pull from; use --registry-mode bundled-http, bundled-https, or external when the platform should discover the internal registry Service automatically",
 		)
 	}
 	return nil

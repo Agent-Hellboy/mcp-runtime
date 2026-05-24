@@ -216,6 +216,11 @@ if ! [[ "${E2E_IMAGE_BUILD_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_IMAGE_BUILD
   echo "E2E_IMAGE_BUILD_PARALLELISM must be a positive integer" >&2
   exit 1
 fi
+E2E_EXAMPLE_DEPLOY_PARALLELISM="${E2E_EXAMPLE_DEPLOY_PARALLELISM:-${E2E_IMAGE_BUILD_PARALLELISM}}"
+if ! [[ "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" -lt 1 ]]; then
+  echo "E2E_EXAMPLE_DEPLOY_PARALLELISM must be a positive integer" >&2
+  exit 1
+fi
 if ! [[ "${E2E_LOG_PREVIEW_LINES}" =~ ^[0-9]+$ ]]; then
   echo "E2E_LOG_PREVIEW_LINES must be zero or a positive integer" >&2
   exit 1
@@ -370,6 +375,8 @@ fi
 git config --global --add safe.directory "${PROJECT_ROOT}" >/dev/null 2>&1 || true
 
 WORKDIR="$(mktemp -d)"
+E2E_PIPELINE_CONFIG_DIR="${WORKDIR}/e2e-pipeline-config"
+mkdir -p "${E2E_PIPELINE_CONFIG_DIR}"
 STAGE_LOG_DIR="${WORKDIR}/stage-logs"
 KIND_CONFIG="$(mktemp)"
 KUBECONFIG_FILE="$(mktemp)"
@@ -2004,8 +2011,8 @@ deploy_example_server_via_pipeline() {
 
   (
     cd "${example_workspace_dir}"
-    "${PROJECT_ROOT}/bin/mcp-runtime" pipeline generate --dir .mcp --output manifests
-    "${PROJECT_ROOT}/bin/mcp-runtime" pipeline deploy --dir manifests
+    MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" "${PROJECT_ROOT}/bin/mcp-runtime" pipeline generate --dir .mcp --output manifests
+    MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" "${PROJECT_ROOT}/bin/mcp-runtime" pipeline deploy --dir manifests
   )
 
   echo "[deploy] waiting for ${server_name} rollout"
@@ -2534,6 +2541,7 @@ wait_core_platform_rollouts() {
   run_logged_stage "verify sentinel gateway rollout" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-gateway 180s
   run_logged_stage "verify tempo rollout" rollout_status_with_logs mcp-sentinel statefulset tempo 180s
   run_logged_stage "verify loki rollout" rollout_status_with_logs mcp-sentinel statefulset loki 300s
+  run_logged_stage "verify promtail rollout" rollout_status_with_logs mcp-sentinel daemonset promtail 180s
 }
 
 delete_mcp_server_and_wait() {
@@ -2560,13 +2568,13 @@ cleanup_mcp_server_and_wait() {
 }
 
 deploy_primary_server_manifests() {
-  ./bin/mcp-runtime pipeline generate --file "${METADATA_FILE}" --output "${MANIFEST_DIR}"
-  ./bin/mcp-runtime pipeline deploy --dir "${MANIFEST_DIR}"
+  MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" ./bin/mcp-runtime pipeline generate --file "${METADATA_FILE}" --output "${MANIFEST_DIR}"
+  MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" ./bin/mcp-runtime pipeline deploy --dir "${MANIFEST_DIR}"
 }
 
 deploy_oauth_server_manifests() {
-  ./bin/mcp-runtime pipeline generate --file "${OAUTH_METADATA_FILE}" --output "${OAUTH_MANIFEST_DIR}"
-  ./bin/mcp-runtime pipeline deploy --dir "${OAUTH_MANIFEST_DIR}"
+  MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" ./bin/mcp-runtime pipeline generate --file "${OAUTH_METADATA_FILE}" --output "${OAUTH_MANIFEST_DIR}"
+  MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" ./bin/mcp-runtime pipeline deploy --dir "${OAUTH_MANIFEST_DIR}"
 }
 
 start_local_registry() {
@@ -2616,6 +2624,14 @@ platform_cache_ready() {
   kubectl rollout status deploy/traefik -n traefik --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status deploy/mcp-sentinel-api -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status deploy/mcp-sentinel-gateway -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status statefulset/clickhouse -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status statefulset/kafka -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status deploy/zookeeper -n mcp-sentinel --timeout=5s >/dev/null 2>&1 \
+    || kubectl rollout status statefulset/zookeeper -n mcp-sentinel --timeout=5s >/dev/null 2>&1 \
+    || return 1
+  kubectl rollout status daemonset/promtail -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status statefulset/loki -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status statefulset/tempo -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
 }
 
 cat > "${KIND_CONFIG}" <<EOF
@@ -2643,22 +2659,33 @@ connect_local_registry_to_kind_network
 
 refresh_kind_kubeconfig() {
   local refreshed_kubeconfig
+  local existing_ok=0
+
+  if [[ -s "${KUBECONFIG_FILE}" ]] && KUBECONFIG="${KUBECONFIG_FILE}" kubectl cluster-info --request-timeout=5s >/dev/null 2>&1; then
+    existing_ok=1
+  fi
+
   refreshed_kubeconfig="$(mktemp)"
-  if kind get kubeconfig --name "${CLUSTER_NAME}" > "${refreshed_kubeconfig}"; then
+  if kind get kubeconfig --name "${CLUSTER_NAME}" > "${refreshed_kubeconfig}" 2>/dev/null && [[ -s "${refreshed_kubeconfig}" ]]; then
     mv "${refreshed_kubeconfig}" "${KUBECONFIG_FILE}"
-  elif [[ -s "${KUBECONFIG_FILE}" ]]; then
-    rm -f "${refreshed_kubeconfig}"
-    echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; reusing existing ${KUBECONFIG_FILE}" >&2
-  elif kubectl config view --raw --minify > "${refreshed_kubeconfig}" 2>/dev/null && [[ -s "${refreshed_kubeconfig}" ]]; then
-    mv "${refreshed_kubeconfig}" "${KUBECONFIG_FILE}"
-    echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; captured current kubectl context" >&2
   else
     rm -f "${refreshed_kubeconfig}"
-    return 1
+    if [[ "${existing_ok}" -eq 1 ]]; then
+      echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; reusing existing ${KUBECONFIG_FILE}" >&2
+    elif [[ -s "${KUBECONFIG_FILE}" ]]; then
+      echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; reusing existing ${KUBECONFIG_FILE}" >&2
+    elif kubectl config view --raw --minify > "${refreshed_kubeconfig}" 2>/dev/null && [[ -s "${refreshed_kubeconfig}" ]]; then
+      mv "${refreshed_kubeconfig}" "${KUBECONFIG_FILE}"
+      echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; captured current kubectl context" >&2
+    else
+      rm -f "${refreshed_kubeconfig}"
+      echo "[kind][error] no usable kubeconfig for ${CLUSTER_NAME}" >&2
+      return 1
+    fi
   fi
   export KUBECONFIG="${KUBECONFIG_FILE}"
   if kubectl config get-contexts "kind-${CLUSTER_NAME}" >/dev/null 2>&1; then
-    kubectl config use-context "kind-${CLUSTER_NAME}"
+    kubectl config use-context "kind-${CLUSTER_NAME}" >/dev/null 2>&1 || true
   fi
   mkdir -p "${HOME}/.kube"
   cp "${KUBECONFIG_FILE}" "${HOME}/.kube/config"
@@ -2717,7 +2744,7 @@ else
   echo "[setup] running platform setup in test mode (platform mode: ${E2E_PLATFORM_MODE})"
   run_logged_stage "setup test mode" \
     env MCP_RUNTIME_REGISTRY_IMAGE_OVERRIDE="${TEST_MODE_REGISTRY_IMAGE}" \
-    ./bin/mcp-runtime setup --test-mode --parallel-builds --platform-mode "${E2E_PLATFORM_MODE}" --ingress-manifest config/ingress/overlays/http
+    ./bin/mcp-runtime setup --test-mode --parallel-builds --platform-mode "${E2E_PLATFORM_MODE}" --ingress-manifest config/ingress/overlays/http --kubeconfig "${KUBECONFIG_FILE}"
 fi
 
 wait_core_platform_rollouts
@@ -2963,19 +2990,19 @@ kubectl wait --for=delete "mcpserver/${TEMP_CLI_SERVER}" -n mcp-servers --timeou
 
 echo "[deploy] deploying capability-focused sample MCP servers"
 parallel_reset
-parallel_start 3 "deploy ${PYTHON_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
+parallel_start "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" "deploy ${PYTHON_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
   "${PYTHON_EXAMPLE_SERVER_NAME}" \
   "${PYTHON_EXAMPLE_SERVER_HOST}" \
   "${PYTHON_EXAMPLE_SERVER_ROUTE}" \
   "${PYTHON_EXAMPLE_SOURCE_DIR}" \
   "${PYTHON_EXAMPLE_WORKDIR}"
-parallel_start 3 "deploy ${RUST_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
+parallel_start "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" "deploy ${RUST_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
   "${RUST_EXAMPLE_SERVER_NAME}" \
   "${RUST_EXAMPLE_SERVER_HOST}" \
   "${RUST_EXAMPLE_SERVER_ROUTE}" \
   "${RUST_EXAMPLE_SOURCE_DIR}" \
   "${RUST_EXAMPLE_WORKDIR}"
-parallel_start 3 "deploy ${GO_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
+parallel_start "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" "deploy ${GO_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
   "${GO_EXAMPLE_SERVER_NAME}" \
   "${GO_EXAMPLE_SERVER_HOST}" \
   "${GO_EXAMPLE_SERVER_ROUTE}" \
