@@ -122,4 +122,4 @@ The repo keeps Claude-specific local configuration in [`.claude/`](.claude/READM
 
 ## License
 
-MIT
+Apache License 2.0. See [LICENSE](LICENSE).
