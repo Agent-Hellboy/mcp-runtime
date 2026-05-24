@@ -2619,6 +2619,14 @@ platform_cache_ready() {
   kubectl rollout status deploy/traefik -n traefik --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status deploy/mcp-sentinel-api -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status deploy/mcp-sentinel-gateway -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status statefulset/clickhouse -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status statefulset/kafka -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status deploy/zookeeper -n mcp-sentinel --timeout=5s >/dev/null 2>&1 \
+    || kubectl rollout status statefulset/zookeeper -n mcp-sentinel --timeout=5s >/dev/null 2>&1 \
+    || return 1
+  kubectl rollout status daemonset/promtail -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status statefulset/loki -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status statefulset/tempo -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
 }
 
 cat > "${KIND_CONFIG}" <<EOF
@@ -2720,7 +2728,7 @@ else
   echo "[setup] running platform setup in test mode (platform mode: ${E2E_PLATFORM_MODE})"
   run_logged_stage "setup test mode" \
     env MCP_RUNTIME_REGISTRY_IMAGE_OVERRIDE="${TEST_MODE_REGISTRY_IMAGE}" \
-    ./bin/mcp-runtime setup --test-mode --parallel-builds --platform-mode "${E2E_PLATFORM_MODE}" --ingress-manifest config/ingress/overlays/http
+    ./bin/mcp-runtime setup --test-mode --parallel-builds --platform-mode "${E2E_PLATFORM_MODE}" --ingress-manifest config/ingress/overlays/http --kubeconfig "${KUBECONFIG_FILE}"
 fi
 
 wait_core_platform_rollouts

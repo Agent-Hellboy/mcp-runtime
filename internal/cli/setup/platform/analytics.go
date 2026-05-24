@@ -28,6 +28,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+func zookeeperRolloutKind(storageMode string) string {
+	if storageMode == setupplan.StorageModeHostpath {
+		return "statefulset"
+	}
+	return "deployment"
+}
+
 func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error {
 	return deployAnalyticsManifestsClientGo(logger, images, storageMode, platformMode)
 }
@@ -90,8 +97,9 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 	if err := waitForRolloutStatusWithClientGo("statefulset", "clickhouse", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
 		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, "statefulset", "clickhouse", core.DefaultAnalyticsNamespace, "storage (clickhouse)")
 	}
-	if err := waitForRolloutStatusWithClientGo("deployment", "zookeeper", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
-		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, "deployment", "zookeeper", core.DefaultAnalyticsNamespace, "messaging (zookeeper)")
+	zookeeperKind := zookeeperRolloutKind(storageMode)
+	if err := waitForRolloutStatusWithClientGo(zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
+		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, "messaging (zookeeper)")
 	}
 	if err := waitForRolloutStatusWithClientGo("statefulset", "kafka", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
 		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, "statefulset", "kafka", core.DefaultAnalyticsNamespace, "messaging (kafka)")
@@ -235,8 +243,9 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	if err := waitForRolloutStatusWithKubectl(kubectl, "statefulset", "clickhouse", core.DefaultAnalyticsNamespace, rolloutTimeout); err != nil {
 		return mcpSentinelDependencyRolloutFailed(kubectl, err, "statefulset", "clickhouse", core.DefaultAnalyticsNamespace, "storage (clickhouse)")
 	}
-	if err := waitForRolloutStatusWithKubectl(kubectl, "deployment", "zookeeper", core.DefaultAnalyticsNamespace, rolloutTimeout); err != nil {
-		return mcpSentinelDependencyRolloutFailed(kubectl, err, "deployment", "zookeeper", core.DefaultAnalyticsNamespace, "messaging (zookeeper)")
+	zookeeperKind := zookeeperRolloutKind(storageMode)
+	if err := waitForRolloutStatusWithKubectl(kubectl, zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, rolloutTimeout); err != nil {
+		return mcpSentinelDependencyRolloutFailed(kubectl, err, zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, "messaging (zookeeper)")
 	}
 	if err := waitForRolloutStatusWithKubectl(kubectl, "statefulset", "kafka", core.DefaultAnalyticsNamespace, rolloutTimeout); err != nil {
 		return mcpSentinelDependencyRolloutFailed(kubectl, err, "statefulset", "kafka", core.DefaultAnalyticsNamespace, "messaging (kafka)")

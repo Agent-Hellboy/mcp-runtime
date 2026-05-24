@@ -343,6 +343,13 @@ spec:
           port: 8081
         - protocol: TCP
           port: 4318
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: registry
+      ports:
+        - protocol: TCP
+          port: 5000
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
