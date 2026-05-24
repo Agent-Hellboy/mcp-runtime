@@ -400,6 +400,26 @@ func WaitForStatefulSetReady(ctx context.Context, clients *Clients, namespace, n
 	})
 }
 
+// WaitForDaemonSetReady waits until a DaemonSet reports all scheduled replicas ready.
+func WaitForDaemonSetReady(ctx context.Context, clients *Clients, namespace, name string, timeout time.Duration) error {
+	return wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		daemonSet, err := clients.Clientset.AppsV1().DaemonSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		desired := daemonSet.Status.DesiredNumberScheduled
+		if desired == 0 {
+			return false, nil
+		}
+		return daemonSet.Status.NumberReady >= desired &&
+			daemonSet.Status.UpdatedNumberScheduled >= desired &&
+			daemonSet.Status.ObservedGeneration >= daemonSet.Generation, nil
+	})
+}
+
 // WaitForWorkloadRollout waits until a supported workload kind is ready.
 func WaitForWorkloadRollout(ctx context.Context, clients *Clients, namespace, kind, name string, timeout time.Duration) error {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
@@ -407,6 +427,8 @@ func WaitForWorkloadRollout(ctx context.Context, clients *Clients, namespace, ki
 		return WaitForDeploymentRolledOut(ctx, clients, namespace, name, timeout)
 	case "statefulset", "statefulsets", "sts":
 		return WaitForStatefulSetReady(ctx, clients, namespace, name, timeout)
+	case "daemonset", "daemonsets", "ds":
+		return WaitForDaemonSetReady(ctx, clients, namespace, name, timeout)
 	default:
 		return fmt.Errorf("unsupported workload kind %q", kind)
 	}
