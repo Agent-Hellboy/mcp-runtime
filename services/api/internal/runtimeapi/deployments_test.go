@@ -207,6 +207,20 @@ func TestEnsureDefaultDenyNetworkPolicyAllowsSameNamespaceIngress(t *testing.T) 
 	}
 }
 
+func TestEnsureDefaultDenyNetworkPolicyAllowsSameNamespaceEgress(t *testing.T) {
+	client := kubernetesfake.NewSimpleClientset()
+	if err := ensureDefaultDenyNetworkPolicy(context.Background(), client, "mcp-servers"); err != nil {
+		t.Fatalf("ensureDefaultDenyNetworkPolicy() error = %v", err)
+	}
+	policy, err := client.NetworkingV1().NetworkPolicies("mcp-servers").Get(context.Background(), "platform-default-deny", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get networkpolicy: %v", err)
+	}
+	if !networkPolicyAllowsSameNamespaceEgress(policy) {
+		t.Fatalf("network policy does not allow same-namespace egress: %#v", policy.Spec.Egress)
+	}
+}
+
 func TestEnsureDefaultDenyNetworkPolicyDoesNotAllowBroadHTTPEgress(t *testing.T) {
 	client := kubernetesfake.NewSimpleClientset()
 	if err := ensureDefaultDenyNetworkPolicy(context.Background(), client, "user-1"); err != nil {
@@ -765,6 +779,17 @@ func networkPolicyAllowsSameNamespace(policy *networkingv1.NetworkPolicy) bool {
 	for _, rule := range policy.Spec.Ingress {
 		for _, peer := range rule.From {
 			if peer.PodSelector != nil && peer.NamespaceSelector == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func networkPolicyAllowsSameNamespaceEgress(policy *networkingv1.NetworkPolicy) bool {
+	for _, rule := range policy.Spec.Egress {
+		for _, peer := range rule.To {
+			if peer.PodSelector != nil && peer.NamespaceSelector == nil && len(rule.Ports) == 0 {
 				return true
 			}
 		}

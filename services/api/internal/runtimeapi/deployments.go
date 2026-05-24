@@ -734,6 +734,11 @@ func desiredDefaultDenyNetworkPolicy(ns string, ingressFromNamespaces ...string)
 						{Protocol: &tcpProtocol, Port: intstrPtr(registryPort)},
 					},
 				},
+				{
+					To: []networkingv1.NetworkPolicyPeer{
+						{PodSelector: &metav1.LabelSelector{}},
+					},
+				},
 			},
 		},
 	}
