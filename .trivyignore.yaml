@@ -6,4 +6,4 @@ misconfigurations:
   - id: KSV-0056
     paths:
       - "k8s/08-api-rbac.yaml"
-    statement: "mcp-sentinel-api intentionally provisions team namespace Services and default-deny NetworkPolicies; registry pull secrets are scoped to resourceNames mcp-runtime-registry-creds only."
+    statement: "mcp-sentinel-api intentionally provisions team namespace Services and default-deny NetworkPolicies; registry pull secrets use namespace-scoped Roles bound to the API service account."

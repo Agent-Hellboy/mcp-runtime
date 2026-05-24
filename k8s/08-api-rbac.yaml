@@ -62,12 +62,6 @@ rules:
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
-  # Team namespace provisioning copies the provisioned registry dockerconfig secret
-  # so mcp-workload pods can pull from the auth-protected registry ingress.
-  - apiGroups: [""]
-    resources: ["secrets"]
-    resourceNames: ["mcp-runtime-registry-creds"]
-    verbs: ["get", "create", "update", "patch"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
