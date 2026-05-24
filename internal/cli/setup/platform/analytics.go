@@ -147,6 +147,7 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		{kind: "deployment", name: "otel-collector"},
 		{kind: "statefulset", name: "tempo"},
 		{kind: "statefulset", name: "loki"},
+		{kind: "daemonset", name: "promtail"},
 	}
 	var rolloutFailures []string
 	var failedForDebug []analyticsFailedRollout
@@ -291,6 +292,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		{kind: "deployment", name: "otel-collector"},
 		{kind: "statefulset", name: "tempo"},
 		{kind: "statefulset", name: "loki"},
+		{kind: "daemonset", name: "promtail"},
 	}
 	var rolloutFailures []string
 	var failedForDebug []analyticsFailedRollout

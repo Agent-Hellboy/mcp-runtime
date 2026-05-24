@@ -370,6 +370,8 @@ fi
 git config --global --add safe.directory "${PROJECT_ROOT}" >/dev/null 2>&1 || true
 
 WORKDIR="$(mktemp -d)"
+E2E_PIPELINE_CONFIG_DIR="${WORKDIR}/e2e-pipeline-config"
+mkdir -p "${E2E_PIPELINE_CONFIG_DIR}"
 STAGE_LOG_DIR="${WORKDIR}/stage-logs"
 KIND_CONFIG="$(mktemp)"
 KUBECONFIG_FILE="$(mktemp)"
@@ -2004,8 +2006,8 @@ deploy_example_server_via_pipeline() {
 
   (
     cd "${example_workspace_dir}"
-    "${PROJECT_ROOT}/bin/mcp-runtime" pipeline generate --dir .mcp --output manifests
-    "${PROJECT_ROOT}/bin/mcp-runtime" pipeline deploy --dir manifests
+    MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" "${PROJECT_ROOT}/bin/mcp-runtime" pipeline generate --dir .mcp --output manifests
+    MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" "${PROJECT_ROOT}/bin/mcp-runtime" pipeline deploy --dir manifests
   )
 
   echo "[deploy] waiting for ${server_name} rollout"
@@ -2534,6 +2536,7 @@ wait_core_platform_rollouts() {
   run_logged_stage "verify sentinel gateway rollout" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-gateway 180s
   run_logged_stage "verify tempo rollout" rollout_status_with_logs mcp-sentinel statefulset tempo 180s
   run_logged_stage "verify loki rollout" rollout_status_with_logs mcp-sentinel statefulset loki 300s
+  run_logged_stage "verify promtail rollout" rollout_status_with_logs mcp-sentinel daemonset promtail 180s
 }
 
 delete_mcp_server_and_wait() {
@@ -2560,13 +2563,13 @@ cleanup_mcp_server_and_wait() {
 }
 
 deploy_primary_server_manifests() {
-  ./bin/mcp-runtime pipeline generate --file "${METADATA_FILE}" --output "${MANIFEST_DIR}"
-  ./bin/mcp-runtime pipeline deploy --dir "${MANIFEST_DIR}"
+  MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" ./bin/mcp-runtime pipeline generate --file "${METADATA_FILE}" --output "${MANIFEST_DIR}"
+  MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" ./bin/mcp-runtime pipeline deploy --dir "${MANIFEST_DIR}"
 }
 
 deploy_oauth_server_manifests() {
-  ./bin/mcp-runtime pipeline generate --file "${OAUTH_METADATA_FILE}" --output "${OAUTH_MANIFEST_DIR}"
-  ./bin/mcp-runtime pipeline deploy --dir "${OAUTH_MANIFEST_DIR}"
+  MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" ./bin/mcp-runtime pipeline generate --file "${OAUTH_METADATA_FILE}" --output "${OAUTH_MANIFEST_DIR}"
+  MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" ./bin/mcp-runtime pipeline deploy --dir "${OAUTH_MANIFEST_DIR}"
 }
 
 start_local_registry() {
