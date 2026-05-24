@@ -1,12 +1,16 @@
 package pipeline
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+	sigsyaml "sigs.k8s.io/yaml"
 
+	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/kube"
 	"mcp-runtime/internal/cli/platformapi"
@@ -31,10 +35,12 @@ the operator to create the necessary Kubernetes resources.`,
 }
 
 func (m *manager) DeployCRDs(manifestsDir, namespace string) error {
-	if _, kerr := m.kubectl.CombinedOutput([]string{"version", "--request-timeout=5s"}); kerr != nil {
-		if platformapi.HasPlatformClient() {
-			return core.NewWithSentinel(core.ErrApplyManifestFailed, "pipeline deploy applies YAML with kubectl and needs a working kubeconfig. mcp-runtime auth is for the platform API only, not for applying manifests. Run deploy from a host with cluster access, or fix KUBECONFIG, then retry.")
-		}
+	_, kerr := m.kubectl.CombinedOutput([]string{"version", "--request-timeout=5s"})
+	if kerr != nil && platformapi.HasPlatformClient() {
+		return m.deployCRDsViaPlatformAPI(manifestsDir, namespace)
+	}
+	if kerr != nil {
+		return core.NewWithSentinel(core.ErrApplyManifestFailed, "pipeline deploy applies YAML with kubectl and needs a working kubeconfig. mcp-runtime auth is for the platform API only, not for applying manifests. Run deploy from a host with cluster access, or fix KUBECONFIG, then retry.")
 	}
 	m.logger.Info("Deploying CRD files", zap.String("dir", manifestsDir))
 
@@ -129,4 +135,46 @@ func (m *manager) DeployCRDs(manifestsDir, namespace string) error {
 
 	m.logger.Info("All CRD files deployed successfully")
 	return nil
+}
+
+func (m *manager) deployCRDsViaPlatformAPI(manifestsDir, namespace string) error {
+	files, _ := filepathGlob(filepath.Join(manifestsDir, "*.yaml"))
+	yml, _ := filepathGlob(filepath.Join(manifestsDir, "*.yml"))
+	files = append(files, yml...)
+	if len(files) == 0 {
+		return core.NewWithSentinel(core.ErrNoManifestFilesFound, fmt.Sprintf("no manifest files found in %s", manifestsDir))
+	}
+	plat, err := platformapi.NewPlatformClient()
+	if err != nil {
+		return platformapi.AuthRequiredError(err)
+	}
+	for _, file := range files {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", file, err)
+		}
+		var server mcpv1alpha1.MCPServer
+		if err := sigsyaml.Unmarshal(b, &server); err != nil {
+			return fmt.Errorf("parse %s: %w", file, err)
+		}
+		if server.Kind != "MCPServer" || server.Name == "" {
+			continue
+		}
+		ns := firstNonEmpty(namespace, server.Namespace)
+		scope := server.Labels["mcpruntime.org/scope"]
+		if _, err := plat.ApplyRuntimeServerWithScope(context.Background(), server.Name, ns, scope, server.Spec); err != nil {
+			return fmt.Errorf("apply %s: %w", server.Name, err)
+		}
+		m.logger.Info("Applied server via platform API", zap.String("name", server.Name), zap.String("namespace", ns))
+	}
+	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

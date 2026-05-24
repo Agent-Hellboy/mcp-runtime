@@ -31,6 +31,11 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 	if err := r.ensureWorkloadServiceAccount(ctx, mcpServer.Namespace); err != nil {
 		return err
 	}
+	if len(mcpServer.Spec.ImagePullSecrets) == 0 {
+		if err := r.ensureRegistryPullSecret(ctx, mcpServer.Namespace); err != nil {
+			return err
+		}
+	}
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -302,6 +307,43 @@ func applyContainerResources(container *corev1.Container, resources mcpv1alpha1.
 	}
 
 	return nil
+}
+
+// ensureRegistryPullSecret creates or updates the provisioned registry pull
+// secret in the MCPServer's namespace so that the operator-injected
+// mcp-gateway sidecar (and the user image) can be pulled even when the
+// namespace was created after setup. It is a no-op when ProvisionedRegistry
+// is not configured or when the spec provides user-defined pull secrets.
+func (r *MCPServerReconciler) ensureRegistryPullSecret(ctx context.Context, namespace string) error {
+	if r.ProvisionedRegistry == nil || r.ProvisionedRegistry.URL == "" ||
+		r.ProvisionedRegistry.Username == "" || r.ProvisionedRegistry.Password == "" {
+		return nil
+	}
+	secretName := r.ProvisionedRegistry.SecretName
+	if secretName == "" {
+		secretName = "mcp-runtime-registry-creds"
+	}
+	dockerconfig := fmt.Sprintf(
+		`{"auths":{%q:{"username":%q,"password":%q}}}`,
+		r.ProvisionedRegistry.URL,
+		r.ProvisionedRegistry.Username,
+		r.ProvisionedRegistry.Password,
+	)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: namespace,
+		},
+	}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		secret.Type = corev1.SecretTypeDockerConfigJson
+		if secret.Data == nil {
+			secret.Data = make(map[string][]byte)
+		}
+		secret.Data[corev1.DockerConfigJsonKey] = []byte(dockerconfig)
+		return nil
+	})
+	return err
 }
 
 func (r *MCPServerReconciler) ensureWorkloadServiceAccount(ctx context.Context, namespace string) error {

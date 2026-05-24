@@ -478,10 +478,6 @@ func registryHostFromImage(image string) string {
 }
 
 func registryEndpointEnvExplicitlyConfigured() bool {
-	for _, key := range []string{"MCP_REGISTRY_ENDPOINT", "MCP_REGISTRY_HOST"} {
-		if value, ok := os.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
-			return true
-		}
-	}
-	return false
+	value, ok := os.LookupEnv("MCP_REGISTRY_ENDPOINT")
+	return ok && strings.TrimSpace(value) != ""
 }

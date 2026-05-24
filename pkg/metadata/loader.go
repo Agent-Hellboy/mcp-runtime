@@ -77,10 +77,8 @@ func setDefaults(server *ServerMetadata) error {
 	server.Scope = PublishScope(scope)
 
 	// Set default image if not provided (will be updated by build command).
-	// Use the ingress host so the generated image ref is pullable by kubelet/containerd
-	// on nodes, which resolve via the host DNS stack (or k3s registries.yaml), not
-	// cluster CoreDNS. MCP_REGISTRY_INGRESS_HOST (or the legacy MCP_REGISTRY_HOST)
-	// overrides the default for users running a different ingress host.
+	// ResolveRegistryHost names the public registry for docker push/build. Pipeline
+	// generate rewrites MCPServer image refs to ResolveRegistryPullHost for kubelet pulls.
 	if server.Image == "" {
 		repository := server.Name
 		if alias, ok := publishscope.RegistryAlias(scope); ok {

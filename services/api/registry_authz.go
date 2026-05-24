@@ -46,6 +46,17 @@ func (s *apiServer) authenticateRegistryRequest(r *http.Request) (principal, boo
 	if !ok {
 		return principal{}, false, nil
 	}
+	// Also try the Basic-auth password as a platform API key. This lets
+	// namespace pull secrets use a static admin key as the Docker password
+	// without requiring user-specific registry credentials.
+	if password != "" {
+		clone := r.Clone(r.Context())
+		clone.Header.Set("x-api-key", password)
+		if p, ok, err := s.authenticateRequest(clone); err == nil && ok {
+			_ = username
+			return p, ok, nil
+		}
+	}
 	authn := s.registryCredentialAuthenticator()
 	if authn == nil {
 		return principal{}, false, nil

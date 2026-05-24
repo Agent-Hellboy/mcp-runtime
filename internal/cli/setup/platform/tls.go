@@ -283,8 +283,13 @@ func acmeServerURLForClientGo(staging bool) string {
 
 func ensureCertManagerInstalledClientGo(logger *zap.Logger) error {
 	if err := checkCertManagerInstalledClientGo(); err == nil {
-		core.Info("cert-manager already installed")
-		return nil
+		// CRDs exist but pods may not be running (e.g. after a k3s restart).
+		// Verify deployments are available; if they aren't, fall through to reinstall.
+		if podErr := waitForCertManagerDeploymentsClientGo(logger, 2*time.Minute, false); podErr == nil {
+			core.Info("cert-manager already installed")
+			return nil
+		}
+		core.Warn("cert-manager CRDs present but deployments not ready — reinstalling")
 	}
 	core.Info("Installing cert-manager v1.16.2")
 	warnMsg := "If this fails (no network), install cert-manager manually, then re-run setup with --skip-cert-manager-install"
@@ -320,33 +325,47 @@ func ensureCertManagerInstalledClientGo(logger *zap.Logger) error {
 		}
 		return wrapped
 	}
+	return waitForCertManagerDeploymentsClientGo(logger, 5*time.Minute, true)
+}
+
+// waitForCertManagerDeploymentsClientGo waits for all three cert-manager
+// deployments to be available within timeout. When logErrors is false errors
+// are returned silently (used for pre-flight readiness probes).
+func waitForCertManagerDeploymentsClientGo(logger *zap.Logger, timeout time.Duration, logErrors bool) error {
 	clients, err := platformKubernetesClients()
 	if err != nil {
 		return err
 	}
-	overall := 5 * time.Minute
 	start := time.Now()
-	core.Info(fmt.Sprintf("Waiting for cert-manager deployments (combined timeout %s across three deployments)", overall))
+	if logErrors {
+		core.Info(fmt.Sprintf("Waiting for cert-manager deployments (combined timeout %s across three deployments)", timeout))
+	}
 	for _, dep := range []string{"cert-manager", "cert-manager-cainjector", "cert-manager-webhook"} {
-		remaining := time.Until(start.Add(overall))
+		remaining := time.Until(start.Add(timeout))
 		if remaining <= 0 {
 			err := core.NewWithSentinel(core.ErrCertManagerInstallFailed, fmt.Sprintf("timed out waiting for cert-manager before deployment/%s", dep))
-			core.Error("cert-manager did not become ready")
-			if logger != nil {
-				core.LogStructuredError(logger, err, "cert-manager did not become ready")
+			if logErrors {
+				core.Error("cert-manager did not become ready")
+				if logger != nil {
+					core.LogStructuredError(logger, err, "cert-manager did not become ready")
+				}
 			}
 			return err
 		}
 		if err := k8sclient.WaitForDeploymentAvailable(context.Background(), clients, "cert-manager", dep, remaining.Round(time.Second)); err != nil {
 			wrapped := core.WrapWithSentinel(core.ErrCertManagerInstallFailed, err, fmt.Sprintf("cert-manager component %s not ready: %v", dep, err))
-			core.Error("cert-manager did not become ready")
-			if logger != nil {
-				core.LogStructuredError(logger, wrapped, "cert-manager did not become ready")
+			if logErrors {
+				core.Error("cert-manager did not become ready")
+				if logger != nil {
+					core.LogStructuredError(logger, wrapped, "cert-manager did not become ready")
+				}
 			}
 			return wrapped
 		}
 	}
-	core.Info("cert-manager is ready")
+	if logErrors {
+		core.Info("cert-manager is ready")
+	}
 	return nil
 }
 

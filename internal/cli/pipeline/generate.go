@@ -58,7 +58,7 @@ func (m *manager) GenerateCRDsFromMetadata(metadataFile, metadataDir, outputDir 
 	}
 
 	if metadata.ResolveRegistryHost() == metadata.DefaultRegistryHost {
-		m.logger.Warn("Using default image host registry.local for generated MCPServer image refs. If cluster pulls fail, set MCP_REGISTRY_INGRESS_HOST to your registry (e.g. ClusterIP:port) and configure containerd/k3s for HTTP, or use public DNS and TLS.")
+		m.logger.Warn("Using default image host registry.local for generated MCPServer image refs. If cluster pulls fail, set MCP_REGISTRY_PULL_HOST or MCP_REGISTRY_ENDPOINT to the in-cluster registry Service (for example registry.registry.svc.cluster.local:5000) before pipeline generate, or configure containerd/k3s for your public registry host and imagePullSecrets.")
 	}
 
 	m.logger.Info("Generating CRD files", zap.Int("count", len(registry.Servers)), zap.String("output", outputDir))

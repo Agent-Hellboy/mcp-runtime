@@ -364,7 +364,10 @@ func TestValidateNonTestSetupAllowsExistingPublicBrowserLoginConfig(t *testing.T
 	}
 }
 
-func TestValidateNonTestSetupRejectsBundledPublicSetupWithoutRegistryEndpoint(t *testing.T) {
+func TestValidateNonTestSetupAllowsBundledHTTPWithoutExplicitRegistryEndpoint(t *testing.T) {
+	// bundled-http and bundled-https auto-discover the registry service; explicit
+	// MCP_REGISTRY_ENDPOINT is no longer required for these modes. Only
+	// --registry-mode auto still requires an explicit endpoint.
 	setPublicDomainEnv(t)
 	t.Setenv("GOOGLE_CLIENT_ID", "client.apps.googleusercontent.com")
 
@@ -373,8 +376,22 @@ func TestValidateNonTestSetupRejectsBundledPublicSetupWithoutRegistryEndpoint(t 
 		nil,
 		false,
 	)
+	if err != nil {
+		t.Fatalf("expected bundled-http without MCP_REGISTRY_ENDPOINT to pass validation, got %v", err)
+	}
+}
+
+func TestValidateNonTestSetupRejectsAutoRegistryModeWithoutRegistryEndpoint(t *testing.T) {
+	setPublicDomainEnv(t)
+	t.Setenv("GOOGLE_CLIENT_ID", "client.apps.googleusercontent.com")
+
+	err := validateNonTestSetup(
+		setupplan.Plan{TLSEnabled: false, TestMode: false, RegistryMode: setupplan.RegistryModeAuto},
+		nil,
+		false,
+	)
 	if err == nil || !strings.Contains(err.Error(), "MCP_REGISTRY_ENDPOINT") {
-		t.Fatalf("expected registry endpoint validation error, got %v", err)
+		t.Fatalf("expected registry endpoint validation error for auto mode, got %v", err)
 	}
 }
 

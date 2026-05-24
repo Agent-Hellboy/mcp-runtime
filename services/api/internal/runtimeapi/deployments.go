@@ -2,6 +2,7 @@ package runtimeapi
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -465,7 +466,79 @@ func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace st
 	if err := ensureDefaultDenyNetworkPolicy(ctx, base, namespace, opts.ingressFromNamespaces...); err != nil {
 		return err
 	}
-	return kubeworkload.EnsureServiceAccount(ctx, base, namespace)
+	if err := kubeworkload.EnsureServiceAccount(ctx, base, namespace); err != nil {
+		return err
+	}
+	return s.ensureNamespaceRegistryPullSecret(ctx, base, namespace)
+}
+
+const registryPullSecretName = "mcp-runtime-registry-pull"
+
+func (s *RuntimeServer) ensureNamespaceRegistryPullSecret(ctx context.Context, client kubernetes.Interface, namespace string) error {
+	registryHost := ""
+	for _, key := range []string{"MCP_REGISTRY_INGRESS_HOST", "MCP_REGISTRY_HOST"} {
+		if h := normalizeImageRegistryHost(os.Getenv(key)); h != "" {
+			registryHost = h
+			break
+		}
+	}
+	if registryHost == "" {
+		if domain := normalizeImageRegistryHost(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
+			registryHost = "registry." + strings.TrimPrefix(domain, "registry.")
+		}
+	}
+	if registryHost == "" {
+		return nil
+	}
+	apiKey := ""
+	for _, raw := range strings.Split(strings.TrimSpace(os.Getenv("ADMIN_API_KEYS")), ",") {
+		if k := strings.TrimSpace(raw); k != "" {
+			apiKey = k
+			break
+		}
+	}
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(os.Getenv("UI_API_KEY"))
+	}
+	if apiKey == "" {
+		return nil
+	}
+	auth := base64.StdEncoding.EncodeToString([]byte("platform-service:" + apiKey))
+	dockerconfig := fmt.Sprintf(`{"auths":{%q:{"username":"platform-service","password":%q,"auth":%q}}}`,
+		registryHost, apiKey, auth)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: registryPullSecretName, Namespace: namespace},
+		Type:       corev1.SecretTypeDockerConfigJson,
+		Data: map[string][]byte{
+			corev1.DockerConfigJsonKey: []byte(dockerconfig),
+		},
+	}
+	existing, err := client.CoreV1().Secrets(namespace).Get(ctx, registryPullSecretName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		if _, err := client.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return err
+		}
+	} else if err != nil {
+		return err
+	} else {
+		existing.Data = secret.Data
+		existing.Type = secret.Type
+		if _, err := client.CoreV1().Secrets(namespace).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+	}
+	sa, err := client.CoreV1().ServiceAccounts(namespace).Get(ctx, kubeworkload.DefaultServiceAccountName, metav1.GetOptions{})
+	if err != nil {
+		return nil
+	}
+	for _, ref := range sa.ImagePullSecrets {
+		if ref.Name == registryPullSecretName {
+			return nil
+		}
+	}
+	sa.ImagePullSecrets = append(sa.ImagePullSecrets, corev1.LocalObjectReference{Name: registryPullSecretName})
+	_, err = client.CoreV1().ServiceAccounts(namespace).Update(ctx, sa, metav1.UpdateOptions{})
+	return err
 }
 
 func mergeNamespaceLabels(ns *corev1.Namespace, labels map[string]string) bool {

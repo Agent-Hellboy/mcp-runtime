@@ -578,7 +578,7 @@ func renderAnalyticsConfigManifestWithReaders(content, platformMode string, imag
 		}
 	}
 	applyGoogleOIDCDefaults(manifest.Data)
-	if registryEndpoint := strings.TrimSpace(core.GetRegistryEndpoint()); registryEndpoint != "" {
+	if registryEndpoint := strings.TrimSpace(resolveInternalPlatformRegistryURLClientGo(nil)); registryEndpoint != "" {
 		manifest.Data["MCP_REGISTRY_ENDPOINT"] = registryEndpoint
 	}
 	if registryIngressHost := strings.TrimSpace(core.GetRegistryIngressHost()); registryIngressHost != "" {

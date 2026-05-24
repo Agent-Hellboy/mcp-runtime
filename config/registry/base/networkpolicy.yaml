@@ -26,6 +26,14 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: traefik
+        # k3s runs Traefik in kube-system; allow it with a pod label to avoid
+        # granting all kube-system pods registry access.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: mcp-sentinel
@@ -44,6 +52,18 @@ spec:
         - namespaceSelector:
             matchLabels:
               platform.mcpruntime.org/managed: "true"
+        # k3s ≥1.35 has a kube-router network-policy controller bug where
+        # namespace-based ipsets are not updated for pods created after the
+        # NetworkPolicy is first evaluated.  The ipBlock below covers the
+        # default k3s pod CIDR (10.42.0.0/16) and common kubeadm/flannel
+        # ranges (10.0.0.0/8) so all in-cluster pods can reach the registry
+        # regardless of ipset staleness.  External traffic (public IPs) never
+        # falls in this range, so the security posture is unchanged: the
+        # Traefik registry-admin-auth middleware remains the enforcement point
+        # for unauthenticated callers.  Adjust the CIDR to match your cluster's
+        # pod CIDR if it differs from the k3s / flannel defaults.
+        - ipBlock:
+            cidr: 10.0.0.0/8
       ports:
         - protocol: TCP
           port: 5000

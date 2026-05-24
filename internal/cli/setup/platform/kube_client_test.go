@@ -33,6 +33,39 @@ func swapKubernetesClientsForTest(t *testing.T, clients *k8sclient.Clients) {
 	}
 }
 
+// resetPlatformKubeconfig restores platformSetupKubeconfig to "" after the test.
+func resetPlatformKubeconfig(t *testing.T) {
+	t.Helper()
+	orig := platformSetupKubeconfig
+	t.Cleanup(func() { platformSetupKubeconfig = orig })
+}
+
+func TestPlatformKubernetesClientsUsesExplicitKubeconfig(t *testing.T) {
+	resetPlatformKubeconfig(t)
+	// When platformSetupKubeconfig is empty the mock via newKubernetesClients must be used.
+	called := false
+	orig := newKubernetesClients
+	t.Cleanup(func() { newKubernetesClients = orig })
+	newKubernetesClients = func() (*k8sclient.Clients, error) {
+		called = true
+		return newPlatformKubernetesTestClients(nil, nil), nil
+	}
+	platformSetupKubeconfig = ""
+	_, _ = platformKubernetesClients()
+	if !called {
+		t.Fatal("expected newKubernetesClients to be called when platformSetupKubeconfig is empty")
+	}
+	// When platformSetupKubeconfig is set to a non-empty path the mock must NOT be used
+	// (NewWithConfig is called directly). We cannot actually connect to a real cluster
+	// in unit tests, so we only verify the mock is bypassed.
+	called = false
+	platformSetupKubeconfig = "/nonexistent/kubeconfig"
+	_, _ = platformKubernetesClients() // will error; that's expected
+	if called {
+		t.Fatal("expected newKubernetesClients to be bypassed when platformSetupKubeconfig is set")
+	}
+}
+
 func newPlatformKubernetesTestClients(clientObjects []runtime.Object, dynamicObjects []runtime.Object) *k8sclient.Clients {
 	scheme := runtime.NewScheme()
 	resources := []*metav1.APIResourceList{
