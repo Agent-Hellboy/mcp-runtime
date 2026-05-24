@@ -3,3 +3,7 @@ misconfigurations:
     paths:
       - "k8s/08-api-rbac.yaml"
     statement: "mcp-runtime-traefik-watch is bound through namespace-scoped RoleBindings; the API service account can bind only this ClusterRole and has no broad Secret read permission."
+  - id: KSV-0056
+    paths:
+      - "k8s/08-api-rbac.yaml"
+    statement: "mcp-sentinel-api intentionally provisions team namespace Services and default-deny NetworkPolicies; registry pull secrets are scoped to resourceNames mcp-runtime-registry-creds only."
