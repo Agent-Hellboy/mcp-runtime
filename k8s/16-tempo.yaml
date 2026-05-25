@@ -79,6 +79,7 @@ spec:
             runAsNonRoot: true
             runAsUser: 10001
             runAsGroup: 10001
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
@@ -92,10 +93,14 @@ spec:
               mountPath: /etc/tempo
             - name: data
               mountPath: /var/tempo
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: config
           configMap:
             name: tempo-config
+        - name: tmp
+          emptyDir: {}
   volumeClaimTemplates:
     - metadata:
         name: data
