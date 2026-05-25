@@ -359,6 +359,8 @@ MCP_PLATFORM_API_URL=https://platform.mcpruntime.org \
   --profile myteam-user
 
 cd examples/workspace-assistant-mcp
+# .mcp/servers.yaml already exists in the example; for a new server run:
+# ../../bin/mcp-runtime server init <name> --tool <tool> --metadata-dir .mcp
 
 MCP_PLATFORM_API_URL=https://platform.mcpruntime.org MCP_PLATFORM_API_PROFILE=myteam-user \
   ../../bin/mcp-runtime server build image workspace-assistant-mcp \

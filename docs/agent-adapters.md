@@ -10,10 +10,11 @@ grants, sessions, or policy:
   each JSON-RPC message to the same MCP Runtime HTTP route.
 
 Both adapters only **present** issued identity values. They do not create
-grants, create sessions, evaluate policy, or bypass the gateway. Platform
-admins still author `MCPAccessGrant` resources; the platform API and the
-adapter session endpoint together resolve which `MCPAgentSession` a caller
-runs under, and the gateway is the enforcement point.
+grants, evaluate policy, or bypass the gateway. Platform admins author
+`MCPAccessGrant` resources first — scaffold with `mcp-runtime access grant init`
+when helpful — and the platform API issues `MCPAgentSession` values through
+`POST /api/runtime/adapter/sessions` when the adapter starts with `--server`
+and `--agent`. The gateway is the enforcement point.
 
 The adapter surface is intentionally limited to stdio and Streamable HTTP, the
 two standard MCP transports. There is no separate legacy HTTP+SSE adapter.

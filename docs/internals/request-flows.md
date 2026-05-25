@@ -339,12 +339,13 @@ Primary request paths:
 | Adapter proxy | `mcp-runtime adapter proxy` | local adapter, API, K8s session, operator, gateway | adapter session response, governance headers | `adapter-proxy` |
 | Adapter stdio | `mcp-runtime adapter stdio` | stdio shim, API, gateway, MCP server | stdin/stdout JSON-RPC, session state | `adapter-proxy`, unit tests |
 | Create/update grants | UI/CLI/API `/api/runtime/grants` | API, K8s, operator, gateway | grant validation, subject/team binding | `governance`, `api-platform` |
-| Create/update sessions | UI/CLI/API `/api/runtime/sessions` | API, K8s, operator, gateway | session trust, expiry, revoked state | `governance`, `api-platform` |
+| Create/update sessions (admin) | UI/CLI/API `POST /api/runtime/sessions` | API, K8s, operator, gateway | admin role required for direct session apply | `governance`, `api-platform` |
+| Adapter-issued sessions | `adapter stdio|proxy`, `POST /api/runtime/adapter/sessions` | adapter, API, K8s, gateway | matching grant, principal identity | `adapter-proxy`, `governance` |
 | Revoke/disable access | item action paths | API, K8s, operator, gateway | enable/disable/revoke/unrevoke | `governance`, `api-platform` |
 | Push or pull registry image | Docker `/v2/*` | registry ingress, Traefik forwardAuth, API, registry | scope authz, registry credentials | `api-platform`, `all` |
 | Create registry credential | `/api/user/registry-credentials` | API, Postgres, registry authz | one-time credential, revoke flow | `api-platform` |
 | Create user API key | `/api/user/api-keys` | API, Postgres, auth middleware | one-time key, revoke flow | `api-platform` |
-| Create team namespace | `/api/runtime/teams` or `team init` | API/CLI, Postgres, K8s namespace/RBAC, Traefik watch | team slug, namespace, membership, RBAC | `multitenancy`, `api-platform` |
+| Create team namespace | `/api/runtime/teams` or `team create` | API/CLI, Postgres, K8s namespace/RBAC, Traefik watch | team slug, namespace, membership, RBAC | `multitenancy`, `api-platform` |
 | Manage team members/users | `/api/runtime/teams/{slug}/*` | API, Postgres, namespace authorization | membership and user records | `multitenancy`, `api-platform` |
 | Query analytics | `/api/events*`, `/api/analytics/usage` | API, ClickHouse, gateway/ingest history | event envelope, filters, usage rows | `observability`, `api-platform` |
 | Direct ingest event | `POST /events` | ingest, auth, Kafka, processor, ClickHouse | event envelope and API key auth | `observability` |

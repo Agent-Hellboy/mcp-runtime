@@ -136,7 +136,8 @@ in `internal/cli/server/validation.go`.
 
 Keep these flows distinct:
 
-- `server apply` applies a manifest.
+- `server init` scaffolds `.mcp/servers.yaml` with governed defaults.
+- `server apply --use-kube` applies a manifest through kubectl (admin only).
 - `server build image` builds and updates metadata but does not deploy.
 - `server generate` renders manifests from metadata for review/GitOps.
 - `server deploy --metadata-dir .mcp` deploys metadata-backed servers through the platform API.
@@ -157,8 +158,12 @@ Tests: `server`/`metadata` package tests and golden CLI help snapshots.
 
 `internal/cli/access/` provides commands for grants and sessions:
 
-- `access grant list|get|apply|delete|enable|disable`
-- `access session list|get|apply|delete|revoke|unrevoke`
+- `access grant init|list|get|apply|delete|enable|disable`
+- `access session init|list|get|apply|delete|revoke|unrevoke`
+
+`init` scaffolds reviewable YAML; `apply` writes through the platform API by
+default. Add `--use-kube` only for admin/operator direct Kubernetes flows
+that bypass platform auth.
 
 The implementation patches `spec.disabled` for grants and `spec.revoked` for
 sessions. Input validation should prevent invalid names/namespaces before they
@@ -185,10 +190,8 @@ Tests: `adapter/adapter_test.go`, `adapter/platformsession_test.go`, and
 ## Team
 
 `internal/cli/team/` owns platform team commands. `team list`, `team create`,
-and `team user` call the platform API through `internal/cli/platformapi`;
-`team init` renders local Kubernetes namespace, RBAC, quota, limits,
-NetworkPolicy, workload service account, and bundled Traefik watch manifests
-before applying them with `kubectl`.
+and `team user` call the platform API through `internal/cli/platformapi`.
+`team init` is deprecated and rejects at runtime; use `team create`.
 
 Team behavior spans CLI and API code: platform-backed team creation and
 membership routes live in `services/api/internal/runtimeapi`, durable identity

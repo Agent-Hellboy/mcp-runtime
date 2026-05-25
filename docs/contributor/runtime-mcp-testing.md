@@ -126,6 +126,14 @@ NAMESPACE=mcp-servers
 kubectl get mcpserver "$SERVER" -n "$NAMESPACE" -o yaml
 kubectl get deploy/"$SERVER" svc/"$SERVER" ingress/"$SERVER" -n "$NAMESPACE" -o wide
 kubectl get cm -n "$NAMESPACE" "${SERVER}-gateway-policy" -o yaml
+
+./bin/mcp-runtime auth login --api-url http://localhost:18080
+./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE"
+```
+
+Admin/operator fallback when you need the raw ConfigMap JSON without platform auth:
+
+```bash
 ./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE" --use-kube
 ```
 
@@ -144,7 +152,38 @@ kubectl logs -n "$NAMESPACE" "$POD" -c mcp-gateway
 Gateway policy requires both an access grant and an agent session when the
 server has `spec.session.required=true`.
 
-Use the CLI apply commands:
+Use `init` to scaffold manifests. Apply the grant through the platform API
+after `auth login`. Platform API **session apply requires an admin role** — use
+admin login (`admin@mcpruntime.org` in test mode), `--use-kube`, or `kubectl
+apply` for explicit curl sessions. For agent testing, prefer the adapter path
+documented below.
+
+```bash
+./bin/mcp-runtime auth login --api-url http://localhost:18080 \
+  --email admin@mcpruntime.org --password 'admin@123'
+
+./bin/mcp-runtime access grant init workspace-assistant-grant \
+  --namespace mcp-servers \
+  --server workspace-assistant-mcp \
+  --human-id local-user \
+  --agent-id local-agent \
+  --tool add --tool upper \
+  --trust high \
+  --output /tmp/grant.yaml
+
+./bin/mcp-runtime access session init local-session \
+  --namespace mcp-servers \
+  --server workspace-assistant-mcp \
+  --human-id local-user \
+  --agent-id local-agent \
+  --trust high \
+  --output /tmp/session.yaml
+
+./bin/mcp-runtime access grant apply --file /tmp/grant.yaml
+./bin/mcp-runtime access session apply --file /tmp/session.yaml
+```
+
+Admin/operator direct Kubernetes fallback:
 
 ```bash
 ./bin/mcp-runtime access grant apply --file /tmp/grant.yaml --use-kube
@@ -155,6 +194,12 @@ Then verify materialization:
 
 ```bash
 kubectl get mcpaccessgrant,mcpagentsession -n "$NAMESPACE" -o wide
+./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE"
+```
+
+Raw ConfigMap inspection without platform auth (`--use-kube`):
+
+```bash
 ./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE" --use-kube
 ```
 

@@ -88,14 +88,14 @@ tool calls.
 - Add `spec.tools` with tool descriptions, trust levels, and side-effect classes so the platform catalog and policy engine mirror the tool summaries clients see from `tools/list`.
 - Add `spec.auth`, `spec.policy`, `spec.session`, or `spec.rollout` when you want stricter governance or more delivery control.
 
-Apply the manifest only from an admin/operator workstation. `server apply` uses
-direct Kubernetes mode, so it requires `--use-kube`, kubectl, and kubeconfig/RBAC
-access to the target namespace. For normal platform workflows, use the
-platform-backed `server deploy` flow in Option B instead.
+Apply the manifest only from an admin/operator workstation. `server apply`
+requires `--use-kube`, kubectl, and kubeconfig/RBAC access to the target
+namespace. For normal platform workflows, use the platform-backed
+`server deploy` flow in Option B instead.
 
 ```bash
 ./bin/mcp-runtime server apply --file payments.yaml --use-kube
-./bin/mcp-runtime server status --use-kube
+./bin/mcp-runtime server status --use-kube   # pod detail; omit --use-kube for platform API summary
 ```
 
 ## Option B: initialize or write `.mcp` metadata
@@ -126,7 +126,38 @@ when a grant needs mixed per-tool decisions or trust levels. For explicit
 session manifests, `access session init` supports `--trust`,
 `--expires-in`, `--expires-at`, `--revoked`, and upstream-token secret flags.
 
-Example:
+```bash
+mcp-runtime auth login --api-url https://platform.example.com
+
+./bin/mcp-runtime access grant init payments-globex-cursor \
+  --namespace mcp-team-acme \
+  --server payments \
+  --team-id <globex-team-id> \
+  --agent-id cursor \
+  --tool list_invoices \
+  --tool-rule refund_invoice:allow:high \
+  --side-effect read \
+  --output grant.yaml
+
+./bin/mcp-runtime access session init cursor-session \
+  --namespace mcp-team-acme \
+  --server payments \
+  --human-id <user-id> \
+  --agent-id cursor \
+  --trust medium \
+  --expires-in 1h \
+  --output session.yaml
+
+./bin/mcp-runtime access grant apply --file grant.yaml
+# Platform API session apply is admin-only — use adapter for agents:
+# ./bin/mcp-runtime access session apply --file session.yaml
+```
+
+Adapter-driven agents should skip manual session apply; use
+`mcp-runtime adapter stdio --server payments --agent cursor --auto-refresh`
+after the grant exists. See [Agent Adapters](agent-adapters.md).
+
+Example metadata:
 
 ```yaml
 version: v1
@@ -291,10 +322,11 @@ exactly one server, it uses that server's inventory even when the deployed
 runtime name is different; this keeps `spec.tools` side-effect metadata in sync
 with governance policy.
 
-### Flow C — manual Docker build, push, and manifest apply
+### Flow C — manual Docker build, push, and manifest apply (admin/GitOps)
 
-Use this when you need full control of `MCPServer` fields and you have
-admin/operator Kubernetes access:
+Use this when you need full control of `MCPServer` fields and have
+admin/operator Kubernetes access. For the normal tenant platform path, use
+**Flow A/B** with `server deploy` instead of `server apply --use-kube`.
 
 ```bash
 docker build -t payments:v1.0.0 .
@@ -348,8 +380,12 @@ If the server uses governed access:
 If traffic is failing:
 
 ```bash
-./bin/mcp-runtime server logs payments --follow --use-kube
+./bin/mcp-runtime server policy inspect payments
+./bin/mcp-runtime status
+
+# Admin/operator only
 ./bin/mcp-runtime sentinel logs gateway --follow
+./bin/mcp-runtime server logs payments --follow --use-kube
 ```
 
 ## Common failure points
@@ -396,11 +432,12 @@ Request analytics only exist for traffic that flows through `mcp-gateway`.
 The adapter is not required for analytics; it only helps clients that cannot
 attach identity or session headers directly, or that want platform-issued
 sessions. Hand-written YAML must include `spec.gateway.enabled: true` for
-request analytics. If you apply raw YAML with `kubectl` instead of
-raw `kubectl apply`, also create a namespace-local ingest-key Secret
-and set `spec.analytics.apiKeySecretRef`; otherwise the gateway can reach
-ingest but events will be rejected with 401. Analytics is on by default for
-gateway traffic when the operator has `MCP_SENTINEL_INGEST_URL`; opt out with:
+request analytics. If you apply raw YAML with `kubectl apply` or
+`server apply --use-kube` instead of `server deploy`, also create a
+namespace-local ingest-key Secret and set `spec.analytics.apiKeySecretRef`;
+otherwise the gateway can reach ingest but events will be rejected with 401.
+Analytics is on by default for gateway traffic when the operator has
+`MCP_SENTINEL_INGEST_URL`; opt out with:
 
 ```yaml
 analytics:

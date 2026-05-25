@@ -1,6 +1,10 @@
 # CLI
 
-The `mcp-runtime` CLI is the operator-facing front door. It bootstraps clusters, manages registries, applies `MCPServer` manifests, operates access grants and sessions, and inspects the runtime + sentinel stack.
+The `mcp-runtime` CLI bootstraps clusters, manages registries, publishes servers
+through the platform API, operates access grants and sessions, and inspects the
+runtime stack. Direct Kubernetes manifest operations (`server apply`, `create`,
+`patch`, `logs`, …) require the admin-only `--use-kube` flag. The `sentinel`
+command group also requires admin/operator kubectl access.
 
 ```mermaid
 flowchart LR
@@ -26,8 +30,13 @@ make build
 ./bin/mcp-runtime auth login --api-url https://platform.example.com --token-stdin < token.txt
 ./bin/mcp-runtime auth status
 
+./bin/mcp-runtime server init payments --tool list_invoices
+./bin/mcp-runtime server build image payments --tag v1
 ./bin/mcp-runtime registry push --image <image-ref-you-built-locally>
-./bin/mcp-runtime server deploy <server-name> --scope tenant --metadata-dir .mcp
+./bin/mcp-runtime server deploy payments --scope tenant --metadata-dir .mcp
+
+./bin/mcp-runtime access grant init payments-ops --server payments --agent-id ops-agent --tool list_invoices --output grant.yaml
+./bin/mcp-runtime access grant apply --file grant.yaml
 ```
 
 For a new workstation, run `make deps-install` first where supported, then `STRICT_DEPS_CHECK=1 make deps-check`. Required host tools are Go `1.26+`, Make, Docker with a reachable daemon, `kubectl` configured for the cluster, plus `curl`, `jq`, and `python3` for documented dev flows. `kind` is required only for local Kind clusters.
@@ -46,14 +55,14 @@ mcp-runtime <group> <subcommand> --help
 |---|---|---|
 | `bootstrap` | Preflight checks for cluster prerequisites (DNS, default StorageClass, ingress class, MetalLB). With `--apply` on k3s only, install bundled CoreDNS + local-path manifests. | `bootstrap`, `--apply`, `--provider auto\|k3s\|rke2\|kubeadm\|generic` |
 | `setup` | Install the platform stack, wire registry and ingress, deploy the operator, optionally include sentinel. | `setup`, `--with-tls`, `--without-sentinel` |
-| `auth` | Save and inspect platform API credentials for non-kubeconfig platform flows. | `login`, `logout`, `status` |
+| `auth` | Save and inspect platform API credentials for non-kubeconfig platform flows. | `login`, `logout`, `status`, `use` |
 | `cluster` | Initialize clusters, inspect health, configure kubeconfig and ingress, provision clusters, manage cert-manager. | `init`, `status`, `config`, `provision`, `cert status\|apply\|wait`, `doctor` |
 | `registry` | Inspect the internal registry, configure an external one, push images. | `status`, `info`, `provision`, `push` |
-| `server` | Manage `MCPServer` resources and operator-facing actions. | `list`, `get`, `create`, `apply`, `deploy`, `generate`, `export`, `patch`, `delete`, `logs`, `status`, `policy inspect`, `build image` |
-| `access` | Manage `MCPAccessGrant` and `MCPAgentSession` resources that feed the gateway policy layer. | `grant list/get/apply/delete/disable/enable`, `session list/get/apply/delete/revoke/unrevoke` |
+| `server` | Manage `MCPServer` resources and operator-facing actions. | `init`, `list`, `get`, `create`, `apply`, `deploy`, `generate`, `export`, `patch`, `delete`, `logs`, `status`, `policy inspect`, `build image` |
+| `access` | Manage `MCPAccessGrant` and `MCPAgentSession` resources that feed the gateway policy layer. | `grant init/list/get/apply/delete/disable/enable`, `session init/list/get/apply/delete/revoke/unrevoke` |
 | `adapter` | HTTP proxy and stdio shims that inject governance identity/session headers for agents. | `proxy`, `stdio` |
-| `team` | Manage internal platform teams, team password users, and Kubernetes team namespaces. | `list`, `create`, `user list`, `user create`, `init` |
-| `sentinel` | Inspect and operate the bundled analytics, gateway, and observability stack. | `status`, `events`, `logs`, `port-forward`, `restart` |
+| `team` | Manage internal platform teams, team password users, and Kubernetes team namespaces. | `list`, `create`, `user list`, `user create` |
+| `sentinel` | Inspect and operate the bundled analytics, gateway, and observability stack (**admin/operator kubectl only**). | `status`, `events`, `logs`, `port-forward`, `restart` |
 | `status` | Aggregated platform health (cluster, registry, operator, servers, sentinel). | `status` |
 | `completion` | Generate shell completion (bash, zsh, fish). | `completion bash\|zsh\|fish` |
 
@@ -212,9 +221,35 @@ Notes:
 - `MCP_PLATFORM_API_TOKEN` overrides any saved token when set
 - `MCP_PLATFORM_API_URL` can provide the default API base URL
 - kubeconfig-based cluster commands are separate from platform auth
-- `--use-kube` is an admin/dev/test escape hatch for supported server and
-  access commands; it requires kubectl plus admin/operator Kubernetes RBAC and
-  is not the normal platform API path
+
+## Platform API vs `--use-kube`
+
+Most `server` and `access` commands use the **platform API** by default. Run
+`mcp-runtime auth login --api-url <platform-url>` (or set
+`MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`) before those flows.
+
+`--use-kube` is **admin/dev/test only**. It bypasses platform auth and talks to
+the Kubernetes API through your kubeconfig. Use it only when you have
+admin/operator RBAC and intentionally want direct CRD/manifest operations.
+
+| Default (platform API) | Requires `--use-kube` (admin only) |
+|---|---|
+| `access grant/session` list, get, apply, delete, enable/disable, revoke/unrevoke | same commands with `--use-kube` for raw kubectl CRUD |
+| `server list`, `get`, `delete`, `status`, `policy inspect`, `deploy` | `server create`, `apply`, `export`, `patch`, `logs` |
+| `registry push` (always platform API) | `kubectl apply -f` for manifests (separate from CLI flag) |
+
+Notes:
+
+- `server get` without `--use-kube` returns a platform API summary; full
+  MCPServer YAML needs `--use-kube`.
+- `server status` without `--use-kube` lists servers from the platform API;
+  pod-level detail needs `--use-kube`.
+- `server logs` always requires `--use-kube`; use `kubectl logs` or
+  `sentinel logs gateway` when you only have platform credentials.
+- `access session apply` through the platform API is **admin-only**; agents
+  should use `adapter stdio|proxy --server … --agent …` or admins use
+  `--use-kube` / `kubectl apply` for explicit session manifests.
+- `--team` is a platform API resolver and is rejected with `--use-kube`.
 
 ## status
 
@@ -274,6 +309,16 @@ true`. Repeated `--tool` flags seed read/low tool metadata. Use repeated
 trust levels or side-effect classes. If a metadata entry with the same server
 name already exists, `server init` fails unless `--force` is passed.
 
+Typical platform path after `server init`:
+
+```bash
+mcp-runtime auth login --api-url https://platform.example.com
+mcp-runtime server build image payments --tag v1
+mcp-runtime registry push --scope tenant --image <exact-image-ref-from-build>
+mcp-runtime server deploy payments --scope tenant --metadata-dir .mcp
+mcp-runtime server deploy payments --scope tenant --metadata-dir .mcp --update   # repeat deploys
+```
+
 ## server generate
 
 ```bash
@@ -286,7 +331,12 @@ For the full build, push, deploy, and verify flow, see [Publish an MCP Server](p
 
 ## access
 
+Scaffold manifests with `init`, then apply through the platform API (default).
+Add `--use-kube` only for admin/operator direct Kubernetes flows.
+
 ```bash
+mcp-runtime auth login --api-url https://platform.example.com
+
 # Grants
 mcp-runtime access grant init payments-globex-cursor \
   --namespace mcp-team-acme \
@@ -334,6 +384,14 @@ mcp-runtime access session unrevoke ops-agent
 
 `grant list` and `session list` default to `--all-namespaces`; pass `--namespace` to narrow scope.
 
+`access grant init` writes a reviewable YAML file with tool rules and
+`allowedSideEffects`. `--tool` is shorthand for an allow rule at `--trust`
+(default `low`). Use `--tool-rule name:allow|deny:low|medium|high` for mixed
+decisions. `access session init` is for explicit/admin session manifests; adapter
+`--auto-refresh` usually creates sessions automatically at runtime. Platform
+API `access session apply` requires an **admin** role; server/team owners use
+grant apply plus adapter-issued sessions for normal agent flows.
+
 For multi-team deployments, namespace scoping controls who can write resources
 and `teamID` controls who can use them. Put each team's grants and sessions in
 the same namespace as its servers, set `subject.teamID`, and use `--namespace`
@@ -349,8 +407,6 @@ mcp-runtime team user create globex \
   --password '...' \
   --role member
 mcp-runtime team user list globex
-mcp-runtime team init acme --group acme-mcp-admins
-mcp-runtime team init acme --dry-run
 ```
 
 `team list`, `team create`, and `team user` use the platform API, so run
@@ -361,14 +417,8 @@ bundled Traefik is present. `team user create` is admin-only. It creates or
 updates a password-login user and adds that user to the team as `member` or
 `owner`; use `auth login --username/--email --password` for the user login.
 
-`team init` uses local `kubectl`. It creates the team namespace, restricted
-workload service account, default quota and limits, default-deny NetworkPolicy,
-same-namespace and bundled-Traefik ingress allowances, MCP Runtime team-admin
-RBAC, bundled Traefik watch RBAC, and patches the repo-managed
-`traefik/traefik` Deployment watch list unless
-`--skip-traefik-watch` is set. Use `--namespace`, `--group`, `--user`, or
-`--service-account` when the defaults do not match your cluster identity system.
-See
+`team init` is **deprecated** and rejects at runtime. Use `team create` for
+the normal platform-backed flow. See
 [Multi-team isolation](multi-team.md).
 
 ## server
@@ -387,10 +437,12 @@ mcp-runtime server create payments --file server.yaml --use-kube
 mcp-runtime server apply --file server.yaml --use-kube
 mcp-runtime server export payments --file payments.yaml --use-kube
 
-# Patch / inspect
-mcp-runtime server patch payments --patch '{"spec":{"imageTag":"v2"}}' --use-kube
+# Patch / inspect (platform API)
 mcp-runtime server status --namespace mcp-servers
 mcp-runtime server policy inspect payments
+
+# Admin/operator only — requires --use-kube
+mcp-runtime server patch payments --patch '{"spec":{"imageTag":"v2"}}' --use-kube
 mcp-runtime server logs payments --follow --use-kube
 
 # Build (push lives under registry)
@@ -398,18 +450,20 @@ mcp-runtime server build image payments --tag v1 --platform linux/amd64
 mcp-runtime registry push --scope public --image <exact-image-ref-from-build>
 ```
 
-When `--use-kube` is absent, supported `server` commands use the platform API
-and require `mcp-runtime auth login --api-url <platform-url>` or
-`MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`. `--team` is a platform API
-resolver; it is rejected in direct Kubernetes mode. In `--use-kube` mode, use
-`--namespace` and expect kubeconfig/RBAC failures unless the current principal
-has admin/operator cluster access.
+When `--use-kube` is absent, the supported `server` and `access` commands above
+use the platform API and require `mcp-runtime auth login --api-url
+<platform-url>` or `MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`.
+In `--use-kube` mode, use `--namespace` and expect kubeconfig/RBAC failures
+unless the current principal has admin/operator cluster access.
 
 `server patch` accepts inline `--patch` or `--patch-file` with `merge`, `json`, or `strategic` modes.
 
 `server build image` updates matching `.mcp` metadata. It defaults Docker builds to `linux/amd64` so images can run on typical amd64 Kubernetes nodes; override with `--platform` or `MCP_DOCKER_PLATFORM` for another node architecture. It prefers an explicit registry host, then the cluster's `registry/registry` Ingress host, before falling back to the registry Service address. That keeps metadata images on a node-pullable public host such as `registry.example.com/public/payments:v1` when the cluster exposes one. Tenant metadata still uses the authenticated team repository prefix when platform credentials are configured. Push that exact ref after logging in to the platform. The command does not deploy by itself; push and deploy are separate steps. `server deploy --scope public` and `--scope org` let the platform resolve the active catalog namespace; `--scope tenant` uses the authenticated user's team namespace unless `--team` or `--namespace` selects one explicitly. Deploy accepts a short image name and expands it through the platform API to the configured node-pullable registry endpoint plus the active scope prefix. `server deploy --metadata-dir .mcp` includes the matching server inventory, including tool side-effect metadata used by governed tool calls. A repeat deploy with the same server name fails by default; pass `--update` when you intentionally want to redeploy an existing server.
 
 ## sentinel
+
+Admin/operator only — requires kubectl access to the cluster. Normal users
+should use the platform dashboard, `/api/*`, and top-level `mcp-runtime status`.
 
 ```bash
 # Health + recent Kubernetes events
@@ -469,22 +523,26 @@ mcp-runtime setup
 mcp-runtime auth login --api-url http://localhost:18080
 
 # Push a server image
+mcp-runtime server init payments --tool list_invoices
 mcp-runtime server build image payments
 mcp-runtime registry push --scope tenant --image <exact-image-ref-from-build>
 
 # Deploy from metadata
 mcp-runtime server deploy payments --scope tenant --metadata-dir .mcp
 
-# Apply access + inspect resulting policy
+# Scaffold and apply access policy (grant via platform API; session via adapter or admin)
+mcp-runtime access grant init payments-ops --server payments --agent-id ops-agent \
+  --tool list_invoices --output grant.yaml
 mcp-runtime access grant apply --file grant.yaml
-mcp-runtime access session apply --file session.yaml
+mcp-runtime adapter stdio --runtime-url http://localhost:18080/payments/mcp \
+  --server payments --agent ops-agent --auto-refresh
 mcp-runtime server policy inspect payments
 
 # Open the sentinel UI locally
 mcp-runtime sentinel port-forward ui
 mcp-runtime sentinel logs api --since 10m
 
-# Patch a running server
+# Patch a running server (admin/operator — requires --use-kube)
 mcp-runtime server patch payments --patch '{"spec":{"imageTag":"v2"}}' --use-kube
 mcp-runtime server status
 mcp-runtime status

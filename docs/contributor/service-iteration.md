@@ -82,7 +82,8 @@ For analytics pipeline changes:
 | Ingest | `mcp-sentinel-ingest` | `services/ingest/Dockerfile` | `.` | `mcp-sentinel-ingest` | `ingest` |
 | Processor | `mcp-sentinel-processor` | `services/processor/Dockerfile` | `.` | `mcp-sentinel-processor` | `processor` |
 
-After rolling either service, generate one MCP request and check both logs:
+After rolling either service, generate one MCP request and check both logs
+(admin kubectl):
 
 ```bash
 ./bin/mcp-runtime sentinel logs ingest --since 10m

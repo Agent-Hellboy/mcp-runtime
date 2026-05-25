@@ -38,7 +38,7 @@ human workflows.
     <li>Optional HTTP and stdio agent adapters for governed framework integrations</li>
     <li>Compliance-oriented event records for who called what, when, against which server, and whether it was allowed or denied</li>
     <li>Ingress routing for path-based MCP endpoints</li>
-    <li>CLI for setup, status, registry, access, Sentinel, and servers</li>
+    <li>CLI for setup, status, registry, <code>server init</code>, access init/apply, adapters; admin kubectl tools for <code>sentinel *</code></li>
   </ul>
   </div>
 </section>

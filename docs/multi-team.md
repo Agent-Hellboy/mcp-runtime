@@ -70,28 +70,9 @@ mcp-runtime auth login \
   --password '...'
 ```
 
-For direct Kubernetes administration, use `team init`:
-
-```bash
-mcp-runtime team init acme --group acme-mcp-admins
-```
-
-`team init` applies the namespace, a restricted `mcp-workload` service account,
-a default quota, default container limits, a default-deny NetworkPolicy that
-allows same-namespace ingress, bundled Traefik ingress, DNS, and basic outbound
-HTTP/S egress, a team-admin `Role`, a `RoleBinding`, and the `traefik-watch`
-`Role`/`RoleBinding` for the bundled Traefik service account. The
-`traefik-watch` role grants watch access to Services, Endpoints, Secrets, and
-Ingresses in the team namespace. Platform-created team namespaces use a
-RoleBinding to the repo-installed `mcp-runtime-traefik-watch` `ClusterRole`
-instead, so the API service account can bind the exact Traefik watch role
-without broad Secret read access. Both paths patch the bundled
-`traefik/traefik` Deployment so
-`--providers.kubernetesingress.namespaces` includes the new team namespace. Use
-`--dry-run` to print the generated manifest, and use `--skip-traefik-watch`
-when your ingress controller is external or managed outside this repo.
-
-The generated namespace/RBAC shape is:
+`team init` is **deprecated** and rejects at runtime. Use `team create` above
+for the normal platform-backed flow. The managed namespace shape that
+`team create` provisions includes:
 
 ```yaml
 apiVersion: v1
@@ -236,8 +217,9 @@ The bundled Traefik manifests watch only `registry`, `mcp-sentinel`,
 does not need broad namespace access. If MCP servers live in team namespaces,
 update the ingress controller watch list, bind the Traefik watch role in each
 team namespace, and allow ingress-controller traffic through the namespace
-NetworkPolicy. `mcp-runtime team init` and the platform API `team create` flow
-perform those changes for the repo-managed `traefik/traefik` Deployment.
+NetworkPolicy. The platform API `team create` flow performs those changes for
+the repo-managed `traefik/traefik` Deployment when
+`PLATFORM_TEAM_TRAEFIK_WATCH` is not `disabled`.
 
 For the bundled Traefik overlay, extend the argument:
 
@@ -262,11 +244,16 @@ Keep identifiers stable:
 | `humanID` | Use the identity provider's stable subject claim, or email when that is stable in your environment. |
 | `agentID` | Use a readable owner-purpose string such as `acme-cron-bot`, `globex-data-loader`, or `claude-code`. |
 
-`mcp-runtime access grant apply` and `mcp-runtime access session apply` run a
-non-blocking advisory pass before applying manifests. The command warns about
-obvious `humanID` shape problems, such as whitespace, malformed email-like
-strings, case-sensitive uppercase email identifiers, or values that appear to
-encode `mcp-team-*` namespace names. These warnings never block the apply.
+`mcp-runtime access grant init` and `access session init` scaffold local YAML on
+the workstation only. `access grant apply` uses the platform API by default after
+`mcp-runtime auth login --api-url <platform-url>`; `access session apply` is
+admin-only on the platform API (agents should use `adapter stdio|proxy --server …
+--agent … --auto-refresh` instead). Add `--use-kube` only for admin/operator
+direct Kubernetes writes. The apply commands run a non-blocking advisory pass
+before applying manifests. The command warns about obvious
+`humanID` shape problems, such as whitespace, malformed email-like strings,
+case-sensitive uppercase email identifiers, or values that appear to encode
+`mcp-team-*` namespace names. These warnings never block the apply.
 
 ## Audit And Reporting
 
