@@ -99,7 +99,6 @@ spec:
             runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
-            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
@@ -133,11 +132,6 @@ spec:
           volumeMounts:
             - name: kafka-data
               mountPath: /var/lib/kafka/data
-            - name: tmp
-              mountPath: /tmp
-      volumes:
-        - name: tmp
-          emptyDir: {}
   volumeClaimTemplates:
     - metadata:
         name: kafka-data

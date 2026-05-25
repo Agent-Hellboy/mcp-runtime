@@ -7,3 +7,10 @@ misconfigurations:
     paths:
       - "k8s/08-api-rbac.yaml"
     statement: "mcp-sentinel-api intentionally provisions team namespace Services and default-deny NetworkPolicies; registry pull secrets use namespace-scoped Roles bound to the API service account."
+  - id: KSV-0014
+    paths:
+      - "k8s/03-clickhouse.yaml"
+      - "k8s/03-clickhouse-hostpath.yaml"
+      - "k8s/05-kafka.yaml"
+      - "k8s/05-kafka-hostpath.yaml"
+    statement: "ClickHouse and Kafka stateful analytics workloads require writable data and log directories on their PVC-backed mounts; readOnlyRootFilesystem is not compatible without image-specific emptyDir wiring."
