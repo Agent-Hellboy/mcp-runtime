@@ -24,11 +24,16 @@ set -euo pipefail
 #   ADMIN_EMAIL=admin@mcpruntime.org ADMIN_PASSWORD=admin@123
 #
 # Useful options:
-#   RESET=1 hack/multitenancytest.sh       # delete demo resources via platform API
-#   SKIP_SETUP=1 hack/multitenancytest.sh  # only run verification
+#   RESET=1 hack/deploy/mcpruntime-org/multitenancy-test.sh       # delete demo resources via platform API
+#   SKIP_SETUP=1 hack/deploy/mcpruntime-org/multitenancy-test.sh  # only run verification
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 BIN="${BIN:-$ROOT_DIR/bin/mcp-runtime}"
+
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  # shellcheck disable=SC1091
+  set -a && source "$ROOT_DIR/.env" && set +a
+fi
 
 require_env() {
   local name="$1"

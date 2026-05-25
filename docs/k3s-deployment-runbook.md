@@ -41,8 +41,9 @@ cp config/deployments/mcpruntime-org.env.example config/deployments/mcpruntime-o
 `config/deployments/mcpruntime-org.env` is gitignored. The `.example` file is the
 team-shared template; your local `.env` holds workstation-specific paths.
 
-The hack scripts (`setup-k3s`, `clean-k3s`, `rollout-k3s`) source this file by
-default. Override the path with `MCP_DEPLOY_ENV=/path/to/other.env`.
+The hack scripts under `hack/deploy/mcpruntime-org/` source this file by
+default. Override the path with `MCP_DEPLOY_ENV=/path/to/other.env`. See
+`hack/README.md` for the full layout.
 
 ### Environment variable reference
 
@@ -51,7 +52,7 @@ default. Override the path with `MCP_DEPLOY_ENV=/path/to/other.env`.
 | Variable | Required | Used by | Purpose |
 |----------|----------|---------|---------|
 | `KUBECONFIG` | yes | all hack scripts, manual `kubectl` | Path to the k3s kubeconfig. Must match the cluster you target. |
-| `MCP_SETUP_KUBECONFIG` | yes (setup) | `hack/setup-k3s-mcpruntime-org.sh` | Same as `KUBECONFIG`; passed to `mcp-runtime setup --kubeconfig`. |
+| `MCP_SETUP_KUBECONFIG` | yes (setup) | `hack/deploy/mcpruntime-org/setup.sh` | Same as `KUBECONFIG`; passed to `mcp-runtime setup --kubeconfig`. |
 | `MCP_PLATFORM_DOMAIN` | yes | setup | Apex domain only (no `https://`). Derives `registry.`, `mcp.`, and `platform.` hostnames. |
 | `MCP_PLATFORM_ADMIN_EMAIL` | yes (non-test setup) | setup | Seeds the platform admin account during bootstrap. |
 
@@ -65,7 +66,7 @@ default. Override the path with `MCP_DEPLOY_ENV=/path/to/other.env`.
 | `MCP_REGISTRY_HOST` | do not set | — | Public ingress hostname; derived from `MCP_PLATFORM_DOMAIN`. Do not use as the internal pull URL. |
 | `MCP_REGISTRY_INTERNAL` | optional | rollout | Override registry ClusterIP:port for **build/push** inside rollout script only. Pull path still uses `MCP_REGISTRY_ENDPOINT` in configmap. |
 
-#### Setup behavior (read by `hack/setup-k3s-mcpruntime-org.sh`)
+#### Setup behavior (read by `hack/deploy/mcpruntime-org/setup.sh`)
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -94,24 +95,24 @@ default. Override the path with `MCP_DEPLOY_ENV=/path/to/other.env`.
 | `OIDC_AUDIENCE` | optional | OIDC audience; defaults to Google client ID. |
 | `OIDC_JWKS_URL` | optional | JWKS URL for token validation. |
 
-#### Platform-runtime backup (`hack/clean-k3s-mcpruntime-org.sh`)
+#### Platform-runtime backup (`hack/deploy/mcpruntime-org/clean.sh`)
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `MCP_TLS_BACKUP_DIR` | `~/.mcpruntime/backups/mcpruntime-org` | Root directory for timestamped platform-runtime snapshots. |
-| `MCP_RESTORE_TLS_AFTER_SETUP` | `1` | When `1`, `hack/setup-k3s-mcpruntime-org.sh` runs `--restore-platform` after setup. |
+| `MCP_RESTORE_TLS_AFTER_SETUP` | `1` | When `1`, `hack/deploy/mcpruntime-org/setup.sh` runs `hack/deploy/mcpruntime-org/restore.sh` after setup. |
 | `MCP_DEPLOY_ENV` | `config/deployments/mcpruntime-org.env` | Env file path for all hack scripts. |
 
 Backup scope is **platform-runtime state only** (TLS, cert-manager, OIDC,
 bootstrap secrets — not tenant users, teams, MCP CRs, or registry images).
 
-#### Rollout-only (`hack/rollout-k3s-mcpruntime-org.sh`)
+#### Rollout-only (`hack/deploy/mcpruntime-org/rollout.sh`)
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `MCP_ROLLOUT_TAG` | `verify-MMDDHHMM` | Image tag for API/UI build and push. |
 
-#### Multitenancy test (`hack/multitenancytest.sh`)
+#### Multitenancy test (`hack/deploy/mcpruntime-org/multitenancy-test.sh`)
 
 These are **not** in the deployment profile — export them when running the test against production URLs:
 
@@ -153,7 +154,7 @@ limit. Use the helper script to back up platform-runtime material (TLS,
 cert-manager ownership, OIDC, bootstrap secrets) before wiping app namespaces:
 
 ```bash
-hack/clean-k3s-mcpruntime-org.sh --yes --wait
+hack/deploy/mcpruntime-org/clean.sh --yes --wait
 ```
 
 Tenant/user data (teams, Postgres identity store, MCP CRs, registry images) is
@@ -169,10 +170,12 @@ kubectl get secret mcp-sentinel-platform-tls -n mcp-sentinel -o yaml \
   > /tmp/platform-tls-backup.yaml 2>/dev/null || true
 ```
 
-Restore after setup (prefer automatic restore via `hack/setup-k3s-mcpruntime-org.sh`):
+Restore after setup (prefer automatic restore via `hack/deploy/mcpruntime-org/setup.sh`):
 
 ```bash
-hack/clean-k3s-mcpruntime-org.sh --restore-platform
+hack/deploy/mcpruntime-org/restore.sh
+# or from clean.sh:
+hack/deploy/mcpruntime-org/clean.sh --restore-platform
 ```
 
 ## Safe cluster wipe (app workloads only)
@@ -246,14 +249,14 @@ When cert-manager already issued `registry-cert` and
 profile and helper script:
 
 ```bash
-hack/setup-k3s-mcpruntime-org.sh
+hack/deploy/mcpruntime-org/setup.sh
 ```
 
 For code-only changes (registry push, team create, API fixes) without a full
 platform rebuild, use the targeted Sentinel rollout:
 
 ```bash
-hack/rollout-k3s-mcpruntime-org.sh
+hack/deploy/mcpruntime-org/rollout.sh
 ```
 
 That rebuilds/pushes `mcp-sentinel-api` and `mcp-sentinel-ui`, applies RBAC,
@@ -392,7 +395,7 @@ If `team create` returns `500 failed to provision team namespace`, confirm
 ## Multi-tenancy end-to-end test
 
 ```bash
-hack/multitenancytest.sh
+hack/deploy/mcpruntime-org/multitenancy-test.sh
 ```
 
 Default assumptions:
@@ -407,7 +410,7 @@ Default assumptions:
 To skip the build/deploy and only verify an existing setup:
 
 ```bash
-SKIP_SETUP=1 hack/multitenancytest.sh
+SKIP_SETUP=1 hack/deploy/mcpruntime-org/multitenancy-test.sh
 ```
 
 ## Troubleshooting
@@ -428,7 +431,7 @@ SKIP_SETUP=1 hack/multitenancytest.sh
 ### Setup fails "bundled registry platform setup requires MCP_REGISTRY_ENDPOINT"
 
 You omitted `--test-mode` and used `--registry-mode auto`. For this k3s cluster
-use `--registry-mode bundled-https` (included in `hack/setup-k3s-mcpruntime-org.sh`).
+use `--registry-mode bundled-https` (included in `hack/deploy/mcpruntime-org/setup.sh`).
 Do not export a ClusterIP as `MCP_REGISTRY_ENDPOINT` on the public TLS deployment.
 
 ### Setup fails "MCP_IMAGE_PLATFORM does not match Kubernetes node architecture"

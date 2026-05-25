@@ -402,8 +402,8 @@ your enterprise issuer, or pre-created TLS secrets.
 **Reinstalling on the same public domain** (app-namespace wipe, setup rerun):
 Let's Encrypt limits duplicate certificates to five per domain set per seven days.
 Use [k3s Deployment Runbook - Step 0](k3s-deployment-runbook.md#step-0-back-up-platform-runtime-state-before-any-wipe)
-or `hack/clean-k3s-mcpruntime-org.sh --yes` to back up platform-runtime TLS
-before delete, then `hack/setup-k3s-mcpruntime-org.sh` to restore after setup.
+or `hack/deploy/mcpruntime-org/clean.sh --yes` to back up platform-runtime TLS
+before delete, then `hack/deploy/mcpruntime-org/setup.sh` to restore after setup.
 
 Back up cert-manager `Certificate`, `Issuer` or `ClusterIssuer`, and TLS
 `Secret` objects when migrating an existing public install that already

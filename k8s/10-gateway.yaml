@@ -466,7 +466,7 @@ metadata:
   name: mcp-sentinel-gateway
   namespace: mcp-sentinel
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: mcp-sentinel-gateway

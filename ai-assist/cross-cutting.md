@@ -84,7 +84,7 @@ can have an evicted session in cache while the K8s object still exists.
 
 References:
 - `services/mcp-gateway/policy_cache.go` (`startPolicyCache`, 5s tick)
-- `hack/multitenancytest.sh` (12s sleep with chain explanation)
+- `hack/deploy/mcpruntime-org/multitenancy-test.sh` (12s sleep with chain explanation)
 - `AGENTS.md` → **Governance (grants and sessions)** → "allow a few seconds"
 
 Added: 2026-05-24

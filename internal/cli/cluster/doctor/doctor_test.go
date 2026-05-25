@@ -916,7 +916,7 @@ func TestCheckManagedTeamWorkloadServiceAccounts(t *testing.T) {
 }
 
 func TestCheckOperatorRegistryEndpoint(t *testing.T) {
-	t.Run("fails when endpoint matches public ingress host", func(t *testing.T) {
+	t.Run("passes when endpoint matches ingress host", func(t *testing.T) {
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				return &core.MockCommand{OutputData: []byte(`{
@@ -928,11 +928,11 @@ func TestCheckOperatorRegistryEndpoint(t *testing.T) {
 			},
 		}
 		check := checkOperatorRegistryEndpoint(core.NewTestKubectlClient(mock))
-		if check.OK {
-			t.Fatal("expected public endpoint to fail")
+		if !check.OK {
+			t.Fatalf("expected public hostname endpoint to pass, got detail=%q remedy=%q", check.Detail, check.Remedy)
 		}
-		if !strings.Contains(check.Detail, "public ingress host") {
-			t.Fatalf("detail = %q, want public ingress hint", check.Detail)
+		if !strings.Contains(check.Detail, "matches MCP_REGISTRY_INGRESS_HOST") {
+			t.Fatalf("detail = %q, want ingress host hint", check.Detail)
 		}
 	})
 

@@ -231,7 +231,7 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 		},
 		{Name: "MCPServer CRD", Detail: "checking that the MCPServer API type is installed", Run: func() DoctorCheck { return checkMCPServerCRD(kubectl) }},
 		{Name: "operator readiness", Detail: "reading ready and desired replicas for the operator deployment", Run: func() DoctorCheck { return checkOperatorReady(kubectl) }},
-		{Name: "operator registry endpoint", Detail: "checking the operator uses an internal registry pull endpoint instead of the public registry ingress host", Run: func() DoctorCheck { return checkOperatorRegistryEndpoint(kubectl) }},
+		{Name: "operator registry endpoint", Detail: "checking the operator uses a node-pullable registry endpoint", Run: func() DoctorCheck { return checkOperatorRegistryEndpoint(kubectl) }},
 		{Name: "operator reconcile errors (last 10m)", Detail: "scanning recent operator logs for reconcile failure patterns", Run: func() DoctorCheck { return checkOperatorRecentReconcileErrors(kubectl) }},
 		{Name: "operator ClusterRole rules", Detail: "verifying mcp-runtime-operator-role grants get/list/watch on the resources the informer cache needs", Run: func() DoctorCheck { return checkOperatorClusterRoleRules(kubectl) }},
 		{Name: "traefik ingressClass", Detail: "checking that the traefik IngressClass exists", Run: func() DoctorCheck { return checkTraefikIngressClass(kubectl) }},

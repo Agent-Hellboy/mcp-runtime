@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 )
 
 const (
@@ -79,8 +81,11 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		return err
 	}
 
-	imagePullSecretName, err := ensureAnalyticsImagePullSecretClientGo()
+	imagePullSecretName, err := ensureAnalyticsImagePullSecretClientGo(images)
 	if err != nil {
+		return err
+	}
+	if err := ensureOperatorPublicRegistryPullSecretClientGo(images); err != nil {
 		return err
 	}
 
@@ -166,20 +171,19 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		{kind: "statefulset", name: "loki"},
 		{kind: "daemonset", name: "promtail"},
 	}
-	var rolloutFailures []string
-	var failedForDebug []analyticsFailedRollout
-	for _, target := range targets {
-		rolloutLog, err := runRolloutWithOptionalDebugCaptureClientGo(target.kind, target.name, core.DefaultAnalyticsNamespace, rolloutTimeoutDuration)
-		if err != nil {
-			rolloutFailures = append(rolloutFailures, fmt.Sprintf("%s/%s: %v", target.kind, target.name, err))
-			failedForDebug = append(failedForDebug, analyticsFailedRollout{
-				kind: target.kind, name: target.name, rolloutLog: rolloutLog,
-			})
-		}
-	}
+	rolloutFailures, failedForDebug := waitForAnalyticsTargetsClientGo(targets, rolloutTimeoutDuration)
 	if len(rolloutFailures) == 0 {
 		core.Success("mcp-sentinel manifests deployed successfully")
 		return nil
+	}
+	if recovered, recoverErr := recoverKafkaClusterIDMismatchClientGo(logger, storageMode); recoverErr != nil {
+		return recoverErr
+	} else if recovered {
+		rolloutFailures, failedForDebug = waitForAnalyticsTargetsClientGo(targets, rolloutTimeoutDuration)
+		if len(rolloutFailures) == 0 {
+			core.Success("mcp-sentinel manifests deployed successfully")
+			return nil
+		}
 	}
 
 	printAnalyticsRolloutDiagnostics(core.DefaultKubectlClient())
@@ -225,8 +229,11 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		return err
 	}
 
-	imagePullSecretName, err := ensureAnalyticsImagePullSecret(kubectl)
+	imagePullSecretName, err := ensureAnalyticsImagePullSecret(kubectl, images)
 	if err != nil {
+		return err
+	}
+	if err := ensureOperatorPublicRegistryPullSecret(kubectl, images); err != nil {
 		return err
 	}
 
@@ -312,20 +319,19 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		{kind: "statefulset", name: "loki"},
 		{kind: "daemonset", name: "promtail"},
 	}
-	var rolloutFailures []string
-	var failedForDebug []analyticsFailedRollout
-	for _, target := range targets {
-		rolloutLog, err := runRolloutWithOptionalDebugCapture(kubectl, target.kind, target.name, core.DefaultAnalyticsNamespace, rolloutTimeout)
-		if err != nil {
-			rolloutFailures = append(rolloutFailures, fmt.Sprintf("%s/%s: %v", target.kind, target.name, err))
-			failedForDebug = append(failedForDebug, analyticsFailedRollout{
-				kind: target.kind, name: target.name, rolloutLog: rolloutLog,
-			})
-		}
-	}
+	rolloutFailures, failedForDebug := waitForAnalyticsTargetsWithKubectl(kubectl, targets, rolloutTimeout)
 	if len(rolloutFailures) == 0 {
 		core.Success("mcp-sentinel manifests deployed successfully")
 		return nil
+	}
+	if recovered, recoverErr := recoverKafkaClusterIDMismatchWithKubectl(kubectl, storageMode); recoverErr != nil {
+		return recoverErr
+	} else if recovered {
+		rolloutFailures, failedForDebug = waitForAnalyticsTargetsWithKubectl(kubectl, targets, rolloutTimeout)
+		if len(rolloutFailures) == 0 {
+			core.Success("mcp-sentinel manifests deployed successfully")
+			return nil
+		}
 	}
 
 	printAnalyticsRolloutDiagnostics(kubectl)
@@ -339,6 +345,36 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		}
 	}
 	return core.WrapWithSentinelAndContext(core.ErrOperatorDeploymentFailed, cause, msg, ctx)
+}
+
+func waitForAnalyticsTargetsClientGo(targets []struct{ kind, name string }, rolloutTimeout time.Duration) ([]string, []analyticsFailedRollout) {
+	var rolloutFailures []string
+	var failedForDebug []analyticsFailedRollout
+	for _, target := range targets {
+		rolloutLog, err := runRolloutWithOptionalDebugCaptureClientGo(target.kind, target.name, core.DefaultAnalyticsNamespace, rolloutTimeout)
+		if err != nil {
+			rolloutFailures = append(rolloutFailures, fmt.Sprintf("%s/%s: %v", target.kind, target.name, err))
+			failedForDebug = append(failedForDebug, analyticsFailedRollout{
+				kind: target.kind, name: target.name, rolloutLog: rolloutLog,
+			})
+		}
+	}
+	return rolloutFailures, failedForDebug
+}
+
+func waitForAnalyticsTargetsWithKubectl(kubectl core.KubectlRunner, targets []struct{ kind, name string }, rolloutTimeout string) ([]string, []analyticsFailedRollout) {
+	var rolloutFailures []string
+	var failedForDebug []analyticsFailedRollout
+	for _, target := range targets {
+		rolloutLog, err := runRolloutWithOptionalDebugCapture(kubectl, target.kind, target.name, core.DefaultAnalyticsNamespace, rolloutTimeout)
+		if err != nil {
+			rolloutFailures = append(rolloutFailures, fmt.Sprintf("%s/%s: %v", target.kind, target.name, err))
+			failedForDebug = append(failedForDebug, analyticsFailedRollout{
+				kind: target.kind, name: target.name, rolloutLog: rolloutLog,
+			})
+		}
+	}
+	return rolloutFailures, failedForDebug
 }
 
 func waitForKafkaRolloutClientGo(logger *zap.Logger, rolloutTimeout time.Duration, storageMode string) error {
@@ -1104,7 +1140,7 @@ func setupSecretEnvValue(candidates ...string) string {
 	return ""
 }
 
-func ensureAnalyticsImagePullSecret(kubectl core.KubectlRunner) (string, error) {
+func ensureAnalyticsImagePullSecret(kubectl core.KubectlRunner, images AnalyticsImageSet) (string, error) {
 	if explicit := platformImagePullSecretOverride(); explicit != "" {
 		return explicit, nil
 	}
@@ -1113,7 +1149,14 @@ func ensureAnalyticsImagePullSecret(kubectl core.KubectlRunner) (string, error) 
 		return "", err
 	}
 	if extRegistry == nil || extRegistry.URL == "" || (extRegistry.Username == "" && extRegistry.Password == "") {
-		return "", nil
+		return ensureBundledPublicRegistryPullSecret(
+			kubectl,
+			core.DefaultAnalyticsNamespace,
+			analyticsImagePullSecretCandidates(images),
+			func(namespace, name, key string) (string, error) {
+				return existingSecretDataValue(kubectl, namespace, name, key)
+			},
+		)
 	}
 	if err := ensureImagePullSecretWithKubectl(kubectl, core.DefaultAnalyticsNamespace, defaultRegistrySecretName, extRegistry.URL, extRegistry.Username, extRegistry.Password); err != nil {
 		return "", err
@@ -1125,7 +1168,7 @@ func platformImagePullSecretOverride() string {
 	return setupSecretEnvValue("MCP_PLATFORM_IMAGE_PULL_SECRET", "MCP_REGISTRY_PULL_SECRET_NAME")
 }
 
-func ensureAnalyticsImagePullSecretClientGo() (string, error) {
+func ensureAnalyticsImagePullSecretClientGo(images AnalyticsImageSet) (string, error) {
 	if explicit := platformImagePullSecretOverride(); explicit != "" {
 		return explicit, nil
 	}
@@ -1134,7 +1177,7 @@ func ensureAnalyticsImagePullSecretClientGo() (string, error) {
 		return "", err
 	}
 	if extRegistry == nil || extRegistry.URL == "" || (extRegistry.Username == "" && extRegistry.Password == "") {
-		return "", nil
+		return ensureBundledPublicRegistryPullSecretClientGo(core.DefaultAnalyticsNamespace, analyticsImagePullSecretCandidates(images))
 	}
 	clients, err := platformKubernetesClients()
 	if err != nil {
@@ -1144,6 +1187,169 @@ func ensureAnalyticsImagePullSecretClientGo() (string, error) {
 		return "", err
 	}
 	return defaultRegistrySecretName, nil
+}
+
+func ensureOperatorPublicRegistryPullSecret(kubectl core.KubectlRunner, images AnalyticsImageSet) error {
+	if platformImagePullSecretOverride() != "" {
+		return nil
+	}
+	secretName, err := ensureBundledPublicRegistryPullSecret(
+		kubectl,
+		core.NamespaceMCPRuntime,
+		analyticsImagePullSecretCandidates(images),
+		func(namespace, name, key string) (string, error) {
+			return existingSecretDataValue(kubectl, namespace, name, key)
+		},
+	)
+	if err != nil || strings.TrimSpace(secretName) == "" {
+		return err
+	}
+	return patchDeploymentImagePullSecret(kubectl, core.NamespaceMCPRuntime, core.OperatorDeploymentName, secretName)
+}
+
+func ensureOperatorPublicRegistryPullSecretClientGo(images AnalyticsImageSet) error {
+	if platformImagePullSecretOverride() != "" {
+		return nil
+	}
+	secretName, err := ensureBundledPublicRegistryPullSecretClientGo(core.NamespaceMCPRuntime, analyticsImagePullSecretCandidates(images))
+	if err != nil || strings.TrimSpace(secretName) == "" {
+		return err
+	}
+	return patchDeploymentImagePullSecretClientGo(core.NamespaceMCPRuntime, core.OperatorDeploymentName, secretName)
+}
+
+func ensureBundledPublicRegistryPullSecret(kubectl core.KubectlRunner, namespace string, images []string, readSecret analyticsSecretValueReader) (string, error) {
+	registryHost := bundledPublicRegistryPullSecretHost(images)
+	if registryHost == "" {
+		return "", nil
+	}
+	password, err := readSecret(core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "UI_API_KEY")
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(password) == "" {
+		return "", fmt.Errorf("cannot create pull secret for public registry %q: mcp-sentinel-secrets UI_API_KEY is empty", registryHost)
+	}
+	if err := ensureImagePullSecretWithKubectl(kubectl, namespace, defaultRegistrySecretName, registryHost, "platform-service", password); err != nil {
+		return "", err
+	}
+	return defaultRegistrySecretName, nil
+}
+
+func ensureBundledPublicRegistryPullSecretClientGo(namespace string, images []string) (string, error) {
+	registryHost := bundledPublicRegistryPullSecretHost(images)
+	if registryHost == "" {
+		return "", nil
+	}
+	password, err := existingSecretDataValueClientGo(core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "UI_API_KEY")
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(password) == "" {
+		return "", fmt.Errorf("cannot create pull secret for public registry %q: mcp-sentinel-secrets UI_API_KEY is empty", registryHost)
+	}
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return "", err
+	}
+	if err := k8sclient.UpsertDockerConfigSecret(context.Background(), clients, namespace, defaultRegistrySecretName, registryHost, "platform-service", password); err != nil {
+		return "", err
+	}
+	return defaultRegistrySecretName, nil
+}
+
+func analyticsImagePullSecretCandidates(images AnalyticsImageSet) []string {
+	return []string{images.Ingest, images.API, images.Processor, images.UI}
+}
+
+func bundledPublicRegistryPullSecretHost(images []string) string {
+	candidates := []string{}
+	if registryIngressHostExplicitlyConfigured() {
+		candidates = append(candidates, core.GetRegistryIngressHost())
+	}
+	if registryEndpointExplicitlyConfiguredForPlatform() {
+		candidates = append(candidates, core.GetRegistryEndpoint())
+	}
+	for _, candidate := range candidates {
+		host := normalizeImageRegistryHost(candidate)
+		if !isPublicRegistryPullHost(host) {
+			continue
+		}
+		for _, image := range images {
+			if normalizeImageRegistryHost(registryHostFromImage(image)) == host {
+				return host
+			}
+		}
+	}
+	return ""
+}
+
+func normalizeImageRegistryHost(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimSuffix(value, "/")
+	if value == "" {
+		return ""
+	}
+	if scheme := strings.Index(value, "://"); scheme >= 0 {
+		value = value[scheme+3:]
+	}
+	if before, _, found := strings.Cut(value, "/"); found {
+		value = before
+	}
+	return strings.TrimSpace(value)
+}
+
+func isPublicRegistryPullHost(host string) bool {
+	host = normalizeImageRegistryHost(host)
+	if host == "" || host == core.DefaultRegistryIngressHost || host == core.DefaultRegistryEndpoint {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") || strings.HasPrefix(host, "localhost:") {
+		return false
+	}
+	if strings.Contains(host, ".svc") || strings.Contains(host, ".cluster.local") {
+		return false
+	}
+	hostOnly := host
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		hostOnly = parsedHost
+	}
+	if net.ParseIP(hostOnly) != nil {
+		return false
+	}
+	return strings.Contains(hostOnly, ".")
+}
+
+func patchDeploymentImagePullSecret(kubectl core.KubectlRunner, namespace, name, secretName string) error {
+	patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":%q}]}}}}`, secretName)
+	cmd, err := kubectl.CommandArgs([]string{"patch", "deployment", name, "-n", namespace, "--type", "merge", "-p", patch})
+	if err != nil {
+		return err
+	}
+	cmd.SetStdout(os.Stdout)
+	cmd.SetStderr(os.Stderr)
+	return cmd.Run()
+}
+
+func patchDeploymentImagePullSecretClientGo(namespace, name, secretName string) error {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		deploy, err := clients.Clientset.AppsV1().Deployments(namespace).Get(context.Background(), name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		for _, existing := range deploy.Spec.Template.Spec.ImagePullSecrets {
+			if existing.Name == secretName {
+				return nil
+			}
+		}
+		deploy.Spec.Template.Spec.ImagePullSecrets = append(deploy.Spec.Template.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: secretName})
+		_, err = clients.Clientset.AppsV1().Deployments(namespace).Update(context.Background(), deploy, metav1.UpdateOptions{})
+		return err
+	})
 }
 
 func existingSecretDataValue(kubectl core.KubectlRunner, namespace, name, key string) (string, error) {
