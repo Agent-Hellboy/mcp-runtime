@@ -2271,6 +2271,22 @@ func TestCheckMCPServersImagePullSecrets(t *testing.T) {
 		}
 	})
 
+	t.Run("ok when kubectl notfound is only on combined output", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				return &core.MockCommand{
+					OutputData: []byte(`Error from server (NotFound): serviceaccounts "mcp-workload" not found`),
+					OutputErr:  errors.New("exit status 1"),
+				}
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		check := checkMCPServersImagePullSecrets(kubectl, "mcp-servers")
+		if !check.OK {
+			t.Fatalf("expected OK when notfound appears only on combined output, got detail=%q", check.Detail)
+		}
+	})
+
 	t.Run("fails when serviceaccount lookup errors", func(t *testing.T) {
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {

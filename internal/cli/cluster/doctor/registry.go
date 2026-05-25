@@ -151,9 +151,9 @@ func checkMCPServersImagePullSecrets(kubectl core.KubectlRunner, namespace strin
 			Remedy: fmt.Sprintf("check serviceaccount %s in %s", kubeworkload.DefaultServiceAccountName, namespace),
 		}
 	}
-	out, execErr := cmd.Output()
+	out, execErr := cmd.CombinedOutput()
 	if execErr != nil {
-		if isKubectlNotFound(execErr) {
+		if isKubectlNotFound(execErr) || isKubectlNotFoundOutput(string(out)) {
 			return DoctorCheck{
 				Name:   "mcp-servers imagePullSecrets",
 				OK:     true,

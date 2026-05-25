@@ -90,6 +90,11 @@ func isKubectlNotFound(err error) bool {
 	return strings.Contains(lower, "notfound") || strings.Contains(lower, "not found")
 }
 
+func isKubectlNotFoundOutput(output string) bool {
+	lower := strings.ToLower(strings.TrimSpace(output))
+	return strings.Contains(lower, "(notfound)") || strings.Contains(lower, "not found")
+}
+
 func buildMCPServerNamespaceJSONPath() string {
 	return `jsonpath={range .items[*]}{.metadata.namespace}{"\n"}{end}`
 }
