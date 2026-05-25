@@ -82,8 +82,6 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/clickhouse
-            - name: tmp
-              mountPath: /tmp
             - name: prometheus-config
               mountPath: /etc/clickhouse-server/config.d/prometheus.xml
               subPath: prometheus.xml
