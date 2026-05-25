@@ -600,9 +600,7 @@ run_cli_help_sweep() {
     "sentinel events"
     "sentinel port-forward"
     "sentinel restart"
-    "pipeline"
-    "pipeline generate"
-    "pipeline deploy"
+    "server generate"
     "setup"
     "status"
     "team"
@@ -1976,6 +1974,11 @@ if not resources_present:
 PY
 }
 
+deploy_manifest_dir() {
+  local dir="$1"
+  kubectl apply -f "${dir}"
+}
+
 deploy_example_server_via_pipeline() {
   local server_name="$1"
   local ingress_host="$2"
@@ -2011,8 +2014,8 @@ deploy_example_server_via_pipeline() {
 
   (
     cd "${example_workspace_dir}"
-    MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" "${PROJECT_ROOT}/bin/mcp-runtime" pipeline generate --dir .mcp --output manifests
-    MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" "${PROJECT_ROOT}/bin/mcp-runtime" pipeline deploy --dir manifests
+    MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" "${PROJECT_ROOT}/bin/mcp-runtime" server generate --metadata-dir .mcp --output manifests
+    deploy_manifest_dir manifests
   )
 
   echo "[deploy] waiting for ${server_name} rollout"
@@ -2568,13 +2571,13 @@ cleanup_mcp_server_and_wait() {
 }
 
 deploy_primary_server_manifests() {
-  MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" ./bin/mcp-runtime pipeline generate --file "${METADATA_FILE}" --output "${MANIFEST_DIR}"
-  MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" ./bin/mcp-runtime pipeline deploy --dir "${MANIFEST_DIR}"
+  MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" ./bin/mcp-runtime server generate --metadata-file "${METADATA_FILE}" --output "${MANIFEST_DIR}"
+  deploy_manifest_dir "${MANIFEST_DIR}"
 }
 
 deploy_oauth_server_manifests() {
-  MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" ./bin/mcp-runtime pipeline generate --file "${OAUTH_METADATA_FILE}" --output "${OAUTH_MANIFEST_DIR}"
-  MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" ./bin/mcp-runtime pipeline deploy --dir "${OAUTH_MANIFEST_DIR}"
+  MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" ./bin/mcp-runtime server generate --metadata-file "${OAUTH_METADATA_FILE}" --output "${OAUTH_MANIFEST_DIR}"
+  deploy_manifest_dir "${OAUTH_MANIFEST_DIR}"
 }
 
 start_local_registry() {
