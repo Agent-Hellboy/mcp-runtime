@@ -108,8 +108,8 @@ flowchart LR
     A[01. Initialize cluster<br/>cluster init / setup] --> B[02. Configure ingress + registry]
     B --> C[03. Describe servers<br/>MCPServer YAML]
     C --> D[04. Scaffold + publish<br/>server init, build, push, deploy]
-    D --> E[05. Grant access<br/>grant init / session init, apply]
-    E --> F[06. Observe<br/>status, sentinel, UI]
+    D --> E[05. Grant access<br/>grant init/apply; adapter sessions]
+    E --> F[06. Observe<br/>status, UI, API]
 ```
 
 | Step | Commands |
@@ -118,8 +118,8 @@ flowchart LR
 | Configure ingress + registry | `cluster config --ingress traefik`, `registry provision` |
 | Describe servers | `server init`, hand-written `MCPServer` YAML, or metadata in `.mcp/` |
 | Publish + deploy | `auth login`, `server build image`, `registry push`, `server deploy`, `server generate` for GitOps YAML |
-| Grant access | `auth login`, `access grant init`, `access grant apply`, `access session init`, `access session apply` |
-| Observe | `status`, `sentinel status`, `sentinel port-forward ui` |
+| Grant access | `auth login`, `access grant init`, `access grant apply`; sessions via `adapter stdio|proxy --server … --agent …` or admin `access session init/apply` |
+| Observe | `status`, platform UI/API; admin: `sentinel status`, `sentinel port-forward ui` |
 
 ## Traffic and enforcement model
 

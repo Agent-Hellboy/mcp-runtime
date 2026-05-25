@@ -41,6 +41,7 @@ The root command wires these internal command groups:
 | `auth` | `internal/cli/auth` | `auth.go` |
 | `sentinel` | `internal/cli/sentinel` | `sentinel.go`, `manager.go`, shared workload/probe helpers in `internal/cli/platformstatus` |
 | `team` | `internal/cli/team` | `team.go`, `manager.go` |
+| `admin` | `internal/cli/admin` | `admin.go` (hidden; operator-only kubectl helpers such as `admin registry push`) |
 
 When adding a command, wire it here only after the implementation has focused
 package tests and help text is ready for golden snapshots.

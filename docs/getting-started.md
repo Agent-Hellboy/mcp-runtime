@@ -138,10 +138,10 @@ Important contributor notes:
 | Pod is not ready or image pulls fail | `kubectl describe pod`, namespace events, `cluster doctor` |
 | Grant or session does not affect traffic | `access grant list`, `access session list`, `server policy inspect`, or admin-only `kubectl get mcpaccessgrant,mcpagentsession` |
 | Policy renders but tool calls are denied | `kubectl logs ... -c mcp-gateway`, request headers, `Mcp-Session-Id` / `X-MCP-Agent-Session` values |
-| Requests work but analytics are missing | `sentinel logs ingest`, `sentinel logs processor`, analytics secret and ingest URL |
+| Requests work but analytics are missing | `sentinel logs ingest`, `sentinel logs processor` (admin kubectl), analytics secret and ingest URL |
 | Dashboard, API, or MCP route returns 404 | `kubectl get ingress -A`, Sentinel ingress YAML, Traefik logs |
 
-Useful local platform checks:
+Useful local platform checks (admin kubectl for `sentinel *`):
 
 ```bash
 ./bin/mcp-runtime cluster doctor
@@ -166,11 +166,19 @@ kubectl get ingress -A
 kubectl get ingress -n mcp-sentinel -o yaml
 ```
 
-Apply an access grant and session for the local request. Prefer `init` to
-scaffold manifests, then apply through the platform API:
+Apply an access grant and session for the local curl request. Prefer `init` to
+scaffold manifests. **Grant apply** uses the platform API for server/team
+owners after `auth login`. **Session apply through the platform API requires an
+admin role** — for explicit curl headers in test mode, log in as the seeded
+admin (`admin@mcpruntime.org` / `admin@123`) or use the admin/operator
+fallbacks below. For agent traffic, prefer `adapter stdio` / `adapter proxy`
+with `--server` and `--agent` so the platform issues the session automatically.
+
+Platform path (admin login required for session apply):
 
 ```bash
-./bin/mcp-runtime auth login --api-url http://localhost:18080
+./bin/mcp-runtime auth login --api-url http://localhost:18080 \
+  --email admin@mcpruntime.org --password 'admin@123'
 
 ./bin/mcp-runtime access grant init workspace-assistant-local \
   --namespace mcp-servers \
@@ -512,12 +520,11 @@ For a non-Google OIDC provider, set `OIDC_ISSUER`, `OIDC_AUDIENCE`, and
 `mcp-sentinel/mcp-sentinel-config`.
 
 For multi-team or tenant-separated deployments, keep setup as the platform
-install and provision one namespace per team with `mcp-runtime team init <slug>`
-or the platform API `mcp-runtime team create <slug>` flow. Both repo-managed
-paths wire bundled Traefik for the team namespace. Use the platform API to
-default team IDs, or set `spec.teamID` and `subject.teamID` directly in YAML; an
-explicit foreign `subject.teamID` delegates access to another team while the
-gateway still matches every non-empty subject field. See
+install and provision one namespace per team with `mcp-runtime team create
+<slug>` (platform API). Use the platform API to default team IDs, or set
+`spec.teamID` and `subject.teamID` directly in YAML; an explicit foreign
+`subject.teamID` delegates access to another team while the gateway still
+matches every non-empty subject field. See
 [Multi-team isolation](multi-team.md).
 
 Common variants:
@@ -664,12 +671,14 @@ The server lands at `/{server-name}/mcp` on the configured ingress host, behind 
 
 #### Publish to the platform: what to do, and what happens next
 
-There are two ways to get a server into the platform:
+There are two supported ways to publish a governed server:
 
-1. Build and push an image, then apply an `MCPServer` manifest directly.
-2. Build and push an image, then generate and deploy `MCPServer` manifests from `.mcp` metadata.
+1. **Platform path (normal):** `auth login` → build → `registry push` →
+   `server deploy --metadata-dir .mcp` (or `server deploy` with image flags).
+2. **Admin/GitOps path:** build → push → `server apply --use-kube` or
+   `server generate` + GitOps apply with admin kubectl access.
 
-The end-to-end flow is the same either way:
+The end-to-end platform flow is:
 
 1. Build the image for your server.
 2. Push that image to the platform registry or another registry the cluster can pull from.
@@ -716,7 +725,11 @@ The target `MCPServer` should list the tools you want to govern, and every
 listed tool must include `sideEffect: read`, `write`, or `destructive`. Grants
 then declare which side-effect classes they allow.
 
-Scaffold manifests with `init`, then apply through the platform API:
+Scaffold manifests with `init`, then apply the grant through the platform API.
+For agents, issue sessions through `adapter stdio` / `adapter proxy` with
+`--server` and `--agent` (recommended). Direct `access session apply` through
+the platform API is **admin-only**; use an admin login, `--use-kube`, or
+`kubectl apply` when you need an explicit session manifest for curl testing.
 
 ```bash
 ./bin/mcp-runtime auth login --api-url <platform-url>
@@ -742,16 +755,24 @@ Scaffold manifests with `init`, then apply through the platform API:
   --output session.yaml
 
 ./bin/mcp-runtime access grant apply --file grant.yaml
+
+# Admin-only on platform API — or use adapter --auto-refresh instead:
 ./bin/mcp-runtime access session apply --file session.yaml
 ./bin/mcp-runtime server policy inspect payments
 ```
 
-For adapter-driven traffic, the platform usually issues sessions through
-`POST /api/runtime/adapter/sessions` when you run `mcp-runtime adapter stdio`
-or `adapter proxy` with `--server` and `--agent`. Use `access session init`
-only when you need an explicit/admin session manifest.
+For adapter-driven traffic, skip manual session apply and run:
 
-Hand-authored YAML reference:
+```bash
+./bin/mcp-runtime adapter stdio \
+  --runtime-url https://mcp.example.com/payments/mcp \
+  --server payments \
+  --agent ops-agent \
+  --auto-refresh
+```
+
+Hand-authored YAML reference (apply grant via platform API; session via admin
+login, `--use-kube`, or `kubectl apply`):
 
 ```yaml
 # grant.yaml
@@ -798,13 +819,22 @@ spec:
 
 ```bash
 ./bin/mcp-runtime auth login --api-url <platform-url>
-
 ./bin/mcp-runtime access grant apply --file grant.yaml
-./bin/mcp-runtime access session apply --file session.yaml
+# session: admin login, adapter, --use-kube, or kubectl apply — see above
 ./bin/mcp-runtime server policy inspect payments
 ```
 
 ## 10. Observe live traffic and policy
+
+Use the platform dashboard and API first:
+
+```bash
+./bin/mcp-runtime auth login --api-url <platform-url>
+./bin/mcp-runtime status
+# Dashboard: http://localhost:18080/ (Kind) or https://platform.<domain>/
+```
+
+Admin/operator kubectl diagnostics (`sentinel *` requires admin cluster access):
 
 ```bash
 ./bin/mcp-runtime sentinel port-forward ui          # Governance + dashboard
@@ -819,9 +849,10 @@ flowchart LR
     A[Build CLI<br/>make build] --> B[bootstrap + setup]
     B --> C[auth login]
     C --> D[server init<br/>build, push, deploy]
-    D --> E[grant init + session init<br/>apply]
-    E --> F[Traffic through gateway<br/>or adapter]
-    F --> G[Observe in UI + Grafana]
+    D --> E[grant init + apply]
+    E --> F[adapter or admin session]
+    F --> G[Traffic through gateway]
+    G --> H[Observe in UI + Grafana]
 ```
 
 ## Next steps

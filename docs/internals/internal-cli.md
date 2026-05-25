@@ -190,10 +190,8 @@ Tests: `adapter/adapter_test.go`, `adapter/platformsession_test.go`, and
 ## Team
 
 `internal/cli/team/` owns platform team commands. `team list`, `team create`,
-and `team user` call the platform API through `internal/cli/platformapi`;
-`team init` renders local Kubernetes namespace, RBAC, quota, limits,
-NetworkPolicy, workload service account, and bundled Traefik watch manifests
-before applying them with `kubectl`.
+and `team user` call the platform API through `internal/cli/platformapi`.
+`team init` is deprecated and rejects at runtime; use `team create`.
 
 Team behavior spans CLI and API code: platform-backed team creation and
 membership routes live in `services/api/internal/runtimeapi`, durable identity

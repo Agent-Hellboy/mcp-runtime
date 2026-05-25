@@ -281,9 +281,11 @@ list_invoices:allow
 refund_invoice:allow:high
 ```
 
-CLI parity: `mcp-runtime access grant init|apply` and
-`mcp-runtime access session init|apply` cover the same CRUD flows as the UI.
-CRs are the source of truth — the UI is a convenience layer.
+CLI parity: `mcp-runtime access grant init|apply` covers grant CRUD for
+authorized principals. `access session init|apply` matches the UI for
+**admin** session writes; agents and normal users should use
+`POST /api/runtime/adapter/sessions` via `adapter stdio|proxy --server …
+--agent …`. CRs are the source of truth — the UI is a convenience layer.
 
 For platform API writes, grants and sessions must reference a server in the same
 namespace as the access resource. Non-admin callers cannot write access
@@ -360,6 +362,9 @@ source subject preserved, never on the other server.
 `mcp-runtime setup` builds the sentinel images and deploys this stack by default. Use `--without-sentinel` to skip.
 
 ## Operating the stack
+
+These commands require **admin/operator kubectl** access. Normal users should
+use the platform dashboard and `/api/*` instead.
 
 ```bash
 # Health + Kubernetes events

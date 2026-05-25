@@ -149,10 +149,11 @@ mcp-runtime auth login --api-url https://platform.example.com
   --output session.yaml
 
 ./bin/mcp-runtime access grant apply --file grant.yaml
-./bin/mcp-runtime access session apply --file session.yaml
+# Platform API session apply is admin-only — use adapter for agents:
+# ./bin/mcp-runtime access session apply --file session.yaml
 ```
 
-Adapter-driven agents usually skip manual session apply; use
+Adapter-driven agents should skip manual session apply; use
 `mcp-runtime adapter stdio --server payments --agent cursor --auto-refresh`
 after the grant exists. See [Agent Adapters](agent-adapters.md).
 
@@ -321,10 +322,11 @@ exactly one server, it uses that server's inventory even when the deployed
 runtime name is different; this keeps `spec.tools` side-effect metadata in sync
 with governance policy.
 
-### Flow C — manual Docker build, push, and manifest apply
+### Flow C — manual Docker build, push, and manifest apply (admin/GitOps)
 
-Use this when you need full control of `MCPServer` fields and you have
-admin/operator Kubernetes access:
+Use this when you need full control of `MCPServer` fields and have
+admin/operator Kubernetes access. For the normal tenant platform path, use
+**Flow A/B** with `server deploy` instead of `server apply --use-kube`.
 
 ```bash
 docker build -t payments:v1.0.0 .
@@ -378,9 +380,11 @@ If the server uses governed access:
 If traffic is failing:
 
 ```bash
-./bin/mcp-runtime sentinel logs gateway --follow
+./bin/mcp-runtime server policy inspect payments
+./bin/mcp-runtime status
 
-# Admin/operator only — MCP server pod logs require --use-kube
+# Admin/operator only
+./bin/mcp-runtime sentinel logs gateway --follow
 ./bin/mcp-runtime server logs payments --follow --use-kube
 ```
 

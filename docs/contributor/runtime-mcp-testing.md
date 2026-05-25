@@ -152,10 +152,15 @@ kubectl logs -n "$NAMESPACE" "$POD" -c mcp-gateway
 Gateway policy requires both an access grant and an agent session when the
 server has `spec.session.required=true`.
 
-Use `init` to scaffold manifests, then apply through the platform API:
+Use `init` to scaffold manifests. Apply the grant through the platform API
+after `auth login`. Platform API **session apply requires an admin role** — use
+admin login (`admin@mcpruntime.org` in test mode), `--use-kube`, or `kubectl
+apply` for explicit curl sessions. For agent testing, prefer the adapter path
+documented below.
 
 ```bash
-./bin/mcp-runtime auth login --api-url http://localhost:18080
+./bin/mcp-runtime auth login --api-url http://localhost:18080 \
+  --email admin@mcpruntime.org --password 'admin@123'
 
 ./bin/mcp-runtime access grant init workspace-assistant-grant \
   --namespace mcp-servers \

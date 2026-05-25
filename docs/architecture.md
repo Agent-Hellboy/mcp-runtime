@@ -75,10 +75,12 @@ flowchart TB
    → ClickHouse; Grafana surfaces usage and traces.
 
 Control-plane changes (setup, `auth login`, `server init`, `server deploy`,
-`access grant init`, `access session init`) flow through the CLI or platform API
+`access grant init`, `access grant apply`) flow through the CLI or platform API
 into Kubernetes; the operator materializes Deployments, Services, Ingress, and
-policy ConfigMaps. Admin-only `--use-kube` or `kubectl apply` bypasses platform
-auth and requires operator RBAC.
+policy ConfigMaps. Sessions for agent traffic are usually issued through
+`POST /api/runtime/adapter/sessions`; explicit session manifests are
+admin-only on the platform API. Admin-only `--use-kube` or `kubectl apply`
+bypasses platform auth and requires operator RBAC.
 
 See [Request Flows](internals/request-flows.md) for allow/deny sequence diagrams,
 component-level paths, and E2E scenario mapping.

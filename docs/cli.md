@@ -1,6 +1,10 @@
 # CLI
 
-The `mcp-runtime` CLI is the operator-facing front door. It bootstraps clusters, manages registries, publishes servers through the platform API, operates access grants and sessions, and inspects the runtime + sentinel stack. Direct Kubernetes manifest operations (`server apply`, `create`, `patch`, `logs`, …) require the admin-only `--use-kube` flag.
+The `mcp-runtime` CLI bootstraps clusters, manages registries, publishes servers
+through the platform API, operates access grants and sessions, and inspects the
+runtime stack. Direct Kubernetes manifest operations (`server apply`, `create`,
+`patch`, `logs`, …) require the admin-only `--use-kube` flag. The `sentinel`
+command group also requires admin/operator kubectl access.
 
 ```mermaid
 flowchart LR
@@ -57,8 +61,8 @@ mcp-runtime <group> <subcommand> --help
 | `server` | Manage `MCPServer` resources and operator-facing actions. | `init`, `list`, `get`, `create`, `apply`, `deploy`, `generate`, `export`, `patch`, `delete`, `logs`, `status`, `policy inspect`, `build image` |
 | `access` | Manage `MCPAccessGrant` and `MCPAgentSession` resources that feed the gateway policy layer. | `grant init/list/get/apply/delete/disable/enable`, `session init/list/get/apply/delete/revoke/unrevoke` |
 | `adapter` | HTTP proxy and stdio shims that inject governance identity/session headers for agents. | `proxy`, `stdio` |
-| `team` | Manage internal platform teams, team password users, and Kubernetes team namespaces. | `list`, `create`, `user list`, `user create`, `init` |
-| `sentinel` | Inspect and operate the bundled analytics, gateway, and observability stack. | `status`, `events`, `logs`, `port-forward`, `restart` |
+| `team` | Manage internal platform teams, team password users, and Kubernetes team namespaces. | `list`, `create`, `user list`, `user create` |
+| `sentinel` | Inspect and operate the bundled analytics, gateway, and observability stack (**admin/operator kubectl only**). | `status`, `events`, `logs`, `port-forward`, `restart` |
 | `status` | Aggregated platform health (cluster, registry, operator, servers, sentinel). | `status` |
 | `completion` | Generate shell completion (bash, zsh, fish). | `completion bash\|zsh\|fish` |
 
@@ -242,6 +246,9 @@ Notes:
   pod-level detail needs `--use-kube`.
 - `server logs` always requires `--use-kube`; use `kubectl logs` or
   `sentinel logs gateway` when you only have platform credentials.
+- `access session apply` through the platform API is **admin-only**; agents
+  should use `adapter stdio|proxy --server … --agent …` or admins use
+  `--use-kube` / `kubectl apply` for explicit session manifests.
 - `--team` is a platform API resolver and is rejected with `--use-kube`.
 
 ## status
@@ -381,7 +388,9 @@ mcp-runtime access session unrevoke ops-agent
 `allowedSideEffects`. `--tool` is shorthand for an allow rule at `--trust`
 (default `low`). Use `--tool-rule name:allow|deny:low|medium|high` for mixed
 decisions. `access session init` is for explicit/admin session manifests; adapter
-`--auto-refresh` usually creates sessions automatically at runtime.
+`--auto-refresh` usually creates sessions automatically at runtime. Platform
+API `access session apply` requires an **admin** role; server/team owners use
+grant apply plus adapter-issued sessions for normal agent flows.
 
 For multi-team deployments, namespace scoping controls who can write resources
 and `teamID` controls who can use them. Put each team's grants and sessions in
@@ -398,8 +407,6 @@ mcp-runtime team user create globex \
   --password '...' \
   --role member
 mcp-runtime team user list globex
-mcp-runtime team init acme --group acme-mcp-admins
-mcp-runtime team init acme --dry-run
 ```
 
 `team list`, `team create`, and `team user` use the platform API, so run
@@ -410,14 +417,8 @@ bundled Traefik is present. `team user create` is admin-only. It creates or
 updates a password-login user and adds that user to the team as `member` or
 `owner`; use `auth login --username/--email --password` for the user login.
 
-`team init` uses local `kubectl`. It creates the team namespace, restricted
-workload service account, default quota and limits, default-deny NetworkPolicy,
-same-namespace and bundled-Traefik ingress allowances, MCP Runtime team-admin
-RBAC, bundled Traefik watch RBAC, and patches the repo-managed
-`traefik/traefik` Deployment watch list unless
-`--skip-traefik-watch` is set. Use `--namespace`, `--group`, `--user`, or
-`--service-account` when the defaults do not match your cluster identity system.
-See
+`team init` is **deprecated** and rejects at runtime. Use `team create` for
+the normal platform-backed flow. See
 [Multi-team isolation](multi-team.md).
 
 ## server
@@ -460,6 +461,9 @@ unless the current principal has admin/operator cluster access.
 `server build image` updates matching `.mcp` metadata. It defaults Docker builds to `linux/amd64` so images can run on typical amd64 Kubernetes nodes; override with `--platform` or `MCP_DOCKER_PLATFORM` for another node architecture. It prefers an explicit registry host, then the cluster's `registry/registry` Ingress host, before falling back to the registry Service address. That keeps metadata images on a node-pullable public host such as `registry.example.com/public/payments:v1` when the cluster exposes one. Tenant metadata still uses the authenticated team repository prefix when platform credentials are configured. Push that exact ref after logging in to the platform. The command does not deploy by itself; push and deploy are separate steps. `server deploy --scope public` and `--scope org` let the platform resolve the active catalog namespace; `--scope tenant` uses the authenticated user's team namespace unless `--team` or `--namespace` selects one explicitly. Deploy accepts a short image name and expands it through the platform API to the configured node-pullable registry endpoint plus the active scope prefix. `server deploy --metadata-dir .mcp` includes the matching server inventory, including tool side-effect metadata used by governed tool calls. A repeat deploy with the same server name fails by default; pass `--update` when you intentionally want to redeploy an existing server.
 
 ## sentinel
+
+Admin/operator only — requires kubectl access to the cluster. Normal users
+should use the platform dashboard, `/api/*`, and top-level `mcp-runtime status`.
 
 ```bash
 # Health + recent Kubernetes events
@@ -526,13 +530,12 @@ mcp-runtime registry push --scope tenant --image <exact-image-ref-from-build>
 # Deploy from metadata
 mcp-runtime server deploy payments --scope tenant --metadata-dir .mcp
 
-# Scaffold and apply access policy
+# Scaffold and apply access policy (grant via platform API; session via adapter or admin)
 mcp-runtime access grant init payments-ops --server payments --agent-id ops-agent \
   --tool list_invoices --output grant.yaml
-mcp-runtime access session init payments-ops-session --server payments \
-  --agent-id ops-agent --trust high --output session.yaml
 mcp-runtime access grant apply --file grant.yaml
-mcp-runtime access session apply --file session.yaml
+mcp-runtime adapter stdio --runtime-url http://localhost:18080/payments/mcp \
+  --server payments --agent ops-agent --auto-refresh
 mcp-runtime server policy inspect payments
 
 # Open the sentinel UI locally
