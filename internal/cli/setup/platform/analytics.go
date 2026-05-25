@@ -1322,7 +1322,7 @@ func isPublicRegistryPullHost(host string) bool {
 
 func patchDeploymentImagePullSecret(kubectl core.KubectlRunner, namespace, name, secretName string) error {
 	patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":%q}]}}}}`, secretName)
-	cmd, err := kubectl.CommandArgs([]string{"patch", "deployment", name, "-n", namespace, "--type", "merge", "-p", patch})
+	cmd, err := kubectl.CommandArgs([]string{"patch", "deployment", name, "-n", namespace, "-p", patch})
 	if err != nil {
 		return err
 	}

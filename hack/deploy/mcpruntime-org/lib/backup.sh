@@ -53,11 +53,7 @@ mcpruntime_org_backup_is_not_found() {
 mcpruntime_org_backup_validate_yaml() {
   local file="$1"
   [[ -s "$file" ]] || return 1
-  command -v jq >/dev/null 2>&1 || {
-    grep -q '^kind:' "$file" && grep -q '^metadata:' "$file"
-    return
-  }
-  jq -e '.kind and .metadata.name' "$file" >/dev/null 2>&1
+  grep -q '^kind:' "$file" && grep -q '^metadata:' "$file"
 }
 
 mcpruntime_org_backup_resource() {

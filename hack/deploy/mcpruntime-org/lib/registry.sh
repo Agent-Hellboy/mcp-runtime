@@ -23,7 +23,6 @@ mcpruntime_org_ensure_platform_pull_secret() {
     --dry-run=client -o yaml | mcpruntime_org_kubectl apply -f -
   mcpruntime_org_kubectl patch deployment/mcp-sentinel-api deployment/mcp-sentinel-ui \
     -n mcp-sentinel \
-    --type merge \
     -p '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"mcp-runtime-registry-pull"}]}}}}'
 }
 
@@ -72,7 +71,7 @@ mcpruntime_org_registry_ensure_port_forward() {
   fi
 
   mcpruntime_org_registry_port_forward_stop "$pf_pid"
-  echo "Starting registry port-forward on 127.0.0.1:${port}..."
+  echo "Starting registry port-forward on 127.0.0.1:${port}..." >&2
   pf_pid="$(mcpruntime_org_registry_port_forward_start "$port")"
   MCP_REGISTRY_PF_PID="$pf_pid"
   local i
