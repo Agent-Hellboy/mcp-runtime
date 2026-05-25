@@ -136,6 +136,7 @@ in `internal/cli/server/validation.go`.
 
 Keep these flows distinct:
 
+- `server init` scaffolds `.mcp/servers.yaml` with governed defaults.
 - `server apply` applies a manifest.
 - `server build image` builds and updates metadata but does not deploy.
 - `server generate` renders manifests from metadata for review/GitOps.
@@ -157,8 +158,11 @@ Tests: `server`/`metadata` package tests and golden CLI help snapshots.
 
 `internal/cli/access/` provides commands for grants and sessions:
 
-- `access grant list|get|apply|delete|enable|disable`
-- `access session list|get|apply|delete|revoke|unrevoke`
+- `access grant init|list|get|apply|delete|enable|disable`
+- `access session init|list|get|apply|delete|revoke|unrevoke`
+
+`init` scaffolds reviewable YAML; `apply` writes through the platform API by
+default or with `--use-kube` for direct Kubernetes admin flows.
 
 The implementation patches `spec.disabled` for grants and `spec.revoked` for
 sessions. Input validation should prevent invalid names/namespaces before they

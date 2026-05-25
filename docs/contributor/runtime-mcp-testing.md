@@ -144,9 +144,26 @@ kubectl logs -n "$NAMESPACE" "$POD" -c mcp-gateway
 Gateway policy requires both an access grant and an agent session when the
 server has `spec.session.required=true`.
 
-Use the CLI apply commands:
+Use `init` to scaffold manifests, then apply:
 
 ```bash
+./bin/mcp-runtime access grant init workspace-assistant-grant \
+  --namespace mcp-servers \
+  --server workspace-assistant-mcp \
+  --human-id local-user \
+  --agent-id local-agent \
+  --tool add --tool upper \
+  --trust high \
+  --output /tmp/grant.yaml
+
+./bin/mcp-runtime access session init local-session \
+  --namespace mcp-servers \
+  --server workspace-assistant-mcp \
+  --human-id local-user \
+  --agent-id local-agent \
+  --trust high \
+  --output /tmp/session.yaml
+
 ./bin/mcp-runtime access grant apply --file /tmp/grant.yaml --use-kube
 ./bin/mcp-runtime access session apply --file /tmp/session.yaml --use-kube
 ```

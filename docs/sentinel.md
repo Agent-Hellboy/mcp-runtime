@@ -281,7 +281,9 @@ list_invoices:allow
 refund_invoice:allow:high
 ```
 
-CLI parity: `mcp-runtime access grant` and `mcp-runtime access session` cover the same CRUD flows. CRs are the source of truth — the UI is a convenience layer.
+CLI parity: `mcp-runtime access grant init|apply` and
+`mcp-runtime access session init|apply` cover the same CRUD flows as the UI.
+CRs are the source of truth — the UI is a convenience layer.
 
 For platform API writes, grants and sessions must reference a server in the same
 namespace as the access resource. Non-admin callers cannot write access

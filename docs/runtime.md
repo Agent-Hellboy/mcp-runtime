@@ -107,8 +107,8 @@ flowchart TB
 flowchart LR
     A[01. Initialize cluster<br/>cluster init / setup] --> B[02. Configure ingress + registry]
     B --> C[03. Describe servers<br/>MCPServer YAML]
-    C --> D[04. Publish + deploy images<br/>registry push, server deploy]
-    D --> E[05. Grant access<br/>access grant / session apply]
+    C --> D[04. Scaffold + publish<br/>server init, build, push, deploy]
+    D --> E[05. Grant access<br/>grant init / session init, apply]
     E --> F[06. Observe<br/>status, sentinel, UI]
 ```
 
@@ -116,9 +116,9 @@ flowchart LR
 |---|---|
 | Initialize cluster | `cluster init`, `setup`, `bootstrap` |
 | Configure ingress + registry | `cluster config --ingress traefik`, `registry provision` |
-| Describe servers | hand-written `MCPServer` YAML or metadata in `.mcp/` |
+| Describe servers | `server init`, hand-written `MCPServer` YAML, or metadata in `.mcp/` |
 | Publish + deploy | `server build image`, `registry push`, `server deploy`, `server generate` for GitOps YAML |
-| Grant access | `access grant apply`, `access session apply` |
+| Grant access | `access grant init`, `access grant apply`, `access session init`, `access session apply` |
 | Observe | `status`, `sentinel status`, `sentinel port-forward ui` |
 
 ## Traffic and enforcement model

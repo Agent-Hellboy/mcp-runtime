@@ -26,8 +26,13 @@ make build
 ./bin/mcp-runtime auth login --api-url https://platform.example.com --token-stdin < token.txt
 ./bin/mcp-runtime auth status
 
+./bin/mcp-runtime server init payments --tool list_invoices
+./bin/mcp-runtime server build image payments --tag v1
 ./bin/mcp-runtime registry push --image <image-ref-you-built-locally>
-./bin/mcp-runtime server deploy <server-name> --scope tenant --metadata-dir .mcp
+./bin/mcp-runtime server deploy payments --scope tenant --metadata-dir .mcp
+
+./bin/mcp-runtime access grant init payments-ops --server payments --agent-id ops-agent --tool list_invoices --output grant.yaml
+./bin/mcp-runtime access grant apply --file grant.yaml
 ```
 
 For a new workstation, run `make deps-install` first where supported, then `STRICT_DEPS_CHECK=1 make deps-check`. Required host tools are Go `1.26+`, Make, Docker with a reachable daemon, `kubectl` configured for the cluster, plus `curl`, `jq`, and `python3` for documented dev flows. `kind` is required only for local Kind clusters.
@@ -46,11 +51,11 @@ mcp-runtime <group> <subcommand> --help
 |---|---|---|
 | `bootstrap` | Preflight checks for cluster prerequisites (DNS, default StorageClass, ingress class, MetalLB). With `--apply` on k3s only, install bundled CoreDNS + local-path manifests. | `bootstrap`, `--apply`, `--provider auto\|k3s\|rke2\|kubeadm\|generic` |
 | `setup` | Install the platform stack, wire registry and ingress, deploy the operator, optionally include sentinel. | `setup`, `--with-tls`, `--without-sentinel` |
-| `auth` | Save and inspect platform API credentials for non-kubeconfig platform flows. | `login`, `logout`, `status` |
+| `auth` | Save and inspect platform API credentials for non-kubeconfig platform flows. | `login`, `logout`, `status`, `use` |
 | `cluster` | Initialize clusters, inspect health, configure kubeconfig and ingress, provision clusters, manage cert-manager. | `init`, `status`, `config`, `provision`, `cert status\|apply\|wait`, `doctor` |
 | `registry` | Inspect the internal registry, configure an external one, push images. | `status`, `info`, `provision`, `push` |
-| `server` | Manage `MCPServer` resources and operator-facing actions. | `list`, `get`, `create`, `apply`, `deploy`, `generate`, `export`, `patch`, `delete`, `logs`, `status`, `policy inspect`, `build image` |
-| `access` | Manage `MCPAccessGrant` and `MCPAgentSession` resources that feed the gateway policy layer. | `grant list/get/apply/delete/disable/enable`, `session list/get/apply/delete/revoke/unrevoke` |
+| `server` | Manage `MCPServer` resources and operator-facing actions. | `init`, `list`, `get`, `create`, `apply`, `deploy`, `generate`, `export`, `patch`, `delete`, `logs`, `status`, `policy inspect`, `build image` |
+| `access` | Manage `MCPAccessGrant` and `MCPAgentSession` resources that feed the gateway policy layer. | `grant init/list/get/apply/delete/disable/enable`, `session init/list/get/apply/delete/revoke/unrevoke` |
 | `adapter` | HTTP proxy and stdio shims that inject governance identity/session headers for agents. | `proxy`, `stdio` |
 | `team` | Manage internal platform teams, team password users, and Kubernetes team namespaces. | `list`, `create`, `user list`, `user create`, `init` |
 | `sentinel` | Inspect and operate the bundled analytics, gateway, and observability stack. | `status`, `events`, `logs`, `port-forward`, `restart` |
@@ -274,6 +279,16 @@ true`. Repeated `--tool` flags seed read/low tool metadata. Use repeated
 trust levels or side-effect classes. If a metadata entry with the same server
 name already exists, `server init` fails unless `--force` is passed.
 
+Typical platform path after `server init`:
+
+```bash
+mcp-runtime auth login --api-url https://platform.example.com
+mcp-runtime server build image payments --tag v1
+mcp-runtime registry push --scope tenant --image <exact-image-ref-from-build>
+mcp-runtime server deploy payments --scope tenant --metadata-dir .mcp
+mcp-runtime server deploy payments --scope tenant --metadata-dir .mcp --update   # repeat deploys
+```
+
 ## server generate
 
 ```bash
@@ -285,6 +300,9 @@ mcp-runtime server generate --metadata-file .mcp/payments.yaml --output manifest
 For the full build, push, deploy, and verify flow, see [Publish an MCP Server](publish-mcp-server.md).
 
 ## access
+
+Scaffold manifests with `init`, then apply through the platform API (default)
+or with `--use-kube` for direct Kubernetes admin flows.
 
 ```bash
 # Grants
@@ -333,6 +351,12 @@ mcp-runtime access session unrevoke ops-agent
 ```
 
 `grant list` and `session list` default to `--all-namespaces`; pass `--namespace` to narrow scope.
+
+`access grant init` writes a reviewable YAML file with tool rules and
+`allowedSideEffects`. `--tool` is shorthand for an allow rule at `--trust`
+(default `low`). Use `--tool-rule name:allow|deny:low|medium|high` for mixed
+decisions. `access session init` is for explicit/admin session manifests; adapter
+`--auto-refresh` usually creates sessions automatically at runtime.
 
 For multi-team deployments, namespace scoping controls who can write resources
 and `teamID` controls who can use them. Put each team's grants and sessions in
@@ -469,13 +493,18 @@ mcp-runtime setup
 mcp-runtime auth login --api-url http://localhost:18080
 
 # Push a server image
+mcp-runtime server init payments --tool list_invoices
 mcp-runtime server build image payments
 mcp-runtime registry push --scope tenant --image <exact-image-ref-from-build>
 
 # Deploy from metadata
 mcp-runtime server deploy payments --scope tenant --metadata-dir .mcp
 
-# Apply access + inspect resulting policy
+# Scaffold and apply access policy
+mcp-runtime access grant init payments-ops --server payments --agent-id ops-agent \
+  --tool list_invoices --output grant.yaml
+mcp-runtime access session init payments-ops-session --server payments \
+  --agent-id ops-agent --trust high --output session.yaml
 mcp-runtime access grant apply --file grant.yaml
 mcp-runtime access session apply --file session.yaml
 mcp-runtime server policy inspect payments

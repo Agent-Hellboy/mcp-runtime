@@ -74,9 +74,9 @@ flowchart TB
 3. Allowed tool calls emit analytics events through ingest → Kafka → processor
    → ClickHouse; Grafana surfaces usage and traces.
 
-Control-plane changes (setup, `server deploy`, grants) flow through the CLI or
-platform API into Kubernetes; the operator materializes Deployments, Services,
-Ingress, and policy ConfigMaps.
+Control-plane changes (setup, `server init`, `server deploy`, `access grant init`,
+`access session init`) flow through the CLI or platform API into Kubernetes;
+the operator materializes Deployments, Services, Ingress, and policy ConfigMaps.
 
 See [Request Flows](internals/request-flows.md) for allow/deny sequence diagrams,
 component-level paths, and E2E scenario mapping.

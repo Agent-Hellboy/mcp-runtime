@@ -126,7 +126,35 @@ when a grant needs mixed per-tool decisions or trust levels. For explicit
 session manifests, `access session init` supports `--trust`,
 `--expires-in`, `--expires-at`, `--revoked`, and upstream-token secret flags.
 
-Example:
+```bash
+./bin/mcp-runtime access grant init payments-globex-cursor \
+  --namespace mcp-team-acme \
+  --server payments \
+  --team-id <globex-team-id> \
+  --agent-id cursor \
+  --tool list_invoices \
+  --tool-rule refund_invoice:allow:high \
+  --side-effect read \
+  --output grant.yaml
+
+./bin/mcp-runtime access session init cursor-session \
+  --namespace mcp-team-acme \
+  --server payments \
+  --human-id <user-id> \
+  --agent-id cursor \
+  --trust medium \
+  --expires-in 1h \
+  --output session.yaml
+
+./bin/mcp-runtime access grant apply --file grant.yaml
+./bin/mcp-runtime access session apply --file session.yaml
+```
+
+Adapter-driven agents usually skip manual session apply; use
+`mcp-runtime adapter stdio --server payments --agent cursor --auto-refresh`
+after the grant exists. See [Agent Adapters](agent-adapters.md).
+
+Example metadata:
 
 ```yaml
 version: v1

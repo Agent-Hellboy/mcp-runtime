@@ -166,7 +166,32 @@ kubectl get ingress -A
 kubectl get ingress -n mcp-sentinel -o yaml
 ```
 
-Apply an access grant and session for the local request:
+Apply an access grant and session for the local request. Prefer `init` to
+scaffold manifests, or apply hand-written YAML:
+
+```bash
+./bin/mcp-runtime access grant init workspace-assistant-local \
+  --namespace mcp-servers \
+  --server workspace-assistant-mcp \
+  --human-id local-user \
+  --agent-id local-agent \
+  --tool add --tool upper \
+  --trust high \
+  --output /tmp/grant.yaml
+
+./bin/mcp-runtime access session init local-session \
+  --namespace mcp-servers \
+  --server workspace-assistant-mcp \
+  --human-id local-user \
+  --agent-id local-agent \
+  --trust high \
+  --output /tmp/session.yaml
+
+./bin/mcp-runtime access grant apply --file /tmp/grant.yaml --use-kube
+./bin/mcp-runtime access session apply --file /tmp/session.yaml --use-kube
+```
+
+Hand-written YAML fallback:
 
 ```bash
 cat > /tmp/workspace-assistant-access.yaml <<'EOF'
@@ -665,6 +690,43 @@ The target `MCPServer` should list the tools you want to govern, and every
 listed tool must include `sideEffect: read`, `write`, or `destructive`. Grants
 then declare which side-effect classes they allow.
 
+Scaffold manifests with `init`, then apply through the platform API:
+
+```bash
+./bin/mcp-runtime auth login --api-url <platform-url>
+
+./bin/mcp-runtime access grant init payments-ops-agent \
+  --namespace mcp-servers \
+  --server payments \
+  --human-id user-123 \
+  --agent-id ops-agent \
+  --tool list_invoices \
+  --tool-rule refund_invoice:allow:high \
+  --side-effect read \
+  --side-effect destructive \
+  --trust high \
+  --output grant.yaml
+
+./bin/mcp-runtime access session init payments-ops-agent-session \
+  --namespace mcp-servers \
+  --server payments \
+  --human-id user-123 \
+  --agent-id ops-agent \
+  --trust high \
+  --output session.yaml
+
+./bin/mcp-runtime access grant apply --file grant.yaml
+./bin/mcp-runtime access session apply --file session.yaml
+./bin/mcp-runtime server policy inspect payments
+```
+
+For adapter-driven traffic, the platform usually issues sessions through
+`POST /api/runtime/adapter/sessions` when you run `mcp-runtime adapter stdio`
+or `adapter proxy` with `--server` and `--agent`. Use `access session init`
+only when you need an explicit/admin session manifest.
+
+Hand-authored YAML reference:
+
 ```yaml
 # grant.yaml
 apiVersion: mcpruntime.org/v1alpha1
@@ -709,7 +771,6 @@ spec:
 ```
 
 ```bash
-./bin/mcp-runtime auth login --api-url <platform-url>
 ./bin/mcp-runtime access grant apply --file grant.yaml
 ./bin/mcp-runtime access session apply --file session.yaml
 ./bin/mcp-runtime server policy inspect payments
@@ -727,12 +788,11 @@ spec:
 
 ```mermaid
 flowchart LR
-    A[Build CLI<br/>make build] --> B[bootstrap<br/>cluster preflight]
-    B --> C[setup<br/>install platform]
-    C --> D[Apply MCPServer]
-    D --> E[Apply Grant + Session]
-    E --> F[Traffic flows<br/>through gateway]
-    F --> G[Observe in UI<br/>+ Grafana]
+    A[Build CLI<br/>make build] --> B[bootstrap + setup]
+    B --> C[server init<br/>build, push, deploy]
+    C --> D[grant init + session init<br/>apply]
+    D --> E[Traffic through gateway<br/>or adapter]
+    E --> F[Observe in UI + Grafana]
 ```
 
 ## Next steps
