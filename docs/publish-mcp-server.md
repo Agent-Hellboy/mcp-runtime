@@ -88,14 +88,14 @@ tool calls.
 - Add `spec.tools` with tool descriptions, trust levels, and side-effect classes so the platform catalog and policy engine mirror the tool summaries clients see from `tools/list`.
 - Add `spec.auth`, `spec.policy`, `spec.session`, or `spec.rollout` when you want stricter governance or more delivery control.
 
-Apply the manifest only from an admin/operator workstation. `server apply` uses
-direct Kubernetes mode, so it requires `--use-kube`, kubectl, and kubeconfig/RBAC
-access to the target namespace. For normal platform workflows, use the
-platform-backed `server deploy` flow in Option B instead.
+Apply the manifest only from an admin/operator workstation. `server apply`
+requires `--use-kube`, kubectl, and kubeconfig/RBAC access to the target
+namespace. For normal platform workflows, use the platform-backed
+`server deploy` flow in Option B instead.
 
 ```bash
 ./bin/mcp-runtime server apply --file payments.yaml --use-kube
-./bin/mcp-runtime server status --use-kube
+./bin/mcp-runtime server status --use-kube   # pod detail; omit --use-kube for platform API summary
 ```
 
 ## Option B: initialize or write `.mcp` metadata
@@ -127,6 +127,8 @@ session manifests, `access session init` supports `--trust`,
 `--expires-in`, `--expires-at`, `--revoked`, and upstream-token secret flags.
 
 ```bash
+mcp-runtime auth login --api-url https://platform.example.com
+
 ./bin/mcp-runtime access grant init payments-globex-cursor \
   --namespace mcp-team-acme \
   --server payments \
@@ -376,8 +378,10 @@ If the server uses governed access:
 If traffic is failing:
 
 ```bash
-./bin/mcp-runtime server logs payments --follow --use-kube
 ./bin/mcp-runtime sentinel logs gateway --follow
+
+# Admin/operator only — MCP server pod logs require --use-kube
+./bin/mcp-runtime server logs payments --follow --use-kube
 ```
 
 ## Common failure points

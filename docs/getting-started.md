@@ -136,7 +136,7 @@ Important contributor notes:
 | Symptom | First checks |
 |---------|--------------|
 | Pod is not ready or image pulls fail | `kubectl describe pod`, namespace events, `cluster doctor` |
-| Grant or session does not affect traffic | `kubectl get mcpaccessgrant,mcpagentsession`, `server policy inspect --use-kube`, raw policy ConfigMap |
+| Grant or session does not affect traffic | `access grant list`, `access session list`, `server policy inspect`, or admin-only `kubectl get mcpaccessgrant,mcpagentsession` |
 | Policy renders but tool calls are denied | `kubectl logs ... -c mcp-gateway`, request headers, `Mcp-Session-Id` / `X-MCP-Agent-Session` values |
 | Requests work but analytics are missing | `sentinel logs ingest`, `sentinel logs processor`, analytics secret and ingest URL |
 | Dashboard, API, or MCP route returns 404 | `kubectl get ingress -A`, Sentinel ingress YAML, Traefik logs |
@@ -167,9 +167,11 @@ kubectl get ingress -n mcp-sentinel -o yaml
 ```
 
 Apply an access grant and session for the local request. Prefer `init` to
-scaffold manifests, or apply hand-written YAML:
+scaffold manifests, then apply through the platform API:
 
 ```bash
+./bin/mcp-runtime auth login --api-url http://localhost:18080
+
 ./bin/mcp-runtime access grant init workspace-assistant-local \
   --namespace mcp-servers \
   --server workspace-assistant-mcp \
@@ -187,11 +189,27 @@ scaffold manifests, or apply hand-written YAML:
   --trust high \
   --output /tmp/session.yaml
 
+./bin/mcp-runtime access grant apply --file /tmp/grant.yaml
+./bin/mcp-runtime access session apply --file /tmp/session.yaml
+
+until ./bin/mcp-runtime server policy inspect workspace-assistant-mcp --namespace mcp-servers | grep -q local-session; do
+  sleep 2
+done
+
+# The proxy sidecar reloads rendered policy on a short polling loop, so give the
+# gateway a few seconds to observe the new access session before the first tool call.
+sleep 6
+```
+
+Admin/operator fallback with direct Kubernetes access (`--use-kube` or
+`kubectl apply`):
+
+```bash
 ./bin/mcp-runtime access grant apply --file /tmp/grant.yaml --use-kube
 ./bin/mcp-runtime access session apply --file /tmp/session.yaml --use-kube
 ```
 
-Hand-written YAML fallback:
+Hand-written YAML fallback (admin kubectl apply):
 
 ```bash
 cat > /tmp/workspace-assistant-access.yaml <<'EOF'
@@ -232,13 +250,17 @@ spec:
 EOF
 
 kubectl apply -f /tmp/workspace-assistant-access.yaml
+```
 
-until ./bin/mcp-runtime server policy inspect workspace-assistant-mcp --namespace mcp-servers --use-kube | grep -q local-session; do
+Then wait for policy materialization through the platform API (after
+`auth login`) or inspect the ConfigMap directly with kubectl when debugging
+operator output:
+
+```bash
+./bin/mcp-runtime auth login --api-url http://localhost:18080
+until ./bin/mcp-runtime server policy inspect workspace-assistant-mcp --namespace mcp-servers | grep -q local-session; do
   sleep 2
 done
-
-# The proxy sidecar reloads rendered policy on a short polling loop, so give the
-# gateway a few seconds to observe the new access session before the first tool call.
 sleep 6
 ```
 
@@ -555,7 +577,7 @@ spec:
 
 ```bash
 ./bin/mcp-runtime server apply --file payments.yaml --use-kube
-./bin/mcp-runtime server status --use-kube
+./bin/mcp-runtime server status --use-kube   # full pod detail; platform API status omits pods
 ```
 
 #### How to write the manifest
@@ -678,10 +700,14 @@ Useful checks after publish:
 If the server does not come up, stay in the CLI first:
 
 ```bash
+./bin/mcp-runtime auth login --api-url <platform-url>
 ./bin/mcp-runtime server get payments
-./bin/mcp-runtime server logs payments --follow --use-kube
+./bin/mcp-runtime server status
 ./bin/mcp-runtime sentinel logs gateway --follow
 ./bin/mcp-runtime status
+
+# Admin/operator only — pod logs need --use-kube or kubectl
+./bin/mcp-runtime server logs payments --follow --use-kube
 ```
 
 ## 9. Grant governed access (for gateway-enabled servers)

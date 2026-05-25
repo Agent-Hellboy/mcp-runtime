@@ -217,9 +217,32 @@ Notes:
 - `MCP_PLATFORM_API_TOKEN` overrides any saved token when set
 - `MCP_PLATFORM_API_URL` can provide the default API base URL
 - kubeconfig-based cluster commands are separate from platform auth
-- `--use-kube` is an admin/dev/test escape hatch for supported server and
-  access commands; it requires kubectl plus admin/operator Kubernetes RBAC and
-  is not the normal platform API path
+
+## Platform API vs `--use-kube`
+
+Most `server` and `access` commands use the **platform API** by default. Run
+`mcp-runtime auth login --api-url <platform-url>` (or set
+`MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`) before those flows.
+
+`--use-kube` is **admin/dev/test only**. It bypasses platform auth and talks to
+the Kubernetes API through your kubeconfig. Use it only when you have
+admin/operator RBAC and intentionally want direct CRD/manifest operations.
+
+| Default (platform API) | Requires `--use-kube` (admin only) |
+|---|---|
+| `access grant/session` list, get, apply, delete, enable/disable, revoke/unrevoke | same commands with `--use-kube` for raw kubectl CRUD |
+| `server list`, `get`, `delete`, `status`, `policy inspect`, `deploy` | `server create`, `apply`, `export`, `patch`, `logs` |
+| `registry push` (always platform API) | `kubectl apply -f` for manifests (separate from CLI flag) |
+
+Notes:
+
+- `server get` without `--use-kube` returns a platform API summary; full
+  MCPServer YAML needs `--use-kube`.
+- `server status` without `--use-kube` lists servers from the platform API;
+  pod-level detail needs `--use-kube`.
+- `server logs` always requires `--use-kube`; use `kubectl logs` or
+  `sentinel logs gateway` when you only have platform credentials.
+- `--team` is a platform API resolver and is rejected with `--use-kube`.
 
 ## status
 
@@ -301,10 +324,12 @@ For the full build, push, deploy, and verify flow, see [Publish an MCP Server](p
 
 ## access
 
-Scaffold manifests with `init`, then apply through the platform API (default)
-or with `--use-kube` for direct Kubernetes admin flows.
+Scaffold manifests with `init`, then apply through the platform API (default).
+Add `--use-kube` only for admin/operator direct Kubernetes flows.
 
 ```bash
+mcp-runtime auth login --api-url https://platform.example.com
+
 # Grants
 mcp-runtime access grant init payments-globex-cursor \
   --namespace mcp-team-acme \
@@ -411,10 +436,12 @@ mcp-runtime server create payments --file server.yaml --use-kube
 mcp-runtime server apply --file server.yaml --use-kube
 mcp-runtime server export payments --file payments.yaml --use-kube
 
-# Patch / inspect
-mcp-runtime server patch payments --patch '{"spec":{"imageTag":"v2"}}' --use-kube
+# Patch / inspect (platform API)
 mcp-runtime server status --namespace mcp-servers
 mcp-runtime server policy inspect payments
+
+# Admin/operator only — requires --use-kube
+mcp-runtime server patch payments --patch '{"spec":{"imageTag":"v2"}}' --use-kube
 mcp-runtime server logs payments --follow --use-kube
 
 # Build (push lives under registry)
@@ -422,12 +449,11 @@ mcp-runtime server build image payments --tag v1 --platform linux/amd64
 mcp-runtime registry push --scope public --image <exact-image-ref-from-build>
 ```
 
-When `--use-kube` is absent, supported `server` commands use the platform API
-and require `mcp-runtime auth login --api-url <platform-url>` or
-`MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`. `--team` is a platform API
-resolver; it is rejected in direct Kubernetes mode. In `--use-kube` mode, use
-`--namespace` and expect kubeconfig/RBAC failures unless the current principal
-has admin/operator cluster access.
+When `--use-kube` is absent, the supported `server` and `access` commands above
+use the platform API and require `mcp-runtime auth login --api-url
+<platform-url>` or `MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`.
+In `--use-kube` mode, use `--namespace` and expect kubeconfig/RBAC failures
+unless the current principal has admin/operator cluster access.
 
 `server patch` accepts inline `--patch` or `--patch-file` with `merge`, `json`, or `strategic` modes.
 
@@ -513,7 +539,7 @@ mcp-runtime server policy inspect payments
 mcp-runtime sentinel port-forward ui
 mcp-runtime sentinel logs api --since 10m
 
-# Patch a running server
+# Patch a running server (admin/operator — requires --use-kube)
 mcp-runtime server patch payments --patch '{"spec":{"imageTag":"v2"}}' --use-kube
 mcp-runtime server status
 mcp-runtime status

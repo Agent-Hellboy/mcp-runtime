@@ -117,8 +117,8 @@ flowchart LR
 | Initialize cluster | `cluster init`, `setup`, `bootstrap` |
 | Configure ingress + registry | `cluster config --ingress traefik`, `registry provision` |
 | Describe servers | `server init`, hand-written `MCPServer` YAML, or metadata in `.mcp/` |
-| Publish + deploy | `server build image`, `registry push`, `server deploy`, `server generate` for GitOps YAML |
-| Grant access | `access grant init`, `access grant apply`, `access session init`, `access session apply` |
+| Publish + deploy | `auth login`, `server build image`, `registry push`, `server deploy`, `server generate` for GitOps YAML |
+| Grant access | `auth login`, `access grant init`, `access grant apply`, `access session init`, `access session apply` |
 | Observe | `status`, `sentinel status`, `sentinel port-forward ui` |
 
 ## Traffic and enforcement model

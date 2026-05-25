@@ -126,6 +126,14 @@ NAMESPACE=mcp-servers
 kubectl get mcpserver "$SERVER" -n "$NAMESPACE" -o yaml
 kubectl get deploy/"$SERVER" svc/"$SERVER" ingress/"$SERVER" -n "$NAMESPACE" -o wide
 kubectl get cm -n "$NAMESPACE" "${SERVER}-gateway-policy" -o yaml
+
+./bin/mcp-runtime auth login --api-url http://localhost:18080
+./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE"
+```
+
+Admin/operator fallback when you need the raw ConfigMap JSON without platform auth:
+
+```bash
 ./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE" --use-kube
 ```
 
@@ -144,9 +152,11 @@ kubectl logs -n "$NAMESPACE" "$POD" -c mcp-gateway
 Gateway policy requires both an access grant and an agent session when the
 server has `spec.session.required=true`.
 
-Use `init` to scaffold manifests, then apply:
+Use `init` to scaffold manifests, then apply through the platform API:
 
 ```bash
+./bin/mcp-runtime auth login --api-url http://localhost:18080
+
 ./bin/mcp-runtime access grant init workspace-assistant-grant \
   --namespace mcp-servers \
   --server workspace-assistant-mcp \
@@ -164,6 +174,13 @@ Use `init` to scaffold manifests, then apply:
   --trust high \
   --output /tmp/session.yaml
 
+./bin/mcp-runtime access grant apply --file /tmp/grant.yaml
+./bin/mcp-runtime access session apply --file /tmp/session.yaml
+```
+
+Admin/operator direct Kubernetes fallback:
+
+```bash
 ./bin/mcp-runtime access grant apply --file /tmp/grant.yaml --use-kube
 ./bin/mcp-runtime access session apply --file /tmp/session.yaml --use-kube
 ```
@@ -172,6 +189,12 @@ Then verify materialization:
 
 ```bash
 kubectl get mcpaccessgrant,mcpagentsession -n "$NAMESPACE" -o wide
+./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE"
+```
+
+Raw ConfigMap inspection without platform auth (`--use-kube`):
+
+```bash
 ./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE" --use-kube
 ```
 
