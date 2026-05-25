@@ -244,11 +244,13 @@ Keep identifiers stable:
 | `humanID` | Use the identity provider's stable subject claim, or email when that is stable in your environment. |
 | `agentID` | Use a readable owner-purpose string such as `acme-cron-bot`, `globex-data-loader`, or `claude-code`. |
 
-`mcp-runtime access grant init`, `access grant apply`, `access session init`,
-and `access session apply` use the platform API by default after
-`mcp-runtime auth login --api-url <platform-url>`. Add `--use-kube` only for
-admin/operator direct Kubernetes writes. These commands run a non-blocking
-advisory pass before applying manifests. The command warns about obvious
+`mcp-runtime access grant init` and `access session init` scaffold local YAML on
+the workstation only. `access grant apply` uses the platform API by default after
+`mcp-runtime auth login --api-url <platform-url>`; `access session apply` is
+admin-only on the platform API (agents should use `adapter stdio|proxy --server …
+--agent … --auto-refresh` instead). Add `--use-kube` only for admin/operator
+direct Kubernetes writes. The apply commands run a non-blocking advisory pass
+before applying manifests. The command warns about obvious
 `humanID` shape problems, such as whitespace, malformed email-like strings,
 case-sensitive uppercase email identifiers, or values that appear to encode
 `mcp-team-*` namespace names. These warnings never block the apply.

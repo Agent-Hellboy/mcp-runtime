@@ -74,9 +74,13 @@ flowchart TB
 3. Allowed tool calls emit analytics events through ingest → Kafka → processor
    → ClickHouse; Grafana surfaces usage and traces.
 
-Control-plane changes (setup, `auth login`, `server init`, `server deploy`,
-`access grant init`, `access grant apply`) flow through the CLI or platform API
-into Kubernetes; the operator materializes Deployments, Services, Ingress, and
+Local scaffolding commands (`server init`, `access grant init`, `access session init`)
+write manifests on the workstation only; they do not call the platform API or
+Kubernetes.
+
+Control-plane changes (setup, `auth login`, `server deploy`, `access grant apply`,
+and admin-only `access session apply`) flow through the CLI or platform API into
+Kubernetes; the operator materializes Deployments, Services, Ingress, and
 policy ConfigMaps. Sessions for agent traffic are usually issued through
 `POST /api/runtime/adapter/sessions`; explicit session manifests are
 admin-only on the platform API. Admin-only `--use-kube` or `kubectl apply`
