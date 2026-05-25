@@ -92,7 +92,7 @@ func replicaCount(replicas *int32) int32 {
 }
 
 func parseReplicaCount(raw string) (int32, error) {
-	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 32)
 	if err != nil {
 		return 0, err
 	}
