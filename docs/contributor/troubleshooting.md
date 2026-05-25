@@ -124,9 +124,7 @@ The host usually cannot resolve Kubernetes service DNS. Use the CLI helper:
 
 ./bin/mcp-runtime registry push \
   --image example:dev \
-  --name example \
-  --registry registry.registry.svc.cluster.local:5000 \
-  --namespace registry
+  --name example
 ```
 
 For one-node Kind debug loops, `kind load docker-image` is also valid when the

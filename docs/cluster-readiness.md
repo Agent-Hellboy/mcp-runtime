@@ -116,12 +116,20 @@ platform image refs with `registry.registry.svc.cluster.local:5000` so the
 internal registry certificate can include a stable service DNS SAN. Kubernetes
 nodes do not automatically use cluster DNS or trust the MCP Runtime CA for image
 pulls; configure containerd/k3s/your node runtime to resolve or mirror that host
-and trust the CA before relying on this mode. When using the built-in issuer,
-setup creates `cert-manager/mcp-runtime-ca` if it is missing; export its
-`tls.crt` and add that certificate to each node runtime trust store. On k3s,
-using the registry ClusterIP as
-`MCP_REGISTRY_ENDPOINT=<cluster-ip>:5000` is often simpler because the generated
-internal certificate includes that IP SAN. After setup, `cluster doctor` uses
+and trust the CA before relying on this mode in **lab** clusters.
+
+**Public TLS with `MCP_PLATFORM_DOMAIN` (production k3s shape):** when the
+registry is exposed at `registry.<domain>` with Let's Encrypt or an enterprise
+issuer, set `MCP_REGISTRY_ENDPOINT=registry.<domain>` before setup so kubelet
+pulls match the certificate SANs. Do **not** use the registry Service ClusterIP
+(for example `10.43.x.x:5000`) on this path — pulls fail with
+`x509: cannot validate certificate ... doesn't contain any IP SANs`. See
+[k3s Deployment Runbook - Environment variable reference](k3s-deployment-runbook.md#environment-variable-reference)
+and [Deployment Targets - bundled HTTPS](deployment-targets.md#option-a-bundled-https-registry-on-prem-reference).
+
+When using the built-in issuer for internal registry pod TLS, setup creates
+`cert-manager/mcp-runtime-ca` if it is missing; export its `tls.crt` and add that
+certificate to each node runtime trust store. After setup, `cluster doctor` uses
 the `registry-internal-tls` Secret as the signal to probe the registry Service
 over HTTPS; a successful doctor registry probe confirms in-cluster push-helper
 reachability, while kubelet image pulls still depend on node/containerd trust
@@ -410,8 +418,15 @@ Runtime workloads only land on pools that have been prepared and audited.
 
 ## k3s
 
-k3s uses embedded containerd. Point it at the registry NodePort on loopback (same node).
-When using `setup --test-mode` with the bundled plain HTTP registry, the same
+k3s uses embedded containerd. The steps below cover **lab HTTP** registry
+mirrors (`registry.local`, NodePort). For **public TLS + bundled HTTPS**
+(`registry.<domain>` with Let's Encrypt), skip the insecure mirror path and
+follow [Deployment Targets - k3s production](deployment-targets.md#option-a-bundled-https-registry-on-prem-reference)
+and [k3s Deployment Runbook](k3s-deployment-runbook.md) instead — set
+`MCP_REGISTRY_ENDPOINT=registry.<domain>` and use `--ingress none` when k3s
+Traefik already runs in `kube-system`.
+
+For `setup --test-mode` with the bundled plain HTTP registry, the same
 containerd mirror requirement applies because setup still builds and pushes
 operator, gateway proxy, and Sentinel images, then deploys pods that pull those
 images. On k3s hosts where `~/.kube/config` is empty or minimal, pass

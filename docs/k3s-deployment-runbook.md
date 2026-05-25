@@ -35,48 +35,144 @@ Saved deployment profile (committed template + local override):
 
 ```bash
 cp config/deployments/mcpruntime-org.env.example config/deployments/mcpruntime-org.env
-# edit mcpruntime-org.env if your kubeconfig path or admin email differs
+# edit mcpruntime-org.env — see Environment variable reference below
 ```
 
 `config/deployments/mcpruntime-org.env` is gitignored. The `.example` file is the
 team-shared template; your local `.env` holds workstation-specific paths.
 
-Minimal exports if you prefer not to use the profile file:
+The hack scripts (`setup-k3s`, `clean-k3s`, `rollout-k3s`) source this file by
+default. Override the path with `MCP_DEPLOY_ENV=/path/to/other.env`.
+
+### Environment variable reference
+
+#### Cluster access and domain
+
+| Variable | Required | Used by | Purpose |
+|----------|----------|---------|---------|
+| `KUBECONFIG` | yes | all hack scripts, manual `kubectl` | Path to the k3s kubeconfig. Must match the cluster you target. |
+| `MCP_SETUP_KUBECONFIG` | yes (setup) | `hack/setup-k3s-mcpruntime-org.sh` | Same as `KUBECONFIG`; passed to `mcp-runtime setup --kubeconfig`. |
+| `MCP_PLATFORM_DOMAIN` | yes | setup | Apex domain only (no `https://`). Derives `registry.`, `mcp.`, and `platform.` hostnames. |
+| `MCP_PLATFORM_ADMIN_EMAIL` | yes (non-test setup) | setup | Seeds the platform admin account during bootstrap. |
+
+#### Image build and registry pulls
+
+| Variable | Required | Used by | Purpose |
+|----------|----------|---------|---------|
+| `MCP_IMAGE_PLATFORM` | strongly recommended | setup, rollout | Target OS/arch for images built on your workstation (for example `linux/amd64` when nodes are amd64). Omitting on an arm64 laptop builds images nodes cannot run. |
+| `MCP_REGISTRY_ENDPOINT` | yes (`bundled-https`) | setup, rollout (via configmap patch) | Hostname nodes use to **pull** platform and tenant images. With public TLS, set to `registry.<domain>` — **not** the registry Service ClusterIP. |
+| `MCP_REGISTRY_INGRESS_HOST` | optional | rollout, CLI build/push | Public registry hostname for `docker push` / `registry push`. Defaults from `MCP_PLATFORM_DOMAIN` when unset. |
+| `MCP_REGISTRY_HOST` | do not set | — | Public ingress hostname; derived from `MCP_PLATFORM_DOMAIN`. Do not use as the internal pull URL. |
+| `MCP_REGISTRY_INTERNAL` | optional | rollout | Override registry ClusterIP:port for **build/push** inside rollout script only. Pull path still uses `MCP_REGISTRY_ENDPOINT` in configmap. |
+
+#### Setup behavior (read by `hack/setup-k3s-mcpruntime-org.sh`)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MCP_SETUP_WAIT_TIMEOUT` | `900` | Seconds to wait for setup rollouts. |
+| `MCP_CERT_TIMEOUT` | `5m` (CLI default) | Certificate issuance wait on first install. Use `15m` on fresh clusters. |
+| `MCP_SETUP_PLATFORM_MODE` | `tenant` | Passed to `setup --platform-mode`. |
+| `MCP_SETUP_REGISTRY_MODE` | `bundled-https` | Passed to `setup --registry-mode`. |
+| `MCP_SETUP_INGRESS` | `none` | `none` when k3s Traefik in `kube-system` already serves ingress. |
+| `MCP_SETUP_TLS_CLUSTER_ISSUER` | `letsencrypt-prod` | ClusterIssuer name on reruns. **Do not** pass `--acme-email` when this issuer already exists. |
+| `MCP_SETUP_SKIP_CERT_MANAGER_INSTALL` | unset | Set to `1` when cert-manager is already installed (typical reruns). |
+
+#### k3s Traefik integration (written to `mcp-sentinel-config`)
+
+| Variable | Typical value | Purpose |
+|----------|---------------|---------|
+| `PLATFORM_TRAEFIK_NAMESPACE` | `kube-system` | Namespace of the live Traefik deployment on k3s. |
+| `PLATFORM_TEAM_TRAEFIK_WATCH` | `disabled` | Prevents `team create` from patching repo-managed `traefik/traefik` when k3s Traefik is external. |
+
+#### Browser sign-in (public / tenant UI)
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `GOOGLE_CLIENT_ID` | yes (public TLS) | Google OAuth client for dashboard sign-in. |
+| `MCP_GOOGLE_CLIENT_ID` | optional | Alias for `GOOGLE_CLIENT_ID`. |
+| `OIDC_ISSUER` | optional | Non-Google provider; setup fills Google defaults when `GOOGLE_CLIENT_ID` is set. |
+| `OIDC_AUDIENCE` | optional | OIDC audience; defaults to Google client ID. |
+| `OIDC_JWKS_URL` | optional | JWKS URL for token validation. |
+
+#### Platform-runtime backup (`hack/clean-k3s-mcpruntime-org.sh`)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MCP_TLS_BACKUP_DIR` | `~/.mcpruntime/backups/mcpruntime-org` | Root directory for timestamped platform-runtime snapshots. |
+| `MCP_RESTORE_TLS_AFTER_SETUP` | `1` | When `1`, `hack/setup-k3s-mcpruntime-org.sh` runs `--restore-platform` after setup. |
+| `MCP_DEPLOY_ENV` | `config/deployments/mcpruntime-org.env` | Env file path for all hack scripts. |
+
+Backup scope is **platform-runtime state only** (TLS, cert-manager, OIDC,
+bootstrap secrets — not tenant users, teams, MCP CRs, or registry images).
+
+#### Rollout-only (`hack/rollout-k3s-mcpruntime-org.sh`)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MCP_ROLLOUT_TAG` | `verify-MMDDHHMM` | Image tag for API/UI build and push. |
+
+#### Multitenancy test (`hack/multitenancytest.sh`)
+
+These are **not** in the deployment profile — export them when running the test against production URLs:
+
+| Variable | Example | Purpose |
+|----------|---------|---------|
+| `PLATFORM_URL` | `https://platform.mcpruntime.org` | Platform API base (no trailing slash). |
+| `MCP_URL` | `https://mcp.mcpruntime.org` | Public MCP ingress base. |
+| `REGISTRY_HOST` | `registry.mcpruntime.org` | Registry hostname for tenant image build/push. |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | test admin creds | Platform admin login when not using token. |
+| `ADMIN_TOKEN` | optional | Admin API token instead of password login. |
+
+The test script clears `KUBECONFIG` internally — tenant flows are platform-API-only.
+
+#### Do not set on this TLS production cluster
+
+| Variable | Why |
+|----------|-----|
+| `MCP_REGISTRY_ENDPOINT=10.x.x.x:5000` | ClusterIP breaks `bundled-https` TLS cert validation on pod pulls. |
+| `MCP_ACME_EMAIL` on reruns | Re-applies Let's Encrypt issuer and can trigger duplicate-cert rate limits. Use `MCP_SETUP_TLS_CLUSTER_ISSUER` instead. |
+| `MCP_RUNTIME_TEST_MODE=1` | Dev/test-mode guardrails; omit for production-shaped installs. |
+
+#### Minimal profile example
 
 ```bash
 export KUBECONFIG=/private/tmp/mcpruntime-k3s.yaml
 export MCP_PLATFORM_DOMAIN=mcpruntime.org
-export MCP_IMAGE_PLATFORM=linux/amd64   # workstation is arm64; nodes are amd64
-export MCP_PLATFORM_ADMIN_EMAIL=princekrroshan01@gmail.com
+export MCP_IMAGE_PLATFORM=linux/amd64
+export MCP_PLATFORM_ADMIN_EMAIL=admin@example.com
+export MCP_REGISTRY_ENDPOINT=registry.mcpruntime.org
+export GOOGLE_CLIENT_ID=<google-oauth-client-id>
 ```
 
-`MCP_IMAGE_PLATFORM` is critical — omitting it causes setup to build arm64
-images that k3s nodes (amd64) cannot run.
+See `config/deployments/mcpruntime-org.env.example` for the full saved profile used by the hack scripts.
 
-Do **not** set `MCP_REGISTRY_ENDPOINT` to the registry Service ClusterIP on this
-TLS cluster. With `MCP_PLATFORM_DOMAIN=mcpruntime.org`, the public registry is
-`registry.mcpruntime.org` (also written to `MCP_REGISTRY_INGRESS_HOST` and
-`PLATFORM_REGISTRY_URL` in `mcp-sentinel-config`).
-
-## Step 0: Back up TLS secrets before any wipe
+## Step 0: Back up platform-runtime state before any wipe
 
 Let's Encrypt enforces a **5 duplicate-certificate / 7 days per domain** rate
-limit. Always save the existing TLS secrets before wiping the cluster so you
-can restore them instead of requesting new ones.
+limit. Use the helper script to back up platform-runtime material (TLS,
+cert-manager ownership, OIDC, bootstrap secrets) before wiping app namespaces:
 
 ```bash
-# Run BEFORE any cluster wipe
+hack/clean-k3s-mcpruntime-org.sh --yes --wait
+```
+
+Tenant/user data (teams, Postgres identity store, MCP CRs, registry images) is
+**not** preserved — platform-runtime state only. See
+[Deployment Targets - k3s Production](deployment-targets.md#option-a-bundled-https-registry-on-prem-reference).
+
+Manual TLS-only backup (legacy):
+
+```bash
 kubectl get secret registry-tls -n registry -o yaml \
   > /tmp/registry-tls-backup.yaml 2>/dev/null || true
 kubectl get secret mcp-sentinel-platform-tls -n mcp-sentinel -o yaml \
   > /tmp/platform-tls-backup.yaml 2>/dev/null || true
 ```
 
-Restore after setup completes:
+Restore after setup (prefer automatic restore via `hack/setup-k3s-mcpruntime-org.sh`):
 
 ```bash
-kubectl apply -f /tmp/registry-tls-backup.yaml 2>/dev/null || true
-kubectl apply -f /tmp/platform-tls-backup.yaml 2>/dev/null || true
+hack/clean-k3s-mcpruntime-org.sh --restore-platform
 ```
 
 ## Safe cluster wipe (app workloads only)
@@ -131,13 +227,13 @@ curl -sm5 http://registry.mcpruntime.org/ && echo "port 80 OK"
 cp config/deployments/mcpruntime-org.env.example config/deployments/mcpruntime-org.env
 # add GOOGLE_CLIENT_ID to mcpruntime-org.env when browser sign-in is required
 
-export MCP_PLATFORM_ADMIN_EMAIL=princekrroshan01@gmail.com
+export MCP_PLATFORM_ADMIN_EMAIL=admin@example.com
 
 MCP_SETUP_WAIT_TIMEOUT=900 MCP_CERT_TIMEOUT=15m \
 ./bin/mcp-runtime setup \
   --kubeconfig /private/tmp/mcpruntime-k3s.yaml \
   --with-tls \
-  --acme-email princekrroshan01@gmail.com \
+  --acme-email ops@example.com \
   --ingress none \
   --registry-mode bundled-https \
   --platform-mode tenant

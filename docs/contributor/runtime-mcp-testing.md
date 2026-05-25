@@ -97,20 +97,19 @@ kubectl create secret generic workspace-assistant-mcp-analytics-creds \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-Build, push, generate, and deploy:
+Build, push, and deploy:
 
 ```bash
 ./bin/mcp-runtime server build image workspace-assistant-mcp \
   --metadata-file /tmp/workspace-assistant-mcp.yaml \
   --dockerfile examples/workspace-assistant-mcp/Dockerfile \
   --context examples/workspace-assistant-mcp \
-  --registry registry.registry.svc.cluster.local:5000 \
   --tag dev
 
 ./bin/mcp-runtime auth login --api-url http://localhost:18080
 
 ./bin/mcp-runtime registry push \
-  --image registry.registry.svc.cluster.local:5000/workspace-assistant-mcp:dev
+  --image workspace-assistant-mcp:dev
 
 ./bin/mcp-runtime server deploy workspace-assistant-mcp \
   --scope tenant \

@@ -38,16 +38,26 @@ For production-like installs, prefer:
 Then make registry mode explicit:
 
 ```bash
+# Bundled registry with public TLS ingress (k3s on-prem, bundled-https).
+# Pod pulls must use the TLS-covered registry hostname — not the registry Service ClusterIP.
+./bin/mcp-runtime setup \
+  --registry-mode bundled-https \
+  --with-tls \
+  --strict-prod
+```
+
+When `MCP_PLATFORM_DOMAIN` is set, export `MCP_REGISTRY_ENDPOINT=registry.<domain>`
+before setup so in-cluster image pulls use the same hostname as the Let's Encrypt
+certificate. Using the registry Service ClusterIP with `bundled-https` causes
+`ImagePullBackOff` (`x509: cannot validate certificate ... doesn't contain any IP SANs`).
+
+For an existing external registry instead:
+
+```bash
 # Existing managed or enterprise registry.
 ./bin/mcp-runtime setup \
   --registry-mode external \
   --external-registry-url registry.example.com \
-  --with-tls \
-  --strict-prod
-
-# Bundled registry with internal HTTPS. Every node must trust the internal CA.
-./bin/mcp-runtime setup \
-  --registry-mode bundled-https \
   --with-tls \
   --strict-prod
 ```
@@ -59,7 +69,7 @@ Then make registry mode explicit:
 | kind | Contributor development, CI-like smoke tests, disposable clusters | Bundled HTTP registry with the documented kind mirror | Use [Contributor Local Kind](contributor/local-kind.md) and `setup --test-mode`. |
 | Docker Desktop Kubernetes | Laptop demos and local evaluation | Bundled HTTP registry or Docker Desktop image loading | Good for local UI/API exploration, not production. |
 | minikube | Laptop or VM evaluation | Insecure registry flag at cluster start, or `minikube image load` | Recreate minikube when changing insecure registry settings. |
-| k3s | Single-node lab, edge, small self-managed clusters | Bundled registry for labs; external or bundled HTTPS for production | See the k3s examples below, the [k3s On-Prem Cluster](k3s-on-prem-cluster.md) runbook, and [Cluster Readiness - k3s](cluster-readiness.md#k3s). |
+| k3s | Single-node lab, edge, small self-managed clusters | Bundled HTTP for labs; bundled HTTPS or external for production | See k3s examples below, [k3s Deployment Runbook](k3s-deployment-runbook.md) (operational reruns/clean), [k3s On-Prem Cluster](k3s-on-prem-cluster.md) (topology), and [Cluster Readiness - k3s](cluster-readiness.md#k3s). |
 | kubeadm / vanilla Kubernetes | Self-managed production or staging | External registry, or bundled HTTPS with node CA trust | Configure containerd, DNS, ingress, storage, and TLS on every node. |
 | RKE2 | Self-managed production or staging | External registry, or bundled HTTPS with node CA trust | Treat it like a hardened self-managed cluster; use provider tooling for runtime config. |
 | EKS | AWS managed Kubernetes | ECR | Use AWS-managed node registry auth, a real ingress/load balancer, Route 53 or equivalent DNS, and cert-manager or enterprise TLS. |
@@ -147,7 +157,31 @@ containerd registry matching is exact.
 
 ### k3s Production-Style Shape
 
-For a public or persistent k3s cluster, make it production-like:
+For a public or persistent k3s cluster there are two common registry shapes.
+
+#### Option A: bundled HTTPS registry (on-prem reference)
+
+Use this when MCP Runtime owns the in-cluster registry and exposes it at
+`registry.<domain>` with Let's Encrypt (or an enterprise issuer). k3s often
+already runs Traefik in `kube-system` — pass `--ingress none`, set
+`PLATFORM_TRAEFIK_NAMESPACE=kube-system`, and
+`PLATFORM_TEAM_TRAEFIK_WATCH=disabled` so setup does not install a second
+ingress stack and team create does not patch k3s Traefik.
+
+Set `MCP_REGISTRY_ENDPOINT=registry.<domain>` (the TLS-covered hostname) before
+setup so pod pulls match the certificate. Using the registry Service ClusterIP
+causes `ImagePullBackOff` with `x509: ... doesn't contain any IP SANs`.
+
+Copy `config/deployments/mcpruntime-org.env.example` to
+`mcpruntime-org.env`, then follow **[k3s Deployment Runbook](k3s-deployment-runbook.md)**
+for first install (`--acme-email`), reruns (`hack/setup-k3s-mcpruntime-org.sh`
+intentionally omits `--acme-email` and uses `--tls-cluster-issuer` instead),
+safe clean+restore, rollout-only updates, the full environment variable reference,
+and multitenancy validation.
+
+#### Option B: external registry
+
+Use when images live in a registry you already operate (Harbor, ECR mirror, etc.):
 
 ```bash
 export MCP_PLATFORM_DOMAIN=example.com
@@ -288,6 +322,10 @@ If you bring your own ingress controller:
 - Make sure it watches the namespaces MCP Runtime uses.
 - Make sure it can serve `platform.<domain>`, `mcp.<domain>`, and
   `registry.<domain>` when `MCP_PLATFORM_DOMAIN` is set.
+- On k3s, Traefik in `kube-system` already watches cluster-wide; use
+  `setup --ingress none` and set `PLATFORM_TRAEFIK_NAMESPACE=kube-system` /
+  `PLATFORM_TEAM_TRAEFIK_WATCH=disabled` so team create does not install a
+  second Traefik stack.
 - Provide an equivalent registry auth guard before exposing
   `registry.<domain>` publicly. The repo-managed Traefik stack uses
   `registry-admin-auth@file` backed by `/api/registry/authz`.

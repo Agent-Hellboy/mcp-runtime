@@ -30,7 +30,7 @@ make build
 ./bin/mcp-runtime server deploy <server-name> --scope tenant --metadata-dir .mcp
 ```
 
-For a new workstation, run `make deps-install` first where supported, then `STRICT_DEPS_CHECK=1 make deps-check`. Required host tools are Go `1.25+`, Make, Docker with a reachable daemon, `kubectl` configured for the cluster, plus `curl`, `jq`, and `python3` for documented dev flows. `kind` is required only for local Kind clusters.
+For a new workstation, run `make deps-install` first where supported, then `STRICT_DEPS_CHECK=1 make deps-check`. Required host tools are Go `1.26+`, Make, Docker with a reachable daemon, `kubectl` configured for the cluster, plus `curl`, `jq`, and `python3` for documented dev flows. `kind` is required only for local Kind clusters.
 
 Use the built-in help for the exact description, flags, and defaults of any command:
 
@@ -51,6 +51,7 @@ mcp-runtime <group> <subcommand> --help
 | `registry` | Inspect the internal registry, configure an external one, push images. | `status`, `info`, `provision`, `push` |
 | `server` | Manage `MCPServer` resources and operator-facing actions. | `list`, `get`, `create`, `apply`, `deploy`, `generate`, `export`, `patch`, `delete`, `logs`, `status`, `policy inspect`, `build image` |
 | `access` | Manage `MCPAccessGrant` and `MCPAgentSession` resources that feed the gateway policy layer. | `grant list/get/apply/delete/disable/enable`, `session list/get/apply/delete/revoke/unrevoke` |
+| `adapter` | HTTP proxy and stdio shims that inject governance identity/session headers for agents. | `proxy`, `stdio` |
 | `team` | Manage internal platform teams, team password users, and Kubernetes team namespaces. | `list`, `create`, `user list`, `user create`, `init` |
 | `sentinel` | Inspect and operate the bundled analytics, gateway, and observability stack. | `status`, `events`, `logs`, `port-forward`, `restart` |
 | `status` | Aggregated platform health (cluster, registry, operator, servers, sentinel). | `status` |
@@ -104,9 +105,10 @@ For non-test public/TLS setup, configure the platform hostnames before running
 setup: set `MCP_PLATFORM_DOMAIN` to derive `platform.<domain>`,
 `registry.<domain>`, and `mcp.<domain>`, or set
 `MCP_PLATFORM_INGRESS_HOST`, `MCP_REGISTRY_INGRESS_HOST`, and
-`MCP_MCP_INGRESS_HOST` explicitly. Bundled registry setups also require
-`MCP_REGISTRY_ENDPOINT` (or `MCP_REGISTRY_HOST`) to be the exact registry
-host:port Kubernetes nodes can pull from. Production setup also requires an
+`MCP_MCP_INGRESS_HOST` explicitly. For bundled HTTPS with a public domain,
+set `MCP_REGISTRY_ENDPOINT=registry.<domain>` so node pulls match the TLS
+certificate — do not use the registry Service ClusterIP or `MCP_REGISTRY_HOST`
+as the pull URL. Production setup also requires an
 admin allowlist through `MCP_PLATFORM_ADMIN_EMAIL` or `ADMIN_USERS`; that
 allowlist is what promotes Google/OIDC logins to platform admin.
 

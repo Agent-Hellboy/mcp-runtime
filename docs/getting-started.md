@@ -4,7 +4,7 @@ The shortest path from an empty Kubernetes cluster to a governed MCP endpoint: i
 
 ## Prerequisites
 
-- Go `1.25+` (matches the repository `go.mod` files)
+- Go `1.26+` (matches the repository `go.mod` files)
 - `make`
 - Docker or a Docker-compatible client, with the daemon running and reachable
 - `kubectl` on `PATH`, configured for the target cluster
@@ -398,9 +398,9 @@ cluster pulls from the same hardened image host you intend to keep:
 For public/TLS setup, setup validates the host env even without
 `--strict-prod`. Use `MCP_PLATFORM_DOMAIN` or set
 `MCP_PLATFORM_INGRESS_HOST`, `MCP_REGISTRY_INGRESS_HOST`, and
-`MCP_MCP_INGRESS_HOST` explicitly. If you use the bundled registry, also set
-`MCP_REGISTRY_ENDPOINT` or `MCP_REGISTRY_HOST` to the exact registry host:port
-that Kubernetes nodes can pull. Set `MCP_PLATFORM_ADMIN_EMAIL` or
+`MCP_MCP_INGRESS_HOST` explicitly. For bundled HTTPS with a public domain,
+set `MCP_REGISTRY_ENDPOINT=registry.<domain>` so kubelet pulls match the TLS
+certificate (not the registry ClusterIP). Set `MCP_PLATFORM_ADMIN_EMAIL` or
 `ADMIN_USERS` so the first OIDC login for that email is promoted to platform
 admin; `--acme-email` is only the certificate contact email.
 
@@ -581,10 +581,17 @@ For the full field surface, use the [API reference](api.md).
 Author lightweight metadata YAML and deploy through the platform API:
 
 ```bash
+./bin/mcp-runtime auth login --api-url https://platform.example.com
 ./bin/mcp-runtime server init my-server --tool ping
 ./bin/mcp-runtime server build image my-server --tag v1.0.0 --platform linux/amd64
 ./bin/mcp-runtime registry push --scope tenant --image <exact-image-ref-from-build>
 ./bin/mcp-runtime server deploy my-server --scope tenant --metadata-dir .mcp
+```
+
+Repeat deploys after metadata or image changes need `--update`:
+
+```bash
+./bin/mcp-runtime server deploy my-server --scope tenant --metadata-dir .mcp --update
 ```
 
 `server init` writes gateway-enabled, header-authenticated, session-required
@@ -599,9 +606,10 @@ name:allow|deny:low|medium|high` for per-tool grant decisions, and use `access
 session init --expires-in` or `--expires-at` when creating explicit/admin
 session manifests.
 
-`<exact-image-ref-from-build>` may be a resolved registry endpoint such as
-`10.43.109.51:5000/my-server:v1.0.0` or, for `scope: tenant` metadata after
-platform login, `10.43.109.51:5000/<team-slug>/my-server:v1.0.0`. Use
+`<exact-image-ref-from-build>` is the tag printed by `server build image`
+(for example `registry.example.com/acme/my-server:v1.0.0` on a public TLS
+cluster after platform login). Kind/HTTP lab clusters may show a ClusterIP or
+`registry.local` host instead — use the exact ref from the build output. Use
 `--scope public` or `--scope org` when the metadata targets those platform
 catalog scopes.
 

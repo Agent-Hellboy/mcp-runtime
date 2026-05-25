@@ -88,7 +88,7 @@ usually exposes them through `http://localhost:18080/`; inside the cluster,
 call the service DNS names directly.
 
 For the local build, push, and rollout loop while editing `services/`, see
-[Iterate on one Sentinel service](getting-started.md#iterate-on-one-sentinel-service).
+[Iterate on one Sentinel service](contributor/service-iteration.md).
 
 `api` accepts `API_KEYS`, with admin elevation only for keys also listed in
 `ADMIN_API_KEYS`. `ingest` accepts ingest-scoped `INGEST_API_KEYS`, with legacy

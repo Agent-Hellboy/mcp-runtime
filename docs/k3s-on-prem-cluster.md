@@ -291,15 +291,27 @@ Run setup:
 ```bash
 ./bin/mcp-runtime bootstrap --provider k3s
 
+# k3s ships Traefik in kube-system — use --ingress none to avoid a second stack.
+# Pass --kubeconfig explicitly when multiple kubeconfigs exist on the workstation.
 MCP_SETUP_WAIT_TIMEOUT=1200 ./bin/mcp-runtime setup \
+  --kubeconfig "$KUBECONFIG" \
   --platform-mode public \
   --registry-mode bundled-https \
   --storage-mode dynamic \
   --with-tls \
   --acme-email ops@example.com \
+  --ingress none \
   --strict-prod \
   --parallel-builds
 ```
+
+Set `PLATFORM_TRAEFIK_NAMESPACE=kube-system` and
+`PLATFORM_TEAM_TRAEFIK_WATCH=disabled` in the deployment env (see
+`config/deployments/mcpruntime-org.env.example`) so team create does not patch
+repo-managed Traefik when k3s Traefik is already active.
+
+For reruns, clean+restore, rollout-only updates, and the full environment
+variable reference, use [k3s Deployment Runbook](k3s-deployment-runbook.md).
 
 Use `--platform-mode tenant` for private team-isolated installs, or
 `--platform-mode org` for a shared internal catalog. `public` exposes the
@@ -384,15 +396,19 @@ node or load balancer that actually receives HTTP and HTTPS traffic.
 
 ## Migration Notes
 
-Fresh installs do not need certificate backup or restore. Use fresh ACME,
+Fresh **first-time** installs do not need certificate backup. Use fresh ACME,
 your enterprise issuer, or pre-created TLS secrets.
 
+**Reinstalling on the same public domain** (app-namespace wipe, setup rerun):
+Let's Encrypt limits duplicate certificates to five per domain set per seven days.
+Use [k3s Deployment Runbook - Step 0](k3s-deployment-runbook.md#step-0-back-up-platform-runtime-state-before-any-wipe)
+or `hack/clean-k3s-mcpruntime-org.sh --yes` to back up platform-runtime TLS
+before delete, then `hack/setup-k3s-mcpruntime-org.sh` to restore after setup.
+
 Back up cert-manager `Certificate`, `Issuer` or `ClusterIssuer`, and TLS
-`Secret` objects only when migrating an existing public install that already
-owns valid certificates or issuer state. That is a migration concern, mainly to
-avoid losing working cert material or burning Let's Encrypt rate limits during a
-move. Keep those backups encrypted and out of git because TLS secrets contain
-private keys.
+`Secret` objects when migrating an existing public install that already
+owns valid certificates or issuer state. Keep those backups encrypted and out
+of git because TLS secrets contain private keys.
 
 ## Troubleshooting
 

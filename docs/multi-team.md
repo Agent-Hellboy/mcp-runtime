@@ -247,7 +247,7 @@ For the bundled Traefik overlay, extend the argument:
 
 External ingress controllers need equivalent namespace watch, RBAC, and
 NetworkPolicy configuration. For platform API team creation, set
-`PLATFORM_TEAM_TRAEFIK_WATCH=false` when another controller manages that
+`PLATFORM_TEAM_TRAEFIK_WATCH=disabled` when another controller manages that
 wiring, or override `PLATFORM_TRAEFIK_NAMESPACE`,
 `PLATFORM_TRAEFIK_DEPLOYMENT`, and `PLATFORM_TRAEFIK_SERVICE_ACCOUNT` when the
 repo-managed Traefik names differ.

@@ -151,7 +151,7 @@ Pipeline changes usually require checking:
 - docs for `.mcp` authoring
 - examples under `examples/`
 
-Tests: `pipeline_test.go` and `pkg/metadata` tests.
+Tests: `server`/`metadata` package tests and golden CLI help snapshots.
 
 ## Access
 
@@ -198,12 +198,12 @@ lives in `docs/multi-team.md`.
 Tests: `team/manager_test.go`; for platform team API changes, run focused tests
 inside `services/api`.
 
-## Sentinel and Platform API
+## Auth, Sentinel, and Platform API
 
-`internal/cli/sentinel/`, `internal/cli/auth/`, and `internal/cli/platformapi/`
-provide CLI access to Sentinel APIs, auth flows, and platform API URL
-normalization. These commands should stay aligned with `services/api` routes and
-the public docs.
+`internal/cli/auth/` handles platform API login, logout, and credential profiles.
+`internal/cli/sentinel/` and `internal/cli/platformapi/` provide CLI access to
+Sentinel APIs and platform API URL normalization. These commands should stay
+aligned with `services/api` routes and the public docs.
 
 Tests: `sentinel/*_test.go`, `auth/*_test.go`, and `platformapi/*_test.go`.
 

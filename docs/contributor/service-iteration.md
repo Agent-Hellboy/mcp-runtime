@@ -50,9 +50,7 @@ docker build -t "$LOCAL_IMAGE" -f "$DOCKERFILE" "$BUILD_CONTEXT"
 
 ./bin/mcp-runtime registry push \
   --image "$LOCAL_IMAGE" \
-  --name "$IMAGE_REPO" \
-  --registry "$REGISTRY" \
-  --namespace registry
+  --name "$IMAGE_REPO"
 
 kubectl -n mcp-sentinel set image \
   "deployment/$DEPLOYMENT" \

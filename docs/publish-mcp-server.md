@@ -17,7 +17,7 @@ You can describe a server in two ways:
 - `MCPServer` manifest
   Best when you want direct control over the Kubernetes resource the operator will reconcile.
 - `.mcp` metadata
-  Best when you want a lighter authoring format and a CLI pipeline that generates `MCPServer` manifests for you.
+  Best when you want a lighter authoring format and `server generate` / `server deploy` from `.mcp` metadata.
 
 The platform outcome is the same in both cases: the operator reconciles a server deployment, service, route, and optional governed request path.
 
