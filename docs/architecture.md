@@ -39,7 +39,7 @@ flowchart TB
     end
 
     CLI --> API
-    CLI --> K8s
+    CLI -. "admin --use-kube only" .-> K8s
     UI --> API
     Agent --> Ing
     MCP --> Ing
@@ -74,9 +74,11 @@ flowchart TB
 3. Allowed tool calls emit analytics events through ingest → Kafka → processor
    → ClickHouse; Grafana surfaces usage and traces.
 
-Control-plane changes (setup, `server init`, `server deploy`, `access grant init`,
-`access session init`) flow through the CLI or platform API into Kubernetes;
-the operator materializes Deployments, Services, Ingress, and policy ConfigMaps.
+Control-plane changes (setup, `auth login`, `server init`, `server deploy`,
+`access grant init`, `access session init`) flow through the CLI or platform API
+into Kubernetes; the operator materializes Deployments, Services, Ingress, and
+policy ConfigMaps. Admin-only `--use-kube` or `kubectl apply` bypasses platform
+auth and requires operator RBAC.
 
 See [Request Flows](internals/request-flows.md) for allow/deny sequence diagrams,
 component-level paths, and E2E scenario mapping.

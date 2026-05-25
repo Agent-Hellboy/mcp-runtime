@@ -797,6 +797,8 @@ spec:
 ```
 
 ```bash
+./bin/mcp-runtime auth login --api-url <platform-url>
+
 ./bin/mcp-runtime access grant apply --file grant.yaml
 ./bin/mcp-runtime access session apply --file session.yaml
 ./bin/mcp-runtime server policy inspect payments
@@ -815,10 +817,11 @@ spec:
 ```mermaid
 flowchart LR
     A[Build CLI<br/>make build] --> B[bootstrap + setup]
-    B --> C[server init<br/>build, push, deploy]
-    C --> D[grant init + session init<br/>apply]
-    D --> E[Traffic through gateway<br/>or adapter]
-    E --> F[Observe in UI + Grafana]
+    B --> C[auth login]
+    C --> D[server init<br/>build, push, deploy]
+    D --> E[grant init + session init<br/>apply]
+    E --> F[Traffic through gateway<br/>or adapter]
+    F --> G[Observe in UI + Grafana]
 ```
 
 ## Next steps

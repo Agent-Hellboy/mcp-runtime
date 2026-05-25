@@ -428,11 +428,12 @@ Request analytics only exist for traffic that flows through `mcp-gateway`.
 The adapter is not required for analytics; it only helps clients that cannot
 attach identity or session headers directly, or that want platform-issued
 sessions. Hand-written YAML must include `spec.gateway.enabled: true` for
-request analytics. If you apply raw YAML with `kubectl` instead of
-raw `kubectl apply`, also create a namespace-local ingest-key Secret
-and set `spec.analytics.apiKeySecretRef`; otherwise the gateway can reach
-ingest but events will be rejected with 401. Analytics is on by default for
-gateway traffic when the operator has `MCP_SENTINEL_INGEST_URL`; opt out with:
+request analytics. If you apply raw YAML with `kubectl apply` or
+`server apply --use-kube` instead of `server deploy`, also create a
+namespace-local ingest-key Secret and set `spec.analytics.apiKeySecretRef`;
+otherwise the gateway can reach ingest but events will be rejected with 401.
+Analytics is on by default for gateway traffic when the operator has
+`MCP_SENTINEL_INGEST_URL`; opt out with:
 
 ```yaml
 analytics:

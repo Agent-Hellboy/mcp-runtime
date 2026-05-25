@@ -1,6 +1,6 @@
 # CLI
 
-The `mcp-runtime` CLI is the operator-facing front door. It bootstraps clusters, manages registries, applies `MCPServer` manifests, operates access grants and sessions, and inspects the runtime + sentinel stack.
+The `mcp-runtime` CLI is the operator-facing front door. It bootstraps clusters, manages registries, publishes servers through the platform API, operates access grants and sessions, and inspects the runtime + sentinel stack. Direct Kubernetes manifest operations (`server apply`, `create`, `patch`, `logs`, …) require the admin-only `--use-kube` flag.
 
 ```mermaid
 flowchart LR

@@ -68,8 +68,8 @@ sequenceDiagram
     participant R as Registry
     participant W as Workloads
 
-    U->>CLI: setup / server apply / server deploy
-    CLI->>K: apply CRDs, manifests, MCPServer
+    U->>CLI: setup / server deploy (platform API) or server apply --use-kube
+    CLI->>K: apply CRDs, manifests, MCPServer (platform API or --use-kube)
     CLI->>R: build or push images when requested
     K-->>O: watch MCPServer changes
     O->>K: create or update Deployment, Service, Ingress

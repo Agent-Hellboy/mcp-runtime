@@ -321,7 +321,8 @@ spec:
 # bob-server-b mirrors the above with serverRef server-b-mcp and a different toolRule
 ```
 
-Confirm each server's policy contains only its own subject:
+Confirm each server's policy contains only its own subject (after
+`mcp-runtime auth login --api-url <platform-url>`):
 
 ```bash
 mcp-runtime server policy inspect server-a-mcp --namespace mcp-servers   # alice only

@@ -262,6 +262,7 @@ POD="$(kubectl get pods -n mcp-servers -l app="$SERVER" -o jsonpath='{.items[0].
 kubectl describe pod -n mcp-servers "$POD"
 kubectl logs -n mcp-servers "$POD" -c "$CONTAINER"
 kubectl logs -n mcp-servers "$POD" -c mcp-gateway
+./bin/mcp-runtime auth login --api-url <platform-url>   # platform API default
 ./bin/mcp-runtime server policy inspect "$SERVER" --namespace mcp-servers
 kubectl get mcpaccessgrant,mcpagentsession -n mcp-servers -o wide
 ```
@@ -352,7 +353,13 @@ For production with `MCP_PLATFORM_DOMAIN=example.com`, setup derives hostnames `
 ## Governance (grants and sessions)
 
 - **UI** can create/apply grants and sessions and toggle grant enablement and session state.
-- **CLI:** `mcp-runtime access grant apply --file <file.yaml>` and `mcp-runtime access session apply --file <file.yaml>`. `kubectl apply -f` is still a valid fallback.
+- **CLI (platform API default):** run `mcp-runtime auth login --api-url <platform-url>`,
+  then scaffold with `access grant init` / `access session init` when helpful, and
+  apply with `mcp-runtime access grant apply --file <file.yaml>` and
+  `mcp-runtime access session apply --file <file.yaml>`. Adapter flows usually
+  skip manual session apply; use `adapter stdio|proxy --server ... --agent ... --auto-refresh`.
+- **Admin fallback:** `kubectl apply -f` or the same apply commands with
+  `--use-kube` require admin/operator kubeconfig/RBAC and bypass platform auth.
 - **Team isolation:** use one namespace per team plus first-class team identity. `MCPServer.spec.teamID` marks the server owner, `SubjectRef.teamID` constrains grants/sessions to callers from that team, and the gateway matches all non-empty `humanID` / `agentID` / `teamID` fields exactly. Keep single-team examples in `mcp-servers`.
 - **Platform access hardening:** platform API server/grant/session writes reject shared-catalog writes by non-admin callers and reject cross-namespace `serverRef.namespace`. Server writes default/validate `spec.teamID` against the authenticated principal namespace. Grant/session writes default missing `subject.teamID` from the referenced server team, but preserve explicit foreign `subject.teamID` values for delegated cross-team access.
 - **Advisory identity checks:** access apply commands warn, but do not block, when `subject.humanID` looks malformed, case-ambiguous, whitespace-padded, or namespace-encoded.
