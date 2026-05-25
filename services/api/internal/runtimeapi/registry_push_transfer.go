@@ -13,13 +13,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"mcp-runtime/pkg/registrypush"
 )
 
 const (
 	registryPushTransferPath         = "/internal/registry-push/tar"
 	registryPushTransferLabelKey     = "mcp-runtime.org/registry-push-transfer"
 	registryPushTransferSecretPrefix = "registry-push-transfer-"
-	registryPushTransferTokenHeader  = "X-Registry-Push-Transfer-Token"
 	defaultTransferNamespace         = "mcp-sentinel"
 )
 
@@ -220,7 +221,7 @@ func (s *RuntimeServer) HandleRegistryPushTransfer(w http.ResponseWriter, r *htt
 		writeAPIError(w, http.StatusNotFound, "not_found")
 		return
 	}
-	token := strings.TrimSpace(r.Header.Get(registryPushTransferTokenHeader))
+	token := strings.TrimSpace(r.Header.Get(registrypush.TransferTokenHeader))
 	if token == "" {
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return

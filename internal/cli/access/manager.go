@@ -258,7 +258,7 @@ func writeAccessManifest(path string, body []byte, force bool) error {
 	} else if err != nil && !os.IsNotExist(err) {
 		return core.WrapWithSentinel(nil, err, fmt.Sprintf("failed to inspect %q: %v", path, err))
 	}
-	if err := os.WriteFile(path, body, 0o644); err != nil {
+	if err := os.WriteFile(path, body, 0o600); err != nil {
 		return core.WrapWithSentinel(nil, err, fmt.Sprintf("failed to write %q: %v", path, err))
 	}
 	return nil

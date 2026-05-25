@@ -40,8 +40,9 @@ func TestRegistryPushRBACIsNamespaceScoped(t *testing.T) {
 
 	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
 	var foundClusterPodsExec bool
-	var foundRegistryRole bool
-	var foundRegistryRoleBinding bool
+	var foundSentinelRole bool
+	var foundSentinelRoleBinding bool
+	var foundRegistryPodsExec bool
 	for {
 		var doc rbacDoc
 		if err := dec.Decode(&doc); err != nil {
@@ -60,14 +61,25 @@ func TestRegistryPushRBACIsNamespaceScoped(t *testing.T) {
 					foundClusterPodsExec = true
 				}
 			}
-		case doc.Kind == "Role" && doc.Metadata.Name == "mcp-sentinel-api-registry-push" && doc.Metadata.Namespace == "registry":
-			foundRegistryRole = true
-		case doc.Kind == "RoleBinding" && doc.Metadata.Name == "mcp-sentinel-api-registry-push" && doc.Metadata.Namespace == "registry":
+		case doc.Kind == "Role" && doc.Metadata.Name == "mcp-sentinel-api-registry-push" && doc.Metadata.Namespace == "mcp-sentinel":
+			foundSentinelRole = true
+			for _, rule := range doc.Rules {
+				if containsAll(rule.Resources, "pods/exec") {
+					t.Fatalf("registry push role in mcp-sentinel must not grant pods/exec")
+				}
+			}
+		case doc.Kind == "RoleBinding" && doc.Metadata.Name == "mcp-sentinel-api-registry-push" && doc.Metadata.Namespace == "mcp-sentinel":
 			if doc.RoleRef.Kind == "Role" && doc.RoleRef.Name == "mcp-sentinel-api-registry-push" {
 				for _, subject := range doc.Subjects {
 					if subject.Kind == "ServiceAccount" && subject.Name == "mcp-sentinel-api" && subject.Namespace == "mcp-sentinel" {
-						foundRegistryRoleBinding = true
+						foundSentinelRoleBinding = true
 					}
+				}
+			}
+		case doc.Kind == "Role" && doc.Metadata.Name == "mcp-sentinel-api-registry-push" && doc.Metadata.Namespace == "registry":
+			for _, rule := range doc.Rules {
+				if containsAll(rule.Resources, "pods/exec") {
+					foundRegistryPodsExec = true
 				}
 			}
 		}
@@ -75,11 +87,14 @@ func TestRegistryPushRBACIsNamespaceScoped(t *testing.T) {
 	if foundClusterPodsExec {
 		t.Fatal("cluster role mcp-sentinel-api must not grant pods/exec cluster-wide")
 	}
-	if !foundRegistryRole {
-		t.Fatal("expected registry-scoped Role for API registry push helper access")
+	if foundRegistryPodsExec {
+		t.Fatal("registry namespace must not grant pods/exec for registry push")
 	}
-	if !foundRegistryRoleBinding {
-		t.Fatal("expected registry-scoped RoleBinding for API registry push helper access")
+	if !foundSentinelRole {
+		t.Fatal("expected mcp-sentinel-scoped Role for API registry push helper access")
+	}
+	if !foundSentinelRoleBinding {
+		t.Fatal("expected mcp-sentinel-scoped RoleBinding for API registry push helper access")
 	}
 }
 

@@ -179,6 +179,8 @@ func TestRuntimeSessionApplyRejectsUnknownServer(t *testing.T) {
 }
 
 func TestRuntimeServersIncludesMCPServerInventory(t *testing.T) {
+	t.Setenv("MCP_PLATFORM_DOMAIN", "")
+	t.Setenv("MCP_MCP_INGRESS_HOST", "")
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.43.69.247:5000")
 	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
 	scheme := runtime.NewScheme()

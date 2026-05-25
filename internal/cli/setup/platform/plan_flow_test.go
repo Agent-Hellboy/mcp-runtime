@@ -213,6 +213,7 @@ func TestBuildSetupPlan_HostpathRegistryManifest_TLS(t *testing.T) {
 }
 
 func TestValidateNonTestSetupAllowsLenientDefaultMode(t *testing.T) {
+	clearProductionSetupEnv(t)
 	err := validateNonTestSetup(
 		setupplan.Plan{TLSEnabled: false, TestMode: false},
 		&config.ExternalRegistryConfig{URL: "registry.example.com"},
@@ -227,6 +228,21 @@ func setPublicDomainEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("MCP_PLATFORM_DOMAIN", "mcpruntime.org")
 	t.Setenv("MCP_PLATFORM_ADMIN_EMAIL", "admin@mcpruntime.org")
+}
+
+func clearProductionSetupEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"MCP_PLATFORM_DOMAIN",
+		"MCP_PLATFORM_ADMIN_EMAIL",
+		"MCP_PLATFORM_ADMIN_PASSWORD",
+		"ADMIN_USERS",
+		"MCP_REGISTRY_INGRESS_HOST",
+		"MCP_REGISTRY_ENDPOINT",
+		"MCP_REGISTRY_HOST",
+	} {
+		t.Setenv(key, "")
+	}
 }
 
 func TestValidateNonTestSetupAllowsBundledHTTPSStableInternalRegistry(t *testing.T) {
@@ -247,6 +263,7 @@ func TestValidateNonTestSetupAllowsBundledHTTPSStableInternalRegistry(t *testing
 }
 
 func TestValidateNonTestSetupAllowsDevRegistryURLByDefault(t *testing.T) {
+	clearProductionSetupEnv(t)
 	err := validateNonTestSetup(
 		setupplan.Plan{TLSEnabled: false, TestMode: false},
 		&config.ExternalRegistryConfig{URL: "registry.local"},
@@ -258,6 +275,7 @@ func TestValidateNonTestSetupAllowsDevRegistryURLByDefault(t *testing.T) {
 }
 
 func TestValidateNonTestSetupAllowsDevInternalRegistryEndpointByDefault(t *testing.T) {
+	clearProductionSetupEnv(t)
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() { core.DefaultCLIConfig = orig })
 	core.DefaultCLIConfig = &core.CLIConfig{RegistryEndpoint: "10.43.39.164:5000", RegistryIngressHost: "registry.local"}
@@ -273,6 +291,7 @@ func TestValidateNonTestSetupAllowsDevInternalRegistryEndpointByDefault(t *testi
 }
 
 func TestValidateNonTestSetupRejectsMissingTLSInStrictProd(t *testing.T) {
+	clearProductionSetupEnv(t)
 	err := validateNonTestSetup(
 		setupplan.Plan{TLSEnabled: false, TestMode: false, StrictProd: true},
 		&config.ExternalRegistryConfig{URL: "registry.example.com"},
@@ -298,6 +317,7 @@ func TestValidateRegistryTLSModeAllowsBundledHTTPSWithACME(t *testing.T) {
 }
 
 func TestValidateNonTestSetupRejectsMissingPublicHostsWithoutStrictProd(t *testing.T) {
+	clearProductionSetupEnv(t)
 	err := validateNonTestSetup(
 		setupplan.Plan{TLSEnabled: true, TestMode: false},
 		&config.ExternalRegistryConfig{URL: "registry.example.com"},
@@ -309,6 +329,7 @@ func TestValidateNonTestSetupRejectsMissingPublicHostsWithoutStrictProd(t *testi
 }
 
 func TestValidateNonTestSetupRejectsPartialPublicHostConfigWithoutStrictProd(t *testing.T) {
+	clearProductionSetupEnv(t)
 	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
 
 	err := validateNonTestSetup(

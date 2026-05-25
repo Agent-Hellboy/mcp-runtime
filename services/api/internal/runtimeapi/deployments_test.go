@@ -276,6 +276,7 @@ func TestEnsureDefaultDenyNetworkPolicyAllowsSentinelAPILiveInventoryIngress(t *
 }
 
 func TestHandleDeploymentApplyAdminUsesRequestedNamespace(t *testing.T) {
+	clearRegistryPullSecretEnv(t)
 	client := kubernetesfake.NewSimpleClientset()
 	server := &RuntimeServer{
 		k8sClients: &k8sclient.Clients{Clientset: client},
@@ -431,6 +432,7 @@ func TestHandleDeploymentApplyRejectsInvalidVersionTag(t *testing.T) {
 }
 
 func TestHandleDeploymentApplyWritesAuditEvent(t *testing.T) {
+	clearRegistryPullSecretEnv(t)
 	client := kubernetesfake.NewSimpleClientset()
 	audit := &fakeAuditWriter{}
 	server := &RuntimeServer{

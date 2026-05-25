@@ -14,7 +14,7 @@ import (
 	"mcp-runtime/pkg/metadata"
 )
 
-const doctorManagedTeamRegistryPullSecret = "mcp-runtime-registry-pull"
+const doctorManagedTeamRegistryPullSecret = "mcp-runtime-registry-pull" // #nosec G101 -- Kubernetes Secret object name, not credential material.
 
 var internalRegistryRefPattern = regexp.MustCompile(`(?:registry\.registry\.svc\.cluster\.local:5000|(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2[0-9]|3[0-1])(?:\.\d{1,3}){2}):\d+)(?:/|")`)
 var ipv4AddressPattern = regexp.MustCompile(`^\d{1,3}(?:\.\d{1,3}){3}$`)

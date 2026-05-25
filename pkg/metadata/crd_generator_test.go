@@ -11,6 +11,7 @@ import (
 
 func TestGenerateCRD(t *testing.T) {
 	t.Run("generates valid CRD YAML", func(t *testing.T) {
+		clearRegistryImageEnv(t)
 		// Prevent registry host rewriting so we can test CRD field mapping in isolation.
 		t.Setenv(envMCPRegistryPullHost, DefaultRegistryHost)
 		tmpDir := t.TempDir()
@@ -280,6 +281,7 @@ func TestGenerateCRD(t *testing.T) {
 
 func TestGenerateCRDsFromRegistry(t *testing.T) {
 	t.Run("generates CRDs for all servers", func(t *testing.T) {
+		clearRegistryImageEnv(t)
 		// Prevent registry host rewriting so we can test CRD field mapping in isolation.
 		t.Setenv(envMCPRegistryPullHost, DefaultRegistryHost)
 		tmpDir := t.TempDir()
@@ -450,5 +452,12 @@ func assertMapIntValue(t *testing.T, data map[string]any, key string, want int) 
 	}
 	if got != want {
 		t.Fatalf("%s = %d, want %d", key, got, want)
+	}
+}
+
+func clearRegistryImageEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{envMCPRegistryPullHost, envMCPRegistryEndpoint, envMCPRegistryHost, envMCPRegistryIngressHost, envMCPPlatformDomain} {
+		t.Setenv(k, "")
 	}
 }

@@ -169,14 +169,14 @@ func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope str
 		registry.Servers = append(registry.Servers, server)
 	}
 
-	if err := os.MkdirAll(metadataDir, 0o755); err != nil {
+	if err := os.MkdirAll(metadataDir, 0o750); err != nil {
 		return core.WrapWithSentinel(nil, err, fmt.Sprintf("failed to create metadata directory %q: %v", metadataDir, err))
 	}
 	data, err := yaml.Marshal(&registry)
 	if err != nil {
 		return core.WrapWithSentinel(nil, err, fmt.Sprintf("failed to encode metadata: %v", err))
 	}
-	if err := os.WriteFile(metadataPath, data, 0o644); err != nil {
+	if err := os.WriteFile(metadataPath, data, 0o600); err != nil {
 		return core.WrapWithSentinel(nil, err, fmt.Sprintf("failed to write metadata file %q: %v", metadataPath, err))
 	}
 	action := "Created"

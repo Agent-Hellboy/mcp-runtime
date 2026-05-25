@@ -15,6 +15,7 @@ import (
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
 
 	"mcp-runtime/pkg/k8sclient"
+	"mcp-runtime/pkg/registrypush"
 )
 
 func TestRegisterAndServeRegistryPushTransfer(t *testing.T) {
@@ -41,7 +42,7 @@ func TestRegisterAndServeRegistryPushTransfer(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, registryPushTransferPath, nil)
-	req.Header.Set(registryPushTransferTokenHeader, token)
+	req.Header.Set(registrypush.TransferTokenHeader, token)
 	rec := httptest.NewRecorder()
 	server.HandleRegistryPushTransfer(rec, req)
 	if rec.Code != http.StatusOK {
@@ -104,7 +105,7 @@ func TestHandleRegistryPushTransferRejectsWrongPod(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, registryPushTransferPath, nil)
-	req.Header.Set(registryPushTransferTokenHeader, token)
+	req.Header.Set(registrypush.TransferTokenHeader, token)
 	rec := httptest.NewRecorder()
 	server.HandleRegistryPushTransfer(rec, req)
 	if rec.Code != http.StatusNotFound {

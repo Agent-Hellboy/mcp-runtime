@@ -25,6 +25,9 @@ import (
 
 const defaultImageTarPath = "/tmp/image.tar"
 
+// TransferTokenHeader is the HTTP header carrying one-time registry push tar tokens.
+const TransferTokenHeader = "X-Registry-Push-Transfer-Token" // #nosec G101 -- HTTP header name, not credential material.
+
 var (
 	waitPodReadyHook     = waitPodReady
 	waitPodSucceededHook = waitPodSucceeded
@@ -138,7 +141,7 @@ func helperCommand(cfg Config, pushTarget string) []string {
 		token := strings.TrimSpace(cfg.TarFetchToken)
 		script := fmt.Sprintf(
 			"set -eu; curl -fsSL -H %q -o %q %q; skopeo copy --dest-tls-verify=false docker-archive:%q docker://%s",
-			registryPushTransferTokenHeader+": "+token,
+			TransferTokenHeader+": "+token,
 			defaultImageTarPath,
 			url,
 			defaultImageTarPath,
@@ -148,8 +151,6 @@ func helperCommand(cfg Config, pushTarget string) []string {
 	}
 	return []string{"sh", "-c", "while true; do sleep 3600; done"}
 }
-
-const registryPushTransferTokenHeader = "X-Registry-Push-Transfer-Token"
 
 func newHelperName() string {
 	buf := make([]byte, 4)
@@ -206,7 +207,7 @@ func waitPodReady(ctx context.Context, client kubernetes.Interface, namespace, n
 }
 
 func copyFileToPod(ctx context.Context, client kubernetes.Interface, restConfig *rest.Config, namespace, podName, containerName, srcPath, destPath string) error {
-	file, err := os.Open(srcPath)
+	file, err := os.Open(srcPath) // #nosec G304 -- srcPath is a trusted docker save tar from the platform API upload temp dir.
 	if err != nil {
 		return err
 	}

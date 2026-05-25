@@ -208,7 +208,7 @@ func (c *PlatformClient) PushRegistryImage(ctx context.Context, tarPath, target,
 				return
 			}
 		}
-		file, err := os.Open(tarPath)
+		file, err := os.Open(tarPath) // #nosec G304 -- tarPath is a local docker save archive produced by the CLI build step.
 		if err != nil {
 			copyErr = err
 			return
