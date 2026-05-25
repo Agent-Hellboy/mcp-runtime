@@ -155,6 +155,9 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 	if err := applyPlatformIngressIfConfigured(); err != nil {
 		return err
 	}
+	if err := ensureSessionLocalDeploymentReplicasClientGo(logger); err != nil {
+		return err
+	}
 
 	core.Info(fmt.Sprintf("Waiting for mcp-sentinel workload rollouts (per-resource timeout %s; override with MCP_DEPLOYMENT_TIMEOUT)", rolloutTimeout))
 	targets := []struct{ kind, name string }{
@@ -301,6 +304,9 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	}
 
 	if err := applyPlatformIngressIfConfigured(); err != nil {
+		return err
+	}
+	if err := ensureSessionLocalDeploymentReplicas(kubectl, logger); err != nil {
 		return err
 	}
 
