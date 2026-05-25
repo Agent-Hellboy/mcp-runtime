@@ -123,7 +123,7 @@ func (s *RuntimeServer) HandleRuntimeRegistryPush(w http.ResponseWriter, r *http
 	})
 }
 
-func readRegistryPushRequest(r *http.Request) (registryPushRequest, error) {
+func readRegistryPushRequest(r *http.Request) (out registryPushRequest, err error) {
 	mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
 		return registryPushRequest{}, fmt.Errorf("invalid multipart form")
@@ -134,8 +134,13 @@ func readRegistryPushRequest(r *http.Request) (registryPushRequest, error) {
 	}
 
 	reader := multipart.NewReader(r.Body, boundary)
-	out := registryPushRequest{}
 	var tarFile *os.File
+	defer func() {
+		if err != nil && tarFile != nil {
+			_ = tarFile.Close()
+			_ = os.Remove(tarFile.Name())
+		}
+	}()
 
 	for {
 		part, err := reader.NextPart()
@@ -143,10 +148,6 @@ func readRegistryPushRequest(r *http.Request) (registryPushRequest, error) {
 			break
 		}
 		if err != nil {
-			if tarFile != nil {
-				_ = tarFile.Close()
-				_ = os.Remove(tarFile.Name())
-			}
 			return registryPushRequest{}, fmt.Errorf("invalid multipart form")
 		}
 
@@ -182,8 +183,6 @@ func readRegistryPushRequest(r *http.Request) (registryPushRequest, error) {
 			}
 			if _, err := io.Copy(tarFile, part); err != nil {
 				part.Close()
-				_ = tarFile.Close()
-				_ = os.Remove(tarFile.Name())
 				return registryPushRequest{}, fmt.Errorf("failed to store uploaded image")
 			}
 		}
@@ -191,17 +190,12 @@ func readRegistryPushRequest(r *http.Request) (registryPushRequest, error) {
 	}
 
 	if out.Target == "" {
-		if tarFile != nil {
-			_ = tarFile.Close()
-			_ = os.Remove(tarFile.Name())
-		}
 		return registryPushRequest{}, fmt.Errorf("target is required")
 	}
 	if tarFile == nil {
 		return registryPushRequest{}, fmt.Errorf("image_tar is required")
 	}
 	if err := tarFile.Close(); err != nil {
-		_ = os.Remove(tarFile.Name())
 		return registryPushRequest{}, fmt.Errorf("failed to store uploaded image")
 	}
 	out.TarPath = tarFile.Name()

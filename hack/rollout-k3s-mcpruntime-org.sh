@@ -123,7 +123,7 @@ kubectl --kubeconfig "$KUBECONFIG" rollout status deployment/mcp-sentinel-ui -n 
 
 echo "Patching team namespace NetworkPolicies for ingress controller (${PLATFORM_TRAEFIK_NAMESPACE:-kube-system})..."
 TRAEFIK_NS="${PLATFORM_TRAEFIK_NAMESPACE:-kube-system}"
-for ns in $(kubectl --kubeconfig "$KUBECONFIG" get ns -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | rg '^mcp-team-'); do
+for ns in $(kubectl --kubeconfig "$KUBECONFIG" get ns -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | grep '^mcp-team-'); do
   if ! kubectl --kubeconfig "$KUBECONFIG" get networkpolicy platform-default-deny -n "$ns" >/dev/null 2>&1; then
     continue
   fi

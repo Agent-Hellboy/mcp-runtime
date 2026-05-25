@@ -779,10 +779,7 @@ func selectDeployMetadata(name, metadataFile, metadataDir string) (*metadata.Ser
 			return &registry.Servers[i], nil
 		}
 	}
-	if len(registry.Servers) == 1 {
-		return &registry.Servers[0], nil
-	}
-	return nil, nil
+	return nil, core.NewWithSentinel(nil, fmt.Sprintf("no metadata entry for server %q", name))
 }
 
 func mergeDeployMetadata(spec *mcpv1alpha1.MCPServerSpec, src *metadata.ServerMetadata) {

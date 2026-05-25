@@ -1219,3 +1219,30 @@ func TestDeployImageRefsEquivalentAcceptsScopedDisplayRefs(t *testing.T) {
 		})
 	}
 }
+
+func TestSelectDeployMetadataRequiresExactNameMatch(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".mcp")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	data, err := yaml.Marshal(metadata.RegistryFile{
+		Version: "v1",
+		Servers: []metadata.ServerMetadata{{
+			Name:  "payments",
+			Image: "registry.example.com/acme/payments",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "servers.yaml"), data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if _, err := selectDeployMetadata("payments", "", dir); err != nil {
+		t.Fatalf("selectDeployMetadata(payments) error = %v", err)
+	}
+	if _, err := selectDeployMetadata("typo", "", dir); err == nil {
+		t.Fatal("expected error for mismatched server name")
+	}
+}

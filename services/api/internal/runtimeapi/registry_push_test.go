@@ -1,6 +1,11 @@
 package runtimeapi
 
 import (
+	"bytes"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"testing"
 
 	"mcp-runtime/pkg/publishscope"
@@ -78,5 +83,47 @@ func TestValidateDeployImageRejectsCrossTeamPushTarget(t *testing.T) {
 	}
 	if err := ValidateDeployImage(target, "mcp-team-acme", "acme", p.Role); err == nil {
 		t.Fatal("expected deploy image validation failure for cross-team repo")
+	}
+}
+
+func TestReadRegistryPushRequestCleansUpTempFileOnDuplicateUpload(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv(registryPushTempDirEnv, tmpDir)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("target", "registry.example.com/acme/demo:v1"); err != nil {
+		t.Fatalf("WriteField() error = %v", err)
+	}
+	part, err := writer.CreateFormFile("image_tar", "demo.tar")
+	if err != nil {
+		t.Fatalf("CreateFormFile() error = %v", err)
+	}
+	if _, err := part.Write([]byte("first")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	part2, err := writer.CreateFormFile("image_tar", "demo2.tar")
+	if err != nil {
+		t.Fatalf("CreateFormFile() duplicate error = %v", err)
+	}
+	if _, err := part2.Write([]byte("second")); err != nil {
+		t.Fatalf("Write() duplicate error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/registry/push", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if _, err := readRegistryPushRequest(req); err == nil {
+		t.Fatal("expected duplicate upload error")
+	}
+
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected no temp files, found %d", len(entries))
 	}
 }
