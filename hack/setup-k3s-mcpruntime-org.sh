@@ -58,3 +58,15 @@ echo "running: ./bin/mcp-runtime ${SETUP_ARGS[*]}"
 
 MCP_SETUP_WAIT_TIMEOUT="${MCP_SETUP_WAIT_TIMEOUT:-900}" \
   ./bin/mcp-runtime "${SETUP_ARGS[@]}"
+
+BACKUP_ROOT="${MCP_TLS_BACKUP_DIR:-$HOME/.mcpruntime/backups/mcpruntime-org}"
+has_platform_backup=0
+if [[ -L "$BACKUP_ROOT/latest" && -f "$BACKUP_ROOT/latest/registry-tls.yaml" ]]; then
+  has_platform_backup=1
+elif [[ -f "$BACKUP_ROOT/registry-tls.yaml" ]]; then
+  has_platform_backup=1
+fi
+if [[ "${MCP_RESTORE_TLS_AFTER_SETUP:-1}" == "1" && "$has_platform_backup" == "1" ]]; then
+  echo "Restoring platform-runtime backup from $BACKUP_ROOT ..."
+  MCP_DEPLOY_ENV="$ENV_FILE" "$ROOT/hack/clean-k3s-mcpruntime-org.sh" --restore-platform
+fi
