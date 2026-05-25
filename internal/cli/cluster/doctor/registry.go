@@ -153,6 +153,13 @@ func checkMCPServersImagePullSecrets(kubectl core.KubectlRunner, namespace strin
 	}
 	out, execErr := cmd.Output()
 	if execErr != nil {
+		if isKubectlNotFound(execErr) {
+			return DoctorCheck{
+				Name:   "mcp-servers imagePullSecrets",
+				OK:     true,
+				Detail: fmt.Sprintf("serviceaccount %s not provisioned yet (created on first managed server deploy)", kubeworkload.DefaultServiceAccountName),
+			}
+		}
 		return DoctorCheck{
 			Name:   "mcp-servers imagePullSecrets",
 			OK:     false,
