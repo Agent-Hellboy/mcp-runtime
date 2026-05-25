@@ -24,6 +24,7 @@ import (
 
 	"mcp-runtime/pkg/k8sclient"
 	"mcp-runtime/pkg/kubeworkload"
+	"mcp-runtime/pkg/sentinel"
 )
 
 type fakeAuditWriter struct {
@@ -313,6 +314,7 @@ func TestHandleDeploymentApplyAdminUsesRequestedNamespace(t *testing.T) {
 
 func TestResolveDeployImageReference(t *testing.T) {
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
 	t.Setenv("PLATFORM_MODE", "public")
 
 	tests := []struct {
@@ -342,10 +344,16 @@ func TestResolveDeployImageReference(t *testing.T) {
 			want:      "10.96.223.152:5000/acme/go-example:v0.1.0",
 		},
 		{
-			name:      "explicit registry",
+			name:      "external explicit registry",
 			image:     "registry.example.com/public/go-example:v0.1.0",
 			namespace: defaultPublicCatalogNamespace,
 			want:      "registry.example.com/public/go-example:v0.1.0",
+		},
+		{
+			name:      "platform explicit public registry rewrites to internal endpoint",
+			image:     "registry.mcpruntime.org/public/go-example:v0.1.0",
+			namespace: defaultPublicCatalogNamespace,
+			want:      "10.96.223.152:5000/public/go-example:v0.1.0",
 		},
 	}
 
@@ -358,34 +366,35 @@ func TestResolveDeployImageReference(t *testing.T) {
 	}
 }
 
-func TestResolveDeployImageReferenceUsesPlatformRegistryURLWhenEndpointUnset(t *testing.T) {
+func TestResolveDeployImageReferenceFallsBackToInternalRegistryDNS(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "")
 	t.Setenv("PLATFORM_REGISTRY_URL", "registry.custom.example")
 	t.Setenv("PLATFORM_MODE", "tenant")
 
 	got := ResolveDeployImageReference("go-example:v0.1.0", "mcp-team-acme", "acme")
-	if want := "registry.custom.example/acme/go-example:v0.1.0"; got != want {
+	if want := "registry.registry.svc.cluster.local:5000/acme/go-example:v0.1.0"; got != want {
 		t.Fatalf("ResolveDeployImageReference() = %q, want %q", got, want)
 	}
 }
 
-func TestResolveDeployImageReferencePrefersPlatformRegistryURLOverEndpoint(t *testing.T) {
+func TestResolveDeployImageReferencePrefersInternalEndpointOverPublicRegistryURL(t *testing.T) {
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
 	t.Setenv("PLATFORM_REGISTRY_URL", "registry.custom.example")
 	t.Setenv("PLATFORM_MODE", "tenant")
 
 	got := ResolveDeployImageReference("go-example:v0.1.0", "mcp-team-acme", "acme")
-	if want := "registry.custom.example/acme/go-example:v0.1.0"; got != want {
+	if want := "10.96.223.152:5000/acme/go-example:v0.1.0"; got != want {
 		t.Fatalf("ResolveDeployImageReference() = %q, want %q", got, want)
 	}
 }
 
 func TestResolveDeployImageReferencePrefersPullHostOverInternalEndpoint(t *testing.T) {
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
-	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
+	t.Setenv("MCP_REGISTRY_PULL_HOST", "registry.registry.svc.cluster.local:5000")
 	t.Setenv("PLATFORM_MODE", "tenant")
 
 	got := ResolveDeployImageReference("go-example:v0.1.0", "mcp-team-acme", "acme")
-	if want := "registry.mcpruntime.org/acme/go-example:v0.1.0"; got != want {
+	if want := "registry.registry.svc.cluster.local:5000/acme/go-example:v0.1.0"; got != want {
 		t.Fatalf("ResolveDeployImageReference() = %q, want %q", got, want)
 	}
 }
@@ -494,11 +503,43 @@ func TestEnsureNamespaceRegistryPullSecret(t *testing.T) {
 	}
 }
 
+func TestEnsureNamespaceRegistryPullSecretAllowsOptionalModeWithoutAPIKey(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.example.com")
+	t.Setenv("ADMIN_API_KEYS", "")
+	t.Setenv("UI_API_KEY", "")
+	t.Setenv("MCP_REGISTRY_PULL_SECRET_OPTIONAL", "true")
+	client := kubernetesfake.NewSimpleClientset()
+	if err := kubeworkload.EnsureServiceAccount(context.Background(), client, "mcp-team-acme"); err != nil {
+		t.Fatalf("EnsureServiceAccount() error = %v", err)
+	}
+	server := &RuntimeServer{k8sClients: &k8sclient.Clients{Clientset: client}}
+	if err := server.ensureNamespaceRegistryPullSecret(context.Background(), client, "mcp-team-acme"); err != nil {
+		t.Fatalf("ensureNamespaceRegistryPullSecret() optional mode error = %v", err)
+	}
+	secrets, err := client.CoreV1().Secrets("mcp-team-acme").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("list secrets: %v", err)
+	}
+	if len(secrets.Items) != 0 {
+		t.Fatalf("expected no registry pull secret in optional mode, found %d", len(secrets.Items))
+	}
+}
+
 func TestRegistryPullSecretHostPrefersInternalEndpointInDev(t *testing.T) {
 	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.local")
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.registry.svc.cluster.local:5000")
 	if got := registryPullSecretHost(); got != "registry.registry.svc.cluster.local:5000" {
 		t.Fatalf("registryPullSecretHost() = %q, want internal service endpoint", got)
+	}
+}
+
+func TestTeamIngressAllowNamespacesUsesPlatformTraefikNamespaceWhenWatchDisabled(t *testing.T) {
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv("PLATFORM_TRAEFIK_NAMESPACE", "kube-system")
+	cfg := platformTeamTraefikWatchConfig()
+	got := teamIngressAllowNamespaces(cfg)
+	if len(got) != 1 || got[0] != "kube-system" {
+		t.Fatalf("teamIngressAllowNamespaces() = %#v, want [kube-system]", got)
 	}
 }
 
@@ -520,6 +561,16 @@ func TestEnsureTeamNamespaceCreatesRegistryPullSecret(t *testing.T) {
 	if _, err := client.CoreV1().Secrets("mcp-team-acme").Get(context.Background(), registryPullSecretName, metav1.GetOptions{}); err != nil {
 		t.Fatalf("registry pull secret missing after ensureTeamNamespace: %v", err)
 	}
+	binding, err := client.RbacV1().RoleBindings("mcp-team-acme").Get(context.Background(), platformNamespaceAPISecretAccessName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("namespace API secret access rolebinding missing after ensureTeamNamespace: %v", err)
+	}
+	if binding.RoleRef.Kind != "ClusterRole" || binding.RoleRef.Name != platformNamespaceAPISecretAccessName {
+		t.Fatalf("namespace API secret access rolebinding ref = %#v", binding.RoleRef)
+	}
+	if len(binding.Subjects) != 1 || binding.Subjects[0].Kind != rbacv1.ServiceAccountKind || binding.Subjects[0].Name != platformNamespaceAPIServiceAccountName || binding.Subjects[0].Namespace != sentinel.DefaultNamespace {
+		t.Fatalf("namespace API secret access subjects = %#v", binding.Subjects)
+	}
 }
 
 func TestEnsureDefaultDenyNetworkPolicyIdempotent(t *testing.T) {
@@ -533,6 +584,7 @@ func TestEnsureDefaultDenyNetworkPolicyIdempotent(t *testing.T) {
 
 func TestEnsureTeamNamespaceConfiguresTraefikIngressWatch(t *testing.T) {
 	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "required")
+	clearRegistryPullSecretEnv(t)
 	client := kubernetesfake.NewSimpleClientset(
 		&appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{Name: "traefik", Namespace: "traefik"},
@@ -598,6 +650,7 @@ func TestEnsureTeamNamespaceConfiguresTraefikIngressWatch(t *testing.T) {
 func TestEnsureCatalogNamespaceAutoTraefikWatchSkipsExternalIngress(t *testing.T) {
 	t.Setenv("PLATFORM_MODE", "public")
 	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "auto")
+	clearRegistryPullSecretEnv(t)
 	client := kubernetesfake.NewSimpleClientset()
 	server := &RuntimeServer{
 		k8sClients: &k8sclient.Clients{Clientset: client},
@@ -829,4 +882,16 @@ func networkPolicyAllowsNamespace(policy *networkingv1.NetworkPolicy, namespace 
 		}
 	}
 	return false
+}
+
+func clearRegistryPullSecretEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"MCP_PLATFORM_DOMAIN",
+		"MCP_REGISTRY_INGRESS_HOST",
+		"MCP_REGISTRY_HOST",
+		"MCP_REGISTRY_ENDPOINT",
+	} {
+		t.Setenv(key, "")
+	}
 }

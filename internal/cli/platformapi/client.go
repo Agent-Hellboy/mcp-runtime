@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -81,13 +82,20 @@ func (c *PlatformClient) do(ctx context.Context, method, relPath, query string, 
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("x-api-key", c.token)
-	req.Header.Set("authorization", "Bearer "+c.token)
-	req.Header.Set("x-mcp-source", "cli")
+	c.setAuthHeaders(req)
 	if body != nil {
 		req.Header.Set("content-type", "application/json")
 	}
 	return c.http.Do(req)
+}
+
+func (c *PlatformClient) setAuthHeaders(req *http.Request) {
+	if req == nil {
+		return
+	}
+	req.Header.Set("x-api-key", c.token)
+	req.Header.Set("authorization", "Bearer "+c.token)
+	req.Header.Set("x-mcp-source", "cli")
 }
 
 func listQuery(namespace string) string {
@@ -161,6 +169,85 @@ type ImagePublishRecord struct {
 	ImageRef    string `json:"image_ref"`
 	SourceImage string `json:"source_image,omitempty"`
 	Mode        string `json:"mode,omitempty"`
+}
+
+// PushRegistryImage uploads a docker save tar and asks the platform API to push
+// it to the configured registry from inside the cluster.
+func (c *PlatformClient) PushRegistryImage(ctx context.Context, tarPath, target, scope string) error {
+	tarPath = strings.TrimSpace(tarPath)
+	target = strings.TrimSpace(target)
+	if tarPath == "" || target == "" {
+		return fmt.Errorf("tar path and target are required")
+	}
+
+	u, err := url.Parse(c.baseURL)
+	if err != nil {
+		return err
+	}
+	rel, err := url.Parse(c.apiPrefix + "/runtime/registry/push")
+	if err != nil {
+		return err
+	}
+	joined := u.ResolveReference(rel)
+
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+	contentType := writer.FormDataContentType()
+
+	go func() {
+		var copyErr error
+		defer func() {
+			_ = writer.Close()
+			_ = pw.CloseWithError(copyErr)
+		}()
+		if copyErr = writer.WriteField("target", target); copyErr != nil {
+			return
+		}
+		if scope = strings.TrimSpace(scope); scope != "" {
+			if copyErr = writer.WriteField("scope", scope); copyErr != nil {
+				return
+			}
+		}
+		file, err := os.Open(tarPath)
+		if err != nil {
+			copyErr = err
+			return
+		}
+		defer file.Close()
+		part, err := writer.CreateFormFile("image_tar", filepath.Base(tarPath))
+		if err != nil {
+			copyErr = err
+			return
+		}
+		if _, copyErr = io.Copy(part, file); copyErr != nil {
+			return
+		}
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, joined.String(), pr)
+	if err != nil {
+		return err
+	}
+	c.setAuthHeaders(req)
+	req.Header.Set("content-type", contentType)
+
+	client := c.http
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Minute}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return httpAPIError(resp.StatusCode, b)
+	}
+	return nil
 }
 
 func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePublishRecord) error {
@@ -484,6 +571,8 @@ func httpAPIError(status int, body []byte) error {
 type ServerListItem struct {
 	Name        string            `json:"name"`
 	Namespace   string            `json:"namespace"`
+	Image       string            `json:"image,omitempty"`
+	ImageTag    string            `json:"imageTag,omitempty"`
 	Description string            `json:"description,omitempty"`
 	Ready       string            `json:"ready"`
 	Status      string            `json:"status"`
@@ -499,6 +588,7 @@ type runtimeServerApplyRequest struct {
 	Name      string                    `json:"name"`
 	Namespace string                    `json:"namespace,omitempty"`
 	Scope     string                    `json:"scope,omitempty"`
+	Update    bool                      `json:"update,omitempty"`
 	Labels    map[string]string         `json:"labels,omitempty"`
 	Spec      mcpv1alpha1.MCPServerSpec `json:"spec"`
 }
@@ -596,10 +686,15 @@ func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace
 }
 
 func (c *PlatformClient) ApplyRuntimeServerWithScope(ctx context.Context, name, namespace, scope string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error) {
+	return c.ApplyRuntimeServerWithScopeUpdate(ctx, name, namespace, scope, spec, false)
+}
+
+func (c *PlatformClient) ApplyRuntimeServerWithScopeUpdate(ctx context.Context, name, namespace, scope string, spec mcpv1alpha1.MCPServerSpec, update bool) (ServerListItem, error) {
 	body := runtimeServerApplyRequest{
 		Name:      strings.TrimSpace(name),
 		Namespace: strings.TrimSpace(namespace),
 		Scope:     strings.TrimSpace(scope),
+		Update:    update,
 		Spec:      spec,
 	}
 	js, err := json.Marshal(body)

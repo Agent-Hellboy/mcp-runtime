@@ -6,6 +6,7 @@ package registry
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,9 +18,11 @@ import (
 
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/kube"
+	"mcp-runtime/internal/cli/kubeerr"
 	"mcp-runtime/internal/cli/platformapi"
 	"mcp-runtime/internal/cli/registry/config"
 	"mcp-runtime/internal/cli/registry/ref"
+	"mcp-runtime/pkg/kubeworkload"
 	"mcp-runtime/pkg/publishscope"
 )
 
@@ -117,8 +120,8 @@ func RunRegistryProvision(mgr *RegistryManager, url, username, password, operato
 	return nil
 }
 
-// RunRegistryPush contains the registry push command flow for folder packages.
-func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error {
+// RunRegistryPush pushes an image through the platform API.
+func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -128,11 +131,93 @@ func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryU
 		core.LogStructuredError(mgr.logger, err, "Image required")
 		return err
 	}
+	platformClient, err := requirePlatformPushCredentials(ctx)
+	if err != nil {
+		return err
+	}
+	target, normalizedScope, err := buildRegistryPushTarget(ctx, mgr, platformClient, image, registryURL, name, scope, "platform")
+	if err != nil {
+		return err
+	}
+
+	mgr.logger.Info("Pushing image", zap.String("source", image), zap.String("target", target))
+	if err := mgr.PushViaPlatform(ctx, platformClient, image, target, string(normalizedScope)); err != nil {
+		return err
+	}
+	mgr.recordImagePublish(ctx, platformClient, image, target, "platform")
+	return nil
+}
+
+// RunAdminRegistryPush pushes an image using direct Kubernetes access for
+// operator debugging. Normal users should use registry push instead.
+func RunAdminRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := requireAdminClusterAccess(mgr); err != nil {
+		return err
+	}
+	if image == "" {
+		err := core.NewWithSentinel(core.ErrImageRequired, "image is required (use --image)")
+		core.Error("Image required")
+		core.LogStructuredError(mgr.logger, err, "Image required")
+		return err
+	}
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		mode = "in-cluster"
+	}
+	switch mode {
+	case "direct", "in-cluster":
+	default:
+		err := core.NewWithSentinel(core.ErrUnknownRegistryMode, fmt.Sprintf("admin registry push mode must be direct or in-cluster, not %q", mode))
+		core.Error("Unknown registry mode")
+		core.LogStructuredError(mgr.logger, err, "Unknown registry mode")
+		return err
+	}
+
+	var platformClient *platformapi.PlatformClient
 	normalizedScope, err := publishscope.Normalize(scope)
 	if err != nil {
 		return err
 	}
+	if normalizedScope == publishscope.Tenant {
+		platformClient, err = platformapi.NewPlatformClient()
+		if err != nil {
+			return fmt.Errorf("tenant scope requires platform credentials: %w", err)
+		}
+	}
+	target, _, err := buildRegistryPushTarget(ctx, mgr, platformClient, image, registryURL, name, scope, mode)
+	if err != nil {
+		return err
+	}
+
+	mgr.logger.Info("Pushing image via admin Kubernetes path", zap.String("source", image), zap.String("target", target), zap.String("mode", mode))
+	var pushErr error
+	switch mode {
+	case "direct":
+		pushErr = mgr.PushDirect(image, target)
+	case "in-cluster":
+		pushErr = mgr.PushInCluster(image, target, helperNamespace)
+	}
+	if pushErr != nil {
+		return pushErr
+	}
+	if platformClient != nil {
+		mgr.recordImagePublish(ctx, platformClient, image, target, mode)
+	}
+	return nil
+}
+
+func buildRegistryPushTarget(ctx context.Context, mgr *RegistryManager, platformClient *platformapi.PlatformClient, image, registryURL, name, scope, mode string) (string, publishscope.Scope, error) {
+	normalizedScope, err := publishscope.Normalize(scope)
+	if err != nil {
+		return "", "", err
+	}
 	targetRegistry := registryURL
+	if targetRegistry == "" && strings.TrimSpace(mode) == "in-cluster" {
+		targetRegistry = resolveInClusterPushRegistryURL(mgr.logger)
+	}
 	if targetRegistry == "" {
 		if ext, err := resolveExternalRegistryConfig(nil); err == nil && ext != nil && ext.URL != "" {
 			targetRegistry = strings.TrimSuffix(ext.URL, "/")
@@ -141,10 +226,6 @@ func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryU
 	if targetRegistry == "" {
 		targetRegistry = resolvePlatformRegistryURL(mgr.logger)
 	}
-	platformClient, err := requirePlatformPushCredentials(ctx)
-	if err != nil {
-		return err
-	}
 
 	repo, tag := ref.SplitImage(image)
 	if name != "" {
@@ -152,33 +233,32 @@ func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryU
 	} else {
 		repo = ref.DropRegistryPrefix(repo)
 	}
-	repo, err = ScopedRegistryRepository(ctx, platformClient, repo, normalizedScope)
-	if err != nil {
-		return err
+	if normalizedScope != "" {
+		repo, err = ScopedRegistryRepository(ctx, platformClient, repo, normalizedScope)
+		if err != nil {
+			return "", "", err
+		}
 	}
 	target := targetRegistry + "/" + repo
 	if tag != "" {
 		target = target + ":" + tag
 	}
+	return target, normalizedScope, nil
+}
 
-	mgr.logger.Info("Pushing image", zap.String("source", image), zap.String("target", target))
-
-	var pushErr error
-	switch mode {
-	case "direct":
-		pushErr = mgr.PushDirect(image, target)
-	case "in-cluster":
-		pushErr = mgr.PushInCluster(image, target, helperNamespace)
-	default:
-		err := core.NewWithSentinel(core.ErrUnknownRegistryMode, fmt.Sprintf("unknown mode %q (use direct|in-cluster)", mode))
-		core.Error("Unknown registry mode")
-		core.LogStructuredError(mgr.logger, err, "Unknown registry mode")
-		return err
+func requireAdminClusterAccess(mgr *RegistryManager) error {
+	if mgr == nil || mgr.kubectl == nil {
+		return core.NewWithSentinel(nil, kubeerr.DirectModeFailureMessage("admin registry push requires admin cluster access", "kubectl client is unavailable"))
 	}
-	if pushErr != nil {
-		return pushErr
+	cmd, err := mgr.kubectl.CommandArgs([]string{"cluster-info"})
+	if err != nil {
+		return core.NewWithSentinel(nil, kubeerr.DirectModeFailureMessage("admin registry push requires admin cluster access", err.Error()))
 	}
-	mgr.recordImagePublish(ctx, platformClient, image, target, mode)
+	output, execErr := cmd.CombinedOutput()
+	if execErr != nil {
+		detail := kubeerr.CommandDetail(string(output), execErr)
+		return core.NewWithSentinel(nil, kubeerr.DirectModeFailureMessage("admin registry push requires admin cluster access", detail))
+	}
 	return nil
 }
 
@@ -287,6 +367,66 @@ func requirePlatformPushCredentials(ctx context.Context) (*platformapi.PlatformC
 		return nil, fmt.Errorf("registry push credentials were rejected: %w", err)
 	}
 	return client, nil
+}
+
+// PushViaPlatform saves the local image and asks the platform API to push it in-cluster.
+func (m *RegistryManager) PushViaPlatform(ctx context.Context, client *platformapi.PlatformClient, source, target, scope string) error {
+	if client == nil {
+		return fmt.Errorf("platform client is required")
+	}
+	core.Info(fmt.Sprintf("Saving local image %s to a temporary archive", source))
+	tmpFile, err := os.CreateTemp("", "mcp-img-*.tar")
+	if err != nil {
+		return core.WrapWithSentinel(core.ErrCreateTempFileFailed, err, fmt.Sprintf("failed to create temp file: %v", err))
+	}
+	tmpPath := tmpFile.Name()
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return core.WrapWithSentinel(core.ErrCloseTempFileFailed, err, fmt.Sprintf("failed to close temp file: %v", err))
+	}
+	defer os.Remove(tmpPath)
+
+	saveCmd, err := m.exec.Command("docker", []string{"save", "-o", tmpPath, source})
+	if err != nil {
+		return err
+	}
+	saveCmd.SetStdout(os.Stdout)
+	saveCmd.SetStderr(os.Stderr)
+	if err := saveCmd.Run(); err != nil {
+		return core.WrapWithSentinelAndContext(
+			core.ErrSaveImageFailed,
+			err,
+			fmt.Sprintf("failed to save image: %v", err),
+			map[string]any{"source": source, "component": "registry"},
+		)
+	}
+	if info, err := os.Stat(tmpPath); err == nil {
+		core.Info(fmt.Sprintf("Saved image archive (%s); uploading to platform API", formatPushArchiveSize(info.Size())))
+	} else {
+		core.Info("Saved image archive; uploading to platform API")
+	}
+
+	uploadCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
+	core.Info(fmt.Sprintf("Uploading image for publish target %s", target))
+	if err := client.PushRegistryImage(uploadCtx, tmpPath, target, scope); err != nil {
+		return core.WrapWithSentinelAndContext(
+			core.ErrPushImageInClusterFailed,
+			err,
+			fmt.Sprintf("failed to push image via platform API: %v", err),
+			map[string]any{"target": target, "component": "registry"},
+		)
+	}
+	core.Success(fmt.Sprintf("Pushed %s via platform API", target))
+	return nil
+}
+
+func formatPushArchiveSize(size int64) string {
+	const mib = 1024 * 1024
+	if size <= 0 {
+		return "size unknown"
+	}
+	return fmt.Sprintf("%.1f MiB", float64(size)/mib)
 }
 
 func (m *RegistryManager) recordImagePublish(ctx context.Context, client *platformapi.PlatformClient, source, target, mode string) {
@@ -799,9 +939,17 @@ func (m *RegistryManager) PushInCluster(source, target, helperNS string) error {
 		return wrappedErr
 	}
 
+	overrides, err := registryPushHelperOverrides(helperName)
+	if err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrStartHelperPodFailed, err, fmt.Sprintf("failed to build helper pod security overrides: %v", err))
+		core.Error("Failed to build helper pod security overrides")
+		core.LogStructuredError(m.logger, wrappedErr, "Failed to build helper pod security overrides")
+		return wrappedErr
+	}
+
 	// Start helper pod with skopeo
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	if err := m.kubectl.RunWithOutput([]string{"run", helperName, "-n", helperNS, "--image=" + core.GetSkopeoImage(), "--restart=Never", "--command", "--", "sh", "-c", "while true; do sleep 3600; done"}, os.Stdout, os.Stderr); err != nil {
+	if err := m.kubectl.RunWithOutput([]string{"run", helperName, "-n", helperNS, "--image=" + core.GetSkopeoImage(), "--restart=Never", "--overrides=" + overrides, "--command", "--", "sh", "-c", "while true; do sleep 3600; done"}, os.Stdout, os.Stderr); err != nil {
 		wrappedErr := core.WrapWithSentinelAndContext(
 			core.ErrStartHelperPodFailed,
 			err,
@@ -873,8 +1021,36 @@ func (m *RegistryManager) PushInCluster(source, target, helperNS string) error {
 		return wrappedErr
 	}
 
-	core.Success(fmt.Sprintf("Pushed %s via in-cluster helper", target))
+	if pushTarget != target {
+		core.Success(fmt.Sprintf("Pushed %s via in-cluster helper (helper destination %s)", target, pushTarget))
+	} else {
+		core.Success(fmt.Sprintf("Pushed %s via in-cluster helper", target))
+	}
 	return nil
+}
+
+func registryPushHelperOverrides(helperName string) (string, error) {
+	overrides := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Pod",
+		"spec": map[string]any{
+			"automountServiceAccountToken": false,
+			"securityContext":              kubeworkload.RestrictedPodSecurityContext(),
+			"containers": []map[string]any{
+				{
+					"name":            helperName,
+					"image":           core.GetSkopeoImage(),
+					"command":         []string{"sh", "-c", "while true; do sleep 3600; done"},
+					"securityContext": kubeworkload.RestrictedContainerSecurityContext(),
+				},
+			},
+		},
+	}
+	b, err := json.Marshal(overrides)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // rewriteTargetHostForInClusterPush replaces the host portion of an image reference

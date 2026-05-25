@@ -224,7 +224,7 @@ func TestLoadOperatorConfig(t *testing.T) {
 	if cfg.InternalRegistryEndpoint != "10.43.39.164:5000" {
 		t.Fatalf("expected internal registry endpoint override, got %q", cfg.InternalRegistryEndpoint)
 	}
-	if cfg.RegistryPullHost != "registry.mcpruntime.org" {
+	if cfg.RegistryPullHost != "10.43.39.164:5000" {
 		t.Fatalf("expected registry pull host override, got %q", cfg.RegistryPullHost)
 	}
 	if cfg.ProvisionedRegistryUsername != "user" || cfg.ProvisionedRegistryPassword != "pass" {

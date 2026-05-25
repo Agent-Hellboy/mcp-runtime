@@ -68,7 +68,7 @@ sequenceDiagram
     participant R as Registry
     participant W as Workloads
 
-    U->>CLI: setup / server apply / pipeline deploy
+    U->>CLI: setup / server apply / server deploy
     CLI->>K: apply CRDs, manifests, MCPServer
     CLI->>R: build or push images when requested
     K-->>O: watch MCPServer changes

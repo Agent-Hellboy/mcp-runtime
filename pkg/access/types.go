@@ -36,11 +36,9 @@ type SubjectRef struct {
 type TrustLevel string
 
 const (
-	TrustNone TrustLevel = "none"
-	TrustLow  TrustLevel = "low"
-	TrustMid  TrustLevel = "mid"
-	TrustHigh TrustLevel = "high"
-	TrustFull TrustLevel = "full"
+	TrustLow    TrustLevel = "low"
+	TrustMedium TrustLevel = "medium"
+	TrustHigh   TrustLevel = "high"
 )
 
 // ToolSideEffect classifies whether a tool reads, mutates, or destructively changes state.

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
@@ -24,8 +25,16 @@ import (
 	setupplan "mcp-runtime/internal/cli/setup/plan"
 	"mcp-runtime/pkg/k8sclient"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+const (
+	kafkaStatefulSetName = "kafka"
+	kafkaPodName         = "kafka-0"
+	kafkaPodContainer    = "kafka"
+	kafkaPVCName         = "kafka-data-kafka-0"
 )
 
 func zookeeperRolloutKind(storageMode string) string {
@@ -101,7 +110,7 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 	if err := waitForRolloutStatusWithClientGo(zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
 		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, "messaging (zookeeper)")
 	}
-	if err := waitForRolloutStatusWithClientGo("statefulset", "kafka", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
+	if err := waitForKafkaRolloutClientGo(logger, rolloutTimeoutDuration, storageMode); err != nil {
 		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, "statefulset", "kafka", core.DefaultAnalyticsNamespace, "messaging (kafka)")
 	}
 
@@ -247,7 +256,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	if err := waitForRolloutStatusWithKubectl(kubectl, zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, rolloutTimeout); err != nil {
 		return mcpSentinelDependencyRolloutFailed(kubectl, err, zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, "messaging (zookeeper)")
 	}
-	if err := waitForRolloutStatusWithKubectl(kubectl, "statefulset", "kafka", core.DefaultAnalyticsNamespace, rolloutTimeout); err != nil {
+	if err := waitForKafkaRolloutWithKubectl(kubectl, rolloutTimeout, storageMode); err != nil {
 		return mcpSentinelDependencyRolloutFailed(kubectl, err, "statefulset", "kafka", core.DefaultAnalyticsNamespace, "messaging (kafka)")
 	}
 
@@ -330,6 +339,166 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		}
 	}
 	return core.WrapWithSentinelAndContext(core.ErrOperatorDeploymentFailed, cause, msg, ctx)
+}
+
+func waitForKafkaRolloutClientGo(logger *zap.Logger, rolloutTimeout time.Duration, storageMode string) error {
+	if err := waitForRolloutStatusWithClientGo("statefulset", kafkaStatefulSetName, core.DefaultAnalyticsNamespace, rolloutTimeout); err == nil {
+		return nil
+	} else {
+		recovered, recoverErr := recoverKafkaClusterIDMismatchClientGo(logger, storageMode)
+		if recoverErr != nil {
+			return recoverErr
+		}
+		if recovered {
+			return waitForRolloutStatusWithClientGo("statefulset", kafkaStatefulSetName, core.DefaultAnalyticsNamespace, rolloutTimeout)
+		}
+		return err
+	}
+}
+
+func waitForKafkaRolloutWithKubectl(kubectl core.KubectlRunner, rolloutTimeout, storageMode string) error {
+	if err := waitForRolloutStatusWithKubectl(kubectl, "statefulset", kafkaStatefulSetName, core.DefaultAnalyticsNamespace, rolloutTimeout); err == nil {
+		return nil
+	} else {
+		recovered, recoverErr := recoverKafkaClusterIDMismatchWithKubectl(kubectl, storageMode)
+		if recoverErr != nil {
+			return recoverErr
+		}
+		if recovered {
+			return waitForRolloutStatusWithKubectl(kubectl, "statefulset", kafkaStatefulSetName, core.DefaultAnalyticsNamespace, rolloutTimeout)
+		}
+		return err
+	}
+}
+
+func recoverKafkaClusterIDMismatchClientGo(logger *zap.Logger, storageMode string) (bool, error) {
+	if strings.EqualFold(strings.TrimSpace(storageMode), setupplan.StorageModeHostpath) {
+		return false, nil
+	}
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return false, err
+	}
+	logs, err := kafkaLogsClientGo(clients)
+	if err != nil || !isKafkaClusterIDMismatchLog(logs) {
+		return false, nil
+	}
+	if logger != nil {
+		logger.Warn("Kafka cluster ID mismatch detected; resetting bundled Kafka PVC")
+	}
+	core.Warn("Kafka data volume has stale cluster metadata; resetting bundled Kafka state")
+	if err := scaleKafkaStatefulSetClientGo(clients, 0); err != nil {
+		return false, err
+	}
+	if err := waitForKafkaPodDeletionClientGo(clients, 2*time.Minute); err != nil {
+		return false, err
+	}
+	if err := clients.Clientset.CoreV1().PersistentVolumeClaims(core.DefaultAnalyticsNamespace).Delete(context.Background(), kafkaPVCName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return false, err
+	}
+	if err := scaleKafkaStatefulSetClientGo(clients, 1); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func recoverKafkaClusterIDMismatchWithKubectl(kubectl core.KubectlRunner, storageMode string) (bool, error) {
+	if strings.EqualFold(strings.TrimSpace(storageMode), setupplan.StorageModeHostpath) {
+		return false, nil
+	}
+	logs, err := kafkaLogsWithKubectl(kubectl)
+	if err != nil || !isKafkaClusterIDMismatchLog(logs) {
+		return false, nil
+	}
+	core.Warn("Kafka data volume has stale cluster metadata; resetting bundled Kafka state")
+	if err := kubectl.RunWithOutput([]string{"scale", "statefulset/" + kafkaStatefulSetName, "-n", core.DefaultAnalyticsNamespace, "--replicas=0"}, os.Stdout, os.Stderr); err != nil {
+		return false, err
+	}
+	if err := waitForKafkaPodDeletionWithKubectl(kubectl, 2*time.Minute); err != nil {
+		return false, err
+	}
+	if err := kubectl.RunWithOutput([]string{"delete", "pvc/" + kafkaPVCName, "-n", core.DefaultAnalyticsNamespace, "--ignore-not-found=true", "--wait=true", "--timeout=120s"}, os.Stdout, os.Stderr); err != nil {
+		return false, err
+	}
+	if err := kubectl.RunWithOutput([]string{"scale", "statefulset/" + kafkaStatefulSetName, "-n", core.DefaultAnalyticsNamespace, "--replicas=1"}, os.Stdout, os.Stderr); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func kafkaLogsClientGo(clients *k8sclient.Clients) (string, error) {
+	for _, previous := range []bool{false, true} {
+		req := clients.Clientset.CoreV1().Pods(core.DefaultAnalyticsNamespace).GetLogs(kafkaPodName, &corev1.PodLogOptions{
+			Container: kafkaPodContainer,
+			Previous:  previous,
+		})
+		stream, err := req.Stream(context.Background())
+		if err != nil {
+			continue
+		}
+		data, readErr := io.ReadAll(stream)
+		_ = stream.Close()
+		if readErr == nil && strings.TrimSpace(string(data)) != "" {
+			return string(data), nil
+		}
+	}
+	return "", fmt.Errorf("kafka logs unavailable")
+}
+
+func kafkaLogsWithKubectl(kubectl core.KubectlRunner) (string, error) {
+	for _, args := range [][]string{
+		{"logs", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-c", kafkaPodContainer},
+		{"logs", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-c", kafkaPodContainer, "--previous"},
+	} {
+		out, err := kubectlText(kubectl, args)
+		if err == nil && strings.TrimSpace(out) != "" {
+			return out, nil
+		}
+	}
+	return "", fmt.Errorf("kafka logs unavailable")
+}
+
+func isKafkaClusterIDMismatchLog(logs string) bool {
+	return strings.Contains(logs, "InconsistentClusterIdException") && strings.Contains(logs, "clusterId")
+}
+
+func scaleKafkaStatefulSetClientGo(clients *k8sclient.Clients, replicas int32) error {
+	stsClient := clients.Clientset.AppsV1().StatefulSets(core.DefaultAnalyticsNamespace)
+	current, err := stsClient.Get(context.Background(), kafkaStatefulSetName, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	copy := current.DeepCopy()
+	copy.Spec.Replicas = &replicas
+	_, err = stsClient.Update(context.Background(), copy, metav1.UpdateOptions{})
+	return err
+}
+
+func waitForKafkaPodDeletionClientGo(clients *k8sclient.Clients, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		_, err := clients.Clientset.CoreV1().Pods(core.DefaultAnalyticsNamespace).Get(context.Background(), kafkaPodName, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("timed out waiting for %s pod deletion", kafkaPodName)
+}
+
+func waitForKafkaPodDeletionWithKubectl(kubectl core.KubectlRunner, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		out, err := kubectlText(kubectl, []string{"get", "pod", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-o", "name"})
+		if err != nil || strings.TrimSpace(out) == "" {
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("timed out waiting for %s pod deletion", kafkaPodName)
 }
 
 func applyCatalogNamespaceForMode(platformMode string) error {
@@ -579,6 +748,7 @@ func renderAnalyticsConfigManifestWithReaders(content, platformMode string, imag
 		"MCP_REGISTRY_INGRESS_HOST",
 		"PLATFORM_REGISTRY_URL",
 		"PLATFORM_TRAEFIK_NAMESPACE",
+		"PLATFORM_TEAM_TRAEFIK_WATCH",
 	} {
 		if envValue := setupAnalyticsConfigEnvValue(key); envValue != "" {
 			manifest.Data[key] = envValue
@@ -589,7 +759,9 @@ func renderAnalyticsConfigManifestWithReaders(content, platformMode string, imag
 		}
 	}
 	applyGoogleOIDCDefaults(manifest.Data)
-	if registryEndpoint := strings.TrimSpace(resolveInternalPlatformRegistryURLClientGo(nil)); registryEndpoint != "" {
+	if registryIngressHost := strings.TrimSpace(core.GetRegistryIngressHost()); registryIngressHost != "" && registryIngressHost != core.DefaultRegistryIngressHost {
+		manifest.Data["MCP_REGISTRY_ENDPOINT"] = registryIngressHost
+	} else if registryEndpoint := strings.TrimSpace(resolveInternalPlatformRegistryURLClientGo(nil)); registryEndpoint != "" {
 		manifest.Data["MCP_REGISTRY_ENDPOINT"] = registryEndpoint
 	}
 	if registryIngressHost := strings.TrimSpace(core.GetRegistryIngressHost()); registryIngressHost != "" {
@@ -603,6 +775,7 @@ func renderAnalyticsConfigManifestWithReaders(content, platformMode string, imag
 			manifest.Data["PLATFORM_TRAEFIK_NAMESPACE"] = namespace
 		}
 	}
+	applyPlatformTeamTraefikWatchDefault(manifest.Data)
 	if existingMode, ok := setupplan.NormalizePlatformMode(existingData["PLATFORM_MODE"]); ok {
 		requestedMode, requestedOK := setupplan.NormalizePlatformMode(platformMode)
 		switch {
@@ -637,6 +810,24 @@ func setupAnalyticsConfigEnvValue(key string) string {
 		}
 	}
 	return ""
+}
+
+func applyPlatformTeamTraefikWatchDefault(data map[string]string) {
+	if data == nil {
+		return
+	}
+	if strings.TrimSpace(data["PLATFORM_TEAM_TRAEFIK_WATCH"]) != "" {
+		return
+	}
+	if env := setupAnalyticsConfigEnvValue("PLATFORM_TEAM_TRAEFIK_WATCH"); env != "" {
+		data["PLATFORM_TEAM_TRAEFIK_WATCH"] = env
+		return
+	}
+	// k3s and other external Traefik installs watch ingress cluster-wide and must
+	// not be patched through repo-managed traefik/traefik namespace args.
+	if strings.TrimSpace(data["PLATFORM_TRAEFIK_NAMESPACE"]) == "kube-system" {
+		data["PLATFORM_TEAM_TRAEFIK_WATCH"] = "disabled"
+	}
 }
 
 func applyGoogleOIDCDefaults(data map[string]string) {

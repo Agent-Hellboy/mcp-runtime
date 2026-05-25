@@ -1388,6 +1388,7 @@ _No package overview is documented._
 ### Index
 
 - [`Constants`](#metadata-helpers-constants)
+- [`func DisplayImageReference(image string) string`](#metadata-helpers-func-displayimagereference-image-string-string)
 - [`func GenerateCRD(server *ServerMetadata, outputPath string) error`](#metadata-helpers-func-generatecrd-server-servermetadata-outputpath-string-error)
 - [`func GenerateCRDsFromRegistry(registry *RegistryFile, outputDir string) error`](#metadata-helpers-func-generatecrdsfromregistry-registry-registryfile-outputdir-string-error)
 - [`func NormalizePlatformDomain(raw string) string`](#metadata-helpers-func-normalizeplatformdomain-raw-string-string)
@@ -1431,6 +1432,16 @@ const DefaultRegistryHost = "registry.local"
 
 <a id="metadata-helpers-functions"></a>
 ### Functions
+
+<a id="metadata-helpers-func-displayimagereference-image-string-string"></a>
+```text
+func DisplayImageReference(image string) string
+    DisplayImageReference rewrites internal registry image refs for user-facing
+    display. It prefers the public registry host when configured, and otherwise
+    strips the internal host so cluster-only endpoints do not leak into UI/API
+    responses.
+
+```
 
 <a id="metadata-helpers-func-generatecrd-server-servermetadata-outputpath-string-error"></a>
 ```text
@@ -1499,15 +1510,11 @@ func ResolveRegistryHost() string
 func ResolveRegistryPullHost() string
     ResolveRegistryPullHost returns the registry host kubelet should
     use for in-cluster image pulls. Precedence: MCP_REGISTRY_PULL_HOST,
-    MCP_REGISTRY_ENDPOINT, MCP_REGISTRY_INGRESS_HOST,
-    registry.<MCP_PLATFORM_DOMAIN>, then bundled cluster DNS.
+    MCP_REGISTRY_ENDPOINT, then bundled cluster DNS.
 
-    When a public TLS registry is configured via MCP_REGISTRY_INGRESS_HOST or
-    MCP_PLATFORM_DOMAIN without an explicit pull host, that public hostname
-    is used for kubelet pulls too — nodes can reach the TLS ingress directly,
-    so no in-cluster service DNS rewrite is needed. imageRefForClusterPull
-    skips the rewrite whenever pullHost equals the push host resolved by
-    ResolveRegistryHost.
+    Public ingress hostnames are intentionally excluded. Workload pods must
+    pull from the internal registry endpoint, not the auth-protected external
+    ingress.
 
 ```
 
@@ -2405,7 +2412,7 @@ const (
 const (
 	// DefaultRegistrySecretName is the default name for registry pull secrets.
 	// #nosec G101 -- This is a secret name, not a credential.
-	DefaultRegistrySecretName = "mcp-runtime-registry-creds"
+	DefaultRegistrySecretName = "mcp-runtime-registry-pull"
 )
     Secret names.
 
@@ -4763,6 +4770,7 @@ _No package overview is documented._
 - [`func (c *PlatformClient) ApplyAccessFromYAMLFile(ctx context.Context, path string) error`](#cli-platform-api-func-c-platformclient-applyaccessfromyamlfile-ctx-context-context-path-string-error)
 - [`func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error)`](#cli-platform-api-func-c-platformclient-applyruntimeserver-ctx-context-context-name-namespace-string-spec-mcpv1alpha1-mcpserverspec-serverlistitem-error)
 - [`func (c *PlatformClient) ApplyRuntimeServerWithScope(ctx context.Context, name, namespace, scope string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error)`](#cli-platform-api-func-c-platformclient-applyruntimeserverwithscope-ctx-context-context-name-namespace-scope-string-spec-mcpv1alpha1-mcpserverspec-serverlistitem-error)
+- [`func (c *PlatformClient) ApplyRuntimeServerWithScopeUpdate(ctx context.Context, name, namespace, scope string, spec mcpv1alpha1.MCPServerSpec, update bool) (ServerListItem, error)`](#cli-platform-api-func-c-platformclient-applyruntimeserverwithscopeupdate-ctx-context-context-name-namespace-scope-string-spec-mcpv1alpha1-mcpserverspec-update-bool-serverlistitem-error)
 - [`func (c *PlatformClient) CreateAdapterSession(ctx context.Context, req AdapterSessionRequest) (AdapterSession, error)`](#cli-platform-api-func-c-platformclient-createadaptersession-ctx-context-context-req-adaptersessionrequest-adaptersession-error)
 - [`func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Team, error)`](#cli-platform-api-func-c-platformclient-createteam-ctx-context-context-slug-name-string-team-error)
 - [`func (c *PlatformClient) CreateTeamUser(ctx context.Context, slug, email, password, role string) (TeamMembership, error)`](#cli-platform-api-func-c-platformclient-createteamuser-ctx-context-context-slug-email-password-role-string-teammembership-error)
@@ -4782,6 +4790,7 @@ _No package overview is documented._
 - [`func (c *PlatformClient) ListTeams(ctx context.Context) ([]Team, error)`](#cli-platform-api-func-c-platformclient-listteams-ctx-context-context-team-error)
 - [`func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postgranttoggle-ctx-context-context-namespace-name-action-string-error)
 - [`func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postsessiontoggle-ctx-context-context-namespace-name-action-string-error)
+- [`func (c *PlatformClient) PushRegistryImage(ctx context.Context, tarPath, target, scope string) error`](#cli-platform-api-func-c-platformclient-pushregistryimage-ctx-context-context-tarpath-target-scope-string-error)
 - [`func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePublishRecord) error`](#cli-platform-api-func-c-platformclient-recordimagepublish-ctx-context-context-record-imagepublishrecord-error)
 - [`func (c *PlatformClient) ValidateCredentials(ctx context.Context) error`](#cli-platform-api-func-c-platformclient-validatecredentials-ctx-context-context-error)
 - [`type Principal struct`](#cli-platform-api-type-principal-struct)
@@ -4914,6 +4923,12 @@ func (c *PlatformClient) ApplyRuntimeServerWithScope(ctx context.Context, name, 
 
 ```
 
+<a id="cli-platform-api-func-c-platformclient-applyruntimeserverwithscopeupdate-ctx-context-context-name-namespace-scope-string-spec-mcpv1alpha1-mcpserverspec-update-bool-serverlistitem-error"></a>
+```text
+func (c *PlatformClient) ApplyRuntimeServerWithScopeUpdate(ctx context.Context, name, namespace, scope string, spec mcpv1alpha1.MCPServerSpec, update bool) (ServerListItem, error)
+
+```
+
 <a id="cli-platform-api-func-c-platformclient-createadaptersession-ctx-context-context-req-adaptersessionrequest-adaptersession-error"></a>
 ```text
 func (c *PlatformClient) CreateAdapterSession(ctx context.Context, req AdapterSessionRequest) (AdapterSession, error)
@@ -5031,6 +5046,14 @@ func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name,
 
 ```
 
+<a id="cli-platform-api-func-c-platformclient-pushregistryimage-ctx-context-context-tarpath-target-scope-string-error"></a>
+```text
+func (c *PlatformClient) PushRegistryImage(ctx context.Context, tarPath, target, scope string) error
+    PushRegistryImage uploads a docker save tar and asks the platform API to
+    push it to the configured registry from inside the cluster.
+
+```
+
 <a id="cli-platform-api-func-c-platformclient-recordimagepublish-ctx-context-context-record-imagepublishrecord-error"></a>
 ```text
 func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePublishRecord) error
@@ -5061,6 +5084,8 @@ type Principal struct {
 type ServerListItem struct {
 	Name        string            `json:"name"`
 	Namespace   string            `json:"namespace"`
+	Image       string            `json:"image,omitempty"`
+	ImageTag    string            `json:"imageTag,omitempty"`
 	Description string            `json:"description,omitempty"`
 	Ready       string            `json:"ready"`
 	Status      string            `json:"status"`
@@ -5226,8 +5251,9 @@ Package registry owns routing for the registry top-level command.
 - [`func ResolveExternalRegistryConfig(flagCfg *config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error)`](#cli-registry-func-resolveexternalregistryconfig-flagcfg-config-externalregistryconfig-config-externalregistryconfig-error)
 - [`func ResolveInternalPlatformRegistryURL(logger *zap.Logger) string`](#cli-registry-func-resolveinternalplatformregistryurl-logger-zap-logger-string)
 - [`func ResolvePlatformRegistryURL(logger *zap.Logger) string`](#cli-registry-func-resolveplatformregistryurl-logger-zap-logger-string)
+- [`func RunAdminRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error`](#cli-registry-func-runadminregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-mode-helpernamespace-string-error)
 - [`func RunRegistryProvision(mgr *RegistryManager, url, username, password, operatorImage string, dryRun bool) error`](#cli-registry-func-runregistryprovision-mgr-registrymanager-url-username-password-operatorimage-string-dryrun-bool-error)
-- [`func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error`](#cli-registry-func-runregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-mode-helpernamespace-string-error)
+- [`func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope string) error`](#cli-registry-func-runregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-string-error)
 - [`func ScopedRegistryRepository(ctx context.Context, client *platformapi.PlatformClient, repo string, scope publishscope.Scope) (string, error)`](#cli-registry-func-scopedregistryrepository-ctx-context-context-client-platformapi-platformclient-repo-string-scope-publishscope-scope-string-error)
 - [`type RegistryManager struct`](#cli-registry-type-registrymanager-struct)
 - [`func DefaultRegistryManager(logger *zap.Logger) *RegistryManager`](#cli-registry-func-defaultregistrymanager-logger-zap-logger-registrymanager)
@@ -5236,6 +5262,7 @@ Package registry owns routing for the registry top-level command.
 - [`func (m *RegistryManager) LoginRegistry(registryURL, username, password string) error`](#cli-registry-func-m-registrymanager-loginregistry-registryurl-username-password-string-error)
 - [`func (m *RegistryManager) PushDirect(source, target string) error`](#cli-registry-func-m-registrymanager-pushdirect-source-target-string-error)
 - [`func (m *RegistryManager) PushInCluster(source, target, helperNS string) error`](#cli-registry-func-m-registrymanager-pushincluster-source-target-helperns-string-error)
+- [`func (m *RegistryManager) PushViaPlatform(ctx context.Context, client *platformapi.PlatformClient, source, target, scope string) error`](#cli-registry-func-m-registrymanager-pushviaplatform-ctx-context-context-client-platformapi-platformclient-source-target-scope-string-error)
 - [`func (m *RegistryManager) ShowRegistryInfo() error`](#cli-registry-func-m-registrymanager-showregistryinfo-error)
 
 <a id="cli-registry-functions"></a>
@@ -5280,6 +5307,14 @@ func ResolveInternalPlatformRegistryURL(logger *zap.Logger) string
 func ResolvePlatformRegistryURL(logger *zap.Logger) string
 ```
 
+<a id="cli-registry-func-runadminregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-mode-helpernamespace-string-error"></a>
+```text
+func RunAdminRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error
+    RunAdminRegistryPush pushes an image using direct Kubernetes access for
+    operator debugging. Normal users should use registry push instead.
+
+```
+
 <a id="cli-registry-func-runregistryprovision-mgr-registrymanager-url-username-password-operatorimage-string-dryrun-bool-error"></a>
 ```text
 func RunRegistryProvision(mgr *RegistryManager, url, username, password, operatorImage string, dryRun bool) error
@@ -5288,10 +5323,10 @@ func RunRegistryProvision(mgr *RegistryManager, url, username, password, operato
 
 ```
 
-<a id="cli-registry-func-runregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-mode-helpernamespace-string-error"></a>
+<a id="cli-registry-func-runregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-string-error"></a>
 ```text
-func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error
-    RunRegistryPush contains the registry push command flow for folder packages.
+func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope string) error
+    RunRegistryPush pushes an image through the platform API.
 
 ```
 
@@ -5353,6 +5388,14 @@ func (m *RegistryManager) PushDirect(source, target string) error
 ```text
 func (m *RegistryManager) PushInCluster(source, target, helperNS string) error
     PushInCluster pushes an image using an in-cluster helper pod.
+
+```
+
+<a id="cli-registry-func-m-registrymanager-pushviaplatform-ctx-context-context-client-platformapi-platformclient-source-target-scope-string-error"></a>
+```text
+func (m *RegistryManager) PushViaPlatform(ctx context.Context, client *platformapi.PlatformClient, source, target, scope string) error
+    PushViaPlatform saves the local image and asks the platform API to push it
+    in-cluster.
 
 ```
 
@@ -5645,9 +5688,11 @@ Package server owns routing for the server top-level command.
 - [`func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) error`](#cli-server-func-m-servermanager-createserver-name-namespace-image-imagetag-string-error)
 - [`func (m *ServerManager) CreateServerFromFile(file string) error`](#cli-server-func-m-servermanager-createserverfromfile-file-string-error)
 - [`func (m *ServerManager) DeleteServer(name, namespace string) error`](#cli-server-func-m-servermanager-deleteserver-name-namespace-string-error)
-- [`func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageTag string, replicas, port, servicePort int32) error`](#cli-server-func-m-servermanager-deployserver-name-namespace-team-scope-image-imagetag-string-replicas-port-serviceport-int32-error)
+- [`func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageTag string, replicas, port, servicePort int32, metadataFile, metadataDir string, update bool) error`](#cli-server-func-m-servermanager-deployserver-name-namespace-team-scope-image-imagetag-string-replicas-port-serviceport-int32-metadatafile-metadatadir-string-update-bool-error)
 - [`func (m *ServerManager) ExportServer(name, namespace, file string) error`](#cli-server-func-m-servermanager-exportserver-name-namespace-file-string-error)
+- [`func (m *ServerManager) GenerateManifests(metadataFile, metadataDir, outputDir string) error`](#cli-server-func-m-servermanager-generatemanifests-metadatafile-metadatadir-outputdir-string-error)
 - [`func (m *ServerManager) GetServer(name, namespace string) error`](#cli-server-func-m-servermanager-getserver-name-namespace-string-error)
+- [`func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope string, port int32, tools, toolSpecs []string, force bool) error`](#cli-server-func-m-servermanager-initserver-name-metadatadir-image-imagetag-scope-string-port-int32-tools-toolspecs-string-force-bool-error)
 - [`func (m *ServerManager) InspectServerPolicy(name, namespace string) error`](#cli-server-func-m-servermanager-inspectserverpolicy-name-namespace-string-error)
 - [`func (m *ServerManager) ListServers(namespace, team string) error`](#cli-server-func-m-servermanager-listservers-namespace-team-string-error)
 - [`func (m *ServerManager) Logger() *zap.Logger`](#cli-server-func-m-servermanager-logger-zap-logger)
@@ -5740,9 +5785,9 @@ func (m *ServerManager) DeleteServer(name, namespace string) error
 
 ```
 
-<a id="cli-server-func-m-servermanager-deployserver-name-namespace-team-scope-image-imagetag-string-replicas-port-serviceport-int32-error"></a>
+<a id="cli-server-func-m-servermanager-deployserver-name-namespace-team-scope-image-imagetag-string-replicas-port-serviceport-int32-metadatafile-metadatadir-string-update-bool-error"></a>
 ```text
-func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageTag string, replicas, port, servicePort int32) error
+func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageTag string, replicas, port, servicePort int32, metadataFile, metadataDir string, update bool) error
 
 ```
 
@@ -5753,10 +5798,24 @@ func (m *ServerManager) ExportServer(name, namespace, file string) error
 
 ```
 
+<a id="cli-server-func-m-servermanager-generatemanifests-metadatafile-metadatadir-outputdir-string-error"></a>
+```text
+func (m *ServerManager) GenerateManifests(metadataFile, metadataDir, outputDir string) error
+    GenerateManifests renders MCPServer YAML from .mcp metadata for review,
+    GitOps, or admin workflows. Normal user deploys should call DeployServer.
+
+```
+
 <a id="cli-server-func-m-servermanager-getserver-name-namespace-string-error"></a>
 ```text
 func (m *ServerManager) GetServer(name, namespace string) error
     GetServer retrieves details for a specific MCP server.
+
+```
+
+<a id="cli-server-func-m-servermanager-initserver-name-metadatadir-image-imagetag-scope-string-port-int32-tools-toolspecs-string-force-bool-error"></a>
+```text
+func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope string, port int32, tools, toolSpecs []string, force bool) error
 
 ```
 

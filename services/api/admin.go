@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"mcp-runtime/pkg/metadata"
 )
 
 func (s *apiServer) handleAdminNamespaces(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +167,7 @@ func adminOperationsFilterResponseFor(filter adminOperationsFilter) adminOperati
 func mergeDeploymentImageActivity(items []platformImageActivity, deployments []map[string]any, filter adminOperationsFilter) []platformImageActivity {
 	limit := operationsLimit(filter)
 	if len(items) >= limit {
-		return items[:limit]
+		return sanitizeImageActivity(items[:limit])
 	}
 	seen := map[string]struct{}{}
 	for _, item := range items {
@@ -205,7 +207,7 @@ func mergeDeploymentImageActivity(items []platformImageActivity, deployments []m
 			break
 		}
 	}
-	return items
+	return sanitizeImageActivity(items)
 }
 
 func filterDeploymentsForOperations(deployments []map[string]any, filter adminOperationsFilter) []map[string]any {
@@ -225,7 +227,7 @@ func filterDeploymentsForOperations(deployments []map[string]any, filter adminOp
 			break
 		}
 	}
-	return out
+	return sanitizeDeploymentSummaries(out)
 }
 
 func matchesOperationsFilter(filter adminOperationsFilter, timestamp time.Time, values ...string) bool {
@@ -252,6 +254,31 @@ func operationsLimit(filter adminOperationsFilter) int {
 		return 50
 	}
 	return filter.Limit
+}
+
+func sanitizeImageActivity(items []platformImageActivity) []platformImageActivity {
+	out := make([]platformImageActivity, 0, len(items))
+	for _, item := range items {
+		item.ImageRef = metadata.DisplayImageReference(item.ImageRef)
+		item.SourceImage = metadata.DisplayImageReference(item.SourceImage)
+		out = append(out, item)
+	}
+	return out
+}
+
+func sanitizeDeploymentSummaries(items []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		cloned := make(map[string]any, len(item))
+		for k, v := range item {
+			cloned[k] = v
+		}
+		if imageRef := strings.TrimSpace(stringFromMap(cloned, "image")); imageRef != "" {
+			cloned["image"] = metadata.DisplayImageReference(imageRef)
+		}
+		out = append(out, cloned)
+	}
+	return out
 }
 
 func stringFromMap(values map[string]any, key string) string {

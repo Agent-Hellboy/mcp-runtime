@@ -18,7 +18,7 @@ set -euo pipefail
 # Required environment (no production defaults — set explicitly for your cluster):
 #   PLATFORM_URL   platform API base (test-mode port-forward: http://localhost:18080)
 #   MCP_URL        public MCP ingress base (test-mode port-forward: http://localhost:18080)
-#   REGISTRY_HOST  registry hostname:port for docker login and image push
+#   REGISTRY_HOST  registry hostname for image build tagging and push target resolution
 #
 # Optional test-mode admin bootstrap (matches setup --test-mode seed accounts):
 #   ADMIN_EMAIL=admin@mcpruntime.org ADMIN_PASSWORD=admin@123
@@ -41,7 +41,7 @@ require_env() {
 
 require_env PLATFORM_URL "e.g. http://localhost:18080 for test-mode port-forward"
 require_env MCP_URL "e.g. http://localhost:18080 for test-mode port-forward"
-require_env REGISTRY_HOST "registry hostname:port for docker login and image push"
+require_env REGISTRY_HOST "registry hostname for build tagging and tenant registry push target"
 
 PLATFORM_URL="${PLATFORM_URL%/}"
 MCP_URL="${MCP_URL%/}"
@@ -52,7 +52,8 @@ MCP_RUNTIME_CONFIG_DIR="${MCP_RUNTIME_CONFIG_DIR:-$HOME/.mcpruntime}"
 CREDS="${MCP_RUNTIME_CONFIG_DIR}/config.json"
 TMP_ROOT="${TMPDIR:-/tmp}"
 TMP_ROOT="${TMP_ROOT%/}"
-WORK_DIR="${WORK_DIR:-$TMP_ROOT/mcp-runtime-multitenancy}"
+RUN_ID="${RUN_ID:-mt$(date +%m%d%H%M%S)-$((RANDOM % 9000 + 1000))}"
+WORK_DIR="${WORK_DIR:-$TMP_ROOT/mcp-runtime-multitenancy-${RUN_ID}}"
 TAG="${TAG:-v0.1.0}"
 ADAPTER_LISTEN="${ADAPTER_LISTEN:-127.0.0.1:8299}"
 
@@ -62,27 +63,27 @@ SERVER_DOCKERFILE="${SERVER_DOCKERFILE:-$SERVER_CONTEXT/Dockerfile}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@mcpruntime.org}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin@123}"
 ADMIN_TOKEN_INPUT="${ADMIN_TOKEN_INPUT:-}"
-ACME_EMAIL="${ACME_EMAIL:-acme-owner@example.com}"
+ACME_EMAIL="${ACME_EMAIL:-acme-owner-${RUN_ID}@example.com}"
 ACME_PASSWORD="${ACME_PASSWORD:-acme-owner-123}"
-GLOBEX_EMAIL="${GLOBEX_EMAIL:-globex-user@example.com}"
+GLOBEX_EMAIL="${GLOBEX_EMAIL:-globex-user-${RUN_ID}@example.com}"
 GLOBEX_PASSWORD="${GLOBEX_PASSWORD:-globex-user-123}"
-TECHCORP_EMAIL="${TECHCORP_EMAIL:-techcorp-dev@example.com}"
+TECHCORP_EMAIL="${TECHCORP_EMAIL:-techcorp-dev-${RUN_ID}@example.com}"
 TECHCORP_PASSWORD="${TECHCORP_PASSWORD:-techcorp-dev-123}"
 
 ADMIN_PROFILE="${ADMIN_PROFILE:-admin}"
-ACME_PROFILE="${ACME_PROFILE:-acme-owner}"
-GLOBEX_PROFILE="${GLOBEX_PROFILE:-globex-user}"
-TECHCORP_PROFILE="${TECHCORP_PROFILE:-techcorp-dev}"
+ACME_PROFILE="${ACME_PROFILE:-acme-owner-${RUN_ID}}"
+GLOBEX_PROFILE="${GLOBEX_PROFILE:-globex-user-${RUN_ID}}"
+TECHCORP_PROFILE="${TECHCORP_PROFILE:-techcorp-dev-${RUN_ID}}"
 
-ACME_SLUG="${ACME_SLUG:-acme}"
-GLOBEX_SLUG="${GLOBEX_SLUG:-globex}"
-TECHCORP_SLUG="${TECHCORP_SLUG:-techcorp}"
+ACME_SLUG="${ACME_SLUG:-acme-${RUN_ID}}"
+GLOBEX_SLUG="${GLOBEX_SLUG:-globex-${RUN_ID}}"
+TECHCORP_SLUG="${TECHCORP_SLUG:-techcorp-${RUN_ID}}"
 ACME_NS="${ACME_NS:-mcp-team-${ACME_SLUG}}"
 GLOBEX_NS="${GLOBEX_NS:-mcp-team-${GLOBEX_SLUG}}"
 TECHCORP_NS="${TECHCORP_NS:-mcp-team-${TECHCORP_SLUG}}"
-ACME_SERVER="${ACME_SERVER:-acme-tools}"
-GLOBEX_SERVER="${GLOBEX_SERVER:-globex-tools}"
-TECHCORP_SERVER="${TECHCORP_SERVER:-techcorp-tools}"
+ACME_SERVER="${ACME_SERVER:-acme-tools-${RUN_ID}}"
+GLOBEX_SERVER="${GLOBEX_SERVER:-globex-tools-${RUN_ID}}"
+TECHCORP_SERVER="${TECHCORP_SERVER:-techcorp-tools-${RUN_ID}}"
 AGENT_ID="${AGENT_ID:-cursor}"
 
 # Force platform-API paths; never touch the local kubeconfig.
@@ -130,7 +131,7 @@ wait_for_adapter_proxy() {
 run_as() {
   local profile="$1"
   shift
-  KUBECONFIG="" MCP_PLATFORM_API_PROFILE="$profile" "$BIN" "$@"
+  KUBECONFIG="" MCP_PLATFORM_API_TOKEN="" MCP_PLATFORM_API_URL="$PLATFORM_URL" MCP_PLATFORM_API_PROFILE="$profile" "$BIN" "$@"
 }
 
 json_escape() {
@@ -140,6 +141,25 @@ json_escape() {
 profile_token() {
   local profile="$1"
   jq -er --arg profile "$profile" '.accounts[$profile].token // (select(.current == $profile) | .token) // empty' "$CREDS"
+}
+
+profile_role() {
+  local profile="$1"
+  jq -r --arg profile "$profile" '.accounts[$profile].role // (select(.current == $profile) | .role) // empty' "$CREDS"
+}
+
+require_tenant_publish_profile() {
+  local profile="$1"
+  local role
+  if [[ "$profile" == "$ADMIN_PROFILE" ]]; then
+    echo "refusing tenant publish/deploy with admin profile ${profile}; use a team owner/member profile" >&2
+    exit 1
+  fi
+  role="$(profile_role "$profile")"
+  if [[ "$role" == "admin" ]]; then
+    echo "refusing tenant publish/deploy with admin role in profile ${profile}; use a team owner/member profile" >&2
+    exit 1
+  fi
 }
 
 admin_login() {
@@ -161,122 +181,200 @@ team_id() {
   local slug="$1"
   local token="$2"
   curl -fsS \
+    -H "x-api-key: ${token}" \
     -H "authorization: Bearer ${token}" \
     "${PLATFORM_URL}/api/runtime/teams/${slug}" | jq -er '.team.id'
+}
+
+team_exists() {
+  local slug="$1"
+  local token="$2"
+  curl -fsS \
+    -H "x-api-key: ${token}" \
+    -H "authorization: Bearer ${token}" \
+    "${PLATFORM_URL}/api/runtime/teams/${slug}" >/dev/null 2>&1
+}
+
+team_user_exists() {
+  local slug="$1"
+  local email="$2"
+  local token="$3"
+  local body
+  body="$(curl -fsS \
+    -H "x-api-key: ${token}" \
+    -H "authorization: Bearer ${token}" \
+    "${PLATFORM_URL}/api/runtime/teams/${slug}/members" 2>/dev/null || echo '{"members":[]}')"
+  jq -e --arg email "$email" 'any(.members[]?; (.email // "") == $email)' <<<"$body" >/dev/null
+}
+
+server_exists() {
+  local profile="$1"
+  local namespace="$2"
+  local server="$3"
+  local token
+  token="$(profile_token "$profile")"
+  curl -fsS \
+    -H "x-api-key: ${token}" \
+    -H "authorization: Bearer ${token}" \
+    "${PLATFORM_URL}/api/runtime/servers/${namespace}/${server}" >/dev/null 2>&1
 }
 
 create_or_update_team() {
   local slug="$1"
   local name="$2"
-  if ! run_as "$ADMIN_PROFILE" team create "$slug" --name "$name"; then
-    echo "team ${slug} may already exist; continuing" >&2
+  local token
+  token="$(profile_token "$ADMIN_PROFILE")"
+  if team_exists "$slug" "$token"; then
+    echo "team ${slug} exists; ensuring namespace/RBAC via platform API"
+    if ! run_as "$ADMIN_PROFILE" team create "$slug" --name "$name"; then
+      echo "team ${slug} exists but platform API did not accept idempotent create; continuing with existing team" >&2
+    fi
+    return 0
+  else
+    echo "creating team ${slug}"
   fi
+  run_as "$ADMIN_PROFILE" team create "$slug" --name "$name"
 }
 
-write_metadata() {
-  local file="$1"
-  local server="$2"
-  local namespace="$3"
-  local team_id_value="$4"
-  local route="/${server}/mcp"
+ensure_team_user() {
+  local slug="$1"
+  local email="$2"
+  local password="$3"
+  local role="$4"
+  local token
+  token="$(profile_token "$ADMIN_PROFILE")"
+  if team_user_exists "$slug" "$email" "$token"; then
+    echo "team user ${email} already exists in ${slug}; ensuring role ${role}"
+  else
+    echo "creating team user ${email} in ${slug} as ${role}"
+  fi
+  run_as "$ADMIN_PROFILE" team user create "$slug" --username "$email" --password "$password" --role "$role"
+}
 
-  cat >"$file" <<YAML
-version: v1
-servers:
-  - name: ${server}
-    scope: tenant
-    namespace: ${namespace}
-    teamID: ${team_id_value}
-    image: ${server}
-    imageTag: ${TAG}
-    route: ${route}
-    publicPathPrefix: ${server}
-    ingressHost: ${MCP_HOST}
-    port: 8088
-    envVars:
-      - name: MCP_PATH
-        value: ${route}
-    tools:
-      - {name: aaa-ping, requiredTrust: low, sideEffect: read}
-      - {name: add, requiredTrust: low, sideEffect: read}
-      - {name: upper, requiredTrust: low, sideEffect: read}
-      - {name: lower, requiredTrust: low, sideEffect: read}
-      - {name: echo, requiredTrust: low, sideEffect: read}
-      - {name: slugify, requiredTrust: low, sideEffect: read}
-    auth:
-      mode: header
-      humanIDHeader: X-MCP-Human-ID
-      agentIDHeader: X-MCP-Agent-ID
-      teamIDHeader: X-MCP-Team-ID
-      sessionIDHeader: X-MCP-Agent-Session
-    policy: {mode: allow-list, defaultDecision: deny, enforceOn: call_tool, policyVersion: v1}
-    session: {required: true, store: kubernetes, headerName: X-MCP-Agent-Session}
-    gateway: {enabled: true}
-YAML
+init_metadata() {
+  local profile="$1"
+  local metadata_dir="$2"
+  local server="$3"
+
+  mkdir -p "$metadata_dir"
+  run_as "$profile" server init "$server" \
+    --metadata-dir "$metadata_dir" \
+    --scope tenant \
+    --tag "$TAG" \
+    --port 8088 \
+    --tool aaa-ping \
+    --tool add \
+    --tool upper \
+    --tool lower \
+    --tool echo \
+    --tool-spec slugify:medium:read \
+    --force
+}
+
+verify_metadata_governance() {
+  local metadata_dir="$1"
+  local server="$2"
+  local file="${metadata_dir}/servers.yaml"
+
+  for pattern in \
+    "sideEffect: read" \
+    "requiredTrust: low" \
+    "mode: header" \
+    "defaultDecision: deny" \
+    "required: true" \
+    "enabled: true"; do
+    if ! grep -q "$pattern" "$file"; then
+      echo "metadata for ${server} missing expected governed default: ${pattern}" >&2
+      cat "$file" >&2
+      exit 1
+    fi
+  done
 }
 
 image_ref_from_metadata() {
-  awk '$1=="image:"{i=$2} $1=="imageTag:"{t=$2} END{if(i=="" || t=="") exit 1; print i ":" t}' "$1"
+  awk '$1=="image:"{i=$2} $1=="imageTag:"{t=$2} END{if(i=="" || t=="") exit 1; print i ":" t}' "$1/servers.yaml"
 }
 
 publish_server() {
   local profile="$1"
   local server="$2"
-  local metadata_file="$3"
-  local manifest_dir="$4"
-  local email="$5"
-  local password="$6"
+  local namespace="$3"
+  local metadata_dir="$4"
 
-  rm -rf "$manifest_dir"
+  require_tenant_publish_profile "$profile"
+  local deploy_update=0
+  if server_exists "$profile" "$namespace" "$server"; then
+    echo "server ${server} already exists for ${profile}; publishing a new image tag and updating it"
+    deploy_update=1
+  else
+    echo "server ${server} does not exist for ${profile}; publishing and deploying it"
+  fi
 
   MCP_REGISTRY_INGRESS_HOST="$REGISTRY_HOST" run_as "$profile" server build image "$server" \
-    --metadata-file "$metadata_file" \
+    --metadata-dir "$metadata_dir" \
     --dockerfile "$SERVER_DOCKERFILE" \
     --context "$SERVER_CONTEXT" \
     --tag "$TAG"
 
-  echo "Logging into registry ${REGISTRY_HOST} as ${email}..."
-  echo "$password" | docker login "$REGISTRY_HOST" -u "$email" --password-stdin
-
   local image_ref
-  image_ref="$(image_ref_from_metadata "$metadata_file")"
+  image_ref="$(image_ref_from_metadata "$metadata_dir")"
 
-  echo "Pushing image ${image_ref} as ${profile}..."
-  KUBECONFIG="" MCP_REGISTRY_INGRESS_HOST="$REGISTRY_HOST" \
-    run_as "$profile" registry push --scope tenant --image "$image_ref" --mode direct
+  echo "Pushing image ${image_ref} as ${profile} via tenant registry push (platform API)..."
+  MCP_PLATFORM_API_URL="$PLATFORM_URL" MCP_REGISTRY_INGRESS_HOST="$REGISTRY_HOST" \
+    run_as "$profile" registry push --scope tenant --image "$image_ref"
 
-  MCP_REGISTRY_INGRESS_HOST="$REGISTRY_HOST" MCP_REGISTRY_PULL_HOST="$REGISTRY_HOST" \
-    KUBECONFIG="" "$BIN" pipeline generate --file "$metadata_file" --output "$manifest_dir"
+  verify_metadata_governance "$metadata_dir" "$server"
 
-  run_as "$profile" pipeline deploy --dir "$manifest_dir"
+  local deploy_args=(server deploy "$server" --scope tenant --metadata-dir "$metadata_dir")
+  if [[ "$deploy_update" == "1" ]]; then
+    deploy_args+=(--update)
+  fi
+  run_as "$profile" "${deploy_args[@]}"
 }
 
-write_grant() {
+init_grant() {
   local file="$1"
   local grant_name="$2"
   local server_name="$3"
   local server_ns="$4"
   local subject_team_id="$5"
-  cat >"$file" <<YAML
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPAccessGrant
-metadata:
-  name: ${grant_name}
-  namespace: ${server_ns}
-spec:
-  serverRef: {name: ${server_name}, namespace: ${server_ns}}
-  subject: {teamID: "${subject_team_id}", agentID: ${AGENT_ID}}
-  maxTrust: low
-  allowedSideEffects: [read]
-  policyVersion: v1
-  toolRules:
-    - {name: aaa-ping, decision: allow, requiredTrust: low}
-    - {name: add, decision: allow, requiredTrust: low}
-    - {name: upper, decision: allow, requiredTrust: low}
-    - {name: lower, decision: allow, requiredTrust: low}
-    - {name: echo, decision: allow, requiredTrust: low}
-    - {name: slugify, decision: allow, requiredTrust: low}
-YAML
+
+  run_as "$ACME_PROFILE" access grant init "$grant_name" \
+    --namespace "$server_ns" \
+    --server "$server_name" \
+    --server-namespace "$server_ns" \
+    --team-id "$subject_team_id" \
+    --agent-id "$AGENT_ID" \
+    --trust low \
+    --side-effect read \
+    --tool-rule aaa-ping:allow:low \
+    --tool-rule add:allow:low \
+    --tool-rule upper:allow:low \
+    --tool-rule lower:allow:low \
+    --tool-rule echo:allow:low \
+    --tool-rule slugify:allow:medium \
+    --output "$file" \
+    --force
+}
+
+init_session() {
+  local file="$1"
+  local session_name="$2"
+  local server_name="$3"
+  local server_ns="$4"
+  local subject_team_id="$5"
+
+  run_as "$ACME_PROFILE" access session init "$session_name" \
+    --namespace "$server_ns" \
+    --server "$server_name" \
+    --server-namespace "$server_ns" \
+    --team-id "$subject_team_id" \
+    --agent-id "$AGENT_ID" \
+    --trust low \
+    --policy-version v1 \
+    --expires-in 1h \
+    --output "$file" \
+    --force
 }
 
 wait_for_rollout() {
@@ -290,7 +388,8 @@ wait_for_rollout() {
   while true; do
     local body
     body="$(curl -fsS \
-      -H "authorization: Bearer ${token}" \
+      -H "x-api-key: ${token}" \
+    -H "authorization: Bearer ${token}" \
       "${PLATFORM_URL}/api/runtime/servers/${namespace}/${server}" 2>/dev/null || echo '{}')"
     local ready_str
     ready_str="$(echo "$body" | jq -r '.server.ready // "0/0"' 2>/dev/null || echo "0/0")"
@@ -317,6 +416,7 @@ delete_all_sessions() {
   token="$(profile_token "$profile")"
   local sessions_body
   sessions_body="$(curl -fsS \
+    -H "x-api-key: ${token}" \
     -H "authorization: Bearer ${token}" \
     "${PLATFORM_URL}/api/runtime/sessions?namespace=${ns}" 2>/dev/null || echo '{"sessions":[]}')"
   local names
@@ -324,7 +424,8 @@ delete_all_sessions() {
   for name in $names; do
     [[ -z "$name" ]] && continue
     curl -fsS -X DELETE \
-      -H "authorization: Bearer ${token}" \
+      -H "x-api-key: ${token}" \
+    -H "authorization: Bearer ${token}" \
       "${PLATFORM_URL}/api/runtime/sessions/${ns}/${name}" >/dev/null 2>&1 || true
   done
 }
@@ -335,9 +436,22 @@ verify_grant_exists() {
   local ns="$3"
   local token
   token="$(profile_token "$profile")"
-  curl -fsS \
-    -H "authorization: Bearer ${token}" \
-    "${PLATFORM_URL}/api/runtime/grants/${ns}/${name}" >/dev/null
+  local deadline=$(( $(date +%s) + 90 ))
+  echo "waiting for grant ${ns}/${name} to be visible via platform API"
+  while true; do
+    if curl -fsS \
+      -H "x-api-key: ${token}" \
+      -H "authorization: Bearer ${token}" \
+      "${PLATFORM_URL}/api/runtime/grants/${ns}/${name}" >/dev/null 2>&1; then
+      echo "grant visible: ${ns}/${name}"
+      return 0
+    fi
+    if [[ $(date +%s) -gt $deadline ]]; then
+      echo "timeout waiting for grant ${ns}/${name} to be visible via platform API" >&2
+      return 1
+    fi
+    sleep 3
+  done
 }
 
 setup_demo() {
@@ -354,20 +468,20 @@ setup_demo() {
     delete_all_sessions "$ADMIN_PROFILE" "$ACME_NS"
     for _ns_name in "${ACME_NS}/${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}" "${ACME_NS}/${ACME_SERVER}-${TECHCORP_SLUG}-${AGENT_ID}"; do
       local _ns="${_ns_name%%/*}" _name="${_ns_name##*/}"
-      curl -fsS -X DELETE -H "authorization: Bearer ${_token}" "${PLATFORM_URL}/api/runtime/grants/${_ns}/${_name}" >/dev/null 2>&1 || true
+      curl -fsS -X DELETE -H "x-api-key: ${_token}" -H "authorization: Bearer ${_token}" "${PLATFORM_URL}/api/runtime/grants/${_ns}/${_name}" >/dev/null 2>&1 || true
     done
     for _ns_name in "${ACME_NS}/${ACME_SERVER}" "${GLOBEX_NS}/${GLOBEX_SERVER}" "${TECHCORP_NS}/${TECHCORP_SERVER}"; do
       local _ns="${_ns_name%%/*}" _name="${_ns_name##*/}"
-      curl -fsS -X DELETE -H "authorization: Bearer ${_token}" "${PLATFORM_URL}/api/runtime/servers/${_ns}/${_name}" >/dev/null 2>&1 || true
+      curl -fsS -X DELETE -H "x-api-key: ${_token}" -H "authorization: Bearer ${_token}" "${PLATFORM_URL}/api/runtime/servers/${_ns}/${_name}" >/dev/null 2>&1 || true
     done
   fi
 
-  create_or_update_team "$ACME_SLUG" "Acme"
-  create_or_update_team "$GLOBEX_SLUG" "Globex"
-  create_or_update_team "$TECHCORP_SLUG" "TechCorp"
-  run_as "$ADMIN_PROFILE" team user create "$ACME_SLUG" --username "$ACME_EMAIL" --password "$ACME_PASSWORD" --role owner
-  run_as "$ADMIN_PROFILE" team user create "$GLOBEX_SLUG" --username "$GLOBEX_EMAIL" --password "$GLOBEX_PASSWORD" --role member
-  run_as "$ADMIN_PROFILE" team user create "$TECHCORP_SLUG" --username "$TECHCORP_EMAIL" --password "$TECHCORP_PASSWORD" --role member
+  create_or_update_team "$ACME_SLUG" "Acme ${RUN_ID}"
+  create_or_update_team "$GLOBEX_SLUG" "Globex ${RUN_ID}"
+  create_or_update_team "$TECHCORP_SLUG" "TechCorp ${RUN_ID}"
+  ensure_team_user "$ACME_SLUG" "$ACME_EMAIL" "$ACME_PASSWORD" owner
+  ensure_team_user "$GLOBEX_SLUG" "$GLOBEX_EMAIL" "$GLOBEX_PASSWORD" member
+  ensure_team_user "$TECHCORP_SLUG" "$TECHCORP_EMAIL" "$TECHCORP_PASSWORD" member
 
   ADMIN_TOKEN="$(profile_token "$ADMIN_PROFILE")"
   ACME_TEAM_ID="$(team_id "$ACME_SLUG" "$ADMIN_TOKEN")"
@@ -379,31 +493,32 @@ setup_demo() {
   team_user_login "$GLOBEX_PROFILE" "$GLOBEX_EMAIL" "$GLOBEX_PASSWORD"
   team_user_login "$TECHCORP_PROFILE" "$TECHCORP_EMAIL" "$TECHCORP_PASSWORD"
 
-  local acme_metadata="$WORK_DIR/${ACME_SERVER}.metadata.yaml"
-  local globex_metadata="$WORK_DIR/${GLOBEX_SERVER}.metadata.yaml"
-  local techcorp_metadata="$WORK_DIR/${TECHCORP_SERVER}.metadata.yaml"
-  local acme_manifests="$WORK_DIR/${ACME_SERVER}-manifests"
-  local globex_manifests="$WORK_DIR/${GLOBEX_SERVER}-manifests"
-  local techcorp_manifests="$WORK_DIR/${TECHCORP_SERVER}-manifests"
+  local acme_metadata_dir="$WORK_DIR/${ACME_SERVER}/.mcp"
+  local globex_metadata_dir="$WORK_DIR/${GLOBEX_SERVER}/.mcp"
+  local techcorp_metadata_dir="$WORK_DIR/${TECHCORP_SERVER}/.mcp"
   local acme_globex_grant="$WORK_DIR/${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}.yaml"
   local acme_techcorp_grant="$WORK_DIR/${ACME_SERVER}-${TECHCORP_SLUG}-${AGENT_ID}.yaml"
+  local acme_globex_session="$WORK_DIR/${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}-manual-session.yaml"
 
-  write_metadata "$acme_metadata" "$ACME_SERVER" "$ACME_NS" "$ACME_TEAM_ID"
-  write_metadata "$globex_metadata" "$GLOBEX_SERVER" "$GLOBEX_NS" "$GLOBEX_TEAM_ID"
-  write_metadata "$techcorp_metadata" "$TECHCORP_SERVER" "$TECHCORP_NS" "$TECHCORP_TEAM_ID"
+  init_metadata "$ACME_PROFILE" "$acme_metadata_dir" "$ACME_SERVER"
+  init_metadata "$GLOBEX_PROFILE" "$globex_metadata_dir" "$GLOBEX_SERVER"
+  init_metadata "$TECHCORP_PROFILE" "$techcorp_metadata_dir" "$TECHCORP_SERVER"
 
-  publish_server "$ACME_PROFILE" "$ACME_SERVER" "$acme_metadata" "$acme_manifests" "$ACME_EMAIL" "$ACME_PASSWORD"
-  publish_server "$GLOBEX_PROFILE" "$GLOBEX_SERVER" "$globex_metadata" "$globex_manifests" "$GLOBEX_EMAIL" "$GLOBEX_PASSWORD"
-  publish_server "$TECHCORP_PROFILE" "$TECHCORP_SERVER" "$techcorp_metadata" "$techcorp_manifests" "$TECHCORP_EMAIL" "$TECHCORP_PASSWORD"
+  publish_server "$ACME_PROFILE" "$ACME_SERVER" "$ACME_NS" "$acme_metadata_dir"
+  publish_server "$GLOBEX_PROFILE" "$GLOBEX_SERVER" "$GLOBEX_NS" "$globex_metadata_dir"
+  publish_server "$TECHCORP_PROFILE" "$TECHCORP_SERVER" "$TECHCORP_NS" "$techcorp_metadata_dir"
 
   wait_for_rollout "$ACME_PROFILE" "$ACME_NS" "$ACME_SERVER"
   wait_for_rollout "$GLOBEX_PROFILE" "$GLOBEX_NS" "$GLOBEX_SERVER"
   wait_for_rollout "$TECHCORP_PROFILE" "$TECHCORP_NS" "$TECHCORP_SERVER"
 
-  write_grant "$acme_globex_grant" "${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}" "$ACME_SERVER" "$ACME_NS" "$GLOBEX_TEAM_ID"
-  write_grant "$acme_techcorp_grant" "${ACME_SERVER}-${TECHCORP_SLUG}-${AGENT_ID}" "$ACME_SERVER" "$ACME_NS" "$TECHCORP_TEAM_ID"
+  init_grant "$acme_globex_grant" "${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}" "$ACME_SERVER" "$ACME_NS" "$GLOBEX_TEAM_ID"
+  init_grant "$acme_techcorp_grant" "${ACME_SERVER}-${TECHCORP_SLUG}-${AGENT_ID}" "$ACME_SERVER" "$ACME_NS" "$TECHCORP_TEAM_ID"
+  init_session "$acme_globex_session" "${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}-manual-session" "$ACME_SERVER" "$ACME_NS" "$GLOBEX_TEAM_ID"
   run_as "$ACME_PROFILE" access grant apply --file "$acme_globex_grant"
   run_as "$ACME_PROFILE" access grant apply --file "$acme_techcorp_grant"
+  run_as "$ADMIN_PROFILE" access session apply --file "$acme_globex_session"
+  run_as "$ADMIN_PROFILE" access session get "${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}-manual-session" --namespace "$ACME_NS" >/dev/null
 }
 
 verify_no_kubeconfig_ops() {
@@ -445,6 +560,7 @@ precreate_adapter_session() {
   local token body
   token="$(profile_token "$profile")"
   body="$(curl -fsS \
+    -H "x-api-key: ${token}" \
     -H "authorization: Bearer ${token}" \
     -H "content-type: application/json" \
     --data "{\"serverName\":\"${ACME_SERVER}\",\"namespace\":\"${ACME_NS}\",\"agentID\":\"${AGENT_ID}\"}" \
@@ -461,11 +577,19 @@ verify_direct_public_denied() {
       --data '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"aaa-ping","arguments":{"note":"direct-public-deny-check"}}}' \
       "${MCP_URL}/${ACME_SERVER}/mcp"
   )"
-  if [[ "$status" != "401" && "$status" != "403" ]] || ! jq -e '.adapter_required == true' "$body" >/dev/null; then
-    echo "expected direct public call to fail with adapter_required (401 or 403), got HTTP ${status}" >&2
+  if [[ "$status" != "401" && "$status" != "403" ]] || ! jq -e '
+    .adapter_required == true and
+    ((.message // "") | contains("mcp-runtime adapter proxy or stdio adapter")) and
+    ((.required_headers // []) | index("X-MCP-Human-ID")) and
+    ((.required_headers // []) | index("X-MCP-Agent-ID")) and
+    ((.required_headers // []) | index("X-MCP-Team-ID")) and
+    ((.required_headers // []) | index("X-MCP-Agent-Session"))
+  ' "$body" >/dev/null; then
+    echo "expected direct public call to fail with adapter_required message and governance headers (401 or 403), got HTTP ${status}" >&2
     cat "$body" >&2
     exit 1
   fi
+  echo "=== direct public call denied with adapter-required message: OK ==="
 }
 
 adapter_call_add_for() {
@@ -512,7 +636,9 @@ adapter_call_add_for() {
 
   sleep 10
 
-  local status deadline
+  local status deadline wait_reason last_wait_log
+  wait_reason=""
+  last_wait_log=0
   status="$(
     curl -sS -o "$notify_body" -w '%{http_code}' \
       -H "content-type: application/json" \
@@ -528,7 +654,7 @@ adapter_call_add_for() {
     return 1
   fi
 
-  deadline=$(( $(date +%s) + 90 ))
+  deadline=$(( $(date +%s) + 180 ))
   while true; do
     status="$(
       curl -sS -o "$result_body" -w '%{http_code}' \
@@ -540,9 +666,18 @@ adapter_call_add_for() {
     if [[ "$status" == "200" ]]; then
       break
     fi
-    if grep -qE 'session_not_found|session_expired' "$result_body" 2>/dev/null; then
-      if [[ $(date +%s) -gt $deadline ]]; then
-        echo "tools/call timed out waiting for gateway session policy for profile ${profile}" >&2
+    if grep -qE 'session_not_found|session_expired|no_matching_grant' "$result_body" 2>/dev/null; then
+      local current_reason
+      current_reason="$(jq -r '.error // empty' "$result_body" 2>/dev/null || true)"
+      local now
+      now="$(date +%s)"
+      if [[ "$current_reason" != "$wait_reason" || $((now - last_wait_log)) -ge 15 ]]; then
+        wait_reason="$current_reason"
+        last_wait_log="$now"
+        echo "waiting for gateway access policy for profile ${profile}: ${wait_reason:-pending}"
+      fi
+      if [[ "$now" -gt $deadline ]]; then
+        echo "tools/call timed out waiting for gateway access policy for profile ${profile}" >&2
         cat "$result_body" >&2
         kill "$proxy_pid" >/dev/null 2>&1 || true
         stop_listen_port "$listen"
@@ -586,7 +721,8 @@ verify_events() {
   local deadline=$(( $(date +%s) + 60 ))
   while true; do
     curl -fsS -o "$body" \
-      -H "authorization: Bearer ${token}" \
+      -H "x-api-key: ${token}" \
+    -H "authorization: Bearer ${token}" \
       "${PLATFORM_URL}/api/runtime/server-events?namespace=${ACME_NS}&server=${ACME_SERVER}&limit=10"
     if jq -e --arg globex "$GLOBEX_TEAM_ID" '
       (.events // .) as $events
@@ -718,6 +854,7 @@ echo "=== techcorp adapter call: OK (11+22=33) ==="
 print_cursor_config
 echo
 echo "multi-tenant flow passed (platform API only, no kubectl/kubeconfig):"
+echo "  - tenant registry push via POST /api/runtime/registry/push (not admin direct push)"
 echo "  - ${GLOBEX_SLUG}/${AGENT_ID} called ${ACME_SLUG}/${ACME_SERVER} add(7,9)=16 via adapter"
 echo "  - ${TECHCORP_SLUG}/${AGENT_ID} called ${ACME_SLUG}/${ACME_SERVER} add(11,22)=33 via adapter"
 echo "  - admin credentials used only for team bootstrap; tenant flows used email/password login"

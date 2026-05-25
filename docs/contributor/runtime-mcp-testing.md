@@ -82,7 +82,8 @@ EOF
 ```
 
 Create the analytics Secret when you apply raw YAML with `kubectl`. The
-`mcp-runtime pipeline deploy` path creates this per-server Secret automatically.
+platform-backed `mcp-runtime server deploy` path creates this per-server Secret
+automatically.
 
 ```bash
 API_KEY="$(
@@ -111,12 +112,9 @@ Build, push, generate, and deploy:
 ./bin/mcp-runtime registry push \
   --image registry.registry.svc.cluster.local:5000/workspace-assistant-mcp:dev
 
-rm -rf /tmp/workspace-assistant-mcp-manifests
-./bin/mcp-runtime pipeline generate \
-  --file /tmp/workspace-assistant-mcp.yaml \
-  --output /tmp/workspace-assistant-mcp-manifests
-
-./bin/mcp-runtime pipeline deploy --dir /tmp/workspace-assistant-mcp-manifests
+./bin/mcp-runtime server deploy workspace-assistant-mcp \
+  --scope tenant \
+  --metadata-file /tmp/workspace-assistant-mcp.yaml
 kubectl rollout status deploy/workspace-assistant-mcp -n mcp-servers --timeout=180s
 ```
 

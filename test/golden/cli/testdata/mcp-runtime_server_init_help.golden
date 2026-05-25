@@ -1,0 +1,19 @@
+Initialize .mcp/servers.yaml metadata for a server. Use repeated --tool flags to seed governed tool metadata, then build, push, and deploy with server build image, registry push, and server deploy.
+
+Usage:
+  mcp-runtime server init [name] [flags]
+
+Flags:
+      --force                   Replace an existing metadata entry with the same server name
+  -h, --help                    help for init
+      --image string            Container image repository (default: server name)
+      --metadata-dir string     Directory where servers.yaml will be written (default ".mcp")
+      --port int32              Container port (default 8088)
+      --scope string            Publish scope: tenant, org, or public (default "tenant")
+      --tag string              Container image tag (default "latest")
+      --tool stringArray        Tool name to add with read side-effect metadata; repeat for multiple tools
+      --tool-spec stringArray   Tool metadata as name:low|medium|high:read|write|destructive; repeat for mixed trust or side effects
+
+Global Flags:
+      --debug      Enable debug mode with structured error logging
+      --use-kube   Use direct Kubernetes mode with kubectl; requires admin/operator cluster access (admin/dev/test only)

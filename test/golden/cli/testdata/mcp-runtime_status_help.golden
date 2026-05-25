@@ -1,4 +1,4 @@
-Show the overall status of the MCP platform
+Show MCP Runtime platform status using the platform API when logged in, with optional cluster diagnostics when kubectl is available.
 
 Usage:
   mcp-runtime status [flags]

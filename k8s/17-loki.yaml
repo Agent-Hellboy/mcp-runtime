@@ -82,6 +82,12 @@ spec:
           image: grafana/loki:2.9.4
           securityContext:
             allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            capabilities:
+              drop:
+                - ALL
           args: ["-config.file=/etc/loki/loki.yaml"]
           ports:
             - containerPort: 3100

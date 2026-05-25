@@ -349,12 +349,10 @@ func parseAdapterTrust(raw string) (sentinelaccess.TrustLevel, error) {
 	switch raw {
 	case "":
 		return sentinelaccess.TrustLow, nil
-	case string(sentinelaccess.TrustNone), string(sentinelaccess.TrustLow),
-		string(sentinelaccess.TrustMid), string(sentinelaccess.TrustHigh),
-		string(sentinelaccess.TrustFull):
+	case string(sentinelaccess.TrustLow), string(sentinelaccess.TrustMedium), string(sentinelaccess.TrustHigh):
 		return sentinelaccess.TrustLevel(raw), nil
 	default:
-		return "", fmt.Errorf("requestedTrust %q is not a known trust level", raw)
+		return "", fmt.Errorf("requestedTrust %q is not a known trust level (use low, medium, or high)", raw)
 	}
 }
 
@@ -391,16 +389,12 @@ func capTrust(requested, max sentinelaccess.TrustLevel) sentinelaccess.TrustLeve
 
 func trustRank(t sentinelaccess.TrustLevel) int {
 	switch t {
-	case sentinelaccess.TrustNone:
-		return 0
 	case sentinelaccess.TrustLow:
 		return 1
-	case sentinelaccess.TrustMid:
+	case sentinelaccess.TrustMedium:
 		return 2
 	case sentinelaccess.TrustHigh:
 		return 3
-	case sentinelaccess.TrustFull:
-		return 4
 	default:
 		return -1
 	}

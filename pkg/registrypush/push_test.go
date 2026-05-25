@@ -1,0 +1,201 @@
+package registrypush
+
+import (
+	"context"
+	"os"
+	"strings"
+	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
+)
+
+func TestPushDockerArchiveCreatesHelperAndRewritesTarget(t *testing.T) {
+	client := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "registry"}})
+	tmp, err := os.CreateTemp("", "mcp-registry-push-*.tar")
+	if err != nil {
+		t.Fatalf("create temp tar: %v", err)
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		t.Fatalf("close temp tar: %v", err)
+	}
+	defer os.Remove(tmpPath)
+
+	origWait := waitPodReadyHook
+	origCopy := copyFileToPodHook
+	origExec := execInPodHook
+	defer func() {
+		waitPodReadyHook = origWait
+		copyFileToPodHook = origCopy
+		execInPodHook = origExec
+	}()
+
+	waitPodReadyHook = func(ctx context.Context, clientset kubernetes.Interface, namespace, name string) error {
+		return nil
+	}
+	copyFileToPodHook = func(ctx context.Context, clientset kubernetes.Interface, cfg *rest.Config, namespace, podName, containerName, srcPath, destPath string) error {
+		if srcPath != tmpPath {
+			t.Fatalf("srcPath = %q, want %q", srcPath, tmpPath)
+		}
+		if destPath != defaultImageTarPath {
+			t.Fatalf("destPath = %q, want %q", destPath, defaultImageTarPath)
+		}
+		return nil
+	}
+	var gotTarget string
+	execInPodHook = func(ctx context.Context, clientset kubernetes.Interface, cfg *rest.Config, namespace, podName, containerName string, command []string) error {
+		if len(command) == 0 {
+			t.Fatal("expected skopeo command")
+		}
+		gotTarget = command[len(command)-1]
+		return nil
+	}
+
+	err = PushDockerArchive(context.Background(), client, &rest.Config{Host: "https://example.invalid"}, tmpPath, "registry.example.com/acme/demo:v1", Config{
+		HelperNamespace: "registry",
+		Hosts: Hosts{
+			InternalHostnames: []string{"registry.example.com"},
+			ServiceName:       "registry",
+			ServiceNamespace:  "registry",
+			ServicePort:       5000,
+		},
+	})
+	if err != nil {
+		t.Fatalf("PushDockerArchive() error = %v", err)
+	}
+	if gotTarget != "docker://registry.registry.svc.cluster.local:5000/acme/demo:v1" {
+		t.Fatalf("target = %q", gotTarget)
+	}
+	pods, err := client.CoreV1().Pods("registry").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("list pods: %v", err)
+	}
+	if len(pods.Items) != 0 {
+		t.Fatalf("expected helper pod cleanup, found %d pod(s)", len(pods.Items))
+	}
+}
+
+func TestPushDockerArchiveDeletesHelperAfterExecFailure(t *testing.T) {
+	client := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "registry"}})
+	tmp, err := os.CreateTemp("", "mcp-registry-push-*.tar")
+	if err != nil {
+		t.Fatalf("create temp tar: %v", err)
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		t.Fatalf("close temp tar: %v", err)
+	}
+	defer os.Remove(tmpPath)
+
+	origWait := waitPodReadyHook
+	origCopy := copyFileToPodHook
+	origExec := execInPodHook
+	defer func() {
+		waitPodReadyHook = origWait
+		copyFileToPodHook = origCopy
+		execInPodHook = origExec
+	}()
+
+	waitPodReadyHook = func(ctx context.Context, clientset kubernetes.Interface, namespace, name string) error { return nil }
+	copyFileToPodHook = func(ctx context.Context, clientset kubernetes.Interface, cfg *rest.Config, namespace, podName, containerName, srcPath, destPath string) error {
+		return nil
+	}
+	execInPodHook = func(ctx context.Context, clientset kubernetes.Interface, cfg *rest.Config, namespace, podName, containerName string, command []string) error {
+		return os.ErrPermission
+	}
+
+	err = PushDockerArchive(context.Background(), client, &rest.Config{Host: "https://example.invalid"}, tmpPath, "registry.example.com/acme/demo:v1", Config{
+		HelperNamespace: "registry",
+	})
+	if err == nil || !strings.Contains(err.Error(), "push image from helper pod") {
+		t.Fatalf("PushDockerArchive() error = %v, want wrapped exec failure", err)
+	}
+	pods, err := client.CoreV1().Pods("registry").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("list pods: %v", err)
+	}
+	if len(pods.Items) != 0 {
+		t.Fatalf("expected helper pod cleanup after failure, found %d pod(s)", len(pods.Items))
+	}
+}
+
+func TestPushDockerArchiveTarFetchSkipsExecCopy(t *testing.T) {
+	client := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "mcp-sentinel"}})
+	tmp, err := os.CreateTemp("", "mcp-registry-push-*.tar")
+	if err != nil {
+		t.Fatalf("create temp tar: %v", err)
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		t.Fatalf("close temp tar: %v", err)
+	}
+	defer os.Remove(tmpPath)
+
+	origWaitReady := waitPodReadyHook
+	origWaitSucceeded := waitPodSucceededHook
+	origCopy := copyFileToPodHook
+	origExec := execInPodHook
+	defer func() {
+		waitPodReadyHook = origWaitReady
+		waitPodSucceededHook = origWaitSucceeded
+		copyFileToPodHook = origCopy
+		execInPodHook = origExec
+	}()
+
+	copyCalled := false
+	copyFileToPodHook = func(ctx context.Context, clientset kubernetes.Interface, cfg *rest.Config, namespace, podName, containerName, srcPath, destPath string) error {
+		copyCalled = true
+		return nil
+	}
+	execCalled := false
+	execInPodHook = func(ctx context.Context, clientset kubernetes.Interface, cfg *rest.Config, namespace, podName, containerName string, command []string) error {
+		execCalled = true
+		return nil
+	}
+	waitPodSucceededHook = func(ctx context.Context, clientset kubernetes.Interface, namespace, name string) error {
+		return nil
+	}
+
+	err = PushDockerArchive(context.Background(), client, &rest.Config{Host: "https://example.invalid"}, tmpPath, "registry.example.com/acme/demo:v1", Config{
+		HelperNamespace: "mcp-sentinel",
+		TarFetchURL:     "http://10.0.0.5:8080/internal/registry-push/tar",
+		TarFetchToken:   "test",
+		Hosts: Hosts{
+			InternalHostnames: []string{"registry.example.com"},
+			ServiceName:       "registry",
+			ServiceNamespace:  "registry",
+			ServicePort:       5000,
+		},
+	})
+	if err != nil {
+		t.Fatalf("PushDockerArchive() error = %v", err)
+	}
+	if copyCalled {
+		t.Fatal("copyFileToPod should not run when TarFetchURL is set")
+	}
+	if execCalled {
+		t.Fatal("execInPod should not run when TarFetchURL is set")
+	}
+	pod, err := client.CoreV1().Pods("mcp-sentinel").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("list pods: %v", err)
+	}
+	if len(pod.Items) != 0 {
+		t.Fatalf("expected helper pod cleanup, found %d pod(s)", len(pod.Items))
+	}
+}
+
+func TestNewHelperNameIncludesRandomSuffix(t *testing.T) {
+	first := newHelperName()
+	second := newHelperName()
+	if !strings.HasPrefix(first, "registry-pusher-") || !strings.HasPrefix(second, "registry-pusher-") {
+		t.Fatalf("unexpected helper names %q %q", first, second)
+	}
+	if first == second {
+		t.Fatalf("expected unique helper names, got %q", first)
+	}
+}

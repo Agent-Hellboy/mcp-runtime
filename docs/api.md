@@ -303,15 +303,16 @@ owns that namespace or belongs to that team.
 
 Manage access grants, sessions, and view runtime state. All `/api/runtime/*`
 routes require an authenticated platform bearer token or `x-api-key`; requests
-without authentication receive `401`. `POST` requests create or update the
-Kubernetes CRs that the operator renders into the gateway policy ConfigMap.
+without authentication receive `401`. `POST` requests create the Kubernetes CRs
+that the operator renders into the gateway policy ConfigMap. Server redeploys
+must opt in with `update: true`; grants and sessions remain create-or-update.
 
 For `POST /api/runtime/grants` and admin-only direct `POST /api/runtime/sessions`, the API resolves `serverRef` to an `MCPServer` in the cluster. If that server does not exist, the call returns `400` with a clear `unknown serverRef` message. The server lookup is **not** part of a single distributed transaction with the grant/session write — a concurrent delete can leave a stale reference (same as `kubectl apply`). Kubernetes apply errors are surfaced with the status the API server would use, when available. Non-admin grant mutations and session item mutations require the caller to be the server owner or a team owner for the server namespace; normal adapter flows should use `POST /api/runtime/adapter/sessions` instead of direct session apply.
 
 ```text
 GET  /api/runtime/servers              # List authenticated MCP catalog entries
 GET  /api/runtime/servers/{namespace}/{name} # Get one MCPServer catalog entry
-POST /api/runtime/servers              # Create/update MCPServer in an authorized namespace
+POST /api/runtime/servers              # Create MCPServer; set update=true to redeploy an existing one
 DELETE /api/runtime/servers/{namespace}/{name} # Retire one MCPServer
 GET  /api/runtime/server-events?namespace=&server= # Recent analytics events for one administered server
 GET  /api/runtime/grants               # List MCPAccessGrant resources
@@ -329,6 +330,7 @@ GET  /api/runtime/teams/{team}         # Team metadata (admin/member)
 GET  /api/runtime/teams/{team}/members # List team memberships (admin/member)
 POST /api/runtime/teams/{team}/members # Admin/team-owner membership upsert
 POST /api/runtime/teams/{team}/users   # Admin-only password user create/update + team membership
+POST /api/runtime/registry/push        # Multipart docker-save upload; in-cluster skopeo push to platform registry
 DELETE /api/runtime/teams/{team}/members/{userID}
 GET  /api/runtime/namespaces           # Allowed namespaces + org catalog metadata
 GET  /api/runtime/namespaces/{namespace}
@@ -349,7 +351,9 @@ namespace for the active mode. `POST /api/runtime/servers` also accepts
 requires public platform mode and resolves the active public catalog namespace;
 `scope: "org"` requires org mode and resolves the active org catalog namespace;
 `scope: "tenant"` uses the caller's team namespace unless the request passes an
-authorized team `namespace`.
+authorized team `namespace`. If an `MCPServer` with the same name already
+exists in the target namespace, the API returns `409` unless the request body
+sets `update: true`.
 
 `POST /api/runtime/servers` is governed by the platform publish policy. Admins
 configure `PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `5`, set `0` to disable)

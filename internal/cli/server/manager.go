@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -56,6 +58,194 @@ func (m *ServerManager) requireKubectlForMutation() error {
 		return core.NewWithSentinel(nil, "this command requires `--use-kube` for direct Kubernetes mode. "+kubeerr.DirectModeGuidance)
 	}
 	return nil
+}
+
+func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope string, port int32, tools, toolSpecs []string, force bool) error {
+	name, err := validateManifestValue("name", name)
+	if err != nil {
+		return err
+	}
+	metadataDir = strings.TrimSpace(metadataDir)
+	if metadataDir == "" {
+		metadataDir = ".mcp"
+	}
+	image = strings.TrimSpace(image)
+	if image == "" {
+		image = name
+	}
+	image, err = validateManifestValue("image", image)
+	if err != nil {
+		return err
+	}
+	imageTag, err = validateManifestValue("tag", imageTag)
+	if err != nil {
+		return err
+	}
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		scope = string(publishscope.Tenant)
+	}
+	if _, err := publishscope.Normalize(scope); err != nil {
+		return err
+	}
+	if port <= 0 {
+		port = defaultDeployPort()
+	}
+
+	registry := metadata.RegistryFile{Version: "v1"}
+	metadataPath := filepath.Join(metadataDir, "servers.yaml")
+	if _, err := os.Stat(metadataPath); err == nil {
+		existing, loadErr := metadata.LoadFromFile(metadataPath)
+		if loadErr != nil {
+			return core.WrapWithSentinel(core.ErrLoadMetadataFailed, loadErr, fmt.Sprintf("failed to load existing metadata file %q: %v", metadataPath, loadErr))
+		}
+		if existing != nil {
+			registry = *existing
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return core.WrapWithSentinel(core.ErrLoadMetadataFailed, err, fmt.Sprintf("failed to inspect metadata file %q: %v", metadataPath, err))
+	}
+	if strings.TrimSpace(registry.Version) == "" {
+		registry.Version = "v1"
+	}
+
+	server := metadata.ServerMetadata{
+		Name:             name,
+		Description:      fmt.Sprintf("%s MCP server", name),
+		Image:            image,
+		ImageTag:         imageTag,
+		Scope:            metadata.PublishScope(scope),
+		PublicPathPrefix: name,
+		Route:            "/" + name + "/mcp",
+		Port:             port,
+		Tools:            nil,
+		Auth: &metadata.AuthConfig{
+			Mode:            metadata.AuthModeHeader,
+			HumanIDHeader:   "X-MCP-Human-ID",
+			AgentIDHeader:   "X-MCP-Agent-ID",
+			TeamIDHeader:    "X-MCP-Team-ID",
+			SessionIDHeader: "X-MCP-Agent-Session",
+			TokenHeader:     "Authorization",
+		},
+		Policy: &metadata.PolicyConfig{
+			Mode:            metadata.PolicyModeAllowList,
+			DefaultDecision: metadata.PolicyDecisionDeny,
+			EnforceOn:       "call_tool",
+			PolicyVersion:   "v1",
+		},
+		Session: &metadata.SessionConfig{
+			Required:            true,
+			Store:               "kubernetes",
+			HeaderName:          "X-MCP-Agent-Session",
+			MaxLifetime:         "24h",
+			IdleTimeout:         "1h",
+			UpstreamTokenHeader: "Authorization",
+		},
+		Gateway: &metadata.GatewayConfig{
+			Enabled:     true,
+			Port:        8091,
+			UpstreamURL: fmt.Sprintf("http://127.0.0.1:%d", port),
+		},
+	}
+	toolMetadata, err := initToolMetadata(tools, toolSpecs)
+	if err != nil {
+		return err
+	}
+	server.Tools = toolMetadata
+
+	replaced := false
+	for i := range registry.Servers {
+		if strings.TrimSpace(registry.Servers[i].Name) != name {
+			continue
+		}
+		if !force {
+			return core.NewWithSentinel(nil, fmt.Sprintf("metadata for server %q already exists in %s; pass --force to replace it", name, metadataPath))
+		}
+		registry.Servers[i] = server
+		replaced = true
+		break
+	}
+	if !replaced {
+		registry.Servers = append(registry.Servers, server)
+	}
+
+	if err := os.MkdirAll(metadataDir, 0o755); err != nil {
+		return core.WrapWithSentinel(nil, err, fmt.Sprintf("failed to create metadata directory %q: %v", metadataDir, err))
+	}
+	data, err := yaml.Marshal(&registry)
+	if err != nil {
+		return core.WrapWithSentinel(nil, err, fmt.Sprintf("failed to encode metadata: %v", err))
+	}
+	if err := os.WriteFile(metadataPath, data, 0o644); err != nil {
+		return core.WrapWithSentinel(nil, err, fmt.Sprintf("failed to write metadata file %q: %v", metadataPath, err))
+	}
+	action := "Created"
+	if replaced {
+		action = "Updated"
+	}
+	core.Success(fmt.Sprintf("%s metadata for server %s at %s", action, name, metadataPath))
+	if len(server.Tools) == 0 {
+		core.Info("No tools were added; pass --tool <name> or edit .mcp/servers.yaml before governed tool calls")
+	}
+	return nil
+}
+
+func initToolMetadata(tools, toolSpecs []string) ([]metadata.ToolConfig, error) {
+	seen := map[string]struct{}{}
+	out := make([]metadata.ToolConfig, 0, len(tools))
+	for _, tool := range tools {
+		tool = strings.TrimSpace(tool)
+		if tool == "" {
+			continue
+		}
+		if _, ok := seen[tool]; ok {
+			continue
+		}
+		seen[tool] = struct{}{}
+		out = append(out, metadata.ToolConfig{
+			Name:          tool,
+			Description:   fmt.Sprintf("%s tool", tool),
+			RequiredTrust: metadata.TrustLevelLow,
+			SideEffect:    metadata.ToolSideEffectRead,
+		})
+	}
+	for _, spec := range toolSpecs {
+		spec = strings.TrimSpace(spec)
+		if spec == "" {
+			continue
+		}
+		parts := strings.Split(spec, ":")
+		if len(parts) != 3 {
+			return nil, core.NewWithSentinel(nil, fmt.Sprintf("unsupported tool spec %q (use name:low|medium|high:read|write|destructive)", spec))
+		}
+		name := strings.TrimSpace(parts[0])
+		trust := metadata.TrustLevel(strings.ToLower(strings.TrimSpace(parts[1])))
+		sideEffect := metadata.ToolSideEffect(strings.ToLower(strings.TrimSpace(parts[2])))
+		if name == "" {
+			return nil, core.NewWithSentinel(nil, fmt.Sprintf("unsupported tool spec %q: tool name is required", spec))
+		}
+		switch trust {
+		case metadata.TrustLevelLow, metadata.TrustLevelMedium, metadata.TrustLevelHigh:
+		default:
+			return nil, core.NewWithSentinel(nil, fmt.Sprintf("unsupported tool spec %q: trust must be low, medium, or high", spec))
+		}
+		switch sideEffect {
+		case metadata.ToolSideEffectRead, metadata.ToolSideEffectWrite, metadata.ToolSideEffectDestructive:
+		default:
+			return nil, core.NewWithSentinel(nil, fmt.Sprintf("unsupported tool spec %q: side effect must be read, write, or destructive", spec))
+		}
+		if _, ok := seen[name]; ok {
+			return nil, core.NewWithSentinel(nil, fmt.Sprintf("duplicate tool metadata for %q", name))
+		}
+		seen[name] = struct{}{}
+		out = append(out, metadata.ToolConfig{
+			Name:          name,
+			Description:   fmt.Sprintf("%s tool", name),
+			RequiredTrust: trust,
+			SideEffect:    sideEffect,
+		})
+	}
+	return out, nil
 }
 
 // Logger exposes the manager logger to foldered command packages.
@@ -234,7 +424,7 @@ func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) er
 	return nil
 }
 
-func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageTag string, replicas, port, servicePort int32) error {
+func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageTag string, replicas, port, servicePort int32, metadataFile, metadataDir string, update bool) error {
 	if m.useKube {
 		return core.NewWithSentinel(nil, "server deploy uses the platform API; remove --use-kube")
 	}
@@ -242,9 +432,11 @@ func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageT
 	if err != nil {
 		return err
 	}
-	image, err = validateManifestValue("image", image)
-	if err != nil {
-		return err
+	if strings.TrimSpace(image) != "" {
+		image, err = validateManifestValue("image", image)
+		if err != nil {
+			return err
+		}
 	}
 	imageTag, err = validateManifestValue("tag", imageTag)
 	if err != nil {
@@ -253,6 +445,26 @@ func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageT
 	namespace = strings.TrimSpace(namespace)
 	team = strings.TrimSpace(team)
 	scope = strings.TrimSpace(scope)
+	selectedMetadata, err := selectDeployMetadata(name, metadataFile, metadataDir)
+	if err != nil {
+		return err
+	}
+	if selectedMetadata != nil {
+		if scope == "" {
+			scope = string(selectedMetadata.Scope)
+		}
+		if namespace == "" && team == "" {
+			if !(scope == string(publishscope.Tenant) && strings.TrimSpace(selectedMetadata.Namespace) == core.NamespaceMCPServers) {
+				namespace = selectedMetadata.Namespace
+			}
+		}
+		if image == "" {
+			image = selectedMetadata.Image
+		}
+		if strings.TrimSpace(imageTag) == "" || imageTag == "latest" && strings.TrimSpace(selectedMetadata.ImageTag) != "" {
+			imageTag = selectedMetadata.ImageTag
+		}
+	}
 	if _, err := publishscope.Normalize(scope); err != nil {
 		return err
 	}
@@ -276,6 +488,20 @@ func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageT
 		}
 		namespace = t.Namespace
 	}
+	if namespace == "" && scope == string(publishscope.Tenant) {
+		principal, err := plat.CurrentPrincipal(context.Background())
+		if err != nil {
+			return err
+		}
+		switch len(principal.Teams) {
+		case 0:
+			return core.NewWithSentinel(nil, "tenant deploy requires a team membership; ask an admin to add you to a team")
+		case 1:
+			namespace = principal.Teams[0].Namespace
+		default:
+			return core.NewWithSentinel(nil, "tenant deploy has multiple team memberships; pass --team <slug> or --namespace <team-namespace>")
+		}
+	}
 	if namespace != "" {
 		namespace, err = validateManifestValue("namespace", namespace)
 		if err != nil {
@@ -283,15 +509,189 @@ func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageT
 		}
 	}
 	spec := buildDeployServerSpec(name, image, imageTag, replicas, port, servicePort)
-	if err := applyDeployMetadataDefaults(&spec, name); err != nil {
+	if err := applyDeployMetadataDefaults(&spec, name, metadataFile, metadataDir); err != nil {
 		return err
 	}
-	applied, err := plat.ApplyRuntimeServerWithScope(context.Background(), name, namespace, scope, spec)
+	if strings.TrimSpace(spec.Image) == "" {
+		return core.NewWithSentinel(core.ErrImageRequired, "image is required unless .mcp metadata provides image; pass --image or run from a directory with .mcp/servers.yaml")
+	}
+	expectedImage := strings.TrimSpace(spec.Image)
+	applied, err := plat.ApplyRuntimeServerWithScopeUpdate(context.Background(), name, namespace, scope, spec, update)
 	if err != nil {
 		return err
 	}
-	core.Success(fmt.Sprintf("Deployed server %s in namespace %s", applied.Name, applied.Namespace))
+	ready, err := waitForDeployedServer(context.Background(), plat, applied.Name, applied.Namespace, expectedImage, imageTag)
+	if err != nil {
+		return err
+	}
+	core.Success(fmt.Sprintf("Deployed server %s in namespace %s (status %s)", ready.Name, ready.Namespace, ready.Status))
 	return nil
+}
+
+// GenerateManifests renders MCPServer YAML from .mcp metadata for review,
+// GitOps, or admin workflows. Normal user deploys should call DeployServer.
+func (m *ServerManager) GenerateManifests(metadataFile, metadataDir, outputDir string) error {
+	registry, err := loadDeployMetadata(metadataFile, metadataDir)
+	if err != nil {
+		return err
+	}
+	if registry == nil || len(registry.Servers) == 0 {
+		err := core.ErrNoServersInMetadata
+		core.Error("No servers found in metadata")
+		core.LogStructuredError(m.logger, err, "No servers found in metadata")
+		return err
+	}
+	outputDir = strings.TrimSpace(outputDir)
+	if outputDir == "" {
+		outputDir = "manifests"
+	}
+	if err := metadata.GenerateCRDsFromRegistry(registry, outputDir); err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrGenerateCRDsFailed,
+			err,
+			fmt.Sprintf("failed to generate MCPServer manifests: %v", err),
+			map[string]any{"output_dir": outputDir, "server_count": len(registry.Servers), "component": "server"},
+		)
+		core.Error("Failed to generate MCPServer manifests")
+		core.LogStructuredError(m.logger, wrappedErr, "Failed to generate MCPServer manifests")
+		return wrappedErr
+	}
+	files, _ := filepath.Glob(filepath.Join(outputDir, "*.yaml"))
+	for _, file := range files {
+		core.Success(fmt.Sprintf("Generated: %s", file))
+	}
+	return nil
+}
+
+var serverDeployPollInterval = 2 * time.Second
+
+func waitForDeployedServer(ctx context.Context, plat *platformapi.PlatformClient, name, namespace, expectedImage, expectedTag string) (platformapi.ServerListItem, error) {
+	timeout := core.GetDeploymentTimeout()
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	deadline := time.Now().Add(timeout)
+	var last *platformapi.ServerListItem
+	for {
+		servers, err := plat.ListRuntimeServers(ctx, namespace)
+		if err != nil {
+			return platformapi.ServerListItem{}, core.WrapWithSentinel(
+				core.ErrListServersFailed,
+				err,
+				fmt.Sprintf("wait for deployed server readiness: %v", err),
+			)
+		}
+		for i := range servers {
+			if servers[i].Name != name {
+				continue
+			}
+			last = &servers[i]
+			if strings.EqualFold(strings.TrimSpace(servers[i].Ready), "true") || strings.EqualFold(strings.TrimSpace(servers[i].Status), "ready") {
+				if err := validateDeployedServerImage(servers[i], expectedImage, expectedTag); err != nil {
+					return platformapi.ServerListItem{}, err
+				}
+				return servers[i], nil
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			if last != nil {
+				return platformapi.ServerListItem{}, core.NewWithSentinel(
+					nil,
+					fmt.Sprintf(
+						"server %s was applied in namespace %s but did not become ready within %s (status=%s ready=%s)",
+						name,
+						namespace,
+						timeout.Round(time.Second),
+						strings.TrimSpace(last.Status),
+						strings.TrimSpace(last.Ready),
+					),
+				)
+			}
+			return platformapi.ServerListItem{}, core.NewWithSentinel(
+				nil,
+				fmt.Sprintf("server %s was applied in namespace %s but did not appear in runtime inventory within %s", name, namespace, timeout.Round(time.Second)),
+			)
+		}
+		select {
+		case <-ctx.Done():
+			return platformapi.ServerListItem{}, core.WrapWithSentinel(
+				core.ErrListServersFailed,
+				ctx.Err(),
+				fmt.Sprintf("wait for deployed server readiness: %v", ctx.Err()),
+			)
+		case <-time.After(serverDeployPollInterval):
+		}
+	}
+}
+
+func validateDeployedServerImage(server platformapi.ServerListItem, expectedImage, expectedTag string) error {
+	expectedImage = strings.TrimSpace(expectedImage)
+	if expectedImage == "" {
+		return nil
+	}
+	gotImage := strings.TrimSpace(server.Image)
+	if gotImage == "" {
+		return nil
+	}
+	if !deployImageRefsEquivalent(expectedImage, gotImage) {
+		return core.NewWithSentinel(
+			nil,
+			fmt.Sprintf(
+				"server %s deployed with image %q but runtime inventory reports %q; verify registry push and deploy image references match",
+				server.Name,
+				expectedImage,
+				gotImage,
+			),
+		)
+	}
+	expectedTag = strings.TrimSpace(expectedTag)
+	gotTag := strings.TrimSpace(server.ImageTag)
+	if expectedTag != "" && gotTag != "" && gotTag != expectedTag {
+		return core.NewWithSentinel(
+			nil,
+			fmt.Sprintf(
+				"server %s deployed with tag %q but runtime inventory reports %q",
+				server.Name,
+				expectedTag,
+				gotTag,
+			),
+		)
+	}
+	return nil
+}
+
+func deployImageRefsEquivalent(expectedImage, gotImage string) bool {
+	expected := normalizeDeployImageForCompare(expectedImage)
+	got := normalizeDeployImageForCompare(gotImage)
+	if expected == "" || got == "" {
+		return true
+	}
+	if expected == got {
+		return true
+	}
+	return strings.HasSuffix(got, "/"+expected) || strings.HasSuffix(expected, "/"+got)
+}
+
+func normalizeDeployImageForCompare(image string) string {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(image, "@"); idx > 0 {
+		image = image[:idx]
+	}
+	if idx := strings.LastIndex(image, ":"); idx > 0 {
+		suffix := image[idx+1:]
+		if !strings.Contains(suffix, "/") {
+			image = image[:idx]
+		}
+	}
+	first, rest, found := strings.Cut(image, "/")
+	if found && (strings.Contains(first, ".") || strings.Contains(first, ":") || first == "localhost") {
+		image = rest
+	}
+	return strings.Trim(image, "/")
 }
 
 func buildDeployServerSpec(name, image, imageTag string, replicas, port, servicePort int32) mcpv1alpha1.MCPServerSpec {
@@ -311,19 +711,13 @@ func buildDeployServerSpec(name, image, imageTag string, replicas, port, service
 	}
 }
 
-func applyDeployMetadataDefaults(spec *mcpv1alpha1.MCPServerSpec, name string) error {
+func applyDeployMetadataDefaults(spec *mcpv1alpha1.MCPServerSpec, name, metadataFile, metadataDir string) error {
 	if spec == nil {
 		return nil
 	}
-	if _, err := os.Stat(".mcp"); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return core.WrapWithSentinel(core.ErrLoadMetadataFailed, err, fmt.Sprintf("failed to inspect metadata directory: %v", err))
-	}
-	registry, err := metadata.LoadFromDirectory(".mcp")
+	registry, err := loadDeployMetadata(metadataFile, metadataDir)
 	if err != nil {
-		return core.WrapWithSentinel(core.ErrLoadMetadataFailed, err, fmt.Sprintf("failed to load metadata: %v", err))
+		return err
 	}
 	if registry == nil || len(registry.Servers) == 0 {
 		return nil
@@ -346,9 +740,69 @@ func applyDeployMetadataDefaults(spec *mcpv1alpha1.MCPServerSpec, name string) e
 	return nil
 }
 
+func loadDeployMetadata(metadataFile, metadataDir string) (*metadata.RegistryFile, error) {
+	metadataFile = strings.TrimSpace(metadataFile)
+	metadataDir = strings.TrimSpace(metadataDir)
+	if metadataFile != "" {
+		registry, err := metadata.LoadFromFile(metadataFile)
+		if err != nil {
+			return nil, core.WrapWithSentinel(core.ErrLoadMetadataFailed, err, fmt.Sprintf("failed to load metadata file %q: %v", metadataFile, err))
+		}
+		return registry, nil
+	}
+	if metadataDir == "" {
+		metadataDir = ".mcp"
+	}
+	if _, err := os.Stat(metadataDir); err != nil {
+		if os.IsNotExist(err) && metadataDir == ".mcp" {
+			return nil, nil
+		}
+		return nil, core.WrapWithSentinel(core.ErrLoadMetadataFailed, err, fmt.Sprintf("failed to inspect metadata directory %q: %v", metadataDir, err))
+	}
+	registry, err := metadata.LoadFromDirectory(metadataDir)
+	if err != nil {
+		return nil, core.WrapWithSentinel(core.ErrLoadMetadataFailed, err, fmt.Sprintf("failed to load metadata directory %q: %v", metadataDir, err))
+	}
+	return registry, nil
+}
+
+func selectDeployMetadata(name, metadataFile, metadataDir string) (*metadata.ServerMetadata, error) {
+	registry, err := loadDeployMetadata(metadataFile, metadataDir)
+	if err != nil {
+		return nil, err
+	}
+	if registry == nil || len(registry.Servers) == 0 {
+		return nil, nil
+	}
+	for i := range registry.Servers {
+		if strings.TrimSpace(registry.Servers[i].Name) == name {
+			return &registry.Servers[i], nil
+		}
+	}
+	if len(registry.Servers) == 1 {
+		return &registry.Servers[0], nil
+	}
+	return nil, nil
+}
+
 func mergeDeployMetadata(spec *mcpv1alpha1.MCPServerSpec, src *metadata.ServerMetadata) {
+	if strings.TrimSpace(spec.Image) == "" {
+		spec.Image = src.Image
+	}
+	if strings.TrimSpace(spec.ImageTag) == "" || strings.TrimSpace(spec.ImageTag) == "latest" && strings.TrimSpace(src.ImageTag) != "" {
+		spec.ImageTag = src.ImageTag
+	}
 	if strings.TrimSpace(spec.Description) == "" {
 		spec.Description = src.Description
+	}
+	if src.Port > 0 {
+		spec.Port = src.Port
+	}
+	if src.Replicas != nil {
+		spec.Replicas = src.Replicas
+	}
+	if strings.TrimSpace(src.IngressHost) != "" {
+		spec.IngressHost = strings.TrimSpace(src.IngressHost)
 	}
 	if len(spec.Tools) == 0 {
 		spec.Tools = make([]mcpv1alpha1.ToolConfig, 0, len(src.Tools))
@@ -371,6 +825,80 @@ func mergeDeployMetadata(spec *mcpv1alpha1.MCPServerSpec, src *metadata.ServerMe
 	if len(spec.Tasks) == 0 {
 		spec.Tasks = convertDeployInventory(src.Tasks)
 	}
+	if spec.Resources.Limits == nil && spec.Resources.Requests == nil && src.Resources != nil {
+		spec.Resources = convertDeployResources(src.Resources)
+	}
+	if len(src.EnvVars) > 0 {
+		spec.EnvVars = mergeDeployEnvVars(spec.EnvVars, src.EnvVars)
+	}
+	if len(spec.SecretEnvVars) == 0 {
+		spec.SecretEnvVars = convertDeploySecretEnvVars(src.SecretEnvVars)
+	}
+	if src.Auth != nil {
+		spec.Auth = &mcpv1alpha1.AuthConfig{
+			Mode:            mcpv1alpha1.AuthMode(src.Auth.Mode),
+			HumanIDHeader:   src.Auth.HumanIDHeader,
+			AgentIDHeader:   src.Auth.AgentIDHeader,
+			TeamIDHeader:    src.Auth.TeamIDHeader,
+			SessionIDHeader: src.Auth.SessionIDHeader,
+			TokenHeader:     src.Auth.TokenHeader,
+			IssuerURL:       src.Auth.IssuerURL,
+			Audience:        src.Auth.Audience,
+		}
+	}
+	if src.Policy != nil {
+		spec.Policy = &mcpv1alpha1.PolicyConfig{
+			Mode:            mcpv1alpha1.PolicyMode(src.Policy.Mode),
+			DefaultDecision: mcpv1alpha1.PolicyDecision(src.Policy.DefaultDecision),
+			EnforceOn:       src.Policy.EnforceOn,
+			PolicyVersion:   src.Policy.PolicyVersion,
+		}
+	}
+	if src.Session != nil {
+		spec.Session = &mcpv1alpha1.SessionConfig{
+			Required:            src.Session.Required,
+			Store:               src.Session.Store,
+			HeaderName:          src.Session.HeaderName,
+			MaxLifetime:         src.Session.MaxLifetime,
+			IdleTimeout:         src.Session.IdleTimeout,
+			UpstreamTokenHeader: src.Session.UpstreamTokenHeader,
+		}
+	}
+	if src.Gateway != nil {
+		spec.Gateway = &mcpv1alpha1.GatewayConfig{
+			Enabled:     src.Gateway.Enabled,
+			Image:       src.Gateway.Image,
+			Port:        src.Gateway.Port,
+			UpstreamURL: src.Gateway.UpstreamURL,
+			StripPrefix: src.Gateway.StripPrefix,
+		}
+		if src.Gateway.Resources != nil {
+			resources := convertDeployResources(src.Gateway.Resources)
+			spec.Gateway.Resources = &resources
+		}
+	}
+	if spec.Analytics == nil && src.Analytics != nil {
+		spec.Analytics = &mcpv1alpha1.AnalyticsConfig{
+			Disabled:  src.Analytics.Disabled,
+			IngestURL: src.Analytics.IngestURL,
+			Source:    src.Analytics.Source,
+			EventType: src.Analytics.EventType,
+		}
+		if src.Analytics.APIKeySecretRef != nil {
+			spec.Analytics.APIKeySecretRef = &mcpv1alpha1.SecretKeyRef{
+				Name: src.Analytics.APIKeySecretRef.Name,
+				Key:  src.Analytics.APIKeySecretRef.Key,
+			}
+		}
+	}
+	if spec.Rollout == nil && src.Rollout != nil {
+		spec.Rollout = &mcpv1alpha1.RolloutConfig{
+			Strategy:       mcpv1alpha1.RolloutStrategy(src.Rollout.Strategy),
+			MaxUnavailable: src.Rollout.MaxUnavailable,
+			MaxSurge:       src.Rollout.MaxSurge,
+			CanaryReplicas: src.Rollout.CanaryReplicas,
+		}
+	}
 }
 
 func convertDeployInventory(items []metadata.InventoryItem) []mcpv1alpha1.InventoryItem {
@@ -384,6 +912,61 @@ func convertDeployInventory(items []metadata.InventoryItem) []mcpv1alpha1.Invent
 			Description: item.Description,
 			Labels:      copyStringMap(item.Labels),
 		})
+	}
+	return out
+}
+
+func mergeDeployEnvVars(existing []mcpv1alpha1.EnvVar, items []metadata.EnvVar) []mcpv1alpha1.EnvVar {
+	out := append([]mcpv1alpha1.EnvVar(nil), existing...)
+	index := make(map[string]int, len(out))
+	for i, item := range out {
+		index[item.Name] = i
+	}
+	for _, item := range items {
+		if i, ok := index[item.Name]; ok {
+			out[i].Value = item.Value
+			continue
+		}
+		index[item.Name] = len(out)
+		out = append(out, mcpv1alpha1.EnvVar{Name: item.Name, Value: item.Value})
+	}
+	return out
+}
+
+func convertDeployResources(resources *metadata.ResourceRequirements) mcpv1alpha1.ResourceRequirements {
+	if resources == nil {
+		return mcpv1alpha1.ResourceRequirements{}
+	}
+	converted := mcpv1alpha1.ResourceRequirements{}
+	if resources.Limits != nil {
+		converted.Limits = &mcpv1alpha1.ResourceList{
+			CPU:    resources.Limits.CPU,
+			Memory: resources.Limits.Memory,
+		}
+	}
+	if resources.Requests != nil {
+		converted.Requests = &mcpv1alpha1.ResourceList{
+			CPU:    resources.Requests.CPU,
+			Memory: resources.Requests.Memory,
+		}
+	}
+	return converted
+}
+
+func convertDeploySecretEnvVars(items []metadata.SecretEnvVar) []mcpv1alpha1.SecretEnvVar {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]mcpv1alpha1.SecretEnvVar, 0, len(items))
+	for _, item := range items {
+		converted := mcpv1alpha1.SecretEnvVar{Name: item.Name}
+		if item.SecretKeyRef != nil {
+			converted.SecretKeyRef = &mcpv1alpha1.SecretKeyRef{
+				Name: item.SecretKeyRef.Name,
+				Key:  item.SecretKeyRef.Key,
+			}
+		}
+		out = append(out, converted)
 	}
 	return out
 }

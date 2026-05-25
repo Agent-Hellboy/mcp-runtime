@@ -131,12 +131,14 @@ func main() {
 	httpsMode := serviceutil.EnvOr("UI_REQUIRE_HTTPS", "auto")
 	secured := securityHeadersMiddleware(httpsRedirectMiddleware(mux, httpsMode))
 	handler := otelhttp.NewHandler(serviceutil.LogRequests(secured), "http.server")
+	readTimeout := durationEnvOr("UI_HTTP_READ_TIMEOUT", 20*time.Minute)
+	writeTimeout := durationEnvOr("UI_HTTP_WRITE_TIMEOUT", 20*time.Minute)
 	httpServer := &http.Server{
 		Addr:              ":" + port,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
 		IdleTimeout:       60 * time.Second,
 	}
 	if err := httpServer.ListenAndServe(); err != nil {

@@ -9,6 +9,7 @@ Available Commands:
   disable     Disable a grant
   enable      Enable a grant
   get         Get an access grant
+  init        Initialize an MCPAccessGrant manifest
   list        List access grants
 
 Flags:

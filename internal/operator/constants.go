@@ -39,7 +39,7 @@ const (
 const (
 	// DefaultRegistrySecretName is the default name for registry pull secrets.
 	// #nosec G101 -- This is a secret name, not a credential.
-	DefaultRegistrySecretName = "mcp-runtime-registry-creds"
+	DefaultRegistrySecretName = "mcp-runtime-registry-pull"
 )
 
 // Ingress configuration.

@@ -1,4 +1,4 @@
-Commands for inspecting and operating the bundled mcp-sentinel analytics, gateway, and observability stack.
+Inspect and operate the bundled mcp-sentinel analytics, gateway, and observability stack. These commands require admin/operator Kubernetes access with kubectl; normal users should use the platform API and dashboard instead.
 
 Usage:
   mcp-runtime sentinel [command]

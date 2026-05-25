@@ -89,6 +89,9 @@ func TestAuthLoginSavesAndVerifies(t *testing.T) {
 	if creds.APIBaseURL != "https://platform.example.com" {
 		t.Fatalf("api_url = %q, want https://platform.example.com", creds.APIBaseURL)
 	}
+	if creds.RegistryHost != "registry.example.com" {
+		t.Fatalf("registry_host = %q, want registry.example.com", creds.RegistryHost)
+	}
 	if creds.Current != "default" {
 		t.Fatalf("current = %q, want default", creds.Current)
 	}
@@ -127,6 +130,9 @@ func TestAuthLoginNormalizesTrailingAPIPath(t *testing.T) {
 	}
 	if creds.Token != "good" {
 		t.Fatalf("token = %q, want good", creds.Token)
+	}
+	if creds.RegistryHost != "registry.example.com" {
+		t.Fatalf("registry_host = %q, want registry.example.com", creds.RegistryHost)
 	}
 }
 

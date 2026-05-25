@@ -1,0 +1,26 @@
+Initialize an MCPAgentSession YAML manifest for review or apply. Adapter auto-refresh usually creates sessions automatically; this command is for explicit/admin session manifests.
+
+Usage:
+  mcp-runtime access session init [name] [flags]
+
+Flags:
+      --agent-id string                Agent subject ID
+      --expires-at string              Optional RFC3339 expiry timestamp
+      --expires-in string              Optional relative expiry duration, for example 1h or 30m
+      --force                          Replace output file if it already exists
+  -h, --help                           help for init
+      --human-id string                Human subject ID
+      --namespace string               Manifest namespace (default "mcp-servers")
+      --output string                  Output manifest path (default "session.yaml")
+      --policy-version string          Policy version (default "v1")
+      --revoked                        Initialize the session as revoked
+      --server string                  Target MCPServer name
+      --server-namespace string        Target MCPServer namespace (default: --namespace)
+      --team-id string                 Team subject ID
+      --trust string                   Trust level: low, medium, or high (default "low")
+      --upstream-token-key string      Secret key for --upstream-token-secret (default "token")
+      --upstream-token-secret string   Optional Secret name containing an upstream token
+
+Global Flags:
+      --debug      Enable debug mode with structured error logging
+      --use-kube   Use direct Kubernetes mode with kubectl; requires admin/operator cluster access (admin/dev/test only)

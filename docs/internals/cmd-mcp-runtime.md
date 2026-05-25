@@ -36,7 +36,6 @@ The root command wires these internal command groups:
 | `status` | `internal/cli/status` | `status.go`, shared workload/probe helpers in `internal/cli/platformstatus` |
 | `registry` | `internal/cli/registry` | `registry.go`, `manager.go`, `defaults.go`, registry-owned helpers under `internal/cli/registry/` |
 | `server` | `internal/cli/server` | `server.go`, `manager.go`, `validation.go`, `build.go`, `build_image.go`, server-owned helpers under `internal/cli/server/` |
-| `pipeline` | `internal/cli/pipeline` | `command.go`, `generate.go`, `deploy.go` |
 | `access` | `internal/cli/access` | `access.go`, `manager.go`, `validation.go` |
 | `adapter` | `internal/cli/adapter` | `adapter.go`, `flags.go`, `platformsession.go`, `proxy.go`, `stdio.go`; transport behavior in `internal/agentadapter` |
 | `auth` | `internal/cli/auth` | `auth.go` |

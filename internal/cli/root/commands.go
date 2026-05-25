@@ -6,11 +6,11 @@ import (
 
 	"mcp-runtime/internal/cli/access"
 	"mcp-runtime/internal/cli/adapter"
+	"mcp-runtime/internal/cli/admin"
 	"mcp-runtime/internal/cli/auth"
 	"mcp-runtime/internal/cli/bootstrap"
 	"mcp-runtime/internal/cli/cluster"
 	"mcp-runtime/internal/cli/core"
-	"mcp-runtime/internal/cli/pipeline"
 	"mcp-runtime/internal/cli/registry"
 	"mcp-runtime/internal/cli/sentinel"
 	"mcp-runtime/internal/cli/server"
@@ -29,11 +29,11 @@ func AddCommands(root *cobra.Command, logger *zap.Logger) {
 	root.AddCommand(server.New(runtime))
 	root.AddCommand(access.New(runtime))
 	root.AddCommand(adapter.New(runtime))
+	root.AddCommand(admin.New(runtime))
 	root.AddCommand(auth.New(runtime))
 	root.AddCommand(bootstrap.New(runtime))
 	root.AddCommand(setup.New(runtime, clusterMgr))
 	root.AddCommand(status.New(runtime))
 	root.AddCommand(sentinel.New(runtime))
-	root.AddCommand(pipeline.New(runtime))
 	root.AddCommand(team.New(runtime))
 }

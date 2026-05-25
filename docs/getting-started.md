@@ -576,16 +576,28 @@ Common edits:
 
 For the full field surface, use the [API reference](api.md).
 
-### Option B — metadata-driven pipeline
+### Option B — metadata-driven server flow
 
-Author lightweight metadata YAML, generate CRDs, and deploy:
+Author lightweight metadata YAML and deploy through the platform API:
 
 ```bash
+./bin/mcp-runtime server init my-server --tool ping
 ./bin/mcp-runtime server build image my-server --tag v1.0.0 --platform linux/amd64
 ./bin/mcp-runtime registry push --scope tenant --image <exact-image-ref-from-build>
-./bin/mcp-runtime pipeline generate --dir .mcp --output manifests/
-./bin/mcp-runtime pipeline deploy --dir manifests/
+./bin/mcp-runtime server deploy my-server --scope tenant --metadata-dir .mcp
 ```
+
+`server init` writes gateway-enabled, header-authenticated, session-required
+governance defaults. Edit `.mcp/servers.yaml` when a tool needs `medium` or
+`high` trust, or when its side effect is `write` or `destructive` instead of
+`read`. You can also seed that up front with
+`--tool-spec name:low|medium|high:read|write|destructive`; `--tool name` remains
+the read/low shorthand.
+
+When authoring access manifests, use `access grant init --tool-rule
+name:allow|deny:low|medium|high` for per-tool grant decisions, and use `access
+session init --expires-in` or `--expires-at` when creating explicit/admin
+session manifests.
 
 `<exact-image-ref-from-build>` may be a resolved registry endpoint such as
 `10.43.109.51:5000/my-server:v1.0.0` or, for `scope: tenant` metadata after

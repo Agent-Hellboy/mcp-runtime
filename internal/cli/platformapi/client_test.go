@@ -138,6 +138,60 @@ func TestRecordImagePublish(t *testing.T) {
 	}
 }
 
+func TestPushRegistryImageStreamsMultipartUpload(t *testing.T) {
+	tmpDir := t.TempDir()
+	tarPath := filepath.Join(tmpDir, "demo.tar")
+	if err := os.WriteFile(tarPath, []byte("fake-image-tar"), 0o600); err != nil {
+		t.Fatalf("write temp tar: %v", err)
+	}
+
+	var seenTarget string
+	var seenScope string
+	var seenFileBody string
+	client := &PlatformClient{
+		baseURL:   "https://platform.example.com",
+		token:     "token-1",
+		apiPrefix: "/api",
+		http: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != "/api/runtime/registry/push" {
+				t.Fatalf("path = %q, want registry push endpoint", r.URL.Path)
+			}
+			if got := r.Header.Get("authorization"); got != "Bearer token-1" {
+				t.Fatalf("authorization = %q", got)
+			}
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				t.Fatalf("ParseMultipartForm() error = %v", err)
+			}
+			seenTarget = r.FormValue("target")
+			seenScope = r.FormValue("scope")
+			file, _, err := r.FormFile("image_tar")
+			if err != nil {
+				t.Fatalf("FormFile(image_tar) error = %v", err)
+			}
+			defer file.Close()
+			body, err := io.ReadAll(file)
+			if err != nil {
+				t.Fatalf("read image_tar: %v", err)
+			}
+			seenFileBody = string(body)
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"success":true}`))}, nil
+		})},
+	}
+
+	if err := client.PushRegistryImage(context.Background(), tarPath, "registry.example.com/acme/demo:v1", "tenant"); err != nil {
+		t.Fatalf("PushRegistryImage() error = %v", err)
+	}
+	if seenTarget != "registry.example.com/acme/demo:v1" {
+		t.Fatalf("target = %q", seenTarget)
+	}
+	if seenScope != "tenant" {
+		t.Fatalf("scope = %q", seenScope)
+	}
+	if seenFileBody != "fake-image-tar" {
+		t.Fatalf("image_tar = %q", seenFileBody)
+	}
+}
+
 func TestValidateCredentials(t *testing.T) {
 	client := &PlatformClient{
 		baseURL:   "https://platform.example.com",

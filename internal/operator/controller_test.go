@@ -1694,7 +1694,7 @@ func TestResolveImage(t *testing.T) {
 		original := DefaultOperatorConfig
 		DefaultOperatorConfig = &OperatorConfig{
 			InternalRegistryEndpoint: "10.43.75.207:5000",
-			RegistryPullHost:         "registry.mcpruntime.org",
+			RegistryPullHost:         "10.43.75.207:5000",
 		}
 		t.Cleanup(func() {
 			DefaultOperatorConfig = original
@@ -1712,7 +1712,7 @@ func TestResolveImage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to resolve image: %v", err)
 		}
-		assertEqual(t, "image", image, "registry.mcpruntime.org/test-image")
+		assertEqual(t, "image", image, "10.43.75.207:5000/test-image")
 	})
 }
 

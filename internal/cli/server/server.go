@@ -37,6 +37,32 @@ For pushing images, use 'registry push'.`,
 
 	mgr.BindUseKubeFlag(cmd)
 
+	var initMetadataDir string
+	var initImage string
+	var initTag string
+	var initScope string
+	var initPort int32
+	var initTools []string
+	var initToolSpecs []string
+	var initForce bool
+	initCmd := &cobra.Command{
+		Use:   "init [name]",
+		Short: "Initialize .mcp metadata for a server",
+		Long:  "Initialize .mcp/servers.yaml metadata for a server. Use repeated --tool flags to seed governed tool metadata, then build, push, and deploy with server build image, registry push, and server deploy.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return mgr.InitServer(args[0], initMetadataDir, initImage, initTag, initScope, initPort, initTools, initToolSpecs, initForce)
+		},
+	}
+	initCmd.Flags().StringVar(&initMetadataDir, "metadata-dir", ".mcp", "Directory where servers.yaml will be written")
+	initCmd.Flags().StringVar(&initImage, "image", "", "Container image repository (default: server name)")
+	initCmd.Flags().StringVar(&initTag, "tag", "latest", "Container image tag")
+	initCmd.Flags().StringVar(&initScope, "scope", "tenant", "Publish scope: tenant, org, or public")
+	initCmd.Flags().Int32Var(&initPort, "port", defaultDeployPort(), "Container port")
+	initCmd.Flags().StringArrayVar(&initTools, "tool", nil, "Tool name to add with read side-effect metadata; repeat for multiple tools")
+	initCmd.Flags().StringArrayVar(&initToolSpecs, "tool-spec", nil, "Tool metadata as name:low|medium|high:read|write|destructive; repeat for mixed trust or side effects")
+	initCmd.Flags().BoolVar(&initForce, "force", false, "Replace an existing metadata entry with the same server name")
+
 	var namespace string
 	var team string
 	listCmd := &cobra.Command{
@@ -102,24 +128,44 @@ For pushing images, use 'registry push'.`,
 	var deployReplicas int32
 	var deployPort int32
 	var deployServicePort int32
+	var deployMetadataFile string
+	var deployMetadataDir string
+	var deployUpdate bool
 	deployCmd := &cobra.Command{
 		Use:   "deploy [name]",
 		Short: "Deploy an MCP server through the platform API",
-		Long:  "Apply an MCPServer resource using the authenticated platform API identity.",
+		Long:  "Deploy a new MCPServer through the authenticated platform API identity. When .mcp metadata is present, deploy includes its image, tool side-effect metadata, prompts, resources, and tasks. If the server already exists, pass --update to redeploy it.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return mgr.DeployServer(args[0], deployNamespace, deployTeam, deployScope, deployImage, deployTag, deployReplicas, deployPort, deployServicePort)
+			return mgr.DeployServer(args[0], deployNamespace, deployTeam, deployScope, deployImage, deployTag, deployReplicas, deployPort, deployServicePort, deployMetadataFile, deployMetadataDir, deployUpdate)
 		},
 	}
 	deployCmd.Flags().StringVar(&deployNamespace, "namespace", "", "Target namespace (optional when --team is provided)")
 	deployCmd.Flags().StringVar(&deployTeam, "team", "", "Team slug to resolve target namespace")
 	deployCmd.Flags().StringVar(&deployScope, "scope", "", "Publish scope: tenant, org, or public")
-	deployCmd.Flags().StringVar(&deployImage, "image", "", "Container image repository")
+	deployCmd.Flags().StringVar(&deployImage, "image", "", "Container image repository (optional when .mcp metadata provides image)")
 	deployCmd.Flags().StringVar(&deployTag, "tag", "latest", "Container image tag")
 	deployCmd.Flags().Int32Var(&deployReplicas, "replicas", 1, "Replica count")
 	deployCmd.Flags().Int32Var(&deployPort, "port", defaultDeployPort(), "Container port")
 	deployCmd.Flags().Int32Var(&deployServicePort, "service-port", 80, "Service port")
-	_ = deployCmd.MarkFlagRequired("image")
+	deployCmd.Flags().StringVar(&deployMetadataFile, "metadata-file", "", "Path to .mcp metadata file")
+	deployCmd.Flags().StringVar(&deployMetadataDir, "metadata-dir", ".mcp", "Directory containing .mcp metadata files")
+	deployCmd.Flags().BoolVar(&deployUpdate, "update", false, "Update an existing server instead of failing when the name already exists")
+
+	var generateMetadataFile string
+	var generateMetadataDir string
+	var generateOutputDir string
+	generateCmd := &cobra.Command{
+		Use:   "generate",
+		Short: "Generate MCPServer manifests from .mcp metadata",
+		Long:  "Generate MCPServer YAML manifests from .mcp metadata. Normal user deploys should use server deploy directly; this command is for review, GitOps, and admin workflows that need YAML output.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return mgr.GenerateManifests(generateMetadataFile, generateMetadataDir, generateOutputDir)
+		},
+	}
+	generateCmd.Flags().StringVar(&generateMetadataFile, "metadata-file", "", "Path to .mcp metadata file")
+	generateCmd.Flags().StringVar(&generateMetadataDir, "metadata-dir", ".mcp", "Directory containing .mcp metadata files")
+	generateCmd.Flags().StringVar(&generateOutputDir, "output", "manifests", "Output directory for generated MCPServer manifests")
 
 	var exportNamespace string
 	var exportFile string
@@ -216,7 +262,7 @@ For pushing images, use 'registry push'.`,
 	}
 	buildCmd.AddCommand(newBuildImageCmd(mgr.Logger()))
 
-	cmd.AddCommand(listCmd, getCmd, createCmd, applyCmd, deployCmd, exportCmd, patchCmd, deleteCmd, logsCmd, statusCmd, policyCmd, buildCmd)
+	cmd.AddCommand(initCmd, listCmd, getCmd, createCmd, applyCmd, deployCmd, generateCmd, exportCmd, patchCmd, deleteCmd, logsCmd, statusCmd, policyCmd, buildCmd)
 	return cmd
 }
 

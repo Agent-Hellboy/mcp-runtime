@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -182,7 +183,7 @@ func (m *manager) runLogin(cmd *cobra.Command, f loginFlags) error {
 		APIBaseURL:   apiURL,
 		Token:        token,
 		Role:         loginRole,
-		RegistryHost: strings.TrimSpace(f.registryHost),
+		RegistryHost: defaultRegistryHostForLogin(apiURL, f.registryHost),
 		Username:     loginEmail,
 	}
 	if err := authfile.SaveProfile(path, profile, c); err != nil {
@@ -216,6 +217,27 @@ func loginProfileName(explicit, email, role string) string {
 		return profile
 	}
 	return "default"
+}
+
+func defaultRegistryHostForLogin(apiURL, explicit string) string {
+	if host := strings.TrimSpace(explicit); host != "" {
+		return host
+	}
+	u, err := url.Parse(strings.TrimSpace(apiURL))
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	host := strings.TrimSpace(u.Hostname())
+	if host == "" || host == "localhost" || host == "127.0.0.1" {
+		return ""
+	}
+	if strings.HasPrefix(host, "platform.") {
+		host = "registry." + strings.TrimPrefix(host, "platform.")
+	}
+	if port := strings.TrimSpace(u.Port()); port != "" {
+		return host + ":" + port
+	}
+	return host
 }
 
 func (m *manager) NewLogoutCmd() *cobra.Command {

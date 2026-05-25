@@ -62,12 +62,6 @@ rules:
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
-  # Setup grants this through ClusterRoleBinding; the API must not self-bind secret
-  # permissions in team namespaces because Kubernetes blocks RBAC escalation.
-  - apiGroups: [""]
-    resources: ["secrets"]
-    resourceNames: ["mcp-runtime-registry-creds"]
-    verbs: ["get", "create", "update", "patch"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
@@ -78,14 +72,14 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["clusterroles"]
-    resourceNames: ["mcp-runtime-traefik-watch"]
+    resourceNames: ["mcp-runtime-traefik-watch", "mcp-sentinel-api-team-secrets"]
     verbs: ["bind"]
   # User-scoped deployment requests use Kubernetes impersonation so namespace
   # RBAC is enforced as the platform user instead of the API service account.
   - apiGroups: [""]
     resources: ["users", "groups"]
     verbs: ["impersonate"]
-  # List pods for health checks and logs
+  # List pods for health checks and logs.
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
@@ -131,6 +125,72 @@ subjects:
   - kind: Group
     name: platform:role:admin
     apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mcp-sentinel-api-registry-push
+  namespace: mcp-sentinel
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcp-sentinel-api-registry-push
+  namespace: mcp-sentinel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mcp-sentinel-api-registry-push
+subjects:
+  - kind: ServiceAccount
+    name: mcp-sentinel-api
+    namespace: mcp-sentinel
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mcp-sentinel-api-registry-push
+  namespace: registry
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcp-sentinel-api-registry-push
+  namespace: registry
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mcp-sentinel-api-registry-push
+subjects:
+  - kind: ServiceAccount
+    name: mcp-sentinel-api
+    namespace: mcp-sentinel
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mcp-sentinel-api-team-secrets
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

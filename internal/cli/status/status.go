@@ -2,14 +2,20 @@
 package status
 
 import (
+	"context"
+	"fmt"
+	"os"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
 	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/internal/cli/platformapi"
 	"mcp-runtime/internal/cli/platformstatus"
 	"mcp-runtime/internal/cli/registry/config"
+	"mcp-runtime/pkg/authfile"
 )
 
 type manager struct {
@@ -30,7 +36,7 @@ func New(runtime *core.Runtime) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show platform status",
-		Long:  "Show the overall status of the MCP platform",
+		Long:  "Show MCP Runtime platform status using the platform API when logged in, with optional cluster diagnostics when kubectl is available.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return ShowPlatformStatus(mgr.logger, mgr.kubectl)
 		},
@@ -42,6 +48,73 @@ func ShowPlatformStatus(logger *zap.Logger, kubectl core.KubectlRunner) error {
 	core.Header("MCP Platform Status")
 	core.DefaultPrinter.Println()
 
+	if plat, err := platformapi.NewPlatformClient(); err == nil {
+		return showPlatformStatusFromAPI(logger, plat, kubectl)
+	}
+	return showClusterPlatformStatus(kubectl)
+}
+
+func showPlatformStatusFromAPI(logger *zap.Logger, plat *platformapi.PlatformClient, kubectl core.KubectlRunner) error {
+	tableData := [][]string{
+		{"Component", "Namespace", "Resource", "Status", "Details"},
+	}
+
+	platformStatus := core.Green("OK")
+	platformDetails := "Authenticated"
+	if err := plat.ValidateCredentials(context.Background()); err != nil {
+		platformStatus = core.Red("ERROR")
+		platformDetails = err.Error()
+	}
+	tableData = append(tableData, []string{"Platform API", "-", "auth", platformStatus, platformDetails})
+
+	if host := strings.TrimSpace(resolveStatusRegistryHost()); host != "" {
+		tableData = append(tableData, []string{"Registry", "-", "host", core.Cyan("CONFIGURED"), host})
+	}
+
+	clusterReachable := platformstatus.CheckClusterStatusQuiet(kubectl) == nil
+	if clusterReachable {
+		tableData = append(tableData, platformstatus.WorkloadStatusRow(
+			kubectl,
+			platformstatus.PlatformWorkload{Component: "Registry", Namespace: core.NamespaceRegistry, Kind: "deployment", Name: core.RegistryDeploymentName},
+			true,
+		))
+		tableData = append(tableData, platformstatus.WorkloadStatusRow(
+			kubectl,
+			platformstatus.PlatformWorkload{Component: "Operator", Namespace: core.NamespaceMCPRuntime, Kind: "deployment", Name: core.OperatorDeploymentName},
+			true,
+		))
+	} else {
+		tableData = append(tableData, []string{"Cluster", "-", "kube-api", core.Yellow("SKIPPED"), "kubectl unavailable (platform API view only)"})
+	}
+
+	core.TableBoxed(tableData)
+	core.DefaultPrinter.Println()
+	core.Section("MCP Servers")
+
+	servers, err := plat.ListRuntimeServers(context.Background(), "")
+	if err != nil {
+		core.Warn("Failed to list MCP servers from platform API: " + err.Error())
+	} else if len(servers) == 0 {
+		core.Warn("No MCP servers deployed")
+	} else {
+		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(tw, "NAMESPACE\tNAME\tIMAGE\tSTATUS\tREADY")
+		for _, server := range servers {
+			image := strings.TrimSpace(server.Image)
+			if tag := strings.TrimSpace(server.ImageTag); tag != "" && !strings.Contains(image, ":") {
+				image = image + ":" + tag
+			}
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", server.Namespace, server.Name, image, server.Status, server.Ready)
+		}
+		_ = tw.Flush()
+	}
+
+	core.DefaultPrinter.Println()
+	core.Info("Use 'mcp-runtime server list' for detailed server info")
+	return nil
+}
+
+func showClusterPlatformStatus(kubectl core.KubectlRunner) error {
 	tableData := [][]string{
 		{"Component", "Namespace", "Resource", "Status", "Details"},
 	}
@@ -55,6 +128,7 @@ func ShowPlatformStatus(logger *zap.Logger, kubectl core.KubectlRunner) error {
 		clusterDetails = err.Error()
 	}
 	tableData = append(tableData, []string{"Cluster", "-", "kube-api", clusterStatus, clusterDetails})
+	tableData = append(tableData, []string{"Platform API", "-", "auth", core.Yellow("SKIPPED"), "Not logged in; run mcp-runtime auth login"})
 
 	extRegistry, err := config.Resolve(nil, config.Env{
 		URL:      core.DefaultCLIConfig.ProvisionedRegistryURL,
@@ -100,9 +174,9 @@ func ShowPlatformStatus(logger *zap.Logger, kubectl core.KubectlRunner) error {
 	core.Section("MCP Servers")
 
 	if !clusterReachable {
-		core.Warn("Skipping MCP server status: cluster unavailable")
+		core.Warn("Skipping MCP server status: cluster unavailable and platform API credentials are not configured")
 		core.DefaultPrinter.Println()
-		core.Info("Use 'mcp-runtime server list' for detailed server info")
+		core.Info("Use 'mcp-runtime auth login' or 'mcp-runtime server list' for platform-backed status")
 		return nil
 	}
 
@@ -138,4 +212,18 @@ func ShowPlatformStatus(logger *zap.Logger, kubectl core.KubectlRunner) error {
 	core.Info("Use 'mcp-runtime server list' for detailed server info")
 
 	return nil
+}
+
+func resolveStatusRegistryHost() string {
+	if host := strings.TrimSpace(authfile.CurrentRegistryHost()); host != "" {
+		return strings.TrimSuffix(host, "/")
+	}
+	if ext, err := config.Resolve(nil, config.Env{
+		URL:      core.DefaultCLIConfig.ProvisionedRegistryURL,
+		Username: core.DefaultCLIConfig.ProvisionedRegistryUsername,
+		Password: core.DefaultCLIConfig.ProvisionedRegistryPassword,
+	}); err == nil && ext != nil && strings.TrimSpace(ext.URL) != "" {
+		return strings.TrimSuffix(strings.TrimSpace(ext.URL), "/")
+	}
+	return ""
 }

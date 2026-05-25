@@ -61,15 +61,19 @@ func TestRenderPlatformUIIngressNoTLS(t *testing.T) {
 
 func TestRenderPlatformUIIngressApiBeforeRoot(t *testing.T) {
 	got := RenderPlatformUIIngress("platform.example.com", "", testAnalyticsNS)
-	apiIdx := strings.Index(got, "- path: /api")
+	pushIdx := strings.Index(got, "- path: /api/runtime/registry/push")
+	apiIdx := strings.Index(got, "- path: /api\n")
 	rootIdx := strings.Index(got, "- path: /\n")
-	if apiIdx < 0 || rootIdx < 0 {
-		t.Fatalf("missing /api or / paths:\n%s", got)
+	if pushIdx < 0 || apiIdx < 0 || rootIdx < 0 {
+		t.Fatalf("missing registry push, /api, or / paths:\n%s", got)
+	}
+	if !strings.Contains(got, "name: mcp-sentinel-api") {
+		t.Fatalf("expected direct API route for registry push:\n%s", got)
 	}
 	// Traefik matches longer/more-specific prefixes before /, so /api must be
 	// declared in the rule before the catch-all /.
-	if apiIdx > rootIdx {
-		t.Fatalf("/api must be listed before / catch-all:\n%s", got)
+	if pushIdx > apiIdx || apiIdx > rootIdx {
+		t.Fatalf("/api/runtime/registry/push must be listed before /api and / catch-all:\n%s", got)
 	}
 }
 

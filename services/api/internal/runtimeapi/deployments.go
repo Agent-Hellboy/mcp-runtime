@@ -395,9 +395,8 @@ func (s *RuntimeServer) EnsureCatalogNamespace(ctx context.Context, namespace st
 		podSecurityWarnLabel:    "restricted",
 	}
 	cfg := platformTeamTraefikWatchConfig()
-	opts := managedNamespaceOptions{}
-	if cfg.mode != "disabled" {
-		opts.ingressFromNamespaces = []string{cfg.namespace}
+	opts := managedNamespaceOptions{
+		ingressFromNamespaces: teamIngressAllowNamespaces(cfg),
 	}
 	if err := s.ensureManagedNamespace(ctx, namespace, labels, opts); err != nil {
 		return err
@@ -424,9 +423,8 @@ func (s *RuntimeServer) ensureTeamNamespace(ctx context.Context, team teamRecord
 		podSecurityWarnLabel:    "restricted",
 	}
 	cfg := platformTeamTraefikWatchConfig()
-	opts := managedNamespaceOptions{}
-	if cfg.mode != "disabled" {
-		opts.ingressFromNamespaces = []string{cfg.namespace}
+	opts := managedNamespaceOptions{
+		ingressFromNamespaces: teamIngressAllowNamespaces(cfg),
 	}
 	if err := s.ensureManagedNamespace(ctx, team.Namespace, labels, opts); err != nil {
 		return err
@@ -470,15 +468,18 @@ func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace st
 	if err := kubeworkload.EnsureServiceAccount(ctx, base, namespace); err != nil {
 		return err
 	}
+	if err := ensureNamespacePlatformAPISecretAccess(ctx, base, namespace); err != nil {
+		return err
+	}
 	if err := s.ensureNamespaceRegistryPullSecret(ctx, base, namespace); err != nil {
-		// Best-effort: operator reconcile also copies registry pull creds when an
-		// MCPServer lands in the namespace. Do not fail team/user namespace create.
-		log.Printf("runtime teams: registry pull secret for namespace %q failed: %v", namespace, err)
+		return fmt.Errorf("provision registry pull secret for namespace %q: %w", namespace, err)
 	}
 	return nil
 }
 
-const registryPullSecretName = "mcp-runtime-registry-creds" // #nosec G101 -- Kubernetes Secret object name, not credential material.
+const registryPullSecretName = "mcp-runtime-registry-pull" // #nosec G101 -- Kubernetes Secret object name, not credential material.
+const platformNamespaceAPISecretAccessName = "mcp-sentinel-api-team-secrets"
+const platformNamespaceAPIServiceAccountName = "mcp-sentinel-api"
 
 func (s *RuntimeServer) ensureNamespaceRegistryPullSecret(ctx context.Context, client kubernetes.Interface, namespace string) error {
 	registryHost := registryPullSecretHost()
@@ -487,7 +488,10 @@ func (s *RuntimeServer) ensureNamespaceRegistryPullSecret(ctx context.Context, c
 	}
 	apiKey := registryPullSecretAPIKey()
 	if apiKey == "" {
-		return nil
+		if registryPullSecretOptional() {
+			return nil
+		}
+		return fmt.Errorf("registry pull secret required for %q but ADMIN_API_KEYS and UI_API_KEY are unset", registryHost)
 	}
 	auth := base64.StdEncoding.EncodeToString([]byte("platform-service:" + apiKey))
 	dockerconfig := fmt.Sprintf(`{"auths":{%q:{"username":"platform-service","password":%q,"auth":%q}}}`,
@@ -556,6 +560,15 @@ func registryPullSecretAPIKey() string {
 	return strings.TrimSpace(os.Getenv("UI_API_KEY"))
 }
 
+func registryPullSecretOptional() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("MCP_REGISTRY_PULL_SECRET_OPTIONAL"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 func mergeNamespaceLabels(ns *corev1.Namespace, labels map[string]string) bool {
 	if ns.Labels == nil {
 		ns.Labels = map[string]string{}
@@ -572,6 +585,25 @@ func mergeNamespaceLabels(ns *corev1.Namespace, labels map[string]string) bool {
 		changed = true
 	}
 	return changed
+}
+
+func ensureNamespacePlatformAPISecretAccess(ctx context.Context, client kubernetes.Interface, namespace string) error {
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: platformNamespaceAPISecretAccessName, Namespace: namespace},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     platformNamespaceAPISecretAccessName,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      rbacv1.ServiceAccountKind,
+				Name:      platformNamespaceAPIServiceAccountName,
+				Namespace: sentinel.DefaultNamespace,
+			},
+		},
+	}
+	return upsertRoleBinding(ctx, client, binding)
 }
 
 func (s *RuntimeServer) ensureNamespaceUserWorkloadRBAC(ctx context.Context, namespace, userID string) error {
@@ -745,6 +777,22 @@ func desiredDefaultDenyNetworkPolicy(ns string, ingressFromNamespaces ...string)
 	return policy
 }
 
+func teamIngressAllowNamespaces(cfg teamTraefikWatchConfig) []string {
+	if ns := strings.TrimSpace(envOr("PLATFORM_TRAEFIK_NAMESPACE", "")); ns != "" {
+		return []string{ns}
+	}
+	if cfg.mode == "disabled" {
+		// External ingress controllers (for example k3s Traefik in kube-system) are
+		// not patched through repo-managed traefik/traefik, but team routes still
+		// need ingress from that namespace.
+		return []string{"kube-system"}
+	}
+	if ns := strings.TrimSpace(cfg.namespace); ns != "" {
+		return []string{ns}
+	}
+	return nil
+}
+
 func platformTeamTraefikWatchConfig() teamTraefikWatchConfig {
 	mode := strings.ToLower(strings.TrimSpace(envOr("PLATFORM_TEAM_TRAEFIK_WATCH", "auto")))
 	switch mode {
@@ -767,6 +815,13 @@ func platformTeamTraefikWatchConfig() teamTraefikWatchConfig {
 
 func (s *RuntimeServer) ensureTeamTraefikWatch(ctx context.Context, namespace string, cfg teamTraefikWatchConfig) error {
 	if s.k8sClients == nil || strings.TrimSpace(namespace) == "" {
+		return nil
+	}
+	if cfg.mode == "disabled" {
+		return nil
+	}
+	// k3s Traefik watches ingresses cluster-wide without namespace-scoped args.
+	if cfg.mode == "auto" && strings.TrimSpace(cfg.namespace) == "kube-system" {
 		return nil
 	}
 	if cfg.mode == "auto" {
@@ -1068,12 +1123,15 @@ func ValidateDeployImage(image, namespace, teamSlug, role string) error {
 // ResolveDeployImageReference expands short image names into the platform registry and namespace repository scope.
 func ResolveDeployImageReference(image, namespace, teamSlug string) string {
 	image = strings.TrimSpace(image)
-	if image == "" || imageReferenceHasRegistry(image) {
+	if image == "" {
 		return image
 	}
 	registry := defaultPlatformRegistryHost()
 	if registry == "" {
 		return image
+	}
+	if imageReferenceHasRegistry(image) {
+		return rewritePlatformRegistryImageReference(image, registry)
 	}
 	parts := strings.Split(image, "/")
 	allowedScopes := allowedImageRepositoryScopes(namespace, teamSlug)
@@ -1102,20 +1160,11 @@ func imageReferenceHasRegistry(image string) bool {
 func defaultPlatformRegistryHost() string {
 	for _, key := range []string{
 		"MCP_REGISTRY_PULL_HOST",
-		"PLATFORM_REGISTRY_URL",
-		"PROVISIONED_REGISTRY_URL",
-		"MCP_REGISTRY_INGRESS_HOST",
-		"MCP_REGISTRY_HOST",
+		"MCP_REGISTRY_ENDPOINT",
 	} {
 		if host := normalizeImageRegistryHost(os.Getenv(key)); host != "" {
 			return host
 		}
-	}
-	if domain := normalizeImageRegistryHost(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
-		return "registry." + strings.TrimPrefix(domain, "registry.")
-	}
-	if host := normalizeImageRegistryHost(os.Getenv("MCP_REGISTRY_ENDPOINT")); host != "" {
-		return host
 	}
 	return "registry.registry.svc.cluster.local:5000"
 }
@@ -1133,6 +1182,37 @@ func normalizeImageRegistryHost(value string) string {
 		value = before
 	}
 	return strings.TrimSpace(value)
+}
+
+func rewritePlatformRegistryImageReference(image, internalRegistry string) string {
+	internalRegistry = normalizeImageRegistryHost(internalRegistry)
+	if internalRegistry == "" {
+		return image
+	}
+	currentRegistry, rest, found := strings.Cut(strings.TrimSpace(image), "/")
+	if !found {
+		return image
+	}
+	currentRegistry = normalizeImageRegistryHost(currentRegistry)
+	if currentRegistry == "" || currentRegistry == internalRegistry {
+		return image
+	}
+	for _, host := range []string{
+		os.Getenv("PLATFORM_REGISTRY_URL"),
+		os.Getenv("PROVISIONED_REGISTRY_URL"),
+		os.Getenv("MCP_REGISTRY_INGRESS_HOST"),
+		os.Getenv("MCP_REGISTRY_HOST"),
+	} {
+		if normalizeImageRegistryHost(host) == currentRegistry {
+			return internalRegistry + "/" + rest
+		}
+	}
+	if domain := normalizeImageRegistryHost(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
+		if currentRegistry == "registry."+strings.TrimPrefix(domain, "registry.") {
+			return internalRegistry + "/" + rest
+		}
+	}
+	return image
 }
 
 func defaultImageRepositoryScope(namespace, teamSlug string) string {
@@ -1273,4 +1353,28 @@ func extractNamespaceName(path, prefix string) (string, string, error) {
 
 func intstrFromInt32(v int32) intstr.IntOrString {
 	return intstr.FromInt(int(v))
+}
+
+// ReconcileTeamNamespaceNetworkPolicies refreshes default-deny NetworkPolicies for
+// existing team namespaces so ingress controller namespace changes take effect
+// without recreating teams.
+func (s *RuntimeServer) ReconcileTeamNamespaceNetworkPolicies(ctx context.Context) {
+	if s.k8sClients == nil || s.k8sClients.Clientset == nil {
+		return
+	}
+	cfg := platformTeamTraefikWatchConfig()
+	ingress := teamIngressAllowNamespaces(cfg)
+	list, err := s.k8sClients.Clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{
+		LabelSelector: platformScopeLabel + "=" + namespaceScopeTeam,
+	})
+	if err != nil {
+		log.Printf("reconcile team namespace network policies: list namespaces: %v", err)
+		return
+	}
+	for _, ns := range list.Items {
+		if err := ensureDefaultDenyNetworkPolicy(ctx, s.k8sClients.Clientset, ns.Name, ingress...); err != nil {
+			log.Printf("reconcile team namespace network policies: namespace %q: %v", ns.Name, err)
+		}
+	}
+	s.purgeExpiredRegistryPushTransfers(ctx)
 }

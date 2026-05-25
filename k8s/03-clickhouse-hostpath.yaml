@@ -79,6 +79,13 @@ spec:
         app: clickhouse
     spec:
       automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
         - name: init-perms
           image: alpine:3.23
@@ -87,8 +94,14 @@ spec:
           securityContext:
             runAsUser: 0
             runAsGroup: 0
+            runAsNonRoot: false
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
           volumeMounts:
             - name: data
               mountPath: /var/lib/clickhouse
@@ -97,8 +110,12 @@ spec:
           image: clickhouse/clickhouse-server:23.8
           securityContext:
             runAsUser: 101
+            runAsGroup: 101
             runAsNonRoot: true
             allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 9000
             - containerPort: 8123

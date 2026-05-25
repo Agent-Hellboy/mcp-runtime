@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/pkg/kubeworkload"
 )
 
 func contains(slice []string, val string) bool {
@@ -819,6 +820,236 @@ func TestCheckMCPServerImagePullSecrets(t *testing.T) {
 			},
 		}
 		check := checkMCPServerImagePullSecrets(core.NewTestKubectlClient(mock))
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q remedy=%q", check.Detail, check.Remedy)
+		}
+	})
+}
+
+func TestCheckManagedTeamRegistryPullSecrets(t *testing.T) {
+	dockerCfg := base64.StdEncoding.EncodeToString([]byte(`{"auths":{"registry.mcpruntime.org":{"auth":"abc"}}}`))
+
+	t.Run("fails when managed team secret is missing", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "namespaces"):
+					return &core.MockCommand{OutputData: []byte("mcp-team-acme\n")}
+				case contains(spec.Args, "secret") && contains(spec.Args, doctorManagedTeamRegistryPullSecret):
+					return &core.MockCommand{OutputErr: errors.New("not found")}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		check := checkManagedTeamRegistryPullSecrets(core.NewTestKubectlClient(mock))
+		if check.OK {
+			t.Fatal("expected missing pull secret to fail")
+		}
+		if !strings.Contains(check.Detail, "mcp-team-acme") || !strings.Contains(check.Detail, doctorManagedTeamRegistryPullSecret) {
+			t.Fatalf("detail = %q, want namespace and secret name", check.Detail)
+		}
+	})
+
+	t.Run("passes when managed team secret is valid dockerconfigjson", func(t *testing.T) {
+		secretJSON := fmt.Sprintf(`{"type":"kubernetes.io/dockerconfigjson","data":{".dockerconfigjson":%q}}`, dockerCfg)
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "namespaces"):
+					return &core.MockCommand{OutputData: []byte("mcp-team-acme\nmcp-team-globex\n")}
+				case contains(spec.Args, "secret") && contains(spec.Args, doctorManagedTeamRegistryPullSecret):
+					return &core.MockCommand{OutputData: []byte(secretJSON)}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		check := checkManagedTeamRegistryPullSecrets(core.NewTestKubectlClient(mock))
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q remedy=%q", check.Detail, check.Remedy)
+		}
+	})
+}
+
+func TestCheckManagedTeamWorkloadServiceAccounts(t *testing.T) {
+	t.Run("fails when serviceaccount is missing pull secret", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "namespaces"):
+					return &core.MockCommand{OutputData: []byte("mcp-team-acme\n")}
+				case contains(spec.Args, "serviceaccount"):
+					return &core.MockCommand{OutputData: []byte(`{"imagePullSecrets":[{"name":"something-else"}]}`)}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		check := checkManagedTeamWorkloadServiceAccounts(core.NewTestKubectlClient(mock))
+		if check.OK {
+			t.Fatal("expected missing serviceaccount pull secret to fail")
+		}
+		if !strings.Contains(check.Detail, kubeworkload.DefaultServiceAccountName) || !strings.Contains(check.Detail, doctorManagedTeamRegistryPullSecret) {
+			t.Fatalf("detail = %q, want serviceaccount and secret names", check.Detail)
+		}
+	})
+
+	t.Run("passes when serviceaccount is wired correctly", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "namespaces"):
+					return &core.MockCommand{OutputData: []byte("mcp-team-acme\n")}
+				case contains(spec.Args, "serviceaccount"):
+					return &core.MockCommand{OutputData: []byte(`{"imagePullSecrets":[{"name":"mcp-runtime-registry-pull"}]}`)}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		check := checkManagedTeamWorkloadServiceAccounts(core.NewTestKubectlClient(mock))
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q remedy=%q", check.Detail, check.Remedy)
+		}
+	})
+}
+
+func TestCheckOperatorRegistryEndpoint(t *testing.T) {
+	t.Run("fails when endpoint matches public ingress host", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				return &core.MockCommand{OutputData: []byte(`{
+  "spec":{"template":{"spec":{"containers":[{"env":[
+    {"name":"MCP_REGISTRY_ENDPOINT","value":"registry.mcpruntime.org"},
+    {"name":"MCP_REGISTRY_INGRESS_HOST","value":"registry.mcpruntime.org"}
+  ]}]}}}
+}`)}
+			},
+		}
+		check := checkOperatorRegistryEndpoint(core.NewTestKubectlClient(mock))
+		if check.OK {
+			t.Fatal("expected public endpoint to fail")
+		}
+		if !strings.Contains(check.Detail, "public ingress host") {
+			t.Fatalf("detail = %q, want public ingress hint", check.Detail)
+		}
+	})
+
+	t.Run("passes when endpoint is internal", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				return &core.MockCommand{OutputData: []byte(`{
+  "spec":{"template":{"spec":{"containers":[{"env":[
+    {"name":"MCP_REGISTRY_ENDPOINT","value":"10.43.69.247:5000"},
+    {"name":"MCP_REGISTRY_INGRESS_HOST","value":"registry.mcpruntime.org"}
+  ]}]}}}
+}`)}
+			},
+		}
+		check := checkOperatorRegistryEndpoint(core.NewTestKubectlClient(mock))
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q remedy=%q", check.Detail, check.Remedy)
+		}
+	})
+}
+
+func TestCheckSentinelPipelineReadiness(t *testing.T) {
+	t.Run("kafka fails when statefulset is not ready", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "namespace"):
+					return &core.MockCommand{OutputData: []byte("mcp-sentinel")}
+				case contains(spec.Args, "statefulset"):
+					return &core.MockCommand{OutputData: []byte("0/1")}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		check := checkSentinelKafkaReadiness(core.NewTestKubectlClient(mock))
+		if check.OK {
+			t.Fatal("expected kafka readiness failure")
+		}
+		if !strings.Contains(check.Detail, "0/1") {
+			t.Fatalf("detail = %q, want replica status", check.Detail)
+		}
+	})
+
+	t.Run("ingest passes when deployment is ready", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "namespace"):
+					return &core.MockCommand{OutputData: []byte("mcp-sentinel")}
+				case contains(spec.Args, "mcp-sentinel-ingest"):
+					return &core.MockCommand{OutputData: []byte("1/1")}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		check := checkSentinelIngestReadiness(core.NewTestKubectlClient(mock))
+		if !check.OK {
+			t.Fatalf("expected OK, got detail=%q remedy=%q", check.Detail, check.Remedy)
+		}
+	})
+}
+
+func TestCheckRuntimeAPIImageDisplayRefs(t *testing.T) {
+	uiKeyB64 := base64.StdEncoding.EncodeToString([]byte("ui-key"))
+
+	t.Run("fails when runtime API leaks internal registry refs", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "namespace"):
+					return &core.MockCommand{OutputData: []byte("mcp-sentinel")}
+				case contains(spec.Args, "secret") && contains(spec.Args, "mcp-sentinel-secrets"):
+					return &core.MockCommand{OutputData: []byte(uiKeyB64)}
+				case contains(spec.Args, "run"):
+					return &core.MockCommand{OutputData: []byte("pod created")}
+				case contains(spec.Args, "get") && contains(spec.Args, "pod"):
+					return &core.MockCommand{OutputData: []byte("Succeeded")}
+				case contains(spec.Args, "logs"):
+					return &core.MockCommand{OutputData: []byte(`{"items":[{"image":"10.43.69.247:5000/core/go-example:latest"}]}
+HTTP_STATUS=200`)}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		check := checkRuntimeAPIImageDisplayRefs(core.NewTestKubectlClient(mock))
+		if check.OK {
+			t.Fatal("expected internal image leak to fail")
+		}
+		if !strings.Contains(check.Detail, "internal registry reference") {
+			t.Fatalf("detail = %q, want leak detail", check.Detail)
+		}
+	})
+
+	t.Run("passes when runtime API only shows public refs", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				switch {
+				case contains(spec.Args, "namespace"):
+					return &core.MockCommand{OutputData: []byte("mcp-sentinel")}
+				case contains(spec.Args, "secret") && contains(spec.Args, "mcp-sentinel-secrets"):
+					return &core.MockCommand{OutputData: []byte(uiKeyB64)}
+				case contains(spec.Args, "run"):
+					return &core.MockCommand{OutputData: []byte("pod created")}
+				case contains(spec.Args, "get") && contains(spec.Args, "pod"):
+					return &core.MockCommand{OutputData: []byte("Succeeded")}
+				case contains(spec.Args, "logs"):
+					return &core.MockCommand{OutputData: []byte(`{"items":[{"image":"registry.mcpruntime.org/core/go-example:latest"}]}
+HTTP_STATUS=200`)}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		check := checkRuntimeAPIImageDisplayRefs(core.NewTestKubectlClient(mock))
 		if !check.OK {
 			t.Fatalf("expected OK, got detail=%q remedy=%q", check.Detail, check.Remedy)
 		}

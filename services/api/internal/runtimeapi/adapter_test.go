@@ -94,7 +94,7 @@ func TestAdapterSessionIssuesNewSessionFromMatchingGrant(t *testing.T) {
 		ServerName:     "demo",
 		Namespace:      "mcp-team-acme",
 		AgentID:        "ops-agent",
-		RequestedTrust: "mid",
+		RequestedTrust: "medium",
 	})
 	req = req.WithContext(withPrincipal(req.Context(), fx.principal))
 	w := httptest.NewRecorder()
@@ -106,8 +106,8 @@ func TestAdapterSessionIssuesNewSessionFromMatchingGrant(t *testing.T) {
 	if got.HumanID != "user-123" || got.AgentID != "ops-agent" || got.TeamID != "team-acme" {
 		t.Fatalf("identity = %#v, want user-123/ops-agent/team-acme", got)
 	}
-	if got.ConsentedTrust != "mid" {
-		t.Fatalf("consentedTrust = %q, want mid (requested, within max=high)", got.ConsentedTrust)
+	if got.ConsentedTrust != "medium" {
+		t.Fatalf("consentedTrust = %q, want medium (requested, within max=high)", got.ConsentedTrust)
 	}
 	if got.PolicyVersion != "v3" {
 		t.Fatalf("policyVersion = %q, want v3 (from grant)", got.PolicyVersion)

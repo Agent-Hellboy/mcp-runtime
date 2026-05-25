@@ -69,7 +69,7 @@ func checkGatewayAnalyticsCredentials(kubectl core.KubectlRunner) DoctorCheck {
 			Name:   "gateway analytics credentials",
 			OK:     false,
 			Detail: strings.Join(limitStrings(failures, 4), "; "),
-			Remedy: "create a namespace-local ingest-key Secret and set spec.analytics.apiKeySecretRef on affected MCPServers, or redeploy with `mcp-runtime pipeline deploy`",
+			Remedy: "create a namespace-local ingest-key Secret and set spec.analytics.apiKeySecretRef on affected MCPServers, or redeploy with `mcp-runtime server deploy --metadata-dir .mcp`",
 		}
 	}
 	if checked == 0 {

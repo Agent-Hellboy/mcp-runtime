@@ -2,25 +2,139 @@ package server
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 
+	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/pkg/authfile"
+	"mcp-runtime/pkg/metadata"
 )
 
 func newKubeTestServerManager(kubectl *core.KubectlClient) *ServerManager {
 	mgr := NewServerManager(kubectl, zap.NewNop())
 	mgr.useKube = true
 	return mgr
+}
+
+func TestInitServerCreatesMetadata(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".mcp")
+	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+
+	if err := mgr.InitServer("payments", dir, "", "v1", "tenant", 8088, []string{"add", "add", "echo"}, []string{"refund_invoice:high:destructive"}, false); err != nil {
+		t.Fatalf("InitServer() error = %v", err)
+	}
+
+	registry, err := metadata.LoadFromFile(filepath.Join(dir, "servers.yaml"))
+	if err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
+	}
+	if registry.Version != "v1" || len(registry.Servers) != 1 {
+		t.Fatalf("registry = %#v", registry)
+	}
+	server := registry.Servers[0]
+	if server.Name != "payments" || server.Image != "payments" || server.ImageTag != "v1" || server.Scope != metadata.PublishScope("tenant") {
+		t.Fatalf("server metadata = %#v", server)
+	}
+	if server.Route != "/payments/mcp" || server.PublicPathPrefix != "payments" || server.Port != 8088 {
+		t.Fatalf("server route/port = %#v", server)
+	}
+	if len(server.Tools) != 3 || server.Tools[0].Name != "add" || server.Tools[0].SideEffect != metadata.ToolSideEffectRead {
+		t.Fatalf("tools = %#v", server.Tools)
+	}
+	if server.Tools[2].Name != "refund_invoice" || server.Tools[2].RequiredTrust != metadata.TrustLevelHigh || server.Tools[2].SideEffect != metadata.ToolSideEffectDestructive {
+		t.Fatalf("tool spec = %#v, want refund_invoice/high/destructive", server.Tools[2])
+	}
+	if server.Gateway == nil || !server.Gateway.Enabled {
+		t.Fatalf("gateway = %#v, want enabled", server.Gateway)
+	}
+	if server.Auth == nil || server.Auth.Mode != metadata.AuthModeHeader {
+		t.Fatalf("auth = %#v, want header mode", server.Auth)
+	}
+	if server.Policy == nil || server.Policy.Mode != metadata.PolicyModeAllowList || server.Policy.DefaultDecision != metadata.PolicyDecisionDeny {
+		t.Fatalf("policy = %#v, want allow-list/deny", server.Policy)
+	}
+	if server.Session == nil || !server.Session.Required {
+		t.Fatalf("session = %#v, want required", server.Session)
+	}
+}
+
+func TestInitServerAppendsAndRejectsDuplicate(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".mcp")
+	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+
+	if err := mgr.InitServer("one", dir, "", "latest", "tenant", 8088, nil, nil, false); err != nil {
+		t.Fatalf("InitServer(one) error = %v", err)
+	}
+	if err := mgr.InitServer("two", dir, "custom/two", "v2", "org", 9000, []string{"search"}, nil, false); err != nil {
+		t.Fatalf("InitServer(two) error = %v", err)
+	}
+	err := mgr.InitServer("one", dir, "", "latest", "tenant", 8088, nil, nil, false)
+	if err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("duplicate error = %v, want --force guidance", err)
+	}
+
+	registry, err := metadata.LoadFromFile(filepath.Join(dir, "servers.yaml"))
+	if err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
+	}
+	if len(registry.Servers) != 2 {
+		t.Fatalf("servers = %#v, want 2", registry.Servers)
+	}
+}
+
+func TestInitServerForceReplacesExisting(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".mcp")
+	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+
+	if err := mgr.InitServer("payments", dir, "payments", "v1", "tenant", 8088, []string{"add"}, nil, false); err != nil {
+		t.Fatalf("InitServer() error = %v", err)
+	}
+	if err := mgr.InitServer("payments", dir, "payments-v2", "v2", "tenant", 9090, []string{"echo"}, nil, true); err != nil {
+		t.Fatalf("InitServer(force) error = %v", err)
+	}
+	registry, err := metadata.LoadFromFile(filepath.Join(dir, "servers.yaml"))
+	if err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
+	}
+	if len(registry.Servers) != 1 {
+		t.Fatalf("servers = %#v, want 1", registry.Servers)
+	}
+	server := registry.Servers[0]
+	if server.Image != "payments-v2" || server.ImageTag != "v2" || server.Port != 9090 || len(server.Tools) != 1 || server.Tools[0].Name != "echo" {
+		t.Fatalf("server = %#v", server)
+	}
+}
+
+func TestInitServerRejectsDuplicateToolSpec(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".mcp")
+	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+
+	err := mgr.InitServer("payments", dir, "", "latest", "tenant", 8088, []string{"add"}, []string{"add:high:write"}, false)
+	if err == nil || !strings.Contains(err.Error(), "duplicate tool metadata") {
+		t.Fatalf("error = %v, want duplicate tool metadata", err)
+	}
+}
+
+func TestInitServerRejectsInvalidToolSpec(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".mcp")
+	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+
+	err := mgr.InitServer("payments", dir, "", "latest", "tenant", 8088, nil, []string{"refund_invoice:full:danger"}, false)
+	if err == nil || !strings.Contains(err.Error(), "trust must be low, medium, or high") {
+		t.Fatalf("error = %v, want trust validation", err)
+	}
 }
 
 func TestServerManager_ListServers(t *testing.T) {
@@ -737,6 +851,15 @@ func contains(slice []string, val string) bool {
 	return false
 }
 
+func envVarValue(envVars []mcpv1alpha1.EnvVar, name string) string {
+	for _, envVar := range envVars {
+		if envVar.Name == name {
+			return envVar.Value
+		}
+	}
+	return ""
+}
+
 func TestBuildDeployServerSpecEnablesGateway(t *testing.T) {
 	spec := buildDeployServerSpec("demo", "registry.example.com/team/demo", "v1.0.0", 2, 8088, 80)
 	if spec.Gateway == nil || !spec.Gateway.Enabled {
@@ -780,7 +903,7 @@ servers:
 	}
 
 	spec := buildDeployServerSpec("acme-tools", "registry.example.com/acme/go-example", "v0.1.0", 1, 8088, 80)
-	if err := applyDeployMetadataDefaults(&spec, "acme-tools"); err != nil {
+	if err := applyDeployMetadataDefaults(&spec, "acme-tools", "", ".mcp"); err != nil {
 		t.Fatalf("applyDeployMetadataDefaults() error = %v", err)
 	}
 	if spec.Description != "Workspace assistant metadata" {
@@ -791,5 +914,308 @@ servers:
 	}
 	if spec.IngressPath != "/acme-tools/mcp" {
 		t.Fatalf("deploy route should stay based on requested name, got %q", spec.IngressPath)
+	}
+}
+
+func TestApplyDeployMetadataDefaultsMergesPortReplicasAndIngressHost(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.Mkdir(filepath.Join(tmp, ".mcp"), 0o750); err != nil {
+		t.Fatalf("mkdir metadata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, ".mcp", "servers.yaml"), []byte(`version: v1
+servers:
+  - name: payments
+    route: /custom-payments/mcp
+    publicPathPrefix: custom-payments
+    ingressHost: mcp.example.com
+    port: 9090
+    replicas: 3
+`), 0o600); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	spec := buildDeployServerSpec("payments", "registry.example.com/acme/payments", "v1.0.0", 1, 8088, 80)
+	if err := applyDeployMetadataDefaults(&spec, "payments", "", filepath.Join(tmp, ".mcp")); err != nil {
+		t.Fatalf("applyDeployMetadataDefaults() error = %v", err)
+	}
+	if spec.Port != 9090 {
+		t.Fatalf("port = %d, want 9090", spec.Port)
+	}
+	if spec.Replicas == nil || *spec.Replicas != 3 {
+		t.Fatalf("replicas = %#v, want 3", spec.Replicas)
+	}
+	if spec.IngressPath != "/payments/mcp" || spec.PublicPathPrefix != "payments" || spec.IngressHost != "mcp.example.com" {
+		t.Fatalf("metadata merge changed route unexpectedly: ingressPath=%q publicPathPrefix=%q ingressHost=%q", spec.IngressPath, spec.PublicPathPrefix, spec.IngressHost)
+	}
+	if got := envVarValue(spec.EnvVars, "MCP_PATH"); got != "/payments/mcp" {
+		t.Fatalf("MCP_PATH = %q, want /payments/mcp", got)
+	}
+}
+
+func TestApplyDeployMetadataDefaultsMergesGovernanceConfig(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.Mkdir(filepath.Join(tmp, ".mcp"), 0o750); err != nil {
+		t.Fatalf("mkdir metadata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, ".mcp", "servers.yaml"), []byte(`version: v1
+servers:
+  - name: payments
+    auth:
+      mode: header
+    policy:
+      mode: allow-list
+      defaultDecision: deny
+      enforceOn: call_tool
+      policyVersion: v2
+    session:
+      required: true
+    gateway:
+      enabled: true
+      port: 8091
+      upstreamURL: http://127.0.0.1:9090
+    envVars:
+      - name: FEATURE_FLAG
+        value: enabled
+`), 0o600); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	spec := buildDeployServerSpec("payments", "registry.example.com/acme/payments", "v1.0.0", 1, 8088, 80)
+	if err := applyDeployMetadataDefaults(&spec, "payments", "", filepath.Join(tmp, ".mcp")); err != nil {
+		t.Fatalf("applyDeployMetadataDefaults() error = %v", err)
+	}
+	if spec.Auth == nil || spec.Auth.Mode != mcpv1alpha1.AuthModeHeader {
+		t.Fatalf("auth = %#v, want header", spec.Auth)
+	}
+	if spec.Policy == nil || spec.Policy.PolicyVersion != "v2" || spec.Policy.DefaultDecision != mcpv1alpha1.PolicyDecisionDeny {
+		t.Fatalf("policy = %#v, want metadata policy", spec.Policy)
+	}
+	if spec.Session == nil || !spec.Session.Required {
+		t.Fatalf("session = %#v, want required", spec.Session)
+	}
+	if spec.Gateway == nil || !spec.Gateway.Enabled || spec.Gateway.UpstreamURL != "http://127.0.0.1:9090" {
+		t.Fatalf("gateway = %#v, want metadata gateway", spec.Gateway)
+	}
+	if got := envVarValue(spec.EnvVars, "FEATURE_FLAG"); got != "enabled" {
+		t.Fatalf("FEATURE_FLAG = %q, want enabled", got)
+	}
+	if got := envVarValue(spec.EnvVars, "MCP_PATH"); got != "/payments/mcp" {
+		t.Fatalf("MCP_PATH = %q, want preserved deploy path", got)
+	}
+}
+
+func TestDeployServerWaitsForReadyStatus(t *testing.T) {
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
+	apiCalls := 0
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/teams/core":
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"team":{"slug":"core","name":"Core","namespace":"mcp-team-core"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/servers":
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"server":{"name":"data-utility","namespace":"mcp-team-core","ready":"False","status":"PartiallyReady","age":"0s"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/servers":
+			apiCalls++
+			w.Header().Set("content-type", "application/json")
+			if apiCalls == 1 {
+				_, _ = w.Write([]byte(`{"servers":[{"name":"data-utility","namespace":"mcp-team-core","ready":"False","status":"PartiallyReady","age":"1s"}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"servers":[{"name":"data-utility","namespace":"mcp-team-core","ready":"True","status":"Ready","age":"3s"}]}`))
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+
+	t.Setenv(authfile.EnvAPIToken, "token-1")
+	t.Setenv(authfile.EnvAPIURL, api.URL)
+	origCfg := core.DefaultCLIConfig
+	origPoll := serverDeployPollInterval
+	core.DefaultCLIConfig = &core.CLIConfig{DeploymentTimeout: 2 * time.Second}
+	serverDeployPollInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		core.DefaultCLIConfig = origCfg
+		serverDeployPollInterval = origPoll
+	})
+
+	mock := &core.MockExecutor{}
+	kubectl := core.NewTestKubectlClient(mock)
+	mgr := NewServerManager(kubectl, zap.NewNop())
+
+	if err := mgr.DeployServer("data-utility", "", "core", "tenant", "data-utility", "latest", 1, 8088, 80, "", ".mcp", false); err != nil {
+		t.Fatalf("DeployServer() error = %v", err)
+	}
+	if apiCalls < 2 {
+		t.Fatalf("expected readiness polling, got %d inventory calls", apiCalls)
+	}
+}
+
+func TestDeployServerTenantScopeDefaultsSingleTeamNamespace(t *testing.T) {
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
+	tmp := t.TempDir()
+	if err := os.Mkdir(filepath.Join(tmp, ".mcp"), 0o750); err != nil {
+		t.Fatalf("mkdir metadata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, ".mcp", "servers.yaml"), []byte(`version: v1
+servers:
+  - name: data-utility
+    scope: tenant
+    image: data-utility
+    imageTag: latest
+`), 0o600); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	var appliedNamespace string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/auth/me":
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"authenticated":true,"principal":{"role":"user","teams":[{"slug":"core","namespace":"mcp-team-core"}]}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/servers":
+			var payload struct {
+				Namespace string `json:"namespace"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode payload: %v", err)
+			}
+			appliedNamespace = payload.Namespace
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"server":{"name":"data-utility","namespace":"mcp-team-core","ready":"True","status":"Ready","age":"0s"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/servers":
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"servers":[{"name":"data-utility","namespace":"mcp-team-core","ready":"True","status":"Ready","age":"1s"}]}`))
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+
+	t.Setenv(authfile.EnvAPIToken, "token-1")
+	t.Setenv(authfile.EnvAPIURL, api.URL)
+	origCfg := core.DefaultCLIConfig
+	origPoll := serverDeployPollInterval
+	core.DefaultCLIConfig = &core.CLIConfig{DeploymentTimeout: 2 * time.Second}
+	serverDeployPollInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		core.DefaultCLIConfig = origCfg
+		serverDeployPollInterval = origPoll
+	})
+
+	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+	if err := mgr.DeployServer("data-utility", "", "", "", "", "latest", 1, 8088, 80, "", filepath.Join(tmp, ".mcp"), false); err != nil {
+		t.Fatalf("DeployServer() error = %v", err)
+	}
+	if appliedNamespace != "mcp-team-core" {
+		t.Fatalf("applied namespace = %q, want mcp-team-core", appliedNamespace)
+	}
+}
+
+func TestDeployServerTenantScopeRequiresTeamWhenAmbiguous(t *testing.T) {
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/auth/me" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"authenticated":true,"principal":{"role":"user","teams":[{"slug":"one","namespace":"mcp-team-one"},{"slug":"two","namespace":"mcp-team-two"}]}}`))
+	}))
+	defer api.Close()
+
+	t.Setenv(authfile.EnvAPIToken, "token-1")
+	t.Setenv(authfile.EnvAPIURL, api.URL)
+	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+	err := mgr.DeployServer("data-utility", "", "", "tenant", "data-utility", "latest", 1, 8088, 80, "", ".mcp", false)
+	if err == nil || !strings.Contains(err.Error(), "--team") {
+		t.Fatalf("error = %v, want --team guidance", err)
+	}
+}
+
+func TestDeployServerFailsWhenServerDoesNotBecomeReady(t *testing.T) {
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/teams/core":
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"team":{"slug":"core","name":"Core","namespace":"mcp-team-core"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/servers":
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"server":{"name":"data-utility","namespace":"mcp-team-core","ready":"False","status":"PartiallyReady","age":"0s"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/servers":
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"servers":[{"name":"data-utility","namespace":"mcp-team-core","ready":"False","status":"PartiallyReady","age":"1s"}]}`))
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+
+	t.Setenv(authfile.EnvAPIToken, "token-1")
+	t.Setenv(authfile.EnvAPIURL, api.URL)
+	origCfg := core.DefaultCLIConfig
+	origPoll := serverDeployPollInterval
+	core.DefaultCLIConfig = &core.CLIConfig{DeploymentTimeout: 20 * time.Millisecond}
+	serverDeployPollInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		core.DefaultCLIConfig = origCfg
+		serverDeployPollInterval = origPoll
+	})
+
+	mock := &core.MockExecutor{}
+	kubectl := core.NewTestKubectlClient(mock)
+	mgr := NewServerManager(kubectl, zap.NewNop())
+
+	err := mgr.DeployServer("data-utility", "", "core", "tenant", "data-utility", "latest", 1, 8088, 80, "", ".mcp", false)
+	if err == nil {
+		t.Fatal("expected deploy readiness error")
+	}
+	if !strings.Contains(err.Error(), "did not become ready") || !strings.Contains(err.Error(), "PartiallyReady") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDeployImageRefsEquivalentAcceptsScopedDisplayRefs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		expected string
+		got      string
+		want     bool
+	}{
+		{
+			name:     "short_input_matches_tenant_scoped_inventory",
+			expected: "assist",
+			got:      "techcorp/assist",
+			want:     true,
+		},
+		{
+			name:     "public_ref_matches_sanitized_inventory",
+			expected: "registry.mcpruntime.org/techcorp/assist:latest",
+			got:      "techcorp/assist",
+			want:     true,
+		},
+		{
+			name:     "different_image_name_fails",
+			expected: "assist",
+			got:      "techcorp/other",
+			want:     false,
+		},
+		{
+			name:     "same_scoped_repo_matches",
+			expected: "techcorp/assist",
+			got:      "techcorp/assist",
+			want:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := deployImageRefsEquivalent(tt.expected, tt.got); got != tt.want {
+				t.Fatalf("deployImageRefsEquivalent(%q, %q) = %v, want %v", tt.expected, tt.got, got, tt.want)
+			}
+		})
 	}
 }
