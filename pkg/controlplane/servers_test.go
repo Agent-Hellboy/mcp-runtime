@@ -18,6 +18,8 @@ import (
 )
 
 func TestListServersProjectsMCPServerInventoryAndDeploymentStatus(t *testing.T) {
+	t.Setenv("MCP_PLATFORM_DOMAIN", "")
+	t.Setenv("MCP_MCP_INGRESS_HOST", "")
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)

@@ -9,6 +9,8 @@ type ServerInfo struct {
 	Namespace   string                      `json:"namespace"`
 	UID         string                      `json:"uid,omitempty"`
 	TeamID      string                      `json:"team_id,omitempty"`
+	Image       string                      `json:"image,omitempty"`
+	ImageTag    string                      `json:"imageTag,omitempty"`
 	Description string                      `json:"description,omitempty"`
 	Ready       string                      `json:"ready"`
 	Status      string                      `json:"status"`

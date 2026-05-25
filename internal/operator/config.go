@@ -72,7 +72,7 @@ func LoadOperatorConfig() *OperatorConfig {
 		ProvisionedRegistryPassword:   os.Getenv("PROVISIONED_REGISTRY_PASSWORD"),
 		ProvisionedRegistrySecretName: getEnvOrDefault("PROVISIONED_REGISTRY_SECRET_NAME", DefaultRegistrySecretName),
 		InternalRegistryEndpoint:      getEnvOrDefault("MCP_REGISTRY_ENDPOINT", "registry.registry.svc.cluster.local:5000"),
-		RegistryPullHost:              getEnvOrDefault("MCP_REGISTRY_INGRESS_HOST", getEnvOrDefault("MCP_REGISTRY_HOST", "registry.local")),
+		RegistryPullHost:              getEnvOrDefault("MCP_REGISTRY_PULL_HOST", getEnvOrDefault("MCP_REGISTRY_ENDPOINT", "registry.registry.svc.cluster.local:5000")),
 		RequeueDelaySeconds:           getEnvIntOrDefault("REQUEUE_DELAY_SECONDS", RequeueDelayNotReady),
 		GatewayProxyImage:             os.Getenv("MCP_GATEWAY_PROXY_IMAGE"),
 		GatewayOTLPEndpoint:           os.Getenv("MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT"),

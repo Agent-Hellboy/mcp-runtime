@@ -179,6 +179,10 @@ func TestRuntimeSessionApplyRejectsUnknownServer(t *testing.T) {
 }
 
 func TestRuntimeServersIncludesMCPServerInventory(t *testing.T) {
+	t.Setenv("MCP_PLATFORM_DOMAIN", "")
+	t.Setenv("MCP_MCP_INGRESS_HOST", "")
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.43.69.247:5000")
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
@@ -191,7 +195,7 @@ func TestRuntimeServersIncludesMCPServerInventory(t *testing.T) {
 		},
 		Spec: mcpv1alpha1.MCPServerSpec{
 			Description:      "Demo server for basic arithmetic and text tools.",
-			Image:            "demo:latest",
+			Image:            "10.43.69.247:5000/public/demo:latest",
 			PublicPathPrefix: "demo-one",
 			Tools: []mcpv1alpha1.ToolConfig{
 				{Name: "add", Description: "Add two numbers", RequiredTrust: mcpv1alpha1.TrustLevelLow},
@@ -236,6 +240,9 @@ func TestRuntimeServersIncludesMCPServerInventory(t *testing.T) {
 	}
 	if got.Description != "Demo server for basic arithmetic and text tools." {
 		t.Fatalf("description = %q", got.Description)
+	}
+	if got.Image != "registry.mcpruntime.org/public/demo:latest" {
+		t.Fatalf("image = %q", got.Image)
 	}
 	if len(got.Prompts) != 1 || got.Prompts[0].Name != "summarize" {
 		t.Fatalf("prompts = %#v", got.Prompts)
@@ -915,6 +922,7 @@ func TestRuntimeServerApplyPublicScopeExpandsShortImage(t *testing.T) {
 	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
 	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
+	t.Setenv("UI_API_KEY", "test-registry-pull-key")
 	t.Setenv("MCP_MCP_INGRESS_HOST", "mcp.mcpruntime.org")
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
@@ -947,7 +955,7 @@ func TestRuntimeServerApplyPublicScopeExpandsShortImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetServer: %v", err)
 	}
-	if got, want := current.Spec.Image, "registry.mcpruntime.org/public/go-example"; got != want {
+	if got, want := current.Spec.Image, "10.96.223.152:5000/public/go-example"; got != want {
 		t.Fatalf("image = %q, want %q", got, want)
 	}
 	if got := envValue(current.Spec.EnvVars, "MCP_PATH"); got != "/go-example/mcp" {
@@ -963,6 +971,7 @@ func TestRuntimeServerApplyTenantScopeExpandsShortImageToTeamSlug(t *testing.T) 
 	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.96.223.152:5000")
 	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
+	t.Setenv("UI_API_KEY", "test-registry-pull-key")
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
@@ -996,7 +1005,7 @@ func TestRuntimeServerApplyTenantScopeExpandsShortImageToTeamSlug(t *testing.T) 
 	if err != nil {
 		t.Fatalf("GetServer: %v", err)
 	}
-	if got, want := current.Spec.Image, "registry.mcpruntime.org/acme/go-example"; got != want {
+	if got, want := current.Spec.Image, "10.96.223.152:5000/acme/go-example"; got != want {
 		t.Fatalf("image = %q, want %q", got, want)
 	}
 	if got := current.Spec.TeamID; got != "team-acme" {
@@ -1226,6 +1235,7 @@ func TestRuntimeServerApplyAdminPreservesExistingOwnerLabels(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
 		"name": "demo",
 		"namespace": "user-1",
+		"update": true,
 		"spec": {"image":"registry.example.com/user-1/demo"}
 	}`)))
 	request = request.WithContext(withPrincipal(request.Context(), principal{
@@ -1248,6 +1258,44 @@ func TestRuntimeServerApplyAdminPreservesExistingOwnerLabels(t *testing.T) {
 	}
 	if current.Labels[createdByLabel] != "user-1" {
 		t.Fatalf("created-by label = %q, want user-1", current.Labels[createdByLabel])
+	}
+}
+
+func TestRuntimeServerApplyRejectsExistingOwnedServerWithoutUpdate(t *testing.T) {
+	t.Setenv(envActiveServerLimit, "0")
+	t.Setenv(envPushCooldown, "0s")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme, ownedTestMCPServer("demo", "user-1", "user-1")),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"namespace": "user-1",
+		"spec": {"image":"registry.example.com/user-1/demo"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+		},
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "use --update") {
+		t.Fatalf("body = %q, want --update guidance", recorder.Body.String())
 	}
 }
 
@@ -1278,6 +1326,7 @@ func TestRuntimeServerApplyAllowsLegacyUnlabeledPublicCatalogServer(t *testing.T
 	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
 		"name": "demo",
 		"namespace": "mcp-servers-public",
+		"update": true,
 		"spec": {"image":"registry.example.com/mcp-servers-public/demo"}
 	}`)))
 	request = request.WithContext(withPrincipal(request.Context(), principal{
@@ -1403,6 +1452,7 @@ func TestRuntimeServerApplyRejectsPushInsideCooldown(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
 		"name": "demo",
 		"namespace": "user-1",
+		"update": true,
 		"spec": {"image":"registry.example.com/user-1/demo"}
 	}`)))
 	request = request.WithContext(withPrincipal(request.Context(), principal{

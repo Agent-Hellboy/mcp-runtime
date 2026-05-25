@@ -383,6 +383,17 @@ func requireOperatorEnvVar(t *testing.T, envVars []operatorEnvVar, name, want st
 	}
 }
 
+func requireOperatorEnvVarNonEmpty(t *testing.T, envVars []operatorEnvVar, name string) {
+	t.Helper()
+	envVar := findOperatorEnvVar(envVars, name)
+	if envVar == nil {
+		t.Fatalf("expected operator env %s in %v", name, envVars)
+	}
+	if strings.TrimSpace(envVar.Value) == "" {
+		t.Fatalf("operator env %s was empty in %v", name, envVars)
+	}
+}
+
 func TestOperatorEnvOverrides(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() {
@@ -392,22 +403,24 @@ func TestOperatorEnvOverrides(t *testing.T) {
 	t.Run("returns empty when no gateway override is set", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{}
 		got := operatorEnvOverrides("", "")
-		if len(got) != 2 {
-			t.Fatalf("expected gateway otel and default analytics ingest env only, got %v", got)
+		if len(got) != 3 {
+			t.Fatalf("expected gateway otel, default analytics ingest, and registry endpoint env only, got %v", got)
 		}
 		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
 		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
+		requireOperatorEnvVarNonEmpty(t, got, "MCP_REGISTRY_ENDPOINT")
 	})
 
 	t.Run("returns gateway proxy image override", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{GatewayProxyImage: "example.com/mcp-gateway:latest"}
 		got := operatorEnvOverrides("", "")
-		if len(got) != 3 {
-			t.Fatalf("expected gateway and analytics env overrides, got %d (%v)", len(got), got)
+		if len(got) != 4 {
+			t.Fatalf("expected gateway, analytics, and registry endpoint env overrides, got %d (%v)", len(got), got)
 		}
 		requireOperatorEnvVar(t, got, "MCP_GATEWAY_PROXY_IMAGE", "example.com/mcp-gateway:latest")
 		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
 		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
+		requireOperatorEnvVarNonEmpty(t, got, "MCP_REGISTRY_ENDPOINT")
 	})
 
 	t.Run("prefers explicit setup image over config override", func(t *testing.T) {
@@ -416,53 +429,58 @@ func TestOperatorEnvOverrides(t *testing.T) {
 			AnalyticsIngestURL: "http://custom-analytics-ingest",
 		}
 		got := operatorEnvOverrides("example.com/mcp-gateway:setup", "")
-		if len(got) != 3 {
-			t.Fatalf("expected gateway and analytics env overrides, got %d (%v)", len(got), got)
+		if len(got) != 4 {
+			t.Fatalf("expected gateway, analytics, and registry endpoint env overrides, got %d (%v)", len(got), got)
 		}
 		requireOperatorEnvVar(t, got, "MCP_GATEWAY_PROXY_IMAGE", "example.com/mcp-gateway:setup")
 		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
 		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", "http://custom-analytics-ingest")
+		requireOperatorEnvVarNonEmpty(t, got, "MCP_REGISTRY_ENDPOINT")
 	})
 
 	t.Run("preserves existing gateway otel endpoint when configured", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{}
 		got := operatorEnvOverrides("", "http://custom-collector.mcp-observability.svc.cluster.local:4318")
-		if len(got) != 2 {
-			t.Fatalf("expected gateway otel and default analytics ingest env only, got %v", got)
+		if len(got) != 3 {
+			t.Fatalf("expected gateway otel, default analytics ingest, and registry endpoint env only, got %v", got)
 		}
 		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", "http://custom-collector.mcp-observability.svc.cluster.local:4318")
 		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
+		requireOperatorEnvVarNonEmpty(t, got, "MCP_REGISTRY_ENDPOINT")
 	})
 
 	t.Run("prefers explicit gateway otel endpoint over existing operator value", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{GatewayOTLPEndpoint: "https://otel.example.com/v1/traces"}
 		got := operatorEnvOverrides("", "http://custom-collector.mcp-observability.svc.cluster.local:4318")
-		if len(got) != 2 {
-			t.Fatalf("expected gateway otel and default analytics ingest env only, got %v", got)
+		if len(got) != 3 {
+			t.Fatalf("expected gateway otel, default analytics ingest, and registry endpoint env only, got %v", got)
 		}
 		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", "https://otel.example.com/v1/traces")
 		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
+		requireOperatorEnvVarNonEmpty(t, got, "MCP_REGISTRY_ENDPOINT")
 	})
 
 	t.Run("uses analytics ingest override when configured", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{AnalyticsIngestURL: "http://custom-analytics-ingest"}
 		got := operatorEnvOverrides("", "")
-		if len(got) != 2 {
-			t.Fatalf("expected gateway otel and analytics ingest env only, got %d (%v)", len(got), got)
+		if len(got) != 3 {
+			t.Fatalf("expected gateway otel, analytics ingest, and registry endpoint env only, got %d (%v)", len(got), got)
 		}
 		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
 		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", "http://custom-analytics-ingest")
+		requireOperatorEnvVarNonEmpty(t, got, "MCP_REGISTRY_ENDPOINT")
 	})
 
 	t.Run("includes ingress readiness mode when configured", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{IngressReadinessMode: "permissive"}
 		got := operatorEnvOverrides("", "")
-		if len(got) != 3 {
-			t.Fatalf("expected analytics plus ingress readiness env overrides, got %v", got)
+		if len(got) != 4 {
+			t.Fatalf("expected analytics, ingress readiness, and registry endpoint env overrides, got %v", got)
 		}
 		requireOperatorEnvVar(t, got, "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT", defaultGatewayOTELExporterOTLPEndpoint)
 		requireOperatorEnvVar(t, got, "MCP_SENTINEL_INGEST_URL", defaultAnalyticsIngestURL)
 		requireOperatorEnvVar(t, got, "MCP_INGRESS_READINESS_MODE", "permissive")
+		requireOperatorEnvVarNonEmpty(t, got, "MCP_REGISTRY_ENDPOINT")
 	})
 
 	t.Run("includes registry endpoint and ingress host when configured", func(t *testing.T) {
@@ -1259,6 +1277,41 @@ data:
 	if got := payload.Data["PLATFORM_TRAEFIK_NAMESPACE"]; got != "kube-system" {
 		t.Fatalf("PLATFORM_TRAEFIK_NAMESPACE = %q, want kube-system", got)
 	}
+	if got := payload.Data["PLATFORM_TEAM_TRAEFIK_WATCH"]; got != "disabled" {
+		t.Fatalf("PLATFORM_TEAM_TRAEFIK_WATCH = %q, want disabled", got)
+	}
+}
+
+func TestRenderAnalyticsConfigManifestPreservesExplicitTeamTraefikWatch(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			return &core.MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	rendered, err := renderAnalyticsConfigManifest(kubectl, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-sentinel-config
+  namespace: mcp-sentinel
+data:
+  PLATFORM_TRAEFIK_NAMESPACE: kube-system
+  PLATFORM_TEAM_TRAEFIK_WATCH: required
+`, setupplan.PlatformModeTenant, AnalyticsImageSet{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var payload struct {
+		Data map[string]string `yaml:"data"`
+	}
+	if err := yaml.Unmarshal([]byte(rendered), &payload); err != nil {
+		t.Fatalf("unmarshal rendered config: %v", err)
+	}
+	if got := payload.Data["PLATFORM_TEAM_TRAEFIK_WATCH"]; got != "required" {
+		t.Fatalf("PLATFORM_TEAM_TRAEFIK_WATCH = %q, want required", got)
+	}
 }
 
 func TestRenderAnalyticsConfigManifestAppliesExplicitPlatformMode(t *testing.T) {
@@ -1336,8 +1389,8 @@ data:
 	if err := yaml.Unmarshal([]byte(rendered), &payload); err != nil {
 		t.Fatalf("unmarshal rendered config: %v", err)
 	}
-	if got := payload.Data["MCP_REGISTRY_ENDPOINT"]; got != "10.96.223.152:5000" {
-		t.Fatalf("MCP_REGISTRY_ENDPOINT = %q, want cluster endpoint", got)
+	if got := payload.Data["MCP_REGISTRY_ENDPOINT"]; got != "registry.mcpruntime.org" {
+		t.Fatalf("MCP_REGISTRY_ENDPOINT = %q, want public registry ingress host", got)
 	}
 	if got := payload.Data["MCP_REGISTRY_INGRESS_HOST"]; got != "registry.mcpruntime.org" {
 		t.Fatalf("MCP_REGISTRY_INGRESS_HOST = %q, want public host", got)
@@ -3074,4 +3127,69 @@ func chdirRepoRootForTest(t *testing.T) {
 	t.Cleanup(func() {
 		_ = os.Chdir(origDir)
 	})
+}
+
+func TestIsKafkaClusterIDMismatchLog(t *testing.T) {
+	if !isKafkaClusterIDMismatchLog(`kafka.common.InconsistentClusterIdException: The Cluster ID a doesn't match stored clusterId Some(b) in meta.properties`) {
+		t.Fatal("expected cluster ID mismatch log to be detected")
+	}
+	if isKafkaClusterIDMismatchLog(`ordinary startup log without kafka storage mismatch`) {
+		t.Fatal("did not expect non-mismatch log to be detected")
+	}
+}
+
+func TestRecoverKafkaClusterIDMismatchWithKubectlResetsBundledState(t *testing.T) {
+	var commands [][]string
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			commands = append(commands, append([]string(nil), spec.Args...))
+			cmd := &core.MockCommand{Args: spec.Args}
+			switch {
+			case slices.Equal(spec.Args, []string{"logs", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-c", kafkaPodContainer}):
+				cmd.OutputData = []byte(`kafka.common.InconsistentClusterIdException: The Cluster ID a doesn't match stored clusterId Some(b) in meta.properties`)
+			case slices.Equal(spec.Args, []string{"get", "pod", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-o", "name"}):
+				cmd.OutputData = []byte(`Error from server (NotFound): pods "kafka-0" not found`)
+				cmd.OutputErr = errors.New("not found")
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	recovered, err := recoverKafkaClusterIDMismatchWithKubectl(kubectl, "")
+	if err != nil {
+		t.Fatalf("recoverKafkaClusterIDMismatchWithKubectl returned error: %v", err)
+	}
+	if !recovered {
+		t.Fatal("expected kafka cluster ID mismatch recovery to run")
+	}
+
+	want := [][]string{
+		{"logs", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-c", kafkaPodContainer},
+		{"scale", "statefulset/" + kafkaStatefulSetName, "-n", core.DefaultAnalyticsNamespace, "--replicas=0"},
+		{"get", "pod", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-o", "name"},
+		{"delete", "pvc/" + kafkaPVCName, "-n", core.DefaultAnalyticsNamespace, "--ignore-not-found=true", "--wait=true", "--timeout=120s"},
+		{"scale", "statefulset/" + kafkaStatefulSetName, "-n", core.DefaultAnalyticsNamespace, "--replicas=1"},
+	}
+	if !slices.EqualFunc(commands, want, func(got, want []string) bool {
+		return slices.Equal(got, want)
+	}) {
+		t.Fatalf("kubectl commands = %#v, want %#v", commands, want)
+	}
+}
+
+func TestRecoverKafkaClusterIDMismatchWithKubectlSkipsHostpath(t *testing.T) {
+	mock := &core.MockExecutor{}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	recovered, err := recoverKafkaClusterIDMismatchWithKubectl(kubectl, setupplan.StorageModeHostpath)
+	if err != nil {
+		t.Fatalf("recoverKafkaClusterIDMismatchWithKubectl returned error: %v", err)
+	}
+	if recovered {
+		t.Fatal("did not expect hostpath mode to auto-reset kafka state")
+	}
+	if len(mock.Commands) != 0 {
+		t.Fatalf("expected no kubectl calls in hostpath mode, got %#v", mock.Commands)
+	}
 }

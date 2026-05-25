@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -28,6 +30,208 @@ func contains(slice []string, val string) bool {
 		}
 	}
 	return false
+}
+
+func TestInitGrantManifest(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "grant.yaml")
+	mgr := NewAccessManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+
+	err := mgr.InitGrantManifest(accessManifestInitOptions{
+		Name:        "payments-globex-cursor",
+		Namespace:   "mcp-team-acme",
+		Server:      "payments",
+		TeamID:      "team-globex",
+		AgentID:     "cursor",
+		Trust:       "medium",
+		SideEffects: []string{"read", "write", "read"},
+		Tools:       []string{"list_invoices", "refund_invoice", "list_invoices"},
+		ToolRules:   []string{"delete_invoice:deny:high"},
+		Output:      output,
+	})
+	if err != nil {
+		t.Fatalf("InitGrantManifest() error = %v", err)
+	}
+	body, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	text := string(body)
+	for _, want := range []string{
+		"kind: MCPAccessGrant",
+		"name: payments-globex-cursor",
+		"namespace: mcp-team-acme",
+		"name: payments",
+		"teamID: team-globex",
+		"agentID: cursor",
+		"maxTrust: medium",
+		"- read",
+		"- write",
+		"name: list_invoices",
+		"name: refund_invoice",
+		"name: delete_invoice",
+		"decision: deny",
+		"requiredTrust: high",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("manifest missing %q:\n%s", want, text)
+		}
+	}
+
+	err = mgr.InitGrantManifest(accessManifestInitOptions{Name: "payments-globex-cursor", Namespace: "mcp-team-acme", Server: "payments", TeamID: "team-globex", Output: output})
+	if err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("duplicate output error = %v, want --force guidance", err)
+	}
+}
+
+func TestInitGrantManifestRejectsDuplicateToolRule(t *testing.T) {
+	mgr := NewAccessManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+
+	err := mgr.InitGrantManifest(accessManifestInitOptions{
+		Name:        "payments-globex-cursor",
+		Namespace:   "mcp-team-acme",
+		Server:      "payments",
+		TeamID:      "team-globex",
+		SideEffects: []string{"read"},
+		Tools:       []string{"list_invoices"},
+		ToolRules:   []string{"list_invoices:deny:high"},
+		Output:      filepath.Join(t.TempDir(), "grant.yaml"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicate tool rule") {
+		t.Fatalf("error = %v, want duplicate tool rule", err)
+	}
+}
+
+func TestInitGrantManifestRejectsInvalidToolRule(t *testing.T) {
+	mgr := NewAccessManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+
+	err := mgr.InitGrantManifest(accessManifestInitOptions{
+		Name:        "payments-globex-cursor",
+		Namespace:   "mcp-team-acme",
+		Server:      "payments",
+		TeamID:      "team-globex",
+		SideEffects: []string{"read"},
+		ToolRules:   []string{"refund_invoice:audit:high"},
+		Output:      filepath.Join(t.TempDir(), "grant.yaml"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "allow or deny") {
+		t.Fatalf("error = %v, want decision validation", err)
+	}
+}
+
+func TestInitGrantManifestRejectsUnsupportedTrustAlias(t *testing.T) {
+	mgr := NewAccessManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+
+	err := mgr.InitGrantManifest(accessManifestInitOptions{
+		Name:        "payments-globex-cursor",
+		Namespace:   "mcp-team-acme",
+		Server:      "payments",
+		TeamID:      "team-globex",
+		Trust:       "mid",
+		SideEffects: []string{"read"},
+		Output:      filepath.Join(t.TempDir(), "grant.yaml"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "low|medium|high") {
+		t.Fatalf("error = %v, want supported trust levels", err)
+	}
+}
+
+func TestInitSessionManifest(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "session.yaml")
+	mgr := NewAccessManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+
+	err := mgr.InitSessionManifest(accessManifestInitOptions{
+		Name:               "cursor-session",
+		Namespace:          "mcp-team-acme",
+		Server:             "payments",
+		HumanID:            "user-1",
+		AgentID:            "cursor",
+		Trust:              "low",
+		UpstreamSecretName: "upstream-token",
+		UpstreamSecretKey:  "token",
+		ExpiresAt:          "2026-05-25T12:00:00Z",
+		Revoked:            true,
+		Output:             output,
+	})
+	if err != nil {
+		t.Fatalf("InitSessionManifest() error = %v", err)
+	}
+	body, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	text := string(body)
+	for _, want := range []string{
+		"kind: MCPAgentSession",
+		"name: cursor-session",
+		"namespace: mcp-team-acme",
+		"humanID: user-1",
+		"agentID: cursor",
+		"consentedTrust: low",
+		"expiresAt: \"2026-05-25T12:00:00Z\"",
+		"revoked: true",
+		"upstreamTokenSecretRef:",
+		"name: upstream-token",
+		"key: token",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("manifest missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestInitSessionManifestExpiresIn(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "session.yaml")
+	mgr := NewAccessManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+
+	err := mgr.InitSessionManifest(accessManifestInitOptions{
+		Name:      "cursor-session",
+		Namespace: "mcp-team-acme",
+		Server:    "payments",
+		AgentID:   "cursor",
+		ExpiresIn: "1h",
+		Output:    output,
+	})
+	if err != nil {
+		t.Fatalf("InitSessionManifest() error = %v", err)
+	}
+	body, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "expiresAt:") {
+		t.Fatalf("manifest missing expiresAt:\n%s", text)
+	}
+}
+
+func TestInitSessionManifestRejectsConflictingExpiry(t *testing.T) {
+	mgr := NewAccessManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+
+	err := mgr.InitSessionManifest(accessManifestInitOptions{
+		Name:      "cursor-session",
+		Namespace: "mcp-team-acme",
+		Server:    "payments",
+		AgentID:   "cursor",
+		ExpiresAt: time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
+		ExpiresIn: "1h",
+		Output:    filepath.Join(t.TempDir(), "session.yaml"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "either --expires-at or --expires-in") {
+		t.Fatalf("error = %v, want expiry conflict", err)
+	}
+}
+
+func TestInitAccessManifestRequiresSubject(t *testing.T) {
+	mgr := NewAccessManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+	err := mgr.InitGrantManifest(accessManifestInitOptions{
+		Name:      "grant-a",
+		Namespace: "mcp-team-acme",
+		Server:    "payments",
+		Output:    filepath.Join(t.TempDir(), "grant.yaml"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "--human-id") {
+		t.Fatalf("error = %v, want subject guidance", err)
+	}
 }
 
 func TestAccessManager_ListAccessResources(t *testing.T) {

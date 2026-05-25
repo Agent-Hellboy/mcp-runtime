@@ -6,7 +6,7 @@ Usage:
 Available Commands:
   info        Show registry information
   provision   Configure an external registry
-  push        Retag and push an image to the platform or provisioned registry
+  push        Push an image to the platform registry
   status      Check registry status
 
 Flags:

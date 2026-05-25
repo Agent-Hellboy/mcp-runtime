@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +99,8 @@ func TestMergeDeploymentImageActivityAppliesTargetFilterAndLimit(t *testing.T) {
 }
 
 func TestFilterDeploymentsForOperationsAppliesFiltersAndLimit(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.43.69.247:5000")
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
 	createdAt := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	deployments := filterDeploymentsForOperations([]map[string]any{
 		{
@@ -105,7 +108,7 @@ func TestFilterDeploymentsForOperationsAppliesFiltersAndLimit(t *testing.T) {
 			"namespace":  "tenant-a",
 			"user_id":    "user-1",
 			"created_by": "user-1",
-			"image":      "registry.example.com/tenant-a/demo:v1",
+			"image":      "10.43.69.247:5000/tenant-a/demo:v1",
 			"created_at": createdAt,
 		},
 		{
@@ -134,6 +137,43 @@ func TestFilterDeploymentsForOperationsAppliesFiltersAndLimit(t *testing.T) {
 	}
 	if got := deployments[0]["name"]; got != "demo" {
 		t.Fatalf("deployment name = %v, want demo", got)
+	}
+	if got := deployments[0]["image"]; got != "registry.mcpruntime.org/tenant-a/demo:v1" {
+		t.Fatalf("deployment image = %v", got)
+	}
+}
+
+func TestSanitizeImageActivityRewritesInternalRegistryRefs(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.43.69.247:5000")
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
+	items := sanitizeImageActivity([]platformImageActivity{{
+		ImageRef:    "10.43.69.247:5000/tenant-a/demo:v1",
+		SourceImage: "10.43.69.247:5000/tenant-a/demo:v1",
+	}})
+	if len(items) != 1 {
+		t.Fatalf("items = %d", len(items))
+	}
+	if items[0].ImageRef != "registry.mcpruntime.org/tenant-a/demo:v1" {
+		t.Fatalf("image_ref = %q", items[0].ImageRef)
+	}
+	if items[0].SourceImage != "registry.mcpruntime.org/tenant-a/demo:v1" {
+		t.Fatalf("source_image = %q", items[0].SourceImage)
+	}
+}
+
+func TestSanitizeDeploymentSummariesRewritesInternalRegistryRefs(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.43.69.247:5000")
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
+	input := []map[string]any{{
+		"name":  "demo",
+		"image": "10.43.69.247:5000/tenant-a/demo:v1",
+	}}
+	got := sanitizeDeploymentSummaries(input)
+	if reflect.DeepEqual(got, input) {
+		t.Fatal("expected sanitized copy, got unchanged input")
+	}
+	if got[0]["image"] != "registry.mcpruntime.org/tenant-a/demo:v1" {
+		t.Fatalf("image = %v", got[0]["image"])
 	}
 }
 

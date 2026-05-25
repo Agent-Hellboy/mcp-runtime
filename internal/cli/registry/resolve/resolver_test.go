@@ -38,6 +38,7 @@ func TestGitTag(t *testing.T) {
 }
 
 func TestPlatformURL(t *testing.T) {
+	clearRegistryResolveEnv(t)
 	logger := zap.NewNop()
 	cfg := Config{
 		RegistryEndpoint:        "",
@@ -308,4 +309,17 @@ func (k *fakeKubectl) commandArgs(args []string) (OutputCommand, error) {
 		}
 	}
 	return fakeCommand{}, nil
+}
+
+func clearRegistryResolveEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"MCP_PLATFORM_DOMAIN",
+		"MCP_REGISTRY_INGRESS_HOST",
+		"MCP_REGISTRY_ENDPOINT",
+		"MCP_REGISTRY_HOST",
+		"MCP_REGISTRY_PULL_HOST",
+	} {
+		t.Setenv(key, "")
+	}
 }

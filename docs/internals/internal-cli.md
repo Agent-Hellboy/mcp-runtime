@@ -138,17 +138,11 @@ Keep these flows distinct:
 
 - `server apply` applies a manifest.
 - `server build image` builds and updates metadata but does not deploy.
+- `server generate` renders manifests from metadata for review/GitOps.
+- `server deploy --metadata-dir .mcp` deploys metadata-backed servers through the platform API.
 - `registry push` publishes images after platform credential validation.
-- `pipeline generate` renders manifests from metadata.
-- `pipeline deploy` applies generated manifests.
 
-Tests: `server_test.go`, `server_config_test.go`, `build_test.go`, and pipeline
-tests.
-
-## Pipeline
-
-`pipeline.go` turns `.mcp` metadata into `MCPServer` manifests and applies
-rendered directories. It is the CLI bridge to `pkg/metadata`.
+Tests: `server_test.go`, `server_config_test.go`, and `build_test.go`.
 
 Pipeline changes usually require checking:
 

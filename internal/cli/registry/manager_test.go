@@ -133,7 +133,7 @@ func TestRunRegistryPushRequiresPlatformCredentials(t *testing.T) {
 	kubectl := core.NewTestKubectlClient(mock)
 	mgr := NewRegistryManager(kubectl, mock, zap.NewNop())
 
-	err := RunRegistryPush(context.Background(), mgr, "source:tag", "registry.example.com", "demo", "", "direct", "registry")
+	err := RunRegistryPush(context.Background(), mgr, "source:tag", "registry.example.com", "demo", "")
 	if err == nil {
 		t.Fatal("expected missing platform credentials error")
 	}
@@ -142,6 +142,66 @@ func TestRunRegistryPushRequiresPlatformCredentials(t *testing.T) {
 	}
 	if mock.HasCommand("docker") {
 		t.Fatal("registry push should fail before docker commands when platform credentials are missing")
+	}
+}
+
+func TestRunAdminRegistryPushOrgScopeDoesNotRequirePlatformLogin(t *testing.T) {
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
+	t.Setenv("MCP_PLATFORM_API_TOKEN", "")
+	t.Setenv("MCP_PLATFORM_API_URL", "")
+
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if spec.Name == "kubectl" && contains(spec.Args, "cluster-info") {
+				cmd.OutputData = []byte("Kubernetes control plane")
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+	mgr := NewRegistryManager(kubectl, mock, zap.NewNop())
+
+	err := RunAdminRegistryPush(context.Background(), mgr, "source:tag", "registry.example.com", "demo", "org", "direct", "registry")
+	if err != nil {
+		t.Fatalf("RunAdminRegistryPush() error = %v", err)
+	}
+	if !mock.HasCommand("docker") {
+		t.Fatal("expected docker commands for direct admin push")
+	}
+}
+
+func TestBuildRegistryPushTargetInClusterAutoResolvesInternalRegistry(t *testing.T) {
+	origConfig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = origConfig })
+	core.DefaultCLIConfig = &core.CLIConfig{}
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
+	t.Setenv("MCP_PLATFORM_API_TOKEN", "")
+	t.Setenv("MCP_PLATFORM_API_URL", "")
+
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			switch {
+			case contains(spec.Args, "jsonpath={.spec.clusterIP}"):
+				cmd.OutputData = []byte("10.43.69.247")
+			case contains(spec.Args, "jsonpath={.spec.ports[0].port}"):
+				cmd.OutputData = []byte("5000")
+			}
+			return cmd
+		},
+	}
+	swapDefaultKubectlForTest(t, mock)
+
+	target, normalizedScope, err := buildRegistryPushTarget(context.Background(), NewRegistryManager(core.DefaultKubectlClient(), mock, zap.NewNop()), nil, "source:tag", "", "demo", "", "in-cluster")
+	if err != nil {
+		t.Fatalf("buildRegistryPushTarget() error = %v", err)
+	}
+	if normalizedScope != "" {
+		t.Fatalf("normalizedScope = %q, want empty", normalizedScope)
+	}
+	if want := "registry.registry.svc.cluster.local:5000/demo:tag"; target != want {
+		t.Fatalf("target = %q, want %q", target, want)
 	}
 }
 
@@ -500,9 +560,13 @@ func TestPushInCluster(t *testing.T) {
 
 	t.Run("succeeds and cleans up helper pod", func(t *testing.T) {
 		deleteCalled := false
+		var runArgs []string
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				cmd := &core.MockCommand{Args: spec.Args}
+				if spec.Name == "kubectl" && contains(spec.Args, "run") {
+					runArgs = append([]string(nil), spec.Args...)
+				}
 				if spec.Name == "kubectl" && contains(spec.Args, "delete") {
 					deleteCalled = true
 				}
@@ -521,6 +585,26 @@ func TestPushInCluster(t *testing.T) {
 		}
 		if !deleteCalled {
 			t.Error("expected delete to be called for cleanup")
+		}
+		overrideArg := ""
+		for _, arg := range runArgs {
+			if strings.HasPrefix(arg, "--overrides=") {
+				overrideArg = arg
+				break
+			}
+		}
+		if overrideArg == "" {
+			t.Fatalf("expected kubectl run to include --overrides, got %v", runArgs)
+		}
+		for _, want := range []string{
+			`"allowPrivilegeEscalation":false`,
+			`"runAsNonRoot":true`,
+			`"seccompProfile":{"type":"RuntimeDefault"}`,
+			`"drop":["ALL"]`,
+		} {
+			if !strings.Contains(overrideArg, want) {
+				t.Fatalf("override %q missing %s", overrideArg, want)
+			}
 		}
 	})
 
@@ -563,6 +647,9 @@ func TestPushInCluster(t *testing.T) {
 		want := "docker://registry.registry.svc.cluster.local:5000/mcp-runtime-operator:c63dea8"
 		if skopeoTarget != want {
 			t.Fatalf("expected skopeo target %q, got %q", want, skopeoTarget)
+		}
+		if !strings.Contains(buf.String(), "helper destination registry.registry.svc.cluster.local:5000/mcp-runtime-operator:c63dea8") {
+			t.Fatalf("expected helper destination in output, got %q", buf.String())
 		}
 	})
 }

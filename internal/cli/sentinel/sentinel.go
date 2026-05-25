@@ -16,8 +16,8 @@ func New(runtime *core.Runtime) *cobra.Command {
 func NewWithManager(mgr *SentinelManager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sentinel",
-		Short: "Operate the bundled mcp-sentinel stack",
-		Long:  "Commands for inspecting and operating the bundled mcp-sentinel analytics, gateway, and observability stack.",
+		Short: "Operate the bundled mcp-sentinel stack (admin only)",
+		Long:  "Inspect and operate the bundled mcp-sentinel analytics, gateway, and observability stack. These commands require admin/operator Kubernetes access with kubectl; normal users should use the platform API and dashboard instead.",
 	}
 
 	statusCmd := &cobra.Command{

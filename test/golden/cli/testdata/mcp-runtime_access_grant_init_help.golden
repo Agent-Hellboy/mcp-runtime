@@ -1,0 +1,24 @@
+Initialize an MCPAccessGrant YAML manifest for review or apply. Use --tool to seed allow rules and --side-effect to set the permitted side-effect classes.
+
+Usage:
+  mcp-runtime access grant init [name] [flags]
+
+Flags:
+      --agent-id string           Agent subject ID
+      --force                     Replace output file if it already exists
+  -h, --help                      help for init
+      --human-id string           Human subject ID
+      --namespace string          Manifest namespace (default "mcp-servers")
+      --output string             Output manifest path (default "grant.yaml")
+      --policy-version string     Policy version (default "v1")
+      --server string             Target MCPServer name
+      --server-namespace string   Target MCPServer namespace (default: --namespace)
+      --side-effect stringArray   Allowed side effect class: read, write, or destructive; repeat for multiple (default [read])
+      --team-id string            Team subject ID
+      --tool stringArray          Tool name to allow; repeat for multiple tools
+      --tool-rule stringArray     Tool rule as name:allow|deny:low|medium|high; repeat for mixed trust or deny rules
+      --trust string              Trust level: low, medium, or high (default "low")
+
+Global Flags:
+      --debug      Enable debug mode with structured error logging
+      --use-kube   Use direct Kubernetes mode with kubectl; requires admin/operator cluster access (admin/dev/test only)

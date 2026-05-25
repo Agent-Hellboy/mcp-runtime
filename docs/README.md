@@ -168,7 +168,7 @@ preparation.
 <a class="docs-card" href="cli/">
   <span class="docs-card-kicker">CLI</span>
   <strong>Command reference</strong>
-  <span>Setup, auth, registry, server, access, adapter, team, pipeline, Sentinel, and status commands.</span>
+  <span>Setup, auth, registry, server, access, adapter, team, Sentinel, and status commands.</span>
 </a>
 
 <a class="docs-card" href="api/">

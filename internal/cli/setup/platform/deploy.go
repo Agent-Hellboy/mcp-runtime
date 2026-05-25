@@ -885,7 +885,7 @@ func operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint string)
 	if mode := strings.TrimSpace(core.DefaultCLIConfig.IngressReadinessMode); mode != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_INGRESS_READINESS_MODE", Value: mode})
 	}
-	registryEndpoint := strings.TrimSpace(core.GetRegistryEndpoint())
+	registryEndpoint := strings.TrimSpace(resolveInternalPlatformRegistryURLClientGo(nil))
 	if registryEndpoint != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_REGISTRY_ENDPOINT", Value: registryEndpoint})
 	}

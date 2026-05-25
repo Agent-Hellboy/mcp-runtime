@@ -26,27 +26,27 @@ func TestResolveRegistryPullHost(t *testing.T) {
 	}
 }
 
-func TestResolveRegistryPullHostIngressFallback(t *testing.T) {
+func TestResolveRegistryPullHostIgnoresIngressHostFallback(t *testing.T) {
 	for _, k := range []string{envMCPRegistryPullHost, envMCPRegistryEndpoint, envMCPPlatformDomain} {
 		t.Setenv(k, "")
 	}
 	t.Setenv(envMCPRegistryIngressHost, "registry.mcpruntime.org")
-	if got := ResolveRegistryPullHost(); got != "registry.mcpruntime.org" {
-		t.Fatalf("ingress fallback pull host = %q, want %q", got, "registry.mcpruntime.org")
+	if got := ResolveRegistryPullHost(); got != defaultRegistryPullHost {
+		t.Fatalf("ingress fallback pull host = %q, want %q", got, defaultRegistryPullHost)
 	}
 }
 
-func TestResolveRegistryPullHostPlatformDomainFallback(t *testing.T) {
+func TestResolveRegistryPullHostIgnoresPlatformDomainFallback(t *testing.T) {
 	for _, k := range []string{envMCPRegistryPullHost, envMCPRegistryEndpoint, envMCPRegistryIngressHost} {
 		t.Setenv(k, "")
 	}
 	t.Setenv(envMCPPlatformDomain, "mcpruntime.org")
-	if got := ResolveRegistryPullHost(); got != "registry.mcpruntime.org" {
-		t.Fatalf("platform domain fallback pull host = %q, want %q", got, "registry.mcpruntime.org")
+	if got := ResolveRegistryPullHost(); got != defaultRegistryPullHost {
+		t.Fatalf("platform domain fallback pull host = %q, want %q", got, defaultRegistryPullHost)
 	}
 }
 
-func TestGenerateCRDNoRewriteWhenIngressHostSet(t *testing.T) {
+func TestGenerateCRDRewritesImageWhenOnlyIngressHostSet(t *testing.T) {
 	for _, k := range []string{envMCPRegistryPullHost, envMCPRegistryEndpoint, envMCPRegistryHost} {
 		t.Setenv(k, "")
 	}
@@ -69,11 +69,11 @@ func TestGenerateCRDNoRewriteWhenIngressHostSet(t *testing.T) {
 		t.Fatalf("read generated CRD: %v", err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "image: registry.mcpruntime.org/acme/acme-tools") {
-		t.Fatalf("expected public registry image (no rewrite), got:\n%s", content)
+	if !strings.Contains(content, "image: registry.registry.svc.cluster.local:5000/acme/acme-tools") {
+		t.Fatalf("expected cluster pull host image rewrite, got:\n%s", content)
 	}
-	if strings.Contains(content, "registry.registry.svc.cluster.local") {
-		t.Fatalf("image was incorrectly rewritten to cluster-local pull host:\n%s", content)
+	if strings.Contains(content, "image: registry.mcpruntime.org/acme/acme-tools") {
+		t.Fatalf("image incorrectly kept public registry host:\n%s", content)
 	}
 }
 
@@ -122,5 +122,27 @@ func TestGenerateCRDRewritesImageToPullHost(t *testing.T) {
 	content := string(data)
 	if !strings.Contains(content, "image: 10.43.69.247:5000/acme/acme-tools") {
 		t.Fatalf("expected pull-host image rewrite, got:\n%s", content)
+	}
+}
+
+func TestDisplayImageReferenceRewritesInternalHostToPublicHost(t *testing.T) {
+	t.Setenv(envMCPRegistryEndpoint, "10.43.69.247:5000")
+	t.Setenv(envMCPRegistryIngressHost, "registry.mcpruntime.org")
+
+	got := DisplayImageReference("10.43.69.247:5000/acme/acme-tools:v1")
+	if got != "registry.mcpruntime.org/acme/acme-tools:v1" {
+		t.Fatalf("DisplayImageReference() = %q", got)
+	}
+}
+
+func TestDisplayImageReferenceStripsInternalHostWithoutPublicHost(t *testing.T) {
+	t.Setenv(envMCPRegistryEndpoint, "10.43.69.247:5000")
+	t.Setenv(envMCPRegistryIngressHost, "")
+	t.Setenv(envMCPRegistryHost, "")
+	t.Setenv(envMCPPlatformDomain, "")
+
+	got := DisplayImageReference("10.43.69.247:5000/acme/acme-tools:v1")
+	if got != "acme/acme-tools:v1" {
+		t.Fatalf("DisplayImageReference() = %q", got)
 	}
 }

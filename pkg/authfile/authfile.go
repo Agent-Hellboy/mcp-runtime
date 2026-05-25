@@ -336,3 +336,20 @@ func ResolveToken() (token, apiBase, source string, err error) {
 	}
 	return account.Token, account.APIBaseURL, source, nil
 }
+
+// CurrentRegistryHost returns the registry host saved with the active platform login.
+func CurrentRegistryHost() string {
+	path, err := FilePath()
+	if err != nil {
+		return ""
+	}
+	c, err := Load(path)
+	if err != nil {
+		return ""
+	}
+	account, _, err := c.SelectedAccount(os.Getenv(EnvAPIProfile))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(account.RegistryHost)
+}

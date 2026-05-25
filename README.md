@@ -23,7 +23,7 @@ The public platform at `platform.mcpruntime.org` is a live preview of the deploy
 
 ## What ships
 
-- `mcp-runtime` CLI for `setup`, `status`, `registry`, `server`, `pipeline`, `cluster`, `access`, and `sentinel`
+- `mcp-runtime` CLI for `setup`, `status`, `registry`, `server`, `cluster`, `access`, and `sentinel`
 - `mcp-runtime adapter proxy` and `mcp-runtime adapter stdio` subcommands for
   governed HTTP and stdio agent integrations. Both can fetch identity from
   the platform with `--server <name> --agent <id> [--auto-refresh]`, or

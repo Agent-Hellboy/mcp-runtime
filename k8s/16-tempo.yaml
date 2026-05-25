@@ -64,9 +64,25 @@ spec:
         app: tempo
     spec:
       automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: tempo
           image: grafana/tempo:2.3.1
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           args: ["-config.file=/etc/tempo/tempo.yaml"]
           ports:
             - containerPort: 3200
@@ -77,10 +93,14 @@ spec:
               mountPath: /etc/tempo
             - name: data
               mountPath: /var/tempo
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: config
           configMap:
             name: tempo-config
+        - name: tmp
+          emptyDir: {}
   volumeClaimTemplates:
     - metadata:
         name: data

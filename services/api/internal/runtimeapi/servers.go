@@ -18,6 +18,7 @@ import (
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	"mcp-runtime/pkg/controlplane"
 	"mcp-runtime/pkg/k8sclient"
+	"mcp-runtime/pkg/metadata"
 	"mcp-runtime/pkg/publishscope"
 	"mcp-runtime/pkg/sentinel"
 )
@@ -32,6 +33,7 @@ type runtimeServerApplyRequest struct {
 	Name      string                    `json:"name"`
 	Namespace string                    `json:"namespace,omitempty"`
 	Scope     string                    `json:"scope,omitempty"`
+	Update    bool                      `json:"update,omitempty"`
 	Labels    map[string]string         `json:"labels,omitempty"`
 	Spec      mcpv1alpha1.MCPServerSpec `json:"spec"`
 }
@@ -244,6 +246,12 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 		msg := "server already exists and is not owned by this user"
 		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "denied", req.Name, namespace, req.Spec.Image, msg))
 		writeAPIError(w, http.StatusForbidden, msg)
+		return
+	}
+	if current != nil && !req.Update {
+		msg := "server already exists; use --update to redeploy it"
+		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "denied", req.Name, namespace, req.Spec.Image, msg))
+		writeAPIError(w, http.StatusConflict, msg)
 		return
 	}
 	// This is an API-layer guard. Strict global quota enforcement under highly
@@ -749,6 +757,7 @@ func serverInfosWithAccessJSON(items []controlplane.ServerInfo, r *http.Request)
 }
 
 func serverInfoWithAccessJSON(info controlplane.ServerInfo, r *http.Request) serverInfo {
+	info.Image = metadata.DisplayImageReference(info.Image)
 	out := serverInfo{ServerInfo: info}
 	connectEndpoint := publicMCPConnectEndpoint(info.Endpoint, r)
 	if connectEndpoint != "" {

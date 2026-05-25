@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/pkg/kubeworkload"
 )
 
 func checkRegistryService(kubectl core.KubectlRunner) DoctorCheck {
@@ -33,8 +34,8 @@ func checkRegistryService(kubectl core.KubectlRunner) DoctorCheck {
 
 // checkRegistryReachableFromCluster verifies that an in-cluster pod can talk to
 // the registry over the cluster-internal service DNS. This exercises the same
-// path the in-cluster push helper uses, so a failure here means `registry push
-// --mode=in-cluster` will also fail. Kubelet's pull path (node-side containerd
+// path the in-cluster push helper uses, so a failure here means `admin registry push
+// --mode in-cluster` will also fail. Kubelet's pull path (node-side containerd
 // with registries.yaml mirrors) is distribution-specific and surfaced via the
 // remediation hint, not as a pass/fail check — we can't reach into kubelet
 // non-destructively.
@@ -141,22 +142,29 @@ func doctorRegistryInternalTLSConfigured(kubectl core.KubectlRunner) bool {
 }
 
 func checkMCPServersImagePullSecrets(kubectl core.KubectlRunner, namespace string) DoctorCheck {
-	cmd, err := kubectl.CommandArgs([]string{"get", "serviceaccount", "default", "-n", namespace, "-o", "jsonpath={range .imagePullSecrets[*]}{.name}{\"\\n\"}{end}"})
+	cmd, err := kubectl.CommandArgs([]string{"get", "serviceaccount", kubeworkload.DefaultServiceAccountName, "-n", namespace, "-o", "jsonpath={range .imagePullSecrets[*]}{.name}{\"\\n\"}{end}"})
 	if err != nil {
 		return DoctorCheck{
 			Name:   "mcp-servers imagePullSecrets",
 			OK:     false,
 			Detail: fmt.Sprintf("kubectl error: %v", err),
-			Remedy: "check default serviceaccount in mcp-servers",
+			Remedy: fmt.Sprintf("check serviceaccount %s in %s", kubeworkload.DefaultServiceAccountName, namespace),
 		}
 	}
-	out, execErr := cmd.Output()
+	out, execErr := cmd.CombinedOutput()
 	if execErr != nil {
+		if isKubectlNotFound(execErr) || isKubectlNotFoundOutput(string(out)) {
+			return DoctorCheck{
+				Name:   "mcp-servers imagePullSecrets",
+				OK:     true,
+				Detail: fmt.Sprintf("serviceaccount %s not provisioned yet (created on first managed server deploy)", kubeworkload.DefaultServiceAccountName),
+			}
+		}
 		return DoctorCheck{
 			Name:   "mcp-servers imagePullSecrets",
 			OK:     false,
-			Detail: "failed reading default serviceaccount imagePullSecrets",
-			Remedy: "inspect `kubectl -n mcp-servers get sa default -o yaml`",
+			Detail: fmt.Sprintf("failed reading serviceaccount %s imagePullSecrets", kubeworkload.DefaultServiceAccountName),
+			Remedy: fmt.Sprintf("inspect `kubectl -n %s get sa %s -o yaml`", namespace, kubeworkload.DefaultServiceAccountName),
 		}
 	}
 	raw := strings.TrimSpace(string(out))
@@ -164,7 +172,7 @@ func checkMCPServersImagePullSecrets(kubectl core.KubectlRunner, namespace strin
 		return DoctorCheck{
 			Name:   "mcp-servers imagePullSecrets",
 			OK:     true,
-			Detail: "no imagePullSecrets configured on default serviceaccount",
+			Detail: fmt.Sprintf("no imagePullSecrets configured on serviceaccount %s", kubeworkload.DefaultServiceAccountName),
 		}
 	}
 	names := strings.Split(raw, "\n")

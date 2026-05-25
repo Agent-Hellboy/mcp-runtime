@@ -187,12 +187,12 @@ variables first, run setup with production validation:
 ./bin/mcp-runtime setup --registry-mode external --with-tls --strict-prod
 ```
 
-Before generating MCP server manifests, set the image host that cluster nodes
-should pull from:
+Before rendering MCP server manifests for review or GitOps, set the image host
+that cluster nodes should pull from:
 
 ```bash
 export MCP_REGISTRY_INGRESS_HOST=registry.example.com
-./bin/mcp-runtime pipeline generate --dir .mcp --output manifests
+./bin/mcp-runtime server generate --metadata-dir .mcp --output manifests
 ```
 
 The platform API follows the same split for short image deploys: it expands

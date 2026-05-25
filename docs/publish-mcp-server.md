@@ -68,7 +68,7 @@ spec:
   Analytics emission to the Sentinel stack is on by default whenever the
   operator has an ingest URL configured (via `MCP_SENTINEL_INGEST_URL` or
   `spec.analytics.ingestURL`). Set `spec.analytics.disabled: true` to opt
-  this server out. Platform API deploys and `mcp-runtime pipeline deploy`
+  this server out. Platform API deploys through `mcp-runtime server deploy`
   create a namespace-local ingest-key Secret and set
   `spec.analytics.apiKeySecretRef` automatically when gateway analytics are
   enabled.
@@ -98,9 +98,33 @@ platform-backed `server deploy` flow in Option B instead.
 ./bin/mcp-runtime server status --use-kube
 ```
 
-## Option B: write `.mcp` metadata
+## Option B: initialize or write `.mcp` metadata
 
-The metadata-driven pipeline uses YAML files under `.mcp/` and generates `MCPServer` manifests for you.
+The metadata-driven server flow uses YAML files under `.mcp`. `server deploy`
+publishes directly from that metadata, while `server generate` renders
+`MCPServer` manifests when you need YAML for review or GitOps.
+
+Start with `server init` when you do not already have metadata:
+
+```bash
+./bin/mcp-runtime server init payments --scope org --tool list_invoices --tool refund_invoice
+./bin/mcp-runtime server init payments \
+  --scope org \
+  --tool list_invoices \
+  --tool-spec refund_invoice:high:destructive
+```
+
+This creates `.mcp/servers.yaml` with sane defaults. Re-run with `--force` to
+replace the same server entry, or edit the generated file when tools need
+different trust levels or side-effect values. `--tool` is shorthand for a
+read-only, low-trust tool. Use `--tool-spec name:low|medium|high:read|write|destructive`
+for per-tool metadata.
+
+For grant manifests, `access grant init --tool` is shorthand for
+`name:allow:<--trust>`. Use repeated `--tool-rule name:allow|deny:low|medium|high`
+when a grant needs mixed per-tool decisions or trust levels. For explicit
+session manifests, `access session init` supports `--trust`,
+`--expires-in`, `--expires-at`, `--revoked`, and upstream-token secret flags.
 
 Example:
 
@@ -115,6 +139,17 @@ servers:
     route: /payments
     port: 8088
     replicas: 1
+    auth:
+      mode: header
+    policy:
+      mode: allow-list
+      defaultDecision: deny
+      enforceOn: call_tool
+      policyVersion: v1
+    session:
+      required: true
+    gateway:
+      enabled: true
     tools:
       - name: list_invoices
         description: List invoices for a customer account.
@@ -152,6 +187,8 @@ servers:
   The target namespace.
 - `tools`
   Tool inventory for the platform catalog and policy authoring. Include each tool's description when the MCP server SDK exposes one through `tools/list`, and set `sideEffect` to `read`, `write`, or `destructive`. Tool side effects are required when a tool is listed.
+- `auth`, `policy`, `session`, and `gateway`
+  Governed request-path settings. `server init` writes header auth, allow-list/deny policy, required adapter-issued sessions, and `gateway.enabled: true` so public tool calls go through the adapter/session path by default.
 
 ### Metadata defaults
 
@@ -166,20 +203,26 @@ If fields are omitted, the loader applies defaults:
 - port defaults to `8088`
 - replicas default to `1`
 - namespace defaults to `mcp-servers`
+- `server init` writes explicit governed defaults; hand-authored metadata may
+  omit them only when you intentionally want the platform/operator defaults
 
-For multi-team deployments, set `scope: tenant` plus a team `namespace` in the
-metadata file or pass `pipeline deploy --namespace <team-namespace>`
-deliberately. The namespace is the write boundary for the generated
-`MCPServer`, grants, sessions, and secrets. Set `spec.teamID` /
-`subject.teamID` or use the platform API so it defaults those fields.
-Initialize that namespace first with `mcp-runtime team init <slug>` or the
-platform-backed `mcp-runtime team create <slug>` flow.
+For multi-team deployments, set `scope: tenant` and deploy through
+`server deploy --scope tenant` with platform credentials. The platform API
+resolves the target team namespace and defaults team ownership metadata. The
+namespace is the write boundary for the `MCPServer`, grants, sessions, and
+secrets. `server deploy` creates by default; if a server with the same name
+already exists, pass `--update` to redeploy it intentionally.
 
-Generate and deploy manifests:
+Deploy from metadata:
 
 ```bash
-./bin/mcp-runtime pipeline generate --dir .mcp --output manifests/
-./bin/mcp-runtime pipeline deploy --dir manifests/
+./bin/mcp-runtime server deploy payments --scope org --metadata-dir .mcp
+
+# Redeploy an existing server after changing metadata or image tag.
+./bin/mcp-runtime server deploy payments --scope org --metadata-dir .mcp --update
+
+# Optional: render YAML for review/GitOps.
+./bin/mcp-runtime server generate --metadata-dir .mcp --output manifests/
 ```
 
 ## Build and push the server image
@@ -211,11 +254,10 @@ images; if the image name has no repository prefix, the CLI prefixes it with
 the authenticated user's active team slug. Explicit repository prefixes for
 tenant images must match one of the user's teams.
 
-Then generate and deploy from metadata:
+Then deploy from metadata:
 
 ```bash
-./bin/mcp-runtime pipeline generate --dir .mcp --output manifests/
-./bin/mcp-runtime pipeline deploy --dir manifests/
+./bin/mcp-runtime server deploy payments --scope org --metadata-dir .mcp
 ```
 
 ### Flow B — manual Docker build, push, and direct platform deploy
@@ -355,7 +397,7 @@ The adapter is not required for analytics; it only helps clients that cannot
 attach identity or session headers directly, or that want platform-issued
 sessions. Hand-written YAML must include `spec.gateway.enabled: true` for
 request analytics. If you apply raw YAML with `kubectl` instead of
-`mcp-runtime pipeline deploy`, also create a namespace-local ingest-key Secret
+raw `kubectl apply`, also create a namespace-local ingest-key Secret
 and set `spec.analytics.apiKeySecretRef`; otherwise the gateway can reach
 ingest but events will be rejected with 401. Analytics is on by default for
 gateway traffic when the operator has `MCP_SENTINEL_INGEST_URL`; opt out with:

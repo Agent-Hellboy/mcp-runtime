@@ -266,6 +266,8 @@ func ServerInfoFromMCPServer(mcpServer mcpv1alpha1.MCPServer, deploymentStatus S
 		Namespace:   mcpServer.Namespace,
 		UID:         string(mcpServer.UID),
 		TeamID:      strings.TrimSpace(mcpServer.Spec.TeamID),
+		Image:       strings.TrimSpace(mcpServer.Spec.Image),
+		ImageTag:    strings.TrimSpace(mcpServer.Spec.ImageTag),
 		Description: mcpServer.Spec.Description,
 		Ready:       deploymentStatus.Ready,
 		Status:      deploymentStatus.Status,

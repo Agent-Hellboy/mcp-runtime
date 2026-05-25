@@ -1,0 +1,14 @@
+Generate MCPServer YAML manifests from .mcp metadata. Normal user deploys should use server deploy directly; this command is for review, GitOps, and admin workflows that need YAML output.
+
+Usage:
+  mcp-runtime server generate [flags]
+
+Flags:
+  -h, --help                   help for generate
+      --metadata-dir string    Directory containing .mcp metadata files (default ".mcp")
+      --metadata-file string   Path to .mcp metadata file
+      --output string          Output directory for generated MCPServer manifests (default "manifests")
+
+Global Flags:
+      --debug      Enable debug mode with structured error logging
+      --use-kube   Use direct Kubernetes mode with kubectl; requires admin/operator cluster access (admin/dev/test only)

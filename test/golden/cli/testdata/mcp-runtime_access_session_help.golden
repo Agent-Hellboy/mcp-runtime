@@ -7,6 +7,7 @@ Available Commands:
   apply       Apply a session manifest
   delete      Delete an access session
   get         Get an access session
+  init        Initialize an MCPAgentSession manifest
   list        List access sessions
   revoke      Revoke an agent session
   unrevoke    Clear the revoked flag on an agent session
