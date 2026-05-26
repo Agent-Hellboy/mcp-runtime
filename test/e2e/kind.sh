@@ -3797,6 +3797,7 @@ spec:
       port: 8080
       targetPort: 8080
 EOF
+  fi
 
 echo "[registry] checking public ingress admin auth"
 REGISTRY_PUBLIC_URL="http://127.0.0.1:${TRAEFIK_PORT}/v2/_catalog"
@@ -4175,7 +4176,6 @@ print('adapter-session reused:', resp['name'])
     # short smoke retry after the ConfigMap has already been updated.
     wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "aaa-ping" '{}' 200 "pong"
     wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "add" '{"a":1,"b":2}' 403 "tool_not_granted"
-  fi
 fi
 
 if deep_request_flows_enabled || scenario_selected "cli-platform"; then

@@ -96,91 +96,67 @@ func (s *apiServer) handleUserAPIKeyItem(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "user api key store not configured"})
 		return
 	}
-	path := strings.TrimPrefix(r.URL.Path, "/api/user/api-keys/")
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	switch r.Method {
-	case http.MethodDelete:
-		if len(parts) != 1 || parts[0] == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid key path"})
-			return
-		}
-		key, revokeErr := s.userKeys.RevokeUserAPIKey(r.Context(), p.UserID(), parts[0])
-		if revokeErr != nil {
-			if s.platform != nil {
-				s.platform.WriteAudit(r.Context(), auditEvent{
-					UserID:       p.UserID(),
-					Action:       "api_key_revoke",
-					Resource:     parts[0],
-					Namespace:    p.Namespace,
-					Status:       "error",
-					Message:      revokeErr.Error(),
-					ActorIP:      requestIP(r),
-					Source:       auditSource(r, p),
-					AuthIdentity: auditIdentityLabel(p),
-				})
-			}
-			if apierrors.IsNotFound(revokeErr) || errors.Is(revokeErr, sql.ErrNoRows) {
-				writeJSON(w, http.StatusNotFound, map[string]string{"error": "key not found"})
-				return
-			}
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to revoke key"})
-			return
-		}
-		if s.platform != nil {
-			s.platform.WriteAudit(r.Context(), auditEvent{
-				UserID:       p.UserID(),
-				Action:       "api_key_revoke",
-				Resource:     key.ID,
-				Namespace:    p.Namespace,
-				Status:       "success",
-				ActorIP:      requestIP(r),
-				Source:       auditSource(r, p),
-				AuthIdentity: auditIdentityLabel(p),
-			})
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"key": key})
-	case http.MethodPost:
-		if len(parts) != 2 || parts[0] == "" || parts[1] != "revoke" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid key path"})
-			return
-		}
-		key, revokeErr := s.userKeys.RevokeUserAPIKey(r.Context(), p.UserID(), parts[0])
-		if revokeErr != nil {
-			if s.platform != nil {
-				s.platform.WriteAudit(r.Context(), auditEvent{
-					UserID:       p.UserID(),
-					Action:       "api_key_revoke",
-					Resource:     parts[0],
-					Namespace:    p.Namespace,
-					Status:       "error",
-					Message:      revokeErr.Error(),
-					ActorIP:      requestIP(r),
-					Source:       auditSource(r, p),
-					AuthIdentity: auditIdentityLabel(p),
-				})
-			}
-			if apierrors.IsNotFound(revokeErr) || errors.Is(revokeErr, sql.ErrNoRows) {
-				writeJSON(w, http.StatusNotFound, map[string]string{"error": "key not found"})
-				return
-			}
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to revoke key"})
-			return
-		}
-		if s.platform != nil {
-			s.platform.WriteAudit(r.Context(), auditEvent{
-				UserID:       p.UserID(),
-				Action:       "api_key_revoke",
-				Resource:     key.ID,
-				Namespace:    p.Namespace,
-				Status:       "success",
-				ActorIP:      requestIP(r),
-				Source:       auditSource(r, p),
-				AuthIdentity: auditIdentityLabel(p),
-			})
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"key": key})
-	default:
+	keyID, allowed, valid := parseUserAPIKeyItemPath(r.Method, r.URL.Path)
+	if !allowed {
 		w.Header().Set("allow", "DELETE, POST")
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		return
+	}
+	if !valid {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid key path"})
+		return
+	}
+	key, revokeErr := s.userKeys.RevokeUserAPIKey(r.Context(), p.UserID(), keyID)
+	if revokeErr != nil {
+		if s.platform != nil {
+			s.platform.WriteAudit(r.Context(), auditEvent{
+				UserID:       p.UserID(),
+				Action:       "api_key_revoke",
+				Resource:     keyID,
+				Namespace:    p.Namespace,
+				Status:       "error",
+				Message:      revokeErr.Error(),
+				ActorIP:      requestIP(r),
+				Source:       auditSource(r, p),
+				AuthIdentity: auditIdentityLabel(p),
+			})
+		}
+		if apierrors.IsNotFound(revokeErr) || errors.Is(revokeErr, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "key not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to revoke key"})
+		return
+	}
+	if s.platform != nil {
+		s.platform.WriteAudit(r.Context(), auditEvent{
+			UserID:       p.UserID(),
+			Action:       "api_key_revoke",
+			Resource:     key.ID,
+			Namespace:    p.Namespace,
+			Status:       "success",
+			ActorIP:      requestIP(r),
+			Source:       auditSource(r, p),
+			AuthIdentity: auditIdentityLabel(p),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"key": key})
+}
+
+func parseUserAPIKeyItemPath(method, path string) (keyID string, allowed bool, valid bool) {
+	parts := strings.Split(strings.Trim(strings.TrimPrefix(path, "/api/user/api-keys/"), "/"), "/")
+	switch method {
+	case http.MethodDelete:
+		if len(parts) != 1 || parts[0] == "" {
+			return "", true, false
+		}
+		return parts[0], true, true
+	case http.MethodPost:
+		if len(parts) != 2 || parts[0] == "" || parts[1] != "revoke" {
+			return "", true, false
+		}
+		return parts[0], true, true
+	default:
+		return "", false, false
 	}
 }

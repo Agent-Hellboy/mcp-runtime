@@ -88,79 +88,61 @@ func (s *apiServer) handleRegistryCredentialItem(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	path := strings.TrimPrefix(r.URL.Path, "/api/user/registry-credentials/")
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	switch r.Method {
-	case http.MethodDelete:
-		if len(parts) != 1 || parts[0] == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid credential path"})
-			return
-		}
-		key, err := s.platform.RevokeRegistryCredential(r.Context(), p.UserID(), parts[0])
-		if err != nil {
-			s.platform.WriteAudit(r.Context(), auditEvent{
-				UserID:       p.UserID(),
-				Action:       "registry_credential_revoke",
-				Resource:     parts[0],
-				Status:       "error",
-				Message:      err.Error(),
-				ActorIP:      requestIP(r),
-				Source:       auditSource(r, p),
-				AuthIdentity: auditIdentityLabel(p),
-			})
-			if errors.Is(err, sql.ErrNoRows) {
-				writeJSON(w, http.StatusNotFound, map[string]string{"error": "credential not found"})
-				return
-			}
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to revoke credential"})
-			return
-		}
-		s.platform.WriteAudit(r.Context(), auditEvent{
-			UserID:       p.UserID(),
-			Action:       "registry_credential_revoke",
-			Resource:     key.ID,
-			Status:       "success",
-			ActorIP:      requestIP(r),
-			Source:       auditSource(r, p),
-			AuthIdentity: auditIdentityLabel(p),
-		})
-		writeJSON(w, http.StatusOK, map[string]any{"credential": key})
-	case http.MethodPost:
-		if len(parts) != 2 || parts[0] == "" || parts[1] != "revoke" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid credential path"})
-			return
-		}
-		key, err := s.platform.RevokeRegistryCredential(r.Context(), p.UserID(), parts[0])
-		if err != nil {
-			s.platform.WriteAudit(r.Context(), auditEvent{
-				UserID:       p.UserID(),
-				Action:       "registry_credential_revoke",
-				Resource:     parts[0],
-				Status:       "error",
-				Message:      err.Error(),
-				ActorIP:      requestIP(r),
-				Source:       auditSource(r, p),
-				AuthIdentity: auditIdentityLabel(p),
-			})
-			if errors.Is(err, sql.ErrNoRows) {
-				writeJSON(w, http.StatusNotFound, map[string]string{"error": "credential not found"})
-				return
-			}
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to revoke credential"})
-			return
-		}
-		s.platform.WriteAudit(r.Context(), auditEvent{
-			UserID:       p.UserID(),
-			Action:       "registry_credential_revoke",
-			Resource:     key.ID,
-			Status:       "success",
-			ActorIP:      requestIP(r),
-			Source:       auditSource(r, p),
-			AuthIdentity: auditIdentityLabel(p),
-		})
-		writeJSON(w, http.StatusOK, map[string]any{"credential": key})
-	default:
+	credentialID, allowed, valid := parseRegistryCredentialItemPath(r.Method, r.URL.Path)
+	if !allowed {
 		w.Header().Set("allow", "DELETE, POST")
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		return
+	}
+	if !valid {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid credential path"})
+		return
+	}
+	key, err := s.platform.RevokeRegistryCredential(r.Context(), p.UserID(), credentialID)
+	if err != nil {
+		s.platform.WriteAudit(r.Context(), auditEvent{
+			UserID:       p.UserID(),
+			Action:       "registry_credential_revoke",
+			Resource:     credentialID,
+			Status:       "error",
+			Message:      err.Error(),
+			ActorIP:      requestIP(r),
+			Source:       auditSource(r, p),
+			AuthIdentity: auditIdentityLabel(p),
+		})
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "credential not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to revoke credential"})
+		return
+	}
+	s.platform.WriteAudit(r.Context(), auditEvent{
+		UserID:       p.UserID(),
+		Action:       "registry_credential_revoke",
+		Resource:     key.ID,
+		Status:       "success",
+		ActorIP:      requestIP(r),
+		Source:       auditSource(r, p),
+		AuthIdentity: auditIdentityLabel(p),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"credential": key})
+}
+
+func parseRegistryCredentialItemPath(method, path string) (credentialID string, allowed bool, valid bool) {
+	parts := strings.Split(strings.Trim(strings.TrimPrefix(path, "/api/user/registry-credentials/"), "/"), "/")
+	switch method {
+	case http.MethodDelete:
+		if len(parts) != 1 || parts[0] == "" {
+			return "", true, false
+		}
+		return parts[0], true, true
+	case http.MethodPost:
+		if len(parts) != 2 || parts[0] == "" || parts[1] != "revoke" {
+			return "", true, false
+		}
+		return parts[0], true, true
+	default:
+		return "", false, false
 	}
 }
