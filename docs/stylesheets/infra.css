@@ -506,7 +506,80 @@ body {
   border: 1px solid var(--infra-line);
   border-radius: 8px;
   background: #ffffff;
+  color: var(--infra-ink);
+  font-size: 0.85rem;
+  max-width: 100%;
+  margin: 1rem 0 1.25rem;
+  overflow-x: auto;
   padding: 1rem;
+  scrollbar-color: var(--infra-line-strong) #f8fafc;
+}
+
+.md-typeset .mermaid svg {
+  display: block;
+  width: max(100%, 1280px) !important;
+  max-width: none !important;
+  min-width: 1280px;
+  height: auto !important;
+}
+
+.md-typeset .mermaid svg[aria-roledescription="flowchart-v2"] {
+  width: max(100%, 880px) !important;
+  min-width: 880px;
+}
+
+.md-typeset .mermaid .actor,
+.md-typeset .mermaid .messageText,
+.md-typeset .mermaid .labelText,
+.md-typeset .mermaid .loopText,
+.md-typeset .mermaid .noteText,
+.md-typeset .mermaid text {
+  fill: var(--infra-ink) !important;
+  color: var(--infra-ink) !important;
+}
+
+.md-typeset .mermaid .messageLine0,
+.md-typeset .mermaid .messageLine1,
+.md-typeset .mermaid .flowchart-link {
+  stroke: #334155 !important;
+  stroke-width: 2px !important;
+}
+
+.md-typeset .mermaid .actor {
+  fill: #eff6ff !important;
+  stroke: #2563eb !important;
+  stroke-width: 2px !important;
+}
+
+.md-typeset .mermaid .actor-line {
+  stroke: #64748b !important;
+  stroke-width: 1.5px !important;
+}
+
+.md-typeset .mermaid .labelBox,
+.md-typeset .mermaid .loopLine {
+  fill: #f8fafc !important;
+  stroke: #94a3b8 !important;
+  stroke-width: 1.5px !important;
+}
+
+.md-typeset .mermaid .note {
+  fill: #fef3c7 !important;
+  stroke: #d97706 !important;
+  stroke-width: 1.5px !important;
+}
+
+.md-typeset .mermaid .activation0,
+.md-typeset .mermaid .activation1,
+.md-typeset .mermaid .activation2 {
+  stroke: #2563eb !important;
+  fill: #dbeafe !important;
+}
+
+.md-typeset .mermaid rect,
+.md-typeset .mermaid polygon {
+  fill-opacity: 1 !important;
+  stroke-opacity: 1 !important;
 }
 
 .md-footer {

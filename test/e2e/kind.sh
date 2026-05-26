@@ -3079,9 +3079,9 @@ echo "[policy] applying access grant via CLI"
   --agent-id "${AGENT_ID}" \
   --trust high \
   --side-effect read \
-  --tool aaa-ping \
-  --tool echo \
-  --tool upper \
+  --tool-rule aaa-ping:allow:low \
+  --tool-rule echo:allow:low \
+  --tool-rule upper:allow:medium \
   --output "${WORKDIR}/access-grant.yaml" \
   --force
 (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant.yaml)
