@@ -1707,6 +1707,30 @@ func TestCheckTraefikServiceExposure(t *testing.T) {
 		})
 	}
 
+	t.Run("ok on kind when LoadBalancer pending but traefik deployment ready", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				joined := strings.Join(spec.Args, " ")
+				switch {
+				case strings.Contains(joined, "jsonpath={.spec.type}"):
+					return &core.MockCommand{OutputData: []byte("LoadBalancer|||web:8000:,websecure:8443:,")}
+				case strings.Contains(joined, "jsonpath={.status.readyReplicas}"):
+					return &core.MockCommand{OutputData: []byte("1/1")}
+				default:
+					return &core.MockCommand{}
+				}
+			},
+		}
+		kubectl := core.NewTestKubectlClient(mock)
+		check := checkTraefikServiceExposure(kubectl, DistroKind)
+		if !check.OK {
+			t.Fatalf("expected OK for kind pending LoadBalancer, got detail=%q", check.Detail)
+		}
+		if !strings.Contains(check.Detail, "port-forward") {
+			t.Fatalf("detail should mention port-forward, got %q", check.Detail)
+		}
+	})
+
 	t.Run("ok with k3s bundled traefik service", func(t *testing.T) {
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {

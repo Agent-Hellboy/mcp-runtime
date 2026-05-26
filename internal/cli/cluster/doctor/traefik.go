@@ -169,7 +169,7 @@ func readTraefikServicePorts(kubectl core.KubectlRunner, endpoint doctorTraefikE
 func checkTraefikServiceExposure(kubectl core.KubectlRunner, distro Distribution) DoctorCheck {
 	failures := make([]string, 0, len(doctorTraefikEndpoints(distro)))
 	for _, endpoint := range doctorTraefikEndpoints(distro) {
-		check := checkTraefikServiceExposureAt(kubectl, endpoint)
+		check := checkTraefikServiceExposureAt(kubectl, endpoint, distro)
 		if check.OK {
 			return check
 		}
@@ -183,7 +183,16 @@ func checkTraefikServiceExposure(kubectl core.KubectlRunner, distro Distribution
 	}
 }
 
-func checkTraefikServiceExposureAt(kubectl core.KubectlRunner, endpoint doctorTraefikEndpoint) DoctorCheck {
+func ingressDistroAllowsPortForwardExposure(distro Distribution) bool {
+	switch distro {
+	case DistroKind, DistroMinikube, DistroDockerDesktop:
+		return true
+	default:
+		return false
+	}
+}
+
+func checkTraefikServiceExposureAt(kubectl core.KubectlRunner, endpoint doctorTraefikEndpoint, distro Distribution) DoctorCheck {
 	cmd, err := kubectl.CommandArgs([]string{"get", "svc", "-n", endpoint.Namespace, endpoint.Name, "-o", "jsonpath={.spec.type}|{.status.loadBalancer.ingress[0].ip}|{.status.loadBalancer.ingress[0].hostname}|{range .spec.ports[*]}{.name}:{.port}:{.nodePort}{\",\"}{end}"})
 	if err != nil {
 		return DoctorCheck{
@@ -236,6 +245,15 @@ func checkTraefikServiceExposureAt(kubectl core.KubectlRunner, endpoint doctorTr
 			Name:   "traefik service exposure",
 			OK:     true,
 			Detail: fmt.Sprintf("%s/%s %s service exposes nodePort %s for web port %d (%s)", endpoint.Namespace, endpoint.Name, svcType, webPort.NodePort, webPort.Port, endpoint.Source),
+		}
+	}
+	if ingressDistroAllowsPortForwardExposure(distro) && svcType == "LoadBalancer" && lbIP == "" && lbHost == "" {
+		if readyCheck := checkTraefikDeploymentReadyAt(kubectl, endpoint); readyCheck.OK {
+			return DoctorCheck{
+				Name:   "traefik service exposure",
+				OK:     true,
+				Detail: fmt.Sprintf("%s/%s LoadBalancer has no external address on %s; reach Traefik via kubectl port-forward or cluster port mappings (%s)", endpoint.Namespace, endpoint.Name, distro, endpoint.Source),
+			}
 		}
 	}
 	return DoctorCheck{
@@ -614,7 +632,7 @@ func checkDoctorACMEHTTP01Exposure(kubectl core.KubectlRunner, distro Distributi
 			Remedy: "Let's Encrypt HTTP-01 must reach Traefik on public port 80",
 		}
 	}
-	exposure := checkTraefikServiceExposureAt(kubectl, endpoint)
+	exposure := checkTraefikServiceExposureAt(kubectl, endpoint, distro)
 	if !exposure.OK {
 		return DoctorCheck{
 			Name:   "ACME HTTP-01 exposure",
