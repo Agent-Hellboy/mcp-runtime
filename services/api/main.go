@@ -1222,34 +1222,6 @@ func oidcProvider(issuer string) string {
 	return oidcProviderPrefix + issuer
 }
 
-func (s *apiServer) handleAuthMe(w http.ResponseWriter, r *http.Request) {
-	p, ok := principalFromContext(r.Context())
-	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
-	}
-	type authPrincipal struct {
-		Role              string          `json:"role"`
-		Subject           string          `json:"subject,omitempty"`
-		Email             string          `json:"email,omitempty"`
-		Namespace         string          `json:"namespace,omitempty"`
-		AllowedNamespaces []string        `json:"allowedNamespaces,omitempty"`
-		Teams             []principalTeam `json:"teams,omitempty"`
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"authenticated":          true,
-		"sharedCatalogNamespace": sharedCatalogNamespace,
-		"principal": authPrincipal{
-			Role:              p.Role,
-			Subject:           p.Subject,
-			Email:             p.Email,
-			Namespace:         p.Namespace,
-			AllowedNamespaces: p.AllowedNamespaces,
-			Teams:             p.Teams,
-		},
-	})
-}
-
 // audienceMatches validates if the JWT audience claim matches the expected value.
 func audienceMatches(audClaim any, expected string) bool {
 	return serviceutil.AudienceMatches(audClaim, expected)

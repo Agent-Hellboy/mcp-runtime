@@ -1,148 +1,34 @@
 package main
 
 import (
-	"database/sql"
-	"encoding/json"
-	"errors"
 	"net/http"
-	"strings"
+
+	"mcp-sentinel-api/users"
 )
 
-const registryCredentialRequestMaxBytes = 4 * 1024
-
-func (s *apiServer) handleRegistryCredentials(w http.ResponseWriter, r *http.Request) {
-	if s.platform == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
-		return
-	}
-	p, ok := principalFromContext(r.Context())
-	if !ok || p.UserID() == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		keys, err := s.platform.ListRegistryCredentials(r.Context(), p.UserID())
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list registry credentials"})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"credentials": keys})
-	case http.MethodPost:
-		var req struct {
-			Name string `json:"name"`
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, registryCredentialRequestMaxBytes)
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeBodyDecodeError(w, err)
-			return
-		}
-		key, cleartext, err := s.platform.CreateRegistryCredential(r.Context(), p.UserID(), req.Name)
-		if err != nil {
-			s.platform.WriteAudit(r.Context(), auditEvent{
-				UserID:       p.UserID(),
-				Action:       "registry_credential_create",
-				Resource:     strings.TrimSpace(req.Name),
-				Status:       "error",
-				Message:      err.Error(),
-				ActorIP:      requestIP(r),
-				Source:       auditSource(r, p),
-				AuthIdentity: auditIdentityLabel(p),
-			})
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		s.platform.WriteAudit(r.Context(), auditEvent{
-			UserID:       p.UserID(),
-			Action:       "registry_credential_create",
-			Resource:     key.ID,
-			Status:       "success",
-			ActorIP:      requestIP(r),
-			Source:       auditSource(r, p),
-			AuthIdentity: auditIdentityLabel(p),
-		})
-		writeJSON(w, http.StatusCreated, map[string]any{"credential": key, "username": registryCredentialUsername(p), "password": cleartext})
-	default:
-		w.Header().Set("allow", "GET, POST")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
-	}
+func registryCredentialUsername(p principal) string {
+	return users.RegistryCredentialUsername(p)
 }
 
-func registryCredentialUsername(p principal) string {
-	if namespace := strings.TrimSpace(p.Namespace); namespace != "" {
-		return namespace
-	}
-	if subject := strings.TrimSpace(p.Subject); subject != "" {
-		return subject
-	}
-	return strings.TrimSpace(p.Email)
+func (s *apiServer) handleRegistryCredentials(w http.ResponseWriter, r *http.Request) {
+	users.HandleRegistryCredentials(w, r, users.Dependencies{
+		Platform:             s.platform,
+		PrincipalFromContext: principalFromContext,
+		WriteJSON:            writeJSON,
+		WriteBodyDecodeError: writeBodyDecodeError,
+		RequestIP:            requestIP,
+		AuditSource:          auditSource,
+		AuditIdentityLabel:   auditIdentityLabel,
+	})
 }
 
 func (s *apiServer) handleRegistryCredentialItem(w http.ResponseWriter, r *http.Request) {
-	if s.platform == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
-		return
-	}
-	p, ok := principalFromContext(r.Context())
-	if !ok || p.UserID() == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
-	}
-	credentialID, allowed, valid := parseRegistryCredentialItemPath(r.Method, r.URL.Path)
-	if !allowed {
-		w.Header().Set("allow", "DELETE, POST")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
-		return
-	}
-	if !valid {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid credential path"})
-		return
-	}
-	key, err := s.platform.RevokeRegistryCredential(r.Context(), p.UserID(), credentialID)
-	if err != nil {
-		s.platform.WriteAudit(r.Context(), auditEvent{
-			UserID:       p.UserID(),
-			Action:       "registry_credential_revoke",
-			Resource:     credentialID,
-			Status:       "error",
-			Message:      err.Error(),
-			ActorIP:      requestIP(r),
-			Source:       auditSource(r, p),
-			AuthIdentity: auditIdentityLabel(p),
-		})
-		if errors.Is(err, sql.ErrNoRows) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "credential not found"})
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to revoke credential"})
-		return
-	}
-	s.platform.WriteAudit(r.Context(), auditEvent{
-		UserID:       p.UserID(),
-		Action:       "registry_credential_revoke",
-		Resource:     key.ID,
-		Status:       "success",
-		ActorIP:      requestIP(r),
-		Source:       auditSource(r, p),
-		AuthIdentity: auditIdentityLabel(p),
+	users.HandleRegistryCredentialItem(w, r, users.Dependencies{
+		Platform:             s.platform,
+		PrincipalFromContext: principalFromContext,
+		WriteJSON:            writeJSON,
+		RequestIP:            requestIP,
+		AuditSource:          auditSource,
+		AuditIdentityLabel:   auditIdentityLabel,
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"credential": key})
-}
-
-func parseRegistryCredentialItemPath(method, path string) (credentialID string, allowed bool, valid bool) {
-	parts := strings.Split(strings.Trim(strings.TrimPrefix(path, "/api/user/registry-credentials/"), "/"), "/")
-	switch method {
-	case http.MethodDelete:
-		if len(parts) != 1 || parts[0] == "" {
-			return "", true, false
-		}
-		return parts[0], true, true
-	case http.MethodPost:
-		if len(parts) != 2 || parts[0] == "" || parts[1] != "revoke" {
-			return "", true, false
-		}
-		return parts[0], true, true
-	default:
-		return "", false, false
-	}
 }
