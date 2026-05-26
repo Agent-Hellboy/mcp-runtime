@@ -1,4 +1,4 @@
-Save a local image and push it to the platform registry through the platform API. Requires `mcp-runtime auth login` or MCP_PLATFORM_API_TOKEN plus MCP_PLATFORM_API_URL.
+Save a local image and push it to the platform registry through the platform API. Requires `mcp-runtime auth login` or MCP_PLATFORM_API_TOKEN with a saved or explicit MCP_PLATFORM_API_URL.
 
 Usage:
   mcp-runtime registry push [flags]

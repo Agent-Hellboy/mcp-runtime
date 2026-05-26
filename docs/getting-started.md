@@ -648,10 +648,13 @@ Repeat deploys after metadata or image changes need `--update`:
 ./bin/mcp-runtime server deploy my-server --scope tenant --metadata-dir .mcp --update
 ```
 
-`server init` writes gateway-enabled, header-authenticated, session-required
-governance defaults. Edit `.mcp/servers.yaml` when a tool needs `medium` or
-`high` trust, or when its side effect is `write` or `destructive` instead of
-`read`. You can also seed that up front with
+`server init` enables the gateway, scaffolds allow-list/deny policy and a
+required session, and leaves platform-managed gateway wiring and auth/session
+header details out of `.mcp/servers.yaml`. Use `--policy-mode`,
+`--default-decision`, or `--session-required=false` when the initial governance
+shape should differ. Edit the metadata when a tool needs `medium` or `high`
+trust, or when its side effect is `write` or `destructive` instead of `read`.
+You can also seed that up front with
 `--tool-spec name:low|medium|high:read|write|destructive`; `--tool name` remains
 the read/low shorthand.
 

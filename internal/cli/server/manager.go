@@ -60,7 +60,7 @@ func (m *ServerManager) requireKubectlForMutation() error {
 	return nil
 }
 
-func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope string, port int32, tools, toolSpecs []string, force bool) error {
+func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, policyMode, defaultDecision string, sessionRequired bool, port int32, tools, toolSpecs []string, force bool) error {
 	name, err := validateManifestValue("name", name)
 	if err != nil {
 		return err
@@ -88,6 +88,24 @@ func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope str
 	if _, err := publishscope.Normalize(scope); err != nil {
 		return err
 	}
+	policyMode = strings.TrimSpace(policyMode)
+	if policyMode == "" {
+		policyMode = string(metadata.PolicyModeAllowList)
+	}
+	switch metadata.PolicyMode(policyMode) {
+	case metadata.PolicyModeAllowList, metadata.PolicyModeObserve:
+	default:
+		return core.NewWithSentinel(nil, fmt.Sprintf("invalid policy mode %q; must be allow-list or observe", policyMode))
+	}
+	defaultDecision = strings.TrimSpace(defaultDecision)
+	if defaultDecision == "" {
+		defaultDecision = string(metadata.PolicyDecisionDeny)
+	}
+	switch metadata.PolicyDecision(defaultDecision) {
+	case metadata.PolicyDecisionAllow, metadata.PolicyDecisionDeny:
+	default:
+		return core.NewWithSentinel(nil, fmt.Sprintf("invalid default decision %q; must be allow or deny", defaultDecision))
+	}
 	if port <= 0 {
 		port = defaultDeployPort()
 	}
@@ -109,6 +127,11 @@ func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope str
 		registry.Version = "v1"
 	}
 
+	var session *metadata.SessionConfig
+	if sessionRequired {
+		session = &metadata.SessionConfig{Required: true}
+	}
+
 	server := metadata.ServerMetadata{
 		Name:             name,
 		Description:      fmt.Sprintf("%s MCP server", name),
@@ -119,32 +142,13 @@ func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope str
 		Route:            "/" + name + "/mcp",
 		Port:             port,
 		Tools:            nil,
-		Auth: &metadata.AuthConfig{
-			Mode:            metadata.AuthModeHeader,
-			HumanIDHeader:   "X-MCP-Human-ID",
-			AgentIDHeader:   "X-MCP-Agent-ID",
-			TeamIDHeader:    "X-MCP-Team-ID",
-			SessionIDHeader: "X-MCP-Agent-Session",
-			TokenHeader:     "Authorization",
-		},
 		Policy: &metadata.PolicyConfig{
-			Mode:            metadata.PolicyModeAllowList,
-			DefaultDecision: metadata.PolicyDecisionDeny,
-			EnforceOn:       "call_tool",
-			PolicyVersion:   "v1",
+			Mode:            metadata.PolicyMode(policyMode),
+			DefaultDecision: metadata.PolicyDecision(defaultDecision),
 		},
-		Session: &metadata.SessionConfig{
-			Required:            true,
-			Store:               "kubernetes",
-			HeaderName:          "X-MCP-Agent-Session",
-			MaxLifetime:         "24h",
-			IdleTimeout:         "1h",
-			UpstreamTokenHeader: "Authorization",
-		},
+		Session: session,
 		Gateway: &metadata.GatewayConfig{
-			Enabled:     true,
-			Port:        8091,
-			UpstreamURL: fmt.Sprintf("http://127.0.0.1:%d", port),
+			Enabled: true,
 		},
 	}
 	toolMetadata, err := initToolMetadata(tools, toolSpecs)

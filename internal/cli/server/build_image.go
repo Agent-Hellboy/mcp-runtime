@@ -116,7 +116,7 @@ func scopedRepositoryNameForBuild(ctx context.Context, serverName, metadataFile,
 	if scope == publishscope.Tenant {
 		client, err := platformapi.NewPlatformClient()
 		if err != nil {
-			return "", fmt.Errorf("build tenant-scoped image requires platform credentials; run mcp-runtime auth login or set MCP_PLATFORM_API_TOKEN and MCP_PLATFORM_API_URL: %w", err)
+			return "", fmt.Errorf("build tenant-scoped image requires platform credentials; run mcp-runtime auth login or set MCP_PLATFORM_API_TOKEN with a saved or explicit MCP_PLATFORM_API_URL: %w", err)
 		}
 		scopedCtx, cancel := context.WithTimeout(ctx, buildTenantScopeTimeout)
 		defer cancel()

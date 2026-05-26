@@ -380,6 +380,7 @@ mkdir -p "${E2E_PIPELINE_CONFIG_DIR}"
 STAGE_LOG_DIR="${WORKDIR}/stage-logs"
 KIND_CONFIG="$(mktemp)"
 KUBECONFIG_FILE="$(mktemp)"
+KUBECONFIG_BACKUP_FILE="$(mktemp)"
 ORIG_CONTEXT="$(kubectl config current-context 2>/dev/null || true)"
 PIDS=()
 PARALLEL_PIDS=()
@@ -417,6 +418,7 @@ cleanup() {
   rm -rf "${WORKDIR}"
   rm -f "${KIND_CONFIG}"
   rm -f "${KUBECONFIG_FILE}"
+  rm -f "${KUBECONFIG_BACKUP_FILE}"
 }
 trap cleanup EXIT
 
@@ -1825,19 +1827,31 @@ restart_deployment_pods() {
   kubectl rollout status "deploy/${name}" -n "${namespace}" --timeout="${timeout}"
 }
 
-prepare_example_metadata() {
+init_example_metadata() {
   local metadata_dir="$1"
   local server_name="$2"
-  local ingress_host="$3"
-  local route_path="$4"
-  local image_repo="$5"
-  local image_tag="$6"
+  local route_path="$3"
+  local image_repo="$4"
+  local image_tag="$5"
+  local smoke_tool="$6"
 
-  SERVER_NAME_OVERRIDE="${server_name}" \
-  SERVER_HOST_OVERRIDE="${ingress_host}" \
+  rm -rf "${metadata_dir}"
+  mkdir -p "${metadata_dir}"
+  (
+    cd "$(dirname "${metadata_dir}")"
+    "${PROJECT_ROOT}/bin/mcp-runtime" server init "${server_name}" \
+      --metadata-dir "$(basename "${metadata_dir}")" \
+      --image "${image_repo}" \
+      --tag "${image_tag}" \
+      --port 8088 \
+      --policy-mode observe \
+      --default-decision allow \
+      --session-required=false \
+      --tool "${smoke_tool}" \
+      --force
+  )
+
   SERVER_ROUTE_OVERRIDE="${route_path}" \
-  SERVER_IMAGE_OVERRIDE="${image_repo}" \
-  SERVER_IMAGE_TAG_OVERRIDE="${image_tag}" \
   METADATA_DIR_OVERRIDE="${metadata_dir}" \
   python3 <<'PY'
 from pathlib import Path
@@ -1846,131 +1860,72 @@ import os
 metadata_dir = Path(os.environ["METADATA_DIR_OVERRIDE"])
 path = metadata_dir / "servers.yaml"
 lines = path.read_text(encoding="utf-8").splitlines()
+route = os.environ["SERVER_ROUTE_OVERRIDE"].strip()
+prefix = route.strip("/")
+if prefix.endswith("/mcp"):
+    prefix = prefix[:-len("/mcp")].rstrip("/")
+
 updated = []
-server_name_updated = False
-server_image_updated = False
-server_image_tag_updated = False
-mcp_path_updated = False
-public_path_prefix_updated = False
-in_env_vars = False
-current_env_name = None
-resources_present = any(line.startswith("    resources:") for line in lines)
-image_tag_present = any(line.lstrip().startswith("imageTag: ") for line in lines)
-
-route_override = os.environ["SERVER_ROUTE_OVERRIDE"].strip()
-route_prefix = route_override.strip("/")
-if route_prefix.endswith("/mcp"):
-    route_prefix = route_prefix[: -len("/mcp")].rstrip("/")
-if not route_prefix:
-    route_prefix = os.environ["SERVER_NAME_OVERRIDE"]
-
+server_field_indent = None
+env_inserted = False
+resources_inserted = False
+public_path_prefix_seen = False
 for line in lines:
     stripped = line.lstrip()
     indent = line[: len(line) - len(stripped)]
-    if not server_name_updated and indent == "  " and stripped.startswith("- name: "):
-        updated.append(f"{indent}- name: {os.environ['SERVER_NAME_OVERRIDE']}")
-        server_name_updated = True
-    elif stripped.startswith("ingressHost: "):
-        updated.append(f"{indent}ingressHost: {os.environ['SERVER_HOST_OVERRIDE']}")
-    elif stripped.startswith("route: "):
-        updated.append(f"{indent}route: {os.environ['SERVER_ROUTE_OVERRIDE']}")
-    elif stripped.startswith("publicPathPrefix: "):
-        updated.append(f"{indent}publicPathPrefix: {route_prefix}")
-        public_path_prefix_updated = True
-    elif not server_image_updated and indent == "    " and stripped.startswith("image: "):
-        updated.append(f"{indent}image: {os.environ['SERVER_IMAGE_OVERRIDE']}")
-        server_image_updated = True
-        if not image_tag_present:
-            updated.append(f"{indent}imageTag: {os.environ['SERVER_IMAGE_TAG_OVERRIDE']}")
-            server_image_tag_updated = True
-    elif indent == "    " and stripped.startswith("imageTag: "):
-        updated.append(f"{indent}imageTag: {os.environ['SERVER_IMAGE_TAG_OVERRIDE']}")
-        server_image_tag_updated = True
-    elif indent == "    " and stripped == "envVars:":
-        in_env_vars = True
-        current_env_name = None
-        updated.append(line)
-    elif in_env_vars and indent == "      " and stripped.startswith("- name: "):
-        current_env_name = stripped.split(": ", 1)[1]
-        updated.append(line)
-    elif in_env_vars and current_env_name == "MCP_PATH" and indent == "        " and stripped.startswith("value: "):
-        updated.append(f'{indent}value: "{os.environ["SERVER_ROUTE_OVERRIDE"]}"')
-        mcp_path_updated = True
-    else:
-        if in_env_vars and indent.startswith("    ") and indent != "      " and indent != "        ":
-            in_env_vars = False
-            current_env_name = None
-        updated.append(line)
-if not server_image_updated:
-    final = []
-    inserted = False
-    for line in updated:
-        final.append(line)
-        stripped = line.lstrip()
-        indent = line[: len(line) - len(stripped)]
-        if not inserted and indent == "  " and stripped.startswith("- name: "):
-            final.append(f"{indent}  image: {os.environ['SERVER_IMAGE_OVERRIDE']}")
-            final.append(f"{indent}  imageTag: {os.environ['SERVER_IMAGE_TAG_OVERRIDE']}")
-            inserted = True
-    updated = final
-    server_image_updated = inserted
-    server_image_tag_updated = inserted
-if not mcp_path_updated:
-    final = []
-    inserted = False
-    for line in updated:
-        final.append(line)
-        stripped = line.lstrip()
-        indent = line[: len(line) - len(stripped)]
-        if not inserted and indent == "    " and stripped.startswith("namespace: "):
-            final.append(f"{indent}envVars:")
-            final.append(f"{indent}  - name: MCP_PATH")
-            final.append(f'{indent}    value: "{os.environ["SERVER_ROUTE_OVERRIDE"]}"')
-            inserted = True
-    updated = final
-    mcp_path_updated = inserted
-if not public_path_prefix_updated:
-    final = []
-    inserted = False
-    for line in updated:
-        final.append(line)
-        stripped = line.lstrip()
-        indent = line[: len(line) - len(stripped)]
-        if not inserted and indent == "    " and stripped.startswith("route: "):
-            final.append(f"{indent}publicPathPrefix: {route_prefix}")
-            inserted = True
-    updated = final
-    public_path_prefix_updated = inserted
-if not resources_present:
-    final = []
-    inserted = False
-    for line in updated:
-        final.append(line)
-        stripped = line.lstrip()
-        indent = line[: len(line) - len(stripped)]
-        if not inserted and indent == "    " and stripped.startswith("namespace: "):
-            final.append(f"{indent}resources:")
-            final.append(f"{indent}  requests:")
-            final.append(f"{indent}    cpu: 1m")
-            final.append(f"{indent}    memory: 32Mi")
-            inserted = True
-    updated = final
-    resources_present = inserted
-path.write_text("\n".join(updated) + "\n", encoding="utf-8")
+    updated.append(line)
+    if stripped.startswith("- name: ") and server_field_indent is None:
+        server_field_indent = indent + "  "
+    if server_field_indent is None:
+        continue
+    if indent == server_field_indent and stripped.startswith("route: "):
+        updated[-1] = f"{indent}route: {route}"
+    elif indent == server_field_indent and stripped.startswith("publicPathPrefix: "):
+        updated[-1] = f"{indent}publicPathPrefix: {prefix}"
+        public_path_prefix_seen = True
+    elif indent == server_field_indent and stripped.startswith("port: ") and not env_inserted:
+        updated.append(f"{indent}envVars:")
+        updated.append(f"{indent}  - name: MCP_PATH")
+        updated.append(f'{indent}    value: "{route}"')
+        env_inserted = True
+    elif indent == server_field_indent and stripped.startswith("scope: ") and not resources_inserted:
+        updated.append(f"{indent}resources:")
+        updated.append(f"{indent}  requests:")
+        updated.append(f"{indent}    cpu: 1m")
+        updated.append(f"{indent}    memory: 32Mi")
+        resources_inserted = True
 
-# Verify substitutions landed; missing fields cause silent failures later.
-if not server_name_updated:
-    raise SystemExit(f"prepare_example_metadata: no '- name:' entry found to replace in {path}")
-if not server_image_updated:
-    raise SystemExit(f"prepare_example_metadata: image field was not updated in {path}")
-if not server_image_tag_updated:
-    raise SystemExit(f"prepare_example_metadata: imageTag field was not updated in {path}")
-if not mcp_path_updated:
-    raise SystemExit(f"prepare_example_metadata: MCP_PATH env var was not updated in {path}")
-if not public_path_prefix_updated:
-    raise SystemExit(f"prepare_example_metadata: publicPathPrefix was not updated in {path}")
-if not resources_present:
-    raise SystemExit(f"prepare_example_metadata: resources were not inserted in {path}")
+if not env_inserted:
+    raise SystemExit(f"init_example_metadata: failed to insert MCP_PATH env var in {path}")
+if prefix and not public_path_prefix_seen:
+    final = []
+    inserted = False
+    for line in updated:
+        final.append(line)
+        stripped = line.lstrip()
+        indent = line[: len(line) - len(stripped)]
+        if not inserted and indent == server_field_indent and stripped.startswith("route: "):
+            final.append(f"{indent}publicPathPrefix: {prefix}")
+            inserted = True
+    updated = final
+    public_path_prefix_seen = inserted
+if prefix and not public_path_prefix_seen:
+    raise SystemExit(f"init_example_metadata: failed to set publicPathPrefix in {path}")
+if not resources_inserted:
+    raise SystemExit(f"init_example_metadata: failed to insert resources in {path}")
+
+# These sample servers are deployed directly into the local Kind namespace.
+# Leaving scope unset keeps server build on the local registry path instead of
+# resolving tenant registry ownership through platform credentials.
+updated = [
+    line for line in updated
+    if not (
+        server_field_indent is not None
+        and line[: len(line) - len(line.lstrip())] == server_field_indent
+        and line.lstrip().startswith("scope: ")
+    )
+]
+path.write_text("\n".join(updated) + "\n", encoding="utf-8")
 PY
 }
 
@@ -1985,6 +1940,7 @@ deploy_example_server_via_pipeline() {
   local route_path="$3"
   local example_source_dir="$4"
   local example_workspace_dir="$5"
+  local smoke_tool="$6"
   local image_repo
   local image_ref
 
@@ -1994,7 +1950,7 @@ deploy_example_server_via_pipeline() {
 
   image_repo="registry.registry.svc.cluster.local:5000/${server_name}"
   image_ref="${image_repo}:${E2E_WORKLOAD_TAG}"
-  prepare_example_metadata "${example_workspace_dir}/.mcp" "${server_name}" "${ingress_host}" "${route_path}" "${image_repo}" "${E2E_WORKLOAD_TAG}"
+  init_example_metadata "${example_workspace_dir}/.mcp" "${server_name}" "${route_path}" "${image_repo}" "${E2E_WORKLOAD_TAG}" "${smoke_tool}"
 
   if cache_mode_enabled && docker image inspect "${image_ref}" >/dev/null 2>&1; then
     echo "[cache] skipping example image build for ${image_ref}"
@@ -2664,6 +2620,9 @@ refresh_kind_kubeconfig() {
   local refreshed_kubeconfig
   local existing_ok=0
 
+  if [[ -s "${KUBECONFIG_FILE}" ]]; then
+    cp "${KUBECONFIG_FILE}" "${KUBECONFIG_BACKUP_FILE}" 2>/dev/null || true
+  fi
   if [[ -s "${KUBECONFIG_FILE}" ]] && KUBECONFIG="${KUBECONFIG_FILE}" kubectl cluster-info --request-timeout=5s >/dev/null 2>&1; then
     existing_ok=1
   fi
@@ -2671,14 +2630,19 @@ refresh_kind_kubeconfig() {
   refreshed_kubeconfig="$(mktemp)"
   if kind get kubeconfig --name "${CLUSTER_NAME}" > "${refreshed_kubeconfig}" 2>/dev/null && [[ -s "${refreshed_kubeconfig}" ]]; then
     mv "${refreshed_kubeconfig}" "${KUBECONFIG_FILE}"
+    cp "${KUBECONFIG_FILE}" "${KUBECONFIG_BACKUP_FILE}" 2>/dev/null || true
   else
     rm -f "${refreshed_kubeconfig}"
     if [[ "${existing_ok}" -eq 1 ]]; then
       echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; reusing existing ${KUBECONFIG_FILE}" >&2
     elif [[ -s "${KUBECONFIG_FILE}" ]]; then
       echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; reusing existing ${KUBECONFIG_FILE}" >&2
+    elif [[ -s "${KUBECONFIG_BACKUP_FILE}" ]]; then
+      cp "${KUBECONFIG_BACKUP_FILE}" "${KUBECONFIG_FILE}"
+      echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; restored last-known-good kubeconfig" >&2
     elif kubectl config view --raw --minify > "${refreshed_kubeconfig}" 2>/dev/null && [[ -s "${refreshed_kubeconfig}" ]]; then
       mv "${refreshed_kubeconfig}" "${KUBECONFIG_FILE}"
+      cp "${KUBECONFIG_FILE}" "${KUBECONFIG_BACKUP_FILE}" 2>/dev/null || true
       echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; captured current kubectl context" >&2
     else
       rm -f "${refreshed_kubeconfig}"
@@ -2998,19 +2962,22 @@ parallel_start "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" "deploy ${PYTHON_EXAMPLE_SERV
   "${PYTHON_EXAMPLE_SERVER_HOST}" \
   "${PYTHON_EXAMPLE_SERVER_ROUTE}" \
   "${PYTHON_EXAMPLE_SOURCE_DIR}" \
-  "${PYTHON_EXAMPLE_WORKDIR}"
+  "${PYTHON_EXAMPLE_WORKDIR}" \
+  "echo"
 parallel_start "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" "deploy ${RUST_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
   "${RUST_EXAMPLE_SERVER_NAME}" \
   "${RUST_EXAMPLE_SERVER_HOST}" \
   "${RUST_EXAMPLE_SERVER_ROUTE}" \
   "${RUST_EXAMPLE_SOURCE_DIR}" \
-  "${RUST_EXAMPLE_WORKDIR}"
+  "${RUST_EXAMPLE_WORKDIR}" \
+  "repeat"
 parallel_start "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" "deploy ${GO_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
   "${GO_EXAMPLE_SERVER_NAME}" \
   "${GO_EXAMPLE_SERVER_HOST}" \
   "${GO_EXAMPLE_SERVER_ROUTE}" \
   "${GO_EXAMPLE_SOURCE_DIR}" \
-  "${GO_EXAMPLE_WORKDIR}"
+  "${GO_EXAMPLE_WORKDIR}" \
+  "lower"
 parallel_wait_all
 
 echo "[cli] checking server commands"
@@ -3106,47 +3073,27 @@ print(json.dumps(config, indent=2))
 PYEOF
 
 echo "[policy] applying access grant via CLI"
-cat >"${WORKDIR}/access-grant.yaml" <<EOF
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPAccessGrant
-metadata:
-  name: ${SERVER_NAME}-grant
-  namespace: mcp-servers
-spec:
-  serverRef:
-    name: ${SERVER_NAME}
-  subject:
-    humanID: ${HUMAN_ID}
-    agentID: ${AGENT_ID}
-  maxTrust: high
-  allowedSideEffects: [read]
-  policyVersion: v1
-  toolRules:
-    - name: aaa-ping
-      decision: allow
-    - name: echo
-      decision: allow
-    - name: upper
-      decision: allow
-EOF
+"${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant init "${SERVER_NAME}-grant" \
+  --server "${SERVER_NAME}" \
+  --human-id "${HUMAN_ID}" \
+  --agent-id "${AGENT_ID}" \
+  --trust high \
+  --side-effect read \
+  --tool aaa-ping \
+  --tool echo \
+  --tool upper \
+  --output "${WORKDIR}/access-grant.yaml" \
+  --force
 (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant.yaml)
 
 echo "[policy] applying low-trust session via CLI"
-cat >"${WORKDIR}/access-session.yaml" <<EOF
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPAgentSession
-metadata:
-  name: ${SESSION_ID}
-  namespace: mcp-servers
-spec:
-  serverRef:
-    name: ${SERVER_NAME}
-  subject:
-    humanID: ${HUMAN_ID}
-    agentID: ${AGENT_ID}
-  consentedTrust: low
-  policyVersion: v1
-EOF
+"${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session init "${SESSION_ID}" \
+  --server "${SERVER_NAME}" \
+  --human-id "${HUMAN_ID}" \
+  --agent-id "${AGENT_ID}" \
+  --trust low \
+  --output "${WORKDIR}/access-session.yaml" \
+  --force
 (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session apply --file access-session.yaml)
 
 wait_for_policy_text "\"name\": \"${SESSION_ID}\""

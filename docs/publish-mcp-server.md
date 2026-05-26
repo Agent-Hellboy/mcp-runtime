@@ -170,15 +170,6 @@ servers:
     route: /payments
     port: 8088
     replicas: 1
-    auth:
-      mode: header
-    policy:
-      mode: allow-list
-      defaultDecision: deny
-      enforceOn: call_tool
-      policyVersion: v1
-    session:
-      required: true
     gateway:
       enabled: true
     tools:
@@ -203,11 +194,13 @@ servers:
 - `imageTag`
   The image tag.
 - `scope`
-  Optional publish destination: `tenant`, `org`, or `public`. `org` resolves to
-  the org catalog namespace, and `public` resolves to the public catalog
-  namespace. `tenant` selects one of the authenticated user's team namespaces
-  when you publish through the platform API; when generating Kubernetes YAML
-  directly, set `namespace` explicitly for team deployments.
+  Optional publish destination: `tenant`, `org`, or `public`. `server init`
+  writes `scope: tenant` by default so new metadata starts in the private team
+  publish path. `org` resolves to the org catalog namespace, and `public`
+  resolves to the public catalog namespace. `tenant` selects one of the
+  authenticated user's team namespaces when you publish through the platform
+  API; when generating Kubernetes YAML directly, set `namespace` explicitly for
+  team deployments.
 - `route`
   The public path prefix that will become the server ingress path.
 - `port`
@@ -219,13 +212,15 @@ servers:
 - `tools`
   Tool inventory for the platform catalog and policy authoring. Include each tool's description when the MCP server SDK exposes one through `tools/list`, and set `sideEffect` to `read`, `write`, or `destructive`. Tool side effects are required when a tool is listed.
 - `auth`, `policy`, `session`, and `gateway`
-  Governed request-path settings. `server init` writes header auth, allow-list/deny policy, required adapter-issued sessions, and `gateway.enabled: true` so public tool calls go through the adapter/session path by default.
+  Governed request-path settings. `server init` writes `gateway.enabled: true`, allow-list/deny policy, and `session.required: true` so public tool calls go through the adapter/session path by default. Use `--policy-mode`, `--default-decision`, or `--session-required=false` to change those scaffolded values. Init omits platform-managed gateway wiring and auth/session header details unless you override them intentionally.
 
 ### Metadata defaults
 
 If fields are omitted, the loader applies defaults:
 
 - image defaults toward the platform registry path
+- `server init` writes `scope: tenant` unless you pass `--scope org` or
+  `--scope public`
 - `scope: org` / `scope: public` prefix default image repositories with
   `org/` or `public/` and default the generated namespace to
   `mcp-servers-org` or `mcp-servers-public`
@@ -234,8 +229,9 @@ If fields are omitted, the loader applies defaults:
 - port defaults to `8088`
 - replicas default to `1`
 - namespace defaults to `mcp-servers`
-- `server init` writes explicit governed defaults; hand-authored metadata may
-  omit them only when you intentionally want the platform/operator defaults
+- `server init` omits platform-managed gateway wiring and auth/session header
+  details; add those fields only when you intentionally need to override the
+  platform/operator defaults
 
 For multi-team deployments, set `scope: tenant` and deploy through
 `server deploy --scope tenant` with platform credentials. The platform API
@@ -266,7 +262,7 @@ MCP Runtime supports two practical image flows. Keep these flows separate so tag
 ./bin/mcp-runtime server build image payments --tag v1.0.0 --platform linux/amd64
 ```
 
-`server build image` builds the image, resolves the target registry host, tags the local image with that resolved reference, and rewrites matching `.mcp` metadata (`image` and `imageTag`). The command defaults Docker builds to `linux/amd64`, matching common amd64 Kubernetes nodes; set `--platform` or `MCP_DOCKER_PLATFORM` when your target nodes use another architecture. Registry resolution prefers explicit registry env, then the cluster's `registry/registry` Ingress host, before falling back to the registry Service address. When metadata sets `scope: tenant`, the build command uses platform credentials to resolve the same team repository prefix that `registry push --scope tenant` uses, so log in first or set `MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`.
+`server build image` builds the image, resolves the target registry host, tags the local image with that resolved reference, and rewrites matching `.mcp` metadata (`image` and `imageTag`). The command defaults Docker builds to `linux/amd64`, matching common amd64 Kubernetes nodes; set `--platform` or `MCP_DOCKER_PLATFORM` when your target nodes use another architecture. Registry resolution prefers explicit registry env, then the cluster's `registry/registry` Ingress host, before falling back to the registry Service address. When metadata sets `scope: tenant`, the build command uses platform credentials to resolve the same team repository prefix that `registry push --scope tenant` uses, so log in first or set `MCP_PLATFORM_API_TOKEN` with a saved or explicit `MCP_PLATFORM_API_URL`.
 
 After this command, push the exact image reference produced by the build output (or read it from the rewritten metadata):
 
@@ -276,7 +272,8 @@ mcp-runtime auth login --api-url https://platform.example.com
 ```
 
 `registry push` requires platform credentials from `mcp-runtime auth login` or
-`MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`; unauthenticated pushes are
+`MCP_PLATFORM_API_TOKEN` with a saved or explicit `MCP_PLATFORM_API_URL`;
+unauthenticated pushes are
 rejected before Docker or the in-cluster helper starts. `<exact-image-ref-from-build>`
 may be a resolved public registry host such as `registry.example.com/org/payments:v1.0.0`,
 or a registry Service address when no public registry Ingress is configured.

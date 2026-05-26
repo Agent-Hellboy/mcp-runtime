@@ -359,7 +359,7 @@ func requirePlatformPushCredentials(ctx context.Context) (*platformapi.PlatformC
 	}
 	client, err := platformapi.NewPlatformClient()
 	if err != nil {
-		return nil, fmt.Errorf("registry push requires platform credentials; run mcp-runtime auth login or set MCP_PLATFORM_API_TOKEN and MCP_PLATFORM_API_URL: %w", err)
+		return nil, fmt.Errorf("registry push requires platform credentials; run mcp-runtime auth login or set MCP_PLATFORM_API_TOKEN with a saved or explicit MCP_PLATFORM_API_URL: %w", err)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

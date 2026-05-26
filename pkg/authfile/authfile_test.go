@@ -27,6 +27,49 @@ func TestResolveToken_PrefersEnv(t *testing.T) {
 	}
 }
 
+func TestResolveToken_EnvTokenUsesSavedAPIURL(t *testing.T) {
+	d := t.TempDir()
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", d)
+	t.Setenv(EnvAPIToken, "envkey")
+	p := filepath.Join(d, "config.json")
+	if err := SaveProfile(p, "admin", CredentialAccount{APIBaseURL: "https://admin.example", Token: "admin-token"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveProfile(p, "acme", CredentialAccount{APIBaseURL: "https://acme.example", Token: "acme-token"}); err != nil {
+		t.Fatal(err)
+	}
+
+	tok, api, src, err := ResolveToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok != "envkey" || api != "https://acme.example" || src != EnvAPIToken {
+		t.Fatalf("got %q %q %q", tok, api, src)
+	}
+}
+
+func TestResolveToken_EnvTokenUsesSavedProfileAPIURL(t *testing.T) {
+	d := t.TempDir()
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", d)
+	t.Setenv(EnvAPIToken, "envkey")
+	t.Setenv(EnvAPIProfile, "admin")
+	p := filepath.Join(d, "config.json")
+	if err := SaveProfile(p, "admin", CredentialAccount{APIBaseURL: "https://admin.example", Token: "admin-token"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveProfile(p, "acme", CredentialAccount{APIBaseURL: "https://acme.example", Token: "acme-token"}); err != nil {
+		t.Fatal(err)
+	}
+
+	tok, api, src, err := ResolveToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok != "envkey" || api != "https://admin.example" || src != EnvAPIToken {
+		t.Fatalf("got %q %q %q", tok, api, src)
+	}
+}
+
 func TestConfigDir_RespectsEnv(t *testing.T) {
 	d := t.TempDir()
 	t.Setenv("MCP_RUNTIME_CONFIG_DIR", d)

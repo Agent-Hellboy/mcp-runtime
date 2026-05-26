@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/pkg/metadata"
 )
 
 // New returns the server command.
@@ -41,6 +42,9 @@ For pushing images, use 'registry push'.`,
 	var initImage string
 	var initTag string
 	var initScope string
+	var initPolicyMode string
+	var initDefaultDecision string
+	var initSessionRequired bool
 	var initPort int32
 	var initTools []string
 	var initToolSpecs []string
@@ -51,13 +55,16 @@ For pushing images, use 'registry push'.`,
 		Long:  "Initialize .mcp/servers.yaml metadata for a server. Use repeated --tool flags to seed governed tool metadata, then build, push, and deploy with server build image, registry push, and server deploy.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return mgr.InitServer(args[0], initMetadataDir, initImage, initTag, initScope, initPort, initTools, initToolSpecs, initForce)
+			return mgr.InitServer(args[0], initMetadataDir, initImage, initTag, initScope, initPolicyMode, initDefaultDecision, initSessionRequired, initPort, initTools, initToolSpecs, initForce)
 		},
 	}
 	initCmd.Flags().StringVar(&initMetadataDir, "metadata-dir", ".mcp", "Directory where servers.yaml will be written")
 	initCmd.Flags().StringVar(&initImage, "image", "", "Container image repository (default: server name)")
 	initCmd.Flags().StringVar(&initTag, "tag", "latest", "Container image tag")
 	initCmd.Flags().StringVar(&initScope, "scope", "tenant", "Publish scope: tenant, org, or public")
+	initCmd.Flags().StringVar(&initPolicyMode, "policy-mode", string(metadata.PolicyModeAllowList), "Policy mode: allow-list or observe")
+	initCmd.Flags().StringVar(&initDefaultDecision, "default-decision", string(metadata.PolicyDecisionDeny), "Default policy decision: allow or deny")
+	initCmd.Flags().BoolVar(&initSessionRequired, "session-required", true, "Require adapter-issued agent sessions")
 	initCmd.Flags().Int32Var(&initPort, "port", defaultDeployPort(), "Container port")
 	initCmd.Flags().StringArrayVar(&initTools, "tool", nil, "Tool name to add with read side-effect metadata; repeat for multiple tools")
 	initCmd.Flags().StringArrayVar(&initToolSpecs, "tool-spec", nil, "Tool metadata as name:low|medium|high:read|write|destructive; repeat for mixed trust or side effects")

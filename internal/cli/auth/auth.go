@@ -65,7 +65,7 @@ The token is stored in a local file (mode 0600) under the user config directory,
 
 Optional environment:
   ` + authfile.EnvAPIURL + `      default API base for login, e.g. https://platform.example.com
-  ` + authfile.EnvAPIToken + `    use this token for API calls; overrides a saved file
+  ` + authfile.EnvAPIToken + `    use this token for API calls; overrides the saved token
   ` + authfile.EnvAPIProfile + `  select a saved credentials profile
   MCP_RUNTIME_CONFIG_DIR    override the config directory (default ~/.mcpruntime)`,
 	}
@@ -287,12 +287,8 @@ func (m *manager) NewStatusCmd() *cobra.Command {
 		Short: "Show whether platform API credentials are configured",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			stdout := cmd.OutOrStdout()
-			stderr := cmd.ErrOrStderr()
 			if t := strings.TrimSpace(os.Getenv(authfile.EnvAPIToken)); t != "" {
-				fmt.Fprintln(stdout, "A platform API token is set in "+authfile.EnvAPIToken+" and overrides any saved file.")
-				if b := strings.TrimSpace(os.Getenv(authfile.EnvAPIURL)); b == "" {
-					fmt.Fprintln(stderr, "Note: "+authfile.EnvAPIURL+" is not set. Commands that need a base URL require it (or a saved `mcp-runtime auth login`).")
-				}
+				fmt.Fprintln(stdout, "A platform API token is set in "+authfile.EnvAPIToken+" and overrides any saved token.")
 			} else {
 				p, perr := authfile.FilePath()
 				if perr == nil {
@@ -316,7 +312,7 @@ func (m *manager) NewStatusCmd() *cobra.Command {
 			if api != "" {
 				fmt.Fprintln(stdout, "  API base URL:", api)
 			} else {
-				fmt.Fprintln(stdout, "  API base URL: (set --api-url on login or "+authfile.EnvAPIURL+" if using "+authfile.EnvAPIToken+" only)")
+				fmt.Fprintln(stdout, "  API base URL: (set --api-url on login or "+authfile.EnvAPIURL+")")
 			}
 			if c, cErr := fileCredentialsIfRelevant(); cErr == nil && c != nil {
 				account, profile, aErr := c.SelectedAccount(os.Getenv(authfile.EnvAPIProfile))
