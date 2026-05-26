@@ -328,10 +328,10 @@ GET  /api/runtime/teams                # Admin: all teams; user: caller membersh
 POST /api/runtime/teams                # Admin-only team + namespace provisioning
 GET  /api/runtime/teams/{team}         # Team metadata (admin/member)
 GET  /api/runtime/teams/{team}/members # List team memberships (admin/member)
-POST /api/runtime/teams/{team}/members # Admin/team-owner membership upsert
+PUT  /api/runtime/teams/{team}/members/{userID} # Admin/team-owner membership upsert
 POST /api/runtime/teams/{team}/users   # Admin-only password user create/update + team membership
-POST /api/runtime/registry/push        # Multipart docker-save upload; in-cluster skopeo push to platform registry
 DELETE /api/runtime/teams/{team}/members/{userID}
+POST /api/runtime/registry/push        # Multipart docker-save upload; in-cluster skopeo push to platform registry
 GET  /api/runtime/namespaces           # Allowed namespaces + org catalog metadata
 GET  /api/runtime/namespaces/{namespace}
 GET  /api/runtime/components           # Admin-only Sentinel component health status
@@ -414,10 +414,8 @@ identify the human principal that should own the `MCPAgentSession`.
 Safe operational actions for grants, sessions, and components.
 
 ```text
-POST /api/runtime/grants/{namespace}/{name}/disable
-POST /api/runtime/grants/{namespace}/{name}/enable
-POST /api/runtime/sessions/{namespace}/{name}/revoke
-POST /api/runtime/sessions/{namespace}/{name}/unrevoke
+PATCH /api/runtime/grants/{namespace}/{name}
+PATCH /api/runtime/sessions/{namespace}/{name}
 POST /api/runtime/actions/restart     # Body: {component: "api"} or {all: true}
 ```
 
@@ -441,11 +439,11 @@ GET  /api/admin/audit                  # Admin-only audit timeline; supports use
 GET  /api/admin/operations             # Admin-only user, image, deployment, and timeline view
 GET  /api/user/api-keys                # List caller-owned API keys
 POST /api/user/api-keys                # Create caller-owned API key
-POST /api/user/api-keys/{id}/revoke    # Revoke caller-owned API key
+DELETE /api/user/api-keys/{id}         # Revoke caller-owned API key
 GET  /api/user/analytics/usage         # User/team-scoped MCP server analytics
 GET  /api/user/registry-credentials    # List caller-owned registry credentials
 POST /api/user/registry-credentials    # Create a registry credential
-POST /api/user/registry-credentials/{id}/revoke
+DELETE /api/user/registry-credentials/{id}
 *    /api/registry/authz               # Traefik forward-auth for registry ingress
 POST /api/user/activity/image-publish  # Record a successful user image publish event
 ```

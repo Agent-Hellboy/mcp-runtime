@@ -328,6 +328,17 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"user":{"id":"user-1","email":"member@example.com","role":"user"},"membership":{"team_slug":"core","team_namespace":"mcp-team-core","user_id":"user-1","email":"member@example.com","role":"member"}}`)),
 				}, nil
+			case r.Method == http.MethodPut && r.URL.Path == "/api/runtime/teams/core/members/user-1":
+				body, _ := io.ReadAll(r.Body)
+				var payload map[string]string
+				_ = json.Unmarshal(body, &payload)
+				if payload["role"] != "member" {
+					t.Fatalf("upsert team member payload = %#v", payload)
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"membership":{"team_slug":"core","team_namespace":"mcp-team-core","user_id":"user-1","email":"member@example.com","role":"member"}}`)),
+				}, nil
 			case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/servers":
 				if got := r.URL.Query().Get("namespace"); got != "" {
 					t.Fatalf("list runtime servers namespace query = %q, want empty", got)
@@ -395,6 +406,13 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 	if created.Email != "member@example.com" || created.TeamSlug != "core" {
 		t.Fatalf("created membership = %#v", created)
 	}
+	upserted, err := client.UpsertTeamMember(context.Background(), "core", "user-1", "member")
+	if err != nil {
+		t.Fatalf("UpsertTeamMember() error = %v", err)
+	}
+	if upserted.UserID != "user-1" || upserted.Role != "member" {
+		t.Fatalf("upserted membership = %#v", upserted)
+	}
 	if _, err := client.ListRuntimeServers(context.Background(), ""); err != nil {
 		t.Fatalf("ListRuntimeServers() error = %v", err)
 	}
@@ -410,6 +428,46 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 	}
 	if err := client.DeleteRuntimeServer(context.Background(), "mcp-team-core", "demo"); err != nil {
 		t.Fatalf("DeleteRuntimeServer() error = %v", err)
+	}
+}
+
+func TestPlatformClientAccessPatchRoutes(t *testing.T) {
+	httpClient := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			switch {
+			case r.Method == http.MethodPatch && r.URL.Path == "/api/runtime/grants/mcp-servers/grant-a":
+				body, _ := io.ReadAll(r.Body)
+				var payload map[string]any
+				_ = json.Unmarshal(body, &payload)
+				if payload["disabled"] != true {
+					t.Fatalf("grant patch payload = %#v", payload)
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"success":true}`))}, nil
+			case r.Method == http.MethodPatch && r.URL.Path == "/api/runtime/sessions/mcp-servers/session-a":
+				body, _ := io.ReadAll(r.Body)
+				var payload map[string]any
+				_ = json.Unmarshal(body, &payload)
+				if payload["revoked"] != true {
+					t.Fatalf("session patch payload = %#v", payload)
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"success":true}`))}, nil
+			default:
+				t.Fatalf("unexpected route %s %s", r.Method, r.URL.Path)
+				return nil, nil
+			}
+		}),
+	}
+	client := &PlatformClient{
+		baseURL:   "https://platform.example.com",
+		token:     "token-1",
+		http:      httpClient,
+		apiPrefix: "/api",
+	}
+	if err := client.PatchGrant(context.Background(), "mcp-servers", "grant-a", true); err != nil {
+		t.Fatalf("PatchGrant() error = %v", err)
+	}
+	if err := client.PatchSession(context.Background(), "mcp-servers", "session-a", true); err != nil {
+		t.Fatalf("PatchSession() error = %v", err)
 	}
 }
 

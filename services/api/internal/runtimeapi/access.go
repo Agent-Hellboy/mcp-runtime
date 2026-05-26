@@ -41,6 +41,14 @@ type accessSessionRequest struct {
 	PolicyVersion  string                         `json:"policyVersion"`
 }
 
+type accessGrantPatchRequest struct {
+	Disabled *bool `json:"disabled,omitempty"`
+}
+
+type accessSessionPatchRequest struct {
+	Revoked *bool `json:"revoked,omitempty"`
+}
+
 // HandleRuntimeGrants lists and applies MCPAccessGrant resources within the caller's allowed namespace scope.
 func (s *RuntimeServer) HandleRuntimeGrants(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -426,7 +434,7 @@ func accessServerCacheKey(namespace, name string) string {
 	return strings.TrimSpace(namespace) + "\x00" + strings.TrimSpace(name)
 }
 
-// HandleGrantItemPath handles GET, DELETE, and enable or disable actions for one MCPAccessGrant.
+// HandleGrantItemPath handles GET, DELETE, PATCH, and legacy enable or disable actions for one MCPAccessGrant.
 func (s *RuntimeServer) HandleGrantItemPath(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -445,11 +453,19 @@ func (s *RuntimeServer) HandleGrantItemPath(w http.ResponseWriter, r *http.Reque
 		}
 		s.handleGrantDelete(w, r, ns, name)
 		return
+	case http.MethodPatch:
+		ns, name, err := extractNamespacedPath(r.URL.Path, "/api/runtime/grants/", 2)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.handleGrantPatch(w, r, ns, name)
+		return
 	case http.MethodPost:
 		s.handleGrantPostTogglePath(w, r)
 		return
 	default:
-		w.Header().Set("allow", "GET, POST, DELETE")
+		w.Header().Set("allow", "GET, POST, PATCH, DELETE")
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 }
@@ -521,7 +537,68 @@ func (s *RuntimeServer) handleGrantDelete(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// handleGrantPostTogglePath handles POST /api/runtime/grants/{namespace}/{name}/disable|enable
+func (s *RuntimeServer) handleGrantPatch(w http.ResponseWriter, r *http.Request, namespace, name string) {
+	if s.accessMgr == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
+		return
+	}
+
+	namespace, err := s.scopedAccessWriteNamespaceForPrincipal(r.Context(), namespace)
+	if err != nil {
+		writeAPIError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	grant, err := s.accessMgr.GetGrant(ctx, name, namespace)
+	if err != nil {
+		code, msg := k8sclient.HTTPStatusFromK8sError(err)
+		writeAPIError(w, code, msg)
+		return
+	}
+	allowed, err := s.canAdministerAccessServerRef(ctx, namespace, grant.Spec.ServerRef)
+	if err != nil {
+		log.Printf("patch grant %s/%s authz lookup failed: %v", namespace, name, err)
+		writeAPIError(w, http.StatusInternalServerError, "failed to verify server reference")
+		return
+	}
+	if !allowed {
+		writeAPIError(w, http.StatusForbidden, "forbidden server")
+		return
+	}
+
+	var req accessGrantPatchRequest
+	r.Body = http.MaxBytesReader(w, r.Body, accessApplyMaxBytes)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeBodyDecodeError(w, err)
+		return
+	}
+	if req.Disabled == nil {
+		writeAPIError(w, http.StatusBadRequest, "disabled is required")
+		return
+	}
+
+	var updateErr error
+	if *req.Disabled {
+		updateErr = s.accessMgr.DisableGrant(ctx, name, namespace)
+	} else {
+		updateErr = s.accessMgr.EnableGrant(ctx, name, namespace)
+	}
+	if updateErr != nil {
+		writeAPIError(w, http.StatusInternalServerError, "failed to update grant")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":   true,
+		"name":      name,
+		"namespace": namespace,
+		"disabled":  *req.Disabled,
+	})
+}
+
+// handleGrantPostTogglePath handles legacy POST /api/runtime/grants/{namespace}/{name}/disable|enable.
 func (s *RuntimeServer) handleGrantPostTogglePath(w http.ResponseWriter, r *http.Request) {
 	params, err := serviceutil.ExtractGrantActionParams(r, "/api/runtime/grants/")
 	if err != nil {
@@ -742,7 +819,7 @@ func validDecision(decision sentinelaccess.PolicyDecision) bool {
 	}
 }
 
-// HandleSessionItemPath handles GET, DELETE, and revoke or unrevoke actions for one MCPAgentSession.
+// HandleSessionItemPath handles GET, DELETE, PATCH, and legacy revoke or unrevoke actions for one MCPAgentSession.
 func (s *RuntimeServer) HandleSessionItemPath(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -761,11 +838,19 @@ func (s *RuntimeServer) HandleSessionItemPath(w http.ResponseWriter, r *http.Req
 		}
 		s.handleSessionDelete(w, r, ns, name)
 		return
+	case http.MethodPatch:
+		ns, name, err := extractNamespacedPath(r.URL.Path, "/api/runtime/sessions/", 2)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.handleSessionPatch(w, r, ns, name)
+		return
 	case http.MethodPost:
 		s.handleSessionPostTogglePath(w, r)
 		return
 	default:
-		w.Header().Set("allow", "GET, POST, DELETE")
+		w.Header().Set("allow", "GET, POST, PATCH, DELETE")
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 }
@@ -857,7 +942,68 @@ func (s *RuntimeServer) handleSessionDelete(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// handleSessionPostTogglePath handles POST /api/runtime/sessions/{namespace}/{name}/revoke|unrevoke
+func (s *RuntimeServer) handleSessionPatch(w http.ResponseWriter, r *http.Request, namespace, name string) {
+	if s.accessMgr == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
+		return
+	}
+
+	namespace, nsErr := s.scopedAccessWriteNamespaceForPrincipal(r.Context(), namespace)
+	if nsErr != nil {
+		writeAPIError(w, http.StatusForbidden, nsErr.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	session, err := s.accessMgr.GetSession(ctx, name, namespace)
+	if err != nil {
+		code, msg := k8sclient.HTTPStatusFromK8sError(err)
+		writeAPIError(w, code, msg)
+		return
+	}
+	allowed, err := s.canAdministerAccessServerRef(ctx, namespace, session.Spec.ServerRef)
+	if err != nil {
+		log.Printf("patch session %s/%s authz lookup failed: %v", namespace, name, err)
+		writeAPIError(w, http.StatusInternalServerError, "failed to verify server reference")
+		return
+	}
+	if !allowed {
+		writeAPIError(w, http.StatusForbidden, "forbidden server")
+		return
+	}
+
+	var req accessSessionPatchRequest
+	r.Body = http.MaxBytesReader(w, r.Body, accessApplyMaxBytes)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeBodyDecodeError(w, err)
+		return
+	}
+	if req.Revoked == nil {
+		writeAPIError(w, http.StatusBadRequest, "revoked is required")
+		return
+	}
+
+	var updateErr error
+	if *req.Revoked {
+		updateErr = s.accessMgr.RevokeSession(ctx, name, namespace)
+	} else {
+		updateErr = s.accessMgr.UnrevokeSession(ctx, name, namespace)
+	}
+	if updateErr != nil {
+		writeAPIError(w, http.StatusInternalServerError, "failed to update session")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":   true,
+		"name":      name,
+		"namespace": namespace,
+		"revoked":   *req.Revoked,
+	})
+}
+
+// handleSessionPostTogglePath handles legacy POST /api/runtime/sessions/{namespace}/{name}/revoke|unrevoke.
 func (s *RuntimeServer) handleSessionPostTogglePath(w http.ResponseWriter, r *http.Request) {
 	params, err := serviceutil.ExtractSessionActionParams(r, "/api/runtime/sessions/")
 	if err != nil {

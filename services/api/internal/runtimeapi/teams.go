@@ -64,7 +64,10 @@ func (s *RuntimeServer) HandleRuntimeTeamItemPath(w http.ResponseWriter, r *http
 		s.handleRuntimeTeamMemberList(w, r, p, teamSlug)
 		return
 	case len(parts) == 2 && parts[1] == "members" && r.Method == http.MethodPost:
-		s.handleRuntimeTeamMemberUpsert(w, r, p, teamSlug)
+		s.handleRuntimeTeamMemberUpsertLegacy(w, r, p, teamSlug)
+		return
+	case len(parts) == 3 && parts[1] == "members" && r.Method == http.MethodPut:
+		s.handleRuntimeTeamMemberUpsert(w, r, p, teamSlug, strings.TrimSpace(parts[2]))
 		return
 	case len(parts) == 3 && parts[1] == "members" && r.Method == http.MethodDelete:
 		s.handleRuntimeTeamMemberDelete(w, r, p, teamSlug, strings.TrimSpace(parts[2]))
@@ -73,7 +76,7 @@ func (s *RuntimeServer) HandleRuntimeTeamItemPath(w http.ResponseWriter, r *http
 		s.handleRuntimeTeamUserCreate(w, r, p, teamSlug)
 		return
 	default:
-		w.Header().Set("allow", "GET, POST, DELETE")
+		w.Header().Set("allow", "GET, POST, PUT, DELETE")
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 }
@@ -325,23 +328,36 @@ func (s *RuntimeServer) handleRuntimeTeamMemberList(w http.ResponseWriter, r *ht
 	writeJSON(w, http.StatusOK, map[string]any{"members": memberships})
 }
 
-func (s *RuntimeServer) handleRuntimeTeamMemberUpsert(w http.ResponseWriter, r *http.Request, p principal, teamSlug string) {
+type teamMemberUpsertRequest struct {
+	UserID string `json:"userID"`
+	Role   string `json:"role"`
+}
+
+func (s *RuntimeServer) handleRuntimeTeamMemberUpsert(w http.ResponseWriter, r *http.Request, p principal, teamSlug, userID string) {
 	if p.Role != roleAdmin && p.TeamRole(teamSlug) != teamRoleOwner {
 		writeAPIError(w, http.StatusForbidden, "forbidden")
 		return
 	}
-	var req struct {
-		UserID string `json:"userID"`
-		Role   string `json:"role"`
-	}
+	var req teamMemberUpsertRequest
 	r.Body = http.MaxBytesReader(w, r.Body, teamApplyMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBodyDecodeError(w, err)
 		return
 	}
+	if strings.TrimSpace(req.UserID) != "" && strings.TrimSpace(userID) != "" && strings.TrimSpace(req.UserID) != strings.TrimSpace(userID) {
+		writeAPIError(w, http.StatusBadRequest, "userID must match the path")
+		return
+	}
+	if strings.TrimSpace(userID) == "" {
+		userID = strings.TrimSpace(req.UserID)
+	}
+	s.handleRuntimeTeamMemberUpsertDecoded(w, r, teamSlug, userID, req.Role)
+}
+
+func (s *RuntimeServer) handleRuntimeTeamMemberUpsertDecoded(w http.ResponseWriter, r *http.Request, teamSlug, userID, role string) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	membership, err := s.platform.UpsertTeamMembership(ctx, teamSlug, req.UserID, req.Role)
+	membership, err := s.platform.UpsertTeamMembership(ctx, teamSlug, userID, role)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeAPIError(w, http.StatusNotFound, "team or user not found")
@@ -351,6 +367,20 @@ func (s *RuntimeServer) handleRuntimeTeamMemberUpsert(w http.ResponseWriter, r *
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"membership": membership})
+}
+
+func (s *RuntimeServer) handleRuntimeTeamMemberUpsertLegacy(w http.ResponseWriter, r *http.Request, p principal, teamSlug string) {
+	var req teamMemberUpsertRequest
+	r.Body = http.MaxBytesReader(w, r.Body, teamApplyMaxBytes)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeBodyDecodeError(w, err)
+		return
+	}
+	if p.Role != roleAdmin && p.TeamRole(teamSlug) != teamRoleOwner {
+		writeAPIError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	s.handleRuntimeTeamMemberUpsertDecoded(w, r, teamSlug, req.UserID, req.Role)
 }
 
 func (s *RuntimeServer) handleRuntimeTeamUserCreate(w http.ResponseWriter, r *http.Request, p principal, teamSlug string) {

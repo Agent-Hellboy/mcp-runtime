@@ -120,8 +120,13 @@ teams = expect_json(f"{api_base}/api/runtime/teams", headers=admin_headers)
 check(team_slug in {item.get("slug") for item in teams.get("teams", [])}, "GET /api/runtime/teams listed created team", f"created team missing: {teams}")
 expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}", headers=admin_headers)
 expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members", headers=admin_headers)
-membership = expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members", method="POST", headers=admin_headers, body={"userID": user_id, "role": "member"})
-check(membership.get("membership", {}).get("user_id") == user_id, "POST /api/runtime/teams/{slug}/members added user", f"membership response: {membership}")
+membership = expect_json(
+    f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members/{quote_segment(user_id)}",
+    method="PUT",
+    headers=admin_headers,
+    body={"role": "member"},
+)
+check(membership.get("membership", {}).get("user_id") == user_id, "PUT /api/runtime/teams/{slug}/members/{userID} added user", f"membership response: {membership}")
 team_user_email = f"e2e-api-team-user-{suffix}@mcpruntime.org"
 team_user = expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/users", method="POST", headers=admin_headers, body={"email": team_user_email, "password": test_user_password, "role": "owner"})
 team_user_id = team_user.get("user", {}).get("id", "")
@@ -219,9 +224,9 @@ check("audit_logs" in admin_operations and "users" in admin_operations, "GET /ap
 gateway_summary = expect_json(f"{gateway_api_base}/dashboard/summary", headers=admin_key_headers)
 check("total_events" in gateway_summary, "gateway /api/dashboard/summary returned summary", f"gateway summary response: {gateway_summary}")
 
-expect_json(f"{api_base}/api/user/registry-credentials/{quote_segment(credential_id)}/revoke", method="POST", headers=user_headers)
+expect_json(f"{api_base}/api/user/registry-credentials/{quote_segment(credential_id)}", method="DELETE", headers=user_headers)
 expect_status(f"{api_base}/api/registry/authz", 401, headers=merged_headers(registry_basic_headers, {"X-Forwarded-Uri": f"/v2/{team_slug}/demo/manifests/latest"}))
-expect_json(f"{api_base}/api/user/api-keys/{quote_segment(user_key_id)}/revoke", method="POST", headers=user_headers)
+expect_json(f"{api_base}/api/user/api-keys/{quote_segment(user_key_id)}", method="DELETE", headers=user_headers)
 expect_status(f"{api_base}/api/auth/me", 401, headers=user_key_headers)
 
 print("api-platform request routes:")
@@ -234,15 +239,15 @@ for route in (
     "api:/api/analytics/usage",
     "api:/api/user/analytics/usage",
     "api:/api/user/api-keys",
-    "api:/api/user/api-keys/{id}/revoke",
+    "api:/api/user/api-keys/{id}",
     "api:/api/user/registry-credentials",
-    "api:/api/user/registry-credentials/{id}/revoke",
+    "api:/api/user/registry-credentials/{id}",
     "api:/api/user/activity/image-publish",
     "api:/api/runtime/servers/{namespace}/{name}",
     "api:/api/runtime/server-events",
     "api:/api/runtime/teams",
     "api:/api/runtime/teams/{slug}",
-    "api:/api/runtime/teams/{slug}/members",
+    "api:/api/runtime/teams/{slug}/members/{userID}",
     "api:/api/runtime/teams/{slug}/users",
     "api:/api/runtime/namespaces",
     "api:/api/runtime/namespaces/{namespace}",

@@ -2213,6 +2213,36 @@ func TestRuntimeServerEventsRejectsTeamMemberBeforeAnalyticsQuery(t *testing.T) 
 	}
 }
 
+func TestRuntimeDashboardSummaryRejectsNonGet(t *testing.T) {
+	server := &RuntimeServer{}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/dashboard/summary", nil)
+
+	server.HandleDashboardSummary(recorder, request)
+
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("allow"); got != http.MethodGet {
+		t.Fatalf("allow = %q, want GET", got)
+	}
+}
+
+func TestRuntimePolicyRejectsNonGet(t *testing.T) {
+	server := &RuntimeServer{}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/policy?namespace=mcp-team-acme&server=demo", nil)
+
+	server.HandleRuntimePolicy(recorder, request)
+
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("allow"); got != http.MethodGet {
+		t.Fatalf("allow = %q, want GET", got)
+	}
+}
+
 func TestRuntimeComponentsRequiresAdmin(t *testing.T) {
 	server := &RuntimeServer{}
 	userReq := httptest.NewRequest(http.MethodGet, "/api/runtime/components", nil)
@@ -2229,6 +2259,36 @@ func TestRuntimeComponentsRequiresAdmin(t *testing.T) {
 	server.HandleRuntimeComponents(adminRec, adminReq)
 	if adminRec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("admin status = %d body=%s", adminRec.Code, adminRec.Body.String())
+	}
+}
+
+func TestRuntimeComponentsRejectsNonGet(t *testing.T) {
+	server := &RuntimeServer{}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/components", nil)
+
+	server.HandleRuntimeComponents(recorder, request)
+
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("allow"); got != http.MethodGet {
+		t.Fatalf("allow = %q, want GET", got)
+	}
+}
+
+func TestActionRestartRejectsNonPost(t *testing.T) {
+	server := &RuntimeServer{}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/actions/restart", nil)
+
+	server.HandleActionRestart(recorder, request)
+
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("allow"); got != http.MethodPost {
+		t.Fatalf("allow = %q, want POST", got)
 	}
 }
 

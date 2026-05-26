@@ -14,6 +14,11 @@ const actionRestartMaxBytes = 4 * 1024
 
 // HandleActionRestart restarts one or all Sentinel runtime components.
 func (s *RuntimeServer) HandleActionRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("allow", "POST")
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
+		return
+	}
 	if s.sentinelMgr == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return

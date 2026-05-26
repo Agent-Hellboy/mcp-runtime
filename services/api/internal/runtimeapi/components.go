@@ -8,6 +8,11 @@ import (
 
 // HandleDashboardSummary returns analytics and live control-plane counters for the Sentinel dashboard.
 func (s *RuntimeServer) HandleDashboardSummary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("allow", http.MethodGet)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -53,6 +58,11 @@ func (s *RuntimeServer) HandleDashboardSummary(w http.ResponseWriter, r *http.Re
 
 // HandleRuntimeComponents returns admin-only health details for Sentinel platform components.
 func (s *RuntimeServer) HandleRuntimeComponents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("allow", http.MethodGet)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
+		return
+	}
 	if p, ok := principalFromContext(r.Context()); !ok || p.Role != roleAdmin {
 		writeAPIError(w, http.StatusForbidden, "forbidden")
 		return

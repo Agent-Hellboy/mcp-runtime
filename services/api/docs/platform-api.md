@@ -46,10 +46,10 @@ noted otherwise. Authenticated routes accept `Authorization: Bearer <token>` or
 | `POST` | `/api/auth/oidc` | Exchange a configured OIDC ID token for a platform bearer token. |
 | `GET` | `/api/auth/me` | Return the authenticated principal. |
 | `GET`, `POST` | `/api/user/api-keys` | List or create caller-owned API keys. |
-| `POST` | `/api/user/api-keys/{id}/revoke` | Revoke one caller-owned API key. |
+| `DELETE` | `/api/user/api-keys/{id}` | Revoke one caller-owned API key. |
 | `GET` | `/api/user/analytics/usage` | Caller-scoped MCP server usage analytics for the user dashboard. |
 | `GET`, `POST` | `/api/user/registry-credentials` | List or create registry credentials. |
-| `POST` | `/api/user/registry-credentials/{id}/revoke` | Revoke one registry credential. |
+| `DELETE` | `/api/user/registry-credentials/{id}` | Revoke one registry credential. |
 | `*` | `/api/registry/authz` | Traefik forward-auth endpoint for bundled registry ingress. Admin credentials are global; user credentials are scoped to team repository paths plus active org/public aliases. |
 | `GET`, `POST` | `/api/deployments` | List or apply platform-managed deployments. |
 | `DELETE` | `/api/deployments/{namespace}/{name}` | Delete a platform-managed deployment and service. |
@@ -146,8 +146,8 @@ curl -sS -H "authorization: Bearer $TOKEN" \
 Revoke a key:
 
 ```bash
-curl -sS -X POST -H "authorization: Bearer $TOKEN" \
-  http://localhost:8080/api/user/api-keys/"$KEY_ID"/revoke
+curl -sS -X DELETE -H "authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/user/api-keys/"$KEY_ID"
 ```
 
 ## Runtime MCP Servers
@@ -276,8 +276,8 @@ curl -sS -H "authorization: Bearer $TOKEN" \
 Revoke one registry credential:
 
 ```bash
-curl -sS -X POST -H "authorization: Bearer $TOKEN" \
-  http://localhost:8080/api/user/registry-credentials/"$CREDENTIAL_ID"/revoke
+curl -sS -X DELETE -H "authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/user/registry-credentials/"$CREDENTIAL_ID"
 ```
 
 ## Admin

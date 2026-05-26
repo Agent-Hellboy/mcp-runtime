@@ -4788,10 +4788,11 @@ _No package overview is documented._
 - [`func (c *PlatformClient) ListSessions(ctx context.Context, namespace string) ([]sentinelaccess.SessionSummary, error)`](#cli-platform-api-func-c-platformclient-listsessions-ctx-context-context-namespace-string-sentinelaccess-sessionsummary-error)
 - [`func (c *PlatformClient) ListTeamMembers(ctx context.Context, slug string) ([]TeamMembership, error)`](#cli-platform-api-func-c-platformclient-listteammembers-ctx-context-context-slug-string-teammembership-error)
 - [`func (c *PlatformClient) ListTeams(ctx context.Context) ([]Team, error)`](#cli-platform-api-func-c-platformclient-listteams-ctx-context-context-team-error)
-- [`func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postgranttoggle-ctx-context-context-namespace-name-action-string-error)
-- [`func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postsessiontoggle-ctx-context-context-namespace-name-action-string-error)
+- [`func (c *PlatformClient) PatchGrant(ctx context.Context, namespace, name string, disabled bool) error`](#cli-platform-api-func-c-platformclient-patchgrant-ctx-context-context-namespace-name-string-disabled-bool-error)
+- [`func (c *PlatformClient) PatchSession(ctx context.Context, namespace, name string, revoked bool) error`](#cli-platform-api-func-c-platformclient-patchsession-ctx-context-context-namespace-name-string-revoked-bool-error)
 - [`func (c *PlatformClient) PushRegistryImage(ctx context.Context, tarPath, target, scope string) error`](#cli-platform-api-func-c-platformclient-pushregistryimage-ctx-context-context-tarpath-target-scope-string-error)
 - [`func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePublishRecord) error`](#cli-platform-api-func-c-platformclient-recordimagepublish-ctx-context-context-record-imagepublishrecord-error)
+- [`func (c *PlatformClient) UpsertTeamMember(ctx context.Context, slug, userID, role string) (TeamMembership, error)`](#cli-platform-api-func-c-platformclient-upsertteammember-ctx-context-context-slug-userid-role-string-teammembership-error)
 - [`func (c *PlatformClient) ValidateCredentials(ctx context.Context) error`](#cli-platform-api-func-c-platformclient-validatecredentials-ctx-context-context-error)
 - [`type Principal struct`](#cli-platform-api-type-principal-struct)
 - [`type ServerListItem struct`](#cli-platform-api-type-serverlistitem-struct)
@@ -5034,15 +5035,15 @@ func (c *PlatformClient) ListTeams(ctx context.Context) ([]Team, error)
 
 ```
 
-<a id="cli-platform-api-func-c-platformclient-postgranttoggle-ctx-context-context-namespace-name-action-string-error"></a>
+<a id="cli-platform-api-func-c-platformclient-patchgrant-ctx-context-context-namespace-name-string-disabled-bool-error"></a>
 ```text
-func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, action string) error
+func (c *PlatformClient) PatchGrant(ctx context.Context, namespace, name string, disabled bool) error
 
 ```
 
-<a id="cli-platform-api-func-c-platformclient-postsessiontoggle-ctx-context-context-namespace-name-action-string-error"></a>
+<a id="cli-platform-api-func-c-platformclient-patchsession-ctx-context-context-namespace-name-string-revoked-bool-error"></a>
 ```text
-func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name, action string) error
+func (c *PlatformClient) PatchSession(ctx context.Context, namespace, name string, revoked bool) error
 
 ```
 
@@ -5057,6 +5058,12 @@ func (c *PlatformClient) PushRegistryImage(ctx context.Context, tarPath, target,
 <a id="cli-platform-api-func-c-platformclient-recordimagepublish-ctx-context-context-record-imagepublishrecord-error"></a>
 ```text
 func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePublishRecord) error
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-upsertteammember-ctx-context-context-slug-userid-role-string-teammembership-error"></a>
+```text
+func (c *PlatformClient) UpsertTeamMember(ctx context.Context, slug, userID, role string) (TeamMembership, error)
 
 ```
 
