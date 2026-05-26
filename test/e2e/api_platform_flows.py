@@ -128,9 +128,15 @@ membership = expect_json(
 )
 check(membership.get("membership", {}).get("user_id") == user_id, "PUT /api/runtime/teams/{slug}/members/{userID} added user", f"membership response: {membership}")
 team_user_email = f"e2e-api-team-user-{suffix}@mcpruntime.org"
-team_user = expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/users", method="POST", headers=admin_headers, body={"email": team_user_email, "password": test_user_password, "role": "owner"})
+team_user = expect_json(f"{api_base}/api/users", method="POST", headers=admin_headers, body={"email": team_user_email, "password": test_user_password, "role": "user"})
 team_user_id = team_user.get("user", {}).get("id", "")
-check(bool(team_user_id), "POST /api/runtime/teams/{slug}/users created user", f"team user response: {team_user}")
+check(bool(team_user_id), "POST /api/users created user", f"team user response: {team_user}")
+expect_json(
+    f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members/{quote_segment(team_user_id)}",
+    method="PUT",
+    headers=admin_headers,
+    body={"role": "owner"},
+)
 expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members/{quote_segment(team_user_id)}", method="DELETE", headers=admin_headers)
 
 namespaces = expect_json(f"{api_base}/api/runtime/namespaces", headers=admin_headers)
@@ -248,7 +254,7 @@ for route in (
     "api:/api/runtime/teams",
     "api:/api/runtime/teams/{slug}",
     "api:/api/runtime/teams/{slug}/members/{userID}",
-    "api:/api/runtime/teams/{slug}/users",
+    "api:/api/users",
     "api:/api/runtime/namespaces",
     "api:/api/runtime/namespaces/{namespace}",
     "api:/api/runtime/grants/{namespace}/{name}",

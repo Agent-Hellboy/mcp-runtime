@@ -3279,6 +3279,12 @@ EOF
     # reuse semantics (reused=true on the *second* call within this run).
     ADAPTER_AGENT_ID="e2e-adapter-agent-$(date +%s)"
 
+    if api_service_paths_selected && [[ -z "${API_SERVICE_PORT_FORWARD_PID:-}" ]]; then
+      port_forward_bg mcp-sentinel mcp-sentinel-api "${API_SERVICE_PORT}" 8080 "${WORKDIR}/api-port-forward.log"
+      API_SERVICE_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+      wait_port "${API_SERVICE_PORT}"
+    fi
+
     log_line policy "applying agent-scoped grant for adapter-session test"
     cat >"${WORKDIR}/adapter-session-grant.yaml" <<EOF
 apiVersion: mcpruntime.org/v1alpha1
@@ -3552,8 +3558,9 @@ if checkpoint_enabled "oauth"; then
   TRAEFIK_PORT_FORWARD_RESTARTS=0
   port_forward_bg mcp-sentinel mcp-sentinel-gateway "${SENTINEL_PORT}" 8083 "${WORKDIR}/sentinel-port-forward.log"
   port_forward_bg mcp-sentinel loki "${LOKI_PORT}" 3100 "${WORKDIR}/loki-port-forward.log"
-  if api_service_paths_selected; then
+  if api_service_paths_selected && [[ -z "${API_SERVICE_PORT_FORWARD_PID:-}" ]]; then
     port_forward_bg mcp-sentinel mcp-sentinel-api "${API_SERVICE_PORT}" 8080 "${WORKDIR}/api-port-forward.log"
+    API_SERVICE_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
   fi
   if scenario_selected "observability"; then
     port_forward_bg mcp-sentinel mcp-sentinel-api "${API_METRICS_PORT}" 9090 "${WORKDIR}/api-metrics-port-forward.log"

@@ -313,6 +313,7 @@ func main() {
 	mux.HandleFunc("/api/auth/login", server.handleLogin)
 	mux.HandleFunc("/api/auth/oidc", server.handleOIDCLogin)
 	mux.HandleFunc("/api/auth/signup", server.handleSignup)
+	mux.Handle("/api/users", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleUsers))))
 	mux.Handle("/api/events", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleEvents))))
 	mux.Handle("/api/stats", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleStats))))
 	mux.Handle("/api/sources", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleSources))))

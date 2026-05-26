@@ -329,7 +329,7 @@ POST /api/runtime/teams                # Admin-only team + namespace provisionin
 GET  /api/runtime/teams/{team}         # Team metadata (admin/member)
 GET  /api/runtime/teams/{team}/members # List team memberships (admin/member)
 PUT  /api/runtime/teams/{team}/members/{userID} # Admin/team-owner membership upsert
-POST /api/runtime/teams/{team}/users   # Admin-only password user create/update + team membership
+POST /api/users                          # Admin-only password user create
 DELETE /api/runtime/teams/{team}/members/{userID}
 POST /api/runtime/registry/push        # Multipart docker-save upload; in-cluster skopeo push to platform registry
 GET  /api/runtime/namespaces           # Allowed namespaces + org catalog metadata

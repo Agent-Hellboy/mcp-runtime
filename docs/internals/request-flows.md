@@ -271,7 +271,9 @@ sequenceDiagram
     API->>DB: create team and namespace record
     API->>K8s: create namespace, RBAC, NetworkPolicy
     API->>Traefik: patch watched namespaces when bundled Traefik is used
-    Admin->>API: PUT /api/runtime/teams/{slug}/members/{userID} or POST /users
+    Admin->>API: POST /api/users
+    API->>DB: create password user
+    Admin->>API: PUT /api/runtime/teams/{slug}/members/{userID}
     API->>DB: create membership
     User->>API: GET /api/runtime/namespaces
     API-->>User: user, team, org, public, and shared catalog namespaces
@@ -286,7 +288,7 @@ Primary request paths:
 - `GET /api/runtime/teams/{slug}/members`
 - `PUT /api/runtime/teams/{slug}/members/{userID}`
 - `DELETE /api/runtime/teams/{slug}/members/{userID}`
-- `POST /api/runtime/teams/{slug}/users`
+- `POST /api/users`
 - `GET /api/runtime/namespaces`
 - `GET /api/runtime/namespaces/{namespace}`
 

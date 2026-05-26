@@ -8,6 +8,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	sentinelaccess "mcp-runtime/pkg/access"
+	runtimeaccess "mcp-sentinel-api/internal/runtimeapi/access"
 )
 
 func principalCanAdministerServerLabels(p principal, namespace string, serverLabels map[string]string) bool {
@@ -56,7 +57,7 @@ func (s *RuntimeServer) principalCanAdministerAccessServer(ctx context.Context, 
 func (s *RuntimeServer) canAdministerAccessServerRef(ctx context.Context, namespace string, ref sentinelaccess.ServerReference) (bool, error) {
 	ref.Namespace = sentinelaccess.Namespace(strings.TrimSpace(string(ref.Namespace)))
 	if ref.Namespace == "" {
-		ref.Namespace = sentinelaccess.Namespace(defaultAccessNamespace(namespace))
+		ref.Namespace = sentinelaccess.Namespace(runtimeaccess.DefaultAccessNamespace(namespace))
 	}
 	targetServer, err := s.accessMgr.GetMCPServerRef(ctx, ref)
 	if err != nil {

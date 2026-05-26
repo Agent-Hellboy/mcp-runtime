@@ -630,13 +630,19 @@ if deep_request_flows:
     )
     team_user_email = f"e2e-team-user-{suffix}@mcpruntime.org"
     team_user = expect_json(
-        f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/users",
+        f"{api_base}/api/users",
         method="POST",
         headers=admin_headers,
-        body={"email": team_user_email, "password": test_user_password, "role": "owner"},
+        body={"email": team_user_email, "password": test_user_password, "role": "user"},
     )
     team_user_id = team_user.get("user", {}).get("id", "")
-    check(bool(team_user_id), "POST /api/runtime/teams/{slug}/users created team user", f"team user response: {team_user}")
+    check(bool(team_user_id), "POST /api/users created team user", f"team user response: {team_user}")
+    expect_json(
+        f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members/{quote_segment(team_user_id)}",
+        method="PUT",
+        headers=admin_headers,
+        body={"role": "owner"},
+    )
     members_after = expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members", headers=admin_headers)
     member_ids = {item.get("user_id") for item in members_after.get("members", [])}
     check(
@@ -907,7 +913,7 @@ if deep_request_flows:
         "api:/api/runtime/teams",
         "api:/api/runtime/teams/{slug}",
         "api:/api/runtime/teams/{slug}/members/{userID}",
-        "api:/api/runtime/teams/{slug}/users",
+        "api:/api/users",
         "api:/api/runtime/namespaces",
         "api:/api/runtime/namespaces/{namespace}",
         "api:/api/runtime/grants/{namespace}/{name}",

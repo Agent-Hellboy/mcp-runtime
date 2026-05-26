@@ -317,16 +317,16 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"team":{"slug":"core","name":"Core Team","namespace":"mcp-team-core"}}`)),
 				}, nil
-			case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/teams/core/users":
+			case r.Method == http.MethodPost && r.URL.Path == "/api/users":
 				body, _ := io.ReadAll(r.Body)
 				var payload map[string]string
 				_ = json.Unmarshal(body, &payload)
-				if payload["email"] != "member@example.com" || payload["password"] != "password123" || payload["role"] != "member" {
-					t.Fatalf("create team user payload = %#v", payload)
+				if payload["email"] != "member@example.com" || payload["password"] != "password123" {
+					t.Fatalf("create user payload = %#v", payload)
 				}
 				return &http.Response{
 					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`{"user":{"id":"user-1","email":"member@example.com","role":"user"},"membership":{"team_slug":"core","team_namespace":"mcp-team-core","user_id":"user-1","email":"member@example.com","role":"member"}}`)),
+					Body:       io.NopCloser(strings.NewReader(`{"user":{"id":"user-1","email":"member@example.com","role":"user"}}`)),
 				}, nil
 			case r.Method == http.MethodPut && r.URL.Path == "/api/runtime/teams/core/members/user-1":
 				body, _ := io.ReadAll(r.Body)

@@ -21,6 +21,7 @@ import (
 	"mcp-runtime/pkg/metadata"
 	"mcp-runtime/pkg/publishscope"
 	"mcp-runtime/pkg/sentinel"
+	runtimeaccess "mcp-sentinel-api/internal/runtimeapi/access"
 )
 
 const (
@@ -191,7 +192,7 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	if req.Spec.TeamID == "" {
 		req.Spec.TeamID = namespaceTeamID
 	}
-	if err := validateTeamIDValue("spec.teamID", req.Spec.TeamID); err != nil {
+	if err := runtimeaccess.ValidateTeamIDValue("spec.teamID", req.Spec.TeamID); err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}

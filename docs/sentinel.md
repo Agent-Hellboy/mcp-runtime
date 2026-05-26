@@ -150,7 +150,7 @@ metrics on `METRICS_PORT` (default `9090`).
 | `GET` | `/api/runtime/teams/{team}` | Read team metadata for admins and team members. |
 | `GET` | `/api/runtime/teams/{team}/members` | List team memberships for admins and team members. |
 | `PUT` | `/api/runtime/teams/{team}/members/{userID}` | Add/update team membership (admin or team owner). |
-| `POST` | `/api/runtime/teams/{team}/users` | Create/update a password-login user and add the user to a team. Admin role required. |
+| `POST` | `/api/users` | Create a password-login user. Admin role required. |
 | `DELETE` | `/api/runtime/teams/{team}/members/{userID}` | Remove team membership (admin or team owner). |
 | `GET` | `/api/runtime/namespaces` | List allowed namespaces and org catalog metadata for caller scope. |
 | `GET` | `/api/runtime/namespaces/{namespace}` | Read one namespace metadata entry when authorized. |
