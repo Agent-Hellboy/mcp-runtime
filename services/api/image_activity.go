@@ -3,11 +3,11 @@ package main
 import (
 	"net/http"
 
-	"mcp-sentinel-api/users"
+	"mcp-sentinel-api/identity"
 )
 
 func (s *apiServer) handleUserImagePublishActivity(w http.ResponseWriter, r *http.Request) {
-	users.HandleUserImagePublishActivity(w, r, users.Dependencies{
+	identity.HandleUserImagePublishActivity(w, r, identity.Dependencies{
 		Platform:             s.platform,
 		PrincipalFromContext: principalFromContext,
 		WriteJSON:            writeJSON,

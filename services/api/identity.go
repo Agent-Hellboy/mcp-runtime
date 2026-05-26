@@ -3,18 +3,18 @@ package main
 import (
 	"net/http"
 
-	"mcp-sentinel-api/users"
+	"mcp-sentinel-api/identity"
 )
 
 func (s *apiServer) handleAuthMe(w http.ResponseWriter, r *http.Request) {
-	users.HandleAuthMe(w, r, users.Dependencies{
+	identity.HandleAuthMe(w, r, identity.Dependencies{
 		PrincipalFromContext: principalFromContext,
 		WriteJSON:            writeJSON,
 	})
 }
 
 func (s *apiServer) handleSignup(w http.ResponseWriter, r *http.Request) {
-	users.HandleSignup(w, r, users.Dependencies{
+	identity.HandleSignup(w, r, identity.Dependencies{
 		Platform:             s.platform,
 		AuthenticateRequest:  s.authenticateRequest,
 		WriteJSON:            writeJSON,
@@ -25,7 +25,7 @@ func (s *apiServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *apiServer) handleUsers(w http.ResponseWriter, r *http.Request) {
-	users.HandleUsers(w, r, users.Dependencies{
+	identity.HandleUsers(w, r, identity.Dependencies{
 		Platform:             s.platform,
 		AuthenticateRequest:  s.authenticateRequest,
 		WriteJSON:            writeJSON,

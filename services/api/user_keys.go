@@ -3,11 +3,11 @@ package main
 import (
 	"net/http"
 
-	"mcp-sentinel-api/users"
+	"mcp-sentinel-api/identity"
 )
 
 func (s *apiServer) handleUserAPIKeys(w http.ResponseWriter, r *http.Request) {
-	users.HandleUserAPIKeys(w, r, users.Dependencies{
+	identity.HandleUserAPIKeys(w, r, identity.Dependencies{
 		Platform:             s.platform,
 		UserKeys:             s.userKeys,
 		PrincipalFromContext: principalFromContext,
@@ -20,7 +20,7 @@ func (s *apiServer) handleUserAPIKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *apiServer) handleUserAPIKeyItem(w http.ResponseWriter, r *http.Request) {
-	users.HandleUserAPIKeyItem(w, r, users.Dependencies{
+	identity.HandleUserAPIKeyItem(w, r, identity.Dependencies{
 		Platform:             s.platform,
 		UserKeys:             s.userKeys,
 		PrincipalFromContext: principalFromContext,

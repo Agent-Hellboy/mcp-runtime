@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"strings"
 
+	"mcp-sentinel-api/identity"
 	"mcp-sentinel-api/internal/apiauth"
 	"mcp-sentinel-api/internal/platformstore"
-	"mcp-sentinel-api/users"
 )
 
 type CredentialDependencies struct {
@@ -57,7 +57,7 @@ func HandleRegistryCredentials(w http.ResponseWriter, r *http.Request, deps Cred
 			return
 		}
 		deps.Platform.WriteAudit(r.Context(), platformstore.AuditEvent{UserID: p.UserID(), Action: "registry_credential_create", Resource: key.ID, Status: "success", ActorIP: deps.RequestIP(r), Source: deps.AuditSource(r, p), AuthIdentity: deps.AuditIdentityLabel(p)})
-		deps.WriteJSON(w, http.StatusCreated, map[string]any{"credential": key, "username": users.RegistryCredentialUsername(p), "password": cleartext})
+		deps.WriteJSON(w, http.StatusCreated, map[string]any{"credential": key, "username": identity.RegistryCredentialUsername(p), "password": cleartext})
 	default:
 		w.Header().Set("allow", "GET, POST")
 		deps.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
