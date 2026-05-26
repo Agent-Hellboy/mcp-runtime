@@ -47,6 +47,7 @@ import (
 	clickhousepkg "mcp-runtime/pkg/clickhouse"
 	"mcp-runtime/pkg/serviceutil"
 	"mcp-sentinel-api/internal/runtimeapi"
+	"mcp-sentinel-api/registry"
 )
 
 type analyticsServerUsage struct {
@@ -593,6 +594,29 @@ func (s *apiServer) handleUserAnalyticsUsage(w http.ResponseWriter, r *http.Requ
 	}
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *apiServer) handleRegistryCredentials(w http.ResponseWriter, r *http.Request) {
+	registry.HandleRegistryCredentials(w, r, registry.CredentialDependencies{
+		Platform:             s.platform,
+		PrincipalFromContext: principalFromContext,
+		WriteJSON:            writeJSON,
+		WriteBodyDecodeError: writeBodyDecodeError,
+		RequestIP:            requestIP,
+		AuditSource:          auditSource,
+		AuditIdentityLabel:   auditIdentityLabel,
+	})
+}
+
+func (s *apiServer) handleRegistryCredentialItem(w http.ResponseWriter, r *http.Request) {
+	registry.HandleRegistryCredentialItem(w, r, registry.CredentialDependencies{
+		Platform:             s.platform,
+		PrincipalFromContext: principalFromContext,
+		WriteJSON:            writeJSON,
+		RequestIP:            requestIP,
+		AuditSource:          auditSource,
+		AuditIdentityLabel:   auditIdentityLabel,
+	})
 }
 
 type analyticsQueryScope struct {
