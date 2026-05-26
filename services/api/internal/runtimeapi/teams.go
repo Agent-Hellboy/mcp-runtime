@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -307,6 +308,11 @@ func (s *RuntimeServer) handleRuntimeTeamCreate(w http.ResponseWriter, r *http.R
 		return
 	}
 	if err := s.ensureTeamNamespace(ctx, team); err != nil {
+		if cleanupErr := s.platform.DeleteTeamBySlug(ctx, team.Slug); cleanupErr != nil {
+			log.Printf("failed to clean up team %s after namespace provisioning failure: %v", team.Slug, cleanupErr)
+			writeAPIError(w, http.StatusInternalServerError, "failed to provision team namespace")
+			return
+		}
 		writeAPIError(w, http.StatusInternalServerError, "failed to provision team namespace")
 		return
 	}
