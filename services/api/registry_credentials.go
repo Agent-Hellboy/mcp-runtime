@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 
+	"mcp-sentinel-api/registry"
 	"mcp-sentinel-api/users"
 )
 
@@ -11,7 +12,7 @@ func registryCredentialUsername(p principal) string {
 }
 
 func (s *apiServer) handleRegistryCredentials(w http.ResponseWriter, r *http.Request) {
-	users.HandleRegistryCredentials(w, r, users.Dependencies{
+	registry.HandleRegistryCredentials(w, r, registry.CredentialDependencies{
 		Platform:             s.platform,
 		PrincipalFromContext: principalFromContext,
 		WriteJSON:            writeJSON,
@@ -23,7 +24,7 @@ func (s *apiServer) handleRegistryCredentials(w http.ResponseWriter, r *http.Req
 }
 
 func (s *apiServer) handleRegistryCredentialItem(w http.ResponseWriter, r *http.Request) {
-	users.HandleRegistryCredentialItem(w, r, users.Dependencies{
+	registry.HandleRegistryCredentialItem(w, r, registry.CredentialDependencies{
 		Platform:             s.platform,
 		PrincipalFromContext: principalFromContext,
 		WriteJSON:            writeJSON,
