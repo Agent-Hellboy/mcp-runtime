@@ -1,99 +1,108 @@
-package main
+package admin
 
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"mcp-runtime/pkg/metadata"
+	"mcp-sentinel-api/internal/platformstore"
+	"mcp-sentinel-api/internal/runtimeapi"
 )
 
-func (s *apiServer) handleAdminNamespaces(w http.ResponseWriter, r *http.Request) {
-	if s.platform == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
-		return
-	}
-	if r.Method != http.MethodGet {
-		w.Header().Set("allow", "GET")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
-		return
-	}
-	namespaces, err := s.platform.ListNamespaces(r.Context())
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list namespaces"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"namespaces": namespaces})
+type Dependencies struct {
+	Platform  *platformstore.Store
+	Runtime   *runtimeapi.RuntimeServer
+	WriteJSON func(http.ResponseWriter, int, any)
 }
 
-func (s *apiServer) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
-	if s.platform == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+func HandleNamespaces(w http.ResponseWriter, r *http.Request, deps Dependencies) {
+	if deps.Platform == nil {
+		deps.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
 		return
 	}
 	if r.Method != http.MethodGet {
 		w.Header().Set("allow", "GET")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		deps.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		return
+	}
+	namespaces, err := deps.Platform.ListNamespaces(r.Context())
+	if err != nil {
+		deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list namespaces"})
+		return
+	}
+	deps.WriteJSON(w, http.StatusOK, map[string]any{"namespaces": namespaces})
+}
+
+func HandleAudit(w http.ResponseWriter, r *http.Request, deps Dependencies) {
+	if deps.Platform == nil {
+		deps.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.Header().Set("allow", "GET")
+		deps.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
 		return
 	}
 	filter, err := adminOperationsFilterFromRequest(r)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		deps.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	auditLogs, err := s.platform.ListAuditLogs(r.Context(), filter)
+	auditLogs, err := deps.Platform.ListAuditLogs(r.Context(), filter)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list audit logs"})
+		deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list audit logs"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"audit_logs": auditLogs})
+	deps.WriteJSON(w, http.StatusOK, map[string]any{"audit_logs": auditLogs})
 }
 
-func (s *apiServer) handleAdminOperations(w http.ResponseWriter, r *http.Request) {
-	if s.platform == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+func HandleOperations(w http.ResponseWriter, r *http.Request, deps Dependencies) {
+	if deps.Platform == nil {
+		deps.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
 		return
 	}
 	if r.Method != http.MethodGet {
 		w.Header().Set("allow", "GET")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		deps.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
 		return
 	}
 	filter, err := adminOperationsFilterFromRequest(r)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		deps.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
-	users, err := s.platform.ListUserActivity(r.Context(), filter)
+	users, err := deps.Platform.ListUserActivity(r.Context(), filter)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list users"})
+		deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list users"})
 		return
 	}
-	auditLogs, err := s.platform.ListAuditLogs(r.Context(), filter)
+	auditLogs, err := deps.Platform.ListAuditLogs(r.Context(), filter)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list audit logs"})
+		deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list audit logs"})
 		return
 	}
-	images, err := s.platform.ListImageActivity(r.Context(), filter)
+	images, err := deps.Platform.ListImageActivity(r.Context(), filter)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list image activity"})
+		deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list image activity"})
 		return
 	}
 
 	deployments := []map[string]any{}
-	if s.runtime != nil && s.runtime.KubernetesAvailable() {
-		deployments, err = s.runtime.ListAdminDeploymentSummaries(r.Context(), "")
+	if deps.Runtime != nil && deps.Runtime.KubernetesAvailable() {
+		deployments, err = deps.Runtime.ListAdminDeploymentSummaries(r.Context(), "")
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deployments"})
+			deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deployments"})
 			return
 		}
 		deployments = filterDeploymentsForOperations(deployments, filter)
 		images = mergeDeploymentImageActivity(images, deployments, filter)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	deps.WriteJSON(w, http.StatusOK, map[string]any{
 		"filters":     adminOperationsFilterResponseFor(filter),
 		"users":       users,
 		"audit_logs":  auditLogs,
@@ -102,25 +111,25 @@ func (s *apiServer) handleAdminOperations(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func adminOperationsFilterFromRequest(r *http.Request) (adminOperationsFilter, error) {
+func adminOperationsFilterFromRequest(r *http.Request) (platformstore.OperationsFilter, error) {
 	user := strings.TrimSpace(r.URL.Query().Get("user"))
-	filter := adminOperationsFilter{
+	filter := platformstore.OperationsFilter{
 		User:       user,
 		UserSearch: strings.ToLower(user),
 		Limit:      clampInt(queryInt(r, "limit", 50), 1, 200),
 	}
 	since, err := parseOptionalTimeQuery(r, "since", false)
 	if err != nil {
-		return adminOperationsFilter{}, err
+		return platformstore.OperationsFilter{}, err
 	}
 	until, err := parseOptionalTimeQuery(r, "until", true)
 	if err != nil {
-		return adminOperationsFilter{}, err
+		return platformstore.OperationsFilter{}, err
 	}
 	filter.Since = since
 	filter.Until = until
 	if !filter.Since.IsZero() && !filter.Until.IsZero() && filter.Since.After(filter.Until) {
-		return adminOperationsFilter{}, errInvalidTimeRange
+		return platformstore.OperationsFilter{}, errInvalidTimeRange
 	}
 	return filter, nil
 }
@@ -150,8 +159,8 @@ func parseOptionalTimeQuery(r *http.Request, key string, endOfDay bool) (time.Ti
 	return time.Time{}, adminFilterError(key + " must be RFC3339 or YYYY-MM-DD")
 }
 
-func adminOperationsFilterResponseFor(filter adminOperationsFilter) adminOperationsFilterResponse {
-	out := adminOperationsFilterResponse{
+func adminOperationsFilterResponseFor(filter platformstore.OperationsFilter) platformstore.OperationsFilterResponse {
+	out := platformstore.OperationsFilterResponse{
 		User:  filter.User,
 		Limit: filter.Limit,
 	}
@@ -164,7 +173,7 @@ func adminOperationsFilterResponseFor(filter adminOperationsFilter) adminOperati
 	return out
 }
 
-func mergeDeploymentImageActivity(items []platformImageActivity, deployments []map[string]any, filter adminOperationsFilter) []platformImageActivity {
+func mergeDeploymentImageActivity(items []platformstore.ImageActivity, deployments []map[string]any, filter platformstore.OperationsFilter) []platformstore.ImageActivity {
 	limit := operationsLimit(filter)
 	if len(items) >= limit {
 		return sanitizeImageActivity(items[:limit])
@@ -192,7 +201,7 @@ func mergeDeploymentImageActivity(items []platformImageActivity, deployments []m
 			continue
 		}
 		seen[key] = struct{}{}
-		items = append(items, platformImageActivity{
+		items = append(items, platformstore.ImageActivity{
 			UserID:           userID,
 			Namespace:        namespace,
 			ImageRef:         imageRef,
@@ -210,7 +219,7 @@ func mergeDeploymentImageActivity(items []platformImageActivity, deployments []m
 	return sanitizeImageActivity(items)
 }
 
-func filterDeploymentsForOperations(deployments []map[string]any, filter adminOperationsFilter) []map[string]any {
+func filterDeploymentsForOperations(deployments []map[string]any, filter platformstore.OperationsFilter) []map[string]any {
 	limit := operationsLimit(filter)
 	out := make([]map[string]any, 0, min(len(deployments), limit))
 	for _, deployment := range deployments {
@@ -230,14 +239,14 @@ func filterDeploymentsForOperations(deployments []map[string]any, filter adminOp
 	return sanitizeDeploymentSummaries(out)
 }
 
-func matchesOperationsFilter(filter adminOperationsFilter, timestamp time.Time, values ...string) bool {
+func matchesOperationsFilter(filter platformstore.OperationsFilter, timestamp time.Time, values ...string) bool {
 	if !filter.Since.IsZero() && !timestamp.IsZero() && timestamp.Before(filter.Since) {
 		return false
 	}
 	if !filter.Until.IsZero() && !timestamp.IsZero() && timestamp.After(filter.Until) {
 		return false
 	}
-	user := adminOperationsUserSearch(filter)
+	user := platformstore.AdminOperationsUserSearch(filter)
 	if user == "" {
 		return true
 	}
@@ -249,15 +258,15 @@ func matchesOperationsFilter(filter adminOperationsFilter, timestamp time.Time, 
 	return false
 }
 
-func operationsLimit(filter adminOperationsFilter) int {
+func operationsLimit(filter platformstore.OperationsFilter) int {
 	if filter.Limit <= 0 {
 		return 50
 	}
 	return filter.Limit
 }
 
-func sanitizeImageActivity(items []platformImageActivity) []platformImageActivity {
-	out := make([]platformImageActivity, 0, len(items))
+func sanitizeImageActivity(items []platformstore.ImageActivity) []platformstore.ImageActivity {
+	out := make([]platformstore.ImageActivity, 0, len(items))
 	for _, item := range items {
 		item.ImageRef = metadata.DisplayImageReference(item.ImageRef)
 		item.SourceImage = metadata.DisplayImageReference(item.SourceImage)
@@ -269,33 +278,44 @@ func sanitizeImageActivity(items []platformImageActivity) []platformImageActivit
 func sanitizeDeploymentSummaries(items []map[string]any) []map[string]any {
 	out := make([]map[string]any, 0, len(items))
 	for _, item := range items {
-		cloned := make(map[string]any, len(item))
+		copyItem := make(map[string]any, len(item))
 		for k, v := range item {
-			cloned[k] = v
+			copyItem[k] = v
 		}
-		if imageRef := strings.TrimSpace(stringFromMap(cloned, "image")); imageRef != "" {
-			cloned["image"] = metadata.DisplayImageReference(imageRef)
+		if imageRef, ok := copyItem["image"].(string); ok {
+			copyItem["image"] = metadata.DisplayImageReference(imageRef)
 		}
-		out = append(out, cloned)
+		out = append(out, copyItem)
 	}
 	return out
 }
 
 func stringFromMap(values map[string]any, key string) string {
-	switch v := values[key].(type) {
-	case string:
-		return v
-	case []byte:
-		return string(v)
-	case nil:
+	if values == nil {
 		return ""
-	default:
-		return strings.TrimSpace(fmt.Sprint(v))
 	}
+	if raw, ok := values[key]; ok && raw != nil {
+		switch v := raw.(type) {
+		case string:
+			return v
+		case fmt.Stringer:
+			return v.String()
+		default:
+			return fmt.Sprint(v)
+		}
+	}
+	return ""
 }
 
 func timeFromMap(values map[string]any, key string) (time.Time, bool) {
-	switch v := values[key].(type) {
+	if values == nil {
+		return time.Time{}, false
+	}
+	raw, ok := values[key]
+	if !ok || raw == nil {
+		return time.Time{}, false
+	}
+	switch v := raw.(type) {
 	case time.Time:
 		return v, true
 	case string:
@@ -304,4 +324,33 @@ func timeFromMap(values map[string]any, key string) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func queryInt(r *http.Request, key string, fallback int) int {
+	raw := strings.TrimSpace(r.URL.Query().Get(key))
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+func clampInt(n, minValue, maxValue int) int {
+	if n < minValue {
+		return minValue
+	}
+	if n > maxValue {
+		return maxValue
+	}
+	return n
 }
