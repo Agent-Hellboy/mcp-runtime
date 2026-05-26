@@ -90,7 +90,13 @@ Do not hand-wave command behavior from memory when the docs are meant to reflect
 - **Docs you were not asked to edit:** Avoid adding new top-level docs unless the task needs them; this file, `README`, and existing doc trees are the defaults for agents.
 - **Secrets and prod:** This repo is **alpha**; do not hardcode real credentials. Use the existing secret and env patterns documented below.
 - **Agent skills:** Keep `.claude/skills` as a symlink to `../.codex/skills`; see `.claude/README.md` before changing local agent-tool configuration.
-- **Skill upkeep:** After finishing a non-trivial feature, bugfix, operational workflow, or docs change, review the relevant `.codex/skills/*/SKILL.md` files. Update or fix skills when the change affects agent workflows, validation commands, runbooks, or recurring gotchas; keep long operational detail in focused skills or docs instead of duplicating it here.
+- **Skill upkeep:** Before closing a non-trivial feature, bugfix, CI failure,
+  operational workflow, or docs change, review the relevant
+  `.codex/skills/*/SKILL.md` files that future agents would use for the same
+  area. Update or fix those skills when the change affects agent workflows,
+  validation commands, runbooks, E2E assumptions, or recurring gotchas; keep
+  long operational detail in focused skills or docs instead of duplicating it
+  here.
 - **AI session hygiene:** Before ending a non-trivial session, propose updates to `ai-assist/` (durable agent-facing learnings, gotchas, cross-cutting tips, upstream tracking) and ask the user to review the diff manually before commit. See **AI session hygiene** below for the full charter.
 
 ## AI session hygiene

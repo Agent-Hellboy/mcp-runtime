@@ -316,7 +316,11 @@ const EnvAPIProfile = "MCP_PLATFORM_API_PROFILE"
 // If apiBase is empty, callers may still have a token from [EnvAPIToken] only.
 func ResolveToken() (token, apiBase, source string, err error) {
 	if t := strings.TrimSpace(os.Getenv(EnvAPIToken)); t != "" {
-		return t, strings.TrimSpace(os.Getenv(EnvAPIURL)), EnvAPIToken, nil
+		apiBase := strings.TrimSpace(os.Getenv(EnvAPIURL))
+		if apiBase == "" {
+			apiBase = savedAPIBaseURL()
+		}
+		return t, apiBase, EnvAPIToken, nil
 	}
 	path, err := FilePath()
 	if err != nil {
@@ -335,6 +339,22 @@ func ResolveToken() (token, apiBase, source string, err error) {
 		source += " profile " + profile
 	}
 	return account.Token, account.APIBaseURL, source, nil
+}
+
+func savedAPIBaseURL() string {
+	path, err := FilePath()
+	if err != nil {
+		return ""
+	}
+	c, err := Load(path)
+	if err != nil {
+		return ""
+	}
+	account, _, err := c.SelectedAccount(os.Getenv(EnvAPIProfile))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(account.APIBaseURL)
 }
 
 // CurrentRegistryHost returns the registry host saved with the active platform login.

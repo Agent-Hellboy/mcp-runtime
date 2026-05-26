@@ -7,7 +7,7 @@ The token is stored in a local file (mode 0600) under the user config directory,
 
 Optional environment:
   MCP_PLATFORM_API_URL      default API base for login, e.g. https://platform.example.com
-  MCP_PLATFORM_API_TOKEN    use this token for API calls; overrides a saved file
+  MCP_PLATFORM_API_TOKEN    use this token for API calls; overrides the saved token
   MCP_PLATFORM_API_PROFILE  select a saved credentials profile
   MCP_RUNTIME_CONFIG_DIR    override the config directory (default ~/.mcpruntime)
 

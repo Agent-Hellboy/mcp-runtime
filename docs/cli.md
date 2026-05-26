@@ -218,15 +218,18 @@ Notes:
 - saved credentials are local to the workstation
 - each login is saved as a named profile; `auth login` makes that profile current
 - `MCP_PLATFORM_API_PROFILE` selects a saved profile without changing the current profile
-- `MCP_PLATFORM_API_TOKEN` overrides any saved token when set
-- `MCP_PLATFORM_API_URL` can provide the default API base URL
+- `MCP_PLATFORM_API_TOKEN` overrides any saved token when set; if
+  `MCP_PLATFORM_API_URL` is unset, the CLI reuses the API URL from the selected
+  saved profile
+- `MCP_PLATFORM_API_URL` overrides the saved API base URL when set
 - kubeconfig-based cluster commands are separate from platform auth
 
 ## Platform API vs `--use-kube`
 
 Most `server` and `access` commands use the **platform API** by default. Run
-`mcp-runtime auth login --api-url <platform-url>` (or set
-`MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`) before those flows.
+`mcp-runtime auth login --api-url <platform-url>` before those flows. You can
+also set `MCP_PLATFORM_API_TOKEN`; set `MCP_PLATFORM_API_URL` too only when you
+want to override the saved profile's API URL.
 
 `--use-kube` is **admin/dev/test only**. It bypasses platform auth and talks to
 the Kubernetes API through your kubeconfig. Use it only when you have
@@ -279,7 +282,8 @@ mcp-runtime registry push --scope tenant --image payments:v1
 ```
 
 `registry push` requires platform credentials from `mcp-runtime auth login` or
-`MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`; unauthenticated pushes are
+`MCP_PLATFORM_API_TOKEN` with a saved or explicit `MCP_PLATFORM_API_URL`;
+unauthenticated pushes are
 rejected before the CLI saves the local image archive. The CLI uploads the docker
 save tar to `POST /api/runtime/registry/push`; the platform API pushes it to the
 registry from inside the cluster. When you use
@@ -302,9 +306,11 @@ mcp-runtime server init payments \
 
 `server init` creates or appends to `.mcp/servers.yaml`. It defaults `image` to
 the server name, `imageTag` to `latest`, `scope` to `tenant`, and the route to
-`/<name>/mcp`. It also writes governed defaults: header auth, allow-list policy
-with deny default, required adapter-issued sessions, and `gateway.enabled:
-true`. Repeated `--tool` flags seed read/low tool metadata. Use repeated
+`/<name>/mcp`. It enables the gateway, scaffolds allow-list/deny policy and a
+required session, and leaves platform-managed gateway wiring and auth/session
+header details out of the metadata file. Use `--policy-mode`,
+`--default-decision`, or `--session-required=false` when the initial governance
+shape should differ. Repeated `--tool` flags seed read/low tool metadata. Use repeated
 `--tool-spec name:low|medium|high:read|write|destructive` when tools need mixed
 trust levels or side-effect classes. If a metadata entry with the same server
 name already exists, `server init` fails unless `--force` is passed.

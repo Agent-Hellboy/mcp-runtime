@@ -136,7 +136,9 @@ in `internal/cli/server/validation.go`.
 
 Keep these flows distinct:
 
-- `server init` scaffolds `.mcp/servers.yaml` with governed defaults.
+- `server init` scaffolds `.mcp/servers.yaml` with `gateway.enabled: true`,
+  policy, and session intent; it leaves gateway wiring and header defaults to
+  the metadata loader and CRD defaulting.
 - `server apply --use-kube` applies a manifest through kubectl (admin only).
 - `server build image` builds and updates metadata but does not deploy.
 - `server generate` renders manifests from metadata for review/GitOps.

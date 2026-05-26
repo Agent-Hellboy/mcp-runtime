@@ -5692,7 +5692,7 @@ Package server owns routing for the server top-level command.
 - [`func (m *ServerManager) ExportServer(name, namespace, file string) error`](#cli-server-func-m-servermanager-exportserver-name-namespace-file-string-error)
 - [`func (m *ServerManager) GenerateManifests(metadataFile, metadataDir, outputDir string) error`](#cli-server-func-m-servermanager-generatemanifests-metadatafile-metadatadir-outputdir-string-error)
 - [`func (m *ServerManager) GetServer(name, namespace string) error`](#cli-server-func-m-servermanager-getserver-name-namespace-string-error)
-- [`func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope string, port int32, tools, toolSpecs []string, force bool) error`](#cli-server-func-m-servermanager-initserver-name-metadatadir-image-imagetag-scope-string-port-int32-tools-toolspecs-string-force-bool-error)
+- [`func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, policyMode, defaultDecision string, sessionRequired bool, port int32, tools, toolSpecs []string, force bool) error`](#cli-server-func-m-servermanager-initserver-name-metadatadir-image-imagetag-scope-policymode-defaultdecision-string-sessionrequired-bool-port-int32-tools-toolspecs-string-force-bool-error)
 - [`func (m *ServerManager) InspectServerPolicy(name, namespace string) error`](#cli-server-func-m-servermanager-inspectserverpolicy-name-namespace-string-error)
 - [`func (m *ServerManager) ListServers(namespace, team string) error`](#cli-server-func-m-servermanager-listservers-namespace-team-string-error)
 - [`func (m *ServerManager) Logger() *zap.Logger`](#cli-server-func-m-servermanager-logger-zap-logger)
@@ -5813,9 +5813,9 @@ func (m *ServerManager) GetServer(name, namespace string) error
 
 ```
 
-<a id="cli-server-func-m-servermanager-initserver-name-metadatadir-image-imagetag-scope-string-port-int32-tools-toolspecs-string-force-bool-error"></a>
+<a id="cli-server-func-m-servermanager-initserver-name-metadatadir-image-imagetag-scope-policymode-defaultdecision-string-sessionrequired-bool-port-int32-tools-toolspecs-string-force-bool-error"></a>
 ```text
-func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope string, port int32, tools, toolSpecs []string, force bool) error
+func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, policyMode, defaultDecision string, sessionRequired bool, port int32, tools, toolSpecs []string, force bool) error
 
 ```
 
