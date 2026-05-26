@@ -821,7 +821,7 @@ func TestEnsureAnalyticsImagePullSecret(t *testing.T) {
 	}
 	kubectl := core.NewTestKubectlClient(mock)
 
-	secretName, err := ensureAnalyticsImagePullSecret(kubectl)
+	secretName, err := ensureAnalyticsImagePullSecret(kubectl, AnalyticsImageSet{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -833,6 +833,87 @@ func TestEnsureAnalyticsImagePullSecret(t *testing.T) {
 	}
 	if !strings.Contains(manifest, "kubernetes.io/dockerconfigjson") {
 		t.Fatalf("expected dockerconfigjson secret manifest, got %q", manifest)
+	}
+}
+
+func TestEnsureAnalyticsImagePullSecretForBundledPublicRegistry(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() {
+		core.DefaultCLIConfig = orig
+	})
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.mcpruntime.org")
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
+	core.DefaultCLIConfig = &core.CLIConfig{
+		RegistryEndpoint:    "registry.mcpruntime.org",
+		RegistryIngressHost: "registry.mcpruntime.org",
+	}
+
+	var manifest string
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if contains(spec.Args, "get") && contains(spec.Args, "secret") && contains(spec.Args, "mcp-sentinel-secrets") {
+				cmd.OutputData = []byte(base64.StdEncoding.EncodeToString([]byte("admin-key")))
+				return cmd
+			}
+			if contains(spec.Args, "apply") && contains(spec.Args, "-f") && contains(spec.Args, "-") {
+				cmd.RunFunc = func() error {
+					if cmd.StdinR != nil {
+						data, _ := io.ReadAll(cmd.StdinR)
+						manifest = string(data)
+					}
+					return nil
+				}
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	secretName, err := ensureAnalyticsImagePullSecret(kubectl, AnalyticsImageSet{
+		API: "registry.mcpruntime.org/mcp-sentinel-api:dev",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if secretName != defaultRegistrySecretName {
+		t.Fatalf("expected secret name %q, got %q", defaultRegistrySecretName, secretName)
+	}
+	if !strings.Contains(manifest, "namespace: "+core.DefaultAnalyticsNamespace) {
+		t.Fatalf("expected analytics namespace in secret manifest, got %q", manifest)
+	}
+	if !strings.Contains(manifest, "kubernetes.io/dockerconfigjson") {
+		t.Fatalf("expected public registry dockerconfigjson secret, got %q", manifest)
+	}
+	encoded := ""
+	for _, line := range strings.Split(manifest, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), ".dockerconfigjson:") {
+			encoded = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), ".dockerconfigjson:"))
+		}
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("failed to decode dockerconfigjson: %v", err)
+	}
+	if !strings.Contains(string(decoded), "registry.mcpruntime.org") || !strings.Contains(string(decoded), "platform-service") {
+		t.Fatalf("unexpected dockerconfigjson payload: %s", string(decoded))
+	}
+}
+
+func TestBundledPublicRegistryPullSecretHostSkipsClusterDNS(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() {
+		core.DefaultCLIConfig = orig
+	})
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.registry.svc.cluster.local:5000")
+	core.DefaultCLIConfig = &core.CLIConfig{
+		RegistryEndpoint:    "registry.registry.svc.cluster.local:5000",
+		RegistryIngressHost: "registry.local",
+	}
+
+	got := bundledPublicRegistryPullSecretHost([]string{"registry.registry.svc.cluster.local:5000/mcp-sentinel-api:dev"})
+	if got != "" {
+		t.Fatalf("expected no public pull secret host for cluster DNS, got %q", got)
 	}
 }
 
@@ -916,7 +997,7 @@ func TestRenderAnalyticsSecretManifestReusesExistingAPIKeys(t *testing.T) {
 }
 
 func TestRenderAnalyticsSecretManifestUsesAdminEnv(t *testing.T) {
-	t.Setenv("MCP_PLATFORM_ADMIN_EMAIL", "PrinceKrRoshan01@gmail.com")
+	t.Setenv("MCP_PLATFORM_ADMIN_EMAIL", "admin@example.com")
 	t.Setenv("MCP_PLATFORM_ADMIN_PASSWORD", "bootstrap-password")
 	t.Setenv("MCP_ADMIN_USERS", "ops@example.com, google-sub-123")
 	kubectl := core.NewTestKubectlClient(&core.MockExecutor{})
@@ -926,13 +1007,13 @@ func TestRenderAnalyticsSecretManifestUsesAdminEnv(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	data := secretStringDataFromManifest(t, manifest)
-	if data["PLATFORM_ADMIN_EMAIL"] != "PrinceKrRoshan01@gmail.com" {
+	if data["PLATFORM_ADMIN_EMAIL"] != "admin@example.com" {
 		t.Fatalf("expected platform admin email from env, got %q", data["PLATFORM_ADMIN_EMAIL"])
 	}
 	if data["PLATFORM_ADMIN_PASSWORD"] != "bootstrap-password" {
 		t.Fatalf("expected platform admin password from env, got %q", data["PLATFORM_ADMIN_PASSWORD"])
 	}
-	for _, want := range []string{"ops@example.com", "google-sub-123", "PrinceKrRoshan01@gmail.com"} {
+	for _, want := range []string{"ops@example.com", "google-sub-123", "admin@example.com"} {
 		if !csvHasValue(data["ADMIN_USERS"], want) {
 			t.Fatalf("expected ADMIN_USERS to include %q, got %q", want, data["ADMIN_USERS"])
 		}
@@ -940,7 +1021,7 @@ func TestRenderAnalyticsSecretManifestUsesAdminEnv(t *testing.T) {
 }
 
 func TestRenderAnalyticsSecretManifestDoesNotSeedPartialAdminPasswordUser(t *testing.T) {
-	t.Setenv("MCP_PLATFORM_ADMIN_EMAIL", "PrinceKrRoshan01@gmail.com")
+	t.Setenv("MCP_PLATFORM_ADMIN_EMAIL", "admin@example.com")
 	kubectl := core.NewTestKubectlClient(&core.MockExecutor{})
 
 	manifest, err := renderAnalyticsSecretManifest(kubectl)
@@ -951,7 +1032,7 @@ func TestRenderAnalyticsSecretManifestDoesNotSeedPartialAdminPasswordUser(t *tes
 	if data["PLATFORM_ADMIN_EMAIL"] != "" || data["PLATFORM_ADMIN_PASSWORD"] != "" {
 		t.Fatalf("expected partial admin bootstrap fields to be omitted, got email=%q password=%q", data["PLATFORM_ADMIN_EMAIL"], data["PLATFORM_ADMIN_PASSWORD"])
 	}
-	if !csvHasValue(data["ADMIN_USERS"], "PrinceKrRoshan01@gmail.com") {
+	if !csvHasValue(data["ADMIN_USERS"], "admin@example.com") {
 		t.Fatalf("expected admin email to remain in ADMIN_USERS, got %q", data["ADMIN_USERS"])
 	}
 	for _, part := range strings.Split(data["ADMIN_USERS"], ",") {

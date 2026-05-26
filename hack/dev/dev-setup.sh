@@ -4,7 +4,7 @@
 # End users don't need this - they use pre-generated manifests.
 #
 # Usage:
-#   ./hack/dev-setup.sh [command]
+#   ./hack/dev/dev-setup.sh [command]
 #
 # Commands:
 #   install    - Install dev tools (controller-gen, kustomize)
@@ -17,7 +17,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${PROJECT_ROOT}"
 
 # Minikube configuration
@@ -277,7 +277,7 @@ status_minikube() {
 
     if ! minikube status -p "${MINIKUBE_PROFILE}" &> /dev/null; then
         echo "   ⚠️  Cluster '${MINIKUBE_PROFILE}' does not exist"
-        echo "   Run './hack/dev-setup.sh minikube start' to create it"
+        echo "   Run './hack/dev/dev-setup.sh minikube start' to create it"
         return 0
     fi
 
@@ -314,7 +314,7 @@ setup_minikube() {
         if ! check_docker; then
             echo ""
             echo "💡 Tip: You can use a different driver by setting MINIKUBE_DRIVER"
-            echo "   Example: MINIKUBE_DRIVER=hyperkit ./hack/dev-setup.sh minikube"
+            echo "   Example: MINIKUBE_DRIVER=hyperkit ./hack/dev/dev-setup.sh minikube"
             exit 1
         fi
         echo "✓ Docker is installed and running"
@@ -343,9 +343,9 @@ setup_minikube() {
     echo "  minikube dashboard -p ${MINIKUBE_PROFILE}    # Open Kubernetes dashboard"
     echo "  minikube tunnel -p ${MINIKUBE_PROFILE}       # Enable LoadBalancer services"
     echo "  minikube ssh -p ${MINIKUBE_PROFILE}          # SSH into the minikube node"
-    echo "  ./hack/dev-setup.sh minikube status          # Check cluster status"
-    echo "  ./hack/dev-setup.sh minikube stop            # Stop the cluster"
-    echo "  ./hack/dev-setup.sh minikube delete          # Delete the cluster"
+    echo "  ./hack/dev/dev-setup.sh minikube status          # Check cluster status"
+    echo "  ./hack/dev/dev-setup.sh minikube stop            # Stop the cluster"
+    echo "  ./hack/dev/dev-setup.sh minikube delete          # Delete the cluster"
 }
 
 # Install dev tools
@@ -422,7 +422,7 @@ show_usage() {
 🔧 MCP Runtime Development Setup
 ==================================
 
-Usage: ./hack/dev-setup.sh [command]
+Usage: ./hack/dev/dev-setup.sh [command]
 
 Commands:
   install              Install dev tools (controller-gen, kustomize)
@@ -441,15 +441,15 @@ Minikube Actions:
   minikube status      Show cluster status
 
 Examples:
-  ./hack/dev-setup.sh install           # Install tools only
-  ./hack/dev-setup.sh generate          # Generate manifests only
-  ./hack/dev-setup.sh format            # Format code only
-  ./hack/dev-setup.sh validate          # Validate code only
-  ./hack/dev-setup.sh minikube          # Setup minikube cluster
-  ./hack/dev-setup.sh minikube status   # Check minikube status
-  ./hack/dev-setup.sh minikube stop     # Stop minikube
-  ./hack/dev-setup.sh all               # Run everything
-  ./hack/dev-setup.sh                   # Run everything (default)
+  ./hack/dev/dev-setup.sh install           # Install tools only
+  ./hack/dev/dev-setup.sh generate          # Generate manifests only
+  ./hack/dev/dev-setup.sh format            # Format code only
+  ./hack/dev/dev-setup.sh validate          # Validate code only
+  ./hack/dev/dev-setup.sh minikube          # Setup minikube cluster
+  ./hack/dev/dev-setup.sh minikube status   # Check minikube status
+  ./hack/dev/dev-setup.sh minikube stop     # Stop minikube
+  ./hack/dev/dev-setup.sh all               # Run everything
+  ./hack/dev/dev-setup.sh                   # Run everything (default)
 
 Environment Variables (minikube):
   MINIKUBE_CPUS                CPU count (default: 2)
@@ -543,7 +543,7 @@ case "$COMMAND" in
             setup_minikube
         else
             echo "   Skipping minikube setup"
-            echo "   Run './hack/dev-setup.sh minikube' later to set it up"
+            echo "   Run './hack/dev/dev-setup.sh minikube' later to set it up"
         fi
         echo ""
 
@@ -551,7 +551,7 @@ case "$COMMAND" in
         echo ""
         echo "Next steps:"
         echo "  - Make changes to api/v1alpha1/mcpserver_types.go"
-        echo "  - Run './hack/dev-setup.sh generate' to regenerate manifests"
+        echo "  - Run './hack/dev/dev-setup.sh generate' to regenerate manifests"
         echo "  - Or use: make -f Makefile.operator manifests generate"
         echo ""
         echo "Tools installed:"

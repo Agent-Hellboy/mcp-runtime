@@ -466,6 +466,7 @@ metadata:
   name: mcp-sentinel-gateway
   namespace: mcp-sentinel
 spec:
+  # Keep at 1 replica until shared UI session storage exists (issue #257).
   replicas: 1
   selector:
     matchLabels:

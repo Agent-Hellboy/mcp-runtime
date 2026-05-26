@@ -90,6 +90,7 @@ Do not hand-wave command behavior from memory when the docs are meant to reflect
 - **Docs you were not asked to edit:** Avoid adding new top-level docs unless the task needs them; this file, `README`, and existing doc trees are the defaults for agents.
 - **Secrets and prod:** This repo is **alpha**; do not hardcode real credentials. Use the existing secret and env patterns documented below.
 - **Agent skills:** Keep `.claude/skills` as a symlink to `../.codex/skills`; see `.claude/README.md` before changing local agent-tool configuration.
+- **Skill upkeep:** After finishing a non-trivial feature, bugfix, operational workflow, or docs change, review the relevant `.codex/skills/*/SKILL.md` files. Update or fix skills when the change affects agent workflows, validation commands, runbooks, or recurring gotchas; keep long operational detail in focused skills or docs instead of duplicating it here.
 - **AI session hygiene:** Before ending a non-trivial session, propose updates to `ai-assist/` (durable agent-facing learnings, gotchas, cross-cutting tips, upstream tracking) and ask the user to review the diff manually before commit. See **AI session hygiene** below for the full charter.
 
 ## AI session hygiene
@@ -235,8 +236,8 @@ kubectl patch secret mcp-sentinel-secrets -n mcp-sentinel --type merge -p '{"str
 - **Prod DNS / ACME:** with `MCP_PLATFORM_DOMAIN=example.com`, setup derives `registry.example.com`, `mcp.example.com`, and `platform.example.com`. All three public DNS records must point at the ingress IP and port 80 must reach Traefik for HTTP-01. If cert-manager reports NXDOMAIN, verify from outside and inside the cluster: `getent hosts registry.example.com`, `getent hosts mcp.example.com`, `getent hosts platform.example.com`, and `kubectl run dns-check --rm -i --restart=Never --image=busybox:1.36 -- nslookup platform.example.com`.
 - **cert-manager "already installed" but TLS times out:** setup's installed check only tests for CRD existence, not pod health. After a k3s restart or cluster disruption, CRDs survive but pods may be gone. If `kubectl get pods -n cert-manager` shows no Running pods, reinstall: `curl -sL https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml | kubectl apply -f -` and wait for all three pods to be Ready before rerunning setup.
 - **Multiple kubeconfigs / wrong cluster targeted by setup:** always pass `--kubeconfig <path>` explicitly when your workstation has more than one kubeconfig. The `KUBECONFIG` env var alone is not sufficient — TLS and cert-manager operations inside setup use `platformKubernetesClients()` which requires the explicit path to be set (fixed in `internal/cli/setup/platform/kube_client.go`). Without this, ClusterIssuer and Certificate resources land on the wrong cluster and the cert never issues on the target cluster.
-- **Sentinel pods ImagePullBackOff after setup with `MCP_REGISTRY_HOST`:** `MCP_REGISTRY_HOST` is the public ingress hostname for external access; it must NOT be used as the internal image pull URL. Before the fix in `platform_registry_resolve.go`, setting `MCP_REGISTRY_HOST=registry.<domain>` caused platform pods to pull images through the auth-protected public ingress (bootstrap deadlock: pod can't pull image → auth service can't start → auth service can't respond → pod can't pull image). Fix: `registryEndpointExplicitlyConfiguredForPlatform()` now only checks `MCP_REGISTRY_ENDPOINT`, not `MCP_REGISTRY_HOST`. Internal pod pulls always use the ClusterIP service URL.
-- **Tenant MCPServer ImagePullBackOff with public registry image refs:** `server generate` rewrites MCPServer `spec.image` to `MCP_REGISTRY_PULL_HOST` / `MCP_REGISTRY_ENDPOINT` (default `registry.registry.svc.cluster.local:5000`) so tenant pods pull over the internal HTTP registry without dockerconfig secrets. Keep `MCP_REGISTRY_INGRESS_HOST` for `docker push` / `registry push` from your workstation; set `MCP_REGISTRY_PULL_HOST` before `server generate` when you need an explicit in-cluster pull address (for example a k3s node-reachable `ClusterIP:port`). The operator receives the internal pull endpoint through setup (`MCP_REGISTRY_ENDPOINT` on the Deployment env), not the public ingress hostname. For public TLS registry setups the platform automatically creates an `mcp-runtime-registry-pull` dockerconfig secret in each team namespace (via `ensureManagedNamespace`) and attaches it to the `mcp-workload` SA. Pull secrets must target `mcp-workload`, not `default` — the operator's `ApplyRestrictedPodDefaults` sets `serviceAccountName: mcp-workload` on all MCPServer pods.
+- **Sentinel pods ImagePullBackOff after setup with registry host drift:** `MCP_REGISTRY_HOST` is the public ingress hostname alias for external access; it must not silently override the platform image pull endpoint. For bundled HTTPS public installs, set `MCP_REGISTRY_ENDPOINT=registry.<domain>` so kubelet pulls match the public TLS certificate. For private HTTP or node-local registry paths, set `MCP_REGISTRY_ENDPOINT` / `MCP_REGISTRY_PULL_HOST` to the exact node-pullable host:port and configure node trust or insecure-registry settings for that exact host.
+- **Tenant MCPServer ImagePullBackOff with registry image refs:** `server generate` rewrites MCPServer `spec.image` to `MCP_REGISTRY_PULL_HOST` / `MCP_REGISTRY_ENDPOINT` (default `registry.registry.svc.cluster.local:5000`) so tenant pods use the configured node-pullable registry endpoint. Keep `MCP_REGISTRY_INGRESS_HOST` for `docker push` / `registry push` from your workstation; set `MCP_REGISTRY_PULL_HOST` before `server generate` when tenant pods need a different pull address than platform setup uses. For public TLS registry setups the platform automatically creates an `mcp-runtime-registry-pull` dockerconfig secret in each team namespace (via `ensureManagedNamespace`) and attaches it to the `mcp-workload` SA. Pull secrets must target `mcp-workload`, not `default` — the operator's `ApplyRestrictedPodDefaults` sets `serviceAccountName: mcp-workload` on all MCPServer pods.
 - **registry-allow-ingress NetworkPolicy blocks k3s Traefik:** the bundled NetworkPolicy allows traffic from the `traefik` namespace (repo-managed Traefik) but k3s runs Traefik in `kube-system`. The current `config/registry/base/networkpolicy.yaml` includes a `kube-system` + `app.kubernetes.io/name: traefik` pod selector entry to handle k3s deployments; it also includes an `ipBlock: 10.0.0.0/8` fallback rule to address k3s ≥1.35 ipset staleness (see next entry). Both fixes are present in the base manifest — apply it with `kubectl apply -f config/registry/base/networkpolicy.yaml` on k3s clusters.
 - **k3s ≥1.35 NetworkPolicy ipset stale for new pods (registry unreachable from new pods):** On k3s 1.35.x+k3s1, the built-in kube-router network policy controller creates ipsets for namespace-based `from` selectors at policy creation/modification time but does NOT update them when new pods are created in allowed namespaces. Symptoms: long-running pods (grafana, tempo, prometheus) can reach `registry.registry.svc.cluster.local:5000` but newly-created pods from the same namespaces get "Connection refused" (TCP RST from iptables REJECT). Diagnosis: `kubectl exec -n mcp-sentinel <long-running-pod> -- wget -qO- http://registry.registry.svc.cluster.local:5000/v2/` succeeds while a fresh job pod in the same namespace fails. Fix: the base `config/registry/base/networkpolicy.yaml` now includes `ipBlock: 10.0.0.0/8` in the ingress allow rule to cover k3s's default pod CIDR (10.42.0.0/16) and flannel's (10.244.0.0/16 is in 10.0.0.0/8). If your cluster uses a different pod CIDR, add the appropriate `ipBlock`. The `cluster doctor` checks 15 and 18 will fail before this fix is applied; they pass after.
 - **Platform UI 404 / wrong host:** when `MCP_PLATFORM_DOMAIN` (or `MCP_PLATFORM_INGRESS_HOST`) is set, setup applies a host-based ingress `mcp-sentinel-platform-ui` in `mcp-sentinel`, a sibling `mcp-sentinel-platform-observability` Ingress for `/grafana`, and, when TLS is enabled, `mcp-sentinel-platform-ui-http` for HTTP→HTTPS redirect. Verify with `kubectl get ingress mcp-sentinel-platform-ui mcp-sentinel-platform-observability -n mcp-sentinel -o yaml`; the UI rule should be host=`platform.<domain>` routing `/` to `mcp-sentinel-ui:8082` (and `/api` to the same service), while observability routes `/grafana` to `grafana:3000` with `sentinel-admin-auth@file`. A direct `/prometheus` route is intentionally absent. If the dashboard returns Traefik default 404, check that DNS resolves `platform.<domain>` to the cluster ingress, then `kubectl logs -n traefik deploy/traefik --tail=120` for routing errors. The dev path-based gateway (`mcp-sentinel-gateway`) keeps working when `MCP_PLATFORM_DOMAIN` is unset.
@@ -277,78 +278,18 @@ kubectl debug -it -n mcp-servers "pod/$POD" \
   --image=busybox:1.36 -- sh
 ```
 
-### k3s and HTTP registry (dev / test without registry TLS)
+### k3s / Public Registry Ops
 
-**When this section applies**
+For public k3s setup, cleanup/restore, rollout, multitenancy smoke tests,
+registry TLS/auth, node DNS versus pod DNS, and ImagePullBackOff debugging,
+use `.codex/skills/k3s-public-ops/SKILL.md` plus
+`docs/k3s-deployment-runbook.md` and `docs/cluster-readiness.md`.
 
-- **Dev HTTP registry (typical on k3s or lab):** run `./bin/mcp-runtime setup` **without** `--with-tls`. Setup logs `TLS: disabled (dev HTTP mode)` for the internal registry; the registry serves **HTTP**, so you need the **Docker** and **k3s** config in the table below on every machine that builds/pushes or pulls.
-- **`--test-mode`:** meant mainly for **Kind** contributor and CI flows. It keeps production guardrails off, uses local/dev registry behavior, and still builds and pushes operator, gateway proxy, and Sentinel images with `latest` tags. In Kind, implicit bundled-registry image refs use `registry.registry.svc.cluster.local:5000/...` to match the documented mirror. On k3s, pods still pull from the exact configured or discovered image host, such as `10.43.x.x:5000`, so k3s/containerd needs a matching insecure HTTP mirror when using the bundled plain HTTP registry. On k3s hosts with an empty/minimal `~/.kube/config`, pass `--kubeconfig /etc/rancher/k3s/k3s.yaml`.
-- **Bundled registry on k3s:** setup prints the selected registry **Internal URL** after creating the registry Service. If you did not preconfigure a stable registry endpoint, copy that exact `host:port` into `/etc/rancher/k3s/registries.yaml`, restart `k3s` / `k3s-agent`, then rerun setup. If StatefulSet storage was interrupted during a failed run, clear the partial runtime namespaces first.
-
-The platform can install a **plain HTTP** Docker distribution registry (typical in dev with `./bin/mcp-runtime setup` **without** `--with-tls`). Runtimes default to **HTTPS** for any registry; you must allow **HTTP (insecure)** in two places: the host where you run **Docker** (build/push) and every **k3s node** (kubelet/containerd pull for Pods).
-
-| Component | Config file (path) | What to set |
-|----------|--------------------|------------|
-| **Docker** (laptop, CI, bastion) | **Docker Desktop:** *Settings* → *Docker Engine* (JSON editor) | Add `insecure-registries` (see example below) |
-| **Docker** (Linux, `dockerd`) | `/etc/docker/daemon.json` | Same JSON; then restart Docker (below) |
-| **k3s** (server and each agent) | `/etc/rancher/k3s/registries.yaml` | Mirror the registry to `http://…` and allow TLS skip for that host (see example); then restart `k3s` / `k3s-agent` on that node |
-
-**1. Docker — `insecure-registries` (push/pull from your workstation)**  
-Create or merge into the JSON (use your real registry `host:port` from `kubectl get svc -n registry` or the address you push to, e.g. a node IP and node port, or a LoadBalancer address):
-
-```json
-{
-  "insecure-registries": ["10.0.0.1:5000", "registry.local:5000"]
-}
-```
-
-- **macOS/Windows (Docker Desktop):** apply the JSON in **Settings → Docker Engine** → **Apply & restart** (or restart the app).
-- **Linux:** write `/etc/docker/daemon.json` (merge with any existing keys such as `log-drivers` if you already have a file), then `sudo systemctl restart docker` (or your distro’s equivalent). Any user running `docker push` that targets this host must have this in effect on that machine.
-
-**2. k3s — `registries.yaml` (Pod image pulls on the node)**  
-On **each** k3s node that can schedule Pods that use the registry, edit or create `/etc/rancher/k3s/registries.yaml`. The key under `mirrors` must **match the registry host and port** used in the image name (e.g. if the image is `10.43.109.51:5000/my-app:tag`, the mirror key must be `10.43.109.51:5000`).
-
-```yaml
-mirrors:
-  "10.43.109.51:5000":
-    endpoint:
-      - "http://10.43.109.51:5000"
-configs:
-  "10.43.109.51:5000":
-    tls:
-      insecure_skip_verify: true
-```
-
-- **Control plane:** `sudo systemctl restart k3s`  
-- **Agent nodes:** the same `registries.yaml` and `sudo systemctl restart k3s-agent` (paths can differ in air-gapped installs; match your k3s version docs).
-
-If you use the hostname `registry.local` in image refs, add a second `mirrors` / `configs` block for that name. Kubelet uses **node** name resolution, not the cluster’s **CoreDNS**, so for `registry.local` you still need a real DNS name or an entry in **`/etc/hosts` on each node**, unless you set **`MCP_REGISTRY_INGRESS_HOST` to a reachable `IP:port` before** `mcp-runtime server generate` so manifests use a pull address nodes can use without a fake host.
-
-**3. Align with MCP server manifests and CI**
-- **Before** `mcp-runtime server generate`, set **`MCP_REGISTRY_INGRESS_HOST`**, **`MCP_REGISTRY_HOST`**, or **`MCP_PLATFORM_DOMAIN`** (see `pkg/metadata/host_resolve.go`) so default image names are **pullable** from the node, not only `registry.local/...` unless you intend to manage DNS/hosts.
-- **`mcp-runtime server build image <name>`** must match the **`name`** in `.mcp/*.yaml`. For metadata-driven builds, the CLI resolves image names from explicit registry env, then the cluster's `registry/registry` Ingress host, then the registry Service address; if a public registry host exists, prefer that so kubelet pulls use a TLS-covered hostname. `mcp-runtime registry push` requires platform credentials from `mcp-runtime auth login` or `MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`; when several local identities are saved, use `mcp-runtime auth use <profile>` or `MCP_PLATFORM_API_PROFILE=<profile>` before tenant-scoped build/push/grant flows. The CLI uploads the saved tar to `POST /api/runtime/registry/push`; the platform API pushes from inside the cluster. Use **`mcp-runtime server deploy <name> --scope tenant --metadata-dir .mcp`** for the normal platform path; repeat deploys with the same name require **`--update`**. Use `mcp-runtime server generate --metadata-dir .mcp --output manifests` only when you need YAML for GitOps or admin review. A single file: `mcp-runtime server apply --file <path>`.
-
-**4. Quick registry reachability (optional)**  
-From a network that can reach the registry: `curl -sS "http://<host>:<port>/v2/"` should return `{}`. That does not replace Docker/k3s configuration for TLS mode of the **client** runtimes.
-
-### Production registry and TLS (debugging)
-
-For production with `MCP_PLATFORM_DOMAIN=example.com`, setup derives hostnames `registry.example.com`, `mcp.example.com`, and `platform.example.com`. MCP server base URLs are `https://mcp.example.com/<server_name>/mcp` (default path shape); the dashboard UI is `https://platform.example.com/`. **All three** DNS names must exist publicly and point to your ingress IP.
-
-- **Cert-manager / NXDOMAIN:** if challenges fail with missing DNS, verify from your laptop and from inside the cluster:
-  - `getent hosts registry.example.com`, `getent hosts mcp.example.com`, and `getent hosts platform.example.com`
-  - `kubectl run dns-check --rm -i --restart=Never --image=busybox:1.36 -- nslookup registry.example.com`
-- **TLS cert SAN checks:** `kubectl get certificate -n registry registry-cert -o yaml` should list `registry.example.com` and `mcp.example.com` under `.spec.dnsNames`; `platform.example.com` should be on the `mcp-sentinel-platform-ui` ingress TLS config in `mcp-sentinel`. After issuance, inspect both secrets:
-  - `kubectl get secret registry-tls -n registry -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -text | grep -A1 "Subject Alternative Name"`
-  - `kubectl get secret mcp-sentinel-platform-tls -n mcp-sentinel -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -text | grep -A1 "Subject Alternative Name"`
-- **`registry-cert` Ready but image pulls `not found`:** confirm the public registry URL actually routes to the distribution service (not a dead Traefik router). The registry **Ingress** must not reference middleware that is not installed on the Traefik instance serving prod (the base registry ingress does not attach the PII redactor; that middleware exists only in the `config/ingress/overlays/http` dev Traefik stack).
-  - `curl -k -i -H "x-api-key: $ADMIN_API_KEY" https://registry.example.com/v2/` should return **HTTP 200** and header `docker-distribution-api-version: registry/2.0`. HTTP 401/403 means public registry auth rejected the request; a Traefik **404 page not found** means the registry router is not active (fix ingress annotations or Traefik before debugging registry data).
-- **Traefik logs:** `kubectl logs -n traefik deploy/traefik --tail=120` (or k3s Traefik in `kube-system` if you use the bundled service). The repo-managed Traefik stack loads `registry-admin-auth@file` from its dynamic config for registry ingress auth. If you see `middleware "pii-redactor@file" does not exist` on a route that should be the registry, ensure the live **registry** `Ingress` does not set `traefik.ingress.kubernetes.io/router.middlewares: pii-redactor@file` for prod Traefik.
-- **Live registry ingress:** `kubectl get ingress registry -n registry -o yaml` and confirm `spec.rules` host and TLS match your domain.
-- **Pushed image visibility:** `curl -k -I -H "x-api-key: $ADMIN_API_KEY" https://registry.example.com/v2/<repo>/manifests/<tag>` (expect 200 or 404 from the registry, not from Traefik’s default backend).
-- **Sentinel rollouts after fixes:** `kubectl rollout status deployment/mcp-sentinel-ingest deployment/mcp-sentinel-api deployment/mcp-sentinel-processor deployment/mcp-sentinel-ui -n mcp-sentinel --timeout=90s`
-
-**Expected when healthy:** `curl -k -i -H "x-api-key: $ADMIN_API_KEY" https://registry.<domain>/v2/` returns 200 with `registry/2.0`; the same public URL without admin credentials returns 401/403; `kubectl get certificate registry-cert -n registry -o wide` shows `Ready=True`; mcp-sentinel pods are `1/1` `Running`; `mcp-runtime setup` ends with `Platform setup complete`.
+Key reminder: kubelet/containerd image pulls use node DNS and node registry
+trust, not pod CoreDNS. Production public k3s installs should prefer
+TLS-covered image refs such as `registry.<domain>/...` with the platform-created
+pull Secret attached, while private HTTP/node-local registry paths require exact
+`/etc/rancher/k3s/registries.yaml` configuration on every node.
 
 ## Governance (grants and sessions)
 

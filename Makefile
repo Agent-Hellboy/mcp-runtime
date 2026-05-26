@@ -51,13 +51,13 @@ dev: build ## Build and run CLI in development mode.
 deps: deps-check deps-go ## Verify host tools, then download Go modules (Go 1.25+, docker, kubectl).
 
 deps-go: ## Go mod download and tidy (root) plus go mod download for each nested module in services/ and examples/.
-	@./hack/deps.sh go
+	@./hack/dev/deps.sh go
 
 deps-check: ## Verify toolchain on PATH. Set STRICT_DEPS_CHECK=1 to fail the recipe if a tool is missing.
-	@./hack/deps.sh check
+	@./hack/dev/deps.sh check
 
 deps-install: ## Best-effort install of host tools where supported (Go, Docker client, kubectl).
-	@./hack/deps.sh install
+	@./hack/dev/deps.sh install
 
 ##@ Testing
 

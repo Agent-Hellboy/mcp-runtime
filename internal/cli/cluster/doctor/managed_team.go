@@ -219,17 +219,15 @@ func checkOperatorRegistryEndpoint(kubectl core.KubectlRunner) DoctorCheck {
 	if ingressHost != "" && strings.EqualFold(endpoint, ingressHost) {
 		return DoctorCheck{
 			Name:   "operator registry endpoint",
-			OK:     false,
-			Detail: fmt.Sprintf("MCP_REGISTRY_ENDPOINT points at public ingress host %s", endpoint),
-			Remedy: "set MCP_REGISTRY_ENDPOINT to the internal pull endpoint, for example registry.registry.svc.cluster.local:5000 or the registry ClusterIP:port",
+			OK:     true,
+			Detail: fmt.Sprintf("MCP_REGISTRY_ENDPOINT=%s matches MCP_REGISTRY_INGRESS_HOST; valid when nodes can resolve and trust the bundled HTTPS registry hostname", endpoint),
 		}
 	}
 	if doctorLooksLikePublicRegistryHost(endpoint) {
 		return DoctorCheck{
 			Name:   "operator registry endpoint",
-			OK:     false,
-			Detail: fmt.Sprintf("MCP_REGISTRY_ENDPOINT=%s looks like a public registry hostname, not an internal pull endpoint", endpoint),
-			Remedy: "set MCP_REGISTRY_ENDPOINT to the internal pull endpoint, not registry.<domain>",
+			OK:     true,
+			Detail: fmt.Sprintf("MCP_REGISTRY_ENDPOINT=%s is a hostname endpoint; verify node DNS/TLS with image-pull diagnostics below", endpoint),
 		}
 	}
 	return DoctorCheck{

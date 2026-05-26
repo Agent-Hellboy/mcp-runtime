@@ -21,7 +21,7 @@ integration_status="skipped"
 # Test 0: Build and test services/api
 echo "🔨 Building and testing services/api"
 if command -v go >/dev/null 2>&1; then
-    hack/go-test.sh services/api
+    hack/ci/go-test.sh services/api
 else
     echo "⚠️  Go not available, skipping services/api tests"
 fi

@@ -2,7 +2,7 @@
 # Development dependency helpers: Go modules, tool checks, optional OS package installs.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 # Minimum Go for the main module (align with go.mod "go" directive).
