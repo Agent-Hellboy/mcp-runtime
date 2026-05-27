@@ -800,6 +800,24 @@ ensure_ui_port_forward() {
   wait_port "${UI_SERVICE_PORT}"
 }
 
+ensure_api_port_forward() {
+  if [[ -z "${API_SERVICE_PORT_FORWARD_PID:-}" ]]; then
+    echo "[port-forward] exposing mcp-sentinel-api on localhost:${API_SERVICE_PORT}"
+    port_forward_bg mcp-sentinel mcp-sentinel-api "${API_SERVICE_PORT}" 8080 "${WORKDIR}/api-port-forward.log"
+    API_SERVICE_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+  fi
+  wait_port "${API_SERVICE_PORT}"
+}
+
+ensure_gateway_port_forward() {
+  if [[ -z "${SENTINEL_PORT_FORWARD_PID:-}" ]]; then
+    echo "[port-forward] exposing mcp-sentinel-gateway on localhost:${SENTINEL_PORT}"
+    port_forward_bg mcp-sentinel mcp-sentinel-gateway "${SENTINEL_PORT}" 8083 "${WORKDIR}/sentinel-port-forward.log"
+    SENTINEL_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+  fi
+  wait_port "${SENTINEL_PORT}"
+}
+
 start_header_proxy_bg() {
   local local_port="$1"
   local upstream_origin="$2"
@@ -807,6 +825,10 @@ start_header_proxy_bg() {
   local label="header proxy ${local_port} -> ${upstream_origin}"
   shift 3
 
+  if port_is_listening "${local_port}"; then
+    echo "[proxy] reusing existing header proxy on localhost:${local_port}"
+    return 0
+  fi
   require_port_available "${local_port}" "${label}"
   python3 "${PROJECT_ROOT}/test/e2e/mcp_header_proxy.py" \
     --listen-host 127.0.0.1 \
@@ -3303,16 +3325,10 @@ EOF
     # reuse semantics (reused=true on the *second* call within this run).
     ADAPTER_AGENT_ID="e2e-adapter-agent-$(date +%s)"
 
-    if api_service_paths_selected && [[ -z "${API_SERVICE_PORT_FORWARD_PID:-}" ]]; then
-      port_forward_bg mcp-sentinel mcp-sentinel-api "${API_SERVICE_PORT}" 8080 "${WORKDIR}/api-port-forward.log"
-      API_SERVICE_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
-      wait_port "${API_SERVICE_PORT}"
+    if api_service_paths_selected; then
+      ensure_api_port_forward
     fi
-    if [[ -z "${SENTINEL_PORT_FORWARD_PID:-}" ]]; then
-      port_forward_bg mcp-sentinel mcp-sentinel-gateway "${SENTINEL_PORT}" 8083 "${WORKDIR}/sentinel-port-forward.log"
-      SENTINEL_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
-      wait_port "${SENTINEL_PORT}"
-    fi
+    ensure_gateway_port_forward
 
     log_line policy "applying agent-scoped grant for adapter-session test"
     cat >"${WORKDIR}/adapter-session-grant.yaml" <<EOF
@@ -3402,21 +3418,25 @@ print('adapter-session reused:', resp['name'])
     if deep_request_flows_enabled || scenario_selected "adapter-proxy"; then
       log_line policy "running local adapter proxy with platform-issued session"
       ADAPTER_PROXY_LOG="${WORKDIR}/adapter-proxy.log"
-      require_port_available "${ADAPTER_PROXY_PORT}" "adapter proxy"
-      MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}" \
-        MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
-        ./bin/mcp-runtime adapter proxy \
-          --listen "127.0.0.1:${ADAPTER_PROXY_PORT}" \
-          --runtime-url "${MCP_DIRECT_URL}" \
-          --host-header "${SERVER_HOST}" \
-          --server "${SERVER_NAME}" \
-          --namespace mcp-servers \
-          --agent "${ADAPTER_AGENT_ID}" \
-          --request-timeout 20s \
-          --log-level info >"${ADAPTER_PROXY_LOG}" 2>&1 &
-      ADAPTER_PROXY_PID="$!"
-      PIDS+=("${ADAPTER_PROXY_PID}")
-      wait_managed_port "${ADAPTER_PROXY_PORT}" "${ADAPTER_PROXY_PID}" "${ADAPTER_PROXY_LOG}" "adapter proxy"
+      if port_is_listening "${ADAPTER_PROXY_PORT}"; then
+        echo "[proxy] reusing existing adapter proxy on localhost:${ADAPTER_PROXY_PORT}"
+      else
+        require_port_available "${ADAPTER_PROXY_PORT}" "adapter proxy"
+        MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}" \
+          MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
+          ./bin/mcp-runtime adapter proxy \
+            --listen "127.0.0.1:${ADAPTER_PROXY_PORT}" \
+            --runtime-url "${MCP_DIRECT_URL}" \
+            --host-header "${SERVER_HOST}" \
+            --server "${SERVER_NAME}" \
+            --namespace mcp-servers \
+            --agent "${ADAPTER_AGENT_ID}" \
+            --request-timeout 20s \
+            --log-level info >"${ADAPTER_PROXY_LOG}" 2>&1 &
+        ADAPTER_PROXY_PID="$!"
+        PIDS+=("${ADAPTER_PROXY_PID}")
+        wait_managed_port "${ADAPTER_PROXY_PORT}" "${ADAPTER_PROXY_PID}" "${ADAPTER_PROXY_LOG}" "adapter proxy"
+      fi
       # The adapter session is rendered through the policy ConfigMap, then the
       # gateway observes the mounted file on its next kubelet/poll interval.
       # Reuse the normal policy wait budget here; CI can take longer than a
@@ -3428,6 +3448,7 @@ print('adapter-session reused:', resp['name'])
 
   if deep_request_flows_enabled || scenario_selected "cli-platform"; then
     log_line policy "running platform CLI request-flow sweep"
+    ensure_api_port_forward
     if [[ -z "${ADAPTER_PLATFORM_TOKEN:-}" ]]; then
       ADAPTER_PLATFORM_TOKEN="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
 import json, os
@@ -3462,6 +3483,8 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
 
   if scenario_selected "api-platform" && ! deep_request_flows_enabled; then
     log_line policy "validating targeted platform API request paths"
+    ensure_api_port_forward
+    ensure_gateway_port_forward
     API_BASE="http://127.0.0.1:${API_SERVICE_PORT}" \
     GATEWAY_API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api" \
     API_KEY="${API_KEY}" \
@@ -3477,6 +3500,7 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
   if scenario_selected "ui-auth" && ! deep_request_flows_enabled; then
     log_line policy "validating targeted UI auth request paths"
     ensure_ui_port_forward
+    ensure_gateway_port_forward
     UI_BASE="http://127.0.0.1:${UI_SERVICE_PORT}" \
     GATEWAY_BASE="http://127.0.0.1:${SENTINEL_PORT}" \
     API_KEY="${API_KEY}" \
@@ -3584,14 +3608,10 @@ fi
 if checkpoint_enabled "oauth"; then
   echo "[port-forward] exposing ingress and observability services"
   ensure_traefik_port_forward
-  if [[ -z "${SENTINEL_PORT_FORWARD_PID:-}" ]]; then
-    port_forward_bg mcp-sentinel mcp-sentinel-gateway "${SENTINEL_PORT}" 8083 "${WORKDIR}/sentinel-port-forward.log"
-    SENTINEL_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
-  fi
+  ensure_gateway_port_forward
   port_forward_bg mcp-sentinel loki "${LOKI_PORT}" 3100 "${WORKDIR}/loki-port-forward.log"
-  if api_service_paths_selected && [[ -z "${API_SERVICE_PORT_FORWARD_PID:-}" ]]; then
-    port_forward_bg mcp-sentinel mcp-sentinel-api "${API_SERVICE_PORT}" 8080 "${WORKDIR}/api-port-forward.log"
-    API_SERVICE_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+  if api_service_paths_selected; then
+    ensure_api_port_forward
   fi
   if scenario_selected "observability"; then
     port_forward_bg mcp-sentinel mcp-sentinel-api "${API_METRICS_PORT}" 9090 "${WORKDIR}/api-metrics-port-forward.log"
@@ -3609,11 +3629,7 @@ if checkpoint_enabled "oauth"; then
   fi
 
   wait_port "${TRAEFIK_PORT}"
-  wait_port "${SENTINEL_PORT}"
   wait_port "${LOKI_PORT}"
-  if api_service_paths_selected; then
-    wait_port "${API_SERVICE_PORT}"
-  fi
   if scenario_selected "observability"; then
     wait_port "${API_METRICS_PORT}"
     wait_port "${INGEST_SERVICE_PORT}"
@@ -4193,21 +4209,25 @@ print('adapter-session reused:', resp['name'])
   if deep_request_flows_enabled || scenario_selected "adapter-proxy"; then
     log_line policy "running local adapter proxy with platform-issued session"
     ADAPTER_PROXY_LOG="${WORKDIR}/adapter-proxy.log"
-    require_port_available "${ADAPTER_PROXY_PORT}" "adapter proxy"
-    MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}" \
-      MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
-      ./bin/mcp-runtime adapter proxy \
-        --listen "127.0.0.1:${ADAPTER_PROXY_PORT}" \
-        --runtime-url "${MCP_DIRECT_URL}" \
-        --host-header "${SERVER_HOST}" \
-        --server "${SERVER_NAME}" \
-        --namespace mcp-servers \
-        --agent "${ADAPTER_AGENT_ID}" \
-        --request-timeout 20s \
-        --log-level info >"${ADAPTER_PROXY_LOG}" 2>&1 &
-    ADAPTER_PROXY_PID="$!"
-    PIDS+=("${ADAPTER_PROXY_PID}")
-    wait_managed_port "${ADAPTER_PROXY_PORT}" "${ADAPTER_PROXY_PID}" "${ADAPTER_PROXY_LOG}" "adapter proxy"
+    if port_is_listening "${ADAPTER_PROXY_PORT}"; then
+      echo "[proxy] reusing existing adapter proxy on localhost:${ADAPTER_PROXY_PORT}"
+    else
+      require_port_available "${ADAPTER_PROXY_PORT}" "adapter proxy"
+      MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}" \
+        MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
+        ./bin/mcp-runtime adapter proxy \
+          --listen "127.0.0.1:${ADAPTER_PROXY_PORT}" \
+          --runtime-url "${MCP_DIRECT_URL}" \
+          --host-header "${SERVER_HOST}" \
+          --server "${SERVER_NAME}" \
+          --namespace mcp-servers \
+          --agent "${ADAPTER_AGENT_ID}" \
+          --request-timeout 20s \
+          --log-level info >"${ADAPTER_PROXY_LOG}" 2>&1 &
+      ADAPTER_PROXY_PID="$!"
+      PIDS+=("${ADAPTER_PROXY_PID}")
+      wait_managed_port "${ADAPTER_PROXY_PORT}" "${ADAPTER_PROXY_PID}" "${ADAPTER_PROXY_LOG}" "adapter proxy"
+    fi
     # The adapter session is rendered through the policy ConfigMap, then the
     # gateway observes the mounted file on its next kubelet/poll interval.
     # Reuse the normal policy wait budget here; CI can take longer than a
@@ -4218,6 +4238,7 @@ fi
 
 if deep_request_flows_enabled || scenario_selected "cli-platform"; then
   log_line policy "running platform CLI request-flow sweep"
+  ensure_api_port_forward
   if [[ -z "${ADAPTER_PLATFORM_TOKEN:-}" ]]; then
     ADAPTER_PLATFORM_TOKEN="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
 import json, os
@@ -4252,6 +4273,8 @@ fi
 
 if scenario_selected "api-platform" && ! deep_request_flows_enabled; then
   log_line policy "validating targeted platform API request paths"
+  ensure_api_port_forward
+  ensure_gateway_port_forward
   API_BASE="http://127.0.0.1:${API_SERVICE_PORT}" \
   GATEWAY_API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api" \
   API_KEY="${API_KEY}" \
@@ -4266,6 +4289,8 @@ fi
 
 if scenario_selected "ui-auth" && ! deep_request_flows_enabled; then
   log_line policy "validating targeted UI auth request paths"
+  ensure_ui_port_forward
+  ensure_gateway_port_forward
   UI_BASE="http://127.0.0.1:${UI_SERVICE_PORT}" \
   GATEWAY_BASE="http://127.0.0.1:${SENTINEL_PORT}" \
   API_KEY="${API_KEY}" \

@@ -631,6 +631,7 @@ if deep_request_flows:
     team_user_email = f"e2e-team-user-{suffix}@mcpruntime.org"
     team_user = expect_json(
         f"{api_base}/api/users",
+        status=201,
         method="POST",
         headers=admin_headers,
         body={"email": team_user_email, "password": test_user_password, "role": "user"},
