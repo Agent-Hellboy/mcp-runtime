@@ -128,7 +128,7 @@ membership = expect_json(
 )
 check(membership.get("membership", {}).get("user_id") == user_id, "PUT /api/runtime/teams/{slug}/members/{userID} added user", f"membership response: {membership}")
 team_user_email = f"e2e-api-team-user-{suffix}@mcpruntime.org"
-team_user = expect_json(f"{api_base}/api/users", method="POST", headers=admin_headers, body={"email": team_user_email, "password": test_user_password, "role": "user"})
+team_user = expect_json(f"{api_base}/api/users", status=201, method="POST", headers=admin_headers, body={"email": team_user_email, "password": test_user_password, "role": "user"})
 team_user_id = team_user.get("user", {}).get("id", "")
 check(bool(team_user_id), "POST /api/users created user", f"team user response: {team_user}")
 expect_json(
