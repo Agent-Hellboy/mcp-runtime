@@ -3284,6 +3284,11 @@ EOF
       API_SERVICE_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
       wait_port "${API_SERVICE_PORT}"
     fi
+    if [[ -z "${SENTINEL_PORT_FORWARD_PID:-}" ]]; then
+      port_forward_bg mcp-sentinel mcp-sentinel-gateway "${SENTINEL_PORT}" 8083 "${WORKDIR}/sentinel-port-forward.log"
+      SENTINEL_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+      wait_port "${SENTINEL_PORT}"
+    fi
 
     log_line policy "applying agent-scoped grant for adapter-session test"
     cat >"${WORKDIR}/adapter-session-grant.yaml" <<EOF
@@ -3556,7 +3561,10 @@ if checkpoint_enabled "oauth"; then
   port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${WORKDIR}/traefik-port-forward.log"
   TRAEFIK_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
   TRAEFIK_PORT_FORWARD_RESTARTS=0
-  port_forward_bg mcp-sentinel mcp-sentinel-gateway "${SENTINEL_PORT}" 8083 "${WORKDIR}/sentinel-port-forward.log"
+  if [[ -z "${SENTINEL_PORT_FORWARD_PID:-}" ]]; then
+    port_forward_bg mcp-sentinel mcp-sentinel-gateway "${SENTINEL_PORT}" 8083 "${WORKDIR}/sentinel-port-forward.log"
+    SENTINEL_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+  fi
   port_forward_bg mcp-sentinel loki "${LOKI_PORT}" 3100 "${WORKDIR}/loki-port-forward.log"
   if api_service_paths_selected && [[ -z "${API_SERVICE_PORT_FORWARD_PID:-}" ]]; then
     port_forward_bg mcp-sentinel mcp-sentinel-api "${API_SERVICE_PORT}" 8080 "${WORKDIR}/api-port-forward.log"
