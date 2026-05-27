@@ -2175,6 +2175,18 @@ PY
   return 1
 }
 
+restore_policy_server_grant_defaults() {
+  log_line policy "restoring baseline access grant allow rules after deny validation"
+  if [[ ! -f "${WORKDIR}/access-grant.yaml" ]]; then
+    echo "missing ${WORKDIR}/access-grant.yaml for grant restore" >&2
+    exit 1
+  fi
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant.yaml)
+  wait_for_grant_tool_rule "${SERVER_NAME}-grant" "aaa-ping" "allow"
+  wait_for_grant_tool_rule "${SERVER_NAME}-grant" "echo" "allow"
+  print_gateway_policy_debug
+}
+
 mirror_repository_path() {
   local image="$1"
   local path="${image#docker.io/}"
@@ -3635,6 +3647,7 @@ EOF
     wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "aaa-ping" '{}' 403 "tool_denied"
     wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "echo" '{"message":"analytics"}' 403 "tool_denied"
     run_mcp_curl_expect "mcp-curl-aaa-ping-deny" "${MCP_TRUST_SESSION_URL}" false "tool_denied"
+    restore_policy_server_grant_defaults
   fi
 fi
 
@@ -4305,103 +4318,6 @@ if scenario_selected "ui-auth" && ! deep_request_flows_enabled; then
   API_KEY="${API_KEY}" \
   E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE}" \
   python3 test/e2e/ui_auth_flows.py
-fi
-
-if scenario_selected "trust"; then
-  ensure_trust_session_proxy
-  log_line mcp "validating targeted echo and upper tool behavior"
-  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "echo" '{"message":"hello"}' 200 "hello"
-  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "upper" '{"message":"governance"}' 403 "trust_too_low"
-
-  log_line policy "raising consented trust to medium; upper should become allowed while add stays ungranted"
-  cat <<EOF | kubectl apply -f -
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPAgentSession
-metadata:
-  name: ${SESSION_ID}
-  namespace: mcp-servers
-spec:
-  serverRef:
-    name: ${SERVER_NAME}
-  subject:
-    humanID: ${HUMAN_ID}
-    agentID: ${AGENT_ID}
-  consentedTrust: medium
-  policyVersion: v1
-EOF
-
-  wait_for_policy_text "\"consented_trust\": \"medium\""
-  print_gateway_policy_debug
-  log_line mcp "waiting for updated consented trust to reach the gateway"
-  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "upper" '{"message":"governance"}' 200 "GOVERNANCE"
-  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "add" '{"a":2,"b":3}' 403 "tool_not_granted"
-
-  log_line policy "temporarily expanding grant for deterministic multi-tool MCP checks"
-  cat <<EOF | kubectl apply -f -
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPAccessGrant
-metadata:
-  name: ${SERVER_NAME}-grant
-  namespace: mcp-servers
-spec:
-  serverRef:
-    name: ${SERVER_NAME}
-  subject:
-    humanID: ${HUMAN_ID}
-    agentID: ${AGENT_ID}
-  maxTrust: high
-  allowedSideEffects: [read]
-  policyVersion: v1
-  toolRules:
-    - name: aaa-ping
-      decision: allow
-    - name: echo
-      decision: allow
-    - name: upper
-      decision: allow
-    - name: add
-      decision: allow
-    - name: slugify
-      decision: allow
-EOF
-  wait_for_policy_text "\"slugify\""
-  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "add" '{"a":41,"b":1}' 200 "42"
-  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "slugify" '{"message":"Hello World"}' 200 "hello-world"
-
-  log_line policy "updating access grant to deny aaa-ping and echo"
-  cat >"${WORKDIR}/access-grant-deny.yaml" <<EOF
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPAccessGrant
-metadata:
-  name: ${SERVER_NAME}-grant
-  namespace: mcp-servers
-spec:
-  serverRef:
-    name: ${SERVER_NAME}
-  subject:
-    humanID: ${HUMAN_ID}
-    agentID: ${AGENT_ID}
-  maxTrust: high
-  allowedSideEffects: [read]
-  policyVersion: v1
-  toolRules:
-    - name: aaa-ping
-      decision: deny
-    - name: echo
-      decision: deny
-    - name: upper
-      decision: allow
-EOF
-  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant-deny.yaml)
-
-  wait_for_grant_tool_rule "${SERVER_NAME}-grant" "aaa-ping" "deny"
-  wait_for_grant_tool_rule "${SERVER_NAME}-grant" "echo" "deny"
-  print_gateway_policy_debug
-
-  log_line mcp "validating updated access grant denies aaa-ping and echo"
-  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "aaa-ping" '{}' 403 "tool_denied"
-  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "echo" '{"message":"analytics"}' 403 "tool_denied"
-  run_mcp_curl_expect "mcp-curl-aaa-ping-deny" "${MCP_TRUST_SESSION_URL}" false "tool_denied"
 fi
 
 fi
