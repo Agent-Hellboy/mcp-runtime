@@ -2049,6 +2049,7 @@ PY
 
 run_parallel_mcp_tool_checks() {
   local label
+  local -a check_args=()
   if [[ "$#" -eq 0 ]]; then
     return 0
   fi
@@ -2062,8 +2063,13 @@ run_parallel_mcp_tool_checks() {
     shift
     label="$1"
     shift
+    check_args=()
+    while [[ "$#" -gt 0 && "$1" != "--" ]]; do
+      check_args+=("$1")
+      shift
+    done
     parallel_start "${E2E_MCP_WAIT_PARALLELISM}" "mcp ${label}" \
-      wait_for_mcp_tool_result "$@" "${label}"
+      wait_for_mcp_tool_result "${check_args[@]}" "${label}"
   done
   parallel_wait_all
 }
