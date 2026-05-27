@@ -224,19 +224,23 @@ if ! [[ "${E2E_IMAGE_BUILD_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_IMAGE_BUILD
   exit 1
 fi
 E2E_EXAMPLE_DEPLOY_PARALLELISM="${E2E_EXAMPLE_DEPLOY_PARALLELISM:-${E2E_IMAGE_BUILD_PARALLELISM}}"
-E2E_MCP_WAIT_PARALLELISM="${E2E_MCP_WAIT_PARALLELISM:-4}"
+E2E_GRANT_RULE_PARALLELISM="${E2E_GRANT_RULE_PARALLELISM:-4}"
 E2E_HTTP_FLOW_PARALLELISM="${E2E_HTTP_FLOW_PARALLELISM:-2}"
 if ! [[ "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" -lt 1 ]]; then
   echo "E2E_EXAMPLE_DEPLOY_PARALLELISM must be a positive integer" >&2
   exit 1
 fi
-if ! [[ "${E2E_MCP_WAIT_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_MCP_WAIT_PARALLELISM}" -lt 1 ]]; then
-  echo "E2E_MCP_WAIT_PARALLELISM must be a positive integer" >&2
+if ! [[ "${E2E_GRANT_RULE_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_GRANT_RULE_PARALLELISM}" -lt 1 ]]; then
+  echo "E2E_GRANT_RULE_PARALLELISM must be a positive integer" >&2
   exit 1
 fi
 if ! [[ "${E2E_HTTP_FLOW_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_HTTP_FLOW_PARALLELISM}" -lt 1 ]]; then
   echo "E2E_HTTP_FLOW_PARALLELISM must be a positive integer" >&2
   exit 1
+fi
+# Backward-compatible alias for older env files/CI that still set E2E_MCP_WAIT_PARALLELISM.
+if [[ -n "${E2E_MCP_WAIT_PARALLELISM:-}" ]]; then
+  E2E_GRANT_RULE_PARALLELISM="${E2E_MCP_WAIT_PARALLELISM}"
 fi
 if ! [[ "${E2E_MAX_MCP_SERVERS}" =~ ^[0-9]+$ ]]; then
   echo "E2E_MAX_MCP_SERVERS must be zero or a positive integer" >&2
@@ -473,6 +477,11 @@ PARALLEL_SEQ=0
 STAGE_SEQ=0
 
 cleanup() {
+  # Background parallel workers inherit this EXIT trap; never tear down the
+  # cluster or delete the shared kubeconfig from a subshell.
+  if [[ "${BASH_SUBSHELL:-0}" -ne 0 ]]; then
+    return 0
+  fi
   if [[ -n "${E2E_ARTIFACT_DIR}" ]]; then
     mkdir -p "${E2E_ARTIFACT_DIR}"
     if [[ -d "${WORKDIR}" ]]; then
@@ -764,7 +773,7 @@ port_forward_bg() {
 
   for attempt in 1 2 3; do
     require_port_available "${local_port}" "${label}" || return 1
-    kubectl port-forward -n "${namespace}" "svc/${service}" "${local_port}:${remote_port}" >"${log_file}" 2>&1 &
+    KUBECONFIG="${KUBECONFIG_FILE}" kubectl port-forward -n "${namespace}" "svc/${service}" "${local_port}:${remote_port}" >"${log_file}" 2>&1 &
     pid="$!"
     PIDS+=("${pid}")
     LAST_MANAGED_PID="${pid}"
@@ -793,7 +802,7 @@ port_forward_resource_bg() {
 
   for attempt in 1 2 3; do
     require_port_available "${local_port}" "${label}" || return 1
-    kubectl port-forward -n "${namespace}" "${resource}" "${local_port}:${remote_port}" >"${log_file}" 2>&1 &
+    KUBECONFIG="${KUBECONFIG_FILE}" kubectl port-forward -n "${namespace}" "${resource}" "${local_port}:${remote_port}" >"${log_file}" 2>&1 &
     pid="$!"
     PIDS+=("${pid}")
     LAST_MANAGED_PID="${pid}"
@@ -952,6 +961,10 @@ refresh_mcp_proxy_urls() {
 }
 
 ensure_server_proxy_port_forward() {
+  refresh_kind_kubeconfig || true
+  if [[ -n "${SERVER_PROXY_PORT_FORWARD_PID:-}" ]] && ! port_is_listening "${SERVER_PROXY_PORT}"; then
+    SERVER_PROXY_PORT_FORWARD_PID=""
+  fi
   if [[ -z "${SERVER_PROXY_PORT_FORWARD_PID:-}" ]]; then
     echo "[port-forward] exposing ${SERVER_NAME} service on localhost:${SERVER_PROXY_PORT}"
     port_forward_bg mcp-servers "${SERVER_NAME}" "${SERVER_PROXY_PORT}" 80 "${WORKDIR}/server-proxy-port-forward.log"
@@ -2054,7 +2067,8 @@ run_parallel_mcp_tool_checks() {
     return 0
   fi
 
-  parallel_reset
+  # Each batch shares one MCP URL/session proxy and gateway reload timing; never
+  # run these concurrently even when other stages use parallel workers.
   while [[ "$#" -gt 0 ]]; do
     if [[ "$1" != "--" ]]; then
       echo "run_parallel_mcp_tool_checks: expected -- before each check group" >&2
@@ -2068,10 +2082,8 @@ run_parallel_mcp_tool_checks() {
       check_args+=("$1")
       shift
     done
-    parallel_start "${E2E_MCP_WAIT_PARALLELISM}" "mcp ${label}" \
-      wait_for_mcp_tool_result "${check_args[@]}" "" "" "${label}"
+    wait_for_mcp_tool_result "${check_args[@]}" "" "" "${label}"
   done
-  parallel_wait_all
 }
 
 run_parallel_grant_tool_rules() {
@@ -2092,7 +2104,7 @@ run_parallel_grant_tool_rules() {
     shift
     local expected_decision="$1"
     shift
-    parallel_start "${E2E_MCP_WAIT_PARALLELISM}" "grant rule ${grant_name}/${tool_name}=${expected_decision}" \
+    parallel_start "${E2E_GRANT_RULE_PARALLELISM}" "grant rule ${grant_name}/${tool_name}=${expected_decision}" \
       wait_for_grant_tool_rule "${grant_name}" "${tool_name}" "${expected_decision}"
   done
   parallel_wait_all
@@ -2149,11 +2161,17 @@ run_selected_http_flow_scenarios() {
     ensure_gateway_port_forward
   fi
 
-  if [[ "${run_api}" -eq 1 && "${run_ui}" -eq 1 ]]; then
+  if [[ "${run_api}" -eq 1 && "${run_ui}" -eq 1 && "${E2E_HTTP_FLOW_PARALLELISM}" -gt 1 ]]; then
     parallel_reset
     parallel_start "${E2E_HTTP_FLOW_PARALLELISM}" "api-platform flows" run_api_platform_http_flows
     parallel_start "${E2E_HTTP_FLOW_PARALLELISM}" "ui-auth flows" run_ui_auth_http_flows
     parallel_wait_all
+    return
+  fi
+
+  if [[ "${run_api}" -eq 1 && "${run_ui}" -eq 1 ]]; then
+    run_api_platform_http_flows
+    run_ui_auth_http_flows
     return
   fi
 
@@ -2833,7 +2851,8 @@ parallel_start() {
   stdout_file="${log_file%.log}.stdout.log"
   stderr_file="${log_file%.log}.stderr.log"
   log_status "START" "${label} (parallel worker; full log: $(relative_log_path "${log_file}"))"
-  "$@" >"${stdout_file}" 2>"${stderr_file}" &
+  # Subshell workers must not inherit the main EXIT trap or they delete shared kubeconfig.
+  ( trap - EXIT; "$@" ) >"${stdout_file}" 2>"${stderr_file}" &
   local pid="$!"
   PARALLEL_PIDS+=("${pid}")
   PARALLEL_LABELS+=("${label}")
@@ -3814,6 +3833,7 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
   run_selected_http_flow_scenarios
 
   if scenario_selected "trust"; then
+    refresh_kind_kubeconfig || true
     ensure_trust_session_proxy
     log_line mcp "validating targeted echo and upper tool behavior"
     wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "echo" '{"message":"hello"}' 200 "hello"

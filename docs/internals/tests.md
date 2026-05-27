@@ -100,9 +100,18 @@ data-utility, text-analysis, and workspace-assistant sample deploys are not used
 anymore; ingress checks exercise multiple tools on the primary server instead.
 Set `E2E_MAX_MCP_SERVERS=0` locally for unlimited servers during full
 `E2E_SCENARIOS=all` pre-release runs.
-The script also deploys the independent workspace assistant, data utility, and
-text analysis sample servers concurrently; scenario assertions remain ordered
-because they share policy, session, and analytics state.
+
+**What runs in parallel (safe):** local Docker image builds and registry mirroring
+(`E2E_IMAGE_BUILD_PARALLELISM`, `E2E_IMAGE_MIRROR_PARALLELISM`); read-only grant
+rule ConfigMap polls (`E2E_GRANT_RULE_PARALLELISM`); and api-platform plus ui-auth
+HTTP scripts when `E2E_HTTP_FLOW_PARALLELISM>1` (workers clear the inherited EXIT
+trap so they do not delete the shared kubeconfig).
+
+**What stays sequential (shared MCP state):** every `run_parallel_mcp_tool_checks`
+batch. Those calls share one session URL, header proxy, and gateway reload window,
+so trust/ingress tool waits always run one at a time regardless of other
+parallelism knobs.
+
 Parallel worker output is buffered under `stage-logs/` in the e2e workdir and
 copied into `E2E_ARTIFACT_DIR` when artifacts are enabled. Live output prints
 colored `START`, `RUNNING`, `DONE`, and `FAILED` lifecycle lines plus short

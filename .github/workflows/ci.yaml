@@ -265,7 +265,7 @@ jobs:
           E2E_IMAGE_BUILD_PARALLELISM: "2"
           E2E_IMAGE_PREP_PARALLELISM: "2"
           E2E_EXAMPLE_DEPLOY_PARALLELISM: "3"
-          E2E_MCP_WAIT_PARALLELISM: "4"
+          E2E_GRANT_RULE_PARALLELISM: "4"
           E2E_HTTP_FLOW_PARALLELISM: "2"
           # One primary MCP server; multitenancy reuses it as tenant-a and adds at most tenant-b.
           E2E_MAX_MCP_SERVERS: "2"
