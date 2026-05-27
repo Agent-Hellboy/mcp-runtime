@@ -791,6 +791,15 @@ ensure_traefik_port_forward() {
   wait_port "${TRAEFIK_PORT}"
 }
 
+ensure_ui_port_forward() {
+  if [[ -z "${UI_SERVICE_PORT_FORWARD_PID:-}" ]]; then
+    echo "[port-forward] exposing mcp-sentinel-ui on localhost:${UI_SERVICE_PORT}"
+    port_forward_bg mcp-sentinel mcp-sentinel-ui "${UI_SERVICE_PORT}" 8082 "${WORKDIR}/ui-port-forward.log"
+    UI_SERVICE_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+  fi
+  wait_port "${UI_SERVICE_PORT}"
+}
+
 start_header_proxy_bg() {
   local local_port="$1"
   local upstream_origin="$2"
@@ -3467,6 +3476,7 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
 
   if scenario_selected "ui-auth" && ! deep_request_flows_enabled; then
     log_line policy "validating targeted UI auth request paths"
+    ensure_ui_port_forward
     UI_BASE="http://127.0.0.1:${UI_SERVICE_PORT}" \
     GATEWAY_BASE="http://127.0.0.1:${SENTINEL_PORT}" \
     API_KEY="${API_KEY}" \
@@ -3595,7 +3605,7 @@ if checkpoint_enabled "oauth"; then
     port_forward_bg mcp-servers "${SERVER_NAME}" "${SERVER_PROXY_PORT}" 80 "${WORKDIR}/server-proxy-port-forward.log"
   fi
   if ui_service_paths_selected; then
-    port_forward_bg mcp-sentinel mcp-sentinel-ui "${UI_SERVICE_PORT}" 8082 "${WORKDIR}/ui-port-forward.log"
+    ensure_ui_port_forward
   fi
 
   wait_port "${TRAEFIK_PORT}"
