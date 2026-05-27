@@ -791,6 +791,96 @@ ensure_traefik_port_forward() {
   wait_port "${TRAEFIK_PORT}"
 }
 
+stop_listener_on_port() {
+  local port="$1"
+  if ! port_is_listening "${port}"; then
+    return 0
+  fi
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+  local pids
+  pids="$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)"
+  if [[ -z "${pids}" ]]; then
+    return 0
+  fi
+  # shellcheck disable=SC2086
+  kill ${pids} 2>/dev/null || true
+  sleep 1
+}
+
+restart_traefik_port_forward_force() {
+  if [[ -n "${TRAEFIK_PORT_FORWARD_PID:-}" ]] && kill -0 "${TRAEFIK_PORT_FORWARD_PID}" 2>/dev/null; then
+    kill "${TRAEFIK_PORT_FORWARD_PID}" 2>/dev/null || true
+    wait "${TRAEFIK_PORT_FORWARD_PID}" 2>/dev/null || true
+  fi
+  TRAEFIK_PORT_FORWARD_PID=""
+  stop_listener_on_port "${TRAEFIK_PORT}"
+  ensure_traefik_port_forward
+}
+
+start_mcp_ingress_header_proxies() {
+  restart_traefik_port_forward_force
+  local proxy_ports=(
+    "${MCP_CURL_ANON_PORT}"
+    "${MCP_CURL_IDENTITY_PORT}"
+    "${MCP_CURL_SESSION_PORT}"
+    "${MCP_CURL_BAD_SESSION_PORT}"
+    "${PYTHON_EXAMPLE_PROXY_PORT}"
+    "${RUST_EXAMPLE_PROXY_PORT}"
+    "${GO_EXAMPLE_PROXY_PORT}"
+  )
+  local port
+  for port in "${proxy_ports[@]}"; do
+    stop_listener_on_port "${port}"
+  done
+
+  echo "[proxy] starting local ingress proxies for curl MCP checks"
+  start_header_proxy_bg "${MCP_CURL_ANON_PORT}" \
+    "http://127.0.0.1:${TRAEFIK_PORT}" \
+    "${WORKDIR}/mcp-curl-anon-proxy.log" \
+    --host-header "${SERVER_HOST}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
+  start_header_proxy_bg "${MCP_CURL_IDENTITY_PORT}" \
+    "http://127.0.0.1:${TRAEFIK_PORT}" \
+    "${WORKDIR}/mcp-curl-identity-proxy.log" \
+    --host-header "${SERVER_HOST}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
+    --header "X-MCP-Human-ID=${HUMAN_ID}" \
+    --header "X-MCP-Agent-ID=${AGENT_ID}"
+  start_header_proxy_bg "${MCP_CURL_SESSION_PORT}" \
+    "http://127.0.0.1:${TRAEFIK_PORT}" \
+    "${WORKDIR}/mcp-curl-session-proxy.log" \
+    --host-header "${SERVER_HOST}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
+    --header "X-MCP-Human-ID=${HUMAN_ID}" \
+    --header "X-MCP-Agent-ID=${AGENT_ID}" \
+    --header "X-MCP-Agent-Session=${SESSION_ID}"
+  start_header_proxy_bg "${MCP_CURL_BAD_SESSION_PORT}" \
+    "http://127.0.0.1:${TRAEFIK_PORT}" \
+    "${WORKDIR}/mcp-curl-bad-session-proxy.log" \
+    --host-header "${SERVER_HOST}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
+    --header "X-MCP-Human-ID=${HUMAN_ID}" \
+    --header "X-MCP-Agent-ID=${AGENT_ID}" \
+    --header "X-MCP-Agent-Session=${UNKNOWN_SESSION_ID}"
+  start_header_proxy_bg "${PYTHON_EXAMPLE_PROXY_PORT}" \
+    "http://127.0.0.1:${TRAEFIK_PORT}" \
+    "${WORKDIR}/data-utility-proxy.log" \
+    --host-header "${PYTHON_EXAMPLE_SERVER_HOST}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
+  start_header_proxy_bg "${RUST_EXAMPLE_PROXY_PORT}" \
+    "http://127.0.0.1:${TRAEFIK_PORT}" \
+    "${WORKDIR}/text-analysis-proxy.log" \
+    --host-header "${RUST_EXAMPLE_SERVER_HOST}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
+  start_header_proxy_bg "${GO_EXAMPLE_PROXY_PORT}" \
+    "http://127.0.0.1:${TRAEFIK_PORT}" \
+    "${WORKDIR}/workspace-assistant-proxy.log" \
+    --host-header "${GO_EXAMPLE_SERVER_HOST}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
+}
+
 ensure_ui_port_forward() {
   if [[ -z "${UI_SERVICE_PORT_FORWARD_PID:-}" ]]; then
     echo "[port-forward] exposing mcp-sentinel-ui on localhost:${UI_SERVICE_PORT}"
@@ -1824,7 +1914,7 @@ def post(msg, mcp_session_id=None):
     body = json.dumps(msg).encode()
     headers["Content-Length"] = str(len(body))
     conn_class = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-    conn = conn_class(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), timeout=10)
+    conn = conn_class(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), timeout=30)
     try:
         conn.putrequest("POST", target, skip_host=True)
         conn.putheader("Host", host_value)
@@ -1872,7 +1962,7 @@ PY
   fi
   if [[ -f "${last_result_file}" ]]; then
     echo "[debug] last ${tool_name} response while waiting:" >&2
-    cat "${last_result_file}" >&2 || true
+    python3 -m json.tool "${last_result_file}" >&2 2>/dev/null || cat "${last_result_file}" >&2 || true
   fi
   print_gateway_policy_debug >&2 || true
   return 1
@@ -2197,6 +2287,7 @@ restore_policy_server_grant_defaults() {
   log_line policy "restarting ${SERVER_NAME} so the gateway reloads restored policy"
   restart_deployment_pods mcp-servers "${SERVER_NAME}"
   wait_for_named_server_ready "${SERVER_NAME}" "mcp-servers" 60
+  restart_traefik_port_forward_force
 
   ensure_trust_session_proxy
   log_line policy "waiting for restored grant allow rules to reach the gateway"
@@ -3728,50 +3819,7 @@ if checkpoint_enabled "oauth"; then
   fi
   echo "[registry][pass] public registry catalog requires admin auth"
 
-  echo "[proxy] starting local ingress proxies for curl MCP checks"
-  start_header_proxy_bg "${MCP_CURL_ANON_PORT}" \
-    "http://127.0.0.1:${TRAEFIK_PORT}" \
-    "${WORKDIR}/mcp-curl-anon-proxy.log" \
-    --host-header "${SERVER_HOST}" \
-    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
-  start_header_proxy_bg "${MCP_CURL_IDENTITY_PORT}" \
-    "http://127.0.0.1:${TRAEFIK_PORT}" \
-    "${WORKDIR}/mcp-curl-identity-proxy.log" \
-    --host-header "${SERVER_HOST}" \
-    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
-    --header "X-MCP-Human-ID=${HUMAN_ID}" \
-    --header "X-MCP-Agent-ID=${AGENT_ID}"
-  start_header_proxy_bg "${MCP_CURL_SESSION_PORT}" \
-    "http://127.0.0.1:${TRAEFIK_PORT}" \
-    "${WORKDIR}/mcp-curl-session-proxy.log" \
-    --host-header "${SERVER_HOST}" \
-    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
-    --header "X-MCP-Human-ID=${HUMAN_ID}" \
-    --header "X-MCP-Agent-ID=${AGENT_ID}" \
-    --header "X-MCP-Agent-Session=${SESSION_ID}"
-  start_header_proxy_bg "${MCP_CURL_BAD_SESSION_PORT}" \
-    "http://127.0.0.1:${TRAEFIK_PORT}" \
-    "${WORKDIR}/mcp-curl-bad-session-proxy.log" \
-    --host-header "${SERVER_HOST}" \
-    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
-    --header "X-MCP-Human-ID=${HUMAN_ID}" \
-    --header "X-MCP-Agent-ID=${AGENT_ID}" \
-    --header "X-MCP-Agent-Session=${UNKNOWN_SESSION_ID}"
-  start_header_proxy_bg "${PYTHON_EXAMPLE_PROXY_PORT}" \
-    "http://127.0.0.1:${TRAEFIK_PORT}" \
-    "${WORKDIR}/data-utility-proxy.log" \
-    --host-header "${PYTHON_EXAMPLE_SERVER_HOST}" \
-    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
-  start_header_proxy_bg "${RUST_EXAMPLE_PROXY_PORT}" \
-    "http://127.0.0.1:${TRAEFIK_PORT}" \
-    "${WORKDIR}/text-analysis-proxy.log" \
-    --host-header "${RUST_EXAMPLE_SERVER_HOST}" \
-    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
-  start_header_proxy_bg "${GO_EXAMPLE_PROXY_PORT}" \
-    "http://127.0.0.1:${TRAEFIK_PORT}" \
-    "${WORKDIR}/workspace-assistant-proxy.log" \
-    --host-header "${GO_EXAMPLE_SERVER_HOST}" \
-    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
+  start_mcp_ingress_header_proxies
   if scenario_selected "trust"; then
     ensure_trust_session_proxy
   fi
@@ -3792,6 +3840,7 @@ if checkpoint_enabled "oauth"; then
   GO_EXAMPLE_URL="http://127.0.0.1:${GO_EXAMPLE_PROXY_PORT}${GO_EXAMPLE_SERVER_ROUTE}"
 
   log_line ingress "validating distinct MCP server behaviors across routes"
+  rm -f "${WORKDIR}/last-mcp-tool-result.json" "${WORKDIR}/last-mcp-tool-stderr.txt"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200 "pong"
   wait_for_mcp_tool_result "${PYTHON_EXAMPLE_URL}" "echo" '{"message":"data utility ready"}' 200 "data utility ready"
   wait_for_mcp_tool_result "${RUST_EXAMPLE_URL}" "repeat" '{"message":"text","times":3}' 200 "texttexttext"
