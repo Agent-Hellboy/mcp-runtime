@@ -2069,7 +2069,7 @@ run_parallel_mcp_tool_checks() {
       shift
     done
     parallel_start "${E2E_MCP_WAIT_PARALLELISM}" "mcp ${label}" \
-      wait_for_mcp_tool_result "${check_args[@]}" "${label}"
+      wait_for_mcp_tool_result "${check_args[@]}" "" "" "${label}"
   done
   parallel_wait_all
 }
@@ -3871,6 +3871,9 @@ spec:
       decision: allow
 EOF
     wait_for_policy_text "\"slugify\""
+    run_parallel_grant_tool_rules \
+      -- "${SERVER_NAME}-grant" "add" "allow" \
+      -- "${SERVER_NAME}-grant" "slugify" "allow"
     run_parallel_mcp_tool_checks \
       -- trust-add "${MCP_TRUST_SESSION_URL}" "add" '{"a":41,"b":1}' 200 "42" \
       -- trust-slugify "${MCP_TRUST_SESSION_URL}" "slugify" '{"message":"Hello World"}' 200 "hello-world"
