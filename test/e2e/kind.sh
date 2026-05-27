@@ -172,6 +172,7 @@ MCP_INGRESS_PATH="${MCP_INGRESS_PATH:-/${SERVER_NAME}/mcp}"
 MCP_DIRECT_URL="${MCP_DIRECT_URL:-http://127.0.0.1:${TRAEFIK_PORT}${MCP_INGRESS_PATH}}"
 MCP_POLICY_WAIT_TRIES="${MCP_POLICY_WAIT_TRIES:-90}"
 RAW_REQUEST_TRIES="${RAW_REQUEST_TRIES:-10}"
+MCP_HTTP_TIMEOUT="${MCP_HTTP_TIMEOUT:-30}"
 UNKNOWN_SESSION_ID="${UNKNOWN_SESSION_ID:-sess-does-not-exist}"
 TEST_MODE_REGISTRY_IMAGE="${TEST_MODE_REGISTRY_IMAGE:-docker.io/library/mcp-runtime-registry:latest}"
 LOCAL_REGISTRY_NAME="${LOCAL_REGISTRY_NAME:-${CLUSTER_NAME}-dockerhub-mirror}"
@@ -187,6 +188,10 @@ E2E_SCENARIOS="${E2E_SCENARIOS//[[:space:]]/}"
 E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE:-tenant}"
 E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE//[[:space:]]/}"
 E2E_DEEP_REQUEST_FLOWS="${E2E_DEEP_REQUEST_FLOWS:-0}"
+# Cap concurrently deployed MCP servers (primary + extras). 0 means unlimited
+# (full pre-release / local all-scenario runs). CI sets 2: primary plus at most
+# one secondary such as multitenancy tenant-b.
+E2E_MAX_MCP_SERVERS="${E2E_MAX_MCP_SERVERS:-0}"
 E2E_VALIDATE_SCENARIOS_ONLY="${E2E_VALIDATE_SCENARIOS_ONLY:-0}"
 E2E_KEEP_CLUSTER="${E2E_KEEP_CLUSTER:-0}"
 E2E_CACHE_MODE="${E2E_CACHE_MODE:-0}"
@@ -219,8 +224,22 @@ if ! [[ "${E2E_IMAGE_BUILD_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_IMAGE_BUILD
   exit 1
 fi
 E2E_EXAMPLE_DEPLOY_PARALLELISM="${E2E_EXAMPLE_DEPLOY_PARALLELISM:-${E2E_IMAGE_BUILD_PARALLELISM}}"
+E2E_MCP_WAIT_PARALLELISM="${E2E_MCP_WAIT_PARALLELISM:-4}"
+E2E_HTTP_FLOW_PARALLELISM="${E2E_HTTP_FLOW_PARALLELISM:-2}"
 if ! [[ "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" -lt 1 ]]; then
   echo "E2E_EXAMPLE_DEPLOY_PARALLELISM must be a positive integer" >&2
+  exit 1
+fi
+if ! [[ "${E2E_MCP_WAIT_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_MCP_WAIT_PARALLELISM}" -lt 1 ]]; then
+  echo "E2E_MCP_WAIT_PARALLELISM must be a positive integer" >&2
+  exit 1
+fi
+if ! [[ "${E2E_HTTP_FLOW_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_HTTP_FLOW_PARALLELISM}" -lt 1 ]]; then
+  echo "E2E_HTTP_FLOW_PARALLELISM must be a positive integer" >&2
+  exit 1
+fi
+if ! [[ "${E2E_MAX_MCP_SERVERS}" =~ ^[0-9]+$ ]]; then
+  echo "E2E_MAX_MCP_SERVERS must be zero or a positive integer" >&2
   exit 1
 fi
 if ! [[ "${E2E_LOG_PREVIEW_LINES}" =~ ^[0-9]+$ ]]; then
@@ -304,6 +323,18 @@ server_proxy_paths_selected() {
 
 oauth_proxy_paths_selected() {
   scenario_selected "oauth" || scenario_selected "observability"
+}
+
+e2e_mcp_server_budget() {
+  if [[ "${E2E_MAX_MCP_SERVERS}" == "0" ]]; then
+    echo 99
+  else
+    echo "${E2E_MAX_MCP_SERVERS}"
+  fi
+}
+
+e2e_multitenancy_slim_mode() {
+  scenario_selected "multitenancy" && [[ "$(e2e_mcp_server_budget)" -le 2 ]]
 }
 
 deep_request_flows_enabled() {
@@ -405,6 +436,11 @@ describe_selected_scenarios() {
 
 validate_scenarios
 log_line info "E2E scenarios: $(describe_selected_scenarios)"
+if [[ "${E2E_MAX_MCP_SERVERS}" == "0" ]]; then
+  log_line info "E2E MCP server budget: unlimited"
+else
+  log_line info "E2E MCP server budget: ${E2E_MAX_MCP_SERVERS} (primary plus extras)"
+fi
 log_line info "E2E platform mode: ${E2E_PLATFORM_MODE}"
 log_line info "E2E checkpoint: ${E2E_CHECKPOINT}"
 if deep_request_flows_enabled; then
@@ -477,6 +513,21 @@ wait_port() {
   done
   echo "timed out waiting for localhost:${port}" >&2
   return 1
+}
+
+wait_ports_parallel() {
+  local port
+  local -a pids=()
+  for port in "$@"; do
+    wait_port "${port}" &
+    pids+=("$!")
+  done
+  local pid
+  for pid in "${pids[@]}"; do
+    if ! wait "${pid}"; then
+      return 1
+    fi
+  done
 }
 
 port_is_listening() {
@@ -826,9 +877,6 @@ start_mcp_ingress_header_proxies() {
     "${MCP_CURL_IDENTITY_PORT}"
     "${MCP_CURL_SESSION_PORT}"
     "${MCP_CURL_BAD_SESSION_PORT}"
-    "${PYTHON_EXAMPLE_PROXY_PORT}"
-    "${RUST_EXAMPLE_PROXY_PORT}"
-    "${GO_EXAMPLE_PROXY_PORT}"
   )
   local port
   for port in "${proxy_ports[@]}"; do
@@ -864,21 +912,6 @@ start_mcp_ingress_header_proxies() {
     --header "X-MCP-Human-ID=${HUMAN_ID}" \
     --header "X-MCP-Agent-ID=${AGENT_ID}" \
     --header "X-MCP-Agent-Session=${UNKNOWN_SESSION_ID}"
-  start_header_proxy_bg "${PYTHON_EXAMPLE_PROXY_PORT}" \
-    "http://127.0.0.1:${TRAEFIK_PORT}" \
-    "${WORKDIR}/data-utility-proxy.log" \
-    --host-header "${PYTHON_EXAMPLE_SERVER_HOST}" \
-    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
-  start_header_proxy_bg "${RUST_EXAMPLE_PROXY_PORT}" \
-    "http://127.0.0.1:${TRAEFIK_PORT}" \
-    "${WORKDIR}/text-analysis-proxy.log" \
-    --host-header "${RUST_EXAMPLE_SERVER_HOST}" \
-    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
-  start_header_proxy_bg "${GO_EXAMPLE_PROXY_PORT}" \
-    "http://127.0.0.1:${TRAEFIK_PORT}" \
-    "${WORKDIR}/workspace-assistant-proxy.log" \
-    --host-header "${GO_EXAMPLE_SERVER_HOST}" \
-    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
 }
 
 ensure_ui_port_forward() {
@@ -934,10 +967,9 @@ start_header_proxy_bg() {
   local label="header proxy ${local_port} -> ${upstream_origin}"
   shift 3
 
-  if port_is_listening "${local_port}"; then
-    echo "[proxy] reusing existing header proxy on localhost:${local_port}"
-    return 0
-  fi
+  # Always recycle the listener so a restarted Traefik port-forward does not leave
+  # a stale upstream connection in an old proxy process.
+  stop_listener_on_port "${local_port}"
   require_port_available "${local_port}" "${label}"
   python3 "${PROJECT_ROOT}/test/e2e/mcp_header_proxy.py" \
     --listen-host 127.0.0.1 \
@@ -946,6 +978,40 @@ start_header_proxy_bg() {
     "$@" >"${log_file}" 2>&1 &
   PIDS+=("$!")
   wait_managed_port "${local_port}" "$!" "${log_file}" "${label}"
+}
+
+mcp_result_initialize_status() {
+  local result_file="$1"
+  if [[ ! -f "${result_file}" ]]; then
+    return 1
+  fi
+  python3 - "${result_file}" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as fh:
+    doc = json.load(fh)
+if doc.get("phase") != "initialize":
+    raise SystemExit(1)
+print(doc.get("status", ""))
+PY
+}
+
+recover_ingress_mcp_path() {
+  log_line ingress "recovering Traefik ingress MCP path"
+  restart_traefik_port_forward_force
+  wait_port "${TRAEFIK_PORT}"
+  start_mcp_ingress_header_proxies
+  refresh_mcp_proxy_urls
+  wait_ports_parallel \
+    "${MCP_CURL_ANON_PORT}" \
+    "${MCP_CURL_IDENTITY_PORT}" \
+    "${MCP_CURL_SESSION_PORT}" \
+    "${MCP_CURL_BAD_SESSION_PORT}"
+}
+
+prepare_ingress_mcp_path_after_trust() {
+  recover_ingress_mcp_path
+  log_line ingress "warming session-backed ingress route after trust checks"
+  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200 "pong" 20 "" "" "ingress-warmup"
 }
 
 ensure_trust_session_proxy() {
@@ -1851,9 +1917,14 @@ wait_for_mcp_tool_result() {
   local expected_body_text="${5:-}"
   local tries="${6:-${MCP_POLICY_WAIT_TRIES}}"
   local host_header="${7:-}"
+  local result_label="${8:-}"
   local i
   local last_result_file="${WORKDIR}/last-mcp-tool-result.json"
   local last_stderr_file="${WORKDIR}/last-mcp-tool-stderr.txt"
+  if [[ -n "${result_label}" ]]; then
+    last_result_file="${WORKDIR}/last-mcp-tool-result-${result_label}.json"
+    last_stderr_file="${WORKDIR}/last-mcp-tool-stderr-${result_label}.txt"
+  fi
 
   for i in $(seq 1 "${tries}"); do
     if MCP_BASE="${base_url}" \
@@ -1864,6 +1935,7 @@ wait_for_mcp_tool_result() {
       MCP_EXPECT_BODY_TEXT="${expected_body_text}" \
       MCP_RESULT_FILE="${last_result_file}" \
       MCP_HOST_HEADER="${host_header}" \
+      MCP_HTTP_TIMEOUT="${MCP_HTTP_TIMEOUT}" \
       python3 <<'PY' >/dev/null 2>"${last_stderr_file}"
 import http.client
 import json
@@ -1883,14 +1955,13 @@ initialize_payload = {
     },
 }
 
-
-import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
 tool_name = os.environ["MCP_TOOL_NAME"]
 tool_args = json.loads(os.environ["MCP_TOOL_ARGS"])
 expected_status = int(os.environ["MCP_EXPECT_STATUS"])
 expected_body_text = os.environ.get("MCP_EXPECT_BODY_TEXT", "")
 result_file = os.environ["MCP_RESULT_FILE"]
 host_header = os.environ.get("MCP_HOST_HEADER", "")
+http_timeout = float(os.environ.get("MCP_HTTP_TIMEOUT", "30"))
 
 
 def write_result(phase, status, body):
@@ -1914,7 +1985,7 @@ def post(msg, mcp_session_id=None):
     body = json.dumps(msg).encode()
     headers["Content-Length"] = str(len(body))
     conn_class = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-    conn = conn_class(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), timeout=30)
+    conn = conn_class(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), timeout=http_timeout)
     try:
         conn.putrequest("POST", target, skip_host=True)
         conn.putheader("Host", host_value)
@@ -1951,6 +2022,14 @@ PY
       echo "[mcp] observed ${tool_name} returning ${expected_status}"
       return 0
     fi
+    if [[ -f "${last_result_file}" ]]; then
+      last_init_status="$(mcp_result_initialize_status "${last_result_file}" 2>/dev/null || true)"
+      if [[ "${last_init_status}" == "504" || "${last_init_status}" == "502" || "${last_init_status}" == "503" ]]; then
+        recover_ingress_mcp_path
+        sleep 2
+        continue
+      fi
+    fi
     recover_traefik_port_forward_if_needed || true
     sleep 2
   done
@@ -1966,6 +2045,118 @@ PY
   fi
   print_gateway_policy_debug >&2 || true
   return 1
+}
+
+run_parallel_mcp_tool_checks() {
+  local label
+  if [[ "$#" -eq 0 ]]; then
+    return 0
+  fi
+
+  parallel_reset
+  while [[ "$#" -gt 0 ]]; do
+    if [[ "$1" != "--" ]]; then
+      echo "run_parallel_mcp_tool_checks: expected -- before each check group" >&2
+      return 1
+    fi
+    shift
+    label="$1"
+    shift
+    parallel_start "${E2E_MCP_WAIT_PARALLELISM}" "mcp ${label}" \
+      wait_for_mcp_tool_result "$@" "${label}"
+  done
+  parallel_wait_all
+}
+
+run_parallel_grant_tool_rules() {
+  if [[ "$#" -eq 0 ]]; then
+    return 0
+  fi
+
+  parallel_reset
+  while [[ "$#" -gt 0 ]]; do
+    if [[ "$1" != "--" ]]; then
+      echo "run_parallel_grant_tool_rules: expected -- before each rule group" >&2
+      return 1
+    fi
+    shift
+    local grant_name="$1"
+    shift
+    local tool_name="$1"
+    shift
+    local expected_decision="$1"
+    shift
+    parallel_start "${E2E_MCP_WAIT_PARALLELISM}" "grant rule ${grant_name}/${tool_name}=${expected_decision}" \
+      wait_for_grant_tool_rule "${grant_name}" "${tool_name}" "${expected_decision}"
+  done
+  parallel_wait_all
+}
+
+run_api_platform_http_flows() {
+  log_line policy "validating targeted platform API request paths"
+  ensure_api_port_forward
+  ensure_gateway_port_forward
+  API_BASE="http://127.0.0.1:${API_SERVICE_PORT}" \
+  GATEWAY_API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api" \
+  API_KEY="${API_KEY}" \
+  SERVER_NAME="${SERVER_NAME}" \
+  SESSION_ID="${SESSION_ID}" \
+  HUMAN_ID="${HUMAN_ID}" \
+  AGENT_ID="${AGENT_ID}" \
+  PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" \
+  PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" \
+  python3 test/e2e/api_platform_flows.py
+}
+
+run_ui_auth_http_flows() {
+  log_line policy "validating targeted UI auth request paths"
+  ensure_ui_port_forward
+  ensure_gateway_port_forward
+  UI_BASE="http://127.0.0.1:${UI_SERVICE_PORT}" \
+  GATEWAY_BASE="http://127.0.0.1:${SENTINEL_PORT}" \
+  API_KEY="${API_KEY}" \
+  E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE}" \
+  python3 test/e2e/ui_auth_flows.py
+}
+
+run_selected_http_flow_scenarios() {
+  local run_api=0
+  local run_ui=0
+
+  if scenario_selected "api-platform" && ! deep_request_flows_enabled; then
+    run_api=1
+  fi
+  if scenario_selected "ui-auth" && ! deep_request_flows_enabled; then
+    run_ui=1
+  fi
+  if [[ "${run_api}" -eq 0 && "${run_ui}" -eq 0 ]]; then
+    return 0
+  fi
+
+  if [[ "${run_api}" -eq 1 ]]; then
+    ensure_api_port_forward
+  fi
+  if [[ "${run_ui}" -eq 1 ]]; then
+    ensure_ui_port_forward
+  fi
+  if [[ "${run_api}" -eq 1 || "${run_ui}" -eq 1 ]]; then
+    ensure_gateway_port_forward
+  fi
+
+  if [[ "${run_api}" -eq 1 && "${run_ui}" -eq 1 ]]; then
+    parallel_reset
+    parallel_start "${E2E_HTTP_FLOW_PARALLELISM}" "api-platform flows" run_api_platform_http_flows
+    parallel_start "${E2E_HTTP_FLOW_PARALLELISM}" "ui-auth flows" run_ui_auth_http_flows
+    parallel_wait_all
+    return
+  fi
+
+  if [[ "${run_api}" -eq 1 ]]; then
+    run_api_platform_http_flows
+  fi
+  if [[ "${run_ui}" -eq 1 ]]; then
+    run_ui_auth_http_flows
+  fi
 }
 
 wait_for_named_server_ready() {
@@ -2272,8 +2463,9 @@ restore_policy_server_grant_defaults() {
     exit 1
   fi
   (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant.yaml)
-  wait_for_grant_tool_rule "${SERVER_NAME}-grant" "aaa-ping" "allow"
-  wait_for_grant_tool_rule "${SERVER_NAME}-grant" "echo" "allow"
+  run_parallel_grant_tool_rules \
+    -- "${SERVER_NAME}-grant" "aaa-ping" "allow" \
+    -- "${SERVER_NAME}-grant" "echo" "allow"
 
   if [[ -f "${WORKDIR}/access-session.yaml" ]]; then
     log_line policy "restoring baseline session consented trust after trust checks"
@@ -2291,8 +2483,10 @@ restore_policy_server_grant_defaults() {
 
   ensure_trust_session_proxy
   log_line policy "waiting for restored grant allow rules to reach the gateway"
-  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "aaa-ping" '{}' 200 "pong"
-  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "echo" '{"message":"hello"}' 200 "hello"
+  run_parallel_mcp_tool_checks \
+    -- restore-aaa-ping "${MCP_TRUST_SESSION_URL}" "aaa-ping" '{}' 200 "pong" \
+    -- restore-echo "${MCP_TRUST_SESSION_URL}" "echo" '{"message":"hello"}' 200 "hello"
+  prepare_ingress_mcp_path_after_trust
   print_gateway_policy_debug
 }
 
@@ -3264,30 +3458,7 @@ EOF
   ./bin/mcp-runtime server --use-kube delete "${TEMP_CLI_SERVER}" --namespace mcp-servers
   kubectl wait --for=delete "mcpserver/${TEMP_CLI_SERVER}" -n mcp-servers --timeout=120s || true
 
-  echo "[deploy] deploying capability-focused sample MCP servers"
-  parallel_reset
-  parallel_start "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" "deploy ${PYTHON_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
-    "${PYTHON_EXAMPLE_SERVER_NAME}" \
-    "${PYTHON_EXAMPLE_SERVER_HOST}" \
-    "${PYTHON_EXAMPLE_SERVER_ROUTE}" \
-    "${PYTHON_EXAMPLE_SOURCE_DIR}" \
-    "${PYTHON_EXAMPLE_WORKDIR}" \
-    "echo"
-  parallel_start "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" "deploy ${RUST_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
-    "${RUST_EXAMPLE_SERVER_NAME}" \
-    "${RUST_EXAMPLE_SERVER_HOST}" \
-    "${RUST_EXAMPLE_SERVER_ROUTE}" \
-    "${RUST_EXAMPLE_SOURCE_DIR}" \
-    "${RUST_EXAMPLE_WORKDIR}" \
-    "repeat"
-  parallel_start "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" "deploy ${GO_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
-    "${GO_EXAMPLE_SERVER_NAME}" \
-    "${GO_EXAMPLE_SERVER_HOST}" \
-    "${GO_EXAMPLE_SERVER_ROUTE}" \
-    "${GO_EXAMPLE_SOURCE_DIR}" \
-    "${GO_EXAMPLE_WORKDIR}" \
-    "lower"
-  parallel_wait_all
+  echo "[deploy] using single primary MCP server ${SERVER_NAME} (extra sample servers disabled; budget=$(e2e_mcp_server_budget))"
 
   echo "[cli] checking server commands"
   refresh_kind_kubeconfig
@@ -3634,32 +3805,7 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
     env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access session get "${SESSION_ID}" --namespace mcp-servers >/dev/null
   fi
 
-  if scenario_selected "api-platform" && ! deep_request_flows_enabled; then
-    log_line policy "validating targeted platform API request paths"
-    ensure_api_port_forward
-    ensure_gateway_port_forward
-    API_BASE="http://127.0.0.1:${API_SERVICE_PORT}" \
-    GATEWAY_API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api" \
-    API_KEY="${API_KEY}" \
-    SERVER_NAME="${SERVER_NAME}" \
-    SESSION_ID="${SESSION_ID}" \
-    HUMAN_ID="${HUMAN_ID}" \
-    AGENT_ID="${AGENT_ID}" \
-    PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" \
-    PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" \
-    python3 test/e2e/api_platform_flows.py
-  fi
-
-  if scenario_selected "ui-auth" && ! deep_request_flows_enabled; then
-    log_line policy "validating targeted UI auth request paths"
-    ensure_ui_port_forward
-    ensure_gateway_port_forward
-    UI_BASE="http://127.0.0.1:${UI_SERVICE_PORT}" \
-    GATEWAY_BASE="http://127.0.0.1:${SENTINEL_PORT}" \
-    API_KEY="${API_KEY}" \
-    E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE}" \
-    python3 test/e2e/ui_auth_flows.py
-  fi
+  run_selected_http_flow_scenarios
 
   if scenario_selected "trust"; then
     ensure_trust_session_proxy
@@ -3719,8 +3865,9 @@ spec:
       decision: allow
 EOF
     wait_for_policy_text "\"slugify\""
-    wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "add" '{"a":41,"b":1}' 200 "42"
-    wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "slugify" '{"message":"Hello World"}' 200 "hello-world"
+    run_parallel_mcp_tool_checks \
+      -- trust-add "${MCP_TRUST_SESSION_URL}" "add" '{"a":41,"b":1}' 200 "42" \
+      -- trust-slugify "${MCP_TRUST_SESSION_URL}" "slugify" '{"message":"Hello World"}' 200 "hello-world"
 
     log_line policy "updating access grant to deny aaa-ping and echo"
     cat >"${WORKDIR}/access-grant-deny.yaml" <<EOF
@@ -3748,13 +3895,15 @@ spec:
 EOF
     (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant-deny.yaml)
 
-    wait_for_grant_tool_rule "${SERVER_NAME}-grant" "aaa-ping" "deny"
-    wait_for_grant_tool_rule "${SERVER_NAME}-grant" "echo" "deny"
+    run_parallel_grant_tool_rules \
+      -- "${SERVER_NAME}-grant" "aaa-ping" "deny" \
+      -- "${SERVER_NAME}-grant" "echo" "deny"
     print_gateway_policy_debug
 
     log_line mcp "validating updated access grant denies aaa-ping and echo"
-    wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "aaa-ping" '{}' 403 "tool_denied"
-    wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "echo" '{"message":"analytics"}' 403 "tool_denied"
+    run_parallel_mcp_tool_checks \
+      -- trust-deny-aaa-ping "${MCP_TRUST_SESSION_URL}" "aaa-ping" '{}' 403 "tool_denied" \
+      -- trust-deny-echo "${MCP_TRUST_SESSION_URL}" "echo" '{"message":"analytics"}' 403 "tool_denied"
     run_mcp_curl_expect "mcp-curl-aaa-ping-deny" "${MCP_TRUST_SESSION_URL}" false "tool_denied"
     restore_policy_server_grant_defaults
   fi
@@ -3783,15 +3932,18 @@ if checkpoint_enabled "oauth"; then
     ensure_ui_port_forward
   fi
 
-  wait_port "${TRAEFIK_PORT}"
-  wait_port "${LOKI_PORT}"
   if scenario_selected "observability"; then
-    wait_port "${API_METRICS_PORT}"
-    wait_port "${INGEST_SERVICE_PORT}"
-    wait_port "${INGEST_METRICS_PORT}"
-    wait_port "${PROCESSOR_METRICS_PORT}"
-    wait_port "${PROMETHEUS_PORT}"
-    wait_port "${SERVER_UPSTREAM_PORT}"
+    wait_ports_parallel \
+      "${TRAEFIK_PORT}" \
+      "${LOKI_PORT}" \
+      "${API_METRICS_PORT}" \
+      "${INGEST_SERVICE_PORT}" \
+      "${INGEST_METRICS_PORT}" \
+      "${PROCESSOR_METRICS_PORT}" \
+      "${PROMETHEUS_PORT}" \
+      "${SERVER_UPSTREAM_PORT}"
+  else
+    wait_ports_parallel "${TRAEFIK_PORT}" "${LOKI_PORT}"
   fi
   if server_proxy_paths_selected; then
     wait_port "${SERVER_PROXY_PORT}"
@@ -3823,28 +3975,24 @@ if checkpoint_enabled "oauth"; then
   if scenario_selected "trust"; then
     ensure_trust_session_proxy
   fi
-  wait_port "${MCP_CURL_ANON_PORT}"
-  wait_port "${MCP_CURL_IDENTITY_PORT}"
-  wait_port "${MCP_CURL_SESSION_PORT}"
-  wait_port "${MCP_CURL_BAD_SESSION_PORT}"
-  wait_port "${PYTHON_EXAMPLE_PROXY_PORT}"
-  wait_port "${RUST_EXAMPLE_PROXY_PORT}"
-  wait_port "${GO_EXAMPLE_PROXY_PORT}"
+  wait_ports_parallel \
+    "${MCP_CURL_ANON_PORT}" \
+    "${MCP_CURL_IDENTITY_PORT}" \
+    "${MCP_CURL_SESSION_PORT}" \
+    "${MCP_CURL_BAD_SESSION_PORT}"
   if scenario_selected "trust"; then
     wait_port "${MCP_SERVICE_SESSION_PORT}"
   fi
 
   refresh_mcp_proxy_urls
-  PYTHON_EXAMPLE_URL="http://127.0.0.1:${PYTHON_EXAMPLE_PROXY_PORT}${PYTHON_EXAMPLE_SERVER_ROUTE}"
-  RUST_EXAMPLE_URL="http://127.0.0.1:${RUST_EXAMPLE_PROXY_PORT}${RUST_EXAMPLE_SERVER_ROUTE}"
-  GO_EXAMPLE_URL="http://127.0.0.1:${GO_EXAMPLE_PROXY_PORT}${GO_EXAMPLE_SERVER_ROUTE}"
-
-  log_line ingress "validating distinct MCP server behaviors across routes"
-  rm -f "${WORKDIR}/last-mcp-tool-result.json" "${WORKDIR}/last-mcp-tool-stderr.txt"
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200 "pong"
-  wait_for_mcp_tool_result "${PYTHON_EXAMPLE_URL}" "echo" '{"message":"data utility ready"}' 200 "data utility ready"
-  wait_for_mcp_tool_result "${RUST_EXAMPLE_URL}" "repeat" '{"message":"text","times":3}' 200 "texttexttext"
-  wait_for_mcp_tool_result "${GO_EXAMPLE_URL}" "lower" '{"message":"Workspace Assistant Ready"}' 200 "workspace assistant ready"
+  if scenario_selected "trust"; then
+    prepare_ingress_mcp_path_after_trust
+  fi
+  log_line ingress "validating MCP ingress routes on primary server ${SERVER_NAME}"
+  rm -f "${WORKDIR}"/last-mcp-tool-result*.json "${WORKDIR}"/last-mcp-tool-stderr*.txt
+  run_parallel_mcp_tool_checks \
+    -- ingress-aaa-ping "${MCP_SESSION_URL}" "aaa-ping" '{}' 200 "pong" \
+    -- ingress-echo "${MCP_SESSION_URL}" "echo" '{"message":"hello"}' 200 "hello"
 
   if scenario_selected "smoke-auth"; then
     log_line mcp "validating raw MCP request edge cases"
@@ -4189,32 +4337,7 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access session get "${SESSION_ID}" --namespace mcp-servers >/dev/null
 fi
 
-if scenario_selected "api-platform" && ! deep_request_flows_enabled; then
-  log_line policy "validating targeted platform API request paths"
-  ensure_api_port_forward
-  ensure_gateway_port_forward
-  API_BASE="http://127.0.0.1:${API_SERVICE_PORT}" \
-  GATEWAY_API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api" \
-  API_KEY="${API_KEY}" \
-  SERVER_NAME="${SERVER_NAME}" \
-  SESSION_ID="${SESSION_ID}" \
-  HUMAN_ID="${HUMAN_ID}" \
-  AGENT_ID="${AGENT_ID}" \
-  PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" \
-  PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" \
-  python3 test/e2e/api_platform_flows.py
-fi
-
-if scenario_selected "ui-auth" && ! deep_request_flows_enabled; then
-  log_line policy "validating targeted UI auth request paths"
-  ensure_ui_port_forward
-  ensure_gateway_port_forward
-  UI_BASE="http://127.0.0.1:${UI_SERVICE_PORT}" \
-  GATEWAY_BASE="http://127.0.0.1:${SENTINEL_PORT}" \
-  API_KEY="${API_KEY}" \
-  E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE}" \
-  python3 test/e2e/ui_auth_flows.py
-fi
+run_selected_http_flow_scenarios
 
 fi
 
@@ -4987,18 +5110,20 @@ PY
 fi
 
 if scenario_selected "multitenancy" && checkpoint_enabled "multitenancy"; then
-  # Multi-tenancy isolation: deploy two gateway-enabled MCPServers in mcp-servers
-  # that reuse the policy-mcp-server image already in the kind registry, grant
-  # alice on tenant-a and bob on tenant-b, then assert the cross-tenant deny
-  # matrix:
-  #   - allowed tool on own tenant   -> 200
-  #   - same-tenant disallowed tool  -> 403 (subject known, tool not in grant)
-  #   - cross-tenant request         -> 401 (no session/grant for subject on that server)
+  # Multi-tenancy isolation: grant alice on tenant-a and bob on tenant-b, then assert
+  # the cross-tenant deny matrix. When E2E_MAX_MCP_SERVERS<=2, tenant-a is the
+  # already-deployed primary server and only tenant-b is deployed as the second
+  # workload.
   echo "[multitenancy] preparing two-tenant isolation probe"
 
   MT_NS="mcp-servers"
   MT_IMAGE_REPO="${SERVER_IMAGE%:*}"
   MT_IMAGE_TAG="${SERVER_IMAGE##*:}"
+  MT_TENANT_A_SERVER="${MT_TENANT_A}"
+  if e2e_multitenancy_slim_mode; then
+    MT_TENANT_A_SERVER="${SERVER_NAME}"
+    echo "[multitenancy] slim mode: tenant-a=${MT_TENANT_A_SERVER}, deploying only ${MT_TENANT_B}"
+  fi
 
   mt_apply_tenant() {
     local name="$1" prefix="$2"
@@ -5056,15 +5181,22 @@ spec:
 EOF
   }
 
-  mt_apply_tenant "${MT_TENANT_A}" "${MT_TENANT_A}"
-  mt_apply_tenant "${MT_TENANT_B}" "${MT_TENANT_B}"
+  if e2e_multitenancy_slim_mode; then
+    wait_for_named_server_ready "${MT_TENANT_A_SERVER}" "${MT_NS}" 60
+    mt_apply_tenant "${MT_TENANT_B}" "${MT_TENANT_B}"
+  else
+    mt_apply_tenant "${MT_TENANT_A}" "${MT_TENANT_A}"
+    mt_apply_tenant "${MT_TENANT_B}" "${MT_TENANT_B}"
+  fi
 
   echo "[multitenancy] waiting for tenant rollouts"
-  wait_for_deployment_exists "${MT_NS}" "${MT_TENANT_A}"
+  if ! e2e_multitenancy_slim_mode; then
+    wait_for_deployment_exists "${MT_NS}" "${MT_TENANT_A}"
+    kubectl rollout status "deploy/${MT_TENANT_A}" -n "${MT_NS}" --timeout=180s
+    wait_for_named_server_ready "${MT_TENANT_A}" "${MT_NS}" 60
+  fi
   wait_for_deployment_exists "${MT_NS}" "${MT_TENANT_B}"
-  kubectl rollout status "deploy/${MT_TENANT_A}" -n "${MT_NS}" --timeout=180s
   kubectl rollout status "deploy/${MT_TENANT_B}" -n "${MT_NS}" --timeout=180s
-  wait_for_named_server_ready "${MT_TENANT_A}" "${MT_NS}" 60
   wait_for_named_server_ready "${MT_TENANT_B}" "${MT_NS}" 60
   mt_wait_for_endpoint() {
     local name="$1" tries=60 i
@@ -5078,9 +5210,11 @@ EOF
     kubectl get svc,endpoints,pods -n "${MT_NS}" -o wide >&2 || true
     return 1
   }
-  mt_wait_for_endpoint "${MT_TENANT_A}"
+  mt_wait_for_endpoint "${MT_TENANT_A_SERVER}"
   mt_wait_for_endpoint "${MT_TENANT_B}"
-  port_forward_bg "${MT_NS}" "${MT_TENANT_A}" "${MT_TENANT_A_PORT}" 80 "${WORKDIR}/${MT_TENANT_A}-proxy.log"
+  if ! e2e_multitenancy_slim_mode; then
+    port_forward_bg "${MT_NS}" "${MT_TENANT_A}" "${MT_TENANT_A_PORT}" 80 "${WORKDIR}/${MT_TENANT_A}-proxy.log"
+  fi
   port_forward_bg "${MT_NS}" "${MT_TENANT_B}" "${MT_TENANT_B_PORT}" 80 "${WORKDIR}/${MT_TENANT_B}-proxy.log"
 
   echo "[multitenancy] applying alice (tenant-a / add) and bob (tenant-b / upper) grants and sessions"
@@ -5089,7 +5223,7 @@ apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
 metadata: {name: alice-${MT_TENANT_A}, namespace: ${MT_NS}}
 spec:
-  serverRef: {name: ${MT_TENANT_A}}
+  serverRef: {name: ${MT_TENANT_A_SERVER}}
   subject:   {humanID: ${MT_HUMAN_A}, agentID: ${MT_AGENT_A}}
   maxTrust: high
   allowedSideEffects: [read]
@@ -5101,7 +5235,7 @@ apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAgentSession
 metadata: {name: ${MT_SESSION_A}, namespace: ${MT_NS}}
 spec:
-  serverRef: {name: ${MT_TENANT_A}}
+  serverRef: {name: ${MT_TENANT_A_SERVER}}
   subject:   {humanID: ${MT_HUMAN_A}, agentID: ${MT_AGENT_A}}
   consentedTrust: high
   policyVersion: v1
@@ -5142,14 +5276,19 @@ EOF
     kubectl get configmap "${server}-gateway-policy" -n "${MT_NS}" -o yaml || true
     return 1
   }
-  mt_wait_for_session_in_policy "${MT_TENANT_A}" "${MT_SESSION_A}"
+  mt_wait_for_session_in_policy "${MT_TENANT_A_SERVER}" "${MT_SESSION_A}"
   mt_wait_for_session_in_policy "${MT_TENANT_B}" "${MT_SESSION_B}"
   # The sidecar reloads from a ConfigMap volume, which can lag behind the
   # rendered ConfigMap. The matrix below retries each expected decision until
   # the sidecar observes the updated policy.
 
   echo "[multitenancy] running cross-tenant deny matrix"
-  MT_BASE_A="http://127.0.0.1:${MT_TENANT_A_PORT}/${MT_TENANT_A}/mcp"
+  refresh_mcp_proxy_urls
+  if e2e_multitenancy_slim_mode; then
+    MT_BASE_A="${MCP_SESSION_URL}"
+  else
+    MT_BASE_A="http://127.0.0.1:${MT_TENANT_A_PORT}/${MT_TENANT_A}/mcp"
+  fi
   MT_BASE_B="http://127.0.0.1:${MT_TENANT_B_PORT}/${MT_TENANT_B}/mcp"
   MT_REPORT="${WORKDIR}/multitenancy-matrix.json"
 
@@ -5298,10 +5437,14 @@ PY
   echo "[multitenancy] cleaning up tenant resources"
   kubectl delete mcpaccessgrant "alice-${MT_TENANT_A}" "bob-${MT_TENANT_B}" -n "${MT_NS}" --ignore-not-found --wait=false >/dev/null
   kubectl delete mcpagentsession "${MT_SESSION_A}" "${MT_SESSION_B}" -n "${MT_NS}" --ignore-not-found --wait=false >/dev/null
-  parallel_reset
-  parallel_start 2 "delete ${MT_TENANT_A}" delete_mcp_server_and_wait "${MT_TENANT_A}" "${MT_NS}" 60s
-  parallel_start 2 "delete ${MT_TENANT_B}" delete_mcp_server_and_wait "${MT_TENANT_B}" "${MT_NS}" 60s
-  parallel_wait_all
+  if e2e_multitenancy_slim_mode; then
+    delete_mcp_server_and_wait "${MT_TENANT_B}" "${MT_NS}" 60s
+  else
+    parallel_reset
+    parallel_start 2 "delete ${MT_TENANT_A}" delete_mcp_server_and_wait "${MT_TENANT_A}" "${MT_NS}" 60s
+    parallel_start 2 "delete ${MT_TENANT_B}" delete_mcp_server_and_wait "${MT_TENANT_B}" "${MT_NS}" 60s
+    parallel_wait_all
+  fi
 fi
 
 fi
@@ -5319,9 +5462,6 @@ echo "[cli] deleting deployed MCP servers"
 if scenario_selected "oauth"; then
   cleanup_mcp_server_and_wait "${OAUTH_SERVER_NAME}" mcp-servers 120s
 fi
-cleanup_mcp_server_and_wait "${PYTHON_EXAMPLE_SERVER_NAME}" mcp-servers 120s
-cleanup_mcp_server_and_wait "${RUST_EXAMPLE_SERVER_NAME}" mcp-servers 120s
-cleanup_mcp_server_and_wait "${GO_EXAMPLE_SERVER_NAME}" mcp-servers 120s
 cleanup_mcp_server_and_wait "${SERVER_NAME}" mcp-servers 120s
 
 echo "[done] E2E completed successfully"

@@ -89,7 +89,17 @@ parallelism. `E2E_IMAGE_PREP_PARALLELISM=<n>` tunes the shared prep default,
 `E2E_IMAGE_BUILD_PARALLELISM=<n>` tunes local Docker builds. CI sets mirroring
 to one worker to avoid Docker/local-registry push contention on shared runners
 and builds to two workers because builds are heavier on runner CPU, memory, and
-Docker.
+Docker. CI also sets `MCP_POLICY_WAIT_TRIES=45` so stuck gateway-policy waits
+fail sooner than the local default of 90, and `MCP_HTTP_TIMEOUT=15` so Traefik
+504/502 retries on the ingress path recover faster than the local 30s default.
+
+Kind E2E deploys a single primary MCP server (`policy-mcp-server`) for most PR
+paths. CI sets `E2E_MAX_MCP_SERVERS=2` so multitenancy can reuse that server as
+tenant-a and deploy only `mt-tenant-b` as the second workload. The older
+data-utility, text-analysis, and workspace-assistant sample deploys are not used
+anymore; ingress checks exercise multiple tools on the primary server instead.
+Set `E2E_MAX_MCP_SERVERS=0` locally for unlimited servers during full
+`E2E_SCENARIOS=all` pre-release runs.
 The script also deploys the independent workspace assistant, data utility, and
 text analysis sample servers concurrently; scenario assertions remain ordered
 because they share policy, session, and analytics state.
