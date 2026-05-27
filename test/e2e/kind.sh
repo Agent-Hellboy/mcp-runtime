@@ -818,6 +818,25 @@ ensure_gateway_port_forward() {
   wait_port "${SENTINEL_PORT}"
 }
 
+refresh_mcp_proxy_urls() {
+  MCP_INGRESS_PATH="/${SERVER_NAME}/mcp"
+  MCP_DIRECT_URL="http://127.0.0.1:${TRAEFIK_PORT}${MCP_INGRESS_PATH}"
+  MCP_ANON_URL="http://127.0.0.1:${MCP_CURL_ANON_PORT}${MCP_INGRESS_PATH}"
+  MCP_IDENTITY_URL="http://127.0.0.1:${MCP_CURL_IDENTITY_PORT}${MCP_INGRESS_PATH}"
+  MCP_SESSION_URL="http://127.0.0.1:${MCP_CURL_SESSION_PORT}${MCP_INGRESS_PATH}"
+  MCP_BAD_SESSION_URL="http://127.0.0.1:${MCP_CURL_BAD_SESSION_PORT}${MCP_INGRESS_PATH}"
+  MCP_TRUST_SESSION_URL="http://127.0.0.1:${MCP_SERVICE_SESSION_PORT}${MCP_INGRESS_PATH}"
+}
+
+ensure_server_proxy_port_forward() {
+  if [[ -z "${SERVER_PROXY_PORT_FORWARD_PID:-}" ]]; then
+    echo "[port-forward] exposing ${SERVER_NAME} service on localhost:${SERVER_PROXY_PORT}"
+    port_forward_bg mcp-servers "${SERVER_NAME}" "${SERVER_PROXY_PORT}" 80 "${WORKDIR}/server-proxy-port-forward.log"
+    SERVER_PROXY_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+  fi
+  wait_port "${SERVER_PROXY_PORT}"
+}
+
 start_header_proxy_bg() {
   local local_port="$1"
   local upstream_origin="$2"
@@ -837,6 +856,19 @@ start_header_proxy_bg() {
     "$@" >"${log_file}" 2>&1 &
   PIDS+=("$!")
   wait_managed_port "${local_port}" "$!" "${log_file}" "${label}"
+}
+
+ensure_trust_session_proxy() {
+  refresh_mcp_proxy_urls
+  ensure_server_proxy_port_forward
+  start_header_proxy_bg "${MCP_SERVICE_SESSION_PORT}" \
+    "http://127.0.0.1:${SERVER_PROXY_PORT}" \
+    "${WORKDIR}/mcp-service-session-proxy.log" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
+    --header "X-MCP-Human-ID=${HUMAN_ID}" \
+    --header "X-MCP-Agent-ID=${AGENT_ID}" \
+    --header "X-MCP-Agent-Session=${SESSION_ID}"
+  wait_port "${MCP_SERVICE_SESSION_PORT}"
 }
 
 build_headers_json() {
@@ -3509,6 +3541,7 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
   fi
 
   if scenario_selected "trust"; then
+    ensure_trust_session_proxy
     log_line mcp "validating targeted echo and upper tool behavior"
     wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "echo" '{"message":"hello"}' 200 "hello"
     wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "upper" '{"message":"governance"}' 403 "trust_too_low"
@@ -3622,7 +3655,7 @@ if checkpoint_enabled "oauth"; then
     port_forward_resource_bg mcp-servers "deployment/${SERVER_NAME}" "${SERVER_UPSTREAM_PORT}" 8090 "${WORKDIR}/server-upstream-port-forward.log"
   fi
   if server_proxy_paths_selected; then
-    port_forward_bg mcp-servers "${SERVER_NAME}" "${SERVER_PROXY_PORT}" 80 "${WORKDIR}/server-proxy-port-forward.log"
+    ensure_server_proxy_port_forward
   fi
   if ui_service_paths_selected; then
     ensure_ui_port_forward
@@ -3709,13 +3742,7 @@ if checkpoint_enabled "oauth"; then
     --host-header "${GO_EXAMPLE_SERVER_HOST}" \
     --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
   if scenario_selected "trust"; then
-    start_header_proxy_bg "${MCP_SERVICE_SESSION_PORT}" \
-      "http://127.0.0.1:${SERVER_PROXY_PORT}" \
-      "${WORKDIR}/mcp-service-session-proxy.log" \
-      --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
-      --header "X-MCP-Human-ID=${HUMAN_ID}" \
-      --header "X-MCP-Agent-ID=${AGENT_ID}" \
-      --header "X-MCP-Agent-Session=${SESSION_ID}"
+    ensure_trust_session_proxy
   fi
   wait_port "${MCP_CURL_ANON_PORT}"
   wait_port "${MCP_CURL_IDENTITY_PORT}"
@@ -3728,13 +3755,7 @@ if checkpoint_enabled "oauth"; then
     wait_port "${MCP_SERVICE_SESSION_PORT}"
   fi
 
-  MCP_INGRESS_PATH="/${SERVER_NAME}/mcp"
-  MCP_DIRECT_URL="http://127.0.0.1:${TRAEFIK_PORT}${MCP_INGRESS_PATH}"
-  MCP_ANON_URL="http://127.0.0.1:${MCP_CURL_ANON_PORT}${MCP_INGRESS_PATH}"
-  MCP_IDENTITY_URL="http://127.0.0.1:${MCP_CURL_IDENTITY_PORT}${MCP_INGRESS_PATH}"
-  MCP_SESSION_URL="http://127.0.0.1:${MCP_CURL_SESSION_PORT}${MCP_INGRESS_PATH}"
-  MCP_BAD_SESSION_URL="http://127.0.0.1:${MCP_CURL_BAD_SESSION_PORT}${MCP_INGRESS_PATH}"
-  MCP_TRUST_SESSION_URL="http://127.0.0.1:${MCP_SERVICE_SESSION_PORT}${MCP_INGRESS_PATH}"
+  refresh_mcp_proxy_urls
   PYTHON_EXAMPLE_URL="http://127.0.0.1:${PYTHON_EXAMPLE_PROXY_PORT}${PYTHON_EXAMPLE_SERVER_ROUTE}"
   RUST_EXAMPLE_URL="http://127.0.0.1:${RUST_EXAMPLE_PROXY_PORT}${RUST_EXAMPLE_SERVER_ROUTE}"
   GO_EXAMPLE_URL="http://127.0.0.1:${GO_EXAMPLE_PROXY_PORT}${GO_EXAMPLE_SERVER_ROUTE}"
@@ -3912,13 +3933,7 @@ start_header_proxy_bg "${GO_EXAMPLE_PROXY_PORT}" \
   --host-header "${GO_EXAMPLE_SERVER_HOST}" \
   --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
 if scenario_selected "trust"; then
-  start_header_proxy_bg "${MCP_SERVICE_SESSION_PORT}" \
-    "http://127.0.0.1:${SERVER_PROXY_PORT}" \
-    "${WORKDIR}/mcp-service-session-proxy.log" \
-    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
-    --header "X-MCP-Human-ID=${HUMAN_ID}" \
-    --header "X-MCP-Agent-ID=${AGENT_ID}" \
-    --header "X-MCP-Agent-Session=${SESSION_ID}"
+  ensure_trust_session_proxy
 fi
 wait_port "${MCP_CURL_ANON_PORT}"
 wait_port "${MCP_CURL_IDENTITY_PORT}"
@@ -3931,13 +3946,7 @@ if scenario_selected "trust"; then
   wait_port "${MCP_SERVICE_SESSION_PORT}"
 fi
 
-MCP_INGRESS_PATH="/${SERVER_NAME}/mcp"
-MCP_DIRECT_URL="http://127.0.0.1:${TRAEFIK_PORT}${MCP_INGRESS_PATH}"
-MCP_ANON_URL="http://127.0.0.1:${MCP_CURL_ANON_PORT}${MCP_INGRESS_PATH}"
-MCP_IDENTITY_URL="http://127.0.0.1:${MCP_CURL_IDENTITY_PORT}${MCP_INGRESS_PATH}"
-MCP_SESSION_URL="http://127.0.0.1:${MCP_CURL_SESSION_PORT}${MCP_INGRESS_PATH}"
-MCP_BAD_SESSION_URL="http://127.0.0.1:${MCP_CURL_BAD_SESSION_PORT}${MCP_INGRESS_PATH}"
-MCP_TRUST_SESSION_URL="http://127.0.0.1:${MCP_SERVICE_SESSION_PORT}${MCP_INGRESS_PATH}"
+refresh_mcp_proxy_urls
 PYTHON_EXAMPLE_URL="http://127.0.0.1:${PYTHON_EXAMPLE_PROXY_PORT}${PYTHON_EXAMPLE_SERVER_ROUTE}"
 RUST_EXAMPLE_URL="http://127.0.0.1:${RUST_EXAMPLE_PROXY_PORT}${RUST_EXAMPLE_SERVER_ROUTE}"
 GO_EXAMPLE_URL="http://127.0.0.1:${GO_EXAMPLE_PROXY_PORT}${GO_EXAMPLE_SERVER_ROUTE}"
@@ -4299,6 +4308,7 @@ if scenario_selected "ui-auth" && ! deep_request_flows_enabled; then
 fi
 
 if scenario_selected "trust"; then
+  ensure_trust_session_proxy
   log_line mcp "validating targeted echo and upper tool behavior"
   wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "echo" '{"message":"hello"}' 200 "hello"
   wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "upper" '{"message":"governance"}' 403 "trust_too_low"
