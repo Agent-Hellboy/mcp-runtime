@@ -779,6 +779,18 @@ recover_traefik_port_forward_if_needed() {
   TRAEFIK_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
 }
 
+ensure_traefik_port_forward() {
+  if [[ -z "${TRAEFIK_PORT_FORWARD_PID:-}" ]]; then
+    echo "[port-forward] exposing traefik on localhost:${TRAEFIK_PORT}"
+    port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${WORKDIR}/traefik-port-forward.log"
+    TRAEFIK_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+    TRAEFIK_PORT_FORWARD_RESTARTS=0
+  else
+    recover_traefik_port_forward_if_needed
+  fi
+  wait_port "${TRAEFIK_PORT}"
+}
+
 start_header_proxy_bg() {
   local local_port="$1"
   local upstream_origin="$2"
@@ -3186,6 +3198,7 @@ print(json.dumps(config, indent=2))
 PYEOF
 
 if checkpoint_enabled "policy"; then
+  ensure_traefik_port_forward
   echo "[policy] applying access grant via CLI"
   "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant init "${SERVER_NAME}-grant" \
     --server "${SERVER_NAME}" \
@@ -3560,9 +3573,7 @@ fi
 
 if checkpoint_enabled "oauth"; then
   echo "[port-forward] exposing ingress and observability services"
-  port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${WORKDIR}/traefik-port-forward.log"
-  TRAEFIK_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
-  TRAEFIK_PORT_FORWARD_RESTARTS=0
+  ensure_traefik_port_forward
   if [[ -z "${SENTINEL_PORT_FORWARD_PID:-}" ]]; then
     port_forward_bg mcp-sentinel mcp-sentinel-gateway "${SENTINEL_PORT}" 8083 "${WORKDIR}/sentinel-port-forward.log"
     SENTINEL_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
