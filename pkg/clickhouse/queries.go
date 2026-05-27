@@ -158,6 +158,7 @@ type EventFilters struct {
 	SessionID string
 	Decision  string
 	ToolName  string
+	Reason    string
 	Limit     int
 }
 
@@ -241,6 +242,10 @@ func buildEventFilterWhereClause(filters EventFilters) (string, []interface{}) {
 	if filters.ToolName != "" {
 		conditions = append(conditions, "tool_name = ?")
 		args = append(args, filters.ToolName)
+	}
+	if filters.Reason != "" {
+		conditions = append(conditions, "JSONExtractString(payload, 'reason') = ?")
+		args = append(args, filters.Reason)
 	}
 
 	whereClause := ""

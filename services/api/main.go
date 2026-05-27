@@ -1124,7 +1124,7 @@ func dedupeAnalyticsStrings(values []string) []string {
 
 // handleEventsFilter handles GET /api/events/filter requests.
 // It queries events filtered by optional source, event_type, and audit payload fields.
-// Supports query parameters: trace_id, source, event_type, server, namespace, team_id, cluster, human_id, agent_id, session_id, decision, tool_name, limit.
+// Supports query parameters: trace_id, source, event_type, server, namespace, team_id, cluster, human_id, agent_id, session_id, decision, tool_name, reason, limit.
 // Returns filtered events ordered by timestamp descending.
 func (s *apiServer) handleEventsFilter(w http.ResponseWriter, r *http.Request) {
 	filters := clickhousepkg.EventFilters{
@@ -1140,6 +1140,7 @@ func (s *apiServer) handleEventsFilter(w http.ResponseWriter, r *http.Request) {
 		SessionID: r.URL.Query().Get("session_id"),
 		Decision:  r.URL.Query().Get("decision"),
 		ToolName:  r.URL.Query().Get("tool_name"),
+		Reason:    r.URL.Query().Get("reason"),
 		Limit:     clampInt(queryInt(r, "limit", 100), 1, 1000),
 	}
 	events, err := s.events.QueryEventsFiltered(r.Context(), filters)

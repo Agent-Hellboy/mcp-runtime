@@ -5162,30 +5162,26 @@ allow_upper = wait_for_json(
     headers=headers,
     description="allow audit event for upper",
 ).get("events", [])
-all_server_denies = wait_for_json(
-    f"{api_base}/events/filter?server={server_name}&decision=deny&limit=250",
-    lambda doc: {
-        payload.get("reason")
-        for payload in (
-            event.get("payload", {})
-            for event in doc.get("events", [])
-            if isinstance(event.get("payload"), dict)
-        )
-        if payload.get("reason")
-    } >= {
-        "missing_identity",
-        "missing_session",
-        "session_not_found",
-        "session_revoked",
-        "session_expired",
-        "rpc_inspection_failed",
-        "trust_too_low",
-        "tool_not_granted",
-        "tool_denied",
-    },
-    headers=headers,
-    description="server deny audit events",
-).get("events", [])
+_required_deny_reasons = [
+    "missing_identity",
+    "missing_session",
+    "session_not_found",
+    "session_revoked",
+    "session_expired",
+    "rpc_inspection_failed",
+    "trust_too_low",
+    "tool_not_granted",
+    "tool_denied",
+]
+all_server_denies = []
+for _deny_reason in _required_deny_reasons:
+    _reason_events = wait_for_json(
+        f"{api_base}/events/filter?server={server_name}&decision=deny&reason={_deny_reason}&limit=5",
+        lambda doc: bool(doc.get("events", [])),
+        headers=headers,
+        description=f"server deny audit event for reason {_deny_reason}",
+    ).get("events", [])
+    all_server_denies.extend(_reason_events)
 all_server_events = wait_for_json(
     f"{api_base}/events/filter?server={server_name}&limit=1000",
     lambda doc: rpc_methods_from_events_doc(doc) >= expected_recent_gateway_rpc_method_set,
