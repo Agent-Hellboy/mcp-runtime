@@ -842,14 +842,10 @@ func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Tea
 }
 
 func (c *PlatformClient) CreateUser(ctx context.Context, email, password, role string) (PlatformUser, error) {
-	payload := struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Role     string `json:"role,omitempty"`
-	}{
-		Email:    strings.TrimSpace(email),
-		Password: password,
-		Role:     strings.TrimSpace(role),
+	payload := map[string]string{
+		"email":    strings.TrimSpace(email),
+		"password": password,
+		"role":     strings.TrimSpace(role),
 	}
 	js, err := json.Marshal(payload)
 	if err != nil {
