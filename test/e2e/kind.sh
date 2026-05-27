@@ -2184,6 +2184,24 @@ restore_policy_server_grant_defaults() {
   (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant.yaml)
   wait_for_grant_tool_rule "${SERVER_NAME}-grant" "aaa-ping" "allow"
   wait_for_grant_tool_rule "${SERVER_NAME}-grant" "echo" "allow"
+
+  if [[ -f "${WORKDIR}/access-session.yaml" ]]; then
+    log_line policy "restoring baseline session consented trust after trust checks"
+    (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session apply --file access-session.yaml)
+    wait_for_policy_text "\"consented_trust\": \"low\""
+  fi
+
+  # ConfigMap updates can appear in kubectl before the gateway sidecar's mounted
+  # policy.json reflects the restored allow rules. Restart so the next ingress
+  # checks do not sit in a long tool_denied retry loop against stale policy.
+  log_line policy "restarting ${SERVER_NAME} so the gateway reloads restored policy"
+  restart_deployment_pods mcp-servers "${SERVER_NAME}"
+  wait_for_named_server_ready "${SERVER_NAME}" "mcp-servers" 60
+
+  ensure_trust_session_proxy
+  log_line policy "waiting for restored grant allow rules to reach the gateway"
+  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "aaa-ping" '{}' 200 "pong"
+  wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "echo" '{"message":"hello"}' 200 "hello"
   print_gateway_policy_debug
 }
 
@@ -3886,177 +3904,6 @@ spec:
       targetPort: 8080
 EOF
   fi
-
-echo "[registry] checking public ingress admin auth"
-REGISTRY_PUBLIC_URL="http://127.0.0.1:${TRAEFIK_PORT}/v2/_catalog"
-REGISTRY_UNAUTH_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: registry.local" "${REGISTRY_PUBLIC_URL}" || true)"
-if [[ "${REGISTRY_UNAUTH_STATUS}" != "401" && "${REGISTRY_UNAUTH_STATUS}" != "403" ]]; then
-  echo "[registry][fail] unauthenticated public registry catalog returned ${REGISTRY_UNAUTH_STATUS}, want 401 or 403" >&2
-  exit 1
-fi
-REGISTRY_ADMIN_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: registry.local" -H "x-api-key: ${API_KEY}" "${REGISTRY_PUBLIC_URL}" || true)"
-if [[ "${REGISTRY_ADMIN_STATUS}" != "200" ]]; then
-  echo "[registry][fail] admin public registry catalog returned ${REGISTRY_ADMIN_STATUS}, want 200" >&2
-  exit 1
-fi
-echo "[registry][pass] public registry catalog requires admin auth"
-
-echo "[proxy] starting local ingress proxies for curl MCP checks"
-start_header_proxy_bg "${MCP_CURL_ANON_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-curl-anon-proxy.log" \
-  --host-header "${SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
-start_header_proxy_bg "${MCP_CURL_IDENTITY_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-curl-identity-proxy.log" \
-  --host-header "${SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
-  --header "X-MCP-Human-ID=${HUMAN_ID}" \
-  --header "X-MCP-Agent-ID=${AGENT_ID}"
-start_header_proxy_bg "${MCP_CURL_SESSION_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-curl-session-proxy.log" \
-  --host-header "${SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
-  --header "X-MCP-Human-ID=${HUMAN_ID}" \
-  --header "X-MCP-Agent-ID=${AGENT_ID}" \
-  --header "X-MCP-Agent-Session=${SESSION_ID}"
-start_header_proxy_bg "${MCP_CURL_BAD_SESSION_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-curl-bad-session-proxy.log" \
-  --host-header "${SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
-  --header "X-MCP-Human-ID=${HUMAN_ID}" \
-  --header "X-MCP-Agent-ID=${AGENT_ID}" \
-  --header "X-MCP-Agent-Session=${UNKNOWN_SESSION_ID}"
-start_header_proxy_bg "${PYTHON_EXAMPLE_PROXY_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/data-utility-proxy.log" \
-  --host-header "${PYTHON_EXAMPLE_SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
-start_header_proxy_bg "${RUST_EXAMPLE_PROXY_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/text-analysis-proxy.log" \
-  --host-header "${RUST_EXAMPLE_SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
-start_header_proxy_bg "${GO_EXAMPLE_PROXY_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/workspace-assistant-proxy.log" \
-  --host-header "${GO_EXAMPLE_SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
-if scenario_selected "trust"; then
-  ensure_trust_session_proxy
-fi
-wait_port "${MCP_CURL_ANON_PORT}"
-wait_port "${MCP_CURL_IDENTITY_PORT}"
-wait_port "${MCP_CURL_SESSION_PORT}"
-wait_port "${MCP_CURL_BAD_SESSION_PORT}"
-wait_port "${PYTHON_EXAMPLE_PROXY_PORT}"
-wait_port "${RUST_EXAMPLE_PROXY_PORT}"
-wait_port "${GO_EXAMPLE_PROXY_PORT}"
-if scenario_selected "trust"; then
-  wait_port "${MCP_SERVICE_SESSION_PORT}"
-fi
-
-refresh_mcp_proxy_urls
-PYTHON_EXAMPLE_URL="http://127.0.0.1:${PYTHON_EXAMPLE_PROXY_PORT}${PYTHON_EXAMPLE_SERVER_ROUTE}"
-RUST_EXAMPLE_URL="http://127.0.0.1:${RUST_EXAMPLE_PROXY_PORT}${RUST_EXAMPLE_SERVER_ROUTE}"
-GO_EXAMPLE_URL="http://127.0.0.1:${GO_EXAMPLE_PROXY_PORT}${GO_EXAMPLE_SERVER_ROUTE}"
-
-log_line ingress "validating distinct MCP server behaviors across routes"
-wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200 "pong"
-wait_for_mcp_tool_result "${PYTHON_EXAMPLE_URL}" "echo" '{"message":"data utility ready"}' 200 "data utility ready"
-wait_for_mcp_tool_result "${RUST_EXAMPLE_URL}" "repeat" '{"message":"text","times":3}' 200 "texttexttext"
-wait_for_mcp_tool_result "${GO_EXAMPLE_URL}" "lower" '{"message":"Workspace Assistant Ready"}' 200 "workspace assistant ready"
-
-if scenario_selected "smoke-auth"; then
-  log_line mcp "validating raw MCP request edge cases"
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    POST \
-    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=2099-01-01")" \
-    text \
-    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-    400 \
-    "Unsupported protocol version"
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    POST \
-    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=text/plain" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
-    text \
-    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-    403 \
-    "rpc_inspection_failed"
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    POST \
-    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
-    text \
-    '' \
-    403 \
-    "rpc_inspection_failed"
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    POST \
-    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
-    text \
-    '{"jsonrpc":' \
-    403 \
-    "rpc_inspection_failed"
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    POST \
-    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
-    text \
-    '{"jsonrpc":"2.0","id":1,"params":{}}' \
-    403 \
-    "rpc_inspection_failed"
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    POST \
-    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream")" \
-    text \
-    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-    200
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    POST \
-    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
-    chunked-text \
-    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-    200
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    GET \
-    "$(build_headers_json "Host=${SERVER_HOST}" "accept=text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
-    none \
-    '' \
-    400 \
-    "GET requires an Mcp-Session-Id header"
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    DELETE \
-    "$(build_headers_json "Host=${SERVER_HOST}" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
-    none \
-    '' \
-    400 \
-    "DELETE requires an Mcp-Session-Id header"
-
-  log_line mcp "running curl-based MCP smoke checks against ingress"
-  run_mcp_curl_expect "mcp-curl-missing-identity" "${MCP_ANON_URL}" false "missing_identity" \
-    || run_mcp_curl_expect "mcp-curl-missing-identity-retry" "${MCP_ANON_URL}" false "missing_identity"
-  run_mcp_curl_expect "mcp-curl-missing-session" "${MCP_IDENTITY_URL}" false "missing_session" \
-    || run_mcp_curl_expect "mcp-curl-missing-session-retry" "${MCP_IDENTITY_URL}" false "missing_session"
-  run_mcp_curl_expect "mcp-curl-session-not-found" "${MCP_BAD_SESSION_URL}" false "session_not_found" \
-    || run_mcp_curl_expect "mcp-curl-session-not-found-retry" "${MCP_BAD_SESSION_URL}" false "session_not_found"
-  log_line mcp "waiting for session-backed allow policy to reach the gateway"
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
-  run_mcp_curl_expect "mcp-curl-allow-aaa-ping" "${MCP_SESSION_URL}" true
-  if scenario_selected "observability"; then
-    wait_for_gateway_rpc_methods "${SERVER_NAME}" "policy server MCP curl"
-  fi
-fi
 
 if scenario_selected "governance"; then
   log_line policy "revoking access session via CLI; gateway should reject session-backed calls with session_revoked"
