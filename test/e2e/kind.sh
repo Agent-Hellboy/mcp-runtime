@@ -4092,10 +4092,10 @@ if checkpoint_enabled "oauth"; then
   fi
 
   if scenario_selected "oauth"; then
-    OAUTH_FIXTURE_DIR="${WORKDIR}/oauth-fixtures"
+  OAUTH_FIXTURE_DIR="${WORKDIR}/oauth-fixtures"
 
-    echo "[oauth] provisioning mock OAuth issuer service"
-    cat <<EOF | kubectl apply -f -
+  echo "[oauth] provisioning mock OAuth issuer service"
+  cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: Service
 metadata:
@@ -4109,6 +4109,416 @@ spec:
       port: 8080
       targetPort: 8080
 EOF
+  cat <<EOF | kubectl apply -f -
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ${OAUTH_ISSUER_NAME}-allow-${OAUTH_SERVER_NAME}
+  namespace: mcp-servers
+spec:
+  podSelector:
+    matchLabels:
+      app: ${OAUTH_ISSUER_NAME}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ${OAUTH_SERVER_NAME}
+      ports:
+        - protocol: TCP
+          port: 8080
+EOF
+  if [[ -z "${OAUTH_ISSUER_URL}" ]]; then
+    OAUTH_ISSUER_CLUSTER_IP="$(kubectl get svc "${OAUTH_ISSUER_NAME}" -n mcp-servers -o jsonpath='{.spec.clusterIP}')"
+    if [[ -z "${OAUTH_ISSUER_CLUSTER_IP}" || "${OAUTH_ISSUER_CLUSTER_IP}" == "None" ]]; then
+      echo "failed to resolve ClusterIP for OAuth issuer service ${OAUTH_ISSUER_NAME}" >&2
+      exit 1
+    fi
+    OAUTH_ISSUER_URL="http://${OAUTH_ISSUER_CLUSTER_IP}:8080"
+  fi
+
+  generate_oauth_fixtures "${OAUTH_FIXTURE_DIR}"
+  OAUTH_VALID_TOKEN="$(tr -d '\n' <"${OAUTH_FIXTURE_DIR}/valid-token.txt")"
+  OAUTH_INVALID_TOKEN="$(tr -d '\n' <"${OAUTH_FIXTURE_DIR}/invalid-token.txt")"
+
+  echo "[oauth] deploying mock OAuth issuer"
+  OAUTH_ISSUER_DEPLOYMENT_EXISTED=0
+  if kubectl get deployment "${OAUTH_ISSUER_NAME}" -n mcp-servers >/dev/null 2>&1; then
+    OAUTH_ISSUER_DEPLOYMENT_EXISTED=1
+  fi
+  kubectl create configmap "${OAUTH_ISSUER_NAME}-files" \
+    -n mcp-servers \
+    --from-file=oauth-authorization-server="${OAUTH_FIXTURE_DIR}/oauth-authorization-server" \
+    --from-file=keys="${OAUTH_FIXTURE_DIR}/keys" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${OAUTH_ISSUER_NAME}
+  namespace: mcp-servers
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${OAUTH_ISSUER_NAME}
+  template:
+    metadata:
+      labels:
+        app: ${OAUTH_ISSUER_NAME}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: http
+          image: docker.io/library/python:3.12-alpine
+          command: ["python3"]
+          args: ["-m", "http.server", "8080", "--directory", "/usr/share/nginx/html"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 65532
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /keys
+              port: 8080
+            initialDelaySeconds: 1
+            periodSeconds: 2
+            failureThreshold: 30
+          volumeMounts:
+            - name: files
+              mountPath: /usr/share/nginx/html/.well-known/oauth-authorization-server
+              subPath: oauth-authorization-server
+            - name: files
+              mountPath: /usr/share/nginx/html/keys
+              subPath: keys
+      volumes:
+        - name: files
+          configMap:
+            name: ${OAUTH_ISSUER_NAME}-files
+EOF
+  # The issuer mounts fixture files through subPath, so restart to pick up new
+  # JWKS/token fixtures when E2E cache mode reuses an existing Deployment.
+  if [[ "${OAUTH_ISSUER_DEPLOYMENT_EXISTED}" == "1" ]]; then
+    kubectl rollout restart "deploy/${OAUTH_ISSUER_NAME}" -n mcp-servers >/dev/null
+  fi
+  kubectl rollout status "deploy/${OAUTH_ISSUER_NAME}" -n mcp-servers --timeout=180s
+  OAUTH_ISSUER_ENDPOINT_READY=0
+  for _oauth_endpoint_try in $(seq 1 60); do
+    if [[ -n "$(kubectl get endpoints "${OAUTH_ISSUER_NAME}" -n mcp-servers -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)" ]]; then
+      OAUTH_ISSUER_ENDPOINT_READY=1
+      break
+    fi
+    sleep 2
+  done
+  if [[ "${OAUTH_ISSUER_ENDPOINT_READY}" != "1" ]]; then
+    echo "timed out waiting for OAuth issuer service endpoint" >&2
+    kubectl get svc,endpoints,pods -n mcp-servers -o wide >&2 || true
+    kubectl describe deployment "${OAUTH_ISSUER_NAME}" -n mcp-servers >&2 || true
+    kubectl logs -n mcp-servers -l "app=${OAUTH_ISSUER_NAME}" --tail=100 >&2 || true
+    exit 1
+  fi
+
+  OAUTH_METADATA_FILE="${WORKDIR}/oauth-metadata.yaml"
+  OAUTH_MANIFEST_DIR="${WORKDIR}/oauth-manifests"
+  cat > "${OAUTH_METADATA_FILE}" <<EOF
+version: v1
+servers:
+  - name: ${OAUTH_SERVER_NAME}
+    image: ${SERVER_IMAGE%:*}
+    imageTag: ${SERVER_IMAGE##*:}
+    route: /${OAUTH_SERVER_NAME}/mcp
+    publicPathPrefix: ${OAUTH_SERVER_NAME}
+    port: 8090
+    namespace: mcp-servers
+    resources:
+      requests:
+        cpu: 1m
+        memory: 32Mi
+    rollout:
+      maxUnavailable: "1"
+      maxSurge: "0"
+    envVars:
+      - name: PORT
+        value: "8090"
+      - name: MCP_PATH
+        value: "/${OAUTH_SERVER_NAME}/mcp"
+    tools:
+      - name: aaa-ping
+        requiredTrust: low
+        sideEffect: read
+      - name: add
+        requiredTrust: low
+        sideEffect: read
+      - name: upper
+        requiredTrust: low
+        sideEffect: read
+    auth:
+      mode: oauth
+      humanIDHeader: X-MCP-Human-ID
+      agentIDHeader: X-MCP-Agent-ID
+      sessionIDHeader: X-MCP-Agent-Session
+      tokenHeader: Authorization
+      issuerURL: ${OAUTH_ISSUER_URL}
+      audience: ${OAUTH_AUDIENCE}
+    policy:
+      mode: allow-list
+      defaultDecision: deny
+      policyVersion: v1
+    session:
+      required: false
+      upstreamTokenHeader: Authorization
+    gateway:
+      enabled: true
+      resources:
+        requests:
+          cpu: 1m
+          memory: 32Mi
+    analytics:
+      ingestURL: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
+      apiKeySecretRef:
+        name: ${SERVER_SECRET_NAME}
+        key: api-key
+EOF
+
+  echo "[oauth] deploying OAuth-protected MCP server"
+  run_logged_stage "deploy OAuth MCP server manifests" bash -lc "MCP_RUNTIME_CONFIG_DIR=\"${E2E_PIPELINE_CONFIG_DIR}\" ./bin/mcp-runtime server generate --metadata-file \"${OAUTH_METADATA_FILE}\" --output \"${OAUTH_MANIFEST_DIR}\" && ./bin/mcp-runtime server --use-kube apply --file \"${OAUTH_MANIFEST_DIR}/${OAUTH_SERVER_NAME}.yaml\""
+  wait_for_deployment_exists mcp-servers "${OAUTH_SERVER_NAME}"
+  if ! restart_deployment_pods mcp-servers "${OAUTH_SERVER_NAME}" 180s; then
+    echo "[debug] OAuth MCP server rollout failed; collecting diagnostics" >&2
+    kubectl get mcpserver "${OAUTH_SERVER_NAME}" -n mcp-servers -o yaml || true
+    kubectl get deploy,rs,pods,svc,ingress,configmap -n mcp-servers || true
+    kubectl describe deployment "${OAUTH_SERVER_NAME}" -n mcp-servers || true
+    kubectl describe pods -n mcp-servers || true
+    kubectl logs -n mcp-servers -l "app=${OAUTH_SERVER_NAME}" --all-containers=true --tail=200 || true
+    exit 1
+  fi
+  wait_for_named_server_ready "${OAUTH_SERVER_NAME}"
+
+  echo "[oauth] applying OAuth grant"
+  cat <<EOF | kubectl apply -f -
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAccessGrant
+metadata:
+  name: ${OAUTH_SERVER_NAME}-grant
+  namespace: mcp-servers
+spec:
+  serverRef:
+    name: ${OAUTH_SERVER_NAME}
+  subject:
+    humanID: ${OAUTH_HUMAN_ID}
+    agentID: ${OAUTH_AGENT_ID}
+  maxTrust: low
+  allowedSideEffects: [read]
+  policyVersion: v1
+  toolRules:
+    - name: aaa-ping
+      decision: allow
+    - name: add
+      decision: allow
+    - name: upper
+      decision: allow
+EOF
+
+  OAUTH_PROXY_UPSTREAM_ORIGIN="http://127.0.0.1:${TRAEFIK_PORT}"
+  OAUTH_HEADER_PROXY_ARGS=(--host-header "${OAUTH_SERVER_HOST}")
+  if oauth_proxy_paths_selected; then
+    port_forward_bg mcp-servers "${OAUTH_SERVER_NAME}" "${OAUTH_PROXY_PORT}" 80 "${WORKDIR}/oauth-proxy-port-forward.log"
+    wait_port "${OAUTH_PROXY_PORT}"
+    OAUTH_PROXY_UPSTREAM_ORIGIN="http://127.0.0.1:${OAUTH_PROXY_PORT}"
+  fi
+  if scenario_selected "observability"; then
+    port_forward_resource_bg mcp-servers "deployment/${OAUTH_SERVER_NAME}" "${OAUTH_UPSTREAM_PORT}" 8090 "${WORKDIR}/oauth-upstream-port-forward.log"
+    wait_port "${OAUTH_UPSTREAM_PORT}"
+  fi
+
+  echo "[oauth] starting local OAuth proxies"
+  # mcp_header_proxy.py uses NAME=VALUE syntax: the part after the first '='
+  # becomes the HTTP header value, so "Authorization=Bearer <token>" sets the
+  # Authorization header to "Bearer <token>" (not "=Bearer <token>").
+  start_header_proxy_bg "${MCP_CURL_OAUTH_ANON_PORT}" \
+    "${OAUTH_PROXY_UPSTREAM_ORIGIN}" \
+    "${WORKDIR}/mcp-curl-oauth-anon-proxy.log" \
+    "${OAUTH_HEADER_PROXY_ARGS[@]}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
+  start_header_proxy_bg "${MCP_CURL_OAUTH_INVALID_PORT}" \
+    "${OAUTH_PROXY_UPSTREAM_ORIGIN}" \
+    "${WORKDIR}/mcp-curl-oauth-invalid-proxy.log" \
+    "${OAUTH_HEADER_PROXY_ARGS[@]}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
+    --header "Authorization=Bearer ${OAUTH_INVALID_TOKEN}"
+  start_header_proxy_bg "${MCP_CURL_OAUTH_VALID_PORT}" \
+    "${OAUTH_PROXY_UPSTREAM_ORIGIN}" \
+    "${WORKDIR}/mcp-curl-oauth-valid-proxy.log" \
+    "${OAUTH_HEADER_PROXY_ARGS[@]}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
+    --header "Authorization=Bearer ${OAUTH_VALID_TOKEN}"
+
+  wait_port "${MCP_CURL_OAUTH_ANON_PORT}"
+  wait_port "${MCP_CURL_OAUTH_INVALID_PORT}"
+  wait_port "${MCP_CURL_OAUTH_VALID_PORT}"
+
+  OAUTH_INGRESS_PATH="/${OAUTH_SERVER_NAME}/mcp"
+  MCP_OAUTH_DIRECT_ORIGIN="http://127.0.0.1:${TRAEFIK_PORT}"
+  if oauth_proxy_paths_selected; then
+    MCP_OAUTH_DIRECT_ORIGIN="http://127.0.0.1:${OAUTH_PROXY_PORT}"
+  fi
+  MCP_OAUTH_DIRECT_URL="${MCP_OAUTH_DIRECT_ORIGIN}${OAUTH_INGRESS_PATH}"
+  MCP_OAUTH_ANON_URL="http://127.0.0.1:${MCP_CURL_OAUTH_ANON_PORT}${OAUTH_INGRESS_PATH}"
+  MCP_OAUTH_INVALID_URL="http://127.0.0.1:${MCP_CURL_OAUTH_INVALID_PORT}${OAUTH_INGRESS_PATH}"
+  MCP_OAUTH_VALID_URL="http://127.0.0.1:${MCP_CURL_OAUTH_VALID_PORT}${OAUTH_INGRESS_PATH}"
+  MCP_OAUTH_METADATA_URL="http://127.0.0.1:${MCP_CURL_OAUTH_ANON_PORT}/.well-known/oauth-protected-resource${OAUTH_INGRESS_PATH}"
+
+  echo "[oauth] validating protected-resource metadata"
+  wait_http "${MCP_OAUTH_METADATA_URL}"
+  MCP_OAUTH_METADATA_URL="${MCP_OAUTH_METADATA_URL}" \
+  OAUTH_ISSUER_URL="${OAUTH_ISSUER_URL}" \
+  OAUTH_RESOURCE_URL="http://${OAUTH_SERVER_HOST}${OAUTH_INGRESS_PATH}" \
+  python3 <<'PY'
+import json
+import os
+import urllib.request
+
+
+import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
+
+
+req = urllib.request.Request(os.environ["MCP_OAUTH_METADATA_URL"], headers={"accept": "application/json"})
+resp = urllib.request.urlopen(req, timeout=10)
+doc = json.loads(resp.read().decode())
+
+check(
+    resp.status == 200,
+    "oauth protected-resource metadata returned 200",
+    f"expected 200 from protected resource metadata, got {resp.status}",
+)
+check(
+    doc.get("authorization_servers") == [os.environ["OAUTH_ISSUER_URL"]],
+    "oauth metadata authorization_servers matched issuer",
+    f"unexpected authorization_servers: {doc}",
+)
+check(
+    doc.get("resource") == os.environ["OAUTH_RESOURCE_URL"],
+    "oauth metadata resource URL matched",
+    f"unexpected resource URL: {doc}",
+)
+check(
+    "header" in doc.get("bearer_methods_supported", []),
+    "oauth metadata bearer_methods_supported includes header",
+    f"expected bearer_methods_supported to include header, got {doc}",
+)
+print("oauth metadata:", json.dumps(doc))
+PY
+
+  echo "[oauth] validating missing and invalid bearer token challenges"
+  wait_for_mcp_initialize_result "${MCP_OAUTH_ANON_URL}" 401 "missing_bearer_token" "www-authenticate" "resource_metadata="
+  if ! wait_for_mcp_initialize_result "${MCP_OAUTH_INVALID_URL}" 401 "invalid_token" "www-authenticate" 'error="invalid_token"'; then
+    echo "[debug] OAuth provider diagnostics after invalid-token failure" >&2
+    kubectl get svc,endpoints,pods,networkpolicy -n mcp-servers -o wide >&2 || true
+    kubectl get networkpolicy -n mcp-servers -o yaml >&2 || true
+    kubectl describe deployment "${OAUTH_ISSUER_NAME}" -n mcp-servers >&2 || true
+    kubectl logs -n mcp-servers -l "app=${OAUTH_ISSUER_NAME}" --tail=100 >&2 || true
+    kubectl logs -n mcp-servers -l "app=${OAUTH_SERVER_NAME}" -c mcp-gateway --tail=200 >&2 || true
+    exit 1
+  fi
+  wait_for_http_result \
+    "${MCP_OAUTH_DIRECT_URL}" \
+    POST \
+    "$(build_headers_json "Host=${OAUTH_SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" "Authorization=${OAUTH_VALID_TOKEN}")" \
+    text \
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+    401 \
+    "missing_bearer_token" \
+    "www-authenticate" \
+    "resource_metadata="
+  run_mcp_curl_expect "mcp-curl-oauth-missing-token" "${MCP_OAUTH_ANON_URL}" false "missing_bearer_token"
+  run_mcp_curl_expect "mcp-curl-oauth-invalid-token" "${MCP_OAUTH_INVALID_URL}" false "invalid_token"
+
+  echo "[oauth] validating valid bearer token MCP flow"
+  wait_for_mcp_tool_result "${MCP_OAUTH_VALID_URL}" "add" '{"a":7,"b":5}' 200 "12"
+  API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api" \
+  API_KEY="${API_KEY}" \
+  OAUTH_SERVER_NAME="${OAUTH_SERVER_NAME}" \
+  OAUTH_HUMAN_ID="${OAUTH_HUMAN_ID}" \
+  OAUTH_AGENT_ID="${OAUTH_AGENT_ID}" \
+  OAUTH_SESSION_ID="${OAUTH_SESSION_ID}" \
+  python3 <<'PY'
+import json
+import os
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
+
+
+api_base = os.environ["API_BASE"]
+api_key = os.environ["API_KEY"]
+server_name = os.environ["OAUTH_SERVER_NAME"]
+human_id = os.environ["OAUTH_HUMAN_ID"]
+agent_id = os.environ["OAUTH_AGENT_ID"]
+session_id = os.environ["OAUTH_SESSION_ID"]
+
+params = urllib.parse.urlencode(
+    {
+        "server": server_name,
+        "decision": "allow",
+        "tool_name": "add",
+        "human_id": human_id,
+        "agent_id": agent_id,
+        "session_id": session_id,
+        "limit": "20",
+    }
+)
+url = f"{api_base}/events/filter?{params}"
+headers = {"x-api-key": api_key}
+last_doc = {}
+
+for _ in range(60):
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            last_doc = json.loads(resp.read().decode())
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
+        time.sleep(2)
+        continue
+    events = last_doc.get("events", [])
+    if events:
+        payload = events[0].get("payload", {})
+        check(
+            payload.get("human_id") == human_id
+            and payload.get("agent_id") == agent_id
+            and payload.get("session_id") == session_id
+            and payload.get("tool_name") == "add"
+            and payload.get("decision") == "allow",
+            "oauth bearer token identity appeared in allow audit event",
+            f"unexpected oauth allow audit payload: {payload}",
+        )
+        break
+    time.sleep(2)
+else:
+    fail(f"timed out waiting for oauth allow audit event: {json.dumps(last_doc, indent=2)}")
+PY
+  wait_for_http_result \
+    "${MCP_OAUTH_DIRECT_URL}" \
+    POST \
+    "$(build_headers_json "Host=${OAUTH_SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" "Authorization=Bearer ${OAUTH_VALID_TOKEN}")" \
+    chunked-text \
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+    200
+  run_mcp_curl_expect "mcp-curl-oauth-valid" "${MCP_OAUTH_VALID_URL}" true
   fi
 
 if scenario_selected "governance"; then
