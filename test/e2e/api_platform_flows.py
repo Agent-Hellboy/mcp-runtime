@@ -48,6 +48,20 @@ def expect_json(url, status=200, *, method="GET", headers=None, body=None):
     return json.loads(expect_status(url, status, method=method, headers=headers, body=body))
 
 
+def expect_json_retry(url, status=200, *, method="GET", headers=None, body=None, tries=5, delay_s=2):
+    last_err = None
+    for attempt in range(1, tries + 1):
+        try:
+            return expect_json(url, status, method=method, headers=headers, body=body)
+        except AssertionError as exc:
+            last_err = exc
+            if attempt < tries:
+                time.sleep(delay_s)
+    if last_err is not None:
+        raise last_err
+    raise AssertionError(f"{method} {url} failed after {tries} attempts")
+
+
 def bearer_headers(token):
     return {"Authorization": f"Bearer {token}"}
 
@@ -208,17 +222,17 @@ expect_json(f"{api_base}/api/runtime/servers/mcp-servers/{quote_segment(temp_ser
 expect_json(f"{api_base}/api/runtime/servers/mcp-servers/{quote_segment(temp_server_name)}", method="DELETE", headers=admin_headers)
 
 deployment_name = f"e2e-api-deploy-{suffix}"
-expect_json(f"{api_base}/api/deployments?namespace=mcp-servers", headers=admin_headers)
-deployment = expect_json(f"{api_base}/api/deployments", method="POST", headers=admin_headers, body={
+expect_json(f"{api_base}/api/deployments?namespace={quote_segment(team_namespace)}", headers=admin_headers)
+deployment = expect_json_retry(f"{api_base}/api/deployments", method="POST", headers=admin_headers, body={
     "name": deployment_name,
-    "namespace": "mcp-servers",
+    "namespace": team_namespace,
     "image": "docker.io/library/nginx:1.27-alpine",
     "port": 8080,
     "replicas": 1,
 })
 check(deployment.get("deployment", {}).get("name") == deployment_name, "POST /api/deployments created deployment", f"deployment response: {deployment}")
-expect_json(f"{api_base}/api/admin/deployments?namespace=mcp-servers", headers=admin_headers)
-expect_json(f"{api_base}/api/deployments/mcp-servers/{quote_segment(deployment_name)}", method="DELETE", headers=admin_headers)
+expect_json(f"{api_base}/api/admin/deployments?namespace={quote_segment(team_namespace)}", headers=admin_headers)
+expect_json(f"{api_base}/api/deployments/{quote_segment(team_namespace)}/{quote_segment(deployment_name)}", method="DELETE", headers=admin_headers)
 
 admin_namespaces = expect_json(f"{api_base}/api/admin/namespaces", headers=admin_headers)
 check("namespaces" in admin_namespaces, "GET /api/admin/namespaces returned namespaces", f"admin namespaces response: {admin_namespaces}")

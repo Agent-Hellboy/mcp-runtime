@@ -322,13 +322,7 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 			return
 		}
 	} else if p.Role == roleAdmin {
-		labels := map[string]string{
-			platformManagedLabel:    "true",
-			podSecurityEnforceLabel: "restricted",
-			podSecurityAuditLabel:   "restricted",
-			podSecurityWarnLabel:    "restricted",
-		}
-		if err := s.ensureManagedNamespace(ctx, namespace, labels, managedNamespaceOptions{}); err != nil {
+		if err := s.ensureAdminPublishNamespace(ctx, namespace); err != nil {
 			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
 			writeAPIError(w, http.StatusInternalServerError, "failed to ensure namespace")
 			return
@@ -433,6 +427,36 @@ func (s *RuntimeServer) ensureTeamNamespace(ctx context.Context, team teamRecord
 		return nil
 	}
 	return s.ensureTeamTraefikWatch(ctx, team.Namespace, cfg)
+}
+
+func (s *RuntimeServer) ensureAdminPublishNamespace(ctx context.Context, namespace string) error {
+	namespace = strings.TrimSpace(namespace)
+	if s.k8sClients == nil || namespace == "" {
+		return nil
+	}
+	if isModeCatalogNamespace(namespace) {
+		return s.EnsureCatalogNamespace(ctx, namespace)
+	}
+	cfg := platformTeamTraefikWatchConfig()
+	labels := map[string]string{
+		platformManagedLabel:    "true",
+		podSecurityEnforceLabel: "restricted",
+		podSecurityAuditLabel:   "restricted",
+		podSecurityWarnLabel:    "restricted",
+	}
+	if namespace == sharedCatalogNamespace {
+		labels[platformScopeLabel] = PlatformMode()
+	}
+	opts := managedNamespaceOptions{
+		ingressFromNamespaces: teamIngressAllowNamespaces(cfg),
+	}
+	if err := s.ensureManagedNamespace(ctx, namespace, labels, opts); err != nil {
+		return err
+	}
+	if namespace != sharedCatalogNamespace || cfg.mode == "disabled" {
+		return nil
+	}
+	return s.ensureTeamTraefikWatch(ctx, namespace, cfg)
 }
 
 func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace string, labels map[string]string, opts managedNamespaceOptions) error {
@@ -670,19 +694,22 @@ func ensureLimitRange(ctx context.Context, client kubernetes.Interface, ns strin
 
 func ensureDefaultDenyNetworkPolicy(ctx context.Context, client kubernetes.Interface, ns string, ingressFromNamespaces ...string) error {
 	policy := desiredDefaultDenyNetworkPolicy(ns, ingressFromNamespaces...)
-	current, err := client.NetworkingV1().NetworkPolicies(ns).Get(ctx, policy.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = client.NetworkingV1().NetworkPolicies(ns).Create(ctx, policy, metav1.CreateOptions{})
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current, err := client.NetworkingV1().NetworkPolicies(ns).Get(ctx, policy.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			_, err = client.NetworkingV1().NetworkPolicies(ns).Create(ctx, policy, metav1.CreateOptions{})
+			return err
+		}
+		if err != nil {
+			return err
+		}
+		updated := policy.DeepCopy()
+		updated.ResourceVersion = current.ResourceVersion
+		updated.Labels = current.Labels
+		updated.Annotations = current.Annotations
+		_, err = client.NetworkingV1().NetworkPolicies(ns).Update(ctx, updated, metav1.UpdateOptions{})
 		return err
-	}
-	if err != nil {
-		return err
-	}
-	policy.ResourceVersion = current.ResourceVersion
-	policy.Labels = current.Labels
-	policy.Annotations = current.Annotations
-	_, err = client.NetworkingV1().NetworkPolicies(ns).Update(ctx, policy, metav1.UpdateOptions{})
-	return err
+	})
 }
 
 func desiredDefaultDenyNetworkPolicy(ns string, ingressFromNamespaces ...string) *networkingv1.NetworkPolicy {
@@ -915,19 +942,25 @@ func upsertRole(ctx context.Context, client kubernetes.Interface, role *rbacv1.R
 }
 
 func upsertRoleBinding(ctx context.Context, client kubernetes.Interface, binding *rbacv1.RoleBinding) error {
-	current, err := client.RbacV1().RoleBindings(binding.Namespace).Get(ctx, binding.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = client.RbacV1().RoleBindings(binding.Namespace).Create(ctx, binding, metav1.CreateOptions{})
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current, err := client.RbacV1().RoleBindings(binding.Namespace).Get(ctx, binding.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			_, err = client.RbacV1().RoleBindings(binding.Namespace).Create(ctx, binding, metav1.CreateOptions{})
+			return err
+		}
+		if err != nil {
+			return err
+		}
+		if roleBindingMatches(current, binding) {
+			return nil
+		}
+		updated := binding.DeepCopy()
+		updated.ResourceVersion = current.ResourceVersion
+		updated.Labels = current.Labels
+		updated.Annotations = current.Annotations
+		_, err = client.RbacV1().RoleBindings(binding.Namespace).Update(ctx, updated, metav1.UpdateOptions{})
 		return err
-	}
-	if err != nil {
-		return err
-	}
-	binding.ResourceVersion = current.ResourceVersion
-	binding.Labels = current.Labels
-	binding.Annotations = current.Annotations
-	_, err = client.RbacV1().RoleBindings(binding.Namespace).Update(ctx, binding, metav1.UpdateOptions{})
-	return err
+	})
 }
 
 func traefikDeploymentHasNamespaceWatchArg(ctx context.Context, client kubernetes.Interface, cfg teamTraefikWatchConfig) (bool, error) {
