@@ -638,7 +638,9 @@ func ensureNamespace(namespace string) error {
 	if err == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), registryClientGoProbeTimeout)
 		defer cancel()
-		return k8sclient.EnsureNamespace(ctx, clients, namespace, nil)
+		if err := k8sclient.EnsureNamespace(ctx, clients, namespace, nil); err == nil {
+			return nil
+		}
 	}
 	return kube.EnsureNamespace(core.DefaultKubectlClient().CommandArgs, namespace)
 }
@@ -673,13 +675,9 @@ func waitForDeploymentAvailable(logger *zap.Logger, name, namespace, selector st
 	}
 	clients, err := registryKubernetesClients()
 	if err == nil {
-		waitTimeout := timeout
-		if waitTimeout <= 0 || waitTimeout > registryClientGoProbeTimeout {
-			waitTimeout = registryClientGoProbeTimeout
-		}
-		waitCtx, cancel := context.WithTimeout(context.Background(), waitTimeout)
+		waitCtx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
-		if err := k8sclient.WaitForDeploymentAvailable(waitCtx, clients, namespace, name, waitTimeout); err == nil {
+		if err := k8sclient.WaitForDeploymentRolledOut(waitCtx, clients, namespace, name, timeout); err == nil {
 			return nil
 		} else if logger != nil {
 			logger.Debug("Client-go deployment wait failed, falling back to kubectl rollout status", zap.Error(err))
