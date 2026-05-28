@@ -1690,21 +1690,6 @@ wait_for_policy_text() {
   return 1
 }
 
-wait_for_policy_not_text() {
-  local text="$1"
-  local tries="${2:-40}"
-  local i
-  for i in $(seq 1 "${tries}"); do
-    local current
-    current="$(kubectl get configmap "${SERVER_NAME}-gateway-policy" -n mcp-servers -o "jsonpath={.data.policy\.json}" 2>/dev/null || true)"
-    if [[ "${current}" != *"${text}"* ]]; then
-      return 0
-    fi
-    sleep 2
-  done
-  echo "timed out waiting for policy text to be absent: ${text}" >&2
-  return 1
-}
 
 wait_for_mcp_initialize_result() {
   local base_url="$1"
@@ -4619,6 +4604,11 @@ EOF
   run_mcp_curl_expect "mcp-curl-session-expired" "${MCP_SESSION_URL}" false "session_expired"
 
   log_line policy "restoring non-expired access session"
+  FUTURE_EXPIRES_AT="$(python3 <<'PY'
+from datetime import datetime, timedelta, timezone
+print((datetime.now(timezone.utc) + timedelta(hours=1)).replace(microsecond=0).isoformat().replace("+00:00", "Z"))
+PY
+)"
   cat >"${WORKDIR}/access-session-restored.yaml" <<EOF
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAgentSession
@@ -4633,9 +4623,10 @@ spec:
     agentID: ${AGENT_ID}
   consentedTrust: low
   policyVersion: v1
+  expiresAt: ${FUTURE_EXPIRES_AT}
 EOF
   (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session apply --file access-session-restored.yaml)
-  wait_for_policy_not_text "\"expires_at\""
+  wait_for_policy_text "\"expires_at\": \"${FUTURE_EXPIRES_AT}\""
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
 
   log_line policy "disabling access grant via CLI; gateway should reject granted tools with tool_not_granted"
