@@ -16,6 +16,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"mcp-runtime/internal/cli/cluster/registrycompat"
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/kube"
 	"mcp-runtime/internal/cli/kubeerr"
@@ -568,6 +569,10 @@ func deployRegistry(logger *zap.Logger, namespace string, port int, registryType
 		}
 	}
 
+	if err := applyRegistryCompatibilityOverlay(logger, namespace); err != nil {
+		return err
+	}
+
 	if err := ensureRegistryStorageSize(logger, namespace, registryStorageSize); err != nil {
 		return err
 	}
@@ -585,6 +590,40 @@ func deployRegistry(logger *zap.Logger, namespace string, port int, registryType
 
 func DeployRegistry(logger *zap.Logger, namespace string, port int, registryType, registryStorageSize, manifestPath string) error {
 	return deployRegistry(logger, namespace, port, registryType, registryStorageSize, manifestPath)
+}
+
+func applyRegistryCompatibilityOverlay(logger *zap.Logger, namespace string) error {
+	compatPath := registrycompat.OverlayPath(core.DefaultKubectlClient())
+	if compatPath == "" {
+		return nil
+	}
+	if logger != nil {
+		logger.Info("Applying registry compatibility overlay", zap.String("path", compatPath))
+	}
+	manifest, err := renderKustomizeManifest(core.DefaultKubectlClient(), compatPath)
+	if err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrDeployRegistryFailed,
+			err,
+			fmt.Sprintf("failed to render registry compatibility overlay %q: %v", compatPath, err),
+			map[string]any{"namespace": namespace, "manifest_path": compatPath, "component": "registry"},
+		)
+		core.Error("Failed to render registry compatibility overlay")
+		core.LogStructuredError(logger, wrappedErr, "Failed to render registry compatibility overlay")
+		return wrappedErr
+	}
+	if err := kube.ApplyManifestContentWithNamespace(core.DefaultKubectlClient().CommandArgs, manifest, namespace); err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrDeployRegistryFailed,
+			err,
+			fmt.Sprintf("failed to apply registry compatibility overlay: %v", err),
+			map[string]any{"namespace": namespace, "manifest_path": compatPath, "component": "registry"},
+		)
+		core.Error("Failed to apply registry compatibility overlay")
+		core.LogStructuredError(logger, wrappedErr, "Failed to apply registry compatibility overlay")
+		return wrappedErr
+	}
+	return nil
 }
 
 func ensureNamespace(namespace string) error {
