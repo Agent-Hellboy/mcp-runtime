@@ -5743,13 +5743,12 @@ EOF
 
   echo "[multitenancy] running cross-tenant deny matrix"
   if e2e_multitenancy_slim_mode; then
-    recover_ingress_mcp_path
+    # Use a direct service port-forward for tenant-a. MCP_SESSION_URL goes through
+    # the governance header proxy (sess-ops-agent), not alice-session.
+    ensure_server_proxy_port_forward
+    MT_BASE_A="http://127.0.0.1:${SERVER_PROXY_PORT}/${SERVER_NAME}/mcp"
   else
     refresh_mcp_proxy_urls
-  fi
-  if e2e_multitenancy_slim_mode; then
-    MT_BASE_A="${MCP_SESSION_URL}"
-  else
     MT_BASE_A="http://127.0.0.1:${MT_TENANT_A_PORT}/${MT_TENANT_A}/mcp"
   fi
   MT_BASE_B="http://127.0.0.1:${MT_TENANT_B_PORT}/${MT_TENANT_B}/mcp"
