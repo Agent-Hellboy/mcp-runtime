@@ -5094,6 +5094,25 @@ check(
     f"pii redaction: unexpected status {status}, body={resp_body}",
 )
 
+# api-platform/ui-auth flows do not emit service.route.check; seed one ingest event
+# so /api/event-types includes it before the analytics assertions below.
+route_check_source = "e2e-service-route-check"
+status, resp_body = post_json(
+    f"{sentinel_base}/ingest/events",
+    {
+        "timestamp": "2026-03-29T00:00:00Z",
+        "source": route_check_source,
+        "event_type": "service.route.check",
+        "payload": {"service": "ingest", "route": "/events"},
+    },
+    {"content-type": "application/json", **ingest_headers},
+)
+check(
+    status in (200, 202),
+    "service.route.check ingest accepted event",
+    f"service.route.check: unexpected status {status}, body={resp_body}",
+)
+
 pii_events = wait_for_json(
     f"{api_base}/events/filter?source={urllib.parse.quote(pii_source)}&event_type=pii.check&limit=1",
     lambda doc: bool(doc.get("events", [])),
