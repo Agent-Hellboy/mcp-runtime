@@ -5742,7 +5742,11 @@ EOF
   # the sidecar observes the updated policy.
 
   echo "[multitenancy] running cross-tenant deny matrix"
-  refresh_mcp_proxy_urls
+  if e2e_multitenancy_slim_mode; then
+    recover_ingress_mcp_path
+  else
+    refresh_mcp_proxy_urls
+  fi
   if e2e_multitenancy_slim_mode; then
     MT_BASE_A="${MCP_SESSION_URL}"
   else
