@@ -27,8 +27,8 @@ func TestOverlayPath_K3sKubeletVersion(t *testing.T) {
 			return &core.MockCommand{}
 		},
 	})
-	if got := OverlayPath(kubectl); got != K3sOverlayPath {
-		t.Fatalf("OverlayPath() = %q, want %q", got, K3sOverlayPath)
+	if got := OverlayPath(kubectl); got != K3sOverlaySubPath {
+		t.Fatalf("OverlayPath() = %q, want %q", got, K3sOverlaySubPath)
 	}
 }
 
@@ -38,18 +38,18 @@ func TestOverlayPath_KubeSystemTraefik(t *testing.T) {
 			switch {
 			case contains(spec.Args, "jsonpath={.items[*].status.nodeInfo.kubeletVersion}"):
 				return &core.MockCommand{OutputData: []byte("v1.30.0")}
+			case contains(spec.Args, "app.kubernetes.io/name=traefik"):
+				return &core.MockCommand{OutputData: []byte("traefik")}
 			case contains(spec.Args, "jsonpath={.items[*].metadata.name}"):
 				return &core.MockCommand{OutputData: []byte("worker-1")}
 			case contains(spec.Args, "current-context"):
 				return &core.MockCommand{OutputData: []byte("prod")}
-			case contains(spec.Args, "app.kubernetes.io/name=traefik"):
-				return &core.MockCommand{OutputData: []byte("traefik")}
 			}
 			return &core.MockCommand{}
 		},
 	})
-	if got := OverlayPath(kubectl); got != K3sOverlayPath {
-		t.Fatalf("OverlayPath() = %q, want %q", got, K3sOverlayPath)
+	if got := OverlayPath(kubectl); got != K3sOverlaySubPath {
+		t.Fatalf("OverlayPath() = %q, want %q", got, K3sOverlaySubPath)
 	}
 }
 
@@ -59,12 +59,12 @@ func TestOverlayPath_PortableCluster(t *testing.T) {
 			switch {
 			case contains(spec.Args, "jsonpath={.items[*].status.nodeInfo.kubeletVersion}"):
 				return &core.MockCommand{OutputData: []byte("v1.30.0")}
+			case contains(spec.Args, "app.kubernetes.io/name=traefik"):
+				return &core.MockCommand{OutputData: []byte("")}
 			case contains(spec.Args, "jsonpath={.items[*].metadata.name}"):
 				return &core.MockCommand{OutputData: []byte("worker-1")}
 			case contains(spec.Args, "current-context"):
 				return &core.MockCommand{OutputData: []byte("prod")}
-			case contains(spec.Args, "app.kubernetes.io/name=traefik"):
-				return &core.MockCommand{OutputData: []byte("")}
 			}
 			return &core.MockCommand{}
 		},
@@ -98,6 +98,47 @@ func TestK3sOverlayContainsCompatRules(t *testing.T) {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("k3s compat networkpolicy missing %q", want)
 		}
+	}
+}
+
+func TestResolveOverlayPath(t *testing.T) {
+	cases := []struct {
+		name     string
+		manifest string
+		overlay  string
+		want     string
+	}{
+		{
+			name:     "default config root",
+			manifest: "config/registry",
+			overlay:  K3sOverlaySubPath,
+			want:     filepath.Clean("config/registry/overlays/compatibility/k3s"),
+		},
+		{
+			name:     "tls overlay path",
+			manifest: "config/registry/overlays/tls",
+			overlay:  K3sOverlaySubPath,
+			want:     filepath.Clean("config/registry/overlays/compatibility/k3s"),
+		},
+		{
+			name:     "base path",
+			manifest: "config/registry/base",
+			overlay:  K3sOverlaySubPath,
+			want:     filepath.Clean("config/registry/overlays/compatibility/k3s"),
+		},
+		{
+			name:     "empty manifest path",
+			manifest: "",
+			overlay:  K3sOverlaySubPath,
+			want:     filepath.Clean("config/registry/overlays/compatibility/k3s"),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ResolveOverlayPath(tc.manifest, tc.overlay); got != tc.want {
+				t.Fatalf("ResolveOverlayPath(%q, %q) = %q, want %q", tc.manifest, tc.overlay, got, tc.want)
+			}
+		})
 	}
 }
 

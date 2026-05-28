@@ -90,7 +90,7 @@ func deployRegistryClientGo(logger *zap.Logger, namespace string, port int, regi
 	}
 	writeApplyResults(os.Stdout, results)
 
-	if err := applyRegistryCompatibilityOverlay(logger, clients, namespace); err != nil {
+	if err := applyRegistryCompatibilityOverlay(logger, clients, namespace, manifestPath); err != nil {
 		return err
 	}
 
@@ -113,11 +113,12 @@ func deployRegistryClientGo(logger *zap.Logger, namespace string, port int, regi
 	return nil
 }
 
-func applyRegistryCompatibilityOverlay(logger *zap.Logger, clients *k8sclient.Clients, namespace string) error {
-	compatPath := registrycompat.OverlayPath(core.DefaultKubectlClient())
-	if compatPath == "" {
+func applyRegistryCompatibilityOverlay(logger *zap.Logger, clients *k8sclient.Clients, namespace, manifestPath string) error {
+	overlaySubPath := registrycompat.OverlayPath(core.DefaultKubectlClient())
+	if overlaySubPath == "" {
 		return nil
 	}
+	compatPath := registrycompat.ResolveOverlayPath(manifestPath, overlaySubPath)
 	if logger != nil {
 		logger.Info("Applying registry compatibility overlay", zap.String("path", compatPath))
 	}
