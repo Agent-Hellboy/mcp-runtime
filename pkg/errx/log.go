@@ -3,13 +3,14 @@ package errx
 import "errors"
 
 // LogrKV returns controller-runtime logr-style key/value pairs for an errx.Error.
-// The second return value is false when err is nil or not an *Error.
+// The second return value is false when err is nil, not an *Error, or a typed nil *Error
+// stored in an error interface (errors.As succeeds but the pointer value is nil).
 func LogrKV(err error) ([]any, bool) {
 	if err == nil {
 		return nil, false
 	}
 	var errxErr *Error
-	if !errors.As(err, &errxErr) {
+	if !errors.As(err, &errxErr) || errxErr == nil {
 		return nil, false
 	}
 	keysAndValues := []any{

@@ -8,6 +8,12 @@ func TestLogrKV(t *testing.T) {
 		t.Fatal("expected no fields for nil error")
 	}
 
+	var typedNil *Error
+	kv, ok = LogrKV(typedNil)
+	if ok || kv != nil {
+		t.Fatal("expected no fields for typed nil *Error in error interface")
+	}
+
 	err := New("CODE", "Category", "message").WithContext("key", "value")
 	kv, ok = LogrKV(err)
 	if !ok {

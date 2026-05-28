@@ -130,9 +130,6 @@ func PrincipalCanAccessRegistryScope(p apiauth.Principal, scope string, cfg *Aut
 		if scope == platformstore.SharedCatalogNamespace && !cfg.sharedCatalogWritableForUsers() {
 			return false
 		}
-		if scope == publishscope.PublicRegistryAlias && cfg.sharedCatalogWritableForUsers() {
-			return true
-		}
 	}
 	for _, team := range p.Teams {
 		if strings.TrimSpace(team.Slug) == scope || strings.TrimSpace(team.Namespace) == scope {

@@ -300,6 +300,30 @@ func TestRegistryAuthzCachesPlatformModePerServer(t *testing.T) {
 	}
 }
 
+func TestRegistryAuthzRejectsPublicAliasInOrgMode(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "org")
+	srv := &apiServer{
+		userKeys: &fakeUserAPIKeyStore{
+			ok: true,
+			principal: principal{
+				Role:      roleUser,
+				Subject:   "user-1",
+				Namespace: "user-1",
+				AuthType:  "user_api_key",
+			},
+		},
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/registry/authz", nil)
+	req.Header.Set("x-api-key", "mcpu_user")
+	req.Header.Set("X-Forwarded-Uri", "/v2/public/demo/manifests/latest")
+	srv.handleRegistryAuthz(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body = %s, want 403", rec.Code, rec.Body.String())
+	}
+}
+
 func TestRegistryAuthzRejectsPublicAliasInTenantMode(t *testing.T) {
 	srv := &apiServer{
 		userKeys: &fakeUserAPIKeyStore{
