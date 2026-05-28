@@ -1690,6 +1690,22 @@ wait_for_policy_text() {
   return 1
 }
 
+wait_for_policy_not_text() {
+  local text="$1"
+  local tries="${2:-40}"
+  local i
+  for i in $(seq 1 "${tries}"); do
+    local current
+    current="$(kubectl get configmap "${SERVER_NAME}-gateway-policy" -n mcp-servers -o "jsonpath={.data.policy\.json}" 2>/dev/null || true)"
+    if [[ "${current}" != *"${text}"* ]]; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "timed out waiting for policy text to be absent: ${text}" >&2
+  return 1
+}
+
 wait_for_mcp_initialize_result() {
   local base_url="$1"
   local expected_status="$2"
@@ -4619,6 +4635,7 @@ spec:
   policyVersion: v1
 EOF
   (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session apply --file access-session-restored.yaml)
+  wait_for_policy_not_text "\"expires_at\""
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
 
   log_line policy "disabling access grant via CLI; gateway should reject granted tools with tool_not_granted"
