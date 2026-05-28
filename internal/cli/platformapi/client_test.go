@@ -471,6 +471,29 @@ func TestPlatformClientAccessPatchRoutes(t *testing.T) {
 	}
 }
 
+func TestPlatformClientAccessPatchRoutesRejectNon2xx(t *testing.T) {
+	httpClient := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Body:       io.NopCloser(strings.NewReader(`{"error":"invalid grant state"}`)),
+			}, nil
+		}),
+	}
+	client := &PlatformClient{
+		baseURL:   "https://platform.example.com",
+		token:     "token-1",
+		http:      httpClient,
+		apiPrefix: "/api",
+	}
+	if err := client.PatchGrant(context.Background(), "mcp-servers", "grant-a", true); err == nil {
+		t.Fatal("PatchGrant() error = nil, want non-2xx failure")
+	}
+	if err := client.PatchSession(context.Background(), "mcp-servers", "session-a", true); err == nil {
+		t.Fatal("PatchSession() error = nil, want non-2xx failure")
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {

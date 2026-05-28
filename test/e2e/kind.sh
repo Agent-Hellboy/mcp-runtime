@@ -4111,6 +4111,8 @@ if checkpoint_enabled "oauth"; then
     fi
   fi
 
+  # OAuth provisioning runs after shared ingress proxies are up so we never
+  # bind MCP_CURL_* ports twice when oauth is selected with other scenarios.
   if scenario_selected "oauth"; then
   OAUTH_FIXTURE_DIR="${WORKDIR}/oauth-fixtures"
 

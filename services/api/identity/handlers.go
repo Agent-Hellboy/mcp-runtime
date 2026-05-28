@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
 	"mcp-sentinel-api/auth"
 	"mcp-sentinel-api/internal/apiauth"
 	"mcp-sentinel-api/internal/platformstore"
@@ -224,7 +226,7 @@ func HandleUserAPIKeyItem(w http.ResponseWriter, r *http.Request, deps Dependenc
 		if deps.Platform != nil {
 			deps.Platform.WriteAudit(r.Context(), platformstore.AuditEvent{UserID: p.UserID(), Action: "api_key_revoke", Resource: keyID, Namespace: p.Namespace, Status: "error", Message: revokeErr.Error(), ActorIP: deps.RequestIP(r), Source: deps.AuditSource(r, p), AuthIdentity: deps.AuditIdentityLabel(p)})
 		}
-		if errors.Is(revokeErr, sql.ErrNoRows) {
+		if apierrors.IsNotFound(revokeErr) || errors.Is(revokeErr, sql.ErrNoRows) {
 			deps.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "key not found"})
 			return
 		}
