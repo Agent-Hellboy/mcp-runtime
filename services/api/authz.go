@@ -28,6 +28,12 @@ type platformImageActivity = platformstore.ImageActivity
 type teamRecord = platformstore.Team
 type teamMembershipRecord = platformstore.TeamMembership
 type userAPIKeySummary = platformstore.APIKeySummary
+type userAPIKeyStore interface {
+	AuthenticateUserAPIKey(ctx context.Context, rawKey string) (principal, bool, error)
+	ListUserAPIKeys(ctx context.Context, userID string) ([]userAPIKeySummary, error)
+	CreateUserAPIKey(ctx context.Context, userID, name string) (userAPIKeySummary, string, error)
+	RevokeUserAPIKey(ctx context.Context, userID, id string) (userAPIKeySummary, error)
+}
 
 type auditWriter interface {
 	WriteAudit(context.Context, auditEvent)

@@ -16,6 +16,7 @@ import (
 	sentinelaccess "mcp-runtime/pkg/access"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	runtimeaccess "mcp-sentinel-api/internal/runtimeapi/access"
 )
 
 // Adapter-session bounds: the issued session's lifetime is constrained so a
@@ -144,7 +145,7 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 	}
 
 	consentedTrust := capTrust(requestedTrust, grant.Spec.MaxTrust)
-	policyVersion := defaultPolicyVersion(grant.Spec.PolicyVersion)
+	policyVersion := runtimeaccess.DefaultPolicyVersion(grant.Spec.PolicyVersion)
 	sessionName := adapterSessionName(humanID, req.AgentID, teamID, req.ServerName)
 	expiresAt := time.Now().UTC().Add(requestedTTL)
 
@@ -170,12 +171,12 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 	session := &sentinelaccess.MCPAgentSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sessionName,
-			Namespace: defaultAccessNamespace(req.Namespace),
+			Namespace: runtimeaccess.DefaultAccessNamespace(req.Namespace),
 		},
 		Spec: sentinelaccess.MCPAgentSessionSpec{
 			ServerRef: sentinelaccess.ServerReference{
 				Name:      sentinelaccess.ServerName(req.ServerName),
-				Namespace: sentinelaccess.Namespace(defaultAccessNamespace(req.Namespace)),
+				Namespace: sentinelaccess.Namespace(runtimeaccess.DefaultAccessNamespace(req.Namespace)),
 			},
 			Subject: sentinelaccess.SubjectRef{
 				HumanID: sentinelaccess.HumanID(humanID),

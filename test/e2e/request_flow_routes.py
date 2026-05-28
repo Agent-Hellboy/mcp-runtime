@@ -427,9 +427,10 @@ check(
 
 # Runtime mutation paths through the API.
 disable = expect_json(
-    f"{api_base}/api/runtime/grants/mcp-servers/{urllib.parse.quote(grant_name)}/disable",
-    method="POST",
+    f"{api_base}/api/runtime/grants/mcp-servers/{urllib.parse.quote(grant_name)}",
+    method="PATCH",
     headers=auth_headers,
+    body={"disabled": True},
 )
 check(
     disable.get("disabled") is True,
@@ -437,9 +438,10 @@ check(
     f"grant disable response unexpected: {disable}",
 )
 enable = expect_json(
-    f"{api_base}/api/runtime/grants/mcp-servers/{urllib.parse.quote(grant_name)}/enable",
-    method="POST",
+    f"{api_base}/api/runtime/grants/mcp-servers/{urllib.parse.quote(grant_name)}",
+    method="PATCH",
     headers=auth_headers,
+    body={"disabled": False},
 )
 check(
     enable.get("disabled") is False,
@@ -447,9 +449,10 @@ check(
     f"grant enable response unexpected: {enable}",
 )
 revoke = expect_json(
-    f"{api_base}/api/runtime/sessions/mcp-servers/{urllib.parse.quote(session_id)}/revoke",
-    method="POST",
+    f"{api_base}/api/runtime/sessions/mcp-servers/{urllib.parse.quote(session_id)}",
+    method="PATCH",
     headers=auth_headers,
+    body={"revoked": True},
 )
 check(
     revoke.get("revoked") is True,
@@ -457,9 +460,10 @@ check(
     f"session revoke response unexpected: {revoke}",
 )
 unrevoke = expect_json(
-    f"{api_base}/api/runtime/sessions/mcp-servers/{urllib.parse.quote(session_id)}/unrevoke",
-    method="POST",
+    f"{api_base}/api/runtime/sessions/mcp-servers/{urllib.parse.quote(session_id)}",
+    method="PATCH",
     headers=auth_headers,
+    body={"revoked": False},
 )
 check(
     unrevoke.get("revoked") is False,
@@ -614,25 +618,32 @@ if deep_request_flows:
     expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}", headers=admin_headers)
     expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members", headers=admin_headers)
     membership = expect_json(
-        f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members",
-        method="POST",
+        f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members/{quote_segment(user_id)}",
+        method="PUT",
         headers=admin_headers,
-        body={"userID": user_id, "role": "member"},
+        body={"role": "member"},
     )
     check(
         membership.get("membership", {}).get("user_id") == user_id,
-        "POST /api/runtime/teams/{slug}/members added signup user",
+        "PUT /api/runtime/teams/{slug}/members/{userID} added signup user",
         f"membership response: {membership}",
     )
     team_user_email = f"e2e-team-user-{suffix}@mcpruntime.org"
     team_user = expect_json(
-        f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/users",
+        f"{api_base}/api/users",
+        status=201,
         method="POST",
         headers=admin_headers,
-        body={"email": team_user_email, "password": test_user_password, "role": "owner"},
+        body={"email": team_user_email, "password": test_user_password, "role": "user"},
     )
     team_user_id = team_user.get("user", {}).get("id", "")
-    check(bool(team_user_id), "POST /api/runtime/teams/{slug}/users created team user", f"team user response: {team_user}")
+    check(bool(team_user_id), "POST /api/users created team user", f"team user response: {team_user}")
+    expect_json(
+        f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members/{quote_segment(team_user_id)}",
+        method="PUT",
+        headers=admin_headers,
+        body={"role": "owner"},
+    )
     members_after = expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members", headers=admin_headers)
     member_ids = {item.get("user_id") for item in members_after.get("members", [])}
     check(
@@ -802,8 +813,8 @@ if deep_request_flows:
     check("audit_logs" in admin_operations and "users" in admin_operations, "GET /api/admin/operations returned operations payload", f"admin operations response: {admin_operations}")
 
     expect_json(
-        f"{api_base}/api/user/registry-credentials/{quote_segment(credential_id)}/revoke",
-        method="POST",
+        f"{api_base}/api/user/registry-credentials/{quote_segment(credential_id)}",
+        method="DELETE",
         headers=user_headers,
     )
     expect_status(
@@ -812,8 +823,8 @@ if deep_request_flows:
         headers=merged_headers(registry_basic_headers, {"X-Forwarded-Uri": f"/v2/{team_slug}/demo/manifests/latest"}),
     )
     expect_json(
-        f"{api_base}/api/user/api-keys/{quote_segment(user_key_id)}/revoke",
-        method="POST",
+        f"{api_base}/api/user/api-keys/{quote_segment(user_key_id)}",
+        method="DELETE",
         headers=user_headers,
     )
     expect_status(f"{api_base}/api/auth/me", 401, headers=user_key_headers)
@@ -894,16 +905,16 @@ if deep_request_flows:
         "api:/api/analytics/usage",
         "api:/api/user/analytics/usage",
         "api:/api/user/api-keys",
-        "api:/api/user/api-keys/{id}/revoke",
+        "api:/api/user/api-keys/{id}",
         "api:/api/user/registry-credentials",
-        "api:/api/user/registry-credentials/{id}/revoke",
+        "api:/api/user/registry-credentials/{id}",
         "api:/api/user/activity/image-publish",
         "api:/api/runtime/servers/{namespace}/{name}",
         "api:/api/runtime/server-events",
         "api:/api/runtime/teams",
         "api:/api/runtime/teams/{slug}",
-        "api:/api/runtime/teams/{slug}/members",
-        "api:/api/runtime/teams/{slug}/users",
+        "api:/api/runtime/teams/{slug}/members/{userID}",
+        "api:/api/users",
         "api:/api/runtime/namespaces",
         "api:/api/runtime/namespaces/{namespace}",
         "api:/api/runtime/grants/{namespace}/{name}",
@@ -987,10 +998,8 @@ for route in (
     "api:/api/runtime/sessions",
     "api:/api/runtime/components",
     "api:/api/runtime/policy",
-    "api:/api/runtime/grants/{namespace}/{name}/disable",
-    "api:/api/runtime/grants/{namespace}/{name}/enable",
-    "api:/api/runtime/sessions/{namespace}/{name}/revoke",
-    "api:/api/runtime/sessions/{namespace}/{name}/unrevoke",
+    "api:/api/runtime/grants/{namespace}/{name}",
+    "api:/api/runtime/sessions/{namespace}/{name}",
     "api:/api/runtime/actions/restart",
     "ingest:/health",
     "ingest:/live",

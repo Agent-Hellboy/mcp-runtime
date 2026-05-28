@@ -154,6 +154,10 @@ func readRegistryPushRequest(r *http.Request) (out registryPushRequest, err erro
 		name := strings.TrimSpace(part.FormName())
 		switch name {
 		case "target":
+			if tarFile != nil {
+				part.Close()
+				return registryPushRequest{}, fmt.Errorf("target and scope must be provided before image_tar")
+			}
 			value, readErr := io.ReadAll(io.LimitReader(part, 4096))
 			if readErr != nil {
 				part.Close()
@@ -161,6 +165,10 @@ func readRegistryPushRequest(r *http.Request) (out registryPushRequest, err erro
 			}
 			out.Target = strings.TrimSpace(string(value))
 		case "scope":
+			if tarFile != nil {
+				part.Close()
+				return registryPushRequest{}, fmt.Errorf("target and scope must be provided before image_tar")
+			}
 			value, readErr := io.ReadAll(io.LimitReader(part, 64))
 			if readErr != nil {
 				part.Close()
@@ -175,6 +183,10 @@ func readRegistryPushRequest(r *http.Request) (out registryPushRequest, err erro
 			if tarFile != nil {
 				part.Close()
 				return registryPushRequest{}, fmt.Errorf("duplicate image upload")
+			}
+			if out.Target == "" || out.Scope == "" {
+				part.Close()
+				return registryPushRequest{}, fmt.Errorf("target and scope must be provided before image_tar")
 			}
 			tarFile, err = os.CreateTemp(registryPushTempDir(), "mcp-registry-upload-*.tar")
 			if err != nil {

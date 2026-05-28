@@ -1,4 +1,4 @@
-package main
+package admin
 
 import (
 	"net/http"
@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"mcp-sentinel-api/internal/platformstore"
 )
 
 func TestAdminOperationsFilterFromRequest(t *testing.T) {
@@ -56,7 +58,7 @@ func TestMergeDeploymentImageActivityAppliesUserFilter(t *testing.T) {
 			"image":      "registry.example.com/tenant-b/other:v1",
 			"created_at": createdAt,
 		},
-	}, adminOperationsFilter{User: "tenant-a"})
+	}, platformstore.OperationsFilter{User: "tenant-a"})
 	if len(items) != 1 {
 		t.Fatalf("image activity count = %d, want 1", len(items))
 	}
@@ -67,7 +69,7 @@ func TestMergeDeploymentImageActivityAppliesUserFilter(t *testing.T) {
 
 func TestMergeDeploymentImageActivityAppliesTargetFilterAndLimit(t *testing.T) {
 	createdAt := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
-	items := mergeDeploymentImageActivity([]platformImageActivity{{
+	items := mergeDeploymentImageActivity([]platformstore.ImageActivity{{
 		UserID:           "user-1",
 		Namespace:        "tenant-a",
 		ImageRef:         "registry.example.com/tenant-a/existing:v1",
@@ -89,7 +91,7 @@ func TestMergeDeploymentImageActivityAppliesTargetFilterAndLimit(t *testing.T) {
 			"image":      "registry.example.com/tenant-a/other:v1",
 			"created_at": createdAt,
 		},
-	}, adminOperationsFilter{User: "tenant-a/demo", UserSearch: "tenant-a/demo", Limit: 2})
+	}, platformstore.OperationsFilter{User: "tenant-a/demo", UserSearch: "tenant-a/demo", Limit: 2})
 	if len(items) != 2 {
 		t.Fatalf("image activity count = %d, want cap at 2", len(items))
 	}
@@ -125,7 +127,7 @@ func TestFilterDeploymentsForOperationsAppliesFiltersAndLimit(t *testing.T) {
 			"image":      "registry.example.com/tenant-b/other:v1",
 			"created_at": createdAt,
 		},
-	}, adminOperationsFilter{
+	}, platformstore.OperationsFilter{
 		User:       "tenant-a",
 		UserSearch: "tenant-a",
 		Since:      createdAt.Add(-1 * time.Hour),
@@ -146,7 +148,7 @@ func TestFilterDeploymentsForOperationsAppliesFiltersAndLimit(t *testing.T) {
 func TestSanitizeImageActivityRewritesInternalRegistryRefs(t *testing.T) {
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.43.69.247:5000")
 	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
-	items := sanitizeImageActivity([]platformImageActivity{{
+	items := sanitizeImageActivity([]platformstore.ImageActivity{{
 		ImageRef:    "10.43.69.247:5000/tenant-a/demo:v1",
 		SourceImage: "10.43.69.247:5000/tenant-a/demo:v1",
 	}})
@@ -180,7 +182,7 @@ func TestSanitizeDeploymentSummariesRewritesInternalRegistryRefs(t *testing.T) {
 func TestPlatformUserActivityWhereKeepsTimeFiltersOutOfTopLevelWhere(t *testing.T) {
 	since := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	until := time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC)
-	where, args := platformUserActivityWhere(adminOperationsFilter{
+	where, args := platformstore.UserActivityWhere(platformstore.OperationsFilter{
 		User:       "alice",
 		UserSearch: "alice",
 		Since:      since,
@@ -194,7 +196,7 @@ func TestPlatformUserActivityWhereKeepsTimeFiltersOutOfTopLevelWhere(t *testing.
 	}
 
 	auditArgs := append([]any{}, args...)
-	predicate := platformAuditTimeWhere("a", adminOperationsFilter{Since: since, Until: until}, &auditArgs)
+	predicate := platformstore.AuditTimeWhere("a", platformstore.OperationsFilter{Since: since, Until: until}, &auditArgs)
 	if len(auditArgs) != 5 {
 		t.Fatalf("audit args = %d, want user args plus since/until", len(auditArgs))
 	}

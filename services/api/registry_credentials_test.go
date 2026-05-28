@@ -1,9 +1,13 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"mcp-sentinel-api/identity"
+)
 
 func TestRegistryCredentialUsernameUsesNamespace(t *testing.T) {
-	got := registryCredentialUsername(principal{
+	got := identity.RegistryCredentialUsername(principal{
 		Namespace: "mcp-team-acme",
 		Subject:   "user-1",
 		Email:     "user@example.com",
@@ -14,7 +18,7 @@ func TestRegistryCredentialUsernameUsesNamespace(t *testing.T) {
 }
 
 func TestRegistryCredentialUsernameFallsBackToSubject(t *testing.T) {
-	got := registryCredentialUsername(principal{
+	got := identity.RegistryCredentialUsername(principal{
 		Subject: "user-1",
 		Email:   "user@example.com",
 	})
@@ -24,7 +28,7 @@ func TestRegistryCredentialUsernameFallsBackToSubject(t *testing.T) {
 }
 
 func TestRegistryCredentialUsernameFallsBackToEmail(t *testing.T) {
-	got := registryCredentialUsername(principal{
+	got := identity.RegistryCredentialUsername(principal{
 		Email: "user@example.com",
 	})
 	if got != "user@example.com" {

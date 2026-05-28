@@ -558,15 +558,15 @@ func (m *AccessManager) ToggleAccessResource(resource, name, namespace string, v
 		switch resource {
 		case GrantResource:
 			if value {
-				err = plat.PostGrantToggle(ctx, namespace, name, "disable")
+				err = plat.PatchGrant(ctx, namespace, name, true)
 			} else {
-				err = plat.PostGrantToggle(ctx, namespace, name, "enable")
+				err = plat.PatchGrant(ctx, namespace, name, false)
 			}
 		case SessionResource:
 			if value {
-				err = plat.PostSessionToggle(ctx, namespace, name, "revoke")
+				err = plat.PatchSession(ctx, namespace, name, true)
 			} else {
-				err = plat.PostSessionToggle(ctx, namespace, name, "unrevoke")
+				err = plat.PatchSession(ctx, namespace, name, false)
 			}
 		default:
 			return core.NewWithSentinel(nil, fmt.Sprintf("unsupported access resource %q", resource))

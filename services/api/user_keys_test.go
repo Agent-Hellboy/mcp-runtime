@@ -31,7 +31,7 @@ func (f *fakeUserAPIKeyStore) CreateUserAPIKey(context.Context, string, string) 
 }
 
 func (f *fakeUserAPIKeyStore) RevokeUserAPIKey(context.Context, string, string) (userAPIKeySummary, error) {
-	return userAPIKeySummary{}, nil
+	return f.key, nil
 }
 
 func TestHandleUserAPIKeysReturnsOneTimeAlias(t *testing.T) {
@@ -66,5 +66,36 @@ func TestHandleUserAPIKeysReturnsOneTimeAlias(t *testing.T) {
 	}
 	if payload["one_time_key"] != store.cleartext {
 		t.Fatalf("one_time_key = %#v, want cleartext", payload["one_time_key"])
+	}
+}
+
+func TestHandleUserAPIKeyItemUsesDelete(t *testing.T) {
+	store := &fakeUserAPIKeyStore{
+		key: userAPIKeySummary{
+			ID:        "key-1",
+			Name:      "laptop",
+			Prefix:    "mcpu_123",
+			CreatedAt: time.Now().UTC(),
+		},
+	}
+	server := &apiServer{userKeys: store}
+	request := httptest.NewRequest(http.MethodDelete, "/api/user/api-keys/key-1", nil)
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:    roleUser,
+		Subject: "user-1",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.handleUserAPIKeyItem(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["key"].(map[string]any)["id"] != "key-1" {
+		t.Fatalf("key = %#v, want key-1", payload["key"])
 	}
 }

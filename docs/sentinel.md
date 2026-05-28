@@ -142,17 +142,15 @@ metrics on `METRICS_PORT` (default `9090`).
 | `GET` | `/api/runtime/server-events?namespace=&server=` | Recent analytics events for one administered MCPServer; full identity/session/payload details are not exposed to regular namespace readers. |
 | `GET`, `POST` | `/api/runtime/grants` | List or apply `MCPAccessGrant` resources. Lists are scoped to administered servers; apply requires admin, server owner, or team owner. |
 | `GET`, `DELETE` | `/api/runtime/grants/{namespace}/{name}` | Read or delete one grant for an administered server. |
-| `POST` | `/api/runtime/grants/{namespace}/{name}/disable` | Set `spec.disabled=true`; requires admin, server owner, or team owner. |
-| `POST` | `/api/runtime/grants/{namespace}/{name}/enable` | Set `spec.disabled=false`; requires admin, server owner, or team owner. |
+| `PATCH` | `/api/runtime/grants/{namespace}/{name}` | Set `spec.disabled` with `{"disabled":true|false}`; requires admin, server owner, or team owner. |
 | `GET`, `POST` | `/api/runtime/sessions` | List scoped `MCPAgentSession` resources; direct session apply is admin/internal-only. User adapter flows use `/api/runtime/adapter/sessions`. |
 | `GET`, `DELETE` | `/api/runtime/sessions/{namespace}/{name}` | Read or delete one session for an administered server. |
-| `POST` | `/api/runtime/sessions/{namespace}/{name}/revoke` | Set `spec.revoked=true`; requires admin, server owner, or team owner. |
-| `POST` | `/api/runtime/sessions/{namespace}/{name}/unrevoke` | Set `spec.revoked=false`; requires admin, server owner, or team owner. |
+| `PATCH` | `/api/runtime/sessions/{namespace}/{name}` | Set `spec.revoked` with `{"revoked":true|false}`; requires admin, server owner, or team owner. |
 | `GET`, `POST` | `/api/runtime/teams` | List teams (admin: all, user: memberships) or create a team+namespace (admin-only). |
 | `GET` | `/api/runtime/teams/{team}` | Read team metadata for admins and team members. |
 | `GET` | `/api/runtime/teams/{team}/members` | List team memberships for admins and team members. |
-| `POST` | `/api/runtime/teams/{team}/members` | Add/update team membership (admin or team owner). |
-| `POST` | `/api/runtime/teams/{team}/users` | Create/update a password-login user and add the user to a team. Admin role required. |
+| `PUT` | `/api/runtime/teams/{team}/members/{userID}` | Add/update team membership (admin or team owner). |
+| `POST` | `/api/users` | Create a password-login user. Admin role required. |
 | `DELETE` | `/api/runtime/teams/{team}/members/{userID}` | Remove team membership (admin or team owner). |
 | `GET` | `/api/runtime/namespaces` | List allowed namespaces and org catalog metadata for caller scope. |
 | `GET` | `/api/runtime/namespaces/{namespace}` | Read one namespace metadata entry when authorized. |
@@ -166,10 +164,10 @@ metrics on `METRICS_PORT` (default `9090`).
 | `GET` | `/api/admin/audit` | Recent platform audit logs such as login, signup, namespace, deploy, image publish, API key, and registry credential activity. Query: `user`, `since`, `until`, `limit` (1-200, default 50). Admin role required. |
 | `GET` | `/api/admin/operations` | Admin operations snapshot for the UI: user activity, last login/activity, image activity, platform timeline, and deployment inventory. Same filters as `/api/admin/audit`. |
 | `GET`, `POST` | `/api/user/api-keys` | List or create caller-owned API keys. |
-| `POST` | `/api/user/api-keys/{id}/revoke` | Revoke one caller-owned API key. |
+| `DELETE` | `/api/user/api-keys/{id}` | Revoke one caller-owned API key. |
 | `GET` | `/api/user/analytics/usage` | Caller-scoped MCP server analytics used by the user dashboard. |
 | `GET`, `POST` | `/api/user/registry-credentials` | List or create caller-owned registry credentials. |
-| `POST` | `/api/user/registry-credentials/{id}/revoke` | Revoke one registry credential. |
+| `DELETE` | `/api/user/registry-credentials/{id}` | Revoke one registry credential. |
 | `*` | `/api/registry/authz` | Forward-auth guard used by the bundled registry ingress. Admin credentials have global access; user credentials are limited to caller-scoped repository paths. |
 | `POST` | `/api/user/activity/image-publish` | Record a successful image publish event for the authenticated user. The authenticated CLI calls this after `registry push`. |
 

@@ -127,3 +127,41 @@ func TestReadRegistryPushRequestCleansUpTempFileOnDuplicateUpload(t *testing.T) 
 		t.Fatalf("expected no temp files, found %d", len(entries))
 	}
 }
+
+func TestReadRegistryPushRequestRequiresMetadataBeforeImageUpload(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv(registryPushTempDirEnv, tmpDir)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("image_tar", "demo.tar")
+	if err != nil {
+		t.Fatalf("CreateFormFile() error = %v", err)
+	}
+	if _, err := part.Write([]byte("first")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := writer.WriteField("target", "registry.example.com/acme/demo:v1"); err != nil {
+		t.Fatalf("WriteField(target) error = %v", err)
+	}
+	if err := writer.WriteField("scope", string(publishscope.Tenant)); err != nil {
+		t.Fatalf("WriteField(scope) error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/registry/push", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if _, err := readRegistryPushRequest(req); err == nil {
+		t.Fatal("expected metadata ordering error")
+	}
+
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected no temp files, found %d", len(entries))
+	}
+}

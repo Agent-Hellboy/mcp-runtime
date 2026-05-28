@@ -410,9 +410,14 @@ func (c *PlatformClient) DeleteSession(ctx context.Context, namespace, name stri
 	return nil
 }
 
-func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, action string) error {
-	p := fmt.Sprintf("/runtime/grants/%s/%s/%s", url.PathEscape(namespace), url.PathEscape(name), action)
-	resp, err := c.do(ctx, http.MethodPost, p, "", nil)
+func (c *PlatformClient) PatchGrant(ctx context.Context, namespace, name string, disabled bool) error {
+	body := map[string]any{"disabled": disabled}
+	js, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	p := fmt.Sprintf("/runtime/grants/%s/%s", url.PathEscape(strings.TrimSpace(namespace)), url.PathEscape(strings.TrimSpace(name)))
+	resp, err := c.do(ctx, http.MethodPatch, p, "", bytes.NewReader(js))
 	if err != nil {
 		return err
 	}
@@ -424,9 +429,14 @@ func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, a
 	return nil
 }
 
-func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name, action string) error {
-	p := fmt.Sprintf("/runtime/sessions/%s/%s/%s", url.PathEscape(namespace), url.PathEscape(name), action)
-	resp, err := c.do(ctx, http.MethodPost, p, "", nil)
+func (c *PlatformClient) PatchSession(ctx context.Context, namespace, name string, revoked bool) error {
+	body := map[string]any{"revoked": revoked}
+	js, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	p := fmt.Sprintf("/runtime/sessions/%s/%s", url.PathEscape(strings.TrimSpace(namespace)), url.PathEscape(strings.TrimSpace(name)))
+	resp, err := c.do(ctx, http.MethodPatch, p, "", bytes.NewReader(js))
 	if err != nil {
 		return err
 	}
@@ -605,6 +615,13 @@ type Team struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type PlatformUser struct {
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	Role      string `json:"role"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
 type TeamMembership = platform.TeamMembership
 
 type teamsResponse struct {
@@ -619,14 +636,12 @@ type teamMembersResponse struct {
 	Members []TeamMembership `json:"members"`
 }
 
-type teamUserResponse struct {
-	User struct {
-		ID        string `json:"id"`
-		Email     string `json:"email"`
-		Role      string `json:"role"`
-		Namespace string `json:"namespace"`
-	} `json:"user"`
+type teamMembershipResponse struct {
 	Membership TeamMembership `json:"membership"`
+}
+
+type userResponse struct {
+	User PlatformUser `json:"user"`
 }
 
 type namespaceListItem struct {
@@ -826,6 +841,35 @@ func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Tea
 	return out.Team, nil
 }
 
+func (c *PlatformClient) CreateUser(ctx context.Context, email, password, role string) (PlatformUser, error) {
+	payload := map[string]string{
+		"email":    strings.TrimSpace(email),
+		"password": password,
+		"role":     strings.TrimSpace(role),
+	}
+	js, err := json.Marshal(payload)
+	if err != nil {
+		return PlatformUser{}, err
+	}
+	resp, err := c.do(ctx, http.MethodPost, "/users", "", bytes.NewReader(js))
+	if err != nil {
+		return PlatformUser{}, err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return PlatformUser{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return PlatformUser{}, httpAPIError(resp.StatusCode, b)
+	}
+	var out userResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return PlatformUser{}, err
+	}
+	return out.User, nil
+}
+
 func (c *PlatformClient) ListTeamMembers(ctx context.Context, slug string) ([]TeamMembership, error) {
 	rel := "/runtime/teams/" + url.PathEscape(strings.TrimSpace(slug)) + "/members"
 	resp, err := c.do(ctx, http.MethodGet, rel, "", nil)
@@ -848,17 +892,28 @@ func (c *PlatformClient) ListTeamMembers(ctx context.Context, slug string) ([]Te
 }
 
 func (c *PlatformClient) CreateTeamUser(ctx context.Context, slug, email, password, role string) (TeamMembership, error) {
+	user, err := c.CreateUser(ctx, email, password, "")
+	if err != nil {
+		return TeamMembership{}, err
+	}
+	membership, err := c.UpsertTeamMember(ctx, slug, user.ID, role)
+	if err != nil {
+		return TeamMembership{}, err
+	}
+	membership.Email = user.Email
+	return membership, nil
+}
+
+func (c *PlatformClient) UpsertTeamMember(ctx context.Context, slug, userID, role string) (TeamMembership, error) {
 	payload := map[string]string{
-		"email":    strings.TrimSpace(email),
-		"password": password,
-		"role":     strings.TrimSpace(role),
+		"role": strings.TrimSpace(role),
 	}
 	js, err := json.Marshal(payload)
 	if err != nil {
 		return TeamMembership{}, err
 	}
-	rel := "/runtime/teams/" + url.PathEscape(strings.TrimSpace(slug)) + "/users"
-	resp, err := c.do(ctx, http.MethodPost, rel, "", bytes.NewReader(js))
+	rel := "/runtime/teams/" + url.PathEscape(strings.TrimSpace(slug)) + "/members/" + url.PathEscape(strings.TrimSpace(userID))
+	resp, err := c.do(ctx, http.MethodPut, rel, "", bytes.NewReader(js))
 	if err != nil {
 		return TeamMembership{}, err
 	}
@@ -870,7 +925,7 @@ func (c *PlatformClient) CreateTeamUser(ctx context.Context, slug, email, passwo
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return TeamMembership{}, httpAPIError(resp.StatusCode, b)
 	}
-	var out teamUserResponse
+	var out teamMembershipResponse
 	if err := json.Unmarshal(b, &out); err != nil {
 		return TeamMembership{}, err
 	}

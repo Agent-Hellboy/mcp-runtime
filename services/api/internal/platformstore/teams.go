@@ -144,6 +144,45 @@ DO UPDATE SET role = EXCLUDED.role, deleted_at = NULL`, uuid.NewString(), teamID
 	}, nil
 }
 
+// DeleteTeamBySlug soft-deletes a team and its derived namespace/membership records.
+func (s *Store) DeleteTeamBySlug(ctx context.Context, slug string) error {
+	slug = NormalizeTeamSlug(slug)
+	if err := ValidateTeamSlug(slug); err != nil {
+		return err
+	}
+	team, ok, err := s.GetTeamBySlug(ctx, slug)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return sql.ErrNoRows
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.ExecContext(ctx, `UPDATE team_memberships SET deleted_at = now() WHERE team_id = $1 AND deleted_at IS NULL`, team.ID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE namespaces SET deleted_at = now() WHERE team_id = $1 AND deleted_at IS NULL`, team.ID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE teams SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL`, team.ID); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return nil
+}
+
 // ListTeams returns all non-deleted platform teams.
 func (s *Store) ListTeams(ctx context.Context) ([]Team, error) {
 	rows, err := s.db.QueryContext(ctx, `

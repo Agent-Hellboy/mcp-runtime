@@ -12,6 +12,12 @@ RUN cd services/api && go mod download
 
 # Copy service source
 COPY services/api/*.go ./services/api/
+COPY services/api/admin/ ./services/api/admin/
+COPY services/api/auth/ ./services/api/auth/
+COPY services/api/deployments/ ./services/api/deployments/
+COPY services/api/identity/ ./services/api/identity/
+COPY services/api/registry/ ./services/api/registry/
+COPY services/api/runtime/ ./services/api/runtime/
 COPY services/api/internal/ ./services/api/internal/
 
 # Build from service directory

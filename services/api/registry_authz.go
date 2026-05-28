@@ -2,13 +2,12 @@ package main
 
 import (
 	"context"
-	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 
 	"mcp-runtime/pkg/publishscope"
+	"mcp-sentinel-api/registry"
 )
 
 const registryAuthChallenge = `Basic realm="mcp-runtime-registry"`
@@ -20,12 +19,13 @@ type registryCredentialAuthenticator interface {
 func (s *apiServer) handleRegistryAuthz(w http.ResponseWriter, r *http.Request) {
 	p, ok, err := s.authenticateRegistryRequest(r)
 	if err != nil {
-		log.Printf("registry auth error: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "auth_failed"})
 		return
 	}
 	if !ok {
-		writeRegistryAuthChallenge(w)
+		w.Header().Set("WWW-Authenticate", registryAuthChallenge)
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
 	if p.Role != roleAdmin {
@@ -46,9 +46,6 @@ func (s *apiServer) authenticateRegistryRequest(r *http.Request) (principal, boo
 	if !ok {
 		return principal{}, false, nil
 	}
-	// Also try the Basic-auth password as a platform API key. This lets
-	// namespace pull secrets use a static admin key as the Docker password
-	// without requiring user-specific registry credentials.
 	if password != "" {
 		clone := r.Clone(r.Context())
 		clone.Header.Set("x-api-key", password)
@@ -74,14 +71,8 @@ func (s *apiServer) registryCredentialAuthenticator() registryCredentialAuthenti
 	return nil
 }
 
-func writeRegistryAuthChallenge(w http.ResponseWriter) {
-	w.Header().Set("WWW-Authenticate", registryAuthChallenge)
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-}
-
 func (s *apiServer) principalCanAccessRegistryPath(p principal, r *http.Request) bool {
-	scope, ok := registryPathScope(r)
+	scope, ok := registry.RegistryPathScope(r)
 	if !ok {
 		return false
 	}
@@ -89,63 +80,6 @@ func (s *apiServer) principalCanAccessRegistryPath(p principal, r *http.Request)
 		return true
 	}
 	return s.principalCanAccessRegistryScope(p, scope)
-}
-
-func registryPathScope(r *http.Request) (string, bool) {
-	path := registryForwardedPath(r)
-	if path == "" {
-		return "", false
-	}
-	if !strings.HasPrefix(path, "/v2/") {
-		return "", false
-	}
-	rest := strings.Trim(strings.TrimPrefix(path, "/v2/"), "/")
-	if rest == "" {
-		return "", true
-	}
-	if strings.HasPrefix(rest, "_catalog") {
-		return "", false
-	}
-	repo := registryRepoFromPath(rest)
-	if repo == "" {
-		return "", false
-	}
-	scope, _, _ := strings.Cut(repo, "/")
-	scope = strings.TrimSpace(scope)
-	return scope, scope != ""
-}
-
-func registryForwardedPath(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-	for _, key := range []string{"X-Forwarded-Uri", "X-Forwarded-URL"} {
-		raw := strings.TrimSpace(r.Header.Get(key))
-		if raw == "" {
-			continue
-		}
-		if parsed, err := url.Parse(raw); err == nil && parsed.Path != "" {
-			return parsed.Path
-		}
-		return raw
-	}
-	if r.URL != nil {
-		return r.URL.Path
-	}
-	return ""
-}
-
-func registryRepoFromPath(rest string) string {
-	end := len(rest)
-	for _, marker := range []string{"/blobs/", "/manifests/", "/tags/"} {
-		if idx := strings.Index(rest, marker); idx >= 0 && idx < end {
-			end = idx
-		}
-	}
-	if end == len(rest) {
-		return ""
-	}
-	return strings.Trim(rest[:end], "/")
 }
 
 func (s *apiServer) principalCanAccessRegistryScope(p principal, scope string) bool {
@@ -196,6 +130,74 @@ func newRegistryAuthzConfigFromEnv() *registryAuthzConfig {
 	}
 }
 
+func registryPlatformModeFromEnv() string {
+	raw := strings.TrimSpace(os.Getenv("PLATFORM_MODE"))
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("MCP_PLATFORM_MODE"))
+	}
+	switch strings.ToLower(raw) {
+	case string(publishscope.Org):
+		return string(publishscope.Org)
+	case string(publishscope.Public):
+		return string(publishscope.Public)
+	case "", "tenant":
+		return "tenant"
+	default:
+		return "tenant"
+	}
+}
+
+func registryModeCatalogNamespacesFromEnv(mode string) []string {
+	switch mode {
+	case "tenant":
+		return nil
+	}
+	raw := strings.TrimSpace(os.Getenv("PLATFORM_CATALOG_NAMESPACES"))
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("MCP_PLATFORM_CATALOG_NAMESPACES"))
+	}
+	if raw == "" && mode == string(publishscope.Public) {
+		raw = strings.TrimSpace(os.Getenv("PLATFORM_PUBLIC_NAMESPACES"))
+		if raw == "" {
+			raw = strings.TrimSpace(os.Getenv("MCP_PLATFORM_PUBLIC_NAMESPACES"))
+		}
+	}
+	namespaces := []string{registryDefaultModeCatalogNamespace(mode)}
+	for _, namespace := range strings.Split(raw, ",") {
+		namespace = strings.TrimSpace(namespace)
+		if namespace != "" {
+			namespaces = append(namespaces, namespace)
+		}
+	}
+	return dedupeNonEmptyStrings(namespaces)
+}
+
+func registryDefaultModeCatalogNamespace(mode string) string {
+	if mode == "tenant" {
+		return ""
+	}
+	if override := strings.TrimSpace(os.Getenv("PLATFORM_CATALOG_NAMESPACE")); override != "" {
+		return override
+	}
+	if override := strings.TrimSpace(os.Getenv("MCP_PLATFORM_CATALOG_NAMESPACE")); override != "" {
+		return override
+	}
+	switch mode {
+	case string(publishscope.Org):
+		if namespace := strings.TrimSpace(os.Getenv("PLATFORM_ORG_NAMESPACE")); namespace != "" {
+			return namespace
+		}
+		return publishscope.DefaultOrgCatalogNamespace
+	case string(publishscope.Public):
+		if namespace := strings.TrimSpace(os.Getenv("PLATFORM_PUBLIC_NAMESPACE")); namespace != "" {
+			return namespace
+		}
+		return publishscope.DefaultPublicCatalogNamespace
+	default:
+		return ""
+	}
+}
+
 func (cfg *registryAuthzConfig) catalogScopeWritable(scope string) bool {
 	if cfg == nil {
 		return false
@@ -222,79 +224,26 @@ func (cfg *registryAuthzConfig) sharedCatalogWritableForUsers() bool {
 		return false
 	}
 	switch cfg.mode {
-	case string(publishscope.Org), string(publishscope.Public):
+	case string(publishscope.Public), string(publishscope.Org):
 		return true
 	default:
 		return false
 	}
 }
 
-func registryPlatformModeFromEnv() string {
-	mode := strings.TrimSpace(os.Getenv("PLATFORM_MODE"))
-	if mode == "" {
-		mode = strings.TrimSpace(os.Getenv("MCP_PLATFORM_MODE"))
-	}
-	switch strings.ToLower(mode) {
-	case string(publishscope.Org):
-		return string(publishscope.Org)
-	case string(publishscope.Public):
-		return string(publishscope.Public)
-	default:
-		return string(publishscope.Tenant)
-	}
-}
-
-func registryDefaultOrgCatalogNamespaceFromEnv() string {
-	if namespace := strings.TrimSpace(os.Getenv("PLATFORM_CATALOG_NAMESPACE")); namespace != "" {
-		return namespace
-	}
-	if namespace := strings.TrimSpace(os.Getenv("MCP_PLATFORM_CATALOG_NAMESPACE")); namespace != "" {
-		return namespace
-	}
-	if namespace := strings.TrimSpace(os.Getenv("PLATFORM_ORG_NAMESPACE")); namespace != "" {
-		return namespace
-	}
-	return publishscope.DefaultOrgCatalogNamespace
-}
-
-func registryDefaultPublicCatalogNamespaceFromEnv() string {
-	if namespace := strings.TrimSpace(os.Getenv("PLATFORM_CATALOG_NAMESPACE")); namespace != "" {
-		return namespace
-	}
-	if namespace := strings.TrimSpace(os.Getenv("MCP_PLATFORM_CATALOG_NAMESPACE")); namespace != "" {
-		return namespace
-	}
-	if namespace := strings.TrimSpace(os.Getenv("PLATFORM_PUBLIC_NAMESPACE")); namespace != "" {
-		return namespace
-	}
-	return publishscope.DefaultPublicCatalogNamespace
-}
-
-func registryModeCatalogNamespacesFromEnv(mode string) []string {
-	if mode == string(publishscope.Tenant) {
-		return nil
-	}
-	namespaces := []string{}
-	switch mode {
-	case string(publishscope.Org):
-		namespaces = append(namespaces, registryDefaultOrgCatalogNamespaceFromEnv())
-	case string(publishscope.Public):
-		namespaces = append(namespaces, registryDefaultPublicCatalogNamespaceFromEnv())
-	}
-	raw := strings.TrimSpace(os.Getenv("PLATFORM_CATALOG_NAMESPACES"))
-	if raw == "" {
-		raw = strings.TrimSpace(os.Getenv("MCP_PLATFORM_CATALOG_NAMESPACES"))
-	}
-	if raw == "" && mode == string(publishscope.Public) {
-		raw = strings.TrimSpace(os.Getenv("PLATFORM_PUBLIC_NAMESPACES"))
-		if raw == "" {
-			raw = strings.TrimSpace(os.Getenv("MCP_PLATFORM_PUBLIC_NAMESPACES"))
+func dedupeNonEmptyStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
 		}
-	}
-	for _, namespace := range strings.Split(raw, ",") {
-		if namespace = strings.TrimSpace(namespace); namespace != "" {
-			namespaces = append(namespaces, namespace)
+		if _, ok := seen[value]; ok {
+			continue
 		}
+		seen[value] = struct{}{}
+		out = append(out, value)
 	}
-	return namespaces
+	return out
 }

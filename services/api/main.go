@@ -46,7 +46,11 @@ import (
 
 	clickhousepkg "mcp-runtime/pkg/clickhouse"
 	"mcp-runtime/pkg/serviceutil"
+	"mcp-sentinel-api/admin"
+	"mcp-sentinel-api/deployments"
 	"mcp-sentinel-api/internal/runtimeapi"
+	"mcp-sentinel-api/registry"
+	runtimehandlers "mcp-sentinel-api/runtime"
 )
 
 type analyticsServerUsage struct {
@@ -313,6 +317,7 @@ func main() {
 	mux.HandleFunc("/api/auth/login", server.handleLogin)
 	mux.HandleFunc("/api/auth/oidc", server.handleOIDCLogin)
 	mux.HandleFunc("/api/auth/signup", server.handleSignup)
+	mux.Handle("/api/users", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleUsers))))
 	mux.Handle("/api/events", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleEvents))))
 	mux.Handle("/api/stats", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleStats))))
 	mux.Handle("/api/sources", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleSources))))
@@ -337,33 +342,89 @@ func main() {
 			server.userKeys = runtimeServer
 		}
 		// Register all runtime endpoints with auth
-		mux.Handle("/api/dashboard/summary", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.HandleDashboardSummary))))
-		mux.Handle("/api/runtime/servers", server.authOrPublicCatalog(http.HandlerFunc(runtimeServer.HandleRuntimeServers)))
-		mux.Handle("/api/runtime/servers/", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeServerItem)))
-		mux.Handle("/api/runtime/server-events", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeServerEvents)))
-		mux.Handle("/api/runtime/teams", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeTeams)))
-		mux.Handle("/api/runtime/teams/", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeTeamItemPath)))
-		mux.Handle("/api/runtime/namespaces", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeNamespaces)))
-		mux.Handle("/api/runtime/namespaces/", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeNamespaceItem)))
-		mux.Handle("/api/deployments", server.auth(http.HandlerFunc(runtimeServer.HandleDeployments)))
-		mux.Handle("/api/deployments/", server.auth(http.HandlerFunc(runtimeServer.HandleDeploymentItem)))
-		mux.Handle("/api/admin/namespaces", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleAdminNamespaces))))
-		mux.Handle("/api/admin/audit", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleAdminAudit))))
-		mux.Handle("/api/admin/operations", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleAdminOperations))))
-		mux.Handle("/api/admin/deployments", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.HandleAdminDeployments))))
-		mux.Handle("/api/runtime/grants", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeGrants)))
-		mux.Handle("/api/runtime/sessions", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeSessions)))
-		mux.Handle("/api/runtime/adapter/sessions", server.auth(http.HandlerFunc(runtimeServer.HandleAdapterSession)))
-		mux.Handle("/api/runtime/registry/push", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeRegistryPush)))
+		mux.Handle("/api/dashboard/summary", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleDashboardSummary(runtimeServer, w, r)
+		}))))
+		mux.Handle("/api/runtime/servers", server.authOrPublicCatalog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleRuntimeServers(runtimeServer, w, r)
+		})))
+		mux.Handle("/api/runtime/servers/", server.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleRuntimeServerItem(runtimeServer, w, r)
+		})))
+		mux.Handle("/api/runtime/server-events", server.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleRuntimeServerEvents(runtimeServer, w, r)
+		})))
+		mux.Handle("/api/runtime/teams", server.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleRuntimeTeams(runtimeServer, w, r)
+		})))
+		mux.Handle("/api/runtime/teams/", server.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleRuntimeTeamItemPath(runtimeServer, w, r)
+		})))
+		mux.Handle("/api/runtime/namespaces", server.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleRuntimeNamespaces(runtimeServer, w, r)
+		})))
+		mux.Handle("/api/runtime/namespaces/", server.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleRuntimeNamespaceItem(runtimeServer, w, r)
+		})))
+		mux.Handle("/api/deployments", server.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			deployments.HandleDeployments(runtimeServer, w, r)
+		})))
+		mux.Handle("/api/deployments/", server.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			deployments.HandleDeploymentItem(runtimeServer, w, r)
+		})))
+		mux.Handle("/api/admin/namespaces", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			admin.HandleNamespaces(w, r, admin.Dependencies{
+				Platform:  server.platform,
+				WriteJSON: writeJSON,
+			})
+		}))))
+		mux.Handle("/api/admin/audit", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			admin.HandleAudit(w, r, admin.Dependencies{
+				Platform:  server.platform,
+				WriteJSON: writeJSON,
+			})
+		}))))
+		mux.Handle("/api/admin/operations", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			admin.HandleOperations(w, r, admin.Dependencies{
+				Platform:  server.platform,
+				Runtime:   server.runtime,
+				WriteJSON: writeJSON,
+			})
+		}))))
+		mux.Handle("/api/admin/deployments", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			deployments.HandleAdminDeployments(runtimeServer, w, r)
+		}))))
+		mux.Handle("/api/runtime/grants", server.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleRuntimeGrants(runtimeServer, w, r)
+		})))
+		mux.Handle("/api/runtime/sessions", server.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleRuntimeSessions(runtimeServer, w, r)
+		})))
+		mux.Handle("/api/runtime/adapter/sessions", server.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleAdapterSession(runtimeServer, w, r)
+		})))
+		mux.Handle("/api/runtime/registry/push", server.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleRuntimeRegistryPush(runtimeServer, w, r)
+		})))
 		mux.HandleFunc("/internal/registry-push/tar", runtimeServer.HandleRegistryPushTransfer)
 		go runtimeServer.ReconcileTeamNamespaceNetworkPolicies(context.Background())
-		mux.Handle("/api/runtime/components", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.HandleRuntimeComponents))))
-		mux.Handle("/api/runtime/policy", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimePolicy)))
-		mux.Handle("/api/runtime/actions/restart", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.HandleActionRestart))))
-		// Grant item (POST /api/runtime/grants/{namespace}/{name}/disable|enable, DELETE /api/runtime/grants/{namespace}/{name})
-		mux.Handle("/api/runtime/grants/", server.auth(http.HandlerFunc(runtimeServer.HandleGrantItemPath)))
-		// Session item (POST /api/runtime/sessions/{namespace}/{name}/revoke|unrevoke, DELETE /api/runtime/sessions/{namespace}/{name})
-		mux.Handle("/api/runtime/sessions/", server.auth(http.HandlerFunc(runtimeServer.HandleSessionItemPath)))
+		mux.Handle("/api/runtime/components", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleRuntimeComponents(runtimeServer, w, r)
+		}))))
+		mux.Handle("/api/runtime/policy", server.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleRuntimePolicy(runtimeServer, w, r)
+		})))
+		mux.Handle("/api/runtime/actions/restart", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleActionRestart(runtimeServer, w, r)
+		}))))
+		// Grant item (PATCH /api/runtime/grants/{namespace}/{name}, DELETE /api/runtime/grants/{namespace}/{name})
+		mux.Handle("/api/runtime/grants/", server.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleGrantItemPath(runtimeServer, w, r)
+		})))
+		// Session item (PATCH /api/runtime/sessions/{namespace}/{name}, DELETE /api/runtime/sessions/{namespace}/{name})
+		mux.Handle("/api/runtime/sessions/", server.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runtimehandlers.HandleSessionItemPath(runtimeServer, w, r)
+		})))
 		// User-scoped API key lifecycle.
 		mux.Handle("/api/user/api-keys", server.auth(http.HandlerFunc(server.handleUserAPIKeys)))
 		mux.Handle("/api/user/api-keys/", server.auth(http.HandlerFunc(server.handleUserAPIKeyItem)))
@@ -592,6 +653,29 @@ func (s *apiServer) handleUserAnalyticsUsage(w http.ResponseWriter, r *http.Requ
 	}
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *apiServer) handleRegistryCredentials(w http.ResponseWriter, r *http.Request) {
+	registry.HandleRegistryCredentials(w, r, registry.CredentialDependencies{
+		Platform:             s.platform,
+		PrincipalFromContext: principalFromContext,
+		WriteJSON:            writeJSON,
+		WriteBodyDecodeError: writeBodyDecodeError,
+		RequestIP:            requestIP,
+		AuditSource:          auditSource,
+		AuditIdentityLabel:   auditIdentityLabel,
+	})
+}
+
+func (s *apiServer) handleRegistryCredentialItem(w http.ResponseWriter, r *http.Request) {
+	registry.HandleRegistryCredentialItem(w, r, registry.CredentialDependencies{
+		Platform:             s.platform,
+		PrincipalFromContext: principalFromContext,
+		WriteJSON:            writeJSON,
+		RequestIP:            requestIP,
+		AuditSource:          auditSource,
+		AuditIdentityLabel:   auditIdentityLabel,
+	})
 }
 
 type analyticsQueryScope struct {
@@ -1040,7 +1124,7 @@ func dedupeAnalyticsStrings(values []string) []string {
 
 // handleEventsFilter handles GET /api/events/filter requests.
 // It queries events filtered by optional source, event_type, and audit payload fields.
-// Supports query parameters: trace_id, source, event_type, server, namespace, team_id, cluster, human_id, agent_id, session_id, decision, tool_name, limit.
+// Supports query parameters: trace_id, source, event_type, server, namespace, team_id, cluster, human_id, agent_id, session_id, decision, tool_name, reason, limit.
 // Returns filtered events ordered by timestamp descending.
 func (s *apiServer) handleEventsFilter(w http.ResponseWriter, r *http.Request) {
 	filters := clickhousepkg.EventFilters{
@@ -1056,6 +1140,7 @@ func (s *apiServer) handleEventsFilter(w http.ResponseWriter, r *http.Request) {
 		SessionID: r.URL.Query().Get("session_id"),
 		Decision:  r.URL.Query().Get("decision"),
 		ToolName:  r.URL.Query().Get("tool_name"),
+		Reason:    r.URL.Query().Get("reason"),
 		Limit:     clampInt(queryInt(r, "limit", 100), 1, 1000),
 	}
 	events, err := s.events.QueryEventsFiltered(r.Context(), filters)
@@ -1219,34 +1304,6 @@ func oidcProvider(issuer string) string {
 		return oidcProviderPrefix + "default"
 	}
 	return oidcProviderPrefix + issuer
-}
-
-func (s *apiServer) handleAuthMe(w http.ResponseWriter, r *http.Request) {
-	p, ok := principalFromContext(r.Context())
-	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
-	}
-	type authPrincipal struct {
-		Role              string          `json:"role"`
-		Subject           string          `json:"subject,omitempty"`
-		Email             string          `json:"email,omitempty"`
-		Namespace         string          `json:"namespace,omitempty"`
-		AllowedNamespaces []string        `json:"allowedNamespaces,omitempty"`
-		Teams             []principalTeam `json:"teams,omitempty"`
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"authenticated":          true,
-		"sharedCatalogNamespace": sharedCatalogNamespace,
-		"principal": authPrincipal{
-			Role:              p.Role,
-			Subject:           p.Subject,
-			Email:             p.Email,
-			Namespace:         p.Namespace,
-			AllowedNamespaces: p.AllowedNamespaces,
-			Teams:             p.Teams,
-		},
-	})
 }
 
 // audienceMatches validates if the JWT audience claim matches the expected value.

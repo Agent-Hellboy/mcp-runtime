@@ -212,12 +212,10 @@ Primary request paths:
 
 - `GET/POST /api/runtime/grants`
 - `GET/DELETE /api/runtime/grants/{namespace}/{name}`
-- `POST /api/runtime/grants/{namespace}/{name}/enable`
-- `POST /api/runtime/grants/{namespace}/{name}/disable`
+- `PATCH /api/runtime/grants/{namespace}/{name}`
 - `GET/POST /api/runtime/sessions`
 - `GET/DELETE /api/runtime/sessions/{namespace}/{name}`
-- `POST /api/runtime/sessions/{namespace}/{name}/revoke`
-- `POST /api/runtime/sessions/{namespace}/{name}/unrevoke`
+- `PATCH /api/runtime/sessions/{namespace}/{name}`
 
 ## Registry Publish And Pull
 
@@ -252,7 +250,7 @@ Primary request paths:
   `/v2/{scope}/{repo}/blobs/*`, `/v2/{scope}/{repo}/tags/list`
 - Authz: `/api/registry/authz`
 - Credential lifecycle: `GET/POST /api/user/registry-credentials`,
-  `POST /api/user/registry-credentials/{id}/revoke`
+  `DELETE /api/user/registry-credentials/{id}`
 - Publish audit: `POST /api/user/activity/image-publish`
 
 ## Teams And Namespaces
@@ -273,7 +271,9 @@ sequenceDiagram
     API->>DB: create team and namespace record
     API->>K8s: create namespace, RBAC, NetworkPolicy
     API->>Traefik: patch watched namespaces when bundled Traefik is used
-    Admin->>API: POST /api/runtime/teams/{slug}/members or /users
+    Admin->>API: POST /api/users
+    API->>DB: create password user
+    Admin->>API: PUT /api/runtime/teams/{slug}/members/{userID}
     API->>DB: create membership
     User->>API: GET /api/runtime/namespaces
     API-->>User: user, team, org, public, and shared catalog namespaces
@@ -285,9 +285,10 @@ Primary request paths:
 
 - `GET/POST /api/runtime/teams`
 - `GET /api/runtime/teams/{slug}`
-- `GET/POST /api/runtime/teams/{slug}/members`
+- `GET /api/runtime/teams/{slug}/members`
+- `PUT /api/runtime/teams/{slug}/members/{userID}`
 - `DELETE /api/runtime/teams/{slug}/members/{userID}`
-- `POST /api/runtime/teams/{slug}/users`
+- `POST /api/users`
 - `GET /api/runtime/namespaces`
 - `GET /api/runtime/namespaces/{namespace}`
 
