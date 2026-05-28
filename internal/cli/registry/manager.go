@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"mcp-runtime/internal/cli/cluster/registrycompat"
 	"mcp-runtime/internal/cli/core"
@@ -23,12 +24,17 @@ import (
 	"mcp-runtime/internal/cli/platformapi"
 	"mcp-runtime/internal/cli/registry/config"
 	"mcp-runtime/internal/cli/registry/ref"
+	"mcp-runtime/pkg/k8sclient"
 	"mcp-runtime/pkg/kubeworkload"
 	"mcp-runtime/pkg/publishscope"
 )
 
 const defaultRegistryImage = "registry:2.8.3"
 const registryImageOverrideEnv = "MCP_RUNTIME_REGISTRY_IMAGE_OVERRIDE"
+
+var newRegistryKubernetesClients = k8sclient.New
+
+const registryClientGoProbeTimeout = 3 * time.Second
 
 // RegistryManager handles registry operations with injected dependencies.
 type RegistryManager struct {
@@ -628,7 +634,17 @@ func applyRegistryCompatibilityOverlay(logger *zap.Logger, namespace, manifestPa
 }
 
 func ensureNamespace(namespace string) error {
+	clients, err := registryKubernetesClients()
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), registryClientGoProbeTimeout)
+		defer cancel()
+		return k8sclient.EnsureNamespace(ctx, clients, namespace, nil)
+	}
 	return kube.EnsureNamespace(core.DefaultKubectlClient().CommandArgs, namespace)
+}
+
+func registryKubernetesClients() (*k8sclient.Clients, error) {
+	return newRegistryKubernetesClients()
 }
 
 func buildOperatorImage(image string) error {
@@ -654,6 +670,20 @@ func pushOperatorImage(image string) error {
 func waitForDeploymentAvailable(logger *zap.Logger, name, namespace, selector string, timeout time.Duration) error {
 	if logger != nil {
 		logger.Info("Waiting for deployment rollout", zap.String("deployment", name), zap.String("namespace", namespace), zap.String("selector", selector))
+	}
+	clients, err := registryKubernetesClients()
+	if err == nil {
+		waitTimeout := timeout
+		if waitTimeout <= 0 || waitTimeout > registryClientGoProbeTimeout {
+			waitTimeout = registryClientGoProbeTimeout
+		}
+		waitCtx, cancel := context.WithTimeout(context.Background(), waitTimeout)
+		defer cancel()
+		if err := k8sclient.WaitForDeploymentAvailable(waitCtx, clients, namespace, name, waitTimeout); err == nil {
+			return nil
+		} else if logger != nil {
+			logger.Debug("Client-go deployment wait failed, falling back to kubectl rollout status", zap.Error(err))
+		}
 	}
 	return core.DefaultKubectlClient().RunWithOutput([]string{
 		"rollout", "status",
@@ -704,6 +734,26 @@ func ensureRegistryStorageSize(logger *zap.Logger, namespace, registryStorageSiz
 	storageSize := strings.TrimSpace(registryStorageSize)
 	if storageSize == "" {
 		return nil
+	}
+	clients, err := registryKubernetesClients()
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), registryClientGoProbeTimeout)
+		defer cancel()
+		currentSize, err := k8sclient.PersistentVolumeClaimStorage(ctx, clients, namespace, core.RegistryPVCName)
+		if err == nil {
+			if currentSize == storageSize {
+				logger.Info("Registry storage size already matches requested value", zap.String("size", storageSize))
+				return nil
+			}
+			logger.Info("Updating registry storage size", zap.String("from", currentSize), zap.String("to", storageSize))
+			if err := k8sclient.UpdatePersistentVolumeClaimStorage(ctx, clients, namespace, core.RegistryPVCName, storageSize); err == nil {
+				return nil
+			} else if logger != nil {
+				logger.Debug("Client-go PVC storage update failed, falling back to kubectl patch", zap.Error(err))
+			}
+		} else if logger != nil {
+			logger.Debug("Client-go PVC storage read failed, falling back to kubectl get", zap.Error(err))
+		}
 	}
 
 	// #nosec G204 -- fixed kubectl command, namespace from internal config.
@@ -757,24 +807,21 @@ func (m *RegistryManager) CheckRegistryStatus(namespace string) error {
 	core.Header("Registry Status")
 	core.DefaultPrinter.Println()
 
-	// Get deployment status
-	// #nosec G204 -- fixed kubectl command, namespace from internal config.
-	readyOut, err := m.kubectl.Output([]string{"get", "deployment", core.RegistryDeploymentName, "-n", namespace, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"})
+	replicas, endpoint, podPhase, err := registryStatusWithClientGo(namespace)
 	if err != nil {
-		core.Error("Registry deployment not found")
-		return err
+		readyOut, readyErr := m.kubectl.Output([]string{"get", "deployment", core.RegistryDeploymentName, "-n", namespace, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"})
+		if readyErr != nil {
+			core.Error("Registry deployment not found")
+			return readyErr
+		}
+		ipOut, _ := m.kubectl.Output([]string{"get", "service", core.RegistryServiceName, "-n", namespace, "-o", "jsonpath={.spec.clusterIP}:{.spec.ports[0].port}"})
+		podOut, _ := m.kubectl.Output([]string{"get", "pods", "-n", namespace, "-l", core.SelectorRegistry, "-o", "jsonpath={.items[0].status.phase}"})
+		replicas = strings.TrimSpace(string(readyOut))
+		endpoint = strings.TrimSpace(string(ipOut))
+		podPhase = strings.TrimSpace(string(podOut))
 	}
 
-	// Get service IP
-	// #nosec G204 -- fixed kubectl command, namespace from internal config.
-	ipOut, _ := m.kubectl.Output([]string{"get", "service", core.RegistryServiceName, "-n", namespace, "-o", "jsonpath={.spec.clusterIP}:{.spec.ports[0].port}"})
-
-	// Get pod status
-	// #nosec G204 -- fixed kubectl command, namespace from internal config.
-	podOut, _ := m.kubectl.Output([]string{"get", "pods", "-n", namespace, "-l", core.SelectorRegistry, "-o", "jsonpath={.items[0].status.phase}"})
-
 	// Build status table
-	replicas := strings.TrimSpace(string(readyOut))
 	status := core.Green("Healthy")
 	if replicas == "" || strings.HasPrefix(replicas, "/") || strings.HasPrefix(replicas, "0/") {
 		status = core.Yellow("Starting")
@@ -784,8 +831,8 @@ func (m *RegistryManager) CheckRegistryStatus(namespace string) error {
 		{"Property", "Value"},
 		{"Status", status},
 		{"Replicas", replicas},
-		{"Endpoint", strings.TrimSpace(string(ipOut))},
-		{"Pod Phase", strings.TrimSpace(string(podOut))},
+		{"Endpoint", endpoint},
+		{"Pod Phase", podPhase},
 	}
 
 	core.TableBoxed(tableData)
@@ -825,32 +872,28 @@ func (m *RegistryManager) LoginRegistry(registryURL, username, password string) 
 // ShowRegistryInfo displays registry connection information.
 func (m *RegistryManager) ShowRegistryInfo() error {
 	ns := core.NamespaceRegistry
-	// #nosec G204 -- fixed kubectl command with hardcoded namespace.
-	ingressHost, err := m.kubectl.Output([]string{"get", "ingress", core.RegistryServiceName, "-n", ns, "-o", "jsonpath={.spec.rules[0].host}"})
+	host, ip, p, err := registryInfoWithClientGo(ns)
 	if err != nil {
-		m.logger.Debug("Failed to get registry ingress host", zap.Error(err))
+		ingressHost, ingressErr := m.kubectl.Output([]string{"get", "ingress", core.RegistryServiceName, "-n", ns, "-o", "jsonpath={.spec.rules[0].host}"})
+		if ingressErr != nil {
+			m.logger.Debug("Failed to get registry ingress host", zap.Error(ingressErr))
+		}
+		clusterIP, ipErr := m.kubectl.Output([]string{"get", "service", core.RegistryServiceName, "-n", ns, "-o", "jsonpath={.spec.clusterIP}"})
+		if ipErr != nil {
+			m.logger.Debug("Failed to get registry cluster IP", zap.Error(ipErr))
+		}
+		port, portErr := m.kubectl.Output([]string{"get", "service", core.RegistryServiceName, "-n", ns, "-o", "jsonpath={.spec.ports[0].port}"})
+		if portErr != nil {
+			m.logger.Debug("Failed to get registry port", zap.Error(portErr))
+		}
+		host = strings.TrimSpace(string(ingressHost))
+		ip = strings.TrimSpace(string(clusterIP))
+		p = strings.TrimSpace(string(port))
 	}
 
-	// Get registry service
-	// #nosec G204 -- fixed kubectl command with hardcoded namespace.
-	clusterIP, err := m.kubectl.Output([]string{"get", "service", core.RegistryServiceName, "-n", ns, "-o", "jsonpath={.spec.clusterIP}"})
-	if err != nil {
-		m.logger.Debug("Failed to get registry cluster IP", zap.Error(err))
-	}
-
-	// #nosec G204 -- fixed kubectl command with hardcoded namespace.
-	port, err := m.kubectl.Output([]string{"get", "service", core.RegistryServiceName, "-n", ns, "-o", "jsonpath={.spec.ports[0].port}"})
-	if err != nil {
-		m.logger.Debug("Failed to get registry port", zap.Error(err))
-	}
-
-	if len(clusterIP) > 0 && len(port) > 0 {
+	if ip != "" && p != "" {
 		core.Header("Registry Information")
 		core.DefaultPrinter.Println()
-
-		ip := strings.TrimSpace(string(clusterIP))
-		p := strings.TrimSpace(string(port))
-		host := strings.TrimSpace(string(ingressHost))
 
 		tableData := [][]string{
 			{"Property", "Value"},
@@ -1133,13 +1176,8 @@ func rewriteTargetHostForInClusterPush(target string, kubectl *core.KubectlClien
 	}
 	addInternalHost(core.GetRegistryEndpoint())
 	addInternalHost(core.GetRegistryIngressHost())
-	if kubectl != nil {
-		// #nosec G204 -- fixed arguments, no user input.
-		if ingressCmd, err := kubectl.CommandArgs([]string{"get", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry, "-o", "jsonpath={.spec.rules[0].host}"}); err == nil {
-			if out, err := ingressCmd.Output(); err == nil {
-				addInternalHost(string(out))
-			}
-		}
+	if host, _, err := discoverRegistryHostAndPort(kubectl); err == nil {
+		addInternalHost(host)
 	}
 
 	if _, ok := internal[hostNoPort]; !ok {
@@ -1147,17 +1185,109 @@ func rewriteTargetHostForInClusterPush(target string, kubectl *core.KubectlClien
 	}
 
 	port := core.GetRegistryPort()
-	if kubectl != nil {
-		// #nosec G204 -- fixed arguments, no user input.
-		if portCmd, err := kubectl.CommandArgs([]string{"get", "service", core.RegistryServiceName, "-n", core.NamespaceRegistry, "-o", "jsonpath={.spec.ports[0].port}"}); err == nil {
-			if out, err := portCmd.Output(); err == nil {
-				if p := strings.TrimSpace(string(out)); p != "" {
-					port = parsePortOrDefault(p, port)
-				}
-			}
-		}
+	if _, discoveredPort, err := discoverRegistryHostAndPort(kubectl); err == nil && discoveredPort != "" {
+		port = parsePortOrDefault(discoveredPort, port)
 	}
 	return fmt.Sprintf("%s.%s.svc.cluster.local:%d%s", core.RegistryServiceName, core.NamespaceRegistry, port, rest)
+}
+
+func discoverRegistryHostAndPort(kubectl *core.KubectlClient) (string, string, error) {
+	clients, err := registryKubernetesClients()
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), registryClientGoProbeTimeout)
+		defer cancel()
+		svc, svcErr := clients.Clientset.CoreV1().Services(core.NamespaceRegistry).Get(ctx, core.RegistryServiceName, metav1.GetOptions{})
+		if svcErr == nil {
+			port := ""
+			if len(svc.Spec.Ports) > 0 {
+				port = fmt.Sprintf("%d", svc.Spec.Ports[0].Port)
+			}
+			ingressHost := ""
+			if ing, ingErr := clients.Clientset.NetworkingV1().Ingresses(core.NamespaceRegistry).Get(ctx, core.RegistryServiceName, metav1.GetOptions{}); ingErr == nil {
+				if len(ing.Spec.Rules) > 0 {
+					ingressHost = strings.TrimSpace(ing.Spec.Rules[0].Host)
+				}
+			}
+			return ingressHost, port, nil
+		}
+	}
+	if kubectl == nil {
+		return "", "", fmt.Errorf("kubectl client unavailable")
+	}
+	var host, port string
+	if ingressCmd, err := kubectl.CommandArgs([]string{"get", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry, "-o", "jsonpath={.spec.rules[0].host}"}); err == nil {
+		if out, err := ingressCmd.Output(); err == nil {
+			host = strings.TrimSpace(string(out))
+		}
+	}
+	if portCmd, err := kubectl.CommandArgs([]string{"get", "service", core.RegistryServiceName, "-n", core.NamespaceRegistry, "-o", "jsonpath={.spec.ports[0].port}"}); err == nil {
+		if out, err := portCmd.Output(); err == nil {
+			port = strings.TrimSpace(string(out))
+		}
+	}
+	if host == "" && port == "" {
+		return "", "", fmt.Errorf("registry host and port not discoverable")
+	}
+	return host, port, nil
+}
+
+func registryStatusWithClientGo(namespace string) (string, string, string, error) {
+	clients, err := registryKubernetesClients()
+	if err != nil {
+		return "", "", "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), registryClientGoProbeTimeout)
+	defer cancel()
+	deploy, err := clients.Clientset.AppsV1().Deployments(namespace).Get(ctx, core.RegistryDeploymentName, metav1.GetOptions{})
+	if err != nil {
+		return "", "", "", err
+	}
+	replicas := int32(1)
+	if deploy.Spec.Replicas != nil {
+		replicas = *deploy.Spec.Replicas
+	}
+	service, err := clients.Clientset.CoreV1().Services(namespace).Get(ctx, core.RegistryServiceName, metav1.GetOptions{})
+	if err != nil {
+		return "", "", "", err
+	}
+	endpoint := strings.TrimSpace(service.Spec.ClusterIP)
+	if endpoint != "" && len(service.Spec.Ports) > 0 {
+		endpoint = fmt.Sprintf("%s:%d", endpoint, service.Spec.Ports[0].Port)
+	}
+	pods, err := clients.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: core.SelectorRegistry, Limit: 1})
+	if err != nil {
+		return "", "", "", err
+	}
+	podPhase := ""
+	if len(pods.Items) > 0 {
+		podPhase = string(pods.Items[0].Status.Phase)
+	}
+	return fmt.Sprintf("%d/%d", deploy.Status.ReadyReplicas, replicas), endpoint, podPhase, nil
+}
+
+func registryInfoWithClientGo(namespace string) (string, string, string, error) {
+	clients, err := registryKubernetesClients()
+	if err != nil {
+		return "", "", "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), registryClientGoProbeTimeout)
+	defer cancel()
+	ingressHost := ""
+	if ingress, err := clients.Clientset.NetworkingV1().Ingresses(namespace).Get(ctx, core.RegistryServiceName, metav1.GetOptions{}); err == nil {
+		if len(ingress.Spec.Rules) > 0 {
+			ingressHost = strings.TrimSpace(ingress.Spec.Rules[0].Host)
+		}
+	}
+	service, err := clients.Clientset.CoreV1().Services(namespace).Get(ctx, core.RegistryServiceName, metav1.GetOptions{})
+	if err != nil {
+		return "", "", "", err
+	}
+	clusterIP := strings.TrimSpace(service.Spec.ClusterIP)
+	port := ""
+	if len(service.Spec.Ports) > 0 {
+		port = fmt.Sprintf("%d", service.Spec.Ports[0].Port)
+	}
+	return ingressHost, clusterIP, port, nil
 }
 
 func parsePortOrDefault(s string, def int) int {

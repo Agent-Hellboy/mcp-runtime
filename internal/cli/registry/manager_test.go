@@ -11,10 +11,26 @@ import (
 	"testing"
 
 	"go.uber.org/zap"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/platformapi"
+	"mcp-runtime/pkg/k8sclient"
 )
+
+func TestMain(m *testing.M) {
+	orig := newRegistryKubernetesClients
+	newRegistryKubernetesClients = func() (*k8sclient.Clients, error) {
+		return nil, errors.New("client-go disabled for registry unit tests unless explicitly stubbed")
+	}
+	code := m.Run()
+	newRegistryKubernetesClients = orig
+	os.Exit(code)
+}
 
 func TestRegistryManager_CheckRegistryStatus(t *testing.T) {
 	t.Run("returns error when deployment not found", func(t *testing.T) {
@@ -53,6 +69,37 @@ func TestRegistryManager_CheckRegistryStatus(t *testing.T) {
 		}
 		if !found {
 			t.Error("expected kubectl get deployment to be called")
+		}
+	})
+
+	t.Run("uses client-go when available", func(t *testing.T) {
+		swapRegistryKubernetesClientsForTest(t, func() (*k8sclient.Clients, error) {
+			clientset := fake.NewSimpleClientset(
+				&appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{Name: core.RegistryDeploymentName, Namespace: "registry"},
+					Spec:       appsv1.DeploymentSpec{Replicas: int32Ptr(1)},
+					Status:     appsv1.DeploymentStatus{ReadyReplicas: 1},
+				},
+				&corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{Name: core.RegistryServiceName, Namespace: "registry"},
+					Spec:       corev1.ServiceSpec{ClusterIP: "10.0.0.5", Ports: []corev1.ServicePort{{Port: 5000}}},
+				},
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{Name: "registry-0", Namespace: "registry", Labels: map[string]string{"app": "registry"}},
+					Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+				},
+			)
+			return &k8sclient.Clients{Clientset: clientset, Namespace: "default"}, nil
+		})
+
+		mock := &core.MockExecutor{}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewRegistryManager(kubectl, mock, zap.NewNop())
+		if err := mgr.CheckRegistryStatus("registry"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.HasCommand("kubectl") {
+			t.Fatal("did not expect kubectl fallback when client-go data is available")
 		}
 	})
 }
@@ -743,6 +790,33 @@ func TestRewriteTargetHostForInClusterPush(t *testing.T) {
 	}
 }
 
+func TestRewriteTargetHostForInClusterPush_UsesClientGoDiscovery(t *testing.T) {
+	origConfig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = origConfig })
+	core.DefaultCLIConfig = &core.CLIConfig{
+		RegistryEndpoint:    "registry.local",
+		RegistryIngressHost: "registry.local",
+		RegistryPort:        5000,
+	}
+	swapRegistryKubernetesClientsForTest(t, func() (*k8sclient.Clients, error) {
+		clientset := fake.NewSimpleClientset(
+			&corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: core.RegistryServiceName, Namespace: core.NamespaceRegistry},
+				Spec:       corev1.ServiceSpec{ClusterIP: "10.0.0.8", Ports: []corev1.ServicePort{{Port: 5443}}},
+			},
+			&networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{Name: core.RegistryServiceName, Namespace: core.NamespaceRegistry},
+				Spec:       networkingv1.IngressSpec{Rules: []networkingv1.IngressRule{{Host: "registry.mcpruntime.org"}}},
+			},
+		)
+		return &k8sclient.Clients{Clientset: clientset, Namespace: "default"}, nil
+	})
+	got := rewriteTargetHostForInClusterPush("registry.mcpruntime.org/foo:tag", nil)
+	if !strings.HasPrefix(got, "registry.registry.svc.cluster.local:5443/") {
+		t.Fatalf("expected client-go discovered service port in rewritten host, got %q", got)
+	}
+}
+
 func TestDeployRegistry(t *testing.T) {
 
 	t.Run("defaults to docker registry type", func(t *testing.T) {
@@ -1029,6 +1103,15 @@ func swapDefaultKubectlForTest(t *testing.T, exec core.Executor) {
 	t.Helper()
 	t.Cleanup(core.SwapDefaultKubectlClient(core.NewTestKubectlClient(exec)))
 }
+
+func swapRegistryKubernetesClientsForTest(t *testing.T, stub func() (*k8sclient.Clients, error)) {
+	t.Helper()
+	orig := newRegistryKubernetesClients
+	newRegistryKubernetesClients = stub
+	t.Cleanup(func() { newRegistryKubernetesClients = orig })
+}
+
+func int32Ptr(v int32) *int32 { return &v }
 
 func setDefaultPrinterWriter(t *testing.T, w *bytes.Buffer) {
 	t.Helper()
