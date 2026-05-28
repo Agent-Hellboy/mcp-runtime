@@ -1,0 +1,33 @@
+# k3s compatibility: bundled with config/registry/overlays/compatibility/k3s.
+# Applied automatically by setup when the cluster is k3s or runs Traefik in kube-system.
+# See config/registry/overlays/compatibility/README.md.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: registry-allow-ingress-k3s
+  namespace: registry
+  labels:
+    platform.mcpruntime.org/compatibility: k3s
+spec:
+  podSelector:
+    matchLabels:
+      app: registry
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # k3s runs Traefik in kube-system; scope by pod label instead of all kube-system pods.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+        # k3s ≥1.35 kube-router may not refresh namespace-based policy ipsets for new pods.
+        # In-cluster pod CIDRs (k3s 10.42.0.0/16, flannel 10.244.0.0/16) fall under 10.0.0.0/8.
+        # Public ingress remains gated by registry-admin-auth; adjust if your pod CIDR differs.
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - protocol: TCP
+          port: 5000

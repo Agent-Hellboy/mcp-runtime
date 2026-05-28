@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 	"sigs.k8s.io/yaml"
 
+	"mcp-runtime/internal/cli/cluster/registrycompat"
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/pkg/k8sclient"
 
@@ -89,6 +90,10 @@ func deployRegistryClientGo(logger *zap.Logger, namespace string, port int, regi
 	}
 	writeApplyResults(os.Stdout, results)
 
+	if err := applyRegistryCompatibilityOverlay(logger, clients, namespace, manifestPath); err != nil {
+		return err
+	}
+
 	if err := ensureRegistryStorageSizeClientGo(logger, clients, namespace, registryStorageSize); err != nil {
 		return err
 	}
@@ -105,6 +110,43 @@ func deployRegistryClientGo(logger *zap.Logger, namespace string, port int, regi
 		logger.Info("Registry deployed successfully")
 	}
 	_ = port
+	return nil
+}
+
+func applyRegistryCompatibilityOverlay(logger *zap.Logger, clients *k8sclient.Clients, namespace, manifestPath string) error {
+	overlaySubPath := registrycompat.OverlayPath(core.DefaultKubectlClient())
+	if overlaySubPath == "" {
+		return nil
+	}
+	compatPath := registrycompat.ResolveOverlayPath(manifestPath, overlaySubPath)
+	if logger != nil {
+		logger.Info("Applying registry compatibility overlay", zap.String("path", compatPath))
+	}
+	manifest, err := renderRegistryKustomizeManifest(compatPath)
+	if err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrDeployRegistryFailed,
+			err,
+			fmt.Sprintf("failed to render registry compatibility overlay %q: %v", compatPath, err),
+			map[string]any{"namespace": namespace, "manifest_path": compatPath, "component": "registry"},
+		)
+		core.Error("Failed to render registry compatibility overlay")
+		core.LogStructuredError(logger, wrappedErr, "Failed to render registry compatibility overlay")
+		return wrappedErr
+	}
+	results, err := k8sclient.ApplyManifestYAML(context.Background(), clients, []byte(manifest), namespace)
+	if err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrDeployRegistryFailed,
+			err,
+			fmt.Sprintf("failed to apply registry compatibility overlay: %v", err),
+			map[string]any{"namespace": namespace, "manifest_path": compatPath, "component": "registry"},
+		)
+		core.Error("Failed to apply registry compatibility overlay")
+		core.LogStructuredError(logger, wrappedErr, "Failed to apply registry compatibility overlay")
+		return wrappedErr
+	}
+	writeApplyResults(os.Stdout, results)
 	return nil
 }
 
