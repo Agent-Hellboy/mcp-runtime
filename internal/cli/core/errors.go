@@ -333,11 +333,6 @@ func specFor(base error) errorSpec {
 	return errorSpec{code: errx.CodeCLI, description: errx.DescCLI}
 }
 
-// TODO: Consider moving this to pkg/errx as a generic logging utility for errx.Error.
-// The structured logging logic could be useful for other components beyond the CLI.
-// Note: Moving this would require mocking zap.Logger dependencies in tests,
-// which suggests it might be better suited as a library function with a testable interface.
-
 const maxDebugChainBytes = 64 * 1024
 
 func trimDebugChainString(s string) string {
@@ -368,27 +363,12 @@ func logStructuredError(logger *zap.Logger, err error, msg string) {
 	}
 
 	chain := trimDebugChainString(errx.DebugString(err))
-	var errxErr *errx.Error
-	if errors.As(err, &errxErr) {
-		fields := []zap.Field{
-			zap.String("error.code", errxErr.Code()),
-			zap.String("error.category", errxErr.Description()),
-			zap.String("error.message", errxErr.Message()),
-			zap.Error(err),
+	if keysAndValues, ok := errx.LogrKV(err); ok {
+		fields := []zap.Field{zap.Error(err)}
+		for i := 0; i+1 < len(keysAndValues); i += 2 {
+			key, _ := keysAndValues[i].(string)
+			fields = append(fields, zap.Any(key, keysAndValues[i+1]))
 		}
-
-		// Add all context fields as individual zap fields for structured output
-		if ctx := errxErr.Context(); ctx != nil {
-			for key, value := range ctx {
-				fields = append(fields, zap.Any("error.context."+key, value))
-			}
-		}
-
-		// Add cause if present (use distinct field name to avoid duplicate "error" field)
-		if cause := errxErr.Cause(); cause != nil {
-			fields = append(fields, zap.NamedError("error.cause", cause))
-		}
-
 		if chain != "" {
 			fields = append(fields, zap.String("error.debug_chain", chain))
 		}

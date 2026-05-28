@@ -373,8 +373,8 @@ func TestRegistryAuthzChallengesAnonymousRequests(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
-	if got := rec.Header().Get("WWW-Authenticate"); got != registryAuthChallenge {
-		t.Fatalf("WWW-Authenticate = %q, want %q", got, registryAuthChallenge)
+	if got := rec.Header().Get("WWW-Authenticate"); got != `Basic realm="mcp-runtime-registry"` {
+		t.Fatalf("WWW-Authenticate = %q, want registry auth challenge", got)
 	}
 }
 

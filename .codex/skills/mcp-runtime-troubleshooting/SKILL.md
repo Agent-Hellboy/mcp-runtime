@@ -27,7 +27,7 @@ For public k3s / `mcpruntime.org` deploys, also read `.codex/skills/k3s-public-o
 
 ## Full checklist
 
-The symptom → cause → remedy list lives in **[reference.md](reference.md)** (ingress, registry, cert-manager, ImagePullBackOff, UI redirect loops, registry push timeouts, k3s NetworkPolicy, duplicate Traefik, and more).
+Read **[reference.md](reference.md) end-to-end** before diagnosing (ingress, registry, cert-manager, ImagePullBackOff, UI redirect loops, registry push timeouts, k3s NetworkPolicy, duplicate Traefik, and more). Public TLS/DNS detail: `mcp-runtime-platform-public` skill.
 
 ## MCPServer pod / gateway sidecar
 
