@@ -3991,12 +3991,28 @@ if checkpoint_enabled "oauth"; then
 
   echo "[registry] checking public ingress admin auth"
   REGISTRY_PUBLIC_URL="http://127.0.0.1:${TRAEFIK_PORT}/v2/_catalog"
-  REGISTRY_UNAUTH_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: registry.local" "${REGISTRY_PUBLIC_URL}" || true)"
+  REGISTRY_UNAUTH_STATUS=""
+  for attempt in $(seq 1 12); do
+    REGISTRY_UNAUTH_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: registry.local" "${REGISTRY_PUBLIC_URL}" || true)"
+    if [[ "${REGISTRY_UNAUTH_STATUS}" == "401" || "${REGISTRY_UNAUTH_STATUS}" == "403" ]]; then
+      break
+    fi
+    echo "[registry] unauthenticated public registry catalog returned ${REGISTRY_UNAUTH_STATUS:-empty} on attempt ${attempt}/12; retrying"
+    sleep 2
+  done
   if [[ "${REGISTRY_UNAUTH_STATUS}" != "401" && "${REGISTRY_UNAUTH_STATUS}" != "403" ]]; then
     echo "[registry][fail] unauthenticated public registry catalog returned ${REGISTRY_UNAUTH_STATUS}, want 401 or 403" >&2
     exit 1
   fi
-  REGISTRY_ADMIN_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: registry.local" -H "x-api-key: ${API_KEY}" "${REGISTRY_PUBLIC_URL}" || true)"
+  REGISTRY_ADMIN_STATUS=""
+  for attempt in $(seq 1 12); do
+    REGISTRY_ADMIN_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: registry.local" -H "x-api-key: ${API_KEY}" "${REGISTRY_PUBLIC_URL}" || true)"
+    if [[ "${REGISTRY_ADMIN_STATUS}" == "200" ]]; then
+      break
+    fi
+    echo "[registry] admin public registry catalog returned ${REGISTRY_ADMIN_STATUS:-empty} on attempt ${attempt}/12; retrying"
+    sleep 2
+  done
   if [[ "${REGISTRY_ADMIN_STATUS}" != "200" ]]; then
     echo "[registry][fail] admin public registry catalog returned ${REGISTRY_ADMIN_STATUS}, want 200" >&2
     exit 1
