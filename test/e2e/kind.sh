@@ -3943,6 +3943,7 @@ if checkpoint_enabled "oauth"; then
   ensure_traefik_port_forward
   ensure_gateway_port_forward
   port_forward_bg mcp-sentinel loki "${LOKI_PORT}" 3100 "${WORKDIR}/loki-port-forward.log"
+  port_forward_bg mcp-sentinel tempo "${TEMPO_PORT}" 3200 "${WORKDIR}/tempo-port-forward.log"
   if api_service_paths_selected; then
     ensure_api_port_forward
   fi
@@ -3965,6 +3966,7 @@ if checkpoint_enabled "oauth"; then
     wait_ports_parallel \
       "${TRAEFIK_PORT}" \
       "${LOKI_PORT}" \
+      "${TEMPO_PORT}" \
       "${API_METRICS_PORT}" \
       "${INGEST_SERVICE_PORT}" \
       "${INGEST_METRICS_PORT}" \
@@ -3972,7 +3974,7 @@ if checkpoint_enabled "oauth"; then
       "${PROMETHEUS_PORT}" \
       "${SERVER_UPSTREAM_PORT}"
   else
-    wait_ports_parallel "${TRAEFIK_PORT}" "${LOKI_PORT}"
+    wait_ports_parallel "${TRAEFIK_PORT}" "${LOKI_PORT}" "${TEMPO_PORT}"
   fi
   if server_proxy_paths_selected; then
     wait_port "${SERVER_PROXY_PORT}"
@@ -3981,6 +3983,7 @@ if checkpoint_enabled "oauth"; then
     wait_port "${UI_SERVICE_PORT}"
   fi
   wait_http "http://127.0.0.1:${SENTINEL_PORT}/api/stats" "x-api-key: ${API_KEY}"
+  wait_http "http://127.0.0.1:${TEMPO_PORT}/ready"
   wait_http "http://127.0.0.1:${LOKI_PORT}/ready"
   if scenario_selected "observability"; then
     wait_http "http://127.0.0.1:${PROMETHEUS_PORT}/prometheus/-/ready"
