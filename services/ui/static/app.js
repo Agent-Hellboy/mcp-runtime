@@ -34,6 +34,9 @@ let namespaceScopes = [];
 let selectedNamespace = defaults.namespace || "";
 let serverLiveInventoryRefreshTimer = null;
 const serverLiveInventoryRefreshDelayMs = 1200;
+// Persistent open-state map so expanded sections survive filter/search re-renders.
+// Keyed by serverKey → { sections: { label → { open, items[] } }, connectOpen }
+let serverCardOpenState = {};
 
 // API Helper
 async function fetchJSON(path, options = {}) {
@@ -1402,6 +1405,7 @@ function renderSignedOutServerCatalog() {
   publishPolicyCache = null;
   selectedServerKey = "";
   selectedServerEventsCache = [];
+  serverCardOpenState = {};
   renderServerCatalogSummary();
   renderServerDetailPanel(null);
   const grid = document.getElementById("servers-grid");
@@ -1411,13 +1415,14 @@ function renderSignedOutServerCatalog() {
 }
 
 function snapshotOpenDetails(grid) {
-  const state = {};
   grid.querySelectorAll("article.server-card").forEach((card) => {
     const key = card.dataset.serverKey;
     if (!key) return;
     const sections = {};
     card.querySelectorAll("details.inventory-block").forEach((block) => {
-      const label = block.querySelector("summary")?.textContent?.trim() || "";
+      // Use the span child of summary to avoid picking up the <small> count badge
+      const label = block.querySelector("summary span")?.textContent?.trim() || "";
+      if (!label) return;
       const items = [];
       block.querySelectorAll("details.inventory-item").forEach((item) => {
         if (item.open) items.push(item.querySelector("summary strong")?.textContent?.trim() || "");
@@ -1425,17 +1430,17 @@ function snapshotOpenDetails(grid) {
       sections[label] = { open: block.open, items };
     });
     const connectOpen = card.querySelector("details.server-connect")?.open || false;
-    state[key] = { sections, connectOpen };
+    // Merge into the persistent map so off-screen cards keep their state
+    serverCardOpenState[key] = { sections, connectOpen };
   });
-  return state;
 }
 
-function restoreOpenDetails(grid, state) {
+function restoreOpenDetails(grid) {
   grid.querySelectorAll("article.server-card").forEach((card) => {
-    const snap = state[card.dataset.serverKey];
+    const snap = serverCardOpenState[card.dataset.serverKey];
     if (!snap) return;
     card.querySelectorAll("details.inventory-block").forEach((block) => {
-      const label = block.querySelector("summary")?.textContent?.trim() || "";
+      const label = block.querySelector("summary span")?.textContent?.trim() || "";
       const sectionSnap = snap.sections[label];
       if (!sectionSnap) return;
       block.open = sectionSnap.open;
@@ -1469,7 +1474,7 @@ function renderServers() {
     return;
   }
 
-  const openState = snapshotOpenDetails(grid);
+  snapshotOpenDetails(grid);
 
   grid.innerHTML = "";
   const fragment = document.createDocumentFragment();
@@ -1511,7 +1516,7 @@ function renderServers() {
     fragment.appendChild(card);
   });
   grid.appendChild(fragment);
-  restoreOpenDetails(grid, openState);
+  restoreOpenDetails(grid);
   const selected = serversCache.find((server) => serverKey(server) === selectedServerKey);
   renderServerDetailPanel(selected || null);
 }
