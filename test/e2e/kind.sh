@@ -2377,6 +2377,35 @@ path.write_text("\n".join(updated) + "\n", encoding="utf-8")
 PY
 }
 
+verify_server_init_governed_defaults() {
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' RETURN
+
+  "${PROJECT_ROOT}/bin/mcp-runtime" server init "e2e-init-check" \
+    --metadata-dir "${tmp_dir}" \
+    --tag v0.0.1 \
+    --port 8088 \
+    --session-required \
+    --tool aaa-ping \
+    --tool-spec slugify:medium:read \
+    --force
+
+  local file="${tmp_dir}/servers.yaml"
+  local missing=()
+  for pattern in "mode: header" "defaultDecision: deny" "required: true" "enabled: true" "sideEffect: read" "requiredTrust: low"; do
+    if ! grep -q "${pattern}" "${file}"; then
+      missing+=("${pattern}")
+    fi
+  done
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    echo "[error] server init governed defaults missing from servers.yaml: ${missing[*]}" >&2
+    cat "${file}" >&2
+    return 1
+  fi
+  echo "[cli] server init governed defaults: OK"
+}
+
 deploy_example_server_via_pipeline() {
   local server_name="$1"
   local ingress_host="$2"
@@ -3166,6 +3195,7 @@ echo "[cli] checking static command output"
 if deep_request_flows_enabled || scenario_selected "cli-platform"; then
   run_cli_help_sweep
 fi
+run_logged_stage "server init governed defaults" verify_server_init_governed_defaults
 
 PLATFORM_CACHE_READY=0
 if platform_cache_ready; then

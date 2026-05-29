@@ -27,7 +27,7 @@ set -euo pipefail
 #   RESET=1 hack/deploy/mcpruntime-org/multitenancy-test.sh       # delete demo resources via platform API
 #   SKIP_SETUP=1 hack/deploy/mcpruntime-org/multitenancy-test.sh  # only run verification
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+ROOT_DIR="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 BIN="${BIN:-$ROOT_DIR/bin/mcp-runtime}"
 
 if [[ -f "$ROOT_DIR/.env" ]]; then

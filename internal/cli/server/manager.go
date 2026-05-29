@@ -142,6 +142,7 @@ func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, po
 		Route:            "/" + name + "/mcp",
 		Port:             port,
 		Tools:            nil,
+		Auth:             &metadata.AuthConfig{Mode: metadata.AuthModeHeader},
 		Policy: &metadata.PolicyConfig{
 			Mode:            metadata.PolicyMode(policyMode),
 			DefaultDecision: metadata.PolicyDecision(defaultDecision),
