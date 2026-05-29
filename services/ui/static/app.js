@@ -1410,6 +1410,47 @@ function renderSignedOutServerCatalog() {
   }
 }
 
+function snapshotOpenDetails(grid) {
+  const state = {};
+  grid.querySelectorAll("article.server-card").forEach((card) => {
+    const key = card.dataset.serverKey;
+    if (!key) return;
+    const sections = {};
+    card.querySelectorAll("details.inventory-block").forEach((block) => {
+      const label = block.querySelector("summary")?.textContent?.trim() || "";
+      const items = [];
+      block.querySelectorAll("details.inventory-item").forEach((item) => {
+        if (item.open) items.push(item.querySelector("summary strong")?.textContent?.trim() || "");
+      });
+      sections[label] = { open: block.open, items };
+    });
+    const connectOpen = card.querySelector("details.server-connect")?.open || false;
+    state[key] = { sections, connectOpen };
+  });
+  return state;
+}
+
+function restoreOpenDetails(grid, state) {
+  grid.querySelectorAll("article.server-card").forEach((card) => {
+    const snap = state[card.dataset.serverKey];
+    if (!snap) return;
+    card.querySelectorAll("details.inventory-block").forEach((block) => {
+      const label = block.querySelector("summary")?.textContent?.trim() || "";
+      const sectionSnap = snap.sections[label];
+      if (!sectionSnap) return;
+      block.open = sectionSnap.open;
+      if (sectionSnap.items.length) {
+        block.querySelectorAll("details.inventory-item").forEach((item) => {
+          const name = item.querySelector("summary strong")?.textContent?.trim() || "";
+          if (sectionSnap.items.includes(name)) item.open = true;
+        });
+      }
+    });
+    const connect = card.querySelector("details.server-connect");
+    if (connect) connect.open = snap.connectOpen;
+  });
+}
+
 function renderServers() {
   const grid = document.getElementById("servers-grid");
   if (!grid) return;
@@ -1427,6 +1468,8 @@ function renderServers() {
     renderServerDetailPanel(null);
     return;
   }
+
+  const openState = snapshotOpenDetails(grid);
 
   grid.innerHTML = "";
   const fragment = document.createDocumentFragment();
@@ -1468,6 +1511,7 @@ function renderServers() {
     fragment.appendChild(card);
   });
   grid.appendChild(fragment);
+  restoreOpenDetails(grid, openState);
   const selected = serversCache.find((server) => serverKey(server) === selectedServerKey);
   renderServerDetailPanel(selected || null);
 }
