@@ -34,6 +34,9 @@ let namespaceScopes = [];
 let selectedNamespace = defaults.namespace || "";
 let serverLiveInventoryRefreshTimer = null;
 const serverLiveInventoryRefreshDelayMs = 1200;
+// Persistent open-state map so expanded sections survive filter/search re-renders.
+// Keyed by serverKey → { sections: { label → { open, items[] } }, connectOpen }
+let serverCardOpenState = {};
 
 // API Helper
 async function fetchJSON(path, options = {}) {
@@ -1402,12 +1405,55 @@ function renderSignedOutServerCatalog() {
   publishPolicyCache = null;
   selectedServerKey = "";
   selectedServerEventsCache = [];
+  serverCardOpenState = {};
   renderServerCatalogSummary();
   renderServerDetailPanel(null);
   const grid = document.getElementById("servers-grid");
   if (grid) {
     grid.innerHTML = '<div class="server-empty-state">No public catalog is available. Sign in to view organization and private servers.</div>';
   }
+}
+
+function snapshotOpenDetails(grid) {
+  grid.querySelectorAll("article.server-card").forEach((card) => {
+    const key = card.dataset.serverKey;
+    if (!key) return;
+    const sections = {};
+    card.querySelectorAll("details.inventory-block").forEach((block) => {
+      // Use the span child of summary to avoid picking up the <small> count badge
+      const label = block.querySelector("summary span")?.textContent?.trim() || "";
+      if (!label) return;
+      const items = [];
+      block.querySelectorAll("details.inventory-item").forEach((item) => {
+        if (item.open) items.push(item.querySelector("summary strong")?.textContent?.trim() || "");
+      });
+      sections[label] = { open: block.open, items };
+    });
+    const connectOpen = card.querySelector("details.server-connect")?.open || false;
+    // Merge into the persistent map so off-screen cards keep their state
+    serverCardOpenState[key] = { sections, connectOpen };
+  });
+}
+
+function restoreOpenDetails(grid) {
+  grid.querySelectorAll("article.server-card").forEach((card) => {
+    const snap = serverCardOpenState[card.dataset.serverKey];
+    if (!snap) return;
+    card.querySelectorAll("details.inventory-block").forEach((block) => {
+      const label = block.querySelector("summary span")?.textContent?.trim() || "";
+      const sectionSnap = snap.sections[label];
+      if (!sectionSnap) return;
+      block.open = sectionSnap.open;
+      if (sectionSnap.items.length) {
+        block.querySelectorAll("details.inventory-item").forEach((item) => {
+          const name = item.querySelector("summary strong")?.textContent?.trim() || "";
+          if (sectionSnap.items.includes(name)) item.open = true;
+        });
+      }
+    });
+    const connect = card.querySelector("details.server-connect");
+    if (connect) connect.open = snap.connectOpen;
+  });
 }
 
 function renderServers() {
@@ -1427,6 +1473,8 @@ function renderServers() {
     renderServerDetailPanel(null);
     return;
   }
+
+  snapshotOpenDetails(grid);
 
   grid.innerHTML = "";
   const fragment = document.createDocumentFragment();
@@ -1468,6 +1516,7 @@ function renderServers() {
     fragment.appendChild(card);
   });
   grid.appendChild(fragment);
+  restoreOpenDetails(grid);
   const selected = serversCache.find((server) => serverKey(server) === selectedServerKey);
   renderServerDetailPanel(selected || null);
 }
@@ -1898,19 +1947,106 @@ function renderServerEndpoint(server) {
 }
 
 function renderServerConnectConfig(server) {
+  const accessJson = server.access_json || {};
+  const serverName = Object.keys(accessJson.mcpServers || {})[0] || server.name || "mcp-server";
+  const mcpEntry = (accessJson.mcpServers || {})[serverName] || {};
+  const url = mcpEntry.url || server.endpoint || "";
+
+  const tabs = [
+    {
+      id: "claude",
+      label: "Claude Desktop",
+      hint: "Add to ~/Library/Application Support/Claude/claude_desktop_config.json",
+      config: JSON.stringify({ mcpServers: { [serverName]: { type: "http", url } } }, null, 2),
+    },
+    {
+      id: "cursor",
+      label: "Cursor",
+      hint: "Add to ~/.cursor/mcp.json  (or .cursor/mcp.json in your project)",
+      config: JSON.stringify({ mcpServers: { [serverName]: { type: "http", url } } }, null, 2),
+    },
+    {
+      id: "vscode",
+      label: "VS Code",
+      hint: "Add to .vscode/mcp.json in your workspace",
+      config: JSON.stringify(
+        { servers: { [serverName]: { type: "http", url } } },
+        null,
+        2
+      ),
+    },
+    {
+      id: "raw",
+      label: "Raw JSON",
+      hint: "Full access_json blob for any MCP-compatible client",
+      config: JSON.stringify(accessJson, null, 2),
+    },
+  ];
+
   const details = document.createElement("details");
   details.className = "server-connect";
+
   const summary = document.createElement("summary");
   summary.textContent = "Connect config";
   details.appendChild(summary);
 
   const body = document.createElement("div");
   body.className = "server-connect-body";
-  const json = document.createElement("pre");
-  json.className = "access-json";
-  const jsonText = JSON.stringify(server.access_json || {}, null, 2);
-  json.textContent = jsonText;
-  body.appendChild(json);
+
+  // Tab bar
+  const tabBar = document.createElement("div");
+  tabBar.className = "connect-tab-bar";
+
+  // Panels container
+  const panels = document.createElement("div");
+  panels.className = "connect-panels";
+
+  tabs.forEach((tab, i) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "connect-tab-btn" + (i === 0 ? " active" : "");
+    btn.textContent = tab.label;
+    btn.dataset.tabId = tab.id;
+
+    const panel = document.createElement("div");
+    panel.className = "connect-panel" + (i === 0 ? " active" : "");
+    panel.dataset.tabId = tab.id;
+
+    const hint = document.createElement("p");
+    hint.className = "connect-hint";
+    hint.textContent = tab.hint;
+    panel.appendChild(hint);
+
+    const codeWrap = document.createElement("div");
+    codeWrap.className = "connect-code-wrap";
+
+    const pre = document.createElement("pre");
+    pre.className = "access-json";
+    pre.textContent = tab.config;
+    codeWrap.appendChild(pre);
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "ghost connect-copy-btn";
+    copyBtn.textContent = "Copy";
+    copyBtn.addEventListener("click", () => copyTextToClipboard(tab.config, `${tab.label} config copied`));
+    codeWrap.appendChild(copyBtn);
+
+    panel.appendChild(codeWrap);
+    panels.appendChild(panel);
+
+    btn.addEventListener("click", () => {
+      tabBar.querySelectorAll(".connect-tab-btn").forEach((b) => b.classList.remove("active"));
+      panels.querySelectorAll(".connect-panel").forEach((p) => p.classList.remove("active"));
+      btn.classList.add("active");
+      panel.classList.add("active");
+    });
+
+    tabBar.appendChild(btn);
+  });
+
+  body.appendChild(tabBar);
+  body.appendChild(panels);
   details.appendChild(body);
   return details;
 }
