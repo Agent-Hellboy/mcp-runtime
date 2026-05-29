@@ -1285,29 +1285,53 @@ func TestDeployImageRefsEquivalentAcceptsScopedDisplayRefs(t *testing.T) {
 	}
 }
 
-func TestSelectDeployMetadataRequiresExactNameMatch(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), ".mcp")
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	data, err := yaml.Marshal(metadata.RegistryFile{
-		Version: "v1",
-		Servers: []metadata.ServerMetadata{{
-			Name:  "payments",
-			Image: "registry.example.com/acme/payments",
-		}},
-	})
-	if err != nil {
-		t.Fatalf("Marshal() error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "servers.yaml"), data, 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
+func TestSelectDeployMetadataNameMatching(t *testing.T) {
+	writeRegistry := func(t *testing.T, dir string, servers []metadata.ServerMetadata) {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatalf("MkdirAll() error = %v", err)
+		}
+		data, err := yaml.Marshal(metadata.RegistryFile{Version: "v1", Servers: servers})
+		if err != nil {
+			t.Fatalf("Marshal() error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "servers.yaml"), data, 0o600); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
 	}
 
-	if _, err := selectDeployMetadata("payments", "", dir); err != nil {
-		t.Fatalf("selectDeployMetadata(payments) error = %v", err)
-	}
-	if _, err := selectDeployMetadata("typo", "", dir); err == nil {
-		t.Fatal("expected error for mismatched server name")
-	}
+	t.Run("exact match always works", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), ".mcp")
+		writeRegistry(t, dir, []metadata.ServerMetadata{{Name: "payments", Image: "registry.example.com/acme/payments"}})
+		m, err := selectDeployMetadata("payments", "", dir)
+		if err != nil {
+			t.Fatalf("selectDeployMetadata(payments) error = %v", err)
+		}
+		if m.Name != "payments" {
+			t.Fatalf("got name %q, want payments", m.Name)
+		}
+	})
+
+	t.Run("single server fallback when name does not match", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), ".mcp")
+		writeRegistry(t, dir, []metadata.ServerMetadata{{Name: "data-utility-mcp", Image: "data-utility-mcp"}})
+		m, err := selectDeployMetadata("data-utility", "", dir)
+		if err != nil {
+			t.Fatalf("single-server fallback error = %v", err)
+		}
+		if m.Name != "data-utility-mcp" {
+			t.Fatalf("got name %q, want data-utility-mcp", m.Name)
+		}
+	})
+
+	t.Run("multi-server registry requires exact match", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), ".mcp")
+		writeRegistry(t, dir, []metadata.ServerMetadata{
+			{Name: "payments", Image: "registry.example.com/acme/payments"},
+			{Name: "invoices", Image: "registry.example.com/acme/invoices"},
+		})
+		if _, err := selectDeployMetadata("typo", "", dir); err == nil {
+			t.Fatal("expected error for mismatched name with multiple servers")
+		}
+	})
 }

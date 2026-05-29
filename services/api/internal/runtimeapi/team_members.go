@@ -39,6 +39,9 @@ func (s *RuntimeServer) HandleRuntimeTeamItemPath(w http.ResponseWriter, r *http
 	case len(parts) == 2 && parts[1] == "members" && r.Method == http.MethodPost:
 		s.handleRuntimeTeamMemberUpsertLegacy(w, r, p, teamSlug)
 		return
+	case len(parts) == 2 && parts[1] == "users" && r.Method == http.MethodPost:
+		s.handleRuntimeTeamUserCreate(w, r, p, teamSlug)
+		return
 	case len(parts) == 3 && parts[1] == "members" && r.Method == http.MethodPut:
 		s.handleRuntimeTeamMemberUpsert(w, r, p, teamSlug, strings.TrimSpace(parts[2]))
 		return
@@ -141,4 +144,53 @@ func (s *RuntimeServer) handleRuntimeTeamMemberDelete(w http.ResponseWriter, r *
 		"team":    teamSlug,
 		"userID":  userID,
 	})
+}
+
+type teamUserCreateRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Role     string `json:"role"`
+}
+
+// handleRuntimeTeamUserCreate creates a new platform user and immediately adds
+// them to the team. Called by the UI "Add team owner/member" form which sends
+// { email, password, role } to POST /api/runtime/teams/{slug}/users.
+func (s *RuntimeServer) handleRuntimeTeamUserCreate(w http.ResponseWriter, r *http.Request, p principal, teamSlug string) {
+	if p.Role != roleAdmin && p.TeamRole(teamSlug) != teamRoleOwner {
+		writeAPIError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	var req teamUserCreateRequest
+	r.Body = http.MaxBytesReader(w, r.Body, teamApplyMaxBytes)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeBodyDecodeError(w, err)
+		return
+	}
+	req.Email = strings.TrimSpace(req.Email)
+	req.Password = strings.TrimSpace(req.Password)
+	teamRole := strings.TrimSpace(req.Role)
+	if req.Email == "" || req.Password == "" {
+		writeAPIError(w, http.StatusBadRequest, "email and password are required")
+		return
+	}
+	if teamRole == "" {
+		teamRole = teamRoleMember
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	u, err := s.platform.CreatePasswordUser(ctx, req.Email, req.Password, roleUser)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	membership, err := s.platform.UpsertTeamMembership(ctx, teamSlug, u.ID, teamRole)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeAPIError(w, http.StatusNotFound, "team not found")
+			return
+		}
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"user": u, "membership": membership})
 }

@@ -381,6 +381,31 @@
             </section>
           </div>
         </div>
+
+        <div class="panel" id="my-teams-panel">
+          <div class="panel-head">
+            <div>
+              <h2>My Teams</h2>
+              <p class="panel-kicker">Teams you belong to and your role in each.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Team</th>
+                  <th>Namespace</th>
+                  <th>Your Role</th>
+                </tr>
+              </thead>
+              <tbody id="my-teams-body">
+                <tr>
+                  <td colspan="3" class="empty">Loading...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </section>
 
       <!-- User API Keys Tab -->
@@ -436,115 +461,118 @@
       >
         <div class="metrics-grid">
           <div class="metric-card">
-            <span class="metric-label">Teams</span>
+            <span class="metric-label">Total Teams</span>
             <strong class="metric-value" id="teams-total">-</strong>
           </div>
           <div class="metric-card">
-            <span class="metric-label">Members</span>
+            <span class="metric-label">Members in Team</span>
             <strong class="metric-value" id="team-members-total">-</strong>
           </div>
           <div class="metric-card">
-            <span class="metric-label">Selected</span>
+            <span class="metric-label">Active Team</span>
             <strong class="metric-value" id="team-selected-count">-</strong>
           </div>
         </div>
 
-        <div class="ops-two-column">
-          <div class="panel">
-            <div class="panel-head">
-              <div>
-                <h2>Teams</h2>
-                <p class="panel-kicker">Tenant namespaces and team identities.</p>
-              </div>
-              <div class="panel-actions">
-                <button class="ghost" id="refresh-teams" type="button">Refresh</button>
-              </div>
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Team Directory</h2>
+              <p class="panel-kicker">All tenant teams — click a row to inspect its members.</p>
             </div>
-            <form class="governance-form" id="team-create-form">
-              <div class="form-grid">
-                <label>
-                  Slug
-                  <input type="text" id="team-create-slug" autocomplete="off" required />
-                </label>
-                <label>
-                  Name
-                  <input type="text" id="team-create-name" autocomplete="off" />
-                </label>
-              </div>
-              <p id="team-create-error" class="form-error hidden" role="alert"></p>
-              <div class="form-actions">
-                <button class="primary" type="submit">Create Team</button>
-              </div>
-            </form>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Team</th>
-                    <th>Namespace</th>
-                    <th>ID</th>
-                    <th>Created</th>
-                  </tr>
-                </thead>
-                <tbody id="teams-body">
-                  <tr>
-                    <td colspan="4" class="empty">Loading teams...</td>
-                  </tr>
-                </tbody>
-              </table>
+            <div class="panel-actions">
+              <button class="ghost" id="show-team-create-form" type="button">+ New Team</button>
+              <button class="ghost" id="refresh-teams" type="button">Refresh</button>
             </div>
           </div>
+          <form class="governance-form hidden" id="team-create-form">
+            <div class="form-grid">
+              <label>
+                Slug
+                <input type="text" id="team-create-slug" autocomplete="off" placeholder="e.g. acme" required />
+              </label>
+              <label>
+                Display Name
+                <input type="text" id="team-create-name" autocomplete="off" placeholder="e.g. Acme Corp" />
+              </label>
+            </div>
+            <p id="team-create-error" class="form-error hidden" role="alert"></p>
+            <div class="form-actions">
+              <button class="ghost" id="cancel-team-create-form" type="button">Cancel</button>
+              <button class="primary" type="submit">Create Team</button>
+            </div>
+          </form>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Team</th>
+                  <th>Namespace</th>
+                  <th>ID</th>
+                  <th>Created</th>
+                </tr>
+              </thead>
+              <tbody id="teams-body">
+                <tr>
+                  <td colspan="4" class="empty">Loading teams...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
 
-          <div class="panel">
-            <div class="panel-head">
-              <div>
-                <h2>Team Users</h2>
-                <p class="panel-kicker">Password-login users and team membership.</p>
-              </div>
-              <div class="panel-actions">
-                <select id="team-user-team" aria-label="Select team"></select>
-              </div>
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Team Members</h2>
+              <p class="panel-kicker" id="team-members-kicker">Select a team above to view and manage its members.</p>
             </div>
-            <form class="governance-form" id="team-user-form">
-              <div class="form-grid">
-                <label>
-                  Email
-                  <input type="email" id="team-user-email" autocomplete="username" required />
-                </label>
-                <label>
-                  Password
-                  <input type="password" id="team-user-password" autocomplete="new-password" required />
-                </label>
-                <label>
-                  Team Role
-                  <select id="team-user-role">
-                    <option value="member" selected>member</option>
-                    <option value="owner">owner</option>
-                  </select>
-                </label>
-              </div>
-              <p id="team-user-error" class="form-error hidden" role="alert"></p>
-              <div class="form-actions">
-                <button class="primary" type="submit">Create User</button>
-              </div>
-            </form>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>User</th>
-                    <th>Role</th>
-                    <th>User ID</th>
-                    <th>Added</th>
-                  </tr>
-                </thead>
-                <tbody id="team-members-body">
-                  <tr>
-                    <td colspan="4" class="empty">Select a team.</td>
-                  </tr>
-                </tbody>
-              </table>
+            <div class="panel-actions">
+              <select id="team-user-team" aria-label="Select team"></select>
+              <button class="ghost" id="show-team-user-form" type="button">+ Add Member</button>
             </div>
+          </div>
+          <form class="governance-form hidden" id="team-user-form">
+            <div class="form-grid">
+              <label>
+                Email
+                <input type="email" id="team-user-email" autocomplete="username" placeholder="user@example.com" required />
+              </label>
+              <label>
+                Password
+                <input type="password" id="team-user-password" autocomplete="new-password" required />
+              </label>
+              <label>
+                Team Role
+                <select id="team-user-role">
+                  <option value="member" selected>Member</option>
+                  <option value="owner">Owner</option>
+                </select>
+              </label>
+            </div>
+            <p id="team-user-error" class="form-error hidden" role="alert"></p>
+            <div class="form-actions">
+              <button class="ghost" id="cancel-team-user-form" type="button">Cancel</button>
+              <button class="primary" type="submit">Add Member</button>
+            </div>
+          </form>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Role</th>
+                  <th>User ID</th>
+                  <th>Added</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="team-members-body">
+                <tr>
+                  <td colspan="5" class="empty">Select a team.</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </section>

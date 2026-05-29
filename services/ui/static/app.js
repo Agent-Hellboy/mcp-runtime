@@ -1091,6 +1091,7 @@ async function loadUserDashboard() {
     showAuthModal();
     return;
   }
+  renderMyTeams();
   await Promise.allSettled([loadUserDashboardServers(), loadUserDashboardAnalytics()]);
   renderUserDashboardSummary();
 }
@@ -2695,7 +2696,7 @@ async function loadTeamMembers() {
     renderTeamMembers();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
-    const message = `Failed to load team users: ${readErrorMessage(err, "request failed")}`;
+    const message = `Failed to load team members: ${readErrorMessage(err, "request failed")}`;
     teamMembersCache = [];
     renderTeamMembers();
     setInlineError("team-user-error", message);
@@ -2718,12 +2719,15 @@ function renderTeams() {
   const fragment = document.createDocumentFragment();
   teamsCache.forEach((team) => {
     const row = document.createElement("tr");
+    if (team.slug === selectedTeamSlug) row.classList.add("selected");
     row.appendChild(createIdentityCell(team.name || team.slug || "-", team.slug || ""));
     row.appendChild(createTextCell(team.namespace || "-"));
     row.appendChild(createCodeCell(team.id || "-"));
     row.appendChild(createTextCell(formatDateTime(team.created_at)));
+    row.style.cursor = "pointer";
     row.addEventListener("click", () => {
       selectedTeamSlug = team.slug || "";
+      renderTeams();
       renderTeamSelect();
       loadTeamMembers();
     });
@@ -2747,11 +2751,15 @@ function renderTeamSelect() {
   teamsCache.forEach((team) => {
     const option = document.createElement("option");
     option.value = team.slug || "";
-    option.textContent = `${team.slug || "-"} / ${team.namespace || "-"}`;
+    option.textContent = team.name || team.slug || "-";
     select.appendChild(option);
   });
   select.disabled = false;
   select.value = selectedTeamSlug;
+  const kicker = document.getElementById("team-members-kicker");
+  if (kicker && selectedTeamSlug) {
+    kicker.textContent = `Members of "${selectedTeamSlug}" — click a team above to switch.`;
+  }
 }
 
 function renderTeamMembers() {
@@ -2761,11 +2769,11 @@ function renderTeamMembers() {
   const tbody = document.getElementById("team-members-body");
   if (!tbody) return;
   if (!selectedTeamSlug) {
-    tbody.innerHTML = '<tr><td colspan="4" class="empty">Select a team.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">Select a team above.</td></tr>';
     return;
   }
   if (!teamMembersCache.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="empty">No users in this team.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No members in this team.</td></tr>';
     return;
   }
   tbody.innerHTML = "";
@@ -2776,6 +2784,80 @@ function renderTeamMembers() {
     row.appendChild(createBadgeCell(member.role || "member", member.role === "owner" ? "badge-warning" : "badge-muted"));
     row.appendChild(createCodeCell(member.user_id || "-"));
     row.appendChild(createTextCell(formatDateTime(member.created_at)));
+
+    const actionsCell = document.createElement("td");
+    actionsCell.style.whiteSpace = "nowrap";
+    if (isAdminUser() || (authPrincipal?.teams || []).some((t) => t.slug === selectedTeamSlug && t.role === "owner")) {
+      const promoteLabel = member.role === "owner" ? "Set Member" : "Make Owner";
+      const promoteBtn = document.createElement("button");
+      promoteBtn.type = "button";
+      promoteBtn.className = "ghost action-btn";
+      promoteBtn.textContent = promoteLabel;
+      promoteBtn.addEventListener("click", () =>
+        setTeamMemberRole(selectedTeamSlug, member.user_id, member.role === "owner" ? "member" : "owner")
+      );
+      actionsCell.appendChild(promoteBtn);
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "ghost action-btn danger";
+      removeBtn.textContent = "Remove";
+      removeBtn.style.marginLeft = "6px";
+      removeBtn.addEventListener("click", () => removeTeamMember(selectedTeamSlug, member.user_id, member.email));
+      actionsCell.appendChild(removeBtn);
+    } else {
+      actionsCell.appendChild(document.createTextNode("—"));
+    }
+    row.appendChild(actionsCell);
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+async function setTeamMemberRole(teamSlug, userID, newRole) {
+  try {
+    await fetchJSON(`/runtime/teams/${encodePathSegment(teamSlug)}/members/${encodePathSegment(userID)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: newRole }),
+    });
+    showToast(`Role updated to "${newRole}"`);
+    await loadTeamMembers();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    showToast(`Failed to update role: ${readErrorMessage(err, "request failed")}`, "error");
+  }
+}
+
+async function removeTeamMember(teamSlug, userID, email) {
+  if (!confirm(`Remove ${email || userID} from team "${teamSlug}"?`)) return;
+  try {
+    await fetchJSON(`/runtime/teams/${encodePathSegment(teamSlug)}/members/${encodePathSegment(userID)}`, {
+      method: "DELETE",
+    });
+    showToast(`Removed ${email || userID} from ${teamSlug}`);
+    await loadTeamMembers();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    showToast(`Failed to remove member: ${readErrorMessage(err, "request failed")}`, "error");
+  }
+}
+
+function renderMyTeams() {
+  const tbody = document.getElementById("my-teams-body");
+  if (!tbody) return;
+  const teams = authPrincipal?.teams || [];
+  if (!teams.length) {
+    tbody.innerHTML = '<tr><td colspan="3" class="empty">You are not a member of any team.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  teams.forEach((team) => {
+    const row = document.createElement("tr");
+    row.appendChild(createIdentityCell(team.name || team.slug || "-", team.slug || ""));
+    row.appendChild(createTextCell(team.namespace || "-"));
+    row.appendChild(createBadgeCell(team.role || "member", team.role === "owner" ? "badge-warning" : "badge-muted"));
     fragment.appendChild(row);
   });
   tbody.appendChild(fragment);
@@ -2804,6 +2886,7 @@ async function createTeam(event) {
     showToast(`Team "${slug}" created`);
     selectedTeamSlug = slug;
     document.getElementById("team-create-form")?.reset();
+    document.getElementById("team-create-form")?.classList.add("hidden");
     await loadNamespaceScopes();
     await loadTeams();
   } catch (err) {
@@ -2842,10 +2925,12 @@ async function createTeamUser(event) {
     selectedTeamSlug = team;
     const passwordInput = document.getElementById("team-user-password");
     if (passwordInput) passwordInput.value = "";
+    document.getElementById("team-user-email") && (document.getElementById("team-user-email").value = "");
+    document.getElementById("team-user-form")?.classList.add("hidden");
     await loadTeamMembers();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
-    const message = `Failed to create team user: ${readErrorMessage(err, "request failed")}`;
+    const message = `Failed to add team member: ${readErrorMessage(err, "request failed")}`;
     setInlineError("team-user-error", message);
     showToast(message, "error");
   } finally {
@@ -2868,7 +2953,7 @@ function resetTeams() {
   }
   const membersBody = document.getElementById("team-members-body");
   if (membersBody) {
-    membersBody.innerHTML = '<tr><td colspan="4" class="empty">Select a team.</td></tr>';
+    membersBody.innerHTML = '<tr><td colspan="5" class="empty">Select a team.</td></tr>';
   }
   renderTeamSelect();
 }
@@ -2877,8 +2962,30 @@ function initTeams() {
   document.getElementById("refresh-teams")?.addEventListener("click", loadTeams);
   document.getElementById("team-create-form")?.addEventListener("submit", createTeam);
   document.getElementById("team-user-form")?.addEventListener("submit", createTeamUser);
+
+  document.getElementById("show-team-create-form")?.addEventListener("click", () => {
+    const form = document.getElementById("team-create-form");
+    form?.classList.toggle("hidden");
+    setInlineError("team-create-error");
+  });
+  document.getElementById("cancel-team-create-form")?.addEventListener("click", () => {
+    document.getElementById("team-create-form")?.classList.add("hidden");
+    setInlineError("team-create-error");
+  });
+
+  document.getElementById("show-team-user-form")?.addEventListener("click", () => {
+    const form = document.getElementById("team-user-form");
+    form?.classList.toggle("hidden");
+    setInlineError("team-user-error");
+  });
+  document.getElementById("cancel-team-user-form")?.addEventListener("click", () => {
+    document.getElementById("team-user-form")?.classList.add("hidden");
+    setInlineError("team-user-error");
+  });
+
   document.getElementById("team-user-team")?.addEventListener("change", (event) => {
     selectedTeamSlug = event.target.value || "";
+    renderTeams();
     loadTeamMembers();
   });
 }
