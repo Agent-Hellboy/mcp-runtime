@@ -6,14 +6,10 @@ cluster-creation guide in [k3s-on-prem-cluster.md](k3s-on-prem-cluster.md).
 
 ## Reference cluster
 
-| Node | Role | Public IP |
-|------|------|-----------|
-| `mcp-platform-large` | k3s control-plane | 103.181.176.28 |
-| `mcp-platform-live` | worker (DNS target) | 103.181.177.16 |
-| `mcp-worker-small-1` | worker | 103.181.176.46 |
-| `mcp-docs-site` | worker (scheduling disabled) | 103.182.102.123 |
-
-DNS wildcard: `*.mcpruntime.org → 103.181.177.16`
+A four-node k3s cluster: one control-plane node and three workers (one of which
+has scheduling disabled). DNS wildcard `*.mcpruntime.org` points to the primary
+worker node. Node names and IPs are internal — check your KUBECONFIG or
+`kubectl get nodes` for the actual addresses.
 
 ## Prerequisites
 
