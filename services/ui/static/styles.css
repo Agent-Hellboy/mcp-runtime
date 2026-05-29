@@ -1691,6 +1691,66 @@ tr:hover td {
   font-size: 12px;
 }
 
+.connect-tab-bar {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.connect-tab-btn {
+  background: none;
+  border: 1px solid rgba(247, 245, 239, 0.15);
+  border-radius: 6px;
+  color: var(--text-muted, rgba(247, 245, 239, 0.55));
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.connect-tab-btn:hover {
+  background: rgba(247, 245, 239, 0.08);
+  color: var(--text);
+}
+
+.connect-tab-btn.active {
+  background: rgba(247, 245, 239, 0.12);
+  border-color: rgba(247, 245, 239, 0.35);
+  color: var(--text);
+}
+
+.connect-panel {
+  display: none;
+}
+
+.connect-panel.active {
+  display: block;
+}
+
+.connect-hint {
+  color: var(--text-muted, rgba(247, 245, 239, 0.55));
+  font-size: 11px;
+  margin: 6px 0 6px;
+}
+
+.connect-code-wrap {
+  position: relative;
+}
+
+.connect-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 11px;
+  padding: 3px 8px;
+  opacity: 0.7;
+}
+
+.connect-copy-btn:hover {
+  opacity: 1;
+}
+
 .toast-message {
   flex: 1;
   font-size: 14px;
