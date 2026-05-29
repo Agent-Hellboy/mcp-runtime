@@ -2380,7 +2380,7 @@ PY
 verify_server_init_governed_defaults() {
   local tmp_dir
   tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "${tmp_dir}"' RETURN
+  trap 'rm -rf "${tmp_dir:-}"; trap - RETURN' RETURN
 
   "${PROJECT_ROOT}/bin/mcp-runtime" server init "e2e-init-check" \
     --metadata-dir "${tmp_dir}" \
