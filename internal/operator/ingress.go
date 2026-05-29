@@ -27,7 +27,7 @@ func (r *MCPServerReconciler) reconcileIngress(ctx context.Context, mcpServer *m
 		pathType := networkingv1.PathTypePrefix
 		ingressClassName := mcpServer.Spec.IngressClass
 		if ingressClassName == "" {
-			ingressClassName = "traefik" // Default to traefik
+			ingressClassName = DefaultIngressClass
 		}
 
 		ingress.Spec = networkingv1.IngressSpec{
@@ -136,7 +136,7 @@ func (r *MCPServerReconciler) buildIngressAnnotations(mcpServer *mcpv1alpha1.MCP
 	// Add controller-specific annotations based on ingress class
 	ingressClass := mcpServer.Spec.IngressClass
 	if ingressClass == "" {
-		ingressClass = "traefik" // Default to traefik
+		ingressClass = DefaultIngressClass
 	}
 
 	switch ingressClass {

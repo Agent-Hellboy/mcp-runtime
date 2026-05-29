@@ -10,6 +10,7 @@ import (
 	"mcp-runtime/pkg/publishscope"
 	"mcp-runtime/pkg/serviceutil"
 	"mcp-sentinel-api/internal/apiauth"
+	"mcp-sentinel-api/internal/platformstore"
 )
 
 const authChallenge = `Basic realm="mcp-runtime-registry"`
@@ -126,8 +127,8 @@ func PrincipalCanAccessRegistryScope(p apiauth.Principal, scope string, cfg *Aut
 		if cfg.catalogScopeWritable(scope) {
 			return true
 		}
-		if scope == publishscope.PublicRegistryAlias && cfg.sharedCatalogWritableForUsers() {
-			return true
+		if scope == platformstore.SharedCatalogNamespace && !cfg.sharedCatalogWritableForUsers() {
+			return false
 		}
 	}
 	for _, team := range p.Teams {
@@ -136,6 +137,18 @@ func PrincipalCanAccessRegistryScope(p apiauth.Principal, scope string, cfg *Aut
 		}
 	}
 	return false
+}
+
+// PrincipalCanAccessRegistryPath resolves the repository scope from the forwarded registry path.
+func PrincipalCanAccessRegistryPath(p apiauth.Principal, r *http.Request, cfg *AuthzConfig) bool {
+	scope, ok := RegistryPathScope(r)
+	if !ok {
+		return false
+	}
+	if scope == "" {
+		return true
+	}
+	return PrincipalCanAccessRegistryScope(p, scope, cfg)
 }
 
 func (cfg *AuthzConfig) catalogScopeWritable(scope string) bool {
