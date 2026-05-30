@@ -552,6 +552,102 @@ func CheckCertificate(ctx context.Context, clients *Clients, namespace, name str
 	return err
 }
 
+// GetCertificateDNSNames returns the spec.dnsNames from a cert-manager Certificate.
+// Returns nil, nil when the Certificate does not exist or cert-manager CRDs are not installed.
+func GetCertificateDNSNames(ctx context.Context, clients *Clients, namespace, name string) ([]string, error) {
+	cert, err := clients.Dynamic.Resource(certificateGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, nil // not found or CRDs absent — nothing to check
+	}
+	names, _, _ := unstructured.NestedStringSlice(cert.Object, "spec", "dnsNames")
+	return names, nil
+}
+
+var certificateRequestGVR = schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "certificaterequests"}
+
+// IsNamespaceTerminating returns true when the namespace exists and is stuck in
+// Terminating phase (deletionTimestamp set). Returns false when the namespace
+// does not exist or is healthy.
+func IsNamespaceTerminating(ctx context.Context, clients *Clients, name string) (bool, error) {
+	ns, err := clients.Clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return ns.DeletionTimestamp != nil, nil
+}
+
+// IsCRDTerminating returns true when the named CRD exists and has a
+// deletionTimestamp (stuck in Terminating). Returns false when not found.
+func IsCRDTerminating(ctx context.Context, clients *Clients, name string) (bool, error) {
+	obj, err := clients.Dynamic.Resource(crdGVR).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return obj.GetDeletionTimestamp() != nil, nil
+}
+
+// SecretExists returns true when the named Secret exists in namespace.
+func SecretExists(ctx context.Context, clients *Clients, namespace, name string) (bool, error) {
+	_, err := clients.Clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// IsJobFailed returns true when the named Job exists and has at least one
+// failed condition, meaning it will not self-recover. Returns false when the
+// Job does not exist or its status cannot be determined.
+func IsJobFailed(ctx context.Context, clients *Clients, namespace, name string) (bool, error) {
+	job, err := clients.Clientset.BatchV1().Jobs(namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, c := range job.Status.Conditions {
+		if string(c.Type) == "Failed" && c.Status == "True" {
+			return true, nil
+		}
+	}
+	// Also treat a job that has exhausted backoffLimit (Failed pods > 0, no active) as failed.
+	return job.Status.Failed > 0 && job.Status.Active == 0 && job.Status.Succeeded == 0, nil
+}
+
+// ListFailedCertificateRequestNames returns names of CertificateRequests in namespace
+// whose Ready condition is False. Returns nil when the namespace or CRDs don't exist.
+func ListFailedCertificateRequestNames(ctx context.Context, clients *Clients, namespace string) ([]string, error) {
+	list, err := clients.Dynamic.Resource(certificateRequestGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, nil // namespace absent or CRDs not installed
+	}
+	var failed []string
+	for _, item := range list.Items {
+		conditions, _, _ := unstructured.NestedSlice(item.Object, "status", "conditions")
+		for _, raw := range conditions {
+			cond, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if cond["type"] == "Ready" && cond["status"] == "False" {
+				failed = append(failed, item.GetName())
+				break
+			}
+		}
+	}
+	return failed, nil
+}
+
 func CertificateOwnersForSecret(ctx context.Context, clients *Clients, namespace, secretName string) ([]string, error) {
 	list, err := clients.Dynamic.Resource(certificateGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {

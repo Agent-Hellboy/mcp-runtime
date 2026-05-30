@@ -189,6 +189,7 @@ func (s verifyStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) e
 func buildSetupSteps(ctx *SetupContext) []SetupStep {
 	catalogMode := setupplan.CatalogNamespaceForPlatformMode(ctx.Plan.PlatformMode) != ""
 	return NewSetupPipeline().
+		With(preflightStep{}).
 		With(clusterStep{}).
 		WithIf(catalogMode, catalogNamespaceStep{}).
 		WithIf(ctx.Plan.TLSEnabled, tlsStep{}).
