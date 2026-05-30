@@ -2,9 +2,11 @@
 package setup
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
@@ -12,6 +14,25 @@ import (
 	setupplan "mcp-runtime/internal/cli/setup/plan"
 	setupplatform "mcp-runtime/internal/cli/setup/platform"
 )
+
+// loadEnvFile reads KEY=VALUE pairs from path and sets any that are not already
+// present in the process environment. Explicit env vars and CLI flags always
+// take precedence over values in the file.
+func loadEnvFile(path string) error {
+	// #nosec G304 -- path is an explicit user-supplied CLI flag value.
+	envs, err := godotenv.Read(path)
+	if err != nil {
+		return err
+	}
+	for key, val := range envs {
+		if _, exists := os.LookupEnv(key); !exists {
+			if err := os.Setenv(key, val); err != nil {
+				return fmt.Errorf("setting %s: %w", key, err)
+			}
+		}
+	}
+	return nil
+}
 
 type manager struct {
 	logger     *zap.Logger
@@ -26,6 +47,7 @@ func newManager(runtime *core.Runtime, clusterMgr setupplatform.ClusterManagerAP
 // uses for cluster init and ingress configuration; it is supplied by the
 // composition root so setup does not import the cluster command package.
 func New(runtime *core.Runtime, clusterMgr setupplatform.ClusterManagerAPI) *cobra.Command {
+	var envFile string
 	var registryType string
 	var registryStorageSize string
 	var registryMode string
@@ -65,6 +87,11 @@ func New(runtime *core.Runtime, clusterMgr setupplatform.ClusterManagerAPI) *cob
 The platform deploys an internal Docker registry by default, which teams
 will use to push and pull container images.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if envFile != "" {
+				if err := loadEnvFile(envFile); err != nil {
+					return fmt.Errorf("--env-file %s: %w", envFile, err)
+				}
+			}
 			if err := setupplatform.ValidateStorageMode(storageMode); err != nil {
 				return err
 			}
@@ -144,6 +171,7 @@ will use to push and pull container images.`,
 		},
 	}
 
+	cmd.Flags().StringVar(&envFile, "env-file", "", "Path to an env file to source before setup (e.g. config/deployments/mcpruntime-org.env); variables already in the environment are not overridden")
 	cmd.Flags().StringVar(&registryType, "registry-type", "docker", "Registry type (docker; harbor coming soon)")
 	cmd.Flags().StringVar(&registryStorageSize, "registry-storage", "20Gi", "Registry storage size (default: 20Gi)")
 	cmd.Flags().StringVar(&registryMode, "registry-mode", "auto", "Registry setup mode (auto|bundled-http|bundled-https|external). auto uses a provisioned registry config when present, otherwise the bundled registry")
