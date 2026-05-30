@@ -2,11 +2,11 @@
 package setup
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
@@ -19,38 +19,19 @@ import (
 // present in the process environment. Explicit env vars and CLI flags always
 // take precedence over values in the file.
 func loadEnvFile(path string) error {
-	f, err := os.Open(path) // #nosec G304 -- path is an explicit user-supplied CLI flag value.
+	// #nosec G304 -- path is an explicit user-supplied CLI flag value.
+	envs, err := godotenv.Read(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = strings.TrimPrefix(line, "export ")
-		idx := strings.IndexByte(line, '=')
-		if idx < 0 {
-			continue
-		}
-		key := strings.TrimSpace(line[:idx])
-		val := strings.TrimSpace(line[idx+1:])
-		if len(val) >= 2 && (val[0] == '"' || val[0] == '\'') && val[len(val)-1] == val[0] {
-			val = val[1 : len(val)-1]
-		}
-		if key == "" {
-			continue
-		}
+	for key, val := range envs {
 		if _, exists := os.LookupEnv(key); !exists {
 			if err := os.Setenv(key, val); err != nil {
 				return fmt.Errorf("setting %s: %w", key, err)
 			}
 		}
 	}
-	return scanner.Err()
+	return nil
 }
 
 type manager struct {
