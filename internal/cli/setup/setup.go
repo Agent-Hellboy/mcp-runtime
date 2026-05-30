@@ -19,7 +19,7 @@ import (
 // present in the process environment. Explicit env vars and CLI flags always
 // take precedence over values in the file.
 func loadEnvFile(path string) error {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- path is an explicit user-supplied CLI flag value.
 	if err != nil {
 		return err
 	}
