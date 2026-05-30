@@ -63,7 +63,7 @@ func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 				oauthResult.Reason,
 				policypkg.ChoosePolicyVersion(policypkg.PolicyVersion(policy), s.defaultPolicyVersion),
 			)
-			s.writeDeniedResponse(recorder, r, originalPath, rpcMethod, toolName, authCtx, policy, decision, start)
+			s.writeDeniedResponse(recorder, r, originalPath, rpcMethod, toolName, authCtx, policy, decision, start, inspection.IsRPCAttempt)
 			return
 		}
 	}
@@ -92,7 +92,7 @@ func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !decision.Allowed {
-		s.writeDeniedResponse(recorder, r, originalPath, rpcMethod, toolName, authCtx, policy, decision, start)
+		s.writeDeniedResponse(recorder, r, originalPath, rpcMethod, toolName, authCtx, policy, decision, start, inspection.IsRPCAttempt)
 		return
 	}
 
@@ -134,6 +134,7 @@ func (s *gatewayServer) writeDeniedResponse(
 	policy *policypkg.Document,
 	decision policypkg.Decision,
 	start time.Time,
+	isRPCAttempt bool,
 ) {
 	recorder.Header().Set("content-type", "application/json")
 	if shouldChallengeOAuth(policy, decision) {
@@ -143,7 +144,10 @@ func (s *gatewayServer) writeDeniedResponse(
 	decision.Status = status
 	recorder.WriteHeader(status)
 	_ = json.NewEncoder(recorder).Encode(gatewayDeniedPayload(policy, decision))
-	if rpcMethod != "" {
+	// Audit when we have an rpcMethod (tool call) OR when the request was a
+	// genuine MCP attempt (application/json content-type) but parsing failed.
+	// Non-RPC noise (text/plain probes, GET health checks) is not audited.
+	if rpcMethod != "" || isRPCAttempt {
 		s.emitAuditEvent(r, originalPath, rpcMethod, toolName, authCtx, policy, decision, recorder.status, time.Since(start).Milliseconds(), recorder.bytes)
 	}
 }

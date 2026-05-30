@@ -31,6 +31,10 @@ type rpcInspection struct {
 	ToolCall      bool
 	Indeterminate bool
 	FailureReason string
+	// IsRPCAttempt is true when the request had application/json content-type
+	// (or no content-type) and is therefore a genuine MCP client attempt that
+	// should be audited even when Method could not be extracted.
+	IsRPCAttempt bool
 }
 
 type oauthProvider struct {

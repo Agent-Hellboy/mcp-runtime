@@ -736,6 +736,57 @@ func TestHandleGatewayDoesNotAuditDeniedNonRPCRequests(t *testing.T) {
 	}
 }
 
+func TestHandleGatewayAuditsDeniedJSONRPCAttempts(t *testing.T) {
+	t.Parallel()
+
+	var analyticsHits int32
+	ingest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		atomic.AddInt32(&analyticsHits, 1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(ingest.Close)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+
+	target, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+
+	proxy := &gatewayServer{
+		proxy:                 newUpstreamReverseProxy(target),
+		httpClient:            ingest.Client(),
+		analyticsURL:          ingest.URL,
+		defaultHumanHeader:    defaultHumanHeader,
+		defaultAgentHeader:    defaultAgentHeader,
+		defaultTeamHeader:     defaultTeamHeader,
+		defaultSessionHeader:  defaultSessionHeader,
+		defaultPolicyMode:     defaultPolicyMode,
+		defaultPolicyDecision: defaultPolicyDecision,
+		defaultPolicyVersion:  "test-policy",
+		oauthProviders:        map[string]*oauthProvider{},
+	}
+	proxy.startAnalyticsDispatcher()
+
+	// POST with application/json but malformed body — this is a genuine MCP client
+	// attempt (rpc_inspection_failed) and must produce an audit event.
+	body := `not valid json`
+	req := httptest.NewRequest(http.MethodPost, "http://gateway.example.local/mcp", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.ContentLength = int64(len(body))
+	proxy.handleGateway(httptest.NewRecorder(), req)
+
+	proxy.stopAnalyticsDispatcher()
+
+	if got := atomic.LoadInt32(&analyticsHits); got != 1 {
+		t.Fatalf("analytics events emitted for denied JSON-RPC attempt = %d, want 1", got)
+	}
+}
+
 func TestHandleGatewayAuditsRPCRequests(t *testing.T) {
 	t.Parallel()
 

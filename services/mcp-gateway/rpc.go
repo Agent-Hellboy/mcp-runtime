@@ -25,27 +25,31 @@ func inspectRPCRequest(r *http.Request) rpcInspection {
 	}
 	contentType := strings.ToLower(r.Header.Get("content-type"))
 	if contentType != "" && !strings.Contains(contentType, "application/json") {
+		// Clearly not a JSON-RPC client (e.g. text/plain probe). Not an audit-worthy
+		// MCP attempt.
 		return rpcInspection{Indeterminate: true, FailureReason: "rpc_inspection_failed"}
 	}
+	// From here on the content-type is JSON (or absent), so treat failures as
+	// genuine MCP client attempts that should produce audit events.
 	if r.Body == nil || r.ContentLength == 0 || r.ContentLength > maxRPCBodyBytes {
-		return rpcInspection{Indeterminate: true, FailureReason: "rpc_inspection_failed"}
+		return rpcInspection{Indeterminate: true, FailureReason: "rpc_inspection_failed", IsRPCAttempt: true}
 	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxRPCBodyBytes+1))
 	if err != nil {
-		return rpcInspection{Indeterminate: true, FailureReason: "rpc_inspection_failed"}
+		return rpcInspection{Indeterminate: true, FailureReason: "rpc_inspection_failed", IsRPCAttempt: true}
 	}
 	if len(body) == 0 || len(body) > maxRPCBodyBytes {
-		return rpcInspection{Indeterminate: true, FailureReason: "rpc_inspection_failed"}
+		return rpcInspection{Indeterminate: true, FailureReason: "rpc_inspection_failed", IsRPCAttempt: true}
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 
 	var req rpcRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		return rpcInspection{Indeterminate: true, FailureReason: "rpc_inspection_failed"}
+		return rpcInspection{Indeterminate: true, FailureReason: "rpc_inspection_failed", IsRPCAttempt: true}
 	}
 	if strings.TrimSpace(req.Method) == "" {
-		return rpcInspection{Indeterminate: true, FailureReason: "rpc_inspection_failed"}
+		return rpcInspection{Indeterminate: true, FailureReason: "rpc_inspection_failed", IsRPCAttempt: true}
 	}
 
 	var toolName string
