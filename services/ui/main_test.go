@@ -91,14 +91,14 @@ func TestStaticAppHidesPersonalActivityForAdmins(t *testing.T) {
 		t.Fatalf("read static index: %v", err)
 	}
 	html := string(index)
-	if !strings.Contains(html, "My Activity") {
-		t.Fatal("personal user dashboard tab should be named My Activity")
+	if !strings.Contains(html, "Activity") {
+		t.Fatal("personal user dashboard tab should be named Activity")
 	}
-	if strings.Contains(html, "My Dashboard") {
-		t.Fatal("personal user dashboard tab should not use the generic My Dashboard label")
+	if strings.Contains(html, "My Activity") {
+		t.Fatal("personal user dashboard tab should not use the verbose My Activity label")
 	}
-	if got := strings.Count(html, "Server Catalog"); got < 2 {
-		t.Fatalf("expected navigation and panel to use Server Catalog, got %d occurrences", got)
+	if got := strings.Count(html, "Servers"); got < 2 {
+		t.Fatalf("expected navigation and panel to use Servers, got %d occurrences", got)
 	}
 	if got := strings.Count(html, `data-user-only="true"`); got < 2 {
 		t.Fatalf("expected tab button and panel to be marked user-only, got %d markers", got)
