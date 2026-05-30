@@ -35,7 +35,7 @@ Flags:
       --storage-mode string                 Storage mode for local/dev clusters (dynamic|hostpath). Use hostpath for single-node k3s/minikube/kind without a provisioner. (default "dynamic")
       --strict-prod                         Require production-style registry and TLS validation for non-test setup
       --test-mode                           Test mode for local Kind/dev installs; builds and pushes latest-tag runtime images while relaxing production guardrails
-      --tls-cluster-issuer string           Use an existing cert-manager ClusterIssuer (e.g. internal CA; setup does not create it). Mutually exclusive with --acme-email. Overrides env MCP_TLS_CLUSTER_ISSUER
+      --tls-cluster-issuer string           Use an existing cert-manager ClusterIssuer (e.g. internal CA; setup does not create it). Mutually exclusive with --acme-email. Overrides env MCP_SETUP_TLS_CLUSTER_ISSUER
       --with-tls                            Enable TLS overlays (ingress/registry). Use --acme-email for public Let's Encrypt, --tls-cluster-issuer for an org ClusterIssuer, or the bundled mcp-runtime-ca private CA (no ACME) when neither is set
       --without-sentinel                    Skip deploying the bundled mcp-sentinel stack
 

@@ -91,26 +91,82 @@ will use to push and pull container images.`,
 				if err := loadEnvFile(envFile); err != nil {
 					return fmt.Errorf("--env-file %s: %w", envFile, err)
 				}
+				// DefaultCLIConfig is initialized at package load time, before the env
+				// file is applied. Reload it now so registry/ingress host resolution
+				// picks up MCP_PLATFORM_DOMAIN and related vars from the env file.
+				core.DefaultCLIConfig = core.LoadCLIConfig()
 			}
+
+			// Apply env var fallbacks for every flag that was not explicitly set on
+			// the command line. Primary names follow the MCP_SETUP_* convention used
+			// in config/deployments/mcpruntime-org.env; legacy names are kept for
+			// backward compatibility where they already existed.
+			envStr := func(flag string, val *string, vars ...string) {
+				if cmd.Flags().Changed(flag) {
+					return
+				}
+				for _, envVar := range vars {
+					if v := strings.TrimSpace(os.Getenv(envVar)); v != "" {
+						*val = v
+						return
+					}
+				}
+			}
+			envBool := func(flag string, val *bool, vars ...string) {
+				if cmd.Flags().Changed(flag) {
+					return
+				}
+				for _, envVar := range vars {
+					v := strings.TrimSpace(os.Getenv(envVar))
+					if v == "1" || strings.EqualFold(v, "true") {
+						*val = true
+						return
+					}
+				}
+			}
+
+			// Cluster access
+			envStr("kubeconfig", &kubeconfig, "MCP_SETUP_KUBECONFIG")
+			envStr("context", &kubeContext, "MCP_KUBE_CONTEXT")
+
+			// Registry
+			envStr("registry-type", &registryType, "MCP_REGISTRY_TYPE")
+			envStr("registry-storage", &registryStorageSize, "MCP_REGISTRY_STORAGE_SIZE")
+			envStr("registry-mode", &registryMode, "MCP_SETUP_REGISTRY_MODE", "MCP_REGISTRY_MODE")
+			envStr("external-registry-url", &externalRegistryURL, "PROVISIONED_REGISTRY_URL")
+			envStr("external-registry-username", &externalRegistryUsername, "PROVISIONED_REGISTRY_USERNAME")
+			envStr("external-registry-password", &externalRegistryPassword, "PROVISIONED_REGISTRY_PASSWORD")
+
+			// Storage / platform
+			envStr("storage-mode", &storageMode, "MCP_STORAGE_MODE")
+			envStr("platform-mode", &platformMode, "MCP_SETUP_PLATFORM_MODE", "MCP_PLATFORM_MODE")
+
+			// Ingress
+			envStr("ingress", &ingressMode, "MCP_SETUP_INGRESS")
+			envStr("ingress-manifest", &ingressManifest, "MCP_SETUP_INGRESS_MANIFEST")
+			envBool("force-ingress-install", &forceIngressInstall, "MCP_FORCE_INGRESS_INSTALL")
+
+			// TLS
+			envBool("with-tls", &tlsEnabled, "MCP_SETUP_WITH_TLS")
+			envStr("acme-email", &acmeEmail, "MCP_ACME_EMAIL")
+			envBool("acme-staging", &acmeStaging, "MCP_ACME_STAGING")
+			envStr("tls-cluster-issuer", &tlsClusterIssuer, "MCP_SETUP_TLS_CLUSTER_ISSUER", "MCP_TLS_CLUSTER_ISSUER")
+			envBool("skip-cert-manager-install", &skipCertManagerInstall, "MCP_SETUP_SKIP_CERT_MANAGER_INSTALL")
+
+			// Deployment behaviour
+			envBool("test-mode", &testMode, "MCP_SETUP_TEST_MODE")
+			envBool("parallel-builds", &parallelBuilds, "MCP_PARALLEL_BUILDS")
+			envBool("strict-prod", &strictProd, "MCP_STRICT_PROD")
+			envBool("without-sentinel", &withoutAnalytics, "MCP_WITHOUT_SENTINEL")
+
+			// Validate after all env vars are applied.
 			if err := setupplatform.ValidateStorageMode(storageMode); err != nil {
 				return err
 			}
-			registryModeResolved := strings.TrimSpace(registryMode)
-			if !cmd.Flags().Changed("registry-mode") {
-				if envMode := strings.TrimSpace(os.Getenv("MCP_REGISTRY_MODE")); envMode != "" {
-					registryModeResolved = envMode
-				}
-			}
-			if err := setupplatform.ValidateRegistryMode(registryModeResolved); err != nil {
+			if err := setupplatform.ValidateRegistryMode(registryMode); err != nil {
 				return err
 			}
-			platformModeResolved := strings.TrimSpace(platformMode)
-			if !cmd.Flags().Changed("platform-mode") {
-				if envMode := strings.TrimSpace(os.Getenv("MCP_PLATFORM_MODE")); envMode != "" {
-					platformModeResolved = envMode
-				}
-			}
-			if err := setupplatform.ValidatePlatformMode(platformModeResolved); err != nil {
+			if err := setupplatform.ValidatePlatformMode(platformMode); err != nil {
 				return err
 			}
 
@@ -121,22 +177,10 @@ will use to push and pull container images.`,
 				cmd.Flags().Changed("operator-leader-elect"),
 			)
 
-			acmeEmailResolved := strings.TrimSpace(acmeEmail)
-			if acmeEmailResolved == "" {
-				acmeEmailResolved = strings.TrimSpace(os.Getenv("MCP_ACME_EMAIL"))
-			}
-			acmeStagingResolved := acmeStaging
-			if v := strings.TrimSpace(os.Getenv("MCP_ACME_STAGING")); v == "1" || strings.EqualFold(v, "true") {
-				acmeStagingResolved = true
-			}
-			tlsCIResolved := strings.TrimSpace(tlsClusterIssuer)
-			if tlsCIResolved == "" {
-				tlsCIResolved = strings.TrimSpace(os.Getenv("MCP_TLS_CLUSTER_ISSUER"))
-			}
-			if err := setupplatform.ValidateTLSSetupCLIFlags(tlsEnabled, acmeEmailResolved, tlsCIResolved, acmeStagingResolved, skipCertManagerInstall); err != nil {
+			if err := setupplatform.ValidateTLSSetupCLIFlags(tlsEnabled, acmeEmail, tlsClusterIssuer, acmeStaging, skipCertManagerInstall); err != nil {
 				return err
 			}
-			if err := setupplatform.ValidateRegistryTLSMode(registryModeResolved, tlsEnabled, acmeEmailResolved); err != nil {
+			if err := setupplatform.ValidateRegistryTLSMode(registryMode, tlsEnabled, acmeEmail); err != nil {
 				return err
 			}
 
@@ -145,12 +189,12 @@ will use to push and pull container images.`,
 				Context:                kubeContext,
 				RegistryType:           registryType,
 				RegistryStorageSize:    registryStorageSize,
-				RegistryMode:           registryModeResolved,
+				RegistryMode:           registryMode,
 				ExternalRegistryURL:    externalRegistryURL,
 				ExternalRegistryUser:   externalRegistryUsername,
 				ExternalRegistryPass:   externalRegistryPassword,
 				StorageMode:            storageMode,
-				PlatformMode:           platformModeResolved,
+				PlatformMode:           platformMode,
 				IngressMode:            ingressMode,
 				IngressManifest:        ingressManifest,
 				IngressManifestChanged: cmd.Flags().Changed("ingress-manifest"),
@@ -161,9 +205,9 @@ will use to push and pull container images.`,
 				StrictProd:             strictProd,
 				DeployAnalytics:        !withoutAnalytics,
 				OperatorArgs:           operatorArgs,
-				ACMEmail:               acmeEmailResolved,
-				ACMEStaging:            acmeStagingResolved,
-				TLSClusterIssuer:       tlsCIResolved,
+				ACMEmail:               acmeEmail,
+				ACMEStaging:            acmeStaging,
+				TLSClusterIssuer:       tlsClusterIssuer,
 				InstallCertManager:     !skipCertManagerInstall,
 			})
 
@@ -187,7 +231,7 @@ will use to push and pull container images.`,
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force repo-managed ingress install when only an IngressClass exists; refuses active external Traefik")
 	cmd.Flags().BoolVar(&tlsEnabled, "with-tls", false, "Enable TLS overlays (ingress/registry). Use --acme-email for public Let's Encrypt, --tls-cluster-issuer for an org ClusterIssuer, or the bundled mcp-runtime-ca private CA (no ACME) when neither is set")
 	cmd.Flags().StringVar(&acmeEmail, "acme-email", "", "Contact email for Let's Encrypt (HTTP-01 via cert-manager). Mutually exclusive with --tls-cluster-issuer. Overrides env MCP_ACME_EMAIL")
-	cmd.Flags().StringVar(&tlsClusterIssuer, "tls-cluster-issuer", "", "Use an existing cert-manager ClusterIssuer (e.g. internal CA; setup does not create it). Mutually exclusive with --acme-email. Overrides env MCP_TLS_CLUSTER_ISSUER")
+	cmd.Flags().StringVar(&tlsClusterIssuer, "tls-cluster-issuer", "", "Use an existing cert-manager ClusterIssuer (e.g. internal CA; setup does not create it). Mutually exclusive with --acme-email. Overrides env MCP_SETUP_TLS_CLUSTER_ISSUER")
 	cmd.Flags().BoolVar(&acmeStaging, "acme-staging", false, "Use Let's Encrypt staging CA (also set MCP_ACME_STAGING=1)")
 	cmd.Flags().BoolVar(&skipCertManagerInstall, "skip-cert-manager-install", false, "Do not install cert-manager; require CRDs to already exist")
 	cmd.Flags().BoolVar(&testMode, "test-mode", false, "Test mode for local Kind/dev installs; builds and pushes latest-tag runtime images while relaxing production guardrails")
