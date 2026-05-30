@@ -143,7 +143,9 @@ func (s *gatewayServer) writeDeniedResponse(
 	decision.Status = status
 	recorder.WriteHeader(status)
 	_ = json.NewEncoder(recorder).Encode(gatewayDeniedPayload(policy, decision))
-	s.emitAuditEvent(r, originalPath, rpcMethod, toolName, authCtx, policy, decision, recorder.status, time.Since(start).Milliseconds(), recorder.bytes)
+	if rpcMethod != "" {
+		s.emitAuditEvent(r, originalPath, rpcMethod, toolName, authCtx, policy, decision, recorder.status, time.Since(start).Milliseconds(), recorder.bytes)
+	}
 }
 
 func gatewayDeniedStatus(policy *policypkg.Document, decision policypkg.Decision) int {
