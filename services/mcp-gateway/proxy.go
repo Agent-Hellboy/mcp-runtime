@@ -118,7 +118,12 @@ func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 		decision.PolicyVersion = s.defaultPolicyVersion
 	}
 
-	s.emitAuditEvent(r, originalPath, rpcMethod, toolName, authCtx, policy, decision, recorder.status, time.Since(start).Milliseconds(), recorder.bytes)
+	// Only audit actual MCP JSON-RPC traffic. Non-RPC requests (GET health probes,
+	// OAuth discovery, etc.) have no rpcMethod and produce noise in the event count.
+	// Denied requests are already audited by writeDeniedResponse above.
+	if rpcMethod != "" {
+		s.emitAuditEvent(r, originalPath, rpcMethod, toolName, authCtx, policy, decision, recorder.status, time.Since(start).Milliseconds(), recorder.bytes)
+	}
 }
 
 func (s *gatewayServer) writeDeniedResponse(
