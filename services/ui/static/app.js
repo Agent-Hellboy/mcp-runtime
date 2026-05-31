@@ -481,7 +481,7 @@ function renderAnalyticsTools(rows) {
   const tbody = document.getElementById("analytics-tools-body");
   if (!tbody) return;
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="empty">No tool calls yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No tool calls yet.</td></tr>';
     return;
   }
   tbody.innerHTML = "";
@@ -490,6 +490,9 @@ function renderAnalyticsTools(rows) {
     const row = document.createElement("tr");
     row.appendChild(createTextCell(item.server || "-"));
     row.appendChild(createTextCell(item.tool_name || "-"));
+    row.appendChild(createTextCell(item.human_id || "-"));
+    row.appendChild(createTextCell(item.team_id || "-"));
+    row.appendChild(createTextCell(item.agent_id || "-"));
     row.appendChild(createTextCell(formatNumber(item.events || 0)));
     row.appendChild(createTextCell(formatNumber(item.denied || 0)));
     fragment.appendChild(row);
@@ -532,7 +535,7 @@ function renderAnalyticsError() {
   document.getElementById("analytics-actors-body").innerHTML =
     '<tr><td colspan="6" class="empty">Error loading actors.</td></tr>';
   document.getElementById("analytics-tools-body").innerHTML =
-    '<tr><td colspan="4" class="empty">Error loading tools.</td></tr>';
+    '<tr><td colspan="7" class="empty">Error loading tools.</td></tr>';
 }
 
 function renderGovernanceDecisionAnalyticsError() {
@@ -1063,7 +1066,7 @@ function resetDashboard() {
   document.getElementById("analytics-actors-body").innerHTML =
     '<tr><td colspan="6" class="empty">No actors yet.</td></tr>';
   document.getElementById("analytics-tools-body").innerHTML =
-    '<tr><td colspan="4" class="empty">No tool calls yet.</td></tr>';
+    '<tr><td colspan="7" class="empty">No tool calls yet.</td></tr>';
   document.getElementById("analytics-decisions-body").innerHTML =
     '<tr><td colspan="2" class="empty">No decisions yet.</td></tr>';
   document.getElementById("events-body").innerHTML =
@@ -1303,7 +1306,7 @@ function renderUserAnalyticsTools(rows) {
   const tbody = document.getElementById("user-analytics-tools-body");
   if (!tbody) return;
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="empty">No tool calls yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No tool calls yet.</td></tr>';
     return;
   }
   tbody.innerHTML = "";
@@ -1312,6 +1315,8 @@ function renderUserAnalyticsTools(rows) {
     const row = document.createElement("tr");
     row.appendChild(createIdentityCell(item.server || "-", ""));
     row.appendChild(createTextCell(item.tool_name || "-"));
+    row.appendChild(createTextCell(item.human_id || "-"));
+    row.appendChild(createTextCell(item.agent_id || "-"));
     row.appendChild(createTextCell(formatNumber(item.events || 0)));
     row.appendChild(createTextCell(formatNumber(item.denied || 0)));
     fragment.appendChild(row);
@@ -1344,7 +1349,7 @@ function renderUserAnalyticsError() {
   const toolsBody = document.getElementById("user-analytics-tools-body");
   const recentBody = document.getElementById("user-analytics-recent-body");
   if (breakdownBody) breakdownBody.innerHTML = '<tr><td colspan="6" class="empty">Error loading usage.</td></tr>';
-  if (toolsBody) toolsBody.innerHTML = '<tr><td colspan="4" class="empty">Error loading tools.</td></tr>';
+  if (toolsBody) toolsBody.innerHTML = '<tr><td colspan="7" class="empty">Error loading tools.</td></tr>';
   if (recentBody) recentBody.innerHTML = '<tr><td colspan="4" class="empty">Error loading recent activity.</td></tr>';
 }
 

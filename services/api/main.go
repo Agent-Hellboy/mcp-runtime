@@ -75,6 +75,9 @@ type analyticsActorUsage struct {
 type analyticsToolUsage struct {
 	Server   string    `json:"server"`
 	ToolName string    `json:"tool_name"`
+	HumanID  string    `json:"human_id"`
+	TeamID   string    `json:"team_id"`
+	AgentID  string    `json:"agent_id"`
 	Events   uint64    `json:"events"`
 	Denied   uint64    `json:"denied"`
 	LastSeen time.Time `json:"last_seen"`
@@ -823,7 +826,9 @@ func (s *apiServer) queryAnalyticsActors(ctx context.Context, scope analyticsQue
 
 func (s *apiServer) queryAnalyticsTools(ctx context.Context, scope analyticsQueryScope) ([]analyticsToolUsage, error) {
 	where, args := analyticsWhereClause(scope, "tool_name != ''")
-	query := "SELECT server, tool_name, count() AS events, countIf(decision = 'deny') AS denied, max(timestamp) AS last_seen FROM " + s.dbName + ".events " + where + " GROUP BY server, tool_name ORDER BY events DESC LIMIT ?"
+	// Group by server+tool+caller so each (tool, user, agent) combination is a
+	// separate row — gives operators a clear picture of who called what and how many times.
+	query := "SELECT server, tool_name, human_id, team_id, agent_id, count() AS events, countIf(decision = 'deny') AS denied, max(timestamp) AS last_seen FROM " + s.dbName + ".events " + where + " GROUP BY server, tool_name, human_id, team_id, agent_id ORDER BY events DESC LIMIT ?"
 	args = append(args, scope.Limit)
 	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
@@ -834,7 +839,7 @@ func (s *apiServer) queryAnalyticsTools(ctx context.Context, scope analyticsQuer
 	out := make([]analyticsToolUsage, 0, scope.Limit)
 	for rows.Next() {
 		var row analyticsToolUsage
-		if err := rows.Scan(&row.Server, &row.ToolName, &row.Events, &row.Denied, &row.LastSeen); err != nil {
+		if err := rows.Scan(&row.Server, &row.ToolName, &row.HumanID, &row.TeamID, &row.AgentID, &row.Events, &row.Denied, &row.LastSeen); err != nil {
 			return nil, err
 		}
 		out = append(out, row)
