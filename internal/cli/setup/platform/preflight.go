@@ -50,6 +50,13 @@ func (s preflightStep) Run(logger *zap.Logger, _ SetupDeps, ctx *SetupContext) e
 	issues = append(issues, checkTerminatingCRD(bg, clients)...)
 	issues = append(issues, checkStuckOperatorDeployment(bg, clients)...)
 
+	// Registry checks.
+	issues = append(issues, checkStuckRegistryPVC(bg, clients)...)
+	issues = append(issues, checkStuckRegistryDeployment(bg, clients)...)
+	if !ctx.Plan.TestMode {
+		issues = append(issues, checkStaleRegistryIngress(bg, clients)...)
+	}
+
 	if ctx.Plan.TLSEnabled {
 		// Host-based TLS checks are skipped in test mode: registry.local is
 		// intentional for local Kind clusters and these checks would always fire.
@@ -69,6 +76,7 @@ func (s preflightStep) Run(logger *zap.Logger, _ SetupDeps, ctx *SetupContext) e
 		issues = append(issues, checkStalePullSecrets(bg, clients)...)
 		issues = append(issues, checkPostgresPasswordSync(bg, clients)...)
 		issues = append(issues, checkKafkaZookeeperConsistency(bg, clients)...)
+		issues = append(issues, checkStuckAnalyticsStatefulSets(bg, clients)...)
 	}
 
 	if len(issues) == 0 {
@@ -493,6 +501,161 @@ func extractPostgresPassword(dsn string) string {
 		return ""
 	}
 	return userPass[colonIdx+1:]
+}
+
+// checkStuckRegistryPVC detects when the registry-storage PVC is stuck in
+// Pending. A Pending PVC prevents the registry pod from scheduling, so the
+// rollout-wait in verifySetup times out after 5+ minutes.
+func checkStuckRegistryPVC(ctx context.Context, clients *k8sclient.Clients) []preflightIssue {
+	pvc, err := clients.Clientset.CoreV1().PersistentVolumeClaims(core.NamespaceRegistry).Get(
+		ctx, "registry-storage", metav1.GetOptions{})
+	if err != nil {
+		return nil // PVC doesn't exist yet — fresh install
+	}
+	if pvc.Status.Phase != "Pending" {
+		return nil
+	}
+	return []preflightIssue{{
+		fatal: true,
+		message: fmt.Sprintf(
+			"PersistentVolumeClaim %s/registry-storage is stuck in Pending — storage provisioning may have failed. The registry pod cannot schedule until this is resolved.",
+			core.NamespaceRegistry,
+		),
+		cleanup: []string{
+			fmt.Sprintf("kubectl describe pvc registry-storage -n %s  # inspect the error", core.NamespaceRegistry),
+			fmt.Sprintf("kubectl delete pvc registry-storage -n %s    # delete to force re-creation", core.NamespaceRegistry),
+		},
+	}}
+}
+
+// checkStuckRegistryDeployment warns when the registry Deployment from a
+// previous run has pods stuck in ImagePullBackOff or CrashLoopBackOff.
+// Setup will update the image, but stuck pods slow the rollout.
+func checkStuckRegistryDeployment(ctx context.Context, clients *k8sclient.Clients) []preflightIssue {
+	deploy, err := k8sclient.GetDeployment(ctx, clients, core.NamespaceRegistry, core.RegistryServiceName)
+	if err != nil || deploy == nil {
+		return nil
+	}
+	pods, err := clients.Clientset.CoreV1().Pods(core.NamespaceRegistry).List(
+		ctx, metav1.ListOptions{LabelSelector: "app=registry"})
+	if err != nil || len(pods.Items) == 0 {
+		return nil
+	}
+	var stuck []string
+	for _, pod := range pods.Items {
+		for _, cs := range pod.Status.ContainerStatuses {
+			w := cs.State.Waiting
+			if w == nil {
+				continue
+			}
+			if w.Reason == "ImagePullBackOff" || w.Reason == "CrashLoopBackOff" || w.Reason == "ErrImagePull" {
+				stuck = append(stuck, fmt.Sprintf("%s (%s)", pod.Name, w.Reason))
+			}
+		}
+	}
+	if len(stuck) == 0 {
+		return nil
+	}
+	return []preflightIssue{{
+		fatal: false,
+		message: fmt.Sprintf(
+			"Registry pod(s) from a previous run are stuck: %s — setup will update the image, but cleaning up first speeds up the rollout.",
+			strings.Join(stuck, "; "),
+		),
+		cleanup: []string{
+			fmt.Sprintf("kubectl delete pod -n %s -l app=registry", core.NamespaceRegistry),
+		},
+	}}
+}
+
+// checkStaleRegistryIngress warns when the registry Ingress exists with a
+// host that does not match the expected registry hostname. This causes external
+// TLS validation to fail and the platform API to use the wrong pull URL.
+func checkStaleRegistryIngress(ctx context.Context, clients *k8sclient.Clients) []preflightIssue {
+	expectedHost := metadata.ResolveRegistryHost()
+	if expectedHost == "" {
+		return nil
+	}
+	ing, err := clients.Clientset.NetworkingV1().Ingresses(core.NamespaceRegistry).Get(
+		ctx, core.RegistryServiceName, metav1.GetOptions{})
+	if err != nil {
+		return nil // ingress not created yet — fresh install
+	}
+	for _, rule := range ing.Spec.Rules {
+		if rule.Host == expectedHost {
+			return nil
+		}
+	}
+	var current string
+	if len(ing.Spec.Rules) > 0 {
+		current = ing.Spec.Rules[0].Host
+	}
+	return []preflightIssue{{
+		fatal: false,
+		message: fmt.Sprintf(
+			"Registry Ingress %q has host %q but the expected registry host is %q — setup will overwrite it.",
+			core.RegistryServiceName, current, expectedHost,
+		),
+		cleanup: []string{
+			fmt.Sprintf("kubectl delete ingress %s -n %s  # setup will recreate with correct host", core.RegistryServiceName, core.NamespaceRegistry),
+		},
+	}}
+}
+
+// checkStuckAnalyticsStatefulSets warns when analytics StatefulSet pods are
+// stuck in CrashLoopBackOff, Error, or Terminating state. Stuck pods slow the
+// rollout-wait that setup runs after applying manifests.
+func checkStuckAnalyticsStatefulSets(ctx context.Context, clients *k8sclient.Clients) []preflightIssue {
+	type stsSpec struct {
+		name     string
+		selector string
+	}
+	targets := []stsSpec{
+		{"clickhouse", "app=clickhouse"},
+		{"mcp-sentinel-postgres", "app=mcp-sentinel-postgres"},
+		{"kafka", "app=kafka"},
+		{"tempo", "app=tempo"},
+		{"loki", "app=loki"},
+	}
+	var issues []preflightIssue
+	for _, t := range targets {
+		pods, err := clients.Clientset.CoreV1().Pods(core.DefaultAnalyticsNamespace).List(
+			ctx, metav1.ListOptions{LabelSelector: t.selector})
+		if err != nil || len(pods.Items) == 0 {
+			continue
+		}
+		var stuck []string
+		for _, pod := range pods.Items {
+			if pod.DeletionTimestamp != nil {
+				stuck = append(stuck, fmt.Sprintf("%s (Terminating)", pod.Name))
+				continue
+			}
+			for _, cs := range pod.Status.ContainerStatuses {
+				w := cs.State.Waiting
+				if w == nil {
+					continue
+				}
+				if w.Reason == "CrashLoopBackOff" || w.Reason == "Error" {
+					stuck = append(stuck, fmt.Sprintf("%s (%s)", pod.Name, w.Reason))
+				}
+			}
+		}
+		if len(stuck) == 0 {
+			continue
+		}
+		issues = append(issues, preflightIssue{
+			fatal: false,
+			message: fmt.Sprintf(
+				"Analytics StatefulSet %q has stuck pod(s): %s — this may cause the rollout wait to time out.",
+				t.name, strings.Join(stuck, "; "),
+			),
+			cleanup: []string{
+				fmt.Sprintf("kubectl delete pod -n %s -l %s --grace-period=0 --force",
+					core.DefaultAnalyticsNamespace, t.selector),
+			},
+		})
+	}
+	return issues
 }
 
 // checkKafkaZookeeperConsistency detects the classic InconsistentClusterIdException
