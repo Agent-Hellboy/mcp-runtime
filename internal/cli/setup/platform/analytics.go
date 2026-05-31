@@ -89,6 +89,14 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		return err
 	}
 
+	// Sync Postgres password: if Postgres is already running, the pod has an
+	// existing database password that may differ from what was just written to
+	// mcp-sentinel-secrets. Apply the current secret value via ALTER USER so
+	// the API can connect on reruns without needing a Postgres pod restart.
+	if err := syncPostgresPasswordClientGo(); err != nil {
+		core.Warn(fmt.Sprintf("Could not sync Postgres password (will retry on next run): %v", err))
+	}
+
 	clickhouseManifest := "k8s/03-clickhouse.yaml"
 	kafkaManifest := "k8s/05-kafka.yaml"
 	postgresManifest := "k8s/20-postgres.yaml"
@@ -157,6 +165,13 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 	}
 	if err := ensureSessionLocalDeploymentReplicasClientGo(logger); err != nil {
 		return err
+	}
+
+	// Explicitly restart analytics deployments so they pick up the secret values
+	// written above. On reruns where the image tag is unchanged, Kubernetes does
+	// not trigger an automatic rollout, leaving pods with stale env var snapshots.
+	if err := restartAnalyticsDeploymentsClientGo(); err != nil {
+		core.Warn(fmt.Sprintf("Could not restart analytics deployments after secret update: %v", err))
 	}
 
 	core.Info(fmt.Sprintf("Waiting for mcp-sentinel workload rollouts (per-resource timeout %s; override with MCP_DEPLOYMENT_TIMEOUT)", rolloutTimeout))
@@ -1592,4 +1607,88 @@ func randomHex(size int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buffer), nil
+}
+
+// restartAnalyticsDeploymentsClientGo triggers a rollout restart for each
+// mcp-sentinel Deployment that reads credentials from mcp-sentinel-secrets.
+// On reruns where the image tag has not changed, Kubernetes does not roll out
+// new pods automatically, so pods keep the env var snapshot from their last
+// start — which may contain stale secret values. Stamping the standard
+// kubectl.kubernetes.io/restartedAt annotation forces one clean rollout.
+func restartAnalyticsDeploymentsClientGo() error {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	now := time.Now()
+	deployments := []string{
+		"mcp-sentinel-api",
+		"mcp-sentinel-ui",
+		"mcp-sentinel-ingest",
+		"mcp-sentinel-processor",
+		"mcp-sentinel-gateway",
+		"grafana",
+	}
+	var errs []string
+	for _, name := range deployments {
+		exists, err := k8sclient.DeploymentExists(ctx, clients, core.DefaultAnalyticsNamespace, name)
+		if err != nil || !exists {
+			continue // not deployed yet — skip
+		}
+		if err := k8sclient.RestartDeployment(ctx, clients, core.DefaultAnalyticsNamespace, name, now); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", name, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("restart failed for: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// syncPostgresPasswordClientGo runs ALTER USER on the Postgres pod so that the
+// database password matches whatever was just written to mcp-sentinel-secrets.
+// This is needed because Kubernetes env vars snapshotted at pod start are NOT
+// automatically refreshed when a Secret is updated, and the StatefulSet restart
+// that would re-read POSTGRES_PASSWORD may differ from what the already-running
+// database cluster uses as the auth password for the mcp_runtime user.
+func syncPostgresPasswordClientGo() error {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+
+	// Only sync if the Postgres pod is actually running.
+	podName, err := k8sclient.GetFirstReadyPodName(ctx, clients, core.DefaultAnalyticsNamespace, "app=mcp-sentinel-postgres")
+	if err != nil || podName == "" {
+		return nil // not running yet; fresh install will use the correct password
+	}
+
+	password, err := existingSecretDataValueClientGo(core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "POSTGRES_PASSWORD")
+	if err != nil || strings.TrimSpace(password) == "" {
+		return err
+	}
+
+	// Use psql inside the pod with password auth via PGPASSWORD so the ALTER USER
+	// takes effect regardless of pg_hba.conf peer-auth configuration.
+	sql := fmt.Sprintf("ALTER USER mcp_runtime PASSWORD '%s';", strings.ReplaceAll(password, "'", "''"))
+	kubectl := core.DefaultKubectlClient()
+	cmd, err := kubectl.CommandArgs([]string{
+		"exec", "-n", core.DefaultAnalyticsNamespace, podName, "--",
+		"sh", "-c", fmt.Sprintf("PGPASSWORD=%s psql -h localhost -U mcp_runtime -c %q",
+			shellQuote(password), sql),
+	})
+	if err != nil {
+		return err
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ALTER USER mcp_runtime: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// shellQuote wraps s in single quotes, escaping any embedded single quotes.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }

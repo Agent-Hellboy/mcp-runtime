@@ -604,6 +604,35 @@ func SecretExists(ctx context.Context, clients *Clients, namespace, name string)
 	return true, nil
 }
 
+// GetFirstReadyPodName returns the name of the first Ready pod matching
+// labelSelector in namespace, or "" when none is found.
+func GetFirstReadyPodName(ctx context.Context, clients *Clients, namespace, labelSelector string) (string, error) {
+	pods, err := clients.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+	if err != nil {
+		return "", err
+	}
+	for _, pod := range pods.Items {
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
+		for _, cond := range pod.Status.Conditions {
+			if cond.Type == "Ready" && cond.Status == "True" {
+				return pod.Name, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// DeploymentExists returns true when the named Deployment exists in namespace.
+func DeploymentExists(ctx context.Context, clients *Clients, namespace, name string) (bool, error) {
+	_, err := clients.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // IsJobFailed returns true when the named Job exists and has at least one
 // failed condition, meaning it will not self-recover. Returns false when the
 // Job does not exist or its status cannot be determined.

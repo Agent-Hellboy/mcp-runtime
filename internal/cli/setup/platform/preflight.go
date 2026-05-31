@@ -51,20 +51,23 @@ func (s preflightStep) Run(logger *zap.Logger, _ SetupDeps, ctx *SetupContext) e
 	issues = append(issues, checkStuckOperatorDeployment(bg, clients)...)
 
 	if ctx.Plan.TLSEnabled {
-		// In test mode registry.local is intentional; skip the public-hostname check.
+		// Host-based TLS checks are skipped in test mode: registry.local is
+		// intentional for local Kind clusters and these checks would always fire.
 		if !ctx.Plan.TestMode {
 			issues = append(issues, checkRegistryHostForTLS()...)
+			issues = append(issues, checkStaleRegistryCertificate(bg, clients)...)
+			issues = append(issues, checkOrphanedRegistryTLSSecret(bg, clients)...)
 		}
 		issues = append(issues, checkCertManagerCRDs(bg, clients, ctx.Plan.InstallCertManager)...)
 		issues = append(issues, checkClusterIssuerExists(bg, clients, ctx.Plan.TLSClusterIssuer)...)
-		issues = append(issues, checkStaleRegistryCertificate(bg, clients)...)
 		issues = append(issues, checkFailedCertificateRequests(bg, clients)...)
 		issues = append(issues, checkConflictingSecretOwners(bg, clients)...)
-		issues = append(issues, checkOrphanedRegistryTLSSecret(bg, clients)...)
 	}
 
 	if ctx.Plan.DeployAnalytics {
 		issues = append(issues, checkStaleAnalyticsJob(bg, clients)...)
+		issues = append(issues, checkStalePullSecrets(bg, clients)...)
+		issues = append(issues, checkPostgresPasswordSync(bg, clients)...)
 	}
 
 	if len(issues) == 0 {
@@ -152,7 +155,11 @@ func checkStaleRegistryCertificate(ctx context.Context, clients *k8sclient.Clien
 		return nil
 	}
 
-	expectedHost := core.GetRegistryIngressHost()
+	// Use metadata.ResolveRegistryHost() (reads env directly) instead of
+	// core.GetRegistryIngressHost() (reads the init-time DefaultCLIConfig snapshot)
+	// so tests using t.Setenv and setup runs after --env-file loading see the
+	// correct value.
+	expectedHost := metadata.ResolveRegistryHost()
 	if expectedHost == "" || containsString(dnsNames, expectedHost) {
 		return nil
 	}
@@ -370,6 +377,121 @@ func checkStaleAnalyticsJob(ctx context.Context, clients *k8sclient.Clients) []p
 			fmt.Sprintf("kubectl delete job -n %s %s", core.DefaultAnalyticsNamespace, jobName),
 		},
 	}}
+}
+
+// checkStalePullSecrets detects when the mcp-runtime-registry-pull Secret in
+// any namespace has a password that no longer matches the current UI_API_KEY.
+// This causes ImagePullBackOff on new pods after a setup rerun rotates the key.
+func checkStalePullSecrets(ctx context.Context, clients *k8sclient.Clients) []preflightIssue {
+	currentKey, err := k8sclient.SecretStringDataValue(ctx, clients, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "UI_API_KEY")
+	if err != nil || strings.TrimSpace(currentKey) == "" {
+		return nil // secret not yet created; fresh install — nothing to check
+	}
+
+	namespaces := []string{core.DefaultAnalyticsNamespace, core.NamespaceMCPRuntime}
+	var stale []string
+	for _, ns := range namespaces {
+		exists, err := k8sclient.SecretExists(ctx, clients, ns, defaultRegistrySecretName)
+		if err != nil || !exists {
+			continue
+		}
+		storedAuth, err := k8sclient.SecretStringDataValue(ctx, clients, ns, defaultRegistrySecretName, ".dockerconfigjson")
+		if err != nil {
+			continue
+		}
+		// The pull secret password appears as base64(user:password) in the auth field.
+		// A quick check: does the raw JSON contain the current key?
+		if !strings.Contains(storedAuth, currentKey) {
+			stale = append(stale, ns)
+		}
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+
+	var fixes []string
+	for _, ns := range stale {
+		fixes = append(fixes,
+			fmt.Sprintf("kubectl create secret docker-registry %s -n %s --docker-server=%s --docker-username=platform-service --docker-password=<UI_API_KEY> --dry-run=client -o yaml | kubectl apply -f -",
+				defaultRegistrySecretName, ns, core.GetRegistryIngressHost()),
+		)
+	}
+	fixes = append(fixes, "# or re-run setup — it refreshes pull secrets automatically")
+	return []preflightIssue{{
+		fatal: false,
+		message: fmt.Sprintf(
+			"Image pull secret %q in namespace(s) %v has a stale password — pods may get ImagePullBackOff after secret rotation.",
+			defaultRegistrySecretName, stale,
+		),
+		cleanup: fixes,
+	}}
+}
+
+// checkPostgresPasswordSync detects when the Postgres pod is running but the
+// POSTGRES_DSN password in mcp-sentinel-secrets no longer authenticates. This
+// happens when setup rotated the secret on a rerun but didn't sync the live DB.
+func checkPostgresPasswordSync(ctx context.Context, clients *k8sclient.Clients) []preflightIssue {
+	podName, err := k8sclient.GetFirstReadyPodName(ctx, clients, core.DefaultAnalyticsNamespace, "app=mcp-sentinel-postgres")
+	if err != nil || podName == "" {
+		return nil // Postgres not running yet
+	}
+
+	dsn, err := k8sclient.SecretStringDataValue(ctx, clients, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "POSTGRES_DSN")
+	if err != nil || strings.TrimSpace(dsn) == "" {
+		return nil // secret not yet created
+	}
+
+	// Probe by exec-ing a quick psql connection test inside the pod.
+	// Use PGPASSWORD + -h localhost to bypass peer auth and actually test the password.
+	kubectl := core.DefaultKubectlClient()
+	cmd, err := kubectl.CommandArgs([]string{
+		"exec", "-n", core.DefaultAnalyticsNamespace, podName, "--",
+		"sh", "-c", fmt.Sprintf("PGPASSWORD=%s psql -h localhost -U mcp_runtime -c '\\l' -t -q 2>&1", shellQuote(extractPostgresPassword(dsn))),
+	})
+	if err != nil {
+		return nil
+	}
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil // connected successfully — passwords are in sync
+	}
+	if !strings.Contains(string(out), "password authentication failed") {
+		return nil // some other error; don't block setup
+	}
+
+	return []preflightIssue{{
+		fatal: false,
+		message: fmt.Sprintf(
+			"Postgres pod %q is running but the password in mcp-sentinel-secrets does not authenticate.\n"+
+				"         Setup will fix this automatically by running ALTER USER on the Postgres pod.",
+			podName,
+		),
+		cleanup: []string{
+			"# Setup will run this automatically; or run it manually:",
+			fmt.Sprintf("kubectl exec -n %s %s -- sh -c 'PGPASSWORD=<new_pass> psql -h localhost -U mcp_runtime -c \"ALTER USER mcp_runtime PASSWORD '\\''<new_pass>'\\''\"'",
+				core.DefaultAnalyticsNamespace, podName),
+		},
+	}}
+}
+
+// extractPostgresPassword parses a postgres://user:pass@host/db DSN and returns the password.
+func extractPostgresPassword(dsn string) string {
+	// Fast path: find the user:pass@ segment.
+	// postgres://mcp_runtime:PASSWORD@host/db
+	after, ok := strings.CutPrefix(dsn, "postgres://")
+	if !ok {
+		return ""
+	}
+	atIdx := strings.LastIndex(after, "@")
+	if atIdx < 0 {
+		return ""
+	}
+	userPass := after[:atIdx]
+	colonIdx := strings.Index(userPass, ":")
+	if colonIdx < 0 {
+		return ""
+	}
+	return userPass[colonIdx+1:]
 }
 
 func countFatal(issues []preflightIssue) int {
