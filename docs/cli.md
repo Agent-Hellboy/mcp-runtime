@@ -35,11 +35,11 @@ a named profile; switch with `auth use` or override per-command with
 
 ```bash
 # Log in and save as the default profile
-mcp-runtime auth login --api-url https://platform.mcpruntime.org
+mcp-runtime auth login --api-url https://platform.example.com
 
 # Log in as a named profile
 mcp-runtime auth login \
-  --api-url https://platform.mcpruntime.org \
+  --api-url https://platform.example.com \
   --email alice@acme.com --password '...' \
   --profile alice
 
@@ -82,16 +82,16 @@ mcp-runtime auth logout
 
 ```bash
 # Interactive — prompts for a token
-mcp-runtime auth login --api-url https://platform.mcpruntime.org
+mcp-runtime auth login --api-url https://platform.example.com
 
 # Non-interactive (CI / scripted)
 mcp-runtime auth login \
-  --api-url https://platform.mcpruntime.org \
+  --api-url https://platform.example.com \
   --token-stdin < token.txt
 
 # Email + password login
 mcp-runtime auth login \
-  --api-url https://platform.mcpruntime.org \
+  --api-url https://platform.example.com \
   --email alice@acme.com --password '...' \
   --profile alice
 
@@ -225,7 +225,7 @@ mcp-runtime server build image text-analysis --tag v1
 
 The command prints the **exact image ref** you must use in the push step, e.g.:
 ```
-registry.mcpruntime.org/acme/workspace-demo:v1
+registry.example.com/acme/workspace-demo:v1
 ```
 
 Use `--platform linux/amd64` when building on Apple Silicon targeting k3s / EKS nodes.
@@ -238,7 +238,7 @@ Use the **exact ref** printed by `server build image`:
 
 ```bash
 mcp-runtime registry push \
-  --image registry.mcpruntime.org/acme/workspace-demo:v1 \
+  --image registry.example.com/acme/workspace-demo:v1 \
   --scope tenant
 
 # Other scopes
@@ -281,11 +281,11 @@ mcp-runtime server validate --metadata-dir .mcp
 # 3. Build (as alice, an Acme team owner)
 mcp-runtime auth use alice
 mcp-runtime server build image workspace-demo --tag v1
-# → prints: registry.mcpruntime.org/acme/workspace-demo:v1
+# → prints: registry.example.com/acme/workspace-demo:v1
 
 # 4. Push — use the exact ref printed above
 mcp-runtime registry push \
-  --image registry.mcpruntime.org/acme/workspace-demo:v1 \
+  --image registry.example.com/acme/workspace-demo:v1 \
   --scope tenant
 
 # 5. Deploy
@@ -340,7 +340,7 @@ mcp-runtime registry provision --url registry.example.com
 # Push (user — requires auth login)
 # Use the exact image ref printed by `server build image`
 mcp-runtime registry push \
-  --image registry.mcpruntime.org/acme/workspace-demo:v1 \
+  --image registry.example.com/acme/workspace-demo:v1 \
   --scope tenant
 ```
 
@@ -465,7 +465,7 @@ automatically — `--agent` (session name) is **required** in that case.
 ```bash
 # HTTP proxy — MCP clients connect to http://127.0.0.1:8099
 mcp-runtime adapter proxy \
-  --runtime-url https://mcp.mcpruntime.org/workspace-demo/mcp \
+  --runtime-url https://mcp.example.com/workspace-demo/mcp \
   --server workspace-demo \
   --agent cursor \
   --agent-id cursor \
@@ -474,7 +474,7 @@ mcp-runtime adapter proxy \
 
 # stdio shim — for Claude Desktop or local agent processes
 mcp-runtime adapter stdio \
-  --runtime-url https://mcp.mcpruntime.org/workspace-demo/mcp \
+  --runtime-url https://mcp.example.com/workspace-demo/mcp \
   --server workspace-demo \
   --agent cursor \
   --agent-id cursor \
@@ -509,7 +509,7 @@ MCP_PLATFORM_API_PROFILE=admin mcp-runtime team user list acme
 Team users log in with:
 ```bash
 mcp-runtime auth login \
-  --api-url https://platform.mcpruntime.org \
+  --api-url https://platform.example.com \
   --email alice@acme.com --password '...' \
   --profile alice
 ```
@@ -586,7 +586,7 @@ mcp-runtime setup --test-mode                                # local Kind dev
 
 | Env var | Flag |
 |---|---|
-| `MCP_PLATFORM_DOMAIN=mcpruntime.org` | derives all three ingress hostnames |
+| `MCP_PLATFORM_DOMAIN=example.com` | derives all three ingress hostnames |
 | `MCP_SETUP_WITH_TLS=1` | `--with-tls` |
 | `MCP_SETUP_TLS_CLUSTER_ISSUER=letsencrypt-prod` | `--tls-cluster-issuer` |
 | `MCP_SETUP_REGISTRY_MODE=bundled-https` | `--registry-mode` |
@@ -620,14 +620,14 @@ KUBECONFIG=~/.kube/config mcp-runtime cluster doctor    # 37-point diagnostic
 ## Presentation walkthrough
 
 Follow this script top to bottom to demo the full platform using
-`workspace-assistant-mcp`. Requires a running platform at `https://platform.mcpruntime.org`
+`workspace-assistant-mcp`. Requires a running platform at `https://platform.example.com`
 and admin credentials.
 
 ```bash
 # ── 1. Create two teams (admin) ───────────────────────────────────────────────
 mcp-runtime auth login \
-  --api-url https://platform.mcpruntime.org \
-  --email admin@mcpruntime.org --password '...' \
+  --api-url https://platform.example.com \
+  --email admin@example.com --password '...' \
   --profile admin
 
 MCP_PLATFORM_API_PROFILE=admin mcp-runtime team create acme --name "Acme Corp"
@@ -640,7 +640,7 @@ MCP_PLATFORM_API_PROFILE=admin mcp-runtime team user create globex \
 
 # ── 2. Log in as alice (Acme team owner) ─────────────────────────────────────
 mcp-runtime auth login \
-  --api-url https://platform.mcpruntime.org \
+  --api-url https://platform.example.com \
   --email alice@acme.com --password 'alice123' \
   --profile alice
 mcp-runtime auth use alice
@@ -661,10 +661,10 @@ mcp-runtime server validate --metadata-dir .mcp
 
 # ── 5. Build → push → deploy ──────────────────────────────────────────────────
 mcp-runtime server build image workspace-demo --tag v1
-# Prints the exact image ref, e.g.: registry.mcpruntime.org/acme/workspace-demo:v1
+# Prints the exact image ref, e.g.: registry.example.com/acme/workspace-demo:v1
 
 mcp-runtime registry push \
-  --image registry.mcpruntime.org/acme/workspace-demo:v1 \
+  --image registry.example.com/acme/workspace-demo:v1 \
   --scope tenant
 
 mcp-runtime server deploy workspace-demo --scope tenant --metadata-dir .mcp
@@ -703,7 +703,7 @@ mcp-runtime access session list
 
 # ── 9. Connect via adapter and call tools with your MCP client ────────────────
 mcp-runtime adapter proxy \
-  --runtime-url https://mcp.mcpruntime.org/workspace-demo/mcp \
+  --runtime-url https://mcp.example.com/workspace-demo/mcp \
   --server workspace-demo \
   --agent cursor \
   --agent-id cursor \
@@ -718,7 +718,7 @@ mcp-runtime status
 mcp-runtime server policy inspect workspace-demo --namespace mcp-team-acme
 KUBECONFIG=~/.kube/config mcp-runtime sentinel status
 KUBECONFIG=~/.kube/config mcp-runtime sentinel logs api --since 10m
-# → Open https://platform.mcpruntime.org → Analytics → Tools tab
+# → Open https://platform.example.com → Analytics → Tools tab
 #   to see tool calls by user, team, and agent
 ```
 
