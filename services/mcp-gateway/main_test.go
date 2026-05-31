@@ -787,6 +787,59 @@ func TestHandleGatewayAuditsDeniedJSONRPCAttempts(t *testing.T) {
 	}
 }
 
+func TestHandleGatewayDoesNotAuditLiveInventoryRequests(t *testing.T) {
+	t.Parallel()
+
+	var analyticsHits int32
+	ingest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		atomic.AddInt32(&analyticsHits, 1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(ingest.Close)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+
+	target, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+
+	proxy := &gatewayServer{
+		proxy:                 newUpstreamReverseProxy(target),
+		httpClient:            ingest.Client(),
+		analyticsURL:          ingest.URL,
+		defaultHumanHeader:    defaultHumanHeader,
+		defaultAgentHeader:    defaultAgentHeader,
+		defaultTeamHeader:     defaultTeamHeader,
+		defaultSessionHeader:  defaultSessionHeader,
+		defaultPolicyMode:     defaultPolicyMode,
+		defaultPolicyDecision: defaultPolicyDecision,
+		defaultPolicyVersion:  "test-policy",
+		oauthProviders:        map[string]*oauthProvider{},
+	}
+	proxy.startAnalyticsDispatcher()
+
+	// A valid JSON-RPC request from the live-inventory probe must NOT emit an
+	// analytics event — it is an internal platform service call, not user traffic.
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`
+	req := httptest.NewRequest(http.MethodPost, "http://gateway.example.local/mcp", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(defaultAgentHeader, "mcp-runtime-live-inventory")
+	req.Header.Set(defaultHumanHeader, "mcp-runtime-api")
+	req.ContentLength = int64(len(body))
+	proxy.handleGateway(httptest.NewRecorder(), req)
+
+	proxy.stopAnalyticsDispatcher()
+
+	if got := atomic.LoadInt32(&analyticsHits); got != 0 {
+		t.Fatalf("analytics events emitted for live-inventory request = %d, want 0", got)
+	}
+}
+
 func TestHandleGatewayAuditsRPCRequests(t *testing.T) {
 	t.Parallel()
 
