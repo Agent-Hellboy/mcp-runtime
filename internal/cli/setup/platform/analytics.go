@@ -1630,11 +1630,22 @@ func restartAnalyticsDeploymentsClientGo() error {
 		"mcp-sentinel-gateway",
 		"grafana",
 	}
+	// Only restart deployments that pre-existed this setup run.
+	// On a fresh install all deployments were just created and already have the
+	// correct secret values — restarting them is unnecessary and doubles the
+	// image-pull time, increasing the risk of rollout-wait timeouts in CI.
+	// A deployment created less than freshDeploymentThreshold seconds ago was
+	// created during this run; its pods have current secret values.
+	const freshDeploymentThreshold = 5 * time.Minute
+
 	var errs []string
 	for _, name := range deployments {
-		exists, err := k8sclient.DeploymentExists(ctx, clients, core.DefaultAnalyticsNamespace, name)
-		if err != nil || !exists {
+		deploy, err := k8sclient.GetDeployment(ctx, clients, core.DefaultAnalyticsNamespace, name)
+		if err != nil || deploy == nil {
 			continue // not deployed yet — skip
+		}
+		if now.Sub(deploy.CreationTimestamp.Time) < freshDeploymentThreshold {
+			continue // brand new — pods already have current secret values
 		}
 		if err := k8sclient.RestartDeployment(ctx, clients, core.DefaultAnalyticsNamespace, name, now); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", name, err))
