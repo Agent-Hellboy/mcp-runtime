@@ -4,15 +4,16 @@ This guide walks through every `mcp-runtime` command using the **real example se
 in the repository** so you can follow along, test the platform, and build a
 presentation from a single working script.
 
-**Example servers used in this doc:**
+**Example servers used throughout this doc:**
 
-| Server | Language | Dockerfile | Key tools |
+| Server | Language | Run command | Tools |
 |---|---|---|---|
-| `workspace-assistant-mcp` | Go | `examples/workspace-assistant-mcp/Dockerfile` | `echo`, `add`, `upper`, `lower`, `create_task` |
-| `text-analysis-mcp` | Rust | `examples/text-analysis-mcp/Dockerfile` | `repeat`, `word_count`, `extract_keywords` |
-| `data-utility-mcp` | Python | `examples/data-utility-mcp/Dockerfile` | `echo`, `add`, `multiply`, `upper`, `lower`, `ping` |
+| `workspace-assistant-mcp` | Go | `go run .` | `echo`, `add`, `upper`, `lower`, `create_task`, `draft_release_note`, `slugify` |
+| `data-utility-mcp` | Python | `python app.py` | `echo`, `add`, `multiply`, `upper`, `lower`, `ping`, `reverse` |
+| `text-analysis-mcp` | Rust | `cargo run` | `repeat`, `word_count`, `extract_keywords` |
 
-All three listen on port `8088` by default and serve the MCP endpoint at `/mcp`.
+All three listen on `http://localhost:8088/mcp` by default.
+`--from-server http://localhost:8088` appends `/mcp` automatically.
 
 ---
 
@@ -29,21 +30,23 @@ All three listen on port `8088` by default and serve the MCP endpoint at `/mcp`.
 ## Profiles (saved credentials)
 
 Credentials are saved in `~/.mcpruntime/config.json`. Each `auth login` creates
-a named profile; switch profiles with `auth use` or `MCP_PLATFORM_API_PROFILE`
-per-command.
+a named profile; switch with `auth use` or override per-command with
+`MCP_PLATFORM_API_PROFILE`.
 
 ```bash
 # Log in and save as the default profile
 mcp-runtime auth login --api-url https://platform.mcpruntime.org
 
 # Log in as a named profile
-mcp-runtime auth login --api-url https://platform.mcpruntime.org \
-  --email alice@acme.com --password '...' --profile alice
+mcp-runtime auth login \
+  --api-url https://platform.mcpruntime.org \
+  --email alice@acme.com --password '...' \
+  --profile alice
 
 # Switch the active profile (affects all following commands)
 mcp-runtime auth use alice
 
-# Use a different profile for one command only
+# Use a different profile for one command only — no switch
 MCP_PLATFORM_API_PROFILE=admin mcp-runtime team list
 
 # Inspect the active profile
@@ -81,20 +84,19 @@ mcp-runtime auth logout
 # Interactive — prompts for a token
 mcp-runtime auth login --api-url https://platform.mcpruntime.org
 
-# Non-interactive (CI/scripted)
+# Non-interactive (CI / scripted)
 mcp-runtime auth login \
   --api-url https://platform.mcpruntime.org \
   --token-stdin < token.txt
 
-# Email + password (when the platform supports password login)
+# Email + password login
 mcp-runtime auth login \
   --api-url https://platform.mcpruntime.org \
-  --email alice@acme.com --password 'secret' \
+  --email alice@acme.com --password '...' \
   --profile alice
 
 # Switch / inspect / remove
 mcp-runtime auth use alice
-mcp-runtime auth use admin
 mcp-runtime auth status
 mcp-runtime auth logout
 ```
@@ -103,12 +105,12 @@ mcp-runtime auth logout
 
 ## status
 
-👤 **User** (kubeconfig optional for full detail)
+👤 **User** (kubeconfig optional for full sentinel detail)
 
 ```bash
-mcp-runtime status                          # registry, operator, platform API
-mcp-runtime registry status                 # registry pod + endpoint
-KUBECONFIG=~/.kube/config mcp-runtime sentinel status   # sentinel stack
+mcp-runtime status                                                   # registry, operator, platform API
+mcp-runtime registry status                                          # registry pod + endpoint
+KUBECONFIG=~/.kube/config mcp-runtime sentinel status               # sentinel stack
 ```
 
 ---
@@ -119,58 +121,63 @@ KUBECONFIG=~/.kube/config mcp-runtime sentinel status   # sentinel stack
 
 > **Full guide:** [Publish an MCP Server](publish-mcp-server.md)
 
-The typical developer flow is four steps: **init → validate → build → push → deploy**.
+The developer flow is five steps: **init → validate → build → push → deploy**.
 
 ---
 
 ### Step 1 — scaffold metadata with `server init`
 
-`server init` creates `.mcp/servers.yaml` which holds tool names, trust levels,
-side effects, and policy settings. **Tool names must exactly match** what your
-server implements.
-
-**Recommended: discover tool names automatically** by running the server locally
-first, then using `--from-server`:
+`server init` creates `.mcp/servers.yaml` which describes your server's tools,
+trust levels, side effects, and policy. **Tool names must exactly match** what
+your server implements — use `--from-server` to discover them automatically:
 
 ```bash
-# Example: workspace-assistant-mcp (Go)
+# workspace-assistant-mcp (Go)
 cd examples/workspace-assistant-mcp
-go run .                           # starts on http://localhost:8088/mcp
+go run . &                                  # starts on http://localhost:8088/mcp
+SERVER_PID=$!
 
-# In another terminal — init discovers all 8 tools automatically
 mcp-runtime server init workspace-demo \
-  --from-server http://localhost:8088
-# → Discovered: aaa-ping, add, create_task, draft_release_note,
-#               echo, lower, slugify, upper
+  --from-server http://localhost:8088       # /mcp appended automatically
+# Discovered: aaa-ping, add, create_task, draft_release_note,
+#             echo, lower, slugify, upper
+
+kill $SERVER_PID
 ```
 
 ```bash
-# Example: data-utility-mcp (Python)
+# data-utility-mcp (Python)
 cd examples/data-utility-mcp
-pip install -r requirements.txt
-python app.py                      # starts on http://localhost:8088/mcp
+pip install "mcp[cli]"
+python app.py &                             # starts on http://localhost:8088/mcp
+SERVER_PID=$!
 
 mcp-runtime server init data-util \
   --from-server http://localhost:8088
-# → Discovered: add, echo, lower, multiply, ping, reverse, upper
+# Discovered: add, echo, lower, multiply, ping, reverse, upper
+
+kill $SERVER_PID
 ```
 
 ```bash
-# Example: text-analysis-mcp (Rust)
+# text-analysis-mcp (Rust)
 cd examples/text-analysis-mcp
-cargo run                          # starts on http://localhost:8088/mcp
+cargo run &                                 # starts on http://localhost:8088/mcp
+SERVER_PID=$!
 
 mcp-runtime server init text-analysis \
   --from-server http://localhost:8088
-# → Discovered: extract_keywords, repeat, word_count
+# Discovered: extract_keywords, repeat, word_count
+
+kill $SERVER_PID
 ```
 
-**Manual alternative** (when you already know tool names):
+**Manual alternative** — when you already know the tool names:
 
 ```bash
-# --tool name                    → allow rule, read side-effect, low trust
-# --tool-spec name:trust:effect  → full control over trust and side-effect
-
+# --tool name                         → allow, read side-effect, low trust
+# --tool-spec name:trust:side-effect  → full control (trust: low|medium|high,
+#                                       side-effect: read|write|destructive)
 mcp-runtime server init workspace-demo \
   --tool echo \
   --tool add \
@@ -179,32 +186,28 @@ mcp-runtime server init workspace-demo \
   --tool-spec draft_release_note:medium:write
 ```
 
-`--tool-spec` format: `name:low|medium|high:read|write|destructive`
-
 ---
 
 ### Step 2 — validate before building
 
-Catches mismatches between metadata and grants that would cause
-`tool_side_effect_unknown` errors at runtime:
+Catches tool name mismatches that would cause `tool_side_effect_unknown` errors
+at the gateway before you spend time on a build:
 
 ```bash
 mcp-runtime server validate --metadata-dir .mcp
 
-# Also validate a grant YAML you scaffolded
+# Also validate a grant you scaffolded
 mcp-runtime server validate --metadata-dir .mcp --grant-file grant.yaml
 
 # Cross-check against the locally running server
-mcp-runtime server validate \
-  --metadata-dir .mcp \
-  --from-server http://localhost:8088
+mcp-runtime server validate --metadata-dir .mcp --from-server http://localhost:8088
 ```
 
 ---
 
 ### Step 3 — build the image
 
-Run from the project directory (where the Dockerfile is):
+Run from the same directory where the Dockerfile lives:
 
 ```bash
 # workspace-assistant-mcp
@@ -220,24 +223,25 @@ cd examples/text-analysis-mcp
 mcp-runtime server build image text-analysis --tag v1
 ```
 
-The command prints the exact image ref to push, e.g.:
+The command prints the **exact image ref** you must use in the push step, e.g.:
 ```
 registry.mcpruntime.org/acme/workspace-demo:v1
 ```
 
-Use `--platform linux/amd64` when building on Apple Silicon for k3s/EKS nodes.
+Use `--platform linux/amd64` when building on Apple Silicon targeting k3s / EKS nodes.
 
 ---
 
 ### Step 4 — push the image
 
+Use the **exact ref** printed by `server build image`:
+
 ```bash
-# Use the exact image ref printed by server build image
 mcp-runtime registry push \
   --image registry.mcpruntime.org/acme/workspace-demo:v1 \
   --scope tenant
 
-# Other scope values
+# Other scopes
 mcp-runtime registry push --image ... --scope org     # org-wide catalog
 mcp-runtime registry push --image ... --scope public  # anonymous catalog
 ```
@@ -251,7 +255,7 @@ mcp-runtime server deploy workspace-demo \
   --scope tenant \
   --metadata-dir .mcp
 
-# Re-deploy after a code/image change
+# Re-deploy after a code / image change
 mcp-runtime server deploy workspace-demo \
   --scope tenant \
   --metadata-dir .mcp \
@@ -260,31 +264,32 @@ mcp-runtime server deploy workspace-demo \
 
 ---
 
-### Full push example — workspace-assistant-mcp
+### Full example — workspace-assistant-mcp end-to-end
 
 ```bash
 cd examples/workspace-assistant-mcp
 
-# 1. Run locally and init
+# 1. Discover tools from the running server
 go run . &
+SERVER_PID=$!
 mcp-runtime server init workspace-demo --from-server http://localhost:8088
+kill $SERVER_PID
 
 # 2. Validate
 mcp-runtime server validate --metadata-dir .mcp
 
-# 3. Build (run as acme team member)
+# 3. Build (as alice, an Acme team owner)
 mcp-runtime auth use alice
 mcp-runtime server build image workspace-demo --tag v1
+# → prints: registry.mcpruntime.org/acme/workspace-demo:v1
 
-# 4. Push
+# 4. Push — use the exact ref printed above
 mcp-runtime registry push \
   --image registry.mcpruntime.org/acme/workspace-demo:v1 \
   --scope tenant
 
 # 5. Deploy
-mcp-runtime server deploy workspace-demo \
-  --scope tenant \
-  --metadata-dir .mcp
+mcp-runtime server deploy workspace-demo --scope tenant --metadata-dir .mcp
 
 # 6. Confirm
 mcp-runtime server list
@@ -302,18 +307,20 @@ mcp-runtime server get workspace-demo --namespace mcp-team-acme
 mcp-runtime server status --namespace mcp-team-acme
 mcp-runtime server policy inspect workspace-demo --namespace mcp-team-acme
 mcp-runtime server delete workspace-demo
-mcp-runtime server generate --metadata-dir .mcp --output manifests/
+mcp-runtime server generate --metadata-dir .mcp --output manifests/   # GitOps YAML
 ```
 
-### Admin / operator commands (🔑 --use-kube)
+### Admin / operator (🔑 --use-kube)
 
 ```bash
-mcp-runtime server create workspace-demo --image repo/workspace-demo --tag v1 --use-kube
+mcp-runtime server create workspace-demo --image repo/workspace-demo --tag v1 \
+  --namespace mcp-team-acme --use-kube
 mcp-runtime server apply  --file server.yaml --use-kube
-mcp-runtime server export workspace-demo --use-kube
-mcp-runtime server patch  workspace-demo \
+mcp-runtime server export workspace-demo --namespace mcp-team-acme --use-kube
+mcp-runtime server patch  workspace-demo --namespace mcp-team-acme \
   --patch '{"spec":{"imageTag":"v2"}}' --use-kube
-mcp-runtime server logs   workspace-demo --follow --use-kube
+mcp-runtime server logs   workspace-demo --namespace mcp-team-acme \
+  --follow --use-kube
 ```
 
 ---
@@ -331,7 +338,7 @@ mcp-runtime registry info
 mcp-runtime registry provision --url registry.example.com
 
 # Push (user — requires auth login)
-# Always use the exact image ref from `server build image`
+# Use the exact image ref printed by `server build image`
 mcp-runtime registry push \
   --image registry.mcpruntime.org/acme/workspace-demo:v1 \
   --scope tenant
@@ -352,9 +359,8 @@ mcp-runtime registry push \
 ### Grants (👤 User)
 
 ```bash
-# Scaffold a grant — allow specific tools
-# --tool name        → allow, read side-effect, low trust (simple case)
-# --tool-rule name:allow|deny:low|medium|high  → full control
+# Simple: allow tools with read side-effect and low trust
+# --tool name  →  allow, read, low trust
 mcp-runtime access grant init workspace-ops \
   --server workspace-demo \
   --namespace mcp-team-acme \
@@ -364,7 +370,8 @@ mcp-runtime access grant init workspace-ops \
   --tool upper \
   --output grant.yaml
 
-# With mixed rules (allow echo, deny create_task)
+# Advanced: mixed allow/deny with custom trust levels
+# --tool-rule name:allow|deny:low|medium|high
 mcp-runtime access grant init workspace-ops \
   --server workspace-demo \
   --namespace mcp-team-acme \
@@ -374,11 +381,11 @@ mcp-runtime access grant init workspace-ops \
   --tool-rule create_task:deny:medium \
   --output grant.yaml
 
-# Validate then apply
+# Always validate before applying
 mcp-runtime server validate --metadata-dir .mcp --grant-file grant.yaml
 mcp-runtime access grant apply --file grant.yaml
 
-# Inspect / manage
+# Manage
 mcp-runtime access grant list
 mcp-runtime access grant list    --namespace mcp-team-acme
 mcp-runtime access grant get     workspace-ops --namespace mcp-team-acme
@@ -412,8 +419,10 @@ mcp-runtime access session unrevoke cursor-session --namespace mcp-team-acme
 
 ### Cross-team access
 
+Team A can grant Team B's agents access to Team A's servers:
+
 ```bash
-# Team A grants Team B's cursor agent access to their server
+# Team A owner creates a cross-team grant
 mcp-runtime access grant init workspace-to-globex \
   --server workspace-demo \
   --namespace mcp-team-acme \
@@ -424,7 +433,7 @@ mcp-runtime access grant init workspace-to-globex \
   --output grant-cross.yaml
 mcp-runtime access grant apply --file grant-cross.yaml
 
-# Admin creates the cross-team session
+# Admin creates the session for Team B's agent
 MCP_PLATFORM_API_PROFILE=admin \
   mcp-runtime access session init globex-session \
     --server workspace-demo \
@@ -448,13 +457,13 @@ See [Multi-team isolation](multi-team.md).
 
 > **Full guide:** [Agent adapters](agent-adapters.md)
 
-The adapter injects governance headers before requests reach the MCP server.
-When `--server` is set, a platform session is created automatically —
-`--agent` is **required** in that case (session name).
-`--agent-id` sets the `X-MCP-Agent-ID` identity header forwarded to the server.
+The adapter injects platform session and governance headers before every request
+reaches the MCP server. When `--server` is set, the adapter creates the session
+automatically — `--agent` (session name) is **required** in that case.
+`--agent-id` sets the identity header forwarded to the server.
 
 ```bash
-# HTTP proxy — MCP clients call http://127.0.0.1:8099
+# HTTP proxy — MCP clients connect to http://127.0.0.1:8099
 mcp-runtime adapter proxy \
   --runtime-url https://mcp.mcpruntime.org/workspace-demo/mcp \
   --server workspace-demo \
@@ -463,7 +472,7 @@ mcp-runtime adapter proxy \
   --auto-refresh \
   --listen 127.0.0.1:8099
 
-# stdio shim (Claude Desktop / local agent processes)
+# stdio shim — for Claude Desktop or local agent processes
 mcp-runtime adapter stdio \
   --runtime-url https://mcp.mcpruntime.org/workspace-demo/mcp \
   --server workspace-demo \
@@ -473,34 +482,36 @@ mcp-runtime adapter stdio \
 ```
 
 Once the adapter is running, point any MCP client (Claude Desktop, Cursor, or your
-own agent SDK) at `http://127.0.0.1:8099` — the adapter injects the platform
-session and governance headers transparently.
+agent SDK) at `http://127.0.0.1:8099` — session creation and governance headers are
+handled transparently.
 
 ---
 
 ## team
 
-🔑 **Admin**
+🔑 **Admin** — all `team` commands require the platform API admin role.
 
 > **Full guide:** [Multi-team isolation](multi-team.md)
 
 ```bash
 MCP_PLATFORM_API_PROFILE=admin mcp-runtime team list
 
-# Create a team — also provisions the Kubernetes namespace
+# Create a team — also provisions the Kubernetes namespace with RBAC
 MCP_PLATFORM_API_PROFILE=admin mcp-runtime team create acme --name "Acme Corp"
 
-# Add a password-login user
+# Add a password-login user to the team
 MCP_PLATFORM_API_PROFILE=admin mcp-runtime team user create acme \
-  --username alice@acme.com --password 'secret' --role owner
+  --username alice@acme.com --password '...' --role owner
 
 MCP_PLATFORM_API_PROFILE=admin mcp-runtime team user list acme
 ```
 
-Users log in with:
+Team users log in with:
 ```bash
-mcp-runtime auth login --api-url https://platform.mcpruntime.org \
-  --email alice@acme.com --password 'secret' --profile alice
+mcp-runtime auth login \
+  --api-url https://platform.mcpruntime.org \
+  --email alice@acme.com --password '...' \
+  --profile alice
 ```
 
 > ⚠️ `team init` is deprecated — use `team create`.
@@ -509,7 +520,7 @@ mcp-runtime auth login --api-url https://platform.mcpruntime.org \
 
 ## sentinel
 
-⚙️ **Operator**
+⚙️ **Operator** — requires `KUBECONFIG` with cluster-admin RBAC.
 
 > **Full guide:** [Sentinel](sentinel.md)
 
@@ -517,15 +528,15 @@ mcp-runtime auth login --api-url https://platform.mcpruntime.org \
 KUBECONFIG=~/.kube/config mcp-runtime sentinel status
 KUBECONFIG=~/.kube/config mcp-runtime sentinel events
 
-# Logs (--follow / --tail / --since / --previous)
+# Logs — --follow, --tail, --since, --previous
 KUBECONFIG=~/.kube/config mcp-runtime sentinel logs api --since 15m --follow
 KUBECONFIG=~/.kube/config mcp-runtime sentinel logs ingest --tail 200
 
-# Restart
+# Restart a component
 KUBECONFIG=~/.kube/config mcp-runtime sentinel restart gateway
 KUBECONFIG=~/.kube/config mcp-runtime sentinel restart --all
 
-# Port-forward to open a component locally
+# Open a component locally
 KUBECONFIG=~/.kube/config mcp-runtime sentinel port-forward ui
 KUBECONFIG=~/.kube/config mcp-runtime sentinel port-forward grafana
 ```
@@ -545,16 +556,14 @@ Component names for `logs` / `restart`:
 ```bash
 mcp-runtime bootstrap
 mcp-runtime bootstrap --provider k3s
-mcp-runtime bootstrap --apply --provider k3s   # automated fix on k3s
+mcp-runtime bootstrap --apply --provider k3s    # automated fix on k3s
 ```
 
 ---
 
 ## setup
 
-⚙️ **Operator**
-
-Runs pre-flight checks automatically before installing anything.
+⚙️ **Operator** — runs pre-flight checks automatically before installing anything.
 
 ```bash
 # Recommended: all flags from an env file
@@ -573,7 +582,7 @@ mcp-runtime setup --without-sentinel                         # skip analytics
 mcp-runtime setup --test-mode                                # local Kind dev
 ```
 
-**Key env vars** (`--env-file` equivalents):
+**Key env vars** (`--env-file` equivalents — see `config/deployments/mcpruntime-org.env.example`):
 
 | Env var | Flag |
 |---|---|
@@ -603,20 +612,18 @@ mcp-runtime cluster cert status
 mcp-runtime cluster cert apply
 mcp-runtime cluster cert wait --timeout 10m
 
-KUBECONFIG=~/.kube/config mcp-runtime cluster doctor   # 37-point diagnostic
+KUBECONFIG=~/.kube/config mcp-runtime cluster doctor    # 37-point diagnostic
 ```
 
 ---
 
-## Complete presentation walkthrough
+## Presentation walkthrough
 
-Run this end-to-end to demo the full platform using `workspace-assistant-mcp`:
+Follow this script top to bottom to demo the full platform using
+`workspace-assistant-mcp`. Requires a running platform at `https://platform.mcpruntime.org`
+and admin credentials.
 
 ```bash
-# ── 0. Prerequisites ──────────────────────────────────────────────────────────
-# Platform is already set up at https://platform.mcpruntime.org
-# You have admin credentials
-
 # ── 1. Create two teams (admin) ───────────────────────────────────────────────
 mcp-runtime auth login \
   --api-url https://platform.mcpruntime.org \
@@ -631,39 +638,45 @@ MCP_PLATFORM_API_PROFILE=admin mcp-runtime team create globex --name "Globex Cor
 MCP_PLATFORM_API_PROFILE=admin mcp-runtime team user create globex \
   --username bob@globex.com --password 'bob456' --role member
 
-# ── 2. Deploy workspace-assistant-mcp as Acme (alice) ────────────────────────
+# ── 2. Log in as alice (Acme team owner) ─────────────────────────────────────
 mcp-runtime auth login \
   --api-url https://platform.mcpruntime.org \
   --email alice@acme.com --password 'alice123' \
   --profile alice
 mcp-runtime auth use alice
 
+# ── 3. Init metadata from the running example server ─────────────────────────
 cd examples/workspace-assistant-mcp
-
-# Run locally to discover real tool names
 go run . &
-mcp-runtime server init workspace \
-  --from-server http://localhost:8088
-kill %1   # stop local server
+SERVER_PID=$!
 
-# Validate metadata
+mcp-runtime server init workspace-demo --from-server http://localhost:8088
+# Discovered: aaa-ping, add, create_task, draft_release_note,
+#             echo, lower, slugify, upper
+
+kill $SERVER_PID
+
+# ── 4. Validate ───────────────────────────────────────────────────────────────
 mcp-runtime server validate --metadata-dir .mcp
 
-# Build → push → deploy
-mcp-runtime server build image workspace --tag v1
+# ── 5. Build → push → deploy ──────────────────────────────────────────────────
+mcp-runtime server build image workspace-demo --tag v1
+# Prints the exact image ref, e.g.: registry.mcpruntime.org/acme/workspace-demo:v1
+
 mcp-runtime registry push \
-  --image registry.mcpruntime.org/acme/workspace:v1 \
+  --image registry.mcpruntime.org/acme/workspace-demo:v1 \
   --scope tenant
-mcp-runtime server deploy workspace --scope tenant --metadata-dir .mcp
 
-# Confirm
+mcp-runtime server deploy workspace-demo --scope tenant --metadata-dir .mcp
+
+# ── 6. Confirm the server is up ───────────────────────────────────────────────
 mcp-runtime server list
-mcp-runtime server get workspace --namespace mcp-team-acme
+mcp-runtime server get workspace-demo --namespace mcp-team-acme
+mcp-runtime server policy inspect workspace-demo --namespace mcp-team-acme
 
-# ── 3. Grant access and set up a session ─────────────────────────────────────
-# Alice grants cursor agent access to echo + add tools
+# ── 7. Grant access ───────────────────────────────────────────────────────────
 mcp-runtime access grant init workspace-cursor \
-  --server workspace \
+  --server workspace-demo \
   --namespace mcp-team-acme \
   --agent-id cursor \
   --tool echo \
@@ -673,11 +686,12 @@ mcp-runtime access grant init workspace-cursor \
 
 mcp-runtime server validate --metadata-dir .mcp --grant-file grant.yaml
 mcp-runtime access grant apply --file grant.yaml
+mcp-runtime access grant list
 
-# Admin creates a session
+# ── 8. Create a session (admin) ───────────────────────────────────────────────
 MCP_PLATFORM_API_PROFILE=admin \
   mcp-runtime access session init demo-session \
-    --server workspace \
+    --server workspace-demo \
     --namespace mcp-team-acme \
     --agent-id cursor \
     --trust low \
@@ -685,26 +699,27 @@ MCP_PLATFORM_API_PROFILE=admin \
     --output session.yaml
 MCP_PLATFORM_API_PROFILE=admin \
   mcp-runtime access session apply --file session.yaml
+mcp-runtime access session list
 
-# ── 4. Connect via adapter and call tools ─────────────────────────────────────
+# ── 9. Connect via adapter and call tools with your MCP client ────────────────
 mcp-runtime adapter proxy \
-  --runtime-url https://mcp.mcpruntime.org/workspace/mcp \
-  --server workspace \
+  --runtime-url https://mcp.mcpruntime.org/workspace-demo/mcp \
+  --server workspace-demo \
   --agent cursor \
   --agent-id cursor \
   --auto-refresh \
   --listen 127.0.0.1:8099 &
 
-# Point your MCP client (Claude Desktop, Cursor, etc.) at http://127.0.0.1:8099
-# The adapter handles session creation and governance headers automatically.
+# → Connect Claude Desktop, Cursor, or your MCP client to http://127.0.0.1:8099
+# → Call echo, add, upper — governance headers injected automatically
 
-# ── 5. Inspect the platform ───────────────────────────────────────────────────
+# ── 10. Inspect analytics ─────────────────────────────────────────────────────
 mcp-runtime status
-mcp-runtime server policy inspect workspace --namespace mcp-team-acme
-mcp-runtime access grant list
-mcp-runtime access session list
+mcp-runtime server policy inspect workspace-demo --namespace mcp-team-acme
 KUBECONFIG=~/.kube/config mcp-runtime sentinel status
-# → Analytics at https://platform.mcpruntime.org (Analytics → Tools tab)
+KUBECONFIG=~/.kube/config mcp-runtime sentinel logs api --since 10m
+# → Open https://platform.mcpruntime.org → Analytics → Tools tab
+#   to see tool calls by user, team, and agent
 ```
 
 ---
