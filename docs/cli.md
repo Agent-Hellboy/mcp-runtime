@@ -472,42 +472,9 @@ mcp-runtime adapter stdio \
   --auto-refresh
 ```
 
-Test the adapter with curl (Streamable HTTP — MCP 2025-06-18):
-
-```bash
-# Initialize MCP session
-INIT=$(curl -si http://localhost:8099 \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-        "protocolVersion":"2025-06-18",
-        "capabilities":{},
-        "clientInfo":{"name":"test","version":"1"}}}')
-
-SID=$(echo "$INIT" | grep -i mcp-session-id | awk '{print $2}' | tr -d '\r')
-
-# Mark session ready
-curl -s http://localhost:8099 \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -H "Mcp-Session-Id: $SID" \
-  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' > /dev/null
-
-# List tools
-curl -s http://localhost:8099 \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -H "Mcp-Session-Id: $SID" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
-
-# Call a tool
-curl -s http://localhost:8099 \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -H "Mcp-Session-Id: $SID" \
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
-        "name":"echo","arguments":{"message":"hello from mcp-runtime!"}}}'
-```
+Once the adapter is running, point any MCP client (Claude Desktop, Cursor, or your
+own agent SDK) at `http://127.0.0.1:8099` — the adapter injects the platform
+session and governance headers transparently.
 
 ---
 
@@ -728,35 +695,8 @@ mcp-runtime adapter proxy \
   --auto-refresh \
   --listen 127.0.0.1:8099 &
 
-# Initialize MCP session
-INIT=$(curl -si http://localhost:8099 \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-        "protocolVersion":"2025-06-18","capabilities":{},
-        "clientInfo":{"name":"demo","version":"1"}}}')
-SID=$(echo "$INIT" | grep -i mcp-session-id | awk '{print $2}' | tr -d '\r')
-
-curl -s http://localhost:8099 \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -H "Mcp-Session-Id: $SID" \
-  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' > /dev/null
-
-# Call tools
-curl -s http://localhost:8099 \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -H "Mcp-Session-Id: $SID" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
-        "name":"echo","arguments":{"message":"hello from the platform!"}}}'
-
-curl -s http://localhost:8099 \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -H "Mcp-Session-Id: $SID" \
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
-        "name":"add","arguments":{"a":42,"b":58}}}'
+# Point your MCP client (Claude Desktop, Cursor, etc.) at http://127.0.0.1:8099
+# The adapter handles session creation and governance headers automatically.
 
 # ── 5. Inspect the platform ───────────────────────────────────────────────────
 mcp-runtime status
