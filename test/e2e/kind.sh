@@ -4020,6 +4020,7 @@ if checkpoint_enabled "oauth"; then
     wait_http "http://127.0.0.1:${PROMETHEUS_PORT}/prometheus/-/ready"
   fi
 
+  recover_traefik_port_forward_if_needed || true
   echo "[registry] checking public ingress admin auth"
   REGISTRY_PUBLIC_URL="http://127.0.0.1:${TRAEFIK_PORT}/v2/_catalog"
   REGISTRY_UNAUTH_STATUS=""
