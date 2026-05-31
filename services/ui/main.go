@@ -231,6 +231,19 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 				w.Header().Set("content-type", ct)
 			}
 		}
+
+		// HTML: always revalidate so browsers pick up new JS/CSS on deploy.
+		// JS/CSS: short max-age so updates land within a minute without hammering
+		// the server on every request.
+		switch filepath.Ext(path) {
+		case ".html":
+			w.Header().Set("cache-control", "no-cache")
+		case ".js", ".css":
+			w.Header().Set("cache-control", "max-age=60")
+		default:
+			w.Header().Set("cache-control", "max-age=300")
+		}
+
 		w.WriteHeader(http.StatusOK)
 		// #nosec G705 -- assets are bundled from repository static/ at build time.
 		_, _ = w.Write(data)
