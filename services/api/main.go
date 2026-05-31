@@ -844,7 +844,49 @@ func (s *apiServer) queryAnalyticsTools(ctx context.Context, scope analyticsQuer
 		}
 		out = append(out, row)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Resolve UUID → human-readable names in a single batch query each.
+	// human_id is a user UUID (JWT sub); team_id is the team UUID.
+	// IDs that look like emails or slugs (non-UUID strings) are kept as-is.
+	if s.platform != nil && len(out) > 0 {
+		uniqueHumans := collectUniqueIDs(out, func(r analyticsToolUsage) string { return r.HumanID })
+		uniqueTeams := collectUniqueIDs(out, func(r analyticsToolUsage) string { return r.TeamID })
+
+		userNames, _ := s.platform.ResolveUserIDs(ctx, uniqueHumans)
+		teamNames, _ := s.platform.ResolveTeamIDs(ctx, uniqueTeams)
+
+		for i := range out {
+			if v, ok := userNames[out[i].HumanID]; ok {
+				out[i].HumanID = v
+			}
+			if v, ok := teamNames[out[i].TeamID]; ok {
+				out[i].TeamID = v
+			}
+		}
+	}
+
+	return out, nil
+}
+
+// collectUniqueIDs returns deduplicated non-empty string values from rows.
+func collectUniqueIDs(rows []analyticsToolUsage, fn func(analyticsToolUsage) string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, r := range rows {
+		v := fn(r)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 func (s *apiServer) queryAnalyticsDecisions(ctx context.Context, scope analyticsQueryScope) ([]analyticsDecisionUsage, error) {

@@ -278,6 +278,66 @@ WHERE t.slug = $1 AND t.deleted_at IS NULL`, slug).
 	return team, true, nil
 }
 
+// ResolveTeamIDs returns a map of team UUID → slug for the given IDs.
+// Unknown or deleted team IDs are silently omitted.
+func (s *Store) ResolveTeamIDs(ctx context.Context, ids []string) (map[string]string, error) {
+	if len(ids) == 0 {
+		return map[string]string{}, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT id, slug FROM teams WHERE id = ANY(ARRAY["+strings.Join(placeholders, ",")+"]::uuid[]) AND deleted_at IS NULL",
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]string, len(ids))
+	for rows.Next() {
+		var id, slug string
+		if err := rows.Scan(&id, &slug); err != nil {
+			return nil, err
+		}
+		out[id] = slug
+	}
+	return out, rows.Err()
+}
+
+// ResolveUserIDs returns a map of user UUID → email for the given IDs.
+// Unknown or deleted user IDs are silently omitted.
+func (s *Store) ResolveUserIDs(ctx context.Context, ids []string) (map[string]string, error) {
+	if len(ids) == 0 {
+		return map[string]string{}, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT id, email FROM users WHERE id = ANY(ARRAY["+strings.Join(placeholders, ",")+"]::uuid[]) AND deleted_at IS NULL",
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]string, len(ids))
+	for rows.Next() {
+		var id, email string
+		if err := rows.Scan(&id, &email); err != nil {
+			return nil, err
+		}
+		out[id] = email
+	}
+	return out, rows.Err()
+}
+
 // UpsertTeamMembership creates or updates a user's role in a team.
 func (s *Store) UpsertTeamMembership(ctx context.Context, teamSlug, userID, role string) (TeamMembership, error) {
 	teamSlug = NormalizeTeamSlug(teamSlug)
