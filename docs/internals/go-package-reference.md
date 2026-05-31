@@ -5704,6 +5704,7 @@ Package server owns routing for the server top-level command.
 ### Index
 
 - [`func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, platform, contextDir string) error`](#cli-server-func-buildimage-ctx-context-context-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-platform-contextdir-string-error)
+- [`func DiscoverToolsFromServer(serverURL string) ([]string, error)`](#cli-server-func-discovertoolsfromserver-serverurl-string-string-error)
 - [`func New(runtime *core.Runtime) *cobra.Command`](#cli-server-func-new-runtime-core-runtime-cobra-command)
 - [`func NewWithManager(mgr *ServerManager) *cobra.Command`](#cli-server-func-newwithmanager-mgr-servermanager-cobra-command)
 - [`type ServerManager struct`](#cli-server-type-servermanager-struct)
@@ -5733,6 +5734,19 @@ Package server owns routing for the server top-level command.
 ```text
 func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, platform, contextDir string) error
     BuildImage builds a Docker image and updates MCP metadata for the server.
+
+```
+
+<a id="cli-server-func-discovertoolsfromserver-serverurl-string-string-error"></a>
+```text
+func DiscoverToolsFromServer(serverURL string) ([]string, error)
+    DiscoverToolsFromServer connects to a running MCP server at url and returns
+    the tool names. They are returned as bare names; callers wrap them into
+    --tool flags or metadata.ToolConfig values.
+
+    If url does not end with an explicit path, /mcp is appended automatically
+    because that is the default MCP endpoint path used by the go-sdk and the
+    workspace-assistant-mcp example server.
 
 ```
 

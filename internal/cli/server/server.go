@@ -2,7 +2,9 @@
 package server
 
 import (
+	"fmt"
 	"math"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -49,12 +51,26 @@ For pushing images, use 'registry push'.`,
 	var initTools []string
 	var initToolSpecs []string
 	var initForce bool
+	var initFromServer string
 	initCmd := &cobra.Command{
 		Use:   "init [name]",
 		Short: "Initialize .mcp metadata for a server",
-		Long:  "Initialize .mcp/servers.yaml metadata for a server. Use repeated --tool flags to seed governed tool metadata, then build, push, and deploy with server build image, registry push, and server deploy.",
+		Long:  "Initialize .mcp/servers.yaml metadata for a server. Use --tool flags to seed governed tool metadata, or --from-server to discover tools from a running MCP server automatically. Then build, push, and deploy with server build image, registry push, and server deploy.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if initFromServer != "" {
+				core.Info(fmt.Sprintf("Discovering tools from %s ...", initFromServer))
+				discovered, err := DiscoverToolsFromServer(initFromServer)
+				if err != nil {
+					return fmt.Errorf("--from-server %s: %w", initFromServer, err)
+				}
+				if len(discovered) == 0 {
+					core.Warn("No tools returned by the server; metadata will have an empty tool list")
+				} else {
+					core.Info(fmt.Sprintf("Discovered %d tool(s): %s", len(discovered), strings.Join(discovered, ", ")))
+					initTools = append(discovered, initTools...)
+				}
+			}
 			return mgr.InitServer(args[0], initMetadataDir, initImage, initTag, initScope, initPolicyMode, initDefaultDecision, initSessionRequired, initPort, initTools, initToolSpecs, initForce)
 		},
 	}
@@ -69,6 +85,7 @@ For pushing images, use 'registry push'.`,
 	initCmd.Flags().StringArrayVar(&initTools, "tool", nil, "Tool name to add with read side-effect metadata; repeat for multiple tools")
 	initCmd.Flags().StringArrayVar(&initToolSpecs, "tool-spec", nil, "Tool metadata as name:low|medium|high:read|write|destructive; repeat for mixed trust or side effects")
 	initCmd.Flags().BoolVar(&initForce, "force", false, "Replace an existing metadata entry with the same server name")
+	initCmd.Flags().StringVar(&initFromServer, "from-server", "", "Discover tools by calling tools/list on a running MCP server at this URL (e.g. http://localhost:8088); discovered names are merged with --tool flags")
 
 	var namespace string
 	var team string
@@ -269,7 +286,7 @@ For pushing images, use 'registry push'.`,
 	}
 	buildCmd.AddCommand(newBuildImageCmd(mgr.Logger()))
 
-	cmd.AddCommand(initCmd, listCmd, getCmd, createCmd, applyCmd, deployCmd, generateCmd, exportCmd, patchCmd, deleteCmd, logsCmd, statusCmd, policyCmd, buildCmd)
+	cmd.AddCommand(initCmd, listCmd, getCmd, createCmd, applyCmd, deployCmd, generateCmd, exportCmd, patchCmd, deleteCmd, logsCmd, statusCmd, policyCmd, buildCmd, newValidateCmd())
 	return cmd
 }
 

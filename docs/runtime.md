@@ -16,41 +16,19 @@ The runtime is the Kubernetes-native control plane for MCP servers. It owns the 
 
 ## Core resources
 
+| Resource | Key fields |
+|---|---|
+| **MCPServer** | `image`, `imageTag`, `teamID`, `port`, `publicPathPrefix`, `tools[]`, `gateway.enabled`, `rollout` |
+| **MCPAccessGrant** | `serverRef`, `subject` (humanID / agentID / teamID), `maxTrust`, `allowedSideEffects[]`, `toolRules[]`, `disabled` |
+| **MCPAgentSession** | `serverRef`, `subject`, `consentedTrust`, `expiresAt`, `revoked`, `upstreamTokenSecretRef` |
+
+`MCPServer` is referenced by many grants and sessions. Grant + session are evaluated together by the gateway policy layer.
+
 ```mermaid
-classDiagram
-    class MCPServer {
-      +teamID
-      +image, imageTag
-      +port, publicPathPrefix
-      +ingressHost, ingressPath
-      +tools[]
-      +auth, policy, session
-      +gateway.enabled
-      +analytics.disabled
-      +rollout
-      +status
-    }
-    class MCPAccessGrant {
-      +serverRef
-      +subject (humanID, agentID, teamID)
-      +maxTrust
-      +allowedSideEffects[]
-      +toolRules[]
-      +disabled
-      +status
-    }
-    class MCPAgentSession {
-      +serverRef
-      +subject
-      +consentedTrust
-      +expiresAt
-      +revoked
-      +upstreamTokenSecretRef
-      +status
-    }
-    MCPServer "1" o-- "many" MCPAccessGrant : referenced by
-    MCPServer "1" o-- "many" MCPAgentSession : referenced by
-    MCPAccessGrant "1" .. "1" MCPAgentSession : evaluated together
+flowchart LR
+    S[MCPServer] --> G[MCPAccessGrant]
+    S --> T[MCPAgentSession]
+    G -. evaluated together .-> T
 ```
 
 See the [API reference](api.md) for full field semantics.

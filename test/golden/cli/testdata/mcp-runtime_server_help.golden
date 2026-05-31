@@ -31,6 +31,7 @@ Available Commands:
   patch       Patch an MCP server manifest
   policy      Inspect rendered gateway policy for an MCP server
   status      Show MCP server runtime status (pods, images, pull secrets)
+  validate    Validate .mcp metadata and optional grant/session YAML files
 
 Flags:
   -h, --help       help for server
