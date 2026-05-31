@@ -5740,13 +5740,12 @@ func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile,
 <a id="cli-server-func-discovertoolsfromserver-serverurl-string-string-error"></a>
 ```text
 func DiscoverToolsFromServer(serverURL string) ([]string, error)
-    DiscoverToolsFromServer connects to a running MCP server at url and returns
-    the tool names. They are returned as bare names; callers wrap them into
-    --tool flags or metadata.ToolConfig values.
+    DiscoverToolsFromServer connects to a running MCP server at serverURL and
+    returns the tool names. They are returned as bare names; callers wrap them
+    into --tool flags or metadata.ToolConfig values.
 
-    If url does not end with an explicit path, /mcp is appended automatically
-    because that is the default MCP endpoint path used by the go-sdk and the
-    workspace-assistant-mcp example server.
+    If the URL has no explicit path, /mcp is appended automatically (the default
+    MCP endpoint path used by the go-sdk).
 
 ```
 

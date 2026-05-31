@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -116,7 +117,7 @@ Use --from-server to also verify tool names against a locally running MCP server
 	return cmd
 }
 
-// validateServer checks a single ServerConfig entry.
+// validateServer checks a single ServerMetadata entry.
 func validateServer(srv metadata.ServerMetadata) []validateIssue {
 	var issues []validateIssue
 
@@ -175,38 +176,86 @@ func validateServer(srv metadata.ServerMetadata) []validateIssue {
 	return issues
 }
 
+// grantYAML is the subset of MCPAccessGrant fields we validate.
+type grantYAML struct {
+	APIVersion string `yaml:"apiVersion"`
+	Kind       string `yaml:"kind"`
+	Metadata   struct {
+		Name string `yaml:"name"`
+	} `yaml:"metadata"`
+	Spec struct {
+		ServerRef struct {
+			Name      string `yaml:"name"`
+			Namespace string `yaml:"namespace"`
+		} `yaml:"serverRef"`
+		MaxTrust           string   `yaml:"maxTrust"`
+		AllowedSideEffects []string `yaml:"allowedSideEffects"`
+		ToolRules          []struct {
+			Name          string `yaml:"name"`
+			Decision      string `yaml:"decision"`
+			RequiredTrust string `yaml:"requiredTrust"`
+		} `yaml:"toolRules"`
+	} `yaml:"spec"`
+}
+
 // validateGrantFile reads an MCPAccessGrant YAML and checks that every tool
-// rule references a tool that is defined in the server metadata.
+// rule references a tool defined in the server metadata and that side effects
+// and trust levels are valid enum values.
 func validateGrantFile(path string, cfg *metadata.RegistryFile) ([]validateIssue, error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- explicit CLI flag path
 	if err != nil {
 		return nil, err
 	}
 
-	var grant struct {
-		Spec struct {
-			ServerRef struct {
-				Name      string `yaml:"name" json:"name"`
-				Namespace string `yaml:"namespace" json:"namespace"`
-			} `yaml:"serverRef" json:"serverRef"`
-			AllowedSideEffects []string `yaml:"allowedSideEffects" json:"allowedSideEffects"`
-			ToolRules          []struct {
-				Name     string `yaml:"name" json:"name"`
-				Decision string `yaml:"decision" json:"decision"`
-			} `yaml:"toolRules" json:"toolRules"`
-		} `yaml:"spec" json:"spec"`
-		Metadata struct {
-			Name string `yaml:"name" json:"name"`
-		} `yaml:"metadata" json:"metadata"`
-	}
+	var grant grantYAML
 	if err := yaml.Unmarshal(data, &grant); err != nil {
 		return nil, fmt.Errorf("parse YAML: %w", err)
+	}
+
+	var issues []validateIssue
+
+	// Check resource kind so users don't accidentally pass the wrong file type.
+	if grant.Kind != "" && grant.Kind != "MCPAccessGrant" {
+		issues = append(issues, validateIssue{
+			fatal:   true,
+			message: fmt.Sprintf("%s: expected kind MCPAccessGrant, got %q — wrong file passed to --grant-file?", path, grant.Kind),
+		})
+		return issues, nil
 	}
 
 	grantName := grant.Metadata.Name
 	serverName := grant.Spec.ServerRef.Name
 
-	// Find the matching server in metadata
+	// Validate maxTrust if set.
+	if t := strings.ToLower(strings.TrimSpace(grant.Spec.MaxTrust)); t != "" {
+		switch metadata.TrustLevel(t) {
+		case metadata.TrustLevelLow, metadata.TrustLevelMedium, metadata.TrustLevelHigh:
+		default:
+			issues = append(issues, validateIssue{
+				fatal:   true,
+				message: fmt.Sprintf("grant %q: invalid maxTrust %q", grantName, grant.Spec.MaxTrust),
+				hint:    "Valid values: low, medium, high",
+			})
+		}
+	}
+
+	// Validate allowedSideEffects enum values.
+	allowedEffects := map[string]struct{}{}
+	for _, e := range grant.Spec.AllowedSideEffects {
+		lower := strings.ToLower(strings.TrimSpace(e))
+		switch metadata.ToolSideEffect(lower) {
+		case metadata.ToolSideEffectRead, metadata.ToolSideEffectWrite, metadata.ToolSideEffectDestructive:
+			allowedEffects[lower] = struct{}{}
+		default:
+			issues = append(issues, validateIssue{
+				fatal:   true,
+				message: fmt.Sprintf("grant %q: invalid allowedSideEffect %q", grantName, e),
+				hint:    "Valid values: read, write, destructive",
+			})
+		}
+	}
+
+	// Find the matching server in metadata.
 	var srv *metadata.ServerMetadata
 	for i := range cfg.Servers {
 		if cfg.Servers[i].Name == serverName {
@@ -214,9 +263,6 @@ func validateGrantFile(path string, cfg *metadata.RegistryFile) ([]validateIssue
 			break
 		}
 	}
-
-	var issues []validateIssue
-
 	if srv == nil {
 		issues = append(issues, validateIssue{
 			fatal:   false,
@@ -226,19 +272,36 @@ func validateGrantFile(path string, cfg *metadata.RegistryFile) ([]validateIssue
 		return issues, nil
 	}
 
-	// Build tool map from server metadata
+	// Build tool map from server metadata.
 	toolMap := map[string]metadata.ToolConfig{}
 	for _, t := range srv.Tools {
 		toolMap[t.Name] = t
 	}
 
-	// Build allowed side effects set
-	allowedEffects := map[string]struct{}{}
-	for _, e := range grant.Spec.AllowedSideEffects {
-		allowedEffects[strings.ToLower(e)] = struct{}{}
-	}
-
 	for _, rule := range grant.Spec.ToolRules {
+		// Validate decision enum.
+		switch strings.ToLower(rule.Decision) {
+		case "allow", "deny", "":
+		default:
+			issues = append(issues, validateIssue{
+				fatal:   true,
+				message: fmt.Sprintf("grant %q toolRule %q: invalid decision %q", grantName, rule.Name, rule.Decision),
+				hint:    "Valid values: allow, deny",
+			})
+		}
+		// Validate requiredTrust enum.
+		if t := strings.ToLower(strings.TrimSpace(rule.RequiredTrust)); t != "" {
+			switch metadata.TrustLevel(t) {
+			case metadata.TrustLevelLow, metadata.TrustLevelMedium, metadata.TrustLevelHigh:
+			default:
+				issues = append(issues, validateIssue{
+					fatal:   true,
+					message: fmt.Sprintf("grant %q toolRule %q: invalid requiredTrust %q", grantName, rule.Name, rule.RequiredTrust),
+					hint:    "Valid values: low, medium, high",
+				})
+			}
+		}
+
 		toolCfg, exists := toolMap[rule.Name]
 		if !exists {
 			issues = append(issues, validateIssue{
@@ -255,7 +318,7 @@ func validateGrantFile(path string, cfg *metadata.RegistryFile) ([]validateIssue
 			continue
 		}
 
-		if rule.Decision == "allow" {
+		if strings.ToLower(rule.Decision) == "allow" {
 			effect := string(toolCfg.SideEffect)
 			if _, ok := allowedEffects[effect]; !ok {
 				issues = append(issues, validateIssue{
@@ -273,6 +336,25 @@ func validateGrantFile(path string, cfg *metadata.RegistryFile) ([]validateIssue
 	return issues, nil
 }
 
+// sessionYAML is the subset of MCPAgentSession fields we validate.
+type sessionYAML struct {
+	APIVersion string `yaml:"apiVersion"`
+	Kind       string `yaml:"kind"`
+	Metadata   struct {
+		Name string `yaml:"name"`
+	} `yaml:"metadata"`
+	Spec struct {
+		ServerRef struct {
+			Name string `yaml:"name"`
+		} `yaml:"serverRef"`
+		Subject struct {
+			AgentID string `yaml:"agentID"`
+		} `yaml:"subject"`
+		ConsentedTrust string `yaml:"consentedTrust"`
+		ExpiresAt      string `yaml:"expiresAt"`
+	} `yaml:"spec"`
+}
+
 // validateSessionFile reads an MCPAgentSession YAML and checks basic consistency.
 func validateSessionFile(path string, cfg *metadata.RegistryFile) ([]validateIssue, error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- explicit CLI flag path
@@ -280,26 +362,22 @@ func validateSessionFile(path string, cfg *metadata.RegistryFile) ([]validateIss
 		return nil, err
 	}
 
-	var session struct {
-		Spec struct {
-			ServerRef struct {
-				Name string `yaml:"name" json:"name"`
-			} `yaml:"serverRef" json:"serverRef"`
-			Subject struct {
-				AgentID string `yaml:"agentID" json:"agentID"`
-			} `yaml:"subject" json:"subject"`
-			ConsentedTrust string `yaml:"consentedTrust" json:"consentedTrust"`
-			ExpiresAt      string `yaml:"expiresAt" json:"expiresAt"`
-		} `yaml:"spec" json:"spec"`
-		Metadata struct {
-			Name string `yaml:"name" json:"name"`
-		} `yaml:"metadata" json:"metadata"`
-	}
+	var session sessionYAML
 	if err := yaml.Unmarshal(data, &session); err != nil {
 		return nil, fmt.Errorf("parse YAML: %w", err)
 	}
 
 	var issues []validateIssue
+
+	// Check resource kind.
+	if session.Kind != "" && session.Kind != "MCPAgentSession" {
+		issues = append(issues, validateIssue{
+			fatal:   true,
+			message: fmt.Sprintf("%s: expected kind MCPAgentSession, got %q — wrong file passed to --session-file?", path, session.Kind),
+		})
+		return issues, nil
+	}
+
 	name := session.Metadata.Name
 	serverName := session.Spec.ServerRef.Name
 
@@ -321,19 +399,33 @@ func validateSessionFile(path string, cfg *metadata.RegistryFile) ([]validateIss
 		})
 	}
 
-	// Check that the referenced server exists in metadata
+	// Validate expiresAt is a valid RFC3339 timestamp if set.
+	if ts := strings.TrimSpace(session.Spec.ExpiresAt); ts != "" {
+		if _, err := time.Parse(time.RFC3339, ts); err != nil {
+			issues = append(issues, validateIssue{
+				fatal:   true,
+				message: fmt.Sprintf("session %q: expiresAt %q is not a valid RFC3339 timestamp: %v", name, ts, err),
+				hint:    "Use the format 2006-01-02T15:04:05Z, e.g. 2026-06-01T12:00:00Z",
+			})
+		}
+	}
+
+	// Check that the referenced server exists in metadata.
 	found := false
 	for _, srv := range cfg.Servers {
-		if srv.Name == serverName {
-			found = true
-			if srv.Policy.DefaultDecision == metadata.PolicyDecisionDeny && len(srv.Tools) == 0 {
-				issues = append(issues, validateIssue{
-					fatal:   false,
-					message: fmt.Sprintf("session %q: server %q has default-deny policy but no tools — all tool calls will be denied", name, serverName),
-				})
-			}
-			break
+		if srv.Name != serverName {
+			continue
 		}
+		found = true
+		// Guard nil policy — PolicyConfig is an embedded struct, not a pointer,
+		// but DefaultDecision may be the zero value "".
+		if srv.Policy.DefaultDecision == metadata.PolicyDecisionDeny && len(srv.Tools) == 0 {
+			issues = append(issues, validateIssue{
+				fatal:   false,
+				message: fmt.Sprintf("session %q: server %q has default-deny policy but no tools — all tool calls will be denied", name, serverName),
+			})
+		}
+		break
 	}
 
 	if !found {
@@ -347,14 +439,27 @@ func validateSessionFile(path string, cfg *metadata.RegistryFile) ([]validateIss
 }
 
 // validateToolsAgainstServer calls tools/list on a running MCP server and
-// checks that each tool in the metadata actually exists there.
-func validateToolsAgainstServer(url string, cfg *metadata.RegistryFile) []validateIssue {
-	core.Info(fmt.Sprintf("Verifying tool names against running server: %s", url))
-	discovered, err := DiscoverToolsFromServer(url)
+// checks that each tool in the metadata actually exists there. When
+// servers.yaml contains multiple servers the check is skipped for all but the
+// first one because --from-server points at a single endpoint.
+func validateToolsAgainstServer(rawURL string, cfg *metadata.RegistryFile) []validateIssue {
+	if len(cfg.Servers) == 0 {
+		return nil
+	}
+	if len(cfg.Servers) > 1 {
+		return []validateIssue{{
+			fatal:   false,
+			message: fmt.Sprintf("--from-server: metadata has %d servers; only validating tools for the first server %q against %s", len(cfg.Servers), cfg.Servers[0].Name, rawURL),
+		}}
+	}
+	srv := cfg.Servers[0]
+
+	core.Info(fmt.Sprintf("Verifying tool names for server %q against running server: %s", srv.Name, rawURL))
+	discovered, err := DiscoverToolsFromServer(rawURL)
 	if err != nil {
 		return []validateIssue{{
 			fatal:   false,
-			message: fmt.Sprintf("--from-server %s: %v", url, err),
+			message: fmt.Sprintf("--from-server %s: %v", rawURL, err),
 			hint:    "Make sure the server is running and reachable before running validate.",
 		}}
 	}
@@ -365,32 +470,31 @@ func validateToolsAgainstServer(url string, cfg *metadata.RegistryFile) []valida
 	}
 
 	var issues []validateIssue
-	for _, srv := range cfg.Servers {
-		for _, tool := range srv.Tools {
-			if _, ok := serverSet[tool.Name]; !ok {
-				issues = append(issues, validateIssue{
-					fatal: true,
-					message: fmt.Sprintf(
-						"server %q tool %q is in metadata but not found in tools/list from %s — gateway will return tool_side_effect_unknown",
-						srv.Name, tool.Name, url,
-					),
-					hint: fmt.Sprintf("Server implements: %s", strings.Join(discovered, ", ")),
-				})
-			}
+	for _, tool := range srv.Tools {
+		if _, ok := serverSet[tool.Name]; !ok {
+			issues = append(issues, validateIssue{
+				fatal: true,
+				message: fmt.Sprintf(
+					"server %q tool %q is in metadata but not found in tools/list from %s — gateway will return tool_side_effect_unknown",
+					srv.Name, tool.Name, rawURL,
+				),
+				hint: fmt.Sprintf("Server implements: %s", strings.Join(discovered, ", ")),
+			})
 		}
-		// Warn about tools on the server that are not in metadata
-		metaSet := map[string]struct{}{}
-		for _, t := range srv.Tools {
-			metaSet[t.Name] = struct{}{}
-		}
-		for _, name := range discovered {
-			if _, ok := metaSet[name]; !ok {
-				issues = append(issues, validateIssue{
-					fatal:   false,
-					message: fmt.Sprintf("server %q: tool %q is exposed by the running server but not in metadata — it will be ungoverned (denied by default policy)", srv.Name, name),
-					hint:    fmt.Sprintf("Add to servers.yaml: --tool %s  or  --tool-spec %s:low:read", name, name),
-				})
-			}
+	}
+
+	// Warn about tools on the server that are not in metadata.
+	metaSet := map[string]struct{}{}
+	for _, t := range srv.Tools {
+		metaSet[t.Name] = struct{}{}
+	}
+	for _, name := range discovered {
+		if _, ok := metaSet[name]; !ok {
+			issues = append(issues, validateIssue{
+				fatal:   false,
+				message: fmt.Sprintf("server %q: tool %q is exposed by the running server but not in metadata — it will be ungoverned (denied by default policy)", srv.Name, name),
+				hint:    fmt.Sprintf("Add to servers.yaml: --tool %s  or  --tool-spec %s:low:read", name, name),
+			})
 		}
 	}
 	return issues

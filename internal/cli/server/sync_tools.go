@@ -1,31 +1,34 @@
 package server
 
 // discoverToolsFromServer calls tools/list on a running MCP server and returns
-// the discovered tools as --tool-spec strings (name:trust:sideEffect).
-// It performs a minimal initialize → notifications/initialized → tools/list
-// handshake so any server that follows the MCP spec will respond correctly.
+// the discovered tool names. It performs a minimal initialize →
+// notifications/initialized → tools/list handshake so any MCP-compliant server
+// will respond correctly.
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
 
 // decodeMCPResponse reads an HTTP response that is either plain JSON or
 // SSE (text/event-stream) and returns the first JSON-RPC message found.
+// It uses a 1 MiB per-line scanner buffer to safely handle large tool lists.
 func decodeMCPResponse(resp *http.Response) (*mcpResponse, error) {
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
 	if strings.Contains(ct, "text/event-stream") {
-		// Parse SSE: find the first "data: {...}" line that is a JSON-RPC response.
-		scanner := bufio.NewScanner(resp.Body)
-		for scanner.Scan() {
-			line := scanner.Text()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("read SSE body: %w", err)
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			line = strings.TrimRight(line, "\r")
 			if !strings.HasPrefix(line, "data:") {
 				continue
 			}
@@ -41,13 +44,13 @@ func decodeMCPResponse(resp *http.Response) (*mcpResponse, error) {
 		return nil, fmt.Errorf("no JSON-RPC message found in SSE stream")
 	}
 	// Plain JSON (or unknown — try JSON first)
-	body, err := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 	var r mcpResponse
-	if err := json.Unmarshal(body, &r); err != nil {
-		return nil, fmt.Errorf("%w (body prefix: %.40s)", err, string(body))
+	if err := json.Unmarshal(b, &r); err != nil {
+		return nil, fmt.Errorf("%w (body prefix: %.40s)", err, string(b))
 	}
 	return &r, nil
 }
@@ -76,18 +79,33 @@ type mcpToolsListResult struct {
 	} `json:"tools"`
 }
 
-// DiscoverToolsFromServer connects to a running MCP server at url and returns
-// the tool names. They are returned as bare names; callers wrap them into
-// --tool flags or metadata.ToolConfig values.
+// normalizeMCPURL ensures the URL has an explicit path. If the parsed URL has
+// no path (or just "/"), "/mcp" is appended — the default endpoint used by the
+// go-sdk and the workspace-assistant-mcp example server.
+func normalizeMCPURL(raw string) (string, error) {
+	u, err := url.Parse(strings.TrimRight(raw, "/"))
+	if err != nil {
+		return "", fmt.Errorf("invalid server URL %q: %w", raw, err)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("invalid server URL %q: must include scheme and host (e.g. http://localhost:8088)", raw)
+	}
+	if u.Path == "" || u.Path == "/" {
+		u.Path = "/mcp"
+	}
+	return u.String(), nil
+}
+
+// DiscoverToolsFromServer connects to a running MCP server at serverURL and
+// returns the tool names. They are returned as bare names; callers wrap them
+// into --tool flags or metadata.ToolConfig values.
 //
-// If url does not end with an explicit path, /mcp is appended automatically
-// because that is the default MCP endpoint path used by the go-sdk and the
-// workspace-assistant-mcp example server.
+// If the URL has no explicit path, /mcp is appended automatically (the default
+// MCP endpoint path used by the go-sdk).
 func DiscoverToolsFromServer(serverURL string) ([]string, error) {
-	serverURL = strings.TrimRight(serverURL, "/")
-	// Append /mcp if no path segment is present (e.g. http://localhost:8088)
-	if !strings.Contains(serverURL[strings.Index(serverURL, "://")+3:], "/") {
-		serverURL += "/mcp"
+	endpoint, err := normalizeMCPURL(serverURL)
+	if err != nil {
+		return nil, err
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -96,7 +114,7 @@ func DiscoverToolsFromServer(serverURL string) ([]string, error) {
 
 	post := func(req mcpRequest) (*mcpResponse, string, error) {
 		body, _ := json.Marshal(req)
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, serverURL, bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if err != nil {
 			return nil, "", err
 		}
@@ -105,7 +123,7 @@ func DiscoverToolsFromServer(serverURL string) ([]string, error) {
 		httpReq.Header.Set("Accept", "application/json, text/event-stream")
 		resp, err := client.Do(httpReq)
 		if err != nil {
-			return nil, "", fmt.Errorf("request to %s failed: %w", serverURL, err)
+			return nil, "", fmt.Errorf("request to %s failed: %w", endpoint, err)
 		}
 		defer resp.Body.Close()
 		sessionID := resp.Header.Get("Mcp-Session-Id")
@@ -118,7 +136,7 @@ func DiscoverToolsFromServer(serverURL string) ([]string, error) {
 
 	postWithSession := func(sessionID string, req mcpRequest) (*mcpResponse, error) {
 		body, _ := json.Marshal(req)
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, serverURL, bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
@@ -129,17 +147,11 @@ func DiscoverToolsFromServer(serverURL string) ([]string, error) {
 		}
 		resp, err := client.Do(httpReq)
 		if err != nil {
-			return nil, fmt.Errorf("request to %s failed: %w", serverURL, err)
+			return nil, fmt.Errorf("request to %s failed: %w", endpoint, err)
 		}
 		defer resp.Body.Close()
-		mcpResp, err := decodeMCPResponse(resp)
-		if err != nil {
-			return nil, fmt.Errorf("decode response: %w", err)
-		}
-		return mcpResp, nil
+		return decodeMCPResponse(resp)
 	}
-
-	// decodeMCPResponse is defined outside the closures to avoid redeclaration.
 
 	// Step 1: initialize
 	initResp, sessionID, err := post(mcpRequest{
@@ -159,7 +171,7 @@ func DiscoverToolsFromServer(serverURL string) ([]string, error) {
 		return nil, fmt.Errorf("initialize error: %s", initResp.Error.Message)
 	}
 
-	// Step 2: notifications/initialized (no response expected)
+	// Step 2: notifications/initialized (no response body expected)
 	_, _ = postWithSession(sessionID, mcpRequest{ //nolint:errcheck
 		JSONRPC: "2.0",
 		Method:  "notifications/initialized",
@@ -184,11 +196,18 @@ func DiscoverToolsFromServer(serverURL string) ([]string, error) {
 		return nil, fmt.Errorf("parse tools/list result: %w", err)
 	}
 
+	seen := make(map[string]struct{}, len(result.Tools))
 	names := make([]string, 0, len(result.Tools))
 	for _, t := range result.Tools {
-		if strings.TrimSpace(t.Name) != "" {
-			names = append(names, t.Name)
+		name := strings.TrimSpace(t.Name)
+		if name == "" {
+			continue
 		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
 	}
 	return names, nil
 }

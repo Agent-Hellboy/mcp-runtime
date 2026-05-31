@@ -68,7 +68,19 @@ For pushing images, use 'registry push'.`,
 					core.Warn("No tools returned by the server; metadata will have an empty tool list")
 				} else {
 					core.Info(fmt.Sprintf("Discovered %d tool(s): %s", len(discovered), strings.Join(discovered, ", ")))
-					initTools = append(discovered, initTools...)
+					// Merge: discovered tools first, then any manually specified --tool
+					// flags that are not already in the discovered set.
+					manualSet := make(map[string]struct{}, len(initTools))
+					for _, t := range discovered {
+						manualSet[t] = struct{}{}
+					}
+					merged := append([]string{}, discovered...)
+					for _, t := range initTools {
+						if _, exists := manualSet[strings.TrimSpace(t)]; !exists {
+							merged = append(merged, t)
+						}
+					}
+					initTools = merged
 				}
 			}
 			return mgr.InitServer(args[0], initMetadataDir, initImage, initTag, initScope, initPolicyMode, initDefaultDecision, initSessionRequired, initPort, initTools, initToolSpecs, initForce)
