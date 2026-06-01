@@ -1392,12 +1392,9 @@ async function loadServers() {
 }
 
 function scheduleServerLiveInventoryRefresh() {
-  if (serverLiveInventoryRefreshTimer) return;
-  if (!serversCache.some(serverLiveInventoryPending)) return;
-  serverLiveInventoryRefreshTimer = setTimeout(() => {
-    serverLiveInventoryRefreshTimer = null;
-    silentServerInventoryRefresh();
-  }, serverLiveInventoryRefreshDelayMs);
+  // Intentionally disabled — continuous live-inventory polling caused
+  // server cards to flicker every time the 30s cache TTL expired.
+  // Inventory is fetched once on page load; refresh the page to reload it.
 }
 
 // Refresh live inventory data without wiping the grid DOM.
