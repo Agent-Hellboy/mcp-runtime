@@ -1501,6 +1501,93 @@
           </div>
         </div>
       </section>
+
+      <!-- Admin Team Detail -->
+      <section
+        id="tab-admin-team"
+        class="tab-content"
+        data-admin-only="true"
+        role="tabpanel"
+        hidden
+      >
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2 id="admin-team-title">Team</h2>
+              <p class="panel-kicker" id="admin-team-kicker"></p>
+            </div>
+            <div class="panel-actions">
+              <button class="ghost" id="admin-team-back" type="button">← Back to Teams</button>
+            </div>
+          </div>
+          <div class="server-detail-grid" id="admin-team-info-grid"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Members</h2>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Role</th>
+                  <th>Added</th>
+                </tr>
+              </thead>
+              <tbody id="admin-team-members-body">
+                <tr><td colspan="3" class="empty">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Admin User Detail -->
+      <section
+        id="tab-admin-user"
+        class="tab-content"
+        data-admin-only="true"
+        role="tabpanel"
+        hidden
+      >
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2 id="admin-user-title">User</h2>
+              <p class="panel-kicker" id="admin-user-kicker"></p>
+            </div>
+            <div class="panel-actions">
+              <button class="ghost" id="admin-user-back" type="button">← Back</button>
+            </div>
+          </div>
+          <div class="server-detail-grid" id="admin-user-info-grid"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Recent Activity</h2>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Action</th>
+                  <th>Resource</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="admin-user-activity-body">
+                <tr><td colspan="4" class="empty">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
     </div>
 
     <!-- Authentication Modal -->

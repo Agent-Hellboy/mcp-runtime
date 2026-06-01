@@ -30,6 +30,12 @@ let serverStatusFilter = "all";
 let selectedOperationsServerKey = "";
 let selectedUserAnalyticsServerKey = "";
 let selectedTeamSlug = "";
+let adminDetailTeamSlug = "";
+let adminDetailUserEmail = "";
+let adminDetailUserId = "";
+let adminDetailBackTab = "teams";
+let adminDetailTeamMembersCache = [];
+let adminDetailUserAuditCache = [];
 let namespaceScopes = [];
 let selectedNamespace = defaults.namespace || "";
 let serverLiveInventoryRefreshTimer = null;
@@ -720,6 +726,32 @@ function createIdentityCell(primary, secondary = "") {
   const primaryEl = document.createElement("strong");
   primaryEl.className = "identity-primary";
   primaryEl.textContent = primary || "-";
+  stack.appendChild(primaryEl);
+
+  if (secondary) {
+    const secondaryEl = document.createElement("span");
+    secondaryEl.className = "identity-secondary";
+    secondaryEl.textContent = secondary;
+    stack.appendChild(secondaryEl);
+  }
+
+  cell.appendChild(stack);
+  return cell;
+}
+
+function createClickableIdentityCell(primary, secondary = "", onClick) {
+  const cell = document.createElement("td");
+  const stack = document.createElement("div");
+  stack.className = "identity-stack";
+
+  const primaryEl = document.createElement("button");
+  primaryEl.type = "button";
+  primaryEl.className = "identity-primary table-link";
+  primaryEl.textContent = primary || "-";
+  primaryEl.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onClick();
+  });
   stack.appendChild(primaryEl);
 
   if (secondary) {
@@ -2943,7 +2975,7 @@ function renderTeams() {
   teamsCache.forEach((team) => {
     const row = document.createElement("tr");
     if (team.slug === selectedTeamSlug) row.classList.add("selected");
-    row.appendChild(createIdentityCell(team.name || team.slug || "-", team.slug || ""));
+    row.appendChild(createClickableIdentityCell(team.name || team.slug || "-", team.slug || "", () => showTeamDetail(team.slug)));
     row.appendChild(createTextCell(team.namespace || "-"));
     row.appendChild(createCodeCell(team.id || "-"));
     row.appendChild(createTextCell(formatDateTime(team.created_at)));
@@ -3003,7 +3035,7 @@ function renderTeamMembers() {
   const fragment = document.createDocumentFragment();
   teamMembersCache.forEach((member) => {
     const row = document.createElement("tr");
-    row.appendChild(createIdentityCell(member.email || member.user_id || "-", member.team_slug || selectedTeamSlug));
+    row.appendChild(createClickableIdentityCell(member.email || member.user_id || "-", member.team_slug || selectedTeamSlug, () => showUserDetail(member.user_id, member.email || "", "teams")));
     row.appendChild(createBadgeCell(member.role || "member", member.role === "owner" ? "badge-warning" : "badge-muted"));
     row.appendChild(createCodeCell(member.user_id || "-"));
     row.appendChild(createTextCell(formatDateTime(member.created_at)));
@@ -3529,7 +3561,7 @@ function renderOperationUsers() {
   const fragment = document.createDocumentFragment();
   operationsUsersCache.forEach((user) => {
     const row = document.createElement("tr");
-    row.appendChild(createIdentityCell(user.email || user.id || "-", user.id || ""));
+    row.appendChild(createClickableIdentityCell(user.email || user.id || "-", user.id || "", () => showUserDetail(user.id, user.email || "", "operations")));
     row.appendChild(createBadgeCell(user.role || "user", user.role === "admin" ? "badge-warning" : "badge-muted"));
     row.appendChild(createTextCell(user.namespace || "-"));
     row.appendChild(createTextCell(formatDateTime(user.last_login_at)));
@@ -4014,6 +4046,192 @@ function confirmModal(message) {
   });
 }
 
+// Admin detail pages
+
+function showTeamDetail(slug) {
+  adminDetailTeamSlug = slug;
+  adminDetailBackTab = "teams";
+  activateTab("admin-team");
+  renderTeamDetail();
+  loadAdminTeamDetailMembers();
+}
+
+function renderTeamDetail() {
+  const team = teamsCache.find((t) => t.slug === adminDetailTeamSlug);
+  setText("admin-team-title", team ? (team.name || team.slug || adminDetailTeamSlug) : adminDetailTeamSlug);
+  setText("admin-team-kicker", team ? `slug: ${team.slug}` : "");
+
+  const grid = document.getElementById("admin-team-info-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+
+  const fields = [
+    ["Namespace", team?.namespace || "-"],
+    ["ID", team?.id || "-"],
+    ["Created", team ? formatDateTime(team.created_at) : "-"],
+  ];
+  fields.forEach(([label, value]) => {
+    const stat = document.createElement("div");
+    stat.className = "server-detail-stat";
+    const labelEl = document.createElement("span");
+    labelEl.className = "server-detail-label";
+    labelEl.textContent = label;
+    const valueEl = document.createElement("strong");
+    if (label === "ID") {
+      const code = document.createElement("code");
+      code.className = "table-code";
+      code.textContent = value;
+      valueEl.appendChild(code);
+    } else {
+      valueEl.textContent = value;
+    }
+    stat.appendChild(labelEl);
+    stat.appendChild(valueEl);
+    grid.appendChild(stat);
+  });
+}
+
+async function loadAdminTeamDetailMembers() {
+  const tbody = document.getElementById("admin-team-members-body");
+  if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="empty">Loading…</td></tr>';
+  try {
+    const data = await fetchJSON(`/runtime/teams/${encodePathSegment(adminDetailTeamSlug)}/members`);
+    adminDetailTeamMembersCache = Array.isArray(data.members) ? data.members : [];
+    renderAdminTeamDetailMembers();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="empty">Failed to load members.</td></tr>';
+  }
+}
+
+function renderAdminTeamDetailMembers() {
+  const tbody = document.getElementById("admin-team-members-body");
+  if (!tbody) return;
+  if (!adminDetailTeamMembersCache.length) {
+    tbody.innerHTML = '<tr><td colspan="3" class="empty">No members.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  adminDetailTeamMembersCache.forEach((member) => {
+    const row = document.createElement("tr");
+    row.appendChild(createClickableIdentityCell(member.email || member.user_id || "-", member.user_id || "", () => showUserDetail(member.user_id, member.email || "", "admin-team")));
+    row.appendChild(createBadgeCell(member.role || "member", member.role === "owner" ? "badge-warning" : "badge-muted"));
+    row.appendChild(createTextCell(formatDateTime(member.created_at)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function showUserDetail(userId, email, backTab = "teams") {
+  adminDetailUserId = userId || "";
+  adminDetailUserEmail = email || "";
+  adminDetailBackTab = backTab;
+  activateTab("admin-user");
+  renderUserDetailHeader();
+  loadUserDetail();
+}
+
+function renderUserDetailHeader() {
+  const email = adminDetailUserEmail;
+  const userId = adminDetailUserId;
+  setText("admin-user-title", email || userId || "User");
+  setText("admin-user-kicker", userId ? `id: ${userId}` : "");
+
+  const user = operationsUsersCache.find((u) => u.id === userId || u.email === email);
+
+  const grid = document.getElementById("admin-user-info-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+
+  const fields = [
+    ["Role", user?.role || "-"],
+    ["Namespace", user?.namespace || "-"],
+    ["User ID", userId || "-"],
+    ["Last Login", user ? formatDateTime(user.last_login_at) : "-"],
+    ["Last Activity", user ? formatDateTime(user.last_activity_at || user.created_at) : "-"],
+    ["Failed Actions", user ? formatNumber(user.failed_action_count || 0) : "-"],
+  ];
+  fields.forEach(([label, value]) => {
+    const stat = document.createElement("div");
+    stat.className = "server-detail-stat";
+    const labelEl = document.createElement("span");
+    labelEl.className = "server-detail-label";
+    labelEl.textContent = label;
+    const valueEl = document.createElement("strong");
+    if (label === "User ID") {
+      const code = document.createElement("code");
+      code.className = "table-code";
+      code.textContent = value;
+      valueEl.appendChild(code);
+    } else if (label === "Role") {
+      valueEl.appendChild(createBadge(value, value === "admin" ? "badge-warning" : "badge-muted"));
+    } else {
+      valueEl.textContent = value;
+    }
+    stat.appendChild(labelEl);
+    stat.appendChild(valueEl);
+    grid.appendChild(stat);
+  });
+}
+
+async function loadUserDetail() {
+  const tbody = document.getElementById("admin-user-activity-body");
+  if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="empty">Loading…</td></tr>';
+  if (!adminDetailUserEmail) {
+    if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="empty">No activity available.</td></tr>';
+    return;
+  }
+  try {
+    const params = new URLSearchParams({ user: adminDetailUserEmail, limit: "50" });
+    const data = await fetchJSON(`/admin/operations?${params}`);
+    adminDetailUserAuditCache = Array.isArray(data.audit_logs) ? data.audit_logs : [];
+    renderUserDetailActivity();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="empty">Failed to load activity.</td></tr>';
+  }
+}
+
+function renderUserDetailActivity() {
+  const tbody = document.getElementById("admin-user-activity-body");
+  if (!tbody) return;
+  if (!adminDetailUserAuditCache.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No recent activity.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  adminDetailUserAuditCache.forEach((item) => {
+    const row = document.createElement("tr");
+    row.appendChild(createTextCell(formatDateTime(item.created_at)));
+    row.appendChild(createIdentityCell(item.action || "-", item.source || ""));
+    row.appendChild(createTextCell(item.resource || item.namespace || "-"));
+    row.appendChild(createBadgeCell(item.status || "unknown", auditStatusBadgeClass(item.status)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function initAdminDetail() {
+  document.getElementById("admin-team-back")?.addEventListener("click", () => {
+    activateTab("teams");
+    loadTeams();
+  });
+  document.getElementById("admin-user-back")?.addEventListener("click", () => {
+    const back = adminDetailBackTab;
+    if (back === "admin-team") {
+      activateTab("admin-team");
+    } else if (back === "operations") {
+      activateTab("operations");
+      loadMCPOperations();
+    } else {
+      activateTab("teams");
+      loadTeams();
+    }
+  });
+}
+
 // Initialize
 document.addEventListener("DOMContentLoaded", () => {
   initTabs();
@@ -4025,4 +4243,5 @@ document.addEventListener("DOMContentLoaded", () => {
   initPlatform();
   initModal();
   initAuth();
+  initAdminDetail();
 });
