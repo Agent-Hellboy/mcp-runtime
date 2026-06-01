@@ -72,6 +72,11 @@ nav:
   - Reference:
       - CLI: cli.md
       - API: api.md
+  - Learn:
+      - Overview: learn/README.md
+      - "Module 1: Core Concepts": learn/module-1-concepts.md
+      - "Module 2: Your First Server": learn/module-2-first-server.md
+      - "Module 3: Multi-Team Setup": learn/module-3-multi-team.md
   - Contributor Guide:
       - Overview: contributor/README.md
       - Local Kind and Test Mode: contributor/local-kind.md

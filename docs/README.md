@@ -31,6 +31,25 @@ human workflows.
 </section>
 </div>
 
+## Who is this for?
+
+| You are | MCP Runtime gives you |
+|---|---|
+| **Platform engineer** | Kubernetes operator + registry + ingress wiring without writing a single manifest |
+| **Security team** | Per-tool audit trail, trust levels, session revocation, deny rules, compliance evidence |
+| **Team lead** | Isolated namespace per team, grants scoped to teams, cross-team access without sharing credentials |
+| **Developer** | One CLI to deploy, one adapter to connect — no Kubernetes knowledge needed |
+
+---
+
+## Why I built this
+
+I got introduced to MCP while building a Superset MCP server at work. While implementing it I started reading the spec, which led me to a similar platform-level project I was building internally — it never got approved. Along the way I noticed a real infrastructure problem: there is no good way for small teams to deploy and govern MCP servers without either buying an expensive gateway or wiring everything up manually. Everyone ends up running redundant copies of the same server — payments team has one, infra team has one, data team has one. Wasteful and impossible to govern. I thought everyone should have this, so here I am building it in the open.
+
+I have been reading the MCP SEPs for gateway and identity management patterns. There are active proposals for exactly these problems. The gateway policy enforcement is a work in progress — I am following the spec and iterating. MCP still has a long way to go here and so do I.
+
+---
+
 ## What MCP Runtime installs
 
 `mcp-runtime setup` installs the CRDs, runtime namespaces, an operator, registry
@@ -161,6 +180,25 @@ preparation.
 </a>
 </div>
 
+## Which setup should I use?
+
+| Setup | Use it when | Time to first server |
+|---|---|---|
+| **Live platform** (`platform.mcpruntime.org`) | Evaluating, no infrastructure, just want to try it | 10 min |
+| **Local Kind cluster** (`--test-mode`) | Contributing to the repo, CI, quick local demo | 30 min |
+| **k3s on-prem** | Production on your own hardware | 2–4 hours |
+| **EKS / GKE / AKS** | Production in cloud | 1–2 hours |
+
+---
+
 ## Project status
 
-MCP Runtime is alpha. The architecture is stable enough to evaluate as governed MCP infrastructure, but API and UX details are still evolving. Treat the `v1alpha1` types as the source of truth.
+MCP Runtime is **alpha**. The architecture is stable enough to evaluate as governed MCP infrastructure, but API and UX details are still evolving. Treat the `v1alpha1` types as the source of truth. A security audit is planned but has not been completed — do not use this in production without your own review.
+
+---
+
+## Community
+
+- [GitHub Issues](https://github.com/Agent-Hellboy/mcp-runtime/issues) — bug reports and feature requests
+- [GitHub Discussions](https://github.com/Agent-Hellboy/mcp-runtime/discussions) — questions, ideas, and general discussion
+- [Releases](https://github.com/Agent-Hellboy/mcp-runtime/releases) — changelog and binary downloads

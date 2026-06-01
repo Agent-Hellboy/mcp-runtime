@@ -78,19 +78,23 @@ mcp-runtime auth logout
 
 ## Command map
 
-| Command | Role | What it does | Guide |
-|---|---|---|---|
-| `auth` | User | Save and switch platform credentials | [auth](#auth) |
-| `status` | User | Platform health at a glance | [status](#status) |
-| `server` | User / Admin | Scaffold, validate, build, push, deploy, manage | [Publish a server](publish-mcp-server.md) |
-| `registry` | User / Operator | Push images; inspect the registry | [registry](#registry) |
-| `access` | User / Admin | Grants and sessions for gateway policy | [API reference](api.md) |
-| `adapter` | User | HTTP proxy and stdio shim for agents | [Agent adapters](agent-adapters.md) |
-| `team` | Admin | Create teams and add password users | [Multi-team](multi-team.md) |
-| `sentinel` | Operator | Inspect and operate the analytics stack | [Sentinel](sentinel.md) |
-| `bootstrap` | Operator | Pre-install cluster checks | [Cluster readiness](cluster-readiness.md) |
-| `setup` | Operator | Install the full platform stack | [setup](#setup) |
-| `cluster` | Operator | Initialize clusters, manage cert-manager | [Deployment targets](deployment-targets.md) |
+| Command | Role | Status | What it does | Guide |
+|---|---|---|---|---|
+| `auth` | User | Stable | Save and switch platform credentials | [auth](#auth) |
+| `status` | User | Stable | Platform health at a glance | [status](#status) |
+| `server` | User / Admin | Stable | Scaffold, validate, build, push, deploy, manage | [Publish a server](publish-mcp-server.md) |
+| `registry` | User / Operator | Stable | Push images; inspect the registry | [registry](#registry) |
+| `access` | User / Admin | Stable | Grants and sessions for gateway policy | [API reference](api.md) |
+| `adapter` | User | Stable | HTTP proxy and stdio shim for agents | [Agent adapters](agent-adapters.md) |
+| `team` | Admin | Stable | Create teams and add password users | [Multi-team](multi-team.md) |
+| `sentinel` | Operator | Stable | Inspect and operate the analytics stack | [Sentinel](sentinel.md) |
+| `bootstrap` | Operator | Stable | Pre-install cluster checks | [Cluster readiness](cluster-readiness.md) |
+| `setup` | Operator | Stable | Install the full platform stack | [setup](#setup) |
+| `cluster` | Operator | Stable | Initialize clusters, manage cert-manager | [Deployment targets](deployment-targets.md) |
+| `server validate` | User | Alpha | Validate metadata and grant/session YAML | [server](#server-validate) |
+| `server init --from-server` | User | Alpha | Auto-discover tools from a running server | [server init](#server-init) |
+
+**Status labels:** `Stable` — works end-to-end, tested in production use. `Alpha` — functional but API or UX may change.
 
 ---
 

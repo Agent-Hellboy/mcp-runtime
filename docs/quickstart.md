@@ -115,7 +115,7 @@ Create a grant that allows an agent to call `echo` and `add`:
 ```bash
 mcp-runtime access grant init workspace-cursor \
   --server workspace-demo \
-  --namespace mcp-team-myteam \
+  --namespace mcp-team-myteam \    # replace myteam with your actual team slug
   --agent-id cursor \
   --tool echo \
   --tool add \

@@ -140,7 +140,7 @@ mcp-runtime adapter proxy
 | `MCP_RUNTIME_HOST_HEADER` | no | Override the `Host` header for host-based ingress. |
 | `MCP_RUNTIME_LISTEN_ADDR` | proxy | Local listener; defaults to `127.0.0.1:8099`. |
 | `MCP_RUNTIME_PROTOCOL_VERSION` | no | MCP protocol header. Defaults to `2025-06-18`; the negotiated `result.protocolVersion` from the runtime's `initialize` response overrides it for the rest of the process. |
-| `MCP_RUNTIME_SET_XFF` | proxy | `false`/`0`/`no`/`off` suppresses `X-Forwarded-*` headers. Defaults to enabled. |
+| `--no-xforwarded` flag | proxy | Pass this flag to suppress `X-Forwarded-*` headers forwarded to the runtime. Defaults to enabled (headers are sent). There is no corresponding env var. |
 | `MCP_RUNTIME_REQUEST_TIMEOUT` | no | Go duration for adapter→runtime calls. Defaults to unbounded. |
 | `MCP_RUNTIME_MAX_INBOUND_BYTES` | proxy | Caps inbound JSON-RPC bodies; over-cap responds 413. Defaults to 16 MiB. |
 | `MCP_RUNTIME_AUTH_HEADER` | no | Static `Authorization` header injected on every runtime request (e.g. `Bearer …`). |
