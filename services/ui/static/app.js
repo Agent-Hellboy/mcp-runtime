@@ -34,6 +34,9 @@ let namespaceScopes = [];
 let selectedNamespace = defaults.namespace || "";
 let serverLiveInventoryRefreshTimer = null;
 const serverLiveInventoryRefreshDelayMs = 1200;
+// Tracks servers that have had their inventory successfully loaded at least once.
+// Once a server is in this set we never re-poll — prevents the 30s TTL flicker.
+const serverInventoryLoaded = new Set();
 // Persistent open-state map so expanded sections survive filter/search re-renders.
 // Keyed by serverKey → { sections: { label → { open, items[] } }, connectOpen }
 let serverCardOpenState = {};
@@ -1392,9 +1395,18 @@ async function loadServers() {
 }
 
 function scheduleServerLiveInventoryRefresh() {
-  // Intentionally disabled — continuous live-inventory polling caused
-  // server cards to flicker every time the 30s cache TTL expired.
-  // Inventory is fetched once on page load; refresh the page to reload it.
+  if (serverLiveInventoryRefreshTimer) return;
+  // Only retry for servers whose inventory has never successfully loaded.
+  // Once a server is in serverInventoryLoaded we stop polling it — this
+  // prevents the 30s TTL expiry from causing a re-poll and card flicker.
+  const needsFirstLoad = serversCache.some(
+    (s) => serverLiveInventoryPending(s) && !serverInventoryLoaded.has(serverKey(s))
+  );
+  if (!needsFirstLoad) return;
+  serverLiveInventoryRefreshTimer = setTimeout(() => {
+    serverLiveInventoryRefreshTimer = null;
+    silentServerInventoryRefresh();
+  }, serverLiveInventoryRefreshDelayMs);
 }
 
 // Refresh live inventory data without wiping the grid DOM.
@@ -1409,6 +1421,10 @@ async function silentServerInventoryRefresh() {
       const key = serverKey(server);
       const existing = serversCache.find((s) => serverKey(s) === key);
       if (!existing) return;
+      // Mark server as loaded once it has real inventory (not pending).
+      if (server.liveInventory && !serverLiveInventoryPending(server)) {
+        serverInventoryLoaded.add(key);
+      }
       const liveChanged =
         JSON.stringify(server.liveInventory) !== JSON.stringify(existing.liveInventory) ||
         server.liveInventoryError !== existing.liveInventoryError;
@@ -1455,9 +1471,8 @@ async function silentServerInventoryRefresh() {
       card.insertBefore(newGrid, connect || null);
     });
     serversCache = fresh;
-    if (fresh.some(serverLiveInventoryPending)) {
-      scheduleServerLiveInventoryRefresh();
-    }
+    // Only keep polling for servers that have never loaded yet.
+    scheduleServerLiveInventoryRefresh();
   } catch (_) {
     // Silent — don't break the UI on background refresh errors.
   }
