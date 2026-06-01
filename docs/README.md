@@ -31,6 +31,21 @@ human workflows.
 </section>
 </div>
 
+## Deploy a governed MCP server in 5 commands
+
+```bash
+mcp-runtime auth login --api-url https://platform.mcpruntime.org
+mcp-runtime server init my-server --from-server http://localhost:8088
+mcp-runtime server build image my-server --tag v1
+mcp-runtime registry push --image registry.mcpruntime.org/myteam/my-server:v1 --scope tenant
+mcp-runtime server deploy my-server --scope tenant --metadata-dir .mcp
+```
+
+The gateway enforces grants and sessions on every tool call. No Kubernetes manifests. No ingress config.
+Point any MCP client at the adapter proxy — governance headers injected transparently.
+
+---
+
 ## Who is this for?
 
 | You are | MCP Runtime gives you |
