@@ -4051,8 +4051,13 @@ function confirmModal(message) {
 function showTeamDetail(slug) {
   adminDetailTeamSlug = slug;
   adminDetailBackTab = "teams";
+  adminDetailTeamMembersCache = [];
   activateTab("admin-team");
-  renderTeamDetail();
+  if (!teamsCache.some((t) => t.slug === slug)) {
+    loadTeams().then(renderTeamDetail);
+  } else {
+    renderTeamDetail();
+  }
   loadAdminTeamDetailMembers();
 }
 
@@ -4115,7 +4120,9 @@ function renderAdminTeamDetailMembers() {
   const fragment = document.createDocumentFragment();
   adminDetailTeamMembersCache.forEach((member) => {
     const row = document.createElement("tr");
-    row.appendChild(createClickableIdentityCell(member.email || member.user_id || "-", member.user_id || "", () => showUserDetail(member.user_id, member.email || "", "admin-team")));
+    const label = member.email || member.user_id || "-";
+    const sub = member.email ? (member.user_id || "") : "";
+    row.appendChild(createClickableIdentityCell(label, sub, () => showUserDetail(member.user_id, member.email || "", "admin-team")));
     row.appendChild(createBadgeCell(member.role || "member", member.role === "owner" ? "badge-warning" : "badge-muted"));
     row.appendChild(createTextCell(formatDateTime(member.created_at)));
     fragment.appendChild(row);
@@ -4127,6 +4134,7 @@ function showUserDetail(userId, email, backTab = "teams") {
   adminDetailUserId = userId || "";
   adminDetailUserEmail = email || "";
   adminDetailBackTab = backTab;
+  adminDetailUserAuditCache = [];
   activateTab("admin-user");
   renderUserDetailHeader();
   loadUserDetail();
@@ -4231,6 +4239,7 @@ function renderUserDetailActivity() {
 }
 
 function initAdminDetail() {
+  // Team detail always originates from the Teams tab, so back is always "teams".
   document.getElementById("admin-team-back")?.addEventListener("click", () => {
     activateTab("teams");
     loadTeams();
