@@ -55,7 +55,10 @@ make deps
 make build
 ```
 
-This produces `./bin/mcp-runtime`.
+This produces `./bin/mcp-runtime` with version metadata from
+`git describe --tags --match 'v*'`, the current commit, and UTC build time.
+Release binaries use the release tag exactly. Override with
+`VERSION=<tag> make build` when needed.
 
 ## 2. Confirm cluster readiness
 

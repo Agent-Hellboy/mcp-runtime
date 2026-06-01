@@ -85,7 +85,10 @@ Notes:
 
 - `make deps-install` is best-effort. It cannot start Docker Desktop, create cloud credentials, or configure kubeconfig for you.
 - `make deps` checks host tools and downloads Go modules. It does not create a Kubernetes cluster.
-- `make build` produces `./bin/mcp-runtime`.
+- `make build` produces `./bin/mcp-runtime` with version metadata from
+  `git describe --tags --match 'v*'`, the current commit, and UTC build time.
+  Release binaries use the release tag exactly. Override with
+  `VERSION=<tag> make build` when needed.
 - Contributors who want a disposable local Kind install should start with the
   maintained [`docs/contributor/`](docs/contributor/README.md) guide. The
   shorter entry summary remains in
