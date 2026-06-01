@@ -28,17 +28,25 @@ STRICT_DEPS_CHECK=1 make deps-check
 
 ```bash
 # macOS Apple Silicon
-curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/download/v0.1.0/mcp-runtime-darwin-arm64
+curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-darwin-arm64
 chmod +x mcp-runtime && sudo mv mcp-runtime /usr/local/bin/
 
 # macOS Intel
-curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/download/v0.1.0/mcp-runtime-darwin-amd64
+curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-darwin-amd64
 chmod +x mcp-runtime && sudo mv mcp-runtime /usr/local/bin/
 
 # Linux amd64
-curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/download/v0.1.0/mcp-runtime-linux-amd64
+curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-linux-amd64
+chmod +x mcp-runtime && sudo mv mcp-runtime /usr/local/bin/
+
+# Linux arm64
+curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-linux-arm64
 chmod +x mcp-runtime && sudo mv mcp-runtime /usr/local/bin/
 ```
+
+Windows users can download
+[`mcp-runtime-windows-amd64.exe`](https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-windows-amd64.exe)
+and add it to `PATH`.
 
 **Option B — Build from source** (requires Go 1.26+):
 

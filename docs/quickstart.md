@@ -13,7 +13,7 @@ To self-host MCP Runtime on your own cluster, see [Getting Started](getting-star
 === "macOS (Apple Silicon)"
 
     ```bash
-    curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/download/v0.1.0/mcp-runtime-darwin-arm64
+    curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-darwin-arm64
     chmod +x mcp-runtime
     sudo mv mcp-runtime /usr/local/bin/
     ```
@@ -21,7 +21,7 @@ To self-host MCP Runtime on your own cluster, see [Getting Started](getting-star
 === "macOS (Intel)"
 
     ```bash
-    curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/download/v0.1.0/mcp-runtime-darwin-amd64
+    curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-darwin-amd64
     chmod +x mcp-runtime
     sudo mv mcp-runtime /usr/local/bin/
     ```
@@ -29,14 +29,22 @@ To self-host MCP Runtime on your own cluster, see [Getting Started](getting-star
 === "Linux (amd64)"
 
     ```bash
-    curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/download/v0.1.0/mcp-runtime-linux-amd64
+    curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-linux-amd64
+    chmod +x mcp-runtime
+    sudo mv mcp-runtime /usr/local/bin/
+    ```
+
+=== "Linux (arm64)"
+
+    ```bash
+    curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-linux-arm64
     chmod +x mcp-runtime
     sudo mv mcp-runtime /usr/local/bin/
     ```
 
 === "Windows"
 
-    Download [mcp-runtime-windows-amd64.exe](https://github.com/Agent-Hellboy/mcp-runtime/releases/download/v0.1.0/mcp-runtime-windows-amd64.exe) and add it to your `PATH`.
+    Download [mcp-runtime-windows-amd64.exe](https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-windows-amd64.exe) and add it to your `PATH`.
 
 Verify:
 
@@ -156,4 +164,3 @@ user, team, agent, call count, and allow/deny.
 - [Publish an MCP Server](publish-mcp-server.md) — full build, push, deploy guide
 - [Getting Started](getting-started.md) — self-host MCP Runtime on your own Kubernetes cluster
 - [CLI reference](cli.md) — every command with flags and examples
-

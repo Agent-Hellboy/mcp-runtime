@@ -108,6 +108,18 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: MCP Runtime ${{ github.ref_name }}
+          body: |
+            ## Try it
+
+            Download the `mcp-runtime` CLI binary for your platform:
+
+            - [macOS Apple Silicon](https://github.com/Agent-Hellboy/mcp-runtime/releases/download/${{ github.ref_name }}/mcp-runtime-darwin-arm64)
+            - [macOS Intel](https://github.com/Agent-Hellboy/mcp-runtime/releases/download/${{ github.ref_name }}/mcp-runtime-darwin-amd64)
+            - [Linux amd64](https://github.com/Agent-Hellboy/mcp-runtime/releases/download/${{ github.ref_name }}/mcp-runtime-linux-amd64)
+            - [Linux arm64](https://github.com/Agent-Hellboy/mcp-runtime/releases/download/${{ github.ref_name }}/mcp-runtime-linux-arm64)
+            - [Windows amd64](https://github.com/Agent-Hellboy/mcp-runtime/releases/download/${{ github.ref_name }}/mcp-runtime-windows-amd64.exe)
+
+            Install and setup guide: https://mcpruntime.org/docs/getting-started/
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: dist/*
