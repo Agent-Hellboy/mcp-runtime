@@ -1471,8 +1471,8 @@ tr:hover td {
 .server-inventory-grid {
   align-items: start;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px;
+  grid-template-columns: 1fr;
+  gap: 12px;
 }
 
 .inventory-block {
@@ -1537,8 +1537,7 @@ tr:hover td {
 
 .inventory-section-body {
   border-top: 1px solid rgba(247, 245, 239, 0.08);
-  max-height: 260px;
-  overflow: auto;
+  overflow: visible;
   padding: 10px;
 }
 
@@ -1547,7 +1546,8 @@ tr:hover td {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 6px;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
 }
 
 .inventory-block li {
@@ -1594,6 +1594,11 @@ tr:hover td {
   gap: 6px;
   grid-column: 2;
   min-width: 0;
+}
+
+.inventory-item summary > .trust-chip,
+.inventory-item summary > .drift-chip {
+  grid-column: 2;
 }
 
 .inventory-item-body {
