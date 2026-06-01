@@ -4178,14 +4178,31 @@ function renderUserDetailHeader() {
 async function loadUserDetail() {
   const tbody = document.getElementById("admin-user-activity-body");
   if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="empty">Loading…</td></tr>';
-  if (!adminDetailUserEmail) {
+  const queryUser = adminDetailUserEmail || adminDetailUserId;
+  if (!queryUser) {
     if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="empty">No activity available.</td></tr>';
     return;
   }
   try {
-    const params = new URLSearchParams({ user: adminDetailUserEmail, limit: "50" });
+    const params = new URLSearchParams({ user: queryUser, limit: "50" });
     const data = await fetchJSON(`/admin/operations?${params}`);
     adminDetailUserAuditCache = Array.isArray(data.audit_logs) ? data.audit_logs : [];
+
+    // Update operationsUsersCache with fresh user data so the header stats
+    // are populated even when navigating here from Teams (cache may be empty).
+    if (Array.isArray(data.users) && data.users.length > 0) {
+      const fetched = data.users.find((u) => u.id === adminDetailUserId || u.email === adminDetailUserEmail);
+      if (fetched) {
+        const idx = operationsUsersCache.findIndex((u) => u.id === fetched.id || u.email === fetched.email);
+        if (idx > -1) {
+          operationsUsersCache[idx] = fetched;
+        } else {
+          operationsUsersCache.push(fetched);
+        }
+        renderUserDetailHeader();
+      }
+    }
+
     renderUserDetailActivity();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
