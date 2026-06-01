@@ -32,6 +32,8 @@ jobs:
             arch: amd64
           - os: darwin
             arch: arm64
+          - os: windows
+            arch: amd64
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -67,19 +69,32 @@ jobs:
           set -euo pipefail
 
           package_dir="dist/${BINARY_NAME}-${GOOS}-${GOARCH}"
-          archive="dist/${BINARY_NAME}-${GOOS}-${GOARCH}.tar.gz"
-
           mkdir -p "${package_dir}"
+
+          # Windows gets .exe extension and .zip archive
+          if [ "${GOOS}" = "windows" ]; then
+            binary="${package_dir}/${BINARY_NAME}.exe"
+            archive="dist/${BINARY_NAME}-${GOOS}-${GOARCH}.zip"
+          else
+            binary="${package_dir}/${BINARY_NAME}"
+            archive="dist/${BINARY_NAME}-${GOOS}-${GOARCH}.tar.gz"
+          fi
 
           go build \
             -trimpath \
             -buildvcs=false \
             -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${BUILD_DATE}" \
-            -o "${package_dir}/${BINARY_NAME}" \
+            -o "${binary}" \
             ./cmd/mcp-runtime
 
           cp README.md LICENSE "${package_dir}/"
-          tar -C "${package_dir}" -czf "${archive}" .
+
+          if [ "${GOOS}" = "windows" ]; then
+            cd "${package_dir}" && zip -r "../${BINARY_NAME}-${GOOS}-${GOARCH}.zip" . && cd -
+          else
+            tar -C "${package_dir}" -czf "${archive}" .
+          fi
+
           sha256sum "${archive}" > "${archive}.sha256"
 
       - name: Upload build artifact
@@ -89,6 +104,8 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.tar.gz.sha256
+            dist/*.zip
+            dist/*.zip.sha256
           if-no-files-found: error
 
   publish:
@@ -118,3 +135,5 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.tar.gz.sha256
+            dist/*.zip
+            dist/*.zip.sha256
