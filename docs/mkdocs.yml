@@ -55,6 +55,7 @@ nav:
   - Home: README.md
   - Quickstart: quickstart.md
   - Concepts: concepts.md
+  - Architecture: architecture.md
   - Getting Started: getting-started.md
   - Developer Guide:
       - Publish an MCP Server: publish-mcp-server.md
@@ -71,7 +72,6 @@ nav:
   - Reference:
       - CLI: cli.md
       - API: api.md
-      - Architecture: architecture.md
   - Contributor Guide:
       - Overview: contributor/README.md
       - Local Kind and Test Mode: contributor/local-kind.md

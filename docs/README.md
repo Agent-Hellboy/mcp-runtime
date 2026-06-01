@@ -23,9 +23,9 @@ human workflows.
   <div class="docs-actions">
     <a class="docs-button docs-button-primary" href="quickstart/">Try in 10 min</a>
     <a class="docs-button" href="concepts/">Concepts</a>
+    <a class="docs-button" href="architecture/">Architecture</a>
     <a class="docs-button" href="getting-started/">Self-host</a>
     <a class="docs-button" href="api/">API reference</a>
-    <a class="docs-button" href="contributor/">Contribute</a>
   </div>
   </div>
 
