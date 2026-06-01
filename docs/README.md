@@ -28,8 +28,6 @@ human workflows.
     <a class="docs-button" href="api/">API reference</a>
   </div>
   </div>
-
-  </div>
 </section>
 </div>
 
