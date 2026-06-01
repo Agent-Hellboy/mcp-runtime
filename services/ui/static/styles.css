@@ -1565,9 +1565,9 @@ tr:hover td {
 .inventory-item summary {
   align-items: center;
   cursor: pointer;
-  display: flex;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
   gap: 8px;
-  justify-content: space-between;
   list-style: none;
   min-height: 40px;
   min-width: 0;
@@ -1575,9 +1575,23 @@ tr:hover td {
 }
 
 .inventory-item summary strong {
-  margin-right: auto;
+  grid-column: 2;
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.inventory-item summary::before {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
+.inventory-summary-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  grid-column: 2;
+  min-width: 0;
 }
 
 .inventory-item-body {

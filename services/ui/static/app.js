@@ -2240,7 +2240,7 @@ function renderExpandableInventoryItem({ name, summaryMeta = "", description = "
     <details class="inventory-item">
       <summary>
         <strong>${escapeHtml(name || "-")}</strong>
-        ${summaryMeta}
+        ${summaryMeta ? `<span class="inventory-summary-meta">${summaryMeta}</span>` : ""}
       </summary>
       <div class="inventory-item-body">
         ${details}
