@@ -12,6 +12,7 @@ Available Commands:
   adapter     Run agent-side adapters that inject issued MCP governance headers
   auth        Log in to the platform API and manage saved credentials
   bootstrap   Bootstrap cluster prerequisites (on-prem focused)
+  catalog     Search MCP Runtime catalogs
   cluster     Manage Kubernetes cluster
   completion  Generate the autocompletion script for the specified shell
   help        Help about any command

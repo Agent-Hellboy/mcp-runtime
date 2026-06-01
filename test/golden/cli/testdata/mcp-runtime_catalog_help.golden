@@ -1,0 +1,16 @@
+Search MCP tools exposed by servers visible to the logged-in platform user.
+
+Usage:
+  mcp-runtime catalog [command]
+
+Available Commands:
+  tool        Show one tool from the catalog
+  tools       List tools across visible MCP servers
+
+Flags:
+  -h, --help   help for catalog
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging
+
+Use "mcp-runtime catalog [command] --help" for more information about a command.

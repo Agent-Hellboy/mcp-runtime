@@ -51,6 +51,7 @@ flowchart LR
 | **policy.mode** | `allow-list`, `observe` | `allow-list` enforces deny-by-default; `observe` keeps the decision path visible. |
 | **trust** | `low`, `medium`, `high` | Used on tools, grants, sessions. Effective trust = min(grant, session). |
 | **tool sideEffect** | `read`, `write`, `destructive` | Required on each listed tool. Grants must include the tool's side effect in `allowedSideEffects` before a tool call can pass. |
+| **tool riskLevel** | `low`, `medium`, `high` | Optional informational catalog/audit badge. If omitted, the platform computes a default from trust and side effect. It does not gate calls. |
 | **rollout.strategy** | `RollingUpdate`, `Recreate`, `Canary` | Available on `spec.rollout`. |
 
 ### Validation rules in code
@@ -102,10 +103,12 @@ spec:
       description: List invoices for a customer account.
       requiredTrust: low
       sideEffect: read
+      riskLevel: low
     - name: refund_invoice
       description: Issue a refund for an invoice.
       requiredTrust: high
       sideEffect: destructive
+      riskLevel: high
   rollout:
     strategy: Canary
     canaryReplicas: 1

@@ -21,6 +21,7 @@ import (
 	ktesting "k8s.io/client-go/testing"
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	sentinelaccess "mcp-runtime/pkg/access"
+	"mcp-runtime/pkg/controlplane"
 	"mcp-runtime/pkg/k8sclient"
 )
 
@@ -273,6 +274,94 @@ func TestRuntimeServersIncludesMCPServerInventory(t *testing.T) {
 	if _, ok := rawServer["headers"]; ok {
 		t.Fatalf("access_json should not include headers: %#v", rawServer)
 	}
+}
+
+func TestRuntimeToolsCatalogScopesFiltersAndComputesRisk(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	srv := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "payments",
+			Namespace:         "mcp-team-acme",
+			CreationTimestamp: metav1.Now(),
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			TeamID:           "acme",
+			Image:            "payments:latest",
+			PublicPathPrefix: "payments",
+			Tools: []mcpv1alpha1.ToolConfig{
+				{
+					Name:          "refund_invoice",
+					Description:   "Refund an invoice.",
+					RequiredTrust: mcpv1alpha1.TrustLevelHigh,
+					SideEffect:    mcpv1alpha1.ToolSideEffectDestructive,
+					Labels:        map[string]string{"domain": "billing"},
+				},
+			},
+		},
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme, srv),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+		liveInventoryProbe: staticLiveInventoryProber{inventory: &liveInventory{
+			Tools: []liveInventoryTool{
+				{Name: "refund_invoice", Description: "Refund an invoice."},
+				{Name: "lookup_invoice", Description: "Look up invoice status."},
+			},
+		}},
+	}
+	waitForCachedInventory(t, server.liveInventory(), controlplane.ServerInfoFromMCPServer(*srv, controlplane.ServerDeploymentStatus{}))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/tools?namespace=mcp-team-acme&risk=high", nil)
+	request = request.WithContext(withPrincipal(request.Context(), principal{Role: roleAdmin, Subject: "admin-1"}))
+	server.HandleRuntimeTools(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Tools []runtimeToolRow `json:"tools"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Tools) != 1 {
+		t.Fatalf("tools = %#v, want one high-risk declared tool", payload.Tools)
+	}
+	got := payload.Tools[0]
+	if got.ToolName != "refund_invoice" || got.RiskLevel != "high" || got.DriftStatus != "declared" || !got.Declared || !got.Live {
+		t.Fatalf("tool row = %#v", got)
+	}
+	if got.ConnectConfig == nil {
+		t.Fatalf("connect_config missing: %#v", got)
+	}
+
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodGet, "/api/runtime/tools?namespace=mcp-team-acme&drift=ungoverned", nil)
+	request = request.WithContext(withPrincipal(request.Context(), principal{Role: roleAdmin, Subject: "admin-1"}))
+	server.HandleRuntimeTools(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	payload.Tools = nil
+	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Tools) != 1 || payload.Tools[0].ToolName != "lookup_invoice" || payload.Tools[0].DriftStatus != "ungoverned" {
+		t.Fatalf("ungoverned tools = %#v", payload.Tools)
+	}
+}
+
+type staticLiveInventoryProber struct {
+	inventory *liveInventory
+}
+
+func (p staticLiveInventoryProber) probe(context.Context, controlplane.ServerInfo) (*liveInventory, error) {
+	return p.inventory, nil
 }
 
 func TestPublicMCPEndpointHonorsPlatformDomain(t *testing.T) {

@@ -563,7 +563,9 @@ func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
 		t.Fatalf("expected long dashboard tables to use scroll-table, got %d", got)
 	}
 	for _, want := range []string{
-		`placeholder="Search servers"`,
+		`placeholder="Search servers and tools"`,
+		`id="tool-catalog-body"`,
+		`id="tool-risk-filter"`,
 		`class="analytics-tabset" data-analytics-tabset`,
 		`id="governance-decisions" data-admin-only="true"`,
 		`data-analytics-tab-target="governance-decision-audit"`,

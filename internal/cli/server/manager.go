@@ -60,7 +60,7 @@ func (m *ServerManager) requireKubectlForMutation() error {
 	return nil
 }
 
-func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, policyMode, defaultDecision string, sessionRequired bool, port int32, tools, toolSpecs []string, force bool) error {
+func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, policyMode, defaultDecision string, sessionRequired bool, port int32, tools, toolSpecs []string, toolRisk string, force bool) error {
 	name, err := validateManifestValue("name", name)
 	if err != nil {
 		return err
@@ -152,7 +152,7 @@ func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, po
 			Enabled: true,
 		},
 	}
-	toolMetadata, err := initToolMetadata(tools, toolSpecs)
+	toolMetadata, err := initToolMetadata(tools, toolSpecs, toolRisk)
 	if err != nil {
 		return err
 	}
@@ -195,7 +195,11 @@ func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, po
 	return nil
 }
 
-func initToolMetadata(tools, toolSpecs []string) ([]metadata.ToolConfig, error) {
+func initToolMetadata(tools, toolSpecs []string, toolRisk string) ([]metadata.ToolConfig, error) {
+	risk, err := normalizeMetadataRisk(toolRisk)
+	if err != nil {
+		return nil, err
+	}
 	seen := map[string]struct{}{}
 	out := make([]metadata.ToolConfig, 0, len(tools))
 	for _, tool := range tools {
@@ -212,6 +216,7 @@ func initToolMetadata(tools, toolSpecs []string) ([]metadata.ToolConfig, error) 
 			Description:   fmt.Sprintf("%s tool", tool),
 			RequiredTrust: metadata.TrustLevelLow,
 			SideEffect:    metadata.ToolSideEffectRead,
+			RiskLevel:     risk,
 		})
 	}
 	for _, spec := range toolSpecs {
@@ -248,9 +253,23 @@ func initToolMetadata(tools, toolSpecs []string) ([]metadata.ToolConfig, error) 
 			Description:   fmt.Sprintf("%s tool", name),
 			RequiredTrust: trust,
 			SideEffect:    sideEffect,
+			RiskLevel:     risk,
 		})
 	}
 	return out, nil
+}
+
+func normalizeMetadataRisk(raw string) (metadata.ToolRiskLevel, error) {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if raw == "" {
+		return "", nil
+	}
+	switch metadata.ToolRiskLevel(raw) {
+	case metadata.ToolRiskLevelLow, metadata.ToolRiskLevelMedium, metadata.ToolRiskLevelHigh:
+		return metadata.ToolRiskLevel(raw), nil
+	default:
+		return "", core.NewWithSentinel(nil, fmt.Sprintf("invalid tool risk %q; must be low, medium, or high", raw))
+	}
 }
 
 // Logger exposes the manager logger to foldered command packages.
@@ -361,6 +380,111 @@ func (m *ServerManager) GetServer(name, namespace string) error {
 		return wrappedErr
 	}
 	return nil
+}
+
+// ConnectConfig prints client connection config for a platform-visible MCP server.
+func (m *ServerManager) ConnectConfig(name, namespace, clientName, output string) error {
+	name = strings.TrimSpace(name)
+	namespace = strings.TrimSpace(namespace)
+	if name == "" {
+		return core.NewWithSentinel(nil, "server name is required")
+	}
+	if m.useKube {
+		return core.NewWithSentinel(nil, "connect-config uses the platform API; omit --use-kube and run mcp-runtime auth login first")
+	}
+	plat, err := platformapi.NewPlatformClient()
+	if err != nil {
+		return err
+	}
+	items, err := plat.ListRuntimeServers(context.Background(), namespace)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.Name != name {
+			continue
+		}
+		if namespace != "" && item.Namespace != namespace {
+			continue
+		}
+		config, err := BuildConnectConfig(item, clientName)
+		if err != nil {
+			return err
+		}
+		return printConnectConfig(config, output)
+	}
+	if namespace != "" {
+		return core.NewWithSentinel(nil, fmt.Sprintf("server %q not found in namespace %q", name, namespace))
+	}
+	return core.NewWithSentinel(nil, fmt.Sprintf("server %q not found", name))
+}
+
+func BuildConnectConfig(server platformapi.ServerListItem, clientName string) (map[string]any, error) {
+	clientName = strings.ToLower(strings.TrimSpace(clientName))
+	if clientName == "" {
+		clientName = "json"
+	}
+	serverName := strings.TrimSpace(server.Name)
+	if serverName == "" {
+		serverName = "mcp-server"
+	}
+	url := strings.TrimSpace(server.Endpoint)
+	if access := server.AccessJSON; len(access) > 0 {
+		if servers, ok := access["mcpServers"].(map[string]any); ok {
+			for key, raw := range servers {
+				serverName = key
+				if entry, ok := raw.(map[string]any); ok {
+					if value, ok := entry["url"].(string); ok && strings.TrimSpace(value) != "" {
+						url = strings.TrimSpace(value)
+					}
+				}
+				break
+			}
+		}
+	}
+	switch clientName {
+	case "claude", "cursor", "json", "raw":
+		return map[string]any{
+			"mcpServers": map[string]any{
+				serverName: map[string]any{
+					"type": "http",
+					"url":  url,
+				},
+			},
+		}, nil
+	case "vscode", "vs-code":
+		return map[string]any{
+			"servers": map[string]any{
+				serverName: map[string]any{
+					"type": "http",
+					"url":  url,
+				},
+			},
+		}, nil
+	default:
+		return nil, core.NewWithSentinel(nil, "client must be claude, cursor, vscode, or json")
+	}
+}
+
+func printConnectConfig(config map[string]any, output string) error {
+	switch strings.ToLower(strings.TrimSpace(output)) {
+	case "", "text", "json":
+		data, err := json.MarshalIndent(config, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = os.Stdout.Write(append(data, '\n'))
+		return err
+	case "yaml":
+		data, err := yaml.Marshal(config)
+		if err != nil {
+			return err
+		}
+		_, err = os.Stdout.Write(data)
+		return err
+	default:
+		return core.NewWithSentinel(nil, "output must be text, json, or yaml")
+	}
 }
 
 // CreateServer creates a new MCP server with the given parameters.
@@ -817,6 +941,7 @@ func mergeDeployMetadata(spec *mcpv1alpha1.MCPServerSpec, src *metadata.ServerMe
 				Description:   tool.Description,
 				RequiredTrust: mcpv1alpha1.TrustLevel(tool.RequiredTrust),
 				SideEffect:    mcpv1alpha1.ToolSideEffect(tool.SideEffect),
+				RiskLevel:     mcpv1alpha1.ToolRiskLevel(tool.RiskLevel),
 				Labels:        copyStringMap(tool.Labels),
 			})
 		}

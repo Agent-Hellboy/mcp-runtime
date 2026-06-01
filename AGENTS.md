@@ -13,7 +13,7 @@ This file is the **onboarding index** for the MCP Runtime repo. It complements `
 | Public domain, TLS, ACME, prod hostnames | `mcp-runtime-platform-public` |
 | Public k3s deploy scripts | `k3s-public-ops` |
 | Real-cluster QA sweeps | `qa-e2e-operations`, `qa-e2e-security`, `qa-e2e-ui`, … |
-| Codebase navigation | `graphify` (when `graphify-out/` exists) |
+| Codebase navigation | `graphify` (create `graphify-out/graph.json` when missing for non-trivial repo exploration) |
 
 ## Repository map (where to look)
 
@@ -128,10 +128,10 @@ Grafana: dev ingress `/grafana` or `https://platform.<domain>/grafana` (admin). 
 
 ## graphify
 
-When `graphify-out/graph.json` exists: `graphify query`, `graphify path`, `graphify explain` before broad grep; `graphify update .` after code changes. See `.codex/skills/graphify/SKILL.md`.
+For non-trivial codebase or docs exploration, check `graphify-out/graph.json` first. If it is missing, run `graphify update .` from the repo root before broad source reads so later agents can use the graph. When it exists, use `graphify query`, `graphify path`, or `graphify explain` before broad grep; run `graphify update .` after code or docs changes that should be reflected in the graph. Skip graph generation for tiny direct tasks where the target file or command is already obvious. See `.codex/skills/graphify/SKILL.md`.
 
 In any agent prompt, include:
 
 > Use `graphify query "<your question>"` to look up any code structure before grepping files. The graph is at `graphify-out/graph.json`.
 
-The `PreToolUse` hook already injects this reminder whenever a Bash command contains `grep`, `find`, or similar — so agents running in this repo are automatically nudged toward the graph.
+The `PreToolUse` hook already injects this reminder whenever a Bash command contains `grep`, `find`, or similar, so agents running in this repo are nudged toward the graph automatically.
