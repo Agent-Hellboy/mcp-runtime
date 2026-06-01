@@ -1396,8 +1396,74 @@ function scheduleServerLiveInventoryRefresh() {
   if (!serversCache.some(serverLiveInventoryPending)) return;
   serverLiveInventoryRefreshTimer = setTimeout(() => {
     serverLiveInventoryRefreshTimer = null;
-    loadServers();
+    silentServerInventoryRefresh();
   }, serverLiveInventoryRefreshDelayMs);
+}
+
+// Refresh live inventory data without wiping the grid DOM.
+// Only patches the inventory section of cards whose liveInventory changed.
+// This prevents the card fluctuation caused by full grid re-renders.
+async function silentServerInventoryRefresh() {
+  if (!authenticated && !publicCatalogEnabled) return;
+  try {
+    const data = await fetchJSON(scopedPath("/runtime/servers"));
+    const fresh = Array.isArray(data.servers) ? data.servers : [];
+    fresh.forEach((server) => {
+      const key = serverKey(server);
+      const existing = serversCache.find((s) => serverKey(s) === key);
+      if (!existing) return;
+      const liveChanged =
+        JSON.stringify(server.liveInventory) !== JSON.stringify(existing.liveInventory) ||
+        server.liveInventoryError !== existing.liveInventoryError;
+      if (!liveChanged) return;
+      Object.assign(existing, server);
+      const card = document.querySelector(`[data-server-key="${CSS.escape(key)}"]`);
+      if (!card) return;
+      const displayInventory = serverDisplayInventory(existing);
+      const visibleInventory = serverVisibleInventorySections(displayInventory);
+      const oldGrid = card.querySelector(".server-inventory-grid");
+      // Snapshot open state before patching.
+      const openState = {};
+      if (oldGrid) {
+        oldGrid.querySelectorAll("details.inventory-block").forEach((block) => {
+          const label = block.querySelector("summary span")?.textContent?.trim() || "";
+          const items = [];
+          block.querySelectorAll("details.inventory-item").forEach((item) => {
+            if (item.open) items.push(item.querySelector("summary strong")?.textContent?.trim() || "");
+          });
+          openState[label] = { open: block.open, items };
+        });
+        oldGrid.remove();
+      }
+      if (!visibleInventory.length) return;
+      const newGrid = document.createElement("div");
+      newGrid.className = "server-inventory-grid";
+      visibleInventory.forEach((section) => {
+        newGrid.appendChild(renderInventoryBlock(section.label, section.items, section.renderer));
+      });
+      // Restore open state on the new inventory grid.
+      newGrid.querySelectorAll("details.inventory-block").forEach((block) => {
+        const label = block.querySelector("summary span")?.textContent?.trim() || "";
+        const snap = openState[label];
+        if (!snap) return;
+        block.open = snap.open;
+        if (snap.items.length) {
+          block.querySelectorAll("details.inventory-item").forEach((item) => {
+            const name = item.querySelector("summary strong")?.textContent?.trim() || "";
+            if (snap.items.includes(name)) item.open = true;
+          });
+        }
+      });
+      const connect = card.querySelector("details.server-connect");
+      card.insertBefore(newGrid, connect || null);
+    });
+    serversCache = fresh;
+    if (fresh.some(serverLiveInventoryPending)) {
+      scheduleServerLiveInventoryRefresh();
+    }
+  } catch (_) {
+    // Silent — don't break the UI on background refresh errors.
+  }
 }
 
 function serverLiveInventoryPending(server) {
