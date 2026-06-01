@@ -2337,7 +2337,11 @@ function startAutoRefresh() {
     loadDashboardAnalytics();
     loadGovernanceDecisionAnalytics();
     loadEvents();
-    loadServers();
+    // loadServers() intentionally removed from the auto-refresh loop.
+    // Full server card re-renders every 5s caused DOM wipes that made
+    // cards fluctuate visually. Server cards load fresh on page open
+    // and update silently via silentServerInventoryRefresh() only when
+    // live inventory data actually changes.
   }, 5000);
 }
 
