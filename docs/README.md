@@ -37,6 +37,7 @@ human workflows.
 mcp-runtime auth login --api-url https://platform.mcpruntime.org
 mcp-runtime server init my-server --from-server http://localhost:8088
 mcp-runtime server build image my-server --tag v1
+# ^ prints the exact image ref, e.g. registry.mcpruntime.org/myteam/my-server:v1
 mcp-runtime registry push --image registry.mcpruntime.org/myteam/my-server:v1 --scope tenant
 mcp-runtime server deploy my-server --scope tenant --metadata-dir .mcp
 ```
