@@ -45,6 +45,8 @@ mcp-runtime server deploy my-server --scope tenant --metadata-dir .mcp
 The gateway enforces grants and sessions on every tool call. No Kubernetes manifests. No ingress config.
 Point any MCP client at the adapter proxy — governance headers injected transparently.
 
+Once your server is deployed: [configure the adapter](agent-adapters.md) → connect Claude Desktop, Cursor, or any MCP-compatible IDE → start using your server. Policy, grants, audit, and observability run in the background automatically.
+
 ---
 
 ## Who is this for?
