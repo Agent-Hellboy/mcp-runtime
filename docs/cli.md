@@ -4,6 +4,20 @@ This guide walks through every `mcp-runtime` command using the real example serv
 in the repository so you can follow along, test the platform, and build a demo from
 a single working script.
 
+## Quick reference
+
+| Goal | Commands |
+|---|---|
+| Log in | `auth login` → `auth use <profile>` |
+| Deploy a server | `server init` → `server validate` → `server build image` → `registry push` → `server deploy` |
+| Grant an agent access | `access grant init` → `server validate --grant-file` → `access grant apply` |
+| Create a session manually | `access session init` → `access session apply` |
+| Connect an MCP client | `adapter proxy --server ... --agent ... --auto-refresh` |
+| Check platform health | `status` |
+| Inspect a running server | `server list` · `server get` · `server policy inspect` |
+| View analytics logs | `sentinel status` · `sentinel logs api` |
+| Diagnose cluster issues | `cluster doctor` |
+
 **Example servers in this repo:**
 
 | Server | Language | Run command | Tools |

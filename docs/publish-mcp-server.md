@@ -448,3 +448,8 @@ analytics:
 - [Runtime](runtime.md)
 - [API](api.md)
 - [Sentinel](sentinel.md)
+
+
+---
+
+**Next:** [Agent Adapters](agent-adapters.md) — connect your MCP client via the adapter proxy.

@@ -53,6 +53,8 @@ extra_css:
   - stylesheets/infra.css
 nav:
   - Home: README.md
+  - Quickstart: quickstart.md
+  - Concepts: concepts.md
   - Getting Started: getting-started.md
   - Developer Guide:
       - Publish an MCP Server: publish-mcp-server.md
@@ -65,6 +67,7 @@ nav:
       - k3s Deployment Runbook: k3s-deployment-runbook.md
       - Runtime: runtime.md
       - Sentinel: sentinel.md
+      - Troubleshooting: troubleshooting.md
   - Reference:
       - CLI: cli.md
       - API: api.md

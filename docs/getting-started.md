@@ -1,6 +1,8 @@
 # Getting Started
 
-The shortest path from an empty Kubernetes cluster to a governed MCP endpoint: install the control plane, registry, broker, and Sentinel stack; deploy one MCP server; grant access; and observe live traffic.
+This guide installs MCP Runtime on your own Kubernetes cluster. If you want to
+try the platform in under 10 minutes without a cluster, see the
+[Quickstart](quickstart.md) instead.
 
 ## Prerequisites
 
@@ -20,7 +22,25 @@ STRICT_DEPS_CHECK=1 make deps-check
 
 `make deps-install` is intentionally best-effort: it can install some packages with Homebrew or apt, but it cannot enable Docker Desktop, create cloud credentials, or configure your kubeconfig. Re-run `STRICT_DEPS_CHECK=1 make deps-check` until the required host tools pass.
 
-## 1. Build the CLI
+## 1. Install the CLI
+
+**Option A — Download a release binary** (no Go required):
+
+```bash
+# macOS Apple Silicon
+curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/download/v0.1.0/mcp-runtime-darwin-arm64
+chmod +x mcp-runtime && sudo mv mcp-runtime /usr/local/bin/
+
+# macOS Intel
+curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/download/v0.1.0/mcp-runtime-darwin-amd64
+chmod +x mcp-runtime && sudo mv mcp-runtime /usr/local/bin/
+
+# Linux amd64
+curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/download/v0.1.0/mcp-runtime-linux-amd64
+chmod +x mcp-runtime && sudo mv mcp-runtime /usr/local/bin/
+```
+
+**Option B — Build from source** (requires Go 1.26+):
 
 ```bash
 make deps
@@ -824,3 +844,8 @@ flowchart LR
 - [CLI](cli.md) — full command reference.
 - [API](api.md) — every CRD field and HTTP endpoint.
 - [Sentinel](sentinel.md) — request-path governance, audit, observability.
+
+
+---
+
+**Next:** [Concepts](concepts.md) — understand Grants, Sessions, Trust levels, and Side effects before deploying servers.

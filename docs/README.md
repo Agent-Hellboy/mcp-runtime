@@ -1,5 +1,7 @@
 # MCP Runtime
 
+**Deploy governed MCP servers on Kubernetes — policy enforcement per tool call, multi-team isolation, and a full audit trail. No YAML required.**
+
 MCP Runtime is an open-source, Kubernetes-native control plane for deploying, governing, and brokering MCP servers. It packages server deployment, registry workflows, gateway routing, access policy, audit evidence, and observability into one operating surface for platform, security, and compliance teams.
 
 Unlike public MCP directories or client-specific catalogs, MCP Runtime is not
@@ -19,11 +21,11 @@ human workflows.
   <p class="docs-lead">Build and publish MCP server images, reconcile them with Kubernetes CRDs, expose them through governed gateway routes, and keep policy decisions, consented sessions, audit trails, and telemetry attached to every agent call.</p>
 
   <div class="docs-actions">
-    <a class="docs-button docs-button-primary" href="getting-started/">Get started</a>
-    <a class="docs-button" href="deployment-targets/">Deploy</a>
-    <a class="docs-button" href="contributor/">Contribute</a>
-    <a class="docs-button" href="architecture/">Architecture</a>
+    <a class="docs-button docs-button-primary" href="quickstart/">Try in 10 min</a>
+    <a class="docs-button" href="concepts/">Concepts</a>
+    <a class="docs-button" href="getting-started/">Self-host</a>
     <a class="docs-button" href="api/">API reference</a>
+    <a class="docs-button" href="contributor/">Contribute</a>
   </div>
   </div>
 
