@@ -16,22 +16,11 @@ The runtime is the Kubernetes-native control plane for MCP servers. It owns the 
 
 ## Core resources
 
-| Resource | Key fields |
-|---|---|
-| **MCPServer** | `image`, `imageTag`, `teamID`, `port`, `publicPathPrefix`, `tools[]`, `gateway.enabled`, `rollout` |
-| **MCPAccessGrant** | `serverRef`, `subject` (humanID / agentID / teamID), `maxTrust`, `allowedSideEffects[]`, `toolRules[]`, `disabled` |
-| **MCPAgentSession** | `serverRef`, `subject`, `consentedTrust`, `expiresAt`, `revoked`, `upstreamTokenSecretRef` |
+Three CRDs form the runtime surface: `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession`.
+`MCPServer` is referenced by many grants and sessions; grant + session are evaluated
+together by the gateway policy layer on every tool call.
 
-`MCPServer` is referenced by many grants and sessions. Grant + session are evaluated together by the gateway policy layer.
-
-```mermaid
-flowchart LR
-    S[MCPServer] --> G[MCPAccessGrant]
-    S --> T[MCPAgentSession]
-    G -. evaluated together .-> T
-```
-
-See the [API reference](api.md) for full field semantics.
+See the [API reference](api.md) for full field definitions and examples.
 
 ## Reconciliation outputs
 

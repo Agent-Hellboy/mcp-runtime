@@ -54,26 +54,7 @@ install bundled CoreDNS / local-path on k3s. After setup, run `cluster doctor`
 to validate the installed MCP Runtime resources, registry pulls, ingress,
 Sentinel, and operator readiness.
 
-## 3. Choose your install path
-
-This page now branches on purpose:
-
-- Use the contributor path for local development, Kind, `--test-mode`, seeded logins, and fast service iteration.
-- Use the production-style path for a real cluster, real DNS/TLS decisions, registry planning, and stricter setup validation.
-
-| Path | Use it when | Start here |
-|---|---|---|
-| Local development | You are working on the repo, using Kind, or validating changes with disposable infra | [Contributor test-mode cluster](#4-contributor-test-mode-cluster) |
-| Target selection | You are deciding between k3s, kubeadm, EKS, GKE, AKS, or another distribution | [Deployment Targets](deployment-targets.md) |
-| Production-style install | You are evaluating or deploying MCP Runtime on a shared, persistent, or externally reachable cluster | [Production-style install](#5-production-style-install) |
-
-The rest of this page keeps both flows in one place, but the detailed
-contributor runbooks still live under [docs/contributor/](contributor/README.md)
-the deployment target guide lives in
-[deployment-targets.md](deployment-targets.md), and the distribution-specific
-production prerequisites still live in [cluster-readiness.md](cluster-readiness.md).
-
-## 4. Contributor test-mode cluster
+## 3. Contributor test-mode cluster (local Kind)
 
 For local contributor work, use the dedicated contributor docs instead of the
 generic install flow in this page. The contributor path owns the Kind cluster
@@ -141,30 +122,7 @@ Important contributor notes:
 | Requests work but analytics are missing | `sentinel logs ingest`, `sentinel logs processor` (admin kubectl), analytics secret and ingest URL |
 | Dashboard, API, or MCP route returns 404 | `kubectl get ingress -A`, Sentinel ingress YAML, Traefik logs |
 
-Useful local platform checks (admin kubectl for `sentinel *`):
-
-```bash
-./bin/mcp-runtime cluster doctor
-./bin/mcp-runtime sentinel status
-./bin/mcp-runtime sentinel events
-./bin/mcp-runtime sentinel logs api --since 10m
-./bin/mcp-runtime sentinel logs ui --since 10m
-./bin/mcp-runtime sentinel logs gateway --since 10m
-./bin/mcp-runtime sentinel logs ingest --since 10m
-./bin/mcp-runtime sentinel logs processor --since 10m
-
-kubectl get pods -n mcp-runtime -o wide
-kubectl get pods -n mcp-sentinel -o wide
-kubectl rollout status deploy/mcp-sentinel-api -n mcp-sentinel --timeout=90s
-kubectl rollout status deploy/mcp-sentinel-ingest -n mcp-sentinel --timeout=90s
-kubectl rollout status deploy/mcp-sentinel-processor -n mcp-sentinel --timeout=90s
-kubectl rollout status deploy/mcp-sentinel-ui -n mcp-sentinel --timeout=90s
-kubectl rollout status deploy/mcp-sentinel-gateway -n mcp-sentinel --timeout=90s
-kubectl logs -n mcp-runtime deploy/mcp-runtime-operator-controller-manager --since=10m
-kubectl logs -n traefik deploy/traefik --tail=120
-kubectl get ingress -A
-kubectl get ingress -n mcp-sentinel -o yaml
-```
+For the full list of status and diagnostic commands see the [CLI reference](cli.md).
 
 Apply an access grant and session for the local curl request. Prefer `init` to
 scaffold manifests. **Grant apply** uses the platform API for server/team

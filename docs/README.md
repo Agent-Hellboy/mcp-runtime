@@ -27,19 +27,6 @@ human workflows.
   </div>
   </div>
 
-  <div class="docs-snapshot">
-  <strong>Core surfaces</strong>
-
-  <ul>
-    <li>Operator and <code>MCPServer</code>, <code>MCPAccessGrant</code>, and <code>MCPAgentSession</code> CRDs</li>
-    <li>Registry-backed image build, push, and deploy flow</li>
-    <li>Sentinel gateway policy, grants, consented sessions, audit, and analytics</li>
-    <li>Governance controls for tool access, trust levels, session revocation, and policy versioning</li>
-    <li>Optional HTTP and stdio agent adapters for governed framework integrations</li>
-    <li>Compliance-oriented event records for who called what, when, against which server, and whether it was allowed or denied</li>
-    <li>Ingress routing for path-based MCP endpoints</li>
-    <li>CLI for setup, status, registry, <code>server init</code>, access init/apply, adapters; admin kubectl tools for <code>sentinel *</code></li>
-  </ul>
   </div>
 </section>
 </div>
@@ -98,103 +85,81 @@ DNS, ingress, TLS, and k3s configuration, start with
 then [Cluster readiness](cluster-readiness.md) for distribution-specific
 preparation.
 
-## Choose a path
+## Where to go next
 
-<div class="docs-grid docs-grid-3">
+<div class="docs-grid docs-grid-2">
 <a class="docs-card" href="getting-started/">
-  <span class="docs-card-kicker">Start</span>
-  <strong>Install the platform</strong>
-  <span>Build the CLI, run preflight checks, install the stack, and deploy the first server.</span>
+  <span class="docs-card-kicker">Start here</span>
+  <strong>Get started</strong>
+  <span>Build the CLI, install the stack, deploy your first server, and observe live traffic.</span>
 </a>
 
 <a class="docs-card" href="architecture/">
   <span class="docs-card-kicker">Understand</span>
-  <strong>Read the architecture</strong>
-  <span>Trace how the control plane, registry, broker, operator, and Sentinel services fit together.</span>
+  <strong>Architecture</strong>
+  <span>How the control plane, registry, broker, operator, and Sentinel services fit together.</span>
 </a>
+</div>
 
-<a class="docs-card" href="cluster-readiness/">
-  <span class="docs-card-kicker">Prepare</span>
-  <strong>Check your cluster</strong>
-  <span>Review registry, DNS, ingress, storage, TLS, and node-runtime prerequisites before setup.</span>
-</a>
+**Developer guide** — publish and govern MCP servers
 
-<a class="docs-card" href="deployment-targets/">
-  <span class="docs-card-kicker">Deploy</span>
-  <strong>Choose a Kubernetes target</strong>
-  <span>Pick the right install shape for k3s, self-managed clusters, EKS, GKE, AKS, and other Kubernetes distributions.</span>
-</a>
-
-<a class="docs-card" href="contributor/">
-  <span class="docs-card-kicker">Contribute</span>
-  <strong>Use the contributor guide</strong>
-  <span>Set up local Kind, iterate on services, verify tenant visibility, and debug the platform.</span>
-</a>
-
+<div class="docs-grid docs-grid-3">
 <a class="docs-card" href="publish-mcp-server/">
-  <span class="docs-card-kicker">Ship</span>
+  <span class="docs-card-kicker">Build</span>
   <strong>Publish an MCP server</strong>
-  <span>Write a manifest or `.mcp` metadata, push an image, deploy it, and verify what the platform creates.</span>
+  <span>Write metadata, build and push an image, deploy it, and verify what the platform creates.</span>
 </a>
 
 <a class="docs-card" href="agent-adapters/">
   <span class="docs-card-kicker">Connect</span>
-  <strong>Wire agent frameworks</strong>
-  <span>Use HTTP and stdio adapters to present issued identity/session values without moving enforcement out of the gateway.</span>
+  <strong>Agent adapters</strong>
+  <span>HTTP and stdio adapters that inject issued identity and session headers into agent requests.</span>
+</a>
+
+<a class="docs-card" href="multi-team/">
+  <span class="docs-card-kicker">Govern</span>
+  <strong>Multi-team isolation</strong>
+  <span>Namespace-per-team isolation, RBAC, and cross-team server access.</span>
 </a>
 </div>
 
-## Operate MCP Runtime
+**Operator guide** — deploy and operate the platform
 
-<div class="docs-grid docs-grid-2">
+<div class="docs-grid docs-grid-3">
+<a class="docs-card" href="deployment-targets/">
+  <span class="docs-card-kicker">Plan</span>
+  <strong>Deployment targets</strong>
+  <span>Choose the right install shape for k3s, EKS, GKE, AKS, and other distributions.</span>
+</a>
+
 <a class="docs-card" href="runtime/">
-  <span class="docs-card-kicker">Runtime</span>
-  <strong>Control plane</strong>
+  <span class="docs-card-kicker">Operate</span>
+  <strong>Runtime</strong>
   <span>CRDs, reconciliation outputs, image resolution, ingress wiring, and rollout flow.</span>
 </a>
 
 <a class="docs-card" href="sentinel/">
-  <span class="docs-card-kicker">Governance</span>
-  <strong>Sentinel request path</strong>
-  <span>Gateway policy, grant/session evaluation, analytics, audit events, and dashboard services.</span>
-</a>
-
-<a class="docs-card" href="multi-team/">
-  <span class="docs-card-kicker">Tenancy</span>
-  <strong>Multi-team isolation</strong>
-  <span>Use namespaces, RBAC, and stable team IDs for team-owned servers, grants, and sessions.</span>
-</a>
-
-<a class="docs-card" href="cli/">
-  <span class="docs-card-kicker">CLI</span>
-  <strong>Command reference</strong>
-  <span>Setup, auth, registry, server, access, adapter, team, Sentinel, and status commands.</span>
-</a>
-
-<a class="docs-card" href="api/">
-  <span class="docs-card-kicker">Reference</span>
-  <strong>API and CRDs</strong>
-  <span><code>MCPServer</code>, access grants, sessions, gateway headers, and HTTP APIs.</span>
-</a>
-
-<a class="docs-card" href="internals/">
-  <span class="docs-card-kicker">Codebase</span>
-  <strong>Read the internals</strong>
-  <span>Use the internal docs for codebase structure, package tours, and implementation details.</span>
+  <span class="docs-card-kicker">Observe</span>
+  <strong>Sentinel</strong>
+  <span>Gateway policy evaluation, analytics, audit events, and observability services.</span>
 </a>
 </div>
 
-## Common workflows
+**Reference**
 
-| Workflow | Start here |
-|---|---|
-| Evaluate MCP Runtime for a private MCP platform | [Getting started](getting-started.md), then [Architecture](architecture.md) |
-| Run MCP Runtime on a real cluster | [Deployment Targets](deployment-targets.md), then [Cluster readiness](cluster-readiness.md) |
-| Build a four or five node k3s demo | [k3s On-Prem Cluster](k3s-on-prem-cluster.md), then [Publish an MCP Server](publish-mcp-server.md) |
-| Host multiple teams on one cluster | [Multi-team isolation](multi-team.md), then [CLI](cli.md) |
-| Govern tools and sessions | [Sentinel](sentinel.md), then [API reference](api.md) |
-| Integrate from automation | [CLI](cli.md), then [API reference](api.md) |
-| Work on the codebase | [Contributor guide](contributor/README.md), then [Internals](internals/README.md) |
+<div class="docs-grid docs-grid-2">
+<a class="docs-card" href="cli/">
+  <span class="docs-card-kicker">CLI</span>
+  <strong>Command reference</strong>
+  <span>Every command with flags, examples, and a full end-to-end walkthrough.</span>
+</a>
+
+<a class="docs-card" href="api/">
+  <span class="docs-card-kicker">API</span>
+  <strong>API and CRDs</strong>
+  <span>MCPServer, MCPAccessGrant, MCPAgentSession fields and HTTP endpoints.</span>
+</a>
+</div>
 
 ## Project status
 
