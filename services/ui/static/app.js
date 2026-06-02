@@ -4146,7 +4146,7 @@ function renderUserDetailHeader() {
   setText("admin-user-title", email || userId || "User");
   setText("admin-user-kicker", userId ? `id: ${userId}` : "");
 
-  const user = operationsUsersCache.find((u) => u.id === userId || u.email === email);
+  const user = operationsUsersCache.find((u) => matchesUserIdentity(u, userId, email));
 
   const grid = document.getElementById("admin-user-info-grid");
   if (!grid) return;
@@ -4183,10 +4183,17 @@ function renderUserDetailHeader() {
   });
 }
 
+function matchesUserIdentity(user, userId, email) {
+  if (!user) return false;
+  return Boolean((userId && user.id === userId) || (email && user.email === email));
+}
+
 async function loadUserDetail() {
   const tbody = document.getElementById("admin-user-activity-body");
   if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="empty">Loading…</td></tr>';
-  const queryUser = adminDetailUserEmail || adminDetailUserId;
+  const requestedUserId = adminDetailUserId;
+  const requestedUserEmail = adminDetailUserEmail;
+  const queryUser = requestedUserEmail || requestedUserId;
   if (!queryUser) {
     if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="empty">No activity available.</td></tr>';
     return;
@@ -4194,14 +4201,18 @@ async function loadUserDetail() {
   try {
     const params = new URLSearchParams({ user: queryUser, limit: "50" });
     const data = await fetchJSON(`/admin/operations?${params}`);
+    if (requestedUserId !== adminDetailUserId || requestedUserEmail !== adminDetailUserEmail) return;
+
     adminDetailUserAuditCache = Array.isArray(data.audit_logs) ? data.audit_logs : [];
 
     // Update operationsUsersCache with fresh user data so the header stats
     // are populated even when navigating here from Teams (cache may be empty).
     if (Array.isArray(data.users) && data.users.length > 0) {
-      const fetched = data.users.find((u) => u.id === adminDetailUserId || u.email === adminDetailUserEmail);
+      const fetched = data.users.find((u) => matchesUserIdentity(u, requestedUserId, requestedUserEmail));
       if (fetched) {
-        const idx = operationsUsersCache.findIndex((u) => u.id === fetched.id || u.email === fetched.email);
+        adminDetailUserId = adminDetailUserId || fetched.id || "";
+        adminDetailUserEmail = adminDetailUserEmail || fetched.email || "";
+        const idx = operationsUsersCache.findIndex((u) => matchesUserIdentity(u, fetched.id, fetched.email));
         if (idx > -1) {
           operationsUsersCache[idx] = fetched;
         } else {
