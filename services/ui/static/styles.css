@@ -695,6 +695,25 @@ select:disabled {
   overflow-wrap: anywhere;
 }
 
+button.identity-primary.table-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+button.identity-primary.table-link:hover {
+  color: var(--accent-strong);
+  text-decoration-style: solid;
+}
+
 .identity-secondary {
   color: var(--muted);
   font-size: 12px;
