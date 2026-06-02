@@ -16,6 +16,8 @@ services/ingest/ingest
 services/mcp-gateway/mcp-gateway
 services/processor/processor
 services/ui/mcp-sentinel-ui
+services/ui/frontend/node_modules/
+services/ui/frontend/dist/
 
 # controller-runtime client
 .fakehome/

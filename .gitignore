@@ -21,6 +21,7 @@ FUTURE_PLAN.md
 *ARCHITECTURE.md
 f.go
 inspirations/
+/plan/
 
 c.go
 r.go 
@@ -30,6 +31,10 @@ tags
 /mcp-sentinel/
 /services/mcp-server/mcp-sentinel-mcp-server
 /services/ui/mcp-sentinel-ui
+/services/ui/frontend/node_modules/
+/services/ui/frontend/dist/
+/services/ui/frontend/.vite/
+/services/ui/frontend/*.tsbuildinfo
 /unit.out
 /chain-bench-results.json
 docs/COVERAGE_IMPROVEMENT_PLAN.md

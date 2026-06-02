@@ -54,8 +54,40 @@ func TestConfigExposesPlatformMode(t *testing.T) {
 	}
 }
 
+func TestStaticShellLoadsReactBundle(t *testing.T) {
+	htmlBody, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(htmlBody)
+	for _, want := range []string{
+		`<div id="root"></div>`,
+		`type="module"`,
+		`/assets/`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("react shell missing %q", want)
+		}
+	}
+
+	legacyBody, err := os.ReadFile("static/legacy/index.html")
+	if err != nil {
+		t.Fatalf("read legacy index: %v", err)
+	}
+	legacy := string(legacyBody)
+	for _, want := range []string{
+		`href="styles.css"`,
+		`src="app.js"`,
+		`src="/config.js"`,
+	} {
+		if !strings.Contains(legacy, want) {
+			t.Fatalf("legacy dashboard missing %q", want)
+		}
+	}
+}
+
 func TestStaticAppPreservesOneTimeAPIKeyAfterCreate(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -72,7 +104,7 @@ func TestStaticAppPreservesOneTimeAPIKeyAfterCreate(t *testing.T) {
 }
 
 func TestStaticAppKeepsOrgCatalogBehindLogin(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -86,7 +118,7 @@ func TestStaticAppKeepsOrgCatalogBehindLogin(t *testing.T) {
 }
 
 func TestStaticAppHidesPersonalActivityForAdmins(t *testing.T) {
-	index, err := os.ReadFile("static/index.html")
+	index, err := os.ReadFile("static/legacy/index.html")
 	if err != nil {
 		t.Fatalf("read static index: %v", err)
 	}
@@ -104,7 +136,7 @@ func TestStaticAppHidesPersonalActivityForAdmins(t *testing.T) {
 		t.Fatalf("expected tab button and panel to be marked user-only, got %d markers", got)
 	}
 
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -121,7 +153,7 @@ func TestStaticAppHidesPersonalActivityForAdmins(t *testing.T) {
 }
 
 func TestStaticAppHidesProtectedTabsWhenSignedOut(t *testing.T) {
-	index, err := os.ReadFile("static/index.html")
+	index, err := os.ReadFile("static/legacy/index.html")
 	if err != nil {
 		t.Fatalf("read static index: %v", err)
 	}
@@ -130,7 +162,7 @@ func TestStaticAppHidesProtectedTabsWhenSignedOut(t *testing.T) {
 		t.Fatalf("expected API Keys and Governance tabs/panels to require auth, got %d markers", got)
 	}
 
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -146,7 +178,7 @@ func TestStaticAppHidesProtectedTabsWhenSignedOut(t *testing.T) {
 }
 
 func TestStaticAppDefaultsAdminsToAllNamespaceGovernance(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -165,7 +197,7 @@ func TestStaticAppDefaultsAdminsToAllNamespaceGovernance(t *testing.T) {
 }
 
 func TestStaticAppIncludesAdminTeamsView(t *testing.T) {
-	index, err := os.ReadFile("static/index.html")
+	index, err := os.ReadFile("static/legacy/index.html")
 	if err != nil {
 		t.Fatalf("read static index: %v", err)
 	}
@@ -182,7 +214,7 @@ func TestStaticAppIncludesAdminTeamsView(t *testing.T) {
 		}
 	}
 
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -202,7 +234,7 @@ func TestStaticAppIncludesAdminTeamsView(t *testing.T) {
 }
 
 func TestStaticAppHidesUserAPIKeysWithoutUserIdentity(t *testing.T) {
-	index, err := os.ReadFile("static/index.html")
+	index, err := os.ReadFile("static/legacy/index.html")
 	if err != nil {
 		t.Fatalf("read static index: %v", err)
 	}
@@ -211,7 +243,7 @@ func TestStaticAppHidesUserAPIKeysWithoutUserIdentity(t *testing.T) {
 		t.Fatalf("expected API key tab and panel to require a user identity, got %d markers", got)
 	}
 
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -229,7 +261,7 @@ func TestStaticAppHidesUserAPIKeysWithoutUserIdentity(t *testing.T) {
 }
 
 func TestStaticAppShowsInlineUserAPIKeyLoadFailures(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -246,7 +278,7 @@ func TestStaticAppShowsInlineUserAPIKeyLoadFailures(t *testing.T) {
 }
 
 func TestStaticAppSearchesServerMetadataLabels(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -262,7 +294,7 @@ func TestStaticAppSearchesServerMetadataLabels(t *testing.T) {
 }
 
 func TestStaticAppUsesLiveInventoryWithDriftBadges(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -282,7 +314,7 @@ func TestStaticAppUsesLiveInventoryWithDriftBadges(t *testing.T) {
 		}
 	}
 
-	styles, err := os.ReadFile("static/styles.css")
+	styles, err := os.ReadFile("static/legacy/styles.css")
 	if err != nil {
 		t.Fatalf("read static styles: %v", err)
 	}
@@ -299,7 +331,7 @@ func TestStaticAppUsesLiveInventoryWithDriftBadges(t *testing.T) {
 }
 
 func TestStaticAppRequiresGrantSideEffects(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -316,7 +348,7 @@ func TestStaticAppRequiresGrantSideEffects(t *testing.T) {
 }
 
 func TestStaticAppKeepsServerEventAuthFailuresLocal(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -333,7 +365,7 @@ func TestStaticAppKeepsServerEventAuthFailuresLocal(t *testing.T) {
 }
 
 func TestStaticAppShowsInlineValidationFeedback(t *testing.T) {
-	index, err := os.ReadFile("static/index.html")
+	index, err := os.ReadFile("static/legacy/index.html")
 	if err != nil {
 		t.Fatalf("read static index: %v", err)
 	}
@@ -349,7 +381,7 @@ func TestStaticAppShowsInlineValidationFeedback(t *testing.T) {
 		}
 	}
 
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -367,7 +399,7 @@ func TestStaticAppShowsInlineValidationFeedback(t *testing.T) {
 }
 
 func TestStaticStylesAvoidTextGeneratedChevrons(t *testing.T) {
-	body, err := os.ReadFile("static/styles.css")
+	body, err := os.ReadFile("static/legacy/styles.css")
 	if err != nil {
 		t.Fatalf("read static styles: %v", err)
 	}
@@ -381,7 +413,7 @@ func TestStaticStylesAvoidTextGeneratedChevrons(t *testing.T) {
 }
 
 func TestStaticMarkupIncludesPlatformRestartAndDialogReviewFixes(t *testing.T) {
-	index, err := os.ReadFile("static/index.html")
+	index, err := os.ReadFile("static/legacy/index.html")
 	if err != nil {
 		t.Fatalf("read static index: %v", err)
 	}
@@ -401,7 +433,7 @@ func TestStaticMarkupIncludesPlatformRestartAndDialogReviewFixes(t *testing.T) {
 }
 
 func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -420,7 +452,7 @@ func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
 }
 
 func TestStaticAppRemovesCatalogDetailsAction(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -437,7 +469,7 @@ func TestStaticAppRemovesCatalogDetailsAction(t *testing.T) {
 }
 
 func TestStaticAppUsesInAppConfirmForRetire(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -451,7 +483,7 @@ func TestStaticAppUsesInAppConfirmForRetire(t *testing.T) {
 }
 
 func TestStaticAppKeepsAdminFleetCatalogAndCreatedGovernanceNamespaceVisible(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -471,7 +503,7 @@ func TestStaticAppKeepsAdminFleetCatalogAndCreatedGovernanceNamespaceVisible(t *
 }
 
 func TestStaticAppExposesGovernanceToTenantUsers(t *testing.T) {
-	index, err := os.ReadFile("static/index.html")
+	index, err := os.ReadFile("static/legacy/index.html")
 	if err != nil {
 		t.Fatalf("read static index: %v", err)
 	}
@@ -493,7 +525,7 @@ func TestStaticAppExposesGovernanceToTenantUsers(t *testing.T) {
 		}
 	}
 
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -534,7 +566,7 @@ func TestSecurityHeadersAllowConfiguredExternalAssets(t *testing.T) {
 }
 
 func TestStaticAppUsesCompactCatalogInventorySections(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}
@@ -554,7 +586,7 @@ func TestStaticAppUsesCompactCatalogInventorySections(t *testing.T) {
 }
 
 func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
-	index, err := os.ReadFile("static/index.html")
+	index, err := os.ReadFile("static/legacy/index.html")
 	if err != nil {
 		t.Fatalf("read static index: %v", err)
 	}
@@ -586,7 +618,7 @@ func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
 		}
 	}
 
-	styles, err := os.ReadFile("static/styles.css")
+	styles, err := os.ReadFile("static/legacy/styles.css")
 	if err != nil {
 		t.Fatalf("read static styles: %v", err)
 	}
@@ -611,7 +643,7 @@ func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
 }
 
 func TestStaticAppRoutesDecisionAuditThroughGovernance(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
+	body, err := os.ReadFile("static/legacy/app.js")
 	if err != nil {
 		t.Fatalf("read static app: %v", err)
 	}

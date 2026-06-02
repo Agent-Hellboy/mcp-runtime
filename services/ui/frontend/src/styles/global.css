@@ -1,0 +1,31 @@
+:root {
+  color-scheme: dark;
+  background: #0b1412;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+.app-shell {
+  background: #0b1412;
+  min-height: 100vh;
+}
+
+.legacy-dashboard {
+  border: 0;
+  display: block;
+  height: 100vh;
+  width: 100%;
+}
