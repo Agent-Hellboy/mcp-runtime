@@ -1232,7 +1232,7 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 				"img-src 'self' data: https:; "+
 				"font-src 'self' data: https://fonts.gstatic.com; "+
 				"connect-src 'self' https://accounts.google.com; "+
-				"frame-src https://accounts.google.com; "+
+				"frame-src 'self' https://accounts.google.com; "+
 				"frame-ancestors 'none'; "+
 				"base-uri 'self'; "+
 				"form-action 'self'")
