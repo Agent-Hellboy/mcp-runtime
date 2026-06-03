@@ -1,3 +1,12 @@
+FROM node:22-bookworm-slim AS frontend
+WORKDIR /src/services/ui/frontend
+
+COPY services/ui/frontend/package*.json ./
+RUN npm ci
+
+COPY services/ui/frontend/ ./
+RUN npm run build
+
 FROM golang:1.26.0 AS build
 WORKDIR /src
 
@@ -8,7 +17,7 @@ COPY services/ui/go.mod services/ui/go.sum ./services/ui/
 RUN cd services/ui && go mod download
 
 COPY services/ui/*.go ./services/ui/
-COPY services/ui/static/ ./services/ui/static/
+COPY --from=frontend /src/services/ui/static/ ./services/ui/static/
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 RUN cd services/ui && \

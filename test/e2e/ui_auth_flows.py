@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 
@@ -38,6 +39,18 @@ def expect_json(url, status=200, *, method="GET", headers=None, body=None):
     return json.loads(expect_status(url, status, method=method, headers=headers, body=body))
 
 
+def check_vite_assets(base, label, index_html):
+    scripts = re.findall(r'<script[^>]+src="([^"]+)"', index_html)
+    styles = re.findall(r'<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"', index_html)
+    script_path = next((path for path in scripts if path.startswith("/assets/")), "")
+    style_path = next((path for path in styles if path.startswith("/assets/")), "")
+    check(script_path, f"{label} index references Vite JS asset", f"{label} index missing Vite JS asset: {index_html}")
+    check(style_path, f"{label} index references Vite CSS asset", f"{label} index missing Vite CSS asset: {index_html}")
+    expect_status(f"{base}{script_path}", 200, contains="/config.js")
+    expect_status(f"{base}{style_path}", 200, contains="legacy-dashboard")
+    return script_path, style_path
+
+
 def check_ui_auth(base, label, *, include_observability=False):
     expect_status(f"{base}/auth/status", 200, contains='"authenticated":false')
     expect_status(f"{base}/auth/login", 401, method="POST", body={"api_key": "wrong-api-key"})
@@ -60,15 +73,13 @@ def check_ui_auth(base, label, *, include_observability=False):
 
 
 expect_status(f"{ui_base}/health", 200, contains='"ok":true')
-expect_status(f"{ui_base}/", 200, contains="MCP Sentinel Control Plane")
+ui_index = expect_status(f"{ui_base}/", 200, contains="MCP Sentinel Control Plane")
 ui_config = expect_status(f"{ui_base}/config.js", 200, contains="window.MCP_API_BASE")
 check(f'window.MCP_PLATFORM_MODE = "{platform_mode}"' in ui_config, "ui config.js exposes platform mode", f"ui config missing platform mode {platform_mode}: {ui_config}")
-expect_status(f"{ui_base}/app.js", 200, contains="const apiBase")
-expect_status(f"{ui_base}/styles.css", 200, contains=".canvas")
-expect_status(f"{gateway_base}/", 200, contains="MCP Sentinel Control Plane")
+ui_script_path, ui_style_path = check_vite_assets(ui_base, "ui", ui_index)
+gateway_index = expect_status(f"{gateway_base}/", 200, contains="MCP Sentinel Control Plane")
 expect_status(f"{gateway_base}/config.js", 200, contains="window.MCP_API_BASE")
-expect_status(f"{gateway_base}/app.js", 200, contains="const apiBase")
-expect_status(f"{gateway_base}/styles.css", 200, contains=".canvas")
+gateway_script_path, gateway_style_path = check_vite_assets(gateway_base, "gateway", gateway_index)
 expect_status(f"{gateway_base}/grafana/api/health", 401)
 expect_status(f"{gateway_base}/prometheus/-/healthy", 404)
 
@@ -80,16 +91,16 @@ for route in (
     "ui:/health",
     "ui:/",
     "ui:/config.js",
-    "ui:/app.js",
-    "ui:/styles.css",
+    f"ui:{ui_script_path}",
+    f"ui:{ui_style_path}",
     "ui:/auth/login",
     "ui:/auth/status",
     "ui:/auth/admin-check",
     "ui:/auth/logout",
     "gateway:/",
     "gateway:/config.js",
-    "gateway:/app.js",
-    "gateway:/styles.css",
+    f"gateway:{gateway_script_path}",
+    f"gateway:{gateway_style_path}",
     "gateway:/auth/login",
     "gateway:/auth/status",
     "gateway:/auth/admin-check",

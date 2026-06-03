@@ -13,7 +13,7 @@ go test ./internal/operator/... ./internal/cli/... -count=1
 go test ./internal/agentadapter -count=1
 (cd services/api && go test ./... -count=1)
 (cd services/ui && go test ./... -count=1)
-node --check services/ui/static/app.js
+(cd services/ui/frontend && npm run build && npm run test)
 ```
 
 Run wider checks before handing off a broad change:
@@ -30,6 +30,13 @@ git diff --check
 API and UI changes often need to roll together because the browser talks to the
 API through the UI service. The UI forwards origin headers so connect configs
 can point at the reachable local MCP route.
+
+The UI service remains a Go backend for `/config.js`, `/auth/*`, API proxying,
+security headers, and static asset embedding. React, Vite, and TypeScript source
+lives under `services/ui/frontend`; Vite writes the browser bundle into
+`services/ui/static` for the Go embed step. During the migration, the current
+dashboard is shipped from `frontend/public/legacy` and mounted by the React
+shell, so migrate tabs into React one at a time.
 
 Build and roll the UI:
 
