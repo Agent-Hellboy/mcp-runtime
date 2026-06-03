@@ -21,6 +21,17 @@ The public platform at `platform.mcpruntime.org` is a live preview of the deploy
 > [!CAUTION]
 > MCP Runtime is alpha software. APIs, commands, and behavior are still evolving. Use the docs, CRDs, and `api/v1alpha1` types as the source of truth before production use.
 
+## Why teams use MCP Runtime
+
+- **Operate MCP servers where company data already lives.** Deploy into an existing Kubernetes cluster instead of sending internal tools, tokens, or traffic through a third-party catalog or hosted proxy.
+- **Use Kubernetes as the source of truth.** `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession` resources make server delivery, access grants, agent sessions, policy, rollout, and status inspectable with normal Kubernetes workflows.
+- **Move beyond "connect an agent to a URL."** The gateway can enforce identity, deny-by-default tool policy, trust ceilings, side-effect limits, session expiry, revocation, and audit emission on the live MCP request path.
+- **Give agents a clean integration path.** The stdio and Streamable HTTP adapters let IDEs, agent frameworks, and scripts attach platform-issued governance identity without each client reimplementing grants or session handling.
+- **Support internal catalog models.** Run private tenant namespaces, an org-wide catalog, or a public preview-style catalog while keeping the same CLI, CRDs, platform UI, and operator model.
+- **Separate teams without separate platforms.** Team namespaces, RBAC, `teamID`, subject matching, and namespace-scoped grants/sessions let multiple teams publish and govern MCP servers on one cluster.
+- **Own the day-two path.** Setup, registry workflows, image pull wiring, ingress, rollout readiness, `cluster doctor`, status commands, dashboards, audit, analytics, and Sentinel services are part of the platform rather than afterthoughts.
+- **Fit different cluster shapes.** The documented paths cover disposable Kind development, laptop evaluation, k3s labs, self-managed production clusters, and managed Kubernetes with external registries.
+
 ## What ships
 
 - `mcp-runtime` CLI for `setup`, `status`, `registry`, `server`, `cluster`, `access`, and `sentinel`
@@ -47,7 +58,21 @@ The [Official MCP Registry](https://registry.modelcontextprotocol.io/) and publi
 | Usually runs as a third-party hosted directory or client feature | Runs in the company's Kubernetes environment or in a hosted preview shape |
 | Stops at configuration or connection | Owns the governed request path through the broker/gateway |
 
-As of April 2026, we have not found another open-source MCP product that combines a deployable Kubernetes control plane, registry workflow, brokered request path, access/session model, audit pipeline, and operational control surface in one package.
+## How it differs from open-source MCP gateways
+
+Open-source MCP gateways such as [agentgateway](https://github.com/agentgateway/agentgateway), [Microsoft MCP Gateway](https://github.com/microsoft/mcp-gateway), [IBM ContextForge](https://github.com/IBM/mcp-context-forge), [MCPJungle](https://github.com/mcpjungle/MCPJungle), [Unla](https://github.com/AmoyLab/Unla), [OpenZiti MCP Gateway](https://github.com/openziti/mcp-gateway), [Obot](https://github.com/obot-platform/obot), [Preloop](https://github.com/preloop/preloop), and [Agentic Community MCP Gateway & Registry](https://github.com/agentic-community/mcp-gateway-registry) are useful references, and several are more than thin proxies. The real difference is not "gateway versus platform" in the abstract; it is where the source of truth lives.
+
+MCP Runtime's main distinction is simplicity around Kubernetes-native control-plane management. `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession` are managed as first-class Kubernetes state instead of only gateway configuration; the operator reconciles workloads, services, ingress, registry image references, gateway policy ConfigMaps, and readiness status; the gateway enforces the rendered grant/session policy and emits audit/analytics events into the Sentinel stack.
+
+This comparison was reviewed on June 3, 2026 with AI assistance against the referenced open-source repositories.
+
+| Closest open-source pattern | What those projects emphasize | MCP Runtime's different center |
+|---|---|---|
+| Gateway API or proxy control planes such as agentgateway | Kubernetes Gateway API, traffic policy, CEL auth, observability, and MCP/LLM/A2A routing | MCP server workload lifecycle is modeled as `MCPServer` CRDs with runtime-specific grants, sessions, registry wiring, and operator-owned deployment state |
+| Kubernetes-aware gateways such as Microsoft MCP Gateway | Adapter/tool CRUD APIs, StatefulSet deployment, session-aware routing, Entra/RBAC integration, and tool routing | Kubernetes is not only a deployment target; MCP Runtime exposes Kubernetes-native desired state and materializes policy from `MCPAccessGrant` and `MCPAgentSession` resources |
+| Registry/proxy platforms such as ContextForge, MCPJungle, Unla, and Agentic Community MCP Gateway & Registry | Federation, server registration, API-to-MCP conversion, auth, UI, tool grouping, and observability | MCP Runtime couples catalog/registry workflows to reconciled cluster workloads, ingress, image pull behavior, gateway enforcement, and operational diagnostics |
+| Broader agent platforms such as Obot and Preloop | MCP hosting or agent onboarding, gateways, catalogs, chat/model flows, policy, approvals, audit, and usage views | MCP Runtime stays focused on operating internal MCP server workloads and governed request paths in Kubernetes rather than becoming a chat client, model gateway, or approval workflow product |
+| Secure remote-access gateways such as OpenZiti MCP Gateway | Zero-trust connectivity, remote sharing, aggregation, and per-client backend sessions | MCP Runtime assumes the cluster is the operating plane and focuses on team-owned server deployment, policy, audit, analytics, and day-two operations |
 
 ## Requirements
 
