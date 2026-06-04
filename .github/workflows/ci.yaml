@@ -661,7 +661,7 @@ jobs:
         env:
           ARTICLES_DEPLOY_HOST: ${{ secrets.ARTICLES_DEPLOY_HOST || secrets.WEBSITE_DEPLOY_HOST }}
           ARTICLES_DEPLOY_USER: ${{ secrets.ARTICLES_DEPLOY_USER || secrets.WEBSITE_DEPLOY_USER }}
-          ARTICLES_DEPLOY_PATH: ${{ secrets.ARTICLES_DEPLOY_PATH }}
+          ARTICLES_DEPLOY_PATH: ${{ secrets.ARTICLES_DEPLOY_PATH || secrets.WEBSITE_DEPLOY_PATH }}
           ARTICLES_DEPLOY_SSH_KEY: ${{ secrets.ARTICLES_DEPLOY_SSH_KEY || secrets.WEBSITE_DEPLOY_SSH_KEY }}
           ARTICLES_DEPLOY_HOST_KEY: ${{ secrets.ARTICLES_DEPLOY_HOST_KEY || secrets.WEBSITE_DEPLOY_HOST_KEY }}
         run: |
@@ -718,7 +718,7 @@ jobs:
       - name: Sync articles/
         env:
           ARTICLES_DEPLOY_USER: ${{ secrets.ARTICLES_DEPLOY_USER || secrets.WEBSITE_DEPLOY_USER }}
-          ARTICLES_DEPLOY_PATH: ${{ secrets.ARTICLES_DEPLOY_PATH }}
+          ARTICLES_DEPLOY_PATH: ${{ secrets.ARTICLES_DEPLOY_PATH || secrets.WEBSITE_DEPLOY_PATH }}
         run: |
           rsync -az --delete \
             -e "ssh -i $HOME/.ssh/id_ed25519 -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts" \
@@ -729,7 +729,7 @@ jobs:
         env:
           ARTICLES_DEPLOY_COMMAND: ${{ secrets.ARTICLES_DEPLOY_COMMAND }}
           ARTICLES_DEPLOY_USER: ${{ secrets.ARTICLES_DEPLOY_USER || secrets.WEBSITE_DEPLOY_USER }}
-          ARTICLES_DEPLOY_PATH: ${{ secrets.ARTICLES_DEPLOY_PATH }}
+          ARTICLES_DEPLOY_PATH: ${{ secrets.ARTICLES_DEPLOY_PATH || secrets.WEBSITE_DEPLOY_PATH }}
           ARTICLES_DOCS_URL: ${{ secrets.ARTICLES_DOCS_URL }}
           ARTICLES_WEBSITE_URL: ${{ secrets.ARTICLES_WEBSITE_URL }}
           ARTICLES_BASE_URL: ${{ secrets.ARTICLES_BASE_URL }}
