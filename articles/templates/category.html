@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <section class="wrap category-header" aria-labelledby="category-title">
+    <span class="meta">Department</span>
+    <h1 id="category-title">{{ category.name }}</h1>
+    <p>{{ category.deck }}</p>
+  </section>
+
+  <section class="wrap archive category-archive" aria-labelledby="category-archive-title">
+    <div class="section-rule">
+      <span>{{ articles|length }} articles</span>
+      <h2 id="category-archive-title">{{ category.name }} archive</h2>
+    </div>
+    {% if articles %}
+      <ol class="archive-list detailed">
+        {% for article in articles %}
+          <li>
+            <a href="{{ article.url }}">{{ article.title }}</a>
+            <p>{{ article.description }}</p>
+            <span>{{ article.published }} / {{ article.reading_time }}</span>
+          </li>
+        {% endfor %}
+      </ol>
+    {% else %}
+      <p class="empty-note">No articles published in this department yet.</p>
+    {% endif %}
+  </section>
+{% endblock %}

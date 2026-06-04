@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <section class="wrap broadsheet" aria-labelledby="articles-title">
+    <div class="issue-label">Systems, infrastructure, and protocol notes</div>
+    <h1 id="articles-title">Articles</h1>
+    <p>
+      A technical journal for MCP Runtime: request traces, Kubernetes operations,
+      networking behavior, infrastructure design, and the identity and policy
+      model behind governed AI systems.
+    </p>
+  </section>
+
+  {% if latest %}
+    <section class="wrap latest" aria-labelledby="latest-title">
+      <div class="latest-kicker">Latest Article</div>
+      <div class="latest-grid">
+        <div>
+          <span class="meta">{{ latest.category_name }} / {{ latest.published }} / {{ latest.reading_time }}</span>
+          <h2 id="latest-title"><a href="{{ latest.url }}">{{ latest.title }}</a></h2>
+        </div>
+        <p>{{ latest.description }}</p>
+      </div>
+    </section>
+  {% endif %}
+
+  <section class="wrap departments" aria-labelledby="departments-title">
+    <div class="section-rule">
+      <span>Departments</span>
+      <h2 id="departments-title">Browse by subject</h2>
+    </div>
+    <div class="department-grid">
+      {% for category in categories %}
+        <a class="department-card" href="{{ category.url }}">
+          <span class="department-count">{{ category_counts.get(category.slug, 0) }} articles</span>
+          <h3>{{ category.name }}</h3>
+          <p>{{ category.deck }}</p>
+        </a>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="wrap archive" aria-labelledby="archive-title">
+    <div class="section-rule">
+      <span>Archive</span>
+      <h2 id="archive-title">All articles</h2>
+    </div>
+    <ol class="archive-list">
+      {% for article in articles %}
+        <li>
+          <a href="{{ article.url }}">{{ article.title }}</a>
+          <span>{{ article.category_name }} / {{ article.published }}</span>
+        </li>
+      {% endfor %}
+    </ol>
+  </section>
+{% endblock %}
