@@ -3,24 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    {% set page_description = description or "Deploy, govern, and broker MCP servers using a Kubernetes-native control plane." %}
     <title>{{ title or "MCP Runtime" }}</title>
     <meta
       name="description"
-      content="Deploy, govern, and broker MCP servers using a Kubernetes-native control plane."
+      content="{{ page_description }}"
     />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="MCP Runtime" />
     <meta property="og:title" content="{{ title or 'MCP Runtime' }}" />
     <meta
       property="og:description"
-      content="Deploy, govern, and broker MCP servers using a Kubernetes-native control plane."
+      content="{{ page_description }}"
     />
     <meta property="og:url" content="{{ canonical_og_url() }}" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="{{ title or 'MCP Runtime' }}" />
     <meta
       name="twitter:description"
-      content="Deploy, govern, and broker MCP servers using a Kubernetes-native control plane."
+      content="{{ page_description }}"
     />
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -46,6 +47,7 @@
           <nav class="nav-actions" aria-label="Primary navigation">
             <a href="{{ platform_url }}">Platform</a>
             <a href="/#architecture">Architecture</a>
+            <a href="{{ articles_url }}">Articles</a>
             <a href="{{ docs_url }}getting-started/">Install</a>
             <a href="{{ docs_url }}">Docs</a>
             <a class="button ghost" href="{{ github_url }}">GitHub</a>
@@ -73,6 +75,7 @@
         </div>
         <div class="footer-links">
           <a href="{{ platform_url }}">Platform</a>
+          <a href="{{ articles_url }}">Articles</a>
           <a href="{{ docs_url }}">Docs</a>
           <a href="{{ docs_url }}api/">API</a>
           <a href="{{ github_url }}">GitHub</a>

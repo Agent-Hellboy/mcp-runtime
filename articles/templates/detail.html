@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <article class="article">
+    <header class="article-header">
+      <a class="article-breadcrumb" href="/{{ article.category_slug }}/">{{ article.category_name }}</a>
+      <h1>{{ article.title }}</h1>
+      <p>{{ article.description }}</p>
+      <div class="article-meta-row">
+        <span>{{ article.published }}</span>
+        <span>{{ article.reading_time }}</span>
+      </div>
+    </header>
+    <div class="article-shell">
+      <aside class="article-sidebar" aria-label="Article metadata">
+        <span>Topic</span>
+        <a href="/{{ article.category_slug }}/">{{ article.category_name }}</a>
+        <span>Published</span>
+        <strong>{{ article.published }}</strong>
+        <span>Reading time</span>
+        <strong>{{ article.reading_time }}</strong>
+      </aside>
+      <div class="article-body">
+        {{ article.body_html | safe }}
+      </div>
+    </div>
+  </article>
+{% endblock %}
