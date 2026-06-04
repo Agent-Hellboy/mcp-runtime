@@ -17,6 +17,7 @@ BASE_URL = (os.environ.get("MCP_ARTICLES_BASE_URL") or "https://articles.mcprunt
 WEBSITE_URL = (os.environ.get("MCP_WEBSITE_URL") or "https://mcpruntime.org").rstrip("/") + "/"
 DOCS_URL = (os.environ.get("MCP_DOCS_URL") or "https://docs.mcpruntime.org").rstrip("/") + "/"
 GITHUB_URL = "https://github.com/Agent-Hellboy/mcp-runtime"
+STATIC_VERSION = int(STYLE_PATH.stat().st_mtime) if STYLE_PATH.exists() else 0
 
 
 @dataclass(frozen=True)
@@ -71,7 +72,10 @@ def _canonical_url() -> str:
 def _split_front_matter(source: str) -> tuple[dict[str, str], str]:
     if not source.startswith("---\n"):
         return {}, source
-    _, metadata_block, body = source.split("---\n", 2)
+    parts = source.split("---\n", 2)
+    if len(parts) < 3:
+        return {}, source
+    _, metadata_block, body = parts
     metadata: dict[str, str] = {}
     for line in metadata_block.splitlines():
         key, separator, value = line.partition(":")
@@ -126,7 +130,7 @@ def inject_globals():
         "categories": CATEGORIES,
         "docs_url": DOCS_URL,
         "github_url": GITHUB_URL,
-        "static_version": int(STYLE_PATH.stat().st_mtime),
+        "static_version": STATIC_VERSION,
         "website_url": WEBSITE_URL,
     }
 
@@ -220,7 +224,7 @@ def apply_response_headers(response):
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "interest-cohort=()")
     if response.status_code < 400 and (request.path or "").startswith("/static/"):
-        response.headers["Cache-Control"] = "no-store"
+        response.headers["Cache-Control"] = "public, max-age=3600, must-revalidate"
     return response
 
 
