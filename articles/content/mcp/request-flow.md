@@ -156,7 +156,7 @@ ping
 tools/call
 ```
 
-The final `client connection complete` log means Cursor stopped sending startup discovery requests after the initial MCP session setup. From a server author's point of view, this is a useful baseline: do not treat the OAuth metadata probes as failures, do not assume `tools/list` is the first MCP method you will see, and expect clients to discover resources and prompts even when the feature you care about is tool calling.
+The final `client connection complete` log means Cursor stopped sending startup discovery requests after the initial MCP session setup. This sequence is not a convention — it is what the `2025-11-25` spec requires clients to do, and what spec implementers like [PyMCP Kit](https://github.com/Agent-Hellboy/py-mcp) must respond to correctly. An MCP server implementation has to handle the OAuth metadata probes (returning `404` is valid for unauthenticated servers), respond to `initialize` and `notifications/initialized` in order, and serve `resources/list`, `tools/list`, and `prompts/list` before any tool call arrives. Clients follow this flow because the spec mandates it, so the implementation must support it end to end.
 
 The lifecycle flow is getting removed in a near-future release, but this article is still important because it explains the current client and server flow in the 2025-11-25 specification. [SEP-2575: Make MCP Stateless](https://modelcontextprotocol.io/seps/2575-stateless-mcp) is final, and it removes the stateful initialization handshake in the next protocol direction:
 
