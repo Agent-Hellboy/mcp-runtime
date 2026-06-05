@@ -93,6 +93,23 @@ class ArticlesNewsletterTest(unittest.TestCase):
             self.assertIn("my understanding of the platform topics", body)
             self.assertIn('action="/newsletter/subscribe"', body)
 
+    def test_article_detail_renders_newsletter_form(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app_module = load_app(
+                MCP_ARTICLES_BASE_URL="http://localhost:8080",
+                MCP_ARTICLES_SECRET_KEY="test-secret",
+                MCP_ARTICLES_DB_PATH=os.path.join(tmp, "articles.db"),
+            )
+            client = app_module.app.test_client()
+
+            response = client.get("/mcp/request-flow/")
+
+            self.assertEqual(response.status_code, 200)
+            body = response.get_data(as_text=True)
+            self.assertIn('id="newsletter"', body)
+            self.assertIn('action="/newsletter/subscribe"', body)
+            self.assertIn('name="next" value="/mcp/request-flow/"', body)
+
     def test_newsletter_subscribe_export_and_unsubscribe(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app_module = load_app(

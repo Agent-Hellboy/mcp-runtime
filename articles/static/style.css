@@ -8,7 +8,9 @@
   --border: #d8dee4;
   --link: #0969da;
   --code-bg: #f6f8fa;
-  --code-dark: #0d1117;
+  --code-bg-strong: #eef2f7;
+  --code-border: #d0d7de;
+  --code-text: #1f2937;
   --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
 }
@@ -494,7 +496,13 @@ a:hover {
 }
 
 .article-body > * {
-  max-width: 760px;
+  max-width: 100%;
+}
+
+.article-body > pre,
+.article-body > .highlight,
+.article-body > p:has(img) {
+  width: 100%;
 }
 
 .article-body p,
@@ -521,14 +529,13 @@ a:hover {
 }
 
 .article-body pre {
-  max-width: 860px;
   margin: 24px 0;
-  padding: 16px;
-  overflow-x: auto;
-  border: 1px solid var(--border);
+  padding: 18px 20px;
+  overflow-x: hidden;
+  border: 1px solid var(--code-border);
   border-radius: 8px;
-  background: var(--code-dark);
-  color: #e6edf3;
+  background: var(--code-bg);
+  color: var(--code-text);
 }
 
 .article-body code,
@@ -539,7 +546,9 @@ a:hover {
 .article-body pre code {
   font-size: 13px;
   line-height: 1.65;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 .article-body :not(pre) > code {
@@ -552,12 +561,11 @@ a:hover {
 }
 
 .article-body > p:has(img) {
-  max-width: 100%;
   margin: 30px 0 34px;
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--subtle);
+  background: var(--code-bg-strong);
 }
 
 .article-body img {
@@ -567,7 +575,7 @@ a:hover {
   margin: 0;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #000;
+  background: var(--code-bg);
 }
 
 .article-body p:has(img) a {
@@ -582,6 +590,30 @@ a:hover {
   color: var(--muted);
   font-family: var(--mono);
   font-size: 12px;
+}
+
+.article-newsletter {
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+  gap: 24px;
+  align-items: end;
+  margin-top: 42px;
+  padding: 22px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.article-newsletter h2 {
+  margin: 6px 0 6px;
+  color: var(--text);
+  font-size: 26px;
+  line-height: 1.16;
+}
+
+.article-newsletter p {
+  margin: 0;
+  color: var(--body);
 }
 
 .comments {
@@ -742,6 +774,10 @@ a:hover {
   .article-sidebar span {
     display: none;
   }
+
+  .article-newsletter {
+    grid-column: 1;
+  }
 }
 
 @media (max-width: 720px) {
@@ -772,7 +808,8 @@ a:hover {
 
   .department-grid,
   .archive-list li,
-  .newsletter {
+  .newsletter,
+  .article-newsletter {
     grid-template-columns: 1fr;
   }
 

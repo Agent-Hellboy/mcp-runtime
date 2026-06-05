@@ -23,6 +23,22 @@
       <div class="article-body">
         {{ article.body_html | safe }}
       </div>
+      <section id="newsletter" class="article-newsletter" aria-labelledby="article-newsletter-title">
+        <div>
+          <div class="latest-kicker">Newsletter</div>
+          <h2 id="article-newsletter-title">Get new notes by email</h2>
+          <p>Subscribe for article updates on MCP, Kubernetes, networking, infrastructure, identity, and policy.</p>
+        </div>
+        <form class="newsletter-form" method="post" action="{{ url_for('newsletter_subscribe') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <input type="hidden" name="next" value="{{ request.path }}" />
+          <label for="article-newsletter-email">Email</label>
+          <div>
+            <input id="article-newsletter-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com" />
+            <button type="submit">Subscribe</button>
+          </div>
+        </form>
+      </section>
     </div>
   </article>
 
