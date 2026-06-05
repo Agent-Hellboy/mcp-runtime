@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 import os
 from pathlib import Path
 import secrets
 import sqlite3
+import warnings
 from urllib.parse import urlparse
 
 import markdown
@@ -29,7 +31,27 @@ GOOGLE_CLIENT_ID = os.environ.get("MCP_ARTICLES_GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("MCP_ARTICLES_GOOGLE_CLIENT_SECRET")
 GOOGLE_OAUTH_CONFIGURED = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
 
-app.config["SECRET_KEY"] = os.environ.get("MCP_ARTICLES_SECRET_KEY") or secrets.token_hex(32)
+
+def _is_production_oauth() -> bool:
+    hostname = urlparse(BASE_URL).hostname or ""
+    return GOOGLE_OAUTH_CONFIGURED and BASE_URL.startswith("https://") and hostname not in {"localhost", "127.0.0.1", "::1"}
+
+
+def _secret_key() -> str:
+    configured = os.environ.get("MCP_ARTICLES_SECRET_KEY")
+    if configured:
+        return configured
+    message = (
+        "MCP_ARTICLES_SECRET_KEY is not set. Using a random key breaks sessions "
+        "and CSRF validation across multiple worker processes."
+    )
+    if _is_production_oauth():
+        raise RuntimeError(message)
+    warnings.warn(message, RuntimeWarning, stacklevel=2)
+    return secrets.token_hex(32)
+
+
+app.config["SECRET_KEY"] = _secret_key()
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = BASE_URL.startswith("https://")
@@ -109,7 +131,7 @@ def _safe_next_url(next_url: str | None) -> str:
     parsed = urlparse(next_url)
     if parsed.scheme or parsed.netloc:
         return url_for("index")
-    if not next_url.startswith("/"):
+    if not next_url.startswith("/") or next_url.startswith("//") or next_url.startswith("\\"):
         return url_for("index")
     return next_url
 
@@ -129,25 +151,37 @@ def _verify_csrf() -> None:
         abort(400)
 
 
-def _db() -> sqlite3.Connection:
+def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                article_slug TEXT NOT NULL,
+                google_sub TEXT NOT NULL,
+                author_name TEXT NOT NULL,
+                author_email TEXT NOT NULL,
+                body TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_article_created ON comments(article_slug, created_at)")
+
+
+@contextmanager
+def _db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS comments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            article_slug TEXT NOT NULL,
-            google_sub TEXT NOT NULL,
-            author_name TEXT NOT NULL,
-            author_email TEXT NOT NULL,
-            body TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_article_created ON comments(article_slug, created_at)")
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
+
+init_db()
 
 
 def comments_for_article(article_slug: str) -> tuple[Comment, ...]:

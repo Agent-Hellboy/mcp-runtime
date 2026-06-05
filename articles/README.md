@@ -44,6 +44,11 @@ redirect URI in the Google OAuth client for local development. Production uses
 Comments are stored in SQLite. Set `MCP_ARTICLES_DB_PATH` to choose the
 database location; the default local path is `articles.db`.
 
+`MCP_ARTICLES_SECRET_KEY` must be set when Google login is configured for a
+production HTTPS deployment. The app intentionally fails startup in that case
+instead of generating per-worker random keys that would break sessions and CSRF
+checks.
+
 ## Docker
 
 ```sh
@@ -80,7 +85,7 @@ Optional secrets:
 - `ARTICLES_CONTAINER_NAME` (default: `mcp-runtime-articles`)
 - `ARTICLES_IMAGE_NAME` (default: `mcp-runtime-articles:latest`)
 - `ARTICLES_BASE_URL` (default: `https://articles.mcpruntime.org`)
-- `ARTICLES_SECRET_KEY` (`MCP_ARTICLES_SECRET_KEY` in the container)
+- `ARTICLES_SECRET_KEY` (`MCP_ARTICLES_SECRET_KEY` in the container; required when Google login is enabled in production)
 - `MCP_ARTICLES_GOOGLE_CLIENT_ID`
 - `MCP_ARTICLES_GOOGLE_CLIENT_SECRET`
 - `ARTICLES_DB_PATH` (default: `/data/articles.db`)
