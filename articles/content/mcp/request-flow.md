@@ -14,14 +14,7 @@ This trace uses the published MCP lifecycle specification version `2025-11-25` a
 
 [![Cursor probes OAuth metadata, then sends initialize and notifications/initialized.](/static/articles/mcp/request-flow/01-oauth-initialize.png)](/static/articles/mcp/request-flow/01-oauth-initialize.png)
 
-The first two requests are probes against standard OAuth protected-resource metadata endpoints:
-
-```text
-/.well-known/oauth-protected-resource/mcp
-/.well-known/oauth-protected-resource
-```
-
-Both return `404 Not Found` in this run. For this local unauthenticated server, that is expected: the server is not exposing OAuth metadata. Cursor then opens the MCP session with `initialize`.
+The first two requests are probes against standard OAuth protected-resource metadata endpoints: `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-protected-resource`. Both return `404 Not Found` in this run. For this local unauthenticated server, that is expected: the server is not exposing OAuth metadata. Cursor then opens the MCP session with `initialize`.
 
 In the observed `initialize` request, Cursor identifies itself as:
 
@@ -41,11 +34,7 @@ text/html;profile=mcp-app
 
 That is the important signal in this trace: Cursor is not just asking for tools. It is announcing capability-level support for richer MCP UI/App content negotiation.
 
-After the server responds to `initialize`, Cursor sends:
-
-```text
-notifications/initialized
-```
+After the server responds to `initialize`, Cursor sends: `notifications/initialized`
 
 That marks the end of the handshake and the start of normal MCP operation.
 
