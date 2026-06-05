@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 import os
@@ -13,7 +13,7 @@ import warnings
 from urllib.parse import urlparse
 
 import markdown
-from authlib.integrations.flask_client import OAuth
+import requests
 from flask import Flask, Response, abort, flash, g, redirect, render_template, request, session, url_for
 
 app = Flask(__name__)
@@ -37,18 +37,18 @@ def _first_env(*names: str) -> str | None:
     return None
 
 
-GOOGLE_CLIENT_ID = _first_env("MCP_ARTICLES_GOOGLE_CLIENT_ID", "ARTICLES_GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = _first_env(
-    "MCP_ARTICLES_GOOGLE_CLIENT_SECRET",
-    "ARTICLES_GOOGLE_CLIENT_SECRET",
-    "GOOGLE_CLIENT_SECRET",
+GOOGLE_CLIENT_ID = _first_env(
+    "MCP_ARTICLES_GOOGLE_CLIENT_ID",
+    "ARTICLES_GOOGLE_CLIENT_ID",
+    "MCP_GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_ID",
 )
-GOOGLE_OAUTH_CONFIGURED = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+GOOGLE_LOGIN_CONFIGURED = bool(GOOGLE_CLIENT_ID)
 
 
-def _is_production_oauth() -> bool:
+def _is_production_login() -> bool:
     hostname = urlparse(BASE_URL).hostname or ""
-    return GOOGLE_OAUTH_CONFIGURED and BASE_URL.startswith("https://") and hostname not in {"localhost", "127.0.0.1", "::1"}
+    return GOOGLE_LOGIN_CONFIGURED and BASE_URL.startswith("https://") and hostname not in {"localhost", "127.0.0.1", "::1"}
 
 
 def _secret_key() -> str:
@@ -59,7 +59,7 @@ def _secret_key() -> str:
         "MCP_ARTICLES_SECRET_KEY is not set. Using a random key breaks sessions "
         "and CSRF validation across multiple worker processes."
     )
-    if _is_production_oauth():
+    if _is_production_login():
         raise RuntimeError(message)
     warnings.warn(message, RuntimeWarning, stacklevel=2)
     return secrets.token_hex(32)
@@ -69,17 +69,6 @@ app.config["SECRET_KEY"] = _secret_key()
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = BASE_URL.startswith("https://")
-
-oauth = OAuth(app)
-if GOOGLE_OAUTH_CONFIGURED:
-    oauth.register(
-        name="google",
-        client_id=GOOGLE_CLIENT_ID,
-        client_secret=GOOGLE_CLIENT_SECRET,
-        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-        client_kwargs={"scope": "openid email profile"},
-    )
-
 
 @dataclass(frozen=True)
 class Category:
@@ -167,21 +156,22 @@ def _verify_csrf() -> None:
 
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS comments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                article_slug TEXT NOT NULL,
-                google_sub TEXT NOT NULL,
-                author_name TEXT NOT NULL,
-                author_email TEXT NOT NULL,
-                body TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        with conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS comments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    article_slug TEXT NOT NULL,
+                    google_sub TEXT NOT NULL,
+                    author_name TEXT NOT NULL,
+                    author_email TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
             )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_article_created ON comments(article_slug, created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_article_created ON comments(article_slug, created_at)")
 
 
 @contextmanager
@@ -305,7 +295,8 @@ def inject_globals():
         "csrf_token": _csrf_token,
         "docs_url": DOCS_URL,
         "github_url": GITHUB_URL,
-        "google_oauth_configured": GOOGLE_OAUTH_CONFIGURED,
+        "google_client_id": GOOGLE_CLIENT_ID or "",
+        "google_login_configured": GOOGLE_LOGIN_CONFIGURED,
         "static_version": STATIC_VERSION,
         "user": getattr(g, "user", None),
         "website_url": WEBSITE_URL,
@@ -315,10 +306,11 @@ def inject_globals():
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
     "img-src 'self' data:; "
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-    "script-src 'self'; "
-    "connect-src 'self'; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; "
+    "script-src 'self' https://accounts.google.com; "
+    "connect-src 'self' https://accounts.google.com; "
     "font-src 'self' https://fonts.gstatic.com; "
+    "frame-src https://accounts.google.com; "
     "object-src 'none'; "
     "base-uri 'self'; "
     "frame-ancestors 'none'"
@@ -371,20 +363,50 @@ def article(slug: str):
 
 @app.route("/login")
 def login():
-    if not GOOGLE_OAUTH_CONFIGURED:
+    if not GOOGLE_LOGIN_CONFIGURED:
         flash("Google login is not configured yet.")
         return redirect(_safe_next_url(request.args.get("next")))
-    redirect_uri = f"{BASE_URL}{url_for('auth_google_callback')}"
     session["login_next"] = _safe_next_url(request.args.get("next"))
-    return oauth.google.authorize_redirect(redirect_uri)
+    return render_template(
+        "login.html",
+        title="Sign in",
+        description="Sign in to MCP Runtime Articles with Google.",
+    )
 
 
-@app.route("/auth/google/callback")
-def auth_google_callback():
-    if not GOOGLE_OAUTH_CONFIGURED:
+@app.post("/auth/google/token")
+def auth_google_token():
+    if not GOOGLE_LOGIN_CONFIGURED:
         abort(404)
-    token = oauth.google.authorize_access_token()
-    profile = token.get("userinfo") or oauth.google.get("userinfo").json()
+    _verify_csrf()
+    credential = request.form.get("credential", "")
+    if not credential:
+        abort(400)
+    profile = _verify_google_id_token(credential)
+    return _complete_google_login(profile)
+
+
+def _verify_google_id_token(credential: str) -> dict[str, str]:
+    response = requests.get(
+        "https://oauth2.googleapis.com/tokeninfo",
+        params={"id_token": credential},
+        timeout=5,
+    )
+    if response.status_code != 200:
+        abort(401)
+    profile = response.json()
+    issuer = profile.get("iss")
+    email_verified = profile.get("email_verified")
+    if (
+        profile.get("aud") != GOOGLE_CLIENT_ID
+        or issuer not in {"accounts.google.com", "https://accounts.google.com"}
+        or email_verified not in {True, "true", "True", "1"}
+    ):
+        abort(401)
+    return profile
+
+
+def _complete_google_login(profile: dict[str, str]):
     email = profile.get("email", "")
     if not profile.get("sub") or not email or profile.get("email_verified") is False:
         abort(401)
@@ -426,7 +448,7 @@ def post_comment(slug: str):
         body = request.form.get("body", "")
         if body.strip():
             session["pending_comment"] = {"article_slug": article_item.slug, "body": body}
-        if not GOOGLE_OAUTH_CONFIGURED:
+        if not GOOGLE_LOGIN_CONFIGURED:
             flash("Google login is not configured yet.")
             return redirect(article_item.url + "#comments")
         return redirect(url_for("login", next=article_item.url))

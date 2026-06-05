@@ -569,6 +569,30 @@ a:hover {
   color: var(--body);
 }
 
+.login-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 32px;
+  align-items: center;
+  max-width: 760px;
+  padding: 56px 0;
+}
+
+.login-panel h1 {
+  margin: 8px 0 10px;
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  line-height: 1.05;
+}
+
+.login-panel p {
+  margin: 0;
+  color: var(--body);
+}
+
+.google-login-box {
+  min-width: 280px;
+}
+
 .comment-list {
   display: grid;
   gap: 14px;
@@ -688,6 +712,11 @@ a:hover {
 
   .department-card {
     min-height: auto;
+  }
+
+  .login-panel {
+    grid-template-columns: 1fr;
+    align-items: start;
   }
 
   .article-header h1 {

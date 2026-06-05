@@ -29,17 +29,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 export MCP_ARTICLES_SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export MCP_ARTICLES_GOOGLE_CLIENT_ID="<google-client-id>"
-export MCP_ARTICLES_GOOGLE_CLIENT_SECRET="<google-client-secret>"
 export MCP_ARTICLES_BASE_URL="http://localhost:8080"
 python3 app.py
 ```
 
 Open <http://localhost:8080>.
 
-Register `http://localhost:8080/auth/google/callback` as an authorized
-redirect URI in the Google OAuth client for local development. Production uses
-`https://articles.mcpruntime.org/auth/google/callback` unless
-`MCP_ARTICLES_BASE_URL` is changed.
+Register `http://localhost:8080` and `https://articles.mcpruntime.org` as
+authorized JavaScript origins in the Google OAuth client.
 
 Comments are stored in SQLite. Set `MCP_ARTICLES_DB_PATH` to choose the
 database location; the default local path is `articles.db`.
@@ -57,7 +54,6 @@ docker run --rm -p 8082:8080 \
   -e MCP_ARTICLES_BASE_URL=https://articles.mcpruntime.org \
   -e MCP_ARTICLES_SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" \
   -e MCP_ARTICLES_GOOGLE_CLIENT_ID="<google-client-id>" \
-  -e MCP_ARTICLES_GOOGLE_CLIENT_SECRET="<google-client-secret>" \
   -e MCP_ARTICLES_DB_PATH=/data/articles.db \
   -v mcp-runtime-articles-data:/data \
   mcp-runtime-articles
@@ -70,9 +66,11 @@ The CI `deploy-articles` job syncs `articles/`, builds
 The host nginx vhost for `articles.mcpruntime.org` should proxy to
 `127.0.0.1:8082`.
 
-Required secret:
+Required secrets:
 
 - `ARTICLES_DEPLOY_PATH`
+- `ARTICLES_SECRET_KEY` (`MCP_ARTICLES_SECRET_KEY` in the container)
+- `MCP_ARTICLES_GOOGLE_CLIENT_ID` (falls back to `ARTICLES_GOOGLE_CLIENT_ID`, `MCP_GOOGLE_CLIENT_ID`, or `GOOGLE_CLIENT_ID`)
 
 Optional secrets:
 
@@ -85,9 +83,6 @@ Optional secrets:
 - `ARTICLES_CONTAINER_NAME` (default: `mcp-runtime-articles`)
 - `ARTICLES_IMAGE_NAME` (default: `mcp-runtime-articles:latest`)
 - `ARTICLES_BASE_URL` (default: `https://articles.mcpruntime.org`)
-- `ARTICLES_SECRET_KEY` (`MCP_ARTICLES_SECRET_KEY` in the container; required when Google login is enabled in production)
-- `MCP_ARTICLES_GOOGLE_CLIENT_ID` (falls back to `ARTICLES_GOOGLE_CLIENT_ID` or `GOOGLE_CLIENT_ID`)
-- `MCP_ARTICLES_GOOGLE_CLIENT_SECRET` (falls back to `ARTICLES_GOOGLE_CLIENT_SECRET` or `GOOGLE_CLIENT_SECRET`)
 - `ARTICLES_DB_PATH` (default: `/data/articles.db`)
 - `ARTICLES_DATA_VOLUME` (default: `mcp-runtime-articles-data`)
 - `ARTICLES_DOCS_URL` (default: `https://docs.mcpruntime.org/`)
