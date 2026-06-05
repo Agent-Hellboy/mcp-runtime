@@ -739,6 +739,7 @@ jobs:
           ARTICLES_BASE_URL: ${{ secrets.ARTICLES_BASE_URL }}
           ARTICLES_SECRET_KEY: ${{ secrets.ARTICLES_SECRET_KEY }}
           MCP_ARTICLES_GOOGLE_CLIENT_ID: ${{ secrets.MCP_ARTICLES_GOOGLE_CLIENT_ID || secrets.ARTICLES_GOOGLE_CLIENT_ID || secrets.MCP_GOOGLE_CLIENT_ID || secrets.GOOGLE_CLIENT_ID }}
+          MCP_ARTICLES_NEWSLETTER_EXPORT_TOKEN: ${{ secrets.MCP_ARTICLES_NEWSLETTER_EXPORT_TOKEN || secrets.ARTICLES_NEWSLETTER_EXPORT_TOKEN }}
           ARTICLES_DB_PATH: ${{ secrets.ARTICLES_DB_PATH }}
           ARTICLES_DATA_VOLUME: ${{ secrets.ARTICLES_DATA_VOLUME }}
           ARTICLES_CONTAINER_NAME: ${{ secrets.ARTICLES_CONTAINER_NAME }}
@@ -760,6 +761,7 @@ jobs:
           base_url="${ARTICLES_BASE_URL:-https://articles.mcpruntime.org}"
           secret_key="${ARTICLES_SECRET_KEY:-}"
           google_client_id="${MCP_ARTICLES_GOOGLE_CLIENT_ID:-}"
+          newsletter_export_token="${MCP_ARTICLES_NEWSLETTER_EXPORT_TOKEN:-}"
           db_path="${ARTICLES_DB_PATH:-/data/articles.db}"
           data_volume="${ARTICLES_DATA_VOLUME:-mcp-runtime-articles-data}"
           git_sha="${GITHUB_SHA:-unknown}"
@@ -776,6 +778,7 @@ jobs:
             printf 'ARTICLES_BASE_URL_B64=%q\n' "$(b64 "$base_url")"
             printf 'ARTICLES_SECRET_KEY_B64=%q\n' "$(b64 "$secret_key")"
             printf 'ARTICLES_GOOGLE_CLIENT_ID_B64=%q\n' "$(b64 "$google_client_id")"
+            printf 'ARTICLES_NEWSLETTER_EXPORT_TOKEN_B64=%q\n' "$(b64 "$newsletter_export_token")"
             printf 'ARTICLES_DB_PATH_B64=%q\n' "$(b64 "$db_path")"
             printf 'ARTICLES_DATA_VOLUME_B64=%q\n' "$(b64 "$data_volume")"
             printf 'ARTICLES_GIT_SHA_B64=%q\n' "$(b64 "$git_sha")"
@@ -793,6 +796,7 @@ jobs:
           base_url="$(decode "$ARTICLES_BASE_URL_B64")"
           secret_key="$(decode "$ARTICLES_SECRET_KEY_B64")"
           google_client_id="$(decode "$ARTICLES_GOOGLE_CLIENT_ID_B64")"
+          newsletter_export_token="$(decode "$ARTICLES_NEWSLETTER_EXPORT_TOKEN_B64")"
           db_path="$(decode "$ARTICLES_DB_PATH_B64")"
           data_volume="$(decode "$ARTICLES_DATA_VOLUME_B64")"
           git_sha="$(decode "$ARTICLES_GIT_SHA_B64")"
@@ -824,6 +828,7 @@ jobs:
             -e MCP_ARTICLES_BASE_URL="$base_url" \
             -e MCP_ARTICLES_SECRET_KEY="$secret_key" \
             -e MCP_ARTICLES_GOOGLE_CLIENT_ID="$google_client_id" \
+            -e MCP_ARTICLES_NEWSLETTER_EXPORT_TOKEN="$newsletter_export_token" \
             -e MCP_ARTICLES_DB_PATH="$db_path" \
             "$image_name"
           docker image prune -f >/dev/null

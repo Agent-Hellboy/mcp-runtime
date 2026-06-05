@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from contextlib import closing, contextmanager
+import csv
 from dataclasses import dataclass
 from functools import lru_cache
+import io
 import os
 from pathlib import Path
+import re
 import secrets
 import sqlite3
 import warnings
@@ -27,6 +30,8 @@ DOCS_URL = (os.environ.get("MCP_DOCS_URL") or "https://docs.mcpruntime.org").rst
 GITHUB_URL = "https://github.com/Agent-Hellboy/mcp-runtime"
 STATIC_VERSION = int(STYLE_PATH.stat().st_mtime) if STYLE_PATH.exists() else 0
 DB_PATH = Path(os.environ.get("MCP_ARTICLES_DB_PATH") or Path(__file__).resolve().parent / "articles.db")
+NEWSLETTER_EXPORT_TOKEN = os.environ.get("MCP_ARTICLES_NEWSLETTER_EXPORT_TOKEN", "")
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def _first_env(*names: str) -> str | None:
@@ -121,6 +126,15 @@ class Comment:
     created_at: str
 
 
+@dataclass(frozen=True)
+class Subscriber:
+    email: str
+    status: str
+    created_at: str
+    confirmed_at: str
+    unsubscribe_token: str
+
+
 def _canonical_url() -> str:
     path = request.path or "/"
     if not path.startswith("/"):
@@ -172,6 +186,20 @@ def init_db() -> None:
                 """
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_article_created ON comments(article_slug, created_at)")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    unsubscribe_token TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    confirmed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    unsubscribed_at TEXT
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_newsletter_subscribers_status ON newsletter_subscribers(status)")
 
 
 @contextmanager
@@ -231,6 +259,80 @@ def create_comment(article_slug: str, user: dict[str, str], body: str) -> None:
                 normalized,
             ),
         )
+
+
+def _normalize_email(email: str) -> str:
+    normalized = email.strip().lower()
+    if not normalized or len(normalized) > 254 or not EMAIL_RE.match(normalized):
+        raise ValueError("Enter a valid email address.")
+    return normalized
+
+
+def subscribe_newsletter(email: str) -> str:
+    normalized = _normalize_email(email)
+    token = secrets.token_urlsafe(24)
+    with _db() as conn:
+        row = conn.execute("SELECT status FROM newsletter_subscribers WHERE email = ?", (normalized,)).fetchone()
+        if row is not None:
+            if row["status"] == "active":
+                return "already"
+            conn.execute(
+                """
+                UPDATE newsletter_subscribers
+                SET status = 'active',
+                    confirmed_at = CURRENT_TIMESTAMP,
+                    unsubscribed_at = NULL
+                WHERE email = ?
+                """,
+                (normalized,),
+            )
+            return "reactivated"
+        conn.execute(
+            """
+            INSERT INTO newsletter_subscribers (email, status, unsubscribe_token)
+            VALUES (?, 'active', ?)
+            """,
+            (normalized, token),
+        )
+    return "subscribed"
+
+
+def unsubscribe_newsletter(token: str) -> bool:
+    if not token:
+        return False
+    with _db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE newsletter_subscribers
+            SET status = 'unsubscribed',
+                unsubscribed_at = CURRENT_TIMESTAMP
+            WHERE unsubscribe_token = ? AND status = 'active'
+            """,
+            (token,),
+        )
+    return cursor.rowcount > 0
+
+
+def active_newsletter_subscribers() -> tuple[Subscriber, ...]:
+    with _db() as conn:
+        rows = conn.execute(
+            """
+            SELECT email, status, created_at, confirmed_at, unsubscribe_token
+            FROM newsletter_subscribers
+            WHERE status = 'active'
+            ORDER BY created_at ASC, id ASC
+            """
+        ).fetchall()
+    return tuple(
+        Subscriber(
+            email=row["email"],
+            status=row["status"],
+            created_at=row["created_at"],
+            confirmed_at=row["confirmed_at"],
+            unsubscribe_token=row["unsubscribe_token"],
+        )
+        for row in rows
+    )
 
 
 def _split_front_matter(source: str) -> tuple[dict[str, str], str]:
@@ -325,11 +427,57 @@ def index():
     return render_template(
         "index.html",
         title="MCP Runtime Articles",
-        description="Technical articles on MCP, Kubernetes, networking, infrastructure, identity, and policy.",
+        description="Notes from building MCP Runtime and understanding the topics behind the platform.",
         articles=articles,
         latest=latest,
         category_counts=category_counts,
     )
+
+
+@app.post("/newsletter/subscribe")
+def newsletter_subscribe():
+    _verify_csrf()
+    next_url = _safe_next_url(request.form.get("next"))
+    try:
+        result = subscribe_newsletter(request.form.get("email", ""))
+    except ValueError as exc:
+        flash(str(exc))
+        return redirect(next_url + "#newsletter")
+    if result == "already":
+        flash("You are already subscribed.")
+    else:
+        flash("Subscribed. I will email updates when new articles are ready.")
+    return redirect(next_url + "#newsletter")
+
+
+@app.route("/newsletter/unsubscribe/<token>")
+def newsletter_unsubscribe(token: str):
+    if unsubscribe_newsletter(token):
+        flash("You have been unsubscribed.")
+    else:
+        flash("This unsubscribe link is no longer active.")
+    return redirect(url_for("index") + "#newsletter")
+
+
+@app.route("/newsletter/export.csv")
+def newsletter_export():
+    token = request.args.get("token", "")
+    if not NEWSLETTER_EXPORT_TOKEN or not token or not secrets.compare_digest(token, NEWSLETTER_EXPORT_TOKEN):
+        abort(403)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["email", "status", "created_at", "confirmed_at", "unsubscribe_url"])
+    for subscriber in active_newsletter_subscribers():
+        writer.writerow(
+            [
+                subscriber.email,
+                subscriber.status,
+                subscriber.created_at,
+                subscriber.confirmed_at,
+                f"{BASE_URL}/newsletter/unsubscribe/{subscriber.unsubscribe_token}",
+            ]
+        )
+    return Response(output.getvalue(), mimetype="text/csv")
 
 
 @app.route("/<category_slug>/")

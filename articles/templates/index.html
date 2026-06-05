@@ -5,10 +5,27 @@
     <div class="issue-label">Systems, infrastructure, and protocol notes</div>
     <h1 id="articles-title">Articles</h1>
     <p>
-      A technical journal for MCP Runtime: request traces, Kubernetes operations,
-      networking behavior, infrastructure design, and the identity and policy
-      model behind governed AI systems.
+      Notes from building MCP Runtime: my understanding of the platform topics,
+      the tradeoffs involved, and the pain behind request traces, Kubernetes,
+      networking, infrastructure, identity, and policy.
     </p>
+  </section>
+
+  <section id="newsletter" class="wrap newsletter" aria-labelledby="newsletter-title">
+    <div>
+      <div class="latest-kicker">Newsletter</div>
+      <h2 id="newsletter-title">Get new notes by email</h2>
+      <p>I will send article updates manually for now. No automated campaign tooling yet.</p>
+    </div>
+    <form class="newsletter-form" method="post" action="{{ url_for('newsletter_subscribe') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <input type="hidden" name="next" value="{{ request.path }}" />
+      <label for="newsletter-email">Email</label>
+      <div>
+        <input id="newsletter-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com" />
+        <button type="submit">Subscribe</button>
+      </div>
+    </form>
   </section>
 
   {% if latest %}

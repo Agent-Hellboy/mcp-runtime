@@ -41,6 +41,17 @@ authorized JavaScript origins in the Google OAuth client.
 Comments are stored in SQLite. Set `MCP_ARTICLES_DB_PATH` to choose the
 database location; the default local path is `articles.db`.
 
+Newsletter subscriptions are also stored in SQLite. Export active subscribers
+for manual sends with:
+
+```sh
+curl "http://localhost:8080/newsletter/export.csv?token=$MCP_ARTICLES_NEWSLETTER_EXPORT_TOKEN"
+```
+
+Set `MCP_ARTICLES_NEWSLETTER_EXPORT_TOKEN` to enable the export endpoint.
+Each exported row includes an unsubscribe URL to include in manually sent
+emails.
+
 `MCP_ARTICLES_SECRET_KEY` must be set when Google login is configured for a
 production HTTPS deployment. The app intentionally fails startup in that case
 instead of generating per-worker random keys that would break sessions and CSRF
@@ -87,4 +98,5 @@ Optional secrets:
 - `ARTICLES_DATA_VOLUME` (default: `mcp-runtime-articles-data`)
 - `ARTICLES_DOCS_URL` (default: `https://docs.mcpruntime.org/`)
 - `ARTICLES_WEBSITE_URL` (default: `https://mcpruntime.org/`)
+- `MCP_ARTICLES_NEWSLETTER_EXPORT_TOKEN` (enables `/newsletter/export.csv`)
 - `ARTICLES_DEPLOY_COMMAND` (if set, CI runs it instead of the default Docker deploy)

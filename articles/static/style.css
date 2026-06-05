@@ -185,6 +185,7 @@ a:hover {
 }
 
 .latest,
+.newsletter,
 .departments,
 .archive,
 .category-header {
@@ -218,6 +219,70 @@ a:hover {
 .latest p {
   margin: 0;
   color: var(--body);
+}
+
+.newsletter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+  gap: 24px;
+  align-items: end;
+  padding: 22px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.newsletter h2 {
+  margin: 6px 0 6px;
+  font-size: clamp(1.5rem, 3vw, 2.15rem);
+  line-height: 1.1;
+}
+
+.newsletter p {
+  margin: 0;
+  color: var(--body);
+}
+
+.newsletter-form {
+  display: grid;
+  gap: 8px;
+}
+
+.newsletter-form label {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.newsletter-form div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.newsletter-form input {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+}
+
+.newsletter-form button {
+  padding: 10px 12px;
+  border: 1px solid var(--text);
+  border-radius: 6px;
+  background: var(--text);
+  color: white;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.newsletter-form button:hover {
+  background: #30363d;
 }
 
 .section-rule {
@@ -706,7 +771,12 @@ a:hover {
   }
 
   .department-grid,
-  .archive-list li {
+  .archive-list li,
+  .newsletter {
+    grid-template-columns: 1fr;
+  }
+
+  .newsletter-form div {
     grid-template-columns: 1fr;
   }
 
