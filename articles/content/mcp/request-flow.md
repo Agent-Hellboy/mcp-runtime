@@ -25,12 +25,8 @@ In the observed `initialize` request, Cursor identifies itself as:
 }
 ```
 
-It also advertises client capabilities, including `elicitation`, `roots`, and an extension capability for MCP UI/App-style content:
+It also advertises client capabilities, including `elicitation`, `roots`, and an extension capability for MCP UI/App-style content: `io.modelcontextprotocol/ui` and `text/html;profile=mcp-app`
 
-```text
-io.modelcontextprotocol/ui
-text/html;profile=mcp-app
-```
 
 That is the important signal in this trace: Cursor is not just asking for tools. It is announcing capability-level support for richer MCP UI/App content negotiation.
 
