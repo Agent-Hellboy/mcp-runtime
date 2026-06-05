@@ -38,6 +38,7 @@ class ArticlesGoogleLoginTest(unittest.TestCase):
             body = response.get_data(as_text=True)
             self.assertIn("https://accounts.google.com/gsi/client", body)
             self.assertIn("client.apps.googleusercontent.com", body)
+            self.assertLess(body.index("/static/login.js"), body.index("https://accounts.google.com/gsi/client"))
 
     def test_google_token_login_accepts_valid_id_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

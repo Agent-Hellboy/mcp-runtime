@@ -30,6 +30,6 @@
       </form>
     </div>
   </section>
+  <script src="{{ url_for('static', filename='login.js', v=static_version) }}"></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="{{ url_for('static', filename='login.js', v=static_version) }}" defer></script>
 {% endblock %}
