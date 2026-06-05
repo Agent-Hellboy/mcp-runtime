@@ -86,8 +86,8 @@ Optional secrets:
 - `ARTICLES_IMAGE_NAME` (default: `mcp-runtime-articles:latest`)
 - `ARTICLES_BASE_URL` (default: `https://articles.mcpruntime.org`)
 - `ARTICLES_SECRET_KEY` (`MCP_ARTICLES_SECRET_KEY` in the container; required when Google login is enabled in production)
-- `MCP_ARTICLES_GOOGLE_CLIENT_ID`
-- `MCP_ARTICLES_GOOGLE_CLIENT_SECRET`
+- `MCP_ARTICLES_GOOGLE_CLIENT_ID` (falls back to `ARTICLES_GOOGLE_CLIENT_ID` or `GOOGLE_CLIENT_ID`)
+- `MCP_ARTICLES_GOOGLE_CLIENT_SECRET` (falls back to `ARTICLES_GOOGLE_CLIENT_SECRET` or `GOOGLE_CLIENT_SECRET`)
 - `ARTICLES_DB_PATH` (default: `/data/articles.db`)
 - `ARTICLES_DATA_VOLUME` (default: `mcp-runtime-articles-data`)
 - `ARTICLES_DOCS_URL` (default: `https://docs.mcpruntime.org/`)

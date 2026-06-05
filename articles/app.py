@@ -27,8 +27,22 @@ DOCS_URL = (os.environ.get("MCP_DOCS_URL") or "https://docs.mcpruntime.org").rst
 GITHUB_URL = "https://github.com/Agent-Hellboy/mcp-runtime"
 STATIC_VERSION = int(STYLE_PATH.stat().st_mtime) if STYLE_PATH.exists() else 0
 DB_PATH = Path(os.environ.get("MCP_ARTICLES_DB_PATH") or Path(__file__).resolve().parent / "articles.db")
-GOOGLE_CLIENT_ID = os.environ.get("MCP_ARTICLES_GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.environ.get("MCP_ARTICLES_GOOGLE_CLIENT_SECRET")
+
+
+def _first_env(*names: str) -> str | None:
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return value
+    return None
+
+
+GOOGLE_CLIENT_ID = _first_env("MCP_ARTICLES_GOOGLE_CLIENT_ID", "ARTICLES_GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = _first_env(
+    "MCP_ARTICLES_GOOGLE_CLIENT_SECRET",
+    "ARTICLES_GOOGLE_CLIENT_SECRET",
+    "GOOGLE_CLIENT_SECRET",
+)
 GOOGLE_OAUTH_CONFIGURED = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
 
 
@@ -379,6 +393,17 @@ def auth_google_callback():
         "name": profile.get("name") or email.split("@", 1)[0],
         "email": email,
     }
+    pending_comment = session.pop("pending_comment", None)
+    if isinstance(pending_comment, dict):
+        article_slug = pending_comment.get("article_slug", "")
+        article_item = get_article(article_slug)
+        if article_item is not None:
+            try:
+                create_comment(article_item.slug, session["user"], pending_comment.get("body", ""))
+                flash("Comment posted.")
+                return redirect(article_item.url + "#comments")
+            except ValueError as exc:
+                flash(str(exc))
     return redirect(_safe_next_url(session.pop("login_next", None)))
 
 
@@ -395,11 +420,16 @@ def post_comment(slug: str):
     article_item = get_article(slug)
     if article_item is None:
         abort(404)
+    _verify_csrf()
     user = getattr(g, "user", None)
     if user is None:
-        flash("Sign in with Google to comment.")
+        body = request.form.get("body", "")
+        if body.strip():
+            session["pending_comment"] = {"article_slug": article_item.slug, "body": body}
+        if not GOOGLE_OAUTH_CONFIGURED:
+            flash("Google login is not configured yet.")
+            return redirect(article_item.url + "#comments")
         return redirect(url_for("login", next=article_item.url))
-    _verify_csrf()
     try:
         create_comment(article_item.slug, user, request.form.get("body", ""))
         flash("Comment posted.")

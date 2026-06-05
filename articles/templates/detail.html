@@ -32,18 +32,12 @@
       <span>{{ comments|length }} comments</span>
     </div>
 
-    {% if user %}
-      <form class="comment-form" method="post" action="{{ article.url }}comments">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-        <label for="comment-body">Comment as {{ user.name }}</label>
-        <textarea id="comment-body" name="body" rows="5" maxlength="2000" required></textarea>
-        <button type="submit">Post comment</button>
-      </form>
-    {% elif google_oauth_configured %}
-      <p class="comment-login"><a href="{{ url_for('login', next=article.url) }}">Sign in with Google</a> to comment.</p>
-    {% else %}
-      <p class="comment-login">Google login is not configured for this deployment yet.</p>
-    {% endif %}
+    <form class="comment-form" method="post" action="{{ article.url }}comments">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <label for="comment-body">{% if user %}Comment as {{ user.name }}{% else %}Comment{% endif %}</label>
+      <textarea id="comment-body" name="body" rows="5" maxlength="2000" required></textarea>
+      <button type="submit">Post comment</button>
+    </form>
 
     {% if comments %}
       <ol class="comment-list">
