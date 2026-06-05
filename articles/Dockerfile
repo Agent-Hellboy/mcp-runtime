@@ -18,7 +18,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN adduser --system --no-create-home appuser && chown -R appuser /app
+RUN adduser --system --no-create-home appuser \
+    && mkdir -p /data \
+    && chown -R appuser /app /data
 USER appuser
 
 EXPOSE 8080

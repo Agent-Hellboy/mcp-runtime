@@ -733,6 +733,11 @@ jobs:
           ARTICLES_DOCS_URL: ${{ secrets.ARTICLES_DOCS_URL }}
           ARTICLES_WEBSITE_URL: ${{ secrets.ARTICLES_WEBSITE_URL }}
           ARTICLES_BASE_URL: ${{ secrets.ARTICLES_BASE_URL }}
+          ARTICLES_SECRET_KEY: ${{ secrets.ARTICLES_SECRET_KEY }}
+          MCP_ARTICLES_GOOGLE_CLIENT_ID: ${{ secrets.MCP_ARTICLES_GOOGLE_CLIENT_ID }}
+          MCP_ARTICLES_GOOGLE_CLIENT_SECRET: ${{ secrets.MCP_ARTICLES_GOOGLE_CLIENT_SECRET }}
+          ARTICLES_DB_PATH: ${{ secrets.ARTICLES_DB_PATH }}
+          ARTICLES_DATA_VOLUME: ${{ secrets.ARTICLES_DATA_VOLUME }}
           ARTICLES_CONTAINER_NAME: ${{ secrets.ARTICLES_CONTAINER_NAME }}
           ARTICLES_IMAGE_NAME: ${{ secrets.ARTICLES_IMAGE_NAME }}
           ARTICLES_HOST_PORT: ${{ secrets.ARTICLES_HOST_PORT }}
@@ -750,23 +755,33 @@ jobs:
           docs_url="${ARTICLES_DOCS_URL:-https://docs.mcpruntime.org/}"
           website_url="${ARTICLES_WEBSITE_URL:-https://mcpruntime.org/}"
           base_url="${ARTICLES_BASE_URL:-https://articles.mcpruntime.org}"
+          secret_key="${ARTICLES_SECRET_KEY:-}"
+          google_client_id="${MCP_ARTICLES_GOOGLE_CLIENT_ID:-}"
+          google_client_secret="${MCP_ARTICLES_GOOGLE_CLIENT_SECRET:-}"
+          db_path="${ARTICLES_DB_PATH:-/data/articles.db}"
+          data_volume="${ARTICLES_DATA_VOLUME:-mcp-runtime-articles-data}"
           git_sha="${GITHUB_SHA:-unknown}"
 
           b64() { printf '%s' "$1" | base64 -w 0; }
-          # shellcheck disable=SC2029
-          ssh "$ARTICLES_DEPLOY_USER@$ARTICLES_DEPLOY_HOST_CLEAN" \
-            "ARTICLES_DEPLOY_PATH_B64=$(b64 "$ARTICLES_DEPLOY_PATH") \
-             ARTICLES_CONTAINER_NAME_B64=$(b64 "$container_name") \
-             ARTICLES_IMAGE_NAME_B64=$(b64 "$image_name") \
-             ARTICLES_HOST_PORT_B64=$(b64 "$host_port") \
-             ARTICLES_CONTAINER_PORT_B64=$(b64 "$container_port") \
-             ARTICLES_DOCS_URL_B64=$(b64 "$docs_url") \
-             ARTICLES_WEBSITE_URL_B64=$(b64 "$website_url") \
-             ARTICLES_BASE_URL_B64=$(b64 "$base_url") \
-             ARTICLES_GIT_SHA_B64=$(b64 "$git_sha") \
-             bash -s" <<'REMOTE'
+          {
+            printf 'ARTICLES_DEPLOY_PATH_B64=%q\n' "$(b64 "$ARTICLES_DEPLOY_PATH")"
+            printf 'ARTICLES_CONTAINER_NAME_B64=%q\n' "$(b64 "$container_name")"
+            printf 'ARTICLES_IMAGE_NAME_B64=%q\n' "$(b64 "$image_name")"
+            printf 'ARTICLES_HOST_PORT_B64=%q\n' "$(b64 "$host_port")"
+            printf 'ARTICLES_CONTAINER_PORT_B64=%q\n' "$(b64 "$container_port")"
+            printf 'ARTICLES_DOCS_URL_B64=%q\n' "$(b64 "$docs_url")"
+            printf 'ARTICLES_WEBSITE_URL_B64=%q\n' "$(b64 "$website_url")"
+            printf 'ARTICLES_BASE_URL_B64=%q\n' "$(b64 "$base_url")"
+            printf 'ARTICLES_SECRET_KEY_B64=%q\n' "$(b64 "$secret_key")"
+            printf 'ARTICLES_GOOGLE_CLIENT_ID_B64=%q\n' "$(b64 "$google_client_id")"
+            printf 'ARTICLES_GOOGLE_CLIENT_SECRET_B64=%q\n' "$(b64 "$google_client_secret")"
+            printf 'ARTICLES_DB_PATH_B64=%q\n' "$(b64 "$db_path")"
+            printf 'ARTICLES_DATA_VOLUME_B64=%q\n' "$(b64 "$data_volume")"
+            printf 'ARTICLES_GIT_SHA_B64=%q\n' "$(b64 "$git_sha")"
+            cat <<'REMOTE'
           set -euo pipefail
           decode() { printf '%s' "$1" | base64 -d; }
+
           deploy_path="$(decode "$ARTICLES_DEPLOY_PATH_B64")"
           container_name="$(decode "$ARTICLES_CONTAINER_NAME_B64")"
           image_name="$(decode "$ARTICLES_IMAGE_NAME_B64")"
@@ -775,6 +790,11 @@ jobs:
           docs_url="$(decode "$ARTICLES_DOCS_URL_B64")"
           website_url="$(decode "$ARTICLES_WEBSITE_URL_B64")"
           base_url="$(decode "$ARTICLES_BASE_URL_B64")"
+          secret_key="$(decode "$ARTICLES_SECRET_KEY_B64")"
+          google_client_id="$(decode "$ARTICLES_GOOGLE_CLIENT_ID_B64")"
+          google_client_secret="$(decode "$ARTICLES_GOOGLE_CLIENT_SECRET_B64")"
+          db_path="$(decode "$ARTICLES_DB_PATH_B64")"
+          data_volume="$(decode "$ARTICLES_DATA_VOLUME_B64")"
           git_sha="$(decode "$ARTICLES_GIT_SHA_B64")"
 
           cd "$deploy_path"
@@ -798,9 +818,15 @@ jobs:
           docker run -d --name "$container_name" \
             --restart unless-stopped \
             -p "$host_port:$container_port" \
+            -v "$data_volume:/data" \
             -e MCP_DOCS_URL="$docs_url" \
             -e MCP_WEBSITE_URL="$website_url" \
             -e MCP_ARTICLES_BASE_URL="$base_url" \
+            -e MCP_ARTICLES_SECRET_KEY="$secret_key" \
+            -e MCP_ARTICLES_GOOGLE_CLIENT_ID="$google_client_id" \
+            -e MCP_ARTICLES_GOOGLE_CLIENT_SECRET="$google_client_secret" \
+            -e MCP_ARTICLES_DB_PATH="$db_path" \
             "$image_name"
           docker image prune -f >/dev/null
           REMOTE
+          } | ssh "$ARTICLES_DEPLOY_USER@$ARTICLES_DEPLOY_HOST_CLEAN" bash -s

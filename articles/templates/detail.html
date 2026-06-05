@@ -25,4 +25,42 @@
       </div>
     </div>
   </article>
+
+  <section id="comments" class="comments wrap" aria-labelledby="comments-title">
+    <div class="section-rule">
+      <h2 id="comments-title">Comments</h2>
+      <span>{{ comments|length }} comments</span>
+    </div>
+
+    {% if user %}
+      <form class="comment-form" method="post" action="{{ article.url }}comments">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+        <label for="comment-body">Comment as {{ user.name }}</label>
+        <textarea id="comment-body" name="body" rows="5" maxlength="2000" required></textarea>
+        <button type="submit">Post comment</button>
+      </form>
+    {% elif google_oauth_configured %}
+      <p class="comment-login"><a href="{{ url_for('login', next=article.url) }}">Sign in with Google</a> to comment.</p>
+    {% else %}
+      <p class="comment-login">Google login is not configured for this deployment yet.</p>
+    {% endif %}
+
+    {% if comments %}
+      <ol class="comment-list">
+        {% for comment in comments %}
+          <li>
+            <article class="comment">
+              <header>
+                <strong>{{ comment.author_name }}</strong>
+                <time datetime="{{ comment.created_at }}">{{ comment.created_at }}</time>
+              </header>
+              <p>{{ comment.body }}</p>
+            </article>
+          </li>
+        {% endfor %}
+      </ol>
+    {% else %}
+      <p class="empty-note">No comments yet.</p>
+    {% endif %}
+  </section>
 {% endblock %}
