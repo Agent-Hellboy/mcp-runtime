@@ -1,6 +1,6 @@
 ---
 title: "Understanding the MCP server-client request flow"
-description: "A trace-driven walkthrough of Cursor's Streamable HTTP startup sequence using PyMCP Kit, from OAuth metadata probes through discovery to the tools Cursor exposes and calls in chat."
+description: "What Cursor sends to an MCP server before the first tool call."
 category: "MCP"
 published: "2026-06-04"
 reading_time: "7 min"
