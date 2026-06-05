@@ -110,18 +110,42 @@ a:hover {
 }
 
 .top-links a,
+.top-links button,
 .category-strip a {
   border-radius: 6px;
   padding: 7px 9px;
+  border: 0;
+  background: transparent;
   color: var(--muted);
+  font: inherit;
   font-size: 14px;
   text-decoration: none;
+  cursor: pointer;
 }
 
 .top-links a:hover,
+.top-links button:hover,
 .category-strip a:hover {
   background: var(--subtle);
   color: var(--text);
+}
+
+.nav-form {
+  margin: 0;
+}
+
+.flash-stack {
+  margin-top: 18px;
+}
+
+.flash-stack p {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--subtle);
+  color: var(--body);
+  font-size: 14px;
 }
 
 .category-strip {
@@ -493,6 +517,91 @@ a:hover {
   color: var(--muted);
   font-family: var(--mono);
   font-size: 12px;
+}
+
+.comments {
+  max-width: 860px;
+  padding-bottom: 80px;
+}
+
+.comment-form {
+  display: grid;
+  gap: 10px;
+  margin: 22px 0 26px;
+}
+
+.comment-form label {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.comment-form textarea {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.comment-form button {
+  justify-self: start;
+  padding: 9px 12px;
+  border: 1px solid var(--text);
+  border-radius: 6px;
+  background: var(--text);
+  color: white;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.comment-form button:hover {
+  background: #30363d;
+}
+
+.comment-login {
+  margin: 18px 0 24px;
+  color: var(--body);
+}
+
+.comment-list {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.comment {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.comment header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+
+.comment time {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.comment p {
+  margin: 0;
+  color: var(--body);
+  white-space: pre-wrap;
 }
 
 .empty-note {

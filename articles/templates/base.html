@@ -35,6 +35,15 @@
           <a href="{{ website_url }}">Website</a>
           <a href="{{ docs_url }}">Docs</a>
           <a href="{{ github_url }}">GitHub</a>
+          {% if user %}
+            <form class="nav-form" method="post" action="{{ url_for('logout') }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+              <input type="hidden" name="next" value="{{ request.path }}" />
+              <button type="submit">Sign out</button>
+            </form>
+          {% else %}
+            <a href="{{ url_for('login', next=request.path) }}">Sign in</a>
+          {% endif %}
         </nav>
       </div>
       <nav class="wrap category-strip" aria-label="Article categories">
@@ -45,6 +54,15 @@
     </header>
 
     <main id="main-content" tabindex="-1">
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="wrap flash-stack" role="status" aria-live="polite">
+            {% for message in messages %}
+              <p>{{ message }}</p>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
       {% block content %}{% endblock %}
     </main>
 

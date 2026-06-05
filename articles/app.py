@@ -1,12 +1,18 @@
 """Standalone article publication for articles.mcpruntime.org."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from functools import lru_cache
 import os
 from pathlib import Path
+import secrets
+import sqlite3
+from urllib.parse import urlparse
 
 import markdown
-from flask import Flask, Response, abort, render_template, request, url_for
+from authlib.integrations.flask_client import OAuth
+from flask import Flask, Response, abort, flash, g, redirect, render_template, request, session, url_for
 
 app = Flask(__name__)
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
@@ -18,6 +24,25 @@ WEBSITE_URL = (os.environ.get("MCP_WEBSITE_URL") or "https://mcpruntime.org").rs
 DOCS_URL = (os.environ.get("MCP_DOCS_URL") or "https://docs.mcpruntime.org").rstrip("/") + "/"
 GITHUB_URL = "https://github.com/Agent-Hellboy/mcp-runtime"
 STATIC_VERSION = int(STYLE_PATH.stat().st_mtime) if STYLE_PATH.exists() else 0
+DB_PATH = Path(os.environ.get("MCP_ARTICLES_DB_PATH") or Path(__file__).resolve().parent / "articles.db")
+GOOGLE_CLIENT_ID = os.environ.get("MCP_ARTICLES_GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("MCP_ARTICLES_GOOGLE_CLIENT_SECRET")
+GOOGLE_OAUTH_CONFIGURED = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+
+app.config["SECRET_KEY"] = os.environ.get("MCP_ARTICLES_SECRET_KEY") or secrets.token_hex(32)
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = BASE_URL.startswith("https://")
+
+oauth = OAuth(app)
+if GOOGLE_OAUTH_CONFIGURED:
+    oauth.register(
+        name="google",
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid email profile"},
+    )
 
 
 @dataclass(frozen=True)
@@ -62,11 +87,112 @@ class Article:
         return f"{BASE_URL}/{self.slug}/"
 
 
+@dataclass(frozen=True)
+class Comment:
+    id: int
+    article_slug: str
+    author_name: str
+    body: str
+    created_at: str
+
+
 def _canonical_url() -> str:
     path = request.path or "/"
     if not path.startswith("/"):
         path = "/" + path
     return BASE_URL + path
+
+
+def _safe_next_url(next_url: str | None) -> str:
+    if not next_url:
+        return url_for("index")
+    parsed = urlparse(next_url)
+    if parsed.scheme or parsed.netloc:
+        return url_for("index")
+    if not next_url.startswith("/"):
+        return url_for("index")
+    return next_url
+
+
+def _csrf_token() -> str:
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["csrf_token"] = token
+    return token
+
+
+def _verify_csrf() -> None:
+    expected = session.get("csrf_token")
+    submitted = request.form.get("csrf_token")
+    if not expected or not submitted or not secrets.compare_digest(expected, submitted):
+        abort(400)
+
+
+def _db() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            article_slug TEXT NOT NULL,
+            google_sub TEXT NOT NULL,
+            author_name TEXT NOT NULL,
+            author_email TEXT NOT NULL,
+            body TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_article_created ON comments(article_slug, created_at)")
+    return conn
+
+
+def comments_for_article(article_slug: str) -> tuple[Comment, ...]:
+    with _db() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, article_slug, author_name, body, created_at
+            FROM comments
+            WHERE article_slug = ?
+            ORDER BY created_at ASC, id ASC
+            """,
+            (article_slug,),
+        ).fetchall()
+    return tuple(
+        Comment(
+            id=row["id"],
+            article_slug=row["article_slug"],
+            author_name=row["author_name"],
+            body=row["body"],
+            created_at=row["created_at"],
+        )
+        for row in rows
+    )
+
+
+def create_comment(article_slug: str, user: dict[str, str], body: str) -> None:
+    normalized = body.strip()
+    if not normalized:
+        raise ValueError("Comment cannot be empty.")
+    if len(normalized) > 2000:
+        raise ValueError("Comment must be 2,000 characters or fewer.")
+    with _db() as conn:
+        conn.execute(
+            """
+            INSERT INTO comments (article_slug, google_sub, author_name, author_email, body)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                article_slug,
+                user["sub"],
+                user.get("name") or "Reader",
+                user.get("email") or "",
+                normalized,
+            ),
+        )
 
 
 def _split_front_matter(source: str) -> tuple[dict[str, str], str]:
@@ -128,9 +254,12 @@ def inject_globals():
     return {
         "canonical_url": _canonical_url,
         "categories": CATEGORIES,
+        "csrf_token": _csrf_token,
         "docs_url": DOCS_URL,
         "github_url": GITHUB_URL,
+        "google_oauth_configured": GOOGLE_OAUTH_CONFIGURED,
         "static_version": STATIC_VERSION,
+        "user": getattr(g, "user", None),
         "website_url": WEBSITE_URL,
     }
 
@@ -188,7 +317,61 @@ def article(slug: str):
         title=article_item.title,
         description=article_item.description,
         article=article_item,
+        comments=comments_for_article(article_item.slug),
     )
+
+
+@app.route("/login")
+def login():
+    if not GOOGLE_OAUTH_CONFIGURED:
+        flash("Google login is not configured yet.")
+        return redirect(_safe_next_url(request.args.get("next")))
+    redirect_uri = f"{BASE_URL}{url_for('auth_google_callback')}"
+    session["login_next"] = _safe_next_url(request.args.get("next"))
+    return oauth.google.authorize_redirect(redirect_uri)
+
+
+@app.route("/auth/google/callback")
+def auth_google_callback():
+    if not GOOGLE_OAUTH_CONFIGURED:
+        abort(404)
+    token = oauth.google.authorize_access_token()
+    profile = token.get("userinfo") or oauth.google.get("userinfo").json()
+    email = profile.get("email", "")
+    if not profile.get("sub") or not email or profile.get("email_verified") is False:
+        abort(401)
+    session["user"] = {
+        "sub": profile["sub"],
+        "name": profile.get("name") or email.split("@", 1)[0],
+        "email": email,
+    }
+    return redirect(_safe_next_url(session.pop("login_next", None)))
+
+
+@app.post("/logout")
+def logout():
+    _verify_csrf()
+    session.pop("user", None)
+    flash("Signed out.")
+    return redirect(_safe_next_url(request.form.get("next")))
+
+
+@app.post("/<path:slug>/comments")
+def post_comment(slug: str):
+    article_item = get_article(slug)
+    if article_item is None:
+        abort(404)
+    user = getattr(g, "user", None)
+    if user is None:
+        flash("Sign in with Google to comment.")
+        return redirect(url_for("login", next=article_item.url))
+    _verify_csrf()
+    try:
+        create_comment(article_item.slug, user, request.form.get("body", ""))
+        flash("Comment posted.")
+    except ValueError as exc:
+        flash(str(exc))
+    return redirect(article_item.url + "#comments")
 
 
 @app.route("/robots.txt")
@@ -226,6 +409,11 @@ def apply_response_headers(response):
     if response.status_code < 400 and (request.path or "").startswith("/static/"):
         response.headers["Cache-Control"] = "public, max-age=3600, must-revalidate"
     return response
+
+
+@app.before_request
+def load_current_user():
+    g.user = session.get("user")
 
 
 if __name__ == "__main__":
