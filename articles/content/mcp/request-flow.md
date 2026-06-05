@@ -1,6 +1,6 @@
 ---
 title: "Understanding the MCP server-client request flow"
-description: "What Cursor sends to an MCP server before the first tool call."
+description: "Tracking the MCP request flow from startup to the first tool call."
 category: "MCP"
 published: "2026-06-04"
 reading_time: "7 min"
