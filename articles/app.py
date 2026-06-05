@@ -16,6 +16,8 @@ import warnings
 from urllib.parse import urlparse
 
 import markdown
+from markdown.extensions import Extension
+from markdown.treeprocessors import Treeprocessor
 import requests
 from flask import Flask, Response, abort, flash, g, redirect, render_template, request, session, url_for
 
@@ -23,15 +25,25 @@ app = Flask(__name__)
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 CONTENT_DIR = Path(__file__).resolve().parent / "content"
-STYLE_PATH = Path(__file__).resolve().parent / "static" / "style.css"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+STYLE_PATH = STATIC_DIR / "style.css"
 BASE_URL = (os.environ.get("MCP_ARTICLES_BASE_URL") or "https://articles.mcpruntime.org").rstrip("/")
 WEBSITE_URL = (os.environ.get("MCP_WEBSITE_URL") or "https://mcpruntime.org").rstrip("/") + "/"
 DOCS_URL = (os.environ.get("MCP_DOCS_URL") or "https://docs.mcpruntime.org").rstrip("/") + "/"
 GITHUB_URL = "https://github.com/Agent-Hellboy/mcp-runtime"
-STATIC_VERSION = int(STYLE_PATH.stat().st_mtime) if STYLE_PATH.exists() else 0
 DB_PATH = Path(os.environ.get("MCP_ARTICLES_DB_PATH") or Path(__file__).resolve().parent / "articles.db")
 NEWSLETTER_EXPORT_TOKEN = os.environ.get("MCP_ARTICLES_NEWSLETTER_EXPORT_TOKEN", "")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _static_version() -> int:
+    if not STATIC_DIR.exists():
+        return 0
+    mtimes = (path.stat().st_mtime for path in STATIC_DIR.rglob("*") if path.is_file())
+    return int(max(mtimes, default=0))
+
+
+STATIC_VERSION = _static_version()
 
 
 def _first_env(*names: str) -> str | None:
@@ -151,6 +163,32 @@ def _safe_next_url(next_url: str | None) -> str:
     if not next_url.startswith("/") or next_url.startswith("//") or next_url.startswith("\\"):
         return url_for("index")
     return next_url
+
+
+def _versioned_static_url(value: str) -> str:
+    if not value.startswith("/static/") or "?v=" in value or "&v=" in value:
+        return value
+    separator = "&" if "?" in value else "?"
+    return f"{value}{separator}v={STATIC_VERSION}"
+
+
+class StaticImageVersionTreeprocessor(Treeprocessor):
+    def run(self, root):
+        for element in root.iter():
+            if element.tag == "img":
+                src = element.get("src")
+                if src:
+                    element.set("src", _versioned_static_url(src))
+            if element.tag == "a":
+                href = element.get("href")
+                if href and href.startswith("/static/articles/"):
+                    element.set("href", _versioned_static_url(href))
+        return root
+
+
+class StaticImageVersionExtension(Extension):
+    def extendMarkdown(self, md):
+        md.treeprocessors.register(StaticImageVersionTreeprocessor(md), "static_image_version", 15)
 
 
 def _csrf_token() -> str:
@@ -363,7 +401,7 @@ def load_articles() -> tuple[Article, ...]:
         category = CATEGORY_BY_SLUG.get(category_slug, Category(category_slug, category_slug.title(), ""))
         body_html = markdown.markdown(
             body,
-            extensions=["fenced_code", "tables", "toc"],
+            extensions=["fenced_code", "tables", "toc", StaticImageVersionExtension()],
             output_format="html5",
         )
         articles.append(
