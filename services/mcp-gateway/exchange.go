@@ -26,7 +26,6 @@
 package main
 
 import (
-	"context"
 	"net/http"
 	"time"
 
@@ -49,14 +48,14 @@ const (
 
 // Filter is a single stage in the gateway request pipeline.
 type Filter interface {
-	Handle(context.Context, *Exchange) Result
+	Handle(*Exchange) Result
 }
 
 // FilterFunc is a function that implements Filter.
-type FilterFunc func(context.Context, *Exchange) Result
+type FilterFunc func(*Exchange) Result
 
 // Handle implements Filter.
-func (f FilterFunc) Handle(ctx context.Context, ex *Exchange) Result { return f(ctx, ex) }
+func (f FilterFunc) Handle(ex *Exchange) Result { return f(ex) }
 
 // Exchange holds all request-scoped state shared across pipeline stages.
 // Fields are written by one designated stage and read by all later stages.
@@ -85,6 +84,12 @@ type Exchange struct {
 
 	// Set by stage 4 (AuthzFilter). Policy and Identity must not change after this.
 	Decision policypkg.Decision
+
+	// SkipAudit is set by a filter that writes a terminal response that bypasses
+	// authentication and authorization entirely (e.g. OAuth metadata early-exit in
+	// policyFilter). When true, emitAuditFromExchange does nothing, because no
+	// identity or authorization decision was established for the request.
+	SkipAudit bool
 }
 
 // newExchange initialises an Exchange for a fresh inbound request.

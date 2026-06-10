@@ -1,10 +1,6 @@
 package main
 
-import (
-	"context"
-
-	policypkg "mcp-runtime/pkg/policy"
-)
+import policypkg "mcp-runtime/pkg/policy"
 
 // authFilter is stage 3 of the gateway pipeline. It extracts the caller
 // identity and, when the policy uses OAuth, validates the bearer JWT.
@@ -19,7 +15,7 @@ import (
 //
 // authFilter always runs after policyFilter (stage 2) has set Exchange.Policy
 // and always completes before authzFilter (stage 4) reads Exchange.Identity.
-func (s *gatewayServer) authFilter(_ context.Context, ex *Exchange) Result {
+func (s *gatewayServer) authFilter(ex *Exchange) Result {
 	// Extract identity from governance headers; for OAuth this populates at
 	// least the session header before JWT validation overwrites the rest.
 	ex.Identity = s.extractIdentity(ex.R, ex.Policy)

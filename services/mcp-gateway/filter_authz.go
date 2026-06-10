@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"net/http"
 	"time"
 
@@ -19,7 +18,7 @@ import (
 // after this filter sets Exchange.Decision.
 //
 // On any denial, authzFilter writes the denial response and returns Reject.
-func (s *gatewayServer) authzFilter(_ context.Context, ex *Exchange) Result {
+func (s *gatewayServer) authzFilter(ex *Exchange) Result {
 	if !ex.Inspection.ToolCall && !ex.Inspection.Indeterminate {
 		return Continue
 	}

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -62,7 +61,7 @@ func TestInspectFilterAlwaysContinues(t *testing.T) {
 
 	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete} {
 		ex := newTestExchange(method, "/mcp", "", nil)
-		if got := s.inspectFilter(context.Background(), ex); got != Continue {
+		if got := s.inspectFilter(ex); got != Continue {
 			t.Errorf("inspectFilter(%s) = %v, want Continue", method, got)
 		}
 	}
@@ -74,7 +73,7 @@ func TestInspectFilterSetsInspection(t *testing.T) {
 	body := `{"method":"tools/call","params":{"name":"echo"}}`
 	ex := newTestExchange(http.MethodPost, "/mcp", body, map[string]string{"Content-Type": "application/json"})
 
-	s.inspectFilter(context.Background(), ex)
+	s.inspectFilter(ex)
 
 	if ex.Inspection.Method != "tools/call" {
 		t.Fatalf("Method = %q, want tools/call", ex.Inspection.Method)
@@ -95,7 +94,7 @@ func TestPolicyFilterContinuesForNonOAuthPath(t *testing.T) {
 	s.snapshotPolicy(policySnapshot{Policy: headerPolicy()})
 	ex := newTestExchange(http.MethodPost, "/mcp", `{}`, map[string]string{"Content-Type": "application/json"})
 
-	if got := s.policyFilter(context.Background(), ex); got != Continue {
+	if got := s.policyFilter(ex); got != Continue {
 		t.Fatalf("policyFilter = %v, want Continue", got)
 	}
 	if ex.Policy == nil {
@@ -110,12 +109,28 @@ func TestPolicyFilterRespondsForOAuthMetadataPath(t *testing.T) {
 	s.snapshotPolicy(policySnapshot{Policy: oauthPolicy(issuer.url)})
 	ex := newTestExchange(http.MethodGet, "/.well-known/oauth-protected-resource", "", nil)
 
-	if got := s.policyFilter(context.Background(), ex); got != Respond {
+	if got := s.policyFilter(ex); got != Respond {
 		t.Fatalf("policyFilter for OAuth metadata path = %v, want Respond", got)
 	}
 	recorder := ex.W.ResponseWriter.(*httptest.ResponseRecorder)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+}
+
+func TestPolicyFilterSetsSkipAuditForOAuthMetadataPath(t *testing.T) {
+	t.Parallel()
+	// Verify that an OAuth metadata early-exit sets SkipAudit so the
+	// orchestrator does not emit a spurious audit event with no identity.
+	s := minimalServer()
+	issuer := newTestJWTIssuer(t)
+	s.snapshotPolicy(policySnapshot{Policy: oauthPolicy(issuer.url)})
+	ex := newTestExchange(http.MethodGet, "/.well-known/oauth-protected-resource", "", nil)
+
+	s.policyFilter(ex)
+
+	if !ex.SkipAudit {
+		t.Fatal("SkipAudit = false after OAuth metadata early-exit, want true")
 	}
 }
 
@@ -126,7 +141,7 @@ func TestPolicyFilterPolicySnapshotIsImmutableForExchange(t *testing.T) {
 	s.snapshotPolicy(policySnapshot{Policy: snap})
 	ex := newTestExchange(http.MethodPost, "/mcp", "", nil)
 
-	s.policyFilter(context.Background(), ex)
+	s.policyFilter(ex)
 	captured := ex.Policy
 
 	// Replace the gateway snapshot mid-exchange — the Exchange copy must be unaffected.
@@ -147,7 +162,7 @@ func TestAuthFilterContinuesForHeaderMode(t *testing.T) {
 	})
 	ex.Policy = headerPolicy()
 
-	if got := s.authFilter(context.Background(), ex); got != Continue {
+	if got := s.authFilter(ex); got != Continue {
 		t.Fatalf("authFilter header mode = %v, want Continue", got)
 	}
 	if ex.Identity.HumanID != "user-1" {
@@ -162,7 +177,7 @@ func TestAuthFilterRejectsOAuthMissingBearer(t *testing.T) {
 	ex := newTestExchange(http.MethodPost, "/mcp", `{}`, map[string]string{"Content-Type": "application/json"})
 	ex.Policy = oauthPolicy(issuer.url)
 
-	if got := s.authFilter(context.Background(), ex); got != Reject {
+	if got := s.authFilter(ex); got != Reject {
 		t.Fatalf("authFilter OAuth no bearer = %v, want Reject", got)
 	}
 	recorder := ex.W.ResponseWriter.(*httptest.ResponseRecorder)
@@ -188,7 +203,7 @@ func TestAuthFilterAlwaysRunsBeforeAuthz(t *testing.T) {
 		FilterFunc(s.inspectFilter),
 		FilterFunc(s.policyFilter),
 		FilterFunc(s.authFilter),
-		FilterFunc(func(_ context.Context, _ *Exchange) Result {
+		FilterFunc(func(_ *Exchange) Result {
 			authzCalled = true
 			return Continue
 		}),
@@ -196,7 +211,7 @@ func TestAuthFilterAlwaysRunsBeforeAuthz(t *testing.T) {
 
 	ex := newExchange(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/mcp", nil), "test")
 	for _, f := range pipeline {
-		if f.Handle(context.Background(), ex) != Continue {
+		if f.Handle(ex) != Continue {
 			break
 		}
 	}
@@ -212,11 +227,11 @@ func TestAuthzFilterContinuesForNonToolCall(t *testing.T) {
 	t.Parallel()
 	s := minimalServer()
 	ex := newTestExchange(http.MethodPost, "/mcp", `{"method":"tools/list"}`, map[string]string{"Content-Type": "application/json"})
-	s.inspectFilter(context.Background(), ex)
+	s.inspectFilter(ex)
 	ex.Policy = headerPolicy()
 	ex.Identity = identityContext{HumanID: "human-1", AgentID: "client-1", TeamID: "team-acme"}
 
-	if got := s.authzFilter(context.Background(), ex); got != Continue {
+	if got := s.authzFilter(ex); got != Continue {
 		t.Fatalf("authzFilter tools/list = %v, want Continue", got)
 	}
 	if !ex.Decision.Allowed {
@@ -229,7 +244,7 @@ func TestAuthzFilterRejectsDeniedToolCall(t *testing.T) {
 	s := minimalServer()
 	body := `{"method":"tools/call","params":{"name":"echo"}}`
 	ex := newTestExchange(http.MethodPost, "/mcp", body, map[string]string{"Content-Type": "application/json"})
-	s.inspectFilter(context.Background(), ex)
+	s.inspectFilter(ex)
 	// Use a session-optional allow-list policy so an unrecognised identity
 	// reaches grant evaluation and gets no_matching_grant → 403.
 	ex.Policy = &policypkg.Document{
@@ -251,7 +266,7 @@ func TestAuthzFilterRejectsDeniedToolCall(t *testing.T) {
 	// No matching grant → default deny.
 	ex.Identity = identityContext{HumanID: "unknown", AgentID: "unknown"}
 
-	if got := s.authzFilter(context.Background(), ex); got != Reject {
+	if got := s.authzFilter(ex); got != Reject {
 		t.Fatalf("authzFilter denied tool call = %v, want Reject", got)
 	}
 	if ex.Decision.Allowed {
@@ -279,7 +294,7 @@ func TestAuthzFilterAuthorizationInputsUnchangedAfterDecision(t *testing.T) {
 
 	pipeline := []Filter{
 		FilterFunc(s.authzFilter),
-		FilterFunc(func(_ context.Context, ex *Exchange) Result {
+		FilterFunc(func(ex *Exchange) Result {
 			upstreamCalled = true
 			policyAtUpstream = ex.Policy
 			identityAtUpstream = ex.Identity
@@ -289,14 +304,14 @@ func TestAuthzFilterAuthorizationInputsUnchangedAfterDecision(t *testing.T) {
 
 	body := `{"method":"tools/list"}`
 	ex := newTestExchange(http.MethodPost, "/mcp", body, map[string]string{"Content-Type": "application/json"})
-	s.inspectFilter(context.Background(), ex) // sets ToolCall=false, so authz skips evaluation
+	s.inspectFilter(ex) // sets ToolCall=false, so authz skips evaluation
 	pol := headerPolicy()
 	ex.Policy = pol
 	ident := identityContext{HumanID: "human-1", AgentID: "client-1", TeamID: "team-acme"}
 	ex.Identity = ident
 
 	for _, f := range pipeline {
-		if f.Handle(context.Background(), ex) != Continue {
+		if f.Handle(ex) != Continue {
 			break
 		}
 	}
@@ -317,11 +332,11 @@ func TestAuthzFilterPolicyUnavailableDeniesWith503(t *testing.T) {
 	s := minimalServer()
 	body := `{"method":"tools/call","params":{"name":"echo"}}`
 	ex := newTestExchange(http.MethodPost, "/mcp", body, map[string]string{"Content-Type": "application/json"})
-	s.inspectFilter(context.Background(), ex)
+	s.inspectFilter(ex)
 	ex.Policy = &policypkg.Document{Policy: &policypkg.Config{}}
 	ex.PolicyErr = errPolicyUnavailable
 
-	if got := s.authzFilter(context.Background(), ex); got != Reject {
+	if got := s.authzFilter(ex); got != Reject {
 		t.Fatalf("authzFilter policy_unavailable = %v, want Reject", got)
 	}
 	recorder := ex.W.ResponseWriter.(*httptest.ResponseRecorder)
@@ -350,7 +365,7 @@ func TestUpstreamFilterAlwaysReturnsRespond(t *testing.T) {
 	ex := newTestExchange(http.MethodGet, "/mcp", "", nil)
 	ex.Policy = headerPolicy()
 
-	if got := s.upstreamFilter(context.Background(), ex); got != Respond {
+	if got := s.upstreamFilter(ex); got != Respond {
 		t.Fatalf("upstreamFilter = %v, want Respond", got)
 	}
 }

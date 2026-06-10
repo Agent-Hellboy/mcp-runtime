@@ -33,7 +33,7 @@ func newUpstreamReverseProxy(target *url.URL) *httputil.ReverseProxy {
 func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 	ex := newExchange(w, r, s.defaultPolicyVersion)
 	for _, f := range s.buildPipeline() {
-		if f.Handle(r.Context(), ex) != Continue {
+		if f.Handle(ex) != Continue {
 			break
 		}
 	}
@@ -65,6 +65,9 @@ func (s *gatewayServer) buildPipeline() []Filter {
 //     genuine MCP client attempt (application/json body that failed parsing).
 //   - Internal platform service probes (mcp-runtime-live-inventory) are never audited.
 func (s *gatewayServer) emitAuditFromExchange(ex *Exchange) {
+	if ex.SkipAudit {
+		return
+	}
 	if ex.Identity.AgentID == "mcp-runtime-live-inventory" {
 		return
 	}
