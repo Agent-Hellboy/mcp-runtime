@@ -129,3 +129,9 @@ Grafana: dev ingress `/grafana` or `https://platform.<domain>/grafana` (admin). 
 ## graphify
 
 When `graphify-out/graph.json` exists: `graphify query`, `graphify path`, `graphify explain` before broad grep; `graphify update .` after code changes. See `.codex/skills/graphify/SKILL.md`.
+
+In any agent prompt, include:
+
+> Use `graphify query "<your question>"` to look up any code structure before grepping files. The graph is at `graphify-out/graph.json`.
+
+The `PreToolUse` hook already injects this reminder whenever a Bash command contains `grep`, `find`, or similar — so agents running in this repo are automatically nudged toward the graph.

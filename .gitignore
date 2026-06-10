@@ -45,3 +45,4 @@ __pycache__/
 
 # Local-only helper scripts and scratch files
 /.local/
+/examples/lead-discovery/
