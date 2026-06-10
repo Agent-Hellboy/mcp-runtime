@@ -960,7 +960,7 @@ func newTestGatewayServer(t *testing.T, policy *policypkg.Document, upstream htt
 		defaultPolicyVersion:  "test-policy",
 		oauthProviders:        map[string]*oauthProvider{},
 	}
-	server.snapshotPolicy(policySnapshot{Policy: policy})
+	server.snapshotPolicy(policySnapshot{Policy: policy, Revision: policy.Revision, LoadedAt: time.Now(), Ready: true})
 	return server
 }
 
