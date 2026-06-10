@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -10,6 +11,10 @@ import (
 
 	policypkg "mcp-runtime/pkg/policy"
 )
+
+// errPolicyUnavailable is returned by currentPolicy when no valid policy has
+// been loaded yet, causing gate filters to fail closed with 503.
+var errPolicyUnavailable = errors.New("policy_unavailable")
 
 func (s *gatewayServer) startPolicyCache() error {
 	s.snapshotPolicy(policySnapshot{Policy: s.defaultPolicyDocument()})
