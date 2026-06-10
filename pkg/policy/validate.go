@@ -21,6 +21,16 @@ func Validate(doc *Document) error {
 	if _, ok := supportedSchemaVersions[doc.SchemaVersion]; !ok {
 		return fmt.Errorf("policy: unsupported schema version %q", doc.SchemaVersion)
 	}
+	if strings.TrimSpace(doc.Revision) == "" {
+		return fmt.Errorf("policy: revision is required")
+	}
+	computed, err := ComputeRevision(doc)
+	if err != nil {
+		return fmt.Errorf("policy: cannot compute revision: %w", err)
+	}
+	if computed != doc.Revision {
+		return fmt.Errorf("policy: revision mismatch: document contains %q, computed %q", doc.Revision, computed)
+	}
 	if strings.TrimSpace(string(doc.Server.Name)) == "" {
 		return fmt.Errorf("policy: server.name is required")
 	}
@@ -111,10 +121,15 @@ func validateGrants(grants []Grant) error {
 				return fmt.Errorf("policy: grant %q has invalid allowed side effect %q", grant.Name, sideEffect)
 			}
 		}
+		seenRules := make(map[ToolName]struct{}, len(grant.ToolRules))
 		for j, rule := range grant.ToolRules {
 			if strings.TrimSpace(string(rule.Name)) == "" {
 				return fmt.Errorf("policy: grant %q tool_rules[%d] name is required", grant.Name, j)
 			}
+			if _, dup := seenRules[rule.Name]; dup {
+				return fmt.Errorf("policy: grant %q has duplicate tool rule %q", grant.Name, rule.Name)
+			}
+			seenRules[rule.Name] = struct{}{}
 			if !validDecision(rule.Decision) {
 				return fmt.Errorf("policy: grant %q tool rule %q has invalid decision %q", grant.Name, rule.Name, rule.Decision)
 			}
