@@ -354,6 +354,33 @@ func TestRuntimeToolsCatalogScopesFiltersAndComputesRisk(t *testing.T) {
 	if len(payload.Tools) != 1 || payload.Tools[0].ToolName != "lookup_invoice" || payload.Tools[0].DriftStatus != "ungoverned" {
 		t.Fatalf("ungoverned tools = %#v", payload.Tools)
 	}
+	if payload.Tools[0].RequiredTrust != "" || payload.Tools[0].RiskLevel != "" {
+		t.Fatalf("ungoverned tool risk metadata = %#v, want empty trust and risk", payload.Tools[0])
+	}
+}
+
+func TestHandleRuntimeToolsReturnsForbiddenForUnreadableNamespace(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/tools?namespace=other-team", nil)
+	request = request.WithContext(withPrincipal(request.Context(), principal{Role: roleUser, Subject: "user-1"}))
+	server.HandleRuntimeTools(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "forbidden namespace") {
+		t.Fatalf("body = %s, want forbidden namespace", recorder.Body.String())
+	}
 }
 
 type staticLiveInventoryProber struct {

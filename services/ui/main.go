@@ -1118,8 +1118,9 @@ func isPublicCatalogAPIRequest(r *http.Request, apiBase string) bool {
 	if r.Method != http.MethodGet {
 		return false
 	}
-	expected := strings.TrimRight(normalizePathPrefix(apiBase), "/") + "/runtime/servers"
-	return strings.TrimRight(r.URL.Path, "/") == expected
+	expectedBase := strings.TrimRight(normalizePathPrefix(apiBase), "/") + "/runtime/"
+	path := strings.TrimRight(r.URL.Path, "/")
+	return path == expectedBase+"servers" || path == expectedBase+"tools"
 }
 
 func secureCookie(r *http.Request) bool {

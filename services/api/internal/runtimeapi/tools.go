@@ -2,6 +2,7 @@ package runtimeapi
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"sort"
@@ -54,6 +55,10 @@ func (s *RuntimeServer) HandleRuntimeTools(w http.ResponseWriter, r *http.Reques
 
 	servers, err := s.visibleServers(ctx, control, p, strings.TrimSpace(r.URL.Query().Get("namespace")))
 	if err != nil {
+		if errors.Is(err, errForbiddenNamespace) {
+			writeAPIError(w, http.StatusForbidden, "forbidden namespace")
+			return
+		}
 		writeAPIError(w, http.StatusInternalServerError, "failed to list servers")
 		return
 	}
@@ -176,8 +181,6 @@ func (s *RuntimeServer) toolRowsFromServers(ctx context.Context, servers []contr
 				Declared:      false,
 				Live:          true,
 				DriftStatus:   "ungoverned",
-				RequiredTrust: string(mcpv1alpha1.TrustLevelLow),
-				RiskLevel:     string(mcpv1alpha1.ToolRiskLevelLow),
 				ConnectConfig: info.AccessJSON,
 			})
 		}

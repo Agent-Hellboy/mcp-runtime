@@ -818,8 +818,8 @@ func TestAPIProxyAllowsAnonymousPublicCatalog(t *testing.T) {
 		if got := r.Header.Get("authorization"); got != "" {
 			t.Fatalf("authorization forwarded upstream: %q", got)
 		}
-		if got := r.URL.Path; got != "/api/runtime/servers" {
-			t.Fatalf("path = %q, want /api/runtime/servers", got)
+		if got := r.URL.Path; got != "/api/runtime/servers" && got != "/api/runtime/tools" {
+			t.Fatalf("path = %q, want /api/runtime/servers or /api/runtime/tools", got)
 		}
 		if got := r.URL.Query().Get("namespace"); got != "mcp-servers-public" {
 			t.Fatalf("namespace = %q, want mcp-servers-public", got)
@@ -843,6 +843,15 @@ func TestAPIProxyAllowsAnonymousPublicCatalog(t *testing.T) {
 	}
 	if !upstreamCalled {
 		t.Fatal("anonymous public catalog request did not reach upstream")
+	}
+
+	upstreamCalled = false
+	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/tools", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("anonymous public tools status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !upstreamCalled {
+		t.Fatal("anonymous public tools request did not reach upstream")
 	}
 
 	forbidden := httptest.NewRecorder()
