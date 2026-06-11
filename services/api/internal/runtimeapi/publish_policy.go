@@ -239,8 +239,9 @@ func (r *serverPublishPolicyRejection) retryAfterHeader() string {
 
 func (r *serverPublishPolicyRejection) payload() map[string]any {
 	payload := map[string]any{
-		"error": r.message,
-		"code":  r.code,
+		"error":   r.code,
+		"code":    r.code,
+		"message": r.message,
 	}
 	if !r.nextAllowedAt.IsZero() {
 		payload["next_allowed_at"] = r.nextAllowedAt.UTC().Format(time.RFC3339)

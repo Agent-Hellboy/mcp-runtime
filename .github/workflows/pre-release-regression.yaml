@@ -1,0 +1,422 @@
+name: Pre-release Regression
+
+on:
+  workflow_dispatch:
+    inputs:
+      run-cache-replay:
+        description: Re-run a cached Kind pass after the fresh run.
+        required: true
+        default: true
+        type: boolean
+      cache-scenarios:
+        description: E2E scenarios for the cache-mode replay.
+        required: true
+        default: smoke-auth,governance
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  static:
+    name: Static + Generated Checks
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install linters
+        run: go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+
+      - name: Run go fmt check
+        run: |
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            echo "Code is not formatted. Run 'gofmt -s -w .'"
+            gofmt -s -d .
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run staticcheck
+        run: staticcheck ./...
+
+      - name: Validate E2E scenario selectors
+        run: bash test/e2e/scenarios_test.sh
+
+      - name: Regenerate CRDs/manifests
+        run: make -f Makefile.operator generate manifests
+
+      - name: Regenerate Go package reference
+        run: python3 docs/scripts/generate_go_package_reference.py
+
+      - name: Check for generated drift
+        run: |
+          if ! git diff --quiet; then
+            echo "Generated files are out of date. Run 'make -f Makefile.operator generate manifests' and 'python3 docs/scripts/generate_go_package_reference.py'."
+            git diff
+            exit 1
+          fi
+
+  root-tests:
+    name: Root, CLI + Integration Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install envtest
+        run: |
+          export KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.0 use -p path)
+          echo "KUBEBUILDER_ASSETS=$KUBEBUILDER_ASSETS" >> "$GITHUB_ENV"
+
+      - name: Build CLI
+        run: go build -o bin/mcp-runtime ./cmd/mcp-runtime
+
+      - name: Run CLI and golden tests
+        run: go test -v -race -count=1 ./cmd/mcp-runtime ./internal/cli/... ./test/golden/...
+
+      - name: Run root unit tests
+        run: |
+          module_path="$(go list -m)"
+          go test -v -race -count=1 \
+            $(go list ./... | grep -v -x "${module_path}/test/integration")
+
+      - name: Run integration tests
+        run: go test -v -race -timeout 30m -count=1 ./test/integration/...
+        env:
+          KUBEBUILDER_ASSETS: ${{ env.KUBEBUILDER_ASSETS }}
+
+  service-tests:
+    name: Sentinel Service Tests
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api
+          - ingest
+          - processor
+          - mcp-gateway
+          - ui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: services/${{ matrix.service }}/go.sum
+
+      - name: Run service tests
+        run: go test -v -race -count=1 ./...
+        working-directory: services/${{ matrix.service }}
+
+  benchmarks:
+    name: Benchmarks
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run benchmarks
+        run: go test -run=^$ -bench=. -benchmem -count=1 ./test/benchmark/...
+
+  repository-sbom:
+    name: Repository SBOM
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Generate repository SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: spdx-json
+          output-file: mcp-runtime-repository.spdx.json
+
+      - name: Upload repository SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pre-release-repository-sbom
+          path: mcp-runtime-repository.spdx.json
+          if-no-files-found: error
+
+  gosec:
+    name: Gosec Scan
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.26.1
+
+      - name: Run gosec
+        run: $(go env GOPATH)/bin/gosec ./...
+
+  gitleaks:
+    name: Gitleaks Scan
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
+  trivy:
+    name: Trivy Repository + Image Scan
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Trivy repository vulnerability scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,license
+          format: sarif
+          output: trivy-fs.sarif
+          exit-code: "1"
+          ignore-unfixed: true
+          skip-dirs: inspirations/mcp-gateway-registry
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          limit-severities-for-sarif: true
+          hide-progress: true
+
+      - name: Upload Trivy repository SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@ed410739ba306e4ebe5e123421a6bd694e494a2b # v4
+        with:
+          sarif_file: trivy-fs.sarif
+          category: pre-release-trivy-fs-vuln
+
+      - name: Trivy repository misconfiguration scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: misconfig
+          format: sarif
+          output: trivy-misconfig.sarif
+          exit-code: "0"
+          skip-dirs: inspirations/mcp-gateway-registry
+          trivyignores: .trivyignore.yaml
+          severity: CRITICAL,HIGH
+          limit-severities-for-sarif: true
+          hide-progress: true
+
+      - name: Upload Trivy misconfiguration SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@ed410739ba306e4ebe5e123421a6bd694e494a2b # v4
+        with:
+          sarif_file: trivy-misconfig.sarif
+          category: pre-release-trivy-fs-misconfig
+
+      - name: Build operator image
+        run: docker build --pull -f Dockerfile.operator -t mcp-runtime-operator:pre-release .
+
+      - name: Generate operator image SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
+        with:
+          image-ref: mcp-runtime-operator:pre-release
+          format: spdx-json
+          output: operator-image.spdx.json
+          exit-code: "0"
+          hide-progress: true
+
+      - name: Upload operator image SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pre-release-operator-image-sbom
+          path: operator-image.spdx.json
+          if-no-files-found: error
+
+      - name: Trivy operator image scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
+        with:
+          image-ref: mcp-runtime-operator:pre-release
+          format: sarif
+          output: trivy-image.sarif
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          limit-severities-for-sarif: true
+          hide-progress: true
+
+      - name: Upload Trivy image SARIF
+        if: always() && hashFiles('trivy-image.sarif') != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@ed410739ba306e4ebe5e123421a6bd694e494a2b # v4
+        with:
+          sarif_file: trivy-image.sarif
+          category: pre-release-trivy-operator-image
+
+  kind-e2e:
+    name: Full Kind E2E (${{ matrix.platform_mode }})
+    runs-on: ubuntu-24.04
+    needs:
+      - static
+      - root-tests
+      - service-tests
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        platform_mode:
+          - tenant
+          - org
+          - public
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Free runner disk space
+        run: |
+          df -h
+          sudo rm -rf \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /usr/share/dotnet
+          docker system prune -af --volumes || true
+          df -h
+
+      - name: Install kubectl
+        run: |
+          curl --retry 5 --retry-delay 5 --retry-all-errors -fsSL -o kubectl "https://dl.k8s.io/release/v1.34.1/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+
+      - name: Install kind
+        run: |
+          curl --retry 5 --retry-delay 5 --retry-all-errors -fsSL -o kind "https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64"
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+
+      - name: Install E2E dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 ripgrep
+
+      - name: Show tool versions
+        run: |
+          docker version
+          kubectl version --client
+          kind version
+          python3 --version
+          rg --version
+
+      - name: Configure E2E resource names
+        run: |
+          case "${{ matrix.platform_mode }}" in
+            tenant) offset=0 ;;
+            org) offset=1 ;;
+            public) offset=2 ;;
+            *) offset=9 ;;
+          esac
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ matrix.platform_mode }}"
+          port=$((20000 + ((GITHUB_RUN_ID + GITHUB_RUN_ATTEMPT + offset) % 20000)))
+          {
+            echo "CLUSTER_NAME=mcp-prerelease-${suffix}"
+            echo "LOCAL_REGISTRY_NAME=mcp-prerelease-registry-${suffix}"
+            echo "LOCAL_REGISTRY_PORT=${port}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Run full fresh Kind e2e
+        env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/.e2e-artifacts/kind-${{ matrix.platform_mode }}-full
+          E2E_SCENARIOS: all
+          E2E_PLATFORM_MODE: ${{ matrix.platform_mode }}
+          E2E_DEEP_REQUEST_FLOWS: "1"
+          E2E_KEEP_CLUSTER: ${{ inputs.run-cache-replay && matrix.platform_mode == 'tenant' && '1' || '0' }}
+          E2E_IMAGE_BUILD_PARALLELISM: "1"
+          E2E_IMAGE_MIRROR_PARALLELISM: "1"
+        run: bash test/e2e/kind.sh
+
+      - name: Run cache-mode replay
+        if: ${{ inputs.run-cache-replay && matrix.platform_mode == 'tenant' }}
+        env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/.e2e-artifacts/kind-tenant-cache
+          E2E_SCENARIOS: ${{ inputs.cache-scenarios }}
+          E2E_PLATFORM_MODE: ${{ matrix.platform_mode }}
+          E2E_CACHE_MODE: "1"
+          E2E_KEEP_CLUSTER: "1"
+          E2E_IMAGE_BUILD_PARALLELISM: "1"
+          E2E_IMAGE_MIRROR_PARALLELISM: "1"
+        run: bash test/e2e/kind.sh
+
+      - name: Cleanup Kind resources
+        if: always()
+        run: |
+          kind delete cluster --name "${CLUSTER_NAME}" || true
+          docker rm -f "${LOCAL_REGISTRY_NAME}" || true
+
+      - name: Upload e2e artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pre-release-kind-e2e-${{ matrix.platform_mode }}-artifacts
+          path: .e2e-artifacts
+          if-no-files-found: ignore

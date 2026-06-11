@@ -13,10 +13,10 @@ RUN cd services/mcp-gateway && go mod download
 # whole directory (rather than *.go) picks up subpackages, embedded assets,
 # and any non-Go source files added later.
 COPY services/mcp-gateway/ ./services/mcp-gateway/
-# GOARCH is left unset so Docker BuildKit's --platform can produce arm64
-# images (Apple Silicon, Graviton, etc.) without a Dockerfile change.
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 RUN cd services/mcp-gateway && \
-    CGO_ENABLED=0 GOOS=linux go build -o /out/mcp-gateway .
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /out/mcp-gateway .
 
 FROM gcr.io/distroless/base-debian12
 WORKDIR /app

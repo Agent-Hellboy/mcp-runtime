@@ -17,6 +17,12 @@ Numbers measured on a Kind cluster are not production numbers. The point is
 **relative**: did this branch regress vs `main` or vs the last recorded
 baseline.
 
+Regression evidence contract: do not report a perf pass from a single request
+or current-branch-only sample. A pass requires baseline comparison, warmup,
+scenario sample counts, p50/p95/p99, and the configured regression threshold;
+missing baseline or live cluster access is **blocked** unless the user accepts
+baseline creation as the task.
+
 ## Step 1 — Confirm precondition
 
 ```bash
@@ -43,7 +49,7 @@ kubectl -n mcp-sentinel get deploy -o jsonpath='{range .items[*]}{.metadata.name
 
 | Diff touches | Scenarios to run |
 |---|---|
-| `services/mcp-proxy/**`, `pkg/access/**` | S1, S2 (gateway hot path) |
+| `services/mcp-gateway/**`, `pkg/access/**` | S1, S2 (gateway hot path) |
 | `internal/operator/**` | S4 (reconcile burst) |
 | `services/api/**`, `services/processor/**`, `services/ingest/**` | S3 (analytics) |
 | `services/ui/**` static only | Skip — UI is not the hot path |
@@ -232,7 +238,7 @@ kubectl logs -n mcp-sentinel deploy/mcp-sentinel-processor --since=2m | tail -40
 ```
 
 Record the suspected hot path with file:line references in
-`services/mcp-proxy/**`, `pkg/access/**`, `services/api/**`, or
+`services/mcp-gateway/**`, `pkg/access/**`, `services/api/**`, or
 `internal/operator/**` based on which scenario regressed.
 
 ## Step 10 — Report

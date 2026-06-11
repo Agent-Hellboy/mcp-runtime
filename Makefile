@@ -8,6 +8,10 @@
 BINARY_NAME ?= mcp-runtime
 BUILD_DIR ?= bin
 GOCACHE ?= $(CURDIR)/.gocache
+VERSION ?= $(shell git describe --tags --match 'v*' --dirty --always 2>/dev/null || echo dev)
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS ?= -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_DATE)
 export GOCACHE
 
 
@@ -26,19 +30,19 @@ all: build ## Default target: build CLI
 build: ## Build CLI binary for current platform.
 	@echo "Building $(BINARY_NAME) CLI..."
 	@mkdir -p $(BUILD_DIR)
-	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/mcp-runtime
+	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/mcp-runtime
 
 build-all: ## Build CLI for all Unix platforms (macOS and Linux, ARM64 and AMD64).
 	@echo "Building for all Unix platforms..."
 	@mkdir -p $(BUILD_DIR)
 	@echo "Building macOS ARM64..."
-	GOOS=darwin GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/mcp-runtime
+	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/mcp-runtime
 	@echo "Building macOS AMD64..."
-	GOOS=darwin GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/mcp-runtime
+	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/mcp-runtime
 	@echo "Building Linux ARM64..."
-	GOOS=linux GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/mcp-runtime
+	GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/mcp-runtime
 	@echo "Building Linux AMD64..."
-	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/mcp-runtime
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/mcp-runtime
 	@echo "Build complete. Binaries in $(BUILD_DIR)/"
 
 build-unix: build-all ## Alias for build-all to keep CI targets stable.
@@ -51,13 +55,13 @@ dev: build ## Build and run CLI in development mode.
 deps: deps-check deps-go ## Verify host tools, then download Go modules (Go 1.25+, docker, kubectl).
 
 deps-go: ## Go mod download and tidy (root) plus go mod download for each nested module in services/ and examples/.
-	@./hack/deps.sh go
+	@./hack/dev/deps.sh go
 
 deps-check: ## Verify toolchain on PATH. Set STRICT_DEPS_CHECK=1 to fail the recipe if a tool is missing.
-	@./hack/deps.sh check
+	@./hack/dev/deps.sh check
 
 deps-install: ## Best-effort install of host tools where supported (Go, Docker client, kubectl).
-	@./hack/deps.sh install
+	@./hack/dev/deps.sh install
 
 ##@ Testing
 

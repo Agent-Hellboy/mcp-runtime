@@ -14,6 +14,7 @@ OUT = ROOT / "docs" / "internals" / "go-package-reference.md"
 PACKAGES = [
     ("API types", ["go", "doc", "-all", "./api/v1alpha1"]),
     ("Metadata helpers", ["go", "doc", "-all", "./pkg/metadata"]),
+    ("Publish scope helpers", ["go", "doc", "-all", "./pkg/publishscope"]),
     ("Agent adapters", ["go", "doc", "-all", "./internal/agentadapter"]),
     ("Operator internals", ["go", "doc", "-all", "./internal/operator"]),
     ("CLI command routing", ["go", "doc", "-all", "./internal/cli/root"]),
@@ -21,6 +22,7 @@ PACKAGES = [
     ("CLI Kubernetes helpers", ["go", "doc", "-all", "./internal/cli/kube"]),
     ("CLI Kubernetes errors", ["go", "doc", "-all", "./internal/cli/kubeerr"]),
     ("CLI cluster", ["go", "doc", "-all", "./internal/cli/cluster"]),
+    ("CLI cluster doctor", ["go", "doc", "-all", "./internal/cli/cluster/doctor"]),
     ("CLI cert-manager", ["go", "doc", "-all", "./internal/cli/certmanager"]),
     ("CLI platform API", ["go", "doc", "-all", "./internal/cli/platformapi"]),
     ("CLI platform status", ["go", "doc", "-all", "./internal/cli/platformstatus"]),
@@ -32,6 +34,7 @@ PACKAGES = [
     ("CLI setup asset paths", ["go", "doc", "-all", "./internal/cli/setup/assetpath"]),
     ("CLI setup ingress manifests", ["go", "doc", "-all", "./internal/cli/setup/ingressmanifest"]),
     ("CLI setup plan", ["go", "doc", "-all", "./internal/cli/setup/plan"]),
+    ("CLI setup platform", ["go", "doc", "-all", "./internal/cli/setup/platform"]),
     ("CLI binary", ["go", "doc", "-cmd", "./cmd/mcp-runtime"]),
     ("Operator binary", ["go", "doc", "-cmd", "./cmd/operator"]),
 ]

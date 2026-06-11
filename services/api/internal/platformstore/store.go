@@ -11,6 +11,7 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// Open connects to Postgres, applies schema migrations, and returns a Store.
 func Open(ctx context.Context, dsn string, jwtSecret []byte) (*Store, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -31,6 +32,7 @@ func Open(ctx context.Context, dsn string, jwtSecret []byte) (*Store, error) {
 	return s, nil
 }
 
+// NewForTest returns an in-memory Store shell for tests that stub persistence.
 func NewForTest(jwtSecret []byte) *Store {
 	return &Store{jwtSecret: jwtSecret}
 }

@@ -7,6 +7,7 @@ Available Commands:
   apply       Apply a session manifest
   delete      Delete an access session
   get         Get an access session
+  init        Initialize an MCPAgentSession manifest
   list        List access sessions
   revoke      Revoke an agent session
   unrevoke    Clear the revoked flag on an agent session
@@ -16,6 +17,6 @@ Flags:
 
 Global Flags:
       --debug      Enable debug mode with structured error logging
-      --use-kube   Use kubectl and local kubeconfig instead of the platform API for supported commands
+      --use-kube   Use direct Kubernetes mode with kubectl; requires admin/operator cluster access (admin/dev/test only)
 
 Use "mcp-runtime access session [command] --help" for more information about a command.

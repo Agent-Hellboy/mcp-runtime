@@ -52,6 +52,15 @@ const (
 	RolloutStrategyCanary        RolloutStrategy = "Canary"
 )
 
+// PublishScope selects the platform catalog or tenant boundary for publishing.
+type PublishScope string
+
+const (
+	PublishScopeTenant PublishScope = "tenant"
+	PublishScopeOrg    PublishScope = "org"
+	PublishScopePublic PublishScope = "public"
+)
+
 // ServerMetadata defines the metadata for an MCP server.
 type ServerMetadata struct {
 	// Name is the unique name of the MCP server.
@@ -92,6 +101,9 @@ type ServerMetadata struct {
 
 	// Namespace is the Kubernetes namespace (defaults to "mcp-servers").
 	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
+
+	// Scope selects a publish destination: tenant, org, or public.
+	Scope PublishScope `yaml:"scope,omitempty" json:"scope,omitempty"`
 
 	// TeamID is the stable platform team identifier that owns the server.
 	TeamID string `yaml:"teamID,omitempty" json:"teamID,omitempty"`

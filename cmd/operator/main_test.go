@@ -142,6 +142,15 @@ func TestIngressReadinessModeFromEnv(t *testing.T) {
 	})
 }
 
+func TestBoolFromEnv(t *testing.T) {
+	if !boolFromEnv(" true ") {
+		t.Fatal("expected true value")
+	}
+	if boolFromEnv("nope") {
+		t.Fatal("expected invalid value to be false")
+	}
+}
+
 func TestParseConfig(t *testing.T) {
 	t.Run("defaults", func(t *testing.T) {
 		fs := flag.NewFlagSet("test", flag.ContinueOnError)

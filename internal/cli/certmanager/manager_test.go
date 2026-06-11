@@ -2,6 +2,9 @@ package certmanager
 
 import (
 	"bytes"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"os"
@@ -60,6 +63,90 @@ func TestCheckCASecretWithKubectlError(t *testing.T) {
 
 	if err := checkCASecretWithKubectl(kubectl); !errors.Is(err, core.ErrCASecretNotFound) {
 		t.Fatalf("expected core.ErrCASecretNotFound, got %v", err)
+	}
+}
+
+func TestEnsureCASecretWithKubectlUsesExistingSecret(t *testing.T) {
+	mock := &core.MockExecutor{}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	created, err := ensureCASecretWithKubectl(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if created {
+		t.Fatal("expected existing secret to be reused")
+	}
+	if len(mock.Commands) != 1 {
+		t.Fatalf("expected only the secret lookup, got %d commands", len(mock.Commands))
+	}
+	if !commandHasArgs(mock.Commands[0], "get", "secret", certCASecretName, "-n", certManagerNamespace) {
+		t.Fatalf("unexpected args: %v", mock.Commands[0].Args)
+	}
+}
+
+func TestEnsureCASecretWithKubectlCreatesMissingSecret(t *testing.T) {
+	var applyCmd *core.MockCommand
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "secret", certCASecretName, "-n", certManagerNamespace) {
+				cmd.RunErr = errors.New("missing secret")
+			}
+			if commandHasArgs(spec, "apply", "-f", "-") {
+				applyCmd = cmd
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	created, err := ensureCASecretWithKubectl(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !created {
+		t.Fatal("expected missing secret to be generated")
+	}
+	if applyCmd == nil {
+		t.Fatal("expected generated secret apply command")
+	}
+	captured, err := io.ReadAll(applyCmd.StdinR)
+	if err != nil {
+		t.Fatalf("read apply stdin: %v", err)
+	}
+	var secret struct {
+		Kind       string            `json:"kind"`
+		Type       string            `json:"type"`
+		Metadata   map[string]string `json:"metadata"`
+		StringData map[string]string `json:"stringData"`
+	}
+	if err := json.Unmarshal(captured, &secret); err != nil {
+		t.Fatalf("unmarshal generated secret: %v\n%s", err, string(captured))
+	}
+	if secret.Kind != "Secret" || secret.Type != "kubernetes.io/tls" {
+		t.Fatalf("unexpected generated secret shape: %#v", secret)
+	}
+	if secret.Metadata["name"] != certCASecretName || secret.Metadata["namespace"] != certManagerNamespace {
+		t.Fatalf("unexpected generated secret metadata: %#v", secret.Metadata)
+	}
+	certBlock, _ := pem.Decode([]byte(secret.StringData["tls.crt"]))
+	if certBlock == nil {
+		t.Fatalf("generated tls.crt is not PEM encoded: %q", secret.StringData["tls.crt"])
+	}
+	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse generated CA certificate: %v", err)
+	}
+	if !cert.IsCA {
+		t.Fatal("generated certificate must be a CA")
+	}
+	keyBlock, _ := pem.Decode([]byte(secret.StringData["tls.key"]))
+	if keyBlock == nil {
+		t.Fatal("generated tls.key is not PEM encoded")
+	}
+	if _, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes); err != nil {
+		t.Fatalf("parse generated CA private key: %v", err)
 	}
 }
 
@@ -505,6 +592,41 @@ func TestCheckRegistryCertificateOwnershipWithKubectl(t *testing.T) {
 			t.Fatalf("expected sorted certificate names, got: %v", err)
 		}
 	})
+}
+
+func TestRegistryTLSCertificateOwnersWrapsListError(t *testing.T) {
+	cause := errors.New("kubectl get certificates failed")
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "certificates", "-n", core.NamespaceRegistry, "-o", "json") {
+				cmd.RunFunc = func() error {
+					if cmd.StderrW != nil {
+						_, _ = cmd.StderrW.Write([]byte("forbidden"))
+					}
+					return cause
+				}
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	_, err := registryTLSCertificateOwners(kubectl)
+	if !errors.Is(err, cause) {
+		t.Fatalf("registryTLSCertificateOwners() error = %v, want errors.Is(..., cause)", err)
+	}
+}
+
+func TestRegistryTLSCertificateOwnersWrapsParseError(t *testing.T) {
+	mock := certificateListMock(`{"items":[`)
+	kubectl := core.NewTestKubectlClient(mock)
+
+	_, err := registryTLSCertificateOwners(kubectl)
+	var cause *json.SyntaxError
+	if !errors.As(err, &cause) {
+		t.Fatalf("registryTLSCertificateOwners() error = %v, want json syntax error in chain", err)
+	}
 }
 
 func TestApplyClusterIssuerWithKubectlError(t *testing.T) {

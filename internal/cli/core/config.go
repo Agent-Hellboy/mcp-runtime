@@ -36,6 +36,7 @@ type CLIConfig struct {
 	SkopeoImage               string
 	OperatorImage             string // Override for operator image
 	GatewayProxyImage         string // Optional default image for the MCP gateway sidecar
+	ImagePlatform             string // Optional Docker image platform for setup-built images, e.g. linux/amd64
 	GatewayOTLPEndpoint       string // Optional OTLP/HTTP endpoint for MCP gateway sidecar tracing
 	AnalyticsIngestURL        string // Optional analytics ingest URL override for the MCP gateway sidecar
 	IngressReadinessMode      string // Optional operator ingress readiness mode: strict or permissive
@@ -87,6 +88,7 @@ func LoadCLIConfig() *CLIConfig {
 		SkopeoImage:                 getEnvOrDefault("MCP_SKOPEO_IMAGE", defaultSkopeoImage),
 		OperatorImage:               os.Getenv("MCP_OPERATOR_IMAGE"), // No default, empty means auto
 		GatewayProxyImage:           os.Getenv("MCP_GATEWAY_PROXY_IMAGE"),
+		ImagePlatform:               os.Getenv("MCP_IMAGE_PLATFORM"),
 		GatewayOTLPEndpoint:         os.Getenv("MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT"),
 		AnalyticsIngestURL:          getEnvCompat("MCP_SENTINEL_INGEST_URL", "MCP_ANALYTICS_INGEST_URL"),
 		IngressReadinessMode:        os.Getenv("MCP_INGRESS_READINESS_MODE"),

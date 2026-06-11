@@ -41,8 +41,9 @@ flowchart LR
 | Area | Start here | Why it matters |
 |---|---|---|
 | CLI entrypoint | [`cmd-mcp-runtime.md`](cmd-mcp-runtime.md) | Shows how the binary starts, wires foldered Cobra commands, and reports errors. |
-| CLI implementation | [`internal-cli.md`](internal-cli.md) | Covers the `internal/cli/root` routing layer plus setup, bootstrap, registry, server, access, status, sentinel, auth, and pipeline behavior. |
+| CLI implementation | [`internal-cli.md`](internal-cli.md) | Covers the `internal/cli/root` routing layer plus setup, bootstrap, registry, server, access, adapter, auth, team, status, and sentinel behavior. |
 | Kubernetes API types | [`api-types.md`](api-types.md) | Defines the public CRD shapes consumed by users, tests, and the operator. |
+| Request flows | [`request-flows.md`](request-flows.md) | Maps CLI, UI/API, registry, adapter, MCP runtime, policy, analytics, tenancy, and pre-release paths to components and E2E scenarios. |
 | Generated Go reference | [`go-package-reference.md`](go-package-reference.md) | Captures `go doc` output for the main contributor-facing packages. |
 | Agent adapters | `internal/agentadapter/`, `internal/cli/adapter/` | HTTP proxy and stdio shim behavior for forwarding agent MCP traffic with issued governance headers; exposed via `mcp-runtime adapter proxy/stdio`. |
 | Operator | [`cmd-operator.md`](cmd-operator.md) | Explains manager startup and reconciliation from desired state to Kubernetes resources. |
@@ -67,8 +68,8 @@ sequenceDiagram
     participant R as Registry
     participant W as Workloads
 
-    U->>CLI: setup / server apply / pipeline deploy
-    CLI->>K: apply CRDs, manifests, MCPServer
+    U->>CLI: setup / server deploy (platform API) or server apply --use-kube
+    CLI->>K: apply CRDs, manifests, MCPServer (platform API or --use-kube)
     CLI->>R: build or push images when requested
     K-->>O: watch MCPServer changes
     O->>K: create or update Deployment, Service, Ingress
@@ -149,8 +150,9 @@ Keep shared behavior in `pkg/` only when multiple binaries or services need it. 
 2. Read [CLI internals](internal-cli.md) and [cmd/mcp-runtime](cmd-mcp-runtime.md) to see how users create, inspect, and deploy resources.
 3. Read [operator internals](cmd-operator.md) to understand how `MCPServer` state becomes Kubernetes workloads and ingress.
 4. Read [config and examples](config-and-examples.md), then run or inspect the example server manifests.
-5. Read [tests](tests.md) before making changes; it shows the fastest feedback loop and the broader CI safety net.
-6. Use the change playbooks below to choose the narrowest useful tests before
+5. Read [request flows](request-flows.md) when a change crosses CLI, UI, API, registry, gateway, policy, analytics, or tenant boundaries.
+6. Read [tests](tests.md) before making changes; it shows the fastest feedback loop and the broader CI safety net.
+7. Use the change playbooks below to choose the narrowest useful tests before
    broadening to full CI coverage.
 
 ## Refreshing Package Reference
@@ -177,6 +179,7 @@ workflows.
 | Change reconciliation behavior | `internal/operator`, API types, k8s helpers | `go test ./internal/operator/... -race -count=1` |
 | Change governance policy | `pkg/access`, `pkg/policy`, `services/api`, `services/mcp-gateway`, access CRDs | targeted package/service tests plus e2e policy scenario |
 | Change agent adapters | `internal/agentadapter`, `internal/cli/adapter`, `docs/agent-adapters.md` | `go test ./internal/agentadapter ./internal/cli/adapter -count=1` |
+| Change team provisioning or membership | `internal/cli/team`, `services/api/internal/runtimeapi`, `services/api/internal/platformstore`, `docs/multi-team.md` | `go test ./internal/cli/team -count=1` plus service API tests inside `services/api` |
 | Change Sentinel event storage | `pkg/events`, `pkg/clickhouse`, `services/ingest`, `services/processor`, `services/api`, `services/mcp-gateway` | package tests plus touched service tests |
 | Change docs site behavior | `docs/mkdocs.yml`, `docs/nginx.conf`, Markdown pages | MkDocs build or docs container build |
 

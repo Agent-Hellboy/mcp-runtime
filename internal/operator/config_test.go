@@ -188,9 +188,12 @@ func TestLoadOperatorConfig(t *testing.T) {
 	t.Setenv("MCP_CLUSTER_NAME", "prod-cluster")
 	t.Setenv("DEFAULT_INGRESS_HOST", "mcp.example.com")
 	t.Setenv("DEFAULT_INGRESS_CLASS", "nginx")
+	t.Setenv("MCP_DEFAULT_INGRESS_ENTRYPOINTS", "websecure")
+	t.Setenv("MCP_DEFAULT_INGRESS_TLS", "true")
 	t.Setenv("MCP_INGRESS_READINESS_MODE", "permissive")
 	t.Setenv("PROVISIONED_REGISTRY_URL", "registry.example.com:5000")
 	t.Setenv("MCP_REGISTRY_ENDPOINT", "10.43.39.164:5000")
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
 	t.Setenv("PROVISIONED_REGISTRY_USERNAME", "user")
 	t.Setenv("PROVISIONED_REGISTRY_PASSWORD", "pass")
 	t.Setenv("PROVISIONED_REGISTRY_SECRET_NAME", "registry-creds")
@@ -206,6 +209,12 @@ func TestLoadOperatorConfig(t *testing.T) {
 	if cfg.DefaultIngressClass != "nginx" {
 		t.Fatalf("expected ingress class override, got %q", cfg.DefaultIngressClass)
 	}
+	if cfg.DefaultIngressEntryPoints != "websecure" {
+		t.Fatalf("expected ingress entrypoints override, got %q", cfg.DefaultIngressEntryPoints)
+	}
+	if !cfg.DefaultIngressTLS {
+		t.Fatal("expected ingress TLS override")
+	}
 	if cfg.IngressReadinessMode != IngressReadinessModePermissive {
 		t.Fatalf("expected ingress readiness mode override, got %q", cfg.IngressReadinessMode)
 	}
@@ -214,6 +223,9 @@ func TestLoadOperatorConfig(t *testing.T) {
 	}
 	if cfg.InternalRegistryEndpoint != "10.43.39.164:5000" {
 		t.Fatalf("expected internal registry endpoint override, got %q", cfg.InternalRegistryEndpoint)
+	}
+	if cfg.RegistryPullHost != "10.43.39.164:5000" {
+		t.Fatalf("expected registry pull host override, got %q", cfg.RegistryPullHost)
 	}
 	if cfg.ProvisionedRegistryUsername != "user" || cfg.ProvisionedRegistryPassword != "pass" {
 		t.Fatalf("expected registry credentials, got %q/%q", cfg.ProvisionedRegistryUsername, cfg.ProvisionedRegistryPassword)

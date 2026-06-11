@@ -14,7 +14,7 @@ cluster posture — those live in `security-audit-platform` and
 `k8s-hardening-audit`.
 
 Findings use the shared template at
-`.codex/skills/_shared/FINDINGS-TEMPLATE.md`.
+`../_shared/FINDINGS-TEMPLATE.md`.
 
 ## Step 1 — Inventory the build inputs
 
@@ -60,11 +60,11 @@ docker build --pull -f services/api/Dockerfile -t mcp-sentinel-api:audit service
 docker build --pull -f services/ui/Dockerfile -t mcp-sentinel-ui:audit services/ui
 docker build --pull -f services/ingest/Dockerfile -t mcp-sentinel-ingest:audit services/ingest
 docker build --pull -f services/processor/Dockerfile -t mcp-sentinel-processor:audit services/processor
-docker build --pull -f services/mcp-proxy/Dockerfile -t mcp-proxy:audit services/mcp-proxy
+docker build --pull -f services/mcp-gateway/Dockerfile -t mcp-sentinel-mcp-gateway:audit services/mcp-gateway
 
 for img in mcp-runtime-operator:audit mcp-sentinel-api:audit \
            mcp-sentinel-ui:audit mcp-sentinel-ingest:audit \
-           mcp-sentinel-processor:audit mcp-proxy:audit; do
+           mcp-sentinel-processor:audit mcp-sentinel-mcp-gateway:audit; do
   trivy image --exit-code 0 --severity CRITICAL,HIGH --ignore-unfixed \
               --vuln-type os,library --format table "$img"
 done
@@ -93,7 +93,7 @@ go install github.com/anchore/syft/cmd/syft@latest
 
 for img in mcp-runtime-operator:audit mcp-sentinel-api:audit \
            mcp-sentinel-ui:audit mcp-sentinel-ingest:audit \
-           mcp-sentinel-processor:audit mcp-proxy:audit; do
+           mcp-sentinel-processor:audit mcp-sentinel-mcp-gateway:audit; do
   out=$(echo "$img" | tr ':/' '__').spdx.json
   syft "$img" -o spdx-json="/tmp/$out"
 done
@@ -187,7 +187,7 @@ For every workflow under `.github/workflows/`:
 
 ## Step 10 — Report
 
-Use `.codex/skills/_shared/FINDINGS-TEMPLATE.md`. For supply-chain audits,
+Use `../_shared/FINDINGS-TEMPLATE.md`. For supply-chain audits,
 include in the Summary section:
 
 - Total Go modules and direct vs transitive count.

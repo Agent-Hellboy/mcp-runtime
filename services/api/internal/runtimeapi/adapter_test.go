@@ -94,7 +94,7 @@ func TestAdapterSessionIssuesNewSessionFromMatchingGrant(t *testing.T) {
 		ServerName:     "demo",
 		Namespace:      "mcp-team-acme",
 		AgentID:        "ops-agent",
-		RequestedTrust: "mid",
+		RequestedTrust: "medium",
 	})
 	req = req.WithContext(withPrincipal(req.Context(), fx.principal))
 	w := httptest.NewRecorder()
@@ -106,8 +106,8 @@ func TestAdapterSessionIssuesNewSessionFromMatchingGrant(t *testing.T) {
 	if got.HumanID != "user-123" || got.AgentID != "ops-agent" || got.TeamID != "team-acme" {
 		t.Fatalf("identity = %#v, want user-123/ops-agent/team-acme", got)
 	}
-	if got.ConsentedTrust != "mid" {
-		t.Fatalf("consentedTrust = %q, want mid (requested, within max=high)", got.ConsentedTrust)
+	if got.ConsentedTrust != "medium" {
+		t.Fatalf("consentedTrust = %q, want medium (requested, within max=high)", got.ConsentedTrust)
 	}
 	if got.PolicyVersion != "v3" {
 		t.Fatalf("policyVersion = %q, want v3 (from grant)", got.PolicyVersion)
@@ -120,6 +120,63 @@ func TestAdapterSessionIssuesNewSessionFromMatchingGrant(t *testing.T) {
 	}
 	if got.ExpiresAt.Before(time.Now()) {
 		t.Fatalf("expiresAt = %v, must be in the future", got.ExpiresAt)
+	}
+}
+
+func TestAdapterSessionIssuesCrossTeamSessionFromGrantedTeam(t *testing.T) {
+	grant := mcpv1alpha1.MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "globex-to-acme", Namespace: "mcp-team-acme"},
+		Spec: mcpv1alpha1.MCPAccessGrantSpec{
+			ServerRef: mcpv1alpha1.ServerReference{Name: "demo", Namespace: "mcp-team-acme"},
+			Subject:   mcpv1alpha1.SubjectRef{AgentID: "ops-agent", TeamID: "team-globex"},
+			MaxTrust:  mcpv1alpha1.TrustLevel("low"),
+		},
+	}
+	fx := newAdapterTestFixture(t, grant)
+	fx.principal.Namespace = "mcp-team-globex"
+	fx.principal.Teams = []platformstore.PrincipalTeam{
+		{ID: "team-globex", Namespace: "mcp-team-globex"},
+	}
+	req := adapterRequest(t, adapterSessionRequest{
+		ServerName: "demo",
+		Namespace:  "mcp-team-acme",
+		AgentID:    "ops-agent",
+	})
+	req = req.WithContext(withPrincipal(req.Context(), fx.principal))
+	w := httptest.NewRecorder()
+	fx.server.HandleAdapterSession(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	got := decodeAdapterResponse(t, w)
+	if got.TeamID != "team-globex" {
+		t.Fatalf("teamID = %q, want team-globex", got.TeamID)
+	}
+}
+
+func TestAdapterSessionRejectsGrantForUnheldTeam(t *testing.T) {
+	grant := mcpv1alpha1.MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "globex-to-acme", Namespace: "mcp-team-acme"},
+		Spec: mcpv1alpha1.MCPAccessGrantSpec{
+			ServerRef: mcpv1alpha1.ServerReference{Name: "demo", Namespace: "mcp-team-acme"},
+			Subject:   mcpv1alpha1.SubjectRef{AgentID: "ops-agent", TeamID: "team-globex"},
+			MaxTrust:  mcpv1alpha1.TrustLevel("low"),
+		},
+	}
+	fx := newAdapterTestFixture(t, grant)
+	req := adapterRequest(t, adapterSessionRequest{
+		ServerName: "demo",
+		Namespace:  "mcp-team-acme",
+		AgentID:    "ops-agent",
+	})
+	req = req.WithContext(withPrincipal(req.Context(), fx.principal))
+	w := httptest.NewRecorder()
+	fx.server.HandleAdapterSession(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s, want 403", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "no enabled MCPAccessGrant") {
+		t.Fatalf("body = %q, want 'no enabled MCPAccessGrant'", w.Body.String())
 	}
 }
 
@@ -203,16 +260,19 @@ func TestAdapterSessionPicksHighestTrustWithDeterministicTiebreak(t *testing.T) 
 		},
 	}
 	fx := newAdapterTestFixture(t, low, newer, older)
-	g, err := fx.server.selectAdapterGrant(
+	g, teamID, err := fx.server.selectAdapterGrant(
 		t.Context(),
 		"mcp-team-acme", "demo",
-		"user-123", "ops-agent", "team-acme",
+		"user-123", "ops-agent", []string{"team-acme"}, "team-acme", false,
 	)
 	if err != nil {
 		t.Fatalf("selectAdapterGrant: %v", err)
 	}
 	if g.Name != "g-older" {
 		t.Fatalf("selected = %q, want g-older (highest trust, oldest first for tiebreak)", g.Name)
+	}
+	if teamID != "team-acme" {
+		t.Fatalf("teamID = %q, want team-acme", teamID)
 	}
 }
 
@@ -224,6 +284,21 @@ func TestAdapterSessionRequiresServerName(t *testing.T) {
 	fx.server.HandleAdapterSession(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestAdapterSessionRequiresResolvedNamespace(t *testing.T) {
+	fx := newAdapterTestFixture(t)
+	fx.principal.Namespace = ""
+	req := adapterRequest(t, adapterSessionRequest{ServerName: "demo", AgentID: "ops-agent"})
+	req = req.WithContext(withPrincipal(req.Context(), fx.principal))
+	w := httptest.NewRecorder()
+	fx.server.HandleAdapterSession(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s, want 400", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "namespace is required") {
+		t.Fatalf("body = %q, want namespace validation error", w.Body.String())
 	}
 }
 

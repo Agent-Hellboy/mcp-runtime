@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -162,6 +163,9 @@ func TestLoadFromFile(t *testing.T) {
 				if got.Namespace != want.Namespace {
 					t.Errorf("server[%d].Namespace = %q, want %q", i, got.Namespace, want.Namespace)
 				}
+				if got.Scope != want.Scope {
+					t.Errorf("server[%d].Scope = %q, want %q", i, got.Scope, want.Scope)
+				}
 				if got.TeamID != want.TeamID {
 					t.Errorf("server[%d].TeamID = %q, want %q", i, got.TeamID, want.TeamID)
 				}
@@ -195,6 +199,11 @@ func TestLoadFromFile(t *testing.T) {
 }
 
 func TestSetDefaults(t *testing.T) {
+	t.Setenv("MCP_PLATFORM_DOMAIN", "")
+	t.Setenv("MCP_MCP_INGRESS_HOST", "")
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "")
+	t.Setenv("MCP_REGISTRY_HOST", "")
+
 	tests := []struct {
 		name   string
 		server *ServerMetadata
@@ -323,9 +332,28 @@ func TestSetDefaults(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "applies-public-scope-defaults",
+			server: &ServerMetadata{
+				Name:  "public-server",
+				Scope: PublishScope("Public"),
+			},
+			want: &ServerMetadata{
+				Name:      "public-server",
+				Scope:     PublishScopePublic,
+				Image:     "registry.local/public/public-server",
+				ImageTag:  "latest",
+				Route:     "/public-server/mcp",
+				Port:      8088,
+				Replicas:  int32Ptr(1),
+				Namespace: "mcp-servers-public",
+			},
+		},
 	}
 	for _, test := range tests {
-		setDefaults(test.server)
+		if err := setDefaults(test.server); err != nil {
+			t.Fatalf("setDefaults(%q) unexpected error: %v", test.name, err)
+		}
 		if test.server.Name != test.want.Name {
 			t.Errorf("setDefaults(%q) = %q, want %q", test.server.Name, test.server.Name, test.want.Name)
 		}
@@ -346,6 +374,9 @@ func TestSetDefaults(t *testing.T) {
 		}
 		if test.server.Namespace != test.want.Namespace {
 			t.Errorf("setDefaults(%q) = %q, want %q", test.server.Namespace, test.server.Namespace, test.want.Namespace)
+		}
+		if test.server.Scope != test.want.Scope {
+			t.Errorf("setDefaults Scope = %q, want %q", test.server.Scope, test.want.Scope)
 		}
 		if !gatewayConfigEqual(test.server.Gateway, test.want.Gateway) {
 			t.Errorf("setDefaults Gateway = %#v, want %#v", test.server.Gateway, test.want.Gateway)
@@ -421,7 +452,9 @@ func TestSetDefaultsImageResolution(t *testing.T) {
 			for k, v := range tc.env {
 				t.Setenv(k, v)
 			}
-			setDefaults(tc.input)
+			if err := setDefaults(tc.input); err != nil {
+				t.Fatalf("setDefaults() unexpected error: %v", err)
+			}
 			if tc.input.Image != tc.wantImage {
 				t.Fatalf("Image = %q, want %q", tc.input.Image, tc.wantImage)
 			}
@@ -530,6 +563,34 @@ servers:
 			t.Errorf("LoadFromDirectory() servers = %d, want 1", len(registry.Servers))
 		}
 	})
+}
+
+func TestLoadFromFileRejectsInvalidScope(t *testing.T) {
+	tmpDir := t.TempDir()
+	metadataFile := filepath.Join(tmpDir, "servers.yaml")
+	if err := os.WriteFile(metadataFile, []byte(`version: v1
+servers:
+  - name: bad-scope
+    scope: internet
+`), 0o600); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	if _, err := LoadFromFile(metadataFile); err == nil {
+		t.Fatal("expected invalid scope error")
+	} else if !strings.Contains(err.Error(), "scope") {
+		t.Fatalf("error = %v, want scope validation", err)
+	}
+}
+
+func TestSetDefaultsRejectsInvalidScope(t *testing.T) {
+	err := setDefaults(&ServerMetadata{Name: "bad-scope", Scope: PublishScope("internet")})
+	if err == nil {
+		t.Fatal("expected invalid scope error")
+	}
+	if !strings.Contains(err.Error(), "scope") {
+		t.Fatalf("error = %v, want scope validation", err)
+	}
 }
 
 func int32Ptr(i int32) *int32 {

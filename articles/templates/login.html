@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <section class="wrap login-panel" aria-labelledby="login-title">
+    <div>
+      <p class="eyebrow">Reader account</p>
+      <h1 id="login-title">Sign in</h1>
+      <p>Use Google to comment on MCP Runtime articles.</p>
+    </div>
+
+    <div class="google-login-box">
+      <div
+        id="g_id_onload"
+        data-client_id="{{ google_client_id }}"
+        data-callback="handleGoogleCredential"
+        data-auto_prompt="false"
+      ></div>
+      <div
+        class="g_id_signin"
+        data-type="standard"
+        data-theme="outline"
+        data-size="large"
+        data-text="continue_with"
+        data-shape="pill"
+        data-width="280"
+      ></div>
+      <form id="google-token-form" method="post" action="{{ url_for('auth_google_token') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+        <input type="hidden" name="credential" value="" />
+      </form>
+    </div>
+  </section>
+  <script src="{{ url_for('static', filename='login.js', v=static_version) }}"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+{% endblock %}

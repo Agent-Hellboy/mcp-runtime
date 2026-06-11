@@ -24,7 +24,15 @@ func (s *gatewayServer) handleOAuthProtectedResource(w http.ResponseWriter, r *h
 		return false
 	}
 	if !policypkg.PolicyUsesOAuth(policy) {
-		http.NotFound(w, r)
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		if r.Method != http.MethodHead {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":            "oauth_not_enabled",
+				"message":          "This MCP server uses MCP Runtime header/session governance. Connect through the mcp-runtime adapter proxy or stdio adapter instead of OAuth discovery.",
+				"adapter_required": true,
+			})
+		}
 		return true
 	}
 	switch r.Method {

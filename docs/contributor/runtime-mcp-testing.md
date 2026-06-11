@@ -7,7 +7,7 @@ gateway policy, and clean up stale runtime objects in a contributor cluster.
 
 `mcp-servers` is the legacy single-team/example namespace used by the local
 testing manifests below. In default `tenant` platform mode, signed-in users see
-only their own user/team namespaces. `--platform-mode org` uses
+only team namespaces they belong to. `--platform-mode org` uses
 `mcp-servers-org` as the shared authenticated catalog, and
 `--platform-mode public` uses `mcp-servers-public` as the anonymous preview
 catalog. Team-specific MCPs belong in namespaces such as `mcp-team-tenant-a`.
@@ -17,40 +17,48 @@ Expected UI/API behavior:
 | Principal | Expected catalog |
 |---|---|
 | Anonymous | `401` for `/api/runtime/servers`, except public mode can read `mcp-servers-public` |
-| Normal user in tenant mode | MCPs from their own user namespace |
+| Normal user in tenant mode | MCPs from team namespaces they belong to |
 | Tenant user in tenant mode | MCPs from their own team namespace |
 | User in org mode | MCPs from `mcp-servers-org` |
 | User in public mode | MCPs from `mcp-servers-public` |
 | Admin | Cluster-wide management visibility, with namespace/team checks on writes |
 
-## Deploy the Bundled Example
+## Deploy the Bundled Workspace Assistant
 
-The bundled Go example is useful for disposable local testing. Keep it separate
-from long-lived shared-cluster MCPs.
+The bundled workspace assistant sample is useful for disposable local testing.
+Keep it separate from long-lived shared-cluster MCPs.
 
 Create metadata:
 
 ```bash
-cat > /tmp/go-example-mcp.yaml <<'EOF'
+cat > /tmp/workspace-assistant-mcp.yaml <<'EOF'
 version: v1
 servers:
-  - name: go-example-mcp
-    description: Go MCP example server with smoke and text transformation tools.
-    route: /go-example-mcp/mcp
-    publicPathPrefix: go-example-mcp
+  - name: workspace-assistant-mcp
+    description: Workspace assistant MCP server for task cards, release notes, and text cleanup.
+    route: /workspace-assistant-mcp/mcp
+    publicPathPrefix: workspace-assistant-mcp
     port: 8088
     namespace: mcp-servers
     envVars:
       - name: MCP_PATH
-        value: /go-example-mcp/mcp
+        value: /workspace-assistant-mcp/mcp
     tools:
       - name: add
-        description: Add two numbers.
+        description: Add two numeric values.
         requiredTrust: low
         sideEffect: read
       - name: upper
-        description: Uppercase the provided message.
+        description: Convert text to uppercase for normalization checks.
         requiredTrust: medium
+        sideEffect: read
+      - name: create_task
+        description: Create a deterministic task card summary.
+        requiredTrust: low
+        sideEffect: write
+      - name: draft_release_note
+        description: Draft a compact release note from a change summary and impact.
+        requiredTrust: low
         sideEffect: read
     auth:
       mode: header
@@ -66,15 +74,16 @@ servers:
     gateway:
       enabled: true
     analytics:
-      enabled: true
       ingestURL: http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events
       apiKeySecretRef:
-        name: go-example-mcp-analytics
+        name: workspace-assistant-mcp-analytics-creds
         key: api-key
 EOF
 ```
 
-Create the analytics Secret:
+Create the analytics Secret when you apply raw YAML with `kubectl`. The
+platform-backed `mcp-runtime server deploy` path creates this per-server Secret
+automatically.
 
 ```bash
 API_KEY="$(
@@ -82,46 +91,50 @@ API_KEY="$(
     -o jsonpath='{.data.INGEST_API_KEYS}' | base64 -d | cut -d, -f1
 )"
 
-kubectl create secret generic go-example-mcp-analytics \
+kubectl create secret generic workspace-assistant-mcp-analytics-creds \
   -n mcp-servers \
   --from-literal=api-key="$API_KEY" \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-Build, push, generate, and deploy:
+Build, push, and deploy:
 
 ```bash
-./bin/mcp-runtime server build image go-example-mcp \
-  --metadata-file /tmp/go-example-mcp.yaml \
-  --dockerfile examples/go-mcp-server/Dockerfile \
-  --context examples/go-mcp-server \
-  --registry registry.registry.svc.cluster.local:5000 \
+./bin/mcp-runtime server build image workspace-assistant-mcp \
+  --metadata-file /tmp/workspace-assistant-mcp.yaml \
+  --dockerfile examples/workspace-assistant-mcp/Dockerfile \
+  --context examples/workspace-assistant-mcp \
   --tag dev
 
 ./bin/mcp-runtime auth login --api-url http://localhost:18080
 
 ./bin/mcp-runtime registry push \
-  --image registry.registry.svc.cluster.local:5000/go-example-mcp:dev
+  --image workspace-assistant-mcp:dev
 
-rm -rf /tmp/go-example-mcp-manifests
-./bin/mcp-runtime pipeline generate \
-  --file /tmp/go-example-mcp.yaml \
-  --output /tmp/go-example-mcp-manifests
-
-./bin/mcp-runtime pipeline deploy --dir /tmp/go-example-mcp-manifests
-kubectl rollout status deploy/go-example-mcp -n mcp-servers --timeout=180s
+./bin/mcp-runtime server deploy workspace-assistant-mcp \
+  --scope tenant \
+  --metadata-file /tmp/workspace-assistant-mcp.yaml
+kubectl rollout status deploy/workspace-assistant-mcp -n mcp-servers --timeout=180s
 ```
 
 ## Inspect Runtime Outputs
 
 ```bash
-SERVER=go-example-mcp
+SERVER=workspace-assistant-mcp
 NAMESPACE=mcp-servers
 
 kubectl get mcpserver "$SERVER" -n "$NAMESPACE" -o yaml
 kubectl get deploy/"$SERVER" svc/"$SERVER" ingress/"$SERVER" -n "$NAMESPACE" -o wide
 kubectl get cm -n "$NAMESPACE" "${SERVER}-gateway-policy" -o yaml
+
+./bin/mcp-runtime auth login --api-url http://localhost:18080
 ./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE"
+```
+
+Admin/operator fallback when you need the raw ConfigMap JSON without platform auth:
+
+```bash
+./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE" --use-kube
 ```
 
 The MCP app container is usually distroless. Use logs and `kubectl describe`
@@ -139,7 +152,38 @@ kubectl logs -n "$NAMESPACE" "$POD" -c mcp-gateway
 Gateway policy requires both an access grant and an agent session when the
 server has `spec.session.required=true`.
 
-Use the CLI apply commands:
+Use `init` to scaffold manifests. Apply the grant through the platform API
+after `auth login`. Platform API **session apply requires an admin role** — use
+admin login (`admin@mcpruntime.org` in test mode), `--use-kube`, or `kubectl
+apply` for explicit curl sessions. For agent testing, prefer the adapter path
+documented below.
+
+```bash
+./bin/mcp-runtime auth login --api-url http://localhost:18080 \
+  --email admin@mcpruntime.org --password 'admin@123'
+
+./bin/mcp-runtime access grant init workspace-assistant-grant \
+  --namespace mcp-servers \
+  --server workspace-assistant-mcp \
+  --human-id local-user \
+  --agent-id local-agent \
+  --tool add --tool upper \
+  --trust high \
+  --output /tmp/grant.yaml
+
+./bin/mcp-runtime access session init local-session \
+  --namespace mcp-servers \
+  --server workspace-assistant-mcp \
+  --human-id local-user \
+  --agent-id local-agent \
+  --trust high \
+  --output /tmp/session.yaml
+
+./bin/mcp-runtime access grant apply --file /tmp/grant.yaml
+./bin/mcp-runtime access session apply --file /tmp/session.yaml
+```
+
+Admin/operator direct Kubernetes fallback:
 
 ```bash
 ./bin/mcp-runtime access grant apply --file /tmp/grant.yaml --use-kube
@@ -151,6 +195,12 @@ Then verify materialization:
 ```bash
 kubectl get mcpaccessgrant,mcpagentsession -n "$NAMESPACE" -o wide
 ./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE"
+```
+
+Raw ConfigMap inspection without platform auth (`--use-kube`):
+
+```bash
+./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE" --use-kube
 ```
 
 If the CRDs exist but the policy file does not include them, check:
@@ -194,7 +244,7 @@ Remove access resources first, then the server and single-purpose Secret:
 kubectl delete mcpagentsession <session-name> -n <namespace> --ignore-not-found
 kubectl delete mcpaccessgrant <grant-name> -n <namespace> --ignore-not-found
 kubectl delete mcpserver <server-name> -n <namespace> --ignore-not-found
-kubectl delete secret <server-name>-analytics -n <namespace> --ignore-not-found
+kubectl delete secret <server-name>-analytics-creds -n <namespace> --ignore-not-found
 ```
 
 Confirm the catalog through the UI/API after cleanup:

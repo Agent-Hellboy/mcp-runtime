@@ -16,6 +16,7 @@ import (
 	sentinelaccess "mcp-runtime/pkg/access"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	runtimeaccess "mcp-sentinel-api/internal/runtimeapi/access"
 )
 
 // Adapter-session bounds: the issued session's lifetime is constrained so a
@@ -69,11 +70,11 @@ type adapterSessionResponse struct {
 func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if s.accessMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 
@@ -89,22 +90,26 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 
 	principal, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "no principal on request"})
+		writeAPIError(w, http.StatusUnauthorized, "no principal on request")
 		return
 	}
 
 	if req.ServerName == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "serverName is required"})
+		writeAPIError(w, http.StatusBadRequest, "serverName is required")
 		return
 	}
 	if req.AgentID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agentID is required"})
+		writeAPIError(w, http.StatusBadRequest, "agentID is required")
 		return
 	}
 	if req.Namespace == "" {
 		// Default to the principal's primary namespace so single-team callers
 		// don't have to pass it on every request.
-		req.Namespace = principal.Namespace
+		req.Namespace = strings.TrimSpace(principal.Namespace)
+	}
+	if req.Namespace == "" {
+		writeAPIError(w, http.StatusBadRequest, "namespace is required")
+		return
 	}
 
 	humanID := strings.TrimSpace(principal.Subject)
@@ -112,38 +117,35 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 		humanID = strings.TrimSpace(principal.Email)
 	}
 	if humanID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "principal has no subject or email"})
+		writeAPIError(w, http.StatusUnauthorized, "principal has no subject or email")
 		return
 	}
 
-	teamID, err := principalTeamForNamespace(principal, req.Namespace)
-	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
-		return
-	}
+	teamIDs := adapterPrincipalTeamIDs(principal)
+	defaultTeamID := defaultAdapterSessionTeamID(principal, req.Namespace, teamIDs)
 
 	requestedTrust, err := parseAdapterTrust(req.RequestedTrust)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	requestedTTL, err := parseAdapterTTL(req.RequestedTTL)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	grant, err := s.selectAdapterGrant(ctx, req.Namespace, req.ServerName, humanID, req.AgentID, teamID)
+	grant, teamID, err := s.selectAdapterGrant(ctx, req.Namespace, req.ServerName, humanID, req.AgentID, teamIDs, defaultTeamID, principal.Role == roleAdmin)
 	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
 
 	consentedTrust := capTrust(requestedTrust, grant.Spec.MaxTrust)
-	policyVersion := defaultPolicyVersion(grant.Spec.PolicyVersion)
+	policyVersion := runtimeaccess.DefaultPolicyVersion(grant.Spec.PolicyVersion)
 	sessionName := adapterSessionName(humanID, req.AgentID, teamID, req.ServerName)
 	expiresAt := time.Now().UTC().Add(requestedTTL)
 
@@ -154,10 +156,10 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusOK, adapterSessionResponse{
 			Name:           existing.Name,
 			Namespace:      existing.Namespace,
-			HumanID:        existing.Spec.Subject.HumanID,
-			AgentID:        existing.Spec.Subject.AgentID,
-			TeamID:         existing.Spec.Subject.TeamID,
-			ServerName:     existing.Spec.ServerRef.Name,
+			HumanID:        string(existing.Spec.Subject.HumanID),
+			AgentID:        string(existing.Spec.Subject.AgentID),
+			TeamID:         string(existing.Spec.Subject.TeamID),
+			ServerName:     string(existing.Spec.ServerRef.Name),
 			ConsentedTrust: string(existing.Spec.ConsentedTrust),
 			PolicyVersion:  existing.Spec.PolicyVersion,
 			ExpiresAt:      existing.Spec.ExpiresAt.Time,
@@ -169,17 +171,17 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 	session := &sentinelaccess.MCPAgentSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sessionName,
-			Namespace: defaultAccessNamespace(req.Namespace),
+			Namespace: runtimeaccess.DefaultAccessNamespace(req.Namespace),
 		},
 		Spec: sentinelaccess.MCPAgentSessionSpec{
 			ServerRef: sentinelaccess.ServerReference{
-				Name:      req.ServerName,
-				Namespace: defaultAccessNamespace(req.Namespace),
+				Name:      sentinelaccess.ServerName(req.ServerName),
+				Namespace: sentinelaccess.Namespace(runtimeaccess.DefaultAccessNamespace(req.Namespace)),
 			},
 			Subject: sentinelaccess.SubjectRef{
-				HumanID: humanID,
-				AgentID: req.AgentID,
-				TeamID:  teamID,
+				HumanID: sentinelaccess.HumanID(humanID),
+				AgentID: sentinelaccess.AgentID(req.AgentID),
+				TeamID:  sentinelaccess.TeamID(teamID),
 			},
 			ConsentedTrust: consentedTrust,
 			ExpiresAt:      &metav1.Time{Time: expiresAt},
@@ -195,10 +197,10 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, adapterSessionResponse{
 		Name:           applied.Name,
 		Namespace:      applied.Namespace,
-		HumanID:        applied.Spec.Subject.HumanID,
-		AgentID:        applied.Spec.Subject.AgentID,
-		TeamID:         applied.Spec.Subject.TeamID,
-		ServerName:     applied.Spec.ServerRef.Name,
+		HumanID:        string(applied.Spec.Subject.HumanID),
+		AgentID:        string(applied.Spec.Subject.AgentID),
+		TeamID:         string(applied.Spec.Subject.TeamID),
+		ServerName:     string(applied.Spec.ServerRef.Name),
 		ConsentedTrust: string(applied.Spec.ConsentedTrust),
 		PolicyVersion:  applied.Spec.PolicyVersion,
 		ExpiresAt:      applied.Spec.ExpiresAt.Time,
@@ -206,22 +208,34 @@ func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// principalTeamForNamespace resolves the team identity the principal must hold
-// for the supplied namespace. Admin principals (no team binding) are allowed
-// to operate without a team; everyone else must be a member of the team that
-// owns the namespace.
-func principalTeamForNamespace(p principal, namespace string) (string, error) {
-	namespace = strings.TrimSpace(namespace)
-	if namespace == "" {
-		return "", errors.New("namespace is required")
+func adapterPrincipalTeamIDs(p principal) []string {
+	if len(p.Teams) == 0 {
+		return nil
 	}
+	seen := make(map[string]struct{}, len(p.Teams))
+	out := make([]string, 0, len(p.Teams))
+	for _, team := range p.Teams {
+		id := strings.TrimSpace(team.ID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func defaultAdapterSessionTeamID(p principal, namespace string, teamIDs []string) string {
 	if team, ok := p.TeamForNamespace(namespace); ok {
-		return strings.TrimSpace(team.ID), nil
+		return strings.TrimSpace(team.ID)
 	}
-	if p.Role == roleAdmin {
-		return "", nil
+	if len(teamIDs) == 1 {
+		return teamIDs[0]
 	}
-	return "", fmt.Errorf("principal is not a member of namespace %q", namespace)
+	return ""
 }
 
 // selectAdapterGrant lists enabled MCPAccessGrants in namespace whose serverRef
@@ -229,54 +243,65 @@ func principalTeamForNamespace(p principal, namespace string) (string, error) {
 // field empty (wildcard). When multiple grants match, the one with the highest
 // MaxTrust wins; ties are broken by oldest creationTimestamp so the result is
 // deterministic across replicas.
-func (s *RuntimeServer) selectAdapterGrant(ctx context.Context, namespace, serverName, humanID, agentID, teamID string) (*sentinelaccess.MCPAccessGrant, error) {
+func (s *RuntimeServer) selectAdapterGrant(ctx context.Context, namespace, serverName, humanID, agentID string, teamIDs []string, defaultTeamID string, allowAnyTeam bool) (*sentinelaccess.MCPAccessGrant, string, error) {
 	grants, err := s.accessMgr.ListGrants(ctx, namespace)
 	if err != nil {
-		return nil, fmt.Errorf("list grants in %s: %w", namespace, err)
+		return nil, "", fmt.Errorf("list grants in %s: %w", namespace, err)
 	}
-	var matches []sentinelaccess.MCPAccessGrant
+	type grantMatch struct {
+		grant  sentinelaccess.MCPAccessGrant
+		teamID string
+	}
+	var matches []grantMatch
 	for _, g := range grants.Items {
 		if g.Spec.Disabled {
 			continue
 		}
-		if g.Spec.ServerRef.Name != serverName {
+		if string(g.Spec.ServerRef.Name) != serverName {
 			continue
 		}
-		if !subjectMatches(g.Spec.Subject, humanID, agentID, teamID) {
+		teamID, ok := matchingAdapterGrantTeamID(g.Spec.Subject, humanID, agentID, teamIDs, defaultTeamID, allowAnyTeam)
+		if !ok {
 			continue
 		}
-		matches = append(matches, g)
+		matches = append(matches, grantMatch{grant: g, teamID: teamID})
 	}
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("no enabled MCPAccessGrant in %s matches server=%q humanID=%q agentID=%q",
+		return nil, "", fmt.Errorf("no enabled MCPAccessGrant in %s matches server=%q humanID=%q agentID=%q",
 			namespace, serverName, humanID, agentID)
 	}
 	sort.SliceStable(matches, func(i, j int) bool {
-		ti := trustRank(matches[i].Spec.MaxTrust)
-		tj := trustRank(matches[j].Spec.MaxTrust)
+		ti := trustRank(matches[i].grant.Spec.MaxTrust)
+		tj := trustRank(matches[j].grant.Spec.MaxTrust)
 		if ti != tj {
 			return ti > tj
 		}
-		return matches[i].CreationTimestamp.Time.Before(matches[j].CreationTimestamp.Time)
+		return matches[i].grant.CreationTimestamp.Time.Before(matches[j].grant.CreationTimestamp.Time)
 	})
 	g := matches[0]
-	return &g, nil
+	return &g.grant, g.teamID, nil
 }
 
-// subjectMatches treats empty fields on the grant's subject as wildcards,
-// preserving the SubjectRef semantics already used by the gateway when
-// evaluating policy at runtime.
-func subjectMatches(subj sentinelaccess.SubjectRef, humanID, agentID, teamID string) bool {
-	if subj.HumanID != "" && subj.HumanID != humanID {
-		return false
+func matchingAdapterGrantTeamID(subj sentinelaccess.SubjectRef, humanID, agentID string, teamIDs []string, defaultTeamID string, allowAnyTeam bool) (string, bool) {
+	if subj.HumanID != "" && string(subj.HumanID) != humanID {
+		return "", false
 	}
-	if subj.AgentID != "" && subj.AgentID != agentID {
-		return false
+	if subj.AgentID != "" && string(subj.AgentID) != agentID {
+		return "", false
 	}
-	if subj.TeamID != "" && subj.TeamID != teamID {
-		return false
+	grantTeamID := strings.TrimSpace(string(subj.TeamID))
+	if grantTeamID == "" {
+		return defaultTeamID, true
 	}
-	return true
+	for _, teamID := range teamIDs {
+		if teamID == grantTeamID {
+			return grantTeamID, true
+		}
+	}
+	if allowAnyTeam {
+		return grantTeamID, true
+	}
+	return "", false
 }
 
 // adapterSessionName derives a deterministic resource name from the caller's
@@ -325,12 +350,10 @@ func parseAdapterTrust(raw string) (sentinelaccess.TrustLevel, error) {
 	switch raw {
 	case "":
 		return sentinelaccess.TrustLow, nil
-	case string(sentinelaccess.TrustNone), string(sentinelaccess.TrustLow),
-		string(sentinelaccess.TrustMid), string(sentinelaccess.TrustHigh),
-		string(sentinelaccess.TrustFull):
+	case string(sentinelaccess.TrustLow), string(sentinelaccess.TrustMedium), string(sentinelaccess.TrustHigh):
 		return sentinelaccess.TrustLevel(raw), nil
 	default:
-		return "", fmt.Errorf("requestedTrust %q is not a known trust level", raw)
+		return "", fmt.Errorf("requestedTrust %q is not a known trust level (use low, medium, or high)", raw)
 	}
 }
 
@@ -367,16 +390,12 @@ func capTrust(requested, max sentinelaccess.TrustLevel) sentinelaccess.TrustLeve
 
 func trustRank(t sentinelaccess.TrustLevel) int {
 	switch t {
-	case sentinelaccess.TrustNone:
-		return 0
 	case sentinelaccess.TrustLow:
 		return 1
-	case sentinelaccess.TrustMid:
+	case sentinelaccess.TrustMedium:
 		return 2
 	case sentinelaccess.TrustHigh:
 		return 3
-	case sentinelaccess.TrustFull:
-		return 4
 	default:
 		return -1
 	}

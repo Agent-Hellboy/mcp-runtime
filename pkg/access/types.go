@@ -4,28 +4,41 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// ServerName identifies an MCPServer resource by name.
+type ServerName string
+
+// Namespace identifies a Kubernetes namespace that contains MCP runtime resources.
+type Namespace string
+
+// HumanID identifies an authenticated human principal.
+type HumanID string
+
+// AgentID identifies an authenticated agent principal.
+type AgentID string
+
+// TeamID identifies a stable platform team principal.
+type TeamID string
+
 // ServerReference identifies an MCPServer.
 type ServerReference struct {
-	Name      string `json:"name"`
-	Namespace string `json:"namespace,omitempty"`
+	Name      ServerName `json:"name"`
+	Namespace Namespace  `json:"namespace,omitempty"`
 }
 
 // SubjectRef identifies the human and optional agent a grant or session applies to.
 type SubjectRef struct {
-	HumanID string `json:"humanID,omitempty"`
-	AgentID string `json:"agentID,omitempty"`
-	TeamID  string `json:"teamID,omitempty"`
+	HumanID HumanID `json:"humanID,omitempty"`
+	AgentID AgentID `json:"agentID,omitempty"`
+	TeamID  TeamID  `json:"teamID,omitempty"`
 }
 
 // TrustLevel defines trust levels for access control.
 type TrustLevel string
 
 const (
-	TrustNone TrustLevel = "none"
-	TrustLow  TrustLevel = "low"
-	TrustMid  TrustLevel = "mid"
-	TrustHigh TrustLevel = "high"
-	TrustFull TrustLevel = "full"
+	TrustLow    TrustLevel = "low"
+	TrustMedium TrustLevel = "medium"
+	TrustHigh   TrustLevel = "high"
 )
 
 // ToolSideEffect classifies whether a tool reads, mutates, or destructively changes state.

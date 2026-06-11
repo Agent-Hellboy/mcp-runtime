@@ -1,0 +1,17 @@
+version: v1
+servers:
+    - name: data-utility-mcp
+      description: data-utility-mcp MCP server
+      image: data-utility-mcp
+      imageTag: latest
+      route: /data-utility-mcp/mcp
+      publicPathPrefix: data-utility-mcp
+      port: 8088
+      scope: tenant
+      policy:
+        mode: allow-list
+        defaultDecision: deny
+      session:
+        required: true
+      gateway:
+        enabled: true

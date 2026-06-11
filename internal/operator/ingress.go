@@ -27,7 +27,7 @@ func (r *MCPServerReconciler) reconcileIngress(ctx context.Context, mcpServer *m
 		pathType := networkingv1.PathTypePrefix
 		ingressClassName := mcpServer.Spec.IngressClass
 		if ingressClassName == "" {
-			ingressClassName = "traefik" // Default to traefik
+			ingressClassName = DefaultIngressClass
 		}
 
 		ingress.Spec = networkingv1.IngressSpec{
@@ -93,9 +93,6 @@ func ingressPathsForServer(mcpServer *mcpv1alpha1.MCPServer, pathType networking
 }
 
 func effectiveIngressHost(mcpServer *mcpv1alpha1.MCPServer) string {
-	if strings.TrimSpace(mcpServer.Spec.PublicPathPrefix) != "" {
-		return ""
-	}
 	return strings.TrimSpace(mcpServer.Spec.IngressHost)
 }
 
@@ -139,14 +136,23 @@ func (r *MCPServerReconciler) buildIngressAnnotations(mcpServer *mcpv1alpha1.MCP
 	// Add controller-specific annotations based on ingress class
 	ingressClass := mcpServer.Spec.IngressClass
 	if ingressClass == "" {
-		ingressClass = "traefik" // Default to traefik
+		ingressClass = DefaultIngressClass
 	}
 
 	switch ingressClass {
 	case "traefik":
 		// Traefik Ingress Controller annotations
 		if _, exists := annotations["traefik.ingress.kubernetes.io/router.entrypoints"]; !exists {
-			annotations["traefik.ingress.kubernetes.io/router.entrypoints"] = "web"
+			entrypoints := strings.TrimSpace(r.DefaultIngressEntryPoints)
+			if entrypoints == "" {
+				entrypoints = "web"
+			}
+			annotations["traefik.ingress.kubernetes.io/router.entrypoints"] = entrypoints
+		}
+		if r.DefaultIngressTLS {
+			if _, exists := annotations["traefik.ingress.kubernetes.io/router.tls"]; !exists {
+				annotations["traefik.ingress.kubernetes.io/router.tls"] = "true"
+			}
 		}
 
 	case "nginx":

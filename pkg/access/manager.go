@@ -51,11 +51,11 @@ func NewManager(dynamic dynamic.Interface, clientset kubernetes.Interface) *Mana
 
 // ResolveServerRefNamespace returns the namespace to resolve serverRef against.
 // Empty or whitespace ref.Namespace defaults to DefaultMCPResourceNamespace.
-func ResolveServerRefNamespace(ref ServerReference) string {
-	if ns := strings.TrimSpace(ref.Namespace); ns != "" {
-		return ns
+func ResolveServerRefNamespace(ref ServerReference) Namespace {
+	if ns := strings.TrimSpace(string(ref.Namespace)); ns != "" {
+		return Namespace(ns)
 	}
-	return DefaultMCPResourceNamespace
+	return Namespace(DefaultMCPResourceNamespace)
 }
 
 // ErrMCPServerNotFound is returned by AssertMCPServerRef when the target MCPServer is missing.
@@ -85,15 +85,15 @@ func (m *Manager) AssertMCPServerRef(ctx context.Context, ref ServerReference) e
 
 // GetMCPServerRef returns the MCPServer referenced by ref.
 func (m *Manager) GetMCPServerRef(ctx context.Context, ref ServerReference) (*mcpv1alpha1.MCPServer, error) {
-	name := strings.TrimSpace(ref.Name)
+	name := strings.TrimSpace(string(ref.Name))
 	if name == "" {
 		return nil, fmt.Errorf("serverRef.name is required")
 	}
 	ns := ResolveServerRefNamespace(ref)
-	obj, err := m.dynamic.Resource(serverGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+	obj, err := m.dynamic.Resource(serverGVR).Namespace(string(ns)).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, &ErrMCPServerNotFound{Name: name, Namespace: ns}
+			return nil, &ErrMCPServerNotFound{Name: name, Namespace: string(ns)}
 		}
 		return nil, fmt.Errorf("lookup serverRef: %w", err)
 	}
@@ -102,6 +102,25 @@ func (m *Manager) GetMCPServerRef(ctx context.Context, ref ServerReference) (*mc
 		return nil, fmt.Errorf("decode serverRef: %w", err)
 	}
 	return &server, nil
+}
+
+// ListMCPServers returns all MCPServer resources, optionally filtered by namespace.
+func (m *Manager) ListMCPServers(ctx context.Context, namespace string) (*mcpv1alpha1.MCPServerList, error) {
+	var obj *unstructured.UnstructuredList
+	var err error
+	if namespace != "" {
+		obj, err = m.dynamic.Resource(serverGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	} else {
+		obj, err = m.dynamic.Resource(serverGVR).List(ctx, metav1.ListOptions{})
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to list MCPServers: %w", err)
+	}
+	var servers mcpv1alpha1.MCPServerList
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.UnstructuredContent(), &servers); err != nil {
+		return nil, fmt.Errorf("decode MCPServers: %w", err)
+	}
+	return &servers, nil
 }
 
 // ListGrants returns all MCPAccessGrant resources, optionally filtered by namespace.

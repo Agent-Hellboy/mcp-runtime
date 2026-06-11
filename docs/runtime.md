@@ -16,44 +16,11 @@ The runtime is the Kubernetes-native control plane for MCP servers. It owns the 
 
 ## Core resources
 
-```mermaid
-classDiagram
-    class MCPServer {
-      +teamID
-      +image, imageTag
-      +port, publicPathPrefix
-      +ingressHost, ingressPath
-      +tools[]
-      +auth, policy, session
-      +gateway.enabled
-      +analytics.disabled
-      +rollout
-      +status
-    }
-    class MCPAccessGrant {
-      +serverRef
-      +subject (humanID, agentID, teamID)
-      +maxTrust
-      +allowedSideEffects[]
-      +toolRules[]
-      +disabled
-      +status
-    }
-    class MCPAgentSession {
-      +serverRef
-      +subject
-      +consentedTrust
-      +expiresAt
-      +revoked
-      +upstreamTokenSecretRef
-      +status
-    }
-    MCPServer "1" o-- "many" MCPAccessGrant : referenced by
-    MCPServer "1" o-- "many" MCPAgentSession : referenced by
-    MCPAccessGrant "1" .. "1" MCPAgentSession : evaluated together
-```
+Three CRDs form the runtime surface: `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession`.
+`MCPServer` is referenced by many grants and sessions; grant + session are evaluated
+together by the gateway policy layer on every tool call.
 
-See the [API reference](api.md) for full field semantics.
+See the [API reference](api.md) for full field definitions and examples.
 
 ## Reconciliation outputs
 
@@ -81,9 +48,9 @@ For every `MCPServer`, the operator reconciles:
 - `setup` provisions `mcp-runtime` plus the active shared catalog namespace for
   shared modes: `mcp-servers-org` for `org` or `mcp-servers-public` for
   `public`.
-- `tenant` mode uses the authenticated principal's user/team namespace. Place
-  runtime CRDs in per-tenant namespaces and rely on Kubernetes RBAC and ingress
-  watch configuration for isolation.
+- `tenant` mode uses team namespaces for the authenticated principal's team
+  memberships. Place runtime CRDs in per-team namespaces and rely on Kubernetes
+  RBAC and ingress watch configuration for isolation.
 - Default ingress class is `traefik`; override via `spec.ingressClass`.
 
 ## Topology
@@ -107,19 +74,19 @@ flowchart TB
 flowchart LR
     A[01. Initialize cluster<br/>cluster init / setup] --> B[02. Configure ingress + registry]
     B --> C[03. Describe servers<br/>MCPServer YAML]
-    C --> D[04. Publish + deploy images<br/>registry push, pipeline deploy]
-    D --> E[05. Grant access<br/>access grant / session apply]
-    E --> F[06. Observe<br/>status, sentinel, UI]
+    C --> D[04. Scaffold + publish<br/>server init, build, push, deploy]
+    D --> E[05. Grant access<br/>grant init/apply; adapter sessions]
+    E --> F[06. Observe<br/>status, UI, API]
 ```
 
 | Step | Commands |
 |---|---|
 | Initialize cluster | `cluster init`, `setup`, `bootstrap` |
 | Configure ingress + registry | `cluster config --ingress traefik`, `registry provision` |
-| Describe servers | hand-written `MCPServer` YAML or metadata in `.mcp/` |
-| Publish + deploy | `server build image`, `registry push`, `pipeline generate / deploy`, `server apply` |
-| Grant access | `access grant apply`, `access session apply` |
-| Observe | `status`, `sentinel status`, `sentinel port-forward ui` |
+| Describe servers | `server init`, hand-written `MCPServer` YAML, or metadata in `.mcp/` |
+| Publish + deploy | `auth login`, `server build image`, `registry push`, `server deploy`, `server generate` for GitOps YAML |
+| Grant access | `auth login`, `access grant init`, `access grant apply`; sessions via `adapter stdio|proxy --server … --agent …` or admin `access session init/apply` |
+| Observe | `status`, platform UI/API; admin: `sentinel status`, `sentinel port-forward ui` |
 
 ## Traffic and enforcement model
 

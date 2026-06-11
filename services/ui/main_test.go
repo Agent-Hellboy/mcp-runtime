@@ -91,14 +91,14 @@ func TestStaticAppHidesPersonalActivityForAdmins(t *testing.T) {
 		t.Fatalf("read static index: %v", err)
 	}
 	html := string(index)
-	if !strings.Contains(html, "My Activity") {
-		t.Fatal("personal user dashboard tab should be named My Activity")
+	if !strings.Contains(html, "Activity") {
+		t.Fatal("personal user dashboard tab should be named Activity")
 	}
-	if strings.Contains(html, "My Dashboard") {
-		t.Fatal("personal user dashboard tab should not use the generic My Dashboard label")
+	if strings.Contains(html, "My Activity") {
+		t.Fatal("personal user dashboard tab should not use the verbose My Activity label")
 	}
-	if got := strings.Count(html, "Server Catalog"); got < 2 {
-		t.Fatalf("expected navigation and panel to use Server Catalog, got %d occurrences", got)
+	if got := strings.Count(html, "Servers"); got < 2 {
+		t.Fatalf("expected navigation and panel to use Servers, got %d occurrences", got)
 	}
 	if got := strings.Count(html, `data-user-only="true"`); got < 2 {
 		t.Fatalf("expected tab button and panel to be marked user-only, got %d markers", got)
@@ -145,6 +145,106 @@ func TestStaticAppHidesProtectedTabsWhenSignedOut(t *testing.T) {
 	}
 }
 
+func TestStaticAppDefaultsAdminsToAllNamespaceGovernance(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`function adminAllNamespaceScope()`,
+		`is_admin_fleet: true`,
+		`return "all namespaces";`,
+		`authPrincipal?.role === "admin" && namespaceScopes.length > 1`,
+		`namespaceScopes = [adminAllNamespaceScope(), ...namespaceScopes]`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("admin governance scope missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppIncludesAdminTeamsView(t *testing.T) {
+	index, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(index)
+	for _, want := range []string{
+		`id="tab-button-teams"`,
+		`id="tab-teams"`,
+		`id="team-create-form"`,
+		`id="team-user-form"`,
+		`id="team-user-password"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("teams view missing %q", want)
+		}
+	}
+
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`loadTeams()`,
+		`fetchJSON("/runtime/teams")`,
+		"`/runtime/teams/${encodePathSegment(selectedTeamSlug)}/members`",
+		"`/runtime/teams/${encodePathSegment(team)}/users`",
+		`document.getElementById("team-user-password")?.value || ""`,
+		`function initTeams()`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("teams app missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppHidesUserAPIKeysWithoutUserIdentity(t *testing.T) {
+	index, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(index)
+	if got := strings.Count(html, `data-user-identity-required="true"`); got < 2 {
+		t.Fatalf("expected API key tab and panel to require a user identity, got %d markers", got)
+	}
+
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`function hasUserIdentity()`,
+		`String(authPrincipal?.subject || "").trim() !== ""`,
+		`querySelectorAll('[data-user-identity-required="true"]')`,
+		`Sign in with a platform account to manage user API keys.`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppShowsInlineUserAPIKeyLoadFailures(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		"const message = `Failed to load API keys: ${readErrorMessage(err, \"request failed\")}`",
+		`setInlineError("user-api-key-error", message)`,
+		`showToast(message, "error")`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
 func TestStaticAppSearchesServerMetadataLabels(t *testing.T) {
 	body, err := os.ReadFile("static/app.js")
 	if err != nil {
@@ -157,6 +257,43 @@ func TestStaticAppSearchesServerMetadataLabels(t *testing.T) {
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppUsesLiveInventoryWithDriftBadges(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`function serverDisplayInventory(server)`,
+		`mergeToolInventory(live.tools || [], declaredTools)`,
+		`drift: governance ? "" : "ungoverned"`,
+		`drift: "missing"`,
+		`missing on server`,
+		`function scheduleServerLiveInventoryRefresh()`,
+		`serverLiveInventoryPending`,
+		`reason === "live inventory pending"`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing %q", want)
+		}
+	}
+
+	styles, err := os.ReadFile("static/styles.css")
+	if err != nil {
+		t.Fatalf("read static styles: %v", err)
+	}
+	css := string(styles)
+	for _, want := range []string{
+		`.drift-ungoverned`,
+		`.drift-missing`,
+		`.drift-chip::before`,
+	} {
+		if !strings.Contains(css, want) {
+			t.Fatalf("styles missing %q", want)
 		}
 	}
 }
@@ -258,6 +395,9 @@ func TestStaticMarkupIncludesPlatformRestartAndDialogReviewFixes(t *testing.T) {
 			t.Fatalf("index missing %q", want)
 		}
 	}
+	if strings.Contains(html, `href="/prometheus"`) {
+		t.Fatal("index should not link directly to the Prometheus UI")
+	}
 }
 
 func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
@@ -270,12 +410,28 @@ func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
 		`function isTenantUser()`,
 		`if (isTenantUser() && server.namespace && server.name)`,
 		`retireButton.textContent = "Retire"`,
-		`if (!isTenantUser()) {`,
 		`authenticated && !isTenantUser()`,
 		`await loadUserDashboard()`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("app missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppRemovesCatalogDetailsAction(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, unwanted := range []string{
+		`detailsButton`,
+		`detailsButton.textContent = "Details"`,
+		`detailsButton.addEventListener("click", () => selectServer(server))`,
+	} {
+		if strings.Contains(source, unwanted) {
+			t.Fatalf("app should not render catalog details action %q", unwanted)
 		}
 	}
 }
@@ -369,8 +525,109 @@ func TestSecurityHeadersAllowConfiguredExternalAssets(t *testing.T) {
 	if !strings.Contains(csp, "https://fonts.googleapis.com") {
 		t.Fatalf("CSP should allow stylesheet font origin, got %q", csp)
 	}
+	if !strings.Contains(csp, "https://accounts.google.com") {
+		t.Fatalf("CSP should allow Google sign-in stylesheet origin, got %q", csp)
+	}
 	if !strings.Contains(csp, "https://fonts.gstatic.com") {
 		t.Fatalf("CSP should allow font file origin, got %q", csp)
+	}
+}
+
+func TestStaticAppUsesCompactCatalogInventorySections(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`function serverVisibleInventorySections(inventory)`,
+		`].filter((section) => section.items.length > 0);`,
+		`const visibleInventory = serverVisibleInventorySections(displayInventory)`,
+		`if (inventory.prompts.length)`,
+		`if (inventory.resources.length)`,
+		`if (inventory.tasks.length)`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing compact catalog behavior %q", want)
+		}
+	}
+}
+
+func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
+	index, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	html := string(index)
+	if got := strings.Count(html, `class="table-wrap scroll-table"`); got < 4 {
+		t.Fatalf("expected long dashboard tables to use scroll-table, got %d", got)
+	}
+	for _, want := range []string{
+		`placeholder="Search servers"`,
+		`class="analytics-tabset" data-analytics-tabset`,
+		`id="governance-decisions" data-admin-only="true"`,
+		`data-analytics-tab-target="governance-decision-audit"`,
+		`id="ops-workspace-panel"`,
+		`data-analytics-tab-target="ops-inspector-panel"`,
+		`id="ops-tab-platform-activity"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("index missing navigation affordance %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		`class="section-nav" aria-label="Operations sections"`,
+		`href="#ops-inspector-panel"`,
+		`href="#dashboard-audit"`,
+		`id="dashboard-audit"`,
+	} {
+		if strings.Contains(html, unwanted) {
+			t.Fatalf("stacked section navigation should not own dense workspace markup %q", unwanted)
+		}
+	}
+
+	styles, err := os.ReadFile("static/styles.css")
+	if err != nil {
+		t.Fatalf("read static styles: %v", err)
+	}
+	css := string(styles)
+	for _, want := range []string{
+		`.table-wrap.scroll-table`,
+		`max-height: min(62vh, 680px);`,
+		`.scroll-table thead th`,
+		`position: sticky;`,
+		`.section-nav`,
+		`.analytics-tabs`,
+		`.analytics-tab-panel[hidden]`,
+		`.ops-tab-head`,
+		`.tabs`,
+		`position: sticky;`,
+		`.server-card:hover`,
+	} {
+		if !strings.Contains(css, want) {
+			t.Fatalf("styles missing UX affordance %q", want)
+		}
+	}
+}
+
+func TestStaticAppRoutesDecisionAuditThroughGovernance(t *testing.T) {
+	body, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read static app: %v", err)
+	}
+	source := string(body)
+	for _, want := range []string{
+		`function initAnalyticsTabsets()`,
+		`function loadGovernanceDecisionAnalytics()`,
+		`if (isAdminUser()) {` + "\n" + `          loadGovernanceDecisionAnalytics();` + "\n" + `          loadEvents();`,
+		`if (usageTab) activateAnalyticsTab(usageTab);`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("app missing governance decision behavior %q", want)
+		}
+	}
+	if strings.Contains(source, `loadDashboardAnalytics();`+"\n"+`        loadEvents();`) {
+		t.Fatal("dashboard tab should not load decision audit events")
 	}
 }
 
@@ -1211,6 +1468,7 @@ func TestHandleAdminCheck(t *testing.T) {
 		apiKeys      string
 		cookie       *http.Cookie
 		apiKeyHeader string
+		legacyAdmin  bool
 		want         int
 	}{
 		{name: "no_credential", apiKeys: "ui-key,admin-key", adminKeys: "admin-key", want: http.StatusUnauthorized},
@@ -1218,13 +1476,14 @@ func TestHandleAdminCheck(t *testing.T) {
 		{name: "user_session_rejected", apiKeys: "ui-key", cookie: &http.Cookie{Name: sessionCookieName, Value: userSess.ID}, want: http.StatusUnauthorized},
 		{name: "admin_api_key", apiKeys: "ui-key,admin-key", adminKeys: "admin-key", apiKeyHeader: "admin-key", want: http.StatusNoContent},
 		{name: "non_admin_api_key_rejected", apiKeys: "ui-key,admin-key", adminKeys: "admin-key", apiKeyHeader: "ui-key", want: http.StatusUnauthorized},
-		{name: "fallback_any_api_key_when_admin_unset", apiKeys: "ui-key", apiKeyHeader: "ui-key", want: http.StatusNoContent},
+		{name: "admin_unset_rejects_api_key_by_default", apiKeys: "ui-key", apiKeyHeader: "ui-key", want: http.StatusUnauthorized},
+		{name: "legacy_fallback_allows_api_key_when_admin_unset", apiKeys: "ui-key", apiKeyHeader: "ui-key", legacyAdmin: true, want: http.StatusNoContent},
 		{name: "unknown_api_key", apiKeys: "ui-key", apiKeyHeader: "rando", want: http.StatusUnauthorized},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := handleAdminCheck(store, parseAPIKeyList(tc.apiKeys), parseAPIKeyList(tc.adminKeys))
+			h := handleAdminCheck(store, parseAPIKeyList(tc.apiKeys), parseAPIKeyList(tc.adminKeys), tc.legacyAdmin)
 			req := httptest.NewRequest(http.MethodGet, "/auth/admin-check", nil)
 			if tc.cookie != nil {
 				req.AddCookie(tc.cookie)
@@ -1238,6 +1497,26 @@ func TestHandleAdminCheck(t *testing.T) {
 				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tc.want, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestLegacyAdminAPIKeyFallbackEnabledForUIAdminCheck(t *testing.T) {
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "")
+	t.Setenv("MCP_LEGACY_ADMIN_API_KEY_FALLBACK", "")
+	t.Setenv("LEGACY_ADMIN_API_KEY_FALLBACK", "")
+	if legacyAdminAPIKeyFallbackEnabled() {
+		t.Fatal("legacy fallback should be disabled by default")
+	}
+
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "1")
+	if !legacyAdminAPIKeyFallbackEnabled() {
+		t.Fatal("legacy fallback should be enabled in runtime test mode")
+	}
+
+	t.Setenv("MCP_RUNTIME_TEST_MODE", "")
+	t.Setenv("MCP_LEGACY_ADMIN_API_KEY_FALLBACK", "true")
+	if !legacyAdminAPIKeyFallbackEnabled() {
+		t.Fatal("legacy fallback should honor explicit override")
 	}
 }
 

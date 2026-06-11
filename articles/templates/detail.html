@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <article class="article">
+    <header class="article-header">
+      <a class="article-breadcrumb" href="/{{ article.category_slug }}/">{{ article.category_name }}</a>
+      <h1>{{ article.title }}</h1>
+      <p>{{ article.description }}</p>
+      <div class="article-meta-row">
+        <span>{{ article.published }}</span>
+        <span>{{ article.reading_time }}</span>
+      </div>
+    </header>
+    <div class="article-shell">
+      <aside class="article-sidebar" aria-label="Article metadata">
+        <span>Topic</span>
+        <a href="/{{ article.category_slug }}/">{{ article.category_name }}</a>
+        <span>Published</span>
+        <strong>{{ article.published }}</strong>
+        <span>Reading time</span>
+        <strong>{{ article.reading_time }}</strong>
+      </aside>
+      <div class="article-body">
+        {{ article.body_html | safe }}
+      </div>
+      <section id="newsletter" class="article-newsletter" aria-labelledby="article-newsletter-title">
+        <div>
+          <div class="latest-kicker">Newsletter</div>
+          <h2 id="article-newsletter-title">Get new notes by email</h2>
+          <p>Subscribe for article updates on MCP, Kubernetes, networking, infrastructure, identity, and policy.</p>
+        </div>
+        <form class="newsletter-form" method="post" action="{{ url_for('newsletter_subscribe') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <input type="hidden" name="next" value="{{ request.path }}" />
+          <label for="article-newsletter-email">Email</label>
+          <div>
+            <input id="article-newsletter-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com" />
+            <button type="submit">Subscribe</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  </article>
+
+  <section id="comments" class="comments wrap" aria-labelledby="comments-title">
+    <div class="section-rule">
+      <h2 id="comments-title">Comments</h2>
+      <span>{{ comments|length }} comments</span>
+    </div>
+
+    <form class="comment-form" method="post" action="{{ article.url }}comments">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <label for="comment-body">{% if user %}Comment as {{ user.name }}{% else %}Comment{% endif %}</label>
+      <textarea id="comment-body" name="body" rows="5" maxlength="2000" required></textarea>
+      <button type="submit">Post comment</button>
+    </form>
+
+    {% if comments %}
+      <ol class="comment-list">
+        {% for comment in comments %}
+          <li>
+            <article class="comment">
+              <header>
+                <strong>{{ comment.author_name }}</strong>
+                <time datetime="{{ comment.created_at }}">{{ comment.created_at }}</time>
+              </header>
+              <p>{{ comment.body }}</p>
+            </article>
+          </li>
+        {% endfor %}
+      </ol>
+    {% else %}
+      <p class="empty-note">No comments yet.</p>
+    {% endif %}
+  </section>
+{% endblock %}

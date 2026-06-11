@@ -2,10 +2,13 @@ package runtimeapi
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -20,8 +23,11 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
 
 	"mcp-runtime/pkg/kubeworkload"
+	"mcp-runtime/pkg/publishscope"
+	"mcp-runtime/pkg/sentinel"
 )
 
 const (
@@ -34,7 +40,15 @@ const (
 	defaultDeployPort              = int32(8088)
 	restrictedRunAsUser            = kubeworkload.RestrictedRunAsUser
 	traefikWatchRoleName           = "traefik-watch"
+	traefikWatchClusterRoleName    = "mcp-runtime-traefik-watch"
 	platformNamespaceOwnerRoleName = "platform-namespace-owner"
+	sentinelIngestPort             = 8081
+	sentinelOTLPPort               = 4318
+	registryNamespace              = "registry"
+	registryPort                   = 5000
+	podSecurityEnforceLabel        = "pod-security.kubernetes.io/enforce"
+	podSecurityAuditLabel          = "pod-security.kubernetes.io/audit"
+	podSecurityWarnLabel           = "pod-security.kubernetes.io/warn"
 )
 
 var (
@@ -62,6 +76,7 @@ type deployRequest struct {
 	Namespace string `json:"namespace,omitempty"`
 }
 
+// HandleDeployments lists and applies user-managed Kubernetes deployments for the caller's namespace scope.
 func (s *RuntimeServer) HandleDeployments(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -70,51 +85,52 @@ func (s *RuntimeServer) HandleDeployments(w http.ResponseWriter, r *http.Request
 		s.handleDeploymentApply(w, r)
 	default:
 		w.Header().Set("allow", "GET, POST")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 }
 
+// HandleDeploymentItem deletes a user-managed Kubernetes deployment and service after namespace authorization.
 func (s *RuntimeServer) HandleDeploymentItem(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		w.Header().Set("allow", "DELETE")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 	p, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	ns, name, err := extractNamespaceName(r.URL.Path, "/api/deployments/")
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if p.Role != roleAdmin && (!p.HasNamespace(ns) || ns == sharedCatalogNamespace) {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "denied", name, ns, "", "forbidden"))
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		writeAPIError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	client, err := s.clientForPrincipal(p)
 	if err != nil {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "error", name, ns, "", err.Error()))
 		if errors.Is(err, errPrincipalIdentityRequired) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "authenticated user identity required"})
+			writeAPIError(w, http.StatusForbidden, "authenticated user identity required")
 			return
 		}
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	if err := client.AppsV1().Deployments(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "error", name, ns, "", err.Error()))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete deployment"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to delete deployment")
 		return
 	}
 	if err := client.CoreV1().Services(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "error", name, ns, "", err.Error()))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete service"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to delete service")
 		return
 	}
 	s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_delete", "success", name, ns, "", ""))
@@ -124,11 +140,11 @@ func (s *RuntimeServer) HandleDeploymentItem(w http.ResponseWriter, r *http.Requ
 func (s *RuntimeServer) handleDeploymentList(w http.ResponseWriter, r *http.Request) {
 	p, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	if s.k8sClients == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
@@ -137,58 +153,60 @@ func (s *RuntimeServer) handleDeploymentList(w http.ResponseWriter, r *http.Requ
 			namespace = strings.TrimSpace(p.Namespace)
 		}
 		if namespace == "" {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			writeAPIError(w, http.StatusForbidden, "forbidden")
 			return
 		}
 		if !p.HasNamespace(namespace) || namespace == sharedCatalogNamespace {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			writeAPIError(w, http.StatusForbidden, "forbidden")
 			return
 		}
 	}
 	client, err := s.clientForPrincipal(p)
 	if err != nil {
 		if errors.Is(err, errPrincipalIdentityRequired) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "authenticated user identity required"})
+			writeAPIError(w, http.StatusForbidden, "authenticated user identity required")
 			return
 		}
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	list, err := client.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{LabelSelector: platformManagedLabel + "=true"})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deployments"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to list deployments")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deployments": deploymentSummaries(list.Items)})
 }
 
+// HandleAdminDeployments lists platform-visible deployments across namespaces for admins.
 func (s *RuntimeServer) HandleAdminDeployments(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("allow", http.MethodGet)
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 	p, ok := principalFromContext(r.Context())
 	if !ok || p.Role != roleAdmin {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		writeAPIError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	if s.k8sClients == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 
 	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
 	summaries, err := s.ListAdminDeploymentSummaries(r.Context(), namespace)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deployments"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to list deployments")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deployments": summaries})
 }
 
+// ListAdminDeploymentSummaries returns deployment summaries from all namespaces or one requested namespace.
 func (s *RuntimeServer) ListAdminDeploymentSummaries(ctx context.Context, namespace string) ([]map[string]any, error) {
 	if s.k8sClients == nil {
 		return nil, errors.New("kubernetes not available")
@@ -210,7 +228,7 @@ func (s *RuntimeServer) ListAdminDeploymentSummaries(ctx context.Context, namesp
 func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Request) {
 	p, ok := principalFromContext(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	var req deployRequest
@@ -230,7 +248,7 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	}
 	if req.Name == "" || req.Image == "" {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, firstNonEmpty(strings.TrimSpace(req.Namespace), p.Namespace), req.Image, "name and image are required"))
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and image are required"})
+		writeAPIError(w, http.StatusBadRequest, "name and image are required")
 		return
 	}
 	namespace := p.Namespace
@@ -242,19 +260,19 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	}
 	if namespace == "" {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, req.Image, "namespace required"))
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace required"})
+		writeAPIError(w, http.StatusBadRequest, "namespace required")
 		return
 	}
 	if p.Role != roleAdmin && (!p.HasNamespace(namespace) || namespace == sharedCatalogNamespace) {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, req.Image, "forbidden"))
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		writeAPIError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	image := req.Image
 	if req.Version != "" && !strings.Contains(image[strings.LastIndex(image, "/")+1:], ":") {
 		if !deployImageTagPattern.MatchString(req.Version) {
 			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, req.Image, "version must be a valid image tag"))
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "version must be a valid image tag"})
+			writeAPIError(w, http.StatusBadRequest, "version must be a valid image tag")
 			return
 		}
 		image += ":" + req.Version
@@ -264,25 +282,29 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	if teamNamespace {
 		teamSlug = strings.TrimSpace(team.Slug)
 	}
+	if p.Role != roleAdmin && !teamNamespace {
+		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, image, "tenant deployments require a team namespace"))
+		writeAPIError(w, http.StatusForbidden, "tenant deployments require a team namespace")
+		return
+	}
+	image = ResolveDeployImageReference(image, namespace, teamSlug)
 	if err := ValidateDeployImage(image, namespace, teamSlug, p.Role); err != nil {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, image, err.Error()))
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	client, err := s.clientForPrincipal(p)
 	if err != nil {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
 		if errors.Is(err, errPrincipalIdentityRequired) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "authenticated user identity required"})
+			writeAPIError(w, http.StatusForbidden, "authenticated user identity required")
 			return
 		}
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	target := p
-	target.Namespace = namespace
 	if teamNamespace {
 		if err := s.ensureTeamNamespace(ctx, teamRecord{
 			ID:        team.ID,
@@ -291,18 +313,18 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 			Namespace: team.Namespace,
 		}); err != nil {
 			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure team namespace"})
+			writeAPIError(w, http.StatusInternalServerError, "failed to ensure team namespace")
 			return
 		}
 		if err := s.ensureNamespaceUserWorkloadRBAC(ctx, namespace, p.UserID()); err != nil {
 			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure namespace access"})
+			writeAPIError(w, http.StatusInternalServerError, "failed to ensure namespace access")
 			return
 		}
-	} else {
-		if err := s.EnsureUserNamespace(ctx, target); err != nil {
+	} else if p.Role == roleAdmin {
+		if err := s.ensureAdminPublishNamespace(ctx, namespace); err != nil {
 			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to ensure namespace"})
+			writeAPIError(w, http.StatusInternalServerError, "failed to ensure namespace")
 			return
 		}
 	}
@@ -322,13 +344,13 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	applied, err := upsertDeployment(ctx, client, dep)
 	if err != nil {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to apply deployment"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to apply deployment")
 		return
 	}
 	svc := desiredService(req.Name, namespace, req.Port, labels)
 	if _, err := upsertService(ctx, client, svc); err != nil {
 		s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "error", req.Name, namespace, image, err.Error()))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to apply service"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to apply service")
 		return
 	}
 	s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "success", req.Name, namespace, image, ""))
@@ -353,36 +375,22 @@ func (s *RuntimeServer) clientForPrincipal(p principal) (kubernetes.Interface, e
 	return kubernetes.NewForConfig(cfg)
 }
 
-func (s *RuntimeServer) EnsureUserNamespace(ctx context.Context, p principal) error {
-	if s.k8sClients == nil || p.Namespace == "" {
-		return nil
-	}
-	labels := map[string]string{
-		platformManagedLabel:                 "true",
-		platformUserIDLabel:                  p.UserID(),
-		platformScopeLabel:                   namespaceScopeUser,
-		"pod-security.kubernetes.io/enforce": "restricted",
-	}
-	if err := s.ensureManagedNamespace(ctx, p.Namespace, labels, managedNamespaceOptions{}); err != nil {
-		return err
-	}
-	return s.ensureNamespaceUserWorkloadRBAC(ctx, p.Namespace, p.UserID())
-}
-
+// EnsureCatalogNamespace creates or updates a catalog namespace with platform labels, security defaults, and ingress watch access.
 func (s *RuntimeServer) EnsureCatalogNamespace(ctx context.Context, namespace string) error {
 	namespace = strings.TrimSpace(namespace)
 	if s.k8sClients == nil || namespace == "" {
 		return nil
 	}
 	labels := map[string]string{
-		platformManagedLabel:                 "true",
-		platformScopeLabel:                   PlatformMode(),
-		"pod-security.kubernetes.io/enforce": "restricted",
+		platformManagedLabel:    "true",
+		platformScopeLabel:      PlatformMode(),
+		podSecurityEnforceLabel: "restricted",
+		podSecurityAuditLabel:   "restricted",
+		podSecurityWarnLabel:    "restricted",
 	}
 	cfg := platformTeamTraefikWatchConfig()
-	opts := managedNamespaceOptions{}
-	if cfg.mode != "disabled" {
-		opts.ingressFromNamespaces = []string{cfg.namespace}
+	opts := managedNamespaceOptions{
+		ingressFromNamespaces: teamIngressAllowNamespaces(cfg),
 	}
 	if err := s.ensureManagedNamespace(ctx, namespace, labels, opts); err != nil {
 		return err
@@ -400,16 +408,17 @@ func (s *RuntimeServer) ensureTeamNamespace(ctx context.Context, team teamRecord
 		return errors.New("team namespace required")
 	}
 	labels := map[string]string{
-		platformManagedLabel:                 "true",
-		platformTeamIDLabel:                  strings.TrimSpace(team.ID),
-		platformTeamSlugLabel:                strings.TrimSpace(team.Slug),
-		platformScopeLabel:                   namespaceScopeTeam,
-		"pod-security.kubernetes.io/enforce": "restricted",
+		platformManagedLabel:    "true",
+		platformTeamIDLabel:     strings.TrimSpace(team.ID),
+		platformTeamSlugLabel:   strings.TrimSpace(team.Slug),
+		platformScopeLabel:      namespaceScopeTeam,
+		podSecurityEnforceLabel: "restricted",
+		podSecurityAuditLabel:   "restricted",
+		podSecurityWarnLabel:    "restricted",
 	}
 	cfg := platformTeamTraefikWatchConfig()
-	opts := managedNamespaceOptions{}
-	if cfg.mode != "disabled" {
-		opts.ingressFromNamespaces = []string{cfg.namespace}
+	opts := managedNamespaceOptions{
+		ingressFromNamespaces: teamIngressAllowNamespaces(cfg),
 	}
 	if err := s.ensureManagedNamespace(ctx, team.Namespace, labels, opts); err != nil {
 		return err
@@ -418,6 +427,36 @@ func (s *RuntimeServer) ensureTeamNamespace(ctx context.Context, team teamRecord
 		return nil
 	}
 	return s.ensureTeamTraefikWatch(ctx, team.Namespace, cfg)
+}
+
+func (s *RuntimeServer) ensureAdminPublishNamespace(ctx context.Context, namespace string) error {
+	namespace = strings.TrimSpace(namespace)
+	if s.k8sClients == nil || namespace == "" {
+		return nil
+	}
+	if isModeCatalogNamespace(namespace) {
+		return s.EnsureCatalogNamespace(ctx, namespace)
+	}
+	cfg := platformTeamTraefikWatchConfig()
+	labels := map[string]string{
+		platformManagedLabel:    "true",
+		podSecurityEnforceLabel: "restricted",
+		podSecurityAuditLabel:   "restricted",
+		podSecurityWarnLabel:    "restricted",
+	}
+	if namespace == sharedCatalogNamespace {
+		labels[platformScopeLabel] = PlatformMode()
+	}
+	opts := managedNamespaceOptions{
+		ingressFromNamespaces: teamIngressAllowNamespaces(cfg),
+	}
+	if err := s.ensureManagedNamespace(ctx, namespace, labels, opts); err != nil {
+		return err
+	}
+	if namespace != sharedCatalogNamespace || cfg.mode == "disabled" {
+		return nil
+	}
+	return s.ensureTeamTraefikWatch(ctx, namespace, cfg)
 }
 
 func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace string, labels map[string]string, opts managedNamespaceOptions) error {
@@ -450,7 +489,108 @@ func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace st
 	if err := ensureDefaultDenyNetworkPolicy(ctx, base, namespace, opts.ingressFromNamespaces...); err != nil {
 		return err
 	}
-	return kubeworkload.EnsureServiceAccount(ctx, base, namespace)
+	if err := kubeworkload.EnsureServiceAccount(ctx, base, namespace); err != nil {
+		return err
+	}
+	if err := ensureNamespacePlatformAPISecretAccess(ctx, base, namespace); err != nil {
+		return err
+	}
+	if err := s.ensureNamespaceRegistryPullSecret(ctx, base, namespace); err != nil {
+		return fmt.Errorf("provision registry pull secret for namespace %q: %w", namespace, err)
+	}
+	return nil
+}
+
+const registryPullSecretName = "mcp-runtime-registry-pull" // #nosec G101 -- Kubernetes Secret object name, not credential material.
+const platformNamespaceAPISecretAccessName = "mcp-sentinel-api-team-secrets"
+const platformNamespaceAPIServiceAccountName = "mcp-sentinel-api"
+
+func (s *RuntimeServer) ensureNamespaceRegistryPullSecret(ctx context.Context, client kubernetes.Interface, namespace string) error {
+	registryHost := registryPullSecretHost()
+	if registryHost == "" {
+		return nil
+	}
+	apiKey := registryPullSecretAPIKey()
+	if apiKey == "" {
+		if registryPullSecretOptional() {
+			return nil
+		}
+		return fmt.Errorf("registry pull secret required for %q but ADMIN_API_KEYS and UI_API_KEY are unset", registryHost)
+	}
+	auth := base64.StdEncoding.EncodeToString([]byte("platform-service:" + apiKey))
+	dockerconfig := fmt.Sprintf(`{"auths":{%q:{"username":"platform-service","password":%q,"auth":%q}}}`,
+		registryHost, apiKey, auth)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: registryPullSecretName, Namespace: namespace},
+		Type:       corev1.SecretTypeDockerConfigJson,
+		Data: map[string][]byte{
+			corev1.DockerConfigJsonKey: []byte(dockerconfig),
+		},
+	}
+	existing, err := client.CoreV1().Secrets(namespace).Get(ctx, registryPullSecretName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		if _, err := client.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return err
+		}
+	} else if err != nil {
+		return err
+	} else {
+		existing.Data = secret.Data
+		existing.Type = secret.Type
+		if _, err := client.CoreV1().Secrets(namespace).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+	}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		sa, err := client.CoreV1().ServiceAccounts(namespace).Get(ctx, kubeworkload.DefaultServiceAccountName, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		for _, ref := range sa.ImagePullSecrets {
+			if ref.Name == registryPullSecretName {
+				return nil
+			}
+		}
+		sa.ImagePullSecrets = append(sa.ImagePullSecrets, corev1.LocalObjectReference{Name: registryPullSecretName})
+		_, err = client.CoreV1().ServiceAccounts(namespace).Update(ctx, sa, metav1.UpdateOptions{})
+		return err
+	})
+}
+
+func registryPullSecretHost() string {
+	for _, key := range []string{"MCP_REGISTRY_INGRESS_HOST", "MCP_REGISTRY_HOST"} {
+		if h := normalizeImageRegistryHost(os.Getenv(key)); h != "" && h != "registry.local" && h != "localhost" {
+			return h
+		}
+	}
+	if h := normalizeImageRegistryHost(os.Getenv("MCP_REGISTRY_ENDPOINT")); h != "" {
+		return h
+	}
+	if domain := normalizeImageRegistryHost(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
+		return "registry." + strings.TrimPrefix(domain, "registry.")
+	}
+	return ""
+}
+
+func registryPullSecretAPIKey() string {
+	for _, raw := range strings.Split(strings.TrimSpace(os.Getenv("ADMIN_API_KEYS")), ",") {
+		if k := strings.TrimSpace(raw); k != "" {
+			return k
+		}
+	}
+	return strings.TrimSpace(os.Getenv("UI_API_KEY"))
+}
+
+func registryPullSecretOptional() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("MCP_REGISTRY_PULL_SECRET_OPTIONAL"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func mergeNamespaceLabels(ns *corev1.Namespace, labels map[string]string) bool {
@@ -469,6 +609,25 @@ func mergeNamespaceLabels(ns *corev1.Namespace, labels map[string]string) bool {
 		changed = true
 	}
 	return changed
+}
+
+func ensureNamespacePlatformAPISecretAccess(ctx context.Context, client kubernetes.Interface, namespace string) error {
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: platformNamespaceAPISecretAccessName, Namespace: namespace},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     platformNamespaceAPISecretAccessName,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      rbacv1.ServiceAccountKind,
+				Name:      platformNamespaceAPIServiceAccountName,
+				Namespace: sentinel.DefaultNamespace,
+			},
+		},
+	}
+	return upsertRoleBinding(ctx, client, binding)
 }
 
 func (s *RuntimeServer) ensureNamespaceUserWorkloadRBAC(ctx context.Context, namespace, userID string) error {
@@ -535,32 +694,33 @@ func ensureLimitRange(ctx context.Context, client kubernetes.Interface, ns strin
 
 func ensureDefaultDenyNetworkPolicy(ctx context.Context, client kubernetes.Interface, ns string, ingressFromNamespaces ...string) error {
 	policy := desiredDefaultDenyNetworkPolicy(ns, ingressFromNamespaces...)
-	current, err := client.NetworkingV1().NetworkPolicies(ns).Get(ctx, policy.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = client.NetworkingV1().NetworkPolicies(ns).Create(ctx, policy, metav1.CreateOptions{})
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current, err := client.NetworkingV1().NetworkPolicies(ns).Get(ctx, policy.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			_, err = client.NetworkingV1().NetworkPolicies(ns).Create(ctx, policy, metav1.CreateOptions{})
+			return err
+		}
+		if err != nil {
+			return err
+		}
+		updated := policy.DeepCopy()
+		updated.ResourceVersion = current.ResourceVersion
+		updated.Labels = current.Labels
+		updated.Annotations = current.Annotations
+		_, err = client.NetworkingV1().NetworkPolicies(ns).Update(ctx, updated, metav1.UpdateOptions{})
 		return err
-	}
-	if err != nil {
-		return err
-	}
-	policy.ResourceVersion = current.ResourceVersion
-	policy.Labels = current.Labels
-	policy.Annotations = current.Annotations
-	_, err = client.NetworkingV1().NetworkPolicies(ns).Update(ctx, policy, metav1.UpdateOptions{})
-	return err
+	})
 }
 
 func desiredDefaultDenyNetworkPolicy(ns string, ingressFromNamespaces ...string) *networkingv1.NetworkPolicy {
 	udpProtocol := corev1.ProtocolUDP
 	tcpProtocol := corev1.ProtocolTCP
 	ingress := make([]networkingv1.NetworkPolicyIngressRule, 0, 2)
-	if len(ingressFromNamespaces) > 0 {
-		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
-			From: []networkingv1.NetworkPolicyPeer{
-				{PodSelector: &metav1.LabelSelector{}},
-			},
-		})
-	}
+	ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+		From: []networkingv1.NetworkPolicyPeer{
+			{PodSelector: &metav1.LabelSelector{}},
+		},
+	})
 	for _, namespace := range ingressFromNamespaces {
 		namespace = strings.TrimSpace(namespace)
 		if namespace == "" {
@@ -576,6 +736,15 @@ func desiredDefaultDenyNetworkPolicy(ns string, ingressFromNamespaces ...string)
 			},
 		})
 	}
+	ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+		From: []networkingv1.NetworkPolicyPeer{
+			{
+				NamespaceSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"kubernetes.io/metadata.name": sentinel.DefaultNamespace},
+				},
+			},
+		},
+	})
 	policy := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "platform-default-deny", Namespace: ns},
 		Spec: networkingv1.NetworkPolicySpec{
@@ -601,19 +770,54 @@ func desiredDefaultDenyNetworkPolicy(ns string, ingressFromNamespaces ...string)
 				},
 				{
 					To: []networkingv1.NetworkPolicyPeer{
-						{PodSelector: &metav1.LabelSelector{}},
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"kubernetes.io/metadata.name": sentinel.DefaultNamespace},
+							},
+						},
+					},
+					Ports: []networkingv1.NetworkPolicyPort{
+						{Protocol: &tcpProtocol, Port: intstrPtr(sentinelIngestPort)},
+						{Protocol: &tcpProtocol, Port: intstrPtr(sentinelOTLPPort)},
 					},
 				},
 				{
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"kubernetes.io/metadata.name": registryNamespace},
+							},
+						},
+					},
 					Ports: []networkingv1.NetworkPolicyPort{
-						{Protocol: &tcpProtocol, Port: intstrPtr(80)},
-						{Protocol: &tcpProtocol, Port: intstrPtr(443)},
+						{Protocol: &tcpProtocol, Port: intstrPtr(registryPort)},
+					},
+				},
+				{
+					To: []networkingv1.NetworkPolicyPeer{
+						{PodSelector: &metav1.LabelSelector{}},
 					},
 				},
 			},
 		},
 	}
 	return policy
+}
+
+func teamIngressAllowNamespaces(cfg teamTraefikWatchConfig) []string {
+	if ns := strings.TrimSpace(envOr("PLATFORM_TRAEFIK_NAMESPACE", "")); ns != "" {
+		return []string{ns}
+	}
+	if cfg.mode == "disabled" {
+		// External ingress controllers (for example k3s Traefik in kube-system) are
+		// not patched through repo-managed traefik/traefik, but team routes still
+		// need ingress from that namespace.
+		return []string{"kube-system"}
+	}
+	if ns := strings.TrimSpace(cfg.namespace); ns != "" {
+		return []string{ns}
+	}
+	return nil
 }
 
 func platformTeamTraefikWatchConfig() teamTraefikWatchConfig {
@@ -640,6 +844,22 @@ func (s *RuntimeServer) ensureTeamTraefikWatch(ctx context.Context, namespace st
 	if s.k8sClients == nil || strings.TrimSpace(namespace) == "" {
 		return nil
 	}
+	if cfg.mode == "disabled" {
+		return nil
+	}
+	// k3s Traefik watches ingresses cluster-wide without namespace-scoped args.
+	if cfg.mode == "auto" && strings.TrimSpace(cfg.namespace) == "kube-system" {
+		return nil
+	}
+	if cfg.mode == "auto" {
+		managed, err := traefikDeploymentHasNamespaceWatchArg(ctx, s.k8sClients.Clientset, cfg)
+		if err != nil {
+			return err
+		}
+		if !managed {
+			return nil
+		}
+	}
 	if err := ensureTraefikWatchRBAC(ctx, s.k8sClients.Clientset, namespace, cfg); err != nil {
 		return err
 	}
@@ -653,22 +873,8 @@ func (s *RuntimeServer) ensureTeamTraefikWatch(ctx context.Context, namespace st
 }
 
 func ensureTraefikWatchRBAC(ctx context.Context, client kubernetes.Interface, namespace string, cfg teamTraefikWatchConfig) error {
-	role := desiredTraefikWatchRole(namespace)
-	if err := ensureTraefikWatchRole(ctx, client, role); err != nil {
-		return err
-	}
 	binding := desiredTraefikWatchRoleBinding(namespace, cfg)
 	return ensureTraefikWatchRoleBinding(ctx, client, binding)
-}
-
-func desiredTraefikWatchRole(namespace string) *rbacv1.Role {
-	return &rbacv1.Role{
-		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: namespace},
-		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"services", "endpoints", "secrets"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses"}, Verbs: []string{"get", "list", "watch"}},
-		},
-	}
 }
 
 func desiredTraefikWatchRoleBinding(namespace string, cfg teamTraefikWatchConfig) *rbacv1.RoleBinding {
@@ -676,17 +882,13 @@ func desiredTraefikWatchRoleBinding(namespace string, cfg teamTraefikWatchConfig
 		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: namespace},
 		RoleRef: rbacv1.RoleRef{
 			APIGroup: "rbac.authorization.k8s.io",
-			Kind:     "Role",
-			Name:     traefikWatchRoleName,
+			Kind:     "ClusterRole",
+			Name:     traefikWatchClusterRoleName,
 		},
 		Subjects: []rbacv1.Subject{
 			{Kind: "ServiceAccount", Name: cfg.serviceAccount, Namespace: cfg.namespace},
 		},
 	}
-}
-
-func ensureTraefikWatchRole(ctx context.Context, client kubernetes.Interface, role *rbacv1.Role) error {
-	return upsertRole(ctx, client, role)
 }
 
 func ensureTraefikWatchRoleBinding(ctx context.Context, client kubernetes.Interface, binding *rbacv1.RoleBinding) error {
@@ -740,33 +942,84 @@ func upsertRole(ctx context.Context, client kubernetes.Interface, role *rbacv1.R
 }
 
 func upsertRoleBinding(ctx context.Context, client kubernetes.Interface, binding *rbacv1.RoleBinding) error {
-	current, err := client.RbacV1().RoleBindings(binding.Namespace).Get(ctx, binding.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = client.RbacV1().RoleBindings(binding.Namespace).Create(ctx, binding, metav1.CreateOptions{})
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current, err := client.RbacV1().RoleBindings(binding.Namespace).Get(ctx, binding.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			_, err = client.RbacV1().RoleBindings(binding.Namespace).Create(ctx, binding, metav1.CreateOptions{})
+			return err
+		}
+		if err != nil {
+			return err
+		}
+		if roleBindingMatches(current, binding) {
+			return nil
+		}
+		updated := binding.DeepCopy()
+		updated.ResourceVersion = current.ResourceVersion
+		updated.Labels = current.Labels
+		updated.Annotations = current.Annotations
+		_, err = client.RbacV1().RoleBindings(binding.Namespace).Update(ctx, updated, metav1.UpdateOptions{})
 		return err
+	})
+}
+
+func traefikDeploymentHasNamespaceWatchArg(ctx context.Context, client kubernetes.Interface, cfg teamTraefikWatchConfig) (bool, error) {
+	deployment, err := client.AppsV1().Deployments(cfg.namespace).Get(ctx, cfg.deployment, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
-	binding.ResourceVersion = current.ResourceVersion
-	binding.Labels = current.Labels
-	binding.Annotations = current.Annotations
-	_, err = client.RbacV1().RoleBindings(binding.Namespace).Update(ctx, binding, metav1.UpdateOptions{})
-	return err
+	_, _, _, ok := traefikNamespaceWatchArg(deployment)
+	return ok, nil
 }
 
 func ensureTraefikDeploymentWatchesNamespace(ctx context.Context, client kubernetes.Interface, namespace string, cfg teamTraefikWatchConfig) error {
-	deployment, err := client.AppsV1().Deployments(cfg.namespace).Get(ctx, cfg.deployment, metav1.GetOptions{})
-	if err != nil {
-		return err
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		deployment, err := client.AppsV1().Deployments(cfg.namespace).Get(ctx, cfg.deployment, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		containerIndex, argIndex, argValue, ok := traefikNamespaceWatchArg(deployment)
+		if !ok {
+			if cfg.mode == "auto" {
+				return nil
+			}
+			return errors.New("traefik deployment does not expose --providers.kubernetesingress.namespaces")
+		}
+		watched := splitCSV(strings.TrimPrefix(argValue, traefikNamespaceWatchArgPrefix))
+		for _, watchedNamespace := range watched {
+			if watchedNamespace == namespace {
+				return nil
+			}
+		}
+		watched = append(watched, namespace)
+		updated := deployment.DeepCopy()
+		updated.Spec.Template.Spec.Containers[containerIndex].Args[argIndex] = traefikNamespaceWatchArgPrefix + strings.Join(watched, ",")
+		_, err = client.AppsV1().Deployments(cfg.namespace).Update(ctx, updated, metav1.UpdateOptions{})
+		if apierrors.IsConflict(err) {
+			return err
+		}
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+const traefikNamespaceWatchArgPrefix = "--providers.kubernetesingress.namespaces="
+
+func traefikNamespaceWatchArg(deployment *appsv1.Deployment) (int, int, string, bool) {
+	if deployment == nil {
+		return -1, -1, "", false
 	}
-	const prefix = "--providers.kubernetesingress.namespaces="
 	containerIndex := -1
 	argIndex := -1
 	argValue := ""
 	for ci, container := range deployment.Spec.Template.Spec.Containers {
 		for ai, arg := range container.Args {
-			if strings.HasPrefix(arg, prefix) {
+			if strings.HasPrefix(arg, traefikNamespaceWatchArgPrefix) {
 				containerIndex = ci
 				argIndex = ai
 				argValue = arg
@@ -778,22 +1031,9 @@ func ensureTraefikDeploymentWatchesNamespace(ctx context.Context, client kuberne
 		}
 	}
 	if containerIndex < 0 {
-		if cfg.mode == "auto" {
-			return nil
-		}
-		return errors.New("traefik deployment does not expose --providers.kubernetesingress.namespaces")
+		return -1, -1, "", false
 	}
-	watched := splitCSV(strings.TrimPrefix(argValue, prefix))
-	for _, watchedNamespace := range watched {
-		if watchedNamespace == namespace {
-			return nil
-		}
-	}
-	watched = append(watched, namespace)
-	updated := deployment.DeepCopy()
-	updated.Spec.Template.Spec.Containers[containerIndex].Args[argIndex] = prefix + strings.Join(watched, ",")
-	_, err = client.AppsV1().Deployments(cfg.namespace).Update(ctx, updated, metav1.UpdateOptions{})
-	return err
+	return containerIndex, argIndex, argValue, true
 }
 
 func splitCSV(raw string) []string {
@@ -820,6 +1060,30 @@ func desiredDeployment(name, namespace, image string, port, replicas int32, labe
 					Image:           image,
 					Ports:           []corev1.ContainerPort{{ContainerPort: port}},
 					SecurityContext: kubeworkload.RestrictedContainerSecurityContext(),
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("100m"),
+							corev1.ResourceMemory: resource.MustParse("128Mi"),
+						},
+						Limits: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("500m"),
+							corev1.ResourceMemory: resource.MustParse("512Mi"),
+						},
+					},
+					ReadinessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							TCPSocket: &corev1.TCPSocketAction{Port: intstrFromInt32(port)},
+						},
+						InitialDelaySeconds: 5,
+						PeriodSeconds:       10,
+					},
+					LivenessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							TCPSocket: &corev1.TCPSocketAction{Port: intstrFromInt32(port)},
+						},
+						InitialDelaySeconds: 30,
+						PeriodSeconds:       20,
+					},
 				}},
 			},
 		},
@@ -868,6 +1132,7 @@ func upsertService(ctx context.Context, client kubernetes.Interface, svc *corev1
 	return client.CoreV1().Services(svc.Namespace).Update(ctx, existing, metav1.UpdateOptions{})
 }
 
+// ValidateDeployImage enforces registry allow-list and namespace-scoped repository rules for deployment images.
 func ValidateDeployImage(image, namespace, teamSlug, role string) error {
 	parts := strings.Split(image, "/")
 	if len(parts) < 2 {
@@ -879,16 +1144,161 @@ func ValidateDeployImage(image, namespace, teamSlug, role string) error {
 			return fmt.Errorf("registry %q is not approved", host)
 		}
 	}
-	if role != roleAdmin && len(parts) >= 3 {
-		expected := namespace
-		if strings.TrimSpace(teamSlug) != "" {
-			expected = teamSlug
-		}
-		if parts[1] != expected {
-			return fmt.Errorf("image repository must be scoped to %q", expected)
+	if role != roleAdmin {
+		expected := allowedImageRepositoryScopes(namespace, teamSlug)
+		if len(parts) < 3 || !stringInSlice(parts[1], expected) {
+			return fmt.Errorf("image repository must be scoped to %s", strings.Join(quoteStrings(expected), " or "))
 		}
 	}
 	return nil
+}
+
+// ResolveDeployImageReference expands short image names into the platform registry and namespace repository scope.
+func ResolveDeployImageReference(image, namespace, teamSlug string) string {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return image
+	}
+	registry := defaultPlatformRegistryHost()
+	if registry == "" {
+		return image
+	}
+	if imageReferenceHasRegistry(image) {
+		return rewritePlatformRegistryImageReference(image, registry)
+	}
+	parts := strings.Split(image, "/")
+	allowedScopes := allowedImageRepositoryScopes(namespace, teamSlug)
+	if len(parts) > 1 && stringInSlice(parts[0], allowedScopes) {
+		return registry + "/" + image
+	}
+	scope := defaultImageRepositoryScope(namespace, teamSlug)
+	if scope == "" {
+		return registry + "/" + image
+	}
+	return registry + "/" + scope + "/" + image
+}
+
+func imageReferenceHasRegistry(image string) bool {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return false
+	}
+	first, _, found := strings.Cut(image, "/")
+	if !found {
+		return false
+	}
+	return strings.Contains(first, ".") || strings.Contains(first, ":") || first == "localhost"
+}
+
+func defaultPlatformRegistryHost() string {
+	for _, key := range []string{
+		"MCP_REGISTRY_PULL_HOST",
+		"MCP_REGISTRY_ENDPOINT",
+	} {
+		if host := normalizeImageRegistryHost(os.Getenv(key)); host != "" {
+			return host
+		}
+	}
+	return "registry.registry.svc.cluster.local:5000"
+}
+
+func normalizeImageRegistryHost(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimSuffix(value, "/")
+	if value == "" {
+		return ""
+	}
+	if scheme := strings.Index(value, "://"); scheme >= 0 {
+		value = value[scheme+3:]
+	}
+	if before, _, found := strings.Cut(value, "/"); found {
+		value = before
+	}
+	return strings.TrimSpace(value)
+}
+
+func rewritePlatformRegistryImageReference(image, internalRegistry string) string {
+	internalRegistry = normalizeImageRegistryHost(internalRegistry)
+	if internalRegistry == "" {
+		return image
+	}
+	currentRegistry, rest, found := strings.Cut(strings.TrimSpace(image), "/")
+	if !found {
+		return image
+	}
+	currentRegistry = normalizeImageRegistryHost(currentRegistry)
+	if currentRegistry == "" || currentRegistry == internalRegistry {
+		return image
+	}
+	for _, host := range []string{
+		os.Getenv("PLATFORM_REGISTRY_URL"),
+		os.Getenv("PROVISIONED_REGISTRY_URL"),
+		os.Getenv("MCP_REGISTRY_INGRESS_HOST"),
+		os.Getenv("MCP_REGISTRY_HOST"),
+	} {
+		if normalizeImageRegistryHost(host) == currentRegistry {
+			return internalRegistry + "/" + rest
+		}
+	}
+	if domain := normalizeImageRegistryHost(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
+		if currentRegistry == "registry."+strings.TrimPrefix(domain, "registry.") {
+			return internalRegistry + "/" + rest
+		}
+	}
+	return image
+}
+
+func defaultImageRepositoryScope(namespace, teamSlug string) string {
+	teamSlug = strings.TrimSpace(teamSlug)
+	if teamSlug != "" {
+		return teamSlug
+	}
+	if isModeCatalogNamespace(namespace) {
+		switch PlatformMode() {
+		case platformModePublic:
+			return publishscope.PublicRegistryAlias
+		case platformModeOrg:
+			return publishscope.OrgRegistryAlias
+		}
+	}
+	return strings.TrimSpace(namespace)
+}
+
+func allowedImageRepositoryScopes(namespace, teamSlug string) []string {
+	expected := strings.TrimSpace(namespace)
+	if strings.TrimSpace(teamSlug) != "" {
+		expected = strings.TrimSpace(teamSlug)
+	}
+	values := []string{}
+	if expected != "" {
+		values = append(values, expected)
+	}
+	if isModeCatalogNamespace(namespace) {
+		switch PlatformMode() {
+		case platformModePublic:
+			values = append(values, publishscope.PublicRegistryAlias)
+		case platformModeOrg:
+			values = append(values, publishscope.OrgRegistryAlias)
+		}
+	}
+	return dedupeNonEmptyStrings(values)
+}
+
+func stringInSlice(value string, allowed []string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func quoteStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, fmt.Sprintf("%q", value))
+	}
+	return out
 }
 
 func approvedRegistries() map[string]struct{} {
@@ -976,4 +1386,28 @@ func extractNamespaceName(path, prefix string) (string, string, error) {
 
 func intstrFromInt32(v int32) intstr.IntOrString {
 	return intstr.FromInt(int(v))
+}
+
+// ReconcileTeamNamespaceNetworkPolicies refreshes default-deny NetworkPolicies for
+// existing team namespaces so ingress controller namespace changes take effect
+// without recreating teams.
+func (s *RuntimeServer) ReconcileTeamNamespaceNetworkPolicies(ctx context.Context) {
+	if s.k8sClients == nil || s.k8sClients.Clientset == nil {
+		return
+	}
+	cfg := platformTeamTraefikWatchConfig()
+	ingress := teamIngressAllowNamespaces(cfg)
+	list, err := s.k8sClients.Clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{
+		LabelSelector: platformScopeLabel + "=" + namespaceScopeTeam,
+	})
+	if err != nil {
+		log.Printf("reconcile team namespace network policies: list namespaces: %v", err)
+		return
+	}
+	for _, ns := range list.Items {
+		if err := ensureDefaultDenyNetworkPolicy(ctx, s.k8sClients.Clientset, ns.Name, ingress...); err != nil {
+			log.Printf("reconcile team namespace network policies: namespace %q: %v", ns.Name, err)
+		}
+	}
+	s.purgeExpiredRegistryPushTransfers(ctx)
 }

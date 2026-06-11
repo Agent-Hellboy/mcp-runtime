@@ -42,10 +42,12 @@ import (
 	"github.com/MicahParks/keyfunc"
 	"github.com/golang-jwt/jwt/v4"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	_ "go.uber.org/automaxprocs" // align GOMAXPROCS with container CPU quota
 
 	clickhousepkg "mcp-runtime/pkg/clickhouse"
 	"mcp-runtime/pkg/serviceutil"
 	"mcp-sentinel-api/internal/runtimeapi"
+	"mcp-sentinel-api/registry"
 )
 
 type analyticsServerUsage struct {
@@ -73,6 +75,9 @@ type analyticsActorUsage struct {
 type analyticsToolUsage struct {
 	Server   string    `json:"server"`
 	ToolName string    `json:"tool_name"`
+	HumanID  string    `json:"human_id"`
+	TeamID   string    `json:"team_id"`
+	AgentID  string    `json:"agent_id"`
 	Events   uint64    `json:"events"`
 	Denied   uint64    `json:"denied"`
 	LastSeen time.Time `json:"last_seen"`
@@ -134,20 +139,23 @@ type analyticsUsageFilters struct {
 }
 
 type apiServer struct {
-	db           chdriver.Conn
-	dbName       string
-	events       *clickhousepkg.Client
-	apiKeys      map[string]struct{}
-	adminAPIKeys map[string]struct{}
-	adminUsers   map[string]struct{}
-	jwks         *keyfunc.JWKS
-	oidcIssuer   string
-	oidcAudience string
-	userKeys     userAPIKeyStore
-	registryAuth registryCredentialAuthenticator
-	platform     *platformStore
-	runtime      *runtimeapi.RuntimeServer
-	runtimeInit  string
+	db                chdriver.Conn
+	dbName            string
+	events            *clickhousepkg.Client
+	apiKeys           map[string]struct{}
+	adminAPIKeys      map[string]struct{}
+	legacyAdminKeys   bool
+	adminUsers        map[string]struct{}
+	jwks              *keyfunc.JWKS
+	oidcIssuer        string
+	oidcAudience      string
+	userKeys          userAPIKeyStore
+	registryAuth      registryCredentialAuthenticator
+	registryAuthz     *registry.AuthzConfig
+	registryAuthzOnce sync.Once
+	platform          *platformStore
+	runtime           *runtimeapi.RuntimeServer
+	runtimeInit       string
 }
 
 const (
@@ -194,11 +202,19 @@ func main() {
 		}
 	}
 	adminAPIKeys := splitCSVSet(envOr("ADMIN_API_KEYS", ""))
+	legacyAdminKeys := legacyAdminAPIKeyFallbackEnabled()
 	adminUsers := splitCSVSet(envOr("ADMIN_USERS", ""))
 	for entry := range adminUsers {
 		normalized := strings.ToLower(strings.TrimSpace(entry))
 		if normalized != "" {
 			adminUsers[normalized] = struct{}{}
+		}
+	}
+	if len(adminAPIKeys) == 0 && len(apiKeys) > 0 {
+		if legacyAdminKeys {
+			log.Printf("warning: ADMIN_API_KEYS is unset; API_KEYS entries authenticate as role=admin because legacy dev/test fallback is enabled")
+		} else {
+			log.Printf("warning: ADMIN_API_KEYS is unset; API_KEYS entries authenticate as role=user")
 		}
 	}
 	if len(adminAPIKeys) > 0 {
@@ -243,15 +259,17 @@ func main() {
 	}
 
 	server := &apiServer{
-		db:           conn,
-		dbName:       dbName,
-		events:       &clickhousepkg.Client{Conn: conn, DBName: dbName},
-		apiKeys:      apiKeys,
-		adminAPIKeys: adminAPIKeys,
-		adminUsers:   adminUsers,
-		jwks:         jwks,
-		oidcIssuer:   oidcIssuer,
-		oidcAudience: oidcAudience,
+		db:              conn,
+		dbName:          dbName,
+		events:          &clickhousepkg.Client{Conn: conn, DBName: dbName},
+		apiKeys:         apiKeys,
+		adminAPIKeys:    adminAPIKeys,
+		legacyAdminKeys: legacyAdminKeys,
+		adminUsers:      adminUsers,
+		jwks:            jwks,
+		oidcIssuer:      oidcIssuer,
+		oidcAudience:    oidcAudience,
+		registryAuthz:   registry.NewAuthzConfigFromEnv(),
 	}
 	var store *platformStore
 	if dsn := platformDSNFromEnv(); dsn != "" {
@@ -281,76 +299,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		if strings.TrimSpace(server.runtimeInit) != "" {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-				"ok":                  false,
-				"runtime_initialized": false,
-				"runtime_error":       server.runtimeInit,
-			})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":                  true,
-			"runtime_initialized": true,
-		})
-	})
-	mux.HandleFunc("/api/registry/authz", server.handleRegistryAuthz)
-	mux.HandleFunc("/api/auth/login", server.handleLogin)
-	mux.HandleFunc("/api/auth/oidc", server.handleOIDCLogin)
-	mux.HandleFunc("/api/auth/signup", server.handleSignup)
-	mux.Handle("/api/events", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleEvents))))
-	mux.Handle("/api/stats", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleStats))))
-	mux.Handle("/api/sources", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleSources))))
-	mux.Handle("/api/event-types", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleEventTypes))))
-	mux.Handle("/api/analytics/usage", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleAnalyticsUsage))))
-	mux.Handle("/api/events/filter", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleEventsFilter))))
-	mux.Handle("/api/auth/me", server.auth(http.HandlerFunc(server.handleAuthMe)))
-	mux.Handle("/api/user/analytics/usage", server.auth(http.HandlerFunc(server.handleUserAnalyticsUsage)))
-	mux.Handle("/api/user/registry-credentials", server.auth(http.HandlerFunc(server.handleRegistryCredentials)))
-	mux.Handle("/api/user/registry-credentials/", server.auth(http.HandlerFunc(server.handleRegistryCredentialItem)))
-	mux.Handle("/api/user/activity/image-publish", server.auth(http.HandlerFunc(server.handleUserImagePublishActivity)))
-
-	// Initialize and register runtime server with Kubernetes support
-	runtimeServer, err := runtimeapi.NewRuntimeServer(conn, dbName, apiKeys, server.platform)
-	if err != nil {
-		server.runtimeInit = err.Error()
-		log.Printf("ERROR: runtime server initialization failed: %v", err)
-	} else {
-		server.runtime = runtimeServer
-		runtimeServer.SetAuditWriter(server.platform)
-		if server.userKeys == nil {
-			server.userKeys = runtimeServer
-		}
-		// Register all runtime endpoints with auth
-		mux.Handle("/api/dashboard/summary", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.HandleDashboardSummary))))
-		mux.Handle("/api/runtime/servers", server.authOrPublicCatalog(http.HandlerFunc(runtimeServer.HandleRuntimeServers)))
-		mux.Handle("/api/runtime/servers/", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeServerItem)))
-		mux.Handle("/api/runtime/server-events", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeServerEvents)))
-		mux.Handle("/api/runtime/teams", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeTeams)))
-		mux.Handle("/api/runtime/teams/", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeTeamItemPath)))
-		mux.Handle("/api/runtime/namespaces", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeNamespaces)))
-		mux.Handle("/api/runtime/namespaces/", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeNamespaceItem)))
-		mux.Handle("/api/deployments", server.auth(http.HandlerFunc(runtimeServer.HandleDeployments)))
-		mux.Handle("/api/deployments/", server.auth(http.HandlerFunc(runtimeServer.HandleDeploymentItem)))
-		mux.Handle("/api/admin/namespaces", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleAdminNamespaces))))
-		mux.Handle("/api/admin/audit", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleAdminAudit))))
-		mux.Handle("/api/admin/operations", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(server.handleAdminOperations))))
-		mux.Handle("/api/admin/deployments", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.HandleAdminDeployments))))
-		mux.Handle("/api/runtime/grants", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeGrants)))
-		mux.Handle("/api/runtime/sessions", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeSessions)))
-		mux.Handle("/api/runtime/adapter/sessions", server.auth(http.HandlerFunc(runtimeServer.HandleAdapterSession)))
-		mux.Handle("/api/runtime/components", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimeComponents)))
-		mux.Handle("/api/runtime/policy", server.auth(http.HandlerFunc(runtimeServer.HandleRuntimePolicy)))
-		mux.Handle("/api/runtime/actions/restart", server.auth(server.requireRole(roleAdmin, http.HandlerFunc(runtimeServer.HandleActionRestart))))
-		// Grant item (POST /api/runtime/grants/{namespace}/{name}/disable|enable, DELETE /api/runtime/grants/{namespace}/{name})
-		mux.Handle("/api/runtime/grants/", server.auth(http.HandlerFunc(runtimeServer.HandleGrantItemPath)))
-		// Session item (POST /api/runtime/sessions/{namespace}/{name}/revoke|unrevoke, DELETE /api/runtime/sessions/{namespace}/{name})
-		mux.Handle("/api/runtime/sessions/", server.auth(http.HandlerFunc(runtimeServer.HandleSessionItemPath)))
-		// User-scoped API key lifecycle.
-		mux.Handle("/api/user/api-keys", server.auth(http.HandlerFunc(server.handleUserAPIKeys)))
-		mux.Handle("/api/user/api-keys/", server.auth(http.HandlerFunc(server.handleUserAPIKeyItem)))
-	}
+	server.registerRoutes(mux)
 
 	shutdown, err := initTracer("mcp-sentinel-api")
 	if err != nil {
@@ -575,6 +524,29 @@ func (s *apiServer) handleUserAnalyticsUsage(w http.ResponseWriter, r *http.Requ
 	}
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *apiServer) handleRegistryCredentials(w http.ResponseWriter, r *http.Request) {
+	registry.HandleRegistryCredentials(w, r, registry.CredentialDependencies{
+		Platform:             s.platform,
+		PrincipalFromContext: principalFromContext,
+		WriteJSON:            writeJSON,
+		WriteBodyDecodeError: writeBodyDecodeError,
+		RequestIP:            requestIP,
+		AuditSource:          auditSource,
+		AuditIdentityLabel:   auditIdentityLabel,
+	})
+}
+
+func (s *apiServer) handleRegistryCredentialItem(w http.ResponseWriter, r *http.Request) {
+	registry.HandleRegistryCredentialItem(w, r, registry.CredentialDependencies{
+		Platform:             s.platform,
+		PrincipalFromContext: principalFromContext,
+		WriteJSON:            writeJSON,
+		RequestIP:            requestIP,
+		AuditSource:          auditSource,
+		AuditIdentityLabel:   auditIdentityLabel,
+	})
 }
 
 type analyticsQueryScope struct {
@@ -854,7 +826,9 @@ func (s *apiServer) queryAnalyticsActors(ctx context.Context, scope analyticsQue
 
 func (s *apiServer) queryAnalyticsTools(ctx context.Context, scope analyticsQueryScope) ([]analyticsToolUsage, error) {
 	where, args := analyticsWhereClause(scope, "tool_name != ''")
-	query := "SELECT server, tool_name, count() AS events, countIf(decision = 'deny') AS denied, max(timestamp) AS last_seen FROM " + s.dbName + ".events " + where + " GROUP BY server, tool_name ORDER BY events DESC LIMIT ?"
+	// Group by server+tool+caller so each (tool, user, agent) combination is a
+	// separate row — gives operators a clear picture of who called what and how many times.
+	query := "SELECT server, tool_name, human_id, team_id, agent_id, count() AS events, countIf(decision = 'deny') AS denied, max(timestamp) AS last_seen FROM " + s.dbName + ".events " + where + " GROUP BY server, tool_name, human_id, team_id, agent_id ORDER BY events DESC LIMIT ?"
 	args = append(args, scope.Limit)
 	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
@@ -865,12 +839,54 @@ func (s *apiServer) queryAnalyticsTools(ctx context.Context, scope analyticsQuer
 	out := make([]analyticsToolUsage, 0, scope.Limit)
 	for rows.Next() {
 		var row analyticsToolUsage
-		if err := rows.Scan(&row.Server, &row.ToolName, &row.Events, &row.Denied, &row.LastSeen); err != nil {
+		if err := rows.Scan(&row.Server, &row.ToolName, &row.HumanID, &row.TeamID, &row.AgentID, &row.Events, &row.Denied, &row.LastSeen); err != nil {
 			return nil, err
 		}
 		out = append(out, row)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Resolve UUID → human-readable names in a single batch query each.
+	// human_id is a user UUID (JWT sub); team_id is the team UUID.
+	// IDs that look like emails or slugs (non-UUID strings) are kept as-is.
+	if s.platform != nil && len(out) > 0 {
+		uniqueHumans := collectUniqueIDs(out, func(r analyticsToolUsage) string { return r.HumanID })
+		uniqueTeams := collectUniqueIDs(out, func(r analyticsToolUsage) string { return r.TeamID })
+
+		userNames, _ := s.platform.ResolveUserIDs(ctx, uniqueHumans)
+		teamNames, _ := s.platform.ResolveTeamIDs(ctx, uniqueTeams)
+
+		for i := range out {
+			if v, ok := userNames[out[i].HumanID]; ok {
+				out[i].HumanID = v
+			}
+			if v, ok := teamNames[out[i].TeamID]; ok {
+				out[i].TeamID = v
+			}
+		}
+	}
+
+	return out, nil
+}
+
+// collectUniqueIDs returns deduplicated non-empty string values from rows.
+func collectUniqueIDs(rows []analyticsToolUsage, fn func(analyticsToolUsage) string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, r := range rows {
+		v := fn(r)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 func (s *apiServer) queryAnalyticsDecisions(ctx context.Context, scope analyticsQueryScope) ([]analyticsDecisionUsage, error) {
@@ -1023,7 +1039,7 @@ func dedupeAnalyticsStrings(values []string) []string {
 
 // handleEventsFilter handles GET /api/events/filter requests.
 // It queries events filtered by optional source, event_type, and audit payload fields.
-// Supports query parameters: trace_id, source, event_type, server, namespace, team_id, cluster, human_id, agent_id, session_id, decision, tool_name, limit.
+// Supports query parameters: trace_id, source, event_type, server, namespace, team_id, cluster, human_id, agent_id, session_id, decision, tool_name, reason, limit.
 // Returns filtered events ordered by timestamp descending.
 func (s *apiServer) handleEventsFilter(w http.ResponseWriter, r *http.Request) {
 	filters := clickhousepkg.EventFilters{
@@ -1039,6 +1055,7 @@ func (s *apiServer) handleEventsFilter(w http.ResponseWriter, r *http.Request) {
 		SessionID: r.URL.Query().Get("session_id"),
 		Decision:  r.URL.Query().Get("decision"),
 		ToolName:  r.URL.Query().Get("tool_name"),
+		Reason:    r.URL.Query().Get("reason"),
 		Limit:     clampInt(queryInt(r, "limit", 100), 1, 1000),
 	}
 	events, err := s.events.QueryEventsFiltered(r.Context(), filters)
@@ -1096,14 +1113,17 @@ func (s *apiServer) authenticateRequest(r *http.Request) (principal, bool, error
 	apiKey := strings.TrimSpace(r.Header.Get("x-api-key"))
 	if apiKey != "" {
 		if _, ok := s.apiKeys[apiKey]; ok {
-			role := roleAdmin // backward-compatible default when ADMIN_API_KEYS is unset.
+			role := roleUser
 			if len(s.adminAPIKeys) > 0 {
 				// When ADMIN_API_KEYS is configured, API_KEYS values not present in
 				// ADMIN_API_KEYS are intentionally demoted to role=user.
-				role = roleUser
 				if _, admin := s.adminAPIKeys[apiKey]; admin {
 					role = roleAdmin
 				}
+			} else if s.legacyAdminKeys {
+				// Explicit dev/test compatibility path for legacy local setups that
+				// predate ADMIN_API_KEYS.
+				role = roleAdmin
 			}
 			return principal{Role: role, AuthType: "service_api_key", IsService: true}, true, nil
 		}
@@ -1201,34 +1221,6 @@ func oidcProvider(issuer string) string {
 	return oidcProviderPrefix + issuer
 }
 
-func (s *apiServer) handleAuthMe(w http.ResponseWriter, r *http.Request) {
-	p, ok := principalFromContext(r.Context())
-	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
-	}
-	type authPrincipal struct {
-		Role              string          `json:"role"`
-		Subject           string          `json:"subject,omitempty"`
-		Email             string          `json:"email,omitempty"`
-		Namespace         string          `json:"namespace,omitempty"`
-		AllowedNamespaces []string        `json:"allowedNamespaces,omitempty"`
-		Teams             []principalTeam `json:"teams,omitempty"`
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"authenticated":          true,
-		"sharedCatalogNamespace": sharedCatalogNamespace,
-		"principal": authPrincipal{
-			Role:              p.Role,
-			Subject:           p.Subject,
-			Email:             p.Email,
-			Namespace:         p.Namespace,
-			AllowedNamespaces: p.AllowedNamespaces,
-			Teams:             p.Teams,
-		},
-	})
-}
-
 // audienceMatches validates if the JWT audience claim matches the expected value.
 func audienceMatches(audClaim any, expected string) bool {
 	return serviceutil.AudienceMatches(audClaim, expected)
@@ -1285,6 +1277,15 @@ func splitCSVSet(raw string) map[string]struct{} {
 		out[part] = struct{}{}
 	}
 	return out
+}
+
+func legacyAdminAPIKeyFallbackEnabled() bool {
+	for _, key := range []string{"MCP_LEGACY_ADMIN_API_KEY_FALLBACK", "LEGACY_ADMIN_API_KEY_FALLBACK"} {
+		if enabled, ok := boolEnv(key); ok {
+			return enabled
+		}
+	}
+	return strings.TrimSpace(os.Getenv("MCP_RUNTIME_TEST_MODE")) == "1"
 }
 
 func maskCredentialForLog(value string) string {

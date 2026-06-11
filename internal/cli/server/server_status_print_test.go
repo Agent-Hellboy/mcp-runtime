@@ -8,13 +8,11 @@ import (
 	"testing"
 
 	"github.com/pterm/pterm"
-	"go.uber.org/zap"
 
 	"mcp-runtime/internal/cli/core"
 )
 
 func TestServerStatus_printingAndKubectl(t *testing.T) {
-	logger := zap.NewNop()
 	namespace := "mcp-servers"
 
 	t.Run("returns-error-and-logs-combined-output-on-mcpserver-list-failure", func(t *testing.T) {
@@ -31,7 +29,7 @@ func TestServerStatus_printingAndKubectl(t *testing.T) {
 			},
 		}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, logger)
+		mgr := newKubeTestServerManager(kubectl)
 
 		var buf bytes.Buffer
 		pterm.SetDefaultOutput(&buf)
@@ -62,7 +60,7 @@ func TestServerStatus_printingAndKubectl(t *testing.T) {
 			},
 		}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, logger)
+		mgr := newKubeTestServerManager(kubectl)
 
 		var buf bytes.Buffer
 		pterm.SetDefaultOutput(&buf)
@@ -95,7 +93,7 @@ func TestServerStatus_printingAndKubectl(t *testing.T) {
 			},
 		}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, logger)
+		mgr := newKubeTestServerManager(kubectl)
 
 		if err := mgr.ServerStatus(namespace); err != nil {
 			t.Fatalf("ServerStatus unexpected error = %v", err)
@@ -126,7 +124,7 @@ func TestServerStatus_printingAndKubectl(t *testing.T) {
 			},
 		}
 		kubectl := core.NewTestKubectlClient(mock)
-		mgr := NewServerManager(kubectl, logger)
+		mgr := newKubeTestServerManager(kubectl)
 
 		var buf bytes.Buffer
 		pterm.SetDefaultOutput(&buf)

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	_ "go.uber.org/automaxprocs" // align GOMAXPROCS with container CPU quota
 
 	"mcp-runtime/pkg/serviceutil"
 )
@@ -130,12 +131,14 @@ func main() {
 	httpsMode := serviceutil.EnvOr("UI_REQUIRE_HTTPS", "auto")
 	secured := securityHeadersMiddleware(httpsRedirectMiddleware(mux, httpsMode))
 	handler := otelhttp.NewHandler(serviceutil.LogRequests(secured), "http.server")
+	readTimeout := durationEnvOr("UI_HTTP_READ_TIMEOUT", 20*time.Minute)
+	writeTimeout := durationEnvOr("UI_HTTP_WRITE_TIMEOUT", 20*time.Minute)
 	httpServer := &http.Server{
 		Addr:              ":" + port,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
 		IdleTimeout:       60 * time.Second,
 	}
 	if err := httpServer.ListenAndServe(); err != nil {
@@ -203,7 +206,7 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 	mux.HandleFunc("/auth/status", handleStatus(sessions))
 	parsedAPIKeys := parseAPIKeyList(apiKeys)
 	parsedAdminAPIKeys := parseAPIKeyList(adminAPIKeys)
-	mux.HandleFunc("/auth/admin-check", handleAdminCheck(sessions, parsedAPIKeys, parsedAdminAPIKeys))
+	mux.HandleFunc("/auth/admin-check", handleAdminCheck(sessions, parsedAPIKeys, parsedAdminAPIKeys, legacyAdminAPIKeyFallbackEnabled()))
 
 	apiProxy := newAPIProxy(target, apiBase, upstreamAPIKey, parsedAPIKeys, sessions, publicCatalog)
 	mux.Handle(apiBase+"/", apiProxy)
@@ -228,6 +231,19 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 				w.Header().Set("content-type", ct)
 			}
 		}
+
+		// HTML: always revalidate so browsers pick up new JS/CSS on deploy.
+		// JS/CSS: short max-age so updates land within a minute without hammering
+		// the server on every request.
+		switch filepath.Ext(path) {
+		case ".html":
+			w.Header().Set("cache-control", "no-cache")
+		case ".js", ".css":
+			w.Header().Set("cache-control", "max-age=60")
+		default:
+			w.Header().Set("cache-control", "max-age=300")
+		}
+
 		w.WriteHeader(http.StatusOK)
 		// #nosec G705 -- assets are bundled from repository static/ at build time.
 		_, _ = w.Write(data)
@@ -868,16 +884,14 @@ func handleLogout(store *uiSessionStore) http.HandlerFunc {
 	}
 }
 
-// handleAdminCheck is the Traefik forwardAuth target for /grafana and
-// /prometheus. It returns 204 when the caller is an admin (logged-in UI
-// session or admin API key) and 401 otherwise. The original request body and
-// path do not matter — Traefik forwards only headers and consumes the status.
-// The Cache-Control header is set by securityHeadersMiddleware for /auth/.
-func handleAdminCheck(store *uiSessionStore, apiKeys, adminAPIKeys []string) http.HandlerFunc {
-	// When ADMIN_API_KEYS is unset, any value from API_KEYS authenticates as
-	// admin — matches the API service's backward-compatible default.
+// handleAdminCheck is the Traefik forwardAuth target for /grafana. It returns
+// 204 when the caller is an admin (logged-in UI session or admin API key) and
+// 401 otherwise. The original request body and path do not matter — Traefik
+// forwards only headers and consumes the status. The Cache-Control header is
+// set by securityHeadersMiddleware for /auth/.
+func handleAdminCheck(store *uiSessionStore, apiKeys, adminAPIKeys []string, legacyAdminKeys bool) http.HandlerFunc {
 	gateKeys := adminAPIKeys
-	if len(gateKeys) == 0 {
+	if len(gateKeys) == 0 && legacyAdminKeys {
 		gateKeys = apiKeys
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1214,7 +1228,7 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; "+
 				"script-src 'self' https://accounts.google.com https://apis.google.com; "+
-				"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
+				"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; "+
 				"img-src 'self' data: https:; "+
 				"font-src 'self' data: https://fonts.gstatic.com; "+
 				"connect-src 'self' https://accounts.google.com; "+
@@ -1265,4 +1279,13 @@ func boolEnvOr(key string, fallback bool) bool {
 		return parsed
 	}
 	return fallback
+}
+
+func legacyAdminAPIKeyFallbackEnabled() bool {
+	for _, key := range []string{"MCP_LEGACY_ADMIN_API_KEY_FALLBACK", "LEGACY_ADMIN_API_KEY_FALLBACK"} {
+		if parsed, ok := serviceutil.BoolEnv(key); ok {
+			return parsed
+		}
+	}
+	return strings.TrimSpace(os.Getenv("MCP_RUNTIME_TEST_MODE")) == "1"
 }

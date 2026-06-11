@@ -13,6 +13,7 @@ func TestAddCommandsRegistersTopLevelCommands(t *testing.T) {
 	AddCommands(root, zap.NewNop())
 
 	want := []string{
+		"admin",
 		"cluster",
 		"registry",
 		"server",
@@ -23,7 +24,6 @@ func TestAddCommandsRegistersTopLevelCommands(t *testing.T) {
 		"setup",
 		"status",
 		"sentinel",
-		"pipeline",
 		"team",
 	}
 	got := root.Commands()

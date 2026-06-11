@@ -22,10 +22,12 @@ the SQL schema at startup; the same schema is available in
 Optional bootstrap variables:
 
 ```bash
+export ADMIN_USERS='admin@example.com'
 export PLATFORM_ADMIN_EMAIL='admin@example.com'
 export PLATFORM_ADMIN_PASSWORD='change-me-now'
 ```
 
+`ADMIN_USERS` is the Google/OIDC admin allowlist used during login.
 `PLATFORM_ADMIN_BOOTSTRAP_ONLY=1` runs only the admin bootstrap path and exits.
 `PLATFORM_ADMIN_PASSWORD` should be cleared after bootstrap.
 
@@ -44,11 +46,11 @@ noted otherwise. Authenticated routes accept `Authorization: Bearer <token>` or
 | `POST` | `/api/auth/oidc` | Exchange a configured OIDC ID token for a platform bearer token. |
 | `GET` | `/api/auth/me` | Return the authenticated principal. |
 | `GET`, `POST` | `/api/user/api-keys` | List or create caller-owned API keys. |
-| `POST` | `/api/user/api-keys/{id}/revoke` | Revoke one caller-owned API key. |
+| `DELETE` | `/api/user/api-keys/{id}` | Revoke one caller-owned API key. |
 | `GET` | `/api/user/analytics/usage` | Caller-scoped MCP server usage analytics for the user dashboard. |
 | `GET`, `POST` | `/api/user/registry-credentials` | List or create registry credentials. |
-| `POST` | `/api/user/registry-credentials/{id}/revoke` | Revoke one registry credential. |
-| `*` | `/api/registry/authz` | Traefik forward-auth endpoint for bundled registry ingress. Admin credentials are global; user credentials are scoped to caller-owned repository paths. |
+| `DELETE` | `/api/user/registry-credentials/{id}` | Revoke one registry credential. |
+| `*` | `/api/registry/authz` | Traefik forward-auth endpoint for bundled registry ingress. Admin credentials are global; user credentials are scoped to team repository paths plus active org/public aliases. |
 | `GET`, `POST` | `/api/deployments` | List or apply platform-managed deployments. |
 | `DELETE` | `/api/deployments/{namespace}/{name}` | Delete a platform-managed deployment and service. |
 | `GET` | `/api/admin/namespaces` | Admin namespace inventory. |
@@ -144,8 +146,8 @@ curl -sS -H "authorization: Bearer $TOKEN" \
 Revoke a key:
 
 ```bash
-curl -sS -X POST -H "authorization: Bearer $TOKEN" \
-  http://localhost:8080/api/user/api-keys/"$KEY_ID"/revoke
+curl -sS -X DELETE -H "authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/user/api-keys/"$KEY_ID"
 ```
 
 ## Runtime MCP Servers
@@ -156,42 +158,81 @@ Apply an MCPServer through the platform API:
 curl -sS -X POST http://localhost:8080/api/runtime/servers \
   -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
-  -d '{"name":"demo","namespace":"user-1","spec":{"image":"registry.example.com/user-1/demo:latest"}}'
+  -d '{"name":"demo","namespace":"mcp-team-acme","spec":{"image":"registry.example.com/acme/demo:latest"}}'
 ```
 
-The response includes `publish_policy` on list calls. Admins configure the
-active-server limit with `PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `5`, `0`
-disables) and per-server cooldown with `PLATFORM_MCP_PUSH_COOLDOWN` (default
-`0s`, Go duration format). Quota or cooldown denials return `429`; cooldown
-responses include `next_allowed_at` and `Retry-After`. The active-server limit
-is enforced by the platform API before Kubernetes apply; strict serialization of
-concurrent publishes would require a shared reservation or admission-control
-layer.
+List MCPServers:
+
+```bash
+curl -sS -H "authorization: Bearer $TOKEN" \
+  'http://localhost:8080/api/runtime/servers?namespace=mcp-team-acme'
+```
+
+Fetch one MCPServer:
+
+```bash
+curl -sS -H "authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/runtime/servers/mcp-team-acme/demo
+```
+
+The list response includes `publish_policy`. Server responses include the CRD
+inventory fields (`tools`, `prompts`, `resources`, `tasks`) plus
+`liveInventory`, which is populated asynchronously by the API service through
+the server's in-cluster MCP gateway endpoint. On a cold cache miss or probe
+failure, `liveInventory` is `null` and `liveInventoryError` contains a short
+reason; the CRD inventory remains present as the governance source of truth.
+Live inventory entries include MCP `tools/list`, `prompts/list`, and
+`resources/list` data:
+
+```json
+{
+  "server": {
+    "name": "demo",
+    "namespace": "mcp-team-acme",
+    "tools": [{"name": "declared-tool", "requiredTrust": "low", "sideEffect": "read"}],
+    "liveInventory": {
+      "fetchedAt": "2026-05-20T01:02:03Z",
+      "protocolVersion": "2025-06-18",
+      "tools": [{"name": "live-tool", "description": "Runtime tool", "inputSchema": {"type": "object"}}],
+      "prompts": [{"name": "summarize", "description": "Summarize text"}],
+      "resources": [{"uri": "repo://README.md", "name": "README", "mimeType": "text/markdown"}]
+    }
+  }
+}
+```
+
+Admins configure the active-server limit with
+`PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `5`, `0` disables) and per-server
+cooldown with `PLATFORM_MCP_PUSH_COOLDOWN` (default `0s`, Go duration format).
+Quota or cooldown denials return `429`; cooldown responses include
+`next_allowed_at` and `Retry-After`. The active-server limit is enforced by the
+platform API before Kubernetes apply; strict serialization of concurrent
+publishes would require a shared reservation or admission-control layer.
 
 Retire an MCPServer to free quota:
 
 ```bash
 curl -sS -X DELETE -H "authorization: Bearer $TOKEN" \
-  http://localhost:8080/api/runtime/servers/user-1/demo
+  http://localhost:8080/api/runtime/servers/mcp-team-acme/demo
 ```
 
 Fetch recent analytics for a server:
 
 ```bash
 curl -sS -H "authorization: Bearer $TOKEN" \
-  'http://localhost:8080/api/runtime/server-events?namespace=user-1&server=demo'
+  'http://localhost:8080/api/runtime/server-events?namespace=mcp-team-acme&server=demo'
 ```
 
 ## Deployments
 
-Normal users deploy only into their owned namespace. Admins may pass
-`namespace`.
+Normal users deploy only into team namespaces they belong to. Admins may pass
+any `namespace`.
 
 ```bash
 curl -sS -X POST http://localhost:8080/api/deployments \
   -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
-  -d '{"name":"demo","image":"registry.example.com/user-1/demo","version":"v1","port":8088,"replicas":1}'
+  -d '{"name":"demo","namespace":"mcp-team-acme","image":"registry.example.com/acme/demo","version":"v1","port":8088,"replicas":1}'
 ```
 
 The API applies a Kubernetes `Deployment` and `Service` labelled as
@@ -205,7 +246,7 @@ curl -sS -H "authorization: Bearer $TOKEN" \
 
 ```bash
 curl -sS -X DELETE -H "authorization: Bearer $TOKEN" \
-  http://localhost:8080/api/deployments/user-1/demo
+  http://localhost:8080/api/deployments/mcp-team-acme/demo
 ```
 
 ## Registry Credentials
@@ -235,8 +276,8 @@ curl -sS -H "authorization: Bearer $TOKEN" \
 Revoke one registry credential:
 
 ```bash
-curl -sS -X POST -H "authorization: Bearer $TOKEN" \
-  http://localhost:8080/api/user/registry-credentials/"$CREDENTIAL_ID"/revoke
+curl -sS -X DELETE -H "authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/user/registry-credentials/"$CREDENTIAL_ID"
 ```
 
 ## Admin
@@ -250,5 +291,5 @@ curl -sS -H "authorization: Bearer $ADMIN_TOKEN" \
 
 ```bash
 curl -sS -H "authorization: Bearer $ADMIN_TOKEN" \
-  'http://localhost:8080/api/admin/deployments?namespace=user-1'
+  'http://localhost:8080/api/admin/deployments?namespace=mcp-team-acme'
 ```

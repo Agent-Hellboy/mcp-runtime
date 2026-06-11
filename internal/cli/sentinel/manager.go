@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/internal/cli/kubeerr"
 	"mcp-runtime/internal/cli/platformstatus"
 )
 
@@ -157,6 +158,9 @@ func findSentinelPortTarget(name string) (*sentinelPortTarget, error) {
 
 // ShowSentinelStatus prints a status table for sentinel workloads.
 func (m *SentinelManager) ShowSentinelStatus() error {
+	if err := m.requireAdminClusterAccess(); err != nil {
+		return err
+	}
 	core.Header("MCP Sentinel Status")
 	core.DefaultPrinter.Println()
 
@@ -188,6 +192,9 @@ func (m *SentinelManager) ShowSentinelStatus() error {
 
 // ViewSentinelLogs streams logs for a sentinel component.
 func (m *SentinelManager) ViewSentinelLogs(component string, follow, previous bool, tail int, since string) error {
+	if err := m.requireAdminClusterAccess(); err != nil {
+		return err
+	}
 	target, err := findSentinelComponent(component)
 	if err != nil {
 		return err
@@ -222,6 +229,9 @@ func (m *SentinelManager) ViewSentinelLogs(component string, follow, previous bo
 
 // ShowSentinelEvents lists recent events in the analytics namespace.
 func (m *SentinelManager) ShowSentinelEvents() error {
+	if err := m.requireAdminClusterAccess(); err != nil {
+		return err
+	}
 	args := []string{"get", "events", "-n", core.DefaultAnalyticsNamespace, "--sort-by=.lastTimestamp"}
 	if err := m.kubectl.RunWithOutput(args, os.Stdout, os.Stderr); err != nil {
 		return core.WrapWithSentinelAndContext(nil, err, fmt.Sprintf("failed to list sentinel events: %v", err), map[string]any{
@@ -234,6 +244,9 @@ func (m *SentinelManager) ShowSentinelEvents() error {
 
 // PortForwardSentinelTarget runs kubectl port-forward for a known service target.
 func (m *SentinelManager) PortForwardSentinelTarget(target string, localPort int, address string) error {
+	if err := m.requireAdminClusterAccess(); err != nil {
+		return err
+	}
 	portTarget, err := findSentinelPortTarget(target)
 	if err != nil {
 		return err
@@ -262,6 +275,9 @@ func (m *SentinelManager) PortForwardSentinelTarget(target string, localPort int
 
 // RestartSentinel restarts one component or all sentinel workloads.
 func (m *SentinelManager) RestartSentinel(component string, restartAll bool) error {
+	if err := m.requireAdminClusterAccess(); err != nil {
+		return err
+	}
 	if restartAll {
 		for _, target := range sentinelComponents {
 			args := []string{"rollout", "restart", fmt.Sprintf("%s/%s", target.Kind, target.Resource), "-n", target.Namespace}
@@ -285,6 +301,22 @@ func (m *SentinelManager) RestartSentinel(component string, restartAll bool) err
 			"component": component,
 			"namespace": target.Namespace,
 		})
+	}
+	return nil
+}
+
+func (m *SentinelManager) requireAdminClusterAccess() error {
+	if m.kubectl == nil {
+		return core.NewWithSentinel(nil, kubeerr.DirectModeFailureMessage("sentinel commands require admin cluster access", "kubectl client is unavailable"))
+	}
+	cmd, err := m.kubectl.CommandArgs([]string{"cluster-info"})
+	if err != nil {
+		return core.NewWithSentinel(nil, kubeerr.DirectModeFailureMessage("sentinel commands require admin cluster access", err.Error()))
+	}
+	output, execErr := cmd.CombinedOutput()
+	if execErr != nil {
+		detail := kubeerr.CommandDetail(string(output), execErr)
+		return core.NewWithSentinel(nil, kubeerr.DirectModeFailureMessage("sentinel commands require admin cluster access", detail))
 	}
 	return nil
 }

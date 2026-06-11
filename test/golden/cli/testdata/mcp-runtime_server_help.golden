@@ -1,8 +1,14 @@
 Commands for managing MCP server deployments.
 
-With mcp-runtime auth login, list, status, policy, deploy, and delete use the
-platform API when --use-kube is not set. Create, apply, patch, and logs require
-kubectl and a cluster kubeconfig (or --use-kube for those operations).
+With mcp-runtime auth login, supported commands use the platform API by default
+for normal user and admin workflows. Use --use-kube only for admin/dev/test
+direct Kubernetes operations; it requires kubectl plus admin/operator kubeconfig
+and RBAC access.
+
+Create, apply, export, patch, and logs are direct Kubernetes operations and
+require --use-kube. For platform workflows, use mcp-runtime auth login
+--api-url <platform-url> and platform-backed commands such as list, deploy,
+delete, status, and policy.
 
 For building images from source, use 'server build'.
 For pushing images, use 'registry push'.
@@ -17,16 +23,19 @@ Available Commands:
   delete      Delete an MCP server
   deploy      Deploy an MCP server through the platform API
   export      Export an MCP server manifest
+  generate    Generate MCPServer manifests from .mcp metadata
   get         Get MCP server details
+  init        Initialize .mcp metadata for a server
   list        List MCP servers
   logs        View server logs
   patch       Patch an MCP server manifest
   policy      Inspect rendered gateway policy for an MCP server
   status      Show MCP server runtime status (pods, images, pull secrets)
+  validate    Validate .mcp metadata and optional grant/session YAML files
 
 Flags:
   -h, --help       help for server
-      --use-kube   Use kubectl and local kubeconfig instead of the platform API for supported commands
+      --use-kube   Use direct Kubernetes mode with kubectl; requires admin/operator cluster access (admin/dev/test only)
 
 Global Flags:
       --debug   Enable debug mode with structured error logging

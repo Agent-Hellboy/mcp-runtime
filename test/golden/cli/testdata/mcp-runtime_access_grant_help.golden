@@ -9,6 +9,7 @@ Available Commands:
   disable     Disable a grant
   enable      Enable a grant
   get         Get an access grant
+  init        Initialize an MCPAccessGrant manifest
   list        List access grants
 
 Flags:
@@ -16,6 +17,6 @@ Flags:
 
 Global Flags:
       --debug      Enable debug mode with structured error logging
-      --use-kube   Use kubectl and local kubeconfig instead of the platform API for supported commands
+      --use-kube   Use direct Kubernetes mode with kubectl; requires admin/operator cluster access (admin/dev/test only)
 
 Use "mcp-runtime access grant [command] --help" for more information about a command.

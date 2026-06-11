@@ -8,8 +8,10 @@ COPY services/ingest/go.mod services/ingest/go.sum ./services/ingest/
 RUN cd services/ingest && go mod download
 
 COPY services/ingest/*.go ./services/ingest/
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 RUN cd services/ingest && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/ingest .
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /out/ingest .
 
 FROM gcr.io/distroless/base-debian12
 WORKDIR /app

@@ -9,8 +9,14 @@ set -euo pipefail
 # - verify audit events plus trace/log backends
 #
 # Set E2E_SCENARIOS to a comma-separated subset for local debugging.
-# Supported values: all, smoke-auth, governance, trust, oauth, observability, multitenancy.
+# Supported values: all, smoke-auth, governance, trust, oauth, observability,
+# multitenancy, api-platform, ui-auth, adapter-proxy, cli-platform.
 # observability requires the full traffic suite: smoke-auth, governance, trust, oauth.
+#
+# Set E2E_DEEP_REQUEST_FLOWS=1 for pre-release runs that should exercise
+# broader CLI help, platform API, UI auth, registry authz, team, deployment,
+# adapter-proxy, and item-level runtime request flows. This mode requires
+# every scenario.
 #
 # For repeated local debugging, set E2E_CACHE_MODE=1. Cache mode implies
 # E2E_KEEP_CLUSTER=1, reuses an existing kind cluster and local registry, skips
@@ -100,13 +106,13 @@ SERVER_NAME="${SERVER_NAME:-policy-mcp-server}"
 SERVER_HOST="${SERVER_HOST:-${PLATFORM_HOST}}"
 OAUTH_SERVER_NAME="${OAUTH_SERVER_NAME:-oauth-mcp-server}"
 OAUTH_SERVER_HOST="${OAUTH_SERVER_HOST:-${PLATFORM_HOST}}"
-PYTHON_EXAMPLE_SERVER_NAME="${PYTHON_EXAMPLE_SERVER_NAME:-python-example-mcp}"
+PYTHON_EXAMPLE_SERVER_NAME="${PYTHON_EXAMPLE_SERVER_NAME:-data-utility-mcp}"
 PYTHON_EXAMPLE_SERVER_HOST="${PYTHON_EXAMPLE_SERVER_HOST:-${PLATFORM_HOST}}"
 PYTHON_EXAMPLE_SERVER_ROUTE="${PYTHON_EXAMPLE_SERVER_ROUTE:-/${PYTHON_EXAMPLE_SERVER_NAME}/mcp}"
-RUST_EXAMPLE_SERVER_NAME="${RUST_EXAMPLE_SERVER_NAME:-rust-example-mcp}"
+RUST_EXAMPLE_SERVER_NAME="${RUST_EXAMPLE_SERVER_NAME:-text-analysis-mcp}"
 RUST_EXAMPLE_SERVER_HOST="${RUST_EXAMPLE_SERVER_HOST:-${PLATFORM_HOST}}"
 RUST_EXAMPLE_SERVER_ROUTE="${RUST_EXAMPLE_SERVER_ROUTE:-/${RUST_EXAMPLE_SERVER_NAME}/mcp}"
-GO_EXAMPLE_SERVER_NAME="${GO_EXAMPLE_SERVER_NAME:-go-example-mcp}"
+GO_EXAMPLE_SERVER_NAME="${GO_EXAMPLE_SERVER_NAME:-workspace-assistant-mcp}"
 GO_EXAMPLE_SERVER_HOST="${GO_EXAMPLE_SERVER_HOST:-${PLATFORM_HOST}}"
 GO_EXAMPLE_SERVER_ROUTE="${GO_EXAMPLE_SERVER_ROUTE:-/${GO_EXAMPLE_SERVER_NAME}/mcp}"
 MT_TENANT_A="${MT_TENANT_A:-mt-tenant-a}"
@@ -125,7 +131,7 @@ OAUTH_AGENT_ID="${OAUTH_AGENT_ID:-oauth-client}"
 OAUTH_SESSION_ID="${OAUTH_SESSION_ID:-oauth-session-1}"
 OAUTH_AUDIENCE="${OAUTH_AUDIENCE:-mcp-runtime-e2e}"
 OAUTH_ISSUER_NAME="${OAUTH_ISSUER_NAME:-oauth-issuer}"
-OAUTH_ISSUER_URL="http://${OAUTH_ISSUER_NAME}.mcp-servers.svc.cluster.local:8080"
+OAUTH_ISSUER_URL="${OAUTH_ISSUER_URL:-}"
 TRAEFIK_PORT="${TRAEFIK_PORT:-18080}"
 SENTINEL_PORT="${SENTINEL_PORT:-18083}"
 TEMPO_PORT="${TEMPO_PORT:-13200}"
@@ -141,9 +147,14 @@ PYTHON_EXAMPLE_PROXY_PORT="${PYTHON_EXAMPLE_PROXY_PORT:-18098}"
 RUST_EXAMPLE_PROXY_PORT="${RUST_EXAMPLE_PROXY_PORT:-18099}"
 GO_EXAMPLE_PROXY_PORT="${GO_EXAMPLE_PROXY_PORT:-18102}"
 CLI_SENTINEL_API_PORT="${CLI_SENTINEL_API_PORT:-18103}"
+ADAPTER_PROXY_PORT="${ADAPTER_PROXY_PORT:-18104}"
+MCP_SERVICE_SESSION_PORT="${MCP_SERVICE_SESSION_PORT:-18105}"
+MT_TENANT_A_PORT="${MT_TENANT_A_PORT:-18106}"
+MT_TENANT_B_PORT="${MT_TENANT_B_PORT:-18107}"
 API_METRICS_PORT="${API_METRICS_PORT:-19090}"
 INGEST_METRICS_PORT="${INGEST_METRICS_PORT:-19091}"
 PROCESSOR_METRICS_PORT="${PROCESSOR_METRICS_PORT:-19092}"
+PROMETHEUS_PORT="${PROMETHEUS_PORT:-19093}"
 PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL:-admin@mcpruntime.org}"
 PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD:-admin@123}"
 MCP_CURL_TIMEOUT="${MCP_CURL_TIMEOUT:-${MCP_SMOKE_TIMEOUT:-20}}"
@@ -157,8 +168,11 @@ MCP_CURL_OAUTH_ANON_PORT="${MCP_CURL_OAUTH_ANON_PORT:-${MCP_SMOKE_OAUTH_ANON_POR
 MCP_CURL_OAUTH_INVALID_PORT="${MCP_CURL_OAUTH_INVALID_PORT:-${MCP_SMOKE_OAUTH_INVALID_PORT:-18089}}"
 MCP_CURL_OAUTH_VALID_PORT="${MCP_CURL_OAUTH_VALID_PORT:-${MCP_SMOKE_OAUTH_VALID_PORT:-18090}}"
 MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION:-2025-06-18}"
+MCP_INGRESS_PATH="${MCP_INGRESS_PATH:-/${SERVER_NAME}/mcp}"
+MCP_DIRECT_URL="${MCP_DIRECT_URL:-http://127.0.0.1:${TRAEFIK_PORT}${MCP_INGRESS_PATH}}"
 MCP_POLICY_WAIT_TRIES="${MCP_POLICY_WAIT_TRIES:-90}"
 RAW_REQUEST_TRIES="${RAW_REQUEST_TRIES:-10}"
+MCP_HTTP_TIMEOUT="${MCP_HTTP_TIMEOUT:-30}"
 UNKNOWN_SESSION_ID="${UNKNOWN_SESSION_ID:-sess-does-not-exist}"
 TEST_MODE_REGISTRY_IMAGE="${TEST_MODE_REGISTRY_IMAGE:-docker.io/library/mcp-runtime-registry:latest}"
 LOCAL_REGISTRY_NAME="${LOCAL_REGISTRY_NAME:-${CLUSTER_NAME}-dockerhub-mirror}"
@@ -173,6 +187,11 @@ E2E_SCENARIOS="${E2E_SCENARIOS-all}"
 E2E_SCENARIOS="${E2E_SCENARIOS//[[:space:]]/}"
 E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE:-tenant}"
 E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE//[[:space:]]/}"
+E2E_DEEP_REQUEST_FLOWS="${E2E_DEEP_REQUEST_FLOWS:-0}"
+# Cap concurrently deployed MCP servers (primary + extras). 0 means unlimited
+# (full pre-release / local all-scenario runs). CI sets 2: primary plus at most
+# one secondary such as multitenancy tenant-b.
+E2E_MAX_MCP_SERVERS="${E2E_MAX_MCP_SERVERS:-0}"
 E2E_VALIDATE_SCENARIOS_ONLY="${E2E_VALIDATE_SCENARIOS_ONLY:-0}"
 E2E_KEEP_CLUSTER="${E2E_KEEP_CLUSTER:-0}"
 E2E_CACHE_MODE="${E2E_CACHE_MODE:-0}"
@@ -204,6 +223,29 @@ if ! [[ "${E2E_IMAGE_BUILD_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_IMAGE_BUILD
   echo "E2E_IMAGE_BUILD_PARALLELISM must be a positive integer" >&2
   exit 1
 fi
+E2E_EXAMPLE_DEPLOY_PARALLELISM="${E2E_EXAMPLE_DEPLOY_PARALLELISM:-${E2E_IMAGE_BUILD_PARALLELISM}}"
+E2E_GRANT_RULE_PARALLELISM="${E2E_GRANT_RULE_PARALLELISM:-4}"
+E2E_HTTP_FLOW_PARALLELISM="${E2E_HTTP_FLOW_PARALLELISM:-2}"
+if ! [[ "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_EXAMPLE_DEPLOY_PARALLELISM}" -lt 1 ]]; then
+  echo "E2E_EXAMPLE_DEPLOY_PARALLELISM must be a positive integer" >&2
+  exit 1
+fi
+if ! [[ "${E2E_GRANT_RULE_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_GRANT_RULE_PARALLELISM}" -lt 1 ]]; then
+  echo "E2E_GRANT_RULE_PARALLELISM must be a positive integer" >&2
+  exit 1
+fi
+if ! [[ "${E2E_HTTP_FLOW_PARALLELISM}" =~ ^[0-9]+$ ]] || [[ "${E2E_HTTP_FLOW_PARALLELISM}" -lt 1 ]]; then
+  echo "E2E_HTTP_FLOW_PARALLELISM must be a positive integer" >&2
+  exit 1
+fi
+# Backward-compatible alias for older env files/CI that still set E2E_MCP_WAIT_PARALLELISM.
+if [[ -n "${E2E_MCP_WAIT_PARALLELISM:-}" ]]; then
+  E2E_GRANT_RULE_PARALLELISM="${E2E_MCP_WAIT_PARALLELISM}"
+fi
+if ! [[ "${E2E_MAX_MCP_SERVERS}" =~ ^[0-9]+$ ]]; then
+  echo "E2E_MAX_MCP_SERVERS must be zero or a positive integer" >&2
+  exit 1
+fi
 if ! [[ "${E2E_LOG_PREVIEW_LINES}" =~ ^[0-9]+$ ]]; then
   echo "E2E_LOG_PREVIEW_LINES must be zero or a positive integer" >&2
   exit 1
@@ -212,6 +254,16 @@ if ! [[ "${E2E_LOG_FAILURE_LINES}" =~ ^[0-9]+$ ]]; then
   echo "E2E_LOG_FAILURE_LINES must be zero or a positive integer" >&2
   exit 1
 fi
+case "${E2E_CHECKPOINT:-platform}" in
+  platform|policy|oauth|observability|multitenancy)
+    ;;
+  *)
+    echo "unsupported E2E checkpoint: ${E2E_CHECKPOINT}" >&2
+    echo "supported values: platform, policy, oauth, observability, multitenancy" >&2
+    exit 1
+    ;;
+esac
+E2E_CHECKPOINT="${E2E_CHECKPOINT:-platform}"
 
 IFS=',' read -r -a E2E_SCENARIO_LIST <<< "${E2E_SCENARIOS}"
 if [[ ${#E2E_SCENARIO_LIST[@]} -eq 0 || -z "${E2E_SCENARIO_LIST[0]}" ]]; then
@@ -257,6 +309,49 @@ scenario_selected() {
   scenario_requested "${wanted}"
 }
 
+api_service_paths_selected() {
+  scenario_selected "governance" \
+    || scenario_selected "observability" \
+    || scenario_selected "api-platform" \
+    || scenario_selected "adapter-proxy" \
+    || scenario_selected "cli-platform"
+}
+
+ui_service_paths_selected() {
+  scenario_selected "observability" || scenario_selected "ui-auth"
+}
+
+server_proxy_paths_selected() {
+  scenario_selected "trust" || scenario_selected "observability"
+}
+
+oauth_proxy_paths_selected() {
+  scenario_selected "oauth" || scenario_selected "observability"
+}
+
+e2e_mcp_server_budget() {
+  if [[ "${E2E_MAX_MCP_SERVERS}" == "0" ]]; then
+    echo 99
+  else
+    echo "${E2E_MAX_MCP_SERVERS}"
+  fi
+}
+
+e2e_multitenancy_slim_mode() {
+  scenario_selected "multitenancy" && [[ "$(e2e_mcp_server_budget)" -le 2 ]]
+}
+
+deep_request_flows_enabled() {
+  case "${E2E_DEEP_REQUEST_FLOWS}" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 validate_scenarios() {
   case "${E2E_PLATFORM_MODE}" in
     tenant|org|public)
@@ -271,11 +366,11 @@ validate_scenarios() {
   local scenario
   for scenario in "${E2E_SCENARIO_LIST[@]}"; do
     case "${scenario}" in
-      all|smoke-auth|governance|trust|oauth|observability|multitenancy)
+      all|smoke-auth|governance|trust|oauth|observability|multitenancy|api-platform|ui-auth|adapter-proxy|cli-platform)
         ;;
       *)
         echo "unsupported E2E scenario: ${scenario}" >&2
-        echo "supported values: all, smoke-auth, governance, trust, oauth, observability, multitenancy" >&2
+        echo "supported values: all, smoke-auth, governance, trust, oauth, observability, multitenancy, api-platform, ui-auth, adapter-proxy, cli-platform" >&2
         exit 1
         ;;
     esac
@@ -290,6 +385,47 @@ validate_scenarios() {
       fi
     done
   fi
+
+  if deep_request_flows_enabled; then
+    local required
+    for required in smoke-auth governance trust oauth observability multitenancy api-platform ui-auth adapter-proxy cli-platform; do
+      if ! scenario_selected "${required}"; then
+        echo "E2E_DEEP_REQUEST_FLOWS=1 requires all E2E scenarios" >&2
+        echo "set E2E_SCENARIOS=all or include every supported scenario" >&2
+        exit 1
+      fi
+    done
+  fi
+}
+
+checkpoint_order() {
+  case "${1}" in
+    platform)
+      echo 0
+      ;;
+    policy)
+      echo 1
+      ;;
+    oauth)
+      echo 2
+      ;;
+    observability)
+      echo 3
+      ;;
+    multitenancy)
+      echo 4
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+checkpoint_enabled() {
+  local requested stage
+  requested="$(checkpoint_order "${E2E_CHECKPOINT}")" || return 1
+  stage="$(checkpoint_order "${1}")" || return 1
+  [[ "${requested}" -le "${stage}" ]]
 }
 
 describe_selected_scenarios() {
@@ -304,7 +440,16 @@ describe_selected_scenarios() {
 
 validate_scenarios
 log_line info "E2E scenarios: $(describe_selected_scenarios)"
+if [[ "${E2E_MAX_MCP_SERVERS}" == "0" ]]; then
+  log_line info "E2E MCP server budget: unlimited"
+else
+  log_line info "E2E MCP server budget: ${E2E_MAX_MCP_SERVERS} (primary plus extras)"
+fi
 log_line info "E2E platform mode: ${E2E_PLATFORM_MODE}"
+log_line info "E2E checkpoint: ${E2E_CHECKPOINT}"
+if deep_request_flows_enabled; then
+  log_line info "Pre-release deep request-flow checks: enabled"
+fi
 log_line info "Local smoke/governance checks use direct curl-based MCP HTTP; OpenAI/Anthropic real-client agent checks are disabled"
 if [[ "${E2E_VALIDATE_SCENARIOS_ONLY}" == "1" ]]; then
   exit 0
@@ -313,9 +458,12 @@ fi
 git config --global --add safe.directory "${PROJECT_ROOT}" >/dev/null 2>&1 || true
 
 WORKDIR="$(mktemp -d)"
+E2E_PIPELINE_CONFIG_DIR="${WORKDIR}/e2e-pipeline-config"
+mkdir -p "${E2E_PIPELINE_CONFIG_DIR}"
 STAGE_LOG_DIR="${WORKDIR}/stage-logs"
 KIND_CONFIG="$(mktemp)"
 KUBECONFIG_FILE="$(mktemp)"
+KUBECONFIG_BACKUP_FILE="$(mktemp)"
 ORIG_CONTEXT="$(kubectl config current-context 2>/dev/null || true)"
 PIDS=()
 PARALLEL_PIDS=()
@@ -329,6 +477,11 @@ PARALLEL_SEQ=0
 STAGE_SEQ=0
 
 cleanup() {
+  # Background parallel workers inherit this EXIT trap; never tear down the
+  # cluster or delete the shared kubeconfig from a subshell.
+  if [[ "${BASH_SUBSHELL:-0}" -ne 0 ]]; then
+    return 0
+  fi
   if [[ -n "${E2E_ARTIFACT_DIR}" ]]; then
     mkdir -p "${E2E_ARTIFACT_DIR}"
     if [[ -d "${WORKDIR}" ]]; then
@@ -353,6 +506,7 @@ cleanup() {
   rm -rf "${WORKDIR}"
   rm -f "${KIND_CONFIG}"
   rm -f "${KUBECONFIG_FILE}"
+  rm -f "${KUBECONFIG_BACKUP_FILE}"
 }
 trap cleanup EXIT
 
@@ -368,6 +522,21 @@ wait_port() {
   done
   echo "timed out waiting for localhost:${port}" >&2
   return 1
+}
+
+wait_ports_parallel() {
+  local port
+  local -a pids=()
+  for port in "$@"; do
+    wait_port "${port}" &
+    pids+=("$!")
+  done
+  local pid
+  for pid in "${pids[@]}"; do
+    if ! wait "${pid}"; then
+      return 1
+    fi
+  done
 }
 
 port_is_listening() {
@@ -472,6 +641,98 @@ assert_file_contains() {
   grep -F -q -- "${needle}" "${file}"
 }
 
+run_cli_help_sweep() {
+  local command_line
+  local -a args
+  local -a commands=(
+    ""
+    "adapter"
+    "adapter proxy"
+    "adapter stdio"
+    "auth"
+    "auth login"
+    "auth logout"
+    "auth status"
+    "bootstrap"
+    "cluster"
+    "cluster init"
+    "cluster status"
+    "cluster config"
+    "cluster provision"
+    "cluster doctor"
+    "cluster cert"
+    "cluster cert status"
+    "cluster cert apply"
+    "cluster cert wait"
+    "registry"
+    "registry status"
+    "registry info"
+    "registry provision"
+    "registry push"
+    "server"
+    "server list"
+    "server get"
+    "server create"
+    "server apply"
+    "server deploy"
+    "server export"
+    "server patch"
+    "server delete"
+    "server logs"
+    "server status"
+    "server policy"
+    "server policy inspect"
+    "server build"
+    "server build image"
+    "access"
+    "access grant"
+    "access grant list"
+    "access grant get"
+    "access grant apply"
+    "access grant delete"
+    "access grant disable"
+    "access grant enable"
+    "access session"
+    "access session list"
+    "access session get"
+    "access session apply"
+    "access session delete"
+    "access session revoke"
+    "access session unrevoke"
+    "sentinel"
+    "sentinel status"
+    "sentinel logs"
+    "sentinel events"
+    "sentinel port-forward"
+    "sentinel restart"
+    "server generate"
+    "setup"
+    "status"
+    "team"
+    "team list"
+    "team create"
+    "team init"
+    "team user"
+    "team user create"
+    "team user list"
+  )
+
+  echo "[cli] running pre-release help sweep"
+  for command_line in "${commands[@]}"; do
+    if [[ -z "${command_line}" ]]; then
+      ./bin/mcp-runtime --help >/dev/null
+      continue
+    fi
+    read -r -a args <<< "${command_line}"
+    ./bin/mcp-runtime "${args[@]}" --help >/dev/null
+  done
+
+  ./bin/mcp-runtime completion bash >/dev/null
+  ./bin/mcp-runtime completion zsh >/dev/null
+  ./bin/mcp-runtime completion fish >/dev/null
+  ./bin/mcp-runtime completion powershell >/dev/null
+}
+
 run_cli_allowing_cert_prereq_failure() {
   local name="$1"
   shift
@@ -507,11 +768,26 @@ port_forward_bg() {
   local remote_port="$4"
   local log_file="$5"
   local label="port-forward ${namespace}/svc/${service}"
+  local pid
+  local attempt
 
-  require_port_available "${local_port}" "${label}"
-  kubectl port-forward -n "${namespace}" "svc/${service}" "${local_port}:${remote_port}" >"${log_file}" 2>&1 &
-  PIDS+=("$!")
-  wait_managed_port "${local_port}" "$!" "${log_file}" "${label}"
+  for attempt in 1 2 3; do
+    require_port_available "${local_port}" "${label}" || return 1
+    KUBECONFIG="${KUBECONFIG_FILE}" kubectl port-forward -n "${namespace}" "svc/${service}" "${local_port}:${remote_port}" >"${log_file}" 2>&1 &
+    pid="$!"
+    PIDS+=("${pid}")
+    LAST_MANAGED_PID="${pid}"
+    if wait_managed_port "${local_port}" "${pid}" "${log_file}" "${label}" 20; then
+      return 0
+    fi
+    kill "${pid}" >/dev/null 2>&1 || true
+    wait "${pid}" >/dev/null 2>&1 || true
+    if ! grep -Eq 'lost connection to pod|connection refused|error forwarding port|timed out waiting' "${log_file}" 2>/dev/null; then
+      return 1
+    fi
+    sleep 2
+  done
+  return 1
 }
 
 port_forward_resource_bg() {
@@ -521,11 +797,180 @@ port_forward_resource_bg() {
   local remote_port="$4"
   local log_file="$5"
   local label="port-forward ${namespace}/${resource}"
+  local pid
+  local attempt
 
-  require_port_available "${local_port}" "${label}"
-  kubectl port-forward -n "${namespace}" "${resource}" "${local_port}:${remote_port}" >"${log_file}" 2>&1 &
-  PIDS+=("$!")
-  wait_managed_port "${local_port}" "$!" "${log_file}" "${label}"
+  for attempt in 1 2 3; do
+    require_port_available "${local_port}" "${label}" || return 1
+    KUBECONFIG="${KUBECONFIG_FILE}" kubectl port-forward -n "${namespace}" "${resource}" "${local_port}:${remote_port}" >"${log_file}" 2>&1 &
+    pid="$!"
+    PIDS+=("${pid}")
+    LAST_MANAGED_PID="${pid}"
+    if wait_managed_port "${local_port}" "${pid}" "${log_file}" "${label}" 20; then
+      return 0
+    fi
+    kill "${pid}" >/dev/null 2>&1 || true
+    wait "${pid}" >/dev/null 2>&1 || true
+    if ! grep -Eq 'lost connection to pod|connection refused|error forwarding port|timed out waiting' "${log_file}" 2>/dev/null; then
+      return 1
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+recover_traefik_port_forward_if_needed() {
+  if [[ -z "${TRAEFIK_PORT_FORWARD_PID:-}" ]]; then
+    return 0
+  fi
+  if port_is_listening "${TRAEFIK_PORT}"; then
+    return 0
+  fi
+
+  if kill -0 "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1; then
+    kill "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
+    wait "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
+  fi
+
+  TRAEFIK_PORT_FORWARD_RESTARTS=$((TRAEFIK_PORT_FORWARD_RESTARTS + 1))
+  local log_file="${WORKDIR}/traefik-port-forward-restart-${TRAEFIK_PORT_FORWARD_RESTARTS}.log"
+  echo "[port-forward] restarting Traefik port-forward on localhost:${TRAEFIK_PORT}" >&2
+  port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${log_file}"
+  TRAEFIK_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+}
+
+ensure_traefik_port_forward() {
+  if [[ -z "${TRAEFIK_PORT_FORWARD_PID:-}" ]]; then
+    echo "[port-forward] exposing traefik on localhost:${TRAEFIK_PORT}"
+    port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${WORKDIR}/traefik-port-forward.log"
+    TRAEFIK_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+    TRAEFIK_PORT_FORWARD_RESTARTS=0
+  else
+    recover_traefik_port_forward_if_needed
+  fi
+  wait_port "${TRAEFIK_PORT}"
+}
+
+stop_listener_on_port() {
+  local port="$1"
+  if ! port_is_listening "${port}"; then
+    return 0
+  fi
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+  local pids
+  pids="$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)"
+  if [[ -z "${pids}" ]]; then
+    return 0
+  fi
+  # shellcheck disable=SC2086
+  kill ${pids} 2>/dev/null || true
+  sleep 1
+}
+
+restart_traefik_port_forward_force() {
+  if [[ -n "${TRAEFIK_PORT_FORWARD_PID:-}" ]] && kill -0 "${TRAEFIK_PORT_FORWARD_PID}" 2>/dev/null; then
+    kill "${TRAEFIK_PORT_FORWARD_PID}" 2>/dev/null || true
+    wait "${TRAEFIK_PORT_FORWARD_PID}" 2>/dev/null || true
+  fi
+  TRAEFIK_PORT_FORWARD_PID=""
+  stop_listener_on_port "${TRAEFIK_PORT}"
+  ensure_traefik_port_forward
+}
+
+start_mcp_ingress_header_proxies() {
+  restart_traefik_port_forward_force
+  local proxy_ports=(
+    "${MCP_CURL_ANON_PORT}"
+    "${MCP_CURL_IDENTITY_PORT}"
+    "${MCP_CURL_SESSION_PORT}"
+    "${MCP_CURL_BAD_SESSION_PORT}"
+  )
+  local port
+  for port in "${proxy_ports[@]}"; do
+    stop_listener_on_port "${port}"
+  done
+
+  echo "[proxy] starting local ingress proxies for curl MCP checks"
+  start_header_proxy_bg "${MCP_CURL_ANON_PORT}" \
+    "http://127.0.0.1:${TRAEFIK_PORT}" \
+    "${WORKDIR}/mcp-curl-anon-proxy.log" \
+    --host-header "${SERVER_HOST}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
+  start_header_proxy_bg "${MCP_CURL_IDENTITY_PORT}" \
+    "http://127.0.0.1:${TRAEFIK_PORT}" \
+    "${WORKDIR}/mcp-curl-identity-proxy.log" \
+    --host-header "${SERVER_HOST}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
+    --header "X-MCP-Human-ID=${HUMAN_ID}" \
+    --header "X-MCP-Agent-ID=${AGENT_ID}"
+  start_header_proxy_bg "${MCP_CURL_SESSION_PORT}" \
+    "http://127.0.0.1:${TRAEFIK_PORT}" \
+    "${WORKDIR}/mcp-curl-session-proxy.log" \
+    --host-header "${SERVER_HOST}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
+    --header "X-MCP-Human-ID=${HUMAN_ID}" \
+    --header "X-MCP-Agent-ID=${AGENT_ID}" \
+    --header "X-MCP-Agent-Session=${SESSION_ID}"
+  start_header_proxy_bg "${MCP_CURL_BAD_SESSION_PORT}" \
+    "http://127.0.0.1:${TRAEFIK_PORT}" \
+    "${WORKDIR}/mcp-curl-bad-session-proxy.log" \
+    --host-header "${SERVER_HOST}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
+    --header "X-MCP-Human-ID=${HUMAN_ID}" \
+    --header "X-MCP-Agent-ID=${AGENT_ID}" \
+    --header "X-MCP-Agent-Session=${UNKNOWN_SESSION_ID}"
+}
+
+ensure_ui_port_forward() {
+  if [[ -z "${UI_SERVICE_PORT_FORWARD_PID:-}" ]]; then
+    echo "[port-forward] exposing mcp-sentinel-ui on localhost:${UI_SERVICE_PORT}"
+    port_forward_bg mcp-sentinel mcp-sentinel-ui "${UI_SERVICE_PORT}" 8082 "${WORKDIR}/ui-port-forward.log"
+    UI_SERVICE_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+  fi
+  wait_port "${UI_SERVICE_PORT}"
+}
+
+ensure_api_port_forward() {
+  if [[ -z "${API_SERVICE_PORT_FORWARD_PID:-}" ]]; then
+    echo "[port-forward] exposing mcp-sentinel-api on localhost:${API_SERVICE_PORT}"
+    port_forward_bg mcp-sentinel mcp-sentinel-api "${API_SERVICE_PORT}" 8080 "${WORKDIR}/api-port-forward.log"
+    API_SERVICE_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+  fi
+  wait_port "${API_SERVICE_PORT}"
+}
+
+ensure_gateway_port_forward() {
+  if [[ -z "${SENTINEL_PORT_FORWARD_PID:-}" ]]; then
+    echo "[port-forward] exposing mcp-sentinel-gateway on localhost:${SENTINEL_PORT}"
+    port_forward_bg mcp-sentinel mcp-sentinel-gateway "${SENTINEL_PORT}" 8083 "${WORKDIR}/sentinel-port-forward.log"
+    SENTINEL_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+  fi
+  wait_port "${SENTINEL_PORT}"
+}
+
+refresh_mcp_proxy_urls() {
+  MCP_INGRESS_PATH="/${SERVER_NAME}/mcp"
+  MCP_DIRECT_URL="http://127.0.0.1:${TRAEFIK_PORT}${MCP_INGRESS_PATH}"
+  MCP_ANON_URL="http://127.0.0.1:${MCP_CURL_ANON_PORT}${MCP_INGRESS_PATH}"
+  MCP_IDENTITY_URL="http://127.0.0.1:${MCP_CURL_IDENTITY_PORT}${MCP_INGRESS_PATH}"
+  MCP_SESSION_URL="http://127.0.0.1:${MCP_CURL_SESSION_PORT}${MCP_INGRESS_PATH}"
+  MCP_BAD_SESSION_URL="http://127.0.0.1:${MCP_CURL_BAD_SESSION_PORT}${MCP_INGRESS_PATH}"
+  MCP_TRUST_SESSION_URL="http://127.0.0.1:${MCP_SERVICE_SESSION_PORT}${MCP_INGRESS_PATH}"
+}
+
+ensure_server_proxy_port_forward() {
+  refresh_kind_kubeconfig || true
+  if [[ -n "${SERVER_PROXY_PORT_FORWARD_PID:-}" ]] && ! port_is_listening "${SERVER_PROXY_PORT}"; then
+    SERVER_PROXY_PORT_FORWARD_PID=""
+  fi
+  if [[ -z "${SERVER_PROXY_PORT_FORWARD_PID:-}" ]]; then
+    echo "[port-forward] exposing ${SERVER_NAME} service on localhost:${SERVER_PROXY_PORT}"
+    port_forward_bg mcp-servers "${SERVER_NAME}" "${SERVER_PROXY_PORT}" 80 "${WORKDIR}/server-proxy-port-forward.log"
+    SERVER_PROXY_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+  fi
+  wait_port "${SERVER_PROXY_PORT}"
 }
 
 start_header_proxy_bg() {
@@ -535,6 +980,9 @@ start_header_proxy_bg() {
   local label="header proxy ${local_port} -> ${upstream_origin}"
   shift 3
 
+  # Always recycle the listener so a restarted Traefik port-forward does not leave
+  # a stale upstream connection in an old proxy process.
+  stop_listener_on_port "${local_port}"
   require_port_available "${local_port}" "${label}"
   python3 "${PROJECT_ROOT}/test/e2e/mcp_header_proxy.py" \
     --listen-host 127.0.0.1 \
@@ -543,6 +991,53 @@ start_header_proxy_bg() {
     "$@" >"${log_file}" 2>&1 &
   PIDS+=("$!")
   wait_managed_port "${local_port}" "$!" "${log_file}" "${label}"
+}
+
+mcp_result_initialize_status() {
+  local result_file="$1"
+  if [[ ! -f "${result_file}" ]]; then
+    return 1
+  fi
+  python3 - "${result_file}" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as fh:
+    doc = json.load(fh)
+if doc.get("phase") != "initialize":
+    raise SystemExit(1)
+print(doc.get("status", ""))
+PY
+}
+
+recover_ingress_mcp_path() {
+  log_line ingress "recovering Traefik ingress MCP path"
+  restart_traefik_port_forward_force
+  wait_port "${TRAEFIK_PORT}"
+  start_mcp_ingress_header_proxies
+  refresh_mcp_proxy_urls
+  wait_ports_parallel \
+    "${MCP_CURL_ANON_PORT}" \
+    "${MCP_CURL_IDENTITY_PORT}" \
+    "${MCP_CURL_SESSION_PORT}" \
+    "${MCP_CURL_BAD_SESSION_PORT}"
+}
+
+prepare_ingress_mcp_path_after_trust() {
+  recover_ingress_mcp_path
+  log_line ingress "warming session-backed ingress route after trust checks"
+  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200 "pong" 20 "" "" "ingress-warmup"
+}
+
+ensure_trust_session_proxy() {
+  refresh_mcp_proxy_urls
+  ensure_server_proxy_port_forward
+  start_header_proxy_bg "${MCP_SERVICE_SESSION_PORT}" \
+    "http://127.0.0.1:${SERVER_PROXY_PORT}" \
+    "${WORKDIR}/mcp-service-session-proxy.log" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
+    --header "X-MCP-Human-ID=${HUMAN_ID}" \
+    --header "X-MCP-Agent-ID=${AGENT_ID}" \
+    --header "X-MCP-Agent-Session=${SESSION_ID}"
+  wait_port "${MCP_SERVICE_SESSION_PORT}"
 }
 
 build_headers_json() {
@@ -1195,6 +1690,7 @@ wait_for_policy_text() {
   return 1
 }
 
+
 wait_for_mcp_initialize_result() {
   local base_url="$1"
   local expected_status="$2"
@@ -1278,6 +1774,7 @@ PY
       echo "[mcp] observed initialize returning ${expected_status}"
       return 0
     fi
+    recover_traefik_port_forward_if_needed || true
     sleep 2
   done
 
@@ -1410,6 +1907,7 @@ PY
       echo "[mcp] observed ${method} ${url} returning ${expected_status}"
       return 0
     fi
+    recover_traefik_port_forward_if_needed || true
     sleep 2
   done
 
@@ -1433,9 +1931,14 @@ wait_for_mcp_tool_result() {
   local expected_body_text="${5:-}"
   local tries="${6:-${MCP_POLICY_WAIT_TRIES}}"
   local host_header="${7:-}"
+  local result_label="${8:-}"
   local i
   local last_result_file="${WORKDIR}/last-mcp-tool-result.json"
   local last_stderr_file="${WORKDIR}/last-mcp-tool-stderr.txt"
+  if [[ -n "${result_label}" ]]; then
+    last_result_file="${WORKDIR}/last-mcp-tool-result-${result_label}.json"
+    last_stderr_file="${WORKDIR}/last-mcp-tool-stderr-${result_label}.txt"
+  fi
 
   for i in $(seq 1 "${tries}"); do
     if MCP_BASE="${base_url}" \
@@ -1446,6 +1949,7 @@ wait_for_mcp_tool_result() {
       MCP_EXPECT_BODY_TEXT="${expected_body_text}" \
       MCP_RESULT_FILE="${last_result_file}" \
       MCP_HOST_HEADER="${host_header}" \
+      MCP_HTTP_TIMEOUT="${MCP_HTTP_TIMEOUT}" \
       python3 <<'PY' >/dev/null 2>"${last_stderr_file}"
 import http.client
 import json
@@ -1465,14 +1969,13 @@ initialize_payload = {
     },
 }
 
-
-import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
 tool_name = os.environ["MCP_TOOL_NAME"]
 tool_args = json.loads(os.environ["MCP_TOOL_ARGS"])
 expected_status = int(os.environ["MCP_EXPECT_STATUS"])
 expected_body_text = os.environ.get("MCP_EXPECT_BODY_TEXT", "")
 result_file = os.environ["MCP_RESULT_FILE"]
 host_header = os.environ.get("MCP_HOST_HEADER", "")
+http_timeout = float(os.environ.get("MCP_HTTP_TIMEOUT", "30"))
 
 
 def write_result(phase, status, body):
@@ -1496,7 +1999,7 @@ def post(msg, mcp_session_id=None):
     body = json.dumps(msg).encode()
     headers["Content-Length"] = str(len(body))
     conn_class = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-    conn = conn_class(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), timeout=10)
+    conn = conn_class(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), timeout=http_timeout)
     try:
         conn.putrequest("POST", target, skip_host=True)
         conn.putheader("Host", host_value)
@@ -1533,6 +2036,15 @@ PY
       echo "[mcp] observed ${tool_name} returning ${expected_status}"
       return 0
     fi
+    if [[ -f "${last_result_file}" ]]; then
+      last_init_status="$(mcp_result_initialize_status "${last_result_file}" 2>/dev/null || true)"
+      if [[ "${last_init_status}" == "504" || "${last_init_status}" == "502" || "${last_init_status}" == "503" ]]; then
+        recover_ingress_mcp_path
+        sleep 2
+        continue
+      fi
+    fi
+    recover_traefik_port_forward_if_needed || true
     sleep 2
   done
 
@@ -1543,10 +2055,133 @@ PY
   fi
   if [[ -f "${last_result_file}" ]]; then
     echo "[debug] last ${tool_name} response while waiting:" >&2
-    cat "${last_result_file}" >&2 || true
+    python3 -m json.tool "${last_result_file}" >&2 2>/dev/null || cat "${last_result_file}" >&2 || true
   fi
   print_gateway_policy_debug >&2 || true
   return 1
+}
+
+run_parallel_mcp_tool_checks() {
+  local label
+  local -a check_args=()
+  if [[ "$#" -eq 0 ]]; then
+    return 0
+  fi
+
+  # Each batch shares one MCP URL/session proxy and gateway reload timing; never
+  # run these concurrently even when other stages use parallel workers.
+  while [[ "$#" -gt 0 ]]; do
+    if [[ "$1" != "--" ]]; then
+      echo "run_parallel_mcp_tool_checks: expected -- before each check group" >&2
+      return 1
+    fi
+    shift
+    label="$1"
+    shift
+    check_args=()
+    while [[ "$#" -gt 0 && "$1" != "--" ]]; do
+      check_args+=("$1")
+      shift
+    done
+    wait_for_mcp_tool_result "${check_args[@]}" "" "" "${label}"
+  done
+}
+
+run_parallel_grant_tool_rules() {
+  if [[ "$#" -eq 0 ]]; then
+    return 0
+  fi
+
+  parallel_reset
+  while [[ "$#" -gt 0 ]]; do
+    if [[ "$1" != "--" ]]; then
+      echo "run_parallel_grant_tool_rules: expected -- before each rule group" >&2
+      return 1
+    fi
+    shift
+    local grant_name="$1"
+    shift
+    local tool_name="$1"
+    shift
+    local expected_decision="$1"
+    shift
+    parallel_start "${E2E_GRANT_RULE_PARALLELISM}" "grant rule ${grant_name}/${tool_name}=${expected_decision}" \
+      wait_for_grant_tool_rule "${grant_name}" "${tool_name}" "${expected_decision}"
+  done
+  parallel_wait_all
+}
+
+run_api_platform_http_flows() {
+  log_line policy "validating targeted platform API request paths"
+  ensure_api_port_forward
+  ensure_gateway_port_forward
+  API_BASE="http://127.0.0.1:${API_SERVICE_PORT}" \
+  GATEWAY_API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api" \
+  API_KEY="${API_KEY}" \
+  SERVER_NAME="${SERVER_NAME}" \
+  SESSION_ID="${SESSION_ID}" \
+  HUMAN_ID="${HUMAN_ID}" \
+  AGENT_ID="${AGENT_ID}" \
+  PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" \
+  PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" \
+  python3 test/e2e/api_platform_flows.py
+}
+
+run_ui_auth_http_flows() {
+  log_line policy "validating targeted UI auth request paths"
+  ensure_ui_port_forward
+  ensure_gateway_port_forward
+  UI_BASE="http://127.0.0.1:${UI_SERVICE_PORT}" \
+  GATEWAY_BASE="http://127.0.0.1:${SENTINEL_PORT}" \
+  API_KEY="${API_KEY}" \
+  E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE}" \
+  python3 test/e2e/ui_auth_flows.py
+}
+
+run_selected_http_flow_scenarios() {
+  local run_api=0
+  local run_ui=0
+
+  if scenario_selected "api-platform" && ! deep_request_flows_enabled; then
+    run_api=1
+  fi
+  if scenario_selected "ui-auth" && ! deep_request_flows_enabled; then
+    run_ui=1
+  fi
+  if [[ "${run_api}" -eq 0 && "${run_ui}" -eq 0 ]]; then
+    return 0
+  fi
+
+  if [[ "${run_api}" -eq 1 ]]; then
+    ensure_api_port_forward
+  fi
+  if [[ "${run_ui}" -eq 1 ]]; then
+    ensure_ui_port_forward
+  fi
+  if [[ "${run_api}" -eq 1 || "${run_ui}" -eq 1 ]]; then
+    ensure_gateway_port_forward
+  fi
+
+  if [[ "${run_api}" -eq 1 && "${run_ui}" -eq 1 && "${E2E_HTTP_FLOW_PARALLELISM}" -gt 1 ]]; then
+    parallel_reset
+    parallel_start "${E2E_HTTP_FLOW_PARALLELISM}" "api-platform flows" run_api_platform_http_flows
+    parallel_start "${E2E_HTTP_FLOW_PARALLELISM}" "ui-auth flows" run_ui_auth_http_flows
+    parallel_wait_all
+    return
+  fi
+
+  if [[ "${run_api}" -eq 1 && "${run_ui}" -eq 1 ]]; then
+    run_api_platform_http_flows
+    run_ui_auth_http_flows
+    return
+  fi
+
+  if [[ "${run_api}" -eq 1 ]]; then
+    run_api_platform_http_flows
+  fi
+  if [[ "${run_ui}" -eq 1 ]]; then
+    run_ui_auth_http_flows
+  fi
 }
 
 wait_for_named_server_ready() {
@@ -1640,19 +2275,31 @@ restart_deployment_pods() {
   kubectl rollout status "deploy/${name}" -n "${namespace}" --timeout="${timeout}"
 }
 
-prepare_example_metadata() {
+init_example_metadata() {
   local metadata_dir="$1"
   local server_name="$2"
-  local ingress_host="$3"
-  local route_path="$4"
-  local image_repo="$5"
-  local image_tag="$6"
+  local route_path="$3"
+  local image_repo="$4"
+  local image_tag="$5"
+  local smoke_tool="$6"
 
-  SERVER_NAME_OVERRIDE="${server_name}" \
-  SERVER_HOST_OVERRIDE="${ingress_host}" \
+  rm -rf "${metadata_dir}"
+  mkdir -p "${metadata_dir}"
+  (
+    cd "$(dirname "${metadata_dir}")"
+    "${PROJECT_ROOT}/bin/mcp-runtime" server init "${server_name}" \
+      --metadata-dir "$(basename "${metadata_dir}")" \
+      --image "${image_repo}" \
+      --tag "${image_tag}" \
+      --port 8088 \
+      --policy-mode observe \
+      --default-decision allow \
+      --session-required=false \
+      --tool "${smoke_tool}" \
+      --force
+  )
+
   SERVER_ROUTE_OVERRIDE="${route_path}" \
-  SERVER_IMAGE_OVERRIDE="${image_repo}" \
-  SERVER_IMAGE_TAG_OVERRIDE="${image_tag}" \
   METADATA_DIR_OVERRIDE="${metadata_dir}" \
   python3 <<'PY'
 from pathlib import Path
@@ -1661,132 +2308,102 @@ import os
 metadata_dir = Path(os.environ["METADATA_DIR_OVERRIDE"])
 path = metadata_dir / "servers.yaml"
 lines = path.read_text(encoding="utf-8").splitlines()
+route = os.environ["SERVER_ROUTE_OVERRIDE"].strip()
+prefix = route.strip("/")
+if prefix.endswith("/mcp"):
+    prefix = prefix[:-len("/mcp")].rstrip("/")
+
 updated = []
-server_name_updated = False
-server_image_updated = False
-server_image_tag_updated = False
-mcp_path_updated = False
-public_path_prefix_updated = False
-in_env_vars = False
-current_env_name = None
-resources_present = any(line.startswith("    resources:") for line in lines)
-image_tag_present = any(line.lstrip().startswith("imageTag: ") for line in lines)
-
-route_override = os.environ["SERVER_ROUTE_OVERRIDE"].strip()
-route_prefix = route_override.strip("/")
-if route_prefix.endswith("/mcp"):
-    route_prefix = route_prefix[: -len("/mcp")].rstrip("/")
-if not route_prefix:
-    route_prefix = os.environ["SERVER_NAME_OVERRIDE"]
-
+server_field_indent = None
+env_inserted = False
+resources_inserted = False
+public_path_prefix_seen = False
 for line in lines:
     stripped = line.lstrip()
     indent = line[: len(line) - len(stripped)]
-    if not server_name_updated and indent == "  " and stripped.startswith("- name: "):
-        updated.append(f"{indent}- name: {os.environ['SERVER_NAME_OVERRIDE']}")
-        server_name_updated = True
-    elif stripped.startswith("ingressHost: "):
-        updated.append(f"{indent}ingressHost: {os.environ['SERVER_HOST_OVERRIDE']}")
-    elif stripped.startswith("route: "):
-        updated.append(f"{indent}route: {os.environ['SERVER_ROUTE_OVERRIDE']}")
-    elif stripped.startswith("publicPathPrefix: "):
-        updated.append(f"{indent}publicPathPrefix: {route_prefix}")
-        public_path_prefix_updated = True
-    elif not server_image_updated and indent == "    " and stripped.startswith("image: "):
-        updated.append(f"{indent}image: {os.environ['SERVER_IMAGE_OVERRIDE']}")
-        server_image_updated = True
-        if not image_tag_present:
-            updated.append(f"{indent}imageTag: {os.environ['SERVER_IMAGE_TAG_OVERRIDE']}")
-            server_image_tag_updated = True
-    elif indent == "    " and stripped.startswith("imageTag: "):
-        updated.append(f"{indent}imageTag: {os.environ['SERVER_IMAGE_TAG_OVERRIDE']}")
-        server_image_tag_updated = True
-    elif indent == "    " and stripped == "envVars:":
-        in_env_vars = True
-        current_env_name = None
-        updated.append(line)
-    elif in_env_vars and indent == "      " and stripped.startswith("- name: "):
-        current_env_name = stripped.split(": ", 1)[1]
-        updated.append(line)
-    elif in_env_vars and current_env_name == "MCP_PATH" and indent == "        " and stripped.startswith("value: "):
-        updated.append(f'{indent}value: "{os.environ["SERVER_ROUTE_OVERRIDE"]}"')
-        mcp_path_updated = True
-    else:
-        if in_env_vars and indent.startswith("    ") and indent != "      " and indent != "        ":
-            in_env_vars = False
-            current_env_name = None
-        updated.append(line)
-if not server_image_updated:
-    final = []
-    inserted = False
-    for line in updated:
-        final.append(line)
-        stripped = line.lstrip()
-        indent = line[: len(line) - len(stripped)]
-        if not inserted and indent == "  " and stripped.startswith("- name: "):
-            final.append(f"{indent}  image: {os.environ['SERVER_IMAGE_OVERRIDE']}")
-            final.append(f"{indent}  imageTag: {os.environ['SERVER_IMAGE_TAG_OVERRIDE']}")
-            inserted = True
-    updated = final
-    server_image_updated = inserted
-    server_image_tag_updated = inserted
-if not mcp_path_updated:
-    final = []
-    inserted = False
-    for line in updated:
-        final.append(line)
-        stripped = line.lstrip()
-        indent = line[: len(line) - len(stripped)]
-        if not inserted and indent == "    " and stripped.startswith("namespace: "):
-            final.append(f"{indent}envVars:")
-            final.append(f"{indent}  - name: MCP_PATH")
-            final.append(f'{indent}    value: "{os.environ["SERVER_ROUTE_OVERRIDE"]}"')
-            inserted = True
-    updated = final
-    mcp_path_updated = inserted
-if not public_path_prefix_updated:
-    final = []
-    inserted = False
-    for line in updated:
-        final.append(line)
-        stripped = line.lstrip()
-        indent = line[: len(line) - len(stripped)]
-        if not inserted and indent == "    " and stripped.startswith("route: "):
-            final.append(f"{indent}publicPathPrefix: {route_prefix}")
-            inserted = True
-    updated = final
-    public_path_prefix_updated = inserted
-if not resources_present:
-    final = []
-    inserted = False
-    for line in updated:
-        final.append(line)
-        stripped = line.lstrip()
-        indent = line[: len(line) - len(stripped)]
-        if not inserted and indent == "    " and stripped.startswith("namespace: "):
-            final.append(f"{indent}resources:")
-            final.append(f"{indent}  requests:")
-            final.append(f"{indent}    cpu: 1m")
-            final.append(f"{indent}    memory: 32Mi")
-            inserted = True
-    updated = final
-    resources_present = inserted
-path.write_text("\n".join(updated) + "\n", encoding="utf-8")
+    updated.append(line)
+    if stripped.startswith("- name: ") and server_field_indent is None:
+        server_field_indent = indent + "  "
+    if server_field_indent is None:
+        continue
+    if indent == server_field_indent and stripped.startswith("route: "):
+        updated[-1] = f"{indent}route: {route}"
+    elif indent == server_field_indent and stripped.startswith("publicPathPrefix: "):
+        updated[-1] = f"{indent}publicPathPrefix: {prefix}"
+        public_path_prefix_seen = True
+    elif indent == server_field_indent and stripped.startswith("port: ") and not env_inserted:
+        updated.append(f"{indent}envVars:")
+        updated.append(f"{indent}  - name: MCP_PATH")
+        updated.append(f'{indent}    value: "{route}"')
+        env_inserted = True
+    elif indent == server_field_indent and stripped.startswith("scope: ") and not resources_inserted:
+        updated.append(f"{indent}resources:")
+        updated.append(f"{indent}  requests:")
+        updated.append(f"{indent}    cpu: 1m")
+        updated.append(f"{indent}    memory: 32Mi")
+        resources_inserted = True
 
-# Verify substitutions landed; missing fields cause silent failures later.
-if not server_name_updated:
-    raise SystemExit(f"prepare_example_metadata: no '- name:' entry found to replace in {path}")
-if not server_image_updated:
-    raise SystemExit(f"prepare_example_metadata: image field was not updated in {path}")
-if not server_image_tag_updated:
-    raise SystemExit(f"prepare_example_metadata: imageTag field was not updated in {path}")
-if not mcp_path_updated:
-    raise SystemExit(f"prepare_example_metadata: MCP_PATH env var was not updated in {path}")
-if not public_path_prefix_updated:
-    raise SystemExit(f"prepare_example_metadata: publicPathPrefix was not updated in {path}")
-if not resources_present:
-    raise SystemExit(f"prepare_example_metadata: resources were not inserted in {path}")
+if not env_inserted:
+    raise SystemExit(f"init_example_metadata: failed to insert MCP_PATH env var in {path}")
+if prefix and not public_path_prefix_seen:
+    final = []
+    inserted = False
+    for line in updated:
+        final.append(line)
+        stripped = line.lstrip()
+        indent = line[: len(line) - len(stripped)]
+        if not inserted and indent == server_field_indent and stripped.startswith("route: "):
+            final.append(f"{indent}publicPathPrefix: {prefix}")
+            inserted = True
+    updated = final
+    public_path_prefix_seen = inserted
+if prefix and not public_path_prefix_seen:
+    raise SystemExit(f"init_example_metadata: failed to set publicPathPrefix in {path}")
+if not resources_inserted:
+    raise SystemExit(f"init_example_metadata: failed to insert resources in {path}")
+
+# These sample servers are deployed directly into the local Kind namespace.
+# Leaving scope unset keeps server build on the local registry path instead of
+# resolving tenant registry ownership through platform credentials.
+updated = [
+    line for line in updated
+    if not (
+        server_field_indent is not None
+        and line[: len(line) - len(line.lstrip())] == server_field_indent
+        and line.lstrip().startswith("scope: ")
+    )
+]
+path.write_text("\n".join(updated) + "\n", encoding="utf-8")
 PY
+}
+
+verify_server_init_governed_defaults() {
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir:-}"; trap - RETURN' RETURN
+
+  "${PROJECT_ROOT}/bin/mcp-runtime" server init "e2e-init-check" \
+    --metadata-dir "${tmp_dir}" \
+    --tag v0.0.1 \
+    --port 8088 \
+    --session-required \
+    --tool aaa-ping \
+    --tool-spec slugify:medium:read \
+    --force
+
+  local file="${tmp_dir}/servers.yaml"
+  local missing=()
+  for pattern in "mode: header" "defaultDecision: deny" "required: true" "enabled: true" "sideEffect: read" "requiredTrust: low"; do
+    if ! grep -q "${pattern}" "${file}"; then
+      missing+=("${pattern}")
+    fi
+  done
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    echo "[error] server init governed defaults missing from servers.yaml: ${missing[*]}" >&2
+    cat "${file}" >&2
+    return 1
+  fi
+  echo "[cli] server init governed defaults: OK"
 }
 
 deploy_example_server_via_pipeline() {
@@ -1795,6 +2412,7 @@ deploy_example_server_via_pipeline() {
   local route_path="$3"
   local example_source_dir="$4"
   local example_workspace_dir="$5"
+  local smoke_tool="$6"
   local image_repo
   local image_ref
 
@@ -1804,7 +2422,7 @@ deploy_example_server_via_pipeline() {
 
   image_repo="registry.registry.svc.cluster.local:5000/${server_name}"
   image_ref="${image_repo}:${E2E_WORKLOAD_TAG}"
-  prepare_example_metadata "${example_workspace_dir}/.mcp" "${server_name}" "${ingress_host}" "${route_path}" "${image_repo}" "${E2E_WORKLOAD_TAG}"
+  init_example_metadata "${example_workspace_dir}/.mcp" "${server_name}" "${route_path}" "${image_repo}" "${E2E_WORKLOAD_TAG}" "${smoke_tool}"
 
   if cache_mode_enabled && docker image inspect "${image_ref}" >/dev/null 2>&1; then
     echo "[cache] skipping example image build for ${image_ref}"
@@ -1820,12 +2438,15 @@ deploy_example_server_via_pipeline() {
         --context .
     )
   fi
+
+  prune_kind_image "${image_ref}"
   load_image_into_kind "${image_ref}"
 
+  echo "[deploy] generating and applying example server manifests via CLI"
   (
     cd "${example_workspace_dir}"
-    "${PROJECT_ROOT}/bin/mcp-runtime" pipeline generate --dir .mcp --output manifests
-    "${PROJECT_ROOT}/bin/mcp-runtime" pipeline deploy --dir manifests
+    MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" "${PROJECT_ROOT}/bin/mcp-runtime" server generate --metadata-dir .mcp --output manifests
+    "${PROJECT_ROOT}/bin/mcp-runtime" server --use-kube apply --file "manifests/${server_name}.yaml"
   )
 
   echo "[deploy] waiting for ${server_name} rollout"
@@ -1889,6 +2510,40 @@ PY
   return 1
 }
 
+restore_policy_server_grant_defaults() {
+  log_line policy "restoring baseline access grant allow rules after deny validation"
+  if [[ ! -f "${WORKDIR}/access-grant.yaml" ]]; then
+    echo "missing ${WORKDIR}/access-grant.yaml for grant restore" >&2
+    exit 1
+  fi
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant.yaml)
+  run_parallel_grant_tool_rules \
+    -- "${SERVER_NAME}-grant" "aaa-ping" "allow" \
+    -- "${SERVER_NAME}-grant" "echo" "allow"
+
+  if [[ -f "${WORKDIR}/access-session.yaml" ]]; then
+    log_line policy "restoring baseline session consented trust after trust checks"
+    (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session apply --file access-session.yaml)
+    wait_for_policy_text "\"consented_trust\": \"low\""
+  fi
+
+  # ConfigMap updates can appear in kubectl before the gateway sidecar's mounted
+  # policy.json reflects the restored allow rules. Restart so the next ingress
+  # checks do not sit in a long tool_denied retry loop against stale policy.
+  log_line policy "restarting ${SERVER_NAME} so the gateway reloads restored policy"
+  restart_deployment_pods mcp-servers "${SERVER_NAME}"
+  wait_for_named_server_ready "${SERVER_NAME}" "mcp-servers" 60
+  restart_traefik_port_forward_force
+
+  ensure_trust_session_proxy
+  log_line policy "waiting for restored grant allow rules to reach the gateway"
+  run_parallel_mcp_tool_checks \
+    -- restore-aaa-ping "${MCP_TRUST_SESSION_URL}" "aaa-ping" '{}' 200 "pong" \
+    -- restore-echo "${MCP_TRUST_SESSION_URL}" "echo" '{"message":"hello"}' 200 "hello"
+  prepare_ingress_mcp_path_after_trust
+  print_gateway_policy_debug
+}
+
 mirror_repository_path() {
   local image="$1"
   local path="${image#docker.io/}"
@@ -1913,10 +2568,21 @@ kind_cluster_exists() {
   kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"
 }
 
-load_image_into_kind() {
-  local image="$1"
-  echo "[kind] loading ${image} into kind cluster ${CLUSTER_NAME}"
-  kind load docker-image --name "${CLUSTER_NAME}" "${image}"
+resolve_cluster_docker_platform() {
+  local architectures
+  architectures="$(kubectl get nodes -o jsonpath='{range .items[*]}{.status.nodeInfo.architecture}{"\n"}{end}' | sort -u)"
+  case "${architectures}" in
+    amd64)
+      echo "linux/amd64"
+      ;;
+    arm64)
+      echo "linux/arm64"
+      ;;
+    *)
+      echo "[error] unsupported or mixed Kubernetes node architectures: ${architectures}" >&2
+      exit 1
+      ;;
+  esac
 }
 
 registry_target_exists() {
@@ -2067,6 +2733,20 @@ preview_log_stream() {
   fi
 }
 
+load_image_into_kind() {
+  local image="$1"
+  echo "[kind] loading ${image} into kind cluster ${CLUSTER_NAME}"
+  kind load docker-image --name "${CLUSTER_NAME}" "${image}"
+}
+
+prune_kind_image() {
+  local image="$1"
+  local node="${CLUSTER_NAME}-control-plane"
+  if docker exec "${node}" ctr -n k8s.io images rm "${image}" >/dev/null 2>&1; then
+    echo "[kind] pruned stale image ${image} from ${node}"
+  fi
+}
+
 run_logged_stage() {
   local label="$1"
   local log_file
@@ -2201,7 +2881,8 @@ parallel_start() {
   stdout_file="${log_file%.log}.stdout.log"
   stderr_file="${log_file%.log}.stderr.log"
   log_status "START" "${label} (parallel worker; full log: $(relative_log_path "${log_file}"))"
-  "$@" >"${stdout_file}" 2>"${stderr_file}" &
+  # Subshell workers must not inherit the main EXIT trap or they delete shared kubeconfig.
+  ( trap - EXIT; "$@" ) >"${stdout_file}" 2>"${stderr_file}" &
   local pid="$!"
   PARALLEL_PIDS+=("${pid}")
   PARALLEL_LABELS+=("${label}")
@@ -2354,6 +3035,7 @@ wait_core_platform_rollouts() {
   run_logged_stage "verify sentinel gateway rollout" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-gateway 180s
   run_logged_stage "verify tempo rollout" rollout_status_with_logs mcp-sentinel statefulset tempo 180s
   run_logged_stage "verify loki rollout" rollout_status_with_logs mcp-sentinel statefulset loki 300s
+  run_logged_stage "verify promtail rollout" rollout_status_with_logs mcp-sentinel daemonset promtail 180s
 }
 
 delete_mcp_server_and_wait() {
@@ -2377,16 +3059,6 @@ cleanup_mcp_server_and_wait() {
   log_line warn "server delete ${server_name} failed; falling back to kubectl cleanup"
   kubectl delete "mcpserver/${server_name}" -n "${namespace}" --ignore-not-found --wait=false
   kubectl wait --for=delete "mcpserver/${server_name}" -n "${namespace}" --timeout="${timeout}" || true
-}
-
-deploy_primary_server_manifests() {
-  ./bin/mcp-runtime pipeline generate --file "${METADATA_FILE}" --output "${MANIFEST_DIR}"
-  ./bin/mcp-runtime pipeline deploy --dir "${MANIFEST_DIR}"
-}
-
-deploy_oauth_server_manifests() {
-  ./bin/mcp-runtime pipeline generate --file "${OAUTH_METADATA_FILE}" --output "${OAUTH_MANIFEST_DIR}"
-  ./bin/mcp-runtime pipeline deploy --dir "${OAUTH_MANIFEST_DIR}"
 }
 
 start_local_registry() {
@@ -2436,6 +3108,14 @@ platform_cache_ready() {
   kubectl rollout status deploy/traefik -n traefik --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status deploy/mcp-sentinel-api -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status deploy/mcp-sentinel-gateway -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status statefulset/clickhouse -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status statefulset/kafka -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status deploy/zookeeper -n mcp-sentinel --timeout=5s >/dev/null 2>&1 \
+    || kubectl rollout status statefulset/zookeeper -n mcp-sentinel --timeout=5s >/dev/null 2>&1 \
+    || return 1
+  kubectl rollout status daemonset/promtail -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status statefulset/loki -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status statefulset/tempo -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
 }
 
 cat > "${KIND_CONFIG}" <<EOF
@@ -2462,9 +3142,43 @@ fi
 connect_local_registry_to_kind_network
 
 refresh_kind_kubeconfig() {
-  kind get kubeconfig --name "${CLUSTER_NAME}" > "${KUBECONFIG_FILE}"
+  local refreshed_kubeconfig
+  local existing_ok=0
+
+  if [[ -s "${KUBECONFIG_FILE}" ]]; then
+    cp "${KUBECONFIG_FILE}" "${KUBECONFIG_BACKUP_FILE}" 2>/dev/null || true
+  fi
+  if [[ -s "${KUBECONFIG_FILE}" ]] && KUBECONFIG="${KUBECONFIG_FILE}" kubectl cluster-info --request-timeout=5s >/dev/null 2>&1; then
+    existing_ok=1
+  fi
+
+  refreshed_kubeconfig="$(mktemp)"
+  if kind get kubeconfig --name "${CLUSTER_NAME}" > "${refreshed_kubeconfig}" 2>/dev/null && [[ -s "${refreshed_kubeconfig}" ]]; then
+    mv "${refreshed_kubeconfig}" "${KUBECONFIG_FILE}"
+    cp "${KUBECONFIG_FILE}" "${KUBECONFIG_BACKUP_FILE}" 2>/dev/null || true
+  else
+    rm -f "${refreshed_kubeconfig}"
+    if [[ "${existing_ok}" -eq 1 ]]; then
+      echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; reusing existing ${KUBECONFIG_FILE}" >&2
+    elif [[ -s "${KUBECONFIG_FILE}" ]]; then
+      echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; reusing existing ${KUBECONFIG_FILE}" >&2
+    elif [[ -s "${KUBECONFIG_BACKUP_FILE}" ]]; then
+      cp "${KUBECONFIG_BACKUP_FILE}" "${KUBECONFIG_FILE}"
+      echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; restored last-known-good kubeconfig" >&2
+    elif kubectl config view --raw --minify > "${refreshed_kubeconfig}" 2>/dev/null && [[ -s "${refreshed_kubeconfig}" ]]; then
+      mv "${refreshed_kubeconfig}" "${KUBECONFIG_FILE}"
+      cp "${KUBECONFIG_FILE}" "${KUBECONFIG_BACKUP_FILE}" 2>/dev/null || true
+      echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; captured current kubectl context" >&2
+    else
+      rm -f "${refreshed_kubeconfig}"
+      echo "[kind][error] no usable kubeconfig for ${CLUSTER_NAME}" >&2
+      return 1
+    fi
+  fi
   export KUBECONFIG="${KUBECONFIG_FILE}"
-  kubectl config use-context "kind-${CLUSTER_NAME}"
+  if kubectl config get-contexts "kind-${CLUSTER_NAME}" >/dev/null 2>&1; then
+    kubectl config use-context "kind-${CLUSTER_NAME}" >/dev/null 2>&1 || true
+  fi
   mkdir -p "${HOME}/.kube"
   cp "${KUBECONFIG_FILE}" "${HOME}/.kube/config"
 }
@@ -2478,6 +3192,10 @@ echo "[cli] checking static command output"
 ./bin/mcp-runtime --version >/dev/null
 ./bin/mcp-runtime help >/dev/null
 ./bin/mcp-runtime completion bash >/dev/null
+if deep_request_flows_enabled || scenario_selected "cli-platform"; then
+  run_cli_help_sweep
+fi
+run_logged_stage "server init governed defaults" verify_server_init_governed_defaults
 
 PLATFORM_CACHE_READY=0
 if platform_cache_ready; then
@@ -2519,7 +3237,7 @@ else
   echo "[setup] running platform setup in test mode (platform mode: ${E2E_PLATFORM_MODE})"
   run_logged_stage "setup test mode" \
     env MCP_RUNTIME_REGISTRY_IMAGE_OVERRIDE="${TEST_MODE_REGISTRY_IMAGE}" \
-    ./bin/mcp-runtime setup --test-mode --parallel-builds --platform-mode "${E2E_PLATFORM_MODE}" --ingress-manifest config/ingress/overlays/http
+    ./bin/mcp-runtime setup --test-mode --parallel-builds --platform-mode "${E2E_PLATFORM_MODE}" --ingress-manifest config/ingress/overlays/http --kubeconfig "${KUBECONFIG_FILE}"
 fi
 
 wait_core_platform_rollouts
@@ -2570,6 +3288,28 @@ if cache_mode_enabled; then
   kubectl delete pod -n mcp-servers -l "app=${OAUTH_SERVER_NAME}" --ignore-not-found --wait=false >/dev/null
   kubectl delete pod -n mcp-servers -l "app=${MT_TENANT_A}" --ignore-not-found --wait=false >/dev/null
   kubectl delete pod -n mcp-servers -l "app=${MT_TENANT_B}" --ignore-not-found --wait=false >/dev/null
+  echo "[cache] removing previous example workloads before cluster doctor"
+  kubectl delete mcpserver -n mcp-servers \
+    "${PYTHON_EXAMPLE_SERVER_NAME}" \
+    "${RUST_EXAMPLE_SERVER_NAME}" \
+    "${GO_EXAMPLE_SERVER_NAME}" \
+    --ignore-not-found --wait=false >/dev/null
+  kubectl delete deployment -n mcp-servers \
+    "${PYTHON_EXAMPLE_SERVER_NAME}" \
+    "${RUST_EXAMPLE_SERVER_NAME}" \
+    "${GO_EXAMPLE_SERVER_NAME}" \
+    --ignore-not-found --wait=false >/dev/null
+  kubectl delete pod -n mcp-servers -l "app=${PYTHON_EXAMPLE_SERVER_NAME}" --ignore-not-found --wait=false >/dev/null
+  kubectl delete pod -n mcp-servers -l "app=${RUST_EXAMPLE_SERVER_NAME}" --ignore-not-found --wait=false >/dev/null
+  kubectl delete pod -n mcp-servers -l "app=${GO_EXAMPLE_SERVER_NAME}" --ignore-not-found --wait=false >/dev/null
+  stale_team_namespaces=()
+  while IFS= read -r ns; do
+    stale_team_namespaces+=("${ns#namespace/}")
+  done < <(kubectl get namespace -o name 2>/dev/null | grep '^namespace/mcp-team-' || true)
+  if [[ "${#stale_team_namespaces[@]}" -gt 0 ]]; then
+    echo "[cache] deleting stale team namespaces before cluster doctor"
+    kubectl delete namespace "${stale_team_namespaces[@]}" --ignore-not-found --wait=false >/dev/null
+  fi
   echo "[cache] deleting stale pending mcp-servers pods before cluster doctor"
   kubectl delete pod -n mcp-servers --field-selector=status.phase=Pending --ignore-not-found --wait=false >/dev/null
   echo "[cache] refreshing operator e2e environment before cluster doctor"
@@ -2597,14 +3337,19 @@ run_cli_allowing_cert_prereq_failure cluster-cert-wait ./bin/mcp-runtime cluster
 ./bin/mcp-runtime sentinel events >"${WORKDIR}/sentinel-events.txt"
 ./bin/mcp-runtime sentinel logs api --tail 20 >"${WORKDIR}/sentinel-api-logs.txt"
 require_port_available "${CLI_SENTINEL_API_PORT}" "sentinel CLI port-forward"
+_cli_pf_pid=""
 ./bin/mcp-runtime sentinel port-forward api \
   --port "${CLI_SENTINEL_API_PORT}" \
   --address 127.0.0.1 >"${WORKDIR}/sentinel-cli-port-forward.log" 2>&1 &
 _cli_pf_pid="$!"
-PIDS+=("${_cli_pf_pid}")
+if [[ -n "${_cli_pf_pid}" ]]; then
+  PIDS+=("${_cli_pf_pid}")
+fi
 wait_managed_port "${CLI_SENTINEL_API_PORT}" "${_cli_pf_pid}" "${WORKDIR}/sentinel-cli-port-forward.log" "sentinel CLI port-forward" 30
-kill "${_cli_pf_pid}" >/dev/null 2>&1 || true
-wait "${_cli_pf_pid}" 2>/dev/null || true
+if [[ -n "${_cli_pf_pid}" ]]; then
+  kill "${_cli_pf_pid}" >/dev/null 2>&1 || true
+  wait "${_cli_pf_pid}" 2>/dev/null || true
+fi
 
 API_KEY="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.UI_API_KEY}' | decode_base64)"
 if [[ -z "${API_KEY}" ]]; then
@@ -2632,25 +3377,29 @@ if scenario_selected "observability"; then
     exit 1
   fi
 fi
+E2E_DOCKER_PLATFORM="$(resolve_cluster_docker_platform)"
+export MCP_DOCKER_PLATFORM="${E2E_DOCKER_PLATFORM}"
+echo "[build] using Docker platform ${MCP_DOCKER_PLATFORM}"
 
 METADATA_FILE="${WORKDIR}/metadata.yaml"
 MANIFEST_DIR="${WORKDIR}/manifests"
 SERVER_IMAGE="registry.registry.svc.cluster.local:5000/${SERVER_NAME}:${E2E_WORKLOAD_TAG}"
 SERVER_SECRET_NAME="${SERVER_NAME}-analytics-creds"
-PYTHON_EXAMPLE_SOURCE_DIR="${PROJECT_ROOT}/examples/python-mcp-server"
-PYTHON_EXAMPLE_WORKDIR="${WORKDIR}/python-mcp-server"
-RUST_EXAMPLE_SOURCE_DIR="${PROJECT_ROOT}/examples/rust-mcp-server"
-RUST_EXAMPLE_WORKDIR="${WORKDIR}/rust-mcp-server"
-GO_EXAMPLE_SOURCE_DIR="${PROJECT_ROOT}/examples/go-mcp-server"
-GO_EXAMPLE_WORKDIR="${WORKDIR}/go-mcp-server"
+PYTHON_EXAMPLE_SOURCE_DIR="${PROJECT_ROOT}/examples/data-utility-mcp"
+PYTHON_EXAMPLE_WORKDIR="${WORKDIR}/data-utility-mcp"
+RUST_EXAMPLE_SOURCE_DIR="${PROJECT_ROOT}/examples/text-analysis-mcp"
+RUST_EXAMPLE_WORKDIR="${WORKDIR}/text-analysis-mcp"
+GO_EXAMPLE_SOURCE_DIR="${PROJECT_ROOT}/examples/workspace-assistant-mcp"
+GO_EXAMPLE_WORKDIR="${WORKDIR}/workspace-assistant-mcp"
 
-echo "[deploy] creating server-local analytics credentials secret"
-kubectl create secret generic "${SERVER_SECRET_NAME}" \
-  -n mcp-servers \
-  --from-literal=api-key="${INGEST_API_KEY}" \
-  --dry-run=client -o yaml | kubectl apply -f -
+if checkpoint_enabled "platform"; then
+  echo "[deploy] creating server-local analytics credentials secret"
+  kubectl create secret generic "${SERVER_SECRET_NAME}" \
+    -n mcp-servers \
+    --from-literal=api-key="${INGEST_API_KEY}" \
+    --dry-run=client -o yaml | kubectl apply -f -
 
-cat > "${METADATA_FILE}" <<EOF
+  cat > "${METADATA_FILE}" <<EOF
 version: v1
 servers:
   - name: ${SERVER_NAME}
@@ -2709,84 +3458,66 @@ servers:
         key: api-key
 EOF
 
-if cache_mode_enabled && docker image inspect "${SERVER_IMAGE}" >/dev/null 2>&1; then
-  echo "[cache] skipping MCP server image build for ${SERVER_IMAGE}"
-else
-  echo "[cli] building MCP server image via CLI"
-  run_logged_stage "build primary MCP server image" ./bin/mcp-runtime server build image "${SERVER_NAME}" \
-    --metadata-file "${METADATA_FILE}" \
-    --dockerfile "${GO_EXAMPLE_SOURCE_DIR}/Dockerfile" \
-    --registry registry.registry.svc.cluster.local:5000 \
-    --tag "${E2E_WORKLOAD_TAG}" \
-    --context "${GO_EXAMPLE_SOURCE_DIR}"
-fi
-load_image_into_kind "${SERVER_IMAGE}"
+  if cache_mode_enabled && docker image inspect "${SERVER_IMAGE}" >/dev/null 2>&1; then
+    echo "[cache] skipping MCP server image build for ${SERVER_IMAGE}"
+  else
+    echo "[cli] building MCP server image via CLI"
+    run_logged_stage "build primary MCP server image" ./bin/mcp-runtime server build image "${SERVER_NAME}" \
+      --metadata-file "${METADATA_FILE}" \
+      --dockerfile "${GO_EXAMPLE_SOURCE_DIR}/Dockerfile" \
+      --registry registry.registry.svc.cluster.local:5000 \
+      --tag "${E2E_WORKLOAD_TAG}" \
+      --context "${GO_EXAMPLE_SOURCE_DIR}"
+  fi
 
-echo "[cli] generating and deploying MCPServer manifests"
-run_logged_stage "deploy primary MCP server manifests" deploy_primary_server_manifests
+  prune_kind_image "${SERVER_IMAGE}"
+  load_image_into_kind "${SERVER_IMAGE}"
 
-echo "[deploy] waiting for MCP server rollout"
-wait_for_deployment_exists mcp-servers "${SERVER_NAME}"
-if ! restart_deployment_pods mcp-servers "${SERVER_NAME}" 180s; then
-  echo "[debug] MCP server rollout failed; collecting diagnostics" >&2
-  kubectl get mcpserver "${SERVER_NAME}" -n mcp-servers -o yaml || true
-  kubectl get deploy,rs,pods,svc,ingress,configmap -n mcp-servers || true
-  kubectl describe deployment "${SERVER_NAME}" -n mcp-servers || true
-  kubectl describe pods -n mcp-servers || true
-  kubectl logs -n mcp-servers -l "app=${SERVER_NAME}" --all-containers=true --tail=200 || true
-  kubectl logs -n mcp-runtime deploy/mcp-runtime-operator-controller-manager --all-containers=true --tail=200 || true
-  exit 1
-fi
-wait_for_server_ready
+  echo "[cli] generating and applying MCP server manifests via CLI"
+  run_logged_stage "deploy primary MCP server manifests" bash -lc "MCP_RUNTIME_CONFIG_DIR=\"${E2E_PIPELINE_CONFIG_DIR}\" ./bin/mcp-runtime server generate --metadata-file \"${METADATA_FILE}\" --output \"${MANIFEST_DIR}\" && ./bin/mcp-runtime server --use-kube apply --file \"${MANIFEST_DIR}/${SERVER_NAME}.yaml\""
 
-echo "[cli] checking server mutation helpers"
-SERVER_EXPORT_FILE="${WORKDIR}/${SERVER_NAME}-export.yaml"
-./bin/mcp-runtime server --use-kube apply --file "${MANIFEST_DIR}/${SERVER_NAME}.yaml"
-./bin/mcp-runtime server --use-kube export "${SERVER_NAME}" \
-  --namespace mcp-servers \
-  --file "${SERVER_EXPORT_FILE}"
-assert_file_contains "name: ${SERVER_NAME}" "${SERVER_EXPORT_FILE}"
-./bin/mcp-runtime server --use-kube patch "${SERVER_NAME}" \
-  --namespace mcp-servers \
-  --type merge \
-  --patch '{"metadata":{"annotations":{"e2e.mcpruntime.org/cli-patch":"true"}}}'
-./bin/mcp-runtime server --use-kube status --namespace mcp-servers >"${WORKDIR}/server-status.txt"
-assert_file_contains "${SERVER_NAME}" "${WORKDIR}/server-status.txt"
-./bin/mcp-runtime server --use-kube logs "${SERVER_NAME}" \
-  --namespace mcp-servers \
-  --tail 20 >"${WORKDIR}/server-logs.txt"
-TEMP_CLI_SERVER="${SERVER_NAME}-cli-create"
-./bin/mcp-runtime server --use-kube create "${TEMP_CLI_SERVER}" \
-  --namespace mcp-servers \
-  --image docker.io/library/nginx \
-  --tag 1.27-alpine
-./bin/mcp-runtime server --use-kube delete "${TEMP_CLI_SERVER}" --namespace mcp-servers
-kubectl wait --for=delete "mcpserver/${TEMP_CLI_SERVER}" -n mcp-servers --timeout=120s || true
+  echo "[deploy] waiting for MCP server rollout"
+  wait_for_deployment_exists mcp-servers "${SERVER_NAME}"
+  if ! kubectl rollout status "deploy/${SERVER_NAME}" -n mcp-servers --timeout=180s; then
+    echo "[debug] MCP server rollout failed; collecting diagnostics" >&2
+    kubectl get mcpserver "${SERVER_NAME}" -n mcp-servers -o yaml || true
+    kubectl get deploy,rs,pods,svc,ingress,configmap -n mcp-servers || true
+    kubectl describe deployment "${SERVER_NAME}" -n mcp-servers || true
+    kubectl describe pods -n mcp-servers || true
+    kubectl logs -n mcp-servers -l "app=${SERVER_NAME}" --all-containers=true --tail=200 || true
+    kubectl logs -n mcp-runtime deploy/mcp-runtime-operator-controller-manager --all-containers=true --tail=200 || true
+    exit 1
+  fi
+  wait_for_server_ready
 
-echo "[deploy] deploying official SDK example MCP servers"
-parallel_reset
-parallel_start 3 "deploy ${PYTHON_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
-  "${PYTHON_EXAMPLE_SERVER_NAME}" \
-  "${PYTHON_EXAMPLE_SERVER_HOST}" \
-  "${PYTHON_EXAMPLE_SERVER_ROUTE}" \
-  "${PYTHON_EXAMPLE_SOURCE_DIR}" \
-  "${PYTHON_EXAMPLE_WORKDIR}"
-parallel_start 3 "deploy ${RUST_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
-  "${RUST_EXAMPLE_SERVER_NAME}" \
-  "${RUST_EXAMPLE_SERVER_HOST}" \
-  "${RUST_EXAMPLE_SERVER_ROUTE}" \
-  "${RUST_EXAMPLE_SOURCE_DIR}" \
-  "${RUST_EXAMPLE_WORKDIR}"
-parallel_start 3 "deploy ${GO_EXAMPLE_SERVER_NAME}" deploy_example_server_via_pipeline \
-  "${GO_EXAMPLE_SERVER_NAME}" \
-  "${GO_EXAMPLE_SERVER_HOST}" \
-  "${GO_EXAMPLE_SERVER_ROUTE}" \
-  "${GO_EXAMPLE_SOURCE_DIR}" \
-  "${GO_EXAMPLE_WORKDIR}"
-parallel_wait_all
+  echo "[cli] checking server mutation helpers"
+  SERVER_EXPORT_FILE="${WORKDIR}/${SERVER_NAME}-export.yaml"
+  ./bin/mcp-runtime server --use-kube apply --file "${MANIFEST_DIR}/${SERVER_NAME}.yaml"
+  ./bin/mcp-runtime server --use-kube export "${SERVER_NAME}" \
+    --namespace mcp-servers \
+    --file "${SERVER_EXPORT_FILE}"
+  assert_file_contains "name: ${SERVER_NAME}" "${SERVER_EXPORT_FILE}"
+  ./bin/mcp-runtime server --use-kube patch "${SERVER_NAME}" \
+    --namespace mcp-servers \
+    --type merge \
+    --patch '{"metadata":{"annotations":{"e2e.mcpruntime.org/cli-patch":"true"}}}'
+  ./bin/mcp-runtime server --use-kube status --namespace mcp-servers >"${WORKDIR}/server-status.txt"
+  assert_file_contains "${SERVER_NAME}" "${WORKDIR}/server-status.txt"
+  ./bin/mcp-runtime server --use-kube logs "${SERVER_NAME}" \
+    --namespace mcp-servers \
+    --tail 20 >"${WORKDIR}/server-logs.txt"
+  TEMP_CLI_SERVER="${SERVER_NAME}-cli-create"
+  ./bin/mcp-runtime server --use-kube create "${TEMP_CLI_SERVER}" \
+    --namespace mcp-servers \
+    --image docker.io/library/nginx \
+    --tag 1.27-alpine
+  ./bin/mcp-runtime server --use-kube delete "${TEMP_CLI_SERVER}" --namespace mcp-servers
+  kubectl wait --for=delete "mcpserver/${TEMP_CLI_SERVER}" -n mcp-servers --timeout=120s || true
 
-echo "[cli] checking server commands"
-refresh_kind_kubeconfig
+  echo "[deploy] using single primary MCP server ${SERVER_NAME} (extra sample servers disabled; budget=$(e2e_mcp_server_budget))"
+
+  echo "[cli] checking server commands"
+  refresh_kind_kubeconfig
 
 # --- server list: assert the primary server appears ---
 _cli_list_file="${WORKDIR}/server-list.txt"
@@ -2877,69 +3608,51 @@ print(f"[cli] Local e2e MCP client config for {server_name}:")
 print(json.dumps(config, indent=2))
 PYEOF
 
-echo "[policy] applying access grant via CLI"
-cat >"${WORKDIR}/access-grant.yaml" <<EOF
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPAccessGrant
-metadata:
-  name: ${SERVER_NAME}-grant
-  namespace: mcp-servers
-spec:
-  serverRef:
-    name: ${SERVER_NAME}
-  subject:
-    humanID: ${HUMAN_ID}
-    agentID: ${AGENT_ID}
-  maxTrust: high
-  allowedSideEffects: [read]
-  policyVersion: v1
-  toolRules:
-    - name: aaa-ping
-      decision: allow
-    - name: echo
-      decision: allow
-    - name: upper
-      decision: allow
-EOF
-(cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant.yaml)
+if checkpoint_enabled "policy"; then
+  ensure_traefik_port_forward
+  echo "[policy] applying access grant via CLI"
+  "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant init "${SERVER_NAME}-grant" \
+    --server "${SERVER_NAME}" \
+    --human-id "${HUMAN_ID}" \
+    --agent-id "${AGENT_ID}" \
+    --trust high \
+    --side-effect read \
+    --tool-rule aaa-ping:allow:low \
+    --tool-rule echo:allow:low \
+    --tool-rule upper:allow:medium \
+    --output "${WORKDIR}/access-grant.yaml" \
+    --force
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant.yaml)
 
-echo "[policy] applying low-trust session via CLI"
-cat >"${WORKDIR}/access-session.yaml" <<EOF
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPAgentSession
-metadata:
-  name: ${SESSION_ID}
-  namespace: mcp-servers
-spec:
-  serverRef:
-    name: ${SERVER_NAME}
-  subject:
-    humanID: ${HUMAN_ID}
-    agentID: ${AGENT_ID}
-  consentedTrust: low
-  policyVersion: v1
-EOF
-(cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session apply --file access-session.yaml)
+  echo "[policy] applying low-trust session via CLI"
+  "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session init "${SESSION_ID}" \
+    --server "${SERVER_NAME}" \
+    --human-id "${HUMAN_ID}" \
+    --agent-id "${AGENT_ID}" \
+    --trust low \
+    --output "${WORKDIR}/access-session.yaml" \
+    --force
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session apply --file access-session.yaml)
 
-wait_for_policy_text "\"name\": \"${SESSION_ID}\""
-wait_for_policy_text "\"consented_trust\": \"low\""
-print_gateway_policy_debug
-./bin/mcp-runtime server --use-kube policy inspect "${SERVER_NAME}" \
-  --namespace mcp-servers >"${WORKDIR}/server-policy.json"
-assert_file_contains "${SESSION_ID}" "${WORKDIR}/server-policy.json"
+  wait_for_policy_text "\"name\": \"${SESSION_ID}\""
+  wait_for_policy_text "\"consented_trust\": \"low\""
+  print_gateway_policy_debug
+  ./bin/mcp-runtime server --use-kube policy inspect "${SERVER_NAME}" \
+    --namespace mcp-servers >"${WORKDIR}/server-policy.json"
+  assert_file_contains "${SESSION_ID}" "${WORKDIR}/server-policy.json"
 
-if scenario_selected "governance"; then
-  echo "[cli] checking access management commands"
-  ./bin/mcp-runtime access --use-kube grant list --namespace mcp-servers >"${WORKDIR}/access-grant-list.txt"
-  assert_file_contains "${SERVER_NAME}-grant" "${WORKDIR}/access-grant-list.txt"
-  ./bin/mcp-runtime access --use-kube grant get "${SERVER_NAME}-grant" --namespace mcp-servers >"${WORKDIR}/access-grant-get.yaml"
-  assert_file_contains "maxTrust: high" "${WORKDIR}/access-grant-get.yaml"
-  ./bin/mcp-runtime access --use-kube session list --namespace mcp-servers >"${WORKDIR}/access-session-list.txt"
-  assert_file_contains "${SESSION_ID}" "${WORKDIR}/access-session-list.txt"
-  ./bin/mcp-runtime access --use-kube session get "${SESSION_ID}" --namespace mcp-servers >"${WORKDIR}/access-session-get.yaml"
-  assert_file_contains "consentedTrust: low" "${WORKDIR}/access-session-get.yaml"
+  if scenario_selected "governance"; then
+    echo "[cli] checking access management commands"
+    ./bin/mcp-runtime access --use-kube grant list --namespace mcp-servers >"${WORKDIR}/access-grant-list.txt"
+    assert_file_contains "${SERVER_NAME}-grant" "${WORKDIR}/access-grant-list.txt"
+    ./bin/mcp-runtime access --use-kube grant get "${SERVER_NAME}-grant" --namespace mcp-servers >"${WORKDIR}/access-grant-get.yaml"
+    assert_file_contains "maxTrust: high" "${WORKDIR}/access-grant-get.yaml"
+    ./bin/mcp-runtime access --use-kube session list --namespace mcp-servers >"${WORKDIR}/access-session-list.txt"
+    assert_file_contains "${SESSION_ID}" "${WORKDIR}/access-session-list.txt"
+    ./bin/mcp-runtime access --use-kube session get "${SESSION_ID}" --namespace mcp-servers >"${WORKDIR}/access-session-get.yaml"
+    assert_file_contains "consentedTrust: low" "${WORKDIR}/access-session-get.yaml"
 
-  cat >"${WORKDIR}/access-temp.yaml" <<EOF
+    cat >"${WORKDIR}/access-temp.yaml" <<EOF
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
 metadata:
@@ -2969,301 +3682,36 @@ spec:
   consentedTrust: low
   policyVersion: v1
 EOF
-  ./bin/mcp-runtime access --use-kube grant apply --file "${WORKDIR}/access-temp.yaml"
-  ./bin/mcp-runtime access --use-kube grant disable "${SERVER_NAME}-grant-cli-temp" --namespace mcp-servers
-  ./bin/mcp-runtime access --use-kube grant enable "${SERVER_NAME}-grant-cli-temp" --namespace mcp-servers
-  ./bin/mcp-runtime access --use-kube session revoke "${SESSION_ID}-cli-temp" --namespace mcp-servers
-  ./bin/mcp-runtime access --use-kube session unrevoke "${SESSION_ID}-cli-temp" --namespace mcp-servers
-  ./bin/mcp-runtime access --use-kube grant delete "${SERVER_NAME}-grant-cli-temp" --namespace mcp-servers
-  ./bin/mcp-runtime access --use-kube session delete "${SESSION_ID}-cli-temp" --namespace mcp-servers
-fi
-
-echo "[port-forward] exposing ingress and observability services"
-port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${WORKDIR}/traefik-port-forward.log"
-port_forward_bg mcp-sentinel mcp-sentinel-gateway "${SENTINEL_PORT}" 8083 "${WORKDIR}/sentinel-port-forward.log"
-port_forward_bg mcp-sentinel tempo "${TEMPO_PORT}" 3200 "${WORKDIR}/tempo-port-forward.log"
-port_forward_bg mcp-sentinel loki "${LOKI_PORT}" 3100 "${WORKDIR}/loki-port-forward.log"
-if scenario_selected "governance" || scenario_selected "observability"; then
-  port_forward_bg mcp-sentinel mcp-sentinel-api "${API_SERVICE_PORT}" 8080 "${WORKDIR}/api-port-forward.log"
-fi
-if scenario_selected "observability"; then
-  port_forward_bg mcp-sentinel mcp-sentinel-api "${API_METRICS_PORT}" 9090 "${WORKDIR}/api-metrics-port-forward.log"
-  port_forward_bg mcp-sentinel mcp-sentinel-ingest "${INGEST_SERVICE_PORT}" 8081 "${WORKDIR}/ingest-port-forward.log"
-  port_forward_bg mcp-sentinel mcp-sentinel-ingest "${INGEST_METRICS_PORT}" 9091 "${WORKDIR}/ingest-metrics-port-forward.log"
-  port_forward_bg mcp-sentinel mcp-sentinel-processor "${PROCESSOR_METRICS_PORT}" 9102 "${WORKDIR}/processor-metrics-port-forward.log"
-  port_forward_bg mcp-sentinel mcp-sentinel-ui "${UI_SERVICE_PORT}" 8082 "${WORKDIR}/ui-port-forward.log"
-  port_forward_bg mcp-servers "${SERVER_NAME}" "${SERVER_PROXY_PORT}" 80 "${WORKDIR}/server-proxy-port-forward.log"
-  port_forward_resource_bg mcp-servers "deployment/${SERVER_NAME}" "${SERVER_UPSTREAM_PORT}" 8090 "${WORKDIR}/server-upstream-port-forward.log"
-fi
-
-wait_port "${TRAEFIK_PORT}"
-wait_port "${SENTINEL_PORT}"
-wait_port "${TEMPO_PORT}"
-wait_port "${LOKI_PORT}"
-if scenario_selected "governance" || scenario_selected "observability"; then
-  wait_port "${API_SERVICE_PORT}"
-fi
-if scenario_selected "observability"; then
-  wait_port "${API_METRICS_PORT}"
-  wait_port "${INGEST_SERVICE_PORT}"
-  wait_port "${INGEST_METRICS_PORT}"
-  wait_port "${PROCESSOR_METRICS_PORT}"
-  wait_port "${UI_SERVICE_PORT}"
-  wait_port "${SERVER_PROXY_PORT}"
-  wait_port "${SERVER_UPSTREAM_PORT}"
-fi
-wait_http "http://127.0.0.1:${SENTINEL_PORT}/api/stats" "x-api-key: ${API_KEY}"
-wait_http "http://127.0.0.1:${TEMPO_PORT}/ready"
-wait_http "http://127.0.0.1:${LOKI_PORT}/ready"
-
-echo "[registry] checking public ingress admin auth"
-REGISTRY_PUBLIC_URL="http://127.0.0.1:${TRAEFIK_PORT}/v2/_catalog"
-REGISTRY_UNAUTH_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: registry.local" "${REGISTRY_PUBLIC_URL}" || true)"
-if [[ "${REGISTRY_UNAUTH_STATUS}" != "401" && "${REGISTRY_UNAUTH_STATUS}" != "403" ]]; then
-  echo "[registry][fail] unauthenticated public registry catalog returned ${REGISTRY_UNAUTH_STATUS}, want 401 or 403" >&2
-  exit 1
-fi
-REGISTRY_ADMIN_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: registry.local" -H "x-api-key: ${API_KEY}" "${REGISTRY_PUBLIC_URL}" || true)"
-if [[ "${REGISTRY_ADMIN_STATUS}" != "200" ]]; then
-  echo "[registry][fail] admin public registry catalog returned ${REGISTRY_ADMIN_STATUS}, want 200" >&2
-  exit 1
-fi
-echo "[registry][pass] public registry catalog requires admin auth"
-
-echo "[proxy] starting local ingress proxies for curl MCP checks"
-start_header_proxy_bg "${MCP_CURL_ANON_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-curl-anon-proxy.log" \
-  --host-header "${SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
-start_header_proxy_bg "${MCP_CURL_IDENTITY_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-curl-identity-proxy.log" \
-  --host-header "${SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
-  --header "X-MCP-Human-ID=${HUMAN_ID}" \
-  --header "X-MCP-Agent-ID=${AGENT_ID}"
-start_header_proxy_bg "${MCP_CURL_SESSION_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-curl-session-proxy.log" \
-  --host-header "${SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
-  --header "X-MCP-Human-ID=${HUMAN_ID}" \
-  --header "X-MCP-Agent-ID=${AGENT_ID}" \
-  --header "X-MCP-Agent-Session=${SESSION_ID}"
-start_header_proxy_bg "${MCP_CURL_BAD_SESSION_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-curl-bad-session-proxy.log" \
-  --host-header "${SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
-  --header "X-MCP-Human-ID=${HUMAN_ID}" \
-  --header "X-MCP-Agent-ID=${AGENT_ID}" \
-  --header "X-MCP-Agent-Session=${UNKNOWN_SESSION_ID}"
-start_header_proxy_bg "${PYTHON_EXAMPLE_PROXY_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/python-example-proxy.log" \
-  --host-header "${PYTHON_EXAMPLE_SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
-start_header_proxy_bg "${RUST_EXAMPLE_PROXY_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/rust-example-proxy.log" \
-  --host-header "${RUST_EXAMPLE_SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
-start_header_proxy_bg "${GO_EXAMPLE_PROXY_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/go-example-proxy.log" \
-  --host-header "${GO_EXAMPLE_SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
-wait_port "${MCP_CURL_ANON_PORT}"
-wait_port "${MCP_CURL_IDENTITY_PORT}"
-wait_port "${MCP_CURL_SESSION_PORT}"
-wait_port "${MCP_CURL_BAD_SESSION_PORT}"
-wait_port "${PYTHON_EXAMPLE_PROXY_PORT}"
-wait_port "${RUST_EXAMPLE_PROXY_PORT}"
-wait_port "${GO_EXAMPLE_PROXY_PORT}"
-
-MCP_INGRESS_PATH="/${SERVER_NAME}/mcp"
-MCP_DIRECT_URL="http://127.0.0.1:${TRAEFIK_PORT}${MCP_INGRESS_PATH}"
-MCP_ANON_URL="http://127.0.0.1:${MCP_CURL_ANON_PORT}${MCP_INGRESS_PATH}"
-MCP_IDENTITY_URL="http://127.0.0.1:${MCP_CURL_IDENTITY_PORT}${MCP_INGRESS_PATH}"
-MCP_SESSION_URL="http://127.0.0.1:${MCP_CURL_SESSION_PORT}${MCP_INGRESS_PATH}"
-MCP_BAD_SESSION_URL="http://127.0.0.1:${MCP_CURL_BAD_SESSION_PORT}${MCP_INGRESS_PATH}"
-PYTHON_EXAMPLE_URL="http://127.0.0.1:${PYTHON_EXAMPLE_PROXY_PORT}${PYTHON_EXAMPLE_SERVER_ROUTE}"
-RUST_EXAMPLE_URL="http://127.0.0.1:${RUST_EXAMPLE_PROXY_PORT}${RUST_EXAMPLE_SERVER_ROUTE}"
-GO_EXAMPLE_URL="http://127.0.0.1:${GO_EXAMPLE_PROXY_PORT}${GO_EXAMPLE_SERVER_ROUTE}"
-
-log_line ingress "validating distinct MCP server behaviors across routes"
-wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200 "pong"
-wait_for_mcp_tool_result "${PYTHON_EXAMPLE_URL}" "echo" '{"message":"python example ready"}' 200 "python example ready"
-wait_for_mcp_tool_result "${RUST_EXAMPLE_URL}" "repeat" '{"message":"rust","times":3}' 200 "rustrustrust"
-wait_for_mcp_tool_result "${GO_EXAMPLE_URL}" "lower" '{"message":"GO Example Ready"}' 200 "go example ready"
-
-if scenario_selected "smoke-auth"; then
-  log_line mcp "validating raw MCP request edge cases"
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    POST \
-    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=2099-01-01")" \
-    text \
-    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-    400 \
-    "Unsupported protocol version"
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    POST \
-    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=text/plain" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
-    text \
-    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-    403 \
-    "rpc_inspection_failed"
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    POST \
-    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
-    text \
-    '' \
-    403 \
-    "rpc_inspection_failed"
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    POST \
-    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
-    text \
-    '{"jsonrpc":' \
-    403 \
-    "rpc_inspection_failed"
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    POST \
-    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
-    text \
-    '{"jsonrpc":"2.0","id":1,"params":{}}' \
-    403 \
-    "rpc_inspection_failed"
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    POST \
-    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream")" \
-    text \
-    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-    200
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    POST \
-    "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
-    chunked-text \
-    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-    200
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    GET \
-    "$(build_headers_json "Host=${SERVER_HOST}" "accept=text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
-    none \
-    '' \
-    400 \
-    "GET requires an Mcp-Session-Id header"
-  wait_for_http_result \
-    "${MCP_DIRECT_URL}" \
-    DELETE \
-    "$(build_headers_json "Host=${SERVER_HOST}" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
-    none \
-    '' \
-    400 \
-    "DELETE requires an Mcp-Session-Id header"
-
-  log_line mcp "running curl-based MCP smoke checks against ingress"
-  run_mcp_curl_expect "mcp-curl-missing-identity" "${MCP_ANON_URL}" false "missing_identity" \
-    || run_mcp_curl_expect "mcp-curl-missing-identity-retry" "${MCP_ANON_URL}" false "missing_identity"
-  run_mcp_curl_expect "mcp-curl-missing-session" "${MCP_IDENTITY_URL}" false "missing_session" \
-    || run_mcp_curl_expect "mcp-curl-missing-session-retry" "${MCP_IDENTITY_URL}" false "missing_session"
-  run_mcp_curl_expect "mcp-curl-session-not-found" "${MCP_BAD_SESSION_URL}" false "session_not_found" \
-    || run_mcp_curl_expect "mcp-curl-session-not-found-retry" "${MCP_BAD_SESSION_URL}" false "session_not_found"
-  log_line mcp "waiting for session-backed allow policy to reach the gateway"
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
-  run_mcp_curl_expect "mcp-curl-allow-aaa-ping" "${MCP_SESSION_URL}" true
-  if scenario_selected "observability"; then
-    wait_for_gateway_rpc_methods "${SERVER_NAME}" "policy server MCP curl"
+    ./bin/mcp-runtime access --use-kube grant apply --file "${WORKDIR}/access-temp.yaml"
+    ./bin/mcp-runtime access --use-kube grant disable "${SERVER_NAME}-grant-cli-temp" --namespace mcp-servers
+    ./bin/mcp-runtime access --use-kube grant enable "${SERVER_NAME}-grant-cli-temp" --namespace mcp-servers
+    ./bin/mcp-runtime access --use-kube session revoke "${SESSION_ID}-cli-temp" --namespace mcp-servers
+    ./bin/mcp-runtime access --use-kube session unrevoke "${SESSION_ID}-cli-temp" --namespace mcp-servers
+    ./bin/mcp-runtime access --use-kube grant delete "${SERVER_NAME}-grant-cli-temp" --namespace mcp-servers
+    ./bin/mcp-runtime access --use-kube session delete "${SESSION_ID}-cli-temp" --namespace mcp-servers
   fi
-fi
 
-if scenario_selected "governance"; then
-  log_line policy "revoking access session via CLI; gateway should reject session-backed calls with session_revoked"
-  ./bin/mcp-runtime access --use-kube session revoke "${SESSION_ID}" --namespace mcp-servers
-  wait_for_policy_text "\"revoked\": true"
-  print_gateway_policy_debug
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 401 "session_revoked"
-  run_mcp_curl_expect "mcp-curl-session-revoked" "${MCP_SESSION_URL}" false "session_revoked"
+  if scenario_selected "governance" || scenario_selected "adapter-proxy"; then
+    # Phase 6: exercise the platform-issued adapter-session endpoint. The
+    # existing governance grant pins humanID to ${HUMAN_ID}, while this flow
+    # calls the endpoint as the platform admin principal. Apply a second,
+    # per-run agent-scoped grant just for this test. The endpoint must pick the
+    # grant, write/reuse an MCPAgentSession with the deterministic adapter-<hash>
+    # name, and report reused=true on the second call.
+    # Use a fresh agentID per e2e invocation so deterministic-name reuse
+    # doesn't leak across re-runs in E2E_CACHE_MODE=1 (where the cluster and
+    # prior adapter-<hash> sessions are retained between runs). A timestamp
+    # suffix is sufficient; the assertions below verify the platform's own
+    # reuse semantics (reused=true on the *second* call within this run).
+    ADAPTER_AGENT_ID="e2e-adapter-agent-$(date +%s)"
 
-  log_line policy "restoring access session via CLI; gateway should allow low-trust tools again"
-  ./bin/mcp-runtime access --use-kube session unrevoke "${SESSION_ID}" --namespace mcp-servers
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
+    if api_service_paths_selected; then
+      ensure_api_port_forward
+    fi
+    ensure_gateway_port_forward
 
-  log_line policy "expiring access session via manifest update; gateway should reject calls with session_expired"
-  EXPIRED_AT="$(python3 <<'PY'
-from datetime import datetime, timedelta, timezone
-print((datetime.now(timezone.utc) - timedelta(minutes=5)).replace(microsecond=0).isoformat().replace("+00:00", "Z"))
-PY
-)"
-  cat >"${WORKDIR}/access-session-expired.yaml" <<EOF
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPAgentSession
-metadata:
-  name: ${SESSION_ID}
-  namespace: mcp-servers
-spec:
-  serverRef:
-    name: ${SERVER_NAME}
-  subject:
-    humanID: ${HUMAN_ID}
-    agentID: ${AGENT_ID}
-  consentedTrust: low
-  policyVersion: v1
-  expiresAt: ${EXPIRED_AT}
-EOF
-  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session apply --file access-session-expired.yaml)
-  wait_for_policy_text "\"expires_at\": \"${EXPIRED_AT}\""
-  print_gateway_policy_debug
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 401 "session_expired"
-  run_mcp_curl_expect "mcp-curl-session-expired" "${MCP_SESSION_URL}" false "session_expired"
-
-  log_line policy "restoring non-expired access session"
-  cat >"${WORKDIR}/access-session-restored.yaml" <<EOF
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPAgentSession
-metadata:
-  name: ${SESSION_ID}
-  namespace: mcp-servers
-spec:
-  serverRef:
-    name: ${SERVER_NAME}
-  subject:
-    humanID: ${HUMAN_ID}
-    agentID: ${AGENT_ID}
-  consentedTrust: low
-  policyVersion: v1
-EOF
-  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session apply --file access-session-restored.yaml)
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
-
-  log_line policy "disabling access grant via CLI; gateway should reject granted tools with tool_not_granted"
-  ./bin/mcp-runtime access --use-kube grant disable "${SERVER_NAME}-grant" --namespace mcp-servers
-  wait_for_policy_text "\"disabled\": true"
-  print_gateway_policy_debug
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 403 "tool_not_granted"
-  run_mcp_curl_expect "mcp-curl-grant-disabled" "${MCP_SESSION_URL}" false "tool_not_granted"
-
-  log_line policy "re-enabling access grant via CLI"
-  ./bin/mcp-runtime access --use-kube grant enable "${SERVER_NAME}-grant" --namespace mcp-servers
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
-
-  # Phase 6: exercise the platform-issued adapter-session endpoint. The
-  # existing governance grant pins humanID to ${HUMAN_ID}, while this flow
-  # calls the endpoint as the platform admin principal. Apply a second,
-  # subject-wildcard grant just for this test. The endpoint must pick the
-  # wildcard grant, write/reuse an MCPAgentSession with the deterministic
-  # adapter-<hash> name, and report reused=true on the second call.
-  log_line policy "applying subject-wildcard grant for adapter-session test"
-  cat >"${WORKDIR}/adapter-session-grant.yaml" <<EOF
+    log_line policy "applying agent-scoped grant for adapter-session test"
+    cat >"${WORKDIR}/adapter-session-grant.yaml" <<EOF
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
 metadata:
@@ -3272,37 +3720,35 @@ metadata:
 spec:
   serverRef:
     name: ${SERVER_NAME}
-  subject: {}
+  subject:
+    agentID: ${ADAPTER_AGENT_ID}
   maxTrust: low
   allowedSideEffects: [read]
   policyVersion: v1
+  toolRules:
+    - name: aaa-ping
+      decision: allow
 EOF
-  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file adapter-session-grant.yaml)
+    (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file adapter-session-grant.yaml)
+    wait_for_policy_text "\"agent_id\": \"${ADAPTER_AGENT_ID}\""
 
-  # Use a fresh agentID per e2e invocation so deterministic-name reuse
-  # doesn't leak across re-runs in E2E_CACHE_MODE=1 (where the cluster and
-  # prior adapter-<hash> sessions are retained between runs). A timestamp
-  # suffix is sufficient; the assertions below verify the platform's own
-  # reuse semantics (reused=true on the *second* call within this run).
-  ADAPTER_AGENT_ID="e2e-adapter-agent-$(date +%s)"
-
-  log_line policy "logging in platform admin for adapter-session test"
-  ADAPTER_PLATFORM_TOKEN="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
+    log_line policy "logging in platform admin for adapter-session test"
+    ADAPTER_PLATFORM_TOKEN="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
 import json, os
 print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.environ["PLATFORM_ADMIN_PASSWORD"]}))
 ' | curl -fsS -X POST \
-    -H "content-type: application/json" \
-    --data-binary @- \
-    "http://127.0.0.1:${API_SERVICE_PORT}/api/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+      -H "content-type: application/json" \
+      --data-binary @- \
+      "http://127.0.0.1:${API_SERVICE_PORT}/api/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
 
-  log_line policy "adapter-session endpoint should issue a session for the wildcard grant"
-  ADAPTER_SESSION_BODY="$(printf '{"serverName":"%s","namespace":"mcp-servers","agentID":"%s"}' "${SERVER_NAME}" "${ADAPTER_AGENT_ID}")"
-  ADAPTER_SESSION_RESP="$(curl -fsS -X POST \
-    -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
-    -H "content-type: application/json" \
-    --data "${ADAPTER_SESSION_BODY}" \
-    "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
-  echo "${ADAPTER_SESSION_RESP}" | ADAPTER_AGENT_ID="${ADAPTER_AGENT_ID}" python3 -c "
+    log_line policy "adapter-session endpoint should issue a session for the wildcard grant"
+    ADAPTER_SESSION_BODY="$(printf '{"serverName":"%s","namespace":"mcp-servers","agentID":"%s"}' "${SERVER_NAME}" "${ADAPTER_AGENT_ID}")"
+    ADAPTER_SESSION_RESP="$(curl -fsS -X POST \
+      -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
+      -H "content-type: application/json" \
+      --data "${ADAPTER_SESSION_BODY}" \
+      "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
+    echo "${ADAPTER_SESSION_RESP}" | ADAPTER_AGENT_ID="${ADAPTER_AGENT_ID}" python3 -c "
 import json, os, sys
 resp = json.load(sys.stdin)
 assert resp['namespace'] == 'mcp-servers', resp
@@ -3314,22 +3760,23 @@ assert resp['consentedTrust'] in ('none','low','mid','high','full'), resp
 assert resp['expiresAt'], resp
 print('adapter-session issued:', resp['name'], 'reused=', resp['reused'])
 "
-  ADAPTER_SESSION_NAME="$(echo "${ADAPTER_SESSION_RESP}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["name"])')"
-  if ! kubectl get mcpagentsession "${ADAPTER_SESSION_NAME}" -n mcp-servers >/dev/null 2>&1; then
-    echo "expected MCPAgentSession ${ADAPTER_SESSION_NAME} in mcp-servers" >&2
-    exit 1
-  fi
+    ADAPTER_SESSION_NAME="$(echo "${ADAPTER_SESSION_RESP}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["name"])')"
+    if ! kubectl get mcpagentsession "${ADAPTER_SESSION_NAME}" -n mcp-servers >/dev/null 2>&1; then
+      echo "expected MCPAgentSession ${ADAPTER_SESSION_NAME} in mcp-servers" >&2
+      exit 1
+    fi
+    wait_for_policy_text "\"name\": \"${ADAPTER_SESSION_NAME}\""
 
-  # The second call must hit the platform's reuse path: same body within the
-  # same run, no Kubernetes round-trip, reused=true. This is independent of
-  # whether the first call hit a leftover from a previous e2e run.
-  log_line policy "adapter-session endpoint should reuse the existing session on a second call"
-  ADAPTER_SESSION_RESP2="$(curl -fsS -X POST \
-    -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
-    -H "content-type: application/json" \
-    --data "${ADAPTER_SESSION_BODY}" \
-    "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
-  echo "${ADAPTER_SESSION_RESP2}" | python3 -c "
+    # The second call must hit the platform's reuse path: same body within the
+    # same run, no Kubernetes round-trip, reused=true. This is independent of
+    # whether the first call hit a leftover from a previous e2e run.
+    log_line policy "adapter-session endpoint should reuse the existing session on a second call"
+    ADAPTER_SESSION_RESP2="$(curl -fsS -X POST \
+      -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
+      -H "content-type: application/json" \
+      --data "${ADAPTER_SESSION_BODY}" \
+      "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
+    echo "${ADAPTER_SESSION_RESP2}" | python3 -c "
 import json, sys
 resp = json.load(sys.stdin)
 assert resp['name'] == '${ADAPTER_SESSION_NAME}', resp
@@ -3337,101 +3784,94 @@ assert resp['reused'] is True, resp
 print('adapter-session reused:', resp['name'])
 "
 
-  log_line policy "adapter-session endpoint must reject requests with no matching grant"
-  ADAPTER_SESSION_REJECT_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
-    -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
-    -H "content-type: application/json" \
-    --data '{"serverName":"definitely-missing","namespace":"mcp-servers","agentID":"ops-agent"}' \
-    "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
-  if [[ "${ADAPTER_SESSION_REJECT_STATUS}" != "403" ]]; then
-    echo "expected 403 when no grant matches, got ${ADAPTER_SESSION_REJECT_STATUS}" >&2
-    exit 1
+    log_line policy "adapter-session endpoint must reject requests with no matching grant"
+    ADAPTER_SESSION_REJECT_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+      -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
+      -H "content-type: application/json" \
+      --data '{"serverName":"definitely-missing","namespace":"mcp-servers","agentID":"ops-agent"}' \
+      "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
+    if [[ "${ADAPTER_SESSION_REJECT_STATUS}" != "403" ]]; then
+      echo "expected 403 when no grant matches, got ${ADAPTER_SESSION_REJECT_STATUS}" >&2
+      exit 1
+    fi
+
+    if deep_request_flows_enabled || scenario_selected "adapter-proxy"; then
+      log_line policy "running local adapter proxy with platform-issued session"
+      ADAPTER_PROXY_LOG="${WORKDIR}/adapter-proxy.log"
+      if port_is_listening "${ADAPTER_PROXY_PORT}"; then
+        echo "[proxy] reusing existing adapter proxy on localhost:${ADAPTER_PROXY_PORT}"
+      else
+        require_port_available "${ADAPTER_PROXY_PORT}" "adapter proxy"
+        MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}" \
+          MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
+          ./bin/mcp-runtime adapter proxy \
+            --listen "127.0.0.1:${ADAPTER_PROXY_PORT}" \
+            --runtime-url "${MCP_DIRECT_URL}" \
+            --host-header "${SERVER_HOST}" \
+            --server "${SERVER_NAME}" \
+            --namespace mcp-servers \
+            --agent "${ADAPTER_AGENT_ID}" \
+            --request-timeout 20s \
+            --log-level info >"${ADAPTER_PROXY_LOG}" 2>&1 &
+        ADAPTER_PROXY_PID="$!"
+        PIDS+=("${ADAPTER_PROXY_PID}")
+        wait_managed_port "${ADAPTER_PROXY_PORT}" "${ADAPTER_PROXY_PID}" "${ADAPTER_PROXY_LOG}" "adapter proxy"
+      fi
+      # The adapter session is rendered through the policy ConfigMap, then the
+      # gateway observes the mounted file on its next kubelet/poll interval.
+      # Reuse the normal policy wait budget here; CI can take longer than a
+      # short smoke retry after the ConfigMap has already been updated.
+      wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "aaa-ping" '{}' 200 "pong"
+      wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "add" '{"a":1,"b":2}' 403 "tool_not_granted"
+    fi
   fi
-fi
 
-if scenario_selected "trust"; then
-  log_line mcp "validating targeted echo and upper tool behavior"
-  MCP_BASE="${MCP_SESSION_URL}" \
-  MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION}" \
-  python3 <<'PY'
-import json
-import os
-import urllib.error
-import urllib.request
+  if deep_request_flows_enabled || scenario_selected "cli-platform"; then
+    log_line policy "running platform CLI request-flow sweep"
+    ensure_api_port_forward
+    if [[ -z "${ADAPTER_PLATFORM_TOKEN:-}" ]]; then
+      ADAPTER_PLATFORM_TOKEN="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
+import json, os
+print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.environ["PLATFORM_ADMIN_PASSWORD"]}))
+' | curl -fsS -X POST \
+        -H "content-type: application/json" \
+        --data-binary @- \
+        "http://127.0.0.1:${API_SERVICE_PORT}/api/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+    fi
+    DEEP_CLI_TEAM_SLUG="e2e-cli-$(date +%s)"
+    DEEP_CLI_USER_EMAIL="${DEEP_CLI_TEAM_SLUG}@mcpruntime.org"
+    DEEP_PLATFORM_ENV=(
+      MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}"
+      MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}"
+    )
 
-base = os.environ["MCP_BASE"]
-protocol = os.environ["MCP_PROTOCOL_VERSION"]
-initialize_payload = {
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "initialize",
-    "params": {
-        "protocolVersion": protocol,
-        "capabilities": {},
-        "clientInfo": {"name": "mcp-runtime-e2e", "version": "1.0.0"},
-    },
-}
+    env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime auth status >/dev/null
+    env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team list >/dev/null
+    env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team create "${DEEP_CLI_TEAM_SLUG}" --name "E2E CLI ${DEEP_CLI_TEAM_SLUG}" >/dev/null
+    env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team user create "${DEEP_CLI_TEAM_SLUG}" \
+      --email "${DEEP_CLI_USER_EMAIL}" \
+      --password "test-password-123" \
+      --role member >/dev/null
+    env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team user list "${DEEP_CLI_TEAM_SLUG}" >/dev/null
+    env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime server list --namespace mcp-servers >/dev/null
+    env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime server get "${SERVER_NAME}" --namespace mcp-servers >/dev/null
+    env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access grant list --namespace mcp-servers >/dev/null
+    env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access grant get "${SERVER_NAME}-grant" --namespace mcp-servers >/dev/null
+    env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access session list --namespace mcp-servers >/dev/null
+    env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access session get "${SESSION_ID}" --namespace mcp-servers >/dev/null
+  fi
 
+  run_selected_http_flow_scenarios
 
-import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
+  if scenario_selected "trust"; then
+    refresh_kind_kubeconfig || true
+    ensure_trust_session_proxy
+    log_line mcp "validating targeted echo and upper tool behavior"
+    wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "echo" '{"message":"hello"}' 200 "hello"
+    wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "upper" '{"message":"governance"}' 403 "trust_too_low"
 
-
-def post(msg, mcp_session_id=None):
-    headers = {
-        "content-type": "application/json",
-        "accept": "application/json, text/event-stream",
-        "Mcp-Protocol-Version": protocol,
-    }
-    if mcp_session_id:
-        headers["Mcp-Session-Id"] = mcp_session_id
-    req = urllib.request.Request(base, data=json.dumps(msg).encode(), headers=headers)
-    try:
-        resp = urllib.request.urlopen(req, timeout=10)
-        return resp.status, resp.headers.get("Mcp-Session-Id") or mcp_session_id, resp.read().decode()
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.headers.get("Mcp-Session-Id") or mcp_session_id, exc.read().decode()
-
-
-status, mcp_session_id, body = post(initialize_payload)
-check(
-    status == 200 and bool(mcp_session_id),
-    "trust pre-update initialize succeeded",
-    f"initialize failed before trust update: {status} {body}",
-)
-
-status, _, body = post({"jsonrpc": "2.0", "method": "notifications/initialized"}, mcp_session_id=mcp_session_id)
-check(
-    status in (200, 202),
-    "trust pre-update notifications/initialized succeeded",
-    f"notifications/initialized failed: {status} {body}",
-)
-
-status, _, body = post(
-    {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "echo", "arguments": {"message": "hello"}}},
-    mcp_session_id=mcp_session_id,
-)
-check(
-    status == 200 and "hello" in body,
-    "trust pre-update echo allowed",
-    f"expected echo to succeed before trust update, got {status}: {body}",
-)
-print("echo allow:", body)
-
-status, _, body = post(
-    {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "upper", "arguments": {"message": "governance"}}},
-    mcp_session_id=mcp_session_id,
-)
-payload = json.loads(body)
-check(
-    status == 403 and payload.get("error") == "trust_too_low",
-    "trust pre-update upper denied with trust_too_low",
-    f"expected upper to be denied before trust update, got {status}: {body}",
-)
-print("upper deny:", body)
-PY
-
-  log_line policy "raising consented trust to medium; upper should become allowed while add stays ungranted"
-  cat <<EOF | kubectl apply -f -
+    log_line policy "raising consented trust to medium; upper should become allowed while add stays ungranted"
+    cat <<EOF | kubectl apply -f -
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAgentSession
 metadata:
@@ -3447,82 +3887,14 @@ spec:
   policyVersion: v1
 EOF
 
-  wait_for_policy_text "\"consented_trust\": \"medium\""
-  print_gateway_policy_debug
-  log_line mcp "waiting for updated consented trust to reach the gateway"
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "upper" '{"message":"governance"}' 200 "GOVERNANCE"
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "add" '{"a":2,"b":3}' 403 "tool_not_granted"
+    wait_for_policy_text "\"consented_trust\": \"medium\""
+    print_gateway_policy_debug
+    log_line mcp "waiting for updated consented trust to reach the gateway"
+    wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "upper" '{"message":"governance"}' 200 "GOVERNANCE"
+    wait_for_mcp_tool_result "${MCP_TRUST_SESSION_URL}" "add" '{"a":2,"b":3}' 403 "tool_not_granted"
 
-  log_line mcp "validating updated policy allows the higher-trust tool"
-  MCP_BASE="${MCP_SESSION_URL}" \
-  MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION}" \
-  python3 <<'PY'
-import json
-import os
-import urllib.error
-import urllib.request
-
-base = os.environ["MCP_BASE"]
-protocol = os.environ["MCP_PROTOCOL_VERSION"]
-
-
-import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
-
-initialize_payload = make_initialize_payload(protocol)
-
-
-def post(msg, mcp_session_id=None):
-    headers = {
-        "content-type": "application/json",
-        "accept": "application/json, text/event-stream",
-        "Mcp-Protocol-Version": protocol,
-    }
-    if mcp_session_id:
-        headers["Mcp-Session-Id"] = mcp_session_id
-    req = urllib.request.Request(base, data=json.dumps(msg).encode(), headers=headers)
-    try:
-        resp = urllib.request.urlopen(req, timeout=10)
-        return resp.status, resp.headers.get("Mcp-Session-Id") or mcp_session_id, resp.read().decode()
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.headers.get("Mcp-Session-Id") or mcp_session_id, exc.read().decode()
-
-
-status, mcp_session_id, body = post({
-    **initialize_payload,
-    "id": 6,
-})
-check(
-    status == 200 and bool(mcp_session_id),
-    "trust post-update initialize succeeded",
-    f"initialize failed after trust update: {status} {body}",
-)
-
-status, _, body = post({"jsonrpc": "2.0", "method": "notifications/initialized"}, mcp_session_id=mcp_session_id)
-check(
-    status in (200, 202),
-    "trust post-update notifications/initialized succeeded",
-    f"notifications/initialized failed: {status} {body}",
-)
-
-status, _, body = post(
-    {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "upper", "arguments": {"message": "governance"}}},
-    mcp_session_id=mcp_session_id,
-)
-check(
-    status == 200,
-    "trust post-update upper returned 200",
-    f"expected upper to succeed after trust update, got {status}: {body}",
-)
-check(
-    "GOVERNANCE" in body,
-    "trust post-update upper returned GOVERNANCE",
-    f"expected uppercase result, got {body}",
-)
-print("upper allow:", body)
-PY
-
-  log_line policy "temporarily expanding grant for deterministic multi-tool MCP checks"
-  cat <<EOF | kubectl apply -f -
+    log_line policy "temporarily expanding grant for deterministic multi-tool MCP checks"
+    cat <<EOF | kubectl apply -f -
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
 metadata:
@@ -3549,12 +3921,16 @@ spec:
     - name: slugify
       decision: allow
 EOF
-  wait_for_policy_text "\"slugify\""
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "add" '{"a":41,"b":1}' 200 "42"
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "slugify" '{"message":"Hello World"}' 200 "hello-world"
+    wait_for_policy_text "\"slugify\""
+    run_parallel_grant_tool_rules \
+      -- "${SERVER_NAME}-grant" "add" "allow" \
+      -- "${SERVER_NAME}-grant" "slugify" "allow"
+    run_parallel_mcp_tool_checks \
+      -- trust-add "${MCP_TRUST_SESSION_URL}" "add" '{"a":41,"b":1}' 200 "42" \
+      -- trust-slugify "${MCP_TRUST_SESSION_URL}" "slugify" '{"message":"Hello World"}' 200 "hello-world"
 
-  log_line policy "updating access grant to deny aaa-ping and echo"
-  cat >"${WORKDIR}/access-grant-deny.yaml" <<EOF
+    log_line policy "updating access grant to deny aaa-ping and echo"
+    cat >"${WORKDIR}/access-grant-deny.yaml" <<EOF
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
 metadata:
@@ -3577,87 +3953,279 @@ spec:
     - name: upper
       decision: allow
 EOF
-  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant-deny.yaml)
+    (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant-deny.yaml)
 
-  wait_for_grant_tool_rule "${SERVER_NAME}-grant" "aaa-ping" "deny"
-  wait_for_grant_tool_rule "${SERVER_NAME}-grant" "echo" "deny"
-  print_gateway_policy_debug
+    run_parallel_grant_tool_rules \
+      -- "${SERVER_NAME}-grant" "aaa-ping" "deny" \
+      -- "${SERVER_NAME}-grant" "echo" "deny"
+    print_gateway_policy_debug
 
-  log_line mcp "validating updated access grant denies aaa-ping and echo"
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 403 "tool_denied"
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "echo" '{"message":"analytics"}' 403 "tool_denied"
-  run_mcp_curl_expect "mcp-curl-aaa-ping-deny" "${MCP_SESSION_URL}" false "tool_denied"
-  MCP_BASE="${MCP_SESSION_URL}" \
-  MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION}" \
-  python3 <<'PY'
-import json
-import os
-import urllib.error
-import urllib.request
-
-base = os.environ["MCP_BASE"]
-protocol = os.environ["MCP_PROTOCOL_VERSION"]
-
-
-import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
-
-
-def post(msg, mcp_session_id=None):
-    headers = {
-        "content-type": "application/json",
-        "accept": "application/json, text/event-stream",
-        "Mcp-Protocol-Version": protocol,
-    }
-    if mcp_session_id:
-        headers["Mcp-Session-Id"] = mcp_session_id
-    req = urllib.request.Request(base, data=json.dumps(msg).encode(), headers=headers)
-    try:
-        resp = urllib.request.urlopen(req, timeout=10)
-        return resp.status, resp.headers.get("Mcp-Session-Id") or mcp_session_id, resp.read().decode()
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.headers.get("Mcp-Session-Id") or mcp_session_id, exc.read().decode()
-
-
-status, mcp_session_id, body = post({"jsonrpc": "2.0", "id": 8, "method": "initialize", "params": {}})
-check(
-    status == 200 and bool(mcp_session_id),
-    "grant update initialize succeeded",
-    f"initialize failed after grant update: {status} {body}",
-)
-
-status, _, body = post({"jsonrpc": "2.0", "method": "notifications/initialized"}, mcp_session_id=mcp_session_id)
-check(
-    status in (200, 202),
-    "grant update notifications/initialized succeeded",
-    f"notifications/initialized failed: {status} {body}",
-)
-
-status, _, body = post(
-    {"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": "echo", "arguments": {"message": "analytics"}}},
-    mcp_session_id=mcp_session_id,
-)
-payload = json.loads(body)
-check(
-    status == 403 and payload.get("error") == "tool_denied",
-    "grant update echo denied with tool_denied",
-    f"expected echo to be denied after grant update, got {status}: {body}",
-)
-print("echo deny:", body)
-PY
+    log_line mcp "validating updated access grant denies aaa-ping and echo"
+    run_parallel_mcp_tool_checks \
+      -- trust-deny-aaa-ping "${MCP_TRUST_SESSION_URL}" "aaa-ping" '{}' 403 "tool_denied" \
+      -- trust-deny-echo "${MCP_TRUST_SESSION_URL}" "echo" '{"message":"analytics"}' 403 "tool_denied"
+    run_mcp_curl_expect "mcp-curl-aaa-ping-deny" "${MCP_TRUST_SESSION_URL}" false "tool_denied"
+    restore_policy_server_grant_defaults
+  fi
 fi
 
-if scenario_selected "oauth"; then
+if checkpoint_enabled "oauth"; then
+  echo "[port-forward] exposing ingress and observability services"
+  ensure_traefik_port_forward
+  ensure_gateway_port_forward
+  port_forward_bg mcp-sentinel loki "${LOKI_PORT}" 3100 "${WORKDIR}/loki-port-forward.log"
+  port_forward_bg mcp-sentinel tempo "${TEMPO_PORT}" 3200 "${WORKDIR}/tempo-port-forward.log"
+  if api_service_paths_selected; then
+    ensure_api_port_forward
+  fi
+  if scenario_selected "observability"; then
+    port_forward_bg mcp-sentinel mcp-sentinel-api "${API_METRICS_PORT}" 9090 "${WORKDIR}/api-metrics-port-forward.log"
+    port_forward_bg mcp-sentinel mcp-sentinel-ingest "${INGEST_SERVICE_PORT}" 8081 "${WORKDIR}/ingest-port-forward.log"
+    port_forward_bg mcp-sentinel mcp-sentinel-ingest "${INGEST_METRICS_PORT}" 9091 "${WORKDIR}/ingest-metrics-port-forward.log"
+    port_forward_bg mcp-sentinel mcp-sentinel-processor "${PROCESSOR_METRICS_PORT}" 9102 "${WORKDIR}/processor-metrics-port-forward.log"
+    port_forward_bg mcp-sentinel prometheus "${PROMETHEUS_PORT}" 9090 "${WORKDIR}/prometheus-port-forward.log"
+    port_forward_resource_bg mcp-servers "deployment/${SERVER_NAME}" "${SERVER_UPSTREAM_PORT}" 8090 "${WORKDIR}/server-upstream-port-forward.log"
+  fi
+  if server_proxy_paths_selected; then
+    ensure_server_proxy_port_forward
+  fi
+  if ui_service_paths_selected; then
+    ensure_ui_port_forward
+  fi
+
+  if scenario_selected "observability"; then
+    wait_ports_parallel \
+      "${TRAEFIK_PORT}" \
+      "${LOKI_PORT}" \
+      "${TEMPO_PORT}" \
+      "${API_METRICS_PORT}" \
+      "${INGEST_SERVICE_PORT}" \
+      "${INGEST_METRICS_PORT}" \
+      "${PROCESSOR_METRICS_PORT}" \
+      "${PROMETHEUS_PORT}" \
+      "${SERVER_UPSTREAM_PORT}"
+  else
+    wait_ports_parallel "${TRAEFIK_PORT}" "${LOKI_PORT}" "${TEMPO_PORT}"
+  fi
+  if server_proxy_paths_selected; then
+    wait_port "${SERVER_PROXY_PORT}"
+  fi
+  if ui_service_paths_selected; then
+    wait_port "${UI_SERVICE_PORT}"
+  fi
+  wait_http "http://127.0.0.1:${SENTINEL_PORT}/api/stats" "x-api-key: ${API_KEY}"
+  wait_http "http://127.0.0.1:${TEMPO_PORT}/ready"
+  wait_http "http://127.0.0.1:${LOKI_PORT}/ready"
+  if scenario_selected "observability"; then
+    wait_http "http://127.0.0.1:${PROMETHEUS_PORT}/prometheus/-/ready"
+  fi
+
+  recover_traefik_port_forward_if_needed || true
+  echo "[registry] checking public ingress admin auth"
+  REGISTRY_PUBLIC_URL="http://127.0.0.1:${TRAEFIK_PORT}/v2/_catalog"
+  REGISTRY_UNAUTH_STATUS=""
+  for attempt in $(seq 1 12); do
+    REGISTRY_UNAUTH_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: registry.local" "${REGISTRY_PUBLIC_URL}" || true)"
+    if [[ "${REGISTRY_UNAUTH_STATUS}" == "401" || "${REGISTRY_UNAUTH_STATUS}" == "403" ]]; then
+      break
+    fi
+    echo "[registry] unauthenticated public registry catalog returned ${REGISTRY_UNAUTH_STATUS:-empty} on attempt ${attempt}/12; retrying"
+    sleep 2
+  done
+  if [[ "${REGISTRY_UNAUTH_STATUS}" != "401" && "${REGISTRY_UNAUTH_STATUS}" != "403" ]]; then
+    echo "[registry][fail] unauthenticated public registry catalog returned ${REGISTRY_UNAUTH_STATUS}, want 401 or 403" >&2
+    exit 1
+  fi
+  REGISTRY_ADMIN_STATUS=""
+  for attempt in $(seq 1 12); do
+    REGISTRY_ADMIN_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: registry.local" -H "x-api-key: ${API_KEY}" "${REGISTRY_PUBLIC_URL}" || true)"
+    if [[ "${REGISTRY_ADMIN_STATUS}" == "200" ]]; then
+      break
+    fi
+    echo "[registry] admin public registry catalog returned ${REGISTRY_ADMIN_STATUS:-empty} on attempt ${attempt}/12; retrying"
+    sleep 2
+  done
+  if [[ "${REGISTRY_ADMIN_STATUS}" != "200" ]]; then
+    echo "[registry][fail] admin public registry catalog returned ${REGISTRY_ADMIN_STATUS}, want 200" >&2
+    exit 1
+  fi
+  echo "[registry][pass] public registry catalog requires admin auth"
+
+  start_mcp_ingress_header_proxies
+  if scenario_selected "trust"; then
+    ensure_trust_session_proxy
+  fi
+  wait_ports_parallel \
+    "${MCP_CURL_ANON_PORT}" \
+    "${MCP_CURL_IDENTITY_PORT}" \
+    "${MCP_CURL_SESSION_PORT}" \
+    "${MCP_CURL_BAD_SESSION_PORT}"
+  if scenario_selected "trust"; then
+    wait_port "${MCP_SERVICE_SESSION_PORT}"
+  fi
+
+  refresh_mcp_proxy_urls
+  if scenario_selected "trust"; then
+    prepare_ingress_mcp_path_after_trust
+  fi
+  log_line ingress "validating MCP ingress routes on primary server ${SERVER_NAME}"
+  rm -f "${WORKDIR}"/last-mcp-tool-result*.json "${WORKDIR}"/last-mcp-tool-stderr*.txt
+  run_parallel_mcp_tool_checks \
+    -- ingress-aaa-ping "${MCP_SESSION_URL}" "aaa-ping" '{}' 200 "pong" \
+    -- ingress-echo "${MCP_SESSION_URL}" "echo" '{"message":"hello"}' 200 "hello"
+
+  if scenario_selected "smoke-auth"; then
+    log_line mcp "validating raw MCP request edge cases"
+    wait_for_http_result \
+      "${MCP_DIRECT_URL}" \
+      POST \
+      "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=2099-01-01")" \
+      text \
+      '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+      400 \
+      "Unsupported protocol version"
+    wait_for_http_result \
+      "${MCP_DIRECT_URL}" \
+      POST \
+      "$(build_headers_json "Host=${SERVER_HOST}" "content-type=text/plain" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
+      text \
+      '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+      403 \
+      "rpc_inspection_failed"
+    wait_for_http_result \
+      "${MCP_DIRECT_URL}" \
+      POST \
+      "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
+      text \
+      '' \
+      403 \
+      "rpc_inspection_failed"
+    wait_for_http_result \
+      "${MCP_DIRECT_URL}" \
+      POST \
+      "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
+      text \
+      '{"jsonrpc":' \
+      403 \
+      "rpc_inspection_failed"
+    wait_for_http_result \
+      "${MCP_DIRECT_URL}" \
+      POST \
+      "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
+      text \
+      '{"jsonrpc":"2.0","id":1,"params":{}}' \
+      403 \
+      "rpc_inspection_failed"
+    wait_for_http_result \
+      "${MCP_DIRECT_URL}" \
+      POST \
+      "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream")" \
+      text \
+      '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+      200
+    wait_for_http_result \
+      "${MCP_DIRECT_URL}" \
+      POST \
+      "$(build_headers_json "Host=${SERVER_HOST}" "content-type=application/json" "accept=application/json, text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
+      chunked-text \
+      '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+      200
+    wait_for_http_result \
+      "${MCP_DIRECT_URL}" \
+      GET \
+      "$(build_headers_json "Host=${SERVER_HOST}" "accept=text/event-stream" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
+      none \
+      '' \
+      400 \
+      "GET requires an Mcp-Session-Id header"
+    wait_for_http_result \
+      "${MCP_DIRECT_URL}" \
+      DELETE \
+      "$(build_headers_json "Host=${SERVER_HOST}" "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}")" \
+      none \
+      '' \
+      400 \
+      "DELETE requires an Mcp-Session-Id header"
+
+    log_line mcp "running curl-based MCP smoke checks against ingress"
+    run_mcp_curl_expect "mcp-curl-missing-identity" "${MCP_ANON_URL}" false "missing_identity" \
+      || run_mcp_curl_expect "mcp-curl-missing-identity-retry" "${MCP_ANON_URL}" false "missing_identity"
+    run_mcp_curl_expect "mcp-curl-missing-session" "${MCP_IDENTITY_URL}" false "missing_session" \
+      || run_mcp_curl_expect "mcp-curl-missing-session-retry" "${MCP_IDENTITY_URL}" false "missing_session"
+    run_mcp_curl_expect "mcp-curl-session-not-found" "${MCP_BAD_SESSION_URL}" false "session_not_found" \
+      || run_mcp_curl_expect "mcp-curl-session-not-found-retry" "${MCP_BAD_SESSION_URL}" false "session_not_found"
+    log_line mcp "waiting for session-backed allow policy to reach the gateway"
+    wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
+    run_mcp_curl_expect "mcp-curl-allow-aaa-ping" "${MCP_SESSION_URL}" true
+    if scenario_selected "observability"; then
+      wait_for_gateway_rpc_methods "${SERVER_NAME}" "policy server MCP curl"
+    fi
+  fi
+
+  # OAuth provisioning runs after shared ingress proxies are up so we never
+  # bind MCP_CURL_* ports twice when oauth is selected with other scenarios.
+  if scenario_selected "oauth"; then
   OAUTH_FIXTURE_DIR="${WORKDIR}/oauth-fixtures"
+
+  echo "[oauth] provisioning mock OAuth issuer service"
+  cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${OAUTH_ISSUER_NAME}
+  namespace: mcp-servers
+spec:
+  selector:
+    app: ${OAUTH_ISSUER_NAME}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+EOF
+  cat <<EOF | kubectl apply -f -
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ${OAUTH_ISSUER_NAME}-allow-${OAUTH_SERVER_NAME}
+  namespace: mcp-servers
+spec:
+  podSelector:
+    matchLabels:
+      app: ${OAUTH_ISSUER_NAME}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ${OAUTH_SERVER_NAME}
+      ports:
+        - protocol: TCP
+          port: 8080
+EOF
+  if [[ -z "${OAUTH_ISSUER_URL}" ]]; then
+    OAUTH_ISSUER_CLUSTER_IP="$(kubectl get svc "${OAUTH_ISSUER_NAME}" -n mcp-servers -o jsonpath='{.spec.clusterIP}')"
+    if [[ -z "${OAUTH_ISSUER_CLUSTER_IP}" || "${OAUTH_ISSUER_CLUSTER_IP}" == "None" ]]; then
+      echo "failed to resolve ClusterIP for OAuth issuer service ${OAUTH_ISSUER_NAME}" >&2
+      exit 1
+    fi
+    OAUTH_ISSUER_URL="http://${OAUTH_ISSUER_CLUSTER_IP}:8080"
+  fi
+
   generate_oauth_fixtures "${OAUTH_FIXTURE_DIR}"
   OAUTH_VALID_TOKEN="$(tr -d '\n' <"${OAUTH_FIXTURE_DIR}/valid-token.txt")"
   OAUTH_INVALID_TOKEN="$(tr -d '\n' <"${OAUTH_FIXTURE_DIR}/invalid-token.txt")"
 
   echo "[oauth] deploying mock OAuth issuer"
+  OAUTH_ISSUER_DEPLOYMENT_EXISTED=0
+  if kubectl get deployment "${OAUTH_ISSUER_NAME}" -n mcp-servers >/dev/null 2>&1; then
+    OAUTH_ISSUER_DEPLOYMENT_EXISTED=1
+  fi
   kubectl create configmap "${OAUTH_ISSUER_NAME}-files" \
-  -n mcp-servers \
-  --from-file=oauth-authorization-server="${OAUTH_FIXTURE_DIR}/oauth-authorization-server" \
-  --from-file=keys="${OAUTH_FIXTURE_DIR}/keys" \
-  --dry-run=client -o yaml | kubectl apply -f -
+    -n mcp-servers \
+    --from-file=oauth-authorization-server="${OAUTH_FIXTURE_DIR}/oauth-authorization-server" \
+    --from-file=keys="${OAUTH_FIXTURE_DIR}/keys" \
+    --dry-run=client -o yaml | kubectl apply -f -
   cat <<EOF | kubectl apply -f -
 apiVersion: apps/v1
 kind: Deployment
@@ -3693,6 +4261,13 @@ spec:
             runAsUser: 65532
           ports:
             - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /keys
+              port: 8080
+            initialDelaySeconds: 1
+            periodSeconds: 2
+            failureThreshold: 30
           volumeMounts:
             - name: files
               mountPath: /usr/share/nginx/html/.well-known/oauth-authorization-server
@@ -3704,24 +4279,28 @@ spec:
         - name: files
           configMap:
             name: ${OAUTH_ISSUER_NAME}-files
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: ${OAUTH_ISSUER_NAME}
-  namespace: mcp-servers
-spec:
-  selector:
-    app: ${OAUTH_ISSUER_NAME}
-  ports:
-    - name: http
-      port: 8080
-      targetPort: 8080
 EOF
   # The issuer mounts fixture files through subPath, so restart to pick up new
   # JWKS/token fixtures when E2E cache mode reuses an existing Deployment.
-  kubectl rollout restart "deploy/${OAUTH_ISSUER_NAME}" -n mcp-servers >/dev/null
+  if [[ "${OAUTH_ISSUER_DEPLOYMENT_EXISTED}" == "1" ]]; then
+    kubectl rollout restart "deploy/${OAUTH_ISSUER_NAME}" -n mcp-servers >/dev/null
+  fi
   kubectl rollout status "deploy/${OAUTH_ISSUER_NAME}" -n mcp-servers --timeout=180s
+  OAUTH_ISSUER_ENDPOINT_READY=0
+  for _oauth_endpoint_try in $(seq 1 60); do
+    if [[ -n "$(kubectl get endpoints "${OAUTH_ISSUER_NAME}" -n mcp-servers -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)" ]]; then
+      OAUTH_ISSUER_ENDPOINT_READY=1
+      break
+    fi
+    sleep 2
+  done
+  if [[ "${OAUTH_ISSUER_ENDPOINT_READY}" != "1" ]]; then
+    echo "timed out waiting for OAuth issuer service endpoint" >&2
+    kubectl get svc,endpoints,pods -n mcp-servers -o wide >&2 || true
+    kubectl describe deployment "${OAUTH_ISSUER_NAME}" -n mcp-servers >&2 || true
+    kubectl logs -n mcp-servers -l "app=${OAUTH_ISSUER_NAME}" --tail=100 >&2 || true
+    exit 1
+  fi
 
   OAUTH_METADATA_FILE="${WORKDIR}/oauth-metadata.yaml"
   OAUTH_MANIFEST_DIR="${WORKDIR}/oauth-manifests"
@@ -3786,7 +4365,7 @@ servers:
 EOF
 
   echo "[oauth] deploying OAuth-protected MCP server"
-  run_logged_stage "deploy OAuth MCP server manifests" deploy_oauth_server_manifests
+  run_logged_stage "deploy OAuth MCP server manifests" bash -lc "MCP_RUNTIME_CONFIG_DIR=\"${E2E_PIPELINE_CONFIG_DIR}\" ./bin/mcp-runtime server generate --metadata-file \"${OAUTH_METADATA_FILE}\" --output \"${OAUTH_MANIFEST_DIR}\" && ./bin/mcp-runtime server --use-kube apply --file \"${OAUTH_MANIFEST_DIR}/${OAUTH_SERVER_NAME}.yaml\""
   wait_for_deployment_exists mcp-servers "${OAUTH_SERVER_NAME}"
   if ! restart_deployment_pods mcp-servers "${OAUTH_SERVER_NAME}" 180s; then
     echo "[debug] OAuth MCP server rollout failed; collecting diagnostics" >&2
@@ -3823,41 +4402,51 @@ spec:
     - name: upper
       decision: allow
 EOF
-  
-  echo "[oauth] starting local ingress proxies"
+
+  OAUTH_PROXY_UPSTREAM_ORIGIN="http://127.0.0.1:${TRAEFIK_PORT}"
+  OAUTH_HEADER_PROXY_ARGS=(--host-header "${OAUTH_SERVER_HOST}")
+  if oauth_proxy_paths_selected; then
+    port_forward_bg mcp-servers "${OAUTH_SERVER_NAME}" "${OAUTH_PROXY_PORT}" 80 "${WORKDIR}/oauth-proxy-port-forward.log"
+    wait_port "${OAUTH_PROXY_PORT}"
+    OAUTH_PROXY_UPSTREAM_ORIGIN="http://127.0.0.1:${OAUTH_PROXY_PORT}"
+  fi
+  if scenario_selected "observability"; then
+    port_forward_resource_bg mcp-servers "deployment/${OAUTH_SERVER_NAME}" "${OAUTH_UPSTREAM_PORT}" 8090 "${WORKDIR}/oauth-upstream-port-forward.log"
+    wait_port "${OAUTH_UPSTREAM_PORT}"
+  fi
+
+  echo "[oauth] starting local OAuth proxies"
   # mcp_header_proxy.py uses NAME=VALUE syntax: the part after the first '='
   # becomes the HTTP header value, so "Authorization=Bearer <token>" sets the
   # Authorization header to "Bearer <token>" (not "=Bearer <token>").
   start_header_proxy_bg "${MCP_CURL_OAUTH_ANON_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-curl-oauth-anon-proxy.log" \
-  --host-header "${OAUTH_SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
+    "${OAUTH_PROXY_UPSTREAM_ORIGIN}" \
+    "${WORKDIR}/mcp-curl-oauth-anon-proxy.log" \
+    "${OAUTH_HEADER_PROXY_ARGS[@]}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}"
   start_header_proxy_bg "${MCP_CURL_OAUTH_INVALID_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-curl-oauth-invalid-proxy.log" \
-  --host-header "${OAUTH_SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
-  --header "Authorization=Bearer ${OAUTH_INVALID_TOKEN}"
+    "${OAUTH_PROXY_UPSTREAM_ORIGIN}" \
+    "${WORKDIR}/mcp-curl-oauth-invalid-proxy.log" \
+    "${OAUTH_HEADER_PROXY_ARGS[@]}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
+    --header "Authorization=Bearer ${OAUTH_INVALID_TOKEN}"
   start_header_proxy_bg "${MCP_CURL_OAUTH_VALID_PORT}" \
-  "http://127.0.0.1:${TRAEFIK_PORT}" \
-  "${WORKDIR}/mcp-curl-oauth-valid-proxy.log" \
-  --host-header "${OAUTH_SERVER_HOST}" \
-  --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
-  --header "Authorization=Bearer ${OAUTH_VALID_TOKEN}"
-  
+    "${OAUTH_PROXY_UPSTREAM_ORIGIN}" \
+    "${WORKDIR}/mcp-curl-oauth-valid-proxy.log" \
+    "${OAUTH_HEADER_PROXY_ARGS[@]}" \
+    --header "Mcp-Protocol-Version=${MCP_PROTOCOL_VERSION}" \
+    --header "Authorization=Bearer ${OAUTH_VALID_TOKEN}"
+
   wait_port "${MCP_CURL_OAUTH_ANON_PORT}"
   wait_port "${MCP_CURL_OAUTH_INVALID_PORT}"
   wait_port "${MCP_CURL_OAUTH_VALID_PORT}"
-  if scenario_selected "observability"; then
-    port_forward_bg mcp-servers "${OAUTH_SERVER_NAME}" "${OAUTH_PROXY_PORT}" 80 "${WORKDIR}/oauth-proxy-port-forward.log"
-    port_forward_resource_bg mcp-servers "deployment/${OAUTH_SERVER_NAME}" "${OAUTH_UPSTREAM_PORT}" 8090 "${WORKDIR}/oauth-upstream-port-forward.log"
-    wait_port "${OAUTH_PROXY_PORT}"
-    wait_port "${OAUTH_UPSTREAM_PORT}"
-  fi
 
   OAUTH_INGRESS_PATH="/${OAUTH_SERVER_NAME}/mcp"
-  MCP_OAUTH_DIRECT_URL="http://127.0.0.1:${TRAEFIK_PORT}${OAUTH_INGRESS_PATH}"
+  MCP_OAUTH_DIRECT_ORIGIN="http://127.0.0.1:${TRAEFIK_PORT}"
+  if oauth_proxy_paths_selected; then
+    MCP_OAUTH_DIRECT_ORIGIN="http://127.0.0.1:${OAUTH_PROXY_PORT}"
+  fi
+  MCP_OAUTH_DIRECT_URL="${MCP_OAUTH_DIRECT_ORIGIN}${OAUTH_INGRESS_PATH}"
   MCP_OAUTH_ANON_URL="http://127.0.0.1:${MCP_CURL_OAUTH_ANON_PORT}${OAUTH_INGRESS_PATH}"
   MCP_OAUTH_INVALID_URL="http://127.0.0.1:${MCP_CURL_OAUTH_INVALID_PORT}${OAUTH_INGRESS_PATH}"
   MCP_OAUTH_VALID_URL="http://127.0.0.1:${MCP_CURL_OAUTH_VALID_PORT}${OAUTH_INGRESS_PATH}"
@@ -3906,7 +4495,15 @@ PY
 
   echo "[oauth] validating missing and invalid bearer token challenges"
   wait_for_mcp_initialize_result "${MCP_OAUTH_ANON_URL}" 401 "missing_bearer_token" "www-authenticate" "resource_metadata="
-  wait_for_mcp_initialize_result "${MCP_OAUTH_INVALID_URL}" 401 "invalid_token" "www-authenticate" 'error="invalid_token"'
+  if ! wait_for_mcp_initialize_result "${MCP_OAUTH_INVALID_URL}" 401 "invalid_token" "www-authenticate" 'error="invalid_token"'; then
+    echo "[debug] OAuth provider diagnostics after invalid-token failure" >&2
+    kubectl get svc,endpoints,pods,networkpolicy -n mcp-servers -o wide >&2 || true
+    kubectl get networkpolicy -n mcp-servers -o yaml >&2 || true
+    kubectl describe deployment "${OAUTH_ISSUER_NAME}" -n mcp-servers >&2 || true
+    kubectl logs -n mcp-servers -l "app=${OAUTH_ISSUER_NAME}" --tail=100 >&2 || true
+    kubectl logs -n mcp-servers -l "app=${OAUTH_SERVER_NAME}" -c mcp-gateway --tail=200 >&2 || true
+    exit 1
+  fi
   wait_for_http_result \
     "${MCP_OAUTH_DIRECT_URL}" \
     POST \
@@ -3995,588 +4592,255 @@ PY
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
     200
   run_mcp_curl_expect "mcp-curl-oauth-valid" "${MCP_OAUTH_VALID_URL}" true
+  fi
+
+if scenario_selected "governance"; then
+  log_line policy "revoking access session via CLI; gateway should reject session-backed calls with session_revoked"
+  ./bin/mcp-runtime access --use-kube session revoke "${SESSION_ID}" --namespace mcp-servers
+  wait_for_policy_text "\"revoked\": true"
+  print_gateway_policy_debug
+  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 401 "session_revoked"
+  run_mcp_curl_expect "mcp-curl-session-revoked" "${MCP_SESSION_URL}" false "session_revoked"
+
+  log_line policy "restoring access session via CLI; gateway should allow low-trust tools again"
+  ./bin/mcp-runtime access --use-kube session unrevoke "${SESSION_ID}" --namespace mcp-servers
+  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
+
+  log_line policy "expiring access session via manifest update; gateway should reject calls with session_expired"
+  EXPIRED_AT="$(python3 <<'PY'
+from datetime import datetime, timedelta, timezone
+print((datetime.now(timezone.utc) - timedelta(minutes=5)).replace(microsecond=0).isoformat().replace("+00:00", "Z"))
+PY
+)"
+  cat >"${WORKDIR}/access-session-expired.yaml" <<EOF
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAgentSession
+metadata:
+  name: ${SESSION_ID}
+  namespace: mcp-servers
+spec:
+  serverRef:
+    name: ${SERVER_NAME}
+  subject:
+    humanID: ${HUMAN_ID}
+    agentID: ${AGENT_ID}
+  consentedTrust: low
+  policyVersion: v1
+  expiresAt: ${EXPIRED_AT}
+EOF
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session apply --file access-session-expired.yaml)
+  wait_for_policy_text "\"expires_at\": \"${EXPIRED_AT}\""
+  print_gateway_policy_debug
+  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 401 "session_expired"
+  run_mcp_curl_expect "mcp-curl-session-expired" "${MCP_SESSION_URL}" false "session_expired"
+
+  log_line policy "restoring non-expired access session"
+  FUTURE_EXPIRES_AT="$(python3 <<'PY'
+from datetime import datetime, timedelta, timezone
+print((datetime.now(timezone.utc) + timedelta(hours=1)).replace(microsecond=0).isoformat().replace("+00:00", "Z"))
+PY
+)"
+  cat >"${WORKDIR}/access-session-restored.yaml" <<EOF
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAgentSession
+metadata:
+  name: ${SESSION_ID}
+  namespace: mcp-servers
+spec:
+  serverRef:
+    name: ${SERVER_NAME}
+  subject:
+    humanID: ${HUMAN_ID}
+    agentID: ${AGENT_ID}
+  consentedTrust: low
+  policyVersion: v1
+  expiresAt: ${FUTURE_EXPIRES_AT}
+EOF
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube session apply --file access-session-restored.yaml)
+  wait_for_policy_text "\"expires_at\": \"${FUTURE_EXPIRES_AT}\""
+  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
+
+  log_line policy "disabling access grant via CLI; gateway should reject granted tools with tool_not_granted"
+  ./bin/mcp-runtime access --use-kube grant disable "${SERVER_NAME}-grant" --namespace mcp-servers
+  wait_for_policy_text "\"disabled\": true"
+  print_gateway_policy_debug
+  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 403 "tool_not_granted"
+  run_mcp_curl_expect "mcp-curl-grant-disabled" "${MCP_SESSION_URL}" false "tool_not_granted"
+
+  log_line policy "re-enabling access grant via CLI"
+  ./bin/mcp-runtime access --use-kube grant enable "${SERVER_NAME}-grant" --namespace mcp-servers
+  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
 fi
 
-if scenario_selected "observability"; then
-  echo "[observe] validating direct Sentinel service routes"
-  SENTINEL_GATEWAY_BASE="http://127.0.0.1:${SENTINEL_PORT}" \
-  SENTINEL_API_BASE="http://127.0.0.1:${API_SERVICE_PORT}" \
-  SENTINEL_API_METRICS_URL="http://127.0.0.1:${API_METRICS_PORT}/metrics" \
-  SENTINEL_INGEST_BASE="http://127.0.0.1:${INGEST_SERVICE_PORT}" \
-  SENTINEL_INGEST_METRICS_URL="http://127.0.0.1:${INGEST_METRICS_PORT}/metrics" \
-  SENTINEL_PROCESSOR_BASE="http://127.0.0.1:${PROCESSOR_METRICS_PORT}" \
-  SENTINEL_UI_BASE="http://127.0.0.1:${UI_SERVICE_PORT}" \
-  SERVER_PROXY_BASE="http://127.0.0.1:${SERVER_PROXY_PORT}" \
-  SERVER_UPSTREAM_BASE="http://127.0.0.1:${SERVER_UPSTREAM_PORT}" \
-  OAUTH_PROXY_BASE="http://127.0.0.1:${OAUTH_PROXY_PORT}" \
-  OAUTH_UPSTREAM_BASE="http://127.0.0.1:${OAUTH_UPSTREAM_PORT}" \
-  API_KEY="${API_KEY}" \
-  INGEST_API_KEY="${INGEST_API_KEY}" \
-  SERVER_NAME="${SERVER_NAME}" \
-  SERVER_HOST="${SERVER_HOST}" \
-  SESSION_ID="${SESSION_ID}" \
-  HUMAN_ID="${HUMAN_ID}" \
-  AGENT_ID="${AGENT_ID}" \
-  OAUTH_SERVER_NAME="${OAUTH_SERVER_NAME}" \
-  OAUTH_SERVER_HOST="${OAUTH_SERVER_HOST}" \
-  OAUTH_ISSUER_URL="${OAUTH_ISSUER_URL}" \
-  OAUTH_VALID_TOKEN="${OAUTH_VALID_TOKEN}" \
-  MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION}" \
-  E2E_PLATFORM_MODE="${E2E_PLATFORM_MODE}" \
-  python3 <<'PY'
-import json
-import os
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
+if scenario_selected "governance" || scenario_selected "adapter-proxy"; then
+  # Phase 6: exercise the platform-issued adapter-session endpoint. The
+  # existing governance grant pins humanID to ${HUMAN_ID}, while this flow
+  # calls the endpoint as the platform admin principal. Apply a second,
+  # per-run agent-scoped grant just for this test. The endpoint must pick the
+  # grant, write/reuse an MCPAgentSession with the deterministic adapter-<hash>
+  # name, and report reused=true on the second call.
+  # Use a fresh agentID per e2e invocation so deterministic-name reuse
+  # doesn't leak across re-runs in E2E_CACHE_MODE=1 (where the cluster and
+  # prior adapter-<hash> sessions are retained between runs). A timestamp
+  # suffix is sufficient; the assertions below verify the platform's own
+  # reuse semantics (reused=true on the *second* call within this run).
+  ADAPTER_AGENT_ID="e2e-adapter-agent-$(date +%s)"
 
-gateway_base = os.environ["SENTINEL_GATEWAY_BASE"]
-api_base = os.environ["SENTINEL_API_BASE"]
-api_metrics_url = os.environ["SENTINEL_API_METRICS_URL"]
-ingest_base = os.environ["SENTINEL_INGEST_BASE"]
-ingest_metrics_url = os.environ["SENTINEL_INGEST_METRICS_URL"]
-processor_base = os.environ["SENTINEL_PROCESSOR_BASE"]
-ui_base = os.environ["SENTINEL_UI_BASE"]
-server_proxy_base = os.environ["SERVER_PROXY_BASE"]
-server_upstream_base = os.environ["SERVER_UPSTREAM_BASE"]
-oauth_proxy_base = os.environ["OAUTH_PROXY_BASE"]
-oauth_upstream_base = os.environ["OAUTH_UPSTREAM_BASE"]
-api_key = os.environ["API_KEY"]
-ingest_api_key = os.environ["INGEST_API_KEY"]
-server_name = os.environ["SERVER_NAME"]
-server_host = os.environ["SERVER_HOST"]
-session_id = os.environ["SESSION_ID"]
-human_id = os.environ["HUMAN_ID"]
-agent_id = os.environ["AGENT_ID"]
-oauth_server_name = os.environ["OAUTH_SERVER_NAME"]
-oauth_server_host = os.environ["OAUTH_SERVER_HOST"]
-oauth_issuer_url = os.environ["OAUTH_ISSUER_URL"]
-oauth_valid_token = os.environ["OAUTH_VALID_TOKEN"]
-protocol = os.environ["MCP_PROTOCOL_VERSION"]
-platform_mode = os.environ["E2E_PLATFORM_MODE"]
-grant_name = f"{server_name}-grant"
-oauth_public_base = f"http://{oauth_server_host}"
-server_mcp_path = f"/{server_name}/mcp"
-oauth_mcp_path = f"/{oauth_server_name}/mcp"
-catalog_namespace = "mcp-servers"
+  log_line policy "applying agent-scoped grant for adapter-session test"
+  cat >"${WORKDIR}/adapter-session-grant.yaml" <<EOF
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAccessGrant
+metadata:
+  name: ${SERVER_NAME}-adapter-grant
+  namespace: mcp-servers
+spec:
+  serverRef:
+    name: ${SERVER_NAME}
+  subject:
+    agentID: ${ADAPTER_AGENT_ID}
+  maxTrust: low
+  allowedSideEffects: [read]
+  policyVersion: v1
+  toolRules:
+    - name: aaa-ping
+      decision: allow
+EOF
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file adapter-session-grant.yaml)
+  wait_for_policy_text "\"agent_id\": \"${ADAPTER_AGENT_ID}\""
 
+  log_line policy "logging in platform admin for adapter-session test"
+  ADAPTER_PLATFORM_TOKEN="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
+import json, os
+print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.environ["PLATFORM_ADMIN_PASSWORD"]}))
+' | curl -fsS -X POST \
+    -H "content-type: application/json" \
+    --data-binary @- \
+    "http://127.0.0.1:${API_SERVICE_PORT}/api/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
 
-import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
+  log_line policy "adapter-session endpoint should issue a session for the wildcard grant"
+  ADAPTER_SESSION_BODY="$(printf '{"serverName":"%s","namespace":"mcp-servers","agentID":"%s"}' "${SERVER_NAME}" "${ADAPTER_AGENT_ID}")"
+  ADAPTER_SESSION_RESP="$(curl -fsS -X POST \
+    -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
+    -H "content-type: application/json" \
+    --data "${ADAPTER_SESSION_BODY}" \
+    "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
+  echo "${ADAPTER_SESSION_RESP}" | ADAPTER_AGENT_ID="${ADAPTER_AGENT_ID}" python3 -c "
+import json, os, sys
+resp = json.load(sys.stdin)
+assert resp['namespace'] == 'mcp-servers', resp
+assert resp['serverName'] == '${SERVER_NAME}', resp
+assert resp['agentID'] == os.environ['ADAPTER_AGENT_ID'], resp
+assert resp['name'].startswith('adapter-'), resp
+assert resp['humanID'], 'humanID derived from principal must be non-empty: %r' % resp
+assert resp['consentedTrust'] in ('none','low','mid','high','full'), resp
+assert resp['expiresAt'], resp
+print('adapter-session issued:', resp['name'], 'reused=', resp['reused'])
+"
+  ADAPTER_SESSION_NAME="$(echo "${ADAPTER_SESSION_RESP}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["name"])')"
+  if ! kubectl get mcpagentsession "${ADAPTER_SESSION_NAME}" -n mcp-servers >/dev/null 2>&1; then
+    echo "expected MCPAgentSession ${ADAPTER_SESSION_NAME} in mcp-servers" >&2
+    exit 1
+  fi
+  wait_for_policy_text "\"name\": \"${ADAPTER_SESSION_NAME}\""
 
+  # The second call must hit the platform's reuse path: same body within the
+  # same run, no Kubernetes round-trip, reused=true. This is independent of
+  # whether the first call hit a leftover from a previous e2e run.
+  log_line policy "adapter-session endpoint should reuse the existing session on a second call"
+  ADAPTER_SESSION_RESP2="$(curl -fsS -X POST \
+    -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
+    -H "content-type: application/json" \
+    --data "${ADAPTER_SESSION_BODY}" \
+    "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
+  echo "${ADAPTER_SESSION_RESP2}" | python3 -c "
+import json, sys
+resp = json.load(sys.stdin)
+assert resp['name'] == '${ADAPTER_SESSION_NAME}', resp
+assert resp['reused'] is True, resp
+print('adapter-session reused:', resp['name'])
+"
 
-def request(url, *, method="GET", headers=None, body=None):
-    headers = dict(headers or {})
-    data = None
-    if body is not None:
-        if isinstance(body, (bytes, bytearray)):
-            data = bytes(body)
-        else:
-            data = json.dumps(body).encode()
-            headers.setdefault("content-type", "application/json")
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status, dict(resp.headers.items()), resp.read().decode()
-    except urllib.error.HTTPError as exc:
-        return exc.code, dict(exc.headers.items()), exc.read().decode()
+  log_line policy "adapter-session endpoint must reject requests with no matching grant"
+  ADAPTER_SESSION_REJECT_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+    -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
+    -H "content-type: application/json" \
+    --data '{"serverName":"definitely-missing","namespace":"mcp-servers","agentID":"ops-agent"}' \
+    "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
+  if [[ "${ADAPTER_SESSION_REJECT_STATUS}" != "403" ]]; then
+    echo "expected 403 when no grant matches, got ${ADAPTER_SESSION_REJECT_STATUS}" >&2
+    exit 1
+  fi
 
+  if deep_request_flows_enabled || scenario_selected "adapter-proxy"; then
+    log_line policy "running local adapter proxy with platform-issued session"
+    ADAPTER_PROXY_LOG="${WORKDIR}/adapter-proxy.log"
+    if port_is_listening "${ADAPTER_PROXY_PORT}"; then
+      echo "[proxy] reusing existing adapter proxy on localhost:${ADAPTER_PROXY_PORT}"
+    else
+      require_port_available "${ADAPTER_PROXY_PORT}" "adapter proxy"
+      MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}" \
+        MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
+        ./bin/mcp-runtime adapter proxy \
+          --listen "127.0.0.1:${ADAPTER_PROXY_PORT}" \
+          --runtime-url "${MCP_DIRECT_URL}" \
+          --host-header "${SERVER_HOST}" \
+          --server "${SERVER_NAME}" \
+          --namespace mcp-servers \
+          --agent "${ADAPTER_AGENT_ID}" \
+          --request-timeout 20s \
+          --log-level info >"${ADAPTER_PROXY_LOG}" 2>&1 &
+      ADAPTER_PROXY_PID="$!"
+      PIDS+=("${ADAPTER_PROXY_PID}")
+      wait_managed_port "${ADAPTER_PROXY_PORT}" "${ADAPTER_PROXY_PID}" "${ADAPTER_PROXY_LOG}" "adapter proxy"
+    fi
+    # The adapter session is rendered through the policy ConfigMap, then the
+    # gateway observes the mounted file on its next kubelet/poll interval.
+    # Reuse the normal policy wait budget here; CI can take longer than a
+    # short smoke retry after the ConfigMap has already been updated.
+    wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "aaa-ping" '{}' 200 "pong"
+    wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "add" '{"a":1,"b":2}' 403 "tool_not_granted"
+fi
 
-def expect_status(url, status, *, method="GET", headers=None, body=None, contains=None):
-    got_status, _, got_body = request(url, method=method, headers=headers, body=body)
-    check(
-        got_status == status,
-        f"{method} {url} returned {status}",
-        f"{method} {url} returned {got_status}: {got_body}",
-    )
-    if contains:
-        check(
-            contains in got_body,
-            f"{method} {url} contained {contains!r}",
-            f"{method} {url} missing {contains!r}: {got_body}",
-        )
-    return got_body
+if deep_request_flows_enabled || scenario_selected "cli-platform"; then
+  log_line policy "running platform CLI request-flow sweep"
+  ensure_api_port_forward
+  if [[ -z "${ADAPTER_PLATFORM_TOKEN:-}" ]]; then
+    ADAPTER_PLATFORM_TOKEN="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
+import json, os
+print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.environ["PLATFORM_ADMIN_PASSWORD"]}))
+' | curl -fsS -X POST \
+      -H "content-type: application/json" \
+      --data-binary @- \
+      "http://127.0.0.1:${API_SERVICE_PORT}/api/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+  fi
+  DEEP_CLI_TEAM_SLUG="e2e-cli-$(date +%s)"
+  DEEP_CLI_USER_EMAIL="${DEEP_CLI_TEAM_SLUG}@mcpruntime.org"
+  DEEP_PLATFORM_ENV=(
+    MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}"
+    MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}"
+  )
 
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime auth status >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team list >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team create "${DEEP_CLI_TEAM_SLUG}" --name "E2E CLI ${DEEP_CLI_TEAM_SLUG}" >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team user create "${DEEP_CLI_TEAM_SLUG}" \
+    --email "${DEEP_CLI_USER_EMAIL}" \
+    --password "test-password-123" \
+    --role member >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team user list "${DEEP_CLI_TEAM_SLUG}" >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime server list --namespace mcp-servers >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime server get "${SERVER_NAME}" --namespace mcp-servers >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access grant list --namespace mcp-servers >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access grant get "${SERVER_NAME}-grant" --namespace mcp-servers >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access session list --namespace mcp-servers >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access session get "${SESSION_ID}" --namespace mcp-servers >/dev/null
+fi
 
-def expect_json(url, status=200, *, method="GET", headers=None, body=None):
-    payload = expect_status(url, status, method=method, headers=headers, body=body)
-    return json.loads(payload)
+run_selected_http_flow_scenarios
 
+fi
 
-def wait_for_json(url, predicate, *, headers=None, retries=60, delay=2, description="response"):
-    last = None
-    for _ in range(retries):
-        last = expect_json(url, headers=headers)
-        if predicate(last):
-            ok(f"waited for {description}")
-            return last
-        time.sleep(delay)
-    fail(f"timed out waiting for {description}: {json.dumps(last, indent=2)}")
-
-
-def expect_mcp_initialize(url, *, headers=None, status=200, contains=None):
-    req_headers = {
-        "accept": "application/json, text/event-stream",
-        "content-type": "application/json",
-        "Mcp-Protocol-Version": protocol,
-    }
-    req_headers.update(headers or {})
-    got_status, got_headers, got_body = request(
-        url,
-        method="POST",
-        headers=req_headers,
-        body={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": protocol,
-                "capabilities": {},
-                "clientInfo": {"name": "mcp-runtime-e2e", "version": "1.0.0"},
-            },
-        },
-    )
-    check(
-        got_status == status,
-        f"POST {url} initialize returned {status}",
-        f"POST {url} initialize returned {got_status}: {got_body}",
-    )
-    if contains:
-        check(
-            contains in got_body,
-            f"POST {url} initialize contained {contains!r}",
-            f"POST {url} initialize missing {contains!r}: {got_body}",
-        )
-    if got_status == 200:
-        doc = json.loads(got_body)
-        check(
-            "result" in doc,
-            f"POST {url} initialize returned result",
-            f"POST {url} initialize missing result: {doc}",
-        )
-        header_map = {k.lower(): v for k, v in got_headers.items()}
-        check(
-            "mcp-session-id" in header_map,
-            f"POST {url} initialize returned Mcp-Session-Id",
-            f"POST {url} initialize missing Mcp-Session-Id: {got_headers}",
-        )
-    return got_body
-
-
-auth_headers = {"x-api-key": api_key}
-ingest_headers = {"x-api-key": ingest_api_key}
-
-# Gateway-routed UI, API, and example MCP routes.
-gateway_summary = expect_json(f"{gateway_base}/api/dashboard/summary", headers=auth_headers)
-for key in ("total_events", "active_servers", "active_grants", "active_sessions"):
-    check(
-        key in gateway_summary,
-        f"gateway dashboard summary contains {key}",
-        f"gateway dashboard summary missing {key}: {gateway_summary}",
-    )
-expect_status(f"{gateway_base}/ping", 200, contains="OK")
-expect_status(f"{gateway_base}/", 200, contains="MCP Sentinel Control Plane")
-gateway_config = expect_status(f"{gateway_base}/config.js", 200, contains="window.MCP_API_BASE")
-check(
-    f'window.MCP_PLATFORM_MODE = "{platform_mode}"' in gateway_config,
-    f"gateway config.js exposes platform mode {platform_mode}",
-    f"gateway config.js missing platform mode {platform_mode}: {gateway_config}",
-)
-expect_status(f"{gateway_base}/app.js", 200, contains="const apiBase")
-expect_status(f"{gateway_base}/styles.css", 200, contains=".canvas")
-expect_status(f"{gateway_base}/grafana/api/health", 401)
-expect_status(f"{gateway_base}/prometheus/-/healthy", 401)
-expect_status(f"{gateway_base}/grafana/api/health", 200, headers=auth_headers, contains="database")
-expect_status(f"{gateway_base}/prometheus/-/healthy", 200, headers=auth_headers, contains="Healthy")
-
-# Direct UI service.
-expect_status(f"{ui_base}/health", 200, contains='"ok":true')
-expect_status(f"{ui_base}/", 200, contains="MCP Sentinel Control Plane")
-ui_config = expect_status(f"{ui_base}/config.js", 200, contains="window.MCP_API_BASE")
-check(
-    f'window.MCP_PLATFORM_MODE = "{platform_mode}"' in ui_config,
-    f"ui config.js exposes platform mode {platform_mode}",
-    f"ui config.js missing platform mode {platform_mode}: {ui_config}",
-)
-expect_status(f"{ui_base}/app.js", 200, contains="const apiBase")
-expect_status(f"{ui_base}/styles.css", 200, contains=".canvas")
-
-# Direct MCP proxy and upstream server surfaces.
-expect_status(f"{server_proxy_base}/health", 200, contains="ok")
-expect_mcp_initialize(
-    f"{server_proxy_base}{server_mcp_path}",
-    headers={
-        "X-MCP-Human-ID": human_id,
-        "X-MCP-Agent-ID": agent_id,
-        "X-MCP-Agent-Session": session_id,
-    },
-)
-expect_status(f"{server_upstream_base}/health", 200, contains='"ok":true')
-expect_mcp_initialize(f"{server_upstream_base}{server_mcp_path}")
-
-expect_status(f"{oauth_proxy_base}/health", 200, contains="ok")
-oauth_metadata = expect_json(f"{oauth_proxy_base}/.well-known/oauth-protected-resource")
-check(
-    oauth_metadata.get("authorization_servers") == [oauth_issuer_url],
-    "oauth proxy metadata authorization_servers matched issuer",
-    f"unexpected oauth metadata authorization servers: {oauth_metadata}",
-)
-check(
-    oauth_metadata.get("bearer_methods_supported") == ["header"],
-    "oauth proxy metadata bearer_methods_supported matched",
-    f"unexpected oauth metadata bearer methods: {oauth_metadata}",
-)
-oauth_resource_url = oauth_metadata.get("resource", "")
-oauth_resource_path = urllib.parse.urlsplit(oauth_resource_url).path or "/"
-check(
-    oauth_resource_path == "/",
-    "oauth proxy metadata root resource path matched",
-    f"unexpected oauth metadata resource URL: {oauth_metadata}",
-)
-oauth_metadata_path = expect_json(
-    f"{oauth_proxy_base}/.well-known/oauth-protected-resource/{oauth_server_name}/mcp"
-)
-oauth_resource_path_url = oauth_metadata_path.get("resource", "")
-oauth_resource_path_value = urllib.parse.urlsplit(oauth_resource_path_url).path
-check(
-    oauth_resource_path_value == f"/{oauth_server_name}/mcp",
-    "oauth proxy metadata path resource matched",
-    f"unexpected oauth metadata path resource URL: {oauth_metadata_path}",
-)
-expect_mcp_initialize(
-    f"{oauth_proxy_base}{oauth_mcp_path}",
-    headers={"Authorization": f"Bearer {oauth_valid_token}"},
-)
-expect_status(f"{oauth_upstream_base}/health", 200, contains='"ok":true')
-expect_mcp_initialize(f"{oauth_upstream_base}{oauth_mcp_path}")
-
-# API service surfaces.
-expect_status(f"{api_base}/health", 200, contains='"ok":true')
-expect_status(api_metrics_url, 200, contains="# HELP")
-events = expect_json(f"{api_base}/api/events?limit=5", headers=auth_headers)
-check(
-    bool(events.get("events")),
-    "api /api/events returned events",
-    f"expected /api/events to return events: {events}",
-)
-stats = expect_json(f"{api_base}/api/stats", headers=auth_headers)
-check(
-    int(stats.get("events_total", 0)) >= 1,
-    "api /api/stats events_total >= 1",
-    f"expected /api/stats events_total >= 1: {stats}",
-)
-sources = expect_json(f"{api_base}/api/sources", headers=auth_headers)
-check(
-    bool(sources.get("sources")),
-    "api /api/sources returned sources",
-    f"expected /api/sources to return sources: {sources}",
-)
-event_types = expect_json(f"{api_base}/api/event-types", headers=auth_headers)
-check(
-    bool(event_types.get("event_types")),
-    "api /api/event-types returned event types",
-    f"expected /api/event-types to return event types: {event_types}",
-)
-filtered = wait_for_json(
-    f"{api_base}/api/events/filter?server={urllib.parse.quote(server_name)}&limit=5",
-    lambda doc: bool(doc.get("events")),
-    headers=auth_headers,
-    description="api /api/events/filter events",
-)
-check(
-    bool(filtered.get("events")),
-    "api /api/events/filter returned events",
-    f"expected /api/events/filter to return events: {filtered}",
-)
-summary = expect_json(f"{api_base}/api/dashboard/summary", headers=auth_headers)
-for key in ("total_events", "active_servers", "active_grants", "active_sessions"):
-    check(
-        key in summary,
-        f"api dashboard summary contains {key}",
-        f"dashboard summary missing {key}: {summary}",
-    )
-servers = expect_json(
-    f"{api_base}/api/runtime/servers?namespace={urllib.parse.quote(catalog_namespace)}",
-    headers=auth_headers,
-)
-server_names = {item.get("name") for item in servers.get("servers", [])}
-check(
-    server_name in server_names and oauth_server_name in server_names,
-    "runtime servers contain expected entries",
-    f"runtime servers missing expected entries: {servers}",
-)
-grants = expect_json(f"{api_base}/api/runtime/grants", headers=auth_headers)
-grant_names = {item.get("name") for item in grants.get("grants", [])}
-check(
-    grant_name in grant_names,
-    f"runtime grants contain {grant_name}",
-    f"runtime grants missing {grant_name}: {grants}",
-)
-sessions = expect_json(f"{api_base}/api/runtime/sessions", headers=auth_headers)
-session_names = {item.get("name") for item in sessions.get("sessions", [])}
-check(
-    session_id in session_names,
-    f"runtime sessions contain {session_id}",
-    f"runtime sessions missing {session_id}: {sessions}",
-)
-not_a_server = f"{server_name}-e2e-not-mcpserver"
-bad_grant_body = expect_status(
-    f"{api_base}/api/runtime/grants",
-    400,
-    method="POST",
-    headers=auth_headers,
-    body={
-        "name": f"{server_name}-e2e-bad-grant",
-        "namespace": "mcp-servers",
-        "serverRef": {"name": not_a_server, "namespace": "mcp-servers"},
-        "subject": {"humanID": human_id, "agentID": agent_id},
-        "maxTrust": "low",
-        "allowedSideEffects": ["read"],
-        "toolRules": [{"name": "add", "decision": "allow", "requiredTrust": "low"}],
-    },
-)
-check(
-    "unknown serverRef" in bad_grant_body,
-    "POST /api/runtime/grants rejects unknown serverRef",
-    f"body: {bad_grant_body}",
-)
-bad_grant_side_effect_body = expect_status(
-    f"{api_base}/api/runtime/grants",
-    400,
-    method="POST",
-    headers=auth_headers,
-    body={
-        "name": f"{server_name}-e2e-bad-side-effect-grant",
-        "namespace": "mcp-servers",
-        "serverRef": {"name": server_name, "namespace": "mcp-servers"},
-        "subject": {"humanID": human_id, "agentID": agent_id},
-        "maxTrust": "low",
-        "toolRules": [{"name": "add", "decision": "allow", "requiredTrust": "low"}],
-    },
-)
-check(
-    "allowed side effect" in bad_grant_side_effect_body,
-    "POST /api/runtime/grants rejects missing allowed side effects",
-    f"body: {bad_grant_side_effect_body}",
-)
-bad_session_body = expect_status(
-    f"{api_base}/api/runtime/sessions",
-    400,
-    method="POST",
-    headers=auth_headers,
-    body={
-        "name": f"{server_name}-e2e-bad-session",
-        "namespace": "mcp-servers",
-        "serverRef": {"name": not_a_server, "namespace": "mcp-servers"},
-        "subject": {"humanID": human_id, "agentID": agent_id},
-        "consentedTrust": "low",
-    },
-)
-check(
-    "unknown serverRef" in bad_session_body,
-    "POST /api/runtime/sessions rejects unknown serverRef",
-    f"body: {bad_session_body}",
-)
-api_runtime_grant = f"{server_name}-e2e-api-grant"
-api_runtime_session = f"{server_name}-e2e-api-session"
-created_grant = expect_json(
-    f"{api_base}/api/runtime/grants",
-    method="POST",
-    headers=auth_headers,
-    body={
-        "name": api_runtime_grant,
-        "namespace": "mcp-servers",
-        "serverRef": {"name": server_name, "namespace": "mcp-servers"},
-        "subject": {"humanID": human_id, "agentID": agent_id},
-        "maxTrust": "low",
-        "allowedSideEffects": ["read"],
-        "toolRules": [{"name": "add", "decision": "allow", "requiredTrust": "low"}],
-    },
-)
-check(
-    created_grant.get("grant", {}).get("name") == api_runtime_grant,
-    "POST /api/runtime/grants created grant",
-    f"body: {created_grant}",
-)
-created_session = expect_json(
-    f"{api_base}/api/runtime/sessions",
-    method="POST",
-    headers=auth_headers,
-    body={
-        "name": api_runtime_session,
-        "namespace": "mcp-servers",
-        "serverRef": {"name": server_name, "namespace": "mcp-servers"},
-        "subject": {"humanID": human_id, "agentID": agent_id},
-        "consentedTrust": "low",
-    },
-)
-check(
-    created_session.get("session", {}).get("name") == api_runtime_session,
-    "POST /api/runtime/sessions created session",
-    f"body: {created_session}",
-)
-grants_after = expect_json(f"{api_base}/api/runtime/grants", headers=auth_headers)
-grant_names_after = {item.get("name") for item in grants_after.get("grants", [])}
-check(
-    api_runtime_grant in grant_names_after,
-    "list grants after API create",
-    f"missing {api_runtime_grant}: {grants_after}",
-)
-sessions_after = expect_json(f"{api_base}/api/runtime/sessions", headers=auth_headers)
-session_names_after = {item.get("name") for item in sessions_after.get("sessions", [])}
-check(
-    api_runtime_session in session_names_after,
-    "list sessions after API create",
-    f"missing {api_runtime_session}: {sessions_after}",
-)
-components = expect_json(f"{api_base}/api/runtime/components", headers=auth_headers)
-component_keys = {item.get("key") for item in components.get("components", [])}
-check(
-    {"api", "gateway", "ui"}.issubset(component_keys),
-    "runtime components contain api/gateway/ui",
-    f"runtime components missing expected keys: {components}",
-)
-policy = expect_json(
-    f"{api_base}/api/runtime/policy?namespace=mcp-servers&server={urllib.parse.quote(server_name)}",
-    headers=auth_headers,
-)
-check(
-    policy.get("server", {}).get("name") == server_name,
-    f"runtime policy resolved server {server_name}",
-    f"runtime policy missing server {server_name}: {policy}",
-)
-
-# Runtime mutation paths through the API.
-disable = expect_json(
-    f"{api_base}/api/runtime/grants/mcp-servers/{urllib.parse.quote(grant_name)}/disable",
-    method="POST",
-    headers=auth_headers,
-)
-check(
-    disable.get("disabled") is True,
-    "grant disable response marked disabled=true",
-    f"grant disable response unexpected: {disable}",
-)
-enable = expect_json(
-    f"{api_base}/api/runtime/grants/mcp-servers/{urllib.parse.quote(grant_name)}/enable",
-    method="POST",
-    headers=auth_headers,
-)
-check(
-    enable.get("disabled") is False,
-    "grant enable response marked disabled=false",
-    f"grant enable response unexpected: {enable}",
-)
-revoke = expect_json(
-    f"{api_base}/api/runtime/sessions/mcp-servers/{urllib.parse.quote(session_id)}/revoke",
-    method="POST",
-    headers=auth_headers,
-)
-check(
-    revoke.get("revoked") is True,
-    "session revoke response marked revoked=true",
-    f"session revoke response unexpected: {revoke}",
-)
-unrevoke = expect_json(
-    f"{api_base}/api/runtime/sessions/mcp-servers/{urllib.parse.quote(session_id)}/unrevoke",
-    method="POST",
-    headers=auth_headers,
-)
-check(
-    unrevoke.get("revoked") is False,
-    "session unrevoke response marked revoked=false",
-    f"session unrevoke response unexpected: {unrevoke}",
-)
-expect_json(
-    f"{api_base}/api/runtime/actions/restart",
-    status=400,
-    method="POST",
-    headers=auth_headers,
-    body={"component": "definitely-not-a-real-component"},
-)
-
-# Ingest and processor service surfaces.
-expect_status(f"{ingest_base}/health", 200, contains='"ok":true')
-expect_status(f"{ingest_base}/live", 200, contains='"ok":true')
-expect_status(f"{ingest_base}/ready", 200, contains='"ok":true')
-expect_status(ingest_metrics_url, 200, contains="# HELP")
-ingest_event = expect_json(
-    f"{ingest_base}/events",
-    status=202,
-    method="POST",
-    headers=ingest_headers,
-    body={
-        "timestamp": "2026-03-29T00:00:00Z",
-        "source": "e2e-direct-ingest",
-        "event_type": "service.route.check",
-        "payload": {"service": "ingest", "route": "/events"},
-    },
-)
-check(
-    ingest_event.get("ok") is True,
-    "ingest /events returned ok=true",
-    f"ingest /events response unexpected: {ingest_event}",
-)
-expect_status(f"{processor_base}/health", 200, contains="ok")
-expect_status(f"{processor_base}/metrics", 200, contains="# HELP")
-
-print("service routes:")
-for route in (
-    "gateway:/",
-    "gateway:/api/dashboard/summary",
-    "gateway:/ping",
-    "gateway:/config.js",
-    "gateway:/app.js",
-    "gateway:/styles.css",
-    "gateway:/grafana/api/health",
-    "gateway:/prometheus/-/healthy",
-    "ingress:{server-host}:/{server}/mcp",
-    "ingress:{oauth-host}:/{oauth-server}/mcp",
-    "ingress:{oauth-host}:/.well-known/oauth-protected-resource/{oauth-server}/mcp",
-    "ui:/health",
-    "ui:/",
-    "ui:/config.js",
-    "ui:/app.js",
-    "ui:/styles.css",
-    "mcp-gateway:/health",
-    "mcp-gateway:/",
-    "mcp-server:/health",
-    "mcp-server:/",
-    "oauth-proxy:/health",
-    "oauth-proxy:/",
-    "oauth-proxy:/.well-known/oauth-protected-resource",
-    "oauth-proxy:/.well-known/oauth-protected-resource/{server}/mcp",
-    "oauth-server:/health",
-    "oauth-server:/",
-    "api:/health",
-    "api:/metrics",
-    "api:/api/events",
-    "api:/api/stats",
-    "api:/api/sources",
-    "api:/api/event-types",
-    "api:/api/events/filter",
-    "api:/api/dashboard/summary",
-    "api:/api/runtime/servers",
-    "api:/api/runtime/grants",
-    "api:/api/runtime/sessions",
-    "api:/api/runtime/components",
-    "api:/api/runtime/policy",
-    "api:/api/runtime/grants/{namespace}/{name}/disable",
-    "api:/api/runtime/grants/{namespace}/{name}/enable",
-    "api:/api/runtime/sessions/{namespace}/{name}/revoke",
-    "api:/api/runtime/sessions/{namespace}/{name}/unrevoke",
-    "api:/api/runtime/actions/restart",
-    "ingest:/health",
-    "ingest:/live",
-    "ingest:/ready",
-    "ingest:/events",
-    "ingest:/metrics",
-    "processor:/health",
-    "processor:/metrics",
-):
-    print(f"  {route}")
-PY
-
+if scenario_selected "observability" && checkpoint_enabled "observability"; then
   echo "[observe] validating audit, traces, and logs"
   API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api" \
   API_KEY="${API_KEY}" \
@@ -4588,7 +4852,7 @@ PY
   SENTINEL_BASE="http://127.0.0.1:${SENTINEL_PORT}" \
   TEMPO_BASE="http://127.0.0.1:${TEMPO_PORT}" \
   GRAFANA_BASE="http://127.0.0.1:${SENTINEL_PORT}/grafana" \
-  PROMETHEUS_BASE="http://127.0.0.1:${SENTINEL_PORT}/prometheus" \
+  PROMETHEUS_BASE="http://127.0.0.1:${PROMETHEUS_PORT}/prometheus" \
   GRAFANA_ADMIN_USER="${GRAFANA_ADMIN_USER}" \
   GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD}" \
   LOKI_BASE="http://127.0.0.1:${LOKI_PORT}" \
@@ -4888,6 +5152,25 @@ check(
     f"pii redaction: unexpected status {status}, body={resp_body}",
 )
 
+# api-platform/ui-auth flows do not emit service.route.check; seed one ingest event
+# so /api/event-types includes it before the analytics assertions below.
+route_check_source = "e2e-service-route-check"
+status, resp_body = post_json(
+    f"{sentinel_base}/ingest/events",
+    {
+        "timestamp": "2026-03-29T00:00:00Z",
+        "source": route_check_source,
+        "event_type": "service.route.check",
+        "payload": {"service": "ingest", "route": "/events"},
+    },
+    {"content-type": "application/json", **ingest_headers},
+)
+check(
+    status in (200, 202),
+    "service.route.check ingest accepted event",
+    f"service.route.check: unexpected status {status}, body={resp_body}",
+)
+
 pii_events = wait_for_json(
     f"{api_base}/events/filter?source={urllib.parse.quote(pii_source)}&event_type=pii.check&limit=1",
     lambda doc: bool(doc.get("events", [])),
@@ -4978,30 +5261,26 @@ allow_upper = wait_for_json(
     headers=headers,
     description="allow audit event for upper",
 ).get("events", [])
-all_server_denies = wait_for_json(
-    f"{api_base}/events/filter?server={server_name}&decision=deny&limit=250",
-    lambda doc: {
-        payload.get("reason")
-        for payload in (
-            event.get("payload", {})
-            for event in doc.get("events", [])
-            if isinstance(event.get("payload"), dict)
-        )
-        if payload.get("reason")
-    } >= {
-        "missing_identity",
-        "missing_session",
-        "session_not_found",
-        "session_revoked",
-        "session_expired",
-        "rpc_inspection_failed",
-        "trust_too_low",
-        "tool_not_granted",
-        "tool_denied",
-    },
-    headers=headers,
-    description="server deny audit events",
-).get("events", [])
+_required_deny_reasons = [
+    "missing_identity",
+    "missing_session",
+    "session_not_found",
+    "session_revoked",
+    "session_expired",
+    "rpc_inspection_failed",
+    "trust_too_low",
+    "tool_not_granted",
+    "tool_denied",
+]
+all_server_denies = []
+for _deny_reason in _required_deny_reasons:
+    _reason_events = wait_for_json(
+        f"{api_base}/events/filter?server={server_name}&decision=deny&reason={_deny_reason}&limit=5",
+        lambda doc: bool(doc.get("events", [])),
+        headers=headers,
+        description=f"server deny audit event for reason {_deny_reason}",
+    ).get("events", [])
+    all_server_denies.extend(_reason_events)
 all_server_events = wait_for_json(
     f"{api_base}/events/filter?server={server_name}&limit=1000",
     lambda doc: rpc_methods_from_events_doc(doc) >= expected_recent_gateway_rpc_method_set,
@@ -5344,19 +5623,21 @@ PY
   fi
 fi
 
-if scenario_selected "multitenancy"; then
-  # Multi-tenancy isolation: deploy two gateway-enabled MCPServers in mcp-servers
-  # that reuse the policy-mcp-server image already in the kind registry, grant
-  # alice on tenant-a and bob on tenant-b, then assert the cross-tenant deny
-  # matrix:
-  #   - allowed tool on own tenant   -> 200
-  #   - same-tenant disallowed tool  -> 403 (subject known, tool not in grant)
-  #   - cross-tenant request         -> 401 (no session/grant for subject on that server)
+if scenario_selected "multitenancy" && checkpoint_enabled "multitenancy"; then
+  # Multi-tenancy isolation: grant alice on tenant-a and bob on tenant-b, then assert
+  # the cross-tenant deny matrix. When E2E_MAX_MCP_SERVERS<=2, tenant-a is the
+  # already-deployed primary server and only tenant-b is deployed as the second
+  # workload.
   echo "[multitenancy] preparing two-tenant isolation probe"
 
   MT_NS="mcp-servers"
   MT_IMAGE_REPO="${SERVER_IMAGE%:*}"
   MT_IMAGE_TAG="${SERVER_IMAGE##*:}"
+  MT_TENANT_A_SERVER="${MT_TENANT_A}"
+  if e2e_multitenancy_slim_mode; then
+    MT_TENANT_A_SERVER="${SERVER_NAME}"
+    echo "[multitenancy] slim mode: tenant-a=${MT_TENANT_A_SERVER}, deploying only ${MT_TENANT_B}"
+  fi
 
   mt_apply_tenant() {
     local name="$1" prefix="$2"
@@ -5373,6 +5654,7 @@ spec:
   port: 8088
   servicePort: 80
   publicPathPrefix: ${prefix}
+  ingressHost: ${SERVER_HOST}
   ingressPath: /${prefix}/mcp
   resources:
     requests:
@@ -5413,16 +5695,41 @@ spec:
 EOF
   }
 
-  mt_apply_tenant "${MT_TENANT_A}" "${MT_TENANT_A}"
-  mt_apply_tenant "${MT_TENANT_B}" "${MT_TENANT_B}"
+  if e2e_multitenancy_slim_mode; then
+    wait_for_named_server_ready "${MT_TENANT_A_SERVER}" "${MT_NS}" 60
+    mt_apply_tenant "${MT_TENANT_B}" "${MT_TENANT_B}"
+  else
+    mt_apply_tenant "${MT_TENANT_A}" "${MT_TENANT_A}"
+    mt_apply_tenant "${MT_TENANT_B}" "${MT_TENANT_B}"
+  fi
 
   echo "[multitenancy] waiting for tenant rollouts"
-  wait_for_deployment_exists "${MT_NS}" "${MT_TENANT_A}"
+  if ! e2e_multitenancy_slim_mode; then
+    wait_for_deployment_exists "${MT_NS}" "${MT_TENANT_A}"
+    kubectl rollout status "deploy/${MT_TENANT_A}" -n "${MT_NS}" --timeout=180s
+    wait_for_named_server_ready "${MT_TENANT_A}" "${MT_NS}" 60
+  fi
   wait_for_deployment_exists "${MT_NS}" "${MT_TENANT_B}"
-  kubectl rollout status "deploy/${MT_TENANT_A}" -n "${MT_NS}" --timeout=180s
   kubectl rollout status "deploy/${MT_TENANT_B}" -n "${MT_NS}" --timeout=180s
-  wait_for_named_server_ready "${MT_TENANT_A}" "${MT_NS}" 60
   wait_for_named_server_ready "${MT_TENANT_B}" "${MT_NS}" 60
+  mt_wait_for_endpoint() {
+    local name="$1" tries=60 i
+    for i in $(seq 1 "${tries}"); do
+      if [[ -n "$(kubectl get endpoints "${name}" -n "${MT_NS}" -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)" ]]; then
+        return 0
+      fi
+      sleep 2
+    done
+    echo "[multitenancy] timed out waiting for service endpoint ${name}" >&2
+    kubectl get svc,endpoints,pods -n "${MT_NS}" -o wide >&2 || true
+    return 1
+  }
+  mt_wait_for_endpoint "${MT_TENANT_A_SERVER}"
+  mt_wait_for_endpoint "${MT_TENANT_B}"
+  if ! e2e_multitenancy_slim_mode; then
+    port_forward_bg "${MT_NS}" "${MT_TENANT_A}" "${MT_TENANT_A_PORT}" 80 "${WORKDIR}/${MT_TENANT_A}-proxy.log"
+  fi
+  port_forward_bg "${MT_NS}" "${MT_TENANT_B}" "${MT_TENANT_B_PORT}" 80 "${WORKDIR}/${MT_TENANT_B}-proxy.log"
 
   echo "[multitenancy] applying alice (tenant-a / add) and bob (tenant-b / upper) grants and sessions"
   cat <<EOF | kubectl apply -f -
@@ -5430,7 +5737,7 @@ apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
 metadata: {name: alice-${MT_TENANT_A}, namespace: ${MT_NS}}
 spec:
-  serverRef: {name: ${MT_TENANT_A}}
+  serverRef: {name: ${MT_TENANT_A_SERVER}}
   subject:   {humanID: ${MT_HUMAN_A}, agentID: ${MT_AGENT_A}}
   maxTrust: high
   allowedSideEffects: [read]
@@ -5442,7 +5749,7 @@ apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAgentSession
 metadata: {name: ${MT_SESSION_A}, namespace: ${MT_NS}}
 spec:
-  serverRef: {name: ${MT_TENANT_A}}
+  serverRef: {name: ${MT_TENANT_A_SERVER}}
   subject:   {humanID: ${MT_HUMAN_A}, agentID: ${MT_AGENT_A}}
   consentedTrust: high
   policyVersion: v1
@@ -5483,42 +5790,62 @@ EOF
     kubectl get configmap "${server}-gateway-policy" -n "${MT_NS}" -o yaml || true
     return 1
   }
-  mt_wait_for_session_in_policy "${MT_TENANT_A}" "${MT_SESSION_A}"
+  mt_wait_for_session_in_policy "${MT_TENANT_A_SERVER}" "${MT_SESSION_A}"
   mt_wait_for_session_in_policy "${MT_TENANT_B}" "${MT_SESSION_B}"
   # The sidecar reloads from a ConfigMap volume, which can lag behind the
   # rendered ConfigMap. The matrix below retries each expected decision until
   # the sidecar observes the updated policy.
 
   echo "[multitenancy] running cross-tenant deny matrix"
-  MT_BASE_A="http://localhost:${TRAEFIK_PORT}/${MT_TENANT_A}/mcp"
-  MT_BASE_B="http://localhost:${TRAEFIK_PORT}/${MT_TENANT_B}/mcp"
+  if e2e_multitenancy_slim_mode; then
+    # Use a direct service port-forward for tenant-a. MCP_SESSION_URL goes through
+    # the governance header proxy (sess-ops-agent), not alice-session.
+    ensure_server_proxy_port_forward
+    MT_BASE_A="http://127.0.0.1:${SERVER_PROXY_PORT}/${SERVER_NAME}/mcp"
+  else
+    refresh_mcp_proxy_urls
+    MT_BASE_A="http://127.0.0.1:${MT_TENANT_A_PORT}/${MT_TENANT_A}/mcp"
+  fi
+  MT_BASE_B="http://127.0.0.1:${MT_TENANT_B_PORT}/${MT_TENANT_B}/mcp"
   MT_REPORT="${WORKDIR}/multitenancy-matrix.json"
 
+  if ! env \
   MT_BASE_A="${MT_BASE_A}" \
   MT_BASE_B="${MT_BASE_B}" \
+  MT_HOST="${SERVER_HOST}" \
   MT_PROTO="${MCP_PROTOCOL_VERSION}" \
   MT_HUMAN_A="${MT_HUMAN_A}" MT_AGENT_A="${MT_AGENT_A}" MT_SESSION_A="${MT_SESSION_A}" \
   MT_HUMAN_B="${MT_HUMAN_B}" MT_AGENT_B="${MT_AGENT_B}" MT_SESSION_B="${MT_SESSION_B}" \
   MT_REPORT="${MT_REPORT}" \
   python3 <<'PY'
 import json, os, subprocess, sys, tempfile, time
+import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
 
 PROTO = os.environ["MT_PROTO"]
 A = os.environ["MT_BASE_A"]
 B = os.environ["MT_BASE_B"]
+HOST = os.environ.get("MT_HOST", "")
 report = []
+
+def read_file(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except FileNotFoundError:
+        return ""
 
 def post(base, body, human, agent, sess, mcp_session=""):
     with tempfile.TemporaryDirectory() as td:
         payload = os.path.join(td, "p.json"); headers = os.path.join(td, "h.txt"); bodyf = os.path.join(td, "b.txt")
         with open(payload, "w") as fh: json.dump(body, fh)
         cmd = [
-            "curl", "-sS", "--max-time", "20", "-D", headers, "-o", bodyf, "-w", "%{http_code}",
+            "curl", "-sS", "--connect-timeout", "2", "--max-time", "5", "-D", headers, "-o", bodyf, "-w", "%{http_code}",
             "-X", "POST",
             "-H", "content-type: application/json",
             "-H", "accept: application/json, text/event-stream",
             "-H", f"Mcp-Protocol-Version: {PROTO}",
         ]
+        if HOST:    cmd += ["-H", f"Host: {HOST}"]
         if human:   cmd += ["-H", f"X-MCP-Human-ID: {human}"]
         if agent:   cmd += ["-H", f"X-MCP-Agent-ID: {agent}"]
         if sess:    cmd += ["-H", f"X-MCP-Agent-Session: {sess}"]
@@ -5527,17 +5854,17 @@ def post(base, body, human, agent, sess, mcp_session=""):
         proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
         try: status = int(proc.stdout.strip().splitlines()[-1])
         except Exception: status = 0
-        with open(headers) as fh: h = fh.read()
+        h = read_file(headers)
         next_sess = ""
         for line in h.splitlines():
             k, sep, v = line.partition(":")
             if sep and k.lower() == "mcp-session-id":
                 next_sess = v.strip()
-        with open(bodyf) as fh: response_body = fh.read()
+        response_body = read_file(bodyf)
         return status, next_sess, response_body, proc.stderr
 
 def run_call(label, base, human, agent, sess, tool, expect_status):
-    init_status, mcp_sess, init_body, init_stderr = post(base, {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}, human, agent, sess)
+    init_status, mcp_sess, init_body, init_stderr = post(base, make_initialize_payload(PROTO), human, agent, sess)
     if init_status != 200:
         # Cross-tenant or unknown-session requests are rejected at initialize;
         # that is the gateway behavior we want to assert.
@@ -5581,6 +5908,9 @@ def call(label, base, human, agent, sess, tool, expect_status, retries=90, delay
         if last["ok"]:
             report.append(last)
             return
+        if last.get("got") == 0 and attempt >= 10:
+            last["short_circuit"] = "transport_unreachable"
+            break
         time.sleep(delay)
     report.append(last)
 
@@ -5610,14 +5940,32 @@ for r in report:
     print(f"  [{mark}] {r['case']:<42}  expect={r['expect']}  got={r['got']} ({r['got_at']}, attempts={r.get('attempts', 1)}){detail}")
 sys.exit(1 if failed else 0)
 PY
+  then
+    echo "[debug] multitenancy matrix failed; collecting route diagnostics" >&2
+    [[ -f "${MT_REPORT}" ]] && cat "${MT_REPORT}" >&2 || true
+    kubectl get mcpserver,deploy,svc,ingress,networkpolicy -n "${MT_NS}" -o wide >&2 || true
+    kubectl get ingress -n "${MT_NS}" -o yaml >&2 || true
+    kubectl logs -n "${MT_NS}" -l "app=${MT_TENANT_A}" --all-containers=true --tail=200 >&2 || true
+    kubectl logs -n "${MT_NS}" -l "app=${MT_TENANT_B}" --all-containers=true --tail=200 >&2 || true
+    kubectl logs -n traefik deploy/traefik --tail=200 >&2 || true
+    exit 1
+  fi
 
   echo "[multitenancy] cleaning up tenant resources"
   kubectl delete mcpaccessgrant "alice-${MT_TENANT_A}" "bob-${MT_TENANT_B}" -n "${MT_NS}" --ignore-not-found --wait=false >/dev/null
   kubectl delete mcpagentsession "${MT_SESSION_A}" "${MT_SESSION_B}" -n "${MT_NS}" --ignore-not-found --wait=false >/dev/null
-  parallel_reset
-  parallel_start 2 "delete ${MT_TENANT_A}" delete_mcp_server_and_wait "${MT_TENANT_A}" "${MT_NS}" 60s
-  parallel_start 2 "delete ${MT_TENANT_B}" delete_mcp_server_and_wait "${MT_TENANT_B}" "${MT_NS}" 60s
-  parallel_wait_all
+  if e2e_multitenancy_slim_mode; then
+    delete_mcp_server_and_wait "${MT_TENANT_B}" "${MT_NS}" 60s
+  else
+    parallel_reset
+    parallel_start 2 "delete ${MT_TENANT_A}" delete_mcp_server_and_wait "${MT_TENANT_A}" "${MT_NS}" 60s
+    parallel_start 2 "delete ${MT_TENANT_B}" delete_mcp_server_and_wait "${MT_TENANT_B}" "${MT_NS}" 60s
+    parallel_wait_all
+  fi
+fi
+
+fi
+
 fi
 
 echo "[cli] checking sentinel restart command"
@@ -5631,9 +5979,6 @@ echo "[cli] deleting deployed MCP servers"
 if scenario_selected "oauth"; then
   cleanup_mcp_server_and_wait "${OAUTH_SERVER_NAME}" mcp-servers 120s
 fi
-cleanup_mcp_server_and_wait "${PYTHON_EXAMPLE_SERVER_NAME}" mcp-servers 120s
-cleanup_mcp_server_and_wait "${RUST_EXAMPLE_SERVER_NAME}" mcp-servers 120s
-cleanup_mcp_server_and_wait "${GO_EXAMPLE_SERVER_NAME}" mcp-servers 120s
 cleanup_mcp_server_and_wait "${SERVER_NAME}" mcp-servers 120s
 
 echo "[done] E2E completed successfully"

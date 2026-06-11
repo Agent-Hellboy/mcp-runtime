@@ -57,14 +57,14 @@ commands genuinely share it.
 Setup is split across `internal/cli/setup/`:
 
 - `setup.go`: Cobra command and flag wiring.
-- `platform.go`: setup orchestration, image publishing, manifest application,
+- `platform/platform.go`: setup orchestration, image publishing, manifest application,
   verification, and deployment diagnostics.
-- `flow.go`: setup flow validation and user-facing warnings.
-- `steps.go`: step-level helpers used by setup orchestration.
+- `platform/flow.go`: setup flow validation and user-facing warnings.
+- `platform/steps.go`: step-level helpers used by setup orchestration.
 - `plan/`: planning and dependency injection seams used by tests.
-- `setup/assetpath/`: repo-root and asset path resolution used by setup builds
+- `assetpath/`: repo-root and asset path resolution used by setup builds
   and manifest rendering.
-- `setup/ingressmanifest/`: platform UI ingress manifest rendering.
+- `ingressmanifest/`: platform UI ingress manifest rendering.
 
 `setup --test-mode` relaxes production guardrails but still builds and pushes
 the operator, gateway proxy, and Sentinel images with `latest` tags. Pull hosts
@@ -83,9 +83,10 @@ Important setup contracts:
 - Setup verification should fail with diagnostic context instead of reporting
   success after partial deployment.
 
-Tests live with the setup package, including `helpers_test.go`,
-`plan_flow_test.go`, `steps_test.go`, `config_plan_test.go`, and
-`tls_flags_test.go`.
+Setup command wiring lives in `internal/cli/setup/`; the platform install flow
+lives in `internal/cli/setup/platform/` with tests beside the workflow files,
+including `helpers_test.go`, `plan_flow_test.go`, `steps_test.go`,
+`config_plan_test.go`, and `tls_flags_test.go`.
 
 ## Cluster and Doctor
 
@@ -93,13 +94,14 @@ Tests live with the setup package, including `helpers_test.go`,
 provider-oriented provisioning helpers. `bootstrap.go` performs preflight checks
 and has the only automated apply path for k3s CoreDNS/local-path prerequisites.
 
-`internal/cli/cluster/doctor_impl.go` is post-install diagnostics. It checks CRDs, workloads,
-registry reachability, image pull failures, ingress, and platform components.
-Registry protocol mismatch detection must inspect regular containers and init
-containers, and it must surface failed pod inspections instead of returning a
-false pass.
+`internal/cli/cluster/doctor/` owns post-install diagnostics. It checks CRDs,
+workloads, registry reachability, image pull failures, ingress, and platform
+components. Registry protocol mismatch detection must inspect regular
+containers and init containers, and it must surface failed pod inspections
+instead of returning a false pass.
 
-Tests: `cluster_test.go`, `doctor_impl_test.go`, and bootstrap-related tests.
+Tests: `cluster_test.go`, `doctor/doctor_impl_test.go`, and bootstrap-related
+tests.
 
 ## Registry
 
@@ -134,19 +136,16 @@ in `internal/cli/server/validation.go`.
 
 Keep these flows distinct:
 
-- `server apply` applies a manifest.
+- `server init` scaffolds `.mcp/servers.yaml` with `gateway.enabled: true`,
+  policy, and session intent; it leaves gateway wiring and header defaults to
+  the metadata loader and CRD defaulting.
+- `server apply --use-kube` applies a manifest through kubectl (admin only).
 - `server build image` builds and updates metadata but does not deploy.
+- `server generate` renders manifests from metadata for review/GitOps.
+- `server deploy --metadata-dir .mcp` deploys metadata-backed servers through the platform API.
 - `registry push` publishes images after platform credential validation.
-- `pipeline generate` renders manifests from metadata.
-- `pipeline deploy` applies generated manifests.
 
-Tests: `server_test.go`, `server_config_test.go`, `build_test.go`, and pipeline
-tests.
-
-## Pipeline
-
-`pipeline.go` turns `.mcp` metadata into `MCPServer` manifests and applies
-rendered directories. It is the CLI bridge to `pkg/metadata`.
+Tests: `server_test.go`, `server_config_test.go`, and `build_test.go`.
 
 Pipeline changes usually require checking:
 
@@ -155,14 +154,18 @@ Pipeline changes usually require checking:
 - docs for `.mcp` authoring
 - examples under `examples/`
 
-Tests: `pipeline_test.go` and `pkg/metadata` tests.
+Tests: `server`/`metadata` package tests and golden CLI help snapshots.
 
 ## Access
 
 `internal/cli/access/` provides commands for grants and sessions:
 
-- `access grant list|get|apply|delete|enable|disable`
-- `access session list|get|apply|delete|revoke|unrevoke`
+- `access grant init|list|get|apply|delete|enable|disable`
+- `access session init|list|get|apply|delete|revoke|unrevoke`
+
+`init` scaffolds reviewable YAML; `apply` writes through the platform API by
+default. Add `--use-kube` only for admin/operator direct Kubernetes flows
+that bypass platform auth.
 
 The implementation patches `spec.disabled` for grants and `spec.revoked` for
 sessions. Input validation should prevent invalid names/namespaces before they
@@ -170,12 +173,42 @@ reach `kubectl`; that validation lives in `internal/cli/access/validation.go`.
 
 Tests: `access/manager_test.go` and `access/validation_test.go`.
 
-## Sentinel and Platform API
+## Adapter
 
-`internal/cli/sentinel/`, `internal/cli/auth/`, and `internal/cli/platformapi/`
-provide CLI access to Sentinel APIs, auth flows, and platform API URL
-normalization. These commands should stay aligned with `services/api` routes and
-the public docs.
+`internal/cli/adapter/` provides the `adapter proxy` and `adapter stdio`
+commands. The CLI layer resolves shared flags, optional platform-issued adapter
+sessions from `POST /api/runtime/adapter/sessions`, and explicit
+`MCP_RUNTIME_*` identity values, then delegates HTTP proxy and stdio transport
+behavior to `internal/agentadapter`.
+
+Keep the boundary clear: command parsing, platform-session bootstrap, and
+auto-refresh scheduling live in `internal/cli/adapter`; request forwarding,
+header injection, TLS transport, stdio bridging, and anonymous stdio method
+filtering live in `internal/agentadapter`.
+
+Tests: `adapter/adapter_test.go`, `adapter/platformsession_test.go`, and
+`internal/agentadapter` tests.
+
+## Team
+
+`internal/cli/team/` owns platform team commands. `team list`, `team create`,
+and `team user` call the platform API through `internal/cli/platformapi`.
+`team init` is deprecated and rejects at runtime; use `team create`.
+
+Team behavior spans CLI and API code: platform-backed team creation and
+membership routes live in `services/api/internal/runtimeapi`, durable identity
+state lives in `services/api/internal/platformstore`, and user-facing guidance
+lives in `docs/multi-team.md`.
+
+Tests: `team/manager_test.go`; for platform team API changes, run focused tests
+inside `services/api`.
+
+## Auth, Sentinel, and Platform API
+
+`internal/cli/auth/` handles platform API login, logout, and credential profiles.
+`internal/cli/sentinel/` and `internal/cli/platformapi/` provide CLI access to
+Sentinel APIs and platform API URL normalization. These commands should stay
+aligned with `services/api` routes and the public docs.
 
 Tests: `sentinel/*_test.go`, `auth/*_test.go`, and `platformapi/*_test.go`.
 

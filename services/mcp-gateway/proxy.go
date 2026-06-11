@@ -63,7 +63,7 @@ func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 				oauthResult.Reason,
 				policypkg.ChoosePolicyVersion(policypkg.PolicyVersion(policy), s.defaultPolicyVersion),
 			)
-			s.writeDeniedResponse(recorder, r, originalPath, rpcMethod, toolName, authCtx, policy, decision, start)
+			s.writeDeniedResponse(recorder, r, originalPath, rpcMethod, toolName, authCtx, policy, decision, start, inspection.IsRPCAttempt)
 			return
 		}
 	}
@@ -86,13 +86,13 @@ func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 			decision = policypkg.Authorize(policy, policypkg.Request{
 				Identity:  policyIdentity(authCtx),
 				RPCMethod: rpcMethod,
-				ToolName:  toolName,
+				ToolName:  policypkg.ToolName(toolName),
 			}, time.Now())
 		}
 	}
 
 	if !decision.Allowed {
-		s.writeDeniedResponse(recorder, r, originalPath, rpcMethod, toolName, authCtx, policy, decision, start)
+		s.writeDeniedResponse(recorder, r, originalPath, rpcMethod, toolName, authCtx, policy, decision, start, inspection.IsRPCAttempt)
 		return
 	}
 
@@ -118,7 +118,15 @@ func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 		decision.PolicyVersion = s.defaultPolicyVersion
 	}
 
-	s.emitAuditEvent(r, originalPath, rpcMethod, toolName, authCtx, policy, decision, recorder.status, time.Since(start).Milliseconds(), recorder.bytes)
+	// Only audit actual MCP JSON-RPC traffic. Non-RPC requests (GET health probes,
+	// OAuth discovery, etc.) have no rpcMethod and produce noise in the event count.
+	// Denied requests are already audited by writeDeniedResponse above.
+	// Internal platform service probes (live-inventory, health checkers) are
+	// identified by the mcp-runtime-live-inventory agent ID; skip those too so
+	// they do not inflate the analytics event count.
+	if rpcMethod != "" && authCtx.AgentID != "mcp-runtime-live-inventory" {
+		s.emitAuditEvent(r, originalPath, rpcMethod, toolName, authCtx, policy, decision, recorder.status, time.Since(start).Milliseconds(), recorder.bytes)
+	}
 }
 
 func (s *gatewayServer) writeDeniedResponse(
@@ -129,14 +137,66 @@ func (s *gatewayServer) writeDeniedResponse(
 	policy *policypkg.Document,
 	decision policypkg.Decision,
 	start time.Time,
+	isRPCAttempt bool,
 ) {
 	recorder.Header().Set("content-type", "application/json")
 	if shouldChallengeOAuth(policy, decision) {
 		recorder.Header().Set("www-authenticate", s.oauthAuthenticateHeader(r, originalPath, decision.Reason))
 	}
-	recorder.WriteHeader(decision.Status)
-	_ = json.NewEncoder(recorder).Encode(map[string]any{"error": decision.Reason})
-	s.emitAuditEvent(r, originalPath, rpcMethod, toolName, authCtx, policy, decision, recorder.status, time.Since(start).Milliseconds(), recorder.bytes)
+	status := gatewayDeniedStatus(policy, decision)
+	decision.Status = status
+	recorder.WriteHeader(status)
+	_ = json.NewEncoder(recorder).Encode(gatewayDeniedPayload(policy, decision))
+	// Audit when we have an rpcMethod (tool call) OR when the request was a
+	// genuine MCP attempt (application/json content-type) but parsing failed.
+	// Non-RPC noise (text/plain probes, GET health checks) and internal platform
+	// service probes (live-inventory) are not audited.
+	if (rpcMethod != "" || isRPCAttempt) && authCtx.AgentID != "mcp-runtime-live-inventory" {
+		s.emitAuditEvent(r, originalPath, rpcMethod, toolName, authCtx, policy, decision, recorder.status, time.Since(start).Milliseconds(), recorder.bytes)
+	}
+}
+
+func gatewayDeniedStatus(policy *policypkg.Document, decision policypkg.Decision) int {
+	if decision.Status > 0 {
+		return decision.Status
+	}
+	return http.StatusForbidden
+}
+
+func gatewayDeniedPayload(policy *policypkg.Document, decision policypkg.Decision) map[string]any {
+	payload := map[string]any{"error": decision.Reason}
+	if policypkg.PolicyUsesOAuth(policy) {
+		return payload
+	}
+	switch decision.Reason {
+	case "missing_identity", "missing_session":
+		payload["message"] = "This MCP server uses MCP Runtime header/session governance. Direct clients must connect through the mcp-runtime adapter proxy or stdio adapter, or send an adapter-issued identity/session."
+		payload["adapter_required"] = true
+		payload["required_headers"] = governanceRequiredHeaders(policy)
+	}
+	return payload
+}
+
+func governanceRequiredHeaders(policy *policypkg.Document) []string {
+	humanHeader := defaultHumanHeader
+	agentHeader := defaultAgentHeader
+	teamHeader := defaultTeamHeader
+	sessionHeader := defaultSessionHeader
+	if policy != nil && policy.Auth != nil {
+		if value := strings.TrimSpace(policy.Auth.HumanIDHeader); value != "" {
+			humanHeader = value
+		}
+		if value := strings.TrimSpace(policy.Auth.AgentIDHeader); value != "" {
+			agentHeader = value
+		}
+		if value := strings.TrimSpace(policy.Auth.TeamIDHeader); value != "" {
+			teamHeader = value
+		}
+		if value := strings.TrimSpace(policy.Auth.SessionIDHeader); value != "" {
+			sessionHeader = value
+		}
+	}
+	return []string{humanHeader, agentHeader, teamHeader, sessionHeader}
 }
 
 func (s *gatewayServer) emitAuditEvent(

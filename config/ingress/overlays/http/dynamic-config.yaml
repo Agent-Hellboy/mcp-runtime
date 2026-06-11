@@ -10,7 +10,7 @@ data:
         registry-admin-auth:
           forwardAuth:
             address: http://mcp-sentinel-api.mcp-sentinel.svc.cluster.local:8080/api/registry/authz
-            trustForwardHeader: true
+            trustForwardHeader: false
         sentinel-admin-auth:
           forwardAuth:
             address: http://mcp-sentinel-ui.mcp-sentinel.svc.cluster.local:8082/auth/admin-check

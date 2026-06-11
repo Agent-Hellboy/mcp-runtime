@@ -2,4 +2,9 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: registry
-
+  labels:
+    # hostpath overlays use a root chown initContainer; keep that exception
+    # visible while enforcing the strongest compatible default.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

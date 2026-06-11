@@ -14,6 +14,12 @@ type OperatorConfig struct {
 	// DefaultIngressClass is the ingress class to use.
 	DefaultIngressClass string
 
+	// DefaultIngressEntryPoints is the default Traefik entrypoint annotation for MCP server ingresses.
+	DefaultIngressEntryPoints string
+
+	// DefaultIngressTLS enables Traefik TLS routing for MCP server ingresses by default.
+	DefaultIngressTLS bool
+
 	// IngressReadinessMode controls how ingress readiness is evaluated.
 	IngressReadinessMode string
 
@@ -31,6 +37,10 @@ type OperatorConfig struct {
 
 	// InternalRegistryEndpoint is the internal registry endpoint to use for image refs when not using a provisioned registry.
 	InternalRegistryEndpoint string
+
+	// RegistryPullHost is the pullable registry host used in image refs when the operator
+	// needs to rewrite images to the platform-managed registry.
+	RegistryPullHost string
 
 	// RequeueDelaySeconds is the delay in seconds before requeueing when resources aren't ready.
 	RequeueDelaySeconds int
@@ -54,12 +64,15 @@ func LoadOperatorConfig() *OperatorConfig {
 	cfg := &OperatorConfig{
 		DefaultIngressHost:            getEnvCompat("MCP_DEFAULT_INGRESS_HOST", "DEFAULT_INGRESS_HOST"),
 		DefaultIngressClass:           getEnvOrDefault("DEFAULT_INGRESS_CLASS", DefaultIngressClass),
+		DefaultIngressEntryPoints:     strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_ENTRYPOINTS")),
+		DefaultIngressTLS:             getEnvBool("MCP_DEFAULT_INGRESS_TLS"),
 		IngressReadinessMode:          ingressReadinessMode,
 		ProvisionedRegistryURL:        os.Getenv("PROVISIONED_REGISTRY_URL"),
 		ProvisionedRegistryUsername:   os.Getenv("PROVISIONED_REGISTRY_USERNAME"),
 		ProvisionedRegistryPassword:   os.Getenv("PROVISIONED_REGISTRY_PASSWORD"),
 		ProvisionedRegistrySecretName: getEnvOrDefault("PROVISIONED_REGISTRY_SECRET_NAME", DefaultRegistrySecretName),
-		InternalRegistryEndpoint:      getEnvOrDefault("MCP_REGISTRY_ENDPOINT", getEnvOrDefault("MCP_REGISTRY_HOST", "registry.local")),
+		InternalRegistryEndpoint:      getEnvOrDefault("MCP_REGISTRY_ENDPOINT", "registry.registry.svc.cluster.local:5000"),
+		RegistryPullHost:              getEnvOrDefault("MCP_REGISTRY_PULL_HOST", getEnvOrDefault("MCP_REGISTRY_ENDPOINT", "registry.registry.svc.cluster.local:5000")),
 		RequeueDelaySeconds:           getEnvIntOrDefault("REQUEUE_DELAY_SECONDS", RequeueDelayNotReady),
 		GatewayProxyImage:             os.Getenv("MCP_GATEWAY_PROXY_IMAGE"),
 		GatewayOTLPEndpoint:           os.Getenv("MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT"),
@@ -101,6 +114,11 @@ func getEnvIntOrDefault(key string, defaultValue int) int {
 		}
 	}
 	return defaultValue
+}
+
+func getEnvBool(key string) bool {
+	v, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(key)))
+	return err == nil && v
 }
 
 func getEnvCompat(keys ...string) string {

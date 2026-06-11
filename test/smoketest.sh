@@ -32,14 +32,14 @@ docker build -t mcp-sentinel-api:latest -f services/api/Dockerfile .
 docker build -t mcp-sentinel-ingest:latest -f services/ingest/Dockerfile .
 docker build -t mcp-sentinel-processor:latest -f services/processor/Dockerfile .
 docker build -t mcp-sentinel-ui:latest -f services/ui/Dockerfile .
-docker build -t go-example-mcp:latest examples/go-mcp-server
+docker build -t workspace-assistant-mcp:latest examples/workspace-assistant-mcp
 docker build -t mcp-sentinel-mcp-gateway:latest -f services/mcp-gateway/Dockerfile .
 
 kind load docker-image mcp-sentinel-api:latest --name "$KIND_CLUSTER_NAME"
 kind load docker-image mcp-sentinel-ingest:latest --name "$KIND_CLUSTER_NAME"
 kind load docker-image mcp-sentinel-processor:latest --name "$KIND_CLUSTER_NAME"
 kind load docker-image mcp-sentinel-ui:latest --name "$KIND_CLUSTER_NAME"
-kind load docker-image go-example-mcp:latest --name "$KIND_CLUSTER_NAME"
+kind load docker-image workspace-assistant-mcp:latest --name "$KIND_CLUSTER_NAME"
 kind load docker-image mcp-sentinel-mcp-gateway:latest --name "$KIND_CLUSTER_NAME"
 
 kubectl apply -f k8s
@@ -49,8 +49,8 @@ kubectl -n "$NAMESPACE" rollout restart deployment/mcp-sentinel-ingest
 kubectl -n "$NAMESPACE" rollout restart deployment/mcp-sentinel-processor
 kubectl -n "$NAMESPACE" rollout restart deployment/mcp-sentinel-ui
 kubectl -n "$NAMESPACE" rollout restart deployment/mcp-sentinel-gateway
-kubectl -n "$NAMESPACE" rollout restart deployment/mcp-example-server
-kubectl -n "$NAMESPACE" rollout restart deployment/mcp-example-sidecar
+kubectl -n "$NAMESPACE" rollout restart deployment/workspace-assistant-server
+kubectl -n "$NAMESPACE" rollout restart deployment/workspace-assistant-sidecar
 
 kubectl -n "$NAMESPACE" rollout status statefulset/clickhouse --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/zookeeper --timeout=180s
@@ -60,8 +60,8 @@ kubectl -n "$NAMESPACE" rollout status deployment/mcp-sentinel-processor --timeo
 kubectl -n "$NAMESPACE" rollout status deployment/mcp-sentinel-api --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/mcp-sentinel-ui --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/mcp-sentinel-gateway --timeout=180s
-kubectl -n "$NAMESPACE" rollout status deployment/mcp-example-server --timeout=180s
-kubectl -n "$NAMESPACE" rollout status deployment/mcp-example-sidecar --timeout=180s
+kubectl -n "$NAMESPACE" rollout status deployment/workspace-assistant-server --timeout=180s
+kubectl -n "$NAMESPACE" rollout status deployment/workspace-assistant-sidecar --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/otel-collector --timeout=180s
 kubectl -n "$NAMESPACE" rollout status statefulset/tempo --timeout=180s
 kubectl -n "$NAMESPACE" rollout status statefulset/loki --timeout="$LOKI_ROLLOUT_TIMEOUT"
@@ -122,7 +122,7 @@ wait_http "http://127.0.0.1:${LOKI_PORT}/loki/api/v1/status/buildinfo" ""
 
 echo "ingest: skipped (using MCP traffic only)"
 
-echo -e "\nexample-mcp-server (MCP JSON-RPC):"
+echo -e "\nworkspace-assistant-mcp (MCP JSON-RPC):"
 env GATEWAY_PORT="$GATEWAY_PORT" python3 <<'PY'
 import json
 import os

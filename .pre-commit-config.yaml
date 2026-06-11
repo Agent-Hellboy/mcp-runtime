@@ -14,7 +14,7 @@ repos:
         types: [go]
       - id: staticcheck
         name: staticcheck
-        entry: hack/staticcheck.sh
+        entry: hack/ci/staticcheck.sh
         language: system
         pass_filenames: false
         args: [./...]

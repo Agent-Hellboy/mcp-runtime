@@ -2,11 +2,15 @@
 
 Minimal Flask landing page for MCP Runtime. The site positions the product as a
 Kubernetes-native control plane to deploy, govern, and broker MCP servers, and
-serves a single home page with links to GitHub and the documentation site.
+serves a single home page with links to GitHub, articles, and the documentation
+site.
 
 Documentation lives at `docs.mcpruntime.org` (deployed separately) and is
 authored as Markdown under [`../docs/`](../docs/) at the repo root. Any
 `/docs*` request to this site 302-redirects to `MCP_DOCS_URL`.
+
+Articles live at `articles.mcpruntime.org` (deployed separately) and are
+authored under [`../articles/`](../articles/) at the repo root.
 
 ## Run locally
 
@@ -25,6 +29,7 @@ Then open <http://localhost:8080>.
 |---|---|---|
 | `MCP_DOCS_URL` | `https://docs.mcpruntime.org/` | Target for the Docs link and `/docs*` redirects. |
 | `MCP_PLATFORM_URL` | `https://platform.mcpruntime.org/` | Target for the public hosted platform link shown on the landing page. |
+| `MCP_ARTICLES_URL` | `https://articles.mcpruntime.org/` | Target for the Articles link. |
 | `MCP_WEBSITE_BASE_URL` | derived from request | Trusted canonical origin for OG/sitemap URLs. |
 
 ## Docker
@@ -49,6 +54,7 @@ docker run -d --name mcp-runtime-website \
   --restart unless-stopped \
   -p 8080:8080 \
   -e MCP_DOCS_URL=https://docs.mcpruntime.org/ \
+  -e MCP_ARTICLES_URL=https://articles.mcpruntime.org/ \
   -e MCP_WEBSITE_BASE_URL=https://mcpruntime.org \
   mcp-runtime-website:latest
 ```
@@ -64,6 +70,7 @@ Optional GitHub secrets:
 
 - `WEBSITE_DEPLOY_HOST_KEY` — pinned SSH host key for `WEBSITE_DEPLOY_HOST`; use either a full known-hosts line such as `203.0.113.10 ssh-ed25519 AAAA...` or a bare host key such as `ssh-ed25519 AAAA...`. If omitted or malformed, CI falls back to `ssh-keyscan`.
 - `WEBSITE_DOCS_URL` (default: `https://docs.mcpruntime.org/`)
+- `WEBSITE_ARTICLES_URL` (default: `https://articles.mcpruntime.org/`)
 - `WEBSITE_BASE_URL` (default: `https://mcpruntime.org`)
 - `WEBSITE_HOST_PORT` (default: `8080`)
 - `WEBSITE_CONTAINER_PORT` (default: `8080`)

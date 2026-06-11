@@ -1,15 +1,13 @@
-Retag and push an image to the platform or provisioned registry
+Save a local image and push it to the platform registry through the platform API. Requires `mcp-runtime auth login` or MCP_PLATFORM_API_TOKEN with a saved or explicit MCP_PLATFORM_API_URL.
 
 Usage:
   mcp-runtime registry push [flags]
 
 Flags:
-  -h, --help               help for push
-      --image string       Local image to push (required)
-      --mode string        Push mode: in-cluster (default, uses skopeo helper) or direct (docker push) (default "in-cluster")
-      --name string        Override target repo/name (default: source name without registry)
-      --namespace string   Namespace to run the in-cluster helper pod (default "registry")
-      --registry string    Target registry (defaults to provisioned or internal)
+  -h, --help           help for push
+      --image string   Local image to push (required)
+      --name string    Override target repo/name (default: source name without registry)
+      --scope string   Publish scope: tenant, org, or public
 
 Global Flags:
       --debug   Enable debug mode with structured error logging

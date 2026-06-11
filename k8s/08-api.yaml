@@ -27,7 +27,7 @@ metadata:
   name: mcp-sentinel-api
   namespace: mcp-sentinel
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: mcp-sentinel-api
@@ -39,14 +39,18 @@ spec:
       serviceAccountName: mcp-sentinel-api
       securityContext:
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: api
           image: mcp-sentinel-api:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
             readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
             capabilities:
               drop:
                 - ALL
@@ -96,6 +100,12 @@ spec:
                   name: mcp-sentinel-secrets
                   key: PLATFORM_ADMIN_EMAIL
                   optional: true
+            - name: PLATFORM_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: PLATFORM_ADMIN_PASSWORD
+                  optional: true
             - name: PLATFORM_DEV_LOGIN_ENABLED
               valueFrom:
                 secretKeyRef:
@@ -128,13 +138,24 @@ spec:
                   optional: true
             - name: OTEL_SERVICE_NAME
               value: mcp-sentinel-api
+            - name: MCP_REGISTRY_PUSH_TEMP_DIR
+              value: /var/run/mcp-runtime/registry-push
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
           resources:
             requests:
               cpu: 100m
+              ephemeral-storage: 512Mi
               memory: 128Mi
             limits:
               cpu: 500m
+              ephemeral-storage: 2Gi
               memory: 256Mi
+          volumeMounts:
+            - name: registry-push-tmp
+              mountPath: /var/run/mcp-runtime/registry-push
           readinessProbe:
             httpGet:
               path: /health
@@ -147,3 +168,6 @@ spec:
               port: 8080
             initialDelaySeconds: 15
             periodSeconds: 20
+      volumes:
+        - name: registry-push-tmp
+          emptyDir: {}

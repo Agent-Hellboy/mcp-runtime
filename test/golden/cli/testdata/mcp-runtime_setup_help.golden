@@ -11,28 +11,33 @@ Usage:
   mcp-runtime setup [flags]
 
 Flags:
-      --acme-email string              Contact email for Let's Encrypt (HTTP-01 via cert-manager). Mutually exclusive with --tls-cluster-issuer. Overrides env MCP_ACME_EMAIL
-      --acme-staging                   Use Let's Encrypt staging CA (also set MCP_ACME_STAGING=1)
-      --context string                 Kubernetes context to use
-      --force-ingress-install          Force repo-managed ingress install when only an IngressClass exists; refuses active external Traefik
-  -h, --help                           help for setup
-      --ingress string                 Ingress controller to install automatically during setup (traefik|none) (default "traefik")
-      --ingress-manifest string        Manifest to apply when installing the ingress controller (default "config/ingress/overlays/http")
-      --kubeconfig string              Path to kubeconfig file (default: ~/.kube/config)
-      --operator-leader-elect          Override operator leader election when set
-      --operator-metrics-addr string   Operator metrics bind address (default: :8080 from manager.yaml)
-      --operator-probe-addr string     Operator health probe bind address (default: :8081 from manager.yaml)
-      --parallel-builds                Build and publish setup images in parallel; keeps cluster, registry, TLS, and rollout sequencing unchanged
-      --platform-mode string           Platform access model (tenant|org|public). public exposes the catalog without login and lets signed-in users publish to the public preview namespace. (default "tenant")
-      --registry-storage string        Registry storage size (default: 20Gi) (default "20Gi")
-      --registry-type string           Registry type (docker; harbor coming soon) (default "docker")
-      --skip-cert-manager-install      Do not install cert-manager; require CRDs to already exist
-      --storage-mode string            Storage mode for local/dev clusters (dynamic|hostpath). Use hostpath for single-node k3s/minikube/kind without a provisioner. (default "dynamic")
-      --strict-prod                    Require production-style registry and TLS validation for non-test setup
-      --test-mode                      Test mode for local Kind/dev installs; builds and pushes latest-tag runtime images while relaxing production guardrails
-      --tls-cluster-issuer string      Use an existing cert-manager ClusterIssuer (e.g. internal CA; setup does not create it). Mutually exclusive with --acme-email. Overrides env MCP_TLS_CLUSTER_ISSUER
-      --with-tls                       Enable TLS overlays (ingress/registry). Use --acme-email for public Let's Encrypt, --tls-cluster-issuer for an org ClusterIssuer, or the bundled mcp-runtime-ca private CA (no ACME) when neither is set
-      --without-sentinel               Skip deploying the bundled mcp-sentinel stack
+      --acme-email string                   Contact email for Let's Encrypt (HTTP-01 via cert-manager). Mutually exclusive with --tls-cluster-issuer. Overrides env MCP_ACME_EMAIL
+      --acme-staging                        Use Let's Encrypt staging CA (also set MCP_ACME_STAGING=1)
+      --context string                      Kubernetes context to use
+      --env-file string                     Path to an env file to source before setup (e.g. config/deployments/mcpruntime-org.env); variables already in the environment are not overridden
+      --external-registry-password string   External/provisioned registry password for --registry-mode external (prefer PROVISIONED_REGISTRY_PASSWORD for shells)
+      --external-registry-url string        External/provisioned registry URL for --registry-mode external (overrides PROVISIONED_REGISTRY_URL and registry provision config)
+      --external-registry-username string   External/provisioned registry username for --registry-mode external
+      --force-ingress-install               Force repo-managed ingress install when only an IngressClass exists; refuses active external Traefik
+  -h, --help                                help for setup
+      --ingress string                      Ingress controller to install automatically during setup (traefik|none) (default "traefik")
+      --ingress-manifest string             Manifest to apply when installing the ingress controller (default "config/ingress/overlays/http")
+      --kubeconfig string                   Path to kubeconfig file (default: ~/.kube/config)
+      --operator-leader-elect               Override operator leader election when set
+      --operator-metrics-addr string        Operator metrics bind address (default: :8080 from manager.yaml)
+      --operator-probe-addr string          Operator health probe bind address (default: :8081 from manager.yaml)
+      --parallel-builds                     Build and publish setup images in parallel; keeps cluster, registry, TLS, and rollout sequencing unchanged
+      --platform-mode string                Platform access model (tenant|org|public). public exposes the catalog without login and lets signed-in users publish to the public preview namespace. (default "tenant")
+      --registry-mode string                Registry setup mode (auto|bundled-http|bundled-https|external). auto uses a provisioned registry config when present, otherwise the bundled registry (default "auto")
+      --registry-storage string             Registry storage size (default: 20Gi) (default "20Gi")
+      --registry-type string                Registry type (docker; harbor coming soon) (default "docker")
+      --skip-cert-manager-install           Do not install cert-manager; require CRDs to already exist
+      --storage-mode string                 Storage mode for local/dev clusters (dynamic|hostpath). Use hostpath for single-node k3s/minikube/kind without a provisioner. (default "dynamic")
+      --strict-prod                         Require production-style registry and TLS validation for non-test setup
+      --test-mode                           Test mode for local Kind/dev installs; builds and pushes latest-tag runtime images while relaxing production guardrails
+      --tls-cluster-issuer string           Use an existing cert-manager ClusterIssuer (e.g. internal CA; setup does not create it). Mutually exclusive with --acme-email. Overrides env MCP_SETUP_TLS_CLUSTER_ISSUER
+      --with-tls                            Enable TLS overlays (ingress/registry). Use --acme-email for public Let's Encrypt, --tls-cluster-issuer for an org ClusterIssuer, or the bundled mcp-runtime-ca private CA (no ACME) when neither is set
+      --without-sentinel                    Skip deploying the bundled mcp-sentinel stack
 
 Global Flags:
       --debug   Enable debug mode with structured error logging

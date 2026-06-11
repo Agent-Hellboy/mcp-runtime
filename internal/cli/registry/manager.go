@@ -6,6 +6,7 @@ package registry
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -14,16 +15,26 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"mcp-runtime/internal/cli/cluster/registrycompat"
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/kube"
+	"mcp-runtime/internal/cli/kubeerr"
 	"mcp-runtime/internal/cli/platformapi"
 	"mcp-runtime/internal/cli/registry/config"
 	"mcp-runtime/internal/cli/registry/ref"
+	"mcp-runtime/pkg/k8sclient"
+	"mcp-runtime/pkg/kubeworkload"
+	"mcp-runtime/pkg/publishscope"
 )
 
 const defaultRegistryImage = "registry:2.8.3"
 const registryImageOverrideEnv = "MCP_RUNTIME_REGISTRY_IMAGE_OVERRIDE"
+
+var newRegistryKubernetesClients = k8sclient.New
+
+const registryClientGoProbeTimeout = 3 * time.Second
 
 // RegistryManager handles registry operations with injected dependencies.
 type RegistryManager struct {
@@ -116,15 +127,104 @@ func RunRegistryProvision(mgr *RegistryManager, url, username, password, operato
 	return nil
 }
 
-// RunRegistryPush contains the registry push command flow for folder packages.
-func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helperNamespace string) error {
+// RunRegistryPush pushes an image through the platform API.
+func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if image == "" {
 		err := core.NewWithSentinel(core.ErrImageRequired, "image is required (use --image)")
 		core.Error("Image required")
 		core.LogStructuredError(mgr.logger, err, "Image required")
 		return err
 	}
+	platformClient, err := requirePlatformPushCredentials(ctx)
+	if err != nil {
+		return err
+	}
+	target, normalizedScope, err := buildRegistryPushTarget(ctx, mgr, platformClient, image, registryURL, name, scope, "platform")
+	if err != nil {
+		return err
+	}
+
+	mgr.logger.Info("Pushing image", zap.String("source", image), zap.String("target", target))
+	if err := mgr.PushViaPlatform(ctx, platformClient, image, target, string(normalizedScope)); err != nil {
+		return err
+	}
+	mgr.recordImagePublish(ctx, platformClient, image, target, "platform")
+	return nil
+}
+
+// RunAdminRegistryPush pushes an image using direct Kubernetes access for
+// operator debugging. Normal users should use registry push instead.
+func RunAdminRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := requireAdminClusterAccess(mgr); err != nil {
+		return err
+	}
+	if image == "" {
+		err := core.NewWithSentinel(core.ErrImageRequired, "image is required (use --image)")
+		core.Error("Image required")
+		core.LogStructuredError(mgr.logger, err, "Image required")
+		return err
+	}
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		mode = "in-cluster"
+	}
+	switch mode {
+	case "direct", "in-cluster":
+	default:
+		err := core.NewWithSentinel(core.ErrUnknownRegistryMode, fmt.Sprintf("admin registry push mode must be direct or in-cluster, not %q", mode))
+		core.Error("Unknown registry mode")
+		core.LogStructuredError(mgr.logger, err, "Unknown registry mode")
+		return err
+	}
+
+	var platformClient *platformapi.PlatformClient
+	normalizedScope, err := publishscope.Normalize(scope)
+	if err != nil {
+		return err
+	}
+	if normalizedScope == publishscope.Tenant {
+		platformClient, err = platformapi.NewPlatformClient()
+		if err != nil {
+			return fmt.Errorf("tenant scope requires platform credentials: %w", err)
+		}
+	}
+	target, _, err := buildRegistryPushTarget(ctx, mgr, platformClient, image, registryURL, name, scope, mode)
+	if err != nil {
+		return err
+	}
+
+	mgr.logger.Info("Pushing image via admin Kubernetes path", zap.String("source", image), zap.String("target", target), zap.String("mode", mode))
+	var pushErr error
+	switch mode {
+	case "direct":
+		pushErr = mgr.PushDirect(image, target)
+	case "in-cluster":
+		pushErr = mgr.PushInCluster(image, target, helperNamespace)
+	}
+	if pushErr != nil {
+		return pushErr
+	}
+	if platformClient != nil {
+		mgr.recordImagePublish(ctx, platformClient, image, target, mode)
+	}
+	return nil
+}
+
+func buildRegistryPushTarget(ctx context.Context, mgr *RegistryManager, platformClient *platformapi.PlatformClient, image, registryURL, name, scope, mode string) (string, publishscope.Scope, error) {
+	normalizedScope, err := publishscope.Normalize(scope)
+	if err != nil {
+		return "", "", err
+	}
 	targetRegistry := registryURL
+	if targetRegistry == "" && strings.TrimSpace(mode) == "in-cluster" {
+		targetRegistry = resolveInClusterPushRegistryURL(mgr.logger)
+	}
 	if targetRegistry == "" {
 		if ext, err := resolveExternalRegistryConfig(nil); err == nil && ext != nil && ext.URL != "" {
 			targetRegistry = strings.TrimSuffix(ext.URL, "/")
@@ -133,10 +233,6 @@ func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helpe
 	if targetRegistry == "" {
 		targetRegistry = resolvePlatformRegistryURL(mgr.logger)
 	}
-	platformClient, err := requirePlatformPushCredentials()
-	if err != nil {
-		return err
-	}
 
 	repo, tag := ref.SplitImage(image)
 	if name != "" {
@@ -144,38 +240,135 @@ func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helpe
 	} else {
 		repo = ref.DropRegistryPrefix(repo)
 	}
+	if normalizedScope != "" {
+		repo, err = ScopedRegistryRepository(ctx, platformClient, repo, normalizedScope)
+		if err != nil {
+			return "", "", err
+		}
+	}
 	target := targetRegistry + "/" + repo
 	if tag != "" {
 		target = target + ":" + tag
 	}
+	return target, normalizedScope, nil
+}
 
-	mgr.logger.Info("Pushing image", zap.String("source", image), zap.String("target", target))
-
-	var pushErr error
-	switch mode {
-	case "direct":
-		pushErr = mgr.PushDirect(image, target)
-	case "in-cluster":
-		pushErr = mgr.PushInCluster(image, target, helperNamespace)
-	default:
-		err := core.NewWithSentinel(core.ErrUnknownRegistryMode, fmt.Sprintf("unknown mode %q (use direct|in-cluster)", mode))
-		core.Error("Unknown registry mode")
-		core.LogStructuredError(mgr.logger, err, "Unknown registry mode")
-		return err
+func requireAdminClusterAccess(mgr *RegistryManager) error {
+	if mgr == nil || mgr.kubectl == nil {
+		return core.NewWithSentinel(nil, kubeerr.DirectModeFailureMessage("admin registry push requires admin cluster access", "kubectl client is unavailable"))
 	}
-	if pushErr != nil {
-		return pushErr
+	cmd, err := mgr.kubectl.CommandArgs([]string{"cluster-info"})
+	if err != nil {
+		return core.NewWithSentinel(nil, kubeerr.DirectModeFailureMessage("admin registry push requires admin cluster access", err.Error()))
 	}
-	mgr.recordImagePublish(platformClient, image, target, mode)
+	output, execErr := cmd.CombinedOutput()
+	if execErr != nil {
+		detail := kubeerr.CommandDetail(string(output), execErr)
+		return core.NewWithSentinel(nil, kubeerr.DirectModeFailureMessage("admin registry push requires admin cluster access", detail))
+	}
 	return nil
 }
 
-func requirePlatformPushCredentials() (*platformapi.PlatformClient, error) {
+// ScopedRegistryRepository applies the repository prefix implied by a publish scope.
+func ScopedRegistryRepository(ctx context.Context, client *platformapi.PlatformClient, repo string, scope publishscope.Scope) (string, error) {
+	repo = strings.Trim(repo, "/")
+	if scope == "" || repo == "" {
+		return repo, nil
+	}
+	if alias, ok := publishscope.RegistryAlias(scope); ok {
+		return prefixRepositoryScope(repo, alias), nil
+	}
+	if scope != publishscope.Tenant {
+		return repo, nil
+	}
+	if client == nil {
+		return "", fmt.Errorf("resolve tenant registry scope: platform client is required")
+	}
+	principal, err := client.CurrentPrincipal(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolve tenant registry scope: %w", err)
+	}
+	return scopedTenantRegistryRepository(repo, principal)
+}
+
+func prefixRepositoryScope(repo, scope string) string {
+	if repo == scope || strings.HasPrefix(repo, scope+"/") {
+		return repo
+	}
+	return scope + "/" + repo
+}
+
+func scopedTenantRegistryRepository(repo string, principal platformapi.Principal) (string, error) {
+	scopes := tenantRegistryScopes(principal)
+	if len(scopes) == 0 {
+		return "", fmt.Errorf("resolve tenant registry scope: authenticated principal has no team membership")
+	}
+	if strings.Contains(repo, "/") {
+		prefix := strings.TrimSpace(strings.SplitN(repo, "/", 2)[0])
+		if stringInSlice(prefix, scopes) {
+			return repo, nil
+		}
+		return "", fmt.Errorf("resolve tenant registry scope: repository must be scoped to one of your teams (%s)", strings.Join(quoteStrings(scopes), " or "))
+	}
+	return scopes[0] + "/" + repo, nil
+}
+
+func tenantRegistryScopes(principal platformapi.Principal) []string {
+	scopes := make([]string, 0, len(principal.Teams)*2)
+	for _, team := range principal.Teams {
+		if slug := strings.TrimSpace(team.Slug); slug != "" {
+			scopes = append(scopes, slug)
+		}
+		if namespace := strings.TrimSpace(team.Namespace); namespace != "" {
+			scopes = append(scopes, namespace)
+		}
+	}
+	return dedupeStrings(scopes)
+}
+
+func stringInSlice(value string, allowed []string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func quoteStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, fmt.Sprintf("%q", value))
+	}
+	return out
+}
+
+func dedupeStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func requirePlatformPushCredentials(ctx context.Context) (*platformapi.PlatformClient, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	client, err := platformapi.NewPlatformClient()
 	if err != nil {
-		return nil, fmt.Errorf("registry push requires platform credentials; run mcp-runtime auth login or set MCP_PLATFORM_API_TOKEN and MCP_PLATFORM_API_URL: %w", err)
+		return nil, fmt.Errorf("registry push requires platform credentials; run mcp-runtime auth login or set MCP_PLATFORM_API_TOKEN with a saved or explicit MCP_PLATFORM_API_URL: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := client.ValidateCredentials(ctx); err != nil {
 		return nil, fmt.Errorf("registry push credentials were rejected: %w", err)
@@ -183,11 +376,74 @@ func requirePlatformPushCredentials() (*platformapi.PlatformClient, error) {
 	return client, nil
 }
 
-func (m *RegistryManager) recordImagePublish(client *platformapi.PlatformClient, source, target, mode string) {
+// PushViaPlatform saves the local image and asks the platform API to push it in-cluster.
+func (m *RegistryManager) PushViaPlatform(ctx context.Context, client *platformapi.PlatformClient, source, target, scope string) error {
+	if client == nil {
+		return fmt.Errorf("platform client is required")
+	}
+	core.Info(fmt.Sprintf("Saving local image %s to a temporary archive", source))
+	tmpFile, err := os.CreateTemp("", "mcp-img-*.tar")
+	if err != nil {
+		return core.WrapWithSentinel(core.ErrCreateTempFileFailed, err, fmt.Sprintf("failed to create temp file: %v", err))
+	}
+	tmpPath := tmpFile.Name()
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return core.WrapWithSentinel(core.ErrCloseTempFileFailed, err, fmt.Sprintf("failed to close temp file: %v", err))
+	}
+	defer os.Remove(tmpPath)
+
+	saveCmd, err := m.exec.Command("docker", []string{"save", "-o", tmpPath, source})
+	if err != nil {
+		return err
+	}
+	saveCmd.SetStdout(os.Stdout)
+	saveCmd.SetStderr(os.Stderr)
+	if err := saveCmd.Run(); err != nil {
+		return core.WrapWithSentinelAndContext(
+			core.ErrSaveImageFailed,
+			err,
+			fmt.Sprintf("failed to save image: %v", err),
+			map[string]any{"source": source, "component": "registry"},
+		)
+	}
+	if info, err := os.Stat(tmpPath); err == nil {
+		core.Info(fmt.Sprintf("Saved image archive (%s); uploading to platform API", formatPushArchiveSize(info.Size())))
+	} else {
+		core.Info("Saved image archive; uploading to platform API")
+	}
+
+	uploadCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
+	core.Info(fmt.Sprintf("Uploading image for publish target %s", target))
+	if err := client.PushRegistryImage(uploadCtx, tmpPath, target, scope); err != nil {
+		return core.WrapWithSentinelAndContext(
+			core.ErrPushImageInClusterFailed,
+			err,
+			fmt.Sprintf("failed to push image via platform API: %v", err),
+			map[string]any{"target": target, "component": "registry"},
+		)
+	}
+	core.Success(fmt.Sprintf("Pushed %s via platform API", target))
+	return nil
+}
+
+func formatPushArchiveSize(size int64) string {
+	const mib = 1024 * 1024
+	if size <= 0 {
+		return "size unknown"
+	}
+	return fmt.Sprintf("%.1f MiB", float64(size)/mib)
+}
+
+func (m *RegistryManager) recordImagePublish(ctx context.Context, client *platformapi.PlatformClient, source, target, mode string) {
 	if client == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if err := client.RecordImagePublish(ctx, platformapi.ImagePublishRecord{
 		ImageRef:    target,
@@ -319,6 +575,10 @@ func deployRegistry(logger *zap.Logger, namespace string, port int, registryType
 		}
 	}
 
+	if err := applyRegistryCompatibilityOverlay(logger, namespace, manifestPath); err != nil {
+		return err
+	}
+
 	if err := ensureRegistryStorageSize(logger, namespace, registryStorageSize); err != nil {
 		return err
 	}
@@ -338,8 +598,55 @@ func DeployRegistry(logger *zap.Logger, namespace string, port int, registryType
 	return deployRegistry(logger, namespace, port, registryType, registryStorageSize, manifestPath)
 }
 
+func applyRegistryCompatibilityOverlay(logger *zap.Logger, namespace, manifestPath string) error {
+	overlaySubPath := registrycompat.OverlayPath(core.DefaultKubectlClient())
+	if overlaySubPath == "" {
+		return nil
+	}
+	compatPath := registrycompat.ResolveOverlayPath(manifestPath, overlaySubPath)
+	if logger != nil {
+		logger.Info("Applying registry compatibility overlay", zap.String("path", compatPath))
+	}
+	manifest, err := renderKustomizeManifest(core.DefaultKubectlClient(), compatPath)
+	if err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrDeployRegistryFailed,
+			err,
+			fmt.Sprintf("failed to render registry compatibility overlay %q: %v", compatPath, err),
+			map[string]any{"namespace": namespace, "manifest_path": compatPath, "component": "registry"},
+		)
+		core.Error("Failed to render registry compatibility overlay")
+		core.LogStructuredError(logger, wrappedErr, "Failed to render registry compatibility overlay")
+		return wrappedErr
+	}
+	if err := kube.ApplyManifestContentWithNamespace(core.DefaultKubectlClient().CommandArgs, manifest, namespace); err != nil {
+		wrappedErr := core.WrapWithSentinelAndContext(
+			core.ErrDeployRegistryFailed,
+			err,
+			fmt.Sprintf("failed to apply registry compatibility overlay: %v", err),
+			map[string]any{"namespace": namespace, "manifest_path": compatPath, "component": "registry"},
+		)
+		core.Error("Failed to apply registry compatibility overlay")
+		core.LogStructuredError(logger, wrappedErr, "Failed to apply registry compatibility overlay")
+		return wrappedErr
+	}
+	return nil
+}
+
 func ensureNamespace(namespace string) error {
+	clients, err := registryKubernetesClients()
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), registryClientGoProbeTimeout)
+		defer cancel()
+		if err := k8sclient.EnsureNamespace(ctx, clients, namespace, nil); err == nil {
+			return nil
+		}
+	}
 	return kube.EnsureNamespace(core.DefaultKubectlClient().CommandArgs, namespace)
+}
+
+func registryKubernetesClients() (*k8sclient.Clients, error) {
+	return newRegistryKubernetesClients()
 }
 
 func buildOperatorImage(image string) error {
@@ -365,6 +672,16 @@ func pushOperatorImage(image string) error {
 func waitForDeploymentAvailable(logger *zap.Logger, name, namespace, selector string, timeout time.Duration) error {
 	if logger != nil {
 		logger.Info("Waiting for deployment rollout", zap.String("deployment", name), zap.String("namespace", namespace), zap.String("selector", selector))
+	}
+	clients, err := registryKubernetesClients()
+	if err == nil {
+		waitCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		if err := k8sclient.WaitForDeploymentRolledOut(waitCtx, clients, namespace, name, timeout); err == nil {
+			return nil
+		} else if logger != nil {
+			logger.Debug("Client-go deployment wait failed, falling back to kubectl rollout status", zap.Error(err))
+		}
 	}
 	return core.DefaultKubectlClient().RunWithOutput([]string{
 		"rollout", "status",
@@ -406,7 +723,7 @@ func renderKustomizeManifest(kubectl core.KubectlRunner, manifestPath string) (s
 	renderCmd.SetStdout(&stdout)
 	renderCmd.SetStderr(&stderr)
 	if err := renderCmd.Run(); err != nil {
-		return "", fmt.Errorf("kubectl kustomize %s failed: %v (%s)", manifestPath, err, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("kubectl kustomize %s failed: %w (%s)", manifestPath, err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
 }
@@ -415,6 +732,26 @@ func ensureRegistryStorageSize(logger *zap.Logger, namespace, registryStorageSiz
 	storageSize := strings.TrimSpace(registryStorageSize)
 	if storageSize == "" {
 		return nil
+	}
+	clients, err := registryKubernetesClients()
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), registryClientGoProbeTimeout)
+		defer cancel()
+		currentSize, err := k8sclient.PersistentVolumeClaimStorage(ctx, clients, namespace, core.RegistryPVCName)
+		if err == nil {
+			if currentSize == storageSize {
+				logger.Info("Registry storage size already matches requested value", zap.String("size", storageSize))
+				return nil
+			}
+			logger.Info("Updating registry storage size", zap.String("from", currentSize), zap.String("to", storageSize))
+			if err := k8sclient.UpdatePersistentVolumeClaimStorage(ctx, clients, namespace, core.RegistryPVCName, storageSize); err == nil {
+				return nil
+			} else if logger != nil {
+				logger.Debug("Client-go PVC storage update failed, falling back to kubectl patch", zap.Error(err))
+			}
+		} else if logger != nil {
+			logger.Debug("Client-go PVC storage read failed, falling back to kubectl get", zap.Error(err))
+		}
 	}
 
 	// #nosec G204 -- fixed kubectl command, namespace from internal config.
@@ -468,24 +805,21 @@ func (m *RegistryManager) CheckRegistryStatus(namespace string) error {
 	core.Header("Registry Status")
 	core.DefaultPrinter.Println()
 
-	// Get deployment status
-	// #nosec G204 -- fixed kubectl command, namespace from internal config.
-	readyOut, err := m.kubectl.Output([]string{"get", "deployment", core.RegistryDeploymentName, "-n", namespace, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"})
+	replicas, endpoint, podPhase, err := registryStatusWithClientGo(namespace)
 	if err != nil {
-		core.Error("Registry deployment not found")
-		return err
+		readyOut, readyErr := m.kubectl.Output([]string{"get", "deployment", core.RegistryDeploymentName, "-n", namespace, "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"})
+		if readyErr != nil {
+			core.Error("Registry deployment not found")
+			return readyErr
+		}
+		ipOut, _ := m.kubectl.Output([]string{"get", "service", core.RegistryServiceName, "-n", namespace, "-o", "jsonpath={.spec.clusterIP}:{.spec.ports[0].port}"})
+		podOut, _ := m.kubectl.Output([]string{"get", "pods", "-n", namespace, "-l", core.SelectorRegistry, "-o", "jsonpath={.items[0].status.phase}"})
+		replicas = strings.TrimSpace(string(readyOut))
+		endpoint = strings.TrimSpace(string(ipOut))
+		podPhase = strings.TrimSpace(string(podOut))
 	}
 
-	// Get service IP
-	// #nosec G204 -- fixed kubectl command, namespace from internal config.
-	ipOut, _ := m.kubectl.Output([]string{"get", "service", core.RegistryServiceName, "-n", namespace, "-o", "jsonpath={.spec.clusterIP}:{.spec.ports[0].port}"})
-
-	// Get pod status
-	// #nosec G204 -- fixed kubectl command, namespace from internal config.
-	podOut, _ := m.kubectl.Output([]string{"get", "pods", "-n", namespace, "-l", core.SelectorRegistry, "-o", "jsonpath={.items[0].status.phase}"})
-
 	// Build status table
-	replicas := strings.TrimSpace(string(readyOut))
 	status := core.Green("Healthy")
 	if replicas == "" || strings.HasPrefix(replicas, "/") || strings.HasPrefix(replicas, "0/") {
 		status = core.Yellow("Starting")
@@ -495,8 +829,8 @@ func (m *RegistryManager) CheckRegistryStatus(namespace string) error {
 		{"Property", "Value"},
 		{"Status", status},
 		{"Replicas", replicas},
-		{"Endpoint", strings.TrimSpace(string(ipOut))},
-		{"Pod Phase", strings.TrimSpace(string(podOut))},
+		{"Endpoint", endpoint},
+		{"Pod Phase", podPhase},
 	}
 
 	core.TableBoxed(tableData)
@@ -536,32 +870,28 @@ func (m *RegistryManager) LoginRegistry(registryURL, username, password string) 
 // ShowRegistryInfo displays registry connection information.
 func (m *RegistryManager) ShowRegistryInfo() error {
 	ns := core.NamespaceRegistry
-	// #nosec G204 -- fixed kubectl command with hardcoded namespace.
-	ingressHost, err := m.kubectl.Output([]string{"get", "ingress", core.RegistryServiceName, "-n", ns, "-o", "jsonpath={.spec.rules[0].host}"})
+	host, ip, p, err := registryInfoWithClientGo(ns)
 	if err != nil {
-		m.logger.Debug("Failed to get registry ingress host", zap.Error(err))
+		ingressHost, ingressErr := m.kubectl.Output([]string{"get", "ingress", core.RegistryServiceName, "-n", ns, "-o", "jsonpath={.spec.rules[0].host}"})
+		if ingressErr != nil {
+			m.logger.Debug("Failed to get registry ingress host", zap.Error(ingressErr))
+		}
+		clusterIP, ipErr := m.kubectl.Output([]string{"get", "service", core.RegistryServiceName, "-n", ns, "-o", "jsonpath={.spec.clusterIP}"})
+		if ipErr != nil {
+			m.logger.Debug("Failed to get registry cluster IP", zap.Error(ipErr))
+		}
+		port, portErr := m.kubectl.Output([]string{"get", "service", core.RegistryServiceName, "-n", ns, "-o", "jsonpath={.spec.ports[0].port}"})
+		if portErr != nil {
+			m.logger.Debug("Failed to get registry port", zap.Error(portErr))
+		}
+		host = strings.TrimSpace(string(ingressHost))
+		ip = strings.TrimSpace(string(clusterIP))
+		p = strings.TrimSpace(string(port))
 	}
 
-	// Get registry service
-	// #nosec G204 -- fixed kubectl command with hardcoded namespace.
-	clusterIP, err := m.kubectl.Output([]string{"get", "service", core.RegistryServiceName, "-n", ns, "-o", "jsonpath={.spec.clusterIP}"})
-	if err != nil {
-		m.logger.Debug("Failed to get registry cluster IP", zap.Error(err))
-	}
-
-	// #nosec G204 -- fixed kubectl command with hardcoded namespace.
-	port, err := m.kubectl.Output([]string{"get", "service", core.RegistryServiceName, "-n", ns, "-o", "jsonpath={.spec.ports[0].port}"})
-	if err != nil {
-		m.logger.Debug("Failed to get registry port", zap.Error(err))
-	}
-
-	if len(clusterIP) > 0 && len(port) > 0 {
+	if ip != "" && p != "" {
 		core.Header("Registry Information")
 		core.DefaultPrinter.Println()
-
-		ip := strings.TrimSpace(string(clusterIP))
-		p := strings.TrimSpace(string(port))
-		host := strings.TrimSpace(string(ingressHost))
 
 		tableData := [][]string{
 			{"Property", "Value"},
@@ -690,9 +1020,17 @@ func (m *RegistryManager) PushInCluster(source, target, helperNS string) error {
 		return wrappedErr
 	}
 
+	overrides, err := registryPushHelperOverrides(helperName)
+	if err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrStartHelperPodFailed, err, fmt.Sprintf("failed to build helper pod security overrides: %v", err))
+		core.Error("Failed to build helper pod security overrides")
+		core.LogStructuredError(m.logger, wrappedErr, "Failed to build helper pod security overrides")
+		return wrappedErr
+	}
+
 	// Start helper pod with skopeo
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	if err := m.kubectl.RunWithOutput([]string{"run", helperName, "-n", helperNS, "--image=" + core.GetSkopeoImage(), "--restart=Never", "--command", "--", "sh", "-c", "while true; do sleep 3600; done"}, os.Stdout, os.Stderr); err != nil {
+	if err := m.kubectl.RunWithOutput([]string{"run", helperName, "-n", helperNS, "--image=" + core.GetSkopeoImage(), "--restart=Never", "--overrides=" + overrides, "--command", "--", "sh", "-c", "while true; do sleep 3600; done"}, os.Stdout, os.Stderr); err != nil {
 		wrappedErr := core.WrapWithSentinelAndContext(
 			core.ErrStartHelperPodFailed,
 			err,
@@ -764,8 +1102,36 @@ func (m *RegistryManager) PushInCluster(source, target, helperNS string) error {
 		return wrappedErr
 	}
 
-	core.Success(fmt.Sprintf("Pushed %s via in-cluster helper", target))
+	if pushTarget != target {
+		core.Success(fmt.Sprintf("Pushed %s via in-cluster helper (helper destination %s)", target, pushTarget))
+	} else {
+		core.Success(fmt.Sprintf("Pushed %s via in-cluster helper", target))
+	}
 	return nil
+}
+
+func registryPushHelperOverrides(helperName string) (string, error) {
+	overrides := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Pod",
+		"spec": map[string]any{
+			"automountServiceAccountToken": false,
+			"securityContext":              kubeworkload.RestrictedPodSecurityContext(),
+			"containers": []map[string]any{
+				{
+					"name":            helperName,
+					"image":           core.GetSkopeoImage(),
+					"command":         []string{"sh", "-c", "while true; do sleep 3600; done"},
+					"securityContext": kubeworkload.RestrictedContainerSecurityContext(),
+				},
+			},
+		},
+	}
+	b, err := json.Marshal(overrides)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // rewriteTargetHostForInClusterPush replaces the host portion of an image reference
@@ -794,14 +1160,22 @@ func rewriteTargetHostForInClusterPush(target string, kubectl *core.KubectlClien
 	}
 
 	internal := map[string]struct{}{}
-	if ep := strings.ToLower(strings.TrimSpace(core.GetRegistryEndpoint())); ep != "" {
-		if idx := strings.LastIndex(ep, ":"); idx >= 0 {
-			ep = ep[:idx]
+	addInternalHost := func(value string) {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			return
 		}
-		internal[ep] = struct{}{}
+		if idx := strings.LastIndex(value, ":"); idx >= 0 {
+			value = value[:idx]
+		}
+		if value != "" {
+			internal[value] = struct{}{}
+		}
 	}
-	if ih := strings.ToLower(strings.TrimSpace(core.GetRegistryIngressHost())); ih != "" {
-		internal[ih] = struct{}{}
+	addInternalHost(core.GetRegistryEndpoint())
+	addInternalHost(core.GetRegistryIngressHost())
+	if host, _, err := discoverRegistryHostAndPort(kubectl); err == nil {
+		addInternalHost(host)
 	}
 
 	if _, ok := internal[hostNoPort]; !ok {
@@ -809,17 +1183,109 @@ func rewriteTargetHostForInClusterPush(target string, kubectl *core.KubectlClien
 	}
 
 	port := core.GetRegistryPort()
-	if kubectl != nil {
-		// #nosec G204 -- fixed arguments, no user input.
-		if portCmd, err := kubectl.CommandArgs([]string{"get", "service", core.RegistryServiceName, "-n", core.NamespaceRegistry, "-o", "jsonpath={.spec.ports[0].port}"}); err == nil {
-			if out, err := portCmd.Output(); err == nil {
-				if p := strings.TrimSpace(string(out)); p != "" {
-					port = parsePortOrDefault(p, port)
-				}
-			}
-		}
+	if _, discoveredPort, err := discoverRegistryHostAndPort(kubectl); err == nil && discoveredPort != "" {
+		port = parsePortOrDefault(discoveredPort, port)
 	}
 	return fmt.Sprintf("%s.%s.svc.cluster.local:%d%s", core.RegistryServiceName, core.NamespaceRegistry, port, rest)
+}
+
+func discoverRegistryHostAndPort(kubectl *core.KubectlClient) (string, string, error) {
+	clients, err := registryKubernetesClients()
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), registryClientGoProbeTimeout)
+		defer cancel()
+		svc, svcErr := clients.Clientset.CoreV1().Services(core.NamespaceRegistry).Get(ctx, core.RegistryServiceName, metav1.GetOptions{})
+		if svcErr == nil {
+			port := ""
+			if len(svc.Spec.Ports) > 0 {
+				port = fmt.Sprintf("%d", svc.Spec.Ports[0].Port)
+			}
+			ingressHost := ""
+			if ing, ingErr := clients.Clientset.NetworkingV1().Ingresses(core.NamespaceRegistry).Get(ctx, core.RegistryServiceName, metav1.GetOptions{}); ingErr == nil {
+				if len(ing.Spec.Rules) > 0 {
+					ingressHost = strings.TrimSpace(ing.Spec.Rules[0].Host)
+				}
+			}
+			return ingressHost, port, nil
+		}
+	}
+	if kubectl == nil {
+		return "", "", fmt.Errorf("kubectl client unavailable")
+	}
+	var host, port string
+	if ingressCmd, err := kubectl.CommandArgs([]string{"get", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry, "-o", "jsonpath={.spec.rules[0].host}"}); err == nil {
+		if out, err := ingressCmd.Output(); err == nil {
+			host = strings.TrimSpace(string(out))
+		}
+	}
+	if portCmd, err := kubectl.CommandArgs([]string{"get", "service", core.RegistryServiceName, "-n", core.NamespaceRegistry, "-o", "jsonpath={.spec.ports[0].port}"}); err == nil {
+		if out, err := portCmd.Output(); err == nil {
+			port = strings.TrimSpace(string(out))
+		}
+	}
+	if host == "" && port == "" {
+		return "", "", fmt.Errorf("registry host and port not discoverable")
+	}
+	return host, port, nil
+}
+
+func registryStatusWithClientGo(namespace string) (string, string, string, error) {
+	clients, err := registryKubernetesClients()
+	if err != nil {
+		return "", "", "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), registryClientGoProbeTimeout)
+	defer cancel()
+	deploy, err := clients.Clientset.AppsV1().Deployments(namespace).Get(ctx, core.RegistryDeploymentName, metav1.GetOptions{})
+	if err != nil {
+		return "", "", "", err
+	}
+	replicas := int32(1)
+	if deploy.Spec.Replicas != nil {
+		replicas = *deploy.Spec.Replicas
+	}
+	service, err := clients.Clientset.CoreV1().Services(namespace).Get(ctx, core.RegistryServiceName, metav1.GetOptions{})
+	if err != nil {
+		return "", "", "", err
+	}
+	endpoint := strings.TrimSpace(service.Spec.ClusterIP)
+	if endpoint != "" && len(service.Spec.Ports) > 0 {
+		endpoint = fmt.Sprintf("%s:%d", endpoint, service.Spec.Ports[0].Port)
+	}
+	pods, err := clients.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: core.SelectorRegistry, Limit: 1})
+	if err != nil {
+		return "", "", "", err
+	}
+	podPhase := ""
+	if len(pods.Items) > 0 {
+		podPhase = string(pods.Items[0].Status.Phase)
+	}
+	return fmt.Sprintf("%d/%d", deploy.Status.ReadyReplicas, replicas), endpoint, podPhase, nil
+}
+
+func registryInfoWithClientGo(namespace string) (string, string, string, error) {
+	clients, err := registryKubernetesClients()
+	if err != nil {
+		return "", "", "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), registryClientGoProbeTimeout)
+	defer cancel()
+	ingressHost := ""
+	if ingress, err := clients.Clientset.NetworkingV1().Ingresses(namespace).Get(ctx, core.RegistryServiceName, metav1.GetOptions{}); err == nil {
+		if len(ingress.Spec.Rules) > 0 {
+			ingressHost = strings.TrimSpace(ingress.Spec.Rules[0].Host)
+		}
+	}
+	service, err := clients.Clientset.CoreV1().Services(namespace).Get(ctx, core.RegistryServiceName, metav1.GetOptions{})
+	if err != nil {
+		return "", "", "", err
+	}
+	clusterIP := strings.TrimSpace(service.Spec.ClusterIP)
+	port := ""
+	if len(service.Spec.Ports) > 0 {
+		port = fmt.Sprintf("%d", service.Spec.Ports[0].Port)
+	}
+	return ingressHost, clusterIP, port, nil
 }
 
 func parsePortOrDefault(s string, def int) int {

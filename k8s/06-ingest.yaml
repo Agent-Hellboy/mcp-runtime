@@ -20,8 +20,7 @@ metadata:
   name: mcp-sentinel-ingest
   namespace: mcp-sentinel
 spec:
-  # Single replica by default: single-node k3s/minikube often lacks capacity for 2+ HA replicas here.
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: mcp-sentinel-ingest
@@ -33,14 +32,18 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: ingest
           image: mcp-sentinel-ingest:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
             readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
             capabilities:
               drop:
                 - ALL

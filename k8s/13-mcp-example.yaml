@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: mcp-example-server
+  name: workspace-assistant-server
   namespace: mcp-sentinel
 spec:
   selector:
-    app: mcp-example-server
+    app: workspace-assistant-server
   ports:
     - name: http
       port: 8090
@@ -14,24 +14,24 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mcp-example-server
+  name: workspace-assistant-server
   namespace: mcp-sentinel
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: mcp-example-server
+      app: workspace-assistant-server
   template:
     metadata:
       labels:
-        app: mcp-example-server
+        app: workspace-assistant-server
     spec:
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
       containers:
-        - name: mcp-example-server
-          image: go-example-mcp:latest
+        - name: workspace-assistant-server
+          image: workspace-assistant-mcp:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false

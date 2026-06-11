@@ -17,7 +17,7 @@ metadata:
   name: mcp-sentinel-processor
   namespace: mcp-sentinel
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: mcp-sentinel-processor
@@ -29,14 +29,18 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: processor
           image: mcp-sentinel-processor:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
             readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
             capabilities:
               drop:
                 - ALL

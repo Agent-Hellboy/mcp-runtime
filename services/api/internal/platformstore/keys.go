@@ -41,6 +41,8 @@ func randomURLToken(rawBytes int) (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
+
+// ListUserAPIKeys returns non-secret API key metadata for a user.
 func (s *Store) ListUserAPIKeys(ctx context.Context, userID string) ([]APIKeySummary, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, prefix, created_at, revoked, revoked_at FROM api_keys WHERE user_id = $1 ORDER BY created_at DESC`, userID)
 	if err != nil {
@@ -58,6 +60,7 @@ func (s *Store) ListUserAPIKeys(ctx context.Context, userID string) ([]APIKeySum
 	return out, rows.Err()
 }
 
+// CreateUserAPIKey creates a user API key and returns its one-time raw value.
 func (s *Store) CreateUserAPIKey(ctx context.Context, userID, name string) (APIKeySummary, string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -76,6 +79,7 @@ func (s *Store) CreateUserAPIKey(ctx context.Context, userID, name string) (APIK
 	return rec, rawKey, nil
 }
 
+// RevokeUserAPIKey marks a user API key as revoked.
 func (s *Store) RevokeUserAPIKey(ctx context.Context, userID, id string) (APIKeySummary, error) {
 	var rec APIKeySummary
 	err := s.db.QueryRowContext(ctx, `
@@ -93,6 +97,7 @@ RETURNING id, name, prefix, created_at, revoked, revoked_at`, userID, id).
 	return rec, nil
 }
 
+// ListRegistryCredentials returns non-secret registry credential metadata for a user.
 func (s *Store) ListRegistryCredentials(ctx context.Context, userID string) ([]APIKeySummary, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, prefix, created_at, revoked, revoked_at FROM registry_credentials WHERE user_id = $1 ORDER BY created_at DESC`, userID)
 	if err != nil {
@@ -110,6 +115,7 @@ func (s *Store) ListRegistryCredentials(ctx context.Context, userID string) ([]A
 	return out, rows.Err()
 }
 
+// CreateRegistryCredential creates a registry credential and returns its one-time raw value.
 func (s *Store) CreateRegistryCredential(ctx context.Context, userID, name string) (APIKeySummary, string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -129,6 +135,7 @@ func (s *Store) CreateRegistryCredential(ctx context.Context, userID, name strin
 	return rec, rawKey, nil
 }
 
+// RevokeRegistryCredential marks a registry credential as revoked.
 func (s *Store) RevokeRegistryCredential(ctx context.Context, userID, id string) (APIKeySummary, error) {
 	var rec APIKeySummary
 	err := s.db.QueryRowContext(ctx, `
@@ -146,37 +153,55 @@ RETURNING id, name, prefix, created_at, revoked, revoked_at`, userID, id).
 	return rec, nil
 }
 
-func (s *Store) AuthenticateRegistryCredential(ctx context.Context, username, rawKey string) (Principal, bool, error) {
+// AuthenticateRegistryCredential validates Docker registry basic-auth credentials.
+// It supports both registry-specific API keys (mcpr_ prefix) and regular
+// platform passwords.
+func (s *Store) AuthenticateRegistryCredential(ctx context.Context, username, password string) (Principal, bool, error) {
 	username = strings.TrimSpace(username)
-	if username == "" || rawKey == "" {
+	password = strings.TrimSpace(password)
+	if username == "" || password == "" {
 		return Principal{}, false, nil
 	}
 
-	targetHash := hashAPIKey(rawKey)
-	var keyID, userID string
-	err := s.db.QueryRowContext(ctx, `
+	// 1. Try registry-specific API keys (mcpr_ prefix)
+	if strings.HasPrefix(password, "mcpr_") {
+		targetHash := hashAPIKey(password)
+		var keyID, userID string
+		err := s.db.QueryRowContext(ctx, `
 SELECT rc.id, rc.user_id
 FROM registry_credentials rc
 JOIN users u ON u.id = rc.user_id AND u.deleted_at IS NULL
 WHERE rc.key_hash = $1 AND rc.revoked = false`, targetHash).
-		Scan(&keyID, &userID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Principal{}, false, nil
+			Scan(&keyID, &userID)
+		if err == nil {
+			p, err := s.PrincipalForUserID(ctx, userID)
+			if err != nil {
+				return Principal{}, false, err
+			}
+			if !registryCredentialUsernameMatches(p, username) {
+				return Principal{}, false, nil
+			}
+			_, _ = s.db.ExecContext(ctx, `UPDATE registry_credentials SET last_used_at = now() WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '5 minutes')`, keyID)
+			p.AuthType = "registry_basic"
+			p.APIKeyID = keyID
+			return p, true, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return Principal{}, false, err
+		}
 	}
-	if err != nil {
+
+	// 2. Fallback to regular platform password authentication
+	u, ok, err := s.AuthenticatePassword(ctx, username, password)
+	if err != nil || !ok {
 		return Principal{}, false, err
 	}
 
-	p, err := s.PrincipalForUserID(ctx, userID)
+	p, err := s.PrincipalForUserID(ctx, u.ID)
 	if err != nil {
 		return Principal{}, false, err
 	}
-	if !registryCredentialUsernameMatches(p, username) {
-		return Principal{}, false, nil
-	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE registry_credentials SET last_used_at = now() WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '5 minutes')`, keyID)
-	p.AuthType = "registry_basic"
-	p.APIKeyID = keyID
+	p.AuthType = "registry_password"
 	return p, true, nil
 }
 

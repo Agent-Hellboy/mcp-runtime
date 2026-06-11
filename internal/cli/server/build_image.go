@@ -8,24 +8,34 @@ package server
 //   mcp-runtime server build image my-server --dockerfile custom.Dockerfile --registry my-registry.com
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"go.uber.org/zap"
-
-	"mcp-runtime/internal/cli/registry/resolve"
-	"mcp-runtime/pkg/metadata"
-
 	"gopkg.in/yaml.v3"
 
 	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/internal/cli/platformapi"
+	"mcp-runtime/internal/cli/registry"
+	"mcp-runtime/internal/cli/registry/resolve"
+	"mcp-runtime/pkg/metadata"
+	"mcp-runtime/pkg/publishscope"
 )
+
+const buildTenantScopeTimeout = 30 * time.Second
+const defaultDockerBuildPlatform = "linux/amd64"
 
 // yamlMarshal is a test seam for yaml.Marshal.
 var yamlMarshal = yaml.Marshal
 
-func buildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, context string) error {
+func buildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, platform, contextDir string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	// Get registry URL
 	if registryURL == "" {
 		kubectl := core.DefaultKubectlClient()
@@ -44,17 +54,24 @@ func buildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metada
 	logger.Info("Building image", zap.String("server", serverName))
 
 	// Determine image name
-	imageName := fmt.Sprintf("%s/%s", registryURL, serverName)
+	repository, err := scopedRepositoryNameForBuild(ctx, serverName, metadataFile, metadataDir)
+	if err != nil {
+		core.Error("Failed to resolve image repository")
+		core.LogStructuredError(logger, err, "Failed to resolve image repository")
+		return err
+	}
+	imageName := fmt.Sprintf("%s/%s", registryURL, repository)
 	fullImage := fmt.Sprintf("%s:%s", imageName, tag)
+	platform = normalizeDockerBuildPlatform(platform)
 
 	// Build Docker image
+	buildArgs := []string{"build"}
+	if platform != "" {
+		buildArgs = append(buildArgs, "--platform", platform)
+	}
+	buildArgs = append(buildArgs, "-f", dockerfile, "-t", fullImage, contextDir)
 	// #nosec G204 -- command arguments are built from trusted inputs and fixed verbs.
-	buildCmd, err := core.ExecCommandWithValidators("docker", []string{
-		"build",
-		"-f", dockerfile,
-		"-t", fullImage,
-		context,
-	})
+	buildCmd, err := core.ExecCommandWithValidators("docker", buildArgs)
 	if err != nil {
 		return err
 	}
@@ -84,15 +101,79 @@ func buildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metada
 	return nil
 }
 
+func scopedRepositoryNameForBuild(ctx context.Context, serverName, metadataFile, metadataDir string) (string, error) {
+	server, ok, err := findMetadataServer(serverName, metadataFile, metadataDir)
+	if err != nil {
+		return "", core.WrapWithSentinel(core.ErrLoadMetadataFailed, err, fmt.Sprintf("failed to load metadata: %v", err))
+	}
+	if !ok {
+		return serverName, nil
+	}
+	scope, err := publishscope.Normalize(string(server.Scope))
+	if err != nil {
+		return serverName, nil
+	}
+	if scope == publishscope.Tenant {
+		client, err := platformapi.NewPlatformClient()
+		if err != nil {
+			return "", fmt.Errorf("build tenant-scoped image requires platform credentials; run mcp-runtime auth login or set MCP_PLATFORM_API_TOKEN with a saved or explicit MCP_PLATFORM_API_URL: %w", err)
+		}
+		scopedCtx, cancel := context.WithTimeout(ctx, buildTenantScopeTimeout)
+		defer cancel()
+		return registry.ScopedRegistryRepository(scopedCtx, client, serverName, scope)
+	}
+	return registry.ScopedRegistryRepository(ctx, nil, serverName, scope)
+}
+
+func findMetadataServer(serverName, metadataFile, metadataDir string) (metadata.ServerMetadata, bool, error) {
+	files := []string{}
+	if metadataFile != "" {
+		files = append(files, metadataFile)
+	} else {
+		yamlFiles, _ := filepath.Glob(filepath.Join(metadataDir, "*.yaml"))
+		ymlFiles, _ := filepath.Glob(filepath.Join(metadataDir, "*.yml"))
+		files = append(files, yamlFiles...)
+		files = append(files, ymlFiles...)
+	}
+
+	for _, file := range files {
+		registry, err := metadata.LoadFromFile(file)
+		if err != nil {
+			if metadataFile != "" {
+				return metadata.ServerMetadata{}, false, err
+			}
+			continue
+		}
+		for _, server := range registry.Servers {
+			if server.Name == serverName {
+				return server, true, nil
+			}
+		}
+	}
+	return metadata.ServerMetadata{}, false, nil
+}
+
 // BuildImage builds a Docker image and updates MCP metadata for the server.
-func BuildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, context string) error {
-	return buildImage(logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, context)
+func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, platform, contextDir string) error {
+	return buildImage(ctx, logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, platform, contextDir)
+}
+
+func normalizeDockerBuildPlatform(platform string) string {
+	if platform = strings.TrimSpace(platform); platform != "" {
+		return platform
+	}
+	if platform = strings.TrimSpace(os.Getenv("MCP_DOCKER_PLATFORM")); platform != "" {
+		return platform
+	}
+	return defaultDockerBuildPlatform
 }
 
 func registryResolveConfig() resolve.Config {
 	return resolve.Config{
 		RegistryEndpoint:        core.DefaultCLIConfig.RegistryEndpoint,
 		DefaultRegistryEndpoint: core.DefaultRegistryEndpoint,
+		RegistryIngressHost:     core.DefaultCLIConfig.RegistryIngressHost,
+		DefaultRegistryHost:     core.DefaultRegistryIngressHost,
 		RegistryPort:            core.DefaultCLIConfig.RegistryPort,
 	}
 }

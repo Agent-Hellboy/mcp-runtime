@@ -52,8 +52,8 @@ Rules to verify:
 
 - Single-team/example MCPs in this guide live in `mcp-servers`.
 - Org-mode and public-mode catalogs live in `mcp-servers-org` and
-  `mcp-servers-public`; tenant MCPs live in `mcp-team-<slug>` or user
-  namespaces with matching ownership.
+  `mcp-servers-public`; tenant MCPs live in `mcp-team-<slug>` namespaces with
+  matching ownership.
 - Non-admin users should receive `403` when explicitly requesting another
   tenant namespace.
 - Direct `kubectl get mcpservers -A` is not an authz check; it shows what your
@@ -124,9 +124,7 @@ The host usually cannot resolve Kubernetes service DNS. Use the CLI helper:
 
 ./bin/mcp-runtime registry push \
   --image example:dev \
-  --name example \
-  --registry registry.registry.svc.cluster.local:5000 \
-  --namespace registry
+  --name example
 ```
 
 For one-node Kind debug loops, `kind load docker-image` is also valid when the
@@ -181,3 +179,27 @@ In local Kind, `MCPServer.status.phase` can stay `PartiallyReady` even when the
 Deployment is ready and traffic works, because strict ingress readiness waits
 for load balancer status. Use the Deployment, Service, Ingress, and actual
 traffic checks to decide whether local routing works.
+
+## Grant or Session Does Not Affect Traffic
+
+Use the platform API path first:
+
+```bash
+./bin/mcp-runtime auth login --api-url http://localhost:18080
+./bin/mcp-runtime access grant list --namespace mcp-servers
+./bin/mcp-runtime access session list --namespace mcp-servers
+./bin/mcp-runtime server policy inspect <server-name> --namespace mcp-servers
+```
+
+Allow a few seconds after apply; the gateway sidecar reloads rendered policy on
+a short polling loop. If policy looks correct but calls still fail, check
+gateway logs and request headers (`Mcp-Session-Id`, `X-MCP-Agent-Session`,
+`X-MCP-Human-ID`, `X-MCP-Agent-ID`).
+
+Admin/operator fallback:
+
+```bash
+kubectl get mcpaccessgrant,mcpagentsession -n <namespace> -o wide
+./bin/mcp-runtime server policy inspect <server-name> --namespace <namespace> --use-kube
+kubectl get cm -n <namespace> <server-name>-gateway-policy -o yaml
+```

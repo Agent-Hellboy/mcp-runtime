@@ -83,5 +83,5 @@ Run:
 
 ```bash
 go test ./pkg/metadata/... -count=1
-go test ./internal/cli/pipeline ./internal/cli/server -run 'TestPipeline|TestBuild' -count=1
+go test ./internal/cli/server -run 'TestGenerate|TestBuild' -count=1
 ```

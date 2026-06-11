@@ -2,6 +2,7 @@ package registry
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -10,9 +11,26 @@ import (
 	"testing"
 
 	"go.uber.org/zap"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/internal/cli/platformapi"
+	"mcp-runtime/pkg/k8sclient"
 )
+
+func TestMain(m *testing.M) {
+	orig := newRegistryKubernetesClients
+	newRegistryKubernetesClients = func() (*k8sclient.Clients, error) {
+		return nil, errors.New("client-go disabled for registry unit tests unless explicitly stubbed")
+	}
+	code := m.Run()
+	newRegistryKubernetesClients = orig
+	os.Exit(code)
+}
 
 func TestRegistryManager_CheckRegistryStatus(t *testing.T) {
 	t.Run("returns error when deployment not found", func(t *testing.T) {
@@ -51,6 +69,37 @@ func TestRegistryManager_CheckRegistryStatus(t *testing.T) {
 		}
 		if !found {
 			t.Error("expected kubectl get deployment to be called")
+		}
+	})
+
+	t.Run("uses client-go when available", func(t *testing.T) {
+		swapRegistryKubernetesClientsForTest(t, func() (*k8sclient.Clients, error) {
+			clientset := fake.NewSimpleClientset(
+				&appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{Name: core.RegistryDeploymentName, Namespace: "registry"},
+					Spec:       appsv1.DeploymentSpec{Replicas: int32Ptr(1)},
+					Status:     appsv1.DeploymentStatus{ReadyReplicas: 1},
+				},
+				&corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{Name: core.RegistryServiceName, Namespace: "registry"},
+					Spec:       corev1.ServiceSpec{ClusterIP: "10.0.0.5", Ports: []corev1.ServicePort{{Port: 5000}}},
+				},
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{Name: "registry-0", Namespace: "registry", Labels: map[string]string{"app": "registry"}},
+					Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+				},
+			)
+			return &k8sclient.Clients{Clientset: clientset, Namespace: "default"}, nil
+		})
+
+		mock := &core.MockExecutor{}
+		kubectl := core.NewTestKubectlClient(mock)
+		mgr := NewRegistryManager(kubectl, mock, zap.NewNop())
+		if err := mgr.CheckRegistryStatus("registry"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.HasCommand("kubectl") {
+			t.Fatal("did not expect kubectl fallback when client-go data is available")
 		}
 	})
 }
@@ -131,7 +180,7 @@ func TestRunRegistryPushRequiresPlatformCredentials(t *testing.T) {
 	kubectl := core.NewTestKubectlClient(mock)
 	mgr := NewRegistryManager(kubectl, mock, zap.NewNop())
 
-	err := RunRegistryPush(mgr, "source:tag", "registry.example.com", "demo", "direct", "registry")
+	err := RunRegistryPush(context.Background(), mgr, "source:tag", "registry.example.com", "demo", "")
 	if err == nil {
 		t.Fatal("expected missing platform credentials error")
 	}
@@ -140,6 +189,93 @@ func TestRunRegistryPushRequiresPlatformCredentials(t *testing.T) {
 	}
 	if mock.HasCommand("docker") {
 		t.Fatal("registry push should fail before docker commands when platform credentials are missing")
+	}
+}
+
+func TestRunAdminRegistryPushOrgScopeDoesNotRequirePlatformLogin(t *testing.T) {
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
+	t.Setenv("MCP_PLATFORM_API_TOKEN", "")
+	t.Setenv("MCP_PLATFORM_API_URL", "")
+
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if spec.Name == "kubectl" && contains(spec.Args, "cluster-info") {
+				cmd.OutputData = []byte("Kubernetes control plane")
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+	mgr := NewRegistryManager(kubectl, mock, zap.NewNop())
+
+	err := RunAdminRegistryPush(context.Background(), mgr, "source:tag", "registry.example.com", "demo", "org", "direct", "registry")
+	if err != nil {
+		t.Fatalf("RunAdminRegistryPush() error = %v", err)
+	}
+	if !mock.HasCommand("docker") {
+		t.Fatal("expected docker commands for direct admin push")
+	}
+}
+
+func TestBuildRegistryPushTargetInClusterAutoResolvesInternalRegistry(t *testing.T) {
+	origConfig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = origConfig })
+	core.DefaultCLIConfig = &core.CLIConfig{}
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
+	t.Setenv("MCP_PLATFORM_API_TOKEN", "")
+	t.Setenv("MCP_PLATFORM_API_URL", "")
+
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			switch {
+			case contains(spec.Args, "jsonpath={.spec.clusterIP}"):
+				cmd.OutputData = []byte("10.43.69.247")
+			case contains(spec.Args, "jsonpath={.spec.ports[0].port}"):
+				cmd.OutputData = []byte("5000")
+			}
+			return cmd
+		},
+	}
+	swapDefaultKubectlForTest(t, mock)
+
+	target, normalizedScope, err := buildRegistryPushTarget(context.Background(), NewRegistryManager(core.DefaultKubectlClient(), mock, zap.NewNop()), nil, "source:tag", "", "demo", "", "in-cluster")
+	if err != nil {
+		t.Fatalf("buildRegistryPushTarget() error = %v", err)
+	}
+	if normalizedScope != "" {
+		t.Fatalf("normalizedScope = %q, want empty", normalizedScope)
+	}
+	if want := "registry.registry.svc.cluster.local:5000/demo:tag"; target != want {
+		t.Fatalf("target = %q, want %q", target, want)
+	}
+}
+
+func TestScopedRegistryRepositoryHelpers(t *testing.T) {
+	if got := prefixRepositoryScope("demo", "public"); got != "public/demo" {
+		t.Fatalf("prefixRepositoryScope = %q, want public/demo", got)
+	}
+	if got := prefixRepositoryScope("public/demo", "public"); got != "public/demo" {
+		t.Fatalf("prefixRepositoryScope double-prefixed: %q", got)
+	}
+	principal := platformapi.Principal{
+		Teams: []platformapi.Team{{
+			Slug:      "acme",
+			Namespace: "mcp-team-acme",
+		}},
+	}
+	if got, err := scopedTenantRegistryRepository("demo", principal); err != nil || got != "acme/demo" {
+		t.Fatalf("scopedTenantRegistryRepository team = %q, %v; want acme/demo", got, err)
+	}
+	if got, err := scopedTenantRegistryRepository("mcp-team-acme/demo", principal); err != nil || got != "mcp-team-acme/demo" {
+		t.Fatalf("scopedTenantRegistryRepository namespace prefix = %q, %v; want mcp-team-acme/demo", got, err)
+	}
+	if _, err := scopedTenantRegistryRepository("user-1/demo", principal); err == nil || !strings.Contains(err.Error(), "one of your teams") {
+		t.Fatalf("expected non-team prefix to be rejected, got %v", err)
+	}
+	if _, err := scopedTenantRegistryRepository("demo", platformapi.Principal{Namespace: "user-1", Subject: "user-1"}); err == nil || !strings.Contains(err.Error(), "no team membership") {
+		t.Fatalf("expected user namespace principal to be rejected, got %v", err)
 	}
 }
 
@@ -471,9 +607,13 @@ func TestPushInCluster(t *testing.T) {
 
 	t.Run("succeeds and cleans up helper pod", func(t *testing.T) {
 		deleteCalled := false
+		var runArgs []string
 		mock := &core.MockExecutor{
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				cmd := &core.MockCommand{Args: spec.Args}
+				if spec.Name == "kubectl" && contains(spec.Args, "run") {
+					runArgs = append([]string(nil), spec.Args...)
+				}
 				if spec.Name == "kubectl" && contains(spec.Args, "delete") {
 					deleteCalled = true
 				}
@@ -492,6 +632,26 @@ func TestPushInCluster(t *testing.T) {
 		}
 		if !deleteCalled {
 			t.Error("expected delete to be called for cleanup")
+		}
+		overrideArg := ""
+		for _, arg := range runArgs {
+			if strings.HasPrefix(arg, "--overrides=") {
+				overrideArg = arg
+				break
+			}
+		}
+		if overrideArg == "" {
+			t.Fatalf("expected kubectl run to include --overrides, got %v", runArgs)
+		}
+		for _, want := range []string{
+			`"allowPrivilegeEscalation":false`,
+			`"runAsNonRoot":true`,
+			`"seccompProfile":{"type":"RuntimeDefault"}`,
+			`"drop":["ALL"]`,
+		} {
+			if !strings.Contains(overrideArg, want) {
+				t.Fatalf("override %q missing %s", overrideArg, want)
+			}
 		}
 	})
 
@@ -534,6 +694,9 @@ func TestPushInCluster(t *testing.T) {
 		want := "docker://registry.registry.svc.cluster.local:5000/mcp-runtime-operator:c63dea8"
 		if skopeoTarget != want {
 			t.Fatalf("expected skopeo target %q, got %q", want, skopeoTarget)
+		}
+		if !strings.Contains(buf.String(), "helper destination registry.registry.svc.cluster.local:5000/mcp-runtime-operator:c63dea8") {
+			t.Fatalf("expected helper destination in output, got %q", buf.String())
 		}
 	})
 }
@@ -584,6 +747,12 @@ func TestRewriteTargetHostForInClusterPush(t *testing.T) {
 			target:   "internal-registry.example.com/foo:tag",
 			wantHost: "registry.registry.svc.cluster.local:5000",
 		},
+		{
+			name:     "rewrites discovered ingress host",
+			endpoint: "registry.local",
+			target:   "registry.mcpruntime.org/foo:tag",
+			wantHost: "registry.registry.svc.cluster.local:5000",
+		},
 	}
 
 	for _, tc := range cases {
@@ -593,7 +762,23 @@ func TestRewriteTargetHostForInClusterPush(t *testing.T) {
 				RegistryIngressHost: tc.ingress,
 				RegistryPort:        5000,
 			}
-			got := rewriteTargetHostForInClusterPush(tc.target, nil)
+			var kubectl *core.KubectlClient
+			if tc.name == "rewrites discovered ingress host" {
+				mock := &core.MockExecutor{
+					CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+						switch {
+						case contains(spec.Args, "ingress"):
+							return &core.MockCommand{OutputData: []byte("registry.mcpruntime.org")}
+						case contains(spec.Args, "service"):
+							return &core.MockCommand{OutputData: []byte("5000")}
+						default:
+							return &core.MockCommand{}
+						}
+					},
+				}
+				kubectl = core.NewTestKubectlClient(mock)
+			}
+			got := rewriteTargetHostForInClusterPush(tc.target, kubectl)
 			slash := strings.Index(got, "/")
 			if slash < 0 {
 				t.Fatalf("unexpected result without path: %q", got)
@@ -602,6 +787,33 @@ func TestRewriteTargetHostForInClusterPush(t *testing.T) {
 				t.Fatalf("expected host %q, got %q (full: %q)", tc.wantHost, got[:slash], got)
 			}
 		})
+	}
+}
+
+func TestRewriteTargetHostForInClusterPush_UsesClientGoDiscovery(t *testing.T) {
+	origConfig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = origConfig })
+	core.DefaultCLIConfig = &core.CLIConfig{
+		RegistryEndpoint:    "registry.local",
+		RegistryIngressHost: "registry.local",
+		RegistryPort:        5000,
+	}
+	swapRegistryKubernetesClientsForTest(t, func() (*k8sclient.Clients, error) {
+		clientset := fake.NewSimpleClientset(
+			&corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: core.RegistryServiceName, Namespace: core.NamespaceRegistry},
+				Spec:       corev1.ServiceSpec{ClusterIP: "10.0.0.8", Ports: []corev1.ServicePort{{Port: 5443}}},
+			},
+			&networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{Name: core.RegistryServiceName, Namespace: core.NamespaceRegistry},
+				Spec:       networkingv1.IngressSpec{Rules: []networkingv1.IngressRule{{Host: "registry.mcpruntime.org"}}},
+			},
+		)
+		return &k8sclient.Clients{Clientset: clientset, Namespace: "default"}, nil
+	})
+	got := rewriteTargetHostForInClusterPush("registry.mcpruntime.org/foo:tag", nil)
+	if !strings.HasPrefix(got, "registry.registry.svc.cluster.local:5443/") {
+		t.Fatalf("expected client-go discovered service port in rewritten host, got %q", got)
 	}
 }
 
@@ -798,6 +1010,30 @@ spec:
 	})
 }
 
+func TestRenderKustomizeManifestWrapsRunError(t *testing.T) {
+	cause := errors.New("kustomize failed")
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if contains(spec.Args, "kustomize") {
+				cmd.RunFunc = func() error {
+					if cmd.StderrW != nil {
+						_, _ = cmd.StderrW.Write([]byte("bad overlay"))
+					}
+					return cause
+				}
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	_, err := renderKustomizeManifest(kubectl, "config/registry")
+	if !errors.Is(err, cause) {
+		t.Fatalf("renderKustomizeManifest() error = %v, want errors.Is(..., cause)", err)
+	}
+}
+
 func TestCheckRegistryStatusStarting(t *testing.T) {
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
@@ -867,6 +1103,15 @@ func swapDefaultKubectlForTest(t *testing.T, exec core.Executor) {
 	t.Helper()
 	t.Cleanup(core.SwapDefaultKubectlClient(core.NewTestKubectlClient(exec)))
 }
+
+func swapRegistryKubernetesClientsForTest(t *testing.T, stub func() (*k8sclient.Clients, error)) {
+	t.Helper()
+	orig := newRegistryKubernetesClients
+	newRegistryKubernetesClients = stub
+	t.Cleanup(func() { newRegistryKubernetesClients = orig })
+}
+
+func int32Ptr(v int32) *int32 { return &v }
 
 func setDefaultPrinterWriter(t *testing.T, w *bytes.Buffer) {
 	t.Helper()

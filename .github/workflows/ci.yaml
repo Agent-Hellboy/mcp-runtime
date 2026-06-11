@@ -17,15 +17,16 @@ permissions:
 
 jobs:
   changed-paths:
-    name: Detect Docs/Website Changes
+    name: Detect Docs/Website/Articles Changes
     runs-on: ubuntu-24.04
     outputs:
       code: ${{ steps.filter.outputs.code }}
       docs: ${{ steps.filter.outputs.docs }}
       website: ${{ steps.filter.outputs.website }}
+      articles: ${{ steps.filter.outputs.articles }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Check changed paths
         id: filter
@@ -34,9 +35,12 @@ jobs:
           filters: |
             code:
               - '**'
+              - '!articles/**'
               - '!docs/**'
               - '!website/**'
               - '!README.md'
+            articles:
+              - 'articles/**'
             docs:
               - 'docs/**'
             website:
@@ -45,11 +49,9 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-24.04
-    needs: [changed-paths]
-    if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -78,11 +80,9 @@ jobs:
   test:
     name: Unit + Integration Tests
     runs-on: ubuntu-24.04
-    needs: [changed-paths]
-    if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -159,7 +159,7 @@ jobs:
           mv unit.out coverage.out
 
       - name: Upload coverage
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6.0.0
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: ./coverage.out
           flags: pre-merge
@@ -169,16 +169,40 @@ jobs:
   e2e-kind:
     name: Kind E2E
     runs-on: ubuntu-24.04
-    needs: [changed-paths, lint, test]
-    if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
+    # Start after lint only so Kind E2E overlaps unit/integration tests on the runner queue.
+    needs: [lint]
     timeout-minutes: 90
     permissions:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           submodules: recursive
+
+      - name: Detect E2E changed files
+        id: e2e_changes
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        with:
+          list-files: shell
+          filters: |
+            changed:
+              - '**'
+
+      - name: Select Kind E2E scenarios
+        run: |
+          changed_files=( ${{ steps.e2e_changes.outputs.changed_files }} )
+          if [ "${#changed_files[@]}" -gt 0 ]; then
+            printf '%s\n' "${changed_files[@]}" > "${RUNNER_TEMP}/e2e-changed-files.txt"
+          else
+            : > "${RUNNER_TEMP}/e2e-changed-files.txt"
+          fi
+
+          scenarios="$(bash test/e2e/select_pr_scenarios.sh < "${RUNNER_TEMP}/e2e-changed-files.txt")"
+          echo "E2E_SCENARIOS=${scenarios}" >> "${GITHUB_ENV}"
+          echo "Selected Kind E2E scenarios: ${scenarios}"
+          echo "Changed files considered for E2E selection:"
+          sed 's/^/  /' "${RUNNER_TEMP}/e2e-changed-files.txt"
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -226,12 +250,33 @@ jobs:
           python3 --version
           rg --version
 
+      - name: Configure E2E resource names
+        run: |
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          port=$((20000 + ((GITHUB_RUN_ID + GITHUB_RUN_ATTEMPT) % 20000)))
+          {
+            echo "CLUSTER_NAME=mcp-e2e-${suffix}"
+            echo "LOCAL_REGISTRY_NAME=mcp-e2e-registry-${suffix}"
+            echo "LOCAL_REGISTRY_PORT=${port}"
+          } >> "${GITHUB_ENV}"
+
       - name: Run kind e2e
         env:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/.e2e-artifacts/kind
-          E2E_SCENARIOS: ${{ github.actor == 'dependabot[bot]' && 'smoke-auth,governance' || 'all' }}
-          E2E_IMAGE_BUILD_PARALLELISM: "1"
+          # Mirror stays single-worker to avoid registry push contention on shared runners.
           E2E_IMAGE_MIRROR_PARALLELISM: "1"
+          # Local image builds are CPU-bound; two workers matches docs/internals/tests.md guidance.
+          E2E_IMAGE_BUILD_PARALLELISM: "2"
+          E2E_IMAGE_PREP_PARALLELISM: "2"
+          E2E_EXAMPLE_DEPLOY_PARALLELISM: "3"
+          E2E_GRANT_RULE_PARALLELISM: "4"
+          E2E_HTTP_FLOW_PARALLELISM: "2"
+          # One primary MCP server; multitenancy reuses it as tenant-a and adds at most tenant-b.
+          E2E_MAX_MCP_SERVERS: "2"
+          # PR CI: shorter policy wait budget than local default 90 (still ~90s per stuck wait).
+          MCP_POLICY_WAIT_TRIES: "45"
+          MCP_HTTP_TIMEOUT: "15"
+          RAW_REQUEST_TRIES: "8"
         run: bash test/e2e/kind.sh
 
       - name: Upload e2e artifacts
@@ -245,11 +290,9 @@ jobs:
   benchmark:
     name: Benchmarks
     runs-on: ubuntu-24.04
-    needs: [changed-paths]
-    if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -264,11 +307,9 @@ jobs:
   generated-drift:
     name: Generated File Drift
     runs-on: ubuntu-24.04
-    needs: [changed-paths]
-    if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true' || needs.changed-paths.outputs.docs == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -293,11 +334,9 @@ jobs:
   sbom:
     name: SBOM
     runs-on: ubuntu-24.04
-    needs: [changed-paths]
-    if: github.event_name == 'workflow_dispatch' || needs.changed-paths.outputs.code == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Generate repository SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
@@ -323,7 +362,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changed-paths.outputs.docs == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Validate docs deploy secrets
         env:
@@ -426,7 +465,23 @@ jobs:
 
           cd "$deploy_path"
           docker rm -f "$container_name" >/dev/null 2>&1 || true
-          docker build --pull -t "$image_name" .
+          
+          # Retry logic for docker build
+          for attempt in {1..3}; do
+            echo "Docker build attempt $attempt/3..."
+            if docker build --pull -t "$image_name" .; then
+              echo "Docker build succeeded"
+              break
+            fi
+            if [ $attempt -lt 3 ]; then
+              echo "Docker build failed. Retrying in 10 seconds..."
+              sleep 10
+            else
+              echo "Docker build failed after 3 attempts"
+              exit 1
+            fi
+          done
+          
           docker run -d --name "$container_name" \
             --restart unless-stopped \
             -p "$host_port:$container_port" \
@@ -444,7 +499,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changed-paths.outputs.website == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Validate website deploy secrets
         env:
@@ -515,6 +570,7 @@ jobs:
           WEBSITE_DEPLOY_COMMAND: ${{ secrets.WEBSITE_DEPLOY_COMMAND }}
           WEBSITE_DEPLOY_PATH: ${{ secrets.WEBSITE_DEPLOY_PATH }}
           WEBSITE_DOCS_URL: ${{ secrets.WEBSITE_DOCS_URL }}
+          WEBSITE_ARTICLES_URL: ${{ secrets.WEBSITE_ARTICLES_URL }}
           WEBSITE_BASE_URL: ${{ secrets.WEBSITE_BASE_URL }}
           WEBSITE_CONTAINER_NAME: ${{ secrets.WEBSITE_CONTAINER_NAME }}
           WEBSITE_IMAGE_NAME: ${{ secrets.WEBSITE_IMAGE_NAME }}
@@ -532,6 +588,7 @@ jobs:
           container_port="${WEBSITE_CONTAINER_PORT:-8080}"
           docs_url="${WEBSITE_DOCS_URL:-https://docs.mcpruntime.org/}"
           base_url="${WEBSITE_BASE_URL:-https://mcpruntime.org}"
+          articles_url="${WEBSITE_ARTICLES_URL:-https://articles.mcpruntime.org/}"
           git_sha="${GITHUB_SHA:-unknown}"
 
           b64() { printf '%s' "$1" | base64 -w 0; }
@@ -544,6 +601,7 @@ jobs:
              WEBSITE_CONTAINER_PORT_B64=$(b64 "$container_port") \
              WEBSITE_DOCS_URL_B64=$(b64 "$docs_url") \
              WEBSITE_BASE_URL_B64=$(b64 "$base_url") \
+             WEBSITE_ARTICLES_URL_B64=$(b64 "$articles_url") \
              WEBSITE_GIT_SHA_B64=$(b64 "$git_sha") \
              bash -s" <<'REMOTE'
           set -euo pipefail
@@ -555,16 +613,224 @@ jobs:
           container_port="$(decode "$WEBSITE_CONTAINER_PORT_B64")"
           docs_url="$(decode "$WEBSITE_DOCS_URL_B64")"
           base_url="$(decode "$WEBSITE_BASE_URL_B64")"
+          articles_url="$(decode "$WEBSITE_ARTICLES_URL_B64")"
           git_sha="$(decode "$WEBSITE_GIT_SHA_B64")"
 
           cd "$deploy_path"
           docker rm -f "$container_name" >/dev/null 2>&1 || true
-          docker build --pull --build-arg GIT_SHA="$git_sha" -t "$image_name" .
+          
+          # Retry logic for docker build
+          for attempt in {1..3}; do
+            echo "Docker build attempt $attempt/3..."
+            if docker build --pull --build-arg GIT_SHA="$git_sha" -t "$image_name" .; then
+              echo "Docker build succeeded"
+              break
+            fi
+            if [ $attempt -lt 3 ]; then
+              echo "Docker build failed. Retrying in 10 seconds..."
+              sleep 10
+            else
+              echo "Docker build failed after 3 attempts"
+              exit 1
+            fi
+          done
+          
           docker run -d --name "$container_name" \
             --restart unless-stopped \
             -p "$host_port:$container_port" \
             -e MCP_DOCS_URL="$docs_url" \
             -e MCP_WEBSITE_BASE_URL="$base_url" \
+            -e MCP_ARTICLES_URL="$articles_url" \
             "$image_name"
           docker image prune -f >/dev/null
           REMOTE
+
+  deploy-articles:
+    name: Deploy Articles (articles.mcpruntime.org)
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: deploy-articles-${{ github.ref }}
+      cancel-in-progress: true
+    needs: [changed-paths]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changed-paths.outputs.articles == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Validate articles deploy secrets
+        env:
+          ARTICLES_DEPLOY_HOST: ${{ secrets.ARTICLES_DEPLOY_HOST || secrets.WEBSITE_DEPLOY_HOST }}
+          ARTICLES_DEPLOY_USER: ${{ secrets.ARTICLES_DEPLOY_USER || secrets.WEBSITE_DEPLOY_USER }}
+          ARTICLES_DEPLOY_PATH: ${{ secrets.ARTICLES_DEPLOY_PATH || secrets.WEBSITE_DEPLOY_PATH }}
+          ARTICLES_DEPLOY_SSH_KEY: ${{ secrets.ARTICLES_DEPLOY_SSH_KEY || secrets.WEBSITE_DEPLOY_SSH_KEY }}
+          ARTICLES_DEPLOY_HOST_KEY: ${{ secrets.ARTICLES_DEPLOY_HOST_KEY || secrets.WEBSITE_DEPLOY_HOST_KEY }}
+          ARTICLES_SECRET_KEY: ${{ secrets.ARTICLES_SECRET_KEY }}
+          MCP_ARTICLES_GOOGLE_CLIENT_ID: ${{ secrets.MCP_ARTICLES_GOOGLE_CLIENT_ID || secrets.ARTICLES_GOOGLE_CLIENT_ID || secrets.MCP_GOOGLE_CLIENT_ID || secrets.GOOGLE_CLIENT_ID }}
+        run: |
+          test -n "$ARTICLES_DEPLOY_HOST"
+          test -n "$ARTICLES_DEPLOY_USER"
+          test -n "$ARTICLES_DEPLOY_PATH"
+          test -n "$ARTICLES_DEPLOY_SSH_KEY"
+          test -n "$ARTICLES_SECRET_KEY"
+          test -n "$MCP_ARTICLES_GOOGLE_CLIENT_ID"
+
+      - name: Set up SSH key
+        env:
+          ARTICLES_DEPLOY_HOST: ${{ secrets.ARTICLES_DEPLOY_HOST || secrets.WEBSITE_DEPLOY_HOST }}
+          ARTICLES_DEPLOY_SSH_KEY: ${{ secrets.ARTICLES_DEPLOY_SSH_KEY || secrets.WEBSITE_DEPLOY_SSH_KEY }}
+          ARTICLES_DEPLOY_HOST_KEY: ${{ secrets.ARTICLES_DEPLOY_HOST_KEY || secrets.WEBSITE_DEPLOY_HOST_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf "%s\n" "$ARTICLES_DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          articles_host="${ARTICLES_DEPLOY_HOST//$'\r'/}"
+          articles_host="${articles_host#"${articles_host%%[![:space:]]*}"}"
+          articles_host="${articles_host%"${articles_host##*[![:space:]]}"}"
+          printf "ARTICLES_DEPLOY_HOST_CLEAN=%s\n" "$articles_host" >> "$GITHUB_ENV"
+          articles_known_hosts="$(mktemp)"
+          articles_known_host="${ARTICLES_DEPLOY_HOST_KEY//$'\r'/}"
+          if [ -n "$articles_known_host" ]; then
+            case "$articles_known_host" in
+              ssh-*|ecdsa-*) printf "%s %s\n" "$articles_host" "$articles_known_host" > "$articles_known_hosts" ;;
+              *" ssh-"*|*" ecdsa-"*) printf "%s\n" "$articles_known_host" > "$articles_known_hosts" ;;
+              *) echo "::warning::Ignoring ARTICLES_DEPLOY_HOST_KEY because it is not a known_hosts entry or bare SSH host key." ;;
+            esac
+          fi
+          if ! ssh-keygen -F "$articles_host" -f "$articles_known_hosts" >/dev/null 2>&1; then
+            ssh-keyscan -T 10 -t ed25519,rsa "$articles_host" > "$articles_known_hosts"
+          fi
+          mv "$articles_known_hosts" ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          if ! ssh-keygen -F "$articles_host" -f ~/.ssh/known_hosts >/dev/null; then
+            echo "::error::Could not create a known_hosts entry for ARTICLES_DEPLOY_HOST."
+            exit 1
+          fi
+
+      - name: Verify articles SSH access
+        env:
+          ARTICLES_DEPLOY_USER: ${{ secrets.ARTICLES_DEPLOY_USER || secrets.WEBSITE_DEPLOY_USER }}
+        run: |
+          ssh \
+            -i "$HOME/.ssh/id_ed25519" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$ARTICLES_DEPLOY_USER@$ARTICLES_DEPLOY_HOST_CLEAN" \
+            "true"
+
+      - name: Sync articles/
+        env:
+          ARTICLES_DEPLOY_USER: ${{ secrets.ARTICLES_DEPLOY_USER || secrets.WEBSITE_DEPLOY_USER }}
+          ARTICLES_DEPLOY_PATH: ${{ secrets.ARTICLES_DEPLOY_PATH || secrets.WEBSITE_DEPLOY_PATH }}
+        run: |
+          rsync -az --delete \
+            -e "ssh -i $HOME/.ssh/id_ed25519 -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts" \
+            articles/ \
+            "$ARTICLES_DEPLOY_USER@$ARTICLES_DEPLOY_HOST_CLEAN:$ARTICLES_DEPLOY_PATH/"
+
+      - name: Deploy articles container on remote host
+        env:
+          ARTICLES_DEPLOY_COMMAND: ${{ secrets.ARTICLES_DEPLOY_COMMAND }}
+          ARTICLES_DEPLOY_USER: ${{ secrets.ARTICLES_DEPLOY_USER || secrets.WEBSITE_DEPLOY_USER }}
+          ARTICLES_DEPLOY_PATH: ${{ secrets.ARTICLES_DEPLOY_PATH || secrets.WEBSITE_DEPLOY_PATH }}
+          ARTICLES_DOCS_URL: ${{ secrets.ARTICLES_DOCS_URL }}
+          ARTICLES_WEBSITE_URL: ${{ secrets.ARTICLES_WEBSITE_URL }}
+          ARTICLES_BASE_URL: ${{ secrets.ARTICLES_BASE_URL }}
+          ARTICLES_SECRET_KEY: ${{ secrets.ARTICLES_SECRET_KEY }}
+          MCP_ARTICLES_GOOGLE_CLIENT_ID: ${{ secrets.MCP_ARTICLES_GOOGLE_CLIENT_ID || secrets.ARTICLES_GOOGLE_CLIENT_ID || secrets.MCP_GOOGLE_CLIENT_ID || secrets.GOOGLE_CLIENT_ID }}
+          MCP_ARTICLES_NEWSLETTER_EXPORT_TOKEN: ${{ secrets.MCP_ARTICLES_NEWSLETTER_EXPORT_TOKEN || secrets.ARTICLES_NEWSLETTER_EXPORT_TOKEN }}
+          ARTICLES_DB_PATH: ${{ secrets.ARTICLES_DB_PATH }}
+          ARTICLES_DATA_VOLUME: ${{ secrets.ARTICLES_DATA_VOLUME }}
+          ARTICLES_CONTAINER_NAME: ${{ secrets.ARTICLES_CONTAINER_NAME }}
+          ARTICLES_IMAGE_NAME: ${{ secrets.ARTICLES_IMAGE_NAME }}
+          ARTICLES_HOST_PORT: ${{ secrets.ARTICLES_HOST_PORT }}
+          ARTICLES_CONTAINER_PORT: ${{ secrets.ARTICLES_CONTAINER_PORT }}
+        run: |
+          if [ -n "$ARTICLES_DEPLOY_COMMAND" ]; then
+            ssh "$ARTICLES_DEPLOY_USER@$ARTICLES_DEPLOY_HOST_CLEAN" "$ARTICLES_DEPLOY_COMMAND"
+            exit 0
+          fi
+
+          container_name="${ARTICLES_CONTAINER_NAME:-mcp-runtime-articles}"
+          image_name="${ARTICLES_IMAGE_NAME:-mcp-runtime-articles:latest}"
+          host_port="${ARTICLES_HOST_PORT:-8082}"
+          container_port="${ARTICLES_CONTAINER_PORT:-8080}"
+          docs_url="${ARTICLES_DOCS_URL:-https://docs.mcpruntime.org/}"
+          website_url="${ARTICLES_WEBSITE_URL:-https://mcpruntime.org/}"
+          base_url="${ARTICLES_BASE_URL:-https://articles.mcpruntime.org}"
+          secret_key="${ARTICLES_SECRET_KEY:-}"
+          google_client_id="${MCP_ARTICLES_GOOGLE_CLIENT_ID:-}"
+          newsletter_export_token="${MCP_ARTICLES_NEWSLETTER_EXPORT_TOKEN:-}"
+          db_path="${ARTICLES_DB_PATH:-/data/articles.db}"
+          data_volume="${ARTICLES_DATA_VOLUME:-mcp-runtime-articles-data}"
+          git_sha="${GITHUB_SHA:-unknown}"
+
+          b64() { printf '%s' "$1" | base64 -w 0; }
+          {
+            printf 'ARTICLES_DEPLOY_PATH_B64=%q\n' "$(b64 "$ARTICLES_DEPLOY_PATH")"
+            printf 'ARTICLES_CONTAINER_NAME_B64=%q\n' "$(b64 "$container_name")"
+            printf 'ARTICLES_IMAGE_NAME_B64=%q\n' "$(b64 "$image_name")"
+            printf 'ARTICLES_HOST_PORT_B64=%q\n' "$(b64 "$host_port")"
+            printf 'ARTICLES_CONTAINER_PORT_B64=%q\n' "$(b64 "$container_port")"
+            printf 'ARTICLES_DOCS_URL_B64=%q\n' "$(b64 "$docs_url")"
+            printf 'ARTICLES_WEBSITE_URL_B64=%q\n' "$(b64 "$website_url")"
+            printf 'ARTICLES_BASE_URL_B64=%q\n' "$(b64 "$base_url")"
+            printf 'ARTICLES_SECRET_KEY_B64=%q\n' "$(b64 "$secret_key")"
+            printf 'ARTICLES_GOOGLE_CLIENT_ID_B64=%q\n' "$(b64 "$google_client_id")"
+            printf 'ARTICLES_NEWSLETTER_EXPORT_TOKEN_B64=%q\n' "$(b64 "$newsletter_export_token")"
+            printf 'ARTICLES_DB_PATH_B64=%q\n' "$(b64 "$db_path")"
+            printf 'ARTICLES_DATA_VOLUME_B64=%q\n' "$(b64 "$data_volume")"
+            printf 'ARTICLES_GIT_SHA_B64=%q\n' "$(b64 "$git_sha")"
+            cat <<'REMOTE'
+          set -euo pipefail
+          decode() { printf '%s' "$1" | base64 -d; }
+
+          deploy_path="$(decode "$ARTICLES_DEPLOY_PATH_B64")"
+          container_name="$(decode "$ARTICLES_CONTAINER_NAME_B64")"
+          image_name="$(decode "$ARTICLES_IMAGE_NAME_B64")"
+          host_port="$(decode "$ARTICLES_HOST_PORT_B64")"
+          container_port="$(decode "$ARTICLES_CONTAINER_PORT_B64")"
+          docs_url="$(decode "$ARTICLES_DOCS_URL_B64")"
+          website_url="$(decode "$ARTICLES_WEBSITE_URL_B64")"
+          base_url="$(decode "$ARTICLES_BASE_URL_B64")"
+          secret_key="$(decode "$ARTICLES_SECRET_KEY_B64")"
+          google_client_id="$(decode "$ARTICLES_GOOGLE_CLIENT_ID_B64")"
+          newsletter_export_token="$(decode "$ARTICLES_NEWSLETTER_EXPORT_TOKEN_B64")"
+          db_path="$(decode "$ARTICLES_DB_PATH_B64")"
+          data_volume="$(decode "$ARTICLES_DATA_VOLUME_B64")"
+          git_sha="$(decode "$ARTICLES_GIT_SHA_B64")"
+
+          cd "$deploy_path"
+          docker rm -f "$container_name" >/dev/null 2>&1 || true
+
+          for attempt in {1..3}; do
+            echo "Docker build attempt $attempt/3..."
+            if docker build --pull --build-arg GIT_SHA="$git_sha" -t "$image_name" .; then
+              echo "Docker build succeeded"
+              break
+            fi
+            if [ $attempt -lt 3 ]; then
+              echo "Docker build failed. Retrying in 10 seconds..."
+              sleep 10
+            else
+              echo "Docker build failed after 3 attempts"
+              exit 1
+            fi
+          done
+
+          docker run -d --name "$container_name" \
+            --restart unless-stopped \
+            -p "$host_port:$container_port" \
+            -v "$data_volume:/data" \
+            -e MCP_DOCS_URL="$docs_url" \
+            -e MCP_WEBSITE_URL="$website_url" \
+            -e MCP_ARTICLES_BASE_URL="$base_url" \
+            -e MCP_ARTICLES_SECRET_KEY="$secret_key" \
+            -e MCP_ARTICLES_GOOGLE_CLIENT_ID="$google_client_id" \
+            -e MCP_ARTICLES_NEWSLETTER_EXPORT_TOKEN="$newsletter_export_token" \
+            -e MCP_ARTICLES_DB_PATH="$db_path" \
+            "$image_name"
+          docker image prune -f >/dev/null
+          REMOTE
+          } | ssh "$ARTICLES_DEPLOY_USER@$ARTICLES_DEPLOY_HOST_CLEAN" bash -s

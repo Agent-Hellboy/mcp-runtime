@@ -10,6 +10,8 @@ let authPrincipal = null;
 let grantsCache = [];
 let sessionsCache = [];
 let userAPIKeysCache = [];
+let teamsCache = [];
+let teamMembersCache = [];
 let serversCache = [];
 let publishPolicyCache = null;
 let selectedServerKey = "";
@@ -27,8 +29,23 @@ let serverSearchQuery = "";
 let serverStatusFilter = "all";
 let selectedOperationsServerKey = "";
 let selectedUserAnalyticsServerKey = "";
+let selectedTeamSlug = "";
+let adminDetailTeamSlug = "";
+let adminDetailUserEmail = "";
+let adminDetailUserId = "";
+let adminDetailBackTab = "teams";
+let adminDetailTeamMembersCache = [];
+let adminDetailUserAuditCache = [];
 let namespaceScopes = [];
 let selectedNamespace = defaults.namespace || "";
+let serverLiveInventoryRefreshTimer = null;
+const serverLiveInventoryRefreshDelayMs = 1200;
+// Tracks servers that have had their inventory successfully loaded at least once.
+// Once a server is in this set we never re-poll — prevents the 30s TTL flicker.
+const serverInventoryLoaded = new Set();
+// Persistent open-state map so expanded sections survive filter/search re-renders.
+// Keyed by serverKey → { sections: { label → { open, items[] } }, connectOpen }
+let serverCardOpenState = {};
 
 // API Helper
 async function fetchJSON(path, options = {}) {
@@ -87,6 +104,7 @@ function readErrorMessage(err, fallback) {
   if (!message) return fallback;
   try {
     const parsed = JSON.parse(message);
+    if (parsed?.message) return parsed.message;
     if (parsed?.error) return parsed.error;
   } catch (_) {
     // Use the plain error text below.
@@ -110,6 +128,9 @@ function scopedPath(path) {
 }
 
 function namespaceScopeLabel(item) {
+  if (item?.is_admin_fleet || item?.scope === "all") {
+    return "all namespaces";
+  }
   if (item?.is_public || item?.scope === "public") {
     return `public / ${item.namespace}`;
   }
@@ -184,6 +205,15 @@ function publicPreviewScopes() {
   }];
 }
 
+function adminAllNamespaceScope() {
+  return {
+    namespace: "",
+    scope: "all",
+    scope_name: "All namespaces",
+    is_admin_fleet: true,
+  };
+}
+
 async function loadNamespaceScopes() {
   if (!authenticated) {
     namespaceScopes = publicCatalogEnabled ? publicPreviewScopes() : [];
@@ -199,8 +229,13 @@ async function loadNamespaceScopes() {
     console.error("Failed to load namespaces:", err);
     namespaceScopes = [];
   }
-  if (authPrincipal?.role !== "admin" && namespaceScopes.length > 1) {
+  if (authPrincipal?.role === "admin" && namespaceScopes.length > 1) {
+    namespaceScopes = [adminAllNamespaceScope(), ...namespaceScopes];
+  } else if (authPrincipal?.role !== "admin" && namespaceScopes.length > 1) {
     namespaceScopes = [{ namespace: "", scope: "catalog", is_catalog: true }, ...namespaceScopes];
+  }
+  if (namespaceScopes.some((item) => item.is_admin_fleet) && (!selectedNamespace || selectedNamespace === defaults.namespace)) {
+    selectedNamespace = "";
   }
   if (namespaceScopes.some((item) => item.is_catalog) && (!selectedNamespace || selectedNamespace === defaults.namespace)) {
     selectedNamespace = "";
@@ -299,12 +334,17 @@ function initTabs() {
       if (target === "dashboard") {
         loadDashboardSummary();
         loadDashboardAnalytics();
-        loadEvents();
       } else if (target === "userdashboard") {
         loadUserDashboard();
       } else if (target === "governance") {
         loadGrants();
         loadSessions();
+        if (isAdminUser()) {
+          loadGovernanceDecisionAnalytics();
+          loadEvents();
+        }
+      } else if (target === "teams") {
+        loadTeams();
       } else if (target === "operations") {
         loadMCPOperations();
       } else if (target === "platform") {
@@ -352,6 +392,18 @@ async function loadDashboardAnalytics() {
   }
 }
 
+async function loadGovernanceDecisionAnalytics() {
+  try {
+    const limit = document.getElementById("analytics-limit")?.value || "10";
+    const data = await fetchJSON(`/analytics/usage?limit=${encodeURIComponent(limit)}`);
+    renderGovernanceDecisionAnalytics(data);
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load governance decision analytics:", err);
+    renderGovernanceDecisionAnalyticsError();
+  }
+}
+
 function renderDashboardAnalytics(data) {
   const totals = data?.totals || {};
   const events = Number(totals.events || 0);
@@ -362,11 +414,18 @@ function renderDashboardAnalytics(data) {
   setText("analytics-denied", formatNumber(denied));
   setText("analytics-humans", formatNumber(totals.unique_humans || 0));
   setText("analytics-agents", formatNumber(totals.unique_agents || 0));
-  renderDecisionMeter(events, allowed, denied);
 
   renderAnalyticsServers(data?.servers || []);
   renderAnalyticsActors(data?.actors || []);
   renderAnalyticsTools(data?.tools || []);
+}
+
+function renderGovernanceDecisionAnalytics(data) {
+  const totals = data?.totals || {};
+  const events = Number(totals.events || 0);
+  const allowed = Number(totals.allowed || 0);
+  const denied = Number(totals.denied || 0);
+  renderDecisionMeter(events, allowed, denied);
   renderAnalyticsDecisions(data?.decisions || []);
 }
 
@@ -431,7 +490,7 @@ function renderAnalyticsTools(rows) {
   const tbody = document.getElementById("analytics-tools-body");
   if (!tbody) return;
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="empty">No tool calls yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No tool calls yet.</td></tr>';
     return;
   }
   tbody.innerHTML = "";
@@ -440,6 +499,9 @@ function renderAnalyticsTools(rows) {
     const row = document.createElement("tr");
     row.appendChild(createTextCell(item.server || "-"));
     row.appendChild(createTextCell(item.tool_name || "-"));
+    row.appendChild(createTextCell(item.human_id || "-"));
+    row.appendChild(createTextCell(item.team_id || "-"));
+    row.appendChild(createTextCell(item.agent_id || "-"));
     row.appendChild(createTextCell(formatNumber(item.events || 0)));
     row.appendChild(createTextCell(formatNumber(item.denied || 0)));
     fragment.appendChild(row);
@@ -477,13 +539,16 @@ function renderAnalyticsError() {
   setText("analytics-denied", "-");
   setText("analytics-humans", "-");
   setText("analytics-agents", "-");
-  renderDecisionMeter(0, 0, 0);
   document.getElementById("analytics-servers-body").innerHTML =
     '<tr><td colspan="7" class="empty">Error loading usage.</td></tr>';
   document.getElementById("analytics-actors-body").innerHTML =
     '<tr><td colspan="6" class="empty">Error loading actors.</td></tr>';
   document.getElementById("analytics-tools-body").innerHTML =
-    '<tr><td colspan="4" class="empty">Error loading tools.</td></tr>';
+    '<tr><td colspan="7" class="empty">Error loading tools.</td></tr>';
+}
+
+function renderGovernanceDecisionAnalyticsError() {
+  renderDecisionMeter(0, 0, 0);
   document.getElementById("analytics-decisions-body").innerHTML =
     '<tr><td colspan="2" class="empty">Error loading decisions.</td></tr>';
 }
@@ -661,6 +726,32 @@ function createIdentityCell(primary, secondary = "") {
   const primaryEl = document.createElement("strong");
   primaryEl.className = "identity-primary";
   primaryEl.textContent = primary || "-";
+  stack.appendChild(primaryEl);
+
+  if (secondary) {
+    const secondaryEl = document.createElement("span");
+    secondaryEl.className = "identity-secondary";
+    secondaryEl.textContent = secondary;
+    stack.appendChild(secondaryEl);
+  }
+
+  cell.appendChild(stack);
+  return cell;
+}
+
+function createClickableIdentityCell(primary, secondary = "", onClick) {
+  const cell = document.createElement("td");
+  const stack = document.createElement("div");
+  stack.className = "identity-stack";
+
+  const primaryEl = document.createElement("button");
+  primaryEl.type = "button";
+  primaryEl.className = "identity-primary table-link";
+  primaryEl.textContent = primary || "-";
+  primaryEl.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onClick();
+  });
   stack.appendChild(primaryEl);
 
   if (secondary) {
@@ -922,6 +1013,7 @@ async function logout() {
   resetDashboard();
   resetUserDashboard();
   resetGovernance();
+  resetTeams();
   resetUserAPIKeys();
   activateTab("servers");
   if (publicCatalogEnabled) {
@@ -971,7 +1063,6 @@ function loadActiveTab() {
   if (active === "dashboard") {
     loadDashboardSummary();
     loadDashboardAnalytics();
-    loadEvents();
   } else if (active === "userdashboard") {
     loadUserDashboard();
   } else if (active === "servers") {
@@ -979,6 +1070,12 @@ function loadActiveTab() {
   } else if (active === "governance") {
     loadGrants();
     loadSessions();
+    if (isAdminUser()) {
+      loadGovernanceDecisionAnalytics();
+      loadEvents();
+    }
+  } else if (active === "teams") {
+    loadTeams();
   } else if (active === "operations") {
     loadMCPOperations();
   } else if (active === "platform") {
@@ -1004,7 +1101,7 @@ function resetDashboard() {
   document.getElementById("analytics-actors-body").innerHTML =
     '<tr><td colspan="6" class="empty">No actors yet.</td></tr>';
   document.getElementById("analytics-tools-body").innerHTML =
-    '<tr><td colspan="4" class="empty">No tool calls yet.</td></tr>';
+    '<tr><td colspan="7" class="empty">No tool calls yet.</td></tr>';
   document.getElementById("analytics-decisions-body").innerHTML =
     '<tr><td colspan="2" class="empty">No decisions yet.</td></tr>';
   document.getElementById("events-body").innerHTML =
@@ -1035,6 +1132,7 @@ async function loadUserDashboard() {
     showAuthModal();
     return;
   }
+  renderMyTeams();
   await Promise.allSettled([loadUserDashboardServers(), loadUserDashboardAnalytics()]);
   renderUserDashboardSummary();
 }
@@ -1183,6 +1281,8 @@ function createUserServerActionsCell(server) {
     selectedUserAnalyticsServerKey = operationServerKey(server);
     const select = document.getElementById("user-analytics-server");
     if (select) select.value = selectedUserAnalyticsServerKey;
+    const usageTab = document.getElementById("user-analytics-tab-usage");
+    if (usageTab) activateAnalyticsTab(usageTab);
     loadUserDashboardAnalytics();
   });
   actions.appendChild(analyticsButton);
@@ -1241,7 +1341,7 @@ function renderUserAnalyticsTools(rows) {
   const tbody = document.getElementById("user-analytics-tools-body");
   if (!tbody) return;
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="empty">No tool calls yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No tool calls yet.</td></tr>';
     return;
   }
   tbody.innerHTML = "";
@@ -1250,6 +1350,8 @@ function renderUserAnalyticsTools(rows) {
     const row = document.createElement("tr");
     row.appendChild(createIdentityCell(item.server || "-", ""));
     row.appendChild(createTextCell(item.tool_name || "-"));
+    row.appendChild(createTextCell(item.human_id || "-"));
+    row.appendChild(createTextCell(item.agent_id || "-"));
     row.appendChild(createTextCell(formatNumber(item.events || 0)));
     row.appendChild(createTextCell(formatNumber(item.denied || 0)));
     fragment.appendChild(row);
@@ -1282,7 +1384,7 @@ function renderUserAnalyticsError() {
   const toolsBody = document.getElementById("user-analytics-tools-body");
   const recentBody = document.getElementById("user-analytics-recent-body");
   if (breakdownBody) breakdownBody.innerHTML = '<tr><td colspan="6" class="empty">Error loading usage.</td></tr>';
-  if (toolsBody) toolsBody.innerHTML = '<tr><td colspan="4" class="empty">Error loading tools.</td></tr>';
+  if (toolsBody) toolsBody.innerHTML = '<tr><td colspan="7" class="empty">Error loading tools.</td></tr>';
   if (recentBody) recentBody.innerHTML = '<tr><td colspan="4" class="empty">Error loading recent activity.</td></tr>';
 }
 
@@ -1311,6 +1413,7 @@ async function loadServers() {
     serversCache = Array.isArray(data.servers) ? data.servers : [];
     publishPolicyCache = data.publish_policy || null;
     renderServers();
+    scheduleServerLiveInventoryRefresh();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
     console.error("Failed to load servers:", err);
@@ -1323,17 +1426,149 @@ async function loadServers() {
   }
 }
 
+function scheduleServerLiveInventoryRefresh() {
+  if (serverLiveInventoryRefreshTimer) return;
+  // Only retry for servers whose inventory has never successfully loaded.
+  // Once a server is in serverInventoryLoaded we stop polling it — this
+  // prevents the 30s TTL expiry from causing a re-poll and card flicker.
+  const needsFirstLoad = serversCache.some(
+    (s) => serverLiveInventoryPending(s) && !serverInventoryLoaded.has(serverKey(s))
+  );
+  if (!needsFirstLoad) return;
+  serverLiveInventoryRefreshTimer = setTimeout(() => {
+    serverLiveInventoryRefreshTimer = null;
+    silentServerInventoryRefresh();
+  }, serverLiveInventoryRefreshDelayMs);
+}
+
+// Refresh live inventory data without wiping the grid DOM.
+// Only patches the inventory section of cards whose liveInventory changed.
+// This prevents the card fluctuation caused by full grid re-renders.
+async function silentServerInventoryRefresh() {
+  if (!authenticated && !publicCatalogEnabled) return;
+  try {
+    const data = await fetchJSON(scopedPath("/runtime/servers"));
+    const fresh = Array.isArray(data.servers) ? data.servers : [];
+    fresh.forEach((server) => {
+      const key = serverKey(server);
+      const existing = serversCache.find((s) => serverKey(s) === key);
+      if (!existing) return;
+      // Mark server as loaded once it has real inventory (not pending).
+      if (server.liveInventory && !serverLiveInventoryPending(server)) {
+        serverInventoryLoaded.add(key);
+      }
+      const liveChanged =
+        JSON.stringify(server.liveInventory) !== JSON.stringify(existing.liveInventory) ||
+        server.liveInventoryError !== existing.liveInventoryError;
+      if (!liveChanged) return;
+      Object.assign(existing, server);
+      const card = document.querySelector(`[data-server-key="${CSS.escape(key)}"]`);
+      if (!card) return;
+      const displayInventory = serverDisplayInventory(existing);
+      const visibleInventory = serverVisibleInventorySections(displayInventory);
+      const oldGrid = card.querySelector(".server-inventory-grid");
+      // Snapshot open state before patching.
+      const openState = {};
+      if (oldGrid) {
+        oldGrid.querySelectorAll("details.inventory-block").forEach((block) => {
+          const label = block.querySelector("summary span")?.textContent?.trim() || "";
+          const items = [];
+          block.querySelectorAll("details.inventory-item").forEach((item) => {
+            if (item.open) items.push(item.querySelector("summary strong")?.textContent?.trim() || "");
+          });
+          openState[label] = { open: block.open, items };
+        });
+        oldGrid.remove();
+      }
+      if (!visibleInventory.length) return;
+      const newGrid = document.createElement("div");
+      newGrid.className = "server-inventory-grid";
+      visibleInventory.forEach((section) => {
+        newGrid.appendChild(renderInventoryBlock(section.label, section.items, section.renderer));
+      });
+      // Restore open state on the new inventory grid.
+      newGrid.querySelectorAll("details.inventory-block").forEach((block) => {
+        const label = block.querySelector("summary span")?.textContent?.trim() || "";
+        const snap = openState[label];
+        if (!snap) return;
+        block.open = snap.open;
+        if (snap.items.length) {
+          block.querySelectorAll("details.inventory-item").forEach((item) => {
+            const name = item.querySelector("summary strong")?.textContent?.trim() || "";
+            if (snap.items.includes(name)) item.open = true;
+          });
+        }
+      });
+      const connect = card.querySelector("details.server-connect");
+      card.insertBefore(newGrid, connect || null);
+    });
+    serversCache = fresh;
+    // Only keep polling for servers that have never loaded yet.
+    scheduleServerLiveInventoryRefresh();
+  } catch (_) {
+    // Silent — don't break the UI on background refresh errors.
+  }
+}
+
+function serverLiveInventoryPending(server) {
+  const reason = String(server?.liveInventoryError || "").trim().toLowerCase();
+  return reason === "live inventory pending" || reason === "refresh_in_progress";
+}
+
 function renderSignedOutServerCatalog() {
   serversCache = [];
   publishPolicyCache = null;
   selectedServerKey = "";
   selectedServerEventsCache = [];
+  serverCardOpenState = {};
   renderServerCatalogSummary();
   renderServerDetailPanel(null);
   const grid = document.getElementById("servers-grid");
   if (grid) {
     grid.innerHTML = '<div class="server-empty-state">No public catalog is available. Sign in to view organization and private servers.</div>';
   }
+}
+
+function snapshotOpenDetails(grid) {
+  grid.querySelectorAll("article.server-card").forEach((card) => {
+    const key = card.dataset.serverKey;
+    if (!key) return;
+    const sections = {};
+    card.querySelectorAll("details.inventory-block").forEach((block) => {
+      // Use the span child of summary to avoid picking up the <small> count badge
+      const label = block.querySelector("summary span")?.textContent?.trim() || "";
+      if (!label) return;
+      const items = [];
+      block.querySelectorAll("details.inventory-item").forEach((item) => {
+        if (item.open) items.push(item.querySelector("summary strong")?.textContent?.trim() || "");
+      });
+      sections[label] = { open: block.open, items };
+    });
+    const connectOpen = card.querySelector("details.server-connect")?.open || false;
+    // Merge into the persistent map so off-screen cards keep their state
+    serverCardOpenState[key] = { sections, connectOpen };
+  });
+}
+
+function restoreOpenDetails(grid) {
+  grid.querySelectorAll("article.server-card").forEach((card) => {
+    const snap = serverCardOpenState[card.dataset.serverKey];
+    if (!snap) return;
+    card.querySelectorAll("details.inventory-block").forEach((block) => {
+      const label = block.querySelector("summary span")?.textContent?.trim() || "";
+      const sectionSnap = snap.sections[label];
+      if (!sectionSnap) return;
+      block.open = sectionSnap.open;
+      if (sectionSnap.items.length) {
+        block.querySelectorAll("details.inventory-item").forEach((item) => {
+          const name = item.querySelector("summary strong")?.textContent?.trim() || "";
+          if (sectionSnap.items.includes(name)) item.open = true;
+        });
+      }
+    });
+    const connect = card.querySelector("details.server-connect");
+    if (connect) connect.open = snap.connectOpen;
+  });
 }
 
 function renderServers() {
@@ -1353,6 +1588,8 @@ function renderServers() {
     renderServerDetailPanel(null);
     return;
   }
+
+  snapshotOpenDetails(grid);
 
   grid.innerHTML = "";
   const fragment = document.createDocumentFragment();
@@ -1376,13 +1613,16 @@ function renderServers() {
     card.appendChild(renderServerMeta(server));
     card.appendChild(renderServerEndpoint(server));
 
-    const inventory = document.createElement("div");
-    inventory.className = "server-inventory-grid";
-    inventory.appendChild(renderInventoryBlock("Tools", server.tools || [], renderToolItem));
-    inventory.appendChild(renderInventoryBlock("Prompts", server.prompts || [], renderInventoryItem));
-    inventory.appendChild(renderInventoryBlock("Resources", server.resources || [], renderInventoryItem));
-    inventory.appendChild(renderInventoryBlock("Tasks", server.tasks || [], renderInventoryItem));
-    card.appendChild(inventory);
+    const displayInventory = serverDisplayInventory(server);
+    const visibleInventory = serverVisibleInventorySections(displayInventory);
+    if (visibleInventory.length) {
+      const inventory = document.createElement("div");
+      inventory.className = "server-inventory-grid";
+      visibleInventory.forEach((section) => {
+        inventory.appendChild(renderInventoryBlock(section.label, section.items, section.renderer));
+      });
+      card.appendChild(inventory);
+    }
 
     if (server.access_json && Object.keys(server.access_json).length) {
       card.appendChild(renderServerConnectConfig(server));
@@ -1391,6 +1631,7 @@ function renderServers() {
     fragment.appendChild(card);
   });
   grid.appendChild(fragment);
+  restoreOpenDetails(grid);
   const selected = serversCache.find((server) => serverKey(server) === selectedServerKey);
   renderServerDetailPanel(selected || null);
 }
@@ -1407,6 +1648,7 @@ function filteredServers() {
 }
 
 function serverSearchText(server) {
+  const inventory = serverDisplayInventory(server);
   const values = [
     server.name,
     server.namespace,
@@ -1415,12 +1657,114 @@ function serverSearchText(server) {
     server.ready,
     server.endpoint,
     metadataSearchText(server.labels),
-    ...(server.tools || []).map((tool) => `${tool.name || ""} ${tool.requiredTrust || ""} ${tool.description || ""}`),
-    ...(server.prompts || []).map(inventorySearchText),
-    ...(server.resources || []).map(inventorySearchText),
-    ...(server.tasks || []).map(inventorySearchText),
+    ...(inventory.tools || []).map((tool) => `${tool.name || ""} ${tool.requiredTrust || ""} ${tool.sideEffect || ""} ${tool.description || ""} ${tool.drift || ""}`),
+    ...(inventory.prompts || []).map(inventorySearchText),
+    ...(inventory.resources || []).map(inventorySearchText),
+    ...(inventory.tasks || []).map(inventorySearchText),
   ];
   return values.filter(Boolean).join(" ").toLowerCase();
+}
+
+function serverDisplayInventory(server) {
+  const declaredTools = Array.isArray(server?.tools) ? server.tools : [];
+  const declaredPrompts = Array.isArray(server?.prompts) ? server.prompts : [];
+  const declaredResources = Array.isArray(server?.resources) ? server.resources : [];
+  const declaredTasks = Array.isArray(server?.tasks) ? server.tasks : [];
+  const live = server?.liveInventory;
+  if (!live || typeof live !== "object") {
+    return {
+      tools: declaredTools,
+      prompts: declaredPrompts,
+      resources: declaredResources,
+      tasks: declaredTasks,
+    };
+  }
+  return {
+    tools: mergeToolInventory(live.tools || [], declaredTools),
+    prompts: mergeNamedInventory(live.prompts || [], declaredPrompts, inventoryNameKey),
+    resources: mergeNamedInventory(live.resources || [], declaredResources, resourceInventoryKey),
+    tasks: declaredTasks,
+  };
+}
+
+function serverVisibleInventorySections(inventory) {
+  return [
+    { label: "Tools", items: inventory.tools || [], renderer: renderToolItem },
+    { label: "Prompts", items: inventory.prompts || [], renderer: renderInventoryItem },
+    { label: "Resources", items: inventory.resources || [], renderer: renderInventoryItem },
+    { label: "Tasks", items: inventory.tasks || [], renderer: renderInventoryItem },
+  ].filter((section) => section.items.length > 0);
+}
+
+function mergeToolInventory(liveItems, declaredItems) {
+  const declared = mapInventoryByKey(declaredItems, inventoryNameKey);
+  const seen = new Set();
+  const out = [];
+  liveItems.forEach((item) => {
+    const key = inventoryNameKey(item);
+    if (!key) return;
+    const governance = declared.get(key);
+    seen.add(key);
+    out.push({
+      ...item,
+      name: item.name || key,
+      description: item.description || governance?.description || "",
+      requiredTrust: governance?.requiredTrust || "",
+      sideEffect: governance?.sideEffect || "",
+      labels: governance?.labels || item.labels || {},
+      drift: governance ? "" : "ungoverned",
+    });
+  });
+  declaredItems.forEach((item) => {
+    const key = inventoryNameKey(item);
+    if (!key || seen.has(key)) return;
+    out.push({ ...item, drift: "missing" });
+  });
+  return out;
+}
+
+function mergeNamedInventory(liveItems, declaredItems, keyFn) {
+  const declared = mapInventoryByKey(declaredItems, keyFn);
+  const seen = new Set();
+  const out = [];
+  liveItems.forEach((item) => {
+    const key = keyFn(item);
+    if (!key) return;
+    const declaredItem = declared.get(key);
+    seen.add(key);
+    out.push({
+      ...item,
+      name: item.name || item.uri || key,
+      description: item.description || declaredItem?.description || "",
+      labels: declaredItem?.labels || item.labels || {},
+      drift: declaredItem ? "" : "ungoverned",
+    });
+  });
+  declaredItems.forEach((item) => {
+    const key = keyFn(item);
+    if (!key || seen.has(key)) return;
+    out.push({ ...item, drift: "missing" });
+  });
+  return out;
+}
+
+function mapInventoryByKey(items, keyFn) {
+  const out = new Map();
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    const key = keyFn(item);
+    if (key && !out.has(key)) out.set(key, item);
+  });
+  return out;
+}
+
+function inventoryNameKey(item) {
+  if (typeof item === "string") return item.trim();
+  return String(item?.name || "").trim();
+}
+
+function resourceInventoryKey(item) {
+  if (typeof item === "string") return item.trim();
+  return String(item?.uri || item?.name || "").trim();
 }
 
 function metadataSearchText(labels) {
@@ -1433,13 +1777,13 @@ function metadataSearchText(labels) {
 function inventorySearchText(item) {
   if (typeof item === "string") return item;
   const labels = metadataSearchText(item?.labels);
-  return `${item?.name || ""} ${item?.description || ""} ${labels}`;
+  return `${item?.name || ""} ${item?.uri || ""} ${item?.description || ""} ${item?.drift || ""} ${labels}`;
 }
 
 function renderServerCatalogSummary() {
   const total = serversCache.length;
   const ready = serversCache.filter((server) => server.status === "Ready").length;
-  const tools = serversCache.reduce((sum, server) => sum + (server.tools || []).length, 0);
+  const tools = serversCache.reduce((sum, server) => sum + serverDisplayInventory(server).tools.length, 0);
   setText("server-count-total", formatNumber(total));
   setText("server-count-ready", formatNumber(ready));
   setText("server-count-tools", formatNumber(tools));
@@ -1534,6 +1878,7 @@ function renderServerDetailPanel(server, errorMessage = "") {
   const labels = server.labels && typeof server.labels === "object"
     ? Object.entries(server.labels)
     : [];
+  const inventory = serverDisplayInventory(server);
   const description = server.description
     ? `<p class="server-description">${escapeHtml(server.description)}</p>`
     : "";
@@ -1555,10 +1900,10 @@ function renderServerDetailPanel(server, errorMessage = "") {
     <div class="server-detail-grid">
       ${serverDetailStat("Ready Pods", server.ready || "0/0")}
       ${serverDetailStat("Deployed", formatDateTime(server.age))}
-      ${serverDetailStat("Tools", String((server.tools || []).length))}
-      ${serverDetailStat("Prompts", String((server.prompts || []).length))}
-      ${serverDetailStat("Resources", String((server.resources || []).length))}
-      ${serverDetailStat("Tasks", String((server.tasks || []).length))}
+      ${serverDetailStat("Tools", String(inventory.tools.length))}
+      ${serverDetailStat("Prompts", String(inventory.prompts.length))}
+      ${serverDetailStat("Resources", String(inventory.resources.length))}
+      ${serverDetailStat("Tasks", String(inventory.tasks.length))}
     </div>
     <div class="server-detail-block">
       <span class="server-detail-label">Endpoint</span>
@@ -1647,26 +1992,26 @@ function renderServerHero(server) {
 function renderServerMeta(server) {
   const wrap = document.createElement("div");
   wrap.className = "server-meta-wrap";
+  const inventory = serverDisplayInventory(server);
 
   const meta = document.createElement("div");
   meta.className = "server-meta-row";
   meta.appendChild(serverMetaPill("HTTP MCP"));
-  meta.appendChild(serverMetaPill(`${(server.tools || []).length} tools`));
-  meta.appendChild(serverMetaPill(`${(server.prompts || []).length} prompts`));
-  meta.appendChild(serverMetaPill(`${(server.resources || []).length} resources`));
+  meta.appendChild(serverMetaPill(`${inventory.tools.length} tools`));
+  if (inventory.prompts.length) {
+    meta.appendChild(serverMetaPill(`${inventory.prompts.length} prompts`));
+  }
+  if (inventory.resources.length) {
+    meta.appendChild(serverMetaPill(`${inventory.resources.length} resources`));
+  }
+  if (inventory.tasks.length) {
+    meta.appendChild(serverMetaPill(`${inventory.tasks.length} tasks`));
+  }
   meta.appendChild(serverMetaPill(`Created ${formatServerAge(server.age)}`));
   wrap.appendChild(meta);
 
   const actions = document.createElement("div");
   actions.className = "server-card-actions";
-  if (!isTenantUser()) {
-    const detailsButton = document.createElement("button");
-    detailsButton.className = "ghost server-action";
-    detailsButton.type = "button";
-    detailsButton.textContent = "Details";
-    detailsButton.addEventListener("click", () => selectServer(server));
-    actions.appendChild(detailsButton);
-  }
   if (server.endpoint) {
     const copyURL = document.createElement("button");
     copyURL.className = "ghost server-action";
@@ -1717,19 +2062,106 @@ function renderServerEndpoint(server) {
 }
 
 function renderServerConnectConfig(server) {
+  const accessJson = server.access_json || {};
+  const serverName = Object.keys(accessJson.mcpServers || {})[0] || server.name || "mcp-server";
+  const mcpEntry = (accessJson.mcpServers || {})[serverName] || {};
+  const url = mcpEntry.url || server.endpoint || "";
+
+  const tabs = [
+    {
+      id: "claude",
+      label: "Claude Desktop",
+      hint: "Add to ~/Library/Application Support/Claude/claude_desktop_config.json",
+      config: JSON.stringify({ mcpServers: { [serverName]: { type: "http", url } } }, null, 2),
+    },
+    {
+      id: "cursor",
+      label: "Cursor",
+      hint: "Add to ~/.cursor/mcp.json  (or .cursor/mcp.json in your project)",
+      config: JSON.stringify({ mcpServers: { [serverName]: { type: "http", url } } }, null, 2),
+    },
+    {
+      id: "vscode",
+      label: "VS Code",
+      hint: "Add to .vscode/mcp.json in your workspace",
+      config: JSON.stringify(
+        { servers: { [serverName]: { type: "http", url } } },
+        null,
+        2
+      ),
+    },
+    {
+      id: "raw",
+      label: "Raw JSON",
+      hint: "Full access_json blob for any MCP-compatible client",
+      config: JSON.stringify(accessJson, null, 2),
+    },
+  ];
+
   const details = document.createElement("details");
   details.className = "server-connect";
+
   const summary = document.createElement("summary");
   summary.textContent = "Connect config";
   details.appendChild(summary);
 
   const body = document.createElement("div");
   body.className = "server-connect-body";
-  const json = document.createElement("pre");
-  json.className = "access-json";
-  const jsonText = JSON.stringify(server.access_json || {}, null, 2);
-  json.textContent = jsonText;
-  body.appendChild(json);
+
+  // Tab bar
+  const tabBar = document.createElement("div");
+  tabBar.className = "connect-tab-bar";
+
+  // Panels container
+  const panels = document.createElement("div");
+  panels.className = "connect-panels";
+
+  tabs.forEach((tab, i) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "connect-tab-btn" + (i === 0 ? " active" : "");
+    btn.textContent = tab.label;
+    btn.dataset.tabId = tab.id;
+
+    const panel = document.createElement("div");
+    panel.className = "connect-panel" + (i === 0 ? " active" : "");
+    panel.dataset.tabId = tab.id;
+
+    const hint = document.createElement("p");
+    hint.className = "connect-hint";
+    hint.textContent = tab.hint;
+    panel.appendChild(hint);
+
+    const codeWrap = document.createElement("div");
+    codeWrap.className = "connect-code-wrap";
+
+    const pre = document.createElement("pre");
+    pre.className = "access-json";
+    pre.textContent = tab.config;
+    codeWrap.appendChild(pre);
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "ghost connect-copy-btn";
+    copyBtn.textContent = "Copy";
+    copyBtn.addEventListener("click", () => copyTextToClipboard(tab.config, `${tab.label} config copied`));
+    codeWrap.appendChild(copyBtn);
+
+    panel.appendChild(codeWrap);
+    panels.appendChild(panel);
+
+    btn.addEventListener("click", () => {
+      tabBar.querySelectorAll(".connect-tab-btn").forEach((b) => b.classList.remove("active"));
+      panels.querySelectorAll(".connect-panel").forEach((p) => p.classList.remove("active"));
+      btn.classList.add("active");
+      panel.classList.add("active");
+    });
+
+    tabBar.appendChild(btn);
+  });
+
+  body.appendChild(tabBar);
+  body.appendChild(panels);
   details.appendChild(body);
   return details;
 }
@@ -1798,10 +2230,11 @@ function renderInventoryBlock(label, items, itemRenderer) {
 function renderToolItem(tool) {
   const trust = tool.requiredTrust ? `<span class="trust-chip">${escapeHtml(tool.requiredTrust)}</span>` : "";
   const sideEffect = tool.sideEffect ? `<span class="trust-chip">${escapeHtml(tool.sideEffect)}</span>` : "";
+  const drift = renderDriftBadge(tool);
   const labels = renderInventoryLabels(tool.labels);
   return renderExpandableInventoryItem({
     name: tool.name || "-",
-    summaryMeta: [trust, sideEffect].filter(Boolean).join(" "),
+    summaryMeta: [trust, sideEffect, drift].filter(Boolean).join(" "),
     description: tool.description,
     labels,
   });
@@ -1811,11 +2244,23 @@ function renderInventoryItem(item) {
   if (typeof item === "string") {
     return renderExpandableInventoryItem({ name: item || "-" });
   }
+  const drift = renderDriftBadge(item);
   return renderExpandableInventoryItem({
-    name: item?.name || "-",
+    name: item?.name || item?.uri || "-",
+    summaryMeta: drift,
     description: item?.description,
     labels: renderInventoryLabels(item?.labels),
   });
+}
+
+function renderDriftBadge(item) {
+  if (item?.drift === "ungoverned") {
+    return '<span class="drift-chip drift-ungoverned">ungoverned</span>';
+  }
+  if (item?.drift === "missing") {
+    return '<span class="drift-chip drift-missing">missing on server</span>';
+  }
+  return "";
 }
 
 function renderExpandableInventoryItem({ name, summaryMeta = "", description = "", labels = "" }) {
@@ -1827,7 +2272,7 @@ function renderExpandableInventoryItem({ name, summaryMeta = "", description = "
     <details class="inventory-item">
       <summary>
         <strong>${escapeHtml(name || "-")}</strong>
-        ${summaryMeta}
+        ${summaryMeta ? `<span class="inventory-summary-meta">${summaryMeta}</span>` : ""}
       </summary>
       <div class="inventory-item-body">
         ${details}
@@ -1844,7 +2289,31 @@ function renderInventoryLabels(labels) {
     .join("");
 }
 
+function activateAnalyticsTab(button) {
+  const tabset = button.closest("[data-analytics-tabset]");
+  if (!tabset) return;
+  const targetID = button.dataset.analyticsTabTarget;
+  tabset.querySelectorAll("[data-analytics-tab-target]").forEach((tab) => {
+    const selected = tab === button;
+    tab.classList.toggle("active", selected);
+    tab.setAttribute("aria-selected", selected ? "true" : "false");
+  });
+  tabset.querySelectorAll(".analytics-tab-panel").forEach((panel) => {
+    const selected = panel.id === targetID;
+    panel.classList.toggle("active", selected);
+    panel.hidden = !selected;
+  });
+}
+
+function initAnalyticsTabsets() {
+  document.querySelectorAll("[data-analytics-tab-target]").forEach((button) => {
+    button.addEventListener("click", () => activateAnalyticsTab(button));
+  });
+}
+
 function initDashboard() {
+  initAnalyticsTabsets();
+
   // Auto refresh
   const autoRefreshCheckbox = document.getElementById("auto-refresh");
   if (autoRefreshCheckbox) {
@@ -1858,6 +2327,8 @@ function initDashboard() {
   }
 
   document.getElementById("refresh-events")?.addEventListener("click", () => {
+    if (!isAdminUser()) return;
+    loadGovernanceDecisionAnalytics();
     loadEvents();
   });
   document.getElementById("refresh-analytics")?.addEventListener("click", () => {
@@ -1908,7 +2379,13 @@ function startAutoRefresh() {
   autoRefreshInterval = setInterval(() => {
     loadDashboardSummary();
     loadDashboardAnalytics();
+    loadGovernanceDecisionAnalytics();
     loadEvents();
+    // loadServers() intentionally removed from the auto-refresh loop.
+    // Full server card re-renders every 5s caused DOM wipes that made
+    // cards fluctuate visually. Server cards load fresh on page open
+    // and update silently via silentServerInventoryRefresh() only when
+    // live inventory data actually changes.
   }, 5000);
 }
 
@@ -1918,6 +2395,10 @@ function isAdminUser() {
 
 function isTenantUser() {
   return authenticated === true && !isAdminUser();
+}
+
+function hasUserIdentity() {
+  return authenticated === true && String(authPrincipal?.subject || "").trim() !== "";
 }
 
 function applyRoleVisibility() {
@@ -1932,6 +2413,10 @@ function applyRoleVisibility() {
   const userOnly = document.querySelectorAll('[data-user-only="true"]');
   userOnly.forEach((node) => {
     node.classList.toggle("hidden", !isTenantUser());
+  });
+  const userIdentityRequired = document.querySelectorAll('[data-user-identity-required="true"]');
+  userIdentityRequired.forEach((node) => {
+    node.classList.toggle("hidden", !hasUserIdentity());
   });
   const active = resolveActiveTab();
   activateTab(active);
@@ -2428,19 +2913,362 @@ function initGovernance() {
   document.getElementById("session-filter")?.addEventListener("input", debouncedRenderSessions);
 }
 
+// Teams
+async function loadTeams() {
+  setInlineError("team-create-error");
+  setInlineError("team-user-error");
+  try {
+    const data = await fetchJSON("/runtime/teams");
+    teamsCache = Array.isArray(data.teams) ? data.teams : [];
+    if (!teamsCache.some((team) => team.slug === selectedTeamSlug)) {
+      selectedTeamSlug = teamsCache[0]?.slug || "";
+    }
+    renderTeams();
+    renderTeamSelect();
+    await loadTeamMembers();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    const message = `Failed to load teams: ${readErrorMessage(err, "request failed")}`;
+    teamsCache = [];
+    teamMembersCache = [];
+    renderTeams();
+    renderTeamSelect();
+    renderTeamMembers();
+    setInlineError("team-create-error", message);
+    showToast(message, "error");
+  }
+}
+
+async function loadTeamMembers() {
+  if (!selectedTeamSlug) {
+    teamMembersCache = [];
+    renderTeamMembers();
+    return;
+  }
+  try {
+    const data = await fetchJSON(`/runtime/teams/${encodePathSegment(selectedTeamSlug)}/members`);
+    teamMembersCache = Array.isArray(data.members) ? data.members : [];
+    renderTeamMembers();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    const message = `Failed to load team members: ${readErrorMessage(err, "request failed")}`;
+    teamMembersCache = [];
+    renderTeamMembers();
+    setInlineError("team-user-error", message);
+    showToast(message, "error");
+  }
+}
+
+function renderTeams() {
+  setText("teams-total", formatNumber(teamsCache.length));
+  setText("team-members-total", formatNumber(teamMembersCache.length));
+  setText("team-selected-count", selectedTeamSlug || "-");
+
+  const tbody = document.getElementById("teams-body");
+  if (!tbody) return;
+  if (!teamsCache.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No teams found.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  teamsCache.forEach((team) => {
+    const row = document.createElement("tr");
+    if (team.slug === selectedTeamSlug) row.classList.add("selected");
+    row.appendChild(createClickableIdentityCell(team.name || team.slug || "-", team.slug || "", () => showTeamDetail(team.slug)));
+    row.appendChild(createTextCell(team.namespace || "-"));
+    row.appendChild(createCodeCell(team.id || "-"));
+    row.appendChild(createTextCell(formatDateTime(team.created_at)));
+    row.style.cursor = "pointer";
+    row.addEventListener("click", () => {
+      selectedTeamSlug = team.slug || "";
+      renderTeams();
+      renderTeamSelect();
+      loadTeamMembers();
+    });
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function renderTeamSelect() {
+  const select = document.getElementById("team-user-team");
+  if (!select) return;
+  select.innerHTML = "";
+  if (!teamsCache.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No teams";
+    select.appendChild(option);
+    select.disabled = true;
+    return;
+  }
+  teamsCache.forEach((team) => {
+    const option = document.createElement("option");
+    option.value = team.slug || "";
+    option.textContent = team.name || team.slug || "-";
+    select.appendChild(option);
+  });
+  select.disabled = false;
+  select.value = selectedTeamSlug;
+  const kicker = document.getElementById("team-members-kicker");
+  if (kicker && selectedTeamSlug) {
+    kicker.textContent = `Members of "${selectedTeamSlug}" — click a team above to switch.`;
+  }
+}
+
+function renderTeamMembers() {
+  setText("team-members-total", formatNumber(teamMembersCache.length));
+  setText("team-selected-count", selectedTeamSlug || "-");
+
+  const tbody = document.getElementById("team-members-body");
+  if (!tbody) return;
+  if (!selectedTeamSlug) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">Select a team above.</td></tr>';
+    return;
+  }
+  if (!teamMembersCache.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No members in this team.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  teamMembersCache.forEach((member) => {
+    const row = document.createElement("tr");
+    row.appendChild(createClickableIdentityCell(member.email || member.user_id || "-", member.team_slug || selectedTeamSlug, () => showUserDetail(member.user_id, member.email || "", "teams")));
+    row.appendChild(createBadgeCell(member.role || "member", member.role === "owner" ? "badge-warning" : "badge-muted"));
+    row.appendChild(createCodeCell(member.user_id || "-"));
+    row.appendChild(createTextCell(formatDateTime(member.created_at)));
+
+    const actionsCell = document.createElement("td");
+    actionsCell.style.whiteSpace = "nowrap";
+    if (isAdminUser() || (authPrincipal?.teams || []).some((t) => t.slug === selectedTeamSlug && t.role === "owner")) {
+      const promoteLabel = member.role === "owner" ? "Set Member" : "Make Owner";
+      const promoteBtn = document.createElement("button");
+      promoteBtn.type = "button";
+      promoteBtn.className = "ghost action-btn";
+      promoteBtn.textContent = promoteLabel;
+      promoteBtn.addEventListener("click", () =>
+        setTeamMemberRole(selectedTeamSlug, member.user_id, member.role === "owner" ? "member" : "owner")
+      );
+      actionsCell.appendChild(promoteBtn);
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "ghost action-btn danger";
+      removeBtn.textContent = "Remove";
+      removeBtn.style.marginLeft = "6px";
+      removeBtn.addEventListener("click", () => removeTeamMember(selectedTeamSlug, member.user_id, member.email));
+      actionsCell.appendChild(removeBtn);
+    } else {
+      actionsCell.appendChild(document.createTextNode("—"));
+    }
+    row.appendChild(actionsCell);
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+async function setTeamMemberRole(teamSlug, userID, newRole) {
+  try {
+    await fetchJSON(`/runtime/teams/${encodePathSegment(teamSlug)}/members/${encodePathSegment(userID)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: newRole }),
+    });
+    showToast(`Role updated to "${newRole}"`);
+    await loadTeamMembers();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    showToast(`Failed to update role: ${readErrorMessage(err, "request failed")}`, "error");
+  }
+}
+
+async function removeTeamMember(teamSlug, userID, email) {
+  if (!confirm(`Remove ${email || userID} from team "${teamSlug}"?`)) return;
+  try {
+    await fetchJSON(`/runtime/teams/${encodePathSegment(teamSlug)}/members/${encodePathSegment(userID)}`, {
+      method: "DELETE",
+    });
+    showToast(`Removed ${email || userID} from ${teamSlug}`);
+    await loadTeamMembers();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    showToast(`Failed to remove member: ${readErrorMessage(err, "request failed")}`, "error");
+  }
+}
+
+function renderMyTeams() {
+  const tbody = document.getElementById("my-teams-body");
+  if (!tbody) return;
+  const teams = authPrincipal?.teams || [];
+  if (!teams.length) {
+    tbody.innerHTML = '<tr><td colspan="3" class="empty">You are not a member of any team.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  teams.forEach((team) => {
+    const row = document.createElement("tr");
+    row.appendChild(createIdentityCell(team.name || team.slug || "-", team.slug || ""));
+    row.appendChild(createTextCell(team.namespace || "-"));
+    row.appendChild(createBadgeCell(team.role || "member", team.role === "owner" ? "badge-warning" : "badge-muted"));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+async function createTeam(event) {
+  event.preventDefault();
+  const submit = event.submitter;
+  if (submit?.disabled) return;
+  const slug = fieldValue("team-create-slug");
+  const name = fieldValue("team-create-name");
+  setInlineError("team-create-error");
+  if (!slug) {
+    const message = "Team slug is required.";
+    setInlineError("team-create-error", message);
+    showToast(message, "warning");
+    return;
+  }
+  if (submit) submit.disabled = true;
+  try {
+    await fetchJSON("/runtime/teams", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, name }),
+    });
+    showToast(`Team "${slug}" created`);
+    selectedTeamSlug = slug;
+    document.getElementById("team-create-form")?.reset();
+    document.getElementById("team-create-form")?.classList.add("hidden");
+    await loadNamespaceScopes();
+    await loadTeams();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    const message = `Failed to create team: ${readErrorMessage(err, "request failed")}`;
+    setInlineError("team-create-error", message);
+    showToast(message, "error");
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+}
+
+async function createTeamUser(event) {
+  event.preventDefault();
+  const submit = event.submitter;
+  if (submit?.disabled) return;
+  const team = fieldValue("team-user-team") || selectedTeamSlug;
+  const email = fieldValue("team-user-email");
+  const password = document.getElementById("team-user-password")?.value || "";
+  const role = fieldValue("team-user-role") || "member";
+  setInlineError("team-user-error");
+  if (!team || !email || !password.trim()) {
+    const message = "Team, email, and password are required.";
+    setInlineError("team-user-error", message);
+    showToast(message, "warning");
+    return;
+  }
+  if (submit) submit.disabled = true;
+  try {
+    await fetchJSON(`/runtime/teams/${encodePathSegment(team)}/users`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, role }),
+    });
+    showToast(`User "${email}" added to ${team}`);
+    selectedTeamSlug = team;
+    const passwordInput = document.getElementById("team-user-password");
+    if (passwordInput) passwordInput.value = "";
+    document.getElementById("team-user-email") && (document.getElementById("team-user-email").value = "");
+    document.getElementById("team-user-form")?.classList.add("hidden");
+    await loadTeamMembers();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    const message = `Failed to add team member: ${readErrorMessage(err, "request failed")}`;
+    setInlineError("team-user-error", message);
+    showToast(message, "error");
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+}
+
+function resetTeams() {
+  teamsCache = [];
+  teamMembersCache = [];
+  selectedTeamSlug = "";
+  setText("teams-total", "-");
+  setText("team-members-total", "-");
+  setText("team-selected-count", "-");
+  setInlineError("team-create-error");
+  setInlineError("team-user-error");
+  const teamsBody = document.getElementById("teams-body");
+  if (teamsBody) {
+    teamsBody.innerHTML = '<tr><td colspan="4" class="empty">No teams found.</td></tr>';
+  }
+  const membersBody = document.getElementById("team-members-body");
+  if (membersBody) {
+    membersBody.innerHTML = '<tr><td colspan="5" class="empty">Select a team.</td></tr>';
+  }
+  renderTeamSelect();
+}
+
+function initTeams() {
+  document.getElementById("refresh-teams")?.addEventListener("click", loadTeams);
+  document.getElementById("team-create-form")?.addEventListener("submit", createTeam);
+  document.getElementById("team-user-form")?.addEventListener("submit", createTeamUser);
+
+  document.getElementById("show-team-create-form")?.addEventListener("click", () => {
+    const form = document.getElementById("team-create-form");
+    form?.classList.toggle("hidden");
+    setInlineError("team-create-error");
+  });
+  document.getElementById("cancel-team-create-form")?.addEventListener("click", () => {
+    document.getElementById("team-create-form")?.classList.add("hidden");
+    setInlineError("team-create-error");
+  });
+
+  document.getElementById("show-team-user-form")?.addEventListener("click", () => {
+    const form = document.getElementById("team-user-form");
+    form?.classList.toggle("hidden");
+    setInlineError("team-user-error");
+  });
+  document.getElementById("cancel-team-user-form")?.addEventListener("click", () => {
+    document.getElementById("team-user-form")?.classList.add("hidden");
+    setInlineError("team-user-error");
+  });
+
+  document.getElementById("team-user-team")?.addEventListener("change", (event) => {
+    selectedTeamSlug = event.target.value || "";
+    renderTeams();
+    loadTeamMembers();
+  });
+}
+
 // User API Keys
 async function loadUserAPIKeys(options = {}) {
   if (!options.preserveOneTime) {
     clearOneTimeUserAPIKey();
   }
+  if (!hasUserIdentity()) {
+    userAPIKeysCache = [];
+    renderUserAPIKeys();
+    setInlineError("user-api-key-error", "Sign in with a platform account to manage user API keys.");
+    return;
+  }
+  setInlineError("user-api-key-error");
   try {
     const data = await fetchJSON("/user/api-keys");
     userAPIKeysCache = Array.isArray(data.keys) ? data.keys : [];
     renderUserAPIKeys();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
+    const message = `Failed to load API keys: ${readErrorMessage(err, "request failed")}`;
+    userAPIKeysCache = [];
+    renderUserAPIKeys();
+    setInlineError("user-api-key-error", message);
     console.error("Failed to load user api keys:", err);
-    showToast("Failed to load API keys", "error");
+    showToast(message, "error");
   }
 }
 
@@ -2479,6 +3307,12 @@ async function createUserAPIKey() {
   const name = (input?.value || "").trim();
   setInlineError("user-api-key-error");
   input?.removeAttribute("aria-invalid");
+  if (!hasUserIdentity()) {
+    const message = "Sign in with a platform account to manage user API keys.";
+    setInlineError("user-api-key-error", message);
+    showToast(message, "warning");
+    return;
+  }
   if (!name) {
     const message = "Enter a name for the API key.";
     setInlineError("user-api-key-error", message);
@@ -2518,6 +3352,12 @@ async function createUserAPIKey() {
 }
 
 async function revokeUserAPIKey(id) {
+  if (!hasUserIdentity()) {
+    const message = "Sign in with a platform account to manage user API keys.";
+    setInlineError("user-api-key-error", message);
+    showToast(message, "warning");
+    return;
+  }
   try {
     await fetchJSON(`/user/api-keys/${encodePathSegment(id)}/revoke`, { method: "POST" });
     showToast("API key revoked");
@@ -2721,7 +3561,7 @@ function renderOperationUsers() {
   const fragment = document.createDocumentFragment();
   operationsUsersCache.forEach((user) => {
     const row = document.createElement("tr");
-    row.appendChild(createIdentityCell(user.email || user.id || "-", user.id || ""));
+    row.appendChild(createClickableIdentityCell(user.email || user.id || "-", user.id || "", () => showUserDetail(user.id, user.email || "", "operations")));
     row.appendChild(createBadgeCell(user.role || "user", user.role === "admin" ? "badge-warning" : "badge-muted"));
     row.appendChild(createTextCell(user.namespace || "-"));
     row.appendChild(createTextCell(formatDateTime(user.last_login_at)));
@@ -2782,6 +3622,7 @@ function renderSelectedOperationServer() {
   const labels = server.labels && typeof server.labels === "object"
     ? Object.entries(server.labels)
     : [];
+  const inventory = serverDisplayInventory(server);
   const description = server.description
     ? `<p class="server-description">${escapeHtml(server.description)}</p>`
     : "";
@@ -2800,10 +3641,10 @@ function renderSelectedOperationServer() {
     <div class="server-detail-grid">
       ${serverDetailStat("Ready Pods", server.ready || "0/0")}
       ${serverDetailStat("Deployed", formatDateTime(server.age))}
-      ${serverDetailStat("Tools", String((server.tools || []).length))}
-      ${serverDetailStat("Prompts", String((server.prompts || []).length))}
-      ${serverDetailStat("Resources", String((server.resources || []).length))}
-      ${serverDetailStat("Tasks", String((server.tasks || []).length))}
+      ${serverDetailStat("Tools", String(inventory.tools.length))}
+      ${serverDetailStat("Prompts", String(inventory.prompts.length))}
+      ${serverDetailStat("Resources", String(inventory.resources.length))}
+      ${serverDetailStat("Tasks", String(inventory.tasks.length))}
     </div>
     <div class="server-detail-block">
       <span class="server-detail-label">Endpoint</span>
@@ -2912,11 +3753,12 @@ function operationServerKey(server) {
 }
 
 function operationInventoryLabel(server) {
+  const inventory = serverDisplayInventory(server);
   const pieces = [
-    `${(server.tools || []).length} tools`,
-    `${(server.prompts || []).length} prompts`,
-    `${(server.resources || []).length} resources`,
-    `${(server.tasks || []).length} tasks`,
+    `${inventory.tools.length} tools`,
+    `${inventory.prompts.length} prompts`,
+    `${inventory.resources.length} resources`,
+    `${inventory.tasks.length} tasks`,
   ];
   return pieces.join(" / ");
 }
@@ -3204,14 +4046,239 @@ function confirmModal(message) {
   });
 }
 
+// Admin detail pages
+
+function showTeamDetail(slug) {
+  adminDetailTeamSlug = slug;
+  adminDetailBackTab = "teams";
+  adminDetailTeamMembersCache = [];
+  activateTab("admin-team");
+  if (!teamsCache.some((t) => t.slug === slug)) {
+    loadTeams().then(renderTeamDetail);
+  } else {
+    renderTeamDetail();
+  }
+  loadAdminTeamDetailMembers();
+}
+
+function renderTeamDetail() {
+  const team = teamsCache.find((t) => t.slug === adminDetailTeamSlug);
+  setText("admin-team-title", team ? (team.name || team.slug || adminDetailTeamSlug) : adminDetailTeamSlug);
+  setText("admin-team-kicker", team ? `slug: ${team.slug}` : "");
+
+  const grid = document.getElementById("admin-team-info-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+
+  const fields = [
+    ["Namespace", team?.namespace || "-"],
+    ["ID", team?.id || "-"],
+    ["Created", team ? formatDateTime(team.created_at) : "-"],
+  ];
+  fields.forEach(([label, value]) => {
+    const stat = document.createElement("div");
+    stat.className = "server-detail-stat";
+    const labelEl = document.createElement("span");
+    labelEl.className = "server-detail-label";
+    labelEl.textContent = label;
+    const valueEl = document.createElement("strong");
+    if (label === "ID") {
+      const code = document.createElement("code");
+      code.className = "table-code";
+      code.textContent = value;
+      valueEl.appendChild(code);
+    } else {
+      valueEl.textContent = value;
+    }
+    stat.appendChild(labelEl);
+    stat.appendChild(valueEl);
+    grid.appendChild(stat);
+  });
+}
+
+async function loadAdminTeamDetailMembers() {
+  const tbody = document.getElementById("admin-team-members-body");
+  if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="empty">Loading…</td></tr>';
+  try {
+    const data = await fetchJSON(`/runtime/teams/${encodePathSegment(adminDetailTeamSlug)}/members`);
+    adminDetailTeamMembersCache = Array.isArray(data.members) ? data.members : [];
+    renderAdminTeamDetailMembers();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="empty">Failed to load members.</td></tr>';
+  }
+}
+
+function renderAdminTeamDetailMembers() {
+  const tbody = document.getElementById("admin-team-members-body");
+  if (!tbody) return;
+  if (!adminDetailTeamMembersCache.length) {
+    tbody.innerHTML = '<tr><td colspan="3" class="empty">No members.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  adminDetailTeamMembersCache.forEach((member) => {
+    const row = document.createElement("tr");
+    const label = member.email || member.user_id || "-";
+    const sub = member.email ? (member.user_id || "") : "";
+    row.appendChild(createClickableIdentityCell(label, sub, () => showUserDetail(member.user_id, member.email || "", "admin-team")));
+    row.appendChild(createBadgeCell(member.role || "member", member.role === "owner" ? "badge-warning" : "badge-muted"));
+    row.appendChild(createTextCell(formatDateTime(member.created_at)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function showUserDetail(userId, email, backTab = "teams") {
+  adminDetailUserId = userId || "";
+  adminDetailUserEmail = email || "";
+  adminDetailBackTab = backTab;
+  adminDetailUserAuditCache = [];
+  activateTab("admin-user");
+  renderUserDetailHeader();
+  loadUserDetail();
+}
+
+function renderUserDetailHeader() {
+  const email = adminDetailUserEmail;
+  const userId = adminDetailUserId;
+  setText("admin-user-title", email || userId || "User");
+  setText("admin-user-kicker", userId ? `id: ${userId}` : "");
+
+  const user = operationsUsersCache.find((u) => matchesUserIdentity(u, userId, email));
+
+  const grid = document.getElementById("admin-user-info-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+
+  const fields = [
+    ["Role", user?.role || "-"],
+    ["Namespace", user?.namespace || "-"],
+    ["User ID", userId || "-"],
+    ["Last Login", user ? formatDateTime(user.last_login_at) : "-"],
+    ["Last Activity", user ? formatDateTime(user.last_activity_at || user.created_at) : "-"],
+    ["Failed Actions", user ? formatNumber(user.failed_action_count || 0) : "-"],
+  ];
+  fields.forEach(([label, value]) => {
+    const stat = document.createElement("div");
+    stat.className = "server-detail-stat";
+    const labelEl = document.createElement("span");
+    labelEl.className = "server-detail-label";
+    labelEl.textContent = label;
+    const valueEl = document.createElement("strong");
+    if (label === "User ID") {
+      const code = document.createElement("code");
+      code.className = "table-code";
+      code.textContent = value;
+      valueEl.appendChild(code);
+    } else if (label === "Role") {
+      valueEl.appendChild(createBadge(value, value === "admin" ? "badge-warning" : "badge-muted"));
+    } else {
+      valueEl.textContent = value;
+    }
+    stat.appendChild(labelEl);
+    stat.appendChild(valueEl);
+    grid.appendChild(stat);
+  });
+}
+
+function matchesUserIdentity(user, userId, email) {
+  if (!user) return false;
+  return Boolean((userId && user.id === userId) || (email && user.email === email));
+}
+
+async function loadUserDetail() {
+  const tbody = document.getElementById("admin-user-activity-body");
+  if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="empty">Loading…</td></tr>';
+  const requestedUserId = adminDetailUserId;
+  const requestedUserEmail = adminDetailUserEmail;
+  const queryUser = requestedUserEmail || requestedUserId;
+  if (!queryUser) {
+    if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="empty">No activity available.</td></tr>';
+    return;
+  }
+  try {
+    const params = new URLSearchParams({ user: queryUser, limit: "50" });
+    const data = await fetchJSON(`/admin/operations?${params}`);
+    if (requestedUserId !== adminDetailUserId || requestedUserEmail !== adminDetailUserEmail) return;
+
+    adminDetailUserAuditCache = Array.isArray(data.audit_logs) ? data.audit_logs : [];
+
+    // Update operationsUsersCache with fresh user data so the header stats
+    // are populated even when navigating here from Teams (cache may be empty).
+    if (Array.isArray(data.users) && data.users.length > 0) {
+      const fetched = data.users.find((u) => matchesUserIdentity(u, requestedUserId, requestedUserEmail));
+      if (fetched) {
+        adminDetailUserId = adminDetailUserId || fetched.id || "";
+        adminDetailUserEmail = adminDetailUserEmail || fetched.email || "";
+        const idx = operationsUsersCache.findIndex((u) => matchesUserIdentity(u, fetched.id, fetched.email));
+        if (idx > -1) {
+          operationsUsersCache[idx] = fetched;
+        } else {
+          operationsUsersCache.push(fetched);
+        }
+        renderUserDetailHeader();
+      }
+    }
+
+    renderUserDetailActivity();
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="empty">Failed to load activity.</td></tr>';
+  }
+}
+
+function renderUserDetailActivity() {
+  const tbody = document.getElementById("admin-user-activity-body");
+  if (!tbody) return;
+  if (!adminDetailUserAuditCache.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No recent activity.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  adminDetailUserAuditCache.forEach((item) => {
+    const row = document.createElement("tr");
+    row.appendChild(createTextCell(formatDateTime(item.created_at)));
+    row.appendChild(createIdentityCell(item.action || "-", item.source || ""));
+    row.appendChild(createTextCell(item.resource || item.namespace || "-"));
+    row.appendChild(createBadgeCell(item.status || "unknown", auditStatusBadgeClass(item.status)));
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function initAdminDetail() {
+  // Team detail always originates from the Teams tab, so back is always "teams".
+  document.getElementById("admin-team-back")?.addEventListener("click", () => {
+    activateTab("teams");
+    loadTeams();
+  });
+  document.getElementById("admin-user-back")?.addEventListener("click", () => {
+    const back = adminDetailBackTab;
+    if (back === "admin-team") {
+      activateTab("admin-team");
+    } else if (back === "operations") {
+      activateTab("operations");
+      loadMCPOperations();
+    } else {
+      activateTab("teams");
+      loadTeams();
+    }
+  });
+}
+
 // Initialize
 document.addEventListener("DOMContentLoaded", () => {
   initTabs();
   initDashboard();
   initGovernance();
+  initTeams();
   initUserAPIKeys();
   initOperations();
   initPlatform();
   initModal();
   initAuth();
+  initAdminDetail();
 });

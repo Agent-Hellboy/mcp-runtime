@@ -106,9 +106,6 @@ spec:
       description: Issue a refund for an invoice.
       requiredTrust: high
       sideEffect: destructive
-  analytics:
-    enabled: true
-    ingestURL: http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events
   rollout:
     strategy: Canary
     canaryReplicas: 1
@@ -229,6 +226,13 @@ GET  /api/auth/me
 | `POST /api/auth/oidc` | Body: `id_token`. Requires configured issuer, audience, and JWKS. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
 | `GET /api/auth/me` | Requires auth. Returns `authenticated=true` and the current principal. |
 
+`setup` writes OIDC settings through `mcp-sentinel-config`. For Google sign-in,
+set `GOOGLE_CLIENT_ID` before setup; when the issuer, audience, and JWKS URL are
+empty, setup derives the standard Google OIDC values from that client ID. For
+other OIDC providers, set `OIDC_ISSUER`, `OIDC_AUDIENCE`, and `OIDC_JWKS_URL`
+explicitly. Non-test public TLS setup fails fast unless one of those browser
+login configurations is present.
+
 ## Gateway flow and headers
 
 ```mermaid
@@ -289,8 +293,8 @@ Query: `limit` (1-50, default 10), `window_days` (1-365, default 30),
 
 `/api/user/analytics/usage` is available to normal platform users. It returns
 the same analytics shape, but the API enforces scope before querying
-ClickHouse: non-admin callers can see only events from their own user namespace
-and team namespaces, and the shared `mcp-servers` catalog is excluded from user
+ClickHouse: non-admin callers can see only events from team namespaces they
+belong to, and the shared `mcp-servers` catalog is excluded from user
 analytics. Query: `window_days`, `limit`, `namespace`, `server`, `decision`,
 and `tool_name`. Passing `namespace` narrows the result only when the caller
 owns that namespace or belongs to that team.
@@ -299,45 +303,57 @@ owns that namespace or belongs to that team.
 
 Manage access grants, sessions, and view runtime state. All `/api/runtime/*`
 routes require an authenticated platform bearer token or `x-api-key`; requests
-without authentication receive `401`. `POST` requests create or update the
-Kubernetes CRs that the operator renders into the gateway policy ConfigMap.
+without authentication receive `401`. `POST` requests create the Kubernetes CRs
+that the operator renders into the gateway policy ConfigMap. Server redeploys
+must opt in with `update: true`; grants and sessions remain create-or-update.
 
-For `POST /api/runtime/grants` and `POST /api/runtime/sessions`, the API resolves `serverRef` to an `MCPServer` in the cluster. If that server does not exist, the call returns `400` with a clear `unknown serverRef` message. The server lookup is **not** part of a single distributed transaction with the grant/session write — a concurrent delete can leave a stale reference (same as `kubectl apply`). Kubernetes apply errors are surfaced with the status the API server would use, when available.
+For `POST /api/runtime/grants` and admin-only direct `POST /api/runtime/sessions`, the API resolves `serverRef` to an `MCPServer` in the cluster. If that server does not exist, the call returns `400` with a clear `unknown serverRef` message. The server lookup is **not** part of a single distributed transaction with the grant/session write — a concurrent delete can leave a stale reference (same as `kubectl apply`). Kubernetes apply errors are surfaced with the status the API server would use, when available. Non-admin grant mutations and session item mutations require the caller to be the server owner or a team owner for the server namespace; normal adapter flows should use `POST /api/runtime/adapter/sessions` instead of direct session apply.
 
 ```text
 GET  /api/runtime/servers              # List authenticated MCP catalog entries
-POST /api/runtime/servers              # Create/update MCPServer in an authorized namespace
+GET  /api/runtime/servers/{namespace}/{name} # Get one MCPServer catalog entry
+POST /api/runtime/servers              # Create MCPServer; set update=true to redeploy an existing one
 DELETE /api/runtime/servers/{namespace}/{name} # Retire one MCPServer
-GET  /api/runtime/server-events?namespace=&server= # Recent analytics events for one server
+GET  /api/runtime/server-events?namespace=&server= # Recent analytics events for one administered server
 GET  /api/runtime/grants               # List MCPAccessGrant resources
 GET  /api/runtime/grants/{namespace}/{name}   # Get one MCPAccessGrant
 POST /api/runtime/grants               # Create or update an MCPAccessGrant (x-api-key)
 DELETE /api/runtime/grants/{namespace}/{name} # Delete one MCPAccessGrant
 GET  /api/runtime/sessions             # List MCPAgentSession resources
 GET  /api/runtime/sessions/{namespace}/{name} # Get one MCPAgentSession
-POST /api/runtime/sessions             # Create or update an MCPAgentSession (x-api-key)
+POST /api/runtime/sessions             # Admin/internal direct MCPAgentSession apply
 DELETE /api/runtime/sessions/{namespace}/{name} # Delete one MCPAgentSession
 POST /api/runtime/adapter/sessions     # Issue/reuse an adapter MCPAgentSession for a human/user principal
 GET  /api/runtime/teams                # Admin: all teams; user: caller memberships
 POST /api/runtime/teams                # Admin-only team + namespace provisioning
 GET  /api/runtime/teams/{team}         # Team metadata (admin/member)
-POST /api/runtime/teams/{team}/members # Admin/team-owner membership upsert
+GET  /api/runtime/teams/{team}/members # List team memberships (admin/member)
+PUT  /api/runtime/teams/{team}/members/{userID} # Admin/team-owner membership upsert
+POST /api/users                          # Admin-only password user create
 DELETE /api/runtime/teams/{team}/members/{userID}
+POST /api/runtime/registry/push        # Multipart docker-save upload; in-cluster skopeo push to platform registry
 GET  /api/runtime/namespaces           # Allowed namespaces + org catalog metadata
 GET  /api/runtime/namespaces/{namespace}
-GET  /api/runtime/components           # Sentinel component health status
-GET  /api/runtime/policy?namespace=&server=   # Get rendered policy for a server
+GET  /api/runtime/components           # Admin-only Sentinel component health status
+GET  /api/runtime/policy?namespace=&server=   # Get rendered policy for an administered server
 ```
 
 For non-admin users, runtime scope depends on `PLATFORM_MODE` / setup
 `--platform-mode`. In `tenant` mode, `GET /api/runtime/servers` without a
-`namespace` query returns MCPs in their own user/team tenant namespaces. In
-`org` mode, signed-in users can use the org catalog namespace and their
-owned/team namespaces. In `public` mode, anonymous users can list the
-`mcp-servers-public` catalog, while signed-in users can publish to the public
-catalog and their owned/team namespaces. Admin callers can inspect any
+`namespace` query returns MCPs in the caller's team namespaces. In `org` mode,
+signed-in users can use the org catalog namespace and their team namespaces.
+In `public` mode, anonymous users can list the `mcp-servers-public` catalog,
+while signed-in users can publish to the public catalog and their team
+namespaces. Admin callers can inspect any
 namespace. Passing `namespace=<name>` narrows the list to an authorized
-namespace for the active mode.
+namespace for the active mode. `POST /api/runtime/servers` also accepts
+`scope: "tenant" | "org" | "public"` in the JSON body. `scope: "public"`
+requires public platform mode and resolves the active public catalog namespace;
+`scope: "org"` requires org mode and resolves the active org catalog namespace;
+`scope: "tenant"` uses the caller's team namespace unless the request passes an
+authorized team `namespace`. If an `MCPServer` with the same name already
+exists in the target namespace, the API returns `409` unless the request body
+sets `update: true`.
 
 `POST /api/runtime/servers` is governed by the platform publish policy. Admins
 configure `PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `5`, set `0` to disable)
@@ -345,10 +361,16 @@ and `PLATFORM_MCP_PUSH_COOLDOWN` (Go duration such as `30m`, default `0s` to
 disable). A quota or cooldown denial returns `429` with a clear error; cooldown
 responses include `next_allowed_at` and `Retry-After`. `GET /api/runtime/servers`
 includes `publish_policy` so UI clients can show the active limit and count.
-`DELETE /api/runtime/servers/{namespace}/{name}` retires a server and frees one
-active-server slot for the owning publisher. The active-server limit is enforced
-by the platform API before Kubernetes apply; strict serialization of concurrent
-publishes would require a shared reservation or admission-control layer.
+Server list/get responses keep CRD `tools`, `prompts`, `resources`, and
+`tasks` as governance metadata and add `liveInventory` from the running MCP
+server when the API service's short-TTL gateway probe has completed. On a cold
+cache miss or probe failure, `liveInventory` is `null` and
+`liveInventoryError` contains a short reason. `DELETE
+/api/runtime/servers/{namespace}/{name}` retires a server and frees one
+active-server slot for the owning publisher. The active-server limit is
+enforced by the platform API before Kubernetes apply; strict serialization of
+concurrent publishes would require a shared reservation or admission-control
+layer.
 
 Adapter session minting requires an authenticated principal with a subject or
 email, such as a platform login bearer token or user API key. Service-only
@@ -392,10 +414,8 @@ identify the human principal that should own the `MCPAgentSession`.
 Safe operational actions for grants, sessions, and components.
 
 ```text
-POST /api/runtime/grants/{namespace}/{name}/disable
-POST /api/runtime/grants/{namespace}/{name}/enable
-POST /api/runtime/sessions/{namespace}/{name}/revoke
-POST /api/runtime/sessions/{namespace}/{name}/unrevoke
+PATCH /api/runtime/grants/{namespace}/{name}
+PATCH /api/runtime/sessions/{namespace}/{name}
 POST /api/runtime/actions/restart     # Body: {component: "api"} or {all: true}
 ```
 
@@ -419,11 +439,11 @@ GET  /api/admin/audit                  # Admin-only audit timeline; supports use
 GET  /api/admin/operations             # Admin-only user, image, deployment, and timeline view
 GET  /api/user/api-keys                # List caller-owned API keys
 POST /api/user/api-keys                # Create caller-owned API key
-POST /api/user/api-keys/{id}/revoke    # Revoke caller-owned API key
+DELETE /api/user/api-keys/{id}         # Revoke caller-owned API key
 GET  /api/user/analytics/usage         # User/team-scoped MCP server analytics
 GET  /api/user/registry-credentials    # List caller-owned registry credentials
 POST /api/user/registry-credentials    # Create a registry credential
-POST /api/user/registry-credentials/{id}/revoke
+DELETE /api/user/registry-credentials/{id}
 *    /api/registry/authz               # Traefik forward-auth for registry ingress
 POST /api/user/activity/image-publish  # Record a successful user image publish event
 ```
@@ -434,9 +454,13 @@ User API-key creation returns the cleartext key once as both `api_key` and
 The bundled `registry.<domain>` ingress calls `/api/registry/authz` before
 proxying Docker Registry API traffic. Platform admin credentials (`x-api-key` or
 Bearer token) keep global registry access. Normal user API keys and platform
-Bearer tokens are accepted only for repository paths scoped to the caller's user
-namespace or team slug, such as `/v2/user-1/demo/...` or `/v2/acme/demo/...`.
-Anonymous requests and non-admin catalog requests are rejected.
+Bearer tokens are accepted only for repository paths scoped to the caller's
+team slug or team namespace, such as `/v2/acme/demo/...` or
+`/v2/mcp-team-acme/demo/...`.
+In `public` mode, signed-in users may also write `/v2/public/...` (or the
+configured public catalog namespace). In `org` mode, signed-in users may write
+`/v2/org/...` (or the configured org catalog namespace). Anonymous requests and
+catalog requests for inactive modes are rejected.
 
 Deployment apply body:
 

@@ -2,14 +2,21 @@ package runtimeapi
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 )
 
+// HandleRuntimePolicy returns the rendered gateway policy for a server the caller can administer.
 func (s *RuntimeServer) HandleRuntimePolicy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("allow", http.MethodGet)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
+		return
+	}
 	if s.accessMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 
@@ -18,23 +25,34 @@ func (s *RuntimeServer) HandleRuntimePolicy(w http.ResponseWriter, r *http.Reque
 
 	namespace, err := s.scopedNamespaceForPrincipal(r.Context(), r.URL.Query().Get("namespace"))
 	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	server := r.URL.Query().Get("server")
 
 	if strings.TrimSpace(namespace) == "" || server == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace and server parameters required"})
+		writeAPIError(w, http.StatusBadRequest, "namespace and server parameters required")
+		return
+	}
+	if allowed, err := s.canAdministerNamedServer(ctx, strings.TrimSpace(namespace), strings.TrimSpace(server)); err != nil {
+		code, msg := sensitiveServerReadStatus(err)
+		if code == http.StatusInternalServerError {
+			log.Printf("runtime policy: inspect server %s/%s failed: %v", namespace, server, err)
+		}
+		writeAPIError(w, code, msg)
+		return
+	} else if !allowed {
+		writeAPIError(w, http.StatusForbidden, "forbidden server")
 		return
 	}
 
 	policy, err := s.accessMgr.GetServerPolicy(ctx, strings.TrimSpace(namespace), server)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
+		writeAPIError(w, http.StatusNotFound, "policy not found")
 		return
 	}
 
 	writeJSON(w, http.StatusOK, policy)
 }
 
-// HandleGrantItemPath handles POST /api/runtime/grants/{namespace}/{name}/disable|enable
+// HandleGrantItemPath handles PATCH /api/runtime/grants/{namespace}/{name} and legacy POST /disable|enable.

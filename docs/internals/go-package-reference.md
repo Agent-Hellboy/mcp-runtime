@@ -13,6 +13,7 @@ python3 docs/scripts/generate_go_package_reference.py
 
 - [API types](#api-types) `mcp-runtime/api/v1alpha1`
 - [Metadata helpers](#metadata-helpers) `mcp-runtime/pkg/metadata`
+- [Publish scope helpers](#publish-scope-helpers) `mcp-runtime/pkg/publishscope`
 - [Agent adapters](#agent-adapters) `mcp-runtime/internal/agentadapter`
 - [Operator internals](#operator-internals) `mcp-runtime/internal/operator`
 - [CLI command routing](#cli-command-routing) `mcp-runtime/internal/cli/root`
@@ -20,6 +21,7 @@ python3 docs/scripts/generate_go_package_reference.py
 - [CLI Kubernetes helpers](#cli-kubernetes-helpers) `mcp-runtime/internal/cli/kube`
 - [CLI Kubernetes errors](#cli-kubernetes-errors) `mcp-runtime/internal/cli/kubeerr`
 - [CLI cluster](#cli-cluster) `mcp-runtime/internal/cli/cluster`
+- [CLI cluster doctor](#cli-cluster-doctor) `mcp-runtime/internal/cli/cluster/doctor`
 - [CLI cert-manager](#cli-cert-manager) `mcp-runtime/internal/cli/certmanager`
 - [CLI platform API](#cli-platform-api) `mcp-runtime/internal/cli/platformapi`
 - [CLI platform status](#cli-platform-status) `mcp-runtime/internal/cli/platformstatus`
@@ -31,6 +33,7 @@ python3 docs/scripts/generate_go_package_reference.py
 - [CLI setup asset paths](#cli-setup-asset-paths) `mcp-runtime/internal/cli/setup/assetpath`
 - [CLI setup ingress manifests](#cli-setup-ingress-manifests) `mcp-runtime/internal/cli/setup/ingressmanifest`
 - [CLI setup plan](#cli-setup-plan) `mcp-runtime/internal/cli/setup/plan`
+- [CLI setup platform](#cli-setup-platform) `mcp-runtime/internal/cli/setup/platform`
 - [CLI binary](#cli-binary) `mcp-runtime/cmd/mcp-runtime`
 - [Operator binary](#operator-binary) `mcp-runtime/cmd/operator`
 
@@ -864,7 +867,7 @@ type MCPServerSpec struct {
 	IngressHost string `json:"ingressHost,omitempty"`
 
 	// PublicPathPrefix enables path-based public routing and is used to compute /<publicPathPrefix>/mcp.
-	// When set, the operator prefers path-based ingress rules without a host match.
+	// When ingressHost is also set, the route is path-based under that host; otherwise it is hostless.
 	PublicPathPrefix string `json:"publicPathPrefix,omitempty"`
 
 	// IngressClass is the ingress class to use (e.g., "traefik", "nginx", "istio"). Defaults to "traefik".
@@ -1385,6 +1388,7 @@ _No package overview is documented._
 ### Index
 
 - [`Constants`](#metadata-helpers-constants)
+- [`func DisplayImageReference(image string) string`](#metadata-helpers-func-displayimagereference-image-string-string)
 - [`func GenerateCRD(server *ServerMetadata, outputPath string) error`](#metadata-helpers-func-generatecrd-server-servermetadata-outputpath-string-error)
 - [`func GenerateCRDsFromRegistry(registry *RegistryFile, outputDir string) error`](#metadata-helpers-func-generatecrdsfromregistry-registry-registryfile-outputdir-string-error)
 - [`func NormalizePlatformDomain(raw string) string`](#metadata-helpers-func-normalizeplatformdomain-raw-string-string)
@@ -1392,6 +1396,8 @@ _No package overview is documented._
 - [`func ResolvePlatformIngressHost() string`](#metadata-helpers-func-resolveplatformingresshost-string)
 - [`func ResolveRegistryEndpoint() string`](#metadata-helpers-func-resolveregistryendpoint-string)
 - [`func ResolveRegistryHost() string`](#metadata-helpers-func-resolveregistryhost-string)
+- [`func ResolveRegistryPullHost() string`](#metadata-helpers-func-resolveregistrypullhost-string)
+- [`func RewriteImageRegistryHost(image, registry string) (string, bool)`](#metadata-helpers-func-rewriteimageregistryhost-image-registry-string-string-bool)
 - [`type AnalyticsConfig struct`](#metadata-helpers-type-analyticsconfig-struct)
 - [`type AuthConfig struct`](#metadata-helpers-type-authconfig-struct)
 - [`type AuthMode string`](#metadata-helpers-type-authmode-string)
@@ -1401,6 +1407,7 @@ _No package overview is documented._
 - [`type PolicyConfig struct`](#metadata-helpers-type-policyconfig-struct)
 - [`type PolicyDecision string`](#metadata-helpers-type-policydecision-string)
 - [`type PolicyMode string`](#metadata-helpers-type-policymode-string)
+- [`type PublishScope string`](#metadata-helpers-type-publishscope-string)
 - [`type RegistryFile struct`](#metadata-helpers-type-registryfile-struct)
 - [`func LoadFromDirectory(dirPath string) (*RegistryFile, error)`](#metadata-helpers-func-loadfromdirectory-dirpath-string-registryfile-error)
 - [`func LoadFromFile(filePath string) (*RegistryFile, error)`](#metadata-helpers-func-loadfromfile-filepath-string-registryfile-error)
@@ -1425,6 +1432,16 @@ const DefaultRegistryHost = "registry.local"
 
 <a id="metadata-helpers-functions"></a>
 ### Functions
+
+<a id="metadata-helpers-func-displayimagereference-image-string-string"></a>
+```text
+func DisplayImageReference(image string) string
+    DisplayImageReference rewrites internal registry image refs for user-facing
+    display. It prefers the public registry host when configured, and otherwise
+    strips the internal host so cluster-only endpoints do not leak into UI/API
+    responses.
+
+```
 
 <a id="metadata-helpers-func-generatecrd-server-servermetadata-outputpath-string-error"></a>
 ```text
@@ -1485,6 +1502,27 @@ func ResolveRegistryHost() string
     ResolveRegistryHost resolves the host used for default image names.
     Precedence: MCP_REGISTRY_INGRESS_HOST, legacy MCP_REGISTRY_HOST, then
     registry.<MCP_PLATFORM_DOMAIN>, else fallback default.
+
+```
+
+<a id="metadata-helpers-func-resolveregistrypullhost-string"></a>
+```text
+func ResolveRegistryPullHost() string
+    ResolveRegistryPullHost returns the registry host kubelet should
+    use for in-cluster image pulls. Precedence: MCP_REGISTRY_PULL_HOST,
+    MCP_REGISTRY_ENDPOINT, then bundled cluster DNS.
+
+    Public ingress hostnames are intentionally excluded. Workload pods must
+    pull from the internal registry endpoint, not the auth-protected external
+    ingress.
+
+```
+
+<a id="metadata-helpers-func-rewriteimageregistryhost-image-registry-string-string-bool"></a>
+```text
+func RewriteImageRegistryHost(image, registry string) (string, bool)
+    RewriteImageRegistryHost replaces the registry portion of an image
+    reference.
 ```
 
 <a id="metadata-helpers-types"></a>
@@ -1599,6 +1637,18 @@ type PolicyMode string
 const (
 	PolicyModeAllowList PolicyMode = "allow-list"
 	PolicyModeObserve   PolicyMode = "observe"
+)
+```
+
+<a id="metadata-helpers-type-publishscope-string"></a>
+```text
+type PublishScope string
+    PublishScope selects the platform catalog or tenant boundary for publishing.
+
+const (
+	PublishScopeTenant PublishScope = "tenant"
+	PublishScopeOrg    PublishScope = "org"
+	PublishScopePublic PublishScope = "public"
 )
 ```
 
@@ -1737,6 +1787,9 @@ type ServerMetadata struct {
 	// Namespace is the Kubernetes namespace (defaults to "mcp-servers").
 	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
 
+	// Scope selects a publish destination: tenant, org, or public.
+	Scope PublishScope `yaml:"scope,omitempty" json:"scope,omitempty"`
+
 	// TeamID is the stable platform team identifier that owns the server.
 	TeamID string `yaml:"teamID,omitempty" json:"teamID,omitempty"`
 
@@ -1823,6 +1876,84 @@ const (
 	TrustLevelMedium TrustLevel = "medium"
 	TrustLevelHigh   TrustLevel = "high"
 )
+```
+
+<a id="publish-scope-helpers"></a>
+## Publish scope helpers
+
+Package: `publishscope`
+Import path: `mcp-runtime/pkg/publishscope`
+
+Source command:
+
+```bash
+go doc -all ./pkg/publishscope
+```
+
+<a id="publish-scope-helpers-overview"></a>
+### Overview
+
+_No package overview is documented._
+
+### Jump To
+
+- [Overview](#publish-scope-helpers-overview)
+- [Index](#publish-scope-helpers-index)
+- [Constants](#publish-scope-helpers-constants)
+- [Functions](#publish-scope-helpers-functions)
+- [Types](#publish-scope-helpers-types)
+
+<a id="publish-scope-helpers-index"></a>
+### Index
+
+- [`Constants`](#publish-scope-helpers-constants)
+- [`func CatalogNamespace(scope Scope) (string, bool)`](#publish-scope-helpers-func-catalognamespace-scope-scope-string-bool)
+- [`func RegistryAlias(scope Scope) (string, bool)`](#publish-scope-helpers-func-registryalias-scope-scope-string-bool)
+- [`type Scope string`](#publish-scope-helpers-type-scope-string)
+- [`func Normalize(raw string) (Scope, error)`](#publish-scope-helpers-func-normalize-raw-string-scope-error)
+
+<a id="publish-scope-helpers-constants"></a>
+### Constants
+
+```text
+const (
+	Tenant Scope = "tenant"
+	Org    Scope = "org"
+	Public Scope = "public"
+
+	DefaultOrgCatalogNamespace    = "mcp-servers-org"
+	DefaultPublicCatalogNamespace = "mcp-servers-public"
+
+	OrgRegistryAlias    = "org"
+	PublicRegistryAlias = "public"
+)
+```
+
+<a id="publish-scope-helpers-functions"></a>
+### Functions
+
+<a id="publish-scope-helpers-func-catalognamespace-scope-scope-string-bool"></a>
+```text
+func CatalogNamespace(scope Scope) (string, bool)
+```
+
+<a id="publish-scope-helpers-func-registryalias-scope-scope-string-bool"></a>
+```text
+func RegistryAlias(scope Scope) (string, bool)
+```
+
+<a id="publish-scope-helpers-types"></a>
+### Types
+
+<a id="publish-scope-helpers-type-scope-string"></a>
+```text
+type Scope string
+
+```
+
+<a id="publish-scope-helpers-func-normalize-raw-string-scope-error"></a>
+```text
+func Normalize(raw string) (Scope, error)
 ```
 
 <a id="agent-adapters"></a>
@@ -2281,7 +2412,7 @@ const (
 const (
 	// DefaultRegistrySecretName is the default name for registry pull secrets.
 	// #nosec G101 -- This is a secret name, not a credential.
-	DefaultRegistrySecretName = "mcp-runtime-registry-creds"
+	DefaultRegistrySecretName = "mcp-runtime-registry-pull"
 )
     Secret names.
 
@@ -2342,6 +2473,12 @@ type MCPServerReconciler struct {
 	// DefaultIngressHost is the default ingress host if not specified in the CR.
 	DefaultIngressHost string
 
+	// DefaultIngressEntryPoints is the default Traefik entrypoint annotation for MCP server ingresses.
+	DefaultIngressEntryPoints string
+
+	// DefaultIngressTLS enables Traefik TLS routing for MCP server ingresses by default.
+	DefaultIngressTLS bool
+
 	// IngressReadinessMode controls how ingress readiness is evaluated.
 	IngressReadinessMode string
 
@@ -2387,6 +2524,12 @@ type OperatorConfig struct {
 	// DefaultIngressClass is the ingress class to use.
 	DefaultIngressClass string
 
+	// DefaultIngressEntryPoints is the default Traefik entrypoint annotation for MCP server ingresses.
+	DefaultIngressEntryPoints string
+
+	// DefaultIngressTLS enables Traefik TLS routing for MCP server ingresses by default.
+	DefaultIngressTLS bool
+
 	// IngressReadinessMode controls how ingress readiness is evaluated.
 	IngressReadinessMode string
 
@@ -2404,6 +2547,10 @@ type OperatorConfig struct {
 
 	// InternalRegistryEndpoint is the internal registry endpoint to use for image refs when not using a provisioned registry.
 	InternalRegistryEndpoint string
+
+	// RegistryPullHost is the pullable registry host used in image refs when the operator
+	// needs to rewrite images to the platform-managed registry.
+	RegistryPullHost string
 
 	// RequeueDelaySeconds is the delay in seconds before requeueing when resources aren't ready.
 	RequeueDelaySeconds int
@@ -2559,6 +2706,7 @@ kubectl clients, terminal output, and test doubles.
 - [`func NewSetupStepFailedError() error`](#cli-core-func-newsetupstepfailederror-error)
 - [`func NewWithSentinel(base error, msg string) error`](#cli-core-func-newwithsentinel-base-error-msg-string-error)
 - [`func Red(msg string) string`](#cli-core-func-red-msg-string-string)
+- [`func ResolveEmailAlias(email, username string) (string, error)`](#cli-core-func-resolveemailalias-email-username-string-string-error)
 - [`func Section(title string)`](#cli-core-func-section-title-string)
 - [`func SetDebugMode(enabled bool)`](#cli-core-func-setdebugmode-enabled-bool)
 - [`func SpinnerStart(msg string) func(success bool, finalMsg string)`](#cli-core-func-spinnerstart-msg-string-func-success-bool-finalmsg-string)
@@ -2733,6 +2881,23 @@ var (
 	ErrGetHomeDirectoryFailed    = newSentinelError("failed to get home directory", errx.CodeCLI, errx.DescCLI)
 	ErrUnknownRegistryMode       = newSentinelError("unknown registry mode", errx.CodeCLI, errx.DescCLI)
 
+	// Auth package errors.
+	ErrAuthAPIURLRequired                  = newSentinelError("api URL is required", errx.CodeAuth, errx.DescAuth)
+	ErrAuthAPIURLInvalid                   = newSentinelError("api URL must include scheme and host", errx.CodeAuth, errx.DescAuth)
+	ErrAuthEmailPasswordRequired           = newSentinelError("email and password are both required for password login", errx.CodeAuth, errx.DescAuth)
+	ErrAuthPlatformLoginFailed             = newSentinelError("platform login failed", errx.CodeAuth, errx.DescAuth)
+	ErrAuthReadStdinFailed                 = newSentinelError("read stdin", errx.CodeAuth, errx.DescAuth)
+	ErrAuthTTYRequired                     = newSentinelError("not a TTY: pass --token, --token-stdin, or run in an interactive terminal", errx.CodeAuth, errx.DescAuth)
+	ErrAuthReadTokenFailed                 = newSentinelError("read token", errx.CodeAuth, errx.DescAuth)
+	ErrAuthTokenRequired                   = newSentinelError("token is required", errx.CodeAuth, errx.DescAuth)
+	ErrAuthTokenVerificationFailed         = newSentinelError("API token could not be verified", errx.CodeAuth, errx.DescAuth)
+	ErrAuthLoginHTTPStatus                 = newSentinelError("login HTTP status failed", errx.CodeAuth, errx.DescAuth)
+	ErrAuthLoginResponseMissingAccessToken = newSentinelError("login response did not include access_token", errx.CodeAuth, errx.DescAuth)
+	ErrAuthServerRejectedToken             = newSentinelError("server rejected the token", errx.CodeAuth, errx.DescAuth)
+	ErrAuthAPIURLMayBeWrong                = newSentinelError("API URL may be wrong", errx.CodeAuth, errx.DescAuth)
+	ErrAuthVerifyRequestFailed             = newSentinelError("verify request failed", errx.CodeAuth, errx.DescAuth)
+	ErrAuthFileDescriptorOutOfRange        = newSentinelError("file descriptor out of range", errx.CodeAuth, errx.DescAuth)
+
 	// Pipeline errors.
 	ErrLoadMetadataFailed      = newSentinelError("failed to load metadata", errx.CodePipeline, errx.DescPipeline)
 	ErrNoServersInMetadata     = newSentinelError("no servers found in metadata", errx.CodePipeline, errx.DescPipeline)
@@ -2769,6 +2934,7 @@ var (
 	ErrEnsureOperatorNamespaceFailed       = newSentinelError("failed to ensure operator namespace", errx.CodeSetup, errx.DescSetup)
 	ErrApplyRBACFailed                     = newSentinelError("failed to apply RBAC", errx.CodeSetup, errx.DescSetup)
 	ErrReadManagerYAMLFailed               = newSentinelError("failed to read manager.yaml", errx.CodeSetup, errx.DescSetup)
+	ErrReadIngressManifestFailed           = newSentinelError("failed to read ingress manifest", errx.CodeSetup, errx.DescSetup)
 	ErrParseManagerYAMLFailed              = newSentinelError("failed to parse manager.yaml", errx.CodeSetup, errx.DescSetup)
 	ErrSetOperatorImageFailed              = newSentinelError("failed to set operator image", errx.CodeSetup, errx.DescSetup)
 	ErrMutateManagerYAMLFailed             = newSentinelError("failed to mutate manager.yaml", errx.CodeSetup, errx.DescSetup)
@@ -2781,6 +2947,40 @@ var (
 	ErrCreateRegistryNamespaceFailed       = newSentinelError("failed to create registry namespace", errx.CodeSetup, errx.DescSetup)
 	ErrApplyCertificateFailed              = newSentinelError("failed to apply Certificate", errx.CodeSetup, errx.DescSetup)
 
+	// Setup platform package errors.
+	ErrSetupImagePlatformNoNodeArchitectures       = newSentinelError("could not resolve setup image platform: no Kubernetes node architectures were reported", errx.CodeSetup, errx.DescSetup)
+	ErrSetupImagePlatformMixedNodeArchitectures    = newSentinelError("mixed Kubernetes node architectures detected", errx.CodeSetup, errx.DescSetup)
+	ErrSetupImagePlatformMismatch                  = newSentinelError("MCP_IMAGE_PLATFORM does not match Kubernetes node architecture", errx.CodeSetup, errx.DescSetup)
+	ErrSetupImagePlatformInvalid                   = newSentinelError("invalid MCP_IMAGE_PLATFORM", errx.CodeSetup, errx.DescSetup)
+	ErrSetupImagePlatformUnsupported               = newSentinelError("unsupported MCP_IMAGE_PLATFORM", errx.CodeSetup, errx.DescSetup)
+	ErrSetupImagePlatformKubectlNil                = newSentinelError("could not resolve setup image platform: kubectl runner is nil", errx.CodeSetup, errx.DescSetup)
+	ErrSetupInspectNodeArchitecturesFailed         = newSentinelError("could not inspect Kubernetes node architectures", errx.CodeSetup, errx.DescSetup)
+	ErrSetupInvalidStorageMode                     = newSentinelError("invalid storage mode", errx.CodeSetup, errx.DescSetup)
+	ErrSetupInvalidPlatformMode                    = newSentinelError("invalid platform mode", errx.CodeSetup, errx.DescSetup)
+	ErrSetupInvalidRegistryMode                    = newSentinelError("invalid registry mode", errx.CodeSetup, errx.DescSetup)
+	ErrSetupSetRuntimeTestModeFailed               = newSentinelError("set MCP_RUNTIME_TEST_MODE", errx.CodeSetup, errx.DescSetup)
+	ErrSetupUnsetRuntimeTestModeFailed             = newSentinelError("unset MCP_RUNTIME_TEST_MODE", errx.CodeSetup, errx.DescSetup)
+	ErrSetupSetPlatformModeFailed                  = newSentinelError("set MCP_PLATFORM_MODE", errx.CodeSetup, errx.DescSetup)
+	ErrSetupListTraefikDeploymentsFailed           = newSentinelError("list traefik deployments", errx.CodeSetup, errx.DescSetup)
+	ErrSetupMarshalTraefikDeploymentPatchFailed    = newSentinelError("marshal traefik deployment patch", errx.CodeSetup, errx.DescSetup)
+	ErrSetupReadTraefikDeploymentFailed            = newSentinelError("read traefik deployment", errx.CodeSetup, errx.DescSetup)
+	ErrSetupDecodeTraefikDeploymentFailed          = newSentinelError("decode traefik deployment", errx.CodeSetup, errx.DescSetup)
+	ErrSetupDeploymentReadinessDeadlineExceeded    = newSentinelError("deployment readiness deadline exceeded", errx.CodeSetup, errx.DescSetup)
+	ErrSetupTLSKubectlRunnerNil                    = newSentinelError("kubectl runner is nil", errx.CodeSetup, errx.DescSetup)
+	ErrSetupInspectClusterIssuerFailed             = newSentinelError("inspect ClusterIssuer", errx.CodeSetup, errx.DescSetup)
+	ErrSetupTLSCertificateSANsEmpty                = newSentinelError("no DNS names or IP addresses resolved for the Certificate", errx.CodeSetup, errx.DescSetup)
+	ErrSetupDeleteClickHouseInitJobFailed          = newSentinelError("delete existing clickhouse init job", errx.CodeSetup, errx.DescSetup)
+	ErrSetupAnalyticsRolloutFailed                 = newSentinelError("analytics components failed to roll out", errx.CodeSetup, errx.DescSetup)
+	ErrSetupRenderManifestFailed                   = newSentinelError("render manifest", errx.CodeSetup, errx.DescSetup)
+	ErrSetupApplyPlatformUIIngressFailed           = newSentinelError("apply platform UI ingress", errx.CodeSetup, errx.DescSetup)
+	ErrSetupRemovePathBasedSentinelIngressesFailed = newSentinelError("remove path-based sentinel ingresses for public platform host", errx.CodeSetup, errx.DescSetup)
+	ErrSetupDecodeAnalyticsConfigManifestFailed    = newSentinelError("decode analytics config manifest", errx.CodeSetup, errx.DescSetup)
+	ErrSetupEncodeAnalyticsConfigManifestFailed    = newSentinelError("encode analytics config manifest", errx.CodeSetup, errx.DescSetup)
+	ErrSetupReadConfigMapFailed                    = newSentinelError("read configmap", errx.CodeSetup, errx.DescSetup)
+	ErrSetupDecodeConfigMapFailed                  = newSentinelError("decode configmap", errx.CodeSetup, errx.DescSetup)
+	ErrSetupReadSecretKeyFailed                    = newSentinelError("read secret key", errx.CodeSetup, errx.DescSetup)
+	ErrSetupDecodeSecretKeyFailed                  = newSentinelError("decode secret key", errx.CodeSetup, errx.DescSetup)
+
 	// Cert errors.
 	ErrCertManagerNotInstalled     = newSentinelError("cert-manager not installed", errx.CodeCert, errx.DescCert)
 	ErrCertManagerInstallFailed    = newSentinelError("cert-manager install failed", errx.CodeCert, errx.DescCert)
@@ -2788,6 +2988,20 @@ var (
 	ErrCertificateNotReady         = newSentinelError("certificate not ready", errx.CodeCert, errx.DescCert)
 	ErrClusterIssuerNotFound       = newSentinelError("ClusterIssuer not found", errx.CodeCert, errx.DescCert)
 	ErrRegistryCertificateNotFound = newSentinelError("registry Certificate not found", errx.CodeCert, errx.DescCert)
+
+	// Certmanager package errors.
+	ErrCertEncodeGeneratedCAFailed         = newSentinelError("failed to encode generated internal CA", errx.CodeCert, errx.DescCert)
+	ErrCertLookupRegistryIngressFailed     = newSentinelError("failed to look up registry ingress", errx.CodeCert, errx.DescCert)
+	ErrCertRemoveRegistryIngressAnnotation = newSentinelError("failed to remove cert-manager.io/cluster-issuer from registry ingress", errx.CodeCert, errx.DescCert)
+	ErrCertRegistryTLSSecretConflict       = newSentinelError("registry TLS secret is already referenced by Certificate(s)", errx.CodeCert, errx.DescCert)
+	ErrCertListCertificatesFailed          = newSentinelError("failed to list cert-manager Certificates", errx.CodeCert, errx.DescCert)
+	ErrCertParseCertificatesFailed         = newSentinelError("failed to parse cert-manager Certificates", errx.CodeCert, errx.DescCert)
+	ErrCertACMEPublicDNSNameRequired       = newSentinelError("ACME public CA requires a public DNS name", errx.CodeCert, errx.DescCert)
+	ErrCertACMEPublicDNSNameInvalid        = newSentinelError("ACME public CA requires a public DNS name; invalid host", errx.CodeCert, errx.DescCert)
+	ErrCertACMEIngressManifestInvalid      = newSentinelError("http-01 ingress manifest is not valid for Let's Encrypt", errx.CodeCert, errx.DescCert)
+	ErrCertTraefikNotReady                 = newSentinelError("traefik not ready", errx.CodeCert, errx.DescCert)
+	ErrCertACMEEmailRequired               = newSentinelError("ACME email is required", errx.CodeCert, errx.DescCert)
+	ErrCertCertificateSANsEmpty            = newSentinelError("TLS has no DNS names or IP addresses to request", errx.CodeCert, errx.DescCert)
 
 	// Cluster errors.
 	ErrCRDNotInstalled                = newSentinelError("MCPServer CRD not installed", errx.CodeCluster, errx.DescCluster)
@@ -2803,15 +3017,31 @@ var (
 	ErrAKSKubeconfigNotImplemented    = newSentinelError("AKS kubeconfig not yet implemented", errx.CodeCluster, errx.DescCluster)
 	ErrGKEKubeconfigNotImplemented    = newSentinelError("GKE kubeconfig not yet implemented", errx.CodeCluster, errx.DescCluster)
 	ErrUnsupportedProvider            = newSentinelError("unsupported provider", errx.CodeCluster, errx.DescCluster)
+	ErrInvalidClusterName             = newSentinelError("invalid cluster name", errx.CodeCluster, errx.DescCluster)
+	ErrInvalidNodeCount               = newSentinelError("invalid node count", errx.CodeCluster, errx.DescCluster)
 	ErrUnsupportedIngressController   = newSentinelError("unsupported ingress controller", errx.CodeCluster, errx.DescCluster)
 	ErrInstallIngressControllerFailed = newSentinelError("failed to install ingress controller", errx.CodeCluster, errx.DescCluster)
 	ErrCreateKindConfigFailed         = newSentinelError("failed to create temp kind config", errx.CodeCluster, errx.DescCluster)
 	ErrCloseKindConfigFailed          = newSentinelError("failed to close kind config", errx.CodeCluster, errx.DescCluster)
 	ErrWriteKindConfigFailed          = newSentinelError("failed to write kind config", errx.CodeCluster, errx.DescCluster)
 	ErrCreateKindClusterFailed        = newSentinelError("failed to create kind cluster", errx.CodeCluster, errx.DescCluster)
+	ErrDockerDaemonNotReachable       = newSentinelError("docker daemon not reachable", errx.CodeCluster, errx.DescCluster)
+	ErrKindClusterAlreadyExists       = newSentinelError("kind cluster already exists", errx.CodeCluster, errx.DescCluster)
 	ErrGKEProvisioningNotImplemented  = newSentinelError("GKE provisioning not yet implemented", errx.CodeCluster, errx.DescCluster)
 	ErrProvisionEKSFailed             = newSentinelError("failed to provision EKS cluster", errx.CodeCluster, errx.DescCluster)
 	ErrAKSProvisioningNotImplemented  = newSentinelError("AKS provisioning not yet implemented", errx.CodeCluster, errx.DescCluster)
+
+	// Cluster doctor package errors.
+	ErrDoctorResourceNotFoundBeforeTimeout = newSentinelError("resource not found before timeout", errx.CodeCluster, errx.DescCluster)
+	ErrDoctorDeploymentRolloutFailed       = newSentinelError("deployment rollout failed", errx.CodeCluster, errx.DescCluster)
+	ErrDoctorPodsNotScheduledBeforeTimeout = newSentinelError("no scheduled pod found before timeout", errx.CodeCluster, errx.DescCluster)
+	ErrDoctorDecodeBase64Failed            = newSentinelError("decode base64 value", errx.CodeCluster, errx.DescCluster)
+	ErrDoctorImagePullStatusFailed         = newSentinelError("pod image pull status failed", errx.CodeCluster, errx.DescCluster)
+	ErrDoctorPodPhaseFailed                = newSentinelError("pod phase Failed", errx.CodeCluster, errx.DescCluster)
+	ErrDoctorKubectlError                  = newSentinelError("kubectl error", errx.CodeCluster, errx.DescCluster)
+	ErrDoctorTraefikServiceNotFound        = newSentinelError("traefik service not found", errx.CodeCluster, errx.DescCluster)
+	ErrDoctorDeploymentNotFound            = newSentinelError("deployment not found", errx.CodeCluster, errx.DescCluster)
+	ErrDoctorUnexpectedReplicaStatus       = newSentinelError("unexpected replica status", errx.CodeCluster, errx.DescCluster)
 
 	// Registry errors.
 	ErrRegistryNotReady             = newSentinelError("registry not ready", errx.CodeRegistry, errx.DescRegistry)
@@ -3065,6 +3295,14 @@ func Red(msg string) string
 
 ```
 
+<a id="cli-core-func-resolveemailalias-email-username-string-string-error"></a>
+```text
+func ResolveEmailAlias(email, username string) (string, error)
+    ResolveEmailAlias returns the single account email represented by --email
+    and the deprecated/alias --username flag.
+
+```
+
 <a id="cli-core-func-section-title-string"></a>
 ```text
 func Section(title string)
@@ -3198,6 +3436,7 @@ type CLIConfig struct {
 	SkopeoImage               string
 	OperatorImage             string // Override for operator image
 	GatewayProxyImage         string // Optional default image for the MCP gateway sidecar
+	ImagePlatform             string // Optional Docker image platform for setup-built images, e.g. linux/amd64
 	GatewayOTLPEndpoint       string // Optional OTLP/HTTP endpoint for MCP gateway sidecar tracing
 	AnalyticsIngestURL        string // Optional analytics ingest URL override for the MCP gateway sidecar
 	IngressReadinessMode      string // Optional operator ingress readiness mode: strict or permissive
@@ -3710,6 +3949,7 @@ Package kube contains shared kubectl-oriented helpers for CLI commands.
 - [`func ApplyManifestContentWithNamespace[T Command](commandArgs func([]string) (T, error), manifest, namespace string) error`](#cli-kubernetes-helpers-func-applymanifestcontentwithnamespace-t-command-commandargs-func-string-t-error-manifest-namespace-string-error)
 - [`func ApplyManifestFromFile[T Command](commandArgs func([]string) (T, error), file string, stdout, stderr io.Writer) error`](#cli-kubernetes-helpers-func-applymanifestfromfile-t-command-commandargs-func-string-t-error-file-string-stdout-stderr-io-writer-error)
 - [`func EnsureNamespace[T Command](commandArgs func([]string) (T, error), name string) error`](#cli-kubernetes-helpers-func-ensurenamespace-t-command-commandargs-func-string-t-error-name-string-error)
+- [`func EnsureNamespaceWithLabels[T Command](commandArgs func([]string) (T, error), name string, labels map[string]string) error`](#cli-kubernetes-helpers-func-ensurenamespacewithlabels-t-command-commandargs-func-string-t-error-name-string-labels-map-string-string-error)
 - [`func NormalizePatchDocument(raw string) (string, error)`](#cli-kubernetes-helpers-func-normalizepatchdocument-raw-string-string-error)
 - [`func NormalizePatchFile(file string) (string, error)`](#cli-kubernetes-helpers-func-normalizepatchfile-file-string-string-error)
 - [`func ReadFileAtPath(path string) ([]byte, error)`](#cli-kubernetes-helpers-func-readfileatpath-path-string-byte-error)
@@ -3746,6 +3986,17 @@ func ApplyManifestFromFile[T Command](commandArgs func([]string) (T, error), fil
 ```text
 func EnsureNamespace[T Command](commandArgs func([]string) (T, error), name string) error
     EnsureNamespace applies/creates a namespace idempotently.
+
+```
+
+<a id="cli-kubernetes-helpers-func-ensurenamespacewithlabels-t-command-commandargs-func-string-t-error-name-string-labels-map-string-string-error"></a>
+```text
+func EnsureNamespaceWithLabels[T Command](commandArgs func([]string) (T, error), name string, labels map[string]string) error
+    EnsureNamespaceWithLabels applies/creates a namespace idempotently and sets
+    labels via kubectl apply. Labels already present on an existing namespace
+    are preserved unless the same key is also supplied here (kubectl apply
+    will set them to the new value). Pass nil/empty labels for a label-less
+    namespace.
 
 ```
 
@@ -3822,13 +4073,26 @@ _No package overview is documented._
 
 - [Overview](#cli-kubernetes-errors-overview)
 - [Index](#cli-kubernetes-errors-index)
+- [Constants](#cli-kubernetes-errors-constants)
 - [Functions](#cli-kubernetes-errors-functions)
 
 <a id="cli-kubernetes-errors-index"></a>
 ### Index
 
+- [`Constants`](#cli-kubernetes-errors-constants)
 - [`func CommandDetail(output string, fallback error) string`](#cli-kubernetes-errors-func-commanddetail-output-string-fallback-error-string)
+- [`func DirectModeFailureMessage(prefix, detail string) string`](#cli-kubernetes-errors-func-directmodefailuremessage-prefix-detail-string-string)
+- [`func DirectModeHint(detail string) string`](#cli-kubernetes-errors-func-directmodehint-detail-string-string)
 - [`func SetupHint(detail string) (string, bool)`](#cli-kubernetes-errors-func-setuphint-detail-string-string-bool)
+- [`func WithDirectModeHint(detail string) string`](#cli-kubernetes-errors-func-withdirectmodehint-detail-string-string)
+
+<a id="cli-kubernetes-errors-constants"></a>
+### Constants
+
+```text
+const DirectModeGuidance = "Direct Kubernetes mode requires admin/operator cluster access. Use the platform API for normal CLI operations: `mcp-runtime auth login --api-url <platform-url>`."
+    DirectModeGuidance explains the boundary for explicit --use-kube operations.
+```
 
 <a id="cli-kubernetes-errors-functions"></a>
 ### Functions
@@ -3841,11 +4105,34 @@ func CommandDetail(output string, fallback error) string
 
 ```
 
+<a id="cli-kubernetes-errors-func-directmodefailuremessage-prefix-detail-string-string"></a>
+```text
+func DirectModeFailureMessage(prefix, detail string) string
+    DirectModeFailureMessage appends shared direct Kubernetes mode guidance to a
+    command failure.
+
+```
+
+<a id="cli-kubernetes-errors-func-directmodehint-detail-string-string"></a>
+```text
+func DirectModeHint(detail string) string
+    DirectModeHint returns guidance for explicit --use-kube failures.
+
+```
+
 <a id="cli-kubernetes-errors-func-setuphint-detail-string-string-bool"></a>
 ```text
 func SetupHint(detail string) (string, bool)
     SetupHint returns a friendlier message when the cluster has not been
     provisioned yet.
+
+```
+
+<a id="cli-kubernetes-errors-func-withdirectmodehint-detail-string-string"></a>
+```text
+func WithDirectModeHint(detail string) string
+    WithDirectModeHint appends explicit --use-kube guidance to a command failure
+    detail.
 ```
 
 <a id="cli-cluster"></a>
@@ -3865,9 +4152,6 @@ go doc -all ./internal/cli/cluster
 
 Package cluster owns routing for the cluster top-level command.
 
-Cluster doctor diagnostics: distribution detection, registry and Traefik checks,
-Sentinel probes, and remediation hints. See docs/cluster-readiness.md.
-
 Package cluster implements cluster operations for the cluster CLI command.
 
 ### Jump To
@@ -3882,7 +4166,6 @@ Package cluster implements cluster operations for the cluster CLI command.
 
 - [`func New(runtime *core.Runtime) *cobra.Command`](#cli-cluster-func-new-runtime-core-runtime-cobra-command)
 - [`func NewWithManager(mgr *ClusterManager) *cobra.Command`](#cli-cluster-func-newwithmanager-mgr-clustermanager-cobra-command)
-- [`func PrintDoctorReport(r DoctorReport)`](#cli-cluster-func-printdoctorreport-r-doctorreport)
 - [`type ClusterManager struct`](#cli-cluster-type-clustermanager-struct)
 - [`func DefaultClusterManager(logger *zap.Logger) *ClusterManager`](#cli-cluster-func-defaultclustermanager-logger-zap-logger-clustermanager)
 - [`func NewClusterManager(kubectl *core.KubectlClient, exec core.Executor, logger *zap.Logger) *ClusterManager`](#cli-cluster-func-newclustermanager-kubectl-core-kubectlclient-exec-core-executor-logger-zap-logger-clustermanager)
@@ -3896,16 +4179,6 @@ Package cluster implements cluster operations for the cluster CLI command.
 - [`func (m *ClusterManager) KubectlRunner() core.KubectlRunner`](#cli-cluster-func-m-clustermanager-kubectlrunner-core-kubectlrunner)
 - [`func (m *ClusterManager) Logger() *zap.Logger`](#cli-cluster-func-m-clustermanager-logger-zap-logger)
 - [`func (m *ClusterManager) ProvisionCluster(provider, region string, nodeCount int, clusterName string, dryRun bool) error`](#cli-cluster-func-m-clustermanager-provisioncluster-provider-region-string-nodecount-int-clustername-string-dryrun-bool-error)
-- [`type Distribution string`](#cli-cluster-type-distribution-string)
-- [`func DetectDistribution(kubectl core.KubectlRunner) Distribution`](#cli-cluster-func-detectdistribution-kubectl-core-kubectlrunner-distribution)
-- [`type DoctorCheck struct`](#cli-cluster-type-doctorcheck-struct)
-- [`type DoctorCheckProgress func(DoctorCheckProgressEvent) func(DoctorCheck)`](#cli-cluster-type-doctorcheckprogress-func-doctorcheckprogressevent-func-doctorcheck)
-- [`type DoctorCheckProgressEvent struct`](#cli-cluster-type-doctorcheckprogressevent-struct)
-- [`type DoctorReport struct`](#cli-cluster-type-doctorreport-struct)
-- [`func RunDoctor(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-func-rundoctor-kubectl-core-kubectlrunner-doctorreport)
-- [`func RunDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-func-rundoctorandprint-kubectl-core-kubectlrunner-doctorreport)
-- [`func RunDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport`](#cli-cluster-func-rundoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport)
-- [`func (r DoctorReport) AllOK() bool`](#cli-cluster-func-r-doctorreport-allok-bool)
 - [`type IngressOptions struct`](#cli-cluster-type-ingressoptions-struct)
 
 <a id="cli-cluster-functions"></a>
@@ -3922,13 +4195,6 @@ func New(runtime *core.Runtime) *cobra.Command
 ```text
 func NewWithManager(mgr *ClusterManager) *cobra.Command
     NewWithManager returns the cluster command using the provided manager.
-
-```
-
-<a id="cli-cluster-func-printdoctorreport-r-doctorreport"></a>
-```text
-func PrintDoctorReport(r DoctorReport)
-    PrintDoctorReport emits a human-readable report using the standard printer.
 ```
 
 <a id="cli-cluster-types"></a>
@@ -4032,7 +4298,72 @@ func (m *ClusterManager) ProvisionCluster(provider, region string, nodeCount int
 
 ```
 
-<a id="cli-cluster-type-distribution-string"></a>
+<a id="cli-cluster-type-ingressoptions-struct"></a>
+```text
+type IngressOptions struct {
+	Mode     string
+	Manifest string
+	Force    bool
+}
+    IngressOptions captures ingress install settings used by both cluster
+    configuration and the setup command.
+```
+
+<a id="cli-cluster-doctor"></a>
+## CLI cluster doctor
+
+Package: `doctor`
+Import path: `mcp-runtime/internal/cli/cluster/doctor`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/cluster/doctor
+```
+
+<a id="cli-cluster-doctor-overview"></a>
+### Overview
+
+Package doctor implements cluster readiness diagnostics for the cluster CLI.
+
+### Jump To
+
+- [Overview](#cli-cluster-doctor-overview)
+- [Index](#cli-cluster-doctor-index)
+- [Functions](#cli-cluster-doctor-functions)
+- [Types](#cli-cluster-doctor-types)
+
+<a id="cli-cluster-doctor-index"></a>
+### Index
+
+- [`func PrintDoctorReport(r DoctorReport)`](#cli-cluster-doctor-func-printdoctorreport-r-doctorreport)
+- [`type Distribution string`](#cli-cluster-doctor-type-distribution-string)
+- [`func DetectDistribution(kubectl core.KubectlRunner) Distribution`](#cli-cluster-doctor-func-detectdistribution-kubectl-core-kubectlrunner-distribution)
+- [`type DoctorCheck struct`](#cli-cluster-doctor-type-doctorcheck-struct)
+- [`type DoctorCheckProgress func(DoctorCheckProgressEvent) func(DoctorCheck)`](#cli-cluster-doctor-type-doctorcheckprogress-func-doctorcheckprogressevent-func-doctorcheck)
+- [`type DoctorCheckProgressEvent struct`](#cli-cluster-doctor-type-doctorcheckprogressevent-struct)
+- [`type DoctorReport struct`](#cli-cluster-doctor-type-doctorreport-struct)
+- [`func RunDoctor(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-doctor-func-rundoctor-kubectl-core-kubectlrunner-doctorreport)
+- [`func RunDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-doctor-func-rundoctorandprint-kubectl-core-kubectlrunner-doctorreport)
+- [`func RunDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport`](#cli-cluster-doctor-func-rundoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport)
+- [`func RunSetupDoctor(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-doctor-func-runsetupdoctor-kubectl-core-kubectlrunner-doctorreport)
+- [`func RunSetupDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport`](#cli-cluster-doctor-func-runsetupdoctorandprint-kubectl-core-kubectlrunner-doctorreport)
+- [`func RunSetupDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport`](#cli-cluster-doctor-func-runsetupdoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport)
+- [`func (r DoctorReport) AllOK() bool`](#cli-cluster-doctor-func-r-doctorreport-allok-bool)
+
+<a id="cli-cluster-doctor-functions"></a>
+### Functions
+
+<a id="cli-cluster-doctor-func-printdoctorreport-r-doctorreport"></a>
+```text
+func PrintDoctorReport(r DoctorReport)
+    PrintDoctorReport emits a human-readable report using the standard printer.
+```
+
+<a id="cli-cluster-doctor-types"></a>
+### Types
+
+<a id="cli-cluster-doctor-type-distribution-string"></a>
 ```text
 type Distribution string
     Distribution identifies a Kubernetes flavor for remediation messaging.
@@ -4046,7 +4377,7 @@ const (
 )
 ```
 
-<a id="cli-cluster-func-detectdistribution-kubectl-core-kubectlrunner-distribution"></a>
+<a id="cli-cluster-doctor-func-detectdistribution-kubectl-core-kubectlrunner-distribution"></a>
 ```text
 func DetectDistribution(kubectl core.KubectlRunner) Distribution
     DetectDistribution inspects node info to guess which distribution is
@@ -4055,7 +4386,7 @@ func DetectDistribution(kubectl core.KubectlRunner) Distribution
 
 ```
 
-<a id="cli-cluster-type-doctorcheck-struct"></a>
+<a id="cli-cluster-doctor-type-doctorcheck-struct"></a>
 ```text
 type DoctorCheck struct {
 	Name   string
@@ -4067,7 +4398,7 @@ type DoctorCheck struct {
 
 ```
 
-<a id="cli-cluster-type-doctorcheckprogress-func-doctorcheckprogressevent-func-doctorcheck"></a>
+<a id="cli-cluster-doctor-type-doctorcheckprogress-func-doctorcheckprogressevent-func-doctorcheck"></a>
 ```text
 type DoctorCheckProgress func(DoctorCheckProgressEvent) func(DoctorCheck)
     DoctorCheckProgress is called before each doctor check starts. It returns an
@@ -4075,7 +4406,7 @@ type DoctorCheckProgress func(DoctorCheckProgressEvent) func(DoctorCheck)
 
 ```
 
-<a id="cli-cluster-type-doctorcheckprogressevent-struct"></a>
+<a id="cli-cluster-doctor-type-doctorcheckprogressevent-struct"></a>
 ```text
 type DoctorCheckProgressEvent struct {
 	Name   string
@@ -4087,7 +4418,7 @@ type DoctorCheckProgressEvent struct {
 
 ```
 
-<a id="cli-cluster-type-doctorreport-struct"></a>
+<a id="cli-cluster-doctor-type-doctorreport-struct"></a>
 ```text
 type DoctorReport struct {
 	Distribution Distribution
@@ -4097,21 +4428,21 @@ type DoctorReport struct {
 
 ```
 
-<a id="cli-cluster-func-rundoctor-kubectl-core-kubectlrunner-doctorreport"></a>
+<a id="cli-cluster-doctor-func-rundoctor-kubectl-core-kubectlrunner-doctorreport"></a>
 ```text
 func RunDoctor(kubectl core.KubectlRunner) DoctorReport
     RunDoctor executes cluster diagnostics and returns a report.
 
 ```
 
-<a id="cli-cluster-func-rundoctorandprint-kubectl-core-kubectlrunner-doctorreport"></a>
+<a id="cli-cluster-doctor-func-rundoctorandprint-kubectl-core-kubectlrunner-doctorreport"></a>
 ```text
 func RunDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport
     RunDoctorAndPrint streams doctor progress and results as checks execute.
 
 ```
 
-<a id="cli-cluster-func-rundoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport"></a>
+<a id="cli-cluster-doctor-func-rundoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport"></a>
 ```text
 func RunDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport
     RunDoctorWithProgress executes cluster diagnostics and calls progress hooks
@@ -4119,22 +4450,32 @@ func RunDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgr
 
 ```
 
-<a id="cli-cluster-func-r-doctorreport-allok-bool"></a>
+<a id="cli-cluster-doctor-func-runsetupdoctor-kubectl-core-kubectlrunner-doctorreport"></a>
 ```text
-func (r DoctorReport) AllOK() bool
-    AllOK reports whether every check passed.
+func RunSetupDoctor(kubectl core.KubectlRunner) DoctorReport
+    RunSetupDoctor executes pre-setup readiness checks and returns a report.
 
 ```
 
-<a id="cli-cluster-type-ingressoptions-struct"></a>
+<a id="cli-cluster-doctor-func-runsetupdoctorandprint-kubectl-core-kubectlrunner-doctorreport"></a>
 ```text
-type IngressOptions struct {
-	Mode     string
-	Manifest string
-	Force    bool
-}
-    IngressOptions captures ingress install settings used by both cluster
-    configuration and the setup command.
+func RunSetupDoctorAndPrint(kubectl core.KubectlRunner) DoctorReport
+    RunSetupDoctorAndPrint streams setup-preflight progress and results.
+
+```
+
+<a id="cli-cluster-doctor-func-runsetupdoctorwithprogress-kubectl-core-kubectlrunner-progress-doctorcheckprogress-doctorreport"></a>
+```text
+func RunSetupDoctorWithProgress(kubectl core.KubectlRunner, progress DoctorCheckProgress) DoctorReport
+    RunSetupDoctorWithProgress executes pre-setup readiness checks and calls
+    progress hooks before and after each check.
+
+```
+
+<a id="cli-cluster-doctor-func-r-doctorreport-allok-bool"></a>
+```text
+func (r DoctorReport) AllOK() bool
+    AllOK reports whether every check passed.
 ```
 
 <a id="cli-cert-manager"></a>
@@ -4169,8 +4510,11 @@ _No package overview is documented._
 - [`func ACMETLSDNSNames() []string`](#cli-cert-manager-func-acmetlsdnsnames-string)
 - [`func ApplyClusterIssuerWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-applyclusterissuerwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func ApplyLetsEncryptClusterIssuer(kubectl core.KubectlRunner, email string, staging bool, logger *zap.Logger) error`](#cli-cert-manager-func-applyletsencryptclusterissuer-kubectl-core-kubectlrunner-email-string-staging-bool-logger-zap-logger-error)
+- [`func ApplyRegistryCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error`](#cli-cert-manager-func-applyregistrycertificate-kubectl-core-kubectlrunner-dnsnames-ipaddresses-string-issuername-string-error)
 - [`func ApplyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []string, issuerName string) error`](#cli-cert-manager-func-applyregistrycertificateforacme-kubectl-core-kubectlrunner-dnsnames-string-issuername-string-error)
 - [`func ApplyRegistryCertificateWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-applyregistrycertificatewithkubectl-kubectl-core-kubectlrunner-error)
+- [`func ApplyRegistryInternalCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error`](#cli-cert-manager-func-applyregistryinternalcertificate-kubectl-core-kubectlrunner-dnsnames-ipaddresses-string-issuername-string-error)
+- [`func CertManagerInstallManifestURL() string`](#cli-cert-manager-func-certmanagerinstallmanifesturl-string)
 - [`func CheckCASecretWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkcasecretwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func CheckCertManagerInstalledWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkcertmanagerinstalledwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func CheckCertificateWithKubectl(kubectl core.KubectlRunner, name, namespace string) error`](#cli-cert-manager-func-checkcertificatewithkubectl-kubectl-core-kubectlrunner-name-namespace-string-error)
@@ -4178,9 +4522,13 @@ _No package overview is documented._
 - [`func CheckNamedClusterIssuerWithKubectl(kubectl core.KubectlRunner, name string) error`](#cli-cert-manager-func-checknamedclusterissuerwithkubectl-kubectl-core-kubectlrunner-name-string-error)
 - [`func CheckRegistryCertificateOwnershipWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-checkregistrycertificateownershipwithkubectl-kubectl-core-kubectlrunner-error)
 - [`func ClusterIssuerNameForACME(staging bool) string`](#cli-cert-manager-func-clusterissuernameforacme-staging-bool-string)
+- [`func EnsureCASecretWithKubectl(kubectl core.KubectlRunner) (bool, error)`](#cli-cert-manager-func-ensurecasecretwithkubectl-kubectl-core-kubectlrunner-bool-error)
 - [`func EnsureCertManagerInstalled(kubectl core.KubectlRunner, logger *zap.Logger) error`](#cli-cert-manager-func-ensurecertmanagerinstalled-kubectl-core-kubectlrunner-logger-zap-logger-error)
 - [`func PreflightACMEHostnamesPort80(dnsNames []string)`](#cli-cert-manager-func-preflightacmehostnamesport80-dnsnames-string)
 - [`func RemoveRegistryIngressShimAnnotationWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-removeregistryingressshimannotationwithkubectl-kubectl-core-kubectlrunner-error)
+- [`func RenderGeneratedCASecretManifest(now time.Time) (string, error)`](#cli-cert-manager-func-rendergeneratedcasecretmanifest-now-time-time-string-error)
+- [`func RenderLetsEncryptClusterIssuerManifest(name, email, serverURL string) string`](#cli-cert-manager-func-renderletsencryptclusterissuermanifest-name-email-serverurl-string-string)
+- [`func RenderRegistryCertificate(certName, secretName string, dnsNames, ipAddresses []string, issuerName string) string`](#cli-cert-manager-func-renderregistrycertificate-certname-secretname-string-dnsnames-ipaddresses-string-issuername-string-string)
 - [`func ValidateACMEHostnameForPublicCA() error`](#cli-cert-manager-func-validateacmehostnameforpublicca-error)
 - [`func ValidateIngressManifestForACME(ingressManifest string) error`](#cli-cert-manager-func-validateingressmanifestforacme-ingressmanifest-string-error)
 - [`func WaitForCertificateReadyWithKubectl(kubectl core.KubectlRunner, name, namespace string, timeout time.Duration) error`](#cli-cert-manager-func-waitforcertificatereadywithkubectl-kubectl-core-kubectlrunner-name-namespace-string-timeout-time-duration-error)
@@ -4196,9 +4544,11 @@ _No package overview is documented._
 
 ```text
 const (
-	CertClusterIssuerName   = certClusterIssuerName
-	RegistryCertificateName = registryCertificateName
-	RegistryTLSSecretName   = registryTLSSecretName
+	CertClusterIssuerName           = certClusterIssuerName
+	RegistryCertificateName         = registryCertificateName
+	RegistryTLSSecretName           = registryTLSSecretName
+	RegistryInternalCertificateName = registryInternalCertificateName
+	RegistryInternalTLSSecretName   = registryInternalTLSSecretName
 )
 ```
 
@@ -4220,6 +4570,11 @@ func ApplyClusterIssuerWithKubectl(kubectl core.KubectlRunner) error
 func ApplyLetsEncryptClusterIssuer(kubectl core.KubectlRunner, email string, staging bool, logger *zap.Logger) error
 ```
 
+<a id="cli-cert-manager-func-applyregistrycertificate-kubectl-core-kubectlrunner-dnsnames-ipaddresses-string-issuername-string-error"></a>
+```text
+func ApplyRegistryCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error
+```
+
 <a id="cli-cert-manager-func-applyregistrycertificateforacme-kubectl-core-kubectlrunner-dnsnames-string-issuername-string-error"></a>
 ```text
 func ApplyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []string, issuerName string) error
@@ -4228,6 +4583,16 @@ func ApplyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []stri
 <a id="cli-cert-manager-func-applyregistrycertificatewithkubectl-kubectl-core-kubectlrunner-error"></a>
 ```text
 func ApplyRegistryCertificateWithKubectl(kubectl core.KubectlRunner) error
+```
+
+<a id="cli-cert-manager-func-applyregistryinternalcertificate-kubectl-core-kubectlrunner-dnsnames-ipaddresses-string-issuername-string-error"></a>
+```text
+func ApplyRegistryInternalCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error
+```
+
+<a id="cli-cert-manager-func-certmanagerinstallmanifesturl-string"></a>
+```text
+func CertManagerInstallManifestURL() string
 ```
 
 <a id="cli-cert-manager-func-checkcasecretwithkubectl-kubectl-core-kubectlrunner-error"></a>
@@ -4268,6 +4633,11 @@ func ClusterIssuerNameForACME(staging bool) string
 
 ```
 
+<a id="cli-cert-manager-func-ensurecasecretwithkubectl-kubectl-core-kubectlrunner-bool-error"></a>
+```text
+func EnsureCASecretWithKubectl(kubectl core.KubectlRunner) (bool, error)
+```
+
 <a id="cli-cert-manager-func-ensurecertmanagerinstalled-kubectl-core-kubectlrunner-logger-zap-logger-error"></a>
 ```text
 func EnsureCertManagerInstalled(kubectl core.KubectlRunner, logger *zap.Logger) error
@@ -4281,6 +4651,21 @@ func PreflightACMEHostnamesPort80(dnsNames []string)
 <a id="cli-cert-manager-func-removeregistryingressshimannotationwithkubectl-kubectl-core-kubectlrunner-error"></a>
 ```text
 func RemoveRegistryIngressShimAnnotationWithKubectl(kubectl core.KubectlRunner) error
+```
+
+<a id="cli-cert-manager-func-rendergeneratedcasecretmanifest-now-time-time-string-error"></a>
+```text
+func RenderGeneratedCASecretManifest(now time.Time) (string, error)
+```
+
+<a id="cli-cert-manager-func-renderletsencryptclusterissuermanifest-name-email-serverurl-string-string"></a>
+```text
+func RenderLetsEncryptClusterIssuerManifest(name, email, serverURL string) string
+```
+
+<a id="cli-cert-manager-func-renderregistrycertificate-certname-secretname-string-dnsnames-ipaddresses-string-issuername-string-string"></a>
+```text
+func RenderRegistryCertificate(certName, secretName string, dnsNames, ipAddresses []string, issuerName string) string
 ```
 
 <a id="cli-cert-manager-func-validateacmehostnameforpublicca-error"></a>
@@ -4365,12 +4750,15 @@ _No package overview is documented._
 
 - [Overview](#cli-platform-api-overview)
 - [Index](#cli-platform-api-index)
+- [Constants](#cli-platform-api-constants)
 - [Functions](#cli-platform-api-functions)
 - [Types](#cli-platform-api-types)
 
 <a id="cli-platform-api-index"></a>
 ### Index
 
+- [`Constants`](#cli-platform-api-constants)
+- [`func AuthRequiredError(err error) error`](#cli-platform-api-func-authrequirederror-err-error-error)
 - [`func HasPlatformClient() bool`](#cli-platform-api-func-hasplatformclient-bool)
 - [`func NormalizeBaseURL(raw string) string`](#cli-platform-api-func-normalizebaseurl-raw-string-string)
 - [`type AdapterSession struct`](#cli-platform-api-type-adaptersession-struct)
@@ -4381,8 +4769,13 @@ _No package overview is documented._
 - [`func ResolvePlatformOrKube(useKube bool) (*PlatformClient, bool, error)`](#cli-platform-api-func-resolveplatformorkube-usekube-bool-platformclient-bool-error)
 - [`func (c *PlatformClient) ApplyAccessFromYAMLFile(ctx context.Context, path string) error`](#cli-platform-api-func-c-platformclient-applyaccessfromyamlfile-ctx-context-context-path-string-error)
 - [`func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error)`](#cli-platform-api-func-c-platformclient-applyruntimeserver-ctx-context-context-name-namespace-string-spec-mcpv1alpha1-mcpserverspec-serverlistitem-error)
+- [`func (c *PlatformClient) ApplyRuntimeServerWithScope(ctx context.Context, name, namespace, scope string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error)`](#cli-platform-api-func-c-platformclient-applyruntimeserverwithscope-ctx-context-context-name-namespace-scope-string-spec-mcpv1alpha1-mcpserverspec-serverlistitem-error)
+- [`func (c *PlatformClient) ApplyRuntimeServerWithScopeUpdate(ctx context.Context, name, namespace, scope string, spec mcpv1alpha1.MCPServerSpec, update bool) (ServerListItem, error)`](#cli-platform-api-func-c-platformclient-applyruntimeserverwithscopeupdate-ctx-context-context-name-namespace-scope-string-spec-mcpv1alpha1-mcpserverspec-update-bool-serverlistitem-error)
 - [`func (c *PlatformClient) CreateAdapterSession(ctx context.Context, req AdapterSessionRequest) (AdapterSession, error)`](#cli-platform-api-func-c-platformclient-createadaptersession-ctx-context-context-req-adaptersessionrequest-adaptersession-error)
 - [`func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Team, error)`](#cli-platform-api-func-c-platformclient-createteam-ctx-context-context-slug-name-string-team-error)
+- [`func (c *PlatformClient) CreateTeamUser(ctx context.Context, slug, email, password, role string) (TeamMembership, error)`](#cli-platform-api-func-c-platformclient-createteamuser-ctx-context-context-slug-email-password-role-string-teammembership-error)
+- [`func (c *PlatformClient) CreateUser(ctx context.Context, email, password, role string) (PlatformUser, error)`](#cli-platform-api-func-c-platformclient-createuser-ctx-context-context-email-password-role-string-platformuser-error)
+- [`func (c *PlatformClient) CurrentPrincipal(ctx context.Context) (Principal, error)`](#cli-platform-api-func-c-platformclient-currentprincipal-ctx-context-context-principal-error)
 - [`func (c *PlatformClient) DeleteGrant(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deletegrant-ctx-context-context-namespace-name-string-error)
 - [`func (c *PlatformClient) DeleteRuntimeServer(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deleteruntimeserver-ctx-context-context-namespace-name-string-error)
 - [`func (c *PlatformClient) DeleteSession(ctx context.Context, namespace, name string) error`](#cli-platform-api-func-c-platformclient-deletesession-ctx-context-context-namespace-name-string-error)
@@ -4394,16 +4787,39 @@ _No package overview is documented._
 - [`func (c *PlatformClient) ListNamespaces(ctx context.Context) ([]namespaceListItem, error)`](#cli-platform-api-func-c-platformclient-listnamespaces-ctx-context-context-namespacelistitem-error)
 - [`func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace string) ([]ServerListItem, error)`](#cli-platform-api-func-c-platformclient-listruntimeservers-ctx-context-context-namespace-string-serverlistitem-error)
 - [`func (c *PlatformClient) ListSessions(ctx context.Context, namespace string) ([]sentinelaccess.SessionSummary, error)`](#cli-platform-api-func-c-platformclient-listsessions-ctx-context-context-namespace-string-sentinelaccess-sessionsummary-error)
+- [`func (c *PlatformClient) ListTeamMembers(ctx context.Context, slug string) ([]TeamMembership, error)`](#cli-platform-api-func-c-platformclient-listteammembers-ctx-context-context-slug-string-teammembership-error)
 - [`func (c *PlatformClient) ListTeams(ctx context.Context) ([]Team, error)`](#cli-platform-api-func-c-platformclient-listteams-ctx-context-context-team-error)
-- [`func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postgranttoggle-ctx-context-context-namespace-name-action-string-error)
-- [`func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name, action string) error`](#cli-platform-api-func-c-platformclient-postsessiontoggle-ctx-context-context-namespace-name-action-string-error)
+- [`func (c *PlatformClient) PatchGrant(ctx context.Context, namespace, name string, disabled bool) error`](#cli-platform-api-func-c-platformclient-patchgrant-ctx-context-context-namespace-name-string-disabled-bool-error)
+- [`func (c *PlatformClient) PatchSession(ctx context.Context, namespace, name string, revoked bool) error`](#cli-platform-api-func-c-platformclient-patchsession-ctx-context-context-namespace-name-string-revoked-bool-error)
+- [`func (c *PlatformClient) PushRegistryImage(ctx context.Context, tarPath, target, scope string) error`](#cli-platform-api-func-c-platformclient-pushregistryimage-ctx-context-context-tarpath-target-scope-string-error)
 - [`func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePublishRecord) error`](#cli-platform-api-func-c-platformclient-recordimagepublish-ctx-context-context-record-imagepublishrecord-error)
+- [`func (c *PlatformClient) UpsertTeamMember(ctx context.Context, slug, userID, role string) (TeamMembership, error)`](#cli-platform-api-func-c-platformclient-upsertteammember-ctx-context-context-slug-userid-role-string-teammembership-error)
 - [`func (c *PlatformClient) ValidateCredentials(ctx context.Context) error`](#cli-platform-api-func-c-platformclient-validatecredentials-ctx-context-context-error)
+- [`type PlatformUser struct`](#cli-platform-api-type-platformuser-struct)
+- [`type Principal struct`](#cli-platform-api-type-principal-struct)
 - [`type ServerListItem struct`](#cli-platform-api-type-serverlistitem-struct)
 - [`type Team struct`](#cli-platform-api-type-team-struct)
+- [`type TeamMembership = platform.TeamMembership`](#cli-platform-api-type-teammembership-platform-teammembership)
+
+<a id="cli-platform-api-constants"></a>
+### Constants
+
+```text
+const PlatformAuthRequiredMessage = "platform API credentials are required; run `mcp-runtime auth login --api-url <platform-url>` for normal platform access. `--use-kube` is direct Kubernetes mode for admin/dev/test environments with admin/operator Kubernetes access only"
+    PlatformAuthRequiredMessage tells users how to use the platform-backed CLI
+    path.
+```
 
 <a id="cli-platform-api-functions"></a>
 ### Functions
+
+<a id="cli-platform-api-func-authrequirederror-err-error-error"></a>
+```text
+func AuthRequiredError(err error) error
+    AuthRequiredError wraps platform credential errors with user-facing mode
+    guidance.
+
+```
 
 <a id="cli-platform-api-func-hasplatformclient-bool"></a>
 ```text
@@ -4479,15 +4895,16 @@ type PlatformClient struct {
 func NewPlatformClient() (*PlatformClient, error)
     NewPlatformClient returns a client when platform credentials and
     API base URL are configured. If the user is not logged in, returns
-    authfile.ErrNotFound so the caller can fall back to kubectl.
+    authfile.ErrNotFound.
 
 ```
 
 <a id="cli-platform-api-func-resolveplatformorkube-usekube-bool-platformclient-bool-error"></a>
 ```text
 func ResolvePlatformOrKube(useKube bool) (*PlatformClient, bool, error)
-    ResolvePlatformOrKube returns a platform API client when useKube is false
-    and auth resolves; otherwise useKubectl is true.
+    ResolvePlatformOrKube returns direct Kubernetes mode only when useKube is
+    explicit. Otherwise it requires platform API credentials and does not fall
+    back to kubeconfig.
 
 ```
 
@@ -4503,6 +4920,18 @@ func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace
 
 ```
 
+<a id="cli-platform-api-func-c-platformclient-applyruntimeserverwithscope-ctx-context-context-name-namespace-scope-string-spec-mcpv1alpha1-mcpserverspec-serverlistitem-error"></a>
+```text
+func (c *PlatformClient) ApplyRuntimeServerWithScope(ctx context.Context, name, namespace, scope string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-applyruntimeserverwithscopeupdate-ctx-context-context-name-namespace-scope-string-spec-mcpv1alpha1-mcpserverspec-update-bool-serverlistitem-error"></a>
+```text
+func (c *PlatformClient) ApplyRuntimeServerWithScopeUpdate(ctx context.Context, name, namespace, scope string, spec mcpv1alpha1.MCPServerSpec, update bool) (ServerListItem, error)
+
+```
+
 <a id="cli-platform-api-func-c-platformclient-createadaptersession-ctx-context-context-req-adaptersessionrequest-adaptersession-error"></a>
 ```text
 func (c *PlatformClient) CreateAdapterSession(ctx context.Context, req AdapterSessionRequest) (AdapterSession, error)
@@ -4515,6 +4944,24 @@ func (c *PlatformClient) CreateAdapterSession(ctx context.Context, req AdapterSe
 <a id="cli-platform-api-func-c-platformclient-createteam-ctx-context-context-slug-name-string-team-error"></a>
 ```text
 func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Team, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-createteamuser-ctx-context-context-slug-email-password-role-string-teammembership-error"></a>
+```text
+func (c *PlatformClient) CreateTeamUser(ctx context.Context, slug, email, password, role string) (TeamMembership, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-createuser-ctx-context-context-email-password-role-string-platformuser-error"></a>
+```text
+func (c *PlatformClient) CreateUser(ctx context.Context, email, password, role string) (PlatformUser, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-currentprincipal-ctx-context-context-principal-error"></a>
+```text
+func (c *PlatformClient) CurrentPrincipal(ctx context.Context) (Principal, error)
 
 ```
 
@@ -4584,21 +5031,35 @@ func (c *PlatformClient) ListSessions(ctx context.Context, namespace string) ([]
 
 ```
 
+<a id="cli-platform-api-func-c-platformclient-listteammembers-ctx-context-context-slug-string-teammembership-error"></a>
+```text
+func (c *PlatformClient) ListTeamMembers(ctx context.Context, slug string) ([]TeamMembership, error)
+
+```
+
 <a id="cli-platform-api-func-c-platformclient-listteams-ctx-context-context-team-error"></a>
 ```text
 func (c *PlatformClient) ListTeams(ctx context.Context) ([]Team, error)
 
 ```
 
-<a id="cli-platform-api-func-c-platformclient-postgranttoggle-ctx-context-context-namespace-name-action-string-error"></a>
+<a id="cli-platform-api-func-c-platformclient-patchgrant-ctx-context-context-namespace-name-string-disabled-bool-error"></a>
 ```text
-func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, action string) error
+func (c *PlatformClient) PatchGrant(ctx context.Context, namespace, name string, disabled bool) error
 
 ```
 
-<a id="cli-platform-api-func-c-platformclient-postsessiontoggle-ctx-context-context-namespace-name-action-string-error"></a>
+<a id="cli-platform-api-func-c-platformclient-patchsession-ctx-context-context-namespace-name-string-revoked-bool-error"></a>
 ```text
-func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name, action string) error
+func (c *PlatformClient) PatchSession(ctx context.Context, namespace, name string, revoked bool) error
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-pushregistryimage-ctx-context-context-tarpath-target-scope-string-error"></a>
+```text
+func (c *PlatformClient) PushRegistryImage(ctx context.Context, tarPath, target, scope string) error
+    PushRegistryImage uploads a docker save tar and asks the platform API to
+    push it to the configured registry from inside the cluster.
 
 ```
 
@@ -4608,9 +5069,39 @@ func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePub
 
 ```
 
+<a id="cli-platform-api-func-c-platformclient-upsertteammember-ctx-context-context-slug-userid-role-string-teammembership-error"></a>
+```text
+func (c *PlatformClient) UpsertTeamMember(ctx context.Context, slug, userID, role string) (TeamMembership, error)
+
+```
+
 <a id="cli-platform-api-func-c-platformclient-validatecredentials-ctx-context-context-error"></a>
 ```text
 func (c *PlatformClient) ValidateCredentials(ctx context.Context) error
+
+```
+
+<a id="cli-platform-api-type-platformuser-struct"></a>
+```text
+type PlatformUser struct {
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	Role      string `json:"role"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
+```
+
+<a id="cli-platform-api-type-principal-struct"></a>
+```text
+type Principal struct {
+	Role              string   `json:"role"`
+	Subject           string   `json:"subject,omitempty"`
+	Email             string   `json:"email,omitempty"`
+	Namespace         string   `json:"namespace,omitempty"`
+	AllowedNamespaces []string `json:"allowedNamespaces,omitempty"`
+	Teams             []Team   `json:"teams,omitempty"`
+}
 
 ```
 
@@ -4619,6 +5110,8 @@ func (c *PlatformClient) ValidateCredentials(ctx context.Context) error
 type ServerListItem struct {
 	Name        string            `json:"name"`
 	Namespace   string            `json:"namespace"`
+	Image       string            `json:"image,omitempty"`
+	ImageTag    string            `json:"imageTag,omitempty"`
 	Description string            `json:"description,omitempty"`
 	Ready       string            `json:"ready"`
 	Status      string            `json:"status"`
@@ -4638,6 +5131,12 @@ type Team struct {
 	Namespace string    `json:"namespace"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+```
+
+<a id="cli-platform-api-type-teammembership-platform-teammembership"></a>
+```text
+type TeamMembership = platform.TeamMembership
 ```
 
 <a id="cli-platform-status"></a>
@@ -4776,9 +5275,12 @@ Package registry owns routing for the registry top-level command.
 - [`func New(runtime *core.Runtime) *cobra.Command`](#cli-registry-func-new-runtime-core-runtime-cobra-command)
 - [`func NewWithManager(mgr *RegistryManager) *cobra.Command`](#cli-registry-func-newwithmanager-mgr-registrymanager-cobra-command)
 - [`func ResolveExternalRegistryConfig(flagCfg *config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error)`](#cli-registry-func-resolveexternalregistryconfig-flagcfg-config-externalregistryconfig-config-externalregistryconfig-error)
+- [`func ResolveInternalPlatformRegistryURL(logger *zap.Logger) string`](#cli-registry-func-resolveinternalplatformregistryurl-logger-zap-logger-string)
 - [`func ResolvePlatformRegistryURL(logger *zap.Logger) string`](#cli-registry-func-resolveplatformregistryurl-logger-zap-logger-string)
+- [`func RunAdminRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error`](#cli-registry-func-runadminregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-mode-helpernamespace-string-error)
 - [`func RunRegistryProvision(mgr *RegistryManager, url, username, password, operatorImage string, dryRun bool) error`](#cli-registry-func-runregistryprovision-mgr-registrymanager-url-username-password-operatorimage-string-dryrun-bool-error)
-- [`func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helperNamespace string) error`](#cli-registry-func-runregistrypush-mgr-registrymanager-image-registryurl-name-mode-helpernamespace-string-error)
+- [`func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope string) error`](#cli-registry-func-runregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-string-error)
+- [`func ScopedRegistryRepository(ctx context.Context, client *platformapi.PlatformClient, repo string, scope publishscope.Scope) (string, error)`](#cli-registry-func-scopedregistryrepository-ctx-context-context-client-platformapi-platformclient-repo-string-scope-publishscope-scope-string-error)
 - [`type RegistryManager struct`](#cli-registry-type-registrymanager-struct)
 - [`func DefaultRegistryManager(logger *zap.Logger) *RegistryManager`](#cli-registry-func-defaultregistrymanager-logger-zap-logger-registrymanager)
 - [`func NewRegistryManager(kubectl *core.KubectlClient, exec core.Executor, logger *zap.Logger) *RegistryManager`](#cli-registry-func-newregistrymanager-kubectl-core-kubectlclient-exec-core-executor-logger-zap-logger-registrymanager)
@@ -4786,6 +5288,7 @@ Package registry owns routing for the registry top-level command.
 - [`func (m *RegistryManager) LoginRegistry(registryURL, username, password string) error`](#cli-registry-func-m-registrymanager-loginregistry-registryurl-username-password-string-error)
 - [`func (m *RegistryManager) PushDirect(source, target string) error`](#cli-registry-func-m-registrymanager-pushdirect-source-target-string-error)
 - [`func (m *RegistryManager) PushInCluster(source, target, helperNS string) error`](#cli-registry-func-m-registrymanager-pushincluster-source-target-helperns-string-error)
+- [`func (m *RegistryManager) PushViaPlatform(ctx context.Context, client *platformapi.PlatformClient, source, target, scope string) error`](#cli-registry-func-m-registrymanager-pushviaplatform-ctx-context-context-client-platformapi-platformclient-source-target-scope-string-error)
 - [`func (m *RegistryManager) ShowRegistryInfo() error`](#cli-registry-func-m-registrymanager-showregistryinfo-error)
 
 <a id="cli-registry-functions"></a>
@@ -4820,9 +5323,22 @@ func NewWithManager(mgr *RegistryManager) *cobra.Command
 func ResolveExternalRegistryConfig(flagCfg *config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error)
 ```
 
+<a id="cli-registry-func-resolveinternalplatformregistryurl-logger-zap-logger-string"></a>
+```text
+func ResolveInternalPlatformRegistryURL(logger *zap.Logger) string
+```
+
 <a id="cli-registry-func-resolveplatformregistryurl-logger-zap-logger-string"></a>
 ```text
 func ResolvePlatformRegistryURL(logger *zap.Logger) string
+```
+
+<a id="cli-registry-func-runadminregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-mode-helpernamespace-string-error"></a>
+```text
+func RunAdminRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error
+    RunAdminRegistryPush pushes an image using direct Kubernetes access for
+    operator debugging. Normal users should use registry push instead.
+
 ```
 
 <a id="cli-registry-func-runregistryprovision-mgr-registrymanager-url-username-password-operatorimage-string-dryrun-bool-error"></a>
@@ -4833,10 +5349,18 @@ func RunRegistryProvision(mgr *RegistryManager, url, username, password, operato
 
 ```
 
-<a id="cli-registry-func-runregistrypush-mgr-registrymanager-image-registryurl-name-mode-helpernamespace-string-error"></a>
+<a id="cli-registry-func-runregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-string-error"></a>
 ```text
-func RunRegistryPush(mgr *RegistryManager, image, registryURL, name, mode, helperNamespace string) error
-    RunRegistryPush contains the registry push command flow for folder packages.
+func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope string) error
+    RunRegistryPush pushes an image through the platform API.
+
+```
+
+<a id="cli-registry-func-scopedregistryrepository-ctx-context-context-client-platformapi-platformclient-repo-string-scope-publishscope-scope-string-error"></a>
+```text
+func ScopedRegistryRepository(ctx context.Context, client *platformapi.PlatformClient, repo string, scope publishscope.Scope) (string, error)
+    ScopedRegistryRepository applies the repository prefix implied by a publish
+    scope.
 ```
 
 <a id="cli-registry-types"></a>
@@ -4890,6 +5414,14 @@ func (m *RegistryManager) PushDirect(source, target string) error
 ```text
 func (m *RegistryManager) PushInCluster(source, target, helperNS string) error
     PushInCluster pushes an image using an in-cluster helper pod.
+
+```
+
+<a id="cli-registry-func-m-registrymanager-pushviaplatform-ctx-context-context-client-platformapi-platformclient-source-target-scope-string-error"></a>
+```text
+func (m *RegistryManager) PushViaPlatform(ctx context.Context, client *platformapi.PlatformClient, source, target, scope string) error
+    PushViaPlatform saves the local image and asks the platform API to push it
+    in-cluster.
 
 ```
 
@@ -5075,6 +5607,7 @@ _No package overview is documented._
 ### Index
 
 - [`func GitTag(command CommandFactory) string`](#cli-registry-resolution-func-gittag-command-commandfactory-string)
+- [`func InternalPlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string`](#cli-registry-resolution-func-internalplatformurl-logger-zap-logger-kubectl-kubectlcommand-cfg-config-string)
 - [`func PlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string`](#cli-registry-resolution-func-platformurl-logger-zap-logger-kubectl-kubectlcommand-cfg-config-string)
 - [`type CommandFactory func(name string, args []string) (OutputCommand, error)`](#cli-registry-resolution-type-commandfactory-func-name-string-args-string-outputcommand-error)
 - [`type Config struct`](#cli-registry-resolution-type-config-struct)
@@ -5091,10 +5624,22 @@ func GitTag(command CommandFactory) string
 
 ```
 
+<a id="cli-registry-resolution-func-internalplatformurl-logger-zap-logger-kubectl-kubectlcommand-cfg-config-string"></a>
+```text
+func InternalPlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string
+    InternalPlatformURL resolves the bundled registry host:port for platform
+    pods rendered by setup. It intentionally ignores public ingress hosts
+    derived from MCP_PLATFORM_DOMAIN/MCP_REGISTRY_INGRESS_HOST so operator and
+    Sentinel pods do not need anonymous or pull-secret access to the public
+    registry route.
+
+```
+
 <a id="cli-registry-resolution-func-platformurl-logger-zap-logger-kubectl-kubectlcommand-cfg-config-string"></a>
 ```text
 func PlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string
-    PlatformURL resolves the registry host:port used for image names.
+    PlatformURL resolves the registry host:port used for public/user-facing
+    image names.
 ```
 
 <a id="cli-registry-resolution-types"></a>
@@ -5111,6 +5656,8 @@ type CommandFactory func(name string, args []string) (OutputCommand, error)
 type Config struct {
 	RegistryEndpoint        string
 	DefaultRegistryEndpoint string
+	RegistryIngressHost     string
+	DefaultRegistryHost     string
 	RegistryPort            int
 }
 
@@ -5156,7 +5703,8 @@ Package server owns routing for the server top-level command.
 <a id="cli-server-index"></a>
 ### Index
 
-- [`func BuildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, context string) error`](#cli-server-func-buildimage-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-context-string-error)
+- [`func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, platform, contextDir string) error`](#cli-server-func-buildimage-ctx-context-context-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-platform-contextdir-string-error)
+- [`func DiscoverToolsFromServer(serverURL string) ([]string, error)`](#cli-server-func-discovertoolsfromserver-serverurl-string-string-error)
 - [`func New(runtime *core.Runtime) *cobra.Command`](#cli-server-func-new-runtime-core-runtime-cobra-command)
 - [`func NewWithManager(mgr *ServerManager) *cobra.Command`](#cli-server-func-newwithmanager-mgr-servermanager-cobra-command)
 - [`type ServerManager struct`](#cli-server-type-servermanager-struct)
@@ -5167,9 +5715,11 @@ Package server owns routing for the server top-level command.
 - [`func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) error`](#cli-server-func-m-servermanager-createserver-name-namespace-image-imagetag-string-error)
 - [`func (m *ServerManager) CreateServerFromFile(file string) error`](#cli-server-func-m-servermanager-createserverfromfile-file-string-error)
 - [`func (m *ServerManager) DeleteServer(name, namespace string) error`](#cli-server-func-m-servermanager-deleteserver-name-namespace-string-error)
-- [`func (m *ServerManager) DeployServer(name, namespace, team, image, imageTag string, replicas, port, servicePort int32) error`](#cli-server-func-m-servermanager-deployserver-name-namespace-team-image-imagetag-string-replicas-port-serviceport-int32-error)
+- [`func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageTag string, replicas, port, servicePort int32, metadataFile, metadataDir string, update bool) error`](#cli-server-func-m-servermanager-deployserver-name-namespace-team-scope-image-imagetag-string-replicas-port-serviceport-int32-metadatafile-metadatadir-string-update-bool-error)
 - [`func (m *ServerManager) ExportServer(name, namespace, file string) error`](#cli-server-func-m-servermanager-exportserver-name-namespace-file-string-error)
+- [`func (m *ServerManager) GenerateManifests(metadataFile, metadataDir, outputDir string) error`](#cli-server-func-m-servermanager-generatemanifests-metadatafile-metadatadir-outputdir-string-error)
 - [`func (m *ServerManager) GetServer(name, namespace string) error`](#cli-server-func-m-servermanager-getserver-name-namespace-string-error)
+- [`func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, policyMode, defaultDecision string, sessionRequired bool, port int32, tools, toolSpecs []string, force bool) error`](#cli-server-func-m-servermanager-initserver-name-metadatadir-image-imagetag-scope-policymode-defaultdecision-string-sessionrequired-bool-port-int32-tools-toolspecs-string-force-bool-error)
 - [`func (m *ServerManager) InspectServerPolicy(name, namespace string) error`](#cli-server-func-m-servermanager-inspectserverpolicy-name-namespace-string-error)
 - [`func (m *ServerManager) ListServers(namespace, team string) error`](#cli-server-func-m-servermanager-listservers-namespace-team-string-error)
 - [`func (m *ServerManager) Logger() *zap.Logger`](#cli-server-func-m-servermanager-logger-zap-logger)
@@ -5180,10 +5730,22 @@ Package server owns routing for the server top-level command.
 <a id="cli-server-functions"></a>
 ### Functions
 
-<a id="cli-server-func-buildimage-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-context-string-error"></a>
+<a id="cli-server-func-buildimage-ctx-context-context-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-platform-contextdir-string-error"></a>
 ```text
-func BuildImage(logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, context string) error
+func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, platform, contextDir string) error
     BuildImage builds a Docker image and updates MCP metadata for the server.
+
+```
+
+<a id="cli-server-func-discovertoolsfromserver-serverurl-string-string-error"></a>
+```text
+func DiscoverToolsFromServer(serverURL string) ([]string, error)
+    DiscoverToolsFromServer connects to a running MCP server at serverURL and
+    returns the tool names. They are returned as bare names; callers wrap them
+    into --tool flags or metadata.ToolConfig values.
+
+    If the URL has no explicit path, /mcp is appended automatically (the default
+    MCP endpoint path used by the go-sdk).
 
 ```
 
@@ -5262,9 +5824,9 @@ func (m *ServerManager) DeleteServer(name, namespace string) error
 
 ```
 
-<a id="cli-server-func-m-servermanager-deployserver-name-namespace-team-image-imagetag-string-replicas-port-serviceport-int32-error"></a>
+<a id="cli-server-func-m-servermanager-deployserver-name-namespace-team-scope-image-imagetag-string-replicas-port-serviceport-int32-metadatafile-metadatadir-string-update-bool-error"></a>
 ```text
-func (m *ServerManager) DeployServer(name, namespace, team, image, imageTag string, replicas, port, servicePort int32) error
+func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageTag string, replicas, port, servicePort int32, metadataFile, metadataDir string, update bool) error
 
 ```
 
@@ -5275,10 +5837,24 @@ func (m *ServerManager) ExportServer(name, namespace, file string) error
 
 ```
 
+<a id="cli-server-func-m-servermanager-generatemanifests-metadatafile-metadatadir-outputdir-string-error"></a>
+```text
+func (m *ServerManager) GenerateManifests(metadataFile, metadataDir, outputDir string) error
+    GenerateManifests renders MCPServer YAML from .mcp metadata for review,
+    GitOps, or admin workflows. Normal user deploys should call DeployServer.
+
+```
+
 <a id="cli-server-func-m-servermanager-getserver-name-namespace-string-error"></a>
 ```text
 func (m *ServerManager) GetServer(name, namespace string) error
     GetServer retrieves details for a specific MCP server.
+
+```
+
+<a id="cli-server-func-m-servermanager-initserver-name-metadatadir-image-imagetag-scope-policymode-defaultdecision-string-sessionrequired-bool-port-int32-tools-toolspecs-string-force-bool-error"></a>
+```text
+func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, policyMode, defaultDecision string, sessionRequired bool, port int32, tools, toolSpecs []string, force bool) error
 
 ```
 
@@ -5420,6 +5996,8 @@ Ingress.
 const (
 	// PlatformIngressName is the Kubernetes Ingress resource name for the dashboard.
 	PlatformIngressName = "mcp-sentinel-platform-ui"
+	// PlatformObservabilityIngressName is the admin-gated platform Ingress for observability tools.
+	PlatformObservabilityIngressName = "mcp-sentinel-platform-observability"
 	// PlatformHTTPRedirectIngressName is the HTTP-only redirect Ingress resource name.
 	PlatformHTTPRedirectIngressName = "mcp-sentinel-platform-ui-http"
 	// PlatformTLSSecretName is the TLS secret name used when TLS is enabled.
@@ -5435,19 +6013,22 @@ const (
 func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string
     RenderPlatformUIIngress emits an Ingress that maps platform.<domain> to
     the dashboard UI and /api on the same UI service (which reverse-proxies to
-    mcp-sentinel-api via API_UPSTREAM). Grafana and Prometheus are intentionally
-    NOT exposed on the public platform host: those tools have no built-in auth
-    in this stack, so operators must reach them via port-forward or a private
-    ingress instead.
+    mcp-sentinel-api via API_UPSTREAM). It also emits a separate admin-gated
+    Ingress on the same host for /grafana. The observability Ingress uses the
+    repo-managed sentinel-admin-auth@file Traefik middleware so Grafana is
+    reachable from admin UI links without exposing it raw on the public platform
+    host. Prometheus stays internal as Grafana's metrics datasource and is not
+    exposed as a direct public route.
 
     When issuerName is set, a TLS section and cert-manager annotation
     are added so cert-manager's ingress-shim provisions a Certificate for
     platform.<domain> into the mcp-sentinel-platform-tls Secret in the same
-    namespace as the Ingress. A second Ingress on the `web` entrypoint is
-    also emitted so HTTP requests to the same host hit the UI service, which
-    redirects to HTTPS. (We can't rely on Traefik's entrypoint-level redirect
-    because the prod overlay disables it to keep HTTP-01 ACME challenges working
-    on first issue.)
+    namespace as the UI Ingress. The observability Ingress references the same
+    TLS Secret without a cert-manager annotation to avoid a second Certificate
+    owner. A third Ingress on the `web` entrypoint is also emitted so HTTP
+    requests to the same host hit the UI service, which redirects to HTTPS.
+    (We can't rely on Traefik's entrypoint-level redirect because the prod
+    overlay disables it to keep HTTP-01 ACME challenges working on first issue.)
 ```
 
 <a id="cli-setup-plan"></a>
@@ -5481,6 +6062,7 @@ Package plan contains pure setup planning types and default resolution.
 - [`Constants`](#cli-setup-plan-constants)
 - [`func CatalogNamespaceForPlatformMode(mode string) string`](#cli-setup-plan-func-catalognamespaceforplatformmode-mode-string-string)
 - [`func NormalizePlatformMode(mode string) (string, bool)`](#cli-setup-plan-func-normalizeplatformmode-mode-string-string-bool)
+- [`func NormalizeRegistryMode(mode string) (string, bool)`](#cli-setup-plan-func-normalizeregistrymode-mode-string-string-bool)
 - [`type Input struct`](#cli-setup-plan-type-input-struct)
 - [`type Plan struct`](#cli-setup-plan-type-plan-struct)
 - [`func Build(input Input) Plan`](#cli-setup-plan-func-build-input-input-plan)
@@ -5497,6 +6079,12 @@ const (
 	PlatformModeTenant = "tenant"
 	PlatformModeOrg    = "org"
 	PlatformModePublic = "public"
+)
+const (
+	RegistryModeAuto         = "auto"
+	RegistryModeBundledHTTP  = "bundled-http"
+	RegistryModeBundledHTTPS = "bundled-https"
+	RegistryModeExternal     = "external"
 )
 const (
 	DefaultOrgCatalogNamespace    = "mcp-servers-org"
@@ -5517,6 +6105,11 @@ func CatalogNamespaceForPlatformMode(mode string) string
 func NormalizePlatformMode(mode string) (string, bool)
 ```
 
+<a id="cli-setup-plan-func-normalizeregistrymode-mode-string-string-bool"></a>
+```text
+func NormalizeRegistryMode(mode string) (string, bool)
+```
+
 <a id="cli-setup-plan-types"></a>
 ### Types
 
@@ -5527,6 +6120,10 @@ type Input struct {
 	Context                string
 	RegistryType           string
 	RegistryStorageSize    string
+	RegistryMode           string
+	ExternalRegistryURL    string
+	ExternalRegistryUser   string
+	ExternalRegistryPass   string
 	StorageMode            string
 	PlatformMode           string
 	IngressMode            string
@@ -5553,24 +6150,28 @@ type Input struct {
 <a id="cli-setup-plan-type-plan-struct"></a>
 ```text
 type Plan struct {
-	Kubeconfig          string
-	Context             string
-	RegistryType        string
-	RegistryStorageSize string
-	StorageMode         string
-	PlatformMode        string
-	Ingress             cluster.IngressOptions
-	RegistryManifest    string
-	TLSEnabled          bool
-	TestMode            bool
-	ParallelBuilds      bool
-	StrictProd          bool
-	DeployAnalytics     bool
-	OperatorArgs        []string
-	ACMEmail            string
-	ACMEStaging         bool
-	TLSClusterIssuer    string
-	InstallCertManager  bool
+	Kubeconfig           string
+	Context              string
+	RegistryType         string
+	RegistryStorageSize  string
+	RegistryMode         string
+	ExternalRegistryURL  string
+	ExternalRegistryUser string
+	ExternalRegistryPass string
+	StorageMode          string
+	PlatformMode         string
+	Ingress              cluster.IngressOptions
+	RegistryManifest     string
+	TLSEnabled           bool
+	TestMode             bool
+	ParallelBuilds       bool
+	StrictProd           bool
+	DeployAnalytics      bool
+	OperatorArgs         []string
+	ACMEmail             string
+	ACMEStaging          bool
+	TLSClusterIssuer     string
+	InstallCertManager   bool
 }
     Plan captures the resolved setup decisions.
 
@@ -5580,6 +6181,252 @@ type Plan struct {
 ```text
 func Build(input Input) Plan
     Build resolves CLI inputs into a concrete setup plan.
+```
+
+<a id="cli-setup-platform"></a>
+## CLI setup platform
+
+Package: `platform`
+Import path: `mcp-runtime/internal/cli/setup/platform`
+
+Source command:
+
+```bash
+go doc -all ./internal/cli/setup/platform
+```
+
+<a id="cli-setup-platform-overview"></a>
+### Overview
+
+Package platform implements the setup workflow for MCP Runtime platform
+components.
+
+### Jump To
+
+- [Overview](#cli-setup-platform-overview)
+- [Index](#cli-setup-platform-index)
+- [Functions](#cli-setup-platform-functions)
+- [Types](#cli-setup-platform-types)
+
+<a id="cli-setup-platform-index"></a>
+### Index
+
+- [`func BuildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectChanged bool) []string`](#cli-setup-platform-func-buildoperatorargs-metricsaddr-probeaddr-string-leaderelect-leaderelectchanged-bool-string)
+- [`func SetupPlatform(logger *zap.Logger, plan setupplan.Plan, clusterMgr ClusterManagerAPI) error`](#cli-setup-platform-func-setupplatform-logger-zap-logger-plan-setupplan-plan-clustermgr-clustermanagerapi-error)
+- [`func ValidatePlatformMode(mode string) error`](#cli-setup-platform-func-validateplatformmode-mode-string-error)
+- [`func ValidatePublicPlatformAuthConfig(platformMode string, tlsEnabled, testMode bool, existingData map[string]string) error`](#cli-setup-platform-func-validatepublicplatformauthconfig-platformmode-string-tlsenabled-testmode-bool-existingdata-map-string-string-error)
+- [`func ValidatePublicPlatformAuthEnv(platformMode string, tlsEnabled, testMode bool) error`](#cli-setup-platform-func-validatepublicplatformauthenv-platformmode-string-tlsenabled-testmode-bool-error)
+- [`func ValidateRegistryMode(mode string) error`](#cli-setup-platform-func-validateregistrymode-mode-string-error)
+- [`func ValidateRegistryTLSMode(mode string, tlsEnabled bool, acmeEmail string) error`](#cli-setup-platform-func-validateregistrytlsmode-mode-string-tlsenabled-bool-acmeemail-string-error)
+- [`func ValidateStorageMode(mode string) error`](#cli-setup-platform-func-validatestoragemode-mode-string-error)
+- [`func ValidateTLSSetupCLIFlags(`](#cli-setup-platform-func-validatetlssetupcliflags)
+- [`type AnalyticsImageSet struct`](#cli-setup-platform-type-analyticsimageset-struct)
+- [`type ClusterManagerAPI interface`](#cli-setup-platform-type-clustermanagerapi-interface)
+- [`type RegistryManagerAPI interface`](#cli-setup-platform-type-registrymanagerapi-interface)
+- [`type SetupContext struct`](#cli-setup-platform-type-setupcontext-struct)
+- [`type SetupDeps struct`](#cli-setup-platform-type-setupdeps-struct)
+- [`type SetupPipeline struct`](#cli-setup-platform-type-setuppipeline-struct)
+- [`func NewSetupPipeline() *SetupPipeline`](#cli-setup-platform-func-newsetuppipeline-setuppipeline)
+- [`func (p *SetupPipeline) Build() []SetupStep`](#cli-setup-platform-func-p-setuppipeline-build-setupstep)
+- [`func (p *SetupPipeline) With(step SetupStep) *SetupPipeline`](#cli-setup-platform-func-p-setuppipeline-with-step-setupstep-setuppipeline)
+- [`func (p *SetupPipeline) WithIf(condition bool, step SetupStep) *SetupPipeline`](#cli-setup-platform-func-p-setuppipeline-withif-condition-bool-step-setupstep-setuppipeline)
+- [`type SetupStep interface`](#cli-setup-platform-type-setupstep-interface)
+
+<a id="cli-setup-platform-functions"></a>
+### Functions
+
+<a id="cli-setup-platform-func-buildoperatorargs-metricsaddr-probeaddr-string-leaderelect-leaderelectchanged-bool-string"></a>
+```text
+func BuildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectChanged bool) []string
+    buildOperatorArgs constructs operator command-line arguments from flags.
+    Only includes flags that were explicitly set.
+
+```
+
+<a id="cli-setup-platform-func-setupplatform-logger-zap-logger-plan-setupplan-plan-clustermgr-clustermanagerapi-error"></a>
+```text
+func SetupPlatform(logger *zap.Logger, plan setupplan.Plan, clusterMgr ClusterManagerAPI) error
+```
+
+<a id="cli-setup-platform-func-validateplatformmode-mode-string-error"></a>
+```text
+func ValidatePlatformMode(mode string) error
+```
+
+<a id="cli-setup-platform-func-validatepublicplatformauthconfig-platformmode-string-tlsenabled-testmode-bool-existingdata-map-string-string-error"></a>
+```text
+func ValidatePublicPlatformAuthConfig(platformMode string, tlsEnabled, testMode bool, existingData map[string]string) error
+```
+
+<a id="cli-setup-platform-func-validatepublicplatformauthenv-platformmode-string-tlsenabled-testmode-bool-error"></a>
+```text
+func ValidatePublicPlatformAuthEnv(platformMode string, tlsEnabled, testMode bool) error
+```
+
+<a id="cli-setup-platform-func-validateregistrymode-mode-string-error"></a>
+```text
+func ValidateRegistryMode(mode string) error
+```
+
+<a id="cli-setup-platform-func-validateregistrytlsmode-mode-string-tlsenabled-bool-acmeemail-string-error"></a>
+```text
+func ValidateRegistryTLSMode(mode string, tlsEnabled bool, acmeEmail string) error
+```
+
+<a id="cli-setup-platform-func-validatestoragemode-mode-string-error"></a>
+```text
+func ValidateStorageMode(mode string) error
+```
+
+<a id="cli-setup-platform-func-validatetlssetupcliflags"></a>
+```text
+func ValidateTLSSetupCLIFlags(
+	tlsEnabled bool,
+	acmeEmailResolved, tlsCIResolved string,
+	acmeStagingResolved, skipCertManagerInstall bool,
+) error
+    validateTLSSetupCLIFlags enforces ACME / internal-issuer mutual exclusion
+    and requires --with-tls when any TLS or cert-manager-related options are
+    set.
+```
+
+<a id="cli-setup-platform-types"></a>
+### Types
+
+<a id="cli-setup-platform-type-analyticsimageset-struct"></a>
+```text
+type AnalyticsImageSet struct {
+	Ingest        string
+	API           string
+	Processor     string
+	UI            string
+	Traefik       string
+	ClickHouse    string
+	Zookeeper     string
+	Kafka         string
+	Prometheus    string
+	OTelCollector string
+	Tempo         string
+	Loki          string
+	Promtail      string
+	Grafana       string
+}
+
+```
+
+<a id="cli-setup-platform-type-clustermanagerapi-interface"></a>
+```text
+type ClusterManagerAPI interface {
+	InitCluster(kubeconfig, context string) error
+	ConfigureCluster(opts cluster.IngressOptions) error
+}
+
+```
+
+<a id="cli-setup-platform-type-registrymanagerapi-interface"></a>
+```text
+type RegistryManagerAPI interface {
+	ShowRegistryInfo() error
+	PushInCluster(source, target, helperNS string) error
+}
+
+```
+
+<a id="cli-setup-platform-type-setupcontext-struct"></a>
+```text
+type SetupContext struct {
+	Plan                  setupplan.Plan
+	ExternalRegistry      *config.ExternalRegistryConfig
+	UsingExternalRegistry bool
+	RegistryAuthStaged    bool
+	RegistrySecretName    string
+	OperatorImage         string
+	GatewayProxyImage     string
+	AnalyticsImages       AnalyticsImageSet
+}
+    SetupContext carries state shared across setup steps.
+
+```
+
+<a id="cli-setup-platform-type-setupdeps-struct"></a>
+```text
+type SetupDeps struct {
+	ResolveExternalRegistryConfig   func(*config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error)
+	ClusterManager                  ClusterManagerAPI
+	RegistryManager                 RegistryManagerAPI
+	LoginRegistry                   func(logger *zap.Logger, registryURL, username, password string) error
+	DeployRegistry                  func(logger *zap.Logger, namespace string, port int, registryType, registryStorageSize, manifestPath string) error
+	WaitForDeploymentAvailable      func(logger *zap.Logger, name, namespace, selector string, timeout time.Duration) error
+	PrintDeploymentDiagnostics      func(deploy, namespace, selector string)
+	SetupTLS                        func(logger *zap.Logger, plan setupplan.Plan) error
+	BuildOperatorImage              func(image string) error
+	PushOperatorImage               func(image string) error
+	BuildGatewayProxyImage          func(image string) error
+	PushGatewayProxyImage           func(image string) error
+	BuildAnalyticsImage             func(image, dockerfilePath, buildContext string) error
+	PushAnalyticsImage              func(image string) error
+	EnsureNamespace                 func(namespace string) error
+	EnsureCatalogNamespace          func(namespace string, labels map[string]string) error
+	ResolvePlatformRegistryURL      func(logger *zap.Logger) string
+	PushOperatorImageToInternal     func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
+	PushGatewayProxyImageToInternal func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
+	PushAnalyticsImageToInternal    func(logger *zap.Logger, sourceImage, targetImage, helperNamespace string) error
+	DeployOperatorManifests         func(logger *zap.Logger, operatorImage, gatewayProxyImage string, operatorArgs []string, imagePullSecretName string) error
+	DeployAnalyticsManifests        func(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error
+	EnsureImagePullSecret           func(namespace, name, registry, username, password string) error
+	DisableRegistryIngressAuth      func() error
+	EnableRegistryIngressAuth       func() error
+	ConfigureProvisionedRegistryEnv func(ext *config.ExternalRegistryConfig, secretName string) error
+	RestartDeployment               func(name, namespace string) error
+	CheckCRDInstalled               func(name string) error
+	GetDeploymentTimeout            func() time.Duration
+	GetRegistryPort                 func() int
+	OperatorImageFor                func(ext *config.ExternalRegistryConfig) string
+	GatewayProxyImageFor            func(ext *config.ExternalRegistryConfig) string
+}
+
+```
+
+<a id="cli-setup-platform-type-setuppipeline-struct"></a>
+```text
+type SetupPipeline struct {
+	// Has unexported fields.
+}
+    SetupPipeline provides a fluent API for building step sequences.
+
+```
+
+<a id="cli-setup-platform-func-newsetuppipeline-setuppipeline"></a>
+```text
+func NewSetupPipeline() *SetupPipeline
+
+```
+
+<a id="cli-setup-platform-func-p-setuppipeline-build-setupstep"></a>
+```text
+func (p *SetupPipeline) Build() []SetupStep
+
+```
+
+<a id="cli-setup-platform-func-p-setuppipeline-with-step-setupstep-setuppipeline"></a>
+```text
+func (p *SetupPipeline) With(step SetupStep) *SetupPipeline
+
+```
+
+<a id="cli-setup-platform-func-p-setuppipeline-withif-condition-bool-step-setupstep-setuppipeline"></a>
+```text
+func (p *SetupPipeline) WithIf(condition bool, step SetupStep) *SetupPipeline
+
+```
+
+<a id="cli-setup-platform-type-setupstep-interface"></a>
+```text
+type SetupStep interface {
+	Name() string
+	Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error
+}
+    SetupStep models a single setup phase.
 ```
 
 <a id="cli-binary"></a>

@@ -1,15 +1,17 @@
 # Getting Started
 
-The shortest path from an empty Kubernetes cluster to a governed MCP endpoint: install the control plane, registry, broker, and Sentinel stack; deploy one MCP server; grant access; and observe live traffic.
+This guide installs MCP Runtime on your own Kubernetes cluster. If you want to
+try the platform in under 10 minutes without a cluster, see the
+[Quickstart](quickstart.md) instead.
 
 ## Prerequisites
 
-- Go `1.25+` (matches the repository `go.mod` files)
+- Go `1.26+` (matches the repository `go.mod` files)
 - `make`
 - Docker or a Docker-compatible client, with the daemon running and reachable
 - `kubectl` on `PATH`, configured for the target cluster
 - `curl`, `jq`, and `python3` for documented dev and traffic-generation flows
-- A Kubernetes cluster (k3s, kind, minikube, Docker Desktop Kubernetes, EKS — see [cluster-readiness.md](cluster-readiness.md) for distribution-specific prep)
+- A Kubernetes cluster (k3s, kind, minikube, Docker Desktop Kubernetes, EKS, GKE, AKS, or equivalent). If you are choosing a target, start with [Deployment Targets](deployment-targets.md), then use [Cluster Readiness](cluster-readiness.md) for distribution-specific prep.
 
 Host bootstrap:
 
@@ -20,14 +22,43 @@ STRICT_DEPS_CHECK=1 make deps-check
 
 `make deps-install` is intentionally best-effort: it can install some packages with Homebrew or apt, but it cannot enable Docker Desktop, create cloud credentials, or configure your kubeconfig. Re-run `STRICT_DEPS_CHECK=1 make deps-check` until the required host tools pass.
 
-## 1. Build the CLI
+## 1. Install the CLI
+
+**Option A — Download a release binary** (no Go required):
+
+```bash
+# macOS Apple Silicon
+curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-darwin-arm64
+chmod +x mcp-runtime && sudo mv mcp-runtime /usr/local/bin/
+
+# macOS Intel
+curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-darwin-amd64
+chmod +x mcp-runtime && sudo mv mcp-runtime /usr/local/bin/
+
+# Linux amd64
+curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-linux-amd64
+chmod +x mcp-runtime && sudo mv mcp-runtime /usr/local/bin/
+
+# Linux arm64
+curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-linux-arm64
+chmod +x mcp-runtime && sudo mv mcp-runtime /usr/local/bin/
+```
+
+Windows users can download
+[`mcp-runtime-windows-amd64.exe`](https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-windows-amd64.exe)
+and add it to `PATH`.
+
+**Option B — Build from source** (requires Go 1.26+):
 
 ```bash
 make deps
 make build
 ```
 
-This produces `./bin/mcp-runtime`.
+This produces `./bin/mcp-runtime` with version metadata from
+`git describe --tags --match 'v*'`, the current commit, and UTC build time.
+Release binaries use the release tag exactly. Override with
+`VERSION=<tag> make build` when needed.
 
 ## 2. Confirm cluster readiness
 
@@ -37,6 +68,8 @@ This produces `./bin/mcp-runtime`.
 
 Before setup, confirm the target Kubernetes cluster is ready for registry
 pushes, image pulls, ingress, storage, and TLS. See
+[Deployment Targets](deployment-targets.md) to choose the right install shape
+for self-managed or managed Kubernetes, then
 [cluster-readiness.md](cluster-readiness.md) for distribution-specific
 preparation.
 
@@ -52,573 +85,124 @@ install bundled CoreDNS / local-path on k3s. After setup, run `cluster doctor`
 to validate the installed MCP Runtime resources, registry pulls, ingress,
 Sentinel, and operator readiness.
 
-## 3. Contributor test-mode cluster
+## 3. Contributor test-mode cluster (local Kind)
 
-For local contributor work, use a disposable Kind cluster and `setup
---test-mode`. This path is for development and CI-style validation: it uses the
-HTTP ingress overlay, avoids public DNS/TLS, and assumes local Docker can build
-the runtime images. It does not skip builds: setup builds and pushes the
-operator, gateway proxy, and Sentinel images with `latest` tags to the
-configured or bundled registry.
+For local development, CI, or contributing to the repo, use the Kind-based
+test-mode path. The contributor docs own this path completely:
 
-For the expanded contributor runbook, including tenant UI smoke tests, service
-rebuild loops, runtime MCP cleanup, and troubleshooting, see the
-[Contributor Guide](contributor/README.md).
+- [Contributor Guide](contributor/README.md)
+- [Local Kind and Test Mode](contributor/local-kind.md)
 
-Create Kind with the registry mirror MCP Runtime expects for image pulls:
+Quick path:
 
 ```bash
-cat > /tmp/mcp-runtime-kind.yaml <<'EOF'
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-containerdConfigPatches:
-  - |-
-    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."registry.registry.svc.cluster.local:5000"]
-      endpoint = ["http://127.0.0.1:32000"]
-EOF
-
-kind create cluster --name mcp-runtime --config /tmp/mcp-runtime-kind.yaml
-kubectl config use-context kind-mcp-runtime
-```
-
-In test mode, setup intentionally emits pod image references under
-`registry.registry.svc.cluster.local:5000/...` so the image host matches this
-Kind containerd mirror exactly instead of using a mutable registry Service
-`ClusterIP:port`.
-
-Build the CLI, run bootstrap, and install the stack in test mode:
-
-```bash
-make deps
-make build
-
-./bin/mcp-runtime bootstrap
-
-MCP_SETUP_WAIT_TIMEOUT=900 \
-  ./bin/mcp-runtime setup --test-mode \
-  --ingress-manifest config/ingress/overlays/http
-```
-
-Confirm the install and expose the local dashboard/gateway:
-
-```bash
-./bin/mcp-runtime status
-./bin/mcp-runtime cluster status
-./bin/mcp-runtime registry status
-./bin/mcp-runtime sentinel status
-./bin/mcp-runtime cluster doctor
-
+make deps && make build
+kind create cluster --name mcp-runtime
+./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http
 kubectl port-forward -n traefik svc/traefik 18080:8000
-```
-
-`cluster doctor` is most useful after setup because it validates the installed
-MCP Runtime components, registry pulls, ingress, Sentinel, and operator
-readiness. On a fresh cluster before setup, those resources do not exist yet.
-
-Local URLs:
-
-- Dashboard UI: `http://localhost:18080/`
-- API: `http://localhost:18080/api`
-- Demo MCP routes, after applying demo servers: `http://localhost:18080/<server-name>/mcp`
-
-This contributor flow uses the single shared `mcp-servers` namespace. For a
-cluster that hosts multiple teams, keep these examples as the single-team
-baseline and use [Multi-team isolation](multi-team.md) to move each team's
-servers, grants, sessions, and secrets into a dedicated namespace with
-`spec.teamID` / `subject.teamID`.
-
-Sign in before browsing MCP servers in the platform UI; the default tenant-mode
-catalog is authenticated even in local test mode. Use the admin login to browse
-the single-team `mcp-servers` examples from this guide, or publish servers into
-the signed-in user's own/team namespace. The MCP Servers tab exposes a copyable
-connect config. In this local test-mode flow, that config should use the same
-reachable local origin, for example:
-
-```json
-{
-  "mcpServers": {
-    "go-example-mcp": {
-      "type": "http",
-      "url": "http://localhost:18080/go-example-mcp/mcp"
-    }
-  }
-}
-```
-
-When the platform is installed with `MCP_PLATFORM_DOMAIN=mcpruntime.org` or an
-explicit `MCP_MCP_INGRESS_HOST`, production connect configs should use the
-public MCP host instead, for example
-`https://mcp.mcpruntime.org/go-example-mcp/mcp`.
-
-`setup --test-mode` also seeds development-only email/password logins in the
-platform identity store:
-
-| Role | Email | Password |
-|---|---|---|
-| User | `test@mcpruntime.org` | `test@123` |
-| Admin | `admin@mcpruntime.org` | `admin@123` |
-
-These credentials are for local Kind/debugging only. They are enabled by the
-managed `mcp-sentinel-secrets` key `PLATFORM_DEV_LOGIN_ENABLED=true` and can be
-disabled or overridden by editing the `PLATFORM_DEV_*` keys before rolling the
-API deployment.
-
-For tenant-isolation UI smoke testing in the shared contributor cluster, use
-these local-only tenant accounts. They are not production credentials.
-
-| Tenant | Email | Password |
-|---|---|---|
-| Tenant A | `tenant-a-20260510232145@mcpruntime.org` | `TenantA-20260510232145!` |
-| Tenant B | `tenant-b-20260510232145@mcpruntime.org` | `TenantB-20260510232145!` |
-
-Tenant users should see only their own team namespace. For example, Tenant A
-should see `mcp-team-tenant-a` entries but receive `403` for
-`mcp-team-tenant-b`, and Tenant B should see the inverse. A setup installed with
-`--platform-mode org` or `--platform-mode public` uses `mcp-servers-org` or
-`mcp-servers-public` instead of tenant namespaces for non-admin catalog
-browsing.
-
-### Iterate on one Sentinel service
-
-After `setup --test-mode` is complete, you do not need to rerun setup for every
-service change. Edit the service under `services/`, build only that image, push
-it to the bundled registry, and update only that Kubernetes Deployment.
-
-Run the targeted service tests before rebuilding the image:
-
-```bash
-(cd services/api && go test ./... -count=1)
-(cd services/ui && go test ./... -count=1)
-node --check services/ui/static/app.js
-```
-
-For API/UI changes that cross the browser-to-API proxy boundary, rebuild and
-roll both services. A common example is the MCP connect config URL: the UI
-forwards the browser origin to the API, and the API uses that origin to return a
-local URL such as `http://localhost:18080/<server-name>/mcp`; production hosts
-map `platform.<domain>` to `mcp.<domain>`.
-
-For the UI, for example:
-
-```bash
-SERVICE=ui
-IMAGE_REPO=mcp-sentinel-ui
-DOCKERFILE=services/ui/Dockerfile
-BUILD_CONTEXT=.
-DEPLOYMENT=mcp-sentinel-ui
-CONTAINER=ui
-TAG="${SERVICE}-dev-$(date +%s)"
-LOCAL_IMAGE="${IMAGE_REPO}:${TAG}"
-REGISTRY=registry.registry.svc.cluster.local:5000
-
-docker build -t "$LOCAL_IMAGE" -f "$DOCKERFILE" "$BUILD_CONTEXT"
-
-./bin/mcp-runtime auth login --api-url http://localhost:18080
-
-./bin/mcp-runtime registry push \
-  --image "$LOCAL_IMAGE" \
-  --name "$IMAGE_REPO" \
-  --registry "$REGISTRY" \
-  --namespace registry
-
-kubectl -n mcp-sentinel set image \
-  "deployment/$DEPLOYMENT" \
-  "$CONTAINER=$REGISTRY/$IMAGE_REPO:$TAG"
-
-kubectl -n mcp-sentinel rollout status "deployment/$DEPLOYMENT" --timeout=90s
-```
-
-Keep the Traefik port-forward running and refresh the local URL:
-`http://localhost:18080/`. Use a new tag for each build so Kubernetes does not
-reuse an older `IfNotPresent` image from the node cache.
-
-Use the same commands with the variables below for other Sentinel services:
-
-| Service | Edit path | Image repo | Dockerfile | Build context | Deployment | Container |
-|---|---|---|---|---|---|---|
-| UI | `services/ui` | `mcp-sentinel-ui` | `services/ui/Dockerfile` | `.` | `mcp-sentinel-ui` | `ui` |
-| API | `services/api` | `mcp-sentinel-api` | `services/api/Dockerfile` | `.` | `mcp-sentinel-api` | `api` |
-| Ingest | `services/ingest` | `mcp-sentinel-ingest` | `services/ingest/Dockerfile` | `.` | `mcp-sentinel-ingest` | `ingest` |
-| Processor | `services/processor` | `mcp-sentinel-processor` | `services/processor/Dockerfile` | `.` | `mcp-sentinel-processor` | `processor` |
-
-`services/mcp-gateway` is different: it runs as the `mcp-gateway` sidecar inside
-each MCP server pod. To test gateway changes, build and push
-`mcp-sentinel-mcp-gateway`, update the operator's `MCP_GATEWAY_PROXY_IMAGE`, then
-restart the operator and recreate or restart the affected MCP server pods so
-the sidecar image is injected again.
-
-If pods report `ImagePullBackOff`, run `./bin/mcp-runtime cluster doctor`.
-For Kind test mode, the usual cause is a cluster created without the
-`registry.registry.svc.cluster.local:5000` mirror to `127.0.0.1:32000`. If pod
-events include `http: server gave HTTP response to HTTPS client`, the node's
-containerd tried HTTPS against the HTTP dev registry. Configure the insecure
-registry mirror for the exact image host string in the pod image reference
-(`registry.registry.svc.cluster.local:5000` in the documented Kind flow), or use TLS.
-On k3s with the bundled plain HTTP registry, that exact host may be the registry
-Service `ClusterIP:port` such as `10.43.x.x:5000`; add a matching
-`/etc/rancher/k3s/registries.yaml` mirror and restart k3s. On hosts where
-`~/.kube/config` is empty or minimal, run setup with
-`--kubeconfig /etc/rancher/k3s/k3s.yaml`.
-
-If setup reached image deployment before the k3s mirror was configured, copy
-the registry `Internal URL` from setup output into `registries.yaml`, restart
-k3s/containerd, then rerun setup. The rerun republishes the `latest` images;
-clear partial runtime namespaces first if StatefulSet storage was interrupted
-during the failed run.
-
-### Test the dashboard, image push, MCP request, and Sentinel
-
-With the port-forward still running, open `http://localhost:18080/` to confirm
-the platform dashboard loads. Then deploy the bundled Go MCP example through the
-same build, push, generate, and deploy path contributors use for server work.
-
-Create a local metadata file that enables gateway policy and Sentinel analytics:
-
-```bash
-cat > /tmp/go-example-mcp.yaml <<'EOF'
-version: v1
-servers:
-  - name: go-example-mcp
-    description: Go MCP example server with smoke and text transformation tools.
-    route: /go-example-mcp/mcp
-    publicPathPrefix: go-example-mcp
-    port: 8088
-    namespace: mcp-servers
-    envVars:
-      - name: MCP_PATH
-        value: /go-example-mcp/mcp
-    tools:
-      - name: add
-        description: Add two numbers.
-        requiredTrust: low
-        sideEffect: read
-      - name: upper
-        description: Uppercase the provided message.
-        requiredTrust: medium
-        sideEffect: read
-    auth:
-      mode: header
-      humanIDHeader: X-MCP-Human-ID
-      agentIDHeader: X-MCP-Agent-ID
-      sessionIDHeader: X-MCP-Agent-Session
-    policy:
-      mode: allow-list
-      defaultDecision: deny
-      policyVersion: v1
-    session:
-      required: true
-    gateway:
-      enabled: true
-    analytics:
-      enabled: true
-      ingestURL: http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events
-      apiKeySecretRef:
-        name: go-example-mcp-analytics
-        key: api-key
-EOF
-```
-
-Create the analytics secret in the server namespace:
-
-```bash
-API_KEY="$(
-  kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
-    -o jsonpath='{.data.INGEST_API_KEYS}' | base64 -d | cut -d, -f1
-)"
-
-kubectl create secret generic go-example-mcp-analytics \
-  -n mcp-servers \
-  --from-literal=api-key="$API_KEY" \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-Build and push the image into the Kind-accessible registry:
-
-```bash
-./bin/mcp-runtime auth login --api-url http://localhost:18080
-
-./bin/mcp-runtime server build image go-example-mcp \
-  --metadata-file /tmp/go-example-mcp.yaml \
-  --dockerfile examples/go-mcp-server/Dockerfile \
-  --context examples/go-mcp-server \
-  --registry registry.registry.svc.cluster.local:5000 \
-  --tag dev
-
-./bin/mcp-runtime registry push \
-  --image registry.registry.svc.cluster.local:5000/go-example-mcp:dev
-```
-
-Generate and deploy the Kubernetes manifests:
-
-```bash
-rm -rf /tmp/go-example-mcp-manifests
-./bin/mcp-runtime pipeline generate \
-  --file /tmp/go-example-mcp.yaml \
-  --output /tmp/go-example-mcp-manifests
-
-./bin/mcp-runtime pipeline deploy --dir /tmp/go-example-mcp-manifests
-kubectl rollout status deploy/go-example-mcp -n mcp-servers --timeout=180s
-./bin/mcp-runtime server status --namespace mcp-servers
-```
-
-In Kind, `server status` may show `PartiallyReady` while the Deployment is
-ready and traffic works. That usually means Traefik is routing through the local
-port-forward but has not written `Ingress.status.loadBalancer.ingress[]`; see
-[Local development notes](#local-development-notes) when you want permissive
-ingress readiness for this setup.
-
-Useful server and policy checks while iterating:
-
-```bash
-SERVER=go-example-mcp
-NAMESPACE=mcp-servers
-CONTAINER=go-example-mcp
-
-kubectl get mcpservers -n "$NAMESPACE"
-kubectl get deploy/"$SERVER" svc/"$SERVER" ingress/"$SERVER" -n "$NAMESPACE" -o wide
-kubectl get cm -n "$NAMESPACE" "${SERVER}-gateway-policy" -o yaml
-kubectl get mcpaccessgrant,mcpagentsession -n "$NAMESPACE" -o wide
-kubectl get pods -n "$NAMESPACE" -o wide
-kubectl get pods -n "$NAMESPACE" \
-  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.name}{","}{end}{"\n"}{end}'
-
-POD="$(
-  kubectl get pods -n "$NAMESPACE" -l app="$SERVER" \
-    -o jsonpath='{.items[0].metadata.name}'
-)"
-
-kubectl describe mcpserver -n "$NAMESPACE" "$SERVER"
-kubectl describe pod -n "$NAMESPACE" "$POD"
-kubectl logs -n "$NAMESPACE" "$POD" -c "$CONTAINER"
-kubectl logs -n "$NAMESPACE" "$POD" -c mcp-gateway
-./bin/mcp-runtime server logs "$SERVER" --namespace "$NAMESPACE"
-./bin/mcp-runtime server policy inspect "$SERVER" --namespace "$NAMESPACE"
-kubectl get cm -n "$NAMESPACE" "${SERVER}-gateway-policy" \
-  -o 'go-template={{index .data "policy.json"}}'
-kubectl get events -n "$NAMESPACE" --sort-by=.lastTimestamp
-```
-
-The governed sidecar container is named `mcp-gateway`; it runs the
-`mcp-gateway` image/process and forwards to the app on `127.0.0.1`. The bundled
-Go example image is distroless, so `kubectl exec ... -- /bin/sh` and
-`/bin/bash` are expected to fail. Use logs/describe first, or attach a debug
-container when you need a shell in the pod namespace:
-
-```bash
-kubectl debug -it -n "$NAMESPACE" "pod/$POD" \
-  --target="$CONTAINER" \
-  --image=busybox:1.36 -- sh
-```
-
-`server policy inspect` prints the rendered `policy.json` from the
-`${SERVER}-gateway-policy` ConfigMap. If a grant or session exists in
-Kubernetes but is missing from that output, check the operator logs in the
-platform block below. If it appears in the rendered policy but calls still fail,
-check the `mcp-gateway` sidecar logs and allow a few seconds for the sidecar to
-reload the mounted file.
-
-Start from the symptom instead of running every command every time:
-
-| Symptom | First checks |
-|---------|--------------|
-| Pod is not ready or image pulls fail | `kubectl describe pod`, namespace events, `cluster doctor` |
-| Grant or session does not affect traffic | `kubectl get mcpaccessgrant,mcpagentsession`, `server policy inspect`, raw policy ConfigMap |
-| Policy renders but tool calls are denied | `kubectl logs ... -c mcp-gateway`, request headers, `Mcp-Session-Id` / `X-MCP-Agent-Session` values |
-| Requests work but analytics are missing | `sentinel logs ingest`, `sentinel logs processor`, analytics secret and ingest URL |
-| Dashboard, API, or MCP route returns 404 | `kubectl get ingress -A`, Sentinel ingress YAML, Traefik logs |
-
-Useful local platform checks:
-
-```bash
 ./bin/mcp-runtime cluster doctor
-./bin/mcp-runtime sentinel status
-./bin/mcp-runtime sentinel events
-./bin/mcp-runtime sentinel logs api --since 10m
-./bin/mcp-runtime sentinel logs ui --since 10m
-./bin/mcp-runtime sentinel logs gateway --since 10m
-./bin/mcp-runtime sentinel logs ingest --since 10m
-./bin/mcp-runtime sentinel logs processor --since 10m
-
-kubectl get pods -n mcp-runtime -o wide
-kubectl get pods -n mcp-sentinel -o wide
-kubectl rollout status deploy/mcp-sentinel-api -n mcp-sentinel --timeout=90s
-kubectl rollout status deploy/mcp-sentinel-ingest -n mcp-sentinel --timeout=90s
-kubectl rollout status deploy/mcp-sentinel-processor -n mcp-sentinel --timeout=90s
-kubectl rollout status deploy/mcp-sentinel-ui -n mcp-sentinel --timeout=90s
-kubectl rollout status deploy/mcp-sentinel-gateway -n mcp-sentinel --timeout=90s
-kubectl logs -n mcp-runtime deploy/mcp-runtime-operator-controller-manager --since=10m
-kubectl logs -n traefik deploy/traefik --tail=120
-kubectl get ingress -A
-kubectl get ingress -n mcp-sentinel -o yaml
 ```
 
-Apply an access grant and session for the local request:
+Local surfaces: platform `http://localhost:18080/`, MCP routes `http://localhost:18080/<server-name>/mcp`.
+
+
+## 5. Production-style install
+
+Use this path when the cluster is not just a disposable contributor environment.
+That includes staging, internal shared clusters, externally reachable installs,
+or anything that needs stable registry, DNS, TLS, storage, and ingress
+ownership.
+
+Before `setup`, make these decisions explicitly:
+
+- Registry: bundled registry with TLS, or a provisioned external registry
+- DNS: stable hostnames for `registry`, `mcp`, and `platform`
+- TLS: Let's Encrypt, enterprise `ClusterIssuer`, or preinstalled cert flow
+- Ingress: repo-managed Traefik or an existing platform ingress controller
+- Storage and retention: registry and Sentinel persistence choices
+- Image pull auth: pull secrets, workload identity, or node-native registry auth
+
+Read these first:
+
+- [Deployment Targets](deployment-targets.md)
+- [Cluster readiness](cluster-readiness.md)
+- [Sentinel Kubernetes awareness and hardening](sentinel.md#kubernetes-awareness-and-hardening)
+- [Multi-team isolation](multi-team.md) if multiple teams will publish or govern servers on one cluster
+
+For production-oriented setup, choose the registry path explicitly. With a
+provisioned registry:
 
 ```bash
-cat > /tmp/go-example-access.yaml <<'EOF'
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPAccessGrant
-metadata:
-  name: go-example-local
-  namespace: mcp-servers
-spec:
-  serverRef:
-    name: go-example-mcp
-  subject:
-    humanID: local-user
-    agentID: local-agent
-  maxTrust: high
-  allowedSideEffects:
-    - read
-  policyVersion: v1
-  toolRules:
-    - name: add
-      decision: allow
-    - name: upper
-      decision: allow
----
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPAgentSession
-metadata:
-  name: local-session
-  namespace: mcp-servers
-spec:
-  serverRef:
-    name: go-example-mcp
-  subject:
-    humanID: local-user
-    agentID: local-agent
-  consentedTrust: high
-  policyVersion: v1
-EOF
-
-kubectl apply -f /tmp/go-example-access.yaml
-
-until ./bin/mcp-runtime server policy inspect go-example-mcp --namespace mcp-servers | grep -q local-session; do
-  sleep 2
-done
-
-# The proxy sidecar reloads rendered policy on a short polling loop, so give the
-# gateway a few seconds to observe the new access session before the first tool call.
-sleep 6
+./bin/mcp-runtime bootstrap
+./bin/mcp-runtime setup --registry-mode external --external-registry-url registry.example.com --with-tls --strict-prod
 ```
 
-Make a local MCP JSON-RPC request through Traefik and the Sentinel gateway:
+With the bundled registry serving internal HTTPS, setup generates an internal
+CA secret for the registry pod certificate unless you provide an existing
+ClusterIssuer. Configure every node to trust that CA for image pulls. Public
+ingress TLS can still use ACME:
 
 ```bash
-BASE=http://localhost:18080/go-example-mcp/mcp
-PROTO=2025-06-18
-
-SESSION="$(
-  curl -si \
-    -H "content-type: application/json" \
-    -H "accept: application/json, text/event-stream" \
-    -H "Mcp-Protocol-Version: $PROTO" \
-    -H "X-MCP-Human-ID: local-user" \
-    -H "X-MCP-Agent-ID: local-agent" \
-    -H "X-MCP-Agent-Session: local-session" \
-    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-    "$BASE" | awk -F': ' 'tolower($1)=="mcp-session-id"{print $2}' | tr -d '\r'
-)"
-
-curl -sS \
-  -H "content-type: application/json" \
-  -H "accept: application/json, text/event-stream" \
-  -H "Mcp-Protocol-Version: $PROTO" \
-  -H "Mcp-Session-Id: $SESSION" \
-  -H "X-MCP-Human-ID: local-user" \
-  -H "X-MCP-Agent-ID: local-agent" \
-  -H "X-MCP-Agent-Session: local-session" \
-  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
-  "$BASE" >/dev/null
-
-curl -sS \
-  -H "content-type: application/json" \
-  -H "accept: application/json, text/event-stream" \
-  -H "Mcp-Protocol-Version: $PROTO" \
-  -H "Mcp-Session-Id: $SESSION" \
-  -H "X-MCP-Human-ID: local-user" \
-  -H "X-MCP-Agent-ID: local-agent" \
-  -H "X-MCP-Agent-Session: local-session" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"add","arguments":{"a":2,"b":3}}}' \
-  "$BASE" | jq .
-
-curl -sS \
-  -H "content-type: application/json" \
-  -H "accept: application/json, text/event-stream" \
-  -H "Mcp-Protocol-Version: $PROTO" \
-  -H "Mcp-Session-Id: $SESSION" \
-  -H "X-MCP-Human-ID: local-user" \
-  -H "X-MCP-Agent-ID: local-agent" \
-  -H "X-MCP-Agent-Session: local-session" \
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"upper","arguments":{"message":"hello world"}}}' \
-  "$BASE" | jq .
+./bin/mcp-runtime bootstrap
+./bin/mcp-runtime setup --registry-mode bundled-https --with-tls --acme-email ops@example.com --strict-prod
 ```
 
-You should see successful `tools/call` responses containing `5` and
-`HELLO WORLD`. Then verify Sentinel health and query the analytics API:
-
-The bundled Go example server also exposes `upper`, `lower`, `echo`, and
-`slugify`, and each of those tools expects a `message` field in `arguments`
-instead of `input` or `text`.
-
-For agent frameworks or IDEs that cannot attach the governance headers
-directly, use the built-in `mcp-runtime adapter proxy` or `mcp-runtime adapter
-stdio` subcommands. The recommended flow is platform-issued sessions —
-the adapter calls the platform API at startup and the session/identity
-headers are derived from your login principal and an existing
-`MCPAccessGrant`:
+If you want hostnames derived from one domain, set:
 
 ```bash
-./bin/mcp-runtime auth login --api-url http://localhost:18080
-./bin/mcp-runtime adapter stdio \
-  --runtime-url http://localhost:18080/go-example-mcp/mcp \
-  --server go-example-mcp \
-  --agent ticket-triage-agent \
-  --auto-refresh
+export MCP_PLATFORM_DOMAIN=example.com
+export MCP_PLATFORM_ADMIN_EMAIL=admin@example.com
+./bin/mcp-runtime setup --registry-mode external --external-registry-url registry.example.com --with-tls --strict-prod
 ```
 
-The closed-environment path is still supported: copy
-`MCP_RUNTIME_HUMAN_ID`, `MCP_RUNTIME_AGENT_ID`, `MCP_RUNTIME_TEAM_ID`, and
-`MCP_RUNTIME_SESSION_ID` straight from `/tmp/go-example-access.yaml` if you
-do not want the platform to pick the grant. See
-[Agent Adapters](agent-adapters.md) for the full configuration reference,
-including auto-refresh, anonymous mode, mTLS, and the proxy's
-`/livez`/`/readyz`/`/metrics` endpoints.
+That derives:
 
-Set `MCP_RUNTIME_LOG_LEVEL=info` while debugging governed-agent demos when
-you want adapter stderr to show runtime denials such as `trust_too_low`.
+- `registry.example.com`
+- `mcp.example.com`
+- `platform.example.com`
+
+If you already have an external registry, provision it before setup so the
+cluster pulls from the same hardened image host you intend to keep:
 
 ```bash
-./bin/mcp-runtime sentinel status
-./bin/mcp-runtime sentinel events
-
-ADMIN_KEY="$(
-  kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
-    -o jsonpath='{.data.UI_API_KEY}' | base64 -d
-)"
-
-curl -sS -H "x-api-key: $ADMIN_KEY" \
-  http://localhost:18080/api/dashboard/summary | jq .
-
-curl -sS -H "x-api-key: $ADMIN_KEY" \
-  "http://localhost:18080/api/analytics/usage?limit=10" | jq .
-
-curl -sS -H "x-api-key: $ADMIN_KEY" \
-  "http://localhost:18080/api/events/filter?server=go-example-mcp&tool_name=add&limit=5" | jq .
+./bin/mcp-runtime registry provision --url registry.example.com
+./bin/mcp-runtime setup --registry-mode external --with-tls --strict-prod
 ```
 
-`mcp-runtime sentinel events` shows Kubernetes events for the Sentinel
-namespace. Use `/api/dashboard/summary`, `/api/events`, or
-`/api/analytics/usage` to verify request analytics. The admin Dashboard tab
-uses `/api/analytics/usage` for its MCP server, human/agent, tool, and decision
-rollups.
+For public/TLS setup, setup validates the host env even without
+`--strict-prod`. Use `MCP_PLATFORM_DOMAIN` or set
+`MCP_PLATFORM_INGRESS_HOST`, `MCP_REGISTRY_INGRESS_HOST`, and
+`MCP_MCP_INGRESS_HOST` explicitly. For bundled HTTPS with a public domain,
+set `MCP_REGISTRY_ENDPOINT=registry.<domain>` so kubelet pulls match the TLS
+certificate (not the registry ClusterIP). Set `MCP_PLATFORM_ADMIN_EMAIL` or
+`ADMIN_USERS` so the first OIDC login for that email is promoted to platform
+admin; `--acme-email` is only the certificate contact email.
 
-To exercise policy isolation between two `MCPServer` resources and per-subject
-grant enforcement on the same cluster, see
-[Sentinel → Verifying per-server policy isolation](sentinel.md#verifying-per-server-policy-isolation).
+When building setup images from a machine with a different CPU architecture
+than the cluster, set `MCP_IMAGE_PLATFORM` to the target node platform, for
+example `MCP_IMAGE_PLATFORM=linux/amd64` for standard VPS/k3s nodes.
 
-## 4. Install the platform stack
+You can also skip the saved provision step and pass
+`--external-registry-url registry.example.com` directly to `setup`.
+
+If you use an internal CA instead of ACME, install the issuer first and point
+setup at it:
+
+```bash
+./bin/mcp-runtime setup --with-tls --tls-cluster-issuer <issuer-name> --strict-prod
+```
+
+What `--strict-prod` is for:
+
+- requires TLS
+- rejects dev-only registry assumptions such as `registry.local`
+- forces you onto a stable production-style registry endpoint
+
+Do not use the contributor `--test-mode` flow as a production install guide.
+`--test-mode` is for local development and CI-like validation; it still builds
+and pushes local images and assumes the contributor registry and ingress shape.
+
+## 6. Install the platform stack
 
 ```bash
 ./bin/mcp-runtime setup
@@ -633,17 +217,33 @@ analytics, audit, and observability.
 
 | Mode | Default namespace behavior | Behavior |
 |---|---|---|
-| `tenant` | Principal user/team namespace | Default private mode. Each signed-in user is scoped to their own tenant namespace, including any team namespace from membership. |
-| `org` | `mcp-servers-org` | Signed-in users publish and browse the org-wide catalog and can still work in their owned/team namespaces. |
-| `public` | `mcp-servers-public` | Anonymous users can browse the public preview catalog; signed-in users publish public preview MCP servers and can still work in their owned/team namespaces. |
+| `tenant` | Principal team namespace | Default private mode. Signed-in users publish through team namespaces for teams they belong to. |
+| `org` | `mcp-servers-org` | Signed-in users publish and browse the org-wide catalog and can still work in team namespaces. |
+| `public` | `mcp-servers-public` | Anonymous users can browse the public preview catalog; signed-in users publish public preview MCP servers and can still work in team namespaces. |
+
+For browser Google sign-in, provide the OAuth client ID before setup. Non-test
+public TLS installs (`--platform-mode public --with-tls`) fail fast unless
+`GOOGLE_CLIENT_ID` / `MCP_GOOGLE_CLIENT_ID` is set, or `OIDC_ISSUER`,
+`OIDC_AUDIENCE`, and `OIDC_JWKS_URL` are all set for another provider. For
+Google, setup uses the client ID as the OIDC audience and fills the standard
+Google issuer and JWKS URL when those values are not set explicitly:
+
+```bash
+export GOOGLE_CLIENT_ID=<client>.apps.googleusercontent.com
+export MCP_PLATFORM_ADMIN_EMAIL=admin@example.com
+./bin/mcp-runtime setup --with-tls --platform-mode public
+```
+
+For a non-Google OIDC provider, set `OIDC_ISSUER`, `OIDC_AUDIENCE`, and
+`OIDC_JWKS_URL` before setup. Reruns preserve existing values in
+`mcp-sentinel/mcp-sentinel-config`.
 
 For multi-team or tenant-separated deployments, keep setup as the platform
-install and provision one namespace per team with `mcp-runtime team init <slug>`
-or the platform API `mcp-runtime team create <slug>` flow. Both repo-managed
-paths wire bundled Traefik for the team namespace. Use the platform API to
-default team IDs, or set `spec.teamID` and `subject.teamID` directly in YAML; an
-explicit foreign `subject.teamID` delegates access to another team while the
-gateway still matches every non-empty subject field. See
+install and provision one namespace per team with `mcp-runtime team create
+<slug>` (platform API). Use the platform API to default team IDs, or set
+`spec.teamID` and `subject.teamID` directly in YAML; an explicit foreign
+`subject.teamID` delegates access to another team while the gateway still
+matches every non-empty subject field. See
 [Multi-team isolation](multi-team.md).
 
 Common variants:
@@ -667,7 +267,7 @@ kubectl port-forward -n traefik svc/traefik 18080:8000
 
 Then use `http://127.0.0.1:18080/<publicPathPrefix>/mcp` for local MCP traffic. Keep the default strict readiness mode for production clusters that rely on published load-balancer status.
 
-## 5. Confirm health
+## 7. Confirm health
 
 ```bash
 ./bin/mcp-runtime status
@@ -676,192 +276,36 @@ Then use `http://127.0.0.1:18080/<publicPathPrefix>/mcp` for local MCP traffic. 
 ./bin/mcp-runtime sentinel status
 ```
 
-## 6. Connect your first MCP server
+## 8. Deploy your first server
 
-### Option A — direct manifest
+The server deploy flow (init → validate → build → push → deploy → grant → adapter)
+is covered step-by-step in the learning modules:
 
-```yaml
-# payments.yaml
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPServer
-metadata:
-  name: payments
-  namespace: mcp-servers
-spec:
-  image: registry.example.com/payments-mcp
-  imageTag: v1.0.0
-  port: 8088
-  publicPathPrefix: payments
-  gateway:
-    enabled: true
-  analytics:
-    enabled: true
-```
+- [Module 2 — Your first governed server](learn/module-2-first-server.md) — end-to-end hands-on
+- [Module 3 — Multi-team setup](learn/module-3-multi-team.md) — two teams, cross-team grants
+
+Quick reference:
 
 ```bash
-./bin/mcp-runtime server apply --file payments.yaml
-./bin/mcp-runtime server status
+mcp-runtime server init my-server --from-server http://localhost:8088
+mcp-runtime server validate --metadata-dir .mcp
+mcp-runtime server build image my-server --tag v1
+mcp-runtime registry push --image ... --scope tenant
+mcp-runtime server deploy my-server --scope tenant --metadata-dir .mcp
 ```
 
-#### How to write the manifest
 
-Start with the smallest useful `MCPServer` and add features only when you need them.
+## 10. Observe live traffic and policy
 
-- `metadata.name` becomes the server identity inside the platform.
-- `metadata.namespace` is usually `mcp-servers` for a single-team setup. In a
-  multi-team deployment, use the team's namespace, for example
-  `mcp-team-acme`.
-- `spec.teamID` is the stable platform team ID that owns the server.
-- `spec.image` points at the container image the platform should run.
-- `spec.imageTag` sets the tag when you do not include one directly in `spec.image`.
-- `spec.port` is the port your MCP server process listens on inside the container.
-- `spec.publicPathPrefix` controls the public route prefix. `payments` becomes `/payments/mcp`.
-- `spec.gateway.enabled` turns on brokered access and policy enforcement.
-- Analytics emission is on by default for governed traffic when the operator has an analytics ingest URL configured. Set `spec.analytics.disabled: true` to opt this server out, or pass an explicit `spec.analytics.ingestURL` to override the operator default.
-
-Use this minimal pattern for most first deployments:
-
-```yaml
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPServer
-metadata:
-  name: my-server
-  namespace: mcp-servers
-spec:
-  image: registry.example.com/my-server
-  imageTag: v1.0.0
-  port: 8088
-  publicPathPrefix: my-server
-  gateway:
-    enabled: true
-  analytics:
-    enabled: true
-```
-
-Common edits:
-
-- Set `spec.ingressHost` if you use host-based routing instead of the default path-based shape.
-- Set `spec.servicePort` if you need a Service port other than `80`.
-- Add `spec.envVars` or `spec.secretEnvVars` when the server needs configuration or credentials.
-- Add `spec.imagePullSecrets` if the image registry requires explicit pull auth.
-- Add `spec.tools`, `spec.auth`, `spec.policy`, `spec.session`, or `spec.rollout` when you are ready to describe stricter governance or delivery behavior. Every listed tool must declare `sideEffect: read`, `write`, or `destructive`.
-
-For the full field surface, use the [API reference](api.md).
-
-### Option B — metadata-driven pipeline
-
-Author lightweight metadata YAML, generate CRDs, and deploy:
+Use the platform dashboard and API first:
 
 ```bash
-./bin/mcp-runtime server build image my-server --tag v1.0.0
-./bin/mcp-runtime registry push --image <exact-image-ref-from-build>
-./bin/mcp-runtime pipeline generate --dir .mcp --output manifests/
-./bin/mcp-runtime pipeline deploy --dir manifests/
-```
-
-`<exact-image-ref-from-build>` may be a resolved registry endpoint such as `10.43.109.51:5000/my-server:v1.0.0`.
-
-The server lands at `/{server-name}/mcp` on the configured ingress host, behind the same platform surface you use for future MCP servers.
-
-#### Publish to the platform: what to do, and what happens next
-
-There are two ways to get a server into the platform:
-
-1. Build and push an image, then apply an `MCPServer` manifest directly.
-2. Build and push an image, then generate and deploy `MCPServer` manifests from `.mcp` metadata.
-
-The end-to-end flow is the same either way:
-
-1. Build the image for your server.
-2. Push that image to the platform registry or another registry the cluster can pull from.
-3. Apply an `MCPServer` resource that points at the image.
-4. Let the operator reconcile the runtime objects for that server.
-
-After the manifest is applied, the platform does the following:
-
-1. Validates and stores the `MCPServer` resource in Kubernetes.
-2. Resolves the final image reference using `spec.image`, `spec.imageTag`, and any registry override behavior.
-3. Creates or updates a `Deployment` for the MCP server.
-4. Creates or updates a `Service` for in-cluster traffic.
-5. Creates or updates an `Ingress` so the server is reachable at `/{publicPathPrefix}/mcp` or the configured ingress path.
-6. If `gateway.enabled` is set, wires traffic through the broker path and renders policy from matching grants and sessions.
-7. If analytics are enabled, emits audit and traffic events into the Sentinel stack.
-8. Reports readiness and status through `MCPServer.status`, `mcp-runtime server status`, and the platform UI.
-
-Useful checks after publish:
-
-```bash
-./bin/mcp-runtime server status
-./bin/mcp-runtime server get payments
-./bin/mcp-runtime server policy inspect payments
+./bin/mcp-runtime auth login --api-url <platform-url>
 ./bin/mcp-runtime status
+# Dashboard: http://localhost:18080/ (Kind) or https://platform.<domain>/
 ```
 
-If the server does not come up, stay in the CLI first:
-
-```bash
-./bin/mcp-runtime server get payments
-./bin/mcp-runtime server logs payments --follow
-./bin/mcp-runtime sentinel logs gateway --follow
-./bin/mcp-runtime status
-```
-
-## 7. Grant governed access (for gateway-enabled servers)
-
-The target `MCPServer` should list the tools you want to govern, and every
-listed tool must include `sideEffect: read`, `write`, or `destructive`. Grants
-then declare which side-effect classes they allow.
-
-```yaml
-# grant.yaml
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPAccessGrant
-metadata:
-  name: payments-ops-agent
-  namespace: mcp-servers
-spec:
-  serverRef:
-    name: payments
-  subject:
-    humanID: user-123
-    agentID: ops-agent
-  maxTrust: high
-  allowedSideEffects:
-    - read
-    - destructive
-  toolRules:
-    - name: list_invoices
-      decision: allow
-      requiredTrust: low
-    - name: refund_invoice
-      decision: allow
-      requiredTrust: high
-```
-
-```yaml
-# session.yaml (MCPAgentSession)
-apiVersion: mcpruntime.org/v1alpha1
-kind: MCPAgentSession
-metadata:
-  name: payments-ops-agent-session
-  namespace: mcp-servers
-spec:
-  serverRef:
-    name: payments
-  subject:
-    humanID: user-123
-    agentID: ops-agent
-  consentedTrust: high
-  policyVersion: v1
-```
-
-```bash
-./bin/mcp-runtime access grant apply --file grant.yaml
-./bin/mcp-runtime access session apply --file session.yaml
-./bin/mcp-runtime server policy inspect payments
-```
-
-## 8. Observe live traffic and policy
+Admin/operator kubectl diagnostics (`sentinel *` requires admin cluster access):
 
 ```bash
 ./bin/mcp-runtime sentinel port-forward ui          # Governance + dashboard
@@ -873,12 +317,13 @@ spec:
 
 ```mermaid
 flowchart LR
-    A[Build CLI<br/>make build] --> B[bootstrap<br/>cluster preflight]
-    B --> C[setup<br/>install platform]
-    C --> D[Apply MCPServer]
-    D --> E[Apply Grant + Session]
-    E --> F[Traffic flows<br/>through gateway]
-    F --> G[Observe in UI<br/>+ Grafana]
+    A[Build CLI<br/>make build] --> B[bootstrap + setup]
+    B --> C[auth login]
+    C --> D[server init<br/>build, push, deploy]
+    D --> E[grant init + apply]
+    E --> F[adapter or admin session]
+    F --> G[Traffic through gateway]
+    G --> H[Observe in UI + Grafana]
 ```
 
 ## Next steps
@@ -889,3 +334,8 @@ flowchart LR
 - [CLI](cli.md) — full command reference.
 - [API](api.md) — every CRD field and HTTP endpoint.
 - [Sentinel](sentinel.md) — request-path governance, audit, observability.
+
+
+---
+
+**Next:** [Concepts](concepts.md) — understand Grants, Sessions, Trust levels, and Side effects before deploying servers.

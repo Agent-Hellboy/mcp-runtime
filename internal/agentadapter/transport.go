@@ -90,11 +90,20 @@ func (t *RuntimeTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 
 	for i := 0; i < maxAttempts; i++ {
 		if i > 0 {
+			// time.NewTimer + Stop() so a context cancellation does not leak
+			// the underlying *Timer until backoff would have fired.
+			timer := time.NewTimer(retryBackoff(i))
 			select {
 			case <-req.Context().Done():
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
 				lastErr = req.Context().Err()
 				goto done
-			case <-time.After(retryBackoff(i)):
+			case <-timer.C:
 			}
 			// Rehydrate the request body from the factory so the retry
 			// sends a fresh reader over the same in-memory bytes.

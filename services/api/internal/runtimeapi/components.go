@@ -6,15 +6,26 @@ import (
 	"time"
 )
 
+// HandleDashboardSummary returns analytics and live control-plane counters for the Sentinel dashboard.
 func (s *RuntimeServer) HandleDashboardSummary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("allow", http.MethodGet)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
 	// Get analytics data from ClickHouse
 	summary, err := s.db.QueryDashboardSummary(ctx)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to query dashboard summary"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to query dashboard summary")
 		return
+	}
+	if control := s.controlPlane(); control != nil {
+		if result, err := control.ListServers(ctx, ""); err == nil {
+			summary.ActiveServers = len(result.Servers)
+		}
 	}
 
 	// Get grants and sessions counts from Kubernetes if available
@@ -45,9 +56,19 @@ func (s *RuntimeServer) HandleDashboardSummary(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, summary)
 }
 
+// HandleRuntimeComponents returns admin-only health details for Sentinel platform components.
 func (s *RuntimeServer) HandleRuntimeComponents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("allow", http.MethodGet)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
+		return
+	}
+	if p, ok := principalFromContext(r.Context()); !ok || p.Role != roleAdmin {
+		writeAPIError(w, http.StatusForbidden, "forbidden")
+		return
+	}
 	if s.sentinelMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "kubernetes not available"})
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
 
@@ -56,7 +77,7 @@ func (s *RuntimeServer) HandleRuntimeComponents(w http.ResponseWriter, r *http.R
 
 	statuses, err := s.sentinelMgr.GetAllComponentStatuses(ctx)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get component statuses"})
+		writeAPIError(w, http.StatusInternalServerError, "failed to get component statuses")
 		return
 	}
 

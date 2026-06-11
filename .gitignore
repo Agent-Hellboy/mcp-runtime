@@ -4,6 +4,7 @@ man/
 cover.out
 coverage.out
 *.test
+mcp-img-*.tar
 !website/docs/
 !website/docs/index.html
 unittesting_strategy.md
@@ -15,10 +16,12 @@ DIFF*.md
 .gomodcache/
 FUTURE_PLAN.md
 /plan.md
+/gateway_plan.md
 .DS_Store
 *ARCHITECTURE.md
 f.go
 inspirations/
+
 c.go
 r.go 
 tags
@@ -30,6 +33,8 @@ tags
 /unit.out
 /chain-bench-results.json
 docs/COVERAGE_IMPROVEMENT_PLAN.md
+graphify-out/
+plan/
 __pycache__/
 *.pyc
 
@@ -37,3 +42,7 @@ __pycache__/
 .env
 *.env
 !.env.example
+
+# Local-only helper scripts and scratch files
+/.local/
+/examples/lead-discovery/

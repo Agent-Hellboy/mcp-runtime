@@ -2,19 +2,34 @@
   "skill_name": "repo-guidance-sync",
   "evals": [
     {
-      "id": "cli-help-doc-sync",
-      "prompt": "I changed the `mcp-runtime server deploy` flags and Cobra help text. Sync the docs and agent guidance.",
-      "expected_output": "Identifies CLI docs, command examples, and golden help snapshots as candidates; verifies behavior from live help or Cobra source before editing; updates the nearest existing docs or AGENTS guidance only where needed; runs or names the relevant golden/doc validation."
+      "id": "docs-drift-after-cli-change",
+      "prompt": "I changed CLI command behavior. Review whether README, docs, AGENTS.md, or contributor guidance need updates and make the needed docs edits.",
+      "expected_output": "A docs sync pass that maps the change surface to existing guidance, verifies live CLI help when command docs are affected, updates the nearest existing docs, and runs docs validation.",
+      "assertions": [
+        "Searches existing docs before creating new files",
+        "Verifies CLI docs against live help output when relevant",
+        "Reports docs changed and validation commands run"
+      ]
     },
     {
       "id": "runtime-contract-doc-sync",
       "prompt": "The MCPAccessGrant session matching behavior changed in the platform API. Check whether the repo guidance needs updates.",
-      "expected_output": "Inspects the API/runtime access contract, CRD/types or tests, and existing docs; updates AGENTS.md or docs that describe grant/session behavior if stale; avoids creating new top-level docs; summarizes source truth and validation searches."
+      "expected_output": "A docs sync pass that inspects the API/runtime access contract, CRD/types or tests, and existing docs; updates AGENTS.md or docs that describe grant/session behavior if stale; and summarizes source truth and validation searches.",
+      "assertions": [
+        "Inspects the access contract source (CRD/types, API handlers, or tests) before editing docs",
+        "Updates the nearest existing grant/session guidance instead of creating new top-level docs",
+        "Summarizes the source-of-truth files and searches used"
+      ]
     },
     {
-      "id": "no-doc-change-audit",
-      "prompt": "I only refactored private helper names in a package without changing behavior. Audit whether docs need updates.",
-      "expected_output": "Checks the diff and nearby docs for exposed behavior; makes no documentation edits when no user-facing or contributor-facing guidance changed; reports the files or searches used to justify leaving docs unchanged."
+      "id": "no-docs-needed-decision",
+      "prompt": "This internal refactor should not affect user-facing behavior. Check if docs need changes and explain the decision.",
+      "expected_output": "A concise docs impact assessment that inspects the diff, searches for affected guidance, and either updates docs or explains why no docs are needed.",
+      "assertions": [
+        "Identifies the changed surface",
+        "Searches relevant docs and AGENTS.md",
+        "Gives a clear no-docs-needed rationale when appropriate"
+      ]
     }
   ]
 }

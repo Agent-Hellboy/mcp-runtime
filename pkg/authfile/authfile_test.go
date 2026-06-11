@@ -1,6 +1,7 @@
 package authfile
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 
 func TestResolveToken_PrefersEnv(t *testing.T) {
 	d := t.TempDir()
-	p := filepath.Join(d, "credentials.json")
+	p := filepath.Join(d, "config.json")
 	_ = os.MkdirAll(d, 0o700)
 	_ = os.WriteFile(p, []byte(`{"api_url":"https://file.example","token":"filetok"}`), 0o600)
 	t.Setenv("MCP_RUNTIME_CONFIG_DIR", d)
@@ -22,6 +23,49 @@ func TestResolveToken_PrefersEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	if tok != "envkey" || api != "https://env.example" || src != EnvAPIToken {
+		t.Fatalf("got %q %q %q", tok, api, src)
+	}
+}
+
+func TestResolveToken_EnvTokenUsesSavedAPIURL(t *testing.T) {
+	d := t.TempDir()
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", d)
+	t.Setenv(EnvAPIToken, "envkey")
+	p := filepath.Join(d, "config.json")
+	if err := SaveProfile(p, "admin", CredentialAccount{APIBaseURL: "https://admin.example", Token: "admin-token"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveProfile(p, "acme", CredentialAccount{APIBaseURL: "https://acme.example", Token: "acme-token"}); err != nil {
+		t.Fatal(err)
+	}
+
+	tok, api, src, err := ResolveToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok != "envkey" || api != "https://acme.example" || src != EnvAPIToken {
+		t.Fatalf("got %q %q %q", tok, api, src)
+	}
+}
+
+func TestResolveToken_EnvTokenUsesSavedProfileAPIURL(t *testing.T) {
+	d := t.TempDir()
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", d)
+	t.Setenv(EnvAPIToken, "envkey")
+	t.Setenv(EnvAPIProfile, "admin")
+	p := filepath.Join(d, "config.json")
+	if err := SaveProfile(p, "admin", CredentialAccount{APIBaseURL: "https://admin.example", Token: "admin-token"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveProfile(p, "acme", CredentialAccount{APIBaseURL: "https://acme.example", Token: "acme-token"}); err != nil {
+		t.Fatal(err)
+	}
+
+	tok, api, src, err := ResolveToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok != "envkey" || api != "https://admin.example" || src != EnvAPIToken {
 		t.Fatalf("got %q %q %q", tok, api, src)
 	}
 }
@@ -41,7 +85,7 @@ func TestConfigDir_RespectsEnv(t *testing.T) {
 func TestSaveLoadRoundTrip(t *testing.T) {
 	t.Parallel()
 	d := t.TempDir()
-	p := filepath.Join(d, "credentials.json")
+	p := filepath.Join(d, "config.json")
 	orig := &Credentials{
 		APIBaseURL:   "https://platform.example.com",
 		Token:        "secret-token-value",
@@ -74,6 +118,67 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if loaded.RegistryHost != orig.RegistryHost {
 		t.Fatalf("RegistryHost: %q", loaded.RegistryHost)
 	}
+	account, profile, err := loaded.SelectedAccount("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile != "default" {
+		t.Fatalf("profile = %q, want default", profile)
+	}
+	if account.Token != orig.Token {
+		t.Fatalf("account token mismatch")
+	}
+}
+
+func TestSaveProfilePreservesMultipleAccounts(t *testing.T) {
+	d := t.TempDir()
+	p := filepath.Join(d, "config.json")
+	if err := SaveProfile(p, "admin", CredentialAccount{APIBaseURL: "https://platform.example.com", Token: "admin-token", Role: "admin"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveProfile(p, "acme-owner", CredentialAccount{APIBaseURL: "https://platform.example.com", Token: "acme-token", Role: "user", RegistryHost: "registry.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Current != "acme-owner" {
+		t.Fatalf("current = %q, want acme-owner", loaded.Current)
+	}
+	if names := loaded.ProfileNames(); len(names) != 2 || names[0] != "acme-owner" || names[1] != "admin" {
+		t.Fatalf("profiles = %#v, want acme-owner/admin", names)
+	}
+	account, profile, err := loaded.SelectedAccount("admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile != "admin" || account.Token != "admin-token" || account.Role != "admin" {
+		t.Fatalf("admin account = %#v profile=%q", account, profile)
+	}
+	if loaded.Token != "acme-token" || loaded.APIBaseURL != "https://platform.example.com" {
+		t.Fatalf("top-level active fields not mirrored: token=%q api=%q", loaded.Token, loaded.APIBaseURL)
+	}
+}
+
+func TestResolveToken_UsesSelectedProfile(t *testing.T) {
+	d := t.TempDir()
+	t.Setenv("MCP_RUNTIME_CONFIG_DIR", d)
+	t.Setenv(EnvAPIProfile, "admin")
+	p := filepath.Join(d, "config.json")
+	if err := SaveProfile(p, "admin", CredentialAccount{APIBaseURL: "https://platform.example.com", Token: "admin-token"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveProfile(p, "globex", CredentialAccount{APIBaseURL: "https://platform.example.com", Token: "globex-token"}); err != nil {
+		t.Fatal(err)
+	}
+	tok, api, src, err := ResolveToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok != "admin-token" || api != "https://platform.example.com" || src != "credentials file profile admin" {
+		t.Fatalf("got token=%q api=%q src=%q", tok, api, src)
+	}
 }
 
 func TestLoad_Missing(t *testing.T) {
@@ -88,7 +193,7 @@ func TestLoad_Missing(t *testing.T) {
 func TestLoad_InvalidJSON(t *testing.T) {
 	t.Parallel()
 	d := t.TempDir()
-	p := filepath.Join(d, "credentials.json")
+	p := filepath.Join(d, "config.json")
 	if err := os.WriteFile(p, []byte(`{"api_url"`), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -96,12 +201,16 @@ func TestLoad_InvalidJSON(t *testing.T) {
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("Load() = %v, want ErrInvalid", err)
 	}
+	var cause *json.SyntaxError
+	if !errors.As(err, &cause) {
+		t.Fatalf("Load() = %v, want json syntax error in chain", err)
+	}
 }
 
 func TestLoad_IncompleteCredentials(t *testing.T) {
 	t.Parallel()
 	d := t.TempDir()
-	p := filepath.Join(d, "credentials.json")
+	p := filepath.Join(d, "config.json")
 	if err := os.WriteFile(p, []byte(`{"api_url":"https://platform.example.com"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}

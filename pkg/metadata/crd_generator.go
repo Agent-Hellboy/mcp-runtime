@@ -22,11 +22,12 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      server.Name,
 			Namespace: server.Namespace,
+			Labels:    publishScopeLabels(server.Scope),
 		},
 		Spec: mcpv1alpha1.MCPServerSpec{
 			Description: server.Description,
 			TeamID:      server.TeamID,
-			Image:       server.Image,
+			Image:       imageRefForClusterPull(server.Image),
 			ImageTag:    server.ImageTag,
 			Port:        server.Port,
 			Replicas:    server.Replicas,
@@ -184,6 +185,13 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 	return nil
 }
 
+func publishScopeLabels(scope PublishScope) map[string]string {
+	if scope == "" {
+		return nil
+	}
+	return map[string]string{"mcpruntime.org/scope": string(scope)}
+}
+
 func convertInventoryItems(items []InventoryItem) []mcpv1alpha1.InventoryItem {
 	if len(items) == 0 {
 		return nil
@@ -223,6 +231,18 @@ func convertResourceRequirements(resources *ResourceRequirements) *mcpv1alpha1.R
 		}
 	}
 	return converted
+}
+
+func imageRefForClusterPull(image string) string {
+	pullHost := ResolveRegistryPullHost()
+	pushHost := ResolveRegistryHost()
+	if pullHost == "" || pullHost == pushHost {
+		return image
+	}
+	if rewritten, ok := RewriteImageRegistryHost(image, pullHost); ok {
+		return rewritten
+	}
+	return image
 }
 
 // GenerateCRDsFromRegistry renders CRD YAML files for every server in a registry into outputDir.

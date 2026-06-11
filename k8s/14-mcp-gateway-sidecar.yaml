@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: mcp-example-sidecar
+  name: workspace-assistant-sidecar
   namespace: mcp-sentinel
 spec:
   selector:
-    app: mcp-example-sidecar
+    app: workspace-assistant-sidecar
   ports:
     - name: http
       port: 8091
@@ -14,17 +14,17 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mcp-example-sidecar
+  name: workspace-assistant-sidecar
   namespace: mcp-sentinel
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: mcp-example-sidecar
+      app: workspace-assistant-sidecar
   template:
     metadata:
       labels:
-        app: mcp-example-sidecar
+        app: workspace-assistant-sidecar
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -33,7 +33,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: mcp-server
-          image: go-example-mcp:latest
+          image: workspace-assistant-mcp:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -76,7 +76,7 @@ spec:
             - name: ANALYTICS_SOURCE
               value: "mcp-gateway"
             - name: MCP_SERVER_NAME
-              value: "mcp-example-sidecar"
+              value: "workspace-assistant-sidecar"
             - name: MCP_SERVER_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -91,7 +91,7 @@ spec:
             - name: POLICY_MODE
               value: "observe"
             - name: OTEL_SERVICE_NAME
-              value: mcp-example-gateway
+              value: workspace-assistant-gateway
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               valueFrom:
                 configMapKeyRef:

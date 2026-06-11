@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strconv"
 	"strings"
@@ -30,6 +31,11 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 	}
 	if err := r.ensureWorkloadServiceAccount(ctx, mcpServer.Namespace); err != nil {
 		return err
+	}
+	if len(mcpServer.Spec.ImagePullSecrets) == 0 {
+		if err := r.ensureRegistryPullSecret(ctx, mcpServer.Namespace); err != nil {
+			return err
+		}
 	}
 
 	deployment := &appsv1.Deployment{
@@ -304,6 +310,47 @@ func applyContainerResources(container *corev1.Container, resources mcpv1alpha1.
 	return nil
 }
 
+// ensureRegistryPullSecret creates or updates the provisioned registry pull
+// secret in the MCPServer's namespace so that the operator-injected
+// mcp-gateway sidecar (and the user image) can be pulled even when the
+// namespace was created after setup. It is a no-op when ProvisionedRegistry
+// is not configured or when the spec provides user-defined pull secrets.
+func (r *MCPServerReconciler) ensureRegistryPullSecret(ctx context.Context, namespace string) error {
+	if r.ProvisionedRegistry == nil || r.ProvisionedRegistry.URL == "" ||
+		r.ProvisionedRegistry.Username == "" || r.ProvisionedRegistry.Password == "" {
+		return nil
+	}
+	secretName := r.ProvisionedRegistry.SecretName
+	if secretName == "" {
+		secretName = DefaultRegistrySecretName
+	}
+	auth := base64.StdEncoding.EncodeToString(
+		[]byte(r.ProvisionedRegistry.Username + ":" + r.ProvisionedRegistry.Password),
+	)
+	dockerconfig := fmt.Sprintf(
+		`{"auths":{%q:{"username":%q,"password":%q,"auth":%q}}}`,
+		r.ProvisionedRegistry.URL,
+		r.ProvisionedRegistry.Username,
+		r.ProvisionedRegistry.Password,
+		auth,
+	)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: namespace,
+		},
+	}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		secret.Type = corev1.SecretTypeDockerConfigJson
+		if secret.Data == nil {
+			secret.Data = make(map[string][]byte)
+		}
+		secret.Data[corev1.DockerConfigJsonKey] = []byte(dockerconfig)
+		return nil
+	})
+	return err
+}
+
 func (r *MCPServerReconciler) ensureWorkloadServiceAccount(ctx context.Context, namespace string) error {
 	desiredSA := kubeworkload.ServiceAccount(namespace)
 	sa := &corev1.ServiceAccount{
@@ -333,9 +380,9 @@ func (r *MCPServerReconciler) resolveImage(ctx context.Context, mcpServer *mcpv1
 		if r.ProvisionedRegistry != nil && r.ProvisionedRegistry.URL != "" {
 			regOverride = r.ProvisionedRegistry.URL
 		} else if regOverride == "" {
-			// Fallback to the ingress-backed internal registry when not explicitly configured.
-			regOverride = DefaultOperatorConfig.InternalRegistryEndpoint
-			logger.Info("useProvisionedRegistry set without ProvisionedRegistry config; falling back to internal registry ingress", "mcpServer", mcpServer.Name, "registry", regOverride)
+			// Fall back to the pullable registry host rather than the backend service endpoint.
+			regOverride = DefaultOperatorConfig.RegistryPullHost
+			logger.Info("useProvisionedRegistry set without ProvisionedRegistry config; falling back to registry pull host", "mcpServer", mcpServer.Name, "registry", regOverride)
 		}
 	}
 	if regOverride != "" {
@@ -597,7 +644,7 @@ func (r *MCPServerReconciler) buildImagePullSecrets(mcpServer *mcpv1alpha1.MCPSe
 
 	secretName := r.ProvisionedRegistry.SecretName
 	if secretName == "" {
-		secretName = "mcp-runtime-registry-creds" // #nosec G101 -- default secret name, not a credential.
+		secretName = DefaultRegistrySecretName
 	}
 
 	return []corev1.LocalObjectReference{{Name: secretName}}

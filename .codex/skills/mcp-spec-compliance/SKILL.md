@@ -26,6 +26,12 @@ Goals:
 - Distinguish "spec says X, runtime does X" from "spec says X, runtime does Y"
   from "spec is silent, runtime does Y by choice."
 
+Regression evidence contract: static schema/code checks are only half of this
+skill. For protocol-affecting changes, run live `initialize`, positive
+`tools/call`, and malformed/unsupported-version negative cases against the Kind
+cluster. If upstream fetch or live transport checks cannot run, report the
+result **blocked** for that surface.
+
 Non-goals:
 
 - Auth/grant/session policy enforcement → `qa-e2e-security`.
@@ -97,8 +103,8 @@ grep -rIn 'DefaultProtocolVersion\|protocolVersion\|Mcp-Protocol-Version\|MCP-Pr
   -- internal/ services/ examples/ docs/ pkg/ cmd/
 
 # Streamable HTTP transport contract in the gateway:
-sed -n '1,$p' services/mcp-proxy/rpc.go services/mcp-proxy/proxy.go \
-  services/mcp-proxy/types.go 2>/dev/null | grep -nE \
+sed -n '1,$p' services/mcp-gateway/rpc.go services/mcp-gateway/proxy.go \
+  services/mcp-gateway/types.go 2>/dev/null | grep -nE \
   'jsonrpc|method|Mcp-Session-Id|content-type|text/event-stream|application/json|notifications/initialized|tools/(list|call)|initialize'
 
 # Agent adapter (stdio <-> HTTP shim) protocol surface.
@@ -164,7 +170,7 @@ done
 echo "Schema validation: $fail invalid envelopes"
 ```
 
-Any **invalid** envelope in `services/mcp-proxy/`, `examples/`, or
+Any **invalid** envelope in `services/mcp-gateway/`, `examples/`, or
 `internal/agentadapter/` is a finding (the runtime is emitting / asserting
 non-spec shapes). Invalid envelopes in `test/golden/`, `test/integration/`,
 or e2e fixtures are findings on the test, not the runtime, but track them
@@ -172,157 +178,16 @@ either way.
 
 ## Step 5 — Live transport conformance (against the Kind cluster)
 
-Precondition: `qa-cluster-bringup` has run, port-forward is up, demo server
-deployed with a valid grant/session.
+Precondition: `qa-cluster-bringup` has run, port-forward is up, and a demo
+server is deployed with a valid grant/session. For this dynamic portion, read
+`references/live-conformance.md` and run its sub-suite exactly:
 
-```bash
-kubectl config current-context | grep -qx kind-mcp-runtime \
-  || { echo "Run qa-cluster-bringup first"; exit 1; }
-BASE=http://localhost:18080/go-example-mcp/mcp
-PROTO="$SPEC_REV"
-H=(-H "content-type: application/json"
-   -H "accept: application/json, text/event-stream"
-   -H "Mcp-Protocol-Version: $PROTO"
-   -H "X-MCP-Human-ID: local-user"
-   -H "X-MCP-Agent-ID: local-agent"
-   -H "X-MCP-Agent-Session: local-session")
-```
-
-### 5a. `initialize` response conformance
-
-```bash
-MCP_SPEC_TMP="${MCP_SPEC_TMP:-$(mktemp -d)}"
-trap 'rm -rf "$MCP_SPEC_TMP"' EXIT
-INIT="$(curl -sS "${H[@]}" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-        "protocolVersion":"'"$PROTO"'",
-        "capabilities":{},
-        "clientInfo":{"name":"qa-spec-compliance","version":"0"}}}' "$BASE")"
-echo "$INIT" | jq .
-echo "$INIT" > "$MCP_SPEC_TMP/mcp-init.json"
-"$JV" "$SCHEMA" "$MCP_SPEC_TMP/mcp-init.json" 2>&1 | head -10
-
-# Required fields per spec lifecycle: protocolVersion, capabilities, serverInfo.
-echo "$INIT" | jq -e '.result.protocolVersion == "'"$PROTO"'"' >/dev/null \
-  || echo "FAIL: server did not echo or downgrade protocolVersion correctly"
-echo "$INIT" | jq -e '.result.capabilities | type == "object"' >/dev/null \
-  || echo "FAIL: capabilities missing or wrong type"
-echo "$INIT" | jq -e '.result.serverInfo.name and .result.serverInfo.version' >/dev/null \
-  || echo "FAIL: serverInfo missing name/version"
-```
-
-### 5b. Streamable HTTP transport headers
-
-```bash
-# Mcp-Session-Id MUST be issued on initialize when the server is stateful
-# (per Streamable HTTP). Capture and re-use; verify it survives one round-trip.
-SESSION="$(curl -si "${H[@]}" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"initialize","params":{
-        "protocolVersion":"'"$PROTO"'","capabilities":{},
-        "clientInfo":{"name":"qa","version":"0"}}}' "$BASE" \
-  | awk -F': ' 'tolower($1)=="mcp-session-id"{print $2}' | tr -d '\r')"
-[ -n "$SESSION" ] || echo "FAIL: server did not issue Mcp-Session-Id"
-
-# Content-Type negotiation: JSON request should get JSON response by default;
-# event-stream only when server elects to stream.
-curl -sSI "${H[@]}" -H "Mcp-Session-Id: $SESSION" \
-  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' "$BASE" \
-  | tr -d '\r' | grep -iE '^Content-Type:' | head -1
-
-# DELETE on the MCP endpoint terminates the session (per Streamable HTTP).
-# A subsequent request with the same session MUST fail.
-curl -sS -X DELETE "${H[@]}" -H "Mcp-Session-Id: $SESSION" \
-  -o "$MCP_SPEC_TMP/del.out" -w "delete=%{http_code}\n" "$BASE"
-curl -sS "${H[@]}" -H "Mcp-Session-Id: $SESSION" \
-  -d '{"jsonrpc":"2.0","id":99,"method":"tools/list"}' "$BASE" \
-  | grep -qiE 'error|session|invalid' \
-  || echo "FAIL: session reuse after DELETE was accepted"
-```
-
-If `DELETE` returns 405 or the server silently accepts post-DELETE calls,
-that is a transport-spec violation. If the runtime intentionally treats
-`Mcp-Session-Id` as platform-governance only (decoupled from MCP protocol
-session), record that as an **intentional deviation** in the report and link
-to the design rationale in code/docs — do not flag it as a bug without
-context.
-
-### 5c. `tools/list` shape
-
-```bash
-TOOLS="$(curl -sS "${H[@]}" -H "Mcp-Session-Id: $SESSION" \
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/list"}' "$BASE")"
-echo "$TOOLS" | jq -e '.result.tools | type == "array" and length > 0' >/dev/null \
-  || echo "FAIL: tools/list missing or empty"
-echo "$TOOLS" | jq -e '.result.tools | all(.name and (.inputSchema | type == "object"))' >/dev/null \
-  || echo "FAIL: tool entry missing required name or inputSchema"
-echo "$TOOLS" > "$MCP_SPEC_TMP/mcp-tools.json"
-"$JV" "$SCHEMA" "$MCP_SPEC_TMP/mcp-tools.json" 2>&1 | head -10
-```
-
-### 5d. `tools/call` result envelope
-
-```bash
-CALL="$(curl -sS "${H[@]}" -H "Mcp-Session-Id: $SESSION" \
-  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call",
-       "params":{"name":"add","arguments":{"a":2,"b":3}}}' "$BASE")"
-echo "$CALL" | jq -e '.result.content | type == "array"' >/dev/null \
-  || echo "FAIL: tools/call result.content must be array"
-echo "$CALL" | jq -e '.result.content[0].type and .result.content[0].text != null' >/dev/null \
-  || echo "FAIL: content[0] missing required type/text"
-echo "$CALL" > "$MCP_SPEC_TMP/mcp-call.json"
-"$JV" "$SCHEMA" "$MCP_SPEC_TMP/mcp-call.json" 2>&1 | head -10
-```
-
-### 5e. JSON-RPC error mapping
-
-The spec inherits JSON-RPC 2.0 error codes (`-32700`/`-32600`/`-32601`/`-32602`/`-32603`)
-and adds MCP-specific application errors. Probe each:
-
-```bash
-# Parse error: invalid JSON.
-curl -sS "${H[@]}" -H "Mcp-Session-Id: $SESSION" \
-  --data-binary '{not json' "$BASE" \
-  | jq -e '.error.code == -32700' >/dev/null \
-  || echo "FAIL: parse error should map to -32700"
-
-# Method not found.
-curl -sS "${H[@]}" -H "Mcp-Session-Id: $SESSION" \
-  -d '{"jsonrpc":"2.0","id":5,"method":"definitely/not/a/method"}' "$BASE" \
-  | jq -e '.error.code == -32601' >/dev/null \
-  || echo "FAIL: unknown method should map to -32601"
-
-# Invalid params (tool exists, wrong args).
-curl -sS "${H[@]}" -H "Mcp-Session-Id: $SESSION" \
-  -d '{"jsonrpc":"2.0","id":6,"method":"tools/call",
-       "params":{"name":"add","arguments":{"a":"not-a-number"}}}' "$BASE" \
-  | jq -e '.error.code == -32602 or (.result.isError == true)' >/dev/null \
-  || echo "FAIL: invalid params should map to -32602 or isError result"
-```
-
-MCP allows tool-execution errors to surface either as a top-level
-`error.code` or as `result.isError=true` with content; both shapes are
-spec-legal but should be **consistent** for a given runtime. Flag any tool
-that mixes both for similar failure modes.
-
-### 5f. Protocol-version negotiation
-
-```bash
-# Unsupported version: the server SHOULD respond with a version it supports,
-# not echo the unsupported one.
-RESP="$(curl -sS "${H[@]/Mcp-Protocol-Version: $PROTO/Mcp-Protocol-Version: 1999-01-01}" \
-  -d '{"jsonrpc":"2.0","id":7,"method":"initialize","params":{
-        "protocolVersion":"1999-01-01","capabilities":{},
-        "clientInfo":{"name":"qa","version":"0"}}}' "$BASE")"
-echo "$RESP" | jq -e '.result.protocolVersion != "1999-01-01"' >/dev/null \
-  || echo "FAIL: server echoed unsupported protocolVersion"
-
-# Missing header: behavior is implementation-defined; record what the runtime
-# does so docs and clients stay aligned.
-curl -sS -H "content-type: application/json" -H "accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":8,"method":"initialize","params":{
-        "protocolVersion":"'"$PROTO"'","capabilities":{},
-        "clientInfo":{"name":"qa","version":"0"}}}' "$BASE" | jq -e '.result // .error' >/dev/null
-```
+- initialize response conformance
+- Streamable HTTP headers and `Mcp-Session-Id`
+- `tools/list` shape
+- `tools/call` result envelope
+- JSON-RPC error mapping
+- protocol-version negotiation
 
 ## Step 6 — Capability advertisement vs implementation
 
@@ -348,7 +213,7 @@ for cap in $caps; do
 done
 ```
 
-Cross-check: any method the gateway forwards (`services/mcp-proxy/rpc.go`
+Cross-check: any method the gateway forwards (`services/mcp-gateway/rpc.go`
 method allow-list) that is **not** present in `initialize.capabilities`
 should be flagged — the gateway should not encourage clients to call a
 capability the server did not advertise.
@@ -431,7 +296,7 @@ echo "Draft-schema validation failures: $fail (informational)"
 
 ## Step 10 — Severity rubric (compliance-specific)
 
-Map findings to `_shared/FINDINGS-TEMPLATE.md` severities using this
+Map findings to `../_shared/FINDINGS-TEMPLATE.md` severities using this
 domain-specific rubric. Pick the highest that applies:
 
 - **Critical** — Runtime claims protocol version X, but a conforming X
@@ -453,7 +318,7 @@ domain-specific rubric. Pick the highest that applies:
 
 ## Step 11 — Report
 
-Use the structure in `_shared/FINDINGS-TEMPLATE.md`. The report header must
+Use the structure in `../_shared/FINDINGS-TEMPLATE.md`. The report header must
 state the pinned spec revision, the upstream `SPEC_REF` and commit SHA used
 for the fetch, and the runtime commit SHA under audit — none of those
 findings are interpretable without that triple.

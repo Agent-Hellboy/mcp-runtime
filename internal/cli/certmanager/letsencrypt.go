@@ -34,6 +34,10 @@ func certManagerInstallManifestURL() string {
 	return fmt.Sprintf("https://github.com/cert-manager/cert-manager/releases/download/%s/cert-manager.yaml", certManagerRelease)
 }
 
+func CertManagerInstallManifestURL() string {
+	return certManagerInstallManifestURL()
+}
+
 // ClusterIssuerNameForACME returns the ClusterIssuer resource name for Let's Encrypt.
 func ClusterIssuerNameForACME(staging bool) string {
 	if staging {
@@ -79,11 +83,11 @@ func ACMETLSDNSNames() []string {
 func validateACMEHostnameForPublicCA() error {
 	names := acmeTLSDNSNames()
 	if len(names) == 0 {
-		return fmt.Errorf("ACME public CA requires a public DNS name; set MCP_PLATFORM_DOMAIN, MCP_REGISTRY_HOST, MCP_REGISTRY_INGRESS_HOST, or MCP_MCP_INGRESS_HOST")
+		return core.NewWithSentinel(core.ErrCertACMEPublicDNSNameRequired, "ACME public CA requires a public DNS name; set MCP_PLATFORM_DOMAIN, MCP_REGISTRY_HOST, MCP_REGISTRY_INGRESS_HOST, or MCP_MCP_INGRESS_HOST")
 	}
 	for _, host := range names {
 		if isDevRegistryURL(host) {
-			return fmt.Errorf("ACME public CA requires a public DNS name; set MCP_PLATFORM_DOMAIN (e.g. mcpruntime.com for registry. and mcp. names) or MCP_REGISTRY_INGRESS_HOST, not %q", host)
+			return core.NewWithSentinel(core.ErrCertACMEPublicDNSNameInvalid, fmt.Sprintf("ACME public CA requires a public DNS name; set MCP_PLATFORM_DOMAIN (e.g. mcpruntime.com for registry. and mcp. names) or MCP_REGISTRY_INGRESS_HOST, not %q", host))
 		}
 	}
 	return nil
@@ -135,10 +139,11 @@ func validateIngressManifestForACME(ingressManifest string) error {
 		return nil
 	}
 	if filepath.Base(filepath.Clean(m)) == "http" {
-		return fmt.Errorf(
+		msg := fmt.Sprintf(
 			"http-01 (Let's Encrypt) must reach your hostnames on port 80, but the %q overlay uses 8000/8443. Omit --ingress-manifest so setup uses the prod overlay, or set --ingress-manifest %q, then re-run (use --force-ingress-install if an old ingress is already present)",
 			acmeHTTP01DevIngressOverlay, "config/ingress/overlays/prod",
 		)
+		return core.NewWithSentinel(core.ErrCertACMEIngressManifestInvalid, msg)
 	}
 	return nil
 }
@@ -162,7 +167,7 @@ func waitForTraefikDeploymentForACME(kubectl core.KubectlRunner) error {
 		"wait", "--for=condition=Available",
 		"deployment/" + traefikManagedDeployment, "-n", traefikManagedNamespace, "--timeout=3m",
 	}, os.Stdout, os.Stderr); err != nil {
-		return fmt.Errorf("traefik not ready: %w", err)
+		return core.WrapWithSentinel(core.ErrCertTraefikNotReady, err, fmt.Sprintf("traefik not ready: %v", err))
 	}
 	core.Info(traefikManagedNamespace + "/" + traefikManagedDeployment + " is available")
 	return nil
@@ -218,13 +223,13 @@ func ensureCertManagerInstalled(kubectl core.KubectlRunner, logger *zap.Logger) 
 	for _, dep := range []string{"cert-manager", "cert-manager-cainjector", "cert-manager-webhook"} {
 		remaining := time.Until(start.Add(overall))
 		if remaining <= 0 {
-			err := fmt.Errorf("timed out waiting for cert-manager before deployment/%s", dep)
-			wrapped := core.WrapWithSentinel(core.ErrCertManagerInstallFailed, err, err.Error())
+			msg := fmt.Sprintf("timed out waiting for cert-manager before deployment/%s", dep)
+			err := core.NewWithSentinel(core.ErrCertManagerInstallFailed, msg)
 			core.Error("cert-manager did not become ready")
 			if logger != nil {
-				core.LogStructuredError(logger, wrapped, "cert-manager did not become ready")
+				core.LogStructuredError(logger, err, "cert-manager did not become ready")
 			}
-			return wrapped
+			return err
 		}
 		// #nosec G204 -- fixed deployment name; timeout is remaining wall-clock budget.
 		if err := kubectl.RunWithOutput([]string{
@@ -251,7 +256,7 @@ func EnsureCertManagerInstalled(kubectl core.KubectlRunner, logger *zap.Logger) 
 func applyLetsEncryptClusterIssuer(kubectl core.KubectlRunner, email string, staging bool, logger *zap.Logger) error {
 	email = strings.TrimSpace(email)
 	if email == "" {
-		return fmt.Errorf("ACME email is required")
+		return core.NewWithSentinel(core.ErrCertACMEEmailRequired, "ACME email is required")
 	}
 	name := ClusterIssuerNameForACME(staging)
 	manifest := renderLetsEncryptClusterIssuerManifest(name, email, acmeServerURL(staging))
@@ -297,13 +302,38 @@ func renderLetsEncryptClusterIssuerManifest(name, email, serverURL string) strin
 	return b.String()
 }
 
-func applyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []string, issuerName string) error {
+func RenderLetsEncryptClusterIssuerManifest(name, email, serverURL string) string {
+	return renderLetsEncryptClusterIssuerManifest(name, email, serverURL)
+}
+
+func applyRegistryCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error {
+	return applyCertificate(kubectl, registryCertificateName, registryTLSSecretName, dnsNames, ipAddresses, issuerName)
+}
+
+func applyRegistryInternalCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error {
+	return applyCertificate(kubectl, registryInternalCertificateName, registryInternalTLSSecretName, dnsNames, ipAddresses, issuerName)
+}
+
+func ApplyRegistryInternalCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error {
+	return applyRegistryInternalCertificate(kubectl, dnsNames, ipAddresses, issuerName)
+}
+
+func applyCertificate(kubectl core.KubectlRunner, certName, secretName string, dnsNames, ipAddresses []string, issuerName string) error {
 	uniq := dedupeHostnames(dnsNames)
-	if len(uniq) == 0 {
-		return fmt.Errorf("registry TLS has no DNS names to request")
+	uniqIPs := dedupeHostnames(ipAddresses)
+	if len(uniq) == 0 && len(uniqIPs) == 0 {
+		return core.NewWithSentinel(core.ErrCertCertificateSANsEmpty, fmt.Sprintf("%s TLS has no DNS names or IP addresses to request", certName))
 	}
-	manifest := renderRegistryCertificateForACME(registryCertificateName, uniq, issuerName)
+	manifest := renderRegistryCertificate(certName, secretName, uniq, uniqIPs, issuerName)
 	return kube.ApplyManifestContent(kubectl.CommandArgs, manifest)
+}
+
+func ApplyRegistryCertificate(kubectl core.KubectlRunner, dnsNames, ipAddresses []string, issuerName string) error {
+	return applyRegistryCertificate(kubectl, dnsNames, ipAddresses, issuerName)
+}
+
+func applyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []string, issuerName string) error {
+	return applyRegistryCertificate(kubectl, dnsNames, nil, issuerName)
 }
 
 func ApplyRegistryCertificateForACME(kubectl core.KubectlRunner, dnsNames []string, issuerName string) error {
@@ -327,8 +357,9 @@ func dedupeHostnames(hs []string) []string {
 	return out
 }
 
-func renderRegistryCertificateForACME(certName string, dnsNames []string, issuerName string) string {
+func renderRegistryCertificate(certName, secretName string, dnsNames, ipAddresses []string, issuerName string) string {
 	uniq := dedupeHostnames(dnsNames)
+	uniqIPs := dedupeHostnames(ipAddresses)
 	var b strings.Builder
 	b.WriteString("apiVersion: cert-manager.io/v1\n")
 	b.WriteString("kind: Certificate\n")
@@ -340,17 +371,33 @@ func renderRegistryCertificateForACME(certName string, dnsNames []string, issuer
 	b.WriteString(core.NamespaceRegistry)
 	b.WriteString("\n")
 	b.WriteString("spec:\n")
-	b.WriteString("  secretName: registry-tls\n")
+	b.WriteString("  secretName: ")
+	b.WriteString(secretName)
+	b.WriteString("\n")
 	b.WriteString("  issuerRef:\n")
 	b.WriteString("    name: ")
 	b.WriteString(issuerName)
 	b.WriteString("\n")
 	b.WriteString("    kind: ClusterIssuer\n")
-	b.WriteString("  dnsNames:\n")
-	for _, name := range uniq {
-		b.WriteString("    - ")
-		b.WriteString(strconv.Quote(name))
-		b.WriteString("\n")
+	if len(uniq) > 0 {
+		b.WriteString("  dnsNames:\n")
+		for _, name := range uniq {
+			b.WriteString("    - ")
+			b.WriteString(strconv.Quote(name))
+			b.WriteString("\n")
+		}
+	}
+	if len(uniqIPs) > 0 {
+		b.WriteString("  ipAddresses:\n")
+		for _, ip := range uniqIPs {
+			b.WriteString("    - ")
+			b.WriteString(strconv.Quote(ip))
+			b.WriteString("\n")
+		}
 	}
 	return b.String()
+}
+
+func RenderRegistryCertificate(certName, secretName string, dnsNames, ipAddresses []string, issuerName string) string {
+	return renderRegistryCertificate(certName, secretName, dnsNames, ipAddresses, issuerName)
 }

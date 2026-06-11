@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -22,6 +23,7 @@ import (
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	sentinelaccess "mcp-runtime/pkg/access"
 	"mcp-runtime/pkg/authfile"
+	"mcp-runtime/pkg/platform"
 )
 
 const maxAPIBodyRead = 4 << 20
@@ -38,7 +40,7 @@ type PlatformClient struct {
 }
 
 // NewPlatformClient returns a client when platform credentials and API base URL are configured.
-// If the user is not logged in, returns [authfile.ErrNotFound] so the caller can fall back to kubectl.
+// If the user is not logged in, returns [authfile.ErrNotFound].
 func NewPlatformClient() (*PlatformClient, error) {
 	tok, base, _, err := authfile.ResolveToken()
 	if err != nil {
@@ -80,13 +82,20 @@ func (c *PlatformClient) do(ctx context.Context, method, relPath, query string, 
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("x-api-key", c.token)
-	req.Header.Set("authorization", "Bearer "+c.token)
-	req.Header.Set("x-mcp-source", "cli")
+	c.setAuthHeaders(req)
 	if body != nil {
 		req.Header.Set("content-type", "application/json")
 	}
 	return c.http.Do(req)
+}
+
+func (c *PlatformClient) setAuthHeaders(req *http.Request) {
+	if req == nil {
+		return
+	}
+	req.Header.Set("x-api-key", c.token)
+	req.Header.Set("authorization", "Bearer "+c.token)
+	req.Header.Set("x-mcp-source", "cli")
 }
 
 func listQuery(namespace string) string {
@@ -160,6 +169,85 @@ type ImagePublishRecord struct {
 	ImageRef    string `json:"image_ref"`
 	SourceImage string `json:"source_image,omitempty"`
 	Mode        string `json:"mode,omitempty"`
+}
+
+// PushRegistryImage uploads a docker save tar and asks the platform API to push
+// it to the configured registry from inside the cluster.
+func (c *PlatformClient) PushRegistryImage(ctx context.Context, tarPath, target, scope string) error {
+	tarPath = strings.TrimSpace(tarPath)
+	target = strings.TrimSpace(target)
+	if tarPath == "" || target == "" {
+		return fmt.Errorf("tar path and target are required")
+	}
+
+	u, err := url.Parse(c.baseURL)
+	if err != nil {
+		return err
+	}
+	rel, err := url.Parse(c.apiPrefix + "/runtime/registry/push")
+	if err != nil {
+		return err
+	}
+	joined := u.ResolveReference(rel)
+
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+	contentType := writer.FormDataContentType()
+
+	go func() {
+		var copyErr error
+		defer func() {
+			_ = writer.Close()
+			_ = pw.CloseWithError(copyErr)
+		}()
+		if copyErr = writer.WriteField("target", target); copyErr != nil {
+			return
+		}
+		if scope = strings.TrimSpace(scope); scope != "" {
+			if copyErr = writer.WriteField("scope", scope); copyErr != nil {
+				return
+			}
+		}
+		file, err := os.Open(tarPath) // #nosec G304 -- tarPath is a local docker save archive produced by the CLI build step.
+		if err != nil {
+			copyErr = err
+			return
+		}
+		defer file.Close()
+		part, err := writer.CreateFormFile("image_tar", filepath.Base(tarPath))
+		if err != nil {
+			copyErr = err
+			return
+		}
+		if _, copyErr = io.Copy(part, file); copyErr != nil {
+			return
+		}
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, joined.String(), pr)
+	if err != nil {
+		return err
+	}
+	c.setAuthHeaders(req)
+	req.Header.Set("content-type", contentType)
+
+	client := c.http
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Minute}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return httpAPIError(resp.StatusCode, b)
+	}
+	return nil
 }
 
 func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePublishRecord) error {
@@ -322,9 +410,14 @@ func (c *PlatformClient) DeleteSession(ctx context.Context, namespace, name stri
 	return nil
 }
 
-func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, action string) error {
-	p := fmt.Sprintf("/runtime/grants/%s/%s/%s", url.PathEscape(namespace), url.PathEscape(name), action)
-	resp, err := c.do(ctx, http.MethodPost, p, "", nil)
+func (c *PlatformClient) PatchGrant(ctx context.Context, namespace, name string, disabled bool) error {
+	body := map[string]any{"disabled": disabled}
+	js, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	p := fmt.Sprintf("/runtime/grants/%s/%s", url.PathEscape(strings.TrimSpace(namespace)), url.PathEscape(strings.TrimSpace(name)))
+	resp, err := c.do(ctx, http.MethodPatch, p, "", bytes.NewReader(js))
 	if err != nil {
 		return err
 	}
@@ -336,9 +429,14 @@ func (c *PlatformClient) PostGrantToggle(ctx context.Context, namespace, name, a
 	return nil
 }
 
-func (c *PlatformClient) PostSessionToggle(ctx context.Context, namespace, name, action string) error {
-	p := fmt.Sprintf("/runtime/sessions/%s/%s/%s", url.PathEscape(namespace), url.PathEscape(name), action)
-	resp, err := c.do(ctx, http.MethodPost, p, "", nil)
+func (c *PlatformClient) PatchSession(ctx context.Context, namespace, name string, revoked bool) error {
+	body := map[string]any{"revoked": revoked}
+	js, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	p := fmt.Sprintf("/runtime/sessions/%s/%s", url.PathEscape(strings.TrimSpace(namespace)), url.PathEscape(strings.TrimSpace(name)))
+	resp, err := c.do(ctx, http.MethodPatch, p, "", bytes.NewReader(js))
 	if err != nil {
 		return err
 	}
@@ -428,8 +526,8 @@ func grantFromV1(g *mcpv1alpha1.MCPAccessGrant) grantAPIBody {
 	return grantAPIBody{
 		Name:               g.Name,
 		Namespace:          ns,
-		ServerRef:          sentinelaccess.ServerReference{Name: g.Spec.ServerRef.Name, Namespace: g.Spec.ServerRef.Namespace},
-		Subject:            sentinelaccess.SubjectRef{HumanID: g.Spec.Subject.HumanID, AgentID: g.Spec.Subject.AgentID},
+		ServerRef:          sentinelaccess.ServerReference{Name: sentinelaccess.ServerName(g.Spec.ServerRef.Name), Namespace: sentinelaccess.Namespace(g.Spec.ServerRef.Namespace)},
+		Subject:            sentinelaccess.SubjectRef{HumanID: sentinelaccess.HumanID(g.Spec.Subject.HumanID), AgentID: sentinelaccess.AgentID(g.Spec.Subject.AgentID), TeamID: sentinelaccess.TeamID(g.Spec.Subject.TeamID)},
 		MaxTrust:           trust,
 		AllowedSideEffects: allowedSideEffects,
 		PolicyVersion:      g.Spec.PolicyVersion,
@@ -447,8 +545,8 @@ func sessionFromV1(s *mcpv1alpha1.MCPAgentSession) sessionAPIBody {
 	return sessionAPIBody{
 		Name:           s.Name,
 		Namespace:      ns,
-		ServerRef:      sentinelaccess.ServerReference{Name: s.Spec.ServerRef.Name, Namespace: s.Spec.ServerRef.Namespace},
-		Subject:        sentinelaccess.SubjectRef{HumanID: s.Spec.Subject.HumanID, AgentID: s.Spec.Subject.AgentID},
+		ServerRef:      sentinelaccess.ServerReference{Name: sentinelaccess.ServerName(s.Spec.ServerRef.Name), Namespace: sentinelaccess.Namespace(s.Spec.ServerRef.Namespace)},
+		Subject:        sentinelaccess.SubjectRef{HumanID: sentinelaccess.HumanID(s.Spec.Subject.HumanID), AgentID: sentinelaccess.AgentID(s.Spec.Subject.AgentID), TeamID: sentinelaccess.TeamID(s.Spec.Subject.TeamID)},
 		ConsentedTrust: sentinelaccess.TrustLevel(s.Spec.ConsentedTrust),
 		PolicyVersion:  s.Spec.PolicyVersion,
 		Revoked:        &rev,
@@ -463,6 +561,9 @@ func readBody(r io.Reader) ([]byte, error) {
 func httpAPIError(status int, body []byte) error {
 	var m map[string]string
 	if err := json.Unmarshal(body, &m); err == nil {
+		if message := m["message"]; message != "" {
+			return fmt.Errorf("API %d: %s", status, message)
+		}
 		if e := m["error"]; e != "" {
 			return fmt.Errorf("API %d: %s", status, e)
 		}
@@ -480,6 +581,8 @@ func httpAPIError(status int, body []byte) error {
 type ServerListItem struct {
 	Name        string            `json:"name"`
 	Namespace   string            `json:"namespace"`
+	Image       string            `json:"image,omitempty"`
+	ImageTag    string            `json:"imageTag,omitempty"`
 	Description string            `json:"description,omitempty"`
 	Ready       string            `json:"ready"`
 	Status      string            `json:"status"`
@@ -494,6 +597,8 @@ type serverListResponse struct {
 type runtimeServerApplyRequest struct {
 	Name      string                    `json:"name"`
 	Namespace string                    `json:"namespace,omitempty"`
+	Scope     string                    `json:"scope,omitempty"`
+	Update    bool                      `json:"update,omitempty"`
 	Labels    map[string]string         `json:"labels,omitempty"`
 	Spec      mcpv1alpha1.MCPServerSpec `json:"spec"`
 }
@@ -510,12 +615,33 @@ type Team struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type PlatformUser struct {
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	Role      string `json:"role"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
+type TeamMembership = platform.TeamMembership
+
 type teamsResponse struct {
 	Teams []Team `json:"teams"`
 }
 
 type teamResponse struct {
 	Team Team `json:"team"`
+}
+
+type teamMembersResponse struct {
+	Members []TeamMembership `json:"members"`
+}
+
+type teamMembershipResponse struct {
+	Membership TeamMembership `json:"membership"`
+}
+
+type userResponse struct {
+	User PlatformUser `json:"user"`
 }
 
 type namespaceListItem struct {
@@ -530,6 +656,20 @@ type namespaceListItem struct {
 
 type namespacesResponse struct {
 	Namespaces []namespaceListItem `json:"namespaces"`
+}
+
+type Principal struct {
+	Role              string   `json:"role"`
+	Subject           string   `json:"subject,omitempty"`
+	Email             string   `json:"email,omitempty"`
+	Namespace         string   `json:"namespace,omitempty"`
+	AllowedNamespaces []string `json:"allowedNamespaces,omitempty"`
+	Teams             []Team   `json:"teams,omitempty"`
+}
+
+type authMeResponse struct {
+	Authenticated bool      `json:"authenticated"`
+	Principal     Principal `json:"principal"`
 }
 
 func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace string) ([]ServerListItem, error) {
@@ -557,9 +697,19 @@ func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace strin
 }
 
 func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error) {
+	return c.ApplyRuntimeServerWithScope(ctx, name, namespace, "", spec)
+}
+
+func (c *PlatformClient) ApplyRuntimeServerWithScope(ctx context.Context, name, namespace, scope string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error) {
+	return c.ApplyRuntimeServerWithScopeUpdate(ctx, name, namespace, scope, spec, false)
+}
+
+func (c *PlatformClient) ApplyRuntimeServerWithScopeUpdate(ctx context.Context, name, namespace, scope string, spec mcpv1alpha1.MCPServerSpec, update bool) (ServerListItem, error) {
 	body := runtimeServerApplyRequest{
 		Name:      strings.TrimSpace(name),
 		Namespace: strings.TrimSpace(namespace),
+		Scope:     strings.TrimSpace(scope),
+		Update:    update,
 		Spec:      spec,
 	}
 	js, err := json.Marshal(body)
@@ -583,6 +733,26 @@ func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace
 		return ServerListItem{}, err
 	}
 	return out.Server, nil
+}
+
+func (c *PlatformClient) CurrentPrincipal(ctx context.Context) (Principal, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/auth/me", "", nil)
+	if err != nil {
+		return Principal{}, err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return Principal{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return Principal{}, httpAPIError(resp.StatusCode, b)
+	}
+	var out authMeResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return Principal{}, err
+	}
+	return out.Principal, nil
 }
 
 func (c *PlatformClient) DeleteRuntimeServer(ctx context.Context, namespace, name string) error {
@@ -671,6 +841,97 @@ func (c *PlatformClient) CreateTeam(ctx context.Context, slug, name string) (Tea
 	return out.Team, nil
 }
 
+func (c *PlatformClient) CreateUser(ctx context.Context, email, password, role string) (PlatformUser, error) {
+	payload := map[string]string{
+		"email":    strings.TrimSpace(email),
+		"password": password,
+		"role":     strings.TrimSpace(role),
+	}
+	js, err := json.Marshal(payload)
+	if err != nil {
+		return PlatformUser{}, err
+	}
+	resp, err := c.do(ctx, http.MethodPost, "/users", "", bytes.NewReader(js))
+	if err != nil {
+		return PlatformUser{}, err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return PlatformUser{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return PlatformUser{}, httpAPIError(resp.StatusCode, b)
+	}
+	var out userResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return PlatformUser{}, err
+	}
+	return out.User, nil
+}
+
+func (c *PlatformClient) ListTeamMembers(ctx context.Context, slug string) ([]TeamMembership, error) {
+	rel := "/runtime/teams/" + url.PathEscape(strings.TrimSpace(slug)) + "/members"
+	resp, err := c.do(ctx, http.MethodGet, rel, "", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, httpAPIError(resp.StatusCode, b)
+	}
+	var out teamMembersResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	return out.Members, nil
+}
+
+func (c *PlatformClient) CreateTeamUser(ctx context.Context, slug, email, password, role string) (TeamMembership, error) {
+	user, err := c.CreateUser(ctx, email, password, "")
+	if err != nil {
+		return TeamMembership{}, err
+	}
+	membership, err := c.UpsertTeamMember(ctx, slug, user.ID, role)
+	if err != nil {
+		return TeamMembership{}, err
+	}
+	membership.Email = user.Email
+	return membership, nil
+}
+
+func (c *PlatformClient) UpsertTeamMember(ctx context.Context, slug, userID, role string) (TeamMembership, error) {
+	payload := map[string]string{
+		"role": strings.TrimSpace(role),
+	}
+	js, err := json.Marshal(payload)
+	if err != nil {
+		return TeamMembership{}, err
+	}
+	rel := "/runtime/teams/" + url.PathEscape(strings.TrimSpace(slug)) + "/members/" + url.PathEscape(strings.TrimSpace(userID))
+	resp, err := c.do(ctx, http.MethodPut, rel, "", bytes.NewReader(js))
+	if err != nil {
+		return TeamMembership{}, err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return TeamMembership{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return TeamMembership{}, httpAPIError(resp.StatusCode, b)
+	}
+	var out teamMembershipResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return TeamMembership{}, err
+	}
+	return out.Membership, nil
+}
+
 func (c *PlatformClient) ListNamespaces(ctx context.Context) ([]namespaceListItem, error) {
 	resp, err := c.do(ctx, http.MethodGet, "/runtime/namespaces", "", nil)
 	if err != nil {
@@ -740,7 +1001,19 @@ func (c *PlatformClient) GetRuntimePolicy(ctx context.Context, namespace, server
 	return b, nil
 }
 
-// ResolvePlatformOrKube returns a platform API client when useKube is false and auth resolves; otherwise useKubectl is true.
+// PlatformAuthRequiredMessage tells users how to use the platform-backed CLI path.
+const PlatformAuthRequiredMessage = "platform API credentials are required; run `mcp-runtime auth login --api-url <platform-url>` for normal platform access. `--use-kube` is direct Kubernetes mode for admin/dev/test environments with admin/operator Kubernetes access only"
+
+// AuthRequiredError wraps platform credential errors with user-facing mode guidance.
+func AuthRequiredError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", PlatformAuthRequiredMessage, err)
+}
+
+// ResolvePlatformOrKube returns direct Kubernetes mode only when useKube is explicit.
+// Otherwise it requires platform API credentials and does not fall back to kubeconfig.
 func ResolvePlatformOrKube(useKube bool) (*PlatformClient, bool, error) {
 	if useKube {
 		return nil, true, nil
@@ -749,8 +1022,5 @@ func ResolvePlatformOrKube(useKube bool) (*PlatformClient, bool, error) {
 	if e == nil {
 		return cl, false, nil
 	}
-	if errors.Is(e, authfile.ErrNotFound) {
-		return nil, true, nil
-	}
-	return nil, false, e
+	return nil, false, AuthRequiredError(e)
 }

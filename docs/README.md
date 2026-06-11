@@ -1,5 +1,7 @@
 # MCP Runtime
 
+**Deploy, broker, and govern MCP servers on Kubernetes. Per-call policy enforcement, multi-team isolation, full audit trail. No YAML.**
+
 MCP Runtime is an open-source, Kubernetes-native control plane for deploying, governing, and brokering MCP servers. It packages server deployment, registry workflows, gateway routing, access policy, audit evidence, and observability into one operating surface for platform, security, and compliance teams.
 
 Unlike public MCP directories or client-specific catalogs, MCP Runtime is not
@@ -19,29 +21,52 @@ human workflows.
   <p class="docs-lead">Build and publish MCP server images, reconcile them with Kubernetes CRDs, expose them through governed gateway routes, and keep policy decisions, consented sessions, audit trails, and telemetry attached to every agent call.</p>
 
   <div class="docs-actions">
-    <a class="docs-button docs-button-primary" href="getting-started/">Get started</a>
-    <a class="docs-button" href="contributor/">Contribute</a>
+    <a class="docs-button docs-button-primary" href="quickstart/">Try in 10 min</a>
+    <a class="docs-button" href="concepts/">Concepts</a>
     <a class="docs-button" href="architecture/">Architecture</a>
+    <a class="docs-button" href="getting-started/">Self-host</a>
     <a class="docs-button" href="api/">API reference</a>
   </div>
   </div>
-
-  <div class="docs-snapshot">
-  <strong>Core surfaces</strong>
-
-  <ul>
-    <li>Operator and <code>MCPServer</code>, <code>MCPAccessGrant</code>, and <code>MCPAgentSession</code> CRDs</li>
-    <li>Registry-backed image build, push, and deploy flow</li>
-    <li>Sentinel gateway policy, grants, consented sessions, audit, and analytics</li>
-    <li>Governance controls for tool access, trust levels, session revocation, and policy versioning</li>
-    <li>Optional HTTP and stdio agent adapters for governed framework integrations</li>
-    <li>Compliance-oriented event records for who called what, when, against which server, and whether it was allowed or denied</li>
-    <li>Ingress routing for path-based MCP endpoints</li>
-    <li>CLI for setup, status, registry, access, Sentinel, and servers</li>
-  </ul>
-  </div>
 </section>
 </div>
+
+## Deploy a governed MCP server in 5 commands
+
+```bash
+mcp-runtime auth login --api-url https://platform.mcpruntime.org
+mcp-runtime server init my-server --from-server http://localhost:8088
+mcp-runtime server build image my-server --tag v1
+# ^ prints the exact image ref, e.g. registry.mcpruntime.org/myteam/my-server:v1
+mcp-runtime registry push --image registry.mcpruntime.org/myteam/my-server:v1 --scope tenant
+mcp-runtime server deploy my-server --scope tenant --metadata-dir .mcp
+```
+
+The gateway enforces grants and sessions on every tool call. No Kubernetes manifests. No ingress config.
+Point any MCP client at the adapter proxy — governance headers injected transparently.
+
+Once your server is deployed: [configure the adapter](agent-adapters.md) → connect Claude Desktop, Cursor, or any MCP-compatible IDE → start using your server. Policy, grants, audit, and observability run in the background automatically.
+
+---
+
+## Who is this for?
+
+| You are | MCP Runtime gives you |
+|---|---|
+| **Platform engineer** | Kubernetes operator + registry + ingress wiring without writing a single manifest |
+| **Security team** | Per-tool audit trail, trust levels, session revocation, deny rules, compliance evidence |
+| **Team lead** | Isolated namespace per team, grants scoped to teams, cross-team access without sharing credentials |
+| **Developer** | One CLI to deploy, one adapter to connect — no Kubernetes knowledge needed |
+
+---
+
+## Why I built this
+
+I got introduced to MCP while building a Superset MCP server at work. While implementing it I started reading the spec, which led me to a similar platform-level project I was building internally — it never got approved. Along the way I noticed a real infrastructure problem: there is no good way for small teams to deploy and govern MCP servers without either buying an expensive gateway or wiring everything up manually. Everyone ends up running redundant copies of the same server — payments team has one, infra team has one, data team has one. Wasteful and impossible to govern. I thought everyone should have this, so here I am building it in the open.
+
+I have been reading the MCP SEPs for gateway and identity management patterns. There are active proposals for exactly these problems. The gateway policy enforcement is a work in progress — I am following the spec and iterating. MCP still has a long way to go here and so do I.
+
+---
 
 ## What MCP Runtime installs
 
@@ -65,10 +90,13 @@ company environment.
 | Popularity or metadata signals | Trust, grants, sessions, policy decisions, audit, and compliance evidence |
 | Hosted directory or client-specific UX | Self-hosted, vendor-neutral Kubernetes control plane |
 
-As of April 2026, we have not found another open-source MCP product that
-combines a deployable Kubernetes operator, registry workflow, brokered request
-path, access/session model, audit pipeline, and operational control surface in
-one system.
+Several open-source MCP projects now overlap with parts of that surface:
+gateway/proxy control planes, Kubernetes-aware deployment APIs, registries,
+catalog UIs, auth, audit, and agent governance. MCP Runtime's narrower
+distinction is that Kubernetes desired state is the product boundary:
+`MCPServer`, `MCPAccessGrant`, and `MCPAgentSession` are CRDs, the operator
+reconciles workloads and policy materialization, and the Sentinel stack records
+gateway decisions, usage, and operational state for the running platform.
 
 ## Governance, audit, and compliance
 
@@ -93,99 +121,105 @@ resources for the selected environment.
 
 For provider-specific prerequisites such as container runtime registry trust,
 DNS, ingress, TLS, and k3s configuration, start with
-[Cluster readiness](cluster-readiness.md).
+[Deployment Targets](deployment-targets.md) to choose the right install shape,
+then [Cluster readiness](cluster-readiness.md) for distribution-specific
+preparation.
 
-## Choose a path
+## Where to go next
 
-<div class="docs-grid docs-grid-3">
+<div class="docs-grid docs-grid-2">
 <a class="docs-card" href="getting-started/">
-  <span class="docs-card-kicker">Start</span>
-  <strong>Install the platform</strong>
-  <span>Build the CLI, run preflight checks, install the stack, and deploy the first server.</span>
+  <span class="docs-card-kicker">Start here</span>
+  <strong>Get started</strong>
+  <span>Build the CLI, install the stack, deploy your first server, and observe live traffic.</span>
 </a>
 
 <a class="docs-card" href="architecture/">
   <span class="docs-card-kicker">Understand</span>
-  <strong>Read the architecture</strong>
-  <span>Trace how the control plane, registry, broker, operator, and Sentinel services fit together.</span>
+  <strong>Architecture</strong>
+  <span>How the control plane, registry, broker, operator, and Sentinel services fit together.</span>
 </a>
+</div>
 
-<a class="docs-card" href="cluster-readiness/">
-  <span class="docs-card-kicker">Prepare</span>
-  <strong>Check your cluster</strong>
-  <span>Review prerequisites for k3s, kind, minikube, Docker Desktop Kubernetes, kubeadm, and EKS.</span>
-</a>
+**Developer guide** — publish and govern MCP servers
 
-<a class="docs-card" href="contributor/">
-  <span class="docs-card-kicker">Contribute</span>
-  <strong>Use the contributor guide</strong>
-  <span>Set up local Kind, iterate on services, verify tenant visibility, and debug the platform.</span>
-</a>
-
+<div class="docs-grid docs-grid-3">
 <a class="docs-card" href="publish-mcp-server/">
-  <span class="docs-card-kicker">Ship</span>
+  <span class="docs-card-kicker">Build</span>
   <strong>Publish an MCP server</strong>
-  <span>Write a manifest or `.mcp` metadata, push an image, deploy it, and verify what the platform creates.</span>
+  <span>Write metadata, build and push an image, deploy it, and verify what the platform creates.</span>
 </a>
 
 <a class="docs-card" href="agent-adapters/">
   <span class="docs-card-kicker">Connect</span>
-  <strong>Wire agent frameworks</strong>
-  <span>Use HTTP and stdio adapters to present issued identity/session values without moving enforcement out of the gateway.</span>
+  <strong>Agent adapters</strong>
+  <span>HTTP and stdio adapters that inject issued identity and session headers into agent requests.</span>
+</a>
+
+<a class="docs-card" href="multi-team/">
+  <span class="docs-card-kicker">Govern</span>
+  <strong>Multi-team isolation</strong>
+  <span>Namespace-per-team isolation, RBAC, and cross-team server access.</span>
 </a>
 </div>
 
-## Operate MCP Runtime
+**Operator guide** — deploy and operate the platform
 
-<div class="docs-grid docs-grid-2">
+<div class="docs-grid docs-grid-3">
+<a class="docs-card" href="deployment-targets/">
+  <span class="docs-card-kicker">Plan</span>
+  <strong>Deployment targets</strong>
+  <span>Choose the right install shape for k3s, EKS, GKE, AKS, and other distributions.</span>
+</a>
+
 <a class="docs-card" href="runtime/">
-  <span class="docs-card-kicker">Runtime</span>
-  <strong>Control plane</strong>
+  <span class="docs-card-kicker">Operate</span>
+  <strong>Runtime</strong>
   <span>CRDs, reconciliation outputs, image resolution, ingress wiring, and rollout flow.</span>
 </a>
 
 <a class="docs-card" href="sentinel/">
-  <span class="docs-card-kicker">Governance</span>
-  <strong>Sentinel request path</strong>
-  <span>Gateway policy, grant/session evaluation, analytics, audit events, and dashboard services.</span>
-</a>
-
-<a class="docs-card" href="multi-team/">
-  <span class="docs-card-kicker">Tenancy</span>
-  <strong>Multi-team isolation</strong>
-  <span>Use namespaces, RBAC, and naming conventions for team boundaries without adding team fields to runtime CRDs.</span>
-</a>
-
-<a class="docs-card" href="cli/">
-  <span class="docs-card-kicker">CLI</span>
-  <strong>Command reference</strong>
-  <span>Setup, status, registry, server, access, pipeline, and Sentinel commands.</span>
-</a>
-
-<a class="docs-card" href="api/">
-  <span class="docs-card-kicker">Reference</span>
-  <strong>API and CRDs</strong>
-  <span><code>MCPServer</code>, access grants, sessions, gateway headers, and HTTP APIs.</span>
-</a>
-
-<a class="docs-card" href="internals/">
-  <span class="docs-card-kicker">Codebase</span>
-  <strong>Read the internals</strong>
-  <span>Use the internal docs for codebase structure, package tours, and implementation details.</span>
+  <span class="docs-card-kicker">Observe</span>
+  <strong>Sentinel</strong>
+  <span>Gateway policy evaluation, analytics, audit events, and observability services.</span>
 </a>
 </div>
 
-## Common workflows
+**Reference**
 
-| Workflow | Start here |
-|---|---|
-| Evaluate MCP Runtime for a private MCP platform | [Getting started](getting-started.md), then [Architecture](architecture.md) |
-| Run MCP Runtime on a real cluster | [Cluster readiness](cluster-readiness.md), then [Runtime](runtime.md) |
-| Host multiple teams on one cluster | [Multi-team isolation](multi-team.md), then [CLI](cli.md) |
-| Govern tools and sessions | [Sentinel](sentinel.md), then [API reference](api.md) |
-| Integrate from automation | [CLI](cli.md), then [API reference](api.md) |
-| Work on the codebase | [Contributor guide](contributor/README.md), then [Internals](internals/README.md) |
+<div class="docs-grid docs-grid-2">
+<a class="docs-card" href="cli/">
+  <span class="docs-card-kicker">CLI</span>
+  <strong>Command reference</strong>
+  <span>Every command with flags, examples, and a full end-to-end walkthrough.</span>
+</a>
+
+<a class="docs-card" href="api/">
+  <span class="docs-card-kicker">API</span>
+  <strong>API and CRDs</strong>
+  <span>MCPServer, MCPAccessGrant, MCPAgentSession fields and HTTP endpoints.</span>
+</a>
+</div>
+
+## Which setup should I use?
+
+| Setup | Use it when | Time to first server |
+|---|---|---|
+| **Live platform** (`platform.mcpruntime.org`) | Evaluating, no infrastructure, just want to try it | 10 min |
+| **Local Kind cluster** (`--test-mode`) | Contributing to the repo, CI, quick local demo | 30 min |
+| **k3s on-prem** | Production on your own hardware | 2–4 hours |
+| **EKS / GKE / AKS** | Production in cloud | 1–2 hours |
+
+---
 
 ## Project status
 
-MCP Runtime is alpha. The architecture is stable enough to evaluate as governed MCP infrastructure, but API and UX details are still evolving. Treat the `v1alpha1` types as the source of truth.
+MCP Runtime is **alpha**. The architecture is stable enough to evaluate as governed MCP infrastructure, but API and UX details are still evolving. Treat the `v1alpha1` types as the source of truth. A security audit is planned but has not been completed — do not use this in production without your own review.
+
+---
+
+## Community
+
+- [GitHub Issues](https://github.com/Agent-Hellboy/mcp-runtime/issues) — bug reports and feature requests
+- [GitHub Discussions](https://github.com/Agent-Hellboy/mcp-runtime/discussions) — questions, ideas, and general discussion
+- [Releases](https://github.com/Agent-Hellboy/mcp-runtime/releases) — changelog and binary downloads

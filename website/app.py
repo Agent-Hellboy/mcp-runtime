@@ -1,8 +1,7 @@
 """Minimal Flask app for the MCP Runtime landing page.
 
 Documentation lives at docs.mcpruntime.org (deployed separately from /docs in
-the repo). This site is intentionally a single page with links out to docs and
-GitHub.
+the repo). Articles live at articles.mcpruntime.org (deployed separately).
 """
 
 import os
@@ -22,6 +21,7 @@ def _canonical_site_base() -> str:
 
 DOCS_URL = (os.environ.get("MCP_DOCS_URL") or "https://docs.mcpruntime.org/").rstrip("/") + "/"
 PLATFORM_URL = (os.environ.get("MCP_PLATFORM_URL") or "https://platform.mcpruntime.org/").rstrip("/") + "/"
+ARTICLES_URL = (os.environ.get("MCP_ARTICLES_URL") or "https://articles.mcpruntime.org/").rstrip("/") + "/"
 GITHUB_URL = "https://github.com/Agent-Hellboy/mcp-runtime"
 
 
@@ -37,6 +37,7 @@ def _inject_globals():
         "canonical_og_url": canonical_og_url,
         "docs_url": DOCS_URL,
         "platform_url": PLATFORM_URL,
+        "articles_url": ARTICLES_URL,
         "github_url": GITHUB_URL,
     }
 

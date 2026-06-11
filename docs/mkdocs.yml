@@ -2,6 +2,7 @@ site_name: MCP Runtime Docs
 site_url: https://docs.mcpruntime.org/
 repo_url: https://github.com/Agent-Hellboy/mcp-runtime
 repo_name: Agent-Hellboy/mcp-runtime
+edit_uri: edit/main/docs/
 docs_dir: .
 site_dir: ../site
 exclude_docs: |
@@ -37,7 +38,7 @@ markdown_extensions:
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
-          class: mermaid
+          class: mermaid-source
           format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.details
   - pymdownx.tabbed:
@@ -46,31 +47,47 @@ markdown_extensions:
   - md_in_html
 
 extra_javascript:
-  - js/mermaid-init.js
+  - https://unpkg.com/mermaid@10.9.3/dist/mermaid.min.js
+  - js/mermaid-init.js?v=20260526-4
 
 extra_css:
   - stylesheets/infra.css
 nav:
   - Home: README.md
+  - Quickstart: quickstart.md
+  - Concepts: concepts.md
+  - Architecture: architecture.md
   - Getting Started: getting-started.md
+  - Developer Guide:
+      - Publish an MCP Server: publish-mcp-server.md
+      - Agent Adapters: agent-adapters.md
+      - Multi-Team Isolation: multi-team.md
+  - Operator Guide:
+      - Deployment Targets: deployment-targets.md
+      - Cluster Readiness: cluster-readiness.md
+      - k3s On-Prem Cluster: k3s-on-prem-cluster.md
+      - k3s Deployment Runbook: k3s-deployment-runbook.md
+      - Runtime: runtime.md
+      - Sentinel: sentinel.md
+      - Troubleshooting: troubleshooting.md
+  - Reference:
+      - CLI: cli.md
+      - API: api.md
+  - Learn:
+      - Overview: learn/README.md
+      - "Module 1: Core Concepts": learn/module-1-concepts.md
+      - "Module 2: Your First Server": learn/module-2-first-server.md
+      - "Module 3: Multi-Team Setup": learn/module-3-multi-team.md
   - Contributor Guide:
       - Overview: contributor/README.md
       - Local Kind and Test Mode: contributor/local-kind.md
       - Service Iteration: contributor/service-iteration.md
       - Runtime MCP Testing: contributor/runtime-mcp-testing.md
       - Troubleshooting: contributor/troubleshooting.md
-  - Publish an MCP Server: publish-mcp-server.md
-  - Agent Adapters: agent-adapters.md
-  - Architecture: architecture.md
-  - Runtime: runtime.md
-  - Multi-Team Isolation: multi-team.md
-  - CLI: cli.md
-  - Sentinel: sentinel.md
-  - API: api.md
-  - Cluster Readiness: cluster-readiness.md
   - Internals:
       - Overview: internals/README.md
       - API Types: internals/api-types.md
+      - Request Flows: internals/request-flows.md
       - Go Package Reference: internals/go-package-reference.md
       - CLI Internals: internals/internal-cli.md
       - Operator Internals: internals/cmd-operator.md

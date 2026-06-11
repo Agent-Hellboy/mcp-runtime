@@ -11,6 +11,9 @@ import (
 
 func TestGenerateCRD(t *testing.T) {
 	t.Run("generates valid CRD YAML", func(t *testing.T) {
+		clearRegistryImageEnv(t)
+		// Prevent registry host rewriting so we can test CRD field mapping in isolation.
+		t.Setenv(envMCPRegistryPullHost, DefaultRegistryHost)
 		tmpDir := t.TempDir()
 		outputPath := filepath.Join(tmpDir, "test-server.yaml")
 
@@ -26,6 +29,7 @@ func TestGenerateCRD(t *testing.T) {
 			Port:             9000,
 			Replicas:         &replicas,
 			Namespace:        "custom-ns",
+			Scope:            PublishScopeOrg,
 			TeamID:           "team-custom",
 		}
 
@@ -46,6 +50,7 @@ func TestGenerateCRD(t *testing.T) {
 		assertContains(t, content, "kind: MCPServer")
 		assertContains(t, content, "name: test-server")
 		assertContains(t, content, "namespace: custom-ns")
+		assertContains(t, content, "mcpruntime.org/scope: org")
 		assertContains(t, content, "teamID: team-custom")
 		assertContains(t, content, "description: Test server for CRD generation.")
 		assertContains(t, content, "image: my-image")
@@ -276,6 +281,9 @@ func TestGenerateCRD(t *testing.T) {
 
 func TestGenerateCRDsFromRegistry(t *testing.T) {
 	t.Run("generates CRDs for all servers", func(t *testing.T) {
+		clearRegistryImageEnv(t)
+		// Prevent registry host rewriting so we can test CRD field mapping in isolation.
+		t.Setenv(envMCPRegistryPullHost, DefaultRegistryHost)
 		tmpDir := t.TempDir()
 
 		replicas := int32(1)
@@ -444,5 +452,12 @@ func assertMapIntValue(t *testing.T, data map[string]any, key string, want int) 
 	}
 	if got != want {
 		t.Fatalf("%s = %d, want %d", key, got, want)
+	}
+}
+
+func clearRegistryImageEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{envMCPRegistryPullHost, envMCPRegistryEndpoint, envMCPRegistryHost, envMCPRegistryIngressHost, envMCPPlatformDomain} {
+		t.Setenv(k, "")
 	}
 }

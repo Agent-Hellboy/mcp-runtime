@@ -34,6 +34,7 @@ func audienceMatches(audClaim any, expected string) bool {
 	return false
 }
 
+// CreatePasswordUser creates a password-login platform account with the requested role.
 func (s *Store) CreatePasswordUser(ctx context.Context, email, password string, role string) (User, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	role = strings.TrimSpace(role)
@@ -71,20 +72,13 @@ func (s *Store) CreatePasswordUser(ctx context.Context, email, password string, 
 	if _, err = tx.ExecContext(ctx, `INSERT INTO auth_identities (user_id,provider,subject,password_hash) VALUES ($1,$2,$3,$4)`, userID, passwordProvider, email, string(hash)); err != nil {
 		return User{}, err
 	}
-	var seq int64
-	if err = tx.QueryRowContext(ctx, `SELECT nextval('platform_namespace_seq')`).Scan(&seq); err != nil {
-		return User{}, err
-	}
-	namespace := fmt.Sprintf("user-%d", seq)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO namespaces (id,user_id,namespace) VALUES ($1,$2,$3)`, uuid.NewString(), userID, namespace); err != nil {
-		return User{}, err
-	}
 	if err = tx.Commit(); err != nil {
 		return User{}, err
 	}
-	return User{ID: userID, Email: email, Role: role, Namespace: namespace}, nil
+	return User{ID: userID, Email: email, Role: role}, nil
 }
 
+// EnsurePasswordUser creates or updates a password-login account for a fixed role.
 func (s *Store) EnsurePasswordUser(ctx context.Context, email, password string, role string) (User, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	role = strings.TrimSpace(role)
@@ -107,9 +101,8 @@ func (s *Store) EnsurePasswordUser(ctx context.Context, email, password string, 
 
 	var u User
 	err = s.db.QueryRowContext(ctx, `
-SELECT u.id, u.email, u.role, COALESCE(n.namespace, '')
+SELECT u.id, u.email, u.role, ''
 FROM users u
-LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
 WHERE u.email = $1 AND u.deleted_at IS NULL`, email).
 		Scan(&u.ID, &u.Email, &u.Role, &u.Namespace)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -139,16 +132,6 @@ ON CONFLICT (provider, subject)
 DO UPDATE SET user_id = EXCLUDED.user_id, password_hash = EXCLUDED.password_hash`, u.ID, passwordProvider, email, string(hash)); err != nil {
 		return User{}, err
 	}
-	if u.Namespace == "" {
-		var seq int64
-		if err = tx.QueryRowContext(ctx, `SELECT nextval('platform_namespace_seq')`).Scan(&seq); err != nil {
-			return User{}, err
-		}
-		u.Namespace = fmt.Sprintf("user-%d", seq)
-		if _, err = tx.ExecContext(ctx, `INSERT INTO namespaces (id,user_id,namespace) VALUES ($1,$2,$3)`, uuid.NewString(), u.ID, u.Namespace); err != nil {
-			return User{}, err
-		}
-	}
 	if err = tx.Commit(); err != nil {
 		return User{}, err
 	}
@@ -156,15 +139,70 @@ DO UPDATE SET user_id = EXCLUDED.user_id, password_hash = EXCLUDED.password_hash
 	return u, nil
 }
 
+// EnsureTeamPasswordUser ensures a regular password-login account exists for
+// team membership flows. Existing platform roles are preserved so an admin is
+// not accidentally demoted when they are added to a team.
+func (s *Store) EnsureTeamPasswordUser(ctx context.Context, email, password string) (User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	password = strings.TrimSpace(password)
+	if !validEmail(email) {
+		return User{}, errors.New("valid email required")
+	}
+	if len(password) < 12 {
+		return User{}, errors.New("password must be at least 12 characters")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	if err != nil {
+		return User{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var u User
+	err = tx.QueryRowContext(ctx, `
+SELECT u.id, u.email, u.role, ''
+FROM users u
+WHERE u.email = $1 AND u.deleted_at IS NULL`, email).
+		Scan(&u.ID, &u.Email, &u.Role, &u.Namespace)
+	if errors.Is(err, sql.ErrNoRows) {
+		u = User{ID: uuid.NewString(), Email: email, Role: RoleUser}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO users (id,email,role) VALUES ($1,$2,$3)`, u.ID, u.Email, u.Role); err != nil {
+			return User{}, err
+		}
+	} else if err != nil {
+		return User{}, err
+	}
+
+	if _, err = tx.ExecContext(ctx, `
+INSERT INTO auth_identities (user_id, provider, subject, password_hash)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (provider, subject)
+DO UPDATE SET user_id = EXCLUDED.user_id, password_hash = EXCLUDED.password_hash`, u.ID, passwordProvider, email, string(hash)); err != nil {
+		return User{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return User{}, err
+	}
+	return u, nil
+}
+
+// AuthenticatePassword validates password-login credentials and returns the matching user.
 func (s *Store) AuthenticatePassword(ctx context.Context, email, password string) (User, bool, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	var u User
 	var hash string
 	err := s.db.QueryRowContext(ctx, `
-SELECT u.id, u.email, u.role, COALESCE(n.namespace, ''), ai.password_hash
+SELECT u.id, u.email, u.role, '', ai.password_hash
 FROM auth_identities ai
 JOIN users u ON u.id = ai.user_id AND u.deleted_at IS NULL
-LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
 WHERE ai.provider = $1 AND ai.subject = $2`, passwordProvider, email).
 		Scan(&u.ID, &u.Email, &u.Role, &u.Namespace, &hash)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -179,6 +217,7 @@ WHERE ai.provider = $1 AND ai.subject = $2`, passwordProvider, email).
 	return u, true, nil
 }
 
+// EnsureOIDCUser binds an OIDC subject to a platform account, creating it when needed.
 func (s *Store) EnsureOIDCUser(ctx context.Context, provider, subject, email, role string) (User, error) {
 	provider = strings.TrimSpace(provider)
 	subject = strings.TrimSpace(subject)
@@ -199,14 +238,13 @@ func (s *Store) EnsureOIDCUser(ctx context.Context, provider, subject, email, ro
 
 	var u User
 	err := s.db.QueryRowContext(ctx, `
-SELECT u.id, u.email, u.role, COALESCE(n.namespace, '')
+SELECT u.id, u.email, u.role, ''
 FROM auth_identities ai
 JOIN users u ON u.id = ai.user_id AND u.deleted_at IS NULL
-LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
 WHERE ai.provider = $1 AND ai.subject = $2`, provider, subject).
 		Scan(&u.ID, &u.Email, &u.Role, &u.Namespace)
 	if err == nil {
-		return s.ensureOIDCUserRoleAndNamespace(ctx, u, role)
+		return s.ensureOIDCUserRole(ctx, u, role)
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return User{}, err
@@ -217,9 +255,8 @@ WHERE ai.provider = $1 AND ai.subject = $2`, provider, subject).
 
 	userExists := true
 	err = s.db.QueryRowContext(ctx, `
-SELECT u.id, u.email, u.role, COALESCE(n.namespace, '')
+SELECT u.id, u.email, u.role, ''
 FROM users u
-LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
 WHERE u.email = $1 AND u.deleted_at IS NULL`, email).
 		Scan(&u.ID, &u.Email, &u.Role, &u.Namespace)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -256,24 +293,14 @@ ON CONFLICT (provider, subject)
 DO UPDATE SET user_id = EXCLUDED.user_id`, u.ID, provider, subject); err != nil {
 		return User{}, err
 	}
-	if u.Namespace == "" {
-		var seq int64
-		if err = tx.QueryRowContext(ctx, `SELECT nextval('platform_namespace_seq')`).Scan(&seq); err != nil {
-			return User{}, err
-		}
-		u.Namespace = fmt.Sprintf("user-%d", seq)
-		if _, err = tx.ExecContext(ctx, `INSERT INTO namespaces (id,user_id,namespace) VALUES ($1,$2,$3)`, uuid.NewString(), u.ID, u.Namespace); err != nil {
-			return User{}, err
-		}
-	}
 	if err = tx.Commit(); err != nil {
 		return User{}, err
 	}
 	return u, nil
 }
 
-func (s *Store) ensureOIDCUserRoleAndNamespace(ctx context.Context, u User, role string) (User, error) {
-	if role != RoleAdmin && u.Namespace != "" {
+func (s *Store) ensureOIDCUserRole(ctx context.Context, u User, role string) (User, error) {
+	if role != RoleAdmin {
 		return u, nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -291,28 +318,18 @@ func (s *Store) ensureOIDCUserRoleAndNamespace(ctx context.Context, u User, role
 		}
 		u.Role = RoleAdmin
 	}
-	if u.Namespace == "" {
-		var seq int64
-		if err = tx.QueryRowContext(ctx, `SELECT nextval('platform_namespace_seq')`).Scan(&seq); err != nil {
-			return User{}, err
-		}
-		u.Namespace = fmt.Sprintf("user-%d", seq)
-		if _, err = tx.ExecContext(ctx, `INSERT INTO namespaces (id,user_id,namespace) VALUES ($1,$2,$3)`, uuid.NewString(), u.ID, u.Namespace); err != nil {
-			return User{}, err
-		}
-	}
 	if err = tx.Commit(); err != nil {
 		return User{}, err
 	}
 	return u, nil
 }
 
+// GetUser returns a non-deleted user by id.
 func (s *Store) GetUser(ctx context.Context, userID string) (User, bool, error) {
 	var u User
 	err := s.db.QueryRowContext(ctx, `
-SELECT u.id, u.email, u.role, COALESCE(n.namespace, '')
+SELECT u.id, u.email, u.role, ''
 FROM users u
-LEFT JOIN namespaces n ON n.user_id = u.id AND n.deleted_at IS NULL
 WHERE u.id = $1 AND u.deleted_at IS NULL`, userID).
 		Scan(&u.ID, &u.Email, &u.Role, &u.Namespace)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -324,6 +341,7 @@ WHERE u.id = $1 AND u.deleted_at IS NULL`, userID).
 	return u, true, nil
 }
 
+// DeleteUser deletes a platform user by id.
 func (s *Store) DeleteUser(ctx context.Context, userID string) error {
 	result, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, strings.TrimSpace(userID))
 	if err != nil {
@@ -339,6 +357,7 @@ func (s *Store) DeleteUser(ctx context.Context, userID string) error {
 	return nil
 }
 
+// CreateAccessToken signs a short-lived platform JWT for a user.
 func (s *Store) CreateAccessToken(u User, ttl time.Duration) (string, error) {
 	now := time.Now().UTC()
 	claims := jwt.MapClaims{
@@ -354,6 +373,7 @@ func (s *Store) CreateAccessToken(u User, ttl time.Duration) (string, error) {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.jwtSecret)
 }
 
+// AuthenticateJWT validates a platform JWT and resolves it to the current principal.
 func (s *Store) AuthenticateJWT(token string) (Principal, bool) {
 	if s == nil || len(s.jwtSecret) == 0 {
 		return Principal{}, false
@@ -386,6 +406,7 @@ func (s *Store) AuthenticateJWT(token string) (Principal, bool) {
 	return p, true
 }
 
+// AuthenticateUserAPIKey validates a user API key and resolves its principal.
 func (s *Store) AuthenticateUserAPIKey(ctx context.Context, rawKey string) (Principal, bool, error) {
 	targetHash := hashAPIKey(rawKey)
 	var keyID, userID string
@@ -411,22 +432,14 @@ WHERE ak.key_hash = $1 AND ak.revoked = false`, targetHash).
 	return p, true, nil
 }
 
+// PrincipalForUserID returns the platform principal for a non-deleted user.
 func (s *Store) PrincipalForUserID(ctx context.Context, userID string) (Principal, error) {
 	var p Principal
 	err := s.db.QueryRowContext(ctx, `
-SELECT u.id, u.email, u.role, COALESCE(legacy.namespace, '')
+SELECT u.id, u.email, u.role
 FROM users u
-LEFT JOIN LATERAL (
-  SELECT n.namespace
-  FROM namespaces n
-  WHERE n.user_id = u.id
-    AND n.deleted_at IS NULL
-    AND COALESCE(n.scope, 'user') = 'user'
-  ORDER BY n.created_at ASC
-  LIMIT 1
-) legacy ON true
 WHERE u.id = $1 AND u.deleted_at IS NULL`, userID).
-		Scan(&p.Subject, &p.Email, &p.Role, &p.Namespace)
+		Scan(&p.Subject, &p.Email, &p.Role)
 	if err != nil {
 		return Principal{}, err
 	}
@@ -434,7 +447,6 @@ WHERE u.id = $1 AND u.deleted_at IS NULL`, userID).
 	if err != nil {
 		return Principal{}, err
 	}
-	legacyNamespace := p.Namespace
 	p.Teams = teams
 	for _, team := range teams {
 		if ns := strings.TrimSpace(team.Namespace); ns != "" {
@@ -442,18 +454,12 @@ WHERE u.id = $1 AND u.deleted_at IS NULL`, userID).
 			break
 		}
 	}
-	p.AllowedNamespaces = dedupeNamespaces(append(collectAllowedNamespaces(legacyNamespace, teams), SharedCatalogNamespace))
-	if strings.TrimSpace(p.Namespace) == "" {
-		p.Namespace = strings.TrimSpace(legacyNamespace)
-	}
+	p.AllowedNamespaces = dedupeNamespaces(append(collectAllowedNamespaces(teams), SharedCatalogNamespace))
 	return p, nil
 }
 
-func collectAllowedNamespaces(legacyNamespace string, teams []PrincipalTeam) []string {
-	namespaces := make([]string, 0, len(teams)+1)
-	if ns := strings.TrimSpace(legacyNamespace); ns != "" {
-		namespaces = append(namespaces, ns)
-	}
+func collectAllowedNamespaces(teams []PrincipalTeam) []string {
+	namespaces := make([]string, 0, len(teams))
 	for _, team := range teams {
 		if ns := strings.TrimSpace(team.Namespace); ns != "" {
 			namespaces = append(namespaces, ns)

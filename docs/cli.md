@@ -1,378 +1,605 @@
-# CLI
+# CLI reference
 
-The `mcp-runtime` CLI is the operator-facing front door. It bootstraps clusters, manages registries, applies `MCPServer` manifests, operates access grants and sessions, and inspects the runtime + sentinel stack.
+This guide walks through every `mcp-runtime` command using the real example servers
+in the repository so you can follow along, test the platform, and build a demo from
+a single working script.
 
-```mermaid
-flowchart LR
-    CLI[mcp-runtime] --> Boot[bootstrap]
-    CLI --> Setup[setup]
-    CLI --> Cluster[cluster]
-    CLI --> Reg[registry]
-    CLI --> Server[server]
-    CLI --> Access[access]
-    CLI --> Sent[sentinel]
-    CLI --> Pipe[pipeline]
-    CLI --> Status[status]
-```
+## Quick reference
 
-## Fast path
+| Goal | Commands |
+|---|---|
+| Log in | `auth login` → `auth use <profile>` |
+| Deploy a server | `server init` → `server validate` → `server build image` → `registry push` → `server deploy` |
+| Grant an agent access | `access grant init` → `server validate --grant-file` → `access grant apply` |
+| Create a session manually | `access session init` → `access session apply` |
+| Connect an MCP client | `adapter proxy --server ... --agent ... --auto-refresh` |
+| Check platform health | `status` |
+| Inspect a running server | `server list` · `server get` · `server policy inspect` |
+| View analytics logs | `sentinel status` · `sentinel logs api` |
+| Diagnose cluster issues | `cluster doctor` |
+
+**Example servers in this repo:**
+
+| Server | Language | Run command | Tools |
+|---|---|---|---|
+| `workspace-assistant-mcp` | Go | `go run .` | `echo`, `add`, `upper`, `lower`, `create_task`, `draft_release_note`, `slugify` |
+| `data-utility-mcp` | Python | `python app.py` | `echo`, `add`, `multiply`, `upper`, `lower`, `ping`, `reverse` |
+| `text-analysis-mcp` | Rust | `cargo run` | `repeat`, `word_count`, `extract_keywords` |
+
+All three listen on `http://localhost:8088/mcp` by default.
+`--from-server http://localhost:8088` appends `/mcp` automatically.
+
+---
+
+## Access model
+
+Three roles control what each command can do:
+
+| Role | Who | How to authenticate |
+|---|---|---|
+| User | Team member deploying servers | `mcp-runtime auth login` |
+| Admin | Platform admin or kube operator | Platform API admin role, or `--use-kube` with cluster-admin RBAC |
+| Operator | Cluster operator | `KUBECONFIG` with cluster-admin RBAC — no platform login needed |
+
+Commands are labelled **[User]**, **[Admin]**, or **[Operator]** throughout this page.
+
+---
+
+## Profiles
+
+Credentials are saved in `~/.mcpruntime/config.json`. Each `auth login` creates a
+named profile. Switch with `auth use` or override for a single command with
+`MCP_PLATFORM_API_PROFILE`.
 
 ```bash
-make deps
-make build
+# Save as the default profile
+mcp-runtime auth login --api-url https://platform.example.com
 
-./bin/mcp-runtime setup
-./bin/mcp-runtime status
+# Save under a named profile
+mcp-runtime auth login \
+  --api-url https://platform.example.com \
+  --email alice@acme.com --password '...' \
+  --profile alice
 
-./bin/mcp-runtime auth login --api-url https://platform.example.com --token-stdin < token.txt
-./bin/mcp-runtime auth status
+# Switch the active profile
+mcp-runtime auth use alice
 
-./bin/mcp-runtime registry push --image <image-ref-you-built-locally>
-./bin/mcp-runtime pipeline generate --dir .mcp --output manifests/
-./bin/mcp-runtime pipeline deploy --dir manifests/
+# Use a different profile for one command without switching
+MCP_PLATFORM_API_PROFILE=admin mcp-runtime team list
+
+# Check which profile is active
+mcp-runtime auth status
+
+# Remove saved credentials
+mcp-runtime auth logout
 ```
 
-For a new workstation, run `make deps-install` first where supported, then `STRICT_DEPS_CHECK=1 make deps-check`. Required host tools are Go `1.25+`, Make, Docker with a reachable daemon, `kubectl` configured for the cluster, plus `curl`, `jq`, and `python3` for documented dev flows. `kind` is required only for local Kind clusters.
-
-Use the built-in help for the exact description, flags, and defaults of any command:
-
-```bash
-mcp-runtime --help
-mcp-runtime <group> --help
-mcp-runtime <group> <subcommand> --help
-```
+---
 
 ## Command map
 
-| Group | What it covers | Important subcommands |
-|---|---|---|
-| `bootstrap` | Preflight checks for cluster prerequisites (DNS, default StorageClass, ingress class, MetalLB). With `--apply` on k3s only, install bundled CoreDNS + local-path manifests. | `bootstrap`, `--apply`, `--provider auto\|k3s\|rke2\|kubeadm\|generic` |
-| `setup` | Install the platform stack, wire registry and ingress, deploy the operator, optionally include sentinel. | `setup`, `--with-tls`, `--without-sentinel` |
-| `auth` | Save and inspect platform API credentials for non-kubeconfig platform flows. | `login`, `logout`, `status` |
-| `cluster` | Initialize clusters, inspect health, configure kubeconfig and ingress, provision clusters, manage cert-manager. | `init`, `status`, `config`, `provision`, `cert status\|apply\|wait`, `doctor` |
-| `registry` | Inspect the internal registry, configure an external one, push images. | `status`, `info`, `provision`, `push` |
-| `server` | Manage `MCPServer` resources and operator-facing actions. | `list`, `get`, `create`, `apply`, `deploy`, `export`, `patch`, `delete`, `logs`, `status`, `policy inspect`, `build image` |
-| `access` | Manage `MCPAccessGrant` and `MCPAgentSession` resources that feed the gateway policy layer. | `grant list/get/apply/delete/disable/enable`, `session list/get/apply/delete/revoke/unrevoke` |
-| `team` | Manage internal platform teams and Kubernetes team namespaces. | `list`, `create`, `init` |
-| `sentinel` | Inspect and operate the bundled analytics, gateway, and observability stack. | `status`, `events`, `logs`, `port-forward`, `restart` |
-| `pipeline` | Generate `MCPServer` manifests from metadata and deploy them. | `generate`, `deploy` |
-| `status` | Aggregated platform health (cluster, registry, operator, servers, sentinel). | `status` |
-| `completion` | Generate shell completion (bash, zsh, fish). | `completion bash\|zsh\|fish` |
+| Command | Role | Status | What it does | Guide |
+|---|---|---|---|---|
+| `auth` | User | Stable | Save and switch platform credentials | [auth](#auth) |
+| `status` | User | Stable | Platform health at a glance | [status](#status) |
+| `server` | User / Admin | Stable | Scaffold, validate, build, push, deploy, manage | [Publish a server](publish-mcp-server.md) |
+| `registry` | User / Operator | Stable | Push images; inspect the registry | [registry](#registry) |
+| `access` | User / Admin | Stable | Grants and sessions for gateway policy | [API reference](api.md) |
+| `adapter` | User | Stable | HTTP proxy and stdio shim for agents | [Agent adapters](agent-adapters.md) |
+| `team` | Admin | Stable | Create teams and add password users | [Multi-team](multi-team.md) |
+| `sentinel` | Operator | Stable | Inspect and operate the analytics stack | [Sentinel](sentinel.md) |
+| `bootstrap` | Operator | Stable | Pre-install cluster checks | [Cluster readiness](cluster-readiness.md) |
+| `setup` | Operator | Stable | Install the full platform stack | [setup](#setup) |
+| `cluster` | Operator | Stable | Initialize clusters, manage cert-manager | [Deployment targets](deployment-targets.md) |
+| `server validate` | User | Alpha | Validate metadata and grant/session YAML | [server](#server-validate) |
+| `server init --from-server` | User | Alpha | Auto-discover tools from a running server | [server init](#server-init) |
 
-The root command exposes `--debug` and `--version`. Subcommands inherit `--debug`; use `mcp-runtime --version` at the top level.
+**Status labels:** `Stable` — works end-to-end, tested in production use. `Alpha` — functional but API or UX may change.
+
+---
+
+## auth
+
+**[User]**
+
+```bash
+# Interactive
+mcp-runtime auth login --api-url https://platform.example.com
+
+# Non-interactive (CI)
+mcp-runtime auth login \
+  --api-url https://platform.example.com \
+  --token-stdin < token.txt
+
+# Email + password
+mcp-runtime auth login \
+  --api-url https://platform.example.com \
+  --email alice@acme.com --password '...' \
+  --profile alice
+
+mcp-runtime auth use alice
+mcp-runtime auth status
+mcp-runtime auth logout
+```
+
+---
+
+## status
+
+**[User]** — kubeconfig optional for sentinel detail
+
+```bash
+mcp-runtime status                                         # registry, operator, platform API
+mcp-runtime registry status                               # registry pod + endpoint
+KUBECONFIG=~/.kube/config mcp-runtime sentinel status     # sentinel stack
+```
+
+---
+
+## server
+
+**[User]** by default — **[Admin]** with `--use-kube`
+
+> Full guide: [Publish an MCP Server](publish-mcp-server.md)
+
+The developer flow is five steps: **init → validate → build → push → deploy**.
+
+### server init
+
+`server init` creates `.mcp/servers.yaml` with tool names, trust levels, side effects,
+and policy. Tool names must exactly match what your server implements.
+
+Use `--from-server` to discover them automatically from a running local instance:
+
+```bash
+# workspace-assistant-mcp (Go)
+cd examples/workspace-assistant-mcp
+go run . &
+SERVER_PID=$!
+mcp-runtime server init workspace-demo --from-server http://localhost:8088
+kill $SERVER_PID
+# Discovered: aaa-ping, add, create_task, draft_release_note, echo, lower, slugify, upper
+```
+
+```bash
+# data-utility-mcp (Python)
+cd examples/data-utility-mcp
+pip install "mcp[cli]"
+python app.py &
+SERVER_PID=$!
+mcp-runtime server init data-util --from-server http://localhost:8088
+kill $SERVER_PID
+# Discovered: add, echo, lower, multiply, ping, reverse, upper
+```
+
+```bash
+# text-analysis-mcp (Rust)
+cd examples/text-analysis-mcp
+cargo run &
+SERVER_PID=$!
+mcp-runtime server init text-analysis --from-server http://localhost:8088
+kill $SERVER_PID
+# Discovered: extract_keywords, repeat, word_count
+```
+
+Manual alternative when you already know the tool names:
+
+```bash
+# --tool name                         adds an allow rule with read side-effect and low trust
+# --tool-spec name:trust:side-effect  full control  (trust: low|medium|high,
+#                                                    side-effect: read|write|destructive)
+mcp-runtime server init workspace-demo \
+  --tool echo \
+  --tool add \
+  --tool upper \
+  --tool-spec create_task:medium:write \
+  --tool-spec draft_release_note:medium:write
+```
+
+### server validate
+
+Catches tool name mismatches before a build. A mismatch causes `tool_side_effect_unknown`
+errors at the gateway at runtime.
+
+```bash
+mcp-runtime server validate --metadata-dir .mcp
+
+# Validate a grant alongside the metadata
+mcp-runtime server validate --metadata-dir .mcp --grant-file grant.yaml
+
+# Cross-check against the locally running server
+mcp-runtime server validate --metadata-dir .mcp --from-server http://localhost:8088
+```
+
+### server build image
+
+Run from the directory where the Dockerfile lives:
+
+```bash
+cd examples/workspace-assistant-mcp
+mcp-runtime server build image workspace-demo --tag v1
+```
+
+The command prints the exact image ref to use in the push step:
+
+```
+registry.example.com/acme/workspace-demo:v1
+```
+
+Use `--platform linux/amd64` when building on Apple Silicon for k3s or EKS nodes.
+
+### registry push
+
+Use the exact ref printed by `server build image`:
+
+```bash
+mcp-runtime registry push \
+  --image registry.example.com/acme/workspace-demo:v1 \
+  --scope tenant
+
+# Other scopes
+mcp-runtime registry push --image ... --scope org      # org-wide catalog
+mcp-runtime registry push --image ... --scope public   # anonymous catalog
+```
+
+### server deploy
+
+```bash
+mcp-runtime server deploy workspace-demo \
+  --scope tenant \
+  --metadata-dir .mcp
+
+# Re-deploy after a code or image change
+mcp-runtime server deploy workspace-demo \
+  --scope tenant \
+  --metadata-dir .mcp \
+  --update
+```
+
+### Full example — workspace-assistant-mcp
+
+```bash
+cd examples/workspace-assistant-mcp
+
+go run . &
+SERVER_PID=$!
+mcp-runtime server init workspace-demo --from-server http://localhost:8088
+kill $SERVER_PID
+
+mcp-runtime server validate --metadata-dir .mcp
+
+mcp-runtime auth use alice
+mcp-runtime server build image workspace-demo --tag v1
+# prints: registry.example.com/acme/workspace-demo:v1
+
+mcp-runtime registry push \
+  --image registry.example.com/acme/workspace-demo:v1 \
+  --scope tenant
+
+mcp-runtime server deploy workspace-demo --scope tenant --metadata-dir .mcp
+
+mcp-runtime server list
+mcp-runtime server get workspace-demo --namespace mcp-team-acme
+mcp-runtime server policy inspect workspace-demo --namespace mcp-team-acme
+```
+
+### Inspect and manage
+
+```bash
+mcp-runtime server list
+mcp-runtime server get workspace-demo --namespace mcp-team-acme
+mcp-runtime server status --namespace mcp-team-acme
+mcp-runtime server policy inspect workspace-demo --namespace mcp-team-acme
+mcp-runtime server delete workspace-demo
+mcp-runtime server generate --metadata-dir .mcp --output manifests/
+```
+
+### Direct Kubernetes operations (--use-kube) [Admin]
+
+```bash
+mcp-runtime server create workspace-demo --image repo/workspace-demo --tag v1 \
+  --namespace mcp-team-acme --use-kube
+mcp-runtime server apply  --file server.yaml --use-kube
+mcp-runtime server export workspace-demo --namespace mcp-team-acme --use-kube
+mcp-runtime server patch  workspace-demo --namespace mcp-team-acme \
+  --patch '{"spec":{"imageTag":"v2"}}' --use-kube
+mcp-runtime server logs   workspace-demo --namespace mcp-team-acme --follow --use-kube
+```
+
+---
+
+## registry
+
+**[User]** for `push` — **[Operator]** for `status`, `info`, `provision`
+
+```bash
+# Inspect
+mcp-runtime registry status
+mcp-runtime registry info
+
+# Configure an external registry
+mcp-runtime registry provision --url registry.example.com
+
+# Push — always use the exact ref from server build image
+mcp-runtime registry push \
+  --image registry.example.com/acme/workspace-demo:v1 \
+  --scope tenant
+```
+
+---
+
+## access
+
+**[User]** for grants — **[Admin]** for session `apply`
+
+> Full reference: [API reference](api.md)
+
+Tool names in grants must exactly match `.mcp/servers.yaml`. Run
+`server validate --grant-file grant.yaml` before applying to catch mismatches
+that cause `tool_side_effect_unknown` at the gateway.
+
+### Grants
+
+```bash
+# Allow specific tools (read side-effect, low trust)
+mcp-runtime access grant init workspace-ops \
+  --server workspace-demo \
+  --namespace mcp-team-acme \
+  --agent-id cursor \
+  --tool echo \
+  --tool add \
+  --tool upper \
+  --output grant.yaml
+
+# Mixed allow/deny rules: --tool-rule name:allow|deny:low|medium|high
+mcp-runtime access grant init workspace-ops \
+  --server workspace-demo \
+  --namespace mcp-team-acme \
+  --agent-id cursor \
+  --tool-rule echo:allow:low \
+  --tool-rule add:allow:low \
+  --tool-rule create_task:deny:medium \
+  --output grant.yaml
+
+# Validate then apply
+mcp-runtime server validate --metadata-dir .mcp --grant-file grant.yaml
+mcp-runtime access grant apply --file grant.yaml
+
+# Manage
+mcp-runtime access grant list
+mcp-runtime access grant list    --namespace mcp-team-acme
+mcp-runtime access grant get     workspace-ops --namespace mcp-team-acme
+mcp-runtime access grant disable workspace-ops --namespace mcp-team-acme
+mcp-runtime access grant enable  workspace-ops --namespace mcp-team-acme
+mcp-runtime access grant delete  workspace-ops --namespace mcp-team-acme
+```
+
+### Sessions
+
+Agents normally get sessions automatically via `adapter --auto-refresh`. Use
+`session init` + `session apply` only for explicit manual sessions.
+
+```bash
+mcp-runtime access session init cursor-session \
+  --server workspace-demo \
+  --namespace mcp-team-acme \
+  --agent-id cursor \
+  --trust low \
+  --expires-in 4h \
+  --output session.yaml
+
+MCP_PLATFORM_API_PROFILE=admin \
+  mcp-runtime access session apply --file session.yaml
+
+mcp-runtime access session list
+mcp-runtime access session get      cursor-session --namespace mcp-team-acme
+mcp-runtime access session revoke   cursor-session --namespace mcp-team-acme
+mcp-runtime access session unrevoke cursor-session --namespace mcp-team-acme
+```
+
+### Cross-team access
+
+Team A can grant Team B's agents access to Team A's servers:
+
+```bash
+mcp-runtime access grant init workspace-to-globex \
+  --server workspace-demo \
+  --namespace mcp-team-acme \
+  --team-id <globex-team-uuid> \
+  --agent-id cursor \
+  --tool echo \
+  --tool add \
+  --output grant-cross.yaml
+mcp-runtime access grant apply --file grant-cross.yaml
+
+MCP_PLATFORM_API_PROFILE=admin \
+  mcp-runtime access session init globex-session \
+    --server workspace-demo \
+    --namespace mcp-team-acme \
+    --team-id <globex-team-uuid> \
+    --agent-id cursor \
+    --trust low \
+    --expires-in 4h \
+    --output session-cross.yaml
+MCP_PLATFORM_API_PROFILE=admin \
+  mcp-runtime access session apply --file session-cross.yaml
+```
+
+See [Multi-team isolation](multi-team.md).
+
+---
+
+## adapter
+
+**[User]**
+
+> Full guide: [Agent adapters](agent-adapters.md)
+
+The adapter injects platform session and governance headers before every request
+reaches the MCP server. When `--server` is set, the adapter creates the session
+automatically. `--agent` (session name) is required in that case. `--agent-id`
+sets the identity header forwarded to the server.
+
+```bash
+# HTTP proxy — MCP clients connect to http://127.0.0.1:8099
+mcp-runtime adapter proxy \
+  --runtime-url https://mcp.example.com/workspace-demo/mcp \
+  --server workspace-demo \
+  --agent cursor \
+  --agent-id cursor \
+  --auto-refresh \
+  --listen 127.0.0.1:8099
+
+# stdio shim — for Claude Desktop or local agent processes
+mcp-runtime adapter stdio \
+  --runtime-url https://mcp.example.com/workspace-demo/mcp \
+  --server workspace-demo \
+  --agent cursor \
+  --agent-id cursor \
+  --auto-refresh
+```
+
+Once the adapter is running, point any MCP client at `http://127.0.0.1:8099`.
+Session creation and governance headers are handled transparently.
+
+---
+
+## team
+
+**[Admin]** — all `team` commands require the platform API admin role.
+
+> Full guide: [Multi-team isolation](multi-team.md)
+
+```bash
+MCP_PLATFORM_API_PROFILE=admin mcp-runtime team list
+
+MCP_PLATFORM_API_PROFILE=admin mcp-runtime team create acme --name "Acme Corp"
+
+MCP_PLATFORM_API_PROFILE=admin mcp-runtime team user create acme \
+  --username alice@acme.com --password '...' --role owner
+
+MCP_PLATFORM_API_PROFILE=admin mcp-runtime team user list acme
+```
+
+Team users log in with:
+
+```bash
+mcp-runtime auth login \
+  --api-url https://platform.example.com \
+  --email alice@acme.com --password '...' \
+  --profile alice
+```
+
+Note: `team init` is deprecated. Use `team create`.
+
+---
+
+## sentinel
+
+**[Operator]** — requires `KUBECONFIG` with cluster-admin RBAC.
+
+> Full guide: [Sentinel](sentinel.md)
+
+```bash
+KUBECONFIG=~/.kube/config mcp-runtime sentinel status
+KUBECONFIG=~/.kube/config mcp-runtime sentinel events
+
+# Logs — supports --follow, --tail, --since, --previous
+KUBECONFIG=~/.kube/config mcp-runtime sentinel logs api --since 15m --follow
+KUBECONFIG=~/.kube/config mcp-runtime sentinel logs ingest --tail 200
+
+# Restart
+KUBECONFIG=~/.kube/config mcp-runtime sentinel restart gateway
+KUBECONFIG=~/.kube/config mcp-runtime sentinel restart --all
+
+# Port-forward a component locally
+KUBECONFIG=~/.kube/config mcp-runtime sentinel port-forward ui
+KUBECONFIG=~/.kube/config mcp-runtime sentinel port-forward grafana
+```
+
+Component names for `logs` and `restart`:
+`clickhouse`, `zookeeper`, `kafka`, `ingest`, `processor`, `api`, `ui`,
+`gateway`, `prometheus`, `grafana`, `otel-collector`, `tempo`, `loki`, `promtail`
+
+---
 
 ## bootstrap
 
-Validate kubectl connectivity, CoreDNS, default `StorageClass`, Traefik `IngressClass`, and MetalLB. Missing pieces are warnings — the command surfaces them so you can decide what to install.
+**[Operator]** — run before `setup` on a fresh cluster.
+
+> Full guide: [Cluster readiness](cluster-readiness.md)
 
 ```bash
 mcp-runtime bootstrap
 mcp-runtime bootstrap --provider k3s
-mcp-runtime bootstrap --apply --provider k3s   # Only k3s is automated
+mcp-runtime bootstrap --apply --provider k3s    # automated fix on k3s
 ```
 
-When to run it: on a fresh cluster before `setup`. Skip if your platform team already provides DNS, default storage, ingress, and load balancing.
+---
 
 ## setup
 
-The broad install path: runtime namespace, internal registry, operator, ingress wiring, bundled sentinel stack.
+**[Operator]** — runs pre-flight checks automatically before installing anything.
 
 ```bash
-mcp-runtime setup
-mcp-runtime setup --with-tls                   # cert-manager TLS for registry
-mcp-runtime setup --platform-mode public       # anonymous public preview catalog
-mcp-runtime setup --without-sentinel           # skip request-path stack
-mcp-runtime setup --test-mode                  # local Kind/dev build+push path
-mcp-runtime setup --parallel-builds            # build/publish setup images concurrently
+# Recommended: drive all flags from an env file
+mcp-runtime setup --env-file config/deployments/mcpruntime-org.env
+
+# Common explicit flags
+mcp-runtime setup \
+  --with-tls \
+  --tls-cluster-issuer letsencrypt-prod \
+  --registry-mode bundled-https \
+  --platform-mode tenant \
+  --ingress none
+
+mcp-runtime setup --with-tls --acme-email ops@example.com   # Let's Encrypt
+mcp-runtime setup --without-sentinel                         # skip analytics
+mcp-runtime setup --test-mode                                # local Kind dev
 ```
 
-Flags: `--registry-type`, `--registry-storage`, `--platform-mode`, `--ingress`, `--ingress-manifest`, `--force-ingress-install`, `--with-tls`, `--test-mode`, `--parallel-builds`, `--without-sentinel`, plus operator overrides `--operator-leader-elect`, `--operator-metrics-addr`, `--operator-probe-addr`.
+Key env vars for `--env-file` (see `config/deployments/mcpruntime-org.env.example`):
 
-`--platform-mode` selects the namespace model. `tenant` is the default and
-scopes signed-in users to their own user/team tenant namespace; `org` uses
-`mcp-servers-org` for signed-in org-wide publishing while preserving owned/team
-namespace access; `public` uses `mcp-servers-public`, exposes anonymous catalog
-reads, and lets signed-in users publish public preview MCP servers while
-preserving owned/team namespace access. `MCP_PLATFORM_MODE` provides the same
-value when the flag is not set.
+| Env var | Flag |
+|---|---|
+| `MCP_PLATFORM_DOMAIN=example.com` | derives all three ingress hostnames |
+| `MCP_SETUP_WITH_TLS=1` | `--with-tls` |
+| `MCP_SETUP_TLS_CLUSTER_ISSUER=letsencrypt-prod` | `--tls-cluster-issuer` |
+| `MCP_SETUP_REGISTRY_MODE=bundled-https` | `--registry-mode` |
+| `MCP_SETUP_PLATFORM_MODE=tenant` | `--platform-mode` |
+| `MCP_SETUP_INGRESS=none` | `--ingress` |
+| `MCP_SETUP_SKIP_CERT_MANAGER_INSTALL=1` | `--skip-cert-manager-install` |
 
-`--test-mode` relaxes production guardrails, but it still builds and pushes the
-operator, gateway proxy, and Sentinel images with `latest` tags to the
-configured or bundled registry. With the bundled plain HTTP registry, cluster
-nodes still need containerd/Docker trust for the exact image host they pull
-from.
-
-`--parallel-builds` keeps cluster, registry, TLS, and rollout sequencing
-unchanged, but builds and publishes the runtime and Sentinel setup images
-concurrently.
-
-Setup is reconcile-oriented and refuses known control-plane conflicts before
-applying more state. Registry TLS is owned by the explicit
-`registry/registry-cert` Certificate for the `registry-tls` Secret; the
-registry Ingress does not request a second ingress-shim certificate. If an old
-`registry/registry-tls` Certificate or another Certificate already references
-that Secret, delete or rename the extra Certificate before re-running setup.
-For ingress, setup reuses an existing external Traefik such as k3s'
-`kube-system/traefik` and refuses to force-install the repo-managed
-`traefik/traefik` stack on top of it.
-
-For local development where ingress traffic is exposed through port-forward or NodePort and the ingress controller does not publish load-balancer status, set `MCP_INGRESS_READINESS_MODE=permissive` before `setup`. The default is strict and waits for `Ingress.status.loadBalancer.ingress[]`.
-
-## auth
-
-Use `auth` for platform API credentials, not for Kubernetes cluster access.
-
-Use cases:
-
-- saving a platform API token locally for day-to-day platform flows
-- recording a registry host alongside that token
-- checking whether local platform credentials are already configured
-
-Do not use `auth` for:
-
-- `setup`
-- cluster bootstrap
-- cluster admin operations
-- raw Kubernetes access
-
-Examples:
-
-```bash
-# Save a token interactively
-mcp-runtime auth login --api-url https://platform.example.com
-
-# Save a token non-interactively
-cat token.txt | mcp-runtime auth login \
-  --api-url https://platform.example.com \
-  --token-stdin
-
-# Email/password login when the platform supports it
-mcp-runtime auth login \
-  --api-url https://platform.example.com \
-  --email admin@example.com \
-  --password '...'
-
-# Record the platform registry host too
-mcp-runtime auth login \
-  --api-url https://platform.example.com \
-  --token-stdin \
-  --registry-host registry.example.com < token.txt
-
-# Check current auth state
-mcp-runtime auth status
-
-# Remove saved local credentials
-mcp-runtime auth logout
-```
-
-Notes:
-
-- saved credentials are local to the workstation
-- `MCP_PLATFORM_API_TOKEN` overrides any saved token when set
-- `MCP_PLATFORM_API_URL` can provide the default API base URL
-- kubeconfig-based cluster commands are separate from platform auth
-
-## status
-
-```bash
-mcp-runtime status
-mcp-runtime cluster status
-mcp-runtime registry status
-mcp-runtime sentinel status
-```
-
-## registry
-
-```bash
-# Inspect / configure
-mcp-runtime registry status
-mcp-runtime registry info
-mcp-runtime registry provision --url registry.example.com
-mcp-runtime registry provision \
-  --url registry.example.com \
-  --operator-image registry.example.com/mcp-runtime-operator:latest
-
-# Push images (default mode is in-cluster helper pod)
-mcp-runtime registry push --image <resolved-registry-host>/payments:v1
-mcp-runtime registry push --image payments:v1 --mode direct
-mcp-runtime registry push --image payments:v1 --name payments-api
-```
-
-`registry push` requires platform credentials from `mcp-runtime auth login` or
-`MCP_PLATFORM_API_TOKEN` plus `MCP_PLATFORM_API_URL`; unauthenticated pushes are
-rejected before the CLI starts Docker or the in-cluster helper. When you use
-`server build image`, push the exact image ref it produced. That ref can include
-a resolved registry host instead of a short local name.
-
-## pipeline
-
-```bash
-# Generate CRDs from metadata
-mcp-runtime pipeline generate --dir .mcp --output manifests
-mcp-runtime pipeline generate --file .mcp/payments.yaml --output manifests
-
-# Deploy generated manifests
-mcp-runtime pipeline deploy --dir manifests
-mcp-runtime pipeline deploy --dir manifests --namespace mcp-servers
-```
-
-For the full build, push, deploy, and verify flow, see [Publish an MCP Server](publish-mcp-server.md).
-
-## access
-
-```bash
-# Grants
-mcp-runtime access grant list
-mcp-runtime access grant list --namespace mcp-team-acme
-mcp-runtime access grant get payments-admin --namespace mcp-servers
-mcp-runtime access grant apply --file grant.yaml
-mcp-runtime access grant disable payments-admin
-mcp-runtime access grant enable payments-admin
-
-# Sessions
-mcp-runtime access session list
-mcp-runtime access session get ops-agent --namespace mcp-servers
-mcp-runtime access session apply --file session.yaml
-mcp-runtime access session revoke ops-agent
-mcp-runtime access session unrevoke ops-agent
-```
-
-`grant list` and `session list` default to `--all-namespaces`; pass `--namespace` to narrow scope.
-
-For multi-team deployments, namespace scoping controls who can write resources
-and `teamID` controls who can use them. Put each team's grants and sessions in
-the same namespace as its servers, set `subject.teamID`, and use `--namespace`
-when inspecting or operating one team's policy resources.
-
-## team
-
-```bash
-mcp-runtime team list
-mcp-runtime team create acme --name "Acme"
-mcp-runtime team init acme --group acme-mcp-admins
-mcp-runtime team init acme --dry-run
-```
-
-`team list` and `team create` use the platform API, so run `auth login` or set
-platform API credentials first. `team create` creates a platform team and
-managed namespace, including quota/limits, default-deny NetworkPolicy, service
-account, and repo-managed Traefik watch wiring when bundled Traefik is present.
-
-`team init` uses local `kubectl`. It creates the team namespace, restricted
-workload service account, default quota and limits, default-deny NetworkPolicy,
-same-namespace and bundled-Traefik ingress allowances, MCP Runtime team-admin
-RBAC, bundled Traefik watch RBAC, and patches the repo-managed
-`traefik/traefik` Deployment watch list unless
-`--skip-traefik-watch` is set. Use `--namespace`, `--group`, `--user`, or
-`--service-account` when the defaults do not match your cluster identity system.
-See
-[Multi-team isolation](multi-team.md).
-
-## server
-
-```bash
-# Create / apply / export
-mcp-runtime server create payments --image repo/payments --tag latest
-mcp-runtime server create payments --file server.yaml
-mcp-runtime server apply --file server.yaml
-mcp-runtime server export payments --file payments.yaml
-
-# Patch / inspect
-mcp-runtime server patch payments --patch '{"spec":{"imageTag":"v2"}}'
-mcp-runtime server status --namespace mcp-servers
-mcp-runtime server policy inspect payments
-mcp-runtime server logs payments --follow
-
-# Build (push lives under registry)
-mcp-runtime server build image payments --tag v1
-mcp-runtime registry push --image <exact-image-ref-from-build>
-```
-
-`server patch` accepts inline `--patch` or `--patch-file` with `merge`, `json`, or `strategic` modes.
-
-`server build image` updates matching `.mcp` metadata when you use the metadata-driven pipeline. It can resolve to a concrete host such as `10.43.109.51:5000/payments:v1`. Push that exact ref after logging in to the platform. The command does not deploy by itself; push and deploy are separate steps.
-
-## sentinel
-
-```bash
-# Health + recent Kubernetes events
-mcp-runtime sentinel status
-mcp-runtime sentinel events
-mcp-runtime sentinel restart gateway
-mcp-runtime sentinel restart --all
-
-# Logs (--follow / --previous / --tail / --since)
-mcp-runtime sentinel logs ingest --since 15m --follow
-mcp-runtime sentinel logs grafana --tail 500
-
-# Port-forward (--port / --address)
-mcp-runtime sentinel port-forward ui
-mcp-runtime sentinel port-forward api --port 18080
-```
-
-**Component keys for `logs` and `restart`:** `clickhouse`, `zookeeper`, `kafka`, `ingest`, `api`, `processor`, `ui`, `gateway`, `prometheus`, `grafana`, `otel-collector`, `tempo`, `loki`, `promtail`.
-
-**Port-forward shortcuts** are built in for: `api`, `ui`, `prometheus`, `grafana`.
+---
 
 ## cluster
 
+**[Operator]**
+
+> Full guide: [Deployment targets](deployment-targets.md)
+
 ```bash
-# Initialize / re-target
 mcp-runtime cluster init
-mcp-runtime cluster init --kubeconfig ~/.kube/config --context dev
-
-# Configure ingress, kubeconfig, providers
 mcp-runtime cluster config --ingress traefik
-mcp-runtime cluster config --provider eks --name mcp-runtime --region us-west-1
-
-# Provision
 mcp-runtime cluster provision --provider kind --nodes 3
 mcp-runtime cluster provision --provider eks --name prod-mcp
 
-# cert-manager helpers
 mcp-runtime cluster cert status
 mcp-runtime cluster cert apply
 mcp-runtime cluster cert wait --timeout 10m
 
-# Doctor — registry / DNS / containerd preflight per-distro
-mcp-runtime cluster doctor
+KUBECONFIG=~/.kube/config mcp-runtime cluster doctor    # 37-point diagnostic
 ```
 
-**Provider status today:** `kind` and `eks` are active. `gke` and `aks` flags exist but their kubeconfig and provisioning helpers return planned/not-implemented paths in the current code.
 
-## Common flows
+## Further reading
 
-```bash
-# Local kind cluster
-mcp-runtime cluster provision --provider kind --nodes 3
-mcp-runtime setup
-
-# Push a server image
-mcp-runtime server build image payments
-mcp-runtime registry push --image <exact-image-ref-from-build>
-
-# Deploy from metadata
-mcp-runtime pipeline generate --dir .mcp --output manifests
-mcp-runtime pipeline deploy --dir manifests
-
-# Apply access + inspect resulting policy
-mcp-runtime access grant apply --file grant.yaml
-mcp-runtime access session apply --file session.yaml
-mcp-runtime server policy inspect payments
-
-# Open the sentinel UI locally
-mcp-runtime sentinel port-forward ui
-mcp-runtime sentinel logs api --since 10m
-
-# Patch a running server
-mcp-runtime server patch payments --patch '{"spec":{"imageTag":"v2"}}'
-mcp-runtime server status
-mcp-runtime status
-```
-
-## Next
-
-- [API](api.md) — exact resource fields the CLI is wrapping.
-- [Publish an MCP Server](publish-mcp-server.md) — manifest, metadata, image push, deploy, and verification flow.
-- [Sentinel](sentinel.md) — how `sentinel logs / events / restart` map to the bundled stack.
-- [Cluster readiness](cluster-readiness.md) — distro-specific prerequisites.
+| Topic | Link |
+|---|---|
+| Build, push, deploy flow | [Publish an MCP Server](publish-mcp-server.md) |
+| MCPServer, MCPAccessGrant, MCPAgentSession fields | [API reference](api.md) |
+| HTTP proxy and stdio adapter | [Agent adapters](agent-adapters.md) |
+| Multi-team namespaces and RBAC | [Multi-team isolation](multi-team.md) |
+| Sentinel logs, events, restart | [Sentinel](sentinel.md) |
+| Distro-specific cluster prerequisites | [Cluster readiness](cluster-readiness.md) |
+| Kind, EKS, k3s deployment | [Deployment targets](deployment-targets.md) |

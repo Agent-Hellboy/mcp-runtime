@@ -48,19 +48,40 @@ workflow.
 builds and publishes runtime images, runs `setup --test-mode`, deploys example
 servers, exercises MCP requests, and verifies governance/observability paths.
 
+For the component-level request paths behind each scenario, see [Request Flows](request-flows.md).
+
 Useful local runs:
 
 ```bash
 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh
+E2E_SCENARIOS=api-platform bash test/e2e/kind.sh
+E2E_SCENARIOS=ui-auth bash test/e2e/kind.sh
+E2E_SCENARIOS=adapter-proxy bash test/e2e/kind.sh
+E2E_SCENARIOS=cli-platform bash test/e2e/kind.sh
 E2E_SCENARIOS=all MCP_DEPLOYMENT_TIMEOUT=900s bash test/e2e/kind.sh
+E2E_DEEP_REQUEST_FLOWS=1 E2E_SCENARIOS=all bash test/e2e/kind.sh
 E2E_KEEP_CLUSTER=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh
 E2E_CACHE_MODE=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh
 ```
+
+Supported scenario selectors are `all`, `smoke-auth`, `governance`, `trust`,
+`oauth`, `observability`, `multitenancy`, `api-platform`, `ui-auth`,
+`adapter-proxy`, and `cli-platform`. The targeted PR-only selectors map to
+request-path surfaces: `api-platform` covers platform API auth, user, registry,
+team, runtime, deployment, and admin routes; `ui-auth` covers direct UI and
+gateway cookie auth/static routes; `adapter-proxy` covers platform-issued
+adapter sessions plus the local adapter proxy MCP path; `cli-platform` covers
+the platform-backed CLI request flow.
 
 `E2E_CACHE_MODE=1` is for repeated local debugging. It implies
 `E2E_KEEP_CLUSTER=1`, reuses the existing Kind cluster and local registry when
 present, skips platform setup if the core platform is already ready, and reuses
 image tags already published to the local registry.
+
+`E2E_DEEP_REQUEST_FLOWS=1` is for pre-release sweeps, not normal PR feedback.
+It requires `E2E_SCENARIOS=all` and adds broader CLI help, adapter proxy,
+platform API, UI auth, registry authz, team, deployment, and item-level runtime
+request flows.
 
 Image mirroring and local runtime/Sentinel image builds run with bounded
 parallelism. `E2E_IMAGE_PREP_PARALLELISM=<n>` tunes the shared prep default,
@@ -68,10 +89,29 @@ parallelism. `E2E_IMAGE_PREP_PARALLELISM=<n>` tunes the shared prep default,
 `E2E_IMAGE_BUILD_PARALLELISM=<n>` tunes local Docker builds. CI sets mirroring
 to one worker to avoid Docker/local-registry push contention on shared runners
 and builds to two workers because builds are heavier on runner CPU, memory, and
-Docker.
-The script also deploys the independent official SDK example servers
-concurrently; scenario assertions remain ordered because they share policy,
-session, and analytics state.
+Docker. CI also sets `MCP_POLICY_WAIT_TRIES=45` so stuck gateway-policy waits
+fail sooner than the local default of 90, and `MCP_HTTP_TIMEOUT=15` so Traefik
+504/502 retries on the ingress path recover faster than the local 30s default.
+
+Kind E2E deploys a single primary MCP server (`policy-mcp-server`) for most PR
+paths. CI sets `E2E_MAX_MCP_SERVERS=2` so multitenancy can reuse that server as
+tenant-a and deploy only `mt-tenant-b` as the second workload. The older
+data-utility, text-analysis, and workspace-assistant sample deploys are not used
+anymore; ingress checks exercise multiple tools on the primary server instead.
+Set `E2E_MAX_MCP_SERVERS=0` locally for unlimited servers during full
+`E2E_SCENARIOS=all` pre-release runs.
+
+**What runs in parallel (safe):** local Docker image builds and registry mirroring
+(`E2E_IMAGE_BUILD_PARALLELISM`, `E2E_IMAGE_MIRROR_PARALLELISM`); read-only grant
+rule ConfigMap polls (`E2E_GRANT_RULE_PARALLELISM`); and api-platform plus ui-auth
+HTTP scripts when `E2E_HTTP_FLOW_PARALLELISM>1` (workers clear the inherited EXIT
+trap so they do not delete the shared kubeconfig).
+
+**What stays sequential (shared MCP state):** every `run_parallel_mcp_tool_checks`
+batch. Those calls share one session URL, header proxy, and gateway reload window,
+so trust/ingress tool waits always run one at a time regardless of other
+parallelism knobs.
+
 Parallel worker output is buffered under `stage-logs/` in the e2e workdir and
 copied into `E2E_ARTIFACT_DIR` when artifacts are enabled. Live output prints
 colored `START`, `RUNNING`, `DONE`, and `FAILED` lifecycle lines plus short
@@ -95,10 +135,14 @@ contains the gateway service, `mcp-sentinel-ingest`, `mcp-sentinel-processor`,
 and the `kafka.produce`, `kafka.consume`, `clickhouse.insert_event`, and
 `clickhouse.insert_batch` spans.
 
-Normal PRs, `main`, and manual CI runs execute full Kind e2e with
-`E2E_SCENARIOS=all`. Dependabot PRs run `smoke-auth,governance` only, so
-dependency bumps still exercise MCP ingress/auth and grant/session behavior
-while keeping runtime low.
+Normal PRs and `main` run short Kind e2e with `smoke-auth` as the baseline, then
+`.github/workflows/ci.yaml` calls `test/e2e/select_pr_scenarios.sh` to add
+targeted scenarios based on the changed files. API, UI, adapter, CLI, OAuth,
+observability, and multi-tenancy changes get the matching request-path mode;
+shared or unknown code paths fall back to `all` so CI stays conservative. The
+manual Pre-release Regression workflow runs full Kind e2e with
+`E2E_SCENARIOS=all` and `E2E_DEEP_REQUEST_FLOWS=1` across tenant, org, and
+public platform modes, plus a tenant cache-mode replay when requested.
 
 The script writes artifacts when `E2E_ARTIFACT_DIR` is set. In CI, those
 artifacts are uploaded from `.e2e-artifacts/kind`.
@@ -115,11 +159,15 @@ The main CI workflow runs:
 - service module tests
 - generated file drift
 - repository SBOM generation
-- Kind e2e for code changes
+- path-selected short Kind e2e on PRs and `main`
 
-Security workflows add pinned gosec, Trivy repository/image scans with SARIF
-upload, pinned Gitleaks secret scanning, operator-image SBOM artifacts, and
-pull-request dependency review.
+The manual Pre-release Regression workflow adds full Kind e2e in tenant, org,
+and public platform modes, cache replay, benchmarks, repository/operator-image
+SBOMs, gosec, Gitleaks, and Trivy scans. Security workflows add pinned gosec,
+Trivy repository/image scans with SARIF upload, pinned Gitleaks secret
+scanning, operator-image SBOM artifacts, and pull-request dependency review.
+
+Use the [request-flow matrix](request-flows.md#use-case-matrix) to confirm a pre-release run exercises every user-facing control-plane, runtime, registry, policy, analytics, and tenant flow.
 
 ## Pre-commit Hooks
 

@@ -8,7 +8,10 @@ If you skip this, you'll typically see:
 - The operator pod goes to `ImagePullBackOff` with `10.43.x.x:5000: connection refused` or `no such host`.
 - MCPServer pods get stuck in `ImagePullBackOff` pulling `registry.local/<server-name>`.
 
-This document lists what each distribution needs before you run `setup`.
+This document lists what each distribution needs before you run `setup`. If you
+are still choosing where to deploy the platform, start with
+[Deployment Targets](deployment-targets.md), then return here for the exact
+registry, DNS, TLS, and node-runtime preparation.
 
 ---
 
@@ -39,11 +42,13 @@ workarounds for kubelet image pulls. In production, prefer a registry name that
 resolves through normal DNS and is trusted by every node without bypassing TLS
 verification.
 
-`./bin/mcp-runtime cluster doctor` is useful in both modes, but some checks are
-dev-registry oriented today: it expects the bundled `registry/registry` Service
-and a NodePort. If you run with a provisioned external registry, interpret those
-registry-specific failures against your registry architecture instead of copying
-the local workaround literally.
+`./bin/mcp-runtime cluster doctor` is useful in both modes. For the bundled
+registry it probes the in-cluster `registry/registry` Service and selects HTTP
+or HTTPS from the installed registry state: if `registry/registry-internal-tls`
+exists, doctor probes `https://registry.registry.svc.cluster.local:5000/v2/`;
+otherwise it probes the plain HTTP service. If you run with a provisioned
+external registry, interpret bundled-registry-specific failures against your
+registry architecture instead of copying the local workaround literally.
 
 Production readiness checklist:
 
@@ -87,6 +92,62 @@ it builds and pushes the operator, gateway proxy, and Sentinel images with
 through kubelet/containerd, so an HTTP bundled registry requires node trust for
 the exact image host and port used in the rendered image references.
 
+When setup uses the bundled registry, platform-owned image refs for the
+operator, gateway proxy, and Sentinel services are rendered with the internal
+registry endpoint, ClusterIP, or service-DNS host rather than a public registry
+ingress hostname derived from `MCP_PLATFORM_DOMAIN`. The public registry host is
+still used for ingress routing and user-facing registry flows; set
+`MCP_REGISTRY_ENDPOINT` or `MCP_REGISTRY_HOST` only when cluster nodes should
+pull platform images through a specific internal registry endpoint.
+
+### Registry setup modes
+
+`setup --registry-mode` makes the registry path explicit:
+
+| Mode | What setup does | Node requirement |
+|------|-----------------|------------------|
+| `auto` | Keeps existing behavior: use a provisioned registry config when present, otherwise install the bundled registry. | Depends on the resolved path. |
+| `bundled-http` | Installs the bundled registry and keeps the registry pod on plain HTTP for internal platform pulls. Public ingress can still use TLS with `--with-tls`. | Configure every node/containerd runtime to allow the exact image host as an insecure registry. |
+| `bundled-https` | Installs the bundled registry with TLS served by the registry pod itself. Public ingress TLS can still use ACME; the registry pod uses a separate internal certificate from setup-generated `mcp-runtime-ca`, or from a non-ACME `--tls-cluster-issuer` when you provide one. | Configure every node to resolve or mirror the rendered registry host and trust the internal issuing CA. |
+| `external` | Skips the bundled registry and pushes setup images to a provisioned registry. | Registry DNS, TLS, auth, pull secrets, and node trust are owned by the external registry platform. |
+
+For bundled HTTPS without an explicit `MCP_REGISTRY_ENDPOINT`, setup renders
+platform image refs with `registry.registry.svc.cluster.local:5000` so the
+internal registry certificate can include a stable service DNS SAN. Kubernetes
+nodes do not automatically use cluster DNS or trust the MCP Runtime CA for image
+pulls; configure containerd/k3s/your node runtime to resolve or mirror that host
+and trust the CA before relying on this mode in **lab** clusters.
+
+**Public TLS with `MCP_PLATFORM_DOMAIN` (production k3s shape):** when the
+registry is exposed at `registry.<domain>` with Let's Encrypt or an enterprise
+issuer, set `MCP_REGISTRY_ENDPOINT=registry.<domain>` before setup so kubelet
+pulls match the certificate SANs. Do **not** use the registry Service ClusterIP
+(for example `10.43.x.x:5000`) on this path — pulls fail with
+`x509: cannot validate certificate ... doesn't contain any IP SANs`. See
+[k3s Deployment Runbook - Environment variable reference](k3s-deployment-runbook.md#environment-variable-reference)
+and [Deployment Targets - bundled HTTPS](deployment-targets.md#option-a-bundled-https-registry-on-prem-reference).
+
+When using the built-in issuer for internal registry pod TLS, setup creates
+`cert-manager/mcp-runtime-ca` if it is missing; export its `tls.crt` and add that
+certificate to each node runtime trust store. After setup, `cluster doctor` uses
+the `registry-internal-tls` Secret as the signal to probe the registry Service
+over HTTPS; a successful doctor registry probe confirms in-cluster push-helper
+reachability, while kubelet image pulls still depend on node/containerd trust
+for the exact rendered image host.
+
+### Setup image platform
+
+`setup` builds the operator, gateway proxy, and Sentinel images as Linux
+container images. By default it inspects `kubernetes.io/arch` on cluster nodes
+and builds a single-platform image for a homogeneous cluster, for example
+`linux/amd64` on standard VPS nodes or `linux/arm64` on ARM nodes. Mixed-arch
+clusters are rejected until multi-arch manifest publishing is supported, because
+the platform deployments do not pin pods to architecture-specific node pools.
+
+Set `MCP_IMAGE_PLATFORM=linux/amd64` or `MCP_IMAGE_PLATFORM=linux/arm64` when
+you need to override detection, such as building from an Apple Silicon laptop
+for an amd64 k3s VPS cluster.
+
 ---
 
 ## External registry path
@@ -102,6 +163,15 @@ Configure it either with the CLI:
 ./bin/mcp-runtime registry provision --url registry.example.com
 ```
 
+or directly on setup:
+
+```bash
+./bin/mcp-runtime setup --registry-mode external --with-tls --strict-prod \
+  --external-registry-url registry.example.com \
+  --external-registry-username <user> \
+  --external-registry-password <password>
+```
+
 or with environment variables before `setup`:
 
 ```bash
@@ -110,19 +180,34 @@ export PROVISIONED_REGISTRY_USERNAME=<user>      # optional
 export PROVISIONED_REGISTRY_PASSWORD=<password>  # optional
 ```
 
-Then run setup with production validation:
+When external registry credentials are configured, setup creates pull secrets
+for Sentinel workloads and a separate `mcp-runtime/mcp-runtime-registry-pull-creds`
+Secret for the operator Deployment. If you intentionally roll platform
+workloads from an already-authenticated public registry, set
+`MCP_PLATFORM_IMAGE_PULL_SECRET=<secret-name>` before setup; the Secret must
+exist in `mcp-runtime` for the operator and in `mcp-sentinel` for Sentinel
+workloads.
+
+If you configured the registry with `registry provision` or environment
+variables first, run setup with production validation:
 
 ```bash
-./bin/mcp-runtime setup --with-tls --strict-prod
+./bin/mcp-runtime setup --registry-mode external --with-tls --strict-prod
 ```
 
-Before generating MCP server manifests, set the image host that cluster nodes
-should pull from:
+Before rendering MCP server manifests for review or GitOps, set the image host
+that cluster nodes should pull from:
 
 ```bash
 export MCP_REGISTRY_INGRESS_HOST=registry.example.com
-./bin/mcp-runtime pipeline generate --dir .mcp --output manifests
+./bin/mcp-runtime server generate --metadata-dir .mcp --output manifests
 ```
+
+The platform API follows the same split for short image deploys: it expands
+short image names with `PLATFORM_REGISTRY_URL`, `MCP_REGISTRY_INGRESS_HOST`, or
+`MCP_PLATFORM_DOMAIN` before falling back to `MCP_REGISTRY_ENDPOINT`. This keeps
+tenant `MCPServer.spec.image` values on the pullable public registry host when
+an internal endpoint also exists for push helpers or registry mirrors.
 
 Use `MCP_REGISTRY_ENDPOINT` only when the operator needs a different internal
 push/pull endpoint than the public image host. For example, a private registry
@@ -146,10 +231,9 @@ External registry readiness checks:
 installs. It is ignored in `--test-mode`; otherwise it requires:
 
 - `--with-tls`.
-- An external registry URL that is not dev-only, or a stable
-  `MCP_REGISTRY_ENDPOINT` for the bundled registry.
-- No default local registry endpoint such as `registry.local` for production
-  registry validation.
+- `--registry-mode external` with an external registry URL that is not dev-only,
+  or `--registry-mode bundled-https` for a bundled registry served over HTTPS.
+- No implicit bundled HTTP registry path.
 
 Normal setup still allows local HTTP and internal registry flows so kind, k3s,
 Docker Desktop, and CI remain easy to use. Use `--strict-prod` when the cluster
@@ -161,7 +245,7 @@ When `MCP_PLATFORM_DOMAIN=example.com` is set, setup derives these public names:
 
 - `registry.example.com` for registry ingress.
 - `mcp.example.com` for MCP server traffic.
-- `platform.example.com` for the dashboard, API, Grafana, and Prometheus paths.
+- `platform.example.com` for the dashboard, API, and Grafana paths. Prometheus remains an internal metrics backend.
 
 All configured public names must resolve to the cluster ingress address before
 certificate issuance. For Let's Encrypt HTTP-01, port 80 must reach the ingress
@@ -172,11 +256,12 @@ controller from the public internet. For enterprise PKI, install the
 ./bin/mcp-runtime setup --with-tls --tls-cluster-issuer <issuer-name>
 ```
 
-If you retain the bundled registry with TLS, make sure the registry certificate
-covers the registry and MCP hostnames nodes, build machines, and MCP clients
-use. The `registry/registry-cert` Certificate writes the `registry/registry-tls`
-Secret and covers `registry.<domain>` plus `mcp.<domain>` when those names are
-derived from `MCP_PLATFORM_DOMAIN` or explicit ingress host environment
+If you retain the bundled registry with TLS ingress only, make sure the registry
+certificate covers the registry and MCP hostnames nodes, build machines, and
+MCP clients use. The `registry/registry-cert` Certificate writes the
+`registry/registry-tls` Secret and covers `registry.<domain>` plus
+`mcp.<domain>` when those names are derived from `MCP_PLATFORM_DOMAIN` or
+explicit ingress host environment
 variables.
 
 The registry Ingress intentionally does not carry a
@@ -214,6 +299,18 @@ middleware `registry-admin-auth@file`. If you bring your own ingress controller
 or reuse an external Traefik install, configure an equivalent forward-auth guard
 to `/api/registry/authz` before exposing `registry.<domain>` publicly.
 
+If the cluster already has a live external Traefik install, `setup` reuses it
+and refuses to install a second repo-managed Traefik stack. In that shape, use:
+
+```bash
+./bin/mcp-runtime setup --ingress none ...
+```
+
+Do that only when the external ingress controller already owns the ingress
+class, public entrypoints, and any required registry auth middleware. Running
+two Traefik installations against the same ingress surface leads to ambiguous
+ownership and hard-to-debug routing failures.
+
 Quick public endpoint checks after DNS and TLS are live:
 
 - `curl -k -I -H "x-api-key: $ADMIN_API_KEY" https://registry.<domain>/v2/`
@@ -224,10 +321,87 @@ Quick public endpoint checks after DNS and TLS are live:
 - `curl -k -i https://platform.<domain>/api/health` should normally return
   `401` without platform credentials; that still proves the platform host is
   routing API traffic correctly.
+- `curl -k -i -H "x-api-key: $ADMIN_API_KEY" https://platform.<domain>/grafana/api/health`
+  should reach the admin-gated observability route. Without admin credentials,
+  the `sentinel-admin-auth@file` guard should return `401`. Prometheus is not
+  exposed directly on the platform host; validate it through Grafana's
+  datasource or a temporary `kubectl port-forward`.
 - `curl -k -i https://mcp.<domain>/<server-name>/mcp` may return an
   application-level `400` or `401` when called without the expected MCP
   protocol headers or session context. That is often enough to confirm the
   public route is live before you move on to MCP client debugging.
+
+## Public-mode admin bootstrap
+
+Fresh public/TLS installs must set an OIDC admin allowlist before setup:
+
+- `MCP_PLATFORM_ADMIN_EMAIL`, for the first platform admin email
+- or `ADMIN_USERS`, for a comma-separated list of admin emails or OIDC subjects
+
+Setup writes those values into the `ADMIN_USERS` secret key. The API checks that
+allowlist on Google/OIDC login and promotes matching users to platform admin.
+`--acme-email` is only the certificate contact email and does not grant
+platform admin.
+
+Password bootstrap is separate. Installs that expect a password-created admin
+must keep both of these secret-backed values aligned:
+
+- `PLATFORM_ADMIN_EMAIL`
+- `PLATFORM_ADMIN_PASSWORD`
+
+If only one of the two is present in the API deployment environment, the API
+can crash-loop on a clean database with an error similar to:
+
+```text
+failed to seed platform admin: PLATFORM_ADMIN_EMAIL and PLATFORM_ADMIN_PASSWORD must both be set
+```
+
+Before assuming a database or auth bug, inspect the deployment and the managed
+secret:
+
+```bash
+kubectl get deploy mcp-sentinel-api -n mcp-sentinel -o yaml
+kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o yaml
+```
+
+Bootstrap-only credentials should still be removed or rotated after the first
+successful platform bring-up, but both values must be present for the initial
+seed path to succeed.
+
+## Clean platform reset
+
+Deleting pods is not a full platform reset. Sentinel state primarily lives in
+PVC-backed StatefulSets. If you want a truly fresh platform state, scale the
+StatefulSets down and delete the PVCs you intend to wipe.
+
+Typical destructive reset flow:
+
+```bash
+kubectl scale statefulset clickhouse kafka loki tempo mcp-sentinel-postgres \
+  -n mcp-sentinel --replicas=0
+
+kubectl delete pvc \
+  data-clickhouse-0 \
+  kafka-data-kafka-0 \
+  data-loki-0 \
+  data-tempo-0 \
+  data-mcp-sentinel-postgres-0 \
+  -n mcp-sentinel
+```
+
+Important distinctions:
+
+- Preserve `mcp-sentinel-secrets` unless you intentionally want new API keys,
+  JWT secrets, and platform bootstrap values.
+- Preserve `mcp-sentinel-platform-tls` unless you want to reissue the platform
+  certificate.
+- Preserve `registry/registry-storage` unless you intentionally want to wipe the
+  image registry too.
+- A PVC stuck in `Terminating` is often still referenced by stale pods from an
+  old ReplicaSet. Remove the stale pods first, then recreate the workload.
+
+This reset is destructive. Treat it as an operator workflow, not a normal
+upgrade path.
 
 ## Node pool consistency
 
@@ -244,8 +418,15 @@ Runtime workloads only land on pools that have been prepared and audited.
 
 ## k3s
 
-k3s uses embedded containerd. Point it at the registry NodePort on loopback (same node).
-When using `setup --test-mode` with the bundled plain HTTP registry, the same
+k3s uses embedded containerd. The steps below cover **lab HTTP** registry
+mirrors (`registry.local`, NodePort). For **public TLS + bundled HTTPS**
+(`registry.<domain>` with Let's Encrypt), skip the insecure mirror path and
+follow [Deployment Targets - k3s production](deployment-targets.md#option-a-bundled-https-registry-on-prem-reference)
+and [k3s Deployment Runbook](k3s-deployment-runbook.md) instead — set
+`MCP_REGISTRY_ENDPOINT=registry.<domain>` and use `--ingress none` when k3s
+Traefik already runs in `kube-system`.
+
+For `setup --test-mode` with the bundled plain HTTP registry, the same
 containerd mirror requirement applies because setup still builds and pushes
 operator, gateway proxy, and Sentinel images, then deploys pods that pull those
 images. On k3s hosts where `~/.kube/config` is empty or minimal, pass
@@ -285,6 +466,40 @@ configure a stable external registry or set `MCP_REGISTRY_ENDPOINT` to a
 3. **Reload.** `systemctl restart k3s`. k3s regenerates containerd's config from `registries.yaml` at startup.
 
 Multi-node k3s: apply the same `/etc/rancher/k3s/registries.yaml` and `/etc/hosts` to every node — `127.0.0.1:32000` reaches the local kube-proxy which forwards to the registry pod regardless of where the pod is scheduled.
+
+## Node disk-pressure recovery
+
+Image-heavy setup runs on small clusters can trip kubelet `DiskPressure` during
+the operator/Sentinel build-and-push phase. Typical symptoms:
+
+- helper pods such as `registry-pusher-*` stay `Pending`
+- new Sentinel pods fail scheduling with `untolerated taint(s)`
+- `kubectl describe node` shows `node.kubernetes.io/disk-pressure:NoSchedule`
+
+Check the node first:
+
+```bash
+kubectl describe node <node-name>
+df -h /
+```
+
+Then clear disposable build/cache data before rerunning setup:
+
+- stale Go build/module caches under `/tmp` and `/root/.cache/go-build`
+- unused Docker images from local build stages
+
+If free space returns but the node still reports `DiskPressure`, restart the
+node's Kubernetes runtime service so kubelet/containerd accounting catches up.
+The exact service name depends on the distribution, for example:
+
+```bash
+systemctl restart k3s
+```
+
+After the restart, verify `DiskPressure=False` before continuing the rollout.
+If the registry pod was unavailable during the pressure window, expect a brief
+wave of `ErrImagePull` or `ImagePullBackOff` until the registry becomes ready
+again.
 
 ## kind
 
@@ -437,16 +652,25 @@ Missing pieces are warnings, not errors — the command surfaces them so you can
 
 ## `cluster doctor`
 
-`./bin/mcp-runtime cluster doctor` runs post-install diagnostics:
+`./bin/mcp-runtime cluster doctor` runs post-install diagnostics by default:
 
 - Detects your distribution (k3s / kind / minikube / docker-desktop / generic).
 - Checks the installed MCP Runtime namespaces, CRDs, operator, Traefik ingress, registry, Sentinel, and MCPServer reconciliation path. The MCPServer smoke uses an existing ready app image when available; otherwise it falls back to `registry.k8s.io/pause:3.9` and validates deployment/service/ingress reconciliation plus pod scheduling without a TCP readiness wait.
 - Prefers k3s' bundled Traefik in `kube-system/traefik` when the active cluster is k3s, then falls back to the repo-managed `traefik/traefik` install.
 - `setup` follows the same ownership model: it reuses active external Traefik and refuses to force-install the repo-managed Traefik when that would create a second active stack.
-- Verifies registry reachability, registry image-pull smoke behavior, and common pod image-pull failures.
+- Verifies registry reachability, registry image-pull smoke behavior, and common pod image-pull failures. The bundled registry reachability probe uses HTTPS when `registry/registry-internal-tls` is installed, and HTTP otherwise.
 - Reports `http: server gave HTTP response to HTTPS client` when kubelet/containerd tried HTTPS against the HTTP dev registry, including the affected pod and image where possible.
 - Streams the current check before running it, including helper pod probes and waits, so a slow run shows what it is doing.
 - Prints the distribution-specific registry remediation hint only when registry or image-pull checks fail; Traefik and Sentinel failures use their own check-specific remedies.
 
+For setup preflight, run `./bin/mcp-runtime cluster doctor --for-setup`. That mode focuses on:
+
+- Traefik ingress readiness and exposure.
+- Public host resolution from `MCP_PLATFORM_DOMAIN` or the explicit `MCP_PLATFORM_INGRESS_HOST`, `MCP_REGISTRY_INGRESS_HOST`, and `MCP_MCP_INGRESS_HOST` env vars.
+- Local DNS resolution for those configured public hosts.
+- cert-manager deployment readiness when TLS preflight is requested.
+- `MCP_TLS_CLUSTER_ISSUER` existence when configured.
+- `MCP_ACME_EMAIL` HTTP-01 readiness, including whether the active Traefik web entrypoint is on service port `80`.
+
 Run `bootstrap` before `setup` on a fresh cluster. Run `cluster doctor` after
-setup, or when debugging `ImagePullBackOff` on an installed MCP Runtime stack.
+setup, or use `cluster doctor --for-setup` before a host-based TLS install.

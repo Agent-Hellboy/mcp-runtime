@@ -5,9 +5,16 @@ package certmanager
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"sort"
 	"strings"
@@ -27,14 +34,18 @@ const (
 	certClusterIssuerName           = "mcp-runtime-ca"
 	registryCertificateName         = "registry-cert"
 	registryTLSSecretName           = "registry-tls"
+	registryInternalCertificateName = "registry-internal-cert"
+	registryInternalTLSSecretName   = "registry-internal-tls"
 	clusterIssuerManifestPath       = "config/cert-manager/cluster-issuer.yaml"
 	registryCertificateManifestPath = "config/cert-manager/example-registry-certificate.yaml"
 )
 
 const (
-	CertClusterIssuerName   = certClusterIssuerName
-	RegistryCertificateName = registryCertificateName
-	RegistryTLSSecretName   = registryTLSSecretName
+	CertClusterIssuerName           = certClusterIssuerName
+	RegistryCertificateName         = registryCertificateName
+	RegistryTLSSecretName           = registryTLSSecretName
+	RegistryInternalCertificateName = registryInternalCertificateName
+	RegistryInternalTLSSecretName   = registryInternalTLSSecretName
 )
 
 // CertManager manages cert-manager resources for the platform.
@@ -204,6 +215,98 @@ func CheckCASecretWithKubectl(kubectl core.KubectlRunner) error {
 	return checkCASecretWithKubectl(kubectl)
 }
 
+func ensureCASecretWithKubectl(kubectl core.KubectlRunner) (bool, error) {
+	if err := checkCASecretWithKubectl(kubectl); err == nil {
+		return false, nil
+	}
+	manifest, err := renderGeneratedCASecretManifest(time.Now())
+	if err != nil {
+		return false, err
+	}
+	if err := kube.ApplyManifestContent(kubectl.CommandArgs, manifest); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func EnsureCASecretWithKubectl(kubectl core.KubectlRunner) (bool, error) {
+	return ensureCASecretWithKubectl(kubectl)
+}
+
+func renderGeneratedCASecretManifest(now time.Time) (string, error) {
+	certPEM, keyPEM, err := generateInternalCAPEM(now)
+	if err != nil {
+		return "", err
+	}
+	secret := struct {
+		APIVersion string            `json:"apiVersion"`
+		Kind       string            `json:"kind"`
+		Type       string            `json:"type"`
+		Metadata   map[string]string `json:"metadata"`
+		StringData map[string]string `json:"stringData"`
+	}{
+		APIVersion: "v1",
+		Kind:       "Secret",
+		Type:       "kubernetes.io/tls",
+		Metadata: map[string]string{
+			"name":      certCASecretName,
+			"namespace": certManagerNamespace,
+		},
+		StringData: map[string]string{
+			"tls.crt": string(certPEM),
+			"tls.key": string(keyPEM),
+		},
+	}
+	data, err := json.Marshal(secret)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func RenderGeneratedCASecretManifest(now time.Time) (string, error) {
+	return renderGeneratedCASecretManifest(now)
+}
+
+func generateInternalCAPEM(now time.Time) ([]byte, []byte, error) {
+	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serial, err := rand.Int(rand.Reader, serialLimit)
+	if err != nil {
+		return nil, nil, err
+	}
+	serial.Add(serial, big.NewInt(1))
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName: "mcp-runtime registry internal CA",
+		},
+		NotBefore:             now.Add(-1 * time.Minute),
+		NotAfter:              now.AddDate(10, 0, 0),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLen:            1,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	if len(certPEM) == 0 || len(keyPEM) == 0 {
+		return nil, nil, core.NewWithSentinel(core.ErrCertEncodeGeneratedCAFailed, "failed to encode generated internal CA")
+	}
+	return certPEM, keyPEM, nil
+}
+
 func checkClusterIssuerWithKubectl(kubectl core.KubectlRunner) error {
 	// #nosec G204 -- fixed kubectl command to check ClusterIssuer.
 	if err := kubectl.Run([]string{"get", "clusterissuer", certClusterIssuerName}); err != nil {
@@ -263,13 +366,14 @@ func removeRegistryIngressShimAnnotationWithKubectl(kubectl core.KubectlRunner) 
 		if strings.Contains(detail, "not found") || strings.Contains(detail, "notfound") {
 			return nil
 		}
-		return fmt.Errorf("failed to look up registry ingress %s/%s: %s", core.NamespaceRegistry, core.RegistryServiceName, kubeerr.CommandDetail(detailText, err))
+		msg := fmt.Sprintf("failed to look up registry ingress %s/%s: %s", core.NamespaceRegistry, core.RegistryServiceName, kubeerr.CommandDetail(detailText, err))
+		return core.WrapWithSentinel(core.ErrCertLookupRegistryIngressFailed, err, msg)
 	}
 	if err := kubectl.RunWithOutput(
 		[]string{"patch", "ingress", core.RegistryServiceName, "-n", core.NamespaceRegistry, "--type=merge", "-p", `{"metadata":{"annotations":{"cert-manager.io/cluster-issuer":null}}}`},
 		io.Discard, io.Discard,
 	); err != nil {
-		return fmt.Errorf("failed to remove cert-manager.io/cluster-issuer from registry ingress: %w", err)
+		return core.WrapWithSentinel(core.ErrCertRemoveRegistryIngressAnnotation, err, fmt.Sprintf("failed to remove cert-manager.io/cluster-issuer from registry ingress: %v", err))
 	}
 	return nil
 }
@@ -297,13 +401,14 @@ func checkRegistryCertificateOwnershipWithKubectl(kubectl core.KubectlRunner) er
 	if len(certs) == 0 || (len(certs) == 1 && certs[0] == registryCertificateName) {
 		return nil
 	}
-	return fmt.Errorf(
+	msg := fmt.Sprintf(
 		"registry TLS secret %q in namespace %q is already referenced by Certificate(s) %s; setup owns this secret with Certificate %q. Delete or rename the extra Certificate resource before re-running setup (old ingress-shim drift is usually fixed with: kubectl delete certificate registry-tls -n registry)",
 		registryTLSSecretName,
 		core.NamespaceRegistry,
 		strings.Join(certs, ", "),
 		registryCertificateName,
 	)
+	return core.NewWithSentinel(core.ErrCertRegistryTLSSecretConflict, msg)
 }
 
 func CheckRegistryCertificateOwnershipWithKubectl(kubectl core.KubectlRunner) error {
@@ -319,11 +424,12 @@ func registryTLSCertificateOwners(kubectl core.KubectlRunner) ([]string, error) 
 	cmd.SetStdout(&stdout)
 	cmd.SetStderr(&stderr)
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("failed to list cert-manager Certificates in namespace %q: %v (%s)", core.NamespaceRegistry, err, strings.TrimSpace(stderr.String()))
+		msg := fmt.Sprintf("failed to list cert-manager Certificates in namespace %q: %v (%s)", core.NamespaceRegistry, err, strings.TrimSpace(stderr.String()))
+		return nil, core.WrapWithSentinel(core.ErrCertListCertificatesFailed, err, msg)
 	}
 	var list certificateList
 	if err := json.Unmarshal(stdout.Bytes(), &list); err != nil {
-		return nil, fmt.Errorf("failed to parse cert-manager Certificates in namespace %q: %v", core.NamespaceRegistry, err)
+		return nil, core.WrapWithSentinel(core.ErrCertParseCertificatesFailed, err, fmt.Sprintf("failed to parse cert-manager Certificates in namespace %q: %v", core.NamespaceRegistry, err))
 	}
 	var owners []string
 	for _, item := range list.Items {
