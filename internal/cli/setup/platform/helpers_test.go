@@ -18,6 +18,9 @@ import (
 
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 
 	"mcp-runtime/internal/cli/cluster"
 	"mcp-runtime/internal/cli/core"
@@ -222,6 +225,130 @@ func TestGenerateOperatorWebhookCertificate(t *testing.T) {
 	}
 	if !caCert.NotAfter.After(servingCert.NotAfter) {
 		t.Fatalf("CA expiry %s must outlive serving certificate expiry %s", caCert.NotAfter, servingCert.NotAfter)
+	}
+}
+
+func TestReusableOperatorWebhookServingCert(t *testing.T) {
+	issued := time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC)
+	caPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(issued)
+	if err != nil {
+		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
+	}
+
+	if !reusableOperatorWebhookServingCert(caPEM, certPEM, keyPEM, issued) {
+		t.Fatal("expected freshly generated certificate to be reusable")
+	}
+	insideRenewalWindow := issued.AddDate(1, 0, 0).Add(-29 * 24 * time.Hour)
+	if reusableOperatorWebhookServingCert(caPEM, certPEM, keyPEM, insideRenewalWindow) {
+		t.Fatal("expected certificate inside the renewal window to be rotated")
+	}
+	if reusableOperatorWebhookServingCert(nil, certPEM, keyPEM, issued) {
+		t.Fatal("expected secret without ca.crt to be rotated")
+	}
+
+	_, _, otherKeyPEM, err := generateOperatorWebhookCertificate(issued)
+	if err != nil {
+		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
+	}
+	if reusableOperatorWebhookServingCert(caPEM, certPEM, otherKeyPEM, issued) {
+		t.Fatal("expected mismatched private key to be rotated")
+	}
+}
+
+func operatorWebhookSecretJSON(caPEM, certPEM, keyPEM []byte) []byte {
+	return []byte(fmt.Sprintf(`{"data":{"ca.crt":%q,"tls.crt":%q,"tls.key":%q}}`,
+		base64.StdEncoding.EncodeToString(caPEM),
+		base64.StdEncoding.EncodeToString(certPEM),
+		base64.StdEncoding.EncodeToString(keyPEM)))
+}
+
+func TestEnsureOperatorWebhookTLSSecretReusesValidSecret(t *testing.T) {
+	caPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC())
+	if err != nil {
+		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
+	}
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if commandHasArgs(spec, "get", "secret", operatorWebhookSecretName) {
+				return &core.MockCommand{Args: spec.Args, OutputData: operatorWebhookSecretJSON(caPEM, certPEM, keyPEM)}
+			}
+			if commandHasArgs(spec, "apply") {
+				t.Errorf("expected no apply while reusing webhook secret, got %#v", spec.Args)
+			}
+			return &core.MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	got, err := ensureOperatorWebhookTLSSecret(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != string(caPEM) {
+		t.Fatal("expected existing CA bundle to be returned without rotation")
+	}
+}
+
+func TestEnsureOperatorWebhookTLSSecretRotatesExpiringSecret(t *testing.T) {
+	// Issued ~11.5 months ago, the serving certificate expires inside the
+	// 30-day renewal window and must be rotated.
+	caPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC().AddDate(0, -11, -15))
+	if err != nil {
+		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
+	}
+	applied := 0
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "secret", operatorWebhookSecretName) {
+				cmd.OutputData = operatorWebhookSecretJSON(caPEM, certPEM, keyPEM)
+			}
+			if commandHasArgs(spec, "apply") {
+				applied++
+				cmd.RunFunc = func() error {
+					_, err := io.ReadAll(cmd.StdinR)
+					return err
+				}
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	got, err := ensureOperatorWebhookTLSSecret(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if applied == 0 {
+		t.Fatal("expected expiring webhook secret to be re-applied")
+	}
+	if string(got) == string(caPEM) {
+		t.Fatal("expected a freshly generated CA bundle")
+	}
+}
+
+func TestEnsureOperatorWebhookTLSSecretClientGoReusesValidSecret(t *testing.T) {
+	caPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC())
+	if err != nil {
+		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
+	}
+	resetPlatformKubeconfig(t)
+	swapKubernetesClientsForTest(t, newPlatformKubernetesTestClients([]runtime.Object{&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: operatorWebhookSecretName, Namespace: core.NamespaceMCPRuntime},
+		Type:       corev1.SecretTypeTLS,
+		Data: map[string][]byte{
+			"ca.crt":  caPEM,
+			"tls.crt": certPEM,
+			"tls.key": keyPEM,
+		},
+	}}, nil))
+
+	got, err := ensureOperatorWebhookTLSSecretClientGo()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != string(caPEM) {
+		t.Fatal("expected existing CA bundle to be returned without rotation")
 	}
 }
 

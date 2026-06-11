@@ -2,6 +2,7 @@ package platform
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -18,6 +20,7 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/kube"
@@ -31,6 +34,10 @@ const (
 	operatorWebhookVolumeName         = "webhook-server-cert"
 	operatorWebhookCertDir            = "/tmp/k8s-webhook-server/serving-certs"
 	operatorWebhookCertHashAnnotation = "mcp-runtime.io/webhook-cert-sha256"
+	// operatorWebhookCertRenewalWindow is how long before expiry a setup
+	// re-run rotates the webhook CA and serving certificate instead of
+	// reusing the existing Secret.
+	operatorWebhookCertRenewalWindow = 30 * 24 * time.Hour
 )
 
 func generateOperatorWebhookCertificate(now time.Time) ([]byte, []byte, []byte, error) {
@@ -98,7 +105,7 @@ func generateOperatorWebhookCertificate(now time.Time) ([]byte, []byte, []byte, 
 	return caCertPEM, certPEM, keyPEM, nil
 }
 
-func operatorWebhookTLSSecretManifest(certPEM, keyPEM []byte) string {
+func operatorWebhookTLSSecretManifest(caCertPEM, certPEM, keyPEM []byte) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
@@ -106,31 +113,136 @@ metadata:
   namespace: %s
 type: kubernetes.io/tls
 data:
+  ca.crt: %s
   tls.crt: %s
   tls.key: %s
-`, operatorWebhookSecretName, core.NamespaceMCPRuntime, base64.StdEncoding.EncodeToString(certPEM), base64.StdEncoding.EncodeToString(keyPEM))
+`, operatorWebhookSecretName, core.NamespaceMCPRuntime, base64.StdEncoding.EncodeToString(caCertPEM), base64.StdEncoding.EncodeToString(certPEM), base64.StdEncoding.EncodeToString(keyPEM))
 }
 
+// ensureOperatorWebhookTLSSecretClientGo reuses the existing webhook Secret
+// when its certificate chain is still valid, so setup re-runs do not rotate
+// the CA. Rotation rolls the operator Deployment and, until the rollout
+// completes, the fail-closed webhooks reject all mcpruntime.org writes —
+// reuse keeps re-runs free of that window.
 func ensureOperatorWebhookTLSSecretClientGo() ([]byte, error) {
-	caCertPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC())
+	now := time.Now().UTC()
+	if ca, cert, key := readOperatorWebhookTLSSecretClientGo(); reusableOperatorWebhookServingCert(ca, cert, key, now) {
+		return ca, nil
+	}
+	caCertPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(now)
 	if err != nil {
 		return nil, err
 	}
-	if err := applyManifestYAML(operatorWebhookTLSSecretManifest(certPEM, keyPEM), "", os.Stdout); err != nil {
+	if err := applyManifestYAML(operatorWebhookTLSSecretManifest(caCertPEM, certPEM, keyPEM), "", os.Stdout); err != nil {
 		return nil, err
 	}
 	return caCertPEM, nil
 }
 
+// ensureOperatorWebhookTLSSecret mirrors ensureOperatorWebhookTLSSecretClientGo
+// for the kubectl deploy path.
 func ensureOperatorWebhookTLSSecret(kubectl core.KubectlRunner) ([]byte, error) {
-	caCertPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC())
+	now := time.Now().UTC()
+	if ca, cert, key := readOperatorWebhookTLSSecret(kubectl); reusableOperatorWebhookServingCert(ca, cert, key, now) {
+		return ca, nil
+	}
+	caCertPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(now)
 	if err != nil {
 		return nil, err
 	}
-	if err := kube.ApplyManifestContent(kubectl.CommandArgs, operatorWebhookTLSSecretManifest(certPEM, keyPEM)); err != nil {
+	if err := kube.ApplyManifestContent(kubectl.CommandArgs, operatorWebhookTLSSecretManifest(caCertPEM, certPEM, keyPEM)); err != nil {
 		return nil, err
 	}
 	return caCertPEM, nil
+}
+
+func readOperatorWebhookTLSSecretClientGo() (caCertPEM, certPEM, keyPEM []byte) {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return nil, nil, nil
+	}
+	secret, err := clients.Clientset.CoreV1().Secrets(core.NamespaceMCPRuntime).Get(context.Background(), operatorWebhookSecretName, metav1.GetOptions{})
+	if err != nil {
+		return nil, nil, nil
+	}
+	return secret.Data["ca.crt"], secret.Data["tls.crt"], secret.Data["tls.key"]
+}
+
+func readOperatorWebhookTLSSecret(kubectl core.KubectlRunner) (caCertPEM, certPEM, keyPEM []byte) {
+	cmd, err := kubectl.CommandArgs([]string{
+		"get", "secret", operatorWebhookSecretName,
+		"-n", core.NamespaceMCPRuntime,
+		"--ignore-not-found", "-o", "json",
+	})
+	if err != nil {
+		return nil, nil, nil
+	}
+	out, err := cmd.Output()
+	if err != nil || len(bytes.TrimSpace(out)) == 0 {
+		return nil, nil, nil
+	}
+	var secret struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(out, &secret); err != nil {
+		return nil, nil, nil
+	}
+	decode := func(key string) []byte {
+		raw, err := base64.StdEncoding.DecodeString(secret.Data[key])
+		if err != nil {
+			return nil
+		}
+		return raw
+	}
+	return decode("ca.crt"), decode("tls.crt"), decode("tls.key")
+}
+
+// reusableOperatorWebhookServingCert reports whether an existing webhook
+// Secret can be kept as-is: the serving certificate must match the stored
+// private key, chain to the stored CA for the webhook service DNS name, and
+// both certificates must stay valid beyond the renewal window. Secrets
+// written before ca.crt was stored fail the check and are regenerated.
+func reusableOperatorWebhookServingCert(caCertPEM, certPEM, keyPEM []byte, now time.Time) bool {
+	caCert, err := parsePEMCertificate(caCertPEM)
+	if err != nil {
+		return false
+	}
+	cert, err := parsePEMCertificate(certPEM)
+	if err != nil {
+		return false
+	}
+	keyBlock, _ := pem.Decode(keyPEM)
+	if keyBlock == nil {
+		return false
+	}
+	key, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
+	if err != nil {
+		return false
+	}
+	certKey, ok := cert.PublicKey.(*rsa.PublicKey)
+	if !ok || !key.PublicKey.Equal(certKey) {
+		return false
+	}
+	deadline := now.Add(operatorWebhookCertRenewalWindow)
+	if deadline.After(cert.NotAfter) || deadline.After(caCert.NotAfter) {
+		return false
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+	_, err = cert.Verify(x509.VerifyOptions{
+		DNSName:     operatorWebhookServiceName + "." + core.NamespaceMCPRuntime + ".svc",
+		Roots:       roots,
+		CurrentTime: now,
+	})
+	return err == nil
+}
+
+func parsePEMCertificate(pemBytes []byte) (*x509.Certificate, error) {
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return nil, errors.New("no PEM certificate block")
+	}
+	return x509.ParseCertificate(block.Bytes)
 }
 
 func configureOperatorWebhookDeployment(mutator *manifest.Mutator, caBundlePEM []byte) error {
