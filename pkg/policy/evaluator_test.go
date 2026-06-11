@@ -560,6 +560,78 @@ func TestAuthorizeReportsMatchedGrantOnSideEffectDenial(t *testing.T) {
 	}
 }
 
+func TestAuthorizePolicyVersionFollowsMatchedGrant(t *testing.T) {
+	t.Parallel()
+
+	policy := testPolicyWithGrant()
+	policy.Grants = []Grant{
+		{
+			Name:               "matched-grant",
+			HumanID:            "human-1",
+			AgentID:            "agent-1",
+			MaxTrust:           "high",
+			PolicyVersion:      "matched-v1",
+			AllowedSideEffects: []string{"read"},
+			ToolRules:          []ToolAccess{{Name: "upper", Decision: "allow"}},
+		},
+		{
+			Name:               "unrelated-grant",
+			HumanID:            "human-1",
+			AgentID:            "agent-1",
+			MaxTrust:           "high",
+			PolicyVersion:      "unrelated-v9",
+			AllowedSideEffects: []string{"write"},
+			ToolRules:          []ToolAccess{{Name: "other_tool", Decision: "allow"}},
+		},
+	}
+
+	decision := Authorize(policy, Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, time.Time{})
+
+	if !decision.Allowed {
+		t.Fatalf("decision = %#v, want allowed", decision)
+	}
+	if decision.MatchedGrant != "matched-grant" {
+		t.Fatalf("decision = %#v, want matched-grant attributed", decision)
+	}
+	if decision.PolicyVersion != "matched-v1" {
+		t.Fatalf("decision = %#v, want policy version of the matched grant, not an unrelated one", decision)
+	}
+}
+
+func TestAuthorizeReportsMatchedNamespaces(t *testing.T) {
+	t.Parallel()
+
+	policy := testPolicyWithGrant()
+	policy.Grants[0].Namespace = "team-a"
+	policy.Session.Required = true
+	policy.Sessions = []Binding{
+		{
+			Name:           "session-1",
+			Namespace:      "team-b",
+			HumanID:        "human-1",
+			AgentID:        "agent-1",
+			ConsentedTrust: "high",
+		},
+	}
+
+	decision := Authorize(policy, Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1", SessionID: "session-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, time.Time{})
+
+	if !decision.Allowed {
+		t.Fatalf("decision = %#v, want allowed", decision)
+	}
+	if decision.MatchedGrantNamespace != "team-a" || decision.MatchedSessionNamespace != "team-b" {
+		t.Fatalf("decision = %#v, want grant namespace team-a and session namespace team-b", decision)
+	}
+}
+
 func testPolicyWithGrant() *Document {
 	return &Document{
 		Policy: &Config{
