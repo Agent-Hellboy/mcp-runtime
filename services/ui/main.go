@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,10 @@ const (
 	defaultLoginFailureWindow     = 15 * time.Minute
 	defaultLoginFailureThreshold  = 5
 	defaultLoginLockoutDuration   = 5 * time.Minute
+	loginAttemptIdleTTL           = 30 * time.Minute
+	loginAttemptMaxClients        = 4096
+	loginAttemptPruneInterval     = time.Minute
+	loginAttemptEvictionBatch     = 256
 	loginFailureLogEvery          = 3
 	loginRequestMaxBytes          = 8 * 1024
 )
@@ -77,14 +82,16 @@ type uiSessionStore struct {
 }
 
 type loginAttemptTracker struct {
-	mu      sync.Mutex
-	clients map[string]*loginClientState
-	now     func() time.Time
+	mu        sync.Mutex
+	clients   map[string]*loginClientState
+	now       func() time.Time
+	lastPrune time.Time
 }
 
 type loginClientState struct {
 	tokens         int
 	lastRefill     time.Time
+	lastSeen       time.Time
 	failures       int
 	failuresExpire time.Time
 	lockedUntil    time.Time
@@ -737,8 +744,10 @@ func (t *loginAttemptTracker) allow(clientID string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	state := t.stateForLocked(clientID)
 	now := t.now()
+	t.pruneIfDueLocked(now)
+	state := t.stateForLocked(clientID, now)
+	state.lastSeen = now
 	refillLoginTokens(state, now)
 	if now.Before(state.lockedUntil) {
 		return false
@@ -747,6 +756,7 @@ func (t *loginAttemptTracker) allow(clientID string) bool {
 		return false
 	}
 	state.tokens--
+	t.enforceMaxLocked(now)
 	return true
 }
 
@@ -754,8 +764,10 @@ func (t *loginAttemptTracker) recordFailure(clientID string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	state := t.stateForLocked(clientID)
 	now := t.now()
+	t.pruneIfDueLocked(now)
+	state := t.stateForLocked(clientID, now)
+	state.lastSeen = now
 	if now.After(state.failuresExpire) {
 		state.failures = 0
 	}
@@ -764,6 +776,7 @@ func (t *loginAttemptTracker) recordFailure(clientID string) int {
 	if state.failures >= loginFailureThreshold {
 		state.lockedUntil = now.Add(loginLockoutDuration)
 	}
+	t.enforceMaxLocked(now)
 	return state.failures
 }
 
@@ -771,7 +784,13 @@ func (t *loginAttemptTracker) recordSuccess(clientID string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	state := t.stateForLocked(clientID)
+	now := t.now()
+	t.pruneIfDueLocked(now)
+	state := t.clients[clientID]
+	if state == nil {
+		return 0
+	}
+	state.lastSeen = now
 	prior := state.failures
 	state.failures = 0
 	state.failuresExpire = time.Time{}
@@ -779,14 +798,57 @@ func (t *loginAttemptTracker) recordSuccess(clientID string) int {
 	return prior
 }
 
-func (t *loginAttemptTracker) stateForLocked(clientID string) *loginClientState {
+func (t *loginAttemptTracker) stateForLocked(clientID string, now time.Time) *loginClientState {
 	state := t.clients[clientID]
 	if state == nil {
-		now := t.now()
-		state = &loginClientState{tokens: loginRateLimitCapacity, lastRefill: now}
+		state = &loginClientState{tokens: loginRateLimitCapacity, lastRefill: now, lastSeen: now}
 		t.clients[clientID] = state
 	}
 	return state
+}
+
+func (t *loginAttemptTracker) pruneIfDueLocked(now time.Time) {
+	if !t.lastPrune.IsZero() && now.Sub(t.lastPrune) < loginAttemptPruneInterval {
+		return
+	}
+	t.lastPrune = now
+	for clientID, state := range t.clients {
+		if now.Sub(state.lastSeen) > loginAttemptIdleTTL && !now.Before(state.lockedUntil) {
+			delete(t.clients, clientID)
+		}
+	}
+}
+
+func (t *loginAttemptTracker) enforceMaxLocked(now time.Time) {
+	if len(t.clients) <= loginAttemptMaxClients {
+		return
+	}
+	target := loginAttemptMaxClients - loginAttemptEvictionBatch
+	if target < 0 {
+		target = 0
+	}
+	type candidate struct {
+		clientID string
+		lastSeen time.Time
+		locked   bool
+	}
+	candidates := make([]candidate, 0, len(t.clients))
+	for clientID, state := range t.clients {
+		candidates = append(candidates, candidate{
+			clientID: clientID,
+			lastSeen: state.lastSeen,
+			locked:   now.Before(state.lockedUntil),
+		})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].locked != candidates[j].locked {
+			return !candidates[i].locked
+		}
+		return candidates[i].lastSeen.Before(candidates[j].lastSeen)
+	})
+	for _, entry := range candidates[:len(t.clients)-target] {
+		delete(t.clients, entry.clientID)
+	}
 }
 
 func refillLoginTokens(state *loginClientState, now time.Time) {

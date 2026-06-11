@@ -1239,6 +1239,62 @@ func TestHandleLoginSuccessResetsFailureCounter(t *testing.T) {
 	}
 }
 
+func TestLoginAttemptTrackerPrunesIdleClientsPeriodically(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := newLoginAttemptTracker(func() time.Time { return now })
+
+	tracker.recordFailure("client-old")
+	now = now.Add(loginAttemptIdleTTL + time.Second)
+	tracker.recordFailure("client-new")
+
+	if _, ok := tracker.clients["client-old"]; ok {
+		t.Fatal("idle login attempt client was not pruned")
+	}
+	if _, ok := tracker.clients["client-new"]; !ok {
+		t.Fatal("new login attempt client missing")
+	}
+}
+
+func TestLoginAttemptTrackerDoesNotPruneOnEveryRequest(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := newLoginAttemptTracker(func() time.Time { return now })
+	tracker.recordFailure("client")
+	firstPrune := tracker.lastPrune
+
+	now = now.Add(loginAttemptPruneInterval / 2)
+	tracker.recordFailure("client")
+
+	if !tracker.lastPrune.Equal(firstPrune) {
+		t.Fatalf("last prune = %s, want %s", tracker.lastPrune, firstPrune)
+	}
+}
+
+func TestLoginAttemptTrackerCapsClientsAndPreservesLockedClients(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := newLoginAttemptTracker(func() time.Time { return now })
+	tracker.clients["locked"] = &loginClientState{
+		lastSeen:    now,
+		lockedUntil: now.Add(loginLockoutDuration),
+	}
+
+	for i := 0; i < loginAttemptMaxClients; i++ {
+		now = now.Add(time.Millisecond)
+		if !tracker.allow(fmt.Sprintf("client-%d", i)) {
+			t.Fatalf("client-%d should be allowed on first attempt", i)
+		}
+	}
+
+	if got := len(tracker.clients); got > loginAttemptMaxClients {
+		t.Fatalf("login attempt clients = %d, want <= %d", got, loginAttemptMaxClients)
+	}
+	if _, ok := tracker.clients["locked"]; !ok {
+		t.Fatal("active lockout was evicted before unlocked clients")
+	}
+	if _, ok := tracker.clients["client-0"]; ok {
+		t.Fatal("oldest unlocked client was not evicted")
+	}
+}
+
 func useLoginAttemptTrackerForTest(t *testing.T) func() {
 	t.Helper()
 	previous := loginAttempts
