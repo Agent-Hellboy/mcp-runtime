@@ -520,6 +520,260 @@ func TestRuntimeServersNonAdminRejectsOtherNamespace(t *testing.T) {
 	}
 }
 
+func TestRuntimeServersObservabilityLinksOnlyForObservableServers(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	private := ownedTestMCPServer("private-demo", "user-1", "user-1")
+	shared := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "shared-demo",
+			Namespace: sharedCatalogNamespace,
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{Image: "registry.example.com/shared-demo"},
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme, private, shared),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/servers", nil)
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+			sharedCatalogNamespace,
+		},
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Servers []serverInfo `json:"servers"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Servers) != 2 {
+		t.Fatalf("servers = %#v, want private and shared", payload.Servers)
+	}
+	for _, got := range payload.Servers {
+		switch got.Name {
+		case "private-demo":
+			if got.Observability == nil || len(got.Observability.Prometheus.Queries) == 0 {
+				t.Fatalf("private server observability missing: %#v", got.Observability)
+			}
+		case "shared-demo":
+			if got.Observability != nil {
+				t.Fatalf("shared server should not expose user observability links: %#v", got.Observability)
+			}
+		}
+	}
+}
+
+func TestRuntimeObservabilityLinksAllowOwnedNamespace(t *testing.T) {
+	server := newRuntimeServerWithMCPServers(t, ownedTestMCPServer("demo", "user-1", "user-1"))
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/observability/links?namespace=user-1&server=demo", nil)
+	request.Header.Set("X-Forwarded-Host", "platform.example.test")
+	request.Header.Set("X-Forwarded-Proto", "https")
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+			sharedCatalogNamespace,
+		},
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeObservabilityLinks(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var payload observabilityLinksResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Namespace != "user-1" || payload.Server != "demo" {
+		t.Fatalf("target = %s/%s, want user-1/demo", payload.Namespace, payload.Server)
+	}
+	if len(payload.Prometheus.Queries) == 0 {
+		t.Fatalf("prometheus queries missing: %#v", payload.Prometheus)
+	}
+	if got := payload.Prometheus.Queries[0].URL; !strings.HasPrefix(got, "https://platform.example.test/api/runtime/observability/prometheus/query?") {
+		t.Fatalf("prometheus URL = %q", got)
+	}
+	if payload.Grafana.Available {
+		t.Fatalf("grafana should be unavailable without configured tenant-aware dashboard: %#v", payload.Grafana)
+	}
+}
+
+func TestRuntimeObservabilityLinksGenerateGrafanaURLAfterAuthorization(t *testing.T) {
+	t.Setenv(envGrafanaServerDashboardURL, "/grafana/d/server/mcp-server?var-namespace={namespace}&var-server={server}")
+	t.Setenv(envGrafanaScopedUserAccess, "true")
+	server := newRuntimeServerWithMCPServers(t, &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "team-demo",
+			Namespace: "mcp-team-acme",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image:  "registry.example.com/acme/team-demo",
+			TeamID: "team-acme-id",
+		},
+	})
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/observability/links?namespace=mcp-team-acme&server=team-demo", nil)
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+			"mcp-team-acme",
+		},
+		Teams: []principalTeam{{
+			ID:        "team-acme-id",
+			Slug:      "acme",
+			Namespace: "mcp-team-acme",
+			Role:      teamRoleMember,
+		}},
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeObservabilityLinks(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var payload observabilityLinksResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !payload.Grafana.Available {
+		t.Fatalf("grafana should be available with scoped user access enabled: %#v", payload.Grafana)
+	}
+	wantURL := "/grafana/d/server/mcp-server?var-namespace=mcp-team-acme&var-server=team-demo"
+	if payload.Grafana.URL != wantURL {
+		t.Fatalf("grafana URL = %q, want %q", payload.Grafana.URL, wantURL)
+	}
+}
+
+func TestRuntimeObservabilityRejectsCrossTenantServer(t *testing.T) {
+	server := newRuntimeServerWithMCPServers(t, ownedTestMCPServer("demo", "tenant-b", "tenant-b-user"))
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/observability/links?namespace=tenant-b&server=demo", nil)
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "tenant-a-user",
+		Namespace: "tenant-a",
+		AllowedNamespaces: []string{
+			"tenant-a",
+			sharedCatalogNamespace,
+		},
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeObservabilityLinks(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestRuntimeObservabilityRejectsUnownedSharedCatalogServer(t *testing.T) {
+	server := newRuntimeServerWithMCPServers(t, &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "shared-demo",
+			Namespace: sharedCatalogNamespace,
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{Image: "registry.example.com/shared-demo"},
+	})
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/observability/links?namespace=mcp-servers&server=shared-demo", nil)
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+			sharedCatalogNamespace,
+		},
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeObservabilityLinks(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestRuntimeObservabilityPrometheusProxyScopesQuery(t *testing.T) {
+	var gotPath, gotQuery string
+	prometheus := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.Query().Get("query")
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+	}))
+	defer prometheus.Close()
+	t.Setenv(envMCPPrometheusAPIURL, prometheus.URL+"/prometheus")
+
+	server := newRuntimeServerWithMCPServers(t, ownedTestMCPServer("demo", "user-1", "user-1"))
+	request := httptest.NewRequest(http.MethodGet, "/api/runtime/observability/prometheus/query?namespace=user-1&server=demo&query_id=request_rate", nil)
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "user-1",
+		AllowedNamespaces: []string{
+			"user-1",
+			sharedCatalogNamespace,
+		},
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeObservabilityPrometheusQuery(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if gotPath != "/prometheus/api/v1/query" {
+		t.Fatalf("prometheus path = %q, want /prometheus/api/v1/query", gotPath)
+	}
+	wantQuery := `sum(rate(mcp_gateway_requests_total{namespace="user-1",server="demo"}[5m]))`
+	if gotQuery != wantQuery {
+		t.Fatalf("prometheus query = %q, want %q", gotQuery, wantQuery)
+	}
+	if strings.Contains(recorder.Body.String(), "tenant-b") {
+		t.Fatalf("response leaked foreign tenant marker: %s", recorder.Body.String())
+	}
+}
+
+func newRuntimeServerWithMCPServers(t *testing.T, servers ...*mcpv1alpha1.MCPServer) *RuntimeServer {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	objects := make([]runtime.Object, 0, len(servers))
+	for _, server := range servers {
+		objects = append(objects, server)
+	}
+	return &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic:   dynamicfake.NewSimpleDynamicClient(scheme, objects...),
+			Clientset: kubernetesfake.NewSimpleClientset(),
+		},
+	}
+}
+
 func TestRuntimeServerApplyNonAdminRejectsSharedCatalogNamespace(t *testing.T) {
 	server := &RuntimeServer{
 		k8sClients: &k8sclient.Clients{

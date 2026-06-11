@@ -410,6 +410,9 @@ func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
 		`function isTenantUser()`,
 		`if (isTenantUser() && server.namespace && server.name)`,
 		`retireButton.textContent = "Retire"`,
+		`metricsButton.textContent = "Prometheus"`,
+		`async function openScopedObservability(server, target)`,
+		`server.observability?.prometheus?.queries?.length`,
 		`authenticated && !isTenantUser()`,
 		`await loadUserDashboard()`,
 	} {
