@@ -570,6 +570,9 @@ func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
 	default:
 		t.Fatal("analytics queue unexpectedly drained")
 	}
+	if got := proxy.analyticsDropped.Load(); got != 1 {
+		t.Fatalf("analytics dropped count = %d, want 1", got)
+	}
 }
 
 func TestStopAnalyticsDispatcherDrainsQueue(t *testing.T) {
