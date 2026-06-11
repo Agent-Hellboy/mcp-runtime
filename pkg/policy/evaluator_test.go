@@ -404,6 +404,162 @@ func TestAuthorizeIgnoresRuleTrustFromGrantWithoutSideEffect(t *testing.T) {
 	}
 }
 
+func TestAuthorizeReportsMatchedGrantOnAllow(t *testing.T) {
+	t.Parallel()
+
+	decision := Authorize(testPolicyWithGrant(), Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, time.Time{})
+
+	if !decision.Allowed {
+		t.Fatalf("decision = %#v, want allowed", decision)
+	}
+	if decision.MatchedGrant != "grant-1" {
+		t.Fatalf("decision = %#v, want matched grant grant-1", decision)
+	}
+	if decision.MatchedSession != "" {
+		t.Fatalf("decision = %#v, want no matched session without session header", decision)
+	}
+}
+
+func TestAuthorizeReportsMatchedGrantOnToolDenied(t *testing.T) {
+	t.Parallel()
+
+	policy := testPolicyWithGrant()
+	policy.Grants[0].ToolRules = []ToolAccess{{Name: "upper", Decision: "deny"}}
+
+	decision := Authorize(policy, Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, time.Time{})
+
+	if decision.Allowed || decision.Reason != "tool_denied" {
+		t.Fatalf("decision = %#v, want tool_denied", decision)
+	}
+	if decision.MatchedGrant != "grant-1" {
+		t.Fatalf("decision = %#v, want denying grant attributed", decision)
+	}
+}
+
+func TestAuthorizeReportsMatchedSession(t *testing.T) {
+	t.Parallel()
+
+	policy := testPolicyWithGrant()
+	policy.Session.Required = true
+	policy.Sessions = []Binding{
+		{
+			Name:           "session-1",
+			HumanID:        "human-1",
+			AgentID:        "agent-1",
+			ConsentedTrust: "high",
+		},
+	}
+
+	decision := Authorize(policy, Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1", SessionID: "session-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, time.Time{})
+
+	if !decision.Allowed {
+		t.Fatalf("decision = %#v, want allowed", decision)
+	}
+	if decision.MatchedSession != "session-1" || decision.MatchedGrant != "grant-1" {
+		t.Fatalf("decision = %#v, want session and grant attribution", decision)
+	}
+}
+
+func TestAuthorizeReportsMatchedSessionOnRevokedSession(t *testing.T) {
+	t.Parallel()
+
+	policy := testPolicyWithGrant()
+	policy.Session.Required = true
+	policy.Sessions = []Binding{
+		{
+			Name:           "session-1",
+			HumanID:        "human-1",
+			AgentID:        "agent-1",
+			ConsentedTrust: "high",
+			Revoked:        true,
+		},
+	}
+
+	decision := Authorize(policy, Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1", SessionID: "session-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, time.Time{})
+
+	if decision.Allowed || decision.Reason != "session_revoked" {
+		t.Fatalf("decision = %#v, want session_revoked", decision)
+	}
+	if decision.MatchedSession != "session-1" {
+		t.Fatalf("decision = %#v, want revoked session attributed", decision)
+	}
+}
+
+func TestAuthorizeAttributesHighestTrustGrant(t *testing.T) {
+	t.Parallel()
+
+	policy := testPolicyWithGrant()
+	policy.Grants = []Grant{
+		{
+			Name:               "low-grant",
+			HumanID:            "human-1",
+			AgentID:            "agent-1",
+			MaxTrust:           "medium",
+			AllowedSideEffects: []string{"read"},
+			ToolRules:          []ToolAccess{{Name: "upper", Decision: "allow"}},
+		},
+		{
+			Name:               "high-grant",
+			HumanID:            "human-1",
+			AgentID:            "agent-1",
+			MaxTrust:           "high",
+			AllowedSideEffects: []string{"read"},
+			ToolRules:          []ToolAccess{{Name: "upper", Decision: "allow"}},
+		},
+	}
+
+	decision := Authorize(policy, Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, time.Time{})
+
+	if !decision.Allowed {
+		t.Fatalf("decision = %#v, want allowed", decision)
+	}
+	if decision.MatchedGrant != "high-grant" {
+		t.Fatalf("decision = %#v, want highest-trust grant attributed", decision)
+	}
+}
+
+func TestAuthorizeReportsMatchedGrantOnSideEffectDenial(t *testing.T) {
+	t.Parallel()
+
+	policy := testPolicyWithGrant()
+	policy.Tools = append(policy.Tools, Tool{Name: "delete_row", RequiredTrust: "high", SideEffect: "destructive"})
+	policy.Grants[0].AllowedSideEffects = []string{"read"}
+	policy.Grants[0].ToolRules = []ToolAccess{{Name: "delete_row", Decision: "allow"}}
+
+	decision := Authorize(policy, Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "delete_row",
+	}, time.Time{})
+
+	if decision.Allowed || decision.Reason != "side_effect_not_allowed" {
+		t.Fatalf("decision = %#v, want side_effect_not_allowed", decision)
+	}
+	if decision.MatchedGrant != "grant-1" {
+		t.Fatalf("decision = %#v, want tool-matching grant attributed", decision)
+	}
+}
+
 func testPolicyWithGrant() *Document {
 	return &Document{
 		Policy: &Config{

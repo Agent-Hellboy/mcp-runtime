@@ -256,6 +256,12 @@ func (s *gatewayServer) auditPayload(
 	if toolName != "" {
 		payload["tool_name"] = toolName
 	}
+	if decision.MatchedGrant != "" {
+		payload["matched_grant"] = decision.MatchedGrant
+	}
+	if decision.MatchedSession != "" {
+		payload["matched_session"] = decision.MatchedSession
+	}
 	if decision.RequiredTrust != "" {
 		payload["required_trust"] = decision.RequiredTrust
 	}

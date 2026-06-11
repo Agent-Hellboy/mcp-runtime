@@ -32,6 +32,12 @@ type Decision struct {
 	AdminTrust         string
 	ConsentedTrust     string
 	EffectiveTrust     string
+	// MatchedGrant is the name of the grant that determined this decision,
+	// empty when no grant applied (e.g. no_matching_grant, default decisions).
+	MatchedGrant string
+	// MatchedSession is the name of the session binding the request resolved
+	// to, empty when no live session applied to the decision.
+	MatchedSession string
 }
 
 // Deny builds a denied authorization decision.
@@ -76,35 +82,51 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 			return Deny(http.StatusUnauthorized, "session_not_found", policyVersionOrDefault(policy, ""))
 		}
 		if session.Revoked {
-			return Deny(http.StatusUnauthorized, "session_revoked", ChoosePolicyVersion(session.PolicyVersion, policyVersionOrDefault(policy, "")))
+			denied := Deny(http.StatusUnauthorized, "session_revoked", ChoosePolicyVersion(session.PolicyVersion, policyVersionOrDefault(policy, "")))
+			denied.MatchedSession = string(session.Name)
+			return denied
 		}
 		if isExpiredAt(session.ExpiresAt, now) {
-			return Deny(http.StatusUnauthorized, "session_expired", ChoosePolicyVersion(session.PolicyVersion, policyVersionOrDefault(policy, "")))
+			denied := Deny(http.StatusUnauthorized, "session_expired", ChoosePolicyVersion(session.PolicyVersion, policyVersionOrDefault(policy, "")))
+			denied.MatchedSession = string(session.Name)
+			return denied
 		}
 	} else if identity.SessionID == "" || !sessionFound || session.Revoked || isExpiredAt(session.ExpiresAt, now) {
 		session = Binding{}
 		sessionFound = false
 	}
+	matchedSession := ""
+	if sessionFound {
+		matchedSession = string(session.Name)
+	}
 
 	requiredTrust, requiredSideEffect := resolveToolMetadata(tools, request.ToolName)
 	matchingGrants := matchingGrants(grants, identity)
 	if len(matchingGrants) == 0 {
-		return decideByDefault(policy, "no_matching_grant")
+		denied := decideByDefault(policy, "no_matching_grant")
+		denied.MatchedSession = matchedSession
+		return denied
 	}
 
 	grant := bestGrantFor(matchingGrants, request.ToolName, requiredTrust, requiredSideEffect, policyVersionOrDefault(policy, ""))
 	if grant.deny != nil {
-		return *grant.deny
+		denied := *grant.deny
+		denied.MatchedSession = matchedSession
+		return denied
 	}
 	if !grant.toolAllowed {
-		return decideByDefault(policy, "tool_not_granted")
+		denied := decideByDefault(policy, "tool_not_granted")
+		denied.MatchedSession = matchedSession
+		return denied
 	}
 	if requiredSideEffect == "" {
 		return Decision{
-			Status:        http.StatusForbidden,
-			Reason:        "tool_side_effect_unknown",
-			PolicyVersion: grant.policyVersion,
-			RequiredTrust: grant.requiredTrust,
+			Status:         http.StatusForbidden,
+			Reason:         "tool_side_effect_unknown",
+			PolicyVersion:  grant.policyVersion,
+			RequiredTrust:  grant.requiredTrust,
+			MatchedGrant:   grant.grantName,
+			MatchedSession: matchedSession,
 		}
 	}
 	if !grant.sideEffectAllowed {
@@ -114,10 +136,15 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 			PolicyVersion:      grant.policyVersion,
 			RequiredTrust:      grant.requiredTrust,
 			RequiredSideEffect: requiredSideEffect,
+			MatchedGrant:       grant.grantName,
+			MatchedSession:     matchedSession,
 		}
 	}
 	if grant.adminTrustRank == 0 {
-		return decideByDefault(policy, "grant_without_trust")
+		denied := decideByDefault(policy, "grant_without_trust")
+		denied.MatchedGrant = grant.grantName
+		denied.MatchedSession = matchedSession
+		return denied
 	}
 
 	consentedRank := grant.adminTrustRank
@@ -137,6 +164,8 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 			AdminTrust:         RankToTrust(grant.adminTrustRank),
 			ConsentedTrust:     consentedTrust,
 			EffectiveTrust:     RankToTrust(effectiveRank),
+			MatchedGrant:       grant.grantName,
+			MatchedSession:     matchedSession,
 		}
 	}
 
@@ -150,6 +179,8 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 		AdminTrust:         RankToTrust(grant.adminTrustRank),
 		ConsentedTrust:     consentedTrust,
 		EffectiveTrust:     RankToTrust(effectiveRank),
+		MatchedGrant:       grant.grantName,
+		MatchedSession:     matchedSession,
 	}
 }
 
@@ -160,6 +191,7 @@ type grantSelection struct {
 	requiredTrustRank int
 	requiredTrust     string
 	policyVersion     string
+	grantName         string
 	deny              *Decision
 }
 
@@ -179,7 +211,13 @@ func bestGrantFor(grants []Grant, toolName ToolName, requiredTrust, requiredSide
 		adminRank := TrustRank(grant.MaxTrust)
 		if len(grant.ToolRules) == 0 {
 			selection.toolAllowed = true
+			if selection.grantName == "" {
+				selection.grantName = grant.Name
+			}
 			if sideEffectAllowed(grant.AllowedSideEffects, requiredSideEffect) {
+				if !selection.sideEffectAllowed || adminRank > selection.adminTrustRank {
+					selection.grantName = grant.Name
+				}
 				selection.sideEffectAllowed = true
 				selection.adminTrustRank = maxInt(selection.adminTrustRank, adminRank)
 			}
@@ -191,11 +229,18 @@ func bestGrantFor(grants []Grant, toolName ToolName, requiredTrust, requiredSide
 			}
 			if strings.EqualFold(rule.Decision, "deny") {
 				deny := Deny(http.StatusForbidden, "tool_denied", ChoosePolicyVersion(grant.PolicyVersion, policyVersion))
+				deny.MatchedGrant = grant.Name
 				selection.deny = &deny
 				return selection
 			}
 			selection.toolAllowed = true
+			if selection.grantName == "" {
+				selection.grantName = grant.Name
+			}
 			if sideEffectAllowed(grant.AllowedSideEffects, requiredSideEffect) {
+				if !selection.sideEffectAllowed || adminRank > selection.adminTrustRank {
+					selection.grantName = grant.Name
+				}
 				selection.sideEffectAllowed = true
 				ruleRank := TrustRank(rule.RequiredTrust)
 				if ruleRank > selection.requiredTrustRank {
