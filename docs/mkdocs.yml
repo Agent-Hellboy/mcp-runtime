@@ -57,7 +57,6 @@ nav:
   - Quickstart: quickstart.md
   - Concepts: concepts.md
   - Architecture: architecture.md
-  - Next Product Picks Plan: next-product-picks-plan.md
   - Getting Started: getting-started.md
   - Developer Guide:
       - Publish an MCP Server: publish-mcp-server.md
