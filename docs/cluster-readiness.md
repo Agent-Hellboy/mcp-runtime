@@ -383,6 +383,8 @@ kubectl scale statefulset clickhouse kafka loki tempo mcp-sentinel-postgres \
 kubectl delete pvc \
   data-clickhouse-0 \
   kafka-data-kafka-0 \
+  kafka-data-kafka-1 \
+  kafka-data-kafka-2 \
   data-loki-0 \
   data-tempo-0 \
   data-mcp-sentinel-postgres-0 \
@@ -397,6 +399,8 @@ Important distinctions:
   certificate.
 - Preserve `registry/registry-storage` unless you intentionally want to wipe the
   image registry too.
+- Kafka KRaft metadata, topic data, and consumer offsets all live in the three
+  `kafka-data-kafka-*` PVCs. Delete all three together for a clean reset.
 - A PVC stuck in `Terminating` is often still referenced by stale pods from an
   old ReplicaSet. Remove the stale pods first, then recreate the workload.
 

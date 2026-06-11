@@ -174,7 +174,18 @@ kubectl create secret docker-registry mcp-runtime-registry-pull \
    kubectl exec -n mcp-sentinel kafka-0 -- \
      kafka-topics --list --bootstrap-server localhost:9092
    ```
-   If `mcp.events` is missing, re-run `setup`.
+   If `mcp.events` is missing, inspect `job/kafka-topic-init` and rerun `setup`.
+
+4. Check the three-broker KRaft quorum and replicas:
+   ```bash
+   kubectl get pods -n mcp-sentinel -l app=kafka -o wide
+   kubectl exec -n mcp-sentinel kafka-0 -- \
+     kafka-metadata-quorum --bootstrap-server localhost:9092 describe --status
+   kubectl exec -n mcp-sentinel kafka-0 -- \
+     kafka-topics --bootstrap-server localhost:9092 --describe --topic mcp.events
+   ```
+   Healthy output shows three Kafka pods, three `mcp.events` partitions, replica
+   factor `3`, and all assigned replicas in ISR.
 
 ---
 

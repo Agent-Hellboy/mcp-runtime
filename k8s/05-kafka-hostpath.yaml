@@ -1,14 +1,13 @@
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: kafka-pv
+  name: kafka-pv-0
   labels:
     app: kafka
 spec:
   capacity:
     storage: 20Gi
-  accessModes:
-    - ReadWriteOnce
+  accessModes: [ReadWriteOnce]
   volumeMode: Filesystem
   storageClassName: local-path
   persistentVolumeReclaimPolicy: Retain
@@ -16,192 +15,84 @@ spec:
     namespace: mcp-sentinel
     name: kafka-data-kafka-0
   local:
-    path: /var/lib/mcp-runtime/kafka
+    path: /var/lib/mcp-runtime/kafka/0
   nodeAffinity:
     required:
       nodeSelectorTerms:
         - matchExpressions:
             - key: mcp-runtime.org/local-storage
               operator: In
-              values:
-                - "true"
+              values: ["true"]
 ---
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: zookeeper-data-pv
+  name: kafka-pv-1
   labels:
-    app: zookeeper
+    app: kafka
 spec:
   capacity:
-    storage: 5Gi
-  accessModes:
-    - ReadWriteOnce
+    storage: 20Gi
+  accessModes: [ReadWriteOnce]
   volumeMode: Filesystem
   storageClassName: local-path
   persistentVolumeReclaimPolicy: Retain
   claimRef:
     namespace: mcp-sentinel
-    name: zookeeper-data-pvc
+    name: kafka-data-kafka-1
   local:
-    path: /var/lib/mcp-runtime/zookeeper/data
+    path: /var/lib/mcp-runtime/kafka/1
   nodeAffinity:
     required:
       nodeSelectorTerms:
         - matchExpressions:
             - key: mcp-runtime.org/local-storage
               operator: In
-              values:
-                - "true"
+              values: ["true"]
 ---
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: zookeeper-log-pv
+  name: kafka-pv-2
   labels:
-    app: zookeeper
+    app: kafka
 spec:
   capacity:
-    storage: 5Gi
-  accessModes:
-    - ReadWriteOnce
+    storage: 20Gi
+  accessModes: [ReadWriteOnce]
   volumeMode: Filesystem
   storageClassName: local-path
   persistentVolumeReclaimPolicy: Retain
   claimRef:
     namespace: mcp-sentinel
-    name: zookeeper-log-pvc
+    name: kafka-data-kafka-2
   local:
-    path: /var/lib/mcp-runtime/zookeeper/log
+    path: /var/lib/mcp-runtime/kafka/2
   nodeAffinity:
     required:
       nodeSelectorTerms:
         - matchExpressions:
             - key: mcp-runtime.org/local-storage
               operator: In
-              values:
-                - "true"
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: zookeeper-data-pvc
-  namespace: mcp-sentinel
-spec:
-  storageClassName: local-path
-  volumeName: zookeeper-data-pv
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 5Gi
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: zookeeper-log-pvc
-  namespace: mcp-sentinel
-spec:
-  storageClassName: local-path
-  volumeName: zookeeper-log-pv
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 5Gi
+              values: ["true"]
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: zookeeper
+  name: kafka-headless
   namespace: mcp-sentinel
 spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
   selector:
-    app: zookeeper
+    app: kafka
   ports:
-    - name: client
-      port: 2181
-      targetPort: 2181
----
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: zookeeper
-  namespace: mcp-sentinel
-spec:
-  serviceName: zookeeper
-  replicas: 1
-  selector:
-    matchLabels:
-      app: zookeeper
-  template:
-    metadata:
-      labels:
-        app: zookeeper
-    spec:
-      automountServiceAccountToken: false
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
-        seccompProfile:
-          type: RuntimeDefault
-      initContainers:
-        - name: init-perms
-          image: alpine:3.23
-          imagePullPolicy: IfNotPresent
-          command: ["sh", "-c", "chown -R 1000:1000 /var/lib/zookeeper/data /var/lib/zookeeper/log"]
-          securityContext:
-            runAsUser: 0
-            runAsGroup: 0
-            runAsNonRoot: false
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop:
-                - ALL
-            seccompProfile:
-              type: RuntimeDefault
-          volumeMounts:
-            - name: zookeeper-data
-              mountPath: /var/lib/zookeeper/data
-            - name: zookeeper-log
-              mountPath: /var/lib/zookeeper/log
-      containers:
-        - name: zookeeper
-          image: confluentinc/cp-zookeeper:7.5.1
-          securityContext:
-            allowPrivilegeEscalation: false
-            runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
-            capabilities:
-              drop:
-                - ALL
-          env:
-            - name: ZOOKEEPER_CLIENT_PORT
-              value: "2181"
-            - name: ZOOKEEPER_TICK_TIME
-              value: "2000"
-            - name: ZOOKEEPER_DATA_DIR
-              value: /var/lib/zookeeper/data
-            - name: ZOOKEEPER_LOG_DIR
-              value: /var/lib/zookeeper/log
-          ports:
-            - containerPort: 2181
-          volumeMounts:
-            - name: zookeeper-data
-              mountPath: /var/lib/zookeeper/data
-            - name: zookeeper-log
-              mountPath: /var/lib/zookeeper/log
-      volumes:
-        - name: zookeeper-data
-          persistentVolumeClaim:
-            claimName: zookeeper-data-pvc
-        - name: zookeeper-log
-          persistentVolumeClaim:
-            claimName: zookeeper-log-pvc
+    - name: broker
+      port: 9092
+      targetPort: 9092
+    - name: controller
+      port: 9093
+      targetPort: 9093
 ---
 apiVersion: v1
 kind: Service
@@ -216,14 +107,28 @@ spec:
       port: 9092
       targetPort: 9092
 ---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kafka
+  namespace: mcp-sentinel
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: kafka
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: kafka
   namespace: mcp-sentinel
+  annotations:
+    mcpruntime.org/kafka-mode: kraft
 spec:
-  serviceName: kafka
-  replicas: 1
+  serviceName: kafka-headless
+  podManagementPolicy: Parallel
+  replicas: 3
   selector:
     matchLabels:
       app: kafka
@@ -241,6 +146,15 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: kafka
+                topologyKey: kubernetes.io/hostname
       initContainers:
         - name: init-perms
           image: alpine:3.23
@@ -253,8 +167,7 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
-              drop:
-                - ALL
+              drop: [ALL]
             seccompProfile:
               type: RuntimeDefault
           volumeMounts:
@@ -263,41 +176,74 @@ spec:
       containers:
         - name: kafka
           image: confluentinc/cp-kafka:7.5.1
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              export KAFKA_NODE_ID="${HOSTNAME##*-}"
+              export KAFKA_ADVERTISED_LISTENERS="PLAINTEXT://${HOSTNAME}.kafka-headless.mcp-sentinel.svc.cluster.local:9092"
+              exec /etc/confluent/docker/run
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
             capabilities:
-              drop:
-                - ALL
+              drop: [ALL]
           ports:
-            - containerPort: 9092
+            - name: broker
+              containerPort: 9092
+            - name: controller
+              containerPort: 9093
           env:
-            - name: KAFKA_BROKER_ID
-              value: "1"
-            - name: KAFKA_ZOOKEEPER_CONNECT
-              value: zookeeper:2181
+            - name: CLUSTER_ID
+              value: MkU3OEVBNTcwNTJENDM2Qk
+            - name: KAFKA_PROCESS_ROLES
+              value: broker,controller
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: 0@kafka-0.kafka-headless.mcp-sentinel.svc.cluster.local:9093,1@kafka-1.kafka-headless.mcp-sentinel.svc.cluster.local:9093,2@kafka-2.kafka-headless.mcp-sentinel.svc.cluster.local:9093
             - name: KAFKA_LISTENERS
-              value: PLAINTEXT://0.0.0.0:9092
-            - name: KAFKA_ADVERTISED_LISTENERS
-              value: PLAINTEXT://kafka.mcp-sentinel.svc.cluster.local:9092
+              value: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
             - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
-              value: PLAINTEXT:PLAINTEXT
+              value: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+            - name: KAFKA_CONTROLLER_LISTENER_NAMES
+              value: CONTROLLER
             - name: KAFKA_INTER_BROKER_LISTENER_NAME
               value: PLAINTEXT
             - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
-              value: "1"
+              value: "3"
+            - name: KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS
+              value: "3"
             - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
-              value: "1"
+              value: "2"
             - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
-              value: "1"
+              value: "3"
+            - name: KAFKA_DEFAULT_REPLICATION_FACTOR
+              value: "3"
+            - name: KAFKA_MIN_INSYNC_REPLICAS
+              value: "2"
             - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
-              value: "true"
+              value: "false"
             - name: KAFKA_LOG_DIRS
               value: /var/lib/kafka/data
             - name: KAFKA_HEAP_OPTS
-              value: "-Xms256m -Xmx256m"
+              value: "-Xms384m -Xmx384m"
+          readinessProbe:
+            tcpSocket:
+              port: broker
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: broker
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              memory: 768Mi
           volumeMounts:
             - name: kafka-data
               mountPath: /var/lib/kafka/data
@@ -306,7 +252,7 @@ spec:
         name: kafka-data
       spec:
         storageClassName: local-path
-        accessModes: ["ReadWriteOnce"]
+        accessModes: [ReadWriteOnce]
         resources:
           requests:
             storage: 20Gi

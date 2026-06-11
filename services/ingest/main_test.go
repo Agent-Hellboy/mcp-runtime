@@ -75,6 +75,15 @@ func TestHandleReadyWithoutKafkaReturnsServiceUnavailable(t *testing.T) {
 	}
 }
 
+func TestKafkaWriterRequiresAllReplicas(t *testing.T) {
+	t.Parallel()
+
+	writer := newKafkaWriter([]string{"kafka:9092"}, "mcp.events")
+	if writer.RequiredAcks != kafka.RequireAll {
+		t.Fatalf("RequiredAcks = %v, want kafka.RequireAll", writer.RequiredAcks)
+	}
+}
+
 func TestHandleEventsPropagatesTraceContextToKafka(t *testing.T) {
 	previous := otel.GetTextMapPropagator()
 	otel.SetTextMapPropagator(propagation.TraceContext{})

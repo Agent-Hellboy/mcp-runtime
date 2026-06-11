@@ -75,7 +75,6 @@ func (s preflightStep) Run(logger *zap.Logger, _ SetupDeps, ctx *SetupContext) e
 		issues = append(issues, checkStaleAnalyticsJob(bg, clients)...)
 		issues = append(issues, checkStalePullSecrets(bg, clients)...)
 		issues = append(issues, checkPostgresPasswordSync(bg, clients)...)
-		issues = append(issues, checkKafkaZookeeperConsistency(bg, clients)...)
 		issues = append(issues, checkStuckAnalyticsStatefulSets(bg, clients)...)
 	}
 
@@ -656,58 +655,6 @@ func checkStuckAnalyticsStatefulSets(ctx context.Context, clients *k8sclient.Cli
 		})
 	}
 	return issues
-}
-
-// checkKafkaZookeeperConsistency detects the classic InconsistentClusterIdException
-// that occurs when ZooKeeper is restarted (losing its data) while Kafka's PVC still
-// holds an old cluster ID. Kafka will crash-loop with a fatal error on startup until
-// its meta.properties is cleared.
-func checkKafkaZookeeperConsistency(ctx context.Context, clients *k8sclient.Clients) []preflightIssue {
-	// Check if Kafka pod is in CrashLoopBackOff / Error state
-	pods, err := clients.Clientset.CoreV1().Pods(core.DefaultAnalyticsNamespace).List(ctx, metav1.ListOptions{LabelSelector: "app=kafka"})
-	if err != nil || len(pods.Items) == 0 {
-		return nil
-	}
-	for _, pod := range pods.Items {
-		if pod.DeletionTimestamp != nil {
-			continue
-		}
-		for _, cs := range pod.Status.ContainerStatuses {
-			waiting := cs.State.Waiting
-			if waiting == nil {
-				continue
-			}
-			if waiting.Reason == "CrashLoopBackOff" || waiting.Reason == "Error" {
-				// Check if last termination message mentions InconsistentClusterIdException
-				if cs.LastTerminationState.Terminated != nil &&
-					strings.Contains(cs.LastTerminationState.Terminated.Message, "InconsistentClusterIdException") {
-					return []preflightIssue{{
-						fatal: true,
-						message: fmt.Sprintf(
-							"Kafka pod %q is crash-looping with InconsistentClusterIdException — ZooKeeper was restarted and has a new cluster ID that conflicts with Kafka's stored cluster ID.",
-							pod.Name,
-						),
-						cleanup: []string{
-							"# Scale Kafka to 0, clear meta.properties from the PVC, then scale back up:",
-							fmt.Sprintf("kubectl scale statefulset kafka -n %s --replicas=0", core.DefaultAnalyticsNamespace),
-							fmt.Sprintf("kubectl run kafka-pvc-fix -n %s --rm --restart=Never --image=busybox --overrides='{\"spec\":{\"volumes\":[{\"name\":\"d\",\"persistentVolumeClaim\":{\"claimName\":\"kafka-data-kafka-0\"}}],\"containers\":[{\"name\":\"f\",\"image\":\"busybox\",\"command\":[\"find\",\"/d\",\"-name\",\"meta.properties\",\"-delete\"],\"volumeMounts\":[{\"name\":\"d\",\"mountPath\":\"/d\"}]}]}}' 2>&1", core.DefaultAnalyticsNamespace),
-							fmt.Sprintf("kubectl scale statefulset kafka -n %s --replicas=1", core.DefaultAnalyticsNamespace),
-						},
-					}}
-				}
-				// Generic Kafka crash — warn
-				return []preflightIssue{{
-					fatal:   false,
-					message: fmt.Sprintf("Kafka pod %q is crash-looping (%s) — analytics ingest will fail until Kafka recovers.", pod.Name, waiting.Reason),
-					cleanup: []string{
-						fmt.Sprintf("kubectl logs -n %s %s --previous  # check the crash reason", core.DefaultAnalyticsNamespace, pod.Name),
-						fmt.Sprintf("kubectl rollout restart statefulset/kafka -n %s", core.DefaultAnalyticsNamespace),
-					},
-				}}
-			}
-		}
-	}
-	return nil
 }
 
 func countFatal(issues []preflightIssue) int {
