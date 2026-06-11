@@ -70,7 +70,7 @@ flowchart LR
 | Component | Role |
 |---|---|
 | **ClickHouse** | Stores the event stream with trace IDs plus materialized fields: server, namespace, team ID, cluster, human, agent, session, decision, tool name. |
-| **Kafka + Zookeeper** | Buffer between ingest and processor. |
+| **Kafka + Zookeeper** | Buffer between ingest and processor. Both use persistent volumes because Kafka logs and ZooKeeper cluster/topic metadata must survive together. |
 | **Prometheus + Grafana** | Service metrics, scrape config, dashboards. |
 | **OTel Collector + Tempo** | Distributed tracing pipeline. |
 | **Loki + Promtail** | Log shipping and storage. |

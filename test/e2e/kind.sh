@@ -3110,9 +3110,7 @@ platform_cache_ready() {
   kubectl rollout status deploy/mcp-sentinel-gateway -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status statefulset/clickhouse -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status statefulset/kafka -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
-  kubectl rollout status deploy/zookeeper -n mcp-sentinel --timeout=5s >/dev/null 2>&1 \
-    || kubectl rollout status statefulset/zookeeper -n mcp-sentinel --timeout=5s >/dev/null 2>&1 \
-    || return 1
+  kubectl rollout status statefulset/zookeeper -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status daemonset/promtail -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status statefulset/loki -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status statefulset/tempo -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1

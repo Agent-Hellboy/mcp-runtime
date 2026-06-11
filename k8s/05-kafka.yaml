@@ -12,11 +12,12 @@ spec:
       targetPort: 2181
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: zookeeper
   namespace: mcp-sentinel
 spec:
+  serviceName: zookeeper
   replicas: 1
   selector:
     matchLabels:
@@ -50,8 +51,32 @@ spec:
               value: "2181"
             - name: ZOOKEEPER_TICK_TIME
               value: "2000"
+            - name: ZOOKEEPER_DATA_DIR
+              value: /var/lib/zookeeper/data
+            - name: ZOOKEEPER_LOG_DIR
+              value: /var/lib/zookeeper/log
           ports:
             - containerPort: 2181
+          volumeMounts:
+            - name: zookeeper-data
+              mountPath: /var/lib/zookeeper/data
+            - name: zookeeper-log
+              mountPath: /var/lib/zookeeper/log
+  volumeClaimTemplates:
+    - metadata:
+        name: zookeeper-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+    - metadata:
+        name: zookeeper-log
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
 ---
 apiVersion: v1
 kind: Service

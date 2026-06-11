@@ -40,7 +40,7 @@ type sentinelPortTarget struct {
 
 var sentinelComponents = []sentinelComponent{
 	{Key: "clickhouse", Display: "ClickHouse", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Resource: "clickhouse", Label: "clickhouse"},
-	{Key: "zookeeper", Display: "Zookeeper", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Resource: "zookeeper", Label: "zookeeper"},
+	{Key: "zookeeper", Display: "Zookeeper", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Resource: "zookeeper", Label: "zookeeper"},
 	{Key: "kafka", Display: "Kafka", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Resource: "kafka", Label: "kafka"},
 	{Key: "ingest", Display: "Ingest", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Resource: "mcp-sentinel-ingest", Label: "mcp-sentinel-ingest"},
 	{

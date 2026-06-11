@@ -377,11 +377,13 @@ StatefulSets down and delete the PVCs you intend to wipe.
 Typical destructive reset flow:
 
 ```bash
-kubectl scale statefulset clickhouse kafka loki tempo mcp-sentinel-postgres \
+kubectl scale statefulset clickhouse zookeeper kafka loki tempo mcp-sentinel-postgres \
   -n mcp-sentinel --replicas=0
 
 kubectl delete pvc \
   data-clickhouse-0 \
+  zookeeper-data-zookeeper-0 \
+  zookeeper-log-zookeeper-0 \
   kafka-data-kafka-0 \
   data-loki-0 \
   data-tempo-0 \

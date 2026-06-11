@@ -20,7 +20,7 @@ type PlatformWorkload struct {
 // DefaultPlatformStatusWorkloads lists bundled analytics stack workloads for status output.
 var DefaultPlatformStatusWorkloads = []PlatformWorkload{
 	{Component: "ClickHouse", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Name: "clickhouse"},
-	{Component: "Zookeeper", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "zookeeper"},
+	{Component: "Zookeeper", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Name: "zookeeper"},
 	{Component: "Kafka", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Name: "kafka"},
 	{Component: "Ingest", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-ingest"},
 	{Component: "Processor", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-processor"},

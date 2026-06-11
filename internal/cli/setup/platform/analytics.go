@@ -20,6 +20,7 @@ import (
 
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/kube"
+	"mcp-runtime/internal/cli/kubeerr"
 	"mcp-runtime/internal/cli/registry"
 	"mcp-runtime/internal/cli/setup/assetpath"
 	"mcp-runtime/internal/cli/setup/ingressmanifest"
@@ -33,17 +34,15 @@ import (
 )
 
 const (
-	kafkaStatefulSetName = "kafka"
-	kafkaPodName         = "kafka-0"
-	kafkaPodContainer    = "kafka"
-	kafkaPVCName         = "kafka-data-kafka-0"
+	kafkaStatefulSetName      = "kafka"
+	kafkaPodName              = "kafka-0"
+	kafkaPodContainer         = "kafka"
+	kafkaPVCName              = "kafka-data-kafka-0"
+	legacyZookeeperDeployment = "zookeeper"
 )
 
-func zookeeperRolloutKind(storageMode string) string {
-	if storageMode == setupplan.StorageModeHostpath {
-		return "statefulset"
-	}
-	return "deployment"
+func zookeeperRolloutKind(_ string) string {
+	return "statefulset"
 }
 
 func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error {
@@ -104,6 +103,10 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		clickhouseManifest = "k8s/03-clickhouse-hostpath.yaml"
 		kafkaManifest = "k8s/05-kafka-hostpath.yaml"
 		postgresManifest = "k8s/20-postgres-hostpath.yaml"
+	}
+
+	if err := reconcileLegacyZookeeperDeploymentClientGo(); err != nil {
+		return err
 	}
 
 	core.Info("Applying analytics storage and messaging components")
@@ -264,6 +267,10 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		postgresManifest = "k8s/20-postgres-hostpath.yaml"
 	}
 
+	if err := reconcileLegacyZookeeperDeploymentWithKubectl(kubectl); err != nil {
+		return err
+	}
+
 	core.Info("Applying analytics storage and messaging components")
 	for _, manifest := range []string{
 		clickhouseManifest,
@@ -413,6 +420,100 @@ func waitForKafkaRolloutClientGo(logger *zap.Logger, rolloutTimeout time.Duratio
 	}
 }
 
+func reconcileLegacyZookeeperDeploymentClientGo() error {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	namespace := core.DefaultAnalyticsNamespace
+	deployments := clients.Clientset.AppsV1().Deployments(namespace)
+	if _, err := deployments.Get(context.Background(), legacyZookeeperDeployment, metav1.GetOptions{}); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("inspect legacy ZooKeeper deployment: %w", err)
+	}
+
+	_, err = clients.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(context.Background(), kafkaPVCName, metav1.GetOptions{})
+	switch {
+	case err == nil:
+		return fmt.Errorf(
+			"legacy deployment/%s and persistent Kafka volume %s/%s were both found; setup will not replace ephemeral ZooKeeper automatically because that can orphan Kafka topic metadata. Back up or migrate ZooKeeper state, then delete deployment/%s before rerunning setup",
+			legacyZookeeperDeployment, namespace, kafkaPVCName, legacyZookeeperDeployment,
+		)
+	case !apierrors.IsNotFound(err):
+		return fmt.Errorf("inspect Kafka persistent volume before ZooKeeper migration: %w", err)
+	}
+
+	core.Warn("Legacy ephemeral ZooKeeper deployment found without persistent Kafka data; deleting it before installing the persistent StatefulSet")
+	propagation := metav1.DeletePropagationForeground
+	if err := deployments.Delete(context.Background(), legacyZookeeperDeployment, metav1.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete legacy ZooKeeper deployment: %w", err)
+	}
+	return waitForDeploymentDeletionClientGo(clients, namespace, legacyZookeeperDeployment, 2*time.Minute)
+}
+
+func reconcileLegacyZookeeperDeploymentWithKubectl(kubectl core.KubectlRunner) error {
+	namespace := core.DefaultAnalyticsNamespace
+	deploymentOutput, err := kubectlText(kubectl, []string{
+		"get", "deployment", legacyZookeeperDeployment, "-n", namespace, "-o", "name",
+	})
+	if err != nil {
+		if isKubectlNotFound(deploymentOutput) {
+			return nil
+		}
+		return fmt.Errorf("inspect legacy ZooKeeper deployment: %s", kubeerr.CommandDetail(deploymentOutput, err))
+	}
+	if strings.TrimSpace(deploymentOutput) == "" {
+		return nil
+	}
+
+	pvcOutput, pvcErr := kubectlText(kubectl, []string{
+		"get", "pvc", kafkaPVCName, "-n", namespace, "-o", "name",
+	})
+	switch {
+	case pvcErr == nil && strings.TrimSpace(pvcOutput) != "":
+		return fmt.Errorf(
+			"legacy deployment/%s and persistent Kafka volume %s/%s were both found; setup will not replace ephemeral ZooKeeper automatically because that can orphan Kafka topic metadata. Back up or migrate ZooKeeper state, then delete deployment/%s before rerunning setup",
+			legacyZookeeperDeployment, namespace, kafkaPVCName, legacyZookeeperDeployment,
+		)
+	case pvcErr != nil && !isKubectlNotFound(pvcOutput):
+		return fmt.Errorf("inspect Kafka persistent volume before ZooKeeper migration: %s", kubeerr.CommandDetail(pvcOutput, pvcErr))
+	}
+
+	core.Warn("Legacy ephemeral ZooKeeper deployment found without persistent Kafka data; deleting it before installing the persistent StatefulSet")
+	if err := kubectl.RunWithOutput([]string{
+		"delete", "deployment/" + legacyZookeeperDeployment,
+		"-n", namespace,
+		"--ignore-not-found=true",
+		"--wait=true",
+		"--timeout=120s",
+	}, os.Stdout, os.Stderr); err != nil {
+		return fmt.Errorf("delete legacy ZooKeeper deployment: %w", err)
+	}
+	return nil
+}
+
+func isKubectlNotFound(output string) bool {
+	normalized := strings.ToLower(output)
+	return strings.Contains(normalized, "not found") || strings.Contains(normalized, "notfound")
+}
+
+func waitForDeploymentDeletionClientGo(clients *k8sclient.Clients, namespace, name string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		_, err := clients.Clientset.AppsV1().Deployments(namespace).Get(context.Background(), name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("timed out waiting for deployment/%s deletion", name)
+}
+
 func waitForKafkaRolloutWithKubectl(kubectl core.KubectlRunner, rolloutTimeout, storageMode string) error {
 	if err := waitForRolloutStatusWithKubectl(kubectl, "statefulset", kafkaStatefulSetName, core.DefaultAnalyticsNamespace, rolloutTimeout); err == nil {
 		return nil
@@ -428,10 +529,7 @@ func waitForKafkaRolloutWithKubectl(kubectl core.KubectlRunner, rolloutTimeout, 
 	}
 }
 
-func recoverKafkaClusterIDMismatchClientGo(logger *zap.Logger, storageMode string) (bool, error) {
-	if strings.EqualFold(strings.TrimSpace(storageMode), setupplan.StorageModeHostpath) {
-		return false, nil
-	}
+func recoverKafkaClusterIDMismatchClientGo(logger *zap.Logger, _ string) (bool, error) {
 	clients, err := platformKubernetesClients()
 	if err != nil {
 		return false, err
@@ -441,46 +539,23 @@ func recoverKafkaClusterIDMismatchClientGo(logger *zap.Logger, storageMode strin
 		return false, nil
 	}
 	if logger != nil {
-		logger.Warn("Kafka cluster ID mismatch detected; resetting bundled Kafka PVC")
+		logger.Warn("Kafka cluster ID mismatch detected; refusing destructive automatic recovery")
 	}
-	core.Warn("Kafka data volume has stale cluster metadata; resetting bundled Kafka state")
-	if err := scaleKafkaStatefulSetClientGo(clients, 0); err != nil {
-		return false, err
-	}
-	if err := waitForKafkaPodDeletionClientGo(clients, 2*time.Minute); err != nil {
-		return false, err
-	}
-	if err := clients.Clientset.CoreV1().PersistentVolumeClaims(core.DefaultAnalyticsNamespace).Delete(context.Background(), kafkaPVCName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-		return false, err
-	}
-	if err := scaleKafkaStatefulSetClientGo(clients, 1); err != nil {
-		return false, err
-	}
-	return true, nil
+	return false, fmt.Errorf(
+		"kafka cluster ID does not match ZooKeeper metadata; setup will not delete persistent volume %s/%s automatically. Restore or migrate ZooKeeper metadata to match the Kafka volume, or explicitly reset both stores if data loss is acceptable",
+		core.DefaultAnalyticsNamespace, kafkaPVCName,
+	)
 }
 
-func recoverKafkaClusterIDMismatchWithKubectl(kubectl core.KubectlRunner, storageMode string) (bool, error) {
-	if strings.EqualFold(strings.TrimSpace(storageMode), setupplan.StorageModeHostpath) {
-		return false, nil
-	}
+func recoverKafkaClusterIDMismatchWithKubectl(kubectl core.KubectlRunner, _ string) (bool, error) {
 	logs, err := kafkaLogsWithKubectl(kubectl)
 	if err != nil || !isKafkaClusterIDMismatchLog(logs) {
 		return false, nil
 	}
-	core.Warn("Kafka data volume has stale cluster metadata; resetting bundled Kafka state")
-	if err := kubectl.RunWithOutput([]string{"scale", "statefulset/" + kafkaStatefulSetName, "-n", core.DefaultAnalyticsNamespace, "--replicas=0"}, os.Stdout, os.Stderr); err != nil {
-		return false, err
-	}
-	if err := waitForKafkaPodDeletionWithKubectl(kubectl, 2*time.Minute); err != nil {
-		return false, err
-	}
-	if err := kubectl.RunWithOutput([]string{"delete", "pvc/" + kafkaPVCName, "-n", core.DefaultAnalyticsNamespace, "--ignore-not-found=true", "--wait=true", "--timeout=120s"}, os.Stdout, os.Stderr); err != nil {
-		return false, err
-	}
-	if err := kubectl.RunWithOutput([]string{"scale", "statefulset/" + kafkaStatefulSetName, "-n", core.DefaultAnalyticsNamespace, "--replicas=1"}, os.Stdout, os.Stderr); err != nil {
-		return false, err
-	}
-	return true, nil
+	return false, fmt.Errorf(
+		"kafka cluster ID does not match ZooKeeper metadata; setup will not delete persistent volume %s/%s automatically. Restore or migrate ZooKeeper metadata to match the Kafka volume, or explicitly reset both stores if data loss is acceptable",
+		core.DefaultAnalyticsNamespace, kafkaPVCName,
+	)
 }
 
 func kafkaLogsClientGo(clients *k8sclient.Clients) (string, error) {
@@ -517,45 +592,6 @@ func kafkaLogsWithKubectl(kubectl core.KubectlRunner) (string, error) {
 
 func isKafkaClusterIDMismatchLog(logs string) bool {
 	return strings.Contains(logs, "InconsistentClusterIdException") && strings.Contains(logs, "clusterId")
-}
-
-func scaleKafkaStatefulSetClientGo(clients *k8sclient.Clients, replicas int32) error {
-	stsClient := clients.Clientset.AppsV1().StatefulSets(core.DefaultAnalyticsNamespace)
-	current, err := stsClient.Get(context.Background(), kafkaStatefulSetName, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-	copy := current.DeepCopy()
-	copy.Spec.Replicas = &replicas
-	_, err = stsClient.Update(context.Background(), copy, metav1.UpdateOptions{})
-	return err
-}
-
-func waitForKafkaPodDeletionClientGo(clients *k8sclient.Clients, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		_, err := clients.Clientset.CoreV1().Pods(core.DefaultAnalyticsNamespace).Get(context.Background(), kafkaPodName, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		time.Sleep(2 * time.Second)
-	}
-	return fmt.Errorf("timed out waiting for %s pod deletion", kafkaPodName)
-}
-
-func waitForKafkaPodDeletionWithKubectl(kubectl core.KubectlRunner, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		out, err := kubectlText(kubectl, []string{"get", "pod", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-o", "name"})
-		if err != nil || strings.TrimSpace(out) == "" {
-			return nil
-		}
-		time.Sleep(2 * time.Second)
-	}
-	return fmt.Errorf("timed out waiting for %s pod deletion", kafkaPodName)
 }
 
 func applyCatalogNamespaceForMode(platformMode string) error {

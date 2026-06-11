@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -21,6 +22,12 @@ import (
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/registry/config"
 	setupplan "mcp-runtime/internal/cli/setup/plan"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 type helperFakeClusterManager struct{}
@@ -3219,7 +3226,7 @@ func TestIsKafkaClusterIDMismatchLog(t *testing.T) {
 	}
 }
 
-func TestRecoverKafkaClusterIDMismatchWithKubectlResetsBundledState(t *testing.T) {
+func TestRecoverKafkaClusterIDMismatchWithKubectlRefusesDestructiveReset(t *testing.T) {
 	var commands [][]string
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
@@ -3228,9 +3235,6 @@ func TestRecoverKafkaClusterIDMismatchWithKubectlResetsBundledState(t *testing.T
 			switch {
 			case slices.Equal(spec.Args, []string{"logs", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-c", kafkaPodContainer}):
 				cmd.OutputData = []byte(`kafka.common.InconsistentClusterIdException: The Cluster ID a doesn't match stored clusterId Some(b) in meta.properties`)
-			case slices.Equal(spec.Args, []string{"get", "pod", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-o", "name"}):
-				cmd.OutputData = []byte(`Error from server (NotFound): pods "kafka-0" not found`)
-				cmd.OutputErr = errors.New("not found")
 			}
 			return cmd
 		},
@@ -3238,20 +3242,16 @@ func TestRecoverKafkaClusterIDMismatchWithKubectlResetsBundledState(t *testing.T
 	kubectl := core.NewTestKubectlClient(mock)
 
 	recovered, err := recoverKafkaClusterIDMismatchWithKubectl(kubectl, "")
-	if err != nil {
-		t.Fatalf("recoverKafkaClusterIDMismatchWithKubectl returned error: %v", err)
+	if err == nil {
+		t.Fatal("expected destructive recovery to be refused")
 	}
-	if !recovered {
-		t.Fatal("expected kafka cluster ID mismatch recovery to run")
+	if recovered {
+		t.Fatal("did not expect Kafka state to be reset")
 	}
-
-	want := [][]string{
-		{"logs", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-c", kafkaPodContainer},
-		{"scale", "statefulset/" + kafkaStatefulSetName, "-n", core.DefaultAnalyticsNamespace, "--replicas=0"},
-		{"get", "pod", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-o", "name"},
-		{"delete", "pvc/" + kafkaPVCName, "-n", core.DefaultAnalyticsNamespace, "--ignore-not-found=true", "--wait=true", "--timeout=120s"},
-		{"scale", "statefulset/" + kafkaStatefulSetName, "-n", core.DefaultAnalyticsNamespace, "--replicas=1"},
+	if !strings.Contains(err.Error(), "will not delete persistent volume") {
+		t.Fatalf("unexpected error: %v", err)
 	}
+	want := [][]string{{"logs", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-c", kafkaPodContainer}}
 	if !slices.EqualFunc(commands, want, func(got, want []string) bool {
 		return slices.Equal(got, want)
 	}) {
@@ -3259,18 +3259,103 @@ func TestRecoverKafkaClusterIDMismatchWithKubectlResetsBundledState(t *testing.T
 	}
 }
 
-func TestRecoverKafkaClusterIDMismatchWithKubectlSkipsHostpath(t *testing.T) {
-	mock := &core.MockExecutor{}
+func TestReconcileLegacyZookeeperDeploymentWithKubectlDeletesOnlyWithoutKafkaPVC(t *testing.T) {
+	var commands [][]string
+	mock := &core.MockExecutor{CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+		commands = append(commands, append([]string(nil), spec.Args...))
+		cmd := &core.MockCommand{Args: spec.Args}
+		switch {
+		case slices.Equal(spec.Args, []string{"get", "deployment", legacyZookeeperDeployment, "-n", core.DefaultAnalyticsNamespace, "-o", "name"}):
+			cmd.OutputData = []byte("deployment.apps/zookeeper")
+		case slices.Equal(spec.Args, []string{"get", "pvc", kafkaPVCName, "-n", core.DefaultAnalyticsNamespace, "-o", "name"}):
+			cmd.OutputData = []byte(`Error from server (NotFound): persistentvolumeclaims "kafka-data-kafka-0" not found`)
+			cmd.OutputErr = errors.New("not found")
+		}
+		return cmd
+	}}
 	kubectl := core.NewTestKubectlClient(mock)
 
-	recovered, err := recoverKafkaClusterIDMismatchWithKubectl(kubectl, setupplan.StorageModeHostpath)
-	if err != nil {
-		t.Fatalf("recoverKafkaClusterIDMismatchWithKubectl returned error: %v", err)
+	if err := reconcileLegacyZookeeperDeploymentWithKubectl(kubectl); err != nil {
+		t.Fatalf("reconcileLegacyZookeeperDeploymentWithKubectl returned error: %v", err)
 	}
-	if recovered {
-		t.Fatal("did not expect hostpath mode to auto-reset kafka state")
+	wantDelete := []string{"delete", "deployment/" + legacyZookeeperDeployment, "-n", core.DefaultAnalyticsNamespace, "--ignore-not-found=true", "--wait=true", "--timeout=120s"}
+	if !slices.ContainsFunc(commands, func(command []string) bool { return slices.Equal(command, wantDelete) }) {
+		t.Fatalf("expected safe legacy deployment cleanup, got %#v", commands)
 	}
-	if len(mock.Commands) != 0 {
-		t.Fatalf("expected no kubectl calls in hostpath mode, got %#v", mock.Commands)
+}
+
+func TestReconcileLegacyZookeeperDeploymentWithKubectlBlocksWhenKafkaPVCExists(t *testing.T) {
+	var commands [][]string
+	mock := &core.MockExecutor{CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+		commands = append(commands, append([]string(nil), spec.Args...))
+		cmd := &core.MockCommand{Args: spec.Args}
+		switch {
+		case slices.Equal(spec.Args, []string{"get", "deployment", legacyZookeeperDeployment, "-n", core.DefaultAnalyticsNamespace, "-o", "name"}):
+			cmd.OutputData = []byte("deployment.apps/zookeeper")
+		case slices.Equal(spec.Args, []string{"get", "pvc", kafkaPVCName, "-n", core.DefaultAnalyticsNamespace, "-o", "name"}):
+			cmd.OutputData = []byte("persistentvolumeclaim/kafka-data-kafka-0")
+		}
+		return cmd
+	}}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	err := reconcileLegacyZookeeperDeploymentWithKubectl(kubectl)
+	if err == nil {
+		t.Fatal("expected legacy ZooKeeper and persistent Kafka conflict")
+	}
+	if !strings.Contains(err.Error(), "will not replace ephemeral ZooKeeper automatically") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, command := range commands {
+		if slices.Contains(command, "delete") {
+			t.Fatalf("setup must not delete resources for unsafe migration: %#v", commands)
+		}
+	}
+}
+
+func TestReconcileLegacyZookeeperDeploymentClientGoDeletesOnlyWithoutKafkaPVC(t *testing.T) {
+	clients := newPlatformKubernetesTestClients([]runtime.Object{
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{
+			Name:      legacyZookeeperDeployment,
+			Namespace: core.DefaultAnalyticsNamespace,
+		}},
+	}, nil)
+	swapKubernetesClientsForTest(t, clients)
+
+	if err := reconcileLegacyZookeeperDeploymentClientGo(); err != nil {
+		t.Fatalf("reconcileLegacyZookeeperDeploymentClientGo returned error: %v", err)
+	}
+	_, err := clients.Clientset.AppsV1().Deployments(core.DefaultAnalyticsNamespace).Get(
+		context.Background(), legacyZookeeperDeployment, metav1.GetOptions{},
+	)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("legacy ZooKeeper deployment still exists, err=%v", err)
+	}
+}
+
+func TestReconcileLegacyZookeeperDeploymentClientGoBlocksWhenKafkaPVCExists(t *testing.T) {
+	clients := newPlatformKubernetesTestClients([]runtime.Object{
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{
+			Name:      legacyZookeeperDeployment,
+			Namespace: core.DefaultAnalyticsNamespace,
+		}},
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
+			Name:      kafkaPVCName,
+			Namespace: core.DefaultAnalyticsNamespace,
+		}},
+	}, nil)
+	swapKubernetesClientsForTest(t, clients)
+
+	err := reconcileLegacyZookeeperDeploymentClientGo()
+	if err == nil {
+		t.Fatal("expected legacy ZooKeeper and persistent Kafka conflict")
+	}
+	if !strings.Contains(err.Error(), "will not replace ephemeral ZooKeeper automatically") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, getErr := clients.Clientset.AppsV1().Deployments(core.DefaultAnalyticsNamespace).Get(
+		context.Background(), legacyZookeeperDeployment, metav1.GetOptions{},
+	); getErr != nil {
+		t.Fatalf("legacy ZooKeeper deployment should be preserved: %v", getErr)
 	}
 }
