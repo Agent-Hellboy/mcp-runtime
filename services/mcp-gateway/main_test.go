@@ -575,6 +575,27 @@ func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
 	}
 }
 
+func TestShouldLogAnalyticsDropSamples(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		dropped uint64
+		want    bool
+	}{
+		{dropped: 0, want: false},
+		{dropped: 1, want: true},
+		{dropped: 2, want: true},
+		{dropped: 3, want: false},
+		{dropped: 4, want: true},
+		{dropped: 7, want: false},
+		{dropped: 8, want: true},
+	} {
+		if got := shouldLogAnalyticsDrop(tc.dropped); got != tc.want {
+			t.Fatalf("shouldLogAnalyticsDrop(%d) = %v, want %v", tc.dropped, got, tc.want)
+		}
+	}
+}
+
 func TestStopAnalyticsDispatcherDrainsQueue(t *testing.T) {
 	t.Parallel()
 

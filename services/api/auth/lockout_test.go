@@ -59,6 +59,30 @@ func TestLoginAttemptTrackerCapsEntriesAndPreservesLockedEntries(t *testing.T) {
 	}
 }
 
+func TestLoginAttemptTrackerNormalizesEmailSprayToIPBucket(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := NewLoginAttemptTracker(func() time.Time { return now })
+
+	for i := 0; i < 2; i++ {
+		tracker.RecordFailure("203.0.113.10|target@example.com")
+	}
+	for i := 0; i < APILoginAttemptMaxEntries; i++ {
+		now = now.Add(time.Millisecond)
+		tracker.RecordFailure(fmt.Sprintf("203.0.113.10|dummy-%d@example.com", i))
+	}
+
+	state, ok := tracker.entries["203.0.113.10"]
+	if !ok {
+		t.Fatal("ip bucket entry was evicted")
+	}
+	if len(tracker.entries) != 1 {
+		t.Fatalf("login attempt entries = %d, want 1 ip bucket", len(tracker.entries))
+	}
+	if state.Failures != APILoginAttemptMaxEntries+2 {
+		t.Fatalf("ip bucket failures = %d, want %d", state.Failures, APILoginAttemptMaxEntries+2)
+	}
+}
+
 func TestLoginAttemptTrackerAllowDoesNotCreateEntry(t *testing.T) {
 	tracker := NewLoginAttemptTracker(time.Now)
 	if !tracker.Allow("new-client") {

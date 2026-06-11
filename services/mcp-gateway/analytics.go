@@ -86,7 +86,9 @@ func (s *gatewayServer) emitIfEnabled(ctx context.Context, event events.Envelope
 	default:
 		dropped := s.analyticsDropped.Add(1)
 		s.analyticsMu.Unlock()
-		log.Printf("gateway analytics queue full; dropped event total=%d source=%q event_type=%q", dropped, event.Source, event.EventType)
+		if shouldLogAnalyticsDrop(dropped) {
+			log.Printf("gateway analytics queue full; dropped event total=%d source=%q event_type=%q", dropped, event.Source, event.EventType)
+		}
 	}
 }
 
@@ -107,6 +109,13 @@ func (s *gatewayServer) analyticsEventQueue() chan analyticsEvent {
 		return nil
 	}
 	return s.analyticsQueue
+}
+
+func shouldLogAnalyticsDrop(dropped uint64) bool {
+	if dropped == 1 {
+		return true
+	}
+	return dropped != 0 && dropped&(dropped-1) == 0
 }
 
 // emit sends analytics events to the ingest service.

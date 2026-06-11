@@ -2,6 +2,7 @@ package auth
 
 import (
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -38,6 +39,7 @@ func NewLoginAttemptTracker(nowFn func() time.Time) *LoginAttemptTracker {
 func (t *LoginAttemptTracker) Allow(key string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	key = normalizeLoginAttemptKey(key)
 	now := t.nowFunc()
 	t.pruneIfDueLocked(now)
 	state, ok := t.entries[key]
@@ -52,6 +54,7 @@ func (t *LoginAttemptTracker) Allow(key string) bool {
 func (t *LoginAttemptTracker) RecordFailure(key string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	key = normalizeLoginAttemptKey(key)
 	now := t.nowFunc()
 	t.pruneIfDueLocked(now)
 	state := t.entries[key]
@@ -66,6 +69,7 @@ func (t *LoginAttemptTracker) RecordFailure(key string) int {
 func (t *LoginAttemptTracker) RecordSuccess(key string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	key = normalizeLoginAttemptKey(key)
 	t.pruneIfDueLocked(t.nowFunc())
 	state := t.entries[key]
 	failures := state.Failures
@@ -96,6 +100,7 @@ func (t *LoginAttemptTracker) enforceMaxLocked(now time.Time) {
 	type candidate struct {
 		key      string
 		lastSeen time.Time
+		failures int
 		locked   bool
 	}
 	candidates := make([]candidate, 0, len(t.entries))
@@ -103,12 +108,16 @@ func (t *LoginAttemptTracker) enforceMaxLocked(now time.Time) {
 		candidates = append(candidates, candidate{
 			key:      key,
 			lastSeen: state.LastSeen,
+			failures: state.Failures,
 			locked:   state.LockedUntil.After(now),
 		})
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].locked != candidates[j].locked {
 			return !candidates[i].locked
+		}
+		if (candidates[i].failures > 0) != (candidates[j].failures > 0) {
+			return candidates[i].failures == 0
 		}
 		return candidates[i].lastSeen.Before(candidates[j].lastSeen)
 	})
@@ -133,4 +142,18 @@ func lockoutDurationForFailures(failures int) time.Duration {
 		return APILoginLockoutMax
 	}
 	return lockout
+}
+
+func normalizeLoginAttemptKey(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	if before, _, ok := strings.Cut(key, "|"); ok {
+		before = strings.TrimSpace(before)
+		if before != "" {
+			return before
+		}
+	}
+	return key
 }
