@@ -47,9 +47,6 @@ func (s *gatewayServer) startPolicyCache() error {
 // /config/status and metrics surface the failure while traffic keeps flowing.
 func (s *gatewayServer) reloadPolicy() error {
 	doc, err := s.loadPolicy()
-	if err == nil {
-		err = policypkg.Validate(doc)
-	}
 	if err != nil {
 		retained := s.loadPolicySnapshot()
 		retained.Err = err
@@ -109,14 +106,25 @@ func (s *gatewayServer) loadPolicy() (*policypkg.Document, error) {
 		}
 	}
 
+	// A file-backed document is validated exactly as the operator stamped it:
+	// the revision digest covers the rendered content, so integrity must be
+	// checked before gateway runtime defaults mutate the document.
+	if fromFile {
+		if err := policypkg.Validate(doc); err != nil {
+			return nil, err
+		}
+	}
+
 	s.applyPolicyDefaults(doc)
 
-	// A file-backed document carries the operator-stamped schema version and
-	// revision and is reported verbatim. A gateway-generated default document
-	// (no policy file, or an empty one) is stamped here so it carries a
-	// supported schema version and deterministic revision and can validate.
+	// A gateway-generated default document (no policy file, or an empty one)
+	// is stamped after defaulting so it carries a supported schema version and
+	// a deterministic revision over its final content.
 	if !fromFile {
 		if err := policypkg.Stamp(doc, ""); err != nil {
+			return nil, err
+		}
+		if err := policypkg.Validate(doc); err != nil {
 			return nil, err
 		}
 	}
