@@ -1,7 +1,9 @@
 package platform
 
 import (
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -175,6 +177,84 @@ func TestBuildOperatorImagePassesDockerPlatform(t *testing.T) {
 	cmd := mockExec.Commands[0]
 	if cmd.Name != "make" || !contains(cmd.Args, "DOCKER_PLATFORM=linux/amd64") {
 		t.Fatalf("expected make command with DOCKER_PLATFORM, got %s %#v", cmd.Name, cmd.Args)
+	}
+}
+
+func TestGenerateOperatorWebhookCertificate(t *testing.T) {
+	caPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
+	}
+
+	caBlock, _ := pem.Decode(caPEM)
+	if caBlock == nil {
+		t.Fatal("expected CA certificate PEM block")
+	}
+	caCert, err := x509.ParseCertificate(caBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse CA certificate: %v", err)
+	}
+	if !caCert.IsCA {
+		t.Fatal("expected CA certificate to be a CA")
+	}
+
+	certBlock, _ := pem.Decode(certPEM)
+	if certBlock == nil {
+		t.Fatal("expected serving certificate PEM block")
+	}
+	servingCert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse serving certificate: %v", err)
+	}
+	if servingCert.IsCA {
+		t.Fatal("serving certificate should not be a CA")
+	}
+	keyBlock, _ := pem.Decode(keyPEM)
+	if keyBlock == nil {
+		t.Fatal("expected serving private key PEM block")
+	}
+
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+	serviceDNS := operatorWebhookServiceName + "." + core.NamespaceMCPRuntime + ".svc"
+	if _, err := servingCert.Verify(x509.VerifyOptions{DNSName: serviceDNS, Roots: roots}); err != nil {
+		t.Fatalf("serving certificate did not verify for %s: %v", serviceDNS, err)
+	}
+	if !caCert.NotAfter.After(servingCert.NotAfter) {
+		t.Fatalf("CA expiry %s must outlive serving certificate expiry %s", caCert.NotAfter, servingCert.NotAfter)
+	}
+}
+
+func TestInjectOperatorWebhookCABundleQualifiesConfigurationNames(t *testing.T) {
+	rendered, err := injectOperatorWebhookCABundle([]byte(`
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: mutating-webhook-configuration
+webhooks:
+- name: example
+  clientConfig: {}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validating-webhook-configuration
+webhooks:
+- name: example
+  clientConfig: {}
+`), []byte("test-ca"))
+	if err != nil {
+		t.Fatalf("injectOperatorWebhookCABundle failed: %v", err)
+	}
+	body := string(rendered)
+	for _, expected := range []string{
+		"name: mcp-runtime-mutating-webhook-configuration",
+		"name: mcp-runtime-validating-webhook-configuration",
+		"caBundle:",
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("rendered webhook manifest missing %q:\n%s", expected, body)
+		}
 	}
 }
 
@@ -2532,6 +2612,9 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	})
 
 	var managerManifest string
+	var webhookTLSSecretManifest string
+	var webhookServiceManifest string
+	var webhookConfigManifest string
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 			cmd := &core.MockCommand{Args: spec.Args}
@@ -2542,6 +2625,23 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 						return err
 					}
 					managerManifest = string(data)
+					return nil
+				}
+			} else if commandHasArgs(spec, "apply", "-f", "-") {
+				cmd.RunFunc = func() error {
+					data, err := io.ReadAll(cmd.StdinR)
+					if err != nil {
+						return err
+					}
+					manifest := string(data)
+					switch {
+					case strings.Contains(manifest, "name: "+operatorWebhookSecretName):
+						webhookTLSSecretManifest = manifest
+					case strings.Contains(manifest, "kind: Service") && strings.Contains(manifest, operatorWebhookServiceName):
+						webhookServiceManifest = manifest
+					case strings.Contains(manifest, "MutatingWebhookConfiguration") || strings.Contains(manifest, "ValidatingWebhookConfiguration"):
+						webhookConfigManifest = manifest
+					}
 					return nil
 				}
 			}
@@ -2583,6 +2683,28 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	}
 	if !strings.Contains(managerManifest, "name: MCP_SENTINEL_INGEST_URL") || !strings.Contains(managerManifest, "value: "+defaultAnalyticsIngestURL) {
 		t.Fatalf("expected manager manifest to include analytics ingest env, got:\n%s", managerManifest)
+	}
+	if !strings.Contains(managerManifest, "name: MCP_ENABLE_WEBHOOKS") || !strings.Contains(managerManifest, "value: \"true\"") {
+		t.Fatalf("expected manager manifest to enable webhooks, got:\n%s", managerManifest)
+	}
+	if !strings.Contains(managerManifest, "secretName: "+operatorWebhookSecretName) ||
+		!strings.Contains(managerManifest, "mountPath: "+operatorWebhookCertDir) {
+		t.Fatalf("expected manager manifest to mount webhook cert secret, got:\n%s", managerManifest)
+	}
+	if !strings.Contains(managerManifest, operatorWebhookCertHashAnnotation+":") {
+		t.Fatalf("expected manager manifest to include webhook cert hash annotation, got:\n%s", managerManifest)
+	}
+	if !strings.Contains(webhookTLSSecretManifest, "name: "+operatorWebhookSecretName) ||
+		!strings.Contains(webhookTLSSecretManifest, "tls.crt:") ||
+		!strings.Contains(webhookTLSSecretManifest, "tls.key:") {
+		t.Fatalf("expected webhook TLS secret manifest, got:\n%s", webhookTLSSecretManifest)
+	}
+	if !strings.Contains(webhookServiceManifest, "name: "+operatorWebhookServiceName) {
+		t.Fatalf("expected webhook service manifest, got:\n%s", webhookServiceManifest)
+	}
+	if !strings.Contains(webhookConfigManifest, "caBundle:") ||
+		!strings.Contains(webhookConfigManifest, "name: "+operatorWebhookServiceName) {
+		t.Fatalf("expected webhook configuration with caBundle, got:\n%s", webhookConfigManifest)
 	}
 
 	var (
