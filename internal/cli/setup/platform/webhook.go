@@ -172,11 +172,7 @@ func applyOperatorWebhookManifestsClientGo(caBundlePEM []byte) error {
 		return err
 	}
 
-	webhookPath, err := assetpath.ResolveRepoAssetPath("config/webhook/manifests.yaml")
-	if err != nil {
-		return err
-	}
-	webhookYAML, err := os.ReadFile(webhookPath)
+	webhookYAML, err := readRepoAsset("config/webhook/manifests.yaml")
 	if err != nil {
 		return fmt.Errorf("read operator webhook manifests: %w", err)
 	}
@@ -188,11 +184,7 @@ func applyOperatorWebhookManifestsClientGo(caBundlePEM []byte) error {
 }
 
 func applyOperatorWebhookManifests(kubectl core.KubectlRunner, caBundlePEM []byte) error {
-	servicePath, err := assetpath.ResolveRepoAssetPath("config/webhook/service.yaml")
-	if err != nil {
-		return err
-	}
-	serviceYAML, err := os.ReadFile(servicePath)
+	serviceYAML, err := readRepoAsset("config/webhook/service.yaml")
 	if err != nil {
 		return fmt.Errorf("read operator webhook service manifest: %w", err)
 	}
@@ -200,11 +192,7 @@ func applyOperatorWebhookManifests(kubectl core.KubectlRunner, caBundlePEM []byt
 		return err
 	}
 
-	webhookPath, err := assetpath.ResolveRepoAssetPath("config/webhook/manifests.yaml")
-	if err != nil {
-		return err
-	}
-	webhookYAML, err := os.ReadFile(webhookPath)
+	webhookYAML, err := readRepoAsset("config/webhook/manifests.yaml")
 	if err != nil {
 		return fmt.Errorf("read operator webhook manifests: %w", err)
 	}
@@ -213,6 +201,19 @@ func applyOperatorWebhookManifests(kubectl core.KubectlRunner, caBundlePEM []byt
 		return err
 	}
 	return kube.ApplyManifestContent(kubectl.CommandArgs, string(rendered))
+}
+
+func readRepoAsset(path string) ([]byte, error) {
+	rootPath, err := assetpath.ResolveRepoRoot()
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return nil, fmt.Errorf("open repo root: %w", err)
+	}
+	defer root.Close()
+	return root.ReadFile(path)
 }
 
 func injectOperatorWebhookCABundle(webhookYAML, caBundlePEM []byte) ([]byte, error) {
