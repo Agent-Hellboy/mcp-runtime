@@ -605,6 +605,45 @@ func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
 	default:
 		t.Fatal("analytics queue unexpectedly drained")
 	}
+	if got := proxy.analyticsDropped.Load(); got != 1 {
+		t.Fatalf("analytics dropped count = %d, want 1", got)
+	}
+}
+
+func TestEmitIfEnabledDropsWhenDispatcherClosed(t *testing.T) {
+	t.Parallel()
+
+	proxy := &gatewayServer{
+		analyticsURL:    "http://analytics.example.com",
+		analyticsClosed: true,
+	}
+
+	proxy.emitIfEnabled(context.Background(), events.Envelope{Source: "closed", EventType: "mcp.request"})
+
+	if got := proxy.analyticsDropped.Load(); got != 1 {
+		t.Fatalf("analytics dropped count = %d, want 1", got)
+	}
+}
+
+func TestShouldLogAnalyticsDropSamples(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		dropped uint64
+		want    bool
+	}{
+		{dropped: 0, want: false},
+		{dropped: 1, want: true},
+		{dropped: 2, want: true},
+		{dropped: 3, want: false},
+		{dropped: 4, want: true},
+		{dropped: 7, want: false},
+		{dropped: 8, want: true},
+	} {
+		if got := shouldLogAnalyticsDrop(tc.dropped); got != tc.want {
+			t.Fatalf("shouldLogAnalyticsDrop(%d) = %v, want %v", tc.dropped, got, tc.want)
+		}
+	}
 }
 
 func TestStopAnalyticsDispatcherDrainsQueue(t *testing.T) {

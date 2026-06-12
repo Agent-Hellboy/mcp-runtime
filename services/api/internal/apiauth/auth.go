@@ -12,6 +12,10 @@ import (
 const (
 	RoleAdmin = platformstore.RoleAdmin
 	RoleUser  = platformstore.RoleUser
+
+	// UnknownRequestIP is the lockout/rate-limit bucket when no client IP can be
+	// derived. Callers must not treat an empty string as a distinct bucket.
+	UnknownRequestIP = "unknown"
 )
 
 type Principal = platformstore.Principal
@@ -34,13 +38,29 @@ func FromContext(ctx context.Context) (Principal, bool) {
 
 func RequestIP(r *http.Request) string {
 	if xff := strings.TrimSpace(r.Header.Get("x-forwarded-for")); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
+		if ip := firstNonEmptyForwardedIP(xff); ip != "" {
+			return ip
+		}
 	}
 	remote := strings.TrimSpace(r.RemoteAddr)
 	if host, _, err := net.SplitHostPort(remote); err == nil {
-		return strings.TrimSpace(host)
+		if host = strings.TrimSpace(host); host != "" {
+			return host
+		}
 	}
-	return remote
+	if remote != "" {
+		return remote
+	}
+	return UnknownRequestIP
+}
+
+func firstNonEmptyForwardedIP(xff string) string {
+	for _, part := range strings.Split(xff, ",") {
+		if ip := strings.TrimSpace(part); ip != "" {
+			return ip
+		}
+	}
+	return ""
 }
 
 func RequestSource(r *http.Request) string {
