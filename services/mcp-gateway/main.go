@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	_ "go.uber.org/automaxprocs" // align GOMAXPROCS with container CPU quota
 
@@ -84,10 +85,17 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+	// Liveness: always OK while the process is serving.
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	// Readiness: OK only after a valid policy snapshot has been activated.
+	mux.HandleFunc("/ready", srv.handleReady)
+	// Sanitized applied-policy metadata (schema version, revision, reload state).
+	mux.HandleFunc("/config/status", srv.handleConfigStatus)
+	// Prometheus metrics, including policy reload observability.
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/", srv.handleGateway)
 
 	metricsShutdown, metricsErrs := serviceutil.StartMetricsServer(metricsPort)

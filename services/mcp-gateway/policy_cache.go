@@ -12,11 +12,15 @@ import (
 	policypkg "mcp-runtime/pkg/policy"
 )
 
-// errPolicyUnavailable is returned by currentPolicy when no valid policy has
-// been loaded yet, causing gate filters to fail closed with 503.
+// errPolicyUnavailable is returned by currentPolicy when no validated policy
+// snapshot has been activated yet. Callers (including gate filters) fail closed
+// in this state.
 var errPolicyUnavailable = errors.New("policy_unavailable")
 
 func (s *gatewayServer) startPolicyCache() error {
+	// Seed with the default document so reads never observe a nil policy. It is
+	// not marked Ready: in file-backed mode the gateway is only ready once the
+	// rendered policy validates and activates below.
 	s.snapshotPolicy(policySnapshot{Policy: s.defaultPolicyDocument()})
 	if err := s.reloadPolicy(); err != nil {
 		return err
@@ -38,19 +42,34 @@ func (s *gatewayServer) startPolicyCache() error {
 	return nil
 }
 
+// reloadPolicy loads, validates, and atomically activates the policy. A load or
+// validation failure never replaces the last-known-good snapshot: the previous
+// Policy/Revision/LoadedAt/Ready are retained and only Err is updated so that
+// /config/status and metrics surface the failure while traffic keeps flowing.
 func (s *gatewayServer) reloadPolicy() error {
 	doc, err := s.loadPolicy()
 	if err != nil {
-		current := s.loadPolicySnapshot()
-		fallback := current.Policy
+		retained := s.loadPolicySnapshot()
+		fallback := retained.Policy
 		if fallback == nil {
 			fallback = s.defaultPolicyDocument()
 		}
-		s.snapshotPolicy(policySnapshot{Policy: fallback, Err: err})
+		retained.Policy = fallback
+		retained.Err = err
+		s.snapshotPolicy(retained)
+		recordPolicyReloadFailure()
 		s.metrics.recordPolicyReload(s.metricScope(fallback), err)
 		return err
 	}
-	s.snapshotPolicy(policySnapshot{Policy: doc})
+
+	loadedAt := time.Now()
+	s.snapshotPolicy(policySnapshot{
+		Policy:   doc,
+		Revision: doc.Revision,
+		LoadedAt: loadedAt,
+		Ready:    true,
+	})
+	recordPolicyReloadSuccess(doc.Revision, doc.SchemaVersion, loadedAt)
 	s.metrics.recordPolicyReload(s.metricScope(doc), nil)
 	return nil
 }
@@ -58,9 +77,15 @@ func (s *gatewayServer) reloadPolicy() error {
 func (s *gatewayServer) currentPolicy() (*policypkg.Document, error) {
 	snapshot := s.loadPolicySnapshot()
 	if snapshot.Policy == nil {
-		return s.defaultPolicyDocument(), snapshot.Err
+		return s.defaultPolicyDocument(), errPolicyUnavailable
 	}
-	return snapshot.Policy, snapshot.Err
+	// Until the first valid policy is activated, fail tool calls closed even
+	// though a seed document is present. Once Ready, a later failed reload is
+	// surfaced via /config/status but traffic keeps using last-known-good.
+	if !snapshot.Ready {
+		return snapshot.Policy, errPolicyUnavailable
+	}
+	return snapshot.Policy, nil
 }
 
 func (s *gatewayServer) loadPolicySnapshot() policySnapshot {
@@ -76,6 +101,7 @@ func (s *gatewayServer) snapshotPolicy(snapshot policySnapshot) {
 
 func (s *gatewayServer) loadPolicy() (*policypkg.Document, error) {
 	doc := &policypkg.Document{}
+	fromFile := false
 	if s.policyFile != "" {
 		data, err := os.ReadFile(s.policyFile)
 		if err != nil {
@@ -84,9 +110,45 @@ func (s *gatewayServer) loadPolicy() (*policypkg.Document, error) {
 			if err := json.Unmarshal(data, doc); err != nil {
 				return nil, err
 			}
+			fromFile = true
 		}
 	}
 
+	// A file-backed document is validated exactly as the operator stamped it:
+	// the revision digest covers the rendered content, so integrity must be
+	// checked before gateway runtime defaults mutate the document.
+	if fromFile {
+		if err := policypkg.Validate(doc); err != nil {
+			return nil, err
+		}
+	}
+
+	s.applyPolicyDefaults(doc)
+
+	// A gateway-generated default document (no policy file, or an empty one)
+	// is stamped after defaulting so it carries a supported schema version and
+	// a deterministic revision over its final content.
+	if !fromFile {
+		if err := policypkg.Stamp(doc, ""); err != nil {
+			return nil, err
+		}
+		if err := policypkg.Validate(doc); err != nil {
+			return nil, err
+		}
+	}
+	return doc, nil
+}
+
+// applyPolicyDefaults fills server identity and auth/policy defaults on a
+// decoded or empty document, initializing the Auth and Policy sub-documents
+// when absent so callers never dereference a nil pointer.
+func (s *gatewayServer) applyPolicyDefaults(doc *policypkg.Document) {
+	if doc.Auth == nil {
+		doc.Auth = &policypkg.Auth{}
+	}
+	if doc.Policy == nil {
+		doc.Policy = &policypkg.Config{}
+	}
 	if doc.Server.Name == "" {
 		doc.Server.Name = policypkg.ServerName(s.serverName)
 	}
@@ -123,7 +185,6 @@ func (s *gatewayServer) loadPolicy() (*policypkg.Document, error) {
 	if doc.Policy.PolicyVersion == "" {
 		doc.Policy.PolicyVersion = s.defaultPolicyVersion
 	}
-	return doc, nil
 }
 
 func (s *gatewayServer) extractIdentity(r *http.Request, policy *policypkg.Document) identityContext {
@@ -146,7 +207,7 @@ func policyIdentity(identity identityContext) policypkg.Identity {
 }
 
 func (s *gatewayServer) defaultPolicyDocument() *policypkg.Document {
-	return &policypkg.Document{
+	doc := &policypkg.Document{
 		Server: policypkg.Server{
 			Name:      policypkg.ServerName(s.serverName),
 			Namespace: policypkg.Namespace(s.serverNamespace),
@@ -166,4 +227,9 @@ func (s *gatewayServer) defaultPolicyDocument() *policypkg.Document {
 			PolicyVersion:   s.defaultPolicyVersion,
 		},
 	}
+	// Stamp so the default carries a supported schema version and deterministic
+	// revision; this is best-effort and the document is well-formed by
+	// construction, so any error is non-fatal.
+	_ = policypkg.Stamp(doc, "")
+	return doc
 }
