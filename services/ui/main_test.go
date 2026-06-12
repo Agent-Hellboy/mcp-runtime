@@ -1193,6 +1193,25 @@ func TestLoginClientIDUsesForwardedFor(t *testing.T) {
 	}
 }
 
+func TestLoginClientIDEmptyForwardedForFallsBackToRemoteAddr(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+	req.RemoteAddr = "198.51.100.20:54321"
+	req.Header.Set("x-forwarded-for", " , ")
+
+	if got := loginClientID(req); got != "198.51.100.20" {
+		t.Fatalf("loginClientID() = %q, want remote addr host", got)
+	}
+}
+
+func TestLoginClientIDUnknownWhenNoAddressAvailable(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+	req.RemoteAddr = ""
+
+	if got := loginClientID(req); got != loginClientUnknownIP {
+		t.Fatalf("loginClientID() = %q, want %q", got, loginClientUnknownIP)
+	}
+}
+
 func TestHandleLoginLocksOutRepeatedFailures(t *testing.T) {
 	restore := useLoginAttemptTrackerForTest(t)
 	defer restore()

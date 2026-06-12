@@ -14,6 +14,10 @@ const (
 	APILoginAttemptMaxEntries    = 4096
 	apiLoginAttemptPruneInterval = time.Minute
 	apiLoginAttemptEvictionBatch = 256
+
+	// loginAttemptUnknownIP matches apiauth.UnknownRequestIP and buckets requests
+	// whose IP could not be resolved instead of creating per-email keys like "|user@example.com".
+	loginAttemptUnknownIP = "unknown"
 )
 
 type LoginAttempt struct {
@@ -144,16 +148,27 @@ func lockoutDurationForFailures(failures int) time.Duration {
 	return lockout
 }
 
+// normalizeLoginAttemptKey rekeys login lockout state to a per-IP bucket.
+//
+// Handlers build keys as "ip|email" (see HandlePasswordLogin). Before lookup we
+// collapse to the IP portion so a single client cannot exhaust the tracker by
+// spraying many email addresses from one address. Tradeoffs:
+//   - Shared NAT / corporate egress: all users behind the same public IP share
+//     one lockout bucket.
+//   - X-Forwarded-For trust: the IP comes from the left-most XFF hop or
+//     RemoteAddr; a trusted ingress must strip/spoof-proof XFF. Empty or
+//     comma-only XFF values fall back to RemoteAddr or loginAttemptUnknownIP.
 func normalizeLoginAttemptKey(key string) string {
 	key = strings.TrimSpace(key)
 	if key == "" {
-		return ""
+		return loginAttemptUnknownIP
 	}
 	if before, _, ok := strings.Cut(key, "|"); ok {
 		before = strings.TrimSpace(before)
 		if before != "" {
 			return before
 		}
+		return loginAttemptUnknownIP
 	}
 	return key
 }

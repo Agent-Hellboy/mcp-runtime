@@ -723,17 +723,32 @@ func drainAndClose(body io.ReadCloser) {
 	_ = body.Close()
 }
 
+const loginClientUnknownIP = "unknown"
+
 func loginClientID(r *http.Request) string {
 	if forwardedFor := strings.TrimSpace(r.Header.Get("x-forwarded-for")); forwardedFor != "" {
-		client, _, _ := strings.Cut(forwardedFor, ",")
-		if client = strings.TrimSpace(client); client != "" {
+		if client := firstNonEmptyForwardedIP(forwardedFor); client != "" {
 			return client
 		}
 	}
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil && host != "" {
-		return host
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		if host = strings.TrimSpace(host); host != "" {
+			return host
+		}
 	}
-	return strings.TrimSpace(r.RemoteAddr)
+	if remote := strings.TrimSpace(r.RemoteAddr); remote != "" {
+		return remote
+	}
+	return loginClientUnknownIP
+}
+
+func firstNonEmptyForwardedIP(xff string) string {
+	for _, part := range strings.Split(xff, ",") {
+		if ip := strings.TrimSpace(part); ip != "" {
+			return ip
+		}
+	}
+	return ""
 }
 
 func newLoginAttemptTracker(now func() time.Time) *loginAttemptTracker {
@@ -830,6 +845,7 @@ func (t *loginAttemptTracker) enforceMaxLocked(now time.Time) {
 	type candidate struct {
 		clientID string
 		lastSeen time.Time
+		failures int
 		locked   bool
 	}
 	candidates := make([]candidate, 0, len(t.clients))
@@ -837,12 +853,16 @@ func (t *loginAttemptTracker) enforceMaxLocked(now time.Time) {
 		candidates = append(candidates, candidate{
 			clientID: clientID,
 			lastSeen: state.lastSeen,
+			failures: state.failures,
 			locked:   now.Before(state.lockedUntil),
 		})
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].locked != candidates[j].locked {
 			return !candidates[i].locked
+		}
+		if (candidates[i].failures > 0) != (candidates[j].failures > 0) {
+			return candidates[i].failures == 0
 		}
 		return candidates[i].lastSeen.Before(candidates[j].lastSeen)
 	})

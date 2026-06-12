@@ -575,6 +575,21 @@ func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
 	}
 }
 
+func TestEmitIfEnabledDropsWhenDispatcherClosed(t *testing.T) {
+	t.Parallel()
+
+	proxy := &gatewayServer{
+		analyticsURL:    "http://analytics.example.com",
+		analyticsClosed: true,
+	}
+
+	proxy.emitIfEnabled(context.Background(), events.Envelope{Source: "closed", EventType: "mcp.request"})
+
+	if got := proxy.analyticsDropped.Load(); got != 1 {
+		t.Fatalf("analytics dropped count = %d, want 1", got)
+	}
+}
+
 func TestShouldLogAnalyticsDropSamples(t *testing.T) {
 	t.Parallel()
 

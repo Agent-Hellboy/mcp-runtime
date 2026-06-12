@@ -92,3 +92,51 @@ func TestLoginAttemptTrackerAllowDoesNotCreateEntry(t *testing.T) {
 		t.Fatalf("login attempt entries = %d, want 0", got)
 	}
 }
+
+func TestLoginAttemptTrackerNormalizesEmptyIPToUnknownBucket(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := NewLoginAttemptTracker(func() time.Time { return now })
+
+	tracker.RecordFailure("|target@example.com")
+	tracker.RecordFailure("|other@example.com")
+
+	if got := len(tracker.entries); got != 1 {
+		t.Fatalf("login attempt entries = %d, want 1 unknown ip bucket", got)
+	}
+	state, ok := tracker.entries[loginAttemptUnknownIP]
+	if !ok {
+		t.Fatalf("missing unknown ip bucket, keys=%v", tracker.entries)
+	}
+	if state.Failures != 2 {
+		t.Fatalf("unknown ip bucket failures = %d, want 2", state.Failures)
+	}
+}
+
+func TestLoginAttemptTrackerAllowAtLockoutBoundary(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := NewLoginAttemptTracker(func() time.Time { return now })
+	tracker.entries["203.0.113.44"] = LoginAttempt{
+		Failures:    3,
+		LockedUntil: now,
+		LastSeen:    now,
+	}
+
+	if !tracker.Allow("203.0.113.44|user@example.com") {
+		t.Fatal("client should be allowed when lockout expires exactly at now")
+	}
+}
+
+func TestLoginAttemptTrackerEvictionTargetSize(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := NewLoginAttemptTracker(func() time.Time { return now })
+
+	for i := 0; i < APILoginAttemptMaxEntries+1; i++ {
+		now = now.Add(time.Millisecond)
+		tracker.RecordFailure(fmt.Sprintf("client-%d", i))
+	}
+
+	want := APILoginAttemptMaxEntries - apiLoginAttemptEvictionBatch
+	if got := len(tracker.entries); got != want {
+		t.Fatalf("login attempt entries = %d, want %d after eviction", got, want)
+	}
+}
