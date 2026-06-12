@@ -67,10 +67,6 @@ func (s *gatewayServer) emitIfEnabled(ctx context.Context, event events.Envelope
 	if s.analyticsURL == "" {
 		return
 	}
-	queue := s.analyticsEventQueue()
-	if queue == nil {
-		return
-	}
 	s.analyticsMu.Lock()
 	if s.analyticsClosed {
 		s.analyticsMu.Unlock()
@@ -80,6 +76,13 @@ func (s *gatewayServer) emitIfEnabled(ctx context.Context, event events.Envelope
 		}
 		return
 	}
+	s.analyticsMu.Unlock()
+
+	queue := s.analyticsEventQueue()
+	if queue == nil {
+		return
+	}
+	s.analyticsMu.Lock()
 	item := analyticsEvent{
 		Envelope:     event,
 		TraceContext: serviceutil.CaptureTraceContext(ctx),
