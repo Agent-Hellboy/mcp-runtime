@@ -86,6 +86,7 @@ type Tool struct {
 // Grant defines access grants for subjects (humans/agents).
 type Grant struct {
 	Name               string       `json:"name"`
+	Namespace          Namespace    `json:"namespace,omitempty"`
 	HumanID            HumanID      `json:"human_id,omitempty"`
 	AgentID            AgentID      `json:"agent_id,omitempty"`
 	TeamID             TeamID       `json:"team_id,omitempty"`
@@ -99,6 +100,7 @@ type Grant struct {
 // Binding represents an agent session binding.
 type Binding struct {
 	Name             SessionID `json:"name"`
+	Namespace        Namespace `json:"namespace,omitempty"`
 	HumanID          HumanID   `json:"human_id,omitempty"`
 	AgentID          AgentID   `json:"agent_id,omitempty"`
 	TeamID           TeamID    `json:"team_id,omitempty"`

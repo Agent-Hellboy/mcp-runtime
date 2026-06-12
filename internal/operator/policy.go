@@ -133,6 +133,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 		subjectTeamID := subjectTeamIDForServer(serverTeamID, grant.Spec.Subject.TeamID)
 		rendered := policy.Grant{
 			Name:          grant.Name,
+			Namespace:     policy.Namespace(grant.Namespace),
 			HumanID:       policy.HumanID(grant.Spec.Subject.HumanID),
 			AgentID:       policy.AgentID(grant.Spec.Subject.AgentID),
 			TeamID:        policy.TeamID(subjectTeamID),
@@ -164,6 +165,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 		subjectTeamID := subjectTeamIDForServer(serverTeamID, session.Spec.Subject.TeamID)
 		rendered := policy.Binding{
 			Name:           policy.SessionID(session.Name),
+			Namespace:      policy.Namespace(session.Namespace),
 			HumanID:        policy.HumanID(session.Spec.Subject.HumanID),
 			AgentID:        policy.AgentID(session.Spec.Subject.AgentID),
 			TeamID:         policy.TeamID(subjectTeamID),
