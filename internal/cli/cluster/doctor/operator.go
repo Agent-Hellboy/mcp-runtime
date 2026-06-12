@@ -213,7 +213,7 @@ const operatorWebhookCertRenewalWindow = 30 * 24 * time.Hour
 func checkOperatorWebhookCertExpiry(kubectl core.KubectlRunner) DoctorCheck {
 	const (
 		checkName  = "operator webhook TLS expiry"
-		secretName = "mcp-runtime-operator-webhook-server-cert"
+		secretName = "mcp-runtime-operator-webhook-server-cert" // #nosec G101 -- Kubernetes Secret object name, not credential material.
 		namespace  = "mcp-runtime"
 	)
 	cmd, err := kubectl.CommandArgs([]string{
