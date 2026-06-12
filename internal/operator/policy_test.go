@@ -116,3 +116,43 @@ func TestRenderPolicyConfigMapDataRewritesOnChange(t *testing.T) {
 		t.Fatalf("written revision = %q, want %q", outDoc.Revision, changed.Revision)
 	}
 }
+
+func TestRenderPolicyConfigMapDataRewritesWhenRevisionMetadataTampered(t *testing.T) {
+	doc := &policy.Document{Server: policy.Server{Name: "demo"}}
+	if err := policy.Stamp(doc, ""); err != nil {
+		t.Fatalf("Stamp() error = %v", err)
+	}
+	existing, err := renderPolicyConfigMapData("", doc)
+	if err != nil {
+		t.Fatalf("renderPolicyConfigMapData() error = %v", err)
+	}
+
+	var tampered policy.Document
+	if err := json.Unmarshal([]byte(existing), &tampered); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	tampered.Tools = []policy.Tool{{Name: "echo", RequiredTrust: "low", SideEffect: "read"}}
+	tamperedData, err := json.MarshalIndent(&tampered, "", "  ")
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+
+	unchanged := &policy.Document{Server: policy.Server{Name: "demo"}}
+	if err := policy.Stamp(unchanged, ""); err != nil {
+		t.Fatalf("Stamp() error = %v", err)
+	}
+	out, err := renderPolicyConfigMapData(string(tamperedData), unchanged)
+	if err != nil {
+		t.Fatalf("renderPolicyConfigMapData() error = %v", err)
+	}
+	if out == string(tamperedData) {
+		t.Fatal("tampered payload with matching revision metadata was preserved")
+	}
+	var outDoc policy.Document
+	if err := json.Unmarshal([]byte(out), &outDoc); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if outDoc.Revision != unchanged.Revision {
+		t.Fatalf("written revision = %q, want %q", outDoc.Revision, unchanged.Revision)
+	}
+}

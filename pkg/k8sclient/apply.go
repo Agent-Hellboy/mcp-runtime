@@ -116,6 +116,17 @@ func applyObject(ctx context.Context, clients *Clients, mapper meta.RESTMapper, 
 		unstructured.RemoveNestedField(merged.Object, "metadata", "managedFields")
 		unstructured.RemoveNestedField(merged.Object, "status")
 		if _, updateErr := objectClient.Update(ctx, merged, metav1.UpdateOptions{FieldManager: defaultFieldManager}); updateErr != nil {
+			if shouldRecreateOnUpdateError(gvk, updateErr) {
+				propagation := metav1.DeletePropagationForeground
+				if deleteErr := objectClient.Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &propagation}); deleteErr != nil && !errors.IsNotFound(deleteErr) {
+					return fmt.Errorf("delete %s %s/%s for recreate: %w", gvk.String(), objectNamespace, name, deleteErr)
+				}
+				if _, createErr := objectClient.Create(ctx, obj.DeepCopy(), metav1.CreateOptions{FieldManager: defaultFieldManager}); createErr != nil {
+					return fmt.Errorf("recreate %s %s/%s: %w", gvk.String(), objectNamespace, name, createErr)
+				}
+				result.Action = "recreated"
+				return nil
+			}
 			return updateErr
 		}
 		result.Action = "configured"
@@ -124,6 +135,10 @@ func applyObject(ctx context.Context, clients *Clients, mapper meta.RESTMapper, 
 		return ApplyResult{}, fmt.Errorf("apply %s %s/%s: %w", gvk.String(), objectNamespace, name, err)
 	}
 	return result, nil
+}
+
+func shouldRecreateOnUpdateError(gvk schema.GroupVersionKind, err error) bool {
+	return gvk.Kind == "StatefulSet" && errors.IsInvalid(err)
 }
 
 func isEmptyObject(obj *unstructured.Unstructured) bool {

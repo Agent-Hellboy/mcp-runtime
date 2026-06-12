@@ -3693,3 +3693,31 @@ func TestReconcileLegacyZookeeperDeploymentClientGoBlocksWhenKafkaPVCExists(t *t
 		t.Fatalf("legacy ZooKeeper deployment should be preserved: %v", getErr)
 	}
 }
+
+func TestKafkaStatefulSetNeedsKRaftRecreateDetectsLegacyLayout(t *testing.T) {
+	replicas := int32(1)
+	legacy := &appsv1.StatefulSet{
+		Spec: appsv1.StatefulSetSpec{
+			ServiceName: "kafka",
+			Replicas:    &replicas,
+		},
+	}
+	if !kafkaStatefulSetNeedsKRaftRecreate(legacy) {
+		t.Fatal("expected legacy single-broker Kafka layout to require recreate")
+	}
+
+	currentReplicas := kafkaKRaftReplicaCount
+	current := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{"mcpruntime.org/kafka-mode": "kraft"},
+		},
+		Spec: appsv1.StatefulSetSpec{
+			ServiceName:         kafkaHeadlessServiceName,
+			PodManagementPolicy: appsv1.ParallelPodManagement,
+			Replicas:            &currentReplicas,
+		},
+	}
+	if kafkaStatefulSetNeedsKRaftRecreate(current) {
+		t.Fatal("did not expect current KRaft layout to require recreate")
+	}
+}

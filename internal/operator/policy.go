@@ -75,7 +75,10 @@ func renderPolicyConfigMapData(existing string, doc *policy.Document) (string, e
 	if existing != "" {
 		var prev policy.Document
 		if err := json.Unmarshal([]byte(existing), &prev); err == nil && prev.Revision != "" && prev.Revision == doc.Revision {
-			return existing, nil
+			recomputed, computeErr := policy.ComputeRevision(&prev)
+			if computeErr == nil && recomputed == prev.Revision {
+				return existing, nil
+			}
 		}
 	}
 	doc.GeneratedAt = time.Now().UTC().Format(time.RFC3339)

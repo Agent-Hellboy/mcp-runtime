@@ -50,14 +50,6 @@ var Components = []Component{
 		Label:     "clickhouse",
 	},
 	{
-		Key:       "zookeeper",
-		Display:   "Zookeeper",
-		Namespace: DefaultNamespace,
-		Kind:      "statefulset",
-		Resource:  "zookeeper",
-		Label:     "zookeeper",
-	},
-	{
 		Key:       "kafka",
 		Display:   "Kafka",
 		Namespace: DefaultNamespace,
@@ -237,7 +229,6 @@ func IsAnalyticsComponent(key string) bool {
 	analytics := map[string]bool{
 		"clickhouse":     true,
 		"kafka":          true,
-		"zookeeper":      true,
 		"prometheus":     true,
 		"grafana":        true,
 		"otel-collector": true,

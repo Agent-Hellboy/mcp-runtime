@@ -2,6 +2,7 @@ package policy
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -243,7 +244,13 @@ func bestGrantFor(grants []Grant, toolName ToolName, requiredTrust, requiredSide
 		selection.grantNamespace = string(grant.Namespace)
 		selection.policyVersion = ChoosePolicyVersion(grant.PolicyVersion, policyVersion)
 	}
-	for _, grant := range grants {
+	sorted := append([]Grant(nil), grants...)
+	sort.Slice(sorted, func(i, j int) bool {
+		left := string(sorted[i].Namespace) + "\x00" + sorted[i].Name
+		right := string(sorted[j].Namespace) + "\x00" + sorted[j].Name
+		return left < right
+	})
+	for _, grant := range sorted {
 		if grant.Disabled {
 			continue
 		}
@@ -286,6 +293,7 @@ func bestGrantFor(grants []Grant, toolName ToolName, requiredTrust, requiredSide
 				if ruleRank > selection.requiredTrustRank {
 					selection.requiredTrustRank = ruleRank
 					selection.requiredTrust = NormalizeTrust(rule.RequiredTrust)
+					attribute(grant)
 				}
 				selection.adminTrustRank = maxInt(selection.adminTrustRank, adminRank)
 			}

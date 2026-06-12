@@ -27,6 +27,7 @@ import (
 	setupplan "mcp-runtime/internal/cli/setup/plan"
 	"mcp-runtime/pkg/k8sclient"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,6 +41,8 @@ const (
 	kafkaPodContainer         = "kafka"
 	kafkaPVCName              = "kafka-data-kafka-0"
 	legacyZookeeperDeployment = "zookeeper"
+	kafkaHeadlessServiceName  = "kafka-headless"
+	kafkaKRaftReplicaCount    = int32(3)
 )
 
 func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error {
@@ -102,7 +105,13 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		postgresManifest = "k8s/20-postgres-hostpath.yaml"
 	}
 
+	if err := ensureAnalyticsHostpathDirs(storageMode); err != nil {
+		return err
+	}
 	if err := reconcileLegacyZookeeperDeploymentClientGo(); err != nil {
+		return err
+	}
+	if err := reconcileKafkaStatefulSetForKRaftUpgradeClientGo(); err != nil {
 		return err
 	}
 
@@ -263,7 +272,13 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		postgresManifest = "k8s/20-postgres-hostpath.yaml"
 	}
 
+	if err := ensureAnalyticsHostpathDirs(storageMode); err != nil {
+		return err
+	}
 	if err := reconcileLegacyZookeeperDeploymentWithKubectl(kubectl); err != nil {
+		return err
+	}
+	if err := reconcileKafkaStatefulSetForKRaftUpgradeWithKubectl(kubectl); err != nil {
 		return err
 	}
 
@@ -1757,4 +1772,124 @@ func syncPostgresPasswordClientGo() error {
 // shellQuote wraps s in single quotes, escaping any embedded single quotes.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+var analyticsHostpathDirs = []string{
+	"/var/lib/mcp-runtime/clickhouse",
+	"/var/lib/mcp-runtime/kafka/0",
+	"/var/lib/mcp-runtime/kafka/1",
+	"/var/lib/mcp-runtime/kafka/2",
+}
+
+func ensureAnalyticsHostpathDirs(storageMode string) error {
+	if storageMode != setupplan.StorageModeHostpath {
+		return nil
+	}
+	var failures []string
+	for _, dir := range analyticsHostpathDirs {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", dir, err))
+		}
+	}
+	if len(failures) == 0 {
+		return nil
+	}
+	core.Warn(fmt.Sprintf(
+		"Could not create hostpath directories on this machine (%s). Create them on the node labeled mcp-runtime.org/local-storage=true before Kafka/ClickHouse pods start.",
+		strings.Join(failures, "; "),
+	))
+	return nil
+}
+
+func reconcileKafkaStatefulSetForKRaftUpgradeClientGo() error {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	namespace := core.DefaultAnalyticsNamespace
+	statefulSets := clients.Clientset.AppsV1().StatefulSets(namespace)
+	current, err := statefulSets.Get(context.Background(), kafkaStatefulSetName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("inspect Kafka StatefulSet: %w", err)
+	}
+	if !kafkaStatefulSetNeedsKRaftRecreate(current) {
+		return nil
+	}
+	core.Warn("Legacy Kafka StatefulSet layout detected; recreating it for KRaft migration (PVCs are preserved)")
+	propagation := metav1.DeletePropagationForeground
+	if err := statefulSets.Delete(context.Background(), kafkaStatefulSetName, metav1.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete legacy Kafka StatefulSet: %w", err)
+	}
+	return waitForStatefulSetDeletionClientGo(clients, namespace, kafkaStatefulSetName, 5*time.Minute)
+}
+
+func reconcileKafkaStatefulSetForKRaftUpgradeWithKubectl(kubectl core.KubectlRunner) error {
+	namespace := core.DefaultAnalyticsNamespace
+	output, err := kubectlText(kubectl, []string{
+		"get", "statefulset", kafkaStatefulSetName, "-n", namespace, "-o", "json",
+	})
+	if err != nil {
+		if isKubectlNotFound(output) {
+			return nil
+		}
+		return fmt.Errorf("inspect Kafka StatefulSet: %s", kubeerr.CommandDetail(output, err))
+	}
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	var current appsv1.StatefulSet
+	if err := json.Unmarshal([]byte(output), &current); err != nil {
+		return fmt.Errorf("decode Kafka StatefulSet: %w", err)
+	}
+	if !kafkaStatefulSetNeedsKRaftRecreate(&current) {
+		return nil
+	}
+	core.Warn("Legacy Kafka StatefulSet layout detected; recreating it for KRaft migration (PVCs are preserved)")
+	if err := kubectl.RunWithOutput([]string{
+		"delete", "statefulset/" + kafkaStatefulSetName,
+		"-n", namespace,
+		"--wait=true",
+		"--timeout=300s",
+	}, os.Stdout, os.Stderr); err != nil {
+		return fmt.Errorf("delete legacy Kafka StatefulSet: %w", err)
+	}
+	return nil
+}
+
+func kafkaStatefulSetNeedsKRaftRecreate(sts *appsv1.StatefulSet) bool {
+	if sts == nil {
+		return false
+	}
+	if sts.Spec.ServiceName != kafkaHeadlessServiceName {
+		return true
+	}
+	if sts.Spec.PodManagementPolicy != appsv1.ParallelPodManagement {
+		return true
+	}
+	if sts.Spec.Replicas == nil || *sts.Spec.Replicas != kafkaKRaftReplicaCount {
+		return true
+	}
+	if sts.Annotations == nil || sts.Annotations["mcpruntime.org/kafka-mode"] != "kraft" {
+		return true
+	}
+	return false
+}
+
+func waitForStatefulSetDeletionClientGo(clients *k8sclient.Clients, namespace, name string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		_, err := clients.Clientset.AppsV1().StatefulSets(namespace).Get(context.Background(), name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("timed out waiting for statefulset/%s deletion", name)
 }

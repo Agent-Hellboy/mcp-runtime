@@ -538,6 +538,50 @@ func TestAuthorizeAttributesHighestTrustGrant(t *testing.T) {
 	}
 }
 
+func TestAuthorizeAttributesTrustRequirementGrantOnTrustTooLow(t *testing.T) {
+	t.Parallel()
+
+	policy := testPolicyWithGrant()
+	policy.Tools = []Tool{{Name: "upper", RequiredTrust: "medium", SideEffect: "read"}}
+	policy.Sessions = []Binding{{
+		Name:           "session-1",
+		HumanID:        "human-1",
+		AgentID:        "agent-1",
+		ConsentedTrust: "medium",
+	}}
+	policy.Grants = []Grant{
+		{
+			Name:               "high-cap-grant",
+			HumanID:            "human-1",
+			AgentID:            "agent-1",
+			MaxTrust:           "high",
+			AllowedSideEffects: []string{"read"},
+			ToolRules:          []ToolAccess{{Name: "upper", Decision: "allow"}},
+		},
+		{
+			Name:               "strict-rule-grant",
+			HumanID:            "human-1",
+			AgentID:            "agent-1",
+			MaxTrust:           "medium",
+			AllowedSideEffects: []string{"read"},
+			ToolRules:          []ToolAccess{{Name: "upper", Decision: "allow", RequiredTrust: "high"}},
+		},
+	}
+
+	decision := Authorize(policy, Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1", SessionID: "session-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, time.Time{})
+
+	if decision.Allowed || decision.Reason != "trust_too_low" {
+		t.Fatalf("decision = %#v, want trust_too_low", decision)
+	}
+	if decision.MatchedGrant != "strict-rule-grant" {
+		t.Fatalf("decision = %#v, want grant that imposed the failing trust requirement", decision)
+	}
+}
+
 func TestAuthorizeReportsMatchedGrantOnSideEffectDenial(t *testing.T) {
 	t.Parallel()
 
