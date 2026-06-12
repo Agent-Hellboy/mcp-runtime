@@ -95,8 +95,8 @@ func TestControllerWithEnvtest(t *testing.T) {
 		testReconcileHandlesDeletion(t, cfg, scheme)
 	})
 
-	t.Run("ReconcileAppliesDefaults", func(t *testing.T) {
-		testReconcileAppliesDefaults(t, cfg, scheme)
+	t.Run("ReconcileUsesDefaultsWithoutPersistingSpec", func(t *testing.T) {
+		testReconcileUsesDefaultsWithoutPersistingSpec(t, cfg, scheme)
 	})
 }
 
@@ -225,7 +225,7 @@ func testReconcileHandlesDeletion(t *testing.T, cfg *rest.Config, scheme *runtim
 	t.Log("MCPServer deletion handled successfully")
 }
 
-func testReconcileAppliesDefaults(t *testing.T, cfg *rest.Config, scheme *runtime.Scheme) {
+func testReconcileUsesDefaultsWithoutPersistingSpec(t *testing.T, cfg *rest.Config, scheme *runtime.Scheme) {
 	_, k8sClient, cancel := startManager(t, cfg, scheme)
 	defer cancel()
 
@@ -249,27 +249,41 @@ func testReconcileAppliesDefaults(t *testing.T, cfg *rest.Config, scheme *runtim
 		t.Fatalf("failed to create MCPServer: %v", err)
 	}
 
-	// Wait for defaults to be applied
-	time.Sleep(3 * time.Second)
+	key := types.NamespacedName{Name: "defaults-test", Namespace: "test-defaults"}
+
+	var deployment appsv1.Deployment
+	if err := waitForResource(ctx, k8sClient, &deployment, key, 30*time.Second); err != nil {
+		t.Fatalf("deployment not created: %v", err)
+	}
+	if len(deployment.Spec.Template.Spec.Containers) == 0 {
+		t.Fatal("deployment should have at least one container")
+	}
+	ports := deployment.Spec.Template.Spec.Containers[0].Ports
+	if len(ports) == 0 || ports[0].ContainerPort != 8088 {
+		t.Fatalf("expected default container port 8088, got %#v", ports)
+	}
+
+	var service corev1.Service
+	if err := waitForResource(ctx, k8sClient, &service, key, 10*time.Second); err != nil {
+		t.Fatalf("service not created: %v", err)
+	}
+	if len(service.Spec.Ports) == 0 || service.Spec.Ports[0].Port != 80 {
+		t.Fatalf("expected default service port 80, got %#v", service.Spec.Ports)
+	}
 
 	var updated mcpv1alpha1.MCPServer
-	key := types.NamespacedName{Name: "defaults-test", Namespace: "test-defaults"}
 	if err := k8sClient.Get(ctx, key, &updated); err != nil {
 		t.Fatalf("failed to get MCPServer: %v", err)
 	}
-
-	if updated.Spec.Port == 0 {
-		t.Error("default port should be applied")
+	if updated.Spec.Port != 0 {
+		t.Fatalf("controller should not persist default port, got %d", updated.Spec.Port)
 	}
-	if updated.Spec.Replicas == nil || *updated.Spec.Replicas == 0 {
-		t.Error("default replicas should be applied")
+	if updated.Spec.Replicas != nil {
+		t.Fatalf("controller should not persist default replicas, got %v", *updated.Spec.Replicas)
 	}
-	if updated.Spec.ImageTag == "" {
-		t.Error("default imageTag should be applied")
+	if updated.Spec.ImageTag != "" {
+		t.Fatalf("controller should not persist default imageTag, got %q", updated.Spec.ImageTag)
 	}
-
-	t.Logf("Defaults applied: port=%d, replicas=%d, imageTag=%s",
-		updated.Spec.Port, *updated.Spec.Replicas, updated.Spec.ImageTag)
 }
 
 // Helper functions

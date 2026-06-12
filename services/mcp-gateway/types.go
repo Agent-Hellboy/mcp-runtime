@@ -74,6 +74,7 @@ type analyticsEvent struct {
 
 type gatewayServer struct {
 	proxy                 *httputil.ReverseProxy
+	metrics               *gatewayMetrics
 	analyticsURL          string
 	apiKey                string
 	source                string
@@ -97,6 +98,7 @@ type gatewayServer struct {
 	analyticsOnce         sync.Once
 	analyticsWG           sync.WaitGroup
 	analyticsClosed       bool
+	analyticsDropped      atomic.Uint64
 	oauthMu               sync.Mutex
 	oauthProviders        map[string]*oauthProvider
 	policyState           atomic.Value

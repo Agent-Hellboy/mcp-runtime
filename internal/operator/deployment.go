@@ -427,8 +427,10 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 	}
 
 	port := mcpServer.Spec.Gateway.Port
+	metricsPort := int32(DefaultGatewayMetricsPort)
 	envVars := []corev1.EnvVar{
 		{Name: "PORT", Value: strconv.Itoa(int(port))},
+		{Name: "METRICS_PORT", Value: strconv.Itoa(int(metricsPort))},
 		{Name: "UPSTREAM_URL", Value: mcpServer.Spec.Gateway.UpstreamURL},
 		{Name: "POLICY_FILE", Value: gatewayPolicyFilePath},
 		{Name: "MCP_SERVER_NAME", Value: mcpServer.Name},
@@ -510,6 +512,11 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 			{
 				Name:          "gateway",
 				ContainerPort: port,
+				Protocol:      corev1.ProtocolTCP,
+			},
+			{
+				Name:          "metrics",
+				ContainerPort: metricsPort,
 				Protocol:      corev1.ProtocolTCP,
 			},
 		},

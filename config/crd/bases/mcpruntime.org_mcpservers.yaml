@@ -421,6 +421,12 @@ spec:
                       - medium
                       - high
                       type: string
+                    riskLevel:
+                      enum:
+                      - low
+                      - medium
+                      - high
+                      type: string
                     sideEffect:
                       enum:
                       - read

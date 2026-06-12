@@ -1,6 +1,6 @@
 ---
 name: repo-guidance-sync
-description: Keep repository documentation, AGENTS.md, and contributor/test guidance aligned with code, design, and product changes. Use when Codex changes or reviews behavior that affects user-facing docs, developer runbooks, architecture notes, CLI/API references, setup instructions, design-system guidance, operational commands, E2E assumptions, or agent instructions; when a user asks to update docs after implementation; or when stale repo guidance could mislead future contributors.
+description: Audit and update repository documentation, AGENTS.md, contributor runbooks, and test guidance so they match implemented behavior. Use when code, UI, CLI, API/CRD, config, deployment, or test-flow changes may affect user-facing docs, setup instructions, operational/debugging guidance, golden help snapshots, E2E assumptions, or agent instructions; when the user asks to sync docs after implementation; or when stale repo guidance could mislead contributors. Do not use for ordinary code review or implementation work unless documentation or guidance drift is part of the task.
 ---
 
 # Repo Guidance Sync
@@ -8,6 +8,8 @@ description: Keep repository documentation, AGENTS.md, and contributor/test guid
 ## Overview
 
 Use this skill to decide what documentation must change after a code, design, or product update, then make those edits in the right files with verifiable links back to source behavior.
+
+If the user asks for a doc-sync audit and no files need changes, say that clearly and cite the source files or searches checked.
 
 ## Workflow
 

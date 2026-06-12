@@ -102,6 +102,7 @@ type Tool struct {
 	Description   string            `json:"description,omitempty"`
 	RequiredTrust string            `json:"required_trust,omitempty"`
 	SideEffect    string            `json:"side_effect,omitempty"`
+	RiskLevel     string            `json:"risk_level,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
 }
 
@@ -136,4 +137,17 @@ type ToolAccess struct {
 	Name          ToolName `json:"name"`
 	Decision      string   `json:"decision,omitempty"`
 	RequiredTrust string   `json:"required_trust,omitempty"`
+}
+
+func ToolRiskLevel(policy *Document, toolName string) string {
+	if policy == nil || toolName == "" {
+		return ""
+	}
+	for _, tool := range policy.Tools {
+		if string(tool.Name) != toolName {
+			continue
+		}
+		return NormalizeRiskLevel(tool.RiskLevel, tool.RequiredTrust, tool.SideEffect)
+	}
+	return ""
 }

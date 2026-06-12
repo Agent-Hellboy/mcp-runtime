@@ -49,9 +49,15 @@ func (s *gatewayServer) reloadPolicy() error {
 	doc, err := s.loadPolicy()
 	if err != nil {
 		retained := s.loadPolicySnapshot()
+		fallback := retained.Policy
+		if fallback == nil {
+			fallback = s.defaultPolicyDocument()
+		}
+		retained.Policy = fallback
 		retained.Err = err
 		s.snapshotPolicy(retained)
 		recordPolicyReloadFailure()
+		s.metrics.recordPolicyReload(s.metricScope(fallback), err)
 		return err
 	}
 
@@ -63,6 +69,7 @@ func (s *gatewayServer) reloadPolicy() error {
 		Ready:    true,
 	})
 	recordPolicyReloadSuccess(doc.Revision, doc.SchemaVersion, loadedAt)
+	s.metrics.recordPolicyReload(s.metricScope(doc), nil)
 	return nil
 }
 

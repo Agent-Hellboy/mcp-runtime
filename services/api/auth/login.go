@@ -41,6 +41,8 @@ func HandlePasswordLogin(
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
+	// attemptKey is ip|email for audit context; the tracker rekeys to per-IP buckets
+	// via normalizeLoginAttemptKey to limit email-spray lockout exhaustion.
 	attemptKey := requestIP(r)
 	if email != "" {
 		attemptKey += "|" + email

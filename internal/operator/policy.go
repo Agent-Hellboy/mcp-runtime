@@ -135,6 +135,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 				Description:   tool.Description,
 				RequiredTrust: string(tool.RequiredTrust),
 				SideEffect:    string(tool.SideEffect),
+				RiskLevel:     string(tool.RiskLevel),
 			}
 			if len(tool.Labels) > 0 {
 				rendered.Labels = make(map[string]string, len(tool.Labels))
