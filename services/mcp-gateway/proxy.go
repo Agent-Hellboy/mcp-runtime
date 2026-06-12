@@ -27,145 +27,98 @@ func newUpstreamReverseProxy(target *url.URL) *httputil.ReverseProxy {
 	return proxy
 }
 
-// handleGateway handles incoming MCP requests and forwards them to upstream servers.
-// It evaluates simple policy for tool invocations and emits audit events on allow/deny.
+// handleGateway is the pipeline orchestrator for the gateway request path.
+// It runs the five ordered filters (inspect → policy → auth → authz → upstream)
+// and then unconditionally runs stage 6 (audit/analytics finalization).
 func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-	recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-	originalPath := r.URL.Path
-	inspection := inspectRPCRequest(r)
-	rpcMethod, toolName := inspection.Method, inspection.ToolName
+	ex := newExchange(w, r, s.defaultPolicyVersion)
 
-	policy, policyErr := s.currentPolicy()
-	if s.handleOAuthProtectedResource(recorder, r, policy) {
-		return
-	}
-
-	authCtx := s.extractIdentity(r, policy)
-	decision := policypkg.Decision{
-		Allowed:       true,
-		Status:        http.StatusOK,
-		Reason:        "allowed",
-		PolicyVersion: s.defaultPolicyVersion,
-	}
+	policy, _ := s.currentPolicy()
 	scope := s.metricScope(policy)
 	stopInflight := s.metrics.trackInflight(scope)
 	defer stopInflight()
 	policyDecisionObserved := false
 	defer func() {
-		s.metrics.recordRequest(scope, r, rpcMethod, decision, recorder.status, time.Since(start), r.ContentLength, recorder.bytes)
+		metricScope := s.metricScope(ex.Policy)
+		s.metrics.recordRequest(
+			metricScope, ex.R, ex.Inspection.Method, ex.Decision,
+			ex.W.status, time.Since(ex.StartTime), ex.R.ContentLength, ex.W.bytes,
+		)
 		if policyDecisionObserved {
-			s.metrics.recordPolicyDecision(scope, rpcMethod, decision)
+			s.metrics.recordPolicyDecision(metricScope, ex.Inspection.Method, ex.Decision)
 		}
 	}()
-	oauthResult := oauthAuthResult{
-		Allowed:  true,
-		Status:   http.StatusOK,
-		Identity: authCtx,
-	}
 
-	if policypkg.PolicyUsesOAuth(policy) {
-		oauthResult = s.authenticateOAuth(r, policy)
-		authCtx = oauthResult.Identity
-		if !oauthResult.Allowed {
-			decision = policypkg.Deny(
-				oauthResult.Status,
-				oauthResult.Reason,
-				policypkg.ChoosePolicyVersion(policypkg.PolicyVersion(policy), s.defaultPolicyVersion),
-			)
-			policyDecisionObserved = true
-			s.writeDeniedResponse(recorder, r, originalPath, rpcMethod, toolName, authCtx, policy, decision, start, inspection.IsRPCAttempt)
-			return
+	for _, f := range s.buildPipeline() {
+		if f.Handle(ex) != Continue {
+			break
 		}
 	}
-
-	if inspection.ToolCall || inspection.Indeterminate {
-		switch {
-		case policyErr != nil:
-			decision = policypkg.Deny(
-				http.StatusServiceUnavailable,
-				"policy_unavailable",
-				policypkg.ChoosePolicyVersion(policypkg.PolicyVersion(policy), s.defaultPolicyVersion),
-			)
-		case inspection.Indeterminate:
-			decision = policypkg.Deny(
-				http.StatusForbidden,
-				policypkg.FirstNonEmpty(inspection.FailureReason, "rpc_inspection_failed"),
-				policypkg.ChoosePolicyVersion(policypkg.PolicyVersion(policy), s.defaultPolicyVersion),
-			)
-		default:
-			decision = policypkg.Authorize(policy, policypkg.Request{
-				Identity:  policyIdentity(authCtx),
-				RPCMethod: rpcMethod,
-				ToolName:  policypkg.ToolName(toolName),
-			}, time.Now())
-		}
+	if ex.Decision.PolicyVersion == "" {
+		ex.Decision.PolicyVersion = s.defaultPolicyVersion
+	}
+	policyDecisionObserved = ex.Inspection.ToolCall || ex.Inspection.Indeterminate
+	if !policyDecisionObserved && !ex.Decision.Allowed && !ex.SkipAudit {
 		policyDecisionObserved = true
 	}
+	s.emitAuditFromExchange(ex)
+}
 
-	if !decision.Allowed {
-		s.writeDeniedResponse(recorder, r, originalPath, rpcMethod, toolName, authCtx, policy, decision, start, inspection.IsRPCAttempt)
-		return
-	}
-
-	s.applyIdentityHeaders(r, policy, authCtx)
-	s.applyUpstreamToken(r, policy, oauthResult.Token)
-
-	if trimmedPath, ok := trimRequestPathPrefix(r.URL.Path, s.stripPrefix); ok {
-		r.URL.Path = trimmedPath
-		if trimmedRawPath, rawPathTrimmed := trimRequestPathPrefix(r.URL.RawPath, s.stripPrefix); rawPathTrimmed {
-			r.URL.RawPath = trimmedRawPath
-		}
-		if r.URL.Path == "" {
-			r.URL.Path = "/"
-			if r.URL.RawPath != "" {
-				r.URL.RawPath = "/"
-			}
-		}
-	}
-
-	s.proxy.ServeHTTP(recorder, r)
-
-	if decision.PolicyVersion == "" {
-		decision.PolicyVersion = s.defaultPolicyVersion
-	}
-
-	// Only audit actual MCP JSON-RPC traffic. Non-RPC requests (GET health probes,
-	// OAuth discovery, etc.) have no rpcMethod and produce noise in the event count.
-	// Denied requests are already audited by writeDeniedResponse above.
-	// Internal platform service probes (live-inventory, health checkers) are
-	// identified by the mcp-runtime-live-inventory agent ID; skip those too so
-	// they do not inflate the analytics event count.
-	if rpcMethod != "" && authCtx.AgentID != "mcp-runtime-live-inventory" {
-		s.emitAuditEvent(r, originalPath, rpcMethod, toolName, authCtx, policy, decision, recorder.status, time.Since(start).Milliseconds(), recorder.bytes)
+// buildPipeline returns the fixed ordered filter slice for a gateway request.
+// Stages are defined in exchange.go; order is security-sensitive and must not
+// be changed without updating the ordering guarantees documented there.
+func (s *gatewayServer) buildPipeline() []Filter {
+	return []Filter{
+		FilterFunc(s.inspectFilter),
+		FilterFunc(s.policyFilter),
+		FilterFunc(s.authFilter),
+		FilterFunc(s.authzFilter),
+		FilterFunc(s.upstreamFilter),
 	}
 }
 
-func (s *gatewayServer) writeDeniedResponse(
-	recorder *statusRecorder,
-	r *http.Request,
-	originalPath, rpcMethod, toolName string,
-	authCtx identityContext,
-	policy *policypkg.Document,
-	decision policypkg.Decision,
-	start time.Time,
-	isRPCAttempt bool,
-) {
-	recorder.Header().Set("content-type", "application/json")
-	if shouldChallengeOAuth(policy, decision) {
-		recorder.Header().Set("www-authenticate", s.oauthAuthenticateHeader(r, originalPath, decision.Reason))
+// emitAuditFromExchange is stage 6 of the pipeline. It emits a single audit
+// event after the pipeline completes, preserving the following semantics from
+// the previous monolithic handleGateway:
+//
+//   - Allowed requests: audit when rpcMethod is non-empty (actual RPC traffic).
+//   - Denied requests: audit when rpcMethod is non-empty OR the request was a
+//     genuine MCP client attempt (application/json body that failed parsing).
+//   - Internal platform service probes (mcp-runtime-live-inventory) are never audited.
+func (s *gatewayServer) emitAuditFromExchange(ex *Exchange) {
+	if ex.SkipAudit {
+		return
 	}
-	status := gatewayDeniedStatus(policy, decision)
-	decision.Status = status
-	recorder.WriteHeader(status)
-	_ = json.NewEncoder(recorder).Encode(gatewayDeniedPayload(policy, decision))
-	// Audit when we have an rpcMethod (tool call) OR when the request was a
-	// genuine MCP attempt (application/json content-type) but parsing failed.
-	// Non-RPC noise (text/plain probes, GET health checks) and internal platform
-	// service probes (live-inventory) are not audited.
-	if (rpcMethod != "" || isRPCAttempt) && authCtx.AgentID != "mcp-runtime-live-inventory" {
-		s.emitAuditEvent(r, originalPath, rpcMethod, toolName, authCtx, policy, decision, recorder.status, time.Since(start).Milliseconds(), recorder.bytes)
+	if ex.Identity.AgentID == "mcp-runtime-live-inventory" {
+		return
 	}
+	rpcMethod := ex.Inspection.Method
+	if ex.Decision.Allowed {
+		if rpcMethod == "" {
+			return
+		}
+	} else if rpcMethod == "" && !ex.Inspection.IsRPCAttempt {
+		return
+	}
+	s.emitAuditEvent(
+		ex.R, ex.OriginalPath, rpcMethod, ex.Inspection.ToolName,
+		ex.Identity, ex.Policy, ex.Decision,
+		ex.W.status, time.Since(ex.StartTime).Milliseconds(), ex.W.bytes,
+	)
+}
+
+// writeDeniedResponse writes the HTTP denial response for the current exchange.
+// Audit emission is intentionally absent here; it is centralised in
+// emitAuditFromExchange (stage 6) so each denial is audited exactly once.
+func (s *gatewayServer) writeDeniedResponse(ex *Exchange) {
+	ex.W.Header().Set("content-type", "application/json")
+	if shouldChallengeOAuth(ex.Policy, ex.Decision) {
+		ex.W.Header().Set("www-authenticate", s.oauthAuthenticateHeader(ex.R, ex.OriginalPath, ex.Decision.Reason))
+	}
+	status := gatewayDeniedStatus(ex.Policy, ex.Decision)
+	ex.Decision.Status = status
+	ex.W.WriteHeader(status)
+	_ = json.NewEncoder(ex.W).Encode(gatewayDeniedPayload(ex.Policy, ex.Decision))
 }
 
 func gatewayDeniedStatus(policy *policypkg.Document, decision policypkg.Decision) int {
