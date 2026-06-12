@@ -245,7 +245,9 @@ When `MCP_PLATFORM_DOMAIN=example.com` is set, setup derives these public names:
 
 - `registry.example.com` for registry ingress.
 - `mcp.example.com` for MCP server traffic.
-- `platform.example.com` for the dashboard, API, and Grafana paths. Prometheus remains an internal metrics backend.
+- `platform.example.com` for the dashboard, API, and admin-gated Grafana paths.
+  Prometheus remains an internal metrics backend; tenant users reach it only
+  through server-scoped API queries.
 
 All configured public names must resolve to the cluster ingress address before
 certificate issuance. For Let's Encrypt HTTP-01, port 80 must reach the ingress

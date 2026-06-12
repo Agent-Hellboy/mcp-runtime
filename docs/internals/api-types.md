@@ -35,7 +35,7 @@ Key spec areas:
 | Area | Fields | Contributor notes |
 |---|---|---|
 | Image | `image`, `imageTag`, `registryOverride`, `useProvisionedRegistry`, `imagePullSecrets` | Reconciled by the operator into Deployment image refs and pull secrets. Keep registry behavior aligned with setup and metadata generation. |
-| Scale and ports | `replicas`, `port`, `servicePort` | Defaults are applied by the operator; CRD schema should allow unset optional fields when defaults exist. |
+| Scale and ports | `replicas`, `port`, `servicePort` | Defaults are applied by the admission webhook; CRD schema should allow unset optional fields when defaults exist. |
 | Routing | `ingressHost`, `publicPathPrefix`, `ingressPath`, `ingressClass`, `ingressAnnotations` | Host-based and hostless path-based routing both matter. E2E should cover public path changes. |
 | Runtime config | `envVars`, `secretEnvVars`, `resources` | Converted into pod container env and resource requirements. |
 | Inventory | `tools`, `prompts`, `mcpResources`, `tasks` | Used by gateway policy and UI/API surfaces. |
@@ -107,15 +107,25 @@ Shared enums include:
 Keep enum values stable once published. If a value must be renamed, add a
 migration path and update examples, generated CRDs, UI/API validation, and e2e.
 
-## Webhooks and Validation
+## Webhooks, Defaults, and Validation
 
-Validation methods live with the API package and are registered through
-controller-runtime webhook setup. They should enforce invariants that must be
-true no matter which client creates the object.
+Defaulting and validation methods live with the API package and are registered
+through controller-runtime webhook setup. They should enforce invariants that
+must be true no matter which client creates or updates the object.
+
+`MCPServer` defaults are applied by the mutating admission webhook. The
+reconciler still applies the same defaults to an in-memory copy before rendering
+resources so legacy objects created before the webhook existed continue to
+reconcile, but it should not persist those defaults back into the API object.
 
 Use validation for object-level API correctness, not runtime availability. For
 example, malformed policy decisions belong in validation; whether an image is
 pullable belongs in setup/doctor diagnostics and Kubernetes status.
+
+Generated webhook configuration lives under `config/webhook/`. The setup flow
+creates the webhook TLS secret, enables webhook serving on the operator
+deployment, and injects the generated CA bundle into the webhook configuration
+before applying it.
 
 ## Generated Files
 

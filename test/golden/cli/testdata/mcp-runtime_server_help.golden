@@ -17,21 +17,22 @@ Usage:
   mcp-runtime server [command]
 
 Available Commands:
-  apply       Apply an MCP server manifest
-  build       Build MCP server images (push via `registry push`)
-  create      Create an MCP server
-  delete      Delete an MCP server
-  deploy      Deploy an MCP server through the platform API
-  export      Export an MCP server manifest
-  generate    Generate MCPServer manifests from .mcp metadata
-  get         Get MCP server details
-  init        Initialize .mcp metadata for a server
-  list        List MCP servers
-  logs        View server logs
-  patch       Patch an MCP server manifest
-  policy      Inspect rendered gateway policy for an MCP server
-  status      Show MCP server runtime status (pods, images, pull secrets)
-  validate    Validate .mcp metadata and optional grant/session YAML files
+  apply          Apply an MCP server manifest
+  build          Build MCP server images (push via `registry push`)
+  connect-config Print client connection config for an MCP server
+  create         Create an MCP server
+  delete         Delete an MCP server
+  deploy         Deploy an MCP server through the platform API
+  export         Export an MCP server manifest
+  generate       Generate MCPServer manifests from .mcp metadata
+  get            Get MCP server details
+  init           Initialize .mcp metadata for a server
+  list           List MCP servers
+  logs           View server logs
+  patch          Patch an MCP server manifest
+  policy         Inspect rendered gateway policy for an MCP server
+  status         Show MCP server runtime status (pods, images, pull secrets)
+  validate       Validate .mcp metadata and optional grant/session YAML files
 
 Flags:
   -h, --help       help for server

@@ -1,4 +1,33 @@
 apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: mcp-sentinel
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mcp-sentinel-prometheus-discovery
+rules:
+  - apiGroups: [""]
+    resources: ["endpoints", "pods", "services"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mcp-sentinel-prometheus-discovery
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: mcp-sentinel
+roleRef:
+  kind: ClusterRole
+  name: mcp-sentinel-prometheus-discovery
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
 kind: ConfigMap
 metadata:
   name: prometheus-config
@@ -20,6 +49,37 @@ data:
       - job_name: clickhouse
         static_configs:
           - targets: ["clickhouse:9363"]
+      - job_name: mcp-gateway-sidecars
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - action: keep
+            source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+            regex: "true"
+          - action: keep
+            source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_managed_by]
+            regex: mcp-runtime
+          - action: keep
+            source_labels: [__meta_kubernetes_endpoint_port_name]
+            regex: http
+          - action: replace
+            source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+            target_label: __metrics_path__
+            regex: "(.+)"
+          - action: replace
+            source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+            target_label: __address__
+            regex: ([^:]+)(?::[0-9]+)?;([0-9]+)
+            replacement: "$1:$2"
+          - action: replace
+            source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - action: replace
+            source_labels: [__meta_kubernetes_service_name]
+            target_label: server
+          - action: replace
+            source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
 ---
 apiVersion: v1
 kind: Service
@@ -49,7 +109,8 @@ spec:
       labels:
         app: prometheus
     spec:
-      automountServiceAccountToken: false
+      serviceAccountName: prometheus
+      automountServiceAccountToken: true
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534

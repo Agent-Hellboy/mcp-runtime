@@ -410,6 +410,10 @@ func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
 		`function isTenantUser()`,
 		`if (isTenantUser() && server.namespace && server.name)`,
 		`retireButton.textContent = "Retire"`,
+		`metricsButton.textContent = "Prometheus"`,
+		`grafanaButton.textContent = "Grafana"`,
+		`async function openScopedObservability(server, target)`,
+		`server.observability?.prometheus?.queries?.length`,
 		`authenticated && !isTenantUser()`,
 		`await loadUserDashboard()`,
 	} {
@@ -563,7 +567,9 @@ func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
 		t.Fatalf("expected long dashboard tables to use scroll-table, got %d", got)
 	}
 	for _, want := range []string{
-		`placeholder="Search servers"`,
+		`placeholder="Search servers and tools"`,
+		`id="tool-catalog-body"`,
+		`id="tool-risk-filter"`,
 		`class="analytics-tabset" data-analytics-tabset`,
 		`id="governance-decisions" data-admin-only="true"`,
 		`data-analytics-tab-target="governance-decision-audit"`,
@@ -816,8 +822,8 @@ func TestAPIProxyAllowsAnonymousPublicCatalog(t *testing.T) {
 		if got := r.Header.Get("authorization"); got != "" {
 			t.Fatalf("authorization forwarded upstream: %q", got)
 		}
-		if got := r.URL.Path; got != "/api/runtime/servers" {
-			t.Fatalf("path = %q, want /api/runtime/servers", got)
+		if got := r.URL.Path; got != "/api/runtime/servers" && got != "/api/runtime/tools" {
+			t.Fatalf("path = %q, want /api/runtime/servers or /api/runtime/tools", got)
 		}
 		if got := r.URL.Query().Get("namespace"); got != "mcp-servers-public" {
 			t.Fatalf("namespace = %q, want mcp-servers-public", got)
@@ -841,6 +847,15 @@ func TestAPIProxyAllowsAnonymousPublicCatalog(t *testing.T) {
 	}
 	if !upstreamCalled {
 		t.Fatal("anonymous public catalog request did not reach upstream")
+	}
+
+	upstreamCalled = false
+	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/tools", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("anonymous public tools status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !upstreamCalled {
+		t.Fatal("anonymous public tools request did not reach upstream")
 	}
 
 	forbidden := httptest.NewRecorder()
@@ -1193,6 +1208,25 @@ func TestLoginClientIDUsesForwardedFor(t *testing.T) {
 	}
 }
 
+func TestLoginClientIDEmptyForwardedForFallsBackToRemoteAddr(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+	req.RemoteAddr = "198.51.100.20:54321"
+	req.Header.Set("x-forwarded-for", " , ")
+
+	if got := loginClientID(req); got != "198.51.100.20" {
+		t.Fatalf("loginClientID() = %q, want remote addr host", got)
+	}
+}
+
+func TestLoginClientIDUnknownWhenNoAddressAvailable(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+	req.RemoteAddr = ""
+
+	if got := loginClientID(req); got != loginClientUnknownIP {
+		t.Fatalf("loginClientID() = %q, want %q", got, loginClientUnknownIP)
+	}
+}
+
 func TestHandleLoginLocksOutRepeatedFailures(t *testing.T) {
 	restore := useLoginAttemptTrackerForTest(t)
 	defer restore()
@@ -1236,6 +1270,62 @@ func TestHandleLoginSuccessResetsFailureCounter(t *testing.T) {
 	defer loginAttempts.mu.Unlock()
 	if got := loginAttempts.clients["198.51.100.11"].failures; got != 0 {
 		t.Fatalf("failure count after success = %d, want 0", got)
+	}
+}
+
+func TestLoginAttemptTrackerPrunesIdleClientsPeriodically(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := newLoginAttemptTracker(func() time.Time { return now })
+
+	tracker.recordFailure("client-old")
+	now = now.Add(loginAttemptIdleTTL + time.Second)
+	tracker.recordFailure("client-new")
+
+	if _, ok := tracker.clients["client-old"]; ok {
+		t.Fatal("idle login attempt client was not pruned")
+	}
+	if _, ok := tracker.clients["client-new"]; !ok {
+		t.Fatal("new login attempt client missing")
+	}
+}
+
+func TestLoginAttemptTrackerDoesNotPruneOnEveryRequest(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := newLoginAttemptTracker(func() time.Time { return now })
+	tracker.recordFailure("client")
+	firstPrune := tracker.lastPrune
+
+	now = now.Add(loginAttemptPruneInterval / 2)
+	tracker.recordFailure("client")
+
+	if !tracker.lastPrune.Equal(firstPrune) {
+		t.Fatalf("last prune = %s, want %s", tracker.lastPrune, firstPrune)
+	}
+}
+
+func TestLoginAttemptTrackerCapsClientsAndPreservesLockedClients(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := newLoginAttemptTracker(func() time.Time { return now })
+	tracker.clients["locked"] = &loginClientState{
+		lastSeen:    now,
+		lockedUntil: now.Add(loginLockoutDuration),
+	}
+
+	for i := 0; i < loginAttemptMaxClients; i++ {
+		now = now.Add(time.Millisecond)
+		if !tracker.allow(fmt.Sprintf("client-%d", i)) {
+			t.Fatalf("client-%d should be allowed on first attempt", i)
+		}
+	}
+
+	if got := len(tracker.clients); got > loginAttemptMaxClients {
+		t.Fatalf("login attempt clients = %d, want <= %d", got, loginAttemptMaxClients)
+	}
+	if _, ok := tracker.clients["locked"]; !ok {
+		t.Fatal("active lockout was evicted before unlocked clients")
+	}
+	if _, ok := tracker.clients["client-0"]; ok {
+		t.Fatal("oldest unlocked client was not evicted")
 	}
 }
 
