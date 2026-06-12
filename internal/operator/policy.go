@@ -37,9 +37,10 @@ func (r *MCPServerReconciler) reconcilePolicyConfigMap(ctx context.Context, mcpS
 	if err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		return err
+	// Reject an invalid rendered policy before it can replace the ConfigMap
+	// contents, so the gateway never reloads a malformed last-known-good policy.
+	if err := policy.Validate(doc); err != nil {
+		return fmt.Errorf("rendered gateway policy for %s/%s is invalid: %w", mcpServer.Namespace, mcpServer.Name, err)
 	}
 
 	configMap := &corev1.ConfigMap{
@@ -53,12 +54,36 @@ func (r *MCPServerReconciler) reconcilePolicyConfigMap(ctx context.Context, mcpS
 			"app":                          mcpServer.Name,
 			"app.kubernetes.io/managed-by": "mcp-runtime",
 		}
+		rendered, err := renderPolicyConfigMapData(configMap.Data[gatewayPolicyFileName], doc)
+		if err != nil {
+			return err
+		}
 		configMap.Data = map[string]string{
-			gatewayPolicyFileName: string(data),
+			gatewayPolicyFileName: rendered,
 		}
 		return ctrl.SetControllerReference(mcpServer, configMap, r.Scheme)
 	})
 	return err
+}
+
+// renderPolicyConfigMapData serializes the policy document for the ConfigMap.
+// When the rendered policy content is unchanged (same deterministic revision),
+// the prior payload is preserved verbatim so that refreshing the informational
+// generated_at timestamp does not churn the ConfigMap or trigger needless
+// gateway reloads.
+func renderPolicyConfigMapData(existing string, doc *policy.Document) (string, error) {
+	if existing != "" {
+		var prev policy.Document
+		if err := json.Unmarshal([]byte(existing), &prev); err == nil && prev.Revision != "" && prev.Revision == doc.Revision {
+			return existing, nil
+		}
+	}
+	doc.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (*policy.Document, error) {
@@ -133,6 +158,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 		subjectTeamID := subjectTeamIDForServer(serverTeamID, grant.Spec.Subject.TeamID)
 		rendered := policy.Grant{
 			Name:          grant.Name,
+			Namespace:     policy.Namespace(grant.Namespace),
 			HumanID:       policy.HumanID(grant.Spec.Subject.HumanID),
 			AgentID:       policy.AgentID(grant.Spec.Subject.AgentID),
 			TeamID:        policy.TeamID(subjectTeamID),
@@ -164,6 +190,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 		subjectTeamID := subjectTeamIDForServer(serverTeamID, session.Spec.Subject.TeamID)
 		rendered := policy.Binding{
 			Name:           policy.SessionID(session.Name),
+			Namespace:      policy.Namespace(session.Namespace),
 			HumanID:        policy.HumanID(session.Spec.Subject.HumanID),
 			AgentID:        policy.AgentID(session.Spec.Subject.AgentID),
 			TeamID:         policy.TeamID(subjectTeamID),
@@ -180,6 +207,12 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 		doc.Sessions = append(doc.Sessions, rendered)
 	}
 
+	// Stamp document-level metadata (schema version + deterministic revision).
+	// generated_at is left empty here and set at write time so it cannot affect
+	// the revision; see renderPolicyConfigMapData.
+	if err := policy.Stamp(doc, ""); err != nil {
+		return nil, err
+	}
 	return doc, nil
 }
 
