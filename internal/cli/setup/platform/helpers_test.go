@@ -2224,6 +2224,29 @@ func TestPrometheusScrapesClickHouseMetricsPort(t *testing.T) {
 	}
 }
 
+func TestPrometheusDiscoversGatewaySidecarMetrics(t *testing.T) {
+	content, err := os.ReadFile("../../../../k8s/11-prometheus.yaml")
+	if err != nil {
+		t.Fatalf("failed to read prometheus manifest: %v", err)
+	}
+	text := string(content)
+	for _, want := range []string{
+		"kind: ServiceAccount",
+		"name: prometheus",
+		"name: mcp-sentinel-prometheus-discovery",
+		"resources: [\"endpoints\", \"pods\", \"services\"]",
+		"job_name: mcp-gateway-sidecars",
+		"role: endpoints",
+		"__meta_kubernetes_service_annotation_prometheus_io_scrape",
+		"__meta_kubernetes_service_label_app_kubernetes_io_managed_by",
+		"__meta_kubernetes_service_annotation_prometheus_io_port",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected Prometheus manifest to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
 func TestClickHouseExposesPrometheusMetrics(t *testing.T) {
 	for _, path := range []string{"../../../../k8s/03-clickhouse.yaml", "../../../../k8s/03-clickhouse-hostpath.yaml"} {
 		content, err := os.ReadFile(path)

@@ -2451,6 +2451,8 @@ const (
 	DefaultPort = 8088
 	// DefaultGatewayPort is the default container port for the MCP proxy sidecar.
 	DefaultGatewayPort = 8091
+	// DefaultGatewayMetricsPort is the default Prometheus scrape port for the MCP gateway sidecar.
+	DefaultGatewayMetricsPort = 9103
 	// DefaultServicePort is the default service port.
 	DefaultServicePort = 80
 )

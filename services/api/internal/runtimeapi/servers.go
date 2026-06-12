@@ -715,9 +715,10 @@ func (s *RuntimeServer) handleRuntimeServerDelete(w http.ResponseWriter, r *http
 
 type serverInfo struct {
 	controlplane.ServerInfo
-	LiveInventory      *liveInventory `json:"liveInventory"`
-	LiveInventoryError string         `json:"liveInventoryError,omitempty"`
-	AccessJSON         map[string]any `json:"access_json,omitempty"`
+	LiveInventory      *liveInventory              `json:"liveInventory"`
+	LiveInventoryError string                      `json:"liveInventoryError,omitempty"`
+	AccessJSON         map[string]any              `json:"access_json,omitempty"`
+	Observability      *observabilityLinksResponse `json:"observability,omitempty"`
 }
 
 type serverDeploymentStatus = controlplane.ServerDeploymentStatus
@@ -747,6 +748,10 @@ func serverInfoWithAccessJSON(info controlplane.ServerInfo, r *http.Request) ser
 				},
 			},
 		}
+	}
+	if p, ok := principalFromContext(r.Context()); ok && serverInfoObservableByPrincipal(info, p) {
+		links := observabilityLinksForServerInfo(info, p, r)
+		out.Observability = &links
 	}
 	return out
 }

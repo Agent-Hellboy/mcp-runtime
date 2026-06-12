@@ -78,6 +78,9 @@ func (s *apiServer) registerRuntimeRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/runtime/server-events", s.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleRuntimeServerEvents(runtimeServer, w, r)
 	})))
+	mux.Handle("/api/runtime/observability/links", s.auth(http.HandlerFunc(runtimeServer.HandleRuntimeObservabilityLinks)))
+	mux.Handle("/api/runtime/observability/grafana/dashboard", s.auth(http.HandlerFunc(runtimeServer.HandleRuntimeObservabilityGrafanaDashboard)))
+	mux.Handle("/api/runtime/observability/prometheus/query", s.auth(http.HandlerFunc(runtimeServer.HandleRuntimeObservabilityPrometheusQuery)))
 	mux.Handle("/api/runtime/teams", s.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleRuntimeTeams(runtimeServer, w, r)
 	})))

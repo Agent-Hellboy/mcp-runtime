@@ -528,6 +528,7 @@ func TestReconcileDeploymentAddsGatewaySidecar(t *testing.T) {
 		envByName[envVar.Name] = envVar
 	}
 	assertEqual(t, "gatewayPortEnv", envByName["PORT"].Value, "8091")
+	assertEqual(t, "gatewayMetricsPortEnv", envByName["METRICS_PORT"].Value, "9103")
 	assertEqual(t, "gatewayUpstreamEnv", envByName["UPSTREAM_URL"].Value, "http://127.0.0.1:8088")
 	assertEqual(t, "gatewayOTELServiceName", envByName["OTEL_SERVICE_NAME"].Value, "gateway-server-gateway")
 	assertEqual(t, "gatewayOTELEndpoint", envByName["OTEL_EXPORTER_OTLP_ENDPOINT"].Value, "http://otel-collector.mcp-sentinel.svc.cluster.local:4318")
@@ -586,10 +587,76 @@ func TestReconcileServiceUsesGatewayPortWhenEnabled(t *testing.T) {
 		t.Fatalf("failed to fetch service: %v", err)
 	}
 
-	if len(service.Spec.Ports) != 1 {
-		t.Fatalf("expected 1 service port, got %d", len(service.Spec.Ports))
+	if len(service.Spec.Ports) != 2 {
+		t.Fatalf("expected 2 service ports, got %d", len(service.Spec.Ports))
 	}
 	assertEqual(t, "serviceTargetPort", service.Spec.Ports[0].TargetPort.IntVal, int32(8091))
+	assertEqual(t, "serviceMetricsPort", service.Spec.Ports[1].Port, int32(DefaultGatewayMetricsPort))
+	assertEqual(t, "serviceManagedByLabel", service.Labels["app.kubernetes.io/managed-by"], "mcp-runtime")
+	assertEqual(t, "servicePrometheusScrape", service.Annotations["prometheus.io/scrape"], "true")
+	assertEqual(t, "servicePrometheusPath", service.Annotations["prometheus.io/path"], "/metrics")
+	assertEqual(t, "servicePrometheusPort", service.Annotations["prometheus.io/port"], "9103")
+}
+
+func TestReconcileServicePreservesExistingAnnotations(t *testing.T) {
+	replicas := int32(1)
+	mcpServer := mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "annotated-gateway",
+			Namespace: "default",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image:       "example.com/gateway-service",
+			ImageTag:    "latest",
+			Port:        8088,
+			ServicePort: 80,
+			Replicas:    &replicas,
+			Gateway: &mcpv1alpha1.GatewayConfig{
+				Enabled: true,
+				Image:   "example.com/mcp-gateway:latest",
+				Port:    8091,
+			},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add mcp scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add core scheme: %v", err)
+	}
+
+	existingService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      mcpServer.Name,
+			Namespace: mcpServer.Namespace,
+			Annotations: map[string]string{
+				"example.com/custom": "keep-me",
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{{Port: 80}},
+		},
+	}
+
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&mcpServer, existingService).Build()
+	reconciler := MCPServerReconciler{
+		Client: client,
+		Scheme: scheme,
+	}
+
+	if err := reconciler.reconcileService(context.Background(), &mcpServer); err != nil {
+		t.Fatalf("reconcileService() error = %v", err)
+	}
+
+	var service corev1.Service
+	if err := client.Get(context.Background(), types.NamespacedName{Name: mcpServer.Name, Namespace: mcpServer.Namespace}, &service); err != nil {
+		t.Fatalf("failed to fetch service: %v", err)
+	}
+
+	assertEqual(t, "customAnnotation", service.Annotations["example.com/custom"], "keep-me")
+	assertEqual(t, "servicePrometheusScrape", service.Annotations["prometheus.io/scrape"], "true")
 }
 
 func TestResolveGatewayImage(t *testing.T) {
